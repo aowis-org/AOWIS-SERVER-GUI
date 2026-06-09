@@ -1,6 +1,5 @@
-#!/bin/bash
-
-cmake -S . -B build-linux
-cmake --build build-linux
-
-./build-linux/aowis-epanet-gui
+mkdir build
+cd build
+cmake ..
+cmake --build .
+./MyQmlAppBin

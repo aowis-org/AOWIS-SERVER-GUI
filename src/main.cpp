@@ -1,14 +1,24 @@
-#include <QApplication>
-#include "main_window.h"
+#include <QGuiApplication>
+#include <QQmlApplicationEngine>
 
-#include <QDebug>
+using namespace Qt::StringLiterals;
 
 int main(int argc, char *argv[])
 {
-    QApplication app(argc, argv);
-    
-    MainWindow w;
-    w.show();
-    
+    QGuiApplication app(argc, argv);
+
+    QQmlApplicationEngine engine;
+    const QUrl url(u"qrc:/MyQmlApp/qml/Main.qml"_qs);
+
+    QObject::connect(
+        &engine, &QQmlApplicationEngine::objectCreated,
+        &app, [url](QObject *obj, const QUrl &objUrl) {
+            if (!obj && url == objUrl)
+                QCoreApplication::exit(-1);
+        },
+        Qt::QueuedConnection
+    );
+
+    engine.load(url);
     return app.exec();
 }

@@ -1,30 +1,23 @@
-cmake_minimum_required(VERSION 3.21)
-project(aowis-server-gui LANGUAGES CXX)
-
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+cmake_minimum_required(VERSION 3.16)
+project(MyQmlApp LANGUAGES CXX)
 
 set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTOUIC ON)
-set(CMAKE_AUTORCC ON)
+set(CMAKE_CXX_STANDARD 17)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
+find_package(Qt6 REQUIRED COMPONENTS Quick)
 
-qt_add_executable(aowis-server-gui
-    resources.qrc
+#qt_policy(SET QTP0001 NEW)
+#qt_policy(SET QTP0004 NEW)
+
+qt_add_executable(MyQmlAppBin
     src/main.cpp
-    src/main_window.cpp
-    src/main_window.h
-    
-    src/utils/mercator.h src/utils/mercator.cpp
-    
-    src/rest_client.h src/rest_client.cpp
-    src/menubar.h src/menubar.cpp
-    
 )
 
-target_link_libraries(aowis-server-gui PRIVATE Qt6::Widgets Qt6::Network)
-
-qt_import_plugins(aowis-server-gui
-    INCLUDE_BY_TYPE imageformats
+qt_add_qml_module(MyQmlAppBin
+    URI MyQmlApp
+    VERSION 1.0
+    QML_FILES
+        qml/Main.qml
 )
+
+target_link_libraries(MyQmlAppBin PRIVATE Qt6::Quick)
