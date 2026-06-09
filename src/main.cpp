@@ -8,7 +8,7 @@ int main(int argc, char *argv[])
     QGuiApplication app(argc, argv);
 
     QQmlApplicationEngine engine;
-    const QUrl url(u"qrc:/MyQmlApp/qml/Main.qml"_qs);
+    const QUrl url(QStringLiteral("qrc:/AOWIS/ServerGui/qml/Main.qml"));
 
     QObject::connect(
         &engine, &QQmlApplicationEngine::objectCreated,

@@ -6,7 +6,7 @@ Window {
     width: 400
     height: 240
     visible: true
-    title: "MyQmlApp"
+    title: "AOWIS-SERVER-GUI"
 
     Column {
         anchors.centerIn: parent

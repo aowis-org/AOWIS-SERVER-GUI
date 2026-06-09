@@ -1,5 +1,6 @@
-mkdir build
-cd build
-cmake ..
-cmake --build .
-./MyQmlAppBin
+#!/bin/bash
+
+cmake -S . -B build-linux
+cmake --build build-linux
+
+./build-linux/aowis-server-gui
