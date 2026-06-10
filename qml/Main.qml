@@ -2,6 +2,8 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Window
 
+import AOWIS.ServerGui
+
 Window {
     width: 400
     height: 240
@@ -20,6 +22,12 @@ Window {
         Button {
             text: "Click me"
             onClicked: console.log("Button clicked")
+        }
+        
+        MapViewer {
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: parent.width
+            height: 400
         }
     }
 }

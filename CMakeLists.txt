@@ -4,7 +4,11 @@ project(AOWIS-SERVER-GUI LANGUAGES CXX)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_CXX_STANDARD 17)
 
-find_package(Qt6 REQUIRED COMPONENTS Quick)
+find_package(Qt6 REQUIRED COMPONENTS
+    Quick
+    Location
+    Positioning
+)
 
 #qt_policy(SET QTP0001 NEW)
 #qt_policy(SET QTP0004 NEW)
@@ -18,6 +22,11 @@ qt_add_qml_module(aowis-server-gui
     VERSION 1.0
     QML_FILES
         qml/Main.qml
+        QML_FILES qml/MapViewer.qml
 )
 
-target_link_libraries(aowis-server-gui PRIVATE Qt6::Quick)
+target_link_libraries(aowis-server-gui PRIVATE
+    Qt6::Quick
+    Qt6::Location
+    Qt6::Positioning
+)
