@@ -1,7 +1,7 @@
-# AOWIS-EPANET-GUI
+# AOWIS-SERVER-GUI
 EPANET based Controller for Water Networks.
 
-This is the GUI for the AOWIS-EPANET-Server.
+This is the GUI for the AOWIS-SERVER.
 
 This software is written in C++ with Qt and can be compiled for all major platforms, including WebAssembly.
 
