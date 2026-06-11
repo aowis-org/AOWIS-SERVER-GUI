@@ -26,7 +26,7 @@ void MenuBar::addMapMenu()
     
     QActionGroup *group_map_select = new QActionGroup(this);
     group_map_select->setExclusive(true);
-    QAction *action_map_arcgissat = new QAction("ArcGISSAT", this);
+    QAction *action_map_arcgissat = new QAction("ArcGIS SAT", this);
     connect(action_map_arcgissat, &QAction::triggered, this, [this]{
         emit signalMapChange(MapProvider::ArcGISSat); });
     QAction *action_map_openstreetmap = new QAction("OpenStreetMap", this);
