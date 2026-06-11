@@ -12,7 +12,8 @@ class FooterStatusBar : public QWidget
 public:
     FooterStatusBar(QWidget *parent = nullptr);
     
-    void setCoordinates(double x, double y);
+    void setMapZoom(int zoom);
+    void setMapCoordinates(double x, double y);
     
     QStatusBar* statusBar() const { return bar; };
     

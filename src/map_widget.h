@@ -11,6 +11,7 @@
 
 #include <QWheelEvent>
 #include <QMouseEvent>
+#include <QTimer>
 
 #include <QDebug>
 
@@ -60,6 +61,10 @@ private:
     double latToTileY(double lat, int zoom) const;
     double tileXToLon(double x, int zoom) const;
     double tileYToLat(double y, int zoom) const;
+    
+signals:
+    void signalZoomChanged(int zoom);
+    void signalCoordsChanged(double lon, double lat);
 };
 
 #endif // MAP_WIDGET_H

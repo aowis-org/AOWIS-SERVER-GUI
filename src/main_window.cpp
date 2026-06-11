@@ -25,6 +25,8 @@ MainWindow::MainWindow(QWidget *parent)
     
     this->map = new MapWidget(this);
     this->layout->addWidget(this->map, 0, 0, 1, 2);
+    connect(this->map, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
+    connect(this->map, &MapWidget::signalCoordsChanged, this->footer, &FooterStatusBar::setMapCoordinates);
     
     checkAPIServer();
     
@@ -53,26 +55,3 @@ void MainWindow::checkAPIServer()
     rest->get("/status");
 }
 
-void MainWindow::getOpenStreetMapTile(QLabel *label, QString endpoint)
-{
-    // Testing GET OSM Tile from AOWIS-Map-Server
-    
-    RESTClient *rest = new RESTClient("http://aowis-server-map.localhost:80", this);
-    connect(rest, &RESTClient::requestFinished, this, [this, rest, label](const QByteArray &data)
-    {
-        
-        QPixmap pix;
-        pix.loadFromData(data);
-        
-        label->setPixmap(pix);
-        
-        rest->deleteLater();
-    });
-    connect(rest, &RESTClient::requestError, this, [this, rest](const QString &err)
-    {
-        qDebug() << "fail: " << err;
-        
-        rest->deleteLater();
-    });
-    rest->get(endpoint);
-}

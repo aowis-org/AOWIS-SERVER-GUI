@@ -24,6 +24,12 @@ MapWidget::MapWidget(QWidget *parent)
     
     this->setMinimumHeight(500);
     this->setMinimumWidth(550);
+    
+    // make the status bar show correct zoom level from the start
+    QTimer::singleShot(0, this, [this] {
+        emit signalZoomChanged(this->zoom);
+        emit signalCoordsChanged(this->center_lon, this->center_lat);
+    });
 }
 
 void MapWidget::wheelEvent(QWheelEvent *ev)
@@ -84,12 +90,22 @@ void MapWidget::mouseMoveEvent(QMouseEvent *ev)
 void MapWidget::zoomIn()
 {
     this->zoom++;
+    if (this->zoom > 19)
+        this->zoom = 19;
+    
     update();
+    
+    emit signalZoomChanged(this->zoom);
 }
 void MapWidget::zoomOut()
 {
     this->zoom--;
+    if (this->zoom < 1)
+        this->zoom = 1;
+    
     update();
+    
+    emit signalZoomChanged(this->zoom);
 }
 void MapWidget::changeMapProvider(MapProvider provider)
 {
@@ -105,10 +121,6 @@ void MapWidget::paintEvent(QPaintEvent *)
 
 void MapWidget::drawTiles(QPainter &p)
 {
-    #ifndef Q_OS_WASM
-    qDebug() << this->zoom;
-    #endif
-    
     const int tiles = 1 << zoom;
     
     double cx = lonToTileX(this->center_lon, this->zoom);
@@ -158,6 +170,8 @@ void MapWidget::pan(const QPoint &d)
     this->center_lat += d.y() / scale * 360.0;
     
     clampCenter();
+    
+    emit signalCoordsChanged(this->center_lon, this->center_lat);
 }
 
 void MapWidget::clampCenter()

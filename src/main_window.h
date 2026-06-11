@@ -36,5 +36,4 @@ private:
     QLabel *label_image_b;
     
     void checkAPIServer();
-    void getOpenStreetMapTile(QLabel *label, QString endpoint);
 };
