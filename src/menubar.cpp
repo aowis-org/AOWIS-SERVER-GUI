@@ -19,9 +19,9 @@ void MenuBar::addMapMenu()
 {
     QMenu *menu = addMenu("Map");
     
-    QAction *action_zoom_in = new QAction("zoom in", this);
+    QAction *action_zoom_in = new QAction("Zoom In", this);
     connect(action_zoom_in, &QAction::triggered, this, [this]{ emit signalMapZoomIn(); });
-    QAction *action_zoom_out = new QAction("zoom out", this);
+    QAction *action_zoom_out = new QAction("Zoom Out", this);
     connect(action_zoom_out, &QAction::triggered, this, [this]{ emit signalMapZoomOut(); });
     
     QActionGroup *group_map_select = new QActionGroup(this);
