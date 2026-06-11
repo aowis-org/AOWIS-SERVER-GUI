@@ -3,6 +3,7 @@
 MenuBar::MenuBar()
 {
     addFileMenu();
+    addMapMenu();
 }
 
 void MenuBar::addFileMenu()
@@ -12,4 +13,10 @@ void MenuBar::addFileMenu()
     QAction *action_export = new QAction(QIcon::fromTheme("document-save"), "Export");
     
     menu->addAction(action_export);
+}
+
+void MenuBar::addMapMenu()
+{
+    QMenu *menu = addMenu("Map");
+    
 }

@@ -28,13 +28,6 @@ MapWidget::MapWidget(QWidget *parent)
 
 void MapWidget::wheelEvent(QWheelEvent *ev)
 {
-    /*
-    int delta = ev->angleDelta().y();
-    this->zoom += (delta > 0 ? 1 : -1);
-    this->zoom = std::clamp(zoom, 1, 19);
-    update();
-    */
-    
     // mouse position in widget
     QPoint pos = ev->position().toPoint();
     int w = width();
@@ -109,8 +102,8 @@ void MapWidget::drawTiles(QPainter &p)
     int w = width();
     int h = height();
     
-    int tiles_x = w / this->tile_size + 2;
-    int tiles_y = h / this->tile_size + 2;
+    int tiles_x = w / this->tile_size + 4;
+    int tiles_y = h / this->tile_size + 4;
     
     int start_x = int(cx) - tiles_x / 2;
     int start_y = int(cy) - tiles_y / 2;

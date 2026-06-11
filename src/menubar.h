@@ -15,6 +15,7 @@ public:
     
 private:
     void addFileMenu();
+    void addMapMenu();
 };
 
 #endif // MENUBAR_H

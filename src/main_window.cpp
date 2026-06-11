@@ -8,6 +8,9 @@ MainWindow::MainWindow(QWidget *parent)
     this->setCentralWidget(widget_central);
     widget_central->setLayout(this->layout);
     
+    this->footer = new FooterStatusBar(this);
+    setStatusBar(this->footer->statusBar());
+    
     this->label_image_a = new QLabel();
     this->label_image_b = new QLabel();
     
