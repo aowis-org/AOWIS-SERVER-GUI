@@ -13,6 +13,7 @@
 
 #include "rest_client.h"
 #include "menubar.h"
+#include "map_widget.h"
 
 class MainWindow : public QMainWindow
 {
@@ -23,6 +24,7 @@ public:
     
 private:
     MenuBar *menu;
+    MapWidget *map;
     
     QGridLayout *layout = new QGridLayout;
     QLineEdit *line_server_status;

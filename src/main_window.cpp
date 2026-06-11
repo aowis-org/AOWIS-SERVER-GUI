@@ -14,15 +14,18 @@ MainWindow::MainWindow(QWidget *parent)
     this->line_server_status = new QLineEdit();
     this->line_server_status->setDisabled(true);
     
-    this->layout->addWidget(label_image_a, 0, 0);
-    this->layout->addWidget(label_image_b, 0, 1);
+    //this->layout->addWidget(label_image_a, 0, 0);
+    //this->layout->addWidget(label_image_b, 0, 1);
     this->layout->addWidget(this->line_server_status, 1, 0, 1, 2);
     
-    this->setMinimumHeight(500);
-    this->setMinimumWidth(550);
+    this->setMinimumHeight(600);
+    this->setMinimumWidth(800);
     
-    this->menu = new MenuBar;
+    this->menu = new MenuBar();
     setMenuBar(this->menu);
+    
+    this->map = new MapWidget(this);
+    this->layout->addWidget(this->map, 0, 0, 1, 2);
     
     checkAPIServer();
     
