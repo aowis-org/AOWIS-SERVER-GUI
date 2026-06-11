@@ -75,6 +75,8 @@ void MapWidget::wheelEvent(QWheelEvent *ev)
     this->center_lat = tileYToLat(cy2, this->zoom);
     
     update();
+    
+    emit signalZoomChanged(this->zoom);
 }
 void MapWidget::mousePressEvent(QMouseEvent *ev)
 {
