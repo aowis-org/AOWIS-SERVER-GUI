@@ -46,6 +46,7 @@ private:
     void drawTiles(QPainter &p);
     void requestTile(const QString &key, int x, int y);
     void pan(const QPoint &delta);
+    void clampCenter();
     
     
     double lonToTileX(double lon, int zoom) const;

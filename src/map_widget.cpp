@@ -99,6 +99,8 @@ void MapWidget::paintEvent(QPaintEvent *)
 
 void MapWidget::drawTiles(QPainter &p)
 {
+    qDebug() << this->zoom;
+    
     const int tiles = 1 << zoom;
     
     double cx = lonToTileX(this->center_lon, this->zoom);
@@ -144,8 +146,46 @@ void MapWidget::drawTiles(QPainter &p)
 void MapWidget::pan(const QPoint &d)
 {
     double scale = 256.0 * (1 << zoom);
-    center_lon -= d.x() / scale * 360.0;
-    center_lat += d.y() / scale * 360.0;
+    this->center_lon -= d.x() / scale * 360.0;
+    this->center_lat += d.y() / scale * 360.0;
+    
+    clampCenter();
+}
+
+void MapWidget::clampCenter()
+{
+    double cx = lonToTileX(center_lon, zoom);
+    double cy = latToTileY(center_lat, zoom);
+    
+    double maxTile = (1 << zoom) - 1;
+    
+    double half_w = (width()  / double(tile_size)) / 2.0;
+    double half_h = (height() / double(tile_size)) / 2.0;
+    
+    double min_cx = half_w;
+    double max_cx = maxTile - half_w;
+    
+    double min_cy = half_h;
+    double max_cy = maxTile - half_h;
+    
+    // --- CASE 1: Map smaller than screen horizontally ---
+    if (min_cx > max_cx) {
+        // exact center of world in tile coords
+        cx = maxTile / 2.0;
+    } else {
+        cx = std::clamp(cx, min_cx, max_cx);
+    }
+    
+    // --- CASE 2: Map smaller than screen vertically ---
+    if (min_cy > max_cy) {
+        cy = maxTile / 2.0;
+    } else {
+        cy = std::clamp(cy, min_cy, max_cy);
+    }
+    
+    // convert back to lat/lon
+    center_lon = tileXToLon(cx, zoom);
+    center_lat = tileYToLat(cy, zoom);
 }
 
 void MapWidget::requestTile(const QString &key, int x, int y)
@@ -155,7 +195,13 @@ void MapWidget::requestTile(const QString &key, int x, int y)
     
     this->pending.insert(key);
     
-    QString endpoint = QString("/osm/%1/%2/%3.png").arg(this->zoom).arg(x).arg(y);
+    //QString endpoint = QString("/opentopomap/%1/%2/%3.png").arg(this->zoom).arg(x).arg(y);
+    QString endpoint = QString("/arcgis/%1/%2/%3.png").arg(this->zoom).arg(x).arg(y);
+    if (this->zoom > 17)
+    {
+        endpoint = QString("/openstreetmap/%1/%2/%3.png").arg(this->zoom).arg(x).arg(y);
+    }
+    
     this->rest->getTile(endpoint, key);
 }
 
