@@ -91,7 +91,7 @@ void MapWidget::zoomOut()
     this->zoom--;
     update();
 }
-void MapWidget::changeMap(MapProvider provider)
+void MapWidget::changeMapProvider(MapProvider provider)
 {
     this->map_provider = provider;
     update();

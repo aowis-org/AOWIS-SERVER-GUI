@@ -30,7 +30,7 @@ MainWindow::MainWindow(QWidget *parent)
     
     connect(this->menu, &MenuBar::signalMapZoomIn, this->map, &MapWidget::zoomIn);
     connect(this->menu, &MenuBar::signalMapZoomOut, this->map, &MapWidget::zoomOut);
-    connect(this->menu, &MenuBar::signalMapChange, this->map, &MapWidget::changeMap);
+    connect(this->menu, &MenuBar::signalMapChange, this->map, &MapWidget::changeMapProvider);
 }
 
 void MainWindow::checkAPIServer()

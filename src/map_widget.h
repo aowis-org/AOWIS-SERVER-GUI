@@ -26,7 +26,7 @@ public:
     
     void zoomIn();
     void zoomOut();
-    void changeMap(MapProvider provider);
+    void changeMapProvider(MapProvider provider);
     
 protected:
     void wheelEvent(QWheelEvent *event) override;
