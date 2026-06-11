@@ -14,6 +14,7 @@
 
 #include <QDebug>
 
+#include "enums_structs.h"
 #include "rest_client.h"
 
 class MapWidget : public QWidget
@@ -22,6 +23,10 @@ class MapWidget : public QWidget
     
 public:
     explicit MapWidget(QWidget *parent = nullptr);
+    
+    void zoomIn();
+    void zoomOut();
+    void changeMap(MapProvider provider);
     
 protected:
     void wheelEvent(QWheelEvent *event) override;
@@ -42,12 +47,14 @@ private:
     QPoint pos_last;
     
     QCache<QString, QPixmap> cache;
+    QString cache_key;
+    
+    MapProvider map_provider = MapProvider::ArcGISSat;
     
     void drawTiles(QPainter &p);
     void requestTile(const QString &key, int x, int y);
     void pan(const QPoint &delta);
     void clampCenter();
-    
     
     double lonToTileX(double lon, int zoom) const;
     double latToTileY(double lat, int zoom) const;

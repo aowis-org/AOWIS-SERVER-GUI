@@ -22,6 +22,7 @@ qt_add_executable(aowis-server-gui
     src/menubar.h src/menubar.cpp
     src/map_widget.h src/map_widget.cpp
     src/footer_statusbar.h src/footer_statusbar.cpp
+    src/enums_structs.h
     
 )
 

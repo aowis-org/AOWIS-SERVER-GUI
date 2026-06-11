@@ -81,6 +81,21 @@ void MapWidget::mouseMoveEvent(QMouseEvent *ev)
     pan(d);
     update();
 }
+void MapWidget::zoomIn()
+{
+    this->zoom++;
+    update();
+}
+void MapWidget::zoomOut()
+{
+    this->zoom--;
+    update();
+}
+void MapWidget::changeMap(MapProvider provider)
+{
+    this->map_provider = provider;
+    update();
+}
 
 void MapWidget::paintEvent(QPaintEvent *)
 {
@@ -188,8 +203,20 @@ void MapWidget::requestTile(const QString &key, int x, int y)
     
     this->pending.insert(key);
     
-    //QString endpoint = QString("/opentopomap/%1/%2/%3.png").arg(this->zoom).arg(x).arg(y);
-    QString endpoint = QString("/arcgis/%1/%2/%3.png").arg(this->zoom).arg(x).arg(y);
+    QString endpoint;
+    if (this->map_provider == MapProvider::ArcGISSat)
+    {
+        endpoint = QString("/arcgis/%1/%2/%3.png").arg(this->zoom).arg(x).arg(y);
+    }
+    else if (this->map_provider == MapProvider::OpenTopoMap)
+    {
+        endpoint = QString("/opentopomap/%1/%2/%3.png").arg(this->zoom).arg(x).arg(y);
+    }
+    else if (this->map_provider == MapProvider::OpenStreetMap)
+    {
+        endpoint = QString("/openstreetmap/%1/%2/%3.png").arg(this->zoom).arg(x).arg(y);
+    }
+    // fallback, because only OSM has zoom level > 17
     if (this->zoom > 17)
     {
         endpoint = QString("/openstreetmap/%1/%2/%3.png").arg(this->zoom).arg(x).arg(y);

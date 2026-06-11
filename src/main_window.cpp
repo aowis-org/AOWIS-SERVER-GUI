@@ -1,5 +1,6 @@
 #include "main_window.h"
 #include <QPushButton>
+#include <qapplication.h>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -11,14 +12,9 @@ MainWindow::MainWindow(QWidget *parent)
     this->footer = new FooterStatusBar(this);
     setStatusBar(this->footer->statusBar());
     
-    this->label_image_a = new QLabel();
-    this->label_image_b = new QLabel();
-    
     this->line_server_status = new QLineEdit();
     this->line_server_status->setDisabled(true);
     
-    //this->layout->addWidget(label_image_a, 0, 0);
-    //this->layout->addWidget(label_image_b, 0, 1);
     this->layout->addWidget(this->line_server_status, 1, 0, 1, 2);
     
     this->setMinimumHeight(600);
@@ -32,8 +28,9 @@ MainWindow::MainWindow(QWidget *parent)
     
     checkAPIServer();
     
-    getOpenStreetMapTile(this->label_image_a, "/osm/2/3/0.png");
-    getOpenStreetMapTile(this->label_image_b, "/osm/2/3/0.png");
+    connect(this->menu, &MenuBar::signalMapZoomIn, this->map, &MapWidget::zoomIn);
+    connect(this->menu, &MenuBar::signalMapZoomOut, this->map, &MapWidget::zoomOut);
+    connect(this->menu, &MenuBar::signalMapChange, this->map, &MapWidget::changeMap);
 }
 
 void MainWindow::checkAPIServer()
