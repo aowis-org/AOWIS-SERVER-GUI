@@ -17,6 +17,7 @@ public:
     explicit RESTClient(const QString &url_base, QObject *parent = nullptr);
     
     void get(const QString &endpoint);
+    void getTile(const QString &endpoint, const QString &key);
     void post(const QString &endpoint, const QJsonObject &payload);
 
 private:
@@ -24,9 +25,11 @@ private:
     QString url_base;
     
     void handleReply(QNetworkReply *reply);
+    void handleReplyTile(QNetworkReply *reply, QString key);
     
 signals:
     void requestFinished(const QByteArray &data);
+    void requestFinishedTile(const QByteArray &data, const QString &key);
     void requestError(const QString &error);
 };
 
