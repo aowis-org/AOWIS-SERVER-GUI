@@ -36,7 +36,7 @@ protected:
     void paintEvent(QPaintEvent *event) override;
     
 private:
-    const int tile_size = 256;
+    const int TILE_SIZE = 256;
     int zoom;
     double center_lat;
     double center_lon;

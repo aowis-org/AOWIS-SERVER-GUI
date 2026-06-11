@@ -42,8 +42,8 @@ void MapWidget::wheelEvent(QWheelEvent *ev)
     double dy = pos.y() - h / 2.0;
     
     // tile coords under mouse before zoom
-    double mx = cx + dx / this->tile_size;
-    double my = cy + dy / this->tile_size;
+    double mx = cx + dx / this->TILE_SIZE;
+    double my = cy + dy / this->TILE_SIZE;
     
     double lon_mouse = tileXToLon(mx, this->zoom);
     double lat_mouse = tileYToLat(my, this->zoom);
@@ -62,8 +62,8 @@ void MapWidget::wheelEvent(QWheelEvent *ev)
     double my2 = latToTileY(lat_mouse, this->zoom);
     
     // new center tile coords so that mouse stays on samle lon/lat
-    double cx2 = mx2 - dx / this->tile_size;
-    double cy2 = my2 - dy / this->tile_size;
+    double cx2 = mx2 - dx / this->TILE_SIZE;
+    double cy2 = my2 - dy / this->TILE_SIZE;
     
     this->center_lon = tileXToLon(cx2, this->zoom);
     this->center_lat = tileYToLat(cy2, this->zoom);
@@ -117,8 +117,8 @@ void MapWidget::drawTiles(QPainter &p)
     int w = width();
     int h = height();
     
-    int tiles_x = w / this->tile_size + 4;
-    int tiles_y = h / this->tile_size + 4;
+    int tiles_x = w / this->TILE_SIZE + 4;
+    int tiles_y = h / this->TILE_SIZE + 4;
     
     int start_x = int(cx) - tiles_x / 2;
     int start_y = int(cy) - tiles_y / 2;
@@ -143,8 +143,8 @@ void MapWidget::drawTiles(QPainter &p)
             if (this->cache.contains(key))
             {
                 QPixmap *pix = this->cache.object(key);
-                int px = int((x - cx) * this->tile_size + w / 2);
-                int py = int((y - cy) * this->tile_size + h / 2);
+                int px = int((x - cx) * this->TILE_SIZE + w / 2);
+                int py = int((y - cy) * this->TILE_SIZE + h / 2);
                 p.drawPixmap(px, py, *pix);
             }
         }
@@ -167,8 +167,8 @@ void MapWidget::clampCenter()
     
     double maxTile = (1 << zoom) - 1;
     
-    double half_w = (width()  / double(tile_size)) / 2.0;
-    double half_h = (height() / double(tile_size)) / 2.0;
+    double half_w = (width()  / double(TILE_SIZE)) / 2.0;
+    double half_h = (height() / double(TILE_SIZE)) / 2.0;
     
     double min_cx = half_w;
     double max_cx = maxTile - half_w;
