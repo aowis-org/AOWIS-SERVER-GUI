@@ -10,10 +10,10 @@ MapWidget::MapWidget(QWidget *parent)
 {
     connect(this->rest, &RESTClient::requestFinishedTile, this, [this](const QByteArray &data, const QString &key)
         {
-            QImage img;
-            img.loadFromData(data);
+            QPixmap pix;
+            pix.loadFromData(data);
             
-            this->cache.insert(key, new QImage(img));
+            this->cache.insert(key, new QPixmap(pix));
             
             update();
         });
@@ -91,15 +91,15 @@ void MapWidget::mouseMoveEvent(QMouseEvent *ev)
 
 void MapWidget::paintEvent(QPaintEvent *)
 {
-    qDebug() << "paint";
-    
     QPainter p(this);
     drawTiles(p);
 }
 
 void MapWidget::drawTiles(QPainter &p)
 {
+    #ifndef Q_OS_WASM
     qDebug() << this->zoom;
+    #endif
     
     const int tiles = 1 << zoom;
     
@@ -134,10 +134,10 @@ void MapWidget::drawTiles(QPainter &p)
             
             if (this->cache.contains(key))
             {
-                QImage *img = this->cache.object(key);
-                int px = (x - cx) * this->tile_size + w / 2;
-                int py = (y - cy) * this->tile_size + h / 2;
-                p.drawImage(px, py, *img);
+                QPixmap *pix = this->cache.object(key);
+                int px = int((x - cx) * this->tile_size + w / 2);
+                int py = int((y - cy) * this->tile_size + h / 2);
+                p.drawPixmap(px, py, *pix);
             }
         }
     }

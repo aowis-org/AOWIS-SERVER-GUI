@@ -41,7 +41,7 @@ private:
     
     QPoint pos_last;
     
-    QCache<QString, QImage> cache;
+    QCache<QString, QPixmap> cache;
     
     void drawTiles(QPainter &p);
     void requestTile(const QString &key, int x, int y);
