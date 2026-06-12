@@ -176,7 +176,6 @@ void MapWidget::mouseMoveEvent(QMouseEvent *ev)
     if (ev->buttons() & Qt::LeftButton)
     {
         QPoint d = ev->pos() - this->pos_last;
-        this->pos_last = ev->pos();
         
         // first value: inertia memory: how much of the previous movement kept
         // second value: responsiveness: adds some of the new drag movement
@@ -189,6 +188,8 @@ void MapWidget::mouseMoveEvent(QMouseEvent *ev)
         pan(d);
         update();
     }
+    
+    this->pos_last = ev->pos();
 }
 void MapWidget::zoomIn()
 {
