@@ -48,7 +48,8 @@ private:
     QPoint pos_last;
     
     QCache<QString, QPixmap> cache;
-    QString cache_key;
+    //QString cache_key_coords;
+    QString cache_key_provider;
     
     MapProvider map_provider = MapProvider::ArcGISSat;
     

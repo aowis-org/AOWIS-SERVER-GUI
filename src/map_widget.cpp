@@ -112,6 +112,20 @@ void MapWidget::zoomOut()
 void MapWidget::changeMapProvider(MapProvider provider)
 {
     this->map_provider = provider;
+    
+    switch (provider)
+    {
+    case MapProvider::ArcGISSat:
+        this->cache_key_provider = "arcgis";
+        break;
+    case MapProvider::OpenTopoMap:
+        this->cache_key_provider = "opentopomap";
+        break;
+    case MapProvider::OpenStreetMap:
+        this->cache_key_provider = "openstreetmap";
+        break;
+    }
+    
     update();
 }
 
@@ -147,7 +161,7 @@ void MapWidget::drawTiles(QPainter &p)
             if (x < 0 || x >= tiles || y < 0 || y >= tiles)
                 continue;
             
-            QString key = QString("%1/%2/%3").arg(zoom).arg(x).arg(y);
+            QString key = this->cache_key_provider + QString("/%1/%2/%3").arg(zoom).arg(x).arg(y);
             
             if (!this->cache.contains(key))
             {
@@ -181,28 +195,28 @@ void MapWidget::clampCenter()
     double cx = lonToTileX(center_lon, zoom);
     double cy = latToTileY(center_lat, zoom);
     
-    double maxTile = (1 << zoom) - 1;
+    double max_tile = (1 << zoom) - 1;
     
     double half_w = (width()  / double(TILE_SIZE)) / 2.0;
     double half_h = (height() / double(TILE_SIZE)) / 2.0;
     
     double min_cx = half_w;
-    double max_cx = maxTile - half_w;
+    double max_cx = max_tile - half_w;
     
     double min_cy = half_h;
-    double max_cy = maxTile - half_h;
+    double max_cy = max_tile - half_h;
     
     // --- CASE 1: Map smaller than screen horizontally ---
     if (min_cx > max_cx) {
         // exact center of world in tile coords
-        cx = maxTile / 2.0;
+        cx = max_tile / 2.0;
     } else {
         cx = std::clamp(cx, min_cx, max_cx);
     }
     
     // --- CASE 2: Map smaller than screen vertically ---
     if (min_cy > max_cy) {
-        cy = maxTile / 2.0;
+        cy = max_tile / 2.0;
     } else {
         cy = std::clamp(cy, min_cy, max_cy);
     }
@@ -220,17 +234,17 @@ void MapWidget::requestTile(const QString &key, int x, int y)
     this->pending.insert(key);
     
     QString endpoint;
-    if (this->map_provider == MapProvider::ArcGISSat)
+    switch (this->map_provider)
     {
+    case MapProvider::ArcGISSat:
         endpoint = QString("/arcgis/%1/%2/%3.png").arg(this->zoom).arg(x).arg(y);
-    }
-    else if (this->map_provider == MapProvider::OpenTopoMap)
-    {
+        break;
+    case MapProvider::OpenTopoMap:
         endpoint = QString("/opentopomap/%1/%2/%3.png").arg(this->zoom).arg(x).arg(y);
-    }
-    else if (this->map_provider == MapProvider::OpenStreetMap)
-    {
+        break;
+    case MapProvider::OpenStreetMap:
         endpoint = QString("/openstreetmap/%1/%2/%3.png").arg(this->zoom).arg(x).arg(y);
+        break;
     }
     // fallback, because only OSM has zoom level > 17
     if (this->zoom > 17)
@@ -240,7 +254,6 @@ void MapWidget::requestTile(const QString &key, int x, int y)
     
     this->rest->getTile(endpoint, key);
 }
-
 double MapWidget::lonToTileX(double lon, int zoom) const
 {
     return (lon + 180.0) / 360.0 * (1 << zoom);
