@@ -26,7 +26,8 @@ MapWidget::MapWidget(QWidget *parent)
     this->setMinimumWidth(550);
     
     setFocusPolicy(Qt::StrongFocus);
-    setFocus();    
+    setFocus();
+    setMouseTracking(true);
     
     // make the status bar show correct zoom level from the start
     QTimer::singleShot(0, this, [this] {
@@ -169,19 +170,25 @@ void MapWidget::mouseReleaseEvent(QMouseEvent *ev)
 }
 void MapWidget::mouseMoveEvent(QMouseEvent *ev)
 {
-    QPoint d = ev->pos() - this->pos_last;
-    this->pos_last = ev->pos();
+    QPointF ll = latLonUnderCursor(ev->pos());
+    emit signalCoordsChanged(ll.x(), ll.y());
     
-    // first value: inertia memory: how much of the previous movement kept
-    // second value: responsiveness: adds some of the new drag movement
-    #ifdef Q_OS_WASM
-        this->pan_velocity = this->pan_velocity * 0 + QPointF(d) * 0;
-    #else
-        this->pan_velocity = this->pan_velocity * 0 + QPointF(d) * 0;
-    #endif
-    
-    pan(d);
-    update();
+    if (ev->buttons() & Qt::LeftButton)
+    {
+        QPoint d = ev->pos() - this->pos_last;
+        this->pos_last = ev->pos();
+        
+        // first value: inertia memory: how much of the previous movement kept
+        // second value: responsiveness: adds some of the new drag movement
+        #ifdef Q_OS_WASM
+            this->pan_velocity = this->pan_velocity * 0 + QPointF(d) * 0;
+        #else
+            this->pan_velocity = this->pan_velocity * 0 + QPointF(d) * 0;
+        #endif
+        
+        pan(d);
+        update();
+    }
 }
 void MapWidget::zoomIn()
 {
@@ -356,6 +363,25 @@ void MapWidget::requestTile(const QString &key, int x, int y)
     
     this->rest->getTile(endpoint, key);
 }
+
+QPointF MapWidget::latLonUnderCursor(const QPoint &pos) const
+{
+    double cx = lonToTileX(center_lon, zoom);
+    double cy = latToTileY(center_lat, zoom);
+    
+    double dx = pos.x() - width()  / 2.0;
+    double dy = pos.y() - height() / 2.0;
+    
+    double tx = cx + dx / TILE_SIZE;
+    double ty = cy + dy / TILE_SIZE;
+    
+    double lon = tileXToLon(tx, zoom);
+    double lat = tileYToLat(ty, zoom);
+    
+    return QPointF(lon, lat);
+}
+
+
 double MapWidget::lonToTileX(double lon, int zoom) const
 {
     return (lon + 180.0) / 360.0 * (1 << zoom);

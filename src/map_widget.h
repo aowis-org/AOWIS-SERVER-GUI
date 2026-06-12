@@ -68,6 +68,8 @@ private:
     void pan(const QPoint &delta);
     void clampCenter();
     
+    QPointF latLonUnderCursor(const QPoint &pos) const;
+    
     double lonToTileX(double lon, int zoom) const;
     double latToTileY(double lat, int zoom) const;
     double tileXToLon(double x, int zoom) const;
