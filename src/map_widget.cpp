@@ -25,11 +25,81 @@ MapWidget::MapWidget(QWidget *parent)
     this->setMinimumHeight(500);
     this->setMinimumWidth(550);
     
+    setFocusPolicy(Qt::StrongFocus);
+    setFocus();    
+    
     // make the status bar show correct zoom level from the start
     QTimer::singleShot(0, this, [this] {
         emit signalZoomChanged(this->zoom);
         emit signalCoordsChanged(this->center_lon, this->center_lat);
     });
+    
+    initializeTimer();
+}
+void MapWidget::initializeTimer()
+{
+    this->timer_pan_inertia = new QTimer(this);
+    this->timer_pan_inertia->setInterval(16); // target ~60 FPS
+    
+    connect(this->timer_pan_inertia, &QTimer::timeout, this, [this]()
+            {
+                qint64 now = QDateTime::currentMSecsSinceEpoch();
+                double dt = (now - this->time_last_innertia) / 16.0;  // normalize to 60 FPS
+                this->time_last_innertia = now;
+                
+                if (pan_velocity.manhattanLength() < 0.1)
+                {
+                    pan_velocity = QPointF(0,0);
+                    timer_pan_inertia->stop();
+                    return;
+                }
+                
+                // movement scaled by dt
+                QPointF move = pan_velocity * dt;
+                pan(QPoint(move.x(), move.y()));
+                
+                // time‑based friction
+                #ifdef Q_OS_WASM
+                    double friction_per_frame = 0.95;
+                #else
+                    double friction_per_frame = 0.95;
+                #endif
+                double friction = pow(friction_per_frame, dt);
+                pan_velocity *= friction;
+                
+                update();
+            });
+    
+}
+
+
+void MapWidget::keyPressEvent(QKeyEvent *ev)
+{
+    const int step = 10; // base movement in pixels
+    
+    switch (ev->key())
+    {
+    case Qt::Key_Left:
+        this->pan_velocity += QPointF(step, 0);
+        break;
+    case Qt::Key_Right:
+        this->pan_velocity += QPointF(-step, 0);
+        break;
+    case Qt::Key_Up:
+        this->pan_velocity += QPointF(0, step);
+        break;
+    case Qt::Key_Down:
+        this->pan_velocity += QPointF(0, -step);
+        break;
+    default:
+        QWidget::keyPressEvent(ev);
+        return;
+    }
+    
+    this->time_last_innertia = QDateTime::currentMSecsSinceEpoch();
+    
+    if (!this->timer_pan_inertia->isActive())
+        this->timer_pan_inertia->start();
 }
 
 void MapWidget::wheelEvent(QWheelEvent *ev)
@@ -80,12 +150,31 @@ void MapWidget::wheelEvent(QWheelEvent *ev)
 }
 void MapWidget::mousePressEvent(QMouseEvent *ev)
 {
+    this->time_last_innertia = QDateTime::currentMSecsSinceEpoch();
+    
+    this->timer_pan_inertia->stop();
+    this->pan_velocity = QPointF(0,0);
+    
     this->pos_last = ev->pos();
+}
+void MapWidget::mouseReleaseEvent(QMouseEvent *ev)
+{
+    if (!this->timer_pan_inertia->isActive())
+        this->timer_pan_inertia->start();
 }
 void MapWidget::mouseMoveEvent(QMouseEvent *ev)
 {
     QPoint d = ev->pos() - this->pos_last;
     this->pos_last = ev->pos();
+    
+    // first value: inertia memory: how much of the previous movement kept
+    // second value: responsiveness: adds some of the new drag movement
+    #ifdef Q_OS_WASM
+        this->pan_velocity = this->pan_velocity * 0.1 + QPointF(d) * 0.1;
+    #else
+        this->pan_velocity = this->pan_velocity * 0.7 + QPointF(d) * 0.3;
+    #endif
+    
     pan(d);
     update();
 }

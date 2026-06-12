@@ -11,7 +11,10 @@
 
 #include <QWheelEvent>
 #include <QMouseEvent>
+#include <QKeyEvent>
+
 #include <QTimer>
+#include <QDateTime>
 
 #include <QDebug>
 
@@ -32,7 +35,10 @@ public:
 protected:
     void wheelEvent(QWheelEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
+    
+    void keyPressEvent(QKeyEvent *event) override;
     
     void paintEvent(QPaintEvent *event) override;
     
@@ -46,6 +52,10 @@ private:
     QSet<QString> pending;
     
     QPoint pos_last;
+    QPointF pan_velocity;
+    QTimer *timer_pan_inertia;
+    qint64 time_last_innertia = 0;
+    void initializeTimer();
     
     QCache<QString, QPixmap> cache;
     //QString cache_key_coords;
