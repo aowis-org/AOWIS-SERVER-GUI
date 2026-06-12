@@ -275,13 +275,21 @@ void MapWidget::drawTiles(QPainter &p)
 
 void MapWidget::pan(const QPoint &d)
 {
-    double scale = 256.0 * (1 << zoom);
-    this->center_lon -= d.x() / scale * 360.0;
-    this->center_lat += d.y() / scale * 360.0;
+    // convert center to tile coords
+    double cx = lonToTileX(center_lon, zoom);
+    double cy = latToTileY(center_lat, zoom);
+    
+    // apply pixel delta in tile space
+    cx -= double(d.x()) / TILE_SIZE;
+    cy -= double(d.y()) / TILE_SIZE;
+    
+    // convert back to lat/lon
+    center_lon = tileXToLon(cx, zoom);
+    center_lat = tileYToLat(cy, zoom);
     
     clampCenter();
     
-    emit signalCoordsChanged(this->center_lon, this->center_lat);
+    emit signalCoordsChanged(center_lon, center_lat);
 }
 
 void MapWidget::clampCenter()
