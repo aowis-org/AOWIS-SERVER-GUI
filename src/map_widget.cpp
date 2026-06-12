@@ -75,7 +75,7 @@ void MapWidget::initializeTimer()
 
 void MapWidget::keyPressEvent(QKeyEvent *ev)
 {
-    const int step = 10; // base movement in pixels
+    const int step = 20; // base movement in pixels
     
     switch (ev->key())
     {
@@ -104,49 +104,52 @@ void MapWidget::keyPressEvent(QKeyEvent *ev)
 
 void MapWidget::wheelEvent(QWheelEvent *ev)
 {
+    static int accumulated = 0;
+    
+    accumulated += ev->angleDelta().y();
+    
+    const int threshold = 120; // one mouse wheel step
+    
+    if (std::abs(accumulated) < threshold)
+        return;
+    
+    int steps = accumulated / threshold;
+    accumulated %= threshold;
+    
     // mouse position in widget
     QPoint pos = ev->position().toPoint();
     int w = width();
     int h = height();
     
-    // current center in tile coords
-    double cx = lonToTileX(this->center_lon, this->zoom);
-    double cy = latToTileY(this->center_lat, this->zoom);
+    double cx = lonToTileX(center_lon, zoom);
+    double cy = latToTileY(center_lat, zoom);
     
-    // offset from center pixels
     double dx = pos.x() - w / 2.0;
     double dy = pos.y() - h / 2.0;
     
-    // tile coords under mouse before zoom
-    double mx = cx + dx / this->TILE_SIZE;
-    double my = cy + dy / this->TILE_SIZE;
+    double mx = cx + dx / TILE_SIZE;
+    double my = cy + dy / TILE_SIZE;
     
-    double lon_mouse = tileXToLon(mx, this->zoom);
-    double lat_mouse = tileYToLat(my, this->zoom);
+    double lon_mouse = tileXToLon(mx, zoom);
+    double lat_mouse = tileYToLat(my, zoom);
     
-    // apply zoom change
-    int delta = ev->angleDelta().y();
-    int zoom_new = std::clamp(this->zoom + (delta > 0 ? 1 : -1), 1, 19);
-    
-    if (zoom_new == this->zoom)
+    int zoom_new = std::clamp(zoom + steps, 1, 19);
+    if (zoom_new == zoom)
         return;
     
-    this->zoom = zoom_new;
+    zoom = zoom_new;
     
-    // tile coords of mouse at new zoom
-    double mx2 = lonToTileX(lon_mouse, this->zoom);
-    double my2 = latToTileY(lat_mouse, this->zoom);
+    double mx2 = lonToTileX(lon_mouse, zoom);
+    double my2 = latToTileY(lat_mouse, zoom);
     
-    // new center tile coords so that mouse stays on samle lon/lat
-    double cx2 = mx2 - dx / this->TILE_SIZE;
-    double cy2 = my2 - dy / this->TILE_SIZE;
+    double cx2 = mx2 - dx / TILE_SIZE;
+    double cy2 = my2 - dy / TILE_SIZE;
     
-    this->center_lon = tileXToLon(cx2, this->zoom);
-    this->center_lat = tileYToLat(cy2, this->zoom);
+    center_lon = tileXToLon(cx2, zoom);
+    center_lat = tileYToLat(cy2, zoom);
     
     update();
-    
-    emit signalZoomChanged(this->zoom);
+    emit signalZoomChanged(zoom);
 }
 void MapWidget::mousePressEvent(QMouseEvent *ev)
 {
