@@ -162,8 +162,10 @@ void MapWidget::mousePressEvent(QMouseEvent *ev)
 }
 void MapWidget::mouseReleaseEvent(QMouseEvent *ev)
 {
+    /*
     if (!this->timer_pan_inertia->isActive())
         this->timer_pan_inertia->start();
+    */
 }
 void MapWidget::mouseMoveEvent(QMouseEvent *ev)
 {
@@ -173,9 +175,9 @@ void MapWidget::mouseMoveEvent(QMouseEvent *ev)
     // first value: inertia memory: how much of the previous movement kept
     // second value: responsiveness: adds some of the new drag movement
     #ifdef Q_OS_WASM
-        this->pan_velocity = this->pan_velocity * 0.1 + QPointF(d) * 0.1;
+        this->pan_velocity = this->pan_velocity * 0 + QPointF(d) * 0;
     #else
-        this->pan_velocity = this->pan_velocity * 0.7 + QPointF(d) * 0.3;
+        this->pan_velocity = this->pan_velocity * 0 + QPointF(d) * 0;
     #endif
     
     pan(d);
