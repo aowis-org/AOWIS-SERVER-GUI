@@ -415,9 +415,10 @@ double MapWidget::tileYToLat(double y, int zoom) const
 
 void MapWidget::showContextMenu(const QPoint &pos)
 {
-    QMenu menu(this);
-    menu.addAction("Action 1");
-    menu.addAction("Action 2");
-    menu.exec(mapToGlobal(pos));
+    
+    QMenu *menu = new QMenu(this);
+    QAction *action_elevation = menu->addAction("Get Elevation");
+    
+    menu->popup(mapToGlobal(pos));
 }
 
