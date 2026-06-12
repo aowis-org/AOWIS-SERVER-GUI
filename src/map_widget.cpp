@@ -3,8 +3,8 @@
 MapWidget::MapWidget(QWidget *parent)
     : QWidget(parent),
     zoom(15),
-    center_lon(18.20982),
-    center_lat(11.98236),
+    center_lon(18.2063),
+    center_lat(11.9792),
     cache(2000),
     rest(new RESTClient("http://aowis-server-map.localhost:80", this))
 {

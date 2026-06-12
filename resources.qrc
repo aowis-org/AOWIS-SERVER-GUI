@@ -1,5 +1,11 @@
 <RCC>
     <qresource prefix="/img/">
         <file alias="logo.png">assets/img/logo02.png</file>
+        <file alias="favicon.png">assets/img/favicon.png</file>
+    </qresource>
+    
+    <qresource prefix="/icons/">
+        <file alias="zoom-in.svg">assets/icons/zoom-in.svg</file>
+        <file alias="zoom-out.svg">assets/icons/zoom-out.svg</file>
     </qresource>
 </RCC>

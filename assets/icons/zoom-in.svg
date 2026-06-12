@@ -1,0 +1,9 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Zoom In Button</title>
+  <desc id="desc">Rounded button with magnifying glass and plus sign.</desc>
+  <rect x="4" y="4" width="56" height="56" rx="16" fill="#111827"/>
+  <circle cx="29" cy="29" r="13" stroke="#F9FAFB" stroke-width="4"/>
+  <path d="M39 39L48 48" stroke="#F9FAFB" stroke-width="4" stroke-linecap="round"/>
+  <path d="M29 22V36" stroke="#F9FAFB" stroke-width="4" stroke-linecap="round"/>
+  <path d="M22 29H36" stroke="#F9FAFB" stroke-width="4" stroke-linecap="round"/>
+</svg>

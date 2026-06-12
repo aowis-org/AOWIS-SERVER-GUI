@@ -2,9 +2,9 @@
 
 #include <QApplication>
 #include <QMainWindow>
-
 #include <QWidget>
 #include <QGridLayout>
+#include <QTabWidget>
 
 #include <QPushButton>
 #include <QLineEdit>
@@ -15,6 +15,7 @@
 #include "footer_statusbar.h"
 #include "rest_client.h"
 #include "menubar.h"
+#include "map_container.h"
 #include "map_widget.h"
 
 class MainWindow : public QMainWindow
@@ -26,8 +27,10 @@ public:
     
 private:
     MenuBar *menu;
+    MapContainer *map_container;
     MapWidget *map;
     FooterStatusBar *footer;
+    QTabWidget *tabs;
     
     QGridLayout *layout = new QGridLayout;
     QLineEdit *line_server_status;

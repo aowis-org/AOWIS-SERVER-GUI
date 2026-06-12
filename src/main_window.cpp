@@ -3,7 +3,9 @@
 #include <qapplication.h>
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent)
+    : QMainWindow(parent),
+    tabs( new QTabWidget(this) ),
+    map_container( new MapContainer(this) )
 {
     QWidget *widget_central = new QWidget(this);
     this->setCentralWidget(widget_central);
@@ -21,18 +23,25 @@ MainWindow::MainWindow(QWidget *parent)
     this->setMinimumWidth(800);
     
     this->menu = new MenuBar();
-    setMenuBar(this->menu);
+    //setMenuBar(this->menu);
     
-    this->map = new MapWidget(this);
-    this->layout->addWidget(this->map, 0, 0, 1, 2);
+    this->map = this->map_container->mapWidget();
+    this->tabs->addTab(this->map_container, "Map");
     connect(this->map, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
     connect(this->map, &MapWidget::signalCoordsChanged, this->footer, &FooterStatusBar::setMapCoordinates);
-    
-    checkAPIServer();
     
     connect(this->menu, &MenuBar::signalMapZoomIn, this->map, &MapWidget::zoomIn);
     connect(this->menu, &MenuBar::signalMapZoomOut, this->map, &MapWidget::zoomOut);
     connect(this->menu, &MenuBar::signalMapChange, this->map, &MapWidget::changeMapProvider);
+    
+    this->layout->addWidget(this->tabs, 0, 0, 1, 2);
+    
+    checkAPIServer();
+    
+    
+    
+    
+    
 }
 
 void MainWindow::checkAPIServer()
