@@ -22,6 +22,10 @@ MapWidget::MapWidget(QWidget *parent)
             qDebug() << "fail: " << err;
         });
     
+    setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(this, &MapWidget::customContextMenuRequested,
+            this, &MapWidget::showContextMenu);
+    
     this->setMinimumHeight(500);
     this->setMinimumWidth(550);
     
@@ -154,10 +158,17 @@ void MapWidget::wheelEvent(QWheelEvent *ev)
 }
 void MapWidget::mousePressEvent(QMouseEvent *ev)
 {
-    this->time_last_innertia = QDateTime::currentMSecsSinceEpoch();
-    
-    this->timer_pan_inertia->stop();
-    this->pan_velocity = QPointF(0,0);
+    if (ev->buttons() & Qt::LeftButton)
+    {
+        this->time_last_innertia = QDateTime::currentMSecsSinceEpoch();
+        
+        this->timer_pan_inertia->stop();
+        this->pan_velocity = QPointF(0,0);
+    }
+    else if (ev->buttons() & Qt::RightButton)
+    {
+        
+    }
     
     this->pos_last = ev->pos();
 }
@@ -401,3 +412,12 @@ double MapWidget::tileYToLat(double y, int zoom) const
     double n = M_PI - 2.0 * M_PI * y / (1 << zoom);
     return qRadiansToDegrees(atan(0.5 * (exp(n) - exp(-n))));
 }
+
+void MapWidget::showContextMenu(const QPoint &pos)
+{
+    QMenu menu(this);
+    menu.addAction("Action 1");
+    menu.addAction("Action 2");
+    menu.exec(mapToGlobal(pos));
+}
+

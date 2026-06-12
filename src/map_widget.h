@@ -16,6 +16,9 @@
 #include <QTimer>
 #include <QDateTime>
 
+#include <QMenu>
+#include <QAction>
+
 #include <QDebug>
 
 #include "enums_structs.h"
@@ -74,6 +77,8 @@ private:
     double latToTileY(double lat, int zoom) const;
     double tileXToLon(double x, int zoom) const;
     double tileYToLat(double y, int zoom) const;
+    
+    void showContextMenu(const QPoint &pos);
     
 signals:
     void signalZoomChanged(int zoom);
