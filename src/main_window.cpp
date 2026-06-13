@@ -27,18 +27,18 @@ MainWindow::MainWindow(QWidget *parent)
     this->setMinimumHeight(600);
     this->setMinimumWidth(800);
     
-    this->menu = new MenuBar();
+    //this->menu = new MenuBar();
     //setMenuBar(this->menu);
     
     this->map = this->map_container->mapWidget();
     this->tabs->addTab(this->map_container, "Map Monitor");
     
-    connect(this->map, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
-    connect(this->map, &MapWidget::signalCoordsChanged, this->footer, &FooterStatusBar::setMapCoordinates);
+    //connect(this->map, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
+    //connect(this->map, &MapWidget::signalCoordsChanged, this->footer, &FooterStatusBar::setMapCoordinates);
     
-    connect(this->menu, &MenuBar::signalMapZoomIn, this->map, &MapWidget::zoomIn);
-    connect(this->menu, &MenuBar::signalMapZoomOut, this->map, &MapWidget::zoomOut);
-    connect(this->menu, &MenuBar::signalMapChange, this->map, &MapWidget::changeMapProvider);
+    //connect(this->menu, &MenuBar::signalMapZoomIn, this->map, &MapWidget::zoomIn);
+    //connect(this->menu, &MenuBar::signalMapZoomOut, this->map, &MapWidget::zoomOut);
+    //connect(this->menu, &MenuBar::signalMapChange, this->map, &MapWidget::changeMapProvider);
     
     this->layout->addWidget(this->tabs, 0, 0, 1, 2);
     

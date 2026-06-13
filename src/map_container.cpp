@@ -70,7 +70,7 @@ void MapControls::addGroupMapControls()
 {
     QGroupBox *group = new QGroupBox("Map Controls", this);
     this->layout->addWidget(group);
-    QGridLayout *grid = new QGridLayout(this);
+    QGridLayout *grid = new QGridLayout();
     group->setLayout(grid);
     //group->setContentsMargins(0, 10, 0, 0);
     
@@ -114,7 +114,7 @@ void MapControls::addGroupNodeVisuals()
 {
     QGroupBox *group = new QGroupBox("Node Symbology", this);
     this->layout->addWidget(group);
-    QVBoxLayout *vbox = new QVBoxLayout(this);
+    QVBoxLayout *vbox = new QVBoxLayout();
     group->setLayout(vbox);
     
     QRadioButton *radio_node_none = new QRadioButton("None");
@@ -148,7 +148,7 @@ void MapControls::addGroupLinkVisuals()
 {
     QGroupBox *group = new QGroupBox("Link Symbology", this);
     this->layout->addWidget(group);
-    QVBoxLayout *vbox = new QVBoxLayout(this);
+    QVBoxLayout *vbox = new QVBoxLayout();
     group->setLayout(vbox);
     
     QRadioButton *radio_link_none = new QRadioButton("None");
