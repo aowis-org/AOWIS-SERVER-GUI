@@ -34,8 +34,8 @@ MapWidget::MapWidget(QWidget *parent)
     setFocus();
     setMouseTracking(true);
     
-    // make the status bar show correct zoom level from the start
-    QTimer::singleShot(0, this, [this] {
+    QTimer::singleShot(100, this, [this] {
+        // make the status bar show correct zoom level from the start
         emit signalZoomChanged(this->zoom);
         emit signalCoordsChanged(this->center_lon, this->center_lat);
     });

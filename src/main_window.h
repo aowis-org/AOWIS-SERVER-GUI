@@ -12,6 +12,8 @@
 
 #include <QByteArray>
 
+#include <QTimer>
+
 #include "footer_statusbar.h"
 #include "rest_client.h"
 #include "menubar.h"
@@ -38,5 +40,9 @@ private:
     QLabel *label_image_a;
     QLabel *label_image_b;
     
-    void checkAPIServer();
+    RESTClient *rest_check_map;
+    
+    void checkServerMapInit();
+    void checkServerMap();
+    bool checking_server_map = false;
 };

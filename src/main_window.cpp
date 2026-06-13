@@ -33,8 +33,8 @@ MainWindow::MainWindow(QWidget *parent)
     this->map = this->map_container->mapWidget();
     this->tabs->addTab(this->map_container, "Map Monitor");
     
-    //connect(this->map, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
-    //connect(this->map, &MapWidget::signalCoordsChanged, this->footer, &FooterStatusBar::setMapCoordinates);
+    connect(this->map, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
+    connect(this->map, &MapWidget::signalCoordsChanged, this->footer, &FooterStatusBar::setMapCoordinates);
     
     //connect(this->menu, &MenuBar::signalMapZoomIn, this->map, &MapWidget::zoomIn);
     //connect(this->menu, &MenuBar::signalMapZoomOut, this->map, &MapWidget::zoomOut);
@@ -42,31 +42,38 @@ MainWindow::MainWindow(QWidget *parent)
     
     this->layout->addWidget(this->tabs, 0, 0, 1, 2);
     
-    checkAPIServer();
     
-    
-    
-    
-    
+    checkServerMapInit();
 }
 
-void MainWindow::checkAPIServer()
+void MainWindow::checkServerMapInit()
 {
-    // Testing the HTTP connection to AOWIS-Map-Server
+    this->rest_check_map = new RESTClient("http://aowis-server-map.localhost:80", this);
+    connect(this->rest_check_map, &RESTClient::requestFinished, this, [this](const QByteArray &data)
+            {
+                this->checking_server_map = false;
+                this->line_server_status->setText(data);
+            });
+    connect(this->rest_check_map, &RESTClient::requestError, this, [this](const QString &err)
+            {
+                this->checking_server_map = false;
+                this->line_server_status->setText("REST ERROR: " + err);
+            });
     
-    RESTClient *rest = new RESTClient("http://aowis-server-map.localhost:80", this);
-    connect(rest, &RESTClient::requestFinished, this, [this, rest](const QByteArray &data)
-    {
-        this->line_server_status->setText(data);
-        
-        rest->deleteLater();
-    });
-    connect(rest, &RESTClient::requestError, this, [this, rest](const QString &err)
-    {
-        this->line_server_status->setText("REST ERROR: " + err);
-        
-        rest->deleteLater();
-    });
-    rest->get("/status");
+    // on app start run directly
+    checkServerMap();
+    
+    // set up timer for periodic check
+    QTimer *timer = new QTimer(this);
+    connect(timer, &QTimer::timeout, this, &MainWindow::checkServerMap);
+    timer->start(5000);
+}
+void MainWindow::checkServerMap()
+{
+    if (this->checking_server_map)
+        return;
+    
+    this->checking_server_map = true;
+    this->rest_check_map->get("/status");
 }
 

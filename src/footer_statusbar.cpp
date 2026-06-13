@@ -19,8 +19,6 @@ FooterStatusBar::FooterStatusBar(QWidget *parent)
     this->bar->addPermanentWidget(this->label_indicator_map_text);
     this->bar->addPermanentWidget(this->label_indicator_map_status);
     
-    setMapCoordinates(100, 500);
-    
     this->label_indicator_map_text->setText("Map Server Connection: ");
     this->label_indicator_map_status->setFixedSize(12, 12);
     this->label_indicator_map_status->setStyleSheet("background-color: green; border-radius: 6px;");
