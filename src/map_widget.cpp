@@ -26,8 +26,9 @@ MapWidget::MapWidget(QWidget *parent)
     connect(this, &MapWidget::customContextMenuRequested,
             this, &MapWidget::showContextMenu);
     
-    this->setMinimumHeight(500);
-    this->setMinimumWidth(550);
+    setMinimumHeight(500);
+    setMinimumWidth(550);
+    setContentsMargins(0, 0, 0, 0);
     
     setFocusPolicy(Qt::StrongFocus);
     setFocus();

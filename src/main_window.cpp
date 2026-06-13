@@ -10,6 +10,8 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowTitle("AOWIS - Controller");
     showMaximized();
     
+    this->tabs->setContentsMargins(0, 0, 0, 0);
+    
     QWidget *widget_central = new QWidget(this);
     this->setCentralWidget(widget_central);
     widget_central->setLayout(this->layout);

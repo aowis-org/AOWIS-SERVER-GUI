@@ -7,9 +7,13 @@
 #include <QVBoxLayout>
 #include <QGridLayout>
 
+#include <QGroupBox>
 #include <QButtonGroup>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QSlider>
+#include <QLabel>
+
 #include <QIcon>
 
 #include "enums_structs.h"
@@ -22,12 +26,11 @@ public:
     explicit MapControls(MapWidget *map, QWidget *parent = nullptr);
     
 private:
-    QGridLayout *layout;
+    QVBoxLayout *layout;
     
     MapWidget *map;
     
-    QPushButton *button_zoom_in;
-    QPushButton *button_zoom_out;
+    void addGroupMapControls();
     
 signals:
     void mapZoomIn();
