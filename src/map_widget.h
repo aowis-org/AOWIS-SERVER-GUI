@@ -58,13 +58,15 @@ private:
     QPointF pan_velocity;
     QTimer *timer_pan_inertia;
     qint64 time_last_innertia = 0;
-    void initializeTimer();
+    void initTimer();
     
     QCache<QString, QPixmap> cache;
     //QString cache_key_coords;
     QString cache_key_provider;
     
     MapProvider map_provider = MapProvider::ArcGISSat;
+    
+    void initRestConnection();
     
     void drawTiles(QPainter &p);
     void requestTile(const QString &key, int x, int y);

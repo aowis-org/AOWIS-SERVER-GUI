@@ -5,22 +5,9 @@ MapWidget::MapWidget(QWidget *parent)
     zoom(16),
     center_lon(18.2063),
     center_lat(11.9792),
-    cache(2000),
-    rest(new RESTClient("http://aowis-server-map.localhost:80", this))
+    cache(2000)
 {
-    connect(this->rest, &RESTClient::requestFinishedTile, this, [this](const QByteArray &data, const QString &key)
-        {
-            QPixmap pix;
-            pix.loadFromData(data);
-            
-            this->cache.insert(key, new QPixmap(pix));
-            
-            update();
-        });
-    connect(this->rest, &RESTClient::requestError, this, [this](const QString &err)
-        {
-            qDebug() << "fail: " << err;
-        });
+    initRestConnection();
     
     setContextMenuPolicy(Qt::CustomContextMenu);
     connect(this, &MapWidget::customContextMenuRequested,
@@ -40,9 +27,26 @@ MapWidget::MapWidget(QWidget *parent)
         emit signalCoordsChanged(this->center_lon, this->center_lat);
     });
     
-    initializeTimer();
+    initTimer();
 }
-void MapWidget::initializeTimer()
+void MapWidget::initRestConnection()
+{
+    this->rest = new RESTClient("http://aowis-server-map.localhost:80", this);
+    connect(this->rest, &RESTClient::requestFinishedTile, this, [this](const QByteArray &data, const QString &key)
+            {
+                QPixmap pix;
+                pix.loadFromData(data);
+                
+                this->cache.insert(key, new QPixmap(pix));
+                
+                update();
+            });
+    connect(this->rest, &RESTClient::requestError, this, [this](const QString &err)
+            {
+                qDebug() << "fail: " << err;
+            });
+}
+void MapWidget::initTimer()
 {
     this->timer_pan_inertia = new QTimer(this);
     this->timer_pan_inertia->setInterval(16); // target ~60 FPS
