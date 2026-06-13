@@ -7,6 +7,9 @@ MainWindow::MainWindow(QWidget *parent)
     tabs( new QTabWidget(this) ),
     map_container( new MapContainer(this) )
 {
+    setWindowTitle("AOWIS - Controller");
+    showMaximized();
+    
     QWidget *widget_central = new QWidget(this);
     this->setCentralWidget(widget_central);
     widget_central->setLayout(this->layout);
