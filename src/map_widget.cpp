@@ -2,7 +2,7 @@
 
 MapWidget::MapWidget(QWidget *parent)
     : QWidget(parent),
-    zoom(15),
+    zoom(16),
     center_lon(18.2063),
     center_lat(11.9792),
     cache(2000),

@@ -9,8 +9,33 @@ MapContainer::MapContainer(QWidget *parent)
     
     setContentsMargins(0, 0, 0, 0);
     this->layout->setContentsMargins(0, 0, 0, 0);
+    this->layout->setSpacing(0);
     
-    this->layout->addWidget(controls);
+    QScrollArea *scroll_controls = new QScrollArea(this);
+    scroll_controls->setMinimumWidth(160);
+    scroll_controls->setMaximumWidth(180);
+    scroll_controls->setWidgetResizable(true);
+    scroll_controls->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll_controls->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll_controls->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+    
+    // unfortunately we need to fix widget width depending on scrollbar visible with some black magic
+    connect(scroll_controls->verticalScrollBar(), &QScrollBar::rangeChanged, this, [scroll_controls]
+    {
+        auto sb = scroll_controls->verticalScrollBar();
+        bool should_show = sb->maximum() > sb->minimum();
+        
+        int width_base = 160;
+        int width_sb = sb->sizeHint().width();
+        int w = should_show ? width_base + width_sb : width_base;
+        
+        scroll_controls->setMinimumWidth(w);
+        scroll_controls->setMaximumWidth(w);
+    });
+    
+    scroll_controls->setWidget(this->controls);
+    
+    this->layout->addWidget(scroll_controls);
     this->layout->addWidget(map);
 }
 
@@ -35,6 +60,8 @@ MapControls::MapControls(MapWidget *map, QWidget *parent)
     setMaximumWidth(160);
     
     addGroupMapControls();
+    addGroupNodeVisuals();
+    addGroupLinkVisuals();
     
     this->layout->addStretch();
 }
@@ -58,17 +85,9 @@ void MapControls::addGroupMapControls()
     connect(button_zoom_in, &QPushButton::clicked, this->map, &MapWidget::zoomIn);
     connect(button_zoom_out, &QPushButton::clicked, this->map, &MapWidget::zoomOut);
     
-    
-    QButtonGroup* group_button = new QButtonGroup(this);
-    group_button->setExclusive(true);
-    
     QRadioButton* map_arcgissat = new QRadioButton("ArcGIS SAT");
     QRadioButton* map_opentopomap = new QRadioButton("OpenTopoMap");
     QRadioButton* map_openstreetmap = new QRadioButton("OpenStreetMap");
-    
-    group_button->addButton(map_arcgissat);
-    group_button->addButton(map_opentopomap);
-    group_button->addButton(map_openstreetmap);
     
     map_arcgissat->setChecked(true);
     
@@ -91,4 +110,69 @@ void MapControls::addGroupMapControls()
     grid->addWidget(label_slider_map_visibility, 4, 0, 1, 2);
     grid->addWidget(slider_map_visibility, 5, 0, 1, 2);
 }
-
+void MapControls::addGroupNodeVisuals()
+{
+    QGroupBox *group = new QGroupBox("Node Symbology", this);
+    this->layout->addWidget(group);
+    QVBoxLayout *vbox = new QVBoxLayout(this);
+    group->setLayout(vbox);
+    
+    QRadioButton *radio_node_none = new QRadioButton("None");
+    radio_node_none->setChecked(true);
+    QRadioButton *radio_node_elevation = new QRadioButton("Elevation");
+    QRadioButton *radio_node_basedemand = new QRadioButton("Base Demand");
+    QRadioButton *radio_node_totaldemand = new QRadioButton("Total Demand");
+    QRadioButton *radio_node_demanddeficit = new QRadioButton("Demand Deficit");
+    QRadioButton *radio_node_emitterflow = new QRadioButton("Emitter Flow");
+    QRadioButton *radio_node_leakage = new QRadioButton("Leakage");
+    QRadioButton *radio_node_head = new QRadioButton("Head");
+    QRadioButton *radio_node_pressure = new QRadioButton("Pressure");
+    QRadioButton *radio_node_chlorine = new QRadioButton("Cl₂");
+    QRadioButton *radio_node_river = new QRadioButton("River");
+    QRadioButton *radio_node_lake = new QRadioButton("Lake");
+    
+    vbox->addWidget(radio_node_none);
+    vbox->addWidget(radio_node_elevation);
+    vbox->addWidget(radio_node_basedemand);
+    vbox->addWidget(radio_node_totaldemand);
+    vbox->addWidget(radio_node_demanddeficit);
+    vbox->addWidget(radio_node_emitterflow);
+    vbox->addWidget(radio_node_leakage);
+    vbox->addWidget(radio_node_head);
+    vbox->addWidget(radio_node_pressure);
+    vbox->addWidget(radio_node_chlorine);
+    vbox->addWidget(radio_node_river);
+    vbox->addWidget(radio_node_lake);
+}
+void MapControls::addGroupLinkVisuals()
+{
+    QGroupBox *group = new QGroupBox("Link Symbology", this);
+    this->layout->addWidget(group);
+    QVBoxLayout *vbox = new QVBoxLayout(this);
+    group->setLayout(vbox);
+    
+    QRadioButton *radio_link_none = new QRadioButton("None");
+    radio_link_none->setChecked(true);
+    QRadioButton *radio_link_diameter = new QRadioButton("Diameter");
+    QRadioButton *radio_link_length = new QRadioButton("Length");
+    QRadioButton *radio_link_roughness = new QRadioButton("Roughness");
+    QRadioButton *radio_link_flowrate = new QRadioButton("Flow Rate");
+    QRadioButton *radio_link_velocity = new QRadioButton("Velocity");
+    QRadioButton *radio_link_headloss = new QRadioButton("Head Loss");
+    QRadioButton *radio_link_leakage = new QRadioButton("Leakage");
+    QRadioButton *radio_link_chlorine = new QRadioButton("Cl₂");
+    QRadioButton *radio_link_river = new QRadioButton("River");
+    QRadioButton *radio_link_lake = new QRadioButton("Lake");
+    
+    vbox->addWidget(radio_link_none);
+    vbox->addWidget(radio_link_diameter);
+    vbox->addWidget(radio_link_length);
+    vbox->addWidget(radio_link_roughness);
+    vbox->addWidget(radio_link_flowrate);
+    vbox->addWidget(radio_link_velocity);
+    vbox->addWidget(radio_link_headloss);
+    vbox->addWidget(radio_link_leakage);
+    vbox->addWidget(radio_link_chlorine);
+    vbox->addWidget(radio_link_river);
+    vbox->addWidget(radio_link_lake);
+}

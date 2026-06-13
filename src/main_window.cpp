@@ -31,7 +31,8 @@ MainWindow::MainWindow(QWidget *parent)
     //setMenuBar(this->menu);
     
     this->map = this->map_container->mapWidget();
-    this->tabs->addTab(this->map_container, "Map");
+    this->tabs->addTab(this->map_container, "Map Monitor");
+    
     connect(this->map, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
     connect(this->map, &MapWidget::signalCoordsChanged, this->footer, &FooterStatusBar::setMapCoordinates);
     

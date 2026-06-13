@@ -7,6 +7,8 @@
 #include <QVBoxLayout>
 #include <QGridLayout>
 
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QGroupBox>
 #include <QButtonGroup>
 #include <QPushButton>
@@ -31,6 +33,8 @@ private:
     MapWidget *map;
     
     void addGroupMapControls();
+    void addGroupNodeVisuals();
+    void addGroupLinkVisuals();
     
 signals:
     void mapZoomIn();
