@@ -19,14 +19,17 @@
 #include "footer_statusbar.h"
 #include "rest_client.h"
 #include "menubar.h"
-#include "map_monitor_container.h"
 #include "map_widget.h"
+#include "map_monitor_container.h"
+#include "map_editor_container.h"
 #include "reservoirs_widget.h"
 #include "tanks_widget.h"
 #include "pumps_widget.h"
 #include "valves_widget.h"
 #include "junctions_widget.h"
+#include "pipes_widget.h"
 #include "customer_points_widget.h"
+#include "customers_widget.h"
 
 class MainWindow : public QMainWindow
 {
@@ -37,17 +40,20 @@ public:
     
 private:
     MenuBar *menu;
-    MapMonitorContainer *map_monitor_container;
     FooterStatusBar *footer;
     
     QTabWidget *tabs;
     MapWidget *map;
+    MapMonitorContainer *map_monitor;
+    MapEditorContainer *map_editor;
     ReservoirsWidget *reservoirs;
     TanksWidget *tanks;
     PumpsWidget *pumps;
     ValvesWidget *valves;
     JunctionsWidget *junctions;
+    PipesWidget* pipes;
     CustomerPointsWidget *customerPoints;
+    CustomersWidget *customers;
     
     //QGridLayout *layout = new QGridLayout;
     

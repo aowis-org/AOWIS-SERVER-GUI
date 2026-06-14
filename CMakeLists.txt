@@ -30,6 +30,9 @@ qt_add_executable(aowis-server-gui
     src/junctions_widget.h src/junctions_widget.cpp
     src/valves_widget.h src/valves_widget.cpp
     src/customer_points_widget.h src/customer_points_widget.cpp
+    src/pipes_widget.h src/pipes_widget.cpp
+    src/map_editor_container.h src/map_editor_container.cpp
+    src/customers_widget.h src/customers_widget.cpp
     
 )
 

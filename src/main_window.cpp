@@ -5,13 +5,16 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
     tabs( new QTabWidget(this) ),
-    map_monitor_container( new MapMonitorContainer(this) ),
+    map_monitor( new MapMonitorContainer(this) ),
+    map_editor( new MapEditorContainer(this) ),
     reservoirs( new ReservoirsWidget(this) ),
     tanks( new TanksWidget(this) ),
     pumps( new PumpsWidget(this) ),
     valves( new ValvesWidget(this) ),
     junctions( new JunctionsWidget(this) ),
-    customerPoints( new CustomerPointsWidget(this) )
+    pipes( new PipesWidget(this) ),
+    customerPoints( new CustomerPointsWidget(this) ),
+    customers( new CustomersWidget(this) )
 {
     setWindowTitle("AOWIS - Controller");
     showMaximized();
@@ -29,15 +32,17 @@ MainWindow::MainWindow(QWidget *parent)
     //this->menu = new MenuBar();
     //setMenuBar(this->menu);
     
-    this->map = this->map_monitor_container->mapWidget();
-    this->tabs->addTab(this->map_monitor_container, "Map Monitor");
-    // map editor
+    this->map = this->map_monitor->mapWidget();
+    this->tabs->addTab(this->map_monitor, "Map Monitor");
+    this->tabs->addTab(this->map_editor, "Map Editor");
     this->tabs->addTab(this->reservoirs, "Reservoirs");
     this->tabs->addTab(this->tanks, "Tanks");
     this->tabs->addTab(this->pumps, "Pumps");
     this->tabs->addTab(this->valves, "Valves");
     this->tabs->addTab(this->junctions, "Junctions");
+    this->tabs->addTab(this->pipes, "Pipes");
     this->tabs->addTab(this->customerPoints, "Customer Points");
+    this->tabs->addTab(this->customers, "Customers");
     
     connect(this->map, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
     connect(this->map, &MapWidget::signalCoordsChanged, this->footer, &FooterStatusBar::setMapCoordinates);
