@@ -1,5 +1,5 @@
-#ifndef MAP_CONTAINER_H
-#define MAP_CONTAINER_H
+#ifndef MAP_MONITOR_CONTAINER_H
+#define MAP_MONITOR_CONTAINER_H
 
 #include <QObject>
 #include <QWidget>
@@ -47,11 +47,11 @@ signals:
 
 
 
-class MapContainer : public QWidget
+class MapMonitorContainer : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapContainer(QWidget *parent = nullptr);
+    explicit MapMonitorContainer(QWidget *parent = nullptr);
     
     MapWidget* mapWidget();
     
@@ -66,4 +66,4 @@ signals:
 
 
 
-#endif // MAP_CONTAINER_H
+#endif // MAP_MONITOR_CONTAINER_H

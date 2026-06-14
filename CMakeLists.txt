@@ -23,7 +23,7 @@ qt_add_executable(aowis-server-gui
     src/map_widget.h src/map_widget.cpp
     src/footer_statusbar.h src/footer_statusbar.cpp
     src/enums_structs.h
-    src/map_container.h src/map_container.cpp
+    src/map_monitor_container.h src/map_monitor_container.cpp
     src/reservoirs_widget.h src/reservoirs_widget.cpp
     src/tanks_widget.h src/tanks_widget.cpp
     src/pumps_widget.h src/pumps_widget.cpp

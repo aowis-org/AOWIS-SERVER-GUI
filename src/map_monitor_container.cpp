@@ -1,6 +1,6 @@
-#include "map_container.h"
+#include "map_monitor_container.h"
 
-MapContainer::MapContainer(QWidget *parent)
+MapMonitorContainer::MapMonitorContainer(QWidget *parent)
     : QWidget{parent},
     layout( new QHBoxLayout(this) ),
     map( new MapWidget(this) )
@@ -39,7 +39,7 @@ MapContainer::MapContainer(QWidget *parent)
     this->layout->addWidget(map);
 }
 
-MapWidget* MapContainer::mapWidget()
+MapWidget* MapMonitorContainer::mapWidget()
 {
     return this->map;
 }
