@@ -1,8 +1,6 @@
 #ifndef ENUMS_STRUCTS_H
 #define ENUMS_STRUCTS_H
 
-#include <cstdint>
-
 enum MapProvider
 {
     ArcGISSat,
