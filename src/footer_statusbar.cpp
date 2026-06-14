@@ -39,7 +39,7 @@ void FooterStatusBar::statusUpdateServerMap(StatusColorCode code)
     QString style = "color: black;";
     switch (code)
     {
-        case StatusColorCode::None: style = "color: black";     break;
+        case StatusColorCode::None:   style = "color: black";   break;
         case StatusColorCode::Green:  style = "color: green;";  break;
         case StatusColorCode::Yellow: style = "color: yellow;"; break;
         case StatusColorCode::Red:    style = "color: red;";    break;
