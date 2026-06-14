@@ -25,6 +25,8 @@ MainWindow::MainWindow(QWidget *parent)
     
     this->map = this->map_container->mapWidget();
     this->tabs->addTab(this->map_container, "Map Monitor");
+    // map editor
+    
     
     connect(this->map, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
     connect(this->map, &MapWidget::signalCoordsChanged, this->footer, &FooterStatusBar::setMapCoordinates);
@@ -39,8 +41,8 @@ MainWindow::MainWindow(QWidget *parent)
 
 void MainWindow::checkServerMapInit()
 {
-    this->time_server_map_success_last = QDateTime::fromSecsSinceEpoch(0);    
-    this->footer->statusUpdateServerMap(StatusColorCode::Red);
+    this->time_server_map_success_last = QDateTime::currentDateTime();    
+    this->footer->statusUpdateServerMap(StatusColorCode::Yellow);
     
     this->rest_check_map = new RESTClient("http://aowis-server-map.localhost:80", this);
     connect(this->rest_check_map, &RESTClient::requestFinished, this, [this](const QByteArray &data)
@@ -53,9 +55,6 @@ void MainWindow::checkServerMapInit()
             {
                 this->checking_server_map = false;
             });
-    
-    // on app start run directly
-    checkServerMap();
     
     // set up timer for periodic check
     QTimer *timer = new QTimer(this);
