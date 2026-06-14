@@ -7,6 +7,7 @@ MainWindow::MainWindow(QWidget *parent)
     tabs( new QTabWidget(this) ),
     map_monitor( new MapMonitorContainer(this) ),
     map_editor( new MapEditorContainer(this) ),
+    energy( new EnergyWidget(this) ),
     reservoirs( new ReservoirsWidget(this) ),
     tanks( new TanksWidget(this) ),
     pumps( new PumpsWidget(this) ),
@@ -35,6 +36,7 @@ MainWindow::MainWindow(QWidget *parent)
     this->map = this->map_monitor->mapWidget();
     this->tabs->addTab(this->map_monitor, "Map Monitor");
     this->tabs->addTab(this->map_editor, "Map Editor");
+    this->tabs->addTab(this->energy, "Energy");
     this->tabs->addTab(this->reservoirs, "Reservoirs");
     this->tabs->addTab(this->tanks, "Tanks");
     this->tabs->addTab(this->pumps, "Pumps");

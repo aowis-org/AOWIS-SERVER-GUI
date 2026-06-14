@@ -22,6 +22,7 @@
 #include "map_widget.h"
 #include "map_monitor_container.h"
 #include "map_editor_container.h"
+#include "energy_widget.h"
 #include "reservoirs_widget.h"
 #include "tanks_widget.h"
 #include "pumps_widget.h"
@@ -46,6 +47,7 @@ private:
     MapWidget *map;
     MapMonitorContainer *map_monitor;
     MapEditorContainer *map_editor;
+    EnergyWidget *energy;
     ReservoirsWidget *reservoirs;
     TanksWidget *tanks;
     PumpsWidget *pumps;
