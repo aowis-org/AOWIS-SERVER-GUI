@@ -21,6 +21,12 @@
 #include "menubar.h"
 #include "map_container.h"
 #include "map_widget.h"
+#include "reservoirs_widget.h"
+#include "tanks_widget.h"
+#include "pumps_widget.h"
+#include "valves_widget.h"
+#include "junctions_widget.h"
+#include "customer_points_widget.h"
 
 class MainWindow : public QMainWindow
 {
@@ -32,9 +38,16 @@ public:
 private:
     MenuBar *menu;
     MapContainer *map_container;
-    MapWidget *map;
     FooterStatusBar *footer;
+    
     QTabWidget *tabs;
+    MapWidget *map;
+    ReservoirsWidget *reservoirs;
+    TanksWidget *tanks;
+    PumpsWidget *pumps;
+    ValvesWidget *valves;
+    JunctionsWidget *junctions;
+    CustomerPointsWidget *customerPoints;
     
     //QGridLayout *layout = new QGridLayout;
     

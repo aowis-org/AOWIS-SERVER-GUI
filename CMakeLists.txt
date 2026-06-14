@@ -24,6 +24,12 @@ qt_add_executable(aowis-server-gui
     src/footer_statusbar.h src/footer_statusbar.cpp
     src/enums_structs.h
     src/map_container.h src/map_container.cpp
+    src/reservoirs_widget.h src/reservoirs_widget.cpp
+    src/tanks_widget.h src/tanks_widget.cpp
+    src/pumps_widget.h src/pumps_widget.cpp
+    src/junctions_widget.h src/junctions_widget.cpp
+    src/valves_widget.h src/valves_widget.cpp
+    src/customer_points_widget.h src/customer_points_widget.cpp
     
 )
 
