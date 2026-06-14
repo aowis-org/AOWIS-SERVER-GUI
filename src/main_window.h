@@ -43,8 +43,9 @@ private:
     MenuBar *menu;
     FooterStatusBar *footer;
     
-    QTabWidget *tabs;
     MapWidget *map;
+    
+    QTabWidget *tabs;
     MapMonitorContainer *map_monitor;
     MapEditorContainer *map_editor;
     EnergyWidget *energy;

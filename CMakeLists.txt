@@ -34,6 +34,9 @@ qt_add_executable(aowis-server-gui
     src/map_editor_container.h src/map_editor_container.cpp
     src/customers_widget.h src/customers_widget.cpp
     src/energy_widget.h src/energy_widget.cpp
+    src/map_navigation_widget.h src/map_navigation_widget.cpp
+    src/map_model.h src/map_model.cpp
+    src/map_controls.h src/map_controls.cpp
     
 )
 

@@ -20,19 +20,20 @@
 
 #include "enums_structs.h"
 #include "map_widget.h"
+#include "map_navigation_widget.h"
 
-class MapControls : public QWidget
+class MapNavigation : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapControls(MapWidget *map, QWidget *parent = nullptr);
+    explicit MapNavigation(MapWidget *map, QWidget *parent = nullptr);
     
 private:
     QVBoxLayout *layout;
     
     MapWidget *map;
     
-    void addGroupMapControls();
+    void addGroupMapNavigation();
     void addGroupNodeVisuals();
     void addGroupLinkVisuals();
     
@@ -51,14 +52,12 @@ class MapMonitorContainer : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapMonitorContainer(QWidget *parent = nullptr);
-    
-    MapWidget* mapWidget();
+    explicit MapMonitorContainer(MapWidget *map, QWidget *parent = nullptr);
     
 private:
     QHBoxLayout *layout;
     MapWidget *map;
-    MapControls *controls;
+    MapNavigation *controls;
     
 signals:
     

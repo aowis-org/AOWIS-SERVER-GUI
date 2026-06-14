@@ -1,11 +1,12 @@
 #include "map_monitor_container.h"
 
-MapMonitorContainer::MapMonitorContainer(QWidget *parent)
+MapMonitorContainer::MapMonitorContainer(MapWidget *map, QWidget *parent)
     : QWidget{parent},
-    layout( new QHBoxLayout(this) ),
-    map( new MapWidget(this) )
+    layout( new QHBoxLayout(this) )
 {
-    this->controls = new MapControls(this->map, this);
+    this->map = map;
+    
+    this->controls = new MapNavigation(this->map, this);
     
     setContentsMargins(0, 0, 0, 0);
     this->layout->setContentsMargins(0, 0, 0, 0);
@@ -39,16 +40,11 @@ MapMonitorContainer::MapMonitorContainer(QWidget *parent)
     this->layout->addWidget(map);
 }
 
-MapWidget* MapMonitorContainer::mapWidget()
-{
-    return this->map;
-}
 
 
 
 
-
-MapControls::MapControls(MapWidget *map, QWidget *parent)
+MapNavigation::MapNavigation(MapWidget *map, QWidget *parent)
     : QWidget{parent},
     layout( new QVBoxLayout(this) )
 {
@@ -59,14 +55,14 @@ MapControls::MapControls(MapWidget *map, QWidget *parent)
     setMinimumWidth(180);
     setMaximumWidth(200);
     
-    addGroupMapControls();
+    addGroupMapNavigation();
     addGroupNodeVisuals();
     addGroupLinkVisuals();
     
     this->layout->addStretch();
 }
 
-void MapControls::addGroupMapControls()
+void MapNavigation::addGroupMapNavigation()
 {
     QGroupBox *group = new QGroupBox("Map Controls", this);
     this->layout->addWidget(group);
@@ -110,7 +106,7 @@ void MapControls::addGroupMapControls()
     grid->addWidget(label_slider_map_visibility, 4, 0, 1, 2);
     grid->addWidget(slider_map_visibility, 5, 0, 1, 2);
 }
-void MapControls::addGroupNodeVisuals()
+void MapNavigation::addGroupNodeVisuals()
 {
     QGroupBox *group = new QGroupBox("Node Symbology", this);
     group->setCheckable(true);
@@ -147,7 +143,7 @@ void MapControls::addGroupNodeVisuals()
     
     makeGroupCollapsable(group);
 }
-void MapControls::addGroupLinkVisuals()
+void MapNavigation::addGroupLinkVisuals()
 {
     QGroupBox *group = new QGroupBox("Link Symbology", this);
     group->setCheckable(true);
@@ -183,7 +179,7 @@ void MapControls::addGroupLinkVisuals()
     makeGroupCollapsable(group);
 }
 
-void MapControls::makeGroupCollapsable(QGroupBox *group)
+void MapNavigation::makeGroupCollapsable(QGroupBox *group)
 {
     connect(group, &QGroupBox::toggled, group, [group](bool expanded){
         for (QObject *obj : group->children()) {

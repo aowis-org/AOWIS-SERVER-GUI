@@ -4,9 +4,10 @@
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
+    map( new MapWidget(this) ),
     tabs( new QTabWidget(this) ),
-    map_monitor( new MapMonitorContainer(this) ),
-    map_editor( new MapEditorContainer(this) ),
+    map_monitor( new MapMonitorContainer(map, this) ),
+    map_editor( new MapEditorContainer(map, this) ),
     energy( new EnergyWidget(this) ),
     reservoirs( new ReservoirsWidget(this) ),
     tanks( new TanksWidget(this) ),
@@ -33,7 +34,7 @@ MainWindow::MainWindow(QWidget *parent)
     //this->menu = new MenuBar();
     //setMenuBar(this->menu);
     
-    this->map = this->map_monitor->mapWidget();
+    //this->map = this->map_monitor->mapWidget();
     this->tabs->addTab(this->map_editor, "Map Editor");
     this->tabs->addTab(this->map_monitor, "Map Monitor");
     this->tabs->addTab(this->energy, "Energy");
@@ -53,7 +54,6 @@ MainWindow::MainWindow(QWidget *parent)
     //connect(this->menu, &MenuBar::signalMapZoomIn, this->map, &MapWidget::zoomIn);
     //connect(this->menu, &MenuBar::signalMapZoomOut, this->map, &MapWidget::zoomOut);
     //connect(this->menu, &MenuBar::signalMapChange, this->map, &MapWidget::changeMapProvider);
-    
     
     checkServerMapInit();
 }
