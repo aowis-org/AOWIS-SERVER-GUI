@@ -12,8 +12,8 @@ MapContainer::MapContainer(QWidget *parent)
     this->layout->setSpacing(0);
     
     QScrollArea *scroll_controls = new QScrollArea(this);
-    scroll_controls->setMinimumWidth(160);
-    scroll_controls->setMaximumWidth(180);
+    scroll_controls->setMinimumWidth(180);
+    scroll_controls->setMaximumWidth(200);
     scroll_controls->setWidgetResizable(true);
     scroll_controls->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scroll_controls->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
@@ -25,7 +25,7 @@ MapContainer::MapContainer(QWidget *parent)
         auto sb = scroll_controls->verticalScrollBar();
         bool should_show = sb->maximum() > sb->minimum();
         
-        int width_base = 160;
+        int width_base = 180;
         int width_sb = sb->sizeHint().width();
         int w = should_show ? width_base + width_sb : width_base;
         
@@ -56,8 +56,8 @@ MapControls::MapControls(MapWidget *map, QWidget *parent)
     
     //this->layout->setContentsMargins(0, 0, 0, 0);
     setContentsMargins(0, 0, 0, 0);
-    setMinimumWidth(160);
-    setMaximumWidth(160);
+    setMinimumWidth(180);
+    setMaximumWidth(200);
     
     addGroupMapControls();
     addGroupNodeVisuals();
@@ -113,6 +113,7 @@ void MapControls::addGroupMapControls()
 void MapControls::addGroupNodeVisuals()
 {
     QGroupBox *group = new QGroupBox("Node Symbology", this);
+    group->setCheckable(true);
     this->layout->addWidget(group);
     QVBoxLayout *vbox = new QVBoxLayout();
     group->setLayout(vbox);
@@ -143,10 +144,13 @@ void MapControls::addGroupNodeVisuals()
     vbox->addWidget(radio_node_chlorine);
     vbox->addWidget(radio_node_river);
     vbox->addWidget(radio_node_lake);
+    
+    makeGroupCollapsable(group);
 }
 void MapControls::addGroupLinkVisuals()
 {
     QGroupBox *group = new QGroupBox("Link Symbology", this);
+    group->setCheckable(true);
     this->layout->addWidget(group);
     QVBoxLayout *vbox = new QVBoxLayout();
     group->setLayout(vbox);
@@ -175,4 +179,26 @@ void MapControls::addGroupLinkVisuals()
     vbox->addWidget(radio_link_chlorine);
     vbox->addWidget(radio_link_river);
     vbox->addWidget(radio_link_lake);
+    
+    makeGroupCollapsable(group);
 }
+
+void MapControls::makeGroupCollapsable(QGroupBox *group)
+{
+    connect(group, &QGroupBox::toggled, group, [group](bool expanded){
+        for (QObject *obj : group->children()) {
+            
+            // Only affect actual widgets, not layouts
+            QWidget *w = qobject_cast<QWidget*>(obj);
+            if (!w)
+                continue;
+            
+            // Don't hide the group box itself
+            if (w == group)
+                continue;
+            
+            w->setVisible(expanded);
+        }
+    });
+}
+

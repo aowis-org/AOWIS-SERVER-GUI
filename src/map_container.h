@@ -36,6 +36,8 @@ private:
     void addGroupNodeVisuals();
     void addGroupLinkVisuals();
     
+    void makeGroupCollapsable(QGroupBox *group);    
+    
 signals:
     void mapZoomIn();
     void mapZoomOut();
