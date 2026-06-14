@@ -4,7 +4,6 @@
 #include <QObject>
 #include <QWidget>
 #include <QVBoxLayout>
-
 #include <QTableWidget>
 
 class JunctionsWidget : public QWidget
