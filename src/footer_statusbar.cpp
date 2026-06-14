@@ -17,7 +17,7 @@ FooterStatusBar::FooterStatusBar(QWidget *parent)
     this->bar->addWidget(this->label_map_coords_x);
     this->bar->addWidget(this->label_map_coords_y);
     this->bar->addPermanentWidget(this->label_indicator_map_text);
-    this->bar->addPermanentWidget(this->label_indicator_map_status);
+    //this->bar->addPermanentWidget(this->label_indicator_map_status);
     
     this->label_indicator_map_text->setText("Map Server");
     //this->label_indicator_map_status->setFixedSize(12, 12);

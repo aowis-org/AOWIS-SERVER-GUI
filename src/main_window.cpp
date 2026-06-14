@@ -34,8 +34,8 @@ MainWindow::MainWindow(QWidget *parent)
     //setMenuBar(this->menu);
     
     this->map = this->map_monitor->mapWidget();
-    this->tabs->addTab(this->map_monitor, "Map Monitor");
     this->tabs->addTab(this->map_editor, "Map Editor");
+    this->tabs->addTab(this->map_monitor, "Map Monitor");
     this->tabs->addTab(this->energy, "Energy");
     this->tabs->addTab(this->reservoirs, "Reservoirs");
     this->tabs->addTab(this->tanks, "Tanks");
@@ -45,6 +45,7 @@ MainWindow::MainWindow(QWidget *parent)
     this->tabs->addTab(this->pipes, "Pipes");
     this->tabs->addTab(this->customerPoints, "Customer Points");
     this->tabs->addTab(this->customers, "Customers");
+    this->tabs->setCurrentIndex(1);
     
     connect(this->map, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
     connect(this->map, &MapWidget::signalCoordsChanged, this->footer, &FooterStatusBar::setMapCoordinates);
