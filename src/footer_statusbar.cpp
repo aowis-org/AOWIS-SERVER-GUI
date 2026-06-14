@@ -19,9 +19,9 @@ FooterStatusBar::FooterStatusBar(QWidget *parent)
     this->bar->addPermanentWidget(this->label_indicator_map_text);
     this->bar->addPermanentWidget(this->label_indicator_map_status);
     
-    this->label_indicator_map_text->setText("Map Server Connection: ");
-    this->label_indicator_map_status->setFixedSize(12, 12);
-    this->label_indicator_map_status->setStyleSheet("background-color: green; border-radius: 6px;");
+    this->label_indicator_map_text->setText("Map Server");
+    //this->label_indicator_map_status->setFixedSize(12, 12);
+    //this->label_indicator_map_status->setStyleSheet("background-color: green; border-radius: 6px;");
 }
 
 void FooterStatusBar::setMapZoom(int zoom)
@@ -34,4 +34,16 @@ void FooterStatusBar::setMapCoordinates(double lon, double lat)
     this->label_map_coords_x->setText("Lat: " + QString::number(lat));
 }
 
+void FooterStatusBar::statusUpdateServerMap(StatusColorCode code)
+{
+    QString style = "color: black;";
+    switch (code)
+    {
+        case StatusColorCode::Green:  style = "color: green;";  break;
+        case StatusColorCode::Yellow: style = "color: yellow;"; break;
+        case StatusColorCode::Red:    style = "color: red;";    break;
+    }
+    
+    this->label_indicator_map_text->setStyleSheet(style);
+}
 

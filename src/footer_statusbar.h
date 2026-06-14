@@ -7,6 +7,8 @@
 #include <QHBoxLayout>
 #include <QLabel>
 
+#include "enums_structs.h"
+
 class FooterStatusBar : public QWidget
 {
 public:
@@ -16,6 +18,8 @@ public:
     void setMapCoordinates(double x, double y);
     
     QStatusBar* statusBar() const { return bar; };
+    
+    void statusUpdateServerMap(StatusColorCode code);
     
 private:
     QStatusBar *bar;

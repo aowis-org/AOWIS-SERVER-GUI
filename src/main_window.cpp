@@ -12,17 +12,10 @@ MainWindow::MainWindow(QWidget *parent)
     
     this->tabs->setContentsMargins(0, 0, 0, 0);
     
-    QWidget *widget_central = new QWidget(this);
-    this->setCentralWidget(widget_central);
-    widget_central->setLayout(this->layout);
+    this->setCentralWidget(this->tabs);
     
     this->footer = new FooterStatusBar(this);
     setStatusBar(this->footer->statusBar());
-    
-    this->line_server_status = new QLineEdit();
-    this->line_server_status->setDisabled(true);
-    
-    this->layout->addWidget(this->line_server_status, 1, 0, 1, 2);
     
     this->setMinimumHeight(600);
     this->setMinimumWidth(800);
@@ -40,24 +33,25 @@ MainWindow::MainWindow(QWidget *parent)
     //connect(this->menu, &MenuBar::signalMapZoomOut, this->map, &MapWidget::zoomOut);
     //connect(this->menu, &MenuBar::signalMapChange, this->map, &MapWidget::changeMapProvider);
     
-    this->layout->addWidget(this->tabs, 0, 0, 1, 2);
-    
     
     checkServerMapInit();
 }
 
 void MainWindow::checkServerMapInit()
 {
+    this->time_server_map_success_last = QDateTime::fromSecsSinceEpoch(0);    
+    this->footer->statusUpdateServerMap(StatusColorCode::Red);
+    
     this->rest_check_map = new RESTClient("http://aowis-server-map.localhost:80", this);
     connect(this->rest_check_map, &RESTClient::requestFinished, this, [this](const QByteArray &data)
             {
                 this->checking_server_map = false;
-                this->line_server_status->setText(data);
+                
+                this->time_server_map_success_last = QDateTime::currentDateTime();
             });
     connect(this->rest_check_map, &RESTClient::requestError, this, [this](const QString &err)
             {
                 this->checking_server_map = false;
-                this->line_server_status->setText("REST ERROR: " + err);
             });
     
     // on app start run directly
@@ -66,12 +60,20 @@ void MainWindow::checkServerMapInit()
     // set up timer for periodic check
     QTimer *timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, &MainWindow::checkServerMap);
-    timer->start(5000);
+    timer->start(4500);
 }
 void MainWindow::checkServerMap()
 {
     if (this->checking_server_map)
         return;
+    
+    int delta = this->time_server_map_success_last.secsTo(QDateTime::currentDateTime());
+    if (delta < 5)
+        this->footer->statusUpdateServerMap(StatusColorCode::Green);
+    else if (delta < 15)
+        this->footer->statusUpdateServerMap(StatusColorCode::Yellow);
+    else
+        this->footer->statusUpdateServerMap(StatusColorCode::Red);
     
     this->checking_server_map = true;
     this->rest_check_map->get("/status");

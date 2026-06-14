@@ -3,11 +3,19 @@
 
 #include <cstdint>
 
-enum MapProvider : uint8_t
+enum MapProvider
 {
     ArcGISSat,
     OpenStreetMap,
     OpenTopoMap
+};
+
+enum StatusColorCode
+{
+    None,
+    Green,
+    Yellow,
+    Red
 };
 
 #endif // ENUMS_STRUCTS_H
