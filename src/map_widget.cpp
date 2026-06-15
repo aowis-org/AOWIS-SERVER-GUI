@@ -1,11 +1,37 @@
 #include "map_widget.h"
 
+#include <cmath>
+
 MapWidget::MapWidget(QWidget *parent)
     : QWidget(parent),
-    zoom(16),
-    center_lon(18.2063),
-    center_lat(11.9792),
-    cache(2000)
+    m_model(new MapModel(this)),
+    m_ownsModel(true),
+    m_cache(2000)
+{
+    init();
+}
+
+MapWidget::MapWidget(MapModel *model, QWidget *parent)
+    : QWidget(parent),
+    m_model(model),
+    m_ownsModel(false),
+    m_cache(2000)
+{
+    if (!m_model)
+    {
+        m_model = new MapModel(this);
+        m_ownsModel = true;
+    }
+    
+    init();
+}
+
+MapModel *MapWidget::model() const
+{
+    return m_model;
+}
+
+void MapWidget::init()
 {
     initRestConnection();
     
@@ -21,95 +47,109 @@ MapWidget::MapWidget(QWidget *parent)
     setFocus();
     setMouseTracking(true);
     
+    connect(m_model, &MapModel::zoomChanged,
+            this, &MapWidget::signalZoomChanged);
+    
+    connect(m_model, &MapModel::centerChanged,
+            this, &MapWidget::signalCoordsChanged);
+    
+    connect(m_model, &MapModel::providerChanged,
+            this, [this](MapProvider) {
+                update();
+            });
+    
     QTimer::singleShot(100, this, [this] {
-        // make the status bar show correct zoom level from the start
-        emit signalZoomChanged(this->zoom);
-        emit signalCoordsChanged(this->center_lon, this->center_lat);
+        emit signalZoomChanged(m_model->zoom());
+        emit signalCoordsChanged(m_model->centerLon(), m_model->centerLat());
     });
     
     initTimer();
 }
+
 void MapWidget::initRestConnection()
 {
-    this->rest = new RESTClient("http://aowis-server-map.localhost:80", this);
-    connect(this->rest, &RESTClient::requestFinishedTile, this, [this](const QByteArray &data, const QString &key)
-            {
-                QPixmap pix;
-                pix.loadFromData(data);
-                
-                this->cache.insert(key, new QPixmap(pix));
-                
-                update();
-            });
-    connect(this->rest, &RESTClient::requestError, this, [this](const QString &err)
-            {
-                qDebug() << "fail: " << err;
-            });
-}
-void MapWidget::initTimer()
-{
-    this->timer_pan_inertia = new QTimer(this);
-    this->timer_pan_inertia->setInterval(16); // target ~60 FPS
+    m_rest = new RESTClient("http://aowis-server-map.localhost:80", this);
     
-    connect(this->timer_pan_inertia, &QTimer::timeout, this, [this]()
-            {
-                qint64 now = QDateTime::currentMSecsSinceEpoch();
-                double dt = (now - this->time_last_innertia) / 16.0;  // normalize to 60 FPS
-                this->time_last_innertia = now;
+    connect(m_rest, &RESTClient::requestFinishedTile,
+            this, [this](const QByteArray &data, const QString &key) {
+                m_pending.remove(key);
                 
-                if (pan_velocity.manhattanLength() < 0.1)
+                QPixmap pix;
+                if (!pix.loadFromData(data))
                 {
-                    pan_velocity = QPointF(0,0);
-                    timer_pan_inertia->stop();
+                    qDebug() << "Tile decode failed:" << key;
                     return;
                 }
                 
-                // movement scaled by dt
-                QPointF move = pan_velocity * dt;
-                pan(QPoint(move.x(), move.y()));
-                
-                // time‑based friction
-                #ifdef Q_OS_WASM
-                    double friction_per_frame = 0.95;
-                #else
-                    double friction_per_frame = 0.95;
-                #endif
-                double friction = pow(friction_per_frame, dt);
-                pan_velocity *= friction;
-                
+                m_cache.insert(key, new QPixmap(pix));
                 update();
             });
     
+    connect(m_rest, &RESTClient::requestError,
+            this, [this](const QString &err) {
+                qDebug() << "Tile request failed:" << err;
+            });
 }
 
+void MapWidget::initTimer()
+{
+    m_timerPanInertia = new QTimer(this);
+    m_timerPanInertia->setInterval(16);
+    
+    connect(m_timerPanInertia, &QTimer::timeout, this, [this] {
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        const double dt = (now - m_timeLastInertia) / 16.0;
+        m_timeLastInertia = now;
+        
+        if (m_panVelocity.manhattanLength() < 0.1)
+        {
+            m_panVelocity = QPointF(0, 0);
+            m_timerPanInertia->stop();
+            return;
+        }
+        
+        const QPointF move = m_panVelocity * dt;
+        m_model->panByPixels(QPoint(move.x(), move.y()), size());
+
+#ifdef Q_OS_WASM
+        const double frictionPerFrame = 0.95;
+#else
+        const double frictionPerFrame = 0.95;
+#endif
+        const double friction = std::pow(frictionPerFrame, dt);
+        m_panVelocity *= friction;
+        
+        update();
+    });
+}
 
 void MapWidget::keyPressEvent(QKeyEvent *ev)
 {
-    const int step = 20; // base movement in pixels
+    const int step = 20;
     
     switch (ev->key())
     {
     case Qt::Key_Left:
-        this->pan_velocity += QPointF(step, 0);
+        m_panVelocity += QPointF(step, 0);
         break;
     case Qt::Key_Right:
-        this->pan_velocity += QPointF(-step, 0);
+        m_panVelocity += QPointF(-step, 0);
         break;
     case Qt::Key_Up:
-        this->pan_velocity += QPointF(0, step);
+        m_panVelocity += QPointF(0, step);
         break;
     case Qt::Key_Down:
-        this->pan_velocity += QPointF(0, -step);
+        m_panVelocity += QPointF(0, -step);
         break;
     default:
         QWidget::keyPressEvent(ev);
         return;
     }
     
-    this->time_last_innertia = QDateTime::currentMSecsSinceEpoch();
+    m_timeLastInertia = QDateTime::currentMSecsSinceEpoch();
     
-    if (!this->timer_pan_inertia->isActive())
-        this->timer_pan_inertia->start();
+    if (!m_timerPanInertia->isActive())
+        m_timerPanInertia->start();
 }
 
 void MapWidget::wheelEvent(QWheelEvent *ev)
@@ -118,132 +158,77 @@ void MapWidget::wheelEvent(QWheelEvent *ev)
     
     accumulated += ev->angleDelta().y();
     
-    const int threshold = 120; // one mouse wheel step
+    const int threshold = 120;
     
     if (std::abs(accumulated) < threshold)
         return;
     
-    int steps = accumulated / threshold;
+    const int steps = accumulated / threshold;
     accumulated %= threshold;
     
-    // mouse position in widget
-    QPoint pos = ev->position().toPoint();
-    int w = width();
-    int h = height();
-    
-    double cx = lonToTileX(center_lon, zoom);
-    double cy = latToTileY(center_lat, zoom);
-    
-    double dx = pos.x() - w / 2.0;
-    double dy = pos.y() - h / 2.0;
-    
-    double mx = cx + dx / TILE_SIZE;
-    double my = cy + dy / TILE_SIZE;
-    
-    double lon_mouse = tileXToLon(mx, zoom);
-    double lat_mouse = tileYToLat(my, zoom);
-    
-    int zoom_new = std::clamp(zoom + steps, 1, 19);
-    if (zoom_new == zoom)
-        return;
-    
-    zoom = zoom_new;
-    
-    double mx2 = lonToTileX(lon_mouse, zoom);
-    double my2 = latToTileY(lat_mouse, zoom);
-    
-    double cx2 = mx2 - dx / TILE_SIZE;
-    double cy2 = my2 - dy / TILE_SIZE;
-    
-    center_lon = tileXToLon(cx2, zoom);
-    center_lat = tileYToLat(cy2, zoom);
-    
+    m_model->zoomByAt(steps, ev->position().toPoint(), size());
     update();
-    emit signalZoomChanged(zoom);
 }
+
 void MapWidget::mousePressEvent(QMouseEvent *ev)
 {
     if (ev->buttons() & Qt::LeftButton)
     {
-        this->time_last_innertia = QDateTime::currentMSecsSinceEpoch();
-        
-        this->timer_pan_inertia->stop();
-        this->pan_velocity = QPointF(0,0);
-    }
-    else if (ev->buttons() & Qt::RightButton)
-    {
-        
+        m_timeLastInertia = QDateTime::currentMSecsSinceEpoch();
+        m_timerPanInertia->stop();
+        m_panVelocity = QPointF(0, 0);
     }
     
-    this->pos_last = ev->pos();
+    m_posLast = ev->pos();
 }
+
 void MapWidget::mouseReleaseEvent(QMouseEvent *ev)
 {
+    Q_UNUSED(ev)
+    
     /*
-    if (!this->timer_pan_inertia->isActive())
-        this->timer_pan_inertia->start();
+    if (!m_timerPanInertia->isActive())
+        m_timerPanInertia->start();
     */
 }
+
 void MapWidget::mouseMoveEvent(QMouseEvent *ev)
 {
-    QPointF ll = latLonUnderCursor(ev->pos());
+    const QPointF ll = m_model->latLonAt(ev->pos(), size());
     emit signalCoordsChanged(ll.x(), ll.y());
     
     if (ev->buttons() & Qt::LeftButton)
     {
-        QPoint d = ev->pos() - this->pos_last;
+        const QPoint d = ev->pos() - m_posLast;
+
+#ifdef Q_OS_WASM
+        m_panVelocity = m_panVelocity * 0 + QPointF(d) * 0;
+#else
+        m_panVelocity = m_panVelocity * 0 + QPointF(d) * 0;
+#endif
         
-        // first value: inertia memory: how much of the previous movement kept
-        // second value: responsiveness: adds some of the new drag movement
-        #ifdef Q_OS_WASM
-            this->pan_velocity = this->pan_velocity * 0 + QPointF(d) * 0;
-        #else
-            this->pan_velocity = this->pan_velocity * 0 + QPointF(d) * 0;
-        #endif
-        
-        pan(d);
+        m_model->panByPixels(d, size());
         update();
     }
     
-    this->pos_last = ev->pos();
+    m_posLast = ev->pos();
 }
+
 void MapWidget::zoomIn()
 {
-    this->zoom++;
-    if (this->zoom > 19)
-        this->zoom = 19;
-    
+    m_model->zoomIn(size());
     update();
-    
-    emit signalZoomChanged(this->zoom);
 }
+
 void MapWidget::zoomOut()
 {
-    this->zoom--;
-    if (this->zoom < 1)
-        this->zoom = 1;
-    
+    m_model->zoomOut(size());
     update();
-    
-    emit signalZoomChanged(this->zoom);
 }
+
 void MapWidget::changeMapProvider(MapProvider provider)
 {
-    this->map_provider = provider;
-    
-    switch (provider)
-    {
-    case MapProvider::ArcGISSat:
-        this->cache_key_provider = "arcgis";
-        break;
-    case MapProvider::OpenTopoMap:
-        this->cache_key_provider = "opentopomap";
-        break;
-    case MapProvider::OpenStreetMap:
-        this->cache_key_provider = "openstreetmap";
-        break;
-    }
-    
+    m_model->setProvider(provider);
     update();
 }
 
@@ -255,175 +240,60 @@ void MapWidget::paintEvent(QPaintEvent *)
 
 void MapWidget::drawTiles(QPainter &p)
 {
-    const int tiles = 1 << zoom;
+    const int tiles = m_model->tileCount();
     
-    double cx = lonToTileX(this->center_lon, this->zoom);
-    double cy = latToTileY(this->center_lat, this->zoom);
+    const QPointF center = m_model->centerTile();
+    const double cx = center.x();
+    const double cy = center.y();
     
-    int w = width();
-    int h = height();
+    const int w = width();
+    const int h = height();
     
-    int tiles_x = w / this->TILE_SIZE + 4;
-    int tiles_y = h / this->TILE_SIZE + 4;
+    const int tilesX = w / MapModel::TileSize + 4;
+    const int tilesY = h / MapModel::TileSize + 4;
     
-    int start_x = int(cx) - tiles_x / 2;
-    int start_y = int(cy) - tiles_y / 2;
+    const int startX = int(cx) - tilesX / 2;
+    const int startY = int(cy) - tilesY / 2;
     
-    for (int dx = 0; dx < tiles_x; dx++)
+    for (int dx = 0; dx < tilesX; ++dx)
     {
-        for (int dy = 0; dy < tiles_y; dy++)
+        for (int dy = 0; dy < tilesY; ++dy)
         {
-            int x = start_x + dx;
-            int y = start_y + dy;
+            const int x = startX + dx;
+            const int y = startY + dy;
             
             if (x < 0 || x >= tiles || y < 0 || y >= tiles)
                 continue;
             
-            QString key = this->cache_key_provider + QString("/%1/%2/%3").arg(zoom).arg(x).arg(y);
+            const QString key = m_model->tileCacheKey(x, y);
             
-            if (!this->cache.contains(key))
-            {
+            if (!m_cache.contains(key))
                 requestTile(key, x, y);
-            }
             
-            if (this->cache.contains(key))
+            if (QPixmap *pix = m_cache.object(key))
             {
-                QPixmap *pix = this->cache.object(key);
-                int px = int((x - cx) * this->TILE_SIZE + w / 2);
-                int py = int((y - cy) * this->TILE_SIZE + h / 2);
+                const int px = int((x - cx) * MapModel::TileSize + w / 2);
+                const int py = int((y - cy) * MapModel::TileSize + h / 2);
                 p.drawPixmap(px, py, *pix);
             }
         }
     }
 }
 
-void MapWidget::pan(const QPoint &d)
-{
-    // convert center to tile coords
-    double cx = lonToTileX(center_lon, zoom);
-    double cy = latToTileY(center_lat, zoom);
-    
-    // apply pixel delta in tile space
-    cx -= double(d.x()) / TILE_SIZE;
-    cy -= double(d.y()) / TILE_SIZE;
-    
-    // convert back to lat/lon
-    center_lon = tileXToLon(cx, zoom);
-    center_lat = tileYToLat(cy, zoom);
-    
-    clampCenter();
-    
-    emit signalCoordsChanged(center_lon, center_lat);
-}
-
-void MapWidget::clampCenter()
-{
-    double cx = lonToTileX(center_lon, zoom);
-    double cy = latToTileY(center_lat, zoom);
-    
-    double max_tile = (1 << zoom) - 1;
-    
-    double half_w = (width()  / double(TILE_SIZE)) / 2.0;
-    double half_h = (height() / double(TILE_SIZE)) / 2.0;
-    
-    double min_cx = half_w;
-    double max_cx = max_tile - half_w;
-    
-    double min_cy = half_h;
-    double max_cy = max_tile - half_h;
-    
-    // --- CASE 1: Map smaller than screen horizontally ---
-    if (min_cx > max_cx) {
-        // exact center of world in tile coords
-        cx = max_tile / 2.0;
-    } else {
-        cx = std::clamp(cx, min_cx, max_cx);
-    }
-    
-    // --- CASE 2: Map smaller than screen vertically ---
-    if (min_cy > max_cy) {
-        cy = max_tile / 2.0;
-    } else {
-        cy = std::clamp(cy, min_cy, max_cy);
-    }
-    
-    // convert back to lat/lon
-    center_lon = tileXToLon(cx, zoom);
-    center_lat = tileYToLat(cy, zoom);
-}
-
 void MapWidget::requestTile(const QString &key, int x, int y)
 {
-    if (this->pending.contains(key))
+    if (m_pending.contains(key))
         return;
     
-    this->pending.insert(key);
-    
-    QString endpoint;
-    switch (this->map_provider)
-    {
-    case MapProvider::ArcGISSat:
-        endpoint = QString("/arcgis/%1/%2/%3.png").arg(this->zoom).arg(x).arg(y);
-        break;
-    case MapProvider::OpenTopoMap:
-        endpoint = QString("/opentopomap/%1/%2/%3.png").arg(this->zoom).arg(x).arg(y);
-        break;
-    case MapProvider::OpenStreetMap:
-        endpoint = QString("/openstreetmap/%1/%2/%3.png").arg(this->zoom).arg(x).arg(y);
-        break;
-    }
-    // fallback, because only OSM has zoom level > 17
-    if (this->zoom > 17)
-    {
-        endpoint = QString("/openstreetmap/%1/%2/%3.png").arg(this->zoom).arg(x).arg(y);
-    }
-    
-    this->rest->getTile(endpoint, key);
-}
-
-QPointF MapWidget::latLonUnderCursor(const QPoint &pos) const
-{
-    double cx = lonToTileX(center_lon, zoom);
-    double cy = latToTileY(center_lat, zoom);
-    
-    double dx = pos.x() - width()  / 2.0;
-    double dy = pos.y() - height() / 2.0;
-    
-    double tx = cx + dx / TILE_SIZE;
-    double ty = cy + dy / TILE_SIZE;
-    
-    double lon = tileXToLon(tx, zoom);
-    double lat = tileYToLat(ty, zoom);
-    
-    return QPointF(lon, lat);
-}
-
-
-double MapWidget::lonToTileX(double lon, int zoom) const
-{
-    return (lon + 180.0) / 360.0 * (1 << zoom);
-}
-double MapWidget::latToTileY(double lat, int zoom) const
-{
-    double rad = qDegreesToRadians(lat);
-    return (1.0 - log(tan(rad) + 1.0 / cos(rad)) / M_PI) / 2.0 * (1 << zoom);
-}
-double MapWidget::tileXToLon(double x, int zoom) const
-{
-    return x / (1 << zoom) * 360.0 - 180.0;
-}
-double MapWidget::tileYToLat(double y, int zoom) const
-{
-    double n = M_PI - 2.0 * M_PI * y / (1 << zoom);
-    return qRadiansToDegrees(atan(0.5 * (exp(n) - exp(-n))));
+    m_pending.insert(key);
+    m_rest->getTile(m_model->tileEndpoint(x, y), key);
 }
 
 void MapWidget::showContextMenu(const QPoint &pos)
 {
-    
     QMenu *menu = new QMenu(this);
-    QAction *action_elevation = menu->addAction("Get Elevation");
+    QAction *actionElevation = menu->addAction("Get Elevation");
+    Q_UNUSED(actionElevation)
     
     menu->popup(mapToGlobal(pos));
 }
-

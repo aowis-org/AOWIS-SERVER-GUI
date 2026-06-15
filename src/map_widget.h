@@ -1,27 +1,20 @@
 #ifndef MAP_WIDGET_H
 #define MAP_WIDGET_H
 
-#include <QObject>
-#include <QWidget>
-#include <QPainter>
 #include <QCache>
-#include <QImage>
+#include <QDateTime>
+#include <QKeyEvent>
+#include <QMenu>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QPixmap>
 #include <QPoint>
 #include <QSet>
-
-#include <QWheelEvent>
-#include <QMouseEvent>
-#include <QKeyEvent>
-
 #include <QTimer>
-#include <QDateTime>
+#include <QWheelEvent>
+#include <QWidget>
 
-#include <QMenu>
-#include <QAction>
-
-#include <QDebug>
-
-#include "enums_structs.h"
+#include "map_model.h"
 #include "rest_client.h"
 
 class MapWidget : public QWidget
@@ -30,7 +23,11 @@ class MapWidget : public QWidget
     
 public:
     explicit MapWidget(QWidget *parent = nullptr);
+    explicit MapWidget(MapModel *model, QWidget *parent = nullptr);
     
+    MapModel *model() const;
+    
+public slots:
     void zoomIn();
     void zoomOut();
     void changeMapProvider(MapProvider provider);
@@ -40,47 +37,29 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
-    
     void keyPressEvent(QKeyEvent *event) override;
-    
     void paintEvent(QPaintEvent *event) override;
     
 private:
-    const int TILE_SIZE = 256;
-    int zoom;
-    double center_lat;
-    double center_lon;
-    
-    RESTClient *rest;
-    QSet<QString> pending;
-    
-    QPoint pos_last;
-    QPointF pan_velocity;
-    QTimer *timer_pan_inertia;
-    qint64 time_last_innertia = 0;
-    void initTimer();
-    
-    QCache<QString, QPixmap> cache;
-    //QString cache_key_coords;
-    QString cache_key_provider;
-    
-    MapProvider map_provider = MapProvider::ArcGISSat;
-    
+    void init();
     void initRestConnection();
+    void initTimer();
     
     void drawTiles(QPainter &p);
     void requestTile(const QString &key, int x, int y);
-    void pan(const QPoint &delta);
-    void clampCenter();
-    
-    QPointF latLonUnderCursor(const QPoint &pos) const;
-    
-    double lonToTileX(double lon, int zoom) const;
-    double latToTileY(double lat, int zoom) const;
-    double tileXToLon(double x, int zoom) const;
-    double tileYToLat(double y, int zoom) const;
-    
     void showContextMenu(const QPoint &pos);
+    
+    MapModel *m_model = nullptr;
+    bool m_ownsModel = false;
+    
+    RESTClient *m_rest = nullptr;
+    QCache<QString, QPixmap> m_cache;
+    QSet<QString> m_pending;
+    
+    QPoint m_posLast;
+    QPointF m_panVelocity;
+    QTimer *m_timerPanInertia = nullptr;
+    qint64 m_timeLastInertia = 0;
     
 signals:
     void signalZoomChanged(int zoom);
