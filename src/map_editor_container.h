@@ -17,6 +17,8 @@ class MapEditorContainer : public QWidget
 public:
     explicit MapEditorContainer(MapModel *map_model, QWidget *parent = nullptr);
     
+    MapWidget *getMap();
+    
 private:
     MapModel *map_model;
     MapWidget *map;

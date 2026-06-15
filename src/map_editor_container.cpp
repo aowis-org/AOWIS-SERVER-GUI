@@ -20,5 +20,9 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, QWidget *parent)
     this->layout->addWidget(scroll_controls);
     this->layout->addWidget(this->map);
 }
+MapWidget *MapEditorContainer::getMap()
+{
+    return this->map;
+}
 
 

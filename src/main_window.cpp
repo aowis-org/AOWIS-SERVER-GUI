@@ -5,7 +5,6 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
     map_model( new MapModel(this) ),
-    map( new MapWidget(this) ),
     tabs( new QTabWidget(this) ),
     map_monitor( new MapMonitorContainer(map_model, this) ),
     map_editor( new MapEditorContainer(map_model, this) ),
@@ -22,6 +21,9 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowTitle("AOWIS - Controller");
     showMaximized();
     
+    this->map_mon = this->map_monitor->getMap();
+    this->map_edit = this->map_editor->getMap();
+    
     this->tabs->setContentsMargins(0, 0, 0, 0);
     
     this->setCentralWidget(this->tabs);
@@ -32,10 +34,6 @@ MainWindow::MainWindow(QWidget *parent)
     this->setMinimumHeight(600);
     this->setMinimumWidth(800);
     
-    //this->menu = new MenuBar();
-    //setMenuBar(this->menu);
-    
-    //this->map = this->map_monitor->mapWidget();
     this->tabs->addTab(this->map_editor, "Map Editor");
     this->tabs->addTab(this->map_monitor, "Map Monitor");
     this->tabs->addTab(this->energy, "Energy");
@@ -49,12 +47,10 @@ MainWindow::MainWindow(QWidget *parent)
     this->tabs->addTab(this->customers, "Customers");
     this->tabs->setCurrentIndex(1);
     
-    connect(this->map, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
-    connect(this->map, &MapWidget::signalCoordsChanged, this->footer, &FooterStatusBar::setMapCoordinates);
-    
-    //connect(this->menu, &MenuBar::signalMapZoomIn, this->map, &MapWidget::zoomIn);
-    //connect(this->menu, &MenuBar::signalMapZoomOut, this->map, &MapWidget::zoomOut);
-    //connect(this->menu, &MenuBar::signalMapChange, this->map, &MapWidget::changeMapProvider);
+    connect(this->map_mon, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
+    connect(this->map_mon, &MapWidget::signalCoordsChanged, this->footer, &FooterStatusBar::setMapCoordinates);
+    connect(this->map_edit, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
+    connect(this->map_edit, &MapWidget::signalCoordsChanged, this->footer, &FooterStatusBar::setMapCoordinates);
     
     checkServerMapInit();
 }

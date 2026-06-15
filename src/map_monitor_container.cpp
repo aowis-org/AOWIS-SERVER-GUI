@@ -40,6 +40,10 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, QWidget *parent)
     this->layout->addWidget(scroll_controls);
     this->layout->addWidget(map);
 }
+MapWidget *MapMonitorContainer::getMap()
+{
+    return this->map;
+}
 
 
 

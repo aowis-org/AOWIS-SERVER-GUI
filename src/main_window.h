@@ -47,7 +47,8 @@ private:
     FooterStatusBar *footer;
     
     MapModel *map_model;
-    MapWidget *map;
+    MapWidget *map_mon;
+    MapWidget *map_edit;
     
     QTabWidget *tabs;
     MapMonitorContainer *map_monitor;

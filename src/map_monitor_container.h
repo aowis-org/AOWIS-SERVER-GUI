@@ -55,6 +55,8 @@ class MapMonitorContainer : public QWidget
 public:
     explicit MapMonitorContainer(MapModel *map_model, QWidget *parent = nullptr);
     
+    MapWidget *getMap();
+    
 private:
     QHBoxLayout *layout;
     MapModel *map_model;
