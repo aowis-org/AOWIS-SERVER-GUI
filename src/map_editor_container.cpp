@@ -1,11 +1,13 @@
 #include "map_editor_container.h"
 
-MapEditorContainer::MapEditorContainer(MapWidget *map, QWidget *parent)
+MapEditorContainer::MapEditorContainer(MapModel *map_model, QWidget *parent)
     : QWidget{parent},
-    layout( new QHBoxLayout(this) ),
-    map_nav( new MapNavigationWidget(map) )
+    layout( new QHBoxLayout(this) )
 {
-    this->map = map;
+    this->map_model = map_model;
+    this->map = new MapWidget(this->map_model, this);
+    
+    this->map_nav = new MapNavigationWidget(this->map);
     
     QScrollArea *scroll_controls = new QScrollArea(this);
     scroll_controls->setMinimumWidth(180);
@@ -15,8 +17,8 @@ MapEditorContainer::MapEditorContainer(MapWidget *map, QWidget *parent)
     scroll_controls->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     scroll_controls->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
     
-    this->layout->addWidget(this->map_nav);
-    //this->layout->addWidget(this->map);
+    this->layout->addWidget(scroll_controls);
+    this->layout->addWidget(this->map);
 }
 
 

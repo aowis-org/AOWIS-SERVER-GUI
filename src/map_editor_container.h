@@ -7,6 +7,7 @@
 #include <QHBoxLayout>
 #include <QScrollArea>
 
+#include "map_model.h"
 #include "map_widget.h"
 #include "map_navigation_widget.h"
 
@@ -14,9 +15,10 @@ class MapEditorContainer : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapEditorContainer(MapWidget *map, QWidget *parent = nullptr);
+    explicit MapEditorContainer(MapModel *map_model, QWidget *parent = nullptr);
     
 private:
+    MapModel *map_model;
     MapWidget *map;
     QHBoxLayout *layout;
     

@@ -8,7 +8,7 @@ MainWindow::MainWindow(QWidget *parent)
     map( new MapWidget(this) ),
     tabs( new QTabWidget(this) ),
     map_monitor( new MapMonitorContainer(map_model, this) ),
-    map_editor( new MapEditorContainer(map, this) ),
+    map_editor( new MapEditorContainer(map_model, this) ),
     energy( new EnergyWidget(this) ),
     reservoirs( new ReservoirsWidget(this) ),
     tanks( new TanksWidget(this) ),
