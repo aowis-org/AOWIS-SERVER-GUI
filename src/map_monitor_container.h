@@ -19,6 +19,7 @@
 #include <QIcon>
 
 #include "enums_structs.h"
+#include "map_model.h"
 #include "map_widget.h"
 #include "map_navigation_widget.h"
 
@@ -52,10 +53,11 @@ class MapMonitorContainer : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapMonitorContainer(MapWidget *map, QWidget *parent = nullptr);
+    explicit MapMonitorContainer(MapModel *map_model, QWidget *parent = nullptr);
     
 private:
     QHBoxLayout *layout;
+    MapModel *map_model;
     MapWidget *map;
     MapNavigation *controls;
     

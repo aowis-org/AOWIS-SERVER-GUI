@@ -1,10 +1,11 @@
 #include "map_monitor_container.h"
 
-MapMonitorContainer::MapMonitorContainer(MapWidget *map, QWidget *parent)
+MapMonitorContainer::MapMonitorContainer(MapModel *map_model, QWidget *parent)
     : QWidget{parent},
     layout( new QHBoxLayout(this) )
 {
-    this->map = map;
+    this->map_model = map_model;
+    this->map = new MapWidget(this->map_model, this);
     
     this->controls = new MapNavigation(this->map, this);
     

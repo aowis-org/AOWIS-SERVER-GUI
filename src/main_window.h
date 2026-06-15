@@ -19,9 +19,12 @@
 #include "footer_statusbar.h"
 #include "rest_client.h"
 #include "menubar.h"
+
+#include "map_model.h"
 #include "map_widget.h"
 #include "map_monitor_container.h"
 #include "map_editor_container.h"
+
 #include "energy_widget.h"
 #include "reservoirs_widget.h"
 #include "tanks_widget.h"
@@ -43,6 +46,7 @@ private:
     MenuBar *menu;
     FooterStatusBar *footer;
     
+    MapModel *map_model;
     MapWidget *map;
     
     QTabWidget *tabs;
