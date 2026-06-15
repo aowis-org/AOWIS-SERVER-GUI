@@ -5,11 +5,28 @@
 #include <QWidget>
 
 #include <QHBoxLayout>
+#include <QVBoxLayout>
 #include <QScrollArea>
 
 #include "map_model.h"
 #include "map_widget.h"
 #include "map_navigation_widget.h"
+
+class MapMenuWidget : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit MapMenuWidget(MapWidget *map, QWidget *parent = nullptr);
+    
+private:
+    QVBoxLayout *layout;
+    
+    MapWidget *map;
+    MapNavigationWidget *map_nav;
+    
+signals:
+    
+};
 
 class MapEditorContainer : public QWidget
 {
@@ -22,9 +39,9 @@ public:
 private:
     MapModel *map_model;
     MapWidget *map;
-    QHBoxLayout *layout;
+    MapMenuWidget *map_menu;
     
-    MapNavigationWidget *map_nav;
+    QHBoxLayout *layout;
     
 signals:
 };
