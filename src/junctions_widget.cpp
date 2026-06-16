@@ -10,7 +10,7 @@ JunctionsWidget::JunctionsWidget(QWidget *parent)
     this->table->setColumnCount(2);
     this->table->setHorizontalHeaderLabels({"ID", "Elevation"});
     this->table->setAlternatingRowColors(true);
-    this->table->resizeColumnsToContents();
+    this->table->resizeColumnsToContents(); 
     
     this->layout->addWidget(this->table);
 }

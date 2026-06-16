@@ -10,7 +10,7 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, QWidget *parent)
     this->map_menu = new MapMenuWidget(this->map, this);
     
     QScrollArea *scroll_controls = new QScrollArea(this);
-    scroll_controls->setMinimumWidth(180);
+    scroll_controls->setMinimumWidth(160);
     scroll_controls->setMaximumWidth(180);
     scroll_controls->setWidgetResizable(true);
     scroll_controls->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -36,6 +36,9 @@ MapMenuWidget::MapMenuWidget(MapWidget *map, QWidget *parent)
 {
     this->map = map;
     setLayout(this->layout);
+    
+    setMinimumWidth(160);
+    setMaximumWidth(180);
     
     this->map_nav = new MapNavigationWidget(this->map);
     
