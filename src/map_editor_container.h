@@ -9,6 +9,7 @@
 #include <QScrollArea>
 #include <QToolBox>
 #include <QToolButton>
+#include <QLabel>
 
 #include "map_model.h"
 #include "map_widget.h"
@@ -26,8 +27,9 @@ private:
     MapWidget *map;
     MapNavigationWidget *map_nav;
     
-    QToolBox *toolbox_cache;
-    QToolBox *createToolboxCache();
+    QToolBox *toolbox;
+    void createToolboxCache(QToolBox *tbx);
+    void createToolboxEdit(QToolBox *tbx);
     
 signals:
     

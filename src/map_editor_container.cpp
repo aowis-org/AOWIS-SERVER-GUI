@@ -37,34 +37,55 @@ MapWidget *MapEditorContainer::getMap()
 MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, QWidget *parent)
     : QWidget{parent},
     layout( new QVBoxLayout(this) ),
-    map( map )
+    map( map ),
+    map_nav( new MapNavigationWidget(this->map, this) ),
+    toolbox( new QToolBox(this) )
 {
     setMinimumWidth(160);
     setMaximumWidth(180);
     
-    this->map_nav = new MapNavigationWidget(this->map, this);
+    this->toolbox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    
+    createToolboxCache(this->toolbox);
+    createToolboxEdit(this->toolbox);
+    
     this->layout->addWidget(this->map_nav);
-    
-    this->toolbox_cache = createToolboxCache();
-    this->layout->addWidget(this->toolbox_cache);
-    
+    this->layout->addWidget(this->toolbox);
     this->layout->addStretch();
 }
 
-QToolBox *MapEditorMenuWidget::createToolboxCache()
+void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
 {
-    QToolBox *tbx = new QToolBox(this);
     QWidget *wgt = new QWidget(tbx);
     QVBoxLayout *lay = new QVBoxLayout(wgt);
+    
+    QLabel *label_explanation = new QLabel("Draw a rectangle on<br>the map first.<br>Than you can choose<br>one of the following<br>actions:", this);
     
     QToolButton *btn_tiles_delete = new QToolButton(wgt);
     btn_tiles_delete->setText("Delete Tiles");
     btn_tiles_delete->setCheckable(true);
+    btn_tiles_delete->setAutoRaise(true);
     btn_tiles_delete->setToolButtonStyle(Qt::ToolButtonTextOnly);
     
+    QToolButton *btn_tiles_update = new QToolButton(wgt);
+    btn_tiles_update->setText("Update");
+    btn_tiles_update->setCheckable(true);
+    btn_tiles_update->setAutoRaise(true);
+    btn_tiles_update->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    
+    lay->addWidget(label_explanation);
     lay->addWidget(btn_tiles_delete);
+    lay->addWidget(btn_tiles_update);
     
-    tbx->addItem(wgt, "Cache");
-    
-    return tbx;
+    tbx->addItem(wgt, "Tile Cache");
 }
+void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
+{
+    QWidget *wgt = new QWidget(tbx);
+    QVBoxLayout *lay = new QVBoxLayout(wgt);
+    
+    
+    
+    tbx->addItem(wgt, "Edit Network");
+}
+
