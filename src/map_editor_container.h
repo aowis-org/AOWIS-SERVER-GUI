@@ -7,16 +7,18 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QScrollArea>
+#include <QToolBox>
+#include <QToolButton>
 
 #include "map_model.h"
 #include "map_widget.h"
 #include "map_navigation_widget.h"
 
-class MapMenuWidget : public QWidget
+class MapEditorMenuWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapMenuWidget(MapWidget *map, QWidget *parent = nullptr);
+    explicit MapEditorMenuWidget(MapWidget *map, QWidget *parent = nullptr);
     
 private:
     QVBoxLayout *layout;
@@ -24,9 +26,14 @@ private:
     MapWidget *map;
     MapNavigationWidget *map_nav;
     
+    QToolBox *toolbox_cache;
+    QToolBox *createToolboxCache();
+    
 signals:
     
 };
+
+
 
 class MapEditorContainer : public QWidget
 {
@@ -39,7 +46,7 @@ public:
 private:
     MapModel *map_model;
     MapWidget *map;
-    MapMenuWidget *map_menu;
+    MapEditorMenuWidget *map_menu;
     
     QHBoxLayout *layout;
     

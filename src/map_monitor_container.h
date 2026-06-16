@@ -23,18 +23,18 @@
 #include "map_widget.h"
 #include "map_navigation_widget.h"
 
-class MapNavigation : public QWidget
+class MapMonitorMenuWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapNavigation(MapWidget *map, QWidget *parent = nullptr);
+    explicit MapMonitorMenuWidget(MapWidget *map, QWidget *parent = nullptr);
     
 private:
     QVBoxLayout *layout;
     
     MapWidget *map;
     
-    void addGroupMapNavigation();
+    MapNavigationWidget *map_nav;
     void addGroupNodeVisuals();
     void addGroupLinkVisuals();
     
@@ -61,7 +61,7 @@ private:
     QHBoxLayout *layout;
     MapModel *map_model;
     MapWidget *map;
-    MapNavigation *controls;
+    MapMonitorMenuWidget *controls;
     
 signals:
     
