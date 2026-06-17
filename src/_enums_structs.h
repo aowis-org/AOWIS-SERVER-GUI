@@ -1,5 +1,5 @@
-#ifndef ENUMS_STRUCTS_H
-#define ENUMS_STRUCTS_H
+#ifndef _ENUMS_STRUCTS_H
+#define _ENUMS_STRUCTS_H
 
 enum MapProvider
 {
@@ -16,4 +16,4 @@ enum StatusColorCode
     Red
 };
 
-#endif // ENUMS_STRUCTS_H
+#endif // _ENUMS_STRUCTS_H

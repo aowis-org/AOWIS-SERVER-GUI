@@ -7,7 +7,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 
-#include "enums_structs.h"
+#include "_enums_structs.h"
 
 class FooterStatusBar : public QWidget
 {

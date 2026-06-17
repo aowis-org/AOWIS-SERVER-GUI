@@ -12,7 +12,7 @@
 
 #include <QtMath>
 
-#include "enums_structs.h"
+#include "_enums_structs.h"
 
 class MapModel : public QObject
 {

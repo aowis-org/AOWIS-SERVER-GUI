@@ -18,7 +18,7 @@
 
 #include <QIcon>
 
-#include "enums_structs.h"
+#include "_enums_structs.h"
 #include "map_model.h"
 #include "map_widget.h"
 #include "map_navigation_widget.h"

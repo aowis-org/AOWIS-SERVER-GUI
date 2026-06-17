@@ -8,7 +8,7 @@
 #include <QAction>
 #include <QActionGroup>
 
-#include "enums_structs.h"
+#include "_enums_structs.h"
 
 class MenuBar : public QMenuBar
 {
