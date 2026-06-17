@@ -20,6 +20,8 @@
 #include "rest_client.h"
 #include "menubar.h"
 
+#include "tab_settings_widget.h"
+
 #include "map_model.h"
 #include "map_widget.h"
 #include "tab_map_monitor_container.h"
@@ -51,6 +53,7 @@ private:
     MapWidget *map_edit;
     
     QTabWidget *tabs;
+    SettingsWidget *settings;
     MapMonitorContainer *map_monitor;
     MapEditorContainer *map_editor;
     EnergyWidget *energy;

@@ -6,6 +6,7 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
     map_model( new MapModel(this) ),
     tabs( new QTabWidget(this) ),
+    settings( new SettingsWidget(this) ),
     map_monitor( new MapMonitorContainer(map_model, this) ),
     map_editor( new MapEditorContainer(map_model, this) ),
     energy( new EnergyWidget(this) ),
@@ -34,6 +35,7 @@ MainWindow::MainWindow(QWidget *parent)
     this->setMinimumHeight(600);
     this->setMinimumWidth(800);
     
+    this->tabs->addTab(this->settings, "Settings");
     this->tabs->addTab(this->map_editor, "Map Editor");
     this->tabs->addTab(this->map_monitor, "Map Monitor");
     this->tabs->addTab(this->energy, "Energy");
@@ -45,7 +47,8 @@ MainWindow::MainWindow(QWidget *parent)
     this->tabs->addTab(this->pipes, "Pipes");
     this->tabs->addTab(this->customerPoints, "Customer Points");
     this->tabs->addTab(this->customers, "Customers");
-    this->tabs->setCurrentIndex(1);
+    
+    this->tabs->setCurrentIndex(2);
     
     connect(this->map_mon, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
     connect(this->map_mon, &MapWidget::signalCoordsChanged, this->footer, &FooterStatusBar::setMapCoordinates);
