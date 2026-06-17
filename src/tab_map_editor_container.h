@@ -6,6 +6,7 @@
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
+#include <QStackedLayout>
 #include <QScrollArea>
 #include <QToolBox>
 #include <QToolButton>
@@ -34,7 +35,7 @@ private:
     void createToolboxEdit(QToolBox *tbx);
     
 signals:
-    
+    void signalSlideOpacityChanged(int opacity);
 };
 
 
@@ -54,8 +55,11 @@ private:
     MapNetworkCanvasWidget *map_canvas;
     
     QHBoxLayout *layout;
+    QWidget *map_stack;
+    QStackedLayout *map_stack_layout;
     
 signals:
+    
 };
 
 #endif // TAB_MAP_EDITOR_CONTAINER_H

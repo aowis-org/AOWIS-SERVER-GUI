@@ -24,6 +24,7 @@ private:
     MapWidget *map;
     
 signals:
+    void signalSlideOpacityChanged(int opacity);
 };
 
 #endif // MAP_NAVIGATION_WIDGET_H

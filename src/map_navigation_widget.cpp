@@ -32,6 +32,7 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, QWidget *parent)
     
     QLabel *label_slider_map_visibility = new QLabel("Opacity");
     QSlider *slider_map_visibility = new QSlider(Qt::Horizontal);
+    connect(slider_map_visibility, &QSlider::valueChanged, this, &MapNavigationWidget::signalSlideOpacityChanged);
     
     this->grid->addWidget(button_zoom_in, 0, 0);
     this->grid->addWidget(button_zoom_out, 0, 1);

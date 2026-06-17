@@ -6,7 +6,9 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, QWidget *parent)
     map_model( map_model ),
     map( new MapWidget(this->map_model, this) ),
     map_menu( new MapEditorMenuWidget(this->map, this) ),
-    map_canvas( new MapNetworkCanvasWidget(this->map_model, this) )
+    map_canvas( new MapNetworkCanvasWidget(this->map_model, this) ),
+    map_stack( new QWidget(this) ),
+    map_stack_layout( new QStackedLayout(this->map_stack) )
 {
     setContentsMargins(0, 0, 0, 0);
     this->layout->setContentsMargins(0, 0, 0, 0);
@@ -21,8 +23,19 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, QWidget *parent)
     scroll_controls->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
     scroll_controls->setWidget(this->map_menu);
     
+    this->map_stack_layout->setContentsMargins(0, 0, 0, 0);
+    this->map_stack_layout->setSpacing(0);
+    this->map_stack_layout->setStackingMode(QStackedLayout::StackAll);
+    
+    this->map_stack_layout->addWidget(this->map);
+    this->map_stack_layout->addWidget(this->map_canvas);
+    
+    this->map_canvas->raise();
+    
     this->layout->addWidget(scroll_controls);
-    this->layout->addWidget(this->map);
+    this->layout->addWidget(this->map_stack);
+    
+    connect(this->map_menu, &MapEditorMenuWidget::signalSlideOpacityChanged, this->map_canvas, &MapNetworkCanvasWidget::setBackgroundOpacity);
 }
 MapWidget *MapEditorContainer::getMap()
 {
@@ -53,6 +66,8 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, QWidget *parent)
     this->layout->addStretch();
     
     this->toolbox->setCurrentIndex(1);
+    
+    connect(this->map_nav, &MapNavigationWidget::signalSlideOpacityChanged, this, &MapEditorMenuWidget::signalSlideOpacityChanged);
 }
 
 void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
