@@ -9,12 +9,13 @@
 #include <QPalette>
 
 #include "map_model.h"
+#include "map_widget.h"
 
 class MapNetworkCanvasWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapNetworkCanvasWidget(MapModel *map_model, QWidget *parent = nullptr);
+    explicit MapNetworkCanvasWidget(MapModel *map_model, MapWidget *map, QWidget *parent = nullptr);
     
     int backgroundOpacity() const;
     
@@ -25,7 +26,8 @@ protected:
     void paintEvent(QPaintEvent *event) override;
     
 private:
-    MapModel *map_model;
+    MapModel *map_model = nullptr;
+    MapWidget *map = nullptr;
     
     // 0 = transparent, 100 = fully system bakground
     int map_background_opacity = 0;

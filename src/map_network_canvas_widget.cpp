@@ -1,8 +1,9 @@
 #include "map_network_canvas_widget.h"
 
-MapNetworkCanvasWidget::MapNetworkCanvasWidget(MapModel *map_model, QWidget *parent)
+MapNetworkCanvasWidget::MapNetworkCanvasWidget(MapModel *map_model, MapWidget *map, QWidget *parent)
     : QWidget{parent},
-    map_model( map_model )
+    map_model( map_model ),
+    map( map )
 {
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_NoSystemBackground);

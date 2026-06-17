@@ -6,7 +6,7 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, QWidget *parent)
     map_model( map_model ),
     map( new MapWidget(this->map_model, this) ),
     map_menu( new MapEditorMenuWidget(this->map, this) ),
-    map_canvas( new MapNetworkCanvasWidget(this->map_model, this) ),
+    map_canvas( new MapNetworkCanvasWidget(this->map_model, this->map, this) ),
     map_stack( new QWidget(this) ),
     map_stack_layout( new QStackedLayout(this->map_stack) )
 {
