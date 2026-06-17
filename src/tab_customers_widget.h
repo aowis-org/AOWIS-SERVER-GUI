@@ -1,5 +1,5 @@
-#ifndef CUSTOMERS_WIDGET_H
-#define CUSTOMERS_WIDGET_H
+#ifndef TAB_CUSTOMERS_WIDGET_H
+#define TAB_CUSTOMERS_WIDGET_H
 
 #include <QObject>
 #include <QWidget>
@@ -13,4 +13,4 @@ public:
 signals:
 };
 
-#endif // CUSTOMERS_WIDGET_H
+#endif // TAB_CUSTOMERS_WIDGET_H

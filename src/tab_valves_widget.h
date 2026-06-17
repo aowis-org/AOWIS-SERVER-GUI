@@ -1,5 +1,5 @@
-#ifndef VALVES_WIDGET_H
-#define VALVES_WIDGET_H
+#ifndef TAB_VALVES_WIDGET_H
+#define TAB_VALVES_WIDGET_H
 
 #include <QObject>
 #include <QWidget>
@@ -13,4 +13,4 @@ public:
 signals:
 };
 
-#endif // VALVES_WIDGET_H
+#endif // TAB_VALVES_WIDGET_H

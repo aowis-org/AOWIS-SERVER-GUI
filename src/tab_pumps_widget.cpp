@@ -1,4 +1,4 @@
-#include "pumps_widget.h"
+#include "tab_pumps_widget.h"
 
 PumpsWidget::PumpsWidget(QWidget *parent)
     : QWidget{parent}

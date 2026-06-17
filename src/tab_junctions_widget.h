@@ -1,5 +1,5 @@
-#ifndef JUNCTIONS_WIDGET_H
-#define JUNCTIONS_WIDGET_H
+#ifndef TAB_JUNCTIONS_WIDGET_H
+#define TAB_JUNCTIONS_WIDGET_H
 
 #include <QObject>
 #include <QWidget>
@@ -19,4 +19,4 @@ private:
 signals:
 };
 
-#endif // JUNCTIONS_WIDGET_H
+#endif // TAB_JUNCTIONS_WIDGET_H

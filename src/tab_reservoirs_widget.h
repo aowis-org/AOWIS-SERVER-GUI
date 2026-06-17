@@ -1,5 +1,5 @@
-#ifndef RESERVOIRS_WIDGET_H
-#define RESERVOIRS_WIDGET_H
+#ifndef TAB_RESERVOIRS_WIDGET_H
+#define TAB_RESERVOIRS_WIDGET_H
 
 #include <QObject>
 #include <QWidget>
@@ -13,4 +13,4 @@ public:
 signals:
 };
 
-#endif // RESERVOIRS_WIDGET_H
+#endif // TAB_RESERVOIRS_WIDGET_H

@@ -1,5 +1,5 @@
-#ifndef ENERGY_WIDGET_H
-#define ENERGY_WIDGET_H
+#ifndef TAB_ENERGY_WIDGET_H
+#define TAB_ENERGY_WIDGET_H
 
 #include <QObject>
 #include <QWidget>
@@ -13,4 +13,4 @@ public:
 signals:
 };
 
-#endif // ENERGY_WIDGET_H
+#endif // TAB_ENERGY_WIDGET_H

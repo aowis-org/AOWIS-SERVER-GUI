@@ -24,16 +24,16 @@ qt_add_executable(aowis-server-gui
     src/footer_statusbar.h src/footer_statusbar.cpp
     src/enums_structs.h
     src/map_monitor_container.h src/map_monitor_container.cpp
-    src/reservoirs_widget.h src/reservoirs_widget.cpp
-    src/tanks_widget.h src/tanks_widget.cpp
-    src/pumps_widget.h src/pumps_widget.cpp
-    src/junctions_widget.h src/junctions_widget.cpp
-    src/valves_widget.h src/valves_widget.cpp
-    src/customer_points_widget.h src/customer_points_widget.cpp
-    src/pipes_widget.h src/pipes_widget.cpp
+    src/tab_reservoirs_widget.h src/tab_reservoirs_widget.cpp
+    src/tab_tanks_widget.h src/tab_tanks_widget.cpp
+    src/tab_pumps_widget.h src/tab_pumps_widget.cpp
+    src/tab_junctions_widget.h src/tab_junctions_widget.cpp
+    src/tab_valves_widget.h src/tab_valves_widget.cpp
+    src/tab_customer_points_widget.h src/tab_customer_points_widget.cpp
+    src/tab_pipes_widget.h src/tab_pipes_widget.cpp
     src/map_editor_container.h src/map_editor_container.cpp
-    src/customers_widget.h src/customers_widget.cpp
-    src/energy_widget.h src/energy_widget.cpp
+    src/tab_customers_widget.h src/tab_customers_widget.cpp
+    src/tab_energy_widget.h src/tab_energy_widget.cpp
     src/map_navigation_widget.h src/map_navigation_widget.cpp
     src/map_model.h src/map_model.cpp
     src/map_controls.h src/map_controls.cpp

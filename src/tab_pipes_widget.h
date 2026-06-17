@@ -1,5 +1,5 @@
-#ifndef PIPES_WIDGET_H
-#define PIPES_WIDGET_H
+#ifndef TAB_PIPES_WIDGET_H
+#define TAB_PIPES_WIDGET_H
 
 #include <QObject>
 #include <QWidget>
@@ -13,4 +13,4 @@ public:
 signals:
 };
 
-#endif // PIPES_WIDGET_H
+#endif // TAB_PIPES_WIDGET_H

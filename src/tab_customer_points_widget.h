@@ -1,5 +1,5 @@
-#ifndef CUSTOMER_POINTS_WIDGET_H
-#define CUSTOMER_POINTS_WIDGET_H
+#ifndef TAB_CUSTOMER_POINTS_WIDGET_H
+#define TAB_CUSTOMER_POINTS_WIDGET_H
 
 #include <QObject>
 #include <QWidget>
@@ -13,4 +13,4 @@ public:
 signals:
 };
 
-#endif // CUSTOMER_POINTS_WIDGET_H
+#endif // TAB_CUSTOMER_POINTS_WIDGET_H

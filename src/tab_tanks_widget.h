@@ -1,5 +1,5 @@
-#ifndef TANKS_WIDGET_H
-#define TANKS_WIDGET_H
+#ifndef TAB_TANKS_WIDGET_H
+#define TAB_TANKS_WIDGET_H
 
 #include <QObject>
 #include <QWidget>
@@ -19,4 +19,4 @@ private:
 signals:
 };
 
-#endif // TANKS_WIDGET_H
+#endif // TAB_TANKS_WIDGET_H

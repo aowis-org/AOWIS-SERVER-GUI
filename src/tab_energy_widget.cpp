@@ -1,4 +1,4 @@
-#include "energy_widget.h"
+#include "tab_energy_widget.h"
 
 EnergyWidget::EnergyWidget(QWidget *parent)
     : QWidget{parent}

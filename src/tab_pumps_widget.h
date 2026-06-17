@@ -1,5 +1,5 @@
-#ifndef PUMPS_WIDGET_H
-#define PUMPS_WIDGET_H
+#ifndef TAB_PUMPS_WIDGET_H
+#define TAB_PUMPS_WIDGET_H
 
 #include <QObject>
 #include <QWidget>
@@ -13,4 +13,4 @@ public:
 signals:
 };
 
-#endif // PUMPS_WIDGET_H
+#endif // TAB_PUMPS_WIDGET_H

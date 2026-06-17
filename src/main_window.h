@@ -25,15 +25,15 @@
 #include "map_monitor_container.h"
 #include "map_editor_container.h"
 
-#include "energy_widget.h"
-#include "reservoirs_widget.h"
-#include "tanks_widget.h"
-#include "pumps_widget.h"
-#include "valves_widget.h"
-#include "junctions_widget.h"
-#include "pipes_widget.h"
-#include "customer_points_widget.h"
-#include "customers_widget.h"
+#include "tab_energy_widget.h"
+#include "tab_reservoirs_widget.h"
+#include "tab_tanks_widget.h"
+#include "tab_pumps_widget.h"
+#include "tab_valves_widget.h"
+#include "tab_junctions_widget.h"
+#include "tab_pipes_widget.h"
+#include "tab_customer_points_widget.h"
+#include "tab_customers_widget.h"
 
 class MainWindow : public QMainWindow
 {

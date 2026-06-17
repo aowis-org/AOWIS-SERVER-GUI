@@ -1,4 +1,4 @@
-#include "tanks_widget.h"
+#include "tab_tanks_widget.h"
 
 TanksWidget::TanksWidget(QWidget *parent)
     : QWidget{parent},

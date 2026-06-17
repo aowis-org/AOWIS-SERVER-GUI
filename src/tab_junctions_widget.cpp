@@ -1,4 +1,4 @@
-#include "junctions_widget.h"
+#include "tab_junctions_widget.h"
 
 JunctionsWidget::JunctionsWidget(QWidget *parent)
     : QWidget{parent},

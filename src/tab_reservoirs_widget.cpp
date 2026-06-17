@@ -1,4 +1,4 @@
-#include "reservoirs_widget.h"
+#include "tab_reservoirs_widget.h"
 
 ReservoirsWidget::ReservoirsWidget(QWidget *parent)
     : QWidget{parent}
