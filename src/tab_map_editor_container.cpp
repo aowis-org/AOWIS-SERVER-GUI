@@ -5,7 +5,8 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, QWidget *parent)
     layout( new QHBoxLayout(this) ),
     map_model( map_model ),
     map( new MapWidget(this->map_model, this) ),
-    map_menu( new MapEditorMenuWidget(this->map, this) )
+    map_menu( new MapEditorMenuWidget(this->map, this) ),
+    map_canvas( new MapNetworkCanvasWidget(this->map_model, this) )
 {
     setContentsMargins(0, 0, 0, 0);
     this->layout->setContentsMargins(0, 0, 0, 0);
