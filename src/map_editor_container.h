@@ -9,6 +9,7 @@
 #include <QScrollArea>
 #include <QToolBox>
 #include <QToolButton>
+#include <QRadioButton>
 #include <QLabel>
 
 #include "map_model.h"

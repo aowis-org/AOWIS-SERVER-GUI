@@ -52,6 +52,8 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, QWidget *parent)
     this->layout->addWidget(this->map_nav);
     this->layout->addWidget(this->toolbox);
     this->layout->addStretch();
+    
+    this->toolbox->setCurrentIndex(1);
 }
 
 void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
@@ -59,21 +61,26 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
     QWidget *wgt = new QWidget(tbx);
     QVBoxLayout *lay = new QVBoxLayout(wgt);
     
-    QLabel *label_explanation = new QLabel("Draw a rectangle on<br>the map first.<br>Than you can choose<br>one of the following<br>actions:", this);
+    QLabel *label_explanation_rectangle = new QLabel("<b>Select Area</b> on<br>the map first:", this);
+    
+    QToolButton *btn_select_rectangle = new QToolButton(wgt);
+    btn_select_rectangle->setText("Select Area");
+    
+    QLabel *label_explanation_actions = new QLabel("Than for the area you<br>have selected, you can<br>choose one of the<br>following actions:", this);
     
     QToolButton *btn_tiles_delete = new QToolButton(wgt);
     btn_tiles_delete->setText("Delete Tiles");
     btn_tiles_delete->setCheckable(true);
-    btn_tiles_delete->setAutoRaise(true);
-    btn_tiles_delete->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    btn_tiles_delete->setEnabled(false);
     
     QToolButton *btn_tiles_update = new QToolButton(wgt);
     btn_tiles_update->setText("Update");
     btn_tiles_update->setCheckable(true);
-    btn_tiles_update->setAutoRaise(true);
-    btn_tiles_update->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    btn_tiles_update->setEnabled(false);
     
-    lay->addWidget(label_explanation);
+    lay->addWidget(label_explanation_rectangle);
+    lay->addWidget(btn_select_rectangle);
+    lay->addWidget(label_explanation_actions);
     lay->addWidget(btn_tiles_delete);
     lay->addWidget(btn_tiles_update);
     
@@ -84,7 +91,23 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     QWidget *wgt = new QWidget(tbx);
     QVBoxLayout *lay = new QVBoxLayout(wgt);
     
-    
+    QStringList labels = {
+        "Select", "Delete Selected", "Add Note", "Add Reservoir", "Add Tank", "Add Pump", "Add Valve", "Add Junction", "Add Pipe", "Add Customer Point"
+    };
+    for (int i=0; i < labels.length(); i++)
+    {
+        if (i == 1)
+        {
+            QToolButton *btn = new QToolButton(wgt);
+            btn->setText(labels[i]);
+            lay->addWidget(btn);
+        }
+        else
+        {
+            QRadioButton *btn = new QRadioButton(labels[i], wgt);
+            lay->addWidget(btn);
+        }
+    }
     
     tbx->addItem(wgt, "Edit Network");
 }

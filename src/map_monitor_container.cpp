@@ -63,8 +63,9 @@ MapMonitorMenuWidget::MapMonitorMenuWidget(MapWidget *map, QWidget *parent)
     this->map_nav = new MapNavigationWidget(this->map);
     
     this->layout->addWidget(this->map_nav);
-    addGroupNodeVisuals();
+    
     addGroupLinkVisuals();
+    addGroupNodeVisuals();
     
     this->layout->addStretch();
 }
@@ -88,9 +89,23 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
     QRadioButton *radio_node_leakage = new QRadioButton("Leakage");
     QRadioButton *radio_node_head = new QRadioButton("Head");
     QRadioButton *radio_node_pressure = new QRadioButton("Pressure");
-    QRadioButton *radio_node_chlorine = new QRadioButton("Cl₂");
-    QRadioButton *radio_node_river = new QRadioButton("River");
-    QRadioButton *radio_node_lake = new QRadioButton("Lake");
+    
+    QLabel *label_multispecies = new QLabel(
+        "EPANET Network 3 has<br>"
+        "Multi-Species Water<br>"
+        "Quality Analysis (MSX).<br>"
+        "Modeled variables are:"
+    );
+    
+    QRadioButton *radio_node_chlorine = new QRadioButton("Cl₂ [mg/L]");
+    QRadioButton *radio_node_river = new QRadioButton("River Water [%]");
+    QRadioButton *radio_node_lake = new QRadioButton("Lake Water [%]");
+    
+    QLabel *label_chlorine = new QLabel(
+        "Chlorine decay constant<br>"
+        "depends on the mix of<br>"
+        "Lake and River water."
+    );
     
     vbox->addWidget(radio_node_none);
     vbox->addWidget(radio_node_elevation);
@@ -101,9 +116,14 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
     vbox->addWidget(radio_node_leakage);
     vbox->addWidget(radio_node_head);
     vbox->addWidget(radio_node_pressure);
+    
+    vbox->addWidget(label_multispecies);
+    
     vbox->addWidget(radio_node_chlorine);
     vbox->addWidget(radio_node_river);
     vbox->addWidget(radio_node_lake);
+    
+    vbox->addWidget(label_chlorine);
     
     makeGroupCollapsable(group);
 }
@@ -124,9 +144,9 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     QRadioButton *radio_link_velocity = new QRadioButton("Velocity");
     QRadioButton *radio_link_headloss = new QRadioButton("Head Loss");
     QRadioButton *radio_link_leakage = new QRadioButton("Leakage");
-    QRadioButton *radio_link_chlorine = new QRadioButton("Cl₂");
-    QRadioButton *radio_link_river = new QRadioButton("River");
-    QRadioButton *radio_link_lake = new QRadioButton("Lake");
+    QRadioButton *radio_link_chlorine = new QRadioButton("Cl₂ [mg/L]");
+    QRadioButton *radio_link_river = new QRadioButton("River Water [%]");
+    QRadioButton *radio_link_lake = new QRadioButton("Lake Water [%]");
     
     vbox->addWidget(radio_link_none);
     vbox->addWidget(radio_link_diameter);
