@@ -2,13 +2,11 @@
 
 MapEditorContainer::MapEditorContainer(MapModel *map_model, QWidget *parent)
     : QWidget{parent},
-    layout( new QHBoxLayout(this) )
+    layout( new QHBoxLayout(this) ),
+    map_model( map_model ),
+    map( new MapWidget(this->map_model, this) ),
+    map_menu( new MapEditorMenuWidget(this->map, this) )
 {
-    this->map_model = map_model;
-    this->map = new MapWidget(this->map_model, this);
-    
-    this->map_menu = new MapEditorMenuWidget(this->map, this);
-    
     setContentsMargins(0, 0, 0, 0);
     this->layout->setContentsMargins(0, 0, 0, 0);
     this->layout->setSpacing(0);

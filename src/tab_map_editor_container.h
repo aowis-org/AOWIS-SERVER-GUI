@@ -15,6 +15,7 @@
 #include "map_model.h"
 #include "map_widget.h"
 #include "map_navigation_widget.h"
+#include "map_network_canvas.h"
 
 class MapEditorMenuWidget : public QWidget
 {
@@ -27,6 +28,7 @@ private:
     
     MapWidget *map;
     MapNavigationWidget *map_nav;
+    MapNetworkCanvas *map_canvas;
     
     QToolBox *toolbox;
     void createToolboxCache(QToolBox *tbx);
