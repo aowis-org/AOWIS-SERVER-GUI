@@ -9,6 +9,8 @@ MapNetworkCanvasWidget::MapNetworkCanvasWidget(MapModel *map_model, MapWidget *m
     setAttribute(Qt::WA_NoSystemBackground);
     setMouseTracking(true);
     
+    setFocusPolicy(Qt::StrongFocus);
+    
     
 }
 
@@ -41,7 +43,6 @@ void MapNetworkCanvasWidget::paintEvent(QPaintEvent *)
         
         p.fillRect(rect(), bg);
     }
-    
     
     
     
