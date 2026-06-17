@@ -1,5 +1,5 @@
-#ifndef MAP_EDITOR_CONTAINER_H
-#define MAP_EDITOR_CONTAINER_H
+#ifndef TAB_MAP_EDITOR_CONTAINER_H
+#define TAB_MAP_EDITOR_CONTAINER_H
 
 #include <QObject>
 #include <QWidget>
@@ -56,4 +56,4 @@ private:
 signals:
 };
 
-#endif // MAP_EDITOR_CONTAINER_H
+#endif // TAB_MAP_EDITOR_CONTAINER_H

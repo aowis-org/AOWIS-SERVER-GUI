@@ -1,4 +1,4 @@
-#include "map_editor_container.h"
+#include "tab_map_editor_container.h"
 
 MapEditorContainer::MapEditorContainer(MapModel *map_model, QWidget *parent)
     : QWidget{parent},

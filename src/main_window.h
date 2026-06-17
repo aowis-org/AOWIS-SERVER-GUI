@@ -22,8 +22,8 @@
 
 #include "map_model.h"
 #include "map_widget.h"
-#include "map_monitor_container.h"
-#include "map_editor_container.h"
+#include "tab_map_monitor_container.h"
+#include "tab_map_editor_container.h"
 
 #include "tab_energy_widget.h"
 #include "tab_reservoirs_widget.h"

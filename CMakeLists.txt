@@ -23,7 +23,7 @@ qt_add_executable(aowis-server-gui
     src/map_widget.h src/map_widget.cpp
     src/footer_statusbar.h src/footer_statusbar.cpp
     src/enums_structs.h
-    src/map_monitor_container.h src/map_monitor_container.cpp
+    src/tab_map_monitor_container.h src/tab_map_monitor_container.cpp
     src/tab_reservoirs_widget.h src/tab_reservoirs_widget.cpp
     src/tab_tanks_widget.h src/tab_tanks_widget.cpp
     src/tab_pumps_widget.h src/tab_pumps_widget.cpp
@@ -31,7 +31,7 @@ qt_add_executable(aowis-server-gui
     src/tab_valves_widget.h src/tab_valves_widget.cpp
     src/tab_customer_points_widget.h src/tab_customer_points_widget.cpp
     src/tab_pipes_widget.h src/tab_pipes_widget.cpp
-    src/map_editor_container.h src/map_editor_container.cpp
+    src/tab_map_editor_container.h src/tab_map_editor_container.cpp
     src/tab_customers_widget.h src/tab_customers_widget.cpp
     src/tab_energy_widget.h src/tab_energy_widget.cpp
     src/map_navigation_widget.h src/map_navigation_widget.cpp

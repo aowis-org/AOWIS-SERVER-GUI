@@ -1,5 +1,5 @@
-#ifndef MAP_MONITOR_CONTAINER_H
-#define MAP_MONITOR_CONTAINER_H
+#ifndef TAB_MAP_MONITOR_CONTAINER_H
+#define TAB_MAP_MONITOR_CONTAINER_H
 
 #include <QObject>
 #include <QWidget>
@@ -69,4 +69,4 @@ signals:
 
 
 
-#endif // MAP_MONITOR_CONTAINER_H
+#endif // TAB_MAP_MONITOR_CONTAINER_H
