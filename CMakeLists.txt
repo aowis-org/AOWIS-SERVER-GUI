@@ -39,6 +39,7 @@ qt_add_executable(aowis-server-gui
     src/map_controls.h src/map_controls.cpp
     src/map_network_canvas_widget.h src/map_network_canvas_widget.cpp
     src/tab_settings_widget.h src/tab_settings_widget.cpp
+    src/_sizes.h
     
 )
 

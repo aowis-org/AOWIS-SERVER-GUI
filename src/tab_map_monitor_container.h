@@ -23,6 +23,8 @@
 #include "map_widget.h"
 #include "map_navigation_widget.h"
 
+#include "_sizes.h"
+
 class MapMonitorMenuWidget : public QWidget
 {
     Q_OBJECT

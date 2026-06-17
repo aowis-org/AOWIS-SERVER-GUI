@@ -18,6 +18,8 @@
 #include "map_navigation_widget.h"
 #include "map_network_canvas_widget.h"
 
+#include "_sizes.h"
+
 class MapEditorMenuWidget : public QWidget
 {
     Q_OBJECT

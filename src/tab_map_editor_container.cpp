@@ -15,8 +15,8 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, QWidget *parent)
     this->layout->setSpacing(0);
     
     QScrollArea *scroll_controls = new QScrollArea(this);
-    scroll_controls->setMinimumWidth(160);
-    scroll_controls->setMaximumWidth(180);
+    scroll_controls->setMinimumWidth(Sizes::SidebarLeftWidthBase);
+    scroll_controls->setMaximumWidth(Sizes::SidebarLeftWidthBase);
     scroll_controls->setWidgetResizable(true);
     scroll_controls->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scroll_controls->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
@@ -53,8 +53,8 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, QWidget *parent)
     map_nav( new MapNavigationWidget(this->map, this) ),
     toolbox( new QToolBox(this) )
 {
-    setMinimumWidth(160);
-    setMaximumWidth(180);
+    setMinimumWidth(Sizes::SidebarLeftWidthBase);
+    setMaximumWidth(Sizes::SidebarLeftWidthBase);
     
     this->toolbox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     
@@ -106,7 +106,8 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     QVBoxLayout *lay = new QVBoxLayout(wgt);
     
     QStringList labels = {
-        "Select", "Delete Selected", "Add Note", "Add Reservoir", "Add Tank", "Add Pump", "Add Valve", "Add Junction", "Add Pipe", "Add Customer Point"
+        "Select", "Delete Selected", "Add Note", "Add Reservoir", "Add Tank", "Add Pump",
+        "Add Valve", "Add Junction", "Add Pipe", "Add Customer Point"
     };
     for (int i=0; i < labels.length(); i++)
     {
