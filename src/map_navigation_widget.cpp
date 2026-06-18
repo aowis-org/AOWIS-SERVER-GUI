@@ -46,7 +46,7 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     // setting it to 50 on init
     if (this->mode == CanvasMode::Edit)
     {
-        slider_map_visibility->setValue(70);
+        slider_map_visibility->setValue(60);
         QTimer::singleShot(0, this, [this, slider_map_visibility]()
         {
             emit signalSlideOpacityChanged(slider_map_visibility->value());

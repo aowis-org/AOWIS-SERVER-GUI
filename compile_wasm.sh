@@ -11,6 +11,10 @@ docker run --rm \
     /bin/bash /project/tools/qt-emscripten/build_wasm_inside_container.sh
 
 ln -sf aowis-server-gui.html build-wasm/index.html
+
+HTML_FILE="build-wasm/aowis-server-gui.html"
+sed -i 's|<title>.*</title>|<title>AOWIS Controller</title>|' "$HTML_FILE"
+
 cp assets/img/favicon.ico build-wasm/.
 
 echo "=== Creating cleaned up, ready for distribution directory build-wasm-dist ==="
