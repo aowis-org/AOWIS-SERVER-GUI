@@ -5,8 +5,8 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, QWidget *parent)
     layout( new QHBoxLayout(this) ),
     map_model( map_model ),
     map( new MapWidget(this->map_model, this) ),
-    map_menu( new MapEditorMenuWidget(this->map, this) ),
-    map_canvas( new MapNetworkCanvasWidget(this->map_model, this->map, this) ),
+    map_canvas( new MapNetworkCanvasWidget(this->map_model, this->map, CanvasMode::Edit, this) ),
+    map_menu( new MapEditorMenuWidget(this->map, this->map_canvas, CanvasMode::Edit, this) ),
     map_stack( new QWidget(this) ),
     map_stack_layout( new QStackedLayout(this->map_stack) )
 {
@@ -46,11 +46,13 @@ MapWidget *MapEditorContainer::getMap()
 
 
 
-MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, QWidget *parent)
+MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapNetworkCanvasWidget *map_canvas, CanvasMode mode, QWidget *parent)
     : QWidget{parent},
     layout( new QVBoxLayout(this) ),
+    mode( mode ),
     map( map ),
-    map_nav( new MapNavigationWidget(this->map, this) ),
+    map_nav( new MapNavigationWidget(this->map, this->mode, this) ),
+    map_canvas( map_canvas ),
     toolbox( new QToolBox(this) )
 {
     setMinimumWidth(Sizes::SidebarLeftWidthBase);
@@ -79,6 +81,12 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
     
     QToolButton *btn_select_rectangle = new QToolButton(wgt);
     btn_select_rectangle->setText("Select Area");
+    btn_select_rectangle->setCheckable(true);
+    btn_select_rectangle->setAutoRaise(false);
+    connect(btn_select_rectangle, &QToolButton::clicked, this, [this, btn_select_rectangle]
+    {
+        this->map_canvas->startRectangleSelection();
+    });
     
     QLabel *label_explanation_actions = new QLabel("Than for the area you<br>have selected, you can<br>choose one of the<br>following actions:", this);
     
@@ -88,9 +96,22 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
     btn_tiles_delete->setEnabled(false);
     
     QToolButton *btn_tiles_update = new QToolButton(wgt);
-    btn_tiles_update->setText("Update");
+    btn_tiles_update->setText("Update Tiles");
     btn_tiles_update->setCheckable(true);
     btn_tiles_update->setEnabled(false);
+    
+    connect(this->map_canvas, &MapNetworkCanvasWidget::rectangleSelectionCanceled, this, [this, btn_select_rectangle, btn_tiles_delete, btn_tiles_update]
+    {
+        btn_select_rectangle->setChecked(false);
+        btn_tiles_delete->setEnabled(false);
+        btn_tiles_update->setEnabled(false);
+    });
+    connect(this->map_canvas, &MapNetworkCanvasWidget::rectangleSelected, this, [this, btn_select_rectangle, btn_tiles_delete, btn_tiles_update]
+    {
+        btn_select_rectangle->setChecked(false);
+        btn_tiles_delete->setEnabled(true);
+        btn_tiles_update->setEnabled(true);
+    });
     
     lay->addWidget(label_explanation_rectangle);
     lay->addWidget(btn_select_rectangle);

@@ -9,15 +9,18 @@
 #include <QPalette>
 
 #include <QKeyEvent>
+#include <QRect>
 
 #include "map_model.h"
 #include "map_widget.h"
+
+#include "_enums_structs.h"
 
 class MapNetworkCanvasWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapNetworkCanvasWidget(MapModel *map_model, MapWidget *map, QWidget *parent = nullptr);
+    explicit MapNetworkCanvasWidget(MapModel *map_model, MapWidget *map, CanvasMode mode, QWidget *parent = nullptr);
     
     int backgroundOpacity() const;
     
@@ -34,13 +37,20 @@ signals:
 protected:
     void paintEvent(QPaintEvent *event) override;
     
+    void keyPressEvent(QKeyEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    
 private:
+    CanvasMode mode;
     MapModel *map_model = nullptr;
     MapWidget *map = nullptr;
     
     // 0 = transparent, 100 = fully system bakground
     int map_background_opacity = 0;
     
+    // rectangle selection variables and function
     bool rectangle_selection_active = false;
     bool rectangle_dragging = false;
     
@@ -48,6 +58,7 @@ private:
     QPoint rectangle_current_pos;
     
     QRect currentSelectionRect() const;
+    void paintEventRectangle(QPainter &paint);
     
 signals:
 };

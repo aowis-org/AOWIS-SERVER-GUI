@@ -49,15 +49,13 @@ MapWidget *MapMonitorContainer::getMap()
 
 MapMonitorMenuWidget::MapMonitorMenuWidget(MapWidget *map, QWidget *parent)
     : QWidget{parent},
-    layout( new QVBoxLayout(this) )
+    layout( new QVBoxLayout(this) ),
+    map( map ),
+    map_nav( new MapNavigationWidget(this->map, CanvasMode::Monitor) )
 {
-    this->map = map;
-    
     setContentsMargins(0, 0, 0, 0);
     setMinimumWidth(Sizes::SidebarLeftWidthBase);
     setMaximumWidth(Sizes::SidebarLeftWidthBase);
-    
-    this->map_nav = new MapNavigationWidget(this->map);
     
     this->layout->addWidget(this->map_nav);
     

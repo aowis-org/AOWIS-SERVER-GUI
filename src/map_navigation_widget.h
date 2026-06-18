@@ -11,15 +11,19 @@
 #include <QLabel>
 #include <QIcon>
 
+#include <QTimer>
+
 #include "map_widget.h"
+#include "_enums_structs.h"
 
 class MapNavigationWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapNavigationWidget(MapWidget *map, QWidget *parent = nullptr);
+    explicit MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidget *parent = nullptr);
     
 private:
+    CanvasMode mode;
     QGridLayout *grid;
     MapWidget *map;
     

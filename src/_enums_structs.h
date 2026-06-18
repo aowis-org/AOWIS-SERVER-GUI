@@ -16,4 +16,10 @@ enum StatusColorCode
     Red
 };
 
+enum CanvasMode
+{
+    Edit,
+    Monitor
+};
+
 #endif // _ENUMS_STRUCTS_H

@@ -1,11 +1,11 @@
 #include "map_navigation_widget.h"
 
-MapNavigationWidget::MapNavigationWidget(MapWidget *map, QWidget *parent)
+MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidget *parent)
     : QWidget{parent},
-    grid( new QGridLayout(this) )
+    grid( new QGridLayout(this) ),
+    map( map ),
+    mode( mode )
 {
-    this->map = map;
-    
     QPushButton *button_zoom_in = new QPushButton();
     button_zoom_in->setIcon(QIcon(":/icons/zoom-in.svg"));
     button_zoom_in->setIconSize(QSize(30, 30));
@@ -42,4 +42,14 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, QWidget *parent)
     this->grid->addWidget(map_openstreetmap, 3, 0, 1, 2);
     this->grid->addWidget(label_slider_map_visibility, 4, 0, 1, 2);
     this->grid->addWidget(slider_map_visibility, 5, 0, 1, 2);
+    
+    // setting it to 50 on init
+    if (this->mode == CanvasMode::Edit)
+    {
+        slider_map_visibility->setValue(70);
+        QTimer::singleShot(0, this, [this, slider_map_visibility]()
+        {
+            emit signalSlideOpacityChanged(slider_map_visibility->value());
+        });
+    }
 }
