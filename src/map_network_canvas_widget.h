@@ -41,11 +41,14 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
     
 private:
     CanvasMode mode;
     MapModel *map_model = nullptr;
     MapWidget *map = nullptr;
+    
+    int wheel_accumulated = 0;
     
     // 0 = transparent, 100 = fully system bakground
     int map_background_opacity = 0;

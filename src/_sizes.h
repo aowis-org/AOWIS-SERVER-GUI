@@ -3,6 +3,7 @@
 
 namespace Sizes
 {
+// Q_OS_WASM
 #ifdef __EMSCRIPTEN__
     inline constexpr int SidebarLeftWidthBase = 240;
 #else

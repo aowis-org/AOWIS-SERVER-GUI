@@ -141,6 +141,11 @@ void MapNetworkCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
     
     QWidget::mouseReleaseEvent(event);
 }
+void MapNetworkCanvasWidget::wheelEvent(QWheelEvent *event)
+{
+    
+    QWidget::wheelEvent(event);
+}
 
 void MapNetworkCanvasWidget::startRectangleSelection()
 {
