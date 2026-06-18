@@ -5,8 +5,9 @@ FooterStatusBar::FooterStatusBar(QWidget *parent)
     label_map_zoom( new QLabel ),
     label_map_coords_x( new QLabel ),
     label_map_coords_y( new QLabel ),
-    label_indicator_map_text( new QLabel ),
-    label_indicator_map_status(new QLabel )
+    label_indicator_map( new QLabel ),
+    label_indicator_map_status(new QLabel ),
+    label_indicator_server( new QLabel )
 {
     this->bar = new QStatusBar(this);
     
@@ -16,10 +17,12 @@ FooterStatusBar::FooterStatusBar(QWidget *parent)
     this->bar->addWidget(this->label_map_zoom);
     this->bar->addWidget(this->label_map_coords_x);
     this->bar->addWidget(this->label_map_coords_y);
-    this->bar->addPermanentWidget(this->label_indicator_map_text);
+    this->bar->addPermanentWidget(this->label_indicator_map);
+    this->bar->addPermanentWidget(this->label_indicator_server);
     //this->bar->addPermanentWidget(this->label_indicator_map_status);
     
-    this->label_indicator_map_text->setText("Map Server");
+    this->label_indicator_map->setText("AOWIS Map Server");
+    this->label_indicator_server->setText("AOWIS Server");
     //this->label_indicator_map_status->setFixedSize(12, 12);
     //this->label_indicator_map_status->setStyleSheet("background-color: green; border-radius: 6px;");
 }
@@ -45,6 +48,6 @@ void FooterStatusBar::statusUpdateServerMap(StatusColorCode code)
         case StatusColorCode::Red:    style = "color: red;";    break;
     }
     
-    this->label_indicator_map_text->setStyleSheet(style);
+    this->label_indicator_map->setStyleSheet(style);
 }
 
