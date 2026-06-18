@@ -51,9 +51,9 @@ MainWindow::MainWindow(QWidget *parent)
     this->tabs->setCurrentIndex(2);
     
     connect(this->map_mon, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
-    connect(this->map_mon, &MapWidget::signalCoordsChanged, this->footer, &FooterStatusBar::setMapCoordinates);
+    connect(this->map_mon, &MapWidget::signalCoordsChanged, this->footer, &FooterStatusBar::setMapCoordinatesWGS84);
     connect(this->map_edit, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
-    connect(this->map_edit, &MapWidget::signalCoordsChanged, this->footer, &FooterStatusBar::setMapCoordinates);
+    connect(this->map_edit, &MapWidget::signalCoordsChanged, this->footer, &FooterStatusBar::setMapCoordinatesWGS84);
     
     checkServerMapInit();
 }

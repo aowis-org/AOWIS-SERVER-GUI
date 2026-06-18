@@ -15,7 +15,8 @@ public:
     FooterStatusBar(QWidget *parent = nullptr);
     
     void setMapZoom(int zoom);
-    void setMapCoordinates(double x, double y);
+    void setMapCoordinatesWGS84(double lon, double lat);
+    void setMapCoordinatesCRS(double lon, double lat);
     
     QStatusBar* statusBar() const { return bar; };
     
@@ -27,8 +28,11 @@ private:
     QHBoxLayout *layout;
     
     QLabel *label_map_zoom;
-    QLabel *label_map_coords_x;
-    QLabel *label_map_coords_y;
+    QLabel *label_map_coords_lat;
+    QLabel *label_map_coords_lon;
+    
+    QLabel *label_map_coords_crs_lat;
+    QLabel *label_map_coords_crs_lon;
     
     QLabel *label_indicator_map;
     QLabel *label_indicator_map_status;
