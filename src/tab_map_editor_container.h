@@ -11,6 +11,7 @@
 #include <QToolBox>
 #include <QToolButton>
 #include <QRadioButton>
+#include <QSpinBox>
 #include <QLabel>
 
 #include "map_model.h"
@@ -36,6 +37,9 @@ private:
     MapWidget *map;
     MapNavigationWidget *map_nav;
     MapNetworkCanvasWidget *map_canvas;
+    
+    QSpinBox *spin_zoom_from;
+    QSpinBox *spin_zoom_to;
     
     QToolBox *toolbox;
     void createToolboxCache(QToolBox *tbx);
