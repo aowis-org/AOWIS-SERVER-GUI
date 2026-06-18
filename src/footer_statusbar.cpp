@@ -43,8 +43,13 @@ void FooterStatusBar::setMapZoom(int zoom)
 }
 void FooterStatusBar::setMapCoordinatesWGS84(double lon, double lat)
 {
-    this->label_map_coords_lat->setText("WGS84 (GPS) Lat: " + QString::number(lat));
-    this->label_map_coords_lon->setText("Lon: " + QString::number(lon));
+    this->label_map_coords_lat->setText(
+        "WGS84 (GPS) Lat: " + QString::number(lat, 'f', 6)
+        );
+    
+    this->label_map_coords_lon->setText(
+        "Lon: " + QString::number(lon, 'f', 6)
+        );
 }
 void FooterStatusBar::setMapCoordinatesCRS(double lon, double lat)
 {
