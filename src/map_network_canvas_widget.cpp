@@ -76,7 +76,19 @@ void MapNetworkCanvasWidget::keyPressEvent(QKeyEvent *event)
         return;
     }
     
-    QWidget::keyPressEvent(event);
+    if (event->key() == Qt::Key_Left)
+        this->map->addPanVelocity(1, 0);
+    else if (event->key() == Qt::Key_Right)
+        this->map->addPanVelocity(-1, 0);
+    else if (event->key() == Qt::Key_Up)
+        this->map->addPanVelocity(0, 1);
+    else if (event->key() == Qt::Key_Down)
+        this->map->addPanVelocity(0, -1);
+    else
+        QWidget::keyPressEvent(event);
+    
+    event->accept();
+    return;
 }
 void MapNetworkCanvasWidget::mousePressEvent(QMouseEvent *event)
 {

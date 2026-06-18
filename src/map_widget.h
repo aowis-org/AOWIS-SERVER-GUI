@@ -27,6 +27,8 @@ public:
     
     MapModel *model() const;
     
+    void addPanVelocity(int x, int y);
+    
 public slots:
     void zoomIn();
     void zoomOut();

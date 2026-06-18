@@ -125,33 +125,49 @@ void MapWidget::initTimer()
 
 void MapWidget::keyPressEvent(QKeyEvent *ev)
 {
-    const int step = 20;
+    //const int step = 20;
     
     switch (ev->key())
     {
     case Qt::Key_Left:
-        m_panVelocity += QPointF(step, 0);
+        //m_panVelocity += QPointF(step, 0);
+        addPanVelocity(1, 0);
         break;
     case Qt::Key_Right:
-        m_panVelocity += QPointF(-step, 0);
+        //m_panVelocity += QPointF(-step, 0);
+        addPanVelocity(-1, 0);
         break;
     case Qt::Key_Up:
-        m_panVelocity += QPointF(0, step);
+        //m_panVelocity += QPointF(0, step);
+        addPanVelocity(0, 1);
         break;
     case Qt::Key_Down:
-        m_panVelocity += QPointF(0, -step);
+        //m_panVelocity += QPointF(0, -step);
+        addPanVelocity(0, -1);
         break;
     default:
         QWidget::keyPressEvent(ev);
         return;
     }
+}
+void MapWidget::addPanVelocity(int x, int y)
+{
+    const int step = 20;
+    
+    if (x >= 1)
+        m_panVelocity += QPointF(step, 0);
+    else if (x <= -1)
+        m_panVelocity += QPointF(-step, 0);
+    else if (y >= 1)
+        m_panVelocity += QPointF(0, step);
+    else if (y <= -1)
+        m_panVelocity += QPointF(0, -step);
     
     m_timeLastInertia = QDateTime::currentMSecsSinceEpoch();
     
     if (!m_timerPanInertia->isActive())
         m_timerPanInertia->start();
 }
-
 void MapWidget::wheelEvent(QWheelEvent *ev)
 {
     static int accumulated = 0;
