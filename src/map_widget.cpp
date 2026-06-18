@@ -214,7 +214,7 @@ void MapWidget::mouseReleaseEvent(QMouseEvent *ev)
 
 void MapWidget::mouseMoveEvent(QMouseEvent *ev)
 {
-    const QPointF ll = m_model->latLonAt(ev->pos(), size());
+    const QPointF ll = m_model->lonLatAtScreenPos(ev->pos(), size());
     emit signalCoordsChanged(ll.x(), ll.y());
     
     if (ev->buttons() & Qt::LeftButton)

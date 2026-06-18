@@ -39,7 +39,8 @@ public:
     int tileCount() const;
     
     QPointF centerTile() const;
-    QPointF latLonAt(const QPoint &pos, const QSize &viewport) const;
+    QPointF lonLatAtScreenPos(const QPoint &pos, const QSize &viewport) const;
+    QPointF screenPosFromLonLat(double lon, double lat, const QSize &viewport) const;
     
     void setCenter(double lon, double lat, const QSize &viewport = QSize());
     void setZoom(int zoom, const QSize &viewport = QSize());

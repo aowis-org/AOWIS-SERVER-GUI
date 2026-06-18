@@ -210,7 +210,7 @@ void MapModel::setProvider(MapProvider provider)
     emit providerChanged(m_provider);
 }
 
-QPointF MapModel::latLonAt(const QPoint &pos, const QSize &viewport) const
+QPointF MapModel::lonLatAtScreenPos(const QPoint &pos, const QSize &viewport) const
 {
     const double cx = GeoWebMercator::lonToTileX(m_centerLon, m_zoom);
     const double cy = GeoWebMercator::latToTileY(m_centerLat, m_zoom);
@@ -226,5 +226,20 @@ QPointF MapModel::latLonAt(const QPoint &pos, const QSize &viewport) const
     
     return QPointF(lon, lat);
 }
-
+QPointF MapModel::screenPosFromLonLat(double lon, double lat, const QSize &viewport) const
+{
+    const double centerTileX = GeoWebMercator::lonToTileX(m_centerLon, m_zoom);
+    const double centerTileY = GeoWebMercator::latToTileY(m_centerLat, m_zoom);
+    
+    const double tileX = GeoWebMercator::lonToTileX(lon, m_zoom);
+    const double tileY = GeoWebMercator::latToTileY(lat, m_zoom);
+    
+    const double dx = (tileX - centerTileX) * TileSize;
+    const double dy = (tileY - centerTileY) * TileSize;
+    
+    return QPointF(
+        double(viewport.width()) / 2.0 + dx,
+        double(viewport.height()) / 2.0 + dy
+        );
+}
 
