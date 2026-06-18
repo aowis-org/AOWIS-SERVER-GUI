@@ -123,26 +123,36 @@ void MapWidget::initTimer()
     });
 }
 
-void MapWidget::keyPressEvent(QKeyEvent *ev)
+void MapWidget::keyPressEvent(QKeyEvent *event)
 {
-    switch (ev->key())
-    {
-    case Qt::Key_Left:
+    if (event->key() == Qt::Key_Left)
         addPanVelocity(1, 0);
-        break;
-    case Qt::Key_Right:
+    else if (event->key() == Qt::Key_Right)
         addPanVelocity(-1, 0);
-        break;
-    case Qt::Key_Up:
+    else if (event->key() == Qt::Key_Up)
         addPanVelocity(0, 1);
-        break;
-    case Qt::Key_Down:
+    else if (event->key() == Qt::Key_Down)
         addPanVelocity(0, -1);
-        break;
-    default:
-        QWidget::keyPressEvent(ev);
-        return;
-    }
+    
+    else if (event->key() == Qt::Key_U)
+        addPanVelocity(1, 0);
+    else if (event->key() == Qt::Key_A)
+        addPanVelocity(-1, 0);
+    else if (event->key() == Qt::Key_V)
+        addPanVelocity(0, 1);
+    else if (event->key() == Qt::Key_I)
+        addPanVelocity(0, -1);
+    
+    else if (event->key() == Qt::Key_Shift)
+        zoomIn();
+    else if (event->key() == Qt::Key_Space)
+        zoomOut();
+    
+    else
+        QWidget::keyPressEvent(event);
+    
+    event->accept();
+    return;
 }
 void MapWidget::addPanVelocity(int x, int y)
 {

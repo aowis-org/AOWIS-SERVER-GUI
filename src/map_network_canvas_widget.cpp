@@ -84,6 +84,21 @@ void MapNetworkCanvasWidget::keyPressEvent(QKeyEvent *event)
         this->map->addPanVelocity(0, 1);
     else if (event->key() == Qt::Key_Down)
         this->map->addPanVelocity(0, -1);
+    
+    else if (event->key() == Qt::Key_U)
+        this->map->addPanVelocity(1, 0);
+    else if (event->key() == Qt::Key_A)
+        this->map->addPanVelocity(-1, 0);
+    else if (event->key() == Qt::Key_V)
+        this->map->addPanVelocity(0, 1);
+    else if (event->key() == Qt::Key_I)
+        this->map->addPanVelocity(0, -1);
+    
+    else if (event->key() == Qt::Key_Shift)
+        this->map->zoomIn();
+    else if (event->key() == Qt::Key_Space)
+        this->map->zoomOut();
+    
     else
         QWidget::keyPressEvent(event);
     
