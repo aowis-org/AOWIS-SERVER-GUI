@@ -77,7 +77,8 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
     QWidget *wgt = new QWidget(tbx);
     QGridLayout *grid = new QGridLayout(wgt);
     
-    QLabel *label_explanation_rectangle = new QLabel("<b>Select Area</b> on<br>the map first:", this);
+    QLabel *label_explanation_rectangle = new QLabel("<b>Select Area</b> on the map first:", this);
+    label_explanation_rectangle->setWordWrap(true);
     
     QToolButton *btn_select_rectangle = new QToolButton(wgt);
     btn_select_rectangle->setText("Select Area");
@@ -88,7 +89,10 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
         this->map_canvas->startRectangleSelection();
     });
     
-    QLabel *label_explanation_actions = new QLabel("Than for the area you<br>have selected, you can<br>choose one of the<br>following actions:", this);
+    QLabel *label_explanation_spinners = new QLabel("Select the zoom level range (from - to) for the tiles you want to delete/reload:");
+    label_explanation_spinners->setWordWrap(true);
+    QLabel *label_explanation_actions = new QLabel("Than for the area and zoom levels you have selected, you can choose one of the following actions:", this);
+    label_explanation_actions->setWordWrap(true);
     
     this->spin_zoom_from = new QSpinBox();
     this->spin_zoom_from->setRange(1, 19);
@@ -128,13 +132,16 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
     
     grid->addWidget(label_explanation_rectangle, 0, 0, 1, 2);
     grid->addWidget(btn_select_rectangle, 1, 0, 1, 2);
-    grid->addWidget(label_explanation_actions, 2, 0, 1, 2);
+    
+    grid->addWidget(label_explanation_spinners, 2, 0, 1, 2);
     
     grid->addWidget(spin_zoom_from, 3, 0);
     grid->addWidget(spin_zoom_to, 3, 1);
     
-    grid->addWidget(btn_tiles_delete, 4, 0, 1, 2);
-    grid->addWidget(btn_tiles_update, 5, 0, 1, 2);
+    grid->addWidget(label_explanation_actions, 4, 0, 1, 2);
+    
+    grid->addWidget(btn_tiles_delete, 5, 0, 1, 2);
+    grid->addWidget(btn_tiles_update, 6, 0, 1, 2);
     
     tbx->addItem(wgt, "Tile Cache");
 }
