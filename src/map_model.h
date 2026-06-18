@@ -12,6 +12,8 @@
 
 #include <QtMath>
 
+#include "geo_metric_projection.h"
+#include "geo_web_mercator.h"
 #include "_enums_structs.h"
 
 class MapModel : public QObject
@@ -49,11 +51,6 @@ public:
     void clampCenter(const QSize &viewport);
     
     void setProvider(MapProvider provider);
-    
-    double lonToTileX(double lon, int zoom) const;
-    double latToTileY(double lat, int zoom) const;
-    double tileXToLon(double x, int zoom) const;
-    double tileYToLat(double y, int zoom) const;
     
 signals:
     void zoomChanged(int zoom);

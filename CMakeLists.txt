@@ -40,6 +40,8 @@ qt_add_executable(aowis-server-gui
     src/map_network_canvas_widget.h src/map_network_canvas_widget.cpp
     src/tab_settings_widget.h src/tab_settings_widget.cpp
     src/_sizes.h
+    src/geo_web_mercator.h src/geo_web_mercator.cpp
+    src/geo_metric_projection.h src/geo_metric_projection.cpp
     
 )
 
