@@ -33,8 +33,8 @@ void FooterStatusBar::setMapZoom(int zoom)
 }
 void FooterStatusBar::setMapCoordinates(double lon, double lat)
 {
+    this->label_map_coords_x->setText("WGS84 (GPS) Lat: " + QString::number(lat));
     this->label_map_coords_y->setText("Lon: " + QString::number(lon));
-    this->label_map_coords_x->setText("Lat: " + QString::number(lat));
 }
 
 void FooterStatusBar::statusUpdateServerMap(StatusColorCode code)
