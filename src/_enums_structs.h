@@ -22,4 +22,12 @@ enum CanvasMode
     Monitor
 };
 
+struct Wgs84Coordinate
+{
+    double lon = 0.0;
+    double lat = 0.0;
+};
+
+
+
 #endif // _ENUMS_STRUCTS_H

@@ -39,8 +39,8 @@ public:
     int tileCount() const;
     
     QPointF centerTile() const;
-    QPointF lonLatAtScreenPos(const QPoint &pos, const QSize &viewport) const;
-    QPointF screenPosFromLonLat(double lon, double lat, const QSize &viewport) const;
+    Wgs84Coordinate wgs84FromScreen(const QPoint &pos, const QSize &viewport) const;
+    QPointF screenFromWgs84(Wgs84Coordinate wgs, const QSize &viewport) const;
     
     void setCenter(double lon, double lat, const QSize &viewport = QSize());
     void setZoom(int zoom, const QSize &viewport = QSize());
@@ -55,7 +55,7 @@ public:
     
 signals:
     void zoomChanged(int zoom);
-    void centerChanged(double lon, double lat);
+    void centerChanged(Wgs84Coordinate wgs);
     void providerChanged(MapProvider provider);
     
 private:

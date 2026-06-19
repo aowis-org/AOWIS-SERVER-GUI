@@ -51,7 +51,7 @@ void MapWidget::init()
             this, &MapWidget::signalZoomChanged);
     
     connect(m_model, &MapModel::centerChanged,
-            this, &MapWidget::signalCoordsChanged);
+            this, &MapWidget::signalCoordsChangedWgs84);
     
     connect(m_model, &MapModel::providerChanged,
             this, [this](MapProvider) {
@@ -60,7 +60,10 @@ void MapWidget::init()
     
     QTimer::singleShot(100, this, [this] {
         emit signalZoomChanged(m_model->zoom());
-        emit signalCoordsChanged(m_model->centerLon(), m_model->centerLat());
+        Wgs84Coordinate wgs;
+        wgs.lat = m_model->centerLat();
+        wgs.lon = m_model->centerLon();
+        emit signalCoordsChangedWgs84(wgs);
     });
     
     initTimer();
@@ -214,8 +217,8 @@ void MapWidget::mouseReleaseEvent(QMouseEvent *ev)
 
 void MapWidget::mouseMoveEvent(QMouseEvent *ev)
 {
-    const QPointF ll = m_model->lonLatAtScreenPos(ev->pos(), size());
-    emit signalCoordsChanged(ll.x(), ll.y());
+    const Wgs84Coordinate wgs = m_model->wgs84FromScreen(ev->pos(), size());
+    emit signalCoordsChangedWgs84(wgs);
     
     if (ev->buttons() & Qt::LeftButton)
     {

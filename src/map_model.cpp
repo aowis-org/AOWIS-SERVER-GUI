@@ -81,7 +81,10 @@ void MapModel::setCenter(double lon, double lat, const QSize &viewport)
     if (viewport.isValid())
         clampCenter(viewport);
     
-    emit centerChanged(m_centerLon, m_centerLat);
+    Wgs84Coordinate wgs;
+    wgs.lat = m_centerLat;
+    wgs.lon = m_centerLon;
+    emit centerChanged(wgs);
 }
 
 void MapModel::setZoom(int zoomValue, const QSize &viewport)
@@ -97,7 +100,11 @@ void MapModel::setZoom(int zoomValue, const QSize &viewport)
         clampCenter(viewport);
     
     emit zoomChanged(m_zoom);
-    emit centerChanged(m_centerLon, m_centerLat);
+    
+    Wgs84Coordinate wgs;
+    wgs.lon = m_centerLon;
+    wgs.lat = m_centerLat;
+    emit centerChanged(wgs);
 }
 
 void MapModel::zoomIn(const QSize &viewport)
@@ -146,7 +153,11 @@ void MapModel::zoomByAt(int steps, const QPoint &anchorPos, const QSize &viewpor
     clampCenter(viewport);
     
     emit zoomChanged(m_zoom);
-    emit centerChanged(m_centerLon, m_centerLat);
+    
+    Wgs84Coordinate wgs;
+    wgs.lat = m_centerLat;
+    wgs.lon = m_centerLon;
+    emit centerChanged(wgs);
 }
 
 void MapModel::panByPixels(const QPoint &delta, const QSize &viewport)
@@ -163,7 +174,10 @@ void MapModel::panByPixels(const QPoint &delta, const QSize &viewport)
     if (viewport.isValid())
         clampCenter(viewport);
     
-    emit centerChanged(m_centerLon, m_centerLat);
+    Wgs84Coordinate wgs;
+    wgs.lat = m_centerLat;
+    wgs.lon = m_centerLon;
+    emit centerChanged(wgs);
 }
 
 void MapModel::clampCenter(const QSize &viewport)
@@ -210,7 +224,7 @@ void MapModel::setProvider(MapProvider provider)
     emit providerChanged(m_provider);
 }
 
-QPointF MapModel::lonLatAtScreenPos(const QPoint &pos, const QSize &viewport) const
+Wgs84Coordinate MapModel::wgs84FromScreen(const QPoint &pos, const QSize &viewport) const
 {
     const double cx = GeoWebMercator::lonToTileX(m_centerLon, m_zoom);
     const double cy = GeoWebMercator::latToTileY(m_centerLat, m_zoom);
@@ -221,18 +235,19 @@ QPointF MapModel::lonLatAtScreenPos(const QPoint &pos, const QSize &viewport) co
     const double tx = cx + dx / TileSize;
     const double ty = cy + dy / TileSize;
     
-    const double lon = GeoWebMercator::tileXToLon(tx, m_zoom);
-    const double lat = GeoWebMercator::tileYToLat(ty, m_zoom);
+    Wgs84Coordinate wgs;
+    wgs.lon = GeoWebMercator::tileXToLon(tx, m_zoom);
+    wgs.lat = GeoWebMercator::tileYToLat(ty, m_zoom);
     
-    return QPointF(lon, lat);
+    return wgs;
 }
-QPointF MapModel::screenPosFromLonLat(double lon, double lat, const QSize &viewport) const
+QPointF MapModel::screenFromWgs84(Wgs84Coordinate wgs, const QSize &viewport) const
 {
     const double centerTileX = GeoWebMercator::lonToTileX(m_centerLon, m_zoom);
     const double centerTileY = GeoWebMercator::latToTileY(m_centerLat, m_zoom);
     
-    const double tileX = GeoWebMercator::lonToTileX(lon, m_zoom);
-    const double tileY = GeoWebMercator::latToTileY(lat, m_zoom);
+    const double tileX = GeoWebMercator::lonToTileX(wgs.lon, m_zoom);
+    const double tileY = GeoWebMercator::latToTileY(wgs.lat, m_zoom);
     
     const double dx = (tileX - centerTileX) * TileSize;
     const double dy = (tileY - centerTileY) * TileSize;

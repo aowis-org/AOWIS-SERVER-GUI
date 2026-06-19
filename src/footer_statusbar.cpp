@@ -41,15 +41,15 @@ void FooterStatusBar::setMapZoom(int zoom)
 {
     this->label_map_zoom->setText("Zoom: " + QString::number(zoom));
 }
-void FooterStatusBar::setMapCoordinatesWGS84(double lon, double lat)
+void FooterStatusBar::setMapCoordinatesWGS84(Wgs84Coordinate wgs)
 {
     // 5 decimals are about 1.11 m (depending on location)
     this->label_map_coords_lat->setText(
-        "WGS84 Lat: " + QString::number(lat, 'f', 5)
+        "WGS84 Lat: " + QString::number(wgs.lat, 'f', 5)
         );
     
     this->label_map_coords_lon->setText(
-        "Lon: " + QString::number(lon, 'f', 5)
+        "Lon: " + QString::number(wgs.lon, 'f', 5)
         );
 }
 void FooterStatusBar::setMapCoordinatesCRS(double lon, double lat)
