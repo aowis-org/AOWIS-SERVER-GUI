@@ -223,12 +223,12 @@ void MapWidget::mouseMoveEvent(QMouseEvent *ev)
     if (ev->buttons() & Qt::LeftButton)
     {
         const QPoint d = ev->pos() - m_posLast;
-
-#ifdef Q_OS_WASM
-        m_panVelocity = m_panVelocity * 0 + QPointF(d) * 0;
-#else
-        m_panVelocity = m_panVelocity * 0 + QPointF(d) * 0;
-#endif
+        
+        #ifdef Q_OS_WASM
+            m_panVelocity = m_panVelocity * 0 + QPointF(d) * 0;
+        #else
+            m_panVelocity = m_panVelocity * 0 + QPointF(d) * 0;
+        #endif
         
         m_model->panByPixels(d, size());
         update();
