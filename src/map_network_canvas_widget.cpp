@@ -49,7 +49,7 @@ void MapNetworkCanvasWidget::paintEvent(QPaintEvent *)
     
     
     
-    Wgs84Coordinate wgs;
+    CoordinateWGS84 wgs;
     wgs.lat = 11.98161;
     wgs.lon = 18.19329;
     const QPointF p = this->map_model->screenFromWgs84(wgs, size());
@@ -59,10 +59,10 @@ void MapNetworkCanvasWidget::paintEvent(QPaintEvent *)
     
     
     
-    Wgs84Coordinate wgs_a;
+    CoordinateWGS84 wgs_a;
     wgs_a.lat = 11.98300;
     wgs_a.lon = 18.19435;
-    Wgs84Coordinate wgs_b;
+    CoordinateWGS84 wgs_b;
     wgs_b.lat = 11.97945;
     wgs_b.lon = 18.19433;
     const QPointF a = this->map_model->screenFromWgs84(wgs_a, size());

@@ -15,7 +15,7 @@ public:
     FooterStatusBar(QWidget *parent = nullptr);
     
     void setMapZoom(int zoom);
-    void setMapCoordinatesWGS84(Wgs84Coordinate wgs);
+    void setMapCoordinatesWGS84(CoordinateWGS84 wgs);
     void setMapCoordinatesCRS(double lon, double lat);
     
     QStatusBar* statusBar() const { return bar; };

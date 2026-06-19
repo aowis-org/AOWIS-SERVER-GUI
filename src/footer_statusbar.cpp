@@ -41,7 +41,7 @@ void FooterStatusBar::setMapZoom(int zoom)
 {
     this->label_map_zoom->setText("Zoom: " + QString::number(zoom));
 }
-void FooterStatusBar::setMapCoordinatesWGS84(Wgs84Coordinate wgs)
+void FooterStatusBar::setMapCoordinatesWGS84(CoordinateWGS84 wgs)
 {
     // 5 decimals are about 1.11 m (depending on location)
     this->label_map_coords_lat->setText(
@@ -54,7 +54,7 @@ void FooterStatusBar::setMapCoordinatesWGS84(Wgs84Coordinate wgs)
 }
 void FooterStatusBar::setMapCoordinatesCRS(double lon, double lat)
 {
-    this->label_map_coords_crs_lon->setText("UTM 33N Lon: " + QString::number(lat));
+    this->label_map_coords_crs_lon->setText("UTM 34N Lon: " + QString::number(lat));
     this->label_map_coords_crs_lat->setText("Lat: " + QString::number(lon));
 }
 

@@ -81,7 +81,7 @@ void MapModel::setCenter(double lon, double lat, const QSize &viewport)
     if (viewport.isValid())
         clampCenter(viewport);
     
-    Wgs84Coordinate wgs;
+    CoordinateWGS84 wgs;
     wgs.lat = m_centerLat;
     wgs.lon = m_centerLon;
     emit centerChanged(wgs);
@@ -101,7 +101,7 @@ void MapModel::setZoom(int zoomValue, const QSize &viewport)
     
     emit zoomChanged(m_zoom);
     
-    Wgs84Coordinate wgs;
+    CoordinateWGS84 wgs;
     wgs.lon = m_centerLon;
     wgs.lat = m_centerLat;
     emit centerChanged(wgs);
@@ -154,7 +154,7 @@ void MapModel::zoomByAt(int steps, const QPoint &anchorPos, const QSize &viewpor
     
     emit zoomChanged(m_zoom);
     
-    Wgs84Coordinate wgs;
+    CoordinateWGS84 wgs;
     wgs.lat = m_centerLat;
     wgs.lon = m_centerLon;
     emit centerChanged(wgs);
@@ -174,7 +174,7 @@ void MapModel::panByPixels(const QPoint &delta, const QSize &viewport)
     if (viewport.isValid())
         clampCenter(viewport);
     
-    Wgs84Coordinate wgs;
+    CoordinateWGS84 wgs;
     wgs.lat = m_centerLat;
     wgs.lon = m_centerLon;
     emit centerChanged(wgs);
@@ -224,7 +224,7 @@ void MapModel::setProvider(MapProvider provider)
     emit providerChanged(m_provider);
 }
 
-Wgs84Coordinate MapModel::wgs84FromScreen(const QPoint &pos, const QSize &viewport) const
+CoordinateWGS84 MapModel::wgs84FromScreen(const QPoint &pos, const QSize &viewport) const
 {
     const double cx = GeoWebMercator::lonToTileX(m_centerLon, m_zoom);
     const double cy = GeoWebMercator::latToTileY(m_centerLat, m_zoom);
@@ -235,13 +235,13 @@ Wgs84Coordinate MapModel::wgs84FromScreen(const QPoint &pos, const QSize &viewpo
     const double tx = cx + dx / TileSize;
     const double ty = cy + dy / TileSize;
     
-    Wgs84Coordinate wgs;
+    CoordinateWGS84 wgs;
     wgs.lon = GeoWebMercator::tileXToLon(tx, m_zoom);
     wgs.lat = GeoWebMercator::tileYToLat(ty, m_zoom);
     
     return wgs;
 }
-QPointF MapModel::screenFromWgs84(const Wgs84Coordinate &coord, const QSize &viewport) const
+QPointF MapModel::screenFromWgs84(const CoordinateWGS84 &coord, const QSize &viewport) const
 {
     return screenFromWgs84(coord.lon, coord.lat, viewport);
 }

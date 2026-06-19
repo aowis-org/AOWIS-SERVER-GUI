@@ -22,10 +22,19 @@ enum CanvasMode
     Monitor
 };
 
-struct Wgs84Coordinate
+struct CoordinateWGS84
 {
     double lon = 0.0;
     double lat = 0.0;
+};
+
+struct CoordinateUTM
+{
+    double easting = 0.0;
+    double northing = 0.0;
+    
+    int zone = 0;
+    bool northernHemisphere = true;
 };
 
 

@@ -60,7 +60,7 @@ void MapWidget::init()
     
     QTimer::singleShot(100, this, [this] {
         emit signalZoomChanged(m_model->zoom());
-        Wgs84Coordinate wgs;
+        CoordinateWGS84 wgs;
         wgs.lat = m_model->centerLat();
         wgs.lon = m_model->centerLon();
         emit signalCoordsChangedWgs84(wgs);
@@ -217,7 +217,7 @@ void MapWidget::mouseReleaseEvent(QMouseEvent *ev)
 
 void MapWidget::mouseMoveEvent(QMouseEvent *ev)
 {
-    const Wgs84Coordinate wgs = m_model->wgs84FromScreen(ev->pos(), size());
+    const CoordinateWGS84 wgs = m_model->wgs84FromScreen(ev->pos(), size());
     emit signalCoordsChangedWgs84(wgs);
     
     if (ev->buttons() & Qt::LeftButton)
