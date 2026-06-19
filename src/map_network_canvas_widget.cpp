@@ -46,6 +46,29 @@ void MapNetworkCanvasWidget::paintEvent(QPaintEvent *)
     }
     
     paintEventRectangle(paint);
+    
+    
+    
+    Wgs84Coordinate wgs;
+    wgs.lat = 11.98161;
+    wgs.lon = 18.19329;
+    const QPointF p = this->map_model->screenFromWgs84(wgs, size());
+    
+    paint.setBrush(Qt::red);
+    paint.drawEllipse(p, 5.0, 5.0);
+    
+    
+    
+    Wgs84Coordinate wgs_a;
+    wgs_a.lat = 11.98300;
+    wgs_a.lon = 18.19435;
+    Wgs84Coordinate wgs_b;
+    wgs_b.lat = 11.97945;
+    wgs_b.lon = 18.19433;
+    const QPointF a = this->map_model->screenFromWgs84(wgs_a, size());
+    const QPointF b = this->map_model->screenFromWgs84(wgs_b, size());
+    
+    paint.drawLine(a, b);
 }
 void MapNetworkCanvasWidget::paintEventRectangle(QPainter &paint)
 {

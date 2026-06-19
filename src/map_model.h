@@ -40,7 +40,8 @@ public:
     
     QPointF centerTile() const;
     Wgs84Coordinate wgs84FromScreen(const QPoint &pos, const QSize &viewport) const;
-    QPointF screenFromWgs84(Wgs84Coordinate wgs, const QSize &viewport) const;
+    QPointF screenFromWgs84(const Wgs84Coordinate &coord, const QSize &viewport) const;
+    QPointF screenFromWgs84(double lon, double lat, const QSize &viewport) const;
     
     void setCenter(double lon, double lat, const QSize &viewport = QSize());
     void setZoom(int zoom, const QSize &viewport = QSize());

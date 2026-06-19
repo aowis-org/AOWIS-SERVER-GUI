@@ -241,13 +241,17 @@ Wgs84Coordinate MapModel::wgs84FromScreen(const QPoint &pos, const QSize &viewpo
     
     return wgs;
 }
-QPointF MapModel::screenFromWgs84(Wgs84Coordinate wgs, const QSize &viewport) const
+QPointF MapModel::screenFromWgs84(const Wgs84Coordinate &coord, const QSize &viewport) const
+{
+    return screenFromWgs84(coord.lon, coord.lat, viewport);
+}
+QPointF MapModel::screenFromWgs84(double lon, double lat, const QSize &viewport) const
 {
     const double centerTileX = GeoWebMercator::lonToTileX(m_centerLon, m_zoom);
     const double centerTileY = GeoWebMercator::latToTileY(m_centerLat, m_zoom);
     
-    const double tileX = GeoWebMercator::lonToTileX(wgs.lon, m_zoom);
-    const double tileY = GeoWebMercator::latToTileY(wgs.lat, m_zoom);
+    const double tileX = GeoWebMercator::lonToTileX(lon, m_zoom);
+    const double tileY = GeoWebMercator::latToTileY(lat, m_zoom);
     
     const double dx = (tileX - centerTileX) * TileSize;
     const double dy = (tileY - centerTileY) * TileSize;
