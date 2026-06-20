@@ -38,6 +38,14 @@ struct CoordinateUTM
     bool hemisphere_northern = true;
 };
 
+// this is UTM coordinates but relative to a user set project origin in CoordinateUTM
+// this helps to keep the numbers small for EPANET export
+struct CoordinateLocal
+{
+    double x = 0.0; // meters east from project origin
+    double y = 0.0; // meters north from project origin
+};
+
 
 
 #endif // _ENUMS_STRUCTS_H
