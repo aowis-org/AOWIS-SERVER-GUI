@@ -39,11 +39,11 @@ QPointF GeoWebMercator::lonLatToWorldPixel(double lon, double lat, int zoom)
     );
 }
 
-QPointF GeoWebMercator::worldPixelToLonLat(double pixelX, double pixelY, int zoom)
+CoordinateWGS84 GeoWebMercator::worldPixelToLonLat(double pixelX, double pixelY, int zoom)
 {
-    return QPointF(
-        tileXToLon(pixelX / TileSize, zoom),
-        tileYToLat(pixelY / TileSize, zoom)
-    );
+    CoordinateWGS84 wgs;
+    wgs.lat = tileYToLat(pixelY / TileSize, zoom);
+    wgs.lon = tileXToLon(pixelX / TileSize, zoom);
+    return wgs;
 }
 

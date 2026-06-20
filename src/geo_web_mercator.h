@@ -3,6 +3,8 @@
 
 #include <QPointF>
 
+#include "_enums_structs.h"
+
 class GeoWebMercator
 {
 public:
@@ -16,7 +18,7 @@ public:
     static double tileYToLat(double y, int zoom);
     
     static QPointF lonLatToWorldPixel(double lon, double lat, int zoom);
-    static QPointF worldPixelToLonLat(double pixelX, double pixelY, int zoom);
+    static CoordinateWGS84 worldPixelToLonLat(double pixelX, double pixelY, int zoom);
 };
 
 #endif // GEO_WEB_MERCATOR_H

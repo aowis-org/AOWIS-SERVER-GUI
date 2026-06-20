@@ -34,7 +34,7 @@ struct CoordinateUTM
     double northing = 0.0;
     
     int zone = 0;
-    bool northernHemisphere = true;
+    bool hemisphere_northern = true;
 };
 
 
