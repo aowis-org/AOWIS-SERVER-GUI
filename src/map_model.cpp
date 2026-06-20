@@ -49,7 +49,7 @@ QString MapModel::tileCacheKey(int x, int y) const
 QString MapModel::tileEndpoint(int x, int y) const
 {
     // Fallback: only OSM has zoom levels > 17 in the current backend.
-    const QString path = (m_zoom > 17) ? QStringLiteral("openstreetmap") : providerPath();
+    const QString path = (m_zoom > 17) ? QStringLiteral("osmcyclo") : providerPath();
     
     return QString("/%1/%2/%3/%4.png")
         .arg(path)
@@ -68,6 +68,8 @@ QString MapModel::providerPath() const
         return QStringLiteral("opentopomap");
     case MapProvider::OpenStreetMap:
         return QStringLiteral("openstreetmap");
+    case MapProvider::OSMCyclo:
+        return QStringLiteral("osmcyclo");
     }
     
     return QStringLiteral("arcgis");

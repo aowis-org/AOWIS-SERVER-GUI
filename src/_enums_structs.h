@@ -5,7 +5,8 @@ enum MapProvider
 {
     ArcGISSat,
     OpenStreetMap,
-    OpenTopoMap
+    OpenTopoMap,
+    OSMCyclo
 };
 
 enum StatusColorCode

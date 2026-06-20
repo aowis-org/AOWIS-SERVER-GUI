@@ -20,6 +20,7 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     QRadioButton* map_arcgissat = new QRadioButton("ArcGIS SAT");
     QRadioButton* map_opentopomap = new QRadioButton("OpenTopoMap");
     QRadioButton* map_openstreetmap = new QRadioButton("OpenStreetMap");
+    QRadioButton* map_osmcyclo = new QRadioButton("CycloOSM");
     
     map_arcgissat->setChecked(true);
     
@@ -29,6 +30,8 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
             { this->map->changeMapProvider(MapProvider::OpenTopoMap); });
     connect(map_openstreetmap, &QRadioButton::clicked, this, [this]
             { this->map->changeMapProvider(MapProvider::OpenStreetMap); });
+    connect(map_osmcyclo, &QRadioButton::clicked, this, [this]
+            { this->map->changeMapProvider(MapProvider::OSMCyclo); });
     
     QLabel *label_slider_map_visibility = new QLabel("Opacity");
     QSlider *slider_map_visibility = new QSlider(Qt::Horizontal);
@@ -40,8 +43,9 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     this->grid->addWidget(map_arcgissat, 1, 0, 1, 2);
     this->grid->addWidget(map_opentopomap, 2, 0, 1, 2);
     this->grid->addWidget(map_openstreetmap, 3, 0, 1, 2);
-    this->grid->addWidget(label_slider_map_visibility, 4, 0, 1, 2);
-    this->grid->addWidget(slider_map_visibility, 5, 0, 1, 2);
+    this->grid->addWidget(map_osmcyclo, 4, 0, 1, 2);
+    this->grid->addWidget(label_slider_map_visibility, 5, 0, 1, 2);
+    this->grid->addWidget(slider_map_visibility, 6, 0, 1, 2);
     
     // setting it to 50 on init
     if (this->mode == CanvasMode::Edit)
