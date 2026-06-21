@@ -86,7 +86,11 @@ void MapModel::setCenter(double lon, double lat, const QSize &viewport)
     CoordinateWGS84 wgs;
     wgs.lat = m_centerLat;
     wgs.lon = m_centerLon;
-    emit centerChanged(wgs);
+    emit centerChangedWGS84(wgs);
+    
+    GeoMetricProjection projection;
+    const CoordinateUTM utm = projection.wgs84ToUtm(wgs);
+    emit centerChangedUTM(utm);
 }
 
 void MapModel::setZoom(int zoomValue, const QSize &viewport)
@@ -106,7 +110,11 @@ void MapModel::setZoom(int zoomValue, const QSize &viewport)
     CoordinateWGS84 wgs;
     wgs.lon = m_centerLon;
     wgs.lat = m_centerLat;
-    emit centerChanged(wgs);
+    emit centerChangedWGS84(wgs);
+    
+    GeoMetricProjection projection;
+    const CoordinateUTM utm = projection.wgs84ToUtm(wgs);
+    emit centerChangedUTM(utm);
 }
 
 void MapModel::zoomIn(const QSize &viewport)
@@ -159,7 +167,11 @@ void MapModel::zoomByAt(int steps, const QPoint &anchorPos, const QSize &viewpor
     CoordinateWGS84 wgs;
     wgs.lat = m_centerLat;
     wgs.lon = m_centerLon;
-    emit centerChanged(wgs);
+    emit centerChangedWGS84(wgs);
+    
+    GeoMetricProjection projection;
+    const CoordinateUTM utm = projection.wgs84ToUtm(wgs);
+    emit centerChangedUTM(utm);
 }
 
 void MapModel::panByPixels(const QPoint &delta, const QSize &viewport)
@@ -179,7 +191,11 @@ void MapModel::panByPixels(const QPoint &delta, const QSize &viewport)
     CoordinateWGS84 wgs;
     wgs.lat = m_centerLat;
     wgs.lon = m_centerLon;
-    emit centerChanged(wgs);
+    emit centerChangedWGS84(wgs);
+    
+    GeoMetricProjection projection;
+    const CoordinateUTM utm = projection.wgs84ToUtm(wgs);
+    emit centerChangedUTM(utm);
 }
 
 void MapModel::clampCenter(const QSize &viewport)

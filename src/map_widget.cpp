@@ -50,8 +50,10 @@ void MapWidget::init()
     connect(m_model, &MapModel::zoomChanged,
             this, &MapWidget::signalZoomChanged);
     
-    connect(m_model, &MapModel::centerChanged,
+    connect(m_model, &MapModel::centerChangedWGS84,
             this, &MapWidget::signalCoordsChangedWgs84);
+    
+    connect(m_model, &MapModel::centerChangedUTM, this, &MapWidget::signalCoordsChangedUTM);
     
     connect(m_model, &MapModel::providerChanged,
             this, [this](MapProvider) {
@@ -60,10 +62,15 @@ void MapWidget::init()
     
     QTimer::singleShot(100, this, [this] {
         emit signalZoomChanged(m_model->zoom());
+        
         CoordinateWGS84 wgs;
         wgs.lat = m_model->centerLat();
         wgs.lon = m_model->centerLon();
         emit signalCoordsChangedWgs84(wgs);
+        
+        GeoMetricProjection projection;
+        const CoordinateUTM utm = projection.wgs84ToUtm(wgs);
+        emit signalCoordsChangedUTM(utm);
     });
     
     initTimer();

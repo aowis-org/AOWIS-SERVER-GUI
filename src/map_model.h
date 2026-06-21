@@ -56,7 +56,8 @@ public:
     
 signals:
     void zoomChanged(int zoom);
-    void centerChanged(CoordinateWGS84 wgs);
+    void centerChangedWGS84(CoordinateWGS84 wgs);
+    void centerChangedUTM(CoordinateUTM utm);
     void providerChanged(MapProvider provider);
     
 private:
