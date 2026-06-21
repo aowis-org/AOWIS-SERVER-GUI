@@ -47,6 +47,8 @@ protected:
 private:
     void init();
     void initServerMapInterface();
+    void setMapServerMode(MapServerMode mode);
+    
     void initTimer();
     
     void drawTiles(QPainter &p);

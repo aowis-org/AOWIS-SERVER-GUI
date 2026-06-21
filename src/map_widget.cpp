@@ -101,6 +101,14 @@ void MapWidget::tileReceived(const QString &key, QPixmap *pix)
     m_cache.insert(key, pix);
     update();
 }
+void MapWidget::setMapServerMode(MapServerMode mode)
+{
+    if (this->map_server_mode == mode)
+        return;
+    
+    this->map_server_mode = mode;
+    initServerMapInterface();
+}
 
 void MapWidget::initTimer()
 {
