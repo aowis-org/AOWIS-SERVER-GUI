@@ -10,6 +10,15 @@ set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 
+# GeographicLib submodule
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(BUILD_BOTH_LIBS OFF CACHE BOOL "" FORCE)
+set(BUILD_DOCUMENTATION OFF CACHE BOOL "" FORCE)
+set(BUILD_MANPAGES OFF CACHE BOOL "" FORCE)
+set(USE_BOOST OFF CACHE BOOL "" FORCE)
+
+add_subdirectory(external/GeographicLib)
+
 qt_add_executable(aowis-server-gui
     resources.qrc
     src/main.cpp
@@ -45,7 +54,12 @@ qt_add_executable(aowis-server-gui
     
 )
 
-target_link_libraries(aowis-server-gui PRIVATE Qt6::Widgets Qt6::Network)
+target_link_libraries(aowis-server-gui
+    PRIVATE
+    Qt6::Widgets
+    Qt6::Network
+    GeographicLib_STATIC
+)
 
 qt_import_plugins(aowis-server-gui
     INCLUDE_BY_TYPE imageformats
