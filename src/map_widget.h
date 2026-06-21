@@ -66,6 +66,7 @@ private:
 signals:
     void signalZoomChanged(int zoom);
     void signalCoordsChangedWgs84(CoordinateWGS84 wgs);
+    void signalCoordsChangedUTM(CoordinateUTM utm);
 };
 
 #endif // MAP_WIDGET_H

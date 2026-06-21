@@ -220,6 +220,10 @@ void MapWidget::mouseMoveEvent(QMouseEvent *ev)
     const CoordinateWGS84 wgs = m_model->wgs84FromScreen(ev->pos(), size());
     emit signalCoordsChangedWgs84(wgs);
     
+    GeoMetricProjection projection;
+    const CoordinateUTM utm = projection.wgs84ToUtm(wgs);
+    emit signalCoordsChangedUTM(utm);
+    
     if (ev->buttons() & Qt::LeftButton)
     {
         const QPoint d = ev->pos() - m_posLast;

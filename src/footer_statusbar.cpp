@@ -5,8 +5,8 @@ FooterStatusBar::FooterStatusBar(QWidget *parent)
     label_map_zoom( new QLabel ),
     label_map_coords_lon( new QLabel ),
     label_map_coords_lat( new QLabel ),
-    label_map_coords_crs_lon( new QLabel ),
-    label_map_coords_crs_lat( new QLabel ),
+    label_map_coords_utm_easting( new QLabel ),
+    label_map_coords_utm_northing( new QLabel ),
     label_indicator_map( new QLabel ),
     label_indicator_map_status(new QLabel ),
     label_indicator_server( new QLabel )
@@ -18,14 +18,17 @@ FooterStatusBar::FooterStatusBar(QWidget *parent)
     
     this->label_map_zoom->setMinimumWidth(80);
     this->label_map_coords_lat->setMinimumWidth(130);
-    this->label_map_coords_lon->setMinimumWidth(180);
+    this->label_map_coords_lon->setMinimumWidth(112);
     
-    this->label_map_coords_crs_lat->setMinimumWidth(200);
-    this->label_map_coords_crs_lon->setMinimumWidth(100);
+    this->label_map_coords_utm_easting->setMinimumWidth(200);
+    this->label_map_coords_utm_northing->setMinimumWidth(100);
     
     this->bar->addWidget(this->label_map_zoom);
     this->bar->addWidget(this->label_map_coords_lat);
     this->bar->addWidget(this->label_map_coords_lon);
+    
+    this->bar->addWidget(this->label_map_coords_utm_easting);
+    this->bar->addWidget(this->label_map_coords_utm_northing);
     
     this->bar->addPermanentWidget(this->label_indicator_map);
     this->bar->addPermanentWidget(this->label_indicator_server);
@@ -41,7 +44,7 @@ void FooterStatusBar::setMapZoom(int zoom)
 {
     this->label_map_zoom->setText("Zoom: " + QString::number(zoom));
 }
-void FooterStatusBar::setMapCoordinatesWGS84(CoordinateWGS84 wgs)
+void FooterStatusBar::setMapCoordinatesWGS84(const CoordinateWGS84 &wgs)
 {
     // 5 decimals are about 1.11 m (depending on location)
     this->label_map_coords_lat->setText(
@@ -52,10 +55,18 @@ void FooterStatusBar::setMapCoordinatesWGS84(CoordinateWGS84 wgs)
         "Lon: " + QString::number(wgs.lon, 'f', 5)
         );
 }
-void FooterStatusBar::setMapCoordinatesCRS(double lon, double lat)
+void FooterStatusBar::setMapCoordinatesUTM(const CoordinateUTM &utm)
 {
-    this->label_map_coords_crs_lon->setText("UTM 34N Lon: " + QString::number(lat));
-    this->label_map_coords_crs_lat->setText("Lat: " + QString::number(lon));
+    const QString hemisphere = utm.hemisphere_northern ? "N" : "S";
+    
+    this->label_map_coords_utm_easting->setText(
+        "UTM " + QString::number(utm.zone) + hemisphere +
+        " Easting: " + QString::number(utm.easting, 'f', 2) + " m"
+        );
+    
+    this->label_map_coords_utm_northing->setText(
+        "Northing: " + QString::number(utm.northing, 'f', 2) + " m"
+        );
 }
 
 void FooterStatusBar::statusUpdateServerMap(StatusColorCode code)

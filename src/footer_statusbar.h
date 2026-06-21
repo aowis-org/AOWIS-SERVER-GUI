@@ -15,8 +15,8 @@ public:
     FooterStatusBar(QWidget *parent = nullptr);
     
     void setMapZoom(int zoom);
-    void setMapCoordinatesWGS84(CoordinateWGS84 wgs);
-    void setMapCoordinatesCRS(double lon, double lat);
+    void setMapCoordinatesWGS84(const CoordinateWGS84 &wgs);
+    void setMapCoordinatesUTM(const CoordinateUTM &utm);
     
     QStatusBar* statusBar() const { return bar; };
     
@@ -31,8 +31,8 @@ private:
     QLabel *label_map_coords_lat;
     QLabel *label_map_coords_lon;
     
-    QLabel *label_map_coords_crs_lat;
-    QLabel *label_map_coords_crs_lon;
+    QLabel *label_map_coords_utm_easting;
+    QLabel *label_map_coords_utm_northing;
     
     QLabel *label_indicator_map;
     QLabel *label_indicator_map_status;
