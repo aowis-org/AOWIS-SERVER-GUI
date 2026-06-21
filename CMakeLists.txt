@@ -51,6 +51,9 @@ qt_add_executable(aowis-server-gui
     src/_sizes.h
     src/geo_web_mercator.h src/geo_web_mercator.cpp
     src/geo_metric_projection.h src/geo_metric_projection.cpp
+    src/interface_server_map.h 
+    src/interface_server_map_rest.h src/interface_server_map_rest.cpp
+    src/interface_server_map_standalone.h src/interface_server_map_standalone.cpp
     
 )
 

@@ -1,6 +1,12 @@
 #ifndef _ENUMS_STRUCTS_H
 #define _ENUMS_STRUCTS_H
 
+enum MapMode
+{
+    REST,
+    Standalone
+};
+
 enum MapProvider
 {
     ArcGISSat,

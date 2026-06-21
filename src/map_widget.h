@@ -15,7 +15,9 @@
 #include <QWidget>
 
 #include "map_model.h"
-#include "rest_client.h"
+
+#include "interface_server_map_rest.h"
+#include "interface_server_map_standalone.h"
 
 class MapWidget : public QWidget
 {
