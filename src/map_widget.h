@@ -46,19 +46,21 @@ protected:
     
 private:
     void init();
-    void initRestConnection();
+    void initServerMapInterface();
     void initTimer();
     
     void drawTiles(QPainter &p);
-    void requestTile(const QString &key, int x, int y);
     void showContextMenu(const QPoint &pos);
+    
+    MapServerMode map_server_mode = MapServerMode::REST;
+    InterfaceServerMap *interface_map = nullptr;
     
     MapModel *m_model = nullptr;
     bool m_ownsModel = false;
     
-    RESTClient *m_rest = nullptr;
+    void tileReceived(const QString &key, QPixmap *pix);
     QCache<QString, QPixmap> m_cache;
-    QSet<QString> m_pending;
+    //QSet<QString> m_pending;
     
     QPoint m_posLast;
     QPointF m_panVelocity;

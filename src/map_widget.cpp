@@ -33,7 +33,7 @@ MapModel *MapWidget::model() const
 
 void MapWidget::init()
 {
-    initRestConnection();
+    initServerMapInterface();
     
     setContextMenuPolicy(Qt::CustomContextMenu);
     connect(this, &MapWidget::customContextMenuRequested,
@@ -76,29 +76,24 @@ void MapWidget::init()
     initTimer();
 }
 
-void MapWidget::initRestConnection()
+void MapWidget::initServerMapInterface()
 {
-    m_rest = new RESTClient("http://aowis-server-map.localhost:80", this);
+    switch (this->map_server_mode)
+    {
+    case MapServerMode::REST:
+        this->interface_map = new InterfaceServerMapREST();
+        break;
+    case MapServerMode::Standalone:
+        this->interface_map = new InterfaceServerMapStandalone();
+        break;
+    }
     
-    connect(m_rest, &RESTClient::requestFinishedTile,
-            this, [this](const QByteArray &data, const QString &key) {
-                m_pending.remove(key);
-                
-                QPixmap pix;
-                if (!pix.loadFromData(data))
-                {
-                    qDebug() << "Tile decode failed:" << key;
-                    return;
-                }
-                
-                m_cache.insert(key, new QPixmap(pix));
-                update();
-            });
-    
-    connect(m_rest, &RESTClient::requestError,
-            this, [this](const QString &err) {
-                qDebug() << "Tile request failed:" << err;
-            });
+    connect(this->interface_map, &InterfaceServerMap::signalTileReceived, this, &MapWidget::tileReceived);
+}
+void MapWidget::tileReceived(const QString &key, QPixmap *pix)
+{
+    m_cache.insert(key, pix);
+    update();
 }
 
 void MapWidget::initTimer()
@@ -302,7 +297,7 @@ void MapWidget::drawTiles(QPainter &p)
             const QString key = m_model->tileCacheKey(x, y);
             
             if (!m_cache.contains(key))
-                requestTile(key, x, y);
+                this->interface_map->requestTile(m_model->tileEndpoint(x, y), key, x, y);
             
             if (QPixmap *pix = m_cache.object(key))
             {
@@ -312,15 +307,6 @@ void MapWidget::drawTiles(QPainter &p)
             }
         }
     }
-}
-
-void MapWidget::requestTile(const QString &key, int x, int y)
-{
-    if (m_pending.contains(key))
-        return;
-    
-    m_pending.insert(key);
-    m_rest->getTile(m_model->tileEndpoint(x, y), key);
 }
 
 void MapWidget::showContextMenu(const QPoint &pos)
