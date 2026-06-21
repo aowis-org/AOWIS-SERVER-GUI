@@ -20,7 +20,7 @@ FooterStatusBar::FooterStatusBar(QWidget *parent)
     this->label_map_coords_lat->setMinimumWidth(130);
     this->label_map_coords_lon->setMinimumWidth(112);
     
-    this->label_map_coords_utm_easting->setMinimumWidth(180);
+    this->label_map_coords_utm_easting->setMinimumWidth(155);
     this->label_map_coords_utm_northing->setMinimumWidth(100);
     
     this->bar->addWidget(this->label_map_zoom);
