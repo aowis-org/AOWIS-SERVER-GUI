@@ -52,7 +52,11 @@ private:
     void drawTiles(QPainter &p);
     void showContextMenu(const QPoint &pos);
     
-    MapServerMode map_server_mode = MapServerMode::REST;
+    #ifdef AOWIS_STANDALONE
+        MapServerMode map_server_mode = MapServerMode::Standalone;
+    #else
+        MapServerMode map_server_mode = MapServerMode::REST;
+    #endif
     InterfaceServerMap *interface_map = nullptr;
     
     MapModel *m_model = nullptr;
@@ -60,7 +64,6 @@ private:
     
     void tileReceived(const QString &key, QPixmap *pix);
     QCache<QString, QPixmap> m_cache;
-    //QSet<QString> m_pending;
     
     QPoint m_posLast;
     QPointF m_panVelocity;

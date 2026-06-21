@@ -78,13 +78,19 @@ void MapWidget::init()
 
 void MapWidget::initServerMapInterface()
 {
+    if (this->interface_map)
+    {
+        this->interface_map->deleteLater();
+        this->interface_map = nullptr;
+    }
+    
     switch (this->map_server_mode)
     {
     case MapServerMode::REST:
-        this->interface_map = new InterfaceServerMapREST();
+        this->interface_map = new InterfaceServerMapREST(this);
         break;
     case MapServerMode::Standalone:
-        this->interface_map = new InterfaceServerMapStandalone();
+        this->interface_map = new InterfaceServerMapStandalone(this);
         break;
     }
     
