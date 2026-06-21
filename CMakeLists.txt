@@ -17,7 +17,7 @@ set(BUILD_DOCUMENTATION OFF CACHE BOOL "" FORCE)
 set(BUILD_MANPAGES OFF CACHE BOOL "" FORCE)
 set(USE_BOOST OFF CACHE BOOL "" FORCE)
 
-add_subdirectory(external/GeographicLib)
+add_subdirectory(external/GeographicLib EXCLUDE_FROM_ALL)
 
 qt_add_executable(aowis-server-gui
     resources.qrc
