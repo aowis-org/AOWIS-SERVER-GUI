@@ -36,6 +36,16 @@ struct CoordinateUTM
     
     int zone = 0;
     bool hemisphere_northern = true;
+    
+    bool isUPS() const
+    {
+        return zone == 0;
+    }
+    
+    bool isUTM() const
+    {
+        return zone >= 1 && zone <= 60;
+    }
 };
 
 // this is UTM coordinates but relative to a user set project origin in CoordinateUTM

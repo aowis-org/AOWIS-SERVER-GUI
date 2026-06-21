@@ -20,7 +20,7 @@ FooterStatusBar::FooterStatusBar(QWidget *parent)
     this->label_map_coords_lat->setMinimumWidth(130);
     this->label_map_coords_lon->setMinimumWidth(112);
     
-    this->label_map_coords_utm_easting->setMinimumWidth(200);
+    this->label_map_coords_utm_easting->setMinimumWidth(180);
     this->label_map_coords_utm_northing->setMinimumWidth(100);
     
     this->bar->addWidget(this->label_map_zoom);
@@ -59,13 +59,16 @@ void FooterStatusBar::setMapCoordinatesUTM(const CoordinateUTM &utm)
 {
     const QString hemisphere = utm.hemisphere_northern ? "N" : "S";
     
+    const QString crs = utm.isUPS()
+                            ? "UPS " + hemisphere
+                            : "UTM " + QString::number(utm.zone) + hemisphere;
+    
     this->label_map_coords_utm_easting->setText(
-        "UTM " + QString::number(utm.zone) + hemisphere +
-        " Easting: " + QString::number(utm.easting, 'f', 2) + " m"
+        crs + " E: " + QString::number(utm.easting, 'f', 2) + " m"
         );
     
     this->label_map_coords_utm_northing->setText(
-        "Northing: " + QString::number(utm.northing, 'f', 2) + " m"
+        "N: " + QString::number(utm.northing, 'f', 2) + " m"
         );
 }
 
