@@ -35,7 +35,7 @@ qt_add_executable(aowis-server-gui
     src/main_window.cpp
     src/main_window.h
     
-    src/utils/mercator.h src/utils/mercator.cpp
+    
     
     src/rest_client.h src/rest_client.cpp
     src/menubar.h src/menubar.cpp
@@ -64,6 +64,14 @@ qt_add_executable(aowis-server-gui
     src/interface_server_map.h 
     src/interface_server_map_rest.h src/interface_server_map_rest.cpp
 )
+
+if(APPLE)
+    set_target_properties(aowis-server-gui PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_BUNDLE_NAME "AOWIS Controller [Standalone]"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "org.aowis.controller"
+    )
+endif()
 
 if(AOWIS_STANDALONE_BUILD)
     target_sources(aowis-server-gui
