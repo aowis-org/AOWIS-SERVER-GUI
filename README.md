@@ -1,4 +1,5 @@
-# AOWIS-SERVER-GUI
+# AOWIS-SERVER-GUI (*AOWIS Controller*)
+
 EPANET based Controller for Water Networks.
 
 This is the GUI for the AOWIS-SERVER.
