@@ -9,7 +9,16 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS
-    Widgets Network Positioning SerialPort)
+    Widgets
+    Network
+)
+
+if(NOT EMSCRIPTEN)
+    find_package(Qt6 REQUIRED COMPONENTS
+        Positioning
+        SerialPort
+    )
+endif()
 
 # GeographicLib submodule
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
@@ -54,7 +63,6 @@ qt_add_executable(aowis-server-gui
     src/geo_metric_projection.h src/geo_metric_projection.cpp
     src/interface_server_map.h 
     src/interface_server_map_rest.h src/interface_server_map_rest.cpp
-    src/gps_provider.h src/gps_provider.cpp
 )
 
 if(AOWIS_STANDALONE_BUILD)
@@ -63,7 +71,7 @@ if(AOWIS_STANDALONE_BUILD)
             src/interface_server_map_standalone.h
             src/interface_server_map_standalone.cpp
     )
-
+    
     target_compile_definitions(aowis-server-gui
         PRIVATE
             AOWIS_STANDALONE
@@ -72,12 +80,39 @@ endif()
 
 target_link_libraries(aowis-server-gui
     PRIVATE
-    Qt6::Widgets
-    Qt6::Network
-    Qt6::Positioning
-    Qt6::SerialPort
-    GeographicLib_STATIC
+        Qt6::Widgets
+        Qt6::Network
+        GeographicLib_STATIC
 )
+
+if(NOT EMSCRIPTEN)
+    target_link_libraries(aowis-server-gui
+        PRIVATE
+            Qt6::Positioning
+            Qt6::SerialPort
+    )
+    
+    target_sources(aowis-server-gui
+        PRIVATE
+            src/gps_provider.h
+            src/gps_provider.cpp
+    )
+    
+    target_compile_definitions(aowis-server-gui
+        PRIVATE
+            AOWIS_HAS_SERIAL_GPS=1
+    )
+else()
+    target_sources(aowis-server-gui
+        PRIVATE
+            src/gps_provider_dummy.h
+            #src/gps_provider_dummy.cpp
+    )
+    target_compile_definitions(aowis-server-gui
+        PRIVATE
+            AOWIS_HAS_SERIAL_GPS=0
+    )
+endif()
 
 qt_import_plugins(aowis-server-gui
     INCLUDE_BY_TYPE imageformats

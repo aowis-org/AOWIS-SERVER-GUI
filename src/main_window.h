@@ -37,7 +37,11 @@
 #include "tab_customer_points_widget.h"
 #include "tab_customers_widget.h"
 
+#ifdef Q_OS_WASM
+#include "gps_provider_dummy.h"
+#else
 #include "gps_provider.h"
+#endif
 
 class MainWindow : public QMainWindow
 {

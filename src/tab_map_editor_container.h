@@ -18,7 +18,12 @@
 #include "map_widget.h"
 #include "map_navigation_widget.h"
 #include "map_network_canvas_widget.h"
+
+#ifdef Q_OS_WASM
+#include "gps_provider_dummy.h"
+#else
 #include "gps_provider.h"
+#endif
 
 #include "_sizes.h"
 #include "_enums_structs.h"

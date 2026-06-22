@@ -64,11 +64,13 @@ void MapWidget::init()
     
     connect(this->gps, &GpsProvider::positionChanged, this, [this](const QGeoPositionInfo &info)
     {
+        #ifndef Q_OS_WASM
         const auto coord = info.coordinate();
         
         this->gps_coordinate.lat = coord.latitude();
         this->gps_coordinate.lon = coord.longitude();
         this->gps_coordinate.alt = coord.altitude();
+        #endif
     });
     connect(this->gps, &GpsProvider::statusMessage, this, [](const QString &msg)
     {
