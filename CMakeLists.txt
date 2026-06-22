@@ -106,7 +106,6 @@ else()
     target_sources(aowis-server-gui
         PRIVATE
             src/gps_provider_dummy.h
-            #src/gps_provider_dummy.cpp
     )
     target_compile_definitions(aowis-server-gui
         PRIVATE

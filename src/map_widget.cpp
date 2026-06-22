@@ -101,16 +101,15 @@ void MapWidget::initServerMapInterface()
         this->interface_map = nullptr;
     }
     
-    switch (this->map_server_mode)
+    if (this->map_server_mode == MapServerMode::REST)
     {
-    case MapServerMode::REST:
         this->interface_map = new InterfaceServerMapREST(this);
-        break;
-    #ifdef AOWIS_STANDALONE
-    case MapServerMode::Standalone:
+    }
+    else if (this->map_server_mode == MapServerMode::Standalone)
+    {
+        #ifdef AOWIS_STANDALONE
         this->interface_map = new InterfaceServerMapStandalone(this);
-        break;
-    #endif
+        #endif
     }
     
     connect(this->interface_map, &InterfaceServerMap::signalTileReceived, this, &MapWidget::tileReceived);

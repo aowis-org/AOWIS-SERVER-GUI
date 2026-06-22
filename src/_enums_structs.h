@@ -1,6 +1,5 @@
 #ifndef _ENUMS_STRUCTS_H
 #define _ENUMS_STRUCTS_H
-
 enum MapServerMode
 {
     REST,
