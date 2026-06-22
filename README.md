@@ -1,8 +1,8 @@
 # AOWIS-SERVER-GUI (*AOWIS Controller*)
 
-EPANET based Controller for Water Networks.
+[EPANET](https://github.com/OpenWaterAnalytics/EPANET) based Controller for Water Networks.
 
-This is the GUI for the AOWIS-SERVER.
+This is the GUI for the AOWIS-SERVER infrastucture.
 
 This software is written in C++ with Qt and can be compiled for all major platforms, including WebAssembly.
 
