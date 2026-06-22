@@ -19,11 +19,12 @@ MainWindow::MainWindow(QWidget *parent)
     customerPoints( new CustomerPointsWidget(this) ),
     customers( new CustomersWidget(this) )
 {
-    #ifdef AOWIS_STANDALONE_BUILD
-    setWindowTitle("AOWIS Controller Standalone");
+    #ifdef AOWIS_STANDALONE
+    setWindowTitle("AOWIS Controller [Standalone]");
     #else
     setWindowTitle("AOWIS Controller");
     #endif
+    
     showMaximized();
     
     this->map_mon = this->map_monitor->getMap();
