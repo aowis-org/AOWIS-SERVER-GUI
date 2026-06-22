@@ -28,6 +28,9 @@ MainWindow::MainWindow(QWidget *parent)
     
     showMaximized();
     
+    //this->gps->start();
+    this->gps->startGpsd("127.0.0.1");
+    
     this->map_mon = this->map_monitor->getMap();
     this->map_edit = this->map_editor->getMap();
     
