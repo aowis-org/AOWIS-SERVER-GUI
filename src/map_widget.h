@@ -19,6 +19,9 @@
 
 #include "interface_server_map_rest.h"
 
+#include "gps_provider.h"
+#include "_enums_structs.h"
+
 #ifdef AOWIS_STANDALONE
 #include "interface_server_map_standalone.h"
 #endif
@@ -28,8 +31,8 @@ class MapWidget : public QWidget
     Q_OBJECT
     
 public:
-    explicit MapWidget(QWidget *parent = nullptr);
-    explicit MapWidget(MapModel *model, QWidget *parent = nullptr);
+    explicit MapWidget(GpsProvider *gps, QWidget *parent = nullptr);
+    explicit MapWidget(MapModel *model, GpsProvider *gps, QWidget *parent = nullptr);
     
     MapModel *model() const;
     
@@ -49,6 +52,9 @@ protected:
     void paintEvent(QPaintEvent *event) override;
     
 private:
+    GpsProvider *gps = nullptr;
+    CoordinateWGS84 gps_coordinate;
+    
     void init();
     void initServerMapInterface();
     void setMapServerMode(MapServerMode mode);

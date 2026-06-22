@@ -33,6 +33,7 @@ struct CoordinateWGS84
 {
     double lon = 0.0;
     double lat = 0.0;
+    double alt = 0.0;
 };
 
 struct CoordinateUTM

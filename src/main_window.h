@@ -37,6 +37,8 @@
 #include "tab_customer_points_widget.h"
 #include "tab_customers_widget.h"
 
+#include "gps_provider.h"
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -45,6 +47,8 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
     
 private:
+    GpsProvider *gps = nullptr;
+    
     MenuBar *menu;
     FooterStatusBar *footer;
     
@@ -77,4 +81,5 @@ private:
     void checkServerMapInit();
     void checkServerMap();
     bool checking_server_map = false;
+    
 };

@@ -4,11 +4,12 @@
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
+    gps( new GpsProvider(this) ),
     map_model( new MapModel(this) ),
     tabs( new QTabWidget(this) ),
     settings( new SettingsWidget(this) ),
-    map_monitor( new MapMonitorContainer(map_model, this) ),
-    map_editor( new MapEditorContainer(map_model, this) ),
+    map_monitor( new MapMonitorContainer(map_model, gps, this) ),
+    map_editor( new MapEditorContainer(map_model, gps, this) ),
     energy( new EnergyWidget(this) ),
     reservoirs( new ReservoirsWidget(this) ),
     tanks( new TanksWidget(this) ),

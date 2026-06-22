@@ -18,6 +18,7 @@
 #include "map_widget.h"
 #include "map_navigation_widget.h"
 #include "map_network_canvas_widget.h"
+#include "gps_provider.h"
 
 #include "_sizes.h"
 #include "_enums_structs.h"
@@ -55,11 +56,13 @@ class MapEditorContainer : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapEditorContainer(MapModel *map_model, QWidget *parent = nullptr);
+    explicit MapEditorContainer(MapModel *map_model, GpsProvider *gps, QWidget *parent = nullptr);
     
     MapWidget *getMap();
     
 private:
+    GpsProvider *gps;
+    
     MapModel *map_model;
     MapWidget *map;
     MapNetworkCanvasWidget *map_canvas;

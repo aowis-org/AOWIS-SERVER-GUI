@@ -22,6 +22,7 @@
 #include "map_model.h"
 #include "map_widget.h"
 #include "map_navigation_widget.h"
+#include "gps_provider.h"
 
 #include "_sizes.h"
 
@@ -55,7 +56,7 @@ class MapMonitorContainer : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapMonitorContainer(MapModel *map_model, QWidget *parent = nullptr);
+    explicit MapMonitorContainer(MapModel *map_model, GpsProvider *gps, QWidget *parent = nullptr);
     
     MapWidget *getMap();
     
@@ -64,6 +65,8 @@ private:
     MapModel *map_model;
     MapWidget *map;
     MapMonitorMenuWidget *controls;
+    
+    GpsProvider *gps = nullptr;
     
 signals:
     

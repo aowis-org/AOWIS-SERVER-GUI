@@ -2,20 +2,22 @@
 
 #include <cmath>
 
-MapWidget::MapWidget(QWidget *parent)
+MapWidget::MapWidget(GpsProvider *gps, QWidget *parent)
     : QWidget(parent),
     m_model(new MapModel(this)),
     m_ownsModel(true),
-    m_cache(2000)
+    m_cache(2000),
+    gps( gps )
 {
     init();
 }
 
-MapWidget::MapWidget(MapModel *model, QWidget *parent)
+MapWidget::MapWidget(MapModel *model, GpsProvider *gps, QWidget *parent)
     : QWidget(parent),
     m_model(model),
     m_ownsModel(false),
-    m_cache(2000)
+    m_cache(2000),
+    gps( gps )
 {
     if (!m_model)
     {
@@ -59,6 +61,19 @@ void MapWidget::init()
             this, [this](MapProvider) {
                 update();
             });
+    
+    connect(this->gps, &GpsProvider::positionChanged, this, [this](const QGeoPositionInfo &info)
+    {
+        const auto coord = info.coordinate();
+        
+        this->gps_coordinate.lat = coord.latitude();
+        this->gps_coordinate.lon = coord.longitude();
+        this->gps_coordinate.alt = coord.altitude();
+    });
+    connect(this->gps, &GpsProvider::statusMessage, this, [](const QString &msg)
+    {
+        qDebug() << msg;
+    });
     
     QTimer::singleShot(100, this, [this] {
         emit signalZoomChanged(m_model->zoom());
@@ -286,8 +301,13 @@ void MapWidget::changeMapProvider(MapProvider provider)
 
 void MapWidget::paintEvent(QPaintEvent *)
 {
-    QPainter p(this);
-    drawTiles(p);
+    QPainter paint(this);
+    drawTiles(paint);
+    
+    const QPointF gps_point = this->m_model->screenFromWgs84(gps_coordinate, size());
+    
+    paint.setBrush(Qt::red);
+    paint.drawEllipse(gps_point, 5.0, 5.0);
 }
 
 void MapWidget::drawTiles(QPainter &p)
