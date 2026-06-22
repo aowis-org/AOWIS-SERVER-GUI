@@ -30,7 +30,7 @@ void InterfaceServerMapREST::initRestConnection()
             });
 }
 
-void InterfaceServerMapREST::requestTile(const QString &endpoint, const QString &key, int x, int y)
+void InterfaceServerMapREST::requestTile(QString endpoint, const QString &key, int x, int y)
 {
     if (this->rest_pending.contains(key))
         return;

@@ -89,15 +89,24 @@ void MapWidget::initServerMapInterface()
     case MapServerMode::REST:
         this->interface_map = new InterfaceServerMapREST(this);
         break;
+    #ifdef AOWIS_STANDALONE
     case MapServerMode::Standalone:
         this->interface_map = new InterfaceServerMapStandalone(this);
         break;
+    #endif
     }
     
     connect(this->interface_map, &InterfaceServerMap::signalTileReceived, this, &MapWidget::tileReceived);
+    
+    connect(this->interface_map, &InterfaceServerMap::signalTileFailed, this, [this](const QString &key)
+            {
+                m_tilesPending.remove(key);
+                update();
+            });
 }
 void MapWidget::tileReceived(const QString &key, QPixmap *pix)
 {
+    m_tilesPending.remove(key);
     m_cache.insert(key, pix);
     update();
 }
@@ -243,12 +252,12 @@ void MapWidget::mouseMoveEvent(QMouseEvent *ev)
     if (ev->buttons() & Qt::LeftButton)
     {
         const QPoint d = ev->pos() - m_posLast;
-        
-        #ifdef Q_OS_WASM
-            m_panVelocity = m_panVelocity * 0 + QPointF(d) * 0;
-        #else
-            m_panVelocity = m_panVelocity * 0 + QPointF(d) * 0;
-        #endif
+
+#ifdef Q_OS_WASM
+        m_panVelocity = m_panVelocity * 0 + QPointF(d) * 0;
+#else
+        m_panVelocity = m_panVelocity * 0 + QPointF(d) * 0;
+#endif
         
         m_model->panByPixels(d, size());
         update();
@@ -310,10 +319,17 @@ void MapWidget::drawTiles(QPainter &p)
             
             const QString key = m_model->tileCacheKey(x, y);
             
-            if (!m_cache.contains(key))
-                this->interface_map->requestTile(m_model->tileEndpoint(x, y), key, x, y);
+            QPixmap *pix = m_cache.object(key);
             
-            if (QPixmap *pix = m_cache.object(key))
+            if (!pix && !m_tilesPending.contains(key))
+            {
+                m_tilesPending.insert(key);
+                this->interface_map->requestTile(m_model->tileEndpoint(x, y), key, x, y);
+            }
+            
+            pix = m_cache.object(key);
+            
+            if (pix)
             {
                 const int px = int((x - cx) * MapModel::TileSize + w / 2);
                 const int py = int((y - cy) * MapModel::TileSize + h / 2);

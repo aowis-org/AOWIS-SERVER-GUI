@@ -13,11 +13,15 @@
 #include <QTimer>
 #include <QWheelEvent>
 #include <QWidget>
+#include <QSet>
 
 #include "map_model.h"
 
 #include "interface_server_map_rest.h"
+
+#ifdef AOWIS_STANDALONE
 #include "interface_server_map_standalone.h"
+#endif
 
 class MapWidget : public QWidget
 {
@@ -51,14 +55,16 @@ private:
     
     void initTimer();
     
+    QSet<QString> m_tilesPending;
+    
     void drawTiles(QPainter &p);
     void showContextMenu(const QPoint &pos);
-    
-    #ifdef AOWIS_STANDALONE
-        MapServerMode map_server_mode = MapServerMode::Standalone;
-    #else
-        MapServerMode map_server_mode = MapServerMode::REST;
-    #endif
+
+#ifdef AOWIS_STANDALONE
+    MapServerMode map_server_mode = MapServerMode::Standalone;
+#else
+    MapServerMode map_server_mode = MapServerMode::REST;
+#endif
     InterfaceServerMap *interface_map = nullptr;
     
     MapModel *m_model = nullptr;

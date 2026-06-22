@@ -15,7 +15,7 @@ class InterfaceServerMapREST : public InterfaceServerMap
 public:
     explicit InterfaceServerMapREST(QObject *parent = nullptr);
     
-    void requestTile(const QString &endpoint, const QString &key, int x, int y) override;
+    void requestTile(QString endpoint, const QString &key, int x, int y) override;
     
 private:
     RESTClient *rest = nullptr;

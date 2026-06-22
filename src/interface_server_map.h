@@ -13,10 +13,11 @@ public:
         
     }
     
-    virtual void requestTile(const QString &endpoint, const QString &key, int x, int y) = 0;
-
+    virtual void requestTile(QString endpoint, const QString &key, int x, int y) = 0;
+    
 signals:
     void signalTileReceived(const QString &key, QPixmap *pix);
+    void signalTileFailed(const QString &key);
 };
 
 #endif // INTERFACE_SERVER_MAP_H

@@ -53,9 +53,20 @@ qt_add_executable(aowis-server-gui
     src/geo_metric_projection.h src/geo_metric_projection.cpp
     src/interface_server_map.h 
     src/interface_server_map_rest.h src/interface_server_map_rest.cpp
-    src/interface_server_map_standalone.h src/interface_server_map_standalone.cpp
-    
 )
+
+if(AOWIS_STANDALONE)
+    target_sources(aowis-server-gui
+        PRIVATE
+            src/interface_server_map_standalone.h
+            src/interface_server_map_standalone.cpp
+    )
+
+    target_compile_definitions(aowis-server-gui
+        PRIVATE
+            AOWIS_STANDALONE
+    )
+endif()
 
 target_link_libraries(aowis-server-gui
     PRIVATE
