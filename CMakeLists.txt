@@ -55,7 +55,7 @@ qt_add_executable(aowis-server-gui
     src/interface_server_map_rest.h src/interface_server_map_rest.cpp
 )
 
-if(AOWIS_STANDALONE)
+if(AOWIS_STANDALONE_BUILD)
     target_sources(aowis-server-gui
         PRIVATE
             src/interface_server_map_standalone.h
