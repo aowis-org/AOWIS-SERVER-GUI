@@ -31,14 +31,13 @@ FooterStatusBar::FooterStatusBar(QWidget *parent)
     this->bar->addWidget(this->label_map_coords_utm_northing);
     
     this->bar->addPermanentWidget(this->label_indicator_map);
-    this->bar->addPermanentWidget(this->label_indicator_server);
-    //this->bar->addPermanentWidget(this->label_indicator_map_status);
-
+    
     #ifdef AOWIS_STANDALONE
     this->label_indicator_map->setText("[AOWIS Controller Standalone Build]");
     #else
     this->label_indicator_map->setText("AOWIS Map Server");
     this->label_indicator_server->setText("AOWIS Server");
+    this->bar->addPermanentWidget(this->label_indicator_server);
     #endif
     
     //this->label_indicator_map_status->setFixedSize(12, 12);
