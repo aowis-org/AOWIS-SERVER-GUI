@@ -63,6 +63,8 @@ qt_add_executable(aowis-server-gui
     src/geo_metric_projection.h src/geo_metric_projection.cpp
     src/interface_server_map.h 
     src/interface_server_map_rest.h src/interface_server_map_rest.cpp
+    src/tab_logs_widget.h src/tab_logs_widget.cpp
+    src/tab_alarms_widget.h src/tab_alarms_widget.cpp
 )
 
 if(APPLE)

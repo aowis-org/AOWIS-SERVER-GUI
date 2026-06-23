@@ -7,12 +7,12 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     mode( mode )
 {
     QPushButton *button_zoom_in = new QPushButton();
-    button_zoom_in->setIcon(QIcon(":/icons/zoom-in.svg"));
-    button_zoom_in->setIconSize(QSize(30, 30));
+    button_zoom_in->setIcon(QIcon(":/img/gothic/zoom_in.png"));
+    //button_zoom_in->setIconSize(QSize(30, 30));
     
     QPushButton *button_zoom_out = new QPushButton();
-    button_zoom_out->setIcon(QIcon(":/icons/zoom-out.svg"));
-    button_zoom_out->setIconSize(QSize(30, 30));
+    button_zoom_out->setIcon(QIcon(":/img/gothic/zoom_out.png"));
+    //button_zoom_out->setIconSize(QSize(30, 30));
     
     connect(button_zoom_in, &QPushButton::clicked, this->map, &MapWidget::zoomIn);
     connect(button_zoom_out, &QPushButton::clicked, this->map, &MapWidget::zoomOut);

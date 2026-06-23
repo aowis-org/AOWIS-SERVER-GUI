@@ -5,10 +5,14 @@
 #include <QWidget>
 #include <QGridLayout>
 #include <QTabWidget>
+#include <QTabBar>
+#include <QTransform>
+#include <QResizeEvent>
 
 #include <QPushButton>
 #include <QLineEdit>
 #include <QLabel>
+#include <QIcon>
 
 #include <QByteArray>
 
@@ -36,6 +40,8 @@
 #include "tab_pipes_widget.h"
 #include "tab_customer_points_widget.h"
 #include "tab_customers_widget.h"
+#include "tab_logs_widget.h"
+#include "tab_alarms_widget.h"
 
 #ifdef Q_OS_WASM
 #include "gps_provider_dummy.h"
@@ -73,6 +79,9 @@ private:
     PipesWidget* pipes;
     CustomerPointsWidget *customerPoints;
     CustomersWidget *customers;
+    LogsWidget *logs;
+    AlarmsWidget *alarms;
+    
     
     //QGridLayout *layout = new QGridLayout;
     
@@ -86,4 +95,10 @@ private:
     void checkServerMap();
     bool checking_server_map = false;
     
+    int tab_spacer_tab_index = -1;
+    int tab_last_spacer_height = -1;
+    void updateTabSpacer();
+    
+protected:
+    void resizeEvent(QResizeEvent *event) override;
 };

@@ -2,10 +2,45 @@
     <qresource prefix="/img/">
         <file alias="logo.png">assets/img/logo02.png</file>
         <file alias="favicon.png">assets/img/favicon.png</file>
-    </qresource>
-    
-    <qresource prefix="/icons/">
-        <file alias="zoom-in.svg">assets/icons/zoom-in.svg</file>
-        <file alias="zoom-out.svg">assets/icons/zoom-out.svg</file>
+        
+        <file alias="gothic/dashboard.png">assets/iconsets/gothic/dashboard.png</file>
+        <file alias="gothic/dashboard_global.png">assets/iconsets/gothic/dashboard_global.png</file>
+        <file alias="gothic/log.png">assets/iconsets/gothic/log.png</file>
+        <file alias="gothic/alarm.png">assets/iconsets/gothic/alarm.png</file>
+        <file alias="gothic/site_switcher.png">assets/iconsets/gothic/site_switcher.png</file>
+        <file alias="gothic/sensor.png">assets/iconsets/gothic/sensor.png</file>
+        
+        <file alias="gothic/arrow_down.png">assets/iconsets/gothic/arrow_down.png</file>
+        <file alias="gothic/arrow_left.png">assets/iconsets/gothic/arrow_left.png</file>
+        <file alias="gothic/arrow_right.png">assets/iconsets/gothic/arrow_right.png</file>
+        <file alias="gothic/arrow_up.png">assets/iconsets/gothic/arrow_up.png</file>
+        
+        <file alias="gothic/customer.png">assets/iconsets/gothic/customer.png</file>
+        <file alias="gothic/electricity.png">assets/iconsets/gothic/electricity.png</file>
+        <file alias="gothic/energy.png">assets/iconsets/gothic/energy.png</file>
+        <file alias="gothic/gps.png">assets/iconsets/gothic/gps.png</file>
+        
+        <file alias="gothic/pipe.png">assets/iconsets/gothic/pipe.png</file>
+        <file alias="gothic/junction.png">assets/iconsets/gothic/junction.png</file>
+        <file alias="gothic/lake.png">assets/iconsets/gothic/lake.png</file>
+        <file alias="gothic/map_edit.png">assets/iconsets/gothic/map_edit.png</file>
+        <file alias="gothic/map_monitor.png">assets/iconsets/gothic/map_monitor.png</file>
+        
+        <file alias="gothic/pump.png">assets/iconsets/gothic/pump.png</file>
+        <file alias="gothic/reservoir.png">assets/iconsets/gothic/reservoir.png</file>
+        <file alias="gothic/river.png">assets/iconsets/gothic/river.png</file>
+        <file alias="gothic/save.png">assets/iconsets/gothic/save.png</file>
+        
+        <file alias="gothic/settings.png">assets/iconsets/gothic/settings.png</file>
+        <file alias="gothic/tower.png">assets/iconsets/gothic/tower.png</file>
+        <file alias="gothic/users.png">assets/iconsets/gothic/users.png</file>
+        <file alias="gothic/valve.png">assets/iconsets/gothic/valve.png</file>
+        
+        <file alias="gothic/visibility_hide.png">assets/iconsets/gothic/visibility_hide.png</file>
+        <file alias="gothic/visibility_show.png">assets/iconsets/gothic/visibility_show.png</file>
+        <file alias="gothic/well.png">assets/iconsets/gothic/well.png</file>
+        
+        <file alias="gothic/zoom_in.png">assets/iconsets/gothic/zoom_in.png</file>
+        <file alias="gothic/zoom_out.png">assets/iconsets/gothic/zoom_out.png</file>
     </qresource>
 </RCC>
