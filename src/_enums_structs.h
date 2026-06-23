@@ -77,5 +77,13 @@ enum MapEditTool
     Power          = 9,
     Note           = 0,
 };
+enum MapEditToolSub
+{
+    Tool_1 = 1,
+    Tool_2 = 2,
+    Tool_3 = 3,
+    Tool_4 = 4,
+    Tool_5 = 5
+};
 
 #endif // _ENUMS_STRUCTS_H

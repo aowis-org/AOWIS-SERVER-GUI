@@ -104,18 +104,27 @@ void MapNetworkCanvasWidget::keyPressEvent(QKeyEvent *event)
     
     if (modifier_ctrl)
     {
+        
+    }
+    else if (this->key_space_pressed)
+    {
         if (key == Qt::Key_1)
-            emit signalMapProviderChange(MapProvider::ArcGISSat);
+            emit signalEditToolChangeSub(MapEditToolSub::Tool_1);
         else if (key == Qt::Key_2)
-            emit signalMapProviderChange(MapProvider::OpenTopoMap);
+            emit signalEditToolChangeSub(MapEditToolSub::Tool_2);
         else if (key == Qt::Key_3)
-            emit signalMapProviderChange(MapProvider::OpenStreetMap);
+            emit signalEditToolChangeSub(MapEditToolSub::Tool_3);
         else if (key == Qt::Key_4)
-            emit signalMapProviderChange(MapProvider::OSMCyclo);
+            emit signalEditToolChangeSub(MapEditToolSub::Tool_4);
+        else if (key == Qt::Key_5)
+            emit signalEditToolChangeSub(MapEditToolSub::Tool_5);
     }
     else
     {
-        if (key == Qt::Key_Left)
+        if (key == Qt::Key_Space)
+            this->key_space_pressed = true;
+        
+        else if (key == Qt::Key_Left)
             this->map->panLeft();
         else if (key == Qt::Key_Right)
             this->map->panRight();
@@ -149,6 +158,7 @@ void MapNetworkCanvasWidget::keyPressEvent(QKeyEvent *event)
         
         else if (this->mode == CanvasMode::Edit)
         {
+            /*
             if (key == Qt::Key_1)
                 emit signalEditToolChange(MapEditTool::Select);
             else if (key == Qt::Key_2)
@@ -169,6 +179,7 @@ void MapNetworkCanvasWidget::keyPressEvent(QKeyEvent *event)
                 emit signalEditToolChange(MapEditTool::Power);
             else if (key == Qt::Key_0)
                 emit signalEditToolChange(MapEditTool::Note);
+            */
         }
         
         else
@@ -177,6 +188,13 @@ void MapNetworkCanvasWidget::keyPressEvent(QKeyEvent *event)
     
     event->accept();
     return;
+}
+void MapNetworkCanvasWidget::keyReleaseEvent(QKeyEvent *event)
+{
+    const int key = event->key();
+    
+    if (key == Qt::Key_Space)
+        this->key_space_pressed = false;
 }
 void MapNetworkCanvasWidget::mousePressEvent(QMouseEvent *event)
 {

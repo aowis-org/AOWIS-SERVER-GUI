@@ -16,6 +16,7 @@
 #include <QPushButton>
 #include <QAbstractButton>
 #include <QButtonGroup>
+#include <QKeySequence>
 
 #include "map_model.h"
 #include "map_widget.h"

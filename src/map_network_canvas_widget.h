@@ -34,6 +34,7 @@ protected:
     void paintEvent(QPaintEvent *event) override;
     
     void keyPressEvent(QKeyEvent *event) override;
+    void keyReleaseEvent(QKeyEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
@@ -59,11 +60,14 @@ private:
     QRect currentSelectionRect() const;
     void paintEventRectangle(QPainter &paint);
     
+    bool key_space_pressed = false;
+    
 signals:
     void rectangleSelected(const QRect &rect);
     void rectangleSelectionCanceled();
     
     void signalEditToolChange(MapEditTool tool);
+    void signalEditToolChangeSub(MapEditToolSub subtool);
     void signalMapProviderChange(MapProvider provider);
 };
 

@@ -162,47 +162,69 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     this->button_group_tools = new QButtonGroup(this);
     
     QRadioButton *button_radio_select = new QRadioButton("Select", wgt);
+    button_radio_select->setToolTip("Shortcut: [1]");
+    button_radio_select->setShortcut(QKeySequence(Qt::Key_1));
     lay->addWidget(button_radio_select);
     this->button_group_tools->addButton(button_radio_select, 1);
     
-    QToolButton *button_select = new QToolButton(wgt);
-    button_select->setText("Delete Selected");
-    button_select->setEnabled(false);
-    lay->addWidget(button_select);
+    QToolButton *button_delete = new QToolButton(wgt);
+    button_delete->setText("Delete Selected");
+    button_delete->setToolTip("Shortcut: [del]");
+    button_delete->setShortcut(QKeySequence(Qt::Key_Delete));
+    button_delete->setEnabled(false);
+    lay->addWidget(button_delete);
     
     QRadioButton *button_radio_reservoir = new QRadioButton("Add Reservoir", wgt);
+    button_radio_reservoir->setToolTip("Shortcut: [2]");
+    button_radio_reservoir->setShortcut(QKeySequence(Qt::Key_2));
     lay->addWidget(button_radio_reservoir);
     this->button_group_tools->addButton(button_radio_reservoir, 2);
     
     QRadioButton *button_radio_tank = new QRadioButton("Add Tank", wgt);
+    button_radio_tank->setToolTip("Shortcut: [3]");
+    button_radio_tank->setShortcut(QKeySequence(Qt::Key_3));
     lay->addWidget(button_radio_tank);
     this->button_group_tools->addButton(button_radio_tank, 3);
     
     QRadioButton *button_radio_pump = new QRadioButton("Add Pump", wgt);
+    button_radio_pump->setToolTip("Shortcut: [4]");
+    button_radio_pump->setShortcut(QKeySequence(Qt::Key_4));
     lay->addWidget(button_radio_pump);
     this->button_group_tools->addButton(button_radio_pump, 4);
     
     QRadioButton *button_radio_valve = new QRadioButton("Add Valve", wgt);
+    button_radio_valve->setToolTip("Shortcut: [5]");
+    button_radio_valve->setShortcut(QKeySequence(Qt::Key_5));
     lay->addWidget(button_radio_valve);
     this->button_group_tools->addButton(button_radio_valve, 5);
     
     QRadioButton *button_radio_junction = new QRadioButton("Add Junction", wgt);
+    button_radio_junction->setToolTip("Shortcut: [6]");
+    button_radio_junction->setShortcut(QKeySequence(Qt::Key_6));
     lay->addWidget(button_radio_junction);
     this->button_group_tools->addButton(button_radio_junction, 6);
     
     QRadioButton *button_radio_pipe = new QRadioButton("Add Pipe", wgt);
+    button_radio_pipe->setToolTip("Shortcut: [7]");
+    button_radio_pipe->setShortcut(QKeySequence(Qt::Key_7));
     lay->addWidget(button_radio_pipe);
     this->button_group_tools->addButton(button_radio_pipe, 7);
     
     QRadioButton *button_radio_customer = new QRadioButton("Add Customer Point", wgt);
+    button_radio_customer->setToolTip("Shortcut: [8]");
+    button_radio_customer->setShortcut(QKeySequence(Qt::Key_8));
     lay->addWidget(button_radio_customer);
     this->button_group_tools->addButton(button_radio_customer, 8);
     
     QRadioButton *button_radio_power = new QRadioButton("Add Power Source", wgt);
+    button_radio_power->setToolTip("Shortcut: [9]");
+    button_radio_power->setShortcut(QKeySequence(Qt::Key_9));
     lay->addWidget(button_radio_power);
     this->button_group_tools->addButton(button_radio_power, 9);
     
     QRadioButton *button_radio_note = new QRadioButton("Add Note", wgt);
+    button_radio_note->setToolTip("Shortcut: [0]");
+    button_radio_note->setShortcut(QKeySequence(Qt::Key_0));
     lay->addWidget(button_radio_note);
     this->button_group_tools->addButton(button_radio_note, 0);
     
@@ -211,8 +233,9 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     
     connect(this->map_canvas, &MapNetworkCanvasWidget::signalEditToolChange, this, [this](MapEditTool tool)
     {
+        qDebug() << "hhhhhh";
         QAbstractButton *abs = this->button_group_tools->button(tool);
-        abs->setChecked(true);
+        abs->click();
     });
     
 }
