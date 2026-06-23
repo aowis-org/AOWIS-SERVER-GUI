@@ -160,7 +160,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     
     this->button_group_tools = new QButtonGroup(this);
     
-    QRadioButton *button_radio_select = new QRadioButton("1️⃣ Select", wgt);
+    QRadioButton *button_radio_select = new QRadioButton("Select", wgt);
     lay->addWidget(button_radio_select);
     this->button_group_tools->addButton(button_radio_select, 1);
     
@@ -169,39 +169,39 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     button_select->setEnabled(false);
     lay->addWidget(button_select);
     
-    QRadioButton *button_radio_reservoir = new QRadioButton("2️⃣ Add Reservoir", wgt);
+    QRadioButton *button_radio_reservoir = new QRadioButton("Add Reservoir", wgt);
     lay->addWidget(button_radio_reservoir);
     this->button_group_tools->addButton(button_radio_reservoir, 2);
     
-    QRadioButton *button_radio_tank = new QRadioButton("3️⃣ Add Tank", wgt);
+    QRadioButton *button_radio_tank = new QRadioButton("Add Tank", wgt);
     lay->addWidget(button_radio_tank);
     this->button_group_tools->addButton(button_radio_tank, 3);
     
-    QRadioButton *button_radio_pump = new QRadioButton("4️⃣ Add Pump", wgt);
+    QRadioButton *button_radio_pump = new QRadioButton("Add Pump", wgt);
     lay->addWidget(button_radio_pump);
     this->button_group_tools->addButton(button_radio_pump, 4);
     
-    QRadioButton *button_radio_valve = new QRadioButton("5️⃣ Add Valve", wgt);
+    QRadioButton *button_radio_valve = new QRadioButton("Add Valve", wgt);
     lay->addWidget(button_radio_valve);
     this->button_group_tools->addButton(button_radio_valve, 5);
     
-    QRadioButton *button_radio_junction = new QRadioButton("6️⃣ Add Junction", wgt);
+    QRadioButton *button_radio_junction = new QRadioButton("Add Junction", wgt);
     lay->addWidget(button_radio_junction);
     this->button_group_tools->addButton(button_radio_junction, 6);
     
-    QRadioButton *button_radio_pipe = new QRadioButton("7️⃣ Add Pipe", wgt);
+    QRadioButton *button_radio_pipe = new QRadioButton("Add Pipe", wgt);
     lay->addWidget(button_radio_pipe);
     this->button_group_tools->addButton(button_radio_pipe, 7);
     
-    QRadioButton *button_radio_customer = new QRadioButton("8️⃣ Add Customer Point", wgt);
+    QRadioButton *button_radio_customer = new QRadioButton("Add Customer Point", wgt);
     lay->addWidget(button_radio_customer);
     this->button_group_tools->addButton(button_radio_customer, 8);
     
-    QRadioButton *button_radio_power = new QRadioButton("9️⃣ Add Power Source", wgt);
+    QRadioButton *button_radio_power = new QRadioButton("Add Power Source", wgt);
     lay->addWidget(button_radio_power);
     this->button_group_tools->addButton(button_radio_power, 9);
     
-    QRadioButton *button_radio_note = new QRadioButton("0️⃣ Add Note", wgt);
+    QRadioButton *button_radio_note = new QRadioButton("Add Note", wgt);
     lay->addWidget(button_radio_note);
     this->button_group_tools->addButton(button_radio_note, 0);
     
