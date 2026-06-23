@@ -159,12 +159,6 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     QVBoxLayout *lay = new QVBoxLayout(wgt);
     
     this->button_group_tools = new QButtonGroup(this);
-    /*
-    QStringList labels = {
-        "1️⃣ Select", "Delete Selected", "2️⃣ Add Reservoir", "Add Tank", "Add Pump",
-        "Add Valve", "Add Junction", "Add Pipe", "Add Customer Point", "Add Power Source", "Add Note"
-    };
-    */
     
     QRadioButton *button_radio_select = new QRadioButton("1️⃣ Select", wgt);
     lay->addWidget(button_radio_select);

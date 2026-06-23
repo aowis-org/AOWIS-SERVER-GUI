@@ -7,24 +7,34 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     mode( mode )
 {
     this->button_zoom_in = new QPushButton();
-    this->button_zoom_in->setIcon(QIcon(":/img/gothic/zoom_in.png"));
+    this->button_zoom_in->setIcon(QIcon(":/icon/zoom_in.png"));
     this->button_zoom_in->setIconSize(QSize(30, 30));
+    this->button_zoom_in->setToolTip("Hotkey: e");
     
     this->button_zoom_out = new QPushButton();
-    this->button_zoom_out->setIcon(QIcon(":/img/gothic/zoom_out.png"));
+    this->button_zoom_out->setIcon(QIcon(":/icon/zoom_out.png"));
     this->button_zoom_out->setIconSize(QSize(30, 30));
+    this->button_zoom_out->setToolTip("Hotkey: q");
     
     this->button_up = new QPushButton();
-    this->button_up->setIcon(QIcon(":/img/gothic/arrow_up"));
+    this->button_up->setIcon(QIcon(":/icon/arrow_up"));
+    this->button_up->setIconSize(QSize(25, 25));
+    this->button_up->setToolTip("Hotkey: w");
     
     this->button_down = new QPushButton();
-    this->button_down->setIcon(QIcon(":/img/gothic/arrow_down"));
+    this->button_down->setIcon(QIcon(":/icon/arrow_down"));
+    this->button_down->setIconSize(QSize(25, 25));
+    this->button_down->setToolTip("Hotkey: s");
     
     this->button_left = new QPushButton();
-    this->button_left->setIcon(QIcon(":/img/gothic/arrow_left"));
+    this->button_left->setIcon(QIcon(":/icon/arrow_left"));
+    this->button_left->setIconSize(QSize(25, 25));
+    this->button_left->setToolTip("Hotkey: a");
     
     this->button_right = new QPushButton();
-    this->button_right->setIcon(QIcon(":/img/gothic/arrow_right"));
+    this->button_right->setIcon(QIcon(":/icon/arrow_right"));
+    this->button_right->setIconSize(QSize(25, 25));
+    this->button_right->setToolTip("Hotkey: d");
     
     connect(button_zoom_in, &QPushButton::clicked, this->map, &MapWidget::zoomIn);
     connect(button_zoom_out, &QPushButton::clicked, this->map, &MapWidget::zoomOut);
@@ -71,7 +81,7 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     // setting it to 50 on init
     if (this->mode == CanvasMode::Edit)
     {
-        slider_map_visibility->setValue(60);
+        slider_map_visibility->setValue(50);
         QTimer::singleShot(0, this, [this, slider_map_visibility]()
         {
             emit signalSlideOpacityChanged(slider_map_visibility->value());

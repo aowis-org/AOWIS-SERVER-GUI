@@ -50,21 +50,21 @@ MainWindow::MainWindow(QWidget *parent)
     this->tabs->setTabPosition(QTabWidget::West);
     
     /*
-    this->tabs->addTab(this->settings, QIcon(":/img/gothic/settings.png"), "Settings");
-    this->tabs->addTab(this->map_editor, QIcon(":/img/gothic/map_edit.png"), "Map Editor");
-    this->tabs->addTab(this->map_monitor, QIcon(":/img/gothic/map_monitor.png"), "Map Monitor");
-    this->tabs->addTab(this->energy, QIcon(":/img/gothic/energy.png"), "Energy");
+    this->tabs->addTab(this->settings, QIcon(":/icon/settings.png"), "Settings");
+    this->tabs->addTab(this->map_editor, QIcon(":/icon/map_edit.png"), "Map Editor");
+    this->tabs->addTab(this->map_monitor, QIcon(":/icon/map_monitor.png"), "Map Monitor");
+    this->tabs->addTab(this->energy, QIcon(":/icon/energy.png"), "Energy");
     
-    this->tabs->addTab(this->reservoirs, QIcon(":/img/gothic/reservoir.png"), "Reservoirs");
-    this->tabs->addTab(this->tanks, QIcon(":/img/gothic/tower.png"), "Tanks");
-    this->tabs->addTab(this->pumps, QIcon(":/img/gothic/pump.png"), "Pumps");
-    this->tabs->addTab(this->valves, QIcon(":/img/gothic/valve.png"), "Valves");
-    this->tabs->addTab(this->junctions, QIcon(":/img/gothic/junction.png"), "Junctions");
+    this->tabs->addTab(this->reservoirs, QIcon(":/icon/reservoir.png"), "Reservoirs");
+    this->tabs->addTab(this->tanks, QIcon(":/icon/tower.png"), "Tanks");
+    this->tabs->addTab(this->pumps, QIcon(":/icon/pump.png"), "Pumps");
+    this->tabs->addTab(this->valves, QIcon(":/icon/valve.png"), "Valves");
+    this->tabs->addTab(this->junctions, QIcon(":/icon/junction.png"), "Junctions");
     
-    this->tabs->addTab(this->pipes, QIcon(":/img/gothic/pipe.png"), "Pipes");
+    this->tabs->addTab(this->pipes, QIcon(":/icon/pipe.png"), "Pipes");
     
-    this->tabs->addTab(this->customerPoints, QIcon(":/img/gothic/customer.png"), "Customer Points");
-    this->tabs->addTab(this->customers, QIcon(":/img/gothic/users.png"), "Customers");
+    this->tabs->addTab(this->customerPoints, QIcon(":/icon/customer.png"), "Customer Points");
+    this->tabs->addTab(this->customers, QIcon(":/icon/users.png"), "Customers");
     */
     
     auto rotatedIcon = [](const QString &path)
@@ -73,58 +73,58 @@ MainWindow::MainWindow(QWidget *parent)
         return QIcon(pixmap.transformed(QTransform().rotate(90), Qt::SmoothTransformation));
     };
     
-    this->tabs->addTab(new QWidget(this), rotatedIcon(":/img/gothic/dashboard_global.png"), "");
+    this->tabs->addTab(new QWidget(this), rotatedIcon(":/icon/dashboard_global.png"), "");
     this->tabs->setTabToolTip(this->tabs->count() - 1, "Dashboard");
     
-    //this->tabs->addTab(new QWidget(this), rotatedIcon(":/img/gothic/site_switcher.png"), "");
+    //this->tabs->addTab(new QWidget(this), rotatedIcon(":/icon/site_switcher.png"), "");
     //this->tabs->setTabToolTip(this->tabs->count() - 1, "Site Switcher");
     
-    //this->tabs->addTab(new QWidget(this), rotatedIcon(":/img/gothic/dashboard.png"), "");
+    //this->tabs->addTab(new QWidget(this), rotatedIcon(":/icon/dashboard.png"), "");
     //this->tabs->setTabToolTip(this->tabs->count() - 1, "Site Dashboard");
     
-    this->tabs->addTab(this->map_editor, rotatedIcon(":/img/gothic/map_edit.png"), "");
+    this->tabs->addTab(this->map_editor, rotatedIcon(":/icon/map_edit.png"), "");
     this->tabs->setTabToolTip(this->tabs->count() - 1, "Map Editor");
     
-    this->tabs->addTab(this->map_monitor, rotatedIcon(":/img/gothic/map_monitor.png"), "");
+    this->tabs->addTab(this->map_monitor, rotatedIcon(":/icon/map_monitor.png"), "");
     this->tabs->setTabToolTip(this->tabs->count() - 1, "Map Monitor");
     
-    this->tabs->addTab(this->energy, rotatedIcon(":/img/gothic/energy.png"), "");
+    this->tabs->addTab(this->energy, rotatedIcon(":/icon/energy.png"), "");
     this->tabs->setTabToolTip(this->tabs->count() - 1, "Energy");
     
-    this->tabs->addTab(this->reservoirs, rotatedIcon(":/img/gothic/reservoir.png"), "");
+    this->tabs->addTab(this->reservoirs, rotatedIcon(":/icon/reservoir.png"), "");
     this->tabs->setTabToolTip(this->tabs->count() - 1, "Reservoirs");
     
-    this->tabs->addTab(this->tanks, rotatedIcon(":/img/gothic/tower.png"), "");
+    this->tabs->addTab(this->tanks, rotatedIcon(":/icon/tower.png"), "");
     this->tabs->setTabToolTip(this->tabs->count() - 1, "Tanks");
     
-    this->tabs->addTab(this->pumps, rotatedIcon(":/img/gothic/pump.png"), "");
+    this->tabs->addTab(this->pumps, rotatedIcon(":/icon/pump.png"), "");
     this->tabs->setTabToolTip(this->tabs->count() - 1, "Pumps");
     
-    this->tabs->addTab(this->valves, rotatedIcon(":/img/gothic/valve.png"), "");
+    this->tabs->addTab(this->valves, rotatedIcon(":/icon/valve.png"), "");
     this->tabs->setTabToolTip(this->tabs->count() - 1, "Valves");
     
-    this->tabs->addTab(this->junctions, rotatedIcon(":/img/gothic/junction.png"), "");
+    this->tabs->addTab(this->junctions, rotatedIcon(":/icon/junction.png"), "");
     this->tabs->setTabToolTip(this->tabs->count() - 1, "Junctions");
     
-    this->tabs->addTab(this->pipes, rotatedIcon(":/img/gothic/pipe.png"), "");
+    this->tabs->addTab(this->pipes, rotatedIcon(":/icon/pipe.png"), "");
     this->tabs->setTabToolTip(this->tabs->count() - 1, "Pipes");
     
-    this->tabs->addTab(this->customerPoints, rotatedIcon(":/img/gothic/customer.png"), "");
+    this->tabs->addTab(this->customerPoints, rotatedIcon(":/icon/customer.png"), "");
     this->tabs->setTabToolTip(this->tabs->count() - 1, "Customer Points");
     
-    this->tabs->addTab(this->customers, rotatedIcon(":/img/gothic/users.png"), "");
+    this->tabs->addTab(this->customers, rotatedIcon(":/icon/users.png"), "");
     this->tabs->setTabToolTip(this->tabs->count() - 1, "Customers");
     
     this->tab_spacer_tab_index = this->tabs->addTab(new QWidget(this->tabs), "");
     this->tabs->setTabEnabled(this->tab_spacer_tab_index, false);
     
-    this->tabs->addTab(this->alarms, rotatedIcon(":/img/gothic/alarm.png"), "");
+    this->tabs->addTab(this->alarms, rotatedIcon(":/icon/alarm.png"), "");
     this->tabs->setTabToolTip(this->tabs->count() - 1, "Alarms");
     
-    this->tabs->addTab(this->logs, rotatedIcon(":/img/gothic/log.png"), "");
+    this->tabs->addTab(this->logs, rotatedIcon(":/icon/log.png"), "");
     this->tabs->setTabToolTip(this->tabs->count() - 1, "Logs");
     
-    this->tabs->addTab(this->settings, rotatedIcon(":/img/gothic/settings.png"), "");
+    this->tabs->addTab(this->settings, rotatedIcon(":/icon/settings.png"), "");
     this->tabs->setTabToolTip(this->tabs->count() - 1, "Settings");
     
     this->tabs->setCurrentIndex(1);
