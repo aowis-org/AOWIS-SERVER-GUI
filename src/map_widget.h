@@ -42,6 +42,8 @@ public:
     MapModel *model() const;
     
     void addPanVelocity(int x, int y);
+    void onMouseMove(QMouseEvent *ev);
+    void onMouseWheel(QWheelEvent *ev);
     
 public slots:
     void zoomIn();

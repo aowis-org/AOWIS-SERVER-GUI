@@ -185,6 +185,10 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     button_radio_tank->setShortcut(QKeySequence(Qt::Key_3));
     lay->addWidget(button_radio_tank);
     this->button_group_tools->addButton(button_radio_tank, 3);
+    connect(button_radio_tank, &QRadioButton::clicked, this, [this]
+    {
+        this->map_canvas->addEntity(MapEditTool::Tank);
+    });
     
     QRadioButton *button_radio_pump = new QRadioButton("Add Pump", wgt);
     button_radio_pump->setToolTip("Shortcut: [4]");
@@ -230,10 +234,9 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     
     tbx->addItem(wgt, "Edit Network");
     
-    
+    // not needed if we stick with setToolTip istead
     connect(this->map_canvas, &MapNetworkCanvasWidget::signalEditToolChange, this, [this](MapEditTool tool)
     {
-        qDebug() << "hhhhhh";
         QAbstractButton *abs = this->button_group_tools->button(tool);
         abs->click();
     });

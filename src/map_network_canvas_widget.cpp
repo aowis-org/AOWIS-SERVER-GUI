@@ -48,17 +48,17 @@ void MapNetworkCanvasWidget::paintEvent(QPaintEvent *)
     paintEventRectangle(paint);
     
     
-    
+    //qDebug() << size();
+    //example red dot
     CoordinateWGS84 wgs;
     wgs.lat = 11.98161;
     wgs.lon = 18.19329;
     const QPointF p = this->map_model->screenFromWgs84(wgs, size());
-    
+    //qDebug() << p;
     paint.setBrush(Qt::red);
     paint.drawEllipse(p, 5.0, 5.0);
     
-    
-    
+    //example red line
     CoordinateWGS84 wgs_a;
     wgs_a.lat = 11.98300;
     wgs_a.lon = 18.19435;
@@ -67,8 +67,18 @@ void MapNetworkCanvasWidget::paintEvent(QPaintEvent *)
     wgs_b.lon = 18.19433;
     const QPointF a = this->map_model->screenFromWgs84(wgs_a, size());
     const QPointF b = this->map_model->screenFromWgs84(wgs_b, size());
-    
     paint.drawLine(a, b);
+}
+void MapNetworkCanvasWidget::addEntity(MapEditTool tool)
+{
+    if (tool == MapEditTool::Tank)
+    {
+        setCursor(Qt::BlankCursor);
+        
+        
+    }
+    
+    
 }
 void MapNetworkCanvasWidget::paintEventRectangle(QPainter &paint)
 {
@@ -104,7 +114,16 @@ void MapNetworkCanvasWidget::keyPressEvent(QKeyEvent *event)
     
     if (modifier_ctrl)
     {
-        
+        // F-Keys (and also shift-modifier) do not work reliably in WASM,
+        // so we fallback to Ctrl + 1 - 4 for that
+        if (key == Qt::Key_1)
+            emit signalMapProviderChange(MapProvider::ArcGISSat);
+        else if (key == Qt::Key_2)
+            emit signalMapProviderChange(MapProvider::OpenTopoMap);
+        else if (key == Qt::Key_3)
+            emit signalMapProviderChange(MapProvider::OpenStreetMap);
+        else if (key == Qt::Key_4)
+            emit signalMapProviderChange(MapProvider::OSMCyclo);
     }
     else if (this->key_space_pressed)
     {
@@ -220,6 +239,8 @@ void MapNetworkCanvasWidget::mouseMoveEvent(QMouseEvent *event)
         event->accept();
     }
     
+    this->map->onMouseMove(event);
+    
     QWidget::mouseMoveEvent(event);
 }
 void MapNetworkCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
@@ -249,6 +270,7 @@ void MapNetworkCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
 }
 void MapNetworkCanvasWidget::wheelEvent(QWheelEvent *event)
 {
+    this->map->onMouseWheel(event);
     
     QWidget::wheelEvent(event);
 }

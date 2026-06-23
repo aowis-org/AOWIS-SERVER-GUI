@@ -27,6 +27,8 @@ public:
     void startRectangleSelection();
     void cancelRectangleSelection();
     
+    void addEntity(MapEditTool tool);
+    
 public slots:
     void setBackgroundOpacity(int opacity);
     

@@ -235,6 +235,10 @@ void MapWidget::panRight()
 
 void MapWidget::wheelEvent(QWheelEvent *ev)
 {
+    onMouseWheel(ev);
+}
+void MapWidget::onMouseWheel(QWheelEvent *ev)
+{
     static int accumulated = 0;
     
     accumulated += ev->angleDelta().y();
@@ -274,6 +278,10 @@ void MapWidget::mouseReleaseEvent(QMouseEvent *ev)
 }
 
 void MapWidget::mouseMoveEvent(QMouseEvent *ev)
+{
+    onMouseMove(ev);
+}
+void MapWidget::onMouseMove(QMouseEvent *ev)
 {
     const CoordinateWGS84 wgs = m_model->wgs84FromScreen(ev->pos(), size());
     emit signalCoordsChangedWgs84(wgs);
