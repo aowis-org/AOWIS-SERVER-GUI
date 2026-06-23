@@ -69,7 +69,7 @@ void MapWidget::init()
         
         this->gps_coordinate.lat = coord.latitude();
         this->gps_coordinate.lon = coord.longitude();
-        this->gps_coordinate.alt = coord.altitude();
+        this->gps_coordinate.altitude_m = coord.altitude();
         #endif
     });
     connect(this->gps, &GpsProvider::statusMessage, this, [](const QString &msg)

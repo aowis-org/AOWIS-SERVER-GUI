@@ -33,8 +33,9 @@ struct CoordinateWGS84
 {
     double lon = 0.0;
     double lat = 0.0;
-    double alt = 0.0;
-    bool alt_exists = false;
+    // GPS altitude, if available.
+    // Not necessarily suitable as hydraulic EPANET elevation.
+    std::optional<double> altitude_m;
 };
 
 struct CoordinateUTM

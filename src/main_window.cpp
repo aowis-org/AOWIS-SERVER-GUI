@@ -137,7 +137,8 @@ MainWindow::MainWindow(QWidget *parent)
     
     connect(this->map_edit, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
     connect(this->map_edit, &MapWidget::signalCoordsChangedWgs84, this->footer, &FooterStatusBar::setMapCoordinatesWGS84);
-
+    connect(this->map_edit, &MapWidget::signalCoordsChangedUTM, this->footer, &FooterStatusBar::setMapCoordinatesUTM);
+    
     #ifdef AOWIS_STANDALONE
     #else    
     checkServerMapInit();

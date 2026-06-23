@@ -187,7 +187,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     this->button_group_tools->addButton(button_radio_tank, 3);
     connect(button_radio_tank, &QRadioButton::clicked, this, [this]
     {
-        this->map_canvas->addEntity(MapEditTool::Tank);
+        this->map_canvas->startEntityPositioning(MapEditTool::Tank);
     });
     
     QRadioButton *button_radio_pump = new QRadioButton("Add Pump", wgt);

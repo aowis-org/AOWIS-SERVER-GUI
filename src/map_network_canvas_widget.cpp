@@ -11,7 +11,7 @@ MapNetworkCanvasWidget::MapNetworkCanvasWidget(MapModel *map_model, MapWidget *m
     setMouseTracking(true);
     
     setFocusPolicy(Qt::StrongFocus);
-    
+    setFocus(Qt::OtherFocusReason);
     
 }
 
@@ -69,13 +69,31 @@ void MapNetworkCanvasWidget::paintEvent(QPaintEvent *)
     const QPointF b = this->map_model->screenFromWgs84(wgs_b, size());
     paint.drawLine(a, b);
 }
-void MapNetworkCanvasWidget::addEntity(MapEditTool tool)
+void MapNetworkCanvasWidget::startEntityPositioning(MapEditTool tool)
 {
+    this->entity_positioning_active = true;
+    
     if (tool == MapEditTool::Tank)
     {
-        setCursor(Qt::BlankCursor);
+        //setCursor(Qt::BlankCursor);
         
-        
+        if (this->entity_floating)   
+        {
+            this->entity_floating->deleteLater();
+            this->entity_floating = nullptr;
+        }
+        else
+        {
+            this->entity_floating = new QLabel(this);
+            this->entity_floating->setPixmap(QPixmap(":/icon/tower.png"));
+            this->entity_floating->adjustSize();
+            
+            this->entity_floating->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+            this->entity_floating->setFocusPolicy(Qt::NoFocus);
+            
+            this->entity_floating->hide();
+            this->entity_floating->raise();
+        }
     }
     
     
@@ -239,12 +257,39 @@ void MapNetworkCanvasWidget::mouseMoveEvent(QMouseEvent *event)
         event->accept();
     }
     
-    this->map->onMouseMove(event);
+    // Passing the movement to the map to get coordinate updates,
+    // but do not handle mouse buttons and clicks here
+    QMouseEvent *event_clean = new QMouseEvent(
+        event->type(),
+        event->position(),
+        event->globalPosition(),
+        Qt::NoButton,     // button that caused this event
+        Qt::NoButton,     // currently pressed buttons
+        event->modifiers()
+    );
+    this->map->onMouseMove(event_clean);
+    
+    if (this->entity_positioning_active && this->entity_floating)
+    {
+        setFocusPolicy(Qt::StrongFocus);
+        setFocus(Qt::OtherFocusReason);
+        
+        if (!this->entity_floating->isVisible())
+        {
+            this->entity_floating->show();
+        }
+        this->entity_floating->move(event->position().toPoint());
+        
+        event->accept();
+        return;
+    }
     
     QWidget::mouseMoveEvent(event);
 }
 void MapNetworkCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
 {
+    this->entity_positioning_active = false;
+    
     if (this->rectangle_selection_active && this->rectangle_dragging)
     {
         this->rectangle_current_pos = event->position().toPoint();
