@@ -8,6 +8,7 @@
 #include <QTabBar>
 #include <QTransform>
 #include <QResizeEvent>
+#include <QProcessEnvironment>
 
 #include <QPushButton>
 #include <QLineEdit>

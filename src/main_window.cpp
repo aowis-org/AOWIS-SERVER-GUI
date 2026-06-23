@@ -194,19 +194,7 @@ void MainWindow::updateTabSpacer()
     if (this->tab_spacer_tab_index < 0)
         return;
     
-    const int normal_tab_height = 56;
-    
-    // Your first tab is larger.
-    const int first_tab_height = 68;
-    const int first_tab_margin_bottom = 8;
-    
-    // Safety offset. Increase if bottom tabs are too low.
-    // Decrease if bottom tabs are too high.
-    #ifdef Q_OS_WASM
-    const int spacer_offset = -19;
-    #else
-    const int spacer_offset = -78;
-    #endif
+    QTabBar *bar = this->tabs->tabBar();
     
     int used_height = 0;
     
@@ -215,18 +203,15 @@ void MainWindow::updateTabSpacer()
         if (tab == this->tab_spacer_tab_index)
             continue;
         
-        if (tab == 0)
-            used_height += first_tab_height + first_tab_margin_bottom;
-        else
-            used_height += normal_tab_height;
+        used_height += bar->tabRect(tab).height();
     }
     
-    // Important: do NOT use tabBar()->height() here.
-    // The tab bar height changes because of the spacer, causing feedback/creeping.
     const int available_height = this->tabs->contentsRect().height();
     
-    // Important: subtract offset BEFORE qMax().
-    const int spacer_height = qMax(0, available_height - used_height - spacer_offset);
+    // Small universal breathing room. Usually 0-6 is enough.
+    const int bottom_padding = 2;
+    
+    const int spacer_height = qMax(0, available_height - used_height - bottom_padding);
     
     if (spacer_height == this->tab_last_spacer_height)
         return;
