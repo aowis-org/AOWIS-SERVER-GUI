@@ -9,10 +9,10 @@ enum MapServerMode
 
 enum MapProvider
 {
-    ArcGISSat,
-    OpenStreetMap,
-    OpenTopoMap,
-    OSMCyclo
+    ArcGISSat       = 1,
+    OpenTopoMap     = 2,
+    OpenStreetMap   = 3,
+    OSMCyclo        = 4
 };
 
 enum StatusColorCode

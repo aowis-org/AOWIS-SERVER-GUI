@@ -30,10 +30,6 @@ public:
 public slots:
     void setBackgroundOpacity(int opacity);
     
-signals:
-    void rectangleSelected(const QRect &rect);
-    void rectangleSelectionCanceled();
-    
 protected:
     void paintEvent(QPaintEvent *event) override;
     
@@ -64,7 +60,11 @@ private:
     void paintEventRectangle(QPainter &paint);
     
 signals:
+    void rectangleSelected(const QRect &rect);
+    void rectangleSelectionCanceled();
+    
     void signalEditToolChange(MapEditTool tool);
+    void signalMapProviderChange(MapProvider provider);
 };
 
 #endif // MAP_NETWORK_CANVAS_WIDGET_H

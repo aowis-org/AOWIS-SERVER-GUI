@@ -99,57 +99,81 @@ void MapNetworkCanvasWidget::keyPressEvent(QKeyEvent *event)
         return;
     }
     
-    int key = event->key();
+    const int key = event->key();
+    const bool modifier_ctrl = (event->modifiers() & Qt::ControlModifier);
     
-    if (key == Qt::Key_Left)
-        this->map->panLeft();
-    else if (key == Qt::Key_Right)
-        this->map->panRight();
-    else if (key == Qt::Key_Up)
-        this->map->panUp();
-    else if (key == Qt::Key_Down)
-        this->map->panDown();
-    
-    else if (key == Qt::Key_U)
-        this->map->panLeft();
-    else if (key == Qt::Key_A)
-        this->map->panRight();
-    else if (key == Qt::Key_V)
-        this->map->panUp();
-    else if (key == Qt::Key_I)
-        this->map->panDown();
-    
-    else if (key == Qt::Key_L)
-        this->map->zoomIn();
-    else if (key == Qt::Key_X)
-        this->map->zoomOut();
-    
-    else if (this->mode == CanvasMode::Edit)
+    if (modifier_ctrl)
     {
         if (key == Qt::Key_1)
-            emit signalEditToolChange(MapEditTool::Select);
+            emit signalMapProviderChange(MapProvider::ArcGISSat);
         else if (key == Qt::Key_2)
-            emit signalEditToolChange(MapEditTool::Reservoir);
+            emit signalMapProviderChange(MapProvider::OpenTopoMap);
         else if (key == Qt::Key_3)
-            emit signalEditToolChange(MapEditTool::Tank);
+            emit signalMapProviderChange(MapProvider::OpenStreetMap);
         else if (key == Qt::Key_4)
-            emit signalEditToolChange(MapEditTool::Pump);
-        else if (key == Qt::Key_5)
-            emit signalEditToolChange(MapEditTool::Valve);
-        else if (key == Qt::Key_6)
-            emit signalEditToolChange(MapEditTool::Junction);
-        else if (key == Qt::Key_7)
-            emit signalEditToolChange(MapEditTool::Pipe);
-        else if (key == Qt::Key_8)
-            emit signalEditToolChange(MapEditTool::Customer_Point);
-        else if (key == Qt::Key_9)
-            emit signalEditToolChange(MapEditTool::Power);
-        else if (key == Qt::Key_0)
-            emit signalEditToolChange(MapEditTool::Note);
+            emit signalMapProviderChange(MapProvider::OSMCyclo);
     }
-    
     else
-        QWidget::keyPressEvent(event);
+    {
+        if (key == Qt::Key_Left)
+            this->map->panLeft();
+        else if (key == Qt::Key_Right)
+            this->map->panRight();
+        else if (key == Qt::Key_Up)
+            this->map->panUp();
+        else if (key == Qt::Key_Down)
+            this->map->panDown();
+        
+        else if (key == Qt::Key_U)
+            this->map->panLeft();
+        else if (key == Qt::Key_A)
+            this->map->panRight();
+        else if (key == Qt::Key_V)
+            this->map->panUp();
+        else if (key == Qt::Key_I)
+            this->map->panDown();
+        
+        else if (key == Qt::Key_L)
+            this->map->zoomIn();
+        else if (key == Qt::Key_X)
+            this->map->zoomOut();
+        
+        else if (key == Qt::Key_F1)
+            emit signalMapProviderChange(MapProvider::ArcGISSat);
+        else if (key == Qt::Key_F2)
+            emit signalMapProviderChange(MapProvider::OpenTopoMap);
+        else if (key == Qt::Key_F3)
+            emit signalMapProviderChange(MapProvider::OpenStreetMap);
+        else if (key == Qt::Key_F4)
+            emit signalMapProviderChange(MapProvider::OSMCyclo);
+        
+        else if (this->mode == CanvasMode::Edit)
+        {
+            if (key == Qt::Key_1)
+                emit signalEditToolChange(MapEditTool::Select);
+            else if (key == Qt::Key_2)
+                emit signalEditToolChange(MapEditTool::Reservoir);
+            else if (key == Qt::Key_3)
+                emit signalEditToolChange(MapEditTool::Tank);
+            else if (key == Qt::Key_4)
+                emit signalEditToolChange(MapEditTool::Pump);
+            else if (key == Qt::Key_5)
+                emit signalEditToolChange(MapEditTool::Valve);
+            else if (key == Qt::Key_6)
+                emit signalEditToolChange(MapEditTool::Junction);
+            else if (key == Qt::Key_7)
+                emit signalEditToolChange(MapEditTool::Pipe);
+            else if (key == Qt::Key_8)
+                emit signalEditToolChange(MapEditTool::Customer_Point);
+            else if (key == Qt::Key_9)
+                emit signalEditToolChange(MapEditTool::Power);
+            else if (key == Qt::Key_0)
+                emit signalEditToolChange(MapEditTool::Note);
+        }
+        
+        else
+            QWidget::keyPressEvent(event);
+    }
     
     event->accept();
     return;

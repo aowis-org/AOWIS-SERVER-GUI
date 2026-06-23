@@ -10,6 +10,8 @@
 #include <QSlider>
 #include <QLabel>
 #include <QIcon>
+#include <QButtonGroup>
+#include <QAbstractButton>
 
 #include <QTimer>
 
@@ -22,6 +24,8 @@ class MapNavigationWidget : public QWidget
 public:
     explicit MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidget *parent = nullptr);
     
+    void mapProviderChange(MapProvider provider);
+    
 private:
     CanvasMode mode;
     QGridLayout *grid;
@@ -33,6 +37,12 @@ private:
     QPushButton *button_down;
     QPushButton *button_left;
     QPushButton *button_right;
+    
+    QButtonGroup *button_group_map_select;
+    QRadioButton* map_arcgissat = nullptr;
+    QRadioButton* map_opentopomap = nullptr;
+    QRadioButton* map_openstreetmap = nullptr;
+    QRadioButton* map_osmcyclo = nullptr;
     
 signals:
     void signalSlideOpacityChanged(int opacity);
