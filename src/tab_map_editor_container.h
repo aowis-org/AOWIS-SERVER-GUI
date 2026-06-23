@@ -13,6 +13,9 @@
 #include <QRadioButton>
 #include <QSpinBox>
 #include <QLabel>
+#include <QPushButton>
+#include <QAbstractButton>
+#include <QButtonGroup>
 
 #include "map_model.h"
 #include "map_widget.h"
@@ -50,6 +53,8 @@ private:
     QToolBox *toolbox;
     void createToolboxCache(QToolBox *tbx);
     void createToolboxEdit(QToolBox *tbx);
+    
+    QButtonGroup *button_group_tools = nullptr;
     
 signals:
     void signalSlideOpacityChanged(int opacity);

@@ -99,28 +99,54 @@ void MapNetworkCanvasWidget::keyPressEvent(QKeyEvent *event)
         return;
     }
     
-    if (event->key() == Qt::Key_Left)
+    int key = event->key();
+    
+    if (key == Qt::Key_Left)
         this->map->panLeft();
-    else if (event->key() == Qt::Key_Right)
+    else if (key == Qt::Key_Right)
         this->map->panRight();
-    else if (event->key() == Qt::Key_Up)
+    else if (key == Qt::Key_Up)
         this->map->panUp();
-    else if (event->key() == Qt::Key_Down)
+    else if (key == Qt::Key_Down)
         this->map->panDown();
     
-    else if (event->key() == Qt::Key_U)
+    else if (key == Qt::Key_U)
         this->map->panLeft();
-    else if (event->key() == Qt::Key_A)
+    else if (key == Qt::Key_A)
         this->map->panRight();
-    else if (event->key() == Qt::Key_V)
+    else if (key == Qt::Key_V)
         this->map->panUp();
-    else if (event->key() == Qt::Key_I)
+    else if (key == Qt::Key_I)
         this->map->panDown();
     
-    else if (event->key() == Qt::Key_Shift)
+    else if (key == Qt::Key_L)
         this->map->zoomIn();
-    else if (event->key() == Qt::Key_Space)
+    else if (key == Qt::Key_X)
         this->map->zoomOut();
+    
+    else if (this->mode == CanvasMode::Edit)
+    {
+        if (key == Qt::Key_1)
+            emit signalEditToolChange(MapEditTool::Select);
+        else if (key == Qt::Key_2)
+            emit signalEditToolChange(MapEditTool::Reservoir);
+        else if (key == Qt::Key_3)
+            emit signalEditToolChange(MapEditTool::Tank);
+        else if (key == Qt::Key_4)
+            emit signalEditToolChange(MapEditTool::Pump);
+        else if (key == Qt::Key_5)
+            emit signalEditToolChange(MapEditTool::Valve);
+        else if (key == Qt::Key_6)
+            emit signalEditToolChange(MapEditTool::Junction);
+        else if (key == Qt::Key_7)
+            emit signalEditToolChange(MapEditTool::Pipe);
+        else if (key == Qt::Key_8)
+            emit signalEditToolChange(MapEditTool::Customer_Point);
+        else if (key == Qt::Key_9)
+            emit signalEditToolChange(MapEditTool::Power);
+        else if (key == Qt::Key_0)
+            emit signalEditToolChange(MapEditTool::Note);
+    }
     
     else
         QWidget::keyPressEvent(event);

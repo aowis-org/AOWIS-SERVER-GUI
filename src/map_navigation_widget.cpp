@@ -54,9 +54,9 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     QSlider *slider_map_visibility = new QSlider(Qt::Horizontal);
     connect(slider_map_visibility, &QSlider::valueChanged, this, &MapNavigationWidget::signalSlideOpacityChanged);
     
-    this->grid->addWidget(button_zoom_in, 0, 0);
+    this->grid->addWidget(button_zoom_out, 0, 0);
     this->grid->addWidget(button_up, 0, 1);
-    this->grid->addWidget(button_zoom_out, 0, 2);
+    this->grid->addWidget(button_zoom_in, 0, 2);
     this->grid->addWidget(button_left, 1, 0);
     this->grid->addWidget(button_down, 1, 1);
     this->grid->addWidget(button_right, 1, 2);

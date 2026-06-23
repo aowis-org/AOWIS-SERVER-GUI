@@ -64,6 +64,18 @@ struct CoordinateLocal
     double y = 0.0; // meters north from project origin
 };
 
-
+enum MapEditTool
+{
+    Select         = 1,
+    Reservoir      = 2,
+    Tank           = 3,
+    Pump           = 4,
+    Valve          = 5,
+    Junction       = 6,
+    Pipe           = 7,
+    Customer_Point = 8,
+    Power          = 9,
+    Note           = 0,
+};
 
 #endif // _ENUMS_STRUCTS_H

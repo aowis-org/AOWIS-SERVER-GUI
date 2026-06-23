@@ -127,7 +127,7 @@ MainWindow::MainWindow(QWidget *parent)
     this->tabs->addTab(this->settings, rotatedIcon(":/img/gothic/settings.png"), "");
     this->tabs->setTabToolTip(this->tabs->count() - 1, "Settings");
     
-    this->tabs->setCurrentIndex(2);
+    this->tabs->setCurrentIndex(1);
     
     QTimer::singleShot(0, this, &MainWindow::updateTabSpacer);
     

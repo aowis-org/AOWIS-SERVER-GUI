@@ -64,6 +64,7 @@ private:
     void paintEventRectangle(QPainter &paint);
     
 signals:
+    void signalEditToolChange(MapEditTool tool);
 };
 
 #endif // MAP_NETWORK_CANVAS_WIDGET_H

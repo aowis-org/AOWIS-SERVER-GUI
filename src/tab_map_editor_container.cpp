@@ -16,8 +16,8 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, GpsProvider *gps, QW
     this->layout->setSpacing(0);
     
     QScrollArea *scroll_controls = new QScrollArea(this);
-    scroll_controls->setMinimumWidth(Sizes::SidebarLeftWidthBase);
-    scroll_controls->setMaximumWidth(Sizes::SidebarLeftWidthBase);
+    scroll_controls->setMinimumWidth(Sizes::SidebarMapEditLeftWidthBase);
+    scroll_controls->setMaximumWidth(Sizes::SidebarMapEditLeftWidthBase);
     scroll_controls->setWidgetResizable(true);
     scroll_controls->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scroll_controls->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
@@ -37,6 +37,12 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, GpsProvider *gps, QW
     this->layout->addWidget(this->map_stack);
     
     connect(this->map_menu, &MapEditorMenuWidget::signalSlideOpacityChanged, this->map_canvas, &MapNetworkCanvasWidget::setBackgroundOpacity);
+    
+    this->map_canvas->setFocusPolicy(Qt::StrongFocus);
+    QTimer::singleShot(0, this->map_canvas, [this]()
+    {
+        this->map_canvas->setFocus(Qt::OtherFocusReason);
+    });
 }
 MapWidget *MapEditorContainer::getMap()
 {
@@ -56,8 +62,8 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapNetworkCanvasWidget 
     map_canvas( map_canvas ),
     toolbox( new QToolBox(this) )
 {
-    setMinimumWidth(Sizes::SidebarLeftWidthBase);
-    setMaximumWidth(Sizes::SidebarLeftWidthBase);
+    setMinimumWidth(Sizes::SidebarMapEditLeftWidthBase);
+    setMaximumWidth(Sizes::SidebarMapEditLeftWidthBase);
     
     this->toolbox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     
@@ -152,25 +158,67 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     QWidget *wgt = new QWidget(tbx);
     QVBoxLayout *lay = new QVBoxLayout(wgt);
     
+    this->button_group_tools = new QButtonGroup(this);
+    /*
     QStringList labels = {
-        "Select", "Delete Selected", "Add Note", "Add Reservoir", "Add Tank", "Add Pump",
-        "Add Valve", "Add Junction", "Add Pipe", "Add Customer Point"
+        "1️⃣ Select", "Delete Selected", "2️⃣ Add Reservoir", "Add Tank", "Add Pump",
+        "Add Valve", "Add Junction", "Add Pipe", "Add Customer Point", "Add Power Source", "Add Note"
     };
-    for (int i=0; i < labels.length(); i++)
-    {
-        if (i == 1)
-        {
-            QToolButton *btn = new QToolButton(wgt);
-            btn->setText(labels[i]);
-            lay->addWidget(btn);
-        }
-        else
-        {
-            QRadioButton *btn = new QRadioButton(labels[i], wgt);
-            lay->addWidget(btn);
-        }
-    }
+    */
+    
+    QRadioButton *button_radio_select = new QRadioButton("1️⃣ Select", wgt);
+    lay->addWidget(button_radio_select);
+    this->button_group_tools->addButton(button_radio_select, 1);
+    
+    QToolButton *button_select = new QToolButton(wgt);
+    button_select->setText("Delete Selected");
+    button_select->setEnabled(false);
+    lay->addWidget(button_select);
+    
+    QRadioButton *button_radio_reservoir = new QRadioButton("2️⃣ Add Reservoir", wgt);
+    lay->addWidget(button_radio_reservoir);
+    this->button_group_tools->addButton(button_radio_reservoir, 2);
+    
+    QRadioButton *button_radio_tank = new QRadioButton("3️⃣ Add Tank", wgt);
+    lay->addWidget(button_radio_tank);
+    this->button_group_tools->addButton(button_radio_tank, 3);
+    
+    QRadioButton *button_radio_pump = new QRadioButton("4️⃣ Add Pump", wgt);
+    lay->addWidget(button_radio_pump);
+    this->button_group_tools->addButton(button_radio_pump, 4);
+    
+    QRadioButton *button_radio_valve = new QRadioButton("5️⃣ Add Valve", wgt);
+    lay->addWidget(button_radio_valve);
+    this->button_group_tools->addButton(button_radio_valve, 5);
+    
+    QRadioButton *button_radio_junction = new QRadioButton("6️⃣ Add Junction", wgt);
+    lay->addWidget(button_radio_junction);
+    this->button_group_tools->addButton(button_radio_junction, 6);
+    
+    QRadioButton *button_radio_pipe = new QRadioButton("7️⃣ Add Pipe", wgt);
+    lay->addWidget(button_radio_pipe);
+    this->button_group_tools->addButton(button_radio_pipe, 7);
+    
+    QRadioButton *button_radio_customer = new QRadioButton("8️⃣ Add Customer Point", wgt);
+    lay->addWidget(button_radio_customer);
+    this->button_group_tools->addButton(button_radio_customer, 8);
+    
+    QRadioButton *button_radio_power = new QRadioButton("9️⃣ Add Power Source", wgt);
+    lay->addWidget(button_radio_power);
+    this->button_group_tools->addButton(button_radio_power, 9);
+    
+    QRadioButton *button_radio_note = new QRadioButton("0️⃣ Add Note", wgt);
+    lay->addWidget(button_radio_note);
+    this->button_group_tools->addButton(button_radio_note, 0);
     
     tbx->addItem(wgt, "Edit Network");
+    
+    
+    connect(this->map_canvas, &MapNetworkCanvasWidget::signalEditToolChange, this, [this](MapEditTool tool)
+    {
+        QAbstractButton *abs = this->button_group_tools->button(tool);
+        abs->setChecked(true);
+    });
+    
 }
 
