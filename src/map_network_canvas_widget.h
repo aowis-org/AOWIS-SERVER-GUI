@@ -70,7 +70,7 @@ private:
     
     bool key_space_pressed = false;
     
-    QList<EntityTank> list_tanks;
+    QList<EntityTankMarker> list_tank_markers;
     
 signals:
     void rectangleSelected(const QRect &rect);

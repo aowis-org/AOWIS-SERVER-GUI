@@ -2,6 +2,7 @@
 #define MAP_NETWORK_STRUCTS_H
 
 #include <QString>
+#include <QLabel>
 
 #include "_enums_structs.h"
 
@@ -63,6 +64,13 @@ struct EntityTank
     // If true: excess inflow is treated as overflow/spillage.
     bool overflow_allowed = false;
 };
+struct EntityTankMarker
+{
+    EntityTank entity_tank;
+    QLabel *label = nullptr;
+    QString path_pixmap;
+};
+
 
 
 #endif // MAP_NETWORK_STRUCTS_H
