@@ -22,8 +22,6 @@ class MapNavigationWidget : public QWidget
 public:
     explicit MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidget *parent = nullptr);
     
-    void animateButton(MapNavigation nav);
-    
 private:
     CanvasMode mode;
     QGridLayout *grid;

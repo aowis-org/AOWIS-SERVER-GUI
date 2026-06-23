@@ -100,57 +100,28 @@ void MapNetworkCanvasWidget::keyPressEvent(QKeyEvent *event)
     }
     
     if (event->key() == Qt::Key_Left)
-    {
         this->map->panLeft();
-        emit signalMapControlSent(MapNavigation::DownMoveLeft);
-    }
     else if (event->key() == Qt::Key_Right)
-    {
         this->map->panRight();
-        emit signalMapControlSent(MapNavigation::DownMoveRight);
-    }
     else if (event->key() == Qt::Key_Up)
-    {
         this->map->panUp();
-        emit signalMapControlSent(MapNavigation::DownMoveUp);
-    }
     else if (event->key() == Qt::Key_Down)
-    {
         this->map->panDown();
-        emit signalMapControlSent(MapNavigation::DownMoveDown);
-    }
     
     else if (event->key() == Qt::Key_U)
-    {
         this->map->panLeft();
-        emit signalMapControlSent(MapNavigation::DownMoveLeft);
-    }
     else if (event->key() == Qt::Key_A)
-    {
         this->map->panRight();
-        emit signalMapControlSent(MapNavigation::DownMoveRight);
-    }
     else if (event->key() == Qt::Key_V)
-    {
         this->map->panUp();
-        emit signalMapControlSent(MapNavigation::DownMoveUp);
-    }
     else if (event->key() == Qt::Key_I)
-    {
         this->map->panDown();
-        emit signalMapControlSent(MapNavigation::DownMoveDown);
-    }
     
     else if (event->key() == Qt::Key_Shift)
-    {
         this->map->zoomIn();
-        emit signalMapControlSent(MapNavigation::DownZoomIn);
-    }
     else if (event->key() == Qt::Key_Space)
-    {
         this->map->zoomOut();
-        emit signalMapControlSent(MapNavigation::DownZoomOut);
-    }
+    
     else
         QWidget::keyPressEvent(event);
     

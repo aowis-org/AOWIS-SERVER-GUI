@@ -7,23 +7,6 @@ enum MapServerMode
     Standalone
 };
 
-enum MapNavigation
-{
-    DownMoveUp,
-    DownMoveDown,
-    DownMoveLeft,
-    DownMoveRight,
-    DownZoomIn,
-    DownZoomOut,
-    
-    UpMoveUp,
-    UpMoveDown,
-    UpMoveLeft,
-    UpMoveRight,
-    UpZoomIn,
-    UpZoomOut,
-};
-
 enum MapProvider
 {
     ArcGISSat,

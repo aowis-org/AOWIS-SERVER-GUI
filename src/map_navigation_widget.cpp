@@ -79,11 +79,3 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     }
 }
 
-void MapNavigationWidget::animateButton(MapNavigation nav)
-{
-    if (nav == MapNavigation::DownZoomIn)
-        this->button_zoom_in->setDown(true);
-    else if (nav == MapNavigation::UpZoomIn)
-        this->button_zoom_in->setDown(false);
-}
-
