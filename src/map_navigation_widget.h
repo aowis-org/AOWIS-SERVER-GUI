@@ -22,10 +22,19 @@ class MapNavigationWidget : public QWidget
 public:
     explicit MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidget *parent = nullptr);
     
+    void animateButton(MapNavigation nav);
+    
 private:
     CanvasMode mode;
     QGridLayout *grid;
     MapWidget *map;
+    
+    QPushButton *button_zoom_in;
+    QPushButton *button_zoom_out;
+    QPushButton *button_up;
+    QPushButton *button_down;
+    QPushButton *button_left;
+    QPushButton *button_right;
     
 signals:
     void signalSlideOpacityChanged(int opacity);

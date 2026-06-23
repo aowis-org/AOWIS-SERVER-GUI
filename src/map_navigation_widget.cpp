@@ -6,16 +6,33 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     map( map ),
     mode( mode )
 {
-    QPushButton *button_zoom_in = new QPushButton();
-    button_zoom_in->setIcon(QIcon(":/img/gothic/zoom_in.png"));
-    //button_zoom_in->setIconSize(QSize(30, 30));
+    this->button_zoom_in = new QPushButton();
+    this->button_zoom_in->setIcon(QIcon(":/img/gothic/zoom_in.png"));
+    this->button_zoom_in->setIconSize(QSize(30, 30));
     
-    QPushButton *button_zoom_out = new QPushButton();
-    button_zoom_out->setIcon(QIcon(":/img/gothic/zoom_out.png"));
-    //button_zoom_out->setIconSize(QSize(30, 30));
+    this->button_zoom_out = new QPushButton();
+    this->button_zoom_out->setIcon(QIcon(":/img/gothic/zoom_out.png"));
+    this->button_zoom_out->setIconSize(QSize(30, 30));
+    
+    this->button_up = new QPushButton();
+    this->button_up->setIcon(QIcon(":/img/gothic/arrow_up"));
+    
+    this->button_down = new QPushButton();
+    this->button_down->setIcon(QIcon(":/img/gothic/arrow_down"));
+    
+    this->button_left = new QPushButton();
+    this->button_left->setIcon(QIcon(":/img/gothic/arrow_left"));
+    
+    this->button_right = new QPushButton();
+    this->button_right->setIcon(QIcon(":/img/gothic/arrow_right"));
     
     connect(button_zoom_in, &QPushButton::clicked, this->map, &MapWidget::zoomIn);
     connect(button_zoom_out, &QPushButton::clicked, this->map, &MapWidget::zoomOut);
+    
+    connect(button_up, &QPushButton::clicked, this->map, &MapWidget::panUp);
+    connect(button_down, &QPushButton::clicked, this->map, &MapWidget::panDown);
+    connect(button_left, &QPushButton::clicked, this->map, &MapWidget::panLeft);
+    connect(button_right, &QPushButton::clicked, this->map, &MapWidget::panRight);
     
     QRadioButton* map_arcgissat = new QRadioButton("ArcGIS SAT");
     QRadioButton* map_opentopomap = new QRadioButton("OpenTopoMap");
@@ -38,14 +55,18 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     connect(slider_map_visibility, &QSlider::valueChanged, this, &MapNavigationWidget::signalSlideOpacityChanged);
     
     this->grid->addWidget(button_zoom_in, 0, 0);
-    this->grid->addWidget(button_zoom_out, 0, 1);
+    this->grid->addWidget(button_up, 0, 1);
+    this->grid->addWidget(button_zoom_out, 0, 2);
+    this->grid->addWidget(button_left, 1, 0);
+    this->grid->addWidget(button_down, 1, 1);
+    this->grid->addWidget(button_right, 1, 2);
     
-    this->grid->addWidget(map_arcgissat, 1, 0, 1, 2);
-    this->grid->addWidget(map_opentopomap, 2, 0, 1, 2);
-    this->grid->addWidget(map_openstreetmap, 3, 0, 1, 2);
-    this->grid->addWidget(map_osmcyclo, 4, 0, 1, 2);
-    this->grid->addWidget(label_slider_map_visibility, 5, 0, 1, 2);
-    this->grid->addWidget(slider_map_visibility, 6, 0, 1, 2);
+    this->grid->addWidget(map_arcgissat, 2, 0, 1, 3);
+    this->grid->addWidget(map_opentopomap, 3, 0, 1, 3);
+    this->grid->addWidget(map_openstreetmap, 4, 0, 1, 3);
+    this->grid->addWidget(map_osmcyclo, 5, 0, 1, 3);
+    this->grid->addWidget(label_slider_map_visibility, 6, 0, 1, 3);
+    this->grid->addWidget(slider_map_visibility, 7, 0, 1, 3);
     
     // setting it to 50 on init
     if (this->mode == CanvasMode::Edit)
@@ -57,3 +78,12 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
         });
     }
 }
+
+void MapNavigationWidget::animateButton(MapNavigation nav)
+{
+    if (nav == MapNavigation::DownZoomIn)
+        this->button_zoom_in->setDown(true);
+    else if (nav == MapNavigation::UpZoomIn)
+        this->button_zoom_in->setDown(false);
+}
+

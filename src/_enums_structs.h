@@ -1,9 +1,27 @@
 #ifndef _ENUMS_STRUCTS_H
 #define _ENUMS_STRUCTS_H
+
 enum MapServerMode
 {
     REST,
     Standalone
+};
+
+enum MapNavigation
+{
+    DownMoveUp,
+    DownMoveDown,
+    DownMoveLeft,
+    DownMoveRight,
+    DownZoomIn,
+    DownZoomOut,
+    
+    UpMoveUp,
+    UpMoveDown,
+    UpMoveLeft,
+    UpMoveRight,
+    UpZoomIn,
+    UpZoomOut,
 };
 
 enum MapProvider

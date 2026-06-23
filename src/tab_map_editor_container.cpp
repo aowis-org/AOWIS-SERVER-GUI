@@ -71,6 +71,8 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapNetworkCanvasWidget 
     this->toolbox->setCurrentIndex(1);
     
     connect(this->map_nav, &MapNavigationWidget::signalSlideOpacityChanged, this, &MapEditorMenuWidget::signalSlideOpacityChanged);
+    
+    connect(this->map_canvas, &MapNetworkCanvasWidget::signalMapControlSent, this->map_nav, &MapNavigationWidget::animateButton);
 }
 
 void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)

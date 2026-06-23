@@ -216,6 +216,23 @@ void MapWidget::addPanVelocity(int x, int y)
     if (!m_timerPanInertia->isActive())
         m_timerPanInertia->start();
 }
+void MapWidget::panUp()
+{
+    addPanVelocity(0, 1);
+}
+void MapWidget::panDown()
+{
+    addPanVelocity(0, -1);
+}
+void MapWidget::panLeft()
+{
+    addPanVelocity(1, 0);
+}
+void MapWidget::panRight()
+{
+    addPanVelocity(-1, 0);
+}
+
 void MapWidget::wheelEvent(QWheelEvent *ev)
 {
     static int accumulated = 0;
@@ -287,7 +304,6 @@ void MapWidget::zoomIn()
     m_model->zoomIn(size());
     update();
 }
-
 void MapWidget::zoomOut()
 {
     m_model->zoomOut(size());

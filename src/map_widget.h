@@ -46,6 +46,11 @@ public:
 public slots:
     void zoomIn();
     void zoomOut();
+    void panUp();
+    void panDown();
+    void panLeft();
+    void panRight();
+    
     void changeMapProvider(MapProvider provider);
     
 protected:
