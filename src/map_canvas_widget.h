@@ -16,6 +16,7 @@
 
 #include "map_model.h"
 #include "map_widget.h"
+#include "map_canvas_entities.h"
 
 #include "_enums_structs.h"
 #include "map_network_structs.h"
@@ -50,6 +51,7 @@ private:
     CanvasMode mode;
     MapModel *map_model = nullptr;
     MapWidget *map = nullptr;
+    MapCanvasEntities *map_canvas_entities = nullptr;
     
     int wheel_accumulated = 0;
     
@@ -69,8 +71,6 @@ private:
     void paintEventRectangle(QPainter &paint);
     
     bool key_space_pressed = false;
-    
-    QList<EntityTankMarker> list_tank_markers;
     
 signals:
     void rectangleSelected(const QRect &rect);
