@@ -8,7 +8,7 @@ int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
     
-    app.setWindowIcon(QIcon(":/icon/favicon.png"));
+    app.setWindowIcon(QIcon(":/icon/aowis_light_128.png"));
     
     MainWindow w;
     w.show();
