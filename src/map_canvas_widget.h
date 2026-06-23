@@ -1,5 +1,5 @@
-#ifndef MAP_NETWORK_CANVAS_WIDGET_H
-#define MAP_NETWORK_CANVAS_WIDGET_H
+#ifndef MAP_CANVAS_WIDGET_H
+#define MAP_CANVAS_WIDGET_H
 
 #include <QObject>
 #include <QWidget>
@@ -20,11 +20,11 @@
 #include "_enums_structs.h"
 #include "map_network_structs.h"
 
-class MapNetworkCanvasWidget : public QWidget
+class MapCanvasWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapNetworkCanvasWidget(MapModel *map_model, MapWidget *map, CanvasMode mode, QWidget *parent = nullptr);
+    explicit MapCanvasWidget(MapModel *map_model, MapWidget *map, CanvasMode mode, QWidget *parent = nullptr);
     
     int backgroundOpacity() const;
     
@@ -81,4 +81,4 @@ signals:
     void signalMapProviderChange(MapProvider provider);
 };
 
-#endif // MAP_NETWORK_CANVAS_WIDGET_H
+#endif // MAP_CANVAS_WIDGET_H

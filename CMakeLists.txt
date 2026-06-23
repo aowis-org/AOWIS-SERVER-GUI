@@ -56,7 +56,7 @@ qt_add_executable(aowis-server-gui
     src/map_navigation_widget.h src/map_navigation_widget.cpp
     src/map_model.h src/map_model.cpp
     src/map_controls.h src/map_controls.cpp
-    src/map_network_canvas_widget.h src/map_network_canvas_widget.cpp
+    src/map_canvas_widget.h src/map_canvas_widget.cpp
     src/tab_settings_widget.h src/tab_settings_widget.cpp
     src/_sizes.h
     src/geo_web_mercator.h src/geo_web_mercator.cpp
@@ -66,6 +66,7 @@ qt_add_executable(aowis-server-gui
     src/tab_logs_widget.h src/tab_logs_widget.cpp
     src/tab_alarms_widget.h src/tab_alarms_widget.cpp
     src/map_network_structs.h
+    src/map_canvas_entities.h src/map_canvas_entities.cpp
 )
 
 if(APPLE)

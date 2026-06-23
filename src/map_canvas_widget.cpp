@@ -1,6 +1,6 @@
-#include "map_network_canvas_widget.h"
+#include "map_canvas_widget.h"
 
-MapNetworkCanvasWidget::MapNetworkCanvasWidget(MapModel *map_model, MapWidget *map, CanvasMode mode, QWidget *parent)
+MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map, CanvasMode mode, QWidget *parent)
     : QWidget{parent},
     map_model( map_model ),
     map( map ),
@@ -15,11 +15,11 @@ MapNetworkCanvasWidget::MapNetworkCanvasWidget(MapModel *map_model, MapWidget *m
     
 }
 
-int MapNetworkCanvasWidget::backgroundOpacity() const
+int MapCanvasWidget::backgroundOpacity() const
 {
     return this->map_background_opacity;
 }
-void MapNetworkCanvasWidget::setBackgroundOpacity(int opacity)
+void MapCanvasWidget::setBackgroundOpacity(int opacity)
 {
     opacity = qBound(0, opacity, 100);
     
@@ -32,7 +32,7 @@ void MapNetworkCanvasWidget::setBackgroundOpacity(int opacity)
     update();
 }
 
-void MapNetworkCanvasWidget::paintEvent(QPaintEvent *)
+void MapCanvasWidget::paintEvent(QPaintEvent *)
 {
     QPainter paint(this);
     paint.setRenderHint(QPainter::Antialiasing);
@@ -90,7 +90,7 @@ void MapNetworkCanvasWidget::paintEvent(QPaintEvent *)
             label->setPixmap(QPixmap(tank_marker.path_pixmap).scaledToWidth(10, Qt::SmoothTransformation));
     }
 }
-void MapNetworkCanvasWidget::startEntityPositioning(MapEditTool tool)
+void MapCanvasWidget::startEntityPositioning(MapEditTool tool)
 {
     this->entity_positioning_active = true;
     
@@ -119,7 +119,7 @@ void MapNetworkCanvasWidget::startEntityPositioning(MapEditTool tool)
     
     
 }
-void MapNetworkCanvasWidget::paintEventRectangle(QPainter &paint)
+void MapCanvasWidget::paintEventRectangle(QPainter &paint)
 {
     if (this->rectangle_selection_active && this->rectangle_dragging)
     {
@@ -139,7 +139,7 @@ void MapNetworkCanvasWidget::paintEventRectangle(QPainter &paint)
     }
 }
 
-void MapNetworkCanvasWidget::keyPressEvent(QKeyEvent *event)
+void MapCanvasWidget::keyPressEvent(QKeyEvent *event)
 {
     if (this->rectangle_selection_active && event->key() == Qt::Key_Escape)
     {
@@ -247,14 +247,14 @@ void MapNetworkCanvasWidget::keyPressEvent(QKeyEvent *event)
     event->accept();
     return;
 }
-void MapNetworkCanvasWidget::keyReleaseEvent(QKeyEvent *event)
+void MapCanvasWidget::keyReleaseEvent(QKeyEvent *event)
 {
     const int key = event->key();
     
     if (key == Qt::Key_Space)
         this->key_space_pressed = false;
 }
-void MapNetworkCanvasWidget::mousePressEvent(QMouseEvent *event)
+void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
 {
     if (this->rectangle_selection_active && event->button() == Qt::LeftButton)
     {
@@ -288,7 +288,7 @@ void MapNetworkCanvasWidget::mousePressEvent(QMouseEvent *event)
     
     QWidget::mousePressEvent(event);
 }
-void MapNetworkCanvasWidget::mouseMoveEvent(QMouseEvent *event)
+void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
 {
     if (this->rectangle_selection_active && this->rectangle_dragging)
     {
@@ -327,7 +327,7 @@ void MapNetworkCanvasWidget::mouseMoveEvent(QMouseEvent *event)
     
     QWidget::mouseMoveEvent(event);
 }
-void MapNetworkCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
+void MapCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
 {
     this->entity_positioning_active = false;
     
@@ -354,14 +354,14 @@ void MapNetworkCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
     
     QWidget::mouseReleaseEvent(event);
 }
-void MapNetworkCanvasWidget::wheelEvent(QWheelEvent *event)
+void MapCanvasWidget::wheelEvent(QWheelEvent *event)
 {
     this->map->onMouseWheel(event);
     
     QWidget::wheelEvent(event);
 }
 
-void MapNetworkCanvasWidget::startRectangleSelection()
+void MapCanvasWidget::startRectangleSelection()
 {
     this->rectangle_selection_active = true;
     this->rectangle_dragging = false;
@@ -374,7 +374,7 @@ void MapNetworkCanvasWidget::startRectangleSelection()
     
     update();
 }
-void MapNetworkCanvasWidget::cancelRectangleSelection()
+void MapCanvasWidget::cancelRectangleSelection()
 {
     if (!rectangle_selection_active)
         return;
@@ -388,7 +388,7 @@ void MapNetworkCanvasWidget::cancelRectangleSelection()
     
     emit rectangleSelectionCanceled();
 }
-QRect MapNetworkCanvasWidget::currentSelectionRect() const
+QRect MapCanvasWidget::currentSelectionRect() const
 {
     return QRect(rectangle_start_pos, rectangle_current_pos).normalized();
 }

@@ -21,7 +21,7 @@
 #include "map_model.h"
 #include "map_widget.h"
 #include "map_navigation_widget.h"
-#include "map_network_canvas_widget.h"
+#include "map_canvas_widget.h"
 
 #ifdef Q_OS_WASM
 #include "gps_provider_dummy.h"
@@ -38,7 +38,7 @@ class MapEditorMenuWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapEditorMenuWidget(MapWidget *map, MapNetworkCanvasWidget *map_canvas, CanvasMode mode, QWidget *parent = nullptr);
+    explicit MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_canvas, CanvasMode mode, QWidget *parent = nullptr);
     
 private:
     CanvasMode mode;
@@ -46,7 +46,7 @@ private:
     
     MapWidget *map;
     MapNavigationWidget *map_nav;
-    MapNetworkCanvasWidget *map_canvas;
+    MapCanvasWidget *map_canvas;
     
     QSpinBox *spin_zoom_from;
     QSpinBox *spin_zoom_to;
@@ -76,7 +76,7 @@ private:
     
     MapModel *map_model;
     MapWidget *map;
-    MapNetworkCanvasWidget *map_canvas;
+    MapCanvasWidget *map_canvas;
     MapEditorMenuWidget *map_menu;
     
     QHBoxLayout *layout;

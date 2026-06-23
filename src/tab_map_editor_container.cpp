@@ -6,7 +6,7 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, GpsProvider *gps, QW
     gps( gps ),
     map_model( map_model ),
     map( new MapWidget(this->map_model, gps, this) ),
-    map_canvas( new MapNetworkCanvasWidget(this->map_model, this->map, CanvasMode::Edit, this) ),
+    map_canvas( new MapCanvasWidget(this->map_model, this->map, CanvasMode::Edit, this) ),
     map_menu( new MapEditorMenuWidget(this->map, this->map_canvas, CanvasMode::Edit, this) ),
     map_stack( new QWidget(this) ),
     map_stack_layout( new QStackedLayout(this->map_stack) )
@@ -36,7 +36,7 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, GpsProvider *gps, QW
     this->layout->addWidget(scroll_controls);
     this->layout->addWidget(this->map_stack);
     
-    connect(this->map_menu, &MapEditorMenuWidget::signalSlideOpacityChanged, this->map_canvas, &MapNetworkCanvasWidget::setBackgroundOpacity);
+    connect(this->map_menu, &MapEditorMenuWidget::signalSlideOpacityChanged, this->map_canvas, &MapCanvasWidget::setBackgroundOpacity);
     
     this->map_canvas->setFocusPolicy(Qt::StrongFocus);
     QTimer::singleShot(0, this->map_canvas, [this]()
@@ -53,7 +53,7 @@ MapWidget *MapEditorContainer::getMap()
 
 
 
-MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapNetworkCanvasWidget *map_canvas, CanvasMode mode, QWidget *parent)
+MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_canvas, CanvasMode mode, QWidget *parent)
     : QWidget{parent},
     layout( new QVBoxLayout(this) ),
     mode( mode ),
@@ -78,7 +78,7 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapNetworkCanvasWidget 
     
     connect(this->map_nav, &MapNavigationWidget::signalSlideOpacityChanged, this, &MapEditorMenuWidget::signalSlideOpacityChanged);
     
-    connect(this->map_canvas, &MapNetworkCanvasWidget::signalMapProviderChange, this->map_nav, &MapNavigationWidget::mapProviderChange);
+    connect(this->map_canvas, &MapCanvasWidget::signalMapProviderChange, this->map_nav, &MapNavigationWidget::mapProviderChange);
 }
 
 void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
@@ -126,13 +126,13 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
     btn_tiles_update->setCheckable(true);
     btn_tiles_update->setEnabled(false);
     
-    connect(this->map_canvas, &MapNetworkCanvasWidget::rectangleSelectionCanceled, this, [this, btn_select_rectangle, btn_tiles_delete, btn_tiles_update]
+    connect(this->map_canvas, &MapCanvasWidget::rectangleSelectionCanceled, this, [this, btn_select_rectangle, btn_tiles_delete, btn_tiles_update]
     {
         btn_select_rectangle->setChecked(false);
         btn_tiles_delete->setEnabled(false);
         btn_tiles_update->setEnabled(false);
     });
-    connect(this->map_canvas, &MapNetworkCanvasWidget::rectangleSelected, this, [this, btn_select_rectangle, btn_tiles_delete, btn_tiles_update]
+    connect(this->map_canvas, &MapCanvasWidget::rectangleSelected, this, [this, btn_select_rectangle, btn_tiles_delete, btn_tiles_update]
     {
         btn_select_rectangle->setChecked(false);
         btn_tiles_delete->setEnabled(true);
@@ -235,7 +235,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     tbx->addItem(wgt, "Edit Network");
     
     // not needed if we stick with setToolTip istead
-    connect(this->map_canvas, &MapNetworkCanvasWidget::signalEditToolChange, this, [this](MapEditTool tool)
+    connect(this->map_canvas, &MapCanvasWidget::signalEditToolChange, this, [this](MapEditTool tool)
     {
         QAbstractButton *abs = this->button_group_tools->button(tool);
         abs->click();
