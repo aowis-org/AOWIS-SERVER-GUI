@@ -5,6 +5,7 @@
 #include <QWidget>
 #include <QLabel>
 
+#include <QResizeEvent>
 #include <QPaintEvent>
 #include <QPainter>
 #include <QColor>
@@ -43,10 +44,13 @@ protected:
     
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
+    
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
+    
+    void resizeEvent(QResizeEvent *event) override;
     
 private:
     CanvasMode mode;

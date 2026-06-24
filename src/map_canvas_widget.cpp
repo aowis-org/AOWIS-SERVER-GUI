@@ -293,6 +293,13 @@ void MapCanvasWidget::wheelEvent(QWheelEvent *event)
     QWidget::wheelEvent(event);
 }
 
+void MapCanvasWidget::resizeEvent(QResizeEvent *event)
+{
+    this->map_canvas_entities->positionMarkersTank();
+    
+    QWidget::resizeEvent(event);
+}
+
 void MapCanvasWidget::startRectangleSelection()
 {
     this->rectangle_selection_active = true;
