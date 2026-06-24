@@ -48,7 +48,7 @@ void MapCanvasWidget::paintEvent(QPaintEvent *)
     
     paintEventRectangle(paint);
     
-    
+    /*
     //qDebug() << size();
     //example red dot
     CoordinateWGS84 wgs;
@@ -69,8 +69,8 @@ void MapCanvasWidget::paintEvent(QPaintEvent *)
     const QPointF a = this->map_model->screenFromWgs84(wgs_a, size());
     const QPointF b = this->map_model->screenFromWgs84(wgs_b, size());
     paint.drawLine(a, b);
+    */
     
-    //this->map_canvas_entities->updateMarkersTank(paint);
     this->map_canvas_entities->paintMarkersTank(paint);
 }
 
