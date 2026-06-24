@@ -70,7 +70,8 @@ void MapCanvasWidget::paintEvent(QPaintEvent *)
     const QPointF b = this->map_model->screenFromWgs84(wgs_b, size());
     paint.drawLine(a, b);
     
-    this->map_canvas_entities->updateMarkersTank(paint);
+    //this->map_canvas_entities->updateMarkersTank(paint);
+    this->map_canvas_entities->paintMarkersTank(paint);
 }
 void MapCanvasWidget::startEntityPositioning(MapEditTool tool)
 {

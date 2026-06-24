@@ -26,7 +26,10 @@ public:
     void startEntityPositioning(MapEditTool tool);
     void floatEntity(QMouseEvent *event);
     bool anchorMarkerTank(QMouseEvent *event);
-    void updateMarkersTank(QPainter &paint);
+    void scaleMarkersTank();
+    //void updateMarkersTank(QPainter &paint);
+    void positionMarkersTank();
+    void paintMarkersTank(QPainter &paint);
     
 private:
     MapModel *map_model = nullptr;
@@ -38,6 +41,10 @@ private:
     QLabel *entity_floating = nullptr;
     
     MapEditTool tool_current;
+    
+    int calculateEntityWidth();
+    
+    QPoint entity_floating_hide_until;
     
 signals:
 };
