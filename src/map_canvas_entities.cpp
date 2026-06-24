@@ -73,12 +73,12 @@ bool MapCanvasEntities::anchorMarkerTank(QMouseEvent *event)
         tank_marker.label = this->entity_floating;
         tank_marker.path_pixmap = ":/icon/tower.png";
         
-        this->list_tank_markers.append(tank_marker);
-        
         int width = calculateEntityWidth();
         QPixmap pixmap = QPixmap(tank_marker.path_pixmap).scaledToWidth(width, Qt::SmoothTransformation);
         tank_marker.label->setPixmap(pixmap);
         tank_marker.label->resize(pixmap.size());
+        
+        this->list_tank_markers.append(tank_marker);
         
         positionMarkersTank();
         
