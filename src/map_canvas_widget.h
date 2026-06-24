@@ -33,6 +33,7 @@ public:
     void cancelRectangleSelection();
     
     void startEntityPositioning(MapEditTool tool);
+    void stopEntityPositioning();
     
 public slots:
     void setBackgroundOpacity(int opacity);

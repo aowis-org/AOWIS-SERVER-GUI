@@ -73,10 +73,16 @@ void MapCanvasWidget::paintEvent(QPaintEvent *)
     //this->map_canvas_entities->updateMarkersTank(paint);
     this->map_canvas_entities->paintMarkersTank(paint);
 }
+
 void MapCanvasWidget::startEntityPositioning(MapEditTool tool)
 {
     this->map_canvas_entities->startEntityPositioning(tool);
 }
+void MapCanvasWidget::stopEntityPositioning()
+{
+    this->map_canvas_entities->stopEntityPositioning();
+}
+
 void MapCanvasWidget::paintEventRectangle(QPainter &paint)
 {
     if (this->rectangle_selection_active && this->rectangle_dragging)

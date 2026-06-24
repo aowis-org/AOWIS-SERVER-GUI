@@ -236,11 +236,17 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     tbx->addItem(wgt, "Edit Network");
     
     // not needed if we stick with setToolTip istead
+    /*
     connect(this->map_canvas, &MapCanvasWidget::signalEditToolChange, this, [this](MapEditTool tool)
     {
         QAbstractButton *abs = this->button_group_tools->button(tool);
         abs->click();
     });
+    */
     
+    connect(this->button_group_tools, &QButtonGroup::idToggled, this, [this]
+    {
+        this->map_canvas->stopEntityPositioning();
+    });
 }
 

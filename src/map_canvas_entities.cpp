@@ -19,11 +19,7 @@ void MapCanvasEntities::startEntityPositioning(MapEditTool tool)
 {
     this->tool_current = tool;
     
-    if (this->entity_floating)
-    {
-        this->entity_floating->deleteLater();
-        this->entity_floating = nullptr;
-    }
+    stopEntityPositioning();
     
     if (tool == MapEditTool::Tank)
     {
@@ -39,6 +35,15 @@ void MapCanvasEntities::startEntityPositioning(MapEditTool tool)
         
         this->map_canvas->setFocusPolicy(Qt::StrongFocus);
         this->map_canvas->setFocus(Qt::OtherFocusReason);
+    }
+}
+
+void MapCanvasEntities::stopEntityPositioning()
+{
+    if (this->entity_floating)
+    {
+        this->entity_floating->deleteLater();
+        this->entity_floating = nullptr;
     }
 }
 

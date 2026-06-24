@@ -24,6 +24,7 @@ public:
     explicit MapCanvasEntities(MapModel *map_model, MapCanvasWidget *map_canvas);
     
     void startEntityPositioning(MapEditTool tool);
+    void stopEntityPositioning();
     void floatEntity(QMouseEvent *event);
     bool anchorMarkerTank(QMouseEvent *event);
     void scaleMarkersTank();
