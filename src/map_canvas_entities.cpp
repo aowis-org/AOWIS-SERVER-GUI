@@ -18,10 +18,15 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, MapCanvasWidget *map_c
 void MapCanvasEntities::startEntityPositioning(MapEditTool tool)
 {
     this->tool_current = tool;
+    this->entity_draw_immediately = true;
     
+    startEntityPositioningInternal();
+}
+void MapCanvasEntities::startEntityPositioningInternal()
+{
     stopEntityPositioning();
     
-    if (tool == MapEditTool::Tank)
+    if (this->tool_current == MapEditTool::Tank)
     {
         this->entity_floating = new QLabel(this->map_canvas);
         this->entity_floating->setPixmap(QPixmap(":/icon/tower.png").scaledToWidth(150, Qt::SmoothTransformation));
@@ -32,6 +37,13 @@ void MapCanvasEntities::startEntityPositioning(MapEditTool tool)
         
         this->entity_floating->hide();
         this->entity_floating->raise();
+        
+        if (this->entity_draw_immediately)
+        {
+            this->entity_floating->show();
+            this->entity_floating->move(this->mouse_pos_last.toPoint());
+        }
+        this->entity_draw_immediately = false;
         
         this->map_canvas->setFocusPolicy(Qt::StrongFocus);
         this->map_canvas->setFocus(Qt::OtherFocusReason);
@@ -49,13 +61,18 @@ void MapCanvasEntities::stopEntityPositioning()
 
 void MapCanvasEntities::floatEntity(QMouseEvent *event)
 {
+    this->mouse_pos_last = event->position();
+    
     if (this->entity_floating)
     {
         if (!this->entity_floating->isVisible())
         {
             // only draw new floating entity after a certain "rearming distance"
-            if ((event->position().toPoint() - this->entity_floating_hide_until).manhattanLength() <= 10)
-                return;
+            if (!this->entity_draw_immediately)
+            {
+                if ((event->position().toPoint() - this->entity_floating_hide_until).manhattanLength() <= 10)
+                    return;
+            }
             
             this->entity_floating->show();
         }
@@ -90,7 +107,8 @@ bool MapCanvasEntities::anchorMarkerTank(QMouseEvent *event)
         this->entity_floating_hide_until = event->position().toPoint();
         
         this->entity_floating = nullptr;
-        startEntityPositioning(this->tool_current);
+        
+        startEntityPositioningInternal();
         return true;
     }
     else

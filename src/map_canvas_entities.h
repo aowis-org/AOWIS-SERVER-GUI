@@ -24,6 +24,7 @@ public:
     explicit MapCanvasEntities(MapModel *map_model, MapCanvasWidget *map_canvas);
     
     void startEntityPositioning(MapEditTool tool);
+    void startEntityPositioningInternal();
     void stopEntityPositioning();
     void floatEntity(QMouseEvent *event);
     bool anchorMarkerTank(QMouseEvent *event);
@@ -46,6 +47,9 @@ private:
     int calculateEntityWidth();
     
     QPoint entity_floating_hide_until;
+    // on tool change, the rearming should not be active
+    bool entity_draw_immediately = true;
+    QPointF mouse_pos_last;
     
 signals:
 };
