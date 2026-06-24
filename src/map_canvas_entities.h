@@ -25,8 +25,8 @@ public:
     
     void startEntityPositioning(MapEditTool tool);
     void floatEntity(QMouseEvent *event);
-    bool positionMarkerTank(QMouseEvent *event);
-    void paintMarkersTank(QPainter &paint);
+    bool anchorMarkerTank(QMouseEvent *event);
+    void updateMarkersTank(QPainter &paint);
     
 private:
     MapModel *map_model = nullptr;
@@ -36,7 +36,6 @@ private:
     QList<EntityTankMarker> list_tank_markers;
     
     QLabel *entity_floating = nullptr;
-    bool is_entity_floating = false;
     
     MapEditTool tool_current;
     

@@ -14,25 +14,26 @@ void MapCanvasEntities::startEntityPositioning(MapEditTool tool)
 {
     this->tool_current = tool;
     
+    if (this->entity_floating)
+    {
+        this->entity_floating->deleteLater();
+        this->entity_floating = nullptr;
+    }
+    
     if (tool == MapEditTool::Tank)
     {
-        if (this->entity_floating)   
-        {
-            this->entity_floating->deleteLater();
-            this->entity_floating = nullptr;
-        }
-        else
-        {
-            this->entity_floating = new QLabel(this->map_canvas);
-            this->entity_floating->setPixmap(QPixmap(":/icon/tower.png"));
-            this->entity_floating->adjustSize();
-            
-            this->entity_floating->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-            this->entity_floating->setFocusPolicy(Qt::NoFocus);
-            
-            this->entity_floating->hide();
-            this->entity_floating->raise();
-        }
+        this->entity_floating = new QLabel(this->map_canvas);
+        this->entity_floating->setPixmap(QPixmap(":/icon/tower.png").scaledToWidth(150, Qt::SmoothTransformation));
+        this->entity_floating->adjustSize();
+        
+        this->entity_floating->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+        this->entity_floating->setFocusPolicy(Qt::NoFocus);
+        
+        this->entity_floating->hide();
+        this->entity_floating->raise();
+        
+        this->map_canvas->setFocusPolicy(Qt::StrongFocus);
+        this->map_canvas->setFocus(Qt::OtherFocusReason);
     }
 }
 
@@ -40,9 +41,6 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
 {
     if (this->entity_floating)
     {
-        this->map_canvas->setFocusPolicy(Qt::StrongFocus);
-        this->map_canvas->setFocus(Qt::OtherFocusReason);
-        
         if (!this->entity_floating->isVisible())
         {
             this->entity_floating->show();
@@ -54,7 +52,7 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
     }
 }
 
-bool MapCanvasEntities::positionMarkerTank(QMouseEvent *event)
+bool MapCanvasEntities::anchorMarkerTank(QMouseEvent *event)
 {
     if (this->entity_floating)
     {
@@ -78,26 +76,50 @@ bool MapCanvasEntities::positionMarkerTank(QMouseEvent *event)
         return false;
 }
 
-void MapCanvasEntities::paintMarkersTank(QPainter &paint)
+void MapCanvasEntities::updateMarkersTank(QPainter &paint)
 {
-    for (int i=0; i < this->list_tank_markers.length(); i++)
+    if (!this->map_canvas)
+        return;
+    
+    for (int i = 0; i < this->list_tank_markers.length(); i++)
     {
-        EntityTankMarker tank_marker = this->list_tank_markers.at(i);
-        //EntityTank tank = tank_marker.entity_tank;
-        CoordinateWGS84 wgs = tank_marker.entity_tank.coord_wgs84;
+        EntityTankMarker &tank_marker = this->list_tank_markers[i];
+        
         QLabel *label = tank_marker.label;
+        if (!label)
+            continue;
+        
+        CoordinateWGS84 wgs = tank_marker.entity_tank.coord_wgs84;
         QPointF point = this->map_model->screenFromWgs84(wgs, this->map_canvas->size());
         
-        label->move(point.x(), point.y());
-        
         int zoom = this->map_model->zoom();
+        
+        int width = 10;
         if (zoom == 19)
-            label->setPixmap(QPixmap(tank_marker.path_pixmap).scaledToWidth(40, Qt::SmoothTransformation));
+            width = 40;
         else if (zoom == 18)
-            label->setPixmap(QPixmap(tank_marker.path_pixmap).scaledToWidth(30, Qt::SmoothTransformation));
+            width = 30;
         else if (zoom == 17)
-            label->setPixmap(QPixmap(tank_marker.path_pixmap).scaledToWidth(20, Qt::SmoothTransformation));
-        else
-            label->setPixmap(QPixmap(tank_marker.path_pixmap).scaledToWidth(10, Qt::SmoothTransformation));
+            width = 20;
+        
+        QPixmap pixmap = QPixmap(tank_marker.path_pixmap).scaledToWidth(width, Qt::SmoothTransformation);
+        
+        label->setPixmap(pixmap);
+        label->resize(pixmap.size());
+        
+        QPoint marker_pos = point.toPoint();
+        
+        label->move(
+            marker_pos.x(),
+            marker_pos.y() - label->height()
+            );
+        
+        label->show();
+        
+        paint.save();
+        paint.setBrush(Qt::black);
+        paint.setPen(Qt::NoPen);
+        paint.drawEllipse(point, 5.0, 5.0);
+        paint.restore();
     }
 }

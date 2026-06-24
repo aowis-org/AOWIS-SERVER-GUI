@@ -196,6 +196,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     lay->addWidget(button_radio_pump);
     this->button_group_tools->addButton(button_radio_pump, 4);
     
+    
     QRadioButton *button_radio_valve = new QRadioButton("Add Valve", wgt);
     button_radio_valve->setToolTip("Shortcut: [5]");
     button_radio_valve->setShortcut(QKeySequence(Qt::Key_5));

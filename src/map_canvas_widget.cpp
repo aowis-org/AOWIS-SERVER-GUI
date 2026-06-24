@@ -70,7 +70,7 @@ void MapCanvasWidget::paintEvent(QPaintEvent *)
     const QPointF b = this->map_model->screenFromWgs84(wgs_b, size());
     paint.drawLine(a, b);
     
-    this->map_canvas_entities->paintMarkersTank(paint);
+    this->map_canvas_entities->updateMarkersTank(paint);
 }
 void MapCanvasWidget::startEntityPositioning(MapEditTool tool)
 {
@@ -226,7 +226,7 @@ void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
     
     if (event->button() == Qt::RightButton)
     {
-        bool positioned = this->map_canvas_entities->positionMarkerTank(event);
+        bool positioned = this->map_canvas_entities->anchorMarkerTank(event);
         if (positioned)
         {
             update();
@@ -247,18 +247,6 @@ void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
         event->accept();
     }
     
-    // Passing the movement to the map to get coordinate updates,
-    // but do not handle mouse buttons and clicks here
-    /*
-    QMouseEvent *event_clean = new QMouseEvent(
-        event->type(),
-        event->position(),
-        event->globalPosition(),
-        Qt::NoButton,     // button that caused this event
-        Qt::NoButton,     // currently pressed buttons
-        event->modifiers()
-    );
-    */
     this->map->onMouseMove(event);
     
     // float entity with mouse cursor during placement
