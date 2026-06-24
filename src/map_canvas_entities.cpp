@@ -28,7 +28,7 @@ void MapCanvasEntities::startEntityPositioningInternal()
     
     if (this->tool_current == MapEditTool::Tank)
     {
-        this->entity_floating = new QLabel(this->map_canvas);
+        this->entity_floating = new MapEntityMarkerLabel(this->map_canvas);
         this->entity_floating->setPixmap(QPixmap(":/icon/tower.png").scaledToWidth(150, Qt::SmoothTransformation));
         this->entity_floating->adjustSize();
         
@@ -93,7 +93,12 @@ bool MapCanvasEntities::anchorMarkerTank(QMouseEvent *event)
         EntityTankMarker tank_marker;
         tank_marker.entity_tank = tank;
         tank_marker.label = this->entity_floating;
+        
+        tank_marker.label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
         tank_marker.path_pixmap = ":/icon/tower.png";
+        
+        connect(tank_marker.label, &MapEntityMarkerLabel::signalDeleteRequested,
+                this, &MapCanvasEntities::onTankMarkerDeleteRequested);
         
         int width = calculateEntityWidth();
         QPixmap pixmap = QPixmap(tank_marker.path_pixmap).scaledToWidth(width, Qt::SmoothTransformation);
@@ -137,7 +142,7 @@ void MapCanvasEntities::scaleMarkersTank()
     for (int i = 0; i < this->list_tank_markers.length(); i++)
     {
         EntityTankMarker &tank_marker = this->list_tank_markers[i];
-        QLabel *label = tank_marker.label;
+        MapEntityMarkerLabel *label = tank_marker.label;
         
         QPixmap pixmap = QPixmap(tank_marker.path_pixmap).scaledToWidth(width, Qt::SmoothTransformation);
         label->setPixmap(pixmap);
@@ -152,7 +157,7 @@ void MapCanvasEntities::positionMarkersTank()
     for (int i = 0; i < this->list_tank_markers.length(); i++)
     {
         EntityTankMarker &tank_marker = this->list_tank_markers[i];
-        QLabel *label = tank_marker.label;
+        MapEntityMarkerLabel *label = tank_marker.label;
         
         CoordinateWGS84 wgs = tank_marker.entity_tank.coord_wgs84;
         QPointF point = this->map_model->screenFromWgs84(wgs, this->map_canvas->size());
@@ -188,3 +193,26 @@ void MapCanvasEntities::paintMarkersTank(QPainter &paint)
     paint.restore();
 }
 
+void MapCanvasEntities::onTankMarkerDeleteRequested(MapEntityMarkerLabel *label)
+{
+    if (!label)
+        return;
+    
+    for (int i = 0; i < this->list_tank_markers.length(); i++)
+    {
+        EntityTankMarker &tank_marker = this->list_tank_markers[i];
+        
+        if (tank_marker.label == label)
+        {
+            MapEntityMarkerLabel *label_to_delete = tank_marker.label;
+            
+            this->list_tank_markers.removeAt(i);
+            
+            label_to_delete->hide();
+            label_to_delete->deleteLater();
+            
+            this->map_canvas->update();
+            return;
+        }
+    }
+}

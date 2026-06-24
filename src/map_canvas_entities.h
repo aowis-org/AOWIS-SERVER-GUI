@@ -10,6 +10,7 @@
 #include <QMouseEvent>
 
 #include "map_model.h"
+#include "map_entity_marker_label.h"
 
 #include "_enums_structs.h"
 #include "map_network_structs.h"
@@ -40,7 +41,7 @@ private:
     
     QList<EntityTankMarker> list_tank_markers;
     
-    QLabel *entity_floating = nullptr;
+    MapEntityMarkerLabel *entity_floating = nullptr;
     
     MapEditTool tool_current;
     
@@ -50,6 +51,9 @@ private:
     // on tool change, the rearming should not be active
     bool entity_draw_immediately = true;
     QPointF mouse_pos_last;
+    
+private slots:
+    void onTankMarkerDeleteRequested(MapEntityMarkerLabel *label);
     
 signals:
 };

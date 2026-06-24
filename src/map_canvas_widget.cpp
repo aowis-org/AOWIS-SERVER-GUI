@@ -36,7 +36,9 @@ void MapCanvasWidget::setBackgroundOpacity(int opacity)
 void MapCanvasWidget::paintEvent(QPaintEvent *)
 {
     QPainter paint(this);
+    #ifndef Q_OS_WASM
     paint.setRenderHint(QPainter::Antialiasing);
+    #endif
     
     if (this->map_background_opacity > 0)
     {

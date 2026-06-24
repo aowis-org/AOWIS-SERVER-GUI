@@ -4,6 +4,8 @@
 #include <QString>
 #include <QLabel>
 
+#include "map_entity_marker_label.h"
+
 #include "_enums_structs.h"
 
 enum class CurveType
@@ -67,8 +69,10 @@ struct EntityTank
 struct EntityTankMarker
 {
     EntityTank entity_tank;
-    QLabel *label = nullptr;
+    MapEntityMarkerLabel *label = nullptr;
     QString path_pixmap;
+    
+    bool selected = false;
 };
 
 
