@@ -67,14 +67,14 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_ca
     
     this->toolbox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     
-    createToolboxCache(this->toolbox);
     createToolboxEdit(this->toolbox);
+    createToolboxCache(this->toolbox);
     
     this->layout->addWidget(this->map_nav);
     this->layout->addWidget(this->toolbox);
     this->layout->addStretch();
     
-    this->toolbox->setCurrentIndex(1);
+    //this->toolbox->setCurrentIndex(0);
     
     connect(this->map_nav, &MapNavigationWidget::signalSlideOpacityChanged, this, &MapEditorMenuWidget::signalSlideOpacityChanged);
     
@@ -174,7 +174,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     button_delete->setEnabled(false);
     lay->addWidget(button_delete);
     
-    QLabel *label_add = new QLabel("Add:");
+    QLabel *label_add = new QLabel("Add:", this);
     lay->addWidget(label_add);
     
     QRadioButton *button_radio_reservoir = new QRadioButton("[1] Reservoir", wgt);
@@ -235,6 +235,13 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     button_radio_note->setShortcut(QKeySequence(Qt::Key_9));
     lay->addWidget(button_radio_note);
     this->button_group_tools->addButton(button_radio_note);
+    
+    QLabel *label_instruction = new QLabel(
+        "<b>Right Click</b> to place Entity",
+        this
+    );
+    label_instruction->setWordWrap(true);
+    lay->addWidget(label_instruction);
     
     // not needed if we stick with setToolTip istead
     /*
