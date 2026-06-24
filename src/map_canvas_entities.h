@@ -41,6 +41,7 @@ private:
     
     QList<EntityTankMarker> list_tank_markers;
     
+    MapEntityPlacementMode entity_placement_mode = MapEntityPlacementMode::None;
     MapEntityMarkerLabel *entity_floating = nullptr;
     
     MapEditTool tool_current;
@@ -54,6 +55,7 @@ private:
     
 private slots:
     void onTankMarkerDeleteRequested(MapEntityMarkerLabel *label);
+    void onMarkerMoveRequested(MapEntityMarkerLabel *label);
     
 signals:
 };

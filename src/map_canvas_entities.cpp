@@ -20,42 +20,54 @@ void MapCanvasEntities::startEntityPositioning(MapEditTool tool)
     this->tool_current = tool;
     this->entity_draw_immediately = true;
     
+    this->entity_placement_mode = MapEntityPlacementMode::CreateNew;
     startEntityPositioningInternal();
 }
 void MapCanvasEntities::startEntityPositioningInternal()
 {
     stopEntityPositioning();
     
-    if (this->tool_current == MapEditTool::Tank)
+    if (this->entity_placement_mode == MapEntityPlacementMode::CreateNew)
     {
         this->entity_floating = new MapEntityMarkerLabel(this->map_canvas);
         this->entity_floating->setPixmap(QPixmap(":/icon/tower.png").scaledToWidth(150, Qt::SmoothTransformation));
         this->entity_floating->adjustSize();
-        
-        this->entity_floating->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-        this->entity_floating->setFocusPolicy(Qt::NoFocus);
-        
-        this->entity_floating->hide();
-        this->entity_floating->raise();
-        
-        if (this->entity_draw_immediately)
-        {
-            this->entity_floating->show();
-            this->entity_floating->move(this->mouse_pos_last.toPoint());
-        }
-        this->entity_draw_immediately = false;
-        
-        this->map_canvas->setFocusPolicy(Qt::StrongFocus);
-        this->map_canvas->setFocus(Qt::OtherFocusReason);
     }
+    else if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting)
+    {
+        
+    }
+    
+    this->entity_floating->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    this->entity_floating->setFocusPolicy(Qt::NoFocus);
+    
+    this->entity_floating->hide();
+    this->entity_floating->raise();
+    
+    if (this->entity_draw_immediately)
+    {
+        this->entity_floating->show();
+        this->entity_floating->move(this->mouse_pos_last.toPoint());
+    }
+    this->entity_draw_immediately = false;
+    
+    this->map_canvas->setFocusPolicy(Qt::StrongFocus);
+    this->map_canvas->setFocus(Qt::OtherFocusReason);
 }
 
 void MapCanvasEntities::stopEntityPositioning()
 {
     if (this->entity_floating)
     {
-        this->entity_floating->deleteLater();
-        this->entity_floating = nullptr;
+        if (this->entity_placement_mode == MapEntityPlacementMode::CreateNew)
+        {
+            this->entity_floating->deleteLater();
+            this->entity_floating = nullptr;
+        }
+        else if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting)
+        {
+            
+        }
     }
 }
 
@@ -100,6 +112,9 @@ bool MapCanvasEntities::anchorMarkerTank(QMouseEvent *event)
         connect(tank_marker.label, &MapEntityMarkerLabel::signalDeleteRequested,
                 this, &MapCanvasEntities::onTankMarkerDeleteRequested);
         
+        connect(tank_marker.label, &MapEntityMarkerLabel::signalMoveRequested,
+                this, &MapCanvasEntities::onMarkerMoveRequested);
+        
         int width = calculateEntityWidth();
         QPixmap pixmap = QPixmap(tank_marker.path_pixmap).scaledToWidth(width, Qt::SmoothTransformation);
         tank_marker.label->setPixmap(pixmap);
@@ -113,7 +128,9 @@ bool MapCanvasEntities::anchorMarkerTank(QMouseEvent *event)
         
         this->entity_floating = nullptr;
         
-        startEntityPositioningInternal();
+        if (this->entity_placement_mode == MapEntityPlacementMode::CreateNew)
+            startEntityPositioningInternal();
+        
         return true;
     }
     else
@@ -213,6 +230,23 @@ void MapCanvasEntities::onTankMarkerDeleteRequested(MapEntityMarkerLabel *label)
             
             this->map_canvas->update();
             return;
+        }
+    }
+}
+void MapCanvasEntities::onMarkerMoveRequested(MapEntityMarkerLabel *label)
+{
+    this->entity_placement_mode = MapEntityPlacementMode::MoveExisting;
+    
+    for (int i = 0; i < this->list_tank_markers.length(); i++)
+    {
+        EntityTankMarker &marker_tank = this->list_tank_markers[i];
+        
+        if (marker_tank.label == label)
+        {
+            this->entity_floating = label;
+            label->hide();
+            
+            startEntityPositioningInternal();
         }
     }
 }

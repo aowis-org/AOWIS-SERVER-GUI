@@ -11,8 +11,8 @@ MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map, CanvasMode
     setAttribute(Qt::WA_NoSystemBackground);
     setMouseTracking(true);
     
-    setFocusPolicy(Qt::StrongFocus);
-    setFocus(Qt::OtherFocusReason);
+    //setFocusPolicy(Qt::StrongFocus);
+    //setFocus(Qt::OtherFocusReason);
     
 }
 

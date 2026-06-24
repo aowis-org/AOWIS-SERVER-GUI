@@ -8,6 +8,13 @@
 
 #include "_enums_structs.h"
 
+enum class MapEntityPlacementMode
+{
+    None,
+    CreateNew,
+    MoveExisting
+};
+
 enum class CurveType
 {
     Pump,
