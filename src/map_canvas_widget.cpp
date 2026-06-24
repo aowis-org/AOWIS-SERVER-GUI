@@ -249,7 +249,7 @@ void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
         return;
     }
     
-    if (this->entity_positioning_active)
+    if (this->entity_positioning_active && event->button() == Qt::RightButton)
     {
         this->map_canvas_entities->positionMarkerTank(event, this->entity_floating);
         
@@ -274,6 +274,7 @@ void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
     
     // Passing the movement to the map to get coordinate updates,
     // but do not handle mouse buttons and clicks here
+    /*
     QMouseEvent *event_clean = new QMouseEvent(
         event->type(),
         event->position(),
@@ -282,8 +283,10 @@ void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
         Qt::NoButton,     // currently pressed buttons
         event->modifiers()
     );
-    this->map->onMouseMove(event_clean);
+    */
+    this->map->onMouseMove(event);
     
+    // float entity with mouse cursor during placement
     if (this->entity_positioning_active && this->entity_floating)
     {
         setFocusPolicy(Qt::StrongFocus);
@@ -303,7 +306,8 @@ void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
 }
 void MapCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
 {
-    this->entity_positioning_active = false;
+    if (event->button() == Qt::RightButton)
+        this->entity_positioning_active = false;
     
     if (this->rectangle_selection_active && this->rectangle_dragging)
     {
