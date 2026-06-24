@@ -61,8 +61,6 @@ private:
     // rectangle selection variables and function
     bool rectangle_selection_active = false;
     bool rectangle_dragging = false;
-    bool entity_positioning_active = false;
-    QLabel *entity_floating = nullptr;
     
     QPoint rectangle_start_pos;
     QPoint rectangle_current_pos;

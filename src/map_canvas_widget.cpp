@@ -74,32 +74,7 @@ void MapCanvasWidget::paintEvent(QPaintEvent *)
 }
 void MapCanvasWidget::startEntityPositioning(MapEditTool tool)
 {
-    this->entity_positioning_active = true;
-    
-    if (tool == MapEditTool::Tank)
-    {
-        //setCursor(Qt::BlankCursor);
-        
-        if (this->entity_floating)   
-        {
-            this->entity_floating->deleteLater();
-            this->entity_floating = nullptr;
-        }
-        else
-        {
-            this->entity_floating = new QLabel(this);
-            this->entity_floating->setPixmap(QPixmap(":/icon/tower.png"));
-            this->entity_floating->adjustSize();
-            
-            this->entity_floating->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-            this->entity_floating->setFocusPolicy(Qt::NoFocus);
-            
-            this->entity_floating->hide();
-            this->entity_floating->raise();
-        }
-    }
-    
-    
+    this->map_canvas_entities->startEntityPositioning(tool);
 }
 void MapCanvasWidget::paintEventRectangle(QPainter &paint)
 {
@@ -249,15 +224,15 @@ void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
         return;
     }
     
-    if (this->entity_positioning_active && event->button() == Qt::RightButton)
+    if (event->button() == Qt::RightButton)
     {
-        this->map_canvas_entities->positionMarkerTank(event, this->entity_floating);
-        
-        this->entity_floating = nullptr;
-        
-        update();
-        event->accept();
-        return;
+        bool positioned = this->map_canvas_entities->positionMarkerTank(event);
+        if (positioned)
+        {
+            update();
+            event->accept();
+            return;
+        }
     }
     
     QWidget::mousePressEvent(event);
@@ -287,28 +262,12 @@ void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
     this->map->onMouseMove(event);
     
     // float entity with mouse cursor during placement
-    if (this->entity_positioning_active && this->entity_floating)
-    {
-        setFocusPolicy(Qt::StrongFocus);
-        setFocus(Qt::OtherFocusReason);
-        
-        if (!this->entity_floating->isVisible())
-        {
-            this->entity_floating->show();
-        }
-        this->entity_floating->move(event->position().toPoint());
-        
-        event->accept();
-        return;
-    }
+    this->map_canvas_entities->floatEntity(event);
     
     QWidget::mouseMoveEvent(event);
 }
 void MapCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::RightButton)
-        this->entity_positioning_active = false;
-    
     if (this->rectangle_selection_active && this->rectangle_dragging)
     {
         this->rectangle_current_pos = event->position().toPoint();

@@ -23,7 +23,9 @@ class MapCanvasEntities : public QObject
 public:
     explicit MapCanvasEntities(MapModel *map_model, MapCanvasWidget *map_canvas);
     
-    void positionMarkerTank(QMouseEvent *event, QLabel *entity);
+    void startEntityPositioning(MapEditTool tool);
+    void floatEntity(QMouseEvent *event);
+    bool positionMarkerTank(QMouseEvent *event);
     void paintMarkersTank(QPainter &paint);
     
 private:
@@ -32,6 +34,11 @@ private:
     QPointer<MapCanvasWidget> map_canvas;
     
     QList<EntityTankMarker> list_tank_markers;
+    
+    QLabel *entity_floating = nullptr;
+    bool is_entity_floating = false;
+    
+    MapEditTool tool_current;
     
 signals:
 };
