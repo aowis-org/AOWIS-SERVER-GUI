@@ -67,16 +67,17 @@ struct CoordinateLocal
 
 enum MapEditTool
 {
-    Select,
-    Reservoir,
-    Tank,
-    Pump,
-    Valve,
-    Junction,
-    Pipe,
-    Customer_Point,
-    Power,
-    Note
+    Select          = 100,
+    
+    Pipe            = 1,
+    Junction        = 2,
+    Valve           = 3,
+    Customer_Point  = 4,
+    Pump            = 5,
+    Tank            = 6,
+    Power           = 7,
+    Reservoir       = 8,
+    Note            = 9
 };
 enum MapEditToolSub
 {

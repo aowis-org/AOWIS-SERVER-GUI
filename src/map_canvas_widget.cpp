@@ -182,28 +182,27 @@ void MapCanvasWidget::keyPressEvent(QKeyEvent *event)
         
         else if (this->mode == CanvasMode::Edit)
         {
-            /*
-            if (key == Qt::Key_1)
+            if (key == Qt::Key_Escape)
                 emit signalEditToolChange(MapEditTool::Select);
-            else if (key == Qt::Key_2)
-                emit signalEditToolChange(MapEditTool::Reservoir);
-            else if (key == Qt::Key_3)
-                emit signalEditToolChange(MapEditTool::Tank);
-            else if (key == Qt::Key_4)
-                emit signalEditToolChange(MapEditTool::Pump);
-            else if (key == Qt::Key_5)
-                emit signalEditToolChange(MapEditTool::Valve);
-            else if (key == Qt::Key_6)
-                emit signalEditToolChange(MapEditTool::Junction);
-            else if (key == Qt::Key_7)
+            
+            else if (key == Qt::Key_1)
                 emit signalEditToolChange(MapEditTool::Pipe);
-            else if (key == Qt::Key_8)
+            else if (key == Qt::Key_2)
+                emit signalEditToolChange(MapEditTool::Junction);
+            else if (key == Qt::Key_3)
+                emit signalEditToolChange(MapEditTool::Valve);
+            else if (key == Qt::Key_4)
                 emit signalEditToolChange(MapEditTool::Customer_Point);
-            else if (key == Qt::Key_9)
+            else if (key == Qt::Key_5)
+                emit signalEditToolChange(MapEditTool::Pump);
+            else if (key == Qt::Key_6)
+                emit signalEditToolChange(MapEditTool::Tank);
+            else if (key == Qt::Key_7)
                 emit signalEditToolChange(MapEditTool::Power);
-            else if (key == Qt::Key_0)
+            else if (key == Qt::Key_8)
+                emit signalEditToolChange(MapEditTool::Reservoir);
+            else if (key == Qt::Key_9)
                 emit signalEditToolChange(MapEditTool::Note);
-            */
         }
         
         else

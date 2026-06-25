@@ -44,21 +44,10 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     connect(button_left, &QPushButton::clicked, this->map, &MapWidget::panLeft);
     connect(button_right, &QPushButton::clicked, this->map, &MapWidget::panRight);
     
-    this->map_arcgissat = new QRadioButton("ArcGIS SAT");
-    this->map_arcgissat->setToolTip("Shortcut: [F1]");
-    this->map_arcgissat->setShortcut(Qt::Key_F1);
-    
-    this->map_opentopomap = new QRadioButton("OpenTopoMap");
-    this->map_opentopomap->setToolTip("Shortcut: [F2]");
-    this->map_opentopomap->setShortcut(Qt::Key_F2);
-    
-    this->map_openstreetmap = new QRadioButton("OpenStreetMap");
-    this->map_openstreetmap->setToolTip("Shortcut: [F3]");
-    this->map_openstreetmap->setShortcut(Qt::Key_F3);
-    
-    this->map_osmcyclo = new QRadioButton("CycloOSM");
-    this->map_osmcyclo->setToolTip("Shortcut: [F4]");
-    this->map_osmcyclo->setShortcut(Qt::Key_F4);
+    this->map_arcgissat = new QRadioButton("[F1] ArcGIS SAT");
+    this->map_opentopomap = new QRadioButton("[F2] OpenTopoMap");
+    this->map_openstreetmap = new QRadioButton("[F3] OpenStreetMap");
+    this->map_osmcyclo = new QRadioButton("[F4] CycloOSM");
     
     map_arcgissat->setChecked(true);
     

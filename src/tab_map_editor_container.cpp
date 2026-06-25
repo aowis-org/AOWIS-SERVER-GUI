@@ -163,78 +163,56 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     
     QRadioButton *button_radio_select = new QRadioButton("[Esc] Select", wgt);
     button_radio_select->setToolTip("Cancel placement and return to selection mode");
-    button_radio_select->setShortcut(QKeySequence(Qt::Key_Escape));
     lay->addWidget(button_radio_select);
-    this->button_group_tools->addButton(button_radio_select);
+    this->button_group_tools->addButton(button_radio_select, 100);
     
     QToolButton *button_delete = new QToolButton(wgt);
     button_delete->setText("[Del] Delete Selected");
-    //button_delete->setToolTip("Shortcut: [del]");
-    button_delete->setShortcut(QKeySequence(Qt::Key_Delete));
     button_delete->setEnabled(false);
     lay->addWidget(button_delete);
     
     QLabel *label_add = new QLabel("Add:", this);
     lay->addWidget(label_add);
     
-    QRadioButton *button_radio_reservoir = new QRadioButton("[1] Reservoir", wgt);
-    //button_radio_reservoir->setToolTip("Shortcut: [1]");
-    button_radio_reservoir->setShortcut(QKeySequence(Qt::Key_1));
-    lay->addWidget(button_radio_reservoir);
-    this->button_group_tools->addButton(button_radio_reservoir);
+    QRadioButton *button_radio_pipe = new QRadioButton("[1] Pipe / Cable", wgt);
+    lay->addWidget(button_radio_pipe);
+    this->button_group_tools->addButton(button_radio_pipe, 1);
     
-    QRadioButton *button_radio_tank = new QRadioButton("[2] Tank", wgt);
-    //button_radio_tank->setToolTip("Shortcut: [2]");
-    button_radio_tank->setShortcut(QKeySequence(Qt::Key_2));
+    QRadioButton *button_radio_junction = new QRadioButton("[2] Junction", wgt);
+    lay->addWidget(button_radio_junction);
+    this->button_group_tools->addButton(button_radio_junction, 2);
+    
+    QRadioButton *button_radio_valve = new QRadioButton("[3] Valve / Switch", wgt);
+    lay->addWidget(button_radio_valve);
+    this->button_group_tools->addButton(button_radio_valve, 3);
+    
+    QRadioButton *button_radio_customer = new QRadioButton("[4] Customer Point", wgt);
+    lay->addWidget(button_radio_customer);
+    this->button_group_tools->addButton(button_radio_customer, 4);
+    
+    QRadioButton *button_radio_pump = new QRadioButton("[5] Pump", wgt);
+    lay->addWidget(button_radio_pump);
+    this->button_group_tools->addButton(button_radio_pump, 5);
+    
+    QRadioButton *button_radio_tank = new QRadioButton("[6] Tank", wgt);
     lay->addWidget(button_radio_tank);
-    this->button_group_tools->addButton(button_radio_tank);
+    this->button_group_tools->addButton(button_radio_tank, 6);
     connect(button_radio_tank, &QRadioButton::clicked, this, [this]
     {
         this->map_canvas->startEntityPositioning(MapEditTool::Tank);
     });
     
-    QRadioButton *button_radio_pump = new QRadioButton("[3] Pump", wgt);
-    //button_radio_pump->setToolTip("Shortcut: [3]");
-    button_radio_pump->setShortcut(QKeySequence(Qt::Key_3));
-    lay->addWidget(button_radio_pump);
-    this->button_group_tools->addButton(button_radio_pump);
-    
-    
-    QRadioButton *button_radio_valve = new QRadioButton("[4] Valve", wgt);
-    //button_radio_valve->setToolTip("Shortcut: [4]");
-    button_radio_valve->setShortcut(QKeySequence(Qt::Key_4));
-    lay->addWidget(button_radio_valve);
-    this->button_group_tools->addButton(button_radio_valve);
-    
-    QRadioButton *button_radio_junction = new QRadioButton("[5] Junction", wgt);
-    //button_radio_junction->setToolTip("Shortcut: [5]");
-    button_radio_junction->setShortcut(QKeySequence(Qt::Key_5));
-    lay->addWidget(button_radio_junction);
-    this->button_group_tools->addButton(button_radio_junction);
-    
-    QRadioButton *button_radio_pipe = new QRadioButton("[6] Pipe", wgt);
-    //button_radio_pipe->setToolTip("Shortcut: [6]");
-    button_radio_pipe->setShortcut(QKeySequence(Qt::Key_6));
-    lay->addWidget(button_radio_pipe);
-    this->button_group_tools->addButton(button_radio_pipe);
-    
-    QRadioButton *button_radio_customer = new QRadioButton("[7] Customer Point", wgt);
-    //button_radio_customer->setToolTip("Shortcut: [7]");
-    button_radio_customer->setShortcut(QKeySequence(Qt::Key_7));
-    lay->addWidget(button_radio_customer);
-    this->button_group_tools->addButton(button_radio_customer);
-    
-    QRadioButton *button_radio_power = new QRadioButton("[8] Power Source", wgt);
-    //button_radio_power->setToolTip("Shortcut: [8]");
-    button_radio_power->setShortcut(QKeySequence(Qt::Key_8));
+    QRadioButton *button_radio_power = new QRadioButton("[7] Power Source", wgt);
     lay->addWidget(button_radio_power);
-    this->button_group_tools->addButton(button_radio_power);
+    this->button_group_tools->addButton(button_radio_power, 7);
+    
+    QRadioButton *button_radio_reservoir = new QRadioButton("[8] Reservoir", wgt);
+    lay->addWidget(button_radio_reservoir);
+    this->button_group_tools->addButton(button_radio_reservoir, 8);
     
     QRadioButton *button_radio_note = new QRadioButton("[9] Note", wgt);
-    //button_radio_note->setToolTip("Shortcut: [9]");
-    button_radio_note->setShortcut(QKeySequence(Qt::Key_9));
     lay->addWidget(button_radio_note);
-    this->button_group_tools->addButton(button_radio_note);
+    this->button_group_tools->addButton(button_radio_note, 9);
     
     QLabel *label_instruction = new QLabel(
         "<b>Right Click</b> to place Entity",
@@ -243,14 +221,11 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     label_instruction->setWordWrap(true);
     lay->addWidget(label_instruction);
     
-    // not needed if we stick with setToolTip istead
-    /*
     connect(this->map_canvas, &MapCanvasWidget::signalEditToolChange, this, [this](MapEditTool tool)
     {
         QAbstractButton *abs = this->button_group_tools->button(tool);
         abs->click();
     });
-    */
     
     connect(this->button_group_tools, &QButtonGroup::idToggled, this, [this]
     {
