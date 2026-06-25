@@ -68,6 +68,7 @@ qt_add_executable(aowis-server-gui
     src/map_network_structs.h
     src/map_canvas_entities.h src/map_canvas_entities.cpp
     src/map_entity_marker_label.h src/map_entity_marker_label.cpp
+    src/map_inspector_dock.h src/map_inspector_dock.cpp
 )
 
 if(APPLE)

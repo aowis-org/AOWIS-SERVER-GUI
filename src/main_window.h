@@ -44,6 +44,8 @@
 #include "tab_logs_widget.h"
 #include "tab_alarms_widget.h"
 
+#include "map_inspector_dock.h"
+
 #ifdef Q_OS_WASM
 #include "gps_provider_dummy.h"
 #else
@@ -62,6 +64,8 @@ private:
     
     MenuBar *menu;
     FooterStatusBar *footer;
+    
+    MapInspectorDock *map_inspector_dock;
     
     MapModel *map_model;
     MapWidget *map_mon;

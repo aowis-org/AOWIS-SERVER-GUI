@@ -1,6 +1,6 @@
 #include "tab_map_editor_container.h"
 
-MapEditorContainer::MapEditorContainer(MapModel *map_model, GpsProvider *gps, QWidget *parent)
+MapEditorContainer::MapEditorContainer(MapModel *map_model, GpsProvider *gps, MapInspectorDock *map_inspector, QWidget *parent)
     : QWidget{parent},
     layout( new QHBoxLayout(this) ),
     gps( gps ),
@@ -8,6 +8,7 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, GpsProvider *gps, QW
     map( new MapWidget(this->map_model, gps, this) ),
     map_canvas( new MapCanvasWidget(this->map_model, this->map, CanvasMode::Edit, this) ),
     map_menu( new MapEditorMenuWidget(this->map, this->map_canvas, CanvasMode::Edit, this) ),
+    map_inspector( map_inspector ),
     map_stack( new QWidget(this) ),
     map_stack_layout( new QStackedLayout(this->map_stack) )
 {
