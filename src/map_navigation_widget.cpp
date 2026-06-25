@@ -45,18 +45,18 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     connect(button_right, &QPushButton::clicked, this->map, &MapWidget::panRight);
     
     this->map_arcgissat = new QRadioButton("[F1] ArcGIS SAT");
-    this->map_opentopomap = new QRadioButton("[F2] OpenTopoMap");
-    this->map_openstreetmap = new QRadioButton("[F3] OpenStreetMap");
+    this->map_openstreetmap = new QRadioButton("[F2] OpenStreetMap");
+    this->map_opentopomap = new QRadioButton("[F3] OpenTopoMap");
     this->map_osmcyclo = new QRadioButton("[F4] CycloOSM");
     
     map_arcgissat->setChecked(true);
     
     connect(this->map_arcgissat, &QRadioButton::clicked, this, [this]
             { this->map->changeMapProvider(MapProvider::ArcGISSat); });
-    connect(this->map_opentopomap, &QRadioButton::clicked, this, [this]
-            { this->map->changeMapProvider(MapProvider::OpenTopoMap); });
     connect(this->map_openstreetmap, &QRadioButton::clicked, this, [this]
             { this->map->changeMapProvider(MapProvider::OpenStreetMap); });
+    connect(this->map_opentopomap, &QRadioButton::clicked, this, [this]
+            { this->map->changeMapProvider(MapProvider::OpenTopoMap); });
     connect(this->map_osmcyclo, &QRadioButton::clicked, this, [this]
             { this->map->changeMapProvider(MapProvider::OSMCyclo); });
     
@@ -72,16 +72,16 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     this->grid->addWidget(button_right, 1, 2);
     
     this->grid->addWidget(map_arcgissat, 2, 0, 1, 3);
-    this->grid->addWidget(map_opentopomap, 3, 0, 1, 3);
-    this->grid->addWidget(map_openstreetmap, 4, 0, 1, 3);
+    this->grid->addWidget(map_openstreetmap, 3, 0, 1, 3);
+    this->grid->addWidget(map_opentopomap, 4, 0, 1, 3);
     this->grid->addWidget(map_osmcyclo, 5, 0, 1, 3);
     this->grid->addWidget(label_slider_map_visibility, 6, 0, 1, 3);
     this->grid->addWidget(slider_map_visibility, 7, 0, 1, 3);
     
     this->button_group_map_select = new QButtonGroup(this);
     this->button_group_map_select->addButton(this->map_arcgissat, 1);
-    this->button_group_map_select->addButton(this->map_opentopomap, 2);
-    this->button_group_map_select->addButton(this->map_openstreetmap, 3);
+    this->button_group_map_select->addButton(this->map_openstreetmap, 2);
+    this->button_group_map_select->addButton(this->map_opentopomap, 3);
     this->button_group_map_select->addButton(this->map_osmcyclo, 4);
     
     // setting canvas opacity to 50 on init

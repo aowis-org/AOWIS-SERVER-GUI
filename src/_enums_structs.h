@@ -1,6 +1,9 @@
 #ifndef _ENUMS_STRUCTS_H
 #define _ENUMS_STRUCTS_H
 
+#include <optional>
+
+
 enum MapServerMode
 {
     REST,
@@ -10,8 +13,8 @@ enum MapServerMode
 enum MapProvider
 {
     ArcGISSat       = 1,
-    OpenTopoMap     = 2,
-    OpenStreetMap   = 3,
+    OpenStreetMap   = 2,
+    OpenTopoMap     = 3,
     OSMCyclo        = 4
 };
 

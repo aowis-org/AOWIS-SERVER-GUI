@@ -174,9 +174,9 @@ void MapCanvasWidget::keyPressEvent(QKeyEvent *event)
         else if (key == Qt::Key_F1)
             emit signalMapProviderChange(MapProvider::ArcGISSat);
         else if (key == Qt::Key_F2)
-            emit signalMapProviderChange(MapProvider::OpenTopoMap);
-        else if (key == Qt::Key_F3)
             emit signalMapProviderChange(MapProvider::OpenStreetMap);
+        else if (key == Qt::Key_F3)
+            emit signalMapProviderChange(MapProvider::OpenTopoMap);
         else if (key == Qt::Key_F4)
             emit signalMapProviderChange(MapProvider::OSMCyclo);
         
