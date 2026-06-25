@@ -27,16 +27,9 @@ void MapCanvasEntities::startEntityPositioningInternal()
 {
     stopEntityPositioning();
     
-    if (this->entity_placement_mode == MapEntityPlacementMode::CreateNew)
-    {
-        this->entity_floating = new MapEntityMarkerLabel(this->map_canvas);
-        this->entity_floating->setPixmap(QPixmap(":/icon/tower.png").scaledToWidth(150, Qt::SmoothTransformation));
-        this->entity_floating->adjustSize();
-    }
-    else if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting)
-    {
-        
-    }
+    this->entity_floating = new MapEntityMarkerLabel(this->map_canvas);
+    this->entity_floating->setPixmap(QPixmap(":/icon/tower.png").scaledToWidth(150, Qt::SmoothTransformation));
+    this->entity_floating->adjustSize();
     
     this->entity_floating->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     this->entity_floating->setFocusPolicy(Qt::NoFocus);
