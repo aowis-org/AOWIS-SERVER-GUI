@@ -6,6 +6,8 @@
 MapInspectorDock::MapInspectorDock(QWidget *parent)
     : QDockWidget("Entity Inspector", parent)
 {
+    setMinimumWidth(200);
+        
     // Create the inner widget that holds your UI
     QWidget *content = new QWidget(this);
     QVBoxLayout *layout = new QVBoxLayout(content);

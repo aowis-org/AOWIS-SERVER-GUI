@@ -31,6 +31,10 @@ MainWindow::MainWindow(QWidget *parent)
     
     showMaximized();
     
+    QLocale layout = qApp->inputMethod()->locale();
+    qDebug() << layout.name();   // e.g. "en_US", "de_DE"
+    
+    
     //this->gps->start();
     this->gps->startGpsd("127.0.0.1");
     
