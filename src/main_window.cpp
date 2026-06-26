@@ -36,7 +36,9 @@ MainWindow::MainWindow(QWidget *parent)
     
     
     //this->gps->start();
+    #ifdef Q_OS_LINUX
     this->gps->startGpsd("127.0.0.1");
+    #endif
     
     addDockWidget(Qt::RightDockWidgetArea, map_inspector_dock);    
     
