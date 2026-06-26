@@ -99,7 +99,26 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
 
 void MapNavigationWidget::mapProviderChange(MapProvider provider)
 {
-    QAbstractButton *abs = this->button_group_map_select->button(provider);
-    //abs->setChecked(true);
-    abs->click();
+    QAbstractButton *button = nullptr;
+    
+    switch (provider)
+    {
+    case MapProvider::ArcGISSat:
+        button = this->map_arcgissat;
+        break;
+    case MapProvider::OpenStreetMap:
+        button = this->map_openstreetmap;
+        break;
+    case MapProvider::OpenTopoMap:
+        button = this->map_opentopomap;
+        break;
+    case MapProvider::OSMCyclo:
+        button = this->map_osmcyclo;
+        break;
+    }
+    
+    if (!button)
+        return;
+    
+    button->click();
 }

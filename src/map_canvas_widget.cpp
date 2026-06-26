@@ -107,15 +107,21 @@ void MapCanvasWidget::paintEventRectangle(QPainter &paint)
 
 void MapCanvasWidget::keyPressEvent(QKeyEvent *event)
 {
-    onKeyPressEvent(event);
+    if (onKeyPressEvent(event))
+    {
+        event->accept();
+        return;
+    }
+    
+    QWidget::keyPressEvent(event);
 }
-void MapCanvasWidget::onKeyPressEvent(QKeyEvent *event)
+bool MapCanvasWidget::onKeyPressEvent(QKeyEvent *event)
 {
     if (this->rectangle_selection_active && event->key() == Qt::Key_Escape)
     {
         cancelRectangleSelection();
         event->accept();
-        return;
+        return true;
     }
     
     const int key = event->key();
@@ -128,9 +134,9 @@ void MapCanvasWidget::onKeyPressEvent(QKeyEvent *event)
         if (key == Qt::Key_1)
             emit signalMapProviderChange(MapProvider::ArcGISSat);
         else if (key == Qt::Key_2)
-            emit signalMapProviderChange(MapProvider::OpenTopoMap);
-        else if (key == Qt::Key_3)
             emit signalMapProviderChange(MapProvider::OpenStreetMap);
+        else if (key == Qt::Key_3)
+            emit signalMapProviderChange(MapProvider::OpenTopoMap);
         else if (key == Qt::Key_4)
             emit signalMapProviderChange(MapProvider::OSMCyclo);
     }
@@ -149,7 +155,7 @@ void MapCanvasWidget::onKeyPressEvent(QKeyEvent *event)
     }
     else
     {
-        if (key == Qt::Key_Space)
+        if (key == Qt::Key_Space  && !event->isAutoRepeat())
             this->key_space_pressed = true;
         
         else if (key == Qt::Key_Left)
@@ -213,15 +219,19 @@ void MapCanvasWidget::onKeyPressEvent(QKeyEvent *event)
             QWidget::keyPressEvent(event);
     }
     
-    event->accept();
-    return;
+    return false;
 }
 void MapCanvasWidget::keyReleaseEvent(QKeyEvent *event)
 {
     const int key = event->key();
     
-    if (key == Qt::Key_Space)
+    if (key == Qt::Key_Space && !event->isAutoRepeat())
         this->key_space_pressed = false;
+}
+void MapCanvasWidget::focusOutEvent(QFocusEvent *event)
+{
+    this->key_space_pressed = false;
+    QWidget::focusOutEvent(event);
 }
 void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
 {
@@ -257,6 +267,7 @@ void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
         
         update();
         event->accept();
+        return;
     }
     
     this->map->onMouseMove(event);
@@ -287,6 +298,9 @@ void MapCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
         {
             emit rectangleSelectionCanceled();
         }
+        
+        event->accept();
+        return;
     }
     
     QWidget::mouseReleaseEvent(event);
@@ -294,6 +308,8 @@ void MapCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
 void MapCanvasWidget::wheelEvent(QWheelEvent *event)
 {
     this->map->onMouseWheel(event);
+    event->accept();
+    return;
     
     QWidget::wheelEvent(event);
 }

@@ -52,14 +52,17 @@ MapWidget *MapEditorContainer::getMap()
     return this->map;
 }
 
-bool MapEditorContainer::eventFilter(QObject* obj, QEvent* event)
+bool MapEditorContainer::eventFilter(QObject *obj, QEvent *event)
 {
-    if (obj == this && event->type() == QEvent::KeyPress)
+    if (event->type() == QEvent::KeyPress)
     {
-        QKeyEvent *keyEvent = static_cast<QKeyEvent*>(event);
-        map_canvas->onKeyPressEvent(keyEvent);
-        // return true if you want to stop further processing
-        return true;
+        QKeyEvent *key_event = static_cast<QKeyEvent *>(event);
+        
+        if (map_canvas->onKeyPressEvent(key_event))
+        {
+            event->accept();
+            return true;
+        }
     }
     
     return QWidget::eventFilter(obj, event);

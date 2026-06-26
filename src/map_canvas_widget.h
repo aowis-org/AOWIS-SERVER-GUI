@@ -36,7 +36,7 @@ public:
     void startEntityPositioning(MapEditTool tool);
     void stopEntityPositioning();
     
-    void onKeyPressEvent(QKeyEvent *event);
+    bool onKeyPressEvent(QKeyEvent *event);
     
 public slots:
     void setBackgroundOpacity(int opacity);
@@ -46,6 +46,8 @@ protected:
     
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
+    
+    void focusOutEvent(QFocusEvent *event) override;
     
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
