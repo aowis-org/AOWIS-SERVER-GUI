@@ -1,0 +1,313 @@
+<!--
+Copyright (C) 2024 The Qt Company Ltd.
+SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
+-->
+
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+    <!--
+      Set visual viewport size for mobile devices to the device size,
+      which results in a scale of 1 and a 1:1 mapping between CSS pixels
+      and Qt device independent pixels.
+    -->
+    <meta name="viewport" content="width=device-width, height=device-height, user-scalable=0"/>
+
+    <title>AOWIS Controller</title>
+
+    <style>
+      html,
+      body {
+        padding: 0;
+        margin: 0;
+        overflow: hidden;
+        width: 100%;
+        height: 100%;
+      }
+
+      #screen {
+        width: 100%;
+        height: 100%;
+        outline: none;
+        touch-action: none;
+      }
+
+      #screen canvas {
+        outline: none;
+      }
+
+      #qtspinner {
+        overflow: visible;
+      }
+    </style>
+  </head>
+
+  <body onload="init()">
+    <figure id="qtspinner">
+      <center style="margin-top:1.5em; line-height:150%">
+        <img src="qtlogo.svg" width="320" height="200" style="display:block">
+        <strong>Qt for WebAssembly: aowis-server-gui</strong>
+        <div id="qtstatus"></div>
+        <noscript>JavaScript is disabled. Please enable JavaScript to use this application.</noscript>
+      </center>
+    </figure>
+
+    <div id="screen" tabindex="0"></div>
+
+    <script type="text/javascript">
+      let qtFocusHandlersInstalled = false;
+      let qtFocusRetryTimer = null;
+
+      function isNativeTextInput(element)
+      {
+          if (!element)
+              return false;
+
+          const tag = element.tagName;
+
+          return tag === 'INPUT'
+              || tag === 'TEXTAREA'
+              || tag === 'SELECT'
+              || element.isContentEditable;
+      }
+
+      function getQtShadowFocusTarget()
+      {
+          const shadowContainer = document.getElementById('qt-shadow-container');
+
+          if (!shadowContainer)
+              return null;
+
+          const shadowRoot = shadowContainer.shadowRoot;
+
+          if (!shadowRoot)
+              return null;
+
+          let target = shadowRoot.querySelector('.hidden-visually-read-by-screen-reader');
+
+          if (target)
+              return target;
+
+          target = shadowRoot.querySelector('button');
+
+          if (target)
+              return target;
+
+          target = shadowRoot.querySelector('[tabindex]');
+
+          if (target)
+              return target;
+
+          return null;
+      }
+
+      function getQtFallbackFocusTarget()
+      {
+          const screen = document.querySelector('#screen');
+
+          if (!screen)
+              return null;
+
+          const canvas = screen.querySelector('canvas');
+
+          if (canvas)
+              return canvas;
+
+          return screen;
+      }
+
+      function getQtKeyboardFocusTarget()
+      {
+          const shadowTarget = getQtShadowFocusTarget();
+
+          if (shadowTarget)
+              return shadowTarget;
+
+          return getQtFallbackFocusTarget();
+      }
+
+      function focusQtWasmKeyboardTarget(reason)
+      {
+          const active = document.activeElement;
+
+          if (isNativeTextInput(active)) {
+              console.log('Qt focus skipped; native text input active:', active);
+              return false;
+          }
+
+          const target = getQtKeyboardFocusTarget();
+
+          if (!target) {
+              console.log('Qt focus target not found. Reason:', reason);
+              return false;
+          }
+
+          if (!target.hasAttribute('tabindex'))
+              target.setAttribute('tabindex', '0');
+
+          try {
+              target.focus({ preventScroll: true });
+          } catch (error) {
+              target.focus();
+          }
+
+          console.log(
+              'Qt focus set. Reason:',
+              reason,
+              'target:',
+              target,
+              'document.activeElement:',
+              document.activeElement
+          );
+
+          return true;
+      }
+
+      function focusQtWasmKeyboardTargetSoon(reason)
+      {
+          setTimeout(function () {
+              focusQtWasmKeyboardTarget(reason);
+          }, 0);
+      }
+
+      function startQtFocusRetry()
+      {
+          if (qtFocusRetryTimer !== null)
+              return;
+
+          let attempts = 0;
+
+          qtFocusRetryTimer = setInterval(function () {
+              attempts++;
+
+              if (focusQtWasmKeyboardTarget('startup retry ' + attempts) || attempts > 30) {
+                  clearInterval(qtFocusRetryTimer);
+                  qtFocusRetryTimer = null;
+              }
+          }, 100);
+      }
+
+      function installQtFocusHandling()
+      {
+          if (qtFocusHandlersInstalled)
+              return;
+
+          qtFocusHandlersInstalled = true;
+
+          const screen = document.querySelector('#screen');
+
+          if (screen)
+              screen.setAttribute('tabindex', '0');
+
+          document.addEventListener('pointerdown', function () {
+              focusQtWasmKeyboardTargetSoon('pointerdown');
+          }, true);
+
+          document.addEventListener('mousedown', function () {
+              focusQtWasmKeyboardTargetSoon('mousedown');
+          }, true);
+
+          document.addEventListener('mouseup', function () {
+              focusQtWasmKeyboardTargetSoon('mouseup');
+          }, true);
+
+          document.addEventListener('touchstart', function () {
+              focusQtWasmKeyboardTargetSoon('touchstart');
+          }, true);
+
+          document.addEventListener('contextmenu', function (event) {
+              event.preventDefault();
+              focusQtWasmKeyboardTargetSoon('contextmenu');
+          }, true);
+
+          document.addEventListener('focusout', function (event) {
+              console.log(
+                  'DOM focusout:',
+                  'from:', event.target,
+                  'to:', event.relatedTarget,
+                  'active:', document.activeElement
+              );
+
+              if (event.relatedTarget === null)
+                  focusQtWasmKeyboardTargetSoon('focusout-null');
+          }, true);
+
+          window.addEventListener('focus', function () {
+              focusQtWasmKeyboardTargetSoon('window-focus');
+          });
+
+          document.addEventListener('keydown', function (event) {
+              console.log(
+                  'DOM keydown:',
+                  event.key,
+                  'activeElement:',
+                  document.activeElement
+              );
+          }, true);
+
+          startQtFocusRetry();
+      }
+
+      async function init()
+      {
+          const spinner = document.querySelector('#qtspinner');
+          const screen = document.querySelector('#screen');
+          const status = document.querySelector('#qtstatus');
+
+          const showUi = (ui) => {
+              [spinner, screen].forEach(element => element.style.display = 'none');
+
+              if (screen === ui)
+                  screen.style.position = 'relative';
+
+              ui.style.display = 'block';
+          };
+
+          try {
+              showUi(spinner);
+              status.innerHTML = 'Loading...';
+
+              const instance = await qtLoad({
+                  qt: {
+                      onLoaded: () =>
+                      {
+                          showUi(screen);
+                          installQtFocusHandling();
+
+                          requestAnimationFrame(() =>
+                          {
+                              focusQtWasmKeyboardTarget('onLoaded requestAnimationFrame');
+                          });
+
+                          startQtFocusRetry();
+                      },
+
+                      onExit: exitData =>
+                      {
+                          status.innerHTML = 'Application exit';
+                          status.innerHTML +=
+                              exitData.code !== undefined ? ` with code ${exitData.code}` : '';
+                          status.innerHTML +=
+                              exitData.text !== undefined ? ` (${exitData.text})` : '';
+
+                          showUi(spinner);
+                      },
+
+                      entryFunction: window.aowis_server_gui_entry,
+                      containerElements: [screen],
+                  }
+              });
+          } catch (e) {
+              console.error(e);
+              console.error(e.stack);
+          }
+      }
+    </script>
+
+    <script src="aowis-server-gui.js"></script>
+    <script type="text/javascript" src="qtloader.js"></script>
+  </body>
+</html>

@@ -210,6 +210,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     this->button_group_tools->addButton(button_radio_customer, 4);
     
     QRadioButton *button_radio_pump = new QRadioButton("[5] Pump", wgt);
+    button_radio_pump->setShortcut(Qt::Key_G);
     lay->addWidget(button_radio_pump);
     this->button_group_tools->addButton(button_radio_pump, 5);
     
