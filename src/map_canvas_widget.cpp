@@ -158,65 +158,108 @@ bool MapCanvasWidget::onKeyPressEvent(QKeyEvent *event)
         if (key == Qt::Key_Space  && !event->isAutoRepeat())
             this->key_space_pressed = true;
         
-        else if (key == Qt::Key_Left)
-            this->map->panLeft();
-        else if (key == Qt::Key_Right)
-            this->map->panRight();
-        else if (key == Qt::Key_Up)
-            this->map->panUp();
-        else if (key == Qt::Key_Down)
-            this->map->panDown();
-        
-        else if (key == Qt::Key_U)
-            this->map->panLeft();
-        else if (key == Qt::Key_A)
-            this->map->panRight();
-        else if (key == Qt::Key_V)
-            this->map->panUp();
-        else if (key == Qt::Key_I)
-            this->map->panDown();
-        
-        else if (key == Qt::Key_L)
-            this->map->zoomIn();
-        else if (key == Qt::Key_X)
-            this->map->zoomOut();
-        
-        else if (key == Qt::Key_F1)
-            emit signalMapProviderChange(MapProvider::ArcGISSat);
-        else if (key == Qt::Key_F2)
-            emit signalMapProviderChange(MapProvider::OpenStreetMap);
-        else if (key == Qt::Key_F3)
-            emit signalMapProviderChange(MapProvider::OpenTopoMap);
-        else if (key == Qt::Key_F4)
-            emit signalMapProviderChange(MapProvider::OSMCyclo);
-        
-        else if (this->mode == CanvasMode::Edit)
+        switch (key)
         {
-            if (key == Qt::Key_Escape)
-                emit signalEditToolChange(MapEditTool::Select);
+        case Qt::Key_Left:
+        case Qt::Key_U:
+            this->map->panLeft();
+            return true;
             
-            else if (key == Qt::Key_1)
-                emit signalEditToolChange(MapEditTool::Pipe);
-            else if (key == Qt::Key_2)
-                emit signalEditToolChange(MapEditTool::Junction);
-            else if (key == Qt::Key_3)
-                emit signalEditToolChange(MapEditTool::Valve);
-            else if (key == Qt::Key_4)
-                emit signalEditToolChange(MapEditTool::Customer_Point);
-            else if (key == Qt::Key_5)
-                emit signalEditToolChange(MapEditTool::Pump);
-            else if (key == Qt::Key_6)
-                emit signalEditToolChange(MapEditTool::Tank);
-            else if (key == Qt::Key_7)
-                emit signalEditToolChange(MapEditTool::Power);
-            else if (key == Qt::Key_8)
-                emit signalEditToolChange(MapEditTool::Reservoir);
-            else if (key == Qt::Key_9)
-                emit signalEditToolChange(MapEditTool::Note);
+        case Qt::Key_Right:
+        case Qt::Key_A:
+            this->map->panRight();
+            return true;
+            
+        case Qt::Key_Up:
+        case Qt::Key_V:
+            this->map->panUp();
+            return true;
+        
+        case Qt::Key_Down:
+        case Qt::Key_I:
+            this->map->panDown();
+            return true;    
         }
         
-        else
-            QWidget::keyPressEvent(event);
+        switch (key)
+        {
+        case Qt::Key_L:
+            this->map->zoomIn();
+            return true;
+        
+        case Qt::Key_X:
+            this->map->zoomOut();
+            return true;
+        }
+        
+        switch (key)
+        {
+        case Qt::Key_F1:
+            emit signalMapProviderChange(MapProvider::ArcGISSat);
+            return true;
+        
+        case Qt::Key_F2:
+            emit signalMapProviderChange(MapProvider::OpenStreetMap);
+            return true;
+        
+        case Qt::Key_F3:
+            emit signalMapProviderChange(MapProvider::OpenTopoMap);
+            return true;
+        
+        case Qt::Key_F4:
+            emit signalMapProviderChange(MapProvider::OSMCyclo);
+            return true;
+        }
+        
+        if (this->mode == CanvasMode::Edit)
+        {
+            switch (key)
+            {
+            case Qt::Key_Escape:
+                emit signalEditToolChange(MapEditTool::Select);
+                return true;
+                
+            case Qt::Key_1:
+                emit signalEditToolChange(MapEditTool::Pipe);
+                return true;
+                
+            case Qt::Key_2:
+                emit signalEditToolChange(MapEditTool::Junction);
+                return true;
+                
+            case Qt::Key_3:
+                emit signalEditToolChange(MapEditTool::Valve);
+                return true;
+                
+            case Qt::Key_4:
+                emit signalEditToolChange(MapEditTool::Customer_Point);
+                return true;
+                
+            case Qt::Key_5:
+                emit signalEditToolChange(MapEditTool::Pump);
+                return true;
+                
+            case Qt::Key_6:
+                emit signalEditToolChange(MapEditTool::Tank);
+                return true;
+                
+            case Qt::Key_7:
+                emit signalEditToolChange(MapEditTool::Power);
+                return true;
+                
+            case Qt::Key_8:
+                emit signalEditToolChange(MapEditTool::Reservoir);
+                return true;
+                
+            case Qt::Key_9:
+                emit signalEditToolChange(MapEditTool::Note);
+                return true;
+            }
+            
+            return false;
+        }
+        
+        return false;
     }
     
     return false;

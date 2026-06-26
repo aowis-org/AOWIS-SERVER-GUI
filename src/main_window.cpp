@@ -54,7 +54,7 @@ MainWindow::MainWindow(QWidget *parent)
     
     // don't make it smaller, because that could lead to positioning issues on the canvas
     this->setMinimumHeight(700);
-    this->setMinimumWidth(1000);
+    this->setMinimumWidth(1122);
     
     this->tabs->setIconSize(QSize(40, 40));
     this->tabs->setTabPosition(QTabWidget::West);
