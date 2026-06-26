@@ -6,7 +6,7 @@ echo "=== Building AOWIS for WebAssembly ==="
 cd /project
 
 # Clean previous build
-rm -rf build-wasm
+#rm -rf build-wasm
 
 if [ ! -d "build-wasm" ]; then
     mkdir build-wasm

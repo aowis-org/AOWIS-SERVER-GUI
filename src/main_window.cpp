@@ -242,3 +242,39 @@ void MainWindow::updateTabSpacer()
         }
     )").arg(spacer_height));
 }
+
+void MainWindow::keyPressEvent(QKeyEvent *event)
+{
+    const int key = event->key();
+    
+    switch (key)
+    {
+#ifdef Q_OS_WASM
+    case Qt::Key_F5:
+        QMessageBox *box = new QMessageBox(this);
+        box->setAttribute(Qt::WA_DeleteOnClose);
+        
+        box->setIcon(QMessageBox::Question);
+        box->setWindowTitle("Reload page");
+        box->setText("Do you really want to reload this page?<br>You might loose unsaved inputs.");
+        box->setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+        box->setDefaultButton(QMessageBox::No);
+        
+        connect(box, &QMessageBox::buttonClicked, this,
+                [this, box, event](QAbstractButton *button)
+                {
+                    if (box->standardButton(button) == QMessageBox::Yes)
+                    {
+                        emscripten_run_script("window.location.reload();");
+                    }
+                });
+        
+        box->open();
+        
+        event->accept();
+        return;
+#endif
+    }
+    
+    QWidget::keyPressEvent(event);
+}

@@ -97,7 +97,6 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_ca
     
     connect(this->map_nav, &MapNavigationWidget::signalSlideOpacityChanged, this, &MapEditorMenuWidget::signalSlideOpacityChanged);
     
-    connect(this->map_canvas, &MapCanvasWidget::signalMapProviderChange, this->map_nav, &MapNavigationWidget::mapProviderChange);
 }
 
 void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
@@ -182,6 +181,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     
     QRadioButton *button_radio_select = new QRadioButton("[Esc] Select", wgt);
     button_radio_select->setToolTip("Cancel placement and return to selection mode");
+    button_radio_select->setShortcut(Qt::Key_Escape);
     lay->addWidget(button_radio_select);
     this->button_group_tools->addButton(button_radio_select, 100);
     
@@ -194,27 +194,32 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     lay->addWidget(label_add);
     
     QRadioButton *button_radio_pipe = new QRadioButton("[1] Pipe / Cable", wgt);
+    button_radio_pipe->setShortcut(Qt::Key_1);
     lay->addWidget(button_radio_pipe);
     this->button_group_tools->addButton(button_radio_pipe, 1);
     
     QRadioButton *button_radio_junction = new QRadioButton("[2] Junction", wgt);
+    button_radio_junction->setShortcut(Qt::Key_2);
     lay->addWidget(button_radio_junction);
     this->button_group_tools->addButton(button_radio_junction, 2);
     
     QRadioButton *button_radio_valve = new QRadioButton("[3] Valve / Switch", wgt);
+    button_radio_valve->setShortcut(Qt::Key_3);
     lay->addWidget(button_radio_valve);
     this->button_group_tools->addButton(button_radio_valve, 3);
     
     QRadioButton *button_radio_customer = new QRadioButton("[4] Customer Point", wgt);
+    button_radio_customer->setShortcut(Qt::Key_4);
     lay->addWidget(button_radio_customer);
     this->button_group_tools->addButton(button_radio_customer, 4);
     
     QRadioButton *button_radio_pump = new QRadioButton("[5] Pump", wgt);
-    button_radio_pump->setShortcut(Qt::Key_G);
+    button_radio_pump->setShortcut(Qt::Key_5);
     lay->addWidget(button_radio_pump);
     this->button_group_tools->addButton(button_radio_pump, 5);
     
     QRadioButton *button_radio_tank = new QRadioButton("[6] Tank", wgt);
+    button_radio_tank->setShortcut(Qt::Key_6);
     lay->addWidget(button_radio_tank);
     this->button_group_tools->addButton(button_radio_tank, 6);
     connect(button_radio_tank, &QRadioButton::clicked, this, [this]
@@ -223,14 +228,17 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     });
     
     QRadioButton *button_radio_power = new QRadioButton("[7] Power Source", wgt);
+    button_radio_power->setShortcut(Qt::Key_7);
     lay->addWidget(button_radio_power);
     this->button_group_tools->addButton(button_radio_power, 7);
     
     QRadioButton *button_radio_reservoir = new QRadioButton("[8] Reservoir", wgt);
+    button_radio_reservoir->setShortcut(Qt::Key_8);
     lay->addWidget(button_radio_reservoir);
     this->button_group_tools->addButton(button_radio_reservoir, 8);
     
     QRadioButton *button_radio_note = new QRadioButton("[9] Note", wgt);
+    button_radio_note->setShortcut(Qt::Key_9);
     lay->addWidget(button_radio_note);
     this->button_group_tools->addButton(button_radio_note, 9);
     
@@ -240,12 +248,6 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     );
     label_instruction->setWordWrap(true);
     lay->addWidget(label_instruction);
-    
-    connect(this->map_canvas, &MapCanvasWidget::signalEditToolChange, this, [this](MapEditTool tool)
-    {
-        QAbstractButton *abs = this->button_group_tools->button(tool);
-        abs->click();
-    });
     
     connect(this->button_group_tools, &QButtonGroup::idToggled, this, [this]
     {

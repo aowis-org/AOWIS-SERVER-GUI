@@ -83,9 +83,6 @@ signals:
     void rectangleSelected(const QRect &rect);
     void rectangleSelectionCanceled();
     
-    void signalEditToolChange(MapEditTool tool);
-    void signalEditToolChangeSub(MapEditToolSub subtool);
-    void signalMapProviderChange(MapProvider provider);
 };
 
 #endif // MAP_CANVAS_WIDGET_H

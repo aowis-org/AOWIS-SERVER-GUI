@@ -15,6 +15,10 @@
 #include <QLabel>
 #include <QIcon>
 
+#include <QKeyEvent>
+#include <QMessageBox>
+#include <QContextMenuEvent>
+
 #include <QByteArray>
 
 #include <QTimer>
@@ -47,6 +51,7 @@
 #include "map_inspector_dock.h"
 
 #ifdef Q_OS_WASM
+#include <emscripten.h>
 #include "gps_provider_dummy.h"
 #else
 #include "gps_provider.h"
@@ -58,6 +63,9 @@ class MainWindow : public QMainWindow
 
 public:
     explicit MainWindow(QWidget *parent = nullptr);
+    
+protected:
+    void keyPressEvent(QKeyEvent *event) override;
     
 private:
     GpsProvider *gps = nullptr;

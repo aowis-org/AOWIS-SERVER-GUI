@@ -129,29 +129,11 @@ bool MapCanvasWidget::onKeyPressEvent(QKeyEvent *event)
     
     if (modifier_ctrl)
     {
-        // F-Keys (and also shift-modifier) do not work reliably in WASM,
-        // so we fallback to Ctrl + 1 - 4 for that
-        if (key == Qt::Key_1)
-            emit signalMapProviderChange(MapProvider::ArcGISSat);
-        else if (key == Qt::Key_2)
-            emit signalMapProviderChange(MapProvider::OpenStreetMap);
-        else if (key == Qt::Key_3)
-            emit signalMapProviderChange(MapProvider::OpenTopoMap);
-        else if (key == Qt::Key_4)
-            emit signalMapProviderChange(MapProvider::OSMCyclo);
+        
     }
     else if (this->key_space_pressed)
     {
-        if (key == Qt::Key_1)
-            emit signalEditToolChangeSub(MapEditToolSub::Tool_1);
-        else if (key == Qt::Key_2)
-            emit signalEditToolChangeSub(MapEditToolSub::Tool_2);
-        else if (key == Qt::Key_3)
-            emit signalEditToolChangeSub(MapEditToolSub::Tool_3);
-        else if (key == Qt::Key_4)
-            emit signalEditToolChangeSub(MapEditToolSub::Tool_4);
-        else if (key == Qt::Key_5)
-            emit signalEditToolChangeSub(MapEditToolSub::Tool_5);
+        
     }
     else
     {
@@ -190,73 +172,6 @@ bool MapCanvasWidget::onKeyPressEvent(QKeyEvent *event)
         case Qt::Key_X:
             this->map->zoomOut();
             return true;
-        }
-        
-        switch (key)
-        {
-        case Qt::Key_F1:
-            emit signalMapProviderChange(MapProvider::ArcGISSat);
-            return true;
-        
-        case Qt::Key_F2:
-            emit signalMapProviderChange(MapProvider::OpenStreetMap);
-            return true;
-        
-        case Qt::Key_F3:
-            emit signalMapProviderChange(MapProvider::OpenTopoMap);
-            return true;
-        
-        case Qt::Key_F4:
-            emit signalMapProviderChange(MapProvider::OSMCyclo);
-            return true;
-        }
-        
-        if (this->mode == CanvasMode::Edit)
-        {
-            switch (key)
-            {
-            case Qt::Key_Escape:
-                emit signalEditToolChange(MapEditTool::Select);
-                return true;
-                
-            case Qt::Key_1:
-                emit signalEditToolChange(MapEditTool::Pipe);
-                return true;
-                
-            case Qt::Key_2:
-                emit signalEditToolChange(MapEditTool::Junction);
-                return true;
-                
-            case Qt::Key_3:
-                emit signalEditToolChange(MapEditTool::Valve);
-                return true;
-                
-            case Qt::Key_4:
-                emit signalEditToolChange(MapEditTool::Customer_Point);
-                return true;
-                
-            case Qt::Key_5:
-                emit signalEditToolChange(MapEditTool::Pump);
-                return true;
-                
-            case Qt::Key_6:
-                emit signalEditToolChange(MapEditTool::Tank);
-                return true;
-                
-            case Qt::Key_7:
-                emit signalEditToolChange(MapEditTool::Power);
-                return true;
-                
-            case Qt::Key_8:
-                emit signalEditToolChange(MapEditTool::Reservoir);
-                return true;
-                
-            case Qt::Key_9:
-                emit signalEditToolChange(MapEditTool::Note);
-                return true;
-            }
-            
-            return false;
         }
         
         return false;
