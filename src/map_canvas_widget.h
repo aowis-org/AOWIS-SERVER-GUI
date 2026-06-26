@@ -36,6 +36,8 @@ public:
     void startEntityPositioning(MapEditTool tool);
     void stopEntityPositioning();
     
+    void onKeyPressEvent(QKeyEvent *event);
+    
 public slots:
     void setBackgroundOpacity(int opacity);
     

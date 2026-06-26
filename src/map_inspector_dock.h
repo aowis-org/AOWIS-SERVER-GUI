@@ -3,6 +3,8 @@
 
 #include <QDockWidget>
 
+#include <QPushButton>
+
 #include "_enums_structs.h"
 #include "map_network_structs.h"
 

@@ -107,6 +107,10 @@ void MapCanvasWidget::paintEventRectangle(QPainter &paint)
 
 void MapCanvasWidget::keyPressEvent(QKeyEvent *event)
 {
+    onKeyPressEvent(event);
+}
+void MapCanvasWidget::onKeyPressEvent(QKeyEvent *event)
+{
     if (this->rectangle_selection_active && event->key() == Qt::Key_Escape)
     {
         cancelRectangleSelection();

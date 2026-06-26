@@ -16,6 +16,8 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, GpsProvider *gps, Ma
     this->layout->setContentsMargins(0, 0, 0, 0);
     this->layout->setSpacing(0);
     
+    this->installEventFilter(this);
+    
     QScrollArea *scroll_controls = new QScrollArea(this);
     scroll_controls->setMinimumWidth(Sizes::SidebarMapEditLeftWidthBase);
     scroll_controls->setMaximumWidth(Sizes::SidebarMapEditLeftWidthBase);
@@ -48,6 +50,19 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, GpsProvider *gps, Ma
 MapWidget *MapEditorContainer::getMap()
 {
     return this->map;
+}
+
+bool MapEditorContainer::eventFilter(QObject* obj, QEvent* event)
+{
+    if (obj == this && event->type() == QEvent::KeyPress)
+    {
+        QKeyEvent *keyEvent = static_cast<QKeyEvent*>(event);
+        map_canvas->onKeyPressEvent(keyEvent);
+        // return true if you want to stop further processing
+        return true;
+    }
+    
+    return QWidget::eventFilter(obj, event);
 }
 
 
@@ -235,4 +250,5 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     
     tbx->addItem(wgt, "Edit Network");
 }
+
 

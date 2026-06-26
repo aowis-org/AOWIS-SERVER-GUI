@@ -26,6 +26,9 @@ MapInspectorDock::MapInspectorDock(QWidget *parent)
     setFeatures(QDockWidget::DockWidgetClosable |
                 QDockWidget::DockWidgetMovable |
                 QDockWidget::DockWidgetFloatable);
+    
+    QPushButton *test = new QPushButton("Test");
+    layout->addWidget(test);
 }
 
 
