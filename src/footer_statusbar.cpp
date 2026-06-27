@@ -17,7 +17,7 @@ FooterStatusBar::FooterStatusBar(QWidget *parent)
     this->layout->addWidget(this->bar);
     
     this->label_map_zoom->setMinimumWidth(80);
-    this->label_map_coords_lat->setMinimumWidth(130);
+    this->label_map_coords_lat->setMinimumWidth(135);
     this->label_map_coords_lon->setMinimumWidth(112);
     
     this->label_map_coords_utm_easting->setMinimumWidth(155);
@@ -52,7 +52,7 @@ void FooterStatusBar::setMapCoordinatesWGS84(const CoordinateWGS84 &wgs)
 {
     // 5 decimals are about 1.11 m (depending on location)
     this->label_map_coords_lat->setText(
-        "WGS84 Lat: " + QString::number(wgs.lat, 'f', 5)
+        "WGS 84 Lat: " + QString::number(wgs.lat, 'f', 5)
         );
     
     this->label_map_coords_lon->setText(

@@ -11,6 +11,8 @@ namespace Sizes
     inline constexpr int SidebarLeftWidthBase = 210;
     inline constexpr int SidebarMapEditLeftWidthBase = 230;
 #endif
+    inline constexpr int SidebarRightWidthBase = 210;
+    inline constexpr int SidebarRightImageHeight = 200;
 }
 
 

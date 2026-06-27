@@ -36,6 +36,7 @@
         
         <file alias="settings.png">assets/iconsets/gothic/settings.png</file>
         <file alias="tower.png">assets/iconsets/gothic/tower.png</file>
+        <file alias="tower_large.png">assets/iconsets/gothic/water_tower_large_alt.png</file>
         <file alias="users.png">assets/iconsets/gothic/users.png</file>
         <file alias="valve.png">assets/iconsets/gothic/valve.png</file>
         

@@ -66,11 +66,9 @@ MapMonitorMenuWidget::MapMonitorMenuWidget(MapWidget *map, QWidget *parent)
     this->layout->addStretch();
 }
 
-
 void MapMonitorMenuWidget::addGroupNodeVisuals()
 {
     GroupBoxCollapsible *group = new GroupBoxCollapsible("Node Symbology", this);
-    group->setCheckable(true);
     this->layout->addWidget(group);
     QVBoxLayout *vbox = new QVBoxLayout();
     group->setLayout(vbox);
@@ -124,7 +122,6 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
 void MapMonitorMenuWidget::addGroupLinkVisuals()
 {
     GroupBoxCollapsible *group = new GroupBoxCollapsible("Link Symbology", this);
-    group->setCheckable(true);
     this->layout->addWidget(group);
     QVBoxLayout *vbox = new QVBoxLayout();
     group->setLayout(vbox);

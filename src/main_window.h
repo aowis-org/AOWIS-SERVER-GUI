@@ -48,7 +48,7 @@
 #include "tab_logs_widget.h"
 #include "tab_alarms_widget.h"
 
-#include "entity_inspector_dock.h"
+#include "entity_inspector/entity_inspector_dock.h"
 
 #ifdef Q_OS_WASM
 #include <emscripten.h>

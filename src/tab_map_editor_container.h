@@ -22,7 +22,7 @@
 #include "map_widget.h"
 #include "map_navigation_widget.h"
 #include "map_canvas_widget.h"
-#include "entity_inspector_dock.h"
+#include "entity_inspector/entity_inspector_dock.h"
 
 #ifdef Q_OS_WASM
 #include "gps_provider_dummy.h"

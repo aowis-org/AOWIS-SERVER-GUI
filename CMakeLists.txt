@@ -68,7 +68,7 @@ qt_add_executable(aowis-server-gui
     src/map_network_structs.h
     src/map_canvas_entities.h src/map_canvas_entities.cpp
     src/map_entity_marker_label.h src/map_entity_marker_label.cpp
-    src/entity_inspector_dock.h src/entity_inspector_dock.cpp
+    src/entity_inspector/entity_inspector_dock.h src/entity_inspector/entity_inspector_dock.cpp
     src/widgets/group_box_collapsible.h src/widgets/group_box_collapsible.cpp
 )
 
