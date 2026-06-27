@@ -69,7 +69,7 @@ MapMonitorMenuWidget::MapMonitorMenuWidget(MapWidget *map, QWidget *parent)
 
 void MapMonitorMenuWidget::addGroupNodeVisuals()
 {
-    QGroupBox *group = new QGroupBox("Node Symbology", this);
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Node Symbology", this);
     group->setCheckable(true);
     this->layout->addWidget(group);
     QVBoxLayout *vbox = new QVBoxLayout();
@@ -120,12 +120,10 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
     vbox->addWidget(radio_node_lake);
     
     vbox->addWidget(label_chlorine);
-    
-    makeGroupCollapsable(group);
 }
 void MapMonitorMenuWidget::addGroupLinkVisuals()
 {
-    QGroupBox *group = new QGroupBox("Link Symbology", this);
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Link Symbology", this);
     group->setCheckable(true);
     this->layout->addWidget(group);
     QVBoxLayout *vbox = new QVBoxLayout();
@@ -155,26 +153,5 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     vbox->addWidget(radio_link_chlorine);
     vbox->addWidget(radio_link_river);
     vbox->addWidget(radio_link_lake);
-    
-    makeGroupCollapsable(group);
-}
-
-void MapMonitorMenuWidget::makeGroupCollapsable(QGroupBox *group)
-{
-    connect(group, &QGroupBox::toggled, group, [group](bool expanded){
-        for (QObject *obj : group->children()) {
-            
-            // Only affect actual widgets, not layouts
-            QWidget *w = qobject_cast<QWidget*>(obj);
-            if (!w)
-                continue;
-            
-            // Don't hide the group box itself
-            if (w == group)
-                continue;
-            
-            w->setVisible(expanded);
-        }
-    });
 }
 

@@ -22,6 +22,7 @@
 #include "map_model.h"
 #include "map_widget.h"
 #include "map_navigation_widget.h"
+#include "widgets/group_box_collapsible.h"
 
 #ifdef Q_OS_WASM
 #include "gps_provider_dummy.h"
@@ -45,8 +46,6 @@ private:
     MapNavigationWidget *map_nav;
     void addGroupNodeVisuals();
     void addGroupLinkVisuals();
-    
-    void makeGroupCollapsable(QGroupBox *group);
     
 signals:
     void mapZoomIn();
