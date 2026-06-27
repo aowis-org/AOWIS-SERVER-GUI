@@ -249,7 +249,14 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
     
     switch (key)
     {
-#ifdef Q_OS_WASM
+    #ifndef Q_OS_WASM    
+    case Qt::Key_F11:
+        fullScreenToggle();
+        event->accept();
+        return;
+    #endif
+    
+    #ifdef Q_OS_WASM
     case Qt::Key_F5:
         QMessageBox *box = new QMessageBox(this);
         box->setAttribute(Qt::WA_DeleteOnClose);
@@ -273,8 +280,23 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
         
         event->accept();
         return;
-#endif
+    #endif
     }
     
     QWidget::keyPressEvent(event);
+}
+
+void MainWindow::fullScreenToggle()
+{
+    if (!isFullScreen()) {
+        // Save current state before going fullscreen
+        this->window_state_saved = windowState();
+        this->window_geometry_saved = geometry();
+        showFullScreen();
+    } else {
+        // Restore previous state
+        showNormal();
+        setGeometry(this->window_geometry_saved);
+        setWindowState(this->window_state_saved);
+    }
 }

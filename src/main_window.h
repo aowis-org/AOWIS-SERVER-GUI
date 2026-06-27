@@ -52,6 +52,7 @@
 
 #ifdef Q_OS_WASM
 #include <emscripten.h>
+#include <emscripten/html5.h>
 #include "gps_provider_dummy.h"
 #else
 #include "gps_provider.h"
@@ -68,6 +69,10 @@ protected:
     void keyPressEvent(QKeyEvent *event) override;
     
 private:
+    Qt::WindowStates window_state_saved;
+    QRect window_geometry_saved;
+    void fullScreenToggle();
+    
     GpsProvider *gps = nullptr;
     
     MenuBar *menu;
