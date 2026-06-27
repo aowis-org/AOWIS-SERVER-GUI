@@ -288,12 +288,15 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
 
 void MainWindow::fullScreenToggle()
 {
-    if (!isFullScreen()) {
+    if (!isFullScreen())
+    {
         // Save current state before going fullscreen
         this->window_state_saved = windowState();
         this->window_geometry_saved = geometry();
         showFullScreen();
-    } else {
+    }
+    else
+    {
         // Restore previous state
         showNormal();
         setGeometry(this->window_geometry_saved);
