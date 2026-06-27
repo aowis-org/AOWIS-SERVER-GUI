@@ -61,7 +61,7 @@ signals:
     void providerChanged(MapProvider provider);
     
 private:
-    int m_zoom = 19;
+    int m_zoom = 18;
     double m_centerLon = 18.19331;
     double m_centerLat = 11.98119;
     /*

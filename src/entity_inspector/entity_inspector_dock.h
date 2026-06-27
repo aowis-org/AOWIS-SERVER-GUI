@@ -5,6 +5,7 @@
 #include <QDockWidget>
 
 #include <QScrollArea>
+#include <QGroupBox>
 #include <QPixmap>
 #include <QPushButton>
 #include <QPushButton>
@@ -35,6 +36,19 @@ private:
     QVBoxLayout *layout = nullptr;
     
     QLabel *label_title = nullptr;
+    QLineEdit *line_name = nullptr;
+    
+    QDoubleSpinBox *spin_latitude = nullptr;
+    QDoubleSpinBox *spin_longitude = nullptr;
+    
+    QDoubleSpinBox *spin_ground_elevation = nullptr;
+    QDoubleSpinBox *spin_tank_bottom_offset = nullptr;
+    QDoubleSpinBox *spin_tank_bottom_elevation = nullptr;
+    
+    QCheckBox *check_overflow = nullptr;
+    
+private slots:
+    double calculateTankElevation();
 };
 
 #endif // ENTITY_INSPECTOR_DOCK_H
