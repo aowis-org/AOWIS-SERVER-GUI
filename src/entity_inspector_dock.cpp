@@ -9,15 +9,15 @@ EntityInspectorDock::EntityInspectorDock(QWidget *parent)
     setMinimumWidth(200);
         
     // Create the inner widget that holds your UI
-    QWidget *content = new QWidget(this);
-    QVBoxLayout *layout = new QVBoxLayout(content);
+    QScrollArea *scroll = new QScrollArea(this);
+    QVBoxLayout *layout = new QVBoxLayout(this);
     
     // Example content
     layout->addWidget(new QLabel("Map inspector content goes here"));
     layout->addStretch();
     
     // Put the content widget inside the dock
-    setWidget(content);
+    setWidget(scroll);
     
     // Optional: restrict docking areas
     setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
@@ -29,12 +29,13 @@ EntityInspectorDock::EntityInspectorDock(QWidget *parent)
     
     QPushButton *test = new QPushButton("Test");
     layout->addWidget(test);
+    
+    showEntityTank();
 }
 
 void EntityInspectorDock::showEntityTank()
 {
     
 }
-    
 
 

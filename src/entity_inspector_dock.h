@@ -4,6 +4,7 @@
 #include <QDockWidget>
 
 #include <QPushButton>
+#include <QScrollArea>
 
 #include "widgets/group_box_collapsible.h"
 

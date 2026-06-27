@@ -61,9 +61,14 @@ signals:
     void providerChanged(MapProvider provider);
     
 private:
+    int m_zoom = 19;
+    double m_centerLon = 18.19331;
+    double m_centerLat = 11.98119;
+    /*
     int m_zoom = 16;
     double m_centerLon = 18.2063;
     double m_centerLat = 11.9792;
+    */
     
     MapProvider m_provider = MapProvider::ArcGISSat;
     QString m_providerCacheKey = "arcgis";
