@@ -1,9 +1,9 @@
-#include "map_inspector_dock.h"
+#include "entity_inspector_dock.h"
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QLabel>
 
-MapInspectorDock::MapInspectorDock(QWidget *parent)
+EntityInspectorDock::EntityInspectorDock(QWidget *parent)
     : QDockWidget("Entity Inspector", parent)
 {
     setMinimumWidth(200);
@@ -30,5 +30,11 @@ MapInspectorDock::MapInspectorDock(QWidget *parent)
     QPushButton *test = new QPushButton("Test");
     layout->addWidget(test);
 }
+
+void EntityInspectorDock::showEntityTank()
+{
+    
+}
+    
 
 

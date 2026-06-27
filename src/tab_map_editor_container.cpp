@@ -1,6 +1,6 @@
 #include "tab_map_editor_container.h"
 
-MapEditorContainer::MapEditorContainer(MapModel *map_model, GpsProvider *gps, MapInspectorDock *map_inspector, QWidget *parent)
+MapEditorContainer::MapEditorContainer(MapModel *map_model, GpsProvider *gps, EntityInspectorDock *map_inspector, QWidget *parent)
     : QWidget{parent},
     layout( new QHBoxLayout(this) ),
     gps( gps ),

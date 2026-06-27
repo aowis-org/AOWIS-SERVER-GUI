@@ -22,7 +22,7 @@
 #include "map_widget.h"
 #include "map_navigation_widget.h"
 #include "map_canvas_widget.h"
-#include "map_inspector_dock.h"
+#include "entity_inspector_dock.h"
 
 #ifdef Q_OS_WASM
 #include "gps_provider_dummy.h"
@@ -68,7 +68,7 @@ class MapEditorContainer : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapEditorContainer(MapModel *map_model, GpsProvider *gps, MapInspectorDock *map_inspector, QWidget *parent = nullptr);
+    explicit MapEditorContainer(MapModel *map_model, GpsProvider *gps, EntityInspectorDock *map_inspector, QWidget *parent = nullptr);
     
     MapWidget *getMap();
     
@@ -78,7 +78,7 @@ protected:
 private:
     GpsProvider *gps;
     
-    MapInspectorDock *map_inspector;
+    EntityInspectorDock *map_inspector;
     
     MapModel *map_model;
     MapWidget *map;
