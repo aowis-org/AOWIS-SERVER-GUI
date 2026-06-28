@@ -149,6 +149,7 @@ void EntityInspectorTank::addGroupElevation()
             this->label_tank_bottom_offset->hide();
             this->spin_tank_bottom_offset->hide();
             this->spin_tank_bottom_elevation->setReadOnly(false);
+            this->spin_tank_bottom_elevation->setToolTip("");
             return;
         case 1:
             this->label_terrain_elevation->show();
@@ -156,6 +157,9 @@ void EntityInspectorTank::addGroupElevation()
             this->label_tank_bottom_offset->show();
             this->spin_tank_bottom_offset->show();
             this->spin_tank_bottom_elevation->setReadOnly(true);
+            this->spin_tank_bottom_elevation->setToolTip(
+                "Calculated automatically from <i>Terrain Elevation</i> + <i>Offset</i>"
+            );
             elevationCalc();
             return;
         }

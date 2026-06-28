@@ -19,8 +19,8 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, GpsProvider *gps, En
     this->installEventFilter(this);
     
     QScrollArea *scroll_controls = new QScrollArea(this);
-    scroll_controls->setMinimumWidth(Sizes::SidebarMapEditLeftWidthBase);
-    scroll_controls->setMaximumWidth(Sizes::SidebarMapEditLeftWidthBase);
+    scroll_controls->setMinimumWidth(Sizes::SidebarMapEditLeftWidth);
+    scroll_controls->setMaximumWidth(Sizes::SidebarMapEditLeftWidth);
     scroll_controls->setWidgetResizable(true);
     scroll_controls->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scroll_controls->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
@@ -81,8 +81,8 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_ca
     map_canvas( map_canvas ),
     toolbox( new QToolBox(this) )
 {
-    setMinimumWidth(Sizes::SidebarMapEditLeftWidthBase);
-    setMaximumWidth(Sizes::SidebarMapEditLeftWidthBase);
+    setMinimumWidth(Sizes::SidebarMapEditLeftWidth);
+    setMaximumWidth(Sizes::SidebarMapEditLeftWidth);
     
     this->toolbox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     

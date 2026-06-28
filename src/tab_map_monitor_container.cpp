@@ -13,8 +13,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, GpsProvider *gps, 
     this->layout->setSpacing(0);
     
     QScrollArea *scroll_controls = new QScrollArea(this);
-    scroll_controls->setMinimumWidth(Sizes::SidebarLeftWidthBase);
-    scroll_controls->setMaximumWidth(Sizes::SidebarLeftWidthBase);
+    scroll_controls->setMinimumWidth(Sizes::SidebarLeftWidth);
+    scroll_controls->setMaximumWidth(Sizes::SidebarLeftWidth);
     scroll_controls->setWidgetResizable(true);
     scroll_controls->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scroll_controls->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
@@ -26,7 +26,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, GpsProvider *gps, 
         auto sb = scroll_controls->verticalScrollBar();
         bool should_show = sb->maximum() > sb->minimum();
         
-        int width_base = Sizes::SidebarLeftWidthBase;
+        int width_base = Sizes::SidebarLeftWidth;
         int width_sb = sb->sizeHint().width();
         int w = should_show ? width_base + width_sb : width_base;
         
@@ -55,8 +55,8 @@ MapMonitorMenuWidget::MapMonitorMenuWidget(MapWidget *map, QWidget *parent)
     map_nav( new MapNavigationWidget(this->map, CanvasMode::Monitor) )
 {
     setContentsMargins(0, 0, 0, 0);
-    setMinimumWidth(Sizes::SidebarLeftWidthBase);
-    setMaximumWidth(Sizes::SidebarLeftWidthBase);
+    setMinimumWidth(Sizes::SidebarLeftWidth);
+    setMaximumWidth(Sizes::SidebarLeftWidth);
     
     this->layout->addWidget(this->map_nav);
     
