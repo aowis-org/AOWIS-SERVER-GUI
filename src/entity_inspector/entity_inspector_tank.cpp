@@ -178,7 +178,7 @@ void EntityInspectorTank::elevationCalc()
 
 void EntityInspectorTank::addGroupGeometry()
 {
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Geometry");
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Geometry / Levels");
     QGridLayout *grid = new QGridLayout(group);
     
     this->combo_geometry_type = new QComboBox();
@@ -187,14 +187,44 @@ void EntityInspectorTank::addGroupGeometry()
     this->combo_geometry_type->addItem("Total Volume");
     this->combo_geometry_type->addItem("Volume Curve");
     
+    this->spin_level_min = new QDoubleSpinBox();
+    this->spin_level_max = new QDoubleSpinBox();
     
+    connect(this->combo_geometry_type, &QComboBox::currentIndexChanged, this, [this](int index)
+    {
+        switch (index)
+        {
+        case 0:
+            this->label_terrain_elevation->hide();
+            this->spin_terrain_elevation->hide();
+            this->label_tank_bottom_offset->hide();
+            this->spin_tank_bottom_offset->hide();
+            this->spin_tank_bottom_elevation->setReadOnly(false);
+            return;
+        case 1:
+            this->label_terrain_elevation->show();
+            this->spin_terrain_elevation->show();
+            this->label_tank_bottom_offset->show();
+            this->spin_tank_bottom_offset->show();
+            this->spin_tank_bottom_elevation->setReadOnly(true);
+            elevationCalc();
+            return;
+        }
+    });
+    
+    QLabel *label_level_initial = new QLabel("Initial Level");
+    this->spin_level_initial = new QDoubleSpinBox();
     
     QLabel *label_overflow = new QLabel("Overflow Allowed");
     this->check_overflow = new QCheckBox();
     
     grid->addWidget(combo_geometry_type, 0, 0, 1, 2);
-    grid->addWidget(label_overflow, 1, 0);
-    grid->addWidget(this->check_overflow, 1, 1);
+    
+    grid->addWidget(label_level_initial, 1, 0);
+    grid->addWidget(this->spin_level_initial, 1, 1);
+    
+    grid->addWidget(label_overflow, 2, 0);
+    grid->addWidget(this->check_overflow, 2, 1);
     
     this->layout->addWidget(group);
 }

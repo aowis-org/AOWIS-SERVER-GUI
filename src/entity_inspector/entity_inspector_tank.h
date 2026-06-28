@@ -52,6 +52,9 @@ private:
     QDoubleSpinBox *spin_tank_bottom_elevation = nullptr;
     
     void addGroupGeometry();
+    QDoubleSpinBox *spin_level_initial = nullptr;
+    QDoubleSpinBox *spin_level_min = nullptr;
+    QDoubleSpinBox *spin_level_max = nullptr;
     QComboBox *combo_geometry_type = nullptr;
     QCheckBox *check_overflow = nullptr;
     
