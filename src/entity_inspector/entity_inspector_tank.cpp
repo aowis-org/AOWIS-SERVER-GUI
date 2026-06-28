@@ -199,19 +199,10 @@ void EntityInspectorTank::addGroupGeometry()
         switch (index)
         {
         case 0:
-            this->label_terrain_elevation->hide();
-            this->spin_terrain_elevation->hide();
-            this->label_tank_bottom_offset->hide();
-            this->spin_tank_bottom_offset->hide();
-            this->spin_tank_bottom_elevation->setReadOnly(false);
+            
             return;
         case 1:
-            this->label_terrain_elevation->show();
-            this->spin_terrain_elevation->show();
-            this->label_tank_bottom_offset->show();
-            this->spin_tank_bottom_offset->show();
-            this->spin_tank_bottom_elevation->setReadOnly(true);
-            elevationCalc();
+            
             return;
         }
     });
