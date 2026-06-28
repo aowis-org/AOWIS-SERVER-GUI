@@ -47,7 +47,7 @@
 #include "tab_customers_widget.h"
 #include "tab_logs_widget.h"
 #include "tab_alarms_widget.h"
-
+#include "sim_control_dock.h"
 #include "entity_inspector/entity_inspector_dock.h"
 
 #ifdef Q_OS_WASM
@@ -78,7 +78,8 @@ private:
     MenuBar *menu;
     FooterStatusBar *footer;
     
-    EntityInspectorDock *entity_inspector_dock;
+    EntityInspectorDock *dock_entity_inspector;
+    SimControlDock *dock_sim_control;
     
     MapModel *map_model;
     MapWidget *map_mon;

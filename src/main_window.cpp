@@ -5,12 +5,13 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
     gps( new GpsProvider(this) ),
-    entity_inspector_dock( new EntityInspectorDock(this) ),
+    dock_sim_control( new SimControlDock(this) ),
+    dock_entity_inspector( new EntityInspectorDock(this) ),
     map_model( new MapModel(this) ),
     tabs( new QTabWidget(this) ),
     settings( new SettingsWidget(this) ),
     map_monitor( new MapMonitorContainer(map_model, gps, this) ),
-    map_editor( new MapEditorContainer(map_model, gps, entity_inspector_dock, this) ),
+    map_editor( new MapEditorContainer(map_model, gps, dock_entity_inspector, this) ),
     energy( new EnergyWidget(this) ),
     reservoirs( new ReservoirsWidget(this) ),
     tanks( new TanksWidget(this) ),
@@ -40,7 +41,8 @@ MainWindow::MainWindow(QWidget *parent)
     this->gps->startGpsd("127.0.0.1");
     #endif
     
-    addDockWidget(Qt::RightDockWidgetArea, entity_inspector_dock);    
+    addDockWidget(Qt::RightDockWidgetArea, dock_entity_inspector);
+    addDockWidget(Qt::TopDockWidgetArea, dock_sim_control);
     
     this->map_mon = this->map_monitor->getMap();
     this->map_edit = this->map_editor->getMap();
