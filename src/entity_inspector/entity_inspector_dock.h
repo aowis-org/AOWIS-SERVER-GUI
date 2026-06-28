@@ -5,16 +5,11 @@
 #include <QDockWidget>
 
 #include <QScrollArea>
-#include <QGroupBox>
-#include <QPixmap>
-#include <QPushButton>
-#include <QPushButton>
-#include <QLabel>
-#include <QLineEdit>
-#include <QSpinBox>
-#include <QCheckBox>
 
 #include <QVBoxLayout>
+
+#include "../entity_inspector/entity_inspector_dock.h"
+#include "../entity_inspector/entity_inspector_tank.h"
 
 #include "../widgets/group_box_collapsible.h"
 
@@ -30,25 +25,15 @@ public:
     
     //void showEntity(MapNetworkStructs &entity);
     
+    void clearEntity();
+    
     void showEntityTank();
     
+    
 private:
-    QVBoxLayout *layout = nullptr;
+    QScrollArea *scroll = nullptr;
+    QWidget *widget_current = nullptr;
     
-    QLabel *label_title = nullptr;
-    QLineEdit *line_name = nullptr;
-    
-    QDoubleSpinBox *spin_latitude = nullptr;
-    QDoubleSpinBox *spin_longitude = nullptr;
-    
-    QDoubleSpinBox *spin_ground_elevation = nullptr;
-    QDoubleSpinBox *spin_tank_bottom_offset = nullptr;
-    QDoubleSpinBox *spin_tank_bottom_elevation = nullptr;
-    
-    QCheckBox *check_overflow = nullptr;
-    
-private slots:
-    double calculateTankElevation();
 };
 
 #endif // ENTITY_INSPECTOR_DOCK_H
