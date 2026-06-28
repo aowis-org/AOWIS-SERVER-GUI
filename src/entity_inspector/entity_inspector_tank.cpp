@@ -27,18 +27,37 @@ void EntityInspectorTank::addGroupGeneral()
     QGridLayout *grid = new QGridLayout(group);
     
     QPixmap pixmap(":/icon/tower_large.png");
-    
-    QLabel *picture = new QLabel();
-    picture->setPixmap(pixmap.scaledToHeight(
+    this->picture = new QLabel();
+    this->picture->setPixmap(pixmap.scaledToHeight(
         Sizes::SidebarRightImageHeight,
         Qt::SmoothTransformation
-        ));
-    picture->setAlignment(Qt::AlignCenter);
+    ));
+    this->picture->setAlignment(Qt::AlignCenter);
     
     QLabel *label_name = new QLabel("Name");
     this->line_name = new QLineEdit();
+    connect(this->line_name, &QLineEdit::textChanged, this, [this]
+    {
+        if (this->line_name->text() == "T34")
+        {
+            QPixmap pixmap(":/icon/tank.png");
+            this->picture->setPixmap(pixmap.scaledToHeight(
+                Sizes::SidebarRightImageHeight,
+                Qt::SmoothTransformation
+            ));
+            this->picture->setAlignment(Qt::AlignCenter);
+        }
+        else
+        {
+            QPixmap pixmap(":/icon/tower_large.png");
+            this->picture->setPixmap(pixmap.scaledToHeight(
+                Sizes::SidebarRightImageHeight,
+                Qt::SmoothTransformation
+            ));
+        }
+    });
     
-    grid->addWidget(picture, 0, 0, 1, 2);
+    grid->addWidget(this->picture, 0, 0, 1, 2);
     grid->addWidget(label_name, 1, 0);
     grid->addWidget(this->line_name, 2, 0, 1, 2);
     
@@ -185,7 +204,21 @@ void EntityInspectorTank::addGroupQuality()
     GroupBoxCollapsible *group = new GroupBoxCollapsible("Quality");
     QGridLayout *grid = new QGridLayout(group);
     
+    this->combo_chem_source = new QComboBox();
+    this->combo_chem_source->addItem("None");
+    this->combo_chem_source->addItem("Concentration");
+    this->combo_chem_source->addItem("Mass Booster");
+    this->combo_chem_source->addItem("Flow Paced Booster");
+    this->combo_chem_source->addItem("Setpoint Booster");
     
+    this->combo_chem_mixing = new QComboBox();
+    this->combo_chem_mixing->addItem("Complete Mix");
+    this->combo_chem_mixing->addItem("Two-Compartment");
+    this->combo_chem_mixing->addItem("First In, First Out");
+    this->combo_chem_mixing->addItem("Last In, First Out");
+    
+    grid->addWidget(this->combo_chem_source);
+    grid->addWidget(this->combo_chem_mixing);
     
     this->layout->addWidget(group);
 }

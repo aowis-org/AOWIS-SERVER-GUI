@@ -32,6 +32,8 @@ private:
     QVBoxLayout *layout = nullptr;
     QLabel *label = nullptr;
     
+    QLabel *picture = nullptr;
+    
     void addGroupGeneral();
     QLabel *label_title = nullptr;
     QLineEdit *line_name = nullptr;
@@ -54,7 +56,8 @@ private:
     QCheckBox *check_overflow = nullptr;
     
     void addGroupQuality();
-    
+    QComboBox *combo_chem_source = nullptr;
+    QComboBox *combo_chem_mixing = nullptr;
     
     void addGroupSimMeas();
     
