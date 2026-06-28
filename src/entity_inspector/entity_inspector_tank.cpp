@@ -105,6 +105,11 @@ void EntityInspectorTank::addGroupElevation()
     this->combo_elevation_mode->addItem("Tank Bottom Elevation");
     this->combo_elevation_mode->addItem("Terrain Elevation + Offset");
     
+    QPushButton *button_terrain_elevation = new QPushButton("Terrain Elevation from GIS");
+    button_terrain_elevation->setToolTip(
+        "Uses terrain elevation from GIS/DEM data.<br>Accuracy depends on the dataset and local terrain."
+    );
+    
     this->label_terrain_elevation = new QLabel("Terrain elevation");
     this->spin_terrain_elevation = new QDoubleSpinBox;
     spin_terrain_elevation->setRange(-10000.0, 10000.0);
@@ -132,18 +137,21 @@ void EntityInspectorTank::addGroupElevation()
     spin_tank_bottom_elevation->setSuffix(" m");
     
     grid->addWidget(this->combo_elevation_mode, 0, 0, 1, 2);
-    grid->addWidget(this->label_terrain_elevation, 1, 0);
-    grid->addWidget(this->spin_terrain_elevation, 1, 1);
-    grid->addWidget(this->label_tank_bottom_offset, 2, 0);
-    grid->addWidget(this->spin_tank_bottom_offset, 2, 1);
-    grid->addWidget(label_tank_bottom_elevation, 3, 0);
-    grid->addWidget(this->spin_tank_bottom_elevation, 3, 1);
+    grid->addWidget(button_terrain_elevation, 1, 0, 1, 2);
+    grid->addWidget(this->label_terrain_elevation, 2, 0);
+    grid->addWidget(this->spin_terrain_elevation, 2, 1);
+    grid->addWidget(this->label_tank_bottom_offset, 3, 0);
+    grid->addWidget(this->spin_tank_bottom_offset, 3, 1);
+    grid->addWidget(label_tank_bottom_elevation, 4, 0);
+    grid->addWidget(this->spin_tank_bottom_elevation, 4, 1);
     
-    connect(this->combo_elevation_mode, &QComboBox::currentIndexChanged, this, [this](int index)
+    connect(this->combo_elevation_mode, &QComboBox::currentIndexChanged, this,
+            [this, button_terrain_elevation](int index)
     {
         switch (index)
         {
         case 0:
+            button_terrain_elevation->hide();
             this->label_terrain_elevation->hide();
             this->spin_terrain_elevation->hide();
             this->label_tank_bottom_offset->hide();
@@ -152,6 +160,7 @@ void EntityInspectorTank::addGroupElevation()
             this->spin_tank_bottom_elevation->setToolTip("");
             return;
         case 1:
+            button_terrain_elevation->show();
             this->label_terrain_elevation->show();
             this->spin_terrain_elevation->show();
             this->label_tank_bottom_offset->show();
