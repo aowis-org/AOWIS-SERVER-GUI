@@ -194,41 +194,156 @@ void EntityInspectorTank::addGroupGeometry()
     GroupBoxCollapsible *group = new GroupBoxCollapsible("Geometry / Levels");
     QGridLayout *grid = new QGridLayout(group);
     
-    this->combo_geometry_type = new QComboBox();
-    this->combo_geometry_type->addItem("Cylindrical");
-    this->combo_geometry_type->addItem("Uniform Area");
-    this->combo_geometry_type->addItem("Total Volume");
-    this->combo_geometry_type->addItem("Volume Curve");
-    
-    this->spin_level_min = new QDoubleSpinBox();
-    this->spin_level_max = new QDoubleSpinBox();
-    
-    connect(this->combo_geometry_type, &QComboBox::currentIndexChanged, this, [this](int index)
-    {
-        switch (index)
-        {
-        case 0:
-            
-            return;
-        case 1:
-            
-            return;
-        }
-    });
-    
     QLabel *label_level_initial = new QLabel("Initial Level");
     this->spin_level_initial = new QDoubleSpinBox();
     
     QLabel *label_overflow = new QLabel("Overflow Allowed");
     this->check_overflow = new QCheckBox();
     
-    grid->addWidget(combo_geometry_type, 0, 0, 1, 2);
+    this->combo_geometry_type = new QComboBox();
+    this->combo_geometry_type->addItem("Cylindrical");
+    this->combo_geometry_type->addItem("Uniform Area");
+    this->combo_geometry_type->addItem("Total Volume");
+    this->combo_geometry_type->addItem("Volume Curve");
     
-    grid->addWidget(label_level_initial, 1, 0);
-    grid->addWidget(this->spin_level_initial, 1, 1);
+    this->label_spin_diameter = new QLabel("Diameter");
+    this->spin_diameter = new QDoubleSpinBox();
+    this->label_spin_area = new QLabel("Area");
+    this->label_spin_area->hide();
+    this->spin_area = new QDoubleSpinBox();
+    this->spin_area->hide();
     
-    grid->addWidget(label_overflow, 2, 0);
-    grid->addWidget(this->check_overflow, 2, 1);
+    this->label_spin_level_min = new QLabel("Level Min");
+    this->spin_level_min = new QDoubleSpinBox();
+    this->label_spin_level_max = new QLabel("Level Max");
+    this->spin_level_max = new QDoubleSpinBox();
+    
+    this->label_spin_volume_min = new QLabel("Deat Volume at Min");
+    this->label_spin_volume_min->setWordWrap(true);
+    this->spin_volume_min = new QDoubleSpinBox();
+    
+    this->label_volume_max = new QLabel("Volume Max");
+    this->label_volume_max_label = new QLabel();
+    
+    this->label_volume_curve = new QLabel("Volume Curve");
+    this->label_volume_curve->hide();
+    this->combo_volume_curve = new QComboBox();
+    this->combo_volume_curve->hide();
+    
+    connect(this->combo_geometry_type, &QComboBox::currentIndexChanged, this, [this](int index)
+    {
+        switch (index)
+        {
+        case 0:
+            this->label_spin_diameter->show();
+            this->spin_diameter->show();
+            this->label_spin_area->hide();
+            this->spin_area->hide();
+            
+            this->label_spin_level_min->show();
+            this->spin_level_min->show();
+            this->label_spin_level_max->show();
+            this->spin_level_max->show();
+            
+            this->label_spin_volume_min->show();
+            this->spin_volume_min->show();
+            this->label_volume_max->show();
+            this->label_volume_max_label->show();
+            
+            this->label_volume_curve->hide();
+            this->combo_volume_curve->hide();
+            
+            return;
+        case 1:
+            this->label_spin_diameter->hide();
+            this->spin_diameter->hide();
+            this->label_spin_area->show();
+            this->spin_area->show();
+            
+            this->label_spin_level_min->show();
+            this->spin_level_min->show();
+            this->label_spin_level_max->show();
+            this->spin_level_max->show();
+            
+            this->label_spin_volume_min->show();
+            this->spin_volume_min->show();
+            this->label_volume_max->show();
+            this->label_volume_max_label->show();
+            
+            this->label_volume_curve->hide();
+            this->combo_volume_curve->hide();
+            
+            return;
+        case 2:
+            this->label_spin_diameter->hide();
+            this->spin_diameter->hide();
+            this->label_spin_area->hide();
+            this->spin_area->hide();
+            
+            this->label_spin_level_min->show();
+            this->spin_level_min->show();
+            this->label_spin_level_max->show();
+            this->spin_level_max->show();
+            
+            this->label_spin_volume_min->show();
+            this->spin_volume_min->show();
+            this->label_volume_max->show();
+            this->label_volume_max_label->show();
+            
+            this->label_volume_curve->hide();
+            this->combo_volume_curve->hide();
+            
+            return;
+        
+        case 3:
+            this->label_spin_diameter->hide();
+            this->spin_diameter->hide();
+            this->label_spin_area->hide();
+            this->spin_area->hide();
+            
+            this->label_spin_level_min->hide();
+            this->spin_level_min->hide();
+            this->label_spin_level_max->hide();
+            this->spin_level_max->hide();
+            
+            this->label_spin_volume_min->hide();
+            this->spin_volume_min->hide();
+            this->label_volume_max->hide();
+            this->label_volume_max_label->hide();
+            
+            this->label_volume_curve->show();
+            this->combo_volume_curve->show();
+            
+            return;
+        }
+    });
+    
+    grid->addWidget(label_level_initial, 0, 0);
+    grid->addWidget(this->spin_level_initial, 0, 1);
+    
+    grid->addWidget(label_overflow, 1, 0);
+    grid->addWidget(this->check_overflow, 1, 1);
+    
+    grid->addWidget(this->combo_geometry_type, 2, 0, 1, 2);
+    
+    grid->addWidget(this->label_spin_diameter, 3, 0);
+    grid->addWidget(this->spin_diameter, 3, 1);
+    grid->addWidget(this->label_spin_area, 4, 0);
+    grid->addWidget(this->spin_area, 4, 1);
+    
+    grid->addWidget(this->label_spin_level_min, 5, 0);
+    grid->addWidget(this->spin_level_min, 5, 1);
+    grid->addWidget(this->label_spin_level_max, 6, 0);
+    grid->addWidget(this->spin_level_max, 6, 1);
+    
+    grid->addWidget(this->label_spin_volume_min, 7, 0);
+    grid->addWidget(this->spin_volume_min, 7, 1);
+    
+    grid->addWidget(this->label_volume_max, 8, 0);
+    grid->addWidget(this->label_volume_max_label, 8, 1);
+    
+    grid->addWidget(this->label_volume_curve, 9, 0);
+    grid->addWidget(this->combo_volume_curve, 9, 1);
     
     this->layout->addWidget(group);
 }

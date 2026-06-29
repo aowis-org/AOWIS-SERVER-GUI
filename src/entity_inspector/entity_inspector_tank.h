@@ -52,11 +52,27 @@ private:
     QDoubleSpinBox *spin_tank_bottom_elevation = nullptr;
     
     void addGroupGeometry();
-    QDoubleSpinBox *spin_level_initial = nullptr;
-    QDoubleSpinBox *spin_level_min = nullptr;
-    QDoubleSpinBox *spin_level_max = nullptr;
-    QComboBox *combo_geometry_type = nullptr;
     QCheckBox *check_overflow = nullptr;
+    QDoubleSpinBox *spin_level_initial = nullptr;
+    
+    QComboBox *combo_geometry_type = nullptr;
+    QLabel *label_spin_diameter = nullptr;
+    QDoubleSpinBox *spin_diameter = nullptr;
+    QLabel *label_spin_area = nullptr;
+    QDoubleSpinBox *spin_area = nullptr;
+    
+    QLabel *label_spin_level_min = nullptr;
+    QDoubleSpinBox *spin_level_min = nullptr;
+    QLabel *label_spin_level_max = nullptr;
+    QDoubleSpinBox *spin_level_max = nullptr;
+    QLabel *label_spin_volume_min = nullptr;
+    QDoubleSpinBox *spin_volume_min = nullptr;
+    
+    QLabel *label_volume_max = nullptr;
+    QLabel *label_volume_max_label = nullptr;
+    
+    QLabel *label_volume_curve = nullptr;
+    QComboBox *combo_volume_curve = nullptr;
     
     void addGroupQuality();
     QComboBox *combo_chem_source = nullptr;
