@@ -19,6 +19,10 @@ protected:
     
 private:
     void applyExpandedState(bool expanded);
+    
+signals:
+    void signalCollapsed();
+    void signalExpanded();
 };
 
 #endif // GROUP_BOX_COLLAPSIBLE_H

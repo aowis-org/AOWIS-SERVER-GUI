@@ -345,6 +345,14 @@ void EntityInspectorTank::addGroupGeometry()
     grid->addWidget(this->label_volume_curve, 9, 0);
     grid->addWidget(this->combo_volume_curve, 9, 1);
     
+    connect(group, &GroupBoxCollapsible::signalExpanded, this, [this]
+    {
+        this->label_spin_area->hide();
+        this->spin_area->hide();
+        this->label_volume_curve->hide();
+        this->combo_volume_curve->hide();
+    });
+    
     this->layout->addWidget(group);
 }
 
