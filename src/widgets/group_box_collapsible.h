@@ -21,8 +21,8 @@ private:
     void applyExpandedState(bool expanded);
     
 signals:
-    void signalCollapsed();
-    void signalExpanded();
+    void signalCollapsed(GroupBoxCollapsible *group);
+    void signalExpanded(GroupBoxCollapsible *group);
 };
 
 #endif // GROUP_BOX_COLLAPSIBLE_H

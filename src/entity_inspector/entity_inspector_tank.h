@@ -17,6 +17,7 @@
 #include <QComboBox>
 
 #include "../widgets/group_box_collapsible.h"
+#include "../entity_inspector/entity_inspector_location.h"
 
 #include "../_enums_structs.h"
 #include "../_sizes.h"
@@ -38,18 +39,7 @@ private:
     QLabel *label_title = nullptr;
     QLineEdit *line_name = nullptr;
     
-    void addGroupPosition();
-    QDoubleSpinBox *spin_latitude = nullptr;
-    QDoubleSpinBox *spin_longitude = nullptr;
-    
-    void addGroupElevation();
-    QComboBox *combo_elevation_mode = nullptr;
-    
-    QLabel *label_terrain_elevation = nullptr;
-    QDoubleSpinBox *spin_terrain_elevation = nullptr;
-    QLabel *label_tank_bottom_offset = nullptr;
-    QDoubleSpinBox *spin_tank_bottom_offset = nullptr;
-    QDoubleSpinBox *spin_tank_bottom_elevation = nullptr;
+    EntityInspectorLocation *location_inspector = nullptr;
     
     void addGroupGeometry();
     QCheckBox *check_overflow = nullptr;
@@ -85,7 +75,7 @@ private:
     
     
 private slots:
-    void elevationCalc();
+    
     
 signals:
 };

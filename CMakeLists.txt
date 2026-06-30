@@ -72,6 +72,7 @@ qt_add_executable(aowis-server-gui
     src/widgets/group_box_collapsible.h src/widgets/group_box_collapsible.cpp
     src/entity_inspector/entity_inspector_tank.h src/entity_inspector/entity_inspector_tank.cpp
     src/sim_control_dock.h src/sim_control_dock.cpp
+    src/entity_inspector/entity_inspector_location.h src/entity_inspector/entity_inspector_location.cpp
 )
 
 if(APPLE)

@@ -47,9 +47,9 @@ void GroupBoxCollapsible::applyExpandedState(bool expanded)
     updateGeometry();
     
     if (expanded)
-        emit signalExpanded();
+        emit signalExpanded(this);
     else
-        emit signalCollapsed();
+        emit signalCollapsed(this);
 }
 
 void GroupBoxCollapsible::childEvent(QChildEvent *event)
