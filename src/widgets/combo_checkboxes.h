@@ -23,10 +23,15 @@ public:
     void addItem(const QString &text,
                  const QVariant &data = QVariant(),
                  bool checked = false);
+    void addItem(const QString &text,
+                 const QVariant &data = QVariant(),
+                 bool checked = false,
+                 QString tooltip = "");
     void insertItem(int index,
                     const QString &text,
                     const QVariant &data = QVariant(),
-                    bool checked = false);
+                    bool checked = false,
+                    QString tooltip = "");
     void clear();
     
     int count() const;

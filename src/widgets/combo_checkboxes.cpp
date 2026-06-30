@@ -32,10 +32,18 @@ void ComboCheckboxes::addItem(const QString &text,
     insertItem(this->items.count(), text, data, checked);
 }
 
+void ComboCheckboxes::addItem(const QString &text,
+                              const QVariant &data,
+                              bool checked,
+                              QString tooltip)
+{
+    insertItem(this->items.count(), text, data, checked, tooltip);
+}
+
 void ComboCheckboxes::insertItem(int index,
                                  const QString &text,
                                  const QVariant &data,
-                                 bool checked)
+                                 bool checked, QString tooltip)
 {
     if (index < 0)
     {
@@ -54,6 +62,7 @@ void ComboCheckboxes::insertItem(int index,
     
     QCheckBox *check_box = new QCheckBox(text, row_widget);
     check_box->setChecked(checked);
+    check_box->setToolTip(tooltip);
     check_box->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     
     row_layout->addWidget(check_box);

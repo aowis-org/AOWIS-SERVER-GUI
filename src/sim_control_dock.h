@@ -16,6 +16,7 @@ public:
     explicit SimControlDock(QWidget *parent = nullptr);
     
 private:
+    QWidget *content = nullptr;
     QHBoxLayout *layout = nullptr;
     
 signals:
