@@ -73,6 +73,7 @@ qt_add_executable(aowis-server-gui
     src/entity_inspector/entity_inspector_tank.h src/entity_inspector/entity_inspector_tank.cpp
     src/sim_control_dock.h src/sim_control_dock.cpp
     src/entity_inspector/entity_inspector_location.h src/entity_inspector/entity_inspector_location.cpp
+    src/widgets/combo_checkboxes.h src/widgets/combo_checkboxes.cpp
 )
 
 if(APPLE)

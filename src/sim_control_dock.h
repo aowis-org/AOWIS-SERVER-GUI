@@ -5,12 +5,19 @@
 #include <QWidget>
 #include <QDockWidget>
 
+#include <QHBoxLayout>
+
+#include "widgets/combo_checkboxes.h"
+
 class SimControlDock : public QDockWidget
 {
     Q_OBJECT
 public:
     explicit SimControlDock(QWidget *parent = nullptr);
-
+    
+private:
+    QHBoxLayout *layout = nullptr;
+    
 signals:
 };
 
