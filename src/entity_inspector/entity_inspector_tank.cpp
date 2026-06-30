@@ -196,6 +196,10 @@ void EntityInspectorTank::addGroupGeometry()
     
     QLabel *label_level_initial = new QLabel("Initial Level");
     this->spin_level_initial = new QDoubleSpinBox();
+    this->spin_level_initial->setRange(0.0, 1000.0);
+    this->spin_level_initial->setDecimals(2);
+    this->spin_level_initial->setSingleStep(0.10);
+    this->spin_level_initial->setSuffix(" m");
     
     QLabel *label_overflow = new QLabel("Overflow Allowed");
     this->check_overflow = new QCheckBox();
@@ -214,11 +218,20 @@ void EntityInspectorTank::addGroupGeometry()
     this->spin_area->hide();
     
     this->label_spin_level_min = new QLabel("Level Min");
-    this->spin_level_min = new QDoubleSpinBox();
-    this->label_spin_level_max = new QLabel("Level Max");
-    this->spin_level_max = new QDoubleSpinBox();
+    this->spin_level_min = new QDoubleSpinBox;
+    spin_level_min->setRange(0.0, 1000.0);
+    spin_level_min->setDecimals(2);
+    spin_level_min->setSingleStep(0.10);
+    spin_level_min->setSuffix(" m");
     
-    this->label_spin_volume_min = new QLabel("Deat Volume at Min");
+    this->label_spin_level_max = new QLabel("Level Max");
+    this->spin_level_max = new QDoubleSpinBox;
+    spin_level_max->setRange(0.0, 1000.0);
+    spin_level_max->setDecimals(2);
+    spin_level_max->setSingleStep(0.10);
+    spin_level_max->setSuffix(" m");
+    
+    this->label_spin_volume_min = new QLabel("Dead Volume at Min");
     this->label_spin_volume_min->setWordWrap(true);
     this->spin_volume_min = new QDoubleSpinBox();
     
