@@ -212,9 +212,18 @@ void EntityInspectorTank::addGroupGeometry()
     
     this->label_spin_diameter = new QLabel("Diameter");
     this->spin_diameter = new QDoubleSpinBox();
+    this->spin_diameter->setRange(0.00, 1000.0);
+    this->spin_diameter->setDecimals(2);
+    this->spin_diameter->setSingleStep(0.10);
+    this->spin_diameter->setSuffix(" m");
+    
     this->label_spin_area = new QLabel("Area");
     this->label_spin_area->hide();
     this->spin_area = new QDoubleSpinBox();
+    this->spin_area->setRange(0.01, 100000000.0);
+    this->spin_area->setDecimals(2);
+    this->spin_area->setSingleStep(1.00);
+    this->spin_area->setSuffix(" m²");
     this->spin_area->hide();
     
     this->label_spin_level_min = new QLabel("Level Min");
@@ -234,6 +243,11 @@ void EntityInspectorTank::addGroupGeometry()
     this->label_spin_volume_min = new QLabel("Dead Volume at Min");
     this->label_spin_volume_min->setWordWrap(true);
     this->spin_volume_min = new QDoubleSpinBox();
+    this->spin_volume_min->setRange(0.0, 100000.0);
+    this->spin_volume_min->setDecimals(2);
+    this->spin_volume_min->setSingleStep(0.10);
+    this->spin_volume_min->setSuffix(" m³");
+    this->spin_volume_min->setGroupSeparatorShown(true);
     
     this->label_volume_max = new QLabel("Volume Max");
     this->label_volume_max_label = new QLabel();
