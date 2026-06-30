@@ -42,10 +42,14 @@ private:
     EntityInspectorLocation *location_inspector = nullptr;
     
     void addGroupGeometry();
+    GroupBoxCollapsible *group_geometry = nullptr;
+    
     QCheckBox *check_overflow = nullptr;
     QDoubleSpinBox *spin_level_initial = nullptr;
     
     QComboBox *combo_geometry_type = nullptr;
+    int geometry_type_current = 0;
+    
     QLabel *label_spin_diameter = nullptr;
     QDoubleSpinBox *spin_diameter = nullptr;
     QLabel *label_spin_area = nullptr;
@@ -75,7 +79,10 @@ private:
     
     
 private slots:
+    void onGroupCollapse(GroupBoxCollapsible *group);
+    void onGroupExpand(GroupBoxCollapsible *group);
     
+    void onComboGeometryTypeChange(int index);
     
 signals:
 };

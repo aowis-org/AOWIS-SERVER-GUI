@@ -25,17 +25,23 @@ private:
     QDoubleSpinBox *spin_latitude = nullptr;
     QDoubleSpinBox *spin_longitude = nullptr;
     
+    GroupBoxCollapsible *group_elevation = nullptr;
     QComboBox *combo_elevation_mode = nullptr;
+    int elevation_mode_current = 0;
+    
     QLabel *label_terrain_elevation = nullptr;
+    QPushButton *button_terrain_elevation = nullptr;
     QDoubleSpinBox *spin_terrain_elevation = nullptr;
     QLabel *label_tank_bottom_offset = nullptr;
     QDoubleSpinBox *spin_tank_bottom_offset = nullptr;
     QDoubleSpinBox *spin_tank_bottom_elevation = nullptr;
     
 private slots:
-    void elevationCalc();
     void onGroupCollapse(GroupBoxCollapsible *group);
     void onGroupExpand(GroupBoxCollapsible *group);
+    
+    void onElevationModeSignalChanged(int index);
+    void onElevationCalc();
     
 signals:
     

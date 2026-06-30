@@ -71,8 +71,11 @@ void EntityInspectorTank::addGroupGeneral()
 
 void EntityInspectorTank::addGroupGeometry()
 {
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Geometry / Levels");
-    QGridLayout *grid = new QGridLayout(group);
+    this->group_geometry = new GroupBoxCollapsible("Geometry / Levels");
+    QGridLayout *grid = new QGridLayout(group_geometry);
+    
+    connect(this->group_geometry, &GroupBoxCollapsible::signalCollapsed, this, &EntityInspectorTank::onGroupCollapse);
+    connect(this->group_geometry, &GroupBoxCollapsible::signalExpanded, this, &EntityInspectorTank::onGroupExpand);
     
     QLabel *label_level_initial = new QLabel("Initial Level");
     this->spin_level_initial = new QDoubleSpinBox();
@@ -137,92 +140,7 @@ void EntityInspectorTank::addGroupGeometry()
     this->combo_volume_curve = new QComboBox();
     this->combo_volume_curve->hide();
     
-    connect(this->combo_geometry_type, &QComboBox::currentIndexChanged, this, [this](int index)
-    {
-        switch (index)
-        {
-        case 0:
-            this->label_spin_diameter->show();
-            this->spin_diameter->show();
-            this->label_spin_area->hide();
-            this->spin_area->hide();
-            
-            this->label_spin_level_min->show();
-            this->spin_level_min->show();
-            this->label_spin_level_max->show();
-            this->spin_level_max->show();
-            
-            this->label_spin_volume_min->show();
-            this->spin_volume_min->show();
-            this->label_volume_max->show();
-            this->label_volume_max_label->show();
-            
-            this->label_volume_curve->hide();
-            this->combo_volume_curve->hide();
-            
-            return;
-        case 1:
-            this->label_spin_diameter->hide();
-            this->spin_diameter->hide();
-            this->label_spin_area->show();
-            this->spin_area->show();
-            
-            this->label_spin_level_min->show();
-            this->spin_level_min->show();
-            this->label_spin_level_max->show();
-            this->spin_level_max->show();
-            
-            this->label_spin_volume_min->show();
-            this->spin_volume_min->show();
-            this->label_volume_max->show();
-            this->label_volume_max_label->show();
-            
-            this->label_volume_curve->hide();
-            this->combo_volume_curve->hide();
-            
-            return;
-        case 2:
-            this->label_spin_diameter->hide();
-            this->spin_diameter->hide();
-            this->label_spin_area->hide();
-            this->spin_area->hide();
-            
-            this->label_spin_level_min->show();
-            this->spin_level_min->show();
-            this->label_spin_level_max->show();
-            this->spin_level_max->show();
-            
-            this->label_spin_volume_min->show();
-            this->spin_volume_min->show();
-            this->label_volume_max->show();
-            this->label_volume_max_label->show();
-            
-            this->label_volume_curve->hide();
-            this->combo_volume_curve->hide();
-            
-            return;
-        case 3:
-            this->label_spin_diameter->hide();
-            this->spin_diameter->hide();
-            this->label_spin_area->hide();
-            this->spin_area->hide();
-            
-            this->label_spin_level_min->hide();
-            this->spin_level_min->hide();
-            this->label_spin_level_max->hide();
-            this->spin_level_max->hide();
-            
-            this->label_spin_volume_min->hide();
-            this->spin_volume_min->hide();
-            this->label_volume_max->hide();
-            this->label_volume_max_label->hide();
-            
-            this->label_volume_curve->show();
-            this->combo_volume_curve->show();
-            
-            return;
-        }
-    });
+    connect(this->combo_geometry_type, &QComboBox::currentIndexChanged, this, &EntityInspectorTank::onComboGeometryTypeChange);
     
     grid->addWidget(label_level_initial, 0, 0);
     grid->addWidget(this->spin_level_initial, 0, 1);
@@ -251,15 +169,7 @@ void EntityInspectorTank::addGroupGeometry()
     grid->addWidget(this->label_volume_curve, 9, 0);
     grid->addWidget(this->combo_volume_curve, 9, 1);
     
-    connect(group, &GroupBoxCollapsible::signalExpanded, this, [this]
-    {
-        this->label_spin_area->hide();
-        this->spin_area->hide();
-        this->label_volume_curve->hide();
-        this->combo_volume_curve->hide();
-    });
-    
-    this->layout->addWidget(group);
+    this->layout->addWidget(group_geometry);
 }
 
 void EntityInspectorTank::addGroupQuality()
@@ -304,4 +214,101 @@ void EntityInspectorTank::addGroupGraphs()
     
     
     this->layout->addWidget(group);
+}
+
+void EntityInspectorTank::onGroupCollapse(GroupBoxCollapsible *group)
+{
+    this->geometry_type_current = this->combo_geometry_type->currentIndex();
+}
+void EntityInspectorTank::onGroupExpand(GroupBoxCollapsible *group)
+{
+    if (group == this->group_geometry)
+        onComboGeometryTypeChange(this->geometry_type_current);
+}
+
+void EntityInspectorTank::onComboGeometryTypeChange(int index)
+{
+    switch (index)
+    {
+    case 0:
+        this->label_spin_diameter->show();
+        this->spin_diameter->show();
+        this->label_spin_area->hide();
+        this->spin_area->hide();
+        
+        this->label_spin_level_min->show();
+        this->spin_level_min->show();
+        this->label_spin_level_max->show();
+        this->spin_level_max->show();
+        
+        this->label_spin_volume_min->show();
+        this->spin_volume_min->show();
+        this->label_volume_max->show();
+        this->label_volume_max_label->show();
+        
+        this->label_volume_curve->hide();
+        this->combo_volume_curve->hide();
+        
+        return;
+    case 1:
+        this->label_spin_diameter->hide();
+        this->spin_diameter->hide();
+        this->label_spin_area->show();
+        this->spin_area->show();
+        
+        this->label_spin_level_min->show();
+        this->spin_level_min->show();
+        this->label_spin_level_max->show();
+        this->spin_level_max->show();
+        
+        this->label_spin_volume_min->show();
+        this->spin_volume_min->show();
+        this->label_volume_max->show();
+        this->label_volume_max_label->show();
+        
+        this->label_volume_curve->hide();
+        this->combo_volume_curve->hide();
+        
+        return;
+    case 2:
+        this->label_spin_diameter->hide();
+        this->spin_diameter->hide();
+        this->label_spin_area->hide();
+        this->spin_area->hide();
+        
+        this->label_spin_level_min->show();
+        this->spin_level_min->show();
+        this->label_spin_level_max->show();
+        this->spin_level_max->show();
+        
+        this->label_spin_volume_min->show();
+        this->spin_volume_min->show();
+        this->label_volume_max->show();
+        this->label_volume_max_label->show();
+        
+        this->label_volume_curve->hide();
+        this->combo_volume_curve->hide();
+        
+        return;
+    case 3:
+        this->label_spin_diameter->hide();
+        this->spin_diameter->hide();
+        this->label_spin_area->hide();
+        this->spin_area->hide();
+        
+        this->label_spin_level_min->hide();
+        this->spin_level_min->hide();
+        this->label_spin_level_max->hide();
+        this->spin_level_max->hide();
+        
+        this->label_spin_volume_min->hide();
+        this->spin_volume_min->hide();
+        this->label_volume_max->hide();
+        this->label_volume_max_label->hide();
+        
+        this->label_volume_curve->show();
+        this->combo_volume_curve->show();
+        
+        return;
+    }
 }

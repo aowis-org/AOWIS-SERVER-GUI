@@ -40,15 +40,15 @@ void EntityInspectorLocation::addGroupPosition(QVBoxLayout *layout)
 
 void EntityInspectorLocation::addGroupElevation(QVBoxLayout *layout)
 {
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Elevation");
-    QGridLayout *grid = new QGridLayout(group);
+    this->group_elevation = new GroupBoxCollapsible("Elevation");
+    QGridLayout *grid = new QGridLayout(group_elevation);
     
     this->combo_elevation_mode = new QComboBox();
     this->combo_elevation_mode->addItem("Tank Bottom Elevation");
     this->combo_elevation_mode->addItem("Terrain Elevation + Offset");
     
-    QPushButton *button_terrain_elevation = new QPushButton("Terrain Elevation from GIS");
-    button_terrain_elevation->setToolTip(
+    this->button_terrain_elevation = new QPushButton("Terrain Elevation from GIS");
+    this->button_terrain_elevation->setToolTip(
         "Uses terrain elevation from GIS/DEM data.<br>Accuracy depends on the dataset and local terrain."
     );
     
@@ -87,58 +87,60 @@ void EntityInspectorLocation::addGroupElevation(QVBoxLayout *layout)
     grid->addWidget(label_tank_bottom_elevation, 4, 0);
     grid->addWidget(this->spin_tank_bottom_elevation, 4, 1);
     
-    connect(this->combo_elevation_mode, &QComboBox::currentIndexChanged, this,
-            [this, button_terrain_elevation](int index)
-    {
-        switch (index)
-        {
-        case 0:
-            button_terrain_elevation->hide();
-            this->label_terrain_elevation->hide();
-            this->spin_terrain_elevation->hide();
-            this->label_tank_bottom_offset->hide();
-            this->spin_tank_bottom_offset->hide();
-            this->spin_tank_bottom_elevation->setReadOnly(false);
-            this->spin_tank_bottom_elevation->setToolTip("");
-            return;
-        case 1:
-            button_terrain_elevation->show();
-            this->label_terrain_elevation->show();
-            this->spin_terrain_elevation->show();
-            this->label_tank_bottom_offset->show();
-            this->spin_tank_bottom_offset->show();
-            this->spin_tank_bottom_elevation->setReadOnly(true);
-            this->spin_tank_bottom_elevation->setToolTip(
-                "Calculated automatically from <i>Terrain Elevation</i> + <i>Offset</i>"
-                );
-            elevationCalc();
-            return;
-        }
-    });
+    connect(this->combo_elevation_mode, &QComboBox::currentIndexChanged, this, &EntityInspectorLocation::onElevationModeSignalChanged);
     
     this->combo_elevation_mode->setCurrentIndex(1);
     
-    connect(this->spin_terrain_elevation, &QDoubleSpinBox::valueChanged, this, &EntityInspectorLocation::elevationCalc);
-    connect(this->spin_tank_bottom_offset, &QDoubleSpinBox::valueChanged, this, &EntityInspectorLocation::elevationCalc);
+    connect(this->spin_terrain_elevation, &QDoubleSpinBox::valueChanged, this, &EntityInspectorLocation::onElevationCalc);
+    connect(this->spin_tank_bottom_offset, &QDoubleSpinBox::valueChanged, this, &EntityInspectorLocation::onElevationCalc);
     
-    connect(group, &GroupBoxCollapsible::signalCollapsed, this, &EntityInspectorLocation::onGroupCollapse);
-    connect(group, &GroupBoxCollapsible::signalExpanded, this, &EntityInspectorLocation::onGroupExpand);
+    connect(group_elevation, &GroupBoxCollapsible::signalCollapsed, this, &EntityInspectorLocation::onGroupCollapse);
+    connect(group_elevation, &GroupBoxCollapsible::signalExpanded, this, &EntityInspectorLocation::onGroupExpand);
     
-    layout->addWidget(group);
-}
-
-void EntityInspectorLocation::elevationCalc()
-{
-    double ground = this->spin_terrain_elevation->value();
-    double offset = this->spin_tank_bottom_offset->value();
-    this->spin_tank_bottom_elevation->setValue(ground + offset);
+    layout->addWidget(group_elevation);
 }
 
 void EntityInspectorLocation::onGroupCollapse(GroupBoxCollapsible *group)
 {
-    
+    this->elevation_mode_current = this->combo_elevation_mode->currentIndex();
 }
 void EntityInspectorLocation::onGroupExpand(GroupBoxCollapsible *group)
 {
-    
+    if (group == this->group_elevation)
+        onElevationModeSignalChanged(this->elevation_mode_current);
+}
+
+void EntityInspectorLocation::onElevationModeSignalChanged(int index)
+{
+    switch (index)
+    {
+    case 0:
+        this->button_terrain_elevation->hide();
+        this->label_terrain_elevation->hide();
+        this->spin_terrain_elevation->hide();
+        this->label_tank_bottom_offset->hide();
+        this->spin_tank_bottom_offset->hide();
+        this->spin_tank_bottom_elevation->setReadOnly(false);
+        this->spin_tank_bottom_elevation->setToolTip("");
+        return;
+    case 1:
+        this->button_terrain_elevation->show();
+        this->label_terrain_elevation->show();
+        this->spin_terrain_elevation->show();
+        this->label_tank_bottom_offset->show();
+        this->spin_tank_bottom_offset->show();
+        this->spin_tank_bottom_elevation->setReadOnly(true);
+        this->spin_tank_bottom_elevation->setToolTip(
+            "Calculated automatically from <i>Terrain Elevation</i> + <i>Offset</i>"
+            );
+        onElevationCalc();
+        return;
+    }
+}
+
+void EntityInspectorLocation::onElevationCalc()
+{
+    double ground = this->spin_terrain_elevation->value();
+    double offset = this->spin_tank_bottom_offset->value();
+    this->spin_tank_bottom_elevation->setValue(ground + offset);
 }
