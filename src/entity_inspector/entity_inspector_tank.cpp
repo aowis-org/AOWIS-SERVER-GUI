@@ -41,26 +41,6 @@ void EntityInspectorTank::addGroupGeneral()
     
     QLabel *label_name = new QLabel("Name");
     this->line_name = new QLineEdit();
-    connect(this->line_name, &QLineEdit::textChanged, this, [this]
-    {
-        if (this->line_name->text() == "T34")
-        {
-            QPixmap pixmap(":/icon/tank.png");
-            this->picture->setPixmap(pixmap.scaledToHeight(
-                Sizes::SidebarRightImageHeight,
-                Qt::SmoothTransformation
-            ));
-            this->picture->setAlignment(Qt::AlignCenter);
-        }
-        else
-        {
-            QPixmap pixmap(":/icon/tower_large.png");
-            this->picture->setPixmap(pixmap.scaledToHeight(
-                Sizes::SidebarRightImageHeight,
-                Qt::SmoothTransformation
-            ));
-        }
-    });
     
     grid->addWidget(this->picture, 0, 0, 1, 2);
     grid->addWidget(label_name, 1, 0);
