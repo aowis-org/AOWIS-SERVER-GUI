@@ -74,7 +74,7 @@ private:
     QMenu *menu = nullptr;
     QVector<Item> items;
     
-    QString placeholder_text = QStringLiteral("Select...");
+    QString placeholder_text = QStringLiteral("None Selected");
     int summary_limit = 3;
     
     bool hasValidIndex(int index) const;

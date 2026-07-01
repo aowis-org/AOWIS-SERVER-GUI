@@ -20,11 +20,21 @@ SimControlDock::SimControlDock(QWidget *parent)
                       QDockWidget::DockWidgetMovable |
                       QDockWidget::DockWidgetFloatable);
     */
-    this->layout->setContentsMargins(8, 4, 8, 4);
-    this->layout->setSpacing(8);
+    //this->layout->setContentsMargins(8, 4, 8, 4);
+    //this->layout->setSpacing(8);
     
+    this->layout->addStretch();
+    
+    addChemicalQualityDropdown();
+    
+    this->layout->addStretch();
+}
+
+void SimControlDock::addChemicalQualityDropdown()
+{
     ComboCheckboxes *combo = new ComboCheckboxes(this->content);
-    combo->setMinimumWidth(250);
+    combo->setMinimumWidth(210);
+    combo->setMaximumWidth(210);
     
     combo->addItem(QStringLiteral("CHEMICAL"),
                    1,
@@ -41,5 +51,9 @@ SimControlDock::SimControlDock(QWidget *parent)
                    true,
                    QStringLiteral("Source tracing: percent of water originating from one node"));
     
-    this->layout->addWidget(combo, 0, Qt::AlignCenter);
+    QLabel *label_quality_dropdown = new QLabel("Water Quality Modes: ");
+    this->layout->addWidget(label_quality_dropdown);
+    
+    //this->layout->addWidget(combo, 0, Qt::AlignCenter);
+    this->layout->addWidget(combo);
 }

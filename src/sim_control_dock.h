@@ -4,6 +4,8 @@
 #include <QObject>
 #include <QWidget>
 #include <QDockWidget>
+#include <QLabel>
+#include <QPushButton>
 
 #include <QHBoxLayout>
 
@@ -18,6 +20,8 @@ public:
 private:
     QWidget *content = nullptr;
     QHBoxLayout *layout = nullptr;
+    
+    void addChemicalQualityDropdown();
     
 signals:
 };

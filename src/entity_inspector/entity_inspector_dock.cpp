@@ -11,7 +11,8 @@ EntityInspectorDock::EntityInspectorDock(QWidget *parent)
     this->scroll->setWidgetResizable(true);
     setWidget(this->scroll);
     
-    setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    //setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    setAllowedAreas(Qt::RightDockWidgetArea);
     
     setFeatures(QDockWidget::DockWidgetClosable |
                 QDockWidget::DockWidgetMovable |
