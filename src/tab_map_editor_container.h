@@ -18,10 +18,10 @@
 #include <QButtonGroup>
 #include <QKeySequence>
 
-#include "map_model.h"
-#include "map_widget.h"
-#include "map_navigation_widget.h"
-#include "map_canvas_widget.h"
+#include "map/map_model.h"
+#include "map/map_widget.h"
+#include "map/map_navigation_widget.h"
+#include "map/map_canvas_widget.h"
 #include "entity_inspector/entity_inspector_dock.h"
 
 #ifdef Q_OS_WASM

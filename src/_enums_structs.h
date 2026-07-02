@@ -2,6 +2,7 @@
 #define _ENUMS_STRUCTS_H
 
 #include <optional>
+#include <cstdint>
 
 
 enum MapServerMode
@@ -89,6 +90,41 @@ enum MapEditToolSub
     Tool_3 = 3,
     Tool_4 = 4,
     Tool_5 = 5
+};
+
+enum class InfrastructureEntity : std::uint8_t
+{
+    Unknown = 0,
+    
+    // Hydraulic / EPANET-style node entities
+    Junction,
+    Reservoir,
+    Tank,
+    
+    // Hydraulic / EPANET-style link entities
+    Pipe,
+    Pump,
+    Valve,
+    
+    // AOWIS hydraulic extensions
+    CustomerPoint,
+    
+    // Electric node/storage/generation entities
+    ElectricJunction,
+    Battery,
+    Generator,
+    SolarPanel,
+    Inverter,
+    Transformer,
+    
+    // Electric link/control entities
+    Cable,
+    Switch,
+    Fuse,
+    CircuitBreaker,
+    
+    // Non-simulation / UI entities
+    Note
 };
 
 #endif // _ENUMS_STRUCTS_H

@@ -7,7 +7,7 @@
 #include <QPushButton>
 #include <QWidget>
 
-#include "_enums_structs.h"
+#include "../_enums_structs.h"
 
 class MapControls : public QWidget
 {

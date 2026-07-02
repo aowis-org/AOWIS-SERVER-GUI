@@ -39,7 +39,7 @@ qt_add_executable(aowis-server-gui
     
     src/rest_client.h src/rest_client.cpp
     src/menubar.h src/menubar.cpp
-    src/map_widget.h src/map_widget.cpp
+    src/map/map_widget.h src/map/map_widget.cpp
     src/footer_statusbar.h src/footer_statusbar.cpp
     src/_enums_structs.h
     src/tab_map_monitor_container.h src/tab_map_monitor_container.cpp
@@ -53,10 +53,10 @@ qt_add_executable(aowis-server-gui
     src/tab_map_editor_container.h src/tab_map_editor_container.cpp
     src/tab_customers_widget.h src/tab_customers_widget.cpp
     src/tab_energy_widget.h src/tab_energy_widget.cpp
-    src/map_navigation_widget.h src/map_navigation_widget.cpp
-    src/map_model.h src/map_model.cpp
-    src/map_controls.h src/map_controls.cpp
-    src/map_canvas_widget.h src/map_canvas_widget.cpp
+    src/map/map_navigation_widget.h src/map/map_navigation_widget.cpp
+    src/map/map_model.h src/map/map_model.cpp
+    src/map/map_controls.h src/map/map_controls.cpp
+    src/map/map_canvas_widget.h src/map/map_canvas_widget.cpp
     src/tab_settings_widget.h src/tab_settings_widget.cpp
     src/_sizes.h
     src/geo_web_mercator.h src/geo_web_mercator.cpp
@@ -65,9 +65,9 @@ qt_add_executable(aowis-server-gui
     src/interface_server_map_rest.h src/interface_server_map_rest.cpp
     src/tab_logs_widget.h src/tab_logs_widget.cpp
     src/tab_alarms_widget.h src/tab_alarms_widget.cpp
-    src/map_network_structs.h
-    src/map_canvas_entities.h src/map_canvas_entities.cpp
-    src/map_entity_marker_label.h src/map_entity_marker_label.cpp
+    src/map/map_network_structs.h
+    src/map/map_canvas_entities.h src/map/map_canvas_entities.cpp
+    src/map/map_entity_marker_label.h src/map/map_entity_marker_label.cpp
     src/entity_inspector/entity_inspector_dock.h src/entity_inspector/entity_inspector_dock.cpp
     src/widgets/group_box_collapsible.h src/widgets/group_box_collapsible.cpp
     src/entity_inspector/entity_inspector_tank.h src/entity_inspector/entity_inspector_tank.cpp

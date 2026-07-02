@@ -17,15 +17,15 @@
 
 #include "map_model.h"
 
-#include "interface_server_map_rest.h"
+#include "../interface_server_map_rest.h"
 
 #ifdef Q_OS_WASM
 #include "gps_provider_dummy.h"
 #else
-#include "gps_provider.h"
+#include "../gps_provider.h"
 #endif
 
-#include "_enums_structs.h"
+#include "../_enums_structs.h"
 
 #ifdef AOWIS_STANDALONE
 #include "interface_server_map_standalone.h"

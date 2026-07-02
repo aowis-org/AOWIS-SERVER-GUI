@@ -12,7 +12,7 @@
 #include "map_model.h"
 #include "map_entity_marker_label.h"
 
-#include "_enums_structs.h"
+#include "../_enums_structs.h"
 #include "map_network_structs.h"
 
 // to avoid circular includes

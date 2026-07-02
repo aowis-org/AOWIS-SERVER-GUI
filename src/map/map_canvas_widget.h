@@ -19,7 +19,7 @@
 #include "map_widget.h"
 #include "map_canvas_entities.h"
 
-#include "_enums_structs.h"
+#include "../_enums_structs.h"
 #include "map_network_structs.h"
 
 class MapCanvasWidget : public QWidget

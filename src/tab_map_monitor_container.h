@@ -19,9 +19,9 @@
 #include <QIcon>
 
 #include "_enums_structs.h"
-#include "map_model.h"
-#include "map_widget.h"
-#include "map_navigation_widget.h"
+#include "map/map_model.h"
+#include "map/map_widget.h"
+#include "map/map_navigation_widget.h"
 #include "widgets/group_box_collapsible.h"
 
 #ifdef Q_OS_WASM

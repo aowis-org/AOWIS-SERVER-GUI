@@ -16,7 +16,7 @@
 #include <QTimer>
 
 #include "map_widget.h"
-#include "_enums_structs.h"
+#include "../_enums_structs.h"
 
 class MapNavigationWidget : public QWidget
 {

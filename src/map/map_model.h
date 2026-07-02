@@ -12,9 +12,9 @@
 
 #include <QtMath>
 
-#include "geo_metric_projection.h"
-#include "geo_web_mercator.h"
-#include "_enums_structs.h"
+#include "../geo_metric_projection.h"
+#include "../geo_web_mercator.h"
+#include "../_enums_structs.h"
 
 class MapModel : public QObject
 {

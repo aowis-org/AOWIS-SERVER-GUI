@@ -31,8 +31,8 @@
 
 #include "tab_settings_widget.h"
 
-#include "map_model.h"
-#include "map_widget.h"
+#include "map/map_model.h"
+#include "map/map_widget.h"
 #include "tab_map_monitor_container.h"
 #include "tab_map_editor_container.h"
 

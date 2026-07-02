@@ -6,7 +6,7 @@
 
 #include "map_entity_marker_label.h"
 
-#include "_enums_structs.h"
+#include "../_enums_structs.h"
 
 enum class MapEntityPlacementMode
 {
