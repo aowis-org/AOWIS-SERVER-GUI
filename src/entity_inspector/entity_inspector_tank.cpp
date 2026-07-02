@@ -12,9 +12,7 @@ EntityInspectorTank::EntityInspectorTank(QWidget *parent)
     addGroupGeneral(":/icon/tower_large.png", "T1");
     
     addGroupPosition();
-    
-    this->location_inspector = new EntityInspectorLocation(this);
-    this->location_inspector->addGroupElevation(mainLayout());
+    addGroupElevation();
     
     addGroupGeometry();
     addGroupQuality();

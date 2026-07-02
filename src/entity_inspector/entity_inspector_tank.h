@@ -17,7 +17,6 @@
 #include <QComboBox>
 
 #include "entity_inspector_widget.h"
-#include "entity_inspector_location.h"
 
 #include "../widgets/group_box_collapsible.h"
 
@@ -36,8 +35,6 @@ private:
     QLabel *label = nullptr;
     
     QLabel *picture = nullptr;
-    
-    EntityInspectorLocation *location_inspector = nullptr;
     
     void addGroupGeometry();
     GroupBoxCollapsible *group_geometry = nullptr;
