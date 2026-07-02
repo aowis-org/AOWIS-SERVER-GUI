@@ -64,20 +64,15 @@ void EntityInspectorLocation::addGroupElevation(QVBoxLayout *layout)
     connect(this->spin_terrain_elevation, &QDoubleSpinBox::valueChanged, this, &EntityInspectorLocation::onElevationCalc);
     connect(this->spin_tank_bottom_offset, &QDoubleSpinBox::valueChanged, this, &EntityInspectorLocation::onElevationCalc);
     
-    connect(group_elevation, &GroupBoxCollapsible::signalCollapsed, this, &EntityInspectorLocation::onGroupCollapse);
     connect(group_elevation, &GroupBoxCollapsible::signalExpanded, this, &EntityInspectorLocation::onGroupExpand);
     
     layout->addWidget(group_elevation);
 }
 
-void EntityInspectorLocation::onGroupCollapse(GroupBoxCollapsible *group)
-{
-    this->elevation_mode_current = this->combo_elevation_mode->currentIndex();
-}
 void EntityInspectorLocation::onGroupExpand(GroupBoxCollapsible *group)
 {
     if (group == this->group_elevation)
-        onElevationModeSignalChanged(this->elevation_mode_current);
+        this->onElevationModeSignalChanged(this->combo_elevation_mode->currentIndex());
 }
 
 void EntityInspectorLocation::onElevationModeSignalChanged(int index)

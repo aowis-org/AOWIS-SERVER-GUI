@@ -24,7 +24,6 @@ public:
 private:
     GroupBoxCollapsible *group_elevation = nullptr;
     QComboBox *combo_elevation_mode = nullptr;
-    int elevation_mode_current = 0;
     
     QLabel *label_terrain_elevation = nullptr;
     QPushButton *button_terrain_elevation = nullptr;
@@ -34,7 +33,6 @@ private:
     QDoubleSpinBox *spin_tank_bottom_elevation = nullptr;
     
 private slots:
-    void onGroupCollapse(GroupBoxCollapsible *group);
     void onGroupExpand(GroupBoxCollapsible *group);
     
     void onElevationModeSignalChanged(int index);
