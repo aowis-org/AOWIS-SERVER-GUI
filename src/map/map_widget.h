@@ -20,7 +20,7 @@
 #include "../interface_server_map_rest.h"
 
 #ifdef Q_OS_WASM
-#include "gps_provider_dummy.h"
+#include "../gps_provider_dummy.h"
 #else
 #include "../gps_provider.h"
 #endif

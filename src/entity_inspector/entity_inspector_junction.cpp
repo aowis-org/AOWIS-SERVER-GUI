@@ -11,8 +11,10 @@ EntityInspectorJunction::EntityInspectorJunction(QWidget *parent)
     setTitle("Junction J1");
     addGroupGeneral(":/icon/junction.png", "J1");
     
+    addGroupPosition();
+    
     this->location_inspector = new EntityInspectorLocation(this);
-    this->location_inspector->addGroupPosition(mainLayout());
+    //this->location_inspector->addGroupPosition(mainLayout());
     this->location_inspector->addGroupElevation(mainLayout());
     
     

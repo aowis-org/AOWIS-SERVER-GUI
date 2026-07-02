@@ -17,14 +17,11 @@ class EntityInspectorLocation : public QObject
 public:
     explicit EntityInspectorLocation(QObject *parent = nullptr);
     
-    void addGroupPosition(QVBoxLayout *layout);
+    
     
     void addGroupElevation(QVBoxLayout *layout);
     
 private:
-    QDoubleSpinBox *spin_latitude = nullptr;
-    QDoubleSpinBox *spin_longitude = nullptr;
-    
     GroupBoxCollapsible *group_elevation = nullptr;
     QComboBox *combo_elevation_mode = nullptr;
     int elevation_mode_current = 0;

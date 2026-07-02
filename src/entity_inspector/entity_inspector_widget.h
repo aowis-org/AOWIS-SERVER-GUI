@@ -6,6 +6,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QString>
+#include <QDoubleSpinBox>
+#include <QPushButton>
 
 #include "../widgets/group_box_collapsible.h"
 #include "../_sizes.h"
@@ -22,8 +24,11 @@ protected:
     
     void setTitle(const QString &title);
     void addGroupGeneral(const QString &icon_path, const QString &name);
-    
     QLineEdit *line_name = nullptr;
+    
+    void addGroupPosition();
+    QDoubleSpinBox *spin_latitude = nullptr;
+    QDoubleSpinBox *spin_longitude = nullptr;
     
 private:
     QVBoxLayout *layout_main = nullptr;

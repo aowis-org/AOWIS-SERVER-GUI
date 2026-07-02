@@ -11,8 +11,10 @@ EntityInspectorReservoir::EntityInspectorReservoir(QWidget *parent)
     setTitle("Reservoir R1");
     addGroupGeneral(":/icon/lake.png", "R1");
     
+    addGroupPosition();
+    
     this->location_inspector = new EntityInspectorLocation(this);
-    this->location_inspector->addGroupPosition(mainLayout());
+    //this->location_inspector->addGroupPosition(mainLayout());
     this->location_inspector->addGroupElevation(mainLayout());
     
     
