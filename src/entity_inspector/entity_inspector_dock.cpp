@@ -2,12 +2,12 @@
 
 
 EntityInspectorDock::EntityInspectorDock(QWidget *parent)
-    : QDockWidget("Entity Inspector", parent)
+    : QDockWidget("Entity Inspector", parent),
+    scroll(new QScrollArea(this))
 {
     //setMinimumWidth(Sizes::SidebarRightWidthBase);
     //setMaximumWidth(Sizes::SidebarRightWidthBase);
     
-    this->scroll = new QScrollArea(this);
     this->scroll->setWidgetResizable(true);
     setWidget(this->scroll);
     
@@ -23,19 +23,26 @@ EntityInspectorDock::EntityInspectorDock(QWidget *parent)
 
 void EntityInspectorDock::clearEntity()
 {
-    if (this->widget_current)
-    {
-        this->widget_current->deleteLater();
-        this->widget_current = nullptr;
-    }
+    QWidget *old_widget = this->scroll->takeWidget();
+    
+    if (old_widget)
+        old_widget->deleteLater();
+    
+    this->widget_current = nullptr;
+}
+
+void EntityInspectorDock::setInspector(QWidget *inspector)
+{
+    clearEntity();
+    
+    this->widget_current = inspector;
+    this->scroll->setWidget(this->widget_current);
 }
 
 void EntityInspectorDock::showEntityTank()
 {
-    clearEntity();
-    
-    this->widget_current = new EntityInspectorTank(this->scroll);
-    this->scroll->setWidget(this->widget_current);
+    EntityInspectorTank *inspector = new EntityInspectorTank();
+    setInspector(inspector);
 }
 
 

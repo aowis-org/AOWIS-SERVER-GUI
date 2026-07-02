@@ -16,14 +16,16 @@
 #include <QCheckBox>
 #include <QComboBox>
 
+#include "entity_inspector_widget.h"
+#include "entity_inspector_location.h"
+
 #include "../widgets/group_box_collapsible.h"
-#include "../entity_inspector/entity_inspector_location.h"
 
 #include "../_enums_structs.h"
 #include "../_sizes.h"
 #include "../map_network_structs.h"
 
-class EntityInspectorTank : public QWidget
+class EntityInspectorTank : public EntityInspectorWidget
 {
     Q_OBJECT
 public:
@@ -34,10 +36,6 @@ private:
     QLabel *label = nullptr;
     
     QLabel *picture = nullptr;
-    
-    void addGroupGeneral();
-    QLabel *label_title = nullptr;
-    QLineEdit *line_name = nullptr;
     
     EntityInspectorLocation *location_inspector = nullptr;
     

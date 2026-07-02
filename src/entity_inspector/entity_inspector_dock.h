@@ -8,7 +8,7 @@
 
 #include <QVBoxLayout>
 
-#include "../entity_inspector/entity_inspector_tank.h"
+#include "entity_inspector_tank.h"
 
 #include "../widgets/group_box_collapsible.h"
 
@@ -30,6 +30,8 @@ public:
     
     
 private:
+    void setInspector(QWidget *inspector);
+    
     QScrollArea *scroll = nullptr;
     QWidget *widget_current = nullptr;
     
