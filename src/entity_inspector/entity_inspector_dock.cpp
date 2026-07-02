@@ -18,7 +18,13 @@ EntityInspectorDock::EntityInspectorDock(QWidget *parent)
                 QDockWidget::DockWidgetMovable |
                 QDockWidget::DockWidgetFloatable);
     
-    showEntityTank();
+    //showEntityTank();
+    showEntityJunction();
+    //showEntityPipe();
+    //showEntityPump();
+    //showEntityValve();
+    //showEntityReservoir();
+    //showEntityCustomerPoint();
 }
 
 void EntityInspectorDock::clearEntity()
@@ -44,5 +50,33 @@ void EntityInspectorDock::showEntityTank()
     EntityInspectorTank *inspector = new EntityInspectorTank();
     setInspector(inspector);
 }
-
-
+void EntityInspectorDock::showEntityJunction()
+{
+    EntityInspectorJunction *inspector = new EntityInspectorJunction();
+    setInspector(inspector);
+}
+void EntityInspectorDock::showEntityPipe()
+{
+    EntityInspectorPipe *inspector = new EntityInspectorPipe();
+    setInspector(inspector);
+}
+void EntityInspectorDock::showEntityPump()
+{
+    EntityInspectorPump *inspector = new EntityInspectorPump();
+    setInspector(inspector);
+}
+void EntityInspectorDock::showEntityValve()
+{
+    EntityInspectorValve *inspector = new EntityInspectorValve();
+    setInspector(inspector);
+}
+void EntityInspectorDock::showEntityReservoir()
+{
+    EntityInspectorReservoir *inspector = new EntityInspectorReservoir();
+    setInspector(inspector);
+}
+void EntityInspectorDock::showEntityCustomerPoint()
+{
+    EntityInspectorCustomerPoint *inspector = new EntityInspectorCustomerPoint();
+    setInspector(inspector);
+}

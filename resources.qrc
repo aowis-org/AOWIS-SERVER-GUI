@@ -31,6 +31,7 @@
         
         <file alias="pump.png">assets/iconsets/gothic/pump.png</file>
         <file alias="reservoir.png">assets/iconsets/gothic/reservoir.png</file>
+        <file alias="lake.png">assets/iconsets/gothic/reservoir_lake.png</file>
         <file alias="river.png">assets/iconsets/gothic/river.png</file>
         <file alias="save.png">assets/iconsets/gothic/save.png</file>
         

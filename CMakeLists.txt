@@ -75,6 +75,12 @@ qt_add_executable(aowis-server-gui
     src/entity_inspector/entity_inspector_location.h src/entity_inspector/entity_inspector_location.cpp
     src/widgets/combo_checkboxes.h src/widgets/combo_checkboxes.cpp
     src/entity_inspector/entity_inspector_widget.h src/entity_inspector/entity_inspector_widget.cpp
+    src/entity_inspector/entity_inspector_junction.h src/entity_inspector/entity_inspector_junction.cpp
+    src/entity_inspector/entity_inspector_pipe.h src/entity_inspector/entity_inspector_pipe.cpp
+    src/entity_inspector/entity_inspector_pump.h src/entity_inspector/entity_inspector_pump.cpp
+    src/entity_inspector/entity_inspector_valve.h src/entity_inspector/entity_inspector_valve.cpp
+    src/entity_inspector/entity_inspector_reservoir.h src/entity_inspector/entity_inspector_reservoir.cpp
+    src/entity_inspector/entity_inspector_customer_point.h src/entity_inspector/entity_inspector_customer_point.cpp
 )
 
 if(APPLE)
