@@ -8,7 +8,6 @@
 
 #include <QVBoxLayout>
 
-#include "../entity_inspector/entity_inspector_dock.h"
 #include "../entity_inspector/entity_inspector_tank.h"
 
 #include "../widgets/group_box_collapsible.h"

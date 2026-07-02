@@ -12,7 +12,7 @@ EntityInspectorTank::EntityInspectorTank(QWidget *parent)
     
     addGroupGeneral();
     
-    EntityInspectorLocation *location_inspector =
+    this->location_inspector =
         new EntityInspectorLocation(this);
     
     location_inspector->addGroupPosition(this->layout);
