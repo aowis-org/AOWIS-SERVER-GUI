@@ -127,4 +127,10 @@ enum class InfrastructureEntity : std::uint8_t
     Note
 };
 
+enum class JunctionPhysicalKind
+{
+    Physical,
+    Virtual
+};
+
 #endif // _ENUMS_STRUCTS_H

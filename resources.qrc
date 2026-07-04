@@ -18,6 +18,9 @@
         <file alias="arrow_right.png">assets/iconsets/gothic/arrow_right.png</file>
         <file alias="arrow_up.png">assets/iconsets/gothic/arrow_up.png</file>
         
+        <file alias="delete.png">assets/iconsets/gothic/delete.png</file>
+        <file alias="remove.png">assets/iconsets/gothic/remove.png</file>
+        
         <file alias="customer.png">assets/iconsets/gothic/customer.png</file>
         <file alias="electricity.png">assets/iconsets/gothic/electricity.png</file>
         <file alias="energy.png">assets/iconsets/gothic/energy.png</file>

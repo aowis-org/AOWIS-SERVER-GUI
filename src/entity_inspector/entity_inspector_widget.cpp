@@ -94,29 +94,29 @@ void EntityInspectorWidget::addGroupElevation()
     
     this->label_terrain_elevation = new QLabel("Terrain elevation");
     this->spin_terrain_elevation = new QDoubleSpinBox;
-    spin_terrain_elevation->setRange(-10000.0, 10000.0);
-    spin_terrain_elevation->setDecimals(3);
-    spin_terrain_elevation->setSingleStep(0.10);
-    spin_terrain_elevation->setSuffix(" m");
+    this->spin_terrain_elevation->setRange(-10000.0, 10000.0);
+    this->spin_terrain_elevation->setDecimals(3);
+    this->spin_terrain_elevation->setSingleStep(0.10);
+    this->spin_terrain_elevation->setSuffix(" m");
     
     this->label_tank_bottom_offset = new QLabel("Tank bottom offset");
     this->label_tank_bottom_offset->setWordWrap(true);
     this->spin_tank_bottom_offset = new QDoubleSpinBox;
-    spin_tank_bottom_offset->setRange(-100.0, 200.0);
-    spin_tank_bottom_offset->setDecimals(3);
-    spin_tank_bottom_offset->setSingleStep(0.10);
-    spin_tank_bottom_offset->setSuffix(" m");
+    this->spin_tank_bottom_offset->setRange(-100.0, 200.0);
+    this->spin_tank_bottom_offset->setDecimals(3);
+    this->spin_tank_bottom_offset->setSingleStep(0.10);
+    this->spin_tank_bottom_offset->setSuffix(" m");
     this->spin_tank_bottom_offset->setToolTip(
         "Tank bottom relative to terrain. Positive = above ground, negative = below ground."
         );
     
-    QLabel *label_tank_bottom_elevation = new QLabel("Tank bottom elevation");
-    label_tank_bottom_elevation->setWordWrap(true);
+    this->label_tank_bottom_elevation = new QLabel("Tank bottom elevation");
+    this->label_tank_bottom_elevation->setWordWrap(true);
     this->spin_tank_bottom_elevation = new QDoubleSpinBox;
-    spin_tank_bottom_elevation->setRange(-10000.0, 10000.0);
-    spin_tank_bottom_elevation->setDecimals(3);
-    spin_tank_bottom_elevation->setSingleStep(0.10);
-    spin_tank_bottom_elevation->setSuffix(" m");
+    this->spin_tank_bottom_elevation->setRange(-10000.0, 10000.0);
+    this->spin_tank_bottom_elevation->setDecimals(3);
+    this->spin_tank_bottom_elevation->setSingleStep(0.10);
+    this->spin_tank_bottom_elevation->setSuffix(" m");
     
     grid->addWidget(this->combo_elevation_mode, 0, 0, 1, 2);
     grid->addWidget(button_terrain_elevation, 1, 0, 1, 2);

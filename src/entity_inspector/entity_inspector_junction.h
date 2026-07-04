@@ -3,11 +3,14 @@
 
 #include <QObject>
 #include <QWidget>
+#include <QDialog>
+#include <QPointer>
 
 #include <QVBoxLayout>
 #include <QGridLayout>
 
 #include <QPixmap>
+#include <QIcon>
 #include <QPushButton>
 #include <QLabel>
 #include <QLineEdit>
@@ -15,6 +18,8 @@
 #include <QDoubleSpinBox>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QTableWidget>
+#include <QHeaderView>
 
 #include "entity_inspector_widget.h"
 
@@ -36,8 +41,15 @@ private:
     
     QLabel *picture = nullptr;
     
+    void addGroupClassification();
+    QComboBox *combo_classification_kind = nullptr;
+    
     void addGroupDemands();
     
+    
+    void openDemandsEditor();
+    QPointer<QDialog> dialog_demands = nullptr;
+    QPointer<QTableWidget> table_demands = nullptr;
     
     void addGroupQuality();
     

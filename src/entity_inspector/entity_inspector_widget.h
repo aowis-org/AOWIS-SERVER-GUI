@@ -40,6 +40,7 @@ protected:
     QDoubleSpinBox *spin_terrain_elevation = nullptr;
     QLabel *label_tank_bottom_offset = nullptr;
     QDoubleSpinBox *spin_tank_bottom_offset = nullptr;
+    QLabel *label_tank_bottom_elevation = nullptr;
     QDoubleSpinBox *spin_tank_bottom_elevation = nullptr;
     
 private:
