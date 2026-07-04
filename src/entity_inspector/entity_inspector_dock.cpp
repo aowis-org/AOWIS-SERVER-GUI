@@ -19,8 +19,8 @@ EntityInspectorDock::EntityInspectorDock(QWidget *parent)
                 QDockWidget::DockWidgetFloatable);
     
     //showEntityTank();
-    showEntityJunction();
-    //showEntityPipe();
+    //showEntityJunction();
+    showEntityPipe();
     //showEntityPump();
     //showEntityValve();
     //showEntityReservoir();
