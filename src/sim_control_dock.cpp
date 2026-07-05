@@ -12,9 +12,13 @@ SimControlDock::SimControlDock(QWidget *parent)
 {
     this->setWidget(this->content);
     
-    this->setAllowedAreas(Qt::TopDockWidgetArea | Qt::BottomDockWidgetArea);
-    this->setFeatures(QDockWidget::NoDockWidgetFeatures);
-    this->setTitleBarWidget(new QWidget(this));
+    setAllowedAreas(Qt::TopDockWidgetArea | Qt::BottomDockWidgetArea);
+    setFeatures(QDockWidget::NoDockWidgetFeatures);
+    setTitleBarWidget(new QWidget(this));
+    
+    content->setFixedHeight(Sizes::SimControlDockHeight);
+    setFixedHeight(Sizes::SimControlDockHeight);
+    
     /*
     this->setFeatures(QDockWidget::DockWidgetClosable |
                       QDockWidget::DockWidgetMovable |
@@ -26,6 +30,7 @@ SimControlDock::SimControlDock(QWidget *parent)
     this->layout->addStretch();
     
     addChemicalQualityDropdown();
+    addHeadlossFormulaDropdown();
     
     this->layout->addStretch();
 }
@@ -57,3 +62,28 @@ void SimControlDock::addChemicalQualityDropdown()
     //this->layout->addWidget(combo, 0, Qt::AlignCenter);
     this->layout->addWidget(combo);
 }
+
+void SimControlDock::addHeadlossFormulaDropdown()
+{
+    ComboCheckboxes *combo = new ComboCheckboxes(this->content);
+    combo->setMinimumWidth(210);
+    combo->setMaximumWidth(210);
+    
+    combo->addItem(QStringLiteral("Hazen-Williams"),
+                   1,
+                   true,
+                   QStringLiteral("Run simulation with the Hazen-Williams headloss formula.<br><br>Requires pipe roughness coefficient C."));
+    
+    combo->addItem(QStringLiteral("Darcy-Weisbach"),
+                   2,
+                   false,
+                   QStringLiteral("Run simulation with the Darcy-Weisbach headloss formula.<br><br>Requires absolute pipe roughness ε in mm."));
+    
+    combo->addItem(QStringLiteral("Chezy-Manning"),
+                   3,
+                   false,
+                   QStringLiteral("Run simulation with the Chezy-Manning headloss formula.<br><br>Requires Manning roughness coefficient n."));
+    
+    this->layout->addWidget(combo);
+}
+

@@ -42,8 +42,12 @@ private:
     QComboBox *combo_status_initial = nullptr;
     QDoubleSpinBox *spin_diameter = nullptr;
     QDoubleSpinBox *spin_length = nullptr;
+    
+    void addGroupRoughness();
     QComboBox *combo_material = nullptr;
-    QDoubleSpinBox *spin_roughness = nullptr;
+    QDoubleSpinBox *spin_roughness_hw = nullptr;
+    QDoubleSpinBox *spin_roughness_dw = nullptr;
+    QDoubleSpinBox *spin_roughness_cm = nullptr;
     
     void addGroupQuality();
     QCheckBox *check_override = nullptr;

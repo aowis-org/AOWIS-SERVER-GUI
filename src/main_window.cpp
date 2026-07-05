@@ -44,6 +44,13 @@ MainWindow::MainWindow(QWidget *parent)
     addDockWidget(Qt::RightDockWidgetArea, dock_entity_inspector);
     addDockWidget(Qt::TopDockWidgetArea, dock_sim_control);
     
+    setStyleSheet(
+        "QMainWindow::separator {"
+        "    width: 0px;"
+        "    height: 0px;"
+        "}"
+        );
+    
     this->map_mon = this->map_monitor->getMap();
     this->map_edit = this->map_editor->getMap();
     

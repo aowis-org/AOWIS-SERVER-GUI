@@ -5,8 +5,10 @@ EntityInspectorDock::EntityInspectorDock(QWidget *parent)
     : QDockWidget("Entity Inspector", parent),
     scroll(new QScrollArea(this))
 {
-    //setMinimumWidth(Sizes::SidebarRightWidthBase);
-    //setMaximumWidth(Sizes::SidebarRightWidthBase);
+    setMinimumWidth(Sizes::SidebarRightWidth);
+    //setMaximumWidth(Sizes::SidebarRightWidth);
+    this->resize(Sizes::SidebarRightWidth, this->height());
+    this->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     
     this->scroll->setWidgetResizable(true);
     setWidget(this->scroll);

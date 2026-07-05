@@ -13,6 +13,7 @@ EntityInspectorPipe::EntityInspectorPipe(QWidget *parent)
     
     addGroupEndpoints();
     addGroupGeometry();
+    addGroupRoughness();
     addGroupQuality();
     addGroupSimMeas();
     addGroupGraphs();
@@ -50,7 +51,7 @@ void EntityInspectorPipe::addGroupEndpoints()
 
 void EntityInspectorPipe::addGroupGeometry()
 {
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Geometry / Roughness");
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Geometry");
     QGridLayout *grid = new QGridLayout(group);
     
     QLabel *label_status_initial = new QLabel("Initial Status");
@@ -75,16 +76,6 @@ void EntityInspectorPipe::addGroupGeometry()
     this->spin_length->setSingleStep(1.0);
     //this->spin_length->setValue(100.0);
     
-    QLabel *label_material = new QLabel("Material");
-    this->combo_material = new QComboBox();
-    
-    QLabel *label_roughness = new QLabel("Roughness");
-    this->spin_roughness = new QDoubleSpinBox();
-    this->spin_roughness->setDecimals(0);
-    this->spin_roughness->setRange(1.0, 200.0);
-    this->spin_roughness->setSingleStep(1.0);
-    this->spin_roughness->setValue(130.0);
-    
     grid->addWidget(label_status_initial, 0, 0);
     grid->addWidget(this->combo_status_initial, 0, 1);
     
@@ -94,11 +85,54 @@ void EntityInspectorPipe::addGroupGeometry()
     grid->addWidget(label_length, 2, 0);
     grid->addWidget(this->spin_length, 2, 1);
     
+    mainLayout()->addWidget(group);
+}
+
+void EntityInspectorPipe::addGroupRoughness()
+{
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Geometry / Roughness");
+    QGridLayout *grid = new QGridLayout(group);
+    
+    QLabel *label_material = new QLabel("Material");
+    this->combo_material = new QComboBox();
+    
+    QLabel *label_roughness_hw = new QLabel("Roughness<br>Hazen-Williams");
+    label_roughness_hw->setWordWrap(true);
+    this->spin_roughness_hw = new QDoubleSpinBox();
+    this->spin_roughness_hw->setToolTip("Pipe roughness coefficient C");
+    this->spin_roughness_hw->setDecimals(0);
+    this->spin_roughness_hw->setRange(1.0, 200.0);
+    this->spin_roughness_hw->setSingleStep(1.0);
+    this->spin_roughness_hw->setValue(130.0);
+    
+    QLabel *label_roughness_dw = new QLabel("Roughness<br>Darcy-Weisbach");
+    label_roughness_dw->setWordWrap(true);
+    this->spin_roughness_dw = new QDoubleSpinBox();
+    this->spin_roughness_dw->setToolTip("Absolute pipe roughness ε in mm");
+    this->spin_roughness_dw->setSuffix(" mm");
+    this->spin_roughness_dw->setDecimals(6);
+    this->spin_roughness_dw->setRange(0.000001, 100.0);
+    this->spin_roughness_dw->setSingleStep(0.001);
+    this->spin_roughness_dw->setValue(0.100000);
+    
+    QLabel *label_roughness_cm = new QLabel("Roughness<br>Chezy-Manning");
+    label_roughness_cm->setWordWrap(true);
+    this->spin_roughness_cm = new QDoubleSpinBox();
+    this->spin_roughness_cm->setToolTip("Manning roughness coefficient n");
+    this->spin_roughness_cm->setDecimals(4);
+    this->spin_roughness_cm->setRange(0.0010, 0.1000);
+    this->spin_roughness_cm->setSingleStep(0.0010);
+    this->spin_roughness_cm->setValue(0.0130);
+    
     grid->addWidget(label_material, 3, 0);
     grid->addWidget(this->combo_material, 3, 1);
     
-    grid->addWidget(label_roughness, 4, 0);
-    grid->addWidget(this->spin_roughness, 4, 1);
+    grid->addWidget(label_roughness_hw, 4, 0);
+    grid->addWidget(this->spin_roughness_hw, 4, 1);
+    grid->addWidget(label_roughness_dw, 5, 0);
+    grid->addWidget(this->spin_roughness_dw, 5, 1);
+    grid->addWidget(label_roughness_cm, 6, 0);
+    grid->addWidget(this->spin_roughness_cm, 6, 1);
     
     mainLayout()->addWidget(group);
 }
