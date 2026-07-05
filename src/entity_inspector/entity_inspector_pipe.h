@@ -14,6 +14,7 @@
 #include <QDoubleSpinBox>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCheckBox>
 
 #include "entity_inspector_widget.h"
 
@@ -39,7 +40,9 @@ private:
     
     
     void addGroupQuality();
-    
+    QCheckBox *check_override = nullptr;
+    QDoubleSpinBox *spin_bulk_reaction = nullptr;
+    QDoubleSpinBox *spin_wall_reaction = nullptr;
     
     void addGroupSimMeas();
     
