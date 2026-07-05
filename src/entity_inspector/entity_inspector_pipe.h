@@ -36,8 +36,14 @@ private:
     
     QLabel *picture = nullptr;
     
-    void addGroupDemands();
+    void addGroupEndpoints();
     
+    void addGroupGeometry();
+    QComboBox *combo_status_initial = nullptr;
+    QDoubleSpinBox *spin_diameter = nullptr;
+    QDoubleSpinBox *spin_length = nullptr;
+    QComboBox *combo_material = nullptr;
+    QDoubleSpinBox *spin_roughness = nullptr;
     
     void addGroupQuality();
     QCheckBox *check_override = nullptr;

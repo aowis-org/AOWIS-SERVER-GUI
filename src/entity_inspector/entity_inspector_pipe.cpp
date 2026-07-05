@@ -11,8 +11,8 @@ EntityInspectorPipe::EntityInspectorPipe(QWidget *parent)
     setTitle("Pipe P1");
     addGroupGeneral(":/icon/pipe.png", "P1");
     
-    
-    
+    addGroupEndpoints();
+    addGroupGeometry();
     addGroupQuality();
     addGroupSimMeas();
     addGroupGraphs();
@@ -20,12 +20,85 @@ EntityInspectorPipe::EntityInspectorPipe(QWidget *parent)
     mainLayout()->addStretch();
 }
 
-void EntityInspectorPipe::addGroupDemands()
+void EntityInspectorPipe::addGroupEndpoints()
 {
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Demands");
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Endpoints");
     QGridLayout *grid = new QGridLayout(group);
     
+    QLabel *label_node_1 = new QLabel("Node 1");
+    QLabel *label_node_1_id = new QLabel();
+    QPushButton *button_node_1_locate = new QPushButton(QIcon(":/icon/gps.png"), "");
+    button_node_1_locate->setToolTip("Show on Map");
+    button_node_1_locate->setMaximumWidth(35);
     
+    QLabel *label_node_2 = new QLabel("Node 2");
+    QLabel *label_node_2_id = new QLabel();
+    QPushButton *button_node_2_locate = new QPushButton(QIcon(":/icon/gps.png"), "");
+    button_node_2_locate->setToolTip("Show on Map");
+    button_node_2_locate->setMaximumWidth(35);
+    
+    grid->addWidget(label_node_1, 0, 0);
+    grid->addWidget(label_node_1_id, 0, 1);
+    grid->addWidget(button_node_1_locate, 0, 2);
+    
+    grid->addWidget(label_node_2, 1, 0);
+    grid->addWidget(label_node_2_id, 1, 1);
+    grid->addWidget(button_node_2_locate, 1, 2);
+    
+    mainLayout()->addWidget(group);
+}
+
+void EntityInspectorPipe::addGroupGeometry()
+{
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Geometry / Roughness");
+    QGridLayout *grid = new QGridLayout(group);
+    
+    QLabel *label_status_initial = new QLabel("Initial Status");
+    this->combo_status_initial = new QComboBox();
+    this->combo_status_initial->addItem("Open");
+    this->combo_status_initial->addItem("Closed");
+    this->combo_status_initial->addItem("Check Valve");
+    
+    QLabel *label_diameter = new QLabel("Diameter");
+    this->spin_diameter = new QDoubleSpinBox();
+    this->spin_diameter->setSuffix(" mm");
+    this->spin_diameter->setDecimals(1);
+    this->spin_diameter->setRange(1.0, 5000.0);
+    this->spin_diameter->setSingleStep(10.0);
+    this->spin_diameter->setValue(100.0);
+    
+    QLabel *label_length = new QLabel("Length");
+    this->spin_length = new QDoubleSpinBox();
+    this->spin_length->setSuffix(" m");
+    this->spin_length->setDecimals(2);
+    this->spin_length->setRange(0.0, 100000.0);
+    this->spin_length->setSingleStep(1.0);
+    //this->spin_length->setValue(100.0);
+    
+    QLabel *label_material = new QLabel("Material");
+    this->combo_material = new QComboBox();
+    
+    QLabel *label_roughness = new QLabel("Roughness");
+    this->spin_roughness = new QDoubleSpinBox();
+    this->spin_roughness->setDecimals(0);
+    this->spin_roughness->setRange(1.0, 200.0);
+    this->spin_roughness->setSingleStep(1.0);
+    this->spin_roughness->setValue(130.0);
+    
+    grid->addWidget(label_status_initial, 0, 0);
+    grid->addWidget(this->combo_status_initial, 0, 1);
+    
+    grid->addWidget(label_diameter, 1, 0);
+    grid->addWidget(this->spin_diameter, 1, 1);
+    
+    grid->addWidget(label_length, 2, 0);
+    grid->addWidget(this->spin_length, 2, 1);
+    
+    grid->addWidget(label_material, 3, 0);
+    grid->addWidget(this->combo_material, 3, 1);
+    
+    grid->addWidget(label_roughness, 4, 0);
+    grid->addWidget(this->spin_roughness, 4, 1);
     
     mainLayout()->addWidget(group);
 }
