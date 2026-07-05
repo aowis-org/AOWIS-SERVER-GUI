@@ -28,7 +28,7 @@
 #include "../_enums_structs.h"
 
 #ifdef AOWIS_STANDALONE
-#include "interface_server_map_standalone.h"
+#include "../interface_server_map_standalone.h"
 #endif
 
 class MapWidget : public QWidget
