@@ -13,6 +13,7 @@
 #include <QCheckBox>
 
 #include "../widgets/group_box_collapsible.h"
+#include "../_enums_structs.h"
 #include "../_sizes.h"
 
 class EntityInspectorWidget : public QWidget
@@ -57,6 +58,9 @@ private slots:
     
     void onElevationModeSignalChanged(int index);
     void onElevationCalc();
+    
+public slots:
+    virtual void onHeadlossFormulaChanged(HeadlossFormulas formulas);
 };
 
 #endif

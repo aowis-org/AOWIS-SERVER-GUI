@@ -11,6 +11,7 @@
 
 #include "widgets/combo_checkboxes.h"
 
+#include "_enums_structs.h"
 #include "_sizes.h"
 
 class SimControlDock : public QDockWidget
@@ -26,8 +27,10 @@ private:
     void addChemicalQualityDropdown();
     
     void addHeadlossFormulaDropdown();
+    ComboCheckboxes *combo_headloss_formula = nullptr;
     
 signals:
+    void signalHeadlossFormulaChanged(HeadlossFormulas formulas);
 };
 
 #endif // SIM_CONTROL_DOCK_H

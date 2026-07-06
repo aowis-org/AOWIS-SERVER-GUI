@@ -194,3 +194,8 @@ void EntityInspectorWidget::onElevationCalc()
     double offset = this->spin_tank_bottom_offset->value();
     this->spin_tank_bottom_elevation->setValue(ground + offset);
 }
+
+void EntityInspectorWidget::onHeadlossFormulaChanged(HeadlossFormulas formulas)
+{
+    Q_UNUSED(formulas)
+}

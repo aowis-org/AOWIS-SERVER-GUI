@@ -4,6 +4,8 @@
 #include <optional>
 #include <cstdint>
 
+#include <QObject>
+
 
 enum MapServerMode
 {
@@ -132,5 +134,19 @@ enum class JunctionPhysicalKind
     Physical,
     Virtual
 };
+
+enum class HeadlossFormula
+{
+    None           = 0x0,
+    HazenWilliams  = 0x1,
+    DarcyWeisbach  = 0x2,
+    ChezyManning   = 0x4
+};
+
+Q_DECLARE_FLAGS(HeadlossFormulas, HeadlossFormula)
+Q_DECLARE_OPERATORS_FOR_FLAGS(HeadlossFormulas)
+
+Q_DECLARE_METATYPE(HeadlossFormula)
+Q_DECLARE_METATYPE(HeadlossFormulas)
 
 #endif // _ENUMS_STRUCTS_H

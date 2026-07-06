@@ -46,6 +46,9 @@ private:
     QScrollArea *scroll = nullptr;
     QWidget *widget_current = nullptr;
     
+public slots:
+    virtual void onHeadlossFormulaChanged(HeadlossFormulas formulas);
+    
 };
 
 #endif // ENTITY_INSPECTOR_DOCK_H

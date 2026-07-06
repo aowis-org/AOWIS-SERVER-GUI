@@ -82,3 +82,8 @@ void EntityInspectorDock::showEntityCustomerPoint()
     EntityInspectorCustomerPoint *inspector = new EntityInspectorCustomerPoint();
     setInspector(inspector);
 }
+
+void EntityInspectorDock::onHeadlossFormulaChanged(HeadlossFormulas formulas)
+{
+    //this->widget_current->onHeadlossFormulaChanged(formulas);
+}

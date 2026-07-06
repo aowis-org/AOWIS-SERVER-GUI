@@ -62,6 +62,9 @@ private:
     void addGroupGraphs();
     
 signals:
+    
+protected slots:
+    void onHeadlossFormulaChanged(HeadlossFormulas formulas) override;
 };
 
 #endif // ENTITY_INSPECTOR_PIPE_H

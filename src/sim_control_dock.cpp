@@ -65,25 +65,48 @@ void SimControlDock::addChemicalQualityDropdown()
 
 void SimControlDock::addHeadlossFormulaDropdown()
 {
-    ComboCheckboxes *combo = new ComboCheckboxes(this->content);
-    combo->setMinimumWidth(210);
-    combo->setMaximumWidth(210);
+    this->combo_headloss_formula = new ComboCheckboxes(this->content);
+    this->combo_headloss_formula->setMinimumWidth(210);
+    this->combo_headloss_formula->setMaximumWidth(210);
     
-    combo->addItem(QStringLiteral("Hazen-Williams"),
-                   1,
-                   true,
-                   QStringLiteral("Run simulation with the Hazen-Williams headloss formula.<br><br>Requires pipe roughness coefficient C."));
+    this->combo_headloss_formula->addItem(
+        QStringLiteral("Hazen-Williams"),
+        static_cast<int>(HeadlossFormula::HazenWilliams),
+        true,
+        QStringLiteral("Run simulation with the Hazen-Williams headloss formula.<br><br>Requires pipe roughness coefficient C.")
+        );
     
-    combo->addItem(QStringLiteral("Darcy-Weisbach"),
-                   2,
-                   false,
-                   QStringLiteral("Run simulation with the Darcy-Weisbach headloss formula.<br><br>Requires absolute pipe roughness ε in mm."));
+    this->combo_headloss_formula->addItem(
+        QStringLiteral("Darcy-Weisbach"),
+        static_cast<int>(HeadlossFormula::DarcyWeisbach),
+        false,
+        QStringLiteral("Run simulation with the Darcy-Weisbach headloss formula.<br><br>Requires absolute pipe roughness ε in mm.")
+        );
     
-    combo->addItem(QStringLiteral("Chezy-Manning"),
-                   3,
-                   false,
-                   QStringLiteral("Run simulation with the Chezy-Manning headloss formula.<br><br>Requires Manning roughness coefficient n."));
+    this->combo_headloss_formula->addItem(
+        QStringLiteral("Chezy-Manning"),
+        static_cast<int>(HeadlossFormula::ChezyManning),
+        false,
+        QStringLiteral("Run simulation with the Chezy-Manning headloss formula.<br><br>Requires Manning roughness coefficient n.")
+        );
     
-    this->layout->addWidget(combo);
+    connect(this->combo_headloss_formula, &ComboCheckboxes::checkedItemsChanged, this, [this]
+    {
+        const QList<int> indexes_checked = this->combo_headloss_formula->checkedIndexes();
+        
+        HeadlossFormulas formulas = HeadlossFormula::None;
+        
+        for (const int index : indexes_checked)
+        {
+            int value = this->combo_headloss_formula->itemData(index).toInt();
+            HeadlossFormula formula = static_cast<HeadlossFormula>(value);
+            
+            formulas |= formula;
+        }
+        
+        emit signalHeadlossFormulaChanged(formulas);
+    });
+    
+    this->layout->addWidget(this->combo_headloss_formula);
 }
 
