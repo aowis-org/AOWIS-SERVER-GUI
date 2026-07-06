@@ -39,12 +39,14 @@ void EntityInspectorDock::clearEntity()
     this->widget_current = nullptr;
 }
 
-void EntityInspectorDock::setInspector(QWidget *inspector)
+void EntityInspectorDock::setInspector(EntityInspectorWidget *inspector)
 {
     clearEntity();
     
     this->widget_current = inspector;
     this->scroll->setWidget(this->widget_current);
+    
+    this->widget_current->onHeadlossFormulaChanged(this->headloss_formulas_current);
 }
 
 void EntityInspectorDock::showEntityTank()
@@ -85,5 +87,9 @@ void EntityInspectorDock::showEntityCustomerPoint()
 
 void EntityInspectorDock::onHeadlossFormulaChanged(HeadlossFormulas formulas)
 {
-    //this->widget_current->onHeadlossFormulaChanged(formulas);
+    this->headloss_formulas_current = formulas;
+    
+    if (this->widget_current != nullptr) {
+        this->widget_current->onHeadlossFormulaChanged(formulas);
+    }
 }

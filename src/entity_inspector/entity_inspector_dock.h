@@ -41,10 +41,13 @@ public:
     void showEntityCustomerPoint();
     
 private:
-    void setInspector(QWidget *inspector);
+    void setInspector(EntityInspectorWidget *inspector);
     
     QScrollArea *scroll = nullptr;
-    QWidget *widget_current = nullptr;
+    EntityInspectorWidget *widget_current = nullptr;
+    
+    HeadlossFormulas headloss_formulas_current =
+        HeadlossFormulas(HeadlossFormula::HazenWilliams);
     
 public slots:
     virtual void onHeadlossFormulaChanged(HeadlossFormulas formulas);

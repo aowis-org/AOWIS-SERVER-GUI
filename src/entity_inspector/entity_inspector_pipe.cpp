@@ -245,7 +245,7 @@ void EntityInspectorPipe::onHeadlossFormulaChanged(HeadlossFormulas formulas)
     const bool use_dw = formulas.testFlag(HeadlossFormula::DarcyWeisbach);
     const bool use_cm = formulas.testFlag(HeadlossFormula::ChezyManning);
     
-    this->spin_roughness_hw->setVisible(use_hw);
-    this->spin_roughness_dw->setVisible(use_dw);
-    this->spin_roughness_cm->setVisible(use_cm);
+    this->spin_roughness_hw->setDisabled(!use_hw);
+    this->spin_roughness_dw->setDisabled(!use_dw);
+    this->spin_roughness_cm->setDisabled(!use_cm);
 }
