@@ -28,23 +28,35 @@ void EntityInspectorPipe::addGroupEndpoints()
     
     QLabel *label_node_1 = new QLabel("Node 1");
     QLabel *label_node_1_id = new QLabel();
-    QPushButton *button_node_1_locate = new QPushButton(QIcon(":/icon/gps.png"), "");
+    QPushButton *button_node_1_locate = new QPushButton(QIcon(":/icon/geomarker.png"), "");
+    button_node_1_locate->setIconSize(QSize(20, 20));
     button_node_1_locate->setToolTip("Show on Map");
     button_node_1_locate->setMaximumWidth(35);
+    QPushButton *button_node_1_inspect = new QPushButton(QIcon(":/icon/target.png"), "");
+    button_node_1_inspect->setIconSize(QSize(20, 20));
+    button_node_1_inspect->setToolTip("Inspect");
+    button_node_1_inspect->setMaximumWidth(35);
     
     QLabel *label_node_2 = new QLabel("Node 2");
     QLabel *label_node_2_id = new QLabel();
-    QPushButton *button_node_2_locate = new QPushButton(QIcon(":/icon/gps.png"), "");
+    QPushButton *button_node_2_locate = new QPushButton(QIcon(":/icon/geomarker.png"), "");
+    button_node_2_locate->setIconSize(QSize(20, 20));
     button_node_2_locate->setToolTip("Show on Map");
     button_node_2_locate->setMaximumWidth(35);
+    QPushButton *button_node_2_inspect = new QPushButton(QIcon(":/icon/target.png"), "");
+    button_node_2_inspect->setIconSize(QSize(20, 20));
+    button_node_2_inspect->setToolTip("Inspect");
+    button_node_2_inspect->setMaximumWidth(35);
     
     grid->addWidget(label_node_1, 0, 0);
     grid->addWidget(label_node_1_id, 0, 1);
     grid->addWidget(button_node_1_locate, 0, 2);
+    grid->addWidget(button_node_1_inspect, 0, 3);
     
     grid->addWidget(label_node_2, 1, 0);
     grid->addWidget(label_node_2_id, 1, 1);
     grid->addWidget(button_node_2_locate, 1, 2);
+    grid->addWidget(button_node_2_inspect, 1, 3);
     
     mainLayout()->addWidget(group);
 }
@@ -124,6 +136,15 @@ void EntityInspectorPipe::addGroupRoughness()
     this->spin_roughness_cm->setSingleStep(0.0010);
     this->spin_roughness_cm->setValue(0.0130);
     
+    QLabel *label_loss_coefficient = new QLabel("Loss Coefficient");
+    label_loss_coefficient->setWordWrap(true);
+    this->spin_loss_coefficient = new QDoubleSpinBox();
+    this->spin_loss_coefficient->setToolTip(QStringLiteral("Dimensionless minor loss coefficient K<br>for local losses from bends, fittings,<br>entrances, exits, etc.<br><br>Default is 0 for no additional minor losses."));
+    this->spin_loss_coefficient->setDecimals(3);
+    this->spin_loss_coefficient->setRange(0.0, 1000.0);
+    this->spin_loss_coefficient->setSingleStep(0.1);
+    this->spin_loss_coefficient->setValue(0.0);
+    
     grid->addWidget(label_material, 3, 0);
     grid->addWidget(this->combo_material, 3, 1);
     
@@ -133,6 +154,9 @@ void EntityInspectorPipe::addGroupRoughness()
     grid->addWidget(this->spin_roughness_dw, 5, 1);
     grid->addWidget(label_roughness_cm, 6, 0);
     grid->addWidget(this->spin_roughness_cm, 6, 1);
+    
+    grid->addWidget(label_loss_coefficient, 7, 0);
+    grid->addWidget(this->spin_loss_coefficient, 7, 1);
     
     mainLayout()->addWidget(group);
 }

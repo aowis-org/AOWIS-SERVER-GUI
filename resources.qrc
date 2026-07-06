@@ -25,6 +25,8 @@
         <file alias="electricity.png">assets/iconsets/gothic/electricity.png</file>
         <file alias="energy.png">assets/iconsets/gothic/energy.png</file>
         <file alias="gps.png">assets/iconsets/gothic/gps.png</file>
+        <file alias="geomarker.png">assets/iconsets/gothic/geomarker.png</file>
+        <file alias="target.png">assets/iconsets/gothic/target.png</file>
         
         <file alias="pipe.png">assets/iconsets/gothic/pipe.png</file>
         <file alias="junction.png">assets/iconsets/gothic/junction.png</file>

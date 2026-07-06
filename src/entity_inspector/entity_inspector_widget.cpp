@@ -39,9 +39,24 @@ void EntityInspectorWidget::addGroupGeneral(const QString &icon_path, const QStr
     this->line_name = new QLineEdit();
     this->line_name->setText(name);
     
+    QLabel *label_date_install = new QLabel("Installation Date");
+    this->date_install = new QDateEdit();
+    this->date_install->setCalendarPopup(true);
+    this->date_install->setDisplayFormat(QStringLiteral("yyyy-MM-dd"));
+    this->date_install->setToolTip("yyyy-MM-dd");
+    this->date_install->setDate(QDate::currentDate());
+    
+    QCheckBox *check_enabled = new QCheckBox("Enabled");
+    
     grid->addWidget(picture, 0, 0, 1, 2);
+    
     grid->addWidget(label_name, 1, 0);
-    grid->addWidget(this->line_name, 2, 0, 1, 2);
+    grid->addWidget(this->line_name, 1, 1);
+    
+    grid->addWidget(label_date_install, 3, 0);
+    grid->addWidget(this->date_install, 3, 1);
+    
+    grid->addWidget(check_enabled, 4, 0);
     
     this->layout_main->addWidget(group);
 }

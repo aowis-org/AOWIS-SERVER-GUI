@@ -9,6 +9,8 @@
 #include <QDoubleSpinBox>
 #include <QPushButton>
 #include <QComboBox>
+#include <QDateEdit>
+#include <QCheckBox>
 
 #include "../widgets/group_box_collapsible.h"
 #include "../_sizes.h"
@@ -26,6 +28,7 @@ protected:
     void setTitle(const QString &title);
     void addGroupGeneral(const QString &icon_path, const QString &name);
     QLineEdit *line_name = nullptr;
+    QDateEdit *date_install = nullptr;
     
     void addGroupPosition();
     QDoubleSpinBox *spin_latitude = nullptr;

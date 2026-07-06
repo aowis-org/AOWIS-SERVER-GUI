@@ -49,6 +49,8 @@ private:
     QDoubleSpinBox *spin_roughness_dw = nullptr;
     QDoubleSpinBox *spin_roughness_cm = nullptr;
     
+    QDoubleSpinBox *spin_loss_coefficient = nullptr;
+    
     void addGroupQuality();
     QCheckBox *check_override = nullptr;
     QDoubleSpinBox *spin_bulk_reaction = nullptr;
