@@ -248,4 +248,22 @@ void EntityInspectorPipe::onHeadlossFormulaChanged(HeadlossFormulas formulas)
     this->spin_roughness_hw->setDisabled(!use_hw);
     this->spin_roughness_dw->setDisabled(!use_dw);
     this->spin_roughness_cm->setDisabled(!use_cm);
+    
+    this->spin_roughness_hw->setToolTip(
+        use_hw
+            ? QStringLiteral("Pipe roughness coefficient C<br>Used by the <b>Hazen-Williams</b> formula.")
+            : QStringLiteral("Enable <b>Hazen-Williams</b> in the simulation toolbar dropdown<br>to edit the pipe roughness coefficient C.")
+        );
+    
+    this->spin_roughness_dw->setToolTip(
+        use_dw
+            ? QStringLiteral("Absolute pipe roughness ε in mm<br>Used by the <b>Darcy-Weisbach</b> formula.")
+            : QStringLiteral("Enable <b>Darcy-Weisbach</b> in the simulation toolbar dropdown<br>to edit the absolute pipe roughness ε.")
+        );
+    
+    this->spin_roughness_cm->setToolTip(
+        use_cm
+            ? QStringLiteral("Manning roughness coefficient n<br>Used by the <b>Chezy-Manning</b> formula.")
+            : QStringLiteral("Enable <b>Chezy-Manning</b> in the simulation toolbar dropdown<br>to edit the Manning roughness coefficient n.")
+        );
 }
