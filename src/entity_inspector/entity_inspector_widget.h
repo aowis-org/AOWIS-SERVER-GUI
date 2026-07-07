@@ -31,6 +31,8 @@ protected:
     QLineEdit *line_name = nullptr;
     QDateEdit *date_install = nullptr;
     
+    void addGroupEndpoints();
+    
     void addGroupPosition();
     QDoubleSpinBox *spin_latitude = nullptr;
     QDoubleSpinBox *spin_longitude = nullptr;

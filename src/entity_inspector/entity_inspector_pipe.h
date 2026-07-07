@@ -36,8 +36,6 @@ private:
     
     QLabel *picture = nullptr;
     
-    void addGroupEndpoints();
-    
     void addGroupGeometry();
     QComboBox *combo_status_initial = nullptr;
     QDoubleSpinBox *spin_diameter = nullptr;

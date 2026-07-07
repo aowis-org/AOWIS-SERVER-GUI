@@ -21,6 +21,46 @@ void EntityInspectorWidget::setTitle(const QString &title)
     this->label_title->setText("<b>" + title.toHtmlEscaped() + "</b>");
 }
 
+void EntityInspectorWidget::addGroupEndpoints()
+{
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Endpoints");
+    QGridLayout *grid = new QGridLayout(group);
+    
+    QLabel *label_node_1 = new QLabel("Node 1");
+    QLabel *label_node_1_id = new QLabel();
+    QPushButton *button_node_1_locate = new QPushButton(QIcon(":/icon/geomarker.png"), "");
+    button_node_1_locate->setIconSize(QSize(20, 20));
+    button_node_1_locate->setToolTip("Show on Map");
+    button_node_1_locate->setMaximumWidth(35);
+    QPushButton *button_node_1_inspect = new QPushButton(QIcon(":/icon/target.png"), "");
+    button_node_1_inspect->setIconSize(QSize(20, 20));
+    button_node_1_inspect->setToolTip("Inspect");
+    button_node_1_inspect->setMaximumWidth(35);
+    
+    QLabel *label_node_2 = new QLabel("Node 2");
+    QLabel *label_node_2_id = new QLabel();
+    QPushButton *button_node_2_locate = new QPushButton(QIcon(":/icon/geomarker.png"), "");
+    button_node_2_locate->setIconSize(QSize(20, 20));
+    button_node_2_locate->setToolTip("Show on Map");
+    button_node_2_locate->setMaximumWidth(35);
+    QPushButton *button_node_2_inspect = new QPushButton(QIcon(":/icon/target.png"), "");
+    button_node_2_inspect->setIconSize(QSize(20, 20));
+    button_node_2_inspect->setToolTip("Inspect");
+    button_node_2_inspect->setMaximumWidth(35);
+    
+    grid->addWidget(label_node_1, 0, 0);
+    grid->addWidget(label_node_1_id, 0, 1);
+    grid->addWidget(button_node_1_locate, 0, 2);
+    grid->addWidget(button_node_1_inspect, 0, 3);
+    
+    grid->addWidget(label_node_2, 1, 0);
+    grid->addWidget(label_node_2_id, 1, 1);
+    grid->addWidget(button_node_2_locate, 1, 2);
+    grid->addWidget(button_node_2_inspect, 1, 3);
+    
+    mainLayout()->addWidget(group);
+}
+
 void EntityInspectorWidget::addGroupGeneral(const QString &icon_path, const QString &name)
 {
     GroupBoxCollapsible *group = new GroupBoxCollapsible("General");
@@ -47,6 +87,7 @@ void EntityInspectorWidget::addGroupGeneral(const QString &icon_path, const QStr
     this->date_install->setDate(QDate::currentDate());
     
     QCheckBox *check_enabled = new QCheckBox("Enabled");
+    check_enabled->setChecked(true);
     
     grid->addWidget(picture, 0, 0, 1, 2);
     

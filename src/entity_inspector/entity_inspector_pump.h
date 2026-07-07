@@ -35,11 +35,21 @@ private:
     
     QLabel *picture = nullptr;
     
-    void addGroupDemands();
+    void addGroupControls();
+    QComboBox *combo_type = nullptr;
+    QDoubleSpinBox *spin_speed_initial = nullptr;
+    QComboBox *combo_status_initial = nullptr;
+    QComboBox *combo_speed_pattern = nullptr;
+    QComboBox *combo_controls = nullptr;
     
+    void addGroupEnergyCostInput();
+    QComboBox *combo_efficiency_curve = nullptr;
+    QDoubleSpinBox *spin_energy_price = nullptr;
+    QComboBox *combo_price_pattern = nullptr;
     
     void addGroupSimMeas();
     
+    void addGroupEnergy();
     
     void addGroupGraphs();
     
