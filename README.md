@@ -30,6 +30,5 @@ Find the result in the folder `build-wasm`
 To run the result, you need to have a web server set up.
 
 ### Windows / macOS
-At this point, Windows and macOS are not officially supported by AOWIS. However, you can build this application for them, just as any other Qt-Application.
-
+Usually as a Desktop-Client, you might want to prefer [AOWIS-SERVER-Standalone](https://github.com/aowis-org/AOWIS-SERVER-Standalone).
 
