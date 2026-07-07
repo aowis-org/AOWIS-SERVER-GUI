@@ -11,13 +11,23 @@ EntityInspectorCustomerPoint::EntityInspectorCustomerPoint(QWidget *parent)
     setTitle("Customer Point C1");
     addGroupGeneral(":/icon/customer.png", "C1");
     
-    
-    
-    addGroupQuality();
-    addGroupSimMeas();
+    addGroupConnections();
+    addGroupDemands();
     addGroupGraphs();
     
+    addGroupHistory();
+    
     mainLayout()->addStretch();
+}
+
+void EntityInspectorCustomerPoint::addGroupConnections()
+{
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Connections");
+    QGridLayout *grid = new QGridLayout(group);
+    
+    
+    
+    mainLayout()->addWidget(group);
 }
 
 void EntityInspectorCustomerPoint::addGroupDemands()
@@ -25,27 +35,17 @@ void EntityInspectorCustomerPoint::addGroupDemands()
     GroupBoxCollapsible *group = new GroupBoxCollapsible("Demands");
     QGridLayout *grid = new QGridLayout(group);
     
+    QLabel *label_connection_pipe = new QLabel("Pipe");
+    this->combo_connection_pipe = new QComboBox();
     
+    QLabel *label_connection_junction = new QLabel("Junction");
+    this->combo_connection_junction = new QComboBox();
     
-    mainLayout()->addWidget(group);
-}
-
-void EntityInspectorCustomerPoint::addGroupQuality()
-{
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Quality");
-    QGridLayout *grid = new QGridLayout(group);
+    grid->addWidget(label_connection_pipe, 0, 0);
+    grid->addWidget(this->combo_connection_pipe, 0, 1);
     
-    
-    
-    mainLayout()->addWidget(group);
-}
-
-void EntityInspectorCustomerPoint::addGroupSimMeas()
-{
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Simulation / Measurements");
-    QGridLayout *grid = new QGridLayout(group);
-    
-    
+    grid->addWidget(label_connection_junction, 1, 0);
+    grid->addWidget(this->combo_connection_junction, 1, 1);
     
     mainLayout()->addWidget(group);
 }
@@ -55,7 +55,10 @@ void EntityInspectorCustomerPoint::addGroupGraphs()
     GroupBoxCollapsible *group = new GroupBoxCollapsible("Graphs");
     QGridLayout *grid = new QGridLayout(group);
     
+    QLabel *label_devnote = new QLabel("This section could show Water Meter readings (manual or smart auto)");
+    label_devnote->setWordWrap(true);
     
+    grid->addWidget(label_devnote, 0, 0);
     
     mainLayout()->addWidget(group);
 }

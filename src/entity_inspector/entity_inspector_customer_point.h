@@ -36,6 +36,10 @@ private:
     
     QLabel *picture = nullptr;
     
+    void addGroupConnections();
+    QComboBox *combo_connection_pipe = nullptr;
+    QComboBox *combo_connection_junction = nullptr;
+    
     void addGroupDemands();
     
     
