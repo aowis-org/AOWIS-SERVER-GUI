@@ -23,8 +23,8 @@ EntityInspectorDock::EntityInspectorDock(QWidget *parent)
     //showEntityTank();
     //showEntityJunction();
     //showEntityPipe();
-    showEntityPump();
-    //showEntityValve();
+    //showEntityPump();
+    showEntityValve();
     //showEntityReservoir();
     //showEntityCustomerPoint();
 }

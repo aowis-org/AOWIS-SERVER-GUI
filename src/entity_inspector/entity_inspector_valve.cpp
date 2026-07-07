@@ -11,6 +11,7 @@ EntityInspectorValve::EntityInspectorValve(QWidget *parent)
     setTitle("Valve V1");
     addGroupGeneral(":/icon/valve.png", "V1");
     
+    addGroupEndpoints();
     
     addGroupSimMeas();
     addGroupGraphs();
