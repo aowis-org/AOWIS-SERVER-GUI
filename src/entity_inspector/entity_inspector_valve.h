@@ -34,6 +34,16 @@ private:
     
     QLabel *picture = nullptr;
     
+    void addGroupValveConfiguration();
+    QComboBox *combo_valve_type = nullptr;
+    QLabel *label_setting = nullptr;
+    QDoubleSpinBox *spin_setting = nullptr;
+    QComboBox *combo_setting_curve = nullptr;
+    
+    QComboBox *combo_status_initial = nullptr;
+    QDoubleSpinBox *spin_diameter = nullptr;
+    QDoubleSpinBox *spin_loss_coeff = nullptr;
+    void onValveTypeChanged(ValveType type);
     
     void addGroupSimMeas();
     

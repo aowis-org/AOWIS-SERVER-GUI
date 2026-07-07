@@ -149,4 +149,15 @@ Q_DECLARE_OPERATORS_FOR_FLAGS(HeadlossFormulas)
 Q_DECLARE_METATYPE(HeadlossFormula)
 Q_DECLARE_METATYPE(HeadlossFormulas)
 
+enum class ValveType
+{
+    PRV, // Pressure Reducing Valve
+    PSV, // Pressure Sustaining Valve
+    FCV, // Flow Control Valve
+    PBV, // Pressure Breaker Valve
+    TCV, // Throttle Control Valve
+    GPV, // General Purpose Valve
+    PCV  // Positional Control Valve, EPANET 2.3+
+};
+
 #endif // _ENUMS_STRUCTS_H
