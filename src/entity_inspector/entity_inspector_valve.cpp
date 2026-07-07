@@ -17,6 +17,8 @@ EntityInspectorValve::EntityInspectorValve(QWidget *parent)
     addGroupSimMeas();
     addGroupGraphs();
     
+    addGroupHistory();
+    
     mainLayout()->addStretch();
 }
 

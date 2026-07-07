@@ -71,6 +71,13 @@ struct CoordinateLocal
     double y = 0.0; // meters north from project origin
 };
 
+enum class HistoryVisibility
+{
+    Visible,
+    Archived,
+    Deleted
+};
+
 enum MapEditTool
 {
     Select          = 100,
@@ -92,6 +99,17 @@ enum MapEditToolSub
     Tool_3 = 3,
     Tool_4 = 4,
     Tool_5 = 5
+};
+
+enum class EntityModelRole
+{
+    Unspecified,
+    ExistingAsset,
+    PlannedAsset,
+    VirtualModelElement,
+    BoundaryCondition,
+    TemporaryTesting,
+    RetiredAsset
 };
 
 enum class InfrastructureEntity : std::uint8_t

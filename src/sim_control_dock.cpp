@@ -37,6 +37,9 @@ SimControlDock::SimControlDock(QWidget *parent)
 
 void SimControlDock::addChemicalQualityDropdown()
 {
+    QLabel *label_quality_dropdown = new QLabel("Water Quality Modes:");
+    this->layout->addWidget(label_quality_dropdown);
+    
     ComboCheckboxes *combo = new ComboCheckboxes(this->content);
     combo->setMinimumWidth(210);
     combo->setMaximumWidth(210);
@@ -56,15 +59,15 @@ void SimControlDock::addChemicalQualityDropdown()
                    true,
                    QStringLiteral("Source tracing: percent of water originating from one node"));
     
-    QLabel *label_quality_dropdown = new QLabel("Water Quality Modes: ");
-    this->layout->addWidget(label_quality_dropdown);
-    
     //this->layout->addWidget(combo, 0, Qt::AlignCenter);
     this->layout->addWidget(combo);
 }
 
 void SimControlDock::addHeadlossFormulaDropdown()
 {
+    QLabel *label_quality_dropdown = new QLabel("Headloss Formulas:");
+    this->layout->addWidget(label_quality_dropdown);
+    
     this->combo_headloss_formula = new ComboCheckboxes(this->content);
     this->combo_headloss_formula->setMinimumWidth(210);
     this->combo_headloss_formula->setMaximumWidth(210);

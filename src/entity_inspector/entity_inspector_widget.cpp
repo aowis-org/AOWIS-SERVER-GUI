@@ -21,6 +21,64 @@ void EntityInspectorWidget::setTitle(const QString &title)
     this->label_title->setText("<b>" + title.toHtmlEscaped() + "</b>");
 }
 
+void EntityInspectorWidget::addGroupGeneral(const QString &icon_path, const QString &name)
+{
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("General");
+    QGridLayout *grid = new QGridLayout(group);
+    
+    QLabel *picture = new QLabel();
+    QPixmap pixmap(icon_path);
+    
+    picture->setPixmap(pixmap.scaledToHeight(
+        Sizes::SidebarRightImageHeight,
+        Qt::SmoothTransformation
+        ));
+    picture->setAlignment(Qt::AlignCenter);
+    
+    QLabel *label_name = new QLabel("Name");
+    this->line_name = new QLineEdit();
+    this->line_name->setText(name);
+    
+    QLabel *label_date_install = new QLabel("Added Date");
+    this->date_install = new QDateEdit();
+    this->date_install->setCalendarPopup(true);
+    this->date_install->setDisplayFormat(QStringLiteral("yyyy-MM-dd"));
+    this->date_install->setToolTip("yyyy-MM-dd");
+    this->date_install->setDate(QDate::currentDate());
+    
+    QLabel *label_model_role = new QLabel("Model Role");
+    this->combo_model_role = new QComboBox();
+    this->combo_model_role->addItem("[Unspecified]", static_cast<int>(EntityModelRole::Unspecified));
+    this->combo_model_role->addItem("Existing Asset", static_cast<int>(EntityModelRole::ExistingAsset));
+    this->combo_model_role->addItem("Planned Asset", static_cast<int>(EntityModelRole::PlannedAsset));
+    this->combo_model_role->addItem("Virtual / Model-Only", static_cast<int>(EntityModelRole::VirtualModelElement));
+    this->combo_model_role->addItem("Boundary Condition", static_cast<int>(EntityModelRole::BoundaryCondition));
+    this->combo_model_role->addItem("Temporary / Testing", static_cast<int>(EntityModelRole::TemporaryTesting));
+    this->combo_model_role->addItem("Retired Asset", static_cast<int>(EntityModelRole::RetiredAsset));
+    this->combo_model_role->setToolTip(
+        "Describes whether this entity represents a real asset, a planned asset, "
+        "a model-only helper, a boundary condition, or a temporary/testing element."
+    );
+    
+    QCheckBox *check_enabled = new QCheckBox("Enabled");
+    check_enabled->setChecked(true);
+    
+    grid->addWidget(picture, 0, 0, 1, 2);
+    
+    grid->addWidget(label_name, 1, 0);
+    grid->addWidget(this->line_name, 1, 1);
+    
+    grid->addWidget(label_model_role, 3, 0);
+    grid->addWidget(this->combo_model_role, 3, 1);
+    
+    grid->addWidget(label_date_install, 4, 0);
+    grid->addWidget(this->date_install, 4, 1);
+    
+    grid->addWidget(check_enabled, 5, 0);
+    
+    this->layout_main->addWidget(group);
+}
+
 void EntityInspectorWidget::addGroupEndpoints()
 {
     GroupBoxCollapsible *group = new GroupBoxCollapsible("Endpoints");
@@ -59,47 +117,6 @@ void EntityInspectorWidget::addGroupEndpoints()
     grid->addWidget(button_node_2_inspect, 1, 3);
     
     mainLayout()->addWidget(group);
-}
-
-void EntityInspectorWidget::addGroupGeneral(const QString &icon_path, const QString &name)
-{
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("General");
-    QGridLayout *grid = new QGridLayout(group);
-    
-    QLabel *picture = new QLabel();
-    QPixmap pixmap(icon_path);
-    
-    picture->setPixmap(pixmap.scaledToHeight(
-        Sizes::SidebarRightImageHeight,
-        Qt::SmoothTransformation
-        ));
-    picture->setAlignment(Qt::AlignCenter);
-    
-    QLabel *label_name = new QLabel("Name");
-    this->line_name = new QLineEdit();
-    this->line_name->setText(name);
-    
-    QLabel *label_date_install = new QLabel("Installation Date");
-    this->date_install = new QDateEdit();
-    this->date_install->setCalendarPopup(true);
-    this->date_install->setDisplayFormat(QStringLiteral("yyyy-MM-dd"));
-    this->date_install->setToolTip("yyyy-MM-dd");
-    this->date_install->setDate(QDate::currentDate());
-    
-    QCheckBox *check_enabled = new QCheckBox("Enabled");
-    check_enabled->setChecked(true);
-    
-    grid->addWidget(picture, 0, 0, 1, 2);
-    
-    grid->addWidget(label_name, 1, 0);
-    grid->addWidget(this->line_name, 1, 1);
-    
-    grid->addWidget(label_date_install, 3, 0);
-    grid->addWidget(this->date_install, 3, 1);
-    
-    grid->addWidget(check_enabled, 4, 0);
-    
-    this->layout_main->addWidget(group);
 }
 
 void EntityInspectorWidget::addGroupPosition()
@@ -239,4 +256,14 @@ void EntityInspectorWidget::onElevationCalc()
 void EntityInspectorWidget::onHeadlossFormulaChanged(HeadlossFormulas formulas)
 {
     Q_UNUSED(formulas)
+}
+
+void EntityInspectorWidget::addGroupHistory()
+{
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("History");
+    QGridLayout *grid = new QGridLayout(group);
+    
+    
+    
+    this->layout_main->addWidget(group);
 }

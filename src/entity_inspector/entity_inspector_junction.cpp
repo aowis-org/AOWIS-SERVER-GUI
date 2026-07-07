@@ -26,6 +26,8 @@ EntityInspectorJunction::EntityInspectorJunction(QWidget *parent)
     addGroupSimMeas();
     addGroupGraphs();
     
+    addGroupHistory();
+    
     mainLayout()->addStretch();
 }
 

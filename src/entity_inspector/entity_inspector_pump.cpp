@@ -20,6 +20,8 @@ EntityInspectorPump::EntityInspectorPump(QWidget *parent)
     addGroupEnergy();
     addGroupGraphs();
     
+    addGroupHistory();
+    
     mainLayout()->addStretch();
 }
 

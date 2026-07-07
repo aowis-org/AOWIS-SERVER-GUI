@@ -30,6 +30,7 @@ protected:
     void addGroupGeneral(const QString &icon_path, const QString &name);
     QLineEdit *line_name = nullptr;
     QDateEdit *date_install = nullptr;
+    QComboBox *combo_model_role = nullptr;
     
     void addGroupEndpoints();
     
@@ -48,6 +49,8 @@ protected:
     QDoubleSpinBox *spin_tank_bottom_offset = nullptr;
     QLabel *label_tank_bottom_elevation = nullptr;
     QDoubleSpinBox *spin_tank_bottom_elevation = nullptr;
+    
+    void addGroupHistory();
     
 private:
     QVBoxLayout *layout_main = nullptr;

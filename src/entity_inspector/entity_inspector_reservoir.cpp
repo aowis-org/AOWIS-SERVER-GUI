@@ -19,6 +19,8 @@ EntityInspectorReservoir::EntityInspectorReservoir(QWidget *parent)
     addGroupSimMeas();
     addGroupGraphs();
     
+    addGroupHistory();
+    
     mainLayout()->addStretch();
 }
 
