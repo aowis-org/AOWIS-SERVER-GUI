@@ -25,16 +25,6 @@ void EntityInspectorCustomerPoint::addGroupConnections()
     GroupBoxCollapsible *group = new GroupBoxCollapsible("Connections");
     QGridLayout *grid = new QGridLayout(group);
     
-    
-    
-    mainLayout()->addWidget(group);
-}
-
-void EntityInspectorCustomerPoint::addGroupDemands()
-{
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Demands");
-    QGridLayout *grid = new QGridLayout(group);
-    
     QLabel *label_connection_pipe = new QLabel("Pipe");
     this->combo_connection_pipe = new QComboBox();
     

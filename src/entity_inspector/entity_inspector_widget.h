@@ -2,6 +2,9 @@
 #define ENTITY_INSPECTOR_WIDGET_H
 
 #include <QWidget>
+#include <QDialog>
+#include <QPointer>
+
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -11,6 +14,9 @@
 #include <QComboBox>
 #include <QDateEdit>
 #include <QCheckBox>
+
+#include <QTableWidget>
+#include <QHeaderView>
 
 #include "../widgets/group_box_collapsible.h"
 #include "../_enums_structs.h"
@@ -49,6 +55,13 @@ protected:
     QDoubleSpinBox *spin_tank_bottom_offset = nullptr;
     QLabel *label_tank_bottom_elevation = nullptr;
     QDoubleSpinBox *spin_tank_bottom_elevation = nullptr;
+    
+    void addGroupDemands();
+    
+    
+    void openDemandsEditor();
+    QPointer<QDialog> dialog_demands = nullptr;
+    QPointer<QTableWidget> table_demands = nullptr;
     
     void addGroupHistory();
     
