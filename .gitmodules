@@ -1,3 +1,6 @@
 [submodule "external/GeographicLib"]
 	path = external/GeographicLib
 	url = https://github.com/geographiclib/geographiclib.git
+[submodule "external/AOWIS-SERVER-EPANET"]
+	path = external/AOWIS-SERVER-EPANET
+	url = https://github.com/aowis-org/AOWIS-SERVER-EPANET.git
