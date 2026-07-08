@@ -91,21 +91,21 @@ void EntityInspectorValve::addGroupValveConfiguration()
     this->spin_loss_coeff->setSingleStep(0.1);
     this->spin_loss_coeff->setValue(0.0);
     
-    grid->addWidget(label_valve_type, 0, 0);
-    grid->addWidget(this->combo_valve_type, 0, 1);
+    grid->addWidget(label_valve_type, 0, 0, 1, 2);
+    grid->addWidget(this->combo_valve_type, 1, 0, 1, 2);
     
-    grid->addWidget(this->label_setting, 1, 0);
-    grid->addWidget(this->spin_setting, 1, 1);
-    grid->addWidget(this->combo_setting_curve, 1, 1);
+    grid->addWidget(this->label_setting, 2, 0);
+    grid->addWidget(this->spin_setting, 2, 1);
+    grid->addWidget(this->combo_setting_curve, 2, 1);
     
-    grid->addWidget(label_status_initial, 2, 0);
-    grid->addWidget(this->combo_status_initial, 2, 1);
+    grid->addWidget(label_status_initial, 3, 0);
+    grid->addWidget(this->combo_status_initial, 3, 1);
     
-    grid->addWidget(label_diameter, 3, 0);
-    grid->addWidget(this->spin_diameter, 3, 1);
+    grid->addWidget(label_diameter, 4, 0);
+    grid->addWidget(this->spin_diameter, 4, 1);
     
-    grid->addWidget(label_loss_coeff, 4, 0);
-    grid->addWidget(this->spin_loss_coeff, 4, 1);
+    grid->addWidget(label_loss_coeff, 5, 0);
+    grid->addWidget(this->spin_loss_coeff, 5, 1);
     
     connect(
         this->combo_valve_type,
