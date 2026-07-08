@@ -29,6 +29,20 @@ set(USE_BOOST OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(external/GeographicLib EXCLUDE_FROM_ALL)
 
+
+# AOWIS-SERVER-EPANET submodule
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-EPANET/CMakeLists.txt")
+    message(FATAL_ERROR
+        "AOWIS-SERVER-EPANET submodule is missing. Run:\n"
+        "  git submodule update --init --recursive"
+    )
+endif()
+set(AOWIS_SERVER_EPANET_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+set(AOWIS_SERVER_EPANET_BUILD_SHARED_EPANET OFF CACHE BOOL "" FORCE)
+
+add_subdirectory(external/AOWIS-SERVER-EPANET EXCLUDE_FROM_ALL)
+
+
 qt_add_executable(aowis-server-gui
     resources.qrc
     src/main.cpp
@@ -106,6 +120,11 @@ target_link_libraries(aowis-server-gui
         Qt6::Widgets
         Qt6::Network
         GeographicLib_STATIC
+)
+
+target_link_libraries(aowis-server-gui
+    PRIVATE
+        aowis-server-epanet-core
 )
 
 if(NOT EMSCRIPTEN)
