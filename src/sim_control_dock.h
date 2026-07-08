@@ -6,6 +6,7 @@
 #include <QDockWidget>
 #include <QLabel>
 #include <QPushButton>
+#include <QIcon>
 
 #include <QHBoxLayout>
 

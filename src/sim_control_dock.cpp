@@ -32,6 +32,16 @@ SimControlDock::SimControlDock(QWidget *parent)
     addChemicalQualityDropdown();
     addHeadlossFormulaDropdown();
     
+    QPushButton *button_sim_start = new QPushButton(this);
+    button_sim_start->setIcon(QIcon(":/icon/simulation_start.png"));
+    button_sim_start->setFlat(true);
+    button_sim_start->setIconSize(QSize(30, 30));
+    button_sim_start->setMaximumSize(30, 30);
+    button_sim_start->setContentsMargins(0, 0, 0, 0);
+    button_sim_start->setToolTip("Run Configured Simulations");
+    
+    this->layout->addWidget(button_sim_start);
+    
     this->layout->addStretch();
 }
 
