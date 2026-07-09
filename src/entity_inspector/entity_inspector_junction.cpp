@@ -11,8 +11,6 @@ EntityInspectorJunction::EntityInspectorJunction(QWidget *parent)
     setTitle("Junction J1");
     addGroupGeneral(":/icon/junction.png", "J1");
     
-    addGroupClassification();
-    
     addGroupPosition();
     
     addGroupElevation();
@@ -29,20 +27,6 @@ EntityInspectorJunction::EntityInspectorJunction(QWidget *parent)
     addGroupHistory();
     
     mainLayout()->addStretch();
-}
-
-void EntityInspectorJunction::addGroupClassification()
-{
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Classification");
-    QGridLayout *grid = new QGridLayout(group);
-    
-    this->combo_classification_kind = new QComboBox();
-    this->combo_classification_kind->addItem("Physical");
-    this->combo_classification_kind->addItem("Virtual");
-    
-    grid->addWidget(this->combo_classification_kind, 0, 0);
-    
-    mainLayout()->addWidget(group);
 }
 
 void EntityInspectorJunction::addGroupQuality()

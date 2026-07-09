@@ -37,10 +37,6 @@ private:
     
     QLabel *picture = nullptr;
     
-    void addGroupClassification();
-    QComboBox *combo_classification_kind = nullptr;
-    
-    
     void addGroupQuality();
     
     

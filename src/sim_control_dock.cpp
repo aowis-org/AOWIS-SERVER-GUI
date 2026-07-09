@@ -52,16 +52,16 @@ void SimControlDock::addFlowUnitCombo()
     this->layout->addWidget(label_flow_units);
     
     QToolButton *button_flow_units = new QToolButton(this);
-    button_flow_units->setText("LPS");
+    button_flow_units->setText("CMH");
     button_flow_units->setPopupMode(QToolButton::InstantPopup);
     
     QMenu *menu_flow_units = new QMenu(button_flow_units);
     
-    QAction *action_lps = menu_flow_units->addAction("LPS — liters per second");
-    action_lps->setData(static_cast<int>(EN_LPS));
-    
     QAction *action_cmh = menu_flow_units->addAction("CMH — cubic meters per hour");
     action_cmh->setData(static_cast<int>(EN_CMH));
+    
+    QAction *action_lps = menu_flow_units->addAction("LPS — liters per second");
+    action_lps->setData(static_cast<int>(EN_LPS));
     
     menu_flow_units->addSeparator();
     
@@ -108,27 +108,27 @@ void SimControlDock::addFlowUnitCombo()
     for (QMenu *menu : menus)
     {
         connect(menu, &QMenu::triggered, this,
-                [this, button_flow_units](QAction *action)
-                {
-                    if (action == nullptr)
-                        return;
-                    
-                    if (action->menu() != nullptr)
-                        return;
-                    
-                    bool ok = false;
-                    int value = action->data().toInt(&ok);
-                    
-                    if (!ok)
-                        return;
-                    
-                    EN_FlowUnits flow_units = static_cast<EN_FlowUnits>(value);
-                    
-                    QString label = action->text().section(" ", 0, 0);
-                    button_flow_units->setText(label);
-                    
-                    this->selected_flow_units = flow_units;
-                });
+            [this, button_flow_units](QAction *action)
+            {
+                if (action == nullptr)
+                    return;
+                
+                if (action->menu() != nullptr)
+                    return;
+                
+                bool ok = false;
+                int value = action->data().toInt(&ok);
+                
+                if (!ok)
+                    return;
+                
+                EN_FlowUnits flow_units = static_cast<EN_FlowUnits>(value);
+                
+                QString label = action->text().section(" ", 0, 0);
+                button_flow_units->setText(label);
+                
+                this->selected_flow_units = flow_units;
+            });
     }
     
     this->layout->addWidget(button_flow_units);
