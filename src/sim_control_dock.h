@@ -6,9 +6,13 @@
 #include <QDockWidget>
 #include <QLabel>
 #include <QPushButton>
+#include <QToolButton>
+#include <QMenu>
 #include <QIcon>
 
 #include <QHBoxLayout>
+
+#include "epanet2_enums.h"
 
 #include "widgets/combo_checkboxes.h"
 
@@ -24,6 +28,10 @@ public:
 private:
     QWidget *content = nullptr;
     QHBoxLayout *layout = nullptr;
+    
+    EN_FlowUnits selected_flow_units = EN_LPS;
+    
+    void addFlowUnitCombo();
     
     void addChemicalQualityDropdown();
     
