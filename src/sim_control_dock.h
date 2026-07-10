@@ -41,6 +41,7 @@ private:
 signals:
     void signalHeadlossFormulaChanged(HeadlossFormulas formulas);
     void signalSimulationStart();
+    void signalShowEpanetLog();
 };
 
 #endif // SIM_CONTROL_DOCK_H

@@ -2,6 +2,7 @@
 #define SIMULATION_MANAGER_H
 
 #include <QObject>
+#include <QTextBrowser>
 
 #include "epanet_wrapper.h"
 #include "model/simulation_request.h"
@@ -15,6 +16,10 @@ public:
     explicit SimulationManager(QObject *parent = nullptr);
     
     void run();
+    void showEpanetLog();
+    
+private:
+    QString epanet_log;
 
 signals:
 };

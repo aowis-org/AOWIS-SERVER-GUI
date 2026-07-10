@@ -35,5 +35,25 @@ void SimulationManager::run()
     
     EpanetWrapper *epanet = new EpanetWrapper(this);
     epanet->run(request);
-    qDebug().noquote() << epanet->reportText();
+    //qDebug().noquote() << epanet->reportText();
+    
+    this->epanet_log = epanet->reportText();
+}
+
+#include <QTextBrowser>
+
+void SimulationManager::showEpanetLog()
+{
+    QTextBrowser *log_widget = new QTextBrowser();
+    
+    log_widget->setAttribute(Qt::WA_DeleteOnClose);
+    log_widget->setWindowTitle(tr("EPANET Log"));
+    log_widget->resize(900, 600);
+    
+    log_widget->setPlainText(this->epanet_log);
+    
+    // Allows links in future HTML-formatted log output to open externally.
+    log_widget->setOpenExternalLinks(true);
+    
+    log_widget->show();
 }
