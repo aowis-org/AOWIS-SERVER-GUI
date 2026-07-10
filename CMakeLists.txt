@@ -92,6 +92,7 @@ qt_add_executable(aowis-server-gui
     src/entity_inspector/entity_inspector_valve.h src/entity_inspector/entity_inspector_valve.cpp
     src/entity_inspector/entity_inspector_reservoir.h src/entity_inspector/entity_inspector_reservoir.cpp
     src/entity_inspector/entity_inspector_customer_point.h src/entity_inspector/entity_inspector_customer_point.cpp
+    src/simulation_manager.h src/simulation_manager.cpp
 )
 
 if(APPLE)

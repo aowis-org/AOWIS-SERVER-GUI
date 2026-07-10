@@ -49,6 +49,7 @@
 #include "tab_alarms_widget.h"
 #include "sim_control_dock.h"
 #include "entity_inspector/entity_inspector_dock.h"
+#include "simulation_manager.h"
 
 #ifdef Q_OS_WASM
 #include <emscripten.h>
@@ -100,6 +101,7 @@ private:
     CustomersWidget *customers;
     LogsWidget *logs;
     AlarmsWidget *alarms;
+    SimulationManager *simulation_manager;
     
     
     //QGridLayout *layout = new QGridLayout;

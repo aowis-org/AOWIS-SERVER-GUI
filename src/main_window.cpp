@@ -22,7 +22,8 @@ MainWindow::MainWindow(QWidget *parent)
     customerPoints( new CustomerPointsWidget(this) ),
     customers( new CustomersWidget(this) ),
     logs( new LogsWidget(this) ),
-    alarms( new AlarmsWidget(this) )
+    alarms( new AlarmsWidget(this) ),
+    simulation_manager( new SimulationManager(this) )
 {
     #ifdef AOWIS_STANDALONE
     setWindowTitle("AOWIS Controller [Standalone]");
@@ -159,6 +160,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->map_edit, &MapWidget::signalCoordsChangedUTM, this->footer, &FooterStatusBar::setMapCoordinatesUTM);
     
     connect(this->dock_sim_control, &SimControlDock::signalHeadlossFormulaChanged, this->dock_entity_inspector, &EntityInspectorDock::onHeadlossFormulaChanged);
+    connect(this->dock_sim_control, &SimControlDock::signalSimulationStart, this->simulation_manager, &SimulationManager::run);
     
     #ifdef AOWIS_STANDALONE
     #else    

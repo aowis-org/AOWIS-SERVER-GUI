@@ -78,7 +78,7 @@ enum class HistoryVisibility
     Deleted
 };
 
-enum MapEditTool
+enum class MapEditTool
 {
     Select          = 100,
     

@@ -41,6 +41,11 @@ SimControlDock::SimControlDock(QWidget *parent)
     button_sim_start->setContentsMargins(0, 0, 0, 0);
     button_sim_start->setToolTip("Run Configured Simulations");
     
+    connect(button_sim_start, &QPushButton::clicked, this, [this]
+    {
+        emit signalSimulationStart();
+    });
+    
     this->layout->addWidget(button_sim_start);
     
     this->layout->addStretch();
