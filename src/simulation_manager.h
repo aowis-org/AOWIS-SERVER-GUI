@@ -2,7 +2,11 @@
 #define SIMULATION_MANAGER_H
 
 #include <QObject>
+#include <QApplication>
 #include <QTextBrowser>
+#include <QFontDatabase>
+#include <QDialog>
+#include <QVBoxLayout>
 
 #include "epanet_wrapper.h"
 #include "model/simulation_request.h"
