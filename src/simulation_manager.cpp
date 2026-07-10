@@ -54,7 +54,7 @@ void SimulationManager::showEpanetLog()
     
     log_dialog->setAttribute(Qt::WA_DeleteOnClose);
     log_dialog->setWindowTitle(tr("EPANET Log"));
-    log_dialog->resize(900, 600);
+    log_dialog->resize(700, 600);
     log_dialog->setModal(false);
     
     QTextBrowser *log_widget = new QTextBrowser(log_dialog);
