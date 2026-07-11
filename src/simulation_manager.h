@@ -13,6 +13,8 @@
 #include "model/simulation_result.h"
 #include "model/epanet_status.h"
 
+#include "dummy/dummy_networks.h"
+
 class SimulationManager : public QObject
 {
     Q_OBJECT
