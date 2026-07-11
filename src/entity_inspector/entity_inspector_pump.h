@@ -30,9 +30,6 @@ public:
     explicit EntityInspectorPump(QWidget *parent = nullptr);
     
 private:
-    QVBoxLayout *layout = nullptr;
-    QLabel *label = nullptr;
-    
     QLabel *picture = nullptr;
     
     void addGroupControls();

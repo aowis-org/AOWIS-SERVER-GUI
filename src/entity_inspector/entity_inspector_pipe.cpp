@@ -1,13 +1,8 @@
 #include "entity_inspector_pipe.h"
 
 EntityInspectorPipe::EntityInspectorPipe(QWidget *parent)
-    : EntityInspectorWidget(parent),
-    layout(new QVBoxLayout()),
-    label(new QLabel())
+    : EntityInspectorWidget(parent)
 {
-    setLayout(this->layout);
-    
-    this->layout->addWidget(this->label);
     setTitle("Pipe P1");
     addGroupGeneral(":/icon/pipe.png", "P1");
     

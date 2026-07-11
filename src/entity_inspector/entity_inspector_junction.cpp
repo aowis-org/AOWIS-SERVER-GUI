@@ -1,13 +1,8 @@
 #include "entity_inspector_junction.h"
 
 EntityInspectorJunction::EntityInspectorJunction(QWidget *parent)
-    : EntityInspectorWidget(parent),
-    layout(new QVBoxLayout()),
-    label(new QLabel())
+    : EntityInspectorWidget(parent)
 {
-    setLayout(this->layout);
-    
-    this->layout->addWidget(this->label);
     setTitle("Junction J1");
     addGroupGeneral(":/icon/junction.png", "J1");
     

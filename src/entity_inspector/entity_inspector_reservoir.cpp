@@ -1,13 +1,8 @@
 #include "entity_inspector_reservoir.h"
 
 EntityInspectorReservoir::EntityInspectorReservoir(QWidget *parent)
-    : EntityInspectorWidget(parent),
-    layout(new QVBoxLayout()),
-    label(new QLabel())
+    : EntityInspectorWidget(parent)
 {
-    setLayout(this->layout);
-    
-    this->layout->addWidget(this->label);
     setTitle("Reservoir R1");
     addGroupGeneral(":/icon/lake.png", "R1");
     

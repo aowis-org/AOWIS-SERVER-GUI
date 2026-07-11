@@ -1,13 +1,8 @@
 #include "entity_inspector_pump.h"
 
 EntityInspectorPump::EntityInspectorPump(QWidget *parent)
-    : EntityInspectorWidget(parent),
-    layout(new QVBoxLayout()),
-    label(new QLabel())
+    : EntityInspectorWidget(parent)
 {
-    setLayout(this->layout);
-    
-    this->layout->addWidget(this->label);
     setTitle("Pump PU1");
     addGroupGeneral(":/icon/pump.png", "PU1");
     

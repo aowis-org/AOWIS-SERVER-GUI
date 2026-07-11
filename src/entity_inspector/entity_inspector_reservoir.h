@@ -31,9 +31,6 @@ public:
     explicit EntityInspectorReservoir(QWidget *parent = nullptr);
     
 private:
-    QVBoxLayout *layout = nullptr;
-    QLabel *label = nullptr;
-    
     QLabel *picture = nullptr;
     
     void addGroupDemands();

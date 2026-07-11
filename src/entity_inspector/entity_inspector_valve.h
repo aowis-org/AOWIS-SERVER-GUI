@@ -29,9 +29,6 @@ class EntityInspectorValve : public EntityInspectorWidget
 public:
     explicit EntityInspectorValve(QWidget *parent = nullptr);
 private:
-    QVBoxLayout *layout = nullptr;
-    QLabel *label = nullptr;
-    
     QLabel *picture = nullptr;
     
     void addGroupValveConfiguration();

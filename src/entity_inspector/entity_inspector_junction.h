@@ -32,9 +32,6 @@ public:
     explicit EntityInspectorJunction(QWidget *parent = nullptr);
     
 private:
-    QVBoxLayout *layout = nullptr;
-    QLabel *label = nullptr;
-    
     QLabel *picture = nullptr;
     
     void addGroupQuality();

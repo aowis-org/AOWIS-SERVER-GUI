@@ -1,13 +1,8 @@
 #include "entity_inspector_tank.h"
 
 EntityInspectorTank::EntityInspectorTank(QWidget *parent)
-    : EntityInspectorWidget(parent),
-    layout(new QVBoxLayout()),
-    label(new QLabel())
+    : EntityInspectorWidget(parent)
 {
-    setLayout(this->layout);
-    
-    this->layout->addWidget(this->label);
     setTitle("Tank T1");
     addGroupGeneral(":/icon/tower_large.png", "T1");
     
