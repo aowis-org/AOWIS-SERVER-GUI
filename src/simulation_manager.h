@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QApplication>
+#include <QScreen>
 #include <QTextBrowser>
 #include <QFontDatabase>
 #include <QDialog>
