@@ -43,10 +43,23 @@ void EntityInspectorTank::addGroupGeometry()
     this->check_overflow = new QCheckBox();
     
     this->combo_geometry_type = new QComboBox();
-    this->combo_geometry_type->addItem("Cylindrical");
-    this->combo_geometry_type->addItem("Uniform Area");
-    this->combo_geometry_type->addItem("Total Volume");
-    this->combo_geometry_type->addItem("Volume Curve");
+    // get the state with function: tankGeometryInputType()
+    this->combo_geometry_type->addItem(
+        "Cylindrical",
+        static_cast<int>(TankGeometryInputType::Cylindrical)
+    );
+    this->combo_geometry_type->addItem(
+        "Uniform Area",
+        static_cast<int>(TankGeometryInputType::UniformArea)
+    );
+    this->combo_geometry_type->addItem(
+        "Volume at Maximum Level",
+        static_cast<int>(TankGeometryInputType::VolumeAtMaximumLevel)
+    );
+    this->combo_geometry_type->addItem(
+        "Volume Curve",
+        static_cast<int>(TankGeometryInputType::VolumeCurve)
+    );
     
     this->label_spin_diameter = new QLabel("Diameter");
     this->spin_diameter = new QDoubleSpinBox();
@@ -266,4 +279,14 @@ void EntityInspectorTank::onComboGeometryTypeChange(int index)
         
         return;
     }
+}
+
+TankGeometryInputType EntityInspectorTank::tankGeometryInputType()
+{
+    TankGeometryInputType geometry_input_type = static_cast<TankGeometryInputType>
+    (
+        this->combo_geometry_type->currentData().toInt()
+    );
+    
+    return geometry_input_type;
 }

@@ -23,6 +23,7 @@
 #include "../_enums_structs.h"
 #include "../_sizes.h"
 #include "../map/map_network_structs.h"
+#include "../../external/AOWIS-SERVER-EPANET/src/lib/model/simulation_request.h"
 
 class EntityInspectorTank : public EntityInspectorWidget
 {
@@ -43,6 +44,7 @@ private:
     QDoubleSpinBox *spin_level_initial = nullptr;
     
     QComboBox *combo_geometry_type = nullptr;
+    TankGeometryInputType tankGeometryInputType();
     int geometry_type_current = 0;
     
     QLabel *label_spin_diameter = nullptr;

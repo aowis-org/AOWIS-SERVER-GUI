@@ -41,10 +41,6 @@ SimControlDock::SimControlDock(QWidget *parent)
     button_sim_start->setContentsMargins(0, 0, 0, 0);
     button_sim_start->setToolTip("Run Configured Simulations");
     this->layout->addWidget(button_sim_start);
-    connect(button_sim_start, &QPushButton::clicked, this, [this]
-    {
-        emit signalSimulationStart();
-    });
     
     QPushButton *button_sim_log = new QPushButton(this);
     button_sim_log->setIcon(QIcon(":/icon/log.png"));
@@ -52,8 +48,16 @@ SimControlDock::SimControlDock(QWidget *parent)
     button_sim_log->setIconSize(QSize(30, 30));
     button_sim_log->setMaximumSize(30, 30);
     button_sim_log->setContentsMargins(0, 0, 0, 0);
-    button_sim_log->setToolTip("Show EPANET log");
+    button_sim_log->setToolTip("Show EPANET log<br>You need to run a simulation first");
+    button_sim_log->setEnabled(false);
     this->layout->addWidget(button_sim_log);
+    
+    connect(button_sim_start, &QPushButton::clicked, this, [this, button_sim_log]
+    {
+        button_sim_log->setEnabled(true);
+        emit signalSimulationStart();
+    });
+    
     connect(button_sim_log, &QPushButton::clicked, this, [this]
     {
         emit signalShowEpanetLog();
