@@ -28,7 +28,7 @@ void SimulationManager::showEpanetLog()
             | Qt::WindowTitleHint
             | Qt::WindowCloseButtonHint
             | Qt::WindowMaximizeButtonHint
-        );
+    );
     
     log_dialog->setAttribute(Qt::WA_DeleteOnClose);
     log_dialog->setWindowTitle(tr("EPANET Log"));
@@ -39,7 +39,7 @@ void SimulationManager::showEpanetLog()
     
     log_widget->setFont(
         QFontDatabase::systemFont(QFontDatabase::FixedFont)
-        );
+    );
     
     log_widget->setPlainText(this->epanet_log);
     log_widget->setOpenExternalLinks(true);
