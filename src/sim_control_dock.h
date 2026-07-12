@@ -9,6 +9,7 @@
 #include <QToolButton>
 #include <QMenu>
 #include <QIcon>
+#include <QActionGroup>
 
 #include <QHBoxLayout>
 

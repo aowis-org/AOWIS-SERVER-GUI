@@ -69,88 +69,131 @@ SimControlDock::SimControlDock(QWidget *parent)
 
 void SimControlDock::addFlowUnitCombo()
 {
-    QLabel *label_flow_units = new QLabel("Flow Units:");
+    QLabel *label_flow_units = new QLabel("Flow Units:", this);
     this->layout->addWidget(label_flow_units);
     
     QToolButton *button_flow_units = new QToolButton(this);
     button_flow_units->setText("CMH");
-    button_flow_units->setPopupMode(QToolButton::InstantPopup);
     
     QMenu *menu_flow_units = new QMenu(button_flow_units);
     
-    QAction *action_cmh = menu_flow_units->addAction("CMH — cubic meters per hour");
+    QAction *action_cmh =
+        menu_flow_units->addAction("CMH — cubic meters per hour");
     action_cmh->setData(static_cast<int>(EN_CMH));
     
-    QAction *action_lps = menu_flow_units->addAction("LPS — liters per second");
+    QAction *action_lps =
+        menu_flow_units->addAction("LPS — liters per second");
     action_lps->setData(static_cast<int>(EN_LPS));
     
     menu_flow_units->addSeparator();
     
-    QMenu *menu_other_metric = menu_flow_units->addMenu("Other metric");
+    QMenu *menu_other_metric =
+        menu_flow_units->addMenu("Other metric");
     
-    QAction *action_lpm = menu_other_metric->addAction("LPM — liters per minute");
+    QAction *action_lpm =
+        menu_other_metric->addAction("LPM — liters per minute");
     action_lpm->setData(static_cast<int>(EN_LPM));
     
-    QAction *action_mld = menu_other_metric->addAction("MLD — million liters per day");
+    QAction *action_mld =
+        menu_other_metric->addAction(
+            "MLD — million liters per day"
+            );
     action_mld->setData(static_cast<int>(EN_MLD));
     
-    QAction *action_cmd = menu_other_metric->addAction("CMD — cubic meters per day");
+    QAction *action_cmd =
+        menu_other_metric->addAction(
+            "CMD — cubic meters per day"
+            );
     action_cmd->setData(static_cast<int>(EN_CMD));
     
-    QAction *action_cms = menu_other_metric->addAction("CMS — cubic meters per second");
+    QAction *action_cms =
+        menu_other_metric->addAction(
+            "CMS — cubic meters per second"
+            );
     action_cms->setData(static_cast<int>(EN_CMS));
     
-    QMenu *menu_imperial = menu_flow_units->addMenu("Imperial / US");
+    QMenu *menu_imperial =
+        menu_flow_units->addMenu("Imperial / US");
     
-    QAction *action_cfs = menu_imperial->addAction("CFS — cubic feet per second");
+    QAction *action_cfs =
+        menu_imperial->addAction(
+            "CFS — cubic feet per second"
+            );
     action_cfs->setData(static_cast<int>(EN_CFS));
     
-    QAction *action_gpm = menu_imperial->addAction("GPM — gallons per minute");
+    QAction *action_gpm =
+        menu_imperial->addAction(
+            "GPM — gallons per minute"
+            );
     action_gpm->setData(static_cast<int>(EN_GPM));
     
-    QAction *action_mgd = menu_imperial->addAction("MGD — million gallons per day");
+    QAction *action_mgd =
+        menu_imperial->addAction(
+            "MGD — million gallons per day"
+            );
     action_mgd->setData(static_cast<int>(EN_MGD));
     
-    QAction *action_imgd = menu_imperial->addAction("IMGD — imperial million gallons per day");
+    QAction *action_imgd =
+        menu_imperial->addAction(
+            "IMGD — imperial million gallons per day"
+            );
     action_imgd->setData(static_cast<int>(EN_IMGD));
     
-    QAction *action_afd = menu_imperial->addAction("AFD — acre-feet per day");
+    QAction *action_afd =
+        menu_imperial->addAction(
+            "AFD — acre-feet per day"
+            );
     action_afd->setData(static_cast<int>(EN_AFD));
     
-    button_flow_units->setMenu(menu_flow_units);
-    
-    
-    const QList<QMenu *> menus = {
+    connect(
         menu_flow_units,
-        menu_other_metric,
-        menu_imperial
-    };
+        &QMenu::triggered,
+        this,
+        [this, button_flow_units](QAction *action)
+        {
+            if (action == nullptr)
+                return;
+            
+            if (action->menu() != nullptr)
+                return;
+            
+            bool ok = false;
+            
+            const int value =
+                action->data().toInt(&ok);
+            
+            if (!ok)
+                return;
+            
+            this->selected_flow_units =
+                static_cast<EN_FlowUnits>(value);
+            
+            const QString abbreviation =
+                action->text().section(' ', 0, 0);
+            
+            button_flow_units->setText(abbreviation);
+        }
+        );
     
-    for (QMenu *menu : menus)
-    {
-        connect(menu, &QMenu::triggered, this,
-            [this, button_flow_units](QAction *action)
-            {
-                if (action == nullptr)
-                    return;
-                
-                if (action->menu() != nullptr)
-                    return;
-                
-                bool ok = false;
-                int value = action->data().toInt(&ok);
-                
-                if (!ok)
-                    return;
-                
-                EN_FlowUnits flow_units = static_cast<EN_FlowUnits>(value);
-                
-                QString label = action->text().section(" ", 0, 0);
-                button_flow_units->setText(label);
-                
-                this->selected_flow_units = flow_units;
-            });
-    }
+    connect(
+        button_flow_units,
+        &QToolButton::clicked,
+        menu_flow_units,
+        [button_flow_units, menu_flow_units]()
+        {
+            const QPoint position =
+                button_flow_units->mapToGlobal(
+                    QPoint(
+                        0,
+                        button_flow_units->height()
+                        )
+                    );
+            
+            menu_flow_units->popup(position);
+        }
+        );
+    
+    this->selected_flow_units = EN_CMH;
     
     this->layout->addWidget(button_flow_units);
 }
