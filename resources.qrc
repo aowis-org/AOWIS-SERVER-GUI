@@ -45,6 +45,7 @@
         <file alias="history.png">assets/iconsets/gothic/history.png</file>
         <file alias="sim_meas.png">assets/iconsets/gothic/sim_meas.png</file>
         <file alias="inspector_dash.png">assets/iconsets/gothic/inspector_dash.png</file>
+        <file alias="inspector_quality.png">assets/iconsets/gothic/inspector_quality.png</file>
         
         <file alias="tower.png">assets/iconsets/gothic/tower.png</file>
         <file alias="tank.png">assets/iconsets/gothic/tank_34.png</file>

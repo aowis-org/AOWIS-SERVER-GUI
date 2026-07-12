@@ -21,6 +21,10 @@ EntityInspectorWidget::EntityInspectorWidget(QWidget *parent)
     widget_sim_meas(new QWidget()),
     layout_sim_meas(new QVBoxLayout(this->widget_sim_meas)),
     
+    scroll_quality(new QScrollArea(this)),
+    widget_quality(new QWidget()),
+    layout_quality(new QVBoxLayout(this->widget_quality)),
+    
     scroll_history(new QScrollArea(this)),
     widget_history(new QWidget()),
     layout_history(new QVBoxLayout(this->widget_history))
@@ -33,6 +37,9 @@ EntityInspectorWidget::EntityInspectorWidget(QWidget *parent)
     
     this->scroll_sim_meas->setWidgetResizable(true);
     this->scroll_sim_meas->setWidget(this->widget_sim_meas);
+    
+    this->scroll_quality->setWidgetResizable(true);
+    this->scroll_quality->setWidget(this->widget_quality);
     
     this->scroll_history->setWidgetResizable(true);
     this->scroll_history->setWidget(this->widget_history);
@@ -47,6 +54,9 @@ EntityInspectorWidget::EntityInspectorWidget(QWidget *parent)
     
     tabs->addTab(this->scroll_sim_meas, QIcon(":/icon/sim_meas.png"), "");
     this->tabs->setTabToolTip(this->tabs->count()-1, "Simulation & Measurement");
+    
+    tabs->addTab(this->scroll_quality, QIcon(":/icon/inspector_quality.png"), "");
+    this->tabs->setTabToolTip(this->tabs->count()-1, "Quality");
     
     tabs->addTab(this->scroll_history, QIcon(":/icon/history.png"), "");
     this->tabs->setTabToolTip(this->tabs->count()-1, "History");
@@ -66,6 +76,10 @@ QVBoxLayout *EntityInspectorWidget::layoutConfiguration()
 QVBoxLayout *EntityInspectorWidget::layoutSimMeas()
 {
     return this->layout_sim_meas;
+}
+QVBoxLayout *EntityInspectorWidget::layoutQuality()
+{
+    return this->layout_quality;
 }
 QVBoxLayout *EntityInspectorWidget::layoutHistory()
 {
@@ -448,5 +462,6 @@ void EntityInspectorWidget::addStretches()
     this->layoutOverview()->addStretch();
     this->layoutConfiguration()->addStretch();
     this->layoutSimMeas()->addStretch();
+    this->layoutQuality()->addStretch();
     this->layoutHistory()->addStretch();
 }

@@ -26,11 +26,11 @@ EntityInspectorJunction::EntityInspectorJunction(QWidget *parent)
 
 void EntityInspectorJunction::addGroupQuality()
 {
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Quality");
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Quality Settings");
     QGridLayout *grid = new QGridLayout(group);
     
     
     
-    this->layoutConfiguration()->addWidget(group);
+    this->layoutQuality()->addWidget(group);
 }
 

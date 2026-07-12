@@ -8,11 +8,10 @@ EntityInspectorTank::EntityInspectorTank(QWidget *parent)
     addGroupOverviewImage(":/icon/tower_large.png", "T1");
     
     addGroupGeneral("T1");
-    
     addGroupPosition();
     addGroupElevation();
-    
     addGroupGeometry();
+    
     addGroupQuality();
     
     addGroupHistory();
@@ -136,7 +135,7 @@ void EntityInspectorTank::addGroupGeometry()
 
 void EntityInspectorTank::addGroupQuality()
 {
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Quality");
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Quality Settings");
     QGridLayout *grid = new QGridLayout(group);
     
     this->combo_chem_source = new QComboBox();
@@ -152,10 +151,10 @@ void EntityInspectorTank::addGroupQuality()
     this->combo_chem_mixing->addItem("First In, First Out");
     this->combo_chem_mixing->addItem("Last In, First Out");
     
-    //grid->addWidget(this->combo_chem_source);
-    //grid->addWidget(this->combo_chem_mixing);
+    grid->addWidget(this->combo_chem_source);
+    grid->addWidget(this->combo_chem_mixing);
     
-    this->layoutConfiguration()->addWidget(group);
+    this->layoutQuality()->addWidget(group);
 }
 
 void EntityInspectorTank::onGroupCollapse(GroupBoxCollapsible *group)

@@ -125,7 +125,7 @@ void EntityInspectorPipe::addGroupRoughness()
 
 void EntityInspectorPipe::addGroupQuality()
 {
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Quality");
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Quality Settings");
     QGridLayout *grid = new QGridLayout(group);
     
     this->check_override = new QCheckBox("Override global coefficients");
@@ -178,7 +178,7 @@ void EntityInspectorPipe::addGroupQuality()
     grid->addWidget(label_spin_wall, 3, 0);
     grid->addWidget(this->spin_wall_reaction, 3, 1);
     
-    this->layoutConfiguration()->addWidget(group);
+    this->layoutQuality()->addWidget(group);
 }
 
 void EntityInspectorPipe::onHeadlossFormulaChanged(HeadlossFormulas formulas)
