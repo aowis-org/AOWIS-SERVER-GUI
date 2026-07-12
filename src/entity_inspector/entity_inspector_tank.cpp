@@ -35,8 +35,7 @@ void EntityInspectorTank::addGroupGeometry()
     this->spin_level_initial->setSingleStep(0.10);
     this->spin_level_initial->setSuffix(" m");
     
-    QLabel *label_overflow = new QLabel("Overflow Allowed");
-    this->check_overflow = new QCheckBox();
+    this->check_overflow = new QCheckBox("Overflow Allowed");
     
     this->combo_geometry_type = new QComboBox();
     // get the state with function: tankGeometryInputType()
@@ -109,8 +108,7 @@ void EntityInspectorTank::addGroupGeometry()
     grid->addWidget(label_level_initial, 0, 0);
     grid->addWidget(this->spin_level_initial, 0, 1);
     
-    grid->addWidget(label_overflow, 1, 0);
-    grid->addWidget(this->check_overflow, 1, 1);
+    grid->addWidget(this->check_overflow, 1, 0, 1, 2);
     
     grid->addWidget(this->combo_geometry_type, 2, 0, 1, 2);
     
