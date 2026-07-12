@@ -4,7 +4,10 @@ EntityInspectorPipe::EntityInspectorPipe(QWidget *parent)
     : EntityInspectorWidget(parent)
 {
     setTitle("Pipe P1");
-    addGroupGeneral(":/icon/pipe.png", "P1");
+    
+    addGroupOverviewImage(":/icon/pipe.png", "P1");
+    
+    addGroupGeneral("P1");
     
     addGroupEndpoints();
     addGroupGeometry();
@@ -13,9 +16,7 @@ EntityInspectorPipe::EntityInspectorPipe(QWidget *parent)
     
     addGroupHistory();
     
-    this->layoutConfiguration()->addStretch();
-    this->layoutSimMeas()->addStretch();
-    this->layoutHistory()->addStretch();
+    addStretches();
 }
 
 void EntityInspectorPipe::addGroupGeometry()

@@ -5,7 +5,9 @@ EntityInspectorTank::EntityInspectorTank(QWidget *parent)
 {
     setTitle("Tank T1");
     
-    addGroupGeneral(":/icon/tower_large.png", "T1");
+    addGroupOverviewImage(":/icon/tower_large.png", "T1");
+    
+    addGroupGeneral("T1");
     
     addGroupPosition();
     addGroupElevation();
@@ -15,9 +17,7 @@ EntityInspectorTank::EntityInspectorTank(QWidget *parent)
     
     addGroupHistory();
     
-    this->layoutConfiguration()->addStretch();
-    this->layoutSimMeas()->addStretch();
-    this->layoutHistory()->addStretch();
+    addStretches();
 }
 
 void EntityInspectorTank::addGroupGeometry()

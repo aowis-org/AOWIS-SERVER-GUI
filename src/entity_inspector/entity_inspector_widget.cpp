@@ -9,6 +9,10 @@ EntityInspectorWidget::EntityInspectorWidget(QWidget *parent)
     layout_main(new QVBoxLayout(this)),
     label_title(new QLabel(this)),
     
+    scroll_overview(new QScrollArea(this)),
+    widget_overview(new QWidget()),
+    layout_overview(new QVBoxLayout(this->widget_overview)),
+    
     scroll_configuration(new QScrollArea(this)),
     widget_configuration(new QWidget()),
     layout_configuration(new QVBoxLayout(this->widget_configuration)),
@@ -21,16 +25,22 @@ EntityInspectorWidget::EntityInspectorWidget(QWidget *parent)
     widget_history(new QWidget()),
     layout_history(new QVBoxLayout(this->widget_history))
 {
-    scroll_configuration->setWidgetResizable(true);
-    scroll_configuration->setWidget(this->widget_configuration);
+    this->scroll_overview->setWidgetResizable(true);
+    this->scroll_overview->setWidget(this->widget_overview);
     
-    scroll_sim_meas->setWidgetResizable(true);
-    scroll_sim_meas->setWidget(this->widget_sim_meas);
+    this->scroll_configuration->setWidgetResizable(true);
+    this->scroll_configuration->setWidget(this->widget_configuration);
     
-    scroll_history->setWidgetResizable(true);
-    scroll_history->setWidget(this->widget_history);
+    this->scroll_sim_meas->setWidgetResizable(true);
+    this->scroll_sim_meas->setWidget(this->widget_sim_meas);
+    
+    this->scroll_history->setWidgetResizable(true);
+    this->scroll_history->setWidget(this->widget_history);
     
     this->tabs->setIconSize(QSize(40, 40));
+    
+    tabs->addTab(this->scroll_overview, QIcon(":/icon/inspector_dash.png"), "");
+    this->tabs->setTabToolTip(this->tabs->count()-1, "Entity Overview");
     
     tabs->addTab(this->scroll_configuration, QIcon(":/icon/settings_2.png"), "");
     this->tabs->setTabToolTip(this->tabs->count()-1, "Configuration");
@@ -45,6 +55,10 @@ EntityInspectorWidget::EntityInspectorWidget(QWidget *parent)
     this->layout_main->addWidget(this->tabs);
 }
 
+QVBoxLayout *EntityInspectorWidget::layoutOverview()
+{
+    return this->layout_overview;
+}
 QVBoxLayout *EntityInspectorWidget::layoutConfiguration()
 {
     return this->layout_configuration;
@@ -63,7 +77,7 @@ void EntityInspectorWidget::setTitle(const QString &title)
     this->label_title->setText("<b>" + title.toHtmlEscaped() + "</b>");
 }
 
-void EntityInspectorWidget::addGroupGeneral(const QString &icon_path, const QString &name)
+void EntityInspectorWidget::addGroupOverviewImage(const QString &icon_path, const QString &name)
 {
     GroupBoxCollapsible *group = new GroupBoxCollapsible("General");
     QGridLayout *grid = new QGridLayout(group);
@@ -76,6 +90,16 @@ void EntityInspectorWidget::addGroupGeneral(const QString &icon_path, const QStr
         Qt::SmoothTransformation
         ));
     picture->setAlignment(Qt::AlignCenter);
+    
+    grid->addWidget(picture, 0, 0, 1, 2);
+    
+    this->layoutOverview()->addWidget(group);
+}
+
+void EntityInspectorWidget::addGroupGeneral(const QString &name)
+{
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("General");
+    QGridLayout *grid = new QGridLayout(group);
     
     QLabel *label_name = new QLabel("Name");
     this->line_name = new QLineEdit();
@@ -104,8 +128,6 @@ void EntityInspectorWidget::addGroupGeneral(const QString &icon_path, const QStr
     
     QCheckBox *check_enabled = new QCheckBox("Enabled");
     check_enabled->setChecked(true);
-    
-    grid->addWidget(picture, 0, 0, 1, 2);
     
     grid->addWidget(label_name, 1, 0);
     grid->addWidget(this->line_name, 1, 1);
@@ -419,4 +441,12 @@ void EntityInspectorWidget::addGroupHistory()
     
     
     this->layoutHistory()->addWidget(group);
+}
+
+void EntityInspectorWidget::addStretches()
+{
+    this->layoutOverview()->addStretch();
+    this->layoutConfiguration()->addStretch();
+    this->layoutSimMeas()->addStretch();
+    this->layoutHistory()->addStretch();
 }

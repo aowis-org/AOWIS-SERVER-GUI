@@ -4,7 +4,10 @@ EntityInspectorPump::EntityInspectorPump(QWidget *parent)
     : EntityInspectorWidget(parent)
 {
     setTitle("Pump PU1");
-    addGroupGeneral(":/icon/pump.png", "PU1");
+    
+    addGroupOverviewImage(":/icon/pump.png", "PU1");
+    
+    addGroupGeneral("PU1");
     
     addGroupEndpoints();
     
@@ -15,9 +18,7 @@ EntityInspectorPump::EntityInspectorPump(QWidget *parent)
     
     addGroupHistory();
     
-    this->layoutConfiguration()->addStretch();
-    this->layoutSimMeas()->addStretch();
-    this->layoutHistory()->addStretch();
+    addStretches();
 }
 
 void EntityInspectorPump::addGroupControls()

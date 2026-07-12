@@ -4,7 +4,10 @@ EntityInspectorJunction::EntityInspectorJunction(QWidget *parent)
     : EntityInspectorWidget(parent)
 {
     setTitle("Junction J1");
-    addGroupGeneral(":/icon/junction.png", "J1");
+    
+    addGroupOverviewImage(":/icon/junction.png", "J1");
+    
+    addGroupGeneral("J1");
     
     addGroupPosition();
     
@@ -18,9 +21,7 @@ EntityInspectorJunction::EntityInspectorJunction(QWidget *parent)
     addGroupQuality();
     
     
-    this->layoutConfiguration()->addStretch();
-    this->layoutSimMeas()->addStretch();
-    this->layoutHistory()->addStretch();
+    addStretches();
 }
 
 void EntityInspectorJunction::addGroupQuality()

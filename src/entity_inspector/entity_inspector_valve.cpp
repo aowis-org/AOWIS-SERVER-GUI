@@ -4,16 +4,17 @@ EntityInspectorValve::EntityInspectorValve(QWidget *parent)
     : EntityInspectorWidget(parent)
 {
     setTitle("Valve V1");
-    addGroupGeneral(":/icon/valve.png", "V1");
+    
+    addGroupOverviewImage(":/icon/valve.png", "V1");
+    
+    addGroupGeneral("V1");
     
     addGroupEndpoints();
     addGroupValveConfiguration();
     
     addGroupHistory();
     
-    this->layoutConfiguration()->addStretch();
-    this->layoutSimMeas()->addStretch();
-    this->layoutHistory()->addStretch();
+    addStretches();
 }
 
 void EntityInspectorValve::addGroupValveConfiguration()

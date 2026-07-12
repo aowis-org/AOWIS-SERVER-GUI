@@ -4,7 +4,10 @@ EntityInspectorReservoir::EntityInspectorReservoir(QWidget *parent)
     : EntityInspectorWidget(parent)
 {
     setTitle("Reservoir R1");
-    addGroupGeneral(":/icon/lake.png", "R1");
+    
+    addGroupOverviewImage(":/icon/lake.png", "R1");
+    
+    addGroupGeneral("R1");
     
     addGroupPosition();
     addGroupElevation();
@@ -14,9 +17,7 @@ EntityInspectorReservoir::EntityInspectorReservoir(QWidget *parent)
     
     addGroupHistory();
     
-    this->layoutConfiguration()->addStretch();
-    this->layoutSimMeas()->addStretch();
-    this->layoutHistory()->addStretch();
+    addStretches();
 }
 
 void EntityInspectorReservoir::addGroupDemands()

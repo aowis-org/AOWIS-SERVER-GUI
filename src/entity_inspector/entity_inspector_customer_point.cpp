@@ -1,15 +1,13 @@
 #include "entity_inspector_customer_point.h"
 
 EntityInspectorCustomerPoint::EntityInspectorCustomerPoint(QWidget *parent)
-    : EntityInspectorWidget(parent),
-    layout(new QVBoxLayout()),
-    label(new QLabel())
+    : EntityInspectorWidget(parent)
 {
-    setLayout(this->layout);
-    
-    this->layout->addWidget(this->label);
     setTitle("Customer Point C1");
-    addGroupGeneral(":/icon/customer.png", "C1");
+    
+    addGroupOverviewImage(":/icon/customer.png", "C1");
+    
+    addGroupGeneral("C1");
     
     addGroupConnections();
     addGroupDemands();
@@ -17,9 +15,7 @@ EntityInspectorCustomerPoint::EntityInspectorCustomerPoint(QWidget *parent)
     
     addGroupHistory();
     
-    this->layoutConfiguration()->addStretch();
-    this->layoutSimMeas()->addStretch();
-    this->layoutHistory()->addStretch();
+    addStretches();
 }
 
 void EntityInspectorCustomerPoint::addGroupConnections()
@@ -52,5 +48,5 @@ void EntityInspectorCustomerPoint::addGroupGraphs()
     
     grid->addWidget(label_devnote, 0, 0);
     
-    this->layoutConfiguration()->addWidget(group);
+    this->layoutSimMeas()->addWidget(group);
 }

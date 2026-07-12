@@ -34,12 +34,16 @@ public:
     
 protected:
     //QVBoxLayout *mainLayout() const;
+    QVBoxLayout *layoutOverview();
     QVBoxLayout *layoutConfiguration();
     QVBoxLayout *layoutSimMeas();
     QVBoxLayout *layoutHistory();
     
     void setTitle(const QString &title);
-    void addGroupGeneral(const QString &icon_path, const QString &name);
+    
+    void addGroupOverviewImage(const QString &icon_path, const QString &name);
+    
+    void addGroupGeneral(const QString &name);
     QLineEdit *line_name = nullptr;
     QDateEdit *date_install = nullptr;
     QComboBox *combo_model_role = nullptr;
@@ -71,10 +75,16 @@ protected:
     
     void addGroupHistory();
     
+    void addStretches();
+    
 private:
     QTabWidget *tabs = nullptr;
     QVBoxLayout *layout_main = nullptr;
     QLabel *label_title = nullptr;
+    
+    QScrollArea *scroll_overview = nullptr;
+    QWidget *widget_overview = nullptr;
+    QVBoxLayout *layout_overview = nullptr;
     
     QScrollArea *scroll_configuration = nullptr;
     QWidget *widget_configuration = nullptr;
