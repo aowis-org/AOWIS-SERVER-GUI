@@ -51,11 +51,6 @@ private:
     QDoubleSpinBox *spin_bulk_reaction = nullptr;
     QDoubleSpinBox *spin_wall_reaction = nullptr;
     
-    void addGroupSimMeas();
-    
-    
-    void addGroupGraphs();
-    
 signals:
     
 protected slots:

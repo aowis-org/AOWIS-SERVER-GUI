@@ -2,16 +2,12 @@
 
 
 EntityInspectorDock::EntityInspectorDock(QWidget *parent)
-    : QDockWidget("Entity Inspector", parent),
-    scroll(new QScrollArea(this))
+    : QDockWidget("Entity Inspector", parent)
 {
     setMinimumWidth(Sizes::SidebarRightWidth);
     //setMaximumWidth(Sizes::SidebarRightWidth);
     this->resize(Sizes::SidebarRightWidth, this->height());
     this->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
-    
-    this->scroll->setWidgetResizable(true);
-    setWidget(this->scroll);
     
     //setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     setAllowedAreas(Qt::RightDockWidgetArea);
@@ -20,9 +16,9 @@ EntityInspectorDock::EntityInspectorDock(QWidget *parent)
                 QDockWidget::DockWidgetMovable |
                 QDockWidget::DockWidgetFloatable);
     
-    showEntityTank();
+    //showEntityTank();
     //showEntityJunction();
-    //showEntityPipe();
+    showEntityPipe();
     //showEntityPump();
     //showEntityValve();
     //showEntityReservoir();
@@ -31,10 +27,8 @@ EntityInspectorDock::EntityInspectorDock(QWidget *parent)
 
 void EntityInspectorDock::clearEntity()
 {
-    QWidget *old_widget = this->scroll->takeWidget();
-    
-    if (old_widget)
-        old_widget->deleteLater();
+    if (this->widget_current)
+        this->widget_current->deleteLater();
     
     this->widget_current = nullptr;
 }
@@ -44,7 +38,7 @@ void EntityInspectorDock::setInspector(EntityInspectorWidget *inspector)
     clearEntity();
     
     this->widget_current = inspector;
-    this->scroll->setWidget(this->widget_current);
+    setWidget(this->widget_current);
     
     this->widget_current->onHeadlossFormulaChanged(this->headloss_formulas_current);
 }

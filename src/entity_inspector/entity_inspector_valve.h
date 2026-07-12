@@ -42,10 +42,6 @@ private:
     QDoubleSpinBox *spin_loss_coeff = nullptr;
     void onValveTypeChanged(ValveType type);
     
-    void addGroupSimMeas();
-    
-    
-    void addGroupGraphs();
 
 signals:
 };

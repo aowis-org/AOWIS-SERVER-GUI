@@ -2,8 +2,11 @@
 #define ENTITY_INSPECTOR_WIDGET_H
 
 #include <QWidget>
+#include <QTabWidget>
+#include <QScrollArea>
 #include <QDialog>
 #include <QPointer>
+#include <QIcon>
 
 #include <QVBoxLayout>
 #include <QLabel>
@@ -30,7 +33,10 @@ public:
     explicit EntityInspectorWidget(QWidget *parent = nullptr);
     
 protected:
-    QVBoxLayout *mainLayout() const;
+    //QVBoxLayout *mainLayout() const;
+    QVBoxLayout *layoutConfiguration();
+    QVBoxLayout *layoutSimMeas();
+    QVBoxLayout *layoutHistory();
     
     void setTitle(const QString &title);
     void addGroupGeneral(const QString &icon_path, const QString &name);
@@ -66,10 +72,21 @@ protected:
     void addGroupHistory();
     
 private:
+    QTabWidget *tabs = nullptr;
     QVBoxLayout *layout_main = nullptr;
     QLabel *label_title = nullptr;
     
+    QScrollArea *scroll_configuration = nullptr;
+    QWidget *widget_configuration = nullptr;
+    QVBoxLayout *layout_configuration = nullptr;
     
+    QScrollArea *scroll_sim_meas = nullptr;
+    QWidget *widget_sim_meas = nullptr;
+    QVBoxLayout *layout_sim_meas = nullptr;
+    
+    QScrollArea *scroll_history = nullptr;
+    QWidget *widget_history = nullptr;
+    QVBoxLayout *layout_history = nullptr;
     
 private slots:
     void onGroupExpand(GroupBoxCollapsible *group);

@@ -17,7 +17,9 @@ EntityInspectorCustomerPoint::EntityInspectorCustomerPoint(QWidget *parent)
     
     addGroupHistory();
     
-    mainLayout()->addStretch();
+    this->layoutConfiguration()->addStretch();
+    this->layoutSimMeas()->addStretch();
+    this->layoutHistory()->addStretch();
 }
 
 void EntityInspectorCustomerPoint::addGroupConnections()
@@ -37,7 +39,7 @@ void EntityInspectorCustomerPoint::addGroupConnections()
     grid->addWidget(label_connection_junction, 1, 0);
     grid->addWidget(this->combo_connection_junction, 1, 1);
     
-    mainLayout()->addWidget(group);
+    this->layoutConfiguration()->addWidget(group);
 }
 
 void EntityInspectorCustomerPoint::addGroupGraphs()
@@ -50,5 +52,5 @@ void EntityInspectorCustomerPoint::addGroupGraphs()
     
     grid->addWidget(label_devnote, 0, 0);
     
-    mainLayout()->addWidget(group);
+    this->layoutConfiguration()->addWidget(group);
 }

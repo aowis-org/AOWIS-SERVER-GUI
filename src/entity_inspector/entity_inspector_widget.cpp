@@ -5,15 +5,57 @@
 
 EntityInspectorWidget::EntityInspectorWidget(QWidget *parent)
     : QWidget(parent),
+    tabs(new QTabWidget(this)),
     layout_main(new QVBoxLayout(this)),
-    label_title(new QLabel(this))
+    label_title(new QLabel(this)),
+    
+    scroll_configuration(new QScrollArea(this)),
+    widget_configuration(new QWidget()),
+    layout_configuration(new QVBoxLayout(this->widget_configuration)),
+    
+    scroll_sim_meas(new QScrollArea(this)),
+    widget_sim_meas(new QWidget()),
+    layout_sim_meas(new QVBoxLayout(this->widget_sim_meas)),
+    
+    scroll_history(new QScrollArea(this)),
+    widget_history(new QWidget()),
+    layout_history(new QVBoxLayout(this->widget_history))
 {
+    scroll_configuration->setWidgetResizable(true);
+    scroll_configuration->setWidget(this->widget_configuration);
+    
+    scroll_sim_meas->setWidgetResizable(true);
+    scroll_sim_meas->setWidget(this->widget_sim_meas);
+    
+    scroll_history->setWidgetResizable(true);
+    scroll_history->setWidget(this->widget_history);
+    
+    this->tabs->setIconSize(QSize(40, 40));
+    
+    tabs->addTab(this->scroll_configuration, QIcon(":/icon/settings_2.png"), "");
+    this->tabs->setTabToolTip(this->tabs->count()-1, "Configuration");
+    
+    tabs->addTab(this->scroll_sim_meas, QIcon(":/icon/sim_meas.png"), "");
+    this->tabs->setTabToolTip(this->tabs->count()-1, "Simulation & Measurement");
+    
+    tabs->addTab(this->scroll_history, QIcon(":/icon/history.png"), "");
+    this->tabs->setTabToolTip(this->tabs->count()-1, "History");
+    
     this->layout_main->addWidget(this->label_title);
+    this->layout_main->addWidget(this->tabs);
 }
 
-QVBoxLayout *EntityInspectorWidget::mainLayout() const
+QVBoxLayout *EntityInspectorWidget::layoutConfiguration()
 {
-    return this->layout_main;
+    return this->layout_configuration;
+}
+QVBoxLayout *EntityInspectorWidget::layoutSimMeas()
+{
+    return this->layout_sim_meas;
+}
+QVBoxLayout *EntityInspectorWidget::layoutHistory()
+{
+    return this->layout_history;
 }
 
 void EntityInspectorWidget::setTitle(const QString &title)
@@ -76,7 +118,7 @@ void EntityInspectorWidget::addGroupGeneral(const QString &icon_path, const QStr
     
     grid->addWidget(check_enabled, 5, 0);
     
-    this->layout_main->addWidget(group);
+    this->layoutConfiguration()->addWidget(group);
 }
 
 void EntityInspectorWidget::addGroupEndpoints()
@@ -116,7 +158,7 @@ void EntityInspectorWidget::addGroupEndpoints()
     grid->addWidget(button_node_2_locate, 1, 2);
     grid->addWidget(button_node_2_inspect, 1, 3);
     
-    mainLayout()->addWidget(group);
+    this->layoutConfiguration()->addWidget(group);
 }
 
 void EntityInspectorWidget::addGroupPosition()
@@ -148,7 +190,7 @@ void EntityInspectorWidget::addGroupPosition()
     grid->addWidget(this->spin_longitude, 1, 1);
     grid->addWidget(button_find, 2, 0, 1, 2);
     
-    this->layout_main->addWidget(group);
+    this->layoutConfiguration()->addWidget(group);
 }
 
 void EntityInspectorWidget::addGroupElevation()
@@ -209,7 +251,7 @@ void EntityInspectorWidget::addGroupElevation()
     
     connect(group_elevation, &GroupBoxCollapsible::signalExpanded, this, &EntityInspectorWidget::onGroupExpand);
     
-    this->layout_main->addWidget(group_elevation);
+    this->layoutConfiguration()->addWidget(group_elevation);
 }
 
 void EntityInspectorWidget::onGroupExpand(GroupBoxCollapsible *group)
@@ -271,7 +313,7 @@ void EntityInspectorWidget::addGroupDemands()
     
     grid->addWidget(button_editor, 1, 0);
     
-    mainLayout()->addWidget(group);
+    this->layoutConfiguration()->addWidget(group);
 }
 void EntityInspectorWidget::openDemandsEditor()
 {
@@ -376,5 +418,5 @@ void EntityInspectorWidget::addGroupHistory()
     
     
     
-    this->layout_main->addWidget(group);
+    this->layoutHistory()->addWidget(group);
 }

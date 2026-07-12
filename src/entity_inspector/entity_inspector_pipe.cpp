@@ -10,12 +10,12 @@ EntityInspectorPipe::EntityInspectorPipe(QWidget *parent)
     addGroupGeometry();
     addGroupRoughness();
     addGroupQuality();
-    addGroupSimMeas();
-    addGroupGraphs();
     
     addGroupHistory();
     
-    mainLayout()->addStretch();
+    this->layoutConfiguration()->addStretch();
+    this->layoutSimMeas()->addStretch();
+    this->layoutHistory()->addStretch();
 }
 
 void EntityInspectorPipe::addGroupGeometry()
@@ -54,7 +54,7 @@ void EntityInspectorPipe::addGroupGeometry()
     grid->addWidget(label_length, 2, 0);
     grid->addWidget(this->spin_length, 2, 1);
     
-    mainLayout()->addWidget(group);
+    this->layoutConfiguration()->addWidget(group);
 }
 
 void EntityInspectorPipe::addGroupRoughness()
@@ -119,7 +119,7 @@ void EntityInspectorPipe::addGroupRoughness()
     grid->addWidget(label_loss_coefficient, 8, 0);
     grid->addWidget(this->spin_loss_coefficient, 8, 1);
     
-    mainLayout()->addWidget(group);
+    this->layoutConfiguration()->addWidget(group);
 }
 
 void EntityInspectorPipe::addGroupQuality()
@@ -127,7 +127,7 @@ void EntityInspectorPipe::addGroupQuality()
     GroupBoxCollapsible *group = new GroupBoxCollapsible("Quality");
     QGridLayout *grid = new QGridLayout(group);
     
-    this->check_override = new QCheckBox("Override global reaction coefficients");
+    this->check_override = new QCheckBox("Override global coefficients");
     QPushButton *button_override_show = new QPushButton("Edit global reaction coefficients");
     
     QLabel *label_spin_bulk = new QLabel("Bulk reaction coefficient");
@@ -177,27 +177,7 @@ void EntityInspectorPipe::addGroupQuality()
     grid->addWidget(label_spin_wall, 3, 0);
     grid->addWidget(this->spin_wall_reaction, 3, 1);
     
-    mainLayout()->addWidget(group);
-}
-
-void EntityInspectorPipe::addGroupSimMeas()
-{
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Simulation / Measurements");
-    QGridLayout *grid = new QGridLayout(group);
-    
-    
-    
-    mainLayout()->addWidget(group);
-}
-
-void EntityInspectorPipe::addGroupGraphs()
-{
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Graphs");
-    QGridLayout *grid = new QGridLayout(group);
-    
-    
-    
-    mainLayout()->addWidget(group);
+    this->layoutConfiguration()->addWidget(group);
 }
 
 void EntityInspectorPipe::onHeadlossFormulaChanged(HeadlossFormulas formulas)

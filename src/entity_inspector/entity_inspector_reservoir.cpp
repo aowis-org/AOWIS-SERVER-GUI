@@ -11,12 +11,12 @@ EntityInspectorReservoir::EntityInspectorReservoir(QWidget *parent)
     
     addGroupDemands();
     addGroupQuality();
-    addGroupSimMeas();
-    addGroupGraphs();
     
     addGroupHistory();
     
-    mainLayout()->addStretch();
+    this->layoutConfiguration()->addStretch();
+    this->layoutSimMeas()->addStretch();
+    this->layoutHistory()->addStretch();
 }
 
 void EntityInspectorReservoir::addGroupDemands()
@@ -26,7 +26,7 @@ void EntityInspectorReservoir::addGroupDemands()
     
     
     
-    mainLayout()->addWidget(group);
+    this->layoutConfiguration()->addWidget(group);
 }
 
 void EntityInspectorReservoir::addGroupQuality()
@@ -36,25 +36,6 @@ void EntityInspectorReservoir::addGroupQuality()
     
     
     
-    mainLayout()->addWidget(group);
+    this->layoutConfiguration()->addWidget(group);
 }
 
-void EntityInspectorReservoir::addGroupSimMeas()
-{
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Simulation / Measurements");
-    QGridLayout *grid = new QGridLayout(group);
-    
-    
-    
-    mainLayout()->addWidget(group);
-}
-
-void EntityInspectorReservoir::addGroupGraphs()
-{
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Graphs");
-    QGridLayout *grid = new QGridLayout(group);
-    
-    
-    
-    mainLayout()->addWidget(group);
-}

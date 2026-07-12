@@ -37,11 +37,6 @@ private:
     void addGroupQuality();
     
     
-    void addGroupSimMeas();
-    
-    
-    void addGroupGraphs();
-    
 signals:
 };
 

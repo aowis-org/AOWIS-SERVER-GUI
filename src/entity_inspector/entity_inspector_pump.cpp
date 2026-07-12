@@ -11,13 +11,13 @@ EntityInspectorPump::EntityInspectorPump(QWidget *parent)
     addGroupControls();
     addGroupEnergyCostInput();
     
-    addGroupSimMeas();
     addGroupEnergy();
-    addGroupGraphs();
     
     addGroupHistory();
     
-    mainLayout()->addStretch();
+    this->layoutConfiguration()->addStretch();
+    this->layoutSimMeas()->addStretch();
+    this->layoutHistory()->addStretch();
 }
 
 void EntityInspectorPump::addGroupControls()
@@ -72,7 +72,7 @@ void EntityInspectorPump::addGroupControls()
     grid->addWidget(label_controls, 4, 0);
     grid->addWidget(this->combo_controls, 4, 1);
     
-    mainLayout()->addWidget(group);
+    this->layoutConfiguration()->addWidget(group);
 }
 
 void EntityInspectorPump::addGroupEnergyCostInput()
@@ -106,17 +106,7 @@ void EntityInspectorPump::addGroupEnergyCostInput()
     grid->addWidget(label_price_pattern, 2, 0);
     grid->addWidget(this->combo_price_pattern, 2, 1);
     
-    mainLayout()->addWidget(group);
-}
-
-void EntityInspectorPump::addGroupSimMeas()
-{
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Simulation / Measurements");
-    QGridLayout *grid = new QGridLayout(group);
-    
-    
-    
-    mainLayout()->addWidget(group);
+    this->layoutConfiguration()->addWidget(group);
 }
 
 void EntityInspectorPump::addGroupEnergy()
@@ -126,15 +116,6 @@ void EntityInspectorPump::addGroupEnergy()
     
     
     
-    mainLayout()->addWidget(group);
+    this->layoutConfiguration()->addWidget(group);
 }
 
-void EntityInspectorPump::addGroupGraphs()
-{
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Graphs");
-    QGridLayout *grid = new QGridLayout(group);
-    
-    
-    
-    mainLayout()->addWidget(group);
-}

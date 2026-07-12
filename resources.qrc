@@ -41,6 +41,10 @@
         <file alias="save.png">assets/iconsets/gothic/save.png</file>
         
         <file alias="settings.png">assets/iconsets/gothic/settings.png</file>
+        <file alias="settings_2.png">assets/iconsets/gothic/settings_2.png</file>
+        <file alias="history.png">assets/iconsets/gothic/history.png</file>
+        <file alias="sim_meas.png">assets/iconsets/gothic/sim_meas.png</file>
+        
         <file alias="tower.png">assets/iconsets/gothic/tower.png</file>
         <file alias="tank.png">assets/iconsets/gothic/tank_34.png</file>
         <file alias="tower_large.png">assets/iconsets/gothic/water_tower_large_alt.png</file>

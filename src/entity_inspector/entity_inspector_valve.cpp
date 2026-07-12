@@ -9,12 +9,11 @@ EntityInspectorValve::EntityInspectorValve(QWidget *parent)
     addGroupEndpoints();
     addGroupValveConfiguration();
     
-    addGroupSimMeas();
-    addGroupGraphs();
-    
     addGroupHistory();
     
-    mainLayout()->addStretch();
+    this->layoutConfiguration()->addStretch();
+    this->layoutSimMeas()->addStretch();
+    this->layoutHistory()->addStretch();
 }
 
 void EntityInspectorValve::addGroupValveConfiguration()
@@ -125,7 +124,7 @@ void EntityInspectorValve::addGroupValveConfiguration()
             )
     );
     
-    mainLayout()->addWidget(group);
+    this->layoutConfiguration()->addWidget(group);
 }
 void EntityInspectorValve::onValveTypeChanged(ValveType type)
 {
@@ -210,22 +209,4 @@ void EntityInspectorValve::onValveTypeChanged(ValveType type)
     }
 }
 
-void EntityInspectorValve::addGroupSimMeas()
-{
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Simulation / Measurements");
-    QGridLayout *grid = new QGridLayout(group);
-    
-    
-    
-    mainLayout()->addWidget(group);
-}
 
-void EntityInspectorValve::addGroupGraphs()
-{
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Graphs");
-    QGridLayout *grid = new QGridLayout(group);
-    
-    
-    
-    mainLayout()->addWidget(group);
-}

@@ -4,8 +4,6 @@
 #include <QWidget>
 #include <QDockWidget>
 
-#include <QScrollArea>
-
 #include <QVBoxLayout>
 
 #include "entity_inspector_tank.h"
@@ -43,7 +41,6 @@ public:
 private:
     void setInspector(EntityInspectorWidget *inspector);
     
-    QScrollArea *scroll = nullptr;
     EntityInspectorWidget *widget_current = nullptr;
     
     HeadlossFormulas headloss_formulas_current =

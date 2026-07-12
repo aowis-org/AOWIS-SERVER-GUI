@@ -4,6 +4,7 @@ EntityInspectorTank::EntityInspectorTank(QWidget *parent)
     : EntityInspectorWidget(parent)
 {
     setTitle("Tank T1");
+    
     addGroupGeneral(":/icon/tower_large.png", "T1");
     
     addGroupPosition();
@@ -11,12 +12,12 @@ EntityInspectorTank::EntityInspectorTank(QWidget *parent)
     
     addGroupGeometry();
     addGroupQuality();
-    addGroupSimMeas();
-    addGroupGraphs();
     
     addGroupHistory();
     
-    mainLayout()->addStretch();
+    this->layoutConfiguration()->addStretch();
+    this->layoutSimMeas()->addStretch();
+    this->layoutHistory()->addStretch();
 }
 
 void EntityInspectorTank::addGroupGeometry()
@@ -132,7 +133,7 @@ void EntityInspectorTank::addGroupGeometry()
     grid->addWidget(this->label_volume_curve, 9, 0);
     grid->addWidget(this->combo_volume_curve, 9, 1);
     
-    mainLayout()->addWidget(this->group_geometry);
+    this->layoutConfiguration()->addWidget(group_geometry);
 }
 
 void EntityInspectorTank::addGroupQuality()
@@ -156,27 +157,7 @@ void EntityInspectorTank::addGroupQuality()
     //grid->addWidget(this->combo_chem_source);
     //grid->addWidget(this->combo_chem_mixing);
     
-    mainLayout()->addWidget(group);
-}
-
-void EntityInspectorTank::addGroupSimMeas()
-{
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Simulation / Measurements");
-    QGridLayout *grid = new QGridLayout(group);
-    
-    
-    
-    mainLayout()->addWidget(group);
-}
-
-void EntityInspectorTank::addGroupGraphs()
-{
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Graphs");
-    QGridLayout *grid = new QGridLayout(group);
-    
-    
-    
-    mainLayout()->addWidget(group);
+    this->layoutConfiguration()->addWidget(group);
 }
 
 void EntityInspectorTank::onGroupCollapse(GroupBoxCollapsible *group)

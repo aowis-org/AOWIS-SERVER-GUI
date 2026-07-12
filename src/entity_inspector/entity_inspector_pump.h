@@ -44,11 +44,7 @@ private:
     QDoubleSpinBox *spin_energy_price = nullptr;
     QComboBox *combo_price_pattern = nullptr;
     
-    void addGroupSimMeas();
-    
     void addGroupEnergy();
-    
-    void addGroupGraphs();
     
 signals:
 };

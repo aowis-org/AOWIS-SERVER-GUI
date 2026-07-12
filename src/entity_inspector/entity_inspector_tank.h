@@ -66,11 +66,6 @@ private:
     QComboBox *combo_chem_source = nullptr;
     QComboBox *combo_chem_mixing = nullptr;
     
-    void addGroupSimMeas();
-    
-    
-    void addGroupGraphs();
-    
     
 private slots:
     void onGroupCollapse(GroupBoxCollapsible *group);
