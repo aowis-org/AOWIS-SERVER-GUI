@@ -13,6 +13,7 @@
 #include <QButtonGroup>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QCheckBox>
 #include <QSlider>
 #include <QLabel>
 

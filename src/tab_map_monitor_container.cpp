@@ -126,6 +126,9 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     QVBoxLayout *vbox = new QVBoxLayout();
     group->setLayout(vbox);
     
+    QCheckBox *check_flow_direction = new QCheckBox("Show Flow Direction");
+    check_flow_direction->setChecked(true);
+    
     QRadioButton *radio_link_none = new QRadioButton("None");
     radio_link_none->setChecked(true);
     QRadioButton *radio_link_diameter = new QRadioButton("Diameter");
@@ -138,6 +141,8 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     QRadioButton *radio_link_chlorine = new QRadioButton("Cl₂ [mg/L]");
     QRadioButton *radio_link_river = new QRadioButton("River Water [%]");
     QRadioButton *radio_link_lake = new QRadioButton("Lake Water [%]");
+    
+    vbox->addWidget(check_flow_direction);
     
     vbox->addWidget(radio_link_none);
     vbox->addWidget(radio_link_diameter);
