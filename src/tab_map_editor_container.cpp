@@ -118,7 +118,7 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
     
     QLabel *label_explanation_spinners = new QLabel("<b>Select the zoom level range</b> (from - to) for the tiles you want to delete/reload:");
     label_explanation_spinners->setWordWrap(true);
-    QLabel *label_explanation_actions = new QLabel("Than for the selected area and zoom levels, you can <b>choose</b> one of the following <b>actions</b>:", this);
+    QLabel *label_explanation_actions = new QLabel("Then for the selected area and zoom levels, you can <b>choose</b> one of the following <b>actions</b>:", this);
     label_explanation_actions->setWordWrap(true);
     
     this->spin_zoom_from = new QSpinBox();
