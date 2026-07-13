@@ -19,6 +19,8 @@ SimControlDock::SimControlDock(QWidget *parent)
     content->setFixedHeight(Sizes::SimControlDockHeight);
     setFixedHeight(Sizes::SimControlDockHeight);
     
+    setContentsMargins(0, 0, 0, 0);
+    
     /*
     this->setFeatures(QDockWidget::DockWidgetClosable |
                       QDockWidget::DockWidgetMovable |
