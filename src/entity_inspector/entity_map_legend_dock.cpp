@@ -75,7 +75,7 @@ void EntityMapLegendDock::addGroupLink()
 
 void EntityMapLegendDock::addGroupHeatmap()
 {
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Heatmap Legend");
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Heatmap Overlay");
     QGridLayout *grid = new QGridLayout(group);
     
     

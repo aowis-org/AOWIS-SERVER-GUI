@@ -57,7 +57,7 @@ MainWindow::MainWindow(QWidget *parent)
         "    width: 0px;"
         "    height: 0px;"
         "}"
-        );
+    );
     
     this->map_mon = this->map_monitor->getMap();
     this->map_edit = this->map_editor->getMap();
