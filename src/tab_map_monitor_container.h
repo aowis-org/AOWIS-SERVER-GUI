@@ -51,6 +51,9 @@ private:
 signals:
     void mapZoomIn();
     void mapZoomOut();
+    
+    void signalNodeVisualClicked(VisualNode visual_node);
+    void signalLinkVisualClicked(VisualLink visual_link);
 };
 
 
@@ -66,15 +69,16 @@ public:
     MapWidget *getMap();
     
 private:
-    QHBoxLayout *layout;
-    MapModel *map_model;
-    MapWidget *map;
-    MapMonitorMenuWidget *controls;
+    QHBoxLayout *layout = nullptr;
+    MapModel *map_model = nullptr;
+    MapWidget *map = nullptr;
+    MapMonitorMenuWidget *controls = nullptr;
     
     GpsProvider *gps = nullptr;
     
 signals:
-    
+    void signalShowMapLegendNode(VisualNode visual_node);
+    void signalShowMapLegendLink(VisualLink visual_link);
 };
 
 

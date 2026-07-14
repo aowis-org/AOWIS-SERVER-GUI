@@ -7,6 +7,7 @@ MainWindow::MainWindow(QWidget *parent)
     gps( new GpsProvider(this) ),
     dock_sim_control( new SimControlDock(this) ),
     dock_entity_inspector( new EntityInspectorDock(this) ),
+    dock_entity_map_legend( new EntityMapLegendDock(this)),
     map_model( new MapModel(this) ),
     tabs( new QTabWidget(this) ),
     settings( new SettingsWidget(this) ),
@@ -42,8 +43,13 @@ MainWindow::MainWindow(QWidget *parent)
     this->gps->startGpsd("127.0.0.1");
     #endif
     
-    addDockWidget(Qt::RightDockWidgetArea, dock_entity_inspector);
-    addDockWidget(Qt::TopDockWidgetArea, dock_sim_control);
+    addDockWidget(Qt::RightDockWidgetArea, this->dock_entity_inspector);
+    addDockWidget(Qt::RightDockWidgetArea, this->dock_entity_map_legend);
+    addDockWidget(Qt::TopDockWidgetArea, this->dock_sim_control);
+    
+    this->dock_entity_map_legend->setVisible(false);
+    connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendLink, this->dock_entity_map_legend, &EntityMapLegendDock::showMapLegendLink);
+    connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendNode, this->dock_entity_map_legend, &EntityMapLegendDock::showMapLegendNode);
     
     setStyleSheet(
         "QMainWindow::separator {"

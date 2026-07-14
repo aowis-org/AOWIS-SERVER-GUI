@@ -5,7 +5,6 @@ EntityInspectorDock::EntityInspectorDock(QWidget *parent)
     : QDockWidget("Entity Inspector", parent)
 {
     setMinimumWidth(Sizes::SidebarRightWidth);
-    //setMaximumWidth(Sizes::SidebarRightWidth);
     this->resize(Sizes::SidebarRightWidth, this->height());
     this->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     

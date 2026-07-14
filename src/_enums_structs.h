@@ -35,6 +35,36 @@ enum CanvasMode
     Monitor
 };
 
+enum class VisualNode
+{
+    None,
+    Elevation,
+    BaseDemand,
+    TotalDemand,
+    DemandDeficit,
+    EmitterFlow,
+    Leakage,
+    Head,
+    Pressure,
+    Chlorine,
+    RiverWater,
+    LakeWater
+};
+enum class VisualLink
+{
+    None,
+    Diameter,
+    Length,
+    Roughness,
+    FlowRate,
+    Velocity,
+    HeadLoss,
+    Leakage,
+    Chlorine,
+    RiverWater,
+    LakeWater
+};
+
 struct CoordinateWGS84
 {
     double lon = 0.0;

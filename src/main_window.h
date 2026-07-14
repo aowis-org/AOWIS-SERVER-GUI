@@ -49,6 +49,7 @@
 #include "tab_alarms_widget.h"
 #include "sim_control_dock.h"
 #include "entity_inspector/entity_inspector_dock.h"
+#include "entity_inspector/entity_map_legend_dock.h"
 #include "simulation_manager.h"
 
 #ifdef Q_OS_WASM
@@ -80,6 +81,7 @@ private:
     FooterStatusBar *footer;
     
     EntityInspectorDock *dock_entity_inspector;
+    EntityMapLegendDock *dock_entity_map_legend;
     SimControlDock *dock_sim_control;
     
     MapModel *map_model;

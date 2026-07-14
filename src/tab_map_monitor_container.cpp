@@ -38,6 +38,11 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, GpsProvider *gps, 
     
     this->layout->addWidget(scroll_controls);
     this->layout->addWidget(map);
+    
+    connect(this->controls, &MapMonitorMenuWidget::signalNodeVisualClicked,
+            this, &MapMonitorContainer::signalShowMapLegendNode);
+    connect(this->controls, &MapMonitorMenuWidget::signalLinkVisualClicked,
+            this, &MapMonitorContainer::signalShowMapLegendLink);
 }
 MapWidget *MapMonitorContainer::getMap()
 {
@@ -101,6 +106,26 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
         "Lake and River water."
     );
     
+    const auto connect_node_visual = [this](QRadioButton *button, VisualNode visual)
+    {
+        connect(button, &QRadioButton::clicked, this, [this, visual]
+        {
+            emit signalNodeVisualClicked(visual);
+        });
+    };
+    connect_node_visual(radio_node_none, VisualNode::None);
+    connect_node_visual(radio_node_elevation, VisualNode::Elevation);
+    connect_node_visual(radio_node_basedemand, VisualNode::BaseDemand);
+    connect_node_visual(radio_node_totaldemand, VisualNode::TotalDemand);
+    connect_node_visual(radio_node_demanddeficit, VisualNode::DemandDeficit);
+    connect_node_visual(radio_node_emitterflow, VisualNode::EmitterFlow);
+    connect_node_visual(radio_node_leakage, VisualNode::Leakage);
+    connect_node_visual(radio_node_head, VisualNode::Head);
+    connect_node_visual(radio_node_pressure, VisualNode::Pressure);
+    connect_node_visual(radio_node_chlorine, VisualNode::Chlorine);
+    connect_node_visual(radio_node_river, VisualNode::RiverWater);
+    connect_node_visual(radio_node_lake, VisualNode::LakeWater);
+    
     vbox->addWidget(radio_node_none);
     vbox->addWidget(radio_node_elevation);
     vbox->addWidget(radio_node_basedemand);
@@ -141,6 +166,25 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     QRadioButton *radio_link_chlorine = new QRadioButton("Cl₂ [mg/L]");
     QRadioButton *radio_link_river = new QRadioButton("River Water [%]");
     QRadioButton *radio_link_lake = new QRadioButton("Lake Water [%]");
+    
+    const auto connect_link_visual = [this](QRadioButton *button, VisualLink visual)
+    {
+        connect(button, &QRadioButton::clicked, this, [this, visual]
+                {
+                    emit signalLinkVisualClicked(visual);
+                });
+    };
+    connect_link_visual(radio_link_none, VisualLink::None);
+    connect_link_visual(radio_link_diameter, VisualLink::Diameter);
+    connect_link_visual(radio_link_length, VisualLink::Length);
+    connect_link_visual(radio_link_roughness, VisualLink::Roughness);
+    connect_link_visual(radio_link_flowrate, VisualLink::FlowRate);
+    connect_link_visual(radio_link_velocity, VisualLink::Velocity);
+    connect_link_visual(radio_link_headloss, VisualLink::HeadLoss);
+    connect_link_visual(radio_link_leakage, VisualLink::Leakage);
+    connect_link_visual(radio_link_chlorine, VisualLink::Chlorine);
+    connect_link_visual(radio_link_river, VisualLink::RiverWater);
+    connect_link_visual(radio_link_lake, VisualLink::LakeWater);
     
     vbox->addWidget(check_flow_direction);
     
