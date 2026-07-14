@@ -67,8 +67,8 @@ MapMonitorMenuWidget::MapMonitorMenuWidget(MapWidget *map, QWidget *parent)
     
     this->layout->addWidget(this->map_nav);
     
-    addGroupLinkVisuals();
     addGroupNodeVisuals();
+    addGroupLinkVisuals();
     addGroupHeatmapVisuals();
     
     this->layout->addStretch();

@@ -33,6 +33,10 @@ private:
     
     void setVisibility();
     
+    GroupBoxCollapsible *group_node = nullptr;
+    GroupBoxCollapsible *group_link = nullptr;
+    GroupBoxCollapsible *group_heat = nullptr;
+    
     void addGroupNode();
     void addGroupLink();
     void addGroupHeatmap();
