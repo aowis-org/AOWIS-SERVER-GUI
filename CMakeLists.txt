@@ -42,6 +42,15 @@ set(AOWIS_SERVER_EPANET_BUILD_SHARED_EPANET OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(external/AOWIS-SERVER-EPANET EXCLUDE_FROM_ALL)
 
+# AOWIS-SERVER-DB submodule
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-DB/CMakeLists.txt")
+    message(FATAL_ERROR
+        "AOWIS-SERVER-DB submodule is missing. Run:\n"
+        "  git submodule update --init --recursive"
+    )
+endif()
+
+add_subdirectory(external/AOWIS-SERVER-DB EXCLUDE_FROM_ALL)
 
 qt_add_executable(aowis-server-gui
     resources.qrc
@@ -121,12 +130,9 @@ target_link_libraries(aowis-server-gui
     PRIVATE
         Qt6::Widgets
         Qt6::Network
-        GeographicLib_STATIC
-)
-
-target_link_libraries(aowis-server-gui
-    PRIVATE
+        AOWIS::ServerDBGUI
         aowis-server-epanet-core
+        GeographicLib_STATIC
 )
 
 if(NOT EMSCRIPTEN)

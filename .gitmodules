@@ -4,3 +4,6 @@
 [submodule "external/AOWIS-SERVER-EPANET"]
 	path = external/AOWIS-SERVER-EPANET
 	url = https://github.com/aowis-org/AOWIS-SERVER-EPANET.git
+[submodule "external/AOWIS-SERVER-DB"]
+	path = external/AOWIS-SERVER-DB
+	url = https://github.com/aowis-org/AOWIS-SERVER-DB.git
