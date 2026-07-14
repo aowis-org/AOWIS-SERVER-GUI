@@ -47,6 +47,7 @@ private:
     MapNavigationWidget *map_nav;
     void addGroupNodeVisuals();
     void addGroupLinkVisuals();
+    void addGroupHeatmapVisuals();
     
 signals:
     void mapZoomIn();
@@ -54,6 +55,7 @@ signals:
     
     void signalNodeVisualClicked(VisualNode visual_node);
     void signalLinkVisualClicked(VisualLink visual_link);
+    void signalHeatmapVisualClicked(VisualHeatmap visual_heatmap);
 };
 
 
@@ -79,6 +81,7 @@ private:
 signals:
     void signalShowMapLegendNode(VisualNode visual_node);
     void signalShowMapLegendLink(VisualLink visual_link);
+    void signalShowMapLegendHeatmap(VisualHeatmap visual_heatmap);
 };
 
 

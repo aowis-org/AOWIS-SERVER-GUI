@@ -40,9 +40,11 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, GpsProvider *gps, 
     this->layout->addWidget(map);
     
     connect(this->controls, &MapMonitorMenuWidget::signalNodeVisualClicked,
-            this, &MapMonitorContainer::signalShowMapLegendNode);
+        this, &MapMonitorContainer::signalShowMapLegendNode);
     connect(this->controls, &MapMonitorMenuWidget::signalLinkVisualClicked,
-            this, &MapMonitorContainer::signalShowMapLegendLink);
+        this, &MapMonitorContainer::signalShowMapLegendLink);
+    connect(this->controls, &MapMonitorMenuWidget::signalHeatmapVisualClicked,
+        this, &MapMonitorContainer::signalShowMapLegendHeatmap);
 }
 MapWidget *MapMonitorContainer::getMap()
 {
@@ -67,6 +69,7 @@ MapMonitorMenuWidget::MapMonitorMenuWidget(MapWidget *map, QWidget *parent)
     
     addGroupLinkVisuals();
     addGroupNodeVisuals();
+    addGroupHeatmapVisuals();
     
     this->layout->addStretch();
 }
@@ -201,3 +204,70 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     vbox->addWidget(radio_link_lake);
 }
 
+void MapMonitorMenuWidget::addGroupHeatmapVisuals()
+{
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Heatmap", this);
+    this->layout->addWidget(group);
+    
+    QVBoxLayout *vbox = new QVBoxLayout();
+    group->setLayout(vbox);
+    
+    QRadioButton *radio_none = new QRadioButton("None");
+    radio_none->setChecked(true);
+    
+    QRadioButton *radio_elevation = new QRadioButton("Elevation");
+    QRadioButton *radio_total_demand = new QRadioButton("Total Demand");
+    QRadioButton *radio_demand_deficit = new QRadioButton("Demand Deficit");
+    QRadioButton *radio_leakage = new QRadioButton("Leakage");
+    QRadioButton *radio_head = new QRadioButton("Head");
+    QRadioButton *radio_pressure = new QRadioButton("Pressure");
+    QRadioButton *radio_chlorine = new QRadioButton("Cl₂ [mg/L]");
+    QRadioButton *radio_river = new QRadioButton("River Water [%]");
+    QRadioButton *radio_lake = new QRadioButton("Lake Water [%]");
+    
+    QLabel *label_slider_opacity = new QLabel("Opacity");
+    QSlider *slider_opacity = new QSlider(Qt::Horizontal);
+    slider_opacity->setRange(0, 100);
+    slider_opacity->setValue(55);
+    
+    QLabel *label_slider_radius = new QLabel("Radius");
+    QSlider *slider_radius = new QSlider(Qt::Horizontal);
+    slider_radius->setRange(10, 500);
+    slider_radius->setValue(100);
+    
+    const auto connect_heatmap_visual =
+        [this](QRadioButton *button, VisualHeatmap visual)
+    {
+        connect(button, &QRadioButton::clicked, this, [this, visual]
+        {
+            emit signalHeatmapVisualClicked(visual);
+        });
+    };
+    
+    connect_heatmap_visual(radio_none, VisualHeatmap::None);
+    connect_heatmap_visual(radio_elevation, VisualHeatmap::Elevation);
+    connect_heatmap_visual(radio_total_demand, VisualHeatmap::TotalDemand);
+    connect_heatmap_visual(radio_demand_deficit, VisualHeatmap::DemandDeficit);
+    connect_heatmap_visual(radio_leakage, VisualHeatmap::Leakage);
+    connect_heatmap_visual(radio_head, VisualHeatmap::Head);
+    connect_heatmap_visual(radio_pressure, VisualHeatmap::Pressure);
+    connect_heatmap_visual(radio_chlorine, VisualHeatmap::Chlorine);
+    connect_heatmap_visual(radio_river, VisualHeatmap::RiverWater);
+    connect_heatmap_visual(radio_lake, VisualHeatmap::LakeWater);
+    
+    vbox->addWidget(radio_none);
+    vbox->addWidget(radio_elevation);
+    vbox->addWidget(radio_total_demand);
+    vbox->addWidget(radio_demand_deficit);
+    vbox->addWidget(radio_leakage);
+    vbox->addWidget(radio_head);
+    vbox->addWidget(radio_pressure);
+    vbox->addWidget(radio_chlorine);
+    vbox->addWidget(radio_river);
+    vbox->addWidget(radio_lake);
+    
+    vbox->addWidget(label_slider_opacity);
+    vbox->addWidget(slider_opacity);
+    vbox->addWidget(label_slider_radius);
+    vbox->addWidget(slider_radius);
+}

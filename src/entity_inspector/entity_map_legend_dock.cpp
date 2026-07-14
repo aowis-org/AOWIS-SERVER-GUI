@@ -1,7 +1,7 @@
 #include "entity_map_legend_dock.h"
 
 EntityMapLegendDock::EntityMapLegendDock(QWidget *parent)
-    : QDockWidget(parent)
+    : QDockWidget("Map Symbology Legend", parent)
 {
     //setMinimumWidth(Sizes::SidebarRightWidth);
     this->resize(Sizes::SidebarRightWidth, this->height());
@@ -14,29 +14,71 @@ EntityMapLegendDock::EntityMapLegendDock(QWidget *parent)
                 QDockWidget::DockWidgetMovable |
                 QDockWidget::DockWidgetFloatable);
     
+    QWidget *content = new QWidget(this);
+    this->layout = new QVBoxLayout(content);
+    setWidget(content);
     
-        
+    addGroupNode();
+    addGroupLink();
+    addGroupHeatmap();
+    
+    this->layout->addStretch();
 }
 
 void EntityMapLegendDock::showMapLegendNode(VisualNode visual_node)
 {
     this->visual_node = visual_node;
     setVisibility();
-    
-    qDebug() << "node";
 }
 void EntityMapLegendDock::showMapLegendLink(VisualLink visual_link)
 {
     this->visual_link = visual_link;
     setVisibility();
-    
-    qDebug() << "link";    
+}
+void EntityMapLegendDock::showMapLegendHeatmap(VisualHeatmap visual_heatmap)
+{
+    this->visual_heatmap = visual_heatmap;
+    setVisibility();
 }
 
 void EntityMapLegendDock::setVisibility()
 {
-    if ((this->visual_link != VisualLink::None) || (this->visual_node != VisualNode::None))
+    if (
+        (this->visual_link != VisualLink::None) ||
+        (this->visual_node != VisualNode::None) ||
+        (this->visual_heatmap != VisualHeatmap::None)
+    )
         setVisible(true);
     else
         setVisible(false);
+}
+
+void EntityMapLegendDock::addGroupNode()
+{
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Node Legend");
+    QGridLayout *grid = new QGridLayout(group);
+    
+    
+    
+    this->layout->addWidget(group);
+}
+
+void EntityMapLegendDock::addGroupLink()
+{
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Link Legend");
+    QGridLayout *grid = new QGridLayout(group);
+    
+    
+    
+    this->layout->addWidget(group);
+}
+
+void EntityMapLegendDock::addGroupHeatmap()
+{
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Heatmap Legend");
+    QGridLayout *grid = new QGridLayout(group);
+    
+    
+    
+    this->layout->addWidget(group);
 }

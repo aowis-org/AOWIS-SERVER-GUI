@@ -8,6 +8,8 @@
 
 #include <QDebug>
 
+#include "../widgets/group_box_collapsible.h"
+
 #include "../_enums_structs.h"
 #include "../_sizes.h"
 
@@ -20,12 +22,20 @@ public:
 public slots:
     void showMapLegendNode(VisualNode visual_node);
     void showMapLegendLink(VisualLink visual_link);
+    void showMapLegendHeatmap(VisualHeatmap visual_heatmap);
     
 private:
-    VisualNode visual_node;
-    VisualLink visual_link;
+    QVBoxLayout *layout = nullptr;
+    
+    VisualNode visual_node = VisualNode::None;
+    VisualLink visual_link = VisualLink::None;
+    VisualHeatmap visual_heatmap = VisualHeatmap::None;
     
     void setVisibility();
+    
+    void addGroupNode();
+    void addGroupLink();
+    void addGroupHeatmap();
     
 signals:
     
