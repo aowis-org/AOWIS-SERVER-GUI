@@ -7,3 +7,6 @@
 [submodule "external/AOWIS-SERVER-DB"]
 	path = external/AOWIS-SERVER-DB
 	url = https://github.com/aowis-org/AOWIS-SERVER-DB.git
+[submodule "external/AOWIS-SERVER-MODEL"]
+	path = external/AOWIS-SERVER-MODEL
+	url = https://github.com/aowis-org/AOWIS-SERVER-MODEL.git

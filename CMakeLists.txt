@@ -30,6 +30,14 @@ set(USE_BOOST OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(external/GeographicLib EXCLUDE_FROM_ALL)
 
+# AOWIS-SERVER-MODEL submodule
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/CMakeLists.txt")
+    message(FATAL_ERROR
+        "AOWIS-SERVER-MODEL submodule is missing. Run:\n"
+        "  git submodule update --init --recursive"
+    )
+endif()
+add_subdirectory(external/AOWIS-SERVER-MODEL EXCLUDE_FROM_ALL)
 
 # AOWIS-SERVER-EPANET submodule
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-EPANET/CMakeLists.txt")
@@ -40,7 +48,6 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-EPANET/CMakeLis
 endif()
 set(AOWIS_SERVER_EPANET_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 set(AOWIS_SERVER_EPANET_BUILD_SHARED_EPANET OFF CACHE BOOL "" FORCE)
-
 add_subdirectory(external/AOWIS-SERVER-EPANET EXCLUDE_FROM_ALL)
 
 # AOWIS-SERVER-DB submodule
@@ -50,7 +57,6 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-DB/CMakeLists.t
         "  git submodule update --init --recursive"
     )
 endif()
-
 add_subdirectory(external/AOWIS-SERVER-DB EXCLUDE_FROM_ALL)
 
 qt_add_executable(aowis-server-gui
@@ -133,6 +139,7 @@ target_link_libraries(aowis-server-gui
         Qt6::Widgets
         Qt6::Network
         Qt6::Sql
+        AOWIS::ServerModel
         AOWIS::ServerDBGUI
         aowis-server-epanet-core
         GeographicLib_STATIC
