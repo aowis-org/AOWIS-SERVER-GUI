@@ -52,6 +52,8 @@
 #include "entity_inspector/entity_map_legend_dock.h"
 #include "simulation_manager.h"
 
+#include "data.h"
+
 #ifdef Q_OS_WASM
 #include <emscripten.h>
 #include <emscripten/html5.h>
@@ -74,6 +76,8 @@ private:
     Qt::WindowStates window_state_saved;
     QRect window_geometry_saved;
     void fullScreenToggle();
+    
+    Data *data = nullptr;
     
     GpsProvider *gps = nullptr;
     

@@ -3,14 +3,21 @@
 
 #include <QObject>
 
-// ChatGPT: we need to include here ../external/AOWIS-SERVER-DB/src/database_gui.h
+#include <QDebug>
+
+#include "database_gui.h"
 
 class Data : public QObject
 {
     Q_OBJECT
 public:
     explicit Data(QObject *parent = nullptr);
-
+    
+    void getTest();
+    
+private:
+    DatabaseGui *database_gui = nullptr;
+    
 signals:
 };
 

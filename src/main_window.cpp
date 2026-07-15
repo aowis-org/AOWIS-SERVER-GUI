@@ -4,6 +4,7 @@
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
+    data(new Data(this)),
     gps( new GpsProvider(this) ),
     dock_sim_control( new SimControlDock(this) ),
     dock_entity_inspector( new EntityInspectorDock(this) ),
@@ -167,8 +168,13 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->map_edit, &MapWidget::signalCoordsChangedUTM, this->footer, &FooterStatusBar::setMapCoordinatesUTM);
     
     connect(this->dock_sim_control, &SimControlDock::signalHeadlossFormulaChanged, this->dock_entity_inspector, &EntityInspectorDock::onHeadlossFormulaChanged);
-    connect(this->dock_sim_control, &SimControlDock::signalSimulationStart, this->simulation_manager, &SimulationManager::run);
+    //connect(this->dock_sim_control, &SimControlDock::signalSimulationStart, this->simulation_manager, &SimulationManager::run);
     connect(this->dock_sim_control, &SimControlDock::signalShowEpanetLog, this->simulation_manager, &SimulationManager::showEpanetLog);
+    
+    connect(this->dock_sim_control, &SimControlDock::signalSimulationStart, this, [this]
+    {
+        this->data->getTest();
+    });
     
     #ifdef AOWIS_STANDALONE
     #else    
