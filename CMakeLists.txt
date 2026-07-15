@@ -11,6 +11,7 @@ set(CMAKE_AUTORCC ON)
 find_package(Qt6 REQUIRED COMPONENTS
     Widgets
     Network
+    Sql
 )
 
 if(NOT EMSCRIPTEN)
@@ -130,6 +131,7 @@ target_link_libraries(aowis-server-gui
     PRIVATE
         Qt6::Widgets
         Qt6::Network
+        Qt6::Sql
         AOWIS::ServerDBGUI
         aowis-server-epanet-core
         GeographicLib_STATIC
