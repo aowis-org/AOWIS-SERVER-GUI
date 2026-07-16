@@ -7,6 +7,7 @@
 
 #include "database_gui.h"
 
+#include <aowis/model/project.h>
 #include <aowis/model/hydraulic/simulation_request.h>
 
 class Data : public QObject
@@ -15,11 +16,12 @@ class Data : public QObject
 public:
     explicit Data(QObject *parent = nullptr);
     
-    void initializeTestDB();
-    void getTest();
+    void getProject();
     
 private:
     DatabaseGui *database_gui = nullptr;
+    
+    std::optional<Project> project;
     
 private slots:
     void onDatabaseReady();

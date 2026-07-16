@@ -27,10 +27,10 @@ Data::Data(QObject *parent)
 
 void Data::onDatabaseReady()
 {
-    initializeTestDB();
+    getProject();
 }
 
-void Data::initializeTestDB()
+void Data::getProject()
 {
     DatabaseShared *sharedDatabase = this->database_gui->sharedDatabase();
     
@@ -40,17 +40,50 @@ void Data::initializeTestDB()
         return;
     }
     
-    const QString projectId =
-        sharedDatabase->createProject(
+    const QString configKey = QStringLiteral("development_test_project_id");
+    
+    const std::optional<QString> configuredProjectId =
+        sharedDatabase->configValue(configKey);
+    
+    if (configuredProjectId.has_value())
+    {
+        const QUuid projectId(configuredProjectId.value());
+        
+        if (!projectId.isNull())
+            this->project = sharedDatabase->projectById(projectId);
+    }
+    
+    if (!this->project.has_value())
+    {
+        const QUuid projectId = sharedDatabase->createProject(
             QStringLiteral("Test"),
             QStringLiteral("Test DB for Dev")
             );
+        
+        if (projectId.isNull())
+        {
+            qCritical() << "Could not create test project";
+            return;
+        }
+        
+        if (!sharedDatabase->setConfigValue(
+                configKey,
+                projectId.toString(QUuid::WithoutBraces)))
+        {
+            qCritical() << "Could not store test project ID";
+            return;
+        }
+        
+        this->project = sharedDatabase->projectById(projectId);
+    }
     
-    if (projectId.isEmpty())
+    if (!this->project.has_value())
     {
-        qCritical() << "Could not create test project";
+        qCritical() << "Could not retrieve test project";
         return;
     }
     
-    qDebug() << "Created test project:" << projectId;
+    qDebug() << "Test project:"
+             << this->project->projectId
+             << this->project->name;
 }
