@@ -1,12 +1,12 @@
 #include "map_canvas_widget.h"
 
-MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map, NetworkData *data, CanvasMode mode, QWidget *parent)
+MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map, NetworkData *network_data, CanvasMode mode, QWidget *parent)
     : QWidget{parent},
     map_model(map_model),
     map(map),
-    network_data(data),
+    network_data(network_data),
     mode(mode),
-    map_canvas_entities(new MapCanvasEntities(map_model, this))
+    map_canvas_entities(new MapCanvasEntities(map_model, network_data, this))
 {
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_NoSystemBackground);
@@ -14,7 +14,6 @@ MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map, NetworkDat
     
     //setFocusPolicy(Qt::StrongFocus);
     //setFocus(Qt::OtherFocusReason);
-    
 }
 
 int MapCanvasWidget::backgroundOpacity() const

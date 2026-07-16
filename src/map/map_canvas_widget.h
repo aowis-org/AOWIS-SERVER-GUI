@@ -18,7 +18,7 @@
 #include "map_model.h"
 #include "map_widget.h"
 #include "map_canvas_entities.h"
-#include "map_network_structs.h"
+#include "map_models.h"
 
 #include "../network_data.h"
 #include "../_enums_structs.h"
@@ -27,7 +27,7 @@ class MapCanvasWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapCanvasWidget(MapModel *map_model, MapWidget *map, NetworkData *data, CanvasMode mode, QWidget *parent = nullptr);
+    explicit MapCanvasWidget(MapModel *map_model, MapWidget *map, NetworkData *network_data, CanvasMode mode, QWidget *parent = nullptr);
     
     int backgroundOpacity() const;
     

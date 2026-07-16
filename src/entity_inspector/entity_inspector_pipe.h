@@ -22,7 +22,7 @@
 
 #include "../_enums_structs.h"
 #include "../_sizes.h"
-#include "../map/map_network_structs.h"
+#include "../map/map_models.h"
 
 class EntityInspectorPipe : public EntityInspectorWidget
 {

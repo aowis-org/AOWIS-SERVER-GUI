@@ -2,9 +2,10 @@
 #include "map_canvas_widget.h"
 
 
-MapCanvasEntities::MapCanvasEntities(MapModel *map_model, MapCanvasWidget *map_canvas)
+MapCanvasEntities::MapCanvasEntities(MapModel *map_model, NetworkData *network_data, MapCanvasWidget *map_canvas)
     : QObject(map_canvas),
     map_model(map_model),
+    network_data(network_data),
     map_canvas(map_canvas)
 {
     connect(this->map_model, &MapModel::zoomChanged, this, &MapCanvasEntities::scaleMarkersTank);

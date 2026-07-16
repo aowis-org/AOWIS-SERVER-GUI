@@ -22,7 +22,7 @@
 
 #include "../_enums_structs.h"
 #include "../_sizes.h"
-#include "../map/map_network_structs.h"
+#include "../map/map_models.h"
 //#include "../../external/AOWIS-SERVER-EPANET/src/lib/model/simulation_request.h"
 #include <aowis/model/hydraulic/network.h>
 

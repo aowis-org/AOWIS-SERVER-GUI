@@ -1,5 +1,5 @@
-#ifndef MAP_NETWORK_STRUCTS_H
-#define MAP_NETWORK_STRUCTS_H
+#ifndef MAP_MODELS_H
+#define MAP_MODELS_H
 
 #include <QString>
 #include <QLabel>
@@ -84,4 +84,4 @@ struct EntityTankMarker
 
 
 
-#endif // MAP_NETWORK_STRUCTS_H
+#endif // MAP_MODELS_H
