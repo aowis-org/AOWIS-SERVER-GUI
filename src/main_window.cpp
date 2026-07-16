@@ -173,7 +173,7 @@ MainWindow::MainWindow(QWidget *parent)
     
     connect(this->dock_sim_control, &SimControlDock::signalSimulationStart, this, [this]
     {
-        this->data->getTest();
+        this->data->initializeTestDB();
     });
     
     #ifdef AOWIS_STANDALONE

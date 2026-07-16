@@ -15,10 +15,14 @@ class Data : public QObject
 public:
     explicit Data(QObject *parent = nullptr);
     
+    void initializeTestDB();
     void getTest();
     
 private:
     DatabaseGui *database_gui = nullptr;
+    
+private slots:
+    void onDatabaseReady();
     
 signals:
 };
