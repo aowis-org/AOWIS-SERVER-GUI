@@ -38,6 +38,7 @@ protected:
     QVBoxLayout *layoutConfiguration();
     QVBoxLayout *layoutSimMeas();
     QVBoxLayout *layoutQuality();
+    QVBoxLayout *layoutAlerts();
     QVBoxLayout *layoutHistory();
     
     void setTitle(const QString &title);
@@ -98,6 +99,10 @@ private:
     QScrollArea *scroll_quality = nullptr;
     QWidget *widget_quality = nullptr;
     QVBoxLayout *layout_quality = nullptr;
+    
+    QScrollArea *scroll_alerts = nullptr;
+    QWidget *widget_alerts = nullptr;
+    QVBoxLayout *layout_alerts = nullptr;
     
     QScrollArea *scroll_history = nullptr;
     QWidget *widget_history = nullptr;

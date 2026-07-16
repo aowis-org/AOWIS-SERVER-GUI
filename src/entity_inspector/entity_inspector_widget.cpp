@@ -25,6 +25,10 @@ EntityInspectorWidget::EntityInspectorWidget(QWidget *parent)
     widget_quality(new QWidget()),
     layout_quality(new QVBoxLayout(this->widget_quality)),
     
+    scroll_alerts(new QScrollArea(this)),
+    widget_alerts(new QWidget()),
+    layout_alerts(new QVBoxLayout(this->widget_alerts)),
+    
     scroll_history(new QScrollArea(this)),
     widget_history(new QWidget()),
     layout_history(new QVBoxLayout(this->widget_history))
@@ -40,6 +44,9 @@ EntityInspectorWidget::EntityInspectorWidget(QWidget *parent)
     
     this->scroll_quality->setWidgetResizable(true);
     this->scroll_quality->setWidget(this->widget_quality);
+    
+    this->scroll_alerts->setWidgetResizable(true);
+    this->scroll_alerts->setWidget(this->widget_alerts);
     
     this->scroll_history->setWidgetResizable(true);
     this->scroll_history->setWidget(this->widget_history);
@@ -57,6 +64,9 @@ EntityInspectorWidget::EntityInspectorWidget(QWidget *parent)
     
     tabs->addTab(this->scroll_quality, QIcon(":/icon/inspector_quality.png"), "");
     this->tabs->setTabToolTip(this->tabs->count()-1, "Quality");
+    
+    tabs->addTab(this->scroll_alerts, QIcon(":/icon/alarm.png"), "");
+    this->tabs->setTabToolTip(this->tabs->count()-1, "Alerts");
     
     tabs->addTab(this->scroll_history, QIcon(":/icon/history.png"), "");
     this->tabs->setTabToolTip(this->tabs->count()-1, "History");
