@@ -9,7 +9,8 @@ SimulationManager::SimulationManager(QObject *parent)
 void SimulationManager::run()
 {
     //NetworkHydraulic request = DummyNetworks::networkSimple();
-    NetworkHydraulic request = DummyNetworks::networkTanks();
+    //NetworkHydraulic request = DummyNetworks::networkTanks();
+    NetworkHydraulic request = DummyNetworks::networkOnMap();
     //NetworkHydraulic request = DummyNetworks::networkTanksTimeline();
     
     EpanetWrapper *epanet = new EpanetWrapper(this);
