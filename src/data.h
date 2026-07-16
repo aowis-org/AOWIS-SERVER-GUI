@@ -8,7 +8,7 @@
 #include "database_gui.h"
 
 #include <aowis/model/project.h>
-#include <aowis/model/hydraulic/simulation_request.h>
+#include <aowis/model/hydraulic/network.h>
 
 class Data : public QObject
 {

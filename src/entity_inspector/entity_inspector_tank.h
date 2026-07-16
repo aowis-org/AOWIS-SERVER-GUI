@@ -24,7 +24,7 @@
 #include "../_sizes.h"
 #include "../map/map_network_structs.h"
 //#include "../../external/AOWIS-SERVER-EPANET/src/lib/model/simulation_request.h"
-#include <aowis/model/hydraulic/simulation_request.h>
+#include <aowis/model/hydraulic/network.h>
 
 class EntityInspectorTank : public EntityInspectorWidget
 {
