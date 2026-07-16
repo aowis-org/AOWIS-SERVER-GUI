@@ -54,7 +54,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendHeatmap, this->dock_entity_map_legend, &EntityMapLegendDock::showMapLegendHeatmap);
     
     setStyleSheet(
-        "QMainWindow::separator {"
+        "QMainWindow::separator"
+        "{"
         "    width: 0px;"
         "    height: 0px;"
         "}"
@@ -72,7 +73,7 @@ MainWindow::MainWindow(QWidget *parent)
     
     // don't make it smaller, because that could lead to positioning issues on the canvas
     this->setMinimumHeight(700);
-    this->setMinimumWidth(1122);
+    this->setMinimumWidth(1222);
     
     this->tabs->setIconSize(QSize(40, 40));
     this->tabs->setTabPosition(QTabWidget::West);

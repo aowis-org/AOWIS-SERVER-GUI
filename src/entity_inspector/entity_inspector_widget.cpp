@@ -53,6 +53,16 @@ EntityInspectorWidget::EntityInspectorWidget(QWidget *parent)
     
     this->tabs->setIconSize(QSize(40, 40));
     
+    this->tabs->setIconSize(QSize(40, 40));
+    
+    this->tabs->tabBar()->setStyleSheet(
+        "QTabBar::tab"
+        "{"
+        "    max-width: 40px;"
+        "    padding: 5px;"
+        "}"
+    );
+    
     tabs->addTab(this->scroll_overview, QIcon(":/icon/inspector_dash.png"), "");
     this->tabs->setTabToolTip(this->tabs->count()-1, "Entity Overview");
     
