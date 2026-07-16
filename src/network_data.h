@@ -1,5 +1,5 @@
-#ifndef DATA_H
-#define DATA_H
+#ifndef NETWORK_DATA_H
+#define NETWORK_DATA_H
 
 #include <QObject>
 
@@ -10,18 +10,23 @@
 #include <aowis/model/project.h>
 #include <aowis/model/hydraulic/network.h>
 
-class Data : public QObject
+#include "dummy/dummy_networks.h"
+
+class NetworkData : public QObject
 {
     Q_OBJECT
 public:
-    explicit Data(QObject *parent = nullptr);
+    explicit NetworkData(QObject *parent = nullptr);
     
-    void getProject();
+    void loadProject();
+    
+    NetworkHydraulic networkHydraulic();
     
 private:
     DatabaseGui *database_gui = nullptr;
     
     std::optional<Project> project;
+    NetworkHydraulic network_hydraulic;
     
 private slots:
     void onDatabaseReady();
@@ -29,4 +34,4 @@ private slots:
 signals:
 };
 
-#endif // DATA_H
+#endif // NETWORK_DATA_H

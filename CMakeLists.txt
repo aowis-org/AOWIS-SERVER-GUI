@@ -110,7 +110,7 @@ qt_add_executable(aowis-server-gui
     src/entity_inspector/entity_inspector_customer_point.h src/entity_inspector/entity_inspector_customer_point.cpp
     src/simulation_manager.h src/simulation_manager.cpp
     src/entity_inspector/entity_map_legend_dock.h src/entity_inspector/entity_map_legend_dock.cpp
-    src/data.h src/data.cpp
+    src/network_data.h src/network_data.cpp
 )
 
 if(APPLE)

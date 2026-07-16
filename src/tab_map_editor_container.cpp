@@ -1,12 +1,13 @@
 #include "tab_map_editor_container.h"
 
-MapEditorContainer::MapEditorContainer(MapModel *map_model, GpsProvider *gps, EntityInspectorDock *map_inspector, QWidget *parent)
+MapEditorContainer::MapEditorContainer(MapModel *map_model, NetworkData *data, GpsProvider *gps, EntityInspectorDock *map_inspector, QWidget *parent)
     : QWidget{parent},
+    network_data( data ),
     layout( new QHBoxLayout(this) ),
     gps( gps ),
     map_model( map_model ),
     map( new MapWidget(this->map_model, gps, this) ),
-    map_canvas( new MapCanvasWidget(this->map_model, this->map, CanvasMode::Edit, this) ),
+    map_canvas( new MapCanvasWidget(this->map_model, this->map, this->network_data, CanvasMode::Edit, this) ),
     map_menu( new MapEditorMenuWidget(this->map, this->map_canvas, CanvasMode::Edit, this) ),
     map_inspector( map_inspector ),
     map_stack( new QWidget(this) ),

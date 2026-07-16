@@ -4,7 +4,7 @@
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
-    data(new Data(this)),
+    network_data(new NetworkData(this)),
     gps( new GpsProvider(this) ),
     dock_sim_control( new SimControlDock(this) ),
     dock_entity_inspector( new EntityInspectorDock(this) ),
@@ -13,7 +13,7 @@ MainWindow::MainWindow(QWidget *parent)
     tabs( new QTabWidget(this) ),
     settings( new SettingsWidget(this) ),
     map_monitor( new MapMonitorContainer(map_model, gps, this) ),
-    map_editor( new MapEditorContainer(map_model, gps, dock_entity_inspector, this) ),
+    map_editor( new MapEditorContainer(map_model, network_data, gps, dock_entity_inspector, this) ),
     energy( new EnergyWidget(this) ),
     reservoirs( new ReservoirsWidget(this) ),
     tanks( new TanksWidget(this) ),
@@ -25,7 +25,7 @@ MainWindow::MainWindow(QWidget *parent)
     customers( new CustomersWidget(this) ),
     logs( new LogsWidget(this) ),
     alarms( new AlarmsWidget(this) ),
-    simulation_manager( new SimulationManager(this) )
+    simulation_manager( new SimulationManager(network_data, this) )
 {
     #ifdef AOWIS_STANDALONE
     setWindowTitle("AOWIS Controller [Standalone]");

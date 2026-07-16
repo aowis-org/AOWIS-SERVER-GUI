@@ -1,9 +1,10 @@
 #include "map_canvas_widget.h"
 
-MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map, CanvasMode mode, QWidget *parent)
+MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map, NetworkData *data, CanvasMode mode, QWidget *parent)
     : QWidget{parent},
     map_model(map_model),
     map(map),
+    network_data(data),
     mode(mode),
     map_canvas_entities(new MapCanvasEntities(map_model, this))
 {

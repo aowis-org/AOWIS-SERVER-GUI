@@ -1,20 +1,18 @@
 #include "simulation_manager.h"
 
-SimulationManager::SimulationManager(QObject *parent)
-    : QObject{parent}
+SimulationManager::SimulationManager(NetworkData *data, QObject *parent)
+    : QObject{parent},
+    network_data(data)
 {
     
 }
 
 void SimulationManager::run()
 {
-    //NetworkHydraulic request = DummyNetworks::networkSimple();
-    //NetworkHydraulic request = DummyNetworks::networkTanks();
-    NetworkHydraulic request = DummyNetworks::networkOnMap();
-    //NetworkHydraulic request = DummyNetworks::networkTanksTimeline();
+    NetworkHydraulic network_hydraulic = this->network_data->networkHydraulic();
     
     EpanetWrapper *epanet = new EpanetWrapper(this);
-    epanet->run(request);
+    epanet->run(network_hydraulic);
     //qDebug().noquote() << epanet->reportText();
     
     this->epanet_log = epanet->reportText();
@@ -27,9 +25,9 @@ void SimulationManager::showEpanetLog()
     QDialog *log_dialog = new QDialog(
         main_window,
         Qt::Dialog
-            | Qt::WindowTitleHint
-            | Qt::WindowCloseButtonHint
-            | Qt::WindowMaximizeButtonHint
+        | Qt::WindowTitleHint
+        | Qt::WindowCloseButtonHint
+        | Qt::WindowMaximizeButtonHint
     );
     
     log_dialog->setAttribute(Qt::WA_DeleteOnClose);

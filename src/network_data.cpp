@@ -1,36 +1,31 @@
-#include "data.h"
+#include "network_data.h"
 
-Data::Data(QObject *parent)
+NetworkData::NetworkData(QObject *parent)
     : QObject{parent},
     database_gui(new DatabaseGui(this))
 {
-    connect(
-        this->database_gui,
-        &DatabaseGui::signalReady,
-        this,
-        &Data::onDatabaseReady
-        );
+    connect(this->database_gui, &DatabaseGui::signalReady, this, &NetworkData::onDatabaseReady);
     
-    connect(
-        this->database_gui,
-        &DatabaseGui::signalError,
-        this,
-        [](const QString &message)
-        {
-            qCritical() << "Could not initialize database:" << message;
-        }
-        );
+    connect(this->database_gui, &DatabaseGui::signalError, this, [](const QString &message)
+    {
+        qCritical() << "Could not initialize database:" << message;
+    });
     
     DatabaseConfiguration configuration;
     this->database_gui->open(configuration);
 }
 
-void Data::onDatabaseReady()
+void NetworkData::onDatabaseReady()
 {
-    getProject();
+    loadProject();
+    
+    //this->network_hydraulic request = DummyNetworks::networkSimple();
+    //this->network_hydraulic = DummyNetworks::networkTanks();
+    this->network_hydraulic = DummyNetworks::networkOnMap();
+    //this->network_hydraulic = DummyNetworks::networkTanksTimeline();
 }
 
-void Data::getProject()
+void NetworkData::loadProject()
 {
     DatabaseShared *sharedDatabase = this->database_gui->sharedDatabase();
     
@@ -86,4 +81,9 @@ void Data::getProject()
     qDebug() << "Test project:"
              << this->project->projectId
              << this->project->name;
+}
+
+NetworkHydraulic NetworkData::networkHydraulic()
+{
+    return this->network_hydraulic;
 }

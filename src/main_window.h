@@ -52,7 +52,7 @@
 #include "entity_inspector/entity_map_legend_dock.h"
 #include "simulation_manager.h"
 
-#include "data.h"
+#include "network_data.h"
 
 #ifdef Q_OS_WASM
 #include <emscripten.h>
@@ -77,7 +77,7 @@ private:
     QRect window_geometry_saved;
     void fullScreenToggle();
     
-    Data *data = nullptr;
+    NetworkData *network_data = nullptr;
     
     GpsProvider *gps = nullptr;
     

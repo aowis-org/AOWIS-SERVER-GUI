@@ -23,6 +23,7 @@
 #include "map/map_navigation_widget.h"
 #include "map/map_canvas_widget.h"
 #include "entity_inspector/entity_inspector_dock.h"
+#include "network_data.h"
 
 #ifdef Q_OS_WASM
 #include "gps_provider_dummy.h"
@@ -68,7 +69,7 @@ class MapEditorContainer : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapEditorContainer(MapModel *map_model, GpsProvider *gps, EntityInspectorDock *map_inspector, QWidget *parent = nullptr);
+    explicit MapEditorContainer(MapModel *map_model, NetworkData *network_data, GpsProvider *gps, EntityInspectorDock *map_inspector, QWidget *parent = nullptr);
     
     MapWidget *getMap();
     
@@ -76,6 +77,7 @@ protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
     
 private:
+    NetworkData *network_data = nullptr;
     GpsProvider *gps;
     
     EntityInspectorDock *map_inspector;
