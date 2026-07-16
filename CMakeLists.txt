@@ -92,7 +92,7 @@ qt_add_executable(aowis-server-gui
     src/interface_server_map_rest.h src/interface_server_map_rest.cpp
     src/tab_logs_widget.h src/tab_logs_widget.cpp
     src/tab_alarms_widget.h src/tab_alarms_widget.cpp
-    src/map/map_network_structs.h
+    src/map/map_models.h
     src/map/map_canvas_entities.h src/map/map_canvas_entities.cpp
     src/map/map_entity_marker_label.h src/map/map_entity_marker_label.cpp
     src/entity_inspector/entity_inspector_dock.h src/entity_inspector/entity_inspector_dock.cpp
