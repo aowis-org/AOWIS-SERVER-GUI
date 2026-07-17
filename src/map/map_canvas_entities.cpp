@@ -100,44 +100,86 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
 
 bool MapCanvasEntities::anchorMarkerTank(QMouseEvent *event)
 {
-    if (this->entity_floating)
-    {
-        CoordinateWGS84 wgs = this->map_model->wgs84FromScreen(event->position().toPoint(), this->map_canvas->size());
-        EntityTank tank;
-        tank.coord_wgs84 = wgs;
-        EntityTankMarker tank_marker;
-        tank_marker.entity_tank = tank;
-        tank_marker.label = this->entity_floating;
-        
-        tank_marker.label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
-        tank_marker.path_pixmap = ":/icon/tower.png";
-        
-        connect(tank_marker.label, &MapEntityMarkerLabel::signalDeleteRequested,
-                this, &MapCanvasEntities::onTankMarkerDeleteRequested);
-        
-        connect(tank_marker.label, &MapEntityMarkerLabel::signalMoveRequested,
-                this, &MapCanvasEntities::onMarkerMoveRequested);
-        
-        int width = calculateEntityWidth();
-        QPixmap pixmap = QPixmap(tank_marker.path_pixmap).scaledToWidth(width, Qt::SmoothTransformation);
-        tank_marker.label->setPixmap(pixmap);
-        tank_marker.label->resize(pixmap.size());
-        
-        this->list_tank_markers.append(tank_marker);
-        
-        positionMarkersTank();
-        
-        this->entity_floating_hide_until = event->position().toPoint();
-        
-        this->entity_floating = nullptr;
-        
-        if (this->entity_placement_mode == MapEntityPlacementMode::CreateNew)
-            startEntityPositioningInternal();
-        
-        return true;
-    }
-    else
+    if (!this->entity_floating)
         return false;
+    
+    CoordinateWGS84 wgs = this->map_model->wgs84FromScreen(
+        event->position().toPoint(),
+        this->map_canvas->size()
+        );
+    
+    if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting)
+    {
+        for (int i = 0; i < this->list_tank_markers.length(); i++)
+        {
+            EntityTankMarker &tank_marker = this->list_tank_markers[i];
+            
+            if (tank_marker.label == this->entity_floating)
+            {
+                tank_marker.entity_tank.coord_wgs84 = wgs;
+                
+                tank_marker.label->setAttribute(
+                    Qt::WA_TransparentForMouseEvents,
+                    false
+                    );
+                
+                this->entity_floating = nullptr;
+                this->entity_placement_mode = MapEntityPlacementMode::None;
+                
+                positionMarkersTank();
+                this->map_canvas->update();
+                return true;
+            }
+        }
+        
+        return false;
+    }
+    
+    EntityTank tank;
+    tank.coord_wgs84 = wgs;
+    
+    EntityTankMarker tank_marker;
+    tank_marker.entity_tank = tank;
+    tank_marker.label = this->entity_floating;
+    tank_marker.path_pixmap = QStringLiteral(":/icon/tower.png");
+    
+    tank_marker.label->setAttribute(
+        Qt::WA_TransparentForMouseEvents,
+        false
+        );
+    
+    connect(
+        tank_marker.label,
+        &MapEntityMarkerLabel::signalDeleteRequested,
+        this,
+        &MapCanvasEntities::onTankMarkerDeleteRequested
+        );
+    
+    connect(
+        tank_marker.label,
+        &MapEntityMarkerLabel::signalMoveRequested,
+        this,
+        &MapCanvasEntities::onMarkerMoveRequested
+        );
+    
+    int width = calculateEntityWidth();
+    QPixmap pixmap = QPixmap(tank_marker.path_pixmap)
+                         .scaledToWidth(width, Qt::SmoothTransformation);
+    
+    tank_marker.label->setPixmap(pixmap);
+    tank_marker.label->resize(pixmap.size());
+    
+    this->list_tank_markers.append(tank_marker);
+    
+    positionMarkersTank();
+    
+    this->entity_floating_hide_until = event->position().toPoint();
+    this->entity_floating = nullptr;
+    
+    if (this->entity_placement_mode == MapEntityPlacementMode::CreateNew)
+        startEntityPositioningInternal();
+    
+    return true;
 }
 
 int MapCanvasEntities::calculateEntityWidth()
@@ -238,18 +280,21 @@ void MapCanvasEntities::onTankMarkerDeleteRequested(MapEntityMarkerLabel *label)
 }
 void MapCanvasEntities::onMarkerMoveRequested(MapEntityMarkerLabel *label)
 {
-    this->entity_placement_mode = MapEntityPlacementMode::MoveExisting;
+    if (!label)
+        return;
     
     for (int i = 0; i < this->list_tank_markers.length(); i++)
     {
-        EntityTankMarker &marker_tank = this->list_tank_markers[i];
+        EntityTankMarker &tank_marker = this->list_tank_markers[i];
         
-        if (marker_tank.label == label)
+        if (tank_marker.label == label)
         {
+            this->entity_placement_mode = MapEntityPlacementMode::MoveExisting;
             this->entity_floating = label;
-            label->hide();
             
+            label->hide();
             startEntityPositioningInternal();
+            return;
         }
     }
 }
