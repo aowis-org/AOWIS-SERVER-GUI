@@ -20,38 +20,54 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, NetworkData *network_d
 
 void MapCanvasEntities::startEntityPositioning(MapEditTool tool)
 {
+    stopEntityPositioning();
+    
     this->tool_current = tool;
     this->entity_draw_immediately = true;
-    
     this->entity_placement_mode = MapEntityPlacementMode::CreateNew;
+    
     startEntityPositioningInternal();
 }
 void MapCanvasEntities::startEntityPositioningInternal()
 {
-    stopEntityPositioning();
-    
     if (this->entity_placement_mode == MapEntityPlacementMode::CreateNew)
     {
         this->entity_floating = new MapEntityMarkerLabel(this->map_canvas);
-        this->entity_floating->setPixmap(QPixmap(":/icon/tower.png").scaledToWidth(150, Qt::SmoothTransformation));
+        this->entity_floating->setPixmap(
+            QPixmap(QStringLiteral(":/icon/tower.png"))
+                .scaledToWidth(150, Qt::SmoothTransformation)
+            );
         this->entity_floating->adjustSize();
     }
     else if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting)
     {
-        
+        if (!this->entity_floating)
+        {
+            this->entity_placement_mode = MapEntityPlacementMode::None;
+            return;
+        }
+    }
+    else
+    {
+        return;
     }
     
     this->entity_floating->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     this->entity_floating->setFocusPolicy(Qt::NoFocus);
-    
     this->entity_floating->hide();
     this->entity_floating->raise();
     
     if (this->entity_draw_immediately)
     {
+        QPoint marker_pos(
+            qRound(this->mouse_pos_last.x()),
+            qRound(this->mouse_pos_last.y()) - this->entity_floating->height()
+            );
+        
+        this->entity_floating->move(marker_pos);
         this->entity_floating->show();
-        this->entity_floating->move(this->mouse_pos_last.toPoint());
     }
+    
     this->entity_draw_immediately = false;
     
     this->map_canvas->setFocusPolicy(Qt::StrongFocus);
@@ -60,17 +76,33 @@ void MapCanvasEntities::startEntityPositioningInternal()
 
 void MapCanvasEntities::stopEntityPositioning()
 {
-    if (this->entity_floating)
+    if (!this->entity_floating)
     {
-        if (this->entity_placement_mode == MapEntityPlacementMode::CreateNew)
-        {
-            this->entity_floating->deleteLater();
-            this->entity_floating = nullptr;
-        }
-        else if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting)
-        {
-            
-        }
+        this->entity_placement_mode = MapEntityPlacementMode::None;
+        return;
+    }
+    
+    MapEntityPlacementMode previous_mode = this->entity_placement_mode;
+    MapEntityMarkerLabel *label = this->entity_floating;
+    
+    this->entity_floating = nullptr;
+    this->entity_placement_mode = MapEntityPlacementMode::None;
+    
+    if (previous_mode == MapEntityPlacementMode::CreateNew)
+    {
+        label->hide();
+        label->deleteLater();
+        return;
+    }
+    
+    if (previous_mode == MapEntityPlacementMode::MoveExisting)
+    {
+        label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
+        
+        positionMarkersTank();
+        
+        if (this->map_canvas)
+            this->map_canvas->update();
     }
 }
 
@@ -78,24 +110,32 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
 {
     this->mouse_pos_last = event->position();
     
-    if (this->entity_floating)
-    {
-        if (!this->entity_floating->isVisible())
-        {
-            // only draw new floating entity after a certain "rearming distance"
-            if (!this->entity_draw_immediately)
-            {
-                if ((event->position().toPoint() - this->entity_floating_hide_until).manhattanLength() <= 10)
-                    return;
-            }
-            
-            this->entity_floating->show();
-        }
-        this->entity_floating->move(event->position().toPoint());
-        
-        event->accept();
+    if (!this->entity_floating)
         return;
+    
+    if (!this->entity_floating->isVisible())
+    {
+        if (this->entity_placement_mode == MapEntityPlacementMode::CreateNew &&
+            !this->entity_draw_immediately &&
+            (event->position().toPoint() - this->entity_floating_hide_until).manhattanLength() <= 10)
+        {
+            return;
+        }
+        
+        this->entity_floating->show();
     }
+    
+    QPoint marker_pos(
+        qRound(event->position().x()),
+        qRound(event->position().y()) - this->entity_floating->height()
+        );
+    
+    this->entity_floating->move(marker_pos);
+    
+    if (this->map_canvas)
+        this->map_canvas->update();
+    
+    event->accept();
 }
 
 bool MapCanvasEntities::anchorMarkerTank(QMouseEvent *event)
@@ -110,30 +150,44 @@ bool MapCanvasEntities::anchorMarkerTank(QMouseEvent *event)
     
     if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting)
     {
+        MapEntityMarkerLabel *moved_label = this->entity_floating;
+        
         for (int i = 0; i < this->list_tank_markers.length(); i++)
         {
             EntityTankMarker &tank_marker = this->list_tank_markers[i];
             
-            if (tank_marker.label == this->entity_floating)
-            {
-                tank_marker.entity_tank.coord_wgs84 = wgs;
-                
-                tank_marker.label->setAttribute(
-                    Qt::WA_TransparentForMouseEvents,
-                    false
-                    );
-                
-                this->entity_floating = nullptr;
-                this->entity_placement_mode = MapEntityPlacementMode::None;
-                
-                positionMarkersTank();
+            if (tank_marker.label != moved_label)
+                continue;
+            
+            tank_marker.entity_tank.coord_wgs84 = wgs;
+            moved_label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
+            
+            this->entity_floating = nullptr;
+            this->entity_placement_mode = MapEntityPlacementMode::None;
+            
+            positionMarkersTank();
+            
+            if (this->map_canvas)
                 this->map_canvas->update();
-                return true;
-            }
+            
+            return true;
         }
+        
+        moved_label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
+        
+        this->entity_floating = nullptr;
+        this->entity_placement_mode = MapEntityPlacementMode::None;
+        
+        positionMarkersTank();
+        
+        if (this->map_canvas)
+            this->map_canvas->update();
         
         return false;
     }
+    
+    if (this->entity_placement_mode != MapEntityPlacementMode::CreateNew)
+        return false;
     
     EntityTank tank;
     tank.coord_wgs84 = wgs;
@@ -143,10 +197,7 @@ bool MapCanvasEntities::anchorMarkerTank(QMouseEvent *event)
     tank_marker.label = this->entity_floating;
     tank_marker.path_pixmap = QStringLiteral(":/icon/tower.png");
     
-    tank_marker.label->setAttribute(
-        Qt::WA_TransparentForMouseEvents,
-        false
-        );
+    tank_marker.label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
     
     connect(
         tank_marker.label,
@@ -171,13 +222,11 @@ bool MapCanvasEntities::anchorMarkerTank(QMouseEvent *event)
     
     this->list_tank_markers.append(tank_marker);
     
-    positionMarkersTank();
-    
     this->entity_floating_hide_until = event->position().toPoint();
     this->entity_floating = nullptr;
     
-    if (this->entity_placement_mode == MapEntityPlacementMode::CreateNew)
-        startEntityPositioningInternal();
+    positionMarkersTank();
+    startEntityPositioningInternal();
     
     return true;
 }
@@ -221,12 +270,24 @@ void MapCanvasEntities::positionMarkersTank()
         EntityTankMarker &tank_marker = this->list_tank_markers[i];
         MapEntityMarkerLabel *label = tank_marker.label;
         
+        if (!label)
+            continue;
+        
+        if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting &&
+            label == this->entity_floating)
+        {
+            continue;
+        }
+        
         CoordinateWGS84 wgs = tank_marker.entity_tank.coord_wgs84;
-        QPointF point = this->map_model->screenFromWgs84(wgs, this->map_canvas->size());
+        QPointF point = this->map_model->screenFromWgs84(
+            wgs,
+            this->map_canvas->size()
+            );
         
         QPoint marker_pos(
-            int(point.x()),
-            int(point.y()) - label->height()
+            qRound(point.x()),
+            qRound(point.y()) - label->height()
             );
         
         if (label->pos() != marker_pos)
@@ -246,10 +307,25 @@ void MapCanvasEntities::paintMarkersTank(QPainter &paint)
     {
         EntityTankMarker &tank_marker = this->list_tank_markers[i];
         
+        if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting &&
+            tank_marker.label == this->entity_floating)
+        {
+            continue;
+        }
+        
         CoordinateWGS84 wgs = tank_marker.entity_tank.coord_wgs84;
-        QPointF point = this->map_model->screenFromWgs84(wgs, this->map_canvas->size());
+        QPointF point = this->map_model->screenFromWgs84(
+            wgs,
+            this->map_canvas->size()
+            );
         
         paint.drawEllipse(point, 5.0, 5.0);
+    }
+    
+    if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting &&
+        this->entity_floating)
+    {
+        paint.drawEllipse(this->mouse_pos_last, 5.0, 5.0);
     }
     
     paint.restore();
@@ -283,18 +359,29 @@ void MapCanvasEntities::onMarkerMoveRequested(MapEntityMarkerLabel *label)
     if (!label)
         return;
     
+    bool marker_found = false;
+    
     for (int i = 0; i < this->list_tank_markers.length(); i++)
     {
-        EntityTankMarker &tank_marker = this->list_tank_markers[i];
-        
-        if (tank_marker.label == label)
+        if (this->list_tank_markers[i].label == label)
         {
-            this->entity_placement_mode = MapEntityPlacementMode::MoveExisting;
-            this->entity_floating = label;
-            
-            label->hide();
-            startEntityPositioningInternal();
-            return;
+            marker_found = true;
+            break;
         }
     }
+    
+    if (!marker_found)
+        return;
+    
+    stopEntityPositioning();
+    
+    this->entity_placement_mode = MapEntityPlacementMode::MoveExisting;
+    this->entity_floating = label;
+    this->entity_draw_immediately = true;
+    this->mouse_pos_last = this->map_canvas->mapFromGlobal(QCursor::pos());
+    
+    startEntityPositioningInternal();
+    
+    if (this->map_canvas)
+        this->map_canvas->update();
 }
