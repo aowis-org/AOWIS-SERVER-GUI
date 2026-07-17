@@ -213,6 +213,13 @@ bool MapCanvasEntities::anchorMarkerTank(QMouseEvent *event)
         &MapCanvasEntities::onMarkerMoveRequested
         );
     
+    connect(
+        tank_marker.label,
+        &MapEntityMarkerLabel::signalClicked,
+        this,
+        &MapCanvasEntities::onTankMarkerClicked
+        );
+    
     int width = calculateEntityWidth();
     QPixmap pixmap = QPixmap(tank_marker.path_pixmap)
                          .scaledToWidth(width, Qt::SmoothTransformation);
@@ -383,5 +390,28 @@ void MapCanvasEntities::onMarkerMoveRequested(MapEntityMarkerLabel *label)
     startEntityPositioningInternal();
     
     if (this->map_canvas)
+        this->map_canvas->update();
+}
+
+void MapCanvasEntities::onTankMarkerClicked(MapEntityMarkerLabel *label)
+{
+    if (!label)
+        return;
+    
+    bool selection_changed = false;
+    
+    for (int i = 0; i < this->list_tank_markers.length(); i++)
+    {
+        EntityTankMarker &tank_marker = this->list_tank_markers[i];
+        bool selected = tank_marker.label == label;
+        
+        if (tank_marker.selected == selected)
+            continue;
+        
+        tank_marker.selected = selected;
+        selection_changed = true;
+    }
+    
+    if (selection_changed && this->map_canvas)
         this->map_canvas->update();
 }

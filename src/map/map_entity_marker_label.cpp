@@ -9,20 +9,35 @@
 MapEntityMarkerLabel::MapEntityMarkerLabel(QWidget *parent)
     : QLabel(parent)
 {
-    setCursor(Qt::PointingHandCursor);
-    setContextMenuPolicy(Qt::DefaultContextMenu);
+    this->setCursor(Qt::PointingHandCursor);
+    this->setContextMenuPolicy(Qt::DefaultContextMenu);
+    this->setAttribute(Qt::WA_NoMousePropagation, true);
 }
 
 void MapEntityMarkerLabel::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton)
-    {
         emit signalClicked(this);
-        event->accept();
-        return;
-    }
     
-    QLabel::mousePressEvent(event);
+    event->accept();
+}
+
+void MapEntityMarkerLabel::mouseMoveEvent(QMouseEvent *event)
+{
+    event->accept();
+}
+
+void MapEntityMarkerLabel::mouseReleaseEvent(QMouseEvent *event)
+{
+    event->accept();
+}
+
+void MapEntityMarkerLabel::mouseDoubleClickEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton)
+        emit signalClicked(this);
+    
+    event->accept();
 }
 
 void MapEntityMarkerLabel::contextMenuEvent(QContextMenuEvent *event)

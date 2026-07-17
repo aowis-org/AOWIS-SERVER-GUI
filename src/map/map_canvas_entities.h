@@ -58,6 +58,7 @@ private:
     QPointF mouse_pos_last;
     
 private slots:
+    void onTankMarkerClicked(MapEntityMarkerLabel *label);
     void onTankMarkerDeleteRequested(MapEntityMarkerLabel *label);
     void onMarkerMoveRequested(MapEntityMarkerLabel *label);
     
