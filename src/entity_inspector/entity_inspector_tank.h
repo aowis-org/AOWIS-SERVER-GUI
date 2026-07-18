@@ -34,7 +34,7 @@ public:
     explicit EntityInspectorTank(HydraulicData *hydraulic_data, QWidget *parent = nullptr);
     
 private:
-    HydraulicData *hydraulic_data = nullptr;
+    //HydraulicData *hydraulic_data = nullptr;
     QLabel *picture = nullptr;
     
     void addGroupGeometry();
