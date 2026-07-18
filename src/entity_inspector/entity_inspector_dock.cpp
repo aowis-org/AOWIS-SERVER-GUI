@@ -1,8 +1,9 @@
 #include "entity_inspector_dock.h"
 
 
-EntityInspectorDock::EntityInspectorDock(HydraulicData *network_data, QWidget *parent)
-    : QDockWidget("Entity Inspector", parent)
+EntityInspectorDock::EntityInspectorDock(HydraulicData *hydraulic_data, QWidget *parent)
+    : QDockWidget("Entity Inspector", parent),
+    hydraulic_data(hydraulic_data)
 {
     setMinimumWidth(Sizes::SidebarRightWidth);
     this->resize(Sizes::SidebarRightWidth, this->height());
@@ -15,11 +16,13 @@ EntityInspectorDock::EntityInspectorDock(HydraulicData *network_data, QWidget *p
                 QDockWidget::DockWidgetMovable |
                 QDockWidget::DockWidgetFloatable);
     
-    connect(this->hydraulic_data, &HydraulicData::signalTankSelected, this, [this]
-    {
-        qDebug() << "aaa";
-        showEntityTank();
-    });
+    connect(this->hydraulic_data, &HydraulicData::signalTankSelected, this, &EntityInspectorDock::showEntityTank);
+    
+    connect(this->hydraulic_data, &HydraulicData::signalJunctionSelected, this, &EntityInspectorDock::showEntityJunction);
+    
+    connect(this->hydraulic_data, &HydraulicData::signalPipeSelected, this, &EntityInspectorDock::showEntityPipe);
+    
+    connect(this->hydraulic_data, &HydraulicData::signalReservoirSelected, this, &EntityInspectorDock::showEntityReservoir);
     
     setVisible(false);
     
@@ -42,8 +45,6 @@ void EntityInspectorDock::clearEntity()
 
 void EntityInspectorDock::setInspector(EntityInspectorWidget *inspector)
 {
-    qDebug() << "bbb";
-    
     clearEntity();
     
     this->widget_current = inspector;
@@ -56,7 +57,6 @@ void EntityInspectorDock::setInspector(EntityInspectorWidget *inspector)
 
 void EntityInspectorDock::showEntityTank()
 {
-    qDebug() << "ccc";
     EntityInspectorTank *inspector = new EntityInspectorTank(this->hydraulic_data);
     setInspector(inspector);
 }
