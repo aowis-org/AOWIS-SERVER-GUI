@@ -1,8 +1,7 @@
 #include "entity_inspector_junction.h"
 
 EntityInspectorJunction::EntityInspectorJunction(HydraulicData *hydraulic_data, QWidget *parent)
-    : EntityInspectorWidget(hydraulic_data, parent),
-    hydraulic_data(hydraulic_data)
+    : EntityInspectorWidget(hydraulic_data, parent)
 {
     setTitle("Junction J1");
     
