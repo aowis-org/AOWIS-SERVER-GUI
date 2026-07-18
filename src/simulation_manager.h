@@ -15,19 +15,19 @@
 #include <aowis/model/hydraulic/simulation_result.h>
 #include <aowis/model/hydraulic/epanet_status.h>
 
-#include "network_data.h"
+#include "hydraulic_data.h"
 
 class SimulationManager : public QObject
 {
     Q_OBJECT
 public:
-    explicit SimulationManager(NetworkData *data, QObject *parent = nullptr);
+    explicit SimulationManager(HydraulicData *hydraulic_data, QObject *parent = nullptr);
     
     void run();
     void showEpanetLog();
     
 private:
-    NetworkData *network_data = nullptr;
+    HydraulicData *hydraulic_data = nullptr;
     QString epanet_log;
 
 signals:

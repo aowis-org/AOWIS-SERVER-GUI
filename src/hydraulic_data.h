@@ -1,5 +1,5 @@
-#ifndef NETWORK_DATA_H
-#define NETWORK_DATA_H
+#ifndef HYDRAULIC_DATA_H
+#define HYDRAULIC_DATA_H
 
 #include <QObject>
 #include <QUuid>
@@ -15,11 +15,11 @@
 
 #include "_enums_structs.h"
 
-class NetworkData : public QObject
+class HydraulicData : public QObject
 {
     Q_OBJECT
 public:
-    explicit NetworkData(QObject *parent = nullptr);
+    explicit HydraulicData(QObject *parent = nullptr);
     
     void loadProject();
     
@@ -43,4 +43,4 @@ signals:
     void signalPipeSelected(const Pipe &pipe);
 };
 
-#endif // NETWORK_DATA_H
+#endif // HYDRAULIC_DATA_H

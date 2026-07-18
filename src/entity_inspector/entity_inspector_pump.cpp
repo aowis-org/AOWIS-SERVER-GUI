@@ -1,7 +1,8 @@
 #include "entity_inspector_pump.h"
 
-EntityInspectorPump::EntityInspectorPump(QWidget *parent)
-    : EntityInspectorWidget(parent)
+EntityInspectorPump::EntityInspectorPump(HydraulicData *hydraulic_data, QWidget *parent)
+    : EntityInspectorWidget(hydraulic_data, parent),
+    hydraulic_data(hydraulic_data)
 {
     setTitle("Pump PU1");
     

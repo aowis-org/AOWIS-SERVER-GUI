@@ -1,15 +1,15 @@
 #include "simulation_manager.h"
 
-SimulationManager::SimulationManager(NetworkData *data, QObject *parent)
+SimulationManager::SimulationManager(HydraulicData *hydraulic_data, QObject *parent)
     : QObject{parent},
-    network_data(data)
+    hydraulic_data(hydraulic_data)
 {
     
 }
 
 void SimulationManager::run()
 {
-    NetworkHydraulic network_hydraulic = this->network_data->networkHydraulic();
+    NetworkHydraulic network_hydraulic = this->hydraulic_data->networkHydraulic();
     
     EpanetWrapper *epanet = new EpanetWrapper(this);
     epanet->run(network_hydraulic);

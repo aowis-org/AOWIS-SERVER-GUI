@@ -14,7 +14,7 @@
 #include "map_entity_marker_label.h"
 
 #include "../_enums_structs.h"
-#include "../network_data.h"
+#include "../hydraulic_data.h"
 #include "map_models.h"
 
 // to avoid circular includes
@@ -24,7 +24,7 @@ class MapCanvasEntities : public QObject
 {
     Q_OBJECT
 public:
-    explicit MapCanvasEntities(MapModel *map_model, NetworkData *network_data, MapCanvasWidget *map_canvas);
+    explicit MapCanvasEntities(MapModel *map_model, HydraulicData *network_data, MapCanvasWidget *map_canvas);
     
     void startEntityPositioning(MapEditTool tool);
     void startEntityPositioningInternal();
@@ -38,7 +38,7 @@ public:
     
 private:
     MapModel *map_model = nullptr;
-    NetworkData *network_data = nullptr;
+    HydraulicData *hydraulic_data = nullptr;
     //NetworkHydraulic network_hydraulic;
     // QPointer to avoid circular includes
     QPointer<MapCanvasWidget> map_canvas;

@@ -1,7 +1,8 @@
 #include "entity_map_legend_dock.h"
 
-EntityMapLegendDock::EntityMapLegendDock(QWidget *parent)
-    : QDockWidget("Map Symbology Legend", parent)
+EntityMapLegendDock::EntityMapLegendDock(HydraulicData *hydraulic_data, QWidget *parent)
+    : QDockWidget("Map Symbology Legend", parent),
+    hydraulic_data(hydraulic_data)
 {
     //setMinimumWidth(Sizes::SidebarRightWidth);
     this->resize(Sizes::SidebarRightWidth, this->height());

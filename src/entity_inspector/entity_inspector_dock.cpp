@@ -1,7 +1,7 @@
 #include "entity_inspector_dock.h"
 
 
-EntityInspectorDock::EntityInspectorDock(QWidget *parent)
+EntityInspectorDock::EntityInspectorDock(HydraulicData *network_data, QWidget *parent)
     : QDockWidget("Entity Inspector", parent)
 {
     setMinimumWidth(Sizes::SidebarRightWidth);
@@ -44,37 +44,37 @@ void EntityInspectorDock::setInspector(EntityInspectorWidget *inspector)
 
 void EntityInspectorDock::showEntityTank()
 {
-    EntityInspectorTank *inspector = new EntityInspectorTank();
+    EntityInspectorTank *inspector = new EntityInspectorTank(this->hydraulic_data);
     setInspector(inspector);
 }
 void EntityInspectorDock::showEntityJunction()
 {
-    EntityInspectorJunction *inspector = new EntityInspectorJunction();
+    EntityInspectorJunction *inspector = new EntityInspectorJunction(this->hydraulic_data);
     setInspector(inspector);
 }
 void EntityInspectorDock::showEntityPipe()
 {
-    EntityInspectorPipe *inspector = new EntityInspectorPipe();
+    EntityInspectorPipe *inspector = new EntityInspectorPipe(this->hydraulic_data);
     setInspector(inspector);
 }
 void EntityInspectorDock::showEntityPump()
 {
-    EntityInspectorPump *inspector = new EntityInspectorPump();
+    EntityInspectorPump *inspector = new EntityInspectorPump(this->hydraulic_data);
     setInspector(inspector);
 }
 void EntityInspectorDock::showEntityValve()
 {
-    EntityInspectorValve *inspector = new EntityInspectorValve();
+    EntityInspectorValve *inspector = new EntityInspectorValve(this->hydraulic_data);
     setInspector(inspector);
 }
 void EntityInspectorDock::showEntityReservoir()
 {
-    EntityInspectorReservoir *inspector = new EntityInspectorReservoir();
+    EntityInspectorReservoir *inspector = new EntityInspectorReservoir(this->hydraulic_data);
     setInspector(inspector);
 }
 void EntityInspectorDock::showEntityCustomerPoint()
 {
-    EntityInspectorCustomerPoint *inspector = new EntityInspectorCustomerPoint();
+    EntityInspectorCustomerPoint *inspector = new EntityInspectorCustomerPoint(this->hydraulic_data);
     setInspector(inspector);
 }
 

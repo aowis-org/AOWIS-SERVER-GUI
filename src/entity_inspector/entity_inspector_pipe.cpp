@@ -1,7 +1,8 @@
 #include "entity_inspector_pipe.h"
 
-EntityInspectorPipe::EntityInspectorPipe(QWidget *parent)
-    : EntityInspectorWidget(parent)
+EntityInspectorPipe::EntityInspectorPipe(HydraulicData *hydraulic_data, QWidget *parent)
+    : EntityInspectorWidget(hydraulic_data, parent),
+    hydraulic_data(hydraulic_data)
 {
     setTitle("Pipe P1");
     

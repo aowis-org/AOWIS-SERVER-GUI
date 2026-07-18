@@ -1,10 +1,10 @@
-#include "network_data.h"
+#include "hydraulic_data.h"
 
-NetworkData::NetworkData(QObject *parent)
+HydraulicData::HydraulicData(QObject *parent)
     : QObject{parent},
     database_gui(new DatabaseGui(this))
 {
-    connect(this->database_gui, &DatabaseGui::signalReady, this, &NetworkData::onDatabaseReady);
+    connect(this->database_gui, &DatabaseGui::signalReady, this, &HydraulicData::onDatabaseReady);
     
     connect(this->database_gui, &DatabaseGui::signalError, this, [](const QString &message)
     {
@@ -15,7 +15,7 @@ NetworkData::NetworkData(QObject *parent)
     this->database_gui->open(configuration);
 }
 
-void NetworkData::onDatabaseReady()
+void HydraulicData::onDatabaseReady()
 {
     loadProject();
     
@@ -25,7 +25,7 @@ void NetworkData::onDatabaseReady()
     //this->network_hydraulic = DummyNetworks::networkTanksTimeline();
 }
 
-void NetworkData::loadProject()
+void HydraulicData::loadProject()
 {
     DatabaseShared *sharedDatabase = this->database_gui->sharedDatabase();
     
@@ -83,12 +83,12 @@ void NetworkData::loadProject()
              << this->project->name;
 }
 
-const NetworkHydraulic &NetworkData::networkHydraulic() const
+const NetworkHydraulic &HydraulicData::networkHydraulic() const
 {
     return this->network_hydraulic;
 }
 
-void NetworkData::setSelectedUuid(InfrastructureEntity entity_type, const QUuid &uuid)
+void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUuid &uuid)
 {
     switch (entity_type)
     {

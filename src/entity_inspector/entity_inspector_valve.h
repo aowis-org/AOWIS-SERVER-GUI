@@ -18,6 +18,7 @@
 #include "entity_inspector_widget.h"
 
 #include "../widgets/group_box_collapsible.h"
+#include "../hydraulic_data.h"
 
 #include "../_enums_structs.h"
 #include "../_sizes.h"
@@ -27,8 +28,9 @@ class EntityInspectorValve : public EntityInspectorWidget
 {
     Q_OBJECT
 public:
-    explicit EntityInspectorValve(QWidget *parent = nullptr);
+    explicit EntityInspectorValve(HydraulicData *hydraulic_data, QWidget *parent = nullptr);
 private:
+    HydraulicData *hydraulic_data = nullptr;
     QLabel *picture = nullptr;
     
     void addGroupValveConfiguration();

@@ -28,9 +28,10 @@ class EntityInspectorReservoir : public EntityInspectorWidget
 {
     Q_OBJECT
 public:
-    explicit EntityInspectorReservoir(QWidget *parent = nullptr);
+    explicit EntityInspectorReservoir(HydraulicData *hydraulic_data, QWidget *parent = nullptr);
     
 private:
+    HydraulicData *hydraulic_data = nullptr;
     QLabel *picture = nullptr;
     
     void addGroupDemands();

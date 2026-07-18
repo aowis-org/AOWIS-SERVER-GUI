@@ -1,12 +1,12 @@
 #include "map_canvas_widget.h"
 
-MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map, NetworkData *network_data, CanvasMode mode, QWidget *parent)
+MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map, HydraulicData *hydraulic_data, CanvasMode mode, QWidget *parent)
     : QWidget{parent},
     map_model(map_model),
     map(map),
-    network_data(network_data),
+    hydraulic_data(hydraulic_data),
     mode(mode),
-    map_canvas_entities(new MapCanvasEntities(map_model, network_data, this))
+    map_canvas_entities(new MapCanvasEntities(map_model, hydraulic_data, this))
 {
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_NoSystemBackground);

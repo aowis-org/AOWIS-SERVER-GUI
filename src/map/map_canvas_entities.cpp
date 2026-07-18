@@ -2,10 +2,10 @@
 #include "map_canvas_widget.h"
 
 
-MapCanvasEntities::MapCanvasEntities(MapModel *map_model, NetworkData *network_data, MapCanvasWidget *map_canvas)
+MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *network_data, MapCanvasWidget *map_canvas)
     : QObject(map_canvas),
     map_model(map_model),
-    network_data(network_data),
+    hydraulic_data(hydraulic_data),
     map_canvas(map_canvas)
 {
     //this->network_hydraulic = this->network_data->networkHydraulic();

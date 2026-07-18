@@ -1,7 +1,8 @@
 #include "entity_inspector_tank.h"
 
-EntityInspectorTank::EntityInspectorTank(QWidget *parent)
-    : EntityInspectorWidget(parent)
+EntityInspectorTank::EntityInspectorTank(HydraulicData *hydraulic_data, QWidget *parent)
+    : EntityInspectorWidget(hydraulic_data, parent),
+    hydraulic_data(hydraulic_data)
 {
     setTitle("Tank T1");
     

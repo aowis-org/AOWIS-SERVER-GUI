@@ -15,6 +15,7 @@
 #include "entity_inspector_customer_point.h"
 
 #include "../widgets/group_box_collapsible.h"
+#include "../hydraulic_data.h"
 
 #include "../_enums_structs.h"
 #include "../_sizes.h"
@@ -24,7 +25,7 @@ class EntityInspectorDock : public QDockWidget
 {
     Q_OBJECT
 public:
-    explicit EntityInspectorDock(QWidget *parent = nullptr);
+    explicit EntityInspectorDock(HydraulicData *hydraulic_data, QWidget *parent = nullptr);
     
     //void showEntity(MapNetworkStructs &entity);
     
@@ -39,6 +40,7 @@ public:
     void showEntityCustomerPoint();
     
 private:
+    HydraulicData *hydraulic_data = nullptr;
     void setInspector(EntityInspectorWidget *inspector);
     
     EntityInspectorWidget *widget_current = nullptr;

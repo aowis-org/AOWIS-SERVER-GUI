@@ -1,7 +1,8 @@
 #include "entity_inspector_reservoir.h"
 
-EntityInspectorReservoir::EntityInspectorReservoir(QWidget *parent)
-    : EntityInspectorWidget(parent)
+EntityInspectorReservoir::EntityInspectorReservoir(HydraulicData *hydraulic_data, QWidget *parent)
+    : EntityInspectorWidget(hydraulic_data, parent),
+    hydraulic_data(hydraulic_data)
 {
     setTitle("Reservoir R1");
     

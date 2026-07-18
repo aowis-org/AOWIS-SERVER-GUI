@@ -9,6 +9,7 @@
 #include <QDebug>
 
 #include "../widgets/group_box_collapsible.h"
+#include "../hydraulic_data.h"
 
 #include "../_enums_structs.h"
 #include "../_sizes.h"
@@ -17,7 +18,7 @@ class EntityMapLegendDock : public QDockWidget
 {
     Q_OBJECT
 public:
-    explicit EntityMapLegendDock(QWidget *parent = nullptr);
+    explicit EntityMapLegendDock(HydraulicData *hydraulic_data, QWidget *parent = nullptr);
     
 public slots:
     void showMapLegendNode(VisualNode visual_node);
@@ -25,6 +26,7 @@ public slots:
     void showMapLegendHeatmap(VisualHeatmap visual_heatmap);
     
 private:
+    HydraulicData *hydraulic_data = nullptr;
     QVBoxLayout *layout = nullptr;
     
     VisualNode visual_node = VisualNode::None;

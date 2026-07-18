@@ -4,16 +4,16 @@
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
-    network_data(new NetworkData(this)),
+    hydraulic_data(new HydraulicData(this)),
     gps( new GpsProvider(this) ),
     dock_sim_control( new SimControlDock(this) ),
-    dock_entity_inspector( new EntityInspectorDock(this) ),
-    dock_entity_map_legend( new EntityMapLegendDock(this)),
+    dock_entity_inspector( new EntityInspectorDock(hydraulic_data, this) ),
+    dock_entity_map_legend( new EntityMapLegendDock(hydraulic_data, this)),
     map_model( new MapModel(this) ),
     tabs( new QTabWidget(this) ),
     settings( new SettingsWidget(this) ),
     map_monitor( new MapMonitorContainer(map_model, gps, this) ),
-    map_editor( new MapEditorContainer(map_model, network_data, gps, dock_entity_inspector, this) ),
+    map_editor( new MapEditorContainer(map_model, hydraulic_data, gps, dock_entity_inspector, this) ),
     energy( new EnergyWidget(this) ),
     reservoirs( new ReservoirsWidget(this) ),
     tanks( new TanksWidget(this) ),
@@ -25,7 +25,7 @@ MainWindow::MainWindow(QWidget *parent)
     customers( new CustomersWidget(this) ),
     logs( new LogsWidget(this) ),
     alarms( new AlarmsWidget(this) ),
-    simulation_manager( new SimulationManager(network_data, this) )
+    simulation_manager( new SimulationManager(hydraulic_data, this) )
 {
     #ifdef AOWIS_STANDALONE
     setWindowTitle("AOWIS Controller [Standalone]");

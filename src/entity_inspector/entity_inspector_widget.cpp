@@ -3,8 +3,9 @@
 #include <QGridLayout>
 #include <QPixmap>
 
-EntityInspectorWidget::EntityInspectorWidget(QWidget *parent)
+EntityInspectorWidget::EntityInspectorWidget(HydraulicData *hydraulic_data, QWidget *parent)
     : QWidget(parent),
+    hydraulic_data(hydraulic_data),
     tabs(new QTabWidget(this)),
     layout_main(new QVBoxLayout(this)),
     label_title(new QLabel(this)),
