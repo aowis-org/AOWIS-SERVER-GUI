@@ -39,7 +39,7 @@ public:
 private:
     MapModel *map_model = nullptr;
     NetworkData *network_data = nullptr;
-    NetworkHydraulic network_hydraulic;
+    //NetworkHydraulic network_hydraulic;
     // QPointer to avoid circular includes
     QPointer<MapCanvasWidget> map_canvas;
     

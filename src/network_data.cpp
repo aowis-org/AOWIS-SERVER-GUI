@@ -83,7 +83,9 @@ void NetworkData::loadProject()
              << this->project->name;
 }
 
-NetworkHydraulic NetworkData::networkHydraulic()
+const NetworkHydraulic &NetworkData::networkHydraulic() const
 {
     return this->network_hydraulic;
 }
+
+

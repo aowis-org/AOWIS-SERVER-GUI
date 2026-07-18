@@ -8,7 +8,7 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, NetworkData *network_d
     network_data(network_data),
     map_canvas(map_canvas)
 {
-    this->network_hydraulic = this->network_data->networkHydraulic();
+    //this->network_hydraulic = this->network_data->networkHydraulic();
     
     connect(this->map_model, &MapModel::zoomChanged, this, &MapCanvasEntities::scaleMarkersTank);
     

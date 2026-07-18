@@ -20,7 +20,8 @@ public:
     
     void loadProject();
     
-    NetworkHydraulic networkHydraulic();
+    const NetworkHydraulic &networkHydraulic() const;
+    
     
 private:
     DatabaseGui *database_gui = nullptr;
@@ -32,6 +33,10 @@ private slots:
     void onDatabaseReady();
     
 signals:
+    Tank signalTankSelected();
+    Reservoir signalReservoirSelected();
+    Junction signalJunctionSelected();
+    Pipe signalPipeSelected();
 };
 
 #endif // NETWORK_DATA_H
