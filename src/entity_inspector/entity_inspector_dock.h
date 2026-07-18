@@ -32,14 +32,6 @@ public:
     
     void clearEntity();
     
-    void showEntityTank();
-    void showEntityJunction();
-    void showEntityPipe();
-    void showEntityPump();
-    void showEntityValve();
-    void showEntityReservoir();
-    void showEntityCustomerPoint();
-    
 private:
     HydraulicData *hydraulic_data = nullptr;
     void setInspector(EntityInspectorWidget *inspector);
@@ -51,6 +43,15 @@ private:
     
 public slots:
     virtual void onHeadlossFormulaChanged(HeadlossFormulas formulas);
+    
+public slots:
+    void showEntityTank(const Tank &tank);
+    void showEntityJunction(const Junction &junction);
+    void showEntityPipe(const Pipe &pipe);
+    void showEntityPump();
+    void showEntityValve();
+    void showEntityReservoir(const Reservoir &reservoir);
+    void showEntityCustomerPoint();
     
 };
 

@@ -30,7 +30,7 @@ class EntityInspectorTank : public EntityInspectorWidget
 {
     Q_OBJECT
 public:
-    explicit EntityInspectorTank(HydraulicData *hydraulic_data, QWidget *parent = nullptr);
+    explicit EntityInspectorTank(HydraulicData *hydraulic_data, const Tank &tank, QWidget *parent = nullptr);
     
 private:
     QLabel *picture = nullptr;
