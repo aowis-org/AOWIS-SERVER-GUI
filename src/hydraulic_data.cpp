@@ -97,7 +97,7 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
         {
             if (tank.uuid == uuid)
             {
-                emit signalTankSelected(tank);
+                emit signalSelectedTank(tank);
                 return;
             }
         }
@@ -109,7 +109,7 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
         {
             if (reservoir.uuid == uuid)
             {
-                emit signalReservoirSelected(reservoir);
+                emit signalSelectedReservoir(reservoir);
                 return;
             }
         }
@@ -121,7 +121,7 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
         {
             if (junction.uuid == uuid)
             {
-                emit signalJunctionSelected(junction);
+                emit signalSelectedJunction(junction);
                 return;
             }
         }
@@ -133,7 +133,7 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
         {
             if (pipe.uuid == uuid)
             {
-                emit signalPipeSelected(pipe);
+                emit signalSelectedPipe(pipe);
                 return;
             }
         }

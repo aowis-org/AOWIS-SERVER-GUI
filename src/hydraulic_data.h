@@ -37,10 +37,11 @@ private slots:
     void onDatabaseReady();
     
 signals:
-    void signalTankSelected(const Tank &tank);
-    void signalReservoirSelected(const Reservoir &reservoir);
-    void signalJunctionSelected(const Junction &junction);
-    void signalPipeSelected(const Pipe &pipe);
+    void signalSelectedTank(const Tank &tank);
+    void signalSelectedReservoir(const Reservoir &reservoir);
+    void signalSelectedJunction(const Junction &junction);
+    void signalSelectedPipe(const Pipe &pipe);
+    //void signalSelectedPump(const Pump &pump);
 };
 
 #endif // HYDRAULIC_DATA_H

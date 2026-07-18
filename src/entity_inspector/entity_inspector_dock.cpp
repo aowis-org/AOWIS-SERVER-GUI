@@ -16,13 +16,13 @@ EntityInspectorDock::EntityInspectorDock(HydraulicData *hydraulic_data, QWidget 
                 QDockWidget::DockWidgetMovable |
                 QDockWidget::DockWidgetFloatable);
     
-    connect(this->hydraulic_data, &HydraulicData::signalTankSelected, this, &EntityInspectorDock::showEntityTank);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, this, &EntityInspectorDock::showEntityTank);
     
-    connect(this->hydraulic_data, &HydraulicData::signalJunctionSelected, this, &EntityInspectorDock::showEntityJunction);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedJunction, this, &EntityInspectorDock::showEntityJunction);
     
-    connect(this->hydraulic_data, &HydraulicData::signalPipeSelected, this, &EntityInspectorDock::showEntityPipe);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedPipe, this, &EntityInspectorDock::showEntityPipe);
     
-    connect(this->hydraulic_data, &HydraulicData::signalReservoirSelected, this, &EntityInspectorDock::showEntityReservoir);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedReservoir, this, &EntityInspectorDock::showEntityReservoir);
     
     setVisible(false);
     
