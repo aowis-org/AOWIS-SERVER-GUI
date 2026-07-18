@@ -88,4 +88,59 @@ const NetworkHydraulic &NetworkData::networkHydraulic() const
     return this->network_hydraulic;
 }
 
-
+void NetworkData::setSelectedUuid(InfrastructureEntity entity_type, const QUuid &uuid)
+{
+    switch (entity_type)
+    {
+    case InfrastructureEntity::Tank:
+        for (const Tank &tank : this->network_hydraulic.tanks)
+        {
+            if (tank.uuid == uuid)
+            {
+                emit signalTankSelected(tank);
+                return;
+            }
+        }
+        
+        break;
+        
+    case InfrastructureEntity::Reservoir:
+        for (const Reservoir &reservoir : this->network_hydraulic.reservoirs)
+        {
+            if (reservoir.uuid == uuid)
+            {
+                emit signalReservoirSelected(reservoir);
+                return;
+            }
+        }
+        
+        break;
+        
+    case InfrastructureEntity::Junction:
+        for (const Junction &junction : this->network_hydraulic.junctions)
+        {
+            if (junction.uuid == uuid)
+            {
+                emit signalJunctionSelected(junction);
+                return;
+            }
+        }
+        
+        break;
+        
+    case InfrastructureEntity::Pipe:
+        for (const Pipe &pipe : this->network_hydraulic.pipes)
+        {
+            if (pipe.uuid == uuid)
+            {
+                emit signalPipeSelected(pipe);
+                return;
+            }
+        }
+        
+        break;
+        
+    default:
+        break;
+    }
+}
