@@ -15,7 +15,15 @@ EntityInspectorDock::EntityInspectorDock(HydraulicData *network_data, QWidget *p
                 QDockWidget::DockWidgetMovable |
                 QDockWidget::DockWidgetFloatable);
     
-    showEntityTank();
+    connect(this->hydraulic_data, &HydraulicData::signalTankSelected, this, [this]
+    {
+        qDebug() << "aaa";
+        showEntityTank();
+    });
+    
+    setVisible(false);
+    
+    //showEntityTank();
     //showEntityJunction();
     //showEntityPipe();
     //showEntityPump();
@@ -34,16 +42,21 @@ void EntityInspectorDock::clearEntity()
 
 void EntityInspectorDock::setInspector(EntityInspectorWidget *inspector)
 {
+    qDebug() << "bbb";
+    
     clearEntity();
     
     this->widget_current = inspector;
     setWidget(this->widget_current);
     
     this->widget_current->onHeadlossFormulaChanged(this->headloss_formulas_current);
+    
+    setVisible(true);
 }
 
 void EntityInspectorDock::showEntityTank()
 {
+    qDebug() << "ccc";
     EntityInspectorTank *inspector = new EntityInspectorTank(this->hydraulic_data);
     setInspector(inspector);
 }

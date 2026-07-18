@@ -97,6 +97,7 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
         {
             if (tank.uuid == uuid)
             {
+                qDebug() << "yddd";
                 emit signalTankSelected(tank);
                 return;
             }

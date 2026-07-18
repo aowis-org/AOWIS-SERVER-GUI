@@ -175,6 +175,10 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->dock_sim_control, &SimControlDock::signalSimulationStart, this, [this]
     {
         //this->data->initializeTestDB();
+        NetworkHydraulic hydr = this->hydraulic_data->networkHydraulic();
+        QUuid uuid = hydr.tanks.at(0).uuid;
+        qDebug() << uuid;
+        this->hydraulic_data->setSelectedUuid(InfrastructureEntity::Tank, uuid);
     });
     
     #ifdef AOWIS_STANDALONE
