@@ -144,3 +144,21 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
         break;
     }
 }
+
+void HydraulicData::setDataTank(Tank tank)
+{
+    
+}
+void HydraulicData::setDataJunction(Junction junction)
+{
+    
+}
+void HydraulicData::setDataPipe(Pipe pipe)
+{
+    
+}
+
+void HydraulicData::setDataReservoir(Reservoir reservoir)
+{
+    
+}

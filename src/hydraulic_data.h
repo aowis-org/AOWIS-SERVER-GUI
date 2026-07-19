@@ -27,6 +27,13 @@ public:
     
     void setSelectedUuid(InfrastructureEntity entity_type, const QUuid &uuid);
     
+    void setDataTank(Tank tank);
+    void setDataJunction(Junction junction);
+    void setDataPipe(Pipe pipe);
+    //void setDataPump(Pump pump);
+    //void setDataValve(Valve valve);
+    void setDataReservoir(Reservoir reservoir);
+    
 private:
     DatabaseGui *database_gui = nullptr;
     
