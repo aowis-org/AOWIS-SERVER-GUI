@@ -55,7 +55,7 @@ void EntityInspectorDock::setInspector(EntityInspectorWidget *inspector)
     setVisible(true);
 }
 
-void EntityInspectorDock::showEntityTank(const Tank &tank)
+void EntityInspectorDock::showEntityTank(Tank tank)
 {
     EntityInspectorTank *inspector = new EntityInspectorTank(this->hydraulic_data, tank);
     setInspector(inspector);

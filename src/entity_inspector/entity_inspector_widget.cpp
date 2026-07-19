@@ -53,9 +53,6 @@ EntityInspectorWidget::EntityInspectorWidget(HydraulicData *hydraulic_data, QWid
     this->scroll_history->setWidget(this->widget_history);
     
     this->tabs->setIconSize(QSize(40, 40));
-    
-    this->tabs->setIconSize(QSize(40, 40));
-    
     this->tabs->tabBar()->setStyleSheet(
         "QTabBar::tab"
         "{"

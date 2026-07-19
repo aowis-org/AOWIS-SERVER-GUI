@@ -45,7 +45,7 @@ public slots:
     virtual void onHeadlossFormulaChanged(HeadlossFormulas formulas);
     
 public slots:
-    void showEntityTank(const Tank &tank);
+    void showEntityTank(Tank tank);
     void showEntityJunction(const Junction &junction);
     void showEntityPipe(const Pipe &pipe);
     void showEntityPump();

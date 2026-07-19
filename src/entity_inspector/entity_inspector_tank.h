@@ -30,9 +30,10 @@ class EntityInspectorTank : public EntityInspectorWidget
 {
     Q_OBJECT
 public:
-    explicit EntityInspectorTank(HydraulicData *hydraulic_data, const Tank &tank, QWidget *parent = nullptr);
+    explicit EntityInspectorTank(HydraulicData *hydraulic_data, Tank tank, QWidget *parent = nullptr);
     
 private:
+    Tank tank;
     QLabel *picture = nullptr;
     
     void addGroupGeometry();

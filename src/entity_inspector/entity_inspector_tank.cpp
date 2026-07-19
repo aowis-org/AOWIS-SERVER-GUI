@@ -1,13 +1,15 @@
 #include "entity_inspector_tank.h"
 
-EntityInspectorTank::EntityInspectorTank(HydraulicData *hydraulic_data, const Tank &tank, QWidget *parent)
-    : EntityInspectorWidget(hydraulic_data, parent)
+EntityInspectorTank::EntityInspectorTank(HydraulicData *hydraulic_data, Tank tank, QWidget *parent)
+    : EntityInspectorWidget(hydraulic_data, parent),
+    tank(tank)
 {
-    setTitle("Tank T1");
+    //setTitle("Tank T1");
+    setTitle("Tank " + tank.id);
     
     addGroupOverviewImage(":/icon/tower_large.png", "T1");
     
-    addGroupGeneral("T1");
+    addGroupGeneral(tank.id);
     addGroupPosition();
     addGroupElevation();
     addGroupGeometry();
