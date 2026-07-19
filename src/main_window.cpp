@@ -53,6 +53,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendNode, this->dock_entity_map_legend, &EntityMapLegendDock::showMapLegendNode);
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendHeatmap, this->dock_entity_map_legend, &EntityMapLegendDock::showMapLegendHeatmap);
     
+    /*
     setStyleSheet(
         "QMainWindow::separator"
         "{"
@@ -60,6 +61,7 @@ MainWindow::MainWindow(QWidget *parent)
         "    height: 0px;"
         "}"
     );
+    */
     
     this->map_mon = this->map_monitor->getMap();
     this->map_edit = this->map_editor->getMap();
