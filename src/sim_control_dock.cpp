@@ -41,7 +41,21 @@ SimControlDock::SimControlDock(QWidget *parent)
     button_sim_start->setIconSize(QSize(30, 30));
     button_sim_start->setMaximumSize(30, 30);
     button_sim_start->setContentsMargins(0, 0, 0, 0);
-    button_sim_start->setToolTip("Run Configured Simulations");
+    button_sim_start->setToolTip("Run Configured Simulations<br>"
+                                "[Ctrl]+[R]<br>"
+                                "[Shift]+[Enter]");
+    button_sim_start->addAction(
+        QString(),
+        QKeySequence(Qt::SHIFT | Qt::Key_Return),
+        button_sim_start,
+        &QPushButton::click
+        );
+    button_sim_start->addAction(
+        QString(),
+        QKeySequence(Qt::CTRL | Qt::Key_R),
+        button_sim_start,
+        &QPushButton::click
+        );
     this->layout->addWidget(button_sim_start);
     
     QPushButton *button_sim_log = new QPushButton(this);

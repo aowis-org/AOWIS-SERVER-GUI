@@ -11,6 +11,9 @@
 #include <QIcon>
 #include <QActionGroup>
 
+#include <QKeySequence>
+#include <QShortcut>
+
 #include <QHBoxLayout>
 
 #include "epanet2_enums.h"
