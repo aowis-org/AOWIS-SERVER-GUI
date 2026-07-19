@@ -22,7 +22,13 @@ EntityInspectorDock::EntityInspectorDock(HydraulicData *hydraulic_data, QWidget 
     
     connect(this->hydraulic_data, &HydraulicData::signalSelectedPipe, this, &EntityInspectorDock::showEntityPipe);
     
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedPump, this, &EntityInspectorDock::showEntityPump);
+    
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedValve, this, &EntityInspectorDock::showEntityValve);
+    
     connect(this->hydraulic_data, &HydraulicData::signalSelectedReservoir, this, &EntityInspectorDock::showEntityReservoir);
+    
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedCustomerPoint, this, &EntityInspectorDock::showEntityCustomerPoint);
     
     setVisible(false);
     

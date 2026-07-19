@@ -30,8 +30,8 @@ public:
     void setDataTank(Tank tank);
     void setDataJunction(Junction junction);
     void setDataPipe(Pipe pipe);
-    //void setDataPump(Pump pump);
-    //void setDataValve(Valve valve);
+    void setDataPump(Pump pump);
+    void setDataValve(Valve valve);
     void setDataReservoir(Reservoir reservoir);
     
 private:
@@ -48,7 +48,9 @@ signals:
     void signalSelectedReservoir(const Reservoir &reservoir);
     void signalSelectedJunction(const Junction &junction);
     void signalSelectedPipe(const Pipe &pipe);
-    //void signalSelectedPump(const Pump &pump);
+    void signalSelectedPump(const Pump &pump);
+    void signalSelectedValve(const Valve &valve);
+    void signalSelectedCustomerPoint(const CustomerPoint &customer_point);
 };
 
 #endif // HYDRAULIC_DATA_H

@@ -140,6 +140,40 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
         
         break;
         
+    case InfrastructureEntity::Pump:
+        for (const Pump &pump : this->network_hydraulic.pumps)
+        {
+            if (pump.uuid == uuid)
+            {
+                emit signalSelectedPump(pump);
+                return;
+            }
+        }
+        
+        break;
+    
+    case InfrastructureEntity::Valve:
+        for (const Valve &valve : this->network_hydraulic.valves)
+        {
+            if (valve.uuid == uuid)
+            {
+                emit signalSelectedValve(valve);
+                return;
+            }
+        }
+        
+        break;
+    
+    case InfrastructureEntity::CustomerPoint:
+        for (const CustomerPoint &customer_point : this->network_hydraulic.customer_points)
+        {
+            if (customer_point.uuid == uuid)
+            {
+                emit signalSelectedCustomerPoint(customer_point);
+                return;
+            }
+        }
+        
     default:
         break;
     }
@@ -157,7 +191,14 @@ void HydraulicData::setDataPipe(Pipe pipe)
 {
     
 }
-
+void HydraulicData::setDataPump(Pump pump)
+{
+    
+}
+void HydraulicData::setDataValve(Valve valve)
+{
+    
+}
 void HydraulicData::setDataReservoir(Reservoir reservoir)
 {
     
