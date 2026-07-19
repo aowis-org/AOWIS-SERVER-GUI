@@ -66,32 +66,32 @@ void EntityInspectorDock::showEntityTank(Tank tank)
     EntityInspectorTank *inspector = new EntityInspectorTank(this->hydraulic_data, tank);
     setInspector(inspector);
 }
-void EntityInspectorDock::showEntityJunction(const Junction &junction)
+void EntityInspectorDock::showEntityJunction(Junction junction)
 {
     EntityInspectorJunction *inspector = new EntityInspectorJunction(this->hydraulic_data, junction);
     setInspector(inspector);
 }
-void EntityInspectorDock::showEntityPipe(const Pipe &pipe)
+void EntityInspectorDock::showEntityPipe(Pipe pipe)
 {
     EntityInspectorPipe *inspector = new EntityInspectorPipe(this->hydraulic_data, pipe);
     setInspector(inspector);
 }
-void EntityInspectorDock::showEntityPump()
+void EntityInspectorDock::showEntityPump(Pump pump)
 {
     EntityInspectorPump *inspector = new EntityInspectorPump(this->hydraulic_data);
     setInspector(inspector);
 }
-void EntityInspectorDock::showEntityValve()
+void EntityInspectorDock::showEntityValve(Valve valve)
 {
     EntityInspectorValve *inspector = new EntityInspectorValve(this->hydraulic_data);
     setInspector(inspector);
 }
-void EntityInspectorDock::showEntityReservoir(const Reservoir &reservoir)
+void EntityInspectorDock::showEntityReservoir(Reservoir reservoir)
 {
     EntityInspectorReservoir *inspector = new EntityInspectorReservoir(this->hydraulic_data, reservoir);
     setInspector(inspector);
 }
-void EntityInspectorDock::showEntityCustomerPoint()
+void EntityInspectorDock::showEntityCustomerPoint(CustomerPoint customer_point)
 {
     EntityInspectorCustomerPoint *inspector = new EntityInspectorCustomerPoint(this->hydraulic_data);
     setInspector(inspector);

@@ -46,12 +46,12 @@ public slots:
     
 public slots:
     void showEntityTank(Tank tank);
-    void showEntityJunction(const Junction &junction);
-    void showEntityPipe(const Pipe &pipe);
-    void showEntityPump();
-    void showEntityValve();
-    void showEntityReservoir(const Reservoir &reservoir);
-    void showEntityCustomerPoint();
+    void showEntityJunction(Junction junction);
+    void showEntityPipe(Pipe pipe);
+    void showEntityPump(Pump pump);
+    void showEntityValve(Valve valve);
+    void showEntityReservoir(Reservoir reservoir);
+    void showEntityCustomerPoint(CustomerPoint customer_point);
     
 };
 
