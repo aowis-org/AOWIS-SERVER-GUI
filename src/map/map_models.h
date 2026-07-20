@@ -42,7 +42,7 @@ struct EntityCurve
 };
 
 
-
+/*
 struct EntityTank
 {
     QString name;
@@ -83,6 +83,7 @@ struct EntityTankMarker
     
     bool selected = false;
 };
+*/
 struct InfrastructureEntityReference
 {
     InfrastructureEntity type = InfrastructureEntity::Unknown;
