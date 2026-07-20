@@ -1,7 +1,8 @@
 #include "entity_inspector_customer_point.h"
 
-EntityInspectorCustomerPoint::EntityInspectorCustomerPoint(HydraulicData *hydraulic_data, QWidget *parent)
-    : EntityInspectorWidget(hydraulic_data, parent)
+EntityInspectorCustomerPoint::EntityInspectorCustomerPoint(HydraulicData *hydraulic_data, CustomerPoint customer_point, QWidget *parent)
+    : EntityInspectorWidget(hydraulic_data, parent),
+    customer_point(customer_point)
 {
     setTitle("Customer Point C1");
     

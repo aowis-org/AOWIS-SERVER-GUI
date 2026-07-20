@@ -19,6 +19,7 @@
 
 #include "../widgets/group_box_collapsible.h"
 
+#include <aowis/model/hydraulic/network.h>
 #include "../_enums_structs.h"
 #include "../_sizes.h"
 #include "../map/map_models.h"
@@ -27,8 +28,10 @@ class EntityInspectorValve : public EntityInspectorWidget
 {
     Q_OBJECT
 public:
-    explicit EntityInspectorValve(HydraulicData *hydraulic_data, QWidget *parent = nullptr);
+    explicit EntityInspectorValve(HydraulicData *hydraulic_data, Valve valve, QWidget *parent = nullptr);
+    
 private:
+    Valve valve;
     HydraulicData *hydraulic_data = nullptr;
     QLabel *picture = nullptr;
     

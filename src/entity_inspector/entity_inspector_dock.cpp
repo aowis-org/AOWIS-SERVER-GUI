@@ -78,12 +78,12 @@ void EntityInspectorDock::showEntityPipe(Pipe pipe)
 }
 void EntityInspectorDock::showEntityPump(Pump pump)
 {
-    EntityInspectorPump *inspector = new EntityInspectorPump(this->hydraulic_data);
+    EntityInspectorPump *inspector = new EntityInspectorPump(this->hydraulic_data, pump);
     setInspector(inspector);
 }
 void EntityInspectorDock::showEntityValve(Valve valve)
 {
-    EntityInspectorValve *inspector = new EntityInspectorValve(this->hydraulic_data);
+    EntityInspectorValve *inspector = new EntityInspectorValve(this->hydraulic_data, valve);
     setInspector(inspector);
 }
 void EntityInspectorDock::showEntityReservoir(Reservoir reservoir)
@@ -93,7 +93,7 @@ void EntityInspectorDock::showEntityReservoir(Reservoir reservoir)
 }
 void EntityInspectorDock::showEntityCustomerPoint(CustomerPoint customer_point)
 {
-    EntityInspectorCustomerPoint *inspector = new EntityInspectorCustomerPoint(this->hydraulic_data);
+    EntityInspectorCustomerPoint *inspector = new EntityInspectorCustomerPoint(this->hydraulic_data, customer_point);
     setInspector(inspector);
 }
 

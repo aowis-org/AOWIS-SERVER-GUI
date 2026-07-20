@@ -1,7 +1,8 @@
 #include "entity_inspector_valve.h"
 
-EntityInspectorValve::EntityInspectorValve(HydraulicData *hydraulic_data, QWidget *parent)
-    : EntityInspectorWidget(hydraulic_data, parent)
+EntityInspectorValve::EntityInspectorValve(HydraulicData *hydraulic_data, Valve valve, QWidget *parent)
+    : EntityInspectorWidget(hydraulic_data, parent),
+    valve(valve)
 {
     setTitle("Valve V1");
     
