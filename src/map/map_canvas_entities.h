@@ -24,7 +24,7 @@ class MapCanvasEntities : public QObject
 {
     Q_OBJECT
 public:
-    explicit MapCanvasEntities(MapModel *map_model, HydraulicData *network_data, MapCanvasWidget *map_canvas);
+    explicit MapCanvasEntities(MapModel *map_model, HydraulicData *hydraulic_data, MapCanvasWidget *map_canvas);
     
     void startEntityPositioning(MapEditTool tool);
     void startEntityPositioningInternal();
@@ -43,12 +43,13 @@ private:
     // QPointer to avoid circular includes
     QPointer<MapCanvasWidget> map_canvas;
     
-    QList<EntityTankMarker> list_tank_markers;
+    QList<EntityTankMarker> list_entity_markers;
     
     MapEntityPlacementMode entity_placement_mode = MapEntityPlacementMode::None;
     MapEntityMarkerLabel *entity_floating = nullptr;
     
     MapEditTool tool_current;
+    std::optional<InfrastructureEntityReference> selected_entity;
     
     int calculateEntityWidth();
     
@@ -57,9 +58,11 @@ private:
     bool entity_draw_immediately = true;
     QPointF mouse_pos_last;
     
+    QString pixmapPathForSymbol(const QString &symbol_id) const;
+    
 private slots:
-    void onTankMarkerClicked(MapEntityMarkerLabel *label);
-    void onTankMarkerDeleteRequested(MapEntityMarkerLabel *label);
+    void onMarkerClicked(MapEntityMarkerLabel *label);
+    void onMarkerDeleteRequested(MapEntityMarkerLabel *label);
     void onMarkerMoveRequested(MapEntityMarkerLabel *label);
     
 signals:

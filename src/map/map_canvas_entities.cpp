@@ -2,7 +2,7 @@
 #include "map_canvas_widget.h"
 
 
-MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *network_data, MapCanvasWidget *map_canvas)
+MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraulic_data, MapCanvasWidget *map_canvas)
     : QObject(map_canvas),
     map_model(map_model),
     hydraulic_data(hydraulic_data),
@@ -152,9 +152,9 @@ bool MapCanvasEntities::anchorMarkerTank(QMouseEvent *event)
     {
         MapEntityMarkerLabel *moved_label = this->entity_floating;
         
-        for (int i = 0; i < this->list_tank_markers.length(); i++)
+        for (int i = 0; i < this->list_entity_markers.length(); i++)
         {
-            EntityTankMarker &tank_marker = this->list_tank_markers[i];
+            EntityTankMarker &tank_marker = this->list_entity_markers[i];
             
             if (tank_marker.label != moved_label)
                 continue;
@@ -203,31 +203,30 @@ bool MapCanvasEntities::anchorMarkerTank(QMouseEvent *event)
         tank_marker.label,
         &MapEntityMarkerLabel::signalDeleteRequested,
         this,
-        &MapCanvasEntities::onTankMarkerDeleteRequested
-        );
+        &MapCanvasEntities::onMarkerDeleteRequested
+    );
     
     connect(
         tank_marker.label,
         &MapEntityMarkerLabel::signalMoveRequested,
         this,
         &MapCanvasEntities::onMarkerMoveRequested
-        );
+    );
     
     connect(
         tank_marker.label,
         &MapEntityMarkerLabel::signalClicked,
         this,
-        &MapCanvasEntities::onTankMarkerClicked
-        );
+        &MapCanvasEntities::onMarkerClicked
+    );
     
     int width = calculateEntityWidth();
-    QPixmap pixmap = QPixmap(tank_marker.path_pixmap)
-                         .scaledToWidth(width, Qt::SmoothTransformation);
+    QPixmap pixmap = QPixmap(tank_marker.path_pixmap).scaledToWidth(width, Qt::SmoothTransformation);
     
     tank_marker.label->setPixmap(pixmap);
     tank_marker.label->resize(pixmap.size());
     
-    this->list_tank_markers.append(tank_marker);
+    this->list_entity_markers.append(tank_marker);
     
     this->entity_floating_hide_until = event->position().toPoint();
     this->entity_floating = nullptr;
@@ -257,9 +256,9 @@ void MapCanvasEntities::scaleMarkersTank()
 {
     int width = calculateEntityWidth();
     
-    for (int i = 0; i < this->list_tank_markers.length(); i++)
+    for (int i = 0; i < this->list_entity_markers.length(); i++)
     {
-        EntityTankMarker &tank_marker = this->list_tank_markers[i];
+        EntityTankMarker &tank_marker = this->list_entity_markers[i];
         MapEntityMarkerLabel *label = tank_marker.label;
         
         QPixmap pixmap = QPixmap(tank_marker.path_pixmap).scaledToWidth(width, Qt::SmoothTransformation);
@@ -272,9 +271,9 @@ void MapCanvasEntities::scaleMarkersTank()
 
 void MapCanvasEntities::positionMarkersTank()
 {
-    for (int i = 0; i < this->list_tank_markers.length(); i++)
+    for (int i = 0; i < this->list_entity_markers.length(); i++)
     {
-        EntityTankMarker &tank_marker = this->list_tank_markers[i];
+        EntityTankMarker &tank_marker = this->list_entity_markers[i];
         MapEntityMarkerLabel *label = tank_marker.label;
         
         if (!label)
@@ -310,9 +309,9 @@ void MapCanvasEntities::paintMarkersTank(QPainter &paint)
     paint.setBrush(Qt::black);
     paint.setPen(Qt::NoPen);
     
-    for (int i = 0; i < this->list_tank_markers.length(); i++)
+    for (int i = 0; i < this->list_entity_markers.length(); i++)
     {
-        EntityTankMarker &tank_marker = this->list_tank_markers[i];
+        EntityTankMarker &tank_marker = this->list_entity_markers[i];
         
         if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting &&
             tank_marker.label == this->entity_floating)
@@ -338,20 +337,20 @@ void MapCanvasEntities::paintMarkersTank(QPainter &paint)
     paint.restore();
 }
 
-void MapCanvasEntities::onTankMarkerDeleteRequested(MapEntityMarkerLabel *label)
+void MapCanvasEntities::onMarkerDeleteRequested(MapEntityMarkerLabel *label)
 {
     if (!label)
         return;
     
-    for (int i = 0; i < this->list_tank_markers.length(); i++)
+    for (int i = 0; i < this->list_entity_markers.length(); i++)
     {
-        EntityTankMarker &tank_marker = this->list_tank_markers[i];
+        EntityTankMarker &tank_marker = this->list_entity_markers[i];
         
         if (tank_marker.label == label)
         {
             MapEntityMarkerLabel *label_to_delete = tank_marker.label;
             
-            this->list_tank_markers.removeAt(i);
+            this->list_entity_markers.removeAt(i);
             
             label_to_delete->hide();
             label_to_delete->deleteLater();
@@ -368,9 +367,9 @@ void MapCanvasEntities::onMarkerMoveRequested(MapEntityMarkerLabel *label)
     
     bool marker_found = false;
     
-    for (int i = 0; i < this->list_tank_markers.length(); i++)
+    for (int i = 0; i < this->list_entity_markers.length(); i++)
     {
-        if (this->list_tank_markers[i].label == label)
+        if (this->list_entity_markers[i].label == label)
         {
             marker_found = true;
             break;
@@ -393,16 +392,16 @@ void MapCanvasEntities::onMarkerMoveRequested(MapEntityMarkerLabel *label)
         this->map_canvas->update();
 }
 
-void MapCanvasEntities::onTankMarkerClicked(MapEntityMarkerLabel *label)
+void MapCanvasEntities::onMarkerClicked(MapEntityMarkerLabel *label)
 {
     if (!label)
         return;
     
     bool selection_changed = false;
     
-    for (int i = 0; i < this->list_tank_markers.length(); i++)
+    for (int i = 0; i < this->list_entity_markers.length(); i++)
     {
-        EntityTankMarker &tank_marker = this->list_tank_markers[i];
+        EntityTankMarker &tank_marker = this->list_entity_markers[i];
         bool selected = tank_marker.label == label;
         
         if (tank_marker.selected == selected)
@@ -415,3 +414,15 @@ void MapCanvasEntities::onTankMarkerClicked(MapEntityMarkerLabel *label)
     if (selection_changed && this->map_canvas)
         this->map_canvas->update();
 }
+
+QString MapCanvasEntities::pixmapPathForSymbol(const QString &symbol_id) const
+{
+    if (symbol_id == QStringLiteral("tank.water_tower"))
+        return QStringLiteral(":/icon/tower.png");
+    
+    if (symbol_id == QStringLiteral("tank.ground"))
+        return QStringLiteral(":/icon/tank_ground.png");
+    
+    return QStringLiteral(":/icon/entity_unknown.png");
+}
+

@@ -81,6 +81,17 @@ struct EntityTankMarker
     
     bool selected = false;
 };
+struct InfrastructureEntityReference
+{
+    InfrastructureEntity type = InfrastructureEntity::Unknown;
+    QUuid uuid;
+};
+struct MapEntityMarker
+{
+    InfrastructureEntityReference entity;
+    QString symbol_id;
+    QPointer<MapEntityMarkerLabel> label;
+};
 
 
 
