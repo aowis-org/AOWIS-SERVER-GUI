@@ -73,7 +73,7 @@ void MapCanvasWidget::paintEvent(QPaintEvent *)
     paint.drawLine(a, b);
     */
     
-    this->map_canvas_entities->paintMarkersTank(paint);
+    this->map_canvas_entities->paintMarkers(paint);
 }
 
 void MapCanvasWidget::startEntityPositioning(MapEditTool tool)
@@ -206,7 +206,7 @@ void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
     
     if (event->button() == Qt::RightButton)
     {
-        bool positioned = this->map_canvas_entities->anchorMarkerTank(event);
+        bool positioned = this->map_canvas_entities->anchorMarker(event);
         if (positioned)
         {
             update();
@@ -274,7 +274,7 @@ void MapCanvasWidget::wheelEvent(QWheelEvent *event)
 
 void MapCanvasWidget::resizeEvent(QResizeEvent *event)
 {
-    this->map_canvas_entities->positionMarkersTank();
+    this->map_canvas_entities->positionMarkers();
     
     QWidget::resizeEvent(event);
 }

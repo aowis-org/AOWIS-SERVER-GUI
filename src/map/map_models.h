@@ -8,6 +8,8 @@
 
 #include "../_enums_structs.h"
 
+#include <aowis/model/gis.h>
+
 enum class MapEntityPlacementMode
 {
     None,
@@ -89,8 +91,14 @@ struct InfrastructureEntityReference
 struct MapEntityMarker
 {
     InfrastructureEntityReference entity;
+    
+    CoordinateWGS84 coord_wgs84;
+    
     QString symbol_id;
+    QString path_pixmap;
     QPointer<MapEntityMarkerLabel> label;
+    
+    bool selected = false;
 };
 
 

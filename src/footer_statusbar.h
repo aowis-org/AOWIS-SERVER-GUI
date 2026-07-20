@@ -8,6 +8,7 @@
 #include <QLabel>
 
 #include "_enums_structs.h"
+#include <aowis/model/gis.h>
 
 class FooterStatusBar : public QWidget
 {

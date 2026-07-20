@@ -4,6 +4,7 @@
 #include <QPointF>
 
 #include "_enums_structs.h"
+#include <aowis/model/gis.h>
 
 class GeoWebMercator
 {

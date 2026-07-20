@@ -4,6 +4,7 @@
 #include <QObject>
 
 #include "_enums_structs.h"
+#include <aowis/model/gis.h>
 
 class GeoMetricProjection : public QObject
 {

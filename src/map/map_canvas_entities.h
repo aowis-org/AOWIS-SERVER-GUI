@@ -30,11 +30,11 @@ public:
     void startEntityPositioningInternal();
     void stopEntityPositioning();
     void floatEntity(QMouseEvent *event);
-    bool anchorMarkerTank(QMouseEvent *event);
-    void scaleMarkersTank();
+    bool anchorMarker(QMouseEvent *event);
+    void scaleMarkers();
     //void updateMarkersTank(QPainter &paint);
-    void positionMarkersTank();
-    void paintMarkersTank(QPainter &paint);
+    void positionMarkers();
+    void paintMarkers(QPainter &paint);
     
 private:
     MapModel *map_model = nullptr;
@@ -43,7 +43,7 @@ private:
     // QPointer to avoid circular includes
     QPointer<MapCanvasWidget> map_canvas;
     
-    QList<EntityTankMarker> list_entity_markers;
+    QList<MapEntityMarker> list_entity_markers;
     
     MapEntityPlacementMode entity_placement_mode = MapEntityPlacementMode::None;
     MapEntityMarkerLabel *entity_floating = nullptr;
