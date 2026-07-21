@@ -14,6 +14,7 @@
 #include "dummy/dummy_networks.h"
 
 #include "_enums_structs.h"
+#include "map/map_models.h"
 
 class HydraulicData : public QObject
 {

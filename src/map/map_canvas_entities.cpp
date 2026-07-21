@@ -409,9 +409,11 @@ void MapCanvasEntities::onMarkerClicked(MapEntityMarkerLabel *label)
     
     this->selected_entity = marker.entity;
     
-    //setSelectedUuid(InfrastructureEntity entity_type, const QUuid &uuid)
+    // dummy
+    QUuid uuid = this->hydraulic_data->networkHydraulic().tanks.at(0).uuid;
+    qDebug() << uuid;
     InfrastructureEntity type = marker.entity.type;
-    QUuid uuid = marker.entity.uuid;
+    //QUuid uuid = marker.entity.uuid;
     this->hydraulic_data->setSelectedUuid(type, uuid);
     
     if (this->map_canvas)
