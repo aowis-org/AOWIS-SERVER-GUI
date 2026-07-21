@@ -60,7 +60,7 @@ private:
     bool entity_draw_immediately = true;
     QPointF mouse_pos_last;
     
-    QString pixmapPathForSymbol(const QString &symbol_id) const;
+    QString pixmapPathForEntity(InfrastructureEntity entity) const;
     
 private slots:
     void onMarkerClicked(MapEntityMarkerLabel *label);

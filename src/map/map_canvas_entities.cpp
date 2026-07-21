@@ -34,7 +34,7 @@ void MapCanvasEntities::startEntityPositioningInternal()
     {
         this->entity_floating = new MapEntityMarkerLabel(this->map_canvas);
         this->entity_floating->setPixmap(
-            QPixmap(QStringLiteral(":/icon/tower.png"))
+            QPixmap(pixmapPathForEntity(this->entity_current))
                 .scaledToWidth(150, Qt::SmoothTransformation)
             );
         this->entity_floating->adjustSize();
@@ -189,23 +189,13 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
     if (this->entity_placement_mode != MapEntityPlacementMode::CreateNew)
         return false;
     
-    //EntityTank tank;
-    //tank.coord_wgs84 = wgs;
     InfrastructureEntityReference reference;
     reference.type = this->entity_current;
     MapEntityMarker marker;
     marker.coord_wgs84 = wgs;
     marker.entity = reference;
-    
-    //EntityTankMarker tank_marker;
-    //tank_marker.entity_tank = tank;
-    //tank_marker.label = this->entity_floating;
-    //tank_marker.path_pixmap = QStringLiteral(":/icon/tower.png");
-    
-    //tank_marker.label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
-    
     marker.label = this->entity_floating;
-    marker.path_pixmap = QStringLiteral(":/icon/tower.png");
+    marker.path_pixmap = pixmapPathForEntity(this->entity_current);
     marker.label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
     
     connect(
@@ -439,14 +429,50 @@ MapEntityMarker MapCanvasEntities::markerByLabel(MapEntityMarkerLabel *label)
     return marker;
 }
 
-QString MapCanvasEntities::pixmapPathForSymbol(const QString &symbol_id) const
+QString MapCanvasEntities::pixmapPathForEntity(InfrastructureEntity entity) const
 {
-    if (symbol_id == QStringLiteral("tank.water_tower"))
+    switch (entity)
+    {
+    case InfrastructureEntity::Junction:
+        return QStringLiteral(":/icon/junction.png");
+        
+    case InfrastructureEntity::Reservoir:
+        return QStringLiteral(":/icon/reservoir.png");
+        
+    case InfrastructureEntity::Tank:
         return QStringLiteral(":/icon/tower.png");
+        
+    case InfrastructureEntity::Pipe:
+        return QStringLiteral(":/icon/pipe.png");
+        
+    case InfrastructureEntity::Pump:
+        return QStringLiteral(":/icon/pump.png");
+        
+    case InfrastructureEntity::Valve:
+        return QStringLiteral(":/icon/valve.png");
+        
+    case InfrastructureEntity::CustomerPoint:
+        return QStringLiteral(":/icon/customer.png");
+        
+    case InfrastructureEntity::ElectricJunction:
+    case InfrastructureEntity::Cable:
+    case InfrastructureEntity::Switch:
+    case InfrastructureEntity::Fuse:
+    case InfrastructureEntity::CircuitBreaker:
+        return QStringLiteral(":/icon/electricity.png");
+        
+    case InfrastructureEntity::Battery:
+    case InfrastructureEntity::Generator:
+    case InfrastructureEntity::SolarPanel:
+    case InfrastructureEntity::Inverter:
+    case InfrastructureEntity::Transformer:
+        return QStringLiteral(":/icon/energy.png");
+        
+    case InfrastructureEntity::Note:
+    case InfrastructureEntity::Unknown:
+        return QStringLiteral(":/icon/geomarker.png");
+    }
     
-    if (symbol_id == QStringLiteral("tank.ground"))
-        return QStringLiteral(":/icon/tank_ground.png");
-    
-    return QStringLiteral(":/icon/entity_unknown.png");
+    return QStringLiteral(":/icon/geomarker.png");
 }
 
