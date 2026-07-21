@@ -6,7 +6,7 @@
 #include <QPainter>
 #include <QLabel>
 #include <QPixmap>
-
+#include <QUuid>
 #include <QMouseEvent>
 #include <QCursor>
 
@@ -35,6 +35,8 @@ public:
     //void updateMarkersTank(QPainter &paint);
     void positionMarkers();
     void paintMarkers(QPainter &paint);
+    
+    MapEntityMarker markerByLabel(MapEntityMarkerLabel *label);
     
 private:
     MapModel *map_model = nullptr;

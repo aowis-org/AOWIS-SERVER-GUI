@@ -400,25 +400,38 @@ void MapCanvasEntities::onMarkerMoveRequested(MapEntityMarkerLabel *label)
 
 void MapCanvasEntities::onMarkerClicked(MapEntityMarkerLabel *label)
 {
-    if (!label)
+    MapEntityMarker marker = markerByLabel(label);
+    
+    qDebug() << "click";
+    
+    if (marker.entity.type == InfrastructureEntity::Unknown)
         return;
     
-    bool selection_changed = false;
+    this->selected_entity = marker.entity;
     
+    //setSelectedUuid(InfrastructureEntity entity_type, const QUuid &uuid)
+    InfrastructureEntity type = marker.entity.type;
+    QUuid uuid = marker.entity.uuid;
+    this->hydraulic_data->setSelectedUuid(type, uuid);
+    
+    if (this->map_canvas)
+        this->map_canvas->update();
+}
+
+MapEntityMarker MapCanvasEntities::markerByLabel(MapEntityMarkerLabel *label)
+{
     for (int i = 0; i < this->list_entity_markers.length(); i++)
     {
         MapEntityMarker &marker = this->list_entity_markers[i];
-        bool selected = marker.label == label;
-        
-        if (marker.selected == selected)
-            continue;
-        
-        marker.selected = selected;
-        selection_changed = true;
+        if (marker.label == label)
+            return marker;
     }
     
-    if (selection_changed && this->map_canvas)
-        this->map_canvas->update();
+    InfrastructureEntityReference reference;
+    reference.type = InfrastructureEntity::Unknown;
+    MapEntityMarker marker;
+    marker.entity = reference;
+    return marker;
 }
 
 QString MapCanvasEntities::pixmapPathForSymbol(const QString &symbol_id) const
