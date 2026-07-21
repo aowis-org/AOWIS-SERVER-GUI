@@ -26,7 +26,7 @@ class MapCanvasEntities : public QObject
 public:
     explicit MapCanvasEntities(MapModel *map_model, HydraulicData *hydraulic_data, MapCanvasWidget *map_canvas);
     
-    void startEntityPositioning(MapEditTool tool);
+    void startEntityPositioning(InfrastructureEntity entity);
     void startEntityPositioningInternal();
     void stopEntityPositioning();
     void floatEntity(QMouseEvent *event);
@@ -50,7 +50,7 @@ private:
     MapEntityPlacementMode entity_placement_mode = MapEntityPlacementMode::None;
     MapEntityMarkerLabel *entity_floating = nullptr;
     
-    MapEditTool tool_current;
+    InfrastructureEntity entity_current;
     std::optional<InfrastructureEntityReference> selected_entity;
     
     int calculateEntityWidth();

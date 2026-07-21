@@ -225,7 +225,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     this->button_group_tools->addButton(button_radio_tank, 6);
     connect(button_radio_tank, &QRadioButton::clicked, this, [this]
     {
-        this->map_canvas->startEntityPositioning(MapEditTool::Tank);
+        this->map_canvas->startEntityPositioning(InfrastructureEntity::Tank);
     });
     
     QRadioButton *button_radio_power = new QRadioButton("[7] Power Source", wgt);

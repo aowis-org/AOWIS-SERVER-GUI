@@ -18,11 +18,11 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
     });
 }
 
-void MapCanvasEntities::startEntityPositioning(MapEditTool tool)
+void MapCanvasEntities::startEntityPositioning(InfrastructureEntity entity)
 {
     stopEntityPositioning();
     
-    this->tool_current = tool;
+    this->entity_current = entity;
     this->entity_draw_immediately = true;
     this->entity_placement_mode = MapEntityPlacementMode::CreateNew;
     
@@ -191,8 +191,11 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
     
     //EntityTank tank;
     //tank.coord_wgs84 = wgs;
+    InfrastructureEntityReference reference;
+    reference.type = this->entity_current;
     MapEntityMarker marker;
     marker.coord_wgs84 = wgs;
+    marker.entity = reference;
     
     //EntityTankMarker tank_marker;
     //tank_marker.entity_tank = tank;

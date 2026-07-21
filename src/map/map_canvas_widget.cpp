@@ -76,7 +76,7 @@ void MapCanvasWidget::paintEvent(QPaintEvent *)
     this->map_canvas_entities->paintMarkers(paint);
 }
 
-void MapCanvasWidget::startEntityPositioning(MapEditTool tool)
+void MapCanvasWidget::startEntityPositioning(InfrastructureEntity tool)
 {
     this->map_canvas_entities->startEntityPositioning(tool);
 }

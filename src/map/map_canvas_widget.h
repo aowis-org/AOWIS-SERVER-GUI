@@ -34,7 +34,7 @@ public:
     void startRectangleSelection();
     void cancelRectangleSelection();
     
-    void startEntityPositioning(MapEditTool tool);
+    void startEntityPositioning(InfrastructureEntity tool);
     void stopEntityPositioning();
     
     bool onKeyPressEvent(QKeyEvent *event);
