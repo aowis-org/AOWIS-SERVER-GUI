@@ -203,6 +203,10 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     button_radio_junction->setShortcut(Qt::Key_2);
     lay->addWidget(button_radio_junction);
     this->button_group_tools->addButton(button_radio_junction, 2);
+    connect(button_radio_junction, &QRadioButton::clicked, this, [this]
+    {
+        this->map_canvas->startEntityPositioning(InfrastructureEntity::Junction);
+    });
     
     QRadioButton *button_radio_valve = new QRadioButton("[3] Valve / Switch", wgt);
     button_radio_valve->setShortcut(Qt::Key_3);
