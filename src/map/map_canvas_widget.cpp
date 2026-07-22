@@ -198,7 +198,7 @@ void MapCanvasWidget::focusOutEvent(QFocusEvent *event)
 }
 void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
 {
-    if (this->rectangle_selection_active && event->button() == Qt::LeftButton)
+    if (this->rectangle_selection_active && event->button() == Qt::RightButton)
     {
         this->rectangle_start_pos = event->position().toPoint();
         this->rectangle_current_pos = this->rectangle_start_pos;
@@ -224,6 +224,8 @@ void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
 }
 void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
 {
+    this->map->onMouseMove(event);
+    
     if (this->rectangle_selection_active && this->rectangle_dragging)
     {
         this->rectangle_current_pos = event->position().toPoint();
@@ -233,8 +235,6 @@ void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
         return;
     }
     
-    this->map->onMouseMove(event);
-    
     // float entity with mouse cursor during placement
     this->map_canvas_entities->floatEntity(event);
     
@@ -242,7 +242,7 @@ void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
 }
 void MapCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
 {
-    if (this->rectangle_selection_active && this->rectangle_dragging)
+    if (this->rectangle_selection_active && this->rectangle_dragging && event->button() == Qt::RightButton)
     {
         this->rectangle_current_pos = event->position().toPoint();
         QRect selected_rect = currentSelectionRect();
