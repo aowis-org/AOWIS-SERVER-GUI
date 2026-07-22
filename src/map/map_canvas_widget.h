@@ -34,6 +34,8 @@ public:
     void startRectangleSelection();
     void cancelRectangleSelection();
     
+    MapCanvasEntities *mapCanvasEntities();
+    
     void startEntityPositioning(InfrastructureEntity tool);
     void stopEntityPositioning();
     

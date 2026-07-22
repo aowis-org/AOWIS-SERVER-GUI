@@ -409,6 +409,7 @@ void MapCanvasEntities::onMarkerClicked(MapEntityMarkerLabel *label)
     marker.label->setHighlightSelected();
     
     this->list_entity_markers_selected.append(marker);
+    emit signalEntityMarkerSelected();
     
     // dummy
     QUuid uuid = this->hydraulic_data->networkHydraulic().tanks.at(0).uuid;

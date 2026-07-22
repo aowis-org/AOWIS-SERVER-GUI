@@ -16,6 +16,11 @@ MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map, HydraulicD
     //setFocus(Qt::OtherFocusReason);
 }
 
+MapCanvasEntities *MapCanvasWidget::mapCanvasEntities()
+{
+    return this->map_canvas_entities;
+}
+
 int MapCanvasWidget::backgroundOpacity() const
 {
     return this->map_background_opacity;

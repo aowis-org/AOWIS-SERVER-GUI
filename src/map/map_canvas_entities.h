@@ -69,6 +69,7 @@ private slots:
     void onMarkerMoveRequested(MapEntityMarkerLabel *label);
     
 signals:
+    void signalEntityMarkerSelected();
 };
 
 #endif // MAP_CANVAS_ENTITIES_H
