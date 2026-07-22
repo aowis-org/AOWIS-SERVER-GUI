@@ -192,6 +192,24 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
     
     this->entity_floating->move(marker_pos);
     
+    if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting)
+    {
+        for (MapEntityMarker &marker : this->list_entity_markers)
+        {
+            if (marker.label != this->entity_floating)
+                continue;
+            
+            marker.coord_wgs84 = this->map_model->wgs84FromScreen(
+                event->position().toPoint(),
+                this->map_canvas->size()
+                );
+            
+            break;
+        }
+        
+        positionDeviceLinks();
+    }
+    
     if (this->map_canvas)
         this->map_canvas->update();
     
