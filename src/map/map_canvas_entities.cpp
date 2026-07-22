@@ -3,27 +3,65 @@
 
 namespace
 {
-constexpr double marker_dot_radius = 5.0;
-constexpr double connection_target_radius = 9.0;
-constexpr double connection_hover_distance = 18.0;
-
-bool isHydraulicConnectionNode(InfrastructureEntity entity)
-{
-    return entity == InfrastructureEntity::Junction ||
-           entity == InfrastructureEntity::Reservoir ||
-           entity == InfrastructureEntity::Tank;
-}
-
-bool isHydraulicDeviceLink(InfrastructureEntity entity)
-{
-    return entity == InfrastructureEntity::Pump ||
-           entity == InfrastructureEntity::Valve;
-}
-
-bool isHydraulicPipeGeometry(InfrastructureEntity entity)
-{
-    return entity == InfrastructureEntity::Pipe;
-}
+    constexpr double marker_dot_radius = 5.0;
+    constexpr double connection_target_radius = 9.0;
+    constexpr double connection_hover_distance = 18.0;
+    
+    bool isHydraulicConnectionNode(InfrastructureEntity entity)
+    {
+        return entity == InfrastructureEntity::Junction ||
+               entity == InfrastructureEntity::Reservoir ||
+               entity == InfrastructureEntity::Tank;
+    }
+    
+    bool isHydraulicDeviceLink(InfrastructureEntity entity)
+    {
+        return entity == InfrastructureEntity::Pump ||
+               entity == InfrastructureEntity::Valve;
+    }
+    
+    bool isHydraulicPipeGeometry(InfrastructureEntity entity)
+    {
+        return entity == InfrastructureEntity::Pipe;
+    }
+    
+    constexpr double device_link_hit_distance = 7.0;
+    
+    double distanceSquaredToSegment(
+        const QPointF &point,
+        const QPointF &segment_start,
+        const QPointF &segment_end
+    )
+    {
+        const double segment_x = segment_end.x() - segment_start.x();
+        const double segment_y = segment_end.y() - segment_start.y();
+        const double segment_length_squared =
+            segment_x * segment_x + segment_y * segment_y;
+        
+        if (segment_length_squared <= 0.0)
+        {
+            const double distance_x = point.x() - segment_start.x();
+            const double distance_y = point.y() - segment_start.y();
+            return distance_x * distance_x + distance_y * distance_y;
+        }
+        
+        const double projection =
+            ((point.x() - segment_start.x()) * segment_x +
+             (point.y() - segment_start.y()) * segment_y) /
+            segment_length_squared;
+        
+        const double bounded_projection = qBound(0.0, projection, 1.0);
+        
+        const QPointF nearest_point(
+            segment_start.x() + bounded_projection * segment_x,
+            segment_start.y() + bounded_projection * segment_y
+            );
+        
+        const double distance_x = point.x() - nearest_point.x();
+        const double distance_y = point.y() - nearest_point.y();
+        
+        return distance_x * distance_x + distance_y * distance_y;
+    }
 }
 
 MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraulic_data, MapCanvasWidget *map_canvas)
@@ -646,11 +684,6 @@ void MapCanvasEntities::paintDeviceLinks(QPainter &paint)
 {
     paint.save();
     
-    QPen placed_pen(Qt::black);
-    placed_pen.setWidthF(3.0);
-    placed_pen.setCapStyle(Qt::RoundCap);
-    paint.setPen(placed_pen);
-    
     for (int i = 0; i < this->list_device_links.length(); i++)
     {
         const DeviceLinkCanvasItem &device_link =
@@ -675,27 +708,37 @@ void MapCanvasEntities::paintDeviceLinks(QPainter &paint)
             continue;
         }
         
-        QPointF start_point = this->map_model->screenFromWgs84(
+        const QPointF start_point = this->map_model->screenFromWgs84(
             start_marker.coord_wgs84,
             this->map_canvas->size()
             );
         
-        QPointF center_point = this->map_model->screenFromWgs84(
+        const QPointF center_point = this->map_model->screenFromWgs84(
             device_link.geometry.center_coordinate,
             this->map_canvas->size()
             );
         
-        QPointF end_point = this->map_model->screenFromWgs84(
+        const QPointF end_point = this->map_model->screenFromWgs84(
             end_marker.coord_wgs84,
             this->map_canvas->size()
             );
+        
+        QPen placed_pen;
+        
+        if (isMarkerSelected(device_link.device_label))
+            placed_pen.setColor(QColor(0, 190, 255));
+        else
+            placed_pen.setColor(Qt::black);
+        
+        placed_pen.setWidthF(3.0);
+        placed_pen.setCapStyle(Qt::RoundCap);
+        paint.setPen(placed_pen);
         
         paint.drawLine(start_point, center_point);
         paint.drawLine(center_point, end_point);
     }
     
-    if (this->entity_placement_mode ==
-            MapEntityPlacementMode::CreateNew &&
+    if (this->entity_placement_mode == MapEntityPlacementMode::CreateNew &&
         isHydraulicDeviceLink(this->entity_current) &&
         this->device_link_start_label)
     {
@@ -704,7 +747,7 @@ void MapCanvasEntities::paintDeviceLinks(QPainter &paint)
         
         if (isHydraulicConnectionNode(start_marker.entity.type))
         {
-            QPointF start_point =
+            const QPointF start_point =
                 this->map_model->screenFromWgs84(
                     start_marker.coord_wgs84,
                     this->map_canvas->size()
@@ -717,18 +760,16 @@ void MapCanvasEntities::paintDeviceLinks(QPainter &paint)
                 MapEntityMarker end_marker =
                     markerByLabel(this->connection_target_label);
                 
-                if (isHydraulicConnectionNode(
-                        end_marker.entity.type))
+                if (isHydraulicConnectionNode(end_marker.entity.type))
                 {
-                    end_point =
-                        this->map_model->screenFromWgs84(
-                            end_marker.coord_wgs84,
-                            this->map_canvas->size()
-                            );
+                    end_point = this->map_model->screenFromWgs84(
+                        end_marker.coord_wgs84,
+                        this->map_canvas->size()
+                        );
                 }
             }
             
-            QPointF center_point =
+            const QPointF center_point =
                 (start_point + end_point) / 2.0;
             
             QPen preview_pen(QColor(0, 140, 255));
@@ -988,6 +1029,113 @@ void MapCanvasEntities::clearConnectionTarget()
     if (this->map_canvas) this->map_canvas->update();
 }
 
+bool MapCanvasEntities::isMarkerSelected(MapEntityMarkerLabel *label) const
+{
+    if (!label)
+        return false;
+    
+    for (const MapEntityMarker &marker : this->list_entity_markers_selected)
+    {
+        if (marker.label == label)
+            return true;
+    }
+    
+    return false;
+}
+
+bool MapCanvasEntities::selectDeviceLinkAt(const QPointF &position)
+{
+    MapEntityMarkerLabel *device_label =
+        deviceLinkLabelAt(position);
+    
+    if (!device_label)
+        return false;
+    
+    onMarkerClicked(device_label);
+    return true;
+}
+
+MapEntityMarkerLabel *MapCanvasEntities::deviceLinkLabelAt(const QPointF &position)
+{
+    if (this->entity_placement_mode != MapEntityPlacementMode::None)
+        return nullptr;
+    
+    const double maximum_distance_squared =
+        device_link_hit_distance * device_link_hit_distance;
+    
+    double nearest_distance_squared = maximum_distance_squared;
+    MapEntityMarkerLabel *nearest_device_label = nullptr;
+    
+    for (DeviceLinkCanvasItem &device_link : this->list_device_links)
+    {
+        if (!device_link.start_label ||
+            !device_link.end_label ||
+            !device_link.device_label)
+        {
+            continue;
+        }
+        
+        MapEntityMarker start_marker =
+            markerByLabel(device_link.start_label);
+        
+        MapEntityMarker end_marker =
+            markerByLabel(device_link.end_label);
+        
+        if (!isHydraulicConnectionNode(start_marker.entity.type) ||
+            !isHydraulicConnectionNode(end_marker.entity.type))
+        {
+            continue;
+        }
+        
+        const QPointF start_point =
+            this->map_model->screenFromWgs84(
+                start_marker.coord_wgs84,
+                this->map_canvas->size()
+                );
+        
+        const QPointF center_point =
+            this->map_model->screenFromWgs84(
+                device_link.geometry.center_coordinate,
+                this->map_canvas->size()
+                );
+        
+        const QPointF end_point =
+            this->map_model->screenFromWgs84(
+                end_marker.coord_wgs84,
+                this->map_canvas->size()
+                );
+        
+        const double first_distance_squared =
+            distanceSquaredToSegment(
+                position,
+                start_point,
+                center_point
+                );
+        
+        const double second_distance_squared =
+            distanceSquaredToSegment(
+                position,
+                center_point,
+                end_point
+                );
+        
+        const double distance_squared =
+            qMin(first_distance_squared, second_distance_squared);
+        
+        if (distance_squared > nearest_distance_squared)
+            continue;
+        
+        nearest_distance_squared = distance_squared;
+        nearest_device_label = device_link.device_label;
+    }
+    
+    return nearest_device_label;
+}
+
+bool MapCanvasEntities::isDeviceLinkAt(const QPointF &position)
+{
+    return deviceLinkLabelAt(position) != nullptr;
+}
 
 MapEntityMarker MapCanvasEntities::markerByLabel(
     MapEntityMarkerLabel *label

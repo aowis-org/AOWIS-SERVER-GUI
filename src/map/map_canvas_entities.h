@@ -41,6 +41,9 @@ public:
     void positionMarkers();
     void paintMarkers(QPainter &paint);
     
+    bool selectDeviceLinkAt(const QPointF &position);
+    bool isDeviceLinkAt(const QPointF &position);
+    
     MapEntityMarker markerByLabel(MapEntityMarkerLabel *label);
     
 private:
@@ -89,6 +92,11 @@ private:
     
     QPointer<MapEntityMarkerLabel> connection_target_label;
     QPointer<MapEntityMarkerLabel> device_link_start_label;
+    
+    MapEntityMarkerLabel *deviceLinkLabelAt(const QPointF &position);
+    
+    bool isMarkerSelected(MapEntityMarkerLabel *label) const;
+    
     void updateConnectionTarget(const QPointF &mouse_pos);
     void clearConnectionTarget();
     

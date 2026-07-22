@@ -198,9 +198,18 @@ void MapCanvasWidget::focusOutEvent(QFocusEvent *event)
 }
 void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
 {
+    if (event->button() == Qt::LeftButton &&
+        this->map_canvas_entities->selectDeviceLinkAt(event->position()))
+    {
+        update();
+        event->accept();
+        return;
+    }
+    
     if (event->button() == Qt::RightButton)
     {
         bool positioned = this->map_canvas_entities->anchorMarker(event);
+        
         if (positioned)
         {
             update();
@@ -209,14 +218,18 @@ void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
         }
     }
     
-    if (this->rectangle_selection_active && event->button() == Qt::RightButton)
+    if (this->rectangle_selection_active &&
+        event->button() == Qt::RightButton)
     {
-        this->rectangle_start_wgs84 = this->map_model->wgs84FromScreen(
-            event->position().toPoint(),
-            size()
-            );
+        this->rectangle_start_wgs84 =
+            this->map_model->wgs84FromScreen(
+                event->position().toPoint(),
+                size()
+                );
         
-        this->rectangle_current_pos = event->position().toPoint();
+        this->rectangle_current_pos =
+            event->position().toPoint();
+        
         this->rectangle_dragging = true;
         
         update();
@@ -245,6 +258,11 @@ void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
     
     // float entity with mouse cursor during placement
     this->map_canvas_entities->floatEntity(event);
+    
+    if (this->map_canvas_entities->isDeviceLinkAt(event->position()))
+        this->setCursor(Qt::PointingHandCursor);
+    else
+        this->unsetCursor();
     
     QWidget::mouseMoveEvent(event);
 }
