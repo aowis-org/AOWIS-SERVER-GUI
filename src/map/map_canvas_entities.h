@@ -62,14 +62,18 @@ private:
     QPointF mouse_pos_last;
     
     QString pixmapPathForEntity(InfrastructureEntity entity) const;
+    void deleteMarker(MapEntityMarkerLabel *label);
     
 private slots:
     void onMarkerClicked(MapEntityMarkerLabel *label);
-    void onMarkerDeleteRequested(MapEntityMarkerLabel *label);
     void onMarkerMoveRequested(MapEntityMarkerLabel *label);
+    void onMarkerDeleteRequested(MapEntityMarkerLabel *label);
+    
+public slots:
+    void onMarkerSelectedDeleteRequested();
     
 signals:
-    void signalEntityMarkerSelected();
+    void signalEntityMarkerSelected(bool status);
 };
 
 #endif // MAP_CANVAS_ENTITIES_H

@@ -188,12 +188,21 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     
     QToolButton *button_delete = new QToolButton(wgt);
     button_delete->setText("[Del] Delete Selected");
+    button_delete->setShortcut(Qt::Key_Delete);
     button_delete->setEnabled(false);
     lay->addWidget(button_delete);
     MapCanvasEntities *entities = this->map_canvas->mapCanvasEntities();
-    connect(entities, &MapCanvasEntities::signalEntityMarkerSelected, this, [this, button_delete]
+    connect(entities, &MapCanvasEntities::signalEntityMarkerSelected, this,
+    [this, button_delete](bool status)
     {
-        button_delete->setEnabled(true);
+        if (status)
+            button_delete->setEnabled(true);
+        else
+            button_delete->setEnabled(false);
+    });
+    connect(button_delete, &QPushButton::clicked, this, [this, entities]
+    {
+        entities->onMarkerSelectedDeleteRequested();
     });
     
     QLabel *label_add = new QLabel("Add:", this);

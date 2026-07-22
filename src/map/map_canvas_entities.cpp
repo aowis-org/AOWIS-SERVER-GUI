@@ -336,29 +336,6 @@ void MapCanvasEntities::paintMarkers(QPainter &paint)
     paint.restore();
 }
 
-void MapCanvasEntities::onMarkerDeleteRequested(MapEntityMarkerLabel *label)
-{
-    if (!label)
-        return;
-    
-    for (int i = 0; i < this->list_entity_markers.length(); i++)
-    {
-        MapEntityMarker &marker = this->list_entity_markers[i];
-        
-        if (marker.label == label)
-        {
-            MapEntityMarkerLabel *label_to_delete = marker.label;
-            
-            this->list_entity_markers.removeAt(i);
-            
-            label_to_delete->hide();
-            label_to_delete->deleteLater();
-            
-            this->map_canvas->update();
-            return;
-        }
-    }
-}
 void MapCanvasEntities::onMarkerMoveRequested(MapEntityMarkerLabel *label)
 {
     if (!label)
@@ -391,6 +368,69 @@ void MapCanvasEntities::onMarkerMoveRequested(MapEntityMarkerLabel *label)
         this->map_canvas->update();
 }
 
+void MapCanvasEntities::onMarkerDeleteRequested(MapEntityMarkerLabel *label)
+{
+    if (!label)
+        return;
+    
+    deleteMarker(label);
+    
+    if (this->map_canvas)
+        this->map_canvas->update();
+}
+void MapCanvasEntities::onMarkerSelectedDeleteRequested()
+{
+    QList<MapEntityMarkerLabel *> labels_to_delete;
+    
+    for (int i = 0; i < this->list_entity_markers_selected.length(); i++)
+    {
+        MapEntityMarkerLabel *label = this->list_entity_markers_selected[i].label;
+        
+        if (label)
+            labels_to_delete.append(label);
+    }
+    
+    for (int i = 0; i < labels_to_delete.length(); i++)
+        deleteMarker(labels_to_delete[i]);
+    
+    if (this->map_canvas)
+        this->map_canvas->update();
+    
+    emit signalEntityMarkerSelected(false);
+}
+void MapCanvasEntities::deleteMarker(MapEntityMarkerLabel *label)
+{
+    if (!label)
+        return;
+    
+    if (this->entity_floating == label)
+    {
+        this->entity_floating = nullptr;
+        this->entity_placement_mode = MapEntityPlacementMode::None;
+    }
+    
+    for (int i = this->list_entity_markers_selected.length() - 1; i >= 0; i--)
+    {
+        if (this->list_entity_markers_selected[i].label == label)
+            this->list_entity_markers_selected.removeAt(i);
+    }
+    
+    for (int i = 0; i < this->list_entity_markers.length(); i++)
+    {
+        if (this->list_entity_markers[i].label != label)
+            continue;
+        
+        this->list_entity_markers.removeAt(i);
+        break;
+    }
+    
+    if (this->list_entity_markers_selected.isEmpty())
+        this->selected_entity.reset();
+    
+    label->hide();
+    label->deleteLater();
+}
+
 void MapCanvasEntities::onMarkerClicked(MapEntityMarkerLabel *label)
 {
     MapEntityMarker marker = markerByLabel(label);
@@ -409,7 +449,7 @@ void MapCanvasEntities::onMarkerClicked(MapEntityMarkerLabel *label)
     marker.label->setHighlightSelected();
     
     this->list_entity_markers_selected.append(marker);
-    emit signalEntityMarkerSelected();
+    emit signalEntityMarkerSelected(true);
     
     // dummy
     QUuid uuid = this->hydraulic_data->networkHydraulic().tanks.at(0).uuid;
