@@ -75,7 +75,7 @@ private:
     bool rectangle_selection_active = false;
     bool rectangle_dragging = false;
     
-    QPoint rectangle_start_pos;
+    CoordinateWGS84 rectangle_start_wgs84;
     QPoint rectangle_current_pos;
     
     QRect currentSelectionRect() const;
