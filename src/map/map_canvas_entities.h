@@ -9,12 +9,8 @@
 #include <QUuid>
 #include <QMouseEvent>
 #include <QCursor>
-
-#include <functional>
-
 #include "map_model.h"
 #include "map_entity_marker_label.h"
-
 #include "../_enums_structs.h"
 #include "../hydraulic_data.h"
 #include "map_models.h"
@@ -31,6 +27,7 @@ class MapCanvasWidget;
 class MapCanvasEntities : public QObject
 {
     Q_OBJECT
+    
 public:
     explicit MapCanvasEntities(MapModel *map_model, HydraulicData *hydraulic_data, MapCanvasWidget *map_canvas);
     
@@ -38,13 +35,15 @@ public:
     void stopEntityPositioning();
     void floatEntity(QMouseEvent *event);
     bool anchorMarker(QMouseEvent *event);
-    void scaleMarkers();
     
+    void scaleMarkers();
     void positionMarkers();
     void paintMarkers(QPainter &paint);
     
     bool selectDeviceLinkAt(const QPointF &position);
     bool isDeviceLinkAt(const QPointF &position);
+    bool selectPipeAt(const QPointF &position);
+    bool isPipeAt(const QPointF &position);
     
     MapEntityMarker markerByLabel(MapEntityMarkerLabel *label);
     
@@ -59,9 +58,21 @@ private:
         QString path_pixmap;
     };
     
+    struct PipeCanvasItem
+    {
+        InfrastructureEntityReference entity;
+        PipeGeometry geometry;
+        QPointer<MapEntityMarkerLabel> start_label;
+        QPointer<MapEntityMarkerLabel> end_label;
+        bool selected = false;
+    };
+    
     void startEntityPositioningInternal();
     bool anchorDeviceLink(QMouseEvent *event);
+    bool anchorPipe(QMouseEvent *event);
+    
     void paintDeviceLinks(QPainter &paint);
+    void paintPipes(QPainter &paint);
     void positionDeviceLinks();
     void positionDeviceLabel(MapEntityMarkerLabel *label, const QPointF &center);
     void setPointMarkerMouseTransparency(bool transparent);
@@ -69,21 +80,21 @@ private:
     MapModel *map_model = nullptr;
     HydraulicData *hydraulic_data = nullptr;
     //NetworkHydraulic network_hydraulic;
+    
     // QPointer to avoid circular includes
     QPointer<MapCanvasWidget> map_canvas;
     
     QList<MapEntityMarker> list_entity_markers;
     QList<MapEntityMarker> list_entity_markers_selected;
     QList<DeviceLinkCanvasItem> list_device_links;
+    QList<PipeCanvasItem> list_pipes;
     
     MapEntityPlacementMode entity_placement_mode = MapEntityPlacementMode::None;
     MapEntityMarkerLabel *entity_floating = nullptr;
-    
     InfrastructureEntity entity_current;
     std::optional<InfrastructureEntityReference> selected_entity;
     
     int calculateEntityWidth();
-    
     QPoint entity_floating_hide_until;
     // on tool change, the rearming should not be active
     bool entity_draw_immediately = true;
@@ -94,11 +105,14 @@ private:
     
     QPointer<MapEntityMarkerLabel> connection_target_label;
     QPointer<MapEntityMarkerLabel> device_link_start_label;
+    QPointer<MapEntityMarkerLabel> pipe_start_label;
+    QList<CoordinateWGS84> pipe_intermediate_vertices;
     
     MapEntityMarkerLabel *deviceLinkLabelAt(const QPointF &position);
-    
+    PipeCanvasItem *pipeAt(const QPointF &position);
     bool isMarkerSelected(MapEntityMarkerLabel *label) const;
-    
+    bool hasSelection() const;
+    void clearSelection();
     void updateConnectionTarget(const QPointF &mouse_pos);
     void clearConnectionTarget();
     
@@ -109,7 +123,6 @@ private slots:
     
 public slots:
     void onMarkerSelectedDeleteRequested();
-    
     void onRectangleSelect(const CoordinateWGS84Rect &rect, RectangleSelectMode mode);
     
 signals:
