@@ -44,7 +44,22 @@ public:
     MapEntityMarker markerByLabel(MapEntityMarkerLabel *label);
     
 private:
+    struct DeviceLinkCanvasItem
+    {
+        InfrastructureEntityReference entity;
+        DeviceLinkGeometry geometry;
+        QPointer<MapEntityMarkerLabel> start_label;
+        QPointer<MapEntityMarkerLabel> end_label;
+        QPointer<MapEntityMarkerLabel> device_label;
+        QString path_pixmap;
+    };
+    
     void startEntityPositioningInternal();
+    bool anchorDeviceLink(QMouseEvent *event);
+    void paintDeviceLinks(QPainter &paint);
+    void positionDeviceLinks();
+    void positionDeviceLabel(MapEntityMarkerLabel *label, const QPointF &center);
+    void setPointMarkerMouseTransparency(bool transparent);
     
     MapModel *map_model = nullptr;
     HydraulicData *hydraulic_data = nullptr;
@@ -54,6 +69,7 @@ private:
     
     QList<MapEntityMarker> list_entity_markers;
     QList<MapEntityMarker> list_entity_markers_selected;
+    QList<DeviceLinkCanvasItem> list_device_links;
     
     MapEntityPlacementMode entity_placement_mode = MapEntityPlacementMode::None;
     MapEntityMarkerLabel *entity_floating = nullptr;
@@ -70,6 +86,11 @@ private:
     
     QString pixmapPathForEntity(InfrastructureEntity entity) const;
     void deleteMarker(MapEntityMarkerLabel *label);
+    
+    QPointer<MapEntityMarkerLabel> connection_target_label;
+    QPointer<MapEntityMarkerLabel> device_link_start_label;
+    void updateConnectionTarget(const QPointF &mouse_pos);
+    void clearConnectionTarget();
     
 private slots:
     void onMarkerClicked(MapEntityMarkerLabel *label);

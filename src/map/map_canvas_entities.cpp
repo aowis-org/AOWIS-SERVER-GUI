@@ -1,6 +1,30 @@
 #include "map_canvas_entities.h"
 #include "map_canvas_widget.h"
 
+namespace
+{
+constexpr double marker_dot_radius = 5.0;
+constexpr double connection_target_radius = 9.0;
+constexpr double connection_hover_distance = 18.0;
+
+bool isHydraulicConnectionNode(InfrastructureEntity entity)
+{
+    return entity == InfrastructureEntity::Junction ||
+           entity == InfrastructureEntity::Reservoir ||
+           entity == InfrastructureEntity::Tank;
+}
+
+bool isHydraulicDeviceLink(InfrastructureEntity entity)
+{
+    return entity == InfrastructureEntity::Pump ||
+           entity == InfrastructureEntity::Valve;
+}
+
+bool isHydraulicPipeGeometry(InfrastructureEntity entity)
+{
+    return entity == InfrastructureEntity::Pipe;
+}
+}
 
 MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraulic_data, MapCanvasWidget *map_canvas)
     : QObject(map_canvas),
@@ -13,9 +37,9 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
     connect(this->map_model, &MapModel::zoomChanged, this, &MapCanvasEntities::scaleMarkers);
     
     connect(this->map_model, &MapModel::centerChangedWGS84, this, [this](const CoordinateWGS84 &)
-    {
-        positionMarkers();
-    });
+            {
+                positionMarkers();
+            });
 }
 
 void MapCanvasEntities::startEntityPositioning(InfrastructureEntity entity)
@@ -26,6 +50,9 @@ void MapCanvasEntities::startEntityPositioning(InfrastructureEntity entity)
     this->entity_draw_immediately = true;
     this->entity_placement_mode = MapEntityPlacementMode::CreateNew;
     
+    if (isHydraulicDeviceLink(this->entity_current))
+        setPointMarkerMouseTransparency(true);
+    
     startEntityPositioningInternal();
 }
 void MapCanvasEntities::startEntityPositioningInternal()
@@ -33,11 +60,17 @@ void MapCanvasEntities::startEntityPositioningInternal()
     if (this->entity_placement_mode == MapEntityPlacementMode::CreateNew)
     {
         this->entity_floating = new MapEntityMarkerLabel(this->map_canvas);
-        this->entity_floating->setPixmap(
-            QPixmap(pixmapPathForEntity(this->entity_current))
-                .scaledToWidth(150, Qt::SmoothTransformation)
-            );
-        this->entity_floating->adjustSize();
+        
+        int width = 150;
+        
+        if (isHydraulicDeviceLink(this->entity_current))
+            width = calculateEntityWidth();
+        
+        QPixmap pixmap = QPixmap(pixmapPathForEntity(this->entity_current))
+                             .scaledToWidth(width, Qt::SmoothTransformation);
+        
+        this->entity_floating->setPixmap(pixmap);
+        this->entity_floating->resize(pixmap.size());
     }
     else if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting)
     {
@@ -76,6 +109,10 @@ void MapCanvasEntities::startEntityPositioningInternal()
 
 void MapCanvasEntities::stopEntityPositioning()
 {
+    clearConnectionTarget();
+    this->device_link_start_label = nullptr;
+    setPointMarkerMouseTransparency(false);
+    
     if (!this->entity_floating)
     {
         this->entity_placement_mode = MapEntityPlacementMode::None;
@@ -109,6 +146,7 @@ void MapCanvasEntities::stopEntityPositioning()
 void MapCanvasEntities::floatEntity(QMouseEvent *event)
 {
     this->mouse_pos_last = event->position();
+    updateConnectionTarget(event->position());
     
     if (!this->entity_floating)
         return;
@@ -125,10 +163,32 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
         this->entity_floating->show();
     }
     
-    QPoint marker_pos(
-        qRound(event->position().x()),
-        qRound(event->position().y()) - this->entity_floating->height()
-        );
+    QPoint marker_pos;
+    if (isHydraulicDeviceLink(this->entity_current) && this->device_link_start_label)
+    {
+        MapEntityMarker start_marker = markerByLabel(this->device_link_start_label);
+        QPointF start_point = this->map_model->screenFromWgs84(start_marker.coord_wgs84, this->map_canvas->size());
+        QPointF end_point = event->position();
+        
+        if (this->connection_target_label)
+        {
+            MapEntityMarker end_marker = markerByLabel(this->connection_target_label);
+            end_point = this->map_model->screenFromWgs84(end_marker.coord_wgs84, this->map_canvas->size());
+        }
+        
+        QPointF center = (start_point + end_point) / 2.0;
+        marker_pos = QPoint(
+            qRound(center.x() - this->entity_floating->width() / 2.0),
+            qRound(center.y() - this->entity_floating->height() / 2.0)
+            );
+    }
+    else
+    {
+        marker_pos = QPoint(
+            qRound(event->position().x()),
+            qRound(event->position().y()) - this->entity_floating->height()
+            );
+    }
     
     this->entity_floating->move(marker_pos);
     
@@ -143,10 +203,13 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
     if (!this->entity_floating)
         return false;
     
+    if (this->entity_placement_mode == MapEntityPlacementMode::CreateNew && isHydraulicDeviceLink(this->entity_current))
+        return anchorDeviceLink(event);
+    
     CoordinateWGS84 wgs = this->map_model->wgs84FromScreen(
         event->position().toPoint(),
         this->map_canvas->size()
-    );
+        );
     
     if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting)
     {
@@ -191,6 +254,7 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
     
     InfrastructureEntityReference reference;
     reference.type = this->entity_current;
+    reference.uuid = QUuid::createUuid();
     MapEntityMarker marker;
     marker.coord_wgs84 = wgs;
     marker.entity = reference;
@@ -203,21 +267,21 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
         &MapEntityMarkerLabel::signalDeleteRequested,
         this,
         &MapCanvasEntities::onMarkerDeleteRequested
-    );
+        );
     
     connect(
         marker.label,
         &MapEntityMarkerLabel::signalMoveRequested,
         this,
         &MapCanvasEntities::onMarkerMoveRequested
-    );
+        );
     
     connect(
         marker.label,
         &MapEntityMarkerLabel::signalClicked,
         this,
         &MapCanvasEntities::onMarkerClicked
-    );
+        );
     
     int width = calculateEntityWidth();
     QPixmap pixmap = QPixmap(marker.path_pixmap).scaledToWidth(width, Qt::SmoothTransformation);
@@ -232,6 +296,73 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
     
     positionMarkers();
     startEntityPositioningInternal();
+    
+    return true;
+}
+
+bool MapCanvasEntities::anchorDeviceLink(QMouseEvent *event)
+{
+    if (!this->connection_target_label)
+        return true;
+    
+    MapEntityMarker target_marker = markerByLabel(this->connection_target_label);
+    if (!isHydraulicConnectionNode(target_marker.entity.type))
+        return true;
+    
+    if (!this->device_link_start_label)
+    {
+        this->device_link_start_label = this->connection_target_label;
+        this->connection_target_label = nullptr;
+        updateConnectionTarget(event->position());
+        
+        if (this->map_canvas)
+            this->map_canvas->update();
+        
+        return true;
+    }
+    
+    if (this->connection_target_label == this->device_link_start_label)
+        return true;
+    
+    MapEntityMarker start_marker = markerByLabel(this->device_link_start_label);
+    if (!isHydraulicConnectionNode(start_marker.entity.type))
+    {
+        this->device_link_start_label = nullptr;
+        return true;
+    }
+    
+    QPointF start_point = this->map_model->screenFromWgs84(start_marker.coord_wgs84, this->map_canvas->size());
+    QPointF end_point = this->map_model->screenFromWgs84(target_marker.coord_wgs84, this->map_canvas->size());
+    QPointF center_point = (start_point + end_point) / 2.0;
+    
+    DeviceLinkCanvasItem device_link;
+    device_link.entity.type = this->entity_current;
+    device_link.entity.uuid = QUuid::createUuid();
+    device_link.geometry.start_node = start_marker.entity;
+    device_link.geometry.end_node = target_marker.entity;
+    device_link.geometry.center_coordinate = this->map_model->wgs84FromScreen(center_point.toPoint(), this->map_canvas->size());
+    device_link.start_label = this->device_link_start_label;
+    device_link.end_label = this->connection_target_label;
+    device_link.device_label = this->entity_floating;
+    device_link.path_pixmap = pixmapPathForEntity(this->entity_current);
+    
+    int width = calculateEntityWidth();
+    QPixmap pixmap = QPixmap(device_link.path_pixmap).scaledToWidth(width, Qt::SmoothTransformation);
+    device_link.device_label->setPixmap(pixmap);
+    device_link.device_label->resize(pixmap.size());
+    device_link.device_label->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    
+    this->list_device_links.append(device_link);
+    this->entity_floating_hide_until = event->position().toPoint();
+    this->entity_floating = nullptr;
+    this->device_link_start_label = nullptr;
+    this->connection_target_label = nullptr;
+    
+    positionDeviceLinks();
+    startEntityPositioningInternal();
+    
+    if (this->map_canvas)
+        this->map_canvas->update();
     
     return true;
 }
@@ -263,6 +394,17 @@ void MapCanvasEntities::scaleMarkers()
         QPixmap pixmap = QPixmap(marker.path_pixmap).scaledToWidth(width, Qt::SmoothTransformation);
         label->setPixmap(pixmap);
         label->resize(pixmap.size());
+    }
+    
+    for (int i = 0; i < this->list_device_links.length(); i++)
+    {
+        DeviceLinkCanvasItem &device_link = this->list_device_links[i];
+        if (!device_link.device_label)
+            continue;
+        
+        QPixmap pixmap = QPixmap(device_link.path_pixmap).scaledToWidth(width, Qt::SmoothTransformation);
+        device_link.device_label->setPixmap(pixmap);
+        device_link.device_label->resize(pixmap.size());
     }
     
     positionMarkers();
@@ -301,36 +443,147 @@ void MapCanvasEntities::positionMarkers()
         if (!label->isVisible())
             label->show();
     }
+    
+    positionDeviceLinks();
+}
+
+void MapCanvasEntities::positionDeviceLinks()
+{
+    for (int i = 0; i < this->list_device_links.length(); i++)
+    {
+        DeviceLinkCanvasItem &device_link = this->list_device_links[i];
+        if (!device_link.device_label || !device_link.start_label || !device_link.end_label)
+            continue;
+        
+        MapEntityMarker start_marker = markerByLabel(device_link.start_label);
+        MapEntityMarker end_marker = markerByLabel(device_link.end_label);
+        if (!isHydraulicConnectionNode(start_marker.entity.type) || !isHydraulicConnectionNode(end_marker.entity.type))
+            continue;
+        
+        QPointF start_point = this->map_model->screenFromWgs84(start_marker.coord_wgs84, this->map_canvas->size());
+        QPointF end_point = this->map_model->screenFromWgs84(end_marker.coord_wgs84, this->map_canvas->size());
+        QPointF center = (start_point + end_point) / 2.0;
+        
+        device_link.geometry.center_coordinate = this->map_model->wgs84FromScreen(center.toPoint(), this->map_canvas->size());
+        positionDeviceLabel(device_link.device_label, center);
+    }
+}
+
+void MapCanvasEntities::positionDeviceLabel(MapEntityMarkerLabel *label, const QPointF &center)
+{
+    if (!label)
+        return;
+    
+    QPoint label_position(
+        qRound(center.x() - label->width() / 2.0),
+        qRound(center.y() - label->height() / 2.0)
+        );
+    
+    if (label->pos() != label_position)
+        label->move(label_position);
+    
+    if (!label->isVisible())
+        label->show();
+}
+
+void MapCanvasEntities::setPointMarkerMouseTransparency(bool transparent)
+{
+    for (int i = 0; i < this->list_entity_markers.length(); i++)
+    {
+        MapEntityMarkerLabel *label = this->list_entity_markers[i].label;
+        if (label)
+            label->setAttribute(Qt::WA_TransparentForMouseEvents, transparent);
+    }
 }
 void MapCanvasEntities::paintMarkers(QPainter &paint)
 {
+    paintDeviceLinks(paint);
+    
     paint.save();
-    paint.setBrush(Qt::black);
     paint.setPen(Qt::NoPen);
     
-    for (int i = 0; i < this->list_entity_markers.length(); i++)
-    {
+    for (int i = 0; i < this->list_entity_markers.length(); i++) {
         MapEntityMarker &marker = this->list_entity_markers[i];
         
         if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting &&
-            marker.label == this->entity_floating)
-        {
+            marker.label == this->entity_floating) {
             continue;
         }
         
-        CoordinateWGS84 wgs = marker.coord_wgs84;
-        QPointF point = this->map_model->screenFromWgs84(
-            wgs,
+        const QPointF point = this->map_model->screenFromWgs84(
+            marker.coord_wgs84,
             this->map_canvas->size()
             );
         
-        paint.drawEllipse(point, 5.0, 5.0);
+        const bool is_connection_target =
+            marker.label &&
+            marker.label == this->connection_target_label;
+        
+        if (is_connection_target) {
+            paint.setBrush(QColor(0, 140, 255));
+            paint.drawEllipse(point, connection_target_radius, connection_target_radius);
+        } else {
+            paint.setBrush(Qt::black);
+            paint.drawEllipse(point, marker_dot_radius, marker_dot_radius);
+        }
     }
     
     if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting &&
-        this->entity_floating)
+        this->entity_floating) {
+        paint.setBrush(Qt::black);
+        paint.drawEllipse(this->mouse_pos_last, marker_dot_radius, marker_dot_radius);
+    }
+    
+    paint.restore();
+}
+
+void MapCanvasEntities::paintDeviceLinks(QPainter &paint)
+{
+    paint.save();
+    
+    QPen placed_pen(Qt::black);
+    placed_pen.setWidthF(3.0);
+    placed_pen.setCapStyle(Qt::RoundCap);
+    paint.setPen(placed_pen);
+    
+    for (int i = 0; i < this->list_device_links.length(); i++)
     {
-        paint.drawEllipse(this->mouse_pos_last, 5.0, 5.0);
+        const DeviceLinkCanvasItem &device_link = this->list_device_links[i];
+        if (!device_link.start_label || !device_link.end_label)
+            continue;
+        
+        MapEntityMarker start_marker = markerByLabel(device_link.start_label);
+        MapEntityMarker end_marker = markerByLabel(device_link.end_label);
+        if (!isHydraulicConnectionNode(start_marker.entity.type) || !isHydraulicConnectionNode(end_marker.entity.type))
+            continue;
+        
+        QPointF start_point = this->map_model->screenFromWgs84(start_marker.coord_wgs84, this->map_canvas->size());
+        QPointF end_point = this->map_model->screenFromWgs84(end_marker.coord_wgs84, this->map_canvas->size());
+        paint.drawLine(start_point, end_point);
+    }
+    
+    if (this->entity_placement_mode == MapEntityPlacementMode::CreateNew &&
+        isHydraulicDeviceLink(this->entity_current) && this->device_link_start_label)
+    {
+        MapEntityMarker start_marker = markerByLabel(this->device_link_start_label);
+        if (isHydraulicConnectionNode(start_marker.entity.type))
+        {
+            QPointF start_point = this->map_model->screenFromWgs84(start_marker.coord_wgs84, this->map_canvas->size());
+            QPointF end_point = this->mouse_pos_last;
+            
+            if (this->connection_target_label)
+            {
+                MapEntityMarker end_marker = markerByLabel(this->connection_target_label);
+                if (isHydraulicConnectionNode(end_marker.entity.type))
+                    end_point = this->map_model->screenFromWgs84(end_marker.coord_wgs84, this->map_canvas->size());
+            }
+            
+            QPen preview_pen(QColor(0, 140, 255));
+            preview_pen.setWidthF(3.0);
+            preview_pen.setCapStyle(Qt::RoundCap);
+            paint.setPen(preview_pen);
+            paint.drawLine(start_point, end_point);
+        }
     }
     
     paint.restore();
@@ -403,10 +656,32 @@ void MapCanvasEntities::deleteMarker(MapEntityMarkerLabel *label)
     if (!label)
         return;
     
+    if (this->connection_target_label == label) {
+        this->connection_target_label = nullptr;
+    }
+    
     if (this->entity_floating == label)
     {
         this->entity_floating = nullptr;
         this->entity_placement_mode = MapEntityPlacementMode::None;
+    }
+    
+    if (this->device_link_start_label == label)
+        this->device_link_start_label = nullptr;
+    
+    for (int i = this->list_device_links.length() - 1; i >= 0; i--)
+    {
+        DeviceLinkCanvasItem &device_link = this->list_device_links[i];
+        if (device_link.start_label != label && device_link.end_label != label && device_link.device_label != label)
+            continue;
+        
+        if (device_link.device_label && device_link.device_label != label)
+        {
+            device_link.device_label->hide();
+            device_link.device_label->deleteLater();
+        }
+        
+        this->list_device_links.removeAt(i);
     }
     
     for (int i = this->list_entity_markers_selected.length() - 1; i >= 0; i--)
@@ -516,6 +791,53 @@ void MapCanvasEntities::onRectangleSelect(const CoordinateWGS84Rect &rect, Recta
         this->map_canvas->update();
 }
 
+void MapCanvasEntities::updateConnectionTarget(const QPointF &mouse_pos)
+{
+    QPointer<MapEntityMarkerLabel> nearest_label = nullptr;
+    double nearest_distance_squared = connection_hover_distance * connection_hover_distance;
+    
+    if (this->entity_floating &&
+        this->entity_placement_mode == MapEntityPlacementMode::CreateNew &&
+        isHydraulicDeviceLink(this->entity_current)) {
+        for (const MapEntityMarker &marker : this->list_entity_markers) {
+            if (!marker.label || !isHydraulicConnectionNode(marker.entity.type)) continue;
+            if (this->device_link_start_label && marker.label == this->device_link_start_label) continue;
+            
+            const QPointF point = this->map_model->screenFromWgs84(
+                marker.coord_wgs84,
+                this->map_canvas->size()
+                );
+            
+            const double distance_x = point.x() - mouse_pos.x();
+            const double distance_y = point.y() - mouse_pos.y();
+            const double distance_squared =
+                distance_x * distance_x +
+                distance_y * distance_y;
+            
+            if (distance_squared > nearest_distance_squared) continue;
+            
+            nearest_distance_squared = distance_squared;
+            nearest_label = marker.label;
+        }
+    }
+    
+    if (this->connection_target_label == nearest_label) return;
+    
+    this->connection_target_label = nearest_label;
+    
+    if (this->map_canvas) this->map_canvas->update();
+}
+
+void MapCanvasEntities::clearConnectionTarget()
+{
+    if (this->connection_target_label.isNull()) return;
+    
+    this->connection_target_label = nullptr;
+    
+    if (this->map_canvas) this->map_canvas->update();
+}
+
+
 MapEntityMarker MapCanvasEntities::markerByLabel(MapEntityMarkerLabel *label)
 {
     for (int i = 0; i < this->list_entity_markers.length(); i++)
@@ -578,5 +900,3 @@ QString MapCanvasEntities::pixmapPathForEntity(InfrastructureEntity entity) cons
     
     return QStringLiteral(":/icon/geomarker.png");
 }
-
-

@@ -230,6 +230,9 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     button_radio_valve->setShortcut(Qt::Key_3);
     lay->addWidget(button_radio_valve);
     this->button_group_tools->addButton(button_radio_valve, 3);
+    connect(button_radio_valve, &QRadioButton::clicked, this, [this] {
+        this->map_canvas->startEntityPositioning(InfrastructureEntity::Valve);
+    });
     
     QRadioButton *button_radio_customer = new QRadioButton("[4] Customer Point", wgt);
     button_radio_customer->setShortcut(Qt::Key_4);
@@ -240,6 +243,9 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     button_radio_pump->setShortcut(Qt::Key_5);
     lay->addWidget(button_radio_pump);
     this->button_group_tools->addButton(button_radio_pump, 5);
+    connect(button_radio_pump, &QRadioButton::clicked, this, [this] {
+        this->map_canvas->startEntityPositioning(InfrastructureEntity::Pump);
+    });
     
     QRadioButton *button_radio_tank = new QRadioButton("[6] Tank", wgt);
     button_radio_tank->setShortcut(Qt::Key_6);
