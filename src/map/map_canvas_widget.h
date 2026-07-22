@@ -31,7 +31,7 @@ public:
     
     int backgroundOpacity() const;
     
-    void startRectangleSelection();
+    void startRectangleSelection(bool oneshot);
     void cancelRectangleSelection();
     
     MapCanvasEntities *mapCanvasEntities();
@@ -72,6 +72,7 @@ private:
     int map_background_opacity = 0;
     
     // rectangle selection variables and function
+    bool is_rectangle_selection_oneshot = true;
     bool rectangle_selection_active = false;
     bool rectangle_dragging = false;
     

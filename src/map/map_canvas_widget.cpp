@@ -251,7 +251,9 @@ void MapCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
         this->rectangle_current_pos = event->position().toPoint();
         const QRect selected_rect = currentSelectionRect();
         
-        this->rectangle_selection_active = false;
+        if (this->is_rectangle_selection_oneshot)
+            this->rectangle_selection_active = false;
+        
         this->rectangle_dragging = false;
         
         unsetCursor();
@@ -298,8 +300,10 @@ void MapCanvasWidget::resizeEvent(QResizeEvent *event)
     QWidget::resizeEvent(event);
 }
 
-void MapCanvasWidget::startRectangleSelection()
+void MapCanvasWidget::startRectangleSelection(bool oneshot)
 {
+    this->is_rectangle_selection_oneshot = oneshot;
+    
     this->rectangle_selection_active = true;
     this->rectangle_dragging = false;
     
@@ -315,7 +319,9 @@ void MapCanvasWidget::cancelRectangleSelection()
     if (!rectangle_selection_active)
         return;
     
-    this->rectangle_selection_active = false;
+    if (this->is_rectangle_selection_oneshot)
+        this->rectangle_selection_active = false;
+    
     this->rectangle_dragging = false;
     
     unsetCursor();

@@ -114,7 +114,7 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
     btn_select_rectangle->setAutoRaise(false);
     connect(btn_select_rectangle, &QToolButton::clicked, this, [this, btn_select_rectangle]
     {
-        this->map_canvas->startRectangleSelection();
+        this->map_canvas->startRectangleSelection(true);
     });
     
     QLabel *label_explanation_spinners = new QLabel("<b>Select the zoom level range</b> (from - to) for the tiles you want to delete/reload:");
@@ -187,7 +187,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     this->button_group_tools->addButton(button_radio_select, 100);
     connect(button_radio_select, &QRadioButton::clicked, this, [this]
     {
-        this->map_canvas->startRectangleSelection();
+        this->map_canvas->startRectangleSelection(false);
     });
     
     QToolButton *button_delete = new QToolButton(wgt);
