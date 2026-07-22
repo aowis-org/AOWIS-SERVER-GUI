@@ -2,6 +2,10 @@
 #include "map_canvas_widget.h"
 
 #include <functional>
+#include <QAbstractButton>
+#include <QAction>
+#include <QMenu>
+#include <QMessageBox>
 
 namespace
 {
@@ -9,6 +13,8 @@ constexpr double marker_dot_radius = 5.0;
 constexpr double connection_target_radius = 9.0;
 constexpr double connection_hover_distance = 18.0;
 constexpr double link_hit_distance = 7.0;
+constexpr double pipe_vertex_radius = 4.0;
+constexpr double pipe_vertex_hit_distance = 9.0;
 
 bool isHydraulicConnectionNode(InfrastructureEntity entity)
 {
@@ -33,7 +39,7 @@ bool isHydraulicCanvasLink(InfrastructureEntity entity)
     return isHydraulicDeviceLink(entity) || isHydraulicPipeGeometry(entity);
 }
 
-double distanceSquaredToSegment(
+QPointF nearestPointOnSegment(
     const QPointF &point,
     const QPointF &segment_start,
     const QPointF &segment_end
@@ -44,20 +50,29 @@ double distanceSquaredToSegment(
     const double segment_length_squared = segment_x * segment_x + segment_y * segment_y;
     
     if (segment_length_squared <= 0.0)
-    {
-        const double distance_x = point.x() - segment_start.x();
-        const double distance_y = point.y() - segment_start.y();
-        return distance_x * distance_x + distance_y * distance_y;
-    }
+        return segment_start;
     
     const double projection =
         ((point.x() - segment_start.x()) * segment_x +
          (point.y() - segment_start.y()) * segment_y) /
         segment_length_squared;
     const double bounded_projection = qBound(0.0, projection, 1.0);
-    const QPointF nearest_point(
+    return QPointF(
         segment_start.x() + bounded_projection * segment_x,
         segment_start.y() + bounded_projection * segment_y
+        );
+}
+
+double distanceSquaredToSegment(
+    const QPointF &point,
+    const QPointF &segment_start,
+    const QPointF &segment_end
+    )
+{
+    const QPointF nearest_point = nearestPointOnSegment(
+        point,
+        segment_start,
+        segment_end
         );
     const double distance_x = point.x() - nearest_point.x();
     const double distance_y = point.y() - nearest_point.y();
@@ -150,6 +165,8 @@ void MapCanvasEntities::stopEntityPositioning()
     this->device_link_start_label = nullptr;
     this->pipe_start_label = nullptr;
     this->pipe_intermediate_vertices.clear();
+    this->pipe_vertex_move_pipe_uuid.reset();
+    this->pipe_vertex_move_index = -1;
     setPointMarkerMouseTransparency(false);
     
     if (!this->entity_floating)
@@ -185,6 +202,33 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
 {
     this->mouse_pos_last = event->position();
     updateConnectionTarget(event->position());
+    
+    if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting &&
+        this->pipe_vertex_move_pipe_uuid.has_value())
+    {
+        PipeCanvasItem *pipe = pipeByUuid(this->pipe_vertex_move_pipe_uuid.value());
+        if (!pipe ||
+            this->pipe_vertex_move_index < 0 ||
+            this->pipe_vertex_move_index >= pipe->geometry.intermediate_vertices.size())
+        {
+            this->pipe_vertex_move_pipe_uuid.reset();
+            this->pipe_vertex_move_index = -1;
+            this->entity_placement_mode = MapEntityPlacementMode::None;
+            return;
+        }
+        
+        pipe->geometry.intermediate_vertices[this->pipe_vertex_move_index] =
+            this->map_model->wgs84FromScreen(
+                event->position().toPoint(),
+                this->map_canvas->size()
+                );
+        
+        if (this->map_canvas)
+            this->map_canvas->update();
+        
+        event->accept();
+        return;
+    }
     
     if (!this->entity_floating)
         return;
@@ -287,6 +331,9 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
 
 bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
 {
+    if (anchorPipeVertexMove(event))
+        return true;
+    
     if (!this->entity_floating)
         return false;
     
@@ -556,6 +603,36 @@ bool MapCanvasEntities::anchorPipe(QMouseEvent *event)
         this->map_canvas->size()
         );
     this->pipe_intermediate_vertices.append(intermediate_vertex);
+    
+    if (this->map_canvas)
+        this->map_canvas->update();
+    
+    return true;
+}
+
+bool MapCanvasEntities::anchorPipeVertexMove(QMouseEvent *event)
+{
+    if (this->entity_placement_mode != MapEntityPlacementMode::MoveExisting ||
+        !this->pipe_vertex_move_pipe_uuid.has_value())
+    {
+        return false;
+    }
+    
+    PipeCanvasItem *pipe = pipeByUuid(this->pipe_vertex_move_pipe_uuid.value());
+    if (pipe &&
+        this->pipe_vertex_move_index >= 0 &&
+        this->pipe_vertex_move_index < pipe->geometry.intermediate_vertices.size())
+    {
+        pipe->geometry.intermediate_vertices[this->pipe_vertex_move_index] =
+            this->map_model->wgs84FromScreen(
+                event->position().toPoint(),
+                this->map_canvas->size()
+                );
+    }
+    
+    this->pipe_vertex_move_pipe_uuid.reset();
+    this->pipe_vertex_move_index = -1;
+    this->entity_placement_mode = MapEntityPlacementMode::None;
     
     if (this->map_canvas)
         this->map_canvas->update();
@@ -871,6 +948,17 @@ void MapCanvasEntities::paintPipes(QPainter &paint)
             this->map_canvas->size()
             );
         paint.drawLine(previous_point, end_point);
+        
+        paint.setPen(Qt::NoPen);
+        paint.setBrush(pipe.selected ? QColor(0, 190, 255) : QColor(Qt::black));
+        for (const CoordinateWGS84 &vertex : pipe.geometry.intermediate_vertices)
+        {
+            const QPointF vertex_point = this->map_model->screenFromWgs84(
+                vertex,
+                this->map_canvas->size()
+                );
+            paint.drawEllipse(vertex_point, pipe_vertex_radius, pipe_vertex_radius);
+        }
     }
     
     if (this->entity_placement_mode == MapEntityPlacementMode::CreateNew &&
@@ -1323,34 +1411,181 @@ bool MapCanvasEntities::isDeviceLinkAt(const QPointF &position)
     return deviceLinkLabelAt(position) != nullptr;
 }
 
-bool MapCanvasEntities::selectPipeAt(const QPointF &position)
+bool MapCanvasEntities::showPipeContextMenuAt(const QPointF &position, const QPoint &global_position)
 {
-    if (!pipeAt(position))
+    if (this->entity_placement_mode != MapEntityPlacementMode::None)
         return false;
+    
+    PipeVertexHit vertex_hit = pipeVertexAt(position);
+    if (vertex_hit.pipe)
+    {
+        const QUuid pipe_uuid = vertex_hit.pipe->entity.uuid;
+        const int vertex_index = vertex_hit.vertex_index;
+        selectPipe(vertex_hit.pipe);
+        
+        QMenu menu(this->map_canvas);
+        QAction *action_move = menu.addAction("Move");
+        QAction *action_delete = menu.addAction("Delete");
+        QAction *selected_action = menu.exec(global_position);
+        
+        if (selected_action == action_move)
+        {
+            startPipeVertexMove(pipe_uuid, vertex_index);
+        }
+        else if (selected_action == action_delete &&
+                 QMessageBox::question(
+                     this->map_canvas,
+                     "Delete pipe vertex",
+                     "Do you really want to delete this pipe vertex?",
+                     QMessageBox::Yes | QMessageBox::No,
+                     QMessageBox::No
+                     ) == QMessageBox::Yes)
+        {
+            deletePipeVertex(pipe_uuid, vertex_index);
+        }
+        
+        return true;
+    }
+    
+    PipeSegmentHit segment_hit = pipeSegmentAt(position);
+    if (!segment_hit.pipe)
+        return false;
+    
+    const QUuid pipe_uuid = segment_hit.pipe->entity.uuid;
+    const int insert_index = segment_hit.insert_index;
+    const CoordinateWGS84 coordinate = this->map_model->wgs84FromScreen(
+        segment_hit.nearest_point.toPoint(),
+        this->map_canvas->size()
+        );
+    
+    selectPipe(segment_hit.pipe);
+    addPipeVertex(pipe_uuid, insert_index, coordinate);
+    return true;
+}
+
+void MapCanvasEntities::selectPipe(PipeCanvasItem *pipe)
+{
+    if (!pipe)
+        return;
     
     clearSelection();
-    PipeCanvasItem *pipe = pipeAt(position);
-    if (!pipe)
-        return false;
-    
     pipe->selected = true;
     this->selected_entity = pipe->entity;
     emit signalEntityMarkerSelected(true);
     
     if (this->map_canvas)
         this->map_canvas->update();
-    
-    return true;
 }
 
-MapCanvasEntities::PipeCanvasItem *MapCanvasEntities::pipeAt(const QPointF &position)
+void MapCanvasEntities::startPipeVertexMove(const QUuid &pipe_uuid, int vertex_index)
 {
-    if (this->entity_placement_mode != MapEntityPlacementMode::None)
-        return nullptr;
+    stopEntityPositioning();
     
-    const double maximum_distance_squared = link_hit_distance * link_hit_distance;
-    double nearest_distance_squared = maximum_distance_squared;
-    PipeCanvasItem *nearest_pipe = nullptr;
+    PipeCanvasItem *pipe = pipeByUuid(pipe_uuid);
+    if (!pipe ||
+        vertex_index < 0 ||
+        vertex_index >= pipe->geometry.intermediate_vertices.size())
+    {
+        return;
+    }
+    
+    selectPipe(pipe);
+    this->entity_current = InfrastructureEntity::Pipe;
+    this->entity_placement_mode = MapEntityPlacementMode::MoveExisting;
+    this->pipe_vertex_move_pipe_uuid = pipe_uuid;
+    this->pipe_vertex_move_index = vertex_index;
+    this->mouse_pos_last = this->map_canvas->mapFromGlobal(QCursor::pos());
+    this->map_canvas->setFocusPolicy(Qt::StrongFocus);
+    this->map_canvas->setFocus(Qt::OtherFocusReason);
+}
+
+void MapCanvasEntities::deletePipeVertex(const QUuid &pipe_uuid, int vertex_index)
+{
+    PipeCanvasItem *pipe = pipeByUuid(pipe_uuid);
+    if (!pipe ||
+        vertex_index < 0 ||
+        vertex_index >= pipe->geometry.intermediate_vertices.size())
+    {
+        return;
+    }
+    
+    pipe->geometry.intermediate_vertices.removeAt(vertex_index);
+    
+    if (this->map_canvas)
+        this->map_canvas->update();
+}
+
+void MapCanvasEntities::addPipeVertex(
+    const QUuid &pipe_uuid,
+    int insert_index,
+    const CoordinateWGS84 &coordinate
+    )
+{
+    PipeCanvasItem *pipe = pipeByUuid(pipe_uuid);
+    if (!pipe ||
+        insert_index < 0 ||
+        insert_index > pipe->geometry.intermediate_vertices.size())
+    {
+        return;
+    }
+    
+    pipe->geometry.intermediate_vertices.insert(insert_index, coordinate);
+    
+    if (this->map_canvas)
+        this->map_canvas->update();
+}
+
+MapCanvasEntities::PipeCanvasItem *MapCanvasEntities::pipeByUuid(const QUuid &uuid)
+{
+    for (PipeCanvasItem &pipe : this->list_pipes)
+    {
+        if (pipe.entity.uuid == uuid)
+            return &pipe;
+    }
+    
+    return nullptr;
+}
+
+MapCanvasEntities::PipeVertexHit MapCanvasEntities::pipeVertexAt(const QPointF &position)
+{
+    PipeVertexHit hit;
+    if (this->entity_placement_mode != MapEntityPlacementMode::None)
+        return hit;
+    
+    double nearest_distance_squared = pipe_vertex_hit_distance * pipe_vertex_hit_distance;
+    
+    for (PipeCanvasItem &pipe : this->list_pipes)
+    {
+        for (int i = 0; i < pipe.geometry.intermediate_vertices.size(); i++)
+        {
+            const QPointF vertex_point = this->map_model->screenFromWgs84(
+                pipe.geometry.intermediate_vertices[i],
+                this->map_canvas->size()
+                );
+            const double distance_x = position.x() - vertex_point.x();
+            const double distance_y = position.y() - vertex_point.y();
+            const double distance_squared =
+                distance_x * distance_x + distance_y * distance_y;
+            
+            if (distance_squared > nearest_distance_squared)
+                continue;
+            
+            nearest_distance_squared = distance_squared;
+            hit.pipe = &pipe;
+            hit.vertex_index = i;
+        }
+    }
+    
+    return hit;
+}
+
+MapCanvasEntities::PipeSegmentHit MapCanvasEntities::pipeSegmentAt(const QPointF &position)
+{
+    PipeSegmentHit hit;
+    if (this->entity_placement_mode != MapEntityPlacementMode::None)
+        return hit;
+    
+    double nearest_distance_squared = link_hit_distance * link_hit_distance;
     
     for (PipeCanvasItem &pipe : this->list_pipes)
     {
@@ -1370,42 +1605,73 @@ MapCanvasEntities::PipeCanvasItem *MapCanvasEntities::pipeAt(const QPointF &posi
             this->map_canvas->size()
             );
         
-        for (const CoordinateWGS84 &vertex : pipe.geometry.intermediate_vertices)
+        for (int i = 0; i < pipe.geometry.intermediate_vertices.size(); i++)
         {
-            QPointF vertex_point = this->map_model->screenFromWgs84(
-                vertex,
+            const QPointF vertex_point = this->map_model->screenFromWgs84(
+                pipe.geometry.intermediate_vertices[i],
                 this->map_canvas->size()
                 );
-            const double distance_squared = distanceSquaredToSegment(
+            const QPointF nearest_point = nearestPointOnSegment(
                 position,
                 previous_point,
                 vertex_point
                 );
+            const double distance_x = position.x() - nearest_point.x();
+            const double distance_y = position.y() - nearest_point.y();
+            const double distance_squared =
+                distance_x * distance_x + distance_y * distance_y;
+            
             if (distance_squared <= nearest_distance_squared)
             {
                 nearest_distance_squared = distance_squared;
-                nearest_pipe = &pipe;
+                hit.pipe = &pipe;
+                hit.insert_index = i;
+                hit.nearest_point = nearest_point;
             }
+            
             previous_point = vertex_point;
         }
         
-        QPointF end_point = this->map_model->screenFromWgs84(
+        const QPointF end_point = this->map_model->screenFromWgs84(
             end_marker.coord_wgs84,
             this->map_canvas->size()
             );
-        const double distance_squared = distanceSquaredToSegment(
+        const QPointF nearest_point = nearestPointOnSegment(
             position,
             previous_point,
             end_point
             );
+        const double distance_x = position.x() - nearest_point.x();
+        const double distance_y = position.y() - nearest_point.y();
+        const double distance_squared =
+            distance_x * distance_x + distance_y * distance_y;
+        
         if (distance_squared <= nearest_distance_squared)
         {
             nearest_distance_squared = distance_squared;
-            nearest_pipe = &pipe;
+            hit.pipe = &pipe;
+            hit.insert_index = pipe.geometry.intermediate_vertices.size();
+            hit.nearest_point = nearest_point;
         }
     }
     
-    return nearest_pipe;
+    return hit;
+}
+
+bool MapCanvasEntities::selectPipeAt(const QPointF &position)
+{
+    PipeCanvasItem *pipe = pipeAt(position);
+    if (!pipe)
+        return false;
+    
+    selectPipe(pipe);
+    return true;
+}
+
+MapCanvasEntities::PipeCanvasItem *MapCanvasEntities::pipeAt(const QPointF &position)
+{
+    PipeSegmentHit hit = pipeSegmentAt(position);
+    return hit.pipe;
 }
 
 bool MapCanvasEntities::isPipeAt(const QPointF &position)

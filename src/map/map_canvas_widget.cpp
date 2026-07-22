@@ -209,26 +209,37 @@ void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
     
     if (event->button() == Qt::RightButton)
     {
-        bool positioned = this->map_canvas_entities->anchorMarker(event);
-        if (positioned)
+        if (this->map_canvas_entities->anchorMarker(event))
         {
             update();
             event->accept();
             return;
         }
-    }
-    
-    if (this->rectangle_selection_active && event->button() == Qt::RightButton)
-    {
-        this->rectangle_start_wgs84 = this->map_model->wgs84FromScreen(
-            event->position().toPoint(),
-            size()
-            );
-        this->rectangle_current_pos = event->position().toPoint();
-        this->rectangle_dragging = true;
-        update();
-        event->accept();
-        return;
+        
+        // Pipe vertices and segments must be checked before starting
+        // rectangle selection, including while the selection tool is active.
+        if (this->map_canvas_entities->showPipeContextMenuAt(
+                event->position(),
+                event->globalPosition().toPoint()
+                ))
+        {
+            update();
+            event->accept();
+            return;
+        }
+        
+        if (this->rectangle_selection_active)
+        {
+            this->rectangle_start_wgs84 = this->map_model->wgs84FromScreen(
+                event->position().toPoint(),
+                size()
+                );
+            this->rectangle_current_pos = event->position().toPoint();
+            this->rectangle_dragging = true;
+            update();
+            event->accept();
+            return;
+        }
     }
     
     QWidget::mousePressEvent(event);

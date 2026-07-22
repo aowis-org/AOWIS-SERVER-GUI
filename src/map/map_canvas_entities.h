@@ -1,6 +1,7 @@
 #ifndef MAP_CANVAS_ENTITIES_H
 #define MAP_CANVAS_ENTITIES_H
 
+#include <optional>
 #include <QObject>
 #include <QPointer>
 #include <QPainter>
@@ -44,6 +45,7 @@ public:
     bool isDeviceLinkAt(const QPointF &position);
     bool selectPipeAt(const QPointF &position);
     bool isPipeAt(const QPointF &position);
+    bool showPipeContextMenuAt(const QPointF &position, const QPoint &global_position);
     
     MapEntityMarker markerByLabel(MapEntityMarkerLabel *label);
     
@@ -67,9 +69,23 @@ private:
         bool selected = false;
     };
     
+    struct PipeVertexHit
+    {
+        PipeCanvasItem *pipe = nullptr;
+        int vertex_index = -1;
+    };
+    
+    struct PipeSegmentHit
+    {
+        PipeCanvasItem *pipe = nullptr;
+        int insert_index = -1;
+        QPointF nearest_point;
+    };
+    
     void startEntityPositioningInternal();
     bool anchorDeviceLink(QMouseEvent *event);
     bool anchorPipe(QMouseEvent *event);
+    bool anchorPipeVertexMove(QMouseEvent *event);
     
     void paintDeviceLinks(QPainter &paint);
     void paintPipes(QPainter &paint);
@@ -107,9 +123,18 @@ private:
     QPointer<MapEntityMarkerLabel> device_link_start_label;
     QPointer<MapEntityMarkerLabel> pipe_start_label;
     QList<CoordinateWGS84> pipe_intermediate_vertices;
+    std::optional<QUuid> pipe_vertex_move_pipe_uuid;
+    int pipe_vertex_move_index = -1;
     
     MapEntityMarkerLabel *deviceLinkLabelAt(const QPointF &position);
     PipeCanvasItem *pipeAt(const QPointF &position);
+    PipeCanvasItem *pipeByUuid(const QUuid &uuid);
+    PipeVertexHit pipeVertexAt(const QPointF &position);
+    PipeSegmentHit pipeSegmentAt(const QPointF &position);
+    void selectPipe(PipeCanvasItem *pipe);
+    void startPipeVertexMove(const QUuid &pipe_uuid, int vertex_index);
+    void deletePipeVertex(const QUuid &pipe_uuid, int vertex_index);
+    void addPipeVertex(const QUuid &pipe_uuid, int insert_index, const CoordinateWGS84 &coordinate);
     bool isMarkerSelected(MapEntityMarkerLabel *label) const;
     bool hasSelection() const;
     void clearSelection();
