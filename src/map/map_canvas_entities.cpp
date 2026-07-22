@@ -857,7 +857,7 @@ void MapCanvasEntities::paintDeviceLinks(QPainter &paint)
         if (isMarkerSelected(device_link.device_label))
             placed_pen.setColor(QColor(0, 190, 255));
         else
-            placed_pen.setColor(Qt::black);
+            placed_pen.setColor(QColor(139, 90, 43));
         placed_pen.setWidthF(3.0);
         placed_pen.setCapStyle(Qt::RoundCap);
         placed_pen.setJoinStyle(Qt::RoundJoin);
