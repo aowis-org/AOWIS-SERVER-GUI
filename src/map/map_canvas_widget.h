@@ -75,6 +75,7 @@ private:
     bool is_rectangle_selection_oneshot = true;
     bool rectangle_selection_active = false;
     bool rectangle_dragging = false;
+    CoordinateWGS84Rect getSelectionRect(const QRect &selected_rect) const;
     
     CoordinateWGS84 rectangle_start_wgs84;
     QPoint rectangle_current_pos;
@@ -85,10 +86,7 @@ private:
     bool key_space_pressed = false;
     
 signals:
-    void signalRectangleSelected(
-        const CoordinateWGS84 &north_west,
-        const CoordinateWGS84 &south_east
-    );
+    void signalRectangleSelected(const CoordinateWGS84Rect &rect);
     void signalRectangleSelectionCanceled();
     
 };

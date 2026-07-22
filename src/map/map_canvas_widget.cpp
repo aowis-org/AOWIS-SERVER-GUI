@@ -198,6 +198,17 @@ void MapCanvasWidget::focusOutEvent(QFocusEvent *event)
 }
 void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
 {
+    if (event->button() == Qt::RightButton)
+    {
+        bool positioned = this->map_canvas_entities->anchorMarker(event);
+        if (positioned)
+        {
+            update();
+            event->accept();
+            return;
+        }
+    }
+    
     if (this->rectangle_selection_active && event->button() == Qt::RightButton)
     {
         this->rectangle_start_wgs84 = this->map_model->wgs84FromScreen(
@@ -213,17 +224,6 @@ void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
         return;
     }
     
-    if (event->button() == Qt::RightButton)
-    {
-        bool positioned = this->map_canvas_entities->anchorMarker(event);
-        if (positioned)
-        {
-            update();
-            event->accept();
-            return;
-        }
-    }
-    
     QWidget::mousePressEvent(event);
 }
 void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
@@ -233,6 +233,10 @@ void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
     if (this->rectangle_selection_active && this->rectangle_dragging)
     {
         this->rectangle_current_pos = event->position().toPoint();
+        
+        const QRect selected_rect = currentSelectionRect();
+        const CoordinateWGS84Rect rect = getSelectionRect(selected_rect);
+        this->map_canvas_entities->onRectangleSelect(rect, RectangleSelectMode::Replace);
         
         update();
         event->accept();
@@ -261,17 +265,9 @@ void MapCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
         
         if (selected_rect.width() > 3 && selected_rect.height() > 3)
         {
-            const CoordinateWGS84 north_west = this->map_model->wgs84FromScreen(
-                selected_rect.topLeft(),
-                size()
-                );
-            
-            const CoordinateWGS84 south_east = this->map_model->wgs84FromScreen(
-                selected_rect.bottomRight(),
-                size()
-                );
-            
-            emit signalRectangleSelected(north_west, south_east);
+            const CoordinateWGS84Rect rect = getSelectionRect(selected_rect);
+            this->map_canvas_entities->onRectangleSelect(rect, RectangleSelectMode::Replace);
+            emit signalRectangleSelected(rect);
         }
         else
         {
@@ -338,5 +334,20 @@ QRect MapCanvasWidget::currentSelectionRect() const
     ).toPoint();
     
     return QRect(rectangle_start_pos, this->rectangle_current_pos).normalized();
+}
+CoordinateWGS84Rect MapCanvasWidget::getSelectionRect(const QRect &selected_rect) const
+{
+    CoordinateWGS84Rect rect;
+    
+    rect.north_west = this->map_model->wgs84FromScreen(
+        selected_rect.topLeft(),
+        size()
+    );
+    rect.south_east = this->map_model->wgs84FromScreen(
+        selected_rect.bottomRight(),
+        size()
+    );
+    
+    return rect;
 }
 

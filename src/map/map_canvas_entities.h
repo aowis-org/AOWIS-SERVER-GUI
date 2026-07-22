@@ -17,6 +17,12 @@
 #include "../hydraulic_data.h"
 #include "map_models.h"
 
+enum RectangleSelectMode
+{
+    Add,
+    Replace
+};
+
 // to avoid circular includes
 class MapCanvasWidget;
 
@@ -27,18 +33,19 @@ public:
     explicit MapCanvasEntities(MapModel *map_model, HydraulicData *hydraulic_data, MapCanvasWidget *map_canvas);
     
     void startEntityPositioning(InfrastructureEntity entity);
-    void startEntityPositioningInternal();
     void stopEntityPositioning();
     void floatEntity(QMouseEvent *event);
     bool anchorMarker(QMouseEvent *event);
     void scaleMarkers();
-    //void updateMarkersTank(QPainter &paint);
+    
     void positionMarkers();
     void paintMarkers(QPainter &paint);
     
     MapEntityMarker markerByLabel(MapEntityMarkerLabel *label);
     
 private:
+    void startEntityPositioningInternal();
+    
     MapModel *map_model = nullptr;
     HydraulicData *hydraulic_data = nullptr;
     //NetworkHydraulic network_hydraulic;
@@ -71,6 +78,8 @@ private slots:
     
 public slots:
     void onMarkerSelectedDeleteRequested();
+    
+    void onRectangleSelect(const CoordinateWGS84Rect &rect, RectangleSelectMode mode);
     
 signals:
     void signalEntityMarkerSelected(bool status);

@@ -462,6 +462,60 @@ void MapCanvasEntities::onMarkerClicked(MapEntityMarkerLabel *label)
         this->map_canvas->update();
 }
 
+void MapCanvasEntities::onRectangleSelect(const CoordinateWGS84Rect &rect, RectangleSelectMode mode)
+{
+    const double north = rect.north_west.lat;
+    const double west = rect.north_west.lon;
+    const double south = rect.south_east.lat;
+    const double east = rect.south_east.lon;
+    
+    if (mode == RectangleSelectMode::Replace)
+    {
+        for (MapEntityMarker &marker : this->list_entity_markers_selected)
+        {
+            if (marker.label)
+                marker.label->clearHighlight();
+        }
+        
+        this->list_entity_markers_selected.clear();
+    }
+    
+    for (MapEntityMarker &marker : this->list_entity_markers)
+    {
+        const CoordinateWGS84 &coord = marker.coord_wgs84;
+        
+        if (coord.lat < south || coord.lat > north ||
+            coord.lon < west || coord.lon > east)
+        {
+            continue;
+        }
+        
+        bool already_selected = false;
+        
+        for (const MapEntityMarker &selected_marker : this->list_entity_markers_selected)
+        {
+            if (selected_marker.label == marker.label)
+            {
+                already_selected = true;
+                break;
+            }
+        }
+        
+        if (already_selected)
+            continue;
+        
+        this->list_entity_markers_selected.append(marker);
+        
+        if (marker.label)
+            marker.label->setHighlightSelected();
+    }
+    
+    emit signalEntityMarkerSelected(!this->list_entity_markers_selected.isEmpty());
+    
+    if (this->map_canvas)
+        this->map_canvas->update();
+}
+
 MapEntityMarker MapCanvasEntities::markerByLabel(MapEntityMarkerLabel *label)
 {
     for (int i = 0; i < this->list_entity_markers.length(); i++)
@@ -524,4 +578,5 @@ QString MapCanvasEntities::pixmapPathForEntity(InfrastructureEntity entity) cons
     
     return QStringLiteral(":/icon/geomarker.png");
 }
+
 
