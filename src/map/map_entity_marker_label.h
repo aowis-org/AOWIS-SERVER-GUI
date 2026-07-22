@@ -15,6 +15,10 @@ class MapEntityMarkerLabel : public QLabel
 public:
     explicit MapEntityMarkerLabel(QWidget *parent = nullptr);
     
+    void setHighlightSelected();
+    void setHighlightError();
+    void clearHighlight();
+    
 protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;

@@ -395,12 +395,20 @@ void MapCanvasEntities::onMarkerClicked(MapEntityMarkerLabel *label)
 {
     MapEntityMarker marker = markerByLabel(label);
     
-    qDebug() << "click";
-    
     if (marker.entity.type == InfrastructureEntity::Unknown)
         return;
     
+    for (int i=0; i < this->list_entity_markers_selected.length(); i++)
+    {
+        MapEntityMarker mark = this->list_entity_markers_selected[i];
+        mark.label->clearHighlight();
+    }
+    this->list_entity_markers_selected.clear();
+    
     this->selected_entity = marker.entity;
+    marker.label->setHighlightSelected();
+    
+    this->list_entity_markers_selected.append(marker);
     
     // dummy
     QUuid uuid = this->hydraulic_data->networkHydraulic().tanks.at(0).uuid;

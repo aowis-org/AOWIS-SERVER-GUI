@@ -46,6 +46,7 @@ private:
     QPointer<MapCanvasWidget> map_canvas;
     
     QList<MapEntityMarker> list_entity_markers;
+    QList<MapEntityMarker> list_entity_markers_selected;
     
     MapEntityPlacementMode entity_placement_mode = MapEntityPlacementMode::None;
     MapEntityMarkerLabel *entity_floating = nullptr;

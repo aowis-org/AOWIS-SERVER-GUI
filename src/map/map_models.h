@@ -84,6 +84,7 @@ struct EntityTankMarker
     bool selected = false;
 };
 */
+
 struct InfrastructureEntityReference
 {
     InfrastructureEntity type = InfrastructureEntity::Unknown;
@@ -101,7 +102,19 @@ struct MapEntityMarker
     
     bool selected = false;
 };
+struct PipeGeometry
+{
+    InfrastructureEntityReference start_node;
+    InfrastructureEntityReference end_node;
+    QList<CoordinateWGS84> intermediate_vertices;
+};
 
+struct DeviceLinkGeometry
+{
+    InfrastructureEntityReference start_node;
+    InfrastructureEntityReference end_node;
+    CoordinateWGS84 center_coordinate;
+};
 
 
 #endif // MAP_MODELS_H
