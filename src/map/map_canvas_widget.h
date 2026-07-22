@@ -84,8 +84,11 @@ private:
     bool key_space_pressed = false;
     
 signals:
-    void rectangleSelected(const QRect &rect);
-    void rectangleSelectionCanceled();
+    void signalRectangleSelected(
+        const CoordinateWGS84 &north_west,
+        const CoordinateWGS84 &south_east
+    );
+    void signalRectangleSelectionCanceled();
     
 };
 

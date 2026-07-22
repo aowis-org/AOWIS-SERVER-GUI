@@ -145,13 +145,13 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
     btn_tiles_update->setCheckable(true);
     btn_tiles_update->setEnabled(false);
     
-    connect(this->map_canvas, &MapCanvasWidget::rectangleSelectionCanceled, this, [this, btn_select_rectangle, btn_tiles_delete, btn_tiles_update]
+    connect(this->map_canvas, &MapCanvasWidget::signalRectangleSelectionCanceled, this, [this, btn_select_rectangle, btn_tiles_delete, btn_tiles_update]
     {
         btn_select_rectangle->setChecked(false);
         btn_tiles_delete->setEnabled(false);
         btn_tiles_update->setEnabled(false);
     });
-    connect(this->map_canvas, &MapCanvasWidget::rectangleSelected, this, [this, btn_select_rectangle, btn_tiles_delete, btn_tiles_update]
+    connect(this->map_canvas, &MapCanvasWidget::signalRectangleSelected, this, [this, btn_select_rectangle, btn_tiles_delete, btn_tiles_update]
     {
         btn_select_rectangle->setChecked(false);
         btn_tiles_delete->setEnabled(true);
@@ -185,6 +185,10 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     button_radio_select->setShortcut(Qt::Key_Escape);
     lay->addWidget(button_radio_select);
     this->button_group_tools->addButton(button_radio_select, 100);
+    connect(button_radio_select, &QRadioButton::clicked, this, [this]
+    {
+        this->map_canvas->startRectangleSelection();
+    });
     
     QToolButton *button_delete = new QToolButton(wgt);
     button_delete->setText("[Del] Delete Selected");

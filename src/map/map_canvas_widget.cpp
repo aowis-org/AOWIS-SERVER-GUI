@@ -249,7 +249,7 @@ void MapCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
     if (this->rectangle_selection_active && this->rectangle_dragging && event->button() == Qt::RightButton)
     {
         this->rectangle_current_pos = event->position().toPoint();
-        QRect selected_rect = currentSelectionRect();
+        const QRect selected_rect = currentSelectionRect();
         
         this->rectangle_selection_active = false;
         this->rectangle_dragging = false;
@@ -259,11 +259,21 @@ void MapCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
         
         if (selected_rect.width() > 3 && selected_rect.height() > 3)
         {
-            emit rectangleSelected(selected_rect);
+            const CoordinateWGS84 north_west = this->map_model->wgs84FromScreen(
+                selected_rect.topLeft(),
+                size()
+                );
+            
+            const CoordinateWGS84 south_east = this->map_model->wgs84FromScreen(
+                selected_rect.bottomRight(),
+                size()
+                );
+            
+            emit signalRectangleSelected(north_west, south_east);
         }
         else
         {
-            emit rectangleSelectionCanceled();
+            emit signalRectangleSelectionCanceled();
         }
         
         event->accept();
@@ -312,7 +322,7 @@ void MapCanvasWidget::cancelRectangleSelection()
     
     update();
     
-    emit rectangleSelectionCanceled();
+    emit signalRectangleSelectionCanceled();
 }
 QRect MapCanvasWidget::currentSelectionRect() const
 {
