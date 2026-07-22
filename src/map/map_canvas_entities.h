@@ -134,6 +134,7 @@ private:
     void selectPipe(PipeCanvasItem *pipe);
     void startPipeVertexMove(const QUuid &pipe_uuid, int vertex_index);
     void deletePipeVertex(const QUuid &pipe_uuid, int vertex_index);
+    void convertPipeVertexToJunction(const QUuid &pipe_uuid, int vertex_index);
     void addPipeVertex(const QUuid &pipe_uuid, int insert_index, const CoordinateWGS84 &coordinate);
     bool isMarkerSelected(MapEntityMarkerLabel *label) const;
     bool hasSelection() const;

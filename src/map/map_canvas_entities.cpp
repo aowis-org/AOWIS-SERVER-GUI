@@ -1430,6 +1430,7 @@ bool MapCanvasEntities::showPipeContextMenuAt(
         QMenu *menu = new QMenu(this->map_canvas);
         QAction *action_move = menu->addAction("Move");
         QAction *action_delete = menu->addAction("Delete");
+        QAction *action_convert_to_junction = menu->addAction("Convert to junction");
         
         connect(
             action_move,
@@ -1476,6 +1477,16 @@ bool MapCanvasEntities::showPipeContextMenuAt(
                     );
                 
                 message_box->open();
+            }
+            );
+        
+        connect(
+            action_convert_to_junction,
+            &QAction::triggered,
+            this,
+            [this, pipe_uuid, vertex_index]()
+            {
+                convertPipeVertexToJunction(pipe_uuid, vertex_index);
             }
             );
         
@@ -1554,6 +1565,103 @@ void MapCanvasEntities::deletePipeVertex(const QUuid &pipe_uuid, int vertex_inde
     
     pipe->geometry.intermediate_vertices.removeAt(vertex_index);
     
+    if (this->map_canvas)
+        this->map_canvas->update();
+}
+
+void MapCanvasEntities::convertPipeVertexToJunction(const QUuid &pipe_uuid, int vertex_index)
+{
+    int pipe_index = -1;
+    for (int i = 0; i < this->list_pipes.size(); i++)
+    {
+        if (this->list_pipes[i].entity.uuid == pipe_uuid)
+        {
+            pipe_index = i;
+            break;
+        }
+    }
+    
+    if (pipe_index < 0)
+        return;
+    
+    const PipeCanvasItem original_pipe = this->list_pipes[pipe_index];
+    if (vertex_index < 0 ||
+        vertex_index >= original_pipe.geometry.intermediate_vertices.size() ||
+        !original_pipe.start_label ||
+        !original_pipe.end_label)
+    {
+        return;
+    }
+    
+    InfrastructureEntityReference junction_reference;
+    junction_reference.type = InfrastructureEntity::Junction;
+    junction_reference.uuid = QUuid::createUuid();
+    
+    MapEntityMarker junction_marker;
+    junction_marker.entity = junction_reference;
+    junction_marker.coord_wgs84 = original_pipe.geometry.intermediate_vertices[vertex_index];
+    junction_marker.path_pixmap = pixmapPathForEntity(InfrastructureEntity::Junction);
+    junction_marker.label = new MapEntityMarkerLabel(this->map_canvas);
+    junction_marker.label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
+    
+    connect(
+        junction_marker.label,
+        &MapEntityMarkerLabel::signalDeleteRequested,
+        this,
+        &MapCanvasEntities::onMarkerDeleteRequested
+        );
+    connect(
+        junction_marker.label,
+        &MapEntityMarkerLabel::signalMoveRequested,
+        this,
+        &MapCanvasEntities::onMarkerMoveRequested
+        );
+    connect(
+        junction_marker.label,
+        &MapEntityMarkerLabel::signalClicked,
+        this,
+        &MapCanvasEntities::onMarkerClicked
+        );
+    
+    const int width = calculateEntityWidth();
+    const QPixmap pixmap = QPixmap(junction_marker.path_pixmap).scaledToWidth(
+        width,
+        Qt::SmoothTransformation
+        );
+    junction_marker.label->setPixmap(pixmap);
+    junction_marker.label->resize(pixmap.size());
+    this->list_entity_markers.append(junction_marker);
+    
+    PipeCanvasItem first_pipe = original_pipe;
+    first_pipe.geometry.end_node = junction_reference;
+    first_pipe.geometry.intermediate_vertices.clear();
+    first_pipe.end_label = junction_marker.label;
+    first_pipe.selected = false;
+    
+    for (int i = 0; i < vertex_index; i++)
+        first_pipe.geometry.intermediate_vertices.append(original_pipe.geometry.intermediate_vertices[i]);
+    
+    PipeCanvasItem second_pipe;
+    second_pipe.entity.type = InfrastructureEntity::Pipe;
+    second_pipe.entity.uuid = QUuid::createUuid();
+    second_pipe.geometry.start_node = junction_reference;
+    second_pipe.geometry.end_node = original_pipe.geometry.end_node;
+    second_pipe.start_label = junction_marker.label;
+    second_pipe.end_label = original_pipe.end_label;
+    
+    for (int i = vertex_index + 1; i < original_pipe.geometry.intermediate_vertices.size(); i++)
+        second_pipe.geometry.intermediate_vertices.append(original_pipe.geometry.intermediate_vertices[i]);
+    
+    this->list_pipes[pipe_index] = first_pipe;
+    this->list_pipes.insert(pipe_index + 1, second_pipe);
+    
+    clearSelection();
+    junction_marker.label->setHighlightSelected();
+    this->list_entity_markers_selected.append(junction_marker);
+    this->selected_entity = junction_reference;
+    emit signalEntityMarkerSelected(true);
+    
+    positionMarkers();
     if (this->map_canvas)
         this->map_canvas->update();
 }
