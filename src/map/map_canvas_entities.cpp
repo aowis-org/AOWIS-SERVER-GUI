@@ -929,7 +929,7 @@ void MapCanvasEntities::onMarkerClicked(MapEntityMarkerLabel *label)
         this->map_canvas->update();
 }
 
-void MapCanvasEntities::onRectangleSelect(const CoordinateWGS84Rect &rect, RectangleSelectMode mode)
+void MapCanvasEntities::onRectangleSelect(const CoordinateWGS84Rect &rect,RectangleSelectMode mode)
 {
     const double north = rect.north_west.lat;
     const double west = rect.north_west.lon;
@@ -947,37 +947,53 @@ void MapCanvasEntities::onRectangleSelect(const CoordinateWGS84Rect &rect, Recta
         this->list_entity_markers_selected.clear();
     }
     
-    for (MapEntityMarker &marker : this->list_entity_markers)
+    const std::function<void(const MapEntityMarker &)> select_marker =
+        [this, north, west, south, east](const MapEntityMarker &marker)
     {
+        if (!marker.label)
+            return;
+        
         const CoordinateWGS84 &coord = marker.coord_wgs84;
         
-        if (coord.lat < south || coord.lat > north ||
-            coord.lon < west || coord.lon > east)
+        if (coord.lat < south ||
+            coord.lat > north ||
+            coord.lon < west ||
+            coord.lon > east)
         {
-            continue;
+            return;
         }
         
-        bool already_selected = false;
-        
-        for (const MapEntityMarker &selected_marker : this->list_entity_markers_selected)
+        for (const MapEntityMarker &selected_marker :
+             this->list_entity_markers_selected)
         {
             if (selected_marker.label == marker.label)
-            {
-                already_selected = true;
-                break;
-            }
+                return;
         }
         
-        if (already_selected)
+        this->list_entity_markers_selected.append(marker);
+        marker.label->setHighlightSelected();
+    };
+    
+    for (const MapEntityMarker &marker : this->list_entity_markers)
+        select_marker(marker);
+    
+    for (const DeviceLinkCanvasItem &device_link : this->list_device_links)
+    {
+        if (!device_link.device_label)
             continue;
         
-        this->list_entity_markers_selected.append(marker);
+        MapEntityMarker marker;
+        marker.entity = device_link.entity;
+        marker.coord_wgs84 = device_link.geometry.center_coordinate;
+        marker.label = device_link.device_label;
+        marker.path_pixmap = device_link.path_pixmap;
         
-        if (marker.label)
-            marker.label->setHighlightSelected();
+        select_marker(marker);
     }
     
-    emit signalEntityMarkerSelected(!this->list_entity_markers_selected.isEmpty());
+    emit signalEntityMarkerSelected(
+        !this->list_entity_markers_selected.isEmpty()
+        );
     
     if (this->map_canvas)
         this->map_canvas->update();

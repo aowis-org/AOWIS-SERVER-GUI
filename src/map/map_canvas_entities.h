@@ -10,6 +10,8 @@
 #include <QMouseEvent>
 #include <QCursor>
 
+#include <functional>
+
 #include "map_model.h"
 #include "map_entity_marker_label.h"
 
