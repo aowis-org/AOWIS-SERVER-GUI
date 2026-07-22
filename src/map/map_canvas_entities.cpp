@@ -1411,7 +1411,10 @@ bool MapCanvasEntities::isDeviceLinkAt(const QPointF &position)
     return deviceLinkLabelAt(position) != nullptr;
 }
 
-bool MapCanvasEntities::showPipeContextMenuAt(const QPointF &position, const QPoint &global_position)
+bool MapCanvasEntities::showPipeContextMenuAt(
+    const QPointF &position,
+    const QPoint &global_position
+    )
 {
     if (this->entity_placement_mode != MapEntityPlacementMode::None)
         return false;
@@ -1421,29 +1424,69 @@ bool MapCanvasEntities::showPipeContextMenuAt(const QPointF &position, const QPo
     {
         const QUuid pipe_uuid = vertex_hit.pipe->entity.uuid;
         const int vertex_index = vertex_hit.vertex_index;
+        
         selectPipe(vertex_hit.pipe);
         
-        QMenu menu(this->map_canvas);
-        QAction *action_move = menu.addAction("Move");
-        QAction *action_delete = menu.addAction("Delete");
-        QAction *selected_action = menu.exec(global_position);
+        QMenu *menu = new QMenu(this->map_canvas);
+        QAction *action_move = menu->addAction("Move");
+        QAction *action_delete = menu->addAction("Delete");
         
-        if (selected_action == action_move)
-        {
-            startPipeVertexMove(pipe_uuid, vertex_index);
-        }
-        else if (selected_action == action_delete &&
-                 QMessageBox::question(
-                     this->map_canvas,
-                     "Delete pipe vertex",
-                     "Do you really want to delete this pipe vertex?",
-                     QMessageBox::Yes | QMessageBox::No,
-                     QMessageBox::No
-                     ) == QMessageBox::Yes)
-        {
-            deletePipeVertex(pipe_uuid, vertex_index);
-        }
+        connect(
+            action_move,
+            &QAction::triggered,
+            this,
+            [this, pipe_uuid, vertex_index]()
+            {
+                startPipeVertexMove(pipe_uuid, vertex_index);
+            }
+            );
         
+        connect(
+            action_delete,
+            &QAction::triggered,
+            this,
+            [this, pipe_uuid, vertex_index]()
+            {
+                QMessageBox *message_box = new QMessageBox(
+                    QMessageBox::Question,
+                    "Delete pipe vertex",
+                    "Do you really want to delete this pipe vertex?",
+                    QMessageBox::Yes | QMessageBox::No,
+                    this->map_canvas
+                    );
+                
+                message_box->setDefaultButton(QMessageBox::No);
+                
+                connect(
+                    message_box,
+                    &QMessageBox::finished,
+                    this,
+                    [this, pipe_uuid, vertex_index](int result)
+                    {
+                        if (result == QMessageBox::Yes)
+                            deletePipeVertex(pipe_uuid, vertex_index);
+                    }
+                    );
+                
+                connect(
+                    message_box,
+                    &QMessageBox::finished,
+                    message_box,
+                    &QObject::deleteLater
+                    );
+                
+                message_box->open();
+            }
+            );
+        
+        connect(
+            menu,
+            &QMenu::aboutToHide,
+            menu,
+            &QObject::deleteLater
+            );
+        
+        menu->popup(global_position);
         return true;
     }
     
