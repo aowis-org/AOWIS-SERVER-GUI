@@ -41,9 +41,9 @@ void MapCanvasWidget::setBackgroundOpacity(int opacity)
 void MapCanvasWidget::paintEvent(QPaintEvent *)
 {
     QPainter paint(this);
-    #ifndef Q_OS_WASM
+#ifndef Q_OS_WASM
     paint.setRenderHint(QPainter::Antialiasing);
-    #endif
+#endif
     
     if (this->map_background_opacity > 0)
     {
@@ -54,29 +54,6 @@ void MapCanvasWidget::paintEvent(QPaintEvent *)
     }
     
     paintEventRectangle(paint);
-    
-    /*
-    //qDebug() << size();
-    //example red dot
-    CoordinateWGS84 wgs;
-    wgs.lat = 11.98161;
-    wgs.lon = 18.19329;
-    const QPointF p = this->map_model->screenFromWgs84(wgs, size());
-    //qDebug() << p;
-    paint.setBrush(Qt::red);
-    paint.drawEllipse(p, 5.0, 5.0);
-    
-    //example red line
-    CoordinateWGS84 wgs_a;
-    wgs_a.lat = 11.98300;
-    wgs_a.lon = 18.19435;
-    CoordinateWGS84 wgs_b;
-    wgs_b.lat = 11.97945;
-    wgs_b.lon = 18.19433;
-    const QPointF a = this->map_model->screenFromWgs84(wgs_a, size());
-    const QPointF b = this->map_model->screenFromWgs84(wgs_b, size());
-    paint.drawLine(a, b);
-    */
     
     this->map_canvas_entities->paintMarkers(paint);
 }
@@ -236,6 +213,7 @@ void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
                 );
             this->rectangle_current_pos = event->position().toPoint();
             this->rectangle_dragging = true;
+            setCursor(Qt::CrossCursor);
             update();
             event->accept();
             return;
@@ -250,6 +228,7 @@ void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
     
     if (this->rectangle_selection_active && this->rectangle_dragging)
     {
+        setCursor(Qt::CrossCursor);
         this->rectangle_current_pos = event->position().toPoint();
         
         const QRect selected_rect = currentSelectionRect();
@@ -267,14 +246,18 @@ void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
     
     this->map_canvas_entities->floatEntity(event);
     
-    if (this->map_canvas_entities->isDeviceLinkAt(event->position()) ||
-        this->map_canvas_entities->isPipeAt(event->position()))
+    if (this->rectangle_selection_active)
     {
-        this->setCursor(Qt::PointingHandCursor);
+        unsetCursor();
+    }
+    else if (this->map_canvas_entities->isDeviceLinkAt(event->position()) ||
+             this->map_canvas_entities->isPipeAt(event->position()))
+    {
+        setCursor(Qt::PointingHandCursor);
     }
     else
     {
-        this->unsetCursor();
+        unsetCursor();
     }
     
     QWidget::mouseMoveEvent(event);
@@ -337,7 +320,7 @@ void MapCanvasWidget::startRectangleSelection(bool oneshot)
     
     this->rectangle_current_pos = QPoint();
     
-    setCursor(Qt::CrossCursor);
+    unsetCursor();
     setFocus();
     
     update();
@@ -374,12 +357,11 @@ CoordinateWGS84Rect MapCanvasWidget::getSelectionRect(const QRect &selected_rect
     rect.north_west = this->map_model->wgs84FromScreen(
         selected_rect.topLeft(),
         size()
-    );
+        );
     rect.south_east = this->map_model->wgs84FromScreen(
         selected_rect.bottomRight(),
         size()
-    );
+        );
     
     return rect;
 }
-
