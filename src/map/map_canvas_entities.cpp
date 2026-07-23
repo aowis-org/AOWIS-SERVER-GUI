@@ -1371,30 +1371,30 @@ MapEntityMarkerLabel *MapCanvasEntities::deviceLinkLabelAt(const QPointF &positi
         QPointF start_point = this->map_model->screenFromWgs84(
             start_marker.coord_wgs84,
             this->map_canvas->size()
-            );
+        );
         QPointF center_point = this->map_model->screenFromWgs84(
             device_link.geometry.center_coordinate,
             this->map_canvas->size()
-            );
+        );
         QPointF end_point = this->map_model->screenFromWgs84(
             end_marker.coord_wgs84,
             this->map_canvas->size()
-            );
+        );
         
         const double first_distance_squared = distanceSquaredToSegment(
             position,
             start_point,
             center_point
-            );
+        );
         const double second_distance_squared = distanceSquaredToSegment(
             position,
             center_point,
             end_point
-            );
+        );
         const double distance_squared = qMin(
             first_distance_squared,
             second_distance_squared
-            );
+        );
         
         if (distance_squared > nearest_distance_squared)
             continue;
@@ -1432,70 +1432,40 @@ bool MapCanvasEntities::showPipeContextMenuAt(
         QAction *action_delete = menu->addAction("Delete");
         QAction *action_convert_to_junction = menu->addAction("Convert to junction");
         
-        connect(
-            action_move,
-            &QAction::triggered,
-            this,
-            [this, pipe_uuid, vertex_index]()
-            {
-                startPipeVertexMove(pipe_uuid, vertex_index);
-            }
-            );
+        connect(action_move, &QAction::triggered, this, [this, pipe_uuid, vertex_index]()
+        {
+            startPipeVertexMove(pipe_uuid, vertex_index);
+        });
         
-        connect(
-            action_delete,
-            &QAction::triggered,
-            this,
-            [this, pipe_uuid, vertex_index]()
-            {
-                QMessageBox *message_box = new QMessageBox(
-                    QMessageBox::Question,
-                    "Delete pipe vertex",
-                    "Do you really want to delete this pipe vertex?",
-                    QMessageBox::Yes | QMessageBox::No,
-                    this->map_canvas
-                    );
-                
-                message_box->setDefaultButton(QMessageBox::No);
-                
-                connect(
-                    message_box,
-                    &QMessageBox::finished,
-                    this,
-                    [this, pipe_uuid, vertex_index](int result)
-                    {
-                        if (result == QMessageBox::Yes)
-                            deletePipeVertex(pipe_uuid, vertex_index);
-                    }
-                    );
-                
-                connect(
-                    message_box,
-                    &QMessageBox::finished,
-                    message_box,
-                    &QObject::deleteLater
-                    );
-                
-                message_box->open();
-            }
-            );
+        connect(action_delete, &QAction::triggered, this, [this, pipe_uuid, vertex_index]()
+        {
+            deletePipeVertex(pipe_uuid, vertex_index);
+        });
         
-        connect(
-            action_convert_to_junction,
-            &QAction::triggered,
-            this,
-            [this, pipe_uuid, vertex_index]()
+        connect(action_convert_to_junction, &QAction::triggered, this, [this, pipe_uuid, vertex_index]()
+        {
+            QMessageBox *message_box = new QMessageBox(
+                QMessageBox::Question,
+                "Delete pipe vertex",
+                "Do you really want to delete this pipe vertex?",
+                QMessageBox::Yes | QMessageBox::No,
+                this->map_canvas
+                );
+            
+            message_box->setDefaultButton(QMessageBox::No);
+            
+            connect(message_box, &QMessageBox::finished, this, [this, pipe_uuid, vertex_index](int result)
             {
-                convertPipeVertexToJunction(pipe_uuid, vertex_index);
-            }
-            );
+                if (result == QMessageBox::Yes)
+                    convertPipeVertexToJunction(pipe_uuid, vertex_index);
+            });
+            
+            connect(message_box, &QMessageBox::finished, message_box, &QObject::deleteLater);
+            
+            message_box->open();
+        });
         
-        connect(
-            menu,
-            &QMenu::aboutToHide,
-            menu,
-            &QObject::deleteLater
-            );
+        connect(menu, &QMenu::aboutToHide, menu, &QObject::deleteLater);
         
         menu->popup(global_position);
         return true;
@@ -1510,7 +1480,7 @@ bool MapCanvasEntities::showPipeContextMenuAt(
     const CoordinateWGS84 coordinate = this->map_model->wgs84FromScreen(
         segment_hit.nearest_point.toPoint(),
         this->map_canvas->size()
-        );
+    );
     
     selectPipe(segment_hit.pipe);
     addPipeVertex(pipe_uuid, insert_index, coordinate);
