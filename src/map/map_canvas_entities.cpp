@@ -1445,11 +1445,11 @@ bool MapCanvasEntities::showPipeContextMenuAt(
         {
             QMessageBox *message_box = new QMessageBox(
                 QMessageBox::Question,
-                "Delete pipe vertex",
-                "Do you really want to delete this pipe vertex?",
+                "Convert pipe vertex",
+                "Do you really want to convert this pipe vertex to a junction?",
                 QMessageBox::Yes | QMessageBox::No,
                 this->map_canvas
-                );
+            );
             
             message_box->setDefaultButton(QMessageBox::No);
             
@@ -1578,25 +1578,25 @@ void MapCanvasEntities::convertPipeVertexToJunction(const QUuid &pipe_uuid, int 
         &MapEntityMarkerLabel::signalDeleteRequested,
         this,
         &MapCanvasEntities::onMarkerDeleteRequested
-        );
+    );
     connect(
         junction_marker.label,
         &MapEntityMarkerLabel::signalMoveRequested,
         this,
         &MapCanvasEntities::onMarkerMoveRequested
-        );
+    );
     connect(
         junction_marker.label,
         &MapEntityMarkerLabel::signalClicked,
         this,
         &MapCanvasEntities::onMarkerClicked
-        );
+    );
     
     const int width = calculateEntityWidth();
     const QPixmap pixmap = QPixmap(junction_marker.path_pixmap).scaledToWidth(
         width,
         Qt::SmoothTransformation
-        );
+    );
     junction_marker.label->setPixmap(pixmap);
     junction_marker.label->resize(pixmap.size());
     this->list_entity_markers.append(junction_marker);
@@ -1681,7 +1681,7 @@ MapCanvasEntities::PipeVertexHit MapCanvasEntities::pipeVertexAt(const QPointF &
             const QPointF vertex_point = this->map_model->screenFromWgs84(
                 pipe.geometry.intermediate_vertices[i],
                 this->map_canvas->size()
-                );
+            );
             const double distance_x = position.x() - vertex_point.x();
             const double distance_y = position.y() - vertex_point.y();
             const double distance_squared =
@@ -1723,19 +1723,19 @@ MapCanvasEntities::PipeSegmentHit MapCanvasEntities::pipeSegmentAt(const QPointF
         QPointF previous_point = this->map_model->screenFromWgs84(
             start_marker.coord_wgs84,
             this->map_canvas->size()
-            );
+        );
         
         for (int i = 0; i < pipe.geometry.intermediate_vertices.size(); i++)
         {
             const QPointF vertex_point = this->map_model->screenFromWgs84(
                 pipe.geometry.intermediate_vertices[i],
                 this->map_canvas->size()
-                );
+            );
             const QPointF nearest_point = nearestPointOnSegment(
                 position,
                 previous_point,
                 vertex_point
-                );
+            );
             const double distance_x = position.x() - nearest_point.x();
             const double distance_y = position.y() - nearest_point.y();
             const double distance_squared =
@@ -1755,12 +1755,12 @@ MapCanvasEntities::PipeSegmentHit MapCanvasEntities::pipeSegmentAt(const QPointF
         const QPointF end_point = this->map_model->screenFromWgs84(
             end_marker.coord_wgs84,
             this->map_canvas->size()
-            );
+        );
         const QPointF nearest_point = nearestPointOnSegment(
             position,
             previous_point,
             end_point
-            );
+        );
         const double distance_x = position.x() - nearest_point.x();
         const double distance_y = position.y() - nearest_point.y();
         const double distance_squared =
