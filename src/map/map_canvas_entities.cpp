@@ -3,81 +3,82 @@
 
 #include <functional>
 #include <QAbstractButton>
+#include <QApplication>
 #include <QAction>
 #include <QMenu>
 #include <QMessageBox>
 
 namespace
 {
-    constexpr double marker_dot_radius = 5.0;
-    constexpr double connection_target_radius = 9.0;
-    constexpr double connection_hover_distance = 18.0;
-    constexpr double link_hit_distance = 7.0;
-    constexpr double pipe_vertex_radius = 4.0;
-    constexpr double pipe_vertex_hit_distance = 9.0;
-    
-    bool isHydraulicConnectionNode(InfrastructureEntity entity)
-    {
-        return entity == InfrastructureEntity::Junction ||
-               entity == InfrastructureEntity::Reservoir ||
-               entity == InfrastructureEntity::Tank;
-    }
-    
-    bool isHydraulicDeviceLink(InfrastructureEntity entity)
-    {
-        return entity == InfrastructureEntity::Pump ||
-               entity == InfrastructureEntity::Valve;
-    }
-    
-    bool isHydraulicPipeGeometry(InfrastructureEntity entity)
-    {
-        return entity == InfrastructureEntity::Pipe;
-    }
-    
-    bool isHydraulicCanvasLink(InfrastructureEntity entity)
-    {
-        return isHydraulicDeviceLink(entity) || isHydraulicPipeGeometry(entity);
-    }
-    
-    QPointF nearestPointOnSegment(
-        const QPointF &point,
-        const QPointF &segment_start,
-        const QPointF &segment_end
+constexpr double marker_dot_radius = 5.0;
+constexpr double connection_target_radius = 9.0;
+constexpr double connection_hover_distance = 18.0;
+constexpr double link_hit_distance = 7.0;
+constexpr double pipe_vertex_radius = 4.0;
+constexpr double pipe_vertex_hit_distance = 9.0;
+
+bool isHydraulicConnectionNode(InfrastructureEntity entity)
+{
+    return entity == InfrastructureEntity::Junction ||
+           entity == InfrastructureEntity::Reservoir ||
+           entity == InfrastructureEntity::Tank;
+}
+
+bool isHydraulicDeviceLink(InfrastructureEntity entity)
+{
+    return entity == InfrastructureEntity::Pump ||
+           entity == InfrastructureEntity::Valve;
+}
+
+bool isHydraulicPipeGeometry(InfrastructureEntity entity)
+{
+    return entity == InfrastructureEntity::Pipe;
+}
+
+bool isHydraulicCanvasLink(InfrastructureEntity entity)
+{
+    return isHydraulicDeviceLink(entity) || isHydraulicPipeGeometry(entity);
+}
+
+QPointF nearestPointOnSegment(
+    const QPointF &point,
+    const QPointF &segment_start,
+    const QPointF &segment_end
     )
-    {
-        const double segment_x = segment_end.x() - segment_start.x();
-        const double segment_y = segment_end.y() - segment_start.y();
-        const double segment_length_squared = segment_x * segment_x + segment_y * segment_y;
-        
-        if (segment_length_squared <= 0.0)
-            return segment_start;
-        
-        const double projection =
-            ((point.x() - segment_start.x()) * segment_x +
-             (point.y() - segment_start.y()) * segment_y) /
-            segment_length_squared;
-        const double bounded_projection = qBound(0.0, projection, 1.0);
-        return QPointF(
-            segment_start.x() + bounded_projection * segment_x,
-            segment_start.y() + bounded_projection * segment_y
-        );
-    }
+{
+    const double segment_x = segment_end.x() - segment_start.x();
+    const double segment_y = segment_end.y() - segment_start.y();
+    const double segment_length_squared = segment_x * segment_x + segment_y * segment_y;
     
-    double distanceSquaredToSegment(
-        const QPointF &point,
-        const QPointF &segment_start,
-        const QPointF &segment_end
-    )
-    {
-        const QPointF nearest_point = nearestPointOnSegment(
-            point,
-            segment_start,
-            segment_end
+    if (segment_length_squared <= 0.0)
+        return segment_start;
+    
+    const double projection =
+        ((point.x() - segment_start.x()) * segment_x +
+         (point.y() - segment_start.y()) * segment_y) /
+        segment_length_squared;
+    const double bounded_projection = qBound(0.0, projection, 1.0);
+    return QPointF(
+        segment_start.x() + bounded_projection * segment_x,
+        segment_start.y() + bounded_projection * segment_y
         );
-        const double distance_x = point.x() - nearest_point.x();
-        const double distance_y = point.y() - nearest_point.y();
-        return distance_x * distance_x + distance_y * distance_y;
-    }
+}
+
+double distanceSquaredToSegment(
+    const QPointF &point,
+    const QPointF &segment_start,
+    const QPointF &segment_end
+    )
+{
+    const QPointF nearest_point = nearestPointOnSegment(
+        point,
+        segment_start,
+        segment_end
+        );
+    const double distance_x = point.x() - nearest_point.x();
+    const double distance_y = point.y() - nearest_point.y();
+    return distance_x * distance_x + distance_y * distance_y;
+}
 }
 
 MapCanvasEntities::MapCanvasEntities(
@@ -93,9 +94,9 @@ MapCanvasEntities::MapCanvasEntities(
     //this->network_hydraulic = this->network_data->networkHydraulic();
     connect(this->map_model, &MapModel::zoomChanged, this, &MapCanvasEntities::scaleMarkers);
     connect(this->map_model, &MapModel::centerChangedWGS84, this, [this](const CoordinateWGS84 &)
-    {
-        positionMarkers();
-    });
+            {
+                positionMarkers();
+            });
 }
 
 void MapCanvasEntities::startEntityPositioning(InfrastructureEntity entity)
@@ -157,10 +158,13 @@ void MapCanvasEntities::startEntityPositioningInternal()
     this->entity_draw_immediately = false;
     this->map_canvas->setFocusPolicy(Qt::StrongFocus);
     this->map_canvas->setFocus(Qt::OtherFocusReason);
+    if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting)
+        setMoveCursor(true);
 }
 
 void MapCanvasEntities::stopEntityPositioning()
 {
+    setMoveCursor(false);
     clearConnectionTarget();
     this->device_link_start_label = nullptr;
     this->pipe_start_label = nullptr;
@@ -200,6 +204,9 @@ void MapCanvasEntities::stopEntityPositioning()
 
 void MapCanvasEntities::floatEntity(QMouseEvent *event)
 {
+    if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting)
+        setMoveCursor(true);
+    
     this->mouse_pos_last = event->position();
     updateConnectionTarget(event->position());
     
@@ -211,6 +218,7 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
             this->pipe_vertex_move_index < 0 ||
             this->pipe_vertex_move_index >= pipe->geometry.intermediate_vertices.size())
         {
+            setMoveCursor(false);
             this->pipe_vertex_move_pipe_uuid.reset();
             this->pipe_vertex_move_index = -1;
             this->entity_placement_mode = MapEntityPlacementMode::None;
@@ -258,11 +266,11 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
             device_link.geometry.center_coordinate = this->map_model->wgs84FromScreen(
                 event->position().toPoint(),
                 this->map_canvas->size()
-            );
+                );
             marker_pos = QPoint(
                 qRound(event->position().x() - this->entity_floating->width() / 2.0),
                 qRound(event->position().y() - this->entity_floating->height() / 2.0)
-            );
+                );
             break;
         }
     }
@@ -276,7 +284,7 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
         QPointF start_point = this->map_model->screenFromWgs84(
             start_marker.coord_wgs84,
             this->map_canvas->size()
-        );
+            );
         QPointF end_point = event->position();
         
         if (this->connection_target_label)
@@ -287,7 +295,7 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
                 end_point = this->map_model->screenFromWgs84(
                     end_marker.coord_wgs84,
                     this->map_canvas->size()
-                );
+                    );
             }
         }
         
@@ -295,14 +303,14 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
         marker_pos = QPoint(
             qRound(center_point.x() - this->entity_floating->width() / 2.0),
             qRound(center_point.y() - this->entity_floating->height() / 2.0)
-        );
+            );
     }
     else if (!moving_device_link)
     {
         marker_pos = QPoint(
             qRound(event->position().x()),
             qRound(event->position().y()) - this->entity_floating->height()
-        );
+            );
     }
     
     this->entity_floating->move(marker_pos);
@@ -360,6 +368,7 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
                 continue;
             
             marker.coord_wgs84 = wgs;
+            setMoveCursor(false);
             moved_label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
             this->entity_floating = nullptr;
             this->entity_placement_mode = MapEntityPlacementMode::None;
@@ -376,6 +385,7 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
                 continue;
             
             device_link.geometry.center_coordinate = wgs;
+            setMoveCursor(false);
             moved_label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
             this->entity_floating = nullptr;
             this->entity_placement_mode = MapEntityPlacementMode::None;
@@ -385,6 +395,7 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
             return true;
         }
         
+        setMoveCursor(false);
         moved_label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
         this->entity_floating = nullptr;
         this->entity_placement_mode = MapEntityPlacementMode::None;
@@ -414,25 +425,25 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
         &MapEntityMarkerLabel::signalDeleteRequested,
         this,
         &MapCanvasEntities::onMarkerDeleteRequested
-    );
+        );
     connect(
         marker.label,
         &MapEntityMarkerLabel::signalMoveRequested,
         this,
         &MapCanvasEntities::onMarkerMoveRequested
-    );
+        );
     connect(
         marker.label,
         &MapEntityMarkerLabel::signalClicked,
         this,
         &MapCanvasEntities::onMarkerClicked
-    );
+        );
     
     int width = calculateEntityWidth();
     QPixmap pixmap = QPixmap(marker.path_pixmap).scaledToWidth(
         width,
         Qt::SmoothTransformation
-    );
+        );
     marker.label->setPixmap(pixmap);
     marker.label->resize(pixmap.size());
     this->list_entity_markers.append(marker);
@@ -476,11 +487,11 @@ bool MapCanvasEntities::anchorDeviceLink(QMouseEvent *event)
     QPointF start_point = this->map_model->screenFromWgs84(
         start_marker.coord_wgs84,
         this->map_canvas->size()
-    );
+        );
     QPointF end_point = this->map_model->screenFromWgs84(
         target_marker.coord_wgs84,
         this->map_canvas->size()
-    );
+        );
     QPointF center_point = (start_point + end_point) / 2.0;
     
     DeviceLinkCanvasItem device_link;
@@ -508,19 +519,19 @@ bool MapCanvasEntities::anchorDeviceLink(QMouseEvent *event)
         &MapEntityMarkerLabel::signalDeleteRequested,
         this,
         &MapCanvasEntities::onMarkerDeleteRequested
-    );
+        );
     connect(
         device_link.device_label,
         &MapEntityMarkerLabel::signalMoveRequested,
         this,
         &MapCanvasEntities::onMarkerMoveRequested
-    );
+        );
     connect(
         device_link.device_label,
         &MapEntityMarkerLabel::signalClicked,
         this,
         &MapCanvasEntities::onMarkerClicked
-    );
+        );
     
     this->list_device_links.append(device_link);
     this->entity_floating_hide_until = event->position().toPoint();
@@ -626,9 +637,10 @@ bool MapCanvasEntities::anchorPipeVertexMove(QMouseEvent *event)
             this->map_model->wgs84FromScreen(
                 event->position().toPoint(),
                 this->map_canvas->size()
-            );
+                );
     }
     
+    setMoveCursor(false);
     this->pipe_vertex_move_pipe_uuid.reset();
     this->pipe_vertex_move_index = -1;
     this->entity_placement_mode = MapEntityPlacementMode::None;
@@ -665,7 +677,7 @@ void MapCanvasEntities::scaleMarkers()
         QPixmap pixmap = QPixmap(marker.path_pixmap).scaledToWidth(
             width,
             Qt::SmoothTransformation
-        );
+            );
         label->setPixmap(pixmap);
         label->resize(pixmap.size());
     }
@@ -678,7 +690,7 @@ void MapCanvasEntities::scaleMarkers()
         QPixmap pixmap = QPixmap(device_link.path_pixmap).scaledToWidth(
             width,
             Qt::SmoothTransformation
-        );
+            );
         device_link.device_label->setPixmap(pixmap);
         device_link.device_label->resize(pixmap.size());
     }
@@ -690,7 +702,7 @@ void MapCanvasEntities::scaleMarkers()
         QPixmap pixmap = QPixmap(pixmapPathForEntity(this->entity_current)).scaledToWidth(
             width,
             Qt::SmoothTransformation
-        );
+            );
         this->entity_floating->setPixmap(pixmap);
         this->entity_floating->resize(pixmap.size());
     }
@@ -715,11 +727,11 @@ void MapCanvasEntities::positionMarkers()
         QPointF point = this->map_model->screenFromWgs84(
             marker.coord_wgs84,
             this->map_canvas->size()
-        );
+            );
         QPoint marker_pos(
             qRound(point.x()),
             qRound(point.y()) - label->height()
-        );
+            );
         
         if (label->pos() != marker_pos)
             label->move(marker_pos);
@@ -740,7 +752,7 @@ void MapCanvasEntities::positionDeviceLinks()
         QPointF center_point = this->map_model->screenFromWgs84(
             device_link.geometry.center_coordinate,
             this->map_canvas->size()
-        );
+            );
         positionDeviceLabel(device_link.device_label, center_point);
     }
 }
@@ -748,7 +760,7 @@ void MapCanvasEntities::positionDeviceLinks()
 void MapCanvasEntities::positionDeviceLabel(
     MapEntityMarkerLabel *label,
     const QPointF &center
-)
+    )
 {
     if (!label)
         return;
@@ -756,7 +768,7 @@ void MapCanvasEntities::positionDeviceLabel(
     QPoint label_position(
         qRound(center.x() - label->width() / 2.0),
         qRound(center.y() - label->height() / 2.0)
-    );
+        );
     
     if (label->pos() != label_position)
         label->move(label_position);
@@ -771,6 +783,27 @@ void MapCanvasEntities::setPointMarkerMouseTransparency(bool transparent)
         if (marker.label)
             marker.label->setAttribute(Qt::WA_TransparentForMouseEvents, transparent);
     }
+}
+
+void MapCanvasEntities::setMoveCursor(bool enabled)
+{
+    if (enabled)
+    {
+        if (this->move_cursor_active)
+            QApplication::changeOverrideCursor(Qt::SizeAllCursor);
+        else
+        {
+            QApplication::setOverrideCursor(Qt::SizeAllCursor);
+            this->move_cursor_active = true;
+        }
+        return;
+    }
+    
+    if (!this->move_cursor_active)
+        return;
+    
+    QApplication::restoreOverrideCursor();
+    this->move_cursor_active = false;
 }
 
 void MapCanvasEntities::paintMarkers(QPainter &paint)
@@ -792,7 +825,7 @@ void MapCanvasEntities::paintMarkers(QPainter &paint)
         QPointF point = this->map_model->screenFromWgs84(
             marker.coord_wgs84,
             this->map_canvas->size()
-        );
+            );
         const bool is_connection_target = marker.label &&
                                           marker.label == this->connection_target_label;
         
@@ -842,15 +875,15 @@ void MapCanvasEntities::paintDeviceLinks(QPainter &paint)
         QPointF start_point = this->map_model->screenFromWgs84(
             start_marker.coord_wgs84,
             this->map_canvas->size()
-        );
+            );
         QPointF center_point = this->map_model->screenFromWgs84(
             device_link.geometry.center_coordinate,
             this->map_canvas->size()
-        );
+            );
         QPointF end_point = this->map_model->screenFromWgs84(
             end_marker.coord_wgs84,
             this->map_canvas->size()
-        );
+            );
         
         QPen placed_pen;
         if (isMarkerSelected(device_link.device_label))
@@ -930,14 +963,14 @@ void MapCanvasEntities::paintPipes(QPainter &paint)
         QPointF previous_point = this->map_model->screenFromWgs84(
             start_marker.coord_wgs84,
             this->map_canvas->size()
-        );
+            );
         
         for (const CoordinateWGS84 &vertex : pipe.geometry.intermediate_vertices)
         {
             QPointF vertex_point = this->map_model->screenFromWgs84(
                 vertex,
                 this->map_canvas->size()
-            );
+                );
             paint.drawLine(previous_point, vertex_point);
             previous_point = vertex_point;
         }
@@ -945,7 +978,7 @@ void MapCanvasEntities::paintPipes(QPainter &paint)
         QPointF end_point = this->map_model->screenFromWgs84(
             end_marker.coord_wgs84,
             this->map_canvas->size()
-        );
+            );
         paint.drawLine(previous_point, end_point);
         
         paint.setPen(Qt::NoPen);
@@ -955,7 +988,7 @@ void MapCanvasEntities::paintPipes(QPainter &paint)
             const QPointF vertex_point = this->map_model->screenFromWgs84(
                 vertex,
                 this->map_canvas->size()
-            );
+                );
             paint.drawEllipse(vertex_point, pipe_vertex_radius, pipe_vertex_radius);
         }
     }
@@ -976,14 +1009,14 @@ void MapCanvasEntities::paintPipes(QPainter &paint)
             QPointF previous_point = this->map_model->screenFromWgs84(
                 start_marker.coord_wgs84,
                 this->map_canvas->size()
-            );
+                );
             
             for (const CoordinateWGS84 &vertex : this->pipe_intermediate_vertices)
             {
                 QPointF vertex_point = this->map_model->screenFromWgs84(
                     vertex,
                     this->map_canvas->size()
-                );
+                    );
                 paint.drawLine(previous_point, vertex_point);
                 previous_point = vertex_point;
             }
@@ -997,7 +1030,7 @@ void MapCanvasEntities::paintPipes(QPainter &paint)
                     preview_end = this->map_model->screenFromWgs84(
                         end_marker.coord_wgs84,
                         this->map_canvas->size()
-                    );
+                        );
                 }
             }
             
@@ -1075,6 +1108,7 @@ void MapCanvasEntities::deleteMarker(MapEntityMarkerLabel *label)
     
     if (this->entity_floating == label)
     {
+        setMoveCursor(false);
         this->entity_floating = nullptr;
         this->entity_placement_mode = MapEntityPlacementMode::None;
     }
@@ -1256,7 +1290,7 @@ void MapCanvasEntities::updateConnectionTarget(const QPointF &mouse_pos)
             QPointF point = this->map_model->screenFromWgs84(
                 marker.coord_wgs84,
                 this->map_canvas->size()
-            );
+                );
             const double distance_x = point.x() - mouse_pos.x();
             const double distance_y = point.y() - mouse_pos.y();
             const double distance_squared =
@@ -1370,30 +1404,30 @@ MapEntityMarkerLabel *MapCanvasEntities::deviceLinkLabelAt(const QPointF &positi
         QPointF start_point = this->map_model->screenFromWgs84(
             start_marker.coord_wgs84,
             this->map_canvas->size()
-        );
+            );
         QPointF center_point = this->map_model->screenFromWgs84(
             device_link.geometry.center_coordinate,
             this->map_canvas->size()
-        );
+            );
         QPointF end_point = this->map_model->screenFromWgs84(
             end_marker.coord_wgs84,
             this->map_canvas->size()
-        );
+            );
         
         const double first_distance_squared = distanceSquaredToSegment(
             position,
             start_point,
             center_point
-        );
+            );
         const double second_distance_squared = distanceSquaredToSegment(
             position,
             center_point,
             end_point
-        );
+            );
         const double distance_squared = qMin(
             first_distance_squared,
             second_distance_squared
-        );
+            );
         
         if (distance_squared > nearest_distance_squared)
             continue;
@@ -1413,7 +1447,7 @@ bool MapCanvasEntities::isDeviceLinkAt(const QPointF &position)
 bool MapCanvasEntities::showPipeContextMenuAt(
     const QPointF &position,
     const QPoint &global_position
-)
+    )
 {
     if (this->entity_placement_mode != MapEntityPlacementMode::None)
         return false;
@@ -1432,37 +1466,37 @@ bool MapCanvasEntities::showPipeContextMenuAt(
         QAction *action_convert_to_junction = menu->addAction("Convert to junction");
         
         connect(action_move, &QAction::triggered, this, [this, pipe_uuid, vertex_index]()
-        {
-            startPipeVertexMove(pipe_uuid, vertex_index);
-        });
+                {
+                    startPipeVertexMove(pipe_uuid, vertex_index);
+                });
         
         connect(action_delete, &QAction::triggered, this, [this, pipe_uuid, vertex_index]()
-        {
-            deletePipeVertex(pipe_uuid, vertex_index);
-        });
+                {
+                    deletePipeVertex(pipe_uuid, vertex_index);
+                });
         
         connect(action_convert_to_junction, &QAction::triggered, this, [this, pipe_uuid, vertex_index]()
-        {
-            QMessageBox *message_box = new QMessageBox(
-                QMessageBox::Question,
-                "Convert pipe vertex",
-                "Do you really want to convert this pipe vertex to a junction?",
-                QMessageBox::Yes | QMessageBox::No,
-                this->map_canvas
-            );
-            
-            message_box->setDefaultButton(QMessageBox::No);
-            
-            connect(message_box, &QMessageBox::finished, this, [this, pipe_uuid, vertex_index](int result)
-            {
-                if (result == QMessageBox::Yes)
-                    convertPipeVertexToJunction(pipe_uuid, vertex_index);
-            });
-            
-            connect(message_box, &QMessageBox::finished, message_box, &QObject::deleteLater);
-            
-            message_box->open();
-        });
+                {
+                    QMessageBox *message_box = new QMessageBox(
+                        QMessageBox::Question,
+                        "Convert pipe vertex",
+                        "Do you really want to convert this pipe vertex to a junction?",
+                        QMessageBox::Yes | QMessageBox::No,
+                        this->map_canvas
+                        );
+                    
+                    message_box->setDefaultButton(QMessageBox::No);
+                    
+                    connect(message_box, &QMessageBox::finished, this, [this, pipe_uuid, vertex_index](int result)
+                            {
+                                if (result == QMessageBox::Yes)
+                                    convertPipeVertexToJunction(pipe_uuid, vertex_index);
+                            });
+                    
+                    connect(message_box, &QMessageBox::finished, message_box, &QObject::deleteLater);
+                    
+                    message_box->open();
+                });
         
         connect(menu, &QMenu::aboutToHide, menu, &QObject::deleteLater);
         
@@ -1479,7 +1513,7 @@ bool MapCanvasEntities::showPipeContextMenuAt(
     const CoordinateWGS84 coordinate = this->map_model->wgs84FromScreen(
         segment_hit.nearest_point.toPoint(),
         this->map_canvas->size()
-    );
+        );
     
     selectPipe(segment_hit.pipe);
     addPipeVertex(pipe_uuid, insert_index, coordinate);
@@ -1520,6 +1554,7 @@ void MapCanvasEntities::startPipeVertexMove(const QUuid &pipe_uuid, int vertex_i
     this->mouse_pos_last = this->map_canvas->mapFromGlobal(QCursor::pos());
     this->map_canvas->setFocusPolicy(Qt::StrongFocus);
     this->map_canvas->setFocus(Qt::OtherFocusReason);
+    setMoveCursor(true);
 }
 
 void MapCanvasEntities::deletePipeVertex(const QUuid &pipe_uuid, int vertex_index)
@@ -1578,25 +1613,25 @@ void MapCanvasEntities::convertPipeVertexToJunction(const QUuid &pipe_uuid, int 
         &MapEntityMarkerLabel::signalDeleteRequested,
         this,
         &MapCanvasEntities::onMarkerDeleteRequested
-    );
+        );
     connect(
         junction_marker.label,
         &MapEntityMarkerLabel::signalMoveRequested,
         this,
         &MapCanvasEntities::onMarkerMoveRequested
-    );
+        );
     connect(
         junction_marker.label,
         &MapEntityMarkerLabel::signalClicked,
         this,
         &MapCanvasEntities::onMarkerClicked
-    );
+        );
     
     const int width = calculateEntityWidth();
     const QPixmap pixmap = QPixmap(junction_marker.path_pixmap).scaledToWidth(
         width,
         Qt::SmoothTransformation
-    );
+        );
     junction_marker.label->setPixmap(pixmap);
     junction_marker.label->resize(pixmap.size());
     this->list_entity_markers.append(junction_marker);
@@ -1681,7 +1716,7 @@ MapCanvasEntities::PipeVertexHit MapCanvasEntities::pipeVertexAt(const QPointF &
             const QPointF vertex_point = this->map_model->screenFromWgs84(
                 pipe.geometry.intermediate_vertices[i],
                 this->map_canvas->size()
-            );
+                );
             const double distance_x = position.x() - vertex_point.x();
             const double distance_y = position.y() - vertex_point.y();
             const double distance_squared =
@@ -1723,19 +1758,19 @@ MapCanvasEntities::PipeSegmentHit MapCanvasEntities::pipeSegmentAt(const QPointF
         QPointF previous_point = this->map_model->screenFromWgs84(
             start_marker.coord_wgs84,
             this->map_canvas->size()
-        );
+            );
         
         for (int i = 0; i < pipe.geometry.intermediate_vertices.size(); i++)
         {
             const QPointF vertex_point = this->map_model->screenFromWgs84(
                 pipe.geometry.intermediate_vertices[i],
                 this->map_canvas->size()
-            );
+                );
             const QPointF nearest_point = nearestPointOnSegment(
                 position,
                 previous_point,
                 vertex_point
-            );
+                );
             const double distance_x = position.x() - nearest_point.x();
             const double distance_y = position.y() - nearest_point.y();
             const double distance_squared =
@@ -1755,12 +1790,12 @@ MapCanvasEntities::PipeSegmentHit MapCanvasEntities::pipeSegmentAt(const QPointF
         const QPointF end_point = this->map_model->screenFromWgs84(
             end_marker.coord_wgs84,
             this->map_canvas->size()
-        );
+            );
         const QPointF nearest_point = nearestPointOnSegment(
             position,
             previous_point,
             end_point
-        );
+            );
         const double distance_x = position.x() - nearest_point.x();
         const double distance_y = position.y() - nearest_point.y();
         const double distance_squared =

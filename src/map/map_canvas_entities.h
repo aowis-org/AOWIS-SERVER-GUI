@@ -92,6 +92,7 @@ private:
     void positionDeviceLinks();
     void positionDeviceLabel(MapEntityMarkerLabel *label, const QPointF &center);
     void setPointMarkerMouseTransparency(bool transparent);
+    void setMoveCursor(bool enabled);
     
     MapModel *map_model = nullptr;
     HydraulicData *hydraulic_data = nullptr;
@@ -115,6 +116,7 @@ private:
     // on tool change, the rearming should not be active
     bool entity_draw_immediately = true;
     QPointF mouse_pos_last;
+    bool move_cursor_active = false;
     
     QString pixmapPathForEntity(InfrastructureEntity entity) const;
     void deleteMarker(MapEntityMarkerLabel *label);
