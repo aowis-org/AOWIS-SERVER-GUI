@@ -242,6 +242,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     button_radio_customer->setShortcut(Qt::Key_4);
     lay->addWidget(button_radio_customer);
     this->button_group_tools->addButton(button_radio_customer, 4);
+    button_radio_customer->setEnabled(false);
     
     QRadioButton *button_radio_pump = new QRadioButton("[5] Pump", wgt);
     button_radio_pump->setShortcut(Qt::Key_5);
@@ -264,6 +265,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     button_radio_power->setShortcut(Qt::Key_7);
     lay->addWidget(button_radio_power);
     this->button_group_tools->addButton(button_radio_power, 7);
+    button_radio_power->setEnabled(false);
     
     QRadioButton *button_radio_reservoir = new QRadioButton("[8] Reservoir", wgt);
     button_radio_reservoir->setShortcut(Qt::Key_8);
@@ -278,6 +280,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     button_radio_note->setShortcut(Qt::Key_9);
     lay->addWidget(button_radio_note);
     this->button_group_tools->addButton(button_radio_note, 9);
+    button_radio_note->setEnabled(false);
     
     QLabel *label_instruction = new QLabel(
         "<b>Right Click</b> to place Entity",
