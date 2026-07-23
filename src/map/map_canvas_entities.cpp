@@ -9,75 +9,75 @@
 
 namespace
 {
-constexpr double marker_dot_radius = 5.0;
-constexpr double connection_target_radius = 9.0;
-constexpr double connection_hover_distance = 18.0;
-constexpr double link_hit_distance = 7.0;
-constexpr double pipe_vertex_radius = 4.0;
-constexpr double pipe_vertex_hit_distance = 9.0;
-
-bool isHydraulicConnectionNode(InfrastructureEntity entity)
-{
-    return entity == InfrastructureEntity::Junction ||
-           entity == InfrastructureEntity::Reservoir ||
-           entity == InfrastructureEntity::Tank;
-}
-
-bool isHydraulicDeviceLink(InfrastructureEntity entity)
-{
-    return entity == InfrastructureEntity::Pump ||
-           entity == InfrastructureEntity::Valve;
-}
-
-bool isHydraulicPipeGeometry(InfrastructureEntity entity)
-{
-    return entity == InfrastructureEntity::Pipe;
-}
-
-bool isHydraulicCanvasLink(InfrastructureEntity entity)
-{
-    return isHydraulicDeviceLink(entity) || isHydraulicPipeGeometry(entity);
-}
-
-QPointF nearestPointOnSegment(
-    const QPointF &point,
-    const QPointF &segment_start,
-    const QPointF &segment_end
-    )
-{
-    const double segment_x = segment_end.x() - segment_start.x();
-    const double segment_y = segment_end.y() - segment_start.y();
-    const double segment_length_squared = segment_x * segment_x + segment_y * segment_y;
+    constexpr double marker_dot_radius = 5.0;
+    constexpr double connection_target_radius = 9.0;
+    constexpr double connection_hover_distance = 18.0;
+    constexpr double link_hit_distance = 7.0;
+    constexpr double pipe_vertex_radius = 4.0;
+    constexpr double pipe_vertex_hit_distance = 9.0;
     
-    if (segment_length_squared <= 0.0)
-        return segment_start;
+    bool isHydraulicConnectionNode(InfrastructureEntity entity)
+    {
+        return entity == InfrastructureEntity::Junction ||
+               entity == InfrastructureEntity::Reservoir ||
+               entity == InfrastructureEntity::Tank;
+    }
     
-    const double projection =
-        ((point.x() - segment_start.x()) * segment_x +
-         (point.y() - segment_start.y()) * segment_y) /
-        segment_length_squared;
-    const double bounded_projection = qBound(0.0, projection, 1.0);
-    return QPointF(
-        segment_start.x() + bounded_projection * segment_x,
-        segment_start.y() + bounded_projection * segment_y
-        );
-}
-
-double distanceSquaredToSegment(
-    const QPointF &point,
-    const QPointF &segment_start,
-    const QPointF &segment_end
+    bool isHydraulicDeviceLink(InfrastructureEntity entity)
+    {
+        return entity == InfrastructureEntity::Pump ||
+               entity == InfrastructureEntity::Valve;
+    }
+    
+    bool isHydraulicPipeGeometry(InfrastructureEntity entity)
+    {
+        return entity == InfrastructureEntity::Pipe;
+    }
+    
+    bool isHydraulicCanvasLink(InfrastructureEntity entity)
+    {
+        return isHydraulicDeviceLink(entity) || isHydraulicPipeGeometry(entity);
+    }
+    
+    QPointF nearestPointOnSegment(
+        const QPointF &point,
+        const QPointF &segment_start,
+        const QPointF &segment_end
     )
-{
-    const QPointF nearest_point = nearestPointOnSegment(
-        point,
-        segment_start,
-        segment_end
+    {
+        const double segment_x = segment_end.x() - segment_start.x();
+        const double segment_y = segment_end.y() - segment_start.y();
+        const double segment_length_squared = segment_x * segment_x + segment_y * segment_y;
+        
+        if (segment_length_squared <= 0.0)
+            return segment_start;
+        
+        const double projection =
+            ((point.x() - segment_start.x()) * segment_x +
+             (point.y() - segment_start.y()) * segment_y) /
+            segment_length_squared;
+        const double bounded_projection = qBound(0.0, projection, 1.0);
+        return QPointF(
+            segment_start.x() + bounded_projection * segment_x,
+            segment_start.y() + bounded_projection * segment_y
         );
-    const double distance_x = point.x() - nearest_point.x();
-    const double distance_y = point.y() - nearest_point.y();
-    return distance_x * distance_x + distance_y * distance_y;
-}
+    }
+    
+    double distanceSquaredToSegment(
+        const QPointF &point,
+        const QPointF &segment_start,
+        const QPointF &segment_end
+    )
+    {
+        const QPointF nearest_point = nearestPointOnSegment(
+            point,
+            segment_start,
+            segment_end
+        );
+        const double distance_x = point.x() - nearest_point.x();
+        const double distance_y = point.y() - nearest_point.y();
+        return distance_x * distance_x + distance_y * distance_y;
+    }
 }
 
 MapCanvasEntities::MapCanvasEntities(
