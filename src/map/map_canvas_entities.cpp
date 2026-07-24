@@ -916,6 +916,21 @@ void MapCanvasEntities::moveSelectedEntities(const QPointF &from_position, const
             break;
         }
     }
+    
+    for (PipeCanvasItem &pipe : this->list_pipes)
+    {
+        if (!isMarkerSelected(pipe.start_label) ||
+            !isMarkerSelected(pipe.end_label))
+        {
+            continue;
+        }
+        
+        for (CoordinateWGS84 &vertex : pipe.geometry.intermediate_vertices)
+        {
+            vertex.lon += longitude_delta;
+            vertex.lat += latitude_delta;
+        }
+    }
 }
 
 void MapCanvasEntities::setSelectedEntitiesMouseTransparency(bool transparent)
