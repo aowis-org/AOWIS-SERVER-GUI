@@ -93,6 +93,8 @@ private:
     void positionDeviceLabel(MapEntityMarkerLabel *label, const QPointF &center);
     void setPointMarkerMouseTransparency(bool transparent);
     void setMoveCursor(bool enabled);
+    void moveSelectedEntities(const QPointF &from_position, const QPointF &to_position);
+    void setSelectedEntitiesMouseTransparency(bool transparent);
     
     MapModel *map_model = nullptr;
     HydraulicData *hydraulic_data = nullptr;
@@ -117,6 +119,7 @@ private:
     bool entity_draw_immediately = true;
     QPointF mouse_pos_last;
     bool move_cursor_active = false;
+    bool move_selected_entities = false;
     
     QString pixmapPathForEntity(InfrastructureEntity entity) const;
     void deleteMarker(MapEntityMarkerLabel *label);
@@ -148,6 +151,7 @@ private slots:
     void onMarkerClicked(MapEntityMarkerLabel *label);
     void onMarkerContextMenuRequested(MapEntityMarkerLabel *label, const QPoint &global_position);
     void onMarkerMoveRequested(MapEntityMarkerLabel *label);
+    void onMarkerMoveSelectedRequested(MapEntityMarkerLabel *label);
     void onMarkerDeleteRequested(MapEntityMarkerLabel *label);
     
 public slots:
