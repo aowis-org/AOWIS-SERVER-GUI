@@ -146,6 +146,7 @@ private:
     
 private slots:
     void onMarkerClicked(MapEntityMarkerLabel *label);
+    void onMarkerContextMenuRequested(MapEntityMarkerLabel *label, const QPoint &global_position);
     void onMarkerMoveRequested(MapEntityMarkerLabel *label);
     void onMarkerDeleteRequested(MapEntityMarkerLabel *label);
     

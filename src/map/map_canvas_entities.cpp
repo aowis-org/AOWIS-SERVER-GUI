@@ -438,6 +438,12 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
         this,
         &MapCanvasEntities::onMarkerClicked
         );
+    connect(
+        marker.label,
+        &MapEntityMarkerLabel::signalContextMenuRequested,
+        this,
+        &MapCanvasEntities::onMarkerContextMenuRequested
+        );
     
     int width = calculateEntityWidth();
     QPixmap pixmap = QPixmap(marker.path_pixmap).scaledToWidth(
@@ -531,6 +537,12 @@ bool MapCanvasEntities::anchorDeviceLink(QMouseEvent *event)
         &MapEntityMarkerLabel::signalClicked,
         this,
         &MapCanvasEntities::onMarkerClicked
+        );
+    connect(
+        device_link.device_label,
+        &MapEntityMarkerLabel::signalContextMenuRequested,
+        this,
+        &MapCanvasEntities::onMarkerContextMenuRequested
         );
     
     this->list_device_links.append(device_link);
@@ -1190,6 +1202,20 @@ void MapCanvasEntities::onMarkerClicked(MapEntityMarkerLabel *label)
     
     if (this->map_canvas)
         this->map_canvas->update();
+}
+
+void MapCanvasEntities::onMarkerContextMenuRequested(
+    MapEntityMarkerLabel *label,
+    const QPoint &global_position
+)
+{
+    if (!label)
+        return;
+    
+    label->showContextMenu(
+        global_position,
+        this->list_entity_markers_selected.size() > 1
+    );
 }
 
 void MapCanvasEntities::onRectangleSelect(

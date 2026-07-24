@@ -121,16 +121,44 @@ void MapEntityMarkerLabel::mouseDoubleClickEvent(QMouseEvent *event)
 
 void MapEntityMarkerLabel::contextMenuEvent(QContextMenuEvent *event)
 {
+    emit signalContextMenuRequested(this, event->globalPos());
+    event->accept();
+}
+
+void MapEntityMarkerLabel::showContextMenu(
+    const QPoint &global_position,
+    bool multiple_entities_selected
+    )
+{
     QMenu *menu = new QMenu(this);
     menu->setAttribute(Qt::WA_DeleteOnClose);
     
-    QAction *action_move = menu->addAction("Move");
-    QAction *action_delete = menu->addAction("Delete");
-    
-    connect(action_move, &QAction::triggered, this, [this]()
+    if (multiple_entities_selected)
     {
-        emit signalMoveRequested(this);
-    });
+        QAction *action_move_this = menu->addAction("Move this entity");
+        QAction *action_move_selected = menu->addAction("Move selected entities");
+        
+        connect(action_move_this, &QAction::triggered, this, [this]()
+        {
+            emit signalMoveRequested(this);
+        });
+        
+        connect(action_move_selected, &QAction::triggered, this, [this]()
+        {
+            emit signalMoveSelectedRequested(this);
+        });
+    }
+    else
+    {
+        QAction *action_move = menu->addAction("Move");
+        
+        connect(action_move, &QAction::triggered, this, [this]()
+                {
+                    emit signalMoveRequested(this);
+                });
+    }
+    
+    QAction *action_delete = menu->addAction("Delete");
     
     connect(action_delete, &QAction::triggered, this, [this]()
     {
@@ -138,29 +166,23 @@ void MapEntityMarkerLabel::contextMenuEvent(QContextMenuEvent *event)
         
         QMessageBox *box = new QMessageBox(this);
         box->setAttribute(Qt::WA_DeleteOnClose);
-        
         box->setIcon(QMessageBox::Question);
         box->setWindowTitle("Delete entity");
         box->setText("Do you really want to delete this entity?");
         box->setStandardButtons(QMessageBox::Yes | QMessageBox::No);
         box->setDefaultButton(QMessageBox::No);
         
-        connect(box, &QMessageBox::buttonClicked, this,
-        [label_this, box](QAbstractButton *button)
+        connect(box, &QMessageBox::buttonClicked, this, [label_this, box](QAbstractButton *button)
         {
             if (!label_this)
                 return;
             
             if (box->standardButton(button) == QMessageBox::Yes)
-            {
                 emit label_this->signalDeleteRequested(label_this);
-            }
         });
         
         box->open();
     });
     
-    menu->popup(event->globalPos());
-    
-    event->accept();
+    menu->popup(global_position);
 }

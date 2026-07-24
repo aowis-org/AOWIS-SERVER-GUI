@@ -4,6 +4,7 @@
 #include <QLabel>
 #include <QPointer>
 #include <QMessageBox>
+#include <QPoint>
 
 class QMouseEvent;
 class QContextMenuEvent;
@@ -18,6 +19,7 @@ public:
     void setHighlightSelected();
     void setHighlightError();
     void clearHighlight();
+    void showContextMenu(const QPoint &global_position, bool multiple_entities_selected);
     
 protected:
     void mousePressEvent(QMouseEvent *event) override;
@@ -28,7 +30,9 @@ protected:
     
 signals:
     void signalClicked(MapEntityMarkerLabel *label);
+    void signalContextMenuRequested(MapEntityMarkerLabel *label, const QPoint &global_position);
     void signalMoveRequested(MapEntityMarkerLabel *label);
+    void signalMoveSelectedRequested(MapEntityMarkerLabel *label);
     void signalDeleteRequested(MapEntityMarkerLabel *label);
 };
 
