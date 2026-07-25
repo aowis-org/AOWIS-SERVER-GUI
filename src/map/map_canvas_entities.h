@@ -25,6 +25,7 @@ enum RectangleSelectMode
 
 class MapCanvasWidget;
 class MapCanvasPipes;
+class MapCanvasDeviceLinks;
 
 class MapCanvasEntities : public QObject
 {
@@ -50,24 +51,11 @@ public:
     MapEntityMarker markerByLabel(MapEntityMarkerLabel *label);
     
 private:
-    struct DeviceLinkCanvasItem
-    {
-        InfrastructureEntityReference entity;
-        DeviceLinkGeometry geometry;
-        QPointer<MapEntityMarkerLabel> start_label;
-        QPointer<MapEntityMarkerLabel> end_label;
-        QPointer<MapEntityMarkerLabel> device_label;
-        QString path_pixmap;
-    };
-    
     void startEntityPositioningInternal();
     bool anchorDeviceLink(QMouseEvent *event);
     bool anchorPipe(QMouseEvent *event);
     bool anchorPipeVertexMove(QMouseEvent *event);
     
-    void paintDeviceLinks(QPainter &paint);
-    void positionDeviceLinks();
-    void positionDeviceLabel(MapEntityMarkerLabel *label, const QPointF &center);
     void setPointMarkerMouseTransparency(bool transparent);
     void setMoveCursor(bool enabled);
     void moveSelectedEntities(const QPointF &from_position, const QPointF &to_position);
@@ -77,10 +65,10 @@ private:
     HydraulicData *hydraulic_data = nullptr;
     QPointer<MapCanvasWidget> map_canvas;
     MapCanvasPipes *pipes = nullptr;
+    MapCanvasDeviceLinks *device_links = nullptr;
     
     QList<MapEntityMarker> list_entity_markers;
     QList<MapEntityMarker> list_entity_markers_selected;
-    QList<DeviceLinkCanvasItem> list_device_links;
     
     MapEntityPlacementMode entity_placement_mode = MapEntityPlacementMode::None;
     MapEntityMarkerLabel *entity_floating = nullptr;
@@ -97,9 +85,7 @@ private:
     QString pixmapPathForEntity(InfrastructureEntity entity) const;
     void deleteMarker(MapEntityMarkerLabel *label);
     QPointer<MapEntityMarkerLabel> connection_target_label;
-    QPointer<MapEntityMarkerLabel> device_link_start_label;
     
-    MapEntityMarkerLabel *deviceLinkLabelAt(const QPointF &position);
     void selectPipe(const QUuid &pipe_uuid);
     void startPipeVertexMove(const QUuid &pipe_uuid, int vertex_index);
     void convertPipeVertexToJunction(const QUuid &pipe_uuid, int vertex_index);

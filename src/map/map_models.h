@@ -3,6 +3,7 @@
 
 #include <QString>
 #include <QLabel>
+#include <QUuid>
 
 #include "map_entity_marker_label.h"
 
