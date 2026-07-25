@@ -1341,6 +1341,35 @@ void MapCanvasEntities::onMarkerClicked(MapEntityMarkerLabel *label)
     if (marker.entity.type == InfrastructureEntity::Unknown)
         return;
     
+    if (QApplication::keyboardModifiers().testFlag(Qt::ShiftModifier))
+    {
+        if (isMarkerSelected(label))
+        {
+            for (int i = 0; i < this->list_entity_markers_selected.size(); i++)
+            {
+                if (this->list_entity_markers_selected[i].label != label)
+                    continue;
+                
+                this->list_entity_markers_selected.removeAt(i);
+                break;
+            }
+            
+            label->clearHighlight();
+        }
+        else
+        {
+            label->setHighlightSelected();
+            this->list_entity_markers_selected.append(marker);
+        }
+        
+        emit signalEntityMarkerSelected(hasSelection());
+        
+        if (this->map_canvas)
+            this->map_canvas->update();
+        
+        return;
+    }
+    
     clearSelection();
     this->selected_entity = marker.entity;
     marker.label->setHighlightSelected();

@@ -20,8 +20,8 @@ void HydraulicData::onDatabaseReady()
     loadProject();
     
     //this->network_hydraulic request = DummyNetworks::networkSimple();
-    //this->network_hydraulic = DummyNetworks::networkTanks();
-    this->network_hydraulic = DummyNetworks::networkOnMap();
+    this->network_hydraulic = DummyNetworks::networkTanks();
+    //this->network_hydraulic = DummyNetworks::networkOnMap();
     //this->network_hydraulic = DummyNetworks::networkTanksTimeline();
 }
 
