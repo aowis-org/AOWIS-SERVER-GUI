@@ -2,9 +2,9 @@
 #include "map_canvas_pipes.h"
 #include "map_canvas_devicelinks.h"
 #include "map_canvas_markers.h"
+#include "map_canvas_selection.h"
 #include "map_canvas_widget.h"
 
-#include <functional>
 #include <QAction>
 #include <QApplication>
 #include <QMenu>
@@ -48,6 +48,7 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
     this->point_markers = new MapCanvasMarkers(this->map_model, this->map_canvas, this);
     this->device_links = new MapCanvasDeviceLinks(this->map_model, this->map_canvas, this);
     this->pipes = new MapCanvasPipes(this->map_model, this->map_canvas, this);
+    this->selection = new MapCanvasSelection(this->pipes, this);
     
     connect(this->point_markers, &MapCanvasMarkers::markerDeleteRequested,
             this, &MapCanvasEntities::onMarkerDeleteRequested);
@@ -138,7 +139,7 @@ void MapCanvasEntities::stopEntityPositioning()
     
     if (this->move_selected_entities)
     {
-        setSelectedEntitiesMouseTransparency(false);
+        this->selection->setMouseTransparency(false);
         this->move_selected_entities = false;
     }
     
@@ -276,7 +277,7 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
     {
         moveSelectedEntities(this->mouse_pos_last, event->position());
         setMoveCursor(false);
-        setSelectedEntitiesMouseTransparency(false);
+        this->selection->setMouseTransparency(false);
         this->move_selected_entities = false;
         this->entity_floating = nullptr;
         this->entity_placement_mode = MapEntityPlacementMode::None;
@@ -556,8 +557,9 @@ void MapCanvasEntities::moveSelectedEntities(const QPointF &from_position,
         to_position.toPoint(), this->map_canvas->size());
     const double longitude_delta = to_coordinate.lon - from_coordinate.lon;
     const double latitude_delta = to_coordinate.lat - from_coordinate.lat;
+    const QList<MapEntityMarker> &selected_markers = this->selection->selectedMarkers();
     
-    for (const MapEntityMarker &selected_marker : this->list_entity_markers_selected)
+    for (const MapEntityMarker &selected_marker : selected_markers)
     {
         if (!selected_marker.label)
             continue;
@@ -571,16 +573,7 @@ void MapCanvasEntities::moveSelectedEntities(const QPointF &from_position,
     }
     
     this->pipes->moveIntermediateVerticesWithSelectedEndpoints(
-        this->list_entity_markers_selected, longitude_delta, latitude_delta);
-}
-
-void MapCanvasEntities::setSelectedEntitiesMouseTransparency(bool transparent)
-{
-    for (const MapEntityMarker &selected_marker : this->list_entity_markers_selected)
-    {
-        if (selected_marker.label)
-            selected_marker.label->setAttribute(Qt::WA_TransparentForMouseEvents, transparent);
-    }
+        selected_markers, longitude_delta, latitude_delta);
 }
 
 void MapCanvasEntities::paintMarkers(QPainter &paint)
@@ -595,7 +588,7 @@ void MapCanvasEntities::paintMarkers(QPainter &paint)
     this->device_links->paint(
         paint,
         this->point_markers->markers(),
-        this->list_entity_markers_selected,
+        this->selection->selectedMarkers(),
         this->entity_placement_mode == MapEntityPlacementMode::CreateNew &&
             isHydraulicDeviceLink(this->entity_current),
         this->mouse_pos_last,
@@ -636,7 +629,8 @@ void MapCanvasEntities::onMarkerMoveRequested(MapEntityMarkerLabel *label)
 
 void MapCanvasEntities::onMarkerMoveSelectedRequested(MapEntityMarkerLabel *label)
 {
-    if (!label || !isMarkerSelected(label) || this->list_entity_markers_selected.size() < 2)
+    if (!label || !this->selection->isMarkerSelected(label) ||
+        this->selection->selectedMarkerCount() < 2)
         return;
     
     onMarkerMoveRequested(label);
@@ -648,7 +642,7 @@ void MapCanvasEntities::onMarkerMoveSelectedRequested(MapEntityMarkerLabel *labe
     }
     
     this->move_selected_entities = true;
-    setSelectedEntitiesMouseTransparency(true);
+    this->selection->setMouseTransparency(true);
     positionMarkers();
     
     if (this->map_canvas)
@@ -668,7 +662,7 @@ void MapCanvasEntities::onMarkerDeleteRequested(MapEntityMarkerLabel *label)
 void MapCanvasEntities::onMarkerSelectedDeleteRequested()
 {
     QList<MapEntityMarkerLabel *> labels_to_delete;
-    for (const MapEntityMarker &marker : this->list_entity_markers_selected)
+    for (const MapEntityMarker &marker : this->selection->selectedMarkers())
     {
         if (marker.label)
             labels_to_delete.append(marker.label);
@@ -678,7 +672,7 @@ void MapCanvasEntities::onMarkerSelectedDeleteRequested()
         deleteMarker(label);
     
     this->pipes->deleteSelected();
-    clearSelection();
+    this->selection->clear();
     
     if (this->map_canvas)
         this->map_canvas->update();
@@ -707,16 +701,8 @@ void MapCanvasEntities::deleteMarker(MapEntityMarkerLabel *label)
     this->device_links->removeConnectedToLabel(label);
     this->pipes->removeConnectedToLabel(label);
     
-    for (int i = this->list_entity_markers_selected.size() - 1; i >= 0; i--)
-    {
-        if (this->list_entity_markers_selected[i].label == label)
-            this->list_entity_markers_selected.removeAt(i);
-    }
-    
+    this->selection->removeMarker(label);
     const bool point_marker_removed = this->point_markers->removeMarker(label);
-    
-    if (!hasSelection())
-        this->selected_entity.reset();
     
     if (!point_marker_removed)
     {
@@ -733,34 +719,15 @@ void MapCanvasEntities::onMarkerClicked(MapEntityMarkerLabel *label)
     
     if (QApplication::keyboardModifiers().testFlag(Qt::ShiftModifier))
     {
-        if (isMarkerSelected(label))
-        {
-            for (int i = 0; i < this->list_entity_markers_selected.size(); i++)
-            {
-                if (this->list_entity_markers_selected[i].label != label)
-                    continue;
-                
-                this->list_entity_markers_selected.removeAt(i);
-                break;
-            }
-            label->clearHighlight();
-        }
-        else
-        {
-            label->setHighlightSelected();
-            this->list_entity_markers_selected.append(marker);
-        }
+        this->selection->toggleMarker(marker);
+        emit signalEntityMarkerSelected(this->selection->hasSelection());
         
-        emit signalEntityMarkerSelected(hasSelection());
         if (this->map_canvas)
             this->map_canvas->update();
         return;
     }
     
-    clearSelection();
-    this->selected_entity = marker.entity;
-    label->setHighlightSelected();
-    this->list_entity_markers_selected.append(marker);
+    this->selection->replaceWithMarker(marker);
     emit signalEntityMarkerSelected(true);
     
     if (this->hydraulic_data)
@@ -777,53 +744,20 @@ void MapCanvasEntities::onMarkerContextMenuRequested(MapEntityMarkerLabel *label
         return;
     
     const bool multiple_entities_selected =
-        isMarkerSelected(label) && this->list_entity_markers_selected.size() > 1;
+        this->selection->isMarkerSelected(label) &&
+        this->selection->selectedMarkerCount() > 1;
     label->showContextMenu(global_position, multiple_entities_selected);
 }
 
 void MapCanvasEntities::onRectangleSelect(const CoordinateWGS84Rect &rect,
                                           RectangleSelectMode mode)
 {
-    const double north = rect.north_west.lat;
-    const double west = rect.north_west.lon;
-    const double south = rect.south_east.lat;
-    const double east = rect.south_east.lon;
-    
-    if (mode == RectangleSelectMode::Replace)
-        clearSelection();
-    
-    const std::function<void(const MapEntityMarker &)> select_marker =
-        [this, north, west, south, east](const MapEntityMarker &marker)
-    {
-        if (!marker.label)
-            return;
-        
-        const CoordinateWGS84 &coordinate = marker.coord_wgs84;
-        if (coordinate.lat < south || coordinate.lat > north ||
-            coordinate.lon < west || coordinate.lon > east)
-        {
-            return;
-        }
-        
-        for (const MapEntityMarker &selected_marker : this->list_entity_markers_selected)
-        {
-            if (selected_marker.label == marker.label)
-                return;
-        }
-        
-        this->list_entity_markers_selected.append(marker);
-        marker.label->setHighlightSelected();
-    };
-    
-    for (const MapEntityMarker &marker : this->point_markers->markers())
-        select_marker(marker);
-    
-    const QList<MapEntityMarker> device_link_markers = this->device_links->markers();
-    for (const MapEntityMarker &marker : device_link_markers)
-        select_marker(marker);
-    
-    this->pipes->selectPipesWithSelectedEndpoints(this->list_entity_markers_selected);
-    emit signalEntityMarkerSelected(hasSelection());
+    this->selection->selectInRectangle(
+        rect,
+        this->point_markers->markers(),
+        this->device_links->markers(),
+        mode == RectangleSelectMode::Replace);
+    emit signalEntityMarkerSelected(this->selection->hasSelection());
     
     if (this->map_canvas)
         this->map_canvas->update();
@@ -886,38 +820,6 @@ void MapCanvasEntities::clearConnectionTarget()
     this->connection_target_label = nullptr;
     if (this->map_canvas)
         this->map_canvas->update();
-}
-
-bool MapCanvasEntities::isMarkerSelected(MapEntityMarkerLabel *label) const
-{
-    if (!label)
-        return false;
-    
-    for (const MapEntityMarker &marker : this->list_entity_markers_selected)
-    {
-        if (marker.label == label)
-            return true;
-    }
-    
-    return false;
-}
-
-bool MapCanvasEntities::hasSelection() const
-{
-    return !this->list_entity_markers_selected.isEmpty() || this->pipes->hasSelection();
-}
-
-void MapCanvasEntities::clearSelection()
-{
-    for (MapEntityMarker &marker : this->list_entity_markers_selected)
-    {
-        if (marker.label)
-            marker.label->clearHighlight();
-    }
-    
-    this->list_entity_markers_selected.clear();
-    this->pipes->clearSelection();
-    this->selected_entity.reset();
 }
 
 bool MapCanvasEntities::selectDeviceLinkAt(const QPointF &position)
@@ -1009,14 +911,11 @@ bool MapCanvasEntities::showPipeContextMenuAt(const QPointF &position,
 
 void MapCanvasEntities::selectPipe(const QUuid &pipe_uuid)
 {
-    clearSelection();
-    
     const std::optional<InfrastructureEntityReference> selected_pipe =
-        this->pipes->selectPipe(pipe_uuid);
+        this->selection->replaceWithPipe(pipe_uuid);
     if (!selected_pipe.has_value())
         return;
     
-    this->selected_entity = selected_pipe.value();
     emit signalEntityMarkerSelected(true);
     
     if (this->map_canvas)
@@ -1063,10 +962,7 @@ void MapCanvasEntities::convertPipeVertexToJunction(const QUuid &pipe_uuid, int 
         return;
     }
     
-    clearSelection();
-    junction_marker.label->setHighlightSelected();
-    this->list_entity_markers_selected.append(junction_marker);
-    this->selected_entity = junction_reference;
+    this->selection->replaceWithMarker(junction_marker);
     emit signalEntityMarkerSelected(true);
     
     positionMarkers();
