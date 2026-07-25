@@ -1,6 +1,7 @@
 #include "map_canvas_entities.h"
 #include "map_canvas_pipes.h"
 #include "map_canvas_devicelinks.h"
+#include "map_canvas_markers.h"
 #include "map_canvas_widget.h"
 
 #include <functional>
@@ -11,8 +12,6 @@
 
 namespace
 {
-constexpr double marker_dot_radius = 5.0;
-constexpr double connection_target_radius = 9.0;
 constexpr double connection_hover_distance = 18.0;
 
 bool isHydraulicConnectionNode(InfrastructureEntity entity)
@@ -46,8 +45,20 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
     hydraulic_data(hydraulic_data),
     map_canvas(map_canvas)
 {
+    this->point_markers = new MapCanvasMarkers(this->map_model, this->map_canvas, this);
     this->device_links = new MapCanvasDeviceLinks(this->map_model, this->map_canvas, this);
     this->pipes = new MapCanvasPipes(this->map_model, this->map_canvas, this);
+    
+    connect(this->point_markers, &MapCanvasMarkers::markerDeleteRequested,
+            this, &MapCanvasEntities::onMarkerDeleteRequested);
+    connect(this->point_markers, &MapCanvasMarkers::markerMoveRequested,
+            this, &MapCanvasEntities::onMarkerMoveRequested);
+    connect(this->point_markers, &MapCanvasMarkers::markerMoveSelectedRequested,
+            this, &MapCanvasEntities::onMarkerMoveSelectedRequested);
+    connect(this->point_markers, &MapCanvasMarkers::markerClicked,
+            this, &MapCanvasEntities::onMarkerClicked);
+    connect(this->point_markers, &MapCanvasMarkers::markerContextMenuRequested,
+            this, &MapCanvasEntities::onMarkerContextMenuRequested);
     
     connect(this->map_model, &MapModel::zoomChanged, this, &MapCanvasEntities::scaleMarkers);
     connect(this->map_model, &MapModel::centerChangedWGS84, this, [this](const CoordinateWGS84 &)
@@ -229,7 +240,7 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
             this->entity_floating,
             event->position(),
             this->connection_target_label,
-            this->list_entity_markers);
+            this->point_markers->markers());
     }
     
     if (!device_link_positioned)
@@ -242,15 +253,9 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
     if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting &&
         !device_link_positioned)
     {
-        for (MapEntityMarker &marker : this->list_entity_markers)
-        {
-            if (marker.label != this->entity_floating)
-                continue;
-            
-            marker.coord_wgs84 = this->map_model->wgs84FromScreen(
-                event->position().toPoint(), this->map_canvas->size());
-            break;
-        }
+        const CoordinateWGS84 coordinate = this->map_model->wgs84FromScreen(
+            event->position().toPoint(), this->map_canvas->size());
+        this->point_markers->setCoordinate(this->entity_floating, coordinate);
     }
     
     if (this->map_canvas)
@@ -298,12 +303,8 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
     {
         MapEntityMarkerLabel *moved_label = this->entity_floating;
         
-        for (MapEntityMarker &marker : this->list_entity_markers)
+        if (this->point_markers->setCoordinate(moved_label, coordinate))
         {
-            if (marker.label != moved_label)
-                continue;
-            
-            marker.coord_wgs84 = coordinate;
             setMoveCursor(false);
             moved_label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
             this->entity_floating = nullptr;
@@ -349,30 +350,12 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
     reference.type = this->entity_current;
     reference.uuid = QUuid::createUuid();
     
-    MapEntityMarker marker;
-    marker.coord_wgs84 = coordinate;
-    marker.entity = reference;
-    marker.label = this->entity_floating;
-    marker.path_pixmap = pixmapPathForEntity(this->entity_current);
-    marker.label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
-    
-    connect(marker.label, &MapEntityMarkerLabel::signalDeleteRequested,
-            this, &MapCanvasEntities::onMarkerDeleteRequested);
-    connect(marker.label, &MapEntityMarkerLabel::signalMoveRequested,
-            this, &MapCanvasEntities::onMarkerMoveRequested);
-    connect(marker.label, &MapEntityMarkerLabel::signalMoveSelectedRequested,
-            this, &MapCanvasEntities::onMarkerMoveSelectedRequested);
-    connect(marker.label, &MapEntityMarkerLabel::signalClicked,
-            this, &MapCanvasEntities::onMarkerClicked);
-    connect(marker.label, &MapEntityMarkerLabel::signalContextMenuRequested,
-            this, &MapCanvasEntities::onMarkerContextMenuRequested);
-    
-    const int width = calculateEntityWidth();
-    const QPixmap pixmap = QPixmap(marker.path_pixmap).scaledToWidth(
-        width, Qt::SmoothTransformation);
-    marker.label->setPixmap(pixmap);
-    marker.label->resize(pixmap.size());
-    this->list_entity_markers.append(marker);
+    this->point_markers->addMarker(
+        reference,
+        coordinate,
+        pixmapPathForEntity(this->entity_current),
+        calculateEntityWidth(),
+        this->entity_floating);
     
     this->entity_floating_hide_until = event->position().toPoint();
     this->entity_floating = nullptr;
@@ -387,7 +370,7 @@ bool MapCanvasEntities::anchorDeviceLink(QMouseEvent *event)
         this->entity_current,
         this->connection_target_label,
         this->entity_floating,
-        this->list_entity_markers,
+        this->point_markers->markers(),
         pixmapPathForEntity(this->entity_current),
         calculateEntityWidth());
     
@@ -509,18 +492,7 @@ void MapCanvasEntities::scaleMarkers()
 {
     const int width = calculateEntityWidth();
     
-    for (MapEntityMarker &marker : this->list_entity_markers)
-    {
-        MapEntityMarkerLabel *label = marker.label;
-        if (!label)
-            continue;
-        
-        const QPixmap pixmap = QPixmap(marker.path_pixmap).scaledToWidth(
-            width, Qt::SmoothTransformation);
-        label->setPixmap(pixmap);
-        label->resize(pixmap.size());
-    }
-    
+    this->point_markers->scaleLabels(width);
     this->device_links->scaleLabels(width);
     
     if (this->entity_floating &&
@@ -538,39 +510,20 @@ void MapCanvasEntities::scaleMarkers()
 
 void MapCanvasEntities::positionMarkers()
 {
-    for (MapEntityMarker &marker : this->list_entity_markers)
+    MapEntityMarkerLabel *label_to_skip = nullptr;
+    if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting &&
+        !this->move_selected_entities)
     {
-        MapEntityMarkerLabel *label = marker.label;
-        if (!label)
-            continue;
-        
-        if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting &&
-            label == this->entity_floating &&
-            !this->move_selected_entities)
-        {
-            continue;
-        }
-        
-        const QPointF point = this->map_model->screenFromWgs84(
-            marker.coord_wgs84, this->map_canvas->size());
-        const QPoint marker_pos(qRound(point.x()), qRound(point.y()) - label->height());
-        
-        if (label->pos() != marker_pos)
-            label->move(marker_pos);
-        if (!label->isVisible())
-            label->show();
+        label_to_skip = this->entity_floating;
     }
     
+    this->point_markers->positionLabels(label_to_skip);
     this->device_links->positionLabels();
 }
 
 void MapCanvasEntities::setPointMarkerMouseTransparency(bool transparent)
 {
-    for (MapEntityMarker &marker : this->list_entity_markers)
-    {
-        if (marker.label)
-            marker.label->setAttribute(Qt::WA_TransparentForMouseEvents, transparent);
-    }
+    this->point_markers->setMouseTransparency(transparent);
 }
 
 void MapCanvasEntities::setMoveCursor(bool enabled)
@@ -609,19 +562,8 @@ void MapCanvasEntities::moveSelectedEntities(const QPointF &from_position,
         if (!selected_marker.label)
             continue;
         
-        bool marker_moved = false;
-        for (MapEntityMarker &marker : this->list_entity_markers)
-        {
-            if (marker.label != selected_marker.label)
-                continue;
-            
-            marker.coord_wgs84.lon += longitude_delta;
-            marker.coord_wgs84.lat += latitude_delta;
-            marker_moved = true;
-            break;
-        }
-        
-        if (!marker_moved)
+        if (!this->point_markers->moveByDelta(
+                selected_marker.label, longitude_delta, latitude_delta))
         {
             this->device_links->moveCenterByDelta(
                 selected_marker.label, longitude_delta, latitude_delta);
@@ -645,58 +587,30 @@ void MapCanvasEntities::paintMarkers(QPainter &paint)
 {
     this->pipes->paint(
         paint,
-        this->list_entity_markers,
+        this->point_markers->markers(),
         this->entity_placement_mode == MapEntityPlacementMode::CreateNew &&
             isHydraulicPipeGeometry(this->entity_current),
         this->mouse_pos_last,
         this->connection_target_label);
     this->device_links->paint(
         paint,
-        this->list_entity_markers,
+        this->point_markers->markers(),
         this->list_entity_markers_selected,
         this->entity_placement_mode == MapEntityPlacementMode::CreateNew &&
             isHydraulicDeviceLink(this->entity_current),
         this->mouse_pos_last,
         this->connection_target_label);
     
-    paint.save();
-    paint.setPen(Qt::NoPen);
-    
-    for (MapEntityMarker &marker : this->list_entity_markers)
-    {
-        if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting &&
-            marker.label == this->entity_floating &&
-            !this->move_selected_entities)
-        {
-            continue;
-        }
-        
-        const QPointF point = this->map_model->screenFromWgs84(
-            marker.coord_wgs84, this->map_canvas->size());
-        const bool is_connection_target = marker.label &&
-                                          marker.label == this->connection_target_label;
-        
-        if (is_connection_target)
-        {
-            paint.setBrush(QColor(0, 140, 255));
-            paint.drawEllipse(point, connection_target_radius, connection_target_radius);
-        }
-        else
-        {
-            paint.setBrush(Qt::black);
-            paint.drawEllipse(point, marker_dot_radius, marker_dot_radius);
-        }
-    }
-    
-    if (this->entity_placement_mode == MapEntityPlacementMode::MoveExisting &&
+    const bool draw_moving_label_at_mouse =
+        this->entity_placement_mode == MapEntityPlacementMode::MoveExisting &&
         this->entity_floating &&
-        !this->move_selected_entities)
-    {
-        paint.setBrush(Qt::black);
-        paint.drawEllipse(this->mouse_pos_last, marker_dot_radius, marker_dot_radius);
-    }
-    
-    paint.restore();
+        !this->move_selected_entities;
+    this->point_markers->paintConnectionPoints(
+        paint,
+        this->connection_target_label,
+        this->entity_floating,
+        draw_moving_label_at_mouse,
+        this->mouse_pos_last);
 }
 
 void MapCanvasEntities::onMarkerMoveRequested(MapEntityMarkerLabel *label)
@@ -799,20 +713,16 @@ void MapCanvasEntities::deleteMarker(MapEntityMarkerLabel *label)
             this->list_entity_markers_selected.removeAt(i);
     }
     
-    for (int i = 0; i < this->list_entity_markers.size(); i++)
-    {
-        if (this->list_entity_markers[i].label != label)
-            continue;
-        
-        this->list_entity_markers.removeAt(i);
-        break;
-    }
+    const bool point_marker_removed = this->point_markers->removeMarker(label);
     
     if (!hasSelection())
         this->selected_entity.reset();
     
-    label->hide();
-    label->deleteLater();
+    if (!point_marker_removed)
+    {
+        label->hide();
+        label->deleteLater();
+    }
 }
 
 void MapCanvasEntities::onMarkerClicked(MapEntityMarkerLabel *label)
@@ -905,7 +815,7 @@ void MapCanvasEntities::onRectangleSelect(const CoordinateWGS84Rect &rect,
         marker.label->setHighlightSelected();
     };
     
-    for (const MapEntityMarker &marker : this->list_entity_markers)
+    for (const MapEntityMarker &marker : this->point_markers->markers())
         select_marker(marker);
     
     const QList<MapEntityMarker> device_link_markers = this->device_links->markers();
@@ -934,7 +844,7 @@ void MapCanvasEntities::updateConnectionTarget(const QPointF &mouse_pos)
     
     if (placing_device_link || placing_pipe)
     {
-        for (const MapEntityMarker &marker : this->list_entity_markers)
+        for (const MapEntityMarker &marker : this->point_markers->markers())
         {
             if (!marker.label || !isHydraulicConnectionNode(marker.entity.type))
                 continue;
@@ -1016,7 +926,7 @@ bool MapCanvasEntities::selectDeviceLinkAt(const QPointF &position)
         return false;
     
     MapEntityMarkerLabel *device_label = this->device_links->labelAt(
-        position, this->list_entity_markers);
+        position, this->point_markers->markers());
     if (!device_label)
         return false;
     
@@ -1029,7 +939,7 @@ bool MapCanvasEntities::isDeviceLinkAt(const QPointF &position)
     if (this->entity_placement_mode != MapEntityPlacementMode::None)
         return false;
     
-    return this->device_links->labelAt(position, this->list_entity_markers) != nullptr;
+    return this->device_links->labelAt(position, this->point_markers->markers()) != nullptr;
 }
 
 bool MapCanvasEntities::showPipeContextMenuAt(const QPointF &position,
@@ -1085,7 +995,7 @@ bool MapCanvasEntities::showPipeContextMenuAt(const QPointF &position,
     }
     
     const MapCanvasPipes::PipeSegmentHit segment_hit =
-        this->pipes->pipeSegmentAt(position, this->list_entity_markers);
+        this->pipes->pipeSegmentAt(position, this->point_markers->markers());
     if (!segment_hit.isValid())
         return false;
     
@@ -1140,38 +1050,18 @@ void MapCanvasEntities::convertPipeVertexToJunction(const QUuid &pipe_uuid, int 
     junction_reference.type = InfrastructureEntity::Junction;
     junction_reference.uuid = QUuid::createUuid();
     
-    MapEntityMarker junction_marker;
-    junction_marker.entity = junction_reference;
-    junction_marker.coord_wgs84 = vertex_coordinate.value();
-    junction_marker.path_pixmap = pixmapPathForEntity(InfrastructureEntity::Junction);
-    junction_marker.label = new MapEntityMarkerLabel(this->map_canvas);
-    junction_marker.label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
-    
-    connect(junction_marker.label, &MapEntityMarkerLabel::signalDeleteRequested,
-            this, &MapCanvasEntities::onMarkerDeleteRequested);
-    connect(junction_marker.label, &MapEntityMarkerLabel::signalMoveRequested,
-            this, &MapCanvasEntities::onMarkerMoveRequested);
-    connect(junction_marker.label, &MapEntityMarkerLabel::signalMoveSelectedRequested,
-            this, &MapCanvasEntities::onMarkerMoveSelectedRequested);
-    connect(junction_marker.label, &MapEntityMarkerLabel::signalClicked,
-            this, &MapCanvasEntities::onMarkerClicked);
-    connect(junction_marker.label, &MapEntityMarkerLabel::signalContextMenuRequested,
-            this, &MapCanvasEntities::onMarkerContextMenuRequested);
-    
-    const int width = calculateEntityWidth();
-    const QPixmap pixmap = QPixmap(junction_marker.path_pixmap).scaledToWidth(
-        width, Qt::SmoothTransformation);
-    junction_marker.label->setPixmap(pixmap);
-    junction_marker.label->resize(pixmap.size());
+    const MapEntityMarker junction_marker = this->point_markers->addMarker(
+        junction_reference,
+        vertex_coordinate.value(),
+        pixmapPathForEntity(InfrastructureEntity::Junction),
+        calculateEntityWidth());
     
     if (!this->pipes->splitPipeAtVertex(pipe_uuid, vertex_index,
                                         junction_reference, junction_marker.label))
     {
-        junction_marker.label->deleteLater();
+        this->point_markers->removeMarker(junction_marker.label);
         return;
     }
-    
-    this->list_entity_markers.append(junction_marker);
     
     clearSelection();
     junction_marker.label->setHighlightSelected();
@@ -1190,7 +1080,7 @@ bool MapCanvasEntities::selectPipeAt(const QPointF &position)
         return false;
     
     const std::optional<InfrastructureEntityReference> pipe =
-        this->pipes->pipeAt(position, this->list_entity_markers);
+        this->pipes->pipeAt(position, this->point_markers->markers());
     if (!pipe.has_value())
         return false;
     
@@ -1203,16 +1093,15 @@ bool MapCanvasEntities::isPipeAt(const QPointF &position)
     if (this->entity_placement_mode != MapEntityPlacementMode::None)
         return false;
     
-    return this->pipes->pipeAt(position, this->list_entity_markers).has_value();
+    return this->pipes->pipeAt(position, this->point_markers->markers()).has_value();
 }
 
 MapEntityMarker MapCanvasEntities::markerByLabel(MapEntityMarkerLabel *label)
 {
-    for (MapEntityMarker &marker : this->list_entity_markers)
-    {
-        if (marker.label == label)
-            return marker;
-    }
+    const std::optional<MapEntityMarker> point_marker =
+        this->point_markers->markerByLabel(label);
+    if (point_marker.has_value())
+        return point_marker.value();
     
     const std::optional<MapEntityMarker> device_link_marker =
         this->device_links->markerByLabel(label);

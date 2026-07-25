@@ -26,6 +26,7 @@ enum RectangleSelectMode
 class MapCanvasWidget;
 class MapCanvasPipes;
 class MapCanvasDeviceLinks;
+class MapCanvasMarkers;
 
 class MapCanvasEntities : public QObject
 {
@@ -66,8 +67,8 @@ private:
     QPointer<MapCanvasWidget> map_canvas;
     MapCanvasPipes *pipes = nullptr;
     MapCanvasDeviceLinks *device_links = nullptr;
+    MapCanvasMarkers *point_markers = nullptr;
     
-    QList<MapEntityMarker> list_entity_markers;
     QList<MapEntityMarker> list_entity_markers_selected;
     
     MapEntityPlacementMode entity_placement_mode = MapEntityPlacementMode::None;
