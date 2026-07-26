@@ -179,6 +179,15 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
     }
 }
 
+void HydraulicData::addTank()
+{
+    
+}
+void HydraulicData::deleteTank()
+{
+    
+}
+
 void HydraulicData::setDataTank(Tank tank)
 {
     

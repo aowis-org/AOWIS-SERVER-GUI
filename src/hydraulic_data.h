@@ -28,6 +28,9 @@ public:
     
     void setSelectedUuid(InfrastructureEntity entity_type, const QUuid &uuid);
     
+    void addTank();
+    void deleteTank();
+    
     void setDataTank(Tank tank);
     void setDataJunction(Junction junction);
     void setDataPipe(Pipe pipe);
