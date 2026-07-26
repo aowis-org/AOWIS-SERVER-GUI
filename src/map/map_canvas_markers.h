@@ -25,6 +25,11 @@ public:
                               QObject *parent = nullptr);
     
     const QList<MapEntityMarker> &markers() const;
+    int entityWidth() const;
+    QString pixmapPathForEntity(InfrastructureEntity entity) const;
+    MapEntityMarkerLabel *nearestConnectionTarget(const QPointF &mouse_position,
+                                                  MapEntityMarkerLabel *excluded_label = nullptr,
+                                                  double max_distance = 18.0) const;
     std::optional<MapEntityMarker> markerByLabel(MapEntityMarkerLabel *label) const;
     MapEntityMarker addMarker(const InfrastructureEntityReference &entity,
                               const CoordinateWGS84 &coordinate,

@@ -6,6 +6,7 @@
 #include <QList>
 #include <QPainter>
 #include <QPointer>
+#include <QPoint>
 #include <QPointF>
 
 #include "map_entity_marker_label.h"
@@ -72,6 +73,13 @@ public:
     MapEntityMarkerLabel *labelAt(const QPointF &position,
                                   const QList<MapEntityMarker> &markers) const;
     
+signals:
+    void markerClicked(MapEntityMarkerLabel *label);
+    void markerContextMenuRequested(MapEntityMarkerLabel *label, const QPoint &global_position);
+    void markerMoveRequested(MapEntityMarkerLabel *label);
+    void markerMoveSelectedRequested(MapEntityMarkerLabel *label);
+    void markerDeleteRequested(MapEntityMarkerLabel *label);
+    
 private:
     struct DeviceLinkCanvasItem
     {
@@ -88,6 +96,7 @@ private:
     bool markerIsSelected(MapEntityMarkerLabel *label,
                           const QList<MapEntityMarker> &selected_markers) const;
     void positionDeviceLabel(MapEntityMarkerLabel *label, const QPointF &center) const;
+    void configureLabel(MapEntityMarkerLabel *label);
     void updateCanvas();
     
     MapModel *map_model = nullptr;

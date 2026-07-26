@@ -1,6 +1,10 @@
 #include "map_canvas_pipes.h"
 #include "map_canvas_widget.h"
 
+#include <QAction>
+#include <QMenu>
+#include <QMessageBox>
+
 namespace
 {
 constexpr double link_hit_distance = 7.0;
@@ -371,6 +375,63 @@ MapCanvasPipes::PipeSegmentHit MapCanvasPipes::pipeSegmentAt(
     }
     
     return hit;
+}
+
+bool MapCanvasPipes::showContextMenuAt(const QPointF &position, const QPoint &global_position, const QList<MapEntityMarker> &markers)
+{
+    const PipeVertexHit vertex_hit = pipeVertexAt(position);
+    if (vertex_hit.isValid())
+    {
+        const QUuid pipe_uuid = vertex_hit.pipe_uuid;
+        const int vertex_index = vertex_hit.vertex_index;
+        emit pipeSelectionRequested(pipe_uuid);
+        
+        QMenu *menu = new QMenu(this->map_canvas);
+        QAction *action_move = menu->addAction("Move");
+        QAction *action_delete = menu->addAction("Delete");
+        QAction *action_convert_to_junction = menu->addAction("Convert to junction");
+        
+        connect(action_move, &QAction::triggered, this, [this, pipe_uuid, vertex_index]()
+                {
+                    emit pipeVertexMoveRequested(pipe_uuid, vertex_index);
+                });
+        connect(action_delete, &QAction::triggered, this, [this, pipe_uuid, vertex_index]()
+                {
+                    deletePipeVertex(pipe_uuid, vertex_index);
+                });
+        connect(action_convert_to_junction, &QAction::triggered, this,
+                [this, pipe_uuid, vertex_index]()
+                {
+                    QMessageBox *message_box = new QMessageBox(
+                        QMessageBox::Question, "Convert pipe vertex",
+                        "Do you really want to convert this pipe vertex to a junction?",
+                        QMessageBox::Yes | QMessageBox::No, this->map_canvas);
+                    message_box->setDefaultButton(QMessageBox::No);
+                    
+                    connect(message_box, &QMessageBox::finished, this,
+                            [this, pipe_uuid, vertex_index](int result)
+                            {
+                                if (result == QMessageBox::Yes)
+                                    emit pipeVertexConversionRequested(pipe_uuid, vertex_index);
+                            });
+                    connect(message_box, &QMessageBox::finished, message_box, &QObject::deleteLater);
+                    message_box->open();
+                });
+        
+        connect(menu, &QMenu::aboutToHide, menu, &QObject::deleteLater);
+        menu->popup(global_position);
+        return true;
+    }
+    
+    const PipeSegmentHit segment_hit = pipeSegmentAt(position, markers);
+    if (!segment_hit.isValid())
+        return false;
+    
+    const CoordinateWGS84 coordinate = this->map_model->wgs84FromScreen(
+        segment_hit.nearest_point.toPoint(), this->map_canvas->size());
+    emit pipeSelectionRequested(segment_hit.pipe_uuid);
+    addPipeVertex(segment_hit.pipe_uuid, segment_hit.insert_index, coordinate);
+    return true;
 }
 
 bool MapCanvasPipes::addPipeVertex(const QUuid &pipe_uuid,

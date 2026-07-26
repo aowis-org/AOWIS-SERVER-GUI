@@ -2,19 +2,25 @@
 #define MAP_CANVAS_ENTITIES_H
 
 #include <QObject>
-#include <QPointer>
-#include <QPainter>
-#include <QLabel>
-#include <QPixmap>
-#include <QUuid>
 #include <QMouseEvent>
-#include <QCursor>
+#include <QPoint>
+#include <QPointF>
+#include <QPainter>
+#include <QPointer>
+#include <QUuid>
 
-#include "map_model.h"
-#include "map_entity_marker_label.h"
 #include "../_enums_structs.h"
 #include "../hydraulic_data.h"
 #include "map_models.h"
+
+class MapCanvasDeviceLinks;
+class MapCanvasMarkers;
+class MapCanvasPipes;
+class MapCanvasPlacement;
+class MapCanvasSelection;
+class MapCanvasWidget;
+class MapEntityMarkerLabel;
+class MapModel;
 
 enum RectangleSelectMode
 {
@@ -22,18 +28,13 @@ enum RectangleSelectMode
     Replace
 };
 
-class MapCanvasWidget;
-class MapCanvasPipes;
-class MapCanvasDeviceLinks;
-class MapCanvasMarkers;
-class MapCanvasSelection;
-
 class MapCanvasEntities : public QObject
 {
     Q_OBJECT
     
 public:
-    explicit MapCanvasEntities(MapModel *map_model, HydraulicData *hydraulic_data, MapCanvasWidget *map_canvas);
+    explicit MapCanvasEntities(MapModel *map_model, HydraulicData *hydraulic_data,
+                               MapCanvasWidget *map_canvas);
     
     void startEntityPositioning(InfrastructureEntity entity);
     void stopEntityPositioning();
@@ -52,43 +53,24 @@ public:
     MapEntityMarker markerByLabel(MapEntityMarkerLabel *label);
     
 private:
-    void startEntityPositioningInternal();
     bool anchorDeviceLink(QMouseEvent *event);
     bool anchorPipe(QMouseEvent *event);
     bool anchorPipeVertexMove(QMouseEvent *event);
-    
-    void setPointMarkerMouseTransparency(bool transparent);
-    void setMoveCursor(bool enabled);
-    void moveSelectedEntities(const QPointF &from_position, const QPointF &to_position);
+    void updateConnectionTarget(const QPointF &mouse_position);
+    void deleteMarker(MapEntityMarkerLabel *label);
+    void selectPipe(const QUuid &pipe_uuid);
+    void startPipeVertexMove(const QUuid &pipe_uuid, int vertex_index);
+    void convertPipeVertexToJunction(const QUuid &pipe_uuid, int vertex_index);
+    void updateCanvas();
     
     MapModel *map_model = nullptr;
     HydraulicData *hydraulic_data = nullptr;
     QPointer<MapCanvasWidget> map_canvas;
-    MapCanvasPipes *pipes = nullptr;
-    MapCanvasDeviceLinks *device_links = nullptr;
     MapCanvasMarkers *point_markers = nullptr;
+    MapCanvasDeviceLinks *device_links = nullptr;
+    MapCanvasPipes *pipes = nullptr;
     MapCanvasSelection *selection = nullptr;
-    
-    MapEntityPlacementMode entity_placement_mode = MapEntityPlacementMode::None;
-    MapEntityMarkerLabel *entity_floating = nullptr;
-    InfrastructureEntity entity_current;
-    
-    int calculateEntityWidth();
-    QPoint entity_floating_hide_until;
-    bool entity_draw_immediately = true;
-    QPointF mouse_pos_last;
-    bool move_cursor_active = false;
-    bool move_selected_entities = false;
-    
-    QString pixmapPathForEntity(InfrastructureEntity entity) const;
-    void deleteMarker(MapEntityMarkerLabel *label);
-    QPointer<MapEntityMarkerLabel> connection_target_label;
-    
-    void selectPipe(const QUuid &pipe_uuid);
-    void startPipeVertexMove(const QUuid &pipe_uuid, int vertex_index);
-    void convertPipeVertexToJunction(const QUuid &pipe_uuid, int vertex_index);
-    void updateConnectionTarget(const QPointF &mouse_pos);
-    void clearConnectionTarget();
+    MapCanvasPlacement *placement = nullptr;
     
 private slots:
     void onMarkerClicked(MapEntityMarkerLabel *label);

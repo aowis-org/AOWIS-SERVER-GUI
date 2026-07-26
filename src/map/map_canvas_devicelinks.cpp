@@ -124,6 +124,7 @@ MapCanvasDeviceLinks::AnchorResult MapCanvasDeviceLinks::anchor(
     device_link.device_label->setPixmap(pixmap);
     device_link.device_label->resize(pixmap.size());
     device_link.device_label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
+    configureLabel(device_link.device_label);
     
     this->list_device_links.append(device_link);
     result.status = AnchorStatus::Completed;
@@ -493,6 +494,23 @@ void MapCanvasDeviceLinks::positionDeviceLabel(MapEntityMarkerLabel *label,
         label->move(label_position);
     if (!label->isVisible())
         label->show();
+}
+
+void MapCanvasDeviceLinks::configureLabel(MapEntityMarkerLabel *label)
+{
+    if (!label)
+        return;
+    
+    connect(label, &MapEntityMarkerLabel::signalDeleteRequested,
+            this, &MapCanvasDeviceLinks::markerDeleteRequested);
+    connect(label, &MapEntityMarkerLabel::signalMoveRequested,
+            this, &MapCanvasDeviceLinks::markerMoveRequested);
+    connect(label, &MapEntityMarkerLabel::signalMoveSelectedRequested,
+            this, &MapCanvasDeviceLinks::markerMoveSelectedRequested);
+    connect(label, &MapEntityMarkerLabel::signalClicked,
+            this, &MapCanvasDeviceLinks::markerClicked);
+    connect(label, &MapEntityMarkerLabel::signalContextMenuRequested,
+            this, &MapCanvasDeviceLinks::markerContextMenuRequested);
 }
 
 void MapCanvasDeviceLinks::updateCanvas()

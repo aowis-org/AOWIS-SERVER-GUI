@@ -6,6 +6,7 @@
 #include <QList>
 #include <QPainter>
 #include <QPointer>
+#include <QPoint>
 #include <QPointF>
 #include <QUuid>
 
@@ -68,6 +69,7 @@ public:
     PipeVertexHit pipeVertexAt(const QPointF &position) const;
     PipeSegmentHit pipeSegmentAt(const QPointF &position,
                                  const QList<MapEntityMarker> &markers) const;
+    bool showContextMenuAt(const QPointF &position, const QPoint &global_position, const QList<MapEntityMarker> &markers);
     
     bool addPipeVertex(const QUuid &pipe_uuid, int insert_index,
                        const CoordinateWGS84 &coordinate);
@@ -86,6 +88,11 @@ public:
     void cancelPipeVertexMove();
     
     void removeConnectedToLabel(MapEntityMarkerLabel *label);
+    
+signals:
+    void pipeSelectionRequested(const QUuid &pipe_uuid);
+    void pipeVertexMoveRequested(const QUuid &pipe_uuid, int vertex_index);
+    void pipeVertexConversionRequested(const QUuid &pipe_uuid, int vertex_index);
     
 private:
     struct PipeCanvasItem

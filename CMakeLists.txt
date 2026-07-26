@@ -115,6 +115,7 @@ qt_add_executable(aowis-server-gui
     src/map/map_canvas_devicelinks.h src/map/map_canvas_devicelinks.cpp
     src/map/map_canvas_markers.h src/map/map_canvas_markers.cpp
     src/map/map_canvas_selection.h src/map/map_canvas_selection.cpp
+    src/map/map_canvas_placement.h src/map/map_canvas_placement.cpp
 )
 
 if(APPLE)

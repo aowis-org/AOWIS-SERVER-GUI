@@ -8,6 +8,13 @@ namespace
 {
 constexpr double marker_dot_radius = 5.0;
 constexpr double connection_target_radius = 9.0;
+
+bool isHydraulicConnectionNode(InfrastructureEntity entity)
+{
+    return entity == InfrastructureEntity::Junction ||
+           entity == InfrastructureEntity::Reservoir ||
+           entity == InfrastructureEntity::Tank;
+}
 }
 
 MapCanvasMarkers::MapCanvasMarkers(MapModel *map_model,
@@ -22,6 +29,85 @@ MapCanvasMarkers::MapCanvasMarkers(MapModel *map_model,
 const QList<MapEntityMarker> &MapCanvasMarkers::markers() const
 {
     return this->list_markers;
+}
+
+int MapCanvasMarkers::entityWidth() const
+{
+    const int zoom = this->map_model->zoom();
+    if (zoom == 19)
+        return 40;
+    if (zoom == 18)
+        return 30;
+    if (zoom == 17)
+        return 20;
+    return 10;
+}
+
+QString MapCanvasMarkers::pixmapPathForEntity(InfrastructureEntity entity) const
+{
+    switch (entity)
+    {
+    case InfrastructureEntity::Junction:
+        return QStringLiteral(":/icon/junction.png");
+    case InfrastructureEntity::Reservoir:
+        return QStringLiteral(":/icon/reservoir.png");
+    case InfrastructureEntity::Tank:
+        return QStringLiteral(":/icon/tower.png");
+    case InfrastructureEntity::Pipe:
+        return QStringLiteral(":/icon/pipe.png");
+    case InfrastructureEntity::Pump:
+        return QStringLiteral(":/icon/pump.png");
+    case InfrastructureEntity::Valve:
+        return QStringLiteral(":/icon/valve.png");
+    case InfrastructureEntity::CustomerPoint:
+        return QStringLiteral(":/icon/customer.png");
+    case InfrastructureEntity::ElectricJunction:
+    case InfrastructureEntity::Cable:
+    case InfrastructureEntity::Switch:
+    case InfrastructureEntity::Fuse:
+    case InfrastructureEntity::CircuitBreaker:
+        return QStringLiteral(":/icon/electricity.png");
+    case InfrastructureEntity::Battery:
+    case InfrastructureEntity::Generator:
+    case InfrastructureEntity::SolarPanel:
+    case InfrastructureEntity::Inverter:
+    case InfrastructureEntity::Transformer:
+        return QStringLiteral(":/icon/energy.png");
+    case InfrastructureEntity::Note:
+    case InfrastructureEntity::Unknown:
+        return QStringLiteral(":/icon/geomarker.png");
+    }
+    
+    return QStringLiteral(":/icon/geomarker.png");
+}
+
+MapEntityMarkerLabel *MapCanvasMarkers::nearestConnectionTarget(
+    const QPointF &mouse_position, MapEntityMarkerLabel *excluded_label, double max_distance) const
+{
+    MapEntityMarkerLabel *nearest_label = nullptr;
+    double nearest_distance_squared = max_distance * max_distance;
+    
+    for (const MapEntityMarker &marker : this->list_markers)
+    {
+        if (!marker.label || marker.label == excluded_label ||
+            !isHydraulicConnectionNode(marker.entity.type))
+        {
+            continue;
+        }
+        
+        const QPointF point = this->map_model->screenFromWgs84(
+            marker.coord_wgs84, this->map_canvas->size());
+        const double distance_x = point.x() - mouse_position.x();
+        const double distance_y = point.y() - mouse_position.y();
+        const double distance_squared = distance_x * distance_x + distance_y * distance_y;
+        if (distance_squared > nearest_distance_squared)
+            continue;
+        
+        nearest_distance_squared = distance_squared;
+        nearest_label = marker.label;
+    }
+    
+    return nearest_label;
 }
 
 std::optional<MapEntityMarker> MapCanvasMarkers::markerByLabel(
