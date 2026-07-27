@@ -6,15 +6,14 @@
 
 #include <QDebug>
 
-#include "database_gui.h"
-
 #include <aowis/model/project.h>
 #include <aowis/model/hydraulic/network.h>
+
+#include <aowis/db/database_gui.h>
 
 #include <aowis/epanet/dummy/dummy_networks.h>
 
 #include "_enums_structs.h"
-#include "map/map_models.h"
 
 class HydraulicData : public QObject
 {
