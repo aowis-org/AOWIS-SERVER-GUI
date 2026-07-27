@@ -7,7 +7,7 @@
 
 #include "interface_server_map.h"
 
-#include "maptiles.h"
+#include <aowis/map/maptiles.h>
 
 #include <QDebug>
 
