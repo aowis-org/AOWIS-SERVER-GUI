@@ -11,7 +11,7 @@
 #include <aowis/model/project.h>
 #include <aowis/model/hydraulic/network.h>
 
-#include "dummy/dummy_networks.h"
+#include <aowis/epanet/dummy/dummy_networks.h>
 
 #include "_enums_structs.h"
 #include "map/map_models.h"
