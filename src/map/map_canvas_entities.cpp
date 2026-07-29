@@ -179,6 +179,7 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
     if (this->placement->movingSelected())
     {
         this->selection->moveSelected(this->placement->mousePosition(), event->position());
+        synchronizeSelectedGeometry();
         this->selection->setMouseTransparency(false);
         this->placement->completeMove();
         positionMarkers();
@@ -201,10 +202,11 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
     {
         const bool moved = this->point_markers->setCoordinate(floating_label, coordinate) ||
                            this->device_links->setCenterCoordinate(floating_label, coordinate);
+        const bool synchronized = moved && synchronizeMarkerCoordinate(floating_label);
         this->placement->completeMove();
         positionMarkers();
         updateCanvas();
-        return moved;
+        return synchronized;
     }
     
     if (!this->placement->isCreating())
@@ -255,11 +257,27 @@ QUuid MapCanvasEntities::createHydraulicNode(InfrastructureEntity entity, const 
 bool MapCanvasEntities::anchorDeviceLink(QMouseEvent *event)
 {
     const InfrastructureEntity entity = this->placement->entity();
+    InfrastructureEntityReference reference;
+    reference.type = entity;
+
+    if (this->device_links->hasStartLabel())
+    {
+        const std::optional<DeviceLinkGeometry> geometry =
+            this->device_links->completionGeometry(
+                this->placement->connectionTarget(), this->point_markers->markers());
+        if (geometry.has_value())
+        {
+            reference.uuid = createHydraulicDeviceLink(entity, geometry.value());
+            if (reference.uuid.isNull())
+                return true;
+        }
+    }
+
     const MapCanvasDeviceLinks::AnchorResult result = this->device_links->anchor(
-        entity, this->placement->connectionTarget(), this->placement->floatingLabel(),
+        reference, this->placement->connectionTarget(), this->placement->floatingLabel(),
         this->point_markers->markers(), this->point_markers->pixmapPathForEntity(entity),
         this->point_markers->entityWidth());
-    
+
     if (result.status == MapCanvasDeviceLinks::AnchorStatus::StartSet)
     {
         this->placement->clearConnectionTarget();
@@ -267,10 +285,14 @@ bool MapCanvasEntities::anchorDeviceLink(QMouseEvent *event)
         updateCanvas();
         return true;
     }
-    
+
     if (result.status != MapCanvasDeviceLinks::AnchorStatus::Completed)
+    {
+        if (!reference.uuid.isNull())
+            deleteHydraulicLink(reference);
         return true;
-    
+    }
+
     this->placement->setFloatingHiddenUntil(event->position().toPoint());
     this->placement->takeCreatedLabel();
     this->placement->clearConnectionTarget();
@@ -278,6 +300,80 @@ bool MapCanvasEntities::anchorDeviceLink(QMouseEvent *event)
                                  this->point_markers->entityWidth());
     updateCanvas();
     return true;
+}
+
+QUuid MapCanvasEntities::createHydraulicDeviceLink(InfrastructureEntity entity, const DeviceLinkGeometry &geometry)
+{
+    if (!this->hydraulic_data)
+        return QUuid();
+
+    switch (entity)
+    {
+    case InfrastructureEntity::Pump:
+        return this->hydraulic_data->addPump(
+            geometry.start_node.uuid, geometry.end_node.uuid, geometry.center_coordinate);
+    case InfrastructureEntity::Valve:
+        return this->hydraulic_data->addValve(
+            geometry.start_node.uuid, geometry.end_node.uuid, geometry.center_coordinate);
+    default:
+        return QUuid();
+    }
+}
+
+bool MapCanvasEntities::synchronizeMarkerCoordinate(MapEntityMarkerLabel *label)
+{
+    if (!this->hydraulic_data || !label)
+        return false;
+
+    const MapEntityMarker marker = markerByLabel(label);
+    switch (marker.entity.type)
+    {
+    case InfrastructureEntity::Junction:
+    case InfrastructureEntity::Reservoir:
+    case InfrastructureEntity::Tank:
+        return this->hydraulic_data->setNodeCoordinate(marker.entity.uuid, marker.coord_wgs84);
+    case InfrastructureEntity::Pump:
+        return this->hydraulic_data->setPumpCenterCoordinate(marker.entity.uuid, marker.coord_wgs84);
+    case InfrastructureEntity::Valve:
+        return this->hydraulic_data->setValveCenterCoordinate(marker.entity.uuid, marker.coord_wgs84);
+    default:
+        return false;
+    }
+}
+
+void MapCanvasEntities::synchronizeSelectedGeometry()
+{
+    if (!this->hydraulic_data)
+        return;
+
+    const QList<MapEntityMarkerLabel *> selected_labels = this->selection->selectedLabels();
+    for (MapEntityMarkerLabel *label : selected_labels)
+        synchronizeMarkerCoordinate(label);
+
+    const QList<QUuid> selected_pipe_uuids = this->pipes->selectedPipeUuids();
+    for (const QUuid &pipe_uuid : selected_pipe_uuids)
+    {
+        this->hydraulic_data->setPipeVertices(
+            pipe_uuid, this->pipes->intermediateVertices(pipe_uuid));
+    }
+}
+
+bool MapCanvasEntities::deleteHydraulicLink(const InfrastructureEntityReference &reference)
+{
+    if (!this->hydraulic_data || reference.uuid.isNull())
+        return false;
+
+    switch (reference.type)
+    {
+    case InfrastructureEntity::Pipe:
+        return this->hydraulic_data->deletePipe(reference.uuid);
+    case InfrastructureEntity::Pump:
+        return this->hydraulic_data->deletePump(reference.uuid);
+    case InfrastructureEntity::Valve:
+        return this->hydraulic_data->deleteValve(reference.uuid);
+    default:
+        return false;
+    }
 }
 
 bool MapCanvasEntities::anchorPipe(QMouseEvent *event)
@@ -310,8 +406,23 @@ bool MapCanvasEntities::anchorPipe(QMouseEvent *event)
             return true;
         }
         
-        if (!this->pipes->completePipe(start_marker.entity, end_marker.entity, connection_target))
+        InfrastructureEntityReference pipe_reference;
+        pipe_reference.type = InfrastructureEntity::Pipe;
+        if (this->hydraulic_data)
+        {
+            pipe_reference.uuid = this->hydraulic_data->addPipe(
+                start_marker.entity.uuid, end_marker.entity.uuid,
+                this->pipes->intermediateVertices());
+        }
+        if (pipe_reference.uuid.isNull())
             return true;
+
+        if (!this->pipes->completePipe(
+                pipe_reference, start_marker.entity, end_marker.entity, connection_target))
+        {
+            deleteHydraulicLink(pipe_reference);
+            return true;
+        }
         
         this->placement->setFloatingHiddenUntil(event->position().toPoint());
         MapEntityMarkerLabel *placement_icon = this->placement->takeCreatedLabel();
@@ -337,8 +448,21 @@ bool MapCanvasEntities::anchorPipeVertexMove(QMouseEvent *event)
 {
     if (!this->placement->isMoving() || !this->pipes->isPipeVertexMoveActive())
         return false;
-    
-    this->pipes->finishPipeVertexMove(event->position());
+
+    const std::optional<QUuid> pipe_uuid = this->pipes->activePipeVertexMoveUuid();
+    const int vertex_index = this->pipes->activePipeVertexMoveIndex();
+    const bool moved = this->pipes->finishPipeVertexMove(event->position());
+    if (moved && pipe_uuid.has_value() && this->hydraulic_data)
+    {
+        const std::optional<CoordinateWGS84> coordinate = this->pipes->pipeVertexCoordinate(
+            pipe_uuid.value(), vertex_index);
+        if (coordinate.has_value())
+        {
+            this->hydraulic_data->setPipeVertexCoordinate(
+                pipe_uuid.value(), vertex_index, coordinate.value());
+        }
+    }
+
     this->placement->completeMove();
     return true;
 }
@@ -594,9 +718,23 @@ void MapCanvasEntities::convertPipeVertexToJunction(const QUuid &pipe_uuid, int 
         this->point_markers->pixmapPathForEntity(InfrastructureEntity::Junction),
         this->point_markers->entityWidth());
     
-    if (!this->pipes->splitPipeAtVertex(pipe_uuid, vertex_index,
-                                        junction_reference, junction_marker.label))
+    InfrastructureEntityReference second_pipe_reference;
+    second_pipe_reference.type = InfrastructureEntity::Pipe;
+    second_pipe_reference.uuid = this->hydraulic_data->splitPipeAtVertex(
+        pipe_uuid, vertex_index, junction_reference.uuid);
+    if (second_pipe_reference.uuid.isNull())
     {
+        this->point_markers->removeMarker(junction_marker.label);
+        this->hydraulic_data->deleteJunction(junction_reference.uuid);
+        return;
+    }
+
+    if (!this->pipes->splitPipeAtVertex(
+            pipe_uuid, vertex_index, junction_reference,
+            second_pipe_reference, junction_marker.label))
+    {
+        this->hydraulic_data->undoPipeSplit(
+            pipe_uuid, second_pipe_reference.uuid, junction_reference.uuid);
         this->point_markers->removeMarker(junction_marker.label);
         this->hydraulic_data->deleteJunction(junction_reference.uuid);
         return;

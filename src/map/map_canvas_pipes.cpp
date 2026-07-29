@@ -83,16 +83,24 @@ void MapCanvasPipes::appendIntermediateVertex(const CoordinateWGS84 &coordinate)
     updateCanvas();
 }
 
-bool MapCanvasPipes::completePipe(const InfrastructureEntityReference &start_node,
+QList<CoordinateWGS84> MapCanvasPipes::intermediateVertices() const
+{
+    return this->pipe_intermediate_vertices;
+}
+
+bool MapCanvasPipes::completePipe(const InfrastructureEntityReference &pipe_reference,
+                                  const InfrastructureEntityReference &start_node,
                                   const InfrastructureEntityReference &end_node,
                                   MapEntityMarkerLabel *end_label)
 {
-    if (!this->pipe_start_label || !end_label)
+    if (!this->pipe_start_label || !end_label ||
+        pipe_reference.type != InfrastructureEntity::Pipe || pipe_reference.uuid.isNull())
+    {
         return false;
+    }
     
     PipeCanvasItem pipe;
-    pipe.entity.type = InfrastructureEntity::Pipe;
-    pipe.entity.uuid = QUuid::createUuid();
+    pipe.entity = pipe_reference;
     pipe.geometry.start_node = start_node;
     pipe.geometry.end_node = end_node;
     pipe.geometry.intermediate_vertices = this->pipe_intermediate_vertices;
@@ -195,6 +203,15 @@ void MapCanvasPipes::paint(QPainter &paint,
     paint.restore();
 }
 
+QList<CoordinateWGS84> MapCanvasPipes::intermediateVertices(const QUuid &pipe_uuid) const
+{
+    const PipeCanvasItem *pipe = pipeByUuid(pipe_uuid);
+    if (!pipe)
+        return QList<CoordinateWGS84>();
+
+    return pipe->geometry.intermediate_vertices;
+}
+
 bool MapCanvasPipes::hasSelection() const
 {
     for (const PipeCanvasItem &pipe : this->list_pipes)
@@ -204,6 +221,17 @@ bool MapCanvasPipes::hasSelection() const
     }
     
     return false;
+}
+
+QList<QUuid> MapCanvasPipes::selectedPipeUuids() const
+{
+    QList<QUuid> uuids;
+    for (const PipeCanvasItem &pipe : this->list_pipes)
+    {
+        if (pipe.selected)
+            uuids.append(pipe.entity.uuid);
+    }
+    return uuids;
 }
 
 void MapCanvasPipes::clearSelection()
@@ -468,13 +496,15 @@ std::optional<CoordinateWGS84> MapCanvasPipes::pipeVertexCoordinate(const QUuid 
     return pipe->geometry.intermediate_vertices[vertex_index];
 }
 
-bool MapCanvasPipes::splitPipeAtVertex(const QUuid &pipe_uuid,
-                                       int vertex_index,
+bool MapCanvasPipes::splitPipeAtVertex(const QUuid &pipe_uuid, int vertex_index,
                                        const InfrastructureEntityReference &junction_reference,
+                                       const InfrastructureEntityReference &second_pipe_reference,
                                        MapEntityMarkerLabel *junction_label)
 {
     const int pipe_index = pipeIndexByUuid(pipe_uuid);
-    if (pipe_index < 0 || !junction_label)
+    if (pipe_index < 0 || !junction_label ||
+        second_pipe_reference.type != InfrastructureEntity::Pipe ||
+        second_pipe_reference.uuid.isNull())
         return false;
     
     const PipeCanvasItem original_pipe = this->list_pipes[pipe_index];
@@ -496,8 +526,7 @@ bool MapCanvasPipes::splitPipeAtVertex(const QUuid &pipe_uuid,
         first_pipe.geometry.intermediate_vertices.append(original_pipe.geometry.intermediate_vertices[i]);
     
     PipeCanvasItem second_pipe;
-    second_pipe.entity.type = InfrastructureEntity::Pipe;
-    second_pipe.entity.uuid = QUuid::createUuid();
+    second_pipe.entity = second_pipe_reference;
     second_pipe.geometry.start_node = junction_reference;
     second_pipe.geometry.end_node = original_pipe.geometry.end_node;
     second_pipe.start_label = junction_label;
@@ -533,6 +562,16 @@ bool MapCanvasPipes::startPipeVertexMove(const QUuid &pipe_uuid, int vertex_inde
 bool MapCanvasPipes::isPipeVertexMoveActive() const
 {
     return this->pipe_vertex_move_pipe_uuid.has_value();
+}
+
+std::optional<QUuid> MapCanvasPipes::activePipeVertexMoveUuid() const
+{
+    return this->pipe_vertex_move_pipe_uuid;
+}
+
+int MapCanvasPipes::activePipeVertexMoveIndex() const
+{
+    return this->pipe_vertex_move_index;
 }
 
 bool MapCanvasPipes::updatePipeVertexMove(const QPointF &screen_position)

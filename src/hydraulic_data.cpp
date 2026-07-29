@@ -1,5 +1,5 @@
 #include "hydraulic_data.h"
-#include "uuid_v7.h"
+#include <aowis/model/hydraulic/hydraulic_network_editor.h>
 
 HydraulicData::HydraulicData(QObject *parent)
     : QObject{parent},
@@ -182,46 +182,113 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
 
 QUuid HydraulicData::addJunction(const CoordinateWGS84 &coordinate)
 {
-    HydraulicNodeJunction junction;
-    junction.uuid = createUuidV7();
-    junction.latitude_deg = coordinate.latitude_deg;
-    junction.longitude_deg = coordinate.longitude_deg;
-    this->network_hydraulic.nodes_junctions.append(junction);
-    return junction.uuid;
+    HydraulicNetworkEditor editor(this->network_hydraulic);
+    return editor.addJunction(coordinate);
 }
 
 QUuid HydraulicData::addReservoir(const CoordinateWGS84 &coordinate)
 {
-    HydraulicNodeReservoir reservoir;
-    reservoir.uuid = createUuidV7();
-    reservoir.latitude_deg = coordinate.latitude_deg;
-    reservoir.longitude_deg = coordinate.longitude_deg;
-    this->network_hydraulic.nodes_reservoirs.append(reservoir);
-    return reservoir.uuid;
+    HydraulicNetworkEditor editor(this->network_hydraulic);
+    return editor.addReservoir(coordinate);
 }
 
 QUuid HydraulicData::addTank(const CoordinateWGS84 &coordinate)
 {
-    HydraulicNodeTank tank;
-    tank.uuid = createUuidV7();
-    tank.latitude_deg = coordinate.latitude_deg;
-    tank.longitude_deg = coordinate.longitude_deg;
-    this->network_hydraulic.nodes_tanks.append(tank);
-    return tank.uuid;
+    HydraulicNetworkEditor editor(this->network_hydraulic);
+    return editor.addTank(coordinate);
+}
+
+QUuid HydraulicData::addPipe(const QUuid &node_uuid_from, const QUuid &node_uuid_to,
+                             const QList<CoordinateWGS84> &intermediate_vertices)
+{
+    HydraulicNetworkEditor editor(this->network_hydraulic);
+    return editor.addPipe(node_uuid_from, node_uuid_to, intermediate_vertices);
+}
+
+QUuid HydraulicData::addPump(const QUuid &node_uuid_from, const QUuid &node_uuid_to,
+                             const CoordinateWGS84 &center_coordinate)
+{
+    HydraulicNetworkEditor editor(this->network_hydraulic);
+    return editor.addPump(node_uuid_from, node_uuid_to, center_coordinate);
+}
+
+QUuid HydraulicData::addValve(const QUuid &node_uuid_from, const QUuid &node_uuid_to,
+                              const CoordinateWGS84 &center_coordinate)
+{
+    HydraulicNetworkEditor editor(this->network_hydraulic);
+    return editor.addValve(node_uuid_from, node_uuid_to, center_coordinate);
+}
+
+bool HydraulicData::setNodeCoordinate(const QUuid &uuid, const CoordinateWGS84 &coordinate)
+{
+    HydraulicNetworkEditor editor(this->network_hydraulic);
+    return editor.setNodeCoordinate(uuid, coordinate);
+}
+
+bool HydraulicData::setPipeVertexCoordinate(const QUuid &pipe_uuid, int vertex_index,
+                                            const CoordinateWGS84 &coordinate)
+{
+    HydraulicNetworkEditor editor(this->network_hydraulic);
+    return editor.setPipeVertexCoordinate(pipe_uuid, vertex_index, coordinate);
+}
+
+bool HydraulicData::setPipeVertices(const QUuid &pipe_uuid,
+                                    const QList<CoordinateWGS84> &intermediate_vertices)
+{
+    HydraulicNetworkEditor editor(this->network_hydraulic);
+    return editor.setPipeVertices(pipe_uuid, intermediate_vertices);
+}
+
+bool HydraulicData::setPumpCenterCoordinate(const QUuid &pump_uuid,
+                                            const CoordinateWGS84 &coordinate)
+{
+    HydraulicNetworkEditor editor(this->network_hydraulic);
+    return editor.setPumpCenterCoordinate(pump_uuid, coordinate);
+}
+
+bool HydraulicData::setValveCenterCoordinate(const QUuid &valve_uuid,
+                                             const CoordinateWGS84 &coordinate)
+{
+    HydraulicNetworkEditor editor(this->network_hydraulic);
+    return editor.setValveCenterCoordinate(valve_uuid, coordinate);
+}
+
+QUuid HydraulicData::splitPipeAtVertex(const QUuid &pipe_uuid, int vertex_index,
+                                       const QUuid &junction_uuid)
+{
+    HydraulicNetworkEditor editor(this->network_hydraulic);
+    return editor.splitPipeAtVertex(pipe_uuid, vertex_index, junction_uuid);
+}
+
+bool HydraulicData::undoPipeSplit(const QUuid &first_pipe_uuid, const QUuid &second_pipe_uuid,
+                                  const QUuid &junction_uuid)
+{
+    HydraulicNetworkEditor editor(this->network_hydraulic);
+    return editor.undoPipeSplit(first_pipe_uuid, second_pipe_uuid, junction_uuid);
 }
 
 bool HydraulicData::deleteJunction(const QUuid &uuid)
 {
-    for (int i = 0; i < this->network_hydraulic.nodes_junctions.size(); i++)
-    {
-        if (this->network_hydraulic.nodes_junctions[i].uuid != uuid)
-            continue;
+    HydraulicNetworkEditor editor(this->network_hydraulic);
+    return editor.deleteJunction(uuid);
+}
 
-        this->network_hydraulic.nodes_junctions.removeAt(i);
-        return true;
-    }
+bool HydraulicData::deletePipe(const QUuid &uuid)
+{
+    HydraulicNetworkEditor editor(this->network_hydraulic);
+    return editor.deletePipe(uuid);
+}
 
-    return false;
+bool HydraulicData::deletePump(const QUuid &uuid)
+{
+    HydraulicNetworkEditor editor(this->network_hydraulic);
+    return editor.deletePump(uuid);
+}
+
+bool HydraulicData::deleteValve(const QUuid &uuid)
+{
+    HydraulicNetworkEditor editor(this->network_hydraulic);
+    return editor.deleteValve(uuid);
 }
 
 void HydraulicData::deleteTank()

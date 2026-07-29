@@ -39,12 +39,15 @@ public:
     void clearPlacement();
     bool hasStartLabel() const;
     MapEntityMarkerLabel *startLabel() const;
-    AnchorResult anchor(InfrastructureEntity entity,
+    AnchorResult anchor(const InfrastructureEntityReference &entity,
                         MapEntityMarkerLabel *connection_target_label,
                         MapEntityMarkerLabel *floating_label,
                         const QList<MapEntityMarker> &markers,
                         const QString &pixmap_path,
                         int label_width);
+    std::optional<DeviceLinkGeometry> completionGeometry(
+        MapEntityMarkerLabel *connection_target_label,
+        const QList<MapEntityMarker> &markers) const;
     
     bool updateMove(MapEntityMarkerLabel *label, const QPointF &screen_position);
     bool setCenterCoordinate(MapEntityMarkerLabel *label,

@@ -67,7 +67,7 @@ MapEntityMarkerLabel *MapCanvasDeviceLinks::startLabel() const
 }
 
 MapCanvasDeviceLinks::AnchorResult MapCanvasDeviceLinks::anchor(
-    InfrastructureEntity entity,
+    const InfrastructureEntityReference &entity,
     MapEntityMarkerLabel *connection_target_label,
     MapEntityMarkerLabel *floating_label,
     const QList<MapEntityMarker> &markers,
@@ -77,11 +77,11 @@ MapCanvasDeviceLinks::AnchorResult MapCanvasDeviceLinks::anchor(
     AnchorResult result;
     if (!connection_target_label || !floating_label)
         return result;
-    
+
     const MapEntityMarker target_marker = pointMarkerByLabel(connection_target_label, markers);
     if (!isHydraulicConnectionNode(target_marker.entity.type))
         return result;
-    
+
     if (!this->device_link_start_label)
     {
         this->device_link_start_label = connection_target_label;
@@ -89,43 +89,27 @@ MapCanvasDeviceLinks::AnchorResult MapCanvasDeviceLinks::anchor(
         updateCanvas();
         return result;
     }
-    
-    if (connection_target_label == this->device_link_start_label)
+
+    const std::optional<DeviceLinkGeometry> geometry = completionGeometry(
+        connection_target_label, markers);
+    if (!geometry.has_value() || entity.uuid.isNull())
         return result;
-    
-    const MapEntityMarker start_marker = pointMarkerByLabel(
-        this->device_link_start_label.data(), markers);
-    if (!isHydraulicConnectionNode(start_marker.entity.type))
-    {
-        clearPlacement();
-        return result;
-    }
-    
-    const QPointF start_point = this->map_model->screenFromWgs84(
-        start_marker.coord_wgs84, this->map_canvas->size());
-    const QPointF end_point = this->map_model->screenFromWgs84(
-        target_marker.coord_wgs84, this->map_canvas->size());
-    const QPointF center_point = (start_point + end_point) / 2.0;
-    
+
     DeviceLinkCanvasItem device_link;
-    device_link.entity.type = entity;
-    device_link.entity.uuid = QUuid::createUuid();
-    device_link.geometry.start_node = start_marker.entity;
-    device_link.geometry.end_node = target_marker.entity;
-    device_link.geometry.center_coordinate = this->map_model->wgs84FromScreen(
-        center_point.toPoint(), this->map_canvas->size());
+    device_link.entity = entity;
+    device_link.geometry = geometry.value();
     device_link.start_label = this->device_link_start_label;
     device_link.end_label = connection_target_label;
     device_link.device_label = floating_label;
     device_link.path_pixmap = pixmap_path;
-    
+
     const QPixmap pixmap = QPixmap(device_link.path_pixmap).scaledToWidth(
         label_width, Qt::SmoothTransformation);
     device_link.device_label->setPixmap(pixmap);
     device_link.device_label->resize(pixmap.size());
     device_link.device_label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
     configureLabel(device_link.device_label);
-    
+
     this->list_device_links.append(device_link);
     result.status = AnchorStatus::Completed;
     result.device_label = device_link.device_label;
@@ -133,6 +117,38 @@ MapCanvasDeviceLinks::AnchorResult MapCanvasDeviceLinks::anchor(
     positionLabels();
     updateCanvas();
     return result;
+}
+
+std::optional<DeviceLinkGeometry> MapCanvasDeviceLinks::completionGeometry(
+    MapEntityMarkerLabel *connection_target_label,
+    const QList<MapEntityMarker> &markers) const
+{
+    if (!this->device_link_start_label || !connection_target_label ||
+        connection_target_label == this->device_link_start_label)
+    {
+        return std::nullopt;
+    }
+
+    const MapEntityMarker start_marker = pointMarkerByLabel(
+        this->device_link_start_label.data(), markers);
+    const MapEntityMarker end_marker = pointMarkerByLabel(connection_target_label, markers);
+    if (!isHydraulicConnectionNode(start_marker.entity.type) ||
+        !isHydraulicConnectionNode(end_marker.entity.type))
+    {
+        return std::nullopt;
+    }
+
+    const QPointF start_point = this->map_model->screenFromWgs84(
+        start_marker.coord_wgs84, this->map_canvas->size());
+    const QPointF end_point = this->map_model->screenFromWgs84(
+        end_marker.coord_wgs84, this->map_canvas->size());
+
+    DeviceLinkGeometry geometry;
+    geometry.start_node = start_marker.entity;
+    geometry.end_node = end_marker.entity;
+    geometry.center_coordinate = this->map_model->wgs84FromScreen(
+        ((start_point + end_point) / 2.0).toPoint(), this->map_canvas->size());
+    return geometry;
 }
 
 bool MapCanvasDeviceLinks::updateMove(MapEntityMarkerLabel *label,

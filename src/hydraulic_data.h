@@ -1,7 +1,11 @@
 #ifndef HYDRAULIC_DATA_H
 #define HYDRAULIC_DATA_H
 
+#include <optional>
+
 #include <QObject>
+#include <QList>
+#include <QString>
 #include <QUuid>
 
 #include <QDebug>
@@ -31,7 +35,23 @@ public:
     QUuid addJunction(const CoordinateWGS84 &coordinate);
     QUuid addReservoir(const CoordinateWGS84 &coordinate);
     QUuid addTank(const CoordinateWGS84 &coordinate);
+
+    QUuid addPipe(const QUuid &node_uuid_from, const QUuid &node_uuid_to, const QList<CoordinateWGS84> &intermediate_vertices);
+    QUuid addPump(const QUuid &node_uuid_from, const QUuid &node_uuid_to, const CoordinateWGS84 &center_coordinate);
+    QUuid addValve(const QUuid &node_uuid_from, const QUuid &node_uuid_to, const CoordinateWGS84 &center_coordinate);
+    bool setNodeCoordinate(const QUuid &uuid, const CoordinateWGS84 &coordinate);
+    bool setPipeVertexCoordinate(const QUuid &pipe_uuid, int vertex_index, const CoordinateWGS84 &coordinate);
+    bool setPipeVertices(const QUuid &pipe_uuid, const QList<CoordinateWGS84> &intermediate_vertices);
+    bool setPumpCenterCoordinate(const QUuid &pump_uuid, const CoordinateWGS84 &coordinate);
+    bool setValveCenterCoordinate(const QUuid &valve_uuid, const CoordinateWGS84 &coordinate);
+
+    QUuid splitPipeAtVertex(const QUuid &pipe_uuid, int vertex_index, const QUuid &junction_uuid);
+    bool undoPipeSplit(const QUuid &first_pipe_uuid, const QUuid &second_pipe_uuid, const QUuid &junction_uuid);
+
     bool deleteJunction(const QUuid &uuid);
+    bool deletePipe(const QUuid &uuid);
+    bool deletePump(const QUuid &uuid);
+    bool deleteValve(const QUuid &uuid);
     void deleteTank();
     
     void setDataTank(HydraulicNodeTank tank);

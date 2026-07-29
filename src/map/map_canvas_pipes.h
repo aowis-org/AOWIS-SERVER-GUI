@@ -45,9 +45,10 @@ public:
     MapEntityMarkerLabel *startLabel() const;
     void startPipe(MapEntityMarkerLabel *start_label);
     void appendIntermediateVertex(const CoordinateWGS84 &coordinate);
-    bool completePipe(const InfrastructureEntityReference &start_node,
-                      const InfrastructureEntityReference &end_node,
-                      MapEntityMarkerLabel *end_label);
+    QList<CoordinateWGS84> intermediateVertices() const;
+    QList<CoordinateWGS84> intermediateVertices(const QUuid &pipe_uuid) const;
+    bool completePipe(const InfrastructureEntityReference &pipe_reference, const InfrastructureEntityReference &start_node,
+                      const InfrastructureEntityReference &end_node, MapEntityMarkerLabel *end_label);
     
     void paint(QPainter &paint,
                const QList<MapEntityMarker> &markers,
@@ -56,6 +57,7 @@ public:
                MapEntityMarkerLabel *connection_target_label) const;
     
     bool hasSelection() const;
+    QList<QUuid> selectedPipeUuids() const;
     void clearSelection();
     std::optional<InfrastructureEntityReference> selectPipe(const QUuid &pipe_uuid);
     void deleteSelected();
@@ -76,13 +78,13 @@ public:
     bool deletePipeVertex(const QUuid &pipe_uuid, int vertex_index);
     std::optional<CoordinateWGS84> pipeVertexCoordinate(const QUuid &pipe_uuid,
                                                         int vertex_index) const;
-    bool splitPipeAtVertex(const QUuid &pipe_uuid,
-                           int vertex_index,
-                           const InfrastructureEntityReference &junction_reference,
-                           MapEntityMarkerLabel *junction_label);
+    bool splitPipeAtVertex(const QUuid &pipe_uuid, int vertex_index, const InfrastructureEntityReference &junction_reference,
+                           const InfrastructureEntityReference &second_pipe_reference, MapEntityMarkerLabel *junction_label);
     
     bool startPipeVertexMove(const QUuid &pipe_uuid, int vertex_index);
     bool isPipeVertexMoveActive() const;
+    std::optional<QUuid> activePipeVertexMoveUuid() const;
+    int activePipeVertexMoveIndex() const;
     bool updatePipeVertexMove(const QPointF &screen_position);
     bool finishPipeVertexMove(const QPointF &screen_position);
     void cancelPipeVertexMove();
