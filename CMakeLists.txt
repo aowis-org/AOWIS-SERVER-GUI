@@ -111,6 +111,7 @@ qt_add_executable(aowis-server-gui
     src/simulation_manager.h src/simulation_manager.cpp
     src/entity_inspector/entity_map_legend_dock.h src/entity_inspector/entity_map_legend_dock.cpp
     src/hydraulic_data.h src/hydraulic_data.cpp
+    src/hydraulic_network_editor.h src/hydraulic_network_editor.cpp
     src/map/map_canvas_pipes.h src/map/map_canvas_pipes.cpp
     src/map/map_canvas_devicelinks.h src/map/map_canvas_devicelinks.cpp
     src/map/map_canvas_markers.h src/map/map_canvas_markers.cpp

@@ -19,6 +19,7 @@
 #include <aowis/epanet/dummy/dummy_networks.h>
 
 #include "_enums_structs.h"
+#include "hydraulic_network_editor.h"
 
 class HydraulicData : public QObject
 {
@@ -66,6 +67,7 @@ private:
     
     std::optional<Project> project;
     NetworkHydraulic network_hydraulic;
+    HydraulicNetworkEditor network_editor;
     
 private slots:
     void onDatabaseReady();
