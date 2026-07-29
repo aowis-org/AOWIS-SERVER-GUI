@@ -251,23 +251,21 @@ std::optional<InfrastructureEntityReference> MapCanvasPipes::selectPipe(const QU
     return pipe->entity;
 }
 
-void MapCanvasPipes::deleteSelected()
+bool MapCanvasPipes::removePipe(const QUuid &pipe_uuid)
 {
-    for (int i = this->list_pipes.size() - 1; i >= 0; i--)
+    const int pipe_index = pipeIndexByUuid(pipe_uuid);
+    if (pipe_index < 0)
+        return false;
+
+    if (this->pipe_vertex_move_pipe_uuid.has_value() &&
+        this->pipe_vertex_move_pipe_uuid.value() == pipe_uuid)
     {
-        if (!this->list_pipes[i].selected)
-            continue;
-        
-        if (this->pipe_vertex_move_pipe_uuid.has_value() &&
-            this->pipe_vertex_move_pipe_uuid.value() == this->list_pipes[i].entity.uuid)
-        {
-            cancelPipeVertexMove();
-        }
-        
-        this->list_pipes.removeAt(i);
+        cancelPipeVertexMove();
     }
-    
+
+    this->list_pipes.removeAt(pipe_index);
     updateCanvas();
+    return true;
 }
 
 void MapCanvasPipes::selectPipesWithSelectedEndpoints(
@@ -425,7 +423,7 @@ bool MapCanvasPipes::showContextMenuAt(const QPointF &position, const QPoint &gl
                 });
         connect(action_delete, &QAction::triggered, this, [this, pipe_uuid, vertex_index]()
                 {
-                    deletePipeVertex(pipe_uuid, vertex_index);
+                    emit pipeVertexDeleteRequested(pipe_uuid, vertex_index);
                 });
         connect(action_convert_to_junction, &QAction::triggered, this,
                 [this, pipe_uuid, vertex_index]()
@@ -458,7 +456,7 @@ bool MapCanvasPipes::showContextMenuAt(const QPointF &position, const QPoint &gl
     const CoordinateWGS84 coordinate = this->map_model->wgs84FromScreen(
         segment_hit.nearest_point.toPoint(), this->map_canvas->size());
     emit pipeSelectionRequested(segment_hit.pipe_uuid);
-    addPipeVertex(segment_hit.pipe_uuid, segment_hit.insert_index, coordinate);
+    emit pipeVertexAddRequested(segment_hit.pipe_uuid, segment_hit.insert_index, coordinate);
     return true;
 }
 
@@ -482,6 +480,19 @@ bool MapCanvasPipes::deletePipeVertex(const QUuid &pipe_uuid, int vertex_index)
         return false;
     
     pipe->geometry.intermediate_vertices.removeAt(vertex_index);
+    updateCanvas();
+    return true;
+}
+
+bool MapCanvasPipes::setIntermediateVertices(
+    const QUuid &pipe_uuid,
+    const QList<CoordinateWGS84> &intermediate_vertices)
+{
+    PipeCanvasItem *pipe = pipeByUuid(pipe_uuid);
+    if (!pipe)
+        return false;
+
+    pipe->geometry.intermediate_vertices = intermediate_vertices;
     updateCanvas();
     return true;
 }

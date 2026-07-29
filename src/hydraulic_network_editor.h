@@ -49,6 +49,7 @@ public:
     bool deleteValve(const QUuid &uuid);
 
 private:
+    void deleteConnectedLinks(const QUuid &node_uuid);
     QString nextNodeId(const QString &prefix) const;
     QString nextLinkId(const QString &prefix) const;
     double pipeLengthMeters(const QUuid &node_uuid_from, const QUuid &node_uuid_to,

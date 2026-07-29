@@ -259,6 +259,16 @@ bool HydraulicData::deleteJunction(const QUuid &uuid)
     return this->network_editor.deleteJunction(uuid);
 }
 
+bool HydraulicData::deleteReservoir(const QUuid &uuid)
+{
+    return this->network_editor.deleteReservoir(uuid);
+}
+
+bool HydraulicData::deleteTank(const QUuid &uuid)
+{
+    return this->network_editor.deleteTank(uuid);
+}
+
 bool HydraulicData::deletePipe(const QUuid &uuid)
 {
     return this->network_editor.deletePipe(uuid);
@@ -272,11 +282,6 @@ bool HydraulicData::deletePump(const QUuid &uuid)
 bool HydraulicData::deleteValve(const QUuid &uuid)
 {
     return this->network_editor.deleteValve(uuid);
-}
-
-void HydraulicData::deleteTank()
-{
-    
 }
 
 void HydraulicData::setDataTank(HydraulicNodeTank tank)

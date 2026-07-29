@@ -71,6 +71,10 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
     
     connect(this->pipes, &MapCanvasPipes::pipeSelectionRequested,
             this, &MapCanvasEntities::selectPipe);
+    connect(this->pipes, &MapCanvasPipes::pipeVertexAddRequested,
+            this, &MapCanvasEntities::addPipeVertex);
+    connect(this->pipes, &MapCanvasPipes::pipeVertexDeleteRequested,
+            this, &MapCanvasEntities::deletePipeVertex);
     connect(this->pipes, &MapCanvasPipes::pipeVertexMoveRequested,
             this, &MapCanvasEntities::startPipeVertexMove);
     connect(this->pipes, &MapCanvasPipes::pipeVertexConversionRequested,
@@ -99,12 +103,15 @@ void MapCanvasEntities::stopEntityPositioning()
 {
     if (this->placement->movingSelected())
         this->selection->setMouseTransparency(false);
+
+    restoreMoveSnapshot();
     
     this->device_links->clearPlacement();
     this->pipes->clearPlacement();
     this->pipes->cancelPipeVertexMove();
     this->point_markers->setMouseTransparency(false);
     this->placement->stop();
+    clearMoveSnapshot();
     positionMarkers();
     updateCanvas();
 }
@@ -131,7 +138,7 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
     if (this->placement->isMoving() && this->pipes->isPipeVertexMoveActive())
     {
         if (!this->pipes->updatePipeVertexMove(event->position()))
-            this->placement->completeMove();
+            stopEntityPositioning();
         event->accept();
         return;
     }
@@ -179,9 +186,12 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
     if (this->placement->movingSelected())
     {
         this->selection->moveSelected(this->placement->mousePosition(), event->position());
-        synchronizeSelectedGeometry();
+        const bool synchronized = synchronizeSelectedGeometry();
+        if (!synchronized)
+            restoreMoveSnapshot();
         this->selection->setMouseTransparency(false);
         this->placement->completeMove();
+        clearMoveSnapshot();
         positionMarkers();
         updateCanvas();
         return true;
@@ -203,7 +213,10 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
         const bool moved = this->point_markers->setCoordinate(floating_label, coordinate) ||
                            this->device_links->setCenterCoordinate(floating_label, coordinate);
         const bool synchronized = moved && synchronizeMarkerCoordinate(floating_label);
+        if (!synchronized)
+            restoreMoveSnapshot();
         this->placement->completeMove();
+        clearMoveSnapshot();
         positionMarkers();
         updateCanvas();
         return synchronized;
@@ -341,21 +354,100 @@ bool MapCanvasEntities::synchronizeMarkerCoordinate(MapEntityMarkerLabel *label)
     }
 }
 
-void MapCanvasEntities::synchronizeSelectedGeometry()
+bool MapCanvasEntities::synchronizeSelectedGeometry()
 {
     if (!this->hydraulic_data)
-        return;
+        return false;
+
+    bool synchronized = true;
 
     const QList<MapEntityMarkerLabel *> selected_labels = this->selection->selectedLabels();
     for (MapEntityMarkerLabel *label : selected_labels)
-        synchronizeMarkerCoordinate(label);
+        synchronized = synchronizeMarkerCoordinate(label) && synchronized;
 
     const QList<QUuid> selected_pipe_uuids = this->pipes->selectedPipeUuids();
     for (const QUuid &pipe_uuid : selected_pipe_uuids)
     {
-        this->hydraulic_data->setPipeVertices(
+        synchronized = this->hydraulic_data->setPipeVertices(
+            pipe_uuid, this->pipes->intermediateVertices(pipe_uuid)) && synchronized;
+    }
+
+    return synchronized;
+}
+
+void MapCanvasEntities::captureMarkerMoveSnapshot(MapEntityMarkerLabel *label)
+{
+    clearMoveSnapshot();
+    const MapEntityMarker marker = markerByLabel(label);
+    if (marker.entity.type != InfrastructureEntity::Unknown)
+        this->move_marker_snapshot.append(marker);
+}
+
+void MapCanvasEntities::captureSelectedMoveSnapshot()
+{
+    clearMoveSnapshot();
+
+    const QList<MapEntityMarkerLabel *> selected_labels = this->selection->selectedLabels();
+    for (MapEntityMarkerLabel *label : selected_labels)
+    {
+        const MapEntityMarker marker = markerByLabel(label);
+        if (marker.entity.type != InfrastructureEntity::Unknown)
+            this->move_marker_snapshot.append(marker);
+    }
+
+    const QList<QUuid> selected_pipe_uuids = this->pipes->selectedPipeUuids();
+    for (const QUuid &pipe_uuid : selected_pipe_uuids)
+    {
+        this->move_pipe_vertices_snapshot.insert(
             pipe_uuid, this->pipes->intermediateVertices(pipe_uuid));
     }
+}
+
+void MapCanvasEntities::capturePipeMoveSnapshot(const QUuid &pipe_uuid)
+{
+    clearMoveSnapshot();
+    this->move_pipe_vertices_snapshot.insert(
+        pipe_uuid, this->pipes->intermediateVertices(pipe_uuid));
+}
+
+void MapCanvasEntities::restoreMoveSnapshot()
+{
+    for (const MapEntityMarker &marker : this->move_marker_snapshot)
+    {
+        if (!marker.label)
+            continue;
+
+        if (isHydraulicConnectionNode(marker.entity.type))
+        {
+            this->point_markers->setCoordinate(marker.label, marker.coord_wgs84);
+            if (this->hydraulic_data)
+                this->hydraulic_data->setNodeCoordinate(marker.entity.uuid, marker.coord_wgs84);
+        }
+        else if (isHydraulicDeviceLink(marker.entity.type))
+        {
+            this->device_links->setCenterCoordinate(marker.label, marker.coord_wgs84);
+            if (this->hydraulic_data && marker.entity.type == InfrastructureEntity::Pump)
+                this->hydraulic_data->setPumpCenterCoordinate(marker.entity.uuid, marker.coord_wgs84);
+            else if (this->hydraulic_data && marker.entity.type == InfrastructureEntity::Valve)
+                this->hydraulic_data->setValveCenterCoordinate(marker.entity.uuid, marker.coord_wgs84);
+        }
+    }
+
+    QHash<QUuid, QList<CoordinateWGS84>>::const_iterator iterator =
+        this->move_pipe_vertices_snapshot.constBegin();
+    while (iterator != this->move_pipe_vertices_snapshot.constEnd())
+    {
+        this->pipes->setIntermediateVertices(iterator.key(), iterator.value());
+        if (this->hydraulic_data)
+            this->hydraulic_data->setPipeVertices(iterator.key(), iterator.value());
+        ++iterator;
+    }
+}
+
+void MapCanvasEntities::clearMoveSnapshot()
+{
+    this->move_marker_snapshot.clear();
+    this->move_pipe_vertices_snapshot.clear();
 }
 
 bool MapCanvasEntities::deleteHydraulicLink(const InfrastructureEntityReference &reference)
@@ -373,6 +465,51 @@ bool MapCanvasEntities::deleteHydraulicLink(const InfrastructureEntityReference 
         return this->hydraulic_data->deleteValve(reference.uuid);
     default:
         return false;
+    }
+}
+
+bool MapCanvasEntities::deleteHydraulicNode(const InfrastructureEntityReference &reference)
+{
+    if (!this->hydraulic_data || reference.uuid.isNull())
+        return false;
+
+    switch (reference.type)
+    {
+    case InfrastructureEntity::Junction:
+        return this->hydraulic_data->deleteJunction(reference.uuid);
+    case InfrastructureEntity::Reservoir:
+        return this->hydraulic_data->deleteReservoir(reference.uuid);
+    case InfrastructureEntity::Tank:
+        return this->hydraulic_data->deleteTank(reference.uuid);
+    default:
+        return false;
+    }
+}
+
+void MapCanvasEntities::addPipeVertex(const QUuid &pipe_uuid, int insert_index,
+                                      const CoordinateWGS84 &coordinate)
+{
+    const QList<CoordinateWGS84> previous_vertices = this->pipes->intermediateVertices(pipe_uuid);
+    if (!this->pipes->addPipeVertex(pipe_uuid, insert_index, coordinate))
+        return;
+
+    if (!this->hydraulic_data ||
+        !this->hydraulic_data->setPipeVertices(pipe_uuid, this->pipes->intermediateVertices(pipe_uuid)))
+    {
+        this->pipes->setIntermediateVertices(pipe_uuid, previous_vertices);
+    }
+}
+
+void MapCanvasEntities::deletePipeVertex(const QUuid &pipe_uuid, int vertex_index)
+{
+    const QList<CoordinateWGS84> previous_vertices = this->pipes->intermediateVertices(pipe_uuid);
+    if (!this->pipes->deletePipeVertex(pipe_uuid, vertex_index))
+        return;
+
+    if (!this->hydraulic_data ||
+        !this->hydraulic_data->setPipeVertices(pipe_uuid, this->pipes->intermediateVertices(pipe_uuid)))
+    {
+        this->pipes->setIntermediateVertices(pipe_uuid, previous_vertices);
     }
 }
 
@@ -452,18 +589,21 @@ bool MapCanvasEntities::anchorPipeVertexMove(QMouseEvent *event)
     const std::optional<QUuid> pipe_uuid = this->pipes->activePipeVertexMoveUuid();
     const int vertex_index = this->pipes->activePipeVertexMoveIndex();
     const bool moved = this->pipes->finishPipeVertexMove(event->position());
+    bool synchronized = false;
     if (moved && pipe_uuid.has_value() && this->hydraulic_data)
     {
         const std::optional<CoordinateWGS84> coordinate = this->pipes->pipeVertexCoordinate(
             pipe_uuid.value(), vertex_index);
-        if (coordinate.has_value())
-        {
-            this->hydraulic_data->setPipeVertexCoordinate(
-                pipe_uuid.value(), vertex_index, coordinate.value());
-        }
+        synchronized = coordinate.has_value() &&
+                       this->hydraulic_data->setPipeVertexCoordinate(
+                           pipe_uuid.value(), vertex_index, coordinate.value());
     }
 
+    if (!synchronized)
+        restoreMoveSnapshot();
+
     this->placement->completeMove();
+    clearMoveSnapshot();
     return true;
 }
 
@@ -523,7 +663,9 @@ void MapCanvasEntities::onMarkerMoveRequested(MapEntityMarkerLabel *label)
     
     stopEntityPositioning();
     const QPointF mouse_position = this->map_canvas->mapFromGlobal(QCursor::pos());
-    this->placement->startMove(marker.entity.type, label, mouse_position);
+    captureMarkerMoveSnapshot(label);
+    if (!this->placement->startMove(marker.entity.type, label, mouse_position))
+        clearMoveSnapshot();
     updateCanvas();
 }
 
@@ -540,6 +682,8 @@ void MapCanvasEntities::onMarkerMoveSelectedRequested(MapEntityMarkerLabel *labe
         return;
     
     this->placement->setMovingSelected(true);
+    this->pipes->selectPipesWithSelectedEndpoints(this->selection->selectedMarkers());
+    captureSelectedMoveSnapshot();
     this->selection->setMouseTransparency(true);
     positionMarkers();
     updateCanvas();
@@ -554,10 +698,17 @@ void MapCanvasEntities::onMarkerDeleteRequested(MapEntityMarkerLabel *label)
 void MapCanvasEntities::onMarkerSelectedDeleteRequested()
 {
     const QList<MapEntityMarkerLabel *> labels_to_delete = this->selection->selectedLabels();
+    const QList<QUuid> pipe_uuids_to_delete = this->pipes->selectedPipeUuids();
     for (MapEntityMarkerLabel *label : labels_to_delete)
         deleteMarker(label);
-    
-    this->pipes->deleteSelected();
+
+    for (const QUuid &pipe_uuid : pipe_uuids_to_delete)
+    {
+        if (this->hydraulic_data)
+            this->hydraulic_data->deletePipe(pipe_uuid);
+        this->pipes->removePipe(pipe_uuid);
+    }
+
     this->selection->clear();
     updateCanvas();
     emit signalEntityMarkerSelected(false);
@@ -567,11 +718,23 @@ void MapCanvasEntities::deleteMarker(MapEntityMarkerLabel *label)
 {
     if (!label)
         return;
-    
+
+    const MapEntityMarker marker = markerByLabel(label);
+    if (marker.entity.type == InfrastructureEntity::Unknown)
+        return;
+
+    if (this->placement->floatingLabel() == label)
+        stopEntityPositioning();
+
+    if (isHydraulicConnectionNode(marker.entity.type) && !deleteHydraulicNode(marker.entity))
+        return;
+    if (isHydraulicDeviceLink(marker.entity.type) && !deleteHydraulicLink(marker.entity))
+        return;
+
+    this->selection->clear();
+
     if (this->placement->connectionTarget() == label)
         this->placement->clearConnectionTarget();
-    if (this->placement->floatingLabel() == label)
-        this->placement->stop();
     if (this->pipes->startLabel() == label)
         this->pipes->clearPlacement();
     
@@ -686,6 +849,8 @@ void MapCanvasEntities::selectPipe(const QUuid &pipe_uuid)
         return;
     
     emit signalEntityMarkerSelected(true);
+    if (this->hydraulic_data)
+        this->hydraulic_data->setSelectedUuid(InfrastructureEntity::Pipe, pipe_uuid);
     updateCanvas();
 }
 
@@ -695,6 +860,7 @@ void MapCanvasEntities::startPipeVertexMove(const QUuid &pipe_uuid, int vertex_i
     if (!this->pipes->startPipeVertexMove(pipe_uuid, vertex_index))
         return;
     
+    capturePipeMoveSnapshot(pipe_uuid);
     selectPipe(pipe_uuid);
     const QPointF mouse_position = this->map_canvas->mapFromGlobal(QCursor::pos());
     this->placement->startVirtualMove(InfrastructureEntity::Pipe, mouse_position);

@@ -50,10 +50,11 @@ public:
     bool undoPipeSplit(const QUuid &first_pipe_uuid, const QUuid &second_pipe_uuid, const QUuid &junction_uuid);
 
     bool deleteJunction(const QUuid &uuid);
+    bool deleteReservoir(const QUuid &uuid);
+    bool deleteTank(const QUuid &uuid);
     bool deletePipe(const QUuid &uuid);
     bool deletePump(const QUuid &uuid);
     bool deleteValve(const QUuid &uuid);
-    void deleteTank();
     
     void setDataTank(HydraulicNodeTank tank);
     void setDataJunction(HydraulicNodeJunction junction);

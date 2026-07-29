@@ -2,6 +2,7 @@
 #define MAP_CANVAS_ENTITIES_H
 
 #include <QObject>
+#include <QHash>
 #include <QMouseEvent>
 #include <QPoint>
 #include <QPointF>
@@ -58,9 +59,18 @@ private:
     bool anchorPipeVertexMove(QMouseEvent *event);
     QUuid createHydraulicNode(InfrastructureEntity entity, const CoordinateWGS84 &coordinate);
     QUuid createHydraulicDeviceLink(InfrastructureEntity entity, const DeviceLinkGeometry &geometry);
+    bool deleteHydraulicNode(const InfrastructureEntityReference &reference);
     bool deleteHydraulicLink(const InfrastructureEntityReference &reference);
+    void addPipeVertex(const QUuid &pipe_uuid, int insert_index,
+                       const CoordinateWGS84 &coordinate);
+    void deletePipeVertex(const QUuid &pipe_uuid, int vertex_index);
     bool synchronizeMarkerCoordinate(MapEntityMarkerLabel *label);
-    void synchronizeSelectedGeometry();
+    bool synchronizeSelectedGeometry();
+    void captureMarkerMoveSnapshot(MapEntityMarkerLabel *label);
+    void captureSelectedMoveSnapshot();
+    void capturePipeMoveSnapshot(const QUuid &pipe_uuid);
+    void restoreMoveSnapshot();
+    void clearMoveSnapshot();
     void updateConnectionTarget(const QPointF &mouse_position);
     void deleteMarker(MapEntityMarkerLabel *label);
     void selectPipe(const QUuid &pipe_uuid);
@@ -76,6 +86,8 @@ private:
     MapCanvasPipes *pipes = nullptr;
     MapCanvasSelection *selection = nullptr;
     MapCanvasPlacement *placement = nullptr;
+    QList<MapEntityMarker> move_marker_snapshot;
+    QHash<QUuid, QList<CoordinateWGS84>> move_pipe_vertices_snapshot;
     
 private slots:
     void onMarkerClicked(MapEntityMarkerLabel *label);

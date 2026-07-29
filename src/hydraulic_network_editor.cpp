@@ -1,116 +1,9 @@
 #include "hydraulic_network_editor.h"
+#include "geo_metric_projection.h"
 #include <aowis/model/uuid.h>
-
-#include <algorithm>
-#include <cmath>
 
 namespace
 {
-constexpr double pi = 3.141592653589793238462643383279502884;
-constexpr double wgs84_semimajor_axis_m = 6378137.0;
-constexpr double wgs84_flattening = 1.0 / 298.257223563;
-constexpr double mean_earth_radius_m = 6371008.8;
-
-double radians(double degrees)
-{
-    return degrees * pi / 180.0;
-}
-
-double haversineDistanceMeters(const CoordinateWGS84 &a, const CoordinateWGS84 &b)
-{
-    const double latitude_a = radians(a.latitude_deg);
-    const double latitude_b = radians(b.latitude_deg);
-    const double latitude_delta = latitude_b - latitude_a;
-    const double longitude_delta = radians(b.longitude_deg - a.longitude_deg);
-    const double sin_latitude = std::sin(latitude_delta / 2.0);
-    const double sin_longitude = std::sin(longitude_delta / 2.0);
-    const double haversine = sin_latitude * sin_latitude +
-                             std::cos(latitude_a) * std::cos(latitude_b) *
-                             sin_longitude * sin_longitude;
-    const double bounded_haversine = std::clamp(haversine, 0.0, 1.0);
-    const double central_angle = 2.0 * std::atan2(
-        std::sqrt(bounded_haversine), std::sqrt(1.0 - bounded_haversine));
-    return mean_earth_radius_m * central_angle;
-}
-
-double distanceMeters(const CoordinateWGS84 &a, const CoordinateWGS84 &b)
-{
-    if (a.latitude_deg == b.latitude_deg && a.longitude_deg == b.longitude_deg)
-        return 0.0;
-
-    const double semiminor_axis_m = (1.0 - wgs84_flattening) * wgs84_semimajor_axis_m;
-    const double reduced_latitude_a = std::atan((1.0 - wgs84_flattening) * std::tan(radians(a.latitude_deg)));
-    const double reduced_latitude_b = std::atan((1.0 - wgs84_flattening) * std::tan(radians(b.latitude_deg)));
-    const double sin_reduced_a = std::sin(reduced_latitude_a);
-    const double cos_reduced_a = std::cos(reduced_latitude_a);
-    const double sin_reduced_b = std::sin(reduced_latitude_b);
-    const double cos_reduced_b = std::cos(reduced_latitude_b);
-    const double longitude_difference = radians(b.longitude_deg - a.longitude_deg);
-
-    double lambda = longitude_difference;
-    double previous_lambda = 0.0;
-    double sin_sigma = 0.0;
-    double cos_sigma = 0.0;
-    double sigma = 0.0;
-    double sin_alpha = 0.0;
-    double cos_squared_alpha = 0.0;
-    double cos_two_sigma_midpoint = 0.0;
-    bool converged = false;
-
-    for (int iteration = 0; iteration < 100; iteration++)
-    {
-        const double sin_lambda = std::sin(lambda);
-        const double cos_lambda = std::cos(lambda);
-        const double term_a = cos_reduced_b * sin_lambda;
-        const double term_b = cos_reduced_a * sin_reduced_b - sin_reduced_a * cos_reduced_b * cos_lambda;
-        sin_sigma = std::sqrt(term_a * term_a + term_b * term_b);
-        if (sin_sigma == 0.0)
-            return 0.0;
-
-        cos_sigma = sin_reduced_a * sin_reduced_b + cos_reduced_a * cos_reduced_b * cos_lambda;
-        sigma = std::atan2(sin_sigma, cos_sigma);
-        sin_alpha = cos_reduced_a * cos_reduced_b * sin_lambda / sin_sigma;
-        cos_squared_alpha = 1.0 - sin_alpha * sin_alpha;
-        cos_two_sigma_midpoint = cos_squared_alpha == 0.0
-                                     ? 0.0
-                                     : cos_sigma - 2.0 * sin_reduced_a * sin_reduced_b / cos_squared_alpha;
-        const double coefficient = wgs84_flattening / 16.0 * cos_squared_alpha *
-                                   (4.0 + wgs84_flattening * (4.0 - 3.0 * cos_squared_alpha));
-        previous_lambda = lambda;
-        lambda = longitude_difference + (1.0 - coefficient) * wgs84_flattening * sin_alpha *
-                 (sigma + coefficient * sin_sigma *
-                  (cos_two_sigma_midpoint + coefficient * cos_sigma *
-                   (-1.0 + 2.0 * cos_two_sigma_midpoint * cos_two_sigma_midpoint)));
-
-        if (std::abs(lambda - previous_lambda) <= 1e-12)
-        {
-            converged = true;
-            break;
-        }
-    }
-
-    if (!converged)
-        return haversineDistanceMeters(a, b);
-
-    const double reduced_parameter = cos_squared_alpha *
-                                     (wgs84_semimajor_axis_m * wgs84_semimajor_axis_m -
-                                      semiminor_axis_m * semiminor_axis_m) /
-                                     (semiminor_axis_m * semiminor_axis_m);
-    const double coefficient_a = 1.0 + reduced_parameter / 16384.0 *
-                                 (4096.0 + reduced_parameter *
-                                  (-768.0 + reduced_parameter * (320.0 - 175.0 * reduced_parameter)));
-    const double coefficient_b = reduced_parameter / 1024.0 *
-                                 (256.0 + reduced_parameter *
-                                  (-128.0 + reduced_parameter * (74.0 - 47.0 * reduced_parameter)));
-    const double delta_sigma = coefficient_b * sin_sigma *
-                               (cos_two_sigma_midpoint + coefficient_b / 4.0 *
-                                (cos_sigma * (-1.0 + 2.0 * cos_two_sigma_midpoint * cos_two_sigma_midpoint) -
-                                 coefficient_b / 6.0 * cos_two_sigma_midpoint *
-                                 (-3.0 + 4.0 * sin_sigma * sin_sigma) *
-                                 (-3.0 + 4.0 * cos_two_sigma_midpoint * cos_two_sigma_midpoint)));
-    return semiminor_axis_m * coefficient_a * (sigma - delta_sigma);
-}
-
 template<typename Entity>
 bool removeEntityByUuid(QList<Entity> &entities, const QUuid &uuid)
 {
@@ -483,17 +376,29 @@ bool HydraulicNetworkEditor::undoPipeSplit(const QUuid &first_pipe_uuid, const Q
 
 bool HydraulicNetworkEditor::deleteJunction(const QUuid &uuid)
 {
-    return removeEntityByUuid(this->network.nodes_junctions, uuid);
+    if (!removeEntityByUuid(this->network.nodes_junctions, uuid))
+        return false;
+
+    deleteConnectedLinks(uuid);
+    return true;
 }
 
 bool HydraulicNetworkEditor::deleteReservoir(const QUuid &uuid)
 {
-    return removeEntityByUuid(this->network.nodes_reservoirs, uuid);
+    if (!removeEntityByUuid(this->network.nodes_reservoirs, uuid))
+        return false;
+
+    deleteConnectedLinks(uuid);
+    return true;
 }
 
 bool HydraulicNetworkEditor::deleteTank(const QUuid &uuid)
 {
-    return removeEntityByUuid(this->network.nodes_tanks, uuid);
+    if (!removeEntityByUuid(this->network.nodes_tanks, uuid))
+        return false;
+
+    deleteConnectedLinks(uuid);
+    return true;
 }
 
 bool HydraulicNetworkEditor::deletePipe(const QUuid &uuid)
@@ -509,6 +414,30 @@ bool HydraulicNetworkEditor::deletePump(const QUuid &uuid)
 bool HydraulicNetworkEditor::deleteValve(const QUuid &uuid)
 {
     return removeEntityByUuid(this->network.links_valves, uuid);
+}
+
+void HydraulicNetworkEditor::deleteConnectedLinks(const QUuid &node_uuid)
+{
+    for (int i = this->network.links_pipes.size() - 1; i >= 0; i--)
+    {
+        const HydraulicLinkPipe &pipe = this->network.links_pipes[i];
+        if (pipe.node_uuid_from == node_uuid || pipe.node_uuid_to == node_uuid)
+            this->network.links_pipes.removeAt(i);
+    }
+
+    for (int i = this->network.links_pumps.size() - 1; i >= 0; i--)
+    {
+        const HydraulicLinkPump &pump = this->network.links_pumps[i];
+        if (pump.node_uuid_from == node_uuid || pump.node_uuid_to == node_uuid)
+            this->network.links_pumps.removeAt(i);
+    }
+
+    for (int i = this->network.links_valves.size() - 1; i >= 0; i--)
+    {
+        const HydraulicLinkValve &valve = this->network.links_valves[i];
+        if (valve.node_uuid_from == node_uuid || valve.node_uuid_to == node_uuid)
+            this->network.links_valves.removeAt(i);
+    }
 }
 
 QString HydraulicNetworkEditor::nextNodeId(const QString &prefix) const
@@ -562,11 +491,11 @@ double HydraulicNetworkEditor::pipeLengthMeters(const QUuid &node_uuid_from, con
 
     for (const HydraulicLinkVertex &vertex : vertices)
     {
-        length_m += distanceMeters(previous_coordinate, vertex.coordinate_wgs84);
+        length_m += GeoMetricProjection::distanceMeters(previous_coordinate, vertex.coordinate_wgs84);
         previous_coordinate = vertex.coordinate_wgs84;
     }
 
-    length_m += distanceMeters(previous_coordinate, end_coordinate.value());
+    length_m += GeoMetricProjection::distanceMeters(previous_coordinate, end_coordinate.value());
     return length_m;
 }
 

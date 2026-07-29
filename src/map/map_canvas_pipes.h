@@ -60,7 +60,7 @@ public:
     QList<QUuid> selectedPipeUuids() const;
     void clearSelection();
     std::optional<InfrastructureEntityReference> selectPipe(const QUuid &pipe_uuid);
-    void deleteSelected();
+    bool removePipe(const QUuid &pipe_uuid);
     void selectPipesWithSelectedEndpoints(const QList<MapEntityMarker> &selected_markers);
     void moveIntermediateVerticesWithSelectedEndpoints(const QList<MapEntityMarker> &selected_markers,
                                                        double longitude_delta,
@@ -76,6 +76,8 @@ public:
     bool addPipeVertex(const QUuid &pipe_uuid, int insert_index,
                        const CoordinateWGS84 &coordinate);
     bool deletePipeVertex(const QUuid &pipe_uuid, int vertex_index);
+    bool setIntermediateVertices(const QUuid &pipe_uuid,
+                                 const QList<CoordinateWGS84> &intermediate_vertices);
     std::optional<CoordinateWGS84> pipeVertexCoordinate(const QUuid &pipe_uuid,
                                                         int vertex_index) const;
     bool splitPipeAtVertex(const QUuid &pipe_uuid, int vertex_index, const InfrastructureEntityReference &junction_reference,
@@ -93,6 +95,9 @@ public:
     
 signals:
     void pipeSelectionRequested(const QUuid &pipe_uuid);
+    void pipeVertexAddRequested(const QUuid &pipe_uuid, int insert_index,
+                                const CoordinateWGS84 &coordinate);
+    void pipeVertexDeleteRequested(const QUuid &pipe_uuid, int vertex_index);
     void pipeVertexMoveRequested(const QUuid &pipe_uuid, int vertex_index);
     void pipeVertexConversionRequested(const QUuid &pipe_uuid, int vertex_index);
     
