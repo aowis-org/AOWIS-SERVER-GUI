@@ -56,6 +56,7 @@ private:
     bool anchorDeviceLink(QMouseEvent *event);
     bool anchorPipe(QMouseEvent *event);
     bool anchorPipeVertexMove(QMouseEvent *event);
+    QUuid createHydraulicNode(InfrastructureEntity entity, const CoordinateWGS84 &coordinate);
     void updateConnectionTarget(const QPointF &mouse_position);
     void deleteMarker(MapEntityMarkerLabel *label);
     void selectPipe(const QUuid &pipe_uuid);

@@ -7,6 +7,7 @@
 #include <QDebug>
 
 #include <aowis/model/project.h>
+#include <aowis/model/gis.h>
 #include <aowis/model/hydraulic/network_hydraulic.h>
 
 #include <aowis/db/database_gui.h>
@@ -27,7 +28,10 @@ public:
     
     void setSelectedUuid(InfrastructureEntity entity_type, const QUuid &uuid);
     
-    void addTank();
+    QUuid addJunction(const CoordinateWGS84 &coordinate);
+    QUuid addReservoir(const CoordinateWGS84 &coordinate);
+    QUuid addTank(const CoordinateWGS84 &coordinate);
+    bool deleteJunction(const QUuid &uuid);
     void deleteTank();
     
     void setDataTank(HydraulicNodeTank tank);

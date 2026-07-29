@@ -1,4 +1,5 @@
 #include "hydraulic_data.h"
+#include "uuid_v7.h"
 
 HydraulicData::HydraulicData(QObject *parent)
     : QObject{parent},
@@ -179,10 +180,50 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
     }
 }
 
-void HydraulicData::addTank()
+QUuid HydraulicData::addJunction(const CoordinateWGS84 &coordinate)
 {
-    
+    HydraulicNodeJunction junction;
+    junction.uuid = createUuidV7();
+    junction.latitude_deg = coordinate.latitude_deg;
+    junction.longitude_deg = coordinate.longitude_deg;
+    this->network_hydraulic.nodes_junctions.append(junction);
+    return junction.uuid;
 }
+
+QUuid HydraulicData::addReservoir(const CoordinateWGS84 &coordinate)
+{
+    HydraulicNodeReservoir reservoir;
+    reservoir.uuid = createUuidV7();
+    reservoir.latitude_deg = coordinate.latitude_deg;
+    reservoir.longitude_deg = coordinate.longitude_deg;
+    this->network_hydraulic.nodes_reservoirs.append(reservoir);
+    return reservoir.uuid;
+}
+
+QUuid HydraulicData::addTank(const CoordinateWGS84 &coordinate)
+{
+    HydraulicNodeTank tank;
+    tank.uuid = createUuidV7();
+    tank.latitude_deg = coordinate.latitude_deg;
+    tank.longitude_deg = coordinate.longitude_deg;
+    this->network_hydraulic.nodes_tanks.append(tank);
+    return tank.uuid;
+}
+
+bool HydraulicData::deleteJunction(const QUuid &uuid)
+{
+    for (int i = 0; i < this->network_hydraulic.nodes_junctions.size(); i++)
+    {
+        if (this->network_hydraulic.nodes_junctions[i].uuid != uuid)
+            continue;
+
+        this->network_hydraulic.nodes_junctions.removeAt(i);
+        return true;
+    }
+
+    return false;
+}
+
 void HydraulicData::deleteTank()
 {
     

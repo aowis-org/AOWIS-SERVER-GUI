@@ -210,12 +210,20 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
     if (!this->placement->isCreating())
         return false;
     
-    InfrastructureEntityReference reference;
-    reference.type = this->placement->entity();
-    reference.uuid = QUuid::createUuid();
     MapEntityMarkerLabel *created_label = this->placement->takeCreatedLabel();
     if (!created_label)
         return false;
+
+    InfrastructureEntityReference reference;
+    reference.type = this->placement->entity();
+    reference.uuid = createHydraulicNode(reference.type, coordinate);
+    if (reference.uuid.isNull())
+    {
+        created_label->hide();
+        created_label->deleteLater();
+        this->placement->stop();
+        return false;
+    }
     
     this->point_markers->addMarker(
         reference, coordinate, this->point_markers->pixmapPathForEntity(reference.type),
@@ -224,6 +232,24 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
     positionMarkers();
     this->placement->rearmCreate(this->point_markers->pixmapPathForEntity(reference.type), 150);
     return true;
+}
+
+QUuid MapCanvasEntities::createHydraulicNode(InfrastructureEntity entity, const CoordinateWGS84 &coordinate)
+{
+    if (!this->hydraulic_data)
+        return QUuid();
+
+    switch (entity)
+    {
+    case InfrastructureEntity::Junction:
+        return this->hydraulic_data->addJunction(coordinate);
+    case InfrastructureEntity::Reservoir:
+        return this->hydraulic_data->addReservoir(coordinate);
+    case InfrastructureEntity::Tank:
+        return this->hydraulic_data->addTank(coordinate);
+    default:
+        return QUuid();
+    }
 }
 
 bool MapCanvasEntities::anchorDeviceLink(QMouseEvent *event)
@@ -559,7 +585,10 @@ void MapCanvasEntities::convertPipeVertexToJunction(const QUuid &pipe_uuid, int 
     
     InfrastructureEntityReference junction_reference;
     junction_reference.type = InfrastructureEntity::Junction;
-    junction_reference.uuid = QUuid::createUuid();
+    junction_reference.uuid = createHydraulicNode(InfrastructureEntity::Junction, vertex_coordinate.value());
+    if (junction_reference.uuid.isNull())
+        return;
+
     const MapEntityMarker junction_marker = this->point_markers->addMarker(
         junction_reference, vertex_coordinate.value(),
         this->point_markers->pixmapPathForEntity(InfrastructureEntity::Junction),
@@ -569,6 +598,7 @@ void MapCanvasEntities::convertPipeVertexToJunction(const QUuid &pipe_uuid, int 
                                         junction_reference, junction_marker.label))
     {
         this->point_markers->removeMarker(junction_marker.label);
+        this->hydraulic_data->deleteJunction(junction_reference.uuid);
         return;
     }
     
