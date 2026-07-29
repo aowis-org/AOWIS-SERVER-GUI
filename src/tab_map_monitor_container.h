@@ -39,6 +39,8 @@ class MapMonitorMenuWidget : public QWidget
 public:
     explicit MapMonitorMenuWidget(MapWidget *map, QWidget *parent = nullptr);
     
+    MapNavigationWidget *mapNavigationWidget();
+    
 private:
     QVBoxLayout *layout;
     
@@ -70,11 +72,13 @@ public:
     
     MapWidget *getMap();
     
+    MapNavigationWidget *mapNavigationWidget();
+    
 private:
     QHBoxLayout *layout = nullptr;
     MapModel *map_model = nullptr;
     MapWidget *map = nullptr;
-    MapMonitorMenuWidget *controls = nullptr;
+    MapMonitorMenuWidget *map_menu = nullptr;
     
     GpsProvider *gps = nullptr;
     

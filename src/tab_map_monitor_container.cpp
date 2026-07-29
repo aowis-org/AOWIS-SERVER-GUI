@@ -6,7 +6,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, GpsProvider *gps, 
     gps( gps ),
     map_model( map_model ),
     map( new MapWidget(this->map_model, gps, this) ),
-    controls( new MapMonitorMenuWidget(this->map, this) )
+    map_menu( new MapMonitorMenuWidget(this->map, this) )
 {
     setContentsMargins(0, 0, 0, 0);
     this->layout->setContentsMargins(0, 0, 0, 0);
@@ -34,21 +34,25 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, GpsProvider *gps, 
         scroll_controls->setMaximumWidth(w);
     });
     
-    scroll_controls->setWidget(this->controls);
+    scroll_controls->setWidget(this->map_menu);
     
     this->layout->addWidget(scroll_controls);
     this->layout->addWidget(map);
     
-    connect(this->controls, &MapMonitorMenuWidget::signalNodeVisualClicked,
+    connect(this->map_menu, &MapMonitorMenuWidget::signalNodeVisualClicked,
         this, &MapMonitorContainer::signalShowMapLegendNode);
-    connect(this->controls, &MapMonitorMenuWidget::signalLinkVisualClicked,
+    connect(this->map_menu, &MapMonitorMenuWidget::signalLinkVisualClicked,
         this, &MapMonitorContainer::signalShowMapLegendLink);
-    connect(this->controls, &MapMonitorMenuWidget::signalHeatmapVisualClicked,
+    connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapVisualClicked,
         this, &MapMonitorContainer::signalShowMapLegendHeatmap);
 }
 MapWidget *MapMonitorContainer::getMap()
 {
     return this->map;
+}
+MapNavigationWidget *MapMonitorContainer::mapNavigationWidget()
+{
+    return this->map_menu->mapNavigationWidget();
 }
 
 
@@ -72,6 +76,11 @@ MapMonitorMenuWidget::MapMonitorMenuWidget(MapWidget *map, QWidget *parent)
     addGroupHeatmapVisuals();
     
     this->layout->addStretch();
+}
+
+MapNavigationWidget *MapMonitorMenuWidget::mapNavigationWidget()
+{
+    return this->map_nav;
 }
 
 void MapMonitorMenuWidget::addGroupNodeVisuals()

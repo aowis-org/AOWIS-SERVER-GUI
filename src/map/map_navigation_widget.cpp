@@ -71,6 +71,14 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     QSlider *slider_map_visibility = new QSlider(Qt::Horizontal);
     connect(slider_map_visibility, &QSlider::valueChanged, this, &MapNavigationWidget::signalSlideOpacityChanged);
     
+    this->check_map_sync = new QCheckBox("Sync Map Movement");
+    this->check_map_sync->setToolTip("Synchronize Map movement between Editor and Monitor");
+    this->check_map_sync->setChecked(true);
+    connect(this->check_map_sync, &QCheckBox::checkStateChanged, this, [this]
+    {
+        emit signalSyncMapMovementStateChanged(this->check_map_sync->isChecked());
+    });
+    
     this->grid->addWidget(button_zoom_out, 0, 0);
     this->grid->addWidget(button_up, 0, 1, Qt::AlignBottom);
     this->grid->addWidget(button_zoom_in, 0, 2);
@@ -84,6 +92,7 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     this->grid->addWidget(map_osmcyclo, 5, 0, 1, 3);
     this->grid->addWidget(label_slider_map_visibility, 6, 0, 1, 3);
     this->grid->addWidget(slider_map_visibility, 7, 0, 1, 3);
+    this->grid->addWidget(check_map_sync, 8, 0, 1, 3);
     
     this->button_group_map_select = new QButtonGroup(this);
     this->button_group_map_select->addButton(this->map_arcgissat, 1);
@@ -128,4 +137,9 @@ void MapNavigationWidget::mapProviderChange(MapProvider provider)
         return;
     
     button->click();
+}
+
+void MapNavigationWidget::mapMovementSyncStateChange(bool sync)
+{
+    this->check_map_sync->setChecked(sync);
 }

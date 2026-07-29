@@ -170,6 +170,17 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->map_edit, &MapWidget::signalCoordsChangedWgs84, this->footer, &FooterStatusBar::setMapCoordinatesWGS84);
     connect(this->map_edit, &MapWidget::signalCoordsChangedUTM, this->footer, &FooterStatusBar::setMapCoordinatesUTM);
     
+    MapNavigationWidget *map_edit_nav = this->map_editor->mapNavigationWidget();
+    MapNavigationWidget *map_mon_nav = this->map_monitor->mapNavigationWidget();
+    connect(map_edit_nav, &MapNavigationWidget::signalSyncMapMovementStateChanged, this, [this, map_mon_nav](bool state)
+    {
+        map_mon_nav->mapMovementSyncStateChange(state);
+    });
+    connect(map_mon_nav, &MapNavigationWidget::signalSyncMapMovementStateChanged, this, [this, map_edit_nav](bool state)
+    {
+        map_edit_nav->mapMovementSyncStateChange(state);
+    });
+    
     connect(this->dock_sim_control, &SimControlDock::signalHeadlossFormulaChanged, this->dock_entity_inspector, &EntityInspectorDock::onHeadlossFormulaChanged);
     connect(this->dock_sim_control, &SimControlDock::signalSimulationStart, this->simulation_manager, &SimulationManager::run);
     connect(this->dock_sim_control, &SimControlDock::signalShowEpanetLog, this->simulation_manager, &SimulationManager::showEpanetLog);

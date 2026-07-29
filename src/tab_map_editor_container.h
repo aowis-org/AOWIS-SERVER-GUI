@@ -42,6 +42,8 @@ class MapEditorMenuWidget : public QWidget
 public:
     explicit MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_canvas, CanvasMode mode, QWidget *parent = nullptr);
     
+    MapNavigationWidget *mapNavigationWidget();
+    
 private:
     CanvasMode mode;
     QVBoxLayout *layout;
@@ -72,6 +74,8 @@ public:
     explicit MapEditorContainer(MapModel *map_model, HydraulicData *hydraulic_data, GpsProvider *gps, EntityInspectorDock *map_inspector, QWidget *parent = nullptr);
     
     MapWidget *getMap();
+    
+    MapNavigationWidget *mapNavigationWidget();
     
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;

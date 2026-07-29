@@ -7,6 +7,7 @@
 
 #include <QPushButton>
 #include <QRadioButton>
+#include <QCheckBox>
 #include <QSlider>
 #include <QLabel>
 #include <QIcon>
@@ -44,8 +45,14 @@ private:
     QRadioButton* map_openstreetmap = nullptr;
     QRadioButton* map_osmcyclo = nullptr;
     
+    QCheckBox* check_map_sync = nullptr;
+    
 signals:
     void signalSlideOpacityChanged(int opacity);
+    void signalSyncMapMovementStateChanged(bool sync);
+    
+public slots:
+    void mapMovementSyncStateChange(bool sync);
 };
 
 #endif // MAP_NAVIGATION_WIDGET_H

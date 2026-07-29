@@ -52,6 +52,10 @@ MapWidget *MapEditorContainer::getMap()
 {
     return this->map;
 }
+MapNavigationWidget *MapEditorContainer::mapNavigationWidget()
+{
+    return this->map_menu->mapNavigationWidget();
+}
 
 bool MapEditorContainer::eventFilter(QObject *obj, QEvent *event)
 {
@@ -98,6 +102,11 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_ca
     
     connect(this->map_nav, &MapNavigationWidget::signalSlideOpacityChanged, this, &MapEditorMenuWidget::signalSlideOpacityChanged);
     
+}
+
+MapNavigationWidget *MapEditorMenuWidget::mapNavigationWidget()
+{
+    return this->map_nav;
 }
 
 void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
