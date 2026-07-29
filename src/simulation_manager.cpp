@@ -7,15 +7,32 @@ SimulationManager::SimulationManager(HydraulicData *hydraulic_data, QObject *par
     
 }
 
+#include <aowis/epanet/epanet_runner.h>
+
 void SimulationManager::run()
 {
-    NetworkHydraulic network_hydraulic = this->hydraulic_data->networkHydraulic();
+    const NetworkHydraulic network_hydraulic = this->hydraulic_data->networkHydraulic();
     
-    //EpanetWrapper *epanet = new EpanetWrapper(this);
-    //epanet->run(network_hydraulic);
-    //qDebug().noquote() << epanet->reportText();
+    EpanetRunner runner;
+    const EpanetResultRun run_result = runner.run(network_hydraulic);
     
-    //this->epanet_log = epanet->reportText();
+    this->epanet_log = run_result.report_lines.join('\n');
+    qDebug().noquote() << this->epanet_log;
+    
+    if (!run_result.result_timeline.status.success)
+    {
+        const HydraulicSimulationStatus &status = run_result.result_timeline.status;
+        qWarning().noquote() << "EPANET simulation failed:" << status.message;
+        
+        if (!status.message_backend.isEmpty())
+            qWarning().noquote() << status.message_backend;
+        
+        return;
+    }
+    
+    const HydraulicSimulationResultTimeline &result_timeline = run_result.result_timeline;
+    
+    // Process or store result_timeline here.
 }
 
 void SimulationManager::showEpanetLog()
