@@ -1,6 +1,6 @@
 #include "entity_inspector_valve.h"
 
-EntityInspectorValve::EntityInspectorValve(HydraulicData *hydraulic_data, Valve valve, QWidget *parent)
+EntityInspectorValve::EntityInspectorValve(HydraulicData *hydraulic_data, HydraulicLinkValve valve, QWidget *parent)
     : EntityInspectorWidget(hydraulic_data, parent),
     valve(valve)
 {
@@ -27,31 +27,31 @@ void EntityInspectorValve::addGroupValveConfiguration()
     this->combo_valve_type = new QComboBox();
     this->combo_valve_type->addItem(
         "PRV: Pressure Reducing Valve",
-        static_cast<int>(ValveType::PRV)
+        static_cast<int>(HydraulicLinkValveType::PRV)
         );
     this->combo_valve_type->addItem(
         "PSV: Pressure Sustaining Valve",
-        static_cast<int>(ValveType::PSV)
+        static_cast<int>(HydraulicLinkValveType::PSV)
         );
     this->combo_valve_type->addItem(
         "FCV: Flow Control Valve",
-        static_cast<int>(ValveType::FCV)
+        static_cast<int>(HydraulicLinkValveType::FCV)
         );
     this->combo_valve_type->addItem(
         "PBV: Pressure Breaker Valve",
-        static_cast<int>(ValveType::PBV)
+        static_cast<int>(HydraulicLinkValveType::PBV)
         );
     this->combo_valve_type->addItem(
         "TCV: Throttle Control Valve",
-        static_cast<int>(ValveType::TCV)
+        static_cast<int>(HydraulicLinkValveType::TCV)
         );
     this->combo_valve_type->addItem(
         "GPV: General Purpose Valve",
-        static_cast<int>(ValveType::GPV)
+        static_cast<int>(HydraulicLinkValveType::GPV)
         );
     this->combo_valve_type->addItem(
         "PCV: Positional Control Valve",
-        static_cast<int>(ValveType::PCV)
+        static_cast<int>(HydraulicLinkValveType::PCV)
         );
     
     this->label_setting = new QLabel("Setting");
@@ -115,26 +115,26 @@ void EntityInspectorValve::addGroupValveConfiguration()
                 return;
             }
             
-            const ValveType type = static_cast<ValveType>(data.toInt());
+            const HydraulicLinkValveType type = static_cast<HydraulicLinkValveType>(data.toInt());
             onValveTypeChanged(type);
         }
     );
     
     onValveTypeChanged(
-        static_cast<ValveType>(
+        static_cast<HydraulicLinkValveType>(
             this->combo_valve_type->currentData().toInt()
             )
     );
     
     this->layoutConfiguration()->addWidget(group);
 }
-void EntityInspectorValve::onValveTypeChanged(ValveType type)
+void EntityInspectorValve::onValveTypeChanged(HydraulicLinkValveType type)
 {
     this->spin_setting->show();
     this->combo_setting_curve->hide();
     
     switch (type) {
-    case ValveType::PRV:
+    case HydraulicLinkValveType::PRV:
         this->label_setting->setText("Pressure Setting");
         this->spin_setting->setSuffix(" m");
         this->spin_setting->setDecimals(2);
@@ -145,7 +145,7 @@ void EntityInspectorValve::onValveTypeChanged(ValveType type)
             );
         break;
         
-    case ValveType::PSV:
+    case HydraulicLinkValveType::PSV:
         this->label_setting->setText("Pressure Setting");
         this->spin_setting->setSuffix(" m");
         this->spin_setting->setDecimals(2);
@@ -156,7 +156,7 @@ void EntityInspectorValve::onValveTypeChanged(ValveType type)
             );
         break;
         
-    case ValveType::PBV:
+    case HydraulicLinkValveType::PBV:
         this->label_setting->setText("Pressure Drop");
         this->spin_setting->setSuffix(" m");
         this->spin_setting->setDecimals(2);
@@ -167,7 +167,7 @@ void EntityInspectorValve::onValveTypeChanged(ValveType type)
             );
         break;
         
-    case ValveType::FCV:
+    case HydraulicLinkValveType::FCV:
         this->label_setting->setText("Flow Setting");
         this->spin_setting->setSuffix(" m³/h");
         this->spin_setting->setDecimals(3);
@@ -178,7 +178,7 @@ void EntityInspectorValve::onValveTypeChanged(ValveType type)
             );
         break;
         
-    case ValveType::TCV:
+    case HydraulicLinkValveType::TCV:
         this->label_setting->setText("Loss Coefficient");
         this->spin_setting->setSuffix("");
         this->spin_setting->setDecimals(3);
@@ -189,7 +189,7 @@ void EntityInspectorValve::onValveTypeChanged(ValveType type)
             );
         break;
         
-    case ValveType::GPV:
+    case HydraulicLinkValveType::GPV:
         this->label_setting->setText("Headloss Curve");
         this->spin_setting->hide();
         this->combo_setting_curve->show();
@@ -198,7 +198,7 @@ void EntityInspectorValve::onValveTypeChanged(ValveType type)
             );
         break;
         
-    case ValveType::PCV:
+    case HydraulicLinkValveType::PCV:
         this->label_setting->setText("Position Setting");
         this->spin_setting->setSuffix(" %");
         this->spin_setting->setDecimals(2);

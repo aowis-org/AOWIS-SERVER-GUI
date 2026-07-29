@@ -67,8 +67,8 @@ void MapWidget::init()
         #ifndef Q_OS_WASM
         const auto coord = info.coordinate();
         
-        this->gps_coordinate.lat = coord.latitude();
-        this->gps_coordinate.lon = coord.longitude();
+        this->gps_coordinate.latitude_deg = coord.latitude();
+        this->gps_coordinate.longitude_deg = coord.longitude();
         this->gps_coordinate.altitude_m = coord.altitude();
         #endif
     });
@@ -81,8 +81,8 @@ void MapWidget::init()
         emit signalZoomChanged(m_model->zoom());
         
         CoordinateWGS84 wgs;
-        wgs.lat = m_model->centerLat();
-        wgs.lon = m_model->centerLon();
+        wgs.latitude_deg = m_model->centerLat();
+        wgs.longitude_deg = m_model->centerLon();
         emit signalCoordsChangedWgs84(wgs);
         
         GeoMetricProjection projection;

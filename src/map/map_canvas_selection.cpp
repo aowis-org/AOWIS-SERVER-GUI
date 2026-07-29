@@ -159,8 +159,8 @@ void MapCanvasSelection::moveSelected(const QPointF &from_position, const QPoint
         from_position.toPoint(), this->map_canvas->size());
     const CoordinateWGS84 to_coordinate = this->map_model->wgs84FromScreen(
         to_position.toPoint(), this->map_canvas->size());
-    const double longitude_delta = to_coordinate.lon - from_coordinate.lon;
-    const double latitude_delta = to_coordinate.lat - from_coordinate.lat;
+    const double latitude_delta = to_coordinate.latitude_deg - from_coordinate.latitude_deg;
+    const double longitude_delta = to_coordinate.longitude_deg - from_coordinate.longitude_deg;
     
     for (const MapEntityMarker &selected_marker : this->list_selected_markers)
     {
@@ -182,10 +182,10 @@ void MapCanvasSelection::moveSelected(const QPointF &from_position, const QPoint
 void MapCanvasSelection::addMarkersInRectangle(const CoordinateWGS84Rect &rect,
                                                const QList<MapEntityMarker> &markers)
 {
-    const double north = rect.north_west.lat;
-    const double west = rect.north_west.lon;
-    const double south = rect.south_east.lat;
-    const double east = rect.south_east.lon;
+    const double north = rect.north_west.latitude_deg;
+    const double west = rect.north_west.longitude_deg;
+    const double south = rect.south_east.latitude_deg;
+    const double east = rect.south_east.longitude_deg;
     
     for (const MapEntityMarker &marker : markers)
     {
@@ -193,8 +193,8 @@ void MapCanvasSelection::addMarkersInRectangle(const CoordinateWGS84Rect &rect,
             continue;
         
         const CoordinateWGS84 &coordinate = marker.coord_wgs84;
-        if (coordinate.lat < south || coordinate.lat > north ||
-            coordinate.lon < west || coordinate.lon > east)
+        if (coordinate.latitude_deg < south || coordinate.latitude_deg > north ||
+            coordinate.longitude_deg < west || coordinate.longitude_deg > east)
         {
             continue;
         }

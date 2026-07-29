@@ -42,8 +42,8 @@ QPointF GeoWebMercator::lonLatToWorldPixel(double lon, double lat, int zoom)
 CoordinateWGS84 GeoWebMercator::worldPixelToLonLat(double pixelX, double pixelY, int zoom)
 {
     CoordinateWGS84 wgs;
-    wgs.lat = tileYToLat(pixelY / TileSize, zoom);
-    wgs.lon = tileXToLon(pixelX / TileSize, zoom);
+    wgs.latitude_deg = tileYToLat(pixelY / TileSize, zoom);
+    wgs.longitude_deg = tileXToLon(pixelX / TileSize, zoom);
     return wgs;
 }
 

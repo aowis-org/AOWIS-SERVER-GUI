@@ -1,6 +1,6 @@
 #include "entity_inspector_tank.h"
 
-EntityInspectorTank::EntityInspectorTank(HydraulicData *hydraulic_data, Tank tank, QWidget *parent)
+EntityInspectorTank::EntityInspectorTank(HydraulicData *hydraulic_data, HydraulicNodeTank tank, QWidget *parent)
     : EntityInspectorWidget(hydraulic_data, parent),
     tank(tank)
 {
@@ -42,19 +42,19 @@ void EntityInspectorTank::addGroupGeometry()
     // get the state with function: tankGeometryInputType()
     this->combo_geometry_type->addItem(
         "Cylindrical",
-        static_cast<int>(TankGeometryInputType::Cylindrical)
+        static_cast<int>(HydraulicNodeTankGeometryInputType::Cylindrical)
     );
     this->combo_geometry_type->addItem(
         "Uniform Area",
-        static_cast<int>(TankGeometryInputType::UniformArea)
+        static_cast<int>(HydraulicNodeTankGeometryInputType::UniformArea)
     );
     this->combo_geometry_type->addItem(
         "Volume at Maximum Level",
-        static_cast<int>(TankGeometryInputType::VolumeAtMaximumLevel)
+        static_cast<int>(HydraulicNodeTankGeometryInputType::VolumeAtMaximumLevel)
     );
     this->combo_geometry_type->addItem(
         "Volume Curve",
-        static_cast<int>(TankGeometryInputType::VolumeCurve)
+        static_cast<int>(HydraulicNodeTankGeometryInputType::VolumeCurve)
     );
     
     this->label_spin_diameter = new QLabel("Diameter");
@@ -256,9 +256,9 @@ void EntityInspectorTank::onComboGeometryTypeChange(int index)
     }
 }
 
-TankGeometryInputType EntityInspectorTank::tankGeometryInputType()
+HydraulicNodeTankGeometryInputType EntityInspectorTank::tankGeometryInputType()
 {
-    TankGeometryInputType geometry_input_type = static_cast<TankGeometryInputType>
+    HydraulicNodeTankGeometryInputType geometry_input_type = static_cast<HydraulicNodeTankGeometryInputType>
     (
         this->combo_geometry_type->currentData().toInt()
     );

@@ -52,11 +52,11 @@ void FooterStatusBar::setMapCoordinatesWGS84(const CoordinateWGS84 &wgs)
 {
     // 5 decimals are about 1.11 m (depending on location)
     this->label_map_coords_lat->setText(
-        "WGS 84 Lat: " + QString::number(wgs.lat, 'f', 5)
+        "WGS 84 Lat: " + QString::number(wgs.latitude_deg, 'f', 5)
         );
     
     this->label_map_coords_lon->setText(
-        "Lon: " + QString::number(wgs.lon, 'f', 5)
+        "Lon: " + QString::number(wgs.longitude_deg, 'f', 5)
         );
 }
 void FooterStatusBar::setMapCoordinatesUTM(const CoordinateUTM &utm)
@@ -68,11 +68,11 @@ void FooterStatusBar::setMapCoordinatesUTM(const CoordinateUTM &utm)
                             : "UTM " + QString::number(utm.zone) + hemisphere;
     
     this->label_map_coords_utm_easting->setText(
-        crs + " E: " + QString::number(utm.easting, 'f', 2) + " m"
+        crs + " E: " + QString::number(utm.easting_m, 'f', 2) + " m"
         );
     
     this->label_map_coords_utm_northing->setText(
-        "N: " + QString::number(utm.northing, 'f', 2) + " m"
+        "N: " + QString::number(utm.northing_m, 'f', 2) + " m"
         );
 }
 

@@ -43,8 +43,8 @@ CoordinateUTM GeoMetricProjection::wgs84ToUtm(const CoordinateWGS84 &coordinate)
     double northing = 0.0;
     
     GeographicLib::UTMUPS::Forward(
-        coordinate.lat,
-        coordinate.lon,
+        coordinate.latitude_deg,
+        coordinate.longitude_deg,
         zone,
         northp,
         easting,
@@ -52,8 +52,8 @@ CoordinateUTM GeoMetricProjection::wgs84ToUtm(const CoordinateWGS84 &coordinate)
         );
     
     CoordinateUTM result;
-    result.easting = easting;
-    result.northing = northing;
+    result.easting_m = easting;
+    result.northing_m = northing;
     result.zone = zone;
     result.hemisphere_northern = northp;
     
@@ -68,15 +68,15 @@ CoordinateWGS84 GeoMetricProjection::utmToWgs84(const CoordinateUTM &coordinate)
     GeographicLib::UTMUPS::Reverse(
         coordinate.zone,
         coordinate.hemisphere_northern,
-        coordinate.easting,
-        coordinate.northing,
+        coordinate.easting_m,
+        coordinate.northing_m,
         lat,
         lon
         );
     
     CoordinateWGS84 result;
-    result.lon = lon;
-    result.lat = lat;
+    result.latitude_deg = lat;
+    result.longitude_deg = lon;
     
     return result;
 }
@@ -91,8 +91,8 @@ CoordinateLocal GeoMetricProjection::wgs84ToLocal(const CoordinateWGS84 &coordin
     const CoordinateUTM utm = wgs84ToOriginZoneUtm(coordinate);
     
     CoordinateLocal result;
-    result.x = utm.easting - m_originUtm.easting;
-    result.y = utm.northing - m_originUtm.northing;
+    result.x_m = utm.easting_m - m_originUtm.easting_m;
+    result.y_m = utm.northing_m - m_originUtm.northing_m;
     
     return result;
 }
@@ -105,8 +105,8 @@ CoordinateWGS84 GeoMetricProjection::localToWgs84(const CoordinateLocal &coordin
     }
     
     CoordinateUTM utm;
-    utm.easting = m_originUtm.easting + coordinate.x;
-    utm.northing = m_originUtm.northing + coordinate.y;
+    utm.easting_m = m_originUtm.easting_m + coordinate.x_m;
+    utm.northing_m = m_originUtm.northing_m + coordinate.y_m;
     utm.zone = m_originUtm.zone;
     utm.hemisphere_northern = m_originUtm.hemisphere_northern;
     
@@ -126,8 +126,8 @@ CoordinateUTM GeoMetricProjection::wgs84ToOriginZoneUtm(const CoordinateWGS84 &c
     double northing = 0.0;
     
     GeographicLib::UTMUPS::Forward(
-        coordinate.lat,
-        coordinate.lon,
+        coordinate.latitude_deg,
+        coordinate.longitude_deg,
         zone,
         northp,
         easting,
@@ -143,8 +143,8 @@ CoordinateUTM GeoMetricProjection::wgs84ToOriginZoneUtm(const CoordinateWGS84 &c
     }
     
     CoordinateUTM result;
-    result.easting = easting;
-    result.northing = northing;
+    result.easting_m = easting;
+    result.northing_m = northing;
     result.zone = zone;
     result.hemisphere_northern = northp;
     
@@ -157,10 +157,10 @@ double GeoMetricProjection::distanceMeters(const CoordinateWGS84 &a,
     double distance = 0.0;
     
     GeographicLib::Geodesic::WGS84().Inverse(
-        a.lat,
-        a.lon,
-        b.lat,
-        b.lon,
+        a.latitude_deg,
+        a.longitude_deg,
+        b.latitude_deg,
+        b.longitude_deg,
         distance
         );
     
@@ -175,10 +175,10 @@ double GeoMetricProjection::azimuthDegrees(const CoordinateWGS84 &a,
     double azimuth2 = 0.0;
     
     GeographicLib::Geodesic::WGS84().Inverse(
-        a.lat,
-        a.lon,
-        b.lat,
-        b.lon,
+        a.latitude_deg,
+        a.longitude_deg,
+        b.latitude_deg,
+        b.longitude_deg,
         distance,
         azimuth1,
         azimuth2

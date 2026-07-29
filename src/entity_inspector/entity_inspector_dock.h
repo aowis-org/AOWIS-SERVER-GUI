@@ -17,7 +17,7 @@
 #include "../widgets/group_box_collapsible.h"
 #include "../hydraulic_data.h"
 
-#include <aowis/model/hydraulic/network.h>
+#include <aowis/model/hydraulic/network_hydraulic.h>
 #include "../_enums_structs.h"
 #include "../_sizes.h"
 #include "../map/map_models.h"
@@ -45,13 +45,13 @@ public slots:
     virtual void onHeadlossFormulaChanged(HeadlossFormulas formulas);
     
 public slots:
-    void showEntityTank(Tank tank);
-    void showEntityJunction(Junction junction);
-    void showEntityPipe(Pipe pipe);
-    void showEntityPump(Pump pump);
-    void showEntityValve(Valve valve);
-    void showEntityReservoir(Reservoir reservoir);
-    void showEntityCustomerPoint(CustomerPoint customer_point);
+    void showEntityTank(HydraulicNodeTank tank);
+    void showEntityJunction(HydraulicNodeJunction junction);
+    void showEntityPipe(HydraulicLinkPipe pipe);
+    void showEntityPump(HydraulicLinkPump pump);
+    void showEntityValve(HydraulicLinkValve valve);
+    void showEntityReservoir(HydraulicNodeReservoir reservoir);
+    void showEntityCustomerPoint(NetworkHydraulicCustomerPoint customer_point);
     
 };
 

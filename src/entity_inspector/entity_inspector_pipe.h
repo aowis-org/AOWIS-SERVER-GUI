@@ -28,7 +28,7 @@ class EntityInspectorPipe : public EntityInspectorWidget
 {
     Q_OBJECT
 public:
-    explicit EntityInspectorPipe(HydraulicData *hydraulic_data, const Pipe &pipe, QWidget *parent = nullptr);
+    explicit EntityInspectorPipe(HydraulicData *hydraulic_data, const HydraulicLinkPipe &pipe, QWidget *parent = nullptr);
     
 private:
     QLabel *picture = nullptr;

@@ -20,7 +20,7 @@
 
 #include "../widgets/group_box_collapsible.h"
 
-#include <aowis/model/hydraulic/network.h>
+#include <aowis/model/hydraulic/network_hydraulic.h>
 #include "../_enums_structs.h"
 #include "../_sizes.h"
 #include "../map/map_models.h"
@@ -29,10 +29,10 @@ class EntityInspectorCustomerPoint : public EntityInspectorWidget
 {
     Q_OBJECT
 public:
-    explicit EntityInspectorCustomerPoint(HydraulicData *hydraulic_data, CustomerPoint customer_point, QWidget *parent = nullptr);
+    explicit EntityInspectorCustomerPoint(HydraulicData *hydraulic_data, NetworkHydraulicCustomerPoint customer_point, QWidget *parent = nullptr);
     
 private:
-    CustomerPoint customer_point;
+    NetworkHydraulicCustomerPoint customer_point;
     QLabel *picture = nullptr;
     
     void addGroupConnections();

@@ -146,7 +146,7 @@ target_link_libraries(aowis-server-gui
         Qt6::Sql
         AOWIS::ServerModel
         AOWIS::ServerDBGUI
-        aowis-server-epanet-core
+        AOWIS::ServerEpanet
         GeographicLib_STATIC
 )
 

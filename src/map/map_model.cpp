@@ -84,8 +84,8 @@ void MapModel::setCenter(double lon, double lat, const QSize &viewport)
         clampCenter(viewport);
     
     CoordinateWGS84 wgs;
-    wgs.lat = m_centerLat;
-    wgs.lon = m_centerLon;
+    wgs.latitude_deg = m_centerLat;
+    wgs.longitude_deg = m_centerLon;
     emit centerChangedWGS84(wgs);
     
     GeoMetricProjection projection;
@@ -108,8 +108,8 @@ void MapModel::setZoom(int zoomValue, const QSize &viewport)
     emit zoomChanged(m_zoom);
     
     CoordinateWGS84 wgs;
-    wgs.lon = m_centerLon;
-    wgs.lat = m_centerLat;
+    wgs.latitude_deg = m_centerLat;
+    wgs.longitude_deg = m_centerLon;
     emit centerChangedWGS84(wgs);
     
     GeoMetricProjection projection;
@@ -165,8 +165,8 @@ void MapModel::zoomByAt(int steps, const QPoint &anchorPos, const QSize &viewpor
     emit zoomChanged(m_zoom);
     
     CoordinateWGS84 wgs;
-    wgs.lat = m_centerLat;
-    wgs.lon = m_centerLon;
+    wgs.latitude_deg = m_centerLat;
+    wgs.longitude_deg = m_centerLon;
     emit centerChangedWGS84(wgs);
     
     GeoMetricProjection projection;
@@ -189,8 +189,8 @@ void MapModel::panByPixels(const QPoint &delta, const QSize &viewport)
         clampCenter(viewport);
     
     CoordinateWGS84 wgs;
-    wgs.lat = m_centerLat;
-    wgs.lon = m_centerLon;
+    wgs.latitude_deg = m_centerLat;
+    wgs.longitude_deg = m_centerLon;
     emit centerChangedWGS84(wgs);
     
     GeoMetricProjection projection;
@@ -254,14 +254,14 @@ CoordinateWGS84 MapModel::wgs84FromScreen(const QPoint &pos, const QSize &viewpo
     const double ty = cy + dy / TileSize;
     
     CoordinateWGS84 wgs;
-    wgs.lon = GeoWebMercator::tileXToLon(tx, m_zoom);
-    wgs.lat = GeoWebMercator::tileYToLat(ty, m_zoom);
+    wgs.latitude_deg = GeoWebMercator::tileYToLat(ty, m_zoom);
+    wgs.longitude_deg = GeoWebMercator::tileXToLon(tx, m_zoom);
     
     return wgs;
 }
 QPointF MapModel::screenFromWgs84(const CoordinateWGS84 &coord, const QSize &viewport) const
 {
-    return screenFromWgs84(coord.lon, coord.lat, viewport);
+    return screenFromWgs84(coord.longitude_deg, coord.latitude_deg, viewport);
 }
 QPointF MapModel::screenFromWgs84(double lon, double lat, const QSize &viewport) const
 {

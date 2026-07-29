@@ -11,11 +11,11 @@ void SimulationManager::run()
 {
     NetworkHydraulic network_hydraulic = this->hydraulic_data->networkHydraulic();
     
-    EpanetWrapper *epanet = new EpanetWrapper(this);
-    epanet->run(network_hydraulic);
+    //EpanetWrapper *epanet = new EpanetWrapper(this);
+    //epanet->run(network_hydraulic);
     //qDebug().noquote() << epanet->reportText();
     
-    this->epanet_log = epanet->reportText();
+    //this->epanet_log = epanet->reportText();
 }
 
 void SimulationManager::showEpanetLog()

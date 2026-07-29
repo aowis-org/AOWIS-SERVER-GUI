@@ -9,11 +9,9 @@
 #include <QDialog>
 #include <QVBoxLayout>
 
-#include <aowis/model/hydraulic/network.h>
-#include <aowis/model/hydraulic/simulation_result.h>
-#include <aowis/model/hydraulic/epanet_status.h>
-
-#include <aowis/epanet/epanet_wrapper.h>
+#include <aowis/model/hydraulic/network_hydraulic.h>
+#include <aowis/model/hydraulic/hydraulic_simulation_results.h>
+#include <aowis/model/hydraulic/hydraulic_simulation_status.h>
 
 #include "hydraulic_data.h"
 

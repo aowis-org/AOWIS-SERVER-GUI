@@ -195,8 +195,8 @@ bool MapCanvasMarkers::moveByDelta(MapEntityMarkerLabel *label,
         if (marker.label != label)
             continue;
         
-        marker.coord_wgs84.lon += longitude_delta;
-        marker.coord_wgs84.lat += latitude_delta;
+        marker.coord_wgs84.latitude_deg += latitude_delta;
+        marker.coord_wgs84.longitude_deg += longitude_delta;
         return true;
     }
     

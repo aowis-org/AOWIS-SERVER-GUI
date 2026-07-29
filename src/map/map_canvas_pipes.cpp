@@ -269,8 +269,8 @@ void MapCanvasPipes::moveIntermediateVerticesWithSelectedEndpoints(
         
         for (CoordinateWGS84 &vertex : pipe.geometry.intermediate_vertices)
         {
-            vertex.lon += longitude_delta;
-            vertex.lat += latitude_delta;
+            vertex.latitude_deg += latitude_delta;
+            vertex.longitude_deg += longitude_delta;
         }
     }
 }

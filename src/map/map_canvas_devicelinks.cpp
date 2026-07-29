@@ -327,8 +327,8 @@ bool MapCanvasDeviceLinks::moveCenterByDelta(MapEntityMarkerLabel *label,
         if (device_link.device_label != label)
             continue;
         
-        device_link.geometry.center_coordinate.lon += longitude_delta;
-        device_link.geometry.center_coordinate.lat += latitude_delta;
+        device_link.geometry.center_coordinate.latitude_deg += latitude_delta;
+        device_link.geometry.center_coordinate.longitude_deg += longitude_delta;
         return true;
     }
     

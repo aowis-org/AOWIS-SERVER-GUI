@@ -1,6 +1,6 @@
 #include "entity_inspector_customer_point.h"
 
-EntityInspectorCustomerPoint::EntityInspectorCustomerPoint(HydraulicData *hydraulic_data, CustomerPoint customer_point, QWidget *parent)
+EntityInspectorCustomerPoint::EntityInspectorCustomerPoint(HydraulicData *hydraulic_data, NetworkHydraulicCustomerPoint customer_point, QWidget *parent)
     : EntityInspectorWidget(hydraulic_data, parent),
     customer_point(customer_point)
 {

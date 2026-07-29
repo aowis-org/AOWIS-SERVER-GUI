@@ -7,7 +7,7 @@
 #include <QDebug>
 
 #include <aowis/model/project.h>
-#include <aowis/model/hydraulic/network.h>
+#include <aowis/model/hydraulic/network_hydraulic.h>
 
 #include <aowis/db/database_gui.h>
 
@@ -30,12 +30,12 @@ public:
     void addTank();
     void deleteTank();
     
-    void setDataTank(Tank tank);
-    void setDataJunction(Junction junction);
-    void setDataPipe(Pipe pipe);
-    void setDataPump(Pump pump);
-    void setDataValve(Valve valve);
-    void setDataReservoir(Reservoir reservoir);
+    void setDataTank(HydraulicNodeTank tank);
+    void setDataJunction(HydraulicNodeJunction junction);
+    void setDataPipe(HydraulicLinkPipe pipe);
+    void setDataPump(HydraulicLinkPump pump);
+    void setDataValve(HydraulicLinkValve valve);
+    void setDataReservoir(HydraulicNodeReservoir reservoir);
     
 private:
     DatabaseGui *database_gui = nullptr;
@@ -47,13 +47,13 @@ private slots:
     void onDatabaseReady();
     
 signals:
-    void signalSelectedTank(const Tank &tank);
-    void signalSelectedReservoir(const Reservoir &reservoir);
-    void signalSelectedJunction(const Junction &junction);
-    void signalSelectedPipe(const Pipe &pipe);
-    void signalSelectedPump(const Pump &pump);
-    void signalSelectedValve(const Valve &valve);
-    void signalSelectedCustomerPoint(const CustomerPoint &customer_point);
+    void signalSelectedTank(const HydraulicNodeTank &tank);
+    void signalSelectedReservoir(const HydraulicNodeReservoir &reservoir);
+    void signalSelectedJunction(const HydraulicNodeJunction &junction);
+    void signalSelectedPipe(const HydraulicLinkPipe &pipe);
+    void signalSelectedPump(const HydraulicLinkPump &pump);
+    void signalSelectedValve(const HydraulicLinkValve &valve);
+    void signalSelectedCustomerPoint(const NetworkHydraulicCustomerPoint &customer_point);
 };
 
 #endif // HYDRAULIC_DATA_H

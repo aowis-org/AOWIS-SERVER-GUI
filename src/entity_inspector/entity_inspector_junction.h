@@ -29,7 +29,7 @@ class EntityInspectorJunction : public EntityInspectorWidget
 {
     Q_OBJECT
 public:
-    explicit EntityInspectorJunction(HydraulicData *hydraulic_data, const Junction &junction, QWidget *parent = nullptr);
+    explicit EntityInspectorJunction(HydraulicData *hydraulic_data, const HydraulicNodeJunction &junction, QWidget *parent = nullptr);
     
 private:
     QLabel *picture = nullptr;

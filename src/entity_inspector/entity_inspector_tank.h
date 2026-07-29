@@ -24,16 +24,16 @@
 #include "../_sizes.h"
 #include "../map/map_models.h"
 //#include "../../external/AOWIS-SERVER-EPANET/src/lib/model/simulation_request.h"
-#include <aowis/model/hydraulic/network.h>
+#include <aowis/model/hydraulic/network_hydraulic.h>
 
 class EntityInspectorTank : public EntityInspectorWidget
 {
     Q_OBJECT
 public:
-    explicit EntityInspectorTank(HydraulicData *hydraulic_data, Tank tank, QWidget *parent = nullptr);
+    explicit EntityInspectorTank(HydraulicData *hydraulic_data, HydraulicNodeTank tank, QWidget *parent = nullptr);
     
 private:
-    Tank tank;
+    HydraulicNodeTank tank;
     QLabel *picture = nullptr;
     
     void addGroupGeometry();
@@ -43,7 +43,7 @@ private:
     QDoubleSpinBox *spin_level_initial = nullptr;
     
     QComboBox *combo_geometry_type = nullptr;
-    TankGeometryInputType tankGeometryInputType();
+    HydraulicNodeTankGeometryInputType tankGeometryInputType();
     int geometry_type_current = 0;
     
     QLabel *label_spin_diameter = nullptr;

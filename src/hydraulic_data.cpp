@@ -79,7 +79,7 @@ void HydraulicData::loadProject()
     }
     
     qDebug() << "Test project:"
-             << this->project->projectId
+             << this->project->project_id
              << this->project->name;
 }
 
@@ -93,7 +93,7 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
     switch (entity_type)
     {
     case InfrastructureEntity::Tank:
-        for (const Tank &tank : this->network_hydraulic.tanks)
+        for (const HydraulicNodeTank &tank : this->network_hydraulic.nodes_tanks)
         {
             if (tank.uuid == uuid)
             {
@@ -105,7 +105,7 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
         break;
         
     case InfrastructureEntity::Reservoir:
-        for (const Reservoir &reservoir : this->network_hydraulic.reservoirs)
+        for (const HydraulicNodeReservoir &reservoir : this->network_hydraulic.nodes_reservoirs)
         {
             if (reservoir.uuid == uuid)
             {
@@ -117,7 +117,7 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
         break;
         
     case InfrastructureEntity::Junction:
-        for (const Junction &junction : this->network_hydraulic.junctions)
+        for (const HydraulicNodeJunction &junction : this->network_hydraulic.nodes_junctions)
         {
             if (junction.uuid == uuid)
             {
@@ -129,7 +129,7 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
         break;
         
     case InfrastructureEntity::Pipe:
-        for (const Pipe &pipe : this->network_hydraulic.pipes)
+        for (const HydraulicLinkPipe &pipe : this->network_hydraulic.links_pipes)
         {
             if (pipe.uuid == uuid)
             {
@@ -141,7 +141,7 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
         break;
         
     case InfrastructureEntity::Pump:
-        for (const Pump &pump : this->network_hydraulic.pumps)
+        for (const HydraulicLinkPump &pump : this->network_hydraulic.links_pumps)
         {
             if (pump.uuid == uuid)
             {
@@ -153,7 +153,7 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
         break;
     
     case InfrastructureEntity::Valve:
-        for (const Valve &valve : this->network_hydraulic.valves)
+        for (const HydraulicLinkValve &valve : this->network_hydraulic.links_valves)
         {
             if (valve.uuid == uuid)
             {
@@ -165,7 +165,7 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
         break;
     
     case InfrastructureEntity::CustomerPoint:
-        for (const CustomerPoint &customer_point : this->network_hydraulic.customer_points)
+        for (const NetworkHydraulicCustomerPoint &customer_point : this->network_hydraulic.customer_points)
         {
             if (customer_point.uuid == uuid)
             {
@@ -188,27 +188,27 @@ void HydraulicData::deleteTank()
     
 }
 
-void HydraulicData::setDataTank(Tank tank)
+void HydraulicData::setDataTank(HydraulicNodeTank tank)
 {
     
 }
-void HydraulicData::setDataJunction(Junction junction)
+void HydraulicData::setDataJunction(HydraulicNodeJunction junction)
 {
     
 }
-void HydraulicData::setDataPipe(Pipe pipe)
+void HydraulicData::setDataPipe(HydraulicLinkPipe pipe)
 {
     
 }
-void HydraulicData::setDataPump(Pump pump)
+void HydraulicData::setDataPump(HydraulicLinkPump pump)
 {
     
 }
-void HydraulicData::setDataValve(Valve valve)
+void HydraulicData::setDataValve(HydraulicLinkValve valve)
 {
     
 }
-void HydraulicData::setDataReservoir(Reservoir reservoir)
+void HydraulicData::setDataReservoir(HydraulicNodeReservoir reservoir)
 {
     
 }
