@@ -375,18 +375,21 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
 
 void MainWindow::fullScreenToggle()
 {
-    if (!isFullScreen())
+    const bool enter_fullscreen = !this->isFullScreen();
+
+    if (enter_fullscreen)
     {
-        // Save current state before going fullscreen
-        this->window_state_saved = windowState();
-        this->window_geometry_saved = geometry();
-        showFullScreen();
+        this->window_state_saved = this->windowState();
+        this->window_geometry_saved = this->geometry();
+        this->showFullScreen();
     }
     else
     {
-        // Restore previous state
-        showNormal();
-        setGeometry(this->window_geometry_saved);
-        setWindowState(this->window_state_saved);
+        this->showNormal();
+        this->setGeometry(this->window_geometry_saved);
+        this->setWindowState(this->window_state_saved);
     }
+
+    this->map_mon->setEdgePanningEnabled(enter_fullscreen);
+    this->map_edit->setEdgePanningEnabled(enter_fullscreen);
 }

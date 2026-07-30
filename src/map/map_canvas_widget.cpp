@@ -89,90 +89,43 @@ void MapCanvasWidget::paintEventRectangle(QPainter &paint)
 
 void MapCanvasWidget::keyPressEvent(QKeyEvent *event)
 {
-    if (onKeyPressEvent(event))
-    {
-        event->accept();
+    if (this->onKeyPressEvent(event))
         return;
-    }
-    
+
     QWidget::keyPressEvent(event);
 }
+
 bool MapCanvasWidget::onKeyPressEvent(QKeyEvent *event)
 {
     if (this->rectangle_selection_active && event->key() == Qt::Key_Escape)
     {
-        cancelRectangleSelection();
+        this->cancelRectangleSelection();
         event->accept();
         return true;
     }
-    
-    const int key = event->key();
-    const bool modifier_ctrl = (event->modifiers() & Qt::ControlModifier);
-    
-    if (modifier_ctrl)
-    {
-        
-    }
-    else if (this->key_space_pressed)
-    {
-        
-    }
-    else
-    {
-        if (key == Qt::Key_Space  && !event->isAutoRepeat())
-            this->key_space_pressed = true;
-        
-        switch (key)
-        {
-        case Qt::Key_Left:
-        case Qt::Key_U:
-            this->map->panLeft();
-            return true;
-            
-        case Qt::Key_Right:
-        case Qt::Key_A:
-            this->map->panRight();
-            return true;
-            
-        case Qt::Key_Up:
-        case Qt::Key_V:
-            this->map->panUp();
-            return true;
-        
-        case Qt::Key_Down:
-        case Qt::Key_I:
-            this->map->panDown();
-            return true;    
-        }
-        
-        switch (key)
-        {
-        case Qt::Key_L:
-            this->map->zoomIn();
-            return true;
-        
-        case Qt::Key_X:
-            this->map->zoomOut();
-            return true;
-        }
-        
-        return false;
-    }
-    
-    return false;
+
+    return this->map->handleKeyPressEvent(event);
 }
+
 void MapCanvasWidget::keyReleaseEvent(QKeyEvent *event)
 {
-    const int key = event->key();
-    
-    if (key == Qt::Key_Space && !event->isAutoRepeat())
-        this->key_space_pressed = false;
+    if (this->onKeyReleaseEvent(event))
+        return;
+
+    QWidget::keyReleaseEvent(event);
 }
+
+bool MapCanvasWidget::onKeyReleaseEvent(QKeyEvent *event)
+{
+    return this->map->handleKeyReleaseEvent(event);
+}
+
 void MapCanvasWidget::focusOutEvent(QFocusEvent *event)
 {
-    this->key_space_pressed = false;
+    this->map->stopKeyboardPan();
     QWidget::focusOutEvent(event);
 }
+
 void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton &&
@@ -220,12 +173,17 @@ void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
         }
     }
     
+    if (this->map->handleMousePressEvent(event))
+        return;
+
     QWidget::mousePressEvent(event);
 }
+
 void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
 {
-    this->map->onMouseMove(event);
-    
+    if (this->map->handleMouseMoveEvent(event))
+        return;
+
     if (this->rectangle_selection_active && this->rectangle_dragging)
     {
         setCursor(Qt::CrossCursor);
@@ -293,15 +251,15 @@ void MapCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
         return;
     }
     
+    if (this->map->handleMouseReleaseEvent(event))
+        return;
+
     QWidget::mouseReleaseEvent(event);
 }
+
 void MapCanvasWidget::wheelEvent(QWheelEvent *event)
 {
-    this->map->onMouseWheel(event);
-    event->accept();
-    return;
-    
-    QWidget::wheelEvent(event);
+    this->map->handleWheelEvent(event);
 }
 
 void MapCanvasWidget::resizeEvent(QResizeEvent *event)

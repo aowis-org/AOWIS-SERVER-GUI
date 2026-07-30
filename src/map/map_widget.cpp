@@ -1,10 +1,60 @@
 #include "map_widget.h"
 
+#include <QApplication>
+
 #ifndef Q_OS_WASM
+#include <QCursor>
 #include <QGeoCoordinate>
+#include <QScreen>
+#include <QWindow>
 #endif
 
 #include <cmath>
+
+namespace
+{
+constexpr int PanFrameIntervalMs = 16;
+constexpr int PanButtonStepPixels = 120;
+constexpr int EdgePanMarginPixels = 2;
+constexpr double PanMaximumSpeedPixelsPerSecond = 900.0;
+constexpr double PanFastSpeedMultiplier = 2.0;
+constexpr double PanFastAccelerationMultiplier = 1.75;
+constexpr double PanAccelerationPixelsPerSecondSquared = 2800.0;
+constexpr double PanDecelerationPixelsPerSecondSquared = 3600.0;
+constexpr double PanVelocityStopThreshold = 0.5;
+#ifndef Q_OS_WASM
+constexpr int MousePanReleaseTimeoutMs = 100;
+constexpr double MousePanVelocitySmoothing = 0.65;
+constexpr double MousePanMaximumSpeedPixelsPerSecond = 2400.0;
+constexpr double MousePanMinimumInertiaSpeedPixelsPerSecond = 70.0;
+constexpr double MousePanInertiaDecelerationPixelsPerSecondSquared = 2600.0;
+#endif
+
+qreal vectorLength(const QPointF &vector)
+{
+    return std::hypot(vector.x(), vector.y());
+}
+
+QPointF normalized(const QPointF &vector)
+{
+    const qreal length = vectorLength(vector);
+    if (qFuzzyIsNull(length))
+        return QPointF();
+
+    return vector / length;
+}
+
+QPointF moveTowards(const QPointF &current, const QPointF &target, qreal maximum_delta)
+{
+    const QPointF delta = target - current;
+    const qreal distance = vectorLength(delta);
+
+    if (distance <= maximum_delta || qFuzzyIsNull(distance))
+        return target;
+
+    return current + delta / distance * maximum_delta;
+}
+}
 
 MapWidget::MapWidget(MapTileRepository *tile_repository, GpsProvider *gps, QWidget *parent)
     : QWidget(parent),
@@ -110,176 +160,528 @@ void MapWidget::init()
         emit signalCoordsChangedUTM(utm);
     });
 
-    this->initTimer();
+    this->initPanAnimation();
 }
 
-void MapWidget::initTimer()
+void MapWidget::initPanAnimation()
 {
-    this->m_timerPanInertia = new QTimer(this);
-    this->m_timerPanInertia->setInterval(16);
+    this->pan_timer = new QTimer(this);
+    this->pan_timer->setInterval(PanFrameIntervalMs);
+    this->pan_timer->setTimerType(Qt::PreciseTimer);
+    connect(this->pan_timer, &QTimer::timeout, this, &MapWidget::updatePanAnimation);
+}
 
-    connect(this->m_timerPanInertia, &QTimer::timeout, this, [this]
+void MapWidget::ensurePanAnimationRunning()
+{
+    if (this->pan_timer->isActive())
+        return;
+
+    this->pan_elapsed_timer.start();
+    this->pan_timer->start();
+}
+
+void MapWidget::stopPanAnimationIfIdle()
+{
+    if (this->edge_panning_enabled || this->hasKeyboardPanInput() || vectorLength(this->pan_velocity) >= PanVelocityStopThreshold)
+        return;
+
+    this->pan_velocity = QPointF();
+    this->pan_fractional_delta = QPointF();
+    this->pan_timer->stop();
+}
+
+void MapWidget::updatePanAnimation()
+{
+    const qint64 elapsed_ms = this->pan_elapsed_timer.restart();
+    const qreal elapsed_seconds = qBound<qreal>(0.0, elapsed_ms / 1000.0, 0.05);
+
+    if (elapsed_seconds <= 0.0 || !this->isVisible())
+        return;
+
+    if (this->mouse_pan_active)
     {
-        const qint64 now = QDateTime::currentMSecsSinceEpoch();
-        const double dt = (now - this->m_timeLastInertia) / 16.0;
-        this->m_timeLastInertia = now;
+        this->pan_velocity = QPointF();
+        this->pan_fractional_delta = QPointF();
+        return;
+    }
 
-        if (this->m_panVelocity.manhattanLength() < 0.1)
-        {
-            this->m_panVelocity = QPointF(0, 0);
-            this->m_timerPanInertia->stop();
-            return;
-        }
+    QPointF direction = this->keyboardPanDirection();
+    const bool keyboard_pan_active = !direction.isNull();
+    bool edge_pan_active = false;
+    if (!keyboard_pan_active)
+    {
+        direction = this->edgePanDirection();
+        edge_pan_active = !direction.isNull();
+    }
+    direction = normalized(direction);
 
-        const QPointF move = this->m_panVelocity * dt;
-        this->m_model->panByPixels(QPoint(move.x(), move.y()), this->size());
+#ifndef Q_OS_WASM
+    if (!direction.isNull())
+        this->mouse_pan_inertia_active = false;
+#endif
 
-        const double friction_per_frame = 0.95;
-        const double friction = std::pow(friction_per_frame, dt);
-        this->m_panVelocity *= friction;
-    });
+    bool fast_pan_active = keyboard_pan_active && this->hasFastKeyboardPanInput();
+#ifndef Q_OS_WASM
+    if (edge_pan_active && QApplication::keyboardModifiers().testFlag(Qt::ShiftModifier))
+        fast_pan_active = true;
+#endif
+
+    qreal maximum_speed = PanMaximumSpeedPixelsPerSecond;
+    qreal acceleration = PanAccelerationPixelsPerSecondSquared;
+    if (fast_pan_active)
+    {
+        maximum_speed *= PanFastSpeedMultiplier;
+        acceleration *= PanFastAccelerationMultiplier;
+    }
+
+#ifndef Q_OS_WASM
+    if (direction.isNull() && this->mouse_pan_inertia_active)
+        acceleration = MousePanInertiaDecelerationPixelsPerSecondSquared;
+    else if (direction.isNull())
+        acceleration = PanDecelerationPixelsPerSecondSquared;
+#else
+    if (direction.isNull())
+        acceleration = PanDecelerationPixelsPerSecondSquared;
+#endif
+
+    const QPointF target_velocity = direction * maximum_speed;
+    this->pan_velocity = moveTowards(this->pan_velocity, target_velocity, acceleration * elapsed_seconds);
+
+    if (direction.isNull() && vectorLength(this->pan_velocity) < PanVelocityStopThreshold)
+    {
+        this->pan_velocity = QPointF();
+#ifndef Q_OS_WASM
+        this->mouse_pan_inertia_active = false;
+#endif
+    }
+
+    const QPointF precise_delta = this->pan_velocity * elapsed_seconds + this->pan_fractional_delta;
+    const QPoint delta(int(std::trunc(precise_delta.x())), int(std::trunc(precise_delta.y())));
+    this->pan_fractional_delta = precise_delta - QPointF(delta);
+
+    if (!delta.isNull())
+        this->m_model->panByPixels(delta, this->size());
+
+    this->stopPanAnimationIfIdle();
+}
+
+bool MapWidget::setKeyboardPanKey(int key, bool pressed)
+{
+    switch (key)
+    {
+    case Qt::Key_Left:
+    case Qt::Key_U:
+        this->pan_key_left_pressed = pressed;
+        return true;
+
+    case Qt::Key_Right:
+    case Qt::Key_A:
+        this->pan_key_right_pressed = pressed;
+        return true;
+
+    case Qt::Key_Up:
+    case Qt::Key_V:
+        this->pan_key_up_pressed = pressed;
+        return true;
+
+    case Qt::Key_Down:
+    case Qt::Key_I:
+        this->pan_key_down_pressed = pressed;
+        return true;
+
+    default:
+        return false;
+    }
+}
+
+bool MapWidget::hasKeyboardPanInput() const
+{
+    return this->pan_key_left_pressed || this->pan_key_right_pressed || this->pan_key_up_pressed || this->pan_key_down_pressed;
+}
+
+bool MapWidget::hasFastKeyboardPanInput() const
+{
+    return this->pan_fast_modifier_pressed && this->hasKeyboardPanInput();
+}
+
+QPointF MapWidget::keyboardPanDirection() const
+{
+    QPointF direction;
+
+    if (this->pan_key_left_pressed)
+        direction.rx() += 1.0;
+    if (this->pan_key_right_pressed)
+        direction.rx() -= 1.0;
+    if (this->pan_key_up_pressed)
+        direction.ry() += 1.0;
+    if (this->pan_key_down_pressed)
+        direction.ry() -= 1.0;
+
+    return direction;
+}
+
+QPointF MapWidget::edgePanDirection() const
+{
+#ifndef Q_OS_WASM
+    if (!this->edge_panning_enabled || !this->isVisible() || !this->window()->isFullScreen() || !this->window()->isActiveWindow())
+        return QPointF();
+
+    if (QApplication::activePopupWidget() || QApplication::activeModalWidget())
+        return QPointF();
+
+    QWindow *window_handle = this->window()->windowHandle();
+    if (!window_handle || !window_handle->screen())
+        return QPointF();
+
+    const QRect screen_geometry = window_handle->screen()->geometry();
+    const QPoint cursor_position = QCursor::pos();
+    if (!screen_geometry.contains(cursor_position))
+        return QPointF();
+
+    QPointF direction;
+
+    if (cursor_position.x() <= screen_geometry.left() + EdgePanMarginPixels)
+        direction.rx() += 1.0;
+    else if (cursor_position.x() >= screen_geometry.right() - EdgePanMarginPixels)
+        direction.rx() -= 1.0;
+
+    if (cursor_position.y() <= screen_geometry.top() + EdgePanMarginPixels)
+        direction.ry() += 1.0;
+    else if (cursor_position.y() >= screen_geometry.bottom() - EdgePanMarginPixels)
+        direction.ry() -= 1.0;
+
+    return direction;
+#else
+    return QPointF();
+#endif
+}
+
+bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
+{
+    if (!event)
+        return false;
+
+    const Qt::KeyboardModifiers blocked_modifiers = Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier;
+    if (event->modifiers() & blocked_modifiers)
+        return false;
+
+    if (event->key() == Qt::Key_Shift)
+    {
+        this->pan_fast_modifier_pressed = true;
+        if (this->hasKeyboardPanInput())
+            this->ensurePanAnimationRunning();
+
+        event->accept();
+        return true;
+    }
+
+    if (this->setKeyboardPanKey(event->key(), true))
+    {
+        this->pan_fast_modifier_pressed = event->modifiers().testFlag(Qt::ShiftModifier);
+#ifndef Q_OS_WASM
+        this->mouse_pan_inertia_active = false;
+#endif
+        this->ensurePanAnimationRunning();
+        event->accept();
+        return true;
+    }
+
+    switch (event->key())
+    {
+    case Qt::Key_L:
+        this->zoomIn();
+        event->accept();
+        return true;
+
+    case Qt::Key_X:
+        this->zoomOut();
+        event->accept();
+        return true;
+
+    default:
+        return false;
+    }
+}
+
+bool MapWidget::handleKeyReleaseEvent(QKeyEvent *event)
+{
+    if (!event)
+        return false;
+
+    if (event->key() == Qt::Key_Shift)
+    {
+        if (!event->isAutoRepeat())
+            this->pan_fast_modifier_pressed = false;
+
+        if (this->hasKeyboardPanInput())
+            this->ensurePanAnimationRunning();
+
+        event->accept();
+        return true;
+    }
+
+    if (this->setKeyboardPanKey(event->key(), event->isAutoRepeat()))
+    {
+        if (!event->isAutoRepeat())
+            this->ensurePanAnimationRunning();
+
+        event->accept();
+        return true;
+    }
+
+    if (event->key() == Qt::Key_L || event->key() == Qt::Key_X)
+    {
+        event->accept();
+        return true;
+    }
+
+    return false;
+}
+
+void MapWidget::stopKeyboardPan()
+{
+    this->pan_key_left_pressed = false;
+    this->pan_key_right_pressed = false;
+    this->pan_key_up_pressed = false;
+    this->pan_key_down_pressed = false;
+    this->pan_fast_modifier_pressed = false;
+    this->pan_velocity = QPointF();
+#ifndef Q_OS_WASM
+    this->mouse_pan_inertia_active = false;
+#endif
+    this->pan_fractional_delta = QPointF();
+    this->stopPanAnimationIfIdle();
+}
+
+void MapWidget::setEdgePanningEnabled(bool enabled)
+{
+#ifdef Q_OS_WASM
+    Q_UNUSED(enabled)
+    this->edge_panning_enabled = false;
+#else
+    if (this->edge_panning_enabled == enabled)
+        return;
+
+    this->edge_panning_enabled = enabled;
+
+    if (enabled)
+        this->ensurePanAnimationRunning();
+    else
+        this->stopPanAnimationIfIdle();
+#endif
 }
 
 void MapWidget::keyPressEvent(QKeyEvent *event)
 {
-    switch (event->key())
-    {
-    case Qt::Key_Left:
-    case Qt::Key_U:
-        this->addPanVelocity(1, 0);
-        break;
-
-    case Qt::Key_Right:
-    case Qt::Key_A:
-        this->addPanVelocity(-1, 0);
-        break;
-
-    case Qt::Key_Up:
-    case Qt::Key_V:
-        this->addPanVelocity(0, 1);
-        break;
-
-    case Qt::Key_Down:
-    case Qt::Key_I:
-        this->addPanVelocity(0, -1);
-        break;
-
-    case Qt::Key_L:
-    case Qt::Key_Shift:
-        this->zoomIn();
-        break;
-
-    case Qt::Key_X:
-    case Qt::Key_Space:
-        this->zoomOut();
-        break;
-
-    default:
-        QWidget::keyPressEvent(event);
+    if (this->handleKeyPressEvent(event))
         return;
-    }
 
-    event->accept();
+    QWidget::keyPressEvent(event);
 }
 
-void MapWidget::addPanVelocity(int x, int y)
+void MapWidget::keyReleaseEvent(QKeyEvent *event)
 {
-    const int step = 20;
+    if (this->handleKeyReleaseEvent(event))
+        return;
 
-    if (x >= 1)
-        this->m_panVelocity += QPointF(step, 0);
-    else if (x <= -1)
-        this->m_panVelocity += QPointF(-step, 0);
-    else if (y >= 1)
-        this->m_panVelocity += QPointF(0, step);
-    else if (y <= -1)
-        this->m_panVelocity += QPointF(0, -step);
+    QWidget::keyReleaseEvent(event);
+}
 
-    this->m_timeLastInertia = QDateTime::currentMSecsSinceEpoch();
+void MapWidget::focusOutEvent(QFocusEvent *event)
+{
+    this->stopKeyboardPan();
+    QWidget::focusOutEvent(event);
+}
 
-    if (!this->m_timerPanInertia->isActive())
-        this->m_timerPanInertia->start();
+void MapWidget::panByStep(const QPoint &delta)
+{
+    this->pan_velocity = QPointF();
+    this->pan_fractional_delta = QPointF();
+#ifndef Q_OS_WASM
+    this->mouse_pan_inertia_active = false;
+#endif
+    this->m_model->panByPixels(delta, this->size());
 }
 
 void MapWidget::panUp()
 {
-    this->addPanVelocity(0, 1);
+    this->panByStep(QPoint(0, PanButtonStepPixels));
 }
 
 void MapWidget::panDown()
 {
-    this->addPanVelocity(0, -1);
+    this->panByStep(QPoint(0, -PanButtonStepPixels));
 }
 
 void MapWidget::panLeft()
 {
-    this->addPanVelocity(1, 0);
+    this->panByStep(QPoint(PanButtonStepPixels, 0));
 }
 
 void MapWidget::panRight()
 {
-    this->addPanVelocity(-1, 0);
+    this->panByStep(QPoint(-PanButtonStepPixels, 0));
 }
 
 void MapWidget::wheelEvent(QWheelEvent *event)
 {
-    this->onMouseWheel(event);
+    this->handleWheelEvent(event);
 }
 
-void MapWidget::onMouseWheel(QWheelEvent *event)
+void MapWidget::handleWheelEvent(QWheelEvent *event)
 {
     this->wheel_delta_accumulated += event->angleDelta().y();
 
     const int threshold = 120;
-
     if (std::abs(this->wheel_delta_accumulated) < threshold)
+    {
+        event->accept();
         return;
+    }
 
     const int steps = this->wheel_delta_accumulated / threshold;
     this->wheel_delta_accumulated %= threshold;
 
     this->m_model->zoomByAt(steps, event->position().toPoint(), this->size());
+    event->accept();
 }
 
 void MapWidget::mousePressEvent(QMouseEvent *event)
 {
-    if (event->buttons() & Qt::LeftButton)
-    {
-        this->m_timeLastInertia = QDateTime::currentMSecsSinceEpoch();
-        this->m_timerPanInertia->stop();
-        this->m_panVelocity = QPointF(0, 0);
-    }
+    if (this->handleMousePressEvent(event))
+        return;
 
-    this->m_posLast = event->pos();
+    QWidget::mousePressEvent(event);
+}
+
+bool MapWidget::handleMousePressEvent(QMouseEvent *event)
+{
+    if (!event || event->button() != Qt::LeftButton)
+        return false;
+
+    this->mouse_pan_active = true;
+    this->mouse_pan_last_position = event->position().toPoint();
+    this->pan_velocity = QPointF();
+    this->pan_fractional_delta = QPointF();
+#ifndef Q_OS_WASM
+    this->mouse_pan_velocity = QPointF();
+    this->mouse_pan_move_elapsed_timer.start();
+    this->mouse_pan_inertia_active = false;
+#endif
+    this->stopPanAnimationIfIdle();
+    event->accept();
+    return true;
 }
 
 void MapWidget::mouseReleaseEvent(QMouseEvent *event)
 {
-    Q_UNUSED(event)
+    if (this->handleMouseReleaseEvent(event))
+        return;
+
+    QWidget::mouseReleaseEvent(event);
+}
+
+bool MapWidget::handleMouseReleaseEvent(QMouseEvent *event)
+{
+    if (!event || event->button() != Qt::LeftButton || !this->mouse_pan_active)
+        return false;
+
+    this->mouse_pan_active = false;
+#ifndef Q_OS_WASM
+    const bool movement_is_recent = this->mouse_pan_move_elapsed_timer.isValid() &&
+        this->mouse_pan_move_elapsed_timer.elapsed() <= MousePanReleaseTimeoutMs;
+    const qreal release_speed = vectorLength(this->mouse_pan_velocity);
+
+    if (movement_is_recent && release_speed >= MousePanMinimumInertiaSpeedPixelsPerSecond)
+    {
+        this->pan_velocity = this->mouse_pan_velocity;
+        this->pan_fractional_delta = QPointF();
+        this->mouse_pan_inertia_active = true;
+        this->ensurePanAnimationRunning();
+    }
+    else
+    {
+        this->pan_velocity = QPointF();
+        this->mouse_pan_inertia_active = false;
+    }
+
+    this->mouse_pan_velocity = QPointF();
+#endif
+    this->stopPanAnimationIfIdle();
+    event->accept();
+    return true;
 }
 
 void MapWidget::mouseMoveEvent(QMouseEvent *event)
 {
-    this->onMouseMove(event);
+    if (this->handleMouseMoveEvent(event))
+        return;
+
+    QWidget::mouseMoveEvent(event);
 }
 
-void MapWidget::onMouseMove(QMouseEvent *event)
+bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
 {
-    const CoordinateWGS84 wgs = this->m_model->wgs84FromScreen(event->pos(), this->size());
+    if (!event)
+        return false;
+
+    const QPoint position = event->position().toPoint();
+    this->updatePointerCoordinates(position);
+
+    if (!this->mouse_pan_active)
+        return false;
+
+    if (!(event->buttons() & Qt::LeftButton))
+    {
+        this->mouse_pan_active = false;
+#ifndef Q_OS_WASM
+        this->mouse_pan_velocity = QPointF();
+        this->mouse_pan_inertia_active = false;
+#endif
+        return false;
+    }
+
+    const QPoint delta = position - this->mouse_pan_last_position;
+    this->mouse_pan_last_position = position;
+
+#ifndef Q_OS_WASM
+    const qint64 elapsed_ms = this->mouse_pan_move_elapsed_timer.restart();
+    if (!delta.isNull() && elapsed_ms > 0)
+    {
+        const qreal elapsed_seconds = qBound<qreal>(0.001, elapsed_ms / 1000.0, 0.1);
+        QPointF measured_velocity = QPointF(delta) / elapsed_seconds;
+        const qreal measured_speed = vectorLength(measured_velocity);
+        if (measured_speed > MousePanMaximumSpeedPixelsPerSecond)
+            measured_velocity = normalized(measured_velocity) * MousePanMaximumSpeedPixelsPerSecond;
+
+        if (this->mouse_pan_velocity.isNull())
+        {
+            this->mouse_pan_velocity = measured_velocity;
+        }
+        else
+        {
+            this->mouse_pan_velocity =
+                this->mouse_pan_velocity * (1.0 - MousePanVelocitySmoothing) +
+                measured_velocity * MousePanVelocitySmoothing;
+        }
+    }
+#endif
+
+    if (!delta.isNull())
+        this->m_model->panByPixels(delta, this->size());
+
+    event->accept();
+    return true;
+}
+
+void MapWidget::updatePointerCoordinates(const QPoint &position)
+{
+    const CoordinateWGS84 wgs = this->m_model->wgs84FromScreen(position, this->size());
     emit signalCoordsChangedWgs84(wgs);
 
     GeoMetricProjection projection;
     const CoordinateUTM utm = projection.wgs84ToUtm(wgs);
     emit signalCoordsChangedUTM(utm);
-
-    if (event->buttons() & Qt::LeftButton)
-    {
-        const QPoint delta = event->pos() - this->m_posLast;
-        this->m_panVelocity = QPointF(0, 0);
-        this->m_model->panByPixels(delta, this->size());
-    }
-
-    this->m_posLast = event->pos();
 }
 
 void MapWidget::zoomIn()

@@ -63,14 +63,16 @@ bool MapEditorContainer::eventFilter(QObject *obj, QEvent *event)
     if (event->type() == QEvent::KeyPress)
     {
         QKeyEvent *key_event = static_cast<QKeyEvent *>(event);
-        
-        if (map_canvas->onKeyPressEvent(key_event))
-        {
-            event->accept();
+        if (this->map_canvas->onKeyPressEvent(key_event))
             return true;
-        }
     }
-    
+    else if (event->type() == QEvent::KeyRelease)
+    {
+        QKeyEvent *key_event = static_cast<QKeyEvent *>(event);
+        if (this->map_canvas->onKeyReleaseEvent(key_event))
+            return true;
+    }
+
     return QWidget::eventFilter(obj, event);
 }
 

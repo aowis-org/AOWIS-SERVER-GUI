@@ -1,12 +1,14 @@
 #ifndef MAP_WIDGET_H
 #define MAP_WIDGET_H
 
-#include <QDateTime>
+#include <QElapsedTimer>
+#include <QFocusEvent>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPoint>
+#include <QPointF>
 #include <QTimer>
 #include <QWheelEvent>
 #include <QWidget>
@@ -32,9 +34,15 @@ public:
 
     MapModel *model() const;
 
-    void addPanVelocity(int x, int y);
-    void onMouseMove(QMouseEvent *event);
-    void onMouseWheel(QWheelEvent *event);
+    bool handleKeyPressEvent(QKeyEvent *event);
+    bool handleKeyReleaseEvent(QKeyEvent *event);
+    bool handleMousePressEvent(QMouseEvent *event);
+    bool handleMouseReleaseEvent(QMouseEvent *event);
+    bool handleMouseMoveEvent(QMouseEvent *event);
+    void handleWheelEvent(QWheelEvent *event);
+
+    void stopKeyboardPan();
+    void setEdgePanningEnabled(bool enabled);
 
 public slots:
     void zoomIn();
@@ -52,11 +60,25 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void keyReleaseEvent(QKeyEvent *event) override;
+    void focusOutEvent(QFocusEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
 
 private:
     void init();
-    void initTimer();
+    void initPanAnimation();
+    void ensurePanAnimationRunning();
+    void stopPanAnimationIfIdle();
+    void updatePanAnimation();
+
+    bool setKeyboardPanKey(int key, bool pressed);
+    bool hasKeyboardPanInput() const;
+    bool hasFastKeyboardPanInput() const;
+    QPointF keyboardPanDirection() const;
+    QPointF edgePanDirection() const;
+    void panByStep(const QPoint &delta);
+
+    void updatePointerCoordinates(const QPoint &position);
     void drawTiles(QPainter &painter);
     void showContextMenu(const QPoint &pos);
 
@@ -66,10 +88,26 @@ private:
     MapModel *m_model = nullptr;
     MapTileRepository *tile_repository = nullptr;
 
-    QPoint m_posLast;
-    QPointF m_panVelocity;
-    QTimer *m_timerPanInertia = nullptr;
-    qint64 m_timeLastInertia = 0;
+    bool mouse_pan_active = false;
+    QPoint mouse_pan_last_position;
+#ifndef Q_OS_WASM
+    QPointF mouse_pan_velocity;
+    QElapsedTimer mouse_pan_move_elapsed_timer;
+    bool mouse_pan_inertia_active = false;
+#endif
+
+    bool pan_key_left_pressed = false;
+    bool pan_key_right_pressed = false;
+    bool pan_key_up_pressed = false;
+    bool pan_key_down_pressed = false;
+    bool pan_fast_modifier_pressed = false;
+
+    bool edge_panning_enabled = false;
+    QPointF pan_velocity;
+    QPointF pan_fractional_delta;
+    QTimer *pan_timer = nullptr;
+    QElapsedTimer pan_elapsed_timer;
+
     int wheel_delta_accumulated = 0;
 
 signals:

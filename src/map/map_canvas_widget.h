@@ -40,6 +40,7 @@ public:
     void stopEntityPositioning();
     
     bool onKeyPressEvent(QKeyEvent *event);
+    bool onKeyReleaseEvent(QKeyEvent *event);
     
 public slots:
     void setBackgroundOpacity(int opacity);
@@ -82,8 +83,6 @@ private:
     
     QRect currentSelectionRect() const;
     void paintEventRectangle(QPainter &paint);
-    
-    bool key_space_pressed = false;
     
 signals:
     void signalRectangleSelected(const CoordinateWGS84Rect &rect);
