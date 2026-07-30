@@ -82,7 +82,7 @@ void HydraulicData::loadProject()
     }
     
     qDebug() << "Test project:"
-             << this->project->project_id
+             << this->project->uuid
              << this->project->name;
 }
 
