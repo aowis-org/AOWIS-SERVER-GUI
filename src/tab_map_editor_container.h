@@ -19,6 +19,7 @@
 #include <QKeySequence>
 
 #include "map/map_model.h"
+#include "map/map_tile_repository.h"
 #include "map/map_widget.h"
 #include "map/map_navigation_widget.h"
 #include "map/map_canvas_widget.h"
@@ -71,7 +72,7 @@ class MapEditorContainer : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapEditorContainer(MapModel *map_model, HydraulicData *hydraulic_data, GpsProvider *gps, EntityInspectorDock *map_inspector, QWidget *parent = nullptr);
+    explicit MapEditorContainer(MapModel *map_model, MapTileRepository *tile_repository, HydraulicData *hydraulic_data, GpsProvider *gps, EntityInspectorDock *map_inspector, QWidget *parent = nullptr);
     
     MapWidget *getMap();
     
@@ -87,6 +88,7 @@ private:
     EntityInspectorDock *map_inspector;
     
     MapModel *map_model;
+    MapTileRepository *tile_repository;
     MapWidget *map;
     MapCanvasWidget *map_canvas;
     MapEditorMenuWidget *map_menu;

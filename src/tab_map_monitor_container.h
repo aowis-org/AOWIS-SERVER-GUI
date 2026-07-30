@@ -21,6 +21,7 @@
 
 #include "_enums_structs.h"
 #include "map/map_model.h"
+#include "map/map_tile_repository.h"
 #include "map/map_widget.h"
 #include "map/map_navigation_widget.h"
 #include "widgets/group_box_collapsible.h"
@@ -68,7 +69,7 @@ class MapMonitorContainer : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapMonitorContainer(MapModel *map_model, GpsProvider *gps, QWidget *parent = nullptr);
+    explicit MapMonitorContainer(MapModel *map_model, MapTileRepository *tile_repository, GpsProvider *gps, QWidget *parent = nullptr);
     
     MapWidget *getMap();
     
@@ -76,11 +77,11 @@ public:
     
 private:
     QHBoxLayout *layout = nullptr;
+    GpsProvider *gps = nullptr;
     MapModel *map_model = nullptr;
+    MapTileRepository *tile_repository = nullptr;
     MapWidget *map = nullptr;
     MapMonitorMenuWidget *map_menu = nullptr;
-    
-    GpsProvider *gps = nullptr;
     
 signals:
     void signalShowMapLegendNode(VisualNode visual_node);

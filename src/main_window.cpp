@@ -9,11 +9,13 @@ MainWindow::MainWindow(QWidget *parent)
     dock_sim_control( new SimControlDock(this) ),
     dock_entity_inspector( new EntityInspectorDock(hydraulic_data, this) ),
     dock_entity_map_legend( new EntityMapLegendDock(hydraulic_data, this)),
-    map_model( new MapModel(this) ),
+    map_tile_repository( new MapTileRepository(this) ),
+    map_model_monitor( new MapModel(this) ),
+    map_model_editor( new MapModel(this) ),
     tabs( new QTabWidget(this) ),
     settings( new SettingsWidget(this) ),
-    map_monitor( new MapMonitorContainer(map_model, gps, this) ),
-    map_editor( new MapEditorContainer(map_model, hydraulic_data, gps, dock_entity_inspector, this) ),
+    map_monitor( new MapMonitorContainer(this->map_model_monitor, this->map_tile_repository, this->gps, this) ),
+    map_editor( new MapEditorContainer(this->map_model_editor, this->map_tile_repository, this->hydraulic_data, this->gps, this->dock_entity_inspector, this) ),
     energy( new EnergyWidget(this) ),
     reservoirs( new ReservoirsWidget(this) ),
     tanks( new TanksWidget(this) ),
@@ -172,13 +174,44 @@ MainWindow::MainWindow(QWidget *parent)
     
     MapNavigationWidget *map_edit_nav = this->map_editor->mapNavigationWidget();
     MapNavigationWidget *map_mon_nav = this->map_monitor->mapNavigationWidget();
+
+    connect(this->map_model_editor, &MapModel::providerChanged, this->map_model_monitor, &MapModel::setProvider);
+    connect(this->map_model_monitor, &MapModel::providerChanged, this->map_model_editor, &MapModel::setProvider);
+    connect(this->map_model_editor, &MapModel::providerChanged, map_edit_nav, &MapNavigationWidget::mapProviderChange);
+    connect(this->map_model_monitor, &MapModel::providerChanged, map_mon_nav, &MapNavigationWidget::mapProviderChange);
+
+    connect(this->map_model_editor, &MapModel::zoomChanged, this, [this](int)
+    {
+        this->syncMapMovement(this->map_edit, this->map_mon);
+    });
+    connect(this->map_model_editor, &MapModel::centerChangedWGS84, this, [this](CoordinateWGS84)
+    {
+        this->syncMapMovement(this->map_edit, this->map_mon);
+    });
+    connect(this->map_model_monitor, &MapModel::zoomChanged, this, [this](int)
+    {
+        this->syncMapMovement(this->map_mon, this->map_edit);
+    });
+    connect(this->map_model_monitor, &MapModel::centerChangedWGS84, this, [this](CoordinateWGS84)
+    {
+        this->syncMapMovement(this->map_mon, this->map_edit);
+    });
+
     connect(map_edit_nav, &MapNavigationWidget::signalSyncMapMovementStateChanged, this, [this, map_mon_nav](bool state)
     {
+        this->sync_map_movement = state;
         map_mon_nav->mapMovementSyncStateChange(state);
+
+        if (state)
+            this->syncMapMovement(this->map_edit, this->map_mon);
     });
     connect(map_mon_nav, &MapNavigationWidget::signalSyncMapMovementStateChanged, this, [this, map_edit_nav](bool state)
     {
+        this->sync_map_movement = state;
         map_edit_nav->mapMovementSyncStateChange(state);
+
+        if (state)
+            this->syncMapMovement(this->map_mon, this->map_edit);
     });
     
     connect(this->dock_sim_control, &SimControlDock::signalHeadlossFormulaChanged, this->dock_entity_inspector, &EntityInspectorDock::onHeadlossFormulaChanged);
@@ -191,6 +224,24 @@ MainWindow::MainWindow(QWidget *parent)
     #endif
 }
 
+
+void MainWindow::syncMapMovement(MapWidget *source, MapWidget *target)
+{
+    if (!this->sync_map_movement || this->syncing_map_movement || !source || !target)
+        return;
+
+    MapModel *source_model = source->model();
+    MapModel *target_model = target->model();
+
+    if (!source_model || !target_model)
+        return;
+
+    this->syncing_map_movement = true;
+    target_model->setZoom(source_model->zoom(), target->size());
+    target_model->setCenter(source_model->centerLon(), source_model->centerLat(), target->size());
+    this->syncing_map_movement = false;
+}
+
 void MainWindow::checkServerMapInit()
 {
     this->time_server_map_success_last = QDateTime::currentDateTime();    
@@ -198,15 +249,15 @@ void MainWindow::checkServerMapInit()
     
     this->rest_check_map = new RESTClient("http://aowis-server-map.localhost:80", this);
     connect(this->rest_check_map, &RESTClient::requestFinished, this, [this](const QByteArray &data)
-    {
-        this->checking_server_map = false;
-        
-        this->time_server_map_success_last = QDateTime::currentDateTime();
-    });
+            {
+                this->checking_server_map = false;
+                
+                this->time_server_map_success_last = QDateTime::currentDateTime();
+            });
     connect(this->rest_check_map, &RESTClient::requestError, this, [this](const QString &err)
-    {
-        this->checking_server_map = false;
-    });
+            {
+                this->checking_server_map = false;
+            });
     
     // set up timer for periodic check
     QTimer *timer = new QTimer(this);

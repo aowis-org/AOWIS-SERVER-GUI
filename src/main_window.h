@@ -32,6 +32,7 @@
 #include "tab_settings_widget.h"
 
 #include "map/map_model.h"
+#include "map/map_tile_repository.h"
 #include "map/map_widget.h"
 #include "tab_map_monitor_container.h"
 #include "tab_map_editor_container.h"
@@ -88,9 +89,15 @@ private:
     EntityMapLegendDock *dock_entity_map_legend;
     SimControlDock *dock_sim_control;
     
-    MapModel *map_model;
+    MapTileRepository *map_tile_repository;
+    MapModel *map_model_monitor;
+    MapModel *map_model_editor;
     MapWidget *map_mon;
     MapWidget *map_edit;
+
+    bool sync_map_movement = true;
+    bool syncing_map_movement = false;
+    void syncMapMovement(MapWidget *source, MapWidget *target);
     
     QTabWidget *tabs;
     SettingsWidget *settings;

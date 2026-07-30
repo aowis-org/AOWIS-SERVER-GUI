@@ -1,385 +1,352 @@
 #include "map_widget.h"
 
+#ifndef Q_OS_WASM
+#include <QGeoCoordinate>
+#endif
+
 #include <cmath>
 
-MapWidget::MapWidget(GpsProvider *gps, QWidget *parent)
+MapWidget::MapWidget(MapTileRepository *tile_repository, GpsProvider *gps, QWidget *parent)
     : QWidget(parent),
+    gps(gps),
     m_model(new MapModel(this)),
-    m_ownsModel(true),
-    m_cache(2000),
-    gps( gps )
+    tile_repository(tile_repository)
 {
-    init();
+    if (!this->tile_repository)
+        this->tile_repository = new MapTileRepository(this);
+
+    this->init();
 }
 
-MapWidget::MapWidget(MapModel *model, GpsProvider *gps, QWidget *parent)
+MapWidget::MapWidget(MapModel *model, MapTileRepository *tile_repository, GpsProvider *gps, QWidget *parent)
     : QWidget(parent),
+    gps(gps),
     m_model(model),
-    m_ownsModel(false),
-    m_cache(2000),
-    gps( gps )
+    tile_repository(tile_repository)
 {
-    if (!m_model)
-    {
-        m_model = new MapModel(this);
-        m_ownsModel = true;
-    }
-    
-    init();
+    if (!this->m_model)
+        this->m_model = new MapModel(this);
+
+    if (!this->tile_repository)
+        this->tile_repository = new MapTileRepository(this);
+
+    this->init();
 }
 
 MapModel *MapWidget::model() const
 {
-    return m_model;
+    return this->m_model;
 }
 
 void MapWidget::init()
 {
-    initServerMapInterface();
-    
-    setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(this, &MapWidget::customContextMenuRequested,
-            this, &MapWidget::showContextMenu);
-    
-    setMinimumHeight(500);
-    setMinimumWidth(550);
-    setContentsMargins(0, 0, 0, 0);
-    
-    setFocusPolicy(Qt::StrongFocus);
-    setFocus();
-    setMouseTracking(true);
-    
-    connect(m_model, &MapModel::zoomChanged,
-            this, &MapWidget::signalZoomChanged);
-    
-    connect(m_model, &MapModel::centerChangedWGS84,
-            this, &MapWidget::signalCoordsChangedWgs84);
-    
-    connect(m_model, &MapModel::centerChangedUTM, this, &MapWidget::signalCoordsChangedUTM);
-    
-    connect(m_model, &MapModel::providerChanged,
-            this, [this](MapProvider) {
-                update();
-            });
-    
-    connect(this->gps, &GpsProvider::positionChanged, this, [this](const QGeoPositionInfo &info)
+    this->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(this, &MapWidget::customContextMenuRequested, this, &MapWidget::showContextMenu);
+
+    this->setMinimumHeight(500);
+    this->setMinimumWidth(550);
+    this->setContentsMargins(0, 0, 0, 0);
+
+    this->setFocusPolicy(Qt::StrongFocus);
+    this->setFocus();
+    this->setMouseTracking(true);
+
+    connect(this->m_model, &MapModel::zoomChanged, this, [this](int zoom)
     {
-        #ifndef Q_OS_WASM
-        const auto coord = info.coordinate();
-        
-        this->gps_coordinate.latitude_deg = coord.latitude();
-        this->gps_coordinate.longitude_deg = coord.longitude();
-        this->gps_coordinate.altitude_m = coord.altitude();
-        #endif
+        emit signalZoomChanged(zoom);
+        this->update();
     });
-    connect(this->gps, &GpsProvider::statusMessage, this, [](const QString &msg)
+
+    connect(this->m_model, &MapModel::centerChangedWGS84, this, [this](CoordinateWGS84 wgs)
     {
-        qDebug() << msg;
-    });
-    
-    QTimer::singleShot(100, this, [this] {
-        emit signalZoomChanged(m_model->zoom());
-        
-        CoordinateWGS84 wgs;
-        wgs.latitude_deg = m_model->centerLat();
-        wgs.longitude_deg = m_model->centerLon();
         emit signalCoordsChangedWgs84(wgs);
-        
+        this->update();
+    });
+
+    connect(this->m_model, &MapModel::centerChangedUTM, this, &MapWidget::signalCoordsChangedUTM);
+    connect(this->m_model, &MapModel::providerChanged, this, [this](MapProvider)
+    {
+        this->update();
+    });
+
+    connect(this->tile_repository, &MapTileRepository::signalTileAvailable, this, [this](const QString &)
+    {
+        this->update();
+    });
+    connect(this->tile_repository, &MapTileRepository::signalTileFailed, this, [this](const QString &)
+    {
+        this->update();
+    });
+
+    if (this->gps)
+    {
+        connect(this->gps, &GpsProvider::positionChanged, this, [this](const QGeoPositionInfo &info)
+        {
+#ifndef Q_OS_WASM
+            const QGeoCoordinate coord = info.coordinate();
+
+            this->gps_coordinate.latitude_deg = coord.latitude();
+            this->gps_coordinate.longitude_deg = coord.longitude();
+            this->gps_coordinate.altitude_m = coord.altitude();
+#endif
+        });
+        connect(this->gps, &GpsProvider::statusMessage, this, [](const QString &message)
+        {
+            qDebug() << message;
+        });
+    }
+
+    QTimer::singleShot(100, this, [this]
+    {
+        emit signalZoomChanged(this->m_model->zoom());
+
+        CoordinateWGS84 wgs;
+        wgs.latitude_deg = this->m_model->centerLat();
+        wgs.longitude_deg = this->m_model->centerLon();
+        emit signalCoordsChangedWgs84(wgs);
+
         GeoMetricProjection projection;
         const CoordinateUTM utm = projection.wgs84ToUtm(wgs);
         emit signalCoordsChangedUTM(utm);
     });
-    
-    initTimer();
-}
 
-void MapWidget::initServerMapInterface()
-{
-    if (this->interface_map)
-    {
-        this->interface_map->deleteLater();
-        this->interface_map = nullptr;
-    }
-    
-    if (this->map_server_mode == MapServerMode::REST)
-    {
-        this->interface_map = new InterfaceServerMapREST(this);
-    }
-    else if (this->map_server_mode == MapServerMode::Standalone)
-    {
-        #ifdef AOWIS_STANDALONE
-        this->interface_map = new InterfaceServerMapStandalone(this);
-        #endif
-    }
-    
-    connect(this->interface_map, &InterfaceServerMap::signalTileReceived, this, &MapWidget::tileReceived);
-    
-    connect(this->interface_map, &InterfaceServerMap::signalTileFailed, this, [this](const QString &key)
-            {
-                m_tilesPending.remove(key);
-                update();
-            });
-}
-void MapWidget::tileReceived(const QString &key, QPixmap *pix)
-{
-    m_tilesPending.remove(key);
-    m_cache.insert(key, pix);
-    update();
-}
-void MapWidget::setMapServerMode(MapServerMode mode)
-{
-    if (this->map_server_mode == mode)
-        return;
-    
-    this->map_server_mode = mode;
-    initServerMapInterface();
+    this->initTimer();
 }
 
 void MapWidget::initTimer()
 {
-    m_timerPanInertia = new QTimer(this);
-    m_timerPanInertia->setInterval(16);
-    
-    connect(m_timerPanInertia, &QTimer::timeout, this, [this] {
+    this->m_timerPanInertia = new QTimer(this);
+    this->m_timerPanInertia->setInterval(16);
+
+    connect(this->m_timerPanInertia, &QTimer::timeout, this, [this]
+    {
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
-        const double dt = (now - m_timeLastInertia) / 16.0;
-        m_timeLastInertia = now;
-        
-        if (m_panVelocity.manhattanLength() < 0.1)
+        const double dt = (now - this->m_timeLastInertia) / 16.0;
+        this->m_timeLastInertia = now;
+
+        if (this->m_panVelocity.manhattanLength() < 0.1)
         {
-            m_panVelocity = QPointF(0, 0);
-            m_timerPanInertia->stop();
+            this->m_panVelocity = QPointF(0, 0);
+            this->m_timerPanInertia->stop();
             return;
         }
-        
-        const QPointF move = m_panVelocity * dt;
-        m_model->panByPixels(QPoint(move.x(), move.y()), size());
 
-#ifdef Q_OS_WASM
-        const double frictionPerFrame = 0.95;
-#else
-        const double frictionPerFrame = 0.95;
-#endif
-        const double friction = std::pow(frictionPerFrame, dt);
-        m_panVelocity *= friction;
-        
-        update();
+        const QPointF move = this->m_panVelocity * dt;
+        this->m_model->panByPixels(QPoint(move.x(), move.y()), this->size());
+
+        const double friction_per_frame = 0.95;
+        const double friction = std::pow(friction_per_frame, dt);
+        this->m_panVelocity *= friction;
     });
 }
 
 void MapWidget::keyPressEvent(QKeyEvent *event)
 {
-    if (event->key() == Qt::Key_Left)
-        addPanVelocity(1, 0);
-    else if (event->key() == Qt::Key_Right)
-        addPanVelocity(-1, 0);
-    else if (event->key() == Qt::Key_Up)
-        addPanVelocity(0, 1);
-    else if (event->key() == Qt::Key_Down)
-        addPanVelocity(0, -1);
-    
-    else if (event->key() == Qt::Key_U)
-        addPanVelocity(1, 0);
-    else if (event->key() == Qt::Key_A)
-        addPanVelocity(-1, 0);
-    else if (event->key() == Qt::Key_V)
-        addPanVelocity(0, 1);
-    else if (event->key() == Qt::Key_I)
-        addPanVelocity(0, -1);
-    
-    else if (event->key() == Qt::Key_Shift)
-        zoomIn();
-    else if (event->key() == Qt::Key_Space)
-        zoomOut();
-    
-    else
+    switch (event->key())
+    {
+    case Qt::Key_Left:
+    case Qt::Key_U:
+        this->addPanVelocity(1, 0);
+        break;
+
+    case Qt::Key_Right:
+    case Qt::Key_A:
+        this->addPanVelocity(-1, 0);
+        break;
+
+    case Qt::Key_Up:
+    case Qt::Key_V:
+        this->addPanVelocity(0, 1);
+        break;
+
+    case Qt::Key_Down:
+    case Qt::Key_I:
+        this->addPanVelocity(0, -1);
+        break;
+
+    case Qt::Key_L:
+    case Qt::Key_Shift:
+        this->zoomIn();
+        break;
+
+    case Qt::Key_X:
+    case Qt::Key_Space:
+        this->zoomOut();
+        break;
+
+    default:
         QWidget::keyPressEvent(event);
-    
+        return;
+    }
+
     event->accept();
-    return;
 }
+
 void MapWidget::addPanVelocity(int x, int y)
 {
     const int step = 20;
-    
+
     if (x >= 1)
-        m_panVelocity += QPointF(step, 0);
+        this->m_panVelocity += QPointF(step, 0);
     else if (x <= -1)
-        m_panVelocity += QPointF(-step, 0);
+        this->m_panVelocity += QPointF(-step, 0);
     else if (y >= 1)
-        m_panVelocity += QPointF(0, step);
+        this->m_panVelocity += QPointF(0, step);
     else if (y <= -1)
-        m_panVelocity += QPointF(0, -step);
-    
-    m_timeLastInertia = QDateTime::currentMSecsSinceEpoch();
-    
-    if (!m_timerPanInertia->isActive())
-        m_timerPanInertia->start();
+        this->m_panVelocity += QPointF(0, -step);
+
+    this->m_timeLastInertia = QDateTime::currentMSecsSinceEpoch();
+
+    if (!this->m_timerPanInertia->isActive())
+        this->m_timerPanInertia->start();
 }
+
 void MapWidget::panUp()
 {
-    addPanVelocity(0, 1);
+    this->addPanVelocity(0, 1);
 }
+
 void MapWidget::panDown()
 {
-    addPanVelocity(0, -1);
+    this->addPanVelocity(0, -1);
 }
+
 void MapWidget::panLeft()
 {
-    addPanVelocity(1, 0);
+    this->addPanVelocity(1, 0);
 }
+
 void MapWidget::panRight()
 {
-    addPanVelocity(-1, 0);
+    this->addPanVelocity(-1, 0);
 }
 
-void MapWidget::wheelEvent(QWheelEvent *ev)
+void MapWidget::wheelEvent(QWheelEvent *event)
 {
-    onMouseWheel(ev);
+    this->onMouseWheel(event);
 }
-void MapWidget::onMouseWheel(QWheelEvent *ev)
+
+void MapWidget::onMouseWheel(QWheelEvent *event)
 {
-    static int accumulated = 0;
-    
-    accumulated += ev->angleDelta().y();
-    
+    this->wheel_delta_accumulated += event->angleDelta().y();
+
     const int threshold = 120;
-    
-    if (std::abs(accumulated) < threshold)
+
+    if (std::abs(this->wheel_delta_accumulated) < threshold)
         return;
-    
-    const int steps = accumulated / threshold;
-    accumulated %= threshold;
-    
-    m_model->zoomByAt(steps, ev->position().toPoint(), size());
-    update();
+
+    const int steps = this->wheel_delta_accumulated / threshold;
+    this->wheel_delta_accumulated %= threshold;
+
+    this->m_model->zoomByAt(steps, event->position().toPoint(), this->size());
 }
 
-void MapWidget::mousePressEvent(QMouseEvent *ev)
+void MapWidget::mousePressEvent(QMouseEvent *event)
 {
-    if (ev->buttons() & Qt::LeftButton)
+    if (event->buttons() & Qt::LeftButton)
     {
-        m_timeLastInertia = QDateTime::currentMSecsSinceEpoch();
-        m_timerPanInertia->stop();
-        m_panVelocity = QPointF(0, 0);
+        this->m_timeLastInertia = QDateTime::currentMSecsSinceEpoch();
+        this->m_timerPanInertia->stop();
+        this->m_panVelocity = QPointF(0, 0);
     }
-    
-    m_posLast = ev->pos();
+
+    this->m_posLast = event->pos();
 }
 
-void MapWidget::mouseReleaseEvent(QMouseEvent *ev)
+void MapWidget::mouseReleaseEvent(QMouseEvent *event)
 {
-    Q_UNUSED(ev)
-    
-    /*
-    if (!m_timerPanInertia->isActive())
-        m_timerPanInertia->start();
-    */
+    Q_UNUSED(event)
 }
 
-void MapWidget::mouseMoveEvent(QMouseEvent *ev)
+void MapWidget::mouseMoveEvent(QMouseEvent *event)
 {
-    onMouseMove(ev);
+    this->onMouseMove(event);
 }
-void MapWidget::onMouseMove(QMouseEvent *ev)
+
+void MapWidget::onMouseMove(QMouseEvent *event)
 {
-    const CoordinateWGS84 wgs = m_model->wgs84FromScreen(ev->pos(), size());
+    const CoordinateWGS84 wgs = this->m_model->wgs84FromScreen(event->pos(), this->size());
     emit signalCoordsChangedWgs84(wgs);
-    
+
     GeoMetricProjection projection;
     const CoordinateUTM utm = projection.wgs84ToUtm(wgs);
     emit signalCoordsChangedUTM(utm);
-    
-    if (ev->buttons() & Qt::LeftButton)
-    {
-        const QPoint d = ev->pos() - m_posLast;
 
-#ifdef Q_OS_WASM
-        m_panVelocity = m_panVelocity * 0 + QPointF(d) * 0;
-#else
-        m_panVelocity = m_panVelocity * 0 + QPointF(d) * 0;
-#endif
-        
-        m_model->panByPixels(d, size());
-        update();
+    if (event->buttons() & Qt::LeftButton)
+    {
+        const QPoint delta = event->pos() - this->m_posLast;
+        this->m_panVelocity = QPointF(0, 0);
+        this->m_model->panByPixels(delta, this->size());
     }
-    
-    m_posLast = ev->pos();
+
+    this->m_posLast = event->pos();
 }
 
 void MapWidget::zoomIn()
 {
-    m_model->zoomIn(size());
-    update();
+    this->m_model->zoomIn(this->size());
 }
+
 void MapWidget::zoomOut()
 {
-    m_model->zoomOut(size());
-    update();
+    this->m_model->zoomOut(this->size());
 }
 
 void MapWidget::changeMapProvider(MapProvider provider)
 {
-    m_model->setProvider(provider);
-    update();
+    this->m_model->setProvider(provider);
 }
 
 void MapWidget::paintEvent(QPaintEvent *)
 {
-    QPainter paint(this);
-    drawTiles(paint);
-    
-    const QPointF gps_point = this->m_model->screenFromWgs84(gps_coordinate, size());
-    
-    paint.setBrush(Qt::red);
-    paint.drawEllipse(gps_point, 5.0, 5.0);
+    QPainter painter(this);
+    this->drawTiles(painter);
+
+    const QPointF gps_point = this->m_model->screenFromWgs84(this->gps_coordinate, this->size());
+
+    painter.setBrush(Qt::red);
+    painter.drawEllipse(gps_point, 5.0, 5.0);
 }
 
-void MapWidget::drawTiles(QPainter &p)
+void MapWidget::drawTiles(QPainter &painter)
 {
-    const int tiles = m_model->tileCount();
-    
-    const QPointF center = m_model->centerTile();
-    const double cx = center.x();
-    const double cy = center.y();
-    
-    const int w = width();
-    const int h = height();
-    
-    const int tilesX = w / MapModel::TileSize + 4;
-    const int tilesY = h / MapModel::TileSize + 4;
-    
-    const int startX = int(cx) - tilesX / 2;
-    const int startY = int(cy) - tilesY / 2;
-    
-    for (int dx = 0; dx < tilesX; ++dx)
+    const int tiles = this->m_model->tileCount();
+
+    const QPointF center = this->m_model->centerTile();
+    const double center_x = center.x();
+    const double center_y = center.y();
+
+    const int viewport_width = this->width();
+    const int viewport_height = this->height();
+
+    const int tiles_x = viewport_width / MapModel::TileSize + 4;
+    const int tiles_y = viewport_height / MapModel::TileSize + 4;
+
+    const int start_x = int(center_x) - tiles_x / 2;
+    const int start_y = int(center_y) - tiles_y / 2;
+
+    for (int delta_x = 0; delta_x < tiles_x; ++delta_x)
     {
-        for (int dy = 0; dy < tilesY; ++dy)
+        for (int delta_y = 0; delta_y < tiles_y; ++delta_y)
         {
-            const int x = startX + dx;
-            const int y = startY + dy;
-            
+            const int x = start_x + delta_x;
+            const int y = start_y + delta_y;
+
             if (x < 0 || x >= tiles || y < 0 || y >= tiles)
                 continue;
-            
-            const QString key = m_model->tileCacheKey(x, y);
-            
-            QPixmap *pix = m_cache.object(key);
-            
-            if (!pix && !m_tilesPending.contains(key))
+
+            const QString key = this->m_model->tileCacheKey(x, y);
+            QPixmap *pixmap = this->tile_repository->tile(key);
+
+            if (!pixmap)
             {
-                m_tilesPending.insert(key);
-                this->interface_map->requestTile(m_model->tileEndpoint(x, y), key, x, y);
+                this->tile_repository->requestTile(this->m_model->tileEndpoint(x, y), key, x, y);
+                continue;
             }
-            
-            pix = m_cache.object(key);
-            
-            if (pix)
-            {
-                const int px = int((x - cx) * MapModel::TileSize + w / 2);
-                const int py = int((y - cy) * MapModel::TileSize + h / 2);
-                p.drawPixmap(px, py, *pix);
-            }
+
+            const int pixel_x = int((x - center_x) * MapModel::TileSize + viewport_width / 2);
+            const int pixel_y = int((y - center_y) * MapModel::TileSize + viewport_height / 2);
+            painter.drawPixmap(pixel_x, pixel_y, *pixmap);
         }
     }
 }
@@ -387,8 +354,8 @@ void MapWidget::drawTiles(QPainter &p)
 void MapWidget::showContextMenu(const QPoint &pos)
 {
     QMenu *menu = new QMenu(this);
-    QAction *actionElevation = menu->addAction("Get Elevation");
-    Q_UNUSED(actionElevation)
-    
-    menu->popup(mapToGlobal(pos));
+    QAction *action_elevation = menu->addAction("Get Elevation");
+    Q_UNUSED(action_elevation)
+
+    menu->popup(this->mapToGlobal(pos));
 }

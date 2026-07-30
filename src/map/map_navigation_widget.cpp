@@ -1,5 +1,7 @@
 #include "map_navigation_widget.h"
 
+#include <QSignalBlocker>
+
 MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidget *parent)
     : QWidget{parent},
     grid( new QGridLayout(this) ),
@@ -136,10 +138,11 @@ void MapNavigationWidget::mapProviderChange(MapProvider provider)
     if (!button)
         return;
     
-    button->click();
+    button->setChecked(true);
 }
 
 void MapNavigationWidget::mapMovementSyncStateChange(bool sync)
 {
+    const QSignalBlocker blocker(this->check_map_sync);
     this->check_map_sync->setChecked(sync);
 }

@@ -1,12 +1,13 @@
 #include "tab_map_editor_container.h"
 
-MapEditorContainer::MapEditorContainer(MapModel *map_model, HydraulicData *hydraulic_data, GpsProvider *gps, EntityInspectorDock *map_inspector, QWidget *parent)
+MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *tile_repository, HydraulicData *hydraulic_data, GpsProvider *gps, EntityInspectorDock *map_inspector, QWidget *parent)
     : QWidget{parent},
     hydraulic_data( hydraulic_data ),
     layout( new QHBoxLayout(this) ),
     gps( gps ),
     map_model( map_model ),
-    map( new MapWidget(this->map_model, gps, this) ),
+    tile_repository( tile_repository ),
+    map( new MapWidget(this->map_model, this->tile_repository, this->gps, this) ),
     map_canvas( new MapCanvasWidget(this->map_model, this->map, this->hydraulic_data, CanvasMode::Edit, this) ),
     map_menu( new MapEditorMenuWidget(this->map, this->map_canvas, CanvasMode::Edit, this) ),
     map_inspector( map_inspector ),

@@ -1,11 +1,12 @@
 #include "tab_map_monitor_container.h"
 
-MapMonitorContainer::MapMonitorContainer(MapModel *map_model, GpsProvider *gps, QWidget *parent)
+MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository *tile_repository, GpsProvider *gps, QWidget *parent)
     : QWidget{parent},
     layout( new QHBoxLayout(this) ),
     gps( gps ),
     map_model( map_model ),
-    map( new MapWidget(this->map_model, gps, this) ),
+    tile_repository( tile_repository ),
+    map( new MapWidget(this->map_model, this->tile_repository, this->gps, this) ),
     map_menu( new MapMonitorMenuWidget(this->map, this) )
 {
     setContentsMargins(0, 0, 0, 0);

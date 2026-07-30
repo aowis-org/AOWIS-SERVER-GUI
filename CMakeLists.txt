@@ -67,6 +67,7 @@ qt_add_executable(aowis-server-gui
     src/rest_client.h src/rest_client.cpp
     src/menubar.h src/menubar.cpp
     src/map/map_widget.h src/map/map_widget.cpp
+    src/map/map_tile_repository.h src/map/map_tile_repository.cpp
     src/footer_statusbar.h src/footer_statusbar.cpp
     src/_enums_structs.h
     src/tab_map_monitor_container.h src/tab_map_monitor_container.cpp
