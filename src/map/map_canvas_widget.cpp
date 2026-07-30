@@ -188,12 +188,8 @@ void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
     
     this->map_canvas_entities->floatEntity(event);
     
-    if (this->rectangle_selection_active)
-    {
-        unsetCursor();
-    }
-    else if (this->map_canvas_entities->isDeviceLinkAt(event->position()) ||
-             this->map_canvas_entities->isPipeAt(event->position()))
+    if (this->map_canvas_entities->isDeviceLinkAt(event->position()) ||
+        this->map_canvas_entities->isPipeAt(event->position()))
     {
         setCursor(Qt::PointingHandCursor);
     }
