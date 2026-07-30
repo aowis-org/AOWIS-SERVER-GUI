@@ -198,15 +198,15 @@ void MainWindow::checkServerMapInit()
     
     this->rest_check_map = new RESTClient("http://aowis-server-map.localhost:80", this);
     connect(this->rest_check_map, &RESTClient::requestFinished, this, [this](const QByteArray &data)
-            {
-                this->checking_server_map = false;
-                
-                this->time_server_map_success_last = QDateTime::currentDateTime();
-            });
+    {
+        this->checking_server_map = false;
+        
+        this->time_server_map_success_last = QDateTime::currentDateTime();
+    });
     connect(this->rest_check_map, &RESTClient::requestError, this, [this](const QString &err)
-            {
-                this->checking_server_map = false;
-            });
+    {
+        this->checking_server_map = false;
+    });
     
     // set up timer for periodic check
     QTimer *timer = new QTimer(this);
