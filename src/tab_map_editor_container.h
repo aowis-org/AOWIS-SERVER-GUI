@@ -77,10 +77,7 @@ public:
     MapWidget *getMap();
     
     MapNavigationWidget *mapNavigationWidget();
-    
-protected:
-    bool eventFilter(QObject* obj, QEvent* event) override;
-    
+
 private:
     HydraulicData *hydraulic_data = nullptr;
     GpsProvider *gps;

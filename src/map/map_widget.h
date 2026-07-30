@@ -3,12 +3,14 @@
 
 #include <QElapsedTimer>
 #include <QFocusEvent>
+#include <QHideEvent>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPoint>
 #include <QPointF>
+#include <QShowEvent>
 #include <QTimer>
 #include <QWheelEvent>
 #include <QWidget>
@@ -29,7 +31,6 @@ class MapWidget : public QWidget
     Q_OBJECT
 
 public:
-    explicit MapWidget(MapTileRepository *tile_repository, GpsProvider *gps, QWidget *parent = nullptr);
     explicit MapWidget(MapModel *model, MapTileRepository *tile_repository, GpsProvider *gps, QWidget *parent = nullptr);
 
     MapModel *model() const;
@@ -41,7 +42,7 @@ public:
     bool handleMouseMoveEvent(QMouseEvent *event);
     void handleWheelEvent(QWheelEvent *event);
 
-    void stopKeyboardPan();
+    void clearKeyboardPanInput();
     void setEdgePanningEnabled(bool enabled);
 
 public slots:
@@ -62,6 +63,8 @@ protected:
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
     void focusOutEvent(QFocusEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
+    void showEvent(QShowEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
 
 private:
@@ -69,7 +72,11 @@ private:
     void initPanAnimation();
     void ensurePanAnimationRunning();
     void stopPanAnimationIfIdle();
+    void stopAllPanMovement();
     void updatePanAnimation();
+#ifndef Q_OS_WASM
+    void pollEdgePan();
+#endif
 
     bool setKeyboardPanKey(int key, bool pressed);
     bool hasKeyboardPanInput() const;
@@ -94,6 +101,7 @@ private:
     QPointF mouse_pan_velocity;
     QElapsedTimer mouse_pan_move_elapsed_timer;
     bool mouse_pan_inertia_active = false;
+    int mouse_pan_drag_distance = 0;
 #endif
 
     bool pan_key_left_pressed = false;
@@ -107,6 +115,9 @@ private:
     QPointF pan_fractional_delta;
     QTimer *pan_timer = nullptr;
     QElapsedTimer pan_elapsed_timer;
+#ifndef Q_OS_WASM
+    QTimer *edge_pan_poll_timer = nullptr;
+#endif
 
     int wheel_delta_accumulated = 0;
 

@@ -161,6 +161,11 @@ MainWindow::MainWindow(QWidget *parent)
     this->tabs->setTabToolTip(this->tabs->count() - 1, "Settings");
     
     this->tabs->setCurrentIndex(1);
+
+    connect(this->tabs, &QTabWidget::currentChanged, this, [this](int)
+    {
+        this->updateMapEdgePanning();
+    });
     
     QTimer::singleShot(0, this, &MainWindow::updateTabSpacer);
     
@@ -373,6 +378,21 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
     QWidget::keyPressEvent(event);
 }
 
+void MainWindow::changeEvent(QEvent *event)
+{
+    QMainWindow::changeEvent(event);
+
+#ifndef Q_OS_WASM
+    if (event->type() == QEvent::WindowStateChange)
+    {
+        QTimer::singleShot(0, this, [this]
+        {
+            this->updateMapEdgePanning();
+        });
+    }
+#endif
+}
+
 void MainWindow::fullScreenToggle()
 {
     const bool enter_fullscreen = !this->isFullScreen();
@@ -390,6 +410,17 @@ void MainWindow::fullScreenToggle()
         this->setWindowState(this->window_state_saved);
     }
 
-    this->map_mon->setEdgePanningEnabled(enter_fullscreen);
-    this->map_edit->setEdgePanningEnabled(enter_fullscreen);
+    this->updateMapEdgePanning();
+}
+
+void MainWindow::updateMapEdgePanning()
+{
+#ifndef Q_OS_WASM
+    if (!this->map_mon || !this->map_edit || !this->tabs)
+        return;
+
+    const bool fullscreen = this->isFullScreen();
+    this->map_edit->setEdgePanningEnabled(fullscreen && this->tabs->currentWidget() == this->map_editor);
+    this->map_mon->setEdgePanningEnabled(fullscreen && this->tabs->currentWidget() == this->map_monitor);
+#endif
 }

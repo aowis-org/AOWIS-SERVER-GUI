@@ -1,11 +1,9 @@
 #include "map_canvas_widget.h"
 
-MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map, HydraulicData *hydraulic_data, CanvasMode mode, QWidget *parent)
+MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map, HydraulicData *hydraulic_data, QWidget *parent)
     : QWidget{parent},
     map_model(map_model),
     map(map),
-    hydraulic_data(hydraulic_data),
-    mode(mode),
     map_canvas_entities(new MapCanvasEntities(map_model, hydraulic_data, this))
 {
     setAttribute(Qt::WA_TranslucentBackground);
@@ -89,40 +87,30 @@ void MapCanvasWidget::paintEventRectangle(QPainter &paint)
 
 void MapCanvasWidget::keyPressEvent(QKeyEvent *event)
 {
-    if (this->onKeyPressEvent(event))
+    if (this->rectangle_selection_active && event->key() == Qt::Key_Escape)
+    {
+        this->cancelRectangleSelection();
+        event->accept();
+        return;
+    }
+
+    if (this->map->handleKeyPressEvent(event))
         return;
 
     QWidget::keyPressEvent(event);
 }
 
-bool MapCanvasWidget::onKeyPressEvent(QKeyEvent *event)
-{
-    if (this->rectangle_selection_active && event->key() == Qt::Key_Escape)
-    {
-        this->cancelRectangleSelection();
-        event->accept();
-        return true;
-    }
-
-    return this->map->handleKeyPressEvent(event);
-}
-
 void MapCanvasWidget::keyReleaseEvent(QKeyEvent *event)
 {
-    if (this->onKeyReleaseEvent(event))
+    if (this->map->handleKeyReleaseEvent(event))
         return;
 
     QWidget::keyReleaseEvent(event);
 }
 
-bool MapCanvasWidget::onKeyReleaseEvent(QKeyEvent *event)
-{
-    return this->map->handleKeyReleaseEvent(event);
-}
-
 void MapCanvasWidget::focusOutEvent(QFocusEvent *event)
 {
-    this->map->stopKeyboardPan();
+    this->map->clearKeyboardPanInput();
     QWidget::focusOutEvent(event);
 }
 

@@ -27,7 +27,7 @@ class MapCanvasWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapCanvasWidget(MapModel *map_model, MapWidget *map, HydraulicData *hydraulic_data, CanvasMode mode, QWidget *parent = nullptr);
+    explicit MapCanvasWidget(MapModel *map_model, MapWidget *map, HydraulicData *hydraulic_data, QWidget *parent = nullptr);
     
     int backgroundOpacity() const;
     
@@ -38,9 +38,6 @@ public:
     
     void startEntityPositioning(InfrastructureEntity tool);
     void stopEntityPositioning();
-    
-    bool onKeyPressEvent(QKeyEvent *event);
-    bool onKeyReleaseEvent(QKeyEvent *event);
     
 public slots:
     void setBackgroundOpacity(int opacity);
@@ -61,13 +58,9 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
     
 private:
-    CanvasMode mode;
     MapModel *map_model = nullptr;
     MapWidget *map = nullptr;
-    HydraulicData *hydraulic_data = nullptr;
     MapCanvasEntities *map_canvas_entities = nullptr;
-    
-    int wheel_accumulated = 0;
     
     // 0 = transparent, 100 = fully system bakground
     int map_background_opacity = 0;

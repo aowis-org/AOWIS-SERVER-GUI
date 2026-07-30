@@ -11,6 +11,7 @@ InterfaceServerMapStandalone::InterfaceServerMapStandalone(QObject *parent)
                 if (data.isEmpty())
                 {
                     qWarning() << "Downloaded tile is empty:" << key;
+                    emit signalTileFailed(key);
                     return;
                 }
                 
@@ -19,6 +20,7 @@ InterfaceServerMapStandalone::InterfaceServerMapStandalone(QObject *parent)
                 if (!pix.loadFromData(data))
                 {
                     qWarning() << "Downloaded tile decode failed:" << key;
+                    emit signalTileFailed(key);
                     return;
                 }
                 
@@ -46,6 +48,7 @@ void InterfaceServerMapStandalone::requestTile(QString endpoint, const QString &
     if (parts.size() < 2)
     {
         qWarning() << "Invalid endpoint:" << endpoint;
+        emit signalTileFailed(key);
         return;
     }
     
@@ -63,6 +66,7 @@ void InterfaceServerMapStandalone::requestTile(QString endpoint, const QString &
     if (!pix.loadFromData(data))
     {
         qWarning() << "Tile decode failed:" << key;
+        emit signalTileFailed(key);
         return;
     }
     

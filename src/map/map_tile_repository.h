@@ -2,6 +2,7 @@
 #define MAP_TILE_REPOSITORY_H
 
 #include <QCache>
+#include <QHash>
 #include <QObject>
 #include <QPixmap>
 #include <QSet>
@@ -24,10 +25,18 @@ public:
 signals:
     void signalTileAvailable(const QString &key);
     void signalTileFailed(const QString &key);
+    void signalTileRetryReady(const QString &key);
 
 private:
+    struct TileFailure
+    {
+        int count = 0;
+        qint64 retry_after_msecs = 0;
+    };
+
     void initServerMapInterface();
     void tileReceived(const QString &key, QPixmap *pixmap);
+    void tileFailed(const QString &key);
 
 #ifdef AOWIS_STANDALONE
     MapServerMode map_server_mode = MapServerMode::Standalone;
@@ -37,6 +46,7 @@ private:
 
     InterfaceServerMap *interface_map = nullptr;
     QSet<QString> tiles_pending;
+    QHash<QString, TileFailure> tile_failures;
     QCache<QString, QPixmap> cache;
 };
 

@@ -3,22 +3,20 @@
 MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *tile_repository, HydraulicData *hydraulic_data, GpsProvider *gps, EntityInspectorDock *map_inspector, QWidget *parent)
     : QWidget{parent},
     hydraulic_data( hydraulic_data ),
-    layout( new QHBoxLayout(this) ),
     gps( gps ),
+    map_inspector( map_inspector ),
     map_model( map_model ),
     tile_repository( tile_repository ),
     map( new MapWidget(this->map_model, this->tile_repository, this->gps, this) ),
-    map_canvas( new MapCanvasWidget(this->map_model, this->map, this->hydraulic_data, CanvasMode::Edit, this) ),
+    map_canvas( new MapCanvasWidget(this->map_model, this->map, this->hydraulic_data, this) ),
     map_menu( new MapEditorMenuWidget(this->map, this->map_canvas, CanvasMode::Edit, this) ),
-    map_inspector( map_inspector ),
+    layout( new QHBoxLayout(this) ),
     map_stack( new QWidget(this) ),
     map_stack_layout( new QStackedLayout(this->map_stack) )
 {
     setContentsMargins(0, 0, 0, 0);
     this->layout->setContentsMargins(0, 0, 0, 0);
     this->layout->setSpacing(0);
-    
-    this->installEventFilter(this);
     
     QScrollArea *scroll_controls = new QScrollArea(this);
     scroll_controls->setMinimumWidth(Sizes::SidebarMapEditLeftWidth);
@@ -57,28 +55,6 @@ MapNavigationWidget *MapEditorContainer::mapNavigationWidget()
 {
     return this->map_menu->mapNavigationWidget();
 }
-
-bool MapEditorContainer::eventFilter(QObject *obj, QEvent *event)
-{
-    if (event->type() == QEvent::KeyPress)
-    {
-        QKeyEvent *key_event = static_cast<QKeyEvent *>(event);
-        if (this->map_canvas->onKeyPressEvent(key_event))
-            return true;
-    }
-    else if (event->type() == QEvent::KeyRelease)
-    {
-        QKeyEvent *key_event = static_cast<QKeyEvent *>(event);
-        if (this->map_canvas->onKeyReleaseEvent(key_event))
-            return true;
-    }
-
-    return QWidget::eventFilter(obj, event);
-}
-
-
-
-
 
 MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_canvas, CanvasMode mode, QWidget *parent)
     : QWidget{parent},

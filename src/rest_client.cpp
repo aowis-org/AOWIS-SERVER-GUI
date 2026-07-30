@@ -62,7 +62,7 @@ void RESTClient::handleReplyTile(QNetworkReply *reply, QString key)
 {
     if (reply->error() != QNetworkReply::NoError)
     {
-        emit requestError(reply->errorString());
+        emit requestTileError(key, reply->errorString());
         reply->deleteLater();
         
         return;

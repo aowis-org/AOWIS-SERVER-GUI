@@ -31,6 +31,7 @@ signals:
     void requestFinished(const QByteArray &data);
     void requestFinishedTile(const QByteArray &data, const QString &key);
     void requestError(const QString &error);
+    void requestTileError(const QString &key, const QString &error);
 };
 
 #endif // REST_CLIENT_H

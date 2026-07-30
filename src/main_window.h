@@ -16,6 +16,7 @@
 #include <QIcon>
 
 #include <QKeyEvent>
+#include <QEvent>
 #include <QMessageBox>
 #include <QContextMenuEvent>
 
@@ -72,11 +73,13 @@ public:
     
 protected:
     void keyPressEvent(QKeyEvent *event) override;
+    void changeEvent(QEvent *event) override;
     
 private:
     Qt::WindowStates window_state_saved;
     QRect window_geometry_saved;
     void fullScreenToggle();
+    void updateMapEdgePanning();
     
     HydraulicData *hydraulic_data = nullptr;
     
@@ -92,8 +95,8 @@ private:
     MapTileRepository *map_tile_repository;
     MapModel *map_model_monitor;
     MapModel *map_model_editor;
-    MapWidget *map_mon;
-    MapWidget *map_edit;
+    MapWidget *map_mon = nullptr;
+    MapWidget *map_edit = nullptr;
 
     bool sync_map_movement = true;
     bool syncing_map_movement = false;

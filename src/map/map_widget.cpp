@@ -16,6 +16,9 @@ namespace
 constexpr int PanFrameIntervalMs = 16;
 constexpr int PanButtonStepPixels = 120;
 constexpr int EdgePanMarginPixels = 2;
+#ifndef Q_OS_WASM
+constexpr int EdgePanPollIntervalMs = 50;
+#endif
 constexpr double PanMaximumSpeedPixelsPerSecond = 900.0;
 constexpr double PanFastSpeedMultiplier = 2.0;
 constexpr double PanFastAccelerationMultiplier = 1.75;
@@ -56,29 +59,14 @@ QPointF moveTowards(const QPointF &current, const QPointF &target, qreal maximum
 }
 }
 
-MapWidget::MapWidget(MapTileRepository *tile_repository, GpsProvider *gps, QWidget *parent)
-    : QWidget(parent),
-    gps(gps),
-    m_model(new MapModel(this)),
-    tile_repository(tile_repository)
-{
-    if (!this->tile_repository)
-        this->tile_repository = new MapTileRepository(this);
-
-    this->init();
-}
-
 MapWidget::MapWidget(MapModel *model, MapTileRepository *tile_repository, GpsProvider *gps, QWidget *parent)
     : QWidget(parent),
     gps(gps),
     m_model(model),
     tile_repository(tile_repository)
 {
-    if (!this->m_model)
-        this->m_model = new MapModel(this);
-
-    if (!this->tile_repository)
-        this->tile_repository = new MapTileRepository(this);
+    Q_ASSERT(this->m_model);
+    Q_ASSERT(this->tile_repository);
 
     this->init();
 }
@@ -127,6 +115,10 @@ void MapWidget::init()
     {
         this->update();
     });
+    connect(this->tile_repository, &MapTileRepository::signalTileRetryReady, this, [this](const QString &)
+    {
+        this->update();
+    });
 
     if (this->gps)
     {
@@ -169,6 +161,12 @@ void MapWidget::initPanAnimation()
     this->pan_timer->setInterval(PanFrameIntervalMs);
     this->pan_timer->setTimerType(Qt::PreciseTimer);
     connect(this->pan_timer, &QTimer::timeout, this, &MapWidget::updatePanAnimation);
+
+#ifndef Q_OS_WASM
+    this->edge_pan_poll_timer = new QTimer(this);
+    this->edge_pan_poll_timer->setInterval(EdgePanPollIntervalMs);
+    connect(this->edge_pan_poll_timer, &QTimer::timeout, this, &MapWidget::pollEdgePan);
+#endif
 }
 
 void MapWidget::ensurePanAnimationRunning()
@@ -182,11 +180,31 @@ void MapWidget::ensurePanAnimationRunning()
 
 void MapWidget::stopPanAnimationIfIdle()
 {
-    if (this->edge_panning_enabled || this->hasKeyboardPanInput() || vectorLength(this->pan_velocity) >= PanVelocityStopThreshold)
+    if (this->hasKeyboardPanInput() || vectorLength(this->pan_velocity) >= PanVelocityStopThreshold)
         return;
 
     this->pan_velocity = QPointF();
     this->pan_fractional_delta = QPointF();
+    this->pan_timer->stop();
+}
+
+void MapWidget::stopAllPanMovement()
+{
+    this->pan_key_left_pressed = false;
+    this->pan_key_right_pressed = false;
+    this->pan_key_up_pressed = false;
+    this->pan_key_down_pressed = false;
+    this->pan_fast_modifier_pressed = false;
+    this->mouse_pan_active = false;
+    this->pan_velocity = QPointF();
+    this->pan_fractional_delta = QPointF();
+
+#ifndef Q_OS_WASM
+    this->mouse_pan_velocity = QPointF();
+    this->mouse_pan_inertia_active = false;
+    this->mouse_pan_drag_distance = 0;
+#endif
+
     this->pan_timer->stop();
 }
 
@@ -195,8 +213,14 @@ void MapWidget::updatePanAnimation()
     const qint64 elapsed_ms = this->pan_elapsed_timer.restart();
     const qreal elapsed_seconds = qBound<qreal>(0.0, elapsed_ms / 1000.0, 0.05);
 
-    if (elapsed_seconds <= 0.0 || !this->isVisible())
+    if (elapsed_seconds <= 0.0)
         return;
+
+    if (!this->isVisible())
+    {
+        this->stopAllPanMovement();
+        return;
+    }
 
     if (this->mouse_pan_active)
     {
@@ -264,6 +288,14 @@ void MapWidget::updatePanAnimation()
 
     this->stopPanAnimationIfIdle();
 }
+
+#ifndef Q_OS_WASM
+void MapWidget::pollEdgePan()
+{
+    if (!this->edgePanDirection().isNull())
+        this->ensurePanAnimationRunning();
+}
+#endif
 
 bool MapWidget::setKeyboardPanKey(int key, bool pressed)
 {
@@ -438,18 +470,13 @@ bool MapWidget::handleKeyReleaseEvent(QKeyEvent *event)
     return false;
 }
 
-void MapWidget::stopKeyboardPan()
+void MapWidget::clearKeyboardPanInput()
 {
     this->pan_key_left_pressed = false;
     this->pan_key_right_pressed = false;
     this->pan_key_up_pressed = false;
     this->pan_key_down_pressed = false;
     this->pan_fast_modifier_pressed = false;
-    this->pan_velocity = QPointF();
-#ifndef Q_OS_WASM
-    this->mouse_pan_inertia_active = false;
-#endif
-    this->pan_fractional_delta = QPointF();
     this->stopPanAnimationIfIdle();
 }
 
@@ -465,9 +492,18 @@ void MapWidget::setEdgePanningEnabled(bool enabled)
     this->edge_panning_enabled = enabled;
 
     if (enabled)
-        this->ensurePanAnimationRunning();
+    {
+        if (this->isVisible())
+        {
+            this->edge_pan_poll_timer->start();
+            this->pollEdgePan();
+        }
+    }
     else
+    {
+        this->edge_pan_poll_timer->stop();
         this->stopPanAnimationIfIdle();
+    }
 #endif
 }
 
@@ -489,8 +525,30 @@ void MapWidget::keyReleaseEvent(QKeyEvent *event)
 
 void MapWidget::focusOutEvent(QFocusEvent *event)
 {
-    this->stopKeyboardPan();
+    this->clearKeyboardPanInput();
     QWidget::focusOutEvent(event);
+}
+
+void MapWidget::hideEvent(QHideEvent *event)
+{
+    this->stopAllPanMovement();
+#ifndef Q_OS_WASM
+    this->edge_pan_poll_timer->stop();
+#endif
+    QWidget::hideEvent(event);
+}
+
+void MapWidget::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+
+#ifndef Q_OS_WASM
+    if (this->edge_panning_enabled)
+    {
+        this->edge_pan_poll_timer->start();
+        this->pollEdgePan();
+    }
+#endif
 }
 
 void MapWidget::panByStep(const QPoint &delta)
@@ -567,6 +625,7 @@ bool MapWidget::handleMousePressEvent(QMouseEvent *event)
     this->mouse_pan_velocity = QPointF();
     this->mouse_pan_move_elapsed_timer.start();
     this->mouse_pan_inertia_active = false;
+    this->mouse_pan_drag_distance = 0;
 #endif
     this->stopPanAnimationIfIdle();
     event->accept();
@@ -591,8 +650,9 @@ bool MapWidget::handleMouseReleaseEvent(QMouseEvent *event)
     const bool movement_is_recent = this->mouse_pan_move_elapsed_timer.isValid() &&
         this->mouse_pan_move_elapsed_timer.elapsed() <= MousePanReleaseTimeoutMs;
     const qreal release_speed = vectorLength(this->mouse_pan_velocity);
+    const bool dragged_far_enough = this->mouse_pan_drag_distance >= QApplication::startDragDistance();
 
-    if (movement_is_recent && release_speed >= MousePanMinimumInertiaSpeedPixelsPerSecond)
+    if (dragged_far_enough && movement_is_recent && release_speed >= MousePanMinimumInertiaSpeedPixelsPerSecond)
     {
         this->pan_velocity = this->mouse_pan_velocity;
         this->pan_fractional_delta = QPointF();
@@ -606,6 +666,7 @@ bool MapWidget::handleMouseReleaseEvent(QMouseEvent *event)
     }
 
     this->mouse_pan_velocity = QPointF();
+    this->mouse_pan_drag_distance = 0;
 #endif
     this->stopPanAnimationIfIdle();
     event->accept();
@@ -637,6 +698,7 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
 #ifndef Q_OS_WASM
         this->mouse_pan_velocity = QPointF();
         this->mouse_pan_inertia_active = false;
+        this->mouse_pan_drag_distance = 0;
 #endif
         return false;
     }
@@ -645,6 +707,8 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
     this->mouse_pan_last_position = position;
 
 #ifndef Q_OS_WASM
+    this->mouse_pan_drag_distance += delta.manhattanLength();
+
     const qint64 elapsed_ms = this->mouse_pan_move_elapsed_timer.restart();
     if (!delta.isNull() && elapsed_ms > 0)
     {
@@ -756,6 +820,7 @@ void MapWidget::drawTiles(QPainter &painter)
 void MapWidget::showContextMenu(const QPoint &pos)
 {
     QMenu *menu = new QMenu(this);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
     QAction *action_elevation = menu->addAction("Get Elevation");
     Q_UNUSED(action_elevation)
 
