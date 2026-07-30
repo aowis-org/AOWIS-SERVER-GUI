@@ -54,6 +54,17 @@ MapCanvasPipes::MapCanvasPipes(MapModel *map_model, MapCanvasWidget *map_canvas,
     map_canvas(map_canvas)
 {}
 
+void MapCanvasPipes::setWrapReferenceLongitude(double longitude)
+{
+    this->wrap_reference_lon = GeoWebMercator::normalizeLongitude(longitude);
+}
+
+QPointF MapCanvasPipes::screenFromWgs84(const CoordinateWGS84 &coordinate) const
+{
+    return this->map_model->screenFromWgs84(
+        coordinate, this->map_canvas->size(), this->wrap_reference_lon);
+}
+
 void MapCanvasPipes::clear()
 {
     clearPlacement();
@@ -169,26 +180,22 @@ void MapCanvasPipes::paint(QPainter &paint,
         pipe_pen.setJoinStyle(Qt::RoundJoin);
         paint.setPen(pipe_pen);
         
-        QPointF previous_point = this->map_model->screenFromWgs84(start_marker.coord_wgs84,
-                                                                  this->map_canvas->size());
+        QPointF previous_point = this->screenFromWgs84(start_marker.coord_wgs84);
         for (const CoordinateWGS84 &vertex : pipe.geometry.intermediate_vertices)
         {
-            const QPointF vertex_point = this->map_model->screenFromWgs84(vertex,
-                                                                          this->map_canvas->size());
+            const QPointF vertex_point = this->screenFromWgs84(vertex);
             paint.drawLine(previous_point, vertex_point);
             previous_point = vertex_point;
         }
         
-        const QPointF end_point = this->map_model->screenFromWgs84(end_marker.coord_wgs84,
-                                                                   this->map_canvas->size());
+        const QPointF end_point = this->screenFromWgs84(end_marker.coord_wgs84);
         paint.drawLine(previous_point, end_point);
         
         paint.setPen(Qt::NoPen);
         paint.setBrush(pipe.selected ? QColor(0, 190, 255) : QColor(Qt::black));
         for (const CoordinateWGS84 &vertex : pipe.geometry.intermediate_vertices)
         {
-            const QPointF vertex_point = this->map_model->screenFromWgs84(vertex,
-                                                                          this->map_canvas->size());
+            const QPointF vertex_point = this->screenFromWgs84(vertex);
             paint.drawEllipse(vertex_point, pipe_vertex_radius, pipe_vertex_radius);
         }
     }
@@ -204,12 +211,10 @@ void MapCanvasPipes::paint(QPainter &paint,
             preview_pen.setJoinStyle(Qt::RoundJoin);
             paint.setPen(preview_pen);
             
-            QPointF previous_point = this->map_model->screenFromWgs84(start_marker.coord_wgs84,
-                                                                      this->map_canvas->size());
+            QPointF previous_point = this->screenFromWgs84(start_marker.coord_wgs84);
             for (const CoordinateWGS84 &vertex : this->pipe_intermediate_vertices)
             {
-                const QPointF vertex_point = this->map_model->screenFromWgs84(vertex,
-                                                                              this->map_canvas->size());
+                const QPointF vertex_point = this->screenFromWgs84(vertex);
                 paint.drawLine(previous_point, vertex_point);
                 previous_point = vertex_point;
             }
@@ -220,8 +225,7 @@ void MapCanvasPipes::paint(QPainter &paint,
                 const MapEntityMarker end_marker = markerByLabel(connection_target_label, markers);
                 if (isHydraulicConnectionNode(end_marker.entity.type))
                 {
-                    preview_end = this->map_model->screenFromWgs84(end_marker.coord_wgs84,
-                                                                   this->map_canvas->size());
+                    preview_end = this->screenFromWgs84(end_marker.coord_wgs84);
                 }
             }
             
@@ -354,8 +358,7 @@ MapCanvasPipes::PipeVertexHit MapCanvasPipes::pipeVertexAt(const QPointF &positi
     {
         for (int i = 0; i < pipe.geometry.intermediate_vertices.size(); i++)
         {
-            const QPointF vertex_point = this->map_model->screenFromWgs84(
-                pipe.geometry.intermediate_vertices[i], this->map_canvas->size());
+            const QPointF vertex_point = this->screenFromWgs84(pipe.geometry.intermediate_vertices[i]);
             const double distance_x = position.x() - vertex_point.x();
             const double distance_y = position.y() - vertex_point.y();
             const double distance_squared = distance_x * distance_x + distance_y * distance_y;
@@ -391,12 +394,10 @@ MapCanvasPipes::PipeSegmentHit MapCanvasPipes::pipeSegmentAt(
             continue;
         }
         
-        QPointF previous_point = this->map_model->screenFromWgs84(start_marker.coord_wgs84,
-                                                                  this->map_canvas->size());
+        QPointF previous_point = this->screenFromWgs84(start_marker.coord_wgs84);
         for (int i = 0; i < pipe.geometry.intermediate_vertices.size(); i++)
         {
-            const QPointF vertex_point = this->map_model->screenFromWgs84(
-                pipe.geometry.intermediate_vertices[i], this->map_canvas->size());
+            const QPointF vertex_point = this->screenFromWgs84(pipe.geometry.intermediate_vertices[i]);
             const QPointF nearest_point = nearestPointOnSegment(position, previous_point, vertex_point);
             const double distance_x = position.x() - nearest_point.x();
             const double distance_y = position.y() - nearest_point.y();
@@ -413,8 +414,7 @@ MapCanvasPipes::PipeSegmentHit MapCanvasPipes::pipeSegmentAt(
             previous_point = vertex_point;
         }
         
-        const QPointF end_point = this->map_model->screenFromWgs84(end_marker.coord_wgs84,
-                                                                   this->map_canvas->size());
+        const QPointF end_point = this->screenFromWgs84(end_marker.coord_wgs84);
         const QPointF nearest_point = nearestPointOnSegment(position, previous_point, end_point);
         const double distance_x = position.x() - nearest_point.x();
         const double distance_y = position.y() - nearest_point.y();

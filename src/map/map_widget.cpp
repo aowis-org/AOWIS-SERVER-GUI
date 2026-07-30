@@ -776,42 +776,40 @@ void MapWidget::paintEvent(QPaintEvent *)
 
 void MapWidget::drawTiles(QPainter &painter)
 {
-    const int tiles = this->m_model->tileCount();
-
+    const int tile_count = this->m_model->tileCount();
     const QPointF center = this->m_model->centerTile();
     const double center_x = center.x();
     const double center_y = center.y();
 
     const int viewport_width = this->width();
     const int viewport_height = this->height();
-
     const int tiles_x = viewport_width / MapModel::TileSize + 4;
     const int tiles_y = viewport_height / MapModel::TileSize + 4;
-
-    const int start_x = int(center_x) - tiles_x / 2;
-    const int start_y = int(center_y) - tiles_y / 2;
+    const int start_x = int(std::floor(center_x)) - tiles_x / 2;
+    const int start_y = int(std::floor(center_y)) - tiles_y / 2;
 
     for (int delta_x = 0; delta_x < tiles_x; ++delta_x)
     {
         for (int delta_y = 0; delta_y < tiles_y; ++delta_y)
         {
-            const int x = start_x + delta_x;
+            const int virtual_x = start_x + delta_x;
             const int y = start_y + delta_y;
 
-            if (x < 0 || x >= tiles || y < 0 || y >= tiles)
+            if (y < 0 || y >= tile_count)
                 continue;
 
-            const QString key = this->m_model->tileCacheKey(x, y);
+            const int tile_x = GeoWebMercator::wrapTileX(virtual_x, this->m_model->zoom());
+            const QString key = this->m_model->tileCacheKey(tile_x, y);
             QPixmap *pixmap = this->tile_repository->tile(key);
 
             if (!pixmap)
             {
-                this->tile_repository->requestTile(this->m_model->tileEndpoint(x, y), key, x, y);
+                this->tile_repository->requestTile(this->m_model->tileEndpoint(tile_x, y), key, tile_x, y);
                 continue;
             }
 
-            const int pixel_x = int((x - center_x) * MapModel::TileSize + viewport_width / 2);
-            const int pixel_y = int((y - center_y) * MapModel::TileSize + viewport_height / 2);
+            const int pixel_x = int(std::floor((virtual_x - center_x) * MapModel::TileSize + viewport_width / 2.0));
+            const int pixel_y = int(std::floor((y - center_y) * MapModel::TileSize + viewport_height / 2.0));
             painter.drawPixmap(pixel_x, pixel_y, *pixmap);
         }
     }

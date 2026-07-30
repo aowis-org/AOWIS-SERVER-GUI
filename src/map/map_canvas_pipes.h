@@ -39,6 +39,8 @@ public:
     };
     
     explicit MapCanvasPipes(MapModel *map_model, MapCanvasWidget *map_canvas, QObject *parent = nullptr);
+
+    void setWrapReferenceLongitude(double longitude);
     
     void clear();
     void clearPlacement();
@@ -111,6 +113,7 @@ signals:
     void pipeVertexConversionRequested(const QUuid &pipe_uuid, int vertex_index);
     
 private:
+    QPointF screenFromWgs84(const CoordinateWGS84 &coordinate) const;
     struct PipeCanvasItem
     {
         InfrastructureEntityReference entity;
@@ -131,6 +134,7 @@ private:
     
     MapModel *map_model = nullptr;
     QPointer<MapCanvasWidget> map_canvas;
+    double wrap_reference_lon = 0.0;
     QList<PipeCanvasItem> list_pipes;
     
     QPointer<MapEntityMarkerLabel> pipe_start_label;

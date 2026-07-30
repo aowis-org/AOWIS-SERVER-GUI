@@ -35,6 +35,8 @@ public:
     
     explicit MapCanvasDeviceLinks(MapModel *map_model, MapCanvasWidget *map_canvas,
                                   QObject *parent = nullptr);
+
+    void setWrapReferenceLongitude(double longitude);
     
     void clear();
     void clearPlacement();
@@ -93,6 +95,7 @@ signals:
     void markerDeleteRequested(MapEntityMarkerLabel *label);
     
 private:
+    QPointF screenFromWgs84(const CoordinateWGS84 &coordinate) const;
     struct DeviceLinkCanvasItem
     {
         InfrastructureEntityReference entity;
@@ -113,6 +116,7 @@ private:
     
     MapModel *map_model = nullptr;
     QPointer<MapCanvasWidget> map_canvas;
+    double wrap_reference_lon = 0.0;
     QList<DeviceLinkCanvasItem> list_device_links;
     QPointer<MapEntityMarkerLabel> device_link_start_label;
 };

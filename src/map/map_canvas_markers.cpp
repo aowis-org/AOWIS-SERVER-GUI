@@ -26,6 +26,17 @@ MapCanvasMarkers::MapCanvasMarkers(MapModel *map_model,
     this->map_canvas = map_canvas;
 }
 
+void MapCanvasMarkers::setWrapReferenceLongitude(double longitude)
+{
+    this->wrap_reference_lon = GeoWebMercator::normalizeLongitude(longitude);
+}
+
+QPointF MapCanvasMarkers::screenFromWgs84(const CoordinateWGS84 &coordinate) const
+{
+    return this->map_model->screenFromWgs84(
+        coordinate, this->map_canvas->size(), this->wrap_reference_lon);
+}
+
 const QList<MapEntityMarker> &MapCanvasMarkers::markers() const
 {
     return this->list_markers;
@@ -109,8 +120,7 @@ MapEntityMarkerLabel *MapCanvasMarkers::nearestConnectionTarget(
             continue;
         }
         
-        const QPointF point = this->map_model->screenFromWgs84(
-            marker.coord_wgs84, this->map_canvas->size());
+        const QPointF point = this->screenFromWgs84(marker.coord_wgs84);
         const double distance_x = point.x() - mouse_position.x();
         const double distance_y = point.y() - mouse_position.y();
         const double distance_squared = distance_x * distance_x + distance_y * distance_y;
@@ -239,8 +249,7 @@ void MapCanvasMarkers::positionLabels(MapEntityMarkerLabel *label_to_skip)
         if (!label || label == label_to_skip)
             continue;
         
-        const QPointF point = this->map_model->screenFromWgs84(
-            marker.coord_wgs84, this->map_canvas->size());
+        const QPointF point = this->screenFromWgs84(marker.coord_wgs84);
         const QPoint marker_position(qRound(point.x()),
                                      qRound(point.y()) - label->height());
         
@@ -275,8 +284,7 @@ void MapCanvasMarkers::paintConnectionPoints(
         if (draw_moving_label_at_mouse && marker.label == moving_label)
             continue;
         
-        const QPointF point = this->map_model->screenFromWgs84(
-            marker.coord_wgs84, this->map_canvas->size());
+        const QPointF point = this->screenFromWgs84(marker.coord_wgs84);
         const bool is_connection_target = marker.label &&
                                           marker.label == connection_target_label;
         

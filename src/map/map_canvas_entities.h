@@ -73,6 +73,8 @@ private:
     void restoreMoveSnapshot();
     void clearMoveSnapshot();
     void updateConnectionTarget(const QPointF &mouse_position);
+    void updateWrapReferenceLongitude();
+    void setWrapReferenceLongitude(double longitude);
     void deleteMarker(MapEntityMarkerLabel *label);
     void selectPipe(const QUuid &pipe_uuid);
     void startPipeVertexMove(const QUuid &pipe_uuid, int vertex_index);
@@ -89,6 +91,8 @@ private:
     MapCanvasPlacement *placement = nullptr;
     QList<MapEntityMarker> move_marker_snapshot;
     QHash<QUuid, QList<CoordinateWGS84>> move_pipe_vertices_snapshot;
+    double wrap_reference_lon = 0.0;
+    bool has_wrap_reference_lon = false;
     
 private slots:
     void onMarkerClicked(MapEntityMarkerLabel *label);

@@ -9,6 +9,10 @@
 #include <QApplication>
 #include <QCursor>
 
+#include <cmath>
+
+#include <QtMath>
+
 namespace
 {
 bool isHydraulicConnectionNode(InfrastructureEntity entity)
@@ -37,7 +41,10 @@ CoordinateWGS84 midpoint(const CoordinateWGS84 &from, const CoordinateWGS84 &to)
 {
     CoordinateWGS84 coordinate;
     coordinate.latitude_deg = (from.latitude_deg + to.latitude_deg) / 2.0;
-    coordinate.longitude_deg = (from.longitude_deg + to.longitude_deg) / 2.0;
+    const double longitude_delta = GeoWebMercator::normalizeLongitude(
+        to.longitude_deg - from.longitude_deg);
+    coordinate.longitude_deg = GeoWebMercator::normalizeLongitude(
+        from.longitude_deg + longitude_delta / 2.0);
     return coordinate;
 }
 }
@@ -54,6 +61,8 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
                                              this->point_markers, this->device_links,
                                              this->pipes, this);
     this->placement = new MapCanvasPlacement(this->map_canvas, this);
+
+    this->setWrapReferenceLongitude(this->map_model->centerLon());
     
     connect(this->point_markers, &MapCanvasMarkers::markerDeleteRequested,
             this, &MapCanvasEntities::onMarkerDeleteRequested);
@@ -108,6 +117,8 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
 
 void MapCanvasEntities::loadNetwork(const NetworkHydraulic &network)
 {
+    this->has_wrap_reference_lon = false;
+    this->setWrapReferenceLongitude(this->map_model->centerLon());
     this->device_links->clearPlacement();
     this->pipes->clearPlacement();
     this->pipes->cancelPipeVertexMove();
@@ -146,6 +157,8 @@ void MapCanvasEntities::loadNetwork(const NetworkHydraulic &network)
         add_node(InfrastructureEntity::Reservoir, reservoir.uuid, reservoir.coordinate_wgs84);
     for (const HydraulicNodeTank &tank : network.nodes_tanks)
         add_node(InfrastructureEntity::Tank, tank.uuid, tank.coordinate_wgs84);
+
+    this->updateWrapReferenceLongitude();
 
     auto node_marker = [&node_markers](const QUuid &uuid) -> std::optional<MapEntityMarker>
     {
@@ -385,6 +398,8 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
     this->point_markers->addMarker(
         reference, coordinate, this->point_markers->pixmapPathForEntity(reference.type),
         this->point_markers->entityWidth(), created_label);
+    if (!this->has_wrap_reference_lon)
+        this->updateWrapReferenceLongitude();
     this->placement->setFloatingHiddenUntil(event->position().toPoint());
     positionMarkers();
     this->placement->rearmCreate(this->point_markers->pixmapPathForEntity(reference.type), 150);
@@ -749,6 +764,45 @@ bool MapCanvasEntities::anchorPipeVertexMove(QMouseEvent *event)
     return true;
 }
 
+void MapCanvasEntities::setWrapReferenceLongitude(double longitude)
+{
+    this->wrap_reference_lon = GeoWebMercator::normalizeLongitude(longitude);
+    this->point_markers->setWrapReferenceLongitude(this->wrap_reference_lon);
+    this->device_links->setWrapReferenceLongitude(this->wrap_reference_lon);
+    this->pipes->setWrapReferenceLongitude(this->wrap_reference_lon);
+}
+
+void MapCanvasEntities::updateWrapReferenceLongitude()
+{
+    const QList<MapEntityMarker> &markers = this->point_markers->markers();
+    if (markers.isEmpty())
+    {
+        this->has_wrap_reference_lon = false;
+        this->setWrapReferenceLongitude(this->map_model->centerLon());
+        return;
+    }
+
+    double longitude_sin_sum = 0.0;
+    double longitude_cos_sum = 0.0;
+    for (const MapEntityMarker &marker : markers)
+    {
+        const double longitude_radians = qDegreesToRadians(
+            GeoWebMercator::normalizeLongitude(marker.coord_wgs84.longitude_deg));
+        longitude_sin_sum += std::sin(longitude_radians);
+        longitude_cos_sum += std::cos(longitude_radians);
+    }
+
+    double reference_longitude = markers.first().coord_wgs84.longitude_deg;
+    if (std::hypot(longitude_sin_sum, longitude_cos_sum) > 1e-9)
+    {
+        reference_longitude = qRadiansToDegrees(
+            std::atan2(longitude_sin_sum, longitude_cos_sum));
+    }
+
+    this->has_wrap_reference_lon = true;
+    this->setWrapReferenceLongitude(reference_longitude);
+}
+
 void MapCanvasEntities::scaleMarkers()
 {
     const int width = this->point_markers->entityWidth();
@@ -889,6 +943,9 @@ void MapCanvasEntities::deleteMarker(MapEntityMarkerLabel *label)
         label->hide();
         label->deleteLater();
     }
+
+    if (this->point_markers->markers().isEmpty())
+        this->updateWrapReferenceLongitude();
 }
 
 void MapCanvasEntities::onMarkerClicked(MapEntityMarkerLabel *label)

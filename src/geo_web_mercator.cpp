@@ -1,10 +1,34 @@
 #include "geo_web_mercator.h"
 
-
 #include <algorithm>
 #include <cmath>
 
 #include <QtMath>
+
+double GeoWebMercator::normalizeLongitude(double lon)
+{
+    double normalized = std::fmod(lon + 180.0, 360.0);
+    if (normalized < 0.0)
+        normalized += 360.0;
+
+    return normalized - 180.0;
+}
+
+int GeoWebMercator::wrapTileX(int x, int zoom)
+{
+    const int tile_count = 1 << zoom;
+    int wrapped_x = x % tile_count;
+    if (wrapped_x < 0)
+        wrapped_x += tile_count;
+
+    return wrapped_x;
+}
+
+double GeoWebMercator::nearestWrappedTileX(double x, double referenceX, int zoom)
+{
+    const double tile_count = double(1 << zoom);
+    return x + std::round((referenceX - x) / tile_count) * tile_count;
+}
 
 double GeoWebMercator::lonToTileX(double lon, int zoom)
 {
@@ -13,9 +37,9 @@ double GeoWebMercator::lonToTileX(double lon, int zoom)
 
 double GeoWebMercator::latToTileY(double lat, int zoom)
 {
-    const double latClamped = std::clamp(lat, -85.05112878, 85.05112878);
-    const double rad = qDegreesToRadians(latClamped);
-    
+    const double lat_clamped = std::clamp(lat, -MaximumLatitude, MaximumLatitude);
+    const double rad = qDegreesToRadians(lat_clamped);
+
     return (1.0 - std::log(std::tan(rad) + 1.0 / std::cos(rad)) / M_PI)
            / 2.0 * double(1 << zoom);
 }
@@ -43,7 +67,6 @@ CoordinateWGS84 GeoWebMercator::worldPixelToLonLat(double pixelX, double pixelY,
 {
     CoordinateWGS84 wgs;
     wgs.latitude_deg = tileYToLat(pixelY / TileSize, zoom);
-    wgs.longitude_deg = tileXToLon(pixelX / TileSize, zoom);
+    wgs.longitude_deg = normalizeLongitude(tileXToLon(pixelX / TileSize, zoom));
     return wgs;
 }
-

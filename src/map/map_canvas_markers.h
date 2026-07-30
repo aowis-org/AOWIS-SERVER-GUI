@@ -23,6 +23,8 @@ class MapCanvasMarkers : public QObject
 public:
     explicit MapCanvasMarkers(MapModel *map_model, MapCanvasWidget *map_canvas,
                               QObject *parent = nullptr);
+
+    void setWrapReferenceLongitude(double longitude);
     
     const QList<MapEntityMarker> &markers() const;
     void clear();
@@ -61,12 +63,14 @@ signals:
     void markerDeleteRequested(MapEntityMarkerLabel *label);
     
 private:
+    QPointF screenFromWgs84(const CoordinateWGS84 &coordinate) const;
     void configureLabel(MapEntityMarkerLabel *label,
                         const QString &pixmap_path,
                         int width);
     
     MapModel *map_model = nullptr;
     QPointer<MapCanvasWidget> map_canvas;
+    double wrap_reference_lon = 0.0;
     QList<MapEntityMarker> list_markers;
 };
 

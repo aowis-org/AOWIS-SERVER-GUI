@@ -51,6 +51,17 @@ MapCanvasDeviceLinks::MapCanvasDeviceLinks(MapModel *map_model,
     this->map_canvas = map_canvas;
 }
 
+void MapCanvasDeviceLinks::setWrapReferenceLongitude(double longitude)
+{
+    this->wrap_reference_lon = GeoWebMercator::normalizeLongitude(longitude);
+}
+
+QPointF MapCanvasDeviceLinks::screenFromWgs84(const CoordinateWGS84 &coordinate) const
+{
+    return this->map_model->screenFromWgs84(
+        coordinate, this->map_canvas->size(), this->wrap_reference_lon);
+}
+
 void MapCanvasDeviceLinks::clear()
 {
     clearPlacement();
@@ -183,10 +194,8 @@ std::optional<DeviceLinkGeometry> MapCanvasDeviceLinks::completionGeometry(
         return std::nullopt;
     }
 
-    const QPointF start_point = this->map_model->screenFromWgs84(
-        start_marker.coord_wgs84, this->map_canvas->size());
-    const QPointF end_point = this->map_model->screenFromWgs84(
-        end_marker.coord_wgs84, this->map_canvas->size());
+    const QPointF start_point = this->screenFromWgs84(start_marker.coord_wgs84);
+    const QPointF end_point = this->screenFromWgs84(end_marker.coord_wgs84);
 
     DeviceLinkGeometry geometry;
     geometry.start_node = start_marker.entity;
@@ -251,8 +260,7 @@ bool MapCanvasDeviceLinks::positionFloatingLabel(
     if (!isHydraulicConnectionNode(start_marker.entity.type))
         return false;
     
-    const QPointF start_point = this->map_model->screenFromWgs84(
-        start_marker.coord_wgs84, this->map_canvas->size());
+    const QPointF start_point = this->screenFromWgs84(start_marker.coord_wgs84);
     QPointF end_point = mouse_position;
     
     if (connection_target_label)
@@ -260,8 +268,7 @@ bool MapCanvasDeviceLinks::positionFloatingLabel(
         const MapEntityMarker end_marker = pointMarkerByLabel(connection_target_label, markers);
         if (isHydraulicConnectionNode(end_marker.entity.type))
         {
-            end_point = this->map_model->screenFromWgs84(
-                end_marker.coord_wgs84, this->map_canvas->size());
+            end_point = this->screenFromWgs84(end_marker.coord_wgs84);
         }
     }
     
@@ -293,8 +300,7 @@ void MapCanvasDeviceLinks::positionLabels()
         if (!device_link.device_label)
             continue;
         
-        const QPointF center_point = this->map_model->screenFromWgs84(
-            device_link.geometry.center_coordinate, this->map_canvas->size());
+        const QPointF center_point = this->screenFromWgs84(device_link.geometry.center_coordinate);
         positionDeviceLabel(device_link.device_label.data(), center_point);
     }
 }
@@ -323,12 +329,9 @@ void MapCanvasDeviceLinks::paint(QPainter &paint,
             continue;
         }
         
-        const QPointF start_point = this->map_model->screenFromWgs84(
-            start_marker.coord_wgs84, this->map_canvas->size());
-        const QPointF center_point = this->map_model->screenFromWgs84(
-            device_link.geometry.center_coordinate, this->map_canvas->size());
-        const QPointF end_point = this->map_model->screenFromWgs84(
-            end_marker.coord_wgs84, this->map_canvas->size());
+        const QPointF start_point = this->screenFromWgs84(start_marker.coord_wgs84);
+        const QPointF center_point = this->screenFromWgs84(device_link.geometry.center_coordinate);
+        const QPointF end_point = this->screenFromWgs84(end_marker.coord_wgs84);
         
         QPen placed_pen;
         placed_pen.setColor(markerIsSelected(device_link.device_label.data(), selected_markers) ?
@@ -347,8 +350,7 @@ void MapCanvasDeviceLinks::paint(QPainter &paint,
             this->device_link_start_label.data(), markers);
         if (isHydraulicConnectionNode(start_marker.entity.type))
         {
-            const QPointF start_point = this->map_model->screenFromWgs84(
-                start_marker.coord_wgs84, this->map_canvas->size());
+            const QPointF start_point = this->screenFromWgs84(start_marker.coord_wgs84);
             QPointF end_point = mouse_position;
             
             if (connection_target_label)
@@ -357,8 +359,7 @@ void MapCanvasDeviceLinks::paint(QPainter &paint,
                     connection_target_label, markers);
                 if (isHydraulicConnectionNode(end_marker.entity.type))
                 {
-                    end_point = this->map_model->screenFromWgs84(
-                        end_marker.coord_wgs84, this->map_canvas->size());
+                    end_point = this->screenFromWgs84(end_marker.coord_wgs84);
                 }
             }
             
@@ -491,12 +492,9 @@ MapEntityMarkerLabel *MapCanvasDeviceLinks::labelAt(
             continue;
         }
         
-        const QPointF start_point = this->map_model->screenFromWgs84(
-            start_marker.coord_wgs84, this->map_canvas->size());
-        const QPointF center_point = this->map_model->screenFromWgs84(
-            device_link.geometry.center_coordinate, this->map_canvas->size());
-        const QPointF end_point = this->map_model->screenFromWgs84(
-            end_marker.coord_wgs84, this->map_canvas->size());
+        const QPointF start_point = this->screenFromWgs84(start_marker.coord_wgs84);
+        const QPointF center_point = this->screenFromWgs84(device_link.geometry.center_coordinate);
+        const QPointF end_point = this->screenFromWgs84(end_marker.coord_wgs84);
         const double distance_squared = qMin(
             distanceSquaredToSegment(position, start_point, center_point),
             distanceSquaredToSegment(position, center_point, end_point));
