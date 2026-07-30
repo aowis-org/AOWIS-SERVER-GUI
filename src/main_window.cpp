@@ -2,6 +2,15 @@
 #include <QPushButton>
 #include <qapplication.h>
 
+namespace
+{
+QIcon rotatedIcon(const QString &path)
+{
+    const QPixmap pixmap(path);
+    return QIcon(pixmap.transformed(QTransform().rotate(90), Qt::SmoothTransformation));
+}
+}
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
     hydraulic_data(new HydraulicData(this)),
@@ -99,12 +108,6 @@ MainWindow::MainWindow(QWidget *parent)
     this->tabs->addTab(this->customerPoints, QIcon(":/icon/customer.png"), "Customer Points");
     this->tabs->addTab(this->customers, QIcon(":/icon/users.png"), "Customers");
     */
-    
-    auto rotatedIcon = [](const QString &path)
-    {
-        QPixmap pixmap(path);
-        return QIcon(pixmap.transformed(QTransform().rotate(90), Qt::SmoothTransformation));
-    };
     
     this->tabs->addTab(new QWidget(this), rotatedIcon(":/icon/dashboard_global.png"), "");
     this->tabs->setTabToolTip(this->tabs->count() - 1, "Dashboard");
@@ -242,8 +245,8 @@ void MainWindow::syncMapMovement(MapWidget *source, MapWidget *target)
         return;
 
     this->syncing_map_movement = true;
-    target_model->setZoom(source_model->zoom(), target->size());
-    target_model->setCenter(source_model->centerLon(), source_model->centerLat(), target->size());
+    target_model->setView(
+        source_model->centerLon(), source_model->centerLat(), source_model->zoom(), target->size());
     this->syncing_map_movement = false;
 }
 

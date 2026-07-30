@@ -1,9 +1,13 @@
 #include "map_canvas_pipes.h"
 #include "map_canvas_widget.h"
 
+#include "../geo_web_mercator.h"
+
 #include <QAction>
 #include <QMenu>
 #include <QMessageBox>
+
+#include <algorithm>
 
 namespace
 {
@@ -328,8 +332,11 @@ void MapCanvasPipes::moveIntermediateVerticesWithSelectedEndpoints(
         
         for (CoordinateWGS84 &vertex : pipe.geometry.intermediate_vertices)
         {
-            vertex.latitude_deg += latitude_delta;
-            vertex.longitude_deg += longitude_delta;
+            vertex.latitude_deg = std::clamp(
+                vertex.latitude_deg + latitude_delta,
+                -GeoWebMercator::MaximumLatitude, GeoWebMercator::MaximumLatitude);
+            vertex.longitude_deg = GeoWebMercator::normalizeLongitude(
+                vertex.longitude_deg + longitude_delta);
         }
     }
 }

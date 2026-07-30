@@ -8,6 +8,7 @@
 #include <QPointF>
 #include <QPainter>
 #include <QPointer>
+#include <QRect>
 #include <QUuid>
 
 #include "../_enums_structs.h"
@@ -73,7 +74,7 @@ private:
     void restoreMoveSnapshot();
     void clearMoveSnapshot();
     void updateConnectionTarget(const QPointF &mouse_position);
-    void updateWrapReferenceLongitude();
+    void recalculateWrapReferenceLongitude();
     void setWrapReferenceLongitude(double longitude);
     void deleteMarker(MapEntityMarkerLabel *label);
     void selectPipe(const QUuid &pipe_uuid);
@@ -91,8 +92,6 @@ private:
     MapCanvasPlacement *placement = nullptr;
     QList<MapEntityMarker> move_marker_snapshot;
     QHash<QUuid, QList<CoordinateWGS84>> move_pipe_vertices_snapshot;
-    double wrap_reference_lon = 0.0;
-    bool has_wrap_reference_lon = false;
     
 private slots:
     void onMarkerClicked(MapEntityMarkerLabel *label);
@@ -103,7 +102,7 @@ private slots:
     
 public slots:
     void onMarkerSelectedDeleteRequested();
-    void onRectangleSelect(const CoordinateWGS84Rect &rect, RectangleSelectMode mode);
+    void onRectangleSelect(const QRect &rect, RectangleSelectMode mode);
     
 signals:
     void signalEntityMarkerSelected(bool status);

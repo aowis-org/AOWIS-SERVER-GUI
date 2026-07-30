@@ -5,6 +5,8 @@
 #include "map_canvas_widget.h"
 #include "map_model.h"
 
+#include "../geo_web_mercator.h"
+
 MapCanvasSelection::MapCanvasSelection(MapModel *map_model, MapCanvasWidget *map_canvas,
                                        MapCanvasMarkers *point_markers,
                                        MapCanvasDeviceLinks *device_links,
@@ -124,7 +126,7 @@ std::optional<InfrastructureEntityReference> MapCanvasSelection::replaceWithPipe
     return this->pipes->selectPipe(pipe_uuid);
 }
 
-void MapCanvasSelection::selectInRectangle(const CoordinateWGS84Rect &rect,
+void MapCanvasSelection::selectInRectangle(const QRect &rect,
                                            const QList<MapEntityMarker> &point_markers,
                                            const QList<MapEntityMarker> &device_link_markers,
                                            bool replace)
@@ -160,7 +162,8 @@ void MapCanvasSelection::moveSelected(const QPointF &from_position, const QPoint
     const CoordinateWGS84 to_coordinate = this->map_model->wgs84FromScreen(
         to_position.toPoint(), this->map_canvas->size());
     const double latitude_delta = to_coordinate.latitude_deg - from_coordinate.latitude_deg;
-    const double longitude_delta = to_coordinate.longitude_deg - from_coordinate.longitude_deg;
+    const double longitude_delta = GeoWebMercator::normalizeLongitude(
+        to_coordinate.longitude_deg - from_coordinate.longitude_deg);
     
     for (const MapEntityMarker &selected_marker : this->list_selected_markers)
     {
@@ -179,26 +182,14 @@ void MapCanvasSelection::moveSelected(const QPointF &from_position, const QPoint
         this->list_selected_markers, longitude_delta, latitude_delta);
 }
 
-void MapCanvasSelection::addMarkersInRectangle(const CoordinateWGS84Rect &rect,
+void MapCanvasSelection::addMarkersInRectangle(const QRect &rect,
                                                const QList<MapEntityMarker> &markers)
 {
-    const double north = rect.north_west.latitude_deg;
-    const double west = rect.north_west.longitude_deg;
-    const double south = rect.south_east.latitude_deg;
-    const double east = rect.south_east.longitude_deg;
-    
     for (const MapEntityMarker &marker : markers)
     {
-        if (!marker.label)
+        if (!marker.label || !rect.contains(marker.label->geometry().center()))
             continue;
-        
-        const CoordinateWGS84 &coordinate = marker.coord_wgs84;
-        if (coordinate.latitude_deg < south || coordinate.latitude_deg > north ||
-            coordinate.longitude_deg < west || coordinate.longitude_deg > east)
-        {
-            continue;
-        }
-        
+
         addMarker(marker);
     }
 }

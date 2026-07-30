@@ -18,13 +18,12 @@ class MapTileRepository : public QObject
 public:
     explicit MapTileRepository(QObject *parent = nullptr);
 
-    QPixmap *tile(const QString &key) const;
+    const QPixmap *tile(const QString &key) const;
     void requestTile(const QString &endpoint, const QString &key, int x, int y);
     void setMapServerMode(MapServerMode mode);
 
 signals:
     void signalTileAvailable(const QString &key);
-    void signalTileFailed(const QString &key);
     void signalTileRetryReady(const QString &key);
 
 private:
@@ -35,7 +34,7 @@ private:
     };
 
     void initServerMapInterface();
-    void tileReceived(const QString &key, QPixmap *pixmap);
+    void tileReceived(const QString &key, const QPixmap &pixmap);
     void tileFailed(const QString &key);
 
 #ifdef AOWIS_STANDALONE

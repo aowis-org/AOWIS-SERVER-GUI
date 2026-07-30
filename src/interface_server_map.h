@@ -2,21 +2,23 @@
 #define INTERFACE_SERVER_MAP_H
 
 #include <QObject>
+#include <QPixmap>
+#include <QString>
 
 class InterfaceServerMap : public QObject
 {
     Q_OBJECT
+
 public:
     explicit InterfaceServerMap(QObject *parent = nullptr)
         : QObject(parent)
     {
-        
     }
-    
-    virtual void requestTile(QString endpoint, const QString &key, int x, int y) = 0;
-    
+
+    virtual void requestTile(const QString &endpoint, const QString &key, int x, int y) = 0;
+
 signals:
-    void signalTileReceived(const QString &key, QPixmap *pix);
+    void signalTileReceived(const QString &key, const QPixmap &pixmap);
     void signalTileFailed(const QString &key);
 };
 

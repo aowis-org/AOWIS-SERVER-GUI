@@ -1,7 +1,11 @@
 #include "map_canvas_markers.h"
 #include "map_canvas_widget.h"
 
+#include "../geo_web_mercator.h"
+
 #include <QColor>
+
+#include <algorithm>
 #include <QPixmap>
 
 namespace
@@ -219,8 +223,11 @@ bool MapCanvasMarkers::moveByDelta(MapEntityMarkerLabel *label,
         if (marker.label != label)
             continue;
         
-        marker.coord_wgs84.latitude_deg += latitude_delta;
-        marker.coord_wgs84.longitude_deg += longitude_delta;
+        marker.coord_wgs84.latitude_deg = std::clamp(
+            marker.coord_wgs84.latitude_deg + latitude_delta,
+            -GeoWebMercator::MaximumLatitude, GeoWebMercator::MaximumLatitude);
+        marker.coord_wgs84.longitude_deg = GeoWebMercator::normalizeLongitude(
+            marker.coord_wgs84.longitude_deg + longitude_delta);
         return true;
     }
     

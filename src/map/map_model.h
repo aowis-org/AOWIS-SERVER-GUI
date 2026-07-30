@@ -7,14 +7,9 @@
 #include <QSize>
 #include <QString>
 
-#include <algorithm>
-#include <cmath>
-
-#include <QtMath>
-
+#include "../_enums_structs.h"
 #include "../geo_metric_projection.h"
 #include "../geo_web_mercator.h"
-#include "../_enums_structs.h"
 
 class MapModel : public QObject
 {
@@ -32,7 +27,6 @@ public:
     double centerLat() const;
 
     MapProvider provider() const;
-    QString providerCacheKey() const;
     QString tileCacheKey(int x, int y) const;
     QString tileEndpoint(int x, int y) const;
 
@@ -47,6 +41,7 @@ public:
     QPointF screenFromWgs84(double lon, double lat, const QSize &viewport,
                             double wrap_reference_lon) const;
 
+    void setView(double lon, double lat, int zoom, const QSize &viewport = QSize());
     void setCenter(double lon, double lat, const QSize &viewport = QSize());
     void setZoom(int zoom, const QSize &viewport = QSize());
     void zoomIn(const QSize &viewport = QSize());
@@ -54,7 +49,6 @@ public:
 
     void zoomByAt(int steps, const QPoint &anchorPos, const QSize &viewport);
     void panByPixels(const QPoint &delta, const QSize &viewport);
-    void clampCenter(const QSize &viewport);
 
     void setProvider(MapProvider provider);
 
@@ -65,8 +59,10 @@ signals:
     void providerChanged(MapProvider provider);
 
 private:
+    void clampCenter(const QSize &viewport);
     void emitCenterChanged();
     QString providerPath() const;
+    QString tileSourcePath() const;
 
     int m_zoom = 18;
     double m_centerLon = 18.19331;
@@ -78,7 +74,6 @@ private:
     */
 
     MapProvider m_provider = MapProvider::ArcGISSat;
-    QString m_providerCacheKey = "arcgis";
 };
 
 #endif // MAP_MODEL_H

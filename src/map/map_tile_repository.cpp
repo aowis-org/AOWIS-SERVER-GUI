@@ -20,10 +20,10 @@ MapTileRepository::MapTileRepository(QObject *parent)
     : QObject(parent),
     cache(TileCacheMaximumCostKiB)
 {
-    this->initServerMapInterface();
+    initServerMapInterface();
 }
 
-QPixmap *MapTileRepository::tile(const QString &key) const
+const QPixmap *MapTileRepository::tile(const QString &key) const
 {
     return this->cache.object(key);
 }
@@ -33,11 +33,11 @@ void MapTileRepository::requestTile(const QString &endpoint, const QString &key,
     if (this->cache.contains(key) || this->tiles_pending.contains(key) || !this->interface_map)
         return;
 
-    const auto failure = this->tile_failures.constFind(key);
-    if (failure != this->tile_failures.constEnd())
+    const QHash<QString, TileFailure>::const_iterator failure = this->tile_failures.constFind(key);
+    if (failure != this->tile_failures.constEnd() &&
+        QDateTime::currentMSecsSinceEpoch() < failure->retry_after_msecs)
     {
-        if (QDateTime::currentMSecsSinceEpoch() < failure->retry_after_msecs)
-            return;
+        return;
     }
 
     this->tiles_pending.insert(key);
@@ -50,7 +50,7 @@ void MapTileRepository::setMapServerMode(MapServerMode mode)
         return;
 
     this->map_server_mode = mode;
-    this->initServerMapInterface();
+    initServerMapInterface();
 }
 
 void MapTileRepository::initServerMapInterface()
@@ -79,28 +79,31 @@ void MapTileRepository::initServerMapInterface()
     if (!this->interface_map)
         return;
 
-    connect(this->interface_map, &InterfaceServerMap::signalTileReceived, this, &MapTileRepository::tileReceived);
-    connect(this->interface_map, &InterfaceServerMap::signalTileFailed, this, &MapTileRepository::tileFailed);
+    connect(this->interface_map, &InterfaceServerMap::signalTileReceived,
+            this, &MapTileRepository::tileReceived);
+    connect(this->interface_map, &InterfaceServerMap::signalTileFailed,
+            this, &MapTileRepository::tileFailed);
 }
 
-void MapTileRepository::tileReceived(const QString &key, QPixmap *pixmap)
+void MapTileRepository::tileReceived(const QString &key, const QPixmap &pixmap)
 {
     this->tiles_pending.remove(key);
 
-    if (!pixmap || pixmap->isNull())
+    if (pixmap.isNull())
     {
-        delete pixmap;
-        this->tileFailed(key);
+        tileFailed(key);
         return;
     }
 
-    const qint64 cost_bytes = qint64(pixmap->width()) * pixmap->height() * qMax(1, pixmap->depth()) / 8;
+    const qint64 cost_bytes = qint64(pixmap.width()) * pixmap.height() *
+                              qMax(1, pixmap.depth()) / 8;
     const qint64 cost_kib_rounded = (cost_bytes + 1023) / 1024;
-    const int cost_kib = qMax(1, int(qMin<qint64>(cost_kib_rounded, TileCacheMaximumCostKiB)));
+    const int cost_kib = qMax(
+        1, int(qMin<qint64>(cost_kib_rounded, TileCacheMaximumCostKiB)));
 
-    if (!this->cache.insert(key, pixmap, cost_kib))
+    if (!this->cache.insert(key, new QPixmap(pixmap), cost_kib))
     {
-        this->tileFailed(key);
+        tileFailed(key);
         return;
     }
 
@@ -116,18 +119,21 @@ void MapTileRepository::tileFailed(const QString &key)
     failure.count = qMin(failure.count + 1, 6);
 
     const qint64 delay_multiplier = qint64(1) << (failure.count - 1);
-    const qint64 retry_delay = qMin(TileRetryInitialDelayMs * delay_multiplier, TileRetryMaximumDelayMs);
+    const qint64 retry_delay = qMin(
+        TileRetryInitialDelayMs * delay_multiplier, TileRetryMaximumDelayMs);
     failure.retry_after_msecs = QDateTime::currentMSecsSinceEpoch() + retry_delay;
 
     this->tile_failures.insert(key, failure);
-    emit signalTileFailed(key);
-
     const qint64 retry_after_msecs = failure.retry_after_msecs;
     QTimer::singleShot(int(retry_delay), this, [this, key, retry_after_msecs]
     {
-        const auto current_failure = this->tile_failures.constFind(key);
-        if (current_failure == this->tile_failures.constEnd() || current_failure->retry_after_msecs != retry_after_msecs)
+        const QHash<QString, TileFailure>::const_iterator current_failure =
+            this->tile_failures.constFind(key);
+        if (current_failure == this->tile_failures.constEnd() ||
+            current_failure->retry_after_msecs != retry_after_msecs)
+        {
             return;
+        }
 
         emit signalTileRetryReady(key);
     });

@@ -1,5 +1,18 @@
 #include "map_model.h"
 
+#include <algorithm>
+#include <cmath>
+
+namespace
+{
+constexpr double CoordinateComparisonEpsilon = 1e-12;
+
+bool coordinatesEqual(double first, double second)
+{
+    return std::abs(first - second) <= CoordinateComparisonEpsilon;
+}
+}
+
 MapModel::MapModel(QObject *parent)
     : QObject(parent)
 {
@@ -25,11 +38,6 @@ MapProvider MapModel::provider() const
     return this->m_provider;
 }
 
-QString MapModel::providerCacheKey() const
-{
-    return this->m_providerCacheKey;
-}
-
 int MapModel::tileCount() const
 {
     return 1 << this->m_zoom;
@@ -46,18 +54,15 @@ QPointF MapModel::centerTile() const
 QString MapModel::tileCacheKey(int x, int y) const
 {
     const int wrapped_x = GeoWebMercator::wrapTileX(x, this->m_zoom);
-    return this->m_providerCacheKey + QString("/%1/%2/%3").arg(this->m_zoom).arg(wrapped_x).arg(y);
+    return tileSourcePath() + QString("/%1/%2/%3").arg(this->m_zoom).arg(wrapped_x).arg(y);
 }
 
 QString MapModel::tileEndpoint(int x, int y) const
 {
     const int wrapped_x = GeoWebMercator::wrapTileX(x, this->m_zoom);
 
-    // Fallback: only OSM has zoom levels > 17 in the current backend.
-    const QString path = (this->m_zoom > 17) ? QStringLiteral("osmcyclo") : this->providerPath();
-
     return QString("/%1/%2/%3/%4.png")
-        .arg(path)
+        .arg(tileSourcePath())
         .arg(this->m_zoom)
         .arg(wrapped_x)
         .arg(y);
@@ -80,41 +85,60 @@ QString MapModel::providerPath() const
     return QStringLiteral("arcgis");
 }
 
-void MapModel::setCenter(double lon, double lat, const QSize &viewport)
+QString MapModel::tileSourcePath() const
 {
-    this->m_centerLon = GeoWebMercator::normalizeLongitude(lon);
-    this->m_centerLat = std::clamp(lat, -GeoWebMercator::MaximumLatitude, GeoWebMercator::MaximumLatitude);
+    // Only this source currently provides zoom levels above 17 in the map backend.
+    if (this->m_zoom > 17)
+        return QStringLiteral("osmcyclo");
 
-    if (viewport.isValid())
-        this->clampCenter(viewport);
-
-    this->emitCenterChanged();
+    return providerPath();
 }
 
-void MapModel::setZoom(int zoomValue, const QSize &viewport)
+void MapModel::setView(double lon, double lat, int zoom_value, const QSize &viewport)
 {
-    const int clamped_zoom = std::clamp(zoomValue, MinZoom, MaxZoom);
+    const double old_lon = this->m_centerLon;
+    const double old_lat = this->m_centerLat;
+    const int old_zoom = this->m_zoom;
 
-    if (clamped_zoom == this->m_zoom)
-        return;
-
-    this->m_zoom = clamped_zoom;
+    this->m_zoom = std::clamp(zoom_value, MinZoom, MaxZoom);
+    this->m_centerLon = GeoWebMercator::normalizeLongitude(lon);
+    this->m_centerLat = std::clamp(
+        lat, -GeoWebMercator::MaximumLatitude, GeoWebMercator::MaximumLatitude);
 
     if (viewport.isValid())
-        this->clampCenter(viewport);
+        clampCenter(viewport);
 
-    emit zoomChanged(this->m_zoom);
-    this->emitCenterChanged();
+    const bool zoom_changed = this->m_zoom != old_zoom;
+    const bool center_changed = !coordinatesEqual(this->m_centerLon, old_lon) ||
+                                !coordinatesEqual(this->m_centerLat, old_lat);
+
+    if (!zoom_changed && !center_changed)
+        return;
+
+    if (zoom_changed)
+        emit zoomChanged(this->m_zoom);
+    if (center_changed)
+        emitCenterChanged();
+}
+
+void MapModel::setCenter(double lon, double lat, const QSize &viewport)
+{
+    setView(lon, lat, this->m_zoom, viewport);
+}
+
+void MapModel::setZoom(int zoom_value, const QSize &viewport)
+{
+    setView(this->m_centerLon, this->m_centerLat, zoom_value, viewport);
 }
 
 void MapModel::zoomIn(const QSize &viewport)
 {
-    this->setZoom(this->m_zoom + 1, viewport);
+    setZoom(this->m_zoom + 1, viewport);
 }
 
 void MapModel::zoomOut(const QSize &viewport)
 {
-    this->setZoom(this->m_zoom - 1, viewport);
+    setZoom(this->m_zoom - 1, viewport);
 }
 
 void MapModel::zoomByAt(int steps, const QPoint &anchorPos, const QSize &viewport)
@@ -128,7 +152,9 @@ void MapModel::zoomByAt(int steps, const QPoint &anchorPos, const QSize &viewpor
     if (new_zoom == old_zoom)
         return;
 
-    const QPointF old_center = this->centerTile();
+    const double old_lon = this->m_centerLon;
+    const double old_lat = this->m_centerLat;
+    const QPointF old_center = centerTile();
     const double anchor_offset_x = (anchorPos.x() - viewport.width() / 2.0) / TileSize;
     const double anchor_offset_y = (anchorPos.y() - viewport.height() / 2.0) / TileSize;
     const double zoom_scale = std::ldexp(1.0, new_zoom - old_zoom);
@@ -139,27 +165,33 @@ void MapModel::zoomByAt(int steps, const QPoint &anchorPos, const QSize &viewpor
     const double center_tile_y_new = anchor_tile_y_new - anchor_offset_y;
 
     this->m_zoom = new_zoom;
-    this->m_centerLon = GeoWebMercator::normalizeLongitude(GeoWebMercator::tileXToLon(center_tile_x_new, this->m_zoom));
+    this->m_centerLon = GeoWebMercator::normalizeLongitude(
+        GeoWebMercator::tileXToLon(center_tile_x_new, this->m_zoom));
     this->m_centerLat = GeoWebMercator::tileYToLat(center_tile_y_new, this->m_zoom);
-    this->clampCenter(viewport);
+    clampCenter(viewport);
 
     emit zoomChanged(this->m_zoom);
-    this->emitCenterChanged();
+
+    if (!coordinatesEqual(this->m_centerLon, old_lon) ||
+        !coordinatesEqual(this->m_centerLat, old_lat))
+    {
+        emitCenterChanged();
+    }
 }
 
 void MapModel::panByPixels(const QPoint &delta, const QSize &viewport)
 {
-    QPointF center = this->centerTile();
+    if (delta.isNull())
+        return;
+
+    QPointF center = centerTile();
     center.rx() -= double(delta.x()) / TileSize;
     center.ry() -= double(delta.y()) / TileSize;
 
-    this->m_centerLon = GeoWebMercator::normalizeLongitude(GeoWebMercator::tileXToLon(center.x(), this->m_zoom));
-    this->m_centerLat = GeoWebMercator::tileYToLat(center.y(), this->m_zoom);
-
-    if (viewport.isValid())
-        this->clampCenter(viewport);
-
-    this->emitCenterChanged();
+    setCenter(
+        GeoWebMercator::tileXToLon(center.x(), this->m_zoom),
+        GeoWebMercator::tileYToLat(center.y(), this->m_zoom),
+        viewport);
 }
 
 void MapModel::clampCenter(const QSize &viewport)
@@ -167,7 +199,7 @@ void MapModel::clampCenter(const QSize &viewport)
     if (!viewport.isValid())
         return;
 
-    const double world_tile_count = double(this->tileCount());
+    const double world_tile_count = double(tileCount());
     const double half_viewport_height_tiles = viewport.height() / double(TileSize) / 2.0;
     double center_tile_y = GeoWebMercator::latToTileY(this->m_centerLat, this->m_zoom);
 
@@ -193,57 +225,54 @@ void MapModel::setProvider(MapProvider provider)
         return;
 
     this->m_provider = provider;
-    this->m_providerCacheKey = this->providerPath();
-
     emit providerChanged(this->m_provider);
 }
 
 CoordinateWGS84 MapModel::wgs84FromScreen(const QPoint &pos, const QSize &viewport) const
 {
-    const QPointF center = this->centerTile();
+    const QPointF center = centerTile();
     const double tile_x = center.x() + (pos.x() - viewport.width() / 2.0) / TileSize;
     const double unclamped_tile_y = center.y() + (pos.y() - viewport.height() / 2.0) / TileSize;
-    const double tile_y = std::clamp(unclamped_tile_y, 0.0, double(this->tileCount()));
+    const double tile_y = std::clamp(unclamped_tile_y, 0.0, double(tileCount()));
 
     CoordinateWGS84 wgs;
     wgs.latitude_deg = GeoWebMercator::tileYToLat(tile_y, this->m_zoom);
-    wgs.longitude_deg = GeoWebMercator::normalizeLongitude(GeoWebMercator::tileXToLon(tile_x, this->m_zoom));
+    wgs.longitude_deg = GeoWebMercator::normalizeLongitude(
+        GeoWebMercator::tileXToLon(tile_x, this->m_zoom));
     return wgs;
 }
 
 QPointF MapModel::screenFromWgs84(const CoordinateWGS84 &coord, const QSize &viewport) const
 {
-    return this->screenFromWgs84(coord.longitude_deg, coord.latitude_deg, viewport);
+    return screenFromWgs84(coord.longitude_deg, coord.latitude_deg, viewport);
 }
 
 QPointF MapModel::screenFromWgs84(double lon, double lat, const QSize &viewport) const
 {
-    const QPointF center = this->centerTile();
+    const QPointF center = centerTile();
     const double wrapped_lon = GeoWebMercator::normalizeLongitude(lon);
     const double base_tile_x = GeoWebMercator::lonToTileX(wrapped_lon, this->m_zoom);
-    const double tile_x = GeoWebMercator::nearestWrappedTileX(base_tile_x, center.x(), this->m_zoom);
+    const double tile_x = GeoWebMercator::nearestWrappedTileX(
+        base_tile_x, center.x(), this->m_zoom);
     const double tile_y = GeoWebMercator::latToTileY(lat, this->m_zoom);
 
-    const double dx = (tile_x - center.x()) * TileSize;
-    const double dy = (tile_y - center.y()) * TileSize;
-
     return QPointF(
-        double(viewport.width()) / 2.0 + dx,
-        double(viewport.height()) / 2.0 + dy
+        double(viewport.width()) / 2.0 + (tile_x - center.x()) * TileSize,
+        double(viewport.height()) / 2.0 + (tile_y - center.y()) * TileSize
     );
 }
 
 QPointF MapModel::screenFromWgs84(const CoordinateWGS84 &coord, const QSize &viewport,
                                   double wrap_reference_lon) const
 {
-    return this->screenFromWgs84(coord.longitude_deg, coord.latitude_deg, viewport,
-                                 wrap_reference_lon);
+    return screenFromWgs84(
+        coord.longitude_deg, coord.latitude_deg, viewport, wrap_reference_lon);
 }
 
 QPointF MapModel::screenFromWgs84(double lon, double lat, const QSize &viewport,
                                   double wrap_reference_lon) const
 {
-    const QPointF center = this->centerTile();
+    const QPointF center = centerTile();
     const double wrapped_reference_lon = GeoWebMercator::normalizeLongitude(wrap_reference_lon);
     const double reference_base_tile_x = GeoWebMercator::lonToTileX(
         wrapped_reference_lon, this->m_zoom);
@@ -257,12 +286,9 @@ QPointF MapModel::screenFromWgs84(double lon, double lat, const QSize &viewport,
     const double tile_x = local_tile_x + reference_tile_x - reference_base_tile_x;
     const double tile_y = GeoWebMercator::latToTileY(lat, this->m_zoom);
 
-    const double dx = (tile_x - center.x()) * TileSize;
-    const double dy = (tile_y - center.y()) * TileSize;
-
     return QPointF(
-        double(viewport.width()) / 2.0 + dx,
-        double(viewport.height()) / 2.0 + dy
+        double(viewport.width()) / 2.0 + (tile_x - center.x()) * TileSize,
+        double(viewport.height()) / 2.0 + (tile_y - center.y()) * TileSize
     );
 }
 

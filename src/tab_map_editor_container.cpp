@@ -282,7 +282,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
         this->map_canvas->stopEntityPositioning();
     });
     
-    // acticate by default
+    // activate by default
     button_radio_select->click();
     
     tbx->addItem(wgt, "Edit Network");

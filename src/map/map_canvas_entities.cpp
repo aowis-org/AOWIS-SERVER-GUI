@@ -10,6 +10,7 @@
 #include <QCursor>
 
 #include <cmath>
+#include <functional>
 
 #include <QtMath>
 
@@ -100,9 +101,10 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
     connect(this->map_model, &MapModel::zoomChanged, this, &MapCanvasEntities::scaleMarkers);
     connect(this->map_model, &MapModel::centerChangedWGS84, this,
             [this](const CoordinateWGS84 &)
-            {
-                positionMarkers();
-            });
+    {
+        positionMarkers();
+        updateCanvas();
+    });
 
     if (this->hydraulic_data)
     {
@@ -117,7 +119,6 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
 
 void MapCanvasEntities::loadNetwork(const NetworkHydraulic &network)
 {
-    this->has_wrap_reference_lon = false;
     this->setWrapReferenceLongitude(this->map_model->centerLon());
     this->device_links->clearPlacement();
     this->pipes->clearPlacement();
@@ -132,9 +133,9 @@ void MapCanvasEntities::loadNetwork(const NetworkHydraulic &network)
 
     QHash<QUuid, MapEntityMarker> node_markers;
 
-    auto add_node = [this, &node_markers](InfrastructureEntity type,
-                                          const QUuid &uuid,
-                                          const CoordinateWGS84 &coordinate)
+    const std::function<void(InfrastructureEntity, const QUuid &, const CoordinateWGS84 &)> add_node =
+        [this, &node_markers](InfrastructureEntity type, const QUuid &uuid,
+                              const CoordinateWGS84 &coordinate)
     {
         if (uuid.isNull() || node_markers.contains(uuid))
         {
@@ -158,9 +159,10 @@ void MapCanvasEntities::loadNetwork(const NetworkHydraulic &network)
     for (const HydraulicNodeTank &tank : network.nodes_tanks)
         add_node(InfrastructureEntity::Tank, tank.uuid, tank.coordinate_wgs84);
 
-    this->updateWrapReferenceLongitude();
+    recalculateWrapReferenceLongitude();
 
-    auto node_marker = [&node_markers](const QUuid &uuid) -> std::optional<MapEntityMarker>
+    const std::function<std::optional<MapEntityMarker>(const QUuid &)> node_marker =
+        [&node_markers](const QUuid &uuid) -> std::optional<MapEntityMarker>
     {
         const QHash<QUuid, MapEntityMarker>::const_iterator iterator = node_markers.constFind(uuid);
         if (iterator == node_markers.constEnd())
@@ -193,11 +195,11 @@ void MapCanvasEntities::loadNetwork(const NetworkHydraulic &network)
         }
     }
 
-    auto load_device_link = [this, &node_marker](InfrastructureEntity type,
-                                                 const QUuid &uuid,
-                                                 const QUuid &node_uuid_from,
-                                                 const QUuid &node_uuid_to,
-                                                 const QList<HydraulicLinkVertex> &vertices)
+    const std::function<void(InfrastructureEntity, const QUuid &, const QUuid &,
+                             const QUuid &, const QList<HydraulicLinkVertex> &)> load_device_link =
+        [this, &node_marker](InfrastructureEntity type, const QUuid &uuid,
+                             const QUuid &node_uuid_from, const QUuid &node_uuid_to,
+                             const QList<HydraulicLinkVertex> &vertices)
     {
         const std::optional<MapEntityMarker> start_marker = node_marker(node_uuid_from);
         const std::optional<MapEntityMarker> end_marker = node_marker(node_uuid_to);
@@ -344,6 +346,7 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
         const bool synchronized = synchronizeSelectedGeometry();
         if (!synchronized)
             restoreMoveSnapshot();
+        recalculateWrapReferenceLongitude();
         this->selection->setMouseTransparency(false);
         this->placement->completeMove();
         clearMoveSnapshot();
@@ -370,6 +373,7 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
         const bool synchronized = moved && synchronizeMarkerCoordinate(floating_label);
         if (!synchronized)
             restoreMoveSnapshot();
+        recalculateWrapReferenceLongitude();
         this->placement->completeMove();
         clearMoveSnapshot();
         positionMarkers();
@@ -398,11 +402,11 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
     this->point_markers->addMarker(
         reference, coordinate, this->point_markers->pixmapPathForEntity(reference.type),
         this->point_markers->entityWidth(), created_label);
-    if (!this->has_wrap_reference_lon)
-        this->updateWrapReferenceLongitude();
+    recalculateWrapReferenceLongitude();
     this->placement->setFloatingHiddenUntil(event->position().toPoint());
     positionMarkers();
     this->placement->rearmCreate(this->point_markers->pixmapPathForEntity(reference.type), 150);
+    updateCanvas();
     return true;
 }
 
@@ -766,18 +770,17 @@ bool MapCanvasEntities::anchorPipeVertexMove(QMouseEvent *event)
 
 void MapCanvasEntities::setWrapReferenceLongitude(double longitude)
 {
-    this->wrap_reference_lon = GeoWebMercator::normalizeLongitude(longitude);
-    this->point_markers->setWrapReferenceLongitude(this->wrap_reference_lon);
-    this->device_links->setWrapReferenceLongitude(this->wrap_reference_lon);
-    this->pipes->setWrapReferenceLongitude(this->wrap_reference_lon);
+    const double normalized_longitude = GeoWebMercator::normalizeLongitude(longitude);
+    this->point_markers->setWrapReferenceLongitude(normalized_longitude);
+    this->device_links->setWrapReferenceLongitude(normalized_longitude);
+    this->pipes->setWrapReferenceLongitude(normalized_longitude);
 }
 
-void MapCanvasEntities::updateWrapReferenceLongitude()
+void MapCanvasEntities::recalculateWrapReferenceLongitude()
 {
     const QList<MapEntityMarker> &markers = this->point_markers->markers();
     if (markers.isEmpty())
     {
-        this->has_wrap_reference_lon = false;
         this->setWrapReferenceLongitude(this->map_model->centerLon());
         return;
     }
@@ -799,7 +802,6 @@ void MapCanvasEntities::updateWrapReferenceLongitude()
             std::atan2(longitude_sin_sum, longitude_cos_sum));
     }
 
-    this->has_wrap_reference_lon = true;
     this->setWrapReferenceLongitude(reference_longitude);
 }
 
@@ -817,6 +819,7 @@ void MapCanvasEntities::scaleMarkers()
     }
     
     positionMarkers();
+    updateCanvas();
 }
 
 void MapCanvasEntities::positionMarkers()
@@ -938,14 +941,16 @@ void MapCanvasEntities::deleteMarker(MapEntityMarkerLabel *label)
     this->pipes->removeConnectedToLabel(label);
     this->selection->removeMarker(label);
     
-    if (!this->point_markers->removeMarker(label))
+    const bool point_marker_removed = this->point_markers->removeMarker(label);
+    if (!point_marker_removed)
     {
         label->hide();
         label->deleteLater();
     }
-
-    if (this->point_markers->markers().isEmpty())
-        this->updateWrapReferenceLongitude();
+    else
+    {
+        recalculateWrapReferenceLongitude();
+    }
 }
 
 void MapCanvasEntities::onMarkerClicked(MapEntityMarkerLabel *label)
@@ -981,7 +986,7 @@ void MapCanvasEntities::onMarkerContextMenuRequested(MapEntityMarkerLabel *label
     label->showContextMenu(global_position, multiple_entities_selected);
 }
 
-void MapCanvasEntities::onRectangleSelect(const CoordinateWGS84Rect &rect,
+void MapCanvasEntities::onRectangleSelect(const QRect &rect,
                                           RectangleSelectMode mode)
 {
     this->selection->selectInRectangle(rect, this->point_markers->markers(),
@@ -1107,6 +1112,7 @@ void MapCanvasEntities::convertPipeVertexToJunction(const QUuid &pipe_uuid, int 
     
     this->selection->replaceWithMarker(junction_marker);
     emit signalEntityMarkerSelected(true);
+    recalculateWrapReferenceLongitude();
     positionMarkers();
     updateCanvas();
 }

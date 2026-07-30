@@ -178,12 +178,8 @@ void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
         this->rectangle_current_pos = event->position().toPoint();
         
         const QRect selected_rect = currentSelectionRect();
-        const CoordinateWGS84Rect rect = getSelectionRect(selected_rect);
-        
         this->map_canvas_entities->onRectangleSelect(
-            rect,
-            RectangleSelectMode::Replace
-            );
+            selected_rect, RectangleSelectMode::Replace);
         
         update();
         event->accept();
@@ -226,9 +222,9 @@ void MapCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
         int distance_min = 0; // 3
         if (selected_rect.width() > distance_min && selected_rect.height() > distance_min)
         {
-            const CoordinateWGS84Rect rect = getSelectionRect(selected_rect);
-            this->map_canvas_entities->onRectangleSelect(rect, RectangleSelectMode::Replace);
-            emit signalRectangleSelected(rect);
+            this->map_canvas_entities->onRectangleSelect(
+                selected_rect, RectangleSelectMode::Replace);
+            emit signalRectangleSelected(getSelectionRect(selected_rect));
         }
         else
         {

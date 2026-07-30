@@ -6,6 +6,7 @@
 #include <QList>
 #include <QPointer>
 #include <QPointF>
+#include <QRect>
 #include <QUuid>
 
 #include "map_models.h"
@@ -38,7 +39,7 @@ public:
     void toggleMarker(const MapEntityMarker &marker);
     void removeMarker(MapEntityMarkerLabel *label);
     std::optional<InfrastructureEntityReference> replaceWithPipe(const QUuid &pipe_uuid);
-    void selectInRectangle(const CoordinateWGS84Rect &rect,
+    void selectInRectangle(const QRect &rect,
                            const QList<MapEntityMarker> &point_markers,
                            const QList<MapEntityMarker> &device_link_markers,
                            bool replace);
@@ -46,7 +47,7 @@ public:
     void moveSelected(const QPointF &from_position, const QPointF &to_position);
     
 private:
-    void addMarkersInRectangle(const CoordinateWGS84Rect &rect,
+    void addMarkersInRectangle(const QRect &rect,
                                const QList<MapEntityMarker> &markers);
     
     MapModel *map_model = nullptr;

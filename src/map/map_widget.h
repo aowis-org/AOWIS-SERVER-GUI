@@ -91,6 +91,7 @@ private:
 
     GpsProvider *gps = nullptr;
     CoordinateWGS84 gps_coordinate;
+    bool has_gps_coordinate = false;
 
     MapModel *m_model = nullptr;
     MapTileRepository *tile_repository = nullptr;

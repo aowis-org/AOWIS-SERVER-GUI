@@ -1,6 +1,10 @@
 #include "map_canvas_devicelinks.h"
 #include "map_canvas_widget.h"
 
+#include "../geo_web_mercator.h"
+
+#include <algorithm>
+
 namespace
 {
 constexpr double link_hit_distance = 7.0;
@@ -389,8 +393,12 @@ bool MapCanvasDeviceLinks::moveCenterByDelta(MapEntityMarkerLabel *label,
         if (device_link.device_label != label)
             continue;
         
-        device_link.geometry.center_coordinate.latitude_deg += latitude_delta;
-        device_link.geometry.center_coordinate.longitude_deg += longitude_delta;
+        device_link.geometry.center_coordinate.latitude_deg = std::clamp(
+            device_link.geometry.center_coordinate.latitude_deg + latitude_delta,
+            -GeoWebMercator::MaximumLatitude, GeoWebMercator::MaximumLatitude);
+        device_link.geometry.center_coordinate.longitude_deg =
+            GeoWebMercator::normalizeLongitude(
+                device_link.geometry.center_coordinate.longitude_deg + longitude_delta);
         return true;
     }
     

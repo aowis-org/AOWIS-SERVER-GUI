@@ -92,32 +92,28 @@ void MapWidget::init()
     connect(this->m_model, &MapModel::zoomChanged, this, [this](int zoom)
     {
         emit signalZoomChanged(zoom);
-        this->update();
+        update();
     });
 
     connect(this->m_model, &MapModel::centerChangedWGS84, this, [this](CoordinateWGS84 wgs)
     {
         emit signalCoordsChangedWgs84(wgs);
-        this->update();
+        update();
     });
 
     connect(this->m_model, &MapModel::centerChangedUTM, this, &MapWidget::signalCoordsChangedUTM);
     connect(this->m_model, &MapModel::providerChanged, this, [this](MapProvider)
     {
-        this->update();
+        update();
     });
 
     connect(this->tile_repository, &MapTileRepository::signalTileAvailable, this, [this](const QString &)
     {
-        this->update();
-    });
-    connect(this->tile_repository, &MapTileRepository::signalTileFailed, this, [this](const QString &)
-    {
-        this->update();
+        update();
     });
     connect(this->tile_repository, &MapTileRepository::signalTileRetryReady, this, [this](const QString &)
     {
-        this->update();
+        update();
     });
 
     if (this->gps)
@@ -125,12 +121,27 @@ void MapWidget::init()
         connect(this->gps, &GpsProvider::positionChanged, this, [this](const QGeoPositionInfo &info)
         {
 #ifndef Q_OS_WASM
-            const QGeoCoordinate coord = info.coordinate();
+            const QGeoCoordinate coordinate = info.coordinate();
+            if (!info.isValid() || !coordinate.isValid())
+            {
+                this->has_gps_coordinate = false;
+                update();
+                return;
+            }
 
-            this->gps_coordinate.latitude_deg = coord.latitude();
-            this->gps_coordinate.longitude_deg = coord.longitude();
-            this->gps_coordinate.altitude_m = coord.altitude();
+            this->gps_coordinate.latitude_deg = coordinate.latitude();
+            this->gps_coordinate.longitude_deg = coordinate.longitude();
+            this->gps_coordinate.altitude_m = coordinate.altitude();
+            this->has_gps_coordinate = true;
+            update();
+#else
+            Q_UNUSED(info)
 #endif
+        });
+        connect(this->gps, &GpsProvider::gpsDisconnected, this, [this]
+        {
+            this->has_gps_coordinate = false;
+            update();
         });
         connect(this->gps, &GpsProvider::statusMessage, this, [](const QString &message)
         {
@@ -138,7 +149,7 @@ void MapWidget::init()
         });
     }
 
-    QTimer::singleShot(100, this, [this]
+    QTimer::singleShot(0, this, [this]
     {
         emit signalZoomChanged(this->m_model->zoom());
 
@@ -768,10 +779,13 @@ void MapWidget::paintEvent(QPaintEvent *)
     QPainter painter(this);
     this->drawTiles(painter);
 
-    const QPointF gps_point = this->m_model->screenFromWgs84(this->gps_coordinate, this->size());
-
-    painter.setBrush(Qt::red);
-    painter.drawEllipse(gps_point, 5.0, 5.0);
+    if (this->has_gps_coordinate)
+    {
+        const QPointF gps_point = this->m_model->screenFromWgs84(
+            this->gps_coordinate, size());
+        painter.setBrush(Qt::red);
+        painter.drawEllipse(gps_point, 5.0, 5.0);
+    }
 }
 
 void MapWidget::drawTiles(QPainter &painter)
@@ -800,7 +814,7 @@ void MapWidget::drawTiles(QPainter &painter)
 
             const int tile_x = GeoWebMercator::wrapTileX(virtual_x, this->m_model->zoom());
             const QString key = this->m_model->tileCacheKey(tile_x, y);
-            QPixmap *pixmap = this->tile_repository->tile(key);
+            const QPixmap *pixmap = this->tile_repository->tile(key);
 
             if (!pixmap)
             {
