@@ -51,6 +51,23 @@ MapCanvasDeviceLinks::MapCanvasDeviceLinks(MapModel *map_model,
     this->map_canvas = map_canvas;
 }
 
+void MapCanvasDeviceLinks::clear()
+{
+    clearPlacement();
+
+    for (const DeviceLinkCanvasItem &device_link : this->list_device_links)
+    {
+        if (!device_link.device_label)
+            continue;
+
+        device_link.device_label->hide();
+        device_link.device_label->deleteLater();
+    }
+
+    this->list_device_links.clear();
+    updateCanvas();
+}
+
 void MapCanvasDeviceLinks::clearPlacement()
 {
     this->device_link_start_label = nullptr;
@@ -64,6 +81,47 @@ bool MapCanvasDeviceLinks::hasStartLabel() const
 MapEntityMarkerLabel *MapCanvasDeviceLinks::startLabel() const
 {
     return this->device_link_start_label.data();
+}
+
+MapEntityMarkerLabel *MapCanvasDeviceLinks::addDeviceLink(
+    const InfrastructureEntityReference &entity,
+    const DeviceLinkGeometry &geometry,
+    MapEntityMarkerLabel *start_label,
+    MapEntityMarkerLabel *end_label,
+    const QString &pixmap_path,
+    int label_width,
+    MapEntityMarkerLabel *device_label)
+{
+    if (!start_label || !end_label || start_label == end_label || entity.uuid.isNull() ||
+        !isHydraulicConnectionNode(geometry.start_node.type) ||
+        !isHydraulicConnectionNode(geometry.end_node.type) ||
+        (entity.type != InfrastructureEntity::Pump && entity.type != InfrastructureEntity::Valve))
+    {
+        return nullptr;
+    }
+
+    if (!device_label)
+        device_label = new MapEntityMarkerLabel(this->map_canvas);
+
+    DeviceLinkCanvasItem device_link;
+    device_link.entity = entity;
+    device_link.geometry = geometry;
+    device_link.start_label = start_label;
+    device_link.end_label = end_label;
+    device_link.device_label = device_label;
+    device_link.path_pixmap = pixmap_path;
+
+    const QPixmap pixmap = QPixmap(device_link.path_pixmap).scaledToWidth(
+        label_width, Qt::SmoothTransformation);
+    device_link.device_label->setPixmap(pixmap);
+    device_link.device_label->resize(pixmap.size());
+    device_link.device_label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
+    configureLabel(device_link.device_label);
+
+    this->list_device_links.append(device_link);
+    positionLabels();
+    updateCanvas();
+    return device_link.device_label;
 }
 
 MapCanvasDeviceLinks::AnchorResult MapCanvasDeviceLinks::anchor(
@@ -92,30 +150,17 @@ MapCanvasDeviceLinks::AnchorResult MapCanvasDeviceLinks::anchor(
 
     const std::optional<DeviceLinkGeometry> geometry = completionGeometry(
         connection_target_label, markers);
-    if (!geometry.has_value() || entity.uuid.isNull())
+    if (!geometry.has_value())
         return result;
 
-    DeviceLinkCanvasItem device_link;
-    device_link.entity = entity;
-    device_link.geometry = geometry.value();
-    device_link.start_label = this->device_link_start_label;
-    device_link.end_label = connection_target_label;
-    device_link.device_label = floating_label;
-    device_link.path_pixmap = pixmap_path;
+    result.device_label = addDeviceLink(
+        entity, geometry.value(), this->device_link_start_label,
+        connection_target_label, pixmap_path, label_width, floating_label);
+    if (!result.device_label)
+        return result;
 
-    const QPixmap pixmap = QPixmap(device_link.path_pixmap).scaledToWidth(
-        label_width, Qt::SmoothTransformation);
-    device_link.device_label->setPixmap(pixmap);
-    device_link.device_label->resize(pixmap.size());
-    device_link.device_label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
-    configureLabel(device_link.device_label);
-
-    this->list_device_links.append(device_link);
     result.status = AnchorStatus::Completed;
-    result.device_label = device_link.device_label;
     clearPlacement();
-    positionLabels();
-    updateCanvas();
     return result;
 }
 

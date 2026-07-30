@@ -25,6 +25,7 @@ public:
                               QObject *parent = nullptr);
     
     const QList<MapEntityMarker> &markers() const;
+    void clear();
     int entityWidth() const;
     QString pixmapPathForEntity(InfrastructureEntity entity) const;
     MapEntityMarkerLabel *nearestConnectionTarget(const QPointF &mouse_position,

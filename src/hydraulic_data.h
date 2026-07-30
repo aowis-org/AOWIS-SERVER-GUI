@@ -74,6 +74,7 @@ private slots:
     void onDatabaseReady();
     
 signals:
+    void signalNetworkLoaded();
     void signalSelectedTank(const HydraulicNodeTank &tank);
     void signalSelectedReservoir(const HydraulicNodeReservoir &reservoir);
     void signalSelectedJunction(const HydraulicNodeJunction &junction);

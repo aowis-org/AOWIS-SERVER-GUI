@@ -32,6 +32,14 @@ bool isHydraulicCanvasLink(InfrastructureEntity entity)
 {
     return isHydraulicDeviceLink(entity) || isHydraulicPipeGeometry(entity);
 }
+
+CoordinateWGS84 midpoint(const CoordinateWGS84 &from, const CoordinateWGS84 &to)
+{
+    CoordinateWGS84 coordinate;
+    coordinate.latitude_deg = (from.latitude_deg + to.latitude_deg) / 2.0;
+    coordinate.longitude_deg = (from.longitude_deg + to.longitude_deg) / 2.0;
+    return coordinate;
+}
 }
 
 MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraulic_data,
@@ -86,6 +94,140 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
             {
                 positionMarkers();
             });
+
+    if (this->hydraulic_data)
+    {
+        connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this,
+                [this]()
+                {
+                    loadNetwork(this->hydraulic_data->networkHydraulic());
+                });
+        loadNetwork(this->hydraulic_data->networkHydraulic());
+    }
+}
+
+void MapCanvasEntities::loadNetwork(const NetworkHydraulic &network)
+{
+    this->device_links->clearPlacement();
+    this->pipes->clearPlacement();
+    this->pipes->cancelPipeVertexMove();
+    this->point_markers->setMouseTransparency(false);
+    this->placement->stop();
+    clearMoveSnapshot();
+    this->selection->clear();
+    this->device_links->clear();
+    this->pipes->clear();
+    this->point_markers->clear();
+
+    QHash<QUuid, MapEntityMarker> node_markers;
+
+    auto add_node = [this, &node_markers](InfrastructureEntity type,
+                                          const QUuid &uuid,
+                                          const CoordinateWGS84 &coordinate)
+    {
+        if (uuid.isNull() || node_markers.contains(uuid))
+        {
+            qWarning() << "Cannot load hydraulic node with invalid or duplicate UUID:" << uuid;
+            return;
+        }
+
+        InfrastructureEntityReference reference;
+        reference.type = type;
+        reference.uuid = uuid;
+        const MapEntityMarker marker = this->point_markers->addMarker(
+            reference, coordinate, this->point_markers->pixmapPathForEntity(type),
+            this->point_markers->entityWidth());
+        node_markers.insert(uuid, marker);
+    };
+
+    for (const HydraulicNodeJunction &junction : network.nodes_junctions)
+        add_node(InfrastructureEntity::Junction, junction.uuid, junction.coordinate_wgs84);
+    for (const HydraulicNodeReservoir &reservoir : network.nodes_reservoirs)
+        add_node(InfrastructureEntity::Reservoir, reservoir.uuid, reservoir.coordinate_wgs84);
+    for (const HydraulicNodeTank &tank : network.nodes_tanks)
+        add_node(InfrastructureEntity::Tank, tank.uuid, tank.coordinate_wgs84);
+
+    auto node_marker = [&node_markers](const QUuid &uuid) -> std::optional<MapEntityMarker>
+    {
+        const QHash<QUuid, MapEntityMarker>::const_iterator iterator = node_markers.constFind(uuid);
+        if (iterator == node_markers.constEnd())
+            return std::nullopt;
+        return iterator.value();
+    };
+
+    for (const HydraulicLinkPipe &pipe : network.links_pipes)
+    {
+        const std::optional<MapEntityMarker> start_marker = node_marker(pipe.node_uuid_from);
+        const std::optional<MapEntityMarker> end_marker = node_marker(pipe.node_uuid_to);
+        if (!start_marker.has_value() || !end_marker.has_value())
+        {
+            qWarning() << "Cannot load pipe with missing endpoint node:" << pipe.uuid;
+            continue;
+        }
+
+        QList<CoordinateWGS84> vertices;
+        vertices.reserve(pipe.vertices.size());
+        for (const HydraulicLinkVertex &vertex : pipe.vertices)
+            vertices.append(vertex.coordinate_wgs84);
+
+        InfrastructureEntityReference reference;
+        reference.type = InfrastructureEntity::Pipe;
+        reference.uuid = pipe.uuid;
+        if (!this->pipes->addPipe(reference, start_marker->entity, end_marker->entity,
+                                  start_marker->label, end_marker->label, vertices))
+        {
+            qWarning() << "Cannot load pipe:" << pipe.uuid;
+        }
+    }
+
+    auto load_device_link = [this, &node_marker](InfrastructureEntity type,
+                                                 const QUuid &uuid,
+                                                 const QUuid &node_uuid_from,
+                                                 const QUuid &node_uuid_to,
+                                                 const QList<HydraulicLinkVertex> &vertices)
+    {
+        const std::optional<MapEntityMarker> start_marker = node_marker(node_uuid_from);
+        const std::optional<MapEntityMarker> end_marker = node_marker(node_uuid_to);
+        if (!start_marker.has_value() || !end_marker.has_value())
+        {
+            qWarning() << "Cannot load device link with missing endpoint node:" << uuid;
+            return;
+        }
+
+        DeviceLinkGeometry geometry;
+        geometry.start_node = start_marker->entity;
+        geometry.end_node = end_marker->entity;
+        geometry.center_coordinate = vertices.isEmpty()
+                                         ? midpoint(start_marker->coord_wgs84,
+                                                    end_marker->coord_wgs84)
+                                         : vertices.first().coordinate_wgs84;
+
+        InfrastructureEntityReference reference;
+        reference.type = type;
+        reference.uuid = uuid;
+        if (!this->device_links->addDeviceLink(
+                reference, geometry, start_marker->label, end_marker->label,
+                this->point_markers->pixmapPathForEntity(type),
+                this->point_markers->entityWidth()))
+        {
+            qWarning() << "Cannot load device link:" << uuid;
+        }
+    };
+
+    for (const HydraulicLinkPump &pump : network.links_pumps)
+    {
+        load_device_link(InfrastructureEntity::Pump, pump.uuid,
+                         pump.node_uuid_from, pump.node_uuid_to, pump.vertices);
+    }
+    for (const HydraulicLinkValve &valve : network.links_valves)
+    {
+        load_device_link(InfrastructureEntity::Valve, valve.uuid,
+                         valve.node_uuid_from, valve.node_uuid_to, valve.vertices);
+    }
+
+    positionMarkers();
+    emit signalEntityMarkerSelected(false);
+    updateCanvas();
 }
 
 void MapCanvasEntities::startEntityPositioning(InfrastructureEntity entity)

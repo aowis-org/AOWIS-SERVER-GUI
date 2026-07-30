@@ -54,6 +54,14 @@ MapCanvasPipes::MapCanvasPipes(MapModel *map_model, MapCanvasWidget *map_canvas,
     map_canvas(map_canvas)
 {}
 
+void MapCanvasPipes::clear()
+{
+    clearPlacement();
+    cancelPipeVertexMove();
+    this->list_pipes.clear();
+    updateCanvas();
+}
+
 void MapCanvasPipes::clearPlacement()
 {
     this->pipe_start_label = nullptr;
@@ -88,29 +96,50 @@ QList<CoordinateWGS84> MapCanvasPipes::intermediateVertices() const
     return this->pipe_intermediate_vertices;
 }
 
+bool MapCanvasPipes::addPipe(
+    const InfrastructureEntityReference &pipe_reference,
+    const InfrastructureEntityReference &start_node,
+    const InfrastructureEntityReference &end_node,
+    MapEntityMarkerLabel *start_label,
+    MapEntityMarkerLabel *end_label,
+    const QList<CoordinateWGS84> &intermediate_vertices)
+{
+    if (!start_label || !end_label || start_label == end_label ||
+        pipe_reference.type != InfrastructureEntity::Pipe || pipe_reference.uuid.isNull() ||
+        !isHydraulicConnectionNode(start_node.type) ||
+        !isHydraulicConnectionNode(end_node.type))
+    {
+        return false;
+    }
+
+    PipeCanvasItem pipe;
+    pipe.entity = pipe_reference;
+    pipe.geometry.start_node = start_node;
+    pipe.geometry.end_node = end_node;
+    pipe.geometry.intermediate_vertices = intermediate_vertices;
+    pipe.start_label = start_label;
+    pipe.end_label = end_label;
+    this->list_pipes.append(pipe);
+
+    updateCanvas();
+    return true;
+}
+
 bool MapCanvasPipes::completePipe(const InfrastructureEntityReference &pipe_reference,
                                   const InfrastructureEntityReference &start_node,
                                   const InfrastructureEntityReference &end_node,
                                   MapEntityMarkerLabel *end_label)
 {
-    if (!this->pipe_start_label || !end_label ||
-        pipe_reference.type != InfrastructureEntity::Pipe || pipe_reference.uuid.isNull())
-    {
+    if (!this->pipe_start_label)
         return false;
-    }
-    
-    PipeCanvasItem pipe;
-    pipe.entity = pipe_reference;
-    pipe.geometry.start_node = start_node;
-    pipe.geometry.end_node = end_node;
-    pipe.geometry.intermediate_vertices = this->pipe_intermediate_vertices;
-    pipe.start_label = this->pipe_start_label;
-    pipe.end_label = end_label;
-    this->list_pipes.append(pipe);
-    
-    clearPlacement();
-    updateCanvas();
-    return true;
+
+    const bool added = addPipe(pipe_reference, start_node, end_node,
+                               this->pipe_start_label, end_label,
+                               this->pipe_intermediate_vertices);
+    if (added)
+        clearPlacement();
+
+    return added;
 }
 
 void MapCanvasPipes::paint(QPainter &paint,

@@ -31,6 +31,20 @@ const QList<MapEntityMarker> &MapCanvasMarkers::markers() const
     return this->list_markers;
 }
 
+void MapCanvasMarkers::clear()
+{
+    for (const MapEntityMarker &marker : this->list_markers)
+    {
+        if (!marker.label)
+            continue;
+
+        marker.label->hide();
+        marker.label->deleteLater();
+    }
+
+    this->list_markers.clear();
+}
+
 int MapCanvasMarkers::entityWidth() const
 {
     const int zoom = this->map_model->zoom();

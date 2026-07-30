@@ -37,6 +37,7 @@ public:
     explicit MapCanvasEntities(MapModel *map_model, HydraulicData *hydraulic_data,
                                MapCanvasWidget *map_canvas);
     
+    void loadNetwork(const NetworkHydraulic &network);
     void startEntityPositioning(InfrastructureEntity entity);
     void stopEntityPositioning();
     void floatEntity(QMouseEvent *event);

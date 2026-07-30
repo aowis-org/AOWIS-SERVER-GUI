@@ -40,6 +40,7 @@ public:
     
     explicit MapCanvasPipes(MapModel *map_model, MapCanvasWidget *map_canvas, QObject *parent = nullptr);
     
+    void clear();
     void clearPlacement();
     bool hasStartLabel() const;
     MapEntityMarkerLabel *startLabel() const;
@@ -47,8 +48,16 @@ public:
     void appendIntermediateVertex(const CoordinateWGS84 &coordinate);
     QList<CoordinateWGS84> intermediateVertices() const;
     QList<CoordinateWGS84> intermediateVertices(const QUuid &pipe_uuid) const;
-    bool completePipe(const InfrastructureEntityReference &pipe_reference, const InfrastructureEntityReference &start_node,
-                      const InfrastructureEntityReference &end_node, MapEntityMarkerLabel *end_label);
+    bool addPipe(const InfrastructureEntityReference &pipe_reference,
+                 const InfrastructureEntityReference &start_node,
+                 const InfrastructureEntityReference &end_node,
+                 MapEntityMarkerLabel *start_label,
+                 MapEntityMarkerLabel *end_label,
+                 const QList<CoordinateWGS84> &intermediate_vertices);
+    bool completePipe(const InfrastructureEntityReference &pipe_reference,
+                      const InfrastructureEntityReference &start_node,
+                      const InfrastructureEntityReference &end_node,
+                      MapEntityMarkerLabel *end_label);
     
     void paint(QPainter &paint,
                const QList<MapEntityMarker> &markers,

@@ -36,9 +36,18 @@ public:
     explicit MapCanvasDeviceLinks(MapModel *map_model, MapCanvasWidget *map_canvas,
                                   QObject *parent = nullptr);
     
+    void clear();
     void clearPlacement();
     bool hasStartLabel() const;
     MapEntityMarkerLabel *startLabel() const;
+    MapEntityMarkerLabel *addDeviceLink(
+        const InfrastructureEntityReference &entity,
+        const DeviceLinkGeometry &geometry,
+        MapEntityMarkerLabel *start_label,
+        MapEntityMarkerLabel *end_label,
+        const QString &pixmap_path,
+        int label_width,
+        MapEntityMarkerLabel *device_label = nullptr);
     AnchorResult anchor(const InfrastructureEntityReference &entity,
                         MapEntityMarkerLabel *connection_target_label,
                         MapEntityMarkerLabel *floating_label,
