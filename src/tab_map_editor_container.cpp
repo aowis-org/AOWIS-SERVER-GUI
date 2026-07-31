@@ -270,6 +270,8 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     this->button_group_tools->addButton(button_radio_note, 9);
     button_radio_note->setEnabled(false);
     
+    
+    
     QLabel *label_instruction = new QLabel(
         "<b>Right Click</b> to place Entity",
         this

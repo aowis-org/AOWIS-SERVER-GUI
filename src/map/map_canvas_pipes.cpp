@@ -449,8 +449,8 @@ bool MapCanvasPipes::showContextMenuAt(const QPointF &position, const QPoint &gl
         emit pipeSelectionRequested(pipe_uuid);
         
         QMenu *menu = new QMenu(this->map_canvas);
-        QAction *action_move = menu->addAction("Move");
-        QAction *action_delete = menu->addAction("Delete");
+        QAction *action_move = menu->addAction("Move vertex");
+        QAction *action_delete = menu->addAction("Delete vertex");
         QAction *action_convert_to_junction = menu->addAction("Convert to junction");
         
         connect(action_move, &QAction::triggered, this, [this, pipe_uuid, vertex_index]()
