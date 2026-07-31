@@ -72,7 +72,7 @@ private:
     CoordinateWGS84Rect getSelectionRect(const QRect &selected_rect) const;
     
     CoordinateWGS84 rectangle_start_wgs84;
-    QPoint rectangle_current_pos;
+    CoordinateWGS84 rectangle_current_wgs84;
     
     QRect currentSelectionRect() const;
     void paintEventRectangle(QPainter &paint);

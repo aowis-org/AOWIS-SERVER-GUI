@@ -190,6 +190,7 @@ void MapCanvasWidget::focusOutEvent(QFocusEvent *event)
 void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton &&
+        !this->rectangle_dragging &&
         (this->map_canvas_entities->selectDeviceLinkAt(event->position()) ||
          this->map_canvas_entities->selectPipeAt(event->position())))
     {
@@ -221,11 +222,8 @@ void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
         
         if (this->rectangle_selection_active)
         {
-            this->rectangle_start_wgs84 = this->map_model->wgs84FromScreen(
-                event->position().toPoint(),
-                size()
-                );
-            this->rectangle_current_pos = event->position().toPoint();
+            this->rectangle_start_wgs84 = this->map_model->wgs84FromScreen(event->position().toPoint(), size());
+            this->rectangle_current_wgs84 = this->rectangle_start_wgs84;
             this->rectangle_dragging = true;
             setCursor(Qt::CrossCursor);
             update();
@@ -242,22 +240,24 @@ void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
 
 void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
 {
-    if (this->map->handleMouseMoveEvent(event))
-        return;
+    const bool map_handled_event = this->map->handleMouseMoveEvent(event);
 
     if (this->rectangle_selection_active && this->rectangle_dragging)
     {
         setCursor(Qt::CrossCursor);
-        this->rectangle_current_pos = event->position().toPoint();
-        
+        this->rectangle_current_wgs84 = this->map_model->wgs84FromScreen(event->position().toPoint(), size());
+
         const QRect selected_rect = currentSelectionRect();
         this->map_canvas_entities->onRectangleSelect(
             selected_rect, RectangleSelectMode::Replace);
-        
+
         update();
         event->accept();
         return;
     }
+
+    if (map_handled_event)
+        return;
     
     this->map_canvas_entities->floatEntity(event);
     
@@ -277,7 +277,7 @@ void MapCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
 {
     if (this->rectangle_selection_active && this->rectangle_dragging && event->button() == Qt::RightButton)
     {
-        this->rectangle_current_pos = event->position().toPoint();
+        this->rectangle_current_wgs84 = this->map_model->wgs84FromScreen(event->position().toPoint(), size());
         const QRect selected_rect = currentSelectionRect();
         
         if (this->is_rectangle_selection_oneshot)
@@ -329,7 +329,8 @@ void MapCanvasWidget::startRectangleSelection(bool oneshot)
     this->rectangle_selection_active = true;
     this->rectangle_dragging = false;
     
-    this->rectangle_current_pos = QPoint();
+    this->rectangle_start_wgs84 = CoordinateWGS84();
+    this->rectangle_current_wgs84 = CoordinateWGS84();
     
     unsetCursor();
     setFocus();
@@ -354,12 +355,10 @@ void MapCanvasWidget::cancelRectangleSelection()
 }
 QRect MapCanvasWidget::currentSelectionRect() const
 {
-    const QPoint rectangle_start_pos = this->map_model->screenFromWgs84(
-        this->rectangle_start_wgs84,
-        size()
-    ).toPoint();
-    
-    return QRect(rectangle_start_pos, this->rectangle_current_pos).normalized();
+    const QPoint rectangle_start_pos = this->map_model->screenFromWgs84(this->rectangle_start_wgs84, size()).toPoint();
+    const QPoint rectangle_current_pos = this->map_model->screenFromWgs84(this->rectangle_current_wgs84, size()).toPoint();
+
+    return QRect(rectangle_start_pos, rectangle_current_pos).normalized();
 }
 CoordinateWGS84Rect MapCanvasWidget::getSelectionRect(const QRect &selected_rect) const
 {
