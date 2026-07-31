@@ -3,6 +3,7 @@
 #include "_sizes.h"
 #include "widgets/combo_checkboxes.h"
 
+#include <QAbstractButton>
 #include <QAction>
 #include <QComboBox>
 #include <QEvent>
@@ -18,7 +19,6 @@
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QSizePolicy>
-#include <QStyle>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -162,6 +162,25 @@ TopControlBarContent *barContent(QWidget *content)
 {
     return static_cast<TopControlBarContent *>(content);
 }
+
+QSize toolbarIconButtonSize()
+{
+    const int extent = Sizes::TopControlBarHeight - 2;
+    return QSize(extent, extent);
+}
+
+QSize toolbarIconSize()
+{
+    const int extent = Sizes::TopControlBarHeight - 4;
+    return QSize(extent, extent);
+}
+
+void configureToolbarIconButton(QAbstractButton *button)
+{
+    button->setFixedSize(toolbarIconButtonSize());
+    button->setIconSize(toolbarIconSize());
+    button->setStyleSheet(QStringLiteral("padding: 0;"));
+}
 }
 
 TopControlBar::TopControlBar(QWidget *parent)
@@ -173,7 +192,7 @@ TopControlBar::TopControlBar(QWidget *parent)
     setMovable(false);
     setFloatable(false);
     setContextMenuPolicy(Qt::PreventContextMenu);
-    setIconSize(QSize(30, 30));
+    setIconSize(toolbarIconSize());
     setFixedHeight(Sizes::TopControlBarHeight);
     setContentsMargins(0, 0, 0, 0);
 
@@ -196,14 +215,9 @@ void TopControlBar::setFullScreenState(bool fullscreen)
     if (this->button_fullscreen == nullptr)
         return;
 
-    const QStyle::StandardPixmap icon = fullscreen
-                                           ? QStyle::SP_TitleBarNormalButton
-                                           : QStyle::SP_TitleBarMaxButton;
-
-    this->button_fullscreen->setIcon(style()->standardIcon(icon));
-    this->button_fullscreen->setToolTip(fullscreen
-                                            ? QStringLiteral("Leave fullscreen [F11]")
-                                            : QStringLiteral("Enter fullscreen [F11]"));
+    const QString icon_path = fullscreen ? QStringLiteral(":/icon/fullscreen_undo.png") : QStringLiteral(":/icon/fullscreen.png");
+    this->button_fullscreen->setIcon(QIcon(icon_path));
+    this->button_fullscreen->setToolTip(fullscreen ? QStringLiteral("Leave fullscreen [F11]") : QStringLiteral("Enter fullscreen [F11]"));
 }
 
 void TopControlBar::addProjectControls()
@@ -366,13 +380,10 @@ void TopControlBar::addHeadlossFormulaDropdown()
 void TopControlBar::addSimulationControls()
 {
     TopControlBarContent *bar_content = barContent(this->content);
-    const QSize button_size(40, Sizes::TopControlBarHeight - 10);
-
     QPushButton *button_sim_start = new QPushButton(this->content);
     button_sim_start->setIcon(QIcon(QStringLiteral(":/icon/simulation_start.png")));
     button_sim_start->setFlat(true);
-    button_sim_start->setIconSize(QSize(30, 30));
-    button_sim_start->setFixedSize(button_size);
+    configureToolbarIconButton(button_sim_start);
     button_sim_start->setToolTip(QStringLiteral("Run Configured Simulations<br>[Ctrl]+[R]<br>[Shift]+[Enter]"));
     button_sim_start->addAction(QString(), QKeySequence(Qt::SHIFT | Qt::Key_Return), button_sim_start, &QPushButton::click);
     button_sim_start->addAction(QString(), QKeySequence(Qt::CTRL | Qt::Key_R), button_sim_start, &QPushButton::click);
@@ -380,8 +391,7 @@ void TopControlBar::addSimulationControls()
     QPushButton *button_sim_log = new QPushButton(this->content);
     button_sim_log->setIcon(QIcon(QStringLiteral(":/icon/log.png")));
     button_sim_log->setFlat(true);
-    button_sim_log->setIconSize(QSize(30, 30));
-    button_sim_log->setFixedSize(button_size);
+    configureToolbarIconButton(button_sim_log);
     button_sim_log->setToolTip(QStringLiteral("Show EPANET log<br>You need to run a simulation first"));
     button_sim_log->setEnabled(false);
 
@@ -407,8 +417,7 @@ void TopControlBar::addViewControls()
 
     this->button_fullscreen = new QToolButton(this->content);
     this->button_fullscreen->setAutoRaise(true);
-    this->button_fullscreen->setIconSize(QSize(30, 30));
-    this->button_fullscreen->setFixedSize(40, Sizes::TopControlBarHeight - 10);
+    configureToolbarIconButton(this->button_fullscreen);
 
     connect(this->button_fullscreen, &QToolButton::clicked, this, [this]
     {

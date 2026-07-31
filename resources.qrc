@@ -60,8 +60,8 @@
         <file alias="zoom_in.png">assets/iconsets/gothic/zoom_in.png</file>
         <file alias="zoom_out.png">assets/iconsets/gothic/zoom_out.png</file>
         
-        <file alias="zoom_in.png">assets/iconsets/gothic/fullscreen.png</file>
-        <file alias="zoom_out.png">assets/iconsets/gothic/fullscreen_undo.png</file>
+        <file alias="fullscreen.png">assets/iconsets/gothic/fullscreen.png</file>
+        <file alias="fullscreen_undo.png">assets/iconsets/gothic/fullscreen_undo.png</file>
         
         <file alias="simulation_start.png">assets/iconsets/gothic/simulation_run.png</file>
     </qresource>
