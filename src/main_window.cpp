@@ -15,9 +15,9 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
     hydraulic_data(new HydraulicData(this)),
     gps( new GpsProvider(this) ),
-    dock_sim_control( new SimControlDock(this) ),
     dock_entity_inspector( new EntityInspectorDock(hydraulic_data, this) ),
     dock_entity_map_legend( new EntityMapLegendDock(hydraulic_data, this)),
+    top_control_bar( new TopControlBar(this) ),
     map_tile_repository( new MapTileRepository(this) ),
     map_model_monitor( new MapModel(this) ),
     map_model_editor( new MapModel(this) ),
@@ -57,7 +57,7 @@ MainWindow::MainWindow(QWidget *parent)
     
     addDockWidget(Qt::RightDockWidgetArea, this->dock_entity_inspector);
     addDockWidget(Qt::RightDockWidgetArea, this->dock_entity_map_legend);
-    addDockWidget(Qt::TopDockWidgetArea, this->dock_sim_control);
+    addToolBar(Qt::TopToolBarArea, this->top_control_bar);
     
     this->dock_entity_map_legend->setVisible(false);
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendLink, this->dock_entity_map_legend, &EntityMapLegendDock::showMapLegendLink);
@@ -222,9 +222,10 @@ MainWindow::MainWindow(QWidget *parent)
             this->syncMapMovement(this->map_mon, this->map_edit);
     });
     
-    connect(this->dock_sim_control, &SimControlDock::signalHeadlossFormulaChanged, this->dock_entity_inspector, &EntityInspectorDock::onHeadlossFormulaChanged);
-    connect(this->dock_sim_control, &SimControlDock::signalSimulationStart, this->simulation_manager, &SimulationManager::run);
-    connect(this->dock_sim_control, &SimControlDock::signalShowEpanetLog, this->simulation_manager, &SimulationManager::showEpanetLog);
+    connect(this->top_control_bar, &TopControlBar::signalHeadlossFormulaChanged, this->dock_entity_inspector, &EntityInspectorDock::onHeadlossFormulaChanged);
+    connect(this->top_control_bar, &TopControlBar::signalSimulationStart, this->simulation_manager, &SimulationManager::run);
+    connect(this->top_control_bar, &TopControlBar::signalShowEpanetLog, this->simulation_manager, &SimulationManager::showEpanetLog);
+    connect(this->top_control_bar, &TopControlBar::signalFullScreenToggle, this, &MainWindow::fullScreenToggle);
     
     #ifdef AOWIS_STANDALONE
     #else    
@@ -390,6 +391,7 @@ void MainWindow::changeEvent(QEvent *event)
     {
         QTimer::singleShot(0, this, [this]
         {
+            this->top_control_bar->setFullScreenState(this->isFullScreen());
             this->updateMapEdgePanning();
         });
     }
@@ -413,6 +415,7 @@ void MainWindow::fullScreenToggle()
         this->setWindowState(this->window_state_saved);
     }
 
+    this->top_control_bar->setFullScreenState(enter_fullscreen);
     this->updateMapEdgePanning();
 }
 

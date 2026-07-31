@@ -12,7 +12,7 @@ namespace Sizes
     inline constexpr int SidebarMapEditLeftWidth = 230;
 #endif
     
-    inline constexpr int SimControlDockHeight = 50;
+    inline constexpr int TopControlBarHeight = 62;
     
     inline constexpr int SidebarRightWidth = 360;
     inline constexpr int SidebarRightImageHeight = 100;

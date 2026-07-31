@@ -49,7 +49,7 @@
 #include "tab_customers_widget.h"
 #include "tab_logs_widget.h"
 #include "tab_alarms_widget.h"
-#include "sim_control_dock.h"
+#include "top_control_bar.h"
 #include "entity_inspector/entity_inspector_dock.h"
 #include "entity_inspector/entity_map_legend_dock.h"
 #include "simulation_manager.h"
@@ -90,7 +90,7 @@ private:
     
     EntityInspectorDock *dock_entity_inspector;
     EntityMapLegendDock *dock_entity_map_legend;
-    SimControlDock *dock_sim_control;
+    TopControlBar *top_control_bar;
     
     MapTileRepository *map_tile_repository;
     MapModel *map_model_monitor;
