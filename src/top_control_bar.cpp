@@ -165,13 +165,13 @@ TopControlBarContent *barContent(QWidget *content)
 
 QSize toolbarIconButtonSize()
 {
-    const int extent = Sizes::TopControlBarHeight - 2;
+    const int extent = Sizes::TopControlBarHeight - 8;
     return QSize(extent, extent);
 }
 
 QSize toolbarIconSize()
 {
-    const int extent = Sizes::TopControlBarHeight - 4;
+    const int extent = Sizes::TopControlBarHeight - 10;
     return QSize(extent, extent);
 }
 
@@ -179,6 +179,15 @@ void configureToolbarIconButton(QAbstractButton *button)
 {
     button->setFixedSize(toolbarIconButtonSize());
     button->setIconSize(toolbarIconSize());
+    button->setStyleSheet(QStringLiteral("padding: 0;"));
+}
+
+void configureStackedToolbarIconButton(QAbstractButton *button)
+{
+    const int button_extent = toolbarIconButtonSize().width() / 2;
+    const int icon_extent = qMax(1, button_extent - 2);
+    button->setFixedSize(button_extent, button_extent);
+    button->setIconSize(QSize(icon_extent, icon_extent));
     button->setStyleSheet(QStringLiteral("padding: 0;"));
 }
 }
@@ -415,15 +424,28 @@ void TopControlBar::addViewControls()
     TopControlBarContent *bar_content = barContent(this->content);
     bar_content->rightLayout()->addWidget(createSeparator(this->content));
 
-    this->button_fullscreen = new QToolButton(this->content);
+    QWidget *button_stack = new QWidget(this->content);
+    QVBoxLayout *button_stack_layout = new QVBoxLayout(button_stack);
+    button_stack_layout->setContentsMargins(0, 0, 0, 0);
+    button_stack_layout->setSpacing(0);
+
+    this->button_fullscreen = new QToolButton(button_stack);
     this->button_fullscreen->setAutoRaise(true);
-    configureToolbarIconButton(this->button_fullscreen);
+    configureStackedToolbarIconButton(this->button_fullscreen);
 
     connect(this->button_fullscreen, &QToolButton::clicked, this, [this]
     {
         emit signalFullScreenToggle();
     });
 
+    QToolButton *button_export_epanet = new QToolButton(button_stack);
+    button_export_epanet->setAutoRaise(true);
+    button_export_epanet->setIcon(QIcon(QStringLiteral(":/icon/save.png")));
+    button_export_epanet->setToolTip(QStringLiteral("Export EPANET network"));
+    configureStackedToolbarIconButton(button_export_epanet);
+
     setFullScreenState(false);
-    bar_content->rightLayout()->addWidget(this->button_fullscreen);
+    button_stack_layout->addWidget(this->button_fullscreen);
+    button_stack_layout->addWidget(button_export_epanet);
+    bar_content->rightLayout()->addWidget(button_stack);
 }
