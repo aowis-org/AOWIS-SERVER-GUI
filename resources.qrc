@@ -39,6 +39,7 @@
         <file alias="lake.png">assets/iconsets/gothic/reservoir_lake.png</file>
         <file alias="river.png">assets/iconsets/gothic/river.png</file>
         <file alias="save.png">assets/iconsets/gothic/save.png</file>
+        <file alias="download_export.png">assets/iconsets/gothic/download_export.png</file>
         
         <file alias="settings.png">assets/iconsets/gothic/settings.png</file>
         <file alias="settings_2.png">assets/iconsets/gothic/settings_2.png</file>

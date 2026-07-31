@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+# the here produced zip is usually used to feed this project into an LLM
+
 set -euo pipefail
 
 if ! command -v zip >/dev/null 2>&1; then
