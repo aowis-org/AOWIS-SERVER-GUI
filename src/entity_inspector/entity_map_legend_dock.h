@@ -24,6 +24,7 @@ public slots:
     void showMapLegendNode(VisualNode visual_node);
     void showMapLegendLink(VisualLink visual_link);
     void showMapLegendHeatmap(VisualHeatmap visual_heatmap);
+    void setMapMonitorActive(bool active);
     
 private:
     HydraulicData *hydraulic_data = nullptr;
@@ -32,6 +33,7 @@ private:
     VisualNode visual_node = VisualNode::None;
     VisualLink visual_link = VisualLink::None;
     VisualHeatmap visual_heatmap = VisualHeatmap::None;
+    bool map_monitor_active = false;
     
     void setVisibility();
     

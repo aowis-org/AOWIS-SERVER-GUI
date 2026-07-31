@@ -61,16 +61,20 @@ void EntityMapLegendDock::showMapLegendHeatmap(VisualHeatmap visual_heatmap)
         this->group_heat->setCollapsed(false);
 }
 
+void EntityMapLegendDock::setMapMonitorActive(bool active)
+{
+    this->map_monitor_active = active;
+    setVisibility();
+}
+
 void EntityMapLegendDock::setVisibility()
 {
-    if (
+    const bool has_visible_legend =
         (this->visual_link != VisualLink::None) ||
         (this->visual_node != VisualNode::None) ||
-        (this->visual_heatmap != VisualHeatmap::None)
-    )
-        setVisible(true);
-    else
-        setVisible(false);
+        (this->visual_heatmap != VisualHeatmap::None);
+
+    setVisible(this->map_monitor_active && has_visible_legend);
 }
 
 void EntityMapLegendDock::addGroupNode()

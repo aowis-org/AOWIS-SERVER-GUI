@@ -168,7 +168,9 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->tabs, &QTabWidget::currentChanged, this, [this](int)
     {
         this->updateMapEdgePanning();
+        this->dock_entity_map_legend->setMapMonitorActive(this->tabs->currentWidget() == this->map_monitor);
     });
+    this->dock_entity_map_legend->setMapMonitorActive(this->tabs->currentWidget() == this->map_monitor);
     
     QTimer::singleShot(0, this, &MainWindow::updateTabSpacer);
     
