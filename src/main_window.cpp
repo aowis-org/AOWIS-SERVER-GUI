@@ -226,6 +226,10 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->top_control_bar, &TopControlBar::signalSimulationStart, this->simulation_manager, &SimulationManager::run);
     connect(this->top_control_bar, &TopControlBar::signalShowEpanetLog, this->simulation_manager, &SimulationManager::showEpanetLog);
     connect(this->top_control_bar, &TopControlBar::signalFullScreenToggle, this, &MainWindow::fullScreenToggle);
+
+#ifdef Q_OS_WASM
+    emscripten_set_fullscreenchange_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, this, EM_TRUE, &MainWindow::fullScreenChangeCallback);
+#endif
     
     #ifdef AOWIS_STANDALONE
     #else    
@@ -400,6 +404,17 @@ void MainWindow::changeEvent(QEvent *event)
 
 void MainWindow::fullScreenToggle()
 {
+#ifdef Q_OS_WASM
+    emscripten_run_script(R"JS(
+        if (typeof toggleAowisFullscreen === 'function') {
+            toggleAowisFullscreen();
+        } else if (document.fullscreenElement) {
+            document.exitFullscreen();
+        } else {
+            document.documentElement.requestFullscreen();
+        }
+    )JS");
+#else
     const bool enter_fullscreen = !this->isFullScreen();
 
     if (enter_fullscreen)
@@ -417,7 +432,23 @@ void MainWindow::fullScreenToggle()
 
     this->top_control_bar->setFullScreenState(enter_fullscreen);
     this->updateMapEdgePanning();
+#endif
 }
+
+#ifdef Q_OS_WASM
+EM_BOOL MainWindow::fullScreenChangeCallback(int event_type, const EmscriptenFullscreenChangeEvent *event, void *user_data)
+{
+    Q_UNUSED(event_type);
+
+    MainWindow *window = static_cast<MainWindow *>(user_data);
+
+    if (window == nullptr || event == nullptr)
+        return EM_FALSE;
+
+    window->top_control_bar->setFullScreenState(event->isFullscreen != 0);
+    return EM_TRUE;
+}
+#endif
 
 void MainWindow::updateMapEdgePanning()
 {

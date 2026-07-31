@@ -366,31 +366,24 @@ void TopControlBar::addHeadlossFormulaDropdown()
 void TopControlBar::addSimulationControls()
 {
     TopControlBarContent *bar_content = barContent(this->content);
+    const QSize button_size(40, Sizes::TopControlBarHeight - 10);
 
-    QWidget *buttons = new QWidget(this->content);
-    QHBoxLayout *buttons_layout = new QHBoxLayout(buttons);
-    buttons_layout->setContentsMargins(0, 0, 0, 0);
-    buttons_layout->setSpacing(4);
-
-    QPushButton *button_sim_start = new QPushButton(buttons);
+    QPushButton *button_sim_start = new QPushButton(this->content);
     button_sim_start->setIcon(QIcon(QStringLiteral(":/icon/simulation_start.png")));
     button_sim_start->setFlat(true);
     button_sim_start->setIconSize(QSize(30, 30));
-    button_sim_start->setFixedSize(30, 30);
+    button_sim_start->setFixedSize(button_size);
     button_sim_start->setToolTip(QStringLiteral("Run Configured Simulations<br>[Ctrl]+[R]<br>[Shift]+[Enter]"));
     button_sim_start->addAction(QString(), QKeySequence(Qt::SHIFT | Qt::Key_Return), button_sim_start, &QPushButton::click);
     button_sim_start->addAction(QString(), QKeySequence(Qt::CTRL | Qt::Key_R), button_sim_start, &QPushButton::click);
 
-    QPushButton *button_sim_log = new QPushButton(buttons);
+    QPushButton *button_sim_log = new QPushButton(this->content);
     button_sim_log->setIcon(QIcon(QStringLiteral(":/icon/log.png")));
     button_sim_log->setFlat(true);
     button_sim_log->setIconSize(QSize(30, 30));
-    button_sim_log->setFixedSize(30, 30);
+    button_sim_log->setFixedSize(button_size);
     button_sim_log->setToolTip(QStringLiteral("Show EPANET log<br>You need to run a simulation first"));
     button_sim_log->setEnabled(false);
-
-    buttons_layout->addWidget(button_sim_start);
-    buttons_layout->addWidget(button_sim_log);
 
     connect(button_sim_start, &QPushButton::clicked, this, [this, button_sim_log]
     {
@@ -403,7 +396,8 @@ void TopControlBar::addSimulationControls()
         emit signalShowEpanetLog();
     });
 
-    bar_content->centerLayout()->addWidget(createLabeledControl(QStringLiteral("Simulation"), buttons, this->content));
+    bar_content->centerLayout()->addWidget(button_sim_start);
+    bar_content->centerLayout()->addWidget(button_sim_log);
 }
 
 void TopControlBar::addViewControls()
@@ -413,8 +407,8 @@ void TopControlBar::addViewControls()
 
     this->button_fullscreen = new QToolButton(this->content);
     this->button_fullscreen->setAutoRaise(true);
-    this->button_fullscreen->setIconSize(QSize(26, 26));
-    this->button_fullscreen->setFixedSize(30, 30);
+    this->button_fullscreen->setIconSize(QSize(30, 30));
+    this->button_fullscreen->setFixedSize(40, Sizes::TopControlBarHeight - 10);
 
     connect(this->button_fullscreen, &QToolButton::clicked, this, [this]
     {
@@ -422,5 +416,5 @@ void TopControlBar::addViewControls()
     });
 
     setFullScreenState(false);
-    bar_content->rightLayout()->addWidget(createLabeledControl(QStringLiteral("Fullscreen"), this->button_fullscreen, this->content));
+    bar_content->rightLayout()->addWidget(this->button_fullscreen);
 }

@@ -80,6 +80,10 @@ private:
     QRect window_geometry_saved;
     void fullScreenToggle();
     void updateMapEdgePanning();
+
+#ifdef Q_OS_WASM
+    static EM_BOOL fullScreenChangeCallback(int event_type, const EmscriptenFullscreenChangeEvent *event, void *user_data);
+#endif
     
     HydraulicData *hydraulic_data = nullptr;
     

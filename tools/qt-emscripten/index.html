@@ -56,6 +56,24 @@
       let qtFocusHandlersInstalled = false;
       let qtFocusRetryTimer = null;
 
+      function isAowisFullscreen()
+      {
+          return document.fullscreenElement !== null;
+      }
+
+      async function toggleAowisFullscreen()
+      {
+          try {
+              if (isAowisFullscreen()) {
+                  await document.exitFullscreen();
+              } else {
+                  await document.documentElement.requestFullscreen();
+              }
+          } catch (error) {
+              console.error('Unable to change fullscreen state:', error);
+          }
+      }
+
       function isNativeTextInput(element)
       {
           if (!element)
@@ -235,6 +253,13 @@
           });
 
           document.addEventListener('keydown', function (event) {
+              if (event.key === 'F11') {
+                  event.preventDefault();
+                  event.stopImmediatePropagation();
+                  toggleAowisFullscreen();
+                  return;
+              }
+
               console.log(
                   'DOM keydown:',
                   event.key,
