@@ -83,6 +83,7 @@ private:
 
 #ifdef Q_OS_WASM
     static EM_BOOL fullScreenChangeCallback(int event_type, const EmscriptenFullscreenChangeEvent *event, void *user_data);
+    bool browser_fullscreen_active = false;
 #endif
     
     HydraulicData *hydraulic_data = nullptr;

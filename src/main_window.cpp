@@ -229,6 +229,14 @@ MainWindow::MainWindow(QWidget *parent)
 
 #ifdef Q_OS_WASM
     emscripten_set_fullscreenchange_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, this, EM_TRUE, &MainWindow::fullScreenChangeCallback);
+
+    EmscriptenFullscreenChangeEvent fullscreen_status = {};
+    if (emscripten_get_fullscreen_status(&fullscreen_status) == EMSCRIPTEN_RESULT_SUCCESS)
+    {
+        this->browser_fullscreen_active = fullscreen_status.isFullscreen != 0;
+        this->top_control_bar->setFullScreenState(this->browser_fullscreen_active);
+        this->updateMapEdgePanning();
+    }
 #endif
     
     #ifdef AOWIS_STANDALONE
@@ -445,19 +453,24 @@ EM_BOOL MainWindow::fullScreenChangeCallback(int event_type, const EmscriptenFul
     if (window == nullptr || event == nullptr)
         return EM_FALSE;
 
-    window->top_control_bar->setFullScreenState(event->isFullscreen != 0);
+    window->browser_fullscreen_active = event->isFullscreen != 0;
+    window->top_control_bar->setFullScreenState(window->browser_fullscreen_active);
+    window->updateMapEdgePanning();
     return EM_TRUE;
 }
 #endif
 
 void MainWindow::updateMapEdgePanning()
 {
-#ifndef Q_OS_WASM
     if (!this->map_mon || !this->map_edit || !this->tabs)
         return;
 
+#ifdef Q_OS_WASM
+    const bool fullscreen = this->browser_fullscreen_active;
+#else
     const bool fullscreen = this->isFullScreen();
+#endif
+
     this->map_edit->setEdgePanningEnabled(fullscreen && this->tabs->currentWidget() == this->map_editor);
     this->map_mon->setEdgePanningEnabled(fullscreen && this->tabs->currentWidget() == this->map_monitor);
-#endif
 }

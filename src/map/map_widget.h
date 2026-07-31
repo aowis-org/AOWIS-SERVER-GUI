@@ -19,6 +19,8 @@
 #include "map_tile_repository.h"
 
 #ifdef Q_OS_WASM
+#include <emscripten/html5.h>
+
 #include "../gps_provider_dummy.h"
 #else
 #include "../gps_provider.h"
@@ -32,6 +34,7 @@ class MapWidget : public QWidget
 
 public:
     explicit MapWidget(MapModel *model, MapTileRepository *tile_repository, GpsProvider *gps, QWidget *parent = nullptr);
+    ~MapWidget() override;
 
     MapModel *model() const;
 
@@ -74,8 +77,11 @@ private:
     void stopPanAnimationIfIdle();
     void stopAllPanMovement();
     void updatePanAnimation();
-#ifndef Q_OS_WASM
     void pollEdgePan();
+
+#ifdef Q_OS_WASM
+    static EM_BOOL browserMouseMoveCallback(int event_type, const EmscriptenMouseEvent *event, void *user_data);
+    static EM_BOOL browserMouseLeaveCallback(int event_type, const EmscriptenMouseEvent *event, void *user_data);
 #endif
 
     bool setKeyboardPanKey(int key, bool pressed);
@@ -116,8 +122,11 @@ private:
     QPointF pan_fractional_delta;
     QTimer *pan_timer = nullptr;
     QElapsedTimer pan_elapsed_timer;
-#ifndef Q_OS_WASM
     QTimer *edge_pan_poll_timer = nullptr;
+
+#ifdef Q_OS_WASM
+    QPoint browser_pointer_position;
+    bool browser_pointer_inside = false;
 #endif
 
     int wheel_delta_accumulated = 0;

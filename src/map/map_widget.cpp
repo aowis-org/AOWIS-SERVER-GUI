@@ -7,18 +7,35 @@
 #include <QGeoCoordinate>
 #include <QScreen>
 #include <QWindow>
+#else
+#include <emscripten.h>
 #endif
 
 #include <cmath>
+
+#ifdef Q_OS_WASM
+EM_JS(int, aowisBrowserViewportWidth, (),
+{
+    return window.innerWidth | 0;
+});
+
+EM_JS(int, aowisBrowserViewportHeight, (),
+{
+    return window.innerHeight | 0;
+});
+
+EM_JS(int, aowisBrowserDocumentActive, (),
+{
+    return document.hasFocus() && !document.hidden ? 1 : 0;
+});
+#endif
 
 namespace
 {
 constexpr int PanFrameIntervalMs = 16;
 constexpr int PanButtonStepPixels = 120;
 constexpr int EdgePanMarginPixels = 2;
-#ifndef Q_OS_WASM
 constexpr int EdgePanPollIntervalMs = 50;
-#endif
 constexpr double PanMaximumSpeedPixelsPerSecond = 900.0;
 constexpr double PanFastSpeedMultiplier = 2.0;
 constexpr double PanFastAccelerationMultiplier = 1.75;
@@ -69,6 +86,14 @@ MapWidget::MapWidget(MapModel *model, MapTileRepository *tile_repository, GpsPro
     Q_ASSERT(this->tile_repository);
 
     this->init();
+}
+
+MapWidget::~MapWidget()
+{
+#ifdef Q_OS_WASM
+    emscripten_set_mousemove_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, this, EM_TRUE, nullptr);
+    emscripten_set_mouseleave_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, this, EM_TRUE, nullptr);
+#endif
 }
 
 MapModel *MapWidget::model() const
@@ -173,10 +198,13 @@ void MapWidget::initPanAnimation()
     this->pan_timer->setTimerType(Qt::PreciseTimer);
     connect(this->pan_timer, &QTimer::timeout, this, &MapWidget::updatePanAnimation);
 
-#ifndef Q_OS_WASM
     this->edge_pan_poll_timer = new QTimer(this);
     this->edge_pan_poll_timer->setInterval(EdgePanPollIntervalMs);
     connect(this->edge_pan_poll_timer, &QTimer::timeout, this, &MapWidget::pollEdgePan);
+
+#ifdef Q_OS_WASM
+    emscripten_set_mousemove_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, this, EM_TRUE, &MapWidget::browserMouseMoveCallback);
+    emscripten_set_mouseleave_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, this, EM_TRUE, &MapWidget::browserMouseLeaveCallback);
 #endif
 }
 
@@ -300,11 +328,41 @@ void MapWidget::updatePanAnimation()
     this->stopPanAnimationIfIdle();
 }
 
-#ifndef Q_OS_WASM
 void MapWidget::pollEdgePan()
 {
     if (!this->edgePanDirection().isNull())
         this->ensurePanAnimationRunning();
+}
+
+#ifdef Q_OS_WASM
+EM_BOOL MapWidget::browserMouseMoveCallback(int event_type, const EmscriptenMouseEvent *event, void *user_data)
+{
+    Q_UNUSED(event_type)
+
+    MapWidget *map_widget = static_cast<MapWidget *>(user_data);
+    if (map_widget == nullptr || event == nullptr)
+        return EM_FALSE;
+
+    map_widget->browser_pointer_position = QPoint(event->clientX, event->clientY);
+    map_widget->browser_pointer_inside = true;
+
+    if (map_widget->edge_panning_enabled && map_widget->isVisible() && !map_widget->edgePanDirection().isNull())
+        map_widget->ensurePanAnimationRunning();
+
+    return EM_FALSE;
+}
+
+EM_BOOL MapWidget::browserMouseLeaveCallback(int event_type, const EmscriptenMouseEvent *event, void *user_data)
+{
+    Q_UNUSED(event_type)
+    Q_UNUSED(event)
+
+    MapWidget *map_widget = static_cast<MapWidget *>(user_data);
+    if (map_widget == nullptr)
+        return EM_FALSE;
+
+    map_widget->browser_pointer_inside = false;
+    return EM_FALSE;
 }
 #endif
 
@@ -365,11 +423,14 @@ QPointF MapWidget::keyboardPanDirection() const
 
 QPointF MapWidget::edgePanDirection() const
 {
-#ifndef Q_OS_WASM
-    if (!this->edge_panning_enabled || !this->isVisible() || !this->window()->isFullScreen() || !this->window()->isActiveWindow())
+    if (!this->edge_panning_enabled || !this->isVisible())
         return QPointF();
 
     if (QApplication::activePopupWidget() || QApplication::activeModalWidget())
+        return QPointF();
+
+#ifndef Q_OS_WASM
+    if (!this->window()->isFullScreen() || !this->window()->isActiveWindow())
         return QPointF();
 
     QWindow *window_handle = this->window()->windowHandle();
@@ -395,7 +456,32 @@ QPointF MapWidget::edgePanDirection() const
 
     return direction;
 #else
-    return QPointF();
+    if (!this->browser_pointer_inside || aowisBrowserDocumentActive() == 0)
+        return QPointF();
+
+    const int viewport_width = aowisBrowserViewportWidth();
+    const int viewport_height = aowisBrowserViewportHeight();
+    if (viewport_width <= 0 || viewport_height <= 0)
+        return QPointF();
+
+    const int pointer_x = this->browser_pointer_position.x();
+    const int pointer_y = this->browser_pointer_position.y();
+    if (pointer_x < 0 || pointer_y < 0 || pointer_x >= viewport_width || pointer_y >= viewport_height)
+        return QPointF();
+
+    QPointF direction;
+
+    if (pointer_x <= EdgePanMarginPixels)
+        direction.rx() += 1.0;
+    else if (pointer_x >= viewport_width - EdgePanMarginPixels - 1)
+        direction.rx() -= 1.0;
+
+    if (pointer_y <= EdgePanMarginPixels)
+        direction.ry() += 1.0;
+    else if (pointer_y >= viewport_height - EdgePanMarginPixels - 1)
+        direction.ry() -= 1.0;
+
+    return direction;
 #endif
 }
 
@@ -493,10 +579,6 @@ void MapWidget::clearKeyboardPanInput()
 
 void MapWidget::setEdgePanningEnabled(bool enabled)
 {
-#ifdef Q_OS_WASM
-    Q_UNUSED(enabled)
-    this->edge_panning_enabled = false;
-#else
     if (this->edge_panning_enabled == enabled)
         return;
 
@@ -515,7 +597,6 @@ void MapWidget::setEdgePanningEnabled(bool enabled)
         this->edge_pan_poll_timer->stop();
         this->stopPanAnimationIfIdle();
     }
-#endif
 }
 
 void MapWidget::keyPressEvent(QKeyEvent *event)
@@ -543,9 +624,7 @@ void MapWidget::focusOutEvent(QFocusEvent *event)
 void MapWidget::hideEvent(QHideEvent *event)
 {
     this->stopAllPanMovement();
-#ifndef Q_OS_WASM
     this->edge_pan_poll_timer->stop();
-#endif
     QWidget::hideEvent(event);
 }
 
@@ -553,13 +632,11 @@ void MapWidget::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
 
-#ifndef Q_OS_WASM
     if (this->edge_panning_enabled)
     {
         this->edge_pan_poll_timer->start();
         this->pollEdgePan();
     }
-#endif
 }
 
 void MapWidget::panByStep(const QPoint &delta)
