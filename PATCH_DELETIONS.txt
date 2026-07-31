@@ -1,4 +1,0 @@
-Delete these obsolete files from the repository after extracting this patch:
-
-external/AOWIS-SERVER-MODEL/include/aowis/model/hydraulic/hydraulic_network_editor.h
-external/AOWIS-SERVER-MODEL/src/hydraulic_network_editor.cpp
