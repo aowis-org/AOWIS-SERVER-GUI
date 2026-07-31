@@ -40,6 +40,7 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     this->layout->addWidget(this->map_stack);
     
     connect(this->map_menu, &MapEditorMenuWidget::signalSlideOpacityChanged, this->map_canvas, &MapCanvasWidget::setBackgroundOpacity);
+    connect(this->map_menu, &MapEditorMenuWidget::signalMapEditorGuideVisibilityChanged, this, &MapEditorContainer::signalMapEditorGuideVisibilityChanged);
     
     this->map_canvas->setFocusPolicy(Qt::StrongFocus);
     QTimer::singleShot(0, this->map_canvas, [this]()
@@ -54,6 +55,11 @@ MapWidget *MapEditorContainer::getMap()
 MapNavigationWidget *MapEditorContainer::mapNavigationWidget()
 {
     return this->map_menu->mapNavigationWidget();
+}
+
+void MapEditorContainer::setMapEditorGuideChecked(bool checked)
+{
+    this->map_menu->setMapEditorGuideChecked(checked);
 }
 
 MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_canvas, CanvasMode mode, QWidget *parent)
@@ -86,6 +92,11 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_ca
 MapNavigationWidget *MapEditorMenuWidget::mapNavigationWidget()
 {
     return this->map_nav;
+}
+
+void MapEditorMenuWidget::setMapEditorGuideChecked(bool checked)
+{
+    this->checkbox_map_editor_guide->setChecked(checked);
 }
 
 void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
@@ -272,12 +283,11 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     
     
     
-    QLabel *label_instruction = new QLabel(
-        "<b>Right Click</b> to place Entity",
-        this
-    );
-    label_instruction->setWordWrap(true);
-    lay->addWidget(label_instruction);
+    this->checkbox_map_editor_guide = new QCheckBox("Map Editor Guide", wgt);
+    this->checkbox_map_editor_guide->setChecked(true);
+    this->checkbox_map_editor_guide->setToolTip("Show or hide the Map Editor Guide");
+    lay->addWidget(this->checkbox_map_editor_guide);
+    connect(this->checkbox_map_editor_guide, &QCheckBox::toggled, this, &MapEditorMenuWidget::signalMapEditorGuideVisibilityChanged);
     
     connect(this->button_group_tools, &QButtonGroup::idToggled, this, [this]
     {

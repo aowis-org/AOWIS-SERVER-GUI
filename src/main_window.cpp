@@ -66,6 +66,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendLink, this->dock_entity_map_legend, &EntityMapLegendDock::showMapLegendLink);
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendNode, this->dock_entity_map_legend, &EntityMapLegendDock::showMapLegendNode);
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendHeatmap, this->dock_entity_map_legend, &EntityMapLegendDock::showMapLegendHeatmap);
+    connect(this->map_editor, &MapEditorContainer::signalMapEditorGuideVisibilityChanged, this->dock_map_editor_guide, &MapEditorGuideDock::setRequestedVisible);
+    connect(this->dock_map_editor_guide, &MapEditorGuideDock::requestedVisibilityChanged, this->map_editor, &MapEditorContainer::setMapEditorGuideChecked);
     
     /*
     setStyleSheet(

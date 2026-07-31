@@ -11,6 +11,7 @@
 #include <QToolBox>
 #include <QToolButton>
 #include <QRadioButton>
+#include <QCheckBox>
 #include <QSpinBox>
 #include <QLabel>
 #include <QPushButton>
@@ -61,9 +62,14 @@ private:
     void createToolboxEdit(QToolBox *tbx);
     
     QButtonGroup *button_group_tools = nullptr;
+    QCheckBox *checkbox_map_editor_guide = nullptr;
+
+public slots:
+    void setMapEditorGuideChecked(bool checked);
     
 signals:
     void signalSlideOpacityChanged(int opacity);
+    void signalMapEditorGuideVisibilityChanged(bool visible);
 };
 
 
@@ -77,6 +83,9 @@ public:
     MapWidget *getMap();
     
     MapNavigationWidget *mapNavigationWidget();
+
+public slots:
+    void setMapEditorGuideChecked(bool checked);
 
 private:
     HydraulicData *hydraulic_data = nullptr;
@@ -95,7 +104,7 @@ private:
     QStackedLayout *map_stack_layout;
     
 signals:
-    
+    void signalMapEditorGuideVisibilityChanged(bool visible);
 };
 
 #endif // TAB_MAP_EDITOR_CONTAINER_H
