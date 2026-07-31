@@ -22,6 +22,7 @@ signals:
     void signalHeadlossFormulaChanged(HeadlossFormulas formulas);
     void signalSimulationStart();
     void signalShowEpanetLog();
+    void signalExportEpanetNetwork();
     void signalFullScreenToggle();
 
 private:

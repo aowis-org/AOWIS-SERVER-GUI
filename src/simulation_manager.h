@@ -23,6 +23,7 @@ public:
     
     void run();
     void showEpanetLog();
+    void exportEpanetNetwork();
     
 private:
     HydraulicData *hydraulic_data = nullptr;

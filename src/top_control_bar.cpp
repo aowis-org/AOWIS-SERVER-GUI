@@ -444,6 +444,11 @@ void TopControlBar::addViewControls()
     button_export_epanet->setToolTip(QStringLiteral("Export EPANET network"));
     configureStackedToolbarIconButton(button_export_epanet);
 
+    connect(button_export_epanet, &QToolButton::clicked, this, [this]
+    {
+        emit signalExportEpanetNetwork();
+    });
+
     setFullScreenState(false);
     button_stack_layout->addWidget(this->button_fullscreen);
     button_stack_layout->addWidget(button_export_epanet);
