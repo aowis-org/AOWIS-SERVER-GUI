@@ -65,5 +65,6 @@
         <file alias="fullscreen_undo.png">assets/iconsets/gothic/fullscreen_undo.png</file>
         
         <file alias="simulation_start.png">assets/iconsets/gothic/simulation_run.png</file>
+        <file alias="set_active.png">assets/iconsets/gothic/set_active.png</file>
     </qresource>
 </RCC>

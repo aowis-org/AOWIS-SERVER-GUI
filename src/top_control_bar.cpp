@@ -241,8 +241,29 @@ void TopControlBar::addProjectControls()
     combo_revision->setFixedWidth(160);
     combo_revision->addItem(QStringLiteral("Select revision"));
 
+    QToolButton *button_set_active = new QToolButton(this->content);
+    button_set_active->setAutoRaise(true);
+    button_set_active->setIcon(QIcon(QStringLiteral(":/icon/set_active.png")));
+    button_set_active->setIconSize(QSize(28, 28));
+    button_set_active->setFixedSize(30, 30);
+    button_set_active->setToolTip(QStringLiteral("Set active revision"));
+    button_set_active->setStyleSheet(QStringLiteral("padding: 0;"));
+
+    QWidget *revision_container = new QWidget(this->content);
+    QVBoxLayout *revision_layout = new QVBoxLayout(revision_container);
+    revision_layout->setContentsMargins(0, 0, 0, 0);
+    revision_layout->setSpacing(1);
+    revision_layout->addWidget(createCaption(QStringLiteral("Revision"), revision_container));
+
+    QHBoxLayout *revision_control_layout = new QHBoxLayout();
+    revision_control_layout->setContentsMargins(0, 0, 0, 0);
+    revision_control_layout->setSpacing(2);
+    revision_control_layout->addWidget(combo_revision);
+    revision_control_layout->addWidget(button_set_active);
+    revision_layout->addLayout(revision_control_layout);
+
     bar_content->leftLayout()->addWidget(createLabeledControl(QStringLiteral("Project"), combo_project, this->content));
-    bar_content->leftLayout()->addWidget(createLabeledControl(QStringLiteral("Revision"), combo_revision, this->content));
+    bar_content->leftLayout()->addWidget(revision_container);
 }
 
 void TopControlBar::addFlowUnitCombo()
