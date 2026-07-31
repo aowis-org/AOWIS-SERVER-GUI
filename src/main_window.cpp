@@ -17,6 +17,7 @@ MainWindow::MainWindow(QWidget *parent)
     gps( new GpsProvider(this) ),
     dock_entity_inspector( new EntityInspectorDock(hydraulic_data, this) ),
     dock_entity_map_legend( new EntityMapLegendDock(hydraulic_data, this)),
+    dock_map_editor_guide( new MapEditorGuideDock(this) ),
     top_control_bar( new TopControlBar(this) ),
     map_tile_repository( new MapTileRepository(this) ),
     map_model_monitor( new MapModel(this) ),
@@ -57,9 +58,11 @@ MainWindow::MainWindow(QWidget *parent)
     
     addDockWidget(Qt::RightDockWidgetArea, this->dock_entity_inspector);
     addDockWidget(Qt::RightDockWidgetArea, this->dock_entity_map_legend);
+    addDockWidget(Qt::RightDockWidgetArea, this->dock_map_editor_guide);
     addToolBar(Qt::TopToolBarArea, this->top_control_bar);
     
     this->dock_entity_map_legend->setVisible(false);
+    this->dock_map_editor_guide->setVisible(false);
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendLink, this->dock_entity_map_legend, &EntityMapLegendDock::showMapLegendLink);
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendNode, this->dock_entity_map_legend, &EntityMapLegendDock::showMapLegendNode);
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendHeatmap, this->dock_entity_map_legend, &EntityMapLegendDock::showMapLegendHeatmap);
@@ -169,8 +172,10 @@ MainWindow::MainWindow(QWidget *parent)
     {
         this->updateMapEdgePanning();
         this->dock_entity_map_legend->setMapMonitorActive(this->tabs->currentWidget() == this->map_monitor);
+        this->dock_map_editor_guide->setMapEditorActive(this->tabs->currentWidget() == this->map_editor);
     });
     this->dock_entity_map_legend->setMapMonitorActive(this->tabs->currentWidget() == this->map_monitor);
+    this->dock_map_editor_guide->setMapEditorActive(this->tabs->currentWidget() == this->map_editor);
     
     QTimer::singleShot(0, this, &MainWindow::updateTabSpacer);
     

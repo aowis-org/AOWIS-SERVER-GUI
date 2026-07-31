@@ -52,6 +52,7 @@
 #include "top_control_bar.h"
 #include "entity_inspector/entity_inspector_dock.h"
 #include "entity_inspector/entity_map_legend_dock.h"
+#include "map/map_editor_guide_dock.h"
 #include "simulation_manager.h"
 
 #include "hydraulic_data.h"
@@ -95,6 +96,7 @@ private:
     
     EntityInspectorDock *dock_entity_inspector;
     EntityMapLegendDock *dock_entity_map_legend;
+    MapEditorGuideDock *dock_map_editor_guide;
     TopControlBar *top_control_bar;
     
     MapTileRepository *map_tile_repository;
