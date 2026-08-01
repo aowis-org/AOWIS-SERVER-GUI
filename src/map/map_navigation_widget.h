@@ -23,7 +23,7 @@ class MapNavigationWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidget *parent = nullptr);
+    explicit MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidget *keyboard_focus_target, QWidget *parent = nullptr);
     
     void mapProviderChange(MapProvider provider);
     
@@ -31,6 +31,7 @@ private:
     CanvasMode mode;
     QGridLayout *grid;
     MapWidget *map;
+    QWidget *keyboard_focus_target;
     
     QPushButton *button_zoom_in;
     QPushButton *button_zoom_out;
@@ -46,6 +47,8 @@ private:
     QRadioButton* map_osmcyclo = nullptr;
     
     QCheckBox* check_map_sync = nullptr;
+
+    void activateMapProvider(MapProvider provider);
     
 signals:
     void signalSlideOpacityChanged(int opacity);

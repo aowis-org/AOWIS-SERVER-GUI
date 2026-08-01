@@ -2,11 +2,12 @@
 
 #include <QSignalBlocker>
 
-MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidget *parent)
+MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidget *keyboard_focus_target, QWidget *parent)
     : QWidget{parent},
+    mode( mode ),
     grid( new QGridLayout(this) ),
     map( map ),
-    mode( mode )
+    keyboard_focus_target( keyboard_focus_target != nullptr ? keyboard_focus_target : map )
 {
     this->button_zoom_in = new QPushButton();
     this->button_zoom_in->setIcon(QIcon(":/icon/zoom_in.png"));
@@ -61,13 +62,21 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     map_arcgissat->setChecked(true);
     
     connect(this->map_arcgissat, &QRadioButton::clicked, this, [this]
-            { this->map->changeMapProvider(MapProvider::ArcGISSat); });
+    {
+        this->activateMapProvider(MapProvider::ArcGISSat);
+    });
     connect(this->map_openstreetmap, &QRadioButton::clicked, this, [this]
-            { this->map->changeMapProvider(MapProvider::OpenStreetMap); });
+    {
+        this->activateMapProvider(MapProvider::OpenStreetMap);
+    });
     connect(this->map_opentopomap, &QRadioButton::clicked, this, [this]
-            { this->map->changeMapProvider(MapProvider::OpenTopoMap); });
+    {
+        this->activateMapProvider(MapProvider::OpenTopoMap);
+    });
     connect(this->map_osmcyclo, &QRadioButton::clicked, this, [this]
-            { this->map->changeMapProvider(MapProvider::OSMCyclo); });
+    {
+        this->activateMapProvider(MapProvider::OSMCyclo);
+    });
     
     QLabel *label_slider_map_visibility = new QLabel("Opacity");
     QSlider *slider_map_visibility = new QSlider(Qt::Horizontal);
@@ -113,6 +122,18 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     }
     
     
+}
+
+void MapNavigationWidget::activateMapProvider(MapProvider provider)
+{
+    this->map->changeMapProvider(provider);
+
+    QWidget *focus_target = this->keyboard_focus_target;
+    QTimer::singleShot(0, focus_target, [focus_target]
+    {
+        if (focus_target->isVisible())
+            focus_target->setFocus(Qt::ShortcutFocusReason);
+    });
 }
 
 void MapNavigationWidget::mapProviderChange(MapProvider provider)

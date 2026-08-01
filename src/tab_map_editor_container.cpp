@@ -76,7 +76,7 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_ca
     layout( new QVBoxLayout(this) ),
     mode( mode ),
     map( map ),
-    map_nav( new MapNavigationWidget(this->map, this->mode, this) ),
+    map_nav( new MapNavigationWidget(this->map, this->mode, map_canvas, this) ),
     map_canvas( map_canvas ),
     toolbox( new QToolBox(this) )
 {

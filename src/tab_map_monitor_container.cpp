@@ -64,7 +64,7 @@ MapMonitorMenuWidget::MapMonitorMenuWidget(MapWidget *map, QWidget *parent)
     : QWidget{parent},
     layout( new QVBoxLayout(this) ),
     map( map ),
-    map_nav( new MapNavigationWidget(this->map, CanvasMode::Monitor) )
+    map_nav( new MapNavigationWidget(this->map, CanvasMode::Monitor, this->map, this) )
 {
     setContentsMargins(0, 0, 0, 0);
     setMinimumWidth(Sizes::SidebarLeftWidth);
