@@ -33,6 +33,7 @@ EM_JS(int, aowisBrowserDocumentActive, (),
 namespace
 {
 constexpr int PanFrameIntervalMs = 16;
+constexpr int TileUpdateIntervalMs = 16;
 constexpr int PanButtonStepPixels = 120;
 constexpr int EdgePanMarginPixels = 2;
 constexpr int EdgePanPollIntervalMs = 50;
@@ -144,14 +145,19 @@ void MapWidget::init()
         update();
     });
 
-    connect(this->tile_repository, &MapTileRepository::signalTileAvailable, this, [this](const QString &)
+    this->tile_update_timer = new QTimer(this);
+    this->tile_update_timer->setSingleShot(true);
+    this->tile_update_timer->setTimerType(Qt::PreciseTimer);
+    this->tile_update_timer->setInterval(TileUpdateIntervalMs);
+    connect(this->tile_update_timer, &QTimer::timeout, this, [this]
     {
         update();
     });
-    connect(this->tile_repository, &MapTileRepository::signalTileRetryReady, this, [this](const QString &)
-    {
-        update();
-    });
+
+    connect(this->tile_repository, &MapTileRepository::signalTileAvailable,
+            this, &MapWidget::scheduleTileUpdate);
+    connect(this->tile_repository, &MapTileRepository::signalTileRetryReady,
+            this, &MapWidget::scheduleTileUpdate);
 
     if (this->gps)
     {
@@ -846,6 +852,12 @@ void MapWidget::updatePointerCoordinates(const QPoint &position)
     GeoMetricProjection projection;
     const CoordinateUTM utm = projection.wgs84ToUtm(wgs);
     emit signalCoordsChangedUTM(utm);
+}
+
+void MapWidget::scheduleTileUpdate(const QString &)
+{
+    if (!this->tile_update_timer->isActive())
+        this->tile_update_timer->start();
 }
 
 void MapWidget::zoomIn()

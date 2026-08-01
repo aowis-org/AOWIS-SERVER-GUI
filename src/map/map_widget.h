@@ -93,6 +93,7 @@ private:
     void panByStep(const QPoint &delta);
 
     void updatePointerCoordinates(const QPoint &position);
+    void scheduleTileUpdate(const QString &);
     void drawTiles(QPainter &painter);
     void showContextMenu(const QPoint &pos);
 
@@ -124,6 +125,7 @@ private:
     QTimer *pan_timer = nullptr;
     QElapsedTimer pan_elapsed_timer;
     QTimer *edge_pan_poll_timer = nullptr;
+    QTimer *tile_update_timer = nullptr;
 
 #ifdef Q_OS_WASM
     QPoint browser_pointer_position;

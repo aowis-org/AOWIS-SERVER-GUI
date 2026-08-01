@@ -17,15 +17,7 @@ InterfaceServerMapStandalone::InterfaceServerMapStandalone(QObject *parent)
             return;
         }
 
-        QPixmap pixmap;
-        if (!pixmap.loadFromData(data))
-        {
-            qWarning() << "Downloaded tile decode failed:" << key;
-            emit signalTileFailed(key);
-            return;
-        }
-
-        emit signalTileReceived(key, pixmap);
+        emit signalTileDataReceived(key, data);
     }, Qt::QueuedConnection);
 
     connect(this->map_tiles, &MapTiles::tileFailed, this, [this](const QString &key)
@@ -54,17 +46,9 @@ void InterfaceServerMapStandalone::requestTile(const QString &endpoint, const QS
     if (data.isEmpty())
         return;
 
-    QPixmap pixmap;
-    if (!pixmap.loadFromData(data))
+    QTimer::singleShot(0, this, [this, key, data]
     {
-        qWarning() << "Tile decode failed:" << key;
-        emit signalTileFailed(key);
-        return;
-    }
-
-    QTimer::singleShot(0, this, [this, key, pixmap]
-    {
-        emit signalTileReceived(key, pixmap);
+        emit signalTileDataReceived(key, data);
     });
 }
 

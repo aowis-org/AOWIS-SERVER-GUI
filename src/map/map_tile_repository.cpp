@@ -10,12 +10,21 @@
 #include <QDebug>
 #include <QList>
 #include <QTimer>
+#ifdef Q_OS_WIN
+#include <QImage>
+#include <QMetaObject>
+#include <QRunnable>
+#endif
 
 namespace
 {
 constexpr int TileCacheMaximumCostKiB = 512 * 1024;
 constexpr qint64 TileRetryInitialDelayMs = 1000;
 constexpr qint64 TileRetryMaximumDelayMs = 30000;
+#ifdef Q_OS_WIN
+constexpr int TileRequestDispatchIntervalMs = 1;
+constexpr int TileDecodeThreadCount = 2;
+#endif
 
 int positiveModulo(int value, int divisor)
 {
@@ -39,7 +48,26 @@ MapTileRepository::MapTileRepository(QObject *parent)
     : QObject(parent),
     cache(TileCacheMaximumCostKiB)
 {
+#ifdef Q_OS_WIN
+    this->tile_request_timer = new QTimer(this);
+    this->tile_request_timer->setSingleShot(true);
+    this->tile_request_timer->setTimerType(Qt::PreciseTimer);
+    this->tile_request_timer->setInterval(TileRequestDispatchIntervalMs);
+    connect(this->tile_request_timer, &QTimer::timeout, this, &MapTileRepository::processTileRequestQueue);
+
+    this->tile_decode_pool.setMaxThreadCount(TileDecodeThreadCount);
+    this->tile_decode_pool.setExpiryTimeout(30000);
+#endif
+
     initServerMapInterface();
+}
+
+MapTileRepository::~MapTileRepository()
+{
+#ifdef Q_OS_WIN
+    this->tile_decode_pool.clear();
+    this->tile_decode_pool.waitForDone();
+#endif
 }
 
 const QPixmap *MapTileRepository::tile(const QString &key) const
@@ -63,8 +91,53 @@ void MapTileRepository::requestTile(const QString &endpoint, const QString &key,
     }
 
     this->tiles_pending.insert(key);
+#ifdef Q_OS_WIN
+    PendingTileRequest request;
+    request.endpoint = endpoint;
+    request.x = x;
+    request.y = y;
+
+    this->tile_requests_queued.insert(key, request);
+    this->tile_request_order.append(key);
+
+    if (!this->tile_request_timer->isActive())
+        this->tile_request_timer->start();
+#else
     this->interface_map->requestTile(endpoint, key, x, y);
+#endif
 }
+
+#ifdef Q_OS_WIN
+void MapTileRepository::processTileRequestQueue()
+{
+    while (!this->tile_request_order.isEmpty())
+    {
+        const QString key = this->tile_request_order.takeLast();
+        const QHash<QString, PendingTileRequest>::iterator request_iterator =
+            this->tile_requests_queued.find(key);
+        if (request_iterator == this->tile_requests_queued.end())
+            continue;
+
+        const PendingTileRequest request = request_iterator.value();
+        this->tile_requests_queued.erase(request_iterator);
+
+        if (!this->interface_map || this->cache.contains(key) ||
+            tileDeletionPending(key, request.x, request.y))
+        {
+            this->tiles_pending.remove(key);
+        }
+        else
+        {
+            this->interface_map->requestTile(request.endpoint, key, request.x, request.y);
+        }
+
+        break;
+    }
+
+    if (!this->tile_request_order.isEmpty())
+        this->tile_request_timer->start();
+}
+#endif
 
 void MapTileRepository::deleteTiles(const QString &provider, int zoom,
                                     int tile_x_min, int tile_x_max,
@@ -137,6 +210,14 @@ void MapTileRepository::invalidateTiles(const PendingTileDeletion &deletion)
         this->cache.remove(key);
         this->tile_failures.remove(key);
 
+#ifdef Q_OS_WIN
+        if (this->tile_requests_queued.remove(key) > 0)
+        {
+            this->tiles_pending.remove(key);
+            this->tiles_invalidated_while_pending.remove(key);
+            continue;
+        }
+#endif
         if (this->tiles_pending.contains(key))
             this->tiles_invalidated_while_pending.insert(key);
         else
@@ -199,6 +280,12 @@ void MapTileRepository::initServerMapInterface()
         this->interface_map = nullptr;
     }
 
+    this->tile_generation++;
+#ifdef Q_OS_WIN
+    this->tile_request_timer->stop();
+    this->tile_requests_queued.clear();
+    this->tile_request_order.clear();
+#endif
     this->tiles_pending.clear();
     this->tiles_invalidated_while_pending.clear();
     this->tile_failures.clear();
@@ -218,8 +305,8 @@ void MapTileRepository::initServerMapInterface()
     if (!this->interface_map)
         return;
 
-    connect(this->interface_map, &InterfaceServerMap::signalTileReceived,
-            this, &MapTileRepository::tileReceived);
+    connect(this->interface_map, &InterfaceServerMap::signalTileDataReceived,
+            this, &MapTileRepository::tileDataReceived);
     connect(this->interface_map, &InterfaceServerMap::signalTileFailed,
             this, &MapTileRepository::tileFailed);
     connect(this->interface_map, &InterfaceServerMap::signalTilesDeleted,
@@ -234,8 +321,52 @@ void MapTileRepository::initServerMapInterface()
     });
 }
 
-void MapTileRepository::tileReceived(const QString &key, const QPixmap &pixmap)
+void MapTileRepository::tileDataReceived(const QString &key, const QByteArray &data)
 {
+    if (!this->tiles_pending.contains(key))
+        return;
+
+    if (data.isEmpty())
+    {
+        tileFailed(key);
+        return;
+    }
+
+#ifdef Q_OS_WIN
+    const quint64 generation = this->tile_generation;
+    MapTileRepository *repository = this;
+    this->tile_decode_pool.start(QRunnable::create([repository, key, data, generation]
+    {
+        QImage image;
+        image.loadFromData(data);
+        if (!image.isNull() && image.format() != QImage::Format_ARGB32_Premultiplied)
+            image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+
+        QMetaObject::invokeMethod(repository, [repository, key, generation, image]
+        {
+            repository->finishTileDecode(key, generation, image);
+        }, Qt::QueuedConnection);
+    }));
+#else
+    QPixmap pixmap;
+    pixmap.loadFromData(data);
+    finishTileDecode(key, pixmap);
+#endif
+}
+
+#ifdef Q_OS_WIN
+void MapTileRepository::finishTileDecode(const QString &key, quint64 generation, const QImage &image)
+{
+    if (generation != this->tile_generation || !this->tiles_pending.contains(key))
+        return;
+
+    const QPixmap pixmap = QPixmap::fromImage(image);
+#else
+void MapTileRepository::finishTileDecode(const QString &key, const QPixmap &pixmap)
+{
+    if (!this->tiles_pending.contains(key))
+        return;
+#endif
     this->tiles_pending.remove(key);
 
     if (this->tiles_invalidated_while_pending.remove(key))

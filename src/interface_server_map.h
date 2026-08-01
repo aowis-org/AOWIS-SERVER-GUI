@@ -1,8 +1,8 @@
 #ifndef INTERFACE_SERVER_MAP_H
 #define INTERFACE_SERVER_MAP_H
 
+#include <QByteArray>
 #include <QObject>
-#include <QPixmap>
 #include <QString>
 
 class InterfaceServerMap : public QObject
@@ -20,7 +20,7 @@ public:
                              int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max) = 0;
 
 signals:
-    void signalTileReceived(const QString &key, const QPixmap &pixmap);
+    void signalTileDataReceived(const QString &key, const QByteArray &data);
     void signalTileFailed(const QString &key);
     void signalTilesDeleted(quint64 request_id);
     void signalTileDeletionFailed(quint64 request_id, const QString &error);

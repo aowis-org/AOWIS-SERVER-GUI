@@ -17,15 +17,14 @@ void InterfaceServerMapREST::initRestConnection()
     {
         this->rest_pending.remove(key);
 
-        QPixmap pixmap;
-        if (!pixmap.loadFromData(data))
+        if (data.isEmpty())
         {
-            qWarning() << "Tile decode failed:" << key;
+            qWarning() << "Tile response is empty:" << key;
             emit signalTileFailed(key);
             return;
         }
 
-        emit signalTileReceived(key, pixmap);
+        emit signalTileDataReceived(key, data);
     });
 
     connect(this->rest, &RESTClient::requestTileError, this,

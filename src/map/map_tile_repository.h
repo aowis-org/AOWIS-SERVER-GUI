@@ -1,12 +1,19 @@
 #ifndef MAP_TILE_REPOSITORY_H
 #define MAP_TILE_REPOSITORY_H
 
+#include <QByteArray>
 #include <QCache>
 #include <QHash>
+#include <QList>
 #include <QObject>
 #include <QPixmap>
 #include <QSet>
 #include <QString>
+#ifdef Q_OS_WIN
+#include <QImage>
+#include <QThreadPool>
+#include <QTimer>
+#endif
 
 #include "../_enums_structs.h"
 #include "../interface_server_map.h"
@@ -17,6 +24,7 @@ class MapTileRepository : public QObject
 
 public:
     explicit MapTileRepository(QObject *parent = nullptr);
+    ~MapTileRepository() override;
 
     const QPixmap *tile(const QString &key) const;
     void requestTile(const QString &endpoint, const QString &key, int x, int y);
@@ -35,6 +43,15 @@ private:
         qint64 retry_after_msecs = 0;
     };
 
+#ifdef Q_OS_WIN
+    struct PendingTileRequest
+    {
+        QString endpoint;
+        int x = 0;
+        int y = 0;
+    };
+#endif
+
     struct PendingTileDeletion
     {
         QString key_prefix;
@@ -46,10 +63,18 @@ private:
     };
 
     void initServerMapInterface();
+#ifdef Q_OS_WIN
+    void processTileRequestQueue();
+#endif
     void invalidateTiles(const PendingTileDeletion &deletion);
     bool tileDeletionPending(const QString &key, int x, int y) const;
     void finishTileDeletion(quint64 request_id, const QString &error = QString());
-    void tileReceived(const QString &key, const QPixmap &pixmap);
+    void tileDataReceived(const QString &key, const QByteArray &data);
+#ifdef Q_OS_WIN
+    void finishTileDecode(const QString &key, quint64 generation, const QImage &image);
+#else
+    void finishTileDecode(const QString &key, const QPixmap &pixmap);
+#endif
     void tileFailed(const QString &key);
 
 #ifdef AOWIS_STANDALONE
@@ -60,10 +85,19 @@ private:
 
     InterfaceServerMap *interface_map = nullptr;
     QSet<QString> tiles_pending;
+#ifdef Q_OS_WIN
+    QHash<QString, PendingTileRequest> tile_requests_queued;
+    QList<QString> tile_request_order;
+    QTimer *tile_request_timer = nullptr;
+#endif
     QSet<QString> tiles_invalidated_while_pending;
     QHash<QString, TileFailure> tile_failures;
     QHash<quint64, PendingTileDeletion> tile_deletions_pending;
     quint64 next_tile_deletion_id = 1;
+    quint64 tile_generation = 0;
+#ifdef Q_OS_WIN
+    QThreadPool tile_decode_pool;
+#endif
     QCache<QString, QPixmap> cache;
 };
 
