@@ -13,6 +13,15 @@ MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map, HydraulicD
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_NoSystemBackground);
     setMouseTracking(true);
+
+    connect(this->map_model, &MapModel::zoomChanged, this, [this]
+    {
+        update();
+    });
+    connect(this->map_model, &MapModel::centerChangedWGS84, this, [this]
+    {
+        update();
+    });
     
     //setFocusPolicy(Qt::StrongFocus);
     //setFocus(Qt::OtherFocusReason);
@@ -86,14 +95,25 @@ void MapCanvasWidget::paintEventTileSelectionOverlay(QPainter &paint)
 
     const int current_zoom = this->map_model->zoom();
     const double zoom_scale = std::ldexp(1.0, current_zoom - this->tile_selection_overlay.zoom);
+    const double selected_west_tile = this->tile_selection_overlay.tile_x_min * zoom_scale;
+    const double selected_east_tile = (this->tile_selection_overlay.tile_x_max + 1.0) * zoom_scale;
+    const double selected_north_tile = this->tile_selection_overlay.tile_y_min * zoom_scale;
+    const double selected_south_tile = (this->tile_selection_overlay.tile_y_max + 1.0) * zoom_scale;
+
+    const int world_tile_count = 1 << current_zoom;
+    const int current_tile_x_min = int(std::floor(selected_west_tile));
+    const int current_tile_x_max = int(std::ceil(selected_east_tile)) - 1;
+    const int current_tile_y_min = qBound(0, int(std::floor(selected_north_tile)), world_tile_count - 1);
+    const int current_tile_y_max = qBound(0, int(std::ceil(selected_south_tile)) - 1, world_tile_count - 1);
+    if (current_tile_x_min > current_tile_x_max || current_tile_y_min > current_tile_y_max)
+        return;
+
     const QPointF center_tile = this->map_model->centerTile();
+    double west_tile = current_tile_x_min;
+    double east_tile = current_tile_x_max + 1.0;
+    const double north_tile = current_tile_y_min;
+    const double south_tile = current_tile_y_max + 1.0;
 
-    double west_tile = this->tile_selection_overlay.tile_x_min * zoom_scale;
-    double east_tile = (this->tile_selection_overlay.tile_x_max + 1.0) * zoom_scale;
-    const double north_tile = this->tile_selection_overlay.tile_y_min * zoom_scale;
-    const double south_tile = (this->tile_selection_overlay.tile_y_max + 1.0) * zoom_scale;
-
-    const double world_tile_count = double(1 << current_zoom);
     const double selection_center_tile = (west_tile + east_tile) / 2.0;
     const double wrap_shift = std::round((center_tile.x() - selection_center_tile) / world_tile_count) * world_tile_count;
     west_tile += wrap_shift;
@@ -107,7 +127,7 @@ void MapCanvasWidget::paintEventTileSelectionOverlay(QPainter &paint)
         height() / 2.0 + (south_tile - center_tile.y()) * MapModel::TileSize);
     const QRectF overlay_rect = QRectF(top_left, bottom_right).normalized();
 
-    if (overlay_rect.isEmpty())
+    if (overlay_rect.isEmpty() || !overlay_rect.intersects(rect()))
         return;
 
     paint.save();
@@ -138,26 +158,28 @@ void MapCanvasWidget::paintEventTileSelectionOverlay(QPainter &paint)
     paint.setPen(border_pen);
     paint.drawRect(overlay_rect);
 
-    const double selected_tile_size = MapModel::TileSize * zoom_scale;
-    if (selected_tile_size >= 5.0)
+    QPen grid_pen(QColor(104, 255, 104, 105));
+    grid_pen.setWidthF(1.0);
+    paint.setPen(grid_pen);
+
+    const double viewport_west_tile = center_tile.x() - width() / 2.0 / MapModel::TileSize;
+    const double viewport_east_tile = center_tile.x() + width() / 2.0 / MapModel::TileSize;
+    const int first_visible_tile_x = qMax(current_tile_x_min + 1, int(std::ceil(viewport_west_tile - wrap_shift)));
+    const int last_visible_tile_x = qMin(current_tile_x_max, int(std::floor(viewport_east_tile - wrap_shift)));
+    for (int tile_x = first_visible_tile_x; tile_x <= last_visible_tile_x; ++tile_x)
     {
-        QPen grid_pen(QColor(104, 255, 104, 105));
-        grid_pen.setWidthF(1.0);
-        paint.setPen(grid_pen);
+        const double screen_x = width() / 2.0 + (tile_x + wrap_shift - center_tile.x()) * MapModel::TileSize;
+        paint.drawLine(QPointF(screen_x, overlay_rect.top()), QPointF(screen_x, overlay_rect.bottom()));
+    }
 
-        for (int tile_x = this->tile_selection_overlay.tile_x_min + 1; tile_x <= this->tile_selection_overlay.tile_x_max; ++tile_x)
-        {
-            const double current_tile_x = tile_x * zoom_scale + wrap_shift;
-            const double screen_x = width() / 2.0 + (current_tile_x - center_tile.x()) * MapModel::TileSize;
-            paint.drawLine(QPointF(screen_x, overlay_rect.top()), QPointF(screen_x, overlay_rect.bottom()));
-        }
-
-        for (int tile_y = this->tile_selection_overlay.tile_y_min + 1; tile_y <= this->tile_selection_overlay.tile_y_max; ++tile_y)
-        {
-            const double current_tile_y = tile_y * zoom_scale;
-            const double screen_y = height() / 2.0 + (current_tile_y - center_tile.y()) * MapModel::TileSize;
-            paint.drawLine(QPointF(overlay_rect.left(), screen_y), QPointF(overlay_rect.right(), screen_y));
-        }
+    const double viewport_north_tile = center_tile.y() - height() / 2.0 / MapModel::TileSize;
+    const double viewport_south_tile = center_tile.y() + height() / 2.0 / MapModel::TileSize;
+    const int first_visible_tile_y = qMax(current_tile_y_min + 1, int(std::ceil(viewport_north_tile)));
+    const int last_visible_tile_y = qMin(current_tile_y_max, int(std::floor(viewport_south_tile)));
+    for (int tile_y = first_visible_tile_y; tile_y <= last_visible_tile_y; ++tile_y)
+    {
+        const double screen_y = height() / 2.0 + (tile_y - center_tile.y()) * MapModel::TileSize;
+        paint.drawLine(QPointF(overlay_rect.left(), screen_y), QPointF(overlay_rect.right(), screen_y));
     }
 
     paint.restore();
