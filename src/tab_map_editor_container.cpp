@@ -35,9 +35,31 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     this->map_stack_layout->setStackingMode(QStackedLayout::StackAll);
     
     this->map_stack_layout->addWidget(this->map);
+#ifdef Q_OS_WASM
+    this->map->setBrowserMapLayerEnabled(true);
+
+    this->map_canvas->setObjectName(QStringLiteral("aowis-wasm-map-overlay"));
+    this->map_canvas->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint);
+    this->map_canvas->setAttribute(Qt::WA_TranslucentBackground);
+    this->map_canvas->setAttribute(Qt::WA_NoSystemBackground);
+    this->map_canvas->setAttribute(Qt::WA_ShowWithoutActivating);
+
+    this->wasm_map_layer_sync_timer = new QTimer(this);
+    this->wasm_map_layer_sync_timer->setSingleShot(true);
+    connect(this->wasm_map_layer_sync_timer, &QTimer::timeout,
+            this, &MapEditorContainer::syncWasmMapLayers);
+
+    this->installEventFilter(this);
+    this->map->installEventFilter(this);
+    this->map_stack->installEventFilter(this);
+    if (this->window())
+        this->window()->installEventFilter(this);
+
+    this->scheduleWasmMapLayerSync();
+#else
     this->map_stack_layout->addWidget(this->map_canvas);
-    
     this->map_canvas->raise();
+#endif
     
     this->layout->addWidget(scroll_controls);
     this->layout->addWidget(this->map_stack);
@@ -52,6 +74,68 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
         this->map_canvas->setFocus(Qt::OtherFocusReason);
     });
 }
+
+MapEditorContainer::~MapEditorContainer()
+{
+#ifdef Q_OS_WASM
+    this->map->setBrowserMapLayerGeometry(QRect(), false);
+    this->map_canvas->hide();
+#endif
+}
+
+#ifdef Q_OS_WASM
+bool MapEditorContainer::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == this || watched == this->map || watched == this->map_stack || watched == this->window())
+    {
+        switch (event->type())
+        {
+        case QEvent::Move:
+        case QEvent::Resize:
+        case QEvent::Show:
+        case QEvent::Hide:
+        case QEvent::LayoutRequest:
+        case QEvent::ParentChange:
+        case QEvent::WindowStateChange:
+            this->scheduleWasmMapLayerSync();
+            break;
+        default:
+            break;
+        }
+    }
+
+    return QWidget::eventFilter(watched, event);
+}
+
+void MapEditorContainer::scheduleWasmMapLayerSync()
+{
+    if (!this->wasm_map_layer_sync_timer->isActive())
+        this->wasm_map_layer_sync_timer->start(0);
+}
+
+void MapEditorContainer::syncWasmMapLayers()
+{
+    const bool visible = this->isVisible() && this->map->isVisible()
+        && this->map->width() > 0 && this->map->height() > 0;
+
+    if (!visible)
+    {
+        this->map_canvas->hide();
+        this->map->setBrowserMapLayerGeometry(QRect(), false);
+        return;
+    }
+
+    const QRect map_geometry(this->map->mapToGlobal(QPoint(0, 0)), this->map->size());
+    this->map_canvas->setGeometry(map_geometry);
+
+    if (!this->map_canvas->isVisible())
+        this->map_canvas->show();
+
+    this->map_canvas->raise();
+    this->map->setBrowserMapLayerGeometry(map_geometry, true);
+}
+#endif
+
 MapWidget *MapEditorContainer::getMap()
 {
     return this->map;

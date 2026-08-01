@@ -30,6 +30,30 @@ EM_JS(int, aowisBrowserDocumentActive, (),
 {
     return document.hasFocus() && !document.hidden ? 1 : 0;
 });
+
+EM_JS(void, aowisBrowserMapSetGeometry, (int x, int y, int width, int height, int visible),
+{
+    if (window.aowisBrowserMap)
+        window.aowisBrowserMap.setGeometry(x, y, width, height, visible !== 0);
+});
+
+EM_JS(void, aowisBrowserMapSetView, (double longitude, double latitude, int zoom, int provider),
+{
+    if (window.aowisBrowserMap)
+        window.aowisBrowserMap.setView(longitude, latitude, zoom, provider);
+});
+
+EM_JS(void, aowisBrowserMapInvalidateTiles, (),
+{
+    if (window.aowisBrowserMap)
+        window.aowisBrowserMap.invalidateTiles();
+});
+
+EM_JS(void, aowisBrowserMapDestroy, (),
+{
+    if (window.aowisBrowserMap)
+        window.aowisBrowserMap.destroy();
+});
 #endif
 
 namespace
@@ -94,6 +118,9 @@ MapWidget::MapWidget(MapModel *model, MapTileRepository *tile_repository, GpsPro
 MapWidget::~MapWidget()
 {
 #ifdef Q_OS_WASM
+    if (this->browser_map_layer_enabled)
+        aowisBrowserMapDestroy();
+
     emscripten_set_mousemove_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, this, EM_TRUE, nullptr);
     emscripten_set_mouseleave_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, this, EM_TRUE, nullptr);
 #endif
@@ -135,6 +162,13 @@ void MapWidget::init()
     connect(this->m_model, &MapModel::zoomChanged, this, [this](int zoom)
     {
         emit signalZoomChanged(zoom);
+#ifdef Q_OS_WASM
+        if (this->browser_map_layer_enabled)
+        {
+            this->syncBrowserMapView();
+            return;
+        }
+#endif
         update();
     });
 
@@ -143,12 +177,26 @@ void MapWidget::init()
         emit signalCoordsChangedWgs84(wgs);
         if (this->backing_store_pan_active)
             return;
+#ifdef Q_OS_WASM
+        if (this->browser_map_layer_enabled)
+        {
+            this->syncBrowserMapView();
+            return;
+        }
+#endif
         update();
     });
 
     connect(this->m_model, &MapModel::centerChangedUTM, this, &MapWidget::signalCoordsChangedUTM);
     connect(this->m_model, &MapModel::providerChanged, this, [this](MapProvider)
     {
+#ifdef Q_OS_WASM
+        if (this->browser_map_layer_enabled)
+        {
+            this->syncBrowserMapView();
+            return;
+        }
+#endif
         update();
     });
 
@@ -158,6 +206,10 @@ void MapWidget::init()
     this->tile_update_timer->setInterval(TileUpdateIntervalMs);
     connect(this->tile_update_timer, &QTimer::timeout, this, [this]
     {
+#ifdef Q_OS_WASM
+        if (this->browser_map_layer_enabled)
+            return;
+#endif
         update();
     });
 
@@ -165,6 +217,13 @@ void MapWidget::init()
             this, &MapWidget::scheduleTileUpdate);
     connect(this->tile_repository, &MapTileRepository::signalTileRetryReady,
             this, &MapWidget::scheduleTileUpdate);
+    connect(this->tile_repository, &MapTileRepository::signalTilesDeleted, this, [this]
+    {
+#ifdef Q_OS_WASM
+        if (this->browser_map_layer_enabled)
+            aowisBrowserMapInvalidateTiles();
+#endif
+    });
 
     if (this->gps)
     {
@@ -602,6 +661,47 @@ void MapWidget::clearKeyboardPanInput()
     this->stopPanAnimationIfIdle();
 }
 
+#ifdef Q_OS_WASM
+void MapWidget::setBrowserMapLayerEnabled(bool enabled)
+{
+    if (this->browser_map_layer_enabled == enabled)
+        return;
+
+    this->browser_map_layer_enabled = enabled;
+    if (enabled)
+        this->syncBrowserMapView();
+    else
+        aowisBrowserMapDestroy();
+
+    update();
+}
+
+void MapWidget::setBrowserMapLayerGeometry(const QRect &geometry, bool visible)
+{
+    aowisBrowserMapSetGeometry(
+        geometry.x(),
+        geometry.y(),
+        geometry.width(),
+        geometry.height(),
+        visible ? 1 : 0);
+
+    if (visible)
+        this->syncBrowserMapView();
+}
+
+void MapWidget::syncBrowserMapView()
+{
+    if (!this->browser_map_layer_enabled)
+        return;
+
+    aowisBrowserMapSetView(
+        this->m_model->centerLon(),
+        this->m_model->centerLat(),
+        this->m_model->zoom(),
+        int(this->m_model->provider()));
+}
+#endif
+
 void MapWidget::setEdgePanningEnabled(bool enabled)
 {
     if (this->edge_panning_enabled == enabled)
@@ -691,6 +791,14 @@ void MapWidget::panMapByPixels(const QPoint &delta)
     const QPoint actual_delta(
         qRound(horizontal_tile_delta * MapModel::TileSize),
         qRound((old_center.y() - new_center.y()) * MapModel::TileSize));
+
+#ifdef Q_OS_WASM
+    if (this->browser_map_layer_enabled)
+    {
+        this->syncBrowserMapView();
+        return;
+    }
+#endif
 
     if (actual_delta.isNull())
         return;
@@ -893,6 +1001,11 @@ void MapWidget::updatePointerCoordinates(const QPoint &position)
 
 void MapWidget::scheduleTileUpdate(const QString &)
 {
+#ifdef Q_OS_WASM
+    if (this->browser_map_layer_enabled)
+        return;
+#endif
+
     if (!this->tile_update_timer->isActive())
         this->tile_update_timer->start();
 }
@@ -914,6 +1027,15 @@ void MapWidget::changeMapProvider(MapProvider provider)
 
 void MapWidget::paintEvent(QPaintEvent *event)
 {
+#ifdef Q_OS_WASM
+    if (this->browser_map_layer_enabled)
+    {
+        QPainter painter(this);
+        painter.fillRect(event->rect(), this->palette().brush(QPalette::Window));
+        return;
+    }
+#endif
+
     QPainter painter(this);
     painter.setClipRegion(event->region());
     painter.fillRect(event->rect(), this->palette().brush(QPalette::Window));

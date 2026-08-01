@@ -4,6 +4,11 @@
 #include <QObject>
 #include <QWidget>
 
+#ifdef Q_OS_WASM
+#include <QEvent>
+#include <QTimer>
+#endif
+
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QStackedLayout>
@@ -87,6 +92,7 @@ class MapEditorContainer : public QWidget
     Q_OBJECT
 public:
     explicit MapEditorContainer(MapModel *map_model, MapTileRepository *tile_repository, HydraulicData *hydraulic_data, GpsProvider *gps, EntityInspectorDock *map_inspector, QWidget *parent = nullptr);
+    ~MapEditorContainer() override;
     
     MapWidget *getMap();
     
@@ -95,6 +101,11 @@ public:
 
 public slots:
     void setMapEditorGuideChecked(bool checked);
+
+#ifdef Q_OS_WASM
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+#endif
 
 private:
     HydraulicData *hydraulic_data = nullptr;
@@ -111,6 +122,13 @@ private:
     QHBoxLayout *layout;
     QWidget *map_stack;
     QStackedLayout *map_stack_layout;
+
+#ifdef Q_OS_WASM
+    QTimer *wasm_map_layer_sync_timer = nullptr;
+
+    void scheduleWasmMapLayerSync();
+    void syncWasmMapLayers();
+#endif
     
 signals:
     void signalMapEditorGuideVisibilityChanged(bool visible);

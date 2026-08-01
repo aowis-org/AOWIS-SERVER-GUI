@@ -35,6 +35,7 @@ public:
 signals:
     void signalTileAvailable(const QString &key);
     void signalTileRetryReady(const QString &key);
+    void signalTilesDeleted();
 
 private:
     struct TileFailure

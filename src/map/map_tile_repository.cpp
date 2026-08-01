@@ -253,13 +253,15 @@ void MapTileRepository::finishTileDeletion(quint64 request_id, const QString &er
     if (iterator == this->tile_deletions_pending.end())
         return;
 
-    const QString retry_key = iterator.value().key_prefix;
+    const PendingTileDeletion deletion = iterator.value();
     this->tile_deletions_pending.erase(iterator);
 
     if (!error.isEmpty())
         qWarning() << "Tile cache deletion failed:" << error;
+    else
+        emit signalTilesDeleted();
 
-    emit signalTileRetryReady(retry_key);
+    emit signalTileRetryReady(deletion.key_prefix);
 }
 
 void MapTileRepository::setMapServerMode(MapServerMode mode)

@@ -49,6 +49,11 @@ public:
     void clearKeyboardPanInput();
     void setEdgePanningEnabled(bool enabled);
 
+#ifdef Q_OS_WASM
+    void setBrowserMapLayerEnabled(bool enabled);
+    void setBrowserMapLayerGeometry(const QRect &geometry, bool visible);
+#endif
+
 public slots:
     void zoomIn();
     void zoomOut();
@@ -83,6 +88,7 @@ private:
 #ifdef Q_OS_WASM
     static EM_BOOL browserMouseMoveCallback(int event_type, const EmscriptenMouseEvent *event, void *user_data);
     static EM_BOOL browserMouseLeaveCallback(int event_type, const EmscriptenMouseEvent *event, void *user_data);
+    void syncBrowserMapView();
 #endif
 
     bool setKeyboardPanKey(int key, bool pressed);
@@ -131,6 +137,7 @@ private:
 #ifdef Q_OS_WASM
     QPoint browser_pointer_position;
     bool browser_pointer_inside = false;
+    bool browser_map_layer_enabled = false;
 #endif
     bool backing_store_pan_active = false;
 

@@ -49,10 +49,19 @@ void MapCanvasWidget::setBackgroundOpacity(int opacity)
     update();
 }
 
-void MapCanvasWidget::paintEvent(QPaintEvent *)
+void MapCanvasWidget::paintEvent(QPaintEvent *event)
 {
     QPainter paint(this);
-#ifndef Q_OS_WASM
+#ifdef Q_OS_WASM
+    if (isWindow())
+    {
+        paint.setCompositionMode(QPainter::CompositionMode_Source);
+        const QRegion dirty_region = event->region();
+        for (const QRect &dirty_rect : dirty_region)
+            paint.fillRect(dirty_rect, Qt::transparent);
+        paint.setCompositionMode(QPainter::CompositionMode_SourceOver);
+    }
+#else
     paint.setRenderHint(QPainter::Antialiasing);
 #endif
     

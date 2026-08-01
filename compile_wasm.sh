@@ -14,6 +14,7 @@ docker run --rm \
 # Qt's default HTML wrap does not work with setShortcut and
 # keyPressEvents reliably. We replace that with a fixed one
 cp tools/qt-emscripten/index.html build-wasm/
+cp tools/qt-emscripten/aowis-browser-map.js build-wasm/
 #rm build-wasm/aowis-server-gui.html
 
 #HTML_FILE="build-wasm/index.html"
