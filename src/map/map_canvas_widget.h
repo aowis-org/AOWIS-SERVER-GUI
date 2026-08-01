@@ -33,6 +33,7 @@ public:
     
     void startRectangleSelection(bool oneshot, bool interact_with_entities = true);
     void cancelRectangleSelection();
+    void clearTileSelectionOverlay();
     
     MapCanvasEntities *mapCanvasEntities();
     
@@ -70,12 +71,27 @@ private:
     bool rectangle_selection_active = false;
     bool rectangle_dragging = false;
     bool rectangle_selection_interacts_with_entities = true;
+    struct TileSelectionOverlay
+    {
+        bool visible = false;
+        int zoom = 0;
+        int tile_x_min = 0;
+        int tile_x_max = -1;
+        int tile_y_min = 0;
+        int tile_y_max = -1;
+    };
+
     CoordinateWGS84Rect getSelectionRect(const QRect &selected_rect) const;
-    
+    CoordinateWGS84Rect getTileSelectionRect() const;
+    void updateTileSelectionOverlay(const QRect &selected_rect);
+
     CoordinateWGS84 rectangle_start_wgs84;
     CoordinateWGS84 rectangle_current_wgs84;
     
+    TileSelectionOverlay tile_selection_overlay;
+
     QRect currentSelectionRect() const;
+    void paintEventTileSelectionOverlay(QPainter &paint);
     void paintEventRectangle(QPainter &paint);
     
 signals:

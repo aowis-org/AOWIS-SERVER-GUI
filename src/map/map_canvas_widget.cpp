@@ -2,6 +2,8 @@
 
 #include <QLinearGradient>
 
+#include <cmath>
+
 MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map, HydraulicData *hydraulic_data, QWidget *parent)
     : QWidget{parent},
     map_model(map_model),
@@ -53,6 +55,7 @@ void MapCanvasWidget::paintEvent(QPaintEvent *)
         paint.fillRect(rect(), background);
     }
     
+    paintEventTileSelectionOverlay(paint);
     paintEventRectangle(paint);
     
     this->map_canvas_entities->paintMarkers(paint);
@@ -65,6 +68,99 @@ void MapCanvasWidget::startEntityPositioning(InfrastructureEntity tool)
 void MapCanvasWidget::stopEntityPositioning()
 {
     this->map_canvas_entities->stopEntityPositioning();
+}
+
+void MapCanvasWidget::clearTileSelectionOverlay()
+{
+    if (!this->tile_selection_overlay.visible)
+        return;
+
+    this->tile_selection_overlay = TileSelectionOverlay();
+    update();
+}
+
+void MapCanvasWidget::paintEventTileSelectionOverlay(QPainter &paint)
+{
+    if (!this->tile_selection_overlay.visible)
+        return;
+
+    const int current_zoom = this->map_model->zoom();
+    const double zoom_scale = std::ldexp(1.0, current_zoom - this->tile_selection_overlay.zoom);
+    const QPointF center_tile = this->map_model->centerTile();
+
+    double west_tile = this->tile_selection_overlay.tile_x_min * zoom_scale;
+    double east_tile = (this->tile_selection_overlay.tile_x_max + 1.0) * zoom_scale;
+    const double north_tile = this->tile_selection_overlay.tile_y_min * zoom_scale;
+    const double south_tile = (this->tile_selection_overlay.tile_y_max + 1.0) * zoom_scale;
+
+    const double world_tile_count = double(1 << current_zoom);
+    const double selection_center_tile = (west_tile + east_tile) / 2.0;
+    const double wrap_shift = std::round((center_tile.x() - selection_center_tile) / world_tile_count) * world_tile_count;
+    west_tile += wrap_shift;
+    east_tile += wrap_shift;
+
+    const QPointF top_left(
+        width() / 2.0 + (west_tile - center_tile.x()) * MapModel::TileSize,
+        height() / 2.0 + (north_tile - center_tile.y()) * MapModel::TileSize);
+    const QPointF bottom_right(
+        width() / 2.0 + (east_tile - center_tile.x()) * MapModel::TileSize,
+        height() / 2.0 + (south_tile - center_tile.y()) * MapModel::TileSize);
+    const QRectF overlay_rect = QRectF(top_left, bottom_right).normalized();
+
+    if (overlay_rect.isEmpty())
+        return;
+
+    paint.save();
+    paint.setRenderHint(QPainter::Antialiasing, false);
+
+    QLinearGradient fill_gradient(overlay_rect.topLeft(), overlay_rect.bottomRight());
+    fill_gradient.setColorAt(0.0, QColor(92, 255, 82, 54));
+    fill_gradient.setColorAt(0.5, QColor(32, 224, 58, 66));
+    fill_gradient.setColorAt(1.0, QColor(8, 132, 38, 76));
+    paint.fillRect(overlay_rect, fill_gradient);
+
+    QPen wide_glow_pen(QColor(60, 255, 78, 54));
+    wide_glow_pen.setWidthF(12.0);
+    wide_glow_pen.setJoinStyle(Qt::MiterJoin);
+    paint.setPen(wide_glow_pen);
+    paint.setBrush(Qt::NoBrush);
+    paint.drawRect(overlay_rect);
+
+    QPen glow_pen(QColor(92, 255, 96, 120));
+    glow_pen.setWidthF(5.0);
+    glow_pen.setJoinStyle(Qt::MiterJoin);
+    paint.setPen(glow_pen);
+    paint.drawRect(overlay_rect);
+
+    QPen border_pen(QColor(155, 255, 145, 230));
+    border_pen.setWidthF(1.5);
+    border_pen.setJoinStyle(Qt::MiterJoin);
+    paint.setPen(border_pen);
+    paint.drawRect(overlay_rect);
+
+    const double selected_tile_size = MapModel::TileSize * zoom_scale;
+    if (selected_tile_size >= 5.0)
+    {
+        QPen grid_pen(QColor(104, 255, 104, 105));
+        grid_pen.setWidthF(1.0);
+        paint.setPen(grid_pen);
+
+        for (int tile_x = this->tile_selection_overlay.tile_x_min + 1; tile_x <= this->tile_selection_overlay.tile_x_max; ++tile_x)
+        {
+            const double current_tile_x = tile_x * zoom_scale + wrap_shift;
+            const double screen_x = width() / 2.0 + (current_tile_x - center_tile.x()) * MapModel::TileSize;
+            paint.drawLine(QPointF(screen_x, overlay_rect.top()), QPointF(screen_x, overlay_rect.bottom()));
+        }
+
+        for (int tile_y = this->tile_selection_overlay.tile_y_min + 1; tile_y <= this->tile_selection_overlay.tile_y_max; ++tile_y)
+        {
+            const double current_tile_y = tile_y * zoom_scale;
+            const double screen_y = height() / 2.0 + (current_tile_y - center_tile.y()) * MapModel::TileSize;
+            paint.drawLine(QPointF(overlay_rect.left(), screen_y), QPointF(overlay_rect.right(), screen_y));
+        }
+    }
+
+    paint.restore();
 }
 
 void MapCanvasWidget::paintEventRectangle(QPainter &paint)
@@ -206,6 +302,7 @@ void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
     {
         if (this->rectangle_selection_active && !this->rectangle_selection_interacts_with_entities)
         {
+            clearTileSelectionOverlay();
             this->rectangle_start_wgs84 = this->map_model->wgs84FromScreen(event->position().toPoint(), size());
             this->rectangle_current_wgs84 = this->rectangle_start_wgs84;
             this->rectangle_dragging = true;
@@ -262,11 +359,11 @@ void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
         setCursor(Qt::CrossCursor);
         this->rectangle_current_wgs84 = this->map_model->wgs84FromScreen(event->position().toPoint(), size());
 
+        const QRect selected_rect = currentSelectionRect();
         if (this->rectangle_selection_interacts_with_entities)
-        {
-            const QRect selected_rect = currentSelectionRect();
             this->map_canvas_entities->onRectangleSelect(selected_rect, RectangleSelectMode::Replace);
-        }
+        else
+            updateTileSelectionOverlay(selected_rect);
 
         update();
         event->accept();
@@ -316,9 +413,15 @@ void MapCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
         if (selected_rect.width() > distance_min && selected_rect.height() > distance_min)
         {
             if (this->rectangle_selection_interacts_with_entities)
+            {
                 this->map_canvas_entities->onRectangleSelect(selected_rect, RectangleSelectMode::Replace);
-
-            emit signalRectangleSelected(getSelectionRect(selected_rect));
+                emit signalRectangleSelected(getSelectionRect(selected_rect));
+            }
+            else
+            {
+                updateTileSelectionOverlay(selected_rect);
+                emit signalRectangleSelected(getTileSelectionRect());
+            }
         }
         else
         {
@@ -354,6 +457,9 @@ void MapCanvasWidget::startRectangleSelection(bool oneshot, bool interact_with_e
     
     this->rectangle_selection_active = true;
     this->rectangle_dragging = false;
+
+    if (this->rectangle_selection_interacts_with_entities)
+        clearTileSelectionOverlay();
     
     this->rectangle_start_wgs84 = CoordinateWGS84();
     this->rectangle_current_wgs84 = CoordinateWGS84();
@@ -365,13 +471,16 @@ void MapCanvasWidget::startRectangleSelection(bool oneshot, bool interact_with_e
 }
 void MapCanvasWidget::cancelRectangleSelection()
 {
-    if (!rectangle_selection_active)
+    if (!this->rectangle_selection_active)
         return;
     
     if (this->is_rectangle_selection_oneshot)
         this->rectangle_selection_active = false;
     
     this->rectangle_dragging = false;
+
+    if (!this->rectangle_selection_interacts_with_entities)
+        clearTileSelectionOverlay();
     
     unsetCursor();
     
@@ -399,5 +508,60 @@ CoordinateWGS84Rect MapCanvasWidget::getSelectionRect(const QRect &selected_rect
         size()
         );
     
+    return rect;
+}
+
+void MapCanvasWidget::updateTileSelectionOverlay(const QRect &selected_rect)
+{
+    if (selected_rect.isEmpty())
+    {
+        clearTileSelectionOverlay();
+        return;
+    }
+
+    const int zoom = this->map_model->zoom();
+    const int tile_count = 1 << zoom;
+    const QPointF center_tile = this->map_model->centerTile();
+    const double tile_x_first = center_tile.x() + (selected_rect.left() - width() / 2.0) / MapModel::TileSize;
+    const double tile_x_second = center_tile.x() + (selected_rect.right() - width() / 2.0) / MapModel::TileSize;
+    const double tile_y_first = center_tile.y() + (selected_rect.top() - height() / 2.0) / MapModel::TileSize;
+    const double tile_y_second = center_tile.y() + (selected_rect.bottom() - height() / 2.0) / MapModel::TileSize;
+
+    const int tile_y_min = int(std::floor(qMin(tile_y_first, tile_y_second)));
+    const int tile_y_max = int(std::floor(qMax(tile_y_first, tile_y_second)));
+    if (tile_y_max < 0 || tile_y_min >= tile_count)
+    {
+        clearTileSelectionOverlay();
+        return;
+    }
+
+    this->tile_selection_overlay.zoom = zoom;
+    this->tile_selection_overlay.tile_x_min = int(std::floor(qMin(tile_x_first, tile_x_second)));
+    this->tile_selection_overlay.tile_x_max = int(std::floor(qMax(tile_x_first, tile_x_second)));
+    this->tile_selection_overlay.tile_y_min = qBound(0, tile_y_min, tile_count - 1);
+    this->tile_selection_overlay.tile_y_max = qBound(0, tile_y_max, tile_count - 1);
+    this->tile_selection_overlay.visible = this->tile_selection_overlay.tile_x_min <= this->tile_selection_overlay.tile_x_max &&
+                                           this->tile_selection_overlay.tile_y_min <= this->tile_selection_overlay.tile_y_max;
+
+    update();
+}
+
+CoordinateWGS84Rect MapCanvasWidget::getTileSelectionRect() const
+{
+    CoordinateWGS84Rect rect;
+    rect.north_west.latitude_deg = GeoWebMercator::tileYToLat(
+        this->tile_selection_overlay.tile_y_min,
+        this->tile_selection_overlay.zoom);
+    rect.north_west.longitude_deg = GeoWebMercator::normalizeLongitude(
+        GeoWebMercator::tileXToLon(
+            this->tile_selection_overlay.tile_x_min,
+            this->tile_selection_overlay.zoom));
+    rect.south_east.latitude_deg = GeoWebMercator::tileYToLat(
+        this->tile_selection_overlay.tile_y_max + 1.0,
+        this->tile_selection_overlay.zoom);
+    rect.south_east.longitude_deg = GeoWebMercator::normalizeLongitude(
+        GeoWebMercator::tileXToLon(
+            this->tile_selection_overlay.tile_x_max + 1.0,
+            this->tile_selection_overlay.zoom));
     return rect;
 }
