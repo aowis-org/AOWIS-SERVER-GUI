@@ -71,15 +71,15 @@ protected:
     
     void addGroupElevation();
     GroupBoxCollapsible *group_elevation = nullptr;
-    QComboBox *combo_elevation_mode = nullptr;
+    QComboBox *combo_elevation_input_type = nullptr;
     
     QLabel *label_terrain_elevation = nullptr;
     QPushButton *button_terrain_elevation = nullptr;
     QDoubleSpinBox *spin_terrain_elevation = nullptr;
-    QLabel *label_tank_bottom_offset = nullptr;
-    QDoubleSpinBox *spin_tank_bottom_offset = nullptr;
-    QLabel *label_tank_bottom_elevation = nullptr;
-    QDoubleSpinBox *spin_tank_bottom_elevation = nullptr;
+    QLabel *label_elevation_offset = nullptr;
+    QDoubleSpinBox *spin_elevation_offset = nullptr;
+    QLabel *label_elevation_value = nullptr;
+    QDoubleSpinBox *spin_elevation_value = nullptr;
     
     void addGroupDemands();
     
@@ -94,6 +94,13 @@ protected:
     
 private:
     void refreshHydraulicNode();
+    void refreshHydraulicNodeElevation();
+    void updateElevationModeUi();
+    void updateCalculatedElevation();
+    bool setElevationInputType(HydraulicNodeElevationInputType input_type);
+    bool setElevationValue(double value_m);
+    bool setTerrainElevation(double terrain_elevation_m);
+    bool setElevationOffset(double offset_m);
     std::optional<QDate> optionalDate(const QDateEdit *date_edit) const;
     void setOptionalDate(QDateEdit *date_edit, const std::optional<QDate> &date);
 
@@ -133,8 +140,10 @@ private:
 private slots:
     void onGroupExpand(GroupBoxCollapsible *group);
     
-    void onElevationModeSignalChanged(int index);
-    void onElevationCalc();
+    void onElevationInputTypeChanged(int index);
+    void onElevationValueChanged(double value_m);
+    void onTerrainElevationChanged(double terrain_elevation_m);
+    void onElevationOffsetChanged(double offset_m);
     
 public slots:
     virtual void onHeadlossFormulaChanged(HeadlossFormulas formulas);

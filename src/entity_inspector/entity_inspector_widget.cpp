@@ -356,6 +356,8 @@ void EntityInspectorWidget::refreshHydraulicNode()
     this->spin_latitude->setValue(node->coordinate_wgs84.latitude_deg);
     this->spin_longitude->setValue(node->coordinate_wgs84.longitude_deg);
     setTitle(this->entity_title_prefix + " " + node->id);
+
+    refreshHydraulicNodeElevation();
 }
 
 std::optional<QDate> EntityInspectorWidget::optionalDate(const QDateEdit *date_edit) const
@@ -376,104 +378,323 @@ void EntityInspectorWidget::setOptionalDate(QDateEdit *date_edit, const std::opt
 
 void EntityInspectorWidget::addGroupElevation()
 {
-    this->group_elevation = new GroupBoxCollapsible("Elevation");
-    QGridLayout *grid = new QGridLayout(group_elevation);
+    QString group_title;
+    QString absolute_input_text;
+    QString offset_label_text;
+    QString value_label_text;
+    QString offset_tooltip;
+
+    switch (this->entity_type)
+    {
+    case InfrastructureEntity::Junction:
+        group_title = "Elevation";
+        absolute_input_text = "Total Elevation";
+        offset_label_text = "Elevation Offset";
+        value_label_text = "Total Elevation";
+        offset_tooltip =
+            "Distance from <i>Terrain Elevation</i>.<br>Positive: Above Ground.<br>Negative: Below Ground.";
+        break;
+    case InfrastructureEntity::Reservoir:
+        group_title = "Head";
+        absolute_input_text = "Total Head";
+        offset_label_text = "Head Offset";
+        value_label_text = "Total Head";
+        offset_tooltip =
+            "Hydraulic head relative to <i>Terrain Elevation</i>. Positive values are above terrain.";
+        break;
+    case InfrastructureEntity::Tank:
+        group_title = "Bottom Elevation";
+        absolute_input_text = "Bottom Elevation";
+        offset_label_text = "Bottom Offset";
+        value_label_text = "Bottom Elevation";
+        offset_tooltip =
+            "Tank bottom relative to terrain. Positive = above ground, negative = below ground.";
+        break;
+    default:
+        return;
+    }
+
+    this->group_elevation = new GroupBoxCollapsible(group_title);
+    QGridLayout *grid = new QGridLayout(this->group_elevation);
     
-    this->combo_elevation_mode = new QComboBox();
-    this->combo_elevation_mode->addItem("Tank Bottom Elevation");
-    this->combo_elevation_mode->addItem("Terrain Elevation + Offset");
+    this->combo_elevation_input_type = new QComboBox();
+    this->combo_elevation_input_type->addItem(
+        absolute_input_text,
+        static_cast<int>(HydraulicNodeElevationInputType::AbsoluteElevation));
+    this->combo_elevation_input_type->addItem(
+        "Terrain Elevation + Offset",
+        static_cast<int>(HydraulicNodeElevationInputType::TerrainElevationAndOffset));
     
     this->button_terrain_elevation = new QPushButton("Terrain Elevation from GIS");
     this->button_terrain_elevation->setToolTip(
         "Uses terrain elevation from GIS/DEM data.<br>Accuracy depends on the dataset and local terrain."
         );
     
-    this->label_terrain_elevation = new QLabel("Terrain elevation");
+    this->label_terrain_elevation = new QLabel("Terrain Elevation");
     this->spin_terrain_elevation = new QDoubleSpinBox;
     this->spin_terrain_elevation->setRange(-10000.0, 10000.0);
     this->spin_terrain_elevation->setDecimals(3);
     this->spin_terrain_elevation->setSingleStep(0.10);
     this->spin_terrain_elevation->setSuffix(" m");
     
-    this->label_tank_bottom_offset = new QLabel("Tank bottom offset");
-    this->label_tank_bottom_offset->setWordWrap(true);
-    this->spin_tank_bottom_offset = new QDoubleSpinBox;
-    this->spin_tank_bottom_offset->setRange(-100.0, 200.0);
-    this->spin_tank_bottom_offset->setDecimals(3);
-    this->spin_tank_bottom_offset->setSingleStep(0.10);
-    this->spin_tank_bottom_offset->setSuffix(" m");
-    this->spin_tank_bottom_offset->setToolTip(
-        "Tank bottom relative to terrain. Positive = above ground, negative = below ground."
-        );
-    
-    this->label_tank_bottom_elevation = new QLabel("Tank bottom elevation");
-    this->label_tank_bottom_elevation->setWordWrap(true);
-    this->spin_tank_bottom_elevation = new QDoubleSpinBox;
-    this->spin_tank_bottom_elevation->setRange(-10000.0, 10000.0);
-    this->spin_tank_bottom_elevation->setDecimals(3);
-    this->spin_tank_bottom_elevation->setSingleStep(0.10);
-    this->spin_tank_bottom_elevation->setSuffix(" m");
-    
-    grid->addWidget(this->combo_elevation_mode, 0, 0, 1, 2);
-    grid->addWidget(button_terrain_elevation, 1, 0, 1, 2);
+    this->label_elevation_offset = new QLabel(offset_label_text);
+    this->label_elevation_offset->setWordWrap(true);
+    this->spin_elevation_offset = new QDoubleSpinBox;
+    this->spin_elevation_offset->setRange(-10000.0, 10000.0);
+    this->spin_elevation_offset->setDecimals(3);
+    this->spin_elevation_offset->setSingleStep(0.10);
+    this->spin_elevation_offset->setSuffix(" m");
+    this->spin_elevation_offset->setToolTip(offset_tooltip);
+
+    this->label_elevation_value = new QLabel(value_label_text);
+    this->label_elevation_value->setWordWrap(true);
+    this->spin_elevation_value = new QDoubleSpinBox;
+    this->spin_elevation_value->setRange(-10000.0, 10000.0);
+    this->spin_elevation_value->setDecimals(3);
+    this->spin_elevation_value->setSingleStep(0.10);
+    this->spin_elevation_value->setSuffix(" m");
+
+    grid->addWidget(this->combo_elevation_input_type, 0, 0, 1, 2);
+    grid->addWidget(this->button_terrain_elevation, 1, 0, 1, 2);
     grid->addWidget(this->label_terrain_elevation, 2, 0);
     grid->addWidget(this->spin_terrain_elevation, 2, 1);
-    grid->addWidget(this->label_tank_bottom_offset, 3, 0);
-    grid->addWidget(this->spin_tank_bottom_offset, 3, 1);
-    grid->addWidget(label_tank_bottom_elevation, 4, 0);
-    grid->addWidget(this->spin_tank_bottom_elevation, 4, 1);
+    grid->addWidget(this->label_elevation_offset, 3, 0);
+    grid->addWidget(this->spin_elevation_offset, 3, 1);
+    grid->addWidget(this->label_elevation_value, 4, 0);
+    grid->addWidget(this->spin_elevation_value, 4, 1);
     
-    connect(this->combo_elevation_mode, &QComboBox::currentIndexChanged, this, &EntityInspectorWidget::onElevationModeSignalChanged);
+    connect(this->combo_elevation_input_type, &QComboBox::currentIndexChanged, this, &EntityInspectorWidget::onElevationInputTypeChanged);
+    connect(this->spin_elevation_value, &QDoubleSpinBox::valueChanged, this, &EntityInspectorWidget::onElevationValueChanged);
+    connect(this->spin_terrain_elevation, &QDoubleSpinBox::valueChanged, this, &EntityInspectorWidget::onTerrainElevationChanged);
+    connect(this->spin_elevation_offset, &QDoubleSpinBox::valueChanged, this, &EntityInspectorWidget::onElevationOffsetChanged);
     
-    this->combo_elevation_mode->setCurrentIndex(1);
+    connect(this->group_elevation, &GroupBoxCollapsible::signalExpanded, this, &EntityInspectorWidget::onGroupExpand);
     
-    connect(this->spin_terrain_elevation, &QDoubleSpinBox::valueChanged, this, &EntityInspectorWidget::onElevationCalc);
-    connect(this->spin_tank_bottom_offset, &QDoubleSpinBox::valueChanged, this, &EntityInspectorWidget::onElevationCalc);
-    
-    connect(group_elevation, &GroupBoxCollapsible::signalExpanded, this, &EntityInspectorWidget::onGroupExpand);
-    
-    this->layoutConfiguration()->addWidget(group_elevation);
+    this->layoutConfiguration()->addWidget(this->group_elevation);
+
+    refreshHydraulicNodeElevation();
 }
 
 void EntityInspectorWidget::onGroupExpand(GroupBoxCollapsible *group)
 {
     if (group == this->group_elevation)
-        this->onElevationModeSignalChanged(this->combo_elevation_mode->currentIndex());
+        updateElevationModeUi();
 }
 
-void EntityInspectorWidget::onElevationModeSignalChanged(int index)
+void EntityInspectorWidget::refreshHydraulicNodeElevation()
 {
-    switch (index)
+    if (!this->hydraulic_data || this->entity_uuid.isNull() ||
+        !this->combo_elevation_input_type || !this->spin_terrain_elevation ||
+        !this->spin_elevation_offset || !this->spin_elevation_value)
+        return;
+
+    HydraulicNodeElevationInputType input_type = HydraulicNodeElevationInputType::AbsoluteElevation;
+    double value_m = 0.0;
+    double terrain_elevation_m = 0.0;
+    double offset_m = 0.0;
+
+    switch (this->entity_type)
     {
-    case 0:
-        this->button_terrain_elevation->hide();
-        this->label_terrain_elevation->hide();
-        this->spin_terrain_elevation->hide();
-        this->label_tank_bottom_offset->hide();
-        this->spin_tank_bottom_offset->hide();
-        this->spin_tank_bottom_elevation->setReadOnly(false);
-        this->spin_tank_bottom_elevation->setToolTip("");
+    case InfrastructureEntity::Junction:
+    {
+        const std::optional<HydraulicNodeJunction> junction =
+            this->hydraulic_data->junction(this->entity_uuid);
+        if (!junction.has_value())
+            return;
+
+        input_type = junction->elevation_input_type;
+        value_m = junction->elevation_m;
+        terrain_elevation_m = junction->terrain_elevation_m;
+        offset_m = junction->elevation_offset_m;
+        break;
+    }
+    case InfrastructureEntity::Reservoir:
+    {
+        const std::optional<HydraulicNodeReservoir> reservoir =
+            this->hydraulic_data->reservoir(this->entity_uuid);
+        if (!reservoir.has_value())
+            return;
+
+        input_type = reservoir->head_input_type;
+        value_m = reservoir->head_m;
+        terrain_elevation_m = reservoir->terrain_elevation_m;
+        offset_m = reservoir->head_offset_m;
+        break;
+    }
+    case InfrastructureEntity::Tank:
+    {
+        const std::optional<HydraulicNodeTank> tank =
+            this->hydraulic_data->tank(this->entity_uuid);
+        if (!tank.has_value())
+            return;
+
+        input_type = tank->elevation_input_type;
+        value_m = tank->bottom_elevation_m;
+        terrain_elevation_m = tank->terrain_elevation_m;
+        offset_m = tank->bottom_offset_m;
+        break;
+    }
+    default:
         return;
-    case 1:
-        this->button_terrain_elevation->show();
-        this->label_terrain_elevation->show();
-        this->spin_terrain_elevation->show();
-        this->label_tank_bottom_offset->show();
-        this->spin_tank_bottom_offset->show();
-        this->spin_tank_bottom_elevation->setReadOnly(true);
-        this->spin_tank_bottom_elevation->setToolTip(
-            "Calculated automatically from <i>Terrain Elevation</i> + <i>Offset</i>"
-            );
-        onElevationCalc();
+    }
+
+    const QSignalBlocker input_type_blocker(this->combo_elevation_input_type);
+    const QSignalBlocker terrain_blocker(this->spin_terrain_elevation);
+    const QSignalBlocker offset_blocker(this->spin_elevation_offset);
+    const QSignalBlocker value_blocker(this->spin_elevation_value);
+
+    const int input_type_index = this->combo_elevation_input_type->findData(
+        static_cast<int>(input_type));
+    this->combo_elevation_input_type->setCurrentIndex(input_type_index >= 0 ? input_type_index : 0);
+    this->spin_terrain_elevation->setValue(terrain_elevation_m);
+    this->spin_elevation_offset->setValue(offset_m);
+    this->spin_elevation_value->setValue(
+        input_type == HydraulicNodeElevationInputType::TerrainElevationAndOffset
+            ? terrain_elevation_m + offset_m
+            : value_m);
+
+    updateElevationModeUi();
+}
+
+void EntityInspectorWidget::updateElevationModeUi()
+{
+    if (!this->combo_elevation_input_type)
         return;
+
+    const HydraulicNodeElevationInputType input_type =
+        static_cast<HydraulicNodeElevationInputType>(
+            this->combo_elevation_input_type->currentData().toInt());
+    const bool uses_terrain =
+        input_type == HydraulicNodeElevationInputType::TerrainElevationAndOffset;
+
+    this->button_terrain_elevation->setVisible(uses_terrain);
+    this->label_terrain_elevation->setVisible(uses_terrain);
+    this->spin_terrain_elevation->setVisible(uses_terrain);
+    this->label_elevation_offset->setVisible(uses_terrain);
+    this->spin_elevation_offset->setVisible(uses_terrain);
+    this->spin_elevation_value->setReadOnly(uses_terrain);
+
+    if (uses_terrain)
+    {
+        this->spin_elevation_value->setToolTip(
+            "Calculated automatically from <i>Terrain Elevation</i> + <i>Offset</i>");
+        updateCalculatedElevation();
+    }
+    else
+    {
+        this->spin_elevation_value->setToolTip("");
     }
 }
 
-void EntityInspectorWidget::onElevationCalc()
+void EntityInspectorWidget::updateCalculatedElevation()
 {
-    double ground = this->spin_terrain_elevation->value();
-    double offset = this->spin_tank_bottom_offset->value();
-    this->spin_tank_bottom_elevation->setValue(ground + offset);
+    if (!this->combo_elevation_input_type || !this->spin_elevation_value)
+        return;
+
+    const HydraulicNodeElevationInputType input_type =
+        static_cast<HydraulicNodeElevationInputType>(
+            this->combo_elevation_input_type->currentData().toInt());
+    if (input_type != HydraulicNodeElevationInputType::TerrainElevationAndOffset)
+        return;
+
+    const QSignalBlocker value_blocker(this->spin_elevation_value);
+    this->spin_elevation_value->setValue(
+        this->spin_terrain_elevation->value() + this->spin_elevation_offset->value());
+}
+
+void EntityInspectorWidget::onElevationInputTypeChanged(int index)
+{
+    Q_UNUSED(index)
+
+    const HydraulicNodeElevationInputType input_type =
+        static_cast<HydraulicNodeElevationInputType>(
+            this->combo_elevation_input_type->currentData().toInt());
+    updateElevationModeUi();
+    setElevationInputType(input_type);
+}
+
+void EntityInspectorWidget::onElevationValueChanged(double value_m)
+{
+    const HydraulicNodeElevationInputType input_type =
+        static_cast<HydraulicNodeElevationInputType>(
+            this->combo_elevation_input_type->currentData().toInt());
+    if (input_type == HydraulicNodeElevationInputType::AbsoluteElevation)
+        setElevationValue(value_m);
+}
+
+void EntityInspectorWidget::onTerrainElevationChanged(double terrain_elevation_m)
+{
+    setTerrainElevation(terrain_elevation_m);
+    updateCalculatedElevation();
+}
+
+void EntityInspectorWidget::onElevationOffsetChanged(double offset_m)
+{
+    setElevationOffset(offset_m);
+    updateCalculatedElevation();
+}
+
+bool EntityInspectorWidget::setElevationInputType(HydraulicNodeElevationInputType input_type)
+{
+    switch (this->entity_type)
+    {
+    case InfrastructureEntity::Junction:
+        return this->hydraulic_data->setJunctionElevationInputType(this->entity_uuid, input_type);
+    case InfrastructureEntity::Reservoir:
+        return this->hydraulic_data->setReservoirHeadInputType(this->entity_uuid, input_type);
+    case InfrastructureEntity::Tank:
+        return this->hydraulic_data->setTankElevationInputType(this->entity_uuid, input_type);
+    default:
+        return false;
+    }
+}
+
+bool EntityInspectorWidget::setElevationValue(double value_m)
+{
+    switch (this->entity_type)
+    {
+    case InfrastructureEntity::Junction:
+        return this->hydraulic_data->setJunctionElevationM(this->entity_uuid, value_m);
+    case InfrastructureEntity::Reservoir:
+        return this->hydraulic_data->setReservoirHeadM(this->entity_uuid, value_m);
+    case InfrastructureEntity::Tank:
+        return this->hydraulic_data->setTankBottomElevationM(this->entity_uuid, value_m);
+    default:
+        return false;
+    }
+}
+
+bool EntityInspectorWidget::setTerrainElevation(double terrain_elevation_m)
+{
+    switch (this->entity_type)
+    {
+    case InfrastructureEntity::Junction:
+        return this->hydraulic_data->setJunctionTerrainElevationM(
+            this->entity_uuid, terrain_elevation_m);
+    case InfrastructureEntity::Reservoir:
+        return this->hydraulic_data->setReservoirTerrainElevationM(
+            this->entity_uuid, terrain_elevation_m);
+    case InfrastructureEntity::Tank:
+        return this->hydraulic_data->setTankTerrainElevationM(
+            this->entity_uuid, terrain_elevation_m);
+    default:
+        return false;
+    }
+}
+
+bool EntityInspectorWidget::setElevationOffset(double offset_m)
+{
+    switch (this->entity_type)
+    {
+    case InfrastructureEntity::Junction:
+        return this->hydraulic_data->setJunctionElevationOffsetM(this->entity_uuid, offset_m);
+    case InfrastructureEntity::Reservoir:
+        return this->hydraulic_data->setReservoirHeadOffsetM(this->entity_uuid, offset_m);
+    case InfrastructureEntity::Tank:
+        return this->hydraulic_data->setTankBottomOffsetM(this->entity_uuid, offset_m);
+    default:
+        return false;
+    }
 }
 
 void EntityInspectorWidget::onHeadlossFormulaChanged(HeadlossFormulas formulas)
