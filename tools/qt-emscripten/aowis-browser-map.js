@@ -14,6 +14,7 @@
         screen: null,
         overlayWindow: null,
         windowObserver: null,
+        stackingEventHandler: null,
         tiles: new Map(),
         x: 0,
         y: 0,
@@ -132,6 +133,40 @@
         return shadowRoot ? shadowRoot.querySelector(".qt-screen") : null;
     }
 
+    function decoratedWindowsExcept(mainWindow, excludedWindow) {
+        const windows = Array.from(state.screen.querySelectorAll(".qt-decorated-window"));
+        return windows.filter((windowElement) =>
+            windowElement !== mainWindow && windowElement !== excludedWindow);
+    }
+
+    function raiseTransientWindows(mainWindow, excludedWindow, firstZIndex) {
+        const windows = decoratedWindowsExcept(mainWindow, excludedWindow);
+        windows.sort((first, second) => {
+            const firstZIndex = Number.parseInt(window.getComputedStyle(first).zIndex, 10) || 0;
+            const secondZIndex = Number.parseInt(window.getComputedStyle(second).zIndex, 10) || 0;
+            if (firstZIndex !== secondZIndex)
+                return firstZIndex - secondZIndex;
+            const position = first.compareDocumentPosition(second);
+            return position & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
+        });
+
+        windows.forEach((windowElement, index) => {
+            windowElement.style.setProperty(
+                "z-index", String(firstZIndex + index), "important");
+        });
+    }
+
+    function requestStackingRefresh() {
+        if (!state.visible)
+            return;
+
+        const generation = ++state.stackingGeneration;
+        window.requestAnimationFrame(() => {
+            synchronizeStacking(
+                state.x, state.y, state.width, state.height, 30, generation);
+        });
+    }
+
     function ensureLayer() {
         const screen = getShadowScreen();
         if (!screen)
@@ -142,6 +177,8 @@
 
         if (state.layer)
             state.layer.remove();
+        if (state.stackingEventHandler && state.screen)
+            state.screen.removeEventListener("focusin", state.stackingEventHandler, true);
 
         state.screen = screen;
         state.layer = document.createElement("div");
@@ -180,17 +217,11 @@
 
         if (state.windowObserver)
             state.windowObserver.disconnect();
-        state.windowObserver = new MutationObserver(() => {
-            if (!state.visible)
-                return;
-
-            const generation = ++state.stackingGeneration;
-            window.requestAnimationFrame(() => {
-                synchronizeStacking(
-                    state.x, state.y, state.width, state.height, 30, generation);
-            });
-        });
+        state.windowObserver = new MutationObserver(requestStackingRefresh);
         state.windowObserver.observe(screen, { childList: true });
+
+        state.stackingEventHandler = requestStackingRefresh;
+        screen.addEventListener("focusin", state.stackingEventHandler, true);
 
         clearTiles();
         state.ready = false;
@@ -346,7 +377,8 @@
             }
 
             mainWindow.style.setProperty("z-index", "10", "important");
-            state.layer.style.setProperty("z-index", "2147483000", "important");
+            state.layer.style.setProperty("z-index", "20", "important");
+            raiseTransientWindows(mainWindow, null, 30);
             state.overlayWindow = null;
             state.ready = true;
             state.layer.style.display = state.visible ? "block" : "none";
@@ -392,23 +424,7 @@
             overlayCanvas.style.setProperty("background-color", "transparent", "important");
             overlayCanvas.style.setProperty("opacity", "1", "important");
 
-            const otherWindows = [];
-            for (const canvas of canvases) {
-                const candidateWindow = canvas.closest(".qt-decorated-window");
-                if (!candidateWindow || candidateWindow === mainWindow || candidateWindow === overlayWindow
-                    || otherWindows.includes(candidateWindow)) {
-                    continue;
-                }
-                otherWindows.push(candidateWindow);
-            }
-            otherWindows.sort((first, second) => {
-                const firstZ = Number.parseInt(window.getComputedStyle(first).zIndex, 10) || 0;
-                const secondZ = Number.parseInt(window.getComputedStyle(second).zIndex, 10) || 0;
-                return firstZ - secondZ;
-            });
-            otherWindows.forEach((otherWindow, index) => {
-                otherWindow.style.setProperty("z-index", String(40 + index), "important");
-            });
+            raiseTransientWindows(mainWindow, overlayWindow, 40);
 
             state.overlayWindow = overlayWindow;
             state.ready = true;
@@ -546,14 +562,17 @@
         if (state.layer)
             state.layer.remove();
 
+        if (state.windowObserver)
+            state.windowObserver.disconnect();
+        state.windowObserver = null;
+        if (state.stackingEventHandler && state.screen)
+            state.screen.removeEventListener("focusin", state.stackingEventHandler, true);
+        state.stackingEventHandler = null;
         state.layer = null;
         state.tilePane = null;
         state.attribution = null;
         state.screen = null;
         state.overlayWindow = null;
-        if (state.windowObserver)
-            state.windowObserver.disconnect();
-        state.windowObserver = null;
         state.ready = false;
         state.visible = false;
         state.initialized = false;
