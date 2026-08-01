@@ -42,6 +42,7 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     
     connect(this->map_menu, &MapEditorMenuWidget::signalSlideOpacityChanged, this->map_canvas, &MapCanvasWidget::setBackgroundOpacity);
     connect(this->map_menu, &MapEditorMenuWidget::signalMapEditorGuideVisibilityChanged, this, &MapEditorContainer::signalMapEditorGuideVisibilityChanged);
+    connect(this->map_menu, &MapEditorMenuWidget::signalEditNetworkSectionActive, this, &MapEditorContainer::signalEditNetworkSectionActive);
     
     this->map_canvas->setFocusPolicy(Qt::StrongFocus);
     QTimer::singleShot(0, this->map_canvas, [this]()
@@ -56,6 +57,11 @@ MapWidget *MapEditorContainer::getMap()
 MapNavigationWidget *MapEditorContainer::mapNavigationWidget()
 {
     return this->map_menu->mapNavigationWidget();
+}
+
+bool MapEditorContainer::isEditNetworkSectionActive() const
+{
+    return this->map_menu->isEditNetworkSectionActive();
 }
 
 void MapEditorContainer::setMapEditorGuideChecked(bool checked)
@@ -132,6 +138,11 @@ void MapEditorMenuWidget::updateToolboxHeight(int index)
 MapNavigationWidget *MapEditorMenuWidget::mapNavigationWidget()
 {
     return this->map_nav;
+}
+
+bool MapEditorMenuWidget::isEditNetworkSectionActive() const
+{
+    return this->toolbox->currentIndex() == this->toolbox_edit_index;
 }
 
 void MapEditorMenuWidget::setMapEditorGuideChecked(bool checked)
@@ -346,6 +357,8 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
 
 void MapEditorMenuWidget::setToolboxMode(int index)
 {
+    emit signalEditNetworkSectionActive(index == this->toolbox_edit_index);
+
     this->map_canvas->stopEntityPositioning();
     this->map_canvas->clearTileSelectionOverlay();
     this->button_tiles_delete->setChecked(false);

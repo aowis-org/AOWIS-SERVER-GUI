@@ -82,7 +82,9 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendNode, this->dock_entity_map_legend, &EntityMapLegendDock::showMapLegendNode);
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendHeatmap, this->dock_entity_map_legend, &EntityMapLegendDock::showMapLegendHeatmap);
     connect(this->map_editor, &MapEditorContainer::signalMapEditorGuideVisibilityChanged, this->dock_map_editor_guide, &MapEditorGuideDock::setRequestedVisible);
+    connect(this->map_editor, &MapEditorContainer::signalEditNetworkSectionActive, this->dock_map_editor_guide, &MapEditorGuideDock::setEditNetworkSectionActive);
     connect(this->dock_map_editor_guide, &MapEditorGuideDock::requestedVisibilityChanged, this->map_editor, &MapEditorContainer::setMapEditorGuideChecked);
+    this->dock_map_editor_guide->setEditNetworkSectionActive(this->map_editor->isEditNetworkSectionActive());
     
     /*
     setStyleSheet(
@@ -472,7 +474,11 @@ void MainWindow::toggleRightDockArea()
         if (!this->right_dock_visibility.contains(dock) || dock->isFloating() || dockWidgetArea(dock) != Qt::RightDockWidgetArea)
             continue;
 
-        dock->setVisible(this->right_dock_visibility.value(dock));
+        bool visible = this->right_dock_visibility.value(dock);
+        if (dock == this->dock_map_editor_guide)
+            visible = visible && this->dock_map_editor_guide->shouldBeVisible();
+
+        dock->setVisible(visible);
     }
 
     this->right_dock_visibility.clear();

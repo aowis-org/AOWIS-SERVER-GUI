@@ -62,9 +62,20 @@ MapEditorGuideDock::MapEditorGuideDock(QWidget *parent)
     setWidget(guide);
 }
 
+bool MapEditorGuideDock::shouldBeVisible() const
+{
+    return this->map_editor_active && this->edit_network_section_active && this->requested_visible;
+}
+
 void MapEditorGuideDock::setMapEditorActive(bool active)
 {
     this->map_editor_active = active;
+    updateVisibility();
+}
+
+void MapEditorGuideDock::setEditNetworkSectionActive(bool active)
+{
+    this->edit_network_section_active = active;
     updateVisibility();
 }
 
@@ -83,5 +94,5 @@ void MapEditorGuideDock::closeEvent(QCloseEvent *event)
 
 void MapEditorGuideDock::updateVisibility()
 {
-    setVisible(this->map_editor_active && this->requested_visible);
+    setVisible(shouldBeVisible());
 }

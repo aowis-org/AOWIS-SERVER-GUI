@@ -45,6 +45,7 @@ public:
     explicit MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_canvas, CanvasMode mode, QWidget *parent = nullptr);
     
     MapNavigationWidget *mapNavigationWidget();
+    bool isEditNetworkSectionActive() const;
     
 private:
     CanvasMode mode;
@@ -76,6 +77,7 @@ public slots:
 signals:
     void signalSlideOpacityChanged(int opacity);
     void signalMapEditorGuideVisibilityChanged(bool visible);
+    void signalEditNetworkSectionActive(bool active);
 };
 
 
@@ -89,6 +91,7 @@ public:
     MapWidget *getMap();
     
     MapNavigationWidget *mapNavigationWidget();
+    bool isEditNetworkSectionActive() const;
 
 public slots:
     void setMapEditorGuideChecked(bool checked);
@@ -111,6 +114,7 @@ private:
     
 signals:
     void signalMapEditorGuideVisibilityChanged(bool visible);
+    void signalEditNetworkSectionActive(bool active);
 };
 
 #endif // TAB_MAP_EDITOR_CONTAINER_H
