@@ -22,6 +22,7 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     scroll_controls->setMinimumWidth(Sizes::SidebarMapEditLeftWidth);
     scroll_controls->setMaximumWidth(Sizes::SidebarMapEditLeftWidth);
     scroll_controls->setWidgetResizable(true);
+    scroll_controls->setFrameShape(QFrame::NoFrame);
     scroll_controls->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scroll_controls->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     scroll_controls->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
@@ -71,8 +72,7 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_ca
     map_canvas( map_canvas ),
     toolbox( new QToolBox(this) )
 {
-    setMinimumWidth(Sizes::SidebarMapEditLeftWidth);
-    setMaximumWidth(Sizes::SidebarMapEditLeftWidth);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
     
     this->toolbox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     
@@ -87,6 +87,46 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_ca
     connect(this->map_nav, &MapNavigationWidget::signalSlideOpacityChanged, this, &MapEditorMenuWidget::signalSlideOpacityChanged);
     
     setToolboxMode(this->toolbox->currentIndex());
+}
+
+void MapEditorMenuWidget::updateToolboxHeight(int index)
+{
+    QTimer::singleShot(0, this, [this, index]
+    {
+        if (index != this->toolbox->currentIndex())
+            return;
+
+        QWidget *page = this->toolbox->widget(index);
+        if (page == nullptr)
+            return;
+
+        const int page_width = qMax(1, this->toolbox->contentsRect().width());
+        int page_height = page->sizeHint().height();
+        if (page->layout() != nullptr)
+        {
+            page->layout()->invalidate();
+            page->layout()->activate();
+            if (page->layout()->hasHeightForWidth())
+                page_height = page->layout()->totalHeightForWidth(page_width);
+        }
+        else if (page->hasHeightForWidth())
+        {
+            page_height = page->heightForWidth(page_width);
+        }
+
+        int tab_height = 0;
+        const QList<QAbstractButton *> tab_buttons = this->toolbox->findChildren<QAbstractButton *>(QString(), Qt::FindDirectChildrenOnly);
+        for (QAbstractButton *button : tab_buttons)
+            tab_height += button->sizeHint().height();
+
+        if (tab_height == 0)
+            tab_height = qMax(0, this->toolbox->height() - page->height());
+
+        const QMargins margins = this->toolbox->contentsMargins();
+        this->toolbox->setFixedHeight(margins.top() + tab_height + page_height + margins.bottom() + 16);
+        this->toolbox->updateGeometry();
+        updateGeometry();
+    });
 }
 
 MapNavigationWidget *MapEditorMenuWidget::mapNavigationWidget()
@@ -314,14 +354,14 @@ void MapEditorMenuWidget::setToolboxMode(int index)
     if (index == this->toolbox_cache_index)
     {
         this->map_canvas->startRectangleSelection(false, false);
-        return;
     }
-    
-    if (index == this->toolbox_edit_index)
+    else if (index == this->toolbox_edit_index)
     {
         this->button_radio_select->setChecked(true);
         this->map_canvas->startRectangleSelection(false, true);
     }
+
+    updateToolboxHeight(index);
 }
 
 

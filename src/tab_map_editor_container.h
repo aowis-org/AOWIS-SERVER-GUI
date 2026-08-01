@@ -63,6 +63,7 @@ private:
     void createToolboxCache(QToolBox *tbx);
     void createToolboxEdit(QToolBox *tbx);
     void setToolboxMode(int index);
+    void updateToolboxHeight(int index);
     
     QButtonGroup *button_group_tools = nullptr;
     QRadioButton *button_radio_select = nullptr;
