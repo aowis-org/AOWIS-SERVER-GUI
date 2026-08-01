@@ -80,9 +80,27 @@ MainWindow::MainWindow(QWidget *parent)
     
     this->dock_entity_map_legend->setVisible(false);
     this->dock_map_editor_guide->setVisible(false);
-    connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendLink, this->dock_entity_map_legend, &EntityMapLegendDock::showMapLegendLink);
-    connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendNode, this->dock_entity_map_legend, &EntityMapLegendDock::showMapLegendNode);
-    connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendHeatmap, this->dock_entity_map_legend, &EntityMapLegendDock::showMapLegendHeatmap);
+    connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendLink, this, [this](VisualLink visual_link)
+    {
+        if (visual_link != VisualLink::None && this->right_dock_area_hidden && this->tabs->currentWidget() == this->map_monitor)
+            toggleRightDockArea();
+
+        this->dock_entity_map_legend->showMapLegendLink(visual_link);
+    });
+    connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendNode, this, [this](VisualNode visual_node)
+    {
+        if (visual_node != VisualNode::None && this->right_dock_area_hidden && this->tabs->currentWidget() == this->map_monitor)
+            toggleRightDockArea();
+
+        this->dock_entity_map_legend->showMapLegendNode(visual_node);
+    });
+    connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendHeatmap, this, [this](VisualHeatmap visual_heatmap)
+    {
+        if (visual_heatmap != VisualHeatmap::None && this->right_dock_area_hidden && this->tabs->currentWidget() == this->map_monitor)
+            toggleRightDockArea();
+
+        this->dock_entity_map_legend->showMapLegendHeatmap(visual_heatmap);
+    });
     connect(this->map_editor, &MapEditorContainer::signalMapEditorGuideVisibilityChanged, this, [this](bool visible)
     {
         if (visible && this->right_dock_area_hidden)
