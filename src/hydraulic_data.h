@@ -40,6 +40,9 @@ public:
     void loadProject();
 
     const NetworkHydraulic &networkHydraulic() const;
+    std::optional<HydraulicNodeJunction> junction(const QUuid &uuid) const;
+    std::optional<HydraulicNodeReservoir> reservoir(const QUuid &uuid) const;
+    std::optional<HydraulicNodeTank> tank(const QUuid &uuid) const;
     std::optional<HydraulicNodeCommonData> nodeCommonData(InfrastructureEntity entity_type,
                                                            const QUuid &uuid) const;
 
@@ -63,6 +66,51 @@ public:
     bool setNodeDateInstalled(const QUuid &uuid, const std::optional<QDate> &date_installed);
     bool setNodeEnabled(const QUuid &uuid, bool enabled);
     bool setNodeCoordinate(const QUuid &uuid, const CoordinateWGS84 &coordinate);
+
+    bool setJunctionElevationInputType(const QUuid &uuid,
+                                        HydraulicNodeElevationInputType input_type);
+    bool setJunctionElevationM(const QUuid &uuid, double elevation_m);
+    bool setJunctionTerrainElevationM(const QUuid &uuid, double terrain_elevation_m);
+    bool setJunctionElevationOffsetM(const QUuid &uuid, double elevation_offset_m);
+    bool addJunctionDemand(const QUuid &uuid, const HydraulicNodeJunctionDemand &demand);
+    bool removeJunctionDemand(const QUuid &uuid, int demand_index);
+    bool setJunctionDemandCategoryName(const QUuid &uuid, int demand_index,
+                                       const QString &category_name);
+    bool setJunctionDemandBaseDemandM3PerH(const QUuid &uuid, int demand_index,
+                                           double base_demand_m3_per_h);
+    bool setJunctionDemandPatternUuid(const QUuid &uuid, int demand_index,
+                                      const QUuid &pattern_uuid);
+    bool setJunctionDemandSourceMethod(const QUuid &uuid, int demand_index,
+                                       HydraulicNodeJunctionDemandSourceMethod source_method);
+    bool setJunctionDemandNote(const QUuid &uuid, int demand_index, const QString &note);
+    bool setJunctionEmitterCoefficientM3PerHPerMExponent(
+        const QUuid &uuid, double emitter_coefficient_m3_per_h_per_m_exponent);
+
+    bool setReservoirHeadInputType(const QUuid &uuid,
+                                   HydraulicNodeElevationInputType input_type);
+    bool setReservoirHeadM(const QUuid &uuid, double head_m);
+    bool setReservoirTerrainElevationM(const QUuid &uuid, double terrain_elevation_m);
+    bool setReservoirHeadOffsetM(const QUuid &uuid, double head_offset_m);
+    bool setReservoirHeadPatternUuid(const QUuid &uuid, const QUuid &pattern_uuid);
+
+    bool setTankElevationInputType(const QUuid &uuid,
+                                   HydraulicNodeTankElevationInputType input_type);
+    bool setTankBottomElevationM(const QUuid &uuid, double bottom_elevation_m);
+    bool setTankTerrainElevationM(const QUuid &uuid, double terrain_elevation_m);
+    bool setTankBottomOffsetM(const QUuid &uuid, double bottom_offset_m);
+    bool setTankWaterLevelInitialM(const QUuid &uuid, double water_level_initial_m);
+    bool setTankWaterLevelMinimumM(const QUuid &uuid, double water_level_minimum_m);
+    bool setTankWaterLevelMaximumM(const QUuid &uuid, double water_level_maximum_m);
+    bool setTankGeometryInputType(const QUuid &uuid,
+                                  HydraulicNodeTankGeometryInputType input_type);
+    bool setTankDiameterM(const QUuid &uuid, double diameter_m);
+    bool setTankCrossSectionAreaM2(const QUuid &uuid, double cross_section_area_m2);
+    bool setTankVolumeAtMaximumLevelM3(const QUuid &uuid,
+                                       double volume_at_maximum_level_m3);
+    bool setTankMinimumVolumeM3(const QUuid &uuid, double minimum_volume_m3);
+    bool setTankVolumeCurveUuid(const QUuid &uuid, const QUuid &volume_curve_uuid);
+    bool setTankCanOverflow(const QUuid &uuid, bool can_overflow);
+
     bool setPipeVertexCoordinate(const QUuid &pipe_uuid, int vertex_index,
                                  const CoordinateWGS84 &coordinate);
     bool setPipeVertices(const QUuid &pipe_uuid,

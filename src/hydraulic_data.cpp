@@ -91,48 +91,54 @@ const NetworkHydraulic &HydraulicData::networkHydraulic() const
     return this->network_hydraulic;
 }
 
+
+std::optional<HydraulicNodeJunction> HydraulicData::junction(const QUuid &uuid) const
+{
+    return this->network_editor.junction(uuid);
+}
+
+std::optional<HydraulicNodeReservoir> HydraulicData::reservoir(const QUuid &uuid) const
+{
+    return this->network_editor.reservoir(uuid);
+}
+
+std::optional<HydraulicNodeTank> HydraulicData::tank(const QUuid &uuid) const
+{
+    return this->network_editor.tank(uuid);
+}
+
 std::optional<HydraulicNodeCommonData> HydraulicData::nodeCommonData(
     InfrastructureEntity entity_type, const QUuid &uuid) const
 {
-    if (uuid.isNull())
-        return std::nullopt;
-
     switch (entity_type)
     {
     case InfrastructureEntity::Junction:
-        for (const HydraulicNodeJunction &junction : this->network_hydraulic.nodes_junctions)
-        {
-            if (junction.uuid != uuid)
-                continue;
+    {
+        const std::optional<HydraulicNodeJunction> node = junction(uuid);
+        if (!node.has_value())
+            return std::nullopt;
 
-            return HydraulicNodeCommonData{junction.id, junction.uuid, junction.coordinate_wgs84,
-                                           junction.metadata};
-        }
-        break;
-    case InfrastructureEntity::Reservoir:
-        for (const HydraulicNodeReservoir &reservoir : this->network_hydraulic.nodes_reservoirs)
-        {
-            if (reservoir.uuid != uuid)
-                continue;
-
-            return HydraulicNodeCommonData{reservoir.id, reservoir.uuid, reservoir.coordinate_wgs84,
-                                           reservoir.metadata};
-        }
-        break;
-    case InfrastructureEntity::Tank:
-        for (const HydraulicNodeTank &tank : this->network_hydraulic.nodes_tanks)
-        {
-            if (tank.uuid != uuid)
-                continue;
-
-            return HydraulicNodeCommonData{tank.id, tank.uuid, tank.coordinate_wgs84, tank.metadata};
-        }
-        break;
-    default:
-        break;
+        return HydraulicNodeCommonData{node->id, node->uuid, node->coordinate_wgs84, node->metadata};
     }
+    case InfrastructureEntity::Reservoir:
+    {
+        const std::optional<HydraulicNodeReservoir> node = reservoir(uuid);
+        if (!node.has_value())
+            return std::nullopt;
 
-    return std::nullopt;
+        return HydraulicNodeCommonData{node->id, node->uuid, node->coordinate_wgs84, node->metadata};
+    }
+    case InfrastructureEntity::Tank:
+    {
+        const std::optional<HydraulicNodeTank> node = tank(uuid);
+        if (!node.has_value())
+            return std::nullopt;
+
+        return HydraulicNodeCommonData{node->id, node->uuid, node->coordinate_wgs84, node->metadata};
+    }
+    default:
+        return std::nullopt;
+    }
 }
 
 std::optional<InfrastructureEntity> HydraulicData::nodeEntityType(const QUuid &uuid) const
@@ -339,6 +345,212 @@ bool HydraulicData::setNodeCoordinate(const QUuid &uuid, const CoordinateWGS84 &
 {
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setNodeCoordinate(uuid, coordinate));
+}
+
+bool HydraulicData::setJunctionElevationInputType(
+    const QUuid &uuid, HydraulicNodeElevationInputType input_type)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setJunctionElevationInputType(uuid, input_type));
+}
+
+bool HydraulicData::setJunctionElevationM(const QUuid &uuid, double elevation_m)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setJunctionElevationM(uuid, elevation_m));
+}
+
+bool HydraulicData::setJunctionTerrainElevationM(const QUuid &uuid, double terrain_elevation_m)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setJunctionTerrainElevationM(uuid, terrain_elevation_m));
+}
+
+bool HydraulicData::setJunctionElevationOffsetM(const QUuid &uuid, double elevation_offset_m)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setJunctionElevationOffsetM(uuid, elevation_offset_m));
+}
+
+bool HydraulicData::addJunctionDemand(const QUuid &uuid,
+                                      const HydraulicNodeJunctionDemand &demand)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.addJunctionDemand(uuid, demand));
+}
+
+bool HydraulicData::removeJunctionDemand(const QUuid &uuid, int demand_index)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.removeJunctionDemand(uuid, demand_index));
+}
+
+bool HydraulicData::setJunctionDemandCategoryName(const QUuid &uuid, int demand_index,
+                                                  const QString &category_name)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setJunctionDemandCategoryName(
+                  uuid, demand_index, category_name));
+}
+
+bool HydraulicData::setJunctionDemandBaseDemandM3PerH(
+    const QUuid &uuid, int demand_index, double base_demand_m3_per_h)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setJunctionDemandBaseDemandM3PerH(
+                  uuid, demand_index, base_demand_m3_per_h));
+}
+
+bool HydraulicData::setJunctionDemandPatternUuid(const QUuid &uuid, int demand_index,
+                                                 const QUuid &pattern_uuid)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setJunctionDemandPatternUuid(
+                  uuid, demand_index, pattern_uuid));
+}
+
+bool HydraulicData::setJunctionDemandSourceMethod(
+    const QUuid &uuid, int demand_index, HydraulicNodeJunctionDemandSourceMethod source_method)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setJunctionDemandSourceMethod(
+                  uuid, demand_index, source_method));
+}
+
+bool HydraulicData::setJunctionDemandNote(const QUuid &uuid, int demand_index,
+                                          const QString &note)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setJunctionDemandNote(uuid, demand_index, note));
+}
+
+bool HydraulicData::setJunctionEmitterCoefficientM3PerHPerMExponent(
+    const QUuid &uuid, double emitter_coefficient_m3_per_h_per_m_exponent)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setJunctionEmitterCoefficientM3PerHPerMExponent(
+                  uuid, emitter_coefficient_m3_per_h_per_m_exponent));
+}
+
+bool HydraulicData::setReservoirHeadInputType(
+    const QUuid &uuid, HydraulicNodeElevationInputType input_type)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setReservoirHeadInputType(uuid, input_type));
+}
+
+bool HydraulicData::setReservoirHeadM(const QUuid &uuid, double head_m)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setReservoirHeadM(uuid, head_m));
+}
+
+bool HydraulicData::setReservoirTerrainElevationM(const QUuid &uuid,
+                                                  double terrain_elevation_m)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setReservoirTerrainElevationM(
+                  uuid, terrain_elevation_m));
+}
+
+bool HydraulicData::setReservoirHeadOffsetM(const QUuid &uuid, double head_offset_m)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setReservoirHeadOffsetM(uuid, head_offset_m));
+}
+
+bool HydraulicData::setReservoirHeadPatternUuid(const QUuid &uuid, const QUuid &pattern_uuid)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setReservoirHeadPatternUuid(uuid, pattern_uuid));
+}
+
+bool HydraulicData::setTankElevationInputType(
+    const QUuid &uuid, HydraulicNodeTankElevationInputType input_type)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setTankElevationInputType(uuid, input_type));
+}
+
+bool HydraulicData::setTankBottomElevationM(const QUuid &uuid, double bottom_elevation_m)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setTankBottomElevationM(uuid, bottom_elevation_m));
+}
+
+bool HydraulicData::setTankTerrainElevationM(const QUuid &uuid, double terrain_elevation_m)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setTankTerrainElevationM(uuid, terrain_elevation_m));
+}
+
+bool HydraulicData::setTankBottomOffsetM(const QUuid &uuid, double bottom_offset_m)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setTankBottomOffsetM(uuid, bottom_offset_m));
+}
+
+bool HydraulicData::setTankWaterLevelInitialM(const QUuid &uuid, double water_level_initial_m)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setTankWaterLevelInitialM(uuid, water_level_initial_m));
+}
+
+bool HydraulicData::setTankWaterLevelMinimumM(const QUuid &uuid, double water_level_minimum_m)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setTankWaterLevelMinimumM(uuid, water_level_minimum_m));
+}
+
+bool HydraulicData::setTankWaterLevelMaximumM(const QUuid &uuid, double water_level_maximum_m)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setTankWaterLevelMaximumM(uuid, water_level_maximum_m));
+}
+
+bool HydraulicData::setTankGeometryInputType(
+    const QUuid &uuid, HydraulicNodeTankGeometryInputType input_type)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setTankGeometryInputType(uuid, input_type));
+}
+
+bool HydraulicData::setTankDiameterM(const QUuid &uuid, double diameter_m)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setTankDiameterM(uuid, diameter_m));
+}
+
+bool HydraulicData::setTankCrossSectionAreaM2(const QUuid &uuid, double cross_section_area_m2)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setTankCrossSectionAreaM2(uuid, cross_section_area_m2));
+}
+
+bool HydraulicData::setTankVolumeAtMaximumLevelM3(
+    const QUuid &uuid, double volume_at_maximum_level_m3)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setTankVolumeAtMaximumLevelM3(
+                  uuid, volume_at_maximum_level_m3));
+}
+
+bool HydraulicData::setTankMinimumVolumeM3(const QUuid &uuid, double minimum_volume_m3)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setTankMinimumVolumeM3(uuid, minimum_volume_m3));
+}
+
+bool HydraulicData::setTankVolumeCurveUuid(const QUuid &uuid, const QUuid &volume_curve_uuid)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setTankVolumeCurveUuid(uuid, volume_curve_uuid));
+}
+
+bool HydraulicData::setTankCanOverflow(const QUuid &uuid, bool can_overflow)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setTankCanOverflow(uuid, can_overflow));
 }
 
 bool HydraulicData::setPipeVertexCoordinate(const QUuid &pipe_uuid, int vertex_index,
