@@ -67,3 +67,23 @@ void InterfaceServerMapStandalone::requestTile(const QString &endpoint, const QS
         emit signalTileReceived(key, pixmap);
     });
 }
+
+void InterfaceServerMapStandalone::deleteTiles(quint64 request_id, const QString &provider, int zoom,
+                                               int tile_x_min, int tile_x_max,
+                                               int tile_y_min, int tile_y_max)
+{
+    const int deleted_count = this->map_tiles->deleteTiles(
+        provider, zoom, tile_x_min, tile_x_max, tile_y_min, tile_y_max);
+    if (deleted_count == -1)
+    {
+        emit signalTileDeletionFailed(request_id, QStringLiteral("Invalid tile cache deletion request"));
+        return;
+    }
+    if (deleted_count < -1)
+    {
+        emit signalTileDeletionFailed(request_id, QStringLiteral("Failed to delete one or more cached tiles"));
+        return;
+    }
+
+    emit signalTilesDeleted(request_id);
+}

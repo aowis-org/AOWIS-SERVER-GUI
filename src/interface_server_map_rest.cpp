@@ -35,6 +35,18 @@ void InterfaceServerMapREST::initRestConnection()
         qWarning() << "Tile request failed:" << key << error;
         emit signalTileFailed(key);
     });
+
+    connect(this->rest, &RESTClient::requestFinishedDelete, this,
+            [this](quint64 request_id)
+    {
+        emit signalTilesDeleted(request_id);
+    });
+
+    connect(this->rest, &RESTClient::requestDeleteError, this,
+            [this](quint64 request_id, const QString &error)
+    {
+        emit signalTileDeletionFailed(request_id, error);
+    });
 }
 
 void InterfaceServerMapREST::requestTile(const QString &endpoint, const QString &key, int x, int y)
@@ -47,4 +59,18 @@ void InterfaceServerMapREST::requestTile(const QString &endpoint, const QString 
 
     this->rest_pending.insert(key);
     this->rest->getTile(endpoint, key);
+}
+
+void InterfaceServerMapREST::deleteTiles(quint64 request_id, const QString &provider, int zoom,
+                                         int tile_x_min, int tile_x_max,
+                                         int tile_y_min, int tile_y_max)
+{
+    const QString endpoint = QString("/cache/%1/%2/%3/%4/%5/%6")
+        .arg(provider)
+        .arg(zoom)
+        .arg(tile_x_min)
+        .arg(tile_x_max)
+        .arg(tile_y_min)
+        .arg(tile_y_max);
+    this->rest->deleteResource(endpoint, request_id);
 }

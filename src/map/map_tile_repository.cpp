@@ -7,6 +7,7 @@
 #endif
 
 #include <QDateTime>
+#include <QDebug>
 #include <QList>
 #include <QTimer>
 
@@ -48,8 +49,11 @@ const QPixmap *MapTileRepository::tile(const QString &key) const
 
 void MapTileRepository::requestTile(const QString &endpoint, const QString &key, int x, int y)
 {
-    if (this->cache.contains(key) || this->tiles_pending.contains(key) || !this->interface_map)
+    if (this->cache.contains(key) || this->tiles_pending.contains(key) ||
+        !this->interface_map || tileDeletionPending(key, x, y))
+    {
         return;
+    }
 
     const QHash<QString, TileFailure>::const_iterator failure = this->tile_failures.constFind(key);
     if (failure != this->tile_failures.constEnd() &&
@@ -62,11 +66,43 @@ void MapTileRepository::requestTile(const QString &endpoint, const QString &key,
     this->interface_map->requestTile(endpoint, key, x, y);
 }
 
-void MapTileRepository::deleteTiles(const QString &key_prefix, int tile_count, int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max)
+void MapTileRepository::deleteTiles(const QString &provider, int zoom,
+                                    int tile_x_min, int tile_x_max,
+                                    int tile_y_min, int tile_y_max)
 {
-    if (tile_count <= 0 || tile_x_min > tile_x_max || tile_y_min > tile_y_max)
+    if (provider.isEmpty() || zoom < 0 || zoom > 30 ||
+        tile_x_min > tile_x_max || tile_y_min > tile_y_max)
+    {
         return;
+    }
 
+    PendingTileDeletion deletion;
+    deletion.key_prefix = QString("%1/%2/").arg(provider).arg(zoom);
+    deletion.tile_count = 1 << zoom;
+    deletion.tile_x_min = tile_x_min;
+    deletion.tile_x_max = tile_x_max;
+    deletion.tile_y_min = tile_y_min;
+    deletion.tile_y_max = tile_y_max;
+    invalidateTiles(deletion);
+
+    if (!this->interface_map)
+    {
+        emit signalTileRetryReady(deletion.key_prefix);
+        return;
+    }
+
+    quint64 request_id = this->next_tile_deletion_id++;
+    if (request_id == 0)
+        request_id = this->next_tile_deletion_id++;
+
+    this->tile_deletions_pending.insert(request_id, deletion);
+    this->interface_map->deleteTiles(
+        request_id, provider, zoom,
+        tile_x_min, tile_x_max, tile_y_min, tile_y_max);
+}
+
+void MapTileRepository::invalidateTiles(const PendingTileDeletion &deletion)
+{
     QSet<QString> candidate_keys = this->tiles_pending;
     const QList<QString> cached_keys = this->cache.keys();
     for (const QString &key : cached_keys)
@@ -78,10 +114,10 @@ void MapTileRepository::deleteTiles(const QString &key_prefix, int tile_count, i
 
     for (const QString &key : candidate_keys)
     {
-        if (!key.startsWith(key_prefix))
+        if (!key.startsWith(deletion.key_prefix))
             continue;
 
-        const QString coordinates = key.mid(key_prefix.size());
+        const QString coordinates = key.mid(deletion.key_prefix.size());
         const qsizetype separator_index = coordinates.indexOf('/');
         if (separator_index <= 0 || coordinates.indexOf('/', separator_index + 1) >= 0)
             continue;
@@ -91,8 +127,9 @@ void MapTileRepository::deleteTiles(const QString &key_prefix, int tile_count, i
         const int tile_x = coordinates.left(separator_index).toInt(&tile_x_valid);
         const int tile_y = coordinates.mid(separator_index + 1).toInt(&tile_y_valid);
         if (!tile_x_valid || !tile_y_valid ||
-            tile_y < tile_y_min || tile_y > tile_y_max ||
-            !tileXInsideRange(tile_x, tile_count, tile_x_min, tile_x_max))
+            tile_y < deletion.tile_y_min || tile_y > deletion.tile_y_max ||
+            !tileXInsideRange(tile_x, deletion.tile_count,
+                              deletion.tile_x_min, deletion.tile_x_max))
         {
             continue;
         }
@@ -105,6 +142,43 @@ void MapTileRepository::deleteTiles(const QString &key_prefix, int tile_count, i
         else
             this->tiles_invalidated_while_pending.remove(key);
     }
+}
+
+bool MapTileRepository::tileDeletionPending(const QString &key, int x, int y) const
+{
+    QHash<quint64, PendingTileDeletion>::const_iterator iterator =
+        this->tile_deletions_pending.constBegin();
+    while (iterator != this->tile_deletions_pending.constEnd())
+    {
+        const PendingTileDeletion &deletion = iterator.value();
+        if (key.startsWith(deletion.key_prefix) &&
+            y >= deletion.tile_y_min && y <= deletion.tile_y_max &&
+            tileXInsideRange(x, deletion.tile_count,
+                             deletion.tile_x_min, deletion.tile_x_max))
+        {
+            return true;
+        }
+
+        ++iterator;
+    }
+
+    return false;
+}
+
+void MapTileRepository::finishTileDeletion(quint64 request_id, const QString &error)
+{
+    QHash<quint64, PendingTileDeletion>::iterator iterator =
+        this->tile_deletions_pending.find(request_id);
+    if (iterator == this->tile_deletions_pending.end())
+        return;
+
+    const QString retry_key = iterator.value().key_prefix;
+    this->tile_deletions_pending.erase(iterator);
+
+    if (!error.isEmpty())
+        qWarning() << "Tile cache deletion failed:" << error;
+
+    emit signalTileRetryReady(retry_key);
 }
 
 void MapTileRepository::setMapServerMode(MapServerMode mode)
@@ -128,6 +202,7 @@ void MapTileRepository::initServerMapInterface()
     this->tiles_pending.clear();
     this->tiles_invalidated_while_pending.clear();
     this->tile_failures.clear();
+    this->tile_deletions_pending.clear();
 
     if (this->map_server_mode == MapServerMode::REST)
     {
@@ -147,6 +222,16 @@ void MapTileRepository::initServerMapInterface()
             this, &MapTileRepository::tileReceived);
     connect(this->interface_map, &InterfaceServerMap::signalTileFailed,
             this, &MapTileRepository::tileFailed);
+    connect(this->interface_map, &InterfaceServerMap::signalTilesDeleted,
+            this, [this](quint64 request_id)
+    {
+        finishTileDeletion(request_id);
+    });
+    connect(this->interface_map, &InterfaceServerMap::signalTileDeletionFailed,
+            this, [this](quint64 request_id, const QString &error)
+    {
+        finishTileDeletion(request_id, error);
+    });
 }
 
 void MapTileRepository::tileReceived(const QString &key, const QPixmap &pixmap)

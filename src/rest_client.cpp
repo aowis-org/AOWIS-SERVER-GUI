@@ -45,6 +45,19 @@ void RESTClient::post(const QString &endpoint, const QJsonObject &payload)
     });
 }
 
+void RESTClient::deleteResource(const QString &endpoint, quint64 request_id)
+{
+    QNetworkRequest request(this->url_base + endpoint);
+    request.setRawHeader("User-Agent", "aowis-epanet-gui/1.0 (https://github.com/aowis-org/AOWIS-EPANET-GUI)");
+    request.setRawHeader("Accept", "*/*");
+    QNetworkReply *reply = this->network_manager.deleteResource(request);
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, request_id]
+    {
+        handleReplyDelete(reply, request_id);
+    });
+}
+
 void RESTClient::handleReply(QNetworkReply *reply)
 {
     if (reply->error() != QNetworkReply::NoError)
@@ -69,5 +82,18 @@ void RESTClient::handleReplyTile(QNetworkReply *reply, QString key)
     }
     
     emit requestFinishedTile(reply->readAll(), key);
+    reply->deleteLater();
+}
+
+void RESTClient::handleReplyDelete(QNetworkReply *reply, quint64 request_id)
+{
+    if (reply->error() != QNetworkReply::NoError)
+    {
+        emit requestDeleteError(request_id, reply->errorString());
+        reply->deleteLater();
+        return;
+    }
+
+    emit requestFinishedDelete(request_id);
     reply->deleteLater();
 }

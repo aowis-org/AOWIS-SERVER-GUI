@@ -105,8 +105,8 @@ void MapWidget::deleteCachedTiles(int zoom, int tile_x_min, int tile_x_max, int 
 {
     const int bounded_zoom = qBound(MapModel::MinZoom, zoom, MapModel::MaxZoom);
     this->tile_repository->deleteTiles(
-        this->m_model->tileCachePrefix(bounded_zoom),
-        1 << bounded_zoom,
+        this->m_model->tileSourcePath(bounded_zoom),
+        bounded_zoom,
         tile_x_min,
         tile_x_max,
         tile_y_min,

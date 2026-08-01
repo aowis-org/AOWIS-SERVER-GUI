@@ -30,6 +30,7 @@ public:
     QString tileCacheKey(int x, int y) const;
     QString tileCachePrefix(int zoom) const;
     QString tileEndpoint(int x, int y) const;
+    QString tileSourcePath(int zoom) const;
 
     int tileCount() const;
 
@@ -63,7 +64,6 @@ private:
     void clampCenter(const QSize &viewport);
     void emitCenterChanged();
     QString providerPath() const;
-    QString tileSourcePath(int zoom) const;
 
     int m_zoom = 18;
     double m_centerLon = 18.19331;
