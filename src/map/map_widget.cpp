@@ -1,6 +1,8 @@
 #include "map_widget.h"
 
 #include <QApplication>
+#include <QPaintEvent>
+#include <QPalette>
 
 #ifndef Q_OS_WASM
 #include <QCursor>
@@ -116,6 +118,11 @@ void MapWidget::deleteCachedTiles(int zoom, int tile_x_min, int tile_x_max, int 
 
 void MapWidget::init()
 {
+#ifdef Q_OS_WASM
+    this->setAttribute(Qt::WA_OpaquePaintEvent);
+    this->setAttribute(Qt::WA_NoSystemBackground);
+#endif
+
     this->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(this, &MapWidget::customContextMenuRequested, this, &MapWidget::showContextMenu);
 
@@ -136,6 +143,10 @@ void MapWidget::init()
     connect(this->m_model, &MapModel::centerChangedWGS84, this, [this](CoordinateWGS84 wgs)
     {
         emit signalCoordsChangedWgs84(wgs);
+#ifdef Q_OS_WASM
+        if (this->backing_store_pan_active)
+            return;
+#endif
         update();
     });
 
@@ -341,7 +352,7 @@ void MapWidget::updatePanAnimation()
     this->pan_fractional_delta = precise_delta - QPointF(delta);
 
     if (!delta.isNull())
-        this->m_model->panByPixels(delta, this->size());
+        this->panMapByPixels(delta);
 
     this->stopPanAnimationIfIdle();
 }
@@ -664,7 +675,41 @@ void MapWidget::panByStep(const QPoint &delta)
 #ifndef Q_OS_WASM
     this->mouse_pan_inertia_active = false;
 #endif
+    this->panMapByPixels(delta);
+}
+
+void MapWidget::panMapByPixels(const QPoint &delta)
+{
+    if (delta.isNull())
+        return;
+
+#ifndef Q_OS_WASM
     this->m_model->panByPixels(delta, this->size());
+#else
+    const QPointF old_center = this->m_model->centerTile();
+
+    this->backing_store_pan_active = true;
+    this->m_model->panByPixels(delta, this->size());
+    this->backing_store_pan_active = false;
+
+    const QPointF new_center = this->m_model->centerTile();
+    const double tile_count = double(this->m_model->tileCount());
+    const double horizontal_tile_delta = std::remainder(old_center.x() - new_center.x(), tile_count);
+    const QPoint actual_delta(
+        qRound(horizontal_tile_delta * MapModel::TileSize),
+        qRound((old_center.y() - new_center.y()) * MapModel::TileSize));
+
+    if (actual_delta.isNull())
+        return;
+
+    if (std::abs(actual_delta.x()) >= this->width() || std::abs(actual_delta.y()) >= this->height())
+    {
+        update();
+        return;
+    }
+
+    this->scroll(actual_delta.x(), actual_delta.y(), this->rect());
+#endif
 }
 
 void MapWidget::panUp()
@@ -838,7 +883,7 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
 #endif
 
     if (!delta.isNull())
-        this->m_model->panByPixels(delta, this->size());
+        this->panMapByPixels(delta);
 
     event->accept();
     return true;
@@ -875,9 +920,13 @@ void MapWidget::changeMapProvider(MapProvider provider)
     this->m_model->setProvider(provider);
 }
 
-void MapWidget::paintEvent(QPaintEvent *)
+void MapWidget::paintEvent(QPaintEvent *event)
 {
     QPainter painter(this);
+#ifdef Q_OS_WASM
+    painter.setClipRegion(event->region());
+    painter.fillRect(event->rect(), this->palette().brush(QPalette::Window));
+#endif
     this->drawTiles(painter);
 
     if (this->has_gps_coordinate)

@@ -90,6 +90,7 @@ private:
     bool hasFastKeyboardPanInput() const;
     QPointF keyboardPanDirection() const;
     QPointF edgePanDirection() const;
+    void panMapByPixels(const QPoint &delta);
     void panByStep(const QPoint &delta);
 
     void updatePointerCoordinates(const QPoint &position);
@@ -130,6 +131,7 @@ private:
 #ifdef Q_OS_WASM
     QPoint browser_pointer_position;
     bool browser_pointer_inside = false;
+    bool backing_store_pan_active = false;
 #endif
 
     int wheel_delta_accumulated = 0;
