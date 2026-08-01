@@ -34,6 +34,10 @@ class EntityInspectorWidget : public QWidget
     
 public:
     explicit EntityInspectorWidget(HydraulicData *hydraulic_data, QWidget *parent = nullptr);
+    void setCurrentTabIndex(int index);
+
+signals:
+    void signalCurrentTabChanged(int index);
     
 protected:
     //QVBoxLayout *mainLayout() const;

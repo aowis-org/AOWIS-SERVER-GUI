@@ -37,6 +37,7 @@ private:
     void setInspector(EntityInspectorWidget *inspector);
     
     EntityInspectorWidget *widget_current = nullptr;
+    int tab_index_current = 0;
     
     HeadlossFormulas headloss_formulas_current =
         HeadlossFormulas(HeadlossFormula::HazenWilliams);

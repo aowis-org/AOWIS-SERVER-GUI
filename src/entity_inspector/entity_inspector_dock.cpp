@@ -54,6 +54,11 @@ void EntityInspectorDock::setInspector(EntityInspectorWidget *inspector)
     clearEntity();
     
     this->widget_current = inspector;
+    this->widget_current->setCurrentTabIndex(this->tab_index_current);
+    connect(this->widget_current, &EntityInspectorWidget::signalCurrentTabChanged, this, [this](int index)
+    {
+        this->tab_index_current = index;
+    });
     setWidget(this->widget_current);
     
     this->widget_current->onHeadlossFormulaChanged(this->headloss_formulas_current);

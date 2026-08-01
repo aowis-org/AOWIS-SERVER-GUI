@@ -78,9 +78,19 @@ EntityInspectorWidget::EntityInspectorWidget(HydraulicData *hydraulic_data, QWid
     
     tabs->addTab(this->scroll_history, QIcon(":/icon/history.png"), "");
     this->tabs->setTabToolTip(this->tabs->count()-1, "History");
+
+    connect(this->tabs, &QTabWidget::currentChanged, this, &EntityInspectorWidget::signalCurrentTabChanged);
     
     this->layout_main->addWidget(this->label_title);
     this->layout_main->addWidget(this->tabs);
+}
+
+void EntityInspectorWidget::setCurrentTabIndex(int index)
+{
+    if (index < 0 || index >= this->tabs->count())
+        return;
+
+    this->tabs->setCurrentIndex(index);
 }
 
 QVBoxLayout *EntityInspectorWidget::layoutOverview()
