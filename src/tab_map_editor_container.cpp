@@ -1,5 +1,7 @@
 #include "tab_map_editor_container.h"
 
+#include <QMessageBox>
+
 MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *tile_repository, HydraulicData *hydraulic_data, GpsProvider *gps, EntityInspectorDock *map_inspector, QWidget *parent)
     : QWidget{parent},
     hydraulic_data( hydraulic_data ),
@@ -198,24 +200,43 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
     });
     connect(this->button_tiles_delete, &QToolButton::clicked, this, [this]
     {
-        for (int zoom = this->spin_zoom_from->value(); zoom <= this->spin_zoom_to->value(); ++zoom)
-        {
-            const MapCanvasWidget::TileSelectionRange range = this->map_canvas->tileSelectionRange(zoom);
-            if (!range.valid)
-                continue;
-
-            this->map->deleteCachedTiles(
-                zoom,
-                range.tile_x_min,
-                range.tile_x_max,
-                range.tile_y_min,
-                range.tile_y_max);
-        }
-
-        this->map->repaint();
-        this->map_canvas->clearTileSelectionOverlay();
         this->button_tiles_delete->setChecked(false);
-        this->button_tiles_delete->setEnabled(false);
+
+        QMessageBox *box = new QMessageBox(this);
+        box->setAttribute(Qt::WA_DeleteOnClose);
+        box->setWindowTitle("Delete selected map tiles?");
+        box->setIcon(QMessageBox::Warning);
+        box->setText(QString("This will permanently delete all cached map tiles in the selected area for zoom levels %1 through %2.")
+            .arg(this->spin_zoom_from->value())
+            .arg(this->spin_zoom_to->value()));
+        box->setInformativeText("Only continue when you have an internet connection. Deleted tiles may need to be downloaded again; without internet access, the affected map area can remain blank.");
+
+        QPushButton *delete_button = box->addButton("Delete Tiles", QMessageBox::DestructiveRole);
+        QPushButton *cancel_button = box->addButton(QMessageBox::Cancel);
+        box->setDefaultButton(cancel_button);
+        box->setEscapeButton(cancel_button);
+
+        connect(delete_button, &QPushButton::clicked, this, [this]
+        {
+            for (int zoom = this->spin_zoom_from->value(); zoom <= this->spin_zoom_to->value(); ++zoom)
+            {
+                const MapCanvasWidget::TileSelectionRange range = this->map_canvas->tileSelectionRange(zoom);
+                if (!range.valid)
+                    continue;
+
+                this->map->deleteCachedTiles(
+                    zoom,
+                    range.tile_x_min,
+                    range.tile_x_max,
+                    range.tile_y_min,
+                    range.tile_y_max);
+            }
+
+            this->map->repaint();
+            this->map_canvas->clearTileSelectionOverlay();
+            this->button_tiles_delete->setEnabled(false);
+        });
+        box->open();
     });
     
     grid->addWidget(label_explanation_rectangle, 0, 0, 1, 2);
