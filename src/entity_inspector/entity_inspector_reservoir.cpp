@@ -1,22 +1,17 @@
 #include "entity_inspector_reservoir.h"
 
-EntityInspectorReservoir::EntityInspectorReservoir(HydraulicData *hydraulic_data, const HydraulicNodeReservoir &reservoir, QWidget *parent)
+EntityInspectorReservoir::EntityInspectorReservoir(HydraulicData *hydraulic_data, const QUuid &uuid, QWidget *parent)
     : EntityInspectorWidget(hydraulic_data, parent)
 {
-    setTitle("Reservoir R1");
-    
-    addGroupOverviewImage(":/icon/lake.png", "R1");
-    
-    addGroupGeneral("R1");
-    
+    addGroupOverviewImage(":/icon/lake.png", QString());
+    addGroupGeneral(QString());
     addGroupPosition();
+    bindHydraulicNode(InfrastructureEntity::Reservoir, uuid, "Reservoir");
     addGroupElevation();
-    
+
     addGroupDemands();
     addGroupQuality();
-    
     addGroupHistory();
-    
     addStretches();
 }
 

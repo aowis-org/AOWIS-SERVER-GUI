@@ -41,6 +41,7 @@ public:
                               MapEntityMarkerLabel *label = nullptr);
     bool removeMarker(MapEntityMarkerLabel *label);
     bool setCoordinate(MapEntityMarkerLabel *label, const CoordinateWGS84 &coordinate);
+    bool setCoordinate(const QUuid &uuid, const CoordinateWGS84 &coordinate);
     bool moveByDelta(MapEntityMarkerLabel *label,
                      double longitude_delta,
                      double latitude_delta);

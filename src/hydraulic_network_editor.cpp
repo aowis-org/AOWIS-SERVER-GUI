@@ -18,6 +18,39 @@ bool removeEntityByUuid(QList<Entity> &entities, const QUuid &uuid)
 
     return false;
 }
+
+template<typename Mutation>
+bool mutateNode(NetworkHydraulic &network, const QUuid &uuid, Mutation mutation)
+{
+    for (HydraulicNodeJunction &junction : network.nodes_junctions)
+    {
+        if (junction.uuid != uuid)
+            continue;
+
+        mutation(junction);
+        return true;
+    }
+
+    for (HydraulicNodeReservoir &reservoir : network.nodes_reservoirs)
+    {
+        if (reservoir.uuid != uuid)
+            continue;
+
+        mutation(reservoir);
+        return true;
+    }
+
+    for (HydraulicNodeTank &tank : network.nodes_tanks)
+    {
+        if (tank.uuid != uuid)
+            continue;
+
+        mutation(tank);
+        return true;
+    }
+
+    return false;
+}
 }
 
 HydraulicNetworkEditor::HydraulicNetworkEditor(NetworkHydraulic &network)
@@ -61,6 +94,7 @@ QUuid HydraulicNetworkEditor::addJunction(const CoordinateWGS84 &coordinate)
     junction.uuid = createUuidV7();
     junction.id = nextNodeId(QStringLiteral("J"));
     junction.coordinate_wgs84 = coordinate;
+    junction.metadata.date_added = QDate::currentDate();
     this->network.nodes_junctions.append(junction);
     return junction.uuid;
 }
@@ -71,6 +105,7 @@ QUuid HydraulicNetworkEditor::addReservoir(const CoordinateWGS84 &coordinate)
     reservoir.uuid = createUuidV7();
     reservoir.id = nextNodeId(QStringLiteral("R"));
     reservoir.coordinate_wgs84 = coordinate;
+    reservoir.metadata.date_added = QDate::currentDate();
     this->network.nodes_reservoirs.append(reservoir);
     return reservoir.uuid;
 }
@@ -81,6 +116,7 @@ QUuid HydraulicNetworkEditor::addTank(const CoordinateWGS84 &coordinate)
     tank.uuid = createUuidV7();
     tank.id = nextNodeId(QStringLiteral("T"));
     tank.coordinate_wgs84 = coordinate;
+    tank.metadata.date_added = QDate::currentDate();
     this->network.nodes_tanks.append(tank);
     return tank.uuid;
 }
@@ -147,6 +183,46 @@ QUuid HydraulicNetworkEditor::addValve(const QUuid &node_uuid_from, const QUuid 
 
     this->network.links_valves.append(valve);
     return valve.uuid;
+}
+
+bool HydraulicNetworkEditor::setNodeId(const QUuid &uuid, const QString &id)
+{
+    return mutateNode(this->network, uuid, [&id](auto &node)
+    {
+        node.id = id;
+    });
+}
+
+bool HydraulicNetworkEditor::setNodeModelRole(const QUuid &uuid, EntityModelRole model_role)
+{
+    return mutateNode(this->network, uuid, [model_role](auto &node)
+    {
+        node.metadata.model_role = model_role;
+    });
+}
+
+bool HydraulicNetworkEditor::setNodeDateAdded(const QUuid &uuid, const std::optional<QDate> &date_added)
+{
+    return mutateNode(this->network, uuid, [&date_added](auto &node)
+    {
+        node.metadata.date_added = date_added;
+    });
+}
+
+bool HydraulicNetworkEditor::setNodeDateInstalled(const QUuid &uuid, const std::optional<QDate> &date_installed)
+{
+    return mutateNode(this->network, uuid, [&date_installed](auto &node)
+    {
+        node.metadata.date_installed = date_installed;
+    });
+}
+
+bool HydraulicNetworkEditor::setNodeEnabled(const QUuid &uuid, bool enabled)
+{
+    return mutateNode(this->network, uuid, [enabled](auto &node)
+    {
+        node.metadata.enabled = enabled;
+    });
 }
 
 bool HydraulicNetworkEditor::setNodeCoordinate(const QUuid &uuid, const CoordinateWGS84 &coordinate)

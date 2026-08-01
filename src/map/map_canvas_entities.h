@@ -94,6 +94,8 @@ private:
     QHash<QUuid, QList<CoordinateWGS84>> move_pipe_vertices_snapshot;
     
 private slots:
+    void onNodeChanged(InfrastructureEntity entity_type, const QUuid &uuid);
+    void onNodeLocateRequested(InfrastructureEntity entity_type, const QUuid &uuid);
     void onMarkerClicked(MapEntityMarkerLabel *label);
     void onMarkerContextMenuRequested(MapEntityMarkerLabel *label, const QPoint &global_position);
     void onMarkerMoveRequested(MapEntityMarkerLabel *label);

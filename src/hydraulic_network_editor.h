@@ -3,10 +3,12 @@
 
 #include <optional>
 
+#include <QDate>
 #include <QList>
 #include <QString>
 #include <QUuid>
 
+#include <aowis/model/entity.h>
 #include <aowis/model/gis.h>
 #include <aowis/model/hydraulic/network_hydraulic.h>
 
@@ -29,6 +31,11 @@ public:
     QUuid addValve(const QUuid &node_uuid_from, const QUuid &node_uuid_to,
                    const CoordinateWGS84 &center_coordinate);
 
+    bool setNodeId(const QUuid &uuid, const QString &id);
+    bool setNodeModelRole(const QUuid &uuid, EntityModelRole model_role);
+    bool setNodeDateAdded(const QUuid &uuid, const std::optional<QDate> &date_added);
+    bool setNodeDateInstalled(const QUuid &uuid, const std::optional<QDate> &date_installed);
+    bool setNodeEnabled(const QUuid &uuid, bool enabled);
     bool setNodeCoordinate(const QUuid &uuid, const CoordinateWGS84 &coordinate);
     bool setPipeVertexCoordinate(const QUuid &pipe_uuid, int vertex_index,
                                  const CoordinateWGS84 &coordinate);

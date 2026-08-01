@@ -211,6 +211,23 @@ bool MapCanvasMarkers::setCoordinate(MapEntityMarkerLabel *label,
     return false;
 }
 
+bool MapCanvasMarkers::setCoordinate(const QUuid &uuid, const CoordinateWGS84 &coordinate)
+{
+    if (uuid.isNull())
+        return false;
+
+    for (MapEntityMarker &marker : this->list_markers)
+    {
+        if (marker.entity.uuid != uuid)
+            continue;
+
+        marker.coord_wgs84 = coordinate;
+        return true;
+    }
+
+    return false;
+}
+
 bool MapCanvasMarkers::moveByDelta(MapEntityMarkerLabel *label,
                                    double longitude_delta,
                                    double latitude_delta)

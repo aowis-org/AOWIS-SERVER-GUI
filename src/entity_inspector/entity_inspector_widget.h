@@ -54,14 +54,20 @@ protected:
     
     void addGroupGeneral(const QString &name);
     QLineEdit *line_name = nullptr;
-    QDateEdit *date_install = nullptr;
+    QDateEdit *date_added = nullptr;
+    QDateEdit *date_installed = nullptr;
     QComboBox *combo_model_role = nullptr;
+    QCheckBox *check_enabled = nullptr;
     
     void addGroupEndpoints();
     
     void addGroupPosition();
     QDoubleSpinBox *spin_latitude = nullptr;
     QDoubleSpinBox *spin_longitude = nullptr;
+    QPushButton *button_find_on_map = nullptr;
+
+    void bindHydraulicNode(InfrastructureEntity entity_type, const QUuid &uuid,
+                           const QString &title_prefix);
     
     void addGroupElevation();
     GroupBoxCollapsible *group_elevation = nullptr;
@@ -87,7 +93,14 @@ protected:
     void addStretches();
     
 private:
+    void refreshHydraulicNode();
+    std::optional<QDate> optionalDate(const QDateEdit *date_edit) const;
+    void setOptionalDate(QDateEdit *date_edit, const std::optional<QDate> &date);
+
     HydraulicData *hydraulic_data = nullptr;
+    InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
+    QUuid entity_uuid;
+    QString entity_title_prefix;
     
     QTabWidget *tabs = nullptr;
     QVBoxLayout *layout_main = nullptr;

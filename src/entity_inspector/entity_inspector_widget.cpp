@@ -2,6 +2,7 @@
 
 #include <QGridLayout>
 #include <QPixmap>
+#include <QSignalBlocker>
 
 EntityInspectorWidget::EntityInspectorWidget(HydraulicData *hydraulic_data, QWidget *parent)
     : QWidget(parent),
@@ -142,18 +143,11 @@ void EntityInspectorWidget::addGroupGeneral(const QString &name)
 {
     GroupBoxCollapsible *group = new GroupBoxCollapsible("General");
     QGridLayout *grid = new QGridLayout(group);
-    
+
     QLabel *label_name = new QLabel("Name");
     this->line_name = new QLineEdit();
     this->line_name->setText(name);
-    
-    QLabel *label_date_install = new QLabel("Added Date");
-    this->date_install = new QDateEdit();
-    this->date_install->setCalendarPopup(true);
-    this->date_install->setDisplayFormat(QStringLiteral("yyyy-MM-dd"));
-    this->date_install->setToolTip("yyyy-MM-dd");
-    this->date_install->setDate(QDate::currentDate());
-    
+
     QLabel *label_model_role = new QLabel("Model Role");
     this->combo_model_role = new QComboBox();
     this->combo_model_role->addItem("[Unspecified]", static_cast<int>(EntityModelRole::Unspecified));
@@ -167,22 +161,41 @@ void EntityInspectorWidget::addGroupGeneral(const QString &name)
         "Describes whether this entity represents a real asset, a planned asset, "
         "a model-only helper, a boundary condition, or a temporary/testing element."
     );
-    
-    QCheckBox *check_enabled = new QCheckBox("Enabled");
-    check_enabled->setChecked(true);
-    
-    grid->addWidget(label_name, 1, 0);
-    grid->addWidget(this->line_name, 1, 1);
-    
-    grid->addWidget(label_model_role, 3, 0);
-    grid->addWidget(this->combo_model_role, 3, 1);
-    
-    grid->addWidget(label_date_install, 4, 0);
-    grid->addWidget(this->date_install, 4, 1);
-    
-    grid->addWidget(check_enabled, 5, 0);
-    
-    this->layoutConfiguration()->addWidget(group);
+
+    const QDate date_unset(100, 1, 1);
+
+    QLabel *label_date_added = new QLabel("Date Added");
+    this->date_added = new QDateEdit();
+    this->date_added->setCalendarPopup(true);
+    this->date_added->setDisplayFormat(QStringLiteral("yyyy-MM-dd"));
+    this->date_added->setToolTip("Date the entity was added to the model. yyyy-MM-dd");
+    this->date_added->setMinimumDate(date_unset);
+    this->date_added->setSpecialValueText("[Not set]");
+    this->date_added->setDate(date_unset);
+
+    QLabel *label_date_installed = new QLabel("Installation Date");
+    this->date_installed = new QDateEdit();
+    this->date_installed->setCalendarPopup(true);
+    this->date_installed->setDisplayFormat(QStringLiteral("yyyy-MM-dd"));
+    this->date_installed->setToolTip("Date the physical asset was installed. yyyy-MM-dd");
+    this->date_installed->setMinimumDate(date_unset);
+    this->date_installed->setSpecialValueText("[Not set]");
+    this->date_installed->setDate(date_unset);
+
+    this->check_enabled = new QCheckBox("Enabled");
+    this->check_enabled->setChecked(true);
+
+    grid->addWidget(label_name, 0, 0);
+    grid->addWidget(this->line_name, 0, 1);
+    grid->addWidget(label_model_role, 1, 0);
+    grid->addWidget(this->combo_model_role, 1, 1);
+    grid->addWidget(label_date_added, 2, 0);
+    grid->addWidget(this->date_added, 2, 1);
+    grid->addWidget(label_date_installed, 3, 0);
+    grid->addWidget(this->date_installed, 3, 1);
+    grid->addWidget(this->check_enabled, 4, 0, 1, 2);
+
+    layoutConfiguration()->addWidget(group);
 }
 
 void EntityInspectorWidget::addGroupEndpoints()
@@ -246,15 +259,119 @@ void EntityInspectorWidget::addGroupPosition()
     this->spin_longitude->setSuffix(" °");
     this->spin_longitude->setAccelerated(true);
     
-    QPushButton *button_find = new QPushButton("Find on Map");
+    this->button_find_on_map = new QPushButton("Find on Map");
     
     grid->addWidget(label_latitude, 0, 0);
     grid->addWidget(this->spin_latitude, 0, 1);
     grid->addWidget(label_longitude, 1, 0);
     grid->addWidget(this->spin_longitude, 1, 1);
-    grid->addWidget(button_find, 2, 0, 1, 2);
+    grid->addWidget(this->button_find_on_map, 2, 0, 1, 2);
     
-    this->layoutConfiguration()->addWidget(group);
+    layoutConfiguration()->addWidget(group);
+}
+
+void EntityInspectorWidget::bindHydraulicNode(InfrastructureEntity entity_type, const QUuid &uuid,
+                                               const QString &title_prefix)
+{
+    this->entity_type = entity_type;
+    this->entity_uuid = uuid;
+    this->entity_title_prefix = title_prefix;
+
+    refreshHydraulicNode();
+
+    connect(this->line_name, &QLineEdit::textEdited, this, [this](const QString &id)
+    {
+        this->hydraulic_data->setNodeId(this->entity_uuid, id);
+    });
+    connect(this->combo_model_role, &QComboBox::currentIndexChanged, this, [this](int)
+    {
+        const EntityModelRole model_role = static_cast<EntityModelRole>(
+            this->combo_model_role->currentData().toInt());
+        this->hydraulic_data->setNodeModelRole(this->entity_uuid, model_role);
+    });
+    connect(this->date_added, &QDateEdit::dateChanged, this, [this](const QDate &)
+    {
+        this->hydraulic_data->setNodeDateAdded(this->entity_uuid, optionalDate(this->date_added));
+    });
+    connect(this->date_installed, &QDateEdit::dateChanged, this, [this](const QDate &)
+    {
+        this->hydraulic_data->setNodeDateInstalled(
+            this->entity_uuid, optionalDate(this->date_installed));
+    });
+    connect(this->check_enabled, &QCheckBox::toggled, this, [this](bool enabled)
+    {
+        this->hydraulic_data->setNodeEnabled(this->entity_uuid, enabled);
+    });
+    connect(this->spin_latitude, &QDoubleSpinBox::valueChanged, this, [this](double)
+    {
+        CoordinateWGS84 coordinate;
+        coordinate.latitude_deg = this->spin_latitude->value();
+        coordinate.longitude_deg = this->spin_longitude->value();
+        this->hydraulic_data->setNodeCoordinate(this->entity_uuid, coordinate);
+    });
+    connect(this->spin_longitude, &QDoubleSpinBox::valueChanged, this, [this](double)
+    {
+        CoordinateWGS84 coordinate;
+        coordinate.latitude_deg = this->spin_latitude->value();
+        coordinate.longitude_deg = this->spin_longitude->value();
+        this->hydraulic_data->setNodeCoordinate(this->entity_uuid, coordinate);
+    });
+    connect(this->button_find_on_map, &QPushButton::clicked, this, [this]()
+    {
+        this->hydraulic_data->requestNodeLocate(this->entity_type, this->entity_uuid);
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this, [this](InfrastructureEntity entity_type_changed, const QUuid &uuid_changed)
+    {
+        if (entity_type_changed == this->entity_type && uuid_changed == this->entity_uuid)
+            refreshHydraulicNode();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, &EntityInspectorWidget::refreshHydraulicNode);
+}
+
+void EntityInspectorWidget::refreshHydraulicNode()
+{
+    if (!this->hydraulic_data || this->entity_uuid.isNull())
+        return;
+
+    const std::optional<HydraulicNodeCommonData> node =
+        this->hydraulic_data->nodeCommonData(this->entity_type, this->entity_uuid);
+    if (!node.has_value())
+        return;
+
+    const QSignalBlocker name_blocker(this->line_name);
+    const QSignalBlocker model_role_blocker(this->combo_model_role);
+    const QSignalBlocker date_added_blocker(this->date_added);
+    const QSignalBlocker date_installed_blocker(this->date_installed);
+    const QSignalBlocker enabled_blocker(this->check_enabled);
+    const QSignalBlocker latitude_blocker(this->spin_latitude);
+    const QSignalBlocker longitude_blocker(this->spin_longitude);
+
+    this->line_name->setText(node->id);
+    const int model_role_index = this->combo_model_role->findData(
+        static_cast<int>(node->metadata.model_role));
+    this->combo_model_role->setCurrentIndex(model_role_index >= 0 ? model_role_index : 0);
+    setOptionalDate(this->date_added, node->metadata.date_added);
+    setOptionalDate(this->date_installed, node->metadata.date_installed);
+    this->check_enabled->setChecked(node->metadata.enabled);
+    this->spin_latitude->setValue(node->coordinate_wgs84.latitude_deg);
+    this->spin_longitude->setValue(node->coordinate_wgs84.longitude_deg);
+    setTitle(this->entity_title_prefix + " " + node->id);
+}
+
+std::optional<QDate> EntityInspectorWidget::optionalDate(const QDateEdit *date_edit) const
+{
+    if (!date_edit || date_edit->date() == date_edit->minimumDate())
+        return std::nullopt;
+
+    return date_edit->date();
+}
+
+void EntityInspectorWidget::setOptionalDate(QDateEdit *date_edit, const std::optional<QDate> &date)
+{
+    if (!date_edit)
+        return;
+
+    date_edit->setDate(date.has_value() ? date.value() : date_edit->minimumDate());
 }
 
 void EntityInspectorWidget::addGroupElevation()

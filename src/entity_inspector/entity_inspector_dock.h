@@ -46,12 +46,12 @@ public slots:
     virtual void onHeadlossFormulaChanged(HeadlossFormulas formulas);
     
 public slots:
-    void showEntityTank(HydraulicNodeTank tank);
-    void showEntityJunction(HydraulicNodeJunction junction);
+    void showEntityTank(const HydraulicNodeTank &tank);
+    void showEntityJunction(const HydraulicNodeJunction &junction);
     void showEntityPipe(HydraulicLinkPipe pipe);
     void showEntityPump(HydraulicLinkPump pump);
     void showEntityValve(HydraulicLinkValve valve);
-    void showEntityReservoir(HydraulicNodeReservoir reservoir);
+    void showEntityReservoir(const HydraulicNodeReservoir &reservoir);
     void showEntityCustomerPoint(NetworkHydraulicCustomerPoint customer_point);
     
 };

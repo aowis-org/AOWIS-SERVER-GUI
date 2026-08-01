@@ -1,23 +1,16 @@
 #include "entity_inspector_tank.h"
 
-EntityInspectorTank::EntityInspectorTank(HydraulicData *hydraulic_data, HydraulicNodeTank tank, QWidget *parent)
-    : EntityInspectorWidget(hydraulic_data, parent),
-    tank(tank)
+EntityInspectorTank::EntityInspectorTank(HydraulicData *hydraulic_data, const QUuid &uuid, QWidget *parent)
+    : EntityInspectorWidget(hydraulic_data, parent)
 {
-    //setTitle("Tank T1");
-    setTitle("Tank " + tank.id);
-    
-    addGroupOverviewImage(":/icon/tower_large.png", "T1");
-    
-    addGroupGeneral(tank.id);
+    addGroupOverviewImage(":/icon/tower_large.png", QString());
+    addGroupGeneral(QString());
     addGroupPosition();
+    bindHydraulicNode(InfrastructureEntity::Tank, uuid, "Tank");
     addGroupElevation();
     addGroupGeometry();
-    
     addGroupQuality();
-    
     addGroupHistory();
-    
     addStretches();
 }
 

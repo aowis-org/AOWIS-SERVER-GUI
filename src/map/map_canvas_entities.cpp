@@ -108,13 +108,44 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
 
     if (this->hydraulic_data)
     {
-        connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this,
-                [this]()
-                {
-                    loadNetwork(this->hydraulic_data->networkHydraulic());
-                });
+        connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, [this]()
+        {
+            loadNetwork(this->hydraulic_data->networkHydraulic());
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this, &MapCanvasEntities::onNodeChanged);
+        connect(this->hydraulic_data, &HydraulicData::signalNodeLocateRequested, this, &MapCanvasEntities::onNodeLocateRequested);
         loadNetwork(this->hydraulic_data->networkHydraulic());
     }
+}
+
+void MapCanvasEntities::onNodeChanged(InfrastructureEntity entity_type, const QUuid &uuid)
+{
+    if (!this->hydraulic_data)
+        return;
+
+    const std::optional<HydraulicNodeCommonData> node =
+        this->hydraulic_data->nodeCommonData(entity_type, uuid);
+    if (!node.has_value() || !this->point_markers->setCoordinate(uuid, node->coordinate_wgs84))
+        return;
+
+    recalculateWrapReferenceLongitude();
+    positionMarkers();
+    updateCanvas();
+}
+
+void MapCanvasEntities::onNodeLocateRequested(InfrastructureEntity entity_type, const QUuid &uuid)
+{
+    if (!this->hydraulic_data || !this->map_canvas)
+        return;
+
+    const std::optional<HydraulicNodeCommonData> node =
+        this->hydraulic_data->nodeCommonData(entity_type, uuid);
+    if (!node.has_value())
+        return;
+
+    this->map_model->setCenter(node->coordinate_wgs84.longitude_deg,
+                               node->coordinate_wgs84.latitude_deg,
+                               this->map_canvas->size());
 }
 
 void MapCanvasEntities::loadNetwork(const NetworkHydraulic &network)

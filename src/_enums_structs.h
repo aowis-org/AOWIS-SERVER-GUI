@@ -112,17 +112,6 @@ enum MapEditToolSub
     Tool_5 = 5
 };
 
-enum class EntityModelRole
-{
-    Unspecified,
-    ExistingAsset,
-    PlannedAsset,
-    VirtualModelElement,
-    BoundaryCondition,
-    TemporaryTesting,
-    RetiredAsset
-};
-
 enum class InfrastructureEntity : std::uint8_t
 {
     Unknown = 0,
