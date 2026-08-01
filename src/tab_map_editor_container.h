@@ -67,7 +67,6 @@ private:
     QButtonGroup *button_group_tools = nullptr;
     QRadioButton *button_radio_select = nullptr;
     QToolButton *button_tiles_delete = nullptr;
-    QToolButton *button_tiles_update = nullptr;
     QCheckBox *checkbox_map_editor_guide = nullptr;
 
 public slots:
