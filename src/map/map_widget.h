@@ -131,8 +131,8 @@ private:
 #ifdef Q_OS_WASM
     QPoint browser_pointer_position;
     bool browser_pointer_inside = false;
-    bool backing_store_pan_active = false;
 #endif
+    bool backing_store_pan_active = false;
 
     int wheel_delta_accumulated = 0;
 

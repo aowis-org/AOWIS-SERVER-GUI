@@ -118,10 +118,8 @@ void MapWidget::deleteCachedTiles(int zoom, int tile_x_min, int tile_x_max, int 
 
 void MapWidget::init()
 {
-#ifdef Q_OS_WASM
     this->setAttribute(Qt::WA_OpaquePaintEvent);
     this->setAttribute(Qt::WA_NoSystemBackground);
-#endif
 
     this->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(this, &MapWidget::customContextMenuRequested, this, &MapWidget::showContextMenu);
@@ -143,10 +141,8 @@ void MapWidget::init()
     connect(this->m_model, &MapModel::centerChangedWGS84, this, [this](CoordinateWGS84 wgs)
     {
         emit signalCoordsChangedWgs84(wgs);
-#ifdef Q_OS_WASM
         if (this->backing_store_pan_active)
             return;
-#endif
         update();
     });
 
@@ -683,9 +679,6 @@ void MapWidget::panMapByPixels(const QPoint &delta)
     if (delta.isNull())
         return;
 
-#ifndef Q_OS_WASM
-    this->m_model->panByPixels(delta, this->size());
-#else
     const QPointF old_center = this->m_model->centerTile();
 
     this->backing_store_pan_active = true;
@@ -709,7 +702,6 @@ void MapWidget::panMapByPixels(const QPoint &delta)
     }
 
     this->scroll(actual_delta.x(), actual_delta.y(), this->rect());
-#endif
 }
 
 void MapWidget::panUp()
@@ -923,10 +915,8 @@ void MapWidget::changeMapProvider(MapProvider provider)
 void MapWidget::paintEvent(QPaintEvent *event)
 {
     QPainter painter(this);
-#ifdef Q_OS_WASM
     painter.setClipRegion(event->region());
     painter.fillRect(event->rect(), this->palette().brush(QPalette::Window));
-#endif
     this->drawTiles(painter);
 
     if (this->has_gps_coordinate)
