@@ -37,6 +37,7 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     this->map_stack_layout->addWidget(this->map);
 #ifdef Q_OS_WASM
     this->map->setBrowserMapLayerEnabled(true);
+    this->map->setBrowserMapLayerTopmost(false);
 
     this->map_canvas->setObjectName(QStringLiteral("aowis-wasm-map-overlay"));
     this->map_canvas->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint);

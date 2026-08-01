@@ -31,16 +31,16 @@ EM_JS(int, aowisBrowserDocumentActive, (),
     return document.hasFocus() && !document.hidden ? 1 : 0;
 });
 
-EM_JS(void, aowisBrowserMapSetGeometry, (int x, int y, int width, int height, int visible),
+EM_JS(void, aowisBrowserMapSetGeometry, (int owner_id, int x, int y, int width, int height, int visible, int topmost),
 {
     if (window.aowisBrowserMap)
-        window.aowisBrowserMap.setGeometry(x, y, width, height, visible !== 0);
+        window.aowisBrowserMap.setGeometry(owner_id, x, y, width, height, visible !== 0, topmost !== 0);
 });
 
-EM_JS(void, aowisBrowserMapSetView, (double longitude, double latitude, int zoom, int provider),
+EM_JS(void, aowisBrowserMapSetView, (int owner_id, double longitude, double latitude, int zoom, int provider),
 {
     if (window.aowisBrowserMap)
-        window.aowisBrowserMap.setView(longitude, latitude, zoom, provider);
+        window.aowisBrowserMap.setView(owner_id, longitude, latitude, zoom, provider);
 });
 
 EM_JS(void, aowisBrowserMapInvalidateTiles, (),
@@ -49,15 +49,23 @@ EM_JS(void, aowisBrowserMapInvalidateTiles, (),
         window.aowisBrowserMap.invalidateTiles();
 });
 
-EM_JS(void, aowisBrowserMapDestroy, (),
+EM_JS(void, aowisBrowserMapRelease, (int owner_id),
 {
     if (window.aowisBrowserMap)
-        window.aowisBrowserMap.destroy();
+        window.aowisBrowserMap.release(owner_id);
 });
 #endif
 
 namespace
 {
+#ifdef Q_OS_WASM
+int nextBrowserMapLayerOwnerId()
+{
+    static int next_owner_id = 1;
+    return next_owner_id++;
+}
+#endif
+
 constexpr int PanFrameIntervalMs = 16;
 constexpr int TileUpdateIntervalMs = 16;
 constexpr int PanButtonStepPixels = 120;
@@ -112,6 +120,10 @@ MapWidget::MapWidget(MapModel *model, MapTileRepository *tile_repository, GpsPro
     Q_ASSERT(this->m_model);
     Q_ASSERT(this->tile_repository);
 
+#ifdef Q_OS_WASM
+    this->browser_map_layer_owner_id = nextBrowserMapLayerOwnerId();
+#endif
+
     this->init();
 }
 
@@ -119,7 +131,7 @@ MapWidget::~MapWidget()
 {
 #ifdef Q_OS_WASM
     if (this->browser_map_layer_enabled)
-        aowisBrowserMapDestroy();
+        aowisBrowserMapRelease(this->browser_map_layer_owner_id);
 
     emscripten_set_mousemove_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, this, EM_TRUE, nullptr);
     emscripten_set_mouseleave_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, this, EM_TRUE, nullptr);
@@ -671,19 +683,26 @@ void MapWidget::setBrowserMapLayerEnabled(bool enabled)
     if (enabled)
         this->syncBrowserMapView();
     else
-        aowisBrowserMapDestroy();
+        aowisBrowserMapRelease(this->browser_map_layer_owner_id);
 
     update();
+}
+
+void MapWidget::setBrowserMapLayerTopmost(bool topmost)
+{
+    this->browser_map_layer_topmost = topmost;
 }
 
 void MapWidget::setBrowserMapLayerGeometry(const QRect &geometry, bool visible)
 {
     aowisBrowserMapSetGeometry(
+        this->browser_map_layer_owner_id,
         geometry.x(),
         geometry.y(),
         geometry.width(),
         geometry.height(),
-        visible ? 1 : 0);
+        visible ? 1 : 0,
+        this->browser_map_layer_topmost ? 1 : 0);
 
     if (visible)
         this->syncBrowserMapView();
@@ -695,6 +714,7 @@ void MapWidget::syncBrowserMapView()
         return;
 
     aowisBrowserMapSetView(
+        this->browser_map_layer_owner_id,
         this->m_model->centerLon(),
         this->m_model->centerLat(),
         this->m_model->zoom(),

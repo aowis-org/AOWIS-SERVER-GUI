@@ -3,6 +3,11 @@
 
 #include <QObject>
 #include <QWidget>
+
+#ifdef Q_OS_WASM
+#include <QEvent>
+#include <QTimer>
+#endif
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QGridLayout>
@@ -41,7 +46,7 @@ public:
     explicit MapMonitorMenuWidget(MapWidget *map, QWidget *parent = nullptr);
     
     MapNavigationWidget *mapNavigationWidget();
-    
+
 private:
     QVBoxLayout *layout;
     
@@ -70,11 +75,17 @@ class MapMonitorContainer : public QWidget
     Q_OBJECT
 public:
     explicit MapMonitorContainer(MapModel *map_model, MapTileRepository *tile_repository, GpsProvider *gps, QWidget *parent = nullptr);
+    ~MapMonitorContainer() override;
     
     MapWidget *getMap();
     
     MapNavigationWidget *mapNavigationWidget();
-    
+
+#ifdef Q_OS_WASM
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+#endif
+
 private:
     QHBoxLayout *layout = nullptr;
     GpsProvider *gps = nullptr;
@@ -82,7 +93,14 @@ private:
     MapTileRepository *tile_repository = nullptr;
     MapWidget *map = nullptr;
     MapMonitorMenuWidget *map_menu = nullptr;
-    
+
+#ifdef Q_OS_WASM
+    QTimer *wasm_map_layer_sync_timer = nullptr;
+
+    void scheduleWasmMapLayerSync();
+    void syncWasmMapLayer();
+#endif
+
 signals:
     void signalShowMapLegendNode(VisualNode visual_node);
     void signalShowMapLegendLink(VisualLink visual_link);

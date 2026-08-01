@@ -51,6 +51,7 @@ public:
 
 #ifdef Q_OS_WASM
     void setBrowserMapLayerEnabled(bool enabled);
+    void setBrowserMapLayerTopmost(bool topmost);
     void setBrowserMapLayerGeometry(const QRect &geometry, bool visible);
 #endif
 
@@ -138,6 +139,8 @@ private:
     QPoint browser_pointer_position;
     bool browser_pointer_inside = false;
     bool browser_map_layer_enabled = false;
+    bool browser_map_layer_topmost = false;
+    int browser_map_layer_owner_id = 0;
 #endif
     bool backing_store_pan_active = false;
 

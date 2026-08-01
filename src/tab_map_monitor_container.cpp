@@ -36,9 +36,25 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     });
     
     scroll_controls->setWidget(this->map_menu);
-    
+
+#ifdef Q_OS_WASM
+    this->map->setBrowserMapLayerEnabled(true);
+    this->map->setBrowserMapLayerTopmost(true);
+
+    this->wasm_map_layer_sync_timer = new QTimer(this);
+    this->wasm_map_layer_sync_timer->setSingleShot(true);
+    connect(this->wasm_map_layer_sync_timer, &QTimer::timeout, this, &MapMonitorContainer::syncWasmMapLayer);
+
+    this->installEventFilter(this);
+    this->map->installEventFilter(this);
+    if (this->window())
+        this->window()->installEventFilter(this);
+
+    this->scheduleWasmMapLayerSync();
+#endif
+
     this->layout->addWidget(scroll_controls);
-    this->layout->addWidget(map);
+    this->layout->addWidget(this->map);
     
     connect(this->map_menu, &MapMonitorMenuWidget::signalNodeVisualClicked,
         this, &MapMonitorContainer::signalShowMapLegendNode);
@@ -47,6 +63,60 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapVisualClicked,
         this, &MapMonitorContainer::signalShowMapLegendHeatmap);
 }
+
+MapMonitorContainer::~MapMonitorContainer()
+{
+#ifdef Q_OS_WASM
+    this->map->setBrowserMapLayerGeometry(QRect(), false);
+#endif
+}
+
+#ifdef Q_OS_WASM
+bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == this || watched == this->map || watched == this->window())
+    {
+        switch (event->type())
+        {
+        case QEvent::Move:
+        case QEvent::Resize:
+        case QEvent::Show:
+        case QEvent::Hide:
+        case QEvent::LayoutRequest:
+        case QEvent::ParentChange:
+        case QEvent::WindowStateChange:
+            this->scheduleWasmMapLayerSync();
+            break;
+        default:
+            break;
+        }
+    }
+
+    return QWidget::eventFilter(watched, event);
+}
+
+void MapMonitorContainer::scheduleWasmMapLayerSync()
+{
+    if (!this->wasm_map_layer_sync_timer->isActive())
+        this->wasm_map_layer_sync_timer->start(0);
+}
+
+void MapMonitorContainer::syncWasmMapLayer()
+{
+    const bool visible = this->isVisible() && this->map->isVisible()
+        && this->map->width() > 0 && this->map->height() > 0;
+
+    if (!visible)
+    {
+        this->map->setBrowserMapLayerGeometry(QRect(), false);
+        return;
+    }
+
+    const QRect map_geometry(this->map->mapToGlobal(QPoint(0, 0)), this->map->size());
+    this->map->setBrowserMapLayerGeometry(map_geometry, true);
+}
+#endif
+
 MapWidget *MapMonitorContainer::getMap()
 {
     return this->map;

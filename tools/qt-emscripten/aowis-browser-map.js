@@ -33,7 +33,9 @@
         originTileY: 0,
         cacheRevision: 0,
         renderPending: false,
-        stackingGeneration: 0
+        stackingGeneration: 0,
+        activeOwner: 0,
+        topmost: false
     };
 
     function normalizeLongitude(longitude) {
@@ -330,6 +332,28 @@
         }
 
         const mainWindow = mainCanvas ? mainCanvas.closest(".qt-decorated-window") : null;
+
+        if (state.topmost) {
+            if (!mainWindow) {
+                state.ready = false;
+                state.layer.style.display = "none";
+                if (remainingAttempts > 0) {
+                    window.requestAnimationFrame(() => {
+                        synchronizeStacking(x, y, width, height, remainingAttempts - 1, generation);
+                    });
+                }
+                return;
+            }
+
+            mainWindow.style.setProperty("z-index", "10", "important");
+            state.layer.style.setProperty("z-index", "2147483000", "important");
+            state.overlayWindow = null;
+            state.ready = true;
+            state.layer.style.display = state.visible ? "block" : "none";
+            scheduleRender();
+            return;
+        }
+
         let overlayWindow = null;
         let overlayCanvas = null;
         let bestScore = Number.POSITIVE_INFINITY;
@@ -402,23 +426,49 @@
         }
     }
 
-    function setGeometry(x, y, width, height, visible) {
+    function setGeometry(ownerId, x, y, width, height, visible, topmost) {
+        const owner = ownerId | 0;
+        const nextVisible = Boolean(visible) && width > 0 && height > 0;
+
+        if (!nextVisible) {
+            if (state.activeOwner !== owner)
+                return;
+
+            state.visible = false;
+            state.ready = false;
+            state.activeOwner = 0;
+            state.stackingGeneration += 1;
+            if (state.layer)
+                state.layer.style.display = "none";
+            return;
+        }
+
+        const ownerChanged = state.activeOwner !== owner;
+        const presentationChanged = state.topmost !== Boolean(topmost);
+        state.activeOwner = owner;
+        state.topmost = Boolean(topmost);
         state.x = x;
         state.y = y;
         state.width = Math.max(0, width);
         state.height = Math.max(0, height);
-        state.visible = Boolean(visible) && state.width > 0 && state.height > 0;
+        state.visible = true;
+
+        if (ownerChanged) {
+            state.initialized = false;
+            clearTiles();
+        }
+        if (ownerChanged || presentationChanged) {
+            state.ready = false;
+            state.overlayWindow = null;
+            if (state.layer)
+                state.layer.style.display = "none";
+        }
 
         if (!ensureLayer()) {
             const generation = ++state.stackingGeneration;
             window.requestAnimationFrame(() => {
                 synchronizeStacking(x, y, width, height, 120, generation);
             });
-            return;
-        }
-
-        if (!state.visible) {
-            state.layer.style.display = "none";
             return;
         }
 
@@ -438,7 +488,10 @@
         });
     }
 
-    function setView(longitude, latitude, zoom, provider) {
+    function setView(ownerId, longitude, latitude, zoom, provider) {
+        if (state.activeOwner !== (ownerId | 0))
+            return;
+
         const boundedZoom = Math.max(1, Math.min(19, zoom | 0));
         const nextSource = sourceFor(provider | 0, boundedZoom);
         const zoomChanged = !state.initialized || boundedZoom !== state.zoom;
@@ -476,6 +529,18 @@
         scheduleRender();
     }
 
+    function release(ownerId) {
+        if (state.activeOwner !== (ownerId | 0))
+            return;
+
+        state.visible = false;
+        state.ready = false;
+        state.activeOwner = 0;
+        state.stackingGeneration += 1;
+        if (state.layer)
+            state.layer.style.display = "none";
+    }
+
     function destroy() {
         clearTiles();
         if (state.layer)
@@ -493,6 +558,8 @@
         state.visible = false;
         state.initialized = false;
         state.renderPending = false;
+        state.activeOwner = 0;
+        state.topmost = false;
         state.stackingGeneration += 1;
     }
 
@@ -500,6 +567,7 @@
         setGeometry: setGeometry,
         setView: setView,
         invalidateTiles: invalidateTiles,
+        release: release,
         destroy: destroy
     };
 })();
