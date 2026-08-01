@@ -27,9 +27,20 @@ class MapCanvasWidget : public QWidget
 {
     Q_OBJECT
 public:
+    struct TileSelectionRange
+    {
+        bool valid = false;
+        int zoom = 0;
+        int tile_x_min = 0;
+        int tile_x_max = -1;
+        int tile_y_min = 0;
+        int tile_y_max = -1;
+    };
+
     explicit MapCanvasWidget(MapModel *map_model, MapWidget *map, HydraulicData *hydraulic_data, QWidget *parent = nullptr);
     
     int backgroundOpacity() const;
+    TileSelectionRange tileSelectionRange(int zoom) const;
     
     void startRectangleSelection(bool oneshot, bool interact_with_entities = true);
     void cancelRectangleSelection();

@@ -37,6 +37,7 @@ public:
     ~MapWidget() override;
 
     MapModel *model() const;
+    void deleteCachedTiles(int zoom, int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max);
 
     bool handleKeyPressEvent(QKeyEvent *event);
     bool handleKeyReleaseEvent(QKeyEvent *event);

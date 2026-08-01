@@ -20,6 +20,7 @@ public:
 
     const QPixmap *tile(const QString &key) const;
     void requestTile(const QString &endpoint, const QString &key, int x, int y);
+    void deleteTiles(const QString &key_prefix, int tile_count, int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max);
     void setMapServerMode(MapServerMode mode);
 
 signals:
@@ -45,6 +46,7 @@ private:
 
     InterfaceServerMap *interface_map = nullptr;
     QSet<QString> tiles_pending;
+    QSet<QString> tiles_invalidated_while_pending;
     QHash<QString, TileFailure> tile_failures;
     QCache<QString, QPixmap> cache;
 };

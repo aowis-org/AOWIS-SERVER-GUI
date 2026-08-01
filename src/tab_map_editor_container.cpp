@@ -155,6 +155,21 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
     });
     connect(this->button_tiles_delete, &QToolButton::clicked, this, [this]
     {
+        for (int zoom = this->spin_zoom_from->value(); zoom <= this->spin_zoom_to->value(); ++zoom)
+        {
+            const MapCanvasWidget::TileSelectionRange range = this->map_canvas->tileSelectionRange(zoom);
+            if (!range.valid)
+                continue;
+
+            this->map->deleteCachedTiles(
+                zoom,
+                range.tile_x_min,
+                range.tile_x_max,
+                range.tile_y_min,
+                range.tile_y_max);
+        }
+
+        this->map->repaint();
         this->map_canvas->clearTileSelectionOverlay();
         this->button_tiles_delete->setChecked(false);
         this->button_tiles_update->setChecked(false);

@@ -101,6 +101,18 @@ MapModel *MapWidget::model() const
     return this->m_model;
 }
 
+void MapWidget::deleteCachedTiles(int zoom, int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max)
+{
+    const int bounded_zoom = qBound(MapModel::MinZoom, zoom, MapModel::MaxZoom);
+    this->tile_repository->deleteTiles(
+        this->m_model->tileCachePrefix(bounded_zoom),
+        1 << bounded_zoom,
+        tile_x_min,
+        tile_x_max,
+        tile_y_min,
+        tile_y_max);
+}
+
 void MapWidget::init()
 {
     this->setContextMenuPolicy(Qt::CustomContextMenu);

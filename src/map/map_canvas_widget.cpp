@@ -88,25 +88,44 @@ void MapCanvasWidget::clearTileSelectionOverlay()
     update();
 }
 
+MapCanvasWidget::TileSelectionRange MapCanvasWidget::tileSelectionRange(int zoom) const
+{
+    TileSelectionRange range;
+    range.zoom = zoom;
+
+    if (!this->tile_selection_overlay.visible || zoom < MapModel::MinZoom || zoom > MapModel::MaxZoom)
+        return range;
+
+    const double zoom_scale = std::ldexp(1.0, zoom - this->tile_selection_overlay.zoom);
+    const double selected_west_tile = this->tile_selection_overlay.tile_x_min * zoom_scale;
+    const double selected_east_tile = (this->tile_selection_overlay.tile_x_max + 1.0) * zoom_scale;
+    const double selected_north_tile = this->tile_selection_overlay.tile_y_min * zoom_scale;
+    const double selected_south_tile = (this->tile_selection_overlay.tile_y_max + 1.0) * zoom_scale;
+    const int tile_count = 1 << zoom;
+
+    range.tile_x_min = int(std::floor(selected_west_tile));
+    range.tile_x_max = int(std::ceil(selected_east_tile)) - 1;
+    range.tile_y_min = qBound(0, int(std::floor(selected_north_tile)), tile_count - 1);
+    range.tile_y_max = qBound(0, int(std::ceil(selected_south_tile)) - 1, tile_count - 1);
+    range.valid = range.tile_x_min <= range.tile_x_max && range.tile_y_min <= range.tile_y_max;
+    return range;
+}
+
 void MapCanvasWidget::paintEventTileSelectionOverlay(QPainter &paint)
 {
     if (!this->tile_selection_overlay.visible)
         return;
 
     const int current_zoom = this->map_model->zoom();
-    const double zoom_scale = std::ldexp(1.0, current_zoom - this->tile_selection_overlay.zoom);
-    const double selected_west_tile = this->tile_selection_overlay.tile_x_min * zoom_scale;
-    const double selected_east_tile = (this->tile_selection_overlay.tile_x_max + 1.0) * zoom_scale;
-    const double selected_north_tile = this->tile_selection_overlay.tile_y_min * zoom_scale;
-    const double selected_south_tile = (this->tile_selection_overlay.tile_y_max + 1.0) * zoom_scale;
+    const TileSelectionRange current_range = tileSelectionRange(current_zoom);
+    if (!current_range.valid)
+        return;
 
     const int world_tile_count = 1 << current_zoom;
-    const int current_tile_x_min = int(std::floor(selected_west_tile));
-    const int current_tile_x_max = int(std::ceil(selected_east_tile)) - 1;
-    const int current_tile_y_min = qBound(0, int(std::floor(selected_north_tile)), world_tile_count - 1);
-    const int current_tile_y_max = qBound(0, int(std::ceil(selected_south_tile)) - 1, world_tile_count - 1);
-    if (current_tile_x_min > current_tile_x_max || current_tile_y_min > current_tile_y_max)
-        return;
+    const int current_tile_x_min = current_range.tile_x_min;
+    const int current_tile_x_max = current_range.tile_x_max;
+    const int current_tile_y_min = current_range.tile_y_min;
+    const int current_tile_y_max = current_range.tile_y_max;
 
     const QPointF center_tile = this->map_model->centerTile();
     double west_tile = current_tile_x_min;

@@ -54,7 +54,13 @@ QPointF MapModel::centerTile() const
 QString MapModel::tileCacheKey(int x, int y) const
 {
     const int wrapped_x = GeoWebMercator::wrapTileX(x, this->m_zoom);
-    return tileSourcePath() + QString("/%1/%2/%3").arg(this->m_zoom).arg(wrapped_x).arg(y);
+    return tileCachePrefix(this->m_zoom) + QString("%1/%2").arg(wrapped_x).arg(y);
+}
+
+QString MapModel::tileCachePrefix(int zoom) const
+{
+    const int bounded_zoom = std::clamp(zoom, MinZoom, MaxZoom);
+    return tileSourcePath(bounded_zoom) + QString("/%1/").arg(bounded_zoom);
 }
 
 QString MapModel::tileEndpoint(int x, int y) const
@@ -62,7 +68,7 @@ QString MapModel::tileEndpoint(int x, int y) const
     const int wrapped_x = GeoWebMercator::wrapTileX(x, this->m_zoom);
 
     return QString("/%1/%2/%3/%4.png")
-        .arg(tileSourcePath())
+        .arg(tileSourcePath(this->m_zoom))
         .arg(this->m_zoom)
         .arg(wrapped_x)
         .arg(y);
@@ -85,10 +91,10 @@ QString MapModel::providerPath() const
     return QStringLiteral("arcgis");
 }
 
-QString MapModel::tileSourcePath() const
+QString MapModel::tileSourcePath(int zoom) const
 {
     // Only this source currently provides zoom levels above 17 in the map backend.
-    if (this->m_zoom > 17)
+    if (zoom > 17)
         return QStringLiteral("osmcyclo");
 
     return providerPath();
