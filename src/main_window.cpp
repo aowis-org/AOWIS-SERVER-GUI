@@ -68,6 +68,8 @@ MainWindow::MainWindow(QWidget *parent)
         connect(dock, &QDockWidget::visibilityChanged, this, [this, dock](bool visible)
         {
             onRightDockVisibilityChanged(dock, visible);
+            if (visible)
+                scheduleMapEditorGuideDockResize();
         });
     }
 
@@ -525,6 +527,61 @@ void MainWindow::onRightDockVisibilityChanged(QDockWidget *dock, bool visible)
 
     this->right_dock_visibility.insert(dock, true);
     hideRightDock(dock);
+}
+
+void MainWindow::scheduleMapEditorGuideDockResize()
+{
+    if (this->map_editor_guide_resize_pending)
+        return;
+
+    this->map_editor_guide_resize_pending = true;
+    QTimer::singleShot(0, this, [this]
+    {
+        this->map_editor_guide_resize_pending = false;
+        resizeMapEditorGuideDock();
+    });
+}
+
+void MainWindow::resizeMapEditorGuideDock()
+{
+    if (this->right_dock_area_hidden || !this->dock_map_editor_guide->isVisible() || this->dock_map_editor_guide->isFloating() ||
+        dockWidgetArea(this->dock_map_editor_guide) != Qt::RightDockWidgetArea)
+    {
+        return;
+    }
+
+    QList<QDockWidget *> other_docks;
+    const QList<QDockWidget *> docks = findChildren<QDockWidget *>(QString(), Qt::FindDirectChildrenOnly);
+    for (QDockWidget *dock : docks)
+    {
+        if (dock == this->dock_map_editor_guide || !dock->isVisible() || dock->isFloating() ||
+            dockWidgetArea(dock) != Qt::RightDockWidgetArea)
+        {
+            continue;
+        }
+
+        other_docks.append(dock);
+    }
+
+    if (other_docks.isEmpty())
+        return;
+
+    const int available_height = this->centralWidget() != nullptr ? this->centralWidget()->height() : this->height();
+    if (available_height <= 0)
+        return;
+
+    const int guide_height = qMax(1, available_height / 4);
+    const int other_height = qMax(1, (available_height - guide_height) / other_docks.size());
+
+    QList<QDockWidget *> docks_to_resize{this->dock_map_editor_guide};
+    QList<int> dock_heights{guide_height};
+    for (QDockWidget *dock : other_docks)
+    {
+        docks_to_resize.append(dock);
+        dock_heights.append(other_height);
+    }
+
+    resizeDocks(docks_to_resize, dock_heights, Qt::Vertical);
 }
 
 void MainWindow::fullScreenToggle()

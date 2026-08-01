@@ -88,6 +88,8 @@ private:
     void restoreRightDockAreaForMapEditorSelection();
     void hideRightDock(QDockWidget *dock);
     void onRightDockVisibilityChanged(QDockWidget *dock, bool visible);
+    void scheduleMapEditorGuideDockResize();
+    void resizeMapEditorGuideDock();
     void updateMapEdgePanning();
 
 #ifdef Q_OS_WASM
@@ -109,6 +111,7 @@ private:
     bool right_dock_area_hidden = false;
     QHash<QDockWidget *, bool> right_dock_visibility;
     QSet<QDockWidget *> right_docks_being_hidden;
+    bool map_editor_guide_resize_pending = false;
     
     MapTileRepository *map_tile_repository;
     MapModel *map_model_monitor;
