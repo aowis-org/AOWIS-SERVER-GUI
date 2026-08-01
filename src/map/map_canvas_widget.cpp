@@ -189,7 +189,10 @@ void MapCanvasWidget::focusOutEvent(QFocusEvent *event)
 
 void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::LeftButton &&
+    const bool entity_interaction_enabled = !this->rectangle_selection_active || this->rectangle_selection_interacts_with_entities;
+
+    if (entity_interaction_enabled &&
+        event->button() == Qt::LeftButton &&
         !this->rectangle_dragging &&
         (this->map_canvas_entities->selectDeviceLinkAt(event->position()) ||
          this->map_canvas_entities->selectPipeAt(event->position())))
@@ -201,6 +204,17 @@ void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
     
     if (event->button() == Qt::RightButton)
     {
+        if (this->rectangle_selection_active && !this->rectangle_selection_interacts_with_entities)
+        {
+            this->rectangle_start_wgs84 = this->map_model->wgs84FromScreen(event->position().toPoint(), size());
+            this->rectangle_current_wgs84 = this->rectangle_start_wgs84;
+            this->rectangle_dragging = true;
+            setCursor(Qt::CrossCursor);
+            update();
+            event->accept();
+            return;
+        }
+
         if (this->map_canvas_entities->anchorMarker(event))
         {
             update();
@@ -241,15 +255,18 @@ void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
 void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
 {
     const bool map_handled_event = this->map->handleMouseMoveEvent(event);
+    const bool entity_interaction_enabled = !this->rectangle_selection_active || this->rectangle_selection_interacts_with_entities;
 
     if (this->rectangle_selection_active && this->rectangle_dragging)
     {
         setCursor(Qt::CrossCursor);
         this->rectangle_current_wgs84 = this->map_model->wgs84FromScreen(event->position().toPoint(), size());
 
-        const QRect selected_rect = currentSelectionRect();
-        this->map_canvas_entities->onRectangleSelect(
-            selected_rect, RectangleSelectMode::Replace);
+        if (this->rectangle_selection_interacts_with_entities)
+        {
+            const QRect selected_rect = currentSelectionRect();
+            this->map_canvas_entities->onRectangleSelect(selected_rect, RectangleSelectMode::Replace);
+        }
 
         update();
         event->accept();
@@ -259,6 +276,13 @@ void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
     if (map_handled_event)
         return;
     
+    if (!entity_interaction_enabled)
+    {
+        unsetCursor();
+        QWidget::mouseMoveEvent(event);
+        return;
+    }
+
     this->map_canvas_entities->floatEntity(event);
     
     if (this->map_canvas_entities->isDeviceLinkAt(event->position()) ||
@@ -291,8 +315,9 @@ void MapCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
         int distance_min = 0; // 3
         if (selected_rect.width() > distance_min && selected_rect.height() > distance_min)
         {
-            this->map_canvas_entities->onRectangleSelect(
-                selected_rect, RectangleSelectMode::Replace);
+            if (this->rectangle_selection_interacts_with_entities)
+                this->map_canvas_entities->onRectangleSelect(selected_rect, RectangleSelectMode::Replace);
+
             emit signalRectangleSelected(getSelectionRect(selected_rect));
         }
         else
@@ -322,9 +347,10 @@ void MapCanvasWidget::resizeEvent(QResizeEvent *event)
     QWidget::resizeEvent(event);
 }
 
-void MapCanvasWidget::startRectangleSelection(bool oneshot)
+void MapCanvasWidget::startRectangleSelection(bool oneshot, bool interact_with_entities)
 {
     this->is_rectangle_selection_oneshot = oneshot;
+    this->rectangle_selection_interacts_with_entities = interact_with_entities;
     
     this->rectangle_selection_active = true;
     this->rectangle_dragging = false;

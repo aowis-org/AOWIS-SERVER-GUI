@@ -58,10 +58,16 @@ private:
     QSpinBox *spin_zoom_to;
     
     QToolBox *toolbox;
+    int toolbox_edit_index = -1;
+    int toolbox_cache_index = -1;
     void createToolboxCache(QToolBox *tbx);
     void createToolboxEdit(QToolBox *tbx);
+    void setToolboxMode(int index);
     
     QButtonGroup *button_group_tools = nullptr;
+    QRadioButton *button_radio_select = nullptr;
+    QToolButton *button_tiles_delete = nullptr;
+    QToolButton *button_tiles_update = nullptr;
     QCheckBox *checkbox_map_editor_guide = nullptr;
 
 public slots:

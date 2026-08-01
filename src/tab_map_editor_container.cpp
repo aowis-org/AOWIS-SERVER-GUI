@@ -83,10 +83,10 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_ca
     this->layout->addWidget(this->toolbox);
     this->layout->addStretch();
     
-    //this->toolbox->setCurrentIndex(0);
-    
+    connect(this->toolbox, &QToolBox::currentChanged, this, &MapEditorMenuWidget::setToolboxMode);
     connect(this->map_nav, &MapNavigationWidget::signalSlideOpacityChanged, this, &MapEditorMenuWidget::signalSlideOpacityChanged);
     
+    this->setToolboxMode(this->toolbox->currentIndex());
 }
 
 MapNavigationWidget *MapEditorMenuWidget::mapNavigationWidget()
@@ -104,17 +104,8 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
     QWidget *wgt = new QWidget(tbx);
     QGridLayout *grid = new QGridLayout(wgt);
     
-    QLabel *label_explanation_rectangle = new QLabel("<b>Select Area</b> on the map first:", this);
+    QLabel *label_explanation_rectangle = new QLabel("<b>Select a region first:</b> right-click and drag on the map. Tile-cache selection does not interact with network entities.", this);
     label_explanation_rectangle->setWordWrap(true);
-    
-    QToolButton *btn_select_rectangle = new QToolButton(wgt);
-    btn_select_rectangle->setText("Select Area");
-    btn_select_rectangle->setCheckable(true);
-    btn_select_rectangle->setAutoRaise(false);
-    connect(btn_select_rectangle, &QToolButton::clicked, this, [this, btn_select_rectangle]
-    {
-        this->map_canvas->startRectangleSelection(true);
-    });
     
     QLabel *label_explanation_spinners = new QLabel("<b>Select the zoom level range</b> (from - to) for the tiles you want to delete/reload:");
     label_explanation_spinners->setWordWrap(true);
@@ -134,43 +125,42 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
     });
     connect(this->map, &MapWidget::signalZoomChanged, this->spin_zoom_from, &QSpinBox::setValue);
     
-    QToolButton *btn_tiles_delete = new QToolButton(wgt);
-    btn_tiles_delete->setText("Delete Tiles");
-    btn_tiles_delete->setCheckable(true);
-    btn_tiles_delete->setEnabled(false);
+    this->button_tiles_delete = new QToolButton(wgt);
+    this->button_tiles_delete->setText("Delete Tiles");
+    this->button_tiles_delete->setCheckable(true);
+    this->button_tiles_delete->setEnabled(false);
     
-    QToolButton *btn_tiles_update = new QToolButton(wgt);
-    btn_tiles_update->setText("Update Tiles");
-    btn_tiles_update->setCheckable(true);
-    btn_tiles_update->setEnabled(false);
+    this->button_tiles_update = new QToolButton(wgt);
+    this->button_tiles_update->setText("Update Tiles");
+    this->button_tiles_update->setCheckable(true);
+    this->button_tiles_update->setEnabled(false);
     
-    connect(this->map_canvas, &MapCanvasWidget::signalRectangleSelectionCanceled, this, [this, btn_select_rectangle, btn_tiles_delete, btn_tiles_update]
+    connect(this->map_canvas, &MapCanvasWidget::signalRectangleSelectionCanceled, this, [this]
     {
-        btn_select_rectangle->setChecked(false);
-        btn_tiles_delete->setEnabled(false);
-        btn_tiles_update->setEnabled(false);
+        if (this->toolbox->currentIndex() != this->toolbox_cache_index)
+            return;
+
+        this->button_tiles_delete->setEnabled(false);
+        this->button_tiles_update->setEnabled(false);
     });
-    connect(this->map_canvas, &MapCanvasWidget::signalRectangleSelected, this, [this, btn_select_rectangle, btn_tiles_delete, btn_tiles_update]
+    connect(this->map_canvas, &MapCanvasWidget::signalRectangleSelected, this, [this]
     {
-        btn_select_rectangle->setChecked(false);
-        btn_tiles_delete->setEnabled(true);
-        btn_tiles_update->setEnabled(true);
+        if (this->toolbox->currentIndex() != this->toolbox_cache_index)
+            return;
+
+        this->button_tiles_delete->setEnabled(true);
+        this->button_tiles_update->setEnabled(true);
     });
     
     grid->addWidget(label_explanation_rectangle, 0, 0, 1, 2);
-    grid->addWidget(btn_select_rectangle, 1, 0, 1, 2);
-    
-    grid->addWidget(label_explanation_spinners, 2, 0, 1, 2);
-    
-    grid->addWidget(spin_zoom_from, 3, 0);
-    grid->addWidget(spin_zoom_to, 3, 1);
-    
-    grid->addWidget(label_explanation_actions, 4, 0, 1, 2);
-    
-    grid->addWidget(btn_tiles_delete, 5, 0, 1, 2);
-    grid->addWidget(btn_tiles_update, 6, 0, 1, 2);
-    
-    tbx->addItem(wgt, "Tile Cache");
+    grid->addWidget(label_explanation_spinners, 1, 0, 1, 2);
+    grid->addWidget(this->spin_zoom_from, 2, 0);
+    grid->addWidget(this->spin_zoom_to, 2, 1);
+    grid->addWidget(label_explanation_actions, 3, 0, 1, 2);
+    grid->addWidget(this->button_tiles_delete, 4, 0, 1, 2);
+    grid->addWidget(this->button_tiles_update, 5, 0, 1, 2);
+
+    this->toolbox_cache_index = tbx->addItem(wgt, "Tile Cache");
 }
 void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
 {
@@ -179,14 +169,17 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     
     this->button_group_tools = new QButtonGroup(this);
     
-    QRadioButton *button_radio_select = new QRadioButton("[Esc] Select", wgt);
-    button_radio_select->setToolTip("Cancel placement and return to selection mode");
-    button_radio_select->setShortcut(Qt::Key_Escape);
-    lay->addWidget(button_radio_select);
-    this->button_group_tools->addButton(button_radio_select, 100);
-    connect(button_radio_select, &QRadioButton::clicked, this, [this]
+    this->button_radio_select = new QRadioButton("[Esc] Select", wgt);
+    this->button_radio_select->setToolTip("Cancel placement and return to selection mode");
+    this->button_radio_select->setShortcut(Qt::Key_Escape);
+    lay->addWidget(this->button_radio_select);
+    this->button_group_tools->addButton(this->button_radio_select, 100);
+    connect(this->button_radio_select, &QRadioButton::clicked, this, [this]
     {
-        this->map_canvas->startRectangleSelection(false);
+        if (this->toolbox->currentIndex() != this->toolbox_edit_index)
+            return;
+
+        this->map_canvas->startRectangleSelection(false, true);
     });
     
     QToolButton *button_delete = new QToolButton(wgt);
@@ -294,10 +287,26 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
         this->map_canvas->stopEntityPositioning();
     });
     
-    // activate by default
-    button_radio_select->click();
+    this->toolbox_edit_index = tbx->addItem(wgt, "Edit Network");
+}
+
+void MapEditorMenuWidget::setToolboxMode(int index)
+{
+    this->map_canvas->stopEntityPositioning();
+    this->button_tiles_delete->setEnabled(false);
+    this->button_tiles_update->setEnabled(false);
+
+    if (index == this->toolbox_cache_index)
+    {
+        this->map_canvas->startRectangleSelection(false, false);
+        return;
+    }
     
-    tbx->addItem(wgt, "Edit Network");
+    if (index == this->toolbox_edit_index)
+    {
+        this->button_radio_select->setChecked(true);
+        this->map_canvas->startRectangleSelection(false, true);
+    }
 }
 
 

@@ -31,7 +31,7 @@ public:
     
     int backgroundOpacity() const;
     
-    void startRectangleSelection(bool oneshot);
+    void startRectangleSelection(bool oneshot, bool interact_with_entities = true);
     void cancelRectangleSelection();
     
     MapCanvasEntities *mapCanvasEntities();
@@ -69,6 +69,7 @@ private:
     bool is_rectangle_selection_oneshot = true;
     bool rectangle_selection_active = false;
     bool rectangle_dragging = false;
+    bool rectangle_selection_interacts_with_entities = true;
     CoordinateWGS84Rect getSelectionRect(const QRect &selected_rect) const;
     
     CoordinateWGS84 rectangle_start_wgs84;
