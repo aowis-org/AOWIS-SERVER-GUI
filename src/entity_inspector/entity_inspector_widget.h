@@ -82,8 +82,9 @@ protected:
     QDoubleSpinBox *spin_elevation_value = nullptr;
     
     void addGroupDemands();
-    
-    
+    QLabel *label_demands_summary = nullptr;
+    QDoubleSpinBox *spin_emitter_coefficient = nullptr;
+
     void openDemandsEditor();
     QPointer<QDialog> dialog_demands = nullptr;
     QPointer<QTableWidget> table_demands = nullptr;
@@ -95,6 +96,12 @@ protected:
 private:
     void refreshHydraulicNode();
     void refreshHydraulicNodeElevation();
+    void scheduleJunctionDemandsRefresh();
+    void refreshJunctionDemands();
+    void rebuildJunctionDemandRows(const HydraulicNodeJunction &junction);
+    void addJunctionDemandRow(int demand_index, const HydraulicNodeJunctionDemand &demand);
+    void updateJunctionDemandRow(int demand_index, const HydraulicNodeJunctionDemand &demand);
+    void populateDemandPatternCombo(QComboBox *combo_pattern, const QUuid &pattern_uuid);
     void updateElevationModeUi();
     void updateCalculatedElevation();
     bool setElevationInputType(HydraulicNodeElevationInputType input_type);
@@ -108,6 +115,7 @@ private:
     InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
     QUuid entity_uuid;
     QString entity_title_prefix;
+    bool junction_demands_refresh_pending = false;
     
     QTabWidget *tabs = nullptr;
     QVBoxLayout *layout_main = nullptr;

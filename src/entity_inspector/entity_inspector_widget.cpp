@@ -3,6 +3,7 @@
 #include <QGridLayout>
 #include <QPixmap>
 #include <QSignalBlocker>
+#include <QTimer>
 
 EntityInspectorWidget::EntityInspectorWidget(HydraulicData *hydraulic_data, QWidget *parent)
     : QWidget(parent),
@@ -323,9 +324,16 @@ void EntityInspectorWidget::bindHydraulicNode(InfrastructureEntity entity_type, 
     connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this, [this](InfrastructureEntity entity_type_changed, const QUuid &uuid_changed)
     {
         if (entity_type_changed == this->entity_type && uuid_changed == this->entity_uuid)
+        {
             refreshHydraulicNode();
+            scheduleJunctionDemandsRefresh();
+        }
     });
-    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, &EntityInspectorWidget::refreshHydraulicNode);
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, [this]()
+    {
+        refreshHydraulicNode();
+        scheduleJunctionDemandsRefresh();
+    });
 }
 
 void EntityInspectorWidget::refreshHydraulicNode()
@@ -704,112 +712,348 @@ void EntityInspectorWidget::onHeadlossFormulaChanged(HeadlossFormulas formulas)
 
 void EntityInspectorWidget::addGroupDemands()
 {
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Demands");
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Demands & Emitter");
     QGridLayout *grid = new QGridLayout(group);
-    
+
+    this->label_demands_summary = new QLabel();
+    this->label_demands_summary->setWordWrap(true);
+
+    QLabel *label_emitter_coefficient = new QLabel("Emitter Coefficient");
+    this->spin_emitter_coefficient = new QDoubleSpinBox();
+    this->spin_emitter_coefficient->setRange(-1000000000.0, 1000000000.0);
+    this->spin_emitter_coefficient->setDecimals(6);
+    this->spin_emitter_coefficient->setSingleStep(0.001);
+    this->spin_emitter_coefficient->setSuffix(QStringLiteral(" m³/h/mⁿ"));
+    this->spin_emitter_coefficient->setAlignment(Qt::AlignRight);
+    this->spin_emitter_coefficient->setToolTip(
+        "Coefficient C in Q = C · pⁿ. Flow Q is stored in m³/h, pressure head p in m, "
+        "and n is the global emitter exponent."
+    );
+
     QPushButton *button_editor = new QPushButton("Open Editor");
-    connect(button_editor, &QPushButton::clicked, this, [this]
-            {
-                openDemandsEditor();
-            });
-    
-    grid->addWidget(button_editor, 1, 0);
-    
+    connect(button_editor, &QPushButton::clicked, this, [this]()
+    {
+        openDemandsEditor();
+    });
+    connect(this->spin_emitter_coefficient, &QDoubleSpinBox::valueChanged, this, [this](double value)
+    {
+        this->hydraulic_data->setJunctionEmitterCoefficientM3PerHPerMExponent(
+            this->entity_uuid, value);
+    });
+
+    grid->addWidget(this->label_demands_summary, 0, 0, 1, 2);
+    grid->addWidget(label_emitter_coefficient, 1, 0);
+    grid->addWidget(this->spin_emitter_coefficient, 1, 1);
+    grid->addWidget(button_editor, 2, 0, 1, 2);
+
     this->layoutConfiguration()->addWidget(group);
+    refreshJunctionDemands();
 }
+
+void EntityInspectorWidget::scheduleJunctionDemandsRefresh()
+{
+    if (this->entity_type != InfrastructureEntity::Junction ||
+        this->junction_demands_refresh_pending)
+        return;
+
+    this->junction_demands_refresh_pending = true;
+    QTimer::singleShot(0, this, [this]()
+    {
+        this->junction_demands_refresh_pending = false;
+        refreshJunctionDemands();
+    });
+}
+
+void EntityInspectorWidget::refreshJunctionDemands()
+{
+    if (!this->hydraulic_data || this->entity_type != InfrastructureEntity::Junction ||
+        this->entity_uuid.isNull())
+        return;
+
+    const std::optional<HydraulicNodeJunction> junction =
+        this->hydraulic_data->junction(this->entity_uuid);
+    if (!junction.has_value())
+        return;
+
+    if (this->label_demands_summary)
+    {
+        double total_base_demand_m3_per_h = 0.0;
+        for (const HydraulicNodeJunctionDemand &demand : junction->demands)
+            total_base_demand_m3_per_h += demand.base_demand_m3_per_h;
+
+        const int demand_count = junction->demands.size();
+        this->label_demands_summary->setText(
+            QStringLiteral("%1 demand categor%2\nTotal base demand: %3 m³/h")
+                .arg(demand_count)
+                .arg(demand_count == 1 ? QStringLiteral("y") : QStringLiteral("ies"))
+                .arg(total_base_demand_m3_per_h, 0, 'f', 3)
+        );
+    }
+
+    if (this->spin_emitter_coefficient)
+    {
+        const QSignalBlocker emitter_blocker(this->spin_emitter_coefficient);
+        this->spin_emitter_coefficient->setValue(
+            junction->emitter_coefficient_m3_per_h_per_m_exponent);
+    }
+
+    if (!this->table_demands)
+        return;
+
+    if (this->table_demands->rowCount() != junction->demands.size())
+    {
+        rebuildJunctionDemandRows(junction.value());
+        return;
+    }
+
+    for (int demand_index = 0; demand_index < junction->demands.size(); demand_index++)
+        updateJunctionDemandRow(demand_index, junction->demands.at(demand_index));
+}
+
+void EntityInspectorWidget::rebuildJunctionDemandRows(const HydraulicNodeJunction &junction)
+{
+    if (!this->table_demands)
+        return;
+
+    this->table_demands->setUpdatesEnabled(false);
+    this->table_demands->clearContents();
+    this->table_demands->setRowCount(junction.demands.size());
+
+    for (int demand_index = 0; demand_index < junction.demands.size(); demand_index++)
+        addJunctionDemandRow(demand_index, junction.demands.at(demand_index));
+
+    this->table_demands->setUpdatesEnabled(true);
+}
+
+void EntityInspectorWidget::addJunctionDemandRow(
+    int demand_index, const HydraulicNodeJunctionDemand &demand)
+{
+    if (!this->table_demands)
+        return;
+
+    QLineEdit *line_category = new QLineEdit(this->table_demands);
+    QDoubleSpinBox *spin_base_demand = new QDoubleSpinBox(this->table_demands);
+    spin_base_demand->setRange(-1000000000.0, 1000000000.0);
+    spin_base_demand->setDecimals(6);
+    spin_base_demand->setSingleStep(0.1);
+    spin_base_demand->setSuffix(QStringLiteral(" m³/h"));
+    spin_base_demand->setAlignment(Qt::AlignRight);
+
+    QComboBox *combo_pattern = new QComboBox(this->table_demands);
+
+    QComboBox *combo_source = new QComboBox(this->table_demands);
+    combo_source->addItem(
+        "Manual Estimation",
+        static_cast<int>(HydraulicNodeJunctionDemandSourceMethod::ManualEstimation));
+    combo_source->addItem(
+        "Meter Data",
+        static_cast<int>(HydraulicNodeJunctionDemandSourceMethod::MeterData));
+    combo_source->addItem(
+        "Scenario",
+        static_cast<int>(HydraulicNodeJunctionDemandSourceMethod::Scenario));
+
+    QLineEdit *line_note = new QLineEdit(this->table_demands);
+    QPushButton *button_delete = new QPushButton(QIcon(":/icon/remove.png"), "", this->table_demands);
+    button_delete->setToolTip("Delete this demand category");
+    button_delete->setMaximumWidth(35);
+
+    this->table_demands->setCellWidget(demand_index, 0, line_category);
+    this->table_demands->setCellWidget(demand_index, 1, spin_base_demand);
+    this->table_demands->setCellWidget(demand_index, 2, combo_pattern);
+    this->table_demands->setCellWidget(demand_index, 3, combo_source);
+    this->table_demands->setCellWidget(demand_index, 4, line_note);
+    this->table_demands->setCellWidget(demand_index, 5, button_delete);
+
+    updateJunctionDemandRow(demand_index, demand);
+
+    connect(line_category, &QLineEdit::textEdited, this, [this, demand_index](const QString &category_name)
+    {
+        this->hydraulic_data->setJunctionDemandCategoryName(
+            this->entity_uuid, demand_index, category_name);
+    });
+    connect(spin_base_demand, &QDoubleSpinBox::valueChanged, this, [this, demand_index](double base_demand_m3_per_h)
+    {
+        this->hydraulic_data->setJunctionDemandBaseDemandM3PerH(
+            this->entity_uuid, demand_index, base_demand_m3_per_h);
+    });
+    connect(combo_pattern, &QComboBox::currentIndexChanged, this, [this, demand_index, combo_pattern](int)
+    {
+        this->hydraulic_data->setJunctionDemandPatternUuid(
+            this->entity_uuid, demand_index, combo_pattern->currentData().toUuid());
+    });
+    connect(combo_source, &QComboBox::currentIndexChanged, this, [this, demand_index, combo_source](int)
+    {
+        const HydraulicNodeJunctionDemandSourceMethod source_method =
+            static_cast<HydraulicNodeJunctionDemandSourceMethod>(
+                combo_source->currentData().toInt());
+        this->hydraulic_data->setJunctionDemandSourceMethod(
+            this->entity_uuid, demand_index, source_method);
+    });
+    connect(line_note, &QLineEdit::textEdited, this, [this, demand_index](const QString &note)
+    {
+        this->hydraulic_data->setJunctionDemandNote(this->entity_uuid, demand_index, note);
+    });
+    connect(button_delete, &QPushButton::clicked, this, [this, demand_index]()
+    {
+        this->hydraulic_data->removeJunctionDemand(this->entity_uuid, demand_index);
+    });
+}
+
+void EntityInspectorWidget::updateJunctionDemandRow(
+    int demand_index, const HydraulicNodeJunctionDemand &demand)
+{
+    if (!this->table_demands || demand_index < 0 || demand_index >= this->table_demands->rowCount())
+        return;
+
+    QLineEdit *line_category = qobject_cast<QLineEdit *>(
+        this->table_demands->cellWidget(demand_index, 0));
+    QDoubleSpinBox *spin_base_demand = qobject_cast<QDoubleSpinBox *>(
+        this->table_demands->cellWidget(demand_index, 1));
+    QComboBox *combo_pattern = qobject_cast<QComboBox *>(
+        this->table_demands->cellWidget(demand_index, 2));
+    QComboBox *combo_source = qobject_cast<QComboBox *>(
+        this->table_demands->cellWidget(demand_index, 3));
+    QLineEdit *line_note = qobject_cast<QLineEdit *>(
+        this->table_demands->cellWidget(demand_index, 4));
+
+    if (line_category && line_category->text() != demand.category_name)
+    {
+        const QSignalBlocker category_blocker(line_category);
+        line_category->setText(demand.category_name);
+    }
+
+    if (spin_base_demand)
+    {
+        const QSignalBlocker base_demand_blocker(spin_base_demand);
+        spin_base_demand->setValue(demand.base_demand_m3_per_h);
+    }
+
+    if (combo_pattern)
+        populateDemandPatternCombo(combo_pattern, demand.pattern_uuid);
+
+    if (combo_source)
+    {
+        const int source_index = combo_source->findData(static_cast<int>(demand.source_method));
+        const QSignalBlocker source_blocker(combo_source);
+        combo_source->setCurrentIndex(source_index >= 0 ? source_index : 0);
+    }
+
+    if (line_note && line_note->text() != demand.note)
+    {
+        const QSignalBlocker note_blocker(line_note);
+        line_note->setText(demand.note);
+    }
+}
+
+void EntityInspectorWidget::populateDemandPatternCombo(
+    QComboBox *combo_pattern, const QUuid &pattern_uuid)
+{
+    if (!combo_pattern || !this->hydraulic_data)
+        return;
+
+    const QList<HydraulicPatternTime> &patterns =
+        this->hydraulic_data->networkHydraulic().patterns_time;
+    QString pattern_signature;
+    for (const HydraulicPatternTime &pattern : patterns)
+    {
+        pattern_signature += pattern.uuid.toString(QUuid::WithoutBraces);
+        pattern_signature += QLatin1Char(':');
+        pattern_signature += pattern.id;
+        pattern_signature += QLatin1Char('\n');
+    }
+
+    bool pattern_exists = pattern_uuid.isNull();
+    for (const HydraulicPatternTime &pattern : patterns)
+    {
+        if (pattern.uuid == pattern_uuid)
+        {
+            pattern_exists = true;
+            break;
+        }
+    }
+    if (!pattern_exists)
+        pattern_signature += QStringLiteral("missing:%1").arg(
+            pattern_uuid.toString(QUuid::WithoutBraces));
+
+    const QSignalBlocker pattern_blocker(combo_pattern);
+    if (combo_pattern->property("aowisPatternSignature").toString() != pattern_signature)
+    {
+        combo_pattern->clear();
+        combo_pattern->addItem("Constant", QUuid());
+        for (const HydraulicPatternTime &pattern : patterns)
+        {
+            const QString pattern_name = pattern.id.isEmpty()
+                ? pattern.uuid.toString(QUuid::WithoutBraces)
+                : pattern.id;
+            combo_pattern->addItem(pattern_name, pattern.uuid);
+        }
+        if (!pattern_exists)
+        {
+            combo_pattern->addItem(
+                QStringLiteral("[Missing Pattern] %1").arg(
+                    pattern_uuid.toString(QUuid::WithoutBraces)),
+                pattern_uuid);
+        }
+        combo_pattern->setProperty("aowisPatternSignature", pattern_signature);
+    }
+
+    const int pattern_index = combo_pattern->findData(pattern_uuid);
+    combo_pattern->setCurrentIndex(pattern_index >= 0 ? pattern_index : 0);
+}
+
 void EntityInspectorWidget::openDemandsEditor()
 {
-    if (this->dialog_demands != nullptr)
+    if (this->dialog_demands)
     {
         this->dialog_demands->raise();
         this->dialog_demands->activateWindow();
         return;
     }
-    
+
     this->dialog_demands = new QDialog(this);
-    this->dialog_demands->setWindowTitle("Demands");
-    this->dialog_demands->resize(700, 400);
+    this->dialog_demands->setWindowTitle("Junction Demands");
+    this->dialog_demands->resize(950, 420);
     this->dialog_demands->setAttribute(Qt::WA_DeleteOnClose);
-    
+
     QGridLayout *grid = new QGridLayout(this->dialog_demands);
-    
-    this->table_demands = new QTableWidget();
-    this->table_demands->setColumnCount(5);
-    this->table_demands->setHorizontalHeaderLabels(QStringList{"Demand", "Pattern", "Source / Method", "Note", ""});
-    //this->table_demands->setAlternatingRowColors(true);
-    /*
+
+    this->table_demands = new QTableWidget(this->dialog_demands);
+    this->table_demands->setColumnCount(6);
+    this->table_demands->setHorizontalHeaderLabels(
+        QStringList{"Category", "Base Demand", "Pattern", "Source / Method", "Note", ""});
     this->table_demands->verticalHeader()->setVisible(false);
+    this->table_demands->setSelectionMode(QAbstractItemView::NoSelection);
     this->table_demands->horizontalHeader()->setStretchLastSection(false);
-    this->table_demands->setColumnWidth(0, 95);
-    this->table_demands->setColumnWidth(1, 70);
-    this->table_demands->setColumnWidth(2, 70);
-    */
-    this->table_demands->horizontalHeader()->setMinimumSectionSize(1);
-    this->table_demands->setColumnWidth(3, 30);
-    
+    this->table_demands->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Interactive);
+    this->table_demands->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    this->table_demands->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Interactive);
+    this->table_demands->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    this->table_demands->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
+    this->table_demands->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Fixed);
+    this->table_demands->setColumnWidth(0, 150);
+    this->table_demands->setColumnWidth(2, 150);
+    this->table_demands->setColumnWidth(5, 35);
+
     QPushButton *button_demand = new QPushButton("Add Demand");
-    connect(button_demand, &QPushButton::clicked, this, [this]
-            {
-                int row = this->table_demands->rowCount();
-                this->table_demands->insertRow(row);
-                
-                QDoubleSpinBox *spin_base_demand = new QDoubleSpinBox();
-                
-                spin_base_demand->setDecimals(3);
-                spin_base_demand->setMinimum(0.0);
-                spin_base_demand->setMaximum(100000.0);
-                spin_base_demand->setSingleStep(0.1);
-                spin_base_demand->setValue(0.0);
-                spin_base_demand->setSuffix(QStringLiteral(" m³/h"));
-                spin_base_demand->setAlignment(Qt::AlignRight);
-                //spin_base_demand->setMaximumWidth(95);
-                
-                QComboBox *combo_demand = new QComboBox();
-                combo_demand->addItem("Constant");
-                combo_demand->addItem("RESIDENTIAL");
-                //combo_demand->setMaximumWidth(70);
-                
-                QComboBox *combo_source = new QComboBox();
-                combo_source->addItem("Manual Estimation");
-                combo_source->addItem("Meter Data");
-                combo_source->addItem("Scenario");
-                
-                QLineEdit *line_demand = new QLineEdit();
-                line_demand->setPlaceholderText("");
-                line_demand->setMinimumWidth(200);
-                
-                QPushButton *button_delete = new QPushButton(QIcon(":/icon/remove.png"), "");
-                button_delete->setToolTip("Delete this entry");
-                //button_delete->setMaximumWidth(30);
-                
-                this->table_demands->setCellWidget(row, 0, spin_base_demand);
-                this->table_demands->setCellWidget(row, 1, combo_demand);
-                this->table_demands->setCellWidget(row, 2, combo_source);
-                this->table_demands->setCellWidget(row, 3, line_demand);
-                this->table_demands->setCellWidget(row, 4, button_delete);
-                
-                this->table_demands->resizeColumnsToContents();
-            });
-    
-    
+    connect(button_demand, &QPushButton::clicked, this, [this]()
+    {
+        HydraulicNodeJunctionDemand demand;
+        this->hydraulic_data->addJunctionDemand(this->entity_uuid, demand);
+    });
+
     QPushButton *button_patterns = new QPushButton("Manage Patterns");
-    
+
     grid->addWidget(this->table_demands, 0, 0, 1, 2);
     grid->addWidget(button_demand, 1, 0);
-    
     grid->addWidget(button_patterns, 1, 1);
-    
-    connect(
-        this->dialog_demands,
-        &QObject::destroyed,
-        this,
-        [this]
-        {
-            this->dialog_demands = nullptr;
-            this->table_demands = nullptr;
-        }
-        );
-    
+
+    connect(this->dialog_demands, &QObject::destroyed, this, [this]()
+    {
+        this->dialog_demands = nullptr;
+        this->table_demands = nullptr;
+    });
+
+    refreshJunctionDemands();
     this->dialog_demands->show();
 }
 
