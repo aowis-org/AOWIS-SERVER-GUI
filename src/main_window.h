@@ -1,7 +1,11 @@
 #pragma once
 
 #include <QApplication>
+#include <QDockWidget>
+#include <QHash>
+#include <QList>
 #include <QMainWindow>
+#include <QSet>
 #include <QWidget>
 #include <QGridLayout>
 #include <QTabWidget>
@@ -80,6 +84,10 @@ private:
     Qt::WindowStates window_state_saved;
     QRect window_geometry_saved;
     void fullScreenToggle();
+    void toggleRightDockArea();
+    void restoreRightDockAreaForMapEditorSelection();
+    void hideRightDock(QDockWidget *dock);
+    void onRightDockVisibilityChanged(QDockWidget *dock, bool visible);
     void updateMapEdgePanning();
 
 #ifdef Q_OS_WASM
@@ -98,6 +106,9 @@ private:
     EntityMapLegendDock *dock_entity_map_legend;
     MapEditorGuideDock *dock_map_editor_guide;
     TopControlBar *top_control_bar;
+    bool right_dock_area_hidden = false;
+    QHash<QDockWidget *, bool> right_dock_visibility;
+    QSet<QDockWidget *> right_docks_being_hidden;
     
     MapTileRepository *map_tile_repository;
     MapModel *map_model_monitor;

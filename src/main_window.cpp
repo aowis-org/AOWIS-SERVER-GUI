@@ -1,5 +1,6 @@
 #include "main_window.h"
 #include <QPushButton>
+#include <QShortcut>
 #include <qapplication.h>
 
 namespace
@@ -60,6 +61,20 @@ MainWindow::MainWindow(QWidget *parent)
     addDockWidget(Qt::RightDockWidgetArea, this->dock_entity_map_legend);
     addDockWidget(Qt::RightDockWidgetArea, this->dock_map_editor_guide);
     addToolBar(Qt::TopToolBarArea, this->top_control_bar);
+
+    const QList<QDockWidget *> right_docks = findChildren<QDockWidget *>(QString(), Qt::FindDirectChildrenOnly);
+    for (QDockWidget *dock : right_docks)
+    {
+        connect(dock, &QDockWidget::visibilityChanged, this, [this, dock](bool visible)
+        {
+            onRightDockVisibilityChanged(dock, visible);
+        });
+    }
+
+    QShortcut *shortcut_toggle_right_docks = new QShortcut(QKeySequence(Qt::Key_Tab), this);
+    shortcut_toggle_right_docks->setContext(Qt::WindowShortcut);
+    shortcut_toggle_right_docks->setAutoRepeat(false);
+    connect(shortcut_toggle_right_docks, &QShortcut::activated, this, &MainWindow::toggleRightDockArea);
     
     this->dock_entity_map_legend->setVisible(false);
     this->dock_map_editor_guide->setVisible(false);
@@ -236,6 +251,14 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->top_control_bar, &TopControlBar::signalShowEpanetLog, this->simulation_manager, &SimulationManager::showEpanetLog);
     connect(this->top_control_bar, &TopControlBar::signalExportEpanetNetwork, this->simulation_manager, &SimulationManager::exportEpanetNetwork);
     connect(this->top_control_bar, &TopControlBar::signalFullScreenToggle, this, &MainWindow::fullScreenToggle);
+
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, this, &MainWindow::restoreRightDockAreaForMapEditorSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedReservoir, this, &MainWindow::restoreRightDockAreaForMapEditorSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedJunction, this, &MainWindow::restoreRightDockAreaForMapEditorSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedPipe, this, &MainWindow::restoreRightDockAreaForMapEditorSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedPump, this, &MainWindow::restoreRightDockAreaForMapEditorSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedValve, this, &MainWindow::restoreRightDockAreaForMapEditorSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedCustomerPoint, this, &MainWindow::restoreRightDockAreaForMapEditorSelection);
 
 #ifdef Q_OS_WASM
     emscripten_set_fullscreenchange_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, this, EM_TRUE, &MainWindow::fullScreenChangeCallback);
@@ -418,6 +441,75 @@ void MainWindow::changeEvent(QEvent *event)
         });
     }
 #endif
+}
+
+void MainWindow::toggleRightDockArea()
+{
+    const QList<QDockWidget *> docks = findChildren<QDockWidget *>(QString(), Qt::FindDirectChildrenOnly);
+
+    if (!this->right_dock_area_hidden)
+    {
+        this->right_dock_visibility.clear();
+        this->right_dock_area_hidden = true;
+
+        for (QDockWidget *dock : docks)
+        {
+            if (dock->isFloating() || dockWidgetArea(dock) != Qt::RightDockWidgetArea)
+                continue;
+
+            this->right_dock_visibility.insert(dock, dock->isVisible());
+            hideRightDock(dock);
+        }
+
+        return;
+    }
+
+    this->right_dock_area_hidden = false;
+    this->right_docks_being_hidden.clear();
+
+    for (QDockWidget *dock : docks)
+    {
+        if (!this->right_dock_visibility.contains(dock) || dock->isFloating() || dockWidgetArea(dock) != Qt::RightDockWidgetArea)
+            continue;
+
+        dock->setVisible(this->right_dock_visibility.value(dock));
+    }
+
+    this->right_dock_visibility.clear();
+}
+
+void MainWindow::restoreRightDockAreaForMapEditorSelection()
+{
+    if (!this->right_dock_area_hidden || this->tabs->currentWidget() != this->map_editor)
+        return;
+
+    toggleRightDockArea();
+}
+
+void MainWindow::hideRightDock(QDockWidget *dock)
+{
+    if (dock == nullptr || !dock->isVisible())
+        return;
+
+    this->right_docks_being_hidden.insert(dock);
+    dock->hide();
+}
+
+void MainWindow::onRightDockVisibilityChanged(QDockWidget *dock, bool visible)
+{
+    if (!this->right_dock_area_hidden || dock == nullptr || dock->isFloating() || dockWidgetArea(dock) != Qt::RightDockWidgetArea)
+        return;
+
+    if (!visible)
+    {
+        if (this->right_docks_being_hidden.remove(dock) == 0)
+            this->right_dock_visibility.insert(dock, false);
+
+        return;
+    }
+
+    this->right_dock_visibility.insert(dock, true);
+    hideRightDock(dock);
 }
 
 void MainWindow::fullScreenToggle()
