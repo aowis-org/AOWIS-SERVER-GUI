@@ -81,7 +81,16 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendLink, this->dock_entity_map_legend, &EntityMapLegendDock::showMapLegendLink);
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendNode, this->dock_entity_map_legend, &EntityMapLegendDock::showMapLegendNode);
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendHeatmap, this->dock_entity_map_legend, &EntityMapLegendDock::showMapLegendHeatmap);
-    connect(this->map_editor, &MapEditorContainer::signalMapEditorGuideVisibilityChanged, this->dock_map_editor_guide, &MapEditorGuideDock::setRequestedVisible);
+    connect(this->map_editor, &MapEditorContainer::signalMapEditorGuideVisibilityChanged, this, [this](bool visible)
+    {
+        if (visible && this->right_dock_area_hidden)
+        {
+            // Restore first so the guide is not immediately suppressed as a Tab-hidden dock.
+            toggleRightDockArea();
+        }
+
+        this->dock_map_editor_guide->setRequestedVisible(visible);
+    });
     connect(this->map_editor, &MapEditorContainer::signalEditNetworkSectionActive, this->dock_map_editor_guide, &MapEditorGuideDock::setEditNetworkSectionActive);
     connect(this->dock_map_editor_guide, &MapEditorGuideDock::requestedVisibilityChanged, this->map_editor, &MapEditorContainer::setMapEditorGuideChecked);
     this->dock_map_editor_guide->setEditNetworkSectionActive(this->map_editor->isEditNetworkSectionActive());
