@@ -5,6 +5,7 @@
     const TILE_MARGIN = 1;
     const MAP_SERVER_BASE_URL = "http://aowis-server-map.localhost:80";
     const MAX_TILE_RETRY_COUNT = 3;
+    const TILE_SEAM_OVERLAP_PHYSICAL_PIXELS = 1;
 
     const state = {
         layer: null,
@@ -76,6 +77,19 @@
         default:
             return "© OpenStreetMap contributors";
         }
+    }
+
+    function devicePixelRatio() {
+        return Math.max(1, window.devicePixelRatio || 1);
+    }
+
+    function snapToPhysicalPixel(value) {
+        const ratio = devicePixelRatio();
+        return Math.round(value * ratio) / ratio;
+    }
+
+    function tileRenderSize() {
+        return TILE_SIZE + TILE_SEAM_OVERLAP_PHYSICAL_PIXELS / devicePixelRatio();
     }
 
     function worldSize(zoom) {
@@ -196,8 +210,10 @@
         image.decoding = "async";
         image.loading = "eager";
         image.style.position = "absolute";
-        image.style.width = `${TILE_SIZE}px`;
-        image.style.height = `${TILE_SIZE}px`;
+        image.style.display = "block";
+        image.style.width = `${tileRenderSize()}px`;
+        image.style.height = `${tileRenderSize()}px`;
+        image.style.maxWidth = "none";
         image.style.userSelect = "none";
         image.style.pointerEvents = "none";
         image.dataset.retryCount = "0";
@@ -235,8 +251,10 @@
 
         const originPixelX = state.originTileX * TILE_SIZE;
         const originPixelY = state.originTileY * TILE_SIZE;
-        const translateX = state.width / 2 - (state.centerPixelX - originPixelX);
-        const translateY = state.height / 2 - (state.centerPixelY - originPixelY);
+        const translateX = snapToPhysicalPixel(
+            state.width / 2 - (state.centerPixelX - originPixelX));
+        const translateY = snapToPhysicalPixel(
+            state.height / 2 - (state.centerPixelY - originPixelY));
         state.tilePane.style.transform = `translate3d(${translateX}px, ${translateY}px, 0)`;
     }
 
