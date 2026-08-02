@@ -401,6 +401,14 @@ bool HydraulicData::setJunctionDemandBaseDemandM3PerH(
                   uuid, demand_index, base_demand_m3_per_h));
 }
 
+bool HydraulicData::setJunctionDemandPatternMode(
+    const QUuid &uuid, int demand_index, HydraulicTimePatternMode pattern_mode)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setJunctionDemandPatternMode(
+                  uuid, demand_index, pattern_mode));
+}
+
 bool HydraulicData::setJunctionDemandPatternUuid(const QUuid &uuid, int demand_index,
                                                  const QUuid &pattern_uuid)
 {

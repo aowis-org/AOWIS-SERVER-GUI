@@ -52,6 +52,8 @@ public:
                                        const QString &category_name);
     bool setJunctionDemandBaseDemandM3PerH(const QUuid &uuid, int demand_index,
                                            double base_demand_m3_per_h);
+    bool setJunctionDemandPatternMode(const QUuid &uuid, int demand_index,
+                                      HydraulicTimePatternMode pattern_mode);
     bool setJunctionDemandPatternUuid(const QUuid &uuid, int demand_index,
                                       const QUuid &pattern_uuid);
     bool setJunctionDemandSourceMethod(const QUuid &uuid, int demand_index,

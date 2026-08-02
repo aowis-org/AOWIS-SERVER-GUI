@@ -5,6 +5,12 @@
 #include <QSignalBlocker>
 #include <QTimer>
 
+namespace
+{
+constexpr int pattern_mode_role = Qt::UserRole;
+constexpr int pattern_uuid_role = Qt::UserRole + 1;
+}
+
 EntityInspectorWidget::EntityInspectorWidget(HydraulicData *hydraulic_data, QWidget *parent)
     : QWidget(parent),
     hydraulic_data(hydraulic_data),
@@ -878,8 +884,15 @@ void EntityInspectorWidget::addJunctionDemandRow(
     });
     connect(combo_pattern, &QComboBox::currentIndexChanged, this, [this, demand_index, combo_pattern](int)
     {
+        const HydraulicTimePatternMode pattern_mode =
+            static_cast<HydraulicTimePatternMode>(
+                combo_pattern->currentData(pattern_mode_role).toInt());
+        const QUuid pattern_uuid = combo_pattern->currentData(pattern_uuid_role).toUuid();
+
+        this->hydraulic_data->setJunctionDemandPatternMode(
+            this->entity_uuid, demand_index, pattern_mode);
         this->hydraulic_data->setJunctionDemandPatternUuid(
-            this->entity_uuid, demand_index, combo_pattern->currentData().toUuid());
+            this->entity_uuid, demand_index, pattern_uuid);
     });
     connect(combo_source, &QComboBox::currentIndexChanged, this, [this, demand_index, combo_source](int)
     {
@@ -929,7 +942,10 @@ void EntityInspectorWidget::updateJunctionDemandRow(
     }
 
     if (combo_pattern)
-        populateDemandPatternCombo(combo_pattern, demand.pattern_uuid);
+    {
+        populateDemandPatternCombo(
+            combo_pattern, demand.pattern_mode, demand.pattern_uuid);
+    }
 
     if (combo_source)
     {
@@ -946,14 +962,19 @@ void EntityInspectorWidget::updateJunctionDemandRow(
 }
 
 void EntityInspectorWidget::populateDemandPatternCombo(
-    QComboBox *combo_pattern, const QUuid &pattern_uuid)
+    QComboBox *combo_pattern, HydraulicTimePatternMode pattern_mode,
+    const QUuid &pattern_uuid)
 {
     if (!combo_pattern || !this->hydraulic_data)
         return;
 
     const QList<HydraulicPatternTime> &patterns =
         this->hydraulic_data->networkHydraulic().patterns_time;
-    QString pattern_signature;
+    QString pattern_signature = QString::number(static_cast<int>(pattern_mode));
+    pattern_signature += QLatin1Char(':');
+    pattern_signature += pattern_uuid.toString(QUuid::WithoutBraces);
+    pattern_signature += QLatin1Char('\n');
+
     for (const HydraulicPatternTime &pattern : patterns)
     {
         pattern_signature += pattern.uuid.toString(QUuid::WithoutBraces);
@@ -962,43 +983,87 @@ void EntityInspectorWidget::populateDemandPatternCombo(
         pattern_signature += QLatin1Char('\n');
     }
 
-    bool pattern_exists = pattern_uuid.isNull();
-    for (const HydraulicPatternTime &pattern : patterns)
+    bool pattern_exists = false;
+    if (pattern_mode == HydraulicTimePatternMode::TimePattern && !pattern_uuid.isNull())
     {
-        if (pattern.uuid == pattern_uuid)
+        for (const HydraulicPatternTime &pattern : patterns)
         {
-            pattern_exists = true;
-            break;
+            if (pattern.uuid == pattern_uuid)
+            {
+                pattern_exists = true;
+                break;
+            }
         }
     }
-    if (!pattern_exists)
-        pattern_signature += QStringLiteral("missing:%1").arg(
-            pattern_uuid.toString(QUuid::WithoutBraces));
 
     const QSignalBlocker pattern_blocker(combo_pattern);
     if (combo_pattern->property("aowisPatternSignature").toString() != pattern_signature)
     {
         combo_pattern->clear();
-        combo_pattern->addItem("Constant", QUuid());
+
+        combo_pattern->addItem("Constant");
+        combo_pattern->setItemData(
+            combo_pattern->count() - 1,
+            static_cast<int>(HydraulicTimePatternMode::Constant), pattern_mode_role);
+        combo_pattern->setItemData(
+            combo_pattern->count() - 1, QUuid(), pattern_uuid_role);
+
+        combo_pattern->addItem("[Select Pattern]");
+        combo_pattern->setItemData(
+            combo_pattern->count() - 1,
+            static_cast<int>(HydraulicTimePatternMode::TimePattern), pattern_mode_role);
+        combo_pattern->setItemData(
+            combo_pattern->count() - 1, QUuid(), pattern_uuid_role);
+
         for (const HydraulicPatternTime &pattern : patterns)
         {
             const QString pattern_name = pattern.id.isEmpty()
                 ? pattern.uuid.toString(QUuid::WithoutBraces)
                 : pattern.id;
-            combo_pattern->addItem(pattern_name, pattern.uuid);
+            combo_pattern->addItem(pattern_name);
+            combo_pattern->setItemData(
+                combo_pattern->count() - 1,
+                static_cast<int>(HydraulicTimePatternMode::TimePattern), pattern_mode_role);
+            combo_pattern->setItemData(
+                combo_pattern->count() - 1, pattern.uuid, pattern_uuid_role);
         }
-        if (!pattern_exists)
+
+        if (pattern_mode == HydraulicTimePatternMode::TimePattern &&
+            !pattern_uuid.isNull() && !pattern_exists)
         {
             combo_pattern->addItem(
                 QStringLiteral("[Missing Pattern] %1").arg(
-                    pattern_uuid.toString(QUuid::WithoutBraces)),
-                pattern_uuid);
+                    pattern_uuid.toString(QUuid::WithoutBraces)));
+            combo_pattern->setItemData(
+                combo_pattern->count() - 1,
+                static_cast<int>(HydraulicTimePatternMode::TimePattern), pattern_mode_role);
+            combo_pattern->setItemData(
+                combo_pattern->count() - 1, pattern_uuid, pattern_uuid_role);
         }
+
         combo_pattern->setProperty("aowisPatternSignature", pattern_signature);
     }
 
-    const int pattern_index = combo_pattern->findData(pattern_uuid);
-    combo_pattern->setCurrentIndex(pattern_index >= 0 ? pattern_index : 0);
+    int selected_index = -1;
+    for (int item_index = 0; item_index < combo_pattern->count(); item_index++)
+    {
+        const HydraulicTimePatternMode item_mode =
+            static_cast<HydraulicTimePatternMode>(
+                combo_pattern->itemData(item_index, pattern_mode_role).toInt());
+        const QUuid item_uuid = combo_pattern->itemData(item_index, pattern_uuid_role).toUuid();
+
+        const bool mode_matches = item_mode == pattern_mode;
+        const bool uuid_matches = pattern_mode == HydraulicTimePatternMode::Constant ||
+            item_uuid == pattern_uuid;
+
+        if (mode_matches && uuid_matches)
+        {
+            selected_index = item_index;
+            break;
+        }
+    }
+
+    combo_pattern->setCurrentIndex(selected_index >= 0 ? selected_index : 0);
 }
 
 void EntityInspectorWidget::openDemandsEditor()

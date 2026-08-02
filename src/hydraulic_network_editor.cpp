@@ -406,6 +406,17 @@ bool HydraulicNetworkEditor::setJunctionDemandBaseDemandM3PerH(
     return true;
 }
 
+bool HydraulicNetworkEditor::setJunctionDemandPatternMode(
+    const QUuid &uuid, int demand_index, HydraulicTimePatternMode pattern_mode)
+{
+    HydraulicNodeJunction *junction = entityByUuid(this->network.nodes_junctions, uuid);
+    if (junction == nullptr || demand_index < 0 || demand_index >= junction->demands.size())
+        return false;
+
+    junction->demands[demand_index].pattern_mode = pattern_mode;
+    return true;
+}
+
 bool HydraulicNetworkEditor::setJunctionDemandPatternUuid(const QUuid &uuid, int demand_index,
                                                           const QUuid &pattern_uuid)
 {

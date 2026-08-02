@@ -101,7 +101,9 @@ private:
     void rebuildJunctionDemandRows(const HydraulicNodeJunction &junction);
     void addJunctionDemandRow(int demand_index, const HydraulicNodeJunctionDemand &demand);
     void updateJunctionDemandRow(int demand_index, const HydraulicNodeJunctionDemand &demand);
-    void populateDemandPatternCombo(QComboBox *combo_pattern, const QUuid &pattern_uuid);
+    void populateDemandPatternCombo(QComboBox *combo_pattern,
+                                    HydraulicTimePatternMode pattern_mode,
+                                    const QUuid &pattern_uuid);
     void updateElevationModeUi();
     void updateCalculatedElevation();
     bool setElevationInputType(HydraulicNodeElevationInputType input_type);
