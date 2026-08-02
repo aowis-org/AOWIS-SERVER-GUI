@@ -14,7 +14,6 @@
 #include <QPixmap>
 #include <QSignalBlocker>
 #include <QTimer>
-#include <QUrl>
 
 namespace
 {
@@ -680,12 +679,8 @@ void EntityInspectorWidget::addGroupElevation()
 
     if (!this->terrain_elevation_client)
     {
-        // TODO: Make the elevation provider, browser relay, and dataset configurable.
-#ifdef Q_OS_WASM
-        this->terrain_elevation_client = new RESTClient("https://api.allorigins.win/raw?url=", this);
-#else
+        // TODO: Make the elevation provider and dataset configurable.
         this->terrain_elevation_client = new RESTClient("https://api.opentopodata.org", this);
-#endif
         connect(this->terrain_elevation_client, &RESTClient::requestFinished, this,
                 &EntityInspectorWidget::handleTerrainElevationResponse);
         connect(this->terrain_elevation_client, &RESTClient::requestError, this,
@@ -928,16 +923,10 @@ void EntityInspectorWidget::requestTerrainElevation()
         this->label_terrain_elevation_status->clear();
     setTerrainElevationRequestActive(true);
 
-    const QString endpoint = QStringLiteral("/v1/eudem25m?locations=%1,%2")
+    const QString endpoint = QStringLiteral("/v1/srtm30m,aster30m?locations=%1,%2")
         .arg(latitude_deg, 0, 'f', 8)
         .arg(longitude_deg, 0, 'f', 8);
-#ifdef Q_OS_WASM
-    const QString target_url = QStringLiteral("https://api.opentopodata.org") + endpoint;
-    this->terrain_elevation_client->get(
-        QString::fromLatin1(QUrl::toPercentEncoding(target_url)));
-#else
     this->terrain_elevation_client->get(endpoint);
-#endif
 }
 
 void EntityInspectorWidget::handleTerrainElevationResponse(const QByteArray &data)
@@ -979,8 +968,7 @@ void EntityInspectorWidget::handleTerrainElevationResponse(const QByteArray &dat
     if (!elevation_value.isDouble())
     {
         handleTerrainElevationError(
-            "No terrain elevation is available for this position in EU-DEM 25 m. "
-            "This dataset covers Europe only.");
+            "No terrain elevation is available for this position in the configured DEM datasets.");
         return;
     }
 
@@ -1055,18 +1043,50 @@ void EntityInspectorWidget::showTerrainElevationErrorMessage(const QString &erro
     if (this->terrain_elevation_message_box)
         this->terrain_elevation_message_box->close();
 
+    QWidget *parent_window = this->window();
+    if (!parent_window)
+        parent_window = this;
+
     QMessageBox *message_box = new QMessageBox(
         QMessageBox::Warning,
         "Terrain Elevation from GIS",
         "The terrain elevation could not be retrieved.",
         QMessageBox::Ok,
-        this);
+        parent_window);
     message_box->setInformativeText(error);
     message_box->setAttribute(Qt::WA_DeleteOnClose);
+
+#ifdef Q_OS_WASM
+    message_box->setWindowModality(Qt::NonModal);
+    message_box->adjustSize();
+    const QPoint initial_parent_center = parent_window->mapToGlobal(
+        parent_window->rect().center());
+    message_box->move(
+        initial_parent_center.x() - message_box->width() / 2,
+        initial_parent_center.y() - message_box->height() / 2);
+#else
     message_box->setWindowModality(Qt::WindowModal);
+#endif
 
     this->terrain_elevation_message_box = message_box;
     message_box->open();
+
+#ifdef Q_OS_WASM
+    QPointer<QMessageBox> guarded_message_box = message_box;
+    QPointer<QWidget> guarded_parent_window = parent_window;
+    QTimer::singleShot(0, message_box, [guarded_message_box, guarded_parent_window]()
+    {
+        if (!guarded_message_box || !guarded_parent_window)
+            return;
+
+        guarded_message_box->adjustSize();
+        const QPoint parent_center = guarded_parent_window->mapToGlobal(
+            guarded_parent_window->rect().center());
+        guarded_message_box->move(
+            parent_center.x() - guarded_message_box->width() / 2,
+            parent_center.y() - guarded_message_box->height() / 2);
+    });
+#endif
 }
 
 void EntityInspectorWidget::setTerrainElevationRequestActive(bool active)
