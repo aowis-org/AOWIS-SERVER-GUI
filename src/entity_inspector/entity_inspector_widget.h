@@ -68,6 +68,8 @@ protected:
 
     void bindHydraulicNode(InfrastructureEntity entity_type, const QUuid &uuid,
                            const QString &title_prefix);
+    void bindHydraulicLink(InfrastructureEntity entity_type, const QUuid &uuid,
+                           const QString &title_prefix);
     
     void addGroupElevation();
     GroupBoxCollapsible *group_elevation = nullptr;
@@ -95,7 +97,9 @@ protected:
     void addStretches();
     
 private:
+    void refreshHydraulicGeneral(const QString &id, const HydraulicEntityMetadata &metadata);
     void refreshHydraulicNode();
+    void refreshHydraulicLink();
     void refreshHydraulicNodeElevation();
     void scheduleJunctionDemandsRefresh();
     void refreshJunctionDemands();

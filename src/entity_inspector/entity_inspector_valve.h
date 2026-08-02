@@ -28,11 +28,9 @@ class EntityInspectorValve : public EntityInspectorWidget
 {
     Q_OBJECT
 public:
-    explicit EntityInspectorValve(HydraulicData *hydraulic_data, HydraulicLinkValve valve, QWidget *parent = nullptr);
-    
+    explicit EntityInspectorValve(HydraulicData *hydraulic_data, const HydraulicLinkValve &valve, QWidget *parent = nullptr);
+
 private:
-    HydraulicLinkValve valve;
-    HydraulicData *hydraulic_data = nullptr;
     QLabel *picture = nullptr;
     
     void addGroupValveConfiguration();

@@ -75,6 +75,39 @@ bool mutateNode(NetworkHydraulic &network, const QUuid &uuid, Mutation mutation)
 
     return false;
 }
+
+template<typename Mutation>
+bool mutateLink(NetworkHydraulic &network, const QUuid &uuid, Mutation mutation)
+{
+    for (HydraulicLinkPipe &pipe : network.links_pipes)
+    {
+        if (pipe.uuid != uuid)
+            continue;
+
+        mutation(pipe);
+        return true;
+    }
+
+    for (HydraulicLinkPump &pump : network.links_pumps)
+    {
+        if (pump.uuid != uuid)
+            continue;
+
+        mutation(pump);
+        return true;
+    }
+
+    for (HydraulicLinkValve &valve : network.links_valves)
+    {
+        if (valve.uuid != uuid)
+            continue;
+
+        mutation(valve);
+        return true;
+    }
+
+    return false;
+}
 }
 
 HydraulicNetworkEditor::HydraulicNetworkEditor(NetworkHydraulic &network)
@@ -148,6 +181,42 @@ std::optional<HydraulicNodeTank> HydraulicNetworkEditor::tank(const QUuid &uuid)
     return *tank;
 }
 
+std::optional<HydraulicLinkPipe> HydraulicNetworkEditor::pipe(const QUuid &uuid) const
+{
+    if (uuid.isNull())
+        return std::nullopt;
+
+    const HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, uuid);
+    if (pipe == nullptr)
+        return std::nullopt;
+
+    return *pipe;
+}
+
+std::optional<HydraulicLinkPump> HydraulicNetworkEditor::pump(const QUuid &uuid) const
+{
+    if (uuid.isNull())
+        return std::nullopt;
+
+    const HydraulicLinkPump *pump = entityByUuid(this->network.links_pumps, uuid);
+    if (pump == nullptr)
+        return std::nullopt;
+
+    return *pump;
+}
+
+std::optional<HydraulicLinkValve> HydraulicNetworkEditor::valve(const QUuid &uuid) const
+{
+    if (uuid.isNull())
+        return std::nullopt;
+
+    const HydraulicLinkValve *valve = entityByUuid(this->network.links_valves, uuid);
+    if (valve == nullptr)
+        return std::nullopt;
+
+    return *valve;
+}
+
 QUuid HydraulicNetworkEditor::addJunction(const CoordinateWGS84 &coordinate)
 {
     HydraulicNodeJunction junction;
@@ -192,6 +261,7 @@ QUuid HydraulicNetworkEditor::addPipe(const QUuid &node_uuid_from, const QUuid &
     pipe.id = nextLinkId(QStringLiteral("P"));
     pipe.node_uuid_from = node_uuid_from;
     pipe.node_uuid_to = node_uuid_to;
+    pipe.metadata.date_added = QDate::currentDate();
 
     for (const CoordinateWGS84 &coordinate : intermediate_vertices)
     {
@@ -216,6 +286,7 @@ QUuid HydraulicNetworkEditor::addPump(const QUuid &node_uuid_from, const QUuid &
     pump.id = nextLinkId(QStringLiteral("PU"));
     pump.node_uuid_from = node_uuid_from;
     pump.node_uuid_to = node_uuid_to;
+    pump.metadata.date_added = QDate::currentDate();
 
     HydraulicLinkVertex vertex;
     vertex.coordinate_wgs84 = center_coordinate;
@@ -236,6 +307,7 @@ QUuid HydraulicNetworkEditor::addValve(const QUuid &node_uuid_from, const QUuid 
     valve.id = nextLinkId(QStringLiteral("V"));
     valve.node_uuid_from = node_uuid_from;
     valve.node_uuid_to = node_uuid_to;
+    valve.metadata.date_added = QDate::currentDate();
 
     HydraulicLinkVertex vertex;
     vertex.coordinate_wgs84 = center_coordinate;
@@ -282,6 +354,48 @@ bool HydraulicNetworkEditor::setNodeEnabled(const QUuid &uuid, bool enabled)
     return mutateNode(this->network, uuid, [enabled](auto &node)
     {
         node.metadata.enabled = enabled;
+    });
+}
+
+bool HydraulicNetworkEditor::setLinkId(const QUuid &uuid, const QString &id)
+{
+    return mutateLink(this->network, uuid, [&id](auto &link)
+    {
+        link.id = id;
+    });
+}
+
+bool HydraulicNetworkEditor::setLinkModelRole(const QUuid &uuid, EntityModelRole model_role)
+{
+    return mutateLink(this->network, uuid, [model_role](auto &link)
+    {
+        link.metadata.model_role = model_role;
+    });
+}
+
+bool HydraulicNetworkEditor::setLinkDateAdded(const QUuid &uuid,
+                                               const std::optional<QDate> &date_added)
+{
+    return mutateLink(this->network, uuid, [&date_added](auto &link)
+    {
+        link.metadata.date_added = date_added;
+    });
+}
+
+bool HydraulicNetworkEditor::setLinkDateInstalled(
+    const QUuid &uuid, const std::optional<QDate> &date_installed)
+{
+    return mutateLink(this->network, uuid, [&date_installed](auto &link)
+    {
+        link.metadata.date_installed = date_installed;
+    });
+}
+
+bool HydraulicNetworkEditor::setLinkEnabled(const QUuid &uuid, bool enabled)
+{
+    return mutateLink(this->network, uuid, [enabled](auto &link)
+    {
+        link.metadata.enabled = enabled;
     });
 }
 

@@ -22,6 +22,9 @@ public:
     std::optional<HydraulicNodeJunction> junction(const QUuid &uuid) const;
     std::optional<HydraulicNodeReservoir> reservoir(const QUuid &uuid) const;
     std::optional<HydraulicNodeTank> tank(const QUuid &uuid) const;
+    std::optional<HydraulicLinkPipe> pipe(const QUuid &uuid) const;
+    std::optional<HydraulicLinkPump> pump(const QUuid &uuid) const;
+    std::optional<HydraulicLinkValve> valve(const QUuid &uuid) const;
 
     QUuid addJunction(const CoordinateWGS84 &coordinate);
     QUuid addReservoir(const CoordinateWGS84 &coordinate);
@@ -40,6 +43,12 @@ public:
     bool setNodeDateInstalled(const QUuid &uuid, const std::optional<QDate> &date_installed);
     bool setNodeEnabled(const QUuid &uuid, bool enabled);
     bool setNodeCoordinate(const QUuid &uuid, const CoordinateWGS84 &coordinate);
+
+    bool setLinkId(const QUuid &uuid, const QString &id);
+    bool setLinkModelRole(const QUuid &uuid, EntityModelRole model_role);
+    bool setLinkDateAdded(const QUuid &uuid, const std::optional<QDate> &date_added);
+    bool setLinkDateInstalled(const QUuid &uuid, const std::optional<QDate> &date_installed);
+    bool setLinkEnabled(const QUuid &uuid, bool enabled);
 
     bool setJunctionElevationInputType(const QUuid &uuid,
                                         HydraulicNodeElevationInputType input_type);

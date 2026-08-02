@@ -342,6 +342,69 @@ void EntityInspectorWidget::bindHydraulicNode(InfrastructureEntity entity_type, 
     });
 }
 
+void EntityInspectorWidget::bindHydraulicLink(InfrastructureEntity entity_type, const QUuid &uuid,
+                                               const QString &title_prefix)
+{
+    this->entity_type = entity_type;
+    this->entity_uuid = uuid;
+    this->entity_title_prefix = title_prefix;
+
+    refreshHydraulicLink();
+
+    connect(this->line_name, &QLineEdit::textEdited, this, [this](const QString &id)
+    {
+        this->hydraulic_data->setLinkId(this->entity_uuid, id);
+    });
+    connect(this->combo_model_role, &QComboBox::currentIndexChanged, this, [this](int)
+    {
+        const EntityModelRole model_role = static_cast<EntityModelRole>(
+            this->combo_model_role->currentData().toInt());
+        this->hydraulic_data->setLinkModelRole(this->entity_uuid, model_role);
+    });
+    connect(this->date_added, &QDateEdit::dateChanged, this, [this](const QDate &)
+    {
+        this->hydraulic_data->setLinkDateAdded(this->entity_uuid, optionalDate(this->date_added));
+    });
+    connect(this->date_installed, &QDateEdit::dateChanged, this, [this](const QDate &)
+    {
+        this->hydraulic_data->setLinkDateInstalled(
+            this->entity_uuid, optionalDate(this->date_installed));
+    });
+    connect(this->check_enabled, &QCheckBox::toggled, this, [this](bool enabled)
+    {
+        this->hydraulic_data->setLinkEnabled(this->entity_uuid, enabled);
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
+            [this](InfrastructureEntity entity_type_changed, const QUuid &uuid_changed)
+    {
+        if (entity_type_changed == this->entity_type && uuid_changed == this->entity_uuid)
+            refreshHydraulicLink();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, [this]()
+    {
+        refreshHydraulicLink();
+    });
+}
+
+void EntityInspectorWidget::refreshHydraulicGeneral(
+    const QString &id, const HydraulicEntityMetadata &metadata)
+{
+    const QSignalBlocker name_blocker(this->line_name);
+    const QSignalBlocker model_role_blocker(this->combo_model_role);
+    const QSignalBlocker date_added_blocker(this->date_added);
+    const QSignalBlocker date_installed_blocker(this->date_installed);
+    const QSignalBlocker enabled_blocker(this->check_enabled);
+
+    this->line_name->setText(id);
+    const int model_role_index = this->combo_model_role->findData(
+        static_cast<int>(metadata.model_role));
+    this->combo_model_role->setCurrentIndex(model_role_index >= 0 ? model_role_index : 0);
+    setOptionalDate(this->date_added, metadata.date_added);
+    setOptionalDate(this->date_installed, metadata.date_installed);
+    this->check_enabled->setChecked(metadata.enabled);
+    setTitle(this->entity_title_prefix + " " + id);
+}
+
 void EntityInspectorWidget::refreshHydraulicNode()
 {
     if (!this->hydraulic_data || this->entity_uuid.isNull())
@@ -352,26 +415,27 @@ void EntityInspectorWidget::refreshHydraulicNode()
     if (!node.has_value())
         return;
 
-    const QSignalBlocker name_blocker(this->line_name);
-    const QSignalBlocker model_role_blocker(this->combo_model_role);
-    const QSignalBlocker date_added_blocker(this->date_added);
-    const QSignalBlocker date_installed_blocker(this->date_installed);
-    const QSignalBlocker enabled_blocker(this->check_enabled);
+    refreshHydraulicGeneral(node->id, node->metadata);
+
     const QSignalBlocker latitude_blocker(this->spin_latitude);
     const QSignalBlocker longitude_blocker(this->spin_longitude);
-
-    this->line_name->setText(node->id);
-    const int model_role_index = this->combo_model_role->findData(
-        static_cast<int>(node->metadata.model_role));
-    this->combo_model_role->setCurrentIndex(model_role_index >= 0 ? model_role_index : 0);
-    setOptionalDate(this->date_added, node->metadata.date_added);
-    setOptionalDate(this->date_installed, node->metadata.date_installed);
-    this->check_enabled->setChecked(node->metadata.enabled);
     this->spin_latitude->setValue(node->coordinate_wgs84.latitude_deg);
     this->spin_longitude->setValue(node->coordinate_wgs84.longitude_deg);
-    setTitle(this->entity_title_prefix + " " + node->id);
 
     refreshHydraulicNodeElevation();
+}
+
+void EntityInspectorWidget::refreshHydraulicLink()
+{
+    if (!this->hydraulic_data || this->entity_uuid.isNull())
+        return;
+
+    const std::optional<HydraulicLinkCommonData> link =
+        this->hydraulic_data->linkCommonData(this->entity_type, this->entity_uuid);
+    if (!link.has_value())
+        return;
+
+    refreshHydraulicGeneral(link->id, link->metadata);
 }
 
 std::optional<QDate> EntityInspectorWidget::optionalDate(const QDateEdit *date_edit) const

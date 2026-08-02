@@ -1,15 +1,13 @@
 #include "entity_inspector_pump.h"
 
-EntityInspectorPump::EntityInspectorPump(HydraulicData *hydraulic_data, HydraulicLinkPump pump, QWidget *parent)
-    : EntityInspectorWidget(hydraulic_data, parent),
-    pump(pump)
+EntityInspectorPump::EntityInspectorPump(HydraulicData *hydraulic_data, const HydraulicLinkPump &pump, QWidget *parent)
+    : EntityInspectorWidget(hydraulic_data, parent)
 {
-    setTitle("Pump PU1");
-    
-    addGroupOverviewImage(":/icon/pump.png", "PU1");
-    
-    addGroupGeneral("PU1");
-    
+    addGroupOverviewImage(":/icon/pump.png", pump.id);
+
+    addGroupGeneral(QString());
+    bindHydraulicLink(InfrastructureEntity::Pump, pump.uuid, "Pump");
+
     addGroupEndpoints();
     
     addGroupControls();

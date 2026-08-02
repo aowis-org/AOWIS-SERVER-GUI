@@ -3,12 +3,11 @@
 EntityInspectorPipe::EntityInspectorPipe(HydraulicData *hydraulic_data, const HydraulicLinkPipe &pipe, QWidget *parent)
     : EntityInspectorWidget(hydraulic_data, parent)
 {
-    setTitle("Pipe P1");
-    
-    addGroupOverviewImage(":/icon/pipe.png", "P1");
-    
-    addGroupGeneral("P1");
-    
+    addGroupOverviewImage(":/icon/pipe.png", pipe.id);
+
+    addGroupGeneral(QString());
+    bindHydraulicLink(InfrastructureEntity::Pipe, pipe.uuid, "Pipe");
+
     addGroupEndpoints();
     addGroupGeometry();
     addGroupRoughness();

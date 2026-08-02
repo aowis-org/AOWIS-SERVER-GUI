@@ -28,10 +28,9 @@ class EntityInspectorPump : public EntityInspectorWidget
 {
     Q_OBJECT
 public:
-    explicit EntityInspectorPump(HydraulicData *hydraulic_data, HydraulicLinkPump pump, QWidget *parent = nullptr);
-    
+    explicit EntityInspectorPump(HydraulicData *hydraulic_data, const HydraulicLinkPump &pump, QWidget *parent = nullptr);
+
 private:
-    HydraulicLinkPump pump;
     QLabel *picture = nullptr;
     
     void addGroupControls();

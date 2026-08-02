@@ -107,6 +107,21 @@ std::optional<HydraulicNodeTank> HydraulicData::tank(const QUuid &uuid) const
     return this->network_editor.tank(uuid);
 }
 
+std::optional<HydraulicLinkPipe> HydraulicData::pipe(const QUuid &uuid) const
+{
+    return this->network_editor.pipe(uuid);
+}
+
+std::optional<HydraulicLinkPump> HydraulicData::pump(const QUuid &uuid) const
+{
+    return this->network_editor.pump(uuid);
+}
+
+std::optional<HydraulicLinkValve> HydraulicData::valve(const QUuid &uuid) const
+{
+    return this->network_editor.valve(uuid);
+}
+
 std::optional<HydraulicNodeCommonData> HydraulicData::nodeCommonData(
     InfrastructureEntity entity_type, const QUuid &uuid) const
 {
@@ -141,6 +156,40 @@ std::optional<HydraulicNodeCommonData> HydraulicData::nodeCommonData(
     }
 }
 
+std::optional<HydraulicLinkCommonData> HydraulicData::linkCommonData(
+    InfrastructureEntity entity_type, const QUuid &uuid) const
+{
+    switch (entity_type)
+    {
+    case InfrastructureEntity::Pipe:
+    {
+        const std::optional<HydraulicLinkPipe> link = pipe(uuid);
+        if (!link.has_value())
+            return std::nullopt;
+
+        return HydraulicLinkCommonData{link->id, link->uuid, link->metadata};
+    }
+    case InfrastructureEntity::Pump:
+    {
+        const std::optional<HydraulicLinkPump> link = pump(uuid);
+        if (!link.has_value())
+            return std::nullopt;
+
+        return HydraulicLinkCommonData{link->id, link->uuid, link->metadata};
+    }
+    case InfrastructureEntity::Valve:
+    {
+        const std::optional<HydraulicLinkValve> link = valve(uuid);
+        if (!link.has_value())
+            return std::nullopt;
+
+        return HydraulicLinkCommonData{link->id, link->uuid, link->metadata};
+    }
+    default:
+        return std::nullopt;
+    }
+}
+
 std::optional<InfrastructureEntity> HydraulicData::nodeEntityType(const QUuid &uuid) const
 {
     if (uuid.isNull())
@@ -167,6 +216,32 @@ std::optional<InfrastructureEntity> HydraulicData::nodeEntityType(const QUuid &u
     return std::nullopt;
 }
 
+std::optional<InfrastructureEntity> HydraulicData::linkEntityType(const QUuid &uuid) const
+{
+    if (uuid.isNull())
+        return std::nullopt;
+
+    for (const HydraulicLinkPipe &pipe : this->network_hydraulic.links_pipes)
+    {
+        if (pipe.uuid == uuid)
+            return InfrastructureEntity::Pipe;
+    }
+
+    for (const HydraulicLinkPump &pump : this->network_hydraulic.links_pumps)
+    {
+        if (pump.uuid == uuid)
+            return InfrastructureEntity::Pump;
+    }
+
+    for (const HydraulicLinkValve &valve : this->network_hydraulic.links_valves)
+    {
+        if (valve.uuid == uuid)
+            return InfrastructureEntity::Valve;
+    }
+
+    return std::nullopt;
+}
+
 bool HydraulicData::emitNodeChangedIfSuccessful(const QUuid &uuid, bool successful)
 {
     if (!successful)
@@ -177,6 +252,19 @@ bool HydraulicData::emitNodeChangedIfSuccessful(const QUuid &uuid, bool successf
         return false;
 
     emit signalNodeChanged(entity_type.value(), uuid);
+    return true;
+}
+
+bool HydraulicData::emitLinkChangedIfSuccessful(const QUuid &uuid, bool successful)
+{
+    if (!successful)
+        return false;
+
+    const std::optional<InfrastructureEntity> entity_type = linkEntityType(uuid);
+    if (!entity_type.has_value())
+        return false;
+
+    emit signalLinkChanged(entity_type.value(), uuid);
     return true;
 }
 
@@ -345,6 +433,36 @@ bool HydraulicData::setNodeCoordinate(const QUuid &uuid, const CoordinateWGS84 &
 {
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setNodeCoordinate(uuid, coordinate));
+}
+
+bool HydraulicData::setLinkId(const QUuid &uuid, const QString &id)
+{
+    return emitLinkChangedIfSuccessful(uuid, this->network_editor.setLinkId(uuid, id));
+}
+
+bool HydraulicData::setLinkModelRole(const QUuid &uuid, EntityModelRole model_role)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setLinkModelRole(uuid, model_role));
+}
+
+bool HydraulicData::setLinkDateAdded(const QUuid &uuid,
+                                     const std::optional<QDate> &date_added)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setLinkDateAdded(uuid, date_added));
+}
+
+bool HydraulicData::setLinkDateInstalled(const QUuid &uuid,
+                                         const std::optional<QDate> &date_installed)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setLinkDateInstalled(uuid, date_installed));
+}
+
+bool HydraulicData::setLinkEnabled(const QUuid &uuid, bool enabled)
+{
+    return emitLinkChangedIfSuccessful(uuid, this->network_editor.setLinkEnabled(uuid, enabled));
 }
 
 bool HydraulicData::setJunctionElevationInputType(

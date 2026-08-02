@@ -1,15 +1,13 @@
 #include "entity_inspector_valve.h"
 
-EntityInspectorValve::EntityInspectorValve(HydraulicData *hydraulic_data, HydraulicLinkValve valve, QWidget *parent)
-    : EntityInspectorWidget(hydraulic_data, parent),
-    valve(valve)
+EntityInspectorValve::EntityInspectorValve(HydraulicData *hydraulic_data, const HydraulicLinkValve &valve, QWidget *parent)
+    : EntityInspectorWidget(hydraulic_data, parent)
 {
-    setTitle("Valve V1");
-    
-    addGroupOverviewImage(":/icon/valve.png", "V1");
-    
-    addGroupGeneral("V1");
-    
+    addGroupOverviewImage(":/icon/valve.png", valve.id);
+
+    addGroupGeneral(QString());
+    bindHydraulicLink(InfrastructureEntity::Valve, valve.uuid, "Valve");
+
     addGroupEndpoints();
     addGroupValveConfiguration();
     

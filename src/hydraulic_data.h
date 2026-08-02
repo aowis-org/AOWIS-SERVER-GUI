@@ -31,6 +31,13 @@ struct HydraulicNodeCommonData
     HydraulicEntityMetadata metadata;
 };
 
+struct HydraulicLinkCommonData
+{
+    QString id;
+    QUuid uuid;
+    HydraulicEntityMetadata metadata;
+};
+
 class HydraulicData : public QObject
 {
     Q_OBJECT
@@ -43,7 +50,12 @@ public:
     std::optional<HydraulicNodeJunction> junction(const QUuid &uuid) const;
     std::optional<HydraulicNodeReservoir> reservoir(const QUuid &uuid) const;
     std::optional<HydraulicNodeTank> tank(const QUuid &uuid) const;
+    std::optional<HydraulicLinkPipe> pipe(const QUuid &uuid) const;
+    std::optional<HydraulicLinkPump> pump(const QUuid &uuid) const;
+    std::optional<HydraulicLinkValve> valve(const QUuid &uuid) const;
     std::optional<HydraulicNodeCommonData> nodeCommonData(InfrastructureEntity entity_type,
+                                                           const QUuid &uuid) const;
+    std::optional<HydraulicLinkCommonData> linkCommonData(InfrastructureEntity entity_type,
                                                            const QUuid &uuid) const;
 
     void setSelectedUuid(InfrastructureEntity entity_type, const QUuid &uuid);
@@ -66,6 +78,12 @@ public:
     bool setNodeDateInstalled(const QUuid &uuid, const std::optional<QDate> &date_installed);
     bool setNodeEnabled(const QUuid &uuid, bool enabled);
     bool setNodeCoordinate(const QUuid &uuid, const CoordinateWGS84 &coordinate);
+
+    bool setLinkId(const QUuid &uuid, const QString &id);
+    bool setLinkModelRole(const QUuid &uuid, EntityModelRole model_role);
+    bool setLinkDateAdded(const QUuid &uuid, const std::optional<QDate> &date_added);
+    bool setLinkDateInstalled(const QUuid &uuid, const std::optional<QDate> &date_installed);
+    bool setLinkEnabled(const QUuid &uuid, bool enabled);
 
     bool setJunctionElevationInputType(const QUuid &uuid,
                                         HydraulicNodeElevationInputType input_type);
@@ -134,7 +152,9 @@ public:
 
 private:
     std::optional<InfrastructureEntity> nodeEntityType(const QUuid &uuid) const;
+    std::optional<InfrastructureEntity> linkEntityType(const QUuid &uuid) const;
     bool emitNodeChangedIfSuccessful(const QUuid &uuid, bool successful);
+    bool emitLinkChangedIfSuccessful(const QUuid &uuid, bool successful);
 
     DatabaseGui *database_gui = nullptr;
 
@@ -148,6 +168,7 @@ private slots:
 signals:
     void signalNetworkLoaded();
     void signalNodeChanged(InfrastructureEntity entity_type, const QUuid &uuid);
+    void signalLinkChanged(InfrastructureEntity entity_type, const QUuid &uuid);
     void signalNodeLocateRequested(InfrastructureEntity entity_type, const QUuid &uuid);
     void signalSelectedTank(const HydraulicNodeTank &tank);
     void signalSelectedReservoir(const HydraulicNodeReservoir &reservoir);
