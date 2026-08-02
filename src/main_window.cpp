@@ -46,7 +46,9 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowTitle("AOWIS Controller");
     #endif
     
+    #ifdef Q_OS_LINUX
     showMaximized();
+    #endif
     
     QLocale layout = qApp->inputMethod()->locale();
     qDebug() << layout.name();   // e.g. "en_US", "de_DE"
