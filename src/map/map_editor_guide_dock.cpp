@@ -54,9 +54,10 @@ MapEditorGuideDock::MapEditorGuideDock(QWidget *parent)
             <li><b>Right-click a pipe segment:</b> add a vertex.</li>
             <li><b>Right-click a pipe vertex:</b> move, delete, or convert it to a junction.</li>
             <li>After choosing a move action, <b>right-click to confirm</b>.</li>
+            <li>During an entity or pipe-vertex move, press <b>Esc</b> to cancel and restore the original position.</li>
         </ul>
 
-        <p><b>Esc:</b> return to selection mode.</p>
+        <p><b>Esc:</b> cancel the active action; otherwise return to selection mode.</p>
     )HTML");
 
     setWidget(guide);
