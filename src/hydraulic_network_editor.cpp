@@ -504,6 +504,16 @@ bool HydraulicNetworkEditor::setReservoirHeadOffsetM(const QUuid &uuid, double h
     return true;
 }
 
+bool HydraulicNetworkEditor::setReservoirHeadPatternMode(const QUuid &uuid, HydraulicTimePatternMode pattern_mode)
+{
+    HydraulicNodeReservoir *reservoir = entityByUuid(this->network.nodes_reservoirs, uuid);
+    if (reservoir == nullptr)
+        return false;
+
+    reservoir->head_pattern_mode = pattern_mode;
+    return true;
+}
+
 bool HydraulicNetworkEditor::setReservoirHeadPatternUuid(const QUuid &uuid,
                                                          const QUuid &pattern_uuid)
 {

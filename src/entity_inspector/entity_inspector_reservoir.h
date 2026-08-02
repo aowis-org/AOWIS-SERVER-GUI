@@ -33,9 +33,6 @@ public:
 private:
     QLabel *picture = nullptr;
     
-    void addGroupDemands();
-    
-    
     void addGroupQuality();
     
     

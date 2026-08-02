@@ -67,6 +67,7 @@ public:
     bool setReservoirHeadM(const QUuid &uuid, double head_m);
     bool setReservoirTerrainElevationM(const QUuid &uuid, double terrain_elevation_m);
     bool setReservoirHeadOffsetM(const QUuid &uuid, double head_offset_m);
+    bool setReservoirHeadPatternMode(const QUuid &uuid, HydraulicTimePatternMode pattern_mode);
     bool setReservoirHeadPatternUuid(const QUuid &uuid, const QUuid &pattern_uuid);
 
     bool setTankElevationInputType(const QUuid &uuid,

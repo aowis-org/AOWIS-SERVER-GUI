@@ -467,6 +467,12 @@ bool HydraulicData::setReservoirHeadOffsetM(const QUuid &uuid, double head_offse
         uuid, this->network_editor.setReservoirHeadOffsetM(uuid, head_offset_m));
 }
 
+bool HydraulicData::setReservoirHeadPatternMode(const QUuid &uuid, HydraulicTimePatternMode pattern_mode)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setReservoirHeadPatternMode(uuid, pattern_mode));
+}
+
 bool HydraulicData::setReservoirHeadPatternUuid(const QUuid &uuid, const QUuid &pattern_uuid)
 {
     return emitNodeChangedIfSuccessful(

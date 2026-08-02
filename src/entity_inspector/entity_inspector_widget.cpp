@@ -476,6 +476,24 @@ void EntityInspectorWidget::addGroupElevation()
     grid->addWidget(this->spin_elevation_offset, 3, 1);
     grid->addWidget(this->label_elevation_value, 4, 0);
     grid->addWidget(this->spin_elevation_value, 4, 1);
+
+    if (this->entity_type == InfrastructureEntity::Reservoir)
+    {
+        QLabel *label_head_pattern = new QLabel("Head Pattern");
+        this->combo_head_pattern = new QComboBox();
+        this->combo_head_pattern->setToolTip("Select a time pattern for variable reservoir head, or Constant for a fixed head.");
+        grid->addWidget(label_head_pattern, 5, 0);
+        grid->addWidget(this->combo_head_pattern, 5, 1);
+
+        connect(this->combo_head_pattern, &QComboBox::currentIndexChanged, this, [this](int)
+        {
+            const HydraulicTimePatternMode pattern_mode = static_cast<HydraulicTimePatternMode>(this->combo_head_pattern->currentData(pattern_mode_role).toInt());
+            const QUuid pattern_uuid = this->combo_head_pattern->currentData(pattern_uuid_role).toUuid();
+
+            this->hydraulic_data->setReservoirHeadPatternMode(this->entity_uuid, pattern_mode);
+            this->hydraulic_data->setReservoirHeadPatternUuid(this->entity_uuid, pattern_uuid);
+        });
+    }
     
     connect(this->combo_elevation_input_type, &QComboBox::currentIndexChanged, this, &EntityInspectorWidget::onElevationInputTypeChanged);
     connect(this->spin_elevation_value, &QDoubleSpinBox::valueChanged, this, &EntityInspectorWidget::onElevationValueChanged);
@@ -506,6 +524,8 @@ void EntityInspectorWidget::refreshHydraulicNodeElevation()
     double value_m = 0.0;
     double terrain_elevation_m = 0.0;
     double offset_m = 0.0;
+    HydraulicTimePatternMode head_pattern_mode = HydraulicTimePatternMode::Constant;
+    QUuid head_pattern_uuid;
 
     switch (this->entity_type)
     {
@@ -533,6 +553,8 @@ void EntityInspectorWidget::refreshHydraulicNodeElevation()
         value_m = reservoir->head_m;
         terrain_elevation_m = reservoir->terrain_elevation_m;
         offset_m = reservoir->head_offset_m;
+        head_pattern_mode = reservoir->head_pattern_mode;
+        head_pattern_uuid = reservoir->head_pattern_uuid;
         break;
     }
     case InfrastructureEntity::Tank:
@@ -566,6 +588,9 @@ void EntityInspectorWidget::refreshHydraulicNodeElevation()
         input_type == HydraulicNodeElevationInputType::TerrainElevationAndOffset
             ? terrain_elevation_m + offset_m
             : value_m);
+
+    if (this->combo_head_pattern)
+        populateTimePatternCombo(this->combo_head_pattern, head_pattern_mode, head_pattern_uuid);
 
     updateElevationModeUi();
 }
@@ -943,7 +968,7 @@ void EntityInspectorWidget::updateJunctionDemandRow(
 
     if (combo_pattern)
     {
-        populateDemandPatternCombo(
+        populateTimePatternCombo(
             combo_pattern, demand.pattern_mode, demand.pattern_uuid);
     }
 
@@ -961,7 +986,7 @@ void EntityInspectorWidget::updateJunctionDemandRow(
     }
 }
 
-void EntityInspectorWidget::populateDemandPatternCombo(
+void EntityInspectorWidget::populateTimePatternCombo(
     QComboBox *combo_pattern, HydraulicTimePatternMode pattern_mode,
     const QUuid &pattern_uuid)
 {

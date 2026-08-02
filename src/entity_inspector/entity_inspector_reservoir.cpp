@@ -9,20 +9,9 @@ EntityInspectorReservoir::EntityInspectorReservoir(HydraulicData *hydraulic_data
     bindHydraulicNode(InfrastructureEntity::Reservoir, uuid, "Reservoir");
     addGroupElevation();
 
-    addGroupDemands();
     addGroupQuality();
     addGroupHistory();
     addStretches();
-}
-
-void EntityInspectorReservoir::addGroupDemands()
-{
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Demands");
-    QGridLayout *grid = new QGridLayout(group);
-    
-    
-    
-    this->layoutConfiguration()->addWidget(group);
 }
 
 void EntityInspectorReservoir::addGroupQuality()
