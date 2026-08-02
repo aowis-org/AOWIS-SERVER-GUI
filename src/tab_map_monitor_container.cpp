@@ -181,13 +181,26 @@ MapMonitorContainer::~MapMonitorContainer()
 #ifdef Q_OS_WASM
 bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
 {
-    if (watched == this->map && event->type() == QEvent::MouseButtonPress)
+    if (watched == this->map)
     {
-        QMouseEvent *mouse_event = static_cast<QMouseEvent *>(event);
-        if (mouse_event->button() == Qt::LeftButton && selectWasmNetworkEntityAt(mouse_event->position()))
+        if (event->type() == QEvent::MouseMove)
         {
-            mouse_event->accept();
-            return true;
+            QMouseEvent *mouse_event = static_cast<QMouseEvent *>(event);
+            updateWasmNetworkHoverCursor(mouse_event->position(), mouse_event->buttons());
+        }
+        else if (event->type() == QEvent::Leave || event->type() == QEvent::Hide)
+        {
+            clearWasmNetworkHoverCursor();
+        }
+        else if (event->type() == QEvent::MouseButtonPress)
+        {
+            QMouseEvent *mouse_event = static_cast<QMouseEvent *>(event);
+            clearWasmNetworkHoverCursor();
+            if (mouse_event->button() == Qt::LeftButton && selectWasmNetworkEntityAt(mouse_event->position()))
+            {
+                mouse_event->accept();
+                return true;
+            }
         }
     }
 
@@ -212,6 +225,29 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
     return QWidget::eventFilter(watched, event);
 }
 
+
+void MapMonitorContainer::updateWasmNetworkHoverCursor(const QPointF &position, Qt::MouseButtons buttons)
+{
+    const bool entity_hovered = buttons == Qt::NoButton && this->wasm_network_snapshot_sent
+        && aowisBrowserNetworkHitTest(position.x(), position.y()) > 0.0;
+    if (entity_hovered == this->wasm_network_hover_cursor_active)
+        return;
+
+    this->wasm_network_hover_cursor_active = entity_hovered;
+    if (entity_hovered)
+        this->map->setCursor(Qt::PointingHandCursor);
+    else
+        this->map->unsetCursor();
+}
+
+void MapMonitorContainer::clearWasmNetworkHoverCursor()
+{
+    if (!this->wasm_network_hover_cursor_active)
+        return;
+
+    this->wasm_network_hover_cursor_active = false;
+    this->map->unsetCursor();
+}
 
 bool MapMonitorContainer::selectWasmNetworkEntityAt(const QPointF &position)
 {
@@ -273,6 +309,7 @@ void MapMonitorContainer::syncWasmMapLayer()
 
     if (!visible)
     {
+        clearWasmNetworkHoverCursor();
         this->map->setBrowserMapLayerGeometry(QRect(), false);
         return;
     }
@@ -299,6 +336,7 @@ void MapMonitorContainer::syncWasmNetworkSnapshot()
     if (transferred == 0)
         return;
 
+    clearWasmNetworkHoverCursor();
     this->wasm_network_geometry_revision_sent = snapshot.geometry_revision;
     this->wasm_network_snapshot_sent = true;
 }

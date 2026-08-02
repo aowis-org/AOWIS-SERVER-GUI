@@ -102,8 +102,11 @@ private:
     QTimer *wasm_map_layer_sync_timer = nullptr;
     quint64 wasm_network_geometry_revision_sent = 0;
     bool wasm_network_snapshot_sent = false;
+    bool wasm_network_hover_cursor_active = false;
 
     bool selectWasmNetworkEntityAt(const QPointF &position);
+    void updateWasmNetworkHoverCursor(const QPointF &position, Qt::MouseButtons buttons);
+    void clearWasmNetworkHoverCursor();
     void scheduleWasmMapLayerSync();
     void syncWasmMapLayer();
     void syncWasmNetworkSnapshot();
