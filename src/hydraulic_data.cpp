@@ -685,16 +685,69 @@ bool HydraulicData::setTankCanOverflow(const QUuid &uuid, bool can_overflow)
         uuid, this->network_editor.setTankCanOverflow(uuid, can_overflow));
 }
 
+bool HydraulicData::setPipeInitialStatus(
+    const QUuid &uuid, HydraulicLinkPipeInitialStatus initial_status)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setPipeInitialStatus(uuid, initial_status));
+}
+
+bool HydraulicData::setPipeDiameterMm(const QUuid &uuid, double diameter_mm)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setPipeDiameterMm(uuid, diameter_mm));
+}
+
+bool HydraulicData::setPipeMeasuredLengthM(
+    const QUuid &uuid, const std::optional<double> &length_measured_m)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setPipeMeasuredLengthM(uuid, length_measured_m));
+}
+
+bool HydraulicData::setPipeMaterialId(const QUuid &uuid, const QString &material_id)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setPipeMaterialId(uuid, material_id));
+}
+
+bool HydraulicData::setPipeRoughnessHw(const QUuid &uuid, double roughness_hw)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setPipeRoughnessHw(uuid, roughness_hw));
+}
+
+bool HydraulicData::setPipeRoughnessDwMm(const QUuid &uuid, double roughness_dw_mm)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setPipeRoughnessDwMm(uuid, roughness_dw_mm));
+}
+
+bool HydraulicData::setPipeRoughnessCm(const QUuid &uuid, double roughness_cm)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setPipeRoughnessCm(uuid, roughness_cm));
+}
+
+bool HydraulicData::setPipeMinorLoss(const QUuid &uuid, double minor_loss)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setPipeMinorLoss(uuid, minor_loss));
+}
+
 bool HydraulicData::setPipeVertexCoordinate(const QUuid &pipe_uuid, int vertex_index,
                                             const CoordinateWGS84 &coordinate)
 {
-    return this->network_editor.setPipeVertexCoordinate(pipe_uuid, vertex_index, coordinate);
+    return emitLinkChangedIfSuccessful(
+        pipe_uuid, this->network_editor.setPipeVertexCoordinate(
+                       pipe_uuid, vertex_index, coordinate));
 }
 
 bool HydraulicData::setPipeVertices(const QUuid &pipe_uuid,
                                     const QList<CoordinateWGS84> &intermediate_vertices)
 {
-    return this->network_editor.setPipeVertices(pipe_uuid, intermediate_vertices);
+    return emitLinkChangedIfSuccessful(
+        pipe_uuid, this->network_editor.setPipeVertices(pipe_uuid, intermediate_vertices));
 }
 
 bool HydraulicData::setPumpCenterCoordinate(const QUuid &pump_uuid,

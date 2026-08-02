@@ -788,6 +788,88 @@ bool HydraulicNetworkEditor::setTankCanOverflow(const QUuid &uuid, bool can_over
     return true;
 }
 
+bool HydraulicNetworkEditor::setPipeInitialStatus(
+    const QUuid &uuid, HydraulicLinkPipeInitialStatus initial_status)
+{
+    HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, uuid);
+    if (pipe == nullptr)
+        return false;
+
+    pipe->initial_status = initial_status;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setPipeDiameterMm(const QUuid &uuid, double diameter_mm)
+{
+    HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, uuid);
+    if (pipe == nullptr)
+        return false;
+
+    pipe->diameter_mm = diameter_mm;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setPipeMeasuredLengthM(
+    const QUuid &uuid, const std::optional<double> &length_measured_m)
+{
+    HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, uuid);
+    if (pipe == nullptr)
+        return false;
+
+    pipe->length_measured_m = length_measured_m;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setPipeMaterialId(const QUuid &uuid, const QString &material_id)
+{
+    HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, uuid);
+    if (pipe == nullptr)
+        return false;
+
+    pipe->material_id = material_id;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setPipeRoughnessHw(const QUuid &uuid, double roughness_hw)
+{
+    HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, uuid);
+    if (pipe == nullptr)
+        return false;
+
+    pipe->roughness_hw = roughness_hw;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setPipeRoughnessDwMm(const QUuid &uuid, double roughness_dw_mm)
+{
+    HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, uuid);
+    if (pipe == nullptr)
+        return false;
+
+    pipe->roughness_dw_mm = roughness_dw_mm;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setPipeRoughnessCm(const QUuid &uuid, double roughness_cm)
+{
+    HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, uuid);
+    if (pipe == nullptr)
+        return false;
+
+    pipe->roughness_cm = roughness_cm;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setPipeMinorLoss(const QUuid &uuid, double minor_loss)
+{
+    HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, uuid);
+    if (pipe == nullptr)
+        return false;
+
+    pipe->minor_loss = minor_loss;
+    return true;
+}
+
 bool HydraulicNetworkEditor::setPipeVertexCoordinate(const QUuid &pipe_uuid, int vertex_index,
                                                        const CoordinateWGS84 &coordinate)
 {

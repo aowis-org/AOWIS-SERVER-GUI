@@ -97,6 +97,15 @@ public:
     bool setTankVolumeCurveUuid(const QUuid &uuid, const QUuid &volume_curve_uuid);
     bool setTankCanOverflow(const QUuid &uuid, bool can_overflow);
 
+    bool setPipeInitialStatus(const QUuid &uuid, HydraulicLinkPipeInitialStatus initial_status);
+    bool setPipeDiameterMm(const QUuid &uuid, double diameter_mm);
+    bool setPipeMeasuredLengthM(const QUuid &uuid, const std::optional<double> &length_measured_m);
+    bool setPipeMaterialId(const QUuid &uuid, const QString &material_id);
+    bool setPipeRoughnessHw(const QUuid &uuid, double roughness_hw);
+    bool setPipeRoughnessDwMm(const QUuid &uuid, double roughness_dw_mm);
+    bool setPipeRoughnessCm(const QUuid &uuid, double roughness_cm);
+    bool setPipeMinorLoss(const QUuid &uuid, double minor_loss);
+
     bool setPipeVertexCoordinate(const QUuid &pipe_uuid, int vertex_index,
                                  const CoordinateWGS84 &coordinate);
     bool setPipeVertices(const QUuid &pipe_uuid,

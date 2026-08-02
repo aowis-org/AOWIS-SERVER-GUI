@@ -14,7 +14,7 @@
 #include <QDoubleSpinBox>
 #include <QCheckBox>
 #include <QComboBox>
-#include <QCheckBox>
+#include <QUuid>
 
 #include "entity_inspector_widget.h"
 
@@ -29,30 +29,36 @@ class EntityInspectorPipe : public EntityInspectorWidget
     Q_OBJECT
 public:
     explicit EntityInspectorPipe(HydraulicData *hydraulic_data, const HydraulicLinkPipe &pipe, QWidget *parent = nullptr);
-    
+
 private:
+    HydraulicData *hydraulic_data = nullptr;
+    QUuid pipe_uuid;
+
     QLabel *picture = nullptr;
-    
+
     void addGroupGeometry();
     QComboBox *combo_status_initial = nullptr;
     QDoubleSpinBox *spin_diameter = nullptr;
-    QDoubleSpinBox *spin_length = nullptr;
-    
+    QDoubleSpinBox *spin_length_calculated = nullptr;
+    QCheckBox *check_length_measured = nullptr;
+    QDoubleSpinBox *spin_length_measured = nullptr;
+
     void addGroupRoughness();
     QComboBox *combo_material = nullptr;
     QDoubleSpinBox *spin_roughness_hw = nullptr;
     QDoubleSpinBox *spin_roughness_dw = nullptr;
     QDoubleSpinBox *spin_roughness_cm = nullptr;
-    
     QDoubleSpinBox *spin_loss_coefficient = nullptr;
-    
+
     void addGroupQuality();
     QCheckBox *check_override = nullptr;
     QDoubleSpinBox *spin_bulk_reaction = nullptr;
     QDoubleSpinBox *spin_wall_reaction = nullptr;
-    
+
+    void refreshPipe();
+
 signals:
-    
+
 protected slots:
     void onHeadlossFormulaChanged(HeadlossFormulas formulas) override;
 };
