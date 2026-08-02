@@ -350,6 +350,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
         if (this->toolbox->currentIndex() != this->toolbox_edit_index)
             return;
 
+        this->map_canvas->stopEntityPositioning();
         this->map_canvas->startRectangleSelection(false, true);
     });
     

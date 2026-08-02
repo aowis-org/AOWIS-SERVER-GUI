@@ -305,6 +305,15 @@ void MapCanvasEntities::stopEntityPositioning()
     updateCanvas();
 }
 
+bool MapCanvasEntities::cancelActiveMove()
+{
+    if (!this->placement->isMoving())
+        return false;
+
+    stopEntityPositioning();
+    return true;
+}
+
 void MapCanvasEntities::floatEntity(QMouseEvent *event)
 {
     if (this->placement->isMoving())

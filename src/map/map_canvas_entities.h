@@ -41,6 +41,7 @@ public:
     void loadNetwork(const NetworkHydraulic &network);
     void startEntityPositioning(InfrastructureEntity entity);
     void stopEntityPositioning();
+    bool cancelActiveMove();
     void floatEntity(QMouseEvent *event);
     bool anchorMarker(QMouseEvent *event);
     
