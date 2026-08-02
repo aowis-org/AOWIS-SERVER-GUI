@@ -1,80 +1,71 @@
 #ifndef ENTITY_INSPECTOR_TANK_H
 #define ENTITY_INSPECTOR_TANK_H
 
-#include <QObject>
-#include <QWidget>
+#include <optional>
 
-#include <QVBoxLayout>
-#include <QGridLayout>
-
-#include <QPixmap>
-#include <QPushButton>
-#include <QLabel>
-#include <QLineEdit>
-#include <QSpinBox>
-#include <QDoubleSpinBox>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QLabel>
+#include <QUuid>
+#include <QWidget>
 
 #include "entity_inspector_widget.h"
 
 #include "../widgets/group_box_collapsible.h"
 
-#include "../_enums_structs.h"
-#include "../_sizes.h"
-#include "../map/map_models.h"
-//#include "../../external/AOWIS-SERVER-EPANET/src/lib/model/simulation_request.h"
 #include <aowis/model/hydraulic/network_hydraulic.h>
 
 class EntityInspectorTank : public EntityInspectorWidget
 {
     Q_OBJECT
+
 public:
     explicit EntityInspectorTank(HydraulicData *hydraulic_data, const QUuid &uuid, QWidget *parent = nullptr);
-    
+
 private:
-    QLabel *picture = nullptr;
-    
     void addGroupGeometry();
+    void bindGeometry();
+    void refreshGeometry();
+    void populateVolumeCurveCombo(const QUuid &volume_curve_uuid);
+    void updateGeometryModeUi(HydraulicNodeTankGeometryInputType geometry_input_type);
+    void updateDerivedGeometry(const HydraulicNodeTank &tank);
+    std::optional<double> volumeCurveVolumeAtLevel(const QUuid &curve_uuid, double water_level_m) const;
+    void setSpinEditable(QDoubleSpinBox *spin, const QString &tooltip = QString());
+    void setSpinDerived(QDoubleSpinBox *spin, const std::optional<double> &value,
+                        const QString &tooltip = QString());
+    HydraulicNodeTankGeometryInputType tankGeometryInputType() const;
+
+    HydraulicData *hydraulic_data = nullptr;
+    QUuid tank_uuid;
+
     GroupBoxCollapsible *group_geometry = nullptr;
-    
-    QCheckBox *check_overflow = nullptr;
+
     QDoubleSpinBox *spin_level_initial = nullptr;
-    
+    QDoubleSpinBox *spin_level_minimum = nullptr;
+    QDoubleSpinBox *spin_level_maximum = nullptr;
+    QCheckBox *check_overflow = nullptr;
+
     QComboBox *combo_geometry_type = nullptr;
-    HydraulicNodeTankGeometryInputType tankGeometryInputType();
-    int geometry_type_current = 0;
-    
-    QLabel *label_spin_diameter = nullptr;
+
+    QLabel *label_diameter = nullptr;
     QDoubleSpinBox *spin_diameter = nullptr;
-    QLabel *label_spin_area = nullptr;
+    QLabel *label_area = nullptr;
     QDoubleSpinBox *spin_area = nullptr;
-    
-    QLabel *label_spin_level_min = nullptr;
-    QDoubleSpinBox *spin_level_min = nullptr;
-    QLabel *label_spin_level_max = nullptr;
-    QDoubleSpinBox *spin_level_max = nullptr;
-    QLabel *label_spin_volume_min = nullptr;
-    QDoubleSpinBox *spin_volume_min = nullptr;
-    
-    QLabel *label_volume_max = nullptr;
-    QLabel *label_volume_max_label = nullptr;
-    
+    QLabel *label_volume_minimum = nullptr;
+    QDoubleSpinBox *spin_volume_minimum = nullptr;
+    QLabel *label_volume_maximum = nullptr;
+    QDoubleSpinBox *spin_volume_maximum = nullptr;
     QLabel *label_volume_curve = nullptr;
     QComboBox *combo_volume_curve = nullptr;
-    
+
     void addGroupQuality();
     QComboBox *combo_chem_source = nullptr;
     QComboBox *combo_chem_mixing = nullptr;
-    
-    
+
 private slots:
-    void onGroupCollapse(GroupBoxCollapsible *group);
     void onGroupExpand(GroupBoxCollapsible *group);
-    
-    void onComboGeometryTypeChange(int index);
-    
-signals:
+    void onGeometryTypeChanged(int index);
 };
 
 #endif // ENTITY_INSPECTOR_TANK_H
