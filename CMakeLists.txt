@@ -97,6 +97,7 @@ qt_add_executable(aowis-server-gui
     src/map/map_tile_repository.h src/map/map_tile_repository.cpp
     src/footer_statusbar.h src/footer_statusbar.cpp
     src/_enums_structs.h
+    src/network_render_snapshot.h
     src/tab_map_monitor_container.h src/tab_map_monitor_container.cpp
     src/tab_reservoirs_widget.h src/tab_reservoirs_widget.cpp
     src/tab_tanks_widget.h src/tab_tanks_widget.cpp
