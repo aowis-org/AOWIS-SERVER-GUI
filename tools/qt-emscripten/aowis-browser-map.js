@@ -7,6 +7,8 @@
     const MAX_TILE_RETRY_COUNT = 3;
     const TILE_SEAM_OVERLAP_PHYSICAL_PIXELS = 1;
 
+    const viewListeners = new Set();
+
     const state = {
         layer: null,
         tilePane: null,
@@ -32,12 +34,57 @@
         centerPixelY: 0,
         originTileX: 0,
         originTileY: 0,
+        translateX: 0,
+        translateY: 0,
         cacheRevision: 0,
         renderPending: false,
         stackingGeneration: 0,
         activeOwner: 0,
         topmost: false
     };
+
+    function getViewState() {
+        return {
+            layer: state.layer,
+            tilePane: state.tilePane,
+            activeOwner: state.activeOwner,
+            topmost: state.topmost,
+            visible: state.visible,
+            ready: state.ready,
+            initialized: state.initialized,
+            width: state.width,
+            height: state.height,
+            longitude: state.longitude,
+            latitude: state.latitude,
+            zoom: state.zoom,
+            centerPixelX: state.centerPixelX,
+            centerPixelY: state.centerPixelY,
+            originTileX: state.originTileX,
+            originTileY: state.originTileY,
+            translateX: state.translateX,
+            translateY: state.translateY
+        };
+    }
+
+    function notifyViewChanged() {
+        const viewState = getViewState();
+        for (const listener of viewListeners) {
+            try {
+                listener(viewState);
+            } catch (error) {
+                console.error("AOWIS browser map view listener failed:", error);
+            }
+        }
+    }
+
+    function subscribeView(listener) {
+        if (typeof listener !== "function")
+            throw new TypeError("AOWIS browser map view listener must be a function");
+
+        viewListeners.add(listener);
+        listener(getViewState());
+        return () => viewListeners.delete(listener);
+    }
 
     function normalizeLongitude(longitude) {
         let normalized = (longitude + 180) % 360;
@@ -200,6 +247,7 @@
         state.tilePane.style.height = "0";
         state.tilePane.style.willChange = "transform";
         state.tilePane.style.transformOrigin = "0 0";
+        state.tilePane.style.zIndex = "0";
         state.layer.appendChild(state.tilePane);
 
         state.attribution = document.createElement("div");
@@ -211,6 +259,7 @@
         state.attribution.style.color = "#222";
         state.attribution.style.font = "10px/1.25 sans-serif";
         state.attribution.style.whiteSpace = "nowrap";
+        state.attribution.style.zIndex = "20";
         state.layer.appendChild(state.attribution);
 
         screen.appendChild(state.layer);
@@ -225,6 +274,7 @@
 
         clearTiles();
         state.ready = false;
+        notifyViewChanged();
         return true;
     }
 
@@ -284,11 +334,11 @@
 
         const originPixelX = state.originTileX * TILE_SIZE;
         const originPixelY = state.originTileY * TILE_SIZE;
-        const translateX = snapToPhysicalPixel(
+        state.translateX = snapToPhysicalPixel(
             state.width / 2 - (state.centerPixelX - originPixelX));
-        const translateY = snapToPhysicalPixel(
+        state.translateY = snapToPhysicalPixel(
             state.height / 2 - (state.centerPixelY - originPixelY));
-        state.tilePane.style.transform = `translate3d(${translateX}px, ${translateY}px, 0)`;
+        state.tilePane.style.transform = `translate3d(${state.translateX}px, ${state.translateY}px, 0)`;
     }
 
     function renderTiles() {
@@ -334,6 +384,8 @@
         }
 
         applyTransform();
+        if (originChanged)
+            notifyViewChanged();
     }
 
     function scheduleRender() {
@@ -383,6 +435,7 @@
             state.ready = true;
             state.layer.style.display = state.visible ? "block" : "none";
             scheduleRender();
+            notifyViewChanged();
             return;
         }
 
@@ -430,11 +483,13 @@
             state.ready = true;
             state.layer.style.display = state.visible ? "block" : "none";
             scheduleRender();
+            notifyViewChanged();
             return;
         }
 
         state.ready = false;
         state.layer.style.display = "none";
+        notifyViewChanged();
         if (remainingAttempts > 0) {
             window.requestAnimationFrame(() => {
                 synchronizeStacking(x, y, width, height, remainingAttempts - 1, generation);
@@ -456,6 +511,7 @@
             state.stackingGeneration += 1;
             if (state.layer)
                 state.layer.style.display = "none";
+            notifyViewChanged();
             return;
         }
 
@@ -497,6 +553,7 @@
 
         applyTransform();
         scheduleRender();
+        notifyViewChanged();
 
         const generation = ++state.stackingGeneration;
         window.requestAnimationFrame(() => {
@@ -537,6 +594,7 @@
 
         applyTransform();
         scheduleRender();
+        notifyViewChanged();
     }
 
     function invalidateTiles() {
@@ -555,6 +613,7 @@
         state.stackingGeneration += 1;
         if (state.layer)
             state.layer.style.display = "none";
+        notifyViewChanged();
     }
 
     function destroy() {
@@ -580,6 +639,7 @@
         state.activeOwner = 0;
         state.topmost = false;
         state.stackingGeneration += 1;
+        notifyViewChanged();
     }
 
     window.aowisBrowserMap = {
@@ -587,6 +647,8 @@
         setView: setView,
         invalidateTiles: invalidateTiles,
         release: release,
-        destroy: destroy
+        destroy: destroy,
+        getViewState: getViewState,
+        subscribeView: subscribeView
     };
 })();
