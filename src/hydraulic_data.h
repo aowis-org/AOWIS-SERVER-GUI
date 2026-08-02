@@ -4,6 +4,7 @@
 #include <optional>
 
 #include <QDate>
+#include <QDateTime>
 #include <QList>
 #include <QObject>
 #include <QString>
@@ -47,6 +48,9 @@ public:
     void loadProject();
 
     const NetworkHydraulic &networkHydraulic() const;
+    quint64 geometryRevision() const;
+    quint64 visualRevision() const;
+    QDateTime timeChangedLast() const;
     std::optional<HydraulicNodeJunction> junction(const QUuid &uuid) const;
     std::optional<HydraulicNodeReservoir> reservoir(const QUuid &uuid) const;
     std::optional<HydraulicNodeTank> tank(const QUuid &uuid) const;
@@ -161,9 +165,16 @@ public:
     bool deleteValve(const QUuid &uuid);
 
 private:
+    enum class NetworkChange
+    {
+        Visual,
+        Geometry
+    };
+
     std::optional<InfrastructureEntity> linkEntityType(const QUuid &uuid) const;
-    bool emitNodeChangedIfSuccessful(const QUuid &uuid, bool successful);
-    bool emitLinkChangedIfSuccessful(const QUuid &uuid, bool successful);
+    void markNetworkChanged(NetworkChange change);
+    bool emitNodeChangedIfSuccessful(const QUuid &uuid, bool successful, NetworkChange change = NetworkChange::Visual);
+    bool emitLinkChangedIfSuccessful(const QUuid &uuid, bool successful, NetworkChange change = NetworkChange::Visual);
     void emitConnectedPipeChanges(const QUuid &node_uuid);
 
     DatabaseGui *database_gui = nullptr;
@@ -171,6 +182,10 @@ private:
     std::optional<Project> project;
     NetworkHydraulic network_hydraulic;
     HydraulicNetworkEditor network_editor;
+
+    quint64 geometry_revision = 0;
+    quint64 visual_revision = 0;
+    QDateTime time_changed_last;
 
 private slots:
     void onDatabaseReady();
