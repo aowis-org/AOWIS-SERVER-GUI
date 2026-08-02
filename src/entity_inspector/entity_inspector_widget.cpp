@@ -180,7 +180,7 @@ void EntityInspectorWidget::addGroupGeneral(const QString &name)
     this->date_added->setSpecialValueText("[Not set]");
     this->date_added->setDate(date_unset);
 
-    QLabel *label_date_installed = new QLabel("Installation Date");
+    QLabel *label_date_installed = new QLabel("Installation<br>Date");
     this->date_installed = new QDateEdit();
     this->date_installed->setCalendarPopup(true);
     this->date_installed->setDisplayFormat(QStringLiteral("yyyy-MM-dd"));
