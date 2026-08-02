@@ -2,6 +2,7 @@
 #define ENTITY_INSPECTOR_WIDGET_H
 
 #include <QWidget>
+#include <QByteArray>
 #include <QTabWidget>
 #include <QScrollArea>
 #include <QDialog>
@@ -27,6 +28,9 @@
 
 #include "../_enums_structs.h"
 #include "../_sizes.h"
+
+class RESTClient;
+class QMessageBox;
 
 class EntityInspectorWidget : public QWidget
 {
@@ -83,6 +87,7 @@ protected:
     
     QLabel *label_terrain_elevation = nullptr;
     QPushButton *button_terrain_elevation = nullptr;
+    QLabel *label_terrain_elevation_status = nullptr;
     QDoubleSpinBox *spin_terrain_elevation = nullptr;
     QLabel *label_elevation_offset = nullptr;
     QDoubleSpinBox *spin_elevation_offset = nullptr;
@@ -120,6 +125,11 @@ private:
     void populateTimePatternCombo(QComboBox *combo_pattern, HydraulicTimePatternMode pattern_mode, const QUuid &pattern_uuid);
     void updateElevationModeUi();
     void updateCalculatedElevation();
+    void requestTerrainElevation();
+    void handleTerrainElevationResponse(const QByteArray &data);
+    void handleTerrainElevationError(const QString &error);
+    void showTerrainElevationErrorMessage(const QString &error);
+    void setTerrainElevationRequestActive(bool active);
     bool setElevationInputType(HydraulicNodeElevationInputType input_type);
     bool setElevationValue(double value_m);
     bool setTerrainElevation(double terrain_elevation_m);
@@ -134,6 +144,11 @@ private:
     QUuid node_uuid_2;
     QString entity_title_prefix;
     bool junction_demands_refresh_pending = false;
+    RESTClient *terrain_elevation_client = nullptr;
+    QPointer<QMessageBox> terrain_elevation_message_box = nullptr;
+    QUuid terrain_elevation_request_entity_uuid;
+    CoordinateWGS84 terrain_elevation_request_coordinate;
+    bool terrain_elevation_request_active = false;
     
     QTabWidget *tabs = nullptr;
     QVBoxLayout *layout_main = nullptr;

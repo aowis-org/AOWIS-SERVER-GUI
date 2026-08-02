@@ -1,14 +1,26 @@
 #include "entity_inspector_widget.h"
 
+#include "../rest_client.h"
+
+#include <cmath>
+
 #include <QGridLayout>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
+#include <QJsonValue>
+#include <QMessageBox>
 #include <QPixmap>
 #include <QSignalBlocker>
 #include <QTimer>
+#include <QUrl>
 
 namespace
 {
 constexpr int pattern_mode_role = Qt::UserRole;
 constexpr int pattern_uuid_role = Qt::UserRole + 1;
+
 }
 
 EntityInspectorWidget::EntityInspectorWidget(HydraulicData *hydraulic_data, QWidget *parent)
@@ -662,6 +674,23 @@ void EntityInspectorWidget::addGroupElevation()
     this->button_terrain_elevation->setToolTip(
         "Uses terrain elevation from GIS/DEM data.<br>Accuracy depends on the dataset and local terrain."
         );
+    this->label_terrain_elevation_status = new QLabel();
+    this->label_terrain_elevation_status->setWordWrap(true);
+    this->label_terrain_elevation_status->hide();
+
+    if (!this->terrain_elevation_client)
+    {
+        // TODO: Make the elevation provider, browser relay, and dataset configurable.
+#ifdef Q_OS_WASM
+        this->terrain_elevation_client = new RESTClient("https://api.allorigins.win/raw?url=", this);
+#else
+        this->terrain_elevation_client = new RESTClient("https://api.opentopodata.org", this);
+#endif
+        connect(this->terrain_elevation_client, &RESTClient::requestFinished, this,
+                &EntityInspectorWidget::handleTerrainElevationResponse);
+        connect(this->terrain_elevation_client, &RESTClient::requestError, this,
+                &EntityInspectorWidget::handleTerrainElevationError);
+    }
     
     this->label_terrain_elevation = new QLabel("Terrain Elevation");
     this->spin_terrain_elevation = new QDoubleSpinBox;
@@ -689,20 +718,21 @@ void EntityInspectorWidget::addGroupElevation()
 
     grid->addWidget(this->combo_elevation_input_type, 0, 0, 1, 2);
     grid->addWidget(this->button_terrain_elevation, 1, 0, 1, 2);
-    grid->addWidget(this->label_terrain_elevation, 2, 0);
-    grid->addWidget(this->spin_terrain_elevation, 2, 1);
-    grid->addWidget(this->label_elevation_offset, 3, 0);
-    grid->addWidget(this->spin_elevation_offset, 3, 1);
-    grid->addWidget(this->label_elevation_value, 4, 0);
-    grid->addWidget(this->spin_elevation_value, 4, 1);
+    grid->addWidget(this->label_terrain_elevation_status, 2, 0, 1, 2);
+    grid->addWidget(this->label_terrain_elevation, 3, 0);
+    grid->addWidget(this->spin_terrain_elevation, 3, 1);
+    grid->addWidget(this->label_elevation_offset, 4, 0);
+    grid->addWidget(this->spin_elevation_offset, 4, 1);
+    grid->addWidget(this->label_elevation_value, 5, 0);
+    grid->addWidget(this->spin_elevation_value, 5, 1);
 
     if (this->entity_type == InfrastructureEntity::Reservoir)
     {
         QLabel *label_head_pattern = new QLabel("Head Pattern");
         this->combo_head_pattern = new QComboBox();
         this->combo_head_pattern->setToolTip("Select a time pattern for variable reservoir head, or Constant for a fixed head.");
-        grid->addWidget(label_head_pattern, 5, 0);
-        grid->addWidget(this->combo_head_pattern, 5, 1);
+        grid->addWidget(label_head_pattern, 6, 0);
+        grid->addWidget(this->combo_head_pattern, 6, 1);
 
         connect(this->combo_head_pattern, &QComboBox::currentIndexChanged, this, [this](int)
         {
@@ -714,6 +744,8 @@ void EntityInspectorWidget::addGroupElevation()
         });
     }
     
+    connect(this->button_terrain_elevation, &QPushButton::clicked, this,
+            &EntityInspectorWidget::requestTerrainElevation);
     connect(this->combo_elevation_input_type, &QComboBox::currentIndexChanged, this, &EntityInspectorWidget::onElevationInputTypeChanged);
     connect(this->spin_elevation_value, &QDoubleSpinBox::valueChanged, this, &EntityInspectorWidget::onElevationValueChanged);
     connect(this->spin_terrain_elevation, &QDoubleSpinBox::valueChanged, this, &EntityInspectorWidget::onTerrainElevationChanged);
@@ -826,6 +858,11 @@ void EntityInspectorWidget::updateElevationModeUi()
         input_type == HydraulicNodeElevationInputType::TerrainElevationAndOffset;
 
     this->button_terrain_elevation->setVisible(uses_terrain);
+    this->button_terrain_elevation->setEnabled(
+        uses_terrain && !this->terrain_elevation_request_active);
+    if (this->label_terrain_elevation_status)
+        this->label_terrain_elevation_status->setVisible(
+            uses_terrain && !this->label_terrain_elevation_status->text().isEmpty());
     this->label_terrain_elevation->setVisible(uses_terrain);
     this->spin_terrain_elevation->setVisible(uses_terrain);
     this->label_elevation_offset->setVisible(uses_terrain);
@@ -858,6 +895,190 @@ void EntityInspectorWidget::updateCalculatedElevation()
     const QSignalBlocker value_blocker(this->spin_elevation_value);
     this->spin_elevation_value->setValue(
         this->spin_terrain_elevation->value() + this->spin_elevation_offset->value());
+}
+
+void EntityInspectorWidget::requestTerrainElevation()
+{
+    if (!this->hydraulic_data || this->entity_uuid.isNull() ||
+        !this->terrain_elevation_client || this->terrain_elevation_request_active)
+        return;
+
+    const std::optional<HydraulicNodeCommonData> node =
+        this->hydraulic_data->nodeCommonData(this->entity_type, this->entity_uuid);
+    if (!node.has_value())
+    {
+        handleTerrainElevationError(
+            "The node no longer exists in the hydraulic model.");
+        return;
+    }
+
+    const double latitude_deg = node->coordinate_wgs84.latitude_deg;
+    const double longitude_deg = node->coordinate_wgs84.longitude_deg;
+    if (!std::isfinite(latitude_deg) || latitude_deg < -90.0 || latitude_deg > 90.0 ||
+        !std::isfinite(longitude_deg) || longitude_deg < -180.0 || longitude_deg > 180.0)
+    {
+        handleTerrainElevationError(
+            "The node does not have a valid WGS84 position.");
+        return;
+    }
+
+    this->terrain_elevation_request_entity_uuid = this->entity_uuid;
+    this->terrain_elevation_request_coordinate = node->coordinate_wgs84;
+    if (this->label_terrain_elevation_status)
+        this->label_terrain_elevation_status->clear();
+    setTerrainElevationRequestActive(true);
+
+    const QString endpoint = QStringLiteral("/v1/eudem25m?locations=%1,%2")
+        .arg(latitude_deg, 0, 'f', 8)
+        .arg(longitude_deg, 0, 'f', 8);
+#ifdef Q_OS_WASM
+    const QString target_url = QStringLiteral("https://api.opentopodata.org") + endpoint;
+    this->terrain_elevation_client->get(
+        QString::fromLatin1(QUrl::toPercentEncoding(target_url)));
+#else
+    this->terrain_elevation_client->get(endpoint);
+#endif
+}
+
+void EntityInspectorWidget::handleTerrainElevationResponse(const QByteArray &data)
+{
+    if (!this->terrain_elevation_request_active)
+        return;
+
+    QJsonParseError parse_error;
+    const QJsonDocument document = QJsonDocument::fromJson(data, &parse_error);
+    if (parse_error.error != QJsonParseError::NoError || !document.isObject())
+    {
+        handleTerrainElevationError(
+            QStringLiteral("OpenTopoData returned invalid JSON: %1")
+                .arg(parse_error.errorString()));
+        return;
+    }
+
+    const QJsonObject response = document.object();
+    if (response.value(QStringLiteral("status")).toString() != QStringLiteral("OK"))
+    {
+        const QString api_error = response.value(QStringLiteral("error")).toString();
+        handleTerrainElevationError(
+            api_error.isEmpty()
+                ? QStringLiteral("OpenTopoData did not return a successful response.")
+                : api_error);
+        return;
+    }
+
+    const QJsonArray results = response.value(QStringLiteral("results")).toArray();
+    if (results.isEmpty() || !results.first().isObject())
+    {
+        handleTerrainElevationError(
+            "OpenTopoData returned no elevation result for this position.");
+        return;
+    }
+
+    const QJsonObject result = results.first().toObject();
+    const QJsonValue elevation_value = result.value(QStringLiteral("elevation"));
+    if (!elevation_value.isDouble())
+    {
+        handleTerrainElevationError(
+            "No terrain elevation is available for this position in EU-DEM 25 m. "
+            "This dataset covers Europe only.");
+        return;
+    }
+
+    if (this->entity_uuid != this->terrain_elevation_request_entity_uuid)
+    {
+        setTerrainElevationRequestActive(false);
+        return;
+    }
+
+    const std::optional<HydraulicNodeCommonData> node =
+        this->hydraulic_data->nodeCommonData(this->entity_type, this->entity_uuid);
+    if (!node.has_value())
+    {
+        handleTerrainElevationError(
+            "The node no longer exists in the hydraulic model.");
+        return;
+    }
+
+    constexpr double coordinate_tolerance = 1e-10;
+    const bool position_changed =
+        std::abs(node->coordinate_wgs84.latitude_deg -
+                 this->terrain_elevation_request_coordinate.latitude_deg) >
+            coordinate_tolerance ||
+        std::abs(node->coordinate_wgs84.longitude_deg -
+                 this->terrain_elevation_request_coordinate.longitude_deg) >
+            coordinate_tolerance;
+    if (position_changed)
+    {
+        handleTerrainElevationError(
+            "The node position changed while the terrain elevation was being retrieved. Please try again.");
+        return;
+    }
+
+    const double elevation_m = elevation_value.toDouble();
+    if (!std::isfinite(elevation_m) || !setTerrainElevation(elevation_m))
+    {
+        handleTerrainElevationError(
+            "The retrieved terrain elevation could not be written to the hydraulic model.");
+        return;
+    }
+
+    const QString dataset = result.value(QStringLiteral("dataset")).toString();
+    const QString dataset_suffix = dataset.isEmpty()
+        ? QString()
+        : QStringLiteral(" (%1)").arg(dataset);
+    this->button_terrain_elevation->setToolTip(
+        QStringLiteral(
+            "Uses terrain elevation from GIS/DEM data.<br>"
+            "Accuracy depends on the dataset and local terrain.<br>"
+            "Last result: %1 m%2")
+            .arg(elevation_m, 0, 'f', 3)
+            .arg(dataset_suffix));
+    if (this->label_terrain_elevation_status)
+        this->label_terrain_elevation_status->setText(
+            QStringLiteral("Retrieved %1 m%2.")
+                .arg(elevation_m, 0, 'f', 3)
+                .arg(dataset_suffix));
+    setTerrainElevationRequestActive(false);
+}
+
+void EntityInspectorWidget::handleTerrainElevationError(const QString &error)
+{
+    if (this->label_terrain_elevation_status)
+        this->label_terrain_elevation_status->clear();
+
+    setTerrainElevationRequestActive(false);
+    showTerrainElevationErrorMessage(error);
+}
+
+void EntityInspectorWidget::showTerrainElevationErrorMessage(const QString &error)
+{
+    if (this->terrain_elevation_message_box)
+        this->terrain_elevation_message_box->close();
+
+    QMessageBox *message_box = new QMessageBox(
+        QMessageBox::Warning,
+        "Terrain Elevation from GIS",
+        "The terrain elevation could not be retrieved.",
+        QMessageBox::Ok,
+        this);
+    message_box->setInformativeText(error);
+    message_box->setAttribute(Qt::WA_DeleteOnClose);
+    message_box->setWindowModality(Qt::WindowModal);
+
+    this->terrain_elevation_message_box = message_box;
+    message_box->open();
+}
+
+void EntityInspectorWidget::setTerrainElevationRequestActive(bool active)
+{
+    this->terrain_elevation_request_active = active;
+
+    if (!this->button_terrain_elevation)
+        return;
+
+    this->button_terrain_elevation->setText(
+        active ? "Retrieving Terrain Elevation..." : "Terrain Elevation from GIS");
+    updateElevationModeUi();
 }
 
 void EntityInspectorWidget::onElevationInputTypeChanged(int index)
