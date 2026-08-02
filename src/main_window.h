@@ -85,7 +85,7 @@ private:
     QRect window_geometry_saved;
     void fullScreenToggle();
     void toggleRightDockArea();
-    void restoreRightDockAreaForMapEditorSelection();
+    void showEntityInspectorForMapSelection();
     void hideRightDock(QDockWidget *dock);
     void onRightDockVisibilityChanged(QDockWidget *dock, bool visible);
     void scheduleMapEditorGuideDockResize();

@@ -285,13 +285,13 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->top_control_bar, &TopControlBar::signalExportEpanetNetwork, this->simulation_manager, &SimulationManager::exportEpanetNetwork);
     connect(this->top_control_bar, &TopControlBar::signalFullScreenToggle, this, &MainWindow::fullScreenToggle);
 
-    connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, this, &MainWindow::restoreRightDockAreaForMapEditorSelection);
-    connect(this->hydraulic_data, &HydraulicData::signalSelectedReservoir, this, &MainWindow::restoreRightDockAreaForMapEditorSelection);
-    connect(this->hydraulic_data, &HydraulicData::signalSelectedJunction, this, &MainWindow::restoreRightDockAreaForMapEditorSelection);
-    connect(this->hydraulic_data, &HydraulicData::signalSelectedPipe, this, &MainWindow::restoreRightDockAreaForMapEditorSelection);
-    connect(this->hydraulic_data, &HydraulicData::signalSelectedPump, this, &MainWindow::restoreRightDockAreaForMapEditorSelection);
-    connect(this->hydraulic_data, &HydraulicData::signalSelectedValve, this, &MainWindow::restoreRightDockAreaForMapEditorSelection);
-    connect(this->hydraulic_data, &HydraulicData::signalSelectedCustomerPoint, this, &MainWindow::restoreRightDockAreaForMapEditorSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, this, &MainWindow::showEntityInspectorForMapSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedReservoir, this, &MainWindow::showEntityInspectorForMapSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedJunction, this, &MainWindow::showEntityInspectorForMapSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedPipe, this, &MainWindow::showEntityInspectorForMapSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedPump, this, &MainWindow::showEntityInspectorForMapSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedValve, this, &MainWindow::showEntityInspectorForMapSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedCustomerPoint, this, &MainWindow::showEntityInspectorForMapSelection);
 
 #ifdef Q_OS_WASM
     emscripten_set_fullscreenchange_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, this, EM_TRUE, &MainWindow::fullScreenChangeCallback);
@@ -515,12 +515,17 @@ void MainWindow::toggleRightDockArea()
     this->right_dock_visibility.clear();
 }
 
-void MainWindow::restoreRightDockAreaForMapEditorSelection()
+void MainWindow::showEntityInspectorForMapSelection()
 {
-    if (!this->right_dock_area_hidden || this->tabs->currentWidget() != this->map_editor)
+    QWidget *current_tab = this->tabs->currentWidget();
+    if (current_tab != this->map_editor && current_tab != this->map_monitor)
         return;
 
-    toggleRightDockArea();
+    if (this->right_dock_area_hidden)
+        toggleRightDockArea();
+
+    this->dock_entity_inspector->show();
+    this->dock_entity_inspector->raise();
 }
 
 void MainWindow::hideRightDock(QDockWidget *dock)
