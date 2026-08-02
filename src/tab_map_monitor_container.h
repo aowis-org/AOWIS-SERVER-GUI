@@ -6,6 +6,7 @@
 
 #ifdef Q_OS_WASM
 #include <QEvent>
+#include <QMouseEvent>
 #include <QTimer>
 #endif
 #include <QHBoxLayout>
@@ -102,6 +103,7 @@ private:
     quint64 wasm_network_geometry_revision_sent = 0;
     bool wasm_network_snapshot_sent = false;
 
+    bool selectWasmNetworkEntityAt(const QPointF &position);
     void scheduleWasmMapLayerSync();
     void syncWasmMapLayer();
     void syncWasmNetworkSnapshot();

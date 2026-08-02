@@ -2,6 +2,8 @@
 
 #include "hydraulic_data.h"
 
+#include <cmath>
+
 #ifdef Q_OS_WASM
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -26,6 +28,24 @@ EM_JS(int, aowisBrowserNetworkSetSnapshot, (const char *json_data, int json_size
         console.error("Could not transfer AOWIS network snapshot:", error);
         return 0;
     }
+});
+
+EM_JS(double, aowisBrowserNetworkHitTest, (double x, double y),
+{
+    if (!window.aowisBrowserNetwork ||
+        typeof window.aowisBrowserNetwork.hitTest !== "function")
+        return 0;
+
+    const hit = window.aowisBrowserNetwork.hitTest(x, y);
+    if (!hit)
+        return 0;
+
+    const entityType = Number(hit.entityType) >>> 0;
+    const renderId = Number(hit.renderId) >>> 0;
+    if (entityType === 0 || renderId === 0)
+        return 0;
+
+    return entityType * 4294967296 + renderId;
 });
 
 namespace
@@ -161,6 +181,16 @@ MapMonitorContainer::~MapMonitorContainer()
 #ifdef Q_OS_WASM
 bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
 {
+    if (watched == this->map && event->type() == QEvent::MouseButtonPress)
+    {
+        QMouseEvent *mouse_event = static_cast<QMouseEvent *>(event);
+        if (mouse_event->button() == Qt::LeftButton && selectWasmNetworkEntityAt(mouse_event->position()))
+        {
+            mouse_event->accept();
+            return true;
+        }
+    }
+
     if (watched == this || watched == this->map || watched == this->window())
     {
         switch (event->type())
@@ -172,7 +202,7 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
         case QEvent::LayoutRequest:
         case QEvent::ParentChange:
         case QEvent::WindowStateChange:
-            this->scheduleWasmMapLayerSync();
+            scheduleWasmMapLayerSync();
             break;
         default:
             break;
@@ -180,6 +210,54 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
     }
 
     return QWidget::eventFilter(watched, event);
+}
+
+
+bool MapMonitorContainer::selectWasmNetworkEntityAt(const QPointF &position)
+{
+    if (this->hydraulic_data == nullptr || !this->wasm_network_snapshot_sent)
+        return false;
+
+    const double packed_hit = aowisBrowserNetworkHitTest(position.x(), position.y());
+    if (!std::isfinite(packed_hit) || packed_hit <= 0.0)
+        return false;
+
+    const quint64 packed = static_cast<quint64>(packed_hit);
+    const int entity_type_value = static_cast<int>(packed >> 32);
+    const quint32 render_id = static_cast<quint32>(packed & 0xffffffffULL);
+    const InfrastructureEntity entity_type = static_cast<InfrastructureEntity>(entity_type_value);
+    const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
+
+    if (entity_type == InfrastructureEntity::Junction ||
+        entity_type == InfrastructureEntity::Reservoir ||
+        entity_type == InfrastructureEntity::Tank)
+    {
+        for (const NetworkRenderNode &node : snapshot.nodes)
+        {
+            if (node.render_id != render_id || node.entity_type != entity_type)
+                continue;
+
+            this->hydraulic_data->setSelectedUuid(entity_type, node.uuid);
+            return true;
+        }
+        return false;
+    }
+
+    if (entity_type == InfrastructureEntity::Pipe ||
+        entity_type == InfrastructureEntity::Pump ||
+        entity_type == InfrastructureEntity::Valve)
+    {
+        for (const NetworkRenderLink &link : snapshot.links)
+        {
+            if (link.render_id != render_id || link.entity_type != entity_type)
+                continue;
+
+            this->hydraulic_data->setSelectedUuid(entity_type, link.uuid);
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void MapMonitorContainer::scheduleWasmMapLayerSync()
