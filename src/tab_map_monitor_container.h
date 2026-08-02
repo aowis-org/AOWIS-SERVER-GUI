@@ -102,10 +102,13 @@ private:
     QTimer *wasm_map_layer_sync_timer = nullptr;
     quint64 wasm_network_geometry_revision_sent = 0;
     bool wasm_network_snapshot_sent = false;
+    int wasm_network_background_opacity = 0;
 
     bool selectWasmNetworkEntityAt(const QPointF &position);
+    void setWasmNetworkBackgroundOpacity(int opacity);
     void scheduleWasmMapLayerSync();
     void syncWasmMapLayer();
+    void syncWasmNetworkBackground();
     void syncWasmNetworkSnapshot();
 #endif
 

@@ -48,8 +48,21 @@
         hoverFrameRequest: 0,
         cursorElement: null,
         cursorValue: "",
-        cursorPriority: ""
+        cursorPriority: "",
+        backgroundRed: 255,
+        backgroundGreen: 255,
+        backgroundBlue: 255,
+        backgroundOpacity: 0
     };
+
+    function applyBackground() {
+        if (!state.layer)
+            return;
+
+        const alpha = Math.max(0, Math.min(100, state.backgroundOpacity)) / 100;
+        state.layer.style.backgroundColor =
+            `rgba(${state.backgroundRed}, ${state.backgroundGreen}, ${state.backgroundBlue}, ${alpha})`;
+    }
 
     function ensureOverlay(mapLayer) {
         if (!mapLayer)
@@ -66,6 +79,7 @@
             state.layer.style.overflow = "hidden";
             state.layer.style.zIndex = "10";
             state.layer.style.contain = "strict";
+            applyBackground();
         }
 
         if (state.layer.parentElement !== mapLayer)
@@ -194,6 +208,12 @@
         return Boolean(mapView && mapView.topmost && mapView.visible && mapView.ready
             && mapView.initialized && mapView.width > 0 && mapView.height > 0
             && state.geometryReady);
+    }
+
+    function shouldDisplayOverlay(mapView) {
+        return Boolean(mapView && mapView.topmost && mapView.visible && mapView.ready
+            && mapView.initialized && mapView.width > 0 && mapView.height > 0
+            && (state.geometryReady || state.backgroundOpacity > 0));
     }
 
     function positionNetworkImage(mapView) {
@@ -532,9 +552,12 @@
         }
 
         updateViewport(mapView.width, mapView.height);
-        const shouldShow = shouldDisplayNetwork(mapView);
+        const shouldShow = shouldDisplayOverlay(mapView);
         state.layer.style.display = shouldShow ? "block" : "none";
         if (!shouldShow)
+            return;
+
+        if (!state.geometryReady)
             return;
 
         if (!state.image || state.imageZoom !== mapView.zoom) {
@@ -795,6 +818,16 @@
             handleMapViewChanged(state.lastMapView);
     }
 
+    function setBackground(red, green, blue, opacity) {
+        state.backgroundRed = Math.max(0, Math.min(255, Number(red) || 0));
+        state.backgroundGreen = Math.max(0, Math.min(255, Number(green) || 0));
+        state.backgroundBlue = Math.max(0, Math.min(255, Number(blue) || 0));
+        state.backgroundOpacity = Math.max(0, Math.min(100, Number(opacity) || 0));
+        applyBackground();
+        if (state.lastMapView)
+            handleMapViewChanged(state.lastMapView);
+    }
+
     function destroy() {
         if (state.unsubscribeView)
             state.unsubscribeView();
@@ -837,6 +870,7 @@
 
     window.aowisBrowserNetwork = {
         setSnapshot: setSnapshot,
+        setBackground: setBackground,
         hitTest: hitTest,
         destroy: destroy
     };

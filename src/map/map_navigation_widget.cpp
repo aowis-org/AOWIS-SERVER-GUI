@@ -80,6 +80,7 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     
     QLabel *label_slider_map_visibility = new QLabel("Opacity");
     QSlider *slider_map_visibility = new QSlider(Qt::Horizontal);
+    slider_map_visibility->setRange(0, 100);
     connect(slider_map_visibility, &QSlider::valueChanged, this, &MapNavigationWidget::signalSlideOpacityChanged);
     
     this->check_map_sync = new QCheckBox("Sync Map Movement");

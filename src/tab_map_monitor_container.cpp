@@ -2,6 +2,8 @@
 
 #include "hydraulic_data.h"
 
+#include <QColor>
+
 #include <cmath>
 
 #ifdef Q_OS_WASM
@@ -46,6 +48,15 @@ EM_JS(double, aowisBrowserNetworkHitTest, (double x, double y),
         return 0;
 
     return entityType * 4294967296 + renderId;
+});
+
+EM_JS(void, aowisBrowserNetworkSetBackground, (int red, int green, int blue, int opacity),
+{
+    if (!window.aowisBrowserNetwork ||
+        typeof window.aowisBrowserNetwork.setBackground !== "function")
+        return;
+
+    window.aowisBrowserNetwork.setBackground(red, green, blue, opacity);
 });
 
 namespace
@@ -156,7 +167,10 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
 
     connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
         this, &MapMonitorContainer::scheduleWasmMapLayerSync);
+    connect(this->map_menu->mapNavigationWidget(), &MapNavigationWidget::signalSlideOpacityChanged,
+        this, &MapMonitorContainer::setWasmNetworkBackgroundOpacity);
 
+    this->syncWasmNetworkBackground();
     this->scheduleWasmMapLayerSync();
 #endif
 
@@ -203,6 +217,11 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
         case QEvent::ParentChange:
         case QEvent::WindowStateChange:
             scheduleWasmMapLayerSync();
+            break;
+        case QEvent::ApplicationPaletteChange:
+        case QEvent::PaletteChange:
+        case QEvent::StyleChange:
+            this->syncWasmNetworkBackground();
             break;
         default:
             break;
@@ -261,6 +280,16 @@ bool MapMonitorContainer::selectWasmNetworkEntityAt(const QPointF &position)
     return false;
 }
 
+void MapMonitorContainer::setWasmNetworkBackgroundOpacity(int opacity)
+{
+    const int bounded_opacity = qBound(0, opacity, 100);
+    if (this->wasm_network_background_opacity == bounded_opacity)
+        return;
+
+    this->wasm_network_background_opacity = bounded_opacity;
+    this->syncWasmNetworkBackground();
+}
+
 void MapMonitorContainer::scheduleWasmMapLayerSync()
 {
     if (!this->wasm_map_layer_sync_timer->isActive())
@@ -281,6 +310,16 @@ void MapMonitorContainer::syncWasmMapLayer()
     const QRect map_geometry(this->map->mapToGlobal(QPoint(0, 0)), this->map->size());
     this->map->setBrowserMapLayerGeometry(map_geometry, true);
     this->syncWasmNetworkSnapshot();
+}
+
+void MapMonitorContainer::syncWasmNetworkBackground()
+{
+    const QColor background = this->map->palette().color(QPalette::Window);
+    aowisBrowserNetworkSetBackground(
+        background.red(),
+        background.green(),
+        background.blue(),
+        this->wasm_network_background_opacity);
 }
 
 void MapMonitorContainer::syncWasmNetworkSnapshot()
