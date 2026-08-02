@@ -12,6 +12,7 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QGridLayout>
+#include <QStackedLayout>
 
 #include <QScrollArea>
 #include <QScrollBar>
@@ -33,6 +34,7 @@
 #include "widgets/group_box_collapsible.h"
 
 class HydraulicData;
+class MapNetworkOverlayWidget;
 
 #ifdef Q_OS_WASM
 #include "gps_provider_dummy.h"
@@ -95,7 +97,12 @@ private:
     MapModel *map_model = nullptr;
     MapTileRepository *tile_repository = nullptr;
     HydraulicData *hydraulic_data = nullptr;
+    QWidget *map_stack = nullptr;
+    QStackedLayout *map_stack_layout = nullptr;
     MapWidget *map = nullptr;
+#ifndef Q_OS_WASM
+    MapNetworkOverlayWidget *desktop_network_overlay = nullptr;
+#endif
     MapMonitorMenuWidget *map_menu = nullptr;
 
 #ifdef Q_OS_WASM

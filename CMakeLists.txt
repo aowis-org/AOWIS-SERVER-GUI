@@ -203,6 +203,8 @@ if(NOT EMSCRIPTEN)
         PRIVATE
             src/gps_provider.h
             src/gps_provider.cpp
+            src/map/map_network_overlay_widget.h
+            src/map/map_network_overlay_widget.cpp
     )
     
     target_compile_definitions(aowis-server-gui

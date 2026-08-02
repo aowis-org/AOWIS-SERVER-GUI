@@ -2,6 +2,10 @@
 
 #include "hydraulic_data.h"
 
+#ifndef Q_OS_WASM
+#include "map/map_network_overlay_widget.h"
+#endif
+
 #include <QColor>
 
 #include <cmath>
@@ -121,7 +125,12 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     map_model( map_model ),
     tile_repository( tile_repository ),
     hydraulic_data( hydraulic_data ),
-    map( new MapWidget(this->map_model, this->tile_repository, this->gps, this) ),
+    map_stack( new QWidget(this) ),
+    map_stack_layout( new QStackedLayout(this->map_stack) ),
+    map( new MapWidget(this->map_model, this->tile_repository, this->gps, this->map_stack) ),
+#ifndef Q_OS_WASM
+    desktop_network_overlay( new MapNetworkOverlayWidget(this->map_model, this->hydraulic_data, this->map_stack) ),
+#endif
     map_menu( new MapMonitorMenuWidget(this->map, this) )
 {
     setContentsMargins(0, 0, 0, 0);
@@ -152,6 +161,16 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     
     scroll_controls->setWidget(this->map_menu);
 
+    this->map_stack_layout->setContentsMargins(0, 0, 0, 0);
+    this->map_stack_layout->setSpacing(0);
+    this->map_stack_layout->setStackingMode(QStackedLayout::StackAll);
+    this->map_stack_layout->addWidget(this->map);
+#ifndef Q_OS_WASM
+    this->map_stack_layout->addWidget(this->desktop_network_overlay);
+    this->map_stack_layout->setCurrentWidget(this->desktop_network_overlay);
+    this->desktop_network_overlay->raise();
+#endif
+
 #ifdef Q_OS_WASM
     this->map->setBrowserMapLayerEnabled(true);
     this->map->setBrowserMapLayerTopmost(true);
@@ -162,20 +181,21 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
 
     this->installEventFilter(this);
     this->map->installEventFilter(this);
+    this->map_stack->installEventFilter(this);
     if (this->window())
         this->window()->installEventFilter(this);
 
-    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
-        this, &MapMonitorContainer::scheduleWasmMapLayerSync);
-    connect(this->map_menu->mapNavigationWidget(), &MapNavigationWidget::signalSlideOpacityChanged,
-        this, &MapMonitorContainer::setWasmNetworkBackgroundOpacity);
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, &MapMonitorContainer::scheduleWasmMapLayerSync);
+    connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this, &MapMonitorContainer::scheduleWasmMapLayerSync);
+    connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this, &MapMonitorContainer::scheduleWasmMapLayerSync);
+    connect(this->map_menu->mapNavigationWidget(), &MapNavigationWidget::signalSlideOpacityChanged, this, &MapMonitorContainer::setWasmNetworkBackgroundOpacity);
 
     this->syncWasmNetworkBackground();
     this->scheduleWasmMapLayerSync();
 #endif
 
     this->layout->addWidget(scroll_controls);
-    this->layout->addWidget(this->map);
+    this->layout->addWidget(this->map_stack);
     
     connect(this->map_menu, &MapMonitorMenuWidget::signalNodeVisualClicked,
         this, &MapMonitorContainer::signalShowMapLegendNode);
@@ -205,7 +225,7 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
         }
     }
 
-    if (watched == this || watched == this->map || watched == this->window())
+    if (watched == this || watched == this->map || watched == this->map_stack || watched == this->window())
     {
         switch (event->type())
         {
