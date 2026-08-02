@@ -31,6 +31,8 @@
 #include "map/map_navigation_widget.h"
 #include "widgets/group_box_collapsible.h"
 
+class HydraulicData;
+
 #ifdef Q_OS_WASM
 #include "gps_provider_dummy.h"
 #else
@@ -74,7 +76,7 @@ class MapMonitorContainer : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapMonitorContainer(MapModel *map_model, MapTileRepository *tile_repository, GpsProvider *gps, QWidget *parent = nullptr);
+    explicit MapMonitorContainer(MapModel *map_model, MapTileRepository *tile_repository, HydraulicData *hydraulic_data, GpsProvider *gps, QWidget *parent = nullptr);
     ~MapMonitorContainer() override;
     
     MapWidget *getMap();
@@ -91,14 +93,18 @@ private:
     GpsProvider *gps = nullptr;
     MapModel *map_model = nullptr;
     MapTileRepository *tile_repository = nullptr;
+    HydraulicData *hydraulic_data = nullptr;
     MapWidget *map = nullptr;
     MapMonitorMenuWidget *map_menu = nullptr;
 
 #ifdef Q_OS_WASM
     QTimer *wasm_map_layer_sync_timer = nullptr;
+    quint64 wasm_network_geometry_revision_sent = 0;
+    bool wasm_network_snapshot_sent = false;
 
     void scheduleWasmMapLayerSync();
     void syncWasmMapLayer();
+    void syncWasmNetworkSnapshot();
 #endif
 
 signals:

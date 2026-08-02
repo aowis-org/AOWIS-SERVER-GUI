@@ -23,6 +23,7 @@
 
 #include "_enums_structs.h"
 #include "hydraulic_network_editor.h"
+#include "network_render_snapshot.h"
 
 struct HydraulicNodeCommonData
 {
@@ -48,6 +49,7 @@ public:
     void loadProject();
 
     const NetworkHydraulic &networkHydraulic() const;
+    const NetworkRenderSnapshot &networkRenderSnapshot() const;
     quint64 geometryRevision() const;
     quint64 visualRevision() const;
     QDateTime timeChangedLast() const;
@@ -176,6 +178,7 @@ private:
     bool emitNodeChangedIfSuccessful(const QUuid &uuid, bool successful, NetworkChange change = NetworkChange::Visual);
     bool emitLinkChangedIfSuccessful(const QUuid &uuid, bool successful, NetworkChange change = NetworkChange::Visual);
     void emitConnectedPipeChanges(const QUuid &node_uuid);
+    void rebuildNetworkRenderSnapshot() const;
 
     DatabaseGui *database_gui = nullptr;
 
@@ -186,6 +189,7 @@ private:
     quint64 geometry_revision = 0;
     quint64 visual_revision = 0;
     QDateTime time_changed_last;
+    mutable NetworkRenderSnapshot network_render_snapshot;
 
 private slots:
     void onDatabaseReady();

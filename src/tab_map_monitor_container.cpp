@@ -1,11 +1,95 @@
 #include "tab_map_monitor_container.h"
 
-MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository *tile_repository, GpsProvider *gps, QWidget *parent)
+#include "hydraulic_data.h"
+
+#ifdef Q_OS_WASM
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+
+#include <emscripten.h>
+
+EM_JS(int, aowisBrowserNetworkSetSnapshot, (const char *json_data, int json_size),
+{
+    if (!window.aowisBrowserNetwork ||
+        typeof window.aowisBrowserNetwork.setSnapshot !== "function")
+        return 0;
+
+    try
+    {
+        const snapshot = JSON.parse(UTF8ToString(json_data, json_size));
+        window.aowisBrowserNetwork.setSnapshot(snapshot);
+        return 1;
+    }
+    catch (error)
+    {
+        console.error("Could not transfer AOWIS network snapshot:", error);
+        return 0;
+    }
+});
+
+namespace
+{
+QJsonArray coordinateToJson(const CoordinateWGS84 &coordinate)
+{
+    QJsonArray result;
+    result.append(coordinate.longitude_deg);
+    result.append(coordinate.latitude_deg);
+    return result;
+}
+
+QByteArray serializeNetworkRenderSnapshot(const NetworkRenderSnapshot &snapshot)
+{
+    QJsonArray nodes;
+    for (const NetworkRenderNode &node : snapshot.nodes)
+    {
+        QJsonArray node_json;
+        node_json.append(static_cast<double>(node.render_id));
+        node_json.append(static_cast<int>(node.entity_type));
+        node_json.append(node.uuid.toString(QUuid::WithoutBraces));
+        node_json.append(node.id);
+        node_json.append(node.coordinate_wgs84.longitude_deg);
+        node_json.append(node.coordinate_wgs84.latitude_deg);
+        nodes.append(node_json);
+    }
+
+    QJsonArray links;
+    for (const NetworkRenderLink &link : snapshot.links)
+    {
+        QJsonArray vertices;
+        for (const CoordinateWGS84 &coordinate : link.vertices_wgs84)
+            vertices.append(coordinateToJson(coordinate));
+
+        QJsonArray link_json;
+        link_json.append(static_cast<double>(link.render_id));
+        link_json.append(static_cast<int>(link.entity_type));
+        link_json.append(link.uuid.toString(QUuid::WithoutBraces));
+        link_json.append(link.id);
+        link_json.append(static_cast<double>(link.start_node_render_id));
+        link_json.append(static_cast<double>(link.end_node_render_id));
+        link_json.append(vertices);
+        links.append(link_json);
+    }
+
+    QJsonObject root;
+    root.insert(QStringLiteral("geometryRevision"),
+                QString::number(snapshot.geometry_revision));
+    root.insert(QStringLiteral("visualRevision"),
+                QString::number(snapshot.visual_revision));
+    root.insert(QStringLiteral("nodes"), nodes);
+    root.insert(QStringLiteral("links"), links);
+    return QJsonDocument(root).toJson(QJsonDocument::Compact);
+}
+}
+#endif
+
+MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository *tile_repository, HydraulicData *hydraulic_data, GpsProvider *gps, QWidget *parent)
     : QWidget{parent},
     layout( new QHBoxLayout(this) ),
     gps( gps ),
     map_model( map_model ),
     tile_repository( tile_repository ),
+    hydraulic_data( hydraulic_data ),
     map( new MapWidget(this->map_model, this->tile_repository, this->gps, this) ),
     map_menu( new MapMonitorMenuWidget(this->map, this) )
 {
@@ -49,6 +133,9 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     this->map->installEventFilter(this);
     if (this->window())
         this->window()->installEventFilter(this);
+
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
+        this, &MapMonitorContainer::scheduleWasmMapLayerSync);
 
     this->scheduleWasmMapLayerSync();
 #endif
@@ -114,6 +201,28 @@ void MapMonitorContainer::syncWasmMapLayer()
 
     const QRect map_geometry(this->map->mapToGlobal(QPoint(0, 0)), this->map->size());
     this->map->setBrowserMapLayerGeometry(map_geometry, true);
+    this->syncWasmNetworkSnapshot();
+}
+
+void MapMonitorContainer::syncWasmNetworkSnapshot()
+{
+    if (this->hydraulic_data == nullptr)
+        return;
+
+    const quint64 geometry_revision = this->hydraulic_data->geometryRevision();
+    if (this->wasm_network_snapshot_sent &&
+        this->wasm_network_geometry_revision_sent == geometry_revision)
+        return;
+
+    const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
+    const QByteArray json = serializeNetworkRenderSnapshot(snapshot);
+    const int transferred = aowisBrowserNetworkSetSnapshot(
+        json.constData(), static_cast<int>(json.size()));
+    if (transferred == 0)
+        return;
+
+    this->wasm_network_geometry_revision_sent = snapshot.geometry_revision;
+    this->wasm_network_snapshot_sent = true;
 }
 #endif
 

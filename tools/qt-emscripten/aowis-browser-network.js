@@ -15,7 +15,8 @@
         geometryOriginX: 0,
         geometryOriginY: 0,
         width: 0,
-        height: 0
+        height: 0,
+        snapshot: null
     };
 
     function createSvgElement(name) {
@@ -141,6 +142,15 @@
         state.unsubscribeView = window.aowisBrowserMap.subscribeView(handleMapViewChanged);
     }
 
+    // nodes: [renderId, entityType, uuid, hydraulicId, longitude, latitude]
+    // links: [renderId, entityType, uuid, hydraulicId, startNodeId, endNodeId, vertices]
+    function setSnapshot(snapshot) {
+        if (!snapshot || !Array.isArray(snapshot.nodes) || !Array.isArray(snapshot.links))
+            throw new TypeError("Invalid AOWIS browser network snapshot");
+
+        state.snapshot = snapshot;
+    }
+
     function destroy() {
         if (state.unsubscribeView)
             state.unsubscribeView();
@@ -157,9 +167,11 @@
         state.geometryOriginY = 0;
         state.width = 0;
         state.height = 0;
+        state.snapshot = null;
     }
 
     window.aowisBrowserNetwork = {
+        setSnapshot: setSnapshot,
         destroy: destroy
     };
 

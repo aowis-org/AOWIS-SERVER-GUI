@@ -25,7 +25,7 @@ MainWindow::MainWindow(QWidget *parent)
     map_model_editor( new MapModel(this) ),
     tabs( new QTabWidget(this) ),
     settings( new SettingsWidget(this) ),
-    map_monitor( new MapMonitorContainer(this->map_model_monitor, this->map_tile_repository, this->gps, this) ),
+    map_monitor( new MapMonitorContainer(this->map_model_monitor, this->map_tile_repository, this->hydraulic_data, this->gps, this) ),
     map_editor( new MapEditorContainer(this->map_model_editor, this->map_tile_repository, this->hydraulic_data, this->gps, this->dock_entity_inspector, this) ),
     energy( new EnergyWidget(this) ),
     reservoirs( new ReservoirsWidget(this) ),
