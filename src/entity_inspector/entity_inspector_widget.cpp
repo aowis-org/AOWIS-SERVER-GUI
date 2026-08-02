@@ -211,36 +211,71 @@ void EntityInspectorWidget::addGroupEndpoints()
     QGridLayout *grid = new QGridLayout(group);
     
     QLabel *label_node_1 = new QLabel("Node 1");
-    QLabel *label_node_1_id = new QLabel();
-    QPushButton *button_node_1_locate = new QPushButton(QIcon(":/icon/geomarker.png"), "");
-    button_node_1_locate->setIconSize(QSize(20, 20));
-    button_node_1_locate->setToolTip("Show on Map");
-    button_node_1_locate->setMaximumWidth(35);
-    QPushButton *button_node_1_inspect = new QPushButton(QIcon(":/icon/target.png"), "");
-    button_node_1_inspect->setIconSize(QSize(20, 20));
-    button_node_1_inspect->setToolTip("Inspect");
-    button_node_1_inspect->setMaximumWidth(35);
+    this->label_node_1_id = new QLabel();
+    this->label_node_1_id->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    this->label_node_1_id->setAlignment(Qt::AlignCenter);
+    this->button_node_1_locate = new QPushButton(QIcon(":/icon/geomarker.png"), "");
+    this->button_node_1_locate->setIconSize(QSize(20, 20));
+    this->button_node_1_locate->setToolTip("Find on Map");
+    this->button_node_1_locate->setMaximumWidth(35);
+    this->button_node_1_inspect = new QPushButton(QIcon(":/icon/target.png"), "");
+    this->button_node_1_inspect->setIconSize(QSize(20, 20));
+    this->button_node_1_inspect->setToolTip("Show in Inspector");
+    this->button_node_1_inspect->setMaximumWidth(35);
     
     QLabel *label_node_2 = new QLabel("Node 2");
-    QLabel *label_node_2_id = new QLabel();
-    QPushButton *button_node_2_locate = new QPushButton(QIcon(":/icon/geomarker.png"), "");
-    button_node_2_locate->setIconSize(QSize(20, 20));
-    button_node_2_locate->setToolTip("Show on Map");
-    button_node_2_locate->setMaximumWidth(35);
-    QPushButton *button_node_2_inspect = new QPushButton(QIcon(":/icon/target.png"), "");
-    button_node_2_inspect->setIconSize(QSize(20, 20));
-    button_node_2_inspect->setToolTip("Inspect");
-    button_node_2_inspect->setMaximumWidth(35);
+    this->label_node_2_id = new QLabel();
+    this->label_node_2_id->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    this->label_node_2_id->setAlignment(Qt::AlignCenter);
+    this->button_node_2_locate = new QPushButton(QIcon(":/icon/geomarker.png"), "");
+    this->button_node_2_locate->setIconSize(QSize(20, 20));
+    this->button_node_2_locate->setToolTip("Find on Map");
+    this->button_node_2_locate->setMaximumWidth(35);
+    this->button_node_2_inspect = new QPushButton(QIcon(":/icon/target.png"), "");
+    this->button_node_2_inspect->setIconSize(QSize(20, 20));
+    this->button_node_2_inspect->setToolTip("Show in Inspector");
+    this->button_node_2_inspect->setMaximumWidth(35);
     
     grid->addWidget(label_node_1, 0, 0);
-    grid->addWidget(label_node_1_id, 0, 1);
-    grid->addWidget(button_node_1_locate, 0, 2);
-    grid->addWidget(button_node_1_inspect, 0, 3);
+    grid->addWidget(this->label_node_1_id, 0, 1);
+    grid->addWidget(this->button_node_1_locate, 0, 2);
+    grid->addWidget(this->button_node_1_inspect, 0, 3);
     
     grid->addWidget(label_node_2, 1, 0);
-    grid->addWidget(label_node_2_id, 1, 1);
-    grid->addWidget(button_node_2_locate, 1, 2);
-    grid->addWidget(button_node_2_inspect, 1, 3);
+    grid->addWidget(this->label_node_2_id, 1, 1);
+    grid->addWidget(this->button_node_2_locate, 1, 2);
+    grid->addWidget(this->button_node_2_inspect, 1, 3);
+    grid->setColumnStretch(1, 1);
+
+    connect(this->button_node_1_locate, &QPushButton::clicked, this, [this]()
+    {
+        locateHydraulicEndpoint(this->node_uuid_1);
+    });
+    connect(this->button_node_1_inspect, &QPushButton::clicked, this, [this]()
+    {
+        inspectHydraulicEndpoint(this->node_uuid_1);
+    });
+    connect(this->button_node_2_locate, &QPushButton::clicked, this, [this]()
+    {
+        locateHydraulicEndpoint(this->node_uuid_2);
+    });
+    connect(this->button_node_2_inspect, &QPushButton::clicked, this, [this]()
+    {
+        inspectHydraulicEndpoint(this->node_uuid_2);
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
+            [this](InfrastructureEntity, const QUuid &uuid_changed)
+    {
+        if (uuid_changed == this->node_uuid_1 || uuid_changed == this->node_uuid_2)
+            refreshHydraulicEndpoints();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this,
+            [this]()
+    {
+        refreshHydraulicEndpoints();
+    });
+
+    refreshHydraulicEndpoints();
     
     this->layoutConfiguration()->addWidget(group);
 }
@@ -436,6 +471,126 @@ void EntityInspectorWidget::refreshHydraulicLink()
         return;
 
     refreshHydraulicGeneral(link->id, link->metadata);
+    refreshHydraulicEndpoints();
+}
+
+void EntityInspectorWidget::refreshHydraulicEndpoints()
+{
+    if (!this->label_node_1_id || !this->label_node_2_id)
+        return;
+
+    this->node_uuid_1 = QUuid();
+    this->node_uuid_2 = QUuid();
+
+    if (this->hydraulic_data)
+    {
+        switch (this->entity_type)
+        {
+        case InfrastructureEntity::Pipe:
+        {
+            const std::optional<HydraulicLinkPipe> pipe = this->hydraulic_data->pipe(this->entity_uuid);
+            if (pipe.has_value())
+            {
+                this->node_uuid_1 = pipe->node_uuid_from;
+                this->node_uuid_2 = pipe->node_uuid_to;
+            }
+            break;
+        }
+        case InfrastructureEntity::Pump:
+        {
+            const std::optional<HydraulicLinkPump> pump = this->hydraulic_data->pump(this->entity_uuid);
+            if (pump.has_value())
+            {
+                this->node_uuid_1 = pump->node_uuid_from;
+                this->node_uuid_2 = pump->node_uuid_to;
+            }
+            break;
+        }
+        case InfrastructureEntity::Valve:
+        {
+            const std::optional<HydraulicLinkValve> valve = this->hydraulic_data->valve(this->entity_uuid);
+            if (valve.has_value())
+            {
+                this->node_uuid_1 = valve->node_uuid_from;
+                this->node_uuid_2 = valve->node_uuid_to;
+            }
+            break;
+        }
+        default:
+            break;
+        }
+    }
+
+    refreshHydraulicEndpoint(this->node_uuid_1, this->label_node_1_id,
+                             this->button_node_1_locate, this->button_node_1_inspect);
+    refreshHydraulicEndpoint(this->node_uuid_2, this->label_node_2_id,
+                             this->button_node_2_locate, this->button_node_2_inspect);
+}
+
+void EntityInspectorWidget::refreshHydraulicEndpoint(
+    const QUuid &node_uuid, QLabel *label_node_id,
+    QPushButton *button_locate, QPushButton *button_inspect)
+{
+    if (!label_node_id || !button_locate || !button_inspect)
+        return;
+
+    QString label_text = "[Not set]";
+    QString tooltip;
+    bool available = false;
+
+    if (!node_uuid.isNull() && this->hydraulic_data)
+    {
+        const std::optional<InfrastructureEntity> node_type =
+            this->hydraulic_data->nodeEntityType(node_uuid);
+        if (node_type.has_value())
+        {
+            const std::optional<HydraulicNodeCommonData> node =
+                this->hydraulic_data->nodeCommonData(node_type.value(), node_uuid);
+            if (node.has_value())
+            {
+                label_text = node->id.isEmpty() ? "[Unnamed Node]" : node->id;
+                tooltip = node_uuid.toString(QUuid::WithoutBraces);
+                available = true;
+            }
+        }
+
+        if (!available)
+        {
+            label_text = "[Missing Node]";
+            tooltip = node_uuid.toString(QUuid::WithoutBraces);
+        }
+    }
+
+    label_node_id->setText(label_text);
+    label_node_id->setToolTip(tooltip);
+    button_locate->setEnabled(available);
+    button_inspect->setEnabled(available);
+}
+
+void EntityInspectorWidget::locateHydraulicEndpoint(const QUuid &node_uuid)
+{
+    if (!this->hydraulic_data || node_uuid.isNull())
+        return;
+
+    const std::optional<InfrastructureEntity> node_type =
+        this->hydraulic_data->nodeEntityType(node_uuid);
+    if (!node_type.has_value())
+        return;
+
+    this->hydraulic_data->requestNodeLocate(node_type.value(), node_uuid);
+}
+
+void EntityInspectorWidget::inspectHydraulicEndpoint(const QUuid &node_uuid)
+{
+    if (!this->hydraulic_data || node_uuid.isNull())
+        return;
+
+    const std::optional<InfrastructureEntity> node_type =
+        this->hydraulic_data->nodeEntityType(node_uuid);
+    if (!node_type.has_value())
+        return;
+
+    this->hydraulic_data->setSelectedUuid(node_type.value(), node_uuid);
 }
 
 std::optional<QDate> EntityInspectorWidget::optionalDate(const QDateEdit *date_edit) const
@@ -807,13 +962,13 @@ void EntityInspectorWidget::onHeadlossFormulaChanged(HeadlossFormulas formulas)
 
 void EntityInspectorWidget::addGroupDemands()
 {
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Demands & Emitter");
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Demands / Emitter");
     QGridLayout *grid = new QGridLayout(group);
 
     this->label_demands_summary = new QLabel();
     this->label_demands_summary->setWordWrap(true);
 
-    QLabel *label_emitter_coefficient = new QLabel("Emitter Coefficient");
+    QLabel *label_emitter_coefficient = new QLabel("Emitter<br>Coefficient");
     this->spin_emitter_coefficient = new QDoubleSpinBox();
     this->spin_emitter_coefficient->setRange(-1000000000.0, 1000000000.0);
     this->spin_emitter_coefficient->setDecimals(6);

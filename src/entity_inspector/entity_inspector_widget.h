@@ -60,6 +60,12 @@ protected:
     QCheckBox *check_enabled = nullptr;
     
     void addGroupEndpoints();
+    QLabel *label_node_1_id = nullptr;
+    QLabel *label_node_2_id = nullptr;
+    QPushButton *button_node_1_locate = nullptr;
+    QPushButton *button_node_1_inspect = nullptr;
+    QPushButton *button_node_2_locate = nullptr;
+    QPushButton *button_node_2_inspect = nullptr;
     
     void addGroupPosition();
     QDoubleSpinBox *spin_latitude = nullptr;
@@ -100,6 +106,11 @@ private:
     void refreshHydraulicGeneral(const QString &id, const HydraulicEntityMetadata &metadata);
     void refreshHydraulicNode();
     void refreshHydraulicLink();
+    void refreshHydraulicEndpoints();
+    void refreshHydraulicEndpoint(const QUuid &node_uuid, QLabel *label_node_id,
+                                  QPushButton *button_locate, QPushButton *button_inspect);
+    void locateHydraulicEndpoint(const QUuid &node_uuid);
+    void inspectHydraulicEndpoint(const QUuid &node_uuid);
     void refreshHydraulicNodeElevation();
     void scheduleJunctionDemandsRefresh();
     void refreshJunctionDemands();
@@ -119,6 +130,8 @@ private:
     HydraulicData *hydraulic_data = nullptr;
     InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
     QUuid entity_uuid;
+    QUuid node_uuid_1;
+    QUuid node_uuid_2;
     QString entity_title_prefix;
     bool junction_demands_refresh_pending = false;
     

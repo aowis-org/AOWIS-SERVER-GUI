@@ -57,6 +57,7 @@ public:
                                                            const QUuid &uuid) const;
     std::optional<HydraulicLinkCommonData> linkCommonData(InfrastructureEntity entity_type,
                                                            const QUuid &uuid) const;
+    std::optional<InfrastructureEntity> nodeEntityType(const QUuid &uuid) const;
 
     void setSelectedUuid(InfrastructureEntity entity_type, const QUuid &uuid);
     void requestNodeLocate(InfrastructureEntity entity_type, const QUuid &uuid);
@@ -151,7 +152,6 @@ public:
     bool deleteValve(const QUuid &uuid);
 
 private:
-    std::optional<InfrastructureEntity> nodeEntityType(const QUuid &uuid) const;
     std::optional<InfrastructureEntity> linkEntityType(const QUuid &uuid) const;
     bool emitNodeChangedIfSuccessful(const QUuid &uuid, bool successful);
     bool emitLinkChangedIfSuccessful(const QUuid &uuid, bool successful);
