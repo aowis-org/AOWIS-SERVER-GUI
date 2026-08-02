@@ -8,6 +8,7 @@
 
 #include <QApplication>
 #include <QCursor>
+#include <QScopedValueRollback>
 
 #include <cmath>
 #include <functional>
@@ -120,7 +121,7 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
 
 void MapCanvasEntities::onNodeChanged(InfrastructureEntity entity_type, const QUuid &uuid)
 {
-    if (!this->hydraulic_data)
+    if (!this->hydraulic_data || this->synchronizing_geometry)
         return;
 
     const std::optional<HydraulicNodeCommonData> node =
@@ -315,6 +316,13 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
     {
         this->selection->moveSelected(this->placement->previousMousePosition(),
                                       this->placement->mousePosition());
+        if (!synchronizeSelectedGeometry())
+        {
+            stopEntityPositioning();
+            event->accept();
+            return;
+        }
+
         positionMarkers();
         updateCanvas();
         event->accept();
@@ -325,8 +333,21 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
     
     if (this->placement->isMoving() && this->pipes->isPipeVertexMoveActive())
     {
-        if (!this->pipes->updatePipeVertexMove(event->position()))
+        const std::optional<QUuid> pipe_uuid = this->pipes->activePipeVertexMoveUuid();
+        const int vertex_index = this->pipes->activePipeVertexMoveIndex();
+        const bool moved = this->pipes->updatePipeVertexMove(event->position());
+        const std::optional<CoordinateWGS84> coordinate = pipe_uuid.has_value()
+            ? this->pipes->pipeVertexCoordinate(pipe_uuid.value(), vertex_index)
+            : std::nullopt;
+
+        if (!moved || !pipe_uuid.has_value() || !coordinate.has_value() ||
+            !this->hydraulic_data ||
+            !this->hydraulic_data->setPipeVertexCoordinate(
+                pipe_uuid.value(), vertex_index, coordinate.value()))
+        {
             stopEntityPositioning();
+        }
+
         event->accept();
         return;
     }
@@ -351,13 +372,29 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
     if (!device_link_positioned)
         this->placement->moveFloatingLabelTopLeft(event->position());
     
-    if (this->placement->isMoving() && !device_link_positioned)
+    if (this->placement->isMoving())
     {
-        const CoordinateWGS84 coordinate = this->map_model->wgs84FromScreen(
-            event->position().toPoint(), this->map_canvas->size());
-        this->point_markers->setCoordinate(floating_label, coordinate);
+        bool synchronized = false;
+        if (device_link_positioned)
+        {
+            synchronized = synchronizeMarkerCoordinate(floating_label);
+        }
+        else
+        {
+            const CoordinateWGS84 coordinate = this->map_model->wgs84FromScreen(
+                event->position().toPoint(), this->map_canvas->size());
+            synchronized = this->point_markers->setCoordinate(floating_label, coordinate) &&
+                           synchronizeMarkerCoordinate(floating_label);
+        }
+
+        if (!synchronized)
+        {
+            stopEntityPositioning();
+            event->accept();
+            return;
+        }
     }
-    
+
     updateCanvas();
     event->accept();
 }
@@ -530,6 +567,8 @@ bool MapCanvasEntities::synchronizeMarkerCoordinate(MapEntityMarkerLabel *label)
     if (!this->hydraulic_data || !label)
         return false;
 
+    const QScopedValueRollback<bool> synchronization_guard(
+        this->synchronizing_geometry, true);
     const MapEntityMarker marker = markerByLabel(label);
     switch (marker.entity.type)
     {
@@ -551,6 +590,8 @@ bool MapCanvasEntities::synchronizeSelectedGeometry()
     if (!this->hydraulic_data)
         return false;
 
+    const QScopedValueRollback<bool> synchronization_guard(
+        this->synchronizing_geometry, true);
     bool synchronized = true;
 
     const QList<MapEntityMarkerLabel *> selected_labels = this->selection->selectedLabels();

@@ -164,6 +164,7 @@ private:
     std::optional<InfrastructureEntity> linkEntityType(const QUuid &uuid) const;
     bool emitNodeChangedIfSuccessful(const QUuid &uuid, bool successful);
     bool emitLinkChangedIfSuccessful(const QUuid &uuid, bool successful);
+    void emitConnectedPipeChanges(const QUuid &node_uuid);
 
     DatabaseGui *database_gui = nullptr;
 

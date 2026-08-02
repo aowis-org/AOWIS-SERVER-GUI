@@ -92,6 +92,7 @@ private:
     MapCanvasPlacement *placement = nullptr;
     QList<MapEntityMarker> move_marker_snapshot;
     QHash<QUuid, QList<CoordinateWGS84>> move_pipe_vertices_snapshot;
+    bool synchronizing_geometry = false;
     
 private slots:
     void onNodeChanged(InfrastructureEntity entity_type, const QUuid &uuid);

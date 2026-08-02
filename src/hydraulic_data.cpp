@@ -268,6 +268,15 @@ bool HydraulicData::emitLinkChangedIfSuccessful(const QUuid &uuid, bool successf
     return true;
 }
 
+void HydraulicData::emitConnectedPipeChanges(const QUuid &node_uuid)
+{
+    for (const HydraulicLinkPipe &pipe : this->network_hydraulic.links_pipes)
+    {
+        if (pipe.node_uuid_from == node_uuid || pipe.node_uuid_to == node_uuid)
+            emit signalLinkChanged(InfrastructureEntity::Pipe, pipe.uuid);
+    }
+}
+
 void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUuid &uuid)
 {
     switch (entity_type)
@@ -431,8 +440,16 @@ bool HydraulicData::setNodeEnabled(const QUuid &uuid, bool enabled)
 
 bool HydraulicData::setNodeCoordinate(const QUuid &uuid, const CoordinateWGS84 &coordinate)
 {
-    return emitNodeChangedIfSuccessful(
-        uuid, this->network_editor.setNodeCoordinate(uuid, coordinate));
+    if (!this->network_editor.setNodeCoordinate(uuid, coordinate))
+        return false;
+
+    const std::optional<InfrastructureEntity> entity_type = nodeEntityType(uuid);
+    if (!entity_type.has_value())
+        return false;
+
+    emit signalNodeChanged(entity_type.value(), uuid);
+    emitConnectedPipeChanges(uuid);
+    return true;
 }
 
 bool HydraulicData::setLinkId(const QUuid &uuid, const QString &id)
@@ -753,13 +770,15 @@ bool HydraulicData::setPipeVertices(const QUuid &pipe_uuid,
 bool HydraulicData::setPumpCenterCoordinate(const QUuid &pump_uuid,
                                             const CoordinateWGS84 &coordinate)
 {
-    return this->network_editor.setPumpCenterCoordinate(pump_uuid, coordinate);
+    return emitLinkChangedIfSuccessful(
+        pump_uuid, this->network_editor.setPumpCenterCoordinate(pump_uuid, coordinate));
 }
 
 bool HydraulicData::setValveCenterCoordinate(const QUuid &valve_uuid,
                                              const CoordinateWGS84 &coordinate)
 {
-    return this->network_editor.setValveCenterCoordinate(valve_uuid, coordinate);
+    return emitLinkChangedIfSuccessful(
+        valve_uuid, this->network_editor.setValveCenterCoordinate(valve_uuid, coordinate));
 }
 
 QUuid HydraulicData::splitPipeAtVertex(const QUuid &pipe_uuid, int vertex_index,

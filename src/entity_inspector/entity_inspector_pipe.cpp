@@ -25,13 +25,6 @@ EntityInspectorPipe::EntityInspectorPipe(HydraulicData *hydraulic_data, const Hy
         if (entity_type == InfrastructureEntity::Pipe && uuid == this->pipe_uuid)
             refreshPipe();
     });
-    connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
-            [this](InfrastructureEntity, const QUuid &uuid)
-    {
-        const std::optional<HydraulicLinkPipe> pipe = this->hydraulic_data->pipe(this->pipe_uuid);
-        if (pipe.has_value() && (pipe->node_uuid_from == uuid || pipe->node_uuid_to == uuid))
-            refreshPipe();
-    });
     connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, [this]()
     {
         refreshPipe();
