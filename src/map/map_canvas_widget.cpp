@@ -76,6 +76,11 @@ int MapCanvasWidget::backgroundOpacity() const
     return this->map_background_opacity;
 }
 
+MapEditorVisualState MapCanvasWidget::visualState() const
+{
+    return this->map_canvas_entities->visualState();
+}
+
 void MapCanvasWidget::setBackgroundOpacity(int opacity)
 {
     opacity = qBound(0, opacity, 100);

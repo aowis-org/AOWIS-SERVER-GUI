@@ -1,6 +1,206 @@
 #include "tab_map_editor_container.h"
 
+#ifdef Q_OS_WASM
+#include "wasm/browser_network_snapshot_serializer.h"
+#endif
+
 #include <QMessageBox>
+
+#ifdef Q_OS_WASM
+#include <QColor>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QPalette>
+
+#include <emscripten.h>
+
+EM_JS(int, aowisBrowserMapEditorSetNetworkSnapshot, (const char *json_data, int json_size),
+{
+    if (!window.aowisBrowserMapEditor ||
+        typeof window.aowisBrowserMapEditor.setNetworkSnapshot !== "function")
+        return 0;
+
+    try
+    {
+        window.aowisBrowserMapEditor.setNetworkSnapshot(
+            JSON.parse(UTF8ToString(json_data, json_size)));
+        return 1;
+    }
+    catch (error)
+    {
+        console.error("Could not transfer AOWIS map editor network snapshot:", error);
+        return 0;
+    }
+});
+
+EM_JS(int, aowisBrowserMapEditorUpdateGeometry, (const char *json_data, int json_size),
+{
+    if (!window.aowisBrowserMapEditor ||
+        typeof window.aowisBrowserMapEditor.updateGeometry !== "function")
+        return 0;
+
+    try
+    {
+        window.aowisBrowserMapEditor.updateGeometry(
+            JSON.parse(UTF8ToString(json_data, json_size)));
+        return 1;
+    }
+    catch (error)
+    {
+        console.error("Could not transfer AOWIS map editor geometry update:", error);
+        return 0;
+    }
+});
+
+EM_JS(int, aowisBrowserMapEditorSetVisualState, (const char *json_data, int json_size),
+{
+    if (!window.aowisBrowserMapEditor ||
+        typeof window.aowisBrowserMapEditor.setVisualState !== "function")
+        return 0;
+
+    try
+    {
+        window.aowisBrowserMapEditor.setVisualState(
+            JSON.parse(UTF8ToString(json_data, json_size)));
+        return 1;
+    }
+    catch (error)
+    {
+        console.error("Could not transfer AOWIS map editor visual state:", error);
+        return 0;
+    }
+});
+
+EM_JS(int, aowisBrowserMapEditorSetViewportState, (const char *json_data, int json_size),
+{
+    if (!window.aowisBrowserMapEditor ||
+        typeof window.aowisBrowserMapEditor.setViewportState !== "function")
+        return 0;
+
+    try
+    {
+        window.aowisBrowserMapEditor.setViewportState(
+            JSON.parse(UTF8ToString(json_data, json_size)));
+        return 1;
+    }
+    catch (error)
+    {
+        console.error("Could not transfer AOWIS map editor viewport state:", error);
+        return 0;
+    }
+});
+
+EM_JS(void, aowisBrowserMapEditorSetBackground, (int red, int green, int blue),
+{
+    if (!window.aowisBrowserMapEditor ||
+        typeof window.aowisBrowserMapEditor.setBackground !== "function")
+        return;
+
+    window.aowisBrowserMapEditor.setBackground(red, green, blue);
+});
+
+EM_JS(void, aowisBrowserMapEditorClear, (),
+{
+    if (window.aowisBrowserMapEditor &&
+        typeof window.aowisBrowserMapEditor.clear === "function")
+        window.aowisBrowserMapEditor.clear();
+});
+
+namespace
+{
+QJsonArray coordinateToJson(const CoordinateWGS84 &coordinate)
+{
+    QJsonArray result;
+    result.append(coordinate.longitude_deg);
+    result.append(coordinate.latitude_deg);
+    return result;
+}
+
+QJsonArray uuidListToJson(const QList<QUuid> &uuids)
+{
+    QJsonArray result;
+    for (const QUuid &uuid : uuids)
+        result.append(uuid.toString(QUuid::WithoutBraces));
+    return result;
+}
+
+QSet<QUuid> networkNodeUuids(const NetworkRenderSnapshot &snapshot)
+{
+    QSet<QUuid> result;
+    result.reserve(snapshot.nodes.size());
+    for (const NetworkRenderNode &node : snapshot.nodes)
+        result.insert(node.uuid);
+    return result;
+}
+
+QSet<QUuid> networkLinkUuids(const NetworkRenderSnapshot &snapshot)
+{
+    QSet<QUuid> result;
+    result.reserve(snapshot.links.size());
+    for (const NetworkRenderLink &link : snapshot.links)
+        result.insert(link.uuid);
+    return result;
+}
+
+QByteArray serializeMapEditorVisualState(const MapEditorVisualState &state)
+{
+    QJsonArray intermediate_vertices;
+    for (const CoordinateWGS84 &coordinate : state.placement.pipe_intermediate_vertices)
+        intermediate_vertices.append(coordinateToJson(coordinate));
+
+    QJsonObject placement;
+    placement.insert(QStringLiteral("creating"), state.placement.creating);
+    placement.insert(QStringLiteral("floatingMarkerVisible"),
+                     state.placement.floating_marker_visible);
+    placement.insert(QStringLiteral("entity"), static_cast<int>(state.placement.entity));
+    placement.insert(QStringLiteral("mouseX"), state.placement.mouse_position.x());
+    placement.insert(QStringLiteral("mouseY"), state.placement.mouse_position.y());
+    placement.insert(QStringLiteral("connectionTargetUuid"),
+                     state.placement.connection_target_uuid.toString(QUuid::WithoutBraces));
+    placement.insert(QStringLiteral("pipeStartNodeUuid"),
+                     state.placement.pipe_start_node_uuid.toString(QUuid::WithoutBraces));
+    placement.insert(QStringLiteral("pipeIntermediateVertices"), intermediate_vertices);
+    placement.insert(QStringLiteral("deviceLinkStartNodeUuid"),
+                     state.placement.device_link_start_node_uuid.toString(QUuid::WithoutBraces));
+    placement.insert(QStringLiteral("floatingWidth"), state.placement.floating_width);
+
+    QJsonObject root;
+    root.insert(QStringLiteral("revision"), QString::number(state.revision));
+    root.insert(QStringLiteral("selectedMarkerUuids"),
+                uuidListToJson(state.selected_marker_uuids));
+    root.insert(QStringLiteral("selectedPipeUuids"),
+                uuidListToJson(state.selected_pipe_uuids));
+    root.insert(QStringLiteral("wrapReferenceLongitude"), state.wrap_reference_longitude);
+    root.insert(QStringLiteral("entityWidth"), state.entity_width);
+    root.insert(QStringLiteral("placement"), placement);
+    return QJsonDocument(root).toJson(QJsonDocument::Compact);
+}
+
+QByteArray serializeMapEditorViewportState(const MapEditorViewportRenderState &state)
+{
+    QJsonObject tile_selection;
+    tile_selection.insert(QStringLiteral("visible"), state.tile_selection_visible);
+    tile_selection.insert(QStringLiteral("xMin"), state.tile_x_min);
+    tile_selection.insert(QStringLiteral("xMax"), state.tile_x_max);
+    tile_selection.insert(QStringLiteral("yMin"), state.tile_y_min);
+    tile_selection.insert(QStringLiteral("yMax"), state.tile_y_max);
+
+    QJsonObject rectangle_selection;
+    rectangle_selection.insert(QStringLiteral("visible"), state.rectangle_selection_visible);
+    rectangle_selection.insert(QStringLiteral("x"), state.rectangle_selection.x());
+    rectangle_selection.insert(QStringLiteral("y"), state.rectangle_selection.y());
+    rectangle_selection.insert(QStringLiteral("width"), state.rectangle_selection.width());
+    rectangle_selection.insert(QStringLiteral("height"), state.rectangle_selection.height());
+
+    QJsonObject root;
+    root.insert(QStringLiteral("backgroundOpacity"), state.background_opacity);
+    root.insert(QStringLiteral("tileSelection"), tile_selection);
+    root.insert(QStringLiteral("rectangleSelection"), rectangle_selection);
+    return QJsonDocument(root).toJson(QJsonDocument::Compact);
+}
+}
+#endif
 
 MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *tile_repository, HydraulicData *hydraulic_data, GpsProvider *gps, EntityInspectorDock *map_inspector, QWidget *parent)
     : QWidget{parent},
@@ -57,9 +257,32 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     this->installEventFilter(this);
     this->map->installEventFilter(this);
     this->map_stack->installEventFilter(this);
+    this->map_canvas->installEventFilter(this);
     if (this->window())
         this->window()->installEventFilter(this);
 
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
+            this, &MapEditorContainer::scheduleWasmMapLayerSync);
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged,
+            this, &MapEditorContainer::scheduleWasmMapLayerSync);
+    connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
+            [this](InfrastructureEntity, const QUuid &uuid)
+    {
+        this->wasm_dirty_node_uuids.insert(uuid);
+        this->scheduleWasmMapLayerSync();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
+            [this](InfrastructureEntity, const QUuid &uuid)
+    {
+        this->wasm_dirty_link_uuids.insert(uuid);
+        this->scheduleWasmMapLayerSync();
+    });
+    connect(this->map_canvas->mapCanvasEntities(), &MapCanvasEntities::signalVisualStateChanged,
+            this, &MapEditorContainer::scheduleWasmMapLayerSync);
+    connect(this->editor_controller, &MapEditorController::signalStateChanged,
+            this, &MapEditorContainer::scheduleWasmMapLayerSync);
+
+    this->syncWasmBackground();
     this->scheduleWasmMapLayerSync();
 #else
     this->map_stack_layout->addWidget(this->map_canvas);
@@ -69,7 +292,12 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     this->layout->addWidget(scroll_controls);
     this->layout->addWidget(this->map_stack);
     
-    connect(this->map_menu, &MapEditorMenuWidget::signalSlideOpacityChanged, this->map_canvas, &MapCanvasWidget::setBackgroundOpacity);
+    connect(this->map_menu, &MapEditorMenuWidget::signalSlideOpacityChanged,
+            this->map_canvas, &MapCanvasWidget::setBackgroundOpacity);
+#ifdef Q_OS_WASM
+    connect(this->map_menu, &MapEditorMenuWidget::signalSlideOpacityChanged,
+            this, &MapEditorContainer::scheduleWasmMapLayerSync);
+#endif
     connect(this->map_menu, &MapEditorMenuWidget::signalMapEditorGuideVisibilityChanged, this, &MapEditorContainer::signalMapEditorGuideVisibilityChanged);
     connect(this->map_menu, &MapEditorMenuWidget::signalEditNetworkSectionActive, this, &MapEditorContainer::signalEditNetworkSectionActive);
     
@@ -85,13 +313,15 @@ MapEditorContainer::~MapEditorContainer()
 #ifdef Q_OS_WASM
     this->map->setBrowserMapLayerGeometry(QRect(), false);
     this->map_canvas->hide();
+    aowisBrowserMapEditorClear();
 #endif
 }
 
 #ifdef Q_OS_WASM
 bool MapEditorContainer::eventFilter(QObject *watched, QEvent *event)
 {
-    if (watched == this || watched == this->map || watched == this->map_stack || watched == this->window())
+    if (watched == this || watched == this->map || watched == this->map_stack ||
+        watched == this->map_canvas || watched == this->window())
     {
         switch (event->type())
         {
@@ -102,6 +332,12 @@ bool MapEditorContainer::eventFilter(QObject *watched, QEvent *event)
         case QEvent::LayoutRequest:
         case QEvent::ParentChange:
         case QEvent::WindowStateChange:
+            this->scheduleWasmMapLayerSync();
+            break;
+        case QEvent::ApplicationPaletteChange:
+        case QEvent::PaletteChange:
+        case QEvent::StyleChange:
+            this->syncWasmBackground();
             this->scheduleWasmMapLayerSync();
             break;
         default:
@@ -138,6 +374,101 @@ void MapEditorContainer::syncWasmMapLayers()
 
     this->map_canvas->raise();
     this->map->setBrowserMapLayerGeometry(map_geometry, true);
+    this->syncWasmNetworkSnapshot();
+    this->syncWasmVisualState();
+    this->syncWasmViewportState();
+}
+
+void MapEditorContainer::syncWasmNetworkSnapshot()
+{
+    if (!this->hydraulic_data)
+        return;
+
+    const quint64 geometry_revision = this->hydraulic_data->geometryRevision();
+    if (this->wasm_network_snapshot_sent &&
+        this->wasm_network_geometry_revision_sent == geometry_revision)
+    {
+        this->wasm_dirty_node_uuids.clear();
+        this->wasm_dirty_link_uuids.clear();
+        return;
+    }
+
+    const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
+    const QSet<QUuid> node_uuids = networkNodeUuids(snapshot);
+    const QSet<QUuid> link_uuids = networkLinkUuids(snapshot);
+    const bool structure_unchanged = this->wasm_network_snapshot_sent &&
+        node_uuids == this->wasm_network_node_uuids_sent &&
+        link_uuids == this->wasm_network_link_uuids_sent;
+    const bool has_geometry_patch = structure_unchanged &&
+        (!this->wasm_dirty_node_uuids.isEmpty() || !this->wasm_dirty_link_uuids.isEmpty());
+
+    int transferred = 0;
+    if (has_geometry_patch)
+    {
+        const QByteArray json = BrowserNetworkSnapshotSerializer::serializeGeometryPatch(
+            snapshot, this->wasm_dirty_node_uuids, this->wasm_dirty_link_uuids);
+        transferred = aowisBrowserMapEditorUpdateGeometry(
+            json.constData(), static_cast<int>(json.size()));
+    }
+    else
+    {
+        const QByteArray json = BrowserNetworkSnapshotSerializer::serialize(snapshot);
+        transferred = aowisBrowserMapEditorSetNetworkSnapshot(
+            json.constData(), static_cast<int>(json.size()));
+    }
+
+    if (transferred == 0)
+        return;
+
+    this->wasm_network_geometry_revision_sent = snapshot.geometry_revision;
+    this->wasm_network_node_uuids_sent = node_uuids;
+    this->wasm_network_link_uuids_sent = link_uuids;
+    this->wasm_dirty_node_uuids.clear();
+    this->wasm_dirty_link_uuids.clear();
+    this->wasm_network_snapshot_sent = true;
+}
+
+void MapEditorContainer::syncWasmVisualState()
+{
+    const MapEditorVisualState state = this->map_canvas->visualState();
+    if (this->wasm_visual_state_sent &&
+        this->wasm_visual_state_revision_sent == state.revision)
+    {
+        return;
+    }
+
+    const QByteArray json = serializeMapEditorVisualState(state);
+    if (aowisBrowserMapEditorSetVisualState(
+            json.constData(), static_cast<int>(json.size())) == 0)
+    {
+        return;
+    }
+
+    this->wasm_visual_state_revision_sent = state.revision;
+    this->wasm_visual_state_sent = true;
+}
+
+void MapEditorContainer::syncWasmViewportState()
+{
+    const QByteArray json = serializeMapEditorViewportState(
+        this->map_canvas->viewportRenderState());
+    if (json == this->wasm_viewport_state_sent)
+        return;
+
+    if (aowisBrowserMapEditorSetViewportState(
+            json.constData(), static_cast<int>(json.size())) == 0)
+    {
+        return;
+    }
+
+    this->wasm_viewport_state_sent = json;
+}
+
+void MapEditorContainer::syncWasmBackground()
+{
+    const QColor background = this->map_canvas->palette().color(QPalette::Window);
+    aowisBrowserMapEditorSetBackground(
+        background.red(), background.green(), background.blue());
 }
 #endif
 

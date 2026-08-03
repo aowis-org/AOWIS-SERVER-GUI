@@ -5,7 +5,9 @@
 #include <QWidget>
 
 #ifdef Q_OS_WASM
+#include <QByteArray>
 #include <QEvent>
+#include <QSet>
 #include <QTimer>
 #endif
 
@@ -130,9 +132,22 @@ private:
 
 #ifdef Q_OS_WASM
     QTimer *wasm_map_layer_sync_timer = nullptr;
+    quint64 wasm_network_geometry_revision_sent = 0;
+    quint64 wasm_visual_state_revision_sent = 0;
+    QByteArray wasm_viewport_state_sent;
+    QSet<QUuid> wasm_network_node_uuids_sent;
+    QSet<QUuid> wasm_network_link_uuids_sent;
+    QSet<QUuid> wasm_dirty_node_uuids;
+    QSet<QUuid> wasm_dirty_link_uuids;
+    bool wasm_network_snapshot_sent = false;
+    bool wasm_visual_state_sent = false;
 
     void scheduleWasmMapLayerSync();
     void syncWasmMapLayers();
+    void syncWasmNetworkSnapshot();
+    void syncWasmVisualState();
+    void syncWasmViewportState();
+    void syncWasmBackground();
 #endif
     
 signals:

@@ -30,6 +30,8 @@ public:
     void setEditorController(MapEditorController *editor_controller);
     MapCanvasEntities *mapCanvasEntities() const;
     int backgroundOpacity() const;
+    MapEditorVisualState visualState() const;
+    MapEditorViewportRenderState viewportRenderState() const;
 
 public slots:
     void setBackgroundOpacity(int opacity);
@@ -47,7 +49,6 @@ protected:
 
 private:
     void applyControllerState();
-    MapEditorViewportRenderState viewportRenderState() const;
 
     MapModel *map_model = nullptr;
     MapWidget *map = nullptr;

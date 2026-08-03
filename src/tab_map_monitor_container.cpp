@@ -2,6 +2,10 @@
 
 #include "hydraulic_data.h"
 
+#ifdef Q_OS_WASM
+#include "wasm/browser_network_snapshot_serializer.h"
+#endif
+
 #ifndef Q_OS_WASM
 #include "map/map_network_overlay_widget.h"
 #endif
@@ -11,10 +15,6 @@
 #include <cmath>
 
 #ifdef Q_OS_WASM
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
-
 #include <emscripten.h>
 
 EM_JS(int, aowisBrowserNetworkSetSnapshot, (const char *json_data, int json_size),
@@ -63,59 +63,6 @@ EM_JS(void, aowisBrowserNetworkSetBackground, (int red, int green, int blue, int
     window.aowisBrowserNetwork.setBackground(red, green, blue, opacity);
 });
 
-namespace
-{
-QJsonArray coordinateToJson(const CoordinateWGS84 &coordinate)
-{
-    QJsonArray result;
-    result.append(coordinate.longitude_deg);
-    result.append(coordinate.latitude_deg);
-    return result;
-}
-
-QByteArray serializeNetworkRenderSnapshot(const NetworkRenderSnapshot &snapshot)
-{
-    QJsonArray nodes;
-    for (const NetworkRenderNode &node : snapshot.nodes)
-    {
-        QJsonArray node_json;
-        node_json.append(static_cast<double>(node.render_id));
-        node_json.append(static_cast<int>(node.entity_type));
-        node_json.append(node.uuid.toString(QUuid::WithoutBraces));
-        node_json.append(node.id);
-        node_json.append(node.coordinate_wgs84.longitude_deg);
-        node_json.append(node.coordinate_wgs84.latitude_deg);
-        nodes.append(node_json);
-    }
-
-    QJsonArray links;
-    for (const NetworkRenderLink &link : snapshot.links)
-    {
-        QJsonArray vertices;
-        for (const CoordinateWGS84 &coordinate : link.vertices_wgs84)
-            vertices.append(coordinateToJson(coordinate));
-
-        QJsonArray link_json;
-        link_json.append(static_cast<double>(link.render_id));
-        link_json.append(static_cast<int>(link.entity_type));
-        link_json.append(link.uuid.toString(QUuid::WithoutBraces));
-        link_json.append(link.id);
-        link_json.append(static_cast<double>(link.start_node_render_id));
-        link_json.append(static_cast<double>(link.end_node_render_id));
-        link_json.append(vertices);
-        links.append(link_json);
-    }
-
-    QJsonObject root;
-    root.insert(QStringLiteral("geometryRevision"),
-                QString::number(snapshot.geometry_revision));
-    root.insert(QStringLiteral("visualRevision"),
-                QString::number(snapshot.visual_revision));
-    root.insert(QStringLiteral("nodes"), nodes);
-    root.insert(QStringLiteral("links"), links);
-    return QJsonDocument(root).toJson(QJsonDocument::Compact);
-}
-}
 #endif
 
 MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository *tile_repository, HydraulicData *hydraulic_data, GpsProvider *gps, QWidget *parent)
@@ -411,7 +358,7 @@ void MapMonitorContainer::syncWasmNetworkSnapshot()
         return;
 
     const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
-    const QByteArray json = serializeNetworkRenderSnapshot(snapshot);
+    const QByteArray json = BrowserNetworkSnapshotSerializer::serialize(snapshot);
     const int transferred = aowisBrowserNetworkSetSnapshot(
         json.constData(), static_cast<int>(json.size()));
     if (transferred == 0)

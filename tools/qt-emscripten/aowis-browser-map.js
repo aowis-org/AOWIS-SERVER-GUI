@@ -649,6 +649,17 @@
         release: release,
         destroy: destroy,
         getViewState: getViewState,
-        subscribeView: subscribeView
+        subscribeView: subscribeView,
+        projection: {
+            tileSize: TILE_SIZE,
+            normalizeLongitude: normalizeLongitude,
+            clampLatitude: clampLatitude,
+            worldSize: worldSize,
+            longitudeToWorldPixel: longitudeToWorldPixel,
+            latitudeToWorldPixel: latitudeToWorldPixel,
+            nearestWrappedWorldPixel: nearestWrappedWorldPixel,
+            devicePixelRatio: devicePixelRatio,
+            snapToPhysicalPixel: snapToPhysicalPixel
+        }
     };
 })();
