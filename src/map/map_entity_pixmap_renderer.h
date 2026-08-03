@@ -7,6 +7,8 @@
 #include <QRectF>
 #include <QString>
 
+#include "../_enums_structs.h"
+
 class QColor;
 class QPainter;
 
@@ -19,6 +21,8 @@ public:
         Selected,
         Error
     };
+
+    static QString pixmapPathForEntity(InfrastructureEntity entity);
 
     QPixmap pixmap(const QString &path, int width) const;
     QRectF bottomAnchoredRect(const QPointF &anchor, const QString &path, int width) const;

@@ -4,7 +4,6 @@
 #include <optional>
 #include <QObject>
 #include <QList>
-#include <QPainter>
 #include <QPointer>
 #include <QPointF>
 #include <QRectF>
@@ -45,12 +44,6 @@ public:
     bool moveByDelta(const QUuid &uuid, double longitude_delta, double latitude_delta);
 
     void scaleMarkers(int width);
-    void paint(QPainter &painter, const QList<QUuid> &selected_uuids,
-               const QUuid &connection_target_uuid) const;
-    void paintFloating(QPainter &painter, InfrastructureEntity entity,
-                       const QString &pixmap_path, int width,
-                       const QPointF &anchor_position) const;
-
     std::optional<InfrastructureEntityReference> markerAt(const QPointF &position) const;
     bool isMarkerAt(const QPointF &position) const;
     QPointF markerAnchorPosition(const MapEntityMarker &marker) const;
@@ -58,7 +51,6 @@ public:
 
 private:
     QPointF screenFromWgs84(const CoordinateWGS84 &coordinate) const;
-    bool isSelected(const QUuid &uuid, const QList<QUuid> &selected_uuids) const;
     bool dotHit(const QPointF &position, const QPointF &dot_center) const;
 
     MapModel *map_model = nullptr;

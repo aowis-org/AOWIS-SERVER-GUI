@@ -18,6 +18,45 @@ const QPoint glow_offsets[] = {
 };
 }
 
+
+QString MapEntityPixmapRenderer::pixmapPathForEntity(InfrastructureEntity entity)
+{
+    switch (entity)
+    {
+    case InfrastructureEntity::Junction:
+        return QStringLiteral(":/icon/junction.png");
+    case InfrastructureEntity::Reservoir:
+        return QStringLiteral(":/icon/reservoir.png");
+    case InfrastructureEntity::Tank:
+        return QStringLiteral(":/icon/tower.png");
+    case InfrastructureEntity::Pipe:
+        return QStringLiteral(":/icon/pipe.png");
+    case InfrastructureEntity::Pump:
+        return QStringLiteral(":/icon/pump.png");
+    case InfrastructureEntity::Valve:
+        return QStringLiteral(":/icon/valve.png");
+    case InfrastructureEntity::CustomerPoint:
+        return QStringLiteral(":/icon/customer.png");
+    case InfrastructureEntity::ElectricJunction:
+    case InfrastructureEntity::Cable:
+    case InfrastructureEntity::Switch:
+    case InfrastructureEntity::Fuse:
+    case InfrastructureEntity::CircuitBreaker:
+        return QStringLiteral(":/icon/electricity.png");
+    case InfrastructureEntity::Battery:
+    case InfrastructureEntity::Generator:
+    case InfrastructureEntity::SolarPanel:
+    case InfrastructureEntity::Inverter:
+    case InfrastructureEntity::Transformer:
+        return QStringLiteral(":/icon/energy.png");
+    case InfrastructureEntity::Note:
+    case InfrastructureEntity::Unknown:
+        return QStringLiteral(":/icon/geomarker.png");
+    }
+
+    return QStringLiteral(":/icon/geomarker.png");
+}
+
 QPixmap MapEntityPixmapRenderer::pixmap(const QString &path, int width) const
 {
     const QString key = cacheKey(path, width);

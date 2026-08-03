@@ -4,13 +4,13 @@
 #include <optional>
 #include <QObject>
 #include <QList>
-#include <QPainter>
 #include <QPointer>
 #include <QRectF>
 #include <QPointF>
 #include <QString>
 #include <QUuid>
 
+#include "map_editor_render_state.h"
 #include "map_entity_pixmap_renderer.h"
 #include "map_model.h"
 #include "map_models.h"
@@ -59,24 +59,14 @@ public:
 
     bool updateMove(const QUuid &uuid, const QPointF &screen_position);
     bool setCenterCoordinate(const QUuid &uuid, const CoordinateWGS84 &coordinate);
-    std::optional<QPointF> floatingCenter(const QPointF &mouse_position,
-                                          const QUuid &connection_target_uuid,
-                                          const QList<MapEntityMarker> &markers) const;
-
     void scaleMarkers(int width);
-    void paint(QPainter &painter,
-               const QList<MapEntityMarker> &markers,
-               const QList<QUuid> &selected_uuids,
-               bool placing_device_link,
-               const QPointF &mouse_position,
-               const QUuid &connection_target_uuid) const;
-
     bool moveCenterByDelta(const QUuid &uuid,
                            double longitude_delta,
                            double latitude_delta);
     void removeConnectedToUuid(const QUuid &uuid);
 
     QList<MapEntityMarker> markers() const;
+    QList<MapEditorRenderDeviceLink> renderItems(const QList<QUuid> &selected_uuids) const;
     std::optional<MapEntityMarker> markerByUuid(const QUuid &uuid) const;
     std::optional<InfrastructureEntityReference> markerAt(const QPointF &position) const;
     std::optional<InfrastructureEntityReference> linkAt(
@@ -95,7 +85,6 @@ private:
     QPointF screenFromWgs84(const CoordinateWGS84 &coordinate) const;
     std::optional<MapEntityMarker> pointMarkerByUuid(
         const QUuid &uuid, const QList<MapEntityMarker> &markers) const;
-    bool markerIsSelected(const QUuid &uuid, const QList<QUuid> &selected_uuids) const;
     void updateCanvas();
 
     MapModel *map_model = nullptr;

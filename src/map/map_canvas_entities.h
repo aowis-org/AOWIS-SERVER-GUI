@@ -5,7 +5,6 @@
 #include <QHash>
 #include <QPoint>
 #include <QPointF>
-#include <QPainter>
 #include <QPointer>
 #include <QRect>
 #include <QUuid>
@@ -14,6 +13,7 @@
 
 #include "../_enums_structs.h"
 #include "../hydraulic_data.h"
+#include "map_editor_render_state.h"
 #include "map_entity_pixmap_renderer.h"
 #include "map_models.h"
 
@@ -48,7 +48,7 @@ public:
 
     void scaleMarkers();
     void positionMarkers();
-    void paintMarkers(QPainter &painter);
+    MapEditorRenderState renderState() const;
 
     bool selectMarkerAt(const QPointF &position);
     bool isMarkerAt(const QPointF &position) const;
@@ -105,6 +105,7 @@ private:
     MapCanvasPlacement *placement = nullptr;
     QList<MapEntityMarker> move_marker_snapshot;
     QHash<QUuid, QList<CoordinateWGS84>> move_pipe_vertices_snapshot;
+    double wrap_reference_longitude = 0.0;
     bool synchronizing_geometry = false;
 
 private slots:

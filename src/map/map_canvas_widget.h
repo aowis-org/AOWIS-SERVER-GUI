@@ -4,6 +4,7 @@
 #include <QPointer>
 #include <QWidget>
 
+#include "map_editor_renderer.h"
 #include "map_model.h"
 #include "map_widget.h"
 #include "map_canvas_entities.h"
@@ -15,7 +16,6 @@ class QFocusEvent;
 class QKeyEvent;
 class QMouseEvent;
 class QPaintEvent;
-class QPainter;
 class QResizeEvent;
 class QWheelEvent;
 
@@ -47,11 +47,11 @@ protected:
 
 private:
     void applyControllerState();
-    void paintEventTileSelectionOverlay(QPainter &paint);
-    void paintEventRectangle(QPainter &paint);
+    MapEditorViewportRenderState viewportRenderState() const;
 
     MapModel *map_model = nullptr;
     MapWidget *map = nullptr;
+    MapEditorRenderer map_editor_renderer;
     MapCanvasEntities *map_canvas_entities = nullptr;
     QPointer<MapEditorController> editor_controller;
 

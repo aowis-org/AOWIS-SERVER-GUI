@@ -3,15 +3,12 @@
 
 #include "../geo_web_mercator.h"
 
-#include <QColor>
-
 #include <algorithm>
 
 namespace
 {
 constexpr double marker_dot_radius = 5.0;
 constexpr double marker_dot_hit_radius = marker_dot_radius * 3.0;
-constexpr double connection_target_radius = 9.0;
 
 bool isHydraulicConnectionNode(InfrastructureEntity entity)
 {
@@ -67,40 +64,7 @@ int MapCanvasMarkers::entityWidth() const
 
 QString MapCanvasMarkers::pixmapPathForEntity(InfrastructureEntity entity) const
 {
-    switch (entity)
-    {
-    case InfrastructureEntity::Junction:
-        return QStringLiteral(":/icon/junction.png");
-    case InfrastructureEntity::Reservoir:
-        return QStringLiteral(":/icon/reservoir.png");
-    case InfrastructureEntity::Tank:
-        return QStringLiteral(":/icon/tower.png");
-    case InfrastructureEntity::Pipe:
-        return QStringLiteral(":/icon/pipe.png");
-    case InfrastructureEntity::Pump:
-        return QStringLiteral(":/icon/pump.png");
-    case InfrastructureEntity::Valve:
-        return QStringLiteral(":/icon/valve.png");
-    case InfrastructureEntity::CustomerPoint:
-        return QStringLiteral(":/icon/customer.png");
-    case InfrastructureEntity::ElectricJunction:
-    case InfrastructureEntity::Cable:
-    case InfrastructureEntity::Switch:
-    case InfrastructureEntity::Fuse:
-    case InfrastructureEntity::CircuitBreaker:
-        return QStringLiteral(":/icon/electricity.png");
-    case InfrastructureEntity::Battery:
-    case InfrastructureEntity::Generator:
-    case InfrastructureEntity::SolarPanel:
-    case InfrastructureEntity::Inverter:
-    case InfrastructureEntity::Transformer:
-        return QStringLiteral(":/icon/energy.png");
-    case InfrastructureEntity::Note:
-    case InfrastructureEntity::Unknown:
-        return QStringLiteral(":/icon/geomarker.png");
-    }
-
-    return QStringLiteral(":/icon/geomarker.png");
+    return MapEntityPixmapRenderer::pixmapPathForEntity(entity);
 }
 
 std::optional<InfrastructureEntityReference> MapCanvasMarkers::nearestConnectionTarget(
@@ -216,55 +180,6 @@ void MapCanvasMarkers::scaleMarkers(int width)
     this->marker_width = width;
 }
 
-void MapCanvasMarkers::paint(QPainter &painter, const QList<QUuid> &selected_uuids,
-                             const QUuid &connection_target_uuid) const
-{
-    if (!this->pixmap_renderer)
-        return;
-
-    painter.save();
-    painter.setPen(Qt::NoPen);
-
-    for (const MapEntityMarker &marker : this->list_markers)
-    {
-        const QPointF point = screenFromWgs84(marker.coord_wgs84);
-        if (marker.entity.uuid == connection_target_uuid)
-        {
-            painter.setBrush(QColor(0, 140, 255));
-            painter.drawEllipse(point, connection_target_radius, connection_target_radius);
-        }
-        else
-        {
-            painter.setBrush(Qt::black);
-            painter.drawEllipse(point, marker_dot_radius, marker_dot_radius);
-        }
-    }
-
-    for (const MapEntityMarker &marker : this->list_markers)
-    {
-        const MapEntityPixmapRenderer::Highlight highlight =
-            isSelected(marker.entity.uuid, selected_uuids)
-                ? MapEntityPixmapRenderer::Highlight::Selected
-                : MapEntityPixmapRenderer::Highlight::None;
-        this->pixmap_renderer->paint(painter, marker.path_pixmap, this->marker_width,
-                                     markerRect(marker), highlight);
-    }
-
-    painter.restore();
-}
-
-void MapCanvasMarkers::paintFloating(QPainter &painter, InfrastructureEntity entity,
-                                     const QString &pixmap_path, int width,
-                                     const QPointF &anchor_position) const
-{
-    if (!this->pixmap_renderer || entity == InfrastructureEntity::Unknown)
-        return;
-
-    const QRectF target_rect = this->pixmap_renderer->bottomAnchoredRect(
-        anchor_position, pixmap_path, width);
-    this->pixmap_renderer->paint(painter, pixmap_path, width, target_rect);
-}
-
 std::optional<InfrastructureEntityReference> MapCanvasMarkers::markerAt(
     const QPointF &position) const
 {
@@ -305,11 +220,6 @@ QRectF MapCanvasMarkers::markerRect(const MapEntityMarker &marker) const
     const QPointF rounded_anchor(qRound(screen_position.x()), qRound(screen_position.y()));
     return this->pixmap_renderer->bottomAnchoredRect(
         rounded_anchor, marker.path_pixmap, this->marker_width);
-}
-
-bool MapCanvasMarkers::isSelected(const QUuid &uuid, const QList<QUuid> &selected_uuids) const
-{
-    return selected_uuids.contains(uuid);
 }
 
 bool MapCanvasMarkers::dotHit(const QPointF &position, const QPointF &dot_center) const

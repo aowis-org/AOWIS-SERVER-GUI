@@ -12,7 +12,6 @@
 namespace
 {
 constexpr double link_hit_distance = 7.0;
-constexpr double pipe_vertex_radius = 4.0;
 constexpr double pipe_vertex_hit_distance = 9.0;
 
 bool isHydraulicConnectionNode(InfrastructureEntity entity)
@@ -154,82 +153,6 @@ bool MapCanvasPipes::completePipe(const InfrastructureEntityReference &pipe_refe
     return added;
 }
 
-void MapCanvasPipes::paint(QPainter &painter,
-                           const QList<MapEntityMarker> &markers,
-                           bool placing_pipe,
-                           const QPointF &mouse_position,
-                           const QUuid &connection_target_uuid) const
-{
-    painter.save();
-
-    for (const PipeCanvasItem &pipe : this->list_pipes)
-    {
-        const std::optional<MapEntityMarker> start_marker = markerByUuid(
-            pipe.geometry.start_node.uuid, markers);
-        const std::optional<MapEntityMarker> end_marker = markerByUuid(
-            pipe.geometry.end_node.uuid, markers);
-        if (!start_marker.has_value() || !end_marker.has_value())
-            continue;
-
-        QPen pipe_pen(pipe.selected ? QColor(0, 190, 255) : QColor(Qt::black));
-        pipe_pen.setWidthF(3.0);
-        pipe_pen.setCapStyle(Qt::RoundCap);
-        pipe_pen.setJoinStyle(Qt::RoundJoin);
-        painter.setPen(pipe_pen);
-
-        QPointF previous_point = screenFromWgs84(start_marker->coord_wgs84);
-        for (const CoordinateWGS84 &vertex : pipe.geometry.intermediate_vertices)
-        {
-            const QPointF vertex_point = screenFromWgs84(vertex);
-            painter.drawLine(previous_point, vertex_point);
-            previous_point = vertex_point;
-        }
-
-        const QPointF end_point = screenFromWgs84(end_marker->coord_wgs84);
-        painter.drawLine(previous_point, end_point);
-
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(pipe.selected ? QColor(0, 190, 255) : QColor(Qt::black));
-        for (const CoordinateWGS84 &vertex : pipe.geometry.intermediate_vertices)
-        {
-            const QPointF vertex_point = screenFromWgs84(vertex);
-            painter.drawEllipse(vertex_point, pipe_vertex_radius, pipe_vertex_radius);
-        }
-    }
-
-    if (placing_pipe && !this->pipe_start_node_uuid.isNull())
-    {
-        const std::optional<MapEntityMarker> start_marker = markerByUuid(
-            this->pipe_start_node_uuid, markers);
-        if (start_marker.has_value())
-        {
-            QPen preview_pen(QColor(0, 140, 255));
-            preview_pen.setWidthF(3.0);
-            preview_pen.setCapStyle(Qt::RoundCap);
-            preview_pen.setJoinStyle(Qt::RoundJoin);
-            painter.setPen(preview_pen);
-
-            QPointF previous_point = screenFromWgs84(start_marker->coord_wgs84);
-            for (const CoordinateWGS84 &vertex : this->pipe_intermediate_vertices)
-            {
-                const QPointF vertex_point = screenFromWgs84(vertex);
-                painter.drawLine(previous_point, vertex_point);
-                previous_point = vertex_point;
-            }
-
-            QPointF preview_end = mouse_position;
-            const std::optional<MapEntityMarker> end_marker = markerByUuid(
-                connection_target_uuid, markers);
-            if (end_marker.has_value())
-                preview_end = screenFromWgs84(end_marker->coord_wgs84);
-
-            painter.drawLine(previous_point, preview_end);
-        }
-    }
-
-    painter.restore();
-}
-
 bool MapCanvasPipes::hasSelection() const
 {
     for (const PipeCanvasItem &pipe : this->list_pipes)
@@ -249,6 +172,23 @@ QList<QUuid> MapCanvasPipes::selectedPipeUuids() const
             uuids.append(pipe.entity.uuid);
     }
     return uuids;
+}
+
+QList<MapEditorRenderPipe> MapCanvasPipes::renderItems() const
+{
+    QList<MapEditorRenderPipe> result;
+    result.reserve(this->list_pipes.size());
+
+    for (const PipeCanvasItem &pipe : this->list_pipes)
+    {
+        MapEditorRenderPipe item;
+        item.entity = pipe.entity;
+        item.geometry = pipe.geometry;
+        item.selected = pipe.selected;
+        result.append(item);
+    }
+
+    return result;
 }
 
 void MapCanvasPipes::clearSelection()

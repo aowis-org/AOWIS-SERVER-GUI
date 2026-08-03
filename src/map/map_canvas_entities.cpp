@@ -792,6 +792,7 @@ bool MapCanvasEntities::anchorPipeVertexMove(const QPointF &position)
 void MapCanvasEntities::setWrapReferenceLongitude(double longitude)
 {
     const double normalized_longitude = GeoWebMercator::normalizeLongitude(longitude);
+    this->wrap_reference_longitude = normalized_longitude;
     this->point_markers->setWrapReferenceLongitude(normalized_longitude);
     this->device_links->setWrapReferenceLongitude(normalized_longitude);
     this->pipes->setWrapReferenceLongitude(normalized_longitude);
@@ -844,44 +845,40 @@ void MapCanvasEntities::positionMarkers()
     updateCanvas();
 }
 
-void MapCanvasEntities::paintMarkers(QPainter &painter)
+MapEditorRenderState MapCanvasEntities::renderState() const
 {
-    this->pipes->paint(
-        painter, this->point_markers->markers(),
-        this->placement->isCreating() && isHydraulicPipeGeometry(this->placement->entity()),
-        this->placement->mousePosition(), this->placement->connectionTargetUuid());
-    this->device_links->paint(
-        painter, this->point_markers->markers(), this->selection->selectedMarkerUuids(),
-        this->placement->isCreating() && isHydraulicDeviceLink(this->placement->entity()),
-        this->placement->mousePosition(), this->placement->connectionTargetUuid());
-    this->point_markers->paint(
-        painter, this->selection->selectedMarkerUuids(),
-        this->placement->connectionTargetUuid());
+    MapEditorRenderState state;
+    state.wrap_reference_longitude = this->wrap_reference_longitude;
+    state.entity_width = this->point_markers->entityWidth();
 
-    if (!this->placement->isCreating() || !this->placement->floatingMarkerVisible())
-        return;
-
-    QPointF floating_position = this->placement->mousePosition();
-    if (isHydraulicDeviceLink(this->placement->entity()))
+    const QList<QUuid> &selected_uuids = this->selection->selectedMarkerUuids();
+    const QList<MapEntityMarker> &point_markers = this->point_markers->markers();
+    state.markers.reserve(point_markers.size());
+    for (const MapEntityMarker &marker : point_markers)
     {
-        const std::optional<QPointF> center = this->device_links->floatingCenter(
-            floating_position, this->placement->connectionTargetUuid(),
-            this->point_markers->markers());
-        if (center.has_value())
-        {
-            const QRectF target_rect = this->pixmap_renderer.centeredRect(
-                center.value(), this->placement->floatingPixmapPath(),
-                this->placement->floatingWidth());
-            this->pixmap_renderer.paint(
-                painter, this->placement->floatingPixmapPath(),
-                this->placement->floatingWidth(), target_rect);
-            return;
-        }
+        MapEditorRenderMarker render_marker;
+        render_marker.entity = marker.entity;
+        render_marker.coordinate = marker.coord_wgs84;
+        render_marker.selected = selected_uuids.contains(marker.entity.uuid);
+        state.markers.append(render_marker);
     }
 
-    this->point_markers->paintFloating(
-        painter, this->placement->entity(), this->placement->floatingPixmapPath(),
-        this->placement->floatingWidth(), floating_position);
+    state.pipes = this->pipes->renderItems();
+    state.device_links = this->device_links->renderItems(selected_uuids);
+
+    state.placement.creating = this->placement->isCreating();
+    state.placement.floating_marker_visible =
+        this->placement->isCreating() && this->placement->floatingMarkerVisible();
+    state.placement.entity = this->placement->entity();
+    state.placement.connection_target_uuid = this->placement->connectionTargetUuid();
+    state.placement.pipe_start_node_uuid = this->pipes->startNodeUuid();
+    state.placement.pipe_intermediate_vertices = this->pipes->intermediateVertices();
+    state.placement.device_link_start_node_uuid = this->device_links->startNodeUuid();
+    state.placement.floating_width = this->placement->floatingWidth();
+
+    state.placement.mouse_position = this->placement->mousePosition();
+
+    return state;
 }
 
 bool MapCanvasEntities::selectMarkerAt(const QPointF &position)

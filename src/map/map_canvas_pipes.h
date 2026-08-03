@@ -4,12 +4,12 @@
 #include <optional>
 #include <QObject>
 #include <QList>
-#include <QPainter>
 #include <QPointer>
 #include <QPoint>
 #include <QPointF>
 #include <QUuid>
 
+#include "map_editor_render_state.h"
 #include "map_model.h"
 #include "map_models.h"
 
@@ -56,12 +56,9 @@ public:
     bool completePipe(const InfrastructureEntityReference &pipe_reference,
                       const InfrastructureEntityReference &start_node,
                       const InfrastructureEntityReference &end_node);
-    void paint(QPainter &painter, const QList<MapEntityMarker> &markers,
-               bool placing_pipe, const QPointF &mouse_position,
-               const QUuid &connection_target_uuid) const;
-
     bool hasSelection() const;
     QList<QUuid> selectedPipeUuids() const;
+    QList<MapEditorRenderPipe> renderItems() const;
     void clearSelection();
     std::optional<InfrastructureEntityReference> selectPipe(const QUuid &pipe_uuid);
     bool removePipe(const QUuid &pipe_uuid);

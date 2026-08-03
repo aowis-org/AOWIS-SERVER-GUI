@@ -218,110 +218,10 @@ bool MapCanvasDeviceLinks::setCenterCoordinate(const QUuid &uuid,
     return false;
 }
 
-std::optional<QPointF> MapCanvasDeviceLinks::floatingCenter(
-    const QPointF &mouse_position,
-    const QUuid &connection_target_uuid,
-    const QList<MapEntityMarker> &markers) const
-{
-    if (this->device_link_start_uuid.isNull())
-        return std::nullopt;
-
-    const std::optional<MapEntityMarker> start_marker = pointMarkerByUuid(
-        this->device_link_start_uuid, markers);
-    if (!start_marker.has_value() || !isHydraulicConnectionNode(start_marker->entity.type))
-        return std::nullopt;
-
-    const QPointF start_point = screenFromWgs84(start_marker->coord_wgs84);
-    QPointF end_point = mouse_position;
-    const std::optional<MapEntityMarker> end_marker = pointMarkerByUuid(
-        connection_target_uuid, markers);
-    if (end_marker.has_value() && isHydraulicConnectionNode(end_marker->entity.type))
-        end_point = screenFromWgs84(end_marker->coord_wgs84);
-
-    return (start_point + end_point) / 2.0;
-}
-
 void MapCanvasDeviceLinks::scaleMarkers(int width)
 {
     this->device_marker_width = width;
     updateCanvas();
-}
-
-void MapCanvasDeviceLinks::paint(QPainter &painter,
-                                 const QList<MapEntityMarker> &markers,
-                                 const QList<QUuid> &selected_uuids,
-                                 bool placing_device_link,
-                                 const QPointF &mouse_position,
-                                 const QUuid &connection_target_uuid) const
-{
-    painter.save();
-
-    for (const DeviceLinkCanvasItem &device_link : this->list_device_links)
-    {
-        const std::optional<MapEntityMarker> start_marker = pointMarkerByUuid(
-            device_link.geometry.start_node.uuid, markers);
-        const std::optional<MapEntityMarker> end_marker = pointMarkerByUuid(
-            device_link.geometry.end_node.uuid, markers);
-        if (!start_marker.has_value() || !end_marker.has_value())
-            continue;
-
-        const QPointF start_point = screenFromWgs84(start_marker->coord_wgs84);
-        const QPointF center_point = screenFromWgs84(device_link.geometry.center_coordinate);
-        const QPointF end_point = screenFromWgs84(end_marker->coord_wgs84);
-
-        QPen placed_pen(markerIsSelected(device_link.entity.uuid, selected_uuids)
-                            ? QColor(0, 190, 255)
-                            : QColor(139, 90, 43));
-        placed_pen.setWidthF(3.0);
-        placed_pen.setCapStyle(Qt::RoundCap);
-        placed_pen.setJoinStyle(Qt::RoundJoin);
-        painter.setPen(placed_pen);
-        painter.drawLine(start_point, center_point);
-        painter.drawLine(center_point, end_point);
-    }
-
-    if (placing_device_link && !this->device_link_start_uuid.isNull())
-    {
-        const std::optional<MapEntityMarker> start_marker = pointMarkerByUuid(
-            this->device_link_start_uuid, markers);
-        if (start_marker.has_value())
-        {
-            const QPointF start_point = screenFromWgs84(start_marker->coord_wgs84);
-            QPointF end_point = mouse_position;
-            const std::optional<MapEntityMarker> end_marker = pointMarkerByUuid(
-                connection_target_uuid, markers);
-            if (end_marker.has_value())
-                end_point = screenFromWgs84(end_marker->coord_wgs84);
-
-            const QPointF center_point = (start_point + end_point) / 2.0;
-            QPen preview_pen(QColor(0, 140, 255));
-            preview_pen.setWidthF(3.0);
-            preview_pen.setCapStyle(Qt::RoundCap);
-            preview_pen.setJoinStyle(Qt::RoundJoin);
-            painter.setPen(preview_pen);
-            painter.drawLine(start_point, center_point);
-            painter.drawLine(center_point, end_point);
-        }
-    }
-
-    if (this->pixmap_renderer)
-    {
-        for (const DeviceLinkCanvasItem &device_link : this->list_device_links)
-        {
-            MapEntityMarker marker;
-            marker.entity = device_link.entity;
-            marker.coord_wgs84 = device_link.geometry.center_coordinate;
-            marker.path_pixmap = device_link.path_pixmap;
-            const MapEntityPixmapRenderer::Highlight highlight =
-                markerIsSelected(device_link.entity.uuid, selected_uuids)
-                    ? MapEntityPixmapRenderer::Highlight::Selected
-                    : MapEntityPixmapRenderer::Highlight::None;
-            this->pixmap_renderer->paint(painter, device_link.path_pixmap,
-                                         this->device_marker_width, markerRect(marker), highlight);
-        }
-    }
-
-    painter.restore();
 }
 
 bool MapCanvasDeviceLinks::moveCenterByDelta(const QUuid &uuid,
@@ -383,6 +283,24 @@ QList<MapEntityMarker> MapCanvasDeviceLinks::markers() const
         marker.coord_wgs84 = device_link.geometry.center_coordinate;
         marker.path_pixmap = device_link.path_pixmap;
         result.append(marker);
+    }
+
+    return result;
+}
+
+QList<MapEditorRenderDeviceLink> MapCanvasDeviceLinks::renderItems(
+    const QList<QUuid> &selected_uuids) const
+{
+    QList<MapEditorRenderDeviceLink> result;
+    result.reserve(this->list_device_links.size());
+
+    for (const DeviceLinkCanvasItem &device_link : this->list_device_links)
+    {
+        MapEditorRenderDeviceLink item;
+        item.entity = device_link.entity;
+        item.geometry = device_link.geometry;
+        item.selected = selected_uuids.contains(device_link.entity.uuid);
+        result.append(item);
     }
 
     return result;
@@ -486,12 +404,6 @@ std::optional<MapEntityMarker> MapCanvasDeviceLinks::pointMarkerByUuid(
     }
 
     return std::nullopt;
-}
-
-bool MapCanvasDeviceLinks::markerIsSelected(const QUuid &uuid,
-                                            const QList<QUuid> &selected_uuids) const
-{
-    return selected_uuids.contains(uuid);
 }
 
 void MapCanvasDeviceLinks::updateCanvas()
