@@ -3,7 +3,6 @@
 
 #include <QObject>
 #include <QHash>
-#include <QMouseEvent>
 #include <QPoint>
 #include <QPointF>
 #include <QPainter>
@@ -42,8 +41,8 @@ public:
     void startEntityPositioning(InfrastructureEntity entity);
     void stopEntityPositioning();
     bool cancelActiveMove();
-    void floatEntity(QMouseEvent *event);
-    bool anchorMarker(QMouseEvent *event);
+    bool floatEntity(const QPointF &position);
+    bool anchorMarker(const QPointF &position);
     
     void scaleMarkers();
     void positionMarkers();
@@ -57,9 +56,9 @@ public:
     MapEntityMarker markerByLabel(MapEntityMarkerLabel *label);
     
 private:
-    bool anchorDeviceLink(QMouseEvent *event);
-    bool anchorPipe(QMouseEvent *event);
-    bool anchorPipeVertexMove(QMouseEvent *event);
+    bool anchorDeviceLink(const QPointF &position);
+    bool anchorPipe(const QPointF &position);
+    bool anchorPipeVertexMove(const QPointF &position);
     QUuid createHydraulicNode(InfrastructureEntity entity, const CoordinateWGS84 &coordinate);
     QUuid createHydraulicDeviceLink(InfrastructureEntity entity, const DeviceLinkGeometry &geometry);
     bool deleteHydraulicNode(const InfrastructureEntityReference &reference);

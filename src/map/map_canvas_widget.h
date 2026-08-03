@@ -1,114 +1,62 @@
 #ifndef MAP_CANVAS_WIDGET_H
 #define MAP_CANVAS_WIDGET_H
 
-#include <QObject>
+#include <QPointer>
 #include <QWidget>
-#include <QLabel>
-
-#include <QResizeEvent>
-#include <QPaintEvent>
-#include <QPainter>
-#include <QColor>
-#include <QPalette>
-
-#include <QKeyEvent>
-#include <QRect>
-#include <QList>
 
 #include "map_model.h"
 #include "map_widget.h"
 #include "map_canvas_entities.h"
-#include "map_models.h"
 
 #include "../hydraulic_data.h"
-#include "../_enums_structs.h"
+
+class MapEditorController;
+class QFocusEvent;
+class QKeyEvent;
+class QMouseEvent;
+class QPaintEvent;
+class QPainter;
+class QResizeEvent;
+class QWheelEvent;
 
 class MapCanvasWidget : public QWidget
 {
     Q_OBJECT
-public:
-    struct TileSelectionRange
-    {
-        bool valid = false;
-        int zoom = 0;
-        int tile_x_min = 0;
-        int tile_x_max = -1;
-        int tile_y_min = 0;
-        int tile_y_max = -1;
-    };
 
-    explicit MapCanvasWidget(MapModel *map_model, MapWidget *map, HydraulicData *hydraulic_data, QWidget *parent = nullptr);
-    
+public:
+    explicit MapCanvasWidget(MapModel *map_model, MapWidget *map, HydraulicData *hydraulic_data,
+                             QWidget *parent = nullptr);
+
+    void setEditorController(MapEditorController *editor_controller);
+    MapCanvasEntities *mapCanvasEntities() const;
     int backgroundOpacity() const;
-    TileSelectionRange tileSelectionRange(int zoom) const;
-    
-    void startRectangleSelection(bool oneshot, bool interact_with_entities = true);
-    void cancelRectangleSelection();
-    void clearTileSelectionOverlay();
-    
-    MapCanvasEntities *mapCanvasEntities();
-    
-    void startEntityPositioning(InfrastructureEntity tool);
-    void stopEntityPositioning();
-    
+
 public slots:
     void setBackgroundOpacity(int opacity);
-    
+
 protected:
     void paintEvent(QPaintEvent *event) override;
-    
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
-    
     void focusOutEvent(QFocusEvent *event) override;
-    
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
-    
     void resizeEvent(QResizeEvent *event) override;
-    
+
 private:
+    void applyControllerState();
+    void paintEventTileSelectionOverlay(QPainter &paint);
+    void paintEventRectangle(QPainter &paint);
+
     MapModel *map_model = nullptr;
     MapWidget *map = nullptr;
     MapCanvasEntities *map_canvas_entities = nullptr;
-    
-    // 0 = transparent, 100 = fully system bakground
+    QPointer<MapEditorController> editor_controller;
+
+    // 0 = transparent, 100 = fully system background
     int map_background_opacity = 0;
-    
-    // rectangle selection variables and function
-    bool is_rectangle_selection_oneshot = true;
-    bool rectangle_selection_active = false;
-    bool rectangle_dragging = false;
-    bool rectangle_selection_interacts_with_entities = true;
-    struct TileSelectionOverlay
-    {
-        bool visible = false;
-        int zoom = 0;
-        int tile_x_min = 0;
-        int tile_x_max = -1;
-        int tile_y_min = 0;
-        int tile_y_max = -1;
-    };
-
-    CoordinateWGS84Rect getSelectionRect(const QRect &selected_rect) const;
-    CoordinateWGS84Rect getTileSelectionRect() const;
-    void updateTileSelectionOverlay(const QRect &selected_rect);
-
-    CoordinateWGS84 rectangle_start_wgs84;
-    CoordinateWGS84 rectangle_current_wgs84;
-    
-    TileSelectionOverlay tile_selection_overlay;
-
-    QRect currentSelectionRect() const;
-    void paintEventTileSelectionOverlay(QPainter &paint);
-    void paintEventRectangle(QPainter &paint);
-    
-signals:
-    void signalRectangleSelected(const CoordinateWGS84Rect &rect);
-    void signalRectangleSelectionCanceled();
-    
 };
 
 #endif // MAP_CANVAS_WIDGET_H

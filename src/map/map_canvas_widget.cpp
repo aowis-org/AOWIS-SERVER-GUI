@@ -1,13 +1,22 @@
 #include "map_canvas_widget.h"
 
+#include "map_editor_controller.h"
+
+#include <QFocusEvent>
+#include <QKeyEvent>
 #include <QLinearGradient>
+#include <QMouseEvent>
+#include <QPaintEvent>
+#include <QPainter>
+#include <QPalette>
+#include <QResizeEvent>
+#include <QWheelEvent>
 
 #include <cmath>
 
-MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map, HydraulicData *hydraulic_data, QWidget *parent)
-    : QWidget{parent},
-    map_model(map_model),
-    map(map),
+MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map,
+                                 HydraulicData *hydraulic_data, QWidget *parent)
+    : QWidget(parent), map_model(map_model), map(map),
     map_canvas_entities(new MapCanvasEntities(map_model, hydraulic_data, this))
 {
     setAttribute(Qt::WA_TranslucentBackground);
@@ -22,12 +31,32 @@ MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map, HydraulicD
     {
         update();
     });
-    
-    //setFocusPolicy(Qt::StrongFocus);
-    //setFocus(Qt::OtherFocusReason);
 }
 
-MapCanvasEntities *MapCanvasWidget::mapCanvasEntities()
+void MapCanvasWidget::setEditorController(MapEditorController *editor_controller)
+{
+    if (this->editor_controller == editor_controller)
+        return;
+
+    if (this->editor_controller)
+        disconnect(this->editor_controller, nullptr, this, nullptr);
+
+    this->editor_controller = editor_controller;
+    if (this->editor_controller)
+    {
+        connect(this->editor_controller, &MapEditorController::signalStateChanged,
+                this, &MapCanvasWidget::applyControllerState);
+        connect(this->editor_controller, &MapEditorController::signalFocusRequested,
+                this, [this]
+        {
+            setFocus(Qt::OtherFocusReason);
+        });
+    }
+
+    applyControllerState();
+}
+
+MapCanvasEntities *MapCanvasWidget::mapCanvasEntities() const
 {
     return this->map_canvas_entities;
 }
@@ -36,16 +65,32 @@ int MapCanvasWidget::backgroundOpacity() const
 {
     return this->map_background_opacity;
 }
+
 void MapCanvasWidget::setBackgroundOpacity(int opacity)
 {
     opacity = qBound(0, opacity, 100);
-    
     if (this->map_background_opacity == opacity)
+        return;
+
+    this->map_background_opacity = opacity;
+    update();
+}
+
+void MapCanvasWidget::applyControllerState()
+{
+    if (!this->editor_controller)
     {
+        unsetCursor();
+        update();
         return;
     }
-    
-    this->map_background_opacity = opacity;
+
+    const std::optional<Qt::CursorShape> cursor_shape = this->editor_controller->cursorShape();
+    if (cursor_shape.has_value())
+        setCursor(cursor_shape.value());
+    else
+        unsetCursor();
+
     update();
 }
 
@@ -64,69 +109,32 @@ void MapCanvasWidget::paintEvent(QPaintEvent *event)
 #else
     paint.setRenderHint(QPainter::Antialiasing);
 #endif
-    
+
     if (this->map_background_opacity > 0)
     {
         QColor background = palette().color(QPalette::Window);
         background.setAlphaF(this->map_background_opacity / 100.0);
-        
         paint.fillRect(rect(), background);
     }
-    
+
     paintEventTileSelectionOverlay(paint);
     paintEventRectangle(paint);
-    
     this->map_canvas_entities->paintMarkers(paint);
-}
-
-void MapCanvasWidget::startEntityPositioning(InfrastructureEntity tool)
-{
-    this->map_canvas_entities->startEntityPositioning(tool);
-}
-void MapCanvasWidget::stopEntityPositioning()
-{
-    this->map_canvas_entities->stopEntityPositioning();
-}
-
-void MapCanvasWidget::clearTileSelectionOverlay()
-{
-    if (!this->tile_selection_overlay.visible)
-        return;
-
-    this->tile_selection_overlay = TileSelectionOverlay();
-    update();
-}
-
-MapCanvasWidget::TileSelectionRange MapCanvasWidget::tileSelectionRange(int zoom) const
-{
-    TileSelectionRange range;
-    range.zoom = zoom;
-
-    if (!this->tile_selection_overlay.visible || zoom < MapModel::MinZoom || zoom > MapModel::MaxZoom)
-        return range;
-
-    const double zoom_scale = std::ldexp(1.0, zoom - this->tile_selection_overlay.zoom);
-    const double selected_west_tile = this->tile_selection_overlay.tile_x_min * zoom_scale;
-    const double selected_east_tile = (this->tile_selection_overlay.tile_x_max + 1.0) * zoom_scale;
-    const double selected_north_tile = this->tile_selection_overlay.tile_y_min * zoom_scale;
-    const double selected_south_tile = (this->tile_selection_overlay.tile_y_max + 1.0) * zoom_scale;
-    const int tile_count = 1 << zoom;
-
-    range.tile_x_min = int(std::floor(selected_west_tile));
-    range.tile_x_max = int(std::ceil(selected_east_tile)) - 1;
-    range.tile_y_min = qBound(0, int(std::floor(selected_north_tile)), tile_count - 1);
-    range.tile_y_max = qBound(0, int(std::ceil(selected_south_tile)) - 1, tile_count - 1);
-    range.valid = range.tile_x_min <= range.tile_x_max && range.tile_y_min <= range.tile_y_max;
-    return range;
 }
 
 void MapCanvasWidget::paintEventTileSelectionOverlay(QPainter &paint)
 {
-    if (!this->tile_selection_overlay.visible)
+    if (!this->editor_controller)
+        return;
+
+    const MapEditorController::TileSelectionOverlay &overlay =
+        this->editor_controller->tileSelectionOverlay();
+    if (!overlay.visible)
         return;
 
     const int current_zoom = this->map_model->zoom();
-    const TileSelectionRange current_range = tileSelectionRange(current_zoom);
+    const MapEditorController::TileSelectionRange current_range =
+        this->editor_controller->tileSelectionRange(current_zoom);
     if (!current_range.valid)
         return;
 
@@ -215,10 +223,13 @@ void MapCanvasWidget::paintEventTileSelectionOverlay(QPainter &paint)
 
 void MapCanvasWidget::paintEventRectangle(QPainter &paint)
 {
-    if (!this->rectangle_selection_active || !this->rectangle_dragging)
+    if (!this->editor_controller || !this->editor_controller->rectangleSelectionActive() ||
+        !this->editor_controller->rectangleDragging())
+    {
         return;
+    }
 
-    const QRect selection = currentSelectionRect();
+    const QRect selection = this->editor_controller->currentSelectionRect(size());
     if (selection.isEmpty())
         return;
 
@@ -306,15 +317,8 @@ void MapCanvasWidget::paintEventRectangle(QPainter &paint)
 
 void MapCanvasWidget::keyPressEvent(QKeyEvent *event)
 {
-    if (event->key() == Qt::Key_Escape && this->map_canvas_entities->cancelActiveMove())
+    if (this->editor_controller && this->editor_controller->keyPress(Qt::Key(event->key())))
     {
-        event->accept();
-        return;
-    }
-
-    if (this->rectangle_selection_active && event->key() == Qt::Key_Escape)
-    {
-        cancelRectangleSelection();
         event->accept();
         return;
     }
@@ -341,64 +345,14 @@ void MapCanvasWidget::focusOutEvent(QFocusEvent *event)
 
 void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
 {
-    const bool entity_interaction_enabled = !this->rectangle_selection_active || this->rectangle_selection_interacts_with_entities;
-
-    if (entity_interaction_enabled &&
-        event->button() == Qt::LeftButton &&
-        !this->rectangle_dragging &&
-        (this->map_canvas_entities->selectDeviceLinkAt(event->position()) ||
-         this->map_canvas_entities->selectPipeAt(event->position())))
+    if (this->editor_controller &&
+        this->editor_controller->mousePress(event->position(), event->globalPosition().toPoint(),
+                                            event->button(), size()))
     {
-        update();
         event->accept();
         return;
     }
-    
-    if (event->button() == Qt::RightButton)
-    {
-        if (this->rectangle_selection_active && !this->rectangle_selection_interacts_with_entities)
-        {
-            clearTileSelectionOverlay();
-            this->rectangle_start_wgs84 = this->map_model->wgs84FromScreen(event->position().toPoint(), size());
-            this->rectangle_current_wgs84 = this->rectangle_start_wgs84;
-            this->rectangle_dragging = true;
-            setCursor(Qt::CrossCursor);
-            update();
-            event->accept();
-            return;
-        }
 
-        if (this->map_canvas_entities->anchorMarker(event))
-        {
-            update();
-            event->accept();
-            return;
-        }
-        
-        // Pipe vertices and segments must be checked before starting
-        // rectangle selection, including while the selection tool is active.
-        if (this->map_canvas_entities->showPipeContextMenuAt(
-                event->position(),
-                event->globalPosition().toPoint()
-                ))
-        {
-            update();
-            event->accept();
-            return;
-        }
-        
-        if (this->rectangle_selection_active)
-        {
-            this->rectangle_start_wgs84 = this->map_model->wgs84FromScreen(event->position().toPoint(), size());
-            this->rectangle_current_wgs84 = this->rectangle_start_wgs84;
-            this->rectangle_dragging = true;
-            setCursor(Qt::CrossCursor);
-            update();
-            event->accept();
-            return;
-        }
-    }
-    
     if (this->map->handleMousePressEvent(event))
         return;
 
@@ -408,86 +362,30 @@ void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
 void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
 {
     const bool map_handled_event = this->map->handleMouseMoveEvent(event);
-    const bool entity_interaction_enabled = !this->rectangle_selection_active || this->rectangle_selection_interacts_with_entities;
+    const bool editor_handled_event = this->editor_controller &&
+        this->editor_controller->mouseMove(event->position(), size(), !map_handled_event);
 
-    if (this->rectangle_selection_active && this->rectangle_dragging)
+    if (editor_handled_event)
     {
-        setCursor(Qt::CrossCursor);
-        this->rectangle_current_wgs84 = this->map_model->wgs84FromScreen(event->position().toPoint(), size());
-
-        const QRect selected_rect = currentSelectionRect();
-        if (this->rectangle_selection_interacts_with_entities)
-            this->map_canvas_entities->onRectangleSelect(selected_rect, RectangleSelectMode::Replace);
-        else
-            updateTileSelectionOverlay(selected_rect);
-
-        update();
         event->accept();
         return;
     }
 
     if (map_handled_event)
         return;
-    
-    if (!entity_interaction_enabled)
-    {
-        unsetCursor();
-        QWidget::mouseMoveEvent(event);
-        return;
-    }
 
-    this->map_canvas_entities->floatEntity(event);
-    
-    if (this->map_canvas_entities->isDeviceLinkAt(event->position()) ||
-        this->map_canvas_entities->isPipeAt(event->position()))
-    {
-        setCursor(Qt::PointingHandCursor);
-    }
-    else
-    {
-        unsetCursor();
-    }
-    
     QWidget::mouseMoveEvent(event);
 }
+
 void MapCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
 {
-    if (this->rectangle_selection_active && this->rectangle_dragging && event->button() == Qt::RightButton)
+    if (this->editor_controller &&
+        this->editor_controller->mouseRelease(event->position(), event->button(), size()))
     {
-        this->rectangle_current_wgs84 = this->map_model->wgs84FromScreen(event->position().toPoint(), size());
-        const QRect selected_rect = currentSelectionRect();
-        
-        if (this->is_rectangle_selection_oneshot)
-            this->rectangle_selection_active = false;
-        
-        this->rectangle_dragging = false;
-        
-        unsetCursor();
-        update();
-        
-        int distance_min = 0; // 3
-        if (selected_rect.width() > distance_min && selected_rect.height() > distance_min)
-        {
-            if (this->rectangle_selection_interacts_with_entities)
-            {
-                this->map_canvas_entities->onRectangleSelect(selected_rect, RectangleSelectMode::Replace);
-                emit signalRectangleSelected(getSelectionRect(selected_rect));
-            }
-            else
-            {
-                updateTileSelectionOverlay(selected_rect);
-                emit signalRectangleSelected(getTileSelectionRect());
-            }
-        }
-        else
-        {
-            emit signalRectangleSelectionCanceled();
-        }
-        
         event->accept();
         return;
     }
-    
+
     if (this->map->handleMouseReleaseEvent(event))
         return;
 
@@ -502,122 +400,5 @@ void MapCanvasWidget::wheelEvent(QWheelEvent *event)
 void MapCanvasWidget::resizeEvent(QResizeEvent *event)
 {
     this->map_canvas_entities->positionMarkers();
-    
     QWidget::resizeEvent(event);
-}
-
-void MapCanvasWidget::startRectangleSelection(bool oneshot, bool interact_with_entities)
-{
-    this->is_rectangle_selection_oneshot = oneshot;
-    this->rectangle_selection_interacts_with_entities = interact_with_entities;
-    
-    this->rectangle_selection_active = true;
-    this->rectangle_dragging = false;
-
-    if (this->rectangle_selection_interacts_with_entities)
-        clearTileSelectionOverlay();
-    
-    this->rectangle_start_wgs84 = CoordinateWGS84();
-    this->rectangle_current_wgs84 = CoordinateWGS84();
-    
-    unsetCursor();
-    setFocus();
-    
-    update();
-}
-void MapCanvasWidget::cancelRectangleSelection()
-{
-    if (!this->rectangle_selection_active)
-        return;
-    
-    if (this->is_rectangle_selection_oneshot)
-        this->rectangle_selection_active = false;
-    
-    this->rectangle_dragging = false;
-
-    if (!this->rectangle_selection_interacts_with_entities)
-        clearTileSelectionOverlay();
-    
-    unsetCursor();
-    
-    update();
-    
-    emit signalRectangleSelectionCanceled();
-}
-QRect MapCanvasWidget::currentSelectionRect() const
-{
-    const QPoint rectangle_start_pos = this->map_model->screenFromWgs84(this->rectangle_start_wgs84, size()).toPoint();
-    const QPoint rectangle_current_pos = this->map_model->screenFromWgs84(this->rectangle_current_wgs84, size()).toPoint();
-
-    return QRect(rectangle_start_pos, rectangle_current_pos).normalized();
-}
-CoordinateWGS84Rect MapCanvasWidget::getSelectionRect(const QRect &selected_rect) const
-{
-    CoordinateWGS84Rect rect;
-    
-    rect.north_west = this->map_model->wgs84FromScreen(
-        selected_rect.topLeft(),
-        size()
-        );
-    rect.south_east = this->map_model->wgs84FromScreen(
-        selected_rect.bottomRight(),
-        size()
-        );
-    
-    return rect;
-}
-
-void MapCanvasWidget::updateTileSelectionOverlay(const QRect &selected_rect)
-{
-    if (selected_rect.isEmpty())
-    {
-        clearTileSelectionOverlay();
-        return;
-    }
-
-    const int zoom = this->map_model->zoom();
-    const int tile_count = 1 << zoom;
-    const QPointF center_tile = this->map_model->centerTile();
-    const double tile_x_first = center_tile.x() + (selected_rect.left() - width() / 2.0) / MapModel::TileSize;
-    const double tile_x_second = center_tile.x() + (selected_rect.right() - width() / 2.0) / MapModel::TileSize;
-    const double tile_y_first = center_tile.y() + (selected_rect.top() - height() / 2.0) / MapModel::TileSize;
-    const double tile_y_second = center_tile.y() + (selected_rect.bottom() - height() / 2.0) / MapModel::TileSize;
-
-    const int tile_y_min = int(std::floor(qMin(tile_y_first, tile_y_second)));
-    const int tile_y_max = int(std::floor(qMax(tile_y_first, tile_y_second)));
-    if (tile_y_max < 0 || tile_y_min >= tile_count)
-    {
-        clearTileSelectionOverlay();
-        return;
-    }
-
-    this->tile_selection_overlay.zoom = zoom;
-    this->tile_selection_overlay.tile_x_min = int(std::floor(qMin(tile_x_first, tile_x_second)));
-    this->tile_selection_overlay.tile_x_max = int(std::floor(qMax(tile_x_first, tile_x_second)));
-    this->tile_selection_overlay.tile_y_min = qBound(0, tile_y_min, tile_count - 1);
-    this->tile_selection_overlay.tile_y_max = qBound(0, tile_y_max, tile_count - 1);
-    this->tile_selection_overlay.visible = this->tile_selection_overlay.tile_x_min <= this->tile_selection_overlay.tile_x_max &&
-                                           this->tile_selection_overlay.tile_y_min <= this->tile_selection_overlay.tile_y_max;
-
-    update();
-}
-
-CoordinateWGS84Rect MapCanvasWidget::getTileSelectionRect() const
-{
-    CoordinateWGS84Rect rect;
-    rect.north_west.latitude_deg = GeoWebMercator::tileYToLat(
-        this->tile_selection_overlay.tile_y_min,
-        this->tile_selection_overlay.zoom);
-    rect.north_west.longitude_deg = GeoWebMercator::normalizeLongitude(
-        GeoWebMercator::tileXToLon(
-            this->tile_selection_overlay.tile_x_min,
-            this->tile_selection_overlay.zoom));
-    rect.south_east.latitude_deg = GeoWebMercator::tileYToLat(
-        this->tile_selection_overlay.tile_y_max + 1.0,
-        this->tile_selection_overlay.zoom);
-    rect.south_east.longitude_deg = GeoWebMercator::normalizeLongitude(
-        GeoWebMercator::tileXToLon(
-            this->tile_selection_overlay.tile_x_max + 1.0,
-            this->tile_selection_overlay.zoom));
-    return rect;
 }

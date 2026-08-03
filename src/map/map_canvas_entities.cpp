@@ -314,12 +314,12 @@ bool MapCanvasEntities::cancelActiveMove()
     return true;
 }
 
-void MapCanvasEntities::floatEntity(QMouseEvent *event)
+bool MapCanvasEntities::floatEntity(const QPointF &position)
 {
     if (this->placement->isMoving())
         this->placement->setMoveCursor(true);
     
-    this->placement->updateMousePosition(event->position());
+    this->placement->updateMousePosition(position);
     
     if (this->placement->movingSelected())
     {
@@ -328,23 +328,21 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
         if (!synchronizeSelectedGeometry())
         {
             stopEntityPositioning();
-            event->accept();
-            return;
+            return true;
         }
 
         positionMarkers();
         updateCanvas();
-        event->accept();
-        return;
+        return true;
     }
     
-    updateConnectionTarget(event->position());
+    updateConnectionTarget(position);
     
     if (this->placement->isMoving() && this->pipes->isPipeVertexMoveActive())
     {
         const std::optional<QUuid> pipe_uuid = this->pipes->activePipeVertexMoveUuid();
         const int vertex_index = this->pipes->activePipeVertexMoveIndex();
-        const bool moved = this->pipes->updatePipeVertexMove(event->position());
+        const bool moved = this->pipes->updatePipeVertexMove(position);
         const std::optional<CoordinateWGS84> coordinate = pipe_uuid.has_value()
             ? this->pipes->pipeVertexCoordinate(pipe_uuid.value(), vertex_index)
             : std::nullopt;
@@ -357,29 +355,28 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
             stopEntityPositioning();
         }
 
-        event->accept();
-        return;
+        return true;
     }
     
     MapEntityMarkerLabel *floating_label = this->placement->floatingLabel();
     if (!floating_label || !this->placement->revealFloatingLabelIfReady())
-        return;
+        return false;
     
     bool device_link_positioned = false;
     if (this->placement->isMoving())
     {
-        device_link_positioned = this->device_links->updateMove(floating_label, event->position());
+        device_link_positioned = this->device_links->updateMove(floating_label, position);
     }
     else if (this->placement->isCreating() &&
              isHydraulicDeviceLink(this->placement->entity()))
     {
         device_link_positioned = this->device_links->positionFloatingLabel(
-            floating_label, event->position(), this->placement->connectionTarget(),
+            floating_label, position, this->placement->connectionTarget(),
             this->point_markers->markers());
     }
     
     if (!device_link_positioned)
-        this->placement->moveFloatingLabelTopLeft(event->position());
+        this->placement->moveFloatingLabelTopLeft(position);
     
     if (this->placement->isMoving())
     {
@@ -391,7 +388,7 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
         else
         {
             const CoordinateWGS84 coordinate = this->map_model->wgs84FromScreen(
-                event->position().toPoint(), this->map_canvas->size());
+                position.toPoint(), this->map_canvas->size());
             synchronized = this->point_markers->setCoordinate(floating_label, coordinate) &&
                            synchronizeMarkerCoordinate(floating_label);
         }
@@ -399,18 +396,17 @@ void MapCanvasEntities::floatEntity(QMouseEvent *event)
         if (!synchronized)
         {
             stopEntityPositioning();
-            event->accept();
-            return;
+            return true;
         }
     }
 
     updateCanvas();
-    event->accept();
+    return true;
 }
 
-bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
+bool MapCanvasEntities::anchorMarker(const QPointF &position)
 {
-    if (anchorPipeVertexMove(event))
+    if (anchorPipeVertexMove(position))
         return true;
     
     MapEntityMarkerLabel *floating_label = this->placement->floatingLabel();
@@ -419,7 +415,7 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
     
     if (this->placement->movingSelected())
     {
-        this->selection->moveSelected(this->placement->mousePosition(), event->position());
+        this->selection->moveSelected(this->placement->mousePosition(), position);
         const bool synchronized = synchronizeSelectedGeometry();
         if (!synchronized)
             restoreMoveSnapshot();
@@ -435,13 +431,13 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
     if (this->placement->isCreating())
     {
         if (isHydraulicDeviceLink(this->placement->entity()))
-            return anchorDeviceLink(event);
+            return anchorDeviceLink(position);
         if (isHydraulicPipeGeometry(this->placement->entity()))
-            return anchorPipe(event);
+            return anchorPipe(position);
     }
     
     const CoordinateWGS84 coordinate = this->map_model->wgs84FromScreen(
-        event->position().toPoint(), this->map_canvas->size());
+        position.toPoint(), this->map_canvas->size());
     
     if (this->placement->isMoving())
     {
@@ -480,7 +476,7 @@ bool MapCanvasEntities::anchorMarker(QMouseEvent *event)
         reference, coordinate, this->point_markers->pixmapPathForEntity(reference.type),
         this->point_markers->entityWidth(), created_label);
     recalculateWrapReferenceLongitude();
-    this->placement->setFloatingHiddenUntil(event->position().toPoint());
+    this->placement->setFloatingHiddenUntil(position.toPoint());
     positionMarkers();
     this->placement->rearmCreate(this->point_markers->pixmapPathForEntity(reference.type), 150);
     updateCanvas();
@@ -505,7 +501,7 @@ QUuid MapCanvasEntities::createHydraulicNode(InfrastructureEntity entity, const 
     }
 }
 
-bool MapCanvasEntities::anchorDeviceLink(QMouseEvent *event)
+bool MapCanvasEntities::anchorDeviceLink(const QPointF &position)
 {
     const InfrastructureEntity entity = this->placement->entity();
     InfrastructureEntityReference reference;
@@ -532,7 +528,7 @@ bool MapCanvasEntities::anchorDeviceLink(QMouseEvent *event)
     if (result.status == MapCanvasDeviceLinks::AnchorStatus::StartSet)
     {
         this->placement->clearConnectionTarget();
-        updateConnectionTarget(event->position());
+        updateConnectionTarget(position);
         updateCanvas();
         return true;
     }
@@ -544,7 +540,7 @@ bool MapCanvasEntities::anchorDeviceLink(QMouseEvent *event)
         return true;
     }
 
-    this->placement->setFloatingHiddenUntil(event->position().toPoint());
+    this->placement->setFloatingHiddenUntil(position.toPoint());
     this->placement->takeCreatedLabel();
     this->placement->clearConnectionTarget();
     this->placement->rearmCreate(this->point_markers->pixmapPathForEntity(entity),
@@ -755,7 +751,7 @@ void MapCanvasEntities::deletePipeVertex(const QUuid &pipe_uuid, int vertex_inde
     }
 }
 
-bool MapCanvasEntities::anchorPipe(QMouseEvent *event)
+bool MapCanvasEntities::anchorPipe(const QPointF &position)
 {
     MapEntityMarkerLabel *connection_target = this->placement->connectionTarget();
     if (!this->pipes->hasStartLabel())
@@ -803,7 +799,7 @@ bool MapCanvasEntities::anchorPipe(QMouseEvent *event)
             return true;
         }
         
-        this->placement->setFloatingHiddenUntil(event->position().toPoint());
+        this->placement->setFloatingHiddenUntil(position.toPoint());
         MapEntityMarkerLabel *placement_icon = this->placement->takeCreatedLabel();
         this->placement->clearConnectionTarget();
         if (placement_icon)
@@ -818,19 +814,19 @@ bool MapCanvasEntities::anchorPipe(QMouseEvent *event)
     }
     
     const CoordinateWGS84 intermediate_vertex = this->map_model->wgs84FromScreen(
-        event->position().toPoint(), this->map_canvas->size());
+        position.toPoint(), this->map_canvas->size());
     this->pipes->appendIntermediateVertex(intermediate_vertex);
     return true;
 }
 
-bool MapCanvasEntities::anchorPipeVertexMove(QMouseEvent *event)
+bool MapCanvasEntities::anchorPipeVertexMove(const QPointF &position)
 {
     if (!this->placement->isMoving() || !this->pipes->isPipeVertexMoveActive())
         return false;
 
     const std::optional<QUuid> pipe_uuid = this->pipes->activePipeVertexMoveUuid();
     const int vertex_index = this->pipes->activePipeVertexMoveIndex();
-    const bool moved = this->pipes->finishPipeVertexMove(event->position());
+    const bool moved = this->pipes->finishPipeVertexMove(position);
     bool synchronized = false;
     if (moved && pipe_uuid.has_value() && this->hydraulic_data)
     {

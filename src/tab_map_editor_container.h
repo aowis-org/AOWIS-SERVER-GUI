@@ -29,6 +29,7 @@
 #include "map/map_widget.h"
 #include "map/map_navigation_widget.h"
 #include "map/map_canvas_widget.h"
+#include "map/map_editor_controller.h"
 #include "entity_inspector/entity_inspector_dock.h"
 #include "hydraulic_data.h"
 
@@ -47,7 +48,9 @@ class MapEditorMenuWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_canvas, CanvasMode mode, QWidget *parent = nullptr);
+    explicit MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_canvas,
+                                 MapEditorController *editor_controller, CanvasMode mode,
+                                 QWidget *parent = nullptr);
     
     MapNavigationWidget *mapNavigationWidget();
     bool isEditNetworkSectionActive() const;
@@ -59,6 +62,7 @@ private:
     MapWidget *map;
     MapNavigationWidget *map_nav;
     MapCanvasWidget *map_canvas;
+    MapEditorController *editor_controller;
     
     QSpinBox *spin_zoom_from;
     QSpinBox *spin_zoom_to;
@@ -117,6 +121,7 @@ private:
     MapTileRepository *tile_repository;
     MapWidget *map;
     MapCanvasWidget *map_canvas;
+    MapEditorController *editor_controller;
     MapEditorMenuWidget *map_menu;
     
     QHBoxLayout *layout;

@@ -11,11 +11,15 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     tile_repository( tile_repository ),
     map( new MapWidget(this->map_model, this->tile_repository, this->gps, this) ),
     map_canvas( new MapCanvasWidget(this->map_model, this->map, this->hydraulic_data, this) ),
-    map_menu( new MapEditorMenuWidget(this->map, this->map_canvas, CanvasMode::Edit, this) ),
+    editor_controller( new MapEditorController(this->map_model, this->map_canvas->mapCanvasEntities(), this) ),
+    map_menu( new MapEditorMenuWidget(this->map, this->map_canvas, this->editor_controller,
+                                      CanvasMode::Edit, this) ),
     layout( new QHBoxLayout(this) ),
     map_stack( new QWidget(this) ),
     map_stack_layout( new QStackedLayout(this->map_stack) )
 {
+    this->map_canvas->setEditorController(this->editor_controller);
+
     setContentsMargins(0, 0, 0, 0);
     this->layout->setContentsMargins(0, 0, 0, 0);
     this->layout->setSpacing(0);
@@ -156,13 +160,16 @@ void MapEditorContainer::setMapEditorGuideChecked(bool checked)
     this->map_menu->setMapEditorGuideChecked(checked);
 }
 
-MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_canvas, CanvasMode mode, QWidget *parent)
+MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_canvas,
+                                         MapEditorController *editor_controller, CanvasMode mode,
+                                         QWidget *parent)
     : QWidget{parent},
     layout( new QVBoxLayout(this) ),
     mode( mode ),
     map( map ),
     map_nav( new MapNavigationWidget(this->map, this->mode, map_canvas, this) ),
     map_canvas( map_canvas ),
+    editor_controller( editor_controller ),
     toolbox( new QToolBox(this) )
 {
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
@@ -268,7 +275,7 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
     this->button_tiles_delete->setCheckable(true);
     this->button_tiles_delete->setEnabled(false);
     
-    connect(this->map_canvas, &MapCanvasWidget::signalRectangleSelectionCanceled, this, [this]
+    connect(this->editor_controller, &MapEditorController::signalRectangleSelectionCanceled, this, [this]
     {
         if (this->toolbox->currentIndex() != this->toolbox_cache_index)
             return;
@@ -276,7 +283,7 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
         this->button_tiles_delete->setChecked(false);
         this->button_tiles_delete->setEnabled(false);
     });
-    connect(this->map_canvas, &MapCanvasWidget::signalRectangleSelected, this, [this]
+    connect(this->editor_controller, &MapEditorController::signalRectangleSelected, this, [this]
     {
         if (this->toolbox->currentIndex() != this->toolbox_cache_index)
             return;
@@ -305,7 +312,7 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
         {
             for (int zoom = this->spin_zoom_from->value(); zoom <= this->spin_zoom_to->value(); ++zoom)
             {
-                const MapCanvasWidget::TileSelectionRange range = this->map_canvas->tileSelectionRange(zoom);
+                const MapEditorController::TileSelectionRange range = this->editor_controller->tileSelectionRange(zoom);
                 if (!range.valid)
                     continue;
 
@@ -318,7 +325,7 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
             }
 
             this->map->repaint();
-            this->map_canvas->clearTileSelectionOverlay();
+            this->editor_controller->clearTileSelectionOverlay();
             this->button_tiles_delete->setEnabled(false);
         });
         box->open();
@@ -350,8 +357,8 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
         if (this->toolbox->currentIndex() != this->toolbox_edit_index)
             return;
 
-        this->map_canvas->stopEntityPositioning();
-        this->map_canvas->startRectangleSelection(false, true);
+        this->editor_controller->stopEntityPositioning();
+        this->editor_controller->startRectangleSelection(false, true);
     });
     
     QToolButton *button_delete = new QToolButton(wgt);
@@ -359,19 +366,13 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     button_delete->setShortcut(Qt::Key_Delete);
     button_delete->setEnabled(false);
     lay->addWidget(button_delete);
-    MapCanvasEntities *entities = this->map_canvas->mapCanvasEntities();
-    connect(entities, &MapCanvasEntities::signalEntityMarkerSelected, this,
-    [this, button_delete](bool status)
+    connect(this->editor_controller, &MapEditorController::signalEntitySelectionChanged, this,
+    [button_delete](bool selected)
     {
-        if (status)
-            button_delete->setEnabled(true);
-        else
-            button_delete->setEnabled(false);
+        button_delete->setEnabled(selected);
     });
-    connect(button_delete, &QPushButton::clicked, this, [this, entities]
-    {
-        entities->onMarkerSelectedDeleteRequested();
-    });
+    connect(button_delete, &QPushButton::clicked, this->editor_controller,
+            &MapEditorController::deleteSelectedEntities);
     
     QLabel *label_add = new QLabel("Add:", this);
     lay->addWidget(label_add);
@@ -382,7 +383,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     this->button_group_tools->addButton(button_radio_pipe, 1);
     connect(button_radio_pipe, &QRadioButton::clicked, this, [this]
     {
-        this->map_canvas->startEntityPositioning(InfrastructureEntity::Pipe);
+        this->editor_controller->startEntityPositioning(InfrastructureEntity::Pipe);
     });
     
     QRadioButton *button_radio_junction = new QRadioButton("[2] Junction", wgt);
@@ -391,7 +392,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     this->button_group_tools->addButton(button_radio_junction, 2);
     connect(button_radio_junction, &QRadioButton::clicked, this, [this]
     {
-        this->map_canvas->startEntityPositioning(InfrastructureEntity::Junction);
+        this->editor_controller->startEntityPositioning(InfrastructureEntity::Junction);
     });
     
     QRadioButton *button_radio_valve = new QRadioButton("[3] Valve / Switch", wgt);
@@ -399,7 +400,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     lay->addWidget(button_radio_valve);
     this->button_group_tools->addButton(button_radio_valve, 3);
     connect(button_radio_valve, &QRadioButton::clicked, this, [this] {
-        this->map_canvas->startEntityPositioning(InfrastructureEntity::Valve);
+        this->editor_controller->startEntityPositioning(InfrastructureEntity::Valve);
     });
     
     QRadioButton *button_radio_customer = new QRadioButton("[4] Customer Point", wgt);
@@ -413,7 +414,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     lay->addWidget(button_radio_pump);
     this->button_group_tools->addButton(button_radio_pump, 5);
     connect(button_radio_pump, &QRadioButton::clicked, this, [this] {
-        this->map_canvas->startEntityPositioning(InfrastructureEntity::Pump);
+        this->editor_controller->startEntityPositioning(InfrastructureEntity::Pump);
     });
     
     QRadioButton *button_radio_tank = new QRadioButton("[6] Tank", wgt);
@@ -422,7 +423,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     this->button_group_tools->addButton(button_radio_tank, 6);
     connect(button_radio_tank, &QRadioButton::clicked, this, [this]
     {
-        this->map_canvas->startEntityPositioning(InfrastructureEntity::Tank);
+        this->editor_controller->startEntityPositioning(InfrastructureEntity::Tank);
     });
     
     QRadioButton *button_radio_power = new QRadioButton("[7] Power Source", wgt);
@@ -437,7 +438,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     this->button_group_tools->addButton(button_radio_reservoir, 8);
     connect(button_radio_reservoir, &QRadioButton::clicked, this, [this]
     {
-        this->map_canvas->startEntityPositioning(InfrastructureEntity::Reservoir);
+        this->editor_controller->startEntityPositioning(InfrastructureEntity::Reservoir);
     });
     
     QRadioButton *button_radio_note = new QRadioButton("[9] Note", wgt);
@@ -456,7 +457,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     
     connect(this->button_group_tools, &QButtonGroup::idToggled, this, [this]
     {
-        this->map_canvas->stopEntityPositioning();
+        this->editor_controller->stopEntityPositioning();
     });
     
     this->toolbox_edit_index = tbx->addItem(wgt, "Edit Network");
@@ -466,19 +467,19 @@ void MapEditorMenuWidget::setToolboxMode(int index)
 {
     emit signalEditNetworkSectionActive(index == this->toolbox_edit_index);
 
-    this->map_canvas->stopEntityPositioning();
-    this->map_canvas->clearTileSelectionOverlay();
+    this->editor_controller->stopEntityPositioning();
+    this->editor_controller->clearTileSelectionOverlay();
     this->button_tiles_delete->setChecked(false);
     this->button_tiles_delete->setEnabled(false);
 
     if (index == this->toolbox_cache_index)
     {
-        this->map_canvas->startRectangleSelection(false, false);
+        this->editor_controller->startRectangleSelection(false, false);
     }
     else if (index == this->toolbox_edit_index)
     {
         this->button_radio_select->setChecked(true);
-        this->map_canvas->startRectangleSelection(false, true);
+        this->editor_controller->startRectangleSelection(false, true);
     }
 
     updateToolboxHeight(index);
