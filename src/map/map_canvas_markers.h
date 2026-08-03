@@ -53,6 +53,7 @@ public:
 
     std::optional<InfrastructureEntityReference> markerAt(const QPointF &position) const;
     bool isMarkerAt(const QPointF &position) const;
+    QPointF markerAnchorPosition(const MapEntityMarker &marker) const;
     QRectF markerRect(const MapEntityMarker &marker) const;
 
 private:

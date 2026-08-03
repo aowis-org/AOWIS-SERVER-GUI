@@ -7,6 +7,8 @@
 
 #include "../geo_web_mercator.h"
 
+#include <QRectF>
+
 MapCanvasSelection::MapCanvasSelection(MapModel *map_model, MapCanvasWidget *map_canvas,
                                        MapCanvasMarkers *point_markers,
                                        MapCanvasDeviceLinks *device_links,
@@ -150,9 +152,10 @@ void MapCanvasSelection::addPointMarkersInRectangle(
     if (!this->point_markers)
         return;
 
+    const QRectF selection_rect(rect);
     for (const MapEntityMarker &marker : markers)
     {
-        if (rect.contains(this->point_markers->markerRect(marker).center().toPoint()))
+        if (selection_rect.contains(this->point_markers->markerAnchorPosition(marker)))
             addMarker(marker);
     }
 }
@@ -163,9 +166,10 @@ void MapCanvasSelection::addDeviceMarkersInRectangle(
     if (!this->device_links)
         return;
 
+    const QRectF selection_rect(rect);
     for (const MapEntityMarker &marker : markers)
     {
-        if (rect.contains(this->device_links->markerRect(marker).center().toPoint()))
+        if (selection_rect.contains(this->device_links->markerCenterPosition(marker)))
             addMarker(marker);
     }
 }

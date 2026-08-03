@@ -462,13 +462,18 @@ std::optional<InfrastructureEntityReference> MapCanvasDeviceLinks::linkAt(
     return nearest_entity;
 }
 
+QPointF MapCanvasDeviceLinks::markerCenterPosition(const MapEntityMarker &marker) const
+{
+    return screenFromWgs84(marker.coord_wgs84);
+}
+
 QRectF MapCanvasDeviceLinks::markerRect(const MapEntityMarker &marker) const
 {
     if (!this->pixmap_renderer)
         return QRectF();
 
     return this->pixmap_renderer->centeredRect(
-        screenFromWgs84(marker.coord_wgs84), marker.path_pixmap, this->device_marker_width);
+        markerCenterPosition(marker), marker.path_pixmap, this->device_marker_width);
 }
 
 std::optional<MapEntityMarker> MapCanvasDeviceLinks::pointMarkerByUuid(

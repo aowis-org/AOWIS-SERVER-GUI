@@ -10,6 +10,7 @@
 namespace
 {
 constexpr double marker_dot_radius = 5.0;
+constexpr double marker_dot_hit_radius = marker_dot_radius * 3.0;
 constexpr double connection_target_radius = 9.0;
 
 bool isHydraulicConnectionNode(InfrastructureEntity entity)
@@ -113,7 +114,7 @@ std::optional<InfrastructureEntityReference> MapCanvasMarkers::nearestConnection
         if (marker.entity.uuid == excluded_uuid || !isHydraulicConnectionNode(marker.entity.type))
             continue;
 
-        const QPointF point = screenFromWgs84(marker.coord_wgs84);
+        const QPointF point = markerAnchorPosition(marker);
         const double distance_x = point.x() - mouse_position.x();
         const double distance_y = point.y() - mouse_position.y();
         const double distance_squared = distance_x * distance_x + distance_y * distance_y;
@@ -273,7 +274,7 @@ std::optional<InfrastructureEntityReference> MapCanvasMarkers::markerAt(
     for (int i = this->list_markers.size() - 1; i >= 0; i--)
     {
         const MapEntityMarker &marker = this->list_markers[i];
-        const QPointF dot_center = screenFromWgs84(marker.coord_wgs84);
+        const QPointF dot_center = markerAnchorPosition(marker);
         if (dotHit(position, dot_center) ||
             this->pixmap_renderer->hitTest(marker.path_pixmap, this->marker_width,
                                            markerRect(marker), position))
@@ -288,6 +289,11 @@ std::optional<InfrastructureEntityReference> MapCanvasMarkers::markerAt(
 bool MapCanvasMarkers::isMarkerAt(const QPointF &position) const
 {
     return markerAt(position).has_value();
+}
+
+QPointF MapCanvasMarkers::markerAnchorPosition(const MapEntityMarker &marker) const
+{
+    return screenFromWgs84(marker.coord_wgs84);
 }
 
 QRectF MapCanvasMarkers::markerRect(const MapEntityMarker &marker) const
@@ -311,5 +317,5 @@ bool MapCanvasMarkers::dotHit(const QPointF &position, const QPointF &dot_center
     const double distance_x = position.x() - dot_center.x();
     const double distance_y = position.y() - dot_center.y();
     return distance_x * distance_x + distance_y * distance_y <=
-           marker_dot_radius * marker_dot_radius;
+           marker_dot_hit_radius * marker_dot_hit_radius;
 }

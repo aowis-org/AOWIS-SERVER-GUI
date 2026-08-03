@@ -81,6 +81,7 @@ public:
     std::optional<InfrastructureEntityReference> markerAt(const QPointF &position) const;
     std::optional<InfrastructureEntityReference> linkAt(
         const QPointF &position, const QList<MapEntityMarker> &markers) const;
+    QPointF markerCenterPosition(const MapEntityMarker &marker) const;
     QRectF markerRect(const MapEntityMarker &marker) const;
 
 private:
