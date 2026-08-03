@@ -100,6 +100,15 @@ EM_JS(void, aowisBrowserMapEditorSetBackground, (int red, int green, int blue),
     window.aowisBrowserMapEditor.setBackground(red, green, blue);
 });
 
+EM_JS(void, aowisBrowserMapEditorSetOwnerId, (int owner_id),
+{
+    if (!window.aowisBrowserMapEditor ||
+        typeof window.aowisBrowserMapEditor.setOwnerId !== "function")
+        return;
+
+    window.aowisBrowserMapEditor.setOwnerId(owner_id);
+});
+
 EM_JS(void, aowisBrowserMapEditorClear, (),
 {
     if (window.aowisBrowserMapEditor &&
@@ -239,15 +248,12 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     this->map_stack_layout->setStackingMode(QStackedLayout::StackAll);
     
     this->map_stack_layout->addWidget(this->map);
+    this->map_stack_layout->addWidget(this->map_canvas);
+    this->map_canvas->raise();
 #ifdef Q_OS_WASM
     this->map->setBrowserMapLayerEnabled(true);
-    this->map->setBrowserMapLayerTopmost(false);
-
-    this->map_canvas->setObjectName(QStringLiteral("aowis-wasm-map-overlay"));
-    this->map_canvas->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint);
-    this->map_canvas->setAttribute(Qt::WA_TranslucentBackground);
-    this->map_canvas->setAttribute(Qt::WA_NoSystemBackground);
-    this->map_canvas->setAttribute(Qt::WA_ShowWithoutActivating);
+    this->map->setBrowserMapLayerTopmost(true);
+    aowisBrowserMapEditorSetOwnerId(this->map->browserMapLayerOwnerId());
 
     this->wasm_map_layer_sync_timer = new QTimer(this);
     this->wasm_map_layer_sync_timer->setSingleShot(true);
@@ -284,9 +290,6 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
 
     this->syncWasmBackground();
     this->scheduleWasmMapLayerSync();
-#else
-    this->map_stack_layout->addWidget(this->map_canvas);
-    this->map_canvas->raise();
 #endif
     
     this->layout->addWidget(scroll_controls);
@@ -312,7 +315,6 @@ MapEditorContainer::~MapEditorContainer()
 {
 #ifdef Q_OS_WASM
     this->map->setBrowserMapLayerGeometry(QRect(), false);
-    this->map_canvas->hide();
     aowisBrowserMapEditorClear();
 #endif
 }
@@ -361,18 +363,11 @@ void MapEditorContainer::syncWasmMapLayers()
 
     if (!visible)
     {
-        this->map_canvas->hide();
         this->map->setBrowserMapLayerGeometry(QRect(), false);
         return;
     }
 
     const QRect map_geometry(this->map->mapToGlobal(QPoint(0, 0)), this->map->size());
-    this->map_canvas->setGeometry(map_geometry);
-
-    if (!this->map_canvas->isVisible())
-        this->map_canvas->show();
-
-    this->map_canvas->raise();
     this->map->setBrowserMapLayerGeometry(map_geometry, true);
     this->syncWasmNetworkSnapshot();
     this->syncWasmVisualState();

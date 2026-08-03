@@ -22,23 +22,23 @@ MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map,
 
     connect(this->map_model, &MapModel::zoomChanged, this, [this]
     {
-        update();
+        requestRenderUpdate();
     });
     connect(this->map_model, &MapModel::centerChangedWGS84, this, [this]
     {
-        update();
+        requestRenderUpdate();
     });
 
     if (this->hydraulic_data)
     {
         connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, [this]
         {
-            update();
+            requestRenderUpdate();
         });
         connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged,
                 this, [this](quint64)
         {
-            update();
+            requestRenderUpdate();
         });
     }
 }
@@ -88,7 +88,7 @@ void MapCanvasWidget::setBackgroundOpacity(int opacity)
         return;
 
     this->map_background_opacity = opacity;
-    update();
+    requestRenderUpdate();
 }
 
 void MapCanvasWidget::applyControllerState()
@@ -96,7 +96,7 @@ void MapCanvasWidget::applyControllerState()
     if (!this->editor_controller)
     {
         unsetCursor();
-        update();
+        requestRenderUpdate();
         return;
     }
 
@@ -106,11 +106,22 @@ void MapCanvasWidget::applyControllerState()
     else
         unsetCursor();
 
+    requestRenderUpdate();
+}
+
+void MapCanvasWidget::requestRenderUpdate()
+{
+#ifndef Q_OS_WASM
     update();
+#endif
 }
 
 void MapCanvasWidget::paintEvent(QPaintEvent *event)
 {
+#ifdef Q_OS_WASM
+    Q_UNUSED(event)
+    return;
+#else
     static const NetworkRenderSnapshot empty_network_snapshot;
     const NetworkRenderSnapshot &network_snapshot = this->hydraulic_data
         ? this->hydraulic_data->networkRenderSnapshot()
@@ -120,6 +131,7 @@ void MapCanvasWidget::paintEvent(QPaintEvent *event)
     this->map_editor_renderer.paint(
         painter, *event, network_snapshot, this->map_canvas_entities->visualState(),
         viewportRenderState());
+#endif
 }
 
 MapEditorViewportRenderState MapCanvasWidget::viewportRenderState() const

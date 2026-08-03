@@ -36,6 +36,7 @@ cp assets/iconsets/gothic/geomarker.png build-wasm/map-editor-icons/
 #sed -i 's|<title>.*</title>|<title>AOWIS Controller</title>|' "$HTML_FILE"
 
 cp assets/img/favicon.ico build-wasm/.
+cp assets/img/aowis.png build-wasm/.
 
 echo "=== Creating cleaned up, ready for distribution directory build-wasm-dist ==="
 
@@ -45,7 +46,7 @@ if [ ! -d "build-wasm-dist" ]; then
     mkdir build-wasm-dist
 fi
 
-cp build-wasm/*.js build-wasm/*.wasm build-wasm/*.html build-wasm/favicon.ico build-wasm/index.html build-wasm-dist 2>/dev/null || true
+cp build-wasm/*.js build-wasm/*.wasm build-wasm/*.html build-wasm/favicon.ico build-wasm/aowis.png build-wasm/index.html build-wasm-dist 2>/dev/null || true
 cp -r build-wasm/map-editor-icons build-wasm-dist/
 
 echo "=== WASM build finished ==="

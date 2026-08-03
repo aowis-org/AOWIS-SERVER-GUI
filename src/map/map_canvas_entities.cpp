@@ -1302,7 +1302,7 @@ std::optional<MapEntityMarker> MapCanvasEntities::markerByUuid(const QUuid &uuid
 void MapCanvasEntities::repaintCanvas()
 {
     if (this->map_canvas)
-        this->map_canvas->update();
+        this->map_canvas->requestRenderUpdate();
 }
 
 void MapCanvasEntities::updateCanvas()

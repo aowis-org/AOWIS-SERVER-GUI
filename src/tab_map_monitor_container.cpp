@@ -63,6 +63,15 @@ EM_JS(void, aowisBrowserNetworkSetBackground, (int red, int green, int blue, int
     window.aowisBrowserNetwork.setBackground(red, green, blue, opacity);
 });
 
+EM_JS(void, aowisBrowserNetworkSetOwnerId, (int owner_id),
+{
+    if (!window.aowisBrowserNetwork ||
+        typeof window.aowisBrowserNetwork.setOwnerId !== "function")
+        return;
+
+    window.aowisBrowserNetwork.setOwnerId(owner_id);
+});
+
 #endif
 
 MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository *tile_repository, HydraulicData *hydraulic_data, GpsProvider *gps, QWidget *parent)
@@ -124,6 +133,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
 #ifdef Q_OS_WASM
     this->map->setBrowserMapLayerEnabled(true);
     this->map->setBrowserMapLayerTopmost(true);
+    aowisBrowserNetworkSetOwnerId(this->map->browserMapLayerOwnerId());
 
     this->wasm_map_layer_sync_timer = new QTimer(this);
     this->wasm_map_layer_sync_timer->setSingleShot(true);

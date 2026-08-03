@@ -32,6 +32,7 @@ public:
     int backgroundOpacity() const;
     MapEditorVisualState visualState() const;
     MapEditorViewportRenderState viewportRenderState() const;
+    void requestRenderUpdate();
 
 public slots:
     void setBackgroundOpacity(int opacity);

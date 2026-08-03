@@ -76,7 +76,8 @@
         tintedIcons: new Map(),
         backgroundRed: 255,
         backgroundGreen: 255,
-        backgroundBlue: 255
+        backgroundBlue: 255,
+        ownerId: 0
     };
 
     function defaultVisualState() {
@@ -163,8 +164,10 @@
     }
 
     function shouldDisplay(mapView) {
-        return Boolean(mapView && !mapView.topmost && mapView.visible && mapView.ready &&
-            mapView.initialized && mapView.width > 0 && mapView.height > 0);
+        return Boolean(mapView && state.ownerId !== 0 &&
+            mapView.activeOwner === state.ownerId && mapView.topmost &&
+            mapView.visible && mapView.ready && mapView.initialized &&
+            mapView.width > 0 && mapView.height > 0);
     }
 
     function resizeViewportCanvas(canvas, width, height) {
@@ -1027,6 +1030,12 @@
         applyBackground();
     }
 
+    function setOwnerId(ownerId) {
+        state.ownerId = Number(ownerId) | 0;
+        if (state.lastMapView)
+            handleMapViewChanged(state.lastMapView);
+    }
+
     function clearCanvas(canvas) {
         if (!canvas)
             return;
@@ -1082,6 +1091,7 @@
         setVisualState: setVisualState,
         setViewportState: setViewportState,
         setBackground: setBackground,
+        setOwnerId: setOwnerId,
         clear: clear,
         destroy: destroy
     };

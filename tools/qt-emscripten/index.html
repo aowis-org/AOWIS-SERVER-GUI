@@ -35,19 +35,77 @@
       }
 
       #qtspinner {
+        position: fixed;
+        inset: 0;
+        align-items: center;
+        justify-content: center;
         overflow: visible;
+        margin: 0;
+        background: #ffffff;
+      }
+
+      #qtspinner .aowis-splash {
+        width: min(320px, calc(100vw - 48px));
+        text-align: center;
+        font-family: Arial, Helvetica, sans-serif;
+        color: #111111;
+      }
+
+      #qtspinner .aowis-splash-logo {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+
+      #qtspinner .aowis-splash-line {
+        display: flex;
+        justify-content: center;
+        width: 100%;
+        overflow: visible;
+        white-space: nowrap;
+      }
+
+      #qtspinner .aowis-splash-line > span {
+        display: inline-block;
+        flex: none;
+        transform-origin: center top;
+        white-space: nowrap;
+      }
+
+      #qtspinner .aowis-splash-title {
+        margin-top: 12px;
+        font-size: 64px;
+        font-weight: 700;
+        line-height: 1;
+      }
+
+      #qtspinner .aowis-splash-subtitle {
+        margin-top: 8px;
+        font-size: 18px;
+        font-weight: 500;
+        line-height: 1.2;
+      }
+
+      #qtstatus {
+        margin-top: 18px;
+        font: 14px/1.4 Arial, Helvetica, sans-serif;
       }
     </style>
   </head>
 
   <body onload="init()">
     <figure id="qtspinner">
-      <center style="margin-top:1.5em; line-height:150%">
-        <img src="qtlogo.svg" width="320" height="200" style="display:block">
-        <strong>Qt for WebAssembly: aowis-server-gui</strong>
+      <div class="aowis-splash">
+        <img class="aowis-splash-logo" src="aowis.png" alt="AOWIS">
+        <div class="aowis-splash-line aowis-splash-title">
+          <span data-fit-splash-width>AOWIS</span>
+        </div>
+        <div class="aowis-splash-line aowis-splash-subtitle">
+          <span data-fit-splash-width>Afritic Open Water Infrastructure Standard</span>
+        </div>
         <div id="qtstatus"></div>
         <noscript>JavaScript is disabled. Please enable JavaScript to use this application.</noscript>
-      </center>
+      </div>
     </figure>
 
     <div id="screen" tabindex="0"></div>
@@ -271,11 +329,36 @@
           startQtFocusRetry();
       }
 
+      function fitAowisSplashText()
+      {
+          const splash = document.querySelector('#qtspinner .aowis-splash');
+          if (!splash)
+              return;
+
+          const targetWidth = splash.getBoundingClientRect().width;
+          if (targetWidth <= 0)
+              return;
+
+          splash.querySelectorAll('[data-fit-splash-width]').forEach((text) =>
+          {
+              text.style.transform = 'none';
+              const textWidth = text.getBoundingClientRect().width;
+              if (textWidth > 0)
+                  text.style.transform = `scaleX(${targetWidth / textWidth})`;
+          });
+      }
+
       async function init()
       {
           const spinner = document.querySelector('#qtspinner');
           const screen = document.querySelector('#screen');
           const status = document.querySelector('#qtstatus');
+          const splashLogo = document.querySelector('.aowis-splash-logo');
+
+          if (splashLogo)
+              splashLogo.addEventListener('load', fitAowisSplashText, { once: true });
+          window.addEventListener('resize', fitAowisSplashText);
+          fitAowisSplashText();
 
           const showUi = (ui) => {
               [spinner, screen].forEach(element => element.style.display = 'none');
@@ -283,7 +366,7 @@
               if (screen === ui)
                   screen.style.position = 'relative';
 
-              ui.style.display = 'block';
+              ui.style.display = ui === spinner ? 'flex' : 'block';
           };
 
           try {

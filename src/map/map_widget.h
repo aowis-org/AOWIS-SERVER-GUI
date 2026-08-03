@@ -53,6 +53,7 @@ public:
     void setBrowserMapLayerEnabled(bool enabled);
     void setBrowserMapLayerTopmost(bool topmost);
     void setBrowserMapLayerGeometry(const QRect &geometry, bool visible);
+    int browserMapLayerOwnerId() const;
 #endif
 
 public slots:

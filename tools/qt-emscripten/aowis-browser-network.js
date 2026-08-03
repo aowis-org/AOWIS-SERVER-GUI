@@ -52,7 +52,8 @@
         backgroundRed: 255,
         backgroundGreen: 255,
         backgroundBlue: 255,
-        backgroundOpacity: 0
+        backgroundOpacity: 0,
+        ownerId: 0
     };
 
     function applyBackground() {
@@ -204,14 +205,19 @@
         };
     }
 
+    function ownsMapView(mapView) {
+        return Boolean(mapView && state.ownerId !== 0 &&
+            mapView.activeOwner === state.ownerId && mapView.topmost);
+    }
+
     function shouldDisplayNetwork(mapView) {
-        return Boolean(mapView && mapView.topmost && mapView.visible && mapView.ready
+        return Boolean(ownsMapView(mapView) && mapView.visible && mapView.ready
             && mapView.initialized && mapView.width > 0 && mapView.height > 0
             && state.geometryReady);
     }
 
     function shouldDisplayOverlay(mapView) {
-        return Boolean(mapView && mapView.topmost && mapView.visible && mapView.ready
+        return Boolean(ownsMapView(mapView) && mapView.visible && mapView.ready
             && mapView.initialized && mapView.width > 0 && mapView.height > 0
             && (state.geometryReady || state.backgroundOpacity > 0));
     }
@@ -685,7 +691,7 @@
 
     function hitTest(screenX, screenY) {
         const mapView = state.lastMapView;
-        if (!state.geometryReady || !mapView || !mapView.topmost || !mapView.visible
+        if (!state.geometryReady || !ownsMapView(mapView) || !mapView.visible
             || !mapView.ready || !mapView.initialized) {
             return null;
         }
@@ -764,7 +770,7 @@
         const pointer = state.pendingPointer;
         const mapView = state.lastMapView;
         if (!pointer || pointer.buttons !== 0 || !mapView || !mapView.layer
-            || !mapView.topmost || !mapView.visible || !mapView.ready || !mapView.initialized
+            || !ownsMapView(mapView) || !mapView.visible || !mapView.ready || !mapView.initialized
             || !state.geometryReady) {
             restoreCursorElement();
             return;
@@ -828,6 +834,13 @@
             handleMapViewChanged(state.lastMapView);
     }
 
+    function setOwnerId(ownerId) {
+        state.ownerId = Number(ownerId) | 0;
+        clearHoverCursor();
+        if (state.lastMapView)
+            handleMapViewChanged(state.lastMapView);
+    }
+
     function destroy() {
         if (state.unsubscribeView)
             state.unsubscribeView();
@@ -871,6 +884,7 @@
     window.aowisBrowserNetwork = {
         setSnapshot: setSnapshot,
         setBackground: setBackground,
+        setOwnerId: setOwnerId,
         hitTest: hitTest,
         destroy: destroy
     };

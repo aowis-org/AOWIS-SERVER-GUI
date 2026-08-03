@@ -681,16 +681,24 @@ void MapWidget::setBrowserMapLayerEnabled(bool enabled)
 
     this->browser_map_layer_enabled = enabled;
     if (enabled)
+    {
         this->syncBrowserMapView();
+    }
     else
+    {
         aowisBrowserMapRelease(this->browser_map_layer_owner_id);
-
-    update();
+        update();
+    }
 }
 
 void MapWidget::setBrowserMapLayerTopmost(bool topmost)
 {
     this->browser_map_layer_topmost = topmost;
+}
+
+int MapWidget::browserMapLayerOwnerId() const
+{
+    return this->browser_map_layer_owner_id;
 }
 
 void MapWidget::setBrowserMapLayerGeometry(const QRect &geometry, bool visible)
@@ -1050,8 +1058,7 @@ void MapWidget::paintEvent(QPaintEvent *event)
 #ifdef Q_OS_WASM
     if (this->browser_map_layer_enabled)
     {
-        QPainter painter(this);
-        painter.fillRect(event->rect(), this->palette().brush(QPalette::Window));
+        Q_UNUSED(event)
         return;
     }
 #endif
