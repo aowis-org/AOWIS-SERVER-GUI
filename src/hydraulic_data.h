@@ -20,6 +20,7 @@
 #include <aowis/db/database_gui.h>
 
 #include <aowis/epanet/dummy/dummy_networks.h>
+#include <aowis/epanet/dummy/dummy_marburg_network_generator.h>
 
 #include "_enums_structs.h"
 #include "hydraulic_network_editor.h"
