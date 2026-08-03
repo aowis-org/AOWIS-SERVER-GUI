@@ -13,7 +13,7 @@
 
 #include "../_enums_structs.h"
 #include "../hydraulic_data.h"
-#include "map_editor_render_state.h"
+#include "map_editor_visual_state.h"
 #include "map_entity_pixmap_renderer.h"
 #include "map_models.h"
 
@@ -48,7 +48,7 @@ public:
 
     void scaleMarkers();
     void positionMarkers();
-    MapEditorRenderState renderState() const;
+    MapEditorVisualState visualState() const;
 
     bool selectMarkerAt(const QPointF &position);
     bool isMarkerAt(const QPointF &position) const;
@@ -92,6 +92,7 @@ private:
     void startPipeVertexMove(const QUuid &pipe_uuid, int vertex_index);
     void convertPipeVertexToJunction(const QUuid &pipe_uuid, int vertex_index);
     void showMarkerContextMenu(const QUuid &uuid, const QPoint &global_position);
+    void repaintCanvas();
     void updateCanvas();
 
     MapModel *map_model = nullptr;
@@ -106,10 +107,12 @@ private:
     QList<MapEntityMarker> move_marker_snapshot;
     QHash<QUuid, QList<CoordinateWGS84>> move_pipe_vertices_snapshot;
     double wrap_reference_longitude = 0.0;
+    quint64 visual_state_revision = 0;
     bool synchronizing_geometry = false;
 
 private slots:
     void onNodeChanged(InfrastructureEntity entity_type, const QUuid &uuid);
+    void onLinkChanged(InfrastructureEntity entity_type, const QUuid &uuid);
     void onNodeLocateRequested(InfrastructureEntity entity_type, const QUuid &uuid);
 
 public slots:
@@ -118,6 +121,7 @@ public slots:
 
 signals:
     void signalEntityMarkerSelected(bool status);
+    void signalVisualStateChanged(quint64 revision);
 };
 
 #endif // MAP_CANVAS_ENTITIES_H

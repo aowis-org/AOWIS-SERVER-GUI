@@ -174,23 +174,6 @@ QList<QUuid> MapCanvasPipes::selectedPipeUuids() const
     return uuids;
 }
 
-QList<MapEditorRenderPipe> MapCanvasPipes::renderItems() const
-{
-    QList<MapEditorRenderPipe> result;
-    result.reserve(this->list_pipes.size());
-
-    for (const PipeCanvasItem &pipe : this->list_pipes)
-    {
-        MapEditorRenderPipe item;
-        item.entity = pipe.entity;
-        item.geometry = pipe.geometry;
-        item.selected = pipe.selected;
-        result.append(item);
-    }
-
-    return result;
-}
-
 void MapCanvasPipes::clearSelection()
 {
     for (PipeCanvasItem &pipe : this->list_pipes)
@@ -620,6 +603,5 @@ std::optional<MapEntityMarker> MapCanvasPipes::markerByUuid(
 
 void MapCanvasPipes::updateCanvas()
 {
-    if (this->map_canvas)
-        this->map_canvas->update();
+    emit signalCanvasUpdateRequested();
 }

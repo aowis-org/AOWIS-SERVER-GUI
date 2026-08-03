@@ -2,8 +2,11 @@
 
 #include "map_model.h"
 
+#include "../geo_web_mercator.h"
+
 #include <QBrush>
 #include <QColor>
+#include <QHash>
 #include <QLinearGradient>
 #include <QPaintEvent>
 #include <QPainter>
@@ -32,7 +35,8 @@ MapEditorRenderer::MapEditorRenderer(MapModel *map_model, QWidget *canvas)
 }
 
 void MapEditorRenderer::paint(QPainter &painter, const QPaintEvent &event,
-                              const MapEditorRenderState &state,
+                              const NetworkRenderSnapshot &network_snapshot,
+                              const MapEditorVisualState &visual_state,
                               const MapEditorViewportRenderState &viewport_state)
 {
 #ifdef Q_OS_WASM
@@ -52,7 +56,7 @@ void MapEditorRenderer::paint(QPainter &painter, const QPaintEvent &event,
     paintBackground(painter, viewport_state);
     paintTileSelection(painter, viewport_state);
     paintRectangleSelection(painter, viewport_state);
-    paintNetwork(painter, state);
+    paintNetwork(painter, network_snapshot, visual_state);
 }
 
 QPointF MapEditorRenderer::screenFromWgs84(const CoordinateWGS84 &coordinate,
@@ -65,15 +69,35 @@ QPointF MapEditorRenderer::screenFromWgs84(const CoordinateWGS84 &coordinate,
         coordinate, this->canvas->size(), wrap_reference_longitude);
 }
 
-const MapEditorRenderMarker *MapEditorRenderer::markerByUuid(
-    const QList<MapEditorRenderMarker> &markers, const QUuid &uuid) const
+const NetworkRenderNode *MapEditorRenderer::nodeByUuid(
+    const QHash<QUuid, const NetworkRenderNode *> &nodes_by_uuid,
+    const QUuid &uuid) const
 {
-    for (const MapEditorRenderMarker &marker : markers)
-    {
-        if (marker.entity.uuid == uuid)
-            return &marker;
-    }
-    return nullptr;
+    const QHash<QUuid, const NetworkRenderNode *>::const_iterator iterator =
+        nodes_by_uuid.constFind(uuid);
+    if (iterator == nodes_by_uuid.cend())
+        return nullptr;
+    return iterator.value();
+}
+
+CoordinateWGS84 MapEditorRenderer::deviceLinkCenterCoordinate(
+    const NetworkRenderLink &link) const
+{
+    if (link.vertices_wgs84.size() > 2)
+        return link.vertices_wgs84.at(1);
+
+    CoordinateWGS84 center;
+    if (link.vertices_wgs84.size() < 2)
+        return center;
+
+    const CoordinateWGS84 &start = link.vertices_wgs84.first();
+    const CoordinateWGS84 &end = link.vertices_wgs84.last();
+    center.latitude_deg = (start.latitude_deg + end.latitude_deg) / 2.0;
+    const double longitude_delta = GeoWebMercator::normalizeLongitude(
+        end.longitude_deg - start.longitude_deg);
+    center.longitude_deg = GeoWebMercator::normalizeLongitude(
+        start.longitude_deg + longitude_delta / 2.0);
+    return center;
 }
 
 void MapEditorRenderer::paintBackground(
@@ -290,64 +314,73 @@ void MapEditorRenderer::paintRectangleSelection(
     painter.restore();
 }
 
-void MapEditorRenderer::paintNetwork(QPainter &painter, const MapEditorRenderState &state)
+void MapEditorRenderer::paintNetwork(
+    QPainter &painter,
+    const NetworkRenderSnapshot &network_snapshot,
+    const MapEditorVisualState &visual_state)
 {
-    paintPipes(painter, state);
-    paintDeviceLinks(painter, state);
-    paintMarkers(painter, state);
-    paintPlacement(painter, state);
+    QHash<QUuid, const NetworkRenderNode *> nodes_by_uuid;
+    nodes_by_uuid.reserve(network_snapshot.nodes.size());
+    for (const NetworkRenderNode &node : network_snapshot.nodes)
+        nodes_by_uuid.insert(node.uuid, &node);
+
+    paintPipes(painter, network_snapshot, visual_state, nodes_by_uuid);
+    paintDeviceLinks(painter, network_snapshot, visual_state, nodes_by_uuid);
+    paintMarkers(painter, network_snapshot, visual_state);
+    paintPlacement(painter, visual_state, nodes_by_uuid);
 }
 
-void MapEditorRenderer::paintPipes(QPainter &painter,
-                                   const MapEditorRenderState &state) const
+void MapEditorRenderer::paintPipes(
+    QPainter &painter,
+    const NetworkRenderSnapshot &network_snapshot,
+    const MapEditorVisualState &visual_state,
+    const QHash<QUuid, const NetworkRenderNode *> &nodes_by_uuid) const
 {
     painter.save();
 
-    for (const MapEditorRenderPipe &pipe : state.pipes)
+    for (const NetworkRenderLink &link : network_snapshot.links)
     {
-        const MapEditorRenderMarker *start_marker = markerByUuid(
-            state.markers, pipe.geometry.start_node.uuid);
-        const MapEditorRenderMarker *end_marker = markerByUuid(
-            state.markers, pipe.geometry.end_node.uuid);
-        if (!start_marker || !end_marker)
+        if (link.entity_type != InfrastructureEntity::Pipe ||
+            link.vertices_wgs84.size() < 2)
+        {
             continue;
+        }
 
-        QPen pipe_pen(pipe.selected ? QColor(0, 190, 255) : QColor(Qt::black));
+        const bool selected = visual_state.selected_pipe_uuids.contains(link.uuid);
+        QPen pipe_pen(selected ? QColor(0, 190, 255) : QColor(Qt::black));
         pipe_pen.setWidthF(3.0);
         pipe_pen.setCapStyle(Qt::RoundCap);
         pipe_pen.setJoinStyle(Qt::RoundJoin);
         painter.setPen(pipe_pen);
 
         QPointF previous_point = screenFromWgs84(
-            start_marker->coordinate, state.wrap_reference_longitude);
-        for (const CoordinateWGS84 &vertex : pipe.geometry.intermediate_vertices)
+            link.vertices_wgs84.first(), visual_state.wrap_reference_longitude);
+        for (qsizetype index = 1; index < link.vertices_wgs84.size(); ++index)
         {
-            const QPointF vertex_point = screenFromWgs84(
-                vertex, state.wrap_reference_longitude);
-            painter.drawLine(previous_point, vertex_point);
-            previous_point = vertex_point;
+            const QPointF point = screenFromWgs84(
+                link.vertices_wgs84.at(index), visual_state.wrap_reference_longitude);
+            painter.drawLine(previous_point, point);
+            previous_point = point;
         }
 
-        painter.drawLine(
-            previous_point,
-            screenFromWgs84(end_marker->coordinate, state.wrap_reference_longitude));
-
         painter.setPen(Qt::NoPen);
-        painter.setBrush(pipe.selected ? QColor(0, 190, 255) : QColor(Qt::black));
-        for (const CoordinateWGS84 &vertex : pipe.geometry.intermediate_vertices)
+        painter.setBrush(selected ? QColor(0, 190, 255) : QColor(Qt::black));
+        for (qsizetype index = 1; index + 1 < link.vertices_wgs84.size(); ++index)
         {
             painter.drawEllipse(
-                screenFromWgs84(vertex, state.wrap_reference_longitude),
+                screenFromWgs84(link.vertices_wgs84.at(index),
+                                visual_state.wrap_reference_longitude),
                 pipe_vertex_radius, pipe_vertex_radius);
         }
     }
 
-    if (state.placement.creating && state.placement.entity == InfrastructureEntity::Pipe &&
-        !state.placement.pipe_start_node_uuid.isNull())
+    if (visual_state.placement.creating &&
+        visual_state.placement.entity == InfrastructureEntity::Pipe &&
+        !visual_state.placement.pipe_start_node_uuid.isNull())
     {
-        const MapEditorRenderMarker *start_marker = markerByUuid(
-            state.markers, state.placement.pipe_start_node_uuid);
-        if (start_marker)
+        const NetworkRenderNode *start_node = nodeByUuid(
+            nodes_by_uuid, visual_state.placement.pipe_start_node_uuid);
+        if (start_node)
         {
             QPen preview_pen(QColor(0, 140, 255));
             preview_pen.setWidthF(3.0);
@@ -356,23 +389,24 @@ void MapEditorRenderer::paintPipes(QPainter &painter,
             painter.setPen(preview_pen);
 
             QPointF previous_point = screenFromWgs84(
-                start_marker->coordinate, state.wrap_reference_longitude);
+                start_node->coordinate_wgs84, visual_state.wrap_reference_longitude);
             for (const CoordinateWGS84 &vertex :
-                 state.placement.pipe_intermediate_vertices)
+                 visual_state.placement.pipe_intermediate_vertices)
             {
                 const QPointF vertex_point = screenFromWgs84(
-                    vertex, state.wrap_reference_longitude);
+                    vertex, visual_state.wrap_reference_longitude);
                 painter.drawLine(previous_point, vertex_point);
                 previous_point = vertex_point;
             }
 
-            QPointF preview_end = state.placement.mouse_position;
-            const MapEditorRenderMarker *end_marker = markerByUuid(
-                state.markers, state.placement.connection_target_uuid);
-            if (end_marker)
+            QPointF preview_end = visual_state.placement.mouse_position;
+            const NetworkRenderNode *end_node = nodeByUuid(
+                nodes_by_uuid, visual_state.placement.connection_target_uuid);
+            if (end_node)
             {
                 preview_end = screenFromWgs84(
-                    end_marker->coordinate, state.wrap_reference_longitude);
+                    end_node->coordinate_wgs84,
+                    visual_state.wrap_reference_longitude);
             }
             painter.drawLine(previous_point, preview_end);
         }
@@ -381,28 +415,31 @@ void MapEditorRenderer::paintPipes(QPainter &painter,
     painter.restore();
 }
 
-void MapEditorRenderer::paintDeviceLinks(QPainter &painter,
-                                         const MapEditorRenderState &state)
+void MapEditorRenderer::paintDeviceLinks(
+    QPainter &painter,
+    const NetworkRenderSnapshot &network_snapshot,
+    const MapEditorVisualState &visual_state,
+    const QHash<QUuid, const NetworkRenderNode *> &nodes_by_uuid)
 {
     painter.save();
 
-    for (const MapEditorRenderDeviceLink &device_link : state.device_links)
+    for (const NetworkRenderLink &link : network_snapshot.links)
     {
-        const MapEditorRenderMarker *start_marker = markerByUuid(
-            state.markers, device_link.geometry.start_node.uuid);
-        const MapEditorRenderMarker *end_marker = markerByUuid(
-            state.markers, device_link.geometry.end_node.uuid);
-        if (!start_marker || !end_marker)
+        if (!isHydraulicDeviceLink(link.entity_type) ||
+            link.vertices_wgs84.size() < 2)
+        {
             continue;
+        }
 
         const QPointF start_point = screenFromWgs84(
-            start_marker->coordinate, state.wrap_reference_longitude);
+            link.vertices_wgs84.first(), visual_state.wrap_reference_longitude);
         const QPointF center_point = screenFromWgs84(
-            device_link.geometry.center_coordinate, state.wrap_reference_longitude);
+            deviceLinkCenterCoordinate(link), visual_state.wrap_reference_longitude);
         const QPointF end_point = screenFromWgs84(
-            end_marker->coordinate, state.wrap_reference_longitude);
+            link.vertices_wgs84.last(), visual_state.wrap_reference_longitude);
+        const bool selected = visual_state.selected_marker_uuids.contains(link.uuid);
 
-        QPen placed_pen(device_link.selected ? QColor(0, 190, 255) : QColor(139, 90, 43));
+        QPen placed_pen(selected ? QColor(0, 190, 255) : QColor(139, 90, 43));
         placed_pen.setWidthF(3.0);
         placed_pen.setCapStyle(Qt::RoundCap);
         placed_pen.setJoinStyle(Qt::RoundJoin);
@@ -411,22 +448,25 @@ void MapEditorRenderer::paintDeviceLinks(QPainter &painter,
         painter.drawLine(center_point, end_point);
     }
 
-    if (state.placement.creating && isHydraulicDeviceLink(state.placement.entity) &&
-        !state.placement.device_link_start_node_uuid.isNull())
+    if (visual_state.placement.creating &&
+        isHydraulicDeviceLink(visual_state.placement.entity) &&
+        !visual_state.placement.device_link_start_node_uuid.isNull())
     {
-        const MapEditorRenderMarker *start_marker = markerByUuid(
-            state.markers, state.placement.device_link_start_node_uuid);
-        if (start_marker)
+        const NetworkRenderNode *start_node = nodeByUuid(
+            nodes_by_uuid, visual_state.placement.device_link_start_node_uuid);
+        if (start_node)
         {
             const QPointF start_point = screenFromWgs84(
-                start_marker->coordinate, state.wrap_reference_longitude);
-            QPointF end_point = state.placement.mouse_position;
-            const MapEditorRenderMarker *end_marker = markerByUuid(
-                state.markers, state.placement.connection_target_uuid);
-            if (end_marker)
+                start_node->coordinate_wgs84,
+                visual_state.wrap_reference_longitude);
+            QPointF end_point = visual_state.placement.mouse_position;
+            const NetworkRenderNode *end_node = nodeByUuid(
+                nodes_by_uuid, visual_state.placement.connection_target_uuid);
+            if (end_node)
             {
                 end_point = screenFromWgs84(
-                    end_marker->coordinate, state.wrap_reference_longitude);
+                    end_node->coordinate_wgs84,
+                    visual_state.wrap_reference_longitude);
             }
 
             const QPointF center_point = (start_point + end_point) / 2.0;
@@ -440,35 +480,44 @@ void MapEditorRenderer::paintDeviceLinks(QPainter &painter,
         }
     }
 
-    for (const MapEditorRenderDeviceLink &device_link : state.device_links)
+    for (const NetworkRenderLink &link : network_snapshot.links)
     {
+        if (!isHydraulicDeviceLink(link.entity_type) ||
+            link.vertices_wgs84.size() < 2)
+        {
+            continue;
+        }
+
         const QString path = MapEntityPixmapRenderer::pixmapPathForEntity(
-            device_link.entity.type);
+            link.entity_type);
         const QRectF target_rect = this->pixmap_renderer.centeredRect(
-            screenFromWgs84(device_link.geometry.center_coordinate,
-                            state.wrap_reference_longitude),
-            path, state.entity_width);
-        const MapEntityPixmapRenderer::Highlight highlight = device_link.selected
+            screenFromWgs84(deviceLinkCenterCoordinate(link),
+                            visual_state.wrap_reference_longitude),
+            path, visual_state.entity_width);
+        const MapEntityPixmapRenderer::Highlight highlight =
+            visual_state.selected_marker_uuids.contains(link.uuid)
             ? MapEntityPixmapRenderer::Highlight::Selected
             : MapEntityPixmapRenderer::Highlight::None;
         this->pixmap_renderer.paint(
-            painter, path, state.entity_width, target_rect, highlight);
+            painter, path, visual_state.entity_width, target_rect, highlight);
     }
 
     painter.restore();
 }
 
-void MapEditorRenderer::paintMarkers(QPainter &painter,
-                                     const MapEditorRenderState &state)
+void MapEditorRenderer::paintMarkers(
+    QPainter &painter,
+    const NetworkRenderSnapshot &network_snapshot,
+    const MapEditorVisualState &visual_state)
 {
     painter.save();
     painter.setPen(Qt::NoPen);
 
-    for (const MapEditorRenderMarker &marker : state.markers)
+    for (const NetworkRenderNode &node : network_snapshot.nodes)
     {
         const QPointF point = screenFromWgs84(
-            marker.coordinate, state.wrap_reference_longitude);
-        if (marker.entity.uuid == state.placement.connection_target_uuid)
+            node.coordinate_wgs84, visual_state.wrap_reference_longitude);
+        if (node.uuid == visual_state.placement.connection_target_uuid)
         {
             painter.setBrush(QColor(0, 140, 255));
             painter.drawEllipse(point, connection_target_radius, connection_target_radius);
@@ -480,68 +529,75 @@ void MapEditorRenderer::paintMarkers(QPainter &painter,
         }
     }
 
-    for (const MapEditorRenderMarker &marker : state.markers)
+    for (const NetworkRenderNode &node : network_snapshot.nodes)
     {
-        const QString path = MapEntityPixmapRenderer::pixmapPathForEntity(marker.entity.type);
+        const QString path = MapEntityPixmapRenderer::pixmapPathForEntity(
+            node.entity_type);
         const QPointF screen_position = screenFromWgs84(
-            marker.coordinate, state.wrap_reference_longitude);
+            node.coordinate_wgs84, visual_state.wrap_reference_longitude);
         const QPointF rounded_anchor(
             qRound(screen_position.x()), qRound(screen_position.y()));
         const QRectF target_rect = this->pixmap_renderer.bottomAnchoredRect(
-            rounded_anchor, path, state.entity_width);
-        const MapEntityPixmapRenderer::Highlight highlight = marker.selected
+            rounded_anchor, path, visual_state.entity_width);
+        const MapEntityPixmapRenderer::Highlight highlight =
+            visual_state.selected_marker_uuids.contains(node.uuid)
             ? MapEntityPixmapRenderer::Highlight::Selected
             : MapEntityPixmapRenderer::Highlight::None;
         this->pixmap_renderer.paint(
-            painter, path, state.entity_width, target_rect, highlight);
+            painter, path, visual_state.entity_width, target_rect, highlight);
     }
 
     painter.restore();
 }
 
-void MapEditorRenderer::paintPlacement(QPainter &painter,
-                                       const MapEditorRenderState &state)
+void MapEditorRenderer::paintPlacement(
+    QPainter &painter,
+    const MapEditorVisualState &visual_state,
+    const QHash<QUuid, const NetworkRenderNode *> &nodes_by_uuid)
 {
-    if (!state.placement.creating || !state.placement.floating_marker_visible ||
-        state.placement.entity == InfrastructureEntity::Unknown ||
-        state.placement.floating_width <= 0)
+    if (!visual_state.placement.creating ||
+        !visual_state.placement.floating_marker_visible ||
+        visual_state.placement.entity == InfrastructureEntity::Unknown ||
+        visual_state.placement.floating_width <= 0)
     {
         return;
     }
 
     const QString path = MapEntityPixmapRenderer::pixmapPathForEntity(
-        state.placement.entity);
-    const QPointF mouse_position = state.placement.mouse_position;
+        visual_state.placement.entity);
+    const QPointF mouse_position = visual_state.placement.mouse_position;
 
-    if (isHydraulicDeviceLink(state.placement.entity) &&
-        !state.placement.device_link_start_node_uuid.isNull())
+    if (isHydraulicDeviceLink(visual_state.placement.entity) &&
+        !visual_state.placement.device_link_start_node_uuid.isNull())
     {
-        const MapEditorRenderMarker *start_marker = markerByUuid(
-            state.markers, state.placement.device_link_start_node_uuid);
-        if (start_marker)
+        const NetworkRenderNode *start_node = nodeByUuid(
+            nodes_by_uuid, visual_state.placement.device_link_start_node_uuid);
+        if (start_node)
         {
             const QPointF start_point = screenFromWgs84(
-                start_marker->coordinate, state.wrap_reference_longitude);
+                start_node->coordinate_wgs84,
+                visual_state.wrap_reference_longitude);
             QPointF end_point = mouse_position;
-            const MapEditorRenderMarker *end_marker = markerByUuid(
-                state.markers, state.placement.connection_target_uuid);
-            if (end_marker)
+            const NetworkRenderNode *end_node = nodeByUuid(
+                nodes_by_uuid, visual_state.placement.connection_target_uuid);
+            if (end_node)
             {
                 end_point = screenFromWgs84(
-                    end_marker->coordinate, state.wrap_reference_longitude);
+                    end_node->coordinate_wgs84,
+                    visual_state.wrap_reference_longitude);
             }
 
             const QRectF target_rect = this->pixmap_renderer.centeredRect(
                 (start_point + end_point) / 2.0, path,
-                state.placement.floating_width);
+                visual_state.placement.floating_width);
             this->pixmap_renderer.paint(
-                painter, path, state.placement.floating_width, target_rect);
+                painter, path, visual_state.placement.floating_width, target_rect);
             return;
         }
     }
 
     const QRectF target_rect = this->pixmap_renderer.bottomAnchoredRect(
-        mouse_position, path, state.placement.floating_width);
+        mouse_position, path, visual_state.placement.floating_width);
     this->pixmap_renderer.paint(
-        painter, path, state.placement.floating_width, target_rect);
+        painter, path, visual_state.placement.floating_width, target_rect);
 }

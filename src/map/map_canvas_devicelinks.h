@@ -10,7 +10,6 @@
 #include <QString>
 #include <QUuid>
 
-#include "map_editor_render_state.h"
 #include "map_entity_pixmap_renderer.h"
 #include "map_model.h"
 #include "map_models.h"
@@ -66,13 +65,15 @@ public:
     void removeConnectedToUuid(const QUuid &uuid);
 
     QList<MapEntityMarker> markers() const;
-    QList<MapEditorRenderDeviceLink> renderItems(const QList<QUuid> &selected_uuids) const;
     std::optional<MapEntityMarker> markerByUuid(const QUuid &uuid) const;
     std::optional<InfrastructureEntityReference> markerAt(const QPointF &position) const;
     std::optional<InfrastructureEntityReference> linkAt(
         const QPointF &position, const QList<MapEntityMarker> &markers) const;
     QPointF markerCenterPosition(const MapEntityMarker &marker) const;
     QRectF markerRect(const MapEntityMarker &marker) const;
+
+signals:
+    void signalCanvasUpdateRequested();
 
 private:
     struct DeviceLinkCanvasItem

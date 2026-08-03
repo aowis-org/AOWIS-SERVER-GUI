@@ -9,7 +9,6 @@
 #include <QPointF>
 #include <QUuid>
 
-#include "map_editor_render_state.h"
 #include "map_model.h"
 #include "map_models.h"
 
@@ -58,7 +57,6 @@ public:
                       const InfrastructureEntityReference &end_node);
     bool hasSelection() const;
     QList<QUuid> selectedPipeUuids() const;
-    QList<MapEditorRenderPipe> renderItems() const;
     void clearSelection();
     std::optional<InfrastructureEntityReference> selectPipe(const QUuid &pipe_uuid);
     bool removePipe(const QUuid &pipe_uuid);
@@ -97,6 +95,7 @@ public:
     void removeConnectedToUuid(const QUuid &uuid);
 
 signals:
+    void signalCanvasUpdateRequested();
     void pipeSelectionRequested(const QUuid &pipe_uuid);
     void pipeVertexAddRequested(const QUuid &pipe_uuid, int insert_index,
                                 const CoordinateWGS84 &coordinate);

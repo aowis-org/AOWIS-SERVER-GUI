@@ -116,6 +116,7 @@ qt_add_executable(aowis-server-gui
     src/map/map_canvas_widget.h src/map/map_canvas_widget.cpp
     src/map/map_editor_controller.h src/map/map_editor_controller.cpp
     src/map/map_editor_render_state.h
+    src/map/map_editor_visual_state.h
     src/map/map_editor_renderer.h src/map/map_editor_renderer.cpp
     src/tab_settings_widget.h src/tab_settings_widget.cpp
     src/_sizes.h

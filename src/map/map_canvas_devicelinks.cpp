@@ -288,24 +288,6 @@ QList<MapEntityMarker> MapCanvasDeviceLinks::markers() const
     return result;
 }
 
-QList<MapEditorRenderDeviceLink> MapCanvasDeviceLinks::renderItems(
-    const QList<QUuid> &selected_uuids) const
-{
-    QList<MapEditorRenderDeviceLink> result;
-    result.reserve(this->list_device_links.size());
-
-    for (const DeviceLinkCanvasItem &device_link : this->list_device_links)
-    {
-        MapEditorRenderDeviceLink item;
-        item.entity = device_link.entity;
-        item.geometry = device_link.geometry;
-        item.selected = selected_uuids.contains(device_link.entity.uuid);
-        result.append(item);
-    }
-
-    return result;
-}
-
 std::optional<MapEntityMarker> MapCanvasDeviceLinks::markerByUuid(const QUuid &uuid) const
 {
     if (uuid.isNull())
@@ -408,6 +390,5 @@ std::optional<MapEntityMarker> MapCanvasDeviceLinks::pointMarkerByUuid(
 
 void MapCanvasDeviceLinks::updateCanvas()
 {
-    if (this->map_canvas)
-        this->map_canvas->update();
+    emit signalCanvasUpdateRequested();
 }

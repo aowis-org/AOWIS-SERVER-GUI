@@ -12,7 +12,7 @@
 
 MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map,
                                  HydraulicData *hydraulic_data, QWidget *parent)
-    : QWidget(parent), map_model(map_model), map(map),
+    : QWidget(parent), map_model(map_model), map(map), hydraulic_data(hydraulic_data),
       map_editor_renderer(map_model, this),
       map_canvas_entities(new MapCanvasEntities(map_model, hydraulic_data, this))
 {
@@ -28,6 +28,19 @@ MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map,
     {
         update();
     });
+
+    if (this->hydraulic_data)
+    {
+        connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, [this]
+        {
+            update();
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged,
+                this, [this](quint64)
+        {
+            update();
+        });
+    }
 }
 
 void MapCanvasWidget::setEditorController(MapEditorController *editor_controller)
@@ -93,9 +106,15 @@ void MapCanvasWidget::applyControllerState()
 
 void MapCanvasWidget::paintEvent(QPaintEvent *event)
 {
+    static const NetworkRenderSnapshot empty_network_snapshot;
+    const NetworkRenderSnapshot &network_snapshot = this->hydraulic_data
+        ? this->hydraulic_data->networkRenderSnapshot()
+        : empty_network_snapshot;
+
     QPainter painter(this);
     this->map_editor_renderer.paint(
-        painter, *event, this->map_canvas_entities->renderState(), viewportRenderState());
+        painter, *event, network_snapshot, this->map_canvas_entities->visualState(),
+        viewportRenderState());
 }
 
 MapEditorViewportRenderState MapCanvasWidget::viewportRenderState() const

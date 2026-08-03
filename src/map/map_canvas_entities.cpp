@@ -84,6 +84,10 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
             this, &MapCanvasEntities::startPipeVertexMove);
     connect(this->pipes, &MapCanvasPipes::pipeVertexConversionRequested,
             this, &MapCanvasEntities::convertPipeVertexToJunction);
+    connect(this->pipes, &MapCanvasPipes::signalCanvasUpdateRequested,
+            this, &MapCanvasEntities::repaintCanvas);
+    connect(this->device_links, &MapCanvasDeviceLinks::signalCanvasUpdateRequested,
+            this, &MapCanvasEntities::repaintCanvas);
 
     connect(this->map_model, &MapModel::zoomChanged,
             this, &MapCanvasEntities::scaleMarkers);
@@ -91,7 +95,6 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
             [this](const CoordinateWGS84 &)
     {
         positionMarkers();
-        updateCanvas();
     });
 
     if (this->hydraulic_data)
@@ -102,6 +105,8 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
         });
         connect(this->hydraulic_data, &HydraulicData::signalNodeChanged,
                 this, &MapCanvasEntities::onNodeChanged);
+        connect(this->hydraulic_data, &HydraulicData::signalLinkChanged,
+                this, &MapCanvasEntities::onLinkChanged);
         connect(this->hydraulic_data, &HydraulicData::signalNodeLocateRequested,
                 this, &MapCanvasEntities::onNodeLocateRequested);
         loadNetwork(this->hydraulic_data->networkHydraulic());
@@ -120,6 +125,68 @@ void MapCanvasEntities::onNodeChanged(InfrastructureEntity entity_type, const QU
 
     recalculateWrapReferenceLongitude();
     updateCanvas();
+}
+
+void MapCanvasEntities::onLinkChanged(InfrastructureEntity entity_type, const QUuid &uuid)
+{
+    if (!this->hydraulic_data || this->synchronizing_geometry)
+        return;
+
+    if (entity_type == InfrastructureEntity::Pipe)
+    {
+        const std::optional<HydraulicLinkPipe> pipe = this->hydraulic_data->pipe(uuid);
+        if (!pipe.has_value())
+            return;
+
+        QList<CoordinateWGS84> vertices;
+        vertices.reserve(pipe->vertices.size());
+        for (const HydraulicLinkVertex &vertex : pipe->vertices)
+            vertices.append(vertex.coordinate_wgs84);
+        this->pipes->setIntermediateVertices(uuid, vertices);
+        return;
+    }
+
+    QUuid start_node_uuid;
+    QUuid end_node_uuid;
+    QList<HydraulicLinkVertex> vertices;
+    if (entity_type == InfrastructureEntity::Pump)
+    {
+        const std::optional<HydraulicLinkPump> pump = this->hydraulic_data->pump(uuid);
+        if (!pump.has_value())
+            return;
+        start_node_uuid = pump->node_uuid_from;
+        end_node_uuid = pump->node_uuid_to;
+        vertices = pump->vertices;
+    }
+    else if (entity_type == InfrastructureEntity::Valve)
+    {
+        const std::optional<HydraulicLinkValve> valve = this->hydraulic_data->valve(uuid);
+        if (!valve.has_value())
+            return;
+        start_node_uuid = valve->node_uuid_from;
+        end_node_uuid = valve->node_uuid_to;
+        vertices = valve->vertices;
+    }
+    else
+    {
+        return;
+    }
+
+    CoordinateWGS84 center_coordinate;
+    if (!vertices.isEmpty())
+    {
+        center_coordinate = vertices.first().coordinate_wgs84;
+    }
+    else
+    {
+        const std::optional<MapEntityMarker> start_marker = markerByUuid(start_node_uuid);
+        const std::optional<MapEntityMarker> end_marker = markerByUuid(end_node_uuid);
+        if (!start_marker.has_value() || !end_marker.has_value())
+            return;
+        center_coordinate = midpoint(start_marker->coord_wgs84, end_marker->coord_wgs84);
+    }
+
+    this->device_links->setCenterCoordinate(uuid, center_coordinate);
 }
 
 void MapCanvasEntities::onNodeLocateRequested(InfrastructureEntity entity_type, const QUuid &uuid)
@@ -712,6 +779,7 @@ bool MapCanvasEntities::anchorPipe(const QPointF &position)
 
         this->pipes->startPipe(connection_target_uuid);
         this->placement->clearConnectionTarget();
+        updateCanvas();
         return true;
     }
 
@@ -754,12 +822,14 @@ bool MapCanvasEntities::anchorPipe(const QPointF &position)
         this->placement->rearmCreate(
             this->point_markers->pixmapPathForEntity(InfrastructureEntity::Pipe),
             this->point_markers->entityWidth());
+        updateCanvas();
         return true;
     }
 
     const CoordinateWGS84 intermediate_vertex = this->map_model->wgs84FromScreen(
         position.toPoint(), this->map_canvas->size());
     this->pipes->appendIntermediateVertex(intermediate_vertex);
+    updateCanvas();
     return true;
 }
 
@@ -842,29 +912,17 @@ void MapCanvasEntities::scaleMarkers()
 
 void MapCanvasEntities::positionMarkers()
 {
-    updateCanvas();
+    repaintCanvas();
 }
 
-MapEditorRenderState MapCanvasEntities::renderState() const
+MapEditorVisualState MapCanvasEntities::visualState() const
 {
-    MapEditorRenderState state;
+    MapEditorVisualState state;
+    state.revision = this->visual_state_revision;
+    state.selected_marker_uuids = this->selection->selectedMarkerUuids();
+    state.selected_pipe_uuids = this->pipes->selectedPipeUuids();
     state.wrap_reference_longitude = this->wrap_reference_longitude;
     state.entity_width = this->point_markers->entityWidth();
-
-    const QList<QUuid> &selected_uuids = this->selection->selectedMarkerUuids();
-    const QList<MapEntityMarker> &point_markers = this->point_markers->markers();
-    state.markers.reserve(point_markers.size());
-    for (const MapEntityMarker &marker : point_markers)
-    {
-        MapEditorRenderMarker render_marker;
-        render_marker.entity = marker.entity;
-        render_marker.coordinate = marker.coord_wgs84;
-        render_marker.selected = selected_uuids.contains(marker.entity.uuid);
-        state.markers.append(render_marker);
-    }
-
-    state.pipes = this->pipes->renderItems();
-    state.device_links = this->device_links->renderItems(selected_uuids);
 
     state.placement.creating = this->placement->isCreating();
     state.placement.floating_marker_visible =
@@ -875,7 +933,6 @@ MapEditorRenderState MapCanvasEntities::renderState() const
     state.placement.pipe_intermediate_vertices = this->pipes->intermediateVertices();
     state.placement.device_link_start_node_uuid = this->device_links->startNodeUuid();
     state.placement.floating_width = this->placement->floatingWidth();
-
     state.placement.mouse_position = this->placement->mousePosition();
 
     return state;
@@ -1242,8 +1299,15 @@ std::optional<MapEntityMarker> MapCanvasEntities::markerByUuid(const QUuid &uuid
     return this->device_links->markerByUuid(uuid);
 }
 
-void MapCanvasEntities::updateCanvas()
+void MapCanvasEntities::repaintCanvas()
 {
     if (this->map_canvas)
         this->map_canvas->update();
+}
+
+void MapCanvasEntities::updateCanvas()
+{
+    ++this->visual_state_revision;
+    emit signalVisualStateChanged(this->visual_state_revision);
+    repaintCanvas();
 }

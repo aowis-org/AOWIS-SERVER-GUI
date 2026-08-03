@@ -51,6 +51,7 @@ private:
 
     MapModel *map_model = nullptr;
     MapWidget *map = nullptr;
+    HydraulicData *hydraulic_data = nullptr;
     MapEditorRenderer map_editor_renderer;
     MapCanvasEntities *map_canvas_entities = nullptr;
     QPointer<MapEditorController> editor_controller;
