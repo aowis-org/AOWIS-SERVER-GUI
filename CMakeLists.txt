@@ -110,6 +110,7 @@ qt_add_executable(aowis-server-gui
     src/tab_customers_widget.h src/tab_customers_widget.cpp
     src/tab_energy_widget.h src/tab_energy_widget.cpp
     src/map/map_navigation_widget.h src/map/map_navigation_widget.cpp
+    src/map/map_network_overlay_widget.h src/map/map_network_overlay_widget.cpp
     src/map/map_model.h src/map/map_model.cpp
     src/map/map_controls.h src/map/map_controls.cpp
     src/map/map_canvas_widget.h src/map/map_canvas_widget.cpp
@@ -124,7 +125,6 @@ qt_add_executable(aowis-server-gui
     src/tab_alarms_widget.h src/tab_alarms_widget.cpp
     src/map/map_models.h
     src/map/map_canvas_entities.h src/map/map_canvas_entities.cpp
-    src/map/map_entity_marker_label.h src/map/map_entity_marker_label.cpp
     src/entity_inspector/entity_inspector_dock.h src/entity_inspector/entity_inspector_dock.cpp
     src/widgets/group_box_collapsible.h src/widgets/group_box_collapsible.cpp
     src/entity_inspector/entity_inspector_tank.h src/entity_inspector/entity_inspector_tank.cpp
@@ -146,6 +146,7 @@ qt_add_executable(aowis-server-gui
     src/map/map_canvas_pipes.h src/map/map_canvas_pipes.cpp
     src/map/map_canvas_devicelinks.h src/map/map_canvas_devicelinks.cpp
     src/map/map_canvas_markers.h src/map/map_canvas_markers.cpp
+    src/map/map_entity_pixmap_renderer.h src/map/map_entity_pixmap_renderer.cpp
     src/map/map_canvas_selection.h src/map/map_canvas_selection.cpp
     src/map/map_canvas_placement.h src/map/map_canvas_placement.cpp
 )
@@ -204,8 +205,6 @@ if(NOT EMSCRIPTEN)
         PRIVATE
             src/gps_provider.h
             src/gps_provider.cpp
-            src/map/map_network_overlay_widget.h
-            src/map/map_network_overlay_widget.cpp
     )
     
     target_compile_definitions(aowis-server-gui

@@ -159,7 +159,8 @@ bool MapEditorController::mousePress(const QPointF &position, const QPoint &glob
                                             this->rectangle_selection_interacts_with_entities;
 
     if (entity_interaction_enabled && button == Qt::LeftButton && !this->rectangle_dragging &&
-        (this->map_canvas_entities->selectDeviceLinkAt(position) ||
+        (this->map_canvas_entities->selectMarkerAt(position) ||
+         this->map_canvas_entities->selectDeviceLinkAt(position) ||
          this->map_canvas_entities->selectPipeAt(position)))
     {
         emit signalStateChanged();
@@ -182,7 +183,8 @@ bool MapEditorController::mousePress(const QPointF &position, const QPoint &glob
         return true;
     }
 
-    if (this->map_canvas_entities->showPipeContextMenuAt(position, global_position))
+    if (this->map_canvas_entities->showMarkerContextMenuAt(position, global_position) ||
+        this->map_canvas_entities->showPipeContextMenuAt(position, global_position))
     {
         emit signalStateChanged();
         return true;
@@ -229,7 +231,8 @@ bool MapEditorController::mouseMove(const QPointF &position, const QSize &viewpo
     }
 
     const bool handled = this->map_canvas_entities->floatEntity(position);
-    if (this->map_canvas_entities->isDeviceLinkAt(position) ||
+    if (this->map_canvas_entities->isMarkerAt(position) ||
+        this->map_canvas_entities->isDeviceLinkAt(position) ||
         this->map_canvas_entities->isPipeAt(position))
     {
         setCursorShape(Qt::PointingHandCursor);

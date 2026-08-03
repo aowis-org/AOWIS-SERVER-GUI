@@ -20,42 +20,43 @@ class MapModel;
 class MapCanvasSelection : public QObject
 {
     Q_OBJECT
-    
+
 public:
     explicit MapCanvasSelection(MapModel *map_model, MapCanvasWidget *map_canvas,
                                 MapCanvasMarkers *point_markers,
                                 MapCanvasDeviceLinks *device_links,
                                 MapCanvasPipes *pipes, QObject *parent = nullptr);
-    
-    const QList<MapEntityMarker> &selectedMarkers() const;
-    QList<MapEntityMarkerLabel *> selectedLabels() const;
+
+    QList<MapEntityMarker> selectedMarkers() const;
+    const QList<QUuid> &selectedMarkerUuids() const;
     int selectedMarkerCount() const;
-    bool isMarkerSelected(MapEntityMarkerLabel *label) const;
+    bool isMarkerSelected(const QUuid &uuid) const;
     bool hasSelection() const;
-    
+
     void clear();
     void replaceWithMarker(const MapEntityMarker &marker);
     void addMarker(const MapEntityMarker &marker);
     void toggleMarker(const MapEntityMarker &marker);
-    void removeMarker(MapEntityMarkerLabel *label);
+    void removeMarker(const QUuid &uuid);
     std::optional<InfrastructureEntityReference> replaceWithPipe(const QUuid &pipe_uuid);
     void selectInRectangle(const QRect &rect,
                            const QList<MapEntityMarker> &point_markers,
                            const QList<MapEntityMarker> &device_link_markers,
                            bool replace);
-    void setMouseTransparency(bool transparent);
     void moveSelected(const QPointF &from_position, const QPointF &to_position);
-    
+
 private:
-    void addMarkersInRectangle(const QRect &rect,
-                               const QList<MapEntityMarker> &markers);
-    
+    void addPointMarkersInRectangle(const QRect &rect,
+                                    const QList<MapEntityMarker> &markers);
+    void addDeviceMarkersInRectangle(const QRect &rect,
+                                     const QList<MapEntityMarker> &markers);
+
     MapModel *map_model = nullptr;
     QPointer<MapCanvasWidget> map_canvas;
     MapCanvasMarkers *point_markers = nullptr;
     MapCanvasDeviceLinks *device_links = nullptr;
     MapCanvasPipes *pipes = nullptr;
-    QList<MapEntityMarker> list_selected_markers;
+    QList<QUuid> list_selected_marker_uuids;
 };
 
 #endif // MAP_CANVAS_SELECTION_H

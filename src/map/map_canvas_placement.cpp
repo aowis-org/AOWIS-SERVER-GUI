@@ -1,50 +1,59 @@
 #include "map_canvas_placement.h"
 #include "map_canvas_widget.h"
-#include "map_entity_marker_label.h"
 
 #include <QApplication>
-#include <QPixmap>
 
 MapCanvasPlacement::MapCanvasPlacement(MapCanvasWidget *map_canvas, QObject *parent)
     : QObject(parent), map_canvas(map_canvas)
-{}
+{
+}
 
-void MapCanvasPlacement::startCreate(InfrastructureEntity entity, const QString &pixmap_path, int width)
+void MapCanvasPlacement::startCreate(InfrastructureEntity entity,
+                                     const QString &pixmap_path,
+                                     int width)
 {
     stop();
     this->current_entity = entity;
     this->placement_mode = MapEntityPlacementMode::CreateNew;
+    this->floating_pixmap_path = pixmap_path;
+    this->floating_width = width;
     this->draw_immediately = true;
-    createFloatingLabel(pixmap_path, width);
+    prepareFloatingMarker();
 }
 
 bool MapCanvasPlacement::rearmCreate(const QString &pixmap_path, int width)
 {
-    if (this->placement_mode != MapEntityPlacementMode::CreateNew || this->floating_label)
+    if (this->placement_mode != MapEntityPlacementMode::CreateNew || hasFloatingMarker())
         return false;
-    
-    createFloatingLabel(pixmap_path, width);
+
+    this->floating_pixmap_path = pixmap_path;
+    this->floating_width = width;
+    prepareFloatingMarker();
     return true;
 }
 
-bool MapCanvasPlacement::startMove(InfrastructureEntity entity, MapEntityMarkerLabel *label,
+bool MapCanvasPlacement::startMove(InfrastructureEntity entity, const QUuid &uuid,
+                                   const QString &pixmap_path, int width,
                                    const QPointF &mouse_position)
 {
-    if (!label)
+    if (uuid.isNull())
         return false;
-    
+
     stop();
     this->current_entity = entity;
     this->placement_mode = MapEntityPlacementMode::MoveExisting;
-    this->floating_label = label;
+    this->floating_uuid = uuid;
+    this->floating_pixmap_path = pixmap_path;
+    this->floating_width = width;
     this->mouse_position = mouse_position;
     this->previous_mouse_position = mouse_position;
     this->draw_immediately = true;
-    prepareFloatingLabel();
+    prepareFloatingMarker();
     return true;
 }
 
-void MapCanvasPlacement::startVirtualMove(InfrastructureEntity entity, const QPointF &mouse_position)
+void MapCanvasPlacement::startVirtualMove(InfrastructureEntity entity,
+                                          const QPointF &mouse_position)
 {
     stop();
     this->current_entity = entity;
@@ -60,22 +69,10 @@ void MapCanvasPlacement::stop()
     setMoveCursor(false);
     clearConnectionTarget();
     this->moving_selected = false;
-    
-    if (this->floating_label)
-    {
-        MapEntityMarkerLabel *label = this->floating_label.data();
-        if (this->placement_mode == MapEntityPlacementMode::CreateNew)
-        {
-            label->hide();
-            label->deleteLater();
-        }
-        else if (this->placement_mode == MapEntityPlacementMode::MoveExisting)
-        {
-            label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
-        }
-    }
-    
-    this->floating_label = nullptr;
+    this->floating_uuid = QUuid();
+    this->floating_pixmap_path.clear();
+    this->floating_width = 0;
+    this->floating_visible = false;
     this->placement_mode = MapEntityPlacementMode::None;
     this->current_entity = InfrastructureEntity::Unknown;
 }
@@ -105,29 +102,50 @@ bool MapCanvasPlacement::isMoving() const
     return this->placement_mode == MapEntityPlacementMode::MoveExisting;
 }
 
-MapEntityMarkerLabel *MapCanvasPlacement::floatingLabel() const
+QUuid MapCanvasPlacement::floatingUuid() const
 {
-    return this->floating_label.data();
+    return this->floating_uuid;
 }
 
-MapEntityMarkerLabel *MapCanvasPlacement::takeCreatedLabel()
+QString MapCanvasPlacement::floatingPixmapPath() const
+{
+    return this->floating_pixmap_path;
+}
+
+int MapCanvasPlacement::floatingWidth() const
+{
+    return this->floating_width;
+}
+
+bool MapCanvasPlacement::hasFloatingMarker() const
+{
+    return !this->floating_pixmap_path.isEmpty() && this->floating_width > 0;
+}
+
+bool MapCanvasPlacement::floatingMarkerVisible() const
+{
+    return hasFloatingMarker() && this->floating_visible;
+}
+
+void MapCanvasPlacement::consumeCreatedMarker()
 {
     if (!isCreating())
-        return nullptr;
-    
-    MapEntityMarkerLabel *label = this->floating_label.data();
-    this->floating_label = nullptr;
-    return label;
+        return;
+
+    this->floating_uuid = QUuid();
+    this->floating_pixmap_path.clear();
+    this->floating_width = 0;
+    this->floating_visible = false;
 }
 
 void MapCanvasPlacement::completeMove()
 {
-    if (this->floating_label)
-        this->floating_label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
-    
     setMoveCursor(false);
     clearConnectionTarget();
-    this->floating_label = nullptr;
+    this->floating_uuid = QUuid();
+    this->floating_pixmap_path.clear();
+    this->floating_width = 0;
+    this->floating_visible = false;
     this->placement_mode = MapEntityPlacementMode::None;
     this->current_entity = InfrastructureEntity::Unknown;
     this->moving_selected = false;
@@ -149,60 +167,51 @@ QPointF MapCanvasPlacement::previousMousePosition() const
     return this->previous_mouse_position;
 }
 
-bool MapCanvasPlacement::revealFloatingLabelIfReady()
+bool MapCanvasPlacement::revealFloatingMarkerIfReady()
 {
-    if (!this->floating_label)
+    if (!hasFloatingMarker())
         return false;
-    if (this->floating_label->isVisible())
+    if (this->floating_visible)
         return true;
-    
+
     if (isCreating() && !this->draw_immediately &&
         (this->mouse_position.toPoint() - this->floating_hide_until).manhattanLength() <= 10)
     {
         return false;
     }
-    
-    this->floating_label->show();
-    return true;
-}
 
-void MapCanvasPlacement::moveFloatingLabelTopLeft(const QPointF &position)
-{
-    if (!this->floating_label)
-        return;
-    
-    this->floating_label->move(qRound(position.x()),
-                               qRound(position.y()) - this->floating_label->height());
+    this->floating_visible = true;
+    return true;
 }
 
 void MapCanvasPlacement::setFloatingHiddenUntil(const QPoint &position)
 {
     this->floating_hide_until = position;
+    this->floating_visible = false;
 }
 
-void MapCanvasPlacement::scaleFloatingLabel(const QString &pixmap_path, int width)
+void MapCanvasPlacement::scaleFloatingMarker(const QString &pixmap_path, int width)
 {
-    if (!this->floating_label)
+    if (!hasFloatingMarker())
         return;
-    
-    const QPixmap pixmap = QPixmap(pixmap_path).scaledToWidth(width, Qt::SmoothTransformation);
-    this->floating_label->setPixmap(pixmap);
-    this->floating_label->resize(pixmap.size());
+
+    this->floating_pixmap_path = pixmap_path;
+    this->floating_width = width;
 }
 
-void MapCanvasPlacement::setConnectionTarget(MapEntityMarkerLabel *label)
+void MapCanvasPlacement::setConnectionTarget(const QUuid &uuid)
 {
-    this->connection_target_label = label;
+    this->connection_target_uuid = uuid;
 }
 
-MapEntityMarkerLabel *MapCanvasPlacement::connectionTarget() const
+QUuid MapCanvasPlacement::connectionTargetUuid() const
 {
-    return this->connection_target_label.data();
+    return this->connection_target_uuid;
 }
 
 void MapCanvasPlacement::clearConnectionTarget()
 {
-    this->connection_target_label = nullptr;
+    this->connection_target_uuid = QUuid();
 }
 
 void MapCanvasPlacement::setMovingSelected(bool moving_selected)
@@ -228,37 +237,17 @@ void MapCanvasPlacement::setMoveCursor(bool enabled)
         }
         return;
     }
-    
+
     if (!this->move_cursor_active)
         return;
-    
+
     QApplication::restoreOverrideCursor();
     this->move_cursor_active = false;
 }
 
-void MapCanvasPlacement::createFloatingLabel(const QString &pixmap_path, int width)
+void MapCanvasPlacement::prepareFloatingMarker()
 {
-    this->floating_label = new MapEntityMarkerLabel(this->map_canvas);
-    scaleFloatingLabel(pixmap_path, width);
-    prepareFloatingLabel();
-}
-
-void MapCanvasPlacement::prepareFloatingLabel()
-{
-    if (!this->floating_label)
-        return;
-    
-    this->floating_label->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-    this->floating_label->setFocusPolicy(Qt::NoFocus);
-    this->floating_label->hide();
-    this->floating_label->raise();
-    
-    if (this->draw_immediately)
-    {
-        moveFloatingLabelTopLeft(this->mouse_position);
-        this->floating_label->show();
-    }
-    
+    this->floating_visible = this->draw_immediately;
     this->draw_immediately = false;
     focusCanvas();
     if (isMoving())
@@ -269,7 +258,7 @@ void MapCanvasPlacement::focusCanvas()
 {
     if (!this->map_canvas)
         return;
-    
+
     this->map_canvas->setFocusPolicy(Qt::StrongFocus);
     this->map_canvas->setFocus(Qt::OtherFocusReason);
 }

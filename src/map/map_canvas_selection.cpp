@@ -12,59 +12,51 @@ MapCanvasSelection::MapCanvasSelection(MapModel *map_model, MapCanvasWidget *map
                                        MapCanvasDeviceLinks *device_links,
                                        MapCanvasPipes *pipes, QObject *parent)
     : QObject(parent), map_model(map_model), map_canvas(map_canvas),
-    point_markers(point_markers), device_links(device_links), pipes(pipes)
-{}
-
-const QList<MapEntityMarker> &MapCanvasSelection::selectedMarkers() const
+      point_markers(point_markers), device_links(device_links), pipes(pipes)
 {
-    return this->list_selected_markers;
 }
 
-QList<MapEntityMarkerLabel *> MapCanvasSelection::selectedLabels() const
+QList<MapEntityMarker> MapCanvasSelection::selectedMarkers() const
 {
-    QList<MapEntityMarkerLabel *> labels;
-    labels.reserve(this->list_selected_markers.size());
-    for (const MapEntityMarker &marker : this->list_selected_markers)
+    QList<MapEntityMarker> markers;
+    markers.reserve(this->list_selected_marker_uuids.size());
+    for (const QUuid &uuid : this->list_selected_marker_uuids)
     {
-        if (marker.label)
-            labels.append(marker.label);
+        std::optional<MapEntityMarker> marker;
+        if (this->point_markers)
+            marker = this->point_markers->markerByUuid(uuid);
+        if (!marker.has_value() && this->device_links)
+            marker = this->device_links->markerByUuid(uuid);
+        if (marker.has_value())
+            markers.append(marker.value());
     }
-    return labels;
+    return markers;
+}
+
+const QList<QUuid> &MapCanvasSelection::selectedMarkerUuids() const
+{
+    return this->list_selected_marker_uuids;
 }
 
 int MapCanvasSelection::selectedMarkerCount() const
 {
-    return this->list_selected_markers.size();
+    return this->list_selected_marker_uuids.size();
 }
 
-bool MapCanvasSelection::isMarkerSelected(MapEntityMarkerLabel *label) const
+bool MapCanvasSelection::isMarkerSelected(const QUuid &uuid) const
 {
-    if (!label)
-        return false;
-    
-    for (const MapEntityMarker &marker : this->list_selected_markers)
-    {
-        if (marker.label == label)
-            return true;
-    }
-    return false;
+    return !uuid.isNull() && this->list_selected_marker_uuids.contains(uuid);
 }
 
 bool MapCanvasSelection::hasSelection() const
 {
-    return !this->list_selected_markers.isEmpty() ||
+    return !this->list_selected_marker_uuids.isEmpty() ||
            (this->pipes && this->pipes->hasSelection());
 }
 
 void MapCanvasSelection::clear()
 {
-    for (MapEntityMarker &marker : this->list_selected_markers)
-    {
-        if (marker.label)
-            marker.label->clearHighlight();
-    }
-    
-    this->list_selected_markers.clear();
+    this->list_selected_marker_uuids.clear();
     if (this->pipes)
         this->pipes->clearSelection();
 }
@@ -77,44 +69,28 @@ void MapCanvasSelection::replaceWithMarker(const MapEntityMarker &marker)
 
 void MapCanvasSelection::addMarker(const MapEntityMarker &marker)
 {
-    if (!marker.label || isMarkerSelected(marker.label))
+    if (marker.entity.uuid.isNull() || isMarkerSelected(marker.entity.uuid))
         return;
-    
-    marker.label->setHighlightSelected();
-    this->list_selected_markers.append(marker);
+    this->list_selected_marker_uuids.append(marker.entity.uuid);
 }
 
 void MapCanvasSelection::toggleMarker(const MapEntityMarker &marker)
 {
-    if (!marker.label)
+    if (marker.entity.uuid.isNull())
         return;
-    
-    for (int i = 0; i < this->list_selected_markers.size(); i++)
+
+    const int index = this->list_selected_marker_uuids.indexOf(marker.entity.uuid);
+    if (index >= 0)
     {
-        if (this->list_selected_markers[i].label != marker.label)
-            continue;
-        
-        marker.label->clearHighlight();
-        this->list_selected_markers.removeAt(i);
+        this->list_selected_marker_uuids.removeAt(index);
         return;
     }
-    
     addMarker(marker);
 }
 
-void MapCanvasSelection::removeMarker(MapEntityMarkerLabel *label)
+void MapCanvasSelection::removeMarker(const QUuid &uuid)
 {
-    if (!label)
-        return;
-    
-    for (int i = this->list_selected_markers.size() - 1; i >= 0; i--)
-    {
-        if (this->list_selected_markers[i].label != label)
-            continue;
-        
-        label->clearHighlight();
-        this->list_selected_markers.removeAt(i);
-    }
+    this->list_selected_marker_uuids.removeAll(uuid);
 }
 
 std::optional<InfrastructureEntityReference> MapCanvasSelection::replaceWithPipe(
@@ -126,37 +102,30 @@ std::optional<InfrastructureEntityReference> MapCanvasSelection::replaceWithPipe
     return this->pipes->selectPipe(pipe_uuid);
 }
 
-void MapCanvasSelection::selectInRectangle(const QRect &rect,
-                                           const QList<MapEntityMarker> &point_markers,
-                                           const QList<MapEntityMarker> &device_link_markers,
-                                           bool replace)
+void MapCanvasSelection::selectInRectangle(
+    const QRect &rect,
+    const QList<MapEntityMarker> &point_markers,
+    const QList<MapEntityMarker> &device_link_markers,
+    bool replace)
 {
     if (replace)
         clear();
-    
-    addMarkersInRectangle(rect, point_markers);
-    addMarkersInRectangle(rect, device_link_markers);
+
+    addPointMarkersInRectangle(rect, point_markers);
+    addDeviceMarkersInRectangle(rect, device_link_markers);
     if (this->pipes)
-        this->pipes->selectPipesWithSelectedEndpoints(this->list_selected_markers);
+        this->pipes->selectPipesWithSelectedEndpoints(this->list_selected_marker_uuids);
 }
 
-void MapCanvasSelection::setMouseTransparency(bool transparent)
-{
-    for (const MapEntityMarker &marker : this->list_selected_markers)
-    {
-        if (marker.label)
-            marker.label->setAttribute(Qt::WA_TransparentForMouseEvents, transparent);
-    }
-}
-
-void MapCanvasSelection::moveSelected(const QPointF &from_position, const QPointF &to_position)
+void MapCanvasSelection::moveSelected(const QPointF &from_position,
+                                      const QPointF &to_position)
 {
     if (!this->map_model || !this->map_canvas || !this->point_markers ||
         !this->device_links || !this->pipes)
     {
         return;
     }
-    
+
     const CoordinateWGS84 from_coordinate = this->map_model->wgs84FromScreen(
         from_position.toPoint(), this->map_canvas->size());
     const CoordinateWGS84 to_coordinate = this->map_model->wgs84FromScreen(
@@ -164,32 +133,39 @@ void MapCanvasSelection::moveSelected(const QPointF &from_position, const QPoint
     const double latitude_delta = to_coordinate.latitude_deg - from_coordinate.latitude_deg;
     const double longitude_delta = GeoWebMercator::normalizeLongitude(
         to_coordinate.longitude_deg - from_coordinate.longitude_deg);
-    
-    for (const MapEntityMarker &selected_marker : this->list_selected_markers)
+
+    for (const QUuid &uuid : this->list_selected_marker_uuids)
     {
-        if (!selected_marker.label)
-            continue;
-        
-        if (!this->point_markers->moveByDelta(
-                selected_marker.label, longitude_delta, latitude_delta))
-        {
-            this->device_links->moveCenterByDelta(
-                selected_marker.label, longitude_delta, latitude_delta);
-        }
+        if (!this->point_markers->moveByDelta(uuid, longitude_delta, latitude_delta))
+            this->device_links->moveCenterByDelta(uuid, longitude_delta, latitude_delta);
     }
-    
+
     this->pipes->moveIntermediateVerticesWithSelectedEndpoints(
-        this->list_selected_markers, longitude_delta, latitude_delta);
+        this->list_selected_marker_uuids, longitude_delta, latitude_delta);
 }
 
-void MapCanvasSelection::addMarkersInRectangle(const QRect &rect,
-                                               const QList<MapEntityMarker> &markers)
+void MapCanvasSelection::addPointMarkersInRectangle(
+    const QRect &rect, const QList<MapEntityMarker> &markers)
 {
+    if (!this->point_markers)
+        return;
+
     for (const MapEntityMarker &marker : markers)
     {
-        if (!marker.label || !rect.contains(marker.label->geometry().center()))
-            continue;
+        if (rect.contains(this->point_markers->markerRect(marker).center().toPoint()))
+            addMarker(marker);
+    }
+}
 
-        addMarker(marker);
+void MapCanvasSelection::addDeviceMarkersInRectangle(
+    const QRect &rect, const QList<MapEntityMarker> &markers)
+{
+    if (!this->device_links)
+        return;
+
+    for (const MapEntityMarker &marker : markers)
+    {
+        if (rect.contains(this->device_links->markerRect(marker).center().toPoint()))
+            addMarker(marker);
     }
 }

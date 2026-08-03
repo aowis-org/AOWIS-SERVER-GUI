@@ -6,7 +6,6 @@
 #include <QColor>
 
 #include <algorithm>
-#include <QPixmap>
 
 namespace
 {
@@ -21,13 +20,15 @@ bool isHydraulicConnectionNode(InfrastructureEntity entity)
 }
 }
 
-MapCanvasMarkers::MapCanvasMarkers(MapModel *map_model,
-                                   MapCanvasWidget *map_canvas,
+MapCanvasMarkers::MapCanvasMarkers(MapModel *map_model, MapCanvasWidget *map_canvas,
+                                   MapEntityPixmapRenderer *pixmap_renderer,
                                    QObject *parent)
     : QObject(parent)
 {
     this->map_model = map_model;
     this->map_canvas = map_canvas;
+    this->pixmap_renderer = pixmap_renderer;
+    this->marker_width = entityWidth();
 }
 
 void MapCanvasMarkers::setWrapReferenceLongitude(double longitude)
@@ -48,15 +49,6 @@ const QList<MapEntityMarker> &MapCanvasMarkers::markers() const
 
 void MapCanvasMarkers::clear()
 {
-    for (const MapEntityMarker &marker : this->list_markers)
-    {
-        if (!marker.label)
-            continue;
-
-        marker.label->hide();
-        marker.label->deleteLater();
-    }
-
     this->list_markers.clear();
 }
 
@@ -106,108 +98,75 @@ QString MapCanvasMarkers::pixmapPathForEntity(InfrastructureEntity entity) const
     case InfrastructureEntity::Unknown:
         return QStringLiteral(":/icon/geomarker.png");
     }
-    
+
     return QStringLiteral(":/icon/geomarker.png");
 }
 
-MapEntityMarkerLabel *MapCanvasMarkers::nearestConnectionTarget(
-    const QPointF &mouse_position, MapEntityMarkerLabel *excluded_label, double max_distance) const
+std::optional<InfrastructureEntityReference> MapCanvasMarkers::nearestConnectionTarget(
+    const QPointF &mouse_position, const QUuid &excluded_uuid, double max_distance) const
 {
-    MapEntityMarkerLabel *nearest_label = nullptr;
+    std::optional<InfrastructureEntityReference> nearest_entity;
     double nearest_distance_squared = max_distance * max_distance;
-    
+
     for (const MapEntityMarker &marker : this->list_markers)
     {
-        if (!marker.label || marker.label == excluded_label ||
-            !isHydraulicConnectionNode(marker.entity.type))
-        {
+        if (marker.entity.uuid == excluded_uuid || !isHydraulicConnectionNode(marker.entity.type))
             continue;
-        }
-        
-        const QPointF point = this->screenFromWgs84(marker.coord_wgs84);
+
+        const QPointF point = screenFromWgs84(marker.coord_wgs84);
         const double distance_x = point.x() - mouse_position.x();
         const double distance_y = point.y() - mouse_position.y();
         const double distance_squared = distance_x * distance_x + distance_y * distance_y;
         if (distance_squared > nearest_distance_squared)
             continue;
-        
+
         nearest_distance_squared = distance_squared;
-        nearest_label = marker.label;
+        nearest_entity = marker.entity;
     }
-    
-    return nearest_label;
+
+    return nearest_entity;
 }
 
-std::optional<MapEntityMarker> MapCanvasMarkers::markerByLabel(
-    MapEntityMarkerLabel *label) const
+std::optional<MapEntityMarker> MapCanvasMarkers::markerByUuid(const QUuid &uuid) const
 {
-    if (!label)
+    if (uuid.isNull())
         return std::nullopt;
-    
+
     for (const MapEntityMarker &marker : this->list_markers)
     {
-        if (marker.label == label)
+        if (marker.entity.uuid == uuid)
             return marker;
     }
-    
+
     return std::nullopt;
 }
 
-MapEntityMarker MapCanvasMarkers::addMarker(
-    const InfrastructureEntityReference &entity,
-    const CoordinateWGS84 &coordinate,
-    const QString &pixmap_path,
-    int width,
-    MapEntityMarkerLabel *label)
+MapEntityMarker MapCanvasMarkers::addMarker(const InfrastructureEntityReference &entity,
+                                             const CoordinateWGS84 &coordinate,
+                                             const QString &pixmap_path,
+                                             int width)
 {
-    if (!label)
-        label = new MapEntityMarkerLabel(this->map_canvas);
-    
-    configureLabel(label, pixmap_path, width);
-    
+    this->marker_width = width;
+
     MapEntityMarker marker;
     marker.entity = entity;
     marker.coord_wgs84 = coordinate;
     marker.path_pixmap = pixmap_path;
-    marker.label = label;
     this->list_markers.append(marker);
     return marker;
 }
 
-bool MapCanvasMarkers::removeMarker(MapEntityMarkerLabel *label)
+bool MapCanvasMarkers::removeMarker(const QUuid &uuid)
 {
-    if (!label)
-        return false;
-    
     for (int i = 0; i < this->list_markers.size(); i++)
     {
-        if (this->list_markers[i].label != label)
+        if (this->list_markers[i].entity.uuid != uuid)
             continue;
-        
-        this->list_markers.removeAt(i);
-        label->hide();
-        label->deleteLater();
-        return true;
-    }
-    
-    return false;
-}
 
-bool MapCanvasMarkers::setCoordinate(MapEntityMarkerLabel *label,
-                                     const CoordinateWGS84 &coordinate)
-{
-    if (!label)
-        return false;
-    
-    for (MapEntityMarker &marker : this->list_markers)
-    {
-        if (marker.label != label)
-            continue;
-        
-        marker.coord_wgs84 = coordinate;
+        this->list_markers.removeAt(i);
         return true;
     }
-    
+
     return false;
 }
 
@@ -228,18 +187,18 @@ bool MapCanvasMarkers::setCoordinate(const QUuid &uuid, const CoordinateWGS84 &c
     return false;
 }
 
-bool MapCanvasMarkers::moveByDelta(MapEntityMarkerLabel *label,
+bool MapCanvasMarkers::moveByDelta(const QUuid &uuid,
                                    double longitude_delta,
                                    double latitude_delta)
 {
-    if (!label)
+    if (uuid.isNull())
         return false;
-    
+
     for (MapEntityMarker &marker : this->list_markers)
     {
-        if (marker.label != label)
+        if (marker.entity.uuid != uuid)
             continue;
-        
+
         marker.coord_wgs84.latitude_deg = std::clamp(
             marker.coord_wgs84.latitude_deg + latitude_delta,
             -GeoWebMercator::MaximumLatitude, GeoWebMercator::MaximumLatitude);
@@ -247,111 +206,110 @@ bool MapCanvasMarkers::moveByDelta(MapEntityMarkerLabel *label,
             marker.coord_wgs84.longitude_deg + longitude_delta);
         return true;
     }
-    
+
     return false;
 }
 
-void MapCanvasMarkers::scaleLabels(int width)
+void MapCanvasMarkers::scaleMarkers(int width)
 {
-    for (MapEntityMarker &marker : this->list_markers)
-    {
-        if (!marker.label)
-            continue;
-        
-        const QPixmap pixmap = QPixmap(marker.path_pixmap).scaledToWidth(
-            width, Qt::SmoothTransformation);
-        marker.label->setPixmap(pixmap);
-        marker.label->resize(pixmap.size());
-    }
+    this->marker_width = width;
 }
 
-void MapCanvasMarkers::positionLabels(MapEntityMarkerLabel *label_to_skip)
+void MapCanvasMarkers::paint(QPainter &painter, const QList<QUuid> &selected_uuids,
+                             const QUuid &connection_target_uuid) const
 {
-    for (MapEntityMarker &marker : this->list_markers)
-    {
-        MapEntityMarkerLabel *label = marker.label;
-        if (!label || label == label_to_skip)
-            continue;
-        
-        const QPointF point = this->screenFromWgs84(marker.coord_wgs84);
-        const QPoint marker_position(qRound(point.x()),
-                                     qRound(point.y()) - label->height());
-        
-        if (label->pos() != marker_position)
-            label->move(marker_position);
-        if (!label->isVisible())
-            label->show();
-    }
-}
+    if (!this->pixmap_renderer)
+        return;
 
-void MapCanvasMarkers::setMouseTransparency(bool transparent)
-{
-    for (MapEntityMarker &marker : this->list_markers)
-    {
-        if (marker.label)
-            marker.label->setAttribute(Qt::WA_TransparentForMouseEvents, transparent);
-    }
-}
+    painter.save();
+    painter.setPen(Qt::NoPen);
 
-void MapCanvasMarkers::paintConnectionPoints(
-    QPainter &paint,
-    MapEntityMarkerLabel *connection_target_label,
-    MapEntityMarkerLabel *moving_label,
-    bool draw_moving_label_at_mouse,
-    const QPointF &mouse_position) const
-{
-    paint.save();
-    paint.setPen(Qt::NoPen);
-    
     for (const MapEntityMarker &marker : this->list_markers)
     {
-        if (draw_moving_label_at_mouse && marker.label == moving_label)
-            continue;
-        
-        const QPointF point = this->screenFromWgs84(marker.coord_wgs84);
-        const bool is_connection_target = marker.label &&
-                                          marker.label == connection_target_label;
-        
-        if (is_connection_target)
+        const QPointF point = screenFromWgs84(marker.coord_wgs84);
+        if (marker.entity.uuid == connection_target_uuid)
         {
-            paint.setBrush(QColor(0, 140, 255));
-            paint.drawEllipse(point, connection_target_radius, connection_target_radius);
+            painter.setBrush(QColor(0, 140, 255));
+            painter.drawEllipse(point, connection_target_radius, connection_target_radius);
         }
         else
         {
-            paint.setBrush(Qt::black);
-            paint.drawEllipse(point, marker_dot_radius, marker_dot_radius);
+            painter.setBrush(Qt::black);
+            painter.drawEllipse(point, marker_dot_radius, marker_dot_radius);
         }
     }
-    
-    if (draw_moving_label_at_mouse && moving_label)
+
+    for (const MapEntityMarker &marker : this->list_markers)
     {
-        paint.setBrush(Qt::black);
-        paint.drawEllipse(mouse_position, marker_dot_radius, marker_dot_radius);
+        const MapEntityPixmapRenderer::Highlight highlight =
+            isSelected(marker.entity.uuid, selected_uuids)
+                ? MapEntityPixmapRenderer::Highlight::Selected
+                : MapEntityPixmapRenderer::Highlight::None;
+        this->pixmap_renderer->paint(painter, marker.path_pixmap, this->marker_width,
+                                     markerRect(marker), highlight);
     }
-    
-    paint.restore();
+
+    painter.restore();
 }
 
-void MapCanvasMarkers::configureLabel(MapEntityMarkerLabel *label,
-                                      const QString &pixmap_path,
-                                      int width)
+void MapCanvasMarkers::paintFloating(QPainter &painter, InfrastructureEntity entity,
+                                     const QString &pixmap_path, int width,
+                                     const QPointF &anchor_position) const
 {
-    label->setAttribute(Qt::WA_TransparentForMouseEvents, false);
-    
-    const QPixmap pixmap = QPixmap(pixmap_path).scaledToWidth(
-        width, Qt::SmoothTransformation);
-    label->setPixmap(pixmap);
-    label->resize(pixmap.size());
-    
-    connect(label, &MapEntityMarkerLabel::signalDeleteRequested,
-            this, &MapCanvasMarkers::markerDeleteRequested);
-    connect(label, &MapEntityMarkerLabel::signalMoveRequested,
-            this, &MapCanvasMarkers::markerMoveRequested);
-    connect(label, &MapEntityMarkerLabel::signalMoveSelectedRequested,
-            this, &MapCanvasMarkers::markerMoveSelectedRequested);
-    connect(label, &MapEntityMarkerLabel::signalClicked,
-            this, &MapCanvasMarkers::markerClicked);
-    connect(label, &MapEntityMarkerLabel::signalContextMenuRequested,
-            this, &MapCanvasMarkers::markerContextMenuRequested);
+    if (!this->pixmap_renderer || entity == InfrastructureEntity::Unknown)
+        return;
+
+    const QRectF target_rect = this->pixmap_renderer->bottomAnchoredRect(
+        anchor_position, pixmap_path, width);
+    this->pixmap_renderer->paint(painter, pixmap_path, width, target_rect);
+}
+
+std::optional<InfrastructureEntityReference> MapCanvasMarkers::markerAt(
+    const QPointF &position) const
+{
+    if (!this->pixmap_renderer)
+        return std::nullopt;
+
+    for (int i = this->list_markers.size() - 1; i >= 0; i--)
+    {
+        const MapEntityMarker &marker = this->list_markers[i];
+        const QPointF dot_center = screenFromWgs84(marker.coord_wgs84);
+        if (dotHit(position, dot_center) ||
+            this->pixmap_renderer->hitTest(marker.path_pixmap, this->marker_width,
+                                           markerRect(marker), position))
+        {
+            return marker.entity;
+        }
+    }
+
+    return std::nullopt;
+}
+
+bool MapCanvasMarkers::isMarkerAt(const QPointF &position) const
+{
+    return markerAt(position).has_value();
+}
+
+QRectF MapCanvasMarkers::markerRect(const MapEntityMarker &marker) const
+{
+    if (!this->pixmap_renderer)
+        return QRectF();
+
+    const QPointF screen_position = screenFromWgs84(marker.coord_wgs84);
+    const QPointF rounded_anchor(qRound(screen_position.x()), qRound(screen_position.y()));
+    return this->pixmap_renderer->bottomAnchoredRect(
+        rounded_anchor, marker.path_pixmap, this->marker_width);
+}
+
+bool MapCanvasMarkers::isSelected(const QUuid &uuid, const QList<QUuid> &selected_uuids) const
+{
+    return selected_uuids.contains(uuid);
+}
+
+bool MapCanvasMarkers::dotHit(const QPointF &position, const QPointF &dot_center) const
+{
+    const double distance_x = position.x() - dot_center.x();
+    const double distance_y = position.y() - dot_center.y();
+    return distance_x * distance_x + distance_y * distance_y <=
+           marker_dot_radius * marker_dot_radius;
 }
