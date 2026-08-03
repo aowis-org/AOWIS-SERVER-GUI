@@ -196,6 +196,7 @@ private slots:
 
 signals:
     void signalNetworkLoaded();
+    void signalNetworkGeometryChanged(quint64 geometry_revision);
     void signalNodeChanged(InfrastructureEntity entity_type, const QUuid &uuid);
     void signalLinkChanged(InfrastructureEntity entity_type, const QUuid &uuid);
     void signalNodeLocateRequested(InfrastructureEntity entity_type, const QUuid &uuid);

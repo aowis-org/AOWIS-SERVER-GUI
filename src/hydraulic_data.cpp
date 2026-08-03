@@ -314,6 +314,9 @@ void HydraulicData::markNetworkChanged(NetworkChange change)
 
     ++this->visual_revision;
     this->time_changed_last = QDateTime::currentDateTimeUtc();
+
+    if (change == NetworkChange::Geometry)
+        emit signalNetworkGeometryChanged(this->geometry_revision);
 }
 
 bool HydraulicData::emitNodeChangedIfSuccessful(const QUuid &uuid, bool successful, NetworkChange change)

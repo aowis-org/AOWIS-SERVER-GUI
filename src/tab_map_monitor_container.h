@@ -1,12 +1,12 @@
 #ifndef TAB_MAP_MONITOR_CONTAINER_H
 #define TAB_MAP_MONITOR_CONTAINER_H
 
+#include <QEvent>
+#include <QMouseEvent>
 #include <QObject>
 #include <QWidget>
 
 #ifdef Q_OS_WASM
-#include <QEvent>
-#include <QMouseEvent>
 #include <QTimer>
 #endif
 #include <QHBoxLayout>
@@ -86,10 +86,8 @@ public:
     
     MapNavigationWidget *mapNavigationWidget();
 
-#ifdef Q_OS_WASM
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
-#endif
 
 private:
     QHBoxLayout *layout = nullptr;
@@ -104,15 +102,24 @@ private:
     MapNetworkOverlayWidget *desktop_network_overlay = nullptr;
 #endif
     MapMonitorMenuWidget *map_menu = nullptr;
+    int network_background_opacity = 0;
+
+    bool selectNetworkEntity(quint32 render_id, InfrastructureEntity entity_type);
+    void setNetworkBackgroundOpacity(int opacity);
+
+#ifndef Q_OS_WASM
+    bool desktop_network_hovered = false;
+
+    void updateDesktopNetworkHover(const QPointF &position, Qt::MouseButtons buttons);
+    void setDesktopNetworkHovered(bool hovered);
+#endif
 
 #ifdef Q_OS_WASM
     QTimer *wasm_map_layer_sync_timer = nullptr;
     quint64 wasm_network_geometry_revision_sent = 0;
     bool wasm_network_snapshot_sent = false;
-    int wasm_network_background_opacity = 0;
 
     bool selectWasmNetworkEntityAt(const QPointF &position);
-    void setWasmNetworkBackgroundOpacity(int opacity);
     void scheduleWasmMapLayerSync();
     void syncWasmMapLayer();
     void syncWasmNetworkBackground();

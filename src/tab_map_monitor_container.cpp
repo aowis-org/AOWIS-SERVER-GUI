@@ -164,6 +164,9 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     this->map_stack_layout->setContentsMargins(0, 0, 0, 0);
     this->map_stack_layout->setSpacing(0);
     this->map_stack_layout->setStackingMode(QStackedLayout::StackAll);
+    connect(this->map_menu->mapNavigationWidget(), &MapNavigationWidget::signalSlideOpacityChanged,
+        this, &MapMonitorContainer::setNetworkBackgroundOpacity);
+    this->map->installEventFilter(this);
     this->map_stack_layout->addWidget(this->map);
 #ifndef Q_OS_WASM
     this->map_stack_layout->addWidget(this->desktop_network_overlay);
@@ -180,15 +183,13 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     connect(this->wasm_map_layer_sync_timer, &QTimer::timeout, this, &MapMonitorContainer::syncWasmMapLayer);
 
     this->installEventFilter(this);
-    this->map->installEventFilter(this);
     this->map_stack->installEventFilter(this);
     if (this->window())
         this->window()->installEventFilter(this);
 
     connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, &MapMonitorContainer::scheduleWasmMapLayerSync);
-    connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this, &MapMonitorContainer::scheduleWasmMapLayerSync);
-    connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this, &MapMonitorContainer::scheduleWasmMapLayerSync);
-    connect(this->map_menu->mapNavigationWidget(), &MapNavigationWidget::signalSlideOpacityChanged, this, &MapMonitorContainer::setWasmNetworkBackgroundOpacity);
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged,
+        this, &MapMonitorContainer::scheduleWasmMapLayerSync);
 
     this->syncWasmNetworkBackground();
     this->scheduleWasmMapLayerSync();
@@ -212,19 +213,41 @@ MapMonitorContainer::~MapMonitorContainer()
 #endif
 }
 
-#ifdef Q_OS_WASM
 bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
 {
-    if (watched == this->map && event->type() == QEvent::MouseButtonPress)
+    if (watched == this->map)
     {
-        QMouseEvent *mouse_event = static_cast<QMouseEvent *>(event);
-        if (mouse_event->button() == Qt::LeftButton && selectWasmNetworkEntityAt(mouse_event->position()))
+        if (event->type() == QEvent::MouseButtonPress)
         {
-            mouse_event->accept();
-            return true;
+            QMouseEvent *mouse_event = static_cast<QMouseEvent *>(event);
+            if (mouse_event->button() == Qt::LeftButton)
+            {
+#ifdef Q_OS_WASM
+                if (selectWasmNetworkEntityAt(mouse_event->position()))
+#else
+                const NetworkOverlayHit hit = this->desktop_network_overlay->hitTest(mouse_event->position());
+                if (hit.isValid() && selectNetworkEntity(hit.render_id, hit.entity_type))
+#endif
+                {
+                    mouse_event->accept();
+                    return true;
+                }
+            }
         }
+#ifndef Q_OS_WASM
+        else if (event->type() == QEvent::MouseMove)
+        {
+            QMouseEvent *mouse_event = static_cast<QMouseEvent *>(event);
+            updateDesktopNetworkHover(mouse_event->position(), mouse_event->buttons());
+        }
+        else if (event->type() == QEvent::Leave || event->type() == QEvent::Hide)
+        {
+            setDesktopNetworkHovered(false);
+        }
+#endif
     }
 
+#ifdef Q_OS_WASM
     if (watched == this || watched == this->map || watched == this->map_stack || watched == this->window())
     {
         switch (event->type())
@@ -247,27 +270,17 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
             break;
         }
     }
+#endif
 
     return QWidget::eventFilter(watched, event);
 }
 
-
-
-bool MapMonitorContainer::selectWasmNetworkEntityAt(const QPointF &position)
+bool MapMonitorContainer::selectNetworkEntity(quint32 render_id, InfrastructureEntity entity_type)
 {
-    if (this->hydraulic_data == nullptr || !this->wasm_network_snapshot_sent)
+    if (this->hydraulic_data == nullptr || render_id == 0 || entity_type == InfrastructureEntity::Unknown)
         return false;
 
-    const double packed_hit = aowisBrowserNetworkHitTest(position.x(), position.y());
-    if (!std::isfinite(packed_hit) || packed_hit <= 0.0)
-        return false;
-
-    const quint64 packed = static_cast<quint64>(packed_hit);
-    const int entity_type_value = static_cast<int>(packed >> 32);
-    const quint32 render_id = static_cast<quint32>(packed & 0xffffffffULL);
-    const InfrastructureEntity entity_type = static_cast<InfrastructureEntity>(entity_type_value);
     const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
-
     if (entity_type == InfrastructureEntity::Junction ||
         entity_type == InfrastructureEntity::Reservoir ||
         entity_type == InfrastructureEntity::Tank)
@@ -300,14 +313,59 @@ bool MapMonitorContainer::selectWasmNetworkEntityAt(const QPointF &position)
     return false;
 }
 
-void MapMonitorContainer::setWasmNetworkBackgroundOpacity(int opacity)
+#ifndef Q_OS_WASM
+void MapMonitorContainer::updateDesktopNetworkHover(const QPointF &position, Qt::MouseButtons buttons)
 {
-    const int bounded_opacity = qBound(0, opacity, 100);
-    if (this->wasm_network_background_opacity == bounded_opacity)
+    if (buttons != Qt::NoButton)
+    {
+        setDesktopNetworkHovered(false);
+        return;
+    }
+
+    setDesktopNetworkHovered(this->desktop_network_overlay->hitTest(position).isValid());
+}
+
+void MapMonitorContainer::setDesktopNetworkHovered(bool hovered)
+{
+    if (this->desktop_network_hovered == hovered)
         return;
 
-    this->wasm_network_background_opacity = bounded_opacity;
-    this->syncWasmNetworkBackground();
+    this->desktop_network_hovered = hovered;
+    if (hovered)
+        this->map->setCursor(Qt::PointingHandCursor);
+    else
+        this->map->unsetCursor();
+}
+#endif
+
+void MapMonitorContainer::setNetworkBackgroundOpacity(int opacity)
+{
+    const int bounded_opacity = qBound(0, opacity, 100);
+    if (this->network_background_opacity == bounded_opacity)
+        return;
+
+    this->network_background_opacity = bounded_opacity;
+#ifndef Q_OS_WASM
+    this->desktop_network_overlay->setBackgroundOpacity(bounded_opacity);
+#else
+    syncWasmNetworkBackground();
+#endif
+}
+
+#ifdef Q_OS_WASM
+bool MapMonitorContainer::selectWasmNetworkEntityAt(const QPointF &position)
+{
+    if (this->hydraulic_data == nullptr || !this->wasm_network_snapshot_sent)
+        return false;
+
+    const double packed_hit = aowisBrowserNetworkHitTest(position.x(), position.y());
+    if (!std::isfinite(packed_hit) || packed_hit <= 0.0)
+        return false;
+
+    const quint64 packed = static_cast<quint64>(packed_hit);
+    const int entity_type_value = static_cast<int>(packed >> 32);
+    const quint32 render_id = static_cast<quint32>(packed & 0xffffffffULL);
+    return selectNetworkEntity(render_id, static_cast<InfrastructureEntity>(entity_type_value));
 }
 
 void MapMonitorContainer::scheduleWasmMapLayerSync()
@@ -339,7 +397,7 @@ void MapMonitorContainer::syncWasmNetworkBackground()
         background.red(),
         background.green(),
         background.blue(),
-        this->wasm_network_background_opacity);
+        this->network_background_opacity);
 }
 
 void MapMonitorContainer::syncWasmNetworkSnapshot()
