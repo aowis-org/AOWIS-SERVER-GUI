@@ -39,8 +39,10 @@
         inset: 0;
         align-items: center;
         justify-content: center;
-        overflow: visible;
+        overflow: auto;
+        box-sizing: border-box;
         margin: 0;
+        padding: 24px;
         background: #ffffff;
       }
 
@@ -87,7 +89,31 @@
       }
 
       #qtstatus {
+        width: 100%;
+        min-height: 1.4em;
+        max-height: min(220px, 30vh);
+        box-sizing: border-box;
         margin-top: 18px;
+        overflow: auto;
+        color: #333333;
+        font: 14px/1.4 Arial, Helvetica, sans-serif;
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+      }
+
+      #qtstatus[data-kind="error"] {
+        padding: 10px 12px;
+        border: 1px solid #b3261e;
+        border-radius: 4px;
+        background: #fff4f2;
+        color: #8c1d18;
+        text-align: left;
+      }
+
+      #qtspinner noscript {
+        display: block;
+        margin-top: 18px;
+        color: #8c1d18;
         font: 14px/1.4 Arial, Helvetica, sans-serif;
       }
     </style>
@@ -103,7 +129,7 @@
         <div class="aowis-splash-line aowis-splash-subtitle">
           <span data-fit-splash-width>Afritic Open Water Infrastructure Standard</span>
         </div>
-        <div id="qtstatus"></div>
+        <div id="qtstatus" role="status" aria-live="polite" aria-atomic="true"></div>
         <noscript>JavaScript is disabled. Please enable JavaScript to use this application.</noscript>
       </div>
     </figure>
@@ -348,11 +374,34 @@
           });
       }
 
+      function setQtStatus(message, kind = 'status')
+      {
+          const status = document.querySelector('#qtstatus');
+          if (!status)
+              return;
+
+          status.textContent = message;
+          status.dataset.kind = kind;
+          status.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+          status.setAttribute('aria-live', kind === 'error' ? 'assertive' : 'polite');
+      }
+
+      function formatQtStartupError(error)
+      {
+          if (error instanceof Error) {
+              if (error.stack && error.stack !== error.message)
+                  return `${error.message}\n\n${error.stack}`;
+
+              return error.message;
+          }
+
+          return String(error);
+      }
+
       async function init()
       {
           const spinner = document.querySelector('#qtspinner');
           const screen = document.querySelector('#screen');
-          const status = document.querySelector('#qtstatus');
           const splashLogo = document.querySelector('.aowis-splash-logo');
 
           if (splashLogo)
@@ -371,7 +420,7 @@
 
           try {
               showUi(spinner);
-              status.innerHTML = 'Loading...';
+              setQtStatus('Loading...');
 
               const instance = await qtLoad({
                   qt: {
@@ -390,12 +439,15 @@
 
                       onExit: exitData =>
                       {
-                          status.innerHTML = 'Application exit';
-                          status.innerHTML +=
-                              exitData.code !== undefined ? ` with code ${exitData.code}` : '';
-                          status.innerHTML +=
-                              exitData.text !== undefined ? ` (${exitData.text})` : '';
+                          let exitMessage = 'Application exit';
 
+                          if (exitData.code !== undefined)
+                              exitMessage += ` with code ${exitData.code}`;
+
+                          if (exitData.text !== undefined)
+                              exitMessage += ` (${exitData.text})`;
+
+                          setQtStatus(exitMessage, exitData.code ? 'error' : 'status');
                           showUi(spinner);
                       },
 
@@ -403,9 +455,13 @@
                       containerElements: [screen],
                   }
               });
-          } catch (e) {
-              console.error(e);
-              console.error(e.stack);
+          } catch (error) {
+              console.error(error);
+              console.error(error?.stack);
+              setQtStatus(
+                  `Application failed to start.\n\n${formatQtStartupError(error)}`,
+                  'error');
+              showUi(spinner);
           }
       }
     </script>
