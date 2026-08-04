@@ -24,12 +24,14 @@ struct RampStop
     QColor color;
 };
 
-const std::array<RampStop, 5> ramp_stops = {{
-    {0.00, QColor(QStringLiteral("#440154"))},
-    {0.25, QColor(QStringLiteral("#3b528b"))},
-    {0.50, QColor(QStringLiteral("#21918c"))},
-    {0.75, QColor(QStringLiteral("#5ec962"))},
-    {1.00, QColor(QStringLiteral("#fde725"))}
+const std::array<RampStop, 7> ramp_stops = {{
+    {0.000000, QColor(QStringLiteral("#440154"))},
+    {0.166667, QColor(QStringLiteral("#443983"))},
+    {0.333333, QColor(QStringLiteral("#31688e"))},
+    {0.500000, QColor(QStringLiteral("#21918c"))},
+    {0.666667, QColor(QStringLiteral("#35b779"))},
+    {0.833333, QColor(QStringLiteral("#90d743"))},
+    {1.000000, QColor(QStringLiteral("#fde725"))}
 }};
 
 QString legendGroupTitle(const QString &scope, const QString &metric, const QString &unit)
@@ -58,13 +60,14 @@ public:
     {
         setAttribute(Qt::WA_TransparentForMouseEvents);
         setAttribute(Qt::WA_NoSystemBackground);
-        setFixedSize(34, 20);
+        setFixedSize(68, 40);
         hide();
     }
 
-    void setColor(const QColor &color)
+    void setDisplay(const QColor &color, const QString &text)
     {
         this->color = color;
+        this->text = text;
         update();
     }
 
@@ -77,11 +80,22 @@ protected:
         painter.setRenderHint(QPainter::Antialiasing, true);
         painter.setPen(QPen(palette().color(QPalette::Mid), 1.0));
         painter.setBrush(this->color);
-        painter.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 3.0, 3.0);
+        painter.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 4.0, 4.0);
+
+        QFont value_font = painter.font();
+        value_font.setBold(true);
+        painter.setFont(value_font);
+
+        const QRect text_rect = rect().adjusted(4, 2, -4, -2);
+        painter.setPen(QColor(0, 0, 0, 180));
+        painter.drawText(text_rect.translated(1, 1), Qt::AlignCenter, this->text);
+        painter.setPen(Qt::white);
+        painter.drawText(text_rect, Qt::AlignCenter, this->text);
     }
 
 private:
     QColor color;
+    QString text;
 };
 
 class MapSymbologyRampWidget final : public QWidget
@@ -293,7 +307,8 @@ private:
         if (swatch_y < 2)
             swatch_y = anchor.y() + qRound(ramp_rect.height()) + 4;
 
-        this->hover_swatch->setColor(rampColor(uniform ? 0.5 : fraction));
+        const double value = uniform ? this->value_minimum : this->value_minimum + ((this->value_maximum - this->value_minimum) * fraction);
+        this->hover_swatch->setDisplay(rampColor(uniform ? 0.5 : fraction), formatValue(value));
         this->hover_swatch->move(swatch_x, swatch_y);
         this->hover_swatch->show();
         this->hover_swatch->raise();
