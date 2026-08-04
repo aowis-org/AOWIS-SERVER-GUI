@@ -4,7 +4,6 @@
 #include <cmath>
 
 #include <QColor>
-#include <QFontMetrics>
 #include <QHideEvent>
 #include <QLinearGradient>
 #include <QLocale>
@@ -60,7 +59,7 @@ public:
     {
         setAttribute(Qt::WA_TransparentForMouseEvents);
         setAttribute(Qt::WA_NoSystemBackground);
-        setFixedSize(68, 40);
+        setFixedSize(96, 52);
         hide();
     }
 
@@ -84,6 +83,7 @@ protected:
 
         QFont value_font = painter.font();
         value_font.setBold(true);
+        value_font.setPointSizeF(value_font.pointSizeF() + 1.0);
         painter.setFont(value_font);
 
         const QRect text_rect = rect().adjusted(4, 2, -4, -2);
@@ -247,7 +247,7 @@ private:
     {
         const qreal tick_top = ramp_rect.bottom() + 2.0;
         const qreal tick_bottom = tick_top + 4.0;
-        const std::array<double, 5> fractions = {{0.0, 0.25, 0.5, 0.75, 1.0}};
+        const std::array<double, 7> fractions = {{0.0, 1.0 / 6.0, 2.0 / 6.0, 0.5, 4.0 / 6.0, 5.0 / 6.0, 1.0}};
 
         for (double fraction : fractions)
         {
@@ -268,18 +268,22 @@ private:
             return;
         }
 
-        const QFontMetrics metrics(label_font);
+        const qreal label_width = ramp_rect.width() / static_cast<qreal>(fractions.size() - 1);
 
         for (std::size_t index = 0; index < fractions.size(); ++index)
         {
             const double fraction = fractions[index];
             const double value = this->value_minimum + ((this->value_maximum - this->value_minimum) * fraction);
-            const qreal left_fraction = index == 0 ? 0.0 : (fractions[index - 1] + fraction) * 0.5;
-            const qreal right_fraction = index + 1 == fractions.size() ? 1.0 : (fraction + fractions[index + 1]) * 0.5;
-            QRectF label_rect(ramp_rect.left() + (ramp_rect.width() * left_fraction), label_area.top(), ramp_rect.width() * (right_fraction - left_fraction), label_area.height());
-            label_rect.adjust(5.0, 0.0, -5.0, 0.0);
+            const qreal label_center_x = ramp_rect.left() + (ramp_rect.width() * fraction);
+            QRectF label_rect(label_center_x - (label_width * 0.5), label_area.top(), label_width, label_area.height());
 
-            const QString value_text = formatValueCompact(value, metrics, qMax(1, static_cast<int>(label_rect.width())));
+            if (index == 0)
+                label_rect.moveLeft(ramp_rect.left());
+            else if (index + 1 == fractions.size())
+                label_rect.moveRight(ramp_rect.right());
+
+            label_rect.adjust(1.0, 0.0, -1.0, 0.0);
+
             Qt::Alignment alignment = Qt::AlignHCenter | Qt::AlignTop;
 
             if (index == 0)
@@ -287,7 +291,7 @@ private:
             else if (index + 1 == fractions.size())
                 alignment = Qt::AlignRight | Qt::AlignTop;
 
-            painter.drawText(label_rect, alignment, value_text);
+            painter.drawText(label_rect, alignment, formatValue(value));
         }
     }
 
@@ -322,34 +326,17 @@ private:
 
     QString formatValue(double value) const
     {
-        const double absolute_value = std::abs(value);
-        int precision = 4;
+        QLocale locale;
+        QString text = locale.toString(value, 'f', 2);
+        const QString decimal_point = locale.decimalPoint();
 
-        if (absolute_value >= 1000.0)
-            precision = 5;
-        else if (absolute_value < 0.01 && absolute_value > 0.0)
-            precision = 3;
+        while (text.endsWith(QLatin1Char('0')))
+            text.chop(1);
 
-        return QLocale().toString(value, 'g', precision);
-    }
+        if (text.endsWith(decimal_point))
+            text.chop(1);
 
-    QString formatValueCompact(double value, const QFontMetrics &metrics, int maximum_width) const
-    {
-        for (int precision = 5; precision >= 2; --precision)
-        {
-            const QString text = QLocale().toString(value, 'g', precision);
-            if (metrics.horizontalAdvance(text) <= maximum_width)
-                return text;
-        }
-
-        for (int precision = 2; precision >= 0; --precision)
-        {
-            const QString text = QLocale().toString(value, 'e', precision);
-            if (metrics.horizontalAdvance(text) <= maximum_width)
-                return text;
-        }
-
-        return metrics.elidedText(QLocale().toString(value, 'e', 0), Qt::ElideRight, maximum_width);
+        return text;
     }
 };
 
