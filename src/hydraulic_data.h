@@ -57,6 +57,168 @@ public:
     bool boundingBoxWgs84Valid() const;
     const CoordinateWGS84 &boundingBoxWgs84Minimum() const;
     const CoordinateWGS84 &boundingBoxWgs84Maximum() const;
+    void rebuildSymbologyMinMaxValues();
+
+    double nodeElevationMMinimum() const;
+    double nodeElevationMMaximum() const;
+    void setNodeElevationMMinimum(double node_elevation_m_minimum);
+    void setNodeElevationMMaximum(double node_elevation_m_maximum);
+
+    double nodeBaseDemandM3PerHMinimum() const;
+    double nodeBaseDemandM3PerHMaximum() const;
+    void setNodeBaseDemandM3PerHMinimum(double node_base_demand_m3_per_h_minimum);
+    void setNodeBaseDemandM3PerHMaximum(double node_base_demand_m3_per_h_maximum);
+
+    double nodeTotalDemandM3PerHMinimum() const;
+    double nodeTotalDemandM3PerHMaximum() const;
+    void setNodeTotalDemandM3PerHMinimum(double node_total_demand_m3_per_h_minimum);
+    void setNodeTotalDemandM3PerHMaximum(double node_total_demand_m3_per_h_maximum);
+
+    double nodeDemandDeficitM3PerHMinimum() const;
+    double nodeDemandDeficitM3PerHMaximum() const;
+    void setNodeDemandDeficitM3PerHMinimum(double node_demand_deficit_m3_per_h_minimum);
+    void setNodeDemandDeficitM3PerHMaximum(double node_demand_deficit_m3_per_h_maximum);
+
+    double nodeEmitterFlowM3PerHMinimum() const;
+    double nodeEmitterFlowM3PerHMaximum() const;
+    void setNodeEmitterFlowM3PerHMinimum(double node_emitter_flow_m3_per_h_minimum);
+    void setNodeEmitterFlowM3PerHMaximum(double node_emitter_flow_m3_per_h_maximum);
+
+    double nodeLeakageM3PerHMinimum() const;
+    double nodeLeakageM3PerHMaximum() const;
+    void setNodeLeakageM3PerHMinimum(double node_leakage_m3_per_h_minimum);
+    void setNodeLeakageM3PerHMaximum(double node_leakage_m3_per_h_maximum);
+
+    double nodeHeadMMinimum() const;
+    double nodeHeadMMaximum() const;
+    void setNodeHeadMMinimum(double node_head_m_minimum);
+    void setNodeHeadMMaximum(double node_head_m_maximum);
+
+    double nodePressureMMinimum() const;
+    double nodePressureMMaximum() const;
+    void setNodePressureMMinimum(double node_pressure_m_minimum);
+    void setNodePressureMMaximum(double node_pressure_m_maximum);
+
+    double nodeChlorineMgPerLMinimum() const;
+    double nodeChlorineMgPerLMaximum() const;
+    void setNodeChlorineMgPerLMinimum(double node_chlorine_mg_per_l_minimum);
+    void setNodeChlorineMgPerLMaximum(double node_chlorine_mg_per_l_maximum);
+
+    double nodeRiverWaterPercentMinimum() const;
+    double nodeRiverWaterPercentMaximum() const;
+    void setNodeRiverWaterPercentMinimum(double node_river_water_percent_minimum);
+    void setNodeRiverWaterPercentMaximum(double node_river_water_percent_maximum);
+
+    double nodeLakeWaterPercentMinimum() const;
+    double nodeLakeWaterPercentMaximum() const;
+    void setNodeLakeWaterPercentMinimum(double node_lake_water_percent_minimum);
+    void setNodeLakeWaterPercentMaximum(double node_lake_water_percent_maximum);
+
+    double linkDiameterMmMinimum() const;
+    double linkDiameterMmMaximum() const;
+    void setLinkDiameterMmMinimum(double link_diameter_mm_minimum);
+    void setLinkDiameterMmMaximum(double link_diameter_mm_maximum);
+
+    double linkLengthMMinimum() const;
+    double linkLengthMMaximum() const;
+    void setLinkLengthMMinimum(double link_length_m_minimum);
+    void setLinkLengthMMaximum(double link_length_m_maximum);
+
+    double linkRoughnessHwMinimum() const;
+    double linkRoughnessHwMaximum() const;
+    void setLinkRoughnessHwMinimum(double link_roughness_hw_minimum);
+    void setLinkRoughnessHwMaximum(double link_roughness_hw_maximum);
+
+    double linkRoughnessDwMmMinimum() const;
+    double linkRoughnessDwMmMaximum() const;
+    void setLinkRoughnessDwMmMinimum(double link_roughness_dw_mm_minimum);
+    void setLinkRoughnessDwMmMaximum(double link_roughness_dw_mm_maximum);
+
+    double linkRoughnessCmMinimum() const;
+    double linkRoughnessCmMaximum() const;
+    void setLinkRoughnessCmMinimum(double link_roughness_cm_minimum);
+    void setLinkRoughnessCmMaximum(double link_roughness_cm_maximum);
+
+    double linkFlowRateM3PerHMinimum() const;
+    double linkFlowRateM3PerHMaximum() const;
+    void setLinkFlowRateM3PerHMinimum(double link_flow_rate_m3_per_h_minimum);
+    void setLinkFlowRateM3PerHMaximum(double link_flow_rate_m3_per_h_maximum);
+
+    double linkVelocityMPerSMinimum() const;
+    double linkVelocityMPerSMaximum() const;
+    void setLinkVelocityMPerSMinimum(double link_velocity_m_per_s_minimum);
+    void setLinkVelocityMPerSMaximum(double link_velocity_m_per_s_maximum);
+
+    double linkHeadLossMMinimum() const;
+    double linkHeadLossMMaximum() const;
+    void setLinkHeadLossMMinimum(double link_head_loss_m_minimum);
+    void setLinkHeadLossMMaximum(double link_head_loss_m_maximum);
+
+    double linkLeakageM3PerHMinimum() const;
+    double linkLeakageM3PerHMaximum() const;
+    void setLinkLeakageM3PerHMinimum(double link_leakage_m3_per_h_minimum);
+    void setLinkLeakageM3PerHMaximum(double link_leakage_m3_per_h_maximum);
+
+    double linkChlorineMgPerLMinimum() const;
+    double linkChlorineMgPerLMaximum() const;
+    void setLinkChlorineMgPerLMinimum(double link_chlorine_mg_per_l_minimum);
+    void setLinkChlorineMgPerLMaximum(double link_chlorine_mg_per_l_maximum);
+
+    double linkRiverWaterPercentMinimum() const;
+    double linkRiverWaterPercentMaximum() const;
+    void setLinkRiverWaterPercentMinimum(double link_river_water_percent_minimum);
+    void setLinkRiverWaterPercentMaximum(double link_river_water_percent_maximum);
+
+    double linkLakeWaterPercentMinimum() const;
+    double linkLakeWaterPercentMaximum() const;
+    void setLinkLakeWaterPercentMinimum(double link_lake_water_percent_minimum);
+    void setLinkLakeWaterPercentMaximum(double link_lake_water_percent_maximum);
+
+    double heatmapElevationMMinimum() const;
+    double heatmapElevationMMaximum() const;
+    void setHeatmapElevationMMinimum(double heatmap_elevation_m_minimum);
+    void setHeatmapElevationMMaximum(double heatmap_elevation_m_maximum);
+
+    double heatmapTotalDemandM3PerHMinimum() const;
+    double heatmapTotalDemandM3PerHMaximum() const;
+    void setHeatmapTotalDemandM3PerHMinimum(double heatmap_total_demand_m3_per_h_minimum);
+    void setHeatmapTotalDemandM3PerHMaximum(double heatmap_total_demand_m3_per_h_maximum);
+
+    double heatmapDemandDeficitM3PerHMinimum() const;
+    double heatmapDemandDeficitM3PerHMaximum() const;
+    void setHeatmapDemandDeficitM3PerHMinimum(double heatmap_demand_deficit_m3_per_h_minimum);
+    void setHeatmapDemandDeficitM3PerHMaximum(double heatmap_demand_deficit_m3_per_h_maximum);
+
+    double heatmapLeakageM3PerHMinimum() const;
+    double heatmapLeakageM3PerHMaximum() const;
+    void setHeatmapLeakageM3PerHMinimum(double heatmap_leakage_m3_per_h_minimum);
+    void setHeatmapLeakageM3PerHMaximum(double heatmap_leakage_m3_per_h_maximum);
+
+    double heatmapHeadMMinimum() const;
+    double heatmapHeadMMaximum() const;
+    void setHeatmapHeadMMinimum(double heatmap_head_m_minimum);
+    void setHeatmapHeadMMaximum(double heatmap_head_m_maximum);
+
+    double heatmapPressureMMinimum() const;
+    double heatmapPressureMMaximum() const;
+    void setHeatmapPressureMMinimum(double heatmap_pressure_m_minimum);
+    void setHeatmapPressureMMaximum(double heatmap_pressure_m_maximum);
+
+    double heatmapChlorineMgPerLMinimum() const;
+    double heatmapChlorineMgPerLMaximum() const;
+    void setHeatmapChlorineMgPerLMinimum(double heatmap_chlorine_mg_per_l_minimum);
+    void setHeatmapChlorineMgPerLMaximum(double heatmap_chlorine_mg_per_l_maximum);
+
+    double heatmapRiverWaterPercentMinimum() const;
+    double heatmapRiverWaterPercentMaximum() const;
+    void setHeatmapRiverWaterPercentMinimum(double heatmap_river_water_percent_minimum);
+    void setHeatmapRiverWaterPercentMaximum(double heatmap_river_water_percent_maximum);
+
+    double heatmapLakeWaterPercentMinimum() const;
+    double heatmapLakeWaterPercentMaximum() const;
+    void setHeatmapLakeWaterPercentMinimum(double heatmap_lake_water_percent_minimum);
+    void setHeatmapLakeWaterPercentMaximum(double heatmap_lake_water_percent_maximum);
+
     std::optional<HydraulicNodeJunction> junction(const QUuid &uuid) const;
     std::optional<HydraulicNodeReservoir> reservoir(const QUuid &uuid) const;
     std::optional<HydraulicNodeTank> tank(const QUuid &uuid) const;
@@ -230,6 +392,10 @@ private:
     double link_length_m_maximum = 0.0;
     double link_roughness_hw_minimum = 0.0;
     double link_roughness_hw_maximum = 0.0;
+    double link_roughness_dw_mm_minimum = 0.0;
+    double link_roughness_dw_mm_maximum = 0.0;
+    double link_roughness_cm_minimum = 0.0;
+    double link_roughness_cm_maximum = 0.0;
     double link_flow_rate_m3_per_h_minimum = 0.0;
     double link_flow_rate_m3_per_h_maximum = 0.0;
     double link_velocity_m_per_s_minimum = 0.0;

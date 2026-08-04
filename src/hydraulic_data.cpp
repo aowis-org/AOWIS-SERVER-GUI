@@ -14,6 +14,25 @@ bool coordinateWgs84Valid(const CoordinateWGS84 &coordinate)
            coordinate.longitude_deg >= -180.0 && coordinate.longitude_deg <= 180.0;
 }
 
+void updateMinimumMaximum(double value, double &minimum, double &maximum, bool &initialized)
+{
+    if (!std::isfinite(value))
+        return;
+
+    if (!initialized)
+    {
+        minimum = value;
+        maximum = value;
+        initialized = true;
+        return;
+    }
+
+    if (value < minimum)
+        minimum = value;
+    if (value > maximum)
+        maximum = value;
+}
+
 template <typename LinkType>
 bool appendNetworkRenderLink(const LinkType &source, InfrastructureEntity entity_type, quint32 render_id,
                              const QList<NetworkRenderNode> &nodes,
@@ -71,10 +90,11 @@ void HydraulicData::onDatabaseReady()
     loadProject();
     
     //this->network_hydraulic = DummyNetworks::networkSimple();
-    this->network_hydraulic = DummyNetworks::networkTanks();
-    //this->network_hydraulic = DummyMarburgNetworkGenerator::generateFractal();
+    //this->network_hydraulic = DummyNetworks::networkTanks();
+    this->network_hydraulic = DummyMarburgNetworkGenerator::generateFractal();
     //this->network_hydraulic = RandomHydraulicNetworkGenerator::generateFractal();
     rebuildBoundingBoxWgs84();
+    rebuildSymbologyMinMaxValues();
     markNetworkChanged(NetworkChange::Geometry);
     //this->network_hydraulic = DummyNetworks::networkOnMap();
     //this->network_hydraulic = DummyNetworks::networkTanksTimeline();
@@ -182,6 +202,798 @@ const CoordinateWGS84 &HydraulicData::boundingBoxWgs84Minimum() const
 const CoordinateWGS84 &HydraulicData::boundingBoxWgs84Maximum() const
 {
     return this->bounding_box_wgs84_maximum;
+}
+
+void HydraulicData::rebuildSymbologyMinMaxValues()
+{
+    this->node_elevation_m_minimum = 0.0;
+    this->node_elevation_m_maximum = 0.0;
+    this->node_base_demand_m3_per_h_minimum = 0.0;
+    this->node_base_demand_m3_per_h_maximum = 0.0;
+    this->node_total_demand_m3_per_h_minimum = 0.0;
+    this->node_total_demand_m3_per_h_maximum = 0.0;
+    this->node_demand_deficit_m3_per_h_minimum = 0.0;
+    this->node_demand_deficit_m3_per_h_maximum = 0.0;
+    this->node_emitter_flow_m3_per_h_minimum = 0.0;
+    this->node_emitter_flow_m3_per_h_maximum = 0.0;
+    this->node_leakage_m3_per_h_minimum = 0.0;
+    this->node_leakage_m3_per_h_maximum = 0.0;
+    this->node_head_m_minimum = 0.0;
+    this->node_head_m_maximum = 0.0;
+    this->node_pressure_m_minimum = 0.0;
+    this->node_pressure_m_maximum = 0.0;
+    this->node_chlorine_mg_per_l_minimum = 0.0;
+    this->node_chlorine_mg_per_l_maximum = 0.0;
+    this->node_river_water_percent_minimum = 0.0;
+    this->node_river_water_percent_maximum = 0.0;
+    this->node_lake_water_percent_minimum = 0.0;
+    this->node_lake_water_percent_maximum = 0.0;
+    this->link_diameter_mm_minimum = 0.0;
+    this->link_diameter_mm_maximum = 0.0;
+    this->link_length_m_minimum = 0.0;
+    this->link_length_m_maximum = 0.0;
+    this->link_roughness_hw_minimum = 0.0;
+    this->link_roughness_hw_maximum = 0.0;
+    this->link_roughness_dw_mm_minimum = 0.0;
+    this->link_roughness_dw_mm_maximum = 0.0;
+    this->link_roughness_cm_minimum = 0.0;
+    this->link_roughness_cm_maximum = 0.0;
+    this->link_flow_rate_m3_per_h_minimum = 0.0;
+    this->link_flow_rate_m3_per_h_maximum = 0.0;
+    this->link_velocity_m_per_s_minimum = 0.0;
+    this->link_velocity_m_per_s_maximum = 0.0;
+    this->link_head_loss_m_minimum = 0.0;
+    this->link_head_loss_m_maximum = 0.0;
+    this->link_leakage_m3_per_h_minimum = 0.0;
+    this->link_leakage_m3_per_h_maximum = 0.0;
+    this->link_chlorine_mg_per_l_minimum = 0.0;
+    this->link_chlorine_mg_per_l_maximum = 0.0;
+    this->link_river_water_percent_minimum = 0.0;
+    this->link_river_water_percent_maximum = 0.0;
+    this->link_lake_water_percent_minimum = 0.0;
+    this->link_lake_water_percent_maximum = 0.0;
+    this->heatmap_elevation_m_minimum = 0.0;
+    this->heatmap_elevation_m_maximum = 0.0;
+    this->heatmap_total_demand_m3_per_h_minimum = 0.0;
+    this->heatmap_total_demand_m3_per_h_maximum = 0.0;
+    this->heatmap_demand_deficit_m3_per_h_minimum = 0.0;
+    this->heatmap_demand_deficit_m3_per_h_maximum = 0.0;
+    this->heatmap_leakage_m3_per_h_minimum = 0.0;
+    this->heatmap_leakage_m3_per_h_maximum = 0.0;
+    this->heatmap_head_m_minimum = 0.0;
+    this->heatmap_head_m_maximum = 0.0;
+    this->heatmap_pressure_m_minimum = 0.0;
+    this->heatmap_pressure_m_maximum = 0.0;
+    this->heatmap_chlorine_mg_per_l_minimum = 0.0;
+    this->heatmap_chlorine_mg_per_l_maximum = 0.0;
+    this->heatmap_river_water_percent_minimum = 0.0;
+    this->heatmap_river_water_percent_maximum = 0.0;
+    this->heatmap_lake_water_percent_minimum = 0.0;
+    this->heatmap_lake_water_percent_maximum = 0.0;
+
+    bool node_elevation_m_initialized = false;
+    bool node_base_demand_m3_per_h_initialized = false;
+    bool link_diameter_mm_initialized = false;
+    bool link_length_m_initialized = false;
+    bool link_roughness_hw_initialized = false;
+    bool link_roughness_dw_mm_initialized = false;
+    bool link_roughness_cm_initialized = false;
+
+    for (const HydraulicNodeJunction &junction : this->network_hydraulic.nodes_junctions)
+    {
+        updateMinimumMaximum(junction.elevation_m,
+                             this->node_elevation_m_minimum,
+                             this->node_elevation_m_maximum,
+                             node_elevation_m_initialized);
+
+        double base_demand_m3_per_h = 0.0;
+        for (const HydraulicNodeJunctionDemand &demand : junction.demands)
+            base_demand_m3_per_h += demand.base_demand_m3_per_h;
+
+        updateMinimumMaximum(base_demand_m3_per_h,
+                             this->node_base_demand_m3_per_h_minimum,
+                             this->node_base_demand_m3_per_h_maximum,
+                             node_base_demand_m3_per_h_initialized);
+    }
+
+    for (const HydraulicNodeReservoir &reservoir : this->network_hydraulic.nodes_reservoirs)
+    {
+        updateMinimumMaximum(reservoir.head_m,
+                             this->node_elevation_m_minimum,
+                             this->node_elevation_m_maximum,
+                             node_elevation_m_initialized);
+    }
+
+    for (const HydraulicNodeTank &tank : this->network_hydraulic.nodes_tanks)
+    {
+        updateMinimumMaximum(tank.bottom_elevation_m,
+                             this->node_elevation_m_minimum,
+                             this->node_elevation_m_maximum,
+                             node_elevation_m_initialized);
+    }
+
+    for (const HydraulicLinkPipe &pipe : this->network_hydraulic.links_pipes)
+    {
+        updateMinimumMaximum(pipe.diameter_mm,
+                             this->link_diameter_mm_minimum,
+                             this->link_diameter_mm_maximum,
+                             link_diameter_mm_initialized);
+        updateMinimumMaximum(pipe.length_measured_m.value_or(pipe.length_calculated_m),
+                             this->link_length_m_minimum,
+                             this->link_length_m_maximum,
+                             link_length_m_initialized);
+        updateMinimumMaximum(pipe.roughness_hw,
+                             this->link_roughness_hw_minimum,
+                             this->link_roughness_hw_maximum,
+                             link_roughness_hw_initialized);
+        updateMinimumMaximum(pipe.roughness_dw_mm,
+                             this->link_roughness_dw_mm_minimum,
+                             this->link_roughness_dw_mm_maximum,
+                             link_roughness_dw_mm_initialized);
+        updateMinimumMaximum(pipe.roughness_cm,
+                             this->link_roughness_cm_minimum,
+                             this->link_roughness_cm_maximum,
+                             link_roughness_cm_initialized);
+    }
+
+    this->heatmap_elevation_m_minimum = this->node_elevation_m_minimum;
+    this->heatmap_elevation_m_maximum = this->node_elevation_m_maximum;
+    this->heatmap_total_demand_m3_per_h_minimum = this->node_total_demand_m3_per_h_minimum;
+    this->heatmap_total_demand_m3_per_h_maximum = this->node_total_demand_m3_per_h_maximum;
+    this->heatmap_demand_deficit_m3_per_h_minimum = this->node_demand_deficit_m3_per_h_minimum;
+    this->heatmap_demand_deficit_m3_per_h_maximum = this->node_demand_deficit_m3_per_h_maximum;
+    this->heatmap_leakage_m3_per_h_minimum = this->node_leakage_m3_per_h_minimum;
+    this->heatmap_leakage_m3_per_h_maximum = this->node_leakage_m3_per_h_maximum;
+    this->heatmap_head_m_minimum = this->node_head_m_minimum;
+    this->heatmap_head_m_maximum = this->node_head_m_maximum;
+    this->heatmap_pressure_m_minimum = this->node_pressure_m_minimum;
+    this->heatmap_pressure_m_maximum = this->node_pressure_m_maximum;
+    this->heatmap_chlorine_mg_per_l_minimum = this->node_chlorine_mg_per_l_minimum;
+    this->heatmap_chlorine_mg_per_l_maximum = this->node_chlorine_mg_per_l_maximum;
+    this->heatmap_river_water_percent_minimum = this->node_river_water_percent_minimum;
+    this->heatmap_river_water_percent_maximum = this->node_river_water_percent_maximum;
+    this->heatmap_lake_water_percent_minimum = this->node_lake_water_percent_minimum;
+    this->heatmap_lake_water_percent_maximum = this->node_lake_water_percent_maximum;
+}
+
+double HydraulicData::nodeElevationMMinimum() const
+{
+    return this->node_elevation_m_minimum;
+}
+
+void HydraulicData::setNodeElevationMMinimum(double node_elevation_m_minimum)
+{
+    this->node_elevation_m_minimum = node_elevation_m_minimum;
+}
+
+double HydraulicData::nodeElevationMMaximum() const
+{
+    return this->node_elevation_m_maximum;
+}
+
+void HydraulicData::setNodeElevationMMaximum(double node_elevation_m_maximum)
+{
+    this->node_elevation_m_maximum = node_elevation_m_maximum;
+}
+
+double HydraulicData::nodeBaseDemandM3PerHMinimum() const
+{
+    return this->node_base_demand_m3_per_h_minimum;
+}
+
+void HydraulicData::setNodeBaseDemandM3PerHMinimum(double node_base_demand_m3_per_h_minimum)
+{
+    this->node_base_demand_m3_per_h_minimum = node_base_demand_m3_per_h_minimum;
+}
+
+double HydraulicData::nodeBaseDemandM3PerHMaximum() const
+{
+    return this->node_base_demand_m3_per_h_maximum;
+}
+
+void HydraulicData::setNodeBaseDemandM3PerHMaximum(double node_base_demand_m3_per_h_maximum)
+{
+    this->node_base_demand_m3_per_h_maximum = node_base_demand_m3_per_h_maximum;
+}
+
+double HydraulicData::nodeTotalDemandM3PerHMinimum() const
+{
+    return this->node_total_demand_m3_per_h_minimum;
+}
+
+void HydraulicData::setNodeTotalDemandM3PerHMinimum(double node_total_demand_m3_per_h_minimum)
+{
+    this->node_total_demand_m3_per_h_minimum = node_total_demand_m3_per_h_minimum;
+}
+
+double HydraulicData::nodeTotalDemandM3PerHMaximum() const
+{
+    return this->node_total_demand_m3_per_h_maximum;
+}
+
+void HydraulicData::setNodeTotalDemandM3PerHMaximum(double node_total_demand_m3_per_h_maximum)
+{
+    this->node_total_demand_m3_per_h_maximum = node_total_demand_m3_per_h_maximum;
+}
+
+double HydraulicData::nodeDemandDeficitM3PerHMinimum() const
+{
+    return this->node_demand_deficit_m3_per_h_minimum;
+}
+
+void HydraulicData::setNodeDemandDeficitM3PerHMinimum(double node_demand_deficit_m3_per_h_minimum)
+{
+    this->node_demand_deficit_m3_per_h_minimum = node_demand_deficit_m3_per_h_minimum;
+}
+
+double HydraulicData::nodeDemandDeficitM3PerHMaximum() const
+{
+    return this->node_demand_deficit_m3_per_h_maximum;
+}
+
+void HydraulicData::setNodeDemandDeficitM3PerHMaximum(double node_demand_deficit_m3_per_h_maximum)
+{
+    this->node_demand_deficit_m3_per_h_maximum = node_demand_deficit_m3_per_h_maximum;
+}
+
+double HydraulicData::nodeEmitterFlowM3PerHMinimum() const
+{
+    return this->node_emitter_flow_m3_per_h_minimum;
+}
+
+void HydraulicData::setNodeEmitterFlowM3PerHMinimum(double node_emitter_flow_m3_per_h_minimum)
+{
+    this->node_emitter_flow_m3_per_h_minimum = node_emitter_flow_m3_per_h_minimum;
+}
+
+double HydraulicData::nodeEmitterFlowM3PerHMaximum() const
+{
+    return this->node_emitter_flow_m3_per_h_maximum;
+}
+
+void HydraulicData::setNodeEmitterFlowM3PerHMaximum(double node_emitter_flow_m3_per_h_maximum)
+{
+    this->node_emitter_flow_m3_per_h_maximum = node_emitter_flow_m3_per_h_maximum;
+}
+
+double HydraulicData::nodeLeakageM3PerHMinimum() const
+{
+    return this->node_leakage_m3_per_h_minimum;
+}
+
+void HydraulicData::setNodeLeakageM3PerHMinimum(double node_leakage_m3_per_h_minimum)
+{
+    this->node_leakage_m3_per_h_minimum = node_leakage_m3_per_h_minimum;
+}
+
+double HydraulicData::nodeLeakageM3PerHMaximum() const
+{
+    return this->node_leakage_m3_per_h_maximum;
+}
+
+void HydraulicData::setNodeLeakageM3PerHMaximum(double node_leakage_m3_per_h_maximum)
+{
+    this->node_leakage_m3_per_h_maximum = node_leakage_m3_per_h_maximum;
+}
+
+double HydraulicData::nodeHeadMMinimum() const
+{
+    return this->node_head_m_minimum;
+}
+
+void HydraulicData::setNodeHeadMMinimum(double node_head_m_minimum)
+{
+    this->node_head_m_minimum = node_head_m_minimum;
+}
+
+double HydraulicData::nodeHeadMMaximum() const
+{
+    return this->node_head_m_maximum;
+}
+
+void HydraulicData::setNodeHeadMMaximum(double node_head_m_maximum)
+{
+    this->node_head_m_maximum = node_head_m_maximum;
+}
+
+double HydraulicData::nodePressureMMinimum() const
+{
+    return this->node_pressure_m_minimum;
+}
+
+void HydraulicData::setNodePressureMMinimum(double node_pressure_m_minimum)
+{
+    this->node_pressure_m_minimum = node_pressure_m_minimum;
+}
+
+double HydraulicData::nodePressureMMaximum() const
+{
+    return this->node_pressure_m_maximum;
+}
+
+void HydraulicData::setNodePressureMMaximum(double node_pressure_m_maximum)
+{
+    this->node_pressure_m_maximum = node_pressure_m_maximum;
+}
+
+double HydraulicData::nodeChlorineMgPerLMinimum() const
+{
+    return this->node_chlorine_mg_per_l_minimum;
+}
+
+void HydraulicData::setNodeChlorineMgPerLMinimum(double node_chlorine_mg_per_l_minimum)
+{
+    this->node_chlorine_mg_per_l_minimum = node_chlorine_mg_per_l_minimum;
+}
+
+double HydraulicData::nodeChlorineMgPerLMaximum() const
+{
+    return this->node_chlorine_mg_per_l_maximum;
+}
+
+void HydraulicData::setNodeChlorineMgPerLMaximum(double node_chlorine_mg_per_l_maximum)
+{
+    this->node_chlorine_mg_per_l_maximum = node_chlorine_mg_per_l_maximum;
+}
+
+double HydraulicData::nodeRiverWaterPercentMinimum() const
+{
+    return this->node_river_water_percent_minimum;
+}
+
+void HydraulicData::setNodeRiverWaterPercentMinimum(double node_river_water_percent_minimum)
+{
+    this->node_river_water_percent_minimum = node_river_water_percent_minimum;
+}
+
+double HydraulicData::nodeRiverWaterPercentMaximum() const
+{
+    return this->node_river_water_percent_maximum;
+}
+
+void HydraulicData::setNodeRiverWaterPercentMaximum(double node_river_water_percent_maximum)
+{
+    this->node_river_water_percent_maximum = node_river_water_percent_maximum;
+}
+
+double HydraulicData::nodeLakeWaterPercentMinimum() const
+{
+    return this->node_lake_water_percent_minimum;
+}
+
+void HydraulicData::setNodeLakeWaterPercentMinimum(double node_lake_water_percent_minimum)
+{
+    this->node_lake_water_percent_minimum = node_lake_water_percent_minimum;
+}
+
+double HydraulicData::nodeLakeWaterPercentMaximum() const
+{
+    return this->node_lake_water_percent_maximum;
+}
+
+void HydraulicData::setNodeLakeWaterPercentMaximum(double node_lake_water_percent_maximum)
+{
+    this->node_lake_water_percent_maximum = node_lake_water_percent_maximum;
+}
+
+double HydraulicData::linkDiameterMmMinimum() const
+{
+    return this->link_diameter_mm_minimum;
+}
+
+void HydraulicData::setLinkDiameterMmMinimum(double link_diameter_mm_minimum)
+{
+    this->link_diameter_mm_minimum = link_diameter_mm_minimum;
+}
+
+double HydraulicData::linkDiameterMmMaximum() const
+{
+    return this->link_diameter_mm_maximum;
+}
+
+void HydraulicData::setLinkDiameterMmMaximum(double link_diameter_mm_maximum)
+{
+    this->link_diameter_mm_maximum = link_diameter_mm_maximum;
+}
+
+double HydraulicData::linkLengthMMinimum() const
+{
+    return this->link_length_m_minimum;
+}
+
+void HydraulicData::setLinkLengthMMinimum(double link_length_m_minimum)
+{
+    this->link_length_m_minimum = link_length_m_minimum;
+}
+
+double HydraulicData::linkLengthMMaximum() const
+{
+    return this->link_length_m_maximum;
+}
+
+void HydraulicData::setLinkLengthMMaximum(double link_length_m_maximum)
+{
+    this->link_length_m_maximum = link_length_m_maximum;
+}
+
+double HydraulicData::linkRoughnessHwMinimum() const
+{
+    return this->link_roughness_hw_minimum;
+}
+
+void HydraulicData::setLinkRoughnessHwMinimum(double link_roughness_hw_minimum)
+{
+    this->link_roughness_hw_minimum = link_roughness_hw_minimum;
+}
+
+double HydraulicData::linkRoughnessHwMaximum() const
+{
+    return this->link_roughness_hw_maximum;
+}
+
+void HydraulicData::setLinkRoughnessHwMaximum(double link_roughness_hw_maximum)
+{
+    this->link_roughness_hw_maximum = link_roughness_hw_maximum;
+}
+
+double HydraulicData::linkRoughnessDwMmMinimum() const
+{
+    return this->link_roughness_dw_mm_minimum;
+}
+
+void HydraulicData::setLinkRoughnessDwMmMinimum(double link_roughness_dw_mm_minimum)
+{
+    this->link_roughness_dw_mm_minimum = link_roughness_dw_mm_minimum;
+}
+
+double HydraulicData::linkRoughnessDwMmMaximum() const
+{
+    return this->link_roughness_dw_mm_maximum;
+}
+
+void HydraulicData::setLinkRoughnessDwMmMaximum(double link_roughness_dw_mm_maximum)
+{
+    this->link_roughness_dw_mm_maximum = link_roughness_dw_mm_maximum;
+}
+
+double HydraulicData::linkRoughnessCmMinimum() const
+{
+    return this->link_roughness_cm_minimum;
+}
+
+void HydraulicData::setLinkRoughnessCmMinimum(double link_roughness_cm_minimum)
+{
+    this->link_roughness_cm_minimum = link_roughness_cm_minimum;
+}
+
+double HydraulicData::linkRoughnessCmMaximum() const
+{
+    return this->link_roughness_cm_maximum;
+}
+
+void HydraulicData::setLinkRoughnessCmMaximum(double link_roughness_cm_maximum)
+{
+    this->link_roughness_cm_maximum = link_roughness_cm_maximum;
+}
+
+double HydraulicData::linkFlowRateM3PerHMinimum() const
+{
+    return this->link_flow_rate_m3_per_h_minimum;
+}
+
+void HydraulicData::setLinkFlowRateM3PerHMinimum(double link_flow_rate_m3_per_h_minimum)
+{
+    this->link_flow_rate_m3_per_h_minimum = link_flow_rate_m3_per_h_minimum;
+}
+
+double HydraulicData::linkFlowRateM3PerHMaximum() const
+{
+    return this->link_flow_rate_m3_per_h_maximum;
+}
+
+void HydraulicData::setLinkFlowRateM3PerHMaximum(double link_flow_rate_m3_per_h_maximum)
+{
+    this->link_flow_rate_m3_per_h_maximum = link_flow_rate_m3_per_h_maximum;
+}
+
+double HydraulicData::linkVelocityMPerSMinimum() const
+{
+    return this->link_velocity_m_per_s_minimum;
+}
+
+void HydraulicData::setLinkVelocityMPerSMinimum(double link_velocity_m_per_s_minimum)
+{
+    this->link_velocity_m_per_s_minimum = link_velocity_m_per_s_minimum;
+}
+
+double HydraulicData::linkVelocityMPerSMaximum() const
+{
+    return this->link_velocity_m_per_s_maximum;
+}
+
+void HydraulicData::setLinkVelocityMPerSMaximum(double link_velocity_m_per_s_maximum)
+{
+    this->link_velocity_m_per_s_maximum = link_velocity_m_per_s_maximum;
+}
+
+double HydraulicData::linkHeadLossMMinimum() const
+{
+    return this->link_head_loss_m_minimum;
+}
+
+void HydraulicData::setLinkHeadLossMMinimum(double link_head_loss_m_minimum)
+{
+    this->link_head_loss_m_minimum = link_head_loss_m_minimum;
+}
+
+double HydraulicData::linkHeadLossMMaximum() const
+{
+    return this->link_head_loss_m_maximum;
+}
+
+void HydraulicData::setLinkHeadLossMMaximum(double link_head_loss_m_maximum)
+{
+    this->link_head_loss_m_maximum = link_head_loss_m_maximum;
+}
+
+double HydraulicData::linkLeakageM3PerHMinimum() const
+{
+    return this->link_leakage_m3_per_h_minimum;
+}
+
+void HydraulicData::setLinkLeakageM3PerHMinimum(double link_leakage_m3_per_h_minimum)
+{
+    this->link_leakage_m3_per_h_minimum = link_leakage_m3_per_h_minimum;
+}
+
+double HydraulicData::linkLeakageM3PerHMaximum() const
+{
+    return this->link_leakage_m3_per_h_maximum;
+}
+
+void HydraulicData::setLinkLeakageM3PerHMaximum(double link_leakage_m3_per_h_maximum)
+{
+    this->link_leakage_m3_per_h_maximum = link_leakage_m3_per_h_maximum;
+}
+
+double HydraulicData::linkChlorineMgPerLMinimum() const
+{
+    return this->link_chlorine_mg_per_l_minimum;
+}
+
+void HydraulicData::setLinkChlorineMgPerLMinimum(double link_chlorine_mg_per_l_minimum)
+{
+    this->link_chlorine_mg_per_l_minimum = link_chlorine_mg_per_l_minimum;
+}
+
+double HydraulicData::linkChlorineMgPerLMaximum() const
+{
+    return this->link_chlorine_mg_per_l_maximum;
+}
+
+void HydraulicData::setLinkChlorineMgPerLMaximum(double link_chlorine_mg_per_l_maximum)
+{
+    this->link_chlorine_mg_per_l_maximum = link_chlorine_mg_per_l_maximum;
+}
+
+double HydraulicData::linkRiverWaterPercentMinimum() const
+{
+    return this->link_river_water_percent_minimum;
+}
+
+void HydraulicData::setLinkRiverWaterPercentMinimum(double link_river_water_percent_minimum)
+{
+    this->link_river_water_percent_minimum = link_river_water_percent_minimum;
+}
+
+double HydraulicData::linkRiverWaterPercentMaximum() const
+{
+    return this->link_river_water_percent_maximum;
+}
+
+void HydraulicData::setLinkRiverWaterPercentMaximum(double link_river_water_percent_maximum)
+{
+    this->link_river_water_percent_maximum = link_river_water_percent_maximum;
+}
+
+double HydraulicData::linkLakeWaterPercentMinimum() const
+{
+    return this->link_lake_water_percent_minimum;
+}
+
+void HydraulicData::setLinkLakeWaterPercentMinimum(double link_lake_water_percent_minimum)
+{
+    this->link_lake_water_percent_minimum = link_lake_water_percent_minimum;
+}
+
+double HydraulicData::linkLakeWaterPercentMaximum() const
+{
+    return this->link_lake_water_percent_maximum;
+}
+
+void HydraulicData::setLinkLakeWaterPercentMaximum(double link_lake_water_percent_maximum)
+{
+    this->link_lake_water_percent_maximum = link_lake_water_percent_maximum;
+}
+
+double HydraulicData::heatmapElevationMMinimum() const
+{
+    return this->heatmap_elevation_m_minimum;
+}
+
+void HydraulicData::setHeatmapElevationMMinimum(double heatmap_elevation_m_minimum)
+{
+    this->heatmap_elevation_m_minimum = heatmap_elevation_m_minimum;
+}
+
+double HydraulicData::heatmapElevationMMaximum() const
+{
+    return this->heatmap_elevation_m_maximum;
+}
+
+void HydraulicData::setHeatmapElevationMMaximum(double heatmap_elevation_m_maximum)
+{
+    this->heatmap_elevation_m_maximum = heatmap_elevation_m_maximum;
+}
+
+double HydraulicData::heatmapTotalDemandM3PerHMinimum() const
+{
+    return this->heatmap_total_demand_m3_per_h_minimum;
+}
+
+void HydraulicData::setHeatmapTotalDemandM3PerHMinimum(double heatmap_total_demand_m3_per_h_minimum)
+{
+    this->heatmap_total_demand_m3_per_h_minimum = heatmap_total_demand_m3_per_h_minimum;
+}
+
+double HydraulicData::heatmapTotalDemandM3PerHMaximum() const
+{
+    return this->heatmap_total_demand_m3_per_h_maximum;
+}
+
+void HydraulicData::setHeatmapTotalDemandM3PerHMaximum(double heatmap_total_demand_m3_per_h_maximum)
+{
+    this->heatmap_total_demand_m3_per_h_maximum = heatmap_total_demand_m3_per_h_maximum;
+}
+
+double HydraulicData::heatmapDemandDeficitM3PerHMinimum() const
+{
+    return this->heatmap_demand_deficit_m3_per_h_minimum;
+}
+
+void HydraulicData::setHeatmapDemandDeficitM3PerHMinimum(double heatmap_demand_deficit_m3_per_h_minimum)
+{
+    this->heatmap_demand_deficit_m3_per_h_minimum = heatmap_demand_deficit_m3_per_h_minimum;
+}
+
+double HydraulicData::heatmapDemandDeficitM3PerHMaximum() const
+{
+    return this->heatmap_demand_deficit_m3_per_h_maximum;
+}
+
+void HydraulicData::setHeatmapDemandDeficitM3PerHMaximum(double heatmap_demand_deficit_m3_per_h_maximum)
+{
+    this->heatmap_demand_deficit_m3_per_h_maximum = heatmap_demand_deficit_m3_per_h_maximum;
+}
+
+double HydraulicData::heatmapLeakageM3PerHMinimum() const
+{
+    return this->heatmap_leakage_m3_per_h_minimum;
+}
+
+void HydraulicData::setHeatmapLeakageM3PerHMinimum(double heatmap_leakage_m3_per_h_minimum)
+{
+    this->heatmap_leakage_m3_per_h_minimum = heatmap_leakage_m3_per_h_minimum;
+}
+
+double HydraulicData::heatmapLeakageM3PerHMaximum() const
+{
+    return this->heatmap_leakage_m3_per_h_maximum;
+}
+
+void HydraulicData::setHeatmapLeakageM3PerHMaximum(double heatmap_leakage_m3_per_h_maximum)
+{
+    this->heatmap_leakage_m3_per_h_maximum = heatmap_leakage_m3_per_h_maximum;
+}
+
+double HydraulicData::heatmapHeadMMinimum() const
+{
+    return this->heatmap_head_m_minimum;
+}
+
+void HydraulicData::setHeatmapHeadMMinimum(double heatmap_head_m_minimum)
+{
+    this->heatmap_head_m_minimum = heatmap_head_m_minimum;
+}
+
+double HydraulicData::heatmapHeadMMaximum() const
+{
+    return this->heatmap_head_m_maximum;
+}
+
+void HydraulicData::setHeatmapHeadMMaximum(double heatmap_head_m_maximum)
+{
+    this->heatmap_head_m_maximum = heatmap_head_m_maximum;
+}
+
+double HydraulicData::heatmapPressureMMinimum() const
+{
+    return this->heatmap_pressure_m_minimum;
+}
+
+void HydraulicData::setHeatmapPressureMMinimum(double heatmap_pressure_m_minimum)
+{
+    this->heatmap_pressure_m_minimum = heatmap_pressure_m_minimum;
+}
+
+double HydraulicData::heatmapPressureMMaximum() const
+{
+    return this->heatmap_pressure_m_maximum;
+}
+
+void HydraulicData::setHeatmapPressureMMaximum(double heatmap_pressure_m_maximum)
+{
+    this->heatmap_pressure_m_maximum = heatmap_pressure_m_maximum;
+}
+
+double HydraulicData::heatmapChlorineMgPerLMinimum() const
+{
+    return this->heatmap_chlorine_mg_per_l_minimum;
+}
+
+void HydraulicData::setHeatmapChlorineMgPerLMinimum(double heatmap_chlorine_mg_per_l_minimum)
+{
+    this->heatmap_chlorine_mg_per_l_minimum = heatmap_chlorine_mg_per_l_minimum;
+}
+
+double HydraulicData::heatmapChlorineMgPerLMaximum() const
+{
+    return this->heatmap_chlorine_mg_per_l_maximum;
+}
+
+void HydraulicData::setHeatmapChlorineMgPerLMaximum(double heatmap_chlorine_mg_per_l_maximum)
+{
+    this->heatmap_chlorine_mg_per_l_maximum = heatmap_chlorine_mg_per_l_maximum;
+}
+
+double HydraulicData::heatmapRiverWaterPercentMinimum() const
+{
+    return this->heatmap_river_water_percent_minimum;
+}
+
+void HydraulicData::setHeatmapRiverWaterPercentMinimum(double heatmap_river_water_percent_minimum)
+{
+    this->heatmap_river_water_percent_minimum = heatmap_river_water_percent_minimum;
+}
+
+double HydraulicData::heatmapRiverWaterPercentMaximum() const
+{
+    return this->heatmap_river_water_percent_maximum;
+}
+
+void HydraulicData::setHeatmapRiverWaterPercentMaximum(double heatmap_river_water_percent_maximum)
+{
+    this->heatmap_river_water_percent_maximum = heatmap_river_water_percent_maximum;
+}
+
+double HydraulicData::heatmapLakeWaterPercentMinimum() const
+{
+    return this->heatmap_lake_water_percent_minimum;
+}
+
+void HydraulicData::setHeatmapLakeWaterPercentMinimum(double heatmap_lake_water_percent_minimum)
+{
+    this->heatmap_lake_water_percent_minimum = heatmap_lake_water_percent_minimum;
+}
+
+double HydraulicData::heatmapLakeWaterPercentMaximum() const
+{
+    return this->heatmap_lake_water_percent_maximum;
+}
+
+void HydraulicData::setHeatmapLakeWaterPercentMaximum(double heatmap_lake_water_percent_maximum)
+{
+    this->heatmap_lake_water_percent_maximum = heatmap_lake_water_percent_maximum;
 }
 
 std::optional<HydraulicNodeJunction> HydraulicData::junction(const QUuid &uuid) const
