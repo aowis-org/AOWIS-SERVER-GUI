@@ -18,6 +18,7 @@ class EntityMapLegendDock : public QDockWidget
     Q_OBJECT
 public:
     explicit EntityMapLegendDock(HydraulicData *hydraulic_data, QWidget *parent = nullptr);
+    int dockHeightPreferred() const;
 
 public slots:
     void showMapLegendNode(VisualNode visual_node);
@@ -25,8 +26,12 @@ public slots:
     void showMapLegendHeatmap(VisualHeatmap visual_heatmap);
     void setMapMonitorActive(bool active);
 
+signals:
+    void signalDockHeightPreferredChanged(int height);
+
 private:
     HydraulicData *hydraulic_data = nullptr;
+    QWidget *content = nullptr;
     QVBoxLayout *layout = nullptr;
 
     VisualNode visual_node = VisualNode::None;
@@ -41,6 +46,7 @@ private:
     MapSymbologyRampWidget *legend_node = nullptr;
     MapSymbologyRampWidget *legend_link = nullptr;
     MapSymbologyRampWidget *legend_heat = nullptr;
+    int dock_height_preferred = 0;
 
     void setVisibility();
     void addGroupNode();
@@ -49,6 +55,8 @@ private:
     void updateNodeLegend();
     void updateLinkLegend();
     void updateHeatmapLegend();
+    void scheduleDockHeightUpdate();
+    void updateDockHeight();
 };
 
 #endif // ENTITY_MAP_LEGEND_DOCK_H

@@ -70,10 +70,22 @@ MainWindow::MainWindow(QWidget *parent)
         connect(dock, &QDockWidget::visibilityChanged, this, [this, dock](bool visible)
         {
             onRightDockVisibilityChanged(dock, visible);
-            if (visible)
-                scheduleMapEditorGuideDockResize();
+            scheduleRightDockResize();
+        });
+        connect(dock, &QDockWidget::topLevelChanged, this, [this](bool)
+        {
+            scheduleRightDockResize();
+        });
+        connect(dock, &QDockWidget::dockLocationChanged, this, [this](Qt::DockWidgetArea)
+        {
+            scheduleRightDockResize();
         });
     }
+
+    connect(this->dock_entity_map_legend, &EntityMapLegendDock::signalDockHeightPreferredChanged, this, [this](int)
+    {
+        scheduleRightDockResize();
+    });
 
     QShortcut *shortcut_toggle_right_docks = new QShortcut(QKeySequence(Qt::Key_Tab), this);
     shortcut_toggle_right_docks->setContext(Qt::WindowShortcut);
@@ -82,6 +94,7 @@ MainWindow::MainWindow(QWidget *parent)
     
     this->dock_entity_map_legend->setVisible(false);
     this->dock_map_editor_guide->setVisible(false);
+    scheduleRightDockResize();
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendLink, this, [this](VisualLink visual_link)
     {
         if (visual_link != VisualLink::None && this->right_dock_area_hidden && this->tabs->currentWidget() == this->map_monitor)
@@ -372,6 +385,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 {
     QMainWindow::resizeEvent(event);
     this->updateTabSpacer();
+    scheduleRightDockResize();
 }
 
 void MainWindow::updateTabSpacer()
@@ -513,6 +527,7 @@ void MainWindow::toggleRightDockArea()
     }
 
     this->right_dock_visibility.clear();
+    scheduleRightDockResize();
 }
 
 void MainWindow::showEntityInspectorForMapSelection()
@@ -526,6 +541,7 @@ void MainWindow::showEntityInspectorForMapSelection()
 
     this->dock_entity_inspector->show();
     this->dock_entity_inspector->raise();
+    scheduleRightDockResize();
 }
 
 void MainWindow::hideRightDock(QDockWidget *dock)
@@ -554,57 +570,86 @@ void MainWindow::onRightDockVisibilityChanged(QDockWidget *dock, bool visible)
     hideRightDock(dock);
 }
 
-void MainWindow::scheduleMapEditorGuideDockResize()
+void MainWindow::scheduleRightDockResize()
 {
-    if (this->map_editor_guide_resize_pending)
+    if (this->right_dock_resize_pending)
         return;
 
-    this->map_editor_guide_resize_pending = true;
+    this->right_dock_resize_pending = true;
     QTimer::singleShot(0, this, [this]
     {
-        this->map_editor_guide_resize_pending = false;
-        resizeMapEditorGuideDock();
+        this->right_dock_resize_pending = false;
+        resizeRightDocks();
     });
 }
 
-void MainWindow::resizeMapEditorGuideDock()
+void MainWindow::resizeRightDocks()
 {
-    if (this->right_dock_area_hidden || !this->dock_map_editor_guide->isVisible() || this->dock_map_editor_guide->isFloating() ||
-        dockWidgetArea(this->dock_map_editor_guide) != Qt::RightDockWidgetArea)
-    {
-        return;
-    }
-
-    QList<QDockWidget *> other_docks;
-    const QList<QDockWidget *> docks = findChildren<QDockWidget *>(QString(), Qt::FindDirectChildrenOnly);
-    for (QDockWidget *dock : docks)
-    {
-        if (dock == this->dock_map_editor_guide || !dock->isVisible() || dock->isFloating() ||
-            dockWidgetArea(dock) != Qt::RightDockWidgetArea)
-        {
-            continue;
-        }
-
-        other_docks.append(dock);
-    }
-
-    if (other_docks.isEmpty())
+    if (this->right_dock_area_hidden)
         return;
 
     const int available_height = this->centralWidget() != nullptr ? this->centralWidget()->height() : this->height();
     if (available_height <= 0)
         return;
 
-    const int guide_height = qMax(1, available_height / 4);
-    const int other_height = qMax(1, (available_height - guide_height) / other_docks.size());
+    const bool inspector_visible = this->dock_entity_inspector->isVisible() && !this->dock_entity_inspector->isFloating() &&
+                                   dockWidgetArea(this->dock_entity_inspector) == Qt::RightDockWidgetArea;
+    const bool legend_visible = this->dock_entity_map_legend->isVisible() && !this->dock_entity_map_legend->isFloating() &&
+                                dockWidgetArea(this->dock_entity_map_legend) == Qt::RightDockWidgetArea;
+    const bool guide_visible = this->dock_map_editor_guide->isVisible() && !this->dock_map_editor_guide->isFloating() &&
+                               dockWidgetArea(this->dock_map_editor_guide) == Qt::RightDockWidgetArea;
 
-    QList<QDockWidget *> docks_to_resize{this->dock_map_editor_guide};
-    QList<int> dock_heights{guide_height};
-    for (QDockWidget *dock : other_docks)
+    const int visible_count = static_cast<int>(inspector_visible) + static_cast<int>(legend_visible) + static_cast<int>(guide_visible);
+    if (visible_count == 0)
+        return;
+
+    int height_remaining = available_height;
+    int height_legend = 0;
+    int height_guide = 0;
+    int height_inspector = 0;
+
+    if (legend_visible)
     {
-        docks_to_resize.append(dock);
-        dock_heights.append(other_height);
+        const int height_reserved_for_other_docks = qMax(0, visible_count - 1);
+        height_legend = qBound(1, this->dock_entity_map_legend->dockHeightPreferred(), qMax(1, available_height - height_reserved_for_other_docks));
+        height_remaining = qMax(0, height_remaining - height_legend);
     }
+
+    if (guide_visible)
+    {
+        if (inspector_visible)
+            height_guide = qMax(1, height_remaining / 4);
+        else
+            height_guide = qMax(1, height_remaining);
+
+        height_remaining = qMax(0, height_remaining - height_guide);
+    }
+
+    if (inspector_visible)
+        height_inspector = qMax(1, height_remaining);
+
+    QList<QDockWidget *> docks_to_resize;
+    QList<int> dock_heights;
+    if (inspector_visible)
+    {
+        docks_to_resize.append(this->dock_entity_inspector);
+        dock_heights.append(height_inspector);
+    }
+
+    if (legend_visible)
+    {
+        docks_to_resize.append(this->dock_entity_map_legend);
+        dock_heights.append(height_legend);
+    }
+
+    if (guide_visible)
+    {
+        docks_to_resize.append(this->dock_map_editor_guide);
+        dock_heights.append(height_guide);
+    }
+
+    if (docks_to_resize.size() < 2)
+        return;
 
     resizeDocks(docks_to_resize, dock_heights, Qt::Vertical);
 }
