@@ -5,6 +5,11 @@
     const REFERENCE_ZOOM = 18;
     const NETWORK_COLOR = "#b000ff";
     const NETWORK_IMAGE_PADDING = 8;
+    const NETWORK_IMAGE_OVERSCAN_FACTOR = 3;
+    const NETWORK_IMAGE_MAX_DIMENSION = 4096;
+    const NETWORK_IMAGE_MAX_AREA = 8 * 1024 * 1024;
+    const NETWORK_IMAGE_REBUILD_EDGE = 256;
+    const MAX_SPATIAL_QUERY_CELLS = 4096;
     const LINK_HIT_DISTANCE = 7;
     const SPATIAL_CELL_SIZE = 128;
     const ENTITY_JUNCTION = 1;
@@ -51,10 +56,17 @@
         imageZoom: null,
         imageOffsetX: 0,
         imageOffsetY: 0,
+        imageWidth: 0,
+        imageHeight: 0,
+        imageBounds: null,
         pendingImage: null,
         pendingImageObjectUrl: null,
         pendingImageZoom: null,
+        pendingImageWidth: 0,
+        pendingImageHeight: 0,
+        pendingImageBounds: null,
         imageGeneration: 0,
+        imageFrameRequest: 0,
         unsubscribeView: null,
         geometryOriginX: 0,
         geometryOriginY: 0,
@@ -62,12 +74,10 @@
         geometryMinimumY: 0,
         geometryMaximumX: 0,
         geometryMaximumY: 0,
-        linkPathData: "",
         iconSymbols: "",
         geometryReady: false,
         width: 0,
         height: 0,
-        snapshot: null,
         lastMapView: null,
         markers: [],
         deviceSegments: [],
@@ -209,6 +219,12 @@
             URL.revokeObjectURL(objectUrl);
     }
 
+    function clearScheduledImage() {
+        if (state.imageFrameRequest !== 0)
+            window.cancelAnimationFrame(state.imageFrameRequest);
+        state.imageFrameRequest = 0;
+    }
+
     function clearPendingImage() {
         ++state.imageGeneration;
         if (state.pendingImage)
@@ -217,6 +233,9 @@
         state.pendingImage = null;
         state.pendingImageObjectUrl = null;
         state.pendingImageZoom = null;
+        state.pendingImageWidth = 0;
+        state.pendingImageHeight = 0;
+        state.pendingImageBounds = null;
     }
 
     function clearRenderedImage() {
@@ -228,9 +247,13 @@
         state.imageZoom = null;
         state.imageOffsetX = 0;
         state.imageOffsetY = 0;
+        state.imageWidth = 0;
+        state.imageHeight = 0;
+        state.imageBounds = null;
     }
 
     function clearNetworkImage() {
+        clearScheduledImage();
         clearPendingImage();
         clearRenderedImage();
     }
@@ -280,42 +303,233 @@
             handleMapViewChanged(state.lastMapView);
     }
 
-    function networkImageSpecification(zoom) {
-        const scale = scaleForZoom(zoom);
-        const markerPadding = Math.ceil(markerSizeForZoom(zoom) / 2 + NETWORK_IMAGE_PADDING);
-        const minimumLocalX = state.geometryMinimumX - state.geometryOriginX;
-        const minimumLocalY = state.geometryMinimumY - state.geometryOriginY;
-        const maximumLocalX = state.geometryMaximumX - state.geometryOriginX;
-        const maximumLocalY = state.geometryMaximumY - state.geometryOriginY;
-        const scaledWidth = Math.max(0, (maximumLocalX - minimumLocalX) * scale);
-        const scaledHeight = Math.max(0, (maximumLocalY - minimumLocalY) * scale);
-        const width = Math.max(1, Math.ceil(scaledWidth + markerPadding * 2));
-        const height = Math.max(1, Math.ceil(scaledHeight + markerPadding * 2));
-        const translateX = markerPadding - minimumLocalX * scale;
-        const translateY = markerPadding - minimumLocalY * scale;
-        const markerElements = [];
-        for (const marker of state.markers) {
-            const centerX = translateX + (marker.x - state.geometryOriginX) * scale;
-            const centerY = translateY + (marker.y - state.geometryOriginY) * scale;
-            if (marker.entityType === ENTITY_JUNCTION) {
-                markerElements.push(
-                    `<circle cx="${formatted(centerX)}" cy="${formatted(centerY)}" r="${formatted(junctionDotDiameterForZoom(zoom) / 2)}" fill="${NETWORK_COLOR}"/>`);
-                continue;
+    function boundedImageDimensions(mapView) {
+        const viewportArea = Math.max(1, mapView.width * mapView.height);
+        const maximumFactor = Math.min(
+            NETWORK_IMAGE_OVERSCAN_FACTOR,
+            NETWORK_IMAGE_MAX_DIMENSION / Math.max(1, mapView.width),
+            NETWORK_IMAGE_MAX_DIMENSION / Math.max(1, mapView.height),
+            Math.sqrt(NETWORK_IMAGE_MAX_AREA / viewportArea));
+        const factor = Math.max(1, maximumFactor);
+        return {
+            width: Math.max(1, Math.floor(mapView.width * factor)),
+            height: Math.max(1, Math.floor(mapView.height * factor))
+        };
+    }
+
+    function mapViewWorldBounds(mapView, paddingX, paddingY) {
+        const transform = worldTransform(mapView);
+        const horizontalPadding = Math.max(0, paddingX || 0);
+        const verticalPadding = Math.max(0, paddingY || 0);
+        return {
+            minimumX: state.geometryOriginX
+                + (-horizontalPadding - transform.translateX) / transform.scale,
+            minimumY: state.geometryOriginY
+                + (-verticalPadding - transform.translateY) / transform.scale,
+            maximumX: state.geometryOriginX
+                + (mapView.width + horizontalPadding - transform.translateX) / transform.scale,
+            maximumY: state.geometryOriginY
+                + (mapView.height + verticalPadding - transform.translateY) / transform.scale
+        };
+    }
+
+    function expandedBounds(bounds, amount) {
+        return {
+            minimumX: bounds.minimumX - amount,
+            minimumY: bounds.minimumY - amount,
+            maximumX: bounds.maximumX + amount,
+            maximumY: bounds.maximumY + amount
+        };
+    }
+
+    function intersectBounds(first, second) {
+        const result = {
+            minimumX: Math.max(first.minimumX, second.minimumX),
+            minimumY: Math.max(first.minimumY, second.minimumY),
+            maximumX: Math.min(first.maximumX, second.maximumX),
+            maximumY: Math.min(first.maximumY, second.maximumY)
+        };
+        if (result.minimumX >= result.maximumX || result.minimumY >= result.maximumY)
+            return null;
+        return result;
+    }
+
+    function boundsContain(outerBounds, innerBounds) {
+        return Boolean(outerBounds && innerBounds
+            && innerBounds.minimumX >= outerBounds.minimumX
+            && innerBounds.minimumY >= outerBounds.minimumY
+            && innerBounds.maximumX <= outerBounds.maximumX
+            && innerBounds.maximumY <= outerBounds.maximumY);
+    }
+
+    function imageBoundsCoverMapView(bounds, width, height, mapView) {
+        if (!bounds)
+            return false;
+
+        const horizontalOverscan = Math.max(0, (width - mapView.width) / 2);
+        const verticalOverscan = Math.max(0, (height - mapView.height) / 2);
+        const horizontalSafety = Math.min(
+            NETWORK_IMAGE_REBUILD_EDGE, horizontalOverscan / 2);
+        const verticalSafety = Math.min(
+            NETWORK_IMAGE_REBUILD_EDGE, verticalOverscan / 2);
+        return boundsContain(bounds, mapViewWorldBounds(
+            mapView, horizontalSafety, verticalSafety));
+    }
+
+    function collectionForSpatialQuery(collectionName) {
+        if (collectionName === "markers")
+            return state.markers;
+        if (collectionName === "deviceSegments")
+            return state.deviceSegments;
+        return state.pipeSegments;
+    }
+
+    function indicesInWorldBounds(bounds, collectionName) {
+        const minimumCellX = spatialCellCoordinate(bounds.minimumX);
+        const maximumCellX = spatialCellCoordinate(bounds.maximumX);
+        const minimumCellY = spatialCellCoordinate(bounds.minimumY);
+        const maximumCellY = spatialCellCoordinate(bounds.maximumY);
+        const cellCount = (maximumCellX - minimumCellX + 1)
+            * (maximumCellY - minimumCellY + 1);
+        const result = new Set();
+
+        if (cellCount > MAX_SPATIAL_QUERY_CELLS) {
+            const collection = collectionForSpatialQuery(collectionName);
+            for (let index = 0; index < collection.length; ++index)
+                result.add(index);
+        } else {
+            for (let cellY = minimumCellY; cellY <= maximumCellY; ++cellY) {
+                for (let cellX = minimumCellX; cellX <= maximumCellX; ++cellX) {
+                    const cell = state.spatialCells.get(spatialCellKey(cellX, cellY));
+                    if (!cell)
+                        continue;
+                    for (const index of cell[collectionName])
+                        result.add(index);
+                }
             }
-
-            const definition = ICON_DEFINITIONS.get(marker.entityType);
-            if (!definition)
-                continue;
-
-            const bounds = markerScreenBounds(marker.entityType, zoom);
-            markerElements.push(
-                `<use href="#${definition.symbolId}" x="${formatted(centerX - bounds.width / 2)}" y="${formatted(centerY - bounds.height / 2)}" width="${formatted(bounds.width)}" height="${formatted(bounds.height)}"/>`);
         }
+
+        if (collectionName === "deviceSegments") {
+            for (const index of state.globalDeviceSegments)
+                result.add(index);
+        } else if (collectionName === "pipeSegments") {
+            for (const index of state.globalPipeSegments)
+                result.add(index);
+        }
+        return result;
+    }
+
+    function segmentIntersectsBounds(segment, bounds) {
+        return Math.max(segment.x1, segment.x2) >= bounds.minimumX
+            && Math.min(segment.x1, segment.x2) <= bounds.maximumX
+            && Math.max(segment.y1, segment.y2) >= bounds.minimumY
+            && Math.min(segment.y1, segment.y2) <= bounds.maximumY;
+    }
+
+    function markerIntersectsBounds(marker, bounds, zoom, scale) {
+        const markerBounds = markerScreenBounds(marker.entityType, zoom);
+        const halfWidth = markerBounds.width / (2 * scale);
+        const halfHeight = markerBounds.height / (2 * scale);
+        return marker.x + halfWidth >= bounds.minimumX
+            && marker.x - halfWidth <= bounds.maximumX
+            && marker.y + halfHeight >= bounds.minimumY
+            && marker.y - halfHeight <= bounds.maximumY;
+    }
+
+    function visibleLinkPathData(bounds) {
+        const pathCommands = [];
+        for (const collectionName of ["pipeSegments", "deviceSegments"]) {
+            const segments = collectionForSpatialQuery(collectionName);
+            for (const index of indicesInWorldBounds(bounds, collectionName)) {
+                const segment = segments[index];
+                if (!segmentIntersectsBounds(segment, bounds))
+                    continue;
+                pathCommands.push(
+                    "M", formatted(segment.x1 - state.geometryOriginX), " ",
+                    formatted(segment.y1 - state.geometryOriginY),
+                    "L", formatted(segment.x2 - state.geometryOriginX), " ",
+                    formatted(segment.y2 - state.geometryOriginY));
+            }
+        }
+        return pathCommands.join("");
+    }
+
+    function networkImageSpecification(mapView) {
+        const zoom = mapView.zoom;
+        const scale = scaleForZoom(zoom);
+        const cacheDimensions = boundedImageDimensions(mapView);
+        const transform = worldTransform(mapView);
+        const centerX = state.geometryOriginX
+            + (mapView.width / 2 - transform.translateX) / scale;
+        const centerY = state.geometryOriginY
+            + (mapView.height / 2 - transform.translateY) / scale;
+        const cacheBounds = {
+            minimumX: centerX - cacheDimensions.width / (2 * scale),
+            minimumY: centerY - cacheDimensions.height / (2 * scale),
+            maximumX: centerX + cacheDimensions.width / (2 * scale),
+            maximumY: centerY + cacheDimensions.height / (2 * scale)
+        };
+        const geometryPadding = (markerSizeForZoom(zoom) / 2
+            + NETWORK_IMAGE_PADDING) / scale;
+        const geometryBounds = expandedBounds({
+            minimumX: state.geometryMinimumX,
+            minimumY: state.geometryMinimumY,
+            maximumX: state.geometryMaximumX,
+            maximumY: state.geometryMaximumY
+        }, geometryPadding);
+        const visibleBounds = intersectBounds(cacheBounds, geometryBounds);
+        const renderBounds = visibleBounds || {
+            minimumX: cacheBounds.minimumX,
+            minimumY: cacheBounds.minimumY,
+            maximumX: cacheBounds.minimumX + 1 / scale,
+            maximumY: cacheBounds.minimumY + 1 / scale
+        };
+        const width = visibleBounds ? Math.min(cacheDimensions.width, Math.max(1,
+            Math.ceil((renderBounds.maximumX - renderBounds.minimumX) * scale))) : 1;
+        const height = visibleBounds ? Math.min(cacheDimensions.height, Math.max(1,
+            Math.ceil((renderBounds.maximumY - renderBounds.minimumY) * scale))) : 1;
+        const offsetX = (renderBounds.minimumX - state.geometryOriginX) * scale;
+        const offsetY = (renderBounds.minimumY - state.geometryOriginY) * scale;
+        const translateX = -offsetX;
+        const translateY = -offsetY;
+        const markerElements = [];
+        if (visibleBounds) {
+            const markerQueryPadding = markerSizeForZoom(zoom) / (2 * scale)
+                + NETWORK_IMAGE_PADDING / scale;
+            const markerQueryBounds = expandedBounds(renderBounds, markerQueryPadding);
+            for (const index of indicesInWorldBounds(markerQueryBounds, "markers")) {
+                const marker = state.markers[index];
+                if (!markerIntersectsBounds(marker, renderBounds, zoom, scale))
+                    continue;
+
+                const centerMarkerX = translateX
+                    + (marker.x - state.geometryOriginX) * scale;
+                const centerMarkerY = translateY
+                    + (marker.y - state.geometryOriginY) * scale;
+                if (marker.entityType === ENTITY_JUNCTION) {
+                    markerElements.push(
+                        `<circle cx="${formatted(centerMarkerX)}" cy="${formatted(centerMarkerY)}" r="${formatted(junctionDotDiameterForZoom(zoom) / 2)}" fill="${NETWORK_COLOR}"/>`);
+                    continue;
+                }
+
+                const definition = ICON_DEFINITIONS.get(marker.entityType);
+                if (!definition)
+                    continue;
+
+                const markerBounds = markerScreenBounds(marker.entityType, zoom);
+                markerElements.push(
+                    `<use href="#${definition.symbolId}" x="${formatted(centerMarkerX - markerBounds.width / 2)}" y="${formatted(centerMarkerY - markerBounds.height / 2)}" width="${formatted(markerBounds.width)}" height="${formatted(markerBounds.height)}"/>`);
+            }
+        }
+
+        const linkBounds = visibleBounds
+            ? expandedBounds(renderBounds, (3 + NETWORK_IMAGE_PADDING) / scale) : null;
+        const linkPathData = linkBounds ? visibleLinkPathData(linkBounds) : "";
         const svg = [
             `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
             `<defs>${state.iconSymbols}</defs>`,
             `<g transform="translate(${formatted(translateX)} ${formatted(translateY)}) scale(${formatted(scale)})">`,
-            `<path fill="none" stroke="${NETWORK_COLOR}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="${state.linkPathData}"/>`,
+            `<path fill="none" stroke="${NETWORK_COLOR}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="${linkPathData}"/>`,
             "</g>",
             markerElements.join(""),
             "</svg>"
@@ -324,8 +538,11 @@
             svg: svg,
             width: width,
             height: height,
-            offsetX: minimumLocalX * scale - markerPadding,
-            offsetY: minimumLocalY * scale - markerPadding
+            cacheWidth: cacheDimensions.width,
+            cacheHeight: cacheDimensions.height,
+            bounds: cacheBounds,
+            offsetX: offsetX,
+            offsetY: offsetY
         };
     }
 
@@ -357,17 +574,40 @@
         state.image.style.display = shouldDisplayNetwork(mapView) ? "block" : "none";
     }
 
-    function requestNetworkImage(zoom) {
-        if (!state.layer || !state.geometryReady)
+    function renderedImageCoversMapView(mapView) {
+        return Boolean(state.image && state.imageZoom === mapView.zoom
+            && imageBoundsCoverMapView(
+                state.imageBounds, state.imageWidth, state.imageHeight, mapView));
+    }
+
+    function pendingImageCoversMapView(mapView) {
+        if (!state.pendingImage || state.pendingImageZoom !== mapView.zoom
+            || !state.pendingImageBounds) {
+            return false;
+        }
+
+        const horizontalOverscan = Math.max(
+            0, (state.pendingImageWidth - mapView.width) / 2);
+        const verticalOverscan = Math.max(
+            0, (state.pendingImageHeight - mapView.height) / 2);
+        const horizontalSafety = Math.min(
+            NETWORK_IMAGE_REBUILD_EDGE, horizontalOverscan / 2);
+        const verticalSafety = Math.min(
+            NETWORK_IMAGE_REBUILD_EDGE, verticalOverscan / 2);
+        return boundsContain(state.pendingImageBounds, mapViewWorldBounds(
+            mapView, horizontalSafety, verticalSafety));
+    }
+
+    function requestNetworkImage(mapView) {
+        if (!state.layer || !state.geometryReady || !shouldDisplayNetwork(mapView))
             return;
-        if (state.image && state.imageZoom === zoom)
-            return;
-        if (state.pendingImage && state.pendingImageZoom === zoom)
+        if (renderedImageCoversMapView(mapView) || pendingImageCoversMapView(mapView))
             return;
 
         clearPendingImage();
         const generation = state.imageGeneration;
-        const specification = networkImageSpecification(zoom);
+        const specification = networkImageSpecification(mapView);
+        const zoom = mapView.zoom;
         const objectUrl = URL.createObjectURL(
             new Blob([specification.svg], { type: "image/svg+xml" }));
         const image = document.createElement("img");
@@ -383,22 +623,27 @@
         image.style.display = "none";
         image.style.pointerEvents = "none";
         image.style.transformOrigin = "0 0";
-        image.style.willChange = "transform";
-        image.style.backfaceVisibility = "hidden";
 
         state.pendingImage = image;
         state.pendingImageObjectUrl = objectUrl;
         state.pendingImageZoom = zoom;
+        state.pendingImageWidth = specification.cacheWidth;
+        state.pendingImageHeight = specification.cacheHeight;
+        state.pendingImageBounds = specification.bounds;
 
         image.addEventListener("load", () => {
             if (generation !== state.imageGeneration || state.pendingImage !== image) {
                 revokeObjectUrl(objectUrl);
                 return;
             }
-            if (!state.lastMapView || state.lastMapView.zoom !== zoom) {
+            if (!state.lastMapView || state.lastMapView.zoom !== zoom
+                || !shouldDisplayNetwork(state.lastMapView)) {
                 state.pendingImage = null;
                 state.pendingImageObjectUrl = null;
                 state.pendingImageZoom = null;
+                state.pendingImageWidth = 0;
+                state.pendingImageHeight = 0;
+                state.pendingImageBounds = null;
                 revokeObjectUrl(objectUrl);
                 return;
             }
@@ -407,14 +652,21 @@
             state.pendingImage = null;
             state.pendingImageObjectUrl = null;
             state.pendingImageZoom = null;
+            state.pendingImageWidth = 0;
+            state.pendingImageHeight = 0;
+            state.pendingImageBounds = null;
             state.image = image;
             state.imageObjectUrl = objectUrl;
             state.imageZoom = zoom;
             state.imageOffsetX = specification.offsetX;
             state.imageOffsetY = specification.offsetY;
+            state.imageWidth = specification.cacheWidth;
+            state.imageHeight = specification.cacheHeight;
+            state.imageBounds = specification.bounds;
             state.layer.appendChild(image);
-            if (state.lastMapView)
-                positionNetworkImage(state.lastMapView);
+            positionNetworkImage(state.lastMapView);
+            if (!renderedImageCoversMapView(state.lastMapView))
+                scheduleNetworkImage();
         }, { once: true });
 
         image.addEventListener("error", () => {
@@ -422,12 +674,28 @@
                 state.pendingImage = null;
                 state.pendingImageObjectUrl = null;
                 state.pendingImageZoom = null;
+                state.pendingImageWidth = 0;
+                state.pendingImageHeight = 0;
+                state.pendingImageBounds = null;
             }
             revokeObjectUrl(objectUrl);
             console.error("Failed to rasterize AOWIS browser network SVG");
         }, { once: true });
 
         image.src = objectUrl;
+    }
+
+    function scheduleNetworkImage() {
+        if (state.imageFrameRequest !== 0)
+            return;
+
+        state.imageFrameRequest = window.requestAnimationFrame(() => {
+            state.imageFrameRequest = 0;
+            const mapView = state.lastMapView;
+            if (!mapView || !shouldDisplayNetwork(mapView))
+                return;
+            requestNetworkImage(mapView);
+        });
     }
 
     function validCoordinate(coordinate) {
@@ -471,7 +739,7 @@
         const maximumCellY = spatialCellCoordinate(Math.max(segment.y1, segment.y2));
         const cellCount = (maximumCellX - minimumCellX + 1)
             * (maximumCellY - minimumCellY + 1);
-        if (cellCount > 4096) {
+        if (cellCount > MAX_SPATIAL_QUERY_CELLS) {
             const globalCollection = collectionName === "deviceSegments"
                 ? state.globalDeviceSegments : state.globalPipeSegments;
             globalCollection.push(segmentIndex);
@@ -529,9 +797,7 @@
 
     function buildGeometry(snapshot) {
         clearNetworkImage();
-        const projectedNodes = [];
         const nodesByRenderId = new Map();
-        const projectedLinks = [];
         let anchorX = null;
         let minimumX = Number.POSITIVE_INFINITY;
         let minimumY = Number.POSITIVE_INFINITY;
@@ -573,7 +839,6 @@
                 x: x,
                 y: y
             };
-            projectedNodes.push(projectedNode);
             nodesByRenderId.set(projectedNode.renderId, projectedNode);
             state.markers.push(projectedNode);
             includePoint(x, y);
@@ -610,8 +875,6 @@
                 entityType: Number(link[1]),
                 vertices: vertices
             };
-            projectedLinks.push(projectedLink);
-
             const segmentCollection = projectedLink.entityType === ENTITY_PIPE
                 ? state.pipeSegments : state.deviceSegments;
             for (let index = 1; index < vertices.length; ++index) {
@@ -643,7 +906,6 @@
             state.geometryMinimumY = 0;
             state.geometryMaximumX = 0;
             state.geometryMaximumY = 0;
-            state.linkPathData = "";
             state.geometryReady = false;
             return;
         }
@@ -655,21 +917,8 @@
         state.geometryMaximumX = maximumX;
         state.geometryMaximumY = maximumY;
 
-        const linkCommands = [];
-        for (const link of projectedLinks) {
-            const vertices = link.vertices;
-            linkCommands.push(
-                "M", formatted(vertices[0].x - state.geometryOriginX), " ",
-                formatted(vertices[0].y - state.geometryOriginY));
-            for (let index = 1; index < vertices.length; ++index) {
-                linkCommands.push(
-                    "L", formatted(vertices[index].x - state.geometryOriginX), " ",
-                    formatted(vertices[index].y - state.geometryOriginY));
-            }
-        }
-
-        state.linkPathData = linkCommands.join("");
-        state.geometryReady = projectedNodes.length > 0 || projectedLinks.length > 0;
+        state.geometryReady = state.markers.length > 0
+            || state.pipeSegments.length > 0 || state.deviceSegments.length > 0;
         rebuildSpatialIndex();
     }
 
@@ -713,16 +962,18 @@
         if (!state.geometryReady)
             return;
 
-        if (!state.image || state.imageZoom !== mapView.zoom) {
-            if (state.image)
-                state.image.style.display = "none";
-            requestNetworkImage(mapView.zoom);
-            return;
-        }
-
         if (state.pendingImage && state.pendingImageZoom !== mapView.zoom)
             clearPendingImage();
-        positionNetworkImage(mapView);
+
+        if (state.image && state.imageZoom === mapView.zoom)
+            positionNetworkImage(mapView);
+        else if (state.image)
+            state.image.style.display = "none";
+
+        if (!renderedImageCoversMapView(mapView)
+            && !pendingImageCoversMapView(mapView)) {
+            scheduleNetworkImage();
+        }
     }
 
     function initialize() {
@@ -973,7 +1224,6 @@
             throw new TypeError("Invalid AOWIS browser network snapshot");
 
         clearHoverCursor();
-        state.snapshot = snapshot;
         buildGeometry(snapshot);
         if (state.lastMapView)
             handleMapViewChanged(state.lastMapView);
@@ -1021,12 +1271,10 @@
         state.geometryMinimumY = 0;
         state.geometryMaximumX = 0;
         state.geometryMaximumY = 0;
-        state.linkPathData = "";
         state.iconSymbols = "";
         state.geometryReady = false;
         state.width = 0;
         state.height = 0;
-        state.snapshot = null;
         state.lastMapView = null;
         state.markers = [];
         state.deviceSegments = [];
