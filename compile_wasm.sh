@@ -18,6 +18,9 @@ cp tools/qt-emscripten/aowis-browser-map.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-network.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-map-editor.js build-wasm/
 
+rm -rf build-wasm/svg
+cp -r tools/qt-emscripten/svg build-wasm/
+
 rm -rf build-wasm/map-editor-icons
 mkdir -p build-wasm/map-editor-icons
 cp assets/iconsets/gothic/junction.png build-wasm/map-editor-icons/
@@ -48,5 +51,6 @@ fi
 
 cp build-wasm/*.js build-wasm/*.wasm build-wasm/*.html build-wasm/favicon.ico build-wasm/aowis.png build-wasm/index.html build-wasm-dist 2>/dev/null || true
 cp -r build-wasm/map-editor-icons build-wasm-dist/
+cp -r build-wasm/svg build-wasm-dist/
 
 echo "=== WASM build finished ==="

@@ -7,9 +7,42 @@
     const NETWORK_IMAGE_PADDING = 8;
     const LINK_HIT_DISTANCE = 7;
     const SPATIAL_CELL_SIZE = 128;
+    const ENTITY_JUNCTION = 1;
+    const ENTITY_RESERVOIR = 2;
+    const ENTITY_TANK = 3;
     const ENTITY_PIPE = 4;
     const ENTITY_PUMP = 5;
     const ENTITY_VALVE = 6;
+    const ICON_DEFINITIONS = new Map([
+        [ENTITY_RESERVOIR, {
+            file: "svg/reservoir.svg",
+            symbolId: "aowis-network-reservoir",
+            viewWidth: 186,
+            viewHeight: 138,
+            hitShape: "rectangle"
+        }],
+        [ENTITY_TANK, {
+            file: "svg/tank.svg",
+            symbolId: "aowis-network-tank",
+            viewWidth: 138,
+            viewHeight: 183,
+            hitShape: "rectangle"
+        }],
+        [ENTITY_PUMP, {
+            file: "svg/pump.svg",
+            symbolId: "aowis-network-pump",
+            viewWidth: 126,
+            viewHeight: 110,
+            hitShape: "rectangle"
+        }],
+        [ENTITY_VALVE, {
+            file: "svg/valve.svg",
+            symbolId: "aowis-network-valve",
+            viewWidth: 138,
+            viewHeight: 138,
+            hitShape: "ellipse"
+        }]
+    ]);
 
     const state = {
         layer: null,
@@ -30,7 +63,7 @@
         geometryMaximumX: 0,
         geometryMaximumY: 0,
         linkPathData: "",
-        nodePathData: "",
+        iconSymbols: "",
         geometryReady: false,
         width: 0,
         height: 0,
@@ -93,14 +126,39 @@
         return Math.pow(2, zoom - REFERENCE_ZOOM);
     }
 
-    function markerWidthForZoom(zoom) {
-        if (zoom === 19)
-            return 40;
-        if (zoom === 18)
-            return 30;
-        if (zoom === 17)
-            return 20;
-        return 10;
+    function markerSizeForZoom(zoom) {
+        return Math.max(10, Math.min(40, 10 + (zoom - 16) * 10));
+    }
+
+    function junctionDotDiameterForZoom(zoom) {
+        return Math.max(8, Math.min(12, markerSizeForZoom(zoom) * 0.3));
+    }
+
+    function markerScreenBounds(entityType, zoom) {
+        const markerSize = markerSizeForZoom(zoom);
+        if (entityType === ENTITY_JUNCTION) {
+            return {
+                width: markerSize,
+                height: markerSize,
+                hitShape: "ellipse"
+            };
+        }
+
+        const definition = ICON_DEFINITIONS.get(entityType);
+        if (!definition) {
+            return {
+                width: markerSize,
+                height: markerSize,
+                hitShape: "ellipse"
+            };
+        }
+
+        const maximumViewDimension = Math.max(definition.viewWidth, definition.viewHeight);
+        return {
+            width: markerSize * definition.viewWidth / maximumViewDimension,
+            height: markerSize * definition.viewHeight / maximumViewDimension,
+            hitShape: definition.hitShape
+        };
     }
 
     function worldSize(zoom) {
@@ -177,31 +235,97 @@
         clearRenderedImage();
     }
 
+    function iconGeometryElements(svgElement) {
+        const supportedElements = new Set([
+            "circle", "ellipse", "g", "line", "path", "polygon", "polyline", "rect", "text"
+        ]);
+        const serializer = new XMLSerializer();
+        const result = [];
+        for (const child of svgElement.children) {
+            if (supportedElements.has(child.localName))
+                result.push(serializer.serializeToString(child));
+        }
+        return result.join("");
+    }
+
+    async function loadIconSymbol(definition) {
+        try {
+            const response = await fetch(definition.file, { cache: "force-cache" });
+            if (!response.ok)
+                throw new Error(`HTTP ${response.status}`);
+
+            const documentSvg = new DOMParser().parseFromString(
+                await response.text(), "image/svg+xml");
+            if (documentSvg.querySelector("parsererror"))
+                throw new Error("invalid SVG");
+
+            const svgElement = documentSvg.documentElement;
+            const geometry = iconGeometryElements(svgElement);
+            if (!geometry)
+                throw new Error("SVG contains no supported geometry");
+
+            return `<symbol id="${definition.symbolId}" viewBox="0 0 ${definition.viewWidth} ${definition.viewHeight}" fill="none">${geometry}</symbol>`;
+        } catch (error) {
+            console.error(`Failed to load AOWIS network icon ${definition.file}:`, error);
+            return "";
+        }
+    }
+
+    async function loadIconSymbols() {
+        const symbols = await Promise.all(Array.from(ICON_DEFINITIONS.values()).map(
+            definition => loadIconSymbol(definition)));
+        state.iconSymbols = symbols.join("");
+        clearNetworkImage();
+        if (state.lastMapView)
+            handleMapViewChanged(state.lastMapView);
+    }
+
     function networkImageSpecification(zoom) {
         const scale = scaleForZoom(zoom);
+        const markerPadding = Math.ceil(markerSizeForZoom(zoom) / 2 + NETWORK_IMAGE_PADDING);
         const minimumLocalX = state.geometryMinimumX - state.geometryOriginX;
         const minimumLocalY = state.geometryMinimumY - state.geometryOriginY;
         const maximumLocalX = state.geometryMaximumX - state.geometryOriginX;
         const maximumLocalY = state.geometryMaximumY - state.geometryOriginY;
         const scaledWidth = Math.max(0, (maximumLocalX - minimumLocalX) * scale);
         const scaledHeight = Math.max(0, (maximumLocalY - minimumLocalY) * scale);
-        const width = Math.max(1, Math.ceil(scaledWidth + NETWORK_IMAGE_PADDING * 2));
-        const height = Math.max(1, Math.ceil(scaledHeight + NETWORK_IMAGE_PADDING * 2));
-        const translateX = NETWORK_IMAGE_PADDING - minimumLocalX * scale;
-        const translateY = NETWORK_IMAGE_PADDING - minimumLocalY * scale;
+        const width = Math.max(1, Math.ceil(scaledWidth + markerPadding * 2));
+        const height = Math.max(1, Math.ceil(scaledHeight + markerPadding * 2));
+        const translateX = markerPadding - minimumLocalX * scale;
+        const translateY = markerPadding - minimumLocalY * scale;
+        const markerElements = [];
+        for (const marker of state.markers) {
+            const centerX = translateX + (marker.x - state.geometryOriginX) * scale;
+            const centerY = translateY + (marker.y - state.geometryOriginY) * scale;
+            if (marker.entityType === ENTITY_JUNCTION) {
+                markerElements.push(
+                    `<circle cx="${formatted(centerX)}" cy="${formatted(centerY)}" r="${formatted(junctionDotDiameterForZoom(zoom) / 2)}" fill="${NETWORK_COLOR}"/>`);
+                continue;
+            }
+
+            const definition = ICON_DEFINITIONS.get(marker.entityType);
+            if (!definition)
+                continue;
+
+            const bounds = markerScreenBounds(marker.entityType, zoom);
+            markerElements.push(
+                `<use href="#${definition.symbolId}" x="${formatted(centerX - bounds.width / 2)}" y="${formatted(centerY - bounds.height / 2)}" width="${formatted(bounds.width)}" height="${formatted(bounds.height)}"/>`);
+        }
         const svg = [
             `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+            `<defs>${state.iconSymbols}</defs>`,
             `<g transform="translate(${formatted(translateX)} ${formatted(translateY)}) scale(${formatted(scale)})">`,
             `<path fill="none" stroke="${NETWORK_COLOR}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="${state.linkPathData}"/>`,
-            `<path fill="none" stroke="${NETWORK_COLOR}" stroke-width="8" stroke-linecap="round" vector-effect="non-scaling-stroke" d="${state.nodePathData}"/>`,
-            "</g></svg>"
+            "</g>",
+            markerElements.join(""),
+            "</svg>"
         ].join("");
         return {
             svg: svg,
             width: width,
             height: height,
-            offsetX: minimumLocalX * scale - NETWORK_IMAGE_PADDING,
-            offsetY: minimumLocalY * scale - NETWORK_IMAGE_PADDING
+            offsetX: minimumLocalX * scale - markerPadding,
+            offsetY: minimumLocalY * scale - markerPadding
         };
     }
 
@@ -370,6 +494,39 @@
             addSegmentToSpatialIndex(index, "pipeSegments");
     }
 
+    function polylineMidpoint(vertices) {
+        let totalLength = 0;
+        const segmentLengths = [];
+        for (let index = 1; index < vertices.length; ++index) {
+            const deltaX = vertices[index].x - vertices[index - 1].x;
+            const deltaY = vertices[index].y - vertices[index - 1].y;
+            const length = Math.hypot(deltaX, deltaY);
+            segmentLengths.push(length);
+            totalLength += length;
+        }
+
+        if (totalLength <= 0)
+            return vertices[0];
+
+        const midpointDistance = totalLength / 2;
+        let traversed = 0;
+        for (let index = 0; index < segmentLengths.length; ++index) {
+            const segmentLength = segmentLengths[index];
+            if (traversed + segmentLength < midpointDistance) {
+                traversed += segmentLength;
+                continue;
+            }
+
+            const ratio = segmentLength > 0
+                ? (midpointDistance - traversed) / segmentLength : 0;
+            return {
+                x: vertices[index].x + (vertices[index + 1].x - vertices[index].x) * ratio,
+                y: vertices[index].y + (vertices[index + 1].y - vertices[index].y) * ratio
+            };
+        }
+        return vertices[vertices.length - 1];
+    }
+
     function buildGeometry(snapshot) {
         clearNetworkImage();
         const projectedNodes = [];
@@ -468,9 +625,8 @@
                 });
             }
 
-            if ((projectedLink.entityType === ENTITY_PUMP || projectedLink.entityType === ENTITY_VALVE)
-                && vertices.length >= 3) {
-                const center = vertices[Math.floor(vertices.length / 2)];
+            if (projectedLink.entityType === ENTITY_PUMP || projectedLink.entityType === ENTITY_VALVE) {
+                const center = polylineMidpoint(vertices);
                 state.markers.push({
                     renderId: projectedLink.renderId,
                     entityType: projectedLink.entityType,
@@ -488,7 +644,6 @@
             state.geometryMaximumX = 0;
             state.geometryMaximumY = 0;
             state.linkPathData = "";
-            state.nodePathData = "";
             state.geometryReady = false;
             return;
         }
@@ -513,15 +668,7 @@
             }
         }
 
-        const nodeCommands = [];
-        for (const node of projectedNodes) {
-            nodeCommands.push(
-                "M", formatted(node.x - state.geometryOriginX), " ",
-                formatted(node.y - state.geometryOriginY), "h0.001");
-        }
-
         state.linkPathData = linkCommands.join("");
-        state.nodePathData = nodeCommands.join("");
         state.geometryReady = projectedNodes.length > 0 || projectedLinks.length > 0;
         rebuildSpatialIndex();
     }
@@ -588,6 +735,7 @@
         window.addEventListener("pointermove", state.pointerMoveHandler, { capture: true, passive: true });
         window.addEventListener("pointerleave", state.pointerLeaveHandler, { capture: true, passive: true });
         window.addEventListener("blur", state.pointerLeaveHandler, { passive: true });
+        loadIconSymbols();
     }
 
     function pointToSegmentDistanceSquared(pointX, pointY, segment) {
@@ -643,8 +791,8 @@
         return result;
     }
 
-    function nearestMarkerHit(pointX, pointY, scale, markerHalfWidth) {
-        const worldTolerance = markerHalfWidth / scale;
+    function nearestMarkerHit(pointX, pointY, scale, zoom) {
+        const worldTolerance = markerSizeForZoom(zoom) / (2 * scale);
         const candidates = candidateIndices(pointX, pointY, worldTolerance, "markers");
         let bestHit = null;
         let bestDistanceSquared = Number.POSITIVE_INFINITY;
@@ -653,9 +801,17 @@
             const marker = state.markers[index];
             const deltaXScreen = (pointX - marker.x) * scale;
             const deltaYScreen = (pointY - marker.y) * scale;
-            if (Math.abs(deltaXScreen) > markerHalfWidth
-                || Math.abs(deltaYScreen) > markerHalfWidth) {
+            const bounds = markerScreenBounds(marker.entityType, zoom);
+            const halfWidth = bounds.width / 2;
+            const halfHeight = bounds.height / 2;
+            if (Math.abs(deltaXScreen) > halfWidth || Math.abs(deltaYScreen) > halfHeight)
                 continue;
+
+            if (bounds.hitShape === "ellipse") {
+                const normalizedX = deltaXScreen / halfWidth;
+                const normalizedY = deltaYScreen / halfHeight;
+                if (normalizedX * normalizedX + normalizedY * normalizedY > 1)
+                    continue;
             }
 
             const distanceSquared = deltaXScreen * deltaXScreen + deltaYScreen * deltaYScreen;
@@ -704,8 +860,7 @@
         const transform = worldTransform(mapView);
         const pointX = state.geometryOriginX + (screenX - transform.translateX) / transform.scale;
         const pointY = state.geometryOriginY + (screenY - transform.translateY) / transform.scale;
-        const markerHit = nearestMarkerHit(
-            pointX, pointY, transform.scale, markerWidthForZoom(mapView.zoom) / 2);
+        const markerHit = nearestMarkerHit(pointX, pointY, transform.scale, mapView.zoom);
         if (markerHit)
             return markerHit;
 
@@ -867,7 +1022,7 @@
         state.geometryMaximumX = 0;
         state.geometryMaximumY = 0;
         state.linkPathData = "";
-        state.nodePathData = "";
+        state.iconSymbols = "";
         state.geometryReady = false;
         state.width = 0;
         state.height = 0;
