@@ -62,8 +62,8 @@ void HydraulicData::onDatabaseReady()
     
     //this->network_hydraulic = DummyNetworks::networkSimple();
     //this->network_hydraulic = DummyNetworks::networkTanks();
-    //this->network_hydraulic = DummyMarburgNetworkGenerator::generate();
-    this->network_hydraulic = RandomHydraulicNetworkGenerator::generateFractal();
+    this->network_hydraulic = DummyMarburgNetworkGenerator::generateFractal();
+    //this->network_hydraulic = RandomHydraulicNetworkGenerator::generateFractal();
     markNetworkChanged(NetworkChange::Geometry);
     //this->network_hydraulic = DummyNetworks::networkOnMap();
     //this->network_hydraulic = DummyNetworks::networkTanksTimeline();

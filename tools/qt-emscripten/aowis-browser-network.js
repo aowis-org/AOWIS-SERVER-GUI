@@ -205,6 +205,10 @@
         return String(Math.round(value * 1000) / 1000);
     }
 
+    function formattedScale(value) {
+        return value.toFixed(15).replace(/0+$/, "").replace(/\.$/, "");
+    }
+
     function devicePixelRatio() {
         return Math.max(1, window.devicePixelRatio || 1);
     }
@@ -528,7 +532,7 @@
         const svg = [
             `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
             `<defs>${state.iconSymbols}</defs>`,
-            `<g transform="translate(${formatted(translateX)} ${formatted(translateY)}) scale(${formatted(scale)})">`,
+            `<g transform="translate(${formatted(translateX)} ${formatted(translateY)}) scale(${formattedScale(scale)})">`,
             `<path fill="none" stroke="${NETWORK_COLOR}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="${linkPathData}"/>`,
             "</g>",
             markerElements.join(""),
