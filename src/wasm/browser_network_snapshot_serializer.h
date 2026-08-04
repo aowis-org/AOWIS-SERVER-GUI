@@ -8,6 +8,7 @@
 class HydraulicData;
 struct NetworkRenderSnapshot;
 enum class VisualLink;
+enum class VisualHeatmap;
 enum class VisualNode;
 
 namespace BrowserNetworkSnapshotSerializer
@@ -18,7 +19,10 @@ QByteArray serializeGeometryPatch(const NetworkRenderSnapshot &snapshot,
                                   const QSet<QUuid> &link_uuids);
 QByteArray serializeSymbology(const HydraulicData &hydraulic_data,
                               VisualNode visual_node,
-                              VisualLink visual_link);
+                              VisualLink visual_link,
+                              VisualHeatmap visual_heatmap,
+                              int heatmap_opacity,
+                              int heatmap_radius);
 }
 
 #endif // BROWSER_NETWORK_SNAPSHOT_SERIALIZER_H

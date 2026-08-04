@@ -69,6 +69,8 @@ signals:
     void signalNodeVisualClicked(VisualNode visual_node);
     void signalLinkVisualClicked(VisualLink visual_link);
     void signalHeatmapVisualClicked(VisualHeatmap visual_heatmap);
+    void signalHeatmapOpacityChanged(int opacity);
+    void signalHeatmapRadiusChanged(int radius);
 };
 
 
@@ -105,6 +107,9 @@ private:
     int network_background_opacity = 0;
     VisualNode visual_node = VisualNode::None;
     VisualLink visual_link = VisualLink::None;
+    VisualHeatmap visual_heatmap = VisualHeatmap::None;
+    int heatmap_opacity = 55;
+    int heatmap_radius = 100;
 
     bool selectNetworkEntity(quint32 render_id, InfrastructureEntity entity_type);
     void setNetworkBackgroundOpacity(int opacity);

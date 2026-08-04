@@ -219,8 +219,28 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         scheduleWasmNetworkSymbologySync(false);
 #endif
     });
-    connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapVisualClicked,
-        this, &MapMonitorContainer::signalShowMapLegendHeatmap);
+    connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapVisualClicked, this, [this](VisualHeatmap visual_heatmap)
+    {
+        this->visual_heatmap = visual_heatmap;
+        emit signalShowMapLegendHeatmap(visual_heatmap);
+#ifdef Q_OS_WASM
+        scheduleWasmNetworkSymbologySync(false);
+#endif
+    });
+    connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapOpacityChanged, this, [this](int opacity)
+    {
+        this->heatmap_opacity = qBound(0, opacity, 100);
+#ifdef Q_OS_WASM
+        scheduleWasmNetworkSymbologySync(false);
+#endif
+    });
+    connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapRadiusChanged, this, [this](int radius)
+    {
+        this->heatmap_radius = qBound(10, radius, 500);
+#ifdef Q_OS_WASM
+        scheduleWasmNetworkSymbologySync(false);
+#endif
+    });
 }
 
 MapMonitorContainer::~MapMonitorContainer()
@@ -461,7 +481,8 @@ void MapMonitorContainer::syncWasmNetworkSymbology()
     }
 
     const QByteArray json = BrowserNetworkSnapshotSerializer::serializeSymbology(
-        *this->hydraulic_data, this->visual_node, this->visual_link);
+        *this->hydraulic_data, this->visual_node, this->visual_link,
+        this->visual_heatmap, this->heatmap_opacity, this->heatmap_radius);
     const int transferred = aowisBrowserNetworkSetSymbology(
         json.constData(), static_cast<int>(json.size()));
     if (transferred != 0)
@@ -700,6 +721,9 @@ void MapMonitorMenuWidget::addGroupHeatmapVisuals()
     connect_heatmap_visual(radio_chlorine, VisualHeatmap::Chlorine);
     connect_heatmap_visual(radio_river, VisualHeatmap::RiverWater);
     connect_heatmap_visual(radio_lake, VisualHeatmap::LakeWater);
+
+    connect(slider_opacity, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalHeatmapOpacityChanged);
+    connect(slider_radius, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalHeatmapRadiusChanged);
     
     vbox->addWidget(radio_none);
     vbox->addWidget(radio_elevation);

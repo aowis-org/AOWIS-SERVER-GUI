@@ -19,6 +19,9 @@
     const NETWORK_IMAGE_MAX_DIMENSION = 4096;
     const NETWORK_IMAGE_MAX_AREA = 8 * 1024 * 1024;
     const NETWORK_IMAGE_REBUILD_EDGE = 256;
+    const HEATMAP_MAX_DIMENSION = 2048;
+    const HEATMAP_MAX_AREA = 2 * 1024 * 1024;
+    const HEATMAP_MINIMUM_STRENGTH = 0.16;
     const MAX_SPATIAL_QUERY_CELLS = 4096;
     const LINK_HIT_DISTANCE = 7;
     const SPATIAL_CELL_SIZE = 128;
@@ -114,7 +117,21 @@
         linkVisual: 0,
         linkMinimum: 0,
         linkMaximum: 0,
-        linkValues: new Map()
+        linkValues: new Map(),
+        heatmapCanvas: null,
+        heatmapZoom: null,
+        heatmapOffsetX: 0,
+        heatmapOffsetY: 0,
+        heatmapWidth: 0,
+        heatmapHeight: 0,
+        heatmapBounds: null,
+        heatmapFrameRequest: 0,
+        heatmapVisual: 0,
+        heatmapMinimum: 0,
+        heatmapMaximum: 0,
+        heatmapValues: new Map(),
+        heatmapOpacity: 55,
+        heatmapRadius: 100
     };
 
     function applyBackground() {
@@ -231,7 +248,7 @@
         return Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, "0");
     }
 
-    function rampColor(fraction) {
+    function rampRgb(fraction) {
         const limitedFraction = Math.max(0, Math.min(1, Number(fraction) || 0));
         const scaled = limitedFraction * (RAMP_COLORS.length - 1);
         const leftIndex = Math.min(RAMP_COLORS.length - 1, Math.floor(scaled));
@@ -245,7 +262,16 @@
         const rightRed = Number.parseInt(right.slice(1, 3), 16);
         const rightGreen = Number.parseInt(right.slice(3, 5), 16);
         const rightBlue = Number.parseInt(right.slice(5, 7), 16);
-        return `#${hexadecimalByte(leftRed + (rightRed - leftRed) * ratio)}${hexadecimalByte(leftGreen + (rightGreen - leftGreen) * ratio)}${hexadecimalByte(leftBlue + (rightBlue - leftBlue) * ratio)}`;
+        return {
+            red: leftRed + (rightRed - leftRed) * ratio,
+            green: leftGreen + (rightGreen - leftGreen) * ratio,
+            blue: leftBlue + (rightBlue - leftBlue) * ratio
+        };
+    }
+
+    function rampColor(fraction) {
+        const color = rampRgb(fraction);
+        return `#${hexadecimalByte(color.red)}${hexadecimalByte(color.green)}${hexadecimalByte(color.blue)}`;
     }
 
     function valueColor(visual, values, renderId, minimum, maximum) {
@@ -334,6 +360,29 @@
         clearRenderedImage();
     }
 
+    function clearScheduledHeatmap() {
+        if (state.heatmapFrameRequest !== 0)
+            window.cancelAnimationFrame(state.heatmapFrameRequest);
+        state.heatmapFrameRequest = 0;
+    }
+
+    function clearRenderedHeatmap() {
+        if (state.heatmapCanvas)
+            state.heatmapCanvas.remove();
+        state.heatmapCanvas = null;
+        state.heatmapZoom = null;
+        state.heatmapOffsetX = 0;
+        state.heatmapOffsetY = 0;
+        state.heatmapWidth = 0;
+        state.heatmapHeight = 0;
+        state.heatmapBounds = null;
+    }
+
+    function clearHeatmap() {
+        clearScheduledHeatmap();
+        clearRenderedHeatmap();
+    }
+
     function iconGeometryElements(svgElement) {
         const supportedElements = new Set([
             "circle", "ellipse", "g", "line", "path", "polygon", "polyline", "rect", "text"
@@ -390,6 +439,20 @@
         return {
             width: Math.max(1, Math.floor(mapView.width * factor)),
             height: Math.max(1, Math.floor(mapView.height * factor))
+        };
+    }
+
+    function boundedHeatmapRasterDimensions(displayWidth, displayHeight) {
+        const displayArea = Math.max(1, displayWidth * displayHeight);
+        const factor = Math.min(
+            1,
+            HEATMAP_MAX_DIMENSION / Math.max(1, displayWidth),
+            HEATMAP_MAX_DIMENSION / Math.max(1, displayHeight),
+            Math.sqrt(HEATMAP_MAX_AREA / displayArea));
+        return {
+            width: Math.max(1, Math.floor(displayWidth * factor)),
+            height: Math.max(1, Math.floor(displayHeight * factor)),
+            scale: factor
         };
     }
 
@@ -713,6 +776,7 @@
         image.style.display = "none";
         image.style.pointerEvents = "none";
         image.style.transformOrigin = "0 0";
+        image.style.zIndex = "2";
 
         state.pendingImage = image;
         state.pendingImageObjectUrl = objectUrl;
@@ -785,6 +849,235 @@
             if (!mapView || !shouldDisplayNetwork(mapView))
                 return;
             requestNetworkImage(mapView);
+        });
+    }
+
+    function isNodeEntityType(entityType) {
+        return entityType === ENTITY_JUNCTION || entityType === ENTITY_RESERVOIR
+            || entityType === ENTITY_TANK;
+    }
+
+    function shouldDisplayHeatmap(mapView) {
+        return Boolean(ownsMapView(mapView) && mapView.visible && mapView.ready
+            && mapView.initialized && mapView.width > 0 && mapView.height > 0
+            && state.geometryReady && state.heatmapVisual !== 0
+            && state.heatmapValues.size > 0);
+    }
+
+    function applyHeatmapOpacity() {
+        if (!state.heatmapCanvas)
+            return;
+
+        state.heatmapCanvas.style.opacity = String(
+            Math.max(0, Math.min(100, state.heatmapOpacity)) / 100);
+    }
+
+    function heatmapSpecification(mapView) {
+        const zoom = mapView.zoom;
+        const scale = scaleForZoom(zoom);
+        const displayDimensions = boundedImageDimensions(mapView);
+        const rasterDimensions = boundedHeatmapRasterDimensions(
+            displayDimensions.width, displayDimensions.height);
+        const transform = worldTransform(mapView);
+        const centerX = state.geometryOriginX
+            + (mapView.width / 2 - transform.translateX) / scale;
+        const centerY = state.geometryOriginY
+            + (mapView.height / 2 - transform.translateY) / scale;
+        const bounds = {
+            minimumX: centerX - displayDimensions.width / (2 * scale),
+            minimumY: centerY - displayDimensions.height / (2 * scale),
+            maximumX: centerX + displayDimensions.width / (2 * scale),
+            maximumY: centerY + displayDimensions.height / (2 * scale)
+        };
+        return {
+            zoom: zoom,
+            scale: scale,
+            bounds: bounds,
+            displayWidth: displayDimensions.width,
+            displayHeight: displayDimensions.height,
+            rasterWidth: rasterDimensions.width,
+            rasterHeight: rasterDimensions.height,
+            rasterScale: rasterDimensions.scale,
+            offsetX: (bounds.minimumX - state.geometryOriginX) * scale,
+            offsetY: (bounds.minimumY - state.geometryOriginY) * scale
+        };
+    }
+
+    function heatmapValueFraction(value) {
+        if (!Number.isFinite(value) || !Number.isFinite(state.heatmapMinimum)
+            || !Number.isFinite(state.heatmapMaximum)) {
+            return null;
+        }
+        if (state.heatmapMinimum === state.heatmapMaximum)
+            return 0.5;
+        return Math.max(0, Math.min(1,
+            (value - state.heatmapMinimum)
+                / (state.heatmapMaximum - state.heatmapMinimum)));
+    }
+
+    function createHeatmapKernel(radius) {
+        const boundedRadius = Math.max(1, radius);
+        const diameter = Math.max(3, Math.ceil(boundedRadius * 2) + 2);
+        const center = diameter / 2;
+        const canvas = document.createElement("canvas");
+        canvas.width = diameter;
+        canvas.height = diameter;
+        const context = canvas.getContext("2d");
+        if (!context)
+            return null;
+
+        const gradient = context.createRadialGradient(
+            center, center, 0, center, center, boundedRadius);
+        gradient.addColorStop(0, "rgba(0, 0, 0, 1)");
+        gradient.addColorStop(0.42, "rgba(0, 0, 0, 0.72)");
+        gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+        context.fillStyle = gradient;
+        context.fillRect(0, 0, diameter, diameter);
+        return canvas;
+    }
+
+    function colorizeHeatmap(canvas) {
+        const context = canvas.getContext("2d");
+        if (!context)
+            return false;
+
+        const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+        const pixels = imageData.data;
+        for (let index = 0; index < pixels.length; index += 4) {
+            const accumulatedStrength = pixels[index + 3] / 255;
+            if (accumulatedStrength <= 0) {
+                pixels[index + 3] = 0;
+                continue;
+            }
+
+            const fraction = Math.max(0, Math.min(1,
+                (accumulatedStrength - HEATMAP_MINIMUM_STRENGTH)
+                    / (1 - HEATMAP_MINIMUM_STRENGTH)));
+            const color = rampRgb(fraction);
+            pixels[index] = Math.round(color.red);
+            pixels[index + 1] = Math.round(color.green);
+            pixels[index + 2] = Math.round(color.blue);
+            pixels[index + 3] = Math.round(255 * Math.min(
+                1, accumulatedStrength / HEATMAP_MINIMUM_STRENGTH));
+        }
+        context.putImageData(imageData, 0, 0);
+        return true;
+    }
+
+    function renderHeatmap(specification) {
+        const canvas = document.createElement("canvas");
+        canvas.width = specification.rasterWidth;
+        canvas.height = specification.rasterHeight;
+        const context = canvas.getContext("2d");
+        if (!context)
+            return null;
+
+        const radius = Math.max(1, state.heatmapRadius * specification.rasterScale);
+        const kernel = createHeatmapKernel(radius);
+        if (!kernel)
+            return null;
+
+        const queryPadding = state.heatmapRadius / specification.scale;
+        const queryBounds = expandedBounds(specification.bounds, queryPadding);
+        context.globalCompositeOperation = "lighter";
+        for (const index of indicesInWorldBounds(queryBounds, "markers")) {
+            const marker = state.markers[index];
+            if (!isNodeEntityType(marker.entityType)
+                || !state.heatmapValues.has(marker.renderId)) {
+                continue;
+            }
+
+            const fraction = heatmapValueFraction(
+                state.heatmapValues.get(marker.renderId));
+            if (fraction === null)
+                continue;
+
+            const x = (marker.x - specification.bounds.minimumX)
+                * specification.scale * specification.rasterScale;
+            const y = (marker.y - specification.bounds.minimumY)
+                * specification.scale * specification.rasterScale;
+            if (x + radius < 0 || y + radius < 0
+                || x - radius > specification.rasterWidth
+                || y - radius > specification.rasterHeight) {
+                continue;
+            }
+
+            context.globalAlpha = HEATMAP_MINIMUM_STRENGTH
+                + fraction * (1 - HEATMAP_MINIMUM_STRENGTH);
+            context.drawImage(kernel, x - kernel.width / 2, y - kernel.height / 2);
+        }
+        context.globalAlpha = 1;
+        context.globalCompositeOperation = "source-over";
+
+        if (!colorizeHeatmap(canvas))
+            return null;
+
+        canvas.setAttribute("aria-hidden", "true");
+        canvas.style.position = "absolute";
+        canvas.style.left = "0";
+        canvas.style.top = "0";
+        canvas.style.width = `${specification.displayWidth}px`;
+        canvas.style.height = `${specification.displayHeight}px`;
+        canvas.style.display = "none";
+        canvas.style.pointerEvents = "none";
+        canvas.style.transformOrigin = "0 0";
+        canvas.style.zIndex = "1";
+        canvas.style.imageRendering = "auto";
+        return canvas;
+    }
+
+    function positionHeatmap(mapView) {
+        if (!state.heatmapCanvas || state.heatmapZoom !== mapView.zoom)
+            return;
+
+        const transform = worldTransform(mapView);
+        const x = snapToPhysicalPixel(transform.translateX + state.heatmapOffsetX);
+        const y = snapToPhysicalPixel(transform.translateY + state.heatmapOffsetY);
+        state.heatmapCanvas.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+        state.heatmapCanvas.style.display = shouldDisplayHeatmap(mapView)
+            ? "block" : "none";
+        applyHeatmapOpacity();
+    }
+
+    function renderedHeatmapCoversMapView(mapView) {
+        return Boolean(state.heatmapCanvas && state.heatmapZoom === mapView.zoom
+            && imageBoundsCoverMapView(
+                state.heatmapBounds, state.heatmapWidth, state.heatmapHeight, mapView));
+    }
+
+    function requestHeatmap(mapView) {
+        if (!state.layer || !shouldDisplayHeatmap(mapView)
+            || renderedHeatmapCoversMapView(mapView)) {
+            return;
+        }
+
+        const specification = heatmapSpecification(mapView);
+        const canvas = renderHeatmap(specification);
+        if (!canvas)
+            return;
+
+        clearRenderedHeatmap();
+        state.heatmapCanvas = canvas;
+        state.heatmapZoom = specification.zoom;
+        state.heatmapOffsetX = specification.offsetX;
+        state.heatmapOffsetY = specification.offsetY;
+        state.heatmapWidth = specification.displayWidth;
+        state.heatmapHeight = specification.displayHeight;
+        state.heatmapBounds = specification.bounds;
+        state.layer.appendChild(canvas);
+        positionHeatmap(mapView);
+    }
+
+    function scheduleHeatmap() {
+        if (state.heatmapFrameRequest !== 0)
+            return;
+
+        state.heatmapFrameRequest = window.requestAnimationFrame(() => {
+            state.heatmapFrameRequest = 0;
+            const mapView = state.lastMapView;
+            if (!mapView || !shouldDisplayHeatmap(mapView))
+                return;
+            requestHeatmap(mapView);
         });
     }
 
@@ -887,6 +1180,7 @@
 
     function buildGeometry(snapshot) {
         clearNetworkImage();
+        clearHeatmap();
         const nodesByRenderId = new Map();
         let anchorX = null;
         let minimumX = Number.POSITIVE_INFINITY;
@@ -1055,10 +1349,20 @@
         if (state.pendingImage && state.pendingImageZoom !== mapView.zoom)
             clearPendingImage();
 
+        if (state.heatmapCanvas && state.heatmapZoom === mapView.zoom)
+            positionHeatmap(mapView);
+        else if (state.heatmapCanvas)
+            state.heatmapCanvas.style.display = "none";
+
         if (state.image && state.imageZoom === mapView.zoom)
             positionNetworkImage(mapView);
         else if (state.image)
             state.image.style.display = "none";
+
+        if (shouldDisplayHeatmap(mapView)
+            && !renderedHeatmapCoversMapView(mapView)) {
+            scheduleHeatmap();
+        }
 
         if (!renderedImageCoversMapView(mapView)
             && !pendingImageCoversMapView(mapView)) {
@@ -1335,20 +1639,73 @@
         return values;
     }
 
+    function symbologyValuesEqual(first, second) {
+        if (first.size !== second.size)
+            return false;
+        for (const [renderId, value] of first) {
+            if (!second.has(renderId) || second.get(renderId) !== value)
+                return false;
+        }
+        return true;
+    }
+
     function setSymbology(symbology) {
         if (!symbology)
             throw new TypeError("Invalid AOWIS browser network symbology");
 
-        state.nodeVisual = Number(symbology.nodeVisual) | 0;
-        state.nodeMinimum = Number(symbology.nodeMinimum);
-        state.nodeMaximum = Number(symbology.nodeMaximum);
-        state.nodeValues = symbologyValues(symbology.nodeValues);
-        state.linkVisual = Number(symbology.linkVisual) | 0;
-        state.linkMinimum = Number(symbology.linkMinimum);
-        state.linkMaximum = Number(symbology.linkMaximum);
-        state.linkValues = symbologyValues(symbology.linkValues);
+        const nodeVisual = Number(symbology.nodeVisual) | 0;
+        const nodeMinimum = Number(symbology.nodeMinimum);
+        const nodeMaximum = Number(symbology.nodeMaximum);
+        const nodeValues = symbologyValues(symbology.nodeValues);
+        const linkVisual = Number(symbology.linkVisual) | 0;
+        const linkMinimum = Number(symbology.linkMinimum);
+        const linkMaximum = Number(symbology.linkMaximum);
+        const linkValues = symbologyValues(symbology.linkValues);
+        const heatmapVisual = Number(symbology.heatmapVisual) | 0;
+        const heatmapMinimum = Number(symbology.heatmapMinimum);
+        const heatmapMaximum = Number(symbology.heatmapMaximum);
+        const heatmapValues = symbologyValues(symbology.heatmapValues);
+        const heatmapOpacity = Math.max(
+            0, Math.min(100, Number(symbology.heatmapOpacity) || 0));
+        const heatmapRadius = Math.max(
+            10, Math.min(500, Number(symbology.heatmapRadius) || 100));
 
-        clearNetworkImage();
+        const networkChanged = state.nodeVisual !== nodeVisual
+            || state.nodeMinimum !== nodeMinimum
+            || state.nodeMaximum !== nodeMaximum
+            || !symbologyValuesEqual(state.nodeValues, nodeValues)
+            || state.linkVisual !== linkVisual
+            || state.linkMinimum !== linkMinimum
+            || state.linkMaximum !== linkMaximum
+            || !symbologyValuesEqual(state.linkValues, linkValues);
+        const heatmapChanged = state.heatmapVisual !== heatmapVisual
+            || state.heatmapMinimum !== heatmapMinimum
+            || state.heatmapMaximum !== heatmapMaximum
+            || state.heatmapRadius !== heatmapRadius
+            || !symbologyValuesEqual(state.heatmapValues, heatmapValues);
+        const heatmapOpacityChanged = state.heatmapOpacity !== heatmapOpacity;
+
+        state.nodeVisual = nodeVisual;
+        state.nodeMinimum = nodeMinimum;
+        state.nodeMaximum = nodeMaximum;
+        state.nodeValues = nodeValues;
+        state.linkVisual = linkVisual;
+        state.linkMinimum = linkMinimum;
+        state.linkMaximum = linkMaximum;
+        state.linkValues = linkValues;
+        state.heatmapVisual = heatmapVisual;
+        state.heatmapMinimum = heatmapMinimum;
+        state.heatmapMaximum = heatmapMaximum;
+        state.heatmapValues = heatmapValues;
+        state.heatmapOpacity = heatmapOpacity;
+        state.heatmapRadius = heatmapRadius;
+
+        if (networkChanged)
+            clearNetworkImage();
+        if (heatmapChanged)
+            clearHeatmap();
+        else if (heatmapOpacityChanged)
+            applyHeatmapOpacity();
         if (state.lastMapView)
             handleMapViewChanged(state.lastMapView);
     }
@@ -1386,6 +1743,7 @@
         clearHoverCursor();
 
         clearNetworkImage();
+        clearHeatmap();
         if (state.layer)
             state.layer.remove();
         state.layer = null;
@@ -1414,6 +1772,12 @@
         state.linkMinimum = 0;
         state.linkMaximum = 0;
         state.linkValues = new Map();
+        state.heatmapVisual = 0;
+        state.heatmapMinimum = 0;
+        state.heatmapMaximum = 0;
+        state.heatmapValues = new Map();
+        state.heatmapOpacity = 55;
+        state.heatmapRadius = 100;
     }
 
     window.aowisBrowserNetwork = {
