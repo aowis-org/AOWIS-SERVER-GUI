@@ -11,7 +11,6 @@
 #endif
 
 #include <QColor>
-#include <QDebug>
 
 #include <cmath>
 
@@ -41,12 +40,7 @@ EM_JS(int, aowisBrowserNetworkSetSymbology, (const char *json_data, int json_siz
 {
     if (!window.aowisBrowserNetwork ||
         typeof window.aowisBrowserNetwork.setSymbology !== "function")
-    {
-        console.error(
-            "AOWIS browser network symbology API is unavailable. " +
-            "The cached aowis-browser-network.js is outdated.");
         return 0;
-    }
 
     try
     {
@@ -396,7 +390,6 @@ void MapMonitorContainer::scheduleWasmNetworkSymbologySync(bool rebuild_ranges)
     if (rebuild_ranges)
         this->wasm_symbology_rebuild_ranges_pending = true;
 
-    this->wasm_network_symbology_sync_retry_count = 0;
     if (!this->wasm_network_symbology_sync_timer->isActive())
         this->wasm_network_symbology_sync_timer->start(0);
 }
@@ -462,24 +455,7 @@ void MapMonitorContainer::syncWasmNetworkSymbology()
 
     const QByteArray json = BrowserNetworkSnapshotSerializer::serializeSymbology(
         *this->hydraulic_data, this->visual_node, this->visual_link);
-    const int transferred = aowisBrowserNetworkSetSymbology(
-        json.constData(), static_cast<int>(json.size()));
-    if (transferred != 0)
-    {
-        this->wasm_network_symbology_sync_retry_count = 0;
-        return;
-    }
-
-    if (this->wasm_network_symbology_sync_retry_count < 20)
-    {
-        ++this->wasm_network_symbology_sync_retry_count;
-        this->wasm_network_symbology_sync_timer->start(100);
-        return;
-    }
-
-    qWarning() << "Could not transfer WASM network symbology. "
-                  "The browser network JavaScript is missing setSymbology(); "
-                  "rebuild and reload the WASM distribution.";
+    aowisBrowserNetworkSetSymbology(json.constData(), static_cast<int>(json.size()));
 }
 #endif
 

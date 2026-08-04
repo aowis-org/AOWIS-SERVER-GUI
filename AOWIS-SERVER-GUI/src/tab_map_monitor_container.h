@@ -122,7 +122,6 @@ private:
     quint64 wasm_network_geometry_revision_sent = 0;
     bool wasm_network_snapshot_sent = false;
     bool wasm_symbology_rebuild_ranges_pending = false;
-    int wasm_network_symbology_sync_retry_count = 0;
 
     bool selectWasmNetworkEntityAt(const QPointF &position);
     void scheduleWasmMapLayerSync();
