@@ -3,7 +3,8 @@
 
     const TILE_SIZE = 256;
     const REFERENCE_ZOOM = 18;
-    const NETWORK_COLOR = "#b000ff";
+    const NETWORK_COLOR = "#000000";
+    const SYMBOLOGY_VALUE_UNAVAILABLE_COLOR = "#000000";
     const RAMP_COLORS = [
         "#440154",
         "#443983",
@@ -248,12 +249,14 @@
     }
 
     function valueColor(visual, values, renderId, minimum, maximum) {
-        if (visual === 0 || !values.has(renderId))
+        if (visual === 0)
             return NETWORK_COLOR;
+        if (!values.has(renderId))
+            return SYMBOLOGY_VALUE_UNAVAILABLE_COLOR;
 
         const value = values.get(renderId);
         if (!Number.isFinite(value) || !Number.isFinite(minimum) || !Number.isFinite(maximum))
-            return NETWORK_COLOR;
+            return SYMBOLOGY_VALUE_UNAVAILABLE_COLOR;
         if (minimum === maximum)
             return rampColor(0.5);
 
