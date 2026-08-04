@@ -54,6 +54,9 @@ public:
     quint64 geometryRevision() const;
     quint64 visualRevision() const;
     QDateTime timeChangedLast() const;
+    bool boundingBoxWgs84Valid() const;
+    const CoordinateWGS84 &boundingBoxWgs84Minimum() const;
+    const CoordinateWGS84 &boundingBoxWgs84Maximum() const;
     std::optional<HydraulicNodeJunction> junction(const QUuid &uuid) const;
     std::optional<HydraulicNodeReservoir> reservoir(const QUuid &uuid) const;
     std::optional<HydraulicNodeTank> tank(const QUuid &uuid) const;
@@ -179,6 +182,10 @@ private:
     bool emitNodeChangedIfSuccessful(const QUuid &uuid, bool successful, NetworkChange change = NetworkChange::Visual);
     bool emitLinkChangedIfSuccessful(const QUuid &uuid, bool successful, NetworkChange change = NetworkChange::Visual);
     void emitConnectedPipeChanges(const QUuid &node_uuid);
+    bool extendBoundingBoxWgs84(const CoordinateWGS84 &coordinate);
+    void updateBoundingBoxWgs84(const CoordinateWGS84 &coordinate_previous,
+                                const CoordinateWGS84 &coordinate);
+    void rebuildBoundingBoxWgs84();
     void rebuildNetworkRenderSnapshot() const;
 
     DatabaseGui *database_gui = nullptr;
@@ -190,6 +197,73 @@ private:
     quint64 geometry_revision = 0;
     quint64 visual_revision = 0;
     QDateTime time_changed_last;
+    CoordinateWGS84 bounding_box_wgs84_minimum{};
+    CoordinateWGS84 bounding_box_wgs84_maximum{};
+    bool bounding_box_wgs84_valid = false;
+
+    double node_elevation_m_minimum = 0.0;
+    double node_elevation_m_maximum = 0.0;
+    double node_base_demand_m3_per_h_minimum = 0.0;
+    double node_base_demand_m3_per_h_maximum = 0.0;
+    double node_total_demand_m3_per_h_minimum = 0.0;
+    double node_total_demand_m3_per_h_maximum = 0.0;
+    double node_demand_deficit_m3_per_h_minimum = 0.0;
+    double node_demand_deficit_m3_per_h_maximum = 0.0;
+    double node_emitter_flow_m3_per_h_minimum = 0.0;
+    double node_emitter_flow_m3_per_h_maximum = 0.0;
+    double node_leakage_m3_per_h_minimum = 0.0;
+    double node_leakage_m3_per_h_maximum = 0.0;
+    double node_head_m_minimum = 0.0;
+    double node_head_m_maximum = 0.0;
+    double node_pressure_m_minimum = 0.0;
+    double node_pressure_m_maximum = 0.0;
+    double node_chlorine_mg_per_l_minimum = 0.0;
+    double node_chlorine_mg_per_l_maximum = 0.0;
+    double node_river_water_percent_minimum = 0.0;
+    double node_river_water_percent_maximum = 0.0;
+    double node_lake_water_percent_minimum = 0.0;
+    double node_lake_water_percent_maximum = 0.0;
+
+    double link_diameter_mm_minimum = 0.0;
+    double link_diameter_mm_maximum = 0.0;
+    double link_length_m_minimum = 0.0;
+    double link_length_m_maximum = 0.0;
+    double link_roughness_hw_minimum = 0.0;
+    double link_roughness_hw_maximum = 0.0;
+    double link_flow_rate_m3_per_h_minimum = 0.0;
+    double link_flow_rate_m3_per_h_maximum = 0.0;
+    double link_velocity_m_per_s_minimum = 0.0;
+    double link_velocity_m_per_s_maximum = 0.0;
+    double link_head_loss_m_minimum = 0.0;
+    double link_head_loss_m_maximum = 0.0;
+    double link_leakage_m3_per_h_minimum = 0.0;
+    double link_leakage_m3_per_h_maximum = 0.0;
+    double link_chlorine_mg_per_l_minimum = 0.0;
+    double link_chlorine_mg_per_l_maximum = 0.0;
+    double link_river_water_percent_minimum = 0.0;
+    double link_river_water_percent_maximum = 0.0;
+    double link_lake_water_percent_minimum = 0.0;
+    double link_lake_water_percent_maximum = 0.0;
+
+    double heatmap_elevation_m_minimum = 0.0;
+    double heatmap_elevation_m_maximum = 0.0;
+    double heatmap_total_demand_m3_per_h_minimum = 0.0;
+    double heatmap_total_demand_m3_per_h_maximum = 0.0;
+    double heatmap_demand_deficit_m3_per_h_minimum = 0.0;
+    double heatmap_demand_deficit_m3_per_h_maximum = 0.0;
+    double heatmap_leakage_m3_per_h_minimum = 0.0;
+    double heatmap_leakage_m3_per_h_maximum = 0.0;
+    double heatmap_head_m_minimum = 0.0;
+    double heatmap_head_m_maximum = 0.0;
+    double heatmap_pressure_m_minimum = 0.0;
+    double heatmap_pressure_m_maximum = 0.0;
+    double heatmap_chlorine_mg_per_l_minimum = 0.0;
+    double heatmap_chlorine_mg_per_l_maximum = 0.0;
+    double heatmap_river_water_percent_minimum = 0.0;
+    double heatmap_river_water_percent_maximum = 0.0;
+    double heatmap_lake_water_percent_minimum = 0.0;
+    double heatmap_lake_water_percent_maximum = 0.0;
+
     mutable NetworkRenderSnapshot network_render_snapshot;
 
 private slots:
@@ -198,6 +272,7 @@ private slots:
 signals:
     void signalNetworkLoaded();
     void signalNetworkGeometryChanged(quint64 geometry_revision);
+    void signalBoundingBoxWgs84Changed();
     void signalNodeChanged(InfrastructureEntity entity_type, const QUuid &uuid);
     void signalLinkChanged(InfrastructureEntity entity_type, const QUuid &uuid);
     void signalNodeLocateRequested(InfrastructureEntity entity_type, const QUuid &uuid);

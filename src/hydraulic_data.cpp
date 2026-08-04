@@ -1,9 +1,19 @@
 #include "hydraulic_data.h"
 
+#include <cmath>
+
 #include <QHash>
 
 namespace
 {
+bool coordinateWgs84Valid(const CoordinateWGS84 &coordinate)
+{
+    return std::isfinite(coordinate.latitude_deg) &&
+           coordinate.latitude_deg >= -90.0 && coordinate.latitude_deg <= 90.0 &&
+           std::isfinite(coordinate.longitude_deg) &&
+           coordinate.longitude_deg >= -180.0 && coordinate.longitude_deg <= 180.0;
+}
+
 template <typename LinkType>
 bool appendNetworkRenderLink(const LinkType &source, InfrastructureEntity entity_type, quint32 render_id,
                              const QList<NetworkRenderNode> &nodes,
@@ -61,9 +71,10 @@ void HydraulicData::onDatabaseReady()
     loadProject();
     
     //this->network_hydraulic = DummyNetworks::networkSimple();
-    //this->network_hydraulic = DummyNetworks::networkTanks();
-    this->network_hydraulic = DummyMarburgNetworkGenerator::generateFractal();
+    this->network_hydraulic = DummyNetworks::networkTanks();
+    //this->network_hydraulic = DummyMarburgNetworkGenerator::generateFractal();
     //this->network_hydraulic = RandomHydraulicNetworkGenerator::generateFractal();
+    rebuildBoundingBoxWgs84();
     markNetworkChanged(NetworkChange::Geometry);
     //this->network_hydraulic = DummyNetworks::networkOnMap();
     //this->network_hydraulic = DummyNetworks::networkTanksTimeline();
@@ -158,6 +169,20 @@ QDateTime HydraulicData::timeChangedLast() const
     return this->time_changed_last;
 }
 
+bool HydraulicData::boundingBoxWgs84Valid() const
+{
+    return this->bounding_box_wgs84_valid;
+}
+
+const CoordinateWGS84 &HydraulicData::boundingBoxWgs84Minimum() const
+{
+    return this->bounding_box_wgs84_minimum;
+}
+
+const CoordinateWGS84 &HydraulicData::boundingBoxWgs84Maximum() const
+{
+    return this->bounding_box_wgs84_maximum;
+}
 
 std::optional<HydraulicNodeJunction> HydraulicData::junction(const QUuid &uuid) const
 {
@@ -358,6 +383,127 @@ void HydraulicData::emitConnectedPipeChanges(const QUuid &node_uuid)
     }
 }
 
+bool HydraulicData::extendBoundingBoxWgs84(const CoordinateWGS84 &coordinate)
+{
+    if (!coordinateWgs84Valid(coordinate))
+        return false;
+
+    if (!this->bounding_box_wgs84_valid)
+    {
+        this->bounding_box_wgs84_minimum = coordinate;
+        this->bounding_box_wgs84_maximum = coordinate;
+        this->bounding_box_wgs84_valid = true;
+        return true;
+    }
+
+    bool changed = false;
+
+    if (coordinate.latitude_deg < this->bounding_box_wgs84_minimum.latitude_deg)
+    {
+        this->bounding_box_wgs84_minimum.latitude_deg = coordinate.latitude_deg;
+        changed = true;
+    }
+    if (coordinate.longitude_deg < this->bounding_box_wgs84_minimum.longitude_deg)
+    {
+        this->bounding_box_wgs84_minimum.longitude_deg = coordinate.longitude_deg;
+        changed = true;
+    }
+    if (coordinate.latitude_deg > this->bounding_box_wgs84_maximum.latitude_deg)
+    {
+        this->bounding_box_wgs84_maximum.latitude_deg = coordinate.latitude_deg;
+        changed = true;
+    }
+    if (coordinate.longitude_deg > this->bounding_box_wgs84_maximum.longitude_deg)
+    {
+        this->bounding_box_wgs84_maximum.longitude_deg = coordinate.longitude_deg;
+        changed = true;
+    }
+
+    return changed;
+}
+
+void HydraulicData::updateBoundingBoxWgs84(const CoordinateWGS84 &coordinate_previous,
+                                           const CoordinateWGS84 &coordinate)
+{
+    if (!this->bounding_box_wgs84_valid)
+    {
+        if (extendBoundingBoxWgs84(coordinate))
+            emit signalBoundingBoxWgs84Changed();
+        return;
+    }
+
+    const bool coordinate_previous_valid = coordinateWgs84Valid(coordinate_previous);
+    const bool coordinate_valid = coordinateWgs84Valid(coordinate);
+    bool rebuild_required = false;
+
+    if (coordinate_previous_valid)
+    {
+        const bool latitude_is_minimum =
+            coordinate_previous.latitude_deg == this->bounding_box_wgs84_minimum.latitude_deg;
+        const bool longitude_is_minimum =
+            coordinate_previous.longitude_deg == this->bounding_box_wgs84_minimum.longitude_deg;
+        const bool latitude_is_maximum =
+            coordinate_previous.latitude_deg == this->bounding_box_wgs84_maximum.latitude_deg;
+        const bool longitude_is_maximum =
+            coordinate_previous.longitude_deg == this->bounding_box_wgs84_maximum.longitude_deg;
+
+        if (!coordinate_valid)
+        {
+            rebuild_required = latitude_is_minimum || longitude_is_minimum ||
+                               latitude_is_maximum || longitude_is_maximum;
+        }
+        else
+        {
+            rebuild_required =
+                (latitude_is_minimum && coordinate.latitude_deg > coordinate_previous.latitude_deg) ||
+                (longitude_is_minimum && coordinate.longitude_deg > coordinate_previous.longitude_deg) ||
+                (latitude_is_maximum && coordinate.latitude_deg < coordinate_previous.latitude_deg) ||
+                (longitude_is_maximum && coordinate.longitude_deg < coordinate_previous.longitude_deg);
+        }
+    }
+
+    if (rebuild_required)
+    {
+        rebuildBoundingBoxWgs84();
+        return;
+    }
+
+    if (extendBoundingBoxWgs84(coordinate))
+        emit signalBoundingBoxWgs84Changed();
+}
+
+void HydraulicData::rebuildBoundingBoxWgs84()
+{
+    this->bounding_box_wgs84_minimum = CoordinateWGS84{};
+    this->bounding_box_wgs84_maximum = CoordinateWGS84{};
+    this->bounding_box_wgs84_valid = false;
+
+    for (const HydraulicNodeJunction &junction : this->network_hydraulic.nodes_junctions)
+        extendBoundingBoxWgs84(junction.coordinate_wgs84);
+    for (const HydraulicNodeReservoir &reservoir : this->network_hydraulic.nodes_reservoirs)
+        extendBoundingBoxWgs84(reservoir.coordinate_wgs84);
+    for (const HydraulicNodeTank &tank : this->network_hydraulic.nodes_tanks)
+        extendBoundingBoxWgs84(tank.coordinate_wgs84);
+
+    for (const HydraulicLinkPipe &pipe : this->network_hydraulic.links_pipes)
+    {
+        for (const HydraulicLinkVertex &vertex : pipe.vertices)
+            extendBoundingBoxWgs84(vertex.coordinate_wgs84);
+    }
+    for (const HydraulicLinkPump &pump : this->network_hydraulic.links_pumps)
+    {
+        for (const HydraulicLinkVertex &vertex : pump.vertices)
+            extendBoundingBoxWgs84(vertex.coordinate_wgs84);
+    }
+    for (const HydraulicLinkValve &valve : this->network_hydraulic.links_valves)
+    {
+        for (const HydraulicLinkVertex &vertex : valve.vertices)
+            extendBoundingBoxWgs84(vertex.coordinate_wgs84);
+    }
+
+    emit signalBoundingBoxWgs84Changed();
+}
+
 void HydraulicData::rebuildNetworkRenderSnapshot() const
 {
     NetworkRenderSnapshot snapshot;
@@ -542,7 +688,11 @@ QUuid HydraulicData::addJunction(const CoordinateWGS84 &coordinate)
 {
     const QUuid uuid = this->network_editor.addJunction(coordinate);
     if (!uuid.isNull())
+    {
+        if (extendBoundingBoxWgs84(coordinate))
+            emit signalBoundingBoxWgs84Changed();
         markNetworkChanged(NetworkChange::Geometry);
+    }
     return uuid;
 }
 
@@ -550,7 +700,11 @@ QUuid HydraulicData::addReservoir(const CoordinateWGS84 &coordinate)
 {
     const QUuid uuid = this->network_editor.addReservoir(coordinate);
     if (!uuid.isNull())
+    {
+        if (extendBoundingBoxWgs84(coordinate))
+            emit signalBoundingBoxWgs84Changed();
         markNetworkChanged(NetworkChange::Geometry);
+    }
     return uuid;
 }
 
@@ -558,7 +712,11 @@ QUuid HydraulicData::addTank(const CoordinateWGS84 &coordinate)
 {
     const QUuid uuid = this->network_editor.addTank(coordinate);
     if (!uuid.isNull())
+    {
+        if (extendBoundingBoxWgs84(coordinate))
+            emit signalBoundingBoxWgs84Changed();
         markNetworkChanged(NetworkChange::Geometry);
+    }
     return uuid;
 }
 
@@ -568,7 +726,14 @@ QUuid HydraulicData::addPipe(const QUuid &node_uuid_from, const QUuid &node_uuid
     const QUuid uuid =
         this->network_editor.addPipe(node_uuid_from, node_uuid_to, intermediate_vertices);
     if (!uuid.isNull())
+    {
+        bool bounding_box_changed = false;
+        for (const CoordinateWGS84 &coordinate : intermediate_vertices)
+            bounding_box_changed = extendBoundingBoxWgs84(coordinate) || bounding_box_changed;
+        if (bounding_box_changed)
+            emit signalBoundingBoxWgs84Changed();
         markNetworkChanged(NetworkChange::Geometry);
+    }
     return uuid;
 }
 
@@ -578,7 +743,11 @@ QUuid HydraulicData::addPump(const QUuid &node_uuid_from, const QUuid &node_uuid
     const QUuid uuid =
         this->network_editor.addPump(node_uuid_from, node_uuid_to, center_coordinate);
     if (!uuid.isNull())
+    {
+        if (extendBoundingBoxWgs84(center_coordinate))
+            emit signalBoundingBoxWgs84Changed();
         markNetworkChanged(NetworkChange::Geometry);
+    }
     return uuid;
 }
 
@@ -588,7 +757,11 @@ QUuid HydraulicData::addValve(const QUuid &node_uuid_from, const QUuid &node_uui
     const QUuid uuid =
         this->network_editor.addValve(node_uuid_from, node_uuid_to, center_coordinate);
     if (!uuid.isNull())
+    {
+        if (extendBoundingBoxWgs84(center_coordinate))
+            emit signalBoundingBoxWgs84Changed();
         markNetworkChanged(NetworkChange::Geometry);
+    }
     return uuid;
 }
 
@@ -626,9 +799,14 @@ bool HydraulicData::setNodeCoordinate(const QUuid &uuid, const CoordinateWGS84 &
     const std::optional<InfrastructureEntity> entity_type = nodeEntityType(uuid);
     if (!entity_type.has_value())
         return false;
+    const std::optional<CoordinateWGS84> coordinate_previous =
+        this->network_editor.nodeCoordinate(uuid);
+    if (!coordinate_previous.has_value())
+        return false;
     if (!this->network_editor.setNodeCoordinate(uuid, coordinate))
         return false;
 
+    updateBoundingBoxWgs84(coordinate_previous.value(), coordinate);
     markNetworkChanged(NetworkChange::Geometry);
     emit signalNodeChanged(entity_type.value(), uuid);
     emitConnectedPipeChanges(uuid);
@@ -938,34 +1116,68 @@ bool HydraulicData::setPipeMinorLoss(const QUuid &uuid, double minor_loss)
 bool HydraulicData::setPipeVertexCoordinate(const QUuid &pipe_uuid, int vertex_index,
                                             const CoordinateWGS84 &coordinate)
 {
-    return emitLinkChangedIfSuccessful(
-        pipe_uuid,
-        this->network_editor.setPipeVertexCoordinate(pipe_uuid, vertex_index, coordinate),
-        NetworkChange::Geometry);
+    const std::optional<HydraulicLinkPipe> pipe = this->network_editor.pipe(pipe_uuid);
+    if (!pipe.has_value() || vertex_index < 0 || vertex_index >= pipe->vertices.size())
+        return false;
+
+    const CoordinateWGS84 coordinate_previous = pipe->vertices.at(vertex_index).coordinate_wgs84;
+    if (!this->network_editor.setPipeVertexCoordinate(pipe_uuid, vertex_index, coordinate))
+        return false;
+
+    updateBoundingBoxWgs84(coordinate_previous, coordinate);
+    return emitLinkChangedIfSuccessful(pipe_uuid, true, NetworkChange::Geometry);
 }
 
 bool HydraulicData::setPipeVertices(const QUuid &pipe_uuid,
                                     const QList<CoordinateWGS84> &intermediate_vertices)
 {
-    return emitLinkChangedIfSuccessful(
-        pipe_uuid, this->network_editor.setPipeVertices(pipe_uuid, intermediate_vertices),
-        NetworkChange::Geometry);
+    if (!this->network_editor.setPipeVertices(pipe_uuid, intermediate_vertices))
+        return false;
+
+    rebuildBoundingBoxWgs84();
+    return emitLinkChangedIfSuccessful(pipe_uuid, true, NetworkChange::Geometry);
 }
 
 bool HydraulicData::setPumpCenterCoordinate(const QUuid &pump_uuid,
                                             const CoordinateWGS84 &coordinate)
 {
-    return emitLinkChangedIfSuccessful(
-        pump_uuid, this->network_editor.setPumpCenterCoordinate(pump_uuid, coordinate),
-        NetworkChange::Geometry);
+    const std::optional<HydraulicLinkPump> pump = this->network_editor.pump(pump_uuid);
+    if (!pump.has_value())
+        return false;
+
+    std::optional<CoordinateWGS84> coordinate_previous;
+    if (!pump->vertices.isEmpty())
+        coordinate_previous = pump->vertices.first().coordinate_wgs84;
+    if (!this->network_editor.setPumpCenterCoordinate(pump_uuid, coordinate))
+        return false;
+
+    if (coordinate_previous.has_value())
+        updateBoundingBoxWgs84(coordinate_previous.value(), coordinate);
+    else if (extendBoundingBoxWgs84(coordinate))
+        emit signalBoundingBoxWgs84Changed();
+
+    return emitLinkChangedIfSuccessful(pump_uuid, true, NetworkChange::Geometry);
 }
 
 bool HydraulicData::setValveCenterCoordinate(const QUuid &valve_uuid,
                                              const CoordinateWGS84 &coordinate)
 {
-    return emitLinkChangedIfSuccessful(
-        valve_uuid, this->network_editor.setValveCenterCoordinate(valve_uuid, coordinate),
-        NetworkChange::Geometry);
+    const std::optional<HydraulicLinkValve> valve = this->network_editor.valve(valve_uuid);
+    if (!valve.has_value())
+        return false;
+
+    std::optional<CoordinateWGS84> coordinate_previous;
+    if (!valve->vertices.isEmpty())
+        coordinate_previous = valve->vertices.first().coordinate_wgs84;
+    if (!this->network_editor.setValveCenterCoordinate(valve_uuid, coordinate))
+        return false;
+
+    if (coordinate_previous.has_value())
+        updateBoundingBoxWgs84(coordinate_previous.value(), coordinate);
+    else if (extendBoundingBoxWgs84(coordinate))
+        emit signalBoundingBoxWgs84Changed();
+
+    return emitLinkChangedIfSuccessful(valve_uuid, true, NetworkChange::Geometry);
 }
 
 QUuid HydraulicData::splitPipeAtVertex(const QUuid &pipe_uuid, int vertex_index,
@@ -992,7 +1204,10 @@ bool HydraulicData::deleteJunction(const QUuid &uuid)
 {
     const bool successful = this->network_editor.deleteJunction(uuid);
     if (successful)
+    {
+        rebuildBoundingBoxWgs84();
         markNetworkChanged(NetworkChange::Geometry);
+    }
     return successful;
 }
 
@@ -1000,7 +1215,10 @@ bool HydraulicData::deleteReservoir(const QUuid &uuid)
 {
     const bool successful = this->network_editor.deleteReservoir(uuid);
     if (successful)
+    {
+        rebuildBoundingBoxWgs84();
         markNetworkChanged(NetworkChange::Geometry);
+    }
     return successful;
 }
 
@@ -1008,7 +1226,10 @@ bool HydraulicData::deleteTank(const QUuid &uuid)
 {
     const bool successful = this->network_editor.deleteTank(uuid);
     if (successful)
+    {
+        rebuildBoundingBoxWgs84();
         markNetworkChanged(NetworkChange::Geometry);
+    }
     return successful;
 }
 
@@ -1016,7 +1237,10 @@ bool HydraulicData::deletePipe(const QUuid &uuid)
 {
     const bool successful = this->network_editor.deletePipe(uuid);
     if (successful)
+    {
+        rebuildBoundingBoxWgs84();
         markNetworkChanged(NetworkChange::Geometry);
+    }
     return successful;
 }
 
@@ -1024,7 +1248,10 @@ bool HydraulicData::deletePump(const QUuid &uuid)
 {
     const bool successful = this->network_editor.deletePump(uuid);
     if (successful)
+    {
+        rebuildBoundingBoxWgs84();
         markNetworkChanged(NetworkChange::Geometry);
+    }
     return successful;
 }
 
@@ -1032,6 +1259,9 @@ bool HydraulicData::deleteValve(const QUuid &uuid)
 {
     const bool successful = this->network_editor.deleteValve(uuid);
     if (successful)
+    {
+        rebuildBoundingBoxWgs84();
         markNetworkChanged(NetworkChange::Geometry);
+    }
     return successful;
 }
