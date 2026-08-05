@@ -428,7 +428,7 @@
 
       async function loadAowisMapServerConfiguration()
       {
-          const configurationUrl = new URL('aowis-server-gui.ini', window.location.href);
+          const configurationUrl = new URL('/aowis-server-gui.ini', window.location.origin);
           configurationUrl.searchParams.set('aowis-config-revision', Date.now().toString());
 
           const response = await fetch(configurationUrl, {

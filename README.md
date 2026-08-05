@@ -52,4 +52,4 @@ delete_api_key=
 
 Restart the application after editing the file.
 
-WebAssembly builds include `aowis-server-gui.ini` directly in the generated webroot. Edit that file on the web server and reload the page. The normal API key is used for tile requests; the delete API key is used only for tile-cache deletion requests.
+WebAssembly builds include `aowis-server-gui.ini` in the generated webroot. Set `base_url`, `api_key`, and `delete_api_key` there and reload the page. The browser always loads `/aowis-server-gui.ini` from the webroot root. Existing administrator-edited files in `build-wasm` and `build-wasm-dist` are preserved across rebuilds. The normal API key is used for tile requests; the delete API key is used only for tile-cache deletion requests.

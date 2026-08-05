@@ -3,6 +3,24 @@ set -e
 
 echo "=== Starting WASM build using Docker ==="
 
+CONFIG_TEMPLATE="tools/qt-emscripten/aowis-server-gui.ini"
+BUILD_CONFIG="build-wasm/aowis-server-gui.ini"
+DIST_CONFIG="build-wasm-dist/aowis-server-gui.ini"
+PRESERVED_DIST_CONFIG=""
+
+cleanup()
+{
+    if [ -n "$PRESERVED_DIST_CONFIG" ] && [ -f "$PRESERVED_DIST_CONFIG" ]; then
+        rm -f "$PRESERVED_DIST_CONFIG"
+    fi
+}
+trap cleanup EXIT
+
+if [ -f "$DIST_CONFIG" ]; then
+    PRESERVED_DIST_CONFIG=$(mktemp)
+    cp "$DIST_CONFIG" "$PRESERVED_DIST_CONFIG"
+fi
+
 # https://hub.docker.com/r/mattbas/qt-emscripten
 docker run --rm \
     -v "$(pwd)":/project \
@@ -10,14 +28,18 @@ docker run --rm \
     mattbas/qt-emscripten:6.10.2 \
     /bin/bash /project/tools/qt-emscripten/build_wasm_inside_container.sh
 
-#ln -sf aowis-server-gui.html build-wasm/index.html
-# Qt's default HTML wrap does not work with setShortcut and
-# keyPressEvents reliably. We replace that with a fixed one
+# Qt's default HTML wrapper does not work with setShortcut and keyPressEvents reliably.
+# Replace it with the project wrapper.
 cp tools/qt-emscripten/index.html build-wasm/
 cp tools/qt-emscripten/aowis-browser-map.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-network.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-map-editor.js build-wasm/
-cp tools/qt-emscripten/aowis-server-gui.ini build-wasm/
+
+# The WASM configuration is administered in the webroot. Never overwrite an existing
+# administrator-edited build configuration with the source template.
+if [ ! -f "$BUILD_CONFIG" ]; then
+    cp "$CONFIG_TEMPLATE" "$BUILD_CONFIG"
+fi
 
 MAP_JS_VERSION=$(sha256sum tools/qt-emscripten/aowis-browser-map.js | cut -c1-16)
 NETWORK_JS_VERSION=$(sha256sum tools/qt-emscripten/aowis-browser-network.js | cut -c1-16)
@@ -39,10 +61,6 @@ cp assets/iconsets/gothic/customer.png build-wasm/map-editor-icons/
 cp assets/iconsets/gothic/electricity.png build-wasm/map-editor-icons/
 cp assets/iconsets/gothic/energy.png build-wasm/map-editor-icons/
 cp assets/iconsets/gothic/geomarker.png build-wasm/map-editor-icons/
-#rm build-wasm/aowis-server-gui.html
-
-#HTML_FILE="build-wasm/index.html"
-#sed -i 's|<title>.*</title>|<title>AOWIS Controller</title>|' "$HTML_FILE"
 
 cp assets/img/favicon.ico build-wasm/.
 cp assets/img/aowis.png build-wasm/.
@@ -50,13 +68,18 @@ cp assets/img/aowis.png build-wasm/.
 echo "=== Creating cleaned up, ready for distribution directory build-wasm-dist ==="
 
 rm -rf build-wasm-dist
+mkdir -p build-wasm-dist
 
-if [ ! -d "build-wasm-dist" ]; then
-    mkdir build-wasm-dist
-fi
-
-cp build-wasm/*.js build-wasm/*.wasm build-wasm/*.html build-wasm/*.ini build-wasm/favicon.ico build-wasm/aowis.png build-wasm/index.html build-wasm-dist 2>/dev/null || true
+cp build-wasm/*.js build-wasm/*.wasm build-wasm/*.html build-wasm/favicon.ico build-wasm/aowis.png build-wasm/index.html build-wasm-dist 2>/dev/null || true
 cp -r build-wasm/map-editor-icons build-wasm-dist/
 cp -r build-wasm/svg build-wasm-dist/
+
+# Preserve an administrator-edited distribution config across rebuilds. On the first
+# build, initialize it from build-wasm, which itself is only initialized once.
+if [ -n "$PRESERVED_DIST_CONFIG" ]; then
+    cp "$PRESERVED_DIST_CONFIG" "$DIST_CONFIG"
+else
+    cp "$BUILD_CONFIG" "$DIST_CONFIG"
+fi
 
 echo "=== WASM build finished ==="
