@@ -1,4 +1,5 @@
 #include "main_window.h"
+#include "map_server_client_configuration.h"
 #include <QPushButton>
 #include <QShortcut>
 #include <qapplication.h>
@@ -344,26 +345,37 @@ void MainWindow::syncMapMovement(MapWidget *source, MapWidget *target)
 
 void MainWindow::checkServerMapInit()
 {
-    this->time_server_map_success_last = QDateTime::currentDateTime();    
+    this->time_server_map_success_last = QDateTime::currentDateTime().addSecs(-60);
     this->footer->statusUpdateServerMap(StatusColorCode::Yellow);
-    
-    this->rest_check_map = new RESTClient("http://aowis-server-map.localhost:80", this);
+
+    const MapServerClientConfiguration &configuration = mapServerClientConfiguration();
+    qInfo() << "Using configured map server URL:" << configuration.base_url;
+    this->rest_check_map = new RESTClient(configuration.base_url, configuration.api_key,
+                                          configuration.delete_api_key, this);
     connect(this->rest_check_map, &RESTClient::requestFinished, this, [this](const QByteArray &data)
-            {
-                this->checking_server_map = false;
-                
-                this->time_server_map_success_last = QDateTime::currentDateTime();
-            });
-    connect(this->rest_check_map, &RESTClient::requestError, this, [this](const QString &err)
-            {
-                this->checking_server_map = false;
-            });
-    
-    // set up timer for periodic check
+    {
+        this->checking_server_map = false;
+
+        if (!data.contains("AOWIS map server"))
+        {
+            qWarning() << "Configured map server did not return the expected /status response:"
+                       << data.left(512);
+            return;
+        }
+
+        this->time_server_map_success_last = QDateTime::currentDateTime();
+    });
+    connect(this->rest_check_map, &RESTClient::requestError, this, [this](const QString &error)
+    {
+        this->checking_server_map = false;
+        qWarning() << "Map server status request failed:" << error;
+    });
+
     QTimer *timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, &MainWindow::checkServerMap);
     timer->start(4500);
 }
+
 void MainWindow::checkServerMap()
 {
     if (this->checking_server_map)

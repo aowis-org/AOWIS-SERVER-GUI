@@ -32,3 +32,24 @@ To run the result, you need to have a web server set up.
 ### Windows / macOS
 Usually as a Desktop-Client, you might want to prefer [AOWIS-SERVER-Standalone](https://github.com/aowis-org/AOWIS-SERVER-Standalone).
 
+
+## Map server client configuration
+
+Native builds create the following file automatically on first use:
+
+```text
+~/.local/share/aowis-server-gui/aowis-server-gui.ini
+```
+
+`XDG_DATA_HOME` is respected when it is set. The default file is:
+
+```ini
+[map_server]
+base_url=http://aowis-server-map.localhost:80
+api_key=
+delete_api_key=
+```
+
+Restart the application after editing the file.
+
+WebAssembly builds include `aowis-server-gui.ini` directly in the generated webroot. Edit that file on the web server and reload the page. The normal API key is used for tile requests; the delete API key is used only for tile-cache deletion requests.

@@ -17,6 +17,7 @@ cp tools/qt-emscripten/index.html build-wasm/
 cp tools/qt-emscripten/aowis-browser-map.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-network.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-map-editor.js build-wasm/
+cp tools/qt-emscripten/aowis-server-gui.ini build-wasm/
 
 MAP_JS_VERSION=$(sha256sum tools/qt-emscripten/aowis-browser-map.js | cut -c1-16)
 NETWORK_JS_VERSION=$(sha256sum tools/qt-emscripten/aowis-browser-network.js | cut -c1-16)
@@ -54,7 +55,7 @@ if [ ! -d "build-wasm-dist" ]; then
     mkdir build-wasm-dist
 fi
 
-cp build-wasm/*.js build-wasm/*.wasm build-wasm/*.html build-wasm/favicon.ico build-wasm/aowis.png build-wasm/index.html build-wasm-dist 2>/dev/null || true
+cp build-wasm/*.js build-wasm/*.wasm build-wasm/*.html build-wasm/*.ini build-wasm/favicon.ico build-wasm/aowis.png build-wasm/index.html build-wasm-dist 2>/dev/null || true
 cp -r build-wasm/map-editor-icons build-wasm-dist/
 cp -r build-wasm/svg build-wasm-dist/
 

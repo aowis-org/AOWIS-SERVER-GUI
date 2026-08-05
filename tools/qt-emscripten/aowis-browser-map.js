@@ -3,13 +3,59 @@
 
     const TILE_SIZE = 256;
     const TILE_MARGIN = 1;
-    const MAP_SERVER_BASE_URL = "http://aowis-server-map.localhost:80";
     const MAX_TILE_RETRY_COUNT = 3;
     const TILE_SEAM_OVERLAP_PHYSICAL_PIXELS = 1;
     const EARTH_RADIUS_METERS = 6378137;
     const SCALE_MAXIMUM_WIDTH = 140;
 
     const viewListeners = new Set();
+    let activeMapServerConfiguration = null;
+
+    function normalizeMapServerConfiguration(configuration) {
+        const baseUrl = typeof configuration?.baseUrl === "string"
+            ? configuration.baseUrl.trim().replace(/\/+$/, "")
+            : "";
+        if (!baseUrl)
+            throw new Error("Map server base_url is missing from aowis-server-gui.ini");
+
+        return Object.freeze({
+            baseUrl,
+            apiKey: typeof configuration?.apiKey === "string" ? configuration.apiKey.trim() : ""
+        });
+    }
+
+    window.aowisSetMapServerConfiguration = function (configuration) {
+        activeMapServerConfiguration = normalizeMapServerConfiguration(configuration);
+        console.info("Activated browser map server configuration:", {
+            baseUrl: activeMapServerConfiguration.baseUrl,
+            hasApiKey: activeMapServerConfiguration.apiKey.length > 0
+        });
+    };
+
+    window.aowisGetMapServerConfiguration = function () {
+        if (!activeMapServerConfiguration)
+            return null;
+
+        return {
+            baseUrl: activeMapServerConfiguration.baseUrl,
+            hasApiKey: activeMapServerConfiguration.apiKey.length > 0
+        };
+    };
+
+    function mapServerConfiguration() {
+        if (!activeMapServerConfiguration)
+            throw new Error("Map server configuration has not been activated");
+
+        return activeMapServerConfiguration;
+    }
+
+    function tileRequestHeaders() {
+        const headers = new Headers({ Accept: "image/*" });
+        const configuration = mapServerConfiguration();
+        if (configuration.apiKey)
+            headers.set("X-API-Key", configuration.apiKey);
+        return headers;
+    }
 
     const state = {
         layer: null,
@@ -226,9 +272,23 @@
         return ((tileX % count) + count) % count;
     }
 
+    function disposeTile(tile) {
+        if (!tile)
+            return;
+
+        if (tile.aowisAbortController)
+            tile.aowisAbortController.abort();
+        if (tile.aowisObjectUrl)
+            URL.revokeObjectURL(tile.aowisObjectUrl);
+
+        tile.aowisAbortController = null;
+        tile.aowisObjectUrl = "";
+        tile.remove();
+    }
+
     function clearTiles() {
         for (const tile of state.tiles.values())
-            tile.remove();
+            disposeTile(tile);
         state.tiles.clear();
     }
 
@@ -383,12 +443,58 @@
         return true;
     }
 
-    function tileUrl(virtualTileX, tileY) {
+    function tileUrl(virtualTileX, tileY, retryCount = 0) {
         const wrappedX = wrapTileX(virtualTileX, state.zoom);
-        const base = `${MAP_SERVER_BASE_URL}/${state.source}/${state.zoom}/${wrappedX}/${tileY}.png`;
-        if (state.cacheRevision === 0)
-            return base;
-        return `${base}?aowis-cache-revision=${state.cacheRevision}`;
+        const configuration = mapServerConfiguration();
+        const base = `${configuration.baseUrl}/${state.source}/${state.zoom}/${wrappedX}/${tileY}.png`;
+        const parameters = [];
+        if (state.cacheRevision !== 0)
+            parameters.push(`aowis-cache-revision=${state.cacheRevision}`);
+        if (retryCount > 0)
+            parameters.push(`aowis-retry=${Date.now()}`);
+        return parameters.length === 0 ? base : `${base}?${parameters.join("&")}`;
+    }
+
+    async function loadTile(image, virtualTileX, tileY, key, retryCount) {
+        if (state.tiles.get(key) !== image)
+            return;
+
+        if (image.aowisAbortController)
+            image.aowisAbortController.abort();
+
+        const controller = new AbortController();
+        image.aowisAbortController = controller;
+
+        try {
+            const response = await fetch(tileUrl(virtualTileX, tileY, retryCount), {
+                headers: tileRequestHeaders(),
+                signal: controller.signal
+            });
+            if (!response.ok)
+                throw new Error(`HTTP ${response.status} ${response.statusText}`);
+
+            const blob = await response.blob();
+            if (state.tiles.get(key) !== image || controller.signal.aborted)
+                return;
+
+            const objectUrl = URL.createObjectURL(blob);
+            if (image.aowisObjectUrl)
+                URL.revokeObjectURL(image.aowisObjectUrl);
+            image.aowisObjectUrl = objectUrl;
+            image.src = objectUrl;
+        } catch (error) {
+            if (controller.signal.aborted || state.tiles.get(key) !== image)
+                return;
+
+            if (retryCount >= MAX_TILE_RETRY_COUNT) {
+                console.error("AOWIS map tile request failed:", tileUrl(virtualTileX, tileY), error);
+                return;
+            }
+
+            window.setTimeout(() => {
+                loadTile(image, virtualTileX, tileY, key, retryCount + 1);
+            }, 500 * Math.pow(2, retryCount));
+        }
     }
 
     function createTile(virtualTileX, tileY, key) {
@@ -404,32 +510,12 @@
         image.style.maxWidth = "none";
         image.style.userSelect = "none";
         image.style.pointerEvents = "none";
-        image.dataset.retryCount = "0";
+        image.aowisAbortController = null;
+        image.aowisObjectUrl = "";
 
-        const load = () => {
-            image.src = tileUrl(virtualTileX, tileY);
-        };
-
-        image.addEventListener("error", () => {
-            if (state.tiles.get(key) !== image)
-                return;
-
-            const retryCount = Number(image.dataset.retryCount || 0);
-            if (retryCount >= MAX_TILE_RETRY_COUNT)
-                return;
-
-            image.dataset.retryCount = String(retryCount + 1);
-            window.setTimeout(() => {
-                if (state.tiles.get(key) !== image)
-                    return;
-                const separator = tileUrl(virtualTileX, tileY).includes("?") ? "&" : "?";
-                image.src = `${tileUrl(virtualTileX, tileY)}${separator}aowis-retry=${Date.now()}`;
-            }, 500 * Math.pow(2, retryCount));
-        });
-
-        load();
         state.tilePane.appendChild(image);
         state.tiles.set(key, image);
+        loadTile(image, virtualTileX, tileY, key, 0);
         return image;
     }
 
@@ -484,7 +570,7 @@
         for (const [key, image] of state.tiles) {
             if (required.has(key))
                 continue;
-            image.remove();
+            disposeTile(image);
             state.tiles.delete(key);
         }
 

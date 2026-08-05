@@ -1,5 +1,7 @@
 #include "interface_server_map_rest.h"
 
+#include "map_server_client_configuration.h"
+
 #include <QDebug>
 
 InterfaceServerMapREST::InterfaceServerMapREST(QObject *parent)
@@ -10,7 +12,9 @@ InterfaceServerMapREST::InterfaceServerMapREST(QObject *parent)
 
 void InterfaceServerMapREST::initRestConnection()
 {
-    this->rest = new RESTClient("http://aowis-server-map.localhost:80", this);
+    const MapServerClientConfiguration &configuration = mapServerClientConfiguration();
+    this->rest = new RESTClient(configuration.base_url, configuration.api_key,
+                                configuration.delete_api_key, this);
 
     connect(this->rest, &RESTClient::requestFinishedTile, this,
             [this](const QByteArray &data, const QString &key)
