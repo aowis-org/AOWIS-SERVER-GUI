@@ -20,8 +20,14 @@ InterfaceServerMapStandalone::InterfaceServerMapStandalone(QObject *parent)
         emit signalTileDataReceived(key, data);
     }, Qt::QueuedConnection);
 
-    connect(this->map_tiles, &MapTiles::tileFailed, this, [this](const QString &key)
+    connect(this->map_tiles, &MapTiles::tileFailed, this,
+            [this](const QString &key, MapTiles::TileFailureReason reason)
     {
+        if (reason == MapTiles::TileFailureReason::Timeout)
+            qWarning() << "Tile request timed out:" << key;
+        else
+            qWarning() << "Tile request failed upstream:" << key;
+
         emit signalTileFailed(key);
     });
 }
@@ -40,16 +46,45 @@ void InterfaceServerMapStandalone::requestTile(const QString &endpoint, const QS
     }
 
     const QString provider = parts[0];
-    const int zoom = parts[1].toInt();
-    const QByteArray data = this->map_tiles->getTile(provider, zoom, x, y, key);
+    bool zoom_valid = false;
+    const int zoom = parts[1].toInt(&zoom_valid);
+    if (!zoom_valid)
+    {
+        qWarning() << "Invalid tile zoom in endpoint:" << endpoint;
+        emit signalTileFailed(key);
+        return;
+    }
 
-    if (data.isEmpty())
+    const MapTiles::TileRequestResult result = this->map_tiles->getTile(provider, zoom, x, y, key);
+    switch (result.status)
+    {
+    case MapTiles::TileRequestStatus::Ready:
+        if (result.data.isEmpty())
+        {
+            qWarning() << "Cached tile is empty:" << key;
+            emit signalTileFailed(key);
+            return;
+        }
+
+        QTimer::singleShot(0, this, [this, key, data = result.data]
+        {
+            emit signalTileDataReceived(key, data);
+        });
         return;
 
-    QTimer::singleShot(0, this, [this, key, data]
-    {
-        emit signalTileDataReceived(key, data);
-    });
+    case MapTiles::TileRequestStatus::Pending:
+        return;
+
+    case MapTiles::TileRequestStatus::InvalidRequest:
+        qWarning() << "Invalid tile request:" << endpoint << x << y;
+        emit signalTileFailed(key);
+        return;
+
+    case MapTiles::TileRequestStatus::ServerBusy:
+        qWarning() << "Map tile downloader is busy:" << key;
+        emit signalTileFailed(key);
+        return;
+    }
 }
 
 void InterfaceServerMapStandalone::deleteTiles(quint64 request_id, const QString &provider, int zoom,
