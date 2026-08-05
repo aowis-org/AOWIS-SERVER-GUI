@@ -11,9 +11,68 @@
 #endif
 
 #include <QColor>
+#include <QContextMenuEvent>
 #include <QDebug>
+#include <QMouseEvent>
 
 #include <cmath>
+
+namespace
+{
+class SymbologySlider final : public QSlider
+{
+public:
+    SymbologySlider(int value_minimum, int value_maximum, int value_default, const QString &description, const QString &unit_suffix, QWidget *parent = nullptr)
+        : QSlider(Qt::Horizontal, parent),
+          value_default(value_default),
+          description(description),
+          unit_suffix(unit_suffix)
+    {
+        setRange(value_minimum, value_maximum);
+        setValue(this->value_default);
+        connect(this, &QSlider::valueChanged, this, [this]
+        {
+            updateToolTip();
+        });
+        updateToolTip();
+    }
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        if (event->button() == Qt::RightButton)
+        {
+            setValue(this->value_default);
+            event->accept();
+            return;
+        }
+
+        QSlider::mousePressEvent(event);
+    }
+
+    void contextMenuEvent(QContextMenuEvent *event) override
+    {
+        setValue(this->value_default);
+        event->accept();
+    }
+
+private:
+    void updateToolTip()
+    {
+        setToolTip(QStringLiteral("%1\nCurrent: %2%3\nRange: %4%3 to %5%3\nDefault: %6%3\nRight-click to reset.")
+                       .arg(this->description)
+                       .arg(value())
+                       .arg(this->unit_suffix)
+                       .arg(minimum())
+                       .arg(maximum())
+                       .arg(this->value_default));
+    }
+
+    int value_default;
+    QString description;
+    QString unit_suffix;
+};
+}
 
 #ifdef Q_OS_WASM
 #include <emscripten.h>
@@ -250,7 +309,14 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapRadiusChanged, this, [this](int radius)
     {
-        this->heatmap_radius_m = qBound(10, radius, 500);
+        this->heatmap_radius_m = qBound(10, radius, 1000);
+#ifdef Q_OS_WASM
+        scheduleWasmNetworkSymbologySync(false);
+#endif
+    });
+    connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapSolidCenterChanged, this, [this](int percent)
+    {
+        this->heatmap_solid_center_percent = qBound(0, percent, 100);
 #ifdef Q_OS_WASM
         scheduleWasmNetworkSymbologySync(false);
 #endif
@@ -497,7 +563,8 @@ void MapMonitorContainer::syncWasmNetworkSymbology()
     const QByteArray json = BrowserNetworkSnapshotSerializer::serializeSymbology(
         *this->hydraulic_data, this->visual_node, this->node_size_percent,
         this->visual_link, this->link_thickness_px, this->visual_heatmap,
-        this->heatmap_opacity, this->heatmap_radius_m);
+        this->heatmap_opacity, this->heatmap_radius_m,
+        this->heatmap_solid_center_percent);
     const int transferred = aowisBrowserNetworkSetSymbology(
         json.constData(), static_cast<int>(json.size()));
     if (transferred != 0)
@@ -575,9 +642,8 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
     QRadioButton *radio_node_pressure = new QRadioButton("Pressure");
     
     QLabel *label_node_size = new QLabel("Size [%]");
-    QSlider *slider_node_size = new QSlider(Qt::Horizontal);
-    slider_node_size->setRange(50, 250);
-    slider_node_size->setValue(100);
+    QSlider *slider_node_size = new SymbologySlider(50, 250, 100,
+        QStringLiteral("Scales node symbols and their matching hit areas in the map overlay."), QStringLiteral(" %"), this);
     connect(slider_node_size, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalNodeSizeChanged);
 
     QLabel *label_multispecies = new QLabel(
@@ -649,9 +715,8 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     check_flow_direction->setChecked(true);
     
     QLabel *label_link_thickness = new QLabel("Thickness [px]");
-    QSlider *slider_link_thickness = new QSlider(Qt::Horizontal);
-    slider_link_thickness->setRange(1, 12);
-    slider_link_thickness->setValue(3);
+    QSlider *slider_link_thickness = new SymbologySlider(1, 12, 3,
+        QStringLiteral("Sets the SVG link stroke width and keeps link hit detection aligned with it."), QStringLiteral(" px"), this);
     connect(slider_link_thickness, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalLinkThicknessChanged);
 
     QRadioButton *radio_link_none = new QRadioButton("None");
@@ -726,14 +791,16 @@ void MapMonitorMenuWidget::addGroupHeatmapVisuals()
     QRadioButton *radio_lake = new QRadioButton("Lake Water [%]");
     
     QLabel *label_slider_opacity = new QLabel("Opacity");
-    QSlider *slider_opacity = new QSlider(Qt::Horizontal);
-    slider_opacity->setRange(0, 100);
-    slider_opacity->setValue(55);
+    QSlider *slider_opacity = new SymbologySlider(0, 100, 75,
+        QStringLiteral("Controls the opacity of the complete heatmap layer."), QStringLiteral(" %"), this);
     
     QLabel *label_slider_radius = new QLabel("Radius [m]");
-    QSlider *slider_radius = new QSlider(Qt::Horizontal);
-    slider_radius->setRange(10, 500);
-    slider_radius->setValue(100);
+    QSlider *slider_radius = new SymbologySlider(10, 1000, 400,
+        QStringLiteral("Sets each heatmap point's geographic influence radius. It remains consistent across zoom levels."), QStringLiteral(" m"), this);
+
+    QLabel *label_slider_solid_center = new QLabel("Solid center [%]");
+    QSlider *slider_solid_center = new SymbologySlider(0, 100, 70,
+        QStringLiteral("Sets how much of the heatmap radius keeps full local opacity before fading to transparency."), QStringLiteral(" %"), this);
     
     const auto connect_heatmap_visual =
         [this](QRadioButton *button, VisualHeatmap visual)
@@ -757,6 +824,7 @@ void MapMonitorMenuWidget::addGroupHeatmapVisuals()
 
     connect(slider_opacity, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalHeatmapOpacityChanged);
     connect(slider_radius, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalHeatmapRadiusChanged);
+    connect(slider_solid_center, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalHeatmapSolidCenterChanged);
     
     vbox->addWidget(radio_none);
     vbox->addWidget(radio_elevation);
@@ -773,4 +841,6 @@ void MapMonitorMenuWidget::addGroupHeatmapVisuals()
     vbox->addWidget(slider_opacity);
     vbox->addWidget(label_slider_radius);
     vbox->addWidget(slider_radius);
+    vbox->addWidget(label_slider_solid_center);
+    vbox->addWidget(slider_solid_center);
 }

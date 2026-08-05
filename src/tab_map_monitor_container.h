@@ -73,6 +73,7 @@ signals:
     void signalHeatmapVisualClicked(VisualHeatmap visual_heatmap);
     void signalHeatmapOpacityChanged(int opacity);
     void signalHeatmapRadiusChanged(int radius);
+    void signalHeatmapSolidCenterChanged(int percent);
 };
 
 
@@ -112,8 +113,9 @@ private:
     VisualLink visual_link = VisualLink::None;
     int link_thickness_px = 3;
     VisualHeatmap visual_heatmap = VisualHeatmap::None;
-    int heatmap_opacity = 55;
-    int heatmap_radius_m = 100;
+    int heatmap_opacity = 75;
+    int heatmap_radius_m = 400;
+    int heatmap_solid_center_percent = 70;
 
     bool selectNetworkEntity(quint32 render_id, InfrastructureEntity entity_type);
     void setNetworkBackgroundOpacity(int opacity);

@@ -134,8 +134,9 @@
         heatmapMinimum: 0,
         heatmapMaximum: 0,
         heatmapValues: new Map(),
-        heatmapOpacity: 55,
-        heatmapRadiusMeters: 100
+        heatmapOpacity: 75,
+        heatmapRadiusMeters: 400,
+        heatmapSolidCenterPercent: 70
     };
 
     function applyBackground() {
@@ -983,11 +984,17 @@
         const red = Math.round(color.red);
         const green = Math.round(color.green);
         const blue = Math.round(color.blue);
+        const solidCenterFraction = Math.max(0, Math.min(0.9,
+            state.heatmapSolidCenterPercent / 100));
+        const halfOpacityFraction = solidCenterFraction
+            + (1 - solidCenterFraction) * 0.4375;
         const gradient = context.createRadialGradient(
             center, center, 0, center, center, kernelRadius);
         gradient.addColorStop(0, `rgba(${red}, ${green}, ${blue}, 1)`);
-        gradient.addColorStop(0.2, `rgba(${red}, ${green}, ${blue}, 1)`);
-        gradient.addColorStop(0.55, `rgba(${red}, ${green}, ${blue}, 0.5)`);
+        gradient.addColorStop(solidCenterFraction,
+            `rgba(${red}, ${green}, ${blue}, 1)`);
+        gradient.addColorStop(halfOpacityFraction,
+            `rgba(${red}, ${green}, ${blue}, 0.5)`);
         gradient.addColorStop(1, `rgba(${red}, ${green}, ${blue}, 0)`);
         context.fillStyle = gradient;
         context.fillRect(0, 0, diameter, diameter);
@@ -1712,7 +1719,9 @@
         const heatmapOpacity = Math.max(
             0, Math.min(100, Number(symbology.heatmapOpacity) || 0));
         const heatmapRadiusMeters = Math.max(
-            10, Math.min(500, Number(symbology.heatmapRadiusMeters) || 100));
+            10, Math.min(1000, Number(symbology.heatmapRadiusMeters) || 400));
+        const heatmapSolidCenterPercent = Math.max(0, Math.min(100,
+            Number(symbology.heatmapSolidCenterPercent) || 0));
 
         const networkChanged = state.nodeVisual !== nodeVisual
             || state.nodeSizePercent !== nodeSizePercent
@@ -1728,6 +1737,7 @@
             || state.heatmapMinimum !== heatmapMinimum
             || state.heatmapMaximum !== heatmapMaximum
             || state.heatmapRadiusMeters !== heatmapRadiusMeters
+            || state.heatmapSolidCenterPercent !== heatmapSolidCenterPercent
             || !symbologyValuesEqual(state.heatmapValues, heatmapValues);
         const heatmapOpacityChanged = state.heatmapOpacity !== heatmapOpacity;
 
@@ -1747,6 +1757,7 @@
         state.heatmapValues = heatmapValues;
         state.heatmapOpacity = heatmapOpacity;
         state.heatmapRadiusMeters = heatmapRadiusMeters;
+        state.heatmapSolidCenterPercent = heatmapSolidCenterPercent;
 
         if (networkChanged)
             clearNetworkImage();
@@ -1826,8 +1837,9 @@
         state.heatmapMinimum = 0;
         state.heatmapMaximum = 0;
         state.heatmapValues = new Map();
-        state.heatmapOpacity = 55;
-        state.heatmapRadiusMeters = 100;
+        state.heatmapOpacity = 75;
+        state.heatmapRadiusMeters = 400;
+        state.heatmapSolidCenterPercent = 70;
     }
 
     window.aowisBrowserNetwork = {
