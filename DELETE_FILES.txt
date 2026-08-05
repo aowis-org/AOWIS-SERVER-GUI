@@ -1,0 +1,2 @@
+Delete this obsolete file after applying the patch:
+tools/cmake/update_gui_source_fingerprint.cmake

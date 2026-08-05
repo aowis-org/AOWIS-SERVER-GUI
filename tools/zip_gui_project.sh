@@ -25,6 +25,7 @@ find "$project_name" \
         -name ".vs" -o \
         -name ".qtcreator" -o \
         -name ".cache" -o \
+        -name ".aowis-build-state" -o \
         -name "CMakeFiles" -o \
         -name "Testing" -o \
         -name "_deps" -o \

@@ -8,32 +8,6 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-# Patch archives can preserve timestamps older than existing object files.
-# Generate a content-based header before every GUI build so Make/Ninja rebuilds
-# correctly even when source modification times are misleading.
-set(AOWIS_GUI_SOURCE_FINGERPRINT_HEADER
-    "${CMAKE_CURRENT_BINARY_DIR}/generated/aowis_gui_source_fingerprint.h")
-set(AOWIS_GUI_SOURCE_FINGERPRINT_SCRIPT
-    "${CMAKE_CURRENT_SOURCE_DIR}/tools/cmake/update_gui_source_fingerprint.cmake")
-
-execute_process(
-    COMMAND "${CMAKE_COMMAND}"
-        "-DAOWIS_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
-        "-DAOWIS_OUTPUT_FILE=${AOWIS_GUI_SOURCE_FINGERPRINT_HEADER}"
-        -P "${AOWIS_GUI_SOURCE_FINGERPRINT_SCRIPT}"
-    COMMAND_ERROR_IS_FATAL ANY
-)
-
-add_custom_target(aowis-gui-source-fingerprint
-    COMMAND "${CMAKE_COMMAND}"
-        "-DAOWIS_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
-        "-DAOWIS_OUTPUT_FILE=${AOWIS_GUI_SOURCE_FINGERPRINT_HEADER}"
-        -P "${AOWIS_GUI_SOURCE_FINGERPRINT_SCRIPT}"
-    BYPRODUCTS "${AOWIS_GUI_SOURCE_FINGERPRINT_HEADER}"
-    COMMENT "Checking AOWIS GUI source content"
-    VERBATIM
-)
-
 find_package(Qt6 REQUIRED COMPONENTS
     Widgets
     Network
@@ -87,7 +61,6 @@ add_subdirectory(external/AOWIS-SERVER-DB EXCLUDE_FROM_ALL)
 
 qt_add_executable(aowis-server-gui
     resources.qrc
-    "${AOWIS_GUI_SOURCE_FINGERPRINT_HEADER}"
     src/main.cpp
     src/main_window.cpp
     src/main_window.h
@@ -155,17 +128,6 @@ qt_add_executable(aowis-server-gui
     src/map/map_canvas_selection.h src/map/map_canvas_selection.cpp
     src/map/map_canvas_placement.h src/map/map_canvas_placement.cpp
 )
-
-set_source_files_properties("${AOWIS_GUI_SOURCE_FINGERPRINT_HEADER}" PROPERTIES GENERATED TRUE)
-add_dependencies(aowis-server-gui aowis-gui-source-fingerprint)
-
-if(MSVC)
-    target_compile_options(aowis-server-gui PRIVATE
-        "/FI${AOWIS_GUI_SOURCE_FINGERPRINT_HEADER}")
-else()
-    target_compile_options(aowis-server-gui PRIVATE
-        -include "${AOWIS_GUI_SOURCE_FINGERPRINT_HEADER}")
-endif()
 
 if(APPLE)
     set_target_properties(aowis-server-gui PROPERTIES

@@ -25,7 +25,7 @@ cmake .. \
   -DCMAKE_EXE_LINKER_FLAGS="-lembind" \
   -DCMAKE_BUILD_TYPE=Release
 
-# Build
-make -j$(nproc)
+# Build using the configured generator.
+cmake --build . --parallel "$(nproc)"
 
 echo "=== WASM build complete ==="
