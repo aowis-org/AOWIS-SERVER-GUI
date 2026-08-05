@@ -9,6 +9,7 @@
 #include <QPaintEvent>
 #include <QPalette>
 #include <QPen>
+#include <QPixmap>
 #include <QSet>
 #include <QTimer>
 #include <QtMath>
@@ -172,17 +173,24 @@ void MapNetworkOverlayWidget::paintEvent(QPaintEvent *event)
         painter.fillRect(rect(), background);
     }
 
-    if (!this->snapshot_initialized ||
-        (this->snapshot.nodes.isEmpty() && this->snapshot.links.isEmpty()))
+    if (this->snapshot_initialized &&
+        (!this->snapshot.nodes.isEmpty() || !this->snapshot.links.isEmpty()))
     {
-        return;
+        ensureCache();
+        if (!this->cached_image.isNull())
+            painter.drawImage(cachedImageScreenPosition(), this->cached_image);
     }
 
-    ensureCache();
-    if (this->cached_image.isNull())
-        return;
-
-    painter.drawImage(cachedImageScreenPosition(), this->cached_image);
+    static const QPixmap crosshair_pixmap =
+        QPixmap(QStringLiteral(":/icon/crosshair.png")).scaled(
+            QSize(40, 40), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    if (!crosshair_pixmap.isNull())
+    {
+        const QPoint crosshair_position(
+            (width() - crosshair_pixmap.width()) / 2,
+            (height() - crosshair_pixmap.height()) / 2);
+        painter.drawPixmap(crosshair_position, crosshair_pixmap);
+    }
 }
 
 void MapNetworkOverlayWidget::syncSnapshot()

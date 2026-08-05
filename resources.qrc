@@ -28,6 +28,8 @@
         <file alias="geomarker.png">assets/iconsets/gothic/geomarker.png</file>
         <file alias="target.png">assets/iconsets/gothic/target.png</file>
         
+        <file alias="crosshair.png">assets/iconsets/gothic/crosshair.png</file>
+        
         <file alias="pipe.png">assets/iconsets/gothic/pipe.png</file>
         <file alias="junction.png">assets/iconsets/gothic/junction.png</file>
         <file alias="lake.png">assets/iconsets/gothic/lake.png</file>

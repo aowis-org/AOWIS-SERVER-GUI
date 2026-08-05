@@ -7,6 +7,7 @@
 #include <QMouseEvent>
 #include <QPaintEvent>
 #include <QPainter>
+#include <QPixmap>
 #include <QResizeEvent>
 #include <QWheelEvent>
 
@@ -131,6 +132,17 @@ void MapCanvasWidget::paintEvent(QPaintEvent *event)
     this->map_editor_renderer.paint(
         painter, *event, network_snapshot, this->map_canvas_entities->visualState(),
         viewportRenderState());
+
+    static const QPixmap crosshair_pixmap =
+        QPixmap(QStringLiteral(":/icon/crosshair.png")).scaled(
+            QSize(40, 40), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    if (!crosshair_pixmap.isNull())
+    {
+        const QPoint crosshair_position(
+            (width() - crosshair_pixmap.width()) / 2,
+            (height() - crosshair_pixmap.height()) / 2);
+        painter.drawPixmap(crosshair_position, crosshair_pixmap);
+    }
 #endif
 }
 

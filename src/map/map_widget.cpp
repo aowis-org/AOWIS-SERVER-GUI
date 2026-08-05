@@ -1,6 +1,7 @@
 #include "map_widget.h"
 
 #include <QApplication>
+#include <QFile>
 #include <QPaintEvent>
 #include <QPalette>
 
@@ -54,6 +55,15 @@ EM_JS(void, aowisBrowserMapRelease, (int owner_id),
     if (window.aowisBrowserMap)
         window.aowisBrowserMap.release(owner_id);
 });
+
+EM_JS(void, aowisBrowserMapSetCrosshairImage, (const char *data_url),
+{
+    if (window.aowisBrowserMap &&
+        typeof window.aowisBrowserMap.setCrosshairImage === "function")
+    {
+        window.aowisBrowserMap.setCrosshairImage(UTF8ToString(data_url));
+    }
+});
 #endif
 
 namespace
@@ -63,6 +73,19 @@ int nextBrowserMapLayerOwnerId()
 {
     static int next_owner_id = 1;
     return next_owner_id++;
+}
+
+QByteArray browserCrosshairDataUrl()
+{
+    static const QByteArray data_url = []
+    {
+        QFile file(QStringLiteral(":/icon/crosshair.png"));
+        if (!file.open(QIODevice::ReadOnly))
+            return QByteArray();
+
+        return QByteArrayLiteral("data:image/png;base64,") + file.readAll().toBase64();
+    }();
+    return data_url;
 }
 #endif
 
@@ -682,6 +705,9 @@ void MapWidget::setBrowserMapLayerEnabled(bool enabled)
     this->browser_map_layer_enabled = enabled;
     if (enabled)
     {
+        const QByteArray crosshair_data_url = browserCrosshairDataUrl();
+        if (!crosshair_data_url.isEmpty())
+            aowisBrowserMapSetCrosshairImage(crosshair_data_url.constData());
         this->syncBrowserMapView();
     }
     else

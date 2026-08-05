@@ -18,6 +18,8 @@
         scaleControl: null,
         scaleLabel: null,
         scaleBar: null,
+        crosshair: null,
+        crosshairImage: "",
         screen: null,
         overlayWindow: null,
         windowObserver: null,
@@ -346,6 +348,24 @@
         state.scaleBar.style.boxSizing = "border-box";
         state.scaleControl.appendChild(state.scaleBar);
         state.layer.appendChild(state.scaleControl);
+
+        state.crosshair = document.createElement("img");
+        state.crosshair.alt = "";
+        state.crosshair.draggable = false;
+        state.crosshair.style.position = "absolute";
+        state.crosshair.style.left = "50%";
+        state.crosshair.style.top = "50%";
+        state.crosshair.style.width = "40px";
+        state.crosshair.style.height = "40px";
+        state.crosshair.style.maxWidth = "none";
+        state.crosshair.style.objectFit = "contain";
+        state.crosshair.style.pointerEvents = "none";
+        state.crosshair.style.userSelect = "none";
+        state.crosshair.style.transform = "translate(-50%, -50%)";
+        state.crosshair.style.zIndex = "30";
+        if (state.crosshairImage)
+            state.crosshair.src = state.crosshairImage;
+        state.layer.appendChild(state.crosshair);
 
         screen.appendChild(state.layer);
 
@@ -684,6 +704,17 @@
         notifyViewChanged();
     }
 
+    function setCrosshairImage(dataUrl) {
+        state.crosshairImage = typeof dataUrl === "string" ? dataUrl : "";
+        if (!state.crosshair)
+            return;
+
+        if (state.crosshairImage)
+            state.crosshair.src = state.crosshairImage;
+        else
+            state.crosshair.removeAttribute("src");
+    }
+
     function invalidateTiles() {
         state.cacheRevision += 1;
         clearTiles();
@@ -720,6 +751,7 @@
         state.scaleControl = null;
         state.scaleLabel = null;
         state.scaleBar = null;
+        state.crosshair = null;
         state.screen = null;
         state.overlayWindow = null;
         state.ready = false;
@@ -735,6 +767,7 @@
     window.aowisBrowserMap = {
         setGeometry: setGeometry,
         setView: setView,
+        setCrosshairImage: setCrosshairImage,
         invalidateTiles: invalidateTiles,
         release: release,
         destroy: destroy,

@@ -247,17 +247,18 @@ private:
     {
         const qreal tick_top = ramp_rect.bottom() + 2.0;
         const qreal tick_bottom = tick_top + 4.0;
-        const std::array<double, 7> fractions = {{0.0, 1.0 / 6.0, 2.0 / 6.0, 0.5, 4.0 / 6.0, 5.0 / 6.0, 1.0}};
+        const int label_count = useReducedLabelCount() ? 5 : 7;
 
-        for (double fraction : fractions)
+        for (int index = 0; index < label_count; ++index)
         {
+            const double fraction = static_cast<double>(index) / static_cast<double>(label_count - 1);
             const qreal x = ramp_rect.left() + (ramp_rect.width() * fraction);
             painter.drawLine(QPointF(x, tick_top), QPointF(x, tick_bottom));
         }
 
         painter.setPen(text_color);
         QFont label_font = painter.font();
-        label_font.setPointSizeF(qMax(6.0, label_font.pointSizeF() - 2.0));
+        label_font.setPointSizeF(qMax(6.0, label_font.pointSizeF() - 3.0));
         painter.setFont(label_font);
 
         const QRectF label_area(ramp_rect.left(), tick_bottom + 2.0, ramp_rect.width(), height() - tick_bottom - 4.0);
@@ -268,18 +269,18 @@ private:
             return;
         }
 
-        const qreal label_width = ramp_rect.width() / static_cast<qreal>(fractions.size() - 1);
+        const qreal label_width = ramp_rect.width() / static_cast<qreal>(label_count - 1);
 
-        for (std::size_t index = 0; index < fractions.size(); ++index)
+        for (int index = 0; index < label_count; ++index)
         {
-            const double fraction = fractions[index];
+            const double fraction = static_cast<double>(index) / static_cast<double>(label_count - 1);
             const double value = this->value_minimum + ((this->value_maximum - this->value_minimum) * fraction);
             const qreal label_center_x = ramp_rect.left() + (ramp_rect.width() * fraction);
             QRectF label_rect(label_center_x - (label_width * 0.5), label_area.top(), label_width, label_area.height());
 
             if (index == 0)
                 label_rect.moveLeft(ramp_rect.left());
-            else if (index + 1 == fractions.size())
+            else if (index + 1 == label_count)
                 label_rect.moveRight(ramp_rect.right());
 
             label_rect.adjust(1.0, 0.0, -1.0, 0.0);
@@ -288,11 +289,38 @@ private:
 
             if (index == 0)
                 alignment = Qt::AlignLeft | Qt::AlignTop;
-            else if (index + 1 == fractions.size())
+            else if (index + 1 == label_count)
                 alignment = Qt::AlignRight | Qt::AlignTop;
 
             painter.drawText(label_rect, alignment, formatValue(value));
         }
+    }
+
+    bool useReducedLabelCount() const
+    {
+        if (!std::isfinite(this->value_minimum) || !std::isfinite(this->value_maximum)
+            || qFuzzyCompare(this->value_minimum + 1.0, this->value_maximum + 1.0))
+        {
+            return false;
+        }
+
+        constexpr int full_label_count = 7;
+        for (int index = 0; index < full_label_count; ++index)
+        {
+            const double fraction = static_cast<double>(index) / static_cast<double>(full_label_count - 1);
+            const double value = this->value_minimum + ((this->value_maximum - this->value_minimum) * fraction);
+            const QString text = formatValue(value);
+            if (text.size() != 3)
+                return false;
+
+            for (const QChar character : text)
+            {
+                if (!character.isDigit())
+                    return false;
+            }
+        }
+
+        return true;
     }
 
     void showHoverSwatch(double fraction, bool uniform)
@@ -646,11 +674,23 @@ void EntityMapLegendDock::updateLinkLegend()
         maximum = this->hydraulic_data->linkDiameterMmMaximum();
         break;
     case VisualLink::Length:
+    {
         metric = QStringLiteral("Length");
-        unit = QStringLiteral("m");
         minimum = this->hydraulic_data->linkLengthMMinimum();
         maximum = this->hydraulic_data->linkLengthMMaximum();
+        const double maximum_absolute = qMax(std::abs(minimum), std::abs(maximum));
+        if (maximum_absolute >= 1000.0)
+        {
+            unit = QStringLiteral("km");
+            minimum /= 1000.0;
+            maximum /= 1000.0;
+        }
+        else
+        {
+            unit = QStringLiteral("m");
+        }
         break;
+    }
     case VisualLink::Roughness:
         metric = QStringLiteral("Hazen-Williams C");
         minimum = this->hydraulic_data->linkRoughnessHwMinimum();

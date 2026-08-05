@@ -18,7 +18,9 @@ cp tools/qt-emscripten/aowis-browser-map.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-network.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-map-editor.js build-wasm/
 
+MAP_JS_VERSION=$(sha256sum tools/qt-emscripten/aowis-browser-map.js | cut -c1-16)
 NETWORK_JS_VERSION=$(sha256sum tools/qt-emscripten/aowis-browser-network.js | cut -c1-16)
+sed -i "s|__AOWIS_MAP_JS_VERSION__|${MAP_JS_VERSION}|g" build-wasm/index.html
 sed -i "s|__AOWIS_NETWORK_JS_VERSION__|${NETWORK_JS_VERSION}|g" build-wasm/index.html
 
 rm -rf build-wasm/svg
