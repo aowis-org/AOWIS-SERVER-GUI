@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include <QColor>
+#include <QFontMetricsF>
 #include <QHideEvent>
 #include <QLinearGradient>
 #include <QLocale>
@@ -247,19 +248,19 @@ private:
     {
         const qreal tick_top = ramp_rect.bottom() + 2.0;
         const qreal tick_bottom = tick_top + 4.0;
-        const int label_count = useReducedLabelCount() ? 5 : 7;
 
+        painter.setPen(text_color);
+        QFont label_font = painter.font();
+        label_font.setPointSizeF(qMax(6.0, label_font.pointSizeF() - 3.0));
+        painter.setFont(label_font);
+
+        const int label_count = labelCountForWidth(label_font, ramp_rect.width());
         for (int index = 0; index < label_count; ++index)
         {
             const double fraction = static_cast<double>(index) / static_cast<double>(label_count - 1);
             const qreal x = ramp_rect.left() + (ramp_rect.width() * fraction);
             painter.drawLine(QPointF(x, tick_top), QPointF(x, tick_bottom));
         }
-
-        painter.setPen(text_color);
-        QFont label_font = painter.font();
-        label_font.setPointSizeF(qMax(6.0, label_font.pointSizeF() - 3.0));
-        painter.setFont(label_font);
 
         const QRectF label_area(ramp_rect.left(), tick_bottom + 2.0, ramp_rect.width(), height() - tick_bottom - 4.0);
 
@@ -269,58 +270,85 @@ private:
             return;
         }
 
-        const qreal label_width = ramp_rect.width() / static_cast<qreal>(label_count - 1);
-
+        const QFontMetricsF font_metrics(label_font);
         for (int index = 0; index < label_count; ++index)
         {
             const double fraction = static_cast<double>(index) / static_cast<double>(label_count - 1);
             const double value = this->value_minimum + ((this->value_maximum - this->value_minimum) * fraction);
+            const QString text = formatValue(value);
+            const qreal text_width = font_metrics.horizontalAdvance(text) + 2.0;
             const qreal label_center_x = ramp_rect.left() + (ramp_rect.width() * fraction);
-            QRectF label_rect(label_center_x - (label_width * 0.5), label_area.top(), label_width, label_area.height());
-
-            if (index == 0)
-                label_rect.moveLeft(ramp_rect.left());
-            else if (index + 1 == label_count)
-                label_rect.moveRight(ramp_rect.right());
-
-            label_rect.adjust(1.0, 0.0, -1.0, 0.0);
-
+            qreal label_left = label_center_x - (text_width * 0.5);
             Qt::Alignment alignment = Qt::AlignHCenter | Qt::AlignTop;
 
             if (index == 0)
+            {
+                label_left = ramp_rect.left();
                 alignment = Qt::AlignLeft | Qt::AlignTop;
+            }
             else if (index + 1 == label_count)
+            {
+                label_left = ramp_rect.right() - text_width;
                 alignment = Qt::AlignRight | Qt::AlignTop;
+            }
 
-            painter.drawText(label_rect, alignment, formatValue(value));
+            const QRectF label_rect(label_left, label_area.top(), text_width, label_area.height());
+            painter.drawText(label_rect, alignment, text);
         }
     }
 
-    bool useReducedLabelCount() const
+    int labelCountForWidth(const QFont &font, qreal ramp_width) const
     {
         if (!std::isfinite(this->value_minimum) || !std::isfinite(this->value_maximum)
             || qFuzzyCompare(this->value_minimum + 1.0, this->value_maximum + 1.0))
         {
-            return false;
+            return 7;
         }
 
-        constexpr int full_label_count = 7;
-        for (int index = 0; index < full_label_count; ++index)
+        const QFontMetricsF font_metrics(font);
+        const qreal minimum_gap = qMax(6.0, font_metrics.horizontalAdvance(QStringLiteral("  ")));
+        constexpr std::array<int, 3> label_counts = {{7, 5, 3}};
+
+        for (const int label_count : label_counts)
         {
-            const double fraction = static_cast<double>(index) / static_cast<double>(full_label_count - 1);
-            const double value = this->value_minimum + ((this->value_maximum - this->value_minimum) * fraction);
-            const QString text = formatValue(value);
-            if (text.size() != 3)
-                return false;
+            qreal previous_right = -minimum_gap;
+            bool fits = true;
 
-            for (const QChar character : text)
+            for (int index = 0; index < label_count; ++index)
             {
-                if (!character.isDigit())
-                    return false;
+                const double fraction = static_cast<double>(index) / static_cast<double>(label_count - 1);
+                const double value = this->value_minimum + ((this->value_maximum - this->value_minimum) * fraction);
+                const qreal text_width = font_metrics.horizontalAdvance(formatValue(value)) + 2.0;
+                const qreal label_center_x = ramp_width * fraction;
+                qreal label_left = label_center_x - (text_width * 0.5);
+                qreal label_right = label_center_x + (text_width * 0.5);
+
+                if (index == 0)
+                {
+                    label_left = 0.0;
+                    label_right = text_width;
+                }
+                else if (index + 1 == label_count)
+                {
+                    label_left = ramp_width - text_width;
+                    label_right = ramp_width;
+                }
+
+                if (label_left < 0.0 || label_right > ramp_width
+                    || (index > 0 && label_left - previous_right < minimum_gap))
+                {
+                    fits = false;
+                    break;
+                }
+
+                previous_right = label_right;
             }
+
+            if (fits)
+                return label_count;
         }
 
-        return true;
+        return 3;
     }
 
     void showHoverSwatch(double fraction, bool uniform)
