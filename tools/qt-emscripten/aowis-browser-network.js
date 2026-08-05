@@ -21,7 +21,8 @@
     const NETWORK_IMAGE_REBUILD_EDGE = 256;
     const HEATMAP_MAX_DIMENSION = 2048;
     const HEATMAP_MAX_AREA = 2 * 1024 * 1024;
-    const HEATMAP_MINIMUM_STRENGTH = 0.16;
+    const HEATMAP_MAX_KERNEL_CACHE_PIXELS = 8 * 1024 * 1024;
+    const HEATMAP_MAX_COLOR_BUCKETS = 64;
     const MAX_SPATIAL_QUERY_CELLS = 4096;
     const LINK_HIT_DISTANCE = 7;
     const SPATIAL_CELL_SIZE = 128;
@@ -915,7 +916,15 @@
                 / (state.heatmapMaximum - state.heatmapMinimum)));
     }
 
-    function createHeatmapKernel(radius) {
+    function heatmapColorBucketCount(radius) {
+        const diameter = Math.max(3, Math.ceil(Math.max(1, radius) * 2) + 2);
+        const maximumByMemory = Math.floor(
+            HEATMAP_MAX_KERNEL_CACHE_PIXELS / (diameter * diameter));
+        return Math.max(RAMP_COLORS.length, Math.min(
+            HEATMAP_MAX_COLOR_BUCKETS, maximumByMemory));
+    }
+
+    function createHeatmapKernel(radius, color) {
         const boundedRadius = Math.max(1, radius);
         const diameter = Math.max(3, Math.ceil(boundedRadius * 2) + 2);
         const center = diameter / 2;
@@ -926,42 +935,17 @@
         if (!context)
             return null;
 
+        const red = Math.round(color.red);
+        const green = Math.round(color.green);
+        const blue = Math.round(color.blue);
         const gradient = context.createRadialGradient(
             center, center, 0, center, center, boundedRadius);
-        gradient.addColorStop(0, "rgba(0, 0, 0, 1)");
-        gradient.addColorStop(0.42, "rgba(0, 0, 0, 0.72)");
-        gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+        gradient.addColorStop(0, `rgba(${red}, ${green}, ${blue}, 0.86)`);
+        gradient.addColorStop(0.42, `rgba(${red}, ${green}, ${blue}, 0.62)`);
+        gradient.addColorStop(1, `rgba(${red}, ${green}, ${blue}, 0)`);
         context.fillStyle = gradient;
         context.fillRect(0, 0, diameter, diameter);
         return canvas;
-    }
-
-    function colorizeHeatmap(canvas) {
-        const context = canvas.getContext("2d");
-        if (!context)
-            return false;
-
-        const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-        const pixels = imageData.data;
-        for (let index = 0; index < pixels.length; index += 4) {
-            const accumulatedStrength = pixels[index + 3] / 255;
-            if (accumulatedStrength <= 0) {
-                pixels[index + 3] = 0;
-                continue;
-            }
-
-            const fraction = Math.max(0, Math.min(1,
-                (accumulatedStrength - HEATMAP_MINIMUM_STRENGTH)
-                    / (1 - HEATMAP_MINIMUM_STRENGTH)));
-            const color = rampRgb(fraction);
-            pixels[index] = Math.round(color.red);
-            pixels[index + 1] = Math.round(color.green);
-            pixels[index + 2] = Math.round(color.blue);
-            pixels[index + 3] = Math.round(255 * Math.min(
-                1, accumulatedStrength / HEATMAP_MINIMUM_STRENGTH));
-        }
-        context.putImageData(imageData, 0, 0);
-        return true;
     }
 
     function renderHeatmap(specification) {
@@ -973,13 +957,11 @@
             return null;
 
         const radius = Math.max(1, state.heatmapRadius * specification.rasterScale);
-        const kernel = createHeatmapKernel(radius);
-        if (!kernel)
-            return null;
-
+        const colorBucketCount = heatmapColorBucketCount(radius);
+        const kernelCache = new Map();
         const queryPadding = state.heatmapRadius / specification.scale;
         const queryBounds = expandedBounds(specification.bounds, queryPadding);
-        context.globalCompositeOperation = "lighter";
+        context.globalCompositeOperation = "source-over";
         for (const index of indicesInWorldBounds(queryBounds, "markers")) {
             const marker = state.markers[index];
             if (!isNodeEntityType(marker.entityType)
@@ -1002,15 +984,17 @@
                 continue;
             }
 
-            context.globalAlpha = HEATMAP_MINIMUM_STRENGTH
-                + fraction * (1 - HEATMAP_MINIMUM_STRENGTH);
+            const bucket = Math.round(fraction * (colorBucketCount - 1));
+            let kernel = kernelCache.get(bucket);
+            if (!kernel) {
+                const bucketFraction = bucket / (colorBucketCount - 1);
+                kernel = createHeatmapKernel(radius, rampRgb(bucketFraction));
+                if (!kernel)
+                    return null;
+                kernelCache.set(bucket, kernel);
+            }
             context.drawImage(kernel, x - kernel.width / 2, y - kernel.height / 2);
         }
-        context.globalAlpha = 1;
-        context.globalCompositeOperation = "source-over";
-
-        if (!colorizeHeatmap(canvas))
-            return null;
 
         canvas.setAttribute("aria-hidden", "true");
         canvas.style.position = "absolute";
