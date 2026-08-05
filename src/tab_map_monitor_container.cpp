@@ -236,7 +236,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapRadiusChanged, this, [this](int radius)
     {
-        this->heatmap_radius = qBound(10, radius, 500);
+        this->heatmap_radius_m = qBound(10, radius, 500);
 #ifdef Q_OS_WASM
         scheduleWasmNetworkSymbologySync(false);
 #endif
@@ -482,7 +482,7 @@ void MapMonitorContainer::syncWasmNetworkSymbology()
 
     const QByteArray json = BrowserNetworkSnapshotSerializer::serializeSymbology(
         *this->hydraulic_data, this->visual_node, this->visual_link,
-        this->visual_heatmap, this->heatmap_opacity, this->heatmap_radius);
+        this->visual_heatmap, this->heatmap_opacity, this->heatmap_radius_m);
     const int transferred = aowisBrowserNetworkSetSymbology(
         json.constData(), static_cast<int>(json.size()));
     if (transferred != 0)
@@ -697,7 +697,7 @@ void MapMonitorMenuWidget::addGroupHeatmapVisuals()
     slider_opacity->setRange(0, 100);
     slider_opacity->setValue(55);
     
-    QLabel *label_slider_radius = new QLabel("Radius");
+    QLabel *label_slider_radius = new QLabel("Radius [m]");
     QSlider *slider_radius = new QSlider(Qt::Horizontal);
     slider_radius->setRange(10, 500);
     slider_radius->setValue(100);

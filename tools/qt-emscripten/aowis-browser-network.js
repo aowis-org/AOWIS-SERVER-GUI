@@ -22,6 +22,7 @@
     const HEATMAP_MAX_DIMENSION = 2048;
     const HEATMAP_MAX_AREA = 2 * 1024 * 1024;
     const HEATMAP_MAX_KERNEL_CACHE_PIXELS = 8 * 1024 * 1024;
+    const HEATMAP_MAX_KERNEL_RADIUS = 256;
     const HEATMAP_MAX_COLOR_BUCKETS = 64;
     const MAX_SPATIAL_QUERY_CELLS = 4096;
     const LINK_HIT_DISTANCE = 7;
@@ -132,7 +133,7 @@
         heatmapMaximum: 0,
         heatmapValues: new Map(),
         heatmapOpacity: 55,
-        heatmapRadius: 100
+        heatmapRadiusMeters: 100
     };
 
     function applyBackground() {
@@ -230,6 +231,19 @@
         const radians = clampLatitude(latitude) * Math.PI / 180;
         const mercator = Math.log(Math.tan(Math.PI / 4 + radians / 2));
         return (1 - mercator / Math.PI) / 2 * worldSize(REFERENCE_ZOOM);
+    }
+
+    function worldPixelToLatitude(worldPixelY) {
+        const normalized = 1 - 2 * worldPixelY / worldSize(REFERENCE_ZOOM);
+        const mercator = normalized * Math.PI;
+        const radians = 2 * Math.atan(Math.exp(mercator)) - Math.PI / 2;
+        return radians * 180 / Math.PI;
+    }
+
+    function metersPerReferencePixel(latitude) {
+        const latitudeRadians = clampLatitude(latitude) * Math.PI / 180;
+        return 156543.03392804097 * Math.cos(latitudeRadians)
+            / Math.pow(2, REFERENCE_ZOOM);
     }
 
     function nearestWrappedWorldPixel(rawPixelX, referencePixelX) {
@@ -916,8 +930,20 @@
                 / (state.heatmapMaximum - state.heatmapMinimum)));
     }
 
+    function heatmapRadiusWorldPixels() {
+        const centerY = (state.geometryMinimumY + state.geometryMaximumY) / 2;
+        const centerLatitude = worldPixelToLatitude(centerY);
+        const metersPerPixel = Math.max(0.000001, metersPerReferencePixel(centerLatitude));
+        return Math.max(1, state.heatmapRadiusMeters / metersPerPixel);
+    }
+
+    function heatmapKernelRadius(radius) {
+        return Math.max(1, Math.min(HEATMAP_MAX_KERNEL_RADIUS, radius));
+    }
+
     function heatmapColorBucketCount(radius) {
-        const diameter = Math.max(3, Math.ceil(Math.max(1, radius) * 2) + 2);
+        const kernelRadius = heatmapKernelRadius(radius);
+        const diameter = Math.max(3, Math.ceil(kernelRadius * 2) + 2);
         const maximumByMemory = Math.floor(
             HEATMAP_MAX_KERNEL_CACHE_PIXELS / (diameter * diameter));
         return Math.max(RAMP_COLORS.length, Math.min(
@@ -926,7 +952,8 @@
 
     function createHeatmapKernel(radius, color) {
         const boundedRadius = Math.max(1, radius);
-        const diameter = Math.max(3, Math.ceil(boundedRadius * 2) + 2);
+        const kernelRadius = heatmapKernelRadius(boundedRadius);
+        const diameter = Math.max(3, Math.ceil(kernelRadius * 2) + 2);
         const center = diameter / 2;
         const canvas = document.createElement("canvas");
         canvas.width = diameter;
@@ -939,13 +966,17 @@
         const green = Math.round(color.green);
         const blue = Math.round(color.blue);
         const gradient = context.createRadialGradient(
-            center, center, 0, center, center, boundedRadius);
-        gradient.addColorStop(0, `rgba(${red}, ${green}, ${blue}, 0.86)`);
-        gradient.addColorStop(0.42, `rgba(${red}, ${green}, ${blue}, 0.62)`);
+            center, center, 0, center, center, kernelRadius);
+        gradient.addColorStop(0, `rgba(${red}, ${green}, ${blue}, 1)`);
+        gradient.addColorStop(0.2, `rgba(${red}, ${green}, ${blue}, 1)`);
+        gradient.addColorStop(0.55, `rgba(${red}, ${green}, ${blue}, 0.5)`);
         gradient.addColorStop(1, `rgba(${red}, ${green}, ${blue}, 0)`);
         context.fillStyle = gradient;
         context.fillRect(0, 0, diameter, diameter);
-        return canvas;
+        return {
+            canvas: canvas,
+            diameter: Math.max(3, Math.ceil(boundedRadius * 2) + 2)
+        };
     }
 
     function renderHeatmap(specification) {
@@ -956,10 +987,12 @@
         if (!context)
             return null;
 
-        const radius = Math.max(1, state.heatmapRadius * specification.rasterScale);
+        const radiusWorldPixels = heatmapRadiusWorldPixels();
+        const radius = Math.max(
+            1, radiusWorldPixels * specification.scale * specification.rasterScale);
         const colorBucketCount = heatmapColorBucketCount(radius);
         const kernelCache = new Map();
-        const queryPadding = state.heatmapRadius / specification.scale;
+        const queryPadding = radiusWorldPixels;
         const queryBounds = expandedBounds(specification.bounds, queryPadding);
         context.globalCompositeOperation = "source-over";
         for (const index of indicesInWorldBounds(queryBounds, "markers")) {
@@ -993,7 +1026,12 @@
                     return null;
                 kernelCache.set(bucket, kernel);
             }
-            context.drawImage(kernel, x - kernel.width / 2, y - kernel.height / 2);
+            context.drawImage(
+                kernel.canvas,
+                x - kernel.diameter / 2,
+                y - kernel.diameter / 2,
+                kernel.diameter,
+                kernel.diameter);
         }
 
         canvas.setAttribute("aria-hidden", "true");
@@ -1651,8 +1689,8 @@
         const heatmapValues = symbologyValues(symbology.heatmapValues);
         const heatmapOpacity = Math.max(
             0, Math.min(100, Number(symbology.heatmapOpacity) || 0));
-        const heatmapRadius = Math.max(
-            10, Math.min(500, Number(symbology.heatmapRadius) || 100));
+        const heatmapRadiusMeters = Math.max(
+            10, Math.min(500, Number(symbology.heatmapRadiusMeters) || 100));
 
         const networkChanged = state.nodeVisual !== nodeVisual
             || state.nodeMinimum !== nodeMinimum
@@ -1665,7 +1703,7 @@
         const heatmapChanged = state.heatmapVisual !== heatmapVisual
             || state.heatmapMinimum !== heatmapMinimum
             || state.heatmapMaximum !== heatmapMaximum
-            || state.heatmapRadius !== heatmapRadius
+            || state.heatmapRadiusMeters !== heatmapRadiusMeters
             || !symbologyValuesEqual(state.heatmapValues, heatmapValues);
         const heatmapOpacityChanged = state.heatmapOpacity !== heatmapOpacity;
 
@@ -1682,7 +1720,7 @@
         state.heatmapMaximum = heatmapMaximum;
         state.heatmapValues = heatmapValues;
         state.heatmapOpacity = heatmapOpacity;
-        state.heatmapRadius = heatmapRadius;
+        state.heatmapRadiusMeters = heatmapRadiusMeters;
 
         if (networkChanged)
             clearNetworkImage();
@@ -1761,7 +1799,7 @@
         state.heatmapMaximum = 0;
         state.heatmapValues = new Map();
         state.heatmapOpacity = 55;
-        state.heatmapRadius = 100;
+        state.heatmapRadiusMeters = 100;
     }
 
     window.aowisBrowserNetwork = {

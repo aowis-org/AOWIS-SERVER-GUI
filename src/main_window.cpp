@@ -229,7 +229,7 @@ MainWindow::MainWindow(QWidget *parent)
     this->tabs->addTab(this->settings, rotatedIcon(":/icon/settings.png"), "");
     this->tabs->setTabToolTip(this->tabs->count() - 1, "Settings");
     
-    this->tabs->setCurrentIndex(1);
+    this->tabs->setCurrentIndex(2);
 
     connect(this->tabs, &QTabWidget::currentChanged, this, [this](int)
     {

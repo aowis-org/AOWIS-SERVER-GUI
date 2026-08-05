@@ -22,7 +22,7 @@ QByteArray serializeSymbology(const HydraulicData &hydraulic_data,
                               VisualLink visual_link,
                               VisualHeatmap visual_heatmap,
                               int heatmap_opacity,
-                              int heatmap_radius);
+                              int heatmap_radius_m);
 }
 
 #endif // BROWSER_NETWORK_SNAPSHOT_SERIALIZER_H

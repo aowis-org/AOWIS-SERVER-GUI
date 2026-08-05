@@ -109,7 +109,7 @@ private:
     VisualLink visual_link = VisualLink::None;
     VisualHeatmap visual_heatmap = VisualHeatmap::None;
     int heatmap_opacity = 55;
-    int heatmap_radius = 100;
+    int heatmap_radius_m = 100;
 
     bool selectNetworkEntity(quint32 render_id, InfrastructureEntity entity_type);
     void setNetworkBackgroundOpacity(int opacity);

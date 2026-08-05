@@ -363,7 +363,7 @@ QByteArray BrowserNetworkSnapshotSerializer::serializeGeometryPatch(
 
 QByteArray BrowserNetworkSnapshotSerializer::serializeSymbology(
     const HydraulicData &hydraulic_data, VisualNode visual_node, VisualLink visual_link,
-    VisualHeatmap visual_heatmap, int heatmap_opacity, int heatmap_radius)
+    VisualHeatmap visual_heatmap, int heatmap_opacity, int heatmap_radius_m)
 {
     const NetworkRenderSnapshot &snapshot = hydraulic_data.networkRenderSnapshot();
     const NetworkHydraulic &network_hydraulic = hydraulic_data.networkHydraulic();
@@ -388,6 +388,6 @@ QByteArray BrowserNetworkSnapshotSerializer::serializeSymbology(
     root.insert(QStringLiteral("heatmapMaximum"), heatmap_range.second);
     root.insert(QStringLiteral("heatmapValues"), nodeValuesToJson(snapshot, heatmap_values));
     root.insert(QStringLiteral("heatmapOpacity"), qBound(0, heatmap_opacity, 100));
-    root.insert(QStringLiteral("heatmapRadius"), qBound(10, heatmap_radius, 500));
+    root.insert(QStringLiteral("heatmapRadiusMeters"), qBound(10, heatmap_radius_m, 500));
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
