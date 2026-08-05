@@ -210,11 +210,25 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         scheduleWasmNetworkSymbologySync(false);
 #endif
     });
+    connect(this->map_menu, &MapMonitorMenuWidget::signalNodeSizeChanged, this, [this](int size_percent)
+    {
+        this->node_size_percent = qBound(50, size_percent, 250);
+#ifdef Q_OS_WASM
+        scheduleWasmNetworkSymbologySync(false);
+#endif
+    });
     connect(this->map_menu, &MapMonitorMenuWidget::signalLinkVisualClicked, this,
         [this](VisualLink visual_link)
     {
         this->visual_link = visual_link;
         emit signalShowMapLegendLink(visual_link);
+#ifdef Q_OS_WASM
+        scheduleWasmNetworkSymbologySync(false);
+#endif
+    });
+    connect(this->map_menu, &MapMonitorMenuWidget::signalLinkThicknessChanged, this, [this](int thickness_px)
+    {
+        this->link_thickness_px = qBound(1, thickness_px, 12);
 #ifdef Q_OS_WASM
         scheduleWasmNetworkSymbologySync(false);
 #endif
@@ -481,8 +495,9 @@ void MapMonitorContainer::syncWasmNetworkSymbology()
     }
 
     const QByteArray json = BrowserNetworkSnapshotSerializer::serializeSymbology(
-        *this->hydraulic_data, this->visual_node, this->visual_link,
-        this->visual_heatmap, this->heatmap_opacity, this->heatmap_radius_m);
+        *this->hydraulic_data, this->visual_node, this->node_size_percent,
+        this->visual_link, this->link_thickness_px, this->visual_heatmap,
+        this->heatmap_opacity, this->heatmap_radius_m);
     const int transferred = aowisBrowserNetworkSetSymbology(
         json.constData(), static_cast<int>(json.size()));
     if (transferred != 0)
@@ -559,6 +574,12 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
     QRadioButton *radio_node_head = new QRadioButton("Head");
     QRadioButton *radio_node_pressure = new QRadioButton("Pressure");
     
+    QLabel *label_node_size = new QLabel("Size [%]");
+    QSlider *slider_node_size = new QSlider(Qt::Horizontal);
+    slider_node_size->setRange(50, 250);
+    slider_node_size->setValue(100);
+    connect(slider_node_size, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalNodeSizeChanged);
+
     QLabel *label_multispecies = new QLabel(
         "EPANET Network 3 has<br>"
         "Multi-Species Water<br>"
@@ -605,7 +626,7 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
     vbox->addWidget(radio_node_leakage);
     vbox->addWidget(radio_node_head);
     vbox->addWidget(radio_node_pressure);
-    
+
     vbox->addWidget(label_multispecies);
     
     vbox->addWidget(radio_node_chlorine);
@@ -613,6 +634,9 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
     vbox->addWidget(radio_node_lake);
     
     vbox->addWidget(label_chlorine);
+
+    vbox->addWidget(label_node_size);
+    vbox->addWidget(slider_node_size);
 }
 void MapMonitorMenuWidget::addGroupLinkVisuals()
 {
@@ -624,6 +648,12 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     QCheckBox *check_flow_direction = new QCheckBox("Show Flow Direction");
     check_flow_direction->setChecked(true);
     
+    QLabel *label_link_thickness = new QLabel("Thickness [px]");
+    QSlider *slider_link_thickness = new QSlider(Qt::Horizontal);
+    slider_link_thickness->setRange(1, 12);
+    slider_link_thickness->setValue(3);
+    connect(slider_link_thickness, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalLinkThicknessChanged);
+
     QRadioButton *radio_link_none = new QRadioButton("None");
     radio_link_none->setChecked(true);
     QRadioButton *radio_link_diameter = new QRadioButton("Diameter");
@@ -669,6 +699,9 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     vbox->addWidget(radio_link_chlorine);
     vbox->addWidget(radio_link_river);
     vbox->addWidget(radio_link_lake);
+
+    vbox->addWidget(label_link_thickness);
+    vbox->addWidget(slider_link_thickness);
 }
 
 void MapMonitorMenuWidget::addGroupHeatmapVisuals()

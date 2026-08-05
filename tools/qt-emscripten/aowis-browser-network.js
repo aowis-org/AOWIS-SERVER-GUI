@@ -113,10 +113,12 @@
         backgroundOpacity: 0,
         ownerId: 0,
         nodeVisual: 0,
+        nodeSizePercent: 100,
         nodeMinimum: 0,
         nodeMaximum: 0,
         nodeValues: new Map(),
         linkVisual: 0,
+        linkThicknessPixels: 3,
         linkMinimum: 0,
         linkMaximum: 0,
         linkValues: new Map(),
@@ -173,12 +175,26 @@
         return Math.pow(2, zoom - REFERENCE_ZOOM);
     }
 
-    function markerSizeForZoom(zoom) {
+    function nodeSizeScale() {
+        return Math.max(0.5, Math.min(2.5, state.nodeSizePercent / 100));
+    }
+
+    function baseMarkerSizeForZoom(zoom) {
         return Math.max(10, Math.min(40, 10 + (zoom - 16) * 10));
     }
 
+    function markerSizeForZoom(zoom) {
+        return Math.max(5, baseMarkerSizeForZoom(zoom) * nodeSizeScale());
+    }
+
     function junctionDotDiameterForZoom(zoom) {
-        return Math.max(8, Math.min(12, markerSizeForZoom(zoom) * 0.3));
+        const baseDiameter = Math.max(
+            8, Math.min(12, baseMarkerSizeForZoom(zoom) * 0.3));
+        return Math.max(4, baseDiameter * nodeSizeScale());
+    }
+
+    function linkHitDistance() {
+        return Math.max(LINK_HIT_DISTANCE, state.linkThicknessPixels / 2 + 3);
     }
 
     function markerScreenBounds(entityType, zoom) {
@@ -686,12 +702,14 @@
         }
 
         const linkBounds = visibleBounds
-            ? expandedBounds(renderBounds, (3 + NETWORK_IMAGE_PADDING) / scale) : null;
+            ? expandedBounds(renderBounds,
+                (state.linkThicknessPixels / 2 + NETWORK_IMAGE_PADDING) / scale)
+            : null;
         const linkPathDataByColor = linkBounds ? visibleLinkPathDataByColor(linkBounds) : new Map();
         const linkElements = [];
         for (const [color, pathData] of linkPathDataByColor) {
             linkElements.push(
-                `<path fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="${pathData}"/>`);
+                `<path fill="none" stroke="${color}" stroke-width="${formatted(state.linkThicknessPixels)}" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="${pathData}"/>`);
         }
         const svg = [
             `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
@@ -1492,7 +1510,7 @@
     }
 
     function nearestSegmentHit(pointX, pointY, scale, collectionName) {
-        const worldTolerance = LINK_HIT_DISTANCE / scale;
+        const worldTolerance = linkHitDistance() / scale;
         const candidates = candidateIndices(pointX, pointY, worldTolerance, collectionName);
         const segments = collectionName === "deviceSegments"
             ? state.deviceSegments : state.pipeSegments;
@@ -1676,10 +1694,14 @@
             throw new TypeError("Invalid AOWIS browser network symbology");
 
         const nodeVisual = Number(symbology.nodeVisual) | 0;
+        const nodeSizePercent = Math.max(
+            50, Math.min(250, Number(symbology.nodeSizePercent) || 100));
         const nodeMinimum = Number(symbology.nodeMinimum);
         const nodeMaximum = Number(symbology.nodeMaximum);
         const nodeValues = symbologyValues(symbology.nodeValues);
         const linkVisual = Number(symbology.linkVisual) | 0;
+        const linkThicknessPixels = Math.max(
+            1, Math.min(12, Number(symbology.linkThicknessPixels) || 3));
         const linkMinimum = Number(symbology.linkMinimum);
         const linkMaximum = Number(symbology.linkMaximum);
         const linkValues = symbologyValues(symbology.linkValues);
@@ -1693,10 +1715,12 @@
             10, Math.min(500, Number(symbology.heatmapRadiusMeters) || 100));
 
         const networkChanged = state.nodeVisual !== nodeVisual
+            || state.nodeSizePercent !== nodeSizePercent
             || state.nodeMinimum !== nodeMinimum
             || state.nodeMaximum !== nodeMaximum
             || !symbologyValuesEqual(state.nodeValues, nodeValues)
             || state.linkVisual !== linkVisual
+            || state.linkThicknessPixels !== linkThicknessPixels
             || state.linkMinimum !== linkMinimum
             || state.linkMaximum !== linkMaximum
             || !symbologyValuesEqual(state.linkValues, linkValues);
@@ -1708,10 +1732,12 @@
         const heatmapOpacityChanged = state.heatmapOpacity !== heatmapOpacity;
 
         state.nodeVisual = nodeVisual;
+        state.nodeSizePercent = nodeSizePercent;
         state.nodeMinimum = nodeMinimum;
         state.nodeMaximum = nodeMaximum;
         state.nodeValues = nodeValues;
         state.linkVisual = linkVisual;
+        state.linkThicknessPixels = linkThicknessPixels;
         state.linkMinimum = linkMinimum;
         state.linkMaximum = linkMaximum;
         state.linkValues = linkValues;
@@ -1787,10 +1813,12 @@
         state.globalPipeSegments = [];
         state.spatialCells.clear();
         state.nodeVisual = 0;
+        state.nodeSizePercent = 100;
         state.nodeMinimum = 0;
         state.nodeMaximum = 0;
         state.nodeValues = new Map();
         state.linkVisual = 0;
+        state.linkThicknessPixels = 3;
         state.linkMinimum = 0;
         state.linkMaximum = 0;
         state.linkValues = new Map();

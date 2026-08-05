@@ -362,8 +362,9 @@ QByteArray BrowserNetworkSnapshotSerializer::serializeGeometryPatch(
 }
 
 QByteArray BrowserNetworkSnapshotSerializer::serializeSymbology(
-    const HydraulicData &hydraulic_data, VisualNode visual_node, VisualLink visual_link,
-    VisualHeatmap visual_heatmap, int heatmap_opacity, int heatmap_radius_m)
+    const HydraulicData &hydraulic_data, VisualNode visual_node, int node_size_percent,
+    VisualLink visual_link, int link_thickness_px, VisualHeatmap visual_heatmap,
+    int heatmap_opacity, int heatmap_radius_m)
 {
     const NetworkRenderSnapshot &snapshot = hydraulic_data.networkRenderSnapshot();
     const NetworkHydraulic &network_hydraulic = hydraulic_data.networkHydraulic();
@@ -376,10 +377,12 @@ QByteArray BrowserNetworkSnapshotSerializer::serializeSymbology(
 
     QJsonObject root;
     root.insert(QStringLiteral("nodeVisual"), static_cast<int>(visual_node));
+    root.insert(QStringLiteral("nodeSizePercent"), qBound(50, node_size_percent, 250));
     root.insert(QStringLiteral("nodeMinimum"), node_range.first);
     root.insert(QStringLiteral("nodeMaximum"), node_range.second);
     root.insert(QStringLiteral("nodeValues"), nodeValuesToJson(snapshot, node_values));
     root.insert(QStringLiteral("linkVisual"), static_cast<int>(visual_link));
+    root.insert(QStringLiteral("linkThicknessPixels"), qBound(1, link_thickness_px, 12));
     root.insert(QStringLiteral("linkMinimum"), link_range.first);
     root.insert(QStringLiteral("linkMaximum"), link_range.second);
     root.insert(QStringLiteral("linkValues"), linkValuesToJson(snapshot, link_values));

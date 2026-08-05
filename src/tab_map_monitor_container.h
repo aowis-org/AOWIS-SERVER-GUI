@@ -67,7 +67,9 @@ signals:
     void mapZoomOut();
     
     void signalNodeVisualClicked(VisualNode visual_node);
+    void signalNodeSizeChanged(int size_percent);
     void signalLinkVisualClicked(VisualLink visual_link);
+    void signalLinkThicknessChanged(int thickness_px);
     void signalHeatmapVisualClicked(VisualHeatmap visual_heatmap);
     void signalHeatmapOpacityChanged(int opacity);
     void signalHeatmapRadiusChanged(int radius);
@@ -106,7 +108,9 @@ private:
     MapMonitorMenuWidget *map_menu = nullptr;
     int network_background_opacity = 0;
     VisualNode visual_node = VisualNode::None;
+    int node_size_percent = 100;
     VisualLink visual_link = VisualLink::None;
+    int link_thickness_px = 3;
     VisualHeatmap visual_heatmap = VisualHeatmap::None;
     int heatmap_opacity = 55;
     int heatmap_radius_m = 100;

@@ -19,7 +19,9 @@ QByteArray serializeGeometryPatch(const NetworkRenderSnapshot &snapshot,
                                   const QSet<QUuid> &link_uuids);
 QByteArray serializeSymbology(const HydraulicData &hydraulic_data,
                               VisualNode visual_node,
+                              int node_size_percent,
                               VisualLink visual_link,
+                              int link_thickness_px,
                               VisualHeatmap visual_heatmap,
                               int heatmap_opacity,
                               int heatmap_radius_m);
