@@ -6,6 +6,8 @@
     const MAP_SERVER_BASE_URL = "http://aowis-server-map.localhost:80";
     const MAX_TILE_RETRY_COUNT = 3;
     const TILE_SEAM_OVERLAP_PHYSICAL_PIXELS = 1;
+    const EARTH_RADIUS_METERS = 6378137;
+    const SCALE_MAXIMUM_WIDTH = 140;
 
     const viewListeners = new Set();
 
@@ -13,6 +15,9 @@
         layer: null,
         tilePane: null,
         attribution: null,
+        scaleControl: null,
+        scaleLabel: null,
+        scaleBar: null,
         screen: null,
         overlayWindow: null,
         windowObserver: null,
@@ -142,6 +147,57 @@
         return TILE_SIZE + TILE_SEAM_OVERLAP_PHYSICAL_PIXELS / devicePixelRatio();
     }
 
+    function metersPerPixel(latitude, zoom) {
+        const latitudeRadians = clampLatitude(latitude) * Math.PI / 180;
+        return Math.cos(latitudeRadians) * 2 * Math.PI * EARTH_RADIUS_METERS
+            / worldSize(zoom);
+    }
+
+    function roundedScaleDistance(maximumDistanceMeters) {
+        if (!Number.isFinite(maximumDistanceMeters) || maximumDistanceMeters <= 0)
+            return 0;
+
+        const exponent = Math.floor(Math.log10(maximumDistanceMeters));
+        const magnitude = Math.pow(10, exponent);
+        const normalized = maximumDistanceMeters / magnitude;
+        let factor = 1;
+        if (normalized >= 5)
+            factor = 5;
+        else if (normalized >= 2)
+            factor = 2;
+        return factor * magnitude;
+    }
+
+    function formattedScaleDistance(distanceMeters) {
+        if (distanceMeters >= 1000)
+            return `${distanceMeters / 1000} km`;
+        return `${distanceMeters} m`;
+    }
+
+    function updateScaleControl() {
+        if (!state.scaleControl || !state.scaleLabel || !state.scaleBar)
+            return;
+
+        if (!state.initialized || state.width <= 0) {
+            state.scaleControl.style.display = "none";
+            return;
+        }
+
+        const maximumWidth = Math.max(60, Math.min(
+            SCALE_MAXIMUM_WIDTH, Math.floor(state.width * 0.25)));
+        const resolution = metersPerPixel(state.latitude, state.zoom);
+        const distance = roundedScaleDistance(resolution * maximumWidth);
+        if (!(distance > 0) || !(resolution > 0)) {
+            state.scaleControl.style.display = "none";
+            return;
+        }
+
+        const width = snapToPhysicalPixel(distance / resolution);
+        state.scaleLabel.textContent = formattedScaleDistance(distance);
+        state.scaleBar.style.width = `${width}px`;
+        state.scaleControl.style.display = "flex";
+    }
+
     function worldSize(zoom) {
         return TILE_SIZE * Math.pow(2, zoom);
     }
@@ -261,6 +317,35 @@
         state.attribution.style.whiteSpace = "nowrap";
         state.attribution.style.zIndex = "20";
         state.layer.appendChild(state.attribution);
+
+        state.scaleControl = document.createElement("div");
+        state.scaleControl.style.position = "absolute";
+        state.scaleControl.style.left = "10px";
+        state.scaleControl.style.bottom = "10px";
+        state.scaleControl.style.display = "none";
+        state.scaleControl.style.flexDirection = "column";
+        state.scaleControl.style.alignItems = "center";
+        state.scaleControl.style.gap = "2px";
+        state.scaleControl.style.padding = "3px 6px 4px";
+        state.scaleControl.style.background = "rgba(255, 255, 255, 0.82)";
+        state.scaleControl.style.color = "#111";
+        state.scaleControl.style.font = "11px/1.15 sans-serif";
+        state.scaleControl.style.fontWeight = "600";
+        state.scaleControl.style.whiteSpace = "nowrap";
+        state.scaleControl.style.borderRadius = "2px";
+        state.scaleControl.style.zIndex = "20";
+
+        state.scaleLabel = document.createElement("div");
+        state.scaleControl.appendChild(state.scaleLabel);
+
+        state.scaleBar = document.createElement("div");
+        state.scaleBar.style.height = "7px";
+        state.scaleBar.style.borderLeft = "2px solid #111";
+        state.scaleBar.style.borderRight = "2px solid #111";
+        state.scaleBar.style.borderBottom = "2px solid #111";
+        state.scaleBar.style.boxSizing = "border-box";
+        state.scaleControl.appendChild(state.scaleBar);
+        state.layer.appendChild(state.scaleControl);
 
         screen.appendChild(state.layer);
 
@@ -552,6 +637,7 @@
         state.layer.style.display = state.ready ? "block" : "none";
 
         applyTransform();
+        updateScaleControl();
         scheduleRender();
         notifyViewChanged();
 
@@ -593,6 +679,7 @@
             state.attribution.textContent = attributionFor(state.source);
 
         applyTransform();
+        updateScaleControl();
         scheduleRender();
         notifyViewChanged();
     }
@@ -630,6 +717,9 @@
         state.layer = null;
         state.tilePane = null;
         state.attribution = null;
+        state.scaleControl = null;
+        state.scaleLabel = null;
+        state.scaleBar = null;
         state.screen = null;
         state.overlayWindow = null;
         state.ready = false;

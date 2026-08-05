@@ -257,7 +257,7 @@ private:
 
         painter.setPen(text_color);
         QFont label_font = painter.font();
-        label_font.setPointSizeF(qMax(7.0, label_font.pointSizeF() - 1.0));
+        label_font.setPointSizeF(qMax(6.0, label_font.pointSizeF() - 2.0));
         painter.setFont(label_font);
 
         const QRectF label_area(ramp_rect.left(), tick_bottom + 2.0, ramp_rect.width(), height() - tick_bottom - 4.0);
