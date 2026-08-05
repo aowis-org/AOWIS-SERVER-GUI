@@ -326,17 +326,25 @@ private:
 
     QString formatValue(double value) const
     {
-        QLocale locale;
-        QString text = locale.toString(value, 'f', 2);
-        const QString decimal_point = locale.decimalPoint();
+        if (!std::isfinite(value))
+            return QStringLiteral("—");
 
-        while (text.endsWith(QLatin1Char('0')))
-            text.chop(1);
+        const QLocale locale;
+        const double absolute_value = std::abs(value);
+        if (absolute_value == 0.0)
+            return locale.toString(0.0, 'f', 2);
 
-        if (text.endsWith(decimal_point))
-            text.chop(1);
+        const int decimal_exponent = static_cast<int>(std::floor(std::log10(absolute_value)));
+        if (decimal_exponent >= 3 || decimal_exponent <= -3)
+            return locale.toString(value, 'e', 2);
 
-        return text;
+        const int decimal_places = qMax(0, 2 - decimal_exponent);
+        const double decimal_factor = std::pow(10.0, decimal_places);
+        const double rounded_value = std::round(value * decimal_factor) / decimal_factor;
+        if (std::abs(rounded_value) >= 1000.0)
+            return locale.toString(value, 'e', 2);
+
+        return locale.toString(value, 'f', decimal_places);
     }
 };
 
