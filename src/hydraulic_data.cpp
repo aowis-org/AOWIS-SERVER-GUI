@@ -98,7 +98,7 @@ void HydraulicData::onDatabaseReady()
     markNetworkChanged(NetworkChange::Geometry);
     //this->network_hydraulic = DummyNetworks::networkOnMap();
     //this->network_hydraulic = DummyNetworks::networkTanksTimeline();
-
+    
     emit signalNetworkLoaded();
 }
 
