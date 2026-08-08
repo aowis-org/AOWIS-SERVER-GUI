@@ -18,6 +18,7 @@ if(NOT EMSCRIPTEN)
     find_package(Qt6 REQUIRED COMPONENTS
         Positioning
         SerialPort
+        Svg
     )
 endif()
 
@@ -85,7 +86,6 @@ qt_add_executable(aowis-server-gui
     src/tab_customers_widget.h src/tab_customers_widget.cpp
     src/tab_energy_widget.h src/tab_energy_widget.cpp
     src/map/map_navigation_widget.h src/map/map_navigation_widget.cpp
-    src/map/map_network_overlay_widget.h src/map/map_network_overlay_widget.cpp
     src/map/map_model.h src/map/map_model.cpp
     src/map/map_controls.h src/map/map_controls.cpp
     src/map/map_canvas_widget.h src/map/map_canvas_widget.cpp
@@ -166,12 +166,15 @@ if(NOT EMSCRIPTEN)
         PRIVATE
             Qt6::Positioning
             Qt6::SerialPort
+            Qt6::Svg
     )
     
     target_sources(aowis-server-gui
         PRIVATE
             src/gps_provider.h
             src/gps_provider.cpp
+            src/map/map_network_overlay_widget.h
+            src/map/map_network_overlay_widget.cpp
     )
     
     target_compile_definitions(aowis-server-gui
