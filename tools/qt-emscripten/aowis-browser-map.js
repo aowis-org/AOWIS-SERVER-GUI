@@ -7,6 +7,12 @@
     const TILE_SEAM_OVERLAP_PHYSICAL_PIXELS = 1;
     const EARTH_RADIUS_METERS = 6378137;
     const SCALE_MAXIMUM_WIDTH = 140;
+    const MOUSE_PAN_RELEASE_TIMEOUT_MS = 100;
+    const MOUSE_PAN_VELOCITY_SMOOTHING = 0.65;
+    const MOUSE_PAN_MAXIMUM_SPEED_PIXELS_PER_SECOND = 2400;
+    const MOUSE_PAN_MINIMUM_INERTIA_SPEED_PIXELS_PER_SECOND = 70;
+    const MOUSE_PAN_INERTIA_DECELERATION_PIXELS_PER_SECOND_SQUARED = 2600;
+    const PAN_VELOCITY_STOP_THRESHOLD = 0.5;
 
     const viewListeners = new Set();
     let activeMapServerConfiguration = null;
@@ -93,7 +99,18 @@
         renderPending: false,
         stackingGeneration: 0,
         activeOwner: 0,
-        topmost: false
+        topmost: false,
+        mousePan: {
+            active: false,
+            velocityX: 0,
+            velocityY: 0,
+            lastMoveTimestamp: 0,
+            dragDistance: 0,
+            inertiaActive: false,
+            inertiaLastTimestamp: 0,
+            fractionalDeltaX: 0,
+            fractionalDeltaY: 0
+        }
     };
 
     function getViewState() {
@@ -148,6 +165,139 @@
 
     function clampLatitude(latitude) {
         return Math.max(-85.0511287798066, Math.min(85.0511287798066, latitude));
+    }
+
+    function vectorLength(x, y) {
+        return Math.hypot(x, y);
+    }
+
+    function resetMousePanState() {
+        state.mousePan.active = false;
+        state.mousePan.velocityX = 0;
+        state.mousePan.velocityY = 0;
+        state.mousePan.lastMoveTimestamp = 0;
+        state.mousePan.dragDistance = 0;
+        state.mousePan.inertiaActive = false;
+        state.mousePan.inertiaLastTimestamp = 0;
+        state.mousePan.fractionalDeltaX = 0;
+        state.mousePan.fractionalDeltaY = 0;
+    }
+
+    function mousePanBegin(ownerId) {
+        if (state.activeOwner !== (ownerId | 0))
+            return;
+
+        resetMousePanState();
+        state.mousePan.active = true;
+    }
+
+    function mousePanMove(ownerId, deltaX, deltaY, elapsedMs) {
+        if (state.activeOwner !== (ownerId | 0) || !state.mousePan.active)
+            return;
+
+        const x = Number(deltaX) || 0;
+        const y = Number(deltaY) || 0;
+        const elapsed = Number(elapsedMs) || 0;
+        state.mousePan.dragDistance += Math.abs(x) + Math.abs(y);
+        state.mousePan.lastMoveTimestamp = performance.now();
+
+        if ((x !== 0 || y !== 0) && elapsed > 0) {
+            const elapsedSeconds = Math.max(0.001, Math.min(0.1, elapsed / 1000));
+            let measuredVelocityX = x / elapsedSeconds;
+            let measuredVelocityY = y / elapsedSeconds;
+            const measuredSpeed = vectorLength(measuredVelocityX, measuredVelocityY);
+
+            if (measuredSpeed > MOUSE_PAN_MAXIMUM_SPEED_PIXELS_PER_SECOND) {
+                const scale = MOUSE_PAN_MAXIMUM_SPEED_PIXELS_PER_SECOND / measuredSpeed;
+                measuredVelocityX *= scale;
+                measuredVelocityY *= scale;
+            }
+
+            if (state.mousePan.velocityX === 0 && state.mousePan.velocityY === 0) {
+                state.mousePan.velocityX = measuredVelocityX;
+                state.mousePan.velocityY = measuredVelocityY;
+            } else {
+                state.mousePan.velocityX =
+                    state.mousePan.velocityX * (1 - MOUSE_PAN_VELOCITY_SMOOTHING) +
+                    measuredVelocityX * MOUSE_PAN_VELOCITY_SMOOTHING;
+                state.mousePan.velocityY =
+                    state.mousePan.velocityY * (1 - MOUSE_PAN_VELOCITY_SMOOTHING) +
+                    measuredVelocityY * MOUSE_PAN_VELOCITY_SMOOTHING;
+            }
+        }
+    }
+
+    function mousePanRelease(ownerId, startDragDistance) {
+        if (state.activeOwner !== (ownerId | 0) || !state.mousePan.active)
+            return false;
+
+        state.mousePan.active = false;
+
+        const now = performance.now();
+        const movementIsRecent = state.mousePan.lastMoveTimestamp > 0 &&
+            now - state.mousePan.lastMoveTimestamp <= MOUSE_PAN_RELEASE_TIMEOUT_MS;
+        const releaseSpeed = vectorLength(state.mousePan.velocityX, state.mousePan.velocityY);
+        const draggedFarEnough = state.mousePan.dragDistance >= Math.max(0, Number(startDragDistance) || 0);
+
+        if (draggedFarEnough && movementIsRecent && releaseSpeed >= MOUSE_PAN_MINIMUM_INERTIA_SPEED_PIXELS_PER_SECOND) {
+            state.mousePan.inertiaActive = true;
+            state.mousePan.inertiaLastTimestamp = now;
+            state.mousePan.fractionalDeltaX = 0;
+            state.mousePan.fractionalDeltaY = 0;
+            return true;
+        }
+
+        resetMousePanState();
+        return false;
+    }
+
+    function inertiaActive(ownerId) {
+        return state.activeOwner === (ownerId | 0) && state.mousePan.inertiaActive;
+    }
+
+    function takeInertiaDelta(ownerId) {
+        if (!inertiaActive(ownerId))
+            return { x: 0, y: 0, active: false };
+
+        const now = performance.now();
+        const elapsedSeconds = Math.max(0, Math.min(
+            0.05, (now - state.mousePan.inertiaLastTimestamp) / 1000));
+        state.mousePan.inertiaLastTimestamp = now;
+
+        if (elapsedSeconds <= 0)
+            return { x: 0, y: 0, active: true };
+
+        const speed = vectorLength(state.mousePan.velocityX, state.mousePan.velocityY);
+        if (speed > 0) {
+            const nextSpeed = Math.max(
+                0,
+                speed - MOUSE_PAN_INERTIA_DECELERATION_PIXELS_PER_SECOND_SQUARED * elapsedSeconds);
+            const scale = nextSpeed / speed;
+            state.mousePan.velocityX *= scale;
+            state.mousePan.velocityY *= scale;
+        }
+
+        if (vectorLength(state.mousePan.velocityX, state.mousePan.velocityY) < PAN_VELOCITY_STOP_THRESHOLD) {
+            state.mousePan.velocityX = 0;
+            state.mousePan.velocityY = 0;
+            state.mousePan.inertiaActive = false;
+        }
+
+        const preciseDeltaX = state.mousePan.velocityX * elapsedSeconds + state.mousePan.fractionalDeltaX;
+        const preciseDeltaY = state.mousePan.velocityY * elapsedSeconds + state.mousePan.fractionalDeltaY;
+        const deltaX = Math.trunc(preciseDeltaX);
+        const deltaY = Math.trunc(preciseDeltaY);
+        state.mousePan.fractionalDeltaX = preciseDeltaX - deltaX;
+        state.mousePan.fractionalDeltaY = preciseDeltaY - deltaY;
+
+        return { x: deltaX, y: deltaY, active: state.mousePan.inertiaActive };
+    }
+
+    function mousePanCancel(ownerId) {
+        if (state.activeOwner !== (ownerId | 0))
+            return;
+
+        resetMousePanState();
     }
 
     function sourceFor(provider, zoom) {
@@ -696,6 +846,7 @@
             if (state.activeOwner !== owner)
                 return;
 
+            resetMousePanState();
             state.visible = false;
             state.ready = false;
             state.activeOwner = 0;
@@ -708,6 +859,8 @@
 
         const ownerChanged = state.activeOwner !== owner;
         const presentationChanged = state.topmost !== Boolean(topmost);
+        if (ownerChanged)
+            resetMousePanState();
         state.activeOwner = owner;
         state.topmost = Boolean(topmost);
         state.x = x;
@@ -811,6 +964,7 @@
         if (state.activeOwner !== (ownerId | 0))
             return;
 
+        resetMousePanState();
         state.visible = false;
         state.ready = false;
         state.activeOwner = 0;
@@ -821,6 +975,7 @@
     }
 
     function destroy() {
+        resetMousePanState();
         clearTiles();
         if (state.layer)
             state.layer.remove();
@@ -853,6 +1008,12 @@
     window.aowisBrowserMap = {
         setGeometry: setGeometry,
         setView: setView,
+        mousePanBegin: mousePanBegin,
+        mousePanMove: mousePanMove,
+        mousePanRelease: mousePanRelease,
+        mousePanCancel: mousePanCancel,
+        inertiaActive: inertiaActive,
+        takeInertiaDelta: takeInertiaDelta,
         setCrosshairImage: setCrosshairImage,
         invalidateTiles: invalidateTiles,
         release: release,

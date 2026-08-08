@@ -86,6 +86,13 @@ private:
     void stopAllPanMovement();
     void updatePanAnimation();
     void pollEdgePan();
+    bool browserMapHandlesMouseInertia() const;
+    void beginBrowserMapMousePan();
+    void updateBrowserMapMousePan(const QPoint &delta, qint64 elapsed_ms);
+    bool releaseBrowserMapMousePan();
+    bool browserMapInertiaActive() const;
+    bool updateBrowserMapInertia();
+    void cancelBrowserMapMousePan();
 
 #ifdef Q_OS_WASM
     static EM_BOOL browserMouseMoveCallback(int event_type, const EmscriptenMouseEvent *event, void *user_data);
@@ -115,12 +122,10 @@ private:
 
     bool mouse_pan_active = false;
     QPoint mouse_pan_last_position;
-#ifndef Q_OS_WASM
     QPointF mouse_pan_velocity;
     QElapsedTimer mouse_pan_move_elapsed_timer;
     bool mouse_pan_inertia_active = false;
     int mouse_pan_drag_distance = 0;
-#endif
 
     bool pan_key_left_pressed = false;
     bool pan_key_right_pressed = false;

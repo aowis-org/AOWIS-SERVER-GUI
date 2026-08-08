@@ -64,6 +64,62 @@ EM_JS(void, aowisBrowserMapSetCrosshairImage, (const char *data_url),
         window.aowisBrowserMap.setCrosshairImage(UTF8ToString(data_url));
     }
 });
+
+EM_JS(void, aowisBrowserMapMousePanBegin, (int owner_id),
+{
+    if (window.aowisBrowserMap && typeof window.aowisBrowserMap.mousePanBegin === "function")
+        window.aowisBrowserMap.mousePanBegin(owner_id);
+});
+
+EM_JS(void, aowisBrowserMapMousePanMove, (int owner_id, int delta_x, int delta_y, double elapsed_ms),
+{
+    if (window.aowisBrowserMap && typeof window.aowisBrowserMap.mousePanMove === "function")
+        window.aowisBrowserMap.mousePanMove(owner_id, delta_x, delta_y, elapsed_ms);
+});
+
+EM_JS(int, aowisBrowserMapMousePanRelease, (int owner_id, int start_drag_distance),
+{
+    if (!window.aowisBrowserMap || typeof window.aowisBrowserMap.mousePanRelease !== "function")
+        return 0;
+
+    return window.aowisBrowserMap.mousePanRelease(owner_id, start_drag_distance) ? 1 : 0;
+});
+
+EM_JS(int, aowisBrowserMapInertiaActive, (int owner_id),
+{
+    if (!window.aowisBrowserMap || typeof window.aowisBrowserMap.inertiaActive !== "function")
+        return 0;
+
+    return window.aowisBrowserMap.inertiaActive(owner_id) ? 1 : 0;
+});
+
+EM_JS(int, aowisBrowserMapTakeInertiaDelta, (int owner_id, int *delta_x, int *delta_y),
+{
+    let x = 0;
+    let y = 0;
+    let active = false;
+
+    if (window.aowisBrowserMap && typeof window.aowisBrowserMap.takeInertiaDelta === "function")
+    {
+        const movement = window.aowisBrowserMap.takeInertiaDelta(owner_id);
+        if (movement)
+        {
+            x = movement.x | 0;
+            y = movement.y | 0;
+            active = Boolean(movement.active);
+        }
+    }
+
+    HEAP32[delta_x >> 2] = x;
+    HEAP32[delta_y >> 2] = y;
+    return active ? 1 : 0;
+});
+
+EM_JS(void, aowisBrowserMapMousePanCancel, (int owner_id),
+{
+    if (window.aowisBrowserMap && typeof window.aowisBrowserMap.mousePanCancel === "function")
+        window.aowisBrowserMap.mousePanCancel(owner_id);
+});
 #endif
 
 namespace
@@ -100,13 +156,11 @@ constexpr double PanFastAccelerationMultiplier = 1.75;
 constexpr double PanAccelerationPixelsPerSecondSquared = 2800.0;
 constexpr double PanDecelerationPixelsPerSecondSquared = 3600.0;
 constexpr double PanVelocityStopThreshold = 0.5;
-#ifndef Q_OS_WASM
 constexpr int MousePanReleaseTimeoutMs = 100;
 constexpr double MousePanVelocitySmoothing = 0.65;
 constexpr double MousePanMaximumSpeedPixelsPerSecond = 2400.0;
 constexpr double MousePanMinimumInertiaSpeedPixelsPerSecond = 70.0;
 constexpr double MousePanInertiaDecelerationPixelsPerSecondSquared = 2600.0;
-#endif
 
 qreal vectorLength(const QPointF &vector)
 {
@@ -338,7 +392,7 @@ void MapWidget::ensurePanAnimationRunning()
 
 void MapWidget::stopPanAnimationIfIdle()
 {
-    if (this->hasKeyboardPanInput() || vectorLength(this->pan_velocity) >= PanVelocityStopThreshold)
+    if (hasKeyboardPanInput() || vectorLength(this->pan_velocity) >= PanVelocityStopThreshold || browserMapInertiaActive())
         return;
 
     this->pan_velocity = QPointF();
@@ -356,12 +410,10 @@ void MapWidget::stopAllPanMovement()
     this->mouse_pan_active = false;
     this->pan_velocity = QPointF();
     this->pan_fractional_delta = QPointF();
-
-#ifndef Q_OS_WASM
     this->mouse_pan_velocity = QPointF();
     this->mouse_pan_inertia_active = false;
     this->mouse_pan_drag_distance = 0;
-#endif
+    cancelBrowserMapMousePan();
 
     this->pan_timer->stop();
 }
@@ -374,9 +426,9 @@ void MapWidget::updatePanAnimation()
     if (elapsed_seconds <= 0.0)
         return;
 
-    if (!this->isVisible())
+    if (!isVisible())
     {
-        this->stopAllPanMovement();
+        stopAllPanMovement();
         return;
     }
 
@@ -387,26 +439,36 @@ void MapWidget::updatePanAnimation()
         return;
     }
 
-    QPointF direction = this->keyboardPanDirection();
+    QPointF direction = keyboardPanDirection();
     const bool keyboard_pan_active = !direction.isNull();
     bool edge_pan_active = false;
     if (!keyboard_pan_active)
     {
-        direction = this->edgePanDirection();
+        direction = edgePanDirection();
         edge_pan_active = !direction.isNull();
     }
     direction = normalized(direction);
 
-#ifndef Q_OS_WASM
     if (!direction.isNull())
+    {
         this->mouse_pan_inertia_active = false;
-#endif
+        cancelBrowserMapMousePan();
+    }
 
-    bool fast_pan_active = keyboard_pan_active && this->hasFastKeyboardPanInput();
+    bool fast_pan_active = keyboard_pan_active && hasFastKeyboardPanInput();
 #ifndef Q_OS_WASM
     if (edge_pan_active && QApplication::keyboardModifiers().testFlag(Qt::ShiftModifier))
         fast_pan_active = true;
 #endif
+
+    if (direction.isNull() && browserMapHandlesMouseInertia() && browserMapInertiaActive())
+    {
+        this->pan_velocity = QPointF();
+        this->pan_fractional_delta = QPointF();
+        updateBrowserMapInertia();
+        stopPanAnimationIfIdle();
+        return;
+    }
 
     qreal maximum_speed = PanMaximumSpeedPixelsPerSecond;
     qreal acceleration = PanAccelerationPixelsPerSecondSquared;
@@ -416,15 +478,10 @@ void MapWidget::updatePanAnimation()
         acceleration *= PanFastAccelerationMultiplier;
     }
 
-#ifndef Q_OS_WASM
     if (direction.isNull() && this->mouse_pan_inertia_active)
         acceleration = MousePanInertiaDecelerationPixelsPerSecondSquared;
     else if (direction.isNull())
         acceleration = PanDecelerationPixelsPerSecondSquared;
-#else
-    if (direction.isNull())
-        acceleration = PanDecelerationPixelsPerSecondSquared;
-#endif
 
     const QPointF target_velocity = direction * maximum_speed;
     this->pan_velocity = moveTowards(this->pan_velocity, target_velocity, acceleration * elapsed_seconds);
@@ -432,9 +489,7 @@ void MapWidget::updatePanAnimation()
     if (direction.isNull() && vectorLength(this->pan_velocity) < PanVelocityStopThreshold)
     {
         this->pan_velocity = QPointF();
-#ifndef Q_OS_WASM
         this->mouse_pan_inertia_active = false;
-#endif
     }
 
     const QPointF precise_delta = this->pan_velocity * elapsed_seconds + this->pan_fractional_delta;
@@ -442,15 +497,95 @@ void MapWidget::updatePanAnimation()
     this->pan_fractional_delta = precise_delta - QPointF(delta);
 
     if (!delta.isNull())
-        this->panMapByPixels(delta);
+        panMapByPixels(delta);
 
-    this->stopPanAnimationIfIdle();
+    stopPanAnimationIfIdle();
 }
 
 void MapWidget::pollEdgePan()
 {
     if (!this->edgePanDirection().isNull())
         this->ensurePanAnimationRunning();
+}
+
+bool MapWidget::browserMapHandlesMouseInertia() const
+{
+#ifdef Q_OS_WASM
+    return this->browser_map_layer_enabled;
+#else
+    return false;
+#endif
+}
+
+void MapWidget::beginBrowserMapMousePan()
+{
+#ifdef Q_OS_WASM
+    if (this->browser_map_layer_enabled)
+        aowisBrowserMapMousePanBegin(this->browser_map_layer_owner_id);
+#endif
+}
+
+void MapWidget::updateBrowserMapMousePan(const QPoint &delta, qint64 elapsed_ms)
+{
+#ifdef Q_OS_WASM
+    if (this->browser_map_layer_enabled)
+        aowisBrowserMapMousePanMove(this->browser_map_layer_owner_id, delta.x(), delta.y(), elapsed_ms);
+#else
+    Q_UNUSED(delta)
+    Q_UNUSED(elapsed_ms)
+#endif
+}
+
+bool MapWidget::releaseBrowserMapMousePan()
+{
+#ifdef Q_OS_WASM
+    if (!this->browser_map_layer_enabled)
+        return false;
+
+    return aowisBrowserMapMousePanRelease(
+        this->browser_map_layer_owner_id,
+        QApplication::startDragDistance()) != 0;
+#else
+    return false;
+#endif
+}
+
+bool MapWidget::browserMapInertiaActive() const
+{
+#ifdef Q_OS_WASM
+    return this->browser_map_layer_enabled &&
+        aowisBrowserMapInertiaActive(this->browser_map_layer_owner_id) != 0;
+#else
+    return false;
+#endif
+}
+
+bool MapWidget::updateBrowserMapInertia()
+{
+#ifdef Q_OS_WASM
+    if (!this->browser_map_layer_enabled)
+        return false;
+
+    int delta_x = 0;
+    int delta_y = 0;
+    const bool active = aowisBrowserMapTakeInertiaDelta(
+        this->browser_map_layer_owner_id, &delta_x, &delta_y) != 0;
+    const QPoint delta(delta_x, delta_y);
+    if (!delta.isNull())
+        panMapByPixels(delta);
+
+    return active;
+#else
+    return false;
+#endif
+}
+
+void MapWidget::cancelBrowserMapMousePan()
+{
+#ifdef Q_OS_WASM
+    if (this->browser_map_layer_enabled)
+        aowisBrowserMapMousePanCancel(this->browser_map_layer_owner_id);
+#endif
 }
 
 #ifdef Q_OS_WASM
@@ -626,9 +761,8 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
     if (this->setKeyboardPanKey(event->key(), true))
     {
         this->pan_fast_modifier_pressed = event->modifiers().testFlag(Qt::ShiftModifier);
-#ifndef Q_OS_WASM
         this->mouse_pan_inertia_active = false;
-#endif
+        cancelBrowserMapMousePan();
         this->ensurePanAnimationRunning();
         event->accept();
         return true;
@@ -822,10 +956,9 @@ void MapWidget::panByStep(const QPoint &delta)
 {
     this->pan_velocity = QPointF();
     this->pan_fractional_delta = QPointF();
-#ifndef Q_OS_WASM
     this->mouse_pan_inertia_active = false;
-#endif
-    this->panMapByPixels(delta);
+    cancelBrowserMapMousePan();
+    panMapByPixels(delta);
 }
 
 void MapWidget::panMapByPixels(const QPoint &delta)
@@ -926,13 +1059,12 @@ bool MapWidget::handleMousePressEvent(QMouseEvent *event)
     this->mouse_pan_last_position = event->position().toPoint();
     this->pan_velocity = QPointF();
     this->pan_fractional_delta = QPointF();
-#ifndef Q_OS_WASM
     this->mouse_pan_velocity = QPointF();
     this->mouse_pan_move_elapsed_timer.start();
     this->mouse_pan_inertia_active = false;
     this->mouse_pan_drag_distance = 0;
-#endif
-    this->stopPanAnimationIfIdle();
+    beginBrowserMapMousePan();
+    stopPanAnimationIfIdle();
     event->accept();
     return true;
 }
@@ -951,7 +1083,23 @@ bool MapWidget::handleMouseReleaseEvent(QMouseEvent *event)
         return false;
 
     this->mouse_pan_active = false;
-#ifndef Q_OS_WASM
+
+    if (browserMapHandlesMouseInertia())
+    {
+        this->pan_velocity = QPointF();
+        this->pan_fractional_delta = QPointF();
+        this->mouse_pan_velocity = QPointF();
+        this->mouse_pan_inertia_active = false;
+        this->mouse_pan_drag_distance = 0;
+
+        if (releaseBrowserMapMousePan())
+            ensurePanAnimationRunning();
+
+        stopPanAnimationIfIdle();
+        event->accept();
+        return true;
+    }
+
     const bool movement_is_recent = this->mouse_pan_move_elapsed_timer.isValid() &&
         this->mouse_pan_move_elapsed_timer.elapsed() <= MousePanReleaseTimeoutMs;
     const qreal release_speed = vectorLength(this->mouse_pan_velocity);
@@ -962,7 +1110,7 @@ bool MapWidget::handleMouseReleaseEvent(QMouseEvent *event)
         this->pan_velocity = this->mouse_pan_velocity;
         this->pan_fractional_delta = QPointF();
         this->mouse_pan_inertia_active = true;
-        this->ensurePanAnimationRunning();
+        ensurePanAnimationRunning();
     }
     else
     {
@@ -972,8 +1120,7 @@ bool MapWidget::handleMouseReleaseEvent(QMouseEvent *event)
 
     this->mouse_pan_velocity = QPointF();
     this->mouse_pan_drag_distance = 0;
-#endif
-    this->stopPanAnimationIfIdle();
+    stopPanAnimationIfIdle();
     event->accept();
     return true;
 }
@@ -1000,44 +1147,48 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
     if (!(event->buttons() & Qt::LeftButton))
     {
         this->mouse_pan_active = false;
-#ifndef Q_OS_WASM
         this->mouse_pan_velocity = QPointF();
         this->mouse_pan_inertia_active = false;
         this->mouse_pan_drag_distance = 0;
-#endif
+        cancelBrowserMapMousePan();
         return false;
     }
 
     const QPoint delta = position - this->mouse_pan_last_position;
     this->mouse_pan_last_position = position;
 
-#ifndef Q_OS_WASM
-    this->mouse_pan_drag_distance += delta.manhattanLength();
-
     const qint64 elapsed_ms = this->mouse_pan_move_elapsed_timer.restart();
-    if (!delta.isNull() && elapsed_ms > 0)
+    if (browserMapHandlesMouseInertia())
     {
-        const qreal elapsed_seconds = qBound<qreal>(0.001, elapsed_ms / 1000.0, 0.1);
-        QPointF measured_velocity = QPointF(delta) / elapsed_seconds;
-        const qreal measured_speed = vectorLength(measured_velocity);
-        if (measured_speed > MousePanMaximumSpeedPixelsPerSecond)
-            measured_velocity = normalized(measured_velocity) * MousePanMaximumSpeedPixelsPerSecond;
+        updateBrowserMapMousePan(delta, elapsed_ms);
+    }
+    else
+    {
+        this->mouse_pan_drag_distance += delta.manhattanLength();
 
-        if (this->mouse_pan_velocity.isNull())
+        if (!delta.isNull() && elapsed_ms > 0)
         {
-            this->mouse_pan_velocity = measured_velocity;
-        }
-        else
-        {
-            this->mouse_pan_velocity =
-                this->mouse_pan_velocity * (1.0 - MousePanVelocitySmoothing) +
-                measured_velocity * MousePanVelocitySmoothing;
+            const qreal elapsed_seconds = qBound<qreal>(0.001, elapsed_ms / 1000.0, 0.1);
+            QPointF measured_velocity = QPointF(delta) / elapsed_seconds;
+            const qreal measured_speed = vectorLength(measured_velocity);
+            if (measured_speed > MousePanMaximumSpeedPixelsPerSecond)
+                measured_velocity = normalized(measured_velocity) * MousePanMaximumSpeedPixelsPerSecond;
+
+            if (this->mouse_pan_velocity.isNull())
+            {
+                this->mouse_pan_velocity = measured_velocity;
+            }
+            else
+            {
+                this->mouse_pan_velocity =
+                    this->mouse_pan_velocity * (1.0 - MousePanVelocitySmoothing) +
+                    measured_velocity * MousePanVelocitySmoothing;
+            }
         }
     }
-#endif
 
     if (!delta.isNull())
-        this->panMapByPixels(delta);
+        panMapByPixels(delta);
 
     event->accept();
     return true;
