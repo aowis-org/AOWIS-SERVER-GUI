@@ -5,39 +5,37 @@
 
 #include <QByteArray>
 #include <QColor>
+#include <QCoreApplication>
+#include <QMetaObject>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QPalette>
+#include <QPointer>
+#include <QPixmap>
+#include <QRunnable>
 #include <QSvgRenderer>
+#include <QThreadPool>
 #include <QTimer>
 #include <QtMath>
 
 #include <algorithm>
+#include <functional>
 #include <cmath>
 #include <limits>
 
 namespace
 {
+constexpr int ReferenceZoom = 18;
 constexpr qreal NetworkImagePadding = 8.0;
+constexpr qreal NetworkImageOverscanFactor = 3.0;
+constexpr int NetworkImageMaximumPhysicalDimension = 4096;
+constexpr qint64 NetworkImageMaximumPhysicalArea = 8LL * 1024LL * 1024LL;
+constexpr qreal NetworkImageRebuildEdge = 256.0;
 constexpr qreal NetworkLinkWidth = 3.0;
 constexpr qreal NetworkNodeWidth = 8.0;
 constexpr qreal LinkHitDistance = 7.0;
 constexpr qreal SpatialCellSize = 128.0;
-constexpr int RasterTileLogicalSize = 768;
-constexpr qint64 MaximumFullCachePhysicalPixels = 16LL * 1024LL * 1024LL;
-constexpr int MaximumFullCachePhysicalDimension = 6144;
-constexpr int RasterTileCacheMaximumCostKiB = 192 * 1024;
 const QColor NetworkColor(QStringLiteral("#b000ff"));
-
-struct SvgProjectedNode
-{
-    QPointF world_position;
-};
-
-struct SvgProjectedLink
-{
-    QList<QPointF> world_vertices;
-};
 
 bool isFiniteCoordinate(const CoordinateWGS84 &coordinate)
 {
@@ -51,9 +49,9 @@ double nearestWrappedWorldPixel(double raw_pixel_x, double reference_pixel_x, in
     return GeoWebMercator::nearestWrappedTileX(raw_tile_x, reference_tile_x, zoom) * MapModel::TileSize;
 }
 
-qreal snapToPhysicalPixel(qreal value, qreal device_pixel_ratio)
+qreal scaleForZoom(int zoom)
 {
-    return std::round(value * device_pixel_ratio) / device_pixel_ratio;
+    return std::ldexp(1.0, zoom - ReferenceZoom);
 }
 
 qreal markerWidthForZoom(int zoom)
@@ -75,11 +73,6 @@ int spatialCellCoordinate(qreal value)
 quint64 spatialCellKey(int cell_x, int cell_y)
 {
     return (quint64(quint32(cell_x)) << 32) | quint32(cell_y);
-}
-
-quint64 rasterTileKey(int tile_x, int tile_y)
-{
-    return (quint64(quint32(tile_x)) << 32) | quint32(tile_y);
 }
 
 qreal pointToSegmentDistanceSquared(qreal point_x, qreal point_y, const QPointF &start, const QPointF &end)
@@ -149,6 +142,39 @@ void appendSvgCircle(QByteArray &path, const QPointF &center, qreal radius)
     appendSvgNumber(path, center.y());
     path.append('Z');
 }
+
+bool segmentIntersectsRect(const QLineF &segment, const QRectF &rect)
+{
+    const qreal minimum_x = std::min(segment.x1(), segment.x2());
+    const qreal maximum_x = std::max(segment.x1(), segment.x2());
+    const qreal minimum_y = std::min(segment.y1(), segment.y2());
+    const qreal maximum_y = std::max(segment.y1(), segment.y2());
+    return maximum_x >= rect.left() && minimum_x <= rect.right() &&
+        maximum_y >= rect.top() && minimum_y <= rect.bottom();
+}
+
+QSize boundedCacheLogicalSize(const QSize &viewport_size, qreal device_pixel_ratio)
+{
+    if (!viewport_size.isValid())
+        return QSize();
+
+    const qreal bounded_device_pixel_ratio = qMax<qreal>(1.0, device_pixel_ratio);
+    const qreal viewport_physical_area = qMax<qreal>(1.0,
+        viewport_size.width() * bounded_device_pixel_ratio *
+        viewport_size.height() * bounded_device_pixel_ratio);
+    const qreal maximum_factor = std::min({
+        NetworkImageOverscanFactor,
+        NetworkImageMaximumPhysicalDimension /
+            qMax<qreal>(1.0, viewport_size.width() * bounded_device_pixel_ratio),
+        NetworkImageMaximumPhysicalDimension /
+            qMax<qreal>(1.0, viewport_size.height() * bounded_device_pixel_ratio),
+        std::sqrt(NetworkImageMaximumPhysicalArea / viewport_physical_area)
+    });
+    const qreal factor = qMax<qreal>(1.0, maximum_factor);
+    return QSize(
+        qMax(1, qFloor(viewport_size.width() * factor)),
+        qMax(1, qFloor(viewport_size.height() * factor)));
+}
 }
 
 MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicData *hydraulic_data, QWidget *parent)
@@ -159,8 +185,6 @@ MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicD
     Q_ASSERT(this->map_model);
     Q_ASSERT(this->hydraulic_data);
 
-    this->raster_tile_cache.setMaxCost(RasterTileCacheMaximumCostKiB);
-
     setAttribute(Qt::WA_TransparentForMouseEvents);
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_NoSystemBackground);
@@ -169,20 +193,28 @@ MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicD
     connect(this->map_model, &MapModel::centerChangedWGS84, this, [this]
     {
         update();
+        requestRenderCache();
     });
     connect(this->map_model, &MapModel::zoomChanged, this, [this]
     {
-        invalidateCache();
         update();
+        requestRenderCache(true);
     });
 
-    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, &MapNetworkOverlayWidget::syncSnapshot);
-    connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged, this, &MapNetworkOverlayWidget::syncSnapshot);
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
+        this, &MapNetworkOverlayWidget::syncSnapshot);
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged,
+        this, &MapNetworkOverlayWidget::syncSnapshot);
 
     QTimer::singleShot(0, this, &MapNetworkOverlayWidget::syncSnapshot);
 }
 
-MapNetworkOverlayWidget::~MapNetworkOverlayWidget() = default;
+MapNetworkOverlayWidget::~MapNetworkOverlayWidget()
+{
+    if (this->pending_render_cancelled)
+        this->pending_render_cancelled->store(true, std::memory_order_relaxed);
+    this->latest_render_request_id = ++this->next_render_request_id;
+}
 
 int MapNetworkOverlayWidget::backgroundOpacity() const
 {
@@ -202,29 +234,32 @@ void MapNetworkOverlayWidget::setBackgroundOpacity(int opacity)
 NetworkOverlayHit MapNetworkOverlayWidget::hitTest(const QPointF &screen_position)
 {
     NetworkOverlayHit no_hit;
-    if (!isVisible() || !std::isfinite(screen_position.x()) || !std::isfinite(screen_position.y()) ||
+    if (!isVisible() || !this->reference_geometry_ready ||
+        !std::isfinite(screen_position.x()) || !std::isfinite(screen_position.y()) ||
         screen_position.x() < 0.0 || screen_position.y() < 0.0 ||
         screen_position.x() > width() || screen_position.y() > height())
     {
         return no_hit;
     }
 
-    ensureCache();
-    if (!this->cached_geometry_ready)
+    const qreal scale = referenceScaleForCurrentZoom();
+    if (scale <= 0.0)
         return no_hit;
 
     const QPointF world_position = geometryWorldPosition(screen_position);
     const NetworkOverlayHit marker_hit = nearestMarkerHit(
-        world_position.x(), world_position.y(), markerWidthForZoom(this->cached_zoom) / 2.0);
+        world_position.x(), world_position.y(), markerWidthForZoom(this->map_model->zoom()) / (2.0 * scale));
     if (marker_hit.isValid())
         return marker_hit;
 
+    const qreal link_hit_distance = LinkHitDistance / scale;
     const NetworkOverlayHit device_hit = nearestSegmentHit(
-        world_position.x(), world_position.y(), HitCollection::DeviceSegments);
+        world_position.x(), world_position.y(), link_hit_distance, HitCollection::DeviceSegments);
     if (device_hit.isValid())
         return device_hit;
 
-    return nearestSegmentHit(world_position.x(), world_position.y(), HitCollection::PipeSegments);
+    return nearestSegmentHit(
+        world_position.x(), world_position.y(), link_hit_distance, HitCollection::PipeSegments);
 }
 
 void MapNetworkOverlayWidget::paintEvent(QPaintEvent *event)
@@ -239,11 +274,10 @@ void MapNetworkOverlayWidget::paintEvent(QPaintEvent *event)
         painter.fillRect(rect(), background);
     }
 
-    if (this->snapshot_initialized && (!this->snapshot.nodes.isEmpty() || !this->snapshot.links.isEmpty()))
+    if (this->reference_geometry_ready)
     {
-        ensureCache();
-        if (this->cached_geometry_ready)
-            paintNetwork(painter);
+        requestRenderCache();
+        paintNetwork(painter);
     }
 
     static const QPixmap crosshair_pixmap = QPixmap(QStringLiteral(":/icon/crosshair.png")).scaled(
@@ -266,60 +300,15 @@ void MapNetworkOverlayWidget::syncSnapshot()
     this->snapshot = this->hydraulic_data->networkRenderSnapshot();
     this->geometry_revision = this->snapshot.geometry_revision;
     this->snapshot_initialized = true;
-    invalidateCache();
+    rebuildReferenceGeometry();
+    clearRenderedCache();
+    requestRenderCache(true);
     update();
 }
 
-void MapNetworkOverlayWidget::invalidateCache()
+void MapNetworkOverlayWidget::rebuildReferenceGeometry()
 {
-    this->svg_renderer.reset();
-    this->svg_world_bounds = QRectF();
-    this->cached_geometry_world_origin = QPointF();
-    this->cached_zoom = -1;
-    this->cached_device_pixel_ratio = 0.0;
-    this->cache_initialized = false;
-    this->cached_geometry_ready = false;
-    invalidateRasterCache();
-    this->hit_markers.clear();
-    this->device_hit_segments.clear();
-    this->pipe_hit_segments.clear();
-    this->global_device_segment_indices.clear();
-    this->global_pipe_segment_indices.clear();
-    this->spatial_cells.clear();
-}
-
-void MapNetworkOverlayWidget::invalidateRasterCache()
-{
-    this->full_network_cache = QPixmap();
-    this->raster_tile_cache.clear();
-}
-
-void MapNetworkOverlayWidget::ensureCache()
-{
-    if (!this->snapshot_initialized)
-        return;
-
-    const int zoom = this->map_model->zoom();
-    const qreal device_pixel_ratio = devicePixelRatioF();
-    if (!this->cache_initialized || this->cached_zoom != zoom)
-    {
-        rebuildCache();
-        return;
-    }
-
-    if (!qFuzzyCompare(this->cached_device_pixel_ratio, device_pixel_ratio))
-    {
-        this->cached_device_pixel_ratio = device_pixel_ratio;
-        invalidateRasterCache();
-    }
-}
-
-void MapNetworkOverlayWidget::rebuildCache()
-{
-    const int zoom = this->map_model->zoom();
-    const qreal device_pixel_ratio = devicePixelRatioF();
-    QList<SvgProjectedNode> projected_nodes;
-    QList<SvgProjectedLink> projected_links;
+    std::shared_ptr<RenderGeometry> geometry = std::make_shared<RenderGeometry>();
     QHash<quint32, QPointF> node_positions;
     double anchor_x = std::numeric_limits<double>::quiet_NaN();
     double minimum_x = std::numeric_limits<double>::infinity();
@@ -327,11 +316,8 @@ void MapNetworkOverlayWidget::rebuildCache()
     double maximum_x = -std::numeric_limits<double>::infinity();
     double maximum_y = -std::numeric_limits<double>::infinity();
 
-    this->svg_renderer.reset();
-    this->svg_world_bounds = QRectF();
-    this->cached_geometry_world_origin = QPointF();
-    this->cached_geometry_ready = false;
-    invalidateRasterCache();
+    this->reference_geometry_ready = false;
+    this->render_geometry.reset();
     this->hit_markers.clear();
     this->device_hit_segments.clear();
     this->pipe_hit_segments.clear();
@@ -339,8 +325,8 @@ void MapNetworkOverlayWidget::rebuildCache()
     this->global_pipe_segment_indices.clear();
     this->spatial_cells.clear();
 
-    projected_nodes.reserve(this->snapshot.nodes.size());
-    projected_links.reserve(this->snapshot.links.size());
+    geometry->geometry_revision = this->geometry_revision;
+    geometry->node_positions.reserve(this->snapshot.nodes.size());
     node_positions.reserve(this->snapshot.nodes.size());
     this->hit_markers.reserve(this->snapshot.nodes.size());
 
@@ -352,16 +338,14 @@ void MapNetworkOverlayWidget::rebuildCache()
         const QPointF raw_world_position = GeoWebMercator::lonLatToWorldPixel(
             GeoWebMercator::normalizeLongitude(node.coordinate_wgs84.longitude_deg),
             node.coordinate_wgs84.latitude_deg,
-            zoom);
+            ReferenceZoom);
         if (!std::isfinite(anchor_x))
             anchor_x = raw_world_position.x();
 
         const QPointF world_position(
-            nearestWrappedWorldPixel(raw_world_position.x(), anchor_x, zoom),
+            nearestWrappedWorldPixel(raw_world_position.x(), anchor_x, ReferenceZoom),
             raw_world_position.y());
-        SvgProjectedNode projected_node;
-        projected_node.world_position = world_position;
-        projected_nodes.append(projected_node);
+        geometry->node_positions.append(world_position);
         node_positions.insert(node.render_id, world_position);
 
         HitMarker marker;
@@ -378,9 +362,12 @@ void MapNetworkOverlayWidget::rebuildCache()
 
     for (const NetworkRenderLink &link : this->snapshot.links)
     {
-        SvgProjectedLink projected_link;
-        projected_link.world_vertices.reserve(link.vertices_wgs84.size());
-        double previous_x = node_positions.value(link.start_node_render_id, QPointF(anchor_x, 0.0)).x();
+        QList<QPointF> world_vertices;
+        world_vertices.reserve(link.vertices_wgs84.size());
+        const QPointF start_node_position = node_positions.value(
+            link.start_node_render_id,
+            QPointF(anchor_x, 0.0));
+        double previous_x = start_node_position.x();
 
         for (const CoordinateWGS84 &coordinate : link.vertices_wgs84)
         {
@@ -390,14 +377,18 @@ void MapNetworkOverlayWidget::rebuildCache()
             const QPointF raw_world_position = GeoWebMercator::lonLatToWorldPixel(
                 GeoWebMercator::normalizeLongitude(coordinate.longitude_deg),
                 coordinate.latitude_deg,
-                zoom);
+                ReferenceZoom);
             if (!std::isfinite(previous_x))
+            {
                 previous_x = raw_world_position.x();
+                if (!std::isfinite(anchor_x))
+                    anchor_x = previous_x;
+            }
 
             const QPointF world_position(
-                nearestWrappedWorldPixel(raw_world_position.x(), previous_x, zoom),
+                nearestWrappedWorldPixel(raw_world_position.x(), previous_x, ReferenceZoom),
                 raw_world_position.y());
-            projected_link.world_vertices.append(world_position);
+            world_vertices.append(world_position);
             minimum_x = std::min(minimum_x, world_position.x());
             minimum_y = std::min(minimum_y, world_position.y());
             maximum_x = std::max(maximum_x, world_position.x());
@@ -405,78 +396,242 @@ void MapNetworkOverlayWidget::rebuildCache()
             previous_x = world_position.x();
         }
 
-        if (projected_link.world_vertices.size() < 2)
+        if (world_vertices.size() < 2)
             continue;
 
-        QList<HitSegment> *segments = link.entity_type == InfrastructureEntity::Pipe
+        QList<HitSegment> *hit_segments = link.entity_type == InfrastructureEntity::Pipe
             ? &this->pipe_hit_segments : &this->device_hit_segments;
-        for (qsizetype index = 1; index < projected_link.world_vertices.size(); ++index)
+        for (qsizetype index = 1; index < world_vertices.size(); ++index)
         {
+            const QPointF &start = world_vertices.at(index - 1);
+            const QPointF &end = world_vertices.at(index);
+            geometry->link_segments.append(QLineF(start, end));
+
             HitSegment segment;
             segment.render_id = link.render_id;
             segment.entity_type = link.entity_type;
-            segment.start = projected_link.world_vertices.at(index - 1);
-            segment.end = projected_link.world_vertices.at(index);
-            segments->append(segment);
+            segment.start = start;
+            segment.end = end;
+            hit_segments->append(segment);
         }
 
-        if ((link.entity_type == InfrastructureEntity::Pump || link.entity_type == InfrastructureEntity::Valve) &&
-            projected_link.world_vertices.size() >= 3)
+        if (link.entity_type == InfrastructureEntity::Pump ||
+            link.entity_type == InfrastructureEntity::Valve)
         {
             HitMarker marker;
             marker.render_id = link.render_id;
             marker.entity_type = link.entity_type;
-            marker.world_position = projected_link.world_vertices.at(projected_link.world_vertices.size() / 2);
+            marker.world_position = world_vertices.at(world_vertices.size() / 2);
             this->hit_markers.append(marker);
         }
-
-        projected_links.append(projected_link);
     }
 
-    this->cached_zoom = zoom;
-    this->cached_device_pixel_ratio = device_pixel_ratio;
-    this->cache_initialized = true;
-
-    if ((projected_nodes.isEmpty() && projected_links.isEmpty()) ||
+    if ((geometry->node_positions.isEmpty() && geometry->link_segments.isEmpty()) ||
         !std::isfinite(minimum_x) || !std::isfinite(minimum_y) ||
         !std::isfinite(maximum_x) || !std::isfinite(maximum_y))
     {
         return;
     }
 
-    this->svg_world_bounds = QRectF(
-        minimum_x - NetworkImagePadding,
-        minimum_y - NetworkImagePadding,
-        maximum_x - minimum_x + NetworkImagePadding * 2.0,
-        maximum_y - minimum_y + NetworkImagePadding * 2.0);
-    this->cached_geometry_world_origin = this->svg_world_bounds.center();
-    const QPointF svg_world_top_left = this->svg_world_bounds.topLeft();
+    geometry->world_bounds = QRectF(
+        minimum_x,
+        minimum_y,
+        maximum_x - minimum_x,
+        maximum_y - minimum_y);
+    geometry->world_origin = geometry->world_bounds.center();
+    this->render_geometry = geometry;
+    this->reference_geometry_ready = true;
+    rebuildSpatialIndex();
+}
+
+void MapNetworkOverlayWidget::clearRenderedCache()
+{
+    if (this->pending_render_cancelled)
+        this->pending_render_cancelled->store(true, std::memory_order_relaxed);
+    this->pending_render_cancelled.reset();
+    this->latest_render_request_id = ++this->next_render_request_id;
+    this->pending_render_request_id = 0;
+    this->pending_cache_coverage_world_bounds = QRectF();
+    this->pending_cache_zoom = -1;
+    this->pending_cache_device_pixel_ratio = 0.0;
+    this->rendered_network_cache = QImage();
+    this->rendered_cache_coverage_world_bounds = QRectF();
+    this->rendered_cache_image_world_bounds = QRectF();
+    this->rendered_cache_zoom = -1;
+    this->rendered_cache_device_pixel_ratio = 0.0;
+}
+
+void MapNetworkOverlayWidget::requestRenderCache(bool force)
+{
+    if (!this->reference_geometry_ready || !this->render_geometry || width() <= 0 || height() <= 0)
+        return;
+
+    if (!force && renderedCacheCoversCurrentView())
+        return;
+    if (!force && pendingCacheCoversCurrentView())
+        return;
+
+    const quint64 request_id = ++this->next_render_request_id;
+    RenderRequest request = createRenderRequest(request_id);
+    if (!request.geometry || !request.logical_size.isValid() || request.coverage_world_bounds.isEmpty())
+        return;
+
+    if (this->pending_render_cancelled)
+        this->pending_render_cancelled->store(true, std::memory_order_relaxed);
+    request.cancelled = std::make_shared<std::atomic_bool>(false);
+    this->pending_render_cancelled = request.cancelled;
+    this->latest_render_request_id = request_id;
+    this->pending_render_request_id = request_id;
+    this->pending_cache_coverage_world_bounds = request.coverage_world_bounds;
+    this->pending_cache_zoom = request.zoom;
+    this->pending_cache_device_pixel_ratio = request.device_pixel_ratio;
+
+    const QPointer<MapNetworkOverlayWidget> widget(this);
+    QRunnable *runnable = QRunnable::create([widget, request]
+    {
+        RenderResult result = MapNetworkOverlayWidget::renderRequest(request);
+        QCoreApplication *application = QCoreApplication::instance();
+        if (!application)
+            return;
+
+        QMetaObject::invokeMethod(application, [widget, result = std::move(result)]() mutable
+        {
+            if (!widget)
+                return;
+            widget->applyRenderResult(std::move(result));
+        }, Qt::QueuedConnection);
+    });
+    QThreadPool::globalInstance()->start(runnable);
+}
+
+MapNetworkOverlayWidget::RenderRequest MapNetworkOverlayWidget::createRenderRequest(quint64 request_id) const
+{
+    RenderRequest request;
+    if (!this->render_geometry || !this->reference_geometry_ready)
+        return request;
+
+    request.request_id = request_id;
+    request.geometry_revision = this->geometry_revision;
+    request.zoom = this->map_model->zoom();
+    request.device_pixel_ratio = qMax<qreal>(1.0, devicePixelRatioF());
+    request.geometry = this->render_geometry;
+
+    const QSize cache_size = boundedCacheLogicalSize(size(), request.device_pixel_ratio);
+    if (!cache_size.isValid())
+        return RenderRequest();
+
+    const qreal scale = scaleForZoom(request.zoom);
+    if (scale <= 0.0)
+        return RenderRequest();
+
+    const QPointF center = visibleReferenceWorldCenter();
+    request.coverage_world_bounds = QRectF(
+        center.x() - cache_size.width() / (2.0 * scale),
+        center.y() - cache_size.height() / (2.0 * scale),
+        cache_size.width() / scale,
+        cache_size.height() / scale);
+
+    const qreal geometry_padding = (NetworkNodeWidth / 2.0 + NetworkImagePadding) / scale;
+    const QRectF padded_geometry_bounds = this->render_geometry->world_bounds.adjusted(
+        -geometry_padding, -geometry_padding, geometry_padding, geometry_padding);
+    const QRectF visible_geometry_bounds = request.coverage_world_bounds.intersected(padded_geometry_bounds);
+
+    if (visible_geometry_bounds.isEmpty())
+    {
+        request.logical_size = QSize(1, 1);
+        request.image_world_bounds = QRectF(
+            request.coverage_world_bounds.topLeft(),
+            QSizeF(1.0 / scale, 1.0 / scale));
+        return request;
+    }
+
+    const int logical_width = qMin(cache_size.width(),
+        qMax(1, qCeil(visible_geometry_bounds.width() * scale)));
+    const int logical_height = qMin(cache_size.height(),
+        qMax(1, qCeil(visible_geometry_bounds.height() * scale)));
+    request.logical_size = QSize(logical_width, logical_height);
+    request.image_world_bounds = QRectF(
+        visible_geometry_bounds.topLeft(),
+        QSizeF(logical_width / scale, logical_height / scale));
+    return request;
+}
+
+MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(const RenderRequest &request)
+{
+    RenderResult result;
+    result.request_id = request.request_id;
+    result.geometry_revision = request.geometry_revision;
+    result.zoom = request.zoom;
+    result.device_pixel_ratio = request.device_pixel_ratio;
+    result.coverage_world_bounds = request.coverage_world_bounds;
+    result.image_world_bounds = request.image_world_bounds;
+
+    if (!request.geometry || !request.logical_size.isValid() || request.image_world_bounds.isEmpty())
+        return result;
+    if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
+        return result;
+
+    const qreal scale = scaleForZoom(request.zoom);
+    const qreal image_left = request.image_world_bounds.left();
+    const qreal image_top = request.image_world_bounds.top();
+    const qreal link_padding = (NetworkLinkWidth / 2.0 + NetworkImagePadding) / scale;
+    const qreal node_padding = (NetworkNodeWidth / 2.0 + NetworkImagePadding) / scale;
+    const QRectF link_query_bounds = request.image_world_bounds.adjusted(
+        -link_padding, -link_padding, link_padding, link_padding);
+    const QRectF node_query_bounds = request.image_world_bounds.adjusted(
+        -node_padding, -node_padding, node_padding, node_padding);
 
     QByteArray link_path;
     QByteArray node_path;
-    link_path.reserve(this->snapshot.links.size() * 80);
-    node_path.reserve(this->snapshot.nodes.size() * 80);
+    link_path.reserve(request.geometry->link_segments.size() * 20);
+    node_path.reserve(request.geometry->node_positions.size() * 20);
 
-    for (const SvgProjectedLink &projected_link : projected_links)
+    int processed_segments = 0;
+    for (const QLineF &segment : request.geometry->link_segments)
     {
-        appendSvgMove(link_path, projected_link.world_vertices.first() - svg_world_top_left);
-        for (qsizetype index = 1; index < projected_link.world_vertices.size(); ++index)
-            appendSvgLine(link_path, projected_link.world_vertices.at(index) - svg_world_top_left);
+        if ((++processed_segments & 255) == 0 && request.cancelled &&
+            request.cancelled->load(std::memory_order_relaxed))
+        {
+            return result;
+        }
+        if (!segmentIntersectsRect(segment, link_query_bounds))
+            continue;
+
+        appendSvgMove(link_path, QPointF(
+            (segment.x1() - image_left) * scale,
+            (segment.y1() - image_top) * scale));
+        appendSvgLine(link_path, QPointF(
+            (segment.x2() - image_left) * scale,
+            (segment.y2() - image_top) * scale));
     }
 
-    for (const SvgProjectedNode &projected_node : projected_nodes)
-        appendSvgCircle(node_path, projected_node.world_position - svg_world_top_left, NetworkNodeWidth / 2.0);
+    const qreal node_radius = NetworkNodeWidth / 2.0;
+    int processed_nodes = 0;
+    for (const QPointF &world_position : request.geometry->node_positions)
+    {
+        if ((++processed_nodes & 255) == 0 && request.cancelled &&
+            request.cancelled->load(std::memory_order_relaxed))
+        {
+            return result;
+        }
+        if (!node_query_bounds.contains(world_position))
+            continue;
+
+        appendSvgCircle(node_path, QPointF(
+            (world_position.x() - image_left) * scale,
+            (world_position.y() - image_top) * scale), node_radius);
+    }
 
     QByteArray svg;
     svg.reserve(link_path.size() + node_path.size() + 512);
     svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"");
-    appendSvgNumber(svg, this->svg_world_bounds.width());
+    svg.append(QByteArray::number(request.logical_size.width()));
     svg.append("\" height=\"");
-    appendSvgNumber(svg, this->svg_world_bounds.height());
+    svg.append(QByteArray::number(request.logical_size.height()));
     svg.append("\" viewBox=\"0 0 ");
-    appendSvgNumber(svg, this->svg_world_bounds.width());
+    svg.append(QByteArray::number(request.logical_size.width()));
     svg.append(' ');
-    appendSvgNumber(svg, this->svg_world_bounds.height());
+    svg.append(QByteArray::number(request.logical_size.height()));
     svg.append("\">");
     if (!link_path.isEmpty())
     {
@@ -498,155 +653,168 @@ void MapNetworkOverlayWidget::rebuildCache()
     }
     svg.append("</svg>");
 
-    this->svg_renderer = std::make_unique<QSvgRenderer>();
-    if (!this->svg_renderer->load(svg) || !this->svg_renderer->isValid())
+    if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
+        return result;
+
+    QSvgRenderer renderer;
+    if (!renderer.load(svg) || !renderer.isValid())
+        return result;
+
+    const QSize physical_size(
+        qMax(1, qCeil(request.logical_size.width() * request.device_pixel_ratio)),
+        qMax(1, qCeil(request.logical_size.height() * request.device_pixel_ratio)));
+    if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
+        return result;
+
+    QImage image(physical_size, QImage::Format_ARGB32_Premultiplied);
+    if (image.isNull())
+        return result;
+    image.setDevicePixelRatio(request.device_pixel_ratio);
+    image.fill(Qt::transparent);
+
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    renderer.render(&painter, QRectF(QPointF(0.0, 0.0), QSizeF(request.logical_size)));
+    painter.end();
+
+    result.image = std::move(image);
+    return result;
+}
+
+void MapNetworkOverlayWidget::applyRenderResult(RenderResult result)
+{
+    if (result.request_id != this->latest_render_request_id ||
+        result.geometry_revision != this->geometry_revision)
     {
-        this->svg_renderer.reset();
         return;
     }
 
-    this->cached_geometry_ready = true;
-    rebuildSpatialIndex();
+    this->pending_render_request_id = 0;
+    this->pending_render_cancelled.reset();
+    this->pending_cache_coverage_world_bounds = QRectF();
+    this->pending_cache_zoom = -1;
+    this->pending_cache_device_pixel_ratio = 0.0;
+
+    if (result.image.isNull())
+        return;
+
+    this->rendered_network_cache = std::move(result.image);
+    this->rendered_cache_coverage_world_bounds = result.coverage_world_bounds;
+    this->rendered_cache_image_world_bounds = result.image_world_bounds;
+    this->rendered_cache_zoom = result.zoom;
+    this->rendered_cache_device_pixel_ratio = result.device_pixel_ratio;
+    update();
+    requestRenderCache();
+}
+
+bool MapNetworkOverlayWidget::renderedCacheCoversCurrentView() const
+{
+    if (this->rendered_network_cache.isNull() ||
+        this->rendered_cache_zoom != this->map_model->zoom() ||
+        !qFuzzyCompare(this->rendered_cache_device_pixel_ratio, qMax<qreal>(1.0, devicePixelRatioF())))
+    {
+        return false;
+    }
+
+    return coverageCoversCurrentView(
+        this->rendered_cache_coverage_world_bounds,
+        this->rendered_cache_zoom);
+}
+
+bool MapNetworkOverlayWidget::pendingCacheCoversCurrentView() const
+{
+    if (this->pending_render_request_id == 0 ||
+        this->pending_cache_zoom != this->map_model->zoom() ||
+        !qFuzzyCompare(this->pending_cache_device_pixel_ratio, qMax<qreal>(1.0, devicePixelRatioF())))
+    {
+        return false;
+    }
+
+    return coverageCoversCurrentView(
+        this->pending_cache_coverage_world_bounds,
+        this->pending_cache_zoom);
+}
+
+bool MapNetworkOverlayWidget::coverageCoversCurrentView(
+    const QRectF &coverage_world_bounds, int zoom) const
+{
+    if (coverage_world_bounds.isEmpty() || zoom != this->map_model->zoom())
+        return false;
+
+    const qreal scale = scaleForZoom(zoom);
+    if (scale <= 0.0)
+        return false;
+
+    const QRectF view_bounds = visibleReferenceWorldRect();
+    const qreal horizontal_overscan = qMax<qreal>(0.0,
+        (coverage_world_bounds.width() - view_bounds.width()) / 2.0);
+    const qreal vertical_overscan = qMax<qreal>(0.0,
+        (coverage_world_bounds.height() - view_bounds.height()) / 2.0);
+    const qreal horizontal_safety = std::min(NetworkImageRebuildEdge / scale, horizontal_overscan / 2.0);
+    const qreal vertical_safety = std::min(NetworkImageRebuildEdge / scale, vertical_overscan / 2.0);
+    const QRectF required_bounds = view_bounds.adjusted(
+        -horizontal_safety,
+        -vertical_safety,
+        horizontal_safety,
+        vertical_safety);
+    return coverage_world_bounds.contains(required_bounds);
 }
 
 void MapNetworkOverlayWidget::paintNetwork(QPainter &painter)
 {
-    if (!this->svg_renderer || !this->svg_renderer->isValid() || this->svg_world_bounds.isEmpty())
+    if (this->rendered_network_cache.isNull() || this->rendered_cache_image_world_bounds.isEmpty())
         return;
 
-    if (canUseFullNetworkCache())
-        paintFullNetworkCache(painter);
-    else
-        paintTiledNetworkCache(painter);
-}
-
-bool MapNetworkOverlayWidget::canUseFullNetworkCache() const
-{
-    const qreal device_pixel_ratio = this->cached_device_pixel_ratio > 0.0
-        ? this->cached_device_pixel_ratio : devicePixelRatioF();
-    const qint64 physical_width = qMax<qint64>(1, qCeil(this->svg_world_bounds.width() * device_pixel_ratio));
-    const qint64 physical_height = qMax<qint64>(1, qCeil(this->svg_world_bounds.height() * device_pixel_ratio));
-    const qint64 physical_pixels = physical_width * physical_height;
-
-    const qreal maximum_logical_width = qMax<qreal>(RasterTileLogicalSize, width() * 1.5);
-    const qreal maximum_logical_height = qMax<qreal>(RasterTileLogicalSize, height() * 1.5);
-
-    return this->svg_world_bounds.width() <= maximum_logical_width &&
-        this->svg_world_bounds.height() <= maximum_logical_height &&
-        physical_width <= MaximumFullCachePhysicalDimension &&
-        physical_height <= MaximumFullCachePhysicalDimension &&
-        physical_pixels <= MaximumFullCachePhysicalPixels;
-}
-
-QPixmap MapNetworkOverlayWidget::renderSvgSurface(const QRectF &world_rect)
-{
-    if (!this->svg_renderer || !this->svg_renderer->isValid() || world_rect.isEmpty())
-        return QPixmap();
-
-    const qreal device_pixel_ratio = this->cached_device_pixel_ratio > 0.0
-        ? this->cached_device_pixel_ratio : devicePixelRatioF();
-    const QSize physical_size(
-        qMax(1, qCeil(world_rect.width() * device_pixel_ratio)),
-        qMax(1, qCeil(world_rect.height() * device_pixel_ratio)));
-
-    QPixmap pixmap(physical_size);
-    pixmap.setDevicePixelRatio(device_pixel_ratio);
-    pixmap.fill(Qt::transparent);
-
-    const QPointF local_top_left = world_rect.topLeft() - this->svg_world_bounds.topLeft();
-    const QRectF svg_local_bounds(0.0, 0.0, this->svg_world_bounds.width(), this->svg_world_bounds.height());
-
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.translate(-local_top_left.x(), -local_top_left.y());
-    this->svg_renderer->render(&painter, svg_local_bounds);
-    painter.end();
-    return pixmap;
-}
-
-void MapNetworkOverlayWidget::paintFullNetworkCache(QPainter &painter)
-{
-    if (this->full_network_cache.isNull())
-    {
-        this->raster_tile_cache.clear();
-        this->full_network_cache = renderSvgSurface(this->svg_world_bounds);
-    }
-    if (this->full_network_cache.isNull())
+    const qreal scale = referenceScaleForCurrentZoom();
+    if (scale <= 0.0)
         return;
 
-    const QPointF center = visibleGeometryWorldCenter();
-    const QPointF screen_position(
-        snapToPhysicalPixel(width() / 2.0 + this->svg_world_bounds.left() - center.x(), this->cached_device_pixel_ratio),
-        snapToPhysicalPixel(height() / 2.0 + this->svg_world_bounds.top() - center.y(), this->cached_device_pixel_ratio));
-    painter.drawPixmap(screen_position, this->full_network_cache);
+    const QPointF center = visibleReferenceWorldCenter();
+    const QRectF target_rect(
+        width() / 2.0 + (this->rendered_cache_image_world_bounds.left() - center.x()) * scale,
+        height() / 2.0 + (this->rendered_cache_image_world_bounds.top() - center.y()) * scale,
+        this->rendered_cache_image_world_bounds.width() * scale,
+        this->rendered_cache_image_world_bounds.height() * scale);
+
+    painter.setRenderHint(QPainter::SmoothPixmapTransform,
+        this->rendered_cache_zoom != this->map_model->zoom());
+    painter.drawImage(target_rect, this->rendered_network_cache);
 }
 
-void MapNetworkOverlayWidget::paintTiledNetworkCache(QPainter &painter)
+QPointF MapNetworkOverlayWidget::visibleReferenceWorldCenter() const
 {
-    if (!this->full_network_cache.isNull())
-        this->full_network_cache = QPixmap();
+    if (!this->render_geometry)
+        return QPointF();
 
-    const QRectF visible_world_rect = visibleGeometryWorldRect();
-    const QPointF center = visible_world_rect.center();
-    const int minimum_tile_x = qFloor(visible_world_rect.left() / RasterTileLogicalSize);
-    const int maximum_tile_x = qFloor((visible_world_rect.right() - 0.001) / RasterTileLogicalSize);
-    const int minimum_tile_y = qFloor(visible_world_rect.top() / RasterTileLogicalSize);
-    const int maximum_tile_y = qFloor((visible_world_rect.bottom() - 0.001) / RasterTileLogicalSize);
-
-    for (int tile_y = minimum_tile_y; tile_y <= maximum_tile_y; ++tile_y)
-    {
-        for (int tile_x = minimum_tile_x; tile_x <= maximum_tile_x; ++tile_x)
-        {
-            const QRectF tile_world_rect(
-                qreal(tile_x) * RasterTileLogicalSize,
-                qreal(tile_y) * RasterTileLogicalSize,
-                RasterTileLogicalSize,
-                RasterTileLogicalSize);
-            if (!tile_world_rect.intersects(this->svg_world_bounds))
-                continue;
-
-            const quint64 key = rasterTileKey(tile_x, tile_y);
-            QPixmap *tile_pixmap = this->raster_tile_cache.object(key);
-            if (!tile_pixmap)
-            {
-                QPixmap rendered_tile = renderSvgSurface(tile_world_rect);
-                if (rendered_tile.isNull())
-                    continue;
-
-                const int physical_width = rendered_tile.width();
-                const int physical_height = rendered_tile.height();
-                const qint64 bytes = qint64(physical_width) * physical_height * 4;
-                const int cost_kib = qMax(1, int(qMin<qint64>(bytes / 1024, std::numeric_limits<int>::max())));
-                this->raster_tile_cache.insert(key, new QPixmap(rendered_tile), cost_kib);
-                tile_pixmap = this->raster_tile_cache.object(key);
-                if (!tile_pixmap)
-                    continue;
-            }
-
-            const QPointF screen_position(
-                snapToPhysicalPixel(width() / 2.0 + tile_world_rect.left() - center.x(), this->cached_device_pixel_ratio),
-                snapToPhysicalPixel(height() / 2.0 + tile_world_rect.top() - center.y(), this->cached_device_pixel_ratio));
-            painter.drawPixmap(screen_position, *tile_pixmap);
-        }
-    }
-}
-
-QPointF MapNetworkOverlayWidget::visibleGeometryWorldCenter() const
-{
-    const QPointF center_world = this->map_model->centerTile() * MapModel::TileSize;
+    const QPointF raw_center = GeoWebMercator::lonLatToWorldPixel(
+        GeoWebMercator::normalizeLongitude(this->map_model->centerLon()),
+        this->map_model->centerLat(),
+        ReferenceZoom);
     return QPointF(
-        nearestWrappedWorldPixel(center_world.x(), this->cached_geometry_world_origin.x(), this->cached_zoom),
-        center_world.y());
+        nearestWrappedWorldPixel(
+            raw_center.x(),
+            this->render_geometry->world_origin.x(),
+            ReferenceZoom),
+        raw_center.y());
 }
 
-QRectF MapNetworkOverlayWidget::visibleGeometryWorldRect() const
+QRectF MapNetworkOverlayWidget::visibleReferenceWorldRect() const
 {
-    const QPointF center = visibleGeometryWorldCenter();
+    const qreal scale = referenceScaleForCurrentZoom();
+    if (scale <= 0.0)
+        return QRectF();
+
+    const QPointF center = visibleReferenceWorldCenter();
     return QRectF(
-        center.x() - width() / 2.0,
-        center.y() - height() / 2.0,
-        width(),
-        height());
+        center.x() - width() / (2.0 * scale),
+        center.y() - height() / (2.0 * scale),
+        width() / scale,
+        height() / scale);
+}
+
+qreal MapNetworkOverlayWidget::referenceScaleForCurrentZoom() const
+{
+    return scaleForZoom(this->map_model->zoom());
 }
 
 void MapNetworkOverlayWidget::rebuildSpatialIndex()
@@ -664,7 +832,8 @@ void MapNetworkOverlayWidget::rebuildSpatialIndex()
         this->spatial_cells[key].marker_indices.append(index);
     }
 
-    const auto add_segments = [this](const QList<HitSegment> &segments, HitCollection collection)
+    const std::function<void(const QList<HitSegment> &, HitCollection)> add_segments =
+        [this](const QList<HitSegment> &segments, HitCollection collection)
     {
         for (int index = 0; index < segments.size(); ++index)
         {
@@ -794,13 +963,13 @@ NetworkOverlayHit MapNetworkOverlayWidget::nearestMarkerHit(
 }
 
 NetworkOverlayHit MapNetworkOverlayWidget::nearestSegmentHit(
-    qreal point_x, qreal point_y, HitCollection collection) const
+    qreal point_x, qreal point_y, qreal hit_distance, HitCollection collection) const
 {
     NetworkOverlayHit best_hit;
     const QList<HitSegment> &segments = collection == HitCollection::DeviceSegments
         ? this->device_hit_segments : this->pipe_hit_segments;
-    qreal best_distance_squared = LinkHitDistance * LinkHitDistance;
-    const QList<int> candidates = candidateIndices(point_x, point_y, LinkHitDistance, collection);
+    qreal best_distance_squared = hit_distance * hit_distance;
+    const QList<int> candidates = candidateIndices(point_x, point_y, hit_distance, collection);
 
     for (int index : candidates)
     {
@@ -820,8 +989,9 @@ NetworkOverlayHit MapNetworkOverlayWidget::nearestSegmentHit(
 
 QPointF MapNetworkOverlayWidget::geometryWorldPosition(const QPointF &screen_position) const
 {
-    const QPointF center = visibleGeometryWorldCenter();
+    const qreal scale = referenceScaleForCurrentZoom();
+    const QPointF center = visibleReferenceWorldCenter();
     return QPointF(
-        center.x() + screen_position.x() - width() / 2.0,
-        center.y() + screen_position.y() - height() / 2.0);
+        center.x() + (screen_position.x() - width() / 2.0) / scale,
+        center.y() + (screen_position.y() - height() / 2.0) / scale);
 }
