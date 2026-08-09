@@ -38,6 +38,7 @@ public:
 
 public slots:
     void setBackgroundOpacity(int opacity);
+    void setIconSizePercent(int size_percent);
 
 protected:
     void paintEvent(QPaintEvent *event) override;

@@ -247,10 +247,10 @@ const NetworkIconAsset *iconAssetForEntity(InfrastructureEntity entity_type)
     return nullptr;
 }
 
-QSizeF markerScreenSize(InfrastructureEntity entity_type, int zoom, int node_size_percent)
+QSizeF markerScreenSize(InfrastructureEntity entity_type, int zoom, int node_size_percent, int icon_size_percent)
 {
-    const qreal marker_size = markerSizeForZoom(zoom, node_size_percent);
     const NetworkIconAsset *asset = iconAssetForEntity(entity_type);
+    const qreal marker_size = markerSizeForZoom(zoom, asset ? icon_size_percent : node_size_percent);
     if (!asset)
         return QSizeF(marker_size, marker_size);
 
@@ -764,20 +764,23 @@ void MapNetworkOverlayWidget::setBackgroundOpacity(int opacity)
     update();
 }
 
-void MapNetworkOverlayWidget::setSymbology(VisualNode visual_node, int node_size_percent, VisualLink visual_link, int link_thickness_px)
+void MapNetworkOverlayWidget::setSymbology(VisualNode visual_node, int node_size_percent, int icon_size_percent, VisualLink visual_link, int link_thickness_px)
 {
     const int bounded_node_size_percent = qBound(50, node_size_percent, 250);
+    const int bounded_icon_size_percent = qBound(50, icon_size_percent, 250);
     const int bounded_link_thickness_px = qBound(1, link_thickness_px, 12);
     const bool node_visual_changed = this->visual_node != visual_node;
     const bool link_visual_changed = this->visual_link != visual_link;
     const bool node_size_changed = this->node_size_percent != bounded_node_size_percent;
+    const bool icon_size_changed = this->icon_size_percent != bounded_icon_size_percent;
     const bool link_thickness_changed = this->link_thickness_px != bounded_link_thickness_px;
 
-    if (!node_visual_changed && !link_visual_changed && !node_size_changed && !link_thickness_changed)
+    if (!node_visual_changed && !link_visual_changed && !node_size_changed && !icon_size_changed && !link_thickness_changed)
         return;
 
     this->visual_node = visual_node;
     this->node_size_percent = bounded_node_size_percent;
+    this->icon_size_percent = bounded_icon_size_percent;
     this->visual_link = visual_link;
     this->link_thickness_px = bounded_link_thickness_px;
     rebuildSymbology(false, node_visual_changed || !this->render_symbology,
@@ -835,7 +838,8 @@ NetworkOverlayHit MapNetworkOverlayWidget::hitTest(const QPointF &screen_positio
     const QPointF world_position = geometryWorldPosition(screen_position);
     const NetworkOverlayHit marker_hit = nearestMarkerHit(
         world_position.x(), world_position.y(),
-        markerSizeForZoom(this->map_model->zoom(), this->node_size_percent) / (2.0 * scale));
+        markerSizeForZoom(this->map_model->zoom(), this->node_size_percent) / (2.0 * scale),
+        markerSizeForZoom(this->map_model->zoom(), this->icon_size_percent) / (2.0 * scale));
     if (marker_hit.isValid())
         return marker_hit;
 
@@ -1074,6 +1078,7 @@ void MapNetworkOverlayWidget::rebuildSymbology(bool rebuild_ranges, bool rebuild
     std::shared_ptr<RenderSymbology> symbology = std::make_shared<RenderSymbology>();
     symbology->revision = ++this->symbology_revision;
     symbology->node_size_percent = qBound(50, this->node_size_percent, 250);
+    symbology->icon_size_percent = qBound(50, this->icon_size_percent, 250);
     symbology->link_width = qBound<qreal>(1.0, this->link_thickness_px, 12.0);
     symbology->heatmap_radius_m = qBound(10, this->heatmap_radius_m, 1000);
     symbology->heatmap_solid_center_percent = qBound(0, this->heatmap_solid_center_percent, 100);
@@ -1263,7 +1268,8 @@ MapNetworkOverlayWidget::RenderRequest MapNetworkOverlayWidget::createRenderRequ
         cache_size.height() / scale);
 
     const qreal render_half_width = qMax(
-        markerSizeForZoom(request.zoom, request.symbology->node_size_percent) / 2.0,
+        qMax(markerSizeForZoom(request.zoom, request.symbology->node_size_percent) / 2.0,
+             markerSizeForZoom(request.zoom, request.symbology->icon_size_percent) / 2.0),
         request.symbology->link_width / 2.0);
     const qreal heatmap_padding = request.symbology->heatmap_fractions.isEmpty()
         ? 0.0 : heatmapRadiusReferencePixels(
@@ -1483,7 +1489,8 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
         const RenderGeometry::Marker &marker = request.geometry->markers.at(marker_index);
         const QPointF &world_position = marker.world_position;
         const QSizeF marker_size = markerScreenSize(
-            marker.entity_type, request.zoom, request.symbology->node_size_percent);
+            marker.entity_type, request.zoom, request.symbology->node_size_percent,
+            request.symbology->icon_size_percent);
         const qreal marker_padding_x = marker_size.width() / 2.0 + NetworkImagePadding;
         const qreal marker_padding_y = marker_size.height() / 2.0 + NetworkImagePadding;
         const qreal x = (world_position.x() - image_left) * scale;
@@ -1570,7 +1577,7 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
             }
 
             const qreal marker_size = markerSizeForZoom(
-                request.zoom, request.symbology->node_size_percent);
+                request.zoom, request.symbology->icon_size_percent);
             const qreal icon_scale = marker_size / qMax(asset->view_width, asset->view_height);
             const qreal icon_x = center.x() - asset->view_width * icon_scale / 2.0;
             const qreal icon_y = center.y() - asset->view_height * icon_scale / 2.0;
@@ -1612,7 +1619,7 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
             if (!asset)
                 continue;
             const qreal marker_size = markerSizeForZoom(
-                request.zoom, request.symbology->node_size_percent);
+                request.zoom, request.symbology->icon_size_percent);
             const qreal icon_scale = marker_size / qMax(asset->view_width, asset->view_height);
             QPen pen(QColor::fromRgb(color));
             pen.setWidthF(asset->stroke_width * icon_scale);
@@ -1975,16 +1982,19 @@ QList<int> MapNetworkOverlayWidget::candidateIndices(
 }
 
 NetworkOverlayHit MapNetworkOverlayWidget::nearestMarkerHit(
-    qreal point_x, qreal point_y, qreal marker_half_width) const
+    qreal point_x, qreal point_y, qreal node_half_width, qreal icon_half_width) const
 {
     NetworkOverlayHit best_hit;
     qreal best_distance_squared = std::numeric_limits<qreal>::infinity();
+    const qreal maximum_half_width = qMax(node_half_width, icon_half_width);
     const QList<int> candidates = candidateIndices(
-        point_x, point_y, marker_half_width, HitCollection::Markers);
+        point_x, point_y, maximum_half_width, HitCollection::Markers);
 
     for (int index : candidates)
     {
         const HitMarker &marker = this->hit_markers.at(index);
+        const qreal marker_half_width = iconAssetForEntity(marker.entity_type)
+            ? icon_half_width : node_half_width;
         const qreal delta_x = point_x - marker.world_position.x();
         const qreal delta_y = point_y - marker.world_position.y();
         if (qAbs(delta_x) > marker_half_width || qAbs(delta_y) > marker_half_width)

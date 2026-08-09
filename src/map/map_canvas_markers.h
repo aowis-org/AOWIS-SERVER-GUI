@@ -27,10 +27,12 @@ public:
                               QObject *parent = nullptr);
 
     void setWrapReferenceLongitude(double longitude);
+    void setIconSizePercent(int size_percent);
 
     const QList<MapEntityMarker> &markers() const;
     void clear();
     int entityWidth() const;
+    int iconSizePercent() const;
     QString pixmapPathForEntity(InfrastructureEntity entity) const;
     std::optional<InfrastructureEntityReference> nearestConnectionTarget(
         const QPointF &mouse_position, const QUuid &excluded_uuid = QUuid(),
@@ -59,6 +61,7 @@ private:
     QPointer<MapCanvasWidget> map_canvas;
     MapEntityPixmapRenderer *pixmap_renderer = nullptr;
     double wrap_reference_lon = 0.0;
+    int icon_size_percent = 100;
     int marker_width = 10;
     QList<MapEntityMarker> list_markers;
     QHash<QUuid, int> marker_indices_by_uuid;

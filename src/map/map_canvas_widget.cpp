@@ -94,6 +94,11 @@ void MapCanvasWidget::setBackgroundOpacity(int opacity)
     requestRenderUpdate();
 }
 
+void MapCanvasWidget::setIconSizePercent(int size_percent)
+{
+    this->map_canvas_entities->setIconSizePercent(size_percent);
+}
+
 void MapCanvasWidget::applyControllerState()
 {
     if (!this->editor_controller)

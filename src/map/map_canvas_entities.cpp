@@ -330,7 +330,9 @@ void MapCanvasEntities::loadNetwork(const NetworkHydraulic &network)
 void MapCanvasEntities::startEntityPositioning(InfrastructureEntity entity)
 {
     stopEntityPositioning();
-    const int width = isHydraulicCanvasLink(entity) ? this->point_markers->entityWidth() : 150;
+    const int width = isHydraulicCanvasLink(entity)
+        ? this->point_markers->entityWidth()
+        : qMax(1, qRound(150.0 * this->point_markers->iconSizePercent() / 100.0));
     this->placement->startCreate(
         entity, this->point_markers->pixmapPathForEntity(entity), width);
 }
@@ -476,7 +478,8 @@ bool MapCanvasEntities::anchorMarker(const QPointF &position)
     this->placement->setFloatingHiddenUntil(position.toPoint());
     this->placement->consumeCreatedMarker();
     this->placement->rearmCreate(
-        this->point_markers->pixmapPathForEntity(reference.type), 150);
+        this->point_markers->pixmapPathForEntity(reference.type),
+        qMax(1, qRound(150.0 * this->point_markers->iconSizePercent() / 100.0)));
     updateCanvas();
     return true;
 }
@@ -932,16 +935,25 @@ void MapCanvasEntities::recalculateWrapReferenceLongitude()
     setWrapReferenceLongitude(reference_longitude);
 }
 
+void MapCanvasEntities::setIconSizePercent(int size_percent)
+{
+    this->point_markers->setIconSizePercent(size_percent);
+    scaleMarkers();
+}
+
 void MapCanvasEntities::scaleMarkers()
 {
     const int width = this->point_markers->entityWidth();
     this->point_markers->scaleMarkers(width);
     this->device_links->scaleMarkers(width);
 
-    if (this->placement->isCreating() && isHydraulicCanvasLink(this->placement->entity()))
+    if (this->placement->hasFloatingMarker())
     {
+        int floating_width = width;
+        if (this->placement->isCreating() && !isHydraulicCanvasLink(this->placement->entity()))
+            floating_width = qMax(1, qRound(150.0 * this->point_markers->iconSizePercent() / 100.0));
         this->placement->scaleFloatingMarker(
-            this->point_markers->pixmapPathForEntity(this->placement->entity()), width);
+            this->point_markers->pixmapPathForEntity(this->placement->entity()), floating_width);
     }
     updateCanvas();
 }

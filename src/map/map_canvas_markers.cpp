@@ -4,6 +4,7 @@
 #include "../geo_web_mercator.h"
 
 #include <algorithm>
+#include <QtMath>
 
 namespace
 {
@@ -34,6 +35,11 @@ void MapCanvasMarkers::setWrapReferenceLongitude(double longitude)
     this->wrap_reference_lon = GeoWebMercator::normalizeLongitude(longitude);
 }
 
+void MapCanvasMarkers::setIconSizePercent(int size_percent)
+{
+    this->icon_size_percent = qBound(50, size_percent, 250);
+}
+
 QPointF MapCanvasMarkers::screenFromWgs84(const CoordinateWGS84 &coordinate) const
 {
     return this->map_model->screenFromWgs84(
@@ -54,13 +60,20 @@ void MapCanvasMarkers::clear()
 int MapCanvasMarkers::entityWidth() const
 {
     const int zoom = this->map_model->zoom();
+    int base_width = 10;
     if (zoom == 19)
-        return 40;
-    if (zoom == 18)
-        return 30;
-    if (zoom == 17)
-        return 20;
-    return 10;
+        base_width = 40;
+    else if (zoom == 18)
+        base_width = 30;
+    else if (zoom == 17)
+        base_width = 20;
+
+    return qMax(1, qRound(base_width * this->icon_size_percent / 100.0));
+}
+
+int MapCanvasMarkers::iconSizePercent() const
+{
+    return this->icon_size_percent;
 }
 
 QString MapCanvasMarkers::pixmapPathForEntity(InfrastructureEntity entity) const

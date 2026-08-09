@@ -1,7 +1,5 @@
 #include "map_navigation_widget.h"
 
-#include <QSignalBlocker>
-
 MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidget *keyboard_focus_target, QWidget *parent)
     : QWidget{parent},
     mode( mode ),
@@ -82,6 +80,13 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     QSlider *slider_map_visibility = new QSlider(Qt::Horizontal);
     slider_map_visibility->setRange(0, 100);
     connect(slider_map_visibility, &QSlider::valueChanged, this, &MapNavigationWidget::signalSlideOpacityChanged);
+
+    QLabel *label_slider_icon_size = new QLabel("Icon Size [%]");
+    this->slider_icon_size = new QSlider(Qt::Horizontal);
+    this->slider_icon_size->setRange(50, 250);
+    this->slider_icon_size->setValue(100);
+    this->slider_icon_size->setToolTip("Scales pixmap/SVG icons only.");
+    connect(this->slider_icon_size, &QSlider::valueChanged, this, &MapNavigationWidget::signalIconSizeChanged);
     
     this->check_map_sync = new QCheckBox("Sync Map Movement");
     this->check_map_sync->setToolTip("Synchronize Map movement between Editor and Monitor");
@@ -104,7 +109,9 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     this->grid->addWidget(map_osmcyclo, 5, 0, 1, 3);
     this->grid->addWidget(label_slider_map_visibility, 6, 0, 1, 3);
     this->grid->addWidget(slider_map_visibility, 7, 0, 1, 3);
-    this->grid->addWidget(check_map_sync, 8, 0, 1, 3);
+    this->grid->addWidget(label_slider_icon_size, 8, 0, 1, 3);
+    this->grid->addWidget(this->slider_icon_size, 9, 0, 1, 3);
+    this->grid->addWidget(check_map_sync, 10, 0, 1, 3);
     
     this->button_group_map_select = new QButtonGroup(this);
     this->button_group_map_select->addButton(this->map_arcgissat, 1);

@@ -48,7 +48,7 @@ public:
 
 public slots:
     void setBackgroundOpacity(int opacity);
-    void setSymbology(VisualNode visual_node, int node_size_percent, VisualLink visual_link, int link_thickness_px);
+    void setSymbology(VisualNode visual_node, int node_size_percent, int icon_size_percent, VisualLink visual_link, int link_thickness_px);
     void setHeatmap(VisualHeatmap visual_heatmap, int opacity, int radius_m, int solid_center_percent);
 
 protected:
@@ -105,6 +105,7 @@ private:
     {
         quint64 revision = 0;
         int node_size_percent = 100;
+        int icon_size_percent = 100;
         qreal link_width = 3.0;
         int heatmap_radius_m = 400;
         int heatmap_solid_center_percent = 70;
@@ -167,7 +168,7 @@ private:
     QRectF visibleReferenceWorldRect() const;
     qreal referenceScaleForCurrentZoom() const;
     QList<int> candidateIndices(qreal point_x, qreal point_y, qreal radius, HitCollection collection) const;
-    NetworkOverlayHit nearestMarkerHit(qreal point_x, qreal point_y, qreal marker_half_width) const;
+    NetworkOverlayHit nearestMarkerHit(qreal point_x, qreal point_y, qreal node_half_width, qreal icon_half_width) const;
     NetworkOverlayHit nearestSegmentHit(qreal point_x, qreal point_y, qreal hit_distance, HitCollection collection) const;
     QPointF geometryWorldPosition(const QPointF &screen_position) const;
 
@@ -182,6 +183,7 @@ private:
     int background_opacity = 0;
     VisualNode visual_node = VisualNode::None;
     int node_size_percent = 100;
+    int icon_size_percent = 100;
     VisualLink visual_link = VisualLink::None;
     int link_thickness_px = 3;
     VisualHeatmap visual_heatmap = VisualHeatmap::None;

@@ -297,6 +297,8 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     
     connect(this->map_menu, &MapEditorMenuWidget::signalSlideOpacityChanged,
             this->map_canvas, &MapCanvasWidget::setBackgroundOpacity);
+    connect(this->map_menu->mapNavigationWidget(), &MapNavigationWidget::signalIconSizeChanged,
+            this->map_canvas, &MapCanvasWidget::setIconSizePercent);
 #ifdef Q_OS_WASM
     connect(this->map_menu, &MapEditorMenuWidget::signalSlideOpacityChanged,
             this, &MapEditorContainer::scheduleWasmMapLayerSync);

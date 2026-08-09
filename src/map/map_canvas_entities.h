@@ -47,6 +47,7 @@ public:
     bool floatEntity(const QPointF &position);
     bool anchorMarker(const QPointF &position);
 
+    void setIconSizePercent(int size_percent);
     void scaleMarkers();
     void positionMarkers();
     MapEditorVisualState visualState() const;

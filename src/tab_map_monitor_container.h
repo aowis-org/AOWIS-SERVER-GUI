@@ -110,6 +110,7 @@ private:
     int network_background_opacity = 0;
     VisualNode visual_node = VisualNode::None;
     int node_size_percent = 100;
+    int icon_size_percent = 100;
     VisualLink visual_link = VisualLink::None;
     int link_thickness_px = 3;
     VisualHeatmap visual_heatmap = VisualHeatmap::None;

@@ -206,6 +206,18 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     this->map_stack_layout->setStackingMode(QStackedLayout::StackAll);
     connect(this->map_menu->mapNavigationWidget(), &MapNavigationWidget::signalSlideOpacityChanged,
         this, &MapMonitorContainer::setNetworkBackgroundOpacity);
+    connect(this->map_menu->mapNavigationWidget(), &MapNavigationWidget::signalIconSizeChanged, this,
+        [this](int size_percent)
+    {
+        this->icon_size_percent = qBound(50, size_percent, 250);
+#ifndef Q_OS_WASM
+        this->desktop_network_overlay->setSymbology(
+            this->visual_node, this->node_size_percent, this->icon_size_percent,
+            this->visual_link, this->link_thickness_px);
+#else
+        scheduleWasmNetworkSymbologySync(false);
+#endif
+    });
     this->map->installEventFilter(this);
     this->map_stack_layout->addWidget(this->map);
 #ifndef Q_OS_WASM
@@ -267,7 +279,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         emit signalShowMapLegendNode(visual_node);
 #ifndef Q_OS_WASM
         this->desktop_network_overlay->setSymbology(
-            this->visual_node, this->node_size_percent,
+            this->visual_node, this->node_size_percent, this->icon_size_percent,
             this->visual_link, this->link_thickness_px);
 #else
         scheduleWasmNetworkSymbologySync(false);
@@ -278,7 +290,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         this->node_size_percent = qBound(50, size_percent, 250);
 #ifndef Q_OS_WASM
         this->desktop_network_overlay->setSymbology(
-            this->visual_node, this->node_size_percent,
+            this->visual_node, this->node_size_percent, this->icon_size_percent,
             this->visual_link, this->link_thickness_px);
 #else
         scheduleWasmNetworkSymbologySync(false);
@@ -291,7 +303,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         emit signalShowMapLegendLink(visual_link);
 #ifndef Q_OS_WASM
         this->desktop_network_overlay->setSymbology(
-            this->visual_node, this->node_size_percent,
+            this->visual_node, this->node_size_percent, this->icon_size_percent,
             this->visual_link, this->link_thickness_px);
 #else
         scheduleWasmNetworkSymbologySync(false);
@@ -302,7 +314,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         this->link_thickness_px = qBound(1, thickness_px, 12);
 #ifndef Q_OS_WASM
         this->desktop_network_overlay->setSymbology(
-            this->visual_node, this->node_size_percent,
+            this->visual_node, this->node_size_percent, this->icon_size_percent,
             this->visual_link, this->link_thickness_px);
 #else
         scheduleWasmNetworkSymbologySync(false);
@@ -589,7 +601,7 @@ void MapMonitorContainer::syncWasmNetworkSymbology()
     }
 
     const QByteArray json = BrowserNetworkSnapshotSerializer::serializeSymbology(
-        *this->hydraulic_data, this->visual_node, this->node_size_percent,
+        *this->hydraulic_data, this->visual_node, this->node_size_percent, this->icon_size_percent,
         this->visual_link, this->link_thickness_px, this->visual_heatmap,
         this->heatmap_opacity, this->heatmap_radius_m,
         this->heatmap_solid_center_percent);
@@ -669,9 +681,9 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
     QRadioButton *radio_node_head = new QRadioButton("Head");
     QRadioButton *radio_node_pressure = new QRadioButton("Pressure");
     
-    QLabel *label_node_size = new QLabel("Size [%]");
+    QLabel *label_node_size = new QLabel("Node Size [%]");
     QSlider *slider_node_size = new SymbologySlider(50, 250, 100,
-        QStringLiteral("Scales node symbols and their matching hit areas in the map overlay."), QStringLiteral(" %"), this);
+        QStringLiteral("Scales regular node circles only."), QStringLiteral(" %"), this);
     connect(slider_node_size, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalNodeSizeChanged);
 
     QLabel *label_multispecies = new QLabel(

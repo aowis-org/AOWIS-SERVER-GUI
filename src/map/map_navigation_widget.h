@@ -47,11 +47,13 @@ private:
     QRadioButton* map_osmcyclo = nullptr;
     
     QCheckBox* check_map_sync = nullptr;
+    QSlider *slider_icon_size = nullptr;
 
     void activateMapProvider(MapProvider provider);
     
 signals:
     void signalSlideOpacityChanged(int opacity);
+    void signalIconSizeChanged(int size_percent);
     void signalSyncMapMovementStateChanged(bool sync);
     
 public slots:

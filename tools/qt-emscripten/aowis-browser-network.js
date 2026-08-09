@@ -114,6 +114,7 @@
         ownerId: 0,
         nodeVisual: 0,
         nodeSizePercent: 100,
+        iconSizePercent: 100,
         nodeMinimum: 0,
         nodeMaximum: 0,
         nodeValues: new Map(),
@@ -180,12 +181,24 @@
         return Math.max(0.5, Math.min(2.5, state.nodeSizePercent / 100));
     }
 
+    function iconSizeScale() {
+        return Math.max(0.5, Math.min(2.5, state.iconSizePercent / 100));
+    }
+
     function baseMarkerSizeForZoom(zoom) {
         return Math.max(10, Math.min(40, 10 + (zoom - 16) * 10));
     }
 
-    function markerSizeForZoom(zoom) {
+    function nodeMarkerSizeForZoom(zoom) {
         return Math.max(5, baseMarkerSizeForZoom(zoom) * nodeSizeScale());
+    }
+
+    function iconMarkerSizeForZoom(zoom) {
+        return Math.max(5, baseMarkerSizeForZoom(zoom) * iconSizeScale());
+    }
+
+    function maximumMarkerSizeForZoom(zoom) {
+        return Math.max(nodeMarkerSizeForZoom(zoom), iconMarkerSizeForZoom(zoom));
     }
 
     function junctionDotDiameterForZoom(zoom) {
@@ -199,7 +212,8 @@
     }
 
     function markerScreenBounds(entityType, zoom) {
-        const markerSize = markerSizeForZoom(zoom);
+        const markerSize = entityType === ENTITY_JUNCTION
+            ? nodeMarkerSizeForZoom(zoom) : iconMarkerSizeForZoom(zoom);
         if (entityType === ENTITY_JUNCTION) {
             return {
                 width: markerSize,
@@ -648,7 +662,7 @@
             maximumX: centerX + cacheDimensions.width / (2 * scale),
             maximumY: centerY + cacheDimensions.height / (2 * scale)
         };
-        const geometryPadding = (markerSizeForZoom(zoom) / 2
+        const geometryPadding = (maximumMarkerSizeForZoom(zoom) / 2
             + NETWORK_IMAGE_PADDING) / scale;
         const geometryBounds = expandedBounds({
             minimumX: state.geometryMinimumX,
@@ -673,7 +687,7 @@
         const translateY = -offsetY;
         const markerElements = [];
         if (visibleBounds) {
-            const markerQueryPadding = markerSizeForZoom(zoom) / (2 * scale)
+            const markerQueryPadding = maximumMarkerSizeForZoom(zoom) / (2 * scale)
                 + NETWORK_IMAGE_PADDING / scale;
             const markerQueryBounds = expandedBounds(renderBounds, markerQueryPadding);
             for (const index of indicesInWorldBounds(markerQueryBounds, "markers")) {
@@ -1484,7 +1498,7 @@
     }
 
     function nearestMarkerHit(pointX, pointY, scale, zoom) {
-        const worldTolerance = markerSizeForZoom(zoom) / (2 * scale);
+        const worldTolerance = maximumMarkerSizeForZoom(zoom) / (2 * scale);
         const candidates = candidateIndices(pointX, pointY, worldTolerance, "markers");
         let bestHit = null;
         let bestDistanceSquared = Number.POSITIVE_INFINITY;
@@ -1703,6 +1717,8 @@
         const nodeVisual = Number(symbology.nodeVisual) | 0;
         const nodeSizePercent = Math.max(
             50, Math.min(250, Number(symbology.nodeSizePercent) || 100));
+        const iconSizePercent = Math.max(
+            50, Math.min(250, Number(symbology.iconSizePercent) || 100));
         const nodeMinimum = Number(symbology.nodeMinimum);
         const nodeMaximum = Number(symbology.nodeMaximum);
         const nodeValues = symbologyValues(symbology.nodeValues);
@@ -1725,6 +1741,7 @@
 
         const networkChanged = state.nodeVisual !== nodeVisual
             || state.nodeSizePercent !== nodeSizePercent
+            || state.iconSizePercent !== iconSizePercent
             || state.nodeMinimum !== nodeMinimum
             || state.nodeMaximum !== nodeMaximum
             || !symbologyValuesEqual(state.nodeValues, nodeValues)
@@ -1743,6 +1760,7 @@
 
         state.nodeVisual = nodeVisual;
         state.nodeSizePercent = nodeSizePercent;
+        state.iconSizePercent = iconSizePercent;
         state.nodeMinimum = nodeMinimum;
         state.nodeMaximum = nodeMaximum;
         state.nodeValues = nodeValues;
@@ -1825,6 +1843,7 @@
         state.spatialCells.clear();
         state.nodeVisual = 0;
         state.nodeSizePercent = 100;
+        state.iconSizePercent = 100;
         state.nodeMinimum = 0;
         state.nodeMaximum = 0;
         state.nodeValues = new Map();
