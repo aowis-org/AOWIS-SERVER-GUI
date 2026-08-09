@@ -320,6 +320,7 @@ public:
                          const QList<CoordinateWGS84> &intermediate_vertices);
     bool setPumpCenterCoordinate(const QUuid &pump_uuid, const CoordinateWGS84 &coordinate);
     bool setValveCenterCoordinate(const QUuid &valve_uuid, const CoordinateWGS84 &coordinate);
+    bool applyGeometryBatch(const HydraulicGeometryBatch &batch);
 
     QUuid splitPipeAtVertex(const QUuid &pipe_uuid, int vertex_index, const QUuid &junction_uuid);
     bool undoPipeSplit(const QUuid &first_pipe_uuid, const QUuid &second_pipe_uuid,

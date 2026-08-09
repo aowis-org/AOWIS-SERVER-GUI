@@ -7,6 +7,7 @@
 #include <QPointF>
 #include <QPointer>
 #include <QRect>
+#include <QSet>
 #include <QUuid>
 
 #include <optional>
@@ -79,6 +80,7 @@ private:
     void captureMarkerMoveSnapshot(const QUuid &uuid);
     void captureSelectedMoveSnapshot();
     void capturePipeMoveSnapshot(const QUuid &pipe_uuid);
+    void prepareMoveVisualState();
     void restoreMoveSnapshot();
     void clearMoveSnapshot();
     void updateConnectionTarget(const QPointF &mouse_position);
@@ -106,6 +108,10 @@ private:
     MapCanvasPlacement *placement = nullptr;
     QList<MapEntityMarker> move_marker_snapshot;
     QHash<QUuid, QList<CoordinateWGS84>> move_pipe_vertices_snapshot;
+    QList<QUuid> move_dynamic_pipe_uuids;
+    QList<QUuid> move_dynamic_device_link_uuids;
+    QList<QUuid> move_translated_pipe_uuids;
+    quint64 move_session_id = 0;
     double wrap_reference_longitude = 0.0;
     quint64 visual_state_revision = 0;
     bool synchronizing_geometry = false;

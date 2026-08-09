@@ -43,7 +43,8 @@ public:
                            const QList<MapEntityMarker> &point_markers,
                            const QList<MapEntityMarker> &device_link_markers,
                            bool replace);
-    void moveSelected(const QPointF &from_position, const QPointF &to_position);
+    void moveSelected(const QPointF &from_position, const QPointF &to_position,
+                      const QList<QUuid> &translated_pipe_uuids);
 
 private:
     void addPointMarkersInRectangle(const QRect &rect,

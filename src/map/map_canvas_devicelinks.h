@@ -3,6 +3,8 @@
 
 #include <optional>
 #include <QObject>
+#include <QHash>
+#include <QSet>
 #include <QList>
 #include <QPointer>
 #include <QRectF>
@@ -66,6 +68,8 @@ public:
 
     QList<MapEntityMarker> markers() const;
     std::optional<MapEntityMarker> markerByUuid(const QUuid &uuid) const;
+    std::optional<DeviceLinkGeometry> geometryByUuid(const QUuid &uuid) const;
+    QList<QUuid> connectedLinkUuids(const QSet<QUuid> &node_uuids) const;
     std::optional<InfrastructureEntityReference> markerAt(const QPointF &position) const;
     std::optional<InfrastructureEntityReference> linkAt(
         const QPointF &position, const QList<MapEntityMarker> &markers) const;
@@ -86,6 +90,7 @@ private:
     QPointF screenFromWgs84(const CoordinateWGS84 &coordinate) const;
     std::optional<MapEntityMarker> pointMarkerByUuid(
         const QUuid &uuid, const QList<MapEntityMarker> &markers) const;
+    void rebuildUuidIndex();
     void updateCanvas();
 
     MapModel *map_model = nullptr;
@@ -94,6 +99,7 @@ private:
     double wrap_reference_lon = 0.0;
     int device_marker_width = 10;
     QList<DeviceLinkCanvasItem> list_device_links;
+    QHash<QUuid, int> device_link_indices_by_uuid;
     QUuid device_link_start_uuid;
 };
 

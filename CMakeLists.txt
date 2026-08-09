@@ -18,7 +18,6 @@ if(NOT EMSCRIPTEN)
     find_package(Qt6 REQUIRED COMPONENTS
         Positioning
         SerialPort
-        Svg
     )
 endif()
 
@@ -93,6 +92,7 @@ qt_add_executable(aowis-server-gui
     src/map/map_editor_render_state.h
     src/map/map_editor_visual_state.h
     src/map/map_editor_renderer.h src/map/map_editor_renderer.cpp
+    src/map/map_vector_document.h src/map/map_vector_document.cpp
     src/tab_settings_widget.h src/tab_settings_widget.cpp
     src/_sizes.h
     src/geo_web_mercator.h src/geo_web_mercator.cpp
@@ -166,7 +166,6 @@ if(NOT EMSCRIPTEN)
         PRIVATE
             Qt6::Positioning
             Qt6::SerialPort
-            Qt6::Svg
     )
     
     target_sources(aowis-server-gui

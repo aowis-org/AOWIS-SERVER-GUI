@@ -2,16 +2,17 @@
 
 #include "../geo_web_mercator.h"
 #include "../hydraulic_data.h"
+#include "map_vector_document.h"
 
 #include <QBrush>
-#include <QBuffer>
-#include <QByteArray>
 #include <QColor>
-#include <QFile>
+#include <QFont>
+#include <QFontMetricsF>
 #include <QCoreApplication>
 #include <QHideEvent>
 #include <QMetaObject>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPaintEvent>
 #include <QPalette>
 #include <QRadialGradient>
@@ -20,12 +21,10 @@
 #include <QRunnable>
 #include <QSemaphore>
 #include <QShowEvent>
-#include <QSvgRenderer>
 #include <QThread>
 #include <QThreadPool>
 #include <QTimer>
-#include <QXmlStreamReader>
-#include <QXmlStreamWriter>
+#include <QTransform>
 #include <QtMath>
 
 #include <algorithm>
@@ -33,6 +32,7 @@
 #include <functional>
 #include <cmath>
 #include <limits>
+#include <utility>
 #include <vector>
 
 namespace
@@ -125,98 +125,112 @@ qreal junctionDotDiameterForZoom(int zoom, int node_size_percent)
 struct NetworkIconAsset
 {
     InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
-    const char *resource_path = nullptr;
-    const char *definition_id = nullptr;
     qreal view_width = 0.0;
     qreal view_height = 0.0;
-    QByteArray geometry;
+    qreal stroke_width = 10.0;
+    QPainterPath stroke_path;
+    QPainterPath fill_path;
 };
 
-bool isSupportedIconElement(QStringView name)
+QPainterPath reservoirStrokePath()
 {
-    return name == QStringView(u"circle") || name == QStringView(u"ellipse") ||
-        name == QStringView(u"g") || name == QStringView(u"line") ||
-        name == QStringView(u"path") || name == QStringView(u"polygon") ||
-        name == QStringView(u"polyline") || name == QStringView(u"rect") ||
-        name == QStringView(u"text");
+    QPainterPath path;
+    path.moveTo(5.0, 5.0);
+    path.lineTo(23.0, 97.0);
+    path.cubicTo(27.0, 117.0, 41.0, 133.0, 61.0, 133.0);
+    path.lineTo(125.0, 133.0);
+    path.cubicTo(145.0, 133.0, 159.0, 117.0, 163.0, 97.0);
+    path.lineTo(181.0, 5.0);
+
+    QPointF current(13.640777, 19.11651);
+    path.moveTo(current);
+    for (int index = 0; index < 4; ++index)
+    {
+        path.cubicTo(current + QPointF(11.0, 10.0),
+                     current + QPointF(index == 1 ? 29.000003 : 29.0, 10.0),
+                     current + QPointF(index == 1 ? 40.000003 : 40.0, 0.0));
+        current = path.currentPosition();
+    }
+    return path;
 }
 
-void writeIconElement(QXmlStreamReader &reader, QXmlStreamWriter &writer)
+QPainterPath tankStrokePath()
 {
-    writer.writeStartElement(reader.name().toString());
-    for (const QXmlStreamAttribute &attribute : reader.attributes())
-    {
-        if (attribute.name() == QStringView(u"id"))
-            continue;
-        QString value = attribute.value().toString();
-        value.replace(QStringLiteral("#000000"), QStringLiteral("__AOWIS_COLOR__"), Qt::CaseInsensitive);
-        writer.writeAttribute(attribute.name().toString(), value);
-    }
-
-    while (!reader.atEnd())
-    {
-        reader.readNext();
-        if (reader.isEndElement())
-            break;
-        if (reader.isStartElement())
-        {
-            if (isSupportedIconElement(reader.name()))
-                writeIconElement(reader, writer);
-            else
-                reader.skipCurrentElement();
-        }
-        else if (reader.isCharacters())
-        {
-            writer.writeCharacters(reader.text().toString());
-        }
-    }
-    writer.writeEndElement();
+    QPainterPath path;
+    path.addRoundedRect(QRectF(11.0, 22.0, 116.0, 120.0), 10.0, 10.0);
+    path.moveTo(17.0, 22.0);
+    path.cubicTo(23.0, 8.0, 115.0, 8.0, 121.0, 22.0);
+    path.moveTo(49.0, 14.0);
+    path.lineTo(89.0, 14.0);
+    path.moveTo(49.0, 14.0);
+    path.cubicTo(53.0, 2.0, 85.0, 2.0, 89.0, 14.0);
+    path.moveTo(24.0, 142.0);
+    path.lineTo(24.0, 178.0);
+    path.moveTo(46.0, 142.0);
+    path.lineTo(46.0, 178.0);
+    path.moveTo(92.0, 142.0);
+    path.lineTo(92.0, 178.0);
+    path.moveTo(114.0, 142.0);
+    path.lineTo(114.0, 178.0);
+    path.moveTo(5.0, 178.0);
+    path.lineTo(133.0, 178.0);
+    return path;
 }
 
-QByteArray loadIconGeometry(const QString &resource_path)
+NetworkIconAsset pumpIconAsset()
 {
-    QFile file(resource_path);
-    if (!file.open(QIODevice::ReadOnly))
-        return QByteArray();
+    NetworkIconAsset asset;
+    asset.entity_type = InfrastructureEntity::Pump;
+    asset.view_width = 126.0;
+    asset.view_height = 110.0;
+    asset.stroke_path.addRoundedRect(QRectF(5.0, 5.0, 116.0, 100.0), 18.0, 18.0);
 
-    QXmlStreamReader reader(&file);
-    QByteArray geometry;
-    QBuffer buffer(&geometry);
-    buffer.open(QIODevice::WriteOnly);
-    QXmlStreamWriter writer(&buffer);
+    QFont font(QStringLiteral("Arial"));
+    font.setPixelSize(72);
+    font.setBold(true);
+    const QString text = QStringLiteral("P");
+    const QFontMetricsF metrics(font);
+    const QRectF bounds = metrics.boundingRect(text);
+    const qreal x = 64.242722 - bounds.width() / 2.0 - bounds.left();
+    asset.fill_path.addText(QPointF(x, 80.077667), font, text);
+    return asset;
+}
 
-    while (!reader.atEnd())
-    {
-        reader.readNext();
-        if (!reader.isStartElement() || reader.name() != QStringView(u"svg"))
-            continue;
-
-        while (reader.readNextStartElement())
-        {
-            if (isSupportedIconElement(reader.name()))
-                writeIconElement(reader, writer);
-            else
-                reader.skipCurrentElement();
-        }
-        break;
-    }
-
-    buffer.close();
-    return reader.hasError() ? QByteArray() : geometry;
+QPainterPath valveStrokePath()
+{
+    QPainterPath path;
+    path.addEllipse(QRectF(5.0, 5.0, 128.0, 128.0));
+    path.moveTo(25.0, 33.0);
+    path.lineTo(69.0, 69.0);
+    path.lineTo(113.0, 33.0);
+    path.moveTo(25.0, 105.0);
+    path.lineTo(69.0, 69.0);
+    path.lineTo(113.0, 105.0);
+    return path;
 }
 
 const std::array<NetworkIconAsset, 4> &networkIconAssets()
 {
     static const std::array<NetworkIconAsset, 4> assets = []
     {
-        std::array<NetworkIconAsset, 4> result = {{
-            {InfrastructureEntity::Reservoir, ":/network-svg/reservoir.svg", "aowis-network-reservoir", 186.0, 138.0, QByteArray()},
-            {InfrastructureEntity::Tank, ":/network-svg/tank.svg", "aowis-network-tank", 138.0, 183.0, QByteArray()},
-            {InfrastructureEntity::Pump, ":/network-svg/pump.svg", "aowis-network-pump", 126.0, 110.0, QByteArray()},
-            {InfrastructureEntity::Valve, ":/network-svg/valve.svg", "aowis-network-valve", 138.0, 138.0, QByteArray()}
-        }};
-        for (NetworkIconAsset &asset : result)
-            asset.geometry = loadIconGeometry(QString::fromUtf8(asset.resource_path));
+        std::array<NetworkIconAsset, 4> result;
+
+        result[0].entity_type = InfrastructureEntity::Reservoir;
+        result[0].view_width = 186.0;
+        result[0].view_height = 138.0;
+        result[0].stroke_path = reservoirStrokePath();
+
+        result[1].entity_type = InfrastructureEntity::Tank;
+        result[1].view_width = 138.0;
+        result[1].view_height = 183.0;
+        result[1].stroke_path = tankStrokePath();
+
+        result[2] = pumpIconAsset();
+
+        result[3].entity_type = InfrastructureEntity::Valve;
+        result[3].view_width = 138.0;
+        result[3].view_height = 138.0;
+        result[3].stroke_path = valveStrokePath();
         return result;
     }();
     return assets;
@@ -227,7 +241,7 @@ const NetworkIconAsset *iconAssetForEntity(InfrastructureEntity entity_type)
     const std::array<NetworkIconAsset, 4> &assets = networkIconAssets();
     for (const NetworkIconAsset &asset : assets)
     {
-        if (asset.entity_type == entity_type && !asset.geometry.isEmpty())
+        if (asset.entity_type == entity_type)
             return &asset;
     }
     return nullptr;
@@ -644,53 +658,6 @@ qreal pointToSegmentDistanceSquared(qreal point_x, qreal point_y, const QPointF 
     return delta_x * delta_x + delta_y * delta_y;
 }
 
-void appendSvgNumber(QByteArray &target, qreal value)
-{
-    target.append(QByteArray::number(value, 'f', 2));
-}
-
-void appendSvgMove(QByteArray &path, const QPointF &point)
-{
-    path.append('M');
-    appendSvgNumber(path, point.x());
-    path.append(' ');
-    appendSvgNumber(path, point.y());
-}
-
-void appendSvgLine(QByteArray &path, const QPointF &point)
-{
-    path.append('L');
-    appendSvgNumber(path, point.x());
-    path.append(' ');
-    appendSvgNumber(path, point.y());
-}
-
-void appendSvgCircle(QByteArray &path, const QPointF &center, qreal radius)
-{
-    path.append('M');
-    appendSvgNumber(path, center.x() - radius);
-    path.append(' ');
-    appendSvgNumber(path, center.y());
-    path.append('A');
-    appendSvgNumber(path, radius);
-    path.append(' ');
-    appendSvgNumber(path, radius);
-    path.append(" 0 1 0 ");
-    appendSvgNumber(path, center.x() + radius);
-    path.append(' ');
-    appendSvgNumber(path, center.y());
-    path.append('A');
-    appendSvgNumber(path, radius);
-    path.append(' ');
-    appendSvgNumber(path, radius);
-    path.append(" 0 1 0 ");
-    appendSvgNumber(path, center.x() - radius);
-    path.append(' ');
-    appendSvgNumber(path, center.y());
-    path.append('Z');
-}
-
-
 QSize boundedCacheLogicalSize(const QSize &viewport_size, qreal device_pixel_ratio)
 {
     if (!viewport_size.isValid())
@@ -723,6 +690,8 @@ MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicD
     Q_ASSERT(this->map_model);
     Q_ASSERT(this->hydraulic_data);
 
+    networkIconAssets();
+
     setAttribute(Qt::WA_TransparentForMouseEvents);
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_NoSystemBackground);
@@ -746,6 +715,8 @@ MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicD
     connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
         [this](InfrastructureEntity, const QUuid &)
     {
+        if (!this->rendering_active)
+            return;
         const bool rebuild_node_colors = this->visual_node != VisualNode::None;
         const bool rebuild_heatmap = this->visual_heatmap != VisualHeatmap::None;
         if (!rebuild_node_colors && !rebuild_heatmap)
@@ -758,6 +729,8 @@ MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicD
     connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
         [this](InfrastructureEntity, const QUuid &)
     {
+        if (!this->rendering_active)
+            return;
         if (this->visual_link == VisualLink::None)
             return;
 
@@ -1538,10 +1511,10 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
         if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
             return QImage();
 
-        QHash<QRgb, QByteArray> link_paths;
-        QHash<QRgb, QByteArray> junction_paths;
-        QHash<QByteArray, QByteArray> icon_definitions;
-        QByteArray icon_uses;
+        QHash<QRgb, QPainterPath> link_paths;
+        QHash<QRgb, QPainterPath> junction_paths;
+        QHash<quint64, QPainterPath> icon_stroke_paths;
+        QHash<QRgb, QPainterPath> icon_fill_paths;
         link_paths.reserve(qMin(SymbologyColorBucketCount + 1, int(stripe.segment_indices.size())));
         junction_paths.reserve(qMin(SymbologyColorBucketCount + 1, int(stripe.marker_indices.size())));
 
@@ -1558,11 +1531,11 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
             const QLineF &segment = render_segment.line;
             const QRgb color = request.symbology->link_colors.value(
                 render_segment.render_id, NetworkColor.rgb());
-            QByteArray &link_path = link_paths[color];
-            appendSvgMove(link_path, QPointF(
+            QPainterPath &link_path = link_paths[color];
+            link_path.moveTo(QPointF(
                 (segment.x1() - image_left) * scale,
                 (segment.y1() - image_top) * scale - stripe.logical_top));
-            appendSvgLine(link_path, QPointF(
+            link_path.lineTo(QPointF(
                 (segment.x2() - image_left) * scale,
                 (segment.y2() - image_top) * scale - stripe.logical_top));
         }
@@ -1592,8 +1565,7 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
             const NetworkIconAsset *asset = iconAssetForEntity(marker.entity_type);
             if (!asset)
             {
-                QByteArray &junction_path = junction_paths[color];
-                appendSvgCircle(junction_path, center, junction_radius);
+                junction_paths[color].addEllipse(center, junction_radius, junction_radius);
                 continue;
             }
 
@@ -1602,114 +1574,57 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
             const qreal icon_scale = marker_size / qMax(asset->view_width, asset->view_height);
             const qreal icon_x = center.x() - asset->view_width * icon_scale / 2.0;
             const qreal icon_y = center.y() - asset->view_height * icon_scale / 2.0;
-            const QByteArray color_name = QColor::fromRgb(color).name(QColor::HexRgb).toUtf8();
-            QByteArray definition_id(asset->definition_id);
-            definition_id.append('-');
-            definition_id.append(color_name.constData() + 1, color_name.size() - 1);
-
-            if (!icon_definitions.contains(definition_id))
-            {
-                QByteArray geometry = asset->geometry;
-                geometry.replace("__AOWIS_COLOR__", color_name);
-                QByteArray definition;
-                definition.reserve(geometry.size() + definition_id.size() + 32);
-                definition.append("<g id=\"");
-                definition.append(definition_id);
-                definition.append("\" fill=\"none\">");
-                definition.append(geometry);
-                definition.append("</g>");
-                icon_definitions.insert(definition_id, definition);
-            }
-
-            icon_uses.append("<use href=\"#");
-            icon_uses.append(definition_id);
-            icon_uses.append("\" xlink:href=\"#");
-            icon_uses.append(definition_id);
-            icon_uses.append("\" transform=\"translate(");
-            appendSvgNumber(icon_uses, icon_x);
-            icon_uses.append(' ');
-            appendSvgNumber(icon_uses, icon_y);
-            icon_uses.append(") scale(");
-            appendSvgNumber(icon_uses, icon_scale);
-            icon_uses.append(")\"/>");
+            const QTransform icon_transform(
+                icon_scale, 0.0, 0.0, icon_scale, icon_x, icon_y);
+            const quint64 icon_key = (quint64(color) << 32) |
+                quint32(int(marker.entity_type));
+            if (!asset->stroke_path.isEmpty())
+                icon_stroke_paths[icon_key].addPath(icon_transform.map(asset->stroke_path));
+            if (!asset->fill_path.isEmpty())
+                icon_fill_paths[color].addPath(icon_transform.map(asset->fill_path));
         }
 
         if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
             return QImage();
 
-        QByteArray svg;
-        qsizetype svg_payload_bytes = icon_uses.size();
-        for (QHash<QRgb, QByteArray>::const_iterator iterator = link_paths.cbegin();
-             iterator != link_paths.cend(); ++iterator)
+        MapVectorDocument document;
+        for (QHash<QRgb, QPainterPath>::iterator iterator = link_paths.begin();
+             iterator != link_paths.end(); ++iterator)
         {
-            svg_payload_bytes += iterator.value().size();
+            QPen pen(QColor::fromRgb(iterator.key()));
+            pen.setWidthF(request.symbology->link_width);
+            pen.setCapStyle(Qt::RoundCap);
+            pen.setJoinStyle(Qt::RoundJoin);
+            document.addStroke(std::move(iterator.value()), pen);
         }
-        for (QHash<QRgb, QByteArray>::const_iterator iterator = junction_paths.cbegin();
-             iterator != junction_paths.cend(); ++iterator)
+        for (QHash<QRgb, QPainterPath>::iterator iterator = junction_paths.begin();
+             iterator != junction_paths.end(); ++iterator)
         {
-            svg_payload_bytes += iterator.value().size();
+            document.addFill(std::move(iterator.value()), QBrush(QColor::fromRgb(iterator.key())));
         }
-        for (QHash<QByteArray, QByteArray>::const_iterator iterator = icon_definitions.cbegin();
-             iterator != icon_definitions.cend(); ++iterator)
+        for (QHash<quint64, QPainterPath>::iterator iterator = icon_stroke_paths.begin();
+             iterator != icon_stroke_paths.end(); ++iterator)
         {
-            svg_payload_bytes += iterator.value().size();
-        }
-
-        svg.reserve(svg_payload_bytes +
-            (link_paths.size() + junction_paths.size() + icon_definitions.size()) * 128 + 768);
-        svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"");
-        appendSvgNumber(svg, logical_width);
-        svg.append("\" height=\"");
-        appendSvgNumber(svg, stripe.logical_height);
-        svg.append("\" viewBox=\"0 0 ");
-        appendSvgNumber(svg, logical_width);
-        svg.append(' ');
-        appendSvgNumber(svg, stripe.logical_height);
-        svg.append("\">");
-        if (!icon_definitions.isEmpty())
-        {
-            svg.append("<defs>");
-            for (QHash<QByteArray, QByteArray>::const_iterator iterator = icon_definitions.cbegin();
-                 iterator != icon_definitions.cend(); ++iterator)
-            {
-                svg.append(iterator.value());
-            }
-            svg.append("</defs>");
-        }
-        for (QHash<QRgb, QByteArray>::const_iterator iterator = link_paths.cbegin();
-             iterator != link_paths.cend(); ++iterator)
-        {
-            if (iterator.value().isEmpty())
+            const QRgb color = QRgb(iterator.key() >> 32);
+            const InfrastructureEntity entity_type = static_cast<InfrastructureEntity>(
+                quint32(iterator.key()));
+            const NetworkIconAsset *asset = iconAssetForEntity(entity_type);
+            if (!asset)
                 continue;
-
-            svg.append("<path fill=\"none\" stroke=\"");
-            svg.append(QColor::fromRgb(iterator.key()).name(QColor::HexRgb).toUtf8());
-            svg.append("\" stroke-width=\"");
-            appendSvgNumber(svg, request.symbology->link_width);
-            svg.append("\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"");
-            svg.append(iterator.value());
-            svg.append("\"/>");
+            const qreal marker_size = markerSizeForZoom(
+                request.zoom, request.symbology->node_size_percent);
+            const qreal icon_scale = marker_size / qMax(asset->view_width, asset->view_height);
+            QPen pen(QColor::fromRgb(color));
+            pen.setWidthF(asset->stroke_width * icon_scale);
+            pen.setCapStyle(Qt::RoundCap);
+            pen.setJoinStyle(Qt::RoundJoin);
+            document.addStroke(std::move(iterator.value()), pen);
         }
-        for (QHash<QRgb, QByteArray>::const_iterator iterator = junction_paths.cbegin();
-             iterator != junction_paths.cend(); ++iterator)
+        for (QHash<QRgb, QPainterPath>::iterator iterator = icon_fill_paths.begin();
+             iterator != icon_fill_paths.end(); ++iterator)
         {
-            if (iterator.value().isEmpty())
-                continue;
-
-            svg.append("<path fill=\"");
-            svg.append(QColor::fromRgb(iterator.key()).name(QColor::HexRgb).toUtf8());
-            svg.append("\" stroke=\"none\" d=\"");
-            svg.append(iterator.value());
-            svg.append("\"/>");
+            document.addFill(std::move(iterator.value()), QBrush(QColor::fromRgb(iterator.key())));
         }
-        svg.append(icon_uses);
-        svg.append("</svg>");
-
-        QSvgRenderer renderer;
-        if (!renderer.load(svg) || !renderer.isValid())
-            return QImage();
-        if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
-            return QImage();
 
         QImage stripe_image(
             QSize(qMax(1, qCeil(logical_width * request.device_pixel_ratio)), stripe.physical_height),
@@ -1721,7 +1636,7 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
 
         QPainter painter(&stripe_image);
         painter.setRenderHint(QPainter::Antialiasing, true);
-        renderer.render(&painter, QRectF(0.0, 0.0, logical_width, stripe.logical_height));
+        document.paint(painter);
         painter.end();
         return stripe_image;
     };

@@ -4,6 +4,7 @@
 #include <QList>
 #include <QPointF>
 #include <QRect>
+#include <QString>
 #include <QUuid>
 #include <QtGlobal>
 
@@ -22,12 +23,37 @@ struct MapEditorPlacementVisualState
     int floating_width = 0;
 };
 
+
+struct MapEditorDynamicMarkerVisualState
+{
+    InfrastructureEntity entity = InfrastructureEntity::Unknown;
+    QUuid uuid;
+    CoordinateWGS84 coordinate_wgs84;
+    QString pixmap_path;
+};
+
+struct MapEditorDynamicLinkVisualState
+{
+    InfrastructureEntity entity = InfrastructureEntity::Unknown;
+    QUuid uuid;
+    QList<CoordinateWGS84> vertices_wgs84;
+};
+
+struct MapEditorMoveVisualState
+{
+    bool active = false;
+    quint64 session_id = 0;
+    QList<MapEditorDynamicMarkerVisualState> markers;
+    QList<MapEditorDynamicLinkVisualState> links;
+};
+
 struct MapEditorVisualState
 {
     quint64 revision = 0;
     QList<QUuid> selected_marker_uuids;
     QList<QUuid> selected_pipe_uuids;
     MapEditorPlacementVisualState placement;
+    MapEditorMoveVisualState move;
     double wrap_reference_longitude = 0.0;
     int entity_width = 10;
 };

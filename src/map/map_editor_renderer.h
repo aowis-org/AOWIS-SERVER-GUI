@@ -8,6 +8,7 @@
 
 #include <QHash>
 #include <QImage>
+#include <QPainterPath>
 #include <QObject>
 #include <QPointF>
 #include <QRectF>
@@ -114,7 +115,8 @@ private:
     bool pendingStaticCacheCoversCurrentView() const;
     bool coverageCoversCurrentView(const QRectF &coverage_world_bounds,
                                    int zoom, bool include_rebuild_margin) const;
-    bool paintStaticCache(QPainter &painter) const;
+    bool paintStaticCache(QPainter &painter, const MapEditorVisualState &visual_state);
+    QPainterPath moveStaticVisibleClipPath(const MapEditorVisualState &visual_state);
 
     void paintBackground(QPainter &painter,
                          const MapEditorViewportRenderState &viewport_state) const;
@@ -131,6 +133,8 @@ private:
     void paintInteractiveNetwork(QPainter &painter,
                                  const NetworkRenderSnapshot &network_snapshot,
                                  const MapEditorVisualState &visual_state);
+    void paintMovingNetwork(QPainter &painter,
+                            const MapEditorVisualState &visual_state);
     void paintSelectedPipes(QPainter &painter,
                             const MapEditorVisualState &visual_state) const;
     void paintSelectedMarkersAndDeviceLinks(QPainter &painter,
@@ -198,6 +202,14 @@ private:
     bool render_worker_running = false;
     bool render_restart_requested = false;
     bool render_restart_force = false;
+
+    QPainterPath move_static_visible_clip_path;
+    quint64 move_static_clip_session_id = 0;
+    quint64 move_static_clip_geometry_revision = 0;
+    int move_static_clip_zoom = -1;
+    QPointF move_static_clip_center_tile;
+    QSize move_static_clip_viewport_size;
+    int move_static_clip_entity_width = 0;
 };
 
 #endif // MAP_EDITOR_RENDERER_H

@@ -1992,6 +1992,141 @@ bool HydraulicData::setValveCenterCoordinate(const QUuid &valve_uuid,
     return emitLinkChangedIfSuccessful(valve_uuid, true, NetworkChange::Geometry);
 }
 
+bool HydraulicData::applyGeometryBatch(const HydraulicGeometryBatch &batch)
+{
+    if (batch.isEmpty())
+        return true;
+
+    const bool snapshot_was_current =
+        this->network_render_snapshot.geometry_revision == this->geometry_revision;
+    const HydraulicGeometryBatchResult result = this->network_editor.applyGeometryBatch(batch);
+    if (!result.successful)
+        return false;
+
+    rebuildBoundingBoxWgs84();
+    markNetworkChanged(NetworkChange::Geometry);
+
+    if (snapshot_was_current)
+    {
+        QSet<quint32> moved_node_render_ids;
+        for (NetworkRenderNode &node : this->network_render_snapshot.nodes)
+        {
+            const auto iterator = batch.node_coordinates.constFind(node.uuid);
+            if (iterator == batch.node_coordinates.cend())
+                continue;
+            node.coordinate_wgs84 = iterator.value();
+            moved_node_render_ids.insert(node.render_id);
+        }
+
+        QHash<QUuid, const HydraulicLinkPipe *> pipes_by_uuid;
+        pipes_by_uuid.reserve(result.affected_pipe_uuids.size());
+        for (const HydraulicLinkPipe &pipe : this->network_hydraulic.links_pipes)
+        {
+            if (result.affected_pipe_uuids.contains(pipe.uuid))
+                pipes_by_uuid.insert(pipe.uuid, &pipe);
+        }
+
+        QHash<QUuid, const HydraulicLinkPump *> pumps_by_uuid;
+        if (!batch.pump_center_coordinates.isEmpty() || !moved_node_render_ids.isEmpty())
+        {
+            pumps_by_uuid.reserve(this->network_hydraulic.links_pumps.size());
+            for (const HydraulicLinkPump &pump : this->network_hydraulic.links_pumps)
+                pumps_by_uuid.insert(pump.uuid, &pump);
+        }
+
+        QHash<QUuid, const HydraulicLinkValve *> valves_by_uuid;
+        if (!batch.valve_center_coordinates.isEmpty() || !moved_node_render_ids.isEmpty())
+        {
+            valves_by_uuid.reserve(this->network_hydraulic.links_valves.size());
+            for (const HydraulicLinkValve &valve : this->network_hydraulic.links_valves)
+                valves_by_uuid.insert(valve.uuid, &valve);
+        }
+
+        for (NetworkRenderLink &link : this->network_render_snapshot.links)
+        {
+            const bool endpoint_moved =
+                moved_node_render_ids.contains(link.start_node_render_id) ||
+                moved_node_render_ids.contains(link.end_node_render_id);
+            const qsizetype start_index = qsizetype(link.start_node_render_id) - 1;
+            const qsizetype end_index = qsizetype(link.end_node_render_id) - 1;
+            if (start_index < 0 || end_index < 0 ||
+                start_index >= this->network_render_snapshot.nodes.size() ||
+                end_index >= this->network_render_snapshot.nodes.size())
+            {
+                continue;
+            }
+
+            if (link.entity_type == InfrastructureEntity::Pipe)
+            {
+                const auto source_iterator = pipes_by_uuid.constFind(link.uuid);
+                if (source_iterator == pipes_by_uuid.cend())
+                    continue;
+                const HydraulicLinkPipe *source = source_iterator.value();
+                link.vertices_wgs84.clear();
+                link.vertices_wgs84.reserve(source->vertices.size() + 2);
+                link.vertices_wgs84.append(
+                    this->network_render_snapshot.nodes.at(start_index).coordinate_wgs84);
+                for (const HydraulicLinkVertex &vertex : source->vertices)
+                    link.vertices_wgs84.append(vertex.coordinate_wgs84);
+                link.vertices_wgs84.append(
+                    this->network_render_snapshot.nodes.at(end_index).coordinate_wgs84);
+                continue;
+            }
+
+            if (link.entity_type == InfrastructureEntity::Pump &&
+                (endpoint_moved || batch.pump_center_coordinates.contains(link.uuid)))
+            {
+                const auto source_iterator = pumps_by_uuid.constFind(link.uuid);
+                if (source_iterator == pumps_by_uuid.cend())
+                    continue;
+                const HydraulicLinkPump *source = source_iterator.value();
+                link.vertices_wgs84.clear();
+                link.vertices_wgs84.reserve(source->vertices.size() + 2);
+                link.vertices_wgs84.append(
+                    this->network_render_snapshot.nodes.at(start_index).coordinate_wgs84);
+                for (const HydraulicLinkVertex &vertex : source->vertices)
+                    link.vertices_wgs84.append(vertex.coordinate_wgs84);
+                link.vertices_wgs84.append(
+                    this->network_render_snapshot.nodes.at(end_index).coordinate_wgs84);
+            }
+            else if (link.entity_type == InfrastructureEntity::Valve &&
+                     (endpoint_moved || batch.valve_center_coordinates.contains(link.uuid)))
+            {
+                const auto source_iterator = valves_by_uuid.constFind(link.uuid);
+                if (source_iterator == valves_by_uuid.cend())
+                    continue;
+                const HydraulicLinkValve *source = source_iterator.value();
+                link.vertices_wgs84.clear();
+                link.vertices_wgs84.reserve(source->vertices.size() + 2);
+                link.vertices_wgs84.append(
+                    this->network_render_snapshot.nodes.at(start_index).coordinate_wgs84);
+                for (const HydraulicLinkVertex &vertex : source->vertices)
+                    link.vertices_wgs84.append(vertex.coordinate_wgs84);
+                link.vertices_wgs84.append(
+                    this->network_render_snapshot.nodes.at(end_index).coordinate_wgs84);
+            }
+        }
+
+        this->network_render_snapshot.geometry_revision = this->geometry_revision;
+        this->network_render_snapshot.visual_revision = this->visual_revision;
+    }
+
+    for (auto iterator = batch.node_coordinates.cbegin(); iterator != batch.node_coordinates.cend(); ++iterator)
+    {
+        const std::optional<InfrastructureEntity> entity_type = nodeEntityType(iterator.key());
+        if (entity_type.has_value())
+            emit signalNodeChanged(entity_type.value(), iterator.key());
+    }
+    for (auto iterator = batch.pump_center_coordinates.cbegin(); iterator != batch.pump_center_coordinates.cend(); ++iterator)
+        emit signalLinkChanged(InfrastructureEntity::Pump, iterator.key());
+    for (auto iterator = batch.valve_center_coordinates.cbegin(); iterator != batch.valve_center_coordinates.cend(); ++iterator)
+        emit signalLinkChanged(InfrastructureEntity::Valve, iterator.key());
+    for (const QUuid &pipe_uuid : result.affected_pipe_uuids)
+        emit signalLinkChanged(InfrastructureEntity::Pipe, pipe_uuid);
+
+    return true;
+}
+
 QUuid HydraulicData::splitPipeAtVertex(const QUuid &pipe_uuid, int vertex_index,
                                        const QUuid &junction_uuid)
 {

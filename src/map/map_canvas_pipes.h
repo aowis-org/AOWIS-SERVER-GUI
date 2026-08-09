@@ -3,7 +3,9 @@
 
 #include <optional>
 #include <QObject>
+#include <QHash>
 #include <QList>
+#include <QSet>
 #include <QPointer>
 #include <QPoint>
 #include <QPointF>
@@ -47,6 +49,8 @@ public:
     void appendIntermediateVertex(const CoordinateWGS84 &coordinate);
     QList<CoordinateWGS84> intermediateVertices() const;
     QList<CoordinateWGS84> intermediateVertices(const QUuid &pipe_uuid) const;
+    std::optional<PipeGeometry> geometryByUuid(const QUuid &pipe_uuid) const;
+    QList<QUuid> connectedPipeUuids(const QSet<QUuid> &node_uuids) const;
 
     bool addPipe(const InfrastructureEntityReference &pipe_reference,
                  const InfrastructureEntityReference &start_node,
@@ -61,9 +65,8 @@ public:
     std::optional<InfrastructureEntityReference> selectPipe(const QUuid &pipe_uuid);
     bool removePipe(const QUuid &pipe_uuid);
     void selectPipesWithSelectedEndpoints(const QList<QUuid> &selected_marker_uuids);
-    void moveIntermediateVerticesWithSelectedEndpoints(
-        const QList<QUuid> &selected_marker_uuids,
-        double longitude_delta, double latitude_delta);
+    void moveIntermediateVertices(const QList<QUuid> &pipe_uuids,
+                                  double longitude_delta, double latitude_delta);
 
     std::optional<InfrastructureEntityReference> pipeAt(
         const QPointF &position, const QList<MapEntityMarker> &markers) const;
@@ -115,12 +118,14 @@ private:
     PipeCanvasItem *pipeByUuid(const QUuid &pipe_uuid);
     const PipeCanvasItem *pipeByUuid(const QUuid &pipe_uuid) const;
     int pipeIndexByUuid(const QUuid &pipe_uuid) const;
+    void rebuildUuidIndex();
     void updateCanvas();
 
     MapModel *map_model = nullptr;
     QPointer<MapCanvasWidget> map_canvas;
     double wrap_reference_lon = 0.0;
     QList<PipeCanvasItem> list_pipes;
+    QHash<QUuid, int> pipe_indices_by_uuid;
     QUuid pipe_start_node_uuid;
     QList<CoordinateWGS84> pipe_intermediate_vertices;
     std::optional<QUuid> pipe_vertex_move_pipe_uuid;

@@ -4,13 +4,37 @@
 #include <optional>
 
 #include <QDate>
+#include <QHash>
 #include <QList>
+#include <QSet>
 #include <QString>
 #include <QUuid>
 
 #include <aowis/model/entity.h>
 #include <aowis/model/gis.h>
 #include <aowis/model/hydraulic/network_hydraulic.h>
+
+
+struct HydraulicGeometryBatch
+{
+    QHash<QUuid, CoordinateWGS84> node_coordinates;
+    QHash<QUuid, QList<CoordinateWGS84>> pipe_vertices;
+    QHash<QUuid, CoordinateWGS84> pump_center_coordinates;
+    QHash<QUuid, CoordinateWGS84> valve_center_coordinates;
+
+    bool isEmpty() const
+    {
+        return this->node_coordinates.isEmpty() && this->pipe_vertices.isEmpty() &&
+               this->pump_center_coordinates.isEmpty() &&
+               this->valve_center_coordinates.isEmpty();
+    }
+};
+
+struct HydraulicGeometryBatchResult
+{
+    bool successful = false;
+    QSet<QUuid> affected_pipe_uuids;
+};
 
 class HydraulicNetworkEditor
 {
@@ -112,6 +136,7 @@ public:
                          const QList<CoordinateWGS84> &intermediate_vertices);
     bool setPumpCenterCoordinate(const QUuid &pump_uuid, const CoordinateWGS84 &coordinate);
     bool setValveCenterCoordinate(const QUuid &valve_uuid, const CoordinateWGS84 &coordinate);
+    HydraulicGeometryBatchResult applyGeometryBatch(const HydraulicGeometryBatch &batch);
 
     QUuid splitPipeAtVertex(const QUuid &pipe_uuid, int vertex_index, const QUuid &junction_uuid);
     bool undoPipeSplit(const QUuid &first_pipe_uuid, const QUuid &second_pipe_uuid,

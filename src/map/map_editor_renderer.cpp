@@ -1,6 +1,7 @@
 #include "map_editor_renderer.h"
 
 #include "map_model.h"
+#include "map_vector_document.h"
 
 #include "../geo_web_mercator.h"
 
@@ -12,6 +13,7 @@
 #include <QMetaObject>
 #include <QPaintEvent>
 #include <QPainter>
+#include <QPainterPathStroker>
 #include <QPalette>
 #include <QPen>
 #include <QPointer>
@@ -59,6 +61,13 @@ EditorStaticRenderWorkers &editorStaticRenderWorkers()
 {
     static EditorStaticRenderWorkers workers;
     return workers;
+}
+
+bool isHydraulicConnectionNode(InfrastructureEntity entity)
+{
+    return entity == InfrastructureEntity::Junction ||
+           entity == InfrastructureEntity::Reservoir ||
+           entity == InfrastructureEntity::Tank;
 }
 
 bool isHydraulicDeviceLink(InfrastructureEntity entity)
@@ -704,6 +713,9 @@ MapEditorRenderer::StaticRenderResult MapEditorRenderer::renderStaticCache(
         int physical_height = 0;
         qreal logical_top = 0.0;
         qreal logical_height = 0.0;
+        std::vector<int> pipe_indices;
+        std::vector<int> device_indices;
+        std::vector<int> node_indices;
     };
 
     std::vector<StripeDefinition> stripes(stripe_count);
@@ -718,12 +730,235 @@ MapEditorRenderer::StaticRenderResult MapEditorRenderer::renderStaticCache(
         stripe.logical_height = stripe.physical_height / request.device_pixel_ratio;
     }
 
+    const std::function<int(qreal)> stripe_for_logical_y =
+        [stripe_count, logical_height](qreal logical_y)
+    {
+        if (logical_height <= 0.0)
+            return 0;
+        return qBound(0, qFloor(logical_y * stripe_count / logical_height), stripe_count - 1);
+    };
+
+    for (int link_index = 0; link_index < request.geometry->links.size(); ++link_index)
+    {
+        if ((link_index & 511) == 0 && request.cancelled &&
+            request.cancelled->load(std::memory_order_relaxed))
+        {
+            return result;
+        }
+
+        const StaticLink &link = request.geometry->links.at(link_index);
+        if (link.world_vertices.size() < 2)
+            continue;
+
+        qreal minimum_x = std::numeric_limits<qreal>::infinity();
+        qreal minimum_y = std::numeric_limits<qreal>::infinity();
+        qreal maximum_x = -std::numeric_limits<qreal>::infinity();
+        qreal maximum_y = -std::numeric_limits<qreal>::infinity();
+        for (const QPointF &world_position : link.world_vertices)
+        {
+            const qreal x = (world_position.x() - image_left) * scale;
+            const qreal y = (world_position.y() - image_top) * scale;
+            minimum_x = std::min(minimum_x, x);
+            minimum_y = std::min(minimum_y, y);
+            maximum_x = std::max(maximum_x, x);
+            maximum_y = std::max(maximum_y, y);
+        }
+
+        qreal padding_x = static_cache_item_padding;
+        qreal padding_y = static_cache_item_padding;
+        if (isHydraulicDeviceLink(link.entity_type))
+        {
+            const QImage image = request.entity_images.value(int(link.entity_type));
+            padding_x = qMax(padding_x, image.width() / 2.0 + static_cache_item_padding);
+            padding_y = qMax(padding_y, image.height() / 2.0 + static_cache_item_padding);
+            const qreal center_x = (link.device_center_world_position.x() - image_left) * scale;
+            const qreal center_y = (link.device_center_world_position.y() - image_top) * scale;
+            minimum_x = std::min(minimum_x, center_x);
+            minimum_y = std::min(minimum_y, center_y);
+            maximum_x = std::max(maximum_x, center_x);
+            maximum_y = std::max(maximum_y, center_y);
+        }
+
+        minimum_x -= padding_x;
+        maximum_x += padding_x;
+        minimum_y -= padding_y;
+        maximum_y += padding_y;
+        if (maximum_x < 0.0 || minimum_x > logical_width ||
+            maximum_y < 0.0 || minimum_y > logical_height)
+        {
+            continue;
+        }
+
+        const int first_stripe = stripe_for_logical_y(minimum_y);
+        const int last_stripe = stripe_for_logical_y(maximum_y);
+        for (int stripe_index = first_stripe; stripe_index <= last_stripe; ++stripe_index)
+        {
+            if (link.entity_type == InfrastructureEntity::Pipe)
+                stripes[stripe_index].pipe_indices.push_back(link_index);
+            else if (isHydraulicDeviceLink(link.entity_type))
+                stripes[stripe_index].device_indices.push_back(link_index);
+        }
+    }
+
+    for (int node_index = 0; node_index < request.geometry->nodes.size(); ++node_index)
+    {
+        if ((node_index & 511) == 0 && request.cancelled &&
+            request.cancelled->load(std::memory_order_relaxed))
+        {
+            return result;
+        }
+
+        const StaticNode &node = request.geometry->nodes.at(node_index);
+        const qreal x = (node.world_position.x() - image_left) * scale;
+        const qreal y = (node.world_position.y() - image_top) * scale;
+        const QImage image = request.entity_images.value(int(node.entity_type));
+        const qreal minimum_x = x - marker_dot_radius - static_cache_item_padding;
+        const qreal maximum_x = x + qMax<qreal>(marker_dot_radius, image.width()) +
+            static_cache_item_padding;
+        const qreal minimum_y = y - qMax<qreal>(marker_dot_radius, image.height()) -
+            static_cache_item_padding;
+        const qreal maximum_y = y + marker_dot_radius + static_cache_item_padding;
+        if (maximum_x < 0.0 || minimum_x > logical_width ||
+            maximum_y < 0.0 || minimum_y > logical_height)
+        {
+            continue;
+        }
+
+        const int first_stripe = stripe_for_logical_y(minimum_y);
+        const int last_stripe = stripe_for_logical_y(maximum_y);
+        for (int stripe_index = first_stripe; stripe_index <= last_stripe; ++stripe_index)
+            stripes[stripe_index].node_indices.push_back(node_index);
+    }
+
+    if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
+        return result;
+
     std::vector<QImage> stripe_images(stripe_count);
     QSemaphore completed_stripes;
     const std::function<QImage(const StripeDefinition &)> render_stripe =
         [&request, scale, image_left, image_top, logical_width](
             const StripeDefinition &stripe) -> QImage
     {
+        if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
+            return QImage();
+
+        MapVectorDocument document;
+        QPainterPath pipe_path;
+        QPainterPath pipe_vertex_path;
+        int processed_pipes = 0;
+        for (int link_index : stripe.pipe_indices)
+        {
+            if ((++processed_pipes & 255) == 0 && request.cancelled &&
+                request.cancelled->load(std::memory_order_relaxed))
+            {
+                return QImage();
+            }
+
+            const StaticLink &link = request.geometry->links.at(link_index);
+            if (link.world_vertices.size() < 2)
+                continue;
+
+            QPointF point(
+                (link.world_vertices.first().x() - image_left) * scale,
+                (link.world_vertices.first().y() - image_top) * scale - stripe.logical_top);
+            pipe_path.moveTo(point);
+            for (qsizetype index = 1; index < link.world_vertices.size(); ++index)
+            {
+                point = QPointF(
+                    (link.world_vertices.at(index).x() - image_left) * scale,
+                    (link.world_vertices.at(index).y() - image_top) * scale - stripe.logical_top);
+                pipe_path.lineTo(point);
+                if (index + 1 < link.world_vertices.size())
+                    pipe_vertex_path.addEllipse(point, pipe_vertex_radius, pipe_vertex_radius);
+            }
+        }
+
+        QPen pipe_pen(Qt::black);
+        pipe_pen.setWidthF(3.0);
+        pipe_pen.setCapStyle(Qt::RoundCap);
+        pipe_pen.setJoinStyle(Qt::RoundJoin);
+        document.addStroke(std::move(pipe_path), pipe_pen);
+        document.addFill(std::move(pipe_vertex_path), QBrush(Qt::black));
+
+        QPainterPath device_path;
+        int processed_devices = 0;
+        for (int link_index : stripe.device_indices)
+        {
+            if ((++processed_devices & 255) == 0 && request.cancelled &&
+                request.cancelled->load(std::memory_order_relaxed))
+            {
+                return QImage();
+            }
+
+            const StaticLink &link = request.geometry->links.at(link_index);
+            if (link.world_vertices.size() < 2)
+                continue;
+
+            const QPointF start_point(
+                (link.world_vertices.first().x() - image_left) * scale,
+                (link.world_vertices.first().y() - image_top) * scale - stripe.logical_top);
+            const QPointF center_point(
+                (link.device_center_world_position.x() - image_left) * scale,
+                (link.device_center_world_position.y() - image_top) * scale - stripe.logical_top);
+            const QPointF end_point(
+                (link.world_vertices.last().x() - image_left) * scale,
+                (link.world_vertices.last().y() - image_top) * scale - stripe.logical_top);
+            device_path.moveTo(start_point);
+            device_path.lineTo(center_point);
+            device_path.moveTo(center_point);
+            device_path.lineTo(end_point);
+        }
+
+        QPen device_pen(QColor(139, 90, 43));
+        device_pen.setWidthF(3.0);
+        device_pen.setCapStyle(Qt::RoundCap);
+        device_pen.setJoinStyle(Qt::RoundJoin);
+        document.addStroke(std::move(device_path), device_pen);
+
+        for (int link_index : stripe.device_indices)
+        {
+            const StaticLink &link = request.geometry->links.at(link_index);
+            const QImage image = request.entity_images.value(int(link.entity_type));
+            if (image.isNull())
+                continue;
+            const QPointF center_point(
+                (link.device_center_world_position.x() - image_left) * scale,
+                (link.device_center_world_position.y() - image_top) * scale - stripe.logical_top);
+            const QRectF target_rect(
+                center_point.x() - image.width() / 2.0,
+                center_point.y() - image.height() / 2.0,
+                image.width(), image.height());
+            document.addImage(image, target_rect);
+        }
+
+        QPainterPath node_path;
+        for (int node_index : stripe.node_indices)
+        {
+            const StaticNode &node = request.geometry->nodes.at(node_index);
+            const QPointF point(
+                (node.world_position.x() - image_left) * scale,
+                (node.world_position.y() - image_top) * scale - stripe.logical_top);
+            node_path.addEllipse(point, marker_dot_radius, marker_dot_radius);
+        }
+        document.addFill(std::move(node_path), QBrush(Qt::black));
+
+        for (int node_index : stripe.node_indices)
+        {
+            const StaticNode &node = request.geometry->nodes.at(node_index);
+            const QImage image = request.entity_images.value(int(node.entity_type));
+            if (image.isNull())
+                continue;
+
+            const QPointF point(
+                (node.world_position.x() - image_left) * scale,
+                (node.world_position.y() - image_top) * scale - stripe.logical_top);
+            const QPointF rounded_anchor(qRound(point.x()), qRound(point.y()));
+            const QRectF target_rect(
+                rounded_anchor.x(), rounded_anchor.y() - image.height(),
+                image.width(), image.height());
+            document.addImage(image, target_rect);
+        }
+
         if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
             return QImage();
 
@@ -736,153 +971,10 @@ MapEditorRenderer::StaticRenderResult MapEditorRenderer::renderStaticCache(
         stripe_image.setDevicePixelRatio(request.device_pixel_ratio);
         stripe_image.fill(Qt::transparent);
 
-        const QRectF stripe_rect(
-            -static_cache_item_padding,
-            -static_cache_item_padding,
-            logical_width + static_cache_item_padding * 2.0,
-            stripe.logical_height + static_cache_item_padding * 2.0);
         QPainter painter(&stripe_image);
         painter.setRenderHint(QPainter::Antialiasing, true);
         painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-
-        QPen pipe_pen(Qt::black);
-        pipe_pen.setWidthF(3.0);
-        pipe_pen.setCapStyle(Qt::RoundCap);
-        pipe_pen.setJoinStyle(Qt::RoundJoin);
-        painter.setPen(pipe_pen);
-        painter.setBrush(Qt::NoBrush);
-
-        int processed_links = 0;
-        for (const StaticLink &link : request.geometry->links)
-        {
-            if ((++processed_links & 255) == 0 && request.cancelled &&
-                request.cancelled->load(std::memory_order_relaxed))
-            {
-                painter.end();
-                return QImage();
-            }
-            if (link.entity_type != InfrastructureEntity::Pipe ||
-                link.world_vertices.size() < 2)
-            {
-                continue;
-            }
-
-            QPointF previous_point(
-                (link.world_vertices.first().x() - image_left) * scale,
-                (link.world_vertices.first().y() - image_top) * scale -
-                    stripe.logical_top);
-            for (qsizetype index = 1; index < link.world_vertices.size(); ++index)
-            {
-                const QPointF point(
-                    (link.world_vertices.at(index).x() - image_left) * scale,
-                    (link.world_vertices.at(index).y() - image_top) * scale -
-                        stripe.logical_top);
-                const QRectF segment_bounds = QRectF(previous_point, point).normalized()
-                    .adjusted(-3.0, -3.0, 3.0, 3.0);
-                if (stripe_rect.intersects(segment_bounds))
-                    painter.drawLine(previous_point, point);
-                previous_point = point;
-            }
-
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(Qt::black);
-            for (qsizetype index = 1; index + 1 < link.world_vertices.size(); ++index)
-            {
-                const QPointF point(
-                    (link.world_vertices.at(index).x() - image_left) * scale,
-                    (link.world_vertices.at(index).y() - image_top) * scale -
-                        stripe.logical_top);
-                if (stripe_rect.contains(point))
-                    painter.drawEllipse(point, pipe_vertex_radius, pipe_vertex_radius);
-            }
-            painter.setPen(pipe_pen);
-            painter.setBrush(Qt::NoBrush);
-        }
-
-        QPen device_pen(QColor(139, 90, 43));
-        device_pen.setWidthF(3.0);
-        device_pen.setCapStyle(Qt::RoundCap);
-        device_pen.setJoinStyle(Qt::RoundJoin);
-        painter.setPen(device_pen);
-
-        for (const StaticLink &link : request.geometry->links)
-        {
-            if (!isHydraulicDeviceLink(link.entity_type) ||
-                link.world_vertices.size() < 2)
-            {
-                continue;
-            }
-
-            const QPointF start_point(
-                (link.world_vertices.first().x() - image_left) * scale,
-                (link.world_vertices.first().y() - image_top) * scale - stripe.logical_top);
-            const QPointF center_point(
-                (link.device_center_world_position.x() - image_left) * scale,
-                (link.device_center_world_position.y() - image_top) * scale -
-                    stripe.logical_top);
-            const QPointF end_point(
-                (link.world_vertices.last().x() - image_left) * scale,
-                (link.world_vertices.last().y() - image_top) * scale - stripe.logical_top);
-            if (stripe_rect.intersects(
-                    QRectF(start_point, center_point).normalized().adjusted(-3.0, -3.0, 3.0, 3.0)))
-            {
-                painter.drawLine(start_point, center_point);
-            }
-            if (stripe_rect.intersects(
-                    QRectF(center_point, end_point).normalized().adjusted(-3.0, -3.0, 3.0, 3.0)))
-            {
-                painter.drawLine(center_point, end_point);
-            }
-        }
-
-        for (const StaticLink &link : request.geometry->links)
-        {
-            if (!isHydraulicDeviceLink(link.entity_type))
-                continue;
-
-            const QImage image = request.entity_images.value(int(link.entity_type));
-            if (image.isNull())
-                continue;
-            const QPointF center_point(
-                (link.device_center_world_position.x() - image_left) * scale,
-                (link.device_center_world_position.y() - image_top) * scale -
-                    stripe.logical_top);
-            const QRectF target_rect(
-                center_point.x() - image.width() / 2.0,
-                center_point.y() - image.height() / 2.0,
-                image.width(), image.height());
-            if (stripe_rect.intersects(target_rect))
-                painter.drawImage(target_rect, image, QRectF(image.rect()));
-        }
-
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(Qt::black);
-        for (const StaticNode &node : request.geometry->nodes)
-        {
-            const QPointF point(
-                (node.world_position.x() - image_left) * scale,
-                (node.world_position.y() - image_top) * scale - stripe.logical_top);
-            if (stripe_rect.contains(point))
-                painter.drawEllipse(point, marker_dot_radius, marker_dot_radius);
-        }
-
-        for (const StaticNode &node : request.geometry->nodes)
-        {
-            const QImage image = request.entity_images.value(int(node.entity_type));
-            if (image.isNull())
-                continue;
-
-            const QPointF point(
-                (node.world_position.x() - image_left) * scale,
-                (node.world_position.y() - image_top) * scale - stripe.logical_top);
-            const QPointF rounded_anchor(qRound(point.x()), qRound(point.y()));
-            const QRectF target_rect(
-                rounded_anchor.x(), rounded_anchor.y() - image.height(),
-                image.width(), image.height());
-            if (stripe_rect.intersects(target_rect))
-                painter.drawImage(target_rect, image, QRectF(image.rect()));
-        }
-
+        document.paint(painter);
         painter.end();
         return stripe_image;
     };
@@ -1046,7 +1138,8 @@ bool MapEditorRenderer::coverageCoversCurrentView(
     return coverage_world_bounds.contains(required_bounds);
 }
 
-bool MapEditorRenderer::paintStaticCache(QPainter &painter) const
+bool MapEditorRenderer::paintStaticCache(
+    QPainter &painter, const MapEditorVisualState &visual_state)
 {
     if (this->rendered_static_cache.isNull() || !this->static_geometry ||
         this->rendered_static_cache_geometry_revision != this->current_geometry_revision ||
@@ -1074,12 +1167,117 @@ bool MapEditorRenderer::paintStaticCache(QPainter &painter) const
         this->rendered_static_cache_coverage_world_bounds.height() * scale);
 
     painter.save();
+    if (visual_state.move.active)
+        painter.setClipPath(moveStaticVisibleClipPath(visual_state), Qt::IntersectClip);
     painter.setRenderHint(QPainter::SmoothPixmapTransform,
         this->rendered_static_cache_zoom != this->map_model->zoom() ||
         this->rendered_static_cache_entity_width != this->current_entity_width);
     painter.drawImage(target_rect, this->rendered_static_cache);
     painter.restore();
     return true;
+}
+
+QPainterPath MapEditorRenderer::moveStaticVisibleClipPath(
+    const MapEditorVisualState &visual_state)
+{
+    if (!this->canvas || !this->static_geometry || !visual_state.move.active)
+    {
+        QPainterPath full_path;
+        if (this->canvas)
+            full_path.addRect(QRectF(this->canvas->rect()));
+        return full_path;
+    }
+
+    const int current_zoom = this->map_model ? this->map_model->zoom() : -1;
+    const QPointF current_center_tile = this->map_model ? this->map_model->centerTile() : QPointF();
+    const QSize current_viewport_size = this->canvas->size();
+    if (this->move_static_clip_session_id == visual_state.move.session_id &&
+        this->move_static_clip_geometry_revision == this->static_geometry->geometry_revision &&
+        this->move_static_clip_zoom == current_zoom &&
+        this->move_static_clip_center_tile == current_center_tile &&
+        this->move_static_clip_viewport_size == current_viewport_size &&
+        this->move_static_clip_entity_width == visual_state.entity_width &&
+        !this->move_static_visible_clip_path.isEmpty())
+    {
+        return this->move_static_visible_clip_path;
+    }
+
+    QPainterPath clear_path;
+    QPainterPathStroker line_stroker;
+    line_stroker.setWidth(9.0);
+    line_stroker.setCapStyle(Qt::RoundCap);
+    line_stroker.setJoinStyle(Qt::RoundJoin);
+
+    for (const MapEditorDynamicLinkVisualState &dynamic_link : visual_state.move.links)
+    {
+        const auto link_iterator =
+            this->static_geometry->link_indices_by_uuid.constFind(dynamic_link.uuid);
+        if (link_iterator == this->static_geometry->link_indices_by_uuid.cend())
+            continue;
+
+        const StaticLink &link = this->static_geometry->links.at(link_iterator.value());
+        if (link.world_vertices.size() >= 2)
+        {
+            QPainterPath link_path;
+            QPointF point = screenFromReferenceWorld(link.world_vertices.first());
+            link_path.moveTo(point);
+            if (isHydraulicDeviceLink(link.entity_type))
+            {
+                link_path.lineTo(screenFromReferenceWorld(link.device_center_world_position));
+                link_path.lineTo(screenFromReferenceWorld(link.world_vertices.last()));
+            }
+            else
+            {
+                for (qsizetype i = 1; i < link.world_vertices.size(); ++i)
+                    link_path.lineTo(screenFromReferenceWorld(link.world_vertices.at(i)));
+                for (qsizetype i = 1; i + 1 < link.world_vertices.size(); ++i)
+                {
+                    clear_path.addEllipse(
+                        screenFromReferenceWorld(link.world_vertices.at(i)),
+                        pipe_vertex_radius + 2.0, pipe_vertex_radius + 2.0);
+                }
+            }
+            clear_path.addPath(line_stroker.createStroke(link_path));
+        }
+
+        if (isHydraulicDeviceLink(link.entity_type))
+        {
+            const QPointF center_point = screenFromReferenceWorld(
+                link.device_center_world_position);
+            const QString path = MapEntityPixmapRenderer::pixmapPathForEntity(link.entity_type);
+            clear_path.addRect(this->pixmap_renderer.centeredRect(
+                center_point, path, visual_state.entity_width).adjusted(-2.0, -2.0, 2.0, 2.0));
+        }
+    }
+
+    for (const MapEditorDynamicMarkerVisualState &dynamic_marker : visual_state.move.markers)
+    {
+        if (!isHydraulicConnectionNode(dynamic_marker.entity))
+            continue;
+        const auto node_iterator =
+            this->static_geometry->node_indices_by_uuid.constFind(dynamic_marker.uuid);
+        if (node_iterator == this->static_geometry->node_indices_by_uuid.cend())
+            continue;
+
+        const StaticNode &node = this->static_geometry->nodes.at(node_iterator.value());
+        const QPointF point = screenFromReferenceWorld(node.world_position);
+        clear_path.addEllipse(point, marker_dot_radius + 2.0, marker_dot_radius + 2.0);
+        const QString path = MapEntityPixmapRenderer::pixmapPathForEntity(node.entity_type);
+        const QPointF rounded_anchor(qRound(point.x()), qRound(point.y()));
+        clear_path.addRect(this->pixmap_renderer.bottomAnchoredRect(
+            rounded_anchor, path, visual_state.entity_width).adjusted(-2.0, -2.0, 2.0, 2.0));
+    }
+
+    QPainterPath full_path;
+    full_path.addRect(QRectF(this->canvas->rect()));
+    this->move_static_visible_clip_path = full_path.subtracted(clear_path);
+    this->move_static_clip_session_id = visual_state.move.session_id;
+    this->move_static_clip_geometry_revision = this->static_geometry->geometry_revision;
+    this->move_static_clip_zoom = current_zoom;
+    this->move_static_clip_center_tile = current_center_tile;
+    this->move_static_clip_viewport_size = current_viewport_size;
+    this->move_static_clip_entity_width = visual_state.entity_width;
+    return this->move_static_visible_clip_path;
 }
 
 void MapEditorRenderer::paintBackground(
@@ -1309,9 +1507,17 @@ void MapEditorRenderer::paintNetwork(
     syncStaticGeometry(network_snapshot);
     requestStaticCache(visual_state.entity_width);
 
-    if (!paintStaticCache(painter))
+    if (!paintStaticCache(painter, visual_state))
     {
         paintDirectNetwork(painter, network_snapshot, visual_state);
+        if (visual_state.move.active)
+            paintMovingNetwork(painter, visual_state);
+        return;
+    }
+
+    if (visual_state.move.active)
+    {
+        paintMovingNetwork(painter, visual_state);
         return;
     }
 
@@ -1367,6 +1573,94 @@ void MapEditorRenderer::paintInteractiveNetwork(
     paintDeviceLinkPlacement(painter, visual_state, nodes_by_uuid);
     paintSelectedMarkersAndDeviceLinks(painter, visual_state);
     paintPlacement(painter, visual_state, nodes_by_uuid);
+}
+
+void MapEditorRenderer::paintMovingNetwork(
+    QPainter &painter, const MapEditorVisualState &visual_state)
+{
+    painter.save();
+
+    for (const MapEditorDynamicLinkVisualState &link : visual_state.move.links)
+    {
+        if (link.vertices_wgs84.size() < 2)
+            continue;
+
+        if (link.entity == InfrastructureEntity::Pipe)
+        {
+            const bool selected = visual_state.selected_pipe_uuids.contains(link.uuid);
+            QPen pen(selected ? QColor(0, 190, 255) : QColor(Qt::black));
+            pen.setWidthF(3.0);
+            pen.setCapStyle(Qt::RoundCap);
+            pen.setJoinStyle(Qt::RoundJoin);
+            painter.setPen(pen);
+            QPointF previous = screenFromWgs84(
+                link.vertices_wgs84.first(), visual_state.wrap_reference_longitude);
+            for (qsizetype i = 1; i < link.vertices_wgs84.size(); ++i)
+            {
+                const QPointF point = screenFromWgs84(
+                    link.vertices_wgs84.at(i), visual_state.wrap_reference_longitude);
+                painter.drawLine(previous, point);
+                previous = point;
+            }
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(selected ? QColor(0, 190, 255) : QColor(Qt::black));
+            for (qsizetype i = 1; i + 1 < link.vertices_wgs84.size(); ++i)
+            {
+                painter.drawEllipse(
+                    screenFromWgs84(link.vertices_wgs84.at(i),
+                                    visual_state.wrap_reference_longitude),
+                    pipe_vertex_radius, pipe_vertex_radius);
+            }
+            continue;
+        }
+
+        if (!isHydraulicDeviceLink(link.entity) || link.vertices_wgs84.size() < 3)
+            continue;
+
+        const bool selected = visual_state.selected_marker_uuids.contains(link.uuid);
+        QPen pen(selected ? QColor(0, 190, 255) : QColor(139, 90, 43));
+        pen.setWidthF(3.0);
+        pen.setCapStyle(Qt::RoundCap);
+        pen.setJoinStyle(Qt::RoundJoin);
+        painter.setPen(pen);
+        const QPointF start_point = screenFromWgs84(
+            link.vertices_wgs84.first(), visual_state.wrap_reference_longitude);
+        const QPointF center_point = screenFromWgs84(
+            link.vertices_wgs84.at(1), visual_state.wrap_reference_longitude);
+        const QPointF end_point = screenFromWgs84(
+            link.vertices_wgs84.last(), visual_state.wrap_reference_longitude);
+        painter.drawLine(start_point, center_point);
+        painter.drawLine(center_point, end_point);
+
+        const QString path = MapEntityPixmapRenderer::pixmapPathForEntity(link.entity);
+        const QRectF target_rect = this->pixmap_renderer.centeredRect(
+            center_point, path, visual_state.entity_width);
+        this->pixmap_renderer.paint(
+            painter, path, visual_state.entity_width, target_rect,
+            selected ? MapEntityPixmapRenderer::Highlight::Selected
+                     : MapEntityPixmapRenderer::Highlight::None);
+    }
+
+    painter.setPen(Qt::NoPen);
+    for (const MapEditorDynamicMarkerVisualState &marker : visual_state.move.markers)
+    {
+        if (!isHydraulicConnectionNode(marker.entity))
+            continue;
+        const QPointF point = screenFromWgs84(
+            marker.coordinate_wgs84, visual_state.wrap_reference_longitude);
+        painter.setBrush(Qt::black);
+        painter.drawEllipse(point, marker_dot_radius, marker_dot_radius);
+        const QPointF rounded_anchor(qRound(point.x()), qRound(point.y()));
+        const QRectF target_rect = this->pixmap_renderer.bottomAnchoredRect(
+            rounded_anchor, marker.pixmap_path, visual_state.entity_width);
+        this->pixmap_renderer.paint(
+            painter, marker.pixmap_path, visual_state.entity_width, target_rect,
+            visual_state.selected_marker_uuids.contains(marker.uuid)
+                ? MapEntityPixmapRenderer::Highlight::Selected
+                : MapEntityPixmapRenderer::Highlight::None);
+    }
+
+    painter.restore();
 }
 
 void MapEditorRenderer::paintSelectedPipes(

@@ -120,7 +120,8 @@ void MapCanvasSelection::selectInRectangle(
 }
 
 void MapCanvasSelection::moveSelected(const QPointF &from_position,
-                                      const QPointF &to_position)
+                                      const QPointF &to_position,
+                                      const QList<QUuid> &translated_pipe_uuids)
 {
     if (!this->map_model || !this->map_canvas || !this->point_markers ||
         !this->device_links || !this->pipes)
@@ -142,8 +143,8 @@ void MapCanvasSelection::moveSelected(const QPointF &from_position,
             this->device_links->moveCenterByDelta(uuid, longitude_delta, latitude_delta);
     }
 
-    this->pipes->moveIntermediateVerticesWithSelectedEndpoints(
-        this->list_selected_marker_uuids, longitude_delta, latitude_delta);
+    this->pipes->moveIntermediateVertices(
+        translated_pipe_uuids, longitude_delta, latitude_delta);
 }
 
 void MapCanvasSelection::addPointMarkersInRectangle(

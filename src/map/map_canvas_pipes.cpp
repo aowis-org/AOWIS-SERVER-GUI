@@ -73,6 +73,7 @@ void MapCanvasPipes::clear()
     clearPlacement();
     cancelPipeVertexMove();
     this->list_pipes.clear();
+    this->pipe_indices_by_uuid.clear();
     updateCanvas();
 }
 
@@ -136,6 +137,7 @@ bool MapCanvasPipes::addPipe(const InfrastructureEntityReference &pipe_reference
     pipe.geometry.end_node = end_node;
     pipe.geometry.intermediate_vertices = intermediate_vertices;
     this->list_pipes.append(pipe);
+    this->pipe_indices_by_uuid.insert(pipe_reference.uuid, this->list_pipes.size() - 1);
     updateCanvas();
     return true;
 }
@@ -205,6 +207,7 @@ bool MapCanvasPipes::removePipe(const QUuid &pipe_uuid)
     }
 
     this->list_pipes.removeAt(pipe_index);
+    rebuildUuidIndex();
     updateCanvas();
     return true;
 }
@@ -212,30 +215,31 @@ bool MapCanvasPipes::removePipe(const QUuid &pipe_uuid)
 void MapCanvasPipes::selectPipesWithSelectedEndpoints(
     const QList<QUuid> &selected_marker_uuids)
 {
+    QSet<QUuid> selected_marker_set;
+    selected_marker_set.reserve(selected_marker_uuids.size());
+    for (const QUuid &uuid : selected_marker_uuids)
+        selected_marker_set.insert(uuid);
+
     for (PipeCanvasItem &pipe : this->list_pipes)
     {
-        if (selected_marker_uuids.contains(pipe.geometry.start_node.uuid) &&
-            selected_marker_uuids.contains(pipe.geometry.end_node.uuid))
+        if (selected_marker_set.contains(pipe.geometry.start_node.uuid) &&
+            selected_marker_set.contains(pipe.geometry.end_node.uuid))
         {
             pipe.selected = true;
         }
     }
 }
 
-void MapCanvasPipes::moveIntermediateVerticesWithSelectedEndpoints(
-    const QList<QUuid> &selected_marker_uuids,
-    double longitude_delta,
-    double latitude_delta)
+void MapCanvasPipes::moveIntermediateVertices(const QList<QUuid> &pipe_uuids,
+                                               double longitude_delta,
+                                               double latitude_delta)
 {
-    for (PipeCanvasItem &pipe : this->list_pipes)
+    for (const QUuid &pipe_uuid : pipe_uuids)
     {
-        if (!selected_marker_uuids.contains(pipe.geometry.start_node.uuid) ||
-            !selected_marker_uuids.contains(pipe.geometry.end_node.uuid))
-        {
+        PipeCanvasItem *pipe = pipeByUuid(pipe_uuid);
+        if (!pipe)
             continue;
-        }
-
-        for (CoordinateWGS84 &vertex : pipe.geometry.intermediate_vertices)
+        for (CoordinateWGS84 &vertex : pipe->geometry.intermediate_vertices)
         {
             vertex.latitude_deg = std::clamp(
                 vertex.latitude_deg + latitude_delta,
@@ -244,6 +248,28 @@ void MapCanvasPipes::moveIntermediateVerticesWithSelectedEndpoints(
                 vertex.longitude_deg + longitude_delta);
         }
     }
+}
+
+std::optional<PipeGeometry> MapCanvasPipes::geometryByUuid(const QUuid &pipe_uuid) const
+{
+    const PipeCanvasItem *pipe = pipeByUuid(pipe_uuid);
+    if (!pipe)
+        return std::nullopt;
+    return pipe->geometry;
+}
+
+QList<QUuid> MapCanvasPipes::connectedPipeUuids(const QSet<QUuid> &node_uuids) const
+{
+    QList<QUuid> result;
+    for (const PipeCanvasItem &pipe : this->list_pipes)
+    {
+        if (node_uuids.contains(pipe.geometry.start_node.uuid) ||
+            node_uuids.contains(pipe.geometry.end_node.uuid))
+        {
+            result.append(pipe.entity.uuid);
+        }
+    }
+    return result;
 }
 
 std::optional<InfrastructureEntityReference> MapCanvasPipes::pipeAt(
@@ -502,6 +528,7 @@ bool MapCanvasPipes::splitPipeAtVertex(
 
     this->list_pipes[pipe_index] = first_pipe;
     this->list_pipes.insert(pipe_index + 1, second_pipe);
+    rebuildUuidIndex();
 
     if (this->pipe_vertex_move_pipe_uuid.has_value() &&
         this->pipe_vertex_move_pipe_uuid.value() == pipe_uuid)
@@ -589,37 +616,38 @@ void MapCanvasPipes::removeConnectedToUuid(const QUuid &uuid)
         }
         this->list_pipes.removeAt(i);
     }
+    rebuildUuidIndex();
     updateCanvas();
 }
 
 MapCanvasPipes::PipeCanvasItem *MapCanvasPipes::pipeByUuid(const QUuid &pipe_uuid)
 {
-    for (PipeCanvasItem &pipe : this->list_pipes)
-    {
-        if (pipe.entity.uuid == pipe_uuid)
-            return &pipe;
-    }
-    return nullptr;
+    const auto iterator = this->pipe_indices_by_uuid.constFind(pipe_uuid);
+    if (iterator == this->pipe_indices_by_uuid.cend())
+        return nullptr;
+    return &this->list_pipes[iterator.value()];
 }
 
 const MapCanvasPipes::PipeCanvasItem *MapCanvasPipes::pipeByUuid(const QUuid &pipe_uuid) const
 {
-    for (const PipeCanvasItem &pipe : this->list_pipes)
-    {
-        if (pipe.entity.uuid == pipe_uuid)
-            return &pipe;
-    }
-    return nullptr;
+    const auto iterator = this->pipe_indices_by_uuid.constFind(pipe_uuid);
+    if (iterator == this->pipe_indices_by_uuid.cend())
+        return nullptr;
+    return &this->list_pipes.at(iterator.value());
 }
 
 int MapCanvasPipes::pipeIndexByUuid(const QUuid &pipe_uuid) const
 {
-    for (int i = 0; i < this->list_pipes.size(); i++)
-    {
-        if (this->list_pipes[i].entity.uuid == pipe_uuid)
-            return i;
-    }
-    return -1;
+    const auto iterator = this->pipe_indices_by_uuid.constFind(pipe_uuid);
+    return iterator == this->pipe_indices_by_uuid.cend() ? -1 : iterator.value();
+}
+
+void MapCanvasPipes::rebuildUuidIndex()
+{
+    this->pipe_indices_by_uuid.clear();
+    this->pipe_indices_by_uuid.reserve(this->list_pipes.size());
+    for (int i = 0; i < this->list_pipes.size(); ++i)
+        this->pipe_indices_by_uuid.insert(this->list_pipes.at(i).entity.uuid, i);
 }
 
 void MapCanvasPipes::updateCanvas()

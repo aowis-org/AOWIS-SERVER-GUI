@@ -48,6 +48,7 @@ const QList<MapEntityMarker> &MapCanvasMarkers::markers() const
 void MapCanvasMarkers::clear()
 {
     this->list_markers.clear();
+    this->marker_indices_by_uuid.clear();
 }
 
 int MapCanvasMarkers::entityWidth() const
@@ -97,13 +98,10 @@ std::optional<MapEntityMarker> MapCanvasMarkers::markerByUuid(const QUuid &uuid)
     if (uuid.isNull())
         return std::nullopt;
 
-    for (const MapEntityMarker &marker : this->list_markers)
-    {
-        if (marker.entity.uuid == uuid)
-            return marker;
-    }
-
-    return std::nullopt;
+    const auto iterator = this->marker_indices_by_uuid.constFind(uuid);
+    if (iterator == this->marker_indices_by_uuid.cend())
+        return std::nullopt;
+    return this->list_markers.at(iterator.value());
 }
 
 MapEntityMarker MapCanvasMarkers::addMarker(const InfrastructureEntityReference &entity,
@@ -118,6 +116,7 @@ MapEntityMarker MapCanvasMarkers::addMarker(const InfrastructureEntityReference 
     marker.coord_wgs84 = coordinate;
     marker.path_pixmap = pixmap_path;
     this->list_markers.append(marker);
+    this->marker_indices_by_uuid.insert(marker.entity.uuid, this->list_markers.size() - 1);
     return marker;
 }
 
@@ -129,6 +128,7 @@ bool MapCanvasMarkers::removeMarker(const QUuid &uuid)
             continue;
 
         this->list_markers.removeAt(i);
+        rebuildUuidIndex();
         return true;
     }
 
@@ -137,42 +137,28 @@ bool MapCanvasMarkers::removeMarker(const QUuid &uuid)
 
 bool MapCanvasMarkers::setCoordinate(const QUuid &uuid, const CoordinateWGS84 &coordinate)
 {
-    if (uuid.isNull())
+    const auto iterator = this->marker_indices_by_uuid.constFind(uuid);
+    if (iterator == this->marker_indices_by_uuid.cend())
         return false;
-
-    for (MapEntityMarker &marker : this->list_markers)
-    {
-        if (marker.entity.uuid != uuid)
-            continue;
-
-        marker.coord_wgs84 = coordinate;
-        return true;
-    }
-
-    return false;
+    this->list_markers[iterator.value()].coord_wgs84 = coordinate;
+    return true;
 }
 
 bool MapCanvasMarkers::moveByDelta(const QUuid &uuid,
                                    double longitude_delta,
                                    double latitude_delta)
 {
-    if (uuid.isNull())
+    const auto iterator = this->marker_indices_by_uuid.constFind(uuid);
+    if (iterator == this->marker_indices_by_uuid.cend())
         return false;
 
-    for (MapEntityMarker &marker : this->list_markers)
-    {
-        if (marker.entity.uuid != uuid)
-            continue;
-
-        marker.coord_wgs84.latitude_deg = std::clamp(
-            marker.coord_wgs84.latitude_deg + latitude_delta,
-            -GeoWebMercator::MaximumLatitude, GeoWebMercator::MaximumLatitude);
-        marker.coord_wgs84.longitude_deg = GeoWebMercator::normalizeLongitude(
-            marker.coord_wgs84.longitude_deg + longitude_delta);
-        return true;
-    }
-
-    return false;
+    MapEntityMarker &marker = this->list_markers[iterator.value()];
+    marker.coord_wgs84.latitude_deg = std::clamp(
+        marker.coord_wgs84.latitude_deg + latitude_delta,
+        -GeoWebMercator::MaximumLatitude, GeoWebMercator::MaximumLatitude);
+    marker.coord_wgs84.longitude_deg = GeoWebMercator::normalizeLongitude(
+        marker.coord_wgs84.longitude_deg + longitude_delta);
+    return true;
 }
 
 void MapCanvasMarkers::scaleMarkers(int width)
@@ -228,4 +214,12 @@ bool MapCanvasMarkers::dotHit(const QPointF &position, const QPointF &dot_center
     const double distance_y = position.y() - dot_center.y();
     return distance_x * distance_x + distance_y * distance_y <=
            marker_dot_hit_radius * marker_dot_hit_radius;
+}
+
+void MapCanvasMarkers::rebuildUuidIndex()
+{
+    this->marker_indices_by_uuid.clear();
+    this->marker_indices_by_uuid.reserve(this->list_markers.size());
+    for (int i = 0; i < this->list_markers.size(); ++i)
+        this->marker_indices_by_uuid.insert(this->list_markers.at(i).entity.uuid, i);
 }

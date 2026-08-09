@@ -3,6 +3,7 @@
 
 #include <optional>
 #include <QObject>
+#include <QHash>
 #include <QList>
 #include <QPointer>
 #include <QPointF>
@@ -52,6 +53,7 @@ public:
 private:
     QPointF screenFromWgs84(const CoordinateWGS84 &coordinate) const;
     bool dotHit(const QPointF &position, const QPointF &dot_center) const;
+    void rebuildUuidIndex();
 
     MapModel *map_model = nullptr;
     QPointer<MapCanvasWidget> map_canvas;
@@ -59,6 +61,7 @@ private:
     double wrap_reference_lon = 0.0;
     int marker_width = 10;
     QList<MapEntityMarker> list_markers;
+    QHash<QUuid, int> marker_indices_by_uuid;
 };
 
 #endif // MAP_CANVAS_MARKERS_H

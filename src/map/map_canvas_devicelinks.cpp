@@ -71,6 +71,7 @@ void MapCanvasDeviceLinks::clear()
 {
     clearPlacement();
     this->list_device_links.clear();
+    this->device_link_indices_by_uuid.clear();
     updateCanvas();
 }
 
@@ -110,6 +111,7 @@ bool MapCanvasDeviceLinks::addDeviceLink(const InfrastructureEntityReference &en
     device_link.geometry = geometry;
     device_link.path_pixmap = pixmap_path;
     this->list_device_links.append(device_link);
+    this->device_link_indices_by_uuid.insert(entity.uuid, this->list_device_links.size() - 1);
     updateCanvas();
     return true;
 }
@@ -182,40 +184,27 @@ std::optional<DeviceLinkGeometry> MapCanvasDeviceLinks::completionGeometry(
 
 bool MapCanvasDeviceLinks::updateMove(const QUuid &uuid, const QPointF &screen_position)
 {
-    if (uuid.isNull())
+    if (!this->map_model || !this->map_canvas)
+        return false;
+    const auto iterator = this->device_link_indices_by_uuid.constFind(uuid);
+    if (iterator == this->device_link_indices_by_uuid.cend())
         return false;
 
-    for (DeviceLinkCanvasItem &device_link : this->list_device_links)
-    {
-        if (device_link.entity.uuid != uuid)
-            continue;
-
-        device_link.geometry.center_coordinate = this->map_model->wgs84FromScreen(
-            screen_position.toPoint(), this->map_canvas->size());
-        updateCanvas();
-        return true;
-    }
-
-    return false;
+    this->list_device_links[iterator.value()].geometry.center_coordinate =
+        this->map_model->wgs84FromScreen(screen_position.toPoint(), this->map_canvas->size());
+    updateCanvas();
+    return true;
 }
 
 bool MapCanvasDeviceLinks::setCenterCoordinate(const QUuid &uuid,
                                                const CoordinateWGS84 &coordinate)
 {
-    if (uuid.isNull())
+    const auto iterator = this->device_link_indices_by_uuid.constFind(uuid);
+    if (iterator == this->device_link_indices_by_uuid.cend())
         return false;
-
-    for (DeviceLinkCanvasItem &device_link : this->list_device_links)
-    {
-        if (device_link.entity.uuid != uuid)
-            continue;
-
-        device_link.geometry.center_coordinate = coordinate;
-        updateCanvas();
-        return true;
-    }
-
-    return false;
+    this->list_device_links[iterator.value()].geometry.center_coordinate = coordinate;
+    updateCanvas();
+    return true;
 }
 
 void MapCanvasDeviceLinks::scaleMarkers(int width)
@@ -228,23 +217,17 @@ bool MapCanvasDeviceLinks::moveCenterByDelta(const QUuid &uuid,
                                              double longitude_delta,
                                              double latitude_delta)
 {
-    if (uuid.isNull())
+    const auto iterator = this->device_link_indices_by_uuid.constFind(uuid);
+    if (iterator == this->device_link_indices_by_uuid.cend())
         return false;
 
-    for (DeviceLinkCanvasItem &device_link : this->list_device_links)
-    {
-        if (device_link.entity.uuid != uuid)
-            continue;
-
-        device_link.geometry.center_coordinate.latitude_deg = std::clamp(
-            device_link.geometry.center_coordinate.latitude_deg + latitude_delta,
-            -GeoWebMercator::MaximumLatitude, GeoWebMercator::MaximumLatitude);
-        device_link.geometry.center_coordinate.longitude_deg = GeoWebMercator::normalizeLongitude(
-            device_link.geometry.center_coordinate.longitude_deg + longitude_delta);
-        return true;
-    }
-
-    return false;
+    DeviceLinkCanvasItem &device_link = this->list_device_links[iterator.value()];
+    device_link.geometry.center_coordinate.latitude_deg = std::clamp(
+        device_link.geometry.center_coordinate.latitude_deg + latitude_delta,
+        -GeoWebMercator::MaximumLatitude, GeoWebMercator::MaximumLatitude);
+    device_link.geometry.center_coordinate.longitude_deg = GeoWebMercator::normalizeLongitude(
+        device_link.geometry.center_coordinate.longitude_deg + longitude_delta);
+    return true;
 }
 
 void MapCanvasDeviceLinks::removeConnectedToUuid(const QUuid &uuid)
@@ -268,6 +251,7 @@ void MapCanvasDeviceLinks::removeConnectedToUuid(const QUuid &uuid)
         this->list_device_links.removeAt(i);
     }
 
+    rebuildUuidIndex();
     updateCanvas();
 }
 
@@ -290,22 +274,37 @@ QList<MapEntityMarker> MapCanvasDeviceLinks::markers() const
 
 std::optional<MapEntityMarker> MapCanvasDeviceLinks::markerByUuid(const QUuid &uuid) const
 {
-    if (uuid.isNull())
+    const auto iterator = this->device_link_indices_by_uuid.constFind(uuid);
+    if (iterator == this->device_link_indices_by_uuid.cend())
         return std::nullopt;
+    const DeviceLinkCanvasItem &device_link = this->list_device_links.at(iterator.value());
+    MapEntityMarker marker;
+    marker.entity = device_link.entity;
+    marker.coord_wgs84 = device_link.geometry.center_coordinate;
+    marker.path_pixmap = device_link.path_pixmap;
+    return marker;
+}
 
-    for (const DeviceLinkCanvasItem &device_link : this->list_device_links)
+std::optional<DeviceLinkGeometry> MapCanvasDeviceLinks::geometryByUuid(const QUuid &uuid) const
+{
+    const auto iterator = this->device_link_indices_by_uuid.constFind(uuid);
+    if (iterator == this->device_link_indices_by_uuid.cend())
+        return std::nullopt;
+    return this->list_device_links.at(iterator.value()).geometry;
+}
+
+QList<QUuid> MapCanvasDeviceLinks::connectedLinkUuids(const QSet<QUuid> &node_uuids) const
+{
+    QList<QUuid> result;
+    for (const DeviceLinkCanvasItem &item : this->list_device_links)
     {
-        if (device_link.entity.uuid != uuid)
-            continue;
-
-        MapEntityMarker marker;
-        marker.entity = device_link.entity;
-        marker.coord_wgs84 = device_link.geometry.center_coordinate;
-        marker.path_pixmap = device_link.path_pixmap;
-        return marker;
+        if (node_uuids.contains(item.geometry.start_node.uuid) ||
+            node_uuids.contains(item.geometry.end_node.uuid))
+        {
+            result.append(item.entity.uuid);
+        }
     }
-
-    return std::nullopt;
+    return result;
 }
 
 std::optional<InfrastructureEntityReference> MapCanvasDeviceLinks::markerAt(
@@ -386,6 +385,14 @@ std::optional<MapEntityMarker> MapCanvasDeviceLinks::pointMarkerByUuid(
     }
 
     return std::nullopt;
+}
+
+void MapCanvasDeviceLinks::rebuildUuidIndex()
+{
+    this->device_link_indices_by_uuid.clear();
+    this->device_link_indices_by_uuid.reserve(this->list_device_links.size());
+    for (int i = 0; i < this->list_device_links.size(); ++i)
+        this->device_link_indices_by_uuid.insert(this->list_device_links.at(i).entity.uuid, i);
 }
 
 void MapCanvasDeviceLinks::updateCanvas()
