@@ -265,14 +265,22 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     {
         this->visual_node = visual_node;
         emit signalShowMapLegendNode(visual_node);
-#ifdef Q_OS_WASM
+#ifndef Q_OS_WASM
+        this->desktop_network_overlay->setSymbology(
+            this->visual_node, this->node_size_percent,
+            this->visual_link, this->link_thickness_px);
+#else
         scheduleWasmNetworkSymbologySync(false);
 #endif
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalNodeSizeChanged, this, [this](int size_percent)
     {
         this->node_size_percent = qBound(50, size_percent, 250);
-#ifdef Q_OS_WASM
+#ifndef Q_OS_WASM
+        this->desktop_network_overlay->setSymbology(
+            this->visual_node, this->node_size_percent,
+            this->visual_link, this->link_thickness_px);
+#else
         scheduleWasmNetworkSymbologySync(false);
 #endif
     });
@@ -281,14 +289,22 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     {
         this->visual_link = visual_link;
         emit signalShowMapLegendLink(visual_link);
-#ifdef Q_OS_WASM
+#ifndef Q_OS_WASM
+        this->desktop_network_overlay->setSymbology(
+            this->visual_node, this->node_size_percent,
+            this->visual_link, this->link_thickness_px);
+#else
         scheduleWasmNetworkSymbologySync(false);
 #endif
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalLinkThicknessChanged, this, [this](int thickness_px)
     {
         this->link_thickness_px = qBound(1, thickness_px, 12);
-#ifdef Q_OS_WASM
+#ifndef Q_OS_WASM
+        this->desktop_network_overlay->setSymbology(
+            this->visual_node, this->node_size_percent,
+            this->visual_link, this->link_thickness_px);
+#else
         scheduleWasmNetworkSymbologySync(false);
 #endif
     });

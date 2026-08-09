@@ -23,6 +23,7 @@
 #include <QtMath>
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <cmath>
 #include <limits>
@@ -40,7 +41,19 @@ constexpr qreal NetworkLinkWidth = 3.0;
 constexpr qreal NetworkNodeWidth = 8.0;
 constexpr qreal LinkHitDistance = 7.0;
 constexpr qreal SpatialCellSize = 128.0;
+constexpr int SymbologyColorBucketCount = 256;
 const QColor NetworkColor(QStringLiteral("#b000ff"));
+const QColor SymbologyValueUnavailableColor(Qt::black);
+
+const std::array<QColor, 7> SymbologyRampColors = {{
+    QColor(QStringLiteral("#440154")),
+    QColor(QStringLiteral("#443983")),
+    QColor(QStringLiteral("#31688e")),
+    QColor(QStringLiteral("#21918c")),
+    QColor(QStringLiteral("#35b779")),
+    QColor(QStringLiteral("#90d743")),
+    QColor(QStringLiteral("#fde725"))
+}};
 
 struct NetworkRenderWorkers
 {
@@ -87,6 +100,174 @@ qreal markerWidthForZoom(int zoom)
     if (zoom == 17)
         return 20.0;
     return 10.0;
+}
+
+QPair<double, double> nodeRange(const HydraulicData &hydraulic_data, VisualNode visual_node)
+{
+    switch (visual_node)
+    {
+    case VisualNode::Elevation:
+        return qMakePair(hydraulic_data.nodeElevationMMinimum(), hydraulic_data.nodeElevationMMaximum());
+    case VisualNode::BaseDemand:
+        return qMakePair(hydraulic_data.nodeBaseDemandM3PerHMinimum(), hydraulic_data.nodeBaseDemandM3PerHMaximum());
+    case VisualNode::TotalDemand:
+        return qMakePair(hydraulic_data.nodeTotalDemandM3PerHMinimum(), hydraulic_data.nodeTotalDemandM3PerHMaximum());
+    case VisualNode::DemandDeficit:
+        return qMakePair(hydraulic_data.nodeDemandDeficitM3PerHMinimum(), hydraulic_data.nodeDemandDeficitM3PerHMaximum());
+    case VisualNode::EmitterFlow:
+        return qMakePair(hydraulic_data.nodeEmitterFlowM3PerHMinimum(), hydraulic_data.nodeEmitterFlowM3PerHMaximum());
+    case VisualNode::Leakage:
+        return qMakePair(hydraulic_data.nodeLeakageM3PerHMinimum(), hydraulic_data.nodeLeakageM3PerHMaximum());
+    case VisualNode::Head:
+        return qMakePair(hydraulic_data.nodeHeadMMinimum(), hydraulic_data.nodeHeadMMaximum());
+    case VisualNode::Pressure:
+        return qMakePair(hydraulic_data.nodePressureMMinimum(), hydraulic_data.nodePressureMMaximum());
+    case VisualNode::Chlorine:
+        return qMakePair(hydraulic_data.nodeChlorineMgPerLMinimum(), hydraulic_data.nodeChlorineMgPerLMaximum());
+    case VisualNode::RiverWater:
+        return qMakePair(hydraulic_data.nodeRiverWaterPercentMinimum(), hydraulic_data.nodeRiverWaterPercentMaximum());
+    case VisualNode::LakeWater:
+        return qMakePair(hydraulic_data.nodeLakeWaterPercentMinimum(), hydraulic_data.nodeLakeWaterPercentMaximum());
+    case VisualNode::None:
+        break;
+    }
+
+    return qMakePair(0.0, 0.0);
+}
+
+QPair<double, double> linkRange(const HydraulicData &hydraulic_data, VisualLink visual_link)
+{
+    switch (visual_link)
+    {
+    case VisualLink::Diameter:
+        return qMakePair(hydraulic_data.linkDiameterMmMinimum(), hydraulic_data.linkDiameterMmMaximum());
+    case VisualLink::Length:
+        return qMakePair(hydraulic_data.linkLengthMMinimum(), hydraulic_data.linkLengthMMaximum());
+    case VisualLink::Roughness:
+        return qMakePair(hydraulic_data.linkRoughnessHwMinimum(), hydraulic_data.linkRoughnessHwMaximum());
+    case VisualLink::FlowRate:
+        return qMakePair(hydraulic_data.linkFlowRateM3PerHMinimum(), hydraulic_data.linkFlowRateM3PerHMaximum());
+    case VisualLink::Velocity:
+        return qMakePair(hydraulic_data.linkVelocityMPerSMinimum(), hydraulic_data.linkVelocityMPerSMaximum());
+    case VisualLink::HeadLoss:
+        return qMakePair(hydraulic_data.linkHeadLossMMinimum(), hydraulic_data.linkHeadLossMMaximum());
+    case VisualLink::Leakage:
+        return qMakePair(hydraulic_data.linkLeakageM3PerHMinimum(), hydraulic_data.linkLeakageM3PerHMaximum());
+    case VisualLink::Chlorine:
+        return qMakePair(hydraulic_data.linkChlorineMgPerLMinimum(), hydraulic_data.linkChlorineMgPerLMaximum());
+    case VisualLink::RiverWater:
+        return qMakePair(hydraulic_data.linkRiverWaterPercentMinimum(), hydraulic_data.linkRiverWaterPercentMaximum());
+    case VisualLink::LakeWater:
+        return qMakePair(hydraulic_data.linkLakeWaterPercentMinimum(), hydraulic_data.linkLakeWaterPercentMaximum());
+    case VisualLink::None:
+        break;
+    }
+
+    return qMakePair(0.0, 0.0);
+}
+
+QHash<QUuid, double> nodeValues(const NetworkHydraulic &network_hydraulic, VisualNode visual_node)
+{
+    QHash<QUuid, double> values;
+
+    switch (visual_node)
+    {
+    case VisualNode::Elevation:
+        values.reserve(network_hydraulic.nodes_junctions.size() +
+                       network_hydraulic.nodes_reservoirs.size() +
+                       network_hydraulic.nodes_tanks.size());
+        for (const HydraulicNodeJunction &junction : network_hydraulic.nodes_junctions)
+            values.insert(junction.uuid, junction.elevation_m);
+        for (const HydraulicNodeReservoir &reservoir : network_hydraulic.nodes_reservoirs)
+            values.insert(reservoir.uuid, reservoir.head_m);
+        for (const HydraulicNodeTank &tank : network_hydraulic.nodes_tanks)
+            values.insert(tank.uuid, tank.bottom_elevation_m);
+        break;
+    case VisualNode::BaseDemand:
+        values.reserve(network_hydraulic.nodes_junctions.size());
+        for (const HydraulicNodeJunction &junction : network_hydraulic.nodes_junctions)
+        {
+            double base_demand_m3_per_h = 0.0;
+            for (const HydraulicNodeJunctionDemand &demand : junction.demands)
+                base_demand_m3_per_h += demand.base_demand_m3_per_h;
+            values.insert(junction.uuid, base_demand_m3_per_h);
+        }
+        break;
+    case VisualNode::None:
+    case VisualNode::TotalDemand:
+    case VisualNode::DemandDeficit:
+    case VisualNode::EmitterFlow:
+    case VisualNode::Leakage:
+    case VisualNode::Head:
+    case VisualNode::Pressure:
+    case VisualNode::Chlorine:
+    case VisualNode::RiverWater:
+    case VisualNode::LakeWater:
+        break;
+    }
+
+    return values;
+}
+
+QHash<QUuid, double> linkValues(const NetworkHydraulic &network_hydraulic, VisualLink visual_link)
+{
+    QHash<QUuid, double> values;
+
+    switch (visual_link)
+    {
+    case VisualLink::Diameter:
+        values.reserve(network_hydraulic.links_pipes.size());
+        for (const HydraulicLinkPipe &pipe : network_hydraulic.links_pipes)
+            values.insert(pipe.uuid, pipe.diameter_mm);
+        break;
+    case VisualLink::Length:
+        values.reserve(network_hydraulic.links_pipes.size());
+        for (const HydraulicLinkPipe &pipe : network_hydraulic.links_pipes)
+            values.insert(pipe.uuid, pipe.length_measured_m.value_or(pipe.length_calculated_m));
+        break;
+    case VisualLink::Roughness:
+        values.reserve(network_hydraulic.links_pipes.size());
+        for (const HydraulicLinkPipe &pipe : network_hydraulic.links_pipes)
+            values.insert(pipe.uuid, pipe.roughness_hw);
+        break;
+    case VisualLink::None:
+    case VisualLink::FlowRate:
+    case VisualLink::Velocity:
+    case VisualLink::HeadLoss:
+    case VisualLink::Leakage:
+    case VisualLink::Chlorine:
+    case VisualLink::RiverWater:
+    case VisualLink::LakeWater:
+        break;
+    }
+
+    return values;
+}
+
+QColor rampColor(double fraction)
+{
+    const double limited_fraction = qBound(0.0, fraction, 1.0);
+    const int bucket = qRound(limited_fraction * (SymbologyColorBucketCount - 1));
+    const double quantized_fraction = double(bucket) / double(SymbologyColorBucketCount - 1);
+    const double scaled = quantized_fraction * (SymbologyRampColors.size() - 1);
+    const int left_index = qMin(int(SymbologyRampColors.size()) - 1, int(std::floor(scaled)));
+    const int right_index = qMin(int(SymbologyRampColors.size()) - 1, left_index + 1);
+    const double ratio = scaled - left_index;
+    const QColor &left = SymbologyRampColors.at(left_index);
+    const QColor &right = SymbologyRampColors.at(right_index);
+    return QColor(
+        qRound(left.red() + (right.red() - left.red()) * ratio),
+        qRound(left.green() + (right.green() - left.green()) * ratio),
+        qRound(left.blue() + (right.blue() - left.blue()) * ratio));
+}
+
+QRgb symbologyColor(double value, double minimum, double maximum)
+{
+    if (!std::isfinite(value) || !std::isfinite(minimum) || !std::isfinite(maximum))
+        return SymbologyValueUnavailableColor.rgb();
+    if (minimum == maximum)
+        return rampColor(0.5).rgb();
+    return rampColor((value - minimum) / (maximum - minimum)).rgb();
 }
 
 int spatialCellCoordinate(qreal value)
@@ -220,6 +401,26 @@ MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicD
         this, &MapNetworkOverlayWidget::syncSnapshot);
     connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged,
         this, &MapNetworkOverlayWidget::syncSnapshot);
+    connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
+        [this](InfrastructureEntity, const QUuid &)
+    {
+        if (this->visual_node == VisualNode::None)
+            return;
+
+        rebuildSymbology(true, true, false);
+        requestRenderCache(true);
+        update();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
+        [this](InfrastructureEntity, const QUuid &)
+    {
+        if (this->visual_link == VisualLink::None)
+            return;
+
+        rebuildSymbology(true, false, true);
+        requestRenderCache(true);
+        update();
+    });
 
     QTimer::singleShot(0, this, &MapNetworkOverlayWidget::syncSnapshot);
 }
@@ -246,6 +447,29 @@ void MapNetworkOverlayWidget::setBackgroundOpacity(int opacity)
     update();
 }
 
+void MapNetworkOverlayWidget::setSymbology(VisualNode visual_node, int node_size_percent,
+                                           VisualLink visual_link, int link_thickness_px)
+{
+    const int bounded_node_size_percent = qBound(50, node_size_percent, 250);
+    const int bounded_link_thickness_px = qBound(1, link_thickness_px, 12);
+    const bool node_visual_changed = this->visual_node != visual_node;
+    const bool link_visual_changed = this->visual_link != visual_link;
+    const bool node_size_changed = this->node_size_percent != bounded_node_size_percent;
+    const bool link_thickness_changed = this->link_thickness_px != bounded_link_thickness_px;
+
+    if (!node_visual_changed && !link_visual_changed && !node_size_changed && !link_thickness_changed)
+        return;
+
+    this->visual_node = visual_node;
+    this->node_size_percent = bounded_node_size_percent;
+    this->visual_link = visual_link;
+    this->link_thickness_px = bounded_link_thickness_px;
+    rebuildSymbology(false, node_visual_changed || !this->render_symbology,
+                     link_visual_changed || !this->render_symbology);
+    requestRenderCache(true);
+    update();
+}
+
 NetworkOverlayHit MapNetworkOverlayWidget::hitTest(const QPointF &screen_position)
 {
     NetworkOverlayHit no_hit;
@@ -262,12 +486,14 @@ NetworkOverlayHit MapNetworkOverlayWidget::hitTest(const QPointF &screen_positio
         return no_hit;
 
     const QPointF world_position = geometryWorldPosition(screen_position);
+    const qreal node_scale = qBound(0.5, this->node_size_percent / 100.0, 2.5);
     const NetworkOverlayHit marker_hit = nearestMarkerHit(
-        world_position.x(), world_position.y(), markerWidthForZoom(this->map_model->zoom()) / (2.0 * scale));
+        world_position.x(), world_position.y(),
+        markerWidthForZoom(this->map_model->zoom()) * node_scale / (2.0 * scale));
     if (marker_hit.isValid())
         return marker_hit;
 
-    const qreal link_hit_distance = LinkHitDistance / scale;
+    const qreal link_hit_distance = qMax(LinkHitDistance, this->link_thickness_px / 2.0 + 3.0) / scale;
     const NetworkOverlayHit device_hit = nearestSegmentHit(
         world_position.x(), world_position.y(), link_hit_distance, HitCollection::DeviceSegments);
     if (device_hit.isValid())
@@ -334,6 +560,7 @@ void MapNetworkOverlayWidget::syncSnapshot()
     this->geometry_revision = this->snapshot.geometry_revision;
     this->snapshot_initialized = true;
     rebuildReferenceGeometry();
+    rebuildSymbology(false);
     clearRenderedCache();
     requestRenderCache(true);
     update();
@@ -359,7 +586,7 @@ void MapNetworkOverlayWidget::rebuildReferenceGeometry()
     this->spatial_cells.clear();
 
     geometry->geometry_revision = this->geometry_revision;
-    geometry->node_positions.reserve(this->snapshot.nodes.size());
+    geometry->nodes.reserve(this->snapshot.nodes.size());
     node_positions.reserve(this->snapshot.nodes.size());
     this->hit_markers.reserve(this->snapshot.nodes.size());
 
@@ -378,7 +605,10 @@ void MapNetworkOverlayWidget::rebuildReferenceGeometry()
         const QPointF world_position(
             nearestWrappedWorldPixel(raw_world_position.x(), anchor_x, ReferenceZoom),
             raw_world_position.y());
-        geometry->node_positions.append(world_position);
+        RenderGeometry::Node render_node;
+        render_node.render_id = node.render_id;
+        render_node.world_position = world_position;
+        geometry->nodes.append(render_node);
         node_positions.insert(node.render_id, world_position);
 
         HitMarker marker;
@@ -438,7 +668,10 @@ void MapNetworkOverlayWidget::rebuildReferenceGeometry()
         {
             const QPointF &start = world_vertices.at(index - 1);
             const QPointF &end = world_vertices.at(index);
-            geometry->link_segments.append(QLineF(start, end));
+            RenderGeometry::Segment render_segment;
+            render_segment.render_id = link.render_id;
+            render_segment.line = QLineF(start, end);
+            geometry->link_segments.append(render_segment);
 
             HitSegment segment;
             segment.render_id = link.render_id;
@@ -459,7 +692,7 @@ void MapNetworkOverlayWidget::rebuildReferenceGeometry()
         }
     }
 
-    if ((geometry->node_positions.isEmpty() && geometry->link_segments.isEmpty()) ||
+    if ((geometry->nodes.isEmpty() && geometry->link_segments.isEmpty()) ||
         !std::isfinite(minimum_x) || !std::isfinite(minimum_y) ||
         !std::isfinite(maximum_x) || !std::isfinite(maximum_y))
     {
@@ -477,6 +710,72 @@ void MapNetworkOverlayWidget::rebuildReferenceGeometry()
     rebuildSpatialIndex();
 }
 
+void MapNetworkOverlayWidget::rebuildSymbology(bool rebuild_ranges, bool rebuild_node_colors,
+                                               bool rebuild_link_colors)
+{
+    if (rebuild_ranges)
+        this->hydraulic_data->rebuildSymbologyMinMaxValues();
+
+    std::shared_ptr<RenderSymbology> symbology = std::make_shared<RenderSymbology>();
+    symbology->revision = ++this->symbology_revision;
+    symbology->node_width = NetworkNodeWidth * qBound(0.5, this->node_size_percent / 100.0, 2.5);
+    symbology->link_width = qBound<qreal>(1.0, this->link_thickness_px, 12.0);
+
+    if (this->render_symbology && !rebuild_node_colors)
+        symbology->node_colors = this->render_symbology->node_colors;
+    if (this->render_symbology && !rebuild_link_colors)
+        symbology->link_colors = this->render_symbology->link_colors;
+
+    const NetworkHydraulic &network_hydraulic = this->hydraulic_data->networkHydraulic();
+    if (rebuild_node_colors)
+    {
+        symbology->node_colors.reserve(this->snapshot.nodes.size());
+        if (this->visual_node == VisualNode::None)
+        {
+            for (const NetworkRenderNode &node : this->snapshot.nodes)
+                symbology->node_colors.insert(node.render_id, NetworkColor.rgb());
+        }
+        else
+        {
+            const QPair<double, double> range = nodeRange(*this->hydraulic_data, this->visual_node);
+            const QHash<QUuid, double> values = nodeValues(network_hydraulic, this->visual_node);
+            for (const NetworkRenderNode &node : this->snapshot.nodes)
+            {
+                const QHash<QUuid, double>::const_iterator iterator = values.constFind(node.uuid);
+                const QRgb color = iterator == values.cend()
+                    ? SymbologyValueUnavailableColor.rgb()
+                    : symbologyColor(iterator.value(), range.first, range.second);
+                symbology->node_colors.insert(node.render_id, color);
+            }
+        }
+    }
+
+    if (rebuild_link_colors)
+    {
+        symbology->link_colors.reserve(this->snapshot.links.size());
+        if (this->visual_link == VisualLink::None)
+        {
+            for (const NetworkRenderLink &link : this->snapshot.links)
+                symbology->link_colors.insert(link.render_id, NetworkColor.rgb());
+        }
+        else
+        {
+            const QPair<double, double> range = linkRange(*this->hydraulic_data, this->visual_link);
+            const QHash<QUuid, double> values = linkValues(network_hydraulic, this->visual_link);
+            for (const NetworkRenderLink &link : this->snapshot.links)
+            {
+                const QHash<QUuid, double>::const_iterator iterator = values.constFind(link.uuid);
+                const QRgb color = iterator == values.cend()
+                    ? SymbologyValueUnavailableColor.rgb()
+                    : symbologyColor(iterator.value(), range.first, range.second);
+                symbology->link_colors.insert(link.render_id, color);
+            }
+        }
+    }
+
+    this->render_symbology = symbology;
+}
+
 void MapNetworkOverlayWidget::clearRenderedCache()
 {
     if (this->pending_render_cancelled)
@@ -485,6 +784,7 @@ void MapNetworkOverlayWidget::clearRenderedCache()
     this->pending_cache_coverage_world_bounds = QRectF();
     this->pending_cache_zoom = -1;
     this->pending_cache_device_pixel_ratio = 0.0;
+    this->pending_cache_symbology_revision = 0;
     this->render_restart_requested = this->render_worker_running;
     this->render_restart_force = this->render_worker_running;
     this->rendered_network_cache = QImage();
@@ -492,12 +792,14 @@ void MapNetworkOverlayWidget::clearRenderedCache()
     this->rendered_cache_image_world_bounds = QRectF();
     this->rendered_cache_zoom = -1;
     this->rendered_cache_device_pixel_ratio = 0.0;
+    this->rendered_cache_symbology_revision = 0;
 }
 
 void MapNetworkOverlayWidget::requestRenderCache(bool force)
 {
     if (!this->rendering_active || !isVisible() ||
-        !this->reference_geometry_ready || !this->render_geometry || width() <= 0 || height() <= 0)
+        !this->reference_geometry_ready || !this->render_geometry || !this->render_symbology ||
+        width() <= 0 || height() <= 0)
     {
         return;
     }
@@ -531,6 +833,7 @@ void MapNetworkOverlayWidget::requestRenderCache(bool force)
     this->pending_cache_coverage_world_bounds = request.coverage_world_bounds;
     this->pending_cache_zoom = request.zoom;
     this->pending_cache_device_pixel_ratio = request.device_pixel_ratio;
+    this->pending_cache_symbology_revision = request.symbology_revision;
 
     const QPointer<MapNetworkOverlayWidget> widget(this);
     QRunnable *runnable = QRunnable::create([widget, request]
@@ -553,14 +856,16 @@ void MapNetworkOverlayWidget::requestRenderCache(bool force)
 MapNetworkOverlayWidget::RenderRequest MapNetworkOverlayWidget::createRenderRequest(quint64 request_id) const
 {
     RenderRequest request;
-    if (!this->render_geometry || !this->reference_geometry_ready)
+    if (!this->render_geometry || !this->render_symbology || !this->reference_geometry_ready)
         return request;
 
     request.request_id = request_id;
     request.geometry_revision = this->geometry_revision;
+    request.symbology_revision = this->render_symbology->revision;
     request.zoom = this->map_model->zoom();
     request.device_pixel_ratio = qMax<qreal>(1.0, devicePixelRatioF());
     request.geometry = this->render_geometry;
+    request.symbology = this->render_symbology;
 
     const QSize cache_size = boundedCacheLogicalSize(size(), request.device_pixel_ratio);
     if (!cache_size.isValid())
@@ -577,7 +882,10 @@ MapNetworkOverlayWidget::RenderRequest MapNetworkOverlayWidget::createRenderRequ
         cache_size.width() / scale,
         cache_size.height() / scale);
 
-    const qreal geometry_padding = (NetworkNodeWidth / 2.0 + NetworkImagePadding) / scale;
+    const qreal render_half_width = qMax(
+        request.symbology->node_width / 2.0,
+        request.symbology->link_width / 2.0);
+    const qreal geometry_padding = (render_half_width + NetworkImagePadding) / scale;
     const QRectF padded_geometry_bounds = this->render_geometry->world_bounds.adjusted(
         -geometry_padding, -geometry_padding, geometry_padding, geometry_padding);
     const QRectF visible_geometry_bounds = request.coverage_world_bounds.intersected(padded_geometry_bounds);
@@ -607,12 +915,14 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
     RenderResult result;
     result.request_id = request.request_id;
     result.geometry_revision = request.geometry_revision;
+    result.symbology_revision = request.symbology_revision;
     result.zoom = request.zoom;
     result.device_pixel_ratio = request.device_pixel_ratio;
     result.coverage_world_bounds = request.coverage_world_bounds;
     result.image_world_bounds = request.image_world_bounds;
 
-    if (!request.geometry || !request.logical_size.isValid() || request.image_world_bounds.isEmpty())
+    if (!request.geometry || !request.symbology || !request.logical_size.isValid() ||
+        request.image_world_bounds.isEmpty())
         return result;
     if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
         return result;
@@ -651,8 +961,8 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
 
     const qreal logical_width = request.logical_size.width();
     const qreal logical_height = request.logical_size.height();
-    const qreal link_padding = NetworkLinkWidth / 2.0 + NetworkImagePadding;
-    const qreal node_padding = NetworkNodeWidth / 2.0 + NetworkImagePadding;
+    const qreal link_padding = request.symbology->link_width / 2.0 + NetworkImagePadding;
+    const qreal node_padding = request.symbology->node_width / 2.0 + NetworkImagePadding;
 
     const std::function<int(qreal)> stripe_for_logical_y =
         [stripe_count, logical_height](qreal logical_y)
@@ -671,7 +981,8 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
             return result;
         }
 
-        const QLineF &segment = request.geometry->link_segments.at(segment_index);
+        const RenderGeometry::Segment &render_segment = request.geometry->link_segments.at(segment_index);
+        const QLineF &segment = render_segment.line;
         const qreal x1 = (segment.x1() - image_left) * scale;
         const qreal y1 = (segment.y1() - image_top) * scale;
         const qreal x2 = (segment.x2() - image_left) * scale;
@@ -692,7 +1003,7 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
             stripes[stripe_index].segment_indices.push_back(segment_index);
     }
 
-    for (int node_index = 0; node_index < request.geometry->node_positions.size(); ++node_index)
+    for (int node_index = 0; node_index < request.geometry->nodes.size(); ++node_index)
     {
         if ((node_index & 1023) == 0 && request.cancelled &&
             request.cancelled->load(std::memory_order_relaxed))
@@ -700,7 +1011,7 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
             return result;
         }
 
-        const QPointF &world_position = request.geometry->node_positions.at(node_index);
+        const QPointF &world_position = request.geometry->nodes.at(node_index).world_position;
         const qreal x = (world_position.x() - image_left) * scale;
         const qreal y = (world_position.y() - image_top) * scale;
         if (x + node_padding < 0.0 || x - node_padding > logical_width ||
@@ -726,10 +1037,10 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
         if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
             return QImage();
 
-        QByteArray link_path;
-        QByteArray node_path;
-        link_path.reserve(qsizetype(stripe.segment_indices.size()) * 40);
-        node_path.reserve(qsizetype(stripe.node_indices.size()) * 50);
+        QHash<QRgb, QByteArray> link_paths;
+        QHash<QRgb, QByteArray> node_paths;
+        link_paths.reserve(qMin(SymbologyColorBucketCount + 1, int(stripe.segment_indices.size())));
+        node_paths.reserve(qMin(SymbologyColorBucketCount + 1, int(stripe.node_indices.size())));
 
         int processed_segments = 0;
         for (int segment_index : stripe.segment_indices)
@@ -740,7 +1051,11 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
                 return QImage();
             }
 
-            const QLineF &segment = request.geometry->link_segments.at(segment_index);
+            const RenderGeometry::Segment &render_segment = request.geometry->link_segments.at(segment_index);
+            const QLineF &segment = render_segment.line;
+            const QRgb color = request.symbology->link_colors.value(
+                render_segment.render_id, NetworkColor.rgb());
+            QByteArray &link_path = link_paths[color];
             appendSvgMove(link_path, QPointF(
                 (segment.x1() - image_left) * scale,
                 (segment.y1() - image_top) * scale - stripe.logical_top));
@@ -749,7 +1064,7 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
                 (segment.y2() - image_top) * scale - stripe.logical_top));
         }
 
-        const qreal node_radius = NetworkNodeWidth / 2.0;
+        const qreal node_radius = request.symbology->node_width / 2.0;
         int processed_nodes = 0;
         for (int node_index : stripe.node_indices)
         {
@@ -759,7 +1074,11 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
                 return QImage();
             }
 
-            const QPointF &world_position = request.geometry->node_positions.at(node_index);
+            const RenderGeometry::Node &render_node = request.geometry->nodes.at(node_index);
+            const QPointF &world_position = render_node.world_position;
+            const QRgb color = request.symbology->node_colors.value(
+                render_node.render_id, NetworkColor.rgb());
+            QByteArray &node_path = node_paths[color];
             appendSvgCircle(node_path, QPointF(
                 (world_position.x() - image_left) * scale,
                 (world_position.y() - image_top) * scale - stripe.logical_top), node_radius);
@@ -769,7 +1088,18 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
             return QImage();
 
         QByteArray svg;
-        svg.reserve(link_path.size() + node_path.size() + 512);
+        qsizetype path_bytes = 0;
+        for (QHash<QRgb, QByteArray>::const_iterator iterator = link_paths.cbegin();
+             iterator != link_paths.cend(); ++iterator)
+        {
+            path_bytes += iterator.value().size();
+        }
+        for (QHash<QRgb, QByteArray>::const_iterator iterator = node_paths.cbegin();
+             iterator != node_paths.cend(); ++iterator)
+        {
+            path_bytes += iterator.value().size();
+        }
+        svg.reserve(path_bytes + (link_paths.size() + node_paths.size()) * 128 + 512);
         svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"");
         appendSvgNumber(svg, logical_width);
         svg.append("\" height=\"");
@@ -779,22 +1109,30 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
         svg.append(' ');
         appendSvgNumber(svg, stripe.logical_height);
         svg.append("\">");
-        if (!link_path.isEmpty())
+        for (QHash<QRgb, QByteArray>::const_iterator iterator = link_paths.cbegin();
+             iterator != link_paths.cend(); ++iterator)
         {
+            if (iterator.value().isEmpty())
+                continue;
+
             svg.append("<path fill=\"none\" stroke=\"");
-            svg.append(NetworkColor.name().toUtf8());
+            svg.append(QColor::fromRgb(iterator.key()).name(QColor::HexRgb).toUtf8());
             svg.append("\" stroke-width=\"");
-            appendSvgNumber(svg, NetworkLinkWidth);
+            appendSvgNumber(svg, request.symbology->link_width);
             svg.append("\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"");
-            svg.append(link_path);
+            svg.append(iterator.value());
             svg.append("\"/>");
         }
-        if (!node_path.isEmpty())
+        for (QHash<QRgb, QByteArray>::const_iterator iterator = node_paths.cbegin();
+             iterator != node_paths.cend(); ++iterator)
         {
+            if (iterator.value().isEmpty())
+                continue;
+
             svg.append("<path fill=\"");
-            svg.append(NetworkColor.name().toUtf8());
+            svg.append(QColor::fromRgb(iterator.key()).name(QColor::HexRgb).toUtf8());
             svg.append("\" stroke=\"none\" d=\"");
-            svg.append(node_path);
+            svg.append(iterator.value());
             svg.append("\"/>");
         }
         svg.append("</svg>");
@@ -871,6 +1209,7 @@ void MapNetworkOverlayWidget::applyRenderResult(RenderResult result)
     this->pending_cache_coverage_world_bounds = QRectF();
     this->pending_cache_zoom = -1;
     this->pending_cache_device_pixel_ratio = 0.0;
+    this->pending_cache_symbology_revision = 0;
 
     const bool restart_requested = this->render_restart_requested;
     const bool restart_force = this->render_restart_force;
@@ -879,6 +1218,7 @@ void MapNetworkOverlayWidget::applyRenderResult(RenderResult result)
 
     const bool result_matches_current_view =
         result.geometry_revision == this->geometry_revision &&
+        result.symbology_revision == this->symbology_revision &&
         result.zoom == this->map_model->zoom() &&
         qFuzzyCompare(result.device_pixel_ratio, qMax<qreal>(1.0, devicePixelRatioF())) &&
         coverageCoversCurrentView(result.coverage_world_bounds, result.zoom);
@@ -890,6 +1230,7 @@ void MapNetworkOverlayWidget::applyRenderResult(RenderResult result)
         this->rendered_cache_image_world_bounds = result.image_world_bounds;
         this->rendered_cache_zoom = result.zoom;
         this->rendered_cache_device_pixel_ratio = result.device_pixel_ratio;
+        this->rendered_cache_symbology_revision = result.symbology_revision;
         update();
     }
 
@@ -911,6 +1252,7 @@ void MapNetworkOverlayWidget::applyRenderResult(RenderResult result)
 bool MapNetworkOverlayWidget::renderedCacheCoversCurrentView() const
 {
     if (this->rendered_network_cache.isNull() ||
+        this->rendered_cache_symbology_revision != this->symbology_revision ||
         this->rendered_cache_zoom != this->map_model->zoom() ||
         !qFuzzyCompare(this->rendered_cache_device_pixel_ratio, qMax<qreal>(1.0, devicePixelRatioF())))
     {
@@ -925,6 +1267,7 @@ bool MapNetworkOverlayWidget::renderedCacheCoversCurrentView() const
 bool MapNetworkOverlayWidget::pendingCacheCoversCurrentView() const
 {
     if (this->pending_render_request_id == 0 ||
+        this->pending_cache_symbology_revision != this->symbology_revision ||
         this->pending_cache_zoom != this->map_model->zoom() ||
         !qFuzzyCompare(this->pending_cache_device_pixel_ratio, qMax<qreal>(1.0, devicePixelRatioF())))
     {

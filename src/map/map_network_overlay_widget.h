@@ -14,6 +14,7 @@
 #include <atomic>
 #include <memory>
 
+#include "../_enums_structs.h"
 #include "map_model.h"
 #include "../network_render_snapshot.h"
 
@@ -47,6 +48,8 @@ public:
 
 public slots:
     void setBackgroundOpacity(int opacity);
+    void setSymbology(VisualNode visual_node, int node_size_percent,
+                      VisualLink visual_link, int link_thickness_px);
 
 protected:
     void hideEvent(QHideEvent *event) override;
@@ -78,23 +81,46 @@ private:
 
     struct RenderGeometry
     {
-        QList<QPointF> node_positions;
-        QList<QLineF> link_segments;
+        struct Node
+        {
+            quint32 render_id = 0;
+            QPointF world_position;
+        };
+
+        struct Segment
+        {
+            quint32 render_id = 0;
+            QLineF line;
+        };
+
+        QList<Node> nodes;
+        QList<Segment> link_segments;
         QRectF world_bounds;
         QPointF world_origin;
         quint64 geometry_revision = 0;
+    };
+
+    struct RenderSymbology
+    {
+        quint64 revision = 0;
+        qreal node_width = 8.0;
+        qreal link_width = 3.0;
+        QHash<quint32, QRgb> node_colors;
+        QHash<quint32, QRgb> link_colors;
     };
 
     struct RenderRequest
     {
         quint64 request_id = 0;
         quint64 geometry_revision = 0;
+        quint64 symbology_revision = 0;
         int zoom = -1;
         qreal device_pixel_ratio = 1.0;
         QSize logical_size;
         QRectF coverage_world_bounds;
         QRectF image_world_bounds;
         std::shared_ptr<const RenderGeometry> geometry;
+        std::shared_ptr<const RenderSymbology> symbology;
         std::shared_ptr<std::atomic_bool> cancelled;
     };
 
@@ -102,6 +128,7 @@ private:
     {
         quint64 request_id = 0;
         quint64 geometry_revision = 0;
+        quint64 symbology_revision = 0;
         int zoom = -1;
         qreal device_pixel_ratio = 1.0;
         QRectF coverage_world_bounds;
@@ -118,6 +145,8 @@ private:
 
     void syncSnapshot();
     void rebuildReferenceGeometry();
+    void rebuildSymbology(bool rebuild_ranges, bool rebuild_node_colors = true,
+                          bool rebuild_link_colors = true);
     void clearRenderedCache();
     void requestRenderCache(bool force = false);
     RenderRequest createRenderRequest(quint64 request_id) const;
@@ -140,12 +169,18 @@ private:
     HydraulicData *hydraulic_data = nullptr;
 
     quint64 geometry_revision = 0;
+    quint64 symbology_revision = 0;
     bool snapshot_initialized = false;
     NetworkRenderSnapshot snapshot;
 
     int background_opacity = 0;
+    VisualNode visual_node = VisualNode::None;
+    int node_size_percent = 100;
+    VisualLink visual_link = VisualLink::None;
+    int link_thickness_px = 3;
 
     std::shared_ptr<const RenderGeometry> render_geometry;
+    std::shared_ptr<const RenderSymbology> render_symbology;
     bool reference_geometry_ready = false;
 
     QImage rendered_network_cache;
@@ -153,12 +188,14 @@ private:
     QRectF rendered_cache_image_world_bounds;
     int rendered_cache_zoom = -1;
     qreal rendered_cache_device_pixel_ratio = 0.0;
+    quint64 rendered_cache_symbology_revision = 0;
 
     quint64 next_render_request_id = 0;
     quint64 pending_render_request_id = 0;
     QRectF pending_cache_coverage_world_bounds;
     int pending_cache_zoom = -1;
     qreal pending_cache_device_pixel_ratio = 0.0;
+    quint64 pending_cache_symbology_revision = 0;
     std::shared_ptr<std::atomic_bool> pending_render_cancelled;
     bool rendering_active = false;
     bool render_worker_running = false;
