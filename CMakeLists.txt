@@ -87,10 +87,8 @@ qt_add_executable(aowis-server-gui
     src/tab_energy_widget.h src/tab_energy_widget.cpp
     src/map/map_navigation_widget.h src/map/map_navigation_widget.cpp
     src/map/map_model.h src/map/map_model.cpp
-    src/map/map_controls.h src/map/map_controls.cpp
     src/map/map_canvas_widget.h src/map/map_canvas_widget.cpp
     src/map/map_editor_controller.h src/map/map_editor_controller.cpp
-    src/map/map_editor_render_state.h
     src/map/map_editor_visual_state.h
     src/map/map_editor_renderer.h src/map/map_editor_renderer.cpp
     src/map/map_vector_document.h src/map/map_vector_document.cpp
