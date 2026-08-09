@@ -4,6 +4,7 @@
 #include "../geo_web_mercator.h"
 
 #include <QAction>
+#include <QHash>
 #include <QMenu>
 #include <QMessageBox>
 
@@ -289,34 +290,65 @@ MapCanvasPipes::PipeSegmentHit MapCanvasPipes::pipeSegmentAt(
     PipeSegmentHit hit;
     double nearest_distance_squared = link_hit_distance * link_hit_distance;
 
+    QHash<QUuid, const MapEntityMarker *> markers_by_uuid;
+    markers_by_uuid.reserve(markers.size());
+    for (const MapEntityMarker &marker : markers)
+        markers_by_uuid.insert(marker.entity.uuid, &marker);
+
+    const double hit_min_x = position.x() - link_hit_distance;
+    const double hit_max_x = position.x() + link_hit_distance;
+    const double hit_min_y = position.y() - link_hit_distance;
+    const double hit_max_y = position.y() + link_hit_distance;
+
     for (const PipeCanvasItem &pipe : this->list_pipes)
     {
-        const std::optional<MapEntityMarker> start_marker = markerByUuid(
-            pipe.geometry.start_node.uuid, markers);
-        const std::optional<MapEntityMarker> end_marker = markerByUuid(
-            pipe.geometry.end_node.uuid, markers);
-        if (!start_marker.has_value() || !end_marker.has_value())
+        const MapEntityMarker *start_marker = markers_by_uuid.value(
+            pipe.geometry.start_node.uuid, nullptr);
+        const MapEntityMarker *end_marker = markers_by_uuid.value(
+            pipe.geometry.end_node.uuid, nullptr);
+        if (!start_marker || !end_marker)
             continue;
 
         QPointF previous_point = screenFromWgs84(start_marker->coord_wgs84);
         for (int i = 0; i < pipe.geometry.intermediate_vertices.size(); i++)
         {
             const QPointF vertex_point = screenFromWgs84(pipe.geometry.intermediate_vertices[i]);
-            const QPointF nearest_point = nearestPointOnSegment(position, previous_point, vertex_point);
-            const double distance_x = position.x() - nearest_point.x();
-            const double distance_y = position.y() - nearest_point.y();
-            const double distance_squared = distance_x * distance_x + distance_y * distance_y;
-            if (distance_squared <= nearest_distance_squared)
+            const double segment_min_x = qMin(previous_point.x(), vertex_point.x());
+            const double segment_max_x = qMax(previous_point.x(), vertex_point.x());
+            const double segment_min_y = qMin(previous_point.y(), vertex_point.y());
+            const double segment_max_y = qMax(previous_point.y(), vertex_point.y());
+
+            if (segment_max_x >= hit_min_x && segment_min_x <= hit_max_x &&
+                segment_max_y >= hit_min_y && segment_min_y <= hit_max_y)
             {
-                nearest_distance_squared = distance_squared;
-                hit.pipe_uuid = pipe.entity.uuid;
-                hit.insert_index = i;
-                hit.nearest_point = nearest_point;
+                const QPointF nearest_point = nearestPointOnSegment(
+                    position, previous_point, vertex_point);
+                const double distance_x = position.x() - nearest_point.x();
+                const double distance_y = position.y() - nearest_point.y();
+                const double distance_squared = distance_x * distance_x + distance_y * distance_y;
+                if (distance_squared <= nearest_distance_squared)
+                {
+                    nearest_distance_squared = distance_squared;
+                    hit.pipe_uuid = pipe.entity.uuid;
+                    hit.insert_index = i;
+                    hit.nearest_point = nearest_point;
+                }
             }
+
             previous_point = vertex_point;
         }
 
         const QPointF end_point = screenFromWgs84(end_marker->coord_wgs84);
+        const double segment_min_x = qMin(previous_point.x(), end_point.x());
+        const double segment_max_x = qMax(previous_point.x(), end_point.x());
+        const double segment_min_y = qMin(previous_point.y(), end_point.y());
+        const double segment_max_y = qMax(previous_point.y(), end_point.y());
+        if (segment_max_x < hit_min_x || segment_min_x > hit_max_x ||
+            segment_max_y < hit_min_y || segment_min_y > hit_max_y)
+        {
+            continue;
+        }
+
         const QPointF nearest_point = nearestPointOnSegment(position, previous_point, end_point);
         const double distance_x = position.x() - nearest_point.x();
         const double distance_y = position.y() - nearest_point.y();
@@ -588,17 +620,6 @@ int MapCanvasPipes::pipeIndexByUuid(const QUuid &pipe_uuid) const
             return i;
     }
     return -1;
-}
-
-std::optional<MapEntityMarker> MapCanvasPipes::markerByUuid(
-    const QUuid &uuid, const QList<MapEntityMarker> &markers) const
-{
-    for (const MapEntityMarker &marker : markers)
-    {
-        if (marker.entity.uuid == uuid)
-            return marker;
-    }
-    return std::nullopt;
 }
 
 void MapCanvasPipes::updateCanvas()

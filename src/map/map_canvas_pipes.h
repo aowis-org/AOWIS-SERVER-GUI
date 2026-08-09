@@ -115,8 +115,6 @@ private:
     PipeCanvasItem *pipeByUuid(const QUuid &pipe_uuid);
     const PipeCanvasItem *pipeByUuid(const QUuid &pipe_uuid) const;
     int pipeIndexByUuid(const QUuid &pipe_uuid) const;
-    std::optional<MapEntityMarker> markerByUuid(
-        const QUuid &uuid, const QList<MapEntityMarker> &markers) const;
     void updateCanvas();
 
     MapModel *map_model = nullptr;
