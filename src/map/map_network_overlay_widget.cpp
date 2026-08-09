@@ -13,7 +13,9 @@
 #include <QPointer>
 #include <QPixmap>
 #include <QRunnable>
+#include <QSemaphore>
 #include <QSvgRenderer>
+#include <QThread>
 #include <QThreadPool>
 #include <QTimer>
 #include <QtMath>
@@ -22,6 +24,7 @@
 #include <functional>
 #include <cmath>
 #include <limits>
+#include <vector>
 
 namespace
 {
@@ -36,6 +39,25 @@ constexpr qreal NetworkNodeWidth = 8.0;
 constexpr qreal LinkHitDistance = 7.0;
 constexpr qreal SpatialCellSize = 128.0;
 const QColor NetworkColor(QStringLiteral("#b000ff"));
+
+struct NetworkRenderWorkers
+{
+    NetworkRenderWorkers()
+    {
+        this->thread_count = qMax(1, QThread::idealThreadCount());
+        this->pool.setMaxThreadCount(this->thread_count);
+        this->pool.setExpiryTimeout(-1);
+    }
+
+    QThreadPool pool;
+    int thread_count = 1;
+};
+
+NetworkRenderWorkers &networkRenderWorkers()
+{
+    static NetworkRenderWorkers workers;
+    return workers;
+}
 
 bool isFiniteCoordinate(const CoordinateWGS84 &coordinate)
 {
@@ -143,15 +165,6 @@ void appendSvgCircle(QByteArray &path, const QPointF &center, qreal radius)
     path.append('Z');
 }
 
-bool segmentIntersectsRect(const QLineF &segment, const QRectF &rect)
-{
-    const qreal minimum_x = std::min(segment.x1(), segment.x2());
-    const qreal maximum_x = std::max(segment.x1(), segment.x2());
-    const qreal minimum_y = std::min(segment.y1(), segment.y2());
-    const qreal maximum_y = std::max(segment.y1(), segment.y2());
-    return maximum_x >= rect.left() && minimum_x <= rect.right() &&
-        maximum_y >= rect.top() && minimum_y <= rect.bottom();
-}
 
 QSize boundedCacheLogicalSize(const QSize &viewport_size, qreal device_pixel_ratio)
 {
@@ -574,95 +587,220 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
     const qreal scale = scaleForZoom(request.zoom);
     const qreal image_left = request.image_world_bounds.left();
     const qreal image_top = request.image_world_bounds.top();
-    const qreal link_padding = (NetworkLinkWidth / 2.0 + NetworkImagePadding) / scale;
-    const qreal node_padding = (NetworkNodeWidth / 2.0 + NetworkImagePadding) / scale;
-    const QRectF link_query_bounds = request.image_world_bounds.adjusted(
-        -link_padding, -link_padding, link_padding, link_padding);
-    const QRectF node_query_bounds = request.image_world_bounds.adjusted(
-        -node_padding, -node_padding, node_padding, node_padding);
+    const QSize physical_size(
+        qMax(1, qCeil(request.logical_size.width() * request.device_pixel_ratio)),
+        qMax(1, qCeil(request.logical_size.height() * request.device_pixel_ratio)));
+    if (physical_size.isEmpty())
+        return result;
 
-    QByteArray link_path;
-    QByteArray node_path;
-    link_path.reserve(request.geometry->link_segments.size() * 20);
-    node_path.reserve(request.geometry->node_positions.size() * 20);
-
-    int processed_segments = 0;
-    for (const QLineF &segment : request.geometry->link_segments)
+    struct StripeDefinition
     {
-        if ((++processed_segments & 255) == 0 && request.cancelled &&
+        int physical_top = 0;
+        int physical_height = 0;
+        qreal logical_top = 0.0;
+        qreal logical_height = 0.0;
+        std::vector<int> segment_indices;
+        std::vector<int> node_indices;
+    };
+
+    NetworkRenderWorkers &workers = networkRenderWorkers();
+    const int stripe_count = qMin(workers.thread_count, physical_size.height());
+    std::vector<StripeDefinition> stripes(stripe_count);
+    for (int stripe_index = 0; stripe_index < stripe_count; ++stripe_index)
+    {
+        StripeDefinition &stripe = stripes[stripe_index];
+        const int physical_bottom = (stripe_index + 1) * physical_size.height() / stripe_count;
+        stripe.physical_top = stripe_index * physical_size.height() / stripe_count;
+        stripe.physical_height = physical_bottom - stripe.physical_top;
+        stripe.logical_top = stripe.physical_top / request.device_pixel_ratio;
+        stripe.logical_height = stripe.physical_height / request.device_pixel_ratio;
+    }
+
+    const qreal logical_width = request.logical_size.width();
+    const qreal logical_height = request.logical_size.height();
+    const qreal link_padding = NetworkLinkWidth / 2.0 + NetworkImagePadding;
+    const qreal node_padding = NetworkNodeWidth / 2.0 + NetworkImagePadding;
+
+    const std::function<int(qreal)> stripe_for_logical_y =
+        [stripe_count, logical_height](qreal logical_y)
+    {
+        if (logical_height <= 0.0)
+            return 0;
+        const int stripe_index = qFloor(logical_y * stripe_count / logical_height);
+        return qBound(0, stripe_index, stripe_count - 1);
+    };
+
+    for (int segment_index = 0; segment_index < request.geometry->link_segments.size(); ++segment_index)
+    {
+        if ((segment_index & 1023) == 0 && request.cancelled &&
             request.cancelled->load(std::memory_order_relaxed))
         {
             return result;
         }
-        if (!segmentIntersectsRect(segment, link_query_bounds))
-            continue;
 
-        appendSvgMove(link_path, QPointF(
-            (segment.x1() - image_left) * scale,
-            (segment.y1() - image_top) * scale));
-        appendSvgLine(link_path, QPointF(
-            (segment.x2() - image_left) * scale,
-            (segment.y2() - image_top) * scale));
+        const QLineF &segment = request.geometry->link_segments.at(segment_index);
+        const qreal x1 = (segment.x1() - image_left) * scale;
+        const qreal y1 = (segment.y1() - image_top) * scale;
+        const qreal x2 = (segment.x2() - image_left) * scale;
+        const qreal y2 = (segment.y2() - image_top) * scale;
+        const qreal minimum_x = std::min(x1, x2) - link_padding;
+        const qreal maximum_x = std::max(x1, x2) + link_padding;
+        const qreal minimum_y = std::min(y1, y2) - link_padding;
+        const qreal maximum_y = std::max(y1, y2) + link_padding;
+        if (maximum_x < 0.0 || minimum_x > logical_width ||
+            maximum_y < 0.0 || minimum_y > logical_height)
+        {
+            continue;
+        }
+
+        const int first_stripe = stripe_for_logical_y(minimum_y);
+        const int last_stripe = stripe_for_logical_y(maximum_y);
+        for (int stripe_index = first_stripe; stripe_index <= last_stripe; ++stripe_index)
+            stripes[stripe_index].segment_indices.push_back(segment_index);
     }
 
-    const qreal node_radius = NetworkNodeWidth / 2.0;
-    int processed_nodes = 0;
-    for (const QPointF &world_position : request.geometry->node_positions)
+    for (int node_index = 0; node_index < request.geometry->node_positions.size(); ++node_index)
     {
-        if ((++processed_nodes & 255) == 0 && request.cancelled &&
+        if ((node_index & 1023) == 0 && request.cancelled &&
             request.cancelled->load(std::memory_order_relaxed))
         {
             return result;
         }
-        if (!node_query_bounds.contains(world_position))
+
+        const QPointF &world_position = request.geometry->node_positions.at(node_index);
+        const qreal x = (world_position.x() - image_left) * scale;
+        const qreal y = (world_position.y() - image_top) * scale;
+        if (x + node_padding < 0.0 || x - node_padding > logical_width ||
+            y + node_padding < 0.0 || y - node_padding > logical_height)
+        {
             continue;
+        }
 
-        appendSvgCircle(node_path, QPointF(
-            (world_position.x() - image_left) * scale,
-            (world_position.y() - image_top) * scale), node_radius);
+        const int first_stripe = stripe_for_logical_y(y - node_padding);
+        const int last_stripe = stripe_for_logical_y(y + node_padding);
+        for (int stripe_index = first_stripe; stripe_index <= last_stripe; ++stripe_index)
+            stripes[stripe_index].node_indices.push_back(node_index);
     }
-
-    QByteArray svg;
-    svg.reserve(link_path.size() + node_path.size() + 512);
-    svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"");
-    svg.append(QByteArray::number(request.logical_size.width()));
-    svg.append("\" height=\"");
-    svg.append(QByteArray::number(request.logical_size.height()));
-    svg.append("\" viewBox=\"0 0 ");
-    svg.append(QByteArray::number(request.logical_size.width()));
-    svg.append(' ');
-    svg.append(QByteArray::number(request.logical_size.height()));
-    svg.append("\">");
-    if (!link_path.isEmpty())
-    {
-        svg.append("<path fill=\"none\" stroke=\"");
-        svg.append(NetworkColor.name().toUtf8());
-        svg.append("\" stroke-width=\"");
-        appendSvgNumber(svg, NetworkLinkWidth);
-        svg.append("\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"");
-        svg.append(link_path);
-        svg.append("\"/>");
-    }
-    if (!node_path.isEmpty())
-    {
-        svg.append("<path fill=\"");
-        svg.append(NetworkColor.name().toUtf8());
-        svg.append("\" stroke=\"none\" d=\"");
-        svg.append(node_path);
-        svg.append("\"/>");
-    }
-    svg.append("</svg>");
 
     if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
         return result;
 
-    QSvgRenderer renderer;
-    if (!renderer.load(svg) || !renderer.isValid())
-        return result;
+    std::vector<QImage> stripe_images(stripe_count);
+    QSemaphore completed_stripes;
+    const std::function<QImage(const StripeDefinition &)> render_stripe =
+        [&request, scale, image_left, image_top, logical_width](const StripeDefinition &stripe) -> QImage
+    {
+        if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
+            return QImage();
 
-    const QSize physical_size(
-        qMax(1, qCeil(request.logical_size.width() * request.device_pixel_ratio)),
-        qMax(1, qCeil(request.logical_size.height() * request.device_pixel_ratio)));
+        QByteArray link_path;
+        QByteArray node_path;
+        link_path.reserve(qsizetype(stripe.segment_indices.size()) * 40);
+        node_path.reserve(qsizetype(stripe.node_indices.size()) * 50);
+
+        int processed_segments = 0;
+        for (int segment_index : stripe.segment_indices)
+        {
+            if ((++processed_segments & 255) == 0 && request.cancelled &&
+                request.cancelled->load(std::memory_order_relaxed))
+            {
+                return QImage();
+            }
+
+            const QLineF &segment = request.geometry->link_segments.at(segment_index);
+            appendSvgMove(link_path, QPointF(
+                (segment.x1() - image_left) * scale,
+                (segment.y1() - image_top) * scale - stripe.logical_top));
+            appendSvgLine(link_path, QPointF(
+                (segment.x2() - image_left) * scale,
+                (segment.y2() - image_top) * scale - stripe.logical_top));
+        }
+
+        const qreal node_radius = NetworkNodeWidth / 2.0;
+        int processed_nodes = 0;
+        for (int node_index : stripe.node_indices)
+        {
+            if ((++processed_nodes & 255) == 0 && request.cancelled &&
+                request.cancelled->load(std::memory_order_relaxed))
+            {
+                return QImage();
+            }
+
+            const QPointF &world_position = request.geometry->node_positions.at(node_index);
+            appendSvgCircle(node_path, QPointF(
+                (world_position.x() - image_left) * scale,
+                (world_position.y() - image_top) * scale - stripe.logical_top), node_radius);
+        }
+
+        if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
+            return QImage();
+
+        QByteArray svg;
+        svg.reserve(link_path.size() + node_path.size() + 512);
+        svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"");
+        appendSvgNumber(svg, logical_width);
+        svg.append("\" height=\"");
+        appendSvgNumber(svg, stripe.logical_height);
+        svg.append("\" viewBox=\"0 0 ");
+        appendSvgNumber(svg, logical_width);
+        svg.append(' ');
+        appendSvgNumber(svg, stripe.logical_height);
+        svg.append("\">");
+        if (!link_path.isEmpty())
+        {
+            svg.append("<path fill=\"none\" stroke=\"");
+            svg.append(NetworkColor.name().toUtf8());
+            svg.append("\" stroke-width=\"");
+            appendSvgNumber(svg, NetworkLinkWidth);
+            svg.append("\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"");
+            svg.append(link_path);
+            svg.append("\"/>");
+        }
+        if (!node_path.isEmpty())
+        {
+            svg.append("<path fill=\"");
+            svg.append(NetworkColor.name().toUtf8());
+            svg.append("\" stroke=\"none\" d=\"");
+            svg.append(node_path);
+            svg.append("\"/>");
+        }
+        svg.append("</svg>");
+
+        QSvgRenderer renderer;
+        if (!renderer.load(svg) || !renderer.isValid())
+            return QImage();
+        if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
+            return QImage();
+
+        QImage stripe_image(
+            QSize(qMax(1, qCeil(logical_width * request.device_pixel_ratio)), stripe.physical_height),
+            QImage::Format_ARGB32_Premultiplied);
+        if (stripe_image.isNull())
+            return QImage();
+        stripe_image.setDevicePixelRatio(request.device_pixel_ratio);
+        stripe_image.fill(Qt::transparent);
+
+        QPainter painter(&stripe_image);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        renderer.render(&painter, QRectF(0.0, 0.0, logical_width, stripe.logical_height));
+        painter.end();
+        return stripe_image;
+    };
+
+    for (int stripe_index = 0; stripe_index < stripe_count; ++stripe_index)
+    {
+        QRunnable *runnable = QRunnable::create([&stripes, &stripe_images, &completed_stripes,
+            &render_stripe, stripe_index]
+        {
+            stripe_images[stripe_index] = render_stripe(stripes[stripe_index]);
+            completed_stripes.release();
+        });
+        workers.pool.start(runnable);
+    }
+
+    for (int stripe_index = 0; stripe_index < stripe_count; ++stripe_index)
+        completed_stripes.acquire();
+
     if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
         return result;
 
@@ -672,10 +810,17 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
     image.setDevicePixelRatio(request.device_pixel_ratio);
     image.fill(Qt::transparent);
 
-    QPainter painter(&image);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    renderer.render(&painter, QRectF(QPointF(0.0, 0.0), QSizeF(request.logical_size)));
-    painter.end();
+    QPainter composition_painter(&image);
+    composition_painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+    for (int stripe_index = 0; stripe_index < stripe_count; ++stripe_index)
+    {
+        const QImage &stripe_image = stripe_images[stripe_index];
+        if (stripe_image.isNull())
+            continue;
+        composition_painter.drawImage(
+            QPointF(0.0, stripes[stripe_index].logical_top), stripe_image);
+    }
+    composition_painter.end();
 
     result.image = std::move(image);
     return result;
