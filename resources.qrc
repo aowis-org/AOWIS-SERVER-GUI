@@ -69,4 +69,10 @@
         <file alias="simulation_start.png">assets/iconsets/gothic/simulation_run.png</file>
         <file alias="set_active.png">assets/iconsets/gothic/set_active.png</file>
     </qresource>
+    <qresource prefix="/network-svg/">
+        <file alias="pump.svg">tools/qt-emscripten/svg/pump.svg</file>
+        <file alias="reservoir.svg">tools/qt-emscripten/svg/reservoir.svg</file>
+        <file alias="tank.svg">tools/qt-emscripten/svg/tank.svg</file>
+        <file alias="valve.svg">tools/qt-emscripten/svg/valve.svg</file>
+    </qresource>
 </RCC>

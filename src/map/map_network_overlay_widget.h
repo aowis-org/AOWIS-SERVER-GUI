@@ -81,9 +81,10 @@ private:
 
     struct RenderGeometry
     {
-        struct Node
+        struct Marker
         {
             quint32 render_id = 0;
+            InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
             QPointF world_position;
         };
 
@@ -93,7 +94,7 @@ private:
             QLineF line;
         };
 
-        QList<Node> nodes;
+        QList<Marker> markers;
         QList<Segment> link_segments;
         QRectF world_bounds;
         QPointF world_origin;
@@ -103,7 +104,7 @@ private:
     struct RenderSymbology
     {
         quint64 revision = 0;
-        qreal node_width = 8.0;
+        int node_size_percent = 100;
         qreal link_width = 3.0;
         QHash<quint32, QRgb> node_colors;
         QHash<quint32, QRgb> link_colors;
