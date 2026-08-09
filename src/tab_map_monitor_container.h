@@ -58,6 +58,7 @@ private:
     MapWidget *map;
     
     MapNavigationWidget *map_nav;
+    void addGroupVisualSizes();
     void addGroupNodeVisuals();
     void addGroupLinkVisuals();
     void addGroupHeatmapVisuals();

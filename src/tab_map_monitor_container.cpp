@@ -651,6 +651,7 @@ MapMonitorMenuWidget::MapMonitorMenuWidget(MapWidget *map, QWidget *parent)
     
     this->layout->addWidget(this->map_nav);
     
+    addGroupVisualSizes();
     addGroupNodeVisuals();
     addGroupLinkVisuals();
     addGroupHeatmapVisuals();
@@ -661,6 +662,59 @@ MapMonitorMenuWidget::MapMonitorMenuWidget(MapWidget *map, QWidget *parent)
 MapNavigationWidget *MapMonitorMenuWidget::mapNavigationWidget()
 {
     return this->map_nav;
+}
+
+void MapMonitorMenuWidget::addGroupVisualSizes()
+{
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Visual Sizes", this);
+    this->layout->addWidget(group);
+
+    QVBoxLayout *vbox = new QVBoxLayout();
+    group->setLayout(vbox);
+
+    QLabel *label_node_section = new QLabel("<b>Node</b>");
+    QLabel *label_node_size = new QLabel("Circle Size [%]");
+    QSlider *slider_node_size = new SymbologySlider(50, 250, 100,
+        QStringLiteral("Scales regular node circles only."), QStringLiteral(" %"), this);
+    connect(slider_node_size, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalNodeSizeChanged);
+
+    QLabel *label_link_section = new QLabel("<b>Link</b>");
+    QLabel *label_link_thickness = new QLabel("Line Width [px]");
+    QSlider *slider_link_thickness = new SymbologySlider(1, 12, 3,
+        QStringLiteral("Sets the rendered link width and keeps link hit detection aligned with it."), QStringLiteral(" px"), this);
+    connect(slider_link_thickness, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalLinkThicknessChanged);
+
+    QLabel *label_heatmap_section = new QLabel("<b>Heatmap</b>");
+    QLabel *label_heatmap_radius = new QLabel("Radius [m]");
+    QSlider *slider_heatmap_radius = new SymbologySlider(10, 1000, 400,
+        QStringLiteral("Sets each heatmap point's geographic influence radius. It remains consistent across zoom levels."), QStringLiteral(" m"), this);
+    connect(slider_heatmap_radius, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalHeatmapRadiusChanged);
+
+    QLabel *label_heatmap_solid_center = new QLabel("Solid Center [%]");
+    QSlider *slider_heatmap_solid_center = new SymbologySlider(0, 100, 70,
+        QStringLiteral("Sets how much of the heatmap radius keeps full local opacity before fading to transparency."), QStringLiteral(" %"), this);
+    connect(slider_heatmap_solid_center, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalHeatmapSolidCenterChanged);
+
+    QLabel *label_heatmap_opacity = new QLabel("Opacity [%]");
+    QSlider *slider_heatmap_opacity = new SymbologySlider(0, 100, 75,
+        QStringLiteral("Controls the opacity of the complete heatmap layer."), QStringLiteral(" %"), this);
+    connect(slider_heatmap_opacity, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalHeatmapOpacityChanged);
+
+    vbox->addWidget(label_node_section);
+    vbox->addWidget(label_node_size);
+    vbox->addWidget(slider_node_size);
+    vbox->addSpacing(4);
+    vbox->addWidget(label_link_section);
+    vbox->addWidget(label_link_thickness);
+    vbox->addWidget(slider_link_thickness);
+    vbox->addSpacing(4);
+    vbox->addWidget(label_heatmap_section);
+    vbox->addWidget(label_heatmap_radius);
+    vbox->addWidget(slider_heatmap_radius);
+    vbox->addWidget(label_heatmap_solid_center);
+    vbox->addWidget(slider_heatmap_solid_center);
+    vbox->addWidget(label_heatmap_opacity);
+    vbox->addWidget(slider_heatmap_opacity);
 }
 
 void MapMonitorMenuWidget::addGroupNodeVisuals()
@@ -681,11 +735,6 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
     QRadioButton *radio_node_head = new QRadioButton("Head");
     QRadioButton *radio_node_pressure = new QRadioButton("Pressure");
     
-    QLabel *label_node_size = new QLabel("Node Size [%]");
-    QSlider *slider_node_size = new SymbologySlider(50, 250, 100,
-        QStringLiteral("Scales regular node circles only."), QStringLiteral(" %"), this);
-    connect(slider_node_size, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalNodeSizeChanged);
-
     QLabel *label_multispecies = new QLabel(
         "EPANET Network 3 has<br>"
         "Multi-Species Water<br>"
@@ -740,9 +789,6 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
     vbox->addWidget(radio_node_lake);
     
     vbox->addWidget(label_chlorine);
-
-    vbox->addWidget(label_node_size);
-    vbox->addWidget(slider_node_size);
 }
 void MapMonitorMenuWidget::addGroupLinkVisuals()
 {
@@ -754,11 +800,6 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     QCheckBox *check_flow_direction = new QCheckBox("Show Flow Direction");
     check_flow_direction->setChecked(true);
     
-    QLabel *label_link_thickness = new QLabel("Thickness [px]");
-    QSlider *slider_link_thickness = new SymbologySlider(1, 12, 3,
-        QStringLiteral("Sets the SVG link stroke width and keeps link hit detection aligned with it."), QStringLiteral(" px"), this);
-    connect(slider_link_thickness, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalLinkThicknessChanged);
-
     QRadioButton *radio_link_none = new QRadioButton("None");
     radio_link_none->setChecked(true);
     QRadioButton *radio_link_diameter = new QRadioButton("Diameter");
@@ -804,9 +845,6 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     vbox->addWidget(radio_link_chlorine);
     vbox->addWidget(radio_link_river);
     vbox->addWidget(radio_link_lake);
-
-    vbox->addWidget(label_link_thickness);
-    vbox->addWidget(slider_link_thickness);
 }
 
 void MapMonitorMenuWidget::addGroupHeatmapVisuals()
@@ -830,18 +868,6 @@ void MapMonitorMenuWidget::addGroupHeatmapVisuals()
     QRadioButton *radio_river = new QRadioButton("River Water [%]");
     QRadioButton *radio_lake = new QRadioButton("Lake Water [%]");
     
-    QLabel *label_slider_opacity = new QLabel("Opacity");
-    QSlider *slider_opacity = new SymbologySlider(0, 100, 75,
-        QStringLiteral("Controls the opacity of the complete heatmap layer."), QStringLiteral(" %"), this);
-    
-    QLabel *label_slider_radius = new QLabel("Radius [m]");
-    QSlider *slider_radius = new SymbologySlider(10, 1000, 400,
-        QStringLiteral("Sets each heatmap point's geographic influence radius. It remains consistent across zoom levels."), QStringLiteral(" m"), this);
-
-    QLabel *label_slider_solid_center = new QLabel("Solid center [%]");
-    QSlider *slider_solid_center = new SymbologySlider(0, 100, 70,
-        QStringLiteral("Sets how much of the heatmap radius keeps full local opacity before fading to transparency."), QStringLiteral(" %"), this);
-    
     const auto connect_heatmap_visual =
         [this](QRadioButton *button, VisualHeatmap visual)
     {
@@ -862,10 +888,6 @@ void MapMonitorMenuWidget::addGroupHeatmapVisuals()
     connect_heatmap_visual(radio_river, VisualHeatmap::RiverWater);
     connect_heatmap_visual(radio_lake, VisualHeatmap::LakeWater);
 
-    connect(slider_opacity, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalHeatmapOpacityChanged);
-    connect(slider_radius, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalHeatmapRadiusChanged);
-    connect(slider_solid_center, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalHeatmapSolidCenterChanged);
-    
     vbox->addWidget(radio_none);
     vbox->addWidget(radio_elevation);
     vbox->addWidget(radio_total_demand);
@@ -876,11 +898,4 @@ void MapMonitorMenuWidget::addGroupHeatmapVisuals()
     vbox->addWidget(radio_chlorine);
     vbox->addWidget(radio_river);
     vbox->addWidget(radio_lake);
-    
-    vbox->addWidget(label_slider_opacity);
-    vbox->addWidget(slider_opacity);
-    vbox->addWidget(label_slider_radius);
-    vbox->addWidget(slider_radius);
-    vbox->addWidget(label_slider_solid_center);
-    vbox->addWidget(slider_solid_center);
 }
