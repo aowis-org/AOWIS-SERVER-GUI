@@ -3,12 +3,14 @@
 #include "map_editor_controller.h"
 
 #include <QFocusEvent>
+#include <QHideEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPaintEvent>
 #include <QPainter>
 #include <QPixmap>
 #include <QResizeEvent>
+#include <QShowEvent>
 #include <QWheelEvent>
 
 MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map,
@@ -210,6 +212,12 @@ void MapCanvasWidget::focusOutEvent(QFocusEvent *event)
     QWidget::focusOutEvent(event);
 }
 
+void MapCanvasWidget::hideEvent(QHideEvent *event)
+{
+    this->map_editor_renderer.setRenderingActive(false);
+    QWidget::hideEvent(event);
+}
+
 void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
 {
     if (this->editor_controller &&
@@ -268,4 +276,11 @@ void MapCanvasWidget::resizeEvent(QResizeEvent *event)
 {
     this->map_canvas_entities->positionMarkers();
     QWidget::resizeEvent(event);
+}
+
+void MapCanvasWidget::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    this->map_editor_renderer.setRenderingActive(true);
+    requestRenderUpdate();
 }
