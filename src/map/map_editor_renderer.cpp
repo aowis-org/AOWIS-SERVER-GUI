@@ -60,14 +60,52 @@ void MapEditorRenderer::paint(QPainter &painter, const QPaintEvent &event,
     paintNetwork(painter, network_snapshot, visual_state);
 }
 
+void MapEditorRenderer::prepareProjection(double wrap_reference_longitude)
+{
+    if (!this->map_model || !this->canvas)
+    {
+        this->projection_ready = false;
+        return;
+    }
+
+    this->projection_zoom = this->map_model->zoom();
+    this->projection_center_tile = this->map_model->centerTile();
+    this->projection_viewport_size = this->canvas->size();
+
+    const double wrapped_reference_longitude =
+        GeoWebMercator::normalizeLongitude(wrap_reference_longitude);
+    this->projection_reference_base_tile_x = GeoWebMercator::lonToTileX(
+        wrapped_reference_longitude, this->projection_zoom);
+    this->projection_reference_tile_x = GeoWebMercator::nearestWrappedTileX(
+        this->projection_reference_base_tile_x, this->projection_center_tile.x(),
+        this->projection_zoom);
+    this->projection_ready = true;
+}
+
 QPointF MapEditorRenderer::screenFromWgs84(const CoordinateWGS84 &coordinate,
                                            double wrap_reference_longitude) const
 {
-    if (!this->map_model || !this->canvas)
+    Q_UNUSED(wrap_reference_longitude)
+
+    if (!this->projection_ready)
         return QPointF();
 
-    return this->map_model->screenFromWgs84(
-        coordinate, this->canvas->size(), wrap_reference_longitude);
+    const double wrapped_longitude = GeoWebMercator::normalizeLongitude(
+        coordinate.longitude_deg);
+    const double base_tile_x = GeoWebMercator::lonToTileX(
+        wrapped_longitude, this->projection_zoom);
+    const double local_tile_x = GeoWebMercator::nearestWrappedTileX(
+        base_tile_x, this->projection_reference_base_tile_x, this->projection_zoom);
+    const double tile_x = local_tile_x + this->projection_reference_tile_x -
+        this->projection_reference_base_tile_x;
+    const double tile_y = GeoWebMercator::latToTileY(
+        coordinate.latitude_deg, this->projection_zoom);
+
+    return QPointF(
+        double(this->projection_viewport_size.width()) / 2.0 +
+            (tile_x - this->projection_center_tile.x()) * MapModel::TileSize,
+        double(this->projection_viewport_size.height()) / 2.0 +
+            (tile_y - this->projection_center_tile.y()) * MapModel::TileSize);
 }
 
 const NetworkRenderNode *MapEditorRenderer::nodeByUuid(
@@ -320,10 +358,20 @@ void MapEditorRenderer::paintNetwork(
     const NetworkRenderSnapshot &network_snapshot,
     const MapEditorVisualState &visual_state)
 {
+    prepareProjection(visual_state.wrap_reference_longitude);
+    if (!this->projection_ready)
+        return;
+
     QHash<QUuid, const NetworkRenderNode *> nodes_by_uuid;
-    nodes_by_uuid.reserve(network_snapshot.nodes.size());
-    for (const NetworkRenderNode &node : network_snapshot.nodes)
-        nodes_by_uuid.insert(node.uuid, &node);
+    const bool needs_node_lookup = visual_state.placement.creating &&
+        (visual_state.placement.entity == InfrastructureEntity::Pipe ||
+         isHydraulicDeviceLink(visual_state.placement.entity));
+    if (needs_node_lookup)
+    {
+        nodes_by_uuid.reserve(network_snapshot.nodes.size());
+        for (const NetworkRenderNode &node : network_snapshot.nodes)
+            nodes_by_uuid.insert(node.uuid, &node);
+    }
 
     paintPipes(painter, network_snapshot, visual_state, nodes_by_uuid);
     paintDeviceLinks(painter, network_snapshot, visual_state, nodes_by_uuid);
@@ -514,10 +562,18 @@ void MapEditorRenderer::paintMarkers(
     painter.save();
     painter.setPen(Qt::NoPen);
 
+    QList<QPointF> screen_positions;
+    screen_positions.reserve(network_snapshot.nodes.size());
     for (const NetworkRenderNode &node : network_snapshot.nodes)
     {
-        const QPointF point = screenFromWgs84(
-            node.coordinate_wgs84, visual_state.wrap_reference_longitude);
+        screen_positions.append(screenFromWgs84(
+            node.coordinate_wgs84, visual_state.wrap_reference_longitude));
+    }
+
+    for (qsizetype index = 0; index < network_snapshot.nodes.size(); ++index)
+    {
+        const NetworkRenderNode &node = network_snapshot.nodes.at(index);
+        const QPointF &point = screen_positions.at(index);
         if (node.uuid == visual_state.placement.connection_target_uuid)
         {
             painter.setBrush(QColor(0, 140, 255));
@@ -530,12 +586,12 @@ void MapEditorRenderer::paintMarkers(
         }
     }
 
-    for (const NetworkRenderNode &node : network_snapshot.nodes)
+    for (qsizetype index = 0; index < network_snapshot.nodes.size(); ++index)
     {
+        const NetworkRenderNode &node = network_snapshot.nodes.at(index);
         const QString path = MapEntityPixmapRenderer::pixmapPathForEntity(
             node.entity_type);
-        const QPointF screen_position = screenFromWgs84(
-            node.coordinate_wgs84, visual_state.wrap_reference_longitude);
+        const QPointF &screen_position = screen_positions.at(index);
         const QPointF rounded_anchor(
             qRound(screen_position.x()), qRound(screen_position.y()));
         const QRectF target_rect = this->pixmap_renderer.bottomAnchoredRect(

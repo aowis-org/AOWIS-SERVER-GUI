@@ -7,6 +7,8 @@
 #include "../network_render_snapshot.h"
 
 #include <QHash>
+#include <QPointF>
+#include <QSize>
 
 class MapModel;
 class QPaintEvent;
@@ -24,6 +26,7 @@ public:
                const MapEditorViewportRenderState &viewport_state);
 
 private:
+    void prepareProjection(double wrap_reference_longitude);
     QPointF screenFromWgs84(const CoordinateWGS84 &coordinate,
                             double wrap_reference_longitude) const;
     const NetworkRenderNode *nodeByUuid(
@@ -59,6 +62,12 @@ private:
     MapModel *map_model = nullptr;
     QWidget *canvas = nullptr;
     MapEntityPixmapRenderer pixmap_renderer;
+    QPointF projection_center_tile;
+    QSize projection_viewport_size;
+    double projection_reference_base_tile_x = 0.0;
+    double projection_reference_tile_x = 0.0;
+    int projection_zoom = -1;
+    bool projection_ready = false;
 };
 
 #endif // MAP_EDITOR_RENDERER_H
