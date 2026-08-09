@@ -48,8 +48,8 @@ public:
 
 public slots:
     void setBackgroundOpacity(int opacity);
-    void setSymbology(VisualNode visual_node, int node_size_percent,
-                      VisualLink visual_link, int link_thickness_px);
+    void setSymbology(VisualNode visual_node, int node_size_percent, VisualLink visual_link, int link_thickness_px);
+    void setHeatmap(VisualHeatmap visual_heatmap, int opacity, int radius_m, int solid_center_percent);
 
 protected:
     void hideEvent(QHideEvent *event) override;
@@ -106,8 +106,11 @@ private:
         quint64 revision = 0;
         int node_size_percent = 100;
         qreal link_width = 3.0;
+        int heatmap_radius_m = 400;
+        int heatmap_solid_center_percent = 70;
         QHash<quint32, QRgb> node_colors;
         QHash<quint32, QRgb> link_colors;
+        QHash<quint32, double> heatmap_fractions;
     };
 
     struct RenderRequest
@@ -135,6 +138,7 @@ private:
         QRectF coverage_world_bounds;
         QRectF image_world_bounds;
         QImage image;
+        QImage heatmap_image;
     };
 
     enum class HitCollection
@@ -147,11 +151,12 @@ private:
     void syncSnapshot();
     void rebuildReferenceGeometry();
     void rebuildSymbology(bool rebuild_ranges, bool rebuild_node_colors = true,
-                          bool rebuild_link_colors = true);
+                          bool rebuild_link_colors = true, bool rebuild_heatmap = true);
     void clearRenderedCache();
     void requestRenderCache(bool force = false);
     RenderRequest createRenderRequest(quint64 request_id) const;
     static RenderResult renderRequest(const RenderRequest &request);
+    static QImage renderHeatmap(const RenderRequest &request, qreal scale, qreal image_left, qreal image_top);
     void applyRenderResult(RenderResult result);
     bool renderedCacheCoversCurrentView() const;
     bool pendingCacheCoversCurrentView() const;
@@ -179,12 +184,17 @@ private:
     int node_size_percent = 100;
     VisualLink visual_link = VisualLink::None;
     int link_thickness_px = 3;
+    VisualHeatmap visual_heatmap = VisualHeatmap::None;
+    int heatmap_opacity = 75;
+    int heatmap_radius_m = 400;
+    int heatmap_solid_center_percent = 70;
 
     std::shared_ptr<const RenderGeometry> render_geometry;
     std::shared_ptr<const RenderSymbology> render_symbology;
     bool reference_geometry_ready = false;
 
     QImage rendered_network_cache;
+    QImage rendered_heatmap_cache;
     QRectF rendered_cache_coverage_world_bounds;
     QRectF rendered_cache_image_world_bounds;
     int rendered_cache_zoom = -1;

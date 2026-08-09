@@ -312,28 +312,40 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     {
         this->visual_heatmap = visual_heatmap;
         emit signalShowMapLegendHeatmap(visual_heatmap);
-#ifdef Q_OS_WASM
+#ifndef Q_OS_WASM
+        this->desktop_network_overlay->setHeatmap(
+            this->visual_heatmap, this->heatmap_opacity, this->heatmap_radius_m, this->heatmap_solid_center_percent);
+#else
         scheduleWasmNetworkSymbologySync(false);
 #endif
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapOpacityChanged, this, [this](int opacity)
     {
         this->heatmap_opacity = qBound(0, opacity, 100);
-#ifdef Q_OS_WASM
+#ifndef Q_OS_WASM
+        this->desktop_network_overlay->setHeatmap(
+            this->visual_heatmap, this->heatmap_opacity, this->heatmap_radius_m, this->heatmap_solid_center_percent);
+#else
         scheduleWasmNetworkSymbologySync(false);
 #endif
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapRadiusChanged, this, [this](int radius)
     {
         this->heatmap_radius_m = qBound(10, radius, 1000);
-#ifdef Q_OS_WASM
+#ifndef Q_OS_WASM
+        this->desktop_network_overlay->setHeatmap(
+            this->visual_heatmap, this->heatmap_opacity, this->heatmap_radius_m, this->heatmap_solid_center_percent);
+#else
         scheduleWasmNetworkSymbologySync(false);
 #endif
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapSolidCenterChanged, this, [this](int percent)
     {
         this->heatmap_solid_center_percent = qBound(0, percent, 100);
-#ifdef Q_OS_WASM
+#ifndef Q_OS_WASM
+        this->desktop_network_overlay->setHeatmap(
+            this->visual_heatmap, this->heatmap_opacity, this->heatmap_radius_m, this->heatmap_solid_center_percent);
+#else
         scheduleWasmNetworkSymbologySync(false);
 #endif
     });

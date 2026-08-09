@@ -3,6 +3,7 @@
 #include "../geo_web_mercator.h"
 #include "../hydraulic_data.h"
 
+#include <QBrush>
 #include <QBuffer>
 #include <QByteArray>
 #include <QColor>
@@ -13,6 +14,7 @@
 #include <QPainter>
 #include <QPaintEvent>
 #include <QPalette>
+#include <QRadialGradient>
 #include <QPointer>
 #include <QPixmap>
 #include <QRunnable>
@@ -44,6 +46,12 @@ constexpr qreal NetworkImageRebuildEdge = 256.0;
 constexpr qreal LinkHitDistance = 7.0;
 constexpr qreal SpatialCellSize = 128.0;
 constexpr int SymbologyColorBucketCount = 256;
+constexpr int HeatmapMaximumDimension = 2048;
+constexpr qint64 HeatmapMaximumArea = 2LL * 1024LL * 1024LL;
+constexpr qint64 HeatmapMaximumKernelCachePixels = 8LL * 1024LL * 1024LL;
+constexpr qreal HeatmapMaximumKernelRadius = 256.0;
+constexpr int HeatmapMaximumColorBuckets = 64;
+constexpr double WebMercatorMetersPerPixelAtZoomZero = 156543.03392804097;
 const QColor NetworkColor(Qt::black);
 const QColor SymbologyValueUnavailableColor(Qt::black);
 
@@ -336,6 +344,39 @@ QPair<double, double> linkRange(const HydraulicData &hydraulic_data, VisualLink 
     return qMakePair(0.0, 0.0);
 }
 
+QPair<double, double> heatmapRange(const HydraulicData &hydraulic_data, VisualHeatmap visual_heatmap)
+{
+    switch (visual_heatmap)
+    {
+    case VisualHeatmap::Elevation:
+        return qMakePair(hydraulic_data.heatmapElevationMMinimum(), hydraulic_data.heatmapElevationMMaximum());
+    case VisualHeatmap::BaseDemand:
+        return qMakePair(hydraulic_data.nodeBaseDemandM3PerHMinimum(), hydraulic_data.nodeBaseDemandM3PerHMaximum());
+    case VisualHeatmap::TotalDemand:
+        return qMakePair(hydraulic_data.heatmapTotalDemandM3PerHMinimum(), hydraulic_data.heatmapTotalDemandM3PerHMaximum());
+    case VisualHeatmap::DemandDeficit:
+        return qMakePair(hydraulic_data.heatmapDemandDeficitM3PerHMinimum(), hydraulic_data.heatmapDemandDeficitM3PerHMaximum());
+    case VisualHeatmap::EmitterFlow:
+        return qMakePair(hydraulic_data.nodeEmitterFlowM3PerHMinimum(), hydraulic_data.nodeEmitterFlowM3PerHMaximum());
+    case VisualHeatmap::Leakage:
+        return qMakePair(hydraulic_data.heatmapLeakageM3PerHMinimum(), hydraulic_data.heatmapLeakageM3PerHMaximum());
+    case VisualHeatmap::Head:
+        return qMakePair(hydraulic_data.heatmapHeadMMinimum(), hydraulic_data.heatmapHeadMMaximum());
+    case VisualHeatmap::Pressure:
+        return qMakePair(hydraulic_data.heatmapPressureMMinimum(), hydraulic_data.heatmapPressureMMaximum());
+    case VisualHeatmap::Chlorine:
+        return qMakePair(hydraulic_data.heatmapChlorineMgPerLMinimum(), hydraulic_data.heatmapChlorineMgPerLMaximum());
+    case VisualHeatmap::RiverWater:
+        return qMakePair(hydraulic_data.heatmapRiverWaterPercentMinimum(), hydraulic_data.heatmapRiverWaterPercentMaximum());
+    case VisualHeatmap::LakeWater:
+        return qMakePair(hydraulic_data.heatmapLakeWaterPercentMinimum(), hydraulic_data.heatmapLakeWaterPercentMaximum());
+    case VisualHeatmap::None:
+        break;
+    }
+
+    return qMakePair(0.0, 0.0);
+}
+
 QHash<QUuid, double> nodeValues(const NetworkHydraulic &network_hydraulic, VisualNode visual_node)
 {
     QHash<QUuid, double> values;
@@ -414,12 +455,43 @@ QHash<QUuid, double> linkValues(const NetworkHydraulic &network_hydraulic, Visua
     return values;
 }
 
-QColor rampColor(double fraction)
+QHash<QUuid, double> heatmapValues(const NetworkHydraulic &network_hydraulic, VisualHeatmap visual_heatmap)
+{
+    switch (visual_heatmap)
+    {
+    case VisualHeatmap::Elevation:
+        return nodeValues(network_hydraulic, VisualNode::Elevation);
+    case VisualHeatmap::BaseDemand:
+        return nodeValues(network_hydraulic, VisualNode::BaseDemand);
+    case VisualHeatmap::TotalDemand:
+        return nodeValues(network_hydraulic, VisualNode::TotalDemand);
+    case VisualHeatmap::DemandDeficit:
+        return nodeValues(network_hydraulic, VisualNode::DemandDeficit);
+    case VisualHeatmap::EmitterFlow:
+        return nodeValues(network_hydraulic, VisualNode::EmitterFlow);
+    case VisualHeatmap::Leakage:
+        return nodeValues(network_hydraulic, VisualNode::Leakage);
+    case VisualHeatmap::Head:
+        return nodeValues(network_hydraulic, VisualNode::Head);
+    case VisualHeatmap::Pressure:
+        return nodeValues(network_hydraulic, VisualNode::Pressure);
+    case VisualHeatmap::Chlorine:
+        return nodeValues(network_hydraulic, VisualNode::Chlorine);
+    case VisualHeatmap::RiverWater:
+        return nodeValues(network_hydraulic, VisualNode::RiverWater);
+    case VisualHeatmap::LakeWater:
+        return nodeValues(network_hydraulic, VisualNode::LakeWater);
+    case VisualHeatmap::None:
+        break;
+    }
+
+    return QHash<QUuid, double>();
+}
+
+QColor interpolatedRampColor(double fraction)
 {
     const double limited_fraction = qBound(0.0, fraction, 1.0);
-    const int bucket = qRound(limited_fraction * (SymbologyColorBucketCount - 1));
-    const double quantized_fraction = double(bucket) / double(SymbologyColorBucketCount - 1);
-    const double scaled = quantized_fraction * (SymbologyRampColors.size() - 1);
+    const double scaled = limited_fraction * (SymbologyRampColors.size() - 1);
     const int left_index = qMin(int(SymbologyRampColors.size()) - 1, int(std::floor(scaled)));
     const int right_index = qMin(int(SymbologyRampColors.size()) - 1, left_index + 1);
     const double ratio = scaled - left_index;
@@ -431,6 +503,13 @@ QColor rampColor(double fraction)
         qRound(left.blue() + (right.blue() - left.blue()) * ratio));
 }
 
+QColor rampColor(double fraction)
+{
+    const double limited_fraction = qBound(0.0, fraction, 1.0);
+    const int bucket = qRound(limited_fraction * (SymbologyColorBucketCount - 1));
+    return interpolatedRampColor(double(bucket) / double(SymbologyColorBucketCount - 1));
+}
+
 QRgb symbologyColor(double value, double minimum, double maximum)
 {
     if (!std::isfinite(value) || !std::isfinite(minimum) || !std::isfinite(maximum))
@@ -438,6 +517,99 @@ QRgb symbologyColor(double value, double minimum, double maximum)
     if (minimum == maximum)
         return rampColor(0.5).rgb();
     return rampColor((value - minimum) / (maximum - minimum)).rgb();
+}
+
+double heatmapValueFraction(double value, double minimum, double maximum)
+{
+    if (!std::isfinite(value) || !std::isfinite(minimum) || !std::isfinite(maximum))
+        return std::numeric_limits<double>::quiet_NaN();
+    if (minimum == maximum)
+        return 0.5;
+    return qBound(0.0, (value - minimum) / (maximum - minimum), 1.0);
+}
+
+qreal heatmapRadiusReferencePixels(const QRectF &geometry_bounds, int radius_m)
+{
+    if (geometry_bounds.isEmpty())
+        return 0.0;
+
+    const double center_latitude = GeoWebMercator::worldPixelToLonLat(
+        0.0, geometry_bounds.center().y(), ReferenceZoom).latitude_deg;
+    const double latitude_radians = qDegreesToRadians(
+        qBound(-GeoWebMercator::MaximumLatitude, center_latitude, GeoWebMercator::MaximumLatitude));
+    const double meters_per_pixel = std::max(0.000001,
+        WebMercatorMetersPerPixelAtZoomZero * std::cos(latitude_radians) / std::ldexp(1.0, ReferenceZoom));
+    return qMax<qreal>(1.0, qBound(10, radius_m, 1000) / meters_per_pixel);
+}
+
+struct HeatmapRasterDimensions
+{
+    QSize size;
+    qreal scale = 1.0;
+};
+
+HeatmapRasterDimensions boundedHeatmapRasterDimensions(const QSize &display_size)
+{
+    HeatmapRasterDimensions result;
+    if (!display_size.isValid())
+        return result;
+
+    const qreal display_area = qMax<qreal>(1.0, qreal(display_size.width()) * display_size.height());
+    const qreal factor = std::min({
+        qreal(1.0),
+        HeatmapMaximumDimension / qMax<qreal>(1.0, display_size.width()),
+        HeatmapMaximumDimension / qMax<qreal>(1.0, display_size.height()),
+        std::sqrt(HeatmapMaximumArea / display_area)
+    });
+    result.scale = qMax<qreal>(0.000001, factor);
+    result.size = QSize(
+        qMax(1, qFloor(display_size.width() * result.scale)),
+        qMax(1, qFloor(display_size.height() * result.scale)));
+    return result;
+}
+
+qreal heatmapKernelRadius(qreal radius)
+{
+    return qBound<qreal>(1.0, radius, HeatmapMaximumKernelRadius);
+}
+
+int heatmapColorBucketCount(qreal radius)
+{
+    const qreal kernel_radius = heatmapKernelRadius(radius);
+    const int diameter = qMax(3, qCeil(kernel_radius * 2.0) + 2);
+    const int maximum_by_memory = qMax(1, int(HeatmapMaximumKernelCachePixels / (qint64(diameter) * diameter)));
+    return qMax(int(SymbologyRampColors.size()), qMin(HeatmapMaximumColorBuckets, maximum_by_memory));
+}
+
+QImage createHeatmapKernel(qreal radius, const QColor &color, int solid_center_percent)
+{
+    const qreal kernel_radius = heatmapKernelRadius(qMax<qreal>(1.0, radius));
+    const int diameter = qMax(3, qCeil(kernel_radius * 2.0) + 2);
+    const qreal center = diameter / 2.0;
+    QImage image(QSize(diameter, diameter), QImage::Format_ARGB32_Premultiplied);
+    if (image.isNull())
+        return QImage();
+    image.fill(Qt::transparent);
+
+    const qreal solid_center_fraction = qBound<qreal>(0.0, solid_center_percent / 100.0, 0.9);
+    const qreal half_opacity_fraction = solid_center_fraction +
+        (1.0 - solid_center_fraction) * 0.4375;
+    QRadialGradient gradient(QPointF(center, center), kernel_radius);
+    QColor full_color = color;
+    full_color.setAlpha(255);
+    QColor half_color = color;
+    half_color.setAlpha(128);
+    QColor transparent_color = color;
+    transparent_color.setAlpha(0);
+    gradient.setColorAt(0.0, full_color);
+    gradient.setColorAt(solid_center_fraction, full_color);
+    gradient.setColorAt(half_opacity_fraction, half_color);
+    gradient.setColorAt(1.0, transparent_color);
+
+    QPainter painter(&image);
+    painter.fillRect(image.rect(), QBrush(gradient));
+    painter.end();
+    return image;
 }
 
 int spatialCellCoordinate(qreal value)
@@ -574,10 +746,12 @@ MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicD
     connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
         [this](InfrastructureEntity, const QUuid &)
     {
-        if (this->visual_node == VisualNode::None)
+        const bool rebuild_node_colors = this->visual_node != VisualNode::None;
+        const bool rebuild_heatmap = this->visual_heatmap != VisualHeatmap::None;
+        if (!rebuild_node_colors && !rebuild_heatmap)
             return;
 
-        rebuildSymbology(true, true, false);
+        rebuildSymbology(true, rebuild_node_colors, false, rebuild_heatmap);
         requestRenderCache(true);
         update();
     });
@@ -587,7 +761,7 @@ MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicD
         if (this->visual_link == VisualLink::None)
             return;
 
-        rebuildSymbology(true, false, true);
+        rebuildSymbology(true, false, true, false);
         requestRenderCache(true);
         update();
     });
@@ -617,8 +791,7 @@ void MapNetworkOverlayWidget::setBackgroundOpacity(int opacity)
     update();
 }
 
-void MapNetworkOverlayWidget::setSymbology(VisualNode visual_node, int node_size_percent,
-                                           VisualLink visual_link, int link_thickness_px)
+void MapNetworkOverlayWidget::setSymbology(VisualNode visual_node, int node_size_percent, VisualLink visual_link, int link_thickness_px)
 {
     const int bounded_node_size_percent = qBound(50, node_size_percent, 250);
     const int bounded_link_thickness_px = qBound(1, link_thickness_px, 12);
@@ -635,8 +808,39 @@ void MapNetworkOverlayWidget::setSymbology(VisualNode visual_node, int node_size
     this->visual_link = visual_link;
     this->link_thickness_px = bounded_link_thickness_px;
     rebuildSymbology(false, node_visual_changed || !this->render_symbology,
-                     link_visual_changed || !this->render_symbology);
+        link_visual_changed || !this->render_symbology, false);
     requestRenderCache(true);
+    update();
+}
+
+void MapNetworkOverlayWidget::setHeatmap(VisualHeatmap visual_heatmap, int opacity, int radius_m, int solid_center_percent)
+{
+    const int bounded_opacity = qBound(0, opacity, 100);
+    const int bounded_radius_m = qBound(10, radius_m, 1000);
+    const int bounded_solid_center_percent = qBound(0, solid_center_percent, 100);
+    const bool visual_changed = this->visual_heatmap != visual_heatmap;
+    const bool opacity_changed = this->heatmap_opacity != bounded_opacity;
+    const bool radius_changed = this->heatmap_radius_m != bounded_radius_m;
+    const bool solid_center_changed = this->heatmap_solid_center_percent != bounded_solid_center_percent;
+
+    if (!visual_changed && !opacity_changed && !radius_changed && !solid_center_changed)
+        return;
+
+    this->visual_heatmap = visual_heatmap;
+    this->heatmap_opacity = bounded_opacity;
+    this->heatmap_radius_m = bounded_radius_m;
+    this->heatmap_solid_center_percent = bounded_solid_center_percent;
+
+    const bool heatmap_render_changed = visual_changed ||
+        (visual_heatmap != VisualHeatmap::None && (radius_changed || solid_center_changed));
+    if (heatmap_render_changed)
+    {
+        rebuildSymbology(false, false, false, visual_changed || !this->render_symbology);
+        if (visual_heatmap == VisualHeatmap::None)
+            this->rendered_heatmap_cache = QImage();
+        requestRenderCache(true);
+    }
+
     update();
 }
 
@@ -889,7 +1093,7 @@ void MapNetworkOverlayWidget::rebuildReferenceGeometry()
 }
 
 void MapNetworkOverlayWidget::rebuildSymbology(bool rebuild_ranges, bool rebuild_node_colors,
-                                               bool rebuild_link_colors)
+                                               bool rebuild_link_colors, bool rebuild_heatmap)
 {
     if (rebuild_ranges)
         this->hydraulic_data->rebuildSymbologyMinMaxValues();
@@ -898,11 +1102,15 @@ void MapNetworkOverlayWidget::rebuildSymbology(bool rebuild_ranges, bool rebuild
     symbology->revision = ++this->symbology_revision;
     symbology->node_size_percent = qBound(50, this->node_size_percent, 250);
     symbology->link_width = qBound<qreal>(1.0, this->link_thickness_px, 12.0);
+    symbology->heatmap_radius_m = qBound(10, this->heatmap_radius_m, 1000);
+    symbology->heatmap_solid_center_percent = qBound(0, this->heatmap_solid_center_percent, 100);
 
     if (this->render_symbology && !rebuild_node_colors)
         symbology->node_colors = this->render_symbology->node_colors;
     if (this->render_symbology && !rebuild_link_colors)
         symbology->link_colors = this->render_symbology->link_colors;
+    if (this->render_symbology && !rebuild_heatmap)
+        symbology->heatmap_fractions = this->render_symbology->heatmap_fractions;
 
     const NetworkHydraulic &network_hydraulic = this->hydraulic_data->networkHydraulic();
     if (rebuild_node_colors)
@@ -951,6 +1159,26 @@ void MapNetworkOverlayWidget::rebuildSymbology(bool rebuild_ranges, bool rebuild
         }
     }
 
+    if (rebuild_heatmap)
+    {
+        symbology->heatmap_fractions.clear();
+        if (this->visual_heatmap != VisualHeatmap::None)
+        {
+            const QPair<double, double> range = heatmapRange(*this->hydraulic_data, this->visual_heatmap);
+            const QHash<QUuid, double> values = heatmapValues(network_hydraulic, this->visual_heatmap);
+            symbology->heatmap_fractions.reserve(this->snapshot.nodes.size());
+            for (const NetworkRenderNode &node : this->snapshot.nodes)
+            {
+                const QHash<QUuid, double>::const_iterator iterator = values.constFind(node.uuid);
+                if (iterator == values.cend())
+                    continue;
+                const double fraction = heatmapValueFraction(iterator.value(), range.first, range.second);
+                if (std::isfinite(fraction))
+                    symbology->heatmap_fractions.insert(node.render_id, fraction);
+            }
+        }
+    }
+
     this->render_symbology = symbology;
 }
 
@@ -966,6 +1194,7 @@ void MapNetworkOverlayWidget::clearRenderedCache()
     this->render_restart_requested = this->render_worker_running;
     this->render_restart_force = this->render_worker_running;
     this->rendered_network_cache = QImage();
+    this->rendered_heatmap_cache = QImage();
     this->rendered_cache_coverage_world_bounds = QRectF();
     this->rendered_cache_image_world_bounds = QRectF();
     this->rendered_cache_zoom = -1;
@@ -1063,7 +1292,11 @@ MapNetworkOverlayWidget::RenderRequest MapNetworkOverlayWidget::createRenderRequ
     const qreal render_half_width = qMax(
         markerSizeForZoom(request.zoom, request.symbology->node_size_percent) / 2.0,
         request.symbology->link_width / 2.0);
-    const qreal geometry_padding = (render_half_width + NetworkImagePadding) / scale;
+    const qreal heatmap_padding = request.symbology->heatmap_fractions.isEmpty()
+        ? 0.0 : heatmapRadiusReferencePixels(
+            this->render_geometry->world_bounds, request.symbology->heatmap_radius_m) + NetworkImagePadding / scale;
+    const qreal geometry_padding = qMax(
+        (render_half_width + NetworkImagePadding) / scale, heatmap_padding);
     const QRectF padded_geometry_bounds = this->render_geometry->world_bounds.adjusted(
         -geometry_padding, -geometry_padding, geometry_padding, geometry_padding);
     const QRectF visible_geometry_bounds = request.coverage_world_bounds.intersected(padded_geometry_bounds);
@@ -1086,6 +1319,92 @@ MapNetworkOverlayWidget::RenderRequest MapNetworkOverlayWidget::createRenderRequ
         visible_geometry_bounds.topLeft(),
         QSizeF(logical_width / scale, logical_height / scale));
     return request;
+}
+
+QImage MapNetworkOverlayWidget::renderHeatmap(const RenderRequest &request, qreal scale, qreal image_left, qreal image_top)
+{
+    if (!request.geometry || !request.symbology || request.symbology->heatmap_fractions.isEmpty())
+        return QImage();
+    if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
+        return QImage();
+
+    const HeatmapRasterDimensions raster = boundedHeatmapRasterDimensions(request.logical_size);
+    if (!raster.size.isValid() || raster.scale <= 0.0)
+        return QImage();
+
+    const qreal radius_reference_pixels = heatmapRadiusReferencePixels(
+        request.geometry->world_bounds, request.symbology->heatmap_radius_m);
+    const qreal radius = qMax<qreal>(1.0, radius_reference_pixels * scale * raster.scale);
+    const int color_bucket_count = heatmapColorBucketCount(radius);
+    const qreal display_diameter = qMax<qreal>(3.0, qCeil(radius * 2.0) + 2.0);
+
+    QImage heatmap(raster.size, QImage::Format_ARGB32_Premultiplied);
+    if (heatmap.isNull())
+        return QImage();
+    heatmap.fill(Qt::transparent);
+
+    QHash<int, QImage> kernel_cache;
+    kernel_cache.reserve(color_bucket_count);
+    QPainter painter(&heatmap);
+    painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+
+    int processed_markers = 0;
+    for (const RenderGeometry::Marker &marker : request.geometry->markers)
+    {
+        if ((++processed_markers & 255) == 0 && request.cancelled &&
+            request.cancelled->load(std::memory_order_relaxed))
+        {
+            painter.end();
+            return QImage();
+        }
+
+        if (marker.entity_type != InfrastructureEntity::Junction &&
+            marker.entity_type != InfrastructureEntity::Reservoir &&
+            marker.entity_type != InfrastructureEntity::Tank)
+        {
+            continue;
+        }
+
+        const QHash<quint32, double>::const_iterator fraction_iterator =
+            request.symbology->heatmap_fractions.constFind(marker.render_id);
+        if (fraction_iterator == request.symbology->heatmap_fractions.cend())
+            continue;
+
+        const qreal x = (marker.world_position.x() - image_left) * scale * raster.scale;
+        const qreal y = (marker.world_position.y() - image_top) * scale * raster.scale;
+        if (x + radius < 0.0 || y + radius < 0.0 ||
+            x - radius > raster.size.width() || y - radius > raster.size.height())
+        {
+            continue;
+        }
+
+        const int bucket = qBound(0,
+            qRound(fraction_iterator.value() * (color_bucket_count - 1)), color_bucket_count - 1);
+        QHash<int, QImage>::iterator kernel_iterator = kernel_cache.find(bucket);
+        if (kernel_iterator == kernel_cache.end())
+        {
+            const double bucket_fraction = color_bucket_count <= 1
+                ? 0.5 : double(bucket) / double(color_bucket_count - 1);
+            QImage kernel = createHeatmapKernel(
+                radius, interpolatedRampColor(bucket_fraction),
+                request.symbology->heatmap_solid_center_percent);
+            if (kernel.isNull())
+            {
+                painter.end();
+                return QImage();
+            }
+            kernel_iterator = kernel_cache.insert(bucket, kernel);
+        }
+
+        const QImage &kernel = kernel_iterator.value();
+        painter.drawImage(QRectF(
+            x - display_diameter / 2.0, y - display_diameter / 2.0,
+            display_diameter, display_diameter), kernel, QRectF(kernel.rect()));
+    }
+
+    painter.end();
+    return heatmap;
 }
 
 MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(const RenderRequest &request)
@@ -1418,6 +1737,8 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
         workers.pool.start(runnable);
     }
 
+    result.heatmap_image = renderHeatmap(request, scale, image_left, image_top);
+
     for (int stripe_index = 0; stripe_index < stripe_count; ++stripe_index)
         completed_stripes.acquire();
 
@@ -1475,6 +1796,7 @@ void MapNetworkOverlayWidget::applyRenderResult(RenderResult result)
     if (this->rendering_active && isVisible() && result_matches_current_view && !result.image.isNull())
     {
         this->rendered_network_cache = std::move(result.image);
+        this->rendered_heatmap_cache = std::move(result.heatmap_image);
         this->rendered_cache_coverage_world_bounds = result.coverage_world_bounds;
         this->rendered_cache_image_world_bounds = result.image_world_bounds;
         this->rendered_cache_zoom = result.zoom;
@@ -1568,6 +1890,16 @@ void MapNetworkOverlayWidget::paintNetwork(QPainter &painter)
         height() / 2.0 + (this->rendered_cache_image_world_bounds.top() - center.y()) * scale,
         this->rendered_cache_image_world_bounds.width() * scale,
         this->rendered_cache_image_world_bounds.height() * scale);
+
+    if (!this->rendered_heatmap_cache.isNull() && this->visual_heatmap != VisualHeatmap::None &&
+        this->heatmap_opacity > 0)
+    {
+        painter.save();
+        painter.setOpacity(this->heatmap_opacity / 100.0);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        painter.drawImage(target_rect, this->rendered_heatmap_cache);
+        painter.restore();
+    }
 
     painter.setRenderHint(QPainter::SmoothPixmapTransform,
         this->rendered_cache_zoom != this->map_model->zoom());
