@@ -10,10 +10,11 @@
 #include <QDebug>
 #include <QList>
 #include <QTimer>
-#ifdef Q_OS_WIN
+#ifndef __EMSCRIPTEN__
 #include <QImage>
 #include <QMetaObject>
 #include <QRunnable>
+#include <QThread>
 #endif
 
 namespace
@@ -23,7 +24,9 @@ constexpr qint64 TileRetryInitialDelayMs = 1000;
 constexpr qint64 TileRetryMaximumDelayMs = 30000;
 #ifdef Q_OS_WIN
 constexpr int TileRequestDispatchIntervalMs = 1;
-constexpr int TileDecodeThreadCount = 2;
+#endif
+#ifndef __EMSCRIPTEN__
+constexpr int TileDecodeThreadCountMaximum = 4;
 #endif
 
 int positiveModulo(int value, int divisor)
@@ -54,8 +57,11 @@ MapTileRepository::MapTileRepository(QObject *parent)
     this->tile_request_timer->setTimerType(Qt::PreciseTimer);
     this->tile_request_timer->setInterval(TileRequestDispatchIntervalMs);
     connect(this->tile_request_timer, &QTimer::timeout, this, &MapTileRepository::processTileRequestQueue);
-
-    this->tile_decode_pool.setMaxThreadCount(TileDecodeThreadCount);
+#endif
+#ifndef __EMSCRIPTEN__
+    const int decode_threads = qMax(1, qMin(TileDecodeThreadCountMaximum,
+        qMax(1, QThread::idealThreadCount() / 2)));
+    this->tile_decode_pool.setMaxThreadCount(decode_threads);
     this->tile_decode_pool.setExpiryTimeout(30000);
 #endif
 
@@ -64,7 +70,7 @@ MapTileRepository::MapTileRepository(QObject *parent)
 
 MapTileRepository::~MapTileRepository()
 {
-#ifdef Q_OS_WIN
+#ifndef __EMSCRIPTEN__
     this->tile_decode_pool.clear();
     this->tile_decode_pool.waitForDone();
 #endif
@@ -334,7 +340,7 @@ void MapTileRepository::tileDataReceived(const QString &key, const QByteArray &d
         return;
     }
 
-#ifdef Q_OS_WIN
+#ifndef __EMSCRIPTEN__
     const quint64 generation = this->tile_generation;
     MapTileRepository *repository = this;
     this->tile_decode_pool.start(QRunnable::create([repository, key, data, generation]
@@ -356,7 +362,7 @@ void MapTileRepository::tileDataReceived(const QString &key, const QByteArray &d
 #endif
 }
 
-#ifdef Q_OS_WIN
+#ifndef __EMSCRIPTEN__
 void MapTileRepository::finishTileDecode(const QString &key, quint64 generation, const QImage &image)
 {
     if (generation != this->tile_generation || !this->tiles_pending.contains(key))

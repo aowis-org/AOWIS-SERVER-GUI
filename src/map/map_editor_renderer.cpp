@@ -705,7 +705,7 @@ MapEditorRenderer::StaticRenderResult MapEditorRenderer::renderStaticCache(
     const qreal logical_height = request.logical_size.height();
 
     EditorStaticRenderWorkers &workers = editorStaticRenderWorkers();
-    const int stripe_count = qMax(1, qMin(workers.thread_count, physical_size.height()));
+    const int stripe_count = qMax(1, qMin(qMax(1, workers.thread_count * 2), physical_size.height()));
 
     struct StripeDefinition
     {

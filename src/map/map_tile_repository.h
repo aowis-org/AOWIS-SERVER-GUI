@@ -9,9 +9,11 @@
 #include <QPixmap>
 #include <QSet>
 #include <QString>
-#ifdef Q_OS_WIN
+#ifndef __EMSCRIPTEN__
 #include <QImage>
 #include <QThreadPool>
+#endif
+#ifdef Q_OS_WIN
 #include <QTimer>
 #endif
 
@@ -71,7 +73,7 @@ private:
     bool tileDeletionPending(const QString &key, int x, int y) const;
     void finishTileDeletion(quint64 request_id, const QString &error = QString());
     void tileDataReceived(const QString &key, const QByteArray &data);
-#ifdef Q_OS_WIN
+#ifndef __EMSCRIPTEN__
     void finishTileDecode(const QString &key, quint64 generation, const QImage &image);
 #else
     void finishTileDecode(const QString &key, const QPixmap &pixmap);
@@ -96,7 +98,7 @@ private:
     QHash<quint64, PendingTileDeletion> tile_deletions_pending;
     quint64 next_tile_deletion_id = 1;
     quint64 tile_generation = 0;
-#ifdef Q_OS_WIN
+#ifndef __EMSCRIPTEN__
     QThreadPool tile_decode_pool;
 #endif
     QCache<QString, QPixmap> cache;

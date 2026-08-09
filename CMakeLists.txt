@@ -72,6 +72,7 @@ qt_add_executable(aowis-server-gui
     src/footer_statusbar.h src/footer_statusbar.cpp
     src/_enums_structs.h
     src/network_render_snapshot.h
+    src/network_render_snapshot_builder.h src/network_render_snapshot_builder.cpp
     src/wasm/browser_network_snapshot_serializer.h src/wasm/browser_network_snapshot_serializer.cpp
     src/tab_map_monitor_container.h src/tab_map_monitor_container.cpp
     src/tab_reservoirs_widget.h src/tab_reservoirs_widget.cpp

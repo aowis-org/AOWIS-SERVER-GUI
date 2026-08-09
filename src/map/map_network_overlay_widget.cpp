@@ -2,6 +2,7 @@
 
 #include "../geo_web_mercator.h"
 #include "../hydraulic_data.h"
+#include "../network_render_snapshot_builder.h"
 #include "map_vector_document.h"
 
 #include <QBrush>
@@ -51,6 +52,7 @@ constexpr qint64 HeatmapMaximumArea = 2LL * 1024LL * 1024LL;
 constexpr qint64 HeatmapMaximumKernelCachePixels = 8LL * 1024LL * 1024LL;
 constexpr qreal HeatmapMaximumKernelRadius = 256.0;
 constexpr int HeatmapMaximumColorBuckets = 64;
+constexpr int HeatmapTileSize = 256;
 constexpr double WebMercatorMetersPerPixelAtZoomZero = 156543.03392804097;
 const QColor NetworkColor(Qt::black);
 const QColor SymbologyValueUnavailableColor(Qt::black);
@@ -72,15 +74,35 @@ struct NetworkRenderWorkers
         this->thread_count = qMax(1, QThread::idealThreadCount());
         this->pool.setMaxThreadCount(this->thread_count);
         this->pool.setExpiryTimeout(-1);
+        this->heatmap_pool.setMaxThreadCount(1);
+        this->heatmap_pool.setExpiryTimeout(-1);
     }
 
     QThreadPool pool;
+    QThreadPool heatmap_pool;
     int thread_count = 1;
 };
 
 NetworkRenderWorkers &networkRenderWorkers()
 {
     static NetworkRenderWorkers workers;
+    return workers;
+}
+
+struct NetworkPreparationWorkers
+{
+    NetworkPreparationWorkers()
+    {
+        this->pool.setMaxThreadCount(qMax(1, qMin(2, QThread::idealThreadCount())));
+        this->pool.setExpiryTimeout(-1);
+    }
+
+    QThreadPool pool;
+};
+
+NetworkPreparationWorkers &networkPreparationWorkers()
+{
+    static NetworkPreparationWorkers workers;
     return workers;
 }
 
@@ -502,6 +524,120 @@ QHash<QUuid, double> heatmapValues(const NetworkHydraulic &network_hydraulic, Vi
     return QHash<QUuid, double>();
 }
 
+struct BasicSymbologyRanges
+{
+    double node_elevation_minimum = 0.0;
+    double node_elevation_maximum = 0.0;
+    double node_base_demand_minimum = 0.0;
+    double node_base_demand_maximum = 0.0;
+    double link_diameter_minimum = 0.0;
+    double link_diameter_maximum = 0.0;
+    double link_length_minimum = 0.0;
+    double link_length_maximum = 0.0;
+    double link_roughness_hw_minimum = 0.0;
+    double link_roughness_hw_maximum = 0.0;
+    double link_roughness_dw_minimum = 0.0;
+    double link_roughness_dw_maximum = 0.0;
+    double link_roughness_cm_minimum = 0.0;
+    double link_roughness_cm_maximum = 0.0;
+};
+
+BasicSymbologyRanges calculateBasicSymbologyRanges(const NetworkHydraulic &network_hydraulic)
+{
+    BasicSymbologyRanges ranges;
+    bool node_elevation_initialized = false;
+    bool node_base_demand_initialized = false;
+    bool link_diameter_initialized = false;
+    bool link_length_initialized = false;
+    bool link_roughness_hw_initialized = false;
+    bool link_roughness_dw_initialized = false;
+    bool link_roughness_cm_initialized = false;
+
+    const std::function<void(double, double &, double &, bool &)> update_range =
+        [](double value, double &minimum, double &maximum, bool &initialized)
+    {
+        if (!std::isfinite(value))
+            return;
+        if (!initialized)
+        {
+            minimum = value;
+            maximum = value;
+            initialized = true;
+            return;
+        }
+        minimum = std::min(minimum, value);
+        maximum = std::max(maximum, value);
+    };
+
+    for (const HydraulicNodeJunction &junction : network_hydraulic.nodes_junctions)
+    {
+        update_range(junction.elevation_m, ranges.node_elevation_minimum,
+            ranges.node_elevation_maximum, node_elevation_initialized);
+        double base_demand = 0.0;
+        for (const HydraulicNodeJunctionDemand &demand : junction.demands)
+            base_demand += demand.base_demand_m3_per_h;
+        update_range(base_demand, ranges.node_base_demand_minimum,
+            ranges.node_base_demand_maximum, node_base_demand_initialized);
+    }
+    for (const HydraulicNodeReservoir &reservoir : network_hydraulic.nodes_reservoirs)
+    {
+        update_range(reservoir.head_m, ranges.node_elevation_minimum,
+            ranges.node_elevation_maximum, node_elevation_initialized);
+    }
+    for (const HydraulicNodeTank &tank : network_hydraulic.nodes_tanks)
+    {
+        update_range(tank.bottom_elevation_m, ranges.node_elevation_minimum,
+            ranges.node_elevation_maximum, node_elevation_initialized);
+    }
+    for (const HydraulicLinkPipe &pipe : network_hydraulic.links_pipes)
+    {
+        update_range(pipe.diameter_mm, ranges.link_diameter_minimum,
+            ranges.link_diameter_maximum, link_diameter_initialized);
+        update_range(pipe.length_measured_m.value_or(pipe.length_calculated_m),
+            ranges.link_length_minimum, ranges.link_length_maximum, link_length_initialized);
+        update_range(pipe.roughness_hw, ranges.link_roughness_hw_minimum,
+            ranges.link_roughness_hw_maximum, link_roughness_hw_initialized);
+        update_range(pipe.roughness_dw_mm, ranges.link_roughness_dw_minimum,
+            ranges.link_roughness_dw_maximum, link_roughness_dw_initialized);
+        update_range(pipe.roughness_cm, ranges.link_roughness_cm_minimum,
+            ranges.link_roughness_cm_maximum, link_roughness_cm_initialized);
+    }
+    return ranges;
+}
+
+QPair<double, double> basicNodeRange(const BasicSymbologyRanges &ranges, VisualNode visual_node,
+                                     const QPair<double, double> &fallback)
+{
+    if (visual_node == VisualNode::Elevation)
+        return qMakePair(ranges.node_elevation_minimum, ranges.node_elevation_maximum);
+    if (visual_node == VisualNode::BaseDemand)
+        return qMakePair(ranges.node_base_demand_minimum, ranges.node_base_demand_maximum);
+    return fallback;
+}
+
+QPair<double, double> basicLinkRange(const BasicSymbologyRanges &ranges, VisualLink visual_link,
+                                     const QPair<double, double> &fallback)
+{
+    if (visual_link == VisualLink::Diameter)
+        return qMakePair(ranges.link_diameter_minimum, ranges.link_diameter_maximum);
+    if (visual_link == VisualLink::Length)
+        return qMakePair(ranges.link_length_minimum, ranges.link_length_maximum);
+    if (visual_link == VisualLink::Roughness)
+        return qMakePair(ranges.link_roughness_hw_minimum, ranges.link_roughness_hw_maximum);
+    return fallback;
+}
+
+QPair<double, double> basicHeatmapRange(const BasicSymbologyRanges &ranges,
+                                        VisualHeatmap visual_heatmap,
+                                        const QPair<double, double> &fallback)
+{
+    if (visual_heatmap == VisualHeatmap::Elevation)
+        return qMakePair(ranges.node_elevation_minimum, ranges.node_elevation_maximum);
+    if (visual_heatmap == VisualHeatmap::BaseDemand)
+        return qMakePair(ranges.node_base_demand_minimum, ranges.node_base_demand_maximum);
+    return fallback;
+}
+
 QColor interpolatedRampColor(double fraction)
 {
     const double limited_fraction = qBound(0.0, fraction, 1.0);
@@ -722,9 +858,7 @@ MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicD
         if (!rebuild_node_colors && !rebuild_heatmap)
             return;
 
-        rebuildSymbology(true, rebuild_node_colors, false, rebuild_heatmap);
-        requestRenderCache(true);
-        update();
+        requestSymbologyPreparation(true, true);
     });
     connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
         [this](InfrastructureEntity, const QUuid &)
@@ -734,9 +868,7 @@ MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicD
         if (this->visual_link == VisualLink::None)
             return;
 
-        rebuildSymbology(true, false, true, false);
-        requestRenderCache(true);
-        update();
+        requestSymbologyPreparation(true, true);
     });
 
     QTimer::singleShot(0, this, &MapNetworkOverlayWidget::syncSnapshot);
@@ -747,6 +879,10 @@ MapNetworkOverlayWidget::~MapNetworkOverlayWidget()
     this->rendering_active = false;
     if (this->pending_render_cancelled)
         this->pending_render_cancelled->store(true, std::memory_order_relaxed);
+    if (this->geometry_prepare_cancelled)
+        this->geometry_prepare_cancelled->store(true, std::memory_order_relaxed);
+    if (this->symbology_prepare_cancelled)
+        this->symbology_prepare_cancelled->store(true, std::memory_order_relaxed);
 }
 
 int MapNetworkOverlayWidget::backgroundOpacity() const
@@ -783,10 +919,7 @@ void MapNetworkOverlayWidget::setSymbology(VisualNode visual_node, int node_size
     this->icon_size_percent = bounded_icon_size_percent;
     this->visual_link = visual_link;
     this->link_thickness_px = bounded_link_thickness_px;
-    rebuildSymbology(false, node_visual_changed || !this->render_symbology,
-        link_visual_changed || !this->render_symbology, false);
-    requestRenderCache(true);
-    update();
+    requestSymbologyPreparation(false, node_visual_changed || link_visual_changed || !this->render_symbology);
 }
 
 void MapNetworkOverlayWidget::setHeatmap(VisualHeatmap visual_heatmap, int opacity, int radius_m, int solid_center_percent)
@@ -811,13 +944,14 @@ void MapNetworkOverlayWidget::setHeatmap(VisualHeatmap visual_heatmap, int opaci
         (visual_heatmap != VisualHeatmap::None && (radius_changed || solid_center_changed));
     if (heatmap_render_changed)
     {
-        rebuildSymbology(false, false, false, visual_changed || !this->render_symbology);
         if (visual_heatmap == VisualHeatmap::None)
             this->rendered_heatmap_cache = QImage();
-        requestRenderCache(true);
+        requestSymbologyPreparation(false, visual_changed || !this->render_symbology);
     }
-
-    update();
+    else
+    {
+        update();
+    }
 }
 
 NetworkOverlayHit MapNetworkOverlayWidget::hitTest(const QPointF &screen_position)
@@ -903,21 +1037,70 @@ void MapNetworkOverlayWidget::showEvent(QShowEvent *event)
 void MapNetworkOverlayWidget::syncSnapshot()
 {
     const quint64 current_geometry_revision = this->hydraulic_data->geometryRevision();
-    if (this->snapshot_initialized && this->geometry_revision == current_geometry_revision)
+    if ((this->snapshot_initialized || this->active_geometry_prepare_request_id != 0) &&
+        this->geometry_revision == current_geometry_revision)
+    {
         return;
+    }
 
-    this->snapshot = this->hydraulic_data->networkRenderSnapshot();
-    this->geometry_revision = this->snapshot.geometry_revision;
-    this->snapshot_initialized = true;
-    rebuildReferenceGeometry();
-    rebuildSymbology(false);
-    clearRenderedCache();
-    requestRenderCache(true);
+    this->geometry_revision = current_geometry_revision;
+    this->snapshot_initialized = false;
+    this->reference_geometry_ready = false;
+    this->render_symbology.reset();
+
+    if (this->pending_render_cancelled)
+        this->pending_render_cancelled->store(true, std::memory_order_relaxed);
+
+    requestGeometryPreparation();
     update();
 }
 
-void MapNetworkOverlayWidget::rebuildReferenceGeometry()
+void MapNetworkOverlayWidget::requestGeometryPreparation()
 {
+    if (this->geometry_prepare_cancelled)
+        this->geometry_prepare_cancelled->store(true, std::memory_order_relaxed);
+
+    const quint64 request_id = ++this->next_geometry_prepare_request_id;
+    this->active_geometry_prepare_request_id = request_id;
+    this->geometry_prepare_cancelled = std::make_shared<std::atomic_bool>(false);
+    const std::shared_ptr<std::atomic_bool> cancelled = this->geometry_prepare_cancelled;
+    const NetworkHydraulic network_copy = this->hydraulic_data->networkHydraulic();
+    const quint64 geometry_revision = this->geometry_revision;
+    const quint64 visual_revision = this->hydraulic_data->visualRevision();
+    const QPointer<MapNetworkOverlayWidget> widget(this);
+
+    QRunnable *runnable = QRunnable::create([widget, request_id, network_copy, geometry_revision,
+        visual_revision, cancelled]
+    {
+        NetworkRenderSnapshot snapshot_copy = buildNetworkRenderSnapshot(
+            network_copy, geometry_revision, visual_revision);
+        if (cancelled->load(std::memory_order_relaxed))
+            return;
+        PreparedGeometry result = MapNetworkOverlayWidget::prepareGeometry(snapshot_copy, cancelled);
+        result.snapshot = std::move(snapshot_copy);
+        if (cancelled->load(std::memory_order_relaxed))
+            return;
+
+        QCoreApplication *application = QCoreApplication::instance();
+        if (!application)
+            return;
+
+        QMetaObject::invokeMethod(application, [widget, request_id, result = std::move(result)]() mutable
+        {
+            if (!widget)
+                return;
+            widget->applyPreparedGeometry(request_id, std::move(result));
+        }, Qt::QueuedConnection);
+    });
+    networkPreparationWorkers().pool.start(runnable);
+}
+
+MapNetworkOverlayWidget::PreparedGeometry MapNetworkOverlayWidget::prepareGeometry(
+    const NetworkRenderSnapshot &snapshot,
+    const std::shared_ptr<std::atomic_bool> &cancelled)
+{
+    PreparedGeometry result;
+    result.geometry_revision = snapshot.geometry_revision;
     std::shared_ptr<RenderGeometry> geometry = std::make_shared<RenderGeometry>();
     QHash<quint32, QPointF> node_positions;
     double anchor_x = std::numeric_limits<double>::quiet_NaN();
@@ -926,22 +1109,19 @@ void MapNetworkOverlayWidget::rebuildReferenceGeometry()
     double maximum_x = -std::numeric_limits<double>::infinity();
     double maximum_y = -std::numeric_limits<double>::infinity();
 
-    this->reference_geometry_ready = false;
-    this->render_geometry.reset();
-    this->hit_markers.clear();
-    this->device_hit_segments.clear();
-    this->pipe_hit_segments.clear();
-    this->global_device_segment_indices.clear();
-    this->global_pipe_segment_indices.clear();
-    this->spatial_cells.clear();
+    geometry->geometry_revision = snapshot.geometry_revision;
+    geometry->markers.reserve(snapshot.nodes.size() + snapshot.links.size());
+    node_positions.reserve(snapshot.nodes.size());
+    result.hit_markers.reserve(snapshot.nodes.size());
 
-    geometry->geometry_revision = this->geometry_revision;
-    geometry->markers.reserve(this->snapshot.nodes.size() + this->snapshot.links.size());
-    node_positions.reserve(this->snapshot.nodes.size());
-    this->hit_markers.reserve(this->snapshot.nodes.size());
-
-    for (const NetworkRenderNode &node : this->snapshot.nodes)
+    int processed_items = 0;
+    for (const NetworkRenderNode &node : snapshot.nodes)
     {
+        if ((++processed_items & 255) == 0 && cancelled &&
+            cancelled->load(std::memory_order_relaxed))
+        {
+            return PreparedGeometry();
+        }
         if (!isFiniteCoordinate(node.coordinate_wgs84))
             continue;
 
@@ -966,7 +1146,7 @@ void MapNetworkOverlayWidget::rebuildReferenceGeometry()
         marker.render_id = node.render_id;
         marker.entity_type = node.entity_type;
         marker.world_position = world_position;
-        this->hit_markers.append(marker);
+        result.hit_markers.append(marker);
 
         minimum_x = std::min(minimum_x, world_position.x());
         minimum_y = std::min(minimum_y, world_position.y());
@@ -974,8 +1154,14 @@ void MapNetworkOverlayWidget::rebuildReferenceGeometry()
         maximum_y = std::max(maximum_y, world_position.y());
     }
 
-    for (const NetworkRenderLink &link : this->snapshot.links)
+    for (const NetworkRenderLink &link : snapshot.links)
     {
+        if ((++processed_items & 255) == 0 && cancelled &&
+            cancelled->load(std::memory_order_relaxed))
+        {
+            return PreparedGeometry();
+        }
+
         QList<QPointF> world_vertices;
         world_vertices.reserve(link.vertices_wgs84.size());
         const QPointF start_node_position = node_positions.value(
@@ -1014,7 +1200,7 @@ void MapNetworkOverlayWidget::rebuildReferenceGeometry()
             continue;
 
         QList<HitSegment> *hit_segments = link.entity_type == InfrastructureEntity::Pipe
-            ? &this->pipe_hit_segments : &this->device_hit_segments;
+            ? &result.pipe_hit_segments : &result.device_hit_segments;
         for (qsizetype index = 1; index < world_vertices.size(); ++index)
         {
             const QPointF &start = world_vertices.at(index - 1);
@@ -1047,7 +1233,7 @@ void MapNetworkOverlayWidget::rebuildReferenceGeometry()
             marker.render_id = link.render_id;
             marker.entity_type = link.entity_type;
             marker.world_position = center;
-            this->hit_markers.append(marker);
+            result.hit_markers.append(marker);
         }
     }
 
@@ -1055,7 +1241,7 @@ void MapNetworkOverlayWidget::rebuildReferenceGeometry()
         !std::isfinite(minimum_x) || !std::isfinite(minimum_y) ||
         !std::isfinite(maximum_x) || !std::isfinite(maximum_y))
     {
-        return;
+        return result;
     }
 
     geometry->world_bounds = QRectF(
@@ -1064,100 +1250,305 @@ void MapNetworkOverlayWidget::rebuildReferenceGeometry()
         maximum_x - minimum_x,
         maximum_y - minimum_y);
     geometry->world_origin = geometry->world_bounds.center();
-    this->render_geometry = geometry;
-    this->reference_geometry_ready = true;
-    rebuildSpatialIndex();
+    result.geometry = geometry;
+
+    for (int index = 0; index < result.hit_markers.size(); ++index)
+    {
+        const HitMarker &marker = result.hit_markers.at(index);
+        const quint64 key = spatialCellKey(
+            spatialCellCoordinate(marker.world_position.x()),
+            spatialCellCoordinate(marker.world_position.y()));
+        result.spatial_cells[key].marker_indices.append(index);
+    }
+
+    const std::function<void(const QList<HitSegment> &, HitCollection)> add_segments =
+        [&result](const QList<HitSegment> &segments, HitCollection collection)
+    {
+        for (int index = 0; index < segments.size(); ++index)
+        {
+            const HitSegment &segment = segments.at(index);
+            const int minimum_cell_x = spatialCellCoordinate(std::min(segment.start.x(), segment.end.x()));
+            const int maximum_cell_x = spatialCellCoordinate(std::max(segment.start.x(), segment.end.x()));
+            const int minimum_cell_y = spatialCellCoordinate(std::min(segment.start.y(), segment.end.y()));
+            const int maximum_cell_y = spatialCellCoordinate(std::max(segment.start.y(), segment.end.y()));
+            const qint64 cell_count = qint64(maximum_cell_x - minimum_cell_x + 1) *
+                qint64(maximum_cell_y - minimum_cell_y + 1);
+
+            if (cell_count > 4096)
+            {
+                if (collection == HitCollection::DeviceSegments)
+                    result.global_device_segment_indices.append(index);
+                else
+                    result.global_pipe_segment_indices.append(index);
+                continue;
+            }
+
+            for (int cell_y = minimum_cell_y; cell_y <= maximum_cell_y; ++cell_y)
+            {
+                for (int cell_x = minimum_cell_x; cell_x <= maximum_cell_x; ++cell_x)
+                {
+                    SpatialCell &cell = result.spatial_cells[spatialCellKey(cell_x, cell_y)];
+                    if (collection == HitCollection::DeviceSegments)
+                        cell.device_segment_indices.append(index);
+                    else
+                        cell.pipe_segment_indices.append(index);
+                }
+            }
+        }
+    };
+
+    add_segments(result.device_hit_segments, HitCollection::DeviceSegments);
+    add_segments(result.pipe_hit_segments, HitCollection::PipeSegments);
+    return result;
 }
 
-void MapNetworkOverlayWidget::rebuildSymbology(bool rebuild_ranges, bool rebuild_node_colors,
-                                               bool rebuild_link_colors, bool rebuild_heatmap)
+void MapNetworkOverlayWidget::applyPreparedGeometry(quint64 request_id, PreparedGeometry result)
 {
-    if (rebuild_ranges)
-        this->hydraulic_data->rebuildSymbologyMinMaxValues();
-
-    std::shared_ptr<RenderSymbology> symbology = std::make_shared<RenderSymbology>();
-    symbology->revision = ++this->symbology_revision;
-    symbology->node_size_percent = qBound(50, this->node_size_percent, 250);
-    symbology->icon_size_percent = qBound(50, this->icon_size_percent, 250);
-    symbology->link_width = qBound<qreal>(1.0, this->link_thickness_px, 12.0);
-    symbology->heatmap_radius_m = qBound(10, this->heatmap_radius_m, 1000);
-    symbology->heatmap_solid_center_percent = qBound(0, this->heatmap_solid_center_percent, 100);
-
-    if (this->render_symbology && !rebuild_node_colors)
-        symbology->node_colors = this->render_symbology->node_colors;
-    if (this->render_symbology && !rebuild_link_colors)
-        symbology->link_colors = this->render_symbology->link_colors;
-    if (this->render_symbology && !rebuild_heatmap)
-        symbology->heatmap_fractions = this->render_symbology->heatmap_fractions;
-
-    const NetworkHydraulic &network_hydraulic = this->hydraulic_data->networkHydraulic();
-    if (rebuild_node_colors)
+    if (request_id != this->active_geometry_prepare_request_id ||
+        result.geometry_revision != this->geometry_revision)
     {
-        symbology->node_colors.reserve(this->snapshot.nodes.size());
-        if (this->visual_node == VisualNode::None)
+        return;
+    }
+
+    this->active_geometry_prepare_request_id = 0;
+    this->geometry_prepare_cancelled.reset();
+    this->snapshot = std::move(result.snapshot);
+    this->snapshot_initialized = true;
+    if (!result.geometry)
+    {
+        this->render_geometry.reset();
+        this->hit_markers.clear();
+        this->device_hit_segments.clear();
+        this->pipe_hit_segments.clear();
+        this->global_device_segment_indices.clear();
+        this->global_pipe_segment_indices.clear();
+        this->spatial_cells.clear();
+        this->reference_geometry_ready = false;
+        clearRenderedCache();
+        update();
+        return;
+    }
+
+    this->render_geometry = std::move(result.geometry);
+    this->hit_markers = std::move(result.hit_markers);
+    this->device_hit_segments = std::move(result.device_hit_segments);
+    this->pipe_hit_segments = std::move(result.pipe_hit_segments);
+    this->global_device_segment_indices = std::move(result.global_device_segment_indices);
+    this->global_pipe_segment_indices = std::move(result.global_pipe_segment_indices);
+    this->spatial_cells = std::move(result.spatial_cells);
+    this->reference_geometry_ready = true;
+
+    requestSymbologyPreparation(false, true);
+    update();
+}
+
+void MapNetworkOverlayWidget::requestSymbologyPreparation(bool rebuild_ranges, bool force_values)
+{
+    if (!this->snapshot_initialized)
+        return;
+
+    const bool values_current = this->render_symbology &&
+        this->render_symbology->visual_node == this->visual_node &&
+        this->render_symbology->visual_link == this->visual_link &&
+        this->render_symbology->visual_heatmap == this->visual_heatmap;
+
+    if (!force_values && values_current && this->active_symbology_prepare_request_id == 0)
+    {
+        if (this->symbology_prepare_cancelled)
+            this->symbology_prepare_cancelled->store(true, std::memory_order_relaxed);
+        this->active_symbology_prepare_request_id = 0;
+        this->symbology_prepare_cancelled.reset();
+
+        std::shared_ptr<RenderSymbology> symbology =
+            std::make_shared<RenderSymbology>(*this->render_symbology);
+        symbology->revision = ++this->symbology_revision;
+        symbology->node_size_percent = qBound(50, this->node_size_percent, 250);
+        symbology->icon_size_percent = qBound(50, this->icon_size_percent, 250);
+        symbology->link_width = qBound<qreal>(1.0, this->link_thickness_px, 12.0);
+        symbology->heatmap_radius_m = qBound(10, this->heatmap_radius_m, 1000);
+        symbology->heatmap_solid_center_percent = qBound(0, this->heatmap_solid_center_percent, 100);
+        this->render_symbology = symbology;
+        requestRenderCache(true);
+        update();
+        return;
+    }
+
+    if (this->symbology_prepare_cancelled)
+        this->symbology_prepare_cancelled->store(true, std::memory_order_relaxed);
+
+    const quint64 request_id = ++this->next_symbology_prepare_request_id;
+    const quint64 geometry_revision = this->geometry_revision;
+    const quint64 symbology_revision = ++this->symbology_revision;
+    this->active_symbology_prepare_request_id = request_id;
+    this->symbology_prepare_cancelled = std::make_shared<std::atomic_bool>(false);
+    const std::shared_ptr<std::atomic_bool> cancelled = this->symbology_prepare_cancelled;
+
+    const NetworkRenderSnapshot snapshot_copy = this->snapshot;
+    const NetworkHydraulic network_copy = this->hydraulic_data->networkHydraulic();
+    const VisualNode visual_node = this->visual_node;
+    const VisualLink visual_link = this->visual_link;
+    const VisualHeatmap visual_heatmap = this->visual_heatmap;
+    const int node_size_percent = qBound(50, this->node_size_percent, 250);
+    const int icon_size_percent = qBound(50, this->icon_size_percent, 250);
+    const qreal link_width = qBound<qreal>(1.0, this->link_thickness_px, 12.0);
+    const int heatmap_radius_m = qBound(10, this->heatmap_radius_m, 1000);
+    const int heatmap_solid_center_percent = qBound(0, this->heatmap_solid_center_percent, 100);
+    const QPair<double, double> node_range = nodeRange(*this->hydraulic_data, visual_node);
+    const QPair<double, double> link_range = linkRange(*this->hydraulic_data, visual_link);
+    const QPair<double, double> heatmap_range = heatmapRange(*this->hydraulic_data, visual_heatmap);
+    const QPointer<MapNetworkOverlayWidget> widget(this);
+
+    QRunnable *runnable = QRunnable::create([widget, request_id, geometry_revision,
+        symbology_revision, snapshot_copy, network_copy, visual_node, visual_link,
+        visual_heatmap, node_size_percent, icon_size_percent, link_width,
+        heatmap_radius_m, heatmap_solid_center_percent, node_range, link_range,
+        heatmap_range, rebuild_ranges, cancelled]
+    {
+        if (cancelled->load(std::memory_order_relaxed))
+            return;
+
+        BasicSymbologyRanges basic_ranges;
+        QPair<double, double> effective_node_range = node_range;
+        QPair<double, double> effective_link_range = link_range;
+        QPair<double, double> effective_heatmap_range = heatmap_range;
+        if (rebuild_ranges)
         {
-            for (const NetworkRenderNode &node : this->snapshot.nodes)
+            basic_ranges = calculateBasicSymbologyRanges(network_copy);
+            effective_node_range = basicNodeRange(basic_ranges, visual_node, node_range);
+            effective_link_range = basicLinkRange(basic_ranges, visual_link, link_range);
+            effective_heatmap_range = basicHeatmapRange(basic_ranges, visual_heatmap, heatmap_range);
+        }
+
+        std::shared_ptr<RenderSymbology> symbology = std::make_shared<RenderSymbology>();
+        symbology->revision = symbology_revision;
+        symbology->visual_node = visual_node;
+        symbology->visual_link = visual_link;
+        symbology->visual_heatmap = visual_heatmap;
+        symbology->node_size_percent = node_size_percent;
+        symbology->icon_size_percent = icon_size_percent;
+        symbology->link_width = link_width;
+        symbology->heatmap_radius_m = heatmap_radius_m;
+        symbology->heatmap_solid_center_percent = heatmap_solid_center_percent;
+
+        symbology->node_colors.reserve(snapshot_copy.nodes.size());
+        if (visual_node == VisualNode::None)
+        {
+            for (const NetworkRenderNode &node : snapshot_copy.nodes)
                 symbology->node_colors.insert(node.render_id, NetworkColor.rgb());
         }
         else
         {
-            const QPair<double, double> range = nodeRange(*this->hydraulic_data, this->visual_node);
-            const QHash<QUuid, double> values = nodeValues(network_hydraulic, this->visual_node);
-            for (const NetworkRenderNode &node : this->snapshot.nodes)
+            const QHash<QUuid, double> values = nodeValues(network_copy, visual_node);
+            for (const NetworkRenderNode &node : snapshot_copy.nodes)
             {
                 const QHash<QUuid, double>::const_iterator iterator = values.constFind(node.uuid);
                 const QRgb color = iterator == values.cend()
                     ? SymbologyValueUnavailableColor.rgb()
-                    : symbologyColor(iterator.value(), range.first, range.second);
+                    : symbologyColor(iterator.value(), effective_node_range.first, effective_node_range.second);
                 symbology->node_colors.insert(node.render_id, color);
             }
         }
-    }
 
-    if (rebuild_link_colors)
-    {
-        symbology->link_colors.reserve(this->snapshot.links.size());
-        if (this->visual_link == VisualLink::None)
+        if (cancelled->load(std::memory_order_relaxed))
+            return;
+
+        symbology->link_colors.reserve(snapshot_copy.links.size());
+        if (visual_link == VisualLink::None)
         {
-            for (const NetworkRenderLink &link : this->snapshot.links)
+            for (const NetworkRenderLink &link : snapshot_copy.links)
                 symbology->link_colors.insert(link.render_id, NetworkColor.rgb());
         }
         else
         {
-            const QPair<double, double> range = linkRange(*this->hydraulic_data, this->visual_link);
-            const QHash<QUuid, double> values = linkValues(network_hydraulic, this->visual_link);
-            for (const NetworkRenderLink &link : this->snapshot.links)
+            const QHash<QUuid, double> values = linkValues(network_copy, visual_link);
+            for (const NetworkRenderLink &link : snapshot_copy.links)
             {
                 const QHash<QUuid, double>::const_iterator iterator = values.constFind(link.uuid);
                 const QRgb color = iterator == values.cend()
                     ? SymbologyValueUnavailableColor.rgb()
-                    : symbologyColor(iterator.value(), range.first, range.second);
+                    : symbologyColor(iterator.value(), effective_link_range.first, effective_link_range.second);
                 symbology->link_colors.insert(link.render_id, color);
             }
         }
-    }
 
-    if (rebuild_heatmap)
-    {
-        symbology->heatmap_fractions.clear();
-        if (this->visual_heatmap != VisualHeatmap::None)
+        if (cancelled->load(std::memory_order_relaxed))
+            return;
+
+        if (visual_heatmap != VisualHeatmap::None)
         {
-            const QPair<double, double> range = heatmapRange(*this->hydraulic_data, this->visual_heatmap);
-            const QHash<QUuid, double> values = heatmapValues(network_hydraulic, this->visual_heatmap);
-            symbology->heatmap_fractions.reserve(this->snapshot.nodes.size());
-            for (const NetworkRenderNode &node : this->snapshot.nodes)
+            const QHash<QUuid, double> values = heatmapValues(network_copy, visual_heatmap);
+            symbology->heatmap_fractions.reserve(snapshot_copy.nodes.size());
+            for (const NetworkRenderNode &node : snapshot_copy.nodes)
             {
                 const QHash<QUuid, double>::const_iterator iterator = values.constFind(node.uuid);
                 if (iterator == values.cend())
                     continue;
-                const double fraction = heatmapValueFraction(iterator.value(), range.first, range.second);
+                const double fraction = heatmapValueFraction(
+                    iterator.value(), effective_heatmap_range.first, effective_heatmap_range.second);
                 if (std::isfinite(fraction))
                     symbology->heatmap_fractions.insert(node.render_id, fraction);
             }
         }
+
+        if (cancelled->load(std::memory_order_relaxed))
+            return;
+
+        QCoreApplication *application = QCoreApplication::instance();
+        if (!application)
+            return;
+        QMetaObject::invokeMethod(application, [widget, request_id, geometry_revision, symbology,
+            rebuild_ranges, basic_ranges]()
+        {
+            if (!widget || request_id != widget->active_symbology_prepare_request_id ||
+                geometry_revision != widget->geometry_revision)
+            {
+                return;
+            }
+            if (rebuild_ranges)
+            {
+                widget->hydraulic_data->setNodeElevationMMinimum(basic_ranges.node_elevation_minimum);
+                widget->hydraulic_data->setNodeElevationMMaximum(basic_ranges.node_elevation_maximum);
+                widget->hydraulic_data->setNodeBaseDemandM3PerHMinimum(basic_ranges.node_base_demand_minimum);
+                widget->hydraulic_data->setNodeBaseDemandM3PerHMaximum(basic_ranges.node_base_demand_maximum);
+                widget->hydraulic_data->setLinkDiameterMmMinimum(basic_ranges.link_diameter_minimum);
+                widget->hydraulic_data->setLinkDiameterMmMaximum(basic_ranges.link_diameter_maximum);
+                widget->hydraulic_data->setLinkLengthMMinimum(basic_ranges.link_length_minimum);
+                widget->hydraulic_data->setLinkLengthMMaximum(basic_ranges.link_length_maximum);
+                widget->hydraulic_data->setLinkRoughnessHwMinimum(basic_ranges.link_roughness_hw_minimum);
+                widget->hydraulic_data->setLinkRoughnessHwMaximum(basic_ranges.link_roughness_hw_maximum);
+                widget->hydraulic_data->setLinkRoughnessDwMmMinimum(basic_ranges.link_roughness_dw_minimum);
+                widget->hydraulic_data->setLinkRoughnessDwMmMaximum(basic_ranges.link_roughness_dw_maximum);
+                widget->hydraulic_data->setLinkRoughnessCmMinimum(basic_ranges.link_roughness_cm_minimum);
+                widget->hydraulic_data->setLinkRoughnessCmMaximum(basic_ranges.link_roughness_cm_maximum);
+                widget->hydraulic_data->setHeatmapElevationMMinimum(basic_ranges.node_elevation_minimum);
+                widget->hydraulic_data->setHeatmapElevationMMaximum(basic_ranges.node_elevation_maximum);
+            }
+            widget->applyPreparedSymbology(request_id, geometry_revision, symbology);
+        }, Qt::QueuedConnection);
+    });
+    networkPreparationWorkers().pool.start(runnable);
+}
+
+void MapNetworkOverlayWidget::applyPreparedSymbology(
+    quint64 request_id, quint64 geometry_revision,
+    std::shared_ptr<RenderSymbology> symbology)
+{
+    if (request_id != this->active_symbology_prepare_request_id ||
+        geometry_revision != this->geometry_revision || !symbology ||
+        symbology->visual_node != this->visual_node ||
+        symbology->visual_link != this->visual_link ||
+        symbology->visual_heatmap != this->visual_heatmap)
+    {
+        return;
     }
 
-    this->render_symbology = symbology;
+    this->active_symbology_prepare_request_id = 0;
+    this->symbology_prepare_cancelled.reset();
+    this->render_symbology = std::move(symbology);
+    if (this->visual_heatmap == VisualHeatmap::None)
+        this->rendered_heatmap_cache = QImage();
+    requestRenderCache(true);
+    update();
 }
 
 void MapNetworkOverlayWidget::clearRenderedCache()
@@ -1316,25 +1707,24 @@ QImage MapNetworkOverlayWidget::renderHeatmap(const RenderRequest &request, qrea
     const qreal radius = qMax<qreal>(1.0, radius_reference_pixels * scale * raster.scale);
     const int color_bucket_count = heatmapColorBucketCount(radius);
     const qreal display_diameter = qMax<qreal>(3.0, qCeil(radius * 2.0) + 2.0);
+    const qreal display_half = display_diameter / 2.0;
 
-    QImage heatmap(raster.size, QImage::Format_ARGB32_Premultiplied);
-    if (heatmap.isNull())
-        return QImage();
-    heatmap.fill(Qt::transparent);
+    struct HeatmapPoint
+    {
+        qreal x = 0.0;
+        qreal y = 0.0;
+        int bucket = 0;
+    };
 
-    QHash<int, QImage> kernel_cache;
-    kernel_cache.reserve(color_bucket_count);
-    QPainter painter(&heatmap);
-    painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
-    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-
+    std::vector<HeatmapPoint> points;
+    points.reserve(request.geometry->markers.size());
+    std::vector<bool> used_buckets(color_bucket_count, false);
     int processed_markers = 0;
     for (const RenderGeometry::Marker &marker : request.geometry->markers)
     {
         if ((++processed_markers & 255) == 0 && request.cancelled &&
             request.cancelled->load(std::memory_order_relaxed))
         {
-            painter.end();
             return QImage();
         }
 
@@ -1358,31 +1748,132 @@ QImage MapNetworkOverlayWidget::renderHeatmap(const RenderRequest &request, qrea
             continue;
         }
 
-        const int bucket = qBound(0,
+        HeatmapPoint point;
+        point.x = x;
+        point.y = y;
+        point.bucket = qBound(0,
             qRound(fraction_iterator.value() * (color_bucket_count - 1)), color_bucket_count - 1);
-        QHash<int, QImage>::iterator kernel_iterator = kernel_cache.find(bucket);
-        if (kernel_iterator == kernel_cache.end())
-        {
-            const double bucket_fraction = color_bucket_count <= 1
-                ? 0.5 : double(bucket) / double(color_bucket_count - 1);
-            QImage kernel = createHeatmapKernel(
-                radius, interpolatedRampColor(bucket_fraction),
-                request.symbology->heatmap_solid_center_percent);
-            if (kernel.isNull())
-            {
-                painter.end();
-                return QImage();
-            }
-            kernel_iterator = kernel_cache.insert(bucket, kernel);
-        }
-
-        const QImage &kernel = kernel_iterator.value();
-        painter.drawImage(QRectF(
-            x - display_diameter / 2.0, y - display_diameter / 2.0,
-            display_diameter, display_diameter), kernel, QRectF(kernel.rect()));
+        points.push_back(point);
+        used_buckets[point.bucket] = true;
     }
 
-    painter.end();
+    if (points.empty())
+        return QImage();
+
+    std::vector<QImage> kernels(color_bucket_count);
+    for (int bucket = 0; bucket < color_bucket_count; ++bucket)
+    {
+        if (!used_buckets[bucket])
+            continue;
+        const double bucket_fraction = color_bucket_count <= 1
+            ? 0.5 : double(bucket) / double(color_bucket_count - 1);
+        kernels[bucket] = createHeatmapKernel(
+            radius, interpolatedRampColor(bucket_fraction),
+            request.symbology->heatmap_solid_center_percent);
+        if (kernels[bucket].isNull())
+            return QImage();
+    }
+
+    struct HeatmapTile
+    {
+        QRect rect;
+        std::vector<int> point_indices;
+    };
+
+    const int tile_columns = qMax(1, (raster.size.width() + HeatmapTileSize - 1) / HeatmapTileSize);
+    const int tile_rows = qMax(1, (raster.size.height() + HeatmapTileSize - 1) / HeatmapTileSize);
+    const int tile_count = tile_columns * tile_rows;
+    std::vector<HeatmapTile> tiles(tile_count);
+    for (int tile_y = 0; tile_y < tile_rows; ++tile_y)
+    {
+        for (int tile_x = 0; tile_x < tile_columns; ++tile_x)
+        {
+            HeatmapTile &tile = tiles[tile_y * tile_columns + tile_x];
+            const int left = tile_x * HeatmapTileSize;
+            const int top = tile_y * HeatmapTileSize;
+            tile.rect = QRect(left, top,
+                qMin(HeatmapTileSize, raster.size.width() - left),
+                qMin(HeatmapTileSize, raster.size.height() - top));
+        }
+    }
+
+    for (int point_index = 0; point_index < int(points.size()); ++point_index)
+    {
+        const HeatmapPoint &point = points[point_index];
+        const int minimum_tile_x = qBound(0,
+            qFloor((point.x - display_half) / HeatmapTileSize), tile_columns - 1);
+        const int maximum_tile_x = qBound(0,
+            qFloor((point.x + display_half) / HeatmapTileSize), tile_columns - 1);
+        const int minimum_tile_y = qBound(0,
+            qFloor((point.y - display_half) / HeatmapTileSize), tile_rows - 1);
+        const int maximum_tile_y = qBound(0,
+            qFloor((point.y + display_half) / HeatmapTileSize), tile_rows - 1);
+
+        for (int tile_y = minimum_tile_y; tile_y <= maximum_tile_y; ++tile_y)
+        {
+            for (int tile_x = minimum_tile_x; tile_x <= maximum_tile_x; ++tile_x)
+                tiles[tile_y * tile_columns + tile_x].point_indices.push_back(point_index);
+        }
+    }
+
+    NetworkRenderWorkers &workers = networkRenderWorkers();
+    std::vector<QImage> tile_images(tile_count);
+    QSemaphore completed_tiles;
+    for (int tile_index = 0; tile_index < tile_count; ++tile_index)
+    {
+        QRunnable *runnable = QRunnable::create([&request, &tiles, &points, &kernels,
+            &tile_images, &completed_tiles, display_diameter, tile_index]
+        {
+            const HeatmapTile &tile = tiles[tile_index];
+            if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
+            {
+                completed_tiles.release();
+                return;
+            }
+
+            QImage image(tile.rect.size(), QImage::Format_ARGB32_Premultiplied);
+            if (!image.isNull())
+            {
+                image.fill(Qt::transparent);
+                QPainter painter(&image);
+                painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+                painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+                for (int point_index : tile.point_indices)
+                {
+                    const HeatmapPoint &point = points[point_index];
+                    const QImage &kernel = kernels[point.bucket];
+                    painter.drawImage(QRectF(
+                        point.x - display_diameter / 2.0 - tile.rect.left(),
+                        point.y - display_diameter / 2.0 - tile.rect.top(),
+                        display_diameter, display_diameter),
+                        kernel, QRectF(kernel.rect()));
+                }
+                painter.end();
+            }
+            tile_images[tile_index] = std::move(image);
+            completed_tiles.release();
+        });
+        workers.heatmap_pool.start(runnable);
+    }
+
+    for (int tile_index = 0; tile_index < tile_count; ++tile_index)
+        completed_tiles.acquire();
+
+    if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
+        return QImage();
+
+    QImage heatmap(raster.size, QImage::Format_ARGB32_Premultiplied);
+    if (heatmap.isNull())
+        return QImage();
+    heatmap.fill(Qt::transparent);
+    QPainter composition_painter(&heatmap);
+    composition_painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+    for (int tile_index = 0; tile_index < tile_count; ++tile_index)
+    {
+        if (!tile_images[tile_index].isNull())
+            composition_painter.drawImage(tiles[tile_index].rect.topLeft(), tile_images[tile_index]);
+    }
+    composition_painter.end();
     return heatmap;
 }
 
@@ -1423,7 +1914,13 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
     };
 
     NetworkRenderWorkers &workers = networkRenderWorkers();
-    const int stripe_count = qMin(workers.thread_count, physical_size.height());
+    const bool heatmap_active = !request.symbology->heatmap_fractions.isEmpty();
+    const int heatmap_thread_count = heatmap_active && workers.thread_count > 1
+        ? qMax(1, workers.thread_count / 3) : 0;
+    const int vector_thread_count = qMax(1, workers.thread_count - heatmap_thread_count);
+    workers.pool.setMaxThreadCount(vector_thread_count);
+    workers.heatmap_pool.setMaxThreadCount(qMax(1, heatmap_thread_count));
+    const int stripe_count = qMin(qMax(1, vector_thread_count * 2), physical_size.height());
     std::vector<StripeDefinition> stripes(stripe_count);
     for (int stripe_index = 0; stripe_index < stripe_count; ++stripe_index)
     {
@@ -1862,61 +2359,6 @@ QRectF MapNetworkOverlayWidget::visibleReferenceWorldRect() const
 qreal MapNetworkOverlayWidget::referenceScaleForCurrentZoom() const
 {
     return scaleForZoom(this->map_model->zoom());
-}
-
-void MapNetworkOverlayWidget::rebuildSpatialIndex()
-{
-    this->spatial_cells.clear();
-    this->global_device_segment_indices.clear();
-    this->global_pipe_segment_indices.clear();
-
-    for (int index = 0; index < this->hit_markers.size(); ++index)
-    {
-        const HitMarker &marker = this->hit_markers.at(index);
-        const quint64 key = spatialCellKey(
-            spatialCellCoordinate(marker.world_position.x()),
-            spatialCellCoordinate(marker.world_position.y()));
-        this->spatial_cells[key].marker_indices.append(index);
-    }
-
-    const std::function<void(const QList<HitSegment> &, HitCollection)> add_segments =
-        [this](const QList<HitSegment> &segments, HitCollection collection)
-    {
-        for (int index = 0; index < segments.size(); ++index)
-        {
-            const HitSegment &segment = segments.at(index);
-            const int minimum_cell_x = spatialCellCoordinate(std::min(segment.start.x(), segment.end.x()));
-            const int maximum_cell_x = spatialCellCoordinate(std::max(segment.start.x(), segment.end.x()));
-            const int minimum_cell_y = spatialCellCoordinate(std::min(segment.start.y(), segment.end.y()));
-            const int maximum_cell_y = spatialCellCoordinate(std::max(segment.start.y(), segment.end.y()));
-            const qint64 cell_count = qint64(maximum_cell_x - minimum_cell_x + 1) *
-                qint64(maximum_cell_y - minimum_cell_y + 1);
-
-            if (cell_count > 4096)
-            {
-                if (collection == HitCollection::DeviceSegments)
-                    this->global_device_segment_indices.append(index);
-                else
-                    this->global_pipe_segment_indices.append(index);
-                continue;
-            }
-
-            for (int cell_y = minimum_cell_y; cell_y <= maximum_cell_y; ++cell_y)
-            {
-                for (int cell_x = minimum_cell_x; cell_x <= maximum_cell_x; ++cell_x)
-                {
-                    SpatialCell &cell = this->spatial_cells[spatialCellKey(cell_x, cell_y)];
-                    if (collection == HitCollection::DeviceSegments)
-                        cell.device_segment_indices.append(index);
-                    else
-                        cell.pipe_segment_indices.append(index);
-                }
-            }
-        }
-    };
-
-    add_segments(this->device_hit_segments, HitCollection::DeviceSegments);
-    add_segments(this->pipe_hit_segments, HitCollection::PipeSegments);
 }
 
 QList<int> MapNetworkOverlayWidget::candidateIndices(

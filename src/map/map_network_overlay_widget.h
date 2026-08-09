@@ -104,6 +104,9 @@ private:
     struct RenderSymbology
     {
         quint64 revision = 0;
+        VisualNode visual_node = VisualNode::None;
+        VisualLink visual_link = VisualLink::None;
+        VisualHeatmap visual_heatmap = VisualHeatmap::None;
         int node_size_percent = 100;
         int icon_size_percent = 100;
         qreal link_width = 3.0;
@@ -149,10 +152,27 @@ private:
         PipeSegments
     };
 
+    struct PreparedGeometry
+    {
+        quint64 geometry_revision = 0;
+        NetworkRenderSnapshot snapshot;
+        std::shared_ptr<RenderGeometry> geometry;
+        QList<HitMarker> hit_markers;
+        QList<HitSegment> device_hit_segments;
+        QList<HitSegment> pipe_hit_segments;
+        QList<int> global_device_segment_indices;
+        QList<int> global_pipe_segment_indices;
+        QHash<quint64, SpatialCell> spatial_cells;
+    };
+
     void syncSnapshot();
-    void rebuildReferenceGeometry();
-    void rebuildSymbology(bool rebuild_ranges, bool rebuild_node_colors = true,
-                          bool rebuild_link_colors = true, bool rebuild_heatmap = true);
+    void requestGeometryPreparation();
+    static PreparedGeometry prepareGeometry(const NetworkRenderSnapshot &snapshot,
+                                            const std::shared_ptr<std::atomic_bool> &cancelled);
+    void applyPreparedGeometry(quint64 request_id, PreparedGeometry result);
+    void requestSymbologyPreparation(bool rebuild_ranges, bool force_values);
+    void applyPreparedSymbology(quint64 request_id, quint64 geometry_revision,
+                                std::shared_ptr<RenderSymbology> symbology);
     void clearRenderedCache();
     void requestRenderCache(bool force = false);
     RenderRequest createRenderRequest(quint64 request_id) const;
@@ -163,7 +183,6 @@ private:
     bool pendingCacheCoversCurrentView() const;
     bool coverageCoversCurrentView(const QRectF &coverage_world_bounds, int zoom) const;
     void paintNetwork(QPainter &painter);
-    void rebuildSpatialIndex();
     QPointF visibleReferenceWorldCenter() const;
     QRectF visibleReferenceWorldRect() const;
     qreal referenceScaleForCurrentZoom() const;
@@ -194,6 +213,13 @@ private:
     std::shared_ptr<const RenderGeometry> render_geometry;
     std::shared_ptr<const RenderSymbology> render_symbology;
     bool reference_geometry_ready = false;
+
+    quint64 next_geometry_prepare_request_id = 0;
+    quint64 active_geometry_prepare_request_id = 0;
+    std::shared_ptr<std::atomic_bool> geometry_prepare_cancelled;
+    quint64 next_symbology_prepare_request_id = 0;
+    quint64 active_symbology_prepare_request_id = 0;
+    std::shared_ptr<std::atomic_bool> symbology_prepare_cancelled;
 
     QImage rendered_network_cache;
     QImage rendered_heatmap_cache;
