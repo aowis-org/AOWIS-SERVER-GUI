@@ -18,8 +18,10 @@
 #include "../network_render_snapshot.h"
 
 class HydraulicData;
+class QHideEvent;
 class QPaintEvent;
 class QPainter;
+class QShowEvent;
 
 struct NetworkOverlayHit
 {
@@ -47,7 +49,9 @@ public slots:
     void setBackgroundOpacity(int opacity);
 
 protected:
+    void hideEvent(QHideEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
+    void showEvent(QShowEvent *event) override;
 
 private:
     struct HitMarker
@@ -151,12 +155,16 @@ private:
     qreal rendered_cache_device_pixel_ratio = 0.0;
 
     quint64 next_render_request_id = 0;
-    quint64 latest_render_request_id = 0;
     quint64 pending_render_request_id = 0;
     QRectF pending_cache_coverage_world_bounds;
     int pending_cache_zoom = -1;
     qreal pending_cache_device_pixel_ratio = 0.0;
     std::shared_ptr<std::atomic_bool> pending_render_cancelled;
+    bool rendering_active = false;
+    bool render_worker_running = false;
+    quint64 active_render_request_id = 0;
+    bool render_restart_requested = false;
+    bool render_restart_force = false;
 
     QList<HitMarker> hit_markers;
     QList<HitSegment> device_hit_segments;

@@ -6,6 +6,7 @@
 #include <QByteArray>
 #include <QColor>
 #include <QCoreApplication>
+#include <QHideEvent>
 #include <QMetaObject>
 #include <QPainter>
 #include <QPaintEvent>
@@ -14,6 +15,7 @@
 #include <QPixmap>
 #include <QRunnable>
 #include <QSemaphore>
+#include <QShowEvent>
 #include <QSvgRenderer>
 #include <QThread>
 #include <QThreadPool>
@@ -224,9 +226,9 @@ MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicD
 
 MapNetworkOverlayWidget::~MapNetworkOverlayWidget()
 {
+    this->rendering_active = false;
     if (this->pending_render_cancelled)
         this->pending_render_cancelled->store(true, std::memory_order_relaxed);
-    this->latest_render_request_id = ++this->next_render_request_id;
 }
 
 int MapNetworkOverlayWidget::backgroundOpacity() const
@@ -275,6 +277,17 @@ NetworkOverlayHit MapNetworkOverlayWidget::hitTest(const QPointF &screen_positio
         world_position.x(), world_position.y(), link_hit_distance, HitCollection::PipeSegments);
 }
 
+void MapNetworkOverlayWidget::hideEvent(QHideEvent *event)
+{
+    this->rendering_active = false;
+    this->render_restart_requested = false;
+    this->render_restart_force = false;
+    if (this->pending_render_cancelled)
+        this->pending_render_cancelled->store(true, std::memory_order_relaxed);
+
+    QWidget::hideEvent(event);
+}
+
 void MapNetworkOverlayWidget::paintEvent(QPaintEvent *event)
 {
     QPainter painter(this);
@@ -302,6 +315,13 @@ void MapNetworkOverlayWidget::paintEvent(QPaintEvent *event)
             (height() - crosshair_pixmap.height()) / 2);
         painter.drawPixmap(crosshair_position, crosshair_pixmap);
     }
+}
+
+void MapNetworkOverlayWidget::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    this->rendering_active = true;
+    requestRenderCache();
 }
 
 void MapNetworkOverlayWidget::syncSnapshot()
@@ -461,12 +481,12 @@ void MapNetworkOverlayWidget::clearRenderedCache()
 {
     if (this->pending_render_cancelled)
         this->pending_render_cancelled->store(true, std::memory_order_relaxed);
-    this->pending_render_cancelled.reset();
-    this->latest_render_request_id = ++this->next_render_request_id;
     this->pending_render_request_id = 0;
     this->pending_cache_coverage_world_bounds = QRectF();
     this->pending_cache_zoom = -1;
     this->pending_cache_device_pixel_ratio = 0.0;
+    this->render_restart_requested = this->render_worker_running;
+    this->render_restart_force = this->render_worker_running;
     this->rendered_network_cache = QImage();
     this->rendered_cache_coverage_world_bounds = QRectF();
     this->rendered_cache_image_world_bounds = QRectF();
@@ -476,25 +496,38 @@ void MapNetworkOverlayWidget::clearRenderedCache()
 
 void MapNetworkOverlayWidget::requestRenderCache(bool force)
 {
-    if (!this->reference_geometry_ready || !this->render_geometry || width() <= 0 || height() <= 0)
+    if (!this->rendering_active || !isVisible() ||
+        !this->reference_geometry_ready || !this->render_geometry || width() <= 0 || height() <= 0)
+    {
         return;
+    }
 
     if (!force && renderedCacheCoversCurrentView())
         return;
     if (!force && pendingCacheCoversCurrentView())
         return;
 
+    if (this->render_worker_running)
+    {
+        if (this->pending_render_cancelled)
+            this->pending_render_cancelled->store(true, std::memory_order_relaxed);
+        this->render_restart_requested = true;
+        this->render_restart_force = this->render_restart_force || force;
+        return;
+    }
+
     const quint64 request_id = ++this->next_render_request_id;
     RenderRequest request = createRenderRequest(request_id);
     if (!request.geometry || !request.logical_size.isValid() || request.coverage_world_bounds.isEmpty())
         return;
 
-    if (this->pending_render_cancelled)
-        this->pending_render_cancelled->store(true, std::memory_order_relaxed);
     request.cancelled = std::make_shared<std::atomic_bool>(false);
     this->pending_render_cancelled = request.cancelled;
-    this->latest_render_request_id = request_id;
     this->pending_render_request_id = request_id;
+    this->active_render_request_id = request_id;
+    this->render_worker_running = true;
+    this->render_restart_requested = false;
+    this->render_restart_force = false;
     this->pending_cache_coverage_world_bounds = request.coverage_world_bounds;
     this->pending_cache_zoom = request.zoom;
     this->pending_cache_device_pixel_ratio = request.device_pixel_ratio;
@@ -828,27 +861,50 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
 
 void MapNetworkOverlayWidget::applyRenderResult(RenderResult result)
 {
-    if (result.request_id != this->latest_render_request_id ||
-        result.geometry_revision != this->geometry_revision)
-    {
+    if (result.request_id != this->active_render_request_id)
         return;
-    }
 
+    this->render_worker_running = false;
+    this->active_render_request_id = 0;
     this->pending_render_request_id = 0;
     this->pending_render_cancelled.reset();
     this->pending_cache_coverage_world_bounds = QRectF();
     this->pending_cache_zoom = -1;
     this->pending_cache_device_pixel_ratio = 0.0;
 
-    if (result.image.isNull())
+    const bool restart_requested = this->render_restart_requested;
+    const bool restart_force = this->render_restart_force;
+    this->render_restart_requested = false;
+    this->render_restart_force = false;
+
+    const bool result_matches_current_view =
+        result.geometry_revision == this->geometry_revision &&
+        result.zoom == this->map_model->zoom() &&
+        qFuzzyCompare(result.device_pixel_ratio, qMax<qreal>(1.0, devicePixelRatioF())) &&
+        coverageCoversCurrentView(result.coverage_world_bounds, result.zoom);
+
+    if (this->rendering_active && isVisible() && result_matches_current_view && !result.image.isNull())
+    {
+        this->rendered_network_cache = std::move(result.image);
+        this->rendered_cache_coverage_world_bounds = result.coverage_world_bounds;
+        this->rendered_cache_image_world_bounds = result.image_world_bounds;
+        this->rendered_cache_zoom = result.zoom;
+        this->rendered_cache_device_pixel_ratio = result.device_pixel_ratio;
+        update();
+    }
+
+    if (!this->rendering_active || !isVisible())
         return;
 
-    this->rendered_network_cache = std::move(result.image);
-    this->rendered_cache_coverage_world_bounds = result.coverage_world_bounds;
-    this->rendered_cache_image_world_bounds = result.image_world_bounds;
-    this->rendered_cache_zoom = result.zoom;
-    this->rendered_cache_device_pixel_ratio = result.device_pixel_ratio;
-    update();
+    if (restart_requested)
+    {
+        QTimer::singleShot(0, this, [this, restart_force]
+        {
+            requestRenderCache(restart_force);
+        });
+        return;
+    }
+
     requestRenderCache();
 }
 
