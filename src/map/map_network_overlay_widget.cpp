@@ -3,6 +3,7 @@
 #include "../geo_web_mercator.h"
 #include "../hydraulic_data.h"
 #include "../network_render_snapshot_builder.h"
+#include "map_retained_vector_renderer.h"
 #include "map_vector_document.h"
 
 #include <QBrush>
@@ -22,7 +23,6 @@
 #include <QRunnable>
 #include <QSemaphore>
 #include <QShowEvent>
-#include <QThread>
 #include <QThreadPool>
 #include <QTimer>
 #include <QTransform>
@@ -71,14 +71,14 @@ struct NetworkRenderWorkers
 {
     NetworkRenderWorkers()
     {
-        this->thread_count = qMax(1, QThread::idealThreadCount());
-        this->pool.setMaxThreadCount(this->thread_count);
-        this->pool.setExpiryTimeout(-1);
-        this->heatmap_pool.setMaxThreadCount(1);
+        this->thread_count = MapRetainedVectorRenderer::idealThreadCount();
+        this->heatmap_dispatch_pool.setMaxThreadCount(1);
+        this->heatmap_dispatch_pool.setExpiryTimeout(-1);
+        this->heatmap_pool.setMaxThreadCount(qMax(1, this->thread_count / 3));
         this->heatmap_pool.setExpiryTimeout(-1);
     }
 
-    QThreadPool pool;
+    QThreadPool heatmap_dispatch_pool;
     QThreadPool heatmap_pool;
     int thread_count = 1;
 };
@@ -93,7 +93,7 @@ struct NetworkPreparationWorkers
 {
     NetworkPreparationWorkers()
     {
-        this->pool.setMaxThreadCount(qMax(1, qMin(2, QThread::idealThreadCount())));
+        this->pool.setMaxThreadCount(qMax(1, qMin(2, MapRetainedVectorRenderer::idealThreadCount())));
         this->pool.setExpiryTimeout(-1);
     }
 
@@ -104,6 +104,11 @@ NetworkPreparationWorkers &networkPreparationWorkers()
 {
     static NetworkPreparationWorkers workers;
     return workers;
+}
+
+quint64 entityRenderKey(InfrastructureEntity entity_type, quint32 render_id)
+{
+    return (quint64(quint32(int(entity_type))) << 32) | quint64(render_id);
 }
 
 bool isFiniteCoordinate(const CoordinateWGS84 &coordinate)
@@ -890,6 +895,24 @@ int MapNetworkOverlayWidget::backgroundOpacity() const
     return this->background_opacity;
 }
 
+void MapNetworkOverlayWidget::setSelectedEntity(const NetworkOverlayHit &hit)
+{
+    const NetworkOverlayHit selected = hit.isValid() ? hit : NetworkOverlayHit();
+    if (this->selected_entity.render_id == selected.render_id &&
+        this->selected_entity.entity_type == selected.entity_type)
+    {
+        return;
+    }
+
+    this->selected_entity = selected;
+    update();
+}
+
+void MapNetworkOverlayWidget::clearSelectedEntity()
+{
+    setSelectedEntity(NetworkOverlayHit());
+}
+
 void MapNetworkOverlayWidget::setBackgroundOpacity(int opacity)
 {
     const int bounded_opacity = qBound(0, opacity, 100);
@@ -1014,6 +1037,7 @@ void MapNetworkOverlayWidget::paintEvent(QPaintEvent *event)
     {
         requestRenderCache();
         paintNetwork(painter);
+        paintSelectedEntity(painter);
     }
 
     static const QPixmap crosshair_pixmap = QPixmap(QStringLiteral(":/icon/crosshair.png")).scaled(
@@ -1044,6 +1068,7 @@ void MapNetworkOverlayWidget::syncSnapshot()
     }
 
     this->geometry_revision = current_geometry_revision;
+    this->selected_entity = NetworkOverlayHit();
     this->snapshot_initialized = false;
     this->reference_geometry_ready = false;
     this->render_symbology.reset();
@@ -1140,11 +1165,14 @@ MapNetworkOverlayWidget::PreparedGeometry MapNetworkOverlayWidget::prepareGeomet
         render_marker.entity_type = node.entity_type;
         render_marker.world_position = world_position;
         geometry->markers.append(render_marker);
+        geometry->marker_indices_by_entity.insert(
+            entityRenderKey(node.entity_type, node.render_id), geometry->markers.size() - 1);
         node_positions.insert(node.render_id, world_position);
 
         HitMarker marker;
         marker.render_id = node.render_id;
         marker.entity_type = node.entity_type;
+        marker.uuid = node.uuid;
         marker.world_position = world_position;
         result.hit_markers.append(marker);
 
@@ -1207,12 +1235,17 @@ MapNetworkOverlayWidget::PreparedGeometry MapNetworkOverlayWidget::prepareGeomet
             const QPointF &end = world_vertices.at(index);
             RenderGeometry::Segment render_segment;
             render_segment.render_id = link.render_id;
+            render_segment.entity_type = link.entity_type;
             render_segment.line = QLineF(start, end);
             geometry->link_segments.append(render_segment);
+            geometry->segment_indices_by_entity[
+                entityRenderKey(link.entity_type, link.render_id)].append(
+                    geometry->link_segments.size() - 1);
 
             HitSegment segment;
             segment.render_id = link.render_id;
             segment.entity_type = link.entity_type;
+            segment.uuid = link.uuid;
             segment.start = start;
             segment.end = end;
             hit_segments->append(segment);
@@ -1228,10 +1261,13 @@ MapNetworkOverlayWidget::PreparedGeometry MapNetworkOverlayWidget::prepareGeomet
             render_marker.entity_type = link.entity_type;
             render_marker.world_position = center;
             geometry->markers.append(render_marker);
+            geometry->marker_indices_by_entity.insert(
+                entityRenderKey(link.entity_type, link.render_id), geometry->markers.size() - 1);
 
             HitMarker marker;
             marker.render_id = link.render_id;
             marker.entity_type = link.entity_type;
+            marker.uuid = link.uuid;
             marker.world_position = center;
             result.hit_markers.append(marker);
         }
@@ -1890,59 +1926,49 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
 
     if (!request.geometry || !request.symbology || !request.logical_size.isValid() ||
         request.image_world_bounds.isEmpty())
+    {
         return result;
+    }
     if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
         return result;
 
     const qreal scale = scaleForZoom(request.zoom);
     const qreal image_left = request.image_world_bounds.left();
     const qreal image_top = request.image_world_bounds.top();
-    const QSize physical_size(
-        qMax(1, qCeil(request.logical_size.width() * request.device_pixel_ratio)),
-        qMax(1, qCeil(request.logical_size.height() * request.device_pixel_ratio)));
-    if (physical_size.isEmpty())
+    const qreal logical_width = request.logical_size.width();
+    const qreal logical_height = request.logical_size.height();
+    if (scale <= 0.0)
         return result;
-
-    struct StripeDefinition
-    {
-        int physical_top = 0;
-        int physical_height = 0;
-        qreal logical_top = 0.0;
-        qreal logical_height = 0.0;
-        std::vector<int> segment_indices;
-        std::vector<int> marker_indices;
-    };
 
     NetworkRenderWorkers &workers = networkRenderWorkers();
     const bool heatmap_active = !request.symbology->heatmap_fractions.isEmpty();
     const int heatmap_thread_count = heatmap_active && workers.thread_count > 1
         ? qMax(1, workers.thread_count / 3) : 0;
     const int vector_thread_count = qMax(1, workers.thread_count - heatmap_thread_count);
-    workers.pool.setMaxThreadCount(vector_thread_count);
     workers.heatmap_pool.setMaxThreadCount(qMax(1, heatmap_thread_count));
-    const int stripe_count = qMin(qMax(1, vector_thread_count * 2), physical_size.height());
-    std::vector<StripeDefinition> stripes(stripe_count);
-    for (int stripe_index = 0; stripe_index < stripe_count; ++stripe_index)
+
+    const std::vector<MapRetainedVectorRenderer::HorizontalBand> bands =
+        MapRetainedVectorRenderer::createHorizontalBands(
+            request.logical_size, request.device_pixel_ratio, vector_thread_count);
+    if (bands.empty())
+        return result;
+
+    struct BandContent
     {
-        StripeDefinition &stripe = stripes[stripe_index];
-        const int physical_bottom = (stripe_index + 1) * physical_size.height() / stripe_count;
-        stripe.physical_top = stripe_index * physical_size.height() / stripe_count;
-        stripe.physical_height = physical_bottom - stripe.physical_top;
-        stripe.logical_top = stripe.physical_top / request.device_pixel_ratio;
-        stripe.logical_height = stripe.physical_height / request.device_pixel_ratio;
-    }
+        std::vector<int> segment_indices;
+        std::vector<int> marker_indices;
+    };
 
-    const qreal logical_width = request.logical_size.width();
-    const qreal logical_height = request.logical_size.height();
+    std::vector<BandContent> band_contents(bands.size());
+    const int band_count = int(bands.size());
     const qreal link_padding = request.symbology->link_width / 2.0 + NetworkImagePadding;
-
-    const std::function<int(qreal)> stripe_for_logical_y =
-        [stripe_count, logical_height](qreal logical_y)
+    const std::function<int(qreal)> band_for_logical_y =
+        [band_count, logical_height](qreal logical_y)
     {
         if (logical_height <= 0.0)
             return 0;
-        const int stripe_index = qFloor(logical_y * stripe_count / logical_height);
-        return qBound(0, stripe_index, stripe_count - 1);
+        const int band_index = qFloor(logical_y * band_count / logical_height);
+        return qBound(0, band_index, band_count - 1);
     };
 
     for (int segment_index = 0; segment_index < request.geometry->link_segments.size(); ++segment_index)
@@ -1969,10 +1995,10 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
             continue;
         }
 
-        const int first_stripe = stripe_for_logical_y(minimum_y);
-        const int last_stripe = stripe_for_logical_y(maximum_y);
-        for (int stripe_index = first_stripe; stripe_index <= last_stripe; ++stripe_index)
-            stripes[stripe_index].segment_indices.push_back(segment_index);
+        const int first_band = band_for_logical_y(minimum_y);
+        const int last_band = band_for_logical_y(maximum_y);
+        for (int band_index = first_band; band_index <= last_band; ++band_index)
+            band_contents[band_index].segment_indices.push_back(segment_index);
     }
 
     for (int marker_index = 0; marker_index < request.geometry->markers.size(); ++marker_index)
@@ -1998,191 +2024,161 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
             continue;
         }
 
-        const int first_stripe = stripe_for_logical_y(y - marker_padding_y);
-        const int last_stripe = stripe_for_logical_y(y + marker_padding_y);
-        for (int stripe_index = first_stripe; stripe_index <= last_stripe; ++stripe_index)
-            stripes[stripe_index].marker_indices.push_back(marker_index);
+        const int first_band = band_for_logical_y(y - marker_padding_y);
+        const int last_band = band_for_logical_y(y + marker_padding_y);
+        for (int band_index = first_band; band_index <= last_band; ++band_index)
+            band_contents[band_index].marker_indices.push_back(marker_index);
     }
 
     if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
         return result;
 
-    std::vector<QImage> stripe_images(stripe_count);
-    QSemaphore completed_stripes;
-    const std::function<QImage(const StripeDefinition &)> render_stripe =
-        [&request, scale, image_left, image_top, logical_width](const StripeDefinition &stripe) -> QImage
+    QImage heatmap_image;
+    QSemaphore heatmap_completed;
+    if (heatmap_active)
     {
-        if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
-            return QImage();
-
-        QHash<QRgb, QPainterPath> link_paths;
-        QHash<QRgb, QPainterPath> junction_paths;
-        QHash<quint64, QPainterPath> icon_stroke_paths;
-        QHash<QRgb, QPainterPath> icon_fill_paths;
-        link_paths.reserve(qMin(SymbologyColorBucketCount + 1, int(stripe.segment_indices.size())));
-        junction_paths.reserve(qMin(SymbologyColorBucketCount + 1, int(stripe.marker_indices.size())));
-
-        int processed_segments = 0;
-        for (int segment_index : stripe.segment_indices)
+        QRunnable *heatmap_runnable = QRunnable::create(
+            [&request, &heatmap_image, &heatmap_completed, scale, image_left, image_top]
         {
-            if ((++processed_segments & 255) == 0 && request.cancelled &&
-                request.cancelled->load(std::memory_order_relaxed))
-            {
-                return QImage();
-            }
-
-            const RenderGeometry::Segment &render_segment = request.geometry->link_segments.at(segment_index);
-            const QLineF &segment = render_segment.line;
-            const QRgb color = request.symbology->link_colors.value(
-                render_segment.render_id, NetworkColor.rgb());
-            QPainterPath &link_path = link_paths[color];
-            link_path.moveTo(QPointF(
-                (segment.x1() - image_left) * scale,
-                (segment.y1() - image_top) * scale - stripe.logical_top));
-            link_path.lineTo(QPointF(
-                (segment.x2() - image_left) * scale,
-                (segment.y2() - image_top) * scale - stripe.logical_top));
-        }
-
-        const qreal junction_radius = junctionDotDiameterForZoom(
-            request.zoom, request.symbology->node_size_percent) / 2.0;
-        int processed_markers = 0;
-        for (int marker_index : stripe.marker_indices)
-        {
-            if ((++processed_markers & 255) == 0 && request.cancelled &&
-                request.cancelled->load(std::memory_order_relaxed))
-            {
-                return QImage();
-            }
-
-            const RenderGeometry::Marker &marker = request.geometry->markers.at(marker_index);
-            const QPointF &world_position = marker.world_position;
-            const bool node_entity = marker.entity_type == InfrastructureEntity::Junction ||
-                marker.entity_type == InfrastructureEntity::Reservoir ||
-                marker.entity_type == InfrastructureEntity::Tank;
-            const QRgb color = node_entity
-                ? request.symbology->node_colors.value(marker.render_id, NetworkColor.rgb())
-                : request.symbology->link_colors.value(marker.render_id, NetworkColor.rgb());
-            const QPointF center(
-                (world_position.x() - image_left) * scale,
-                (world_position.y() - image_top) * scale - stripe.logical_top);
-            const NetworkIconAsset *asset = iconAssetForEntity(marker.entity_type);
-            if (!asset)
-            {
-                junction_paths[color].addEllipse(center, junction_radius, junction_radius);
-                continue;
-            }
-
-            const qreal marker_size = markerSizeForZoom(
-                request.zoom, request.symbology->icon_size_percent);
-            const qreal icon_scale = marker_size / qMax(asset->view_width, asset->view_height);
-            const qreal icon_x = center.x() - asset->view_width * icon_scale / 2.0;
-            const qreal icon_y = center.y() - asset->view_height * icon_scale / 2.0;
-            const QTransform icon_transform(
-                icon_scale, 0.0, 0.0, icon_scale, icon_x, icon_y);
-            const quint64 icon_key = (quint64(color) << 32) |
-                quint32(int(marker.entity_type));
-            if (!asset->stroke_path.isEmpty())
-                icon_stroke_paths[icon_key].addPath(icon_transform.map(asset->stroke_path));
-            if (!asset->fill_path.isEmpty())
-                icon_fill_paths[color].addPath(icon_transform.map(asset->fill_path));
-        }
-
-        if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
-            return QImage();
-
-        MapVectorDocument document;
-        for (QHash<QRgb, QPainterPath>::iterator iterator = link_paths.begin();
-             iterator != link_paths.end(); ++iterator)
-        {
-            QPen pen(QColor::fromRgb(iterator.key()));
-            pen.setWidthF(request.symbology->link_width);
-            pen.setCapStyle(Qt::RoundCap);
-            pen.setJoinStyle(Qt::RoundJoin);
-            document.addStroke(std::move(iterator.value()), pen);
-        }
-        for (QHash<QRgb, QPainterPath>::iterator iterator = junction_paths.begin();
-             iterator != junction_paths.end(); ++iterator)
-        {
-            document.addFill(std::move(iterator.value()), QBrush(QColor::fromRgb(iterator.key())));
-        }
-        for (QHash<quint64, QPainterPath>::iterator iterator = icon_stroke_paths.begin();
-             iterator != icon_stroke_paths.end(); ++iterator)
-        {
-            const QRgb color = QRgb(iterator.key() >> 32);
-            const InfrastructureEntity entity_type = static_cast<InfrastructureEntity>(
-                quint32(iterator.key()));
-            const NetworkIconAsset *asset = iconAssetForEntity(entity_type);
-            if (!asset)
-                continue;
-            const qreal marker_size = markerSizeForZoom(
-                request.zoom, request.symbology->icon_size_percent);
-            const qreal icon_scale = marker_size / qMax(asset->view_width, asset->view_height);
-            QPen pen(QColor::fromRgb(color));
-            pen.setWidthF(asset->stroke_width * icon_scale);
-            pen.setCapStyle(Qt::RoundCap);
-            pen.setJoinStyle(Qt::RoundJoin);
-            document.addStroke(std::move(iterator.value()), pen);
-        }
-        for (QHash<QRgb, QPainterPath>::iterator iterator = icon_fill_paths.begin();
-             iterator != icon_fill_paths.end(); ++iterator)
-        {
-            document.addFill(std::move(iterator.value()), QBrush(QColor::fromRgb(iterator.key())));
-        }
-
-        QImage stripe_image(
-            QSize(qMax(1, qCeil(logical_width * request.device_pixel_ratio)), stripe.physical_height),
-            QImage::Format_ARGB32_Premultiplied);
-        if (stripe_image.isNull())
-            return QImage();
-        stripe_image.setDevicePixelRatio(request.device_pixel_ratio);
-        stripe_image.fill(Qt::transparent);
-
-        QPainter painter(&stripe_image);
-        painter.setRenderHint(QPainter::Antialiasing, true);
-        document.paint(painter);
-        painter.end();
-        return stripe_image;
-    };
-
-    for (int stripe_index = 0; stripe_index < stripe_count; ++stripe_index)
-    {
-        QRunnable *runnable = QRunnable::create([&stripes, &stripe_images, &completed_stripes,
-            &render_stripe, stripe_index]
-        {
-            stripe_images[stripe_index] = render_stripe(stripes[stripe_index]);
-            completed_stripes.release();
+            heatmap_image = renderHeatmap(request, scale, image_left, image_top);
+            heatmap_completed.release();
         });
-        workers.pool.start(runnable);
+        workers.heatmap_dispatch_pool.start(heatmap_runnable);
     }
 
-    result.heatmap_image = renderHeatmap(request, scale, image_left, image_top);
+    result.image = MapRetainedVectorRenderer::renderHorizontalBands(
+        request.logical_size, request.device_pixel_ratio, bands, request.cancelled,
+        [&request, &band_contents, scale, image_left, image_top](
+            int band_index,
+            const MapRetainedVectorRenderer::HorizontalBand &band,
+            MapVectorDocument &document) -> bool
+        {
+            if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
+                return false;
 
-    for (int stripe_index = 0; stripe_index < stripe_count; ++stripe_index)
-        completed_stripes.acquire();
+            const BandContent &content = band_contents.at(band_index);
+            QHash<QRgb, QPainterPath> link_paths;
+            QHash<QRgb, QPainterPath> junction_paths;
+            QHash<quint64, QPainterPath> icon_stroke_paths;
+            QHash<QRgb, QPainterPath> icon_fill_paths;
+            link_paths.reserve(qMin(SymbologyColorBucketCount + 1, int(content.segment_indices.size())));
+            junction_paths.reserve(qMin(SymbologyColorBucketCount + 1, int(content.marker_indices.size())));
 
-    if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
-        return result;
+            int processed_segments = 0;
+            for (int segment_index : content.segment_indices)
+            {
+                if ((++processed_segments & 255) == 0 && request.cancelled &&
+                    request.cancelled->load(std::memory_order_relaxed))
+                {
+                    return false;
+                }
 
-    QImage image(physical_size, QImage::Format_ARGB32_Premultiplied);
-    if (image.isNull())
-        return result;
-    image.setDevicePixelRatio(request.device_pixel_ratio);
-    image.fill(Qt::transparent);
+                const RenderGeometry::Segment &render_segment = request.geometry->link_segments.at(segment_index);
+                const QLineF &segment = render_segment.line;
+                const QRgb color = request.symbology->link_colors.value(
+                    render_segment.render_id, NetworkColor.rgb());
+                QPainterPath &link_path = link_paths[color];
+                link_path.moveTo(QPointF(
+                    (segment.x1() - image_left) * scale,
+                    (segment.y1() - image_top) * scale - band.logical_top));
+                link_path.lineTo(QPointF(
+                    (segment.x2() - image_left) * scale,
+                    (segment.y2() - image_top) * scale - band.logical_top));
+            }
 
-    QPainter composition_painter(&image);
-    composition_painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
-    for (int stripe_index = 0; stripe_index < stripe_count; ++stripe_index)
+            const qreal junction_radius = junctionDotDiameterForZoom(
+                request.zoom, request.symbology->node_size_percent) / 2.0;
+            int processed_markers = 0;
+            for (int marker_index : content.marker_indices)
+            {
+                if ((++processed_markers & 255) == 0 && request.cancelled &&
+                    request.cancelled->load(std::memory_order_relaxed))
+                {
+                    return false;
+                }
+
+                const RenderGeometry::Marker &marker = request.geometry->markers.at(marker_index);
+                const QPointF &world_position = marker.world_position;
+                const bool node_entity = marker.entity_type == InfrastructureEntity::Junction ||
+                    marker.entity_type == InfrastructureEntity::Reservoir ||
+                    marker.entity_type == InfrastructureEntity::Tank;
+                const QRgb color = node_entity
+                    ? request.symbology->node_colors.value(marker.render_id, NetworkColor.rgb())
+                    : request.symbology->link_colors.value(marker.render_id, NetworkColor.rgb());
+                const QPointF center(
+                    (world_position.x() - image_left) * scale,
+                    (world_position.y() - image_top) * scale - band.logical_top);
+                const NetworkIconAsset *asset = iconAssetForEntity(marker.entity_type);
+                if (!asset)
+                {
+                    junction_paths[color].addEllipse(center, junction_radius, junction_radius);
+                    continue;
+                }
+
+                const qreal marker_size = markerSizeForZoom(
+                    request.zoom, request.symbology->icon_size_percent);
+                const qreal icon_scale = marker_size / qMax(asset->view_width, asset->view_height);
+                const qreal icon_x = center.x() - asset->view_width * icon_scale / 2.0;
+                const qreal icon_y = center.y() - asset->view_height * icon_scale / 2.0;
+                const QTransform icon_transform(
+                    icon_scale, 0.0, 0.0, icon_scale, icon_x, icon_y);
+                const quint64 icon_key = (quint64(color) << 32) |
+                    quint32(int(marker.entity_type));
+                if (!asset->stroke_path.isEmpty())
+                    icon_stroke_paths[icon_key].addPath(icon_transform.map(asset->stroke_path));
+                if (!asset->fill_path.isEmpty())
+                    icon_fill_paths[color].addPath(icon_transform.map(asset->fill_path));
+            }
+
+            for (QHash<QRgb, QPainterPath>::iterator iterator = link_paths.begin();
+                 iterator != link_paths.end(); ++iterator)
+            {
+                QPen pen(QColor::fromRgb(iterator.key()));
+                pen.setWidthF(request.symbology->link_width);
+                pen.setCapStyle(Qt::RoundCap);
+                pen.setJoinStyle(Qt::RoundJoin);
+                document.addStroke(std::move(iterator.value()), pen);
+            }
+            for (QHash<QRgb, QPainterPath>::iterator iterator = junction_paths.begin();
+                 iterator != junction_paths.end(); ++iterator)
+            {
+                document.addFill(std::move(iterator.value()), QBrush(QColor::fromRgb(iterator.key())));
+            }
+            for (QHash<quint64, QPainterPath>::iterator iterator = icon_stroke_paths.begin();
+                 iterator != icon_stroke_paths.end(); ++iterator)
+            {
+                const QRgb color = QRgb(iterator.key() >> 32);
+                const InfrastructureEntity entity_type = static_cast<InfrastructureEntity>(
+                    quint32(iterator.key()));
+                const NetworkIconAsset *asset = iconAssetForEntity(entity_type);
+                if (!asset)
+                    continue;
+                const qreal marker_size = markerSizeForZoom(
+                    request.zoom, request.symbology->icon_size_percent);
+                const qreal icon_scale = marker_size / qMax(asset->view_width, asset->view_height);
+                QPen pen(QColor::fromRgb(color));
+                pen.setWidthF(asset->stroke_width * icon_scale);
+                pen.setCapStyle(Qt::RoundCap);
+                pen.setJoinStyle(Qt::RoundJoin);
+                document.addStroke(std::move(iterator.value()), pen);
+            }
+            for (QHash<QRgb, QPainterPath>::iterator iterator = icon_fill_paths.begin();
+                 iterator != icon_fill_paths.end(); ++iterator)
+            {
+                document.addFill(std::move(iterator.value()), QBrush(QColor::fromRgb(iterator.key())));
+            }
+
+            return !(request.cancelled && request.cancelled->load(std::memory_order_relaxed));
+        },
+        false,
+        vector_thread_count);
+
+    if (heatmap_active)
     {
-        const QImage &stripe_image = stripe_images[stripe_index];
-        if (stripe_image.isNull())
-            continue;
-        composition_painter.drawImage(
-            QPointF(0.0, stripes[stripe_index].logical_top), stripe_image);
+        heatmap_completed.acquire();
+        result.heatmap_image = std::move(heatmap_image);
     }
-    composition_painter.end();
 
-    result.image = std::move(image);
     return result;
 }
 
@@ -2325,6 +2321,91 @@ void MapNetworkOverlayWidget::paintNetwork(QPainter &painter)
     painter.drawImage(target_rect, this->rendered_network_cache);
 }
 
+void MapNetworkOverlayWidget::paintSelectedEntity(QPainter &painter)
+{
+    if (!this->selected_entity.isValid() || !this->render_geometry)
+        return;
+
+    const qreal scale = referenceScaleForCurrentZoom();
+    if (scale <= 0.0)
+        return;
+
+    const QPointF world_center = visibleReferenceWorldCenter();
+    const quint64 key = entityRenderKey(
+        this->selected_entity.entity_type, this->selected_entity.render_id);
+    const QColor selected_color(0, 190, 255);
+
+    const QList<int> segment_indices = this->render_geometry->segment_indices_by_entity.value(key);
+    if (!segment_indices.isEmpty())
+    {
+        QPainterPath selected_path;
+        for (int segment_index : segment_indices)
+        {
+            if (segment_index < 0 || segment_index >= this->render_geometry->link_segments.size())
+                continue;
+            const RenderGeometry::Segment &segment = this->render_geometry->link_segments.at(segment_index);
+            const QPointF start(
+                width() / 2.0 + (segment.line.x1() - world_center.x()) * scale,
+                height() / 2.0 + (segment.line.y1() - world_center.y()) * scale);
+            const QPointF end(
+                width() / 2.0 + (segment.line.x2() - world_center.x()) * scale,
+                height() / 2.0 + (segment.line.y2() - world_center.y()) * scale);
+            selected_path.moveTo(start);
+            selected_path.lineTo(end);
+        }
+
+        const qreal base_width = this->render_symbology
+            ? this->render_symbology->link_width : qreal(this->link_thickness_px);
+        QPen selected_pen(selected_color);
+        selected_pen.setWidthF(qMax<qreal>(3.0, base_width + 2.0));
+        selected_pen.setCapStyle(Qt::RoundCap);
+        selected_pen.setJoinStyle(Qt::RoundJoin);
+        painter.strokePath(selected_path, selected_pen);
+    }
+
+    const QHash<quint64, int>::const_iterator marker_iterator =
+        this->render_geometry->marker_indices_by_entity.constFind(key);
+    if (marker_iterator == this->render_geometry->marker_indices_by_entity.cend())
+        return;
+
+    const int marker_index = marker_iterator.value();
+    if (marker_index < 0 || marker_index >= this->render_geometry->markers.size())
+        return;
+
+    const RenderGeometry::Marker &marker = this->render_geometry->markers.at(marker_index);
+    const QPointF center(
+        width() / 2.0 + (marker.world_position.x() - world_center.x()) * scale,
+        height() / 2.0 + (marker.world_position.y() - world_center.y()) * scale);
+    const NetworkIconAsset *asset = iconAssetForEntity(marker.entity_type);
+    if (!asset)
+    {
+        const qreal radius = junctionDotDiameterForZoom(
+            this->map_model->zoom(), this->node_size_percent) / 2.0;
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(selected_color);
+        painter.drawEllipse(center, radius + 2.0, radius + 2.0);
+        return;
+    }
+
+    const qreal marker_size = markerSizeForZoom(
+        this->map_model->zoom(), this->icon_size_percent);
+    const qreal icon_scale = marker_size / qMax(asset->view_width, asset->view_height);
+    const qreal icon_x = center.x() - asset->view_width * icon_scale / 2.0;
+    const qreal icon_y = center.y() - asset->view_height * icon_scale / 2.0;
+    const QTransform transform(icon_scale, 0.0, 0.0, icon_scale, icon_x, icon_y);
+
+    if (!asset->fill_path.isEmpty())
+        painter.fillPath(transform.map(asset->fill_path), QBrush(selected_color));
+    if (!asset->stroke_path.isEmpty())
+    {
+        QPen selected_pen(selected_color);
+        selected_pen.setWidthF(qMax<qreal>(2.0, asset->stroke_width * icon_scale + 1.5));
+        selected_pen.setCapStyle(Qt::RoundCap);
+        selected_pen.setJoinStyle(Qt::RoundJoin);
+        painter.strokePath(transform.map(asset->stroke_path), selected_pen);
+    }
+}
+
 QPointF MapNetworkOverlayWidget::visibleReferenceWorldCenter() const
 {
     if (!this->render_geometry)
@@ -2449,6 +2530,7 @@ NetworkOverlayHit MapNetworkOverlayWidget::nearestMarkerHit(
         best_distance_squared = distance_squared;
         best_hit.render_id = marker.render_id;
         best_hit.entity_type = marker.entity_type;
+        best_hit.uuid = marker.uuid;
     }
 
     return best_hit;
@@ -2474,6 +2556,7 @@ NetworkOverlayHit MapNetworkOverlayWidget::nearestSegmentHit(
         best_distance_squared = distance_squared;
         best_hit.render_id = segment.render_id;
         best_hit.entity_type = segment.entity_type;
+        best_hit.uuid = segment.uuid;
     }
 
     return best_hit;

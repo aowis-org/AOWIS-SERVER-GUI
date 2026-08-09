@@ -10,6 +10,7 @@
 #include <QSize>
 #include <QSet>
 #include <QWidget>
+#include <QUuid>
 
 #include <atomic>
 #include <memory>
@@ -28,6 +29,7 @@ struct NetworkOverlayHit
 {
     quint32 render_id = 0;
     InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
+    QUuid uuid;
 
     bool isValid() const
     {
@@ -45,6 +47,8 @@ public:
 
     int backgroundOpacity() const;
     NetworkOverlayHit hitTest(const QPointF &screen_position);
+    void setSelectedEntity(const NetworkOverlayHit &hit);
+    void clearSelectedEntity();
 
 public slots:
     void setBackgroundOpacity(int opacity);
@@ -61,6 +65,7 @@ private:
     {
         quint32 render_id = 0;
         InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
+        QUuid uuid;
         QPointF world_position;
     };
 
@@ -68,6 +73,7 @@ private:
     {
         quint32 render_id = 0;
         InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
+        QUuid uuid;
         QPointF start;
         QPointF end;
     };
@@ -91,11 +97,14 @@ private:
         struct Segment
         {
             quint32 render_id = 0;
+            InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
             QLineF line;
         };
 
         QList<Marker> markers;
         QList<Segment> link_segments;
+        QHash<quint64, int> marker_indices_by_entity;
+        QHash<quint64, QList<int>> segment_indices_by_entity;
         QRectF world_bounds;
         QPointF world_origin;
         quint64 geometry_revision = 0;
@@ -183,6 +192,7 @@ private:
     bool pendingCacheCoversCurrentView() const;
     bool coverageCoversCurrentView(const QRectF &coverage_world_bounds, int zoom) const;
     void paintNetwork(QPainter &painter);
+    void paintSelectedEntity(QPainter &painter);
     QPointF visibleReferenceWorldCenter() const;
     QRectF visibleReferenceWorldRect() const;
     qreal referenceScaleForCurrentZoom() const;
@@ -209,6 +219,7 @@ private:
     int heatmap_opacity = 75;
     int heatmap_radius_m = 400;
     int heatmap_solid_center_percent = 70;
+    NetworkOverlayHit selected_entity;
 
     std::shared_ptr<const RenderGeometry> render_geometry;
     std::shared_ptr<const RenderSymbology> render_symbology;

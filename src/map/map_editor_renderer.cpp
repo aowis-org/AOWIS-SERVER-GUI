@@ -1,6 +1,7 @@
 #include "map_editor_renderer.h"
 
 #include "map_model.h"
+#include "map_retained_vector_renderer.h"
 #include "map_vector_document.h"
 
 #include "../geo_web_mercator.h"
@@ -19,8 +20,6 @@
 #include <QPointer>
 #include <QRunnable>
 #include <QRegion>
-#include <QSemaphore>
-#include <QThread>
 #include <QThreadPool>
 #include <QWidget>
 #include <QtMath>
@@ -43,25 +42,6 @@ constexpr int static_cache_maximum_physical_dimension = 4096;
 constexpr qint64 static_cache_maximum_physical_area = 8LL * 1024LL * 1024LL;
 constexpr qreal static_cache_rebuild_edge = 256.0;
 constexpr qreal static_cache_item_padding = 16.0;
-
-struct EditorStaticRenderWorkers
-{
-    EditorStaticRenderWorkers()
-    {
-        this->thread_count = qMax(1, QThread::idealThreadCount());
-        this->pool.setMaxThreadCount(this->thread_count);
-        this->pool.setExpiryTimeout(-1);
-    }
-
-    QThreadPool pool;
-    int thread_count = 1;
-};
-
-EditorStaticRenderWorkers &editorStaticRenderWorkers()
-{
-    static EditorStaticRenderWorkers workers;
-    return workers;
-}
 
 bool isHydraulicConnectionNode(InfrastructureEntity entity)
 {
@@ -696,46 +676,32 @@ MapEditorRenderer::StaticRenderResult MapEditorRenderer::renderStaticCache(
     if (scale <= 0.0)
         return result;
 
-    const QSize physical_size(
-        qMax(1, qCeil(request.logical_size.width() * request.device_pixel_ratio)),
-        qMax(1, qCeil(request.logical_size.height() * request.device_pixel_ratio)));
     const qreal image_left = request.coverage_world_bounds.left();
     const qreal image_top = request.coverage_world_bounds.top();
     const qreal logical_width = request.logical_size.width();
     const qreal logical_height = request.logical_size.height();
 
-    EditorStaticRenderWorkers &workers = editorStaticRenderWorkers();
-    const int stripe_count = qMax(1, qMin(qMax(1, workers.thread_count * 2), physical_size.height()));
+    const std::vector<MapRetainedVectorRenderer::HorizontalBand> bands =
+        MapRetainedVectorRenderer::createHorizontalBands(
+            request.logical_size, request.device_pixel_ratio);
+    if (bands.empty())
+        return result;
 
-    struct StripeDefinition
+    struct BandContent
     {
-        int physical_top = 0;
-        int physical_height = 0;
-        qreal logical_top = 0.0;
-        qreal logical_height = 0.0;
         std::vector<int> pipe_indices;
         std::vector<int> device_indices;
         std::vector<int> node_indices;
     };
 
-    std::vector<StripeDefinition> stripes(stripe_count);
-    for (int stripe_index = 0; stripe_index < stripe_count; ++stripe_index)
-    {
-        StripeDefinition &stripe = stripes[stripe_index];
-        const int physical_bottom =
-            (stripe_index + 1) * physical_size.height() / stripe_count;
-        stripe.physical_top = stripe_index * physical_size.height() / stripe_count;
-        stripe.physical_height = physical_bottom - stripe.physical_top;
-        stripe.logical_top = stripe.physical_top / request.device_pixel_ratio;
-        stripe.logical_height = stripe.physical_height / request.device_pixel_ratio;
-    }
-
-    const std::function<int(qreal)> stripe_for_logical_y =
-        [stripe_count, logical_height](qreal logical_y)
+    std::vector<BandContent> band_contents(bands.size());
+    const int band_count = int(bands.size());
+    const std::function<int(qreal)> band_for_logical_y =
+        [band_count, logical_height](qreal logical_y)
     {
         if (logical_height <= 0.0)
             return 0;
-        return qBound(0, qFloor(logical_y * stripe_count / logical_height), stripe_count - 1);
+        return qBound(0, qFloor(logical_y * band_count / logical_height), band_count - 1);
     };
 
     for (int link_index = 0; link_index < request.geometry->links.size(); ++link_index)
@@ -789,14 +755,14 @@ MapEditorRenderer::StaticRenderResult MapEditorRenderer::renderStaticCache(
             continue;
         }
 
-        const int first_stripe = stripe_for_logical_y(minimum_y);
-        const int last_stripe = stripe_for_logical_y(maximum_y);
-        for (int stripe_index = first_stripe; stripe_index <= last_stripe; ++stripe_index)
+        const int first_band = band_for_logical_y(minimum_y);
+        const int last_band = band_for_logical_y(maximum_y);
+        for (int band_index = first_band; band_index <= last_band; ++band_index)
         {
             if (link.entity_type == InfrastructureEntity::Pipe)
-                stripes[stripe_index].pipe_indices.push_back(link_index);
+                band_contents[band_index].pipe_indices.push_back(link_index);
             else if (isHydraulicDeviceLink(link.entity_type))
-                stripes[stripe_index].device_indices.push_back(link_index);
+                band_contents[band_index].device_indices.push_back(link_index);
         }
     }
 
@@ -824,197 +790,145 @@ MapEditorRenderer::StaticRenderResult MapEditorRenderer::renderStaticCache(
             continue;
         }
 
-        const int first_stripe = stripe_for_logical_y(minimum_y);
-        const int last_stripe = stripe_for_logical_y(maximum_y);
-        for (int stripe_index = first_stripe; stripe_index <= last_stripe; ++stripe_index)
-            stripes[stripe_index].node_indices.push_back(node_index);
+        const int first_band = band_for_logical_y(minimum_y);
+        const int last_band = band_for_logical_y(maximum_y);
+        for (int band_index = first_band; band_index <= last_band; ++band_index)
+            band_contents[band_index].node_indices.push_back(node_index);
     }
 
     if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
         return result;
 
-    std::vector<QImage> stripe_images(stripe_count);
-    QSemaphore completed_stripes;
-    const std::function<QImage(const StripeDefinition &)> render_stripe =
-        [&request, scale, image_left, image_top, logical_width](
-            const StripeDefinition &stripe) -> QImage
-    {
-        if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
-            return QImage();
-
-        MapVectorDocument document;
-        QPainterPath pipe_path;
-        QPainterPath pipe_vertex_path;
-        int processed_pipes = 0;
-        for (int link_index : stripe.pipe_indices)
+    result.image = MapRetainedVectorRenderer::renderHorizontalBands(
+        request.logical_size, request.device_pixel_ratio, bands, request.cancelled,
+        [&request, &band_contents, scale, image_left, image_top](
+            int band_index,
+            const MapRetainedVectorRenderer::HorizontalBand &band,
+            MapVectorDocument &document) -> bool
         {
-            if ((++processed_pipes & 255) == 0 && request.cancelled &&
-                request.cancelled->load(std::memory_order_relaxed))
+            if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
+                return false;
+
+            const BandContent &content = band_contents.at(band_index);
+            QPainterPath pipe_path;
+            QPainterPath pipe_vertex_path;
+            int processed_pipes = 0;
+            for (int link_index : content.pipe_indices)
             {
-                return QImage();
+                if ((++processed_pipes & 255) == 0 && request.cancelled &&
+                    request.cancelled->load(std::memory_order_relaxed))
+                {
+                    return false;
+                }
+
+                const StaticLink &link = request.geometry->links.at(link_index);
+                if (link.world_vertices.size() < 2)
+                    continue;
+
+                QPointF point(
+                    (link.world_vertices.first().x() - image_left) * scale,
+                    (link.world_vertices.first().y() - image_top) * scale - band.logical_top);
+                pipe_path.moveTo(point);
+                for (qsizetype index = 1; index < link.world_vertices.size(); ++index)
+                {
+                    point = QPointF(
+                        (link.world_vertices.at(index).x() - image_left) * scale,
+                        (link.world_vertices.at(index).y() - image_top) * scale - band.logical_top);
+                    pipe_path.lineTo(point);
+                    if (index + 1 < link.world_vertices.size())
+                        pipe_vertex_path.addEllipse(point, pipe_vertex_radius, pipe_vertex_radius);
+                }
             }
 
-            const StaticLink &link = request.geometry->links.at(link_index);
-            if (link.world_vertices.size() < 2)
-                continue;
+            QPen pipe_pen(Qt::black);
+            pipe_pen.setWidthF(3.0);
+            pipe_pen.setCapStyle(Qt::RoundCap);
+            pipe_pen.setJoinStyle(Qt::RoundJoin);
+            document.addStroke(std::move(pipe_path), pipe_pen);
+            document.addFill(std::move(pipe_vertex_path), QBrush(Qt::black));
 
-            QPointF point(
-                (link.world_vertices.first().x() - image_left) * scale,
-                (link.world_vertices.first().y() - image_top) * scale - stripe.logical_top);
-            pipe_path.moveTo(point);
-            for (qsizetype index = 1; index < link.world_vertices.size(); ++index)
+            QPainterPath device_path;
+            int processed_devices = 0;
+            for (int link_index : content.device_indices)
             {
-                point = QPointF(
-                    (link.world_vertices.at(index).x() - image_left) * scale,
-                    (link.world_vertices.at(index).y() - image_top) * scale - stripe.logical_top);
-                pipe_path.lineTo(point);
-                if (index + 1 < link.world_vertices.size())
-                    pipe_vertex_path.addEllipse(point, pipe_vertex_radius, pipe_vertex_radius);
+                if ((++processed_devices & 255) == 0 && request.cancelled &&
+                    request.cancelled->load(std::memory_order_relaxed))
+                {
+                    return false;
+                }
+
+                const StaticLink &link = request.geometry->links.at(link_index);
+                if (link.world_vertices.size() < 2)
+                    continue;
+
+                const QPointF start_point(
+                    (link.world_vertices.first().x() - image_left) * scale,
+                    (link.world_vertices.first().y() - image_top) * scale - band.logical_top);
+                const QPointF center_point(
+                    (link.device_center_world_position.x() - image_left) * scale,
+                    (link.device_center_world_position.y() - image_top) * scale - band.logical_top);
+                const QPointF end_point(
+                    (link.world_vertices.last().x() - image_left) * scale,
+                    (link.world_vertices.last().y() - image_top) * scale - band.logical_top);
+                device_path.moveTo(start_point);
+                device_path.lineTo(center_point);
+                device_path.moveTo(center_point);
+                device_path.lineTo(end_point);
             }
-        }
 
-        QPen pipe_pen(Qt::black);
-        pipe_pen.setWidthF(3.0);
-        pipe_pen.setCapStyle(Qt::RoundCap);
-        pipe_pen.setJoinStyle(Qt::RoundJoin);
-        document.addStroke(std::move(pipe_path), pipe_pen);
-        document.addFill(std::move(pipe_vertex_path), QBrush(Qt::black));
+            QPen device_pen(QColor(139, 90, 43));
+            device_pen.setWidthF(3.0);
+            device_pen.setCapStyle(Qt::RoundCap);
+            device_pen.setJoinStyle(Qt::RoundJoin);
+            document.addStroke(std::move(device_path), device_pen);
 
-        QPainterPath device_path;
-        int processed_devices = 0;
-        for (int link_index : stripe.device_indices)
-        {
-            if ((++processed_devices & 255) == 0 && request.cancelled &&
-                request.cancelled->load(std::memory_order_relaxed))
+            for (int link_index : content.device_indices)
             {
-                return QImage();
+                const StaticLink &link = request.geometry->links.at(link_index);
+                const QImage image = request.entity_images.value(int(link.entity_type));
+                if (image.isNull())
+                    continue;
+                const QPointF center_point(
+                    (link.device_center_world_position.x() - image_left) * scale,
+                    (link.device_center_world_position.y() - image_top) * scale - band.logical_top);
+                const QRectF target_rect(
+                    center_point.x() - image.width() / 2.0,
+                    center_point.y() - image.height() / 2.0,
+                    image.width(), image.height());
+                document.addImage(image, target_rect);
             }
 
-            const StaticLink &link = request.geometry->links.at(link_index);
-            if (link.world_vertices.size() < 2)
-                continue;
+            QPainterPath node_path;
+            for (int node_index : content.node_indices)
+            {
+                const StaticNode &node = request.geometry->nodes.at(node_index);
+                const QPointF point(
+                    (node.world_position.x() - image_left) * scale,
+                    (node.world_position.y() - image_top) * scale - band.logical_top);
+                node_path.addEllipse(point, marker_dot_radius, marker_dot_radius);
+            }
+            document.addFill(std::move(node_path), QBrush(Qt::black));
 
-            const QPointF start_point(
-                (link.world_vertices.first().x() - image_left) * scale,
-                (link.world_vertices.first().y() - image_top) * scale - stripe.logical_top);
-            const QPointF center_point(
-                (link.device_center_world_position.x() - image_left) * scale,
-                (link.device_center_world_position.y() - image_top) * scale - stripe.logical_top);
-            const QPointF end_point(
-                (link.world_vertices.last().x() - image_left) * scale,
-                (link.world_vertices.last().y() - image_top) * scale - stripe.logical_top);
-            device_path.moveTo(start_point);
-            device_path.lineTo(center_point);
-            device_path.moveTo(center_point);
-            device_path.lineTo(end_point);
-        }
+            for (int node_index : content.node_indices)
+            {
+                const StaticNode &node = request.geometry->nodes.at(node_index);
+                const QImage image = request.entity_images.value(int(node.entity_type));
+                if (image.isNull())
+                    continue;
 
-        QPen device_pen(QColor(139, 90, 43));
-        device_pen.setWidthF(3.0);
-        device_pen.setCapStyle(Qt::RoundCap);
-        device_pen.setJoinStyle(Qt::RoundJoin);
-        document.addStroke(std::move(device_path), device_pen);
+                const QPointF point(
+                    (node.world_position.x() - image_left) * scale,
+                    (node.world_position.y() - image_top) * scale - band.logical_top);
+                const QPointF rounded_anchor(qRound(point.x()), qRound(point.y()));
+                const QRectF target_rect(
+                    rounded_anchor.x(), rounded_anchor.y() - image.height(),
+                    image.width(), image.height());
+                document.addImage(image, target_rect);
+            }
 
-        for (int link_index : stripe.device_indices)
-        {
-            const StaticLink &link = request.geometry->links.at(link_index);
-            const QImage image = request.entity_images.value(int(link.entity_type));
-            if (image.isNull())
-                continue;
-            const QPointF center_point(
-                (link.device_center_world_position.x() - image_left) * scale,
-                (link.device_center_world_position.y() - image_top) * scale - stripe.logical_top);
-            const QRectF target_rect(
-                center_point.x() - image.width() / 2.0,
-                center_point.y() - image.height() / 2.0,
-                image.width(), image.height());
-            document.addImage(image, target_rect);
-        }
-
-        QPainterPath node_path;
-        for (int node_index : stripe.node_indices)
-        {
-            const StaticNode &node = request.geometry->nodes.at(node_index);
-            const QPointF point(
-                (node.world_position.x() - image_left) * scale,
-                (node.world_position.y() - image_top) * scale - stripe.logical_top);
-            node_path.addEllipse(point, marker_dot_radius, marker_dot_radius);
-        }
-        document.addFill(std::move(node_path), QBrush(Qt::black));
-
-        for (int node_index : stripe.node_indices)
-        {
-            const StaticNode &node = request.geometry->nodes.at(node_index);
-            const QImage image = request.entity_images.value(int(node.entity_type));
-            if (image.isNull())
-                continue;
-
-            const QPointF point(
-                (node.world_position.x() - image_left) * scale,
-                (node.world_position.y() - image_top) * scale - stripe.logical_top);
-            const QPointF rounded_anchor(qRound(point.x()), qRound(point.y()));
-            const QRectF target_rect(
-                rounded_anchor.x(), rounded_anchor.y() - image.height(),
-                image.width(), image.height());
-            document.addImage(image, target_rect);
-        }
-
-        if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
-            return QImage();
-
-        QImage stripe_image(
-            QSize(qMax(1, qCeil(logical_width * request.device_pixel_ratio)),
-                  stripe.physical_height),
-            QImage::Format_ARGB32_Premultiplied);
-        if (stripe_image.isNull())
-            return QImage();
-        stripe_image.setDevicePixelRatio(request.device_pixel_ratio);
-        stripe_image.fill(Qt::transparent);
-
-        QPainter painter(&stripe_image);
-        painter.setRenderHint(QPainter::Antialiasing, true);
-        painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-        document.paint(painter);
-        painter.end();
-        return stripe_image;
-    };
-
-    for (int stripe_index = 0; stripe_index < stripe_count; ++stripe_index)
-    {
-        QRunnable *runnable = QRunnable::create(
-            [&stripes, &stripe_images, &completed_stripes, &render_stripe, stripe_index]
-        {
-            stripe_images[stripe_index] = render_stripe(stripes[stripe_index]);
-            completed_stripes.release();
-        });
-        workers.pool.start(runnable);
-    }
-
-    for (int stripe_index = 0; stripe_index < stripe_count; ++stripe_index)
-        completed_stripes.acquire();
-
-    if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
-        return result;
-
-    QImage image(physical_size, QImage::Format_ARGB32_Premultiplied);
-    if (image.isNull())
-        return result;
-    image.setDevicePixelRatio(request.device_pixel_ratio);
-    image.fill(Qt::transparent);
-
-    QPainter composition_painter(&image);
-    composition_painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
-    for (int stripe_index = 0; stripe_index < stripe_count; ++stripe_index)
-    {
-        const QImage &stripe_image = stripe_images[stripe_index];
-        if (stripe_image.isNull())
-            continue;
-        composition_painter.drawImage(
-            QPointF(0.0, stripes[stripe_index].logical_top), stripe_image);
-    }
-    composition_painter.end();
-
-    result.image = std::move(image);
+            return !(request.cancelled && request.cancelled->load(std::memory_order_relaxed));
+        },
+        true);
     return result;
 }
 

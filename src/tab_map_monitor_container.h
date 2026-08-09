@@ -5,6 +5,7 @@
 #include <QMouseEvent>
 #include <QObject>
 #include <QWidget>
+#include <QUuid>
 
 #ifdef Q_OS_WASM
 #include <QTimer>
@@ -119,7 +120,7 @@ private:
     int heatmap_radius_m = 400;
     int heatmap_solid_center_percent = 70;
 
-    bool selectNetworkEntity(quint32 render_id, InfrastructureEntity entity_type);
+    bool selectNetworkEntity(quint32 render_id, InfrastructureEntity entity_type, const QUuid &uuid = QUuid());
     void setNetworkBackgroundOpacity(int opacity);
 
 #ifndef Q_OS_WASM

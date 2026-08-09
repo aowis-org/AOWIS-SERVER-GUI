@@ -381,14 +381,20 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
             {
 #ifdef Q_OS_WASM
                 if (selectWasmNetworkEntityAt(mouse_event->position()))
-#else
-                const NetworkOverlayHit hit = this->desktop_network_overlay->hitTest(mouse_event->position());
-                if (hit.isValid() && selectNetworkEntity(hit.render_id, hit.entity_type))
-#endif
                 {
                     mouse_event->accept();
                     return true;
                 }
+#else
+                const NetworkOverlayHit hit = this->desktop_network_overlay->hitTest(mouse_event->position());
+                if (hit.isValid() && selectNetworkEntity(hit.render_id, hit.entity_type, hit.uuid))
+                {
+                    this->desktop_network_overlay->setSelectedEntity(hit);
+                    mouse_event->accept();
+                    return true;
+                }
+                this->desktop_network_overlay->clearSelectedEntity();
+#endif
             }
         }
 #ifndef Q_OS_WASM
@@ -432,10 +438,16 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
     return QWidget::eventFilter(watched, event);
 }
 
-bool MapMonitorContainer::selectNetworkEntity(quint32 render_id, InfrastructureEntity entity_type)
+bool MapMonitorContainer::selectNetworkEntity(quint32 render_id, InfrastructureEntity entity_type, const QUuid &uuid)
 {
     if (this->hydraulic_data == nullptr || render_id == 0 || entity_type == InfrastructureEntity::Unknown)
         return false;
+
+    if (!uuid.isNull())
+    {
+        this->hydraulic_data->setSelectedUuid(entity_type, uuid);
+        return true;
+    }
 
     const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
     if (entity_type == InfrastructureEntity::Junction ||
