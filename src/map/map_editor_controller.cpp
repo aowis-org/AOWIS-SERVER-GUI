@@ -114,7 +114,8 @@ MapEditorController::TileSelectionRange MapEditorController::tileSelectionRange(
     if (!this->tile_selection_overlay.visible || zoom < MapModel::MinZoom || zoom > MapModel::MaxZoom)
         return range;
 
-    const double zoom_scale = std::ldexp(1.0, zoom - this->tile_selection_overlay.zoom);
+    const double zoom_scale = GeoWebMercator::zoomScale(
+        zoom, this->tile_selection_overlay.zoom);
     const double selected_west_tile = this->tile_selection_overlay.tile_x_min * zoom_scale;
     const double selected_east_tile = (this->tile_selection_overlay.tile_x_max + 1.0) * zoom_scale;
     const double selected_north_tile = this->tile_selection_overlay.tile_y_min * zoom_scale;

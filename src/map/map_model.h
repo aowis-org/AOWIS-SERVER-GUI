@@ -18,7 +18,7 @@ class MapModel : public QObject
 public:
     explicit MapModel(QObject *parent = nullptr);
 
-    static constexpr int TileSize = 256;
+    static constexpr int TileSize = GeoWebMercator::TileSize;
     static constexpr int MinZoom = 1;
     static constexpr int MaxZoom = 19;
 

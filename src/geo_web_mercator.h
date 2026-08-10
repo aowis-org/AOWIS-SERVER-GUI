@@ -17,6 +17,9 @@ public:
     static double normalizeLongitude(double lon);
     static int wrapTileX(int x, int zoom);
     static double nearestWrappedTileX(double x, double referenceX, int zoom);
+    static double nearestWrappedWorldPixelX(double x, double referenceX, int zoom);
+    static double zoomScale(int zoom, int referenceZoom);
+    static double metersPerPixel(double latitude, int zoom);
 
     static double lonToTileX(double lon, int zoom);
     static double latToTileY(double lat, int zoom);

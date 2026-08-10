@@ -4,6 +4,7 @@
 #include "../hydraulic_data.h"
 #include "../infrastructure_entity_traits.h"
 #include "../network_render_snapshot_builder.h"
+#include "map_render_cache_math.h"
 #include "map_retained_vector_renderer.h"
 #include "map_vector_document.h"
 
@@ -39,12 +40,7 @@
 
 namespace
 {
-constexpr int ReferenceZoom = 18;
 constexpr qreal NetworkImagePadding = 8.0;
-constexpr qreal NetworkImageOverscanFactor = 3.0;
-constexpr int NetworkImageMaximumPhysicalDimension = 4096;
-constexpr qint64 NetworkImageMaximumPhysicalArea = 8LL * 1024LL * 1024LL;
-constexpr qreal NetworkImageRebuildEdge = 256.0;
 constexpr qreal LinkHitDistance = 7.0;
 constexpr qreal SpatialCellSize = 128.0;
 constexpr int SymbologyColorBucketCount = 256;
@@ -54,7 +50,6 @@ constexpr qint64 HeatmapMaximumKernelCachePixels = 8LL * 1024LL * 1024LL;
 constexpr qreal HeatmapMaximumKernelRadius = 256.0;
 constexpr int HeatmapMaximumColorBuckets = 64;
 constexpr int HeatmapTileSize = 256;
-constexpr double WebMercatorMetersPerPixelAtZoomZero = 156543.03392804097;
 const QColor NetworkColor(Qt::black);
 const QColor SymbologyValueUnavailableColor(Qt::black);
 
@@ -115,18 +110,6 @@ quint64 entityRenderKey(InfrastructureEntity entity_type, quint32 render_id)
 bool isFiniteCoordinate(const CoordinateWGS84 &coordinate)
 {
     return std::isfinite(coordinate.longitude_deg) && std::isfinite(coordinate.latitude_deg);
-}
-
-double nearestWrappedWorldPixel(double raw_pixel_x, double reference_pixel_x, int zoom)
-{
-    const double raw_tile_x = raw_pixel_x / MapModel::TileSize;
-    const double reference_tile_x = reference_pixel_x / MapModel::TileSize;
-    return GeoWebMercator::nearestWrappedTileX(raw_tile_x, reference_tile_x, zoom) * MapModel::TileSize;
-}
-
-qreal scaleForZoom(int zoom)
-{
-    return std::ldexp(1.0, zoom - ReferenceZoom);
 }
 
 qreal nodeSizeScale(int node_size_percent)
@@ -479,11 +462,11 @@ qreal heatmapRadiusReferencePixels(const QRectF &geometry_bounds, int radius_m)
         return 0.0;
 
     const double center_latitude = GeoWebMercator::worldPixelToLonLat(
-        0.0, geometry_bounds.center().y(), ReferenceZoom).latitude_deg;
-    const double latitude_radians = qDegreesToRadians(
-        qBound(-GeoWebMercator::MaximumLatitude, center_latitude, GeoWebMercator::MaximumLatitude));
+        0.0, geometry_bounds.center().y(),
+        MapRenderCacheMath::ReferenceZoom).latitude_deg;
     const double meters_per_pixel = std::max(0.000001,
-        WebMercatorMetersPerPixelAtZoomZero * std::cos(latitude_radians) / std::ldexp(1.0, ReferenceZoom));
+        GeoWebMercator::metersPerPixel(
+            center_latitude, MapRenderCacheMath::ReferenceZoom));
     return qMax<qreal>(1.0, qBound(10, radius_m, 1000) / meters_per_pixel);
 }
 
@@ -589,28 +572,6 @@ qreal pointToSegmentDistanceSquared(qreal point_x, qreal point_y, const QPointF 
     return delta_x * delta_x + delta_y * delta_y;
 }
 
-QSize boundedCacheLogicalSize(const QSize &viewport_size, qreal device_pixel_ratio)
-{
-    if (!viewport_size.isValid())
-        return QSize();
-
-    const qreal bounded_device_pixel_ratio = qMax<qreal>(1.0, device_pixel_ratio);
-    const qreal viewport_physical_area = qMax<qreal>(1.0,
-        viewport_size.width() * bounded_device_pixel_ratio *
-        viewport_size.height() * bounded_device_pixel_ratio);
-    const qreal maximum_factor = std::min({
-        NetworkImageOverscanFactor,
-        NetworkImageMaximumPhysicalDimension /
-            qMax<qreal>(1.0, viewport_size.width() * bounded_device_pixel_ratio),
-        NetworkImageMaximumPhysicalDimension /
-            qMax<qreal>(1.0, viewport_size.height() * bounded_device_pixel_ratio),
-        std::sqrt(NetworkImageMaximumPhysicalArea / viewport_physical_area)
-    });
-    const qreal factor = qMax<qreal>(1.0, maximum_factor);
-    return QSize(
-        qMax(1, qFloor(viewport_size.width() * factor)),
-        qMax(1, qFloor(viewport_size.height() * factor)));
-}
 }
 
 MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicData *hydraulic_data, QWidget *parent)
@@ -961,12 +922,14 @@ MapNetworkOverlayWidget::PreparedGeometry MapNetworkOverlayWidget::prepareGeomet
         const QPointF raw_world_position = GeoWebMercator::lonLatToWorldPixel(
             GeoWebMercator::normalizeLongitude(node.coordinate_wgs84.longitude_deg),
             node.coordinate_wgs84.latitude_deg,
-            ReferenceZoom);
+            MapRenderCacheMath::ReferenceZoom);
         if (!std::isfinite(anchor_x))
             anchor_x = raw_world_position.x();
 
         const QPointF world_position(
-            nearestWrappedWorldPixel(raw_world_position.x(), anchor_x, ReferenceZoom),
+            GeoWebMercator::nearestWrappedWorldPixelX(
+                raw_world_position.x(), anchor_x,
+                MapRenderCacheMath::ReferenceZoom),
             raw_world_position.y());
         RenderGeometry::Marker render_marker;
         render_marker.render_id = node.render_id;
@@ -1013,7 +976,7 @@ MapNetworkOverlayWidget::PreparedGeometry MapNetworkOverlayWidget::prepareGeomet
             const QPointF raw_world_position = GeoWebMercator::lonLatToWorldPixel(
                 GeoWebMercator::normalizeLongitude(coordinate.longitude_deg),
                 coordinate.latitude_deg,
-                ReferenceZoom);
+                MapRenderCacheMath::ReferenceZoom);
             if (!std::isfinite(previous_x))
             {
                 previous_x = raw_world_position.x();
@@ -1022,7 +985,9 @@ MapNetworkOverlayWidget::PreparedGeometry MapNetworkOverlayWidget::prepareGeomet
             }
 
             const QPointF world_position(
-                nearestWrappedWorldPixel(raw_world_position.x(), previous_x, ReferenceZoom),
+                GeoWebMercator::nearestWrappedWorldPixelX(
+                    raw_world_position.x(), previous_x,
+                    MapRenderCacheMath::ReferenceZoom),
                 raw_world_position.y());
             world_vertices.append(world_position);
             minimum_x = std::min(minimum_x, world_position.x());
@@ -1450,20 +1415,18 @@ MapNetworkOverlayWidget::RenderRequest MapNetworkOverlayWidget::createRenderRequ
     request.geometry = this->render_geometry;
     request.symbology = this->render_symbology;
 
-    const QSize cache_size = boundedCacheLogicalSize(size(), request.device_pixel_ratio);
+    const QSize cache_size = MapRenderCacheMath::boundedCacheLogicalSize(
+        size(), request.device_pixel_ratio);
     if (!cache_size.isValid())
         return RenderRequest();
 
-    const qreal scale = scaleForZoom(request.zoom);
+    const qreal scale = GeoWebMercator::zoomScale(
+        request.zoom, MapRenderCacheMath::ReferenceZoom);
     if (scale <= 0.0)
         return RenderRequest();
 
-    const QPointF center = visibleReferenceWorldCenter();
-    request.coverage_world_bounds = QRectF(
-        center.x() - cache_size.width() / (2.0 * scale),
-        center.y() - cache_size.height() / (2.0 * scale),
-        cache_size.width() / scale,
-        cache_size.height() / scale);
+    request.coverage_world_bounds = MapRenderCacheMath::centeredWorldRect(
+        visibleReferenceWorldCenter(), cache_size, scale);
 
     const qreal render_half_width = qMax(
         qMax(markerSizeForZoom(request.zoom, request.symbology->node_size_percent) / 2.0,
@@ -1701,7 +1664,8 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
     if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
         return result;
 
-    const qreal scale = scaleForZoom(request.zoom);
+    const qreal scale = GeoWebMercator::zoomScale(
+        request.zoom, MapRenderCacheMath::ReferenceZoom);
     const qreal image_left = request.image_world_bounds.left();
     const qreal image_top = request.image_world_bounds.top();
     const qreal logical_width = request.logical_size.width();
@@ -2039,23 +2003,13 @@ bool MapNetworkOverlayWidget::coverageCoversCurrentView(
     if (coverage_world_bounds.isEmpty() || zoom != this->map_model->zoom())
         return false;
 
-    const qreal scale = scaleForZoom(zoom);
+    const qreal scale = GeoWebMercator::zoomScale(
+        zoom, MapRenderCacheMath::ReferenceZoom);
     if (scale <= 0.0)
         return false;
 
-    const QRectF view_bounds = visibleReferenceWorldRect();
-    const qreal horizontal_overscan = qMax<qreal>(0.0,
-        (coverage_world_bounds.width() - view_bounds.width()) / 2.0);
-    const qreal vertical_overscan = qMax<qreal>(0.0,
-        (coverage_world_bounds.height() - view_bounds.height()) / 2.0);
-    const qreal horizontal_safety = std::min(NetworkImageRebuildEdge / scale, horizontal_overscan / 2.0);
-    const qreal vertical_safety = std::min(NetworkImageRebuildEdge / scale, vertical_overscan / 2.0);
-    const QRectF required_bounds = view_bounds.adjusted(
-        -horizontal_safety,
-        -vertical_safety,
-        horizontal_safety,
-        vertical_safety);
-    return coverage_world_bounds.contains(required_bounds);
+    return MapRenderCacheMath::coverageCoversView(
+        coverage_world_bounds, visibleReferenceWorldRect(), scale, true);
 }
 
 void MapNetworkOverlayWidget::paintNetwork(QPainter &painter)
@@ -2184,12 +2138,12 @@ QPointF MapNetworkOverlayWidget::visibleReferenceWorldCenter() const
     const QPointF raw_center = GeoWebMercator::lonLatToWorldPixel(
         GeoWebMercator::normalizeLongitude(this->map_model->centerLon()),
         this->map_model->centerLat(),
-        ReferenceZoom);
+        MapRenderCacheMath::ReferenceZoom);
     return QPointF(
-        nearestWrappedWorldPixel(
+        GeoWebMercator::nearestWrappedWorldPixelX(
             raw_center.x(),
             this->render_geometry->world_origin.x(),
-            ReferenceZoom),
+            MapRenderCacheMath::ReferenceZoom),
         raw_center.y());
 }
 
@@ -2199,17 +2153,14 @@ QRectF MapNetworkOverlayWidget::visibleReferenceWorldRect() const
     if (scale <= 0.0)
         return QRectF();
 
-    const QPointF center = visibleReferenceWorldCenter();
-    return QRectF(
-        center.x() - width() / (2.0 * scale),
-        center.y() - height() / (2.0 * scale),
-        width() / scale,
-        height() / scale);
+    return MapRenderCacheMath::centeredWorldRect(
+        visibleReferenceWorldCenter(), size(), scale);
 }
 
 qreal MapNetworkOverlayWidget::referenceScaleForCurrentZoom() const
 {
-    return scaleForZoom(this->map_model->zoom());
+    return GeoWebMercator::zoomScale(
+        this->map_model->zoom(), MapRenderCacheMath::ReferenceZoom);
 }
 
 QList<int> MapNetworkOverlayWidget::candidateIndices(

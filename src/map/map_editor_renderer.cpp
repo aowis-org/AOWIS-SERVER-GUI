@@ -1,6 +1,7 @@
 #include "map_editor_renderer.h"
 
 #include "map_model.h"
+#include "map_render_cache_math.h"
 #include "map_retained_vector_renderer.h"
 #include "map_vector_document.h"
 
@@ -37,11 +38,6 @@ namespace
 constexpr double marker_dot_radius = 5.0;
 constexpr double connection_target_radius = 9.0;
 constexpr double pipe_vertex_radius = 4.0;
-constexpr int reference_zoom = 18;
-constexpr qreal static_cache_overscan_factor = 3.0;
-constexpr int static_cache_maximum_physical_dimension = 4096;
-constexpr qint64 static_cache_maximum_physical_area = 8LL * 1024LL * 1024LL;
-constexpr qreal static_cache_rebuild_edge = 256.0;
 constexpr qreal static_cache_item_padding = 16.0;
 
 bool isFiniteCoordinate(const CoordinateWGS84 &coordinate)
@@ -49,40 +45,6 @@ bool isFiniteCoordinate(const CoordinateWGS84 &coordinate)
     return std::isfinite(coordinate.longitude_deg) && std::isfinite(coordinate.latitude_deg);
 }
 
-double nearestWrappedWorldPixel(double raw_pixel_x, double reference_pixel_x, int zoom)
-{
-    const double raw_tile_x = raw_pixel_x / MapModel::TileSize;
-    const double reference_tile_x = reference_pixel_x / MapModel::TileSize;
-    return GeoWebMercator::nearestWrappedTileX(raw_tile_x, reference_tile_x, zoom) * MapModel::TileSize;
-}
-
-qreal scaleForZoom(int zoom)
-{
-    return std::ldexp(1.0, zoom - reference_zoom);
-}
-
-QSize boundedStaticCacheLogicalSize(const QSize &viewport_size, qreal device_pixel_ratio)
-{
-    if (!viewport_size.isValid())
-        return QSize();
-
-    const qreal bounded_device_pixel_ratio = qMax<qreal>(1.0, device_pixel_ratio);
-    const qreal viewport_physical_area = qMax<qreal>(1.0,
-        viewport_size.width() * bounded_device_pixel_ratio *
-        viewport_size.height() * bounded_device_pixel_ratio);
-    const qreal maximum_factor = std::min({
-        static_cache_overscan_factor,
-        static_cache_maximum_physical_dimension /
-            qMax<qreal>(1.0, viewport_size.width() * bounded_device_pixel_ratio),
-        static_cache_maximum_physical_dimension /
-            qMax<qreal>(1.0, viewport_size.height() * bounded_device_pixel_ratio),
-        std::sqrt(static_cache_maximum_physical_area / viewport_physical_area)
-    });
-    const qreal factor = qMax<qreal>(1.0, maximum_factor);
-    return QSize(
-        qMax(1, qFloor(viewport_size.width() * factor)),
-        qMax(1, qFloor(viewport_size.height() * factor)));
-}
 }
 
 MapEditorRenderer::MapEditorRenderer(MapModel *map_model, QWidget *canvas)
@@ -214,10 +176,11 @@ QPointF MapEditorRenderer::visibleReferenceWorldCenter() const
 
     const QPointF raw_center = GeoWebMercator::lonLatToWorldPixel(
         GeoWebMercator::normalizeLongitude(this->map_model->centerLon()),
-        this->map_model->centerLat(), reference_zoom);
+        this->map_model->centerLat(), MapRenderCacheMath::ReferenceZoom);
     return QPointF(
-        nearestWrappedWorldPixel(raw_center.x(), this->static_geometry->world_origin.x(),
-                                 reference_zoom),
+        GeoWebMercator::nearestWrappedWorldPixelX(
+            raw_center.x(), this->static_geometry->world_origin.x(),
+            MapRenderCacheMath::ReferenceZoom),
         raw_center.y());
 }
 
@@ -230,19 +193,16 @@ QRectF MapEditorRenderer::visibleReferenceWorldRect() const
     if (scale <= 0.0)
         return QRectF();
 
-    const QPointF center = visibleReferenceWorldCenter();
-    return QRectF(
-        center.x() - this->canvas->width() / (2.0 * scale),
-        center.y() - this->canvas->height() / (2.0 * scale),
-        this->canvas->width() / scale,
-        this->canvas->height() / scale);
+    return MapRenderCacheMath::centeredWorldRect(
+        visibleReferenceWorldCenter(), this->canvas->size(), scale);
 }
 
 qreal MapEditorRenderer::referenceScaleForCurrentZoom() const
 {
     if (!this->map_model)
         return 0.0;
-    return scaleForZoom(this->map_model->zoom());
+    return GeoWebMercator::zoomScale(
+        this->map_model->zoom(), MapRenderCacheMath::ReferenceZoom);
 }
 
 const NetworkRenderNode *MapEditorRenderer::nodeByUuid(
@@ -367,7 +327,8 @@ std::shared_ptr<MapEditorRenderer::StaticGeometry> MapEditorRenderer::buildStati
 
         const QPointF raw_world_position = GeoWebMercator::lonLatToWorldPixel(
             GeoWebMercator::normalizeLongitude(node.coordinate_wgs84.longitude_deg),
-            node.coordinate_wgs84.latitude_deg, reference_zoom);
+            node.coordinate_wgs84.latitude_deg,
+            MapRenderCacheMath::ReferenceZoom);
         if (!std::isfinite(anchor_x))
             anchor_x = raw_world_position.x();
 
@@ -375,7 +336,9 @@ std::shared_ptr<MapEditorRenderer::StaticGeometry> MapEditorRenderer::buildStati
         static_node.uuid = node.uuid;
         static_node.entity_type = node.entity_type;
         static_node.world_position = QPointF(
-            nearestWrappedWorldPixel(raw_world_position.x(), anchor_x, reference_zoom),
+            GeoWebMercator::nearestWrappedWorldPixelX(
+                raw_world_position.x(), anchor_x,
+                MapRenderCacheMath::ReferenceZoom),
             raw_world_position.y());
         geometry->node_indices_by_uuid.insert(static_node.uuid, geometry->nodes.size());
         geometry->nodes.append(static_node);
@@ -410,7 +373,7 @@ std::shared_ptr<MapEditorRenderer::StaticGeometry> MapEditorRenderer::buildStati
 
             const QPointF raw_world_position = GeoWebMercator::lonLatToWorldPixel(
                 GeoWebMercator::normalizeLongitude(coordinate.longitude_deg),
-                coordinate.latitude_deg, reference_zoom);
+                coordinate.latitude_deg, MapRenderCacheMath::ReferenceZoom);
             if (!std::isfinite(previous_x))
             {
                 previous_x = raw_world_position.x();
@@ -419,7 +382,9 @@ std::shared_ptr<MapEditorRenderer::StaticGeometry> MapEditorRenderer::buildStati
             }
 
             const QPointF world_position(
-                nearestWrappedWorldPixel(raw_world_position.x(), previous_x, reference_zoom),
+                GeoWebMercator::nearestWrappedWorldPixelX(
+                    raw_world_position.x(), previous_x,
+                    MapRenderCacheMath::ReferenceZoom),
                 raw_world_position.y());
             static_link.world_vertices.append(world_position);
             previous_x = world_position.x();
@@ -450,12 +415,15 @@ std::shared_ptr<MapEditorRenderer::StaticGeometry> MapEditorRenderer::buildStati
                 center.longitude_deg = GeoWebMercator::normalizeLongitude(
                     start.longitude_deg + longitude_delta / 2.0);
                 const QPointF raw_center = GeoWebMercator::lonLatToWorldPixel(
-                    center.longitude_deg, center.latitude_deg, reference_zoom);
+                    center.longitude_deg, center.latitude_deg,
+                    MapRenderCacheMath::ReferenceZoom);
                 const double center_reference_x =
                     (static_link.world_vertices.first().x() +
                      static_link.world_vertices.last().x()) / 2.0;
                 static_link.device_center_world_position = QPointF(
-                    nearestWrappedWorldPixel(raw_center.x(), center_reference_x, reference_zoom),
+                    GeoWebMercator::nearestWrappedWorldPixelX(
+                        raw_center.x(), center_reference_x,
+                        MapRenderCacheMath::ReferenceZoom),
                     raw_center.y());
             }
         }
@@ -605,21 +573,18 @@ MapEditorRenderer::StaticRenderRequest MapEditorRenderer::createStaticRenderRequ
     request.entity_width = qMax(1, entity_width);
     request.device_pixel_ratio = qMax<qreal>(1.0, this->canvas->devicePixelRatioF());
     request.geometry = this->static_geometry;
-    request.logical_size = boundedStaticCacheLogicalSize(
+    request.logical_size = MapRenderCacheMath::boundedCacheLogicalSize(
         this->canvas->size(), request.device_pixel_ratio);
     if (!request.logical_size.isValid())
         return StaticRenderRequest();
 
-    const qreal scale = scaleForZoom(request.zoom);
+    const qreal scale = GeoWebMercator::zoomScale(
+        request.zoom, MapRenderCacheMath::ReferenceZoom);
     if (scale <= 0.0)
         return StaticRenderRequest();
 
-    const QPointF center = visibleReferenceWorldCenter();
-    request.coverage_world_bounds = QRectF(
-        center.x() - request.logical_size.width() / (2.0 * scale),
-        center.y() - request.logical_size.height() / (2.0 * scale),
-        request.logical_size.width() / scale,
-        request.logical_size.height() / scale);
+    request.coverage_world_bounds = MapRenderCacheMath::centeredWorldRect(
+        visibleReferenceWorldCenter(), request.logical_size, scale);
 
     const std::function<void(InfrastructureEntity)> add_entity_image =
         [&request](InfrastructureEntity entity_type)
@@ -661,7 +626,8 @@ MapEditorRenderer::StaticRenderResult MapEditorRenderer::renderStaticCache(
     if (request.cancelled && request.cancelled->load(std::memory_order_relaxed))
         return result;
 
-    const qreal scale = scaleForZoom(request.zoom);
+    const qreal scale = GeoWebMercator::zoomScale(
+        request.zoom, MapRenderCacheMath::ReferenceZoom);
     if (scale <= 0.0)
         return result;
 
@@ -1016,29 +982,18 @@ bool MapEditorRenderer::coverageCoversCurrentView(
     if (coverage_world_bounds.isEmpty() || !this->canvas || !this->static_geometry)
         return false;
 
-    const qreal scale = scaleForZoom(zoom);
+    const qreal scale = GeoWebMercator::zoomScale(
+        zoom, MapRenderCacheMath::ReferenceZoom);
     if (scale <= 0.0)
         return false;
 
     const QRectF view_bounds = visibleReferenceWorldRect();
-    if (!include_rebuild_margin)
-        return coverage_world_bounds.contains(view_bounds);
-
-    const qreal horizontal_overscan = qMax<qreal>(0.0,
-        (coverage_world_bounds.width() - view_bounds.width()) / 2.0);
-    const qreal vertical_overscan = qMax<qreal>(0.0,
-        (coverage_world_bounds.height() - view_bounds.height()) / 2.0);
     const qreal current_scale = referenceScaleForCurrentZoom();
     if (current_scale <= 0.0)
         return false;
-    const qreal horizontal_safety = std::min(
-        static_cache_rebuild_edge / current_scale, horizontal_overscan / 2.0);
-    const qreal vertical_safety = std::min(
-        static_cache_rebuild_edge / current_scale, vertical_overscan / 2.0);
-    const QRectF required_bounds = view_bounds.adjusted(
-        -horizontal_safety, -vertical_safety,
-        horizontal_safety, vertical_safety);
-    return coverage_world_bounds.contains(required_bounds);
+    return MapRenderCacheMath::coverageCoversView(
+        coverage_world_bounds, view_bounds, current_scale,
+        include_rebuild_margin);
 }
 
 bool MapEditorRenderer::paintStaticCache(

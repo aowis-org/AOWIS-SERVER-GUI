@@ -163,7 +163,7 @@ void MapModel::zoomByAt(int steps, const QPoint &anchorPos, const QSize &viewpor
     const QPointF old_center = centerTile();
     const double anchor_offset_x = (anchorPos.x() - viewport.width() / 2.0) / TileSize;
     const double anchor_offset_y = (anchorPos.y() - viewport.height() / 2.0) / TileSize;
-    const double zoom_scale = std::ldexp(1.0, new_zoom - old_zoom);
+    const double zoom_scale = GeoWebMercator::zoomScale(new_zoom, old_zoom);
 
     const double anchor_tile_x_new = (old_center.x() + anchor_offset_x) * zoom_scale;
     const double anchor_tile_y_new = (old_center.y() + anchor_offset_y) * zoom_scale;

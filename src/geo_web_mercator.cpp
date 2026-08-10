@@ -5,6 +5,11 @@
 
 #include <QtMath>
 
+namespace
+{
+constexpr double WebMercatorEarthRadiusMeters = 6378137.0;
+}
+
 double GeoWebMercator::normalizeLongitude(double lon)
 {
     double normalized = std::fmod(lon + 180.0, 360.0);
@@ -28,6 +33,28 @@ double GeoWebMercator::nearestWrappedTileX(double x, double referenceX, int zoom
 {
     const double tile_count = double(1 << zoom);
     return x + std::round((referenceX - x) / tile_count) * tile_count;
+}
+
+double GeoWebMercator::nearestWrappedWorldPixelX(
+    double x, double referenceX, int zoom)
+{
+    const double tile_x = x / TileSize;
+    const double reference_tile_x = referenceX / TileSize;
+    return nearestWrappedTileX(tile_x, reference_tile_x, zoom) * TileSize;
+}
+
+double GeoWebMercator::zoomScale(int zoom, int referenceZoom)
+{
+    return std::ldexp(1.0, zoom - referenceZoom);
+}
+
+double GeoWebMercator::metersPerPixel(double latitude, int zoom)
+{
+    const double latitude_clamped = std::clamp(
+        latitude, -MaximumLatitude, MaximumLatitude);
+    const double circumference = 2.0 * M_PI * WebMercatorEarthRadiusMeters;
+    return circumference * std::cos(qDegreesToRadians(latitude_clamped)) /
+        (TileSize * zoomScale(zoom, 0));
 }
 
 double GeoWebMercator::lonToTileX(double lon, int zoom)
