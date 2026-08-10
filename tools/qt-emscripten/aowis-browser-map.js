@@ -4,6 +4,7 @@
     const TILE_SIZE = 256;
     const TILE_MARGIN = 1;
     const MAX_TILE_RETRY_COUNT = 3;
+    const MAX_CONCURRENT_TILE_LOADS = Math.max(2, Math.min(4, Number(navigator.hardwareConcurrency) || 4));
     const TILE_SEAM_OVERLAP_PHYSICAL_PIXELS = 1;
     const EARTH_RADIUS_METERS = 6378137;
     const SCALE_MAXIMUM_WIDTH = 140;
@@ -77,6 +78,8 @@
         windowObserver: null,
         stackingEventHandler: null,
         tiles: new Map(),
+        tileLoadQueue: [],
+        tileLoadsActive: 0,
         x: 0,
         y: 0,
         width: 0,
@@ -433,10 +436,12 @@
 
         tile.aowisAbortController = null;
         tile.aowisObjectUrl = "";
+        tile.aowisQueued = false;
         tile.remove();
     }
 
     function clearTiles() {
+        state.tileLoadQueue.length = 0;
         for (const tile of state.tiles.values())
             disposeTile(tile);
         state.tiles.clear();
@@ -632,6 +637,12 @@
                 URL.revokeObjectURL(image.aowisObjectUrl);
             image.aowisObjectUrl = objectUrl;
             image.src = objectUrl;
+
+            if (typeof image.decode === "function")
+                await image.decode();
+            if (state.tiles.get(key) !== image || controller.signal.aborted)
+                return;
+            image.style.visibility = "visible";
         } catch (error) {
             if (controller.signal.aborted || state.tiles.get(key) !== image)
                 return;
@@ -642,9 +653,43 @@
             }
 
             window.setTimeout(() => {
-                loadTile(image, virtualTileX, tileY, key, retryCount + 1);
+                enqueueTileLoad(image, virtualTileX, tileY, key, retryCount + 1);
             }, 500 * Math.pow(2, retryCount));
+        } finally {
+            if (image.aowisAbortController === controller)
+                image.aowisAbortController = null;
         }
+    }
+
+    function pumpTileLoads() {
+        while (state.tileLoadsActive < MAX_CONCURRENT_TILE_LOADS && state.tileLoadQueue.length > 0) {
+            const request = state.tileLoadQueue.shift();
+            const image = request.image;
+            image.aowisQueued = false;
+            if (state.tiles.get(request.key) !== image)
+                continue;
+
+            state.tileLoadsActive += 1;
+            loadTile(image, request.virtualTileX, request.tileY, request.key, request.retryCount)
+                .finally(() => {
+                    state.tileLoadsActive = Math.max(0, state.tileLoadsActive - 1);
+                    pumpTileLoads();
+                });
+        }
+    }
+
+    function enqueueTileLoad(image, virtualTileX, tileY, key, retryCount) {
+        if (state.tiles.get(key) !== image || image.aowisQueued)
+            return;
+        image.aowisQueued = true;
+        state.tileLoadQueue.push({
+            image: image,
+            virtualTileX: virtualTileX,
+            tileY: tileY,
+            key: key,
+            retryCount: retryCount
+        });
+        pumpTileLoads();
     }
 
     function createTile(virtualTileX, tileY, key) {
@@ -655,6 +700,7 @@
         image.loading = "eager";
         image.style.position = "absolute";
         image.style.display = "block";
+        image.style.visibility = "hidden";
         image.style.width = `${tileRenderSize()}px`;
         image.style.height = `${tileRenderSize()}px`;
         image.style.maxWidth = "none";
@@ -662,10 +708,11 @@
         image.style.pointerEvents = "none";
         image.aowisAbortController = null;
         image.aowisObjectUrl = "";
+        image.aowisQueued = false;
 
         state.tilePane.appendChild(image);
         state.tiles.set(key, image);
-        loadTile(image, virtualTileX, tileY, key, 0);
+        enqueueTileLoad(image, virtualTileX, tileY, key, 0);
         return image;
     }
 
@@ -999,6 +1046,7 @@
         state.visible = false;
         state.initialized = false;
         state.renderPending = false;
+        state.tileLoadQueue.length = 0;
         state.activeOwner = 0;
         state.topmost = false;
         state.stackingGeneration += 1;

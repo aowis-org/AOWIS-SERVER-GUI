@@ -1,16 +1,23 @@
 (function () {
     "use strict";
 
-    const REFERENCE_ZOOM = 18;
+    const SHARED_RENDERER = window.aowisBrowserVector;
+    if (!SHARED_RENDERER)
+        throw new Error("AOWIS browser map editor requires aowis-browser-vector.js");
+
+    const REFERENCE_ZOOM = SHARED_RENDERER.REFERENCE_ZOOM;
     const STATIC_PADDING = 64;
-    const MAX_STATIC_DIMENSION = 16384;
-    const MAX_STATIC_AREA = 64 * 1024 * 1024;
+    const MAX_STATIC_DIMENSION = 8192;
+    const MAX_STATIC_AREA = 16 * 1024 * 1024;
+    const STATIC_RASTER_MAX_AREA = 8 * 1024 * 1024;
+    const STATIC_MAX_PIXEL_RATIO = 1.5;
+    const STATIC_ZOOM_SETTLE_DELAY_MS = 90;
     const MARKER_DOT_RADIUS = 5;
     const CONNECTION_TARGET_RADIUS = 9;
     const PIPE_VERTEX_RADIUS = 4;
-    const ENTITY_PIPE = 4;
-    const ENTITY_PUMP = 5;
-    const ENTITY_VALVE = 6;
+    const ENTITY_PIPE = SHARED_RENDERER.ENTITY_PIPE;
+    const ENTITY_PUMP = SHARED_RENDERER.ENTITY_PUMP;
+    const ENTITY_VALVE = SHARED_RENDERER.ENTITY_VALVE;
     const SELECTED_COLOR = "rgb(0, 190, 255)";
     const PREVIEW_COLOR = "rgb(0, 140, 255)";
     const DEVICE_LINK_COLOR = "rgb(139, 90, 43)";
@@ -47,6 +54,7 @@
         layer: null,
         underlayCanvas: null,
         staticCanvas: null,
+        staticRetained: null,
         dynamicCanvas: null,
         networkSnapshot: null,
         visualState: defaultVisualState(),
@@ -69,7 +77,8 @@
         staticCssWidth: 0,
         staticCssHeight: 0,
         staticViewportFallback: false,
-        staticRenderPending: false,
+        staticRebuildTimer: 0,
+        staticRebuildNotBefore: 0,
         underlayRenderPending: false,
         dynamicRenderPending: false,
         icons: new Map(),
@@ -98,6 +107,12 @@
                 pipeIntermediateVertices: [],
                 deviceLinkStartNodeUuid: "",
                 floatingWidth: 0
+            },
+            move: {
+                active: false,
+                sessionId: "0",
+                markers: [],
+                links: []
             }
         };
     }
@@ -116,22 +131,17 @@
         return window.aowisBrowserMap.projection;
     }
 
+    function vectorRenderer() {
+        return SHARED_RENDERER;
+    }
+
     function devicePixelRatio() {
         return projection().devicePixelRatio();
     }
 
     function createCanvas(zIndex) {
-        const canvas = document.createElement("canvas");
-        canvas.setAttribute("aria-hidden", "true");
-        canvas.style.position = "absolute";
-        canvas.style.left = "0";
-        canvas.style.top = "0";
-        canvas.style.pointerEvents = "none";
-        canvas.style.zIndex = String(zIndex);
-        canvas.style.transformOrigin = "0 0";
-        return canvas;
+        return vectorRenderer().createCanvas(zIndex);
     }
-
     function ensureLayer(mapLayer) {
         if (!mapLayer)
             return false;
@@ -149,11 +159,12 @@
             state.layer.style.contain = "strict";
 
             state.underlayCanvas = createCanvas(1);
-            state.staticCanvas = createCanvas(2);
+            state.staticRetained = new (vectorRenderer().RetainedCanvasLayer)(2);
+            state.staticCanvas = state.staticRetained.canvas;
             state.staticCanvas.style.willChange = "transform";
             state.dynamicCanvas = createCanvas(3);
             state.layer.appendChild(state.underlayCanvas);
-            state.layer.appendChild(state.staticCanvas);
+            state.staticRetained.attach(state.layer);
             state.layer.appendChild(state.dynamicCanvas);
             applyBackground();
         }
@@ -204,7 +215,7 @@
     }
 
     function normalizeUuid(value) {
-        return typeof value === "string" ? value.toLowerCase() : "";
+        return vectorRenderer().normalizeUuid(value);
     }
 
     function selectedSet(values) {
@@ -237,76 +248,30 @@
         if (!snapshot || !Array.isArray(snapshot.nodes) || !Array.isArray(snapshot.links))
             return;
 
+        const mapProjection = projection();
         const wrapReference = Number(state.visualState.wrapReferenceLongitude) || 0;
-        let minimumX = Number.POSITIVE_INFINITY;
-        let minimumY = Number.POSITIVE_INFINITY;
-        let maximumX = Number.NEGATIVE_INFINITY;
-        let maximumY = Number.NEGATIVE_INFINITY;
-
-        function include(point) {
-            minimumX = Math.min(minimumX, point.x);
-            minimumY = Math.min(minimumY, point.y);
-            maximumX = Math.max(maximumX, point.x);
-            maximumY = Math.max(maximumY, point.y);
-        }
-
-        for (const rawNode of snapshot.nodes) {
-            if (!Array.isArray(rawNode) || rawNode.length < 6)
-                continue;
-            const point = worldPoint(Number(rawNode[4]), Number(rawNode[5]), wrapReference);
-            const node = {
-                renderId: Number(rawNode[0]) >>> 0,
-                entityType: Number(rawNode[1]) | 0,
-                uuid: normalizeUuid(rawNode[2]),
-                id: String(rawNode[3] || ""),
-                longitude: Number(rawNode[4]),
-                latitude: Number(rawNode[5]),
-                x: point.x,
-                y: point.y
-            };
-            state.nodes.push(node);
-            state.nodesByUuid.set(node.uuid, node);
-            include(point);
-        }
-
-        for (const rawLink of snapshot.links) {
-            if (!Array.isArray(rawLink) || rawLink.length < 7 || !Array.isArray(rawLink[6]))
-                continue;
-            const vertices = [];
-            for (const rawVertex of rawLink[6]) {
-                if (!Array.isArray(rawVertex) || rawVertex.length < 2)
-                    continue;
-                const longitude = Number(rawVertex[0]);
-                const latitude = Number(rawVertex[1]);
-                const point = worldPoint(longitude, latitude, wrapReference);
-                vertices.push({ longitude: longitude, latitude: latitude, x: point.x, y: point.y });
-                include(point);
-            }
-            state.links.push({
-                renderId: Number(rawLink[0]) >>> 0,
-                entityType: Number(rawLink[1]) | 0,
-                uuid: normalizeUuid(rawLink[2]),
-                id: String(rawLink[3] || ""),
-                startNodeRenderId: Number(rawLink[4]) >>> 0,
-                endNodeRenderId: Number(rawLink[5]) >>> 0,
-                vertices: vertices
-            });
-        }
-
-        state.geometryWrapReferenceLongitude = wrapReference;
-        if (!Number.isFinite(minimumX)) {
-            state.geometryMinimumX = 0;
-            state.geometryMinimumY = 0;
-            state.geometryMaximumX = 0;
-            state.geometryMaximumY = 0;
+        const referenceX = mapProjection.longitudeToWorldPixel(wrapReference, REFERENCE_ZOOM);
+        const geometry = vectorRenderer().projectNetworkSnapshot(snapshot, {
+            anchorX: referenceX,
+            longitudeToWorldPixel: (longitude) =>
+                mapProjection.longitudeToWorldPixel(longitude, REFERENCE_ZOOM),
+            latitudeToWorldPixel: (latitude) =>
+                mapProjection.latitudeToWorldPixel(latitude, REFERENCE_ZOOM),
+            nearestWrappedWorldPixel: (rawX, reference) =>
+                mapProjection.nearestWrappedWorldPixel(rawX, reference, REFERENCE_ZOOM)
+        });
+        if (!geometry)
             return;
-        }
 
-        state.geometryMinimumX = minimumX;
-        state.geometryMinimumY = minimumY;
-        state.geometryMaximumX = maximumX;
-        state.geometryMaximumY = maximumY;
-        state.geometryReady = true;
+        state.nodes = geometry.nodes;
+        state.links = geometry.links;
+        state.nodesByUuid = geometry.nodesByUuid;
+        state.geometryWrapReferenceLongitude = wrapReference;
+        state.geometryMinimumX = geometry.minimumX;
+        state.geometryMinimumY = geometry.minimumY;
+        state.geometryMaximumX = geometry.maximumX;
+        state.geometryMaximumY = geometry.maximumY;
+        state.geometryReady = geometry.ready;
     }
 
     function iconPath(entityType) {
@@ -393,22 +358,31 @@
     }
 
     function linkCenter(link) {
-        if (link.vertices.length > 2)
-            return link.vertices[1];
-        if (link.vertices.length < 2)
-            return null;
-
-        const start = link.vertices[0];
-        const end = link.vertices[link.vertices.length - 1];
-        const mapProjection = projection();
-        const longitudeDelta = mapProjection.normalizeLongitude(end.longitude - start.longitude);
-        const longitude = mapProjection.normalizeLongitude(start.longitude + longitudeDelta / 2);
-        const latitude = (start.latitude + end.latitude) / 2;
-        return worldPoint(longitude, latitude, state.visualState.wrapReferenceLongitude);
+        return vectorRenderer().polylineMidpoint(link.vertices);
     }
 
     function isDeviceLink(entityType) {
         return entityType === ENTITY_PUMP || entityType === ENTITY_VALVE;
+    }
+
+    function staticRenderPixelRatio(width, height) {
+        const cssWidth = Math.max(1, Number(width) || 1);
+        const cssHeight = Math.max(1, Number(height) || 1);
+        return Math.max(0.5, Math.min(
+            devicePixelRatio(),
+            STATIC_MAX_PIXEL_RATIO,
+            MAX_STATIC_DIMENSION / cssWidth,
+            MAX_STATIC_DIMENSION / cssHeight,
+            Math.sqrt(STATIC_RASTER_MAX_AREA / (cssWidth * cssHeight))));
+    }
+
+    function clearScheduledStaticRender() {
+        if (state.staticRebuildTimer !== 0) {
+            window.clearTimeout(state.staticRebuildTimer);
+            state.staticRebuildTimer = 0;
+        }
+        if (state.staticRetained)
+            state.staticRetained.cancelScheduled();
     }
 
     function invalidateStaticCache() {
@@ -421,7 +395,7 @@
         const scale = Math.pow(2, mapView.zoom - REFERENCE_ZOOM);
         const width = Math.max(1, (state.geometryMaximumX - state.geometryMinimumX) * scale + STATIC_PADDING * 2);
         const height = Math.max(1, (state.geometryMaximumY - state.geometryMinimumY) * scale + STATIC_PADDING * 2);
-        const ratio = devicePixelRatio();
+        const ratio = staticRenderPixelRatio(width, height);
         const physicalWidth = width * ratio;
         const physicalHeight = height * ratio;
         const fallback = physicalWidth > MAX_STATIC_DIMENSION || physicalHeight > MAX_STATIC_DIMENSION ||
@@ -446,26 +420,13 @@
         };
     }
 
-    function configureStaticCanvas(specification) {
-        const ratio = devicePixelRatio();
-        const physicalWidth = Math.max(1, Math.ceil(specification.width * ratio));
-        const physicalHeight = Math.max(1, Math.ceil(specification.height * ratio));
-        state.staticCanvas.width = physicalWidth;
-        state.staticCanvas.height = physicalHeight;
-        state.staticCanvas.style.width = `${specification.width}px`;
-        state.staticCanvas.style.height = `${specification.height}px`;
+    function applyStaticSpecification(specification) {
         state.staticCssWidth = specification.width;
         state.staticCssHeight = specification.height;
         state.staticOriginX = specification.originX;
         state.staticOriginY = specification.originY;
         state.staticViewportFallback = specification.fallback;
-        const context = state.staticCanvas.getContext("2d");
-        context.setTransform(ratio, 0, 0, ratio, 0, 0);
-        context.clearRect(0, 0, specification.width, specification.height);
-        context.imageSmoothingEnabled = true;
-        return context;
     }
-
     function cachedPoint(point, specification, mapView) {
         if (specification.fallback)
             return screenPoint(point, mapView);
@@ -492,8 +453,36 @@
         context.stroke();
     }
 
+    function moveState() {
+        const move = state.visualState && state.visualState.move;
+        return move && typeof move === "object" ? move : { active: false, sessionId: "0", markers: [], links: [] };
+    }
+
+    function movingUuidSets() {
+        const move = moveState();
+        const markers = new Set();
+        const links = new Set();
+        if (!move.active)
+            return { markers: markers, links: links };
+
+        if (Array.isArray(move.markers)) {
+            for (const marker of move.markers) {
+                const uuid = normalizeUuid(marker && marker.uuid);
+                if (uuid)
+                    markers.add(uuid);
+            }
+        }
+        if (Array.isArray(move.links)) {
+            for (const link of move.links) {
+                const uuid = normalizeUuid(link && link.uuid);
+                if (uuid)
+                    links.add(uuid);
+            }
+        }
+        return { markers: markers, links: links };
+    }
+
     function renderStaticNetwork() {
-        state.staticRenderPending = false;
         const mapView = state.lastMapView;
         if (!state.staticCanvas || !state.geometryReady || !shouldDisplay(mapView)) {
             if (state.staticCanvas)
@@ -502,25 +491,30 @@
         }
 
         const specification = staticSpecification(mapView);
-        const context = configureStaticCanvas(specification);
+        applyStaticSpecification(specification);
+        const renderer = vectorRenderer();
+        const documentVector = new renderer.VectorDocument();
         const pointFunction = (point) => cachedPoint(point, specification, mapView);
         const entityWidth = Math.max(1, Number(state.visualState.entityWidth) || 10);
+        const moving = movingUuidSets();
 
+        const pipePath = renderer.createPath();
+        const pipeVertexPath = renderer.createPath();
         for (const link of state.links) {
-            if (link.entityType !== ENTITY_PIPE)
+            if (link.entityType !== ENTITY_PIPE || moving.links.has(link.uuid))
                 continue;
-            strokePolyline(context, link.vertices, pointFunction, "black", 3);
-            context.fillStyle = "black";
+            renderer.addPolyline(pipePath, link.vertices, pointFunction);
             for (let index = 1; index + 1 < link.vertices.length; ++index) {
                 const point = pointFunction(link.vertices[index]);
-                context.beginPath();
-                context.arc(point.x, point.y, PIPE_VERTEX_RADIUS, 0, Math.PI * 2);
-                context.fill();
+                renderer.addCircle(pipeVertexPath, point.x, point.y, PIPE_VERTEX_RADIUS);
             }
         }
+        documentVector.addStroke(pipePath, "black", 3);
+        documentVector.addFill(pipeVertexPath, "black");
 
+        const devicePath = renderer.createPath();
         for (const link of state.links) {
-            if (!isDeviceLink(link.entityType) || link.vertices.length < 2)
+            if (!isDeviceLink(link.entityType) || moving.links.has(link.uuid) || link.vertices.length < 2)
                 continue;
             const center = linkCenter(link);
             if (!center)
@@ -528,68 +522,113 @@
             const start = pointFunction(link.vertices[0]);
             const middle = pointFunction(center);
             const end = pointFunction(link.vertices[link.vertices.length - 1]);
-            context.beginPath();
-            context.moveTo(start.x, start.y);
-            context.lineTo(middle.x, middle.y);
-            context.lineTo(end.x, end.y);
-            context.strokeStyle = DEVICE_LINK_COLOR;
-            context.lineWidth = 3;
-            context.lineCap = "round";
-            context.lineJoin = "round";
-            context.stroke();
+            devicePath.moveTo(start.x, start.y);
+            devicePath.lineTo(middle.x, middle.y);
+            devicePath.lineTo(end.x, end.y);
         }
+        documentVector.addStroke(devicePath, DEVICE_LINK_COLOR, 3);
 
+        const nodeDotPath = renderer.createPath();
         for (const node of state.nodes) {
+            if (moving.markers.has(node.uuid))
+                continue;
             const point = pointFunction(node);
-            context.beginPath();
-            context.arc(point.x, point.y, MARKER_DOT_RADIUS, 0, Math.PI * 2);
-            context.fillStyle = "black";
-            context.fill();
+            renderer.addCircle(nodeDotPath, point.x, point.y, MARKER_DOT_RADIUS);
         }
+        documentVector.addFill(nodeDotPath, "black");
 
         for (const link of state.links) {
-            if (!isDeviceLink(link.entityType) || link.vertices.length < 2)
+            if (!isDeviceLink(link.entityType) || moving.links.has(link.uuid) || link.vertices.length < 2)
                 continue;
             const center = linkCenter(link);
             if (!center)
                 continue;
             const point = pointFunction(center);
-            drawIcon(context, link.entityType, entityWidth, point.x, point.y, true, false);
+            const dimensions = iconDimensions(link.entityType, entityWidth);
+            if (!dimensions)
+                continue;
+            documentVector.addImage(
+                dimensions.image,
+                point.x - dimensions.width / 2,
+                point.y - dimensions.height / 2,
+                dimensions.width,
+                dimensions.height);
         }
 
         for (const node of state.nodes) {
+            if (moving.markers.has(node.uuid))
+                continue;
             const point = pointFunction(node);
-            drawIcon(context, node.entityType, entityWidth, point.x, point.y, false, false);
+            const dimensions = iconDimensions(node.entityType, entityWidth);
+            if (!dimensions)
+                continue;
+            documentVector.addImage(
+                dimensions.image,
+                Math.round(point.x),
+                Math.round(point.y) - dimensions.height,
+                dimensions.width,
+                dimensions.height);
         }
 
+        if (!state.staticRetained || !state.staticRetained.render(
+            documentVector,
+            specification.width,
+            specification.height,
+            staticRenderPixelRatio(specification.width, specification.height))) {
+            return;
+        }
         state.staticZoom = mapView.zoom;
         state.staticEntityWidth = entityWidth;
+        state.staticRebuildNotBefore = 0;
         state.staticCanvas.style.display = "block";
         positionStaticCanvas(mapView);
     }
-
     function positionStaticCanvas(mapView) {
-        if (!state.staticCanvas || state.staticZoom !== mapView.zoom)
+        if (!state.staticCanvas || state.staticZoom === null)
             return;
         if (state.staticViewportFallback) {
-            state.staticCanvas.style.transform = "translate3d(0, 0, 0)";
+            if (state.staticZoom === mapView.zoom) {
+                state.staticCanvas.style.display = "block";
+                state.staticCanvas.style.transform = "translate3d(0, 0, 0)";
+            } else {
+                state.staticCanvas.style.display = "none";
+            }
             return;
         }
 
         const scale = Math.pow(2, mapView.zoom - REFERENCE_ZOOM);
+        const renderedScale = Math.pow(2, state.staticZoom - REFERENCE_ZOOM);
+        const zoomScale = scale / renderedScale;
         const originAtZoom = worldXAtMapZoom(state.staticOriginX, mapView);
         const left = projection().snapToPhysicalPixel(
             mapView.width / 2 + originAtZoom - mapView.centerPixelX);
         const top = projection().snapToPhysicalPixel(
             mapView.height / 2 + state.staticOriginY * scale - mapView.centerPixelY);
-        state.staticCanvas.style.transform = `translate3d(${left}px, ${top}px, 0)`;
+        state.staticCanvas.style.display = "block";
+        state.staticCanvas.style.transform =
+            `translate3d(${left}px, ${top}px, 0) scale(${zoomScale})`;
     }
 
     function scheduleStaticRender() {
-        if (state.staticRenderPending)
+        if (!state.staticRetained)
             return;
-        state.staticRenderPending = true;
-        window.requestAnimationFrame(renderStaticNetwork);
+
+        const delay = state.staticRebuildNotBefore - performance.now();
+        if (delay > 1) {
+            if (state.staticRebuildTimer === 0) {
+                state.staticRebuildTimer = window.setTimeout(() => {
+                    state.staticRebuildTimer = 0;
+                    scheduleStaticRender();
+                }, Math.ceil(delay));
+            }
+            return;
+        }
+
+        if (state.staticRebuildTimer !== 0) {
+            window.clearTimeout(state.staticRebuildTimer);
+            state.staticRebuildTimer = 0;
+        }
+        state.staticRetained.schedule(renderStaticNetwork);
     }
 
     function worldXAtMapZoom(referenceZoomX, mapView) {
@@ -784,10 +823,11 @@
             return;
         const selectedMarkers = selectedSet(state.visualState.selectedMarkerUuids);
         const selectedPipes = selectedSet(state.visualState.selectedPipeUuids);
+        const moving = movingUuidSets();
         const entityWidth = Math.max(1, Number(state.visualState.entityWidth) || 10);
 
         for (const link of state.links) {
-            if (link.entityType !== ENTITY_PIPE || !selectedPipes.has(link.uuid))
+            if (link.entityType !== ENTITY_PIPE || moving.links.has(link.uuid) || !selectedPipes.has(link.uuid))
                 continue;
             strokePolyline(context, link.vertices, (point) => screenPoint(point, mapView), SELECTED_COLOR, 3);
             context.fillStyle = SELECTED_COLOR;
@@ -800,7 +840,7 @@
         }
 
         for (const link of state.links) {
-            if (!isDeviceLink(link.entityType) || !selectedMarkers.has(link.uuid) || link.vertices.length < 2)
+            if (!isDeviceLink(link.entityType) || moving.links.has(link.uuid) || !selectedMarkers.has(link.uuid) || link.vertices.length < 2)
                 continue;
             const center = linkCenter(link);
             if (!center)
@@ -821,10 +861,62 @@
         }
 
         for (const node of state.nodes) {
-            if (!selectedMarkers.has(node.uuid))
+            if (moving.markers.has(node.uuid) || !selectedMarkers.has(node.uuid))
                 continue;
             const point = screenPoint(node, mapView);
             drawIcon(context, node.entityType, entityWidth, point.x, point.y, false, true);
+        }
+    }
+
+    function drawMove(context, mapView) {
+        const move = moveState();
+        if (!move.active)
+            return;
+
+        const entityWidth = Math.max(1, Number(state.visualState.entityWidth) || 10);
+        if (Array.isArray(move.links)) {
+            for (const link of move.links) {
+                if (!link || !Array.isArray(link.vertices) || link.vertices.length < 2)
+                    continue;
+
+                const entityType = Number(link.entity) | 0;
+                const vertices = [];
+                for (const coordinate of link.vertices) {
+                    const point = screenFromCoordinate(coordinate, mapView);
+                    if (point)
+                        vertices.push(point);
+                }
+                if (vertices.length < 2)
+                    continue;
+
+                strokePolyline(context, vertices, (point) => point, SELECTED_COLOR, 3);
+                if (entityType === ENTITY_PIPE) {
+                    context.fillStyle = SELECTED_COLOR;
+                    for (let index = 1; index + 1 < vertices.length; ++index) {
+                        context.beginPath();
+                        context.arc(vertices[index].x, vertices[index].y, PIPE_VERTEX_RADIUS, 0, Math.PI * 2);
+                        context.fill();
+                    }
+                } else if (isDeviceLink(entityType)) {
+                    const center = vectorRenderer().polylineMidpoint(vertices);
+                    if (center)
+                        drawIcon(context, entityType, entityWidth, center.x, center.y, true, true);
+                }
+            }
+        }
+
+        if (!Array.isArray(move.markers))
+            return;
+        for (const marker of move.markers) {
+            if (!marker)
+                continue;
+            const entityType = Number(marker.entity) | 0;
+            if (isDeviceLink(entityType))
+                continue;
+            const point = screenFromCoordinate(marker.coordinate, mapView);
+            if (!point)
+                continue;
+            drawIcon(context, entityType, entityWidth, point.x, point.y, false, true);
         }
     }
 
@@ -911,6 +1003,7 @@
             return;
         const context = viewportContext(state.dynamicCanvas, mapView.width, mapView.height);
         drawSelectedNetwork(context, mapView);
+        drawMove(context, mapView);
         drawPlacement(context, mapView);
     }
 
@@ -931,6 +1024,9 @@
     }
 
     function handleMapViewChanged(mapView) {
+        const previousMapView = state.lastMapView;
+        if (previousMapView && mapView && previousMapView.zoom !== mapView.zoom)
+            state.staticRebuildNotBefore = performance.now() + STATIC_ZOOM_SETTLE_DELAY_MS;
         state.lastMapView = mapView;
         if (!mapView || !ensureLayer(mapView.layer)) {
             if (state.layer)
@@ -949,6 +1045,7 @@
         } else if (state.staticZoom !== mapView.zoom ||
                    state.staticEntityWidth !== Math.max(1, Number(state.visualState.entityWidth) || 10) ||
                    state.staticViewportFallback) {
+            positionStaticCanvas(mapView);
             scheduleStaticRender();
         } else {
             positionStaticCanvas(mapView);
@@ -1003,13 +1100,21 @@
             throw new TypeError("Invalid AOWIS map editor visual state");
         const previousWrapReference = Number(state.visualState.wrapReferenceLongitude) || 0;
         const previousEntityWidth = Number(state.visualState.entityWidth) || 10;
+        const previousMove = moveState();
+        const previousMoveActive = Boolean(previousMove.active);
+        const previousMoveSessionId = String(previousMove.sessionId || "0");
         state.visualState = visualState;
         const wrapReference = Number(visualState.wrapReferenceLongitude) || 0;
         const entityWidth = Number(visualState.entityWidth) || 10;
+        const nextMove = moveState();
+        const nextMoveActive = Boolean(nextMove.active);
+        const nextMoveSessionId = String(nextMove.sessionId || "0");
         if (wrapReference !== previousWrapReference || wrapReference !== state.geometryWrapReferenceLongitude) {
             parseNetworkGeometry();
             invalidateStaticCache();
-        } else if (entityWidth !== previousEntityWidth) {
+        } else if (entityWidth !== previousEntityWidth ||
+                   previousMoveActive !== nextMoveActive ||
+                   (nextMoveActive && previousMoveSessionId !== nextMoveSessionId)) {
             invalidateStaticCache();
         }
         scheduleDynamicRender();
@@ -1045,6 +1150,8 @@
     }
 
     function clear() {
+        clearScheduledStaticRender();
+        state.staticRebuildNotBefore = 0;
         state.networkSnapshot = null;
         state.visualState = defaultVisualState();
         state.viewportState = defaultViewportState();
@@ -1057,10 +1164,11 @@
         state.staticEntityWidth = 0;
         state.staticViewportFallback = false;
         clearCanvas(state.underlayCanvas);
-        clearCanvas(state.staticCanvas);
+        if (state.staticRetained)
+            state.staticRetained.clear();
+        else
+            clearCanvas(state.staticCanvas);
         clearCanvas(state.dynamicCanvas);
-        if (state.staticCanvas)
-            state.staticCanvas.style.display = "none";
         applyBackground();
     }
 
@@ -1068,6 +1176,10 @@
         if (state.unsubscribeView)
             state.unsubscribeView();
         state.unsubscribeView = null;
+        clearScheduledStaticRender();
+        if (state.staticRetained)
+            state.staticRetained.destroy();
+        state.staticRetained = null;
         if (state.layer)
             state.layer.remove();
         state.layer = null;
@@ -1082,6 +1194,7 @@
     function initialize() {
         if (!window.aowisBrowserMap || typeof window.aowisBrowserMap.subscribeView !== "function")
             throw new Error("AOWIS browser map editor requires aowis-browser-map.js");
+        vectorRenderer();
         state.unsubscribeView = window.aowisBrowserMap.subscribeView(handleMapViewChanged);
     }
 

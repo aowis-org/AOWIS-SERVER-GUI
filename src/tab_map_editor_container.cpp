@@ -158,6 +158,37 @@ QByteArray serializeMapEditorVisualState(const MapEditorVisualState &state)
     for (const CoordinateWGS84 &coordinate : state.placement.pipe_intermediate_vertices)
         intermediate_vertices.append(coordinateToJson(coordinate));
 
+    QJsonArray move_markers;
+    for (const MapEditorDynamicMarkerVisualState &marker : state.move.markers)
+    {
+        QJsonObject item;
+        item.insert(QStringLiteral("entity"), static_cast<int>(marker.entity));
+        item.insert(QStringLiteral("uuid"), marker.uuid.toString(QUuid::WithoutBraces));
+        item.insert(QStringLiteral("coordinate"), coordinateToJson(marker.coordinate_wgs84));
+        item.insert(QStringLiteral("pixmapPath"), marker.pixmap_path);
+        move_markers.append(item);
+    }
+
+    QJsonArray move_links;
+    for (const MapEditorDynamicLinkVisualState &link : state.move.links)
+    {
+        QJsonArray vertices;
+        for (const CoordinateWGS84 &coordinate : link.vertices_wgs84)
+            vertices.append(coordinateToJson(coordinate));
+
+        QJsonObject item;
+        item.insert(QStringLiteral("entity"), static_cast<int>(link.entity));
+        item.insert(QStringLiteral("uuid"), link.uuid.toString(QUuid::WithoutBraces));
+        item.insert(QStringLiteral("vertices"), vertices);
+        move_links.append(item);
+    }
+
+    QJsonObject move;
+    move.insert(QStringLiteral("active"), state.move.active);
+    move.insert(QStringLiteral("sessionId"), QString::number(state.move.session_id));
+    move.insert(QStringLiteral("markers"), move_markers);
+    move.insert(QStringLiteral("links"), move_links);
+
     QJsonObject placement;
     placement.insert(QStringLiteral("creating"), state.placement.creating);
     placement.insert(QStringLiteral("floatingMarkerVisible"),
@@ -183,6 +214,7 @@ QByteArray serializeMapEditorVisualState(const MapEditorVisualState &state)
     root.insert(QStringLiteral("wrapReferenceLongitude"), state.wrap_reference_longitude);
     root.insert(QStringLiteral("entityWidth"), state.entity_width);
     root.insert(QStringLiteral("placement"), placement);
+    root.insert(QStringLiteral("move"), move);
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
 
