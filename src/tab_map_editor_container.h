@@ -121,14 +121,14 @@ private:
     
     MapModel *map_model;
     MapTileRepository *tile_repository;
+    QWidget *map_stack;
+    QStackedLayout *map_stack_layout;
     MapWidget *map;
     MapCanvasWidget *map_canvas;
     MapEditorController *editor_controller;
     MapEditorMenuWidget *map_menu;
     
     QHBoxLayout *layout;
-    QWidget *map_stack;
-    QStackedLayout *map_stack_layout;
 
 #ifdef Q_OS_WASM
     QTimer *wasm_map_layer_sync_timer = nullptr;

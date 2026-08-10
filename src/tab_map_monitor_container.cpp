@@ -233,7 +233,6 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
 #ifndef Q_OS_WASM
     this->map_stack_layout->addWidget(this->desktop_network_overlay);
     this->map_stack_layout->setCurrentWidget(this->desktop_network_overlay);
-    this->desktop_network_overlay->raise();
 #endif
 
 #ifdef Q_OS_WASM

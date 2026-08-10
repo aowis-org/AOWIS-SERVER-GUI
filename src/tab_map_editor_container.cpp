@@ -250,14 +250,14 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     map_inspector( map_inspector ),
     map_model( map_model ),
     tile_repository( tile_repository ),
-    map( new MapWidget(this->map_model, this->tile_repository, this->gps, this) ),
-    map_canvas( new MapCanvasWidget(this->map_model, this->map, this->hydraulic_data, this) ),
+    map_stack( new QWidget(this) ),
+    map_stack_layout( new QStackedLayout(this->map_stack) ),
+    map( new MapWidget(this->map_model, this->tile_repository, this->gps, this->map_stack) ),
+    map_canvas( new MapCanvasWidget(this->map_model, this->map, this->hydraulic_data, this->map_stack) ),
     editor_controller( new MapEditorController(this->map_model, this->map_canvas->mapCanvasEntities(), this) ),
     map_menu( new MapEditorMenuWidget(this->map, this->map_canvas, this->editor_controller,
                                       CanvasMode::Edit, this) ),
-    layout( new QHBoxLayout(this) ),
-    map_stack( new QWidget(this) ),
-    map_stack_layout( new QStackedLayout(this->map_stack) )
+    layout( new QHBoxLayout(this) )
 {
     this->map_canvas->setEditorController(this->editor_controller);
 
@@ -281,7 +281,7 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     
     this->map_stack_layout->addWidget(this->map);
     this->map_stack_layout->addWidget(this->map_canvas);
-    this->map_canvas->raise();
+    this->map_stack_layout->setCurrentWidget(this->map_canvas);
 #ifdef Q_OS_WASM
     this->map->setBrowserMapLayerEnabled(true);
     this->map->setBrowserMapLayerTopmost(true);
@@ -844,5 +844,4 @@ void MapEditorMenuWidget::setToolboxMode(int index)
 
     updateToolboxHeight(index);
 }
-
 
