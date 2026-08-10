@@ -137,8 +137,11 @@ private:
     bool wasm_network_snapshot_sent = false;
     bool wasm_symbology_rebuild_ranges_pending = false;
     int wasm_network_symbology_sync_retry_count = 0;
+    InfrastructureEntity wasm_selected_entity_type = InfrastructureEntity::Unknown;
+    QUuid wasm_selected_entity_uuid;
 
     bool selectWasmNetworkEntityAt(const QPointF &position);
+    void syncWasmSelectedEntity(InfrastructureEntity entity_type, const QUuid &uuid);
     void scheduleWasmMapLayerSync();
     void scheduleWasmNetworkSymbologySync(bool rebuild_ranges);
     void syncWasmMapLayer();

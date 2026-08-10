@@ -16,6 +16,7 @@
 #include <QMouseEvent>
 
 #include <cmath>
+#include <functional>
 
 namespace
 {
@@ -156,6 +157,15 @@ EM_JS(void, aowisBrowserNetworkSetOwnerId, (int owner_id),
     window.aowisBrowserNetwork.setOwnerId(owner_id);
 });
 
+EM_JS(void, aowisBrowserNetworkSetSelectedEntity, (int entity_type, double render_id),
+{
+    if (!window.aowisBrowserNetwork ||
+        typeof window.aowisBrowserNetwork.setSelectedEntity !== "function")
+        return;
+
+    window.aowisBrowserNetwork.setSelectedEntity(render_id, entity_type);
+});
+
 #endif
 
 MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository *tile_repository, HydraulicData *hydraulic_data, GpsProvider *gps, QWidget *parent)
@@ -188,7 +198,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     // unfortunately we need to fix widget width depending on scrollbar visible with some black magic
     connect(scroll_controls->verticalScrollBar(), &QScrollBar::rangeChanged, this, [scroll_controls]
     {
-        auto sb = scroll_controls->verticalScrollBar();
+        QScrollBar *sb = scroll_controls->verticalScrollBar();
         bool should_show = sb->maximum() > sb->minimum();
         
         int width_base = Sizes::SidebarLeftWidth;
@@ -263,6 +273,36 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         [this](InfrastructureEntity, const QUuid &)
     {
         scheduleWasmNetworkSymbologySync(true);
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, this,
+        [this](const HydraulicNodeTank &tank)
+    {
+        syncWasmSelectedEntity(InfrastructureEntity::Tank, tank.uuid);
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedReservoir, this,
+        [this](const HydraulicNodeReservoir &reservoir)
+    {
+        syncWasmSelectedEntity(InfrastructureEntity::Reservoir, reservoir.uuid);
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedJunction, this,
+        [this](const HydraulicNodeJunction &junction)
+    {
+        syncWasmSelectedEntity(InfrastructureEntity::Junction, junction.uuid);
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedPipe, this,
+        [this](const HydraulicLinkPipe &pipe)
+    {
+        syncWasmSelectedEntity(InfrastructureEntity::Pipe, pipe.uuid);
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedPump, this,
+        [this](const HydraulicLinkPump &pump)
+    {
+        syncWasmSelectedEntity(InfrastructureEntity::Pump, pump.uuid);
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedValve, this,
+        [this](const HydraulicLinkValve &valve)
+    {
+        syncWasmSelectedEntity(InfrastructureEntity::Valve, valve.uuid);
     });
 
     this->syncWasmNetworkBackground();
@@ -529,12 +569,65 @@ bool MapMonitorContainer::selectWasmNetworkEntityAt(const QPointF &position)
 
     const double packed_hit = aowisBrowserNetworkHitTest(position.x(), position.y());
     if (!std::isfinite(packed_hit) || packed_hit <= 0.0)
+    {
+        this->wasm_selected_entity_type = InfrastructureEntity::Unknown;
+        this->wasm_selected_entity_uuid = QUuid();
+        aowisBrowserNetworkSetSelectedEntity(0, 0);
         return false;
+    }
 
     const quint64 packed = static_cast<quint64>(packed_hit);
     const int entity_type_value = static_cast<int>(packed >> 32);
     const quint32 render_id = static_cast<quint32>(packed & 0xffffffffULL);
-    return selectNetworkEntity(render_id, static_cast<InfrastructureEntity>(entity_type_value));
+    const InfrastructureEntity entity_type = static_cast<InfrastructureEntity>(entity_type_value);
+    const bool selected = selectNetworkEntity(render_id, entity_type);
+    if (selected)
+        aowisBrowserNetworkSetSelectedEntity(entity_type_value, render_id);
+    else
+        aowisBrowserNetworkSetSelectedEntity(0, 0);
+    return selected;
+}
+
+void MapMonitorContainer::syncWasmSelectedEntity(InfrastructureEntity entity_type, const QUuid &uuid)
+{
+    this->wasm_selected_entity_type = entity_type;
+    this->wasm_selected_entity_uuid = uuid;
+
+    if (this->hydraulic_data == nullptr || uuid.isNull())
+    {
+        aowisBrowserNetworkSetSelectedEntity(0, 0);
+        return;
+    }
+
+    const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
+    if (entity_type == InfrastructureEntity::Junction ||
+        entity_type == InfrastructureEntity::Reservoir ||
+        entity_type == InfrastructureEntity::Tank)
+    {
+        for (const NetworkRenderNode &node : snapshot.nodes)
+        {
+            if (node.uuid == uuid && node.entity_type == entity_type)
+            {
+                aowisBrowserNetworkSetSelectedEntity(static_cast<int>(entity_type), node.render_id);
+                return;
+            }
+        }
+    }
+    else if (entity_type == InfrastructureEntity::Pipe ||
+             entity_type == InfrastructureEntity::Pump ||
+             entity_type == InfrastructureEntity::Valve)
+    {
+        for (const NetworkRenderLink &link : snapshot.links)
+        {
+            if (link.uuid == uuid && link.entity_type == entity_type)
+            {
+                aowisBrowserNetworkSetSelectedEntity(static_cast<int>(entity_type), link.render_id);
+                return;
+            }
+        }
+    }
+
+    aowisBrowserNetworkSetSelectedEntity(0, 0);
 }
 
 void MapMonitorContainer::scheduleWasmMapLayerSync()
@@ -598,6 +691,8 @@ void MapMonitorContainer::syncWasmNetworkSnapshot()
 
     this->wasm_network_geometry_revision_sent = snapshot.geometry_revision;
     this->wasm_network_snapshot_sent = true;
+    if (!this->wasm_selected_entity_uuid.isNull())
+        syncWasmSelectedEntity(this->wasm_selected_entity_type, this->wasm_selected_entity_uuid);
     scheduleWasmNetworkSymbologySync(false);
 }
 
@@ -764,7 +859,8 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
         "Lake and River water."
     );
     
-    const auto connect_node_visual = [this](QRadioButton *button, VisualNode visual)
+    const std::function<void(QRadioButton *, VisualNode)> connect_node_visual =
+        [this](QRadioButton *button, VisualNode visual)
     {
         connect(button, &QRadioButton::clicked, this, [this, visual]
         {
@@ -825,12 +921,13 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     QRadioButton *radio_link_river = new QRadioButton("River Water [%]");
     QRadioButton *radio_link_lake = new QRadioButton("Lake Water [%]");
     
-    const auto connect_link_visual = [this](QRadioButton *button, VisualLink visual)
+    const std::function<void(QRadioButton *, VisualLink)> connect_link_visual =
+        [this](QRadioButton *button, VisualLink visual)
     {
         connect(button, &QRadioButton::clicked, this, [this, visual]
-                {
-                    emit signalLinkVisualClicked(visual);
-                });
+        {
+            emit signalLinkVisualClicked(visual);
+        });
     };
     connect_link_visual(radio_link_none, VisualLink::None);
     connect_link_visual(radio_link_diameter, VisualLink::Diameter);
@@ -880,7 +977,7 @@ void MapMonitorMenuWidget::addGroupHeatmapVisuals()
     QRadioButton *radio_river = new QRadioButton("River Water [%]");
     QRadioButton *radio_lake = new QRadioButton("Lake Water [%]");
     
-    const auto connect_heatmap_visual =
+    const std::function<void(QRadioButton *, VisualHeatmap)> connect_heatmap_visual =
         [this](QRadioButton *button, VisualHeatmap visual)
     {
         connect(button, &QRadioButton::clicked, this, [this, visual]

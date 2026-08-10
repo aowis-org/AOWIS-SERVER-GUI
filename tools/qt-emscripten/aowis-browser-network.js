@@ -1,10 +1,15 @@
 (function () {
     "use strict";
 
+    const SHARED_RENDERER = window.aowisBrowserVector;
+    if (!SHARED_RENDERER)
+        throw new Error("AOWIS browser network requires aowis-browser-vector.js");
+
     const TILE_SIZE = 256;
-    const REFERENCE_ZOOM = 18;
+    const REFERENCE_ZOOM = SHARED_RENDERER.REFERENCE_ZOOM;
     const NETWORK_COLOR = "#000000";
     const SYMBOLOGY_VALUE_UNAVAILABLE_COLOR = "#000000";
+    const SELECTED_COLOR = "rgb(0, 190, 255)";
     const RAMP_COLORS = [
         "#440154",
         "#443983",
@@ -14,7 +19,12 @@
         "#90d743",
         "#fde725"
     ];
-    const NETWORK_IMAGE_PADDING = 8;
+    const NETWORK_STATIC_PADDING = 64;
+    const NETWORK_STATIC_MAX_DIMENSION = 8192;
+    const NETWORK_STATIC_MAX_AREA = 16 * 1024 * 1024;
+    const NETWORK_STATIC_RASTER_MAX_AREA = 8 * 1024 * 1024;
+    const NETWORK_STATIC_MAX_PIXEL_RATIO = 1.5;
+    const NETWORK_ZOOM_SETTLE_DELAY_MS = 90;
     const NETWORK_IMAGE_OVERSCAN_FACTOR = 3;
     const NETWORK_IMAGE_MAX_DIMENSION = 4096;
     const NETWORK_IMAGE_MAX_AREA = 8 * 1024 * 1024;
@@ -27,37 +37,33 @@
     const MAX_SPATIAL_QUERY_CELLS = 4096;
     const LINK_HIT_DISTANCE = 7;
     const SPATIAL_CELL_SIZE = 128;
-    const ENTITY_JUNCTION = 1;
-    const ENTITY_RESERVOIR = 2;
-    const ENTITY_TANK = 3;
-    const ENTITY_PIPE = 4;
-    const ENTITY_PUMP = 5;
-    const ENTITY_VALVE = 6;
+    const ENTITY_JUNCTION = SHARED_RENDERER.ENTITY_JUNCTION;
+    const ENTITY_RESERVOIR = SHARED_RENDERER.ENTITY_RESERVOIR;
+    const ENTITY_TANK = SHARED_RENDERER.ENTITY_TANK;
+    const ENTITY_PIPE = SHARED_RENDERER.ENTITY_PIPE;
+    const ENTITY_PUMP = SHARED_RENDERER.ENTITY_PUMP;
+    const ENTITY_VALVE = SHARED_RENDERER.ENTITY_VALVE;
     const ICON_DEFINITIONS = new Map([
         [ENTITY_RESERVOIR, {
             file: "svg/reservoir.svg",
-            symbolId: "aowis-network-reservoir",
             viewWidth: 186,
             viewHeight: 138,
             hitShape: "rectangle"
         }],
         [ENTITY_TANK, {
             file: "svg/tank.svg",
-            symbolId: "aowis-network-tank",
             viewWidth: 138,
             viewHeight: 183,
             hitShape: "rectangle"
         }],
         [ENTITY_PUMP, {
             file: "svg/pump.svg",
-            symbolId: "aowis-network-pump",
             viewWidth: 126,
             viewHeight: 110,
             hitShape: "rectangle"
         }],
         [ENTITY_VALVE, {
             file: "svg/valve.svg",
-            symbolId: "aowis-network-valve",
             viewWidth: 138,
             viewHeight: 138,
             hitShape: "ellipse"
@@ -66,22 +72,24 @@
 
     const state = {
         layer: null,
-        image: null,
-        imageObjectUrl: null,
-        imageZoom: null,
-        imageOffsetX: 0,
-        imageOffsetY: 0,
-        imageWidth: 0,
-        imageHeight: 0,
-        imageBounds: null,
-        pendingImage: null,
-        pendingImageObjectUrl: null,
-        pendingImageZoom: null,
-        pendingImageWidth: 0,
-        pendingImageHeight: 0,
-        pendingImageBounds: null,
-        imageGeneration: 0,
-        imageFrameRequest: 0,
+        networkRetained: null,
+        networkCanvas: null,
+        networkZoom: null,
+        networkOriginX: 0,
+        networkOriginY: 0,
+        networkCssWidth: 0,
+        networkCssHeight: 0,
+        networkViewportFallback: false,
+        networkRebuildTimer: 0,
+        networkRebuildNotBefore: 0,
+        networkStyleRevision: 1,
+        networkRenderedStyleRevision: 0,
+        selectionCanvas: null,
+        selectionRenderPending: false,
+        selectedRenderId: 0,
+        selectedEntityType: 0,
+        entityMarkers: new Map(),
+        entitySegments: new Map(),
         unsubscribeView: null,
         geometryOriginX: 0,
         geometryOriginY: 0,
@@ -89,7 +97,8 @@
         geometryMinimumY: 0,
         geometryMaximumX: 0,
         geometryMaximumY: 0,
-        iconSymbols: "",
+        iconImages: new Map(),
+        tintedIconCache: new Map(),
         geometryReady: false,
         width: 0,
         height: 0,
@@ -164,6 +173,13 @@
             state.layer.style.overflow = "hidden";
             state.layer.style.zIndex = "10";
             state.layer.style.contain = "strict";
+            state.networkRetained = new (SHARED_RENDERER.RetainedCanvasLayer)(2);
+            state.networkCanvas = state.networkRetained.canvas;
+            state.networkCanvas.style.willChange = "transform";
+            state.networkRetained.attach(state.layer);
+            state.selectionCanvas = SHARED_RENDERER.createCanvas(3);
+            state.selectionCanvas.style.willChange = "transform";
+            state.layer.appendChild(state.selectionCanvas);
             applyBackground();
         }
 
@@ -362,48 +378,53 @@
         return Math.round(value * ratio) / ratio;
     }
 
-    function revokeObjectUrl(objectUrl) {
-        if (objectUrl)
-            URL.revokeObjectURL(objectUrl);
+    function vectorRenderer() {
+        return SHARED_RENDERER;
     }
 
-    function clearScheduledImage() {
-        if (state.imageFrameRequest !== 0)
-            window.cancelAnimationFrame(state.imageFrameRequest);
-        state.imageFrameRequest = 0;
+    function networkRenderPixelRatio(width, height) {
+        const cssWidth = Math.max(1, Number(width) || 1);
+        const cssHeight = Math.max(1, Number(height) || 1);
+        return Math.max(0.5, Math.min(
+            devicePixelRatio(),
+            NETWORK_STATIC_MAX_PIXEL_RATIO,
+            NETWORK_STATIC_MAX_DIMENSION / cssWidth,
+            NETWORK_STATIC_MAX_DIMENSION / cssHeight,
+            Math.sqrt(NETWORK_STATIC_RASTER_MAX_AREA / (cssWidth * cssHeight))));
     }
 
-    function clearPendingImage() {
-        ++state.imageGeneration;
-        if (state.pendingImage)
-            state.pendingImage.remove();
-        revokeObjectUrl(state.pendingImageObjectUrl);
-        state.pendingImage = null;
-        state.pendingImageObjectUrl = null;
-        state.pendingImageZoom = null;
-        state.pendingImageWidth = 0;
-        state.pendingImageHeight = 0;
-        state.pendingImageBounds = null;
+    function clearScheduledNetworkRender() {
+        if (state.networkRebuildTimer !== 0) {
+            window.clearTimeout(state.networkRebuildTimer);
+            state.networkRebuildTimer = 0;
+        }
+        if (state.networkRetained)
+            state.networkRetained.cancelScheduled();
     }
 
-    function clearRenderedImage() {
-        if (state.image)
-            state.image.remove();
-        revokeObjectUrl(state.imageObjectUrl);
-        state.image = null;
-        state.imageObjectUrl = null;
-        state.imageZoom = null;
-        state.imageOffsetX = 0;
-        state.imageOffsetY = 0;
-        state.imageWidth = 0;
-        state.imageHeight = 0;
-        state.imageBounds = null;
+    function resetNetworkCanvas() {
+        clearScheduledNetworkRender();
+        state.networkZoom = null;
+        state.networkOriginX = 0;
+        state.networkOriginY = 0;
+        state.networkCssWidth = 0;
+        state.networkCssHeight = 0;
+        state.networkViewportFallback = false;
+        state.networkRebuildNotBefore = 0;
+        state.networkRenderedStyleRevision = 0;
+        if (state.networkCanvas) {
+            state.networkCanvas.style.display = "none";
+            state.networkCanvas.style.transform = "";
+            const context = state.networkCanvas.getContext("2d");
+            if (context)
+                context.clearRect(0, 0, state.networkCanvas.width, state.networkCanvas.height);
+        }
     }
 
-    function clearNetworkImage() {
-        clearScheduledImage();
-        clearPendingImage();
-        clearRenderedImage();
+    function invalidateNetworkCache() {
+        ++state.networkStyleRevision;
+        state.tintedIconCache.clear();
+        scheduleNetworkRender();
     }
 
     function clearScheduledHeatmap() {
@@ -429,49 +450,60 @@
         clearRenderedHeatmap();
     }
 
-    function iconGeometryElements(svgElement) {
-        const supportedElements = new Set([
-            "circle", "ellipse", "g", "line", "path", "polygon", "polyline", "rect", "text"
-        ]);
-        const serializer = new XMLSerializer();
-        const result = [];
-        for (const child of svgElement.children) {
-            if (supportedElements.has(child.localName))
-                result.push(serializer.serializeToString(child));
-        }
-        return result.join("");
+    function loadIconImage(entityType, definition) {
+        return new Promise((resolve) => {
+            const image = new Image();
+            image.decoding = "async";
+            image.onload = function () {
+                state.iconImages.set(entityType, { image: image, loaded: true });
+                resolve();
+            };
+            image.onerror = function () {
+                console.error(`Failed to load AOWIS network icon ${definition.file}`);
+                state.iconImages.set(entityType, { image: image, loaded: false });
+                resolve();
+            };
+            image.src = definition.file;
+        });
     }
 
-    async function loadIconSymbol(definition) {
-        try {
-            const response = await fetch(definition.file, { cache: "force-cache" });
-            if (!response.ok)
-                throw new Error(`HTTP ${response.status}`);
-
-            const documentSvg = new DOMParser().parseFromString(
-                await response.text(), "image/svg+xml");
-            if (documentSvg.querySelector("parsererror"))
-                throw new Error("invalid SVG");
-
-            const svgElement = documentSvg.documentElement;
-            const geometry = iconGeometryElements(svgElement).replace(/#000000/gi, "currentColor");
-            if (!geometry)
-                throw new Error("SVG contains no supported geometry");
-
-            return `<symbol id="${definition.symbolId}" viewBox="0 0 ${definition.viewWidth} ${definition.viewHeight}" fill="none">${geometry}</symbol>`;
-        } catch (error) {
-            console.error(`Failed to load AOWIS network icon ${definition.file}:`, error);
-            return "";
-        }
+    async function loadIconImages() {
+        const requests = [];
+        for (const [entityType, definition] of ICON_DEFINITIONS)
+            requests.push(loadIconImage(entityType, definition));
+        await Promise.all(requests);
+        invalidateNetworkCache();
+        scheduleSelectionRender();
     }
 
-    async function loadIconSymbols() {
-        const symbols = await Promise.all(Array.from(ICON_DEFINITIONS.values()).map(
-            definition => loadIconSymbol(definition)));
-        state.iconSymbols = symbols.join("");
-        clearNetworkImage();
-        if (state.lastMapView)
-            handleMapViewChanged(state.lastMapView);
+    function tintedIcon(entityType, width, height, color) {
+        const entry = state.iconImages.get(entityType);
+        if (!entry || !entry.loaded || !(width > 0) || !(height > 0))
+            return null;
+
+        const ratio = Math.min(devicePixelRatio(), NETWORK_STATIC_MAX_PIXEL_RATIO);
+        const physicalWidth = Math.max(1, Math.ceil(width * ratio));
+        const physicalHeight = Math.max(1, Math.ceil(height * ratio));
+        const key = `${entityType}:${physicalWidth}:${physicalHeight}:${color}`;
+        let canvas = state.tintedIconCache.get(key);
+        if (canvas)
+            return canvas;
+
+        canvas = document.createElement("canvas");
+        canvas.width = physicalWidth;
+        canvas.height = physicalHeight;
+        const context = canvas.getContext("2d");
+        if (!context)
+            return null;
+        context.setTransform(ratio, 0, 0, ratio, 0, 0);
+        context.clearRect(0, 0, width, height);
+        context.drawImage(entry.image, 0, 0, width, height);
+        context.globalCompositeOperation = "source-in";
+        context.fillStyle = color;
+        context.fillRect(0, 0, width, height);
+        context.globalCompositeOperation = "source-over";
+        state.tintedIconCache.set(key, canvas);
+        return canvas;
     }
 
     function boundedImageDimensions(mapView) {
@@ -525,18 +557,6 @@
             maximumX: bounds.maximumX + amount,
             maximumY: bounds.maximumY + amount
         };
-    }
-
-    function intersectBounds(first, second) {
-        const result = {
-            minimumX: Math.max(first.minimumX, second.minimumX),
-            minimumY: Math.max(first.minimumY, second.minimumY),
-            maximumX: Math.min(first.maximumX, second.maximumX),
-            maximumY: Math.min(first.maximumY, second.maximumY)
-        };
-        if (result.minimumX >= result.maximumX || result.minimumY >= result.maximumY)
-            return null;
-        return result;
     }
 
     function boundsContain(outerBounds, innerBounds) {
@@ -621,135 +641,231 @@
             && marker.y - halfHeight <= bounds.maximumY;
     }
 
-    function visibleLinkPathDataByColor(bounds) {
-        const pathDataByColor = new Map();
-        for (const collectionName of ["pipeSegments", "deviceSegments"]) {
-            const segments = collectionForSpatialQuery(collectionName);
-            for (const index of indicesInWorldBounds(bounds, collectionName)) {
-                const segment = segments[index];
-                if (!segmentIntersectsBounds(segment, bounds))
-                    continue;
-
-                const color = linkColor(segment.renderId);
-                const pathCommands = pathDataByColor.get(color) || [];
-                pathCommands.push(
-                    "M", formatted(segment.x1 - state.geometryOriginX), " ",
-                    formatted(segment.y1 - state.geometryOriginY),
-                    "L", formatted(segment.x2 - state.geometryOriginX), " ",
-                    formatted(segment.y2 - state.geometryOriginY));
-                pathDataByColor.set(color, pathCommands);
-            }
+    function networkSpecification(mapView) {
+        const scale = scaleForZoom(mapView.zoom);
+        const width = Math.max(1,
+            (state.geometryMaximumX - state.geometryMinimumX) * scale
+            + NETWORK_STATIC_PADDING * 2);
+        const height = Math.max(1,
+            (state.geometryMaximumY - state.geometryMinimumY) * scale
+            + NETWORK_STATIC_PADDING * 2);
+        const ratio = networkRenderPixelRatio(width, height);
+        const physicalWidth = width * ratio;
+        const physicalHeight = height * ratio;
+        const fallback = physicalWidth > NETWORK_STATIC_MAX_DIMENSION
+            || physicalHeight > NETWORK_STATIC_MAX_DIMENSION
+            || physicalWidth * physicalHeight > NETWORK_STATIC_MAX_AREA;
+        if (fallback) {
+            return {
+                fallback: true,
+                width: mapView.width,
+                height: mapView.height,
+                originX: 0,
+                originY: 0,
+                scale: scale
+            };
         }
-
-        const result = new Map();
-        for (const [color, pathCommands] of pathDataByColor)
-            result.set(color, pathCommands.join(""));
-        return result;
+        return {
+            fallback: false,
+            width: Math.ceil(width),
+            height: Math.ceil(height),
+            originX: state.geometryMinimumX - NETWORK_STATIC_PADDING / scale,
+            originY: state.geometryMinimumY - NETWORK_STATIC_PADDING / scale,
+            scale: scale
+        };
     }
 
-    function networkImageSpecification(mapView) {
-        const zoom = mapView.zoom;
-        const scale = scaleForZoom(zoom);
-        const cacheDimensions = boundedImageDimensions(mapView);
-        const transform = worldTransform(mapView);
-        const centerX = state.geometryOriginX
-            + (mapView.width / 2 - transform.translateX) / scale;
-        const centerY = state.geometryOriginY
-            + (mapView.height / 2 - transform.translateY) / scale;
-        const cacheBounds = {
-            minimumX: centerX - cacheDimensions.width / (2 * scale),
-            minimumY: centerY - cacheDimensions.height / (2 * scale),
-            maximumX: centerX + cacheDimensions.width / (2 * scale),
-            maximumY: centerY + cacheDimensions.height / (2 * scale)
-        };
-        const geometryPadding = (maximumMarkerSizeForZoom(zoom) / 2
-            + NETWORK_IMAGE_PADDING) / scale;
-        const geometryBounds = expandedBounds({
-            minimumX: state.geometryMinimumX,
-            minimumY: state.geometryMinimumY,
-            maximumX: state.geometryMaximumX,
-            maximumY: state.geometryMaximumY
-        }, geometryPadding);
-        const visibleBounds = intersectBounds(cacheBounds, geometryBounds);
-        const renderBounds = visibleBounds || {
-            minimumX: cacheBounds.minimumX,
-            minimumY: cacheBounds.minimumY,
-            maximumX: cacheBounds.minimumX + 1 / scale,
-            maximumY: cacheBounds.minimumY + 1 / scale
-        };
-        const width = visibleBounds ? Math.min(cacheDimensions.width, Math.max(1,
-            Math.ceil((renderBounds.maximumX - renderBounds.minimumX) * scale))) : 1;
-        const height = visibleBounds ? Math.min(cacheDimensions.height, Math.max(1,
-            Math.ceil((renderBounds.maximumY - renderBounds.minimumY) * scale))) : 1;
-        const offsetX = (renderBounds.minimumX - state.geometryOriginX) * scale;
-        const offsetY = (renderBounds.minimumY - state.geometryOriginY) * scale;
-        const translateX = -offsetX;
-        const translateY = -offsetY;
-        const markerElements = [];
-        if (visibleBounds) {
-            const markerQueryPadding = maximumMarkerSizeForZoom(zoom) / (2 * scale)
-                + NETWORK_IMAGE_PADDING / scale;
-            const markerQueryBounds = expandedBounds(renderBounds, markerQueryPadding);
-            for (const index of indicesInWorldBounds(markerQueryBounds, "markers")) {
-                const marker = state.markers[index];
-                if (!markerIntersectsBounds(marker, renderBounds, zoom, scale))
-                    continue;
-
-                const centerMarkerX = translateX
-                    + (marker.x - state.geometryOriginX) * scale;
-                const centerMarkerY = translateY
-                    + (marker.y - state.geometryOriginY) * scale;
-                const color = markerColor(marker);
-                if (marker.entityType === ENTITY_JUNCTION) {
-                    markerElements.push(
-                        `<circle cx="${formatted(centerMarkerX)}" cy="${formatted(centerMarkerY)}" r="${formatted(junctionDotDiameterForZoom(zoom) / 2)}" fill="${color}"/>`);
-                    continue;
-                }
-
-                const definition = ICON_DEFINITIONS.get(marker.entityType);
-                if (!definition)
-                    continue;
-
-                const markerBounds = markerScreenBounds(marker.entityType, zoom);
-                markerElements.push(
-                    `<use href="#${definition.symbolId}" x="${formatted(centerMarkerX - markerBounds.width / 2)}" y="${formatted(centerMarkerY - markerBounds.height / 2)}" width="${formatted(markerBounds.width)}" height="${formatted(markerBounds.height)}" color="${color}"/>`);
-            }
+    function networkPoint(x, y, specification, mapView) {
+        if (specification.fallback) {
+            const transform = worldTransform(mapView);
+            return {
+                x: transform.translateX + (x - state.geometryOriginX) * transform.scale,
+                y: transform.translateY + (y - state.geometryOriginY) * transform.scale
+            };
         }
-
-        const linkBounds = visibleBounds
-            ? expandedBounds(renderBounds,
-                (state.linkThicknessPixels / 2 + NETWORK_IMAGE_PADDING) / scale)
-            : null;
-        const linkPathDataByColor = linkBounds ? visibleLinkPathDataByColor(linkBounds) : new Map();
-        const linkElements = [];
-        for (const [color, pathData] of linkPathDataByColor) {
-            linkElements.push(
-                `<path fill="none" stroke="${color}" stroke-width="${formatted(state.linkThicknessPixels)}" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="${pathData}"/>`);
-        }
-        const svg = [
-            `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
-            `<defs>${state.iconSymbols}</defs>`,
-            `<g transform="translate(${formatted(translateX)} ${formatted(translateY)}) scale(${formattedScale(scale)})">`,
-            linkElements.join(""),
-            "</g>",
-            markerElements.join(""),
-            "</svg>"
-        ].join("");
         return {
-            svg: svg,
-            width: width,
-            height: height,
-            cacheWidth: cacheDimensions.width,
-            cacheHeight: cacheDimensions.height,
-            bounds: cacheBounds,
-            offsetX: offsetX,
-            offsetY: offsetY
+            x: (x - specification.originX) * specification.scale,
+            y: (y - specification.originY) * specification.scale
         };
+    }
+
+    function networkCollections(specification, mapView) {
+        if (!specification.fallback) {
+            return {
+                pipeSegments: null,
+                deviceSegments: null,
+                markers: null,
+                bounds: null
+            };
+        }
+
+        const padding = Math.max(
+            maximumMarkerSizeForZoom(mapView.zoom),
+            state.linkThicknessPixels + NETWORK_STATIC_PADDING);
+        const bounds = mapViewWorldBounds(mapView, padding, padding);
+        return {
+            pipeSegments: indicesInWorldBounds(bounds, "pipeSegments"),
+            deviceSegments: indicesInWorldBounds(bounds, "deviceSegments"),
+            markers: indicesInWorldBounds(bounds, "markers"),
+            bounds: bounds
+        };
+    }
+
+    function addLinkCollection(documentVector, collectionName, indices, specification, mapView) {
+        const renderer = vectorRenderer();
+        const collection = collectionForSpatialQuery(collectionName);
+        const pathsByColor = new Map();
+        const iterable = indices === null ? collection.keys() : indices;
+        for (const index of iterable) {
+            const segment = collection[index];
+            if (!segment)
+                continue;
+            if (specification.fallback && !segmentIntersectsBounds(segment, mapViewWorldBounds(
+                mapView, NETWORK_STATIC_PADDING, NETWORK_STATIC_PADDING))) {
+                continue;
+            }
+            const color = linkColor(segment.renderId);
+            let path = pathsByColor.get(color);
+            if (!path) {
+                path = renderer.createPath();
+                pathsByColor.set(color, path);
+            }
+            const first = networkPoint(segment.x1, segment.y1, specification, mapView);
+            const second = networkPoint(segment.x2, segment.y2, specification, mapView);
+            path.moveTo(first.x, first.y);
+            path.lineTo(second.x, second.y);
+        }
+        for (const [color, path] of pathsByColor)
+            documentVector.addStroke(path, color, state.linkThicknessPixels);
+    }
+
+    function renderNetwork() {
+        const mapView = state.lastMapView;
+        if (!state.networkCanvas || !state.geometryReady || !shouldDisplayNetwork(mapView)) {
+            if (state.networkCanvas)
+                state.networkCanvas.style.display = "none";
+            return;
+        }
+
+        const specification = networkSpecification(mapView);
+        const renderer = vectorRenderer();
+        const documentVector = new renderer.VectorDocument();
+        const collections = networkCollections(specification, mapView);
+        addLinkCollection(documentVector, "pipeSegments", collections.pipeSegments, specification, mapView);
+        addLinkCollection(documentVector, "deviceSegments", collections.deviceSegments, specification, mapView);
+
+        const junctionPaths = new Map();
+        const markerIndices = collections.markers === null ? state.markers.keys() : collections.markers;
+        const iconCommands = [];
+        for (const index of markerIndices) {
+            const marker = state.markers[index];
+            if (!marker)
+                continue;
+            if (specification.fallback && !markerIntersectsBounds(
+                marker, collections.bounds, mapView.zoom, specification.scale)) {
+                continue;
+            }
+            const point = networkPoint(marker.x, marker.y, specification, mapView);
+            const color = markerColor(marker);
+            if (marker.entityType === ENTITY_JUNCTION) {
+                let path = junctionPaths.get(color);
+                if (!path) {
+                    path = renderer.createPath();
+                    junctionPaths.set(color, path);
+                }
+                renderer.addCircle(path, point.x, point.y,
+                    junctionDotDiameterForZoom(mapView.zoom) / 2);
+                continue;
+            }
+
+            const bounds = markerScreenBounds(marker.entityType, mapView.zoom);
+            const image = tintedIcon(marker.entityType, bounds.width, bounds.height, color);
+            if (!image)
+                continue;
+            iconCommands.push({
+                image: image,
+                x: point.x - bounds.width / 2,
+                y: point.y - bounds.height / 2,
+                width: bounds.width,
+                height: bounds.height
+            });
+        }
+        for (const [color, path] of junctionPaths)
+            documentVector.addFill(path, color);
+        for (const command of iconCommands)
+            documentVector.addImage(
+                command.image, command.x, command.y, command.width, command.height);
+
+        if (!state.networkRetained || !state.networkRetained.render(
+            documentVector,
+            specification.width,
+            specification.height,
+            networkRenderPixelRatio(specification.width, specification.height))) {
+            return;
+        }
+        state.networkZoom = mapView.zoom;
+        state.networkOriginX = specification.originX;
+        state.networkOriginY = specification.originY;
+        state.networkCssWidth = specification.width;
+        state.networkCssHeight = specification.height;
+        state.networkViewportFallback = specification.fallback;
+        state.networkRenderedStyleRevision = state.networkStyleRevision;
+        state.networkRebuildNotBefore = 0;
+        state.networkCanvas.style.display = "block";
+        positionNetworkCanvas(mapView);
+    }
+
+    function positionNetworkCanvas(mapView) {
+        if (!state.networkCanvas || state.networkZoom === null)
+            return;
+        if (state.networkViewportFallback) {
+            if (state.networkZoom === mapView.zoom) {
+                state.networkCanvas.style.display = "block";
+                state.networkCanvas.style.transform = "translate3d(0, 0, 0)";
+            } else {
+                state.networkCanvas.style.display = "none";
+            }
+            return;
+        }
+
+        const renderedScale = scaleForZoom(state.networkZoom);
+        const currentScale = scaleForZoom(mapView.zoom);
+        const zoomScale = currentScale / renderedScale;
+        const transform = worldTransform(mapView);
+        const left = snapToPhysicalPixel(
+            transform.translateX + (state.networkOriginX - state.geometryOriginX) * currentScale);
+        const top = snapToPhysicalPixel(
+            transform.translateY + (state.networkOriginY - state.geometryOriginY) * currentScale);
+        state.networkCanvas.style.display = shouldDisplayNetwork(mapView) ? "block" : "none";
+        state.networkCanvas.style.transform =
+            `translate3d(${left}px, ${top}px, 0) scale(${zoomScale})`;
+    }
+
+    function scheduleNetworkRender() {
+        if (!state.networkRetained)
+            return;
+
+        const delay = state.networkRebuildNotBefore - performance.now();
+        if (delay > 1) {
+            if (state.networkRebuildTimer === 0) {
+                state.networkRebuildTimer = window.setTimeout(() => {
+                    state.networkRebuildTimer = 0;
+                    scheduleNetworkRender();
+                }, Math.ceil(delay));
+            }
+            return;
+        }
+
+        if (state.networkRebuildTimer !== 0) {
+            window.clearTimeout(state.networkRebuildTimer);
+            state.networkRebuildTimer = 0;
+        }
+        state.networkRetained.schedule(renderNetwork);
     }
 
     function ownsMapView(mapView) {
-        return Boolean(mapView && state.ownerId !== 0 &&
-            mapView.activeOwner === state.ownerId && mapView.topmost);
+        return Boolean(mapView && state.ownerId !== 0
+            && mapView.activeOwner === state.ownerId && mapView.topmost);
     }
 
     function shouldDisplayNetwork(mapView) {
@@ -762,142 +878,6 @@
         return Boolean(ownsMapView(mapView) && mapView.visible && mapView.ready
             && mapView.initialized && mapView.width > 0 && mapView.height > 0
             && (state.geometryReady || state.backgroundOpacity > 0));
-    }
-
-    function positionNetworkImage(mapView) {
-        if (!state.image || state.imageZoom !== mapView.zoom)
-            return;
-
-        const transform = worldTransform(mapView);
-        const x = snapToPhysicalPixel(transform.translateX + state.imageOffsetX);
-        const y = snapToPhysicalPixel(transform.translateY + state.imageOffsetY);
-        state.image.style.transform = `translate3d(${x}px, ${y}px, 0)`;
-        state.image.style.display = shouldDisplayNetwork(mapView) ? "block" : "none";
-    }
-
-    function renderedImageCoversMapView(mapView) {
-        return Boolean(state.image && state.imageZoom === mapView.zoom
-            && imageBoundsCoverMapView(
-                state.imageBounds, state.imageWidth, state.imageHeight, mapView));
-    }
-
-    function pendingImageCoversMapView(mapView) {
-        if (!state.pendingImage || state.pendingImageZoom !== mapView.zoom
-            || !state.pendingImageBounds) {
-            return false;
-        }
-
-        const horizontalOverscan = Math.max(
-            0, (state.pendingImageWidth - mapView.width) / 2);
-        const verticalOverscan = Math.max(
-            0, (state.pendingImageHeight - mapView.height) / 2);
-        const horizontalSafety = Math.min(
-            NETWORK_IMAGE_REBUILD_EDGE, horizontalOverscan / 2);
-        const verticalSafety = Math.min(
-            NETWORK_IMAGE_REBUILD_EDGE, verticalOverscan / 2);
-        return boundsContain(state.pendingImageBounds, mapViewWorldBounds(
-            mapView, horizontalSafety, verticalSafety));
-    }
-
-    function requestNetworkImage(mapView) {
-        if (!state.layer || !state.geometryReady || !shouldDisplayNetwork(mapView))
-            return;
-        if (renderedImageCoversMapView(mapView) || pendingImageCoversMapView(mapView))
-            return;
-
-        clearPendingImage();
-        const generation = state.imageGeneration;
-        const specification = networkImageSpecification(mapView);
-        const zoom = mapView.zoom;
-        const objectUrl = URL.createObjectURL(
-            new Blob([specification.svg], { type: "image/svg+xml" }));
-        const image = document.createElement("img");
-        image.setAttribute("aria-hidden", "true");
-        image.alt = "";
-        image.draggable = false;
-        image.decoding = "async";
-        image.style.position = "absolute";
-        image.style.left = "0";
-        image.style.top = "0";
-        image.style.width = `${specification.width}px`;
-        image.style.height = `${specification.height}px`;
-        image.style.display = "none";
-        image.style.pointerEvents = "none";
-        image.style.transformOrigin = "0 0";
-        image.style.zIndex = "2";
-
-        state.pendingImage = image;
-        state.pendingImageObjectUrl = objectUrl;
-        state.pendingImageZoom = zoom;
-        state.pendingImageWidth = specification.cacheWidth;
-        state.pendingImageHeight = specification.cacheHeight;
-        state.pendingImageBounds = specification.bounds;
-
-        image.addEventListener("load", () => {
-            if (generation !== state.imageGeneration || state.pendingImage !== image) {
-                revokeObjectUrl(objectUrl);
-                return;
-            }
-            if (!state.lastMapView || state.lastMapView.zoom !== zoom
-                || !shouldDisplayNetwork(state.lastMapView)) {
-                state.pendingImage = null;
-                state.pendingImageObjectUrl = null;
-                state.pendingImageZoom = null;
-                state.pendingImageWidth = 0;
-                state.pendingImageHeight = 0;
-                state.pendingImageBounds = null;
-                revokeObjectUrl(objectUrl);
-                return;
-            }
-
-            clearRenderedImage();
-            state.pendingImage = null;
-            state.pendingImageObjectUrl = null;
-            state.pendingImageZoom = null;
-            state.pendingImageWidth = 0;
-            state.pendingImageHeight = 0;
-            state.pendingImageBounds = null;
-            state.image = image;
-            state.imageObjectUrl = objectUrl;
-            state.imageZoom = zoom;
-            state.imageOffsetX = specification.offsetX;
-            state.imageOffsetY = specification.offsetY;
-            state.imageWidth = specification.cacheWidth;
-            state.imageHeight = specification.cacheHeight;
-            state.imageBounds = specification.bounds;
-            state.layer.appendChild(image);
-            positionNetworkImage(state.lastMapView);
-            if (!renderedImageCoversMapView(state.lastMapView))
-                scheduleNetworkImage();
-        }, { once: true });
-
-        image.addEventListener("error", () => {
-            if (state.pendingImage === image) {
-                state.pendingImage = null;
-                state.pendingImageObjectUrl = null;
-                state.pendingImageZoom = null;
-                state.pendingImageWidth = 0;
-                state.pendingImageHeight = 0;
-                state.pendingImageBounds = null;
-            }
-            revokeObjectUrl(objectUrl);
-            console.error("Failed to rasterize AOWIS browser network SVG");
-        }, { once: true });
-
-        image.src = objectUrl;
-    }
-
-    function scheduleNetworkImage() {
-        if (state.imageFrameRequest !== 0)
-            return;
-
-        state.imageFrameRequest = window.requestAnimationFrame(() => {
-            state.imageFrameRequest = 0;
-            const mapView = state.lastMapView;
-            if (!mapView || !shouldDisplayNetwork(mapView))
-                return;
-            requestNetworkImage(mapView);
-        });
     }
 
     function isNodeEntityType(entityType) {
@@ -1240,7 +1220,7 @@
     }
 
     function buildGeometry(snapshot) {
-        clearNetworkImage();
+        resetNetworkCanvas();
         clearHeatmap();
         const nodesByRenderId = new Map();
         let anchorX = null;
@@ -1252,6 +1232,8 @@
         state.markers = [];
         state.deviceSegments = [];
         state.pipeSegments = [];
+        state.entityMarkers.clear();
+        state.entitySegments.clear();
         state.globalDeviceSegments = [];
         state.globalPipeSegments = [];
         state.spatialCells.clear();
@@ -1286,6 +1268,7 @@
             };
             nodesByRenderId.set(projectedNode.renderId, projectedNode);
             state.markers.push(projectedNode);
+            state.entityMarkers.set(`${projectedNode.entityType}:${projectedNode.renderId}`, projectedNode);
             includePoint(x, y);
         }
 
@@ -1323,24 +1306,32 @@
             const segmentCollection = projectedLink.entityType === ENTITY_PIPE
                 ? state.pipeSegments : state.deviceSegments;
             for (let index = 1; index < vertices.length; ++index) {
-                segmentCollection.push({
+                const segment = {
                     renderId: projectedLink.renderId,
                     entityType: projectedLink.entityType,
                     x1: vertices[index - 1].x,
                     y1: vertices[index - 1].y,
                     x2: vertices[index].x,
                     y2: vertices[index].y
-                });
+                };
+                segmentCollection.push(segment);
+                const entityKey = `${projectedLink.entityType}:${projectedLink.renderId}`;
+                const entitySegments = state.entitySegments.get(entityKey) || [];
+                entitySegments.push(segment);
+                state.entitySegments.set(entityKey, entitySegments);
             }
 
             if (projectedLink.entityType === ENTITY_PUMP || projectedLink.entityType === ENTITY_VALVE) {
                 const center = polylineMidpoint(vertices);
-                state.markers.push({
+                const deviceMarker = {
                     renderId: projectedLink.renderId,
                     entityType: projectedLink.entityType,
                     x: center.x,
                     y: center.y
-                });
+                };
+                state.markers.push(deviceMarker);
+                state.entityMarkers.set(
+                    `${projectedLink.entityType}:${projectedLink.renderId}`, deviceMarker);
             }
         }
 
@@ -1389,7 +1380,108 @@
         };
     }
 
+    function clearSelectionCanvas() {
+        if (!state.selectionCanvas)
+            return;
+        const context = state.selectionCanvas.getContext("2d");
+        if (context)
+            context.clearRect(0, 0, state.selectionCanvas.width, state.selectionCanvas.height);
+        state.selectionCanvas.style.display = "none";
+    }
+
+    function renderSelection() {
+        state.selectionRenderPending = false;
+        const mapView = state.lastMapView;
+        if (!state.selectionCanvas || !shouldDisplayNetwork(mapView)
+            || state.selectedRenderId === 0 || state.selectedEntityType === 0) {
+            clearSelectionCanvas();
+            return;
+        }
+
+        const context = vectorRenderer().configureCanvas(
+            state.selectionCanvas,
+            mapView.width,
+            mapView.height,
+            Math.min(devicePixelRatio(), NETWORK_STATIC_MAX_PIXEL_RATIO));
+        if (!context)
+            return;
+
+        const transform = worldTransform(mapView);
+        const key = `${state.selectedEntityType}:${state.selectedRenderId}`;
+        const segments = state.entitySegments.get(key) || [];
+        if (segments.length > 0) {
+            context.beginPath();
+            for (const segment of segments) {
+                context.moveTo(
+                    transform.translateX + (segment.x1 - state.geometryOriginX) * transform.scale,
+                    transform.translateY + (segment.y1 - state.geometryOriginY) * transform.scale);
+                context.lineTo(
+                    transform.translateX + (segment.x2 - state.geometryOriginX) * transform.scale,
+                    transform.translateY + (segment.y2 - state.geometryOriginY) * transform.scale);
+            }
+            context.strokeStyle = SELECTED_COLOR;
+            context.lineWidth = Math.max(3, state.linkThicknessPixels + 2);
+            context.lineCap = "round";
+            context.lineJoin = "round";
+            context.stroke();
+        }
+
+        const marker = state.entityMarkers.get(key);
+        if (marker) {
+            const centerX = transform.translateX
+                + (marker.x - state.geometryOriginX) * transform.scale;
+            const centerY = transform.translateY
+                + (marker.y - state.geometryOriginY) * transform.scale;
+            if (marker.entityType === ENTITY_JUNCTION) {
+                context.beginPath();
+                context.arc(
+                    centerX, centerY,
+                    junctionDotDiameterForZoom(mapView.zoom) / 2 + 2,
+                    0, Math.PI * 2);
+                context.fillStyle = SELECTED_COLOR;
+                context.fill();
+            } else {
+                const bounds = markerScreenBounds(marker.entityType, mapView.zoom);
+                const image = tintedIcon(
+                    marker.entityType, bounds.width, bounds.height, SELECTED_COLOR);
+                if (image) {
+                    context.drawImage(
+                        image,
+                        centerX - bounds.width / 2,
+                        centerY - bounds.height / 2,
+                        bounds.width,
+                        bounds.height);
+                }
+            }
+        }
+        state.selectionCanvas.style.display = "block";
+    }
+
+    function scheduleSelectionRender() {
+        if (!state.selectionCanvas || state.selectionRenderPending)
+            return;
+        if (state.selectedRenderId === 0 && state.selectionCanvas.style.display !== "block")
+            return;
+        state.selectionRenderPending = true;
+        window.requestAnimationFrame(renderSelection);
+    }
+
+    function setSelectedEntity(renderId, entityType) {
+        const nextRenderId = Number(renderId) >>> 0;
+        const nextEntityType = nextRenderId === 0 ? 0 : Number(entityType) | 0;
+        if (state.selectedRenderId === nextRenderId
+            && state.selectedEntityType === nextEntityType) {
+            return;
+        }
+        state.selectedRenderId = nextRenderId;
+        state.selectedEntityType = nextEntityType;
+        scheduleSelectionRender();
+    }
+
     function handleMapViewChanged(mapView) {
+        const previousMapView = state.lastMapView;
+        if (previousMapView && mapView && previousMapView.zoom !== mapView.zoom)
+            state.networkRebuildNotBefore = performance.now() + NETWORK_ZOOM_SETTLE_DELAY_MS;
         state.lastMapView = mapView;
 
         if (!mapView || !ensureOverlay(mapView.layer)) {
@@ -1404,36 +1496,36 @@
         if (!shouldShow)
             return;
 
-        if (!state.geometryReady)
+        if (!state.geometryReady) {
+            if (state.networkCanvas)
+                state.networkCanvas.style.display = "none";
+            clearSelectionCanvas();
             return;
-
-        if (state.pendingImage && state.pendingImageZoom !== mapView.zoom)
-            clearPendingImage();
+        }
 
         if (state.heatmapCanvas && state.heatmapZoom === mapView.zoom)
             positionHeatmap(mapView);
         else if (state.heatmapCanvas)
             state.heatmapCanvas.style.display = "none";
 
-        if (state.image && state.imageZoom === mapView.zoom)
-            positionNetworkImage(mapView);
-        else if (state.image)
-            state.image.style.display = "none";
+        positionNetworkCanvas(mapView);
+        const networkNeedsRender = state.networkZoom !== mapView.zoom
+            || state.networkRenderedStyleRevision !== state.networkStyleRevision
+            || state.networkViewportFallback;
+        if (networkNeedsRender)
+            scheduleNetworkRender();
 
         if (shouldDisplayHeatmap(mapView)
             && !renderedHeatmapCoversMapView(mapView)) {
             scheduleHeatmap();
         }
-
-        if (!renderedImageCoversMapView(mapView)
-            && !pendingImageCoversMapView(mapView)) {
-            scheduleNetworkImage();
-        }
+        scheduleSelectionRender();
     }
 
     function initialize() {
         if (!window.aowisBrowserMap || typeof window.aowisBrowserMap.subscribeView !== "function")
             throw new Error("AOWIS browser network requires aowis-browser-map.js");
+        vectorRenderer();
 
         state.unsubscribeView = window.aowisBrowserMap.subscribeView(handleMapViewChanged);
         state.pointerMoveHandler = handlePointerMove;
@@ -1441,7 +1533,7 @@
         window.addEventListener("pointermove", state.pointerMoveHandler, { capture: true, passive: true });
         window.addEventListener("pointerleave", state.pointerLeaveHandler, { capture: true, passive: true });
         window.addEventListener("blur", state.pointerLeaveHandler, { passive: true });
-        loadIconSymbols();
+        loadIconImages();
     }
 
     function pointToSegmentDistanceSquared(pointX, pointY, segment) {
@@ -1778,7 +1870,7 @@
         state.heatmapSolidCenterPercent = heatmapSolidCenterPercent;
 
         if (networkChanged)
-            clearNetworkImage();
+            invalidateNetworkCache();
         if (heatmapChanged)
             clearHeatmap();
         else if (heatmapOpacityChanged)
@@ -1819,18 +1911,31 @@
         state.pointerLeaveHandler = null;
         clearHoverCursor();
 
-        clearNetworkImage();
+        resetNetworkCanvas();
         clearHeatmap();
+        if (state.networkRetained)
+            state.networkRetained.destroy();
+        if (state.selectionCanvas)
+            state.selectionCanvas.remove();
         if (state.layer)
             state.layer.remove();
         state.layer = null;
+        state.networkRetained = null;
+        state.networkCanvas = null;
+        state.selectionCanvas = null;
+        state.selectionRenderPending = false;
+        state.selectedRenderId = 0;
+        state.selectedEntityType = 0;
+        state.entityMarkers.clear();
+        state.entitySegments.clear();
         state.geometryOriginX = 0;
         state.geometryOriginY = 0;
         state.geometryMinimumX = 0;
         state.geometryMinimumY = 0;
         state.geometryMaximumX = 0;
         state.geometryMaximumY = 0;
-        state.iconSymbols = "";
+        state.iconImages.clear();
+        state.tintedIconCache.clear();
         state.geometryReady = false;
         state.width = 0;
         state.height = 0;
@@ -1866,6 +1971,7 @@
         setSymbology: setSymbology,
         setBackground: setBackground,
         setOwnerId: setOwnerId,
+        setSelectedEntity: setSelectedEntity,
         hitTest: hitTest,
         destroy: destroy
     };
