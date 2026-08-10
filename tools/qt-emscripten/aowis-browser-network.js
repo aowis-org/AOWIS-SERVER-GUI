@@ -10,6 +10,7 @@
     const NETWORK_COLOR = "#000000";
     const SYMBOLOGY_VALUE_UNAVAILABLE_COLOR = "#000000";
     const SELECTED_COLOR = "rgb(0, 190, 255)";
+    const SYMBOLOGY_COLOR_BUCKETS = 64;
     const RAMP_COLORS = [
         "#440154",
         "#443983",
@@ -134,11 +135,13 @@
         nodeMinimum: 0,
         nodeMaximum: 0,
         nodeValues: new Map(),
+        nodeColors: new Map(),
         linkVisual: 0,
         linkThicknessPixels: 3,
         linkMinimum: 0,
         linkMaximum: 0,
         linkValues: new Map(),
+        linkColors: new Map(),
         heatmapCanvas: null,
         heatmapMode: null,
         heatmapGl: null,
@@ -357,29 +360,42 @@
         return `#${hexadecimalByte(color.red)}${hexadecimalByte(color.green)}${hexadecimalByte(color.blue)}`;
     }
 
-    function valueColor(visual, values, renderId, minimum, maximum) {
-        if (visual === 0)
-            return NETWORK_COLOR;
-        if (!values.has(renderId))
-            return SYMBOLOGY_VALUE_UNAVAILABLE_COLOR;
+    const SYMBOLOGY_PALETTE = Array.from({ length: SYMBOLOGY_COLOR_BUCKETS }, (_, index) =>
+        rampColor(index / Math.max(1, SYMBOLOGY_COLOR_BUCKETS - 1)));
 
-        const value = values.get(renderId);
+    function quantizedRampColor(value, minimum, maximum) {
         if (!Number.isFinite(value) || !Number.isFinite(minimum) || !Number.isFinite(maximum))
             return SYMBOLOGY_VALUE_UNAVAILABLE_COLOR;
         if (minimum === maximum)
-            return rampColor(0.5);
+            return SYMBOLOGY_PALETTE[Math.floor((SYMBOLOGY_COLOR_BUCKETS - 1) / 2)];
 
-        return rampColor((value - minimum) / (maximum - minimum));
+        const fraction = Math.max(0, Math.min(1, (value - minimum) / (maximum - minimum)));
+        const bucket = Math.max(0, Math.min(
+            SYMBOLOGY_COLOR_BUCKETS - 1,
+            Math.round(fraction * (SYMBOLOGY_COLOR_BUCKETS - 1))));
+        return SYMBOLOGY_PALETTE[bucket];
+    }
+
+    function buildSymbologyColorMap(visual, values, minimum, maximum) {
+        const colors = new Map();
+        if (visual === 0)
+            return colors;
+
+        for (const [renderId, value] of values)
+            colors.set(renderId, quantizedRampColor(value, minimum, maximum));
+        return colors;
     }
 
     function nodeColor(renderId) {
-        return valueColor(
-            state.nodeVisual, state.nodeValues, renderId, state.nodeMinimum, state.nodeMaximum);
+        if (state.nodeVisual === 0)
+            return NETWORK_COLOR;
+        return state.nodeColors.get(renderId) || SYMBOLOGY_VALUE_UNAVAILABLE_COLOR;
     }
 
     function linkColor(renderId) {
-        return valueColor(
-            state.linkVisual, state.linkValues, renderId, state.linkMinimum, state.linkMaximum);
+        if (state.linkVisual === 0)
+            return NETWORK_COLOR;
+        return state.linkColors.get(renderId) || SYMBOLOGY_VALUE_UNAVAILABLE_COLOR;
     }
 
     function markerColor(marker) {
@@ -2323,17 +2339,19 @@
         const heatmapSolidCenterPercent = Math.max(0, Math.min(100,
             Number(symbology.heatmapSolidCenterPercent) || 0));
 
-        const networkChanged = state.nodeVisual !== nodeVisual
-            || state.nodeSizePercent !== nodeSizePercent
-            || state.iconSizePercent !== iconSizePercent
+        const nodeSymbologyChanged = state.nodeVisual !== nodeVisual
             || state.nodeMinimum !== nodeMinimum
             || state.nodeMaximum !== nodeMaximum
-            || !symbologyValuesEqual(state.nodeValues, nodeValues)
-            || state.linkVisual !== linkVisual
-            || state.linkThicknessPixels !== linkThicknessPixels
+            || !symbologyValuesEqual(state.nodeValues, nodeValues);
+        const linkSymbologyChanged = state.linkVisual !== linkVisual
             || state.linkMinimum !== linkMinimum
             || state.linkMaximum !== linkMaximum
             || !symbologyValuesEqual(state.linkValues, linkValues);
+        const networkChanged = nodeSymbologyChanged
+            || linkSymbologyChanged
+            || state.nodeSizePercent !== nodeSizePercent
+            || state.iconSizePercent !== iconSizePercent
+            || state.linkThicknessPixels !== linkThicknessPixels;
         const heatmapChanged = state.heatmapVisual !== heatmapVisual
             || state.heatmapMinimum !== heatmapMinimum
             || state.heatmapMaximum !== heatmapMaximum
@@ -2348,11 +2366,15 @@
         state.nodeMinimum = nodeMinimum;
         state.nodeMaximum = nodeMaximum;
         state.nodeValues = nodeValues;
+        if (nodeSymbologyChanged)
+            state.nodeColors = buildSymbologyColorMap(nodeVisual, nodeValues, nodeMinimum, nodeMaximum);
         state.linkVisual = linkVisual;
         state.linkThicknessPixels = linkThicknessPixels;
         state.linkMinimum = linkMinimum;
         state.linkMaximum = linkMaximum;
         state.linkValues = linkValues;
+        if (linkSymbologyChanged)
+            state.linkColors = buildSymbologyColorMap(linkVisual, linkValues, linkMinimum, linkMaximum);
         state.heatmapVisual = heatmapVisual;
         state.heatmapMinimum = heatmapMinimum;
         state.heatmapMaximum = heatmapMaximum;
@@ -2449,11 +2471,13 @@
         state.nodeMinimum = 0;
         state.nodeMaximum = 0;
         state.nodeValues = new Map();
+        state.nodeColors = new Map();
         state.linkVisual = 0;
         state.linkThicknessPixels = 3;
         state.linkMinimum = 0;
         state.linkMaximum = 0;
         state.linkValues = new Map();
+        state.linkColors = new Map();
         state.heatmapVisual = 0;
         state.heatmapMinimum = 0;
         state.heatmapMaximum = 0;
