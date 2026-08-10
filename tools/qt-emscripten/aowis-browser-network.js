@@ -29,8 +29,15 @@
     const NETWORK_IMAGE_MAX_DIMENSION = 4096;
     const NETWORK_IMAGE_MAX_AREA = 8 * 1024 * 1024;
     const NETWORK_IMAGE_REBUILD_EDGE = 256;
-    const HEATMAP_MAX_DIMENSION = 2048;
-    const HEATMAP_MAX_AREA = 2 * 1024 * 1024;
+    const HEATMAP_OVERSCAN_FACTOR = 1.5;
+    const HEATMAP_RASTER_SCALE = 0.5;
+    const HEATMAP_WEBGL_MAX_PIXEL_RATIO = 0.5;
+    const HEATMAP_WEBGL_MIN_PIXEL_RATIO = 0.0625;
+    const HEATMAP_WEBGL_TARGET_RADIUS_PIXELS = 96;
+    const HEATMAP_WEBGL_TARGET_FRAGMENT_BUDGET = 24 * 1024 * 1024;
+    const HEATMAP_REBUILD_EDGE = 96;
+    const HEATMAP_MAX_DIMENSION = 1536;
+    const HEATMAP_MAX_AREA = 1280 * 1024;
     const HEATMAP_MAX_KERNEL_CACHE_PIXELS = 8 * 1024 * 1024;
     const HEATMAP_MAX_KERNEL_RADIUS = 256;
     const HEATMAP_MAX_COLOR_BUCKETS = 64;
@@ -133,13 +140,27 @@
         linkMaximum: 0,
         linkValues: new Map(),
         heatmapCanvas: null,
+        heatmapMode: null,
+        heatmapGl: null,
+        heatmapGlProgram: null,
+        heatmapGlBuffer: null,
+        heatmapGlLocations: null,
+        heatmapGlVertexCount: 0,
+        heatmapGlNodeCount: 0,
+        heatmapDataRevision: 1,
+        heatmapUploadedRevision: 0,
+        heatmapWebGlFailureLogged: false,
+        heatmapCacheCanvas: null,
         heatmapZoom: null,
         heatmapOffsetX: 0,
         heatmapOffsetY: 0,
         heatmapWidth: 0,
         heatmapHeight: 0,
+        heatmapRasterScale: 1,
         heatmapBounds: null,
         heatmapFrameRequest: 0,
+        heatmapPresentationFrameRequest: 0,
+        heatmapKernelCache: new Map(),
         heatmapVisual: 0,
         heatmapMinimum: 0,
         heatmapMaximum: 0,
@@ -430,24 +451,40 @@
     function clearScheduledHeatmap() {
         if (state.heatmapFrameRequest !== 0)
             window.cancelAnimationFrame(state.heatmapFrameRequest);
+        if (state.heatmapPresentationFrameRequest !== 0)
+            window.cancelAnimationFrame(state.heatmapPresentationFrameRequest);
         state.heatmapFrameRequest = 0;
+        state.heatmapPresentationFrameRequest = 0;
     }
 
     function clearRenderedHeatmap() {
-        if (state.heatmapCanvas)
-            state.heatmapCanvas.remove();
-        state.heatmapCanvas = null;
+        state.heatmapCacheCanvas = null;
         state.heatmapZoom = null;
         state.heatmapOffsetX = 0;
         state.heatmapOffsetY = 0;
         state.heatmapWidth = 0;
         state.heatmapHeight = 0;
+        state.heatmapRasterScale = 1;
         state.heatmapBounds = null;
+        if (state.heatmapCanvas) {
+            if (state.heatmapMode === "webgl" && state.heatmapGl) {
+                state.heatmapGl.clearColor(0, 0, 0, 0);
+                state.heatmapGl.clear(state.heatmapGl.COLOR_BUFFER_BIT);
+            } else if (state.heatmapMode === "canvas") {
+                const context = state.heatmapCanvas.getContext("2d");
+                if (context)
+                    context.clearRect(0, 0, state.heatmapCanvas.width, state.heatmapCanvas.height);
+            }
+            state.heatmapCanvas.style.display = "none";
+        }
     }
 
     function clearHeatmap() {
         clearScheduledHeatmap();
         clearRenderedHeatmap();
+        state.heatmapKernelCache.clear();
+        ++state.heatmapDataRevision;
+        state.heatmapUploadedRevision = 0;
     }
 
     function loadIconImage(entityType, definition) {
@@ -520,10 +557,24 @@
         };
     }
 
+    function boundedHeatmapDisplayDimensions(mapView) {
+        const viewportArea = Math.max(1, mapView.width * mapView.height);
+        const maximumFactor = Math.min(
+            HEATMAP_OVERSCAN_FACTOR,
+            NETWORK_IMAGE_MAX_DIMENSION / Math.max(1, mapView.width),
+            NETWORK_IMAGE_MAX_DIMENSION / Math.max(1, mapView.height),
+            Math.sqrt(NETWORK_IMAGE_MAX_AREA / viewportArea));
+        const factor = Math.max(1, maximumFactor);
+        return {
+            width: Math.max(1, Math.floor(mapView.width * factor)),
+            height: Math.max(1, Math.floor(mapView.height * factor))
+        };
+    }
+
     function boundedHeatmapRasterDimensions(displayWidth, displayHeight) {
         const displayArea = Math.max(1, displayWidth * displayHeight);
         const factor = Math.min(
-            1,
+            HEATMAP_RASTER_SCALE,
             HEATMAP_MAX_DIMENSION / Math.max(1, displayWidth),
             HEATMAP_MAX_DIMENSION / Math.max(1, displayHeight),
             Math.sqrt(HEATMAP_MAX_AREA / displayArea));
@@ -577,6 +628,20 @@
             NETWORK_IMAGE_REBUILD_EDGE, horizontalOverscan / 2);
         const verticalSafety = Math.min(
             NETWORK_IMAGE_REBUILD_EDGE, verticalOverscan / 2);
+        return boundsContain(bounds, mapViewWorldBounds(
+            mapView, horizontalSafety, verticalSafety));
+    }
+
+    function heatmapBoundsCoverMapView(bounds, width, height, mapView) {
+        if (!bounds)
+            return false;
+
+        const horizontalOverscan = Math.max(0, (width - mapView.width) / 2);
+        const verticalOverscan = Math.max(0, (height - mapView.height) / 2);
+        const horizontalSafety = Math.min(
+            HEATMAP_REBUILD_EDGE, horizontalOverscan / 2);
+        const verticalSafety = Math.min(
+            HEATMAP_REBUILD_EDGE, verticalOverscan / 2);
         return boundsContain(bounds, mapViewWorldBounds(
             mapView, horizontalSafety, verticalSafety));
     }
@@ -892,10 +957,336 @@
             && state.heatmapValues.size > 0);
     }
 
+    function ensureHeatmapCanvasElement() {
+        if (!state.layer)
+            return null;
+
+        if (!state.heatmapCanvas) {
+            state.heatmapCanvas = document.createElement("canvas");
+            state.heatmapCanvas.setAttribute("aria-hidden", "true");
+            state.heatmapCanvas.style.position = "absolute";
+            state.heatmapCanvas.style.left = "0";
+            state.heatmapCanvas.style.top = "0";
+            state.heatmapCanvas.style.display = "none";
+            state.heatmapCanvas.style.pointerEvents = "none";
+            state.heatmapCanvas.style.zIndex = "1";
+            state.heatmapCanvas.style.background = "transparent";
+            state.layer.insertBefore(state.heatmapCanvas, state.networkCanvas);
+        }
+        return state.heatmapCanvas;
+    }
+
+    function resetHeatmapWebGlState(removeCanvas) {
+        if (state.heatmapGl) {
+            if (state.heatmapGlBuffer)
+                state.heatmapGl.deleteBuffer(state.heatmapGlBuffer);
+            if (state.heatmapGlProgram)
+                state.heatmapGl.deleteProgram(state.heatmapGlProgram);
+        }
+        state.heatmapGl = null;
+        state.heatmapGlProgram = null;
+        state.heatmapGlBuffer = null;
+        state.heatmapGlLocations = null;
+        state.heatmapGlVertexCount = 0;
+        state.heatmapGlNodeCount = 0;
+        state.heatmapUploadedRevision = 0;
+        if (removeCanvas && state.heatmapCanvas) {
+            state.heatmapCanvas.remove();
+            state.heatmapCanvas = null;
+        }
+        state.heatmapMode = null;
+    }
+
+    function compileHeatmapShader(gl, type, source) {
+        const shader = gl.createShader(type);
+        if (!shader)
+            return null;
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            console.error("AOWIS heatmap shader compilation failed:", gl.getShaderInfoLog(shader));
+            gl.deleteShader(shader);
+            return null;
+        }
+        return shader;
+    }
+
+    function createHeatmapWebGlProgram(gl) {
+        const vertexShader = compileHeatmapShader(gl, gl.VERTEX_SHADER, `
+            precision highp float;
+            attribute vec2 a_local;
+            attribute vec2 a_corner;
+            attribute vec3 a_color;
+            uniform vec2 u_translate;
+            uniform float u_scale;
+            uniform vec2 u_viewport;
+            uniform float u_radius;
+            varying vec2 v_corner;
+            varying vec3 v_color;
+            void main() {
+                vec2 screen = u_translate + a_local * u_scale + a_corner * u_radius;
+                vec2 clip = vec2(screen.x / u_viewport.x * 2.0 - 1.0,
+                    1.0 - screen.y / u_viewport.y * 2.0);
+                gl_Position = vec4(clip, 0.0, 1.0);
+                v_corner = a_corner;
+                v_color = a_color;
+            }
+        `);
+        const fragmentShader = compileHeatmapShader(gl, gl.FRAGMENT_SHADER, `
+            precision mediump float;
+            uniform float u_solid_center;
+            varying vec2 v_corner;
+            varying vec3 v_color;
+            void main() {
+                float distance_from_center = length(v_corner);
+                if (distance_from_center > 1.0)
+                    discard;
+
+                float solid_center = clamp(u_solid_center, 0.0, 0.9);
+                float half_opacity = solid_center + (1.0 - solid_center) * 0.4375;
+                float alpha;
+                if (distance_from_center <= solid_center) {
+                    alpha = 1.0;
+                } else if (distance_from_center <= half_opacity) {
+                    float range = max(0.0001, half_opacity - solid_center);
+                    alpha = 1.0 - 0.5 * (distance_from_center - solid_center) / range;
+                } else {
+                    float range = max(0.0001, 1.0 - half_opacity);
+                    alpha = 0.5 * (1.0 - (distance_from_center - half_opacity) / range);
+                }
+                gl_FragColor = vec4(v_color, clamp(alpha, 0.0, 1.0));
+            }
+        `);
+        if (!vertexShader || !fragmentShader) {
+            if (vertexShader)
+                gl.deleteShader(vertexShader);
+            if (fragmentShader)
+                gl.deleteShader(fragmentShader);
+            return null;
+        }
+
+        const program = gl.createProgram();
+        if (!program) {
+            gl.deleteShader(vertexShader);
+            gl.deleteShader(fragmentShader);
+            return null;
+        }
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+        gl.deleteShader(vertexShader);
+        gl.deleteShader(fragmentShader);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            console.error("AOWIS heatmap shader linking failed:", gl.getProgramInfoLog(program));
+            gl.deleteProgram(program);
+            return null;
+        }
+        return program;
+    }
+
+    function initializeHeatmapWebGl(canvas) {
+        const gl = canvas.getContext("webgl", {
+            alpha: true,
+            antialias: false,
+            depth: false,
+            stencil: false,
+            premultipliedAlpha: false,
+            preserveDrawingBuffer: false
+        });
+        if (!gl)
+            return false;
+
+        const program = createHeatmapWebGlProgram(gl);
+        if (!program) {
+            resetHeatmapWebGlState(true);
+            return false;
+        }
+        const buffer = gl.createBuffer();
+        if (!buffer) {
+            gl.deleteProgram(program);
+            resetHeatmapWebGlState(true);
+            return false;
+        }
+
+        state.heatmapGl = gl;
+        state.heatmapGlProgram = program;
+        state.heatmapGlBuffer = buffer;
+        state.heatmapGlLocations = {
+            local: gl.getAttribLocation(program, "a_local"),
+            corner: gl.getAttribLocation(program, "a_corner"),
+            color: gl.getAttribLocation(program, "a_color"),
+            translate: gl.getUniformLocation(program, "u_translate"),
+            scale: gl.getUniformLocation(program, "u_scale"),
+            viewport: gl.getUniformLocation(program, "u_viewport"),
+            radius: gl.getUniformLocation(program, "u_radius"),
+            solidCenter: gl.getUniformLocation(program, "u_solid_center")
+        };
+        state.heatmapMode = "webgl";
+        canvas.style.opacity = String(
+            Math.max(0, Math.min(100, state.heatmapOpacity)) / 100);
+        canvas.style.willChange = "contents";
+        gl.disable(gl.DEPTH_TEST);
+        gl.disable(gl.CULL_FACE);
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.clearColor(0, 0, 0, 0);
+        return true;
+    }
+
+    function ensureHeatmapWebGl(mapView) {
+        if (state.heatmapMode === "canvas")
+            return false;
+        const canvas = ensureHeatmapCanvasElement();
+        if (!canvas)
+            return false;
+
+        if (state.heatmapMode !== "webgl" && !initializeHeatmapWebGl(canvas)) {
+            if (!state.heatmapWebGlFailureLogged) {
+                console.warn("AOWIS WebGL heatmap unavailable; falling back to Canvas 2D");
+                state.heatmapWebGlFailureLogged = true;
+            }
+            if (!state.heatmapCanvas)
+                ensureHeatmapCanvasElement();
+            state.heatmapMode = "canvas";
+            return false;
+        }
+
+        const pixelRatio = heatmapWebGlPixelRatio(mapView);
+        const rasterWidth = Math.max(1, Math.ceil(mapView.width * pixelRatio));
+        const rasterHeight = Math.max(1, Math.ceil(mapView.height * pixelRatio));
+        if (canvas.width !== rasterWidth)
+            canvas.width = rasterWidth;
+        if (canvas.height !== rasterHeight)
+            canvas.height = rasterHeight;
+        const cssWidth = `${Math.max(1, mapView.width)}px`;
+        const cssHeight = `${Math.max(1, mapView.height)}px`;
+        if (canvas.style.width !== cssWidth)
+            canvas.style.width = cssWidth;
+        if (canvas.style.height !== cssHeight)
+            canvas.style.height = cssHeight;
+        return true;
+    }
+
+    function rebuildHeatmapWebGlBuffer() {
+        const gl = state.heatmapGl;
+        if (!gl || !state.heatmapGlBuffer)
+            return false;
+        if (state.heatmapUploadedRevision === state.heatmapDataRevision)
+            return true;
+
+        const corners = [
+            -1, -1, 1, -1, -1, 1,
+            -1, 1, 1, -1, 1, 1
+        ];
+        let heatmapNodeCount = 0;
+        for (const marker of state.markers) {
+            if (isNodeEntityType(marker.entityType) && state.heatmapValues.has(marker.renderId))
+                ++heatmapNodeCount;
+        }
+
+        const floatsPerVertex = 7;
+        const verticesPerNode = 6;
+        const data = new Float32Array(heatmapNodeCount * verticesPerNode * floatsPerVertex);
+        let offset = 0;
+        for (const marker of state.markers) {
+            if (!isNodeEntityType(marker.entityType) || !state.heatmapValues.has(marker.renderId))
+                continue;
+            const fraction = heatmapValueFraction(state.heatmapValues.get(marker.renderId));
+            if (fraction === null)
+                continue;
+            const color = rampRgb(fraction);
+            const localX = marker.x - state.geometryOriginX;
+            const localY = marker.y - state.geometryOriginY;
+            for (let cornerIndex = 0; cornerIndex < corners.length; cornerIndex += 2) {
+                data[offset++] = localX;
+                data[offset++] = localY;
+                data[offset++] = corners[cornerIndex];
+                data[offset++] = corners[cornerIndex + 1];
+                data[offset++] = color.red / 255;
+                data[offset++] = color.green / 255;
+                data[offset++] = color.blue / 255;
+            }
+        }
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, state.heatmapGlBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, offset === data.length ? data : data.subarray(0, offset), gl.STATIC_DRAW);
+        state.heatmapGlVertexCount = offset / floatsPerVertex;
+        state.heatmapGlNodeCount = state.heatmapGlVertexCount / verticesPerNode;
+        state.heatmapUploadedRevision = state.heatmapDataRevision;
+        return true;
+    }
+
+    function heatmapWebGlNodeCount() {
+        if (state.heatmapUploadedRevision === state.heatmapDataRevision
+            && state.heatmapGlNodeCount > 0) {
+            return state.heatmapGlNodeCount;
+        }
+
+        let count = 0;
+        for (const marker of state.markers) {
+            if (isNodeEntityType(marker.entityType) && state.heatmapValues.has(marker.renderId))
+                ++count;
+        }
+        return count;
+    }
+
+    function heatmapWebGlPixelRatio(mapView) {
+        const cssRadius = Math.max(1, heatmapRadiusWorldPixels() * scaleForZoom(mapView.zoom));
+        const nodeCount = Math.max(1, heatmapWebGlNodeCount());
+        const viewportArea = Math.max(1, mapView.width * mapView.height);
+        const circleArea = Math.PI * cssRadius * cssRadius;
+        const estimatedCssFragmentsPerNode = Math.min(viewportArea, circleArea);
+        const budgetRatio = Math.sqrt(
+            HEATMAP_WEBGL_TARGET_FRAGMENT_BUDGET
+                / Math.max(1, nodeCount * estimatedCssFragmentsPerNode));
+        const radiusRatio = HEATMAP_WEBGL_TARGET_RADIUS_PIXELS / cssRadius;
+        const ratio = Math.min(HEATMAP_WEBGL_MAX_PIXEL_RATIO, radiusRatio, budgetRatio);
+        return Math.max(HEATMAP_WEBGL_MIN_PIXEL_RATIO, ratio);
+    }
+
+    function renderHeatmapWebGl(mapView) {
+        if (!ensureHeatmapWebGl(mapView) || !state.heatmapGl || !state.heatmapGlProgram
+            || !state.heatmapGlLocations || !rebuildHeatmapWebGlBuffer()) {
+            return false;
+        }
+
+        const gl = state.heatmapGl;
+        if (typeof gl.isContextLost === "function" && gl.isContextLost()) {
+            resetHeatmapWebGlState(true);
+            state.heatmapMode = "canvas";
+            return false;
+        }
+        const locations = state.heatmapGlLocations;
+        const canvas = state.heatmapCanvas;
+        const transform = worldTransform(mapView);
+        const radius = Math.max(1, heatmapRadiusWorldPixels() * transform.scale);
+        const stride = 7 * Float32Array.BYTES_PER_ELEMENT;
+
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.useProgram(state.heatmapGlProgram);
+        gl.bindBuffer(gl.ARRAY_BUFFER, state.heatmapGlBuffer);
+        gl.enableVertexAttribArray(locations.local);
+        gl.vertexAttribPointer(locations.local, 2, gl.FLOAT, false, stride, 0);
+        gl.enableVertexAttribArray(locations.corner);
+        gl.vertexAttribPointer(locations.corner, 2, gl.FLOAT, false, stride, 2 * Float32Array.BYTES_PER_ELEMENT);
+        gl.enableVertexAttribArray(locations.color);
+        gl.vertexAttribPointer(locations.color, 3, gl.FLOAT, false, stride, 4 * Float32Array.BYTES_PER_ELEMENT);
+        gl.uniform2f(locations.translate, transform.translateX, transform.translateY);
+        gl.uniform1f(locations.scale, transform.scale);
+        gl.uniform2f(locations.viewport, Math.max(1, mapView.width), Math.max(1, mapView.height));
+        gl.uniform1f(locations.radius, radius);
+        gl.uniform1f(locations.solidCenter, Math.max(0, Math.min(0.9, state.heatmapSolidCenterPercent / 100)));
+        if (state.heatmapGlVertexCount > 0)
+            gl.drawArrays(gl.TRIANGLES, 0, state.heatmapGlVertexCount);
+        if (canvas.style.display !== "block")
+            canvas.style.display = "block";
+        return true;
+    }
+
     function applyHeatmapOpacity() {
         if (!state.heatmapCanvas)
             return;
-
         state.heatmapCanvas.style.opacity = String(
             Math.max(0, Math.min(100, state.heatmapOpacity)) / 100);
     }
@@ -903,7 +1294,7 @@
     function heatmapSpecification(mapView) {
         const zoom = mapView.zoom;
         const scale = scaleForZoom(zoom);
-        const displayDimensions = boundedImageDimensions(mapView);
+        const displayDimensions = boundedHeatmapDisplayDimensions(mapView);
         const rasterDimensions = boundedHeatmapRasterDimensions(
             displayDimensions.width, displayDimensions.height);
         const transform = worldTransform(mapView);
@@ -998,6 +1389,25 @@
         };
     }
 
+    function heatmapKernel(radius, colorBucketCount, bucket) {
+        const roundedRadius = Math.max(1, Math.round(radius * 4) / 4);
+        const bucketFraction = colorBucketCount <= 1
+            ? 0.5 : bucket / (colorBucketCount - 1);
+        const color = rampRgb(bucketFraction);
+        const key = `${roundedRadius}:${colorBucketCount}:${bucket}:${state.heatmapSolidCenterPercent}`;
+        let kernel = state.heatmapKernelCache.get(key);
+        if (kernel)
+            return kernel;
+
+        kernel = createHeatmapKernel(roundedRadius, color);
+        if (!kernel)
+            return null;
+        if (state.heatmapKernelCache.size >= HEATMAP_MAX_COLOR_BUCKETS * 4)
+            state.heatmapKernelCache.clear();
+        state.heatmapKernelCache.set(key, kernel);
+        return kernel;
+    }
+
     function renderHeatmap(specification) {
         const canvas = document.createElement("canvas");
         canvas.width = specification.rasterWidth;
@@ -1010,7 +1420,6 @@
         const radius = Math.max(
             1, radiusWorldPixels * specification.scale * specification.rasterScale);
         const colorBucketCount = heatmapColorBucketCount(radius);
-        const kernelCache = new Map();
         const queryPadding = radiusWorldPixels;
         const queryBounds = expandedBounds(specification.bounds, queryPadding);
         context.globalCompositeOperation = "source-over";
@@ -1037,14 +1446,9 @@
             }
 
             const bucket = Math.round(fraction * (colorBucketCount - 1));
-            let kernel = kernelCache.get(bucket);
-            if (!kernel) {
-                const bucketFraction = bucket / (colorBucketCount - 1);
-                kernel = createHeatmapKernel(radius, rampRgb(bucketFraction));
-                if (!kernel)
-                    return null;
-                kernelCache.set(bucket, kernel);
-            }
+            const kernel = heatmapKernel(radius, colorBucketCount, bucket);
+            if (!kernel)
+                return null;
             context.drawImage(
                 kernel.canvas,
                 x - kernel.diameter / 2,
@@ -1052,43 +1456,107 @@
                 kernel.diameter,
                 kernel.diameter);
         }
-
-        canvas.setAttribute("aria-hidden", "true");
-        canvas.style.position = "absolute";
-        canvas.style.left = "0";
-        canvas.style.top = "0";
-        canvas.style.width = `${specification.displayWidth}px`;
-        canvas.style.height = `${specification.displayHeight}px`;
-        canvas.style.display = "none";
-        canvas.style.pointerEvents = "none";
-        canvas.style.transformOrigin = "0 0";
-        canvas.style.zIndex = "1";
-        canvas.style.imageRendering = "auto";
         return canvas;
     }
 
-    function positionHeatmap(mapView) {
-        if (!state.heatmapCanvas || state.heatmapZoom !== mapView.zoom)
-            return;
+    function ensureCanvasHeatmapPresentationCanvas(mapView) {
+        if (!state.layer || state.heatmapMode === "webgl")
+            return false;
 
-        const transform = worldTransform(mapView);
-        const x = snapToPhysicalPixel(transform.translateX + state.heatmapOffsetX);
-        const y = snapToPhysicalPixel(transform.translateY + state.heatmapOffsetY);
-        state.heatmapCanvas.style.transform = `translate3d(${x}px, ${y}px, 0)`;
-        state.heatmapCanvas.style.display = shouldDisplayHeatmap(mapView)
-            ? "block" : "none";
-        applyHeatmapOpacity();
+        const canvas = ensureHeatmapCanvasElement();
+        if (!canvas)
+            return false;
+        state.heatmapMode = "canvas";
+        canvas.style.imageRendering = "auto";
+        canvas.style.opacity = String(
+            Math.max(0, Math.min(100, state.heatmapOpacity)) / 100);
+
+        const dimensions = boundedHeatmapRasterDimensions(mapView.width, mapView.height);
+        if (state.heatmapCanvas.width !== dimensions.width
+            || state.heatmapCanvas.height !== dimensions.height) {
+            state.heatmapCanvas.width = dimensions.width;
+            state.heatmapCanvas.height = dimensions.height;
+        }
+        const cssWidth = `${Math.max(1, mapView.width)}px`;
+        const cssHeight = `${Math.max(1, mapView.height)}px`;
+        if (state.heatmapCanvas.style.width !== cssWidth)
+            state.heatmapCanvas.style.width = cssWidth;
+        if (state.heatmapCanvas.style.height !== cssHeight)
+            state.heatmapCanvas.style.height = cssHeight;
+        return true;
     }
 
-    function renderedHeatmapCoversMapView(mapView) {
-        return Boolean(state.heatmapCanvas && state.heatmapZoom === mapView.zoom
-            && imageBoundsCoverMapView(
+    function presentCanvasHeatmap(mapView) {
+        state.heatmapPresentationFrameRequest = 0;
+        if (!state.heatmapCacheCanvas || state.heatmapZoom !== mapView.zoom
+            || !shouldDisplayHeatmap(mapView)
+            || !ensureCanvasHeatmapPresentationCanvas(mapView)) {
+            if (state.heatmapCanvas)
+                state.heatmapCanvas.style.display = "none";
+            return;
+        }
+
+        const context = state.heatmapCanvas.getContext("2d");
+        if (!context)
+            return;
+
+        const destinationScaleX = state.heatmapCanvas.width / Math.max(1, mapView.width);
+        const destinationScaleY = state.heatmapCanvas.height / Math.max(1, mapView.height);
+        const transform = worldTransform(mapView);
+        const cacheLeft = transform.translateX + state.heatmapOffsetX;
+        const cacheTop = transform.translateY + state.heatmapOffsetY;
+        const sourceCssX = Math.max(0, -cacheLeft);
+        const sourceCssY = Math.max(0, -cacheTop);
+        const destinationCssX = Math.max(0, cacheLeft);
+        const destinationCssY = Math.max(0, cacheTop);
+        const visibleCssWidth = Math.max(0, Math.min(
+            mapView.width - destinationCssX, state.heatmapWidth - sourceCssX));
+        const visibleCssHeight = Math.max(0, Math.min(
+            mapView.height - destinationCssY, state.heatmapHeight - sourceCssY));
+
+        context.clearRect(0, 0, state.heatmapCanvas.width, state.heatmapCanvas.height);
+        if (visibleCssWidth > 0 && visibleCssHeight > 0) {
+            context.drawImage(
+                state.heatmapCacheCanvas,
+                sourceCssX * state.heatmapRasterScale,
+                sourceCssY * state.heatmapRasterScale,
+                visibleCssWidth * state.heatmapRasterScale,
+                visibleCssHeight * state.heatmapRasterScale,
+                destinationCssX * destinationScaleX,
+                destinationCssY * destinationScaleY,
+                visibleCssWidth * destinationScaleX,
+                visibleCssHeight * destinationScaleY);
+        }
+        if (state.heatmapCanvas.style.display !== "block")
+            state.heatmapCanvas.style.display = "block";
+    }
+
+    function positionCanvasHeatmap(mapView) {
+        if (!state.heatmapCacheCanvas || state.heatmapZoom !== mapView.zoom) {
+            if (state.heatmapCanvas)
+                state.heatmapCanvas.style.display = "none";
+            return;
+        }
+        if (state.heatmapPresentationFrameRequest !== 0)
+            return;
+        state.heatmapPresentationFrameRequest = window.requestAnimationFrame(() => {
+            const latestMapView = state.lastMapView;
+            if (latestMapView)
+                presentCanvasHeatmap(latestMapView);
+            else
+                state.heatmapPresentationFrameRequest = 0;
+        });
+    }
+
+    function renderedCanvasHeatmapCoversMapView(mapView) {
+        return Boolean(state.heatmapCacheCanvas && state.heatmapZoom === mapView.zoom
+            && heatmapBoundsCoverMapView(
                 state.heatmapBounds, state.heatmapWidth, state.heatmapHeight, mapView));
     }
 
-    function requestHeatmap(mapView) {
+    function requestCanvasHeatmap(mapView) {
         if (!state.layer || !shouldDisplayHeatmap(mapView)
-            || renderedHeatmapCoversMapView(mapView)) {
+            || renderedCanvasHeatmapCoversMapView(mapView)) {
             return;
         }
 
@@ -1097,16 +1565,28 @@
         if (!canvas)
             return;
 
-        clearRenderedHeatmap();
-        state.heatmapCanvas = canvas;
+        state.heatmapCacheCanvas = canvas;
         state.heatmapZoom = specification.zoom;
         state.heatmapOffsetX = specification.offsetX;
         state.heatmapOffsetY = specification.offsetY;
         state.heatmapWidth = specification.displayWidth;
         state.heatmapHeight = specification.displayHeight;
+        state.heatmapRasterScale = specification.rasterScale;
         state.heatmapBounds = specification.bounds;
-        state.layer.appendChild(canvas);
-        positionHeatmap(mapView);
+        positionCanvasHeatmap(mapView);
+    }
+
+    function scheduleCanvasHeatmap() {
+        if (state.heatmapFrameRequest !== 0)
+            return;
+
+        state.heatmapFrameRequest = window.requestAnimationFrame(() => {
+            state.heatmapFrameRequest = 0;
+            const mapView = state.lastMapView;
+            if (!mapView || !shouldDisplayHeatmap(mapView))
+                return;
+            requestCanvasHeatmap(mapView);
+        });
     }
 
     function scheduleHeatmap() {
@@ -1116,9 +1596,21 @@
         state.heatmapFrameRequest = window.requestAnimationFrame(() => {
             state.heatmapFrameRequest = 0;
             const mapView = state.lastMapView;
-            if (!mapView || !shouldDisplayHeatmap(mapView))
+            if (!mapView || !shouldDisplayHeatmap(mapView)) {
+                if (state.heatmapCanvas)
+                    state.heatmapCanvas.style.display = "none";
                 return;
-            requestHeatmap(mapView);
+            }
+
+            if (renderHeatmapWebGl(mapView))
+                return;
+
+            if (state.heatmapCacheCanvas && state.heatmapZoom === mapView.zoom)
+                positionCanvasHeatmap(mapView);
+            else if (state.heatmapCanvas)
+                state.heatmapCanvas.style.display = "none";
+            if (!renderedCanvasHeatmapCoversMapView(mapView))
+                scheduleCanvasHeatmap();
         });
     }
 
@@ -1499,12 +1991,14 @@
         if (!state.geometryReady) {
             if (state.networkCanvas)
                 state.networkCanvas.style.display = "none";
+            if (state.heatmapCanvas)
+                state.heatmapCanvas.style.display = "none";
             clearSelectionCanvas();
             return;
         }
 
-        if (state.heatmapCanvas && state.heatmapZoom === mapView.zoom)
-            positionHeatmap(mapView);
+        if (shouldDisplayHeatmap(mapView))
+            scheduleHeatmap();
         else if (state.heatmapCanvas)
             state.heatmapCanvas.style.display = "none";
 
@@ -1515,10 +2009,6 @@
         if (networkNeedsRender)
             scheduleNetworkRender();
 
-        if (shouldDisplayHeatmap(mapView)
-            && !renderedHeatmapCoversMapView(mapView)) {
-            scheduleHeatmap();
-        }
         scheduleSelectionRender();
     }
 
@@ -1913,6 +2403,11 @@
 
         resetNetworkCanvas();
         clearHeatmap();
+        resetHeatmapWebGlState(false);
+        if (state.heatmapCanvas)
+            state.heatmapCanvas.remove();
+        state.heatmapCanvas = null;
+        state.heatmapMode = null;
         if (state.networkRetained)
             state.networkRetained.destroy();
         if (state.selectionCanvas)
@@ -1964,6 +2459,10 @@
         state.heatmapOpacity = 75;
         state.heatmapRadiusMeters = 400;
         state.heatmapSolidCenterPercent = 70;
+        state.heatmapGlVertexCount = 0;
+        state.heatmapGlNodeCount = 0;
+        state.heatmapDataRevision = 1;
+        state.heatmapUploadedRevision = 0;
     }
 
     window.aowisBrowserNetwork = {
