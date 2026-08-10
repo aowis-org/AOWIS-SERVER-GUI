@@ -28,6 +28,7 @@
 #include <QIcon>
 
 #include "_enums_structs.h"
+#include "network_symbology.h"
 #include "map/map_model.h"
 #include "map/map_tile_repository.h"
 #include "map/map_widget.h"
@@ -110,17 +111,10 @@ private:
 #endif
     MapMonitorMenuWidget *map_menu = nullptr;
     int network_background_opacity = 0;
-    VisualNode visual_node = VisualNode::None;
-    int node_size_percent = 100;
-    int icon_size_percent = 100;
-    VisualLink visual_link = VisualLink::None;
-    int link_thickness_px = 3;
-    VisualHeatmap visual_heatmap = VisualHeatmap::None;
-    int heatmap_opacity = 75;
-    int heatmap_radius_m = 400;
-    int heatmap_solid_center_percent = 70;
+    NetworkSymbologySettings symbology_settings;
 
     bool selectNetworkEntity(quint32 render_id, InfrastructureEntity entity_type, const QUuid &uuid = QUuid());
+    void applySymbology();
     void setNetworkBackgroundOpacity(int opacity);
 
 #ifndef Q_OS_WASM
@@ -135,7 +129,6 @@ private:
     QTimer *wasm_network_symbology_sync_timer = nullptr;
     quint64 wasm_network_geometry_revision_sent = 0;
     bool wasm_network_snapshot_sent = false;
-    bool wasm_symbology_rebuild_ranges_pending = false;
     int wasm_network_symbology_sync_retry_count = 0;
     InfrastructureEntity wasm_selected_entity_type = InfrastructureEntity::Unknown;
     QUuid wasm_selected_entity_uuid;
@@ -143,7 +136,7 @@ private:
     bool selectWasmNetworkEntityAt(const QPointF &position);
     void syncWasmSelectedEntity(InfrastructureEntity entity_type, const QUuid &uuid);
     void scheduleWasmMapLayerSync();
-    void scheduleWasmNetworkSymbologySync(bool rebuild_ranges);
+    void scheduleWasmNetworkSymbologySync();
     void syncWasmMapLayer();
     void syncWasmNetworkBackground();
     void syncWasmNetworkSnapshot();

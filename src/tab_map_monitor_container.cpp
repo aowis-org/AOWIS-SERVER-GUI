@@ -219,14 +219,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     connect(this->map_menu->mapNavigationWidget(), &MapNavigationWidget::signalIconSizeChanged, this,
         [this](int size_percent)
     {
-        this->icon_size_percent = qBound(50, size_percent, 250);
-#ifndef Q_OS_WASM
-        this->desktop_network_overlay->setSymbology(
-            this->visual_node, this->node_size_percent, this->icon_size_percent,
-            this->visual_link, this->link_thickness_px);
-#else
-        scheduleWasmNetworkSymbologySync(false);
-#endif
+        this->symbology_settings.icon_size_percent = size_percent;
+        applySymbology();
     });
     this->map->installEventFilter(this);
     this->map_stack_layout->addWidget(this->map);
@@ -256,22 +250,22 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, [this]
     {
         scheduleWasmMapLayerSync();
-        scheduleWasmNetworkSymbologySync(false);
+        scheduleWasmNetworkSymbologySync();
     });
     connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged, this, [this](quint64)
     {
         scheduleWasmMapLayerSync();
-        scheduleWasmNetworkSymbologySync(true);
+        scheduleWasmNetworkSymbologySync();
     });
     connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
         [this](InfrastructureEntity, const QUuid &)
     {
-        scheduleWasmNetworkSymbologySync(true);
+        scheduleWasmNetworkSymbologySync();
     });
     connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
         [this](InfrastructureEntity, const QUuid &)
     {
-        scheduleWasmNetworkSymbologySync(true);
+        scheduleWasmNetworkSymbologySync();
     });
     connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, this,
         [this](const HydraulicNodeTank &tank)
@@ -314,91 +308,47 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     connect(this->map_menu, &MapMonitorMenuWidget::signalNodeVisualClicked, this,
         [this](VisualNode visual_node)
     {
-        this->visual_node = visual_node;
+        this->symbology_settings.visual_node = visual_node;
         emit signalShowMapLegendNode(visual_node);
-#ifndef Q_OS_WASM
-        this->desktop_network_overlay->setSymbology(
-            this->visual_node, this->node_size_percent, this->icon_size_percent,
-            this->visual_link, this->link_thickness_px);
-#else
-        scheduleWasmNetworkSymbologySync(false);
-#endif
+        applySymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalNodeSizeChanged, this, [this](int size_percent)
     {
-        this->node_size_percent = qBound(50, size_percent, 250);
-#ifndef Q_OS_WASM
-        this->desktop_network_overlay->setSymbology(
-            this->visual_node, this->node_size_percent, this->icon_size_percent,
-            this->visual_link, this->link_thickness_px);
-#else
-        scheduleWasmNetworkSymbologySync(false);
-#endif
+        this->symbology_settings.node_size_percent = size_percent;
+        applySymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalLinkVisualClicked, this,
         [this](VisualLink visual_link)
     {
-        this->visual_link = visual_link;
+        this->symbology_settings.visual_link = visual_link;
         emit signalShowMapLegendLink(visual_link);
-#ifndef Q_OS_WASM
-        this->desktop_network_overlay->setSymbology(
-            this->visual_node, this->node_size_percent, this->icon_size_percent,
-            this->visual_link, this->link_thickness_px);
-#else
-        scheduleWasmNetworkSymbologySync(false);
-#endif
+        applySymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalLinkThicknessChanged, this, [this](int thickness_px)
     {
-        this->link_thickness_px = qBound(1, thickness_px, 12);
-#ifndef Q_OS_WASM
-        this->desktop_network_overlay->setSymbology(
-            this->visual_node, this->node_size_percent, this->icon_size_percent,
-            this->visual_link, this->link_thickness_px);
-#else
-        scheduleWasmNetworkSymbologySync(false);
-#endif
+        this->symbology_settings.link_thickness_px = thickness_px;
+        applySymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapVisualClicked, this, [this](VisualHeatmap visual_heatmap)
     {
-        this->visual_heatmap = visual_heatmap;
+        this->symbology_settings.visual_heatmap = visual_heatmap;
         emit signalShowMapLegendHeatmap(visual_heatmap);
-#ifndef Q_OS_WASM
-        this->desktop_network_overlay->setHeatmap(
-            this->visual_heatmap, this->heatmap_opacity, this->heatmap_radius_m, this->heatmap_solid_center_percent);
-#else
-        scheduleWasmNetworkSymbologySync(false);
-#endif
+        applySymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapOpacityChanged, this, [this](int opacity)
     {
-        this->heatmap_opacity = qBound(0, opacity, 100);
-#ifndef Q_OS_WASM
-        this->desktop_network_overlay->setHeatmap(
-            this->visual_heatmap, this->heatmap_opacity, this->heatmap_radius_m, this->heatmap_solid_center_percent);
-#else
-        scheduleWasmNetworkSymbologySync(false);
-#endif
+        this->symbology_settings.heatmap_opacity = opacity;
+        applySymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapRadiusChanged, this, [this](int radius)
     {
-        this->heatmap_radius_m = qBound(10, radius, 1000);
-#ifndef Q_OS_WASM
-        this->desktop_network_overlay->setHeatmap(
-            this->visual_heatmap, this->heatmap_opacity, this->heatmap_radius_m, this->heatmap_solid_center_percent);
-#else
-        scheduleWasmNetworkSymbologySync(false);
-#endif
+        this->symbology_settings.heatmap_radius_m = radius;
+        applySymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapSolidCenterChanged, this, [this](int percent)
     {
-        this->heatmap_solid_center_percent = qBound(0, percent, 100);
-#ifndef Q_OS_WASM
-        this->desktop_network_overlay->setHeatmap(
-            this->visual_heatmap, this->heatmap_opacity, this->heatmap_radius_m, this->heatmap_solid_center_percent);
-#else
-        scheduleWasmNetworkSymbologySync(false);
-#endif
+        this->symbology_settings.heatmap_solid_center_percent = percent;
+        applySymbology();
     });
 }
 
@@ -546,6 +496,19 @@ void MapMonitorContainer::setDesktopNetworkHovered(bool hovered)
 }
 #endif
 
+void MapMonitorContainer::applySymbology()
+{
+    this->symbology_settings = this->symbology_settings.bounded();
+
+#ifndef Q_OS_WASM
+    const NetworkSymbologyRanges ranges =
+        this->hydraulic_data->symbologyRanges(this->symbology_settings);
+    this->desktop_network_overlay->setSymbology(this->symbology_settings, ranges);
+#else
+    scheduleWasmNetworkSymbologySync();
+#endif
+}
+
 void MapMonitorContainer::setNetworkBackgroundOpacity(int opacity)
 {
     const int bounded_opacity = qBound(0, opacity, 100);
@@ -635,11 +598,8 @@ void MapMonitorContainer::scheduleWasmMapLayerSync()
         this->wasm_map_layer_sync_timer->start(0);
 }
 
-void MapMonitorContainer::scheduleWasmNetworkSymbologySync(bool rebuild_ranges)
+void MapMonitorContainer::scheduleWasmNetworkSymbologySync()
 {
-    if (rebuild_ranges)
-        this->wasm_symbology_rebuild_ranges_pending = true;
-
     this->wasm_network_symbology_sync_retry_count = 0;
     if (!this->wasm_network_symbology_sync_timer->isActive())
         this->wasm_network_symbology_sync_timer->start(0);
@@ -692,7 +652,7 @@ void MapMonitorContainer::syncWasmNetworkSnapshot()
     this->wasm_network_snapshot_sent = true;
     if (!this->wasm_selected_entity_uuid.isNull())
         syncWasmSelectedEntity(this->wasm_selected_entity_type, this->wasm_selected_entity_uuid);
-    scheduleWasmNetworkSymbologySync(false);
+    scheduleWasmNetworkSymbologySync();
 }
 
 void MapMonitorContainer::syncWasmNetworkSymbology()
@@ -700,17 +660,10 @@ void MapMonitorContainer::syncWasmNetworkSymbology()
     if (this->hydraulic_data == nullptr)
         return;
 
-    if (this->wasm_symbology_rebuild_ranges_pending)
-    {
-        this->hydraulic_data->rebuildSymbologyMinMaxValues();
-        this->wasm_symbology_rebuild_ranges_pending = false;
-    }
-
+    const NetworkSymbologyRanges ranges =
+        this->hydraulic_data->symbologyRanges(this->symbology_settings);
     const QByteArray json = BrowserNetworkSnapshotSerializer::serializeSymbology(
-        *this->hydraulic_data, this->visual_node, this->node_size_percent, this->icon_size_percent,
-        this->visual_link, this->link_thickness_px, this->visual_heatmap,
-        this->heatmap_opacity, this->heatmap_radius_m,
-        this->heatmap_solid_center_percent);
+        *this->hydraulic_data, this->symbology_settings, ranges);
     const int transferred = aowisBrowserNetworkSetSymbology(
         json.constData(), static_cast<int>(json.size()));
     if (transferred != 0)

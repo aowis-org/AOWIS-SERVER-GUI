@@ -25,6 +25,7 @@
 #include "_enums_structs.h"
 #include "hydraulic_network_editor.h"
 #include "network_render_snapshot.h"
+#include "network_symbology.h"
 
 struct HydraulicNodeCommonData
 {
@@ -57,7 +58,8 @@ public:
     bool boundingBoxWgs84Valid() const;
     const CoordinateWGS84 &boundingBoxWgs84Minimum() const;
     const CoordinateWGS84 &boundingBoxWgs84Maximum() const;
-    void rebuildSymbologyMinMaxValues();
+    NetworkSymbologyRanges symbologyRanges(
+        const NetworkSymbologySettings &settings) const;
 
     double nodeElevationMMinimum() const;
     double nodeElevationMMaximum() const;
@@ -349,6 +351,7 @@ private:
     void updateBoundingBoxWgs84(const CoordinateWGS84 &coordinate_previous,
                                 const CoordinateWGS84 &coordinate);
     void rebuildBoundingBoxWgs84();
+    void rebuildSymbologyMinMaxValues();
     void rebuildNetworkRenderSnapshot() const;
 
     DatabaseGui *database_gui = nullptr;

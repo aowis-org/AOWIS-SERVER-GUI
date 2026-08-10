@@ -321,103 +321,6 @@ QPointF polylineMidpoint(const QList<QPointF> &vertices)
     return vertices.constLast();
 }
 
-QPair<double, double> nodeRange(const HydraulicData &hydraulic_data, VisualNode visual_node)
-{
-    switch (visual_node)
-    {
-    case VisualNode::Elevation:
-        return qMakePair(hydraulic_data.nodeElevationMMinimum(), hydraulic_data.nodeElevationMMaximum());
-    case VisualNode::BaseDemand:
-        return qMakePair(hydraulic_data.nodeBaseDemandM3PerHMinimum(), hydraulic_data.nodeBaseDemandM3PerHMaximum());
-    case VisualNode::TotalDemand:
-        return qMakePair(hydraulic_data.nodeTotalDemandM3PerHMinimum(), hydraulic_data.nodeTotalDemandM3PerHMaximum());
-    case VisualNode::DemandDeficit:
-        return qMakePair(hydraulic_data.nodeDemandDeficitM3PerHMinimum(), hydraulic_data.nodeDemandDeficitM3PerHMaximum());
-    case VisualNode::EmitterFlow:
-        return qMakePair(hydraulic_data.nodeEmitterFlowM3PerHMinimum(), hydraulic_data.nodeEmitterFlowM3PerHMaximum());
-    case VisualNode::Leakage:
-        return qMakePair(hydraulic_data.nodeLeakageM3PerHMinimum(), hydraulic_data.nodeLeakageM3PerHMaximum());
-    case VisualNode::Head:
-        return qMakePair(hydraulic_data.nodeHeadMMinimum(), hydraulic_data.nodeHeadMMaximum());
-    case VisualNode::Pressure:
-        return qMakePair(hydraulic_data.nodePressureMMinimum(), hydraulic_data.nodePressureMMaximum());
-    case VisualNode::Chlorine:
-        return qMakePair(hydraulic_data.nodeChlorineMgPerLMinimum(), hydraulic_data.nodeChlorineMgPerLMaximum());
-    case VisualNode::RiverWater:
-        return qMakePair(hydraulic_data.nodeRiverWaterPercentMinimum(), hydraulic_data.nodeRiverWaterPercentMaximum());
-    case VisualNode::LakeWater:
-        return qMakePair(hydraulic_data.nodeLakeWaterPercentMinimum(), hydraulic_data.nodeLakeWaterPercentMaximum());
-    case VisualNode::None:
-        break;
-    }
-
-    return qMakePair(0.0, 0.0);
-}
-
-QPair<double, double> linkRange(const HydraulicData &hydraulic_data, VisualLink visual_link)
-{
-    switch (visual_link)
-    {
-    case VisualLink::Diameter:
-        return qMakePair(hydraulic_data.linkDiameterMmMinimum(), hydraulic_data.linkDiameterMmMaximum());
-    case VisualLink::Length:
-        return qMakePair(hydraulic_data.linkLengthMMinimum(), hydraulic_data.linkLengthMMaximum());
-    case VisualLink::Roughness:
-        return qMakePair(hydraulic_data.linkRoughnessHwMinimum(), hydraulic_data.linkRoughnessHwMaximum());
-    case VisualLink::FlowRate:
-        return qMakePair(hydraulic_data.linkFlowRateM3PerHMinimum(), hydraulic_data.linkFlowRateM3PerHMaximum());
-    case VisualLink::Velocity:
-        return qMakePair(hydraulic_data.linkVelocityMPerSMinimum(), hydraulic_data.linkVelocityMPerSMaximum());
-    case VisualLink::HeadLoss:
-        return qMakePair(hydraulic_data.linkHeadLossMMinimum(), hydraulic_data.linkHeadLossMMaximum());
-    case VisualLink::Leakage:
-        return qMakePair(hydraulic_data.linkLeakageM3PerHMinimum(), hydraulic_data.linkLeakageM3PerHMaximum());
-    case VisualLink::Chlorine:
-        return qMakePair(hydraulic_data.linkChlorineMgPerLMinimum(), hydraulic_data.linkChlorineMgPerLMaximum());
-    case VisualLink::RiverWater:
-        return qMakePair(hydraulic_data.linkRiverWaterPercentMinimum(), hydraulic_data.linkRiverWaterPercentMaximum());
-    case VisualLink::LakeWater:
-        return qMakePair(hydraulic_data.linkLakeWaterPercentMinimum(), hydraulic_data.linkLakeWaterPercentMaximum());
-    case VisualLink::None:
-        break;
-    }
-
-    return qMakePair(0.0, 0.0);
-}
-
-QPair<double, double> heatmapRange(const HydraulicData &hydraulic_data, VisualHeatmap visual_heatmap)
-{
-    switch (visual_heatmap)
-    {
-    case VisualHeatmap::Elevation:
-        return qMakePair(hydraulic_data.heatmapElevationMMinimum(), hydraulic_data.heatmapElevationMMaximum());
-    case VisualHeatmap::BaseDemand:
-        return qMakePair(hydraulic_data.nodeBaseDemandM3PerHMinimum(), hydraulic_data.nodeBaseDemandM3PerHMaximum());
-    case VisualHeatmap::TotalDemand:
-        return qMakePair(hydraulic_data.heatmapTotalDemandM3PerHMinimum(), hydraulic_data.heatmapTotalDemandM3PerHMaximum());
-    case VisualHeatmap::DemandDeficit:
-        return qMakePair(hydraulic_data.heatmapDemandDeficitM3PerHMinimum(), hydraulic_data.heatmapDemandDeficitM3PerHMaximum());
-    case VisualHeatmap::EmitterFlow:
-        return qMakePair(hydraulic_data.nodeEmitterFlowM3PerHMinimum(), hydraulic_data.nodeEmitterFlowM3PerHMaximum());
-    case VisualHeatmap::Leakage:
-        return qMakePair(hydraulic_data.heatmapLeakageM3PerHMinimum(), hydraulic_data.heatmapLeakageM3PerHMaximum());
-    case VisualHeatmap::Head:
-        return qMakePair(hydraulic_data.heatmapHeadMMinimum(), hydraulic_data.heatmapHeadMMaximum());
-    case VisualHeatmap::Pressure:
-        return qMakePair(hydraulic_data.heatmapPressureMMinimum(), hydraulic_data.heatmapPressureMMaximum());
-    case VisualHeatmap::Chlorine:
-        return qMakePair(hydraulic_data.heatmapChlorineMgPerLMinimum(), hydraulic_data.heatmapChlorineMgPerLMaximum());
-    case VisualHeatmap::RiverWater:
-        return qMakePair(hydraulic_data.heatmapRiverWaterPercentMinimum(), hydraulic_data.heatmapRiverWaterPercentMaximum());
-    case VisualHeatmap::LakeWater:
-        return qMakePair(hydraulic_data.heatmapLakeWaterPercentMinimum(), hydraulic_data.heatmapLakeWaterPercentMaximum());
-    case VisualHeatmap::None:
-        break;
-    }
-
-    return qMakePair(0.0, 0.0);
-}
-
 QHash<QUuid, double> nodeValues(const NetworkHydraulic &network_hydraulic, VisualNode visual_node)
 {
     QHash<QUuid, double> values;
@@ -527,120 +430,6 @@ QHash<QUuid, double> heatmapValues(const NetworkHydraulic &network_hydraulic, Vi
     }
 
     return QHash<QUuid, double>();
-}
-
-struct BasicSymbologyRanges
-{
-    double node_elevation_minimum = 0.0;
-    double node_elevation_maximum = 0.0;
-    double node_base_demand_minimum = 0.0;
-    double node_base_demand_maximum = 0.0;
-    double link_diameter_minimum = 0.0;
-    double link_diameter_maximum = 0.0;
-    double link_length_minimum = 0.0;
-    double link_length_maximum = 0.0;
-    double link_roughness_hw_minimum = 0.0;
-    double link_roughness_hw_maximum = 0.0;
-    double link_roughness_dw_minimum = 0.0;
-    double link_roughness_dw_maximum = 0.0;
-    double link_roughness_cm_minimum = 0.0;
-    double link_roughness_cm_maximum = 0.0;
-};
-
-BasicSymbologyRanges calculateBasicSymbologyRanges(const NetworkHydraulic &network_hydraulic)
-{
-    BasicSymbologyRanges ranges;
-    bool node_elevation_initialized = false;
-    bool node_base_demand_initialized = false;
-    bool link_diameter_initialized = false;
-    bool link_length_initialized = false;
-    bool link_roughness_hw_initialized = false;
-    bool link_roughness_dw_initialized = false;
-    bool link_roughness_cm_initialized = false;
-
-    const std::function<void(double, double &, double &, bool &)> update_range =
-        [](double value, double &minimum, double &maximum, bool &initialized)
-    {
-        if (!std::isfinite(value))
-            return;
-        if (!initialized)
-        {
-            minimum = value;
-            maximum = value;
-            initialized = true;
-            return;
-        }
-        minimum = std::min(minimum, value);
-        maximum = std::max(maximum, value);
-    };
-
-    for (const HydraulicNodeJunction &junction : network_hydraulic.nodes_junctions)
-    {
-        update_range(junction.elevation_m, ranges.node_elevation_minimum,
-            ranges.node_elevation_maximum, node_elevation_initialized);
-        double base_demand = 0.0;
-        for (const HydraulicNodeJunctionDemand &demand : junction.demands)
-            base_demand += demand.base_demand_m3_per_h;
-        update_range(base_demand, ranges.node_base_demand_minimum,
-            ranges.node_base_demand_maximum, node_base_demand_initialized);
-    }
-    for (const HydraulicNodeReservoir &reservoir : network_hydraulic.nodes_reservoirs)
-    {
-        update_range(reservoir.head_m, ranges.node_elevation_minimum,
-            ranges.node_elevation_maximum, node_elevation_initialized);
-    }
-    for (const HydraulicNodeTank &tank : network_hydraulic.nodes_tanks)
-    {
-        update_range(tank.bottom_elevation_m, ranges.node_elevation_minimum,
-            ranges.node_elevation_maximum, node_elevation_initialized);
-    }
-    for (const HydraulicLinkPipe &pipe : network_hydraulic.links_pipes)
-    {
-        update_range(pipe.diameter_mm, ranges.link_diameter_minimum,
-            ranges.link_diameter_maximum, link_diameter_initialized);
-        update_range(pipe.length_measured_m.value_or(pipe.length_calculated_m),
-            ranges.link_length_minimum, ranges.link_length_maximum, link_length_initialized);
-        update_range(pipe.roughness_hw, ranges.link_roughness_hw_minimum,
-            ranges.link_roughness_hw_maximum, link_roughness_hw_initialized);
-        update_range(pipe.roughness_dw_mm, ranges.link_roughness_dw_minimum,
-            ranges.link_roughness_dw_maximum, link_roughness_dw_initialized);
-        update_range(pipe.roughness_cm, ranges.link_roughness_cm_minimum,
-            ranges.link_roughness_cm_maximum, link_roughness_cm_initialized);
-    }
-    return ranges;
-}
-
-QPair<double, double> basicNodeRange(const BasicSymbologyRanges &ranges, VisualNode visual_node,
-                                     const QPair<double, double> &fallback)
-{
-    if (visual_node == VisualNode::Elevation)
-        return qMakePair(ranges.node_elevation_minimum, ranges.node_elevation_maximum);
-    if (visual_node == VisualNode::BaseDemand)
-        return qMakePair(ranges.node_base_demand_minimum, ranges.node_base_demand_maximum);
-    return fallback;
-}
-
-QPair<double, double> basicLinkRange(const BasicSymbologyRanges &ranges, VisualLink visual_link,
-                                     const QPair<double, double> &fallback)
-{
-    if (visual_link == VisualLink::Diameter)
-        return qMakePair(ranges.link_diameter_minimum, ranges.link_diameter_maximum);
-    if (visual_link == VisualLink::Length)
-        return qMakePair(ranges.link_length_minimum, ranges.link_length_maximum);
-    if (visual_link == VisualLink::Roughness)
-        return qMakePair(ranges.link_roughness_hw_minimum, ranges.link_roughness_hw_maximum);
-    return fallback;
-}
-
-QPair<double, double> basicHeatmapRange(const BasicSymbologyRanges &ranges,
-                                        VisualHeatmap visual_heatmap,
-                                        const QPair<double, double> &fallback)
-{
-    if (visual_heatmap == VisualHeatmap::Elevation)
-        return qMakePair(ranges.node_elevation_minimum, ranges.node_elevation_maximum);
-    if (visual_heatmap == VisualHeatmap::BaseDemand)
-        return qMakePair(ranges.node_base_demand_minimum, ranges.node_base_demand_maximum);
-    return fallback;
 }
 
 QColor interpolatedRampColor(double fraction)
@@ -858,22 +647,28 @@ MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicD
     {
         if (!this->rendering_active)
             return;
-        const bool rebuild_node_colors = this->visual_node != VisualNode::None;
-        const bool rebuild_heatmap = this->visual_heatmap != VisualHeatmap::None;
+        const bool rebuild_node_colors =
+            this->symbology_settings.visual_node != VisualNode::None;
+        const bool rebuild_heatmap =
+            this->symbology_settings.visual_heatmap != VisualHeatmap::None;
         if (!rebuild_node_colors && !rebuild_heatmap)
             return;
 
-        requestSymbologyPreparation(true, true);
+        this->symbology_ranges =
+            this->hydraulic_data->symbologyRanges(this->symbology_settings);
+        requestSymbologyPreparation(true);
     });
     connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
         [this](InfrastructureEntity, const QUuid &)
     {
         if (!this->rendering_active)
             return;
-        if (this->visual_link == VisualLink::None)
+        if (this->symbology_settings.visual_link == VisualLink::None)
             return;
 
-        requestSymbologyPreparation(true, true);
+        this->symbology_ranges =
+            this->hydraulic_data->symbologyRanges(this->symbology_settings);
+        requestSymbologyPreparation(true);
     });
 
     QTimer::singleShot(0, this, &MapNetworkOverlayWidget::syncSnapshot);
@@ -923,58 +718,67 @@ void MapNetworkOverlayWidget::setBackgroundOpacity(int opacity)
     update();
 }
 
-void MapNetworkOverlayWidget::setSymbology(VisualNode visual_node, int node_size_percent, int icon_size_percent, VisualLink visual_link, int link_thickness_px)
+void MapNetworkOverlayWidget::setSymbology(
+    const NetworkSymbologySettings &settings, const NetworkSymbologyRanges &ranges)
 {
-    const int bounded_node_size_percent = qBound(50, node_size_percent, 250);
-    const int bounded_icon_size_percent = qBound(50, icon_size_percent, 250);
-    const int bounded_link_thickness_px = qBound(1, link_thickness_px, 12);
-    const bool node_visual_changed = this->visual_node != visual_node;
-    const bool link_visual_changed = this->visual_link != visual_link;
-    const bool node_size_changed = this->node_size_percent != bounded_node_size_percent;
-    const bool icon_size_changed = this->icon_size_percent != bounded_icon_size_percent;
-    const bool link_thickness_changed = this->link_thickness_px != bounded_link_thickness_px;
+    const NetworkSymbologySettings bounded_settings = settings.bounded();
+    const bool node_visual_changed =
+        this->symbology_settings.visual_node != bounded_settings.visual_node;
+    const bool link_visual_changed =
+        this->symbology_settings.visual_link != bounded_settings.visual_link;
+    const bool heatmap_visual_changed =
+        this->symbology_settings.visual_heatmap != bounded_settings.visual_heatmap;
+    const bool node_size_changed =
+        this->symbology_settings.node_size_percent != bounded_settings.node_size_percent;
+    const bool icon_size_changed =
+        this->symbology_settings.icon_size_percent != bounded_settings.icon_size_percent;
+    const bool link_thickness_changed =
+        this->symbology_settings.link_thickness_px != bounded_settings.link_thickness_px;
+    const bool heatmap_opacity_changed =
+        this->symbology_settings.heatmap_opacity != bounded_settings.heatmap_opacity;
+    const bool heatmap_radius_changed =
+        this->symbology_settings.heatmap_radius_m != bounded_settings.heatmap_radius_m;
+    const bool heatmap_solid_center_changed =
+        this->symbology_settings.heatmap_solid_center_percent !=
+        bounded_settings.heatmap_solid_center_percent;
+    const bool node_range_changed =
+        this->symbology_ranges.node_minimum != ranges.node_minimum ||
+        this->symbology_ranges.node_maximum != ranges.node_maximum;
+    const bool link_range_changed =
+        this->symbology_ranges.link_minimum != ranges.link_minimum ||
+        this->symbology_ranges.link_maximum != ranges.link_maximum;
+    const bool heatmap_range_changed =
+        this->symbology_ranges.heatmap_minimum != ranges.heatmap_minimum ||
+        this->symbology_ranges.heatmap_maximum != ranges.heatmap_maximum;
 
-    if (!node_visual_changed && !link_visual_changed && !node_size_changed && !icon_size_changed && !link_thickness_changed)
+    const bool values_changed = node_visual_changed || link_visual_changed ||
+        heatmap_visual_changed ||
+        (bounded_settings.visual_node != VisualNode::None && node_range_changed) ||
+        (bounded_settings.visual_link != VisualLink::None && link_range_changed) ||
+        (bounded_settings.visual_heatmap != VisualHeatmap::None && heatmap_range_changed);
+    const bool cached_render_changed = values_changed || node_size_changed ||
+        icon_size_changed || link_thickness_changed ||
+        (bounded_settings.visual_heatmap != VisualHeatmap::None &&
+            (heatmap_radius_changed || heatmap_solid_center_changed));
+    const bool any_change = cached_render_changed || heatmap_opacity_changed ||
+        heatmap_radius_changed || heatmap_solid_center_changed ||
+        node_range_changed || link_range_changed || heatmap_range_changed;
+
+    if (!any_change)
         return;
 
-    this->visual_node = visual_node;
-    this->node_size_percent = bounded_node_size_percent;
-    this->icon_size_percent = bounded_icon_size_percent;
-    this->visual_link = visual_link;
-    this->link_thickness_px = bounded_link_thickness_px;
-    requestSymbologyPreparation(false, node_visual_changed || link_visual_changed || !this->render_symbology);
-}
+    this->symbology_settings = bounded_settings;
+    this->symbology_ranges = ranges;
 
-void MapNetworkOverlayWidget::setHeatmap(VisualHeatmap visual_heatmap, int opacity, int radius_m, int solid_center_percent)
-{
-    const int bounded_opacity = qBound(0, opacity, 100);
-    const int bounded_radius_m = qBound(10, radius_m, 1000);
-    const int bounded_solid_center_percent = qBound(0, solid_center_percent, 100);
-    const bool visual_changed = this->visual_heatmap != visual_heatmap;
-    const bool opacity_changed = this->heatmap_opacity != bounded_opacity;
-    const bool radius_changed = this->heatmap_radius_m != bounded_radius_m;
-    const bool solid_center_changed = this->heatmap_solid_center_percent != bounded_solid_center_percent;
-
-    if (!visual_changed && !opacity_changed && !radius_changed && !solid_center_changed)
-        return;
-
-    this->visual_heatmap = visual_heatmap;
-    this->heatmap_opacity = bounded_opacity;
-    this->heatmap_radius_m = bounded_radius_m;
-    this->heatmap_solid_center_percent = bounded_solid_center_percent;
-
-    const bool heatmap_render_changed = visual_changed ||
-        (visual_heatmap != VisualHeatmap::None && (radius_changed || solid_center_changed));
-    if (heatmap_render_changed)
-    {
-        if (visual_heatmap == VisualHeatmap::None)
-            this->rendered_heatmap_cache = QImage();
-        requestSymbologyPreparation(false, visual_changed || !this->render_symbology);
-    }
-    else
+    if (!cached_render_changed)
     {
         update();
+        return;
     }
+
+    if (bounded_settings.visual_heatmap == VisualHeatmap::None)
+        this->rendered_heatmap_cache = QImage();
+    requestSymbologyPreparation(values_changed || !this->render_symbology);
 }
 
 NetworkOverlayHit MapNetworkOverlayWidget::hitTest(const QPointF &screen_position)
@@ -995,12 +799,15 @@ NetworkOverlayHit MapNetworkOverlayWidget::hitTest(const QPointF &screen_positio
     const QPointF world_position = geometryWorldPosition(screen_position);
     const NetworkOverlayHit marker_hit = nearestMarkerHit(
         world_position.x(), world_position.y(),
-        markerSizeForZoom(this->map_model->zoom(), this->node_size_percent) / (2.0 * scale),
-        markerSizeForZoom(this->map_model->zoom(), this->icon_size_percent) / (2.0 * scale));
+        markerSizeForZoom(this->map_model->zoom(),
+            this->symbology_settings.node_size_percent) / (2.0 * scale),
+        markerSizeForZoom(this->map_model->zoom(),
+            this->symbology_settings.icon_size_percent) / (2.0 * scale));
     if (marker_hit.isValid())
         return marker_hit;
 
-    const qreal link_hit_distance = qMax(LinkHitDistance, this->link_thickness_px / 2.0 + 3.0) / scale;
+    const qreal link_hit_distance = qMax(
+        LinkHitDistance, this->symbology_settings.link_thickness_px / 2.0 + 3.0) / scale;
     const NetworkOverlayHit device_hit = nearestSegmentHit(
         world_position.x(), world_position.y(), link_hit_distance, HitCollection::DeviceSegments);
     if (device_hit.isValid())
@@ -1374,19 +1181,21 @@ void MapNetworkOverlayWidget::applyPreparedGeometry(quint64 request_id, Prepared
     this->spatial_cells = std::move(result.spatial_cells);
     this->reference_geometry_ready = true;
 
-    requestSymbologyPreparation(false, true);
+    this->symbology_ranges =
+        this->hydraulic_data->symbologyRanges(this->symbology_settings);
+    requestSymbologyPreparation(true);
     update();
 }
 
-void MapNetworkOverlayWidget::requestSymbologyPreparation(bool rebuild_ranges, bool force_values)
+void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
 {
     if (!this->snapshot_initialized)
         return;
 
     const bool values_current = this->render_symbology &&
-        this->render_symbology->visual_node == this->visual_node &&
-        this->render_symbology->visual_link == this->visual_link &&
-        this->render_symbology->visual_heatmap == this->visual_heatmap;
+        this->render_symbology->visual_node == this->symbology_settings.visual_node &&
+        this->render_symbology->visual_link == this->symbology_settings.visual_link &&
+        this->render_symbology->visual_heatmap == this->symbology_settings.visual_heatmap;
 
     if (!force_values && values_current && this->active_symbology_prepare_request_id == 0)
     {
@@ -1398,11 +1207,12 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool rebuild_ranges, b
         std::shared_ptr<RenderSymbology> symbology =
             std::make_shared<RenderSymbology>(*this->render_symbology);
         symbology->revision = ++this->symbology_revision;
-        symbology->node_size_percent = qBound(50, this->node_size_percent, 250);
-        symbology->icon_size_percent = qBound(50, this->icon_size_percent, 250);
-        symbology->link_width = qBound<qreal>(1.0, this->link_thickness_px, 12.0);
-        symbology->heatmap_radius_m = qBound(10, this->heatmap_radius_m, 1000);
-        symbology->heatmap_solid_center_percent = qBound(0, this->heatmap_solid_center_percent, 100);
+        symbology->node_size_percent = this->symbology_settings.node_size_percent;
+        symbology->icon_size_percent = this->symbology_settings.icon_size_percent;
+        symbology->link_width = qreal(this->symbology_settings.link_thickness_px);
+        symbology->heatmap_radius_m = this->symbology_settings.heatmap_radius_m;
+        symbology->heatmap_solid_center_percent =
+            this->symbology_settings.heatmap_solid_center_percent;
         this->render_symbology = symbology;
         requestRenderCache(true);
         update();
@@ -1421,66 +1231,44 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool rebuild_ranges, b
 
     const NetworkRenderSnapshot snapshot_copy = this->snapshot;
     const NetworkHydraulic network_copy = this->hydraulic_data->networkHydraulic();
-    const VisualNode visual_node = this->visual_node;
-    const VisualLink visual_link = this->visual_link;
-    const VisualHeatmap visual_heatmap = this->visual_heatmap;
-    const int node_size_percent = qBound(50, this->node_size_percent, 250);
-    const int icon_size_percent = qBound(50, this->icon_size_percent, 250);
-    const qreal link_width = qBound<qreal>(1.0, this->link_thickness_px, 12.0);
-    const int heatmap_radius_m = qBound(10, this->heatmap_radius_m, 1000);
-    const int heatmap_solid_center_percent = qBound(0, this->heatmap_solid_center_percent, 100);
-    const QPair<double, double> node_range = nodeRange(*this->hydraulic_data, visual_node);
-    const QPair<double, double> link_range = linkRange(*this->hydraulic_data, visual_link);
-    const QPair<double, double> heatmap_range = heatmapRange(*this->hydraulic_data, visual_heatmap);
+    const NetworkSymbologySettings settings = this->symbology_settings;
+    const NetworkSymbologyRanges ranges = this->symbology_ranges;
     const QPointer<MapNetworkOverlayWidget> widget(this);
 
     QRunnable *runnable = QRunnable::create([widget, request_id, geometry_revision,
-        symbology_revision, snapshot_copy, network_copy, visual_node, visual_link,
-        visual_heatmap, node_size_percent, icon_size_percent, link_width,
-        heatmap_radius_m, heatmap_solid_center_percent, node_range, link_range,
-        heatmap_range, rebuild_ranges, cancelled]
+        symbology_revision, snapshot_copy, network_copy, settings, ranges, cancelled]
     {
         if (cancelled->load(std::memory_order_relaxed))
             return;
 
-        BasicSymbologyRanges basic_ranges;
-        QPair<double, double> effective_node_range = node_range;
-        QPair<double, double> effective_link_range = link_range;
-        QPair<double, double> effective_heatmap_range = heatmap_range;
-        if (rebuild_ranges)
-        {
-            basic_ranges = calculateBasicSymbologyRanges(network_copy);
-            effective_node_range = basicNodeRange(basic_ranges, visual_node, node_range);
-            effective_link_range = basicLinkRange(basic_ranges, visual_link, link_range);
-            effective_heatmap_range = basicHeatmapRange(basic_ranges, visual_heatmap, heatmap_range);
-        }
-
         std::shared_ptr<RenderSymbology> symbology = std::make_shared<RenderSymbology>();
         symbology->revision = symbology_revision;
-        symbology->visual_node = visual_node;
-        symbology->visual_link = visual_link;
-        symbology->visual_heatmap = visual_heatmap;
-        symbology->node_size_percent = node_size_percent;
-        symbology->icon_size_percent = icon_size_percent;
-        symbology->link_width = link_width;
-        symbology->heatmap_radius_m = heatmap_radius_m;
-        symbology->heatmap_solid_center_percent = heatmap_solid_center_percent;
+        symbology->visual_node = settings.visual_node;
+        symbology->visual_link = settings.visual_link;
+        symbology->visual_heatmap = settings.visual_heatmap;
+        symbology->node_size_percent = settings.node_size_percent;
+        symbology->icon_size_percent = settings.icon_size_percent;
+        symbology->link_width = qreal(settings.link_thickness_px);
+        symbology->heatmap_radius_m = settings.heatmap_radius_m;
+        symbology->heatmap_solid_center_percent = settings.heatmap_solid_center_percent;
 
         symbology->node_colors.reserve(snapshot_copy.nodes.size());
-        if (visual_node == VisualNode::None)
+        if (settings.visual_node == VisualNode::None)
         {
             for (const NetworkRenderNode &node : snapshot_copy.nodes)
                 symbology->node_colors.insert(node.render_id, NetworkColor.rgb());
         }
         else
         {
-            const QHash<QUuid, double> values = nodeValues(network_copy, visual_node);
+            const QHash<QUuid, double> values =
+                nodeValues(network_copy, settings.visual_node);
             for (const NetworkRenderNode &node : snapshot_copy.nodes)
             {
                 const QHash<QUuid, double>::const_iterator iterator = values.constFind(node.uuid);
                 const QRgb color = iterator == values.cend()
                     ? SymbologyValueUnavailableColor.rgb()
-                    : symbologyColor(iterator.value(), effective_node_range.first, effective_node_range.second);
+                    : symbologyColor(
+                        iterator.value(), ranges.node_minimum, ranges.node_maximum);
                 symbology->node_colors.insert(node.render_id, color);
             }
         }
@@ -1489,20 +1277,22 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool rebuild_ranges, b
             return;
 
         symbology->link_colors.reserve(snapshot_copy.links.size());
-        if (visual_link == VisualLink::None)
+        if (settings.visual_link == VisualLink::None)
         {
             for (const NetworkRenderLink &link : snapshot_copy.links)
                 symbology->link_colors.insert(link.render_id, NetworkColor.rgb());
         }
         else
         {
-            const QHash<QUuid, double> values = linkValues(network_copy, visual_link);
+            const QHash<QUuid, double> values =
+                linkValues(network_copy, settings.visual_link);
             for (const NetworkRenderLink &link : snapshot_copy.links)
             {
                 const QHash<QUuid, double>::const_iterator iterator = values.constFind(link.uuid);
                 const QRgb color = iterator == values.cend()
                     ? SymbologyValueUnavailableColor.rgb()
-                    : symbologyColor(iterator.value(), effective_link_range.first, effective_link_range.second);
+                    : symbologyColor(
+                        iterator.value(), ranges.link_minimum, ranges.link_maximum);
                 symbology->link_colors.insert(link.render_id, color);
             }
         }
@@ -1510,9 +1300,10 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool rebuild_ranges, b
         if (cancelled->load(std::memory_order_relaxed))
             return;
 
-        if (visual_heatmap != VisualHeatmap::None)
+        if (settings.visual_heatmap != VisualHeatmap::None)
         {
-            const QHash<QUuid, double> values = heatmapValues(network_copy, visual_heatmap);
+            const QHash<QUuid, double> values =
+                heatmapValues(network_copy, settings.visual_heatmap);
             symbology->heatmap_fractions.reserve(snapshot_copy.nodes.size());
             for (const NetworkRenderNode &node : snapshot_copy.nodes)
             {
@@ -1520,7 +1311,7 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool rebuild_ranges, b
                 if (iterator == values.cend())
                     continue;
                 const double fraction = heatmapValueFraction(
-                    iterator.value(), effective_heatmap_range.first, effective_heatmap_range.second);
+                    iterator.value(), ranges.heatmap_minimum, ranges.heatmap_maximum);
                 if (std::isfinite(fraction))
                     symbology->heatmap_fractions.insert(node.render_id, fraction);
             }
@@ -1532,32 +1323,12 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool rebuild_ranges, b
         QCoreApplication *application = QCoreApplication::instance();
         if (!application)
             return;
-        QMetaObject::invokeMethod(application, [widget, request_id, geometry_revision, symbology,
-            rebuild_ranges, basic_ranges]()
+        QMetaObject::invokeMethod(application, [widget, request_id, geometry_revision, symbology]()
         {
             if (!widget || request_id != widget->active_symbology_prepare_request_id ||
                 geometry_revision != widget->geometry_revision)
             {
                 return;
-            }
-            if (rebuild_ranges)
-            {
-                widget->hydraulic_data->setNodeElevationMMinimum(basic_ranges.node_elevation_minimum);
-                widget->hydraulic_data->setNodeElevationMMaximum(basic_ranges.node_elevation_maximum);
-                widget->hydraulic_data->setNodeBaseDemandM3PerHMinimum(basic_ranges.node_base_demand_minimum);
-                widget->hydraulic_data->setNodeBaseDemandM3PerHMaximum(basic_ranges.node_base_demand_maximum);
-                widget->hydraulic_data->setLinkDiameterMmMinimum(basic_ranges.link_diameter_minimum);
-                widget->hydraulic_data->setLinkDiameterMmMaximum(basic_ranges.link_diameter_maximum);
-                widget->hydraulic_data->setLinkLengthMMinimum(basic_ranges.link_length_minimum);
-                widget->hydraulic_data->setLinkLengthMMaximum(basic_ranges.link_length_maximum);
-                widget->hydraulic_data->setLinkRoughnessHwMinimum(basic_ranges.link_roughness_hw_minimum);
-                widget->hydraulic_data->setLinkRoughnessHwMaximum(basic_ranges.link_roughness_hw_maximum);
-                widget->hydraulic_data->setLinkRoughnessDwMmMinimum(basic_ranges.link_roughness_dw_minimum);
-                widget->hydraulic_data->setLinkRoughnessDwMmMaximum(basic_ranges.link_roughness_dw_maximum);
-                widget->hydraulic_data->setLinkRoughnessCmMinimum(basic_ranges.link_roughness_cm_minimum);
-                widget->hydraulic_data->setLinkRoughnessCmMaximum(basic_ranges.link_roughness_cm_maximum);
-                widget->hydraulic_data->setHeatmapElevationMMinimum(basic_ranges.node_elevation_minimum);
-                widget->hydraulic_data->setHeatmapElevationMMaximum(basic_ranges.node_elevation_maximum);
             }
             widget->applyPreparedSymbology(request_id, geometry_revision, symbology);
         }, Qt::QueuedConnection);
@@ -1571,9 +1342,9 @@ void MapNetworkOverlayWidget::applyPreparedSymbology(
 {
     if (request_id != this->active_symbology_prepare_request_id ||
         geometry_revision != this->geometry_revision || !symbology ||
-        symbology->visual_node != this->visual_node ||
-        symbology->visual_link != this->visual_link ||
-        symbology->visual_heatmap != this->visual_heatmap)
+        symbology->visual_node != this->symbology_settings.visual_node ||
+        symbology->visual_link != this->symbology_settings.visual_link ||
+        symbology->visual_heatmap != this->symbology_settings.visual_heatmap)
     {
         return;
     }
@@ -1581,7 +1352,7 @@ void MapNetworkOverlayWidget::applyPreparedSymbology(
     this->active_symbology_prepare_request_id = 0;
     this->symbology_prepare_cancelled.reset();
     this->render_symbology = std::move(symbology);
-    if (this->visual_heatmap == VisualHeatmap::None)
+    if (this->symbology_settings.visual_heatmap == VisualHeatmap::None)
         this->rendered_heatmap_cache = QImage();
     requestRenderCache(true);
     update();
@@ -2306,11 +2077,12 @@ void MapNetworkOverlayWidget::paintNetwork(QPainter &painter)
         this->rendered_cache_image_world_bounds.width() * scale,
         this->rendered_cache_image_world_bounds.height() * scale);
 
-    if (!this->rendered_heatmap_cache.isNull() && this->visual_heatmap != VisualHeatmap::None &&
-        this->heatmap_opacity > 0)
+    if (!this->rendered_heatmap_cache.isNull() &&
+        this->symbology_settings.visual_heatmap != VisualHeatmap::None &&
+        this->symbology_settings.heatmap_opacity > 0)
     {
         painter.save();
-        painter.setOpacity(this->heatmap_opacity / 100.0);
+        painter.setOpacity(this->symbology_settings.heatmap_opacity / 100.0);
         painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
         painter.drawImage(target_rect, this->rendered_heatmap_cache);
         painter.restore();
@@ -2355,7 +2127,8 @@ void MapNetworkOverlayWidget::paintSelectedEntity(QPainter &painter)
         }
 
         const qreal base_width = this->render_symbology
-            ? this->render_symbology->link_width : qreal(this->link_thickness_px);
+            ? this->render_symbology->link_width
+            : qreal(this->symbology_settings.link_thickness_px);
         QPen selected_pen(selected_color);
         selected_pen.setWidthF(qMax<qreal>(3.0, base_width + 2.0));
         selected_pen.setCapStyle(Qt::RoundCap);
@@ -2380,7 +2153,7 @@ void MapNetworkOverlayWidget::paintSelectedEntity(QPainter &painter)
     if (!asset)
     {
         const qreal radius = junctionDotDiameterForZoom(
-            this->map_model->zoom(), this->node_size_percent) / 2.0;
+            this->map_model->zoom(), this->symbology_settings.node_size_percent) / 2.0;
         painter.setPen(Qt::NoPen);
         painter.setBrush(selected_color);
         painter.drawEllipse(center, radius + 2.0, radius + 2.0);
@@ -2388,7 +2161,7 @@ void MapNetworkOverlayWidget::paintSelectedEntity(QPainter &painter)
     }
 
     const qreal marker_size = markerSizeForZoom(
-        this->map_model->zoom(), this->icon_size_percent);
+        this->map_model->zoom(), this->symbology_settings.icon_size_percent);
     const qreal icon_scale = marker_size / qMax(asset->view_width, asset->view_height);
     const qreal icon_x = center.x() - asset->view_width * icon_scale / 2.0;
     const qreal icon_y = center.y() - asset->view_height * icon_scale / 2.0;

@@ -94,7 +94,6 @@ void HydraulicData::onDatabaseReady()
     this->network_hydraulic = DummyMarburgNetworkGenerator::generate();
     //this->network_hydraulic = RandomHydraulicNetworkGenerator::generateFractal();
     rebuildBoundingBoxWgs84();
-    rebuildSymbologyMinMaxValues();
     markNetworkChanged(NetworkChange::Geometry);
     //this->network_hydraulic = DummyNetworks::networkOnMap();
     //this->network_hydraulic = DummyNetworks::networkTanksTimeline();
@@ -354,6 +353,160 @@ void HydraulicData::rebuildSymbologyMinMaxValues()
     this->heatmap_river_water_percent_maximum = this->node_river_water_percent_maximum;
     this->heatmap_lake_water_percent_minimum = this->node_lake_water_percent_minimum;
     this->heatmap_lake_water_percent_maximum = this->node_lake_water_percent_maximum;
+}
+
+NetworkSymbologyRanges HydraulicData::symbologyRanges(
+    const NetworkSymbologySettings &settings) const
+{
+    NetworkSymbologyRanges ranges;
+
+    switch (settings.visual_node)
+    {
+    case VisualNode::Elevation:
+        ranges.node_minimum = this->node_elevation_m_minimum;
+        ranges.node_maximum = this->node_elevation_m_maximum;
+        break;
+    case VisualNode::BaseDemand:
+        ranges.node_minimum = this->node_base_demand_m3_per_h_minimum;
+        ranges.node_maximum = this->node_base_demand_m3_per_h_maximum;
+        break;
+    case VisualNode::TotalDemand:
+        ranges.node_minimum = this->node_total_demand_m3_per_h_minimum;
+        ranges.node_maximum = this->node_total_demand_m3_per_h_maximum;
+        break;
+    case VisualNode::DemandDeficit:
+        ranges.node_minimum = this->node_demand_deficit_m3_per_h_minimum;
+        ranges.node_maximum = this->node_demand_deficit_m3_per_h_maximum;
+        break;
+    case VisualNode::EmitterFlow:
+        ranges.node_minimum = this->node_emitter_flow_m3_per_h_minimum;
+        ranges.node_maximum = this->node_emitter_flow_m3_per_h_maximum;
+        break;
+    case VisualNode::Leakage:
+        ranges.node_minimum = this->node_leakage_m3_per_h_minimum;
+        ranges.node_maximum = this->node_leakage_m3_per_h_maximum;
+        break;
+    case VisualNode::Head:
+        ranges.node_minimum = this->node_head_m_minimum;
+        ranges.node_maximum = this->node_head_m_maximum;
+        break;
+    case VisualNode::Pressure:
+        ranges.node_minimum = this->node_pressure_m_minimum;
+        ranges.node_maximum = this->node_pressure_m_maximum;
+        break;
+    case VisualNode::Chlorine:
+        ranges.node_minimum = this->node_chlorine_mg_per_l_minimum;
+        ranges.node_maximum = this->node_chlorine_mg_per_l_maximum;
+        break;
+    case VisualNode::RiverWater:
+        ranges.node_minimum = this->node_river_water_percent_minimum;
+        ranges.node_maximum = this->node_river_water_percent_maximum;
+        break;
+    case VisualNode::LakeWater:
+        ranges.node_minimum = this->node_lake_water_percent_minimum;
+        ranges.node_maximum = this->node_lake_water_percent_maximum;
+        break;
+    case VisualNode::None:
+        break;
+    }
+
+    switch (settings.visual_link)
+    {
+    case VisualLink::Diameter:
+        ranges.link_minimum = this->link_diameter_mm_minimum;
+        ranges.link_maximum = this->link_diameter_mm_maximum;
+        break;
+    case VisualLink::Length:
+        ranges.link_minimum = this->link_length_m_minimum;
+        ranges.link_maximum = this->link_length_m_maximum;
+        break;
+    case VisualLink::Roughness:
+        ranges.link_minimum = this->link_roughness_hw_minimum;
+        ranges.link_maximum = this->link_roughness_hw_maximum;
+        break;
+    case VisualLink::FlowRate:
+        ranges.link_minimum = this->link_flow_rate_m3_per_h_minimum;
+        ranges.link_maximum = this->link_flow_rate_m3_per_h_maximum;
+        break;
+    case VisualLink::Velocity:
+        ranges.link_minimum = this->link_velocity_m_per_s_minimum;
+        ranges.link_maximum = this->link_velocity_m_per_s_maximum;
+        break;
+    case VisualLink::HeadLoss:
+        ranges.link_minimum = this->link_head_loss_m_minimum;
+        ranges.link_maximum = this->link_head_loss_m_maximum;
+        break;
+    case VisualLink::Leakage:
+        ranges.link_minimum = this->link_leakage_m3_per_h_minimum;
+        ranges.link_maximum = this->link_leakage_m3_per_h_maximum;
+        break;
+    case VisualLink::Chlorine:
+        ranges.link_minimum = this->link_chlorine_mg_per_l_minimum;
+        ranges.link_maximum = this->link_chlorine_mg_per_l_maximum;
+        break;
+    case VisualLink::RiverWater:
+        ranges.link_minimum = this->link_river_water_percent_minimum;
+        ranges.link_maximum = this->link_river_water_percent_maximum;
+        break;
+    case VisualLink::LakeWater:
+        ranges.link_minimum = this->link_lake_water_percent_minimum;
+        ranges.link_maximum = this->link_lake_water_percent_maximum;
+        break;
+    case VisualLink::None:
+        break;
+    }
+
+    switch (settings.visual_heatmap)
+    {
+    case VisualHeatmap::Elevation:
+        ranges.heatmap_minimum = this->heatmap_elevation_m_minimum;
+        ranges.heatmap_maximum = this->heatmap_elevation_m_maximum;
+        break;
+    case VisualHeatmap::BaseDemand:
+        ranges.heatmap_minimum = this->node_base_demand_m3_per_h_minimum;
+        ranges.heatmap_maximum = this->node_base_demand_m3_per_h_maximum;
+        break;
+    case VisualHeatmap::TotalDemand:
+        ranges.heatmap_minimum = this->heatmap_total_demand_m3_per_h_minimum;
+        ranges.heatmap_maximum = this->heatmap_total_demand_m3_per_h_maximum;
+        break;
+    case VisualHeatmap::DemandDeficit:
+        ranges.heatmap_minimum = this->heatmap_demand_deficit_m3_per_h_minimum;
+        ranges.heatmap_maximum = this->heatmap_demand_deficit_m3_per_h_maximum;
+        break;
+    case VisualHeatmap::EmitterFlow:
+        ranges.heatmap_minimum = this->node_emitter_flow_m3_per_h_minimum;
+        ranges.heatmap_maximum = this->node_emitter_flow_m3_per_h_maximum;
+        break;
+    case VisualHeatmap::Leakage:
+        ranges.heatmap_minimum = this->heatmap_leakage_m3_per_h_minimum;
+        ranges.heatmap_maximum = this->heatmap_leakage_m3_per_h_maximum;
+        break;
+    case VisualHeatmap::Head:
+        ranges.heatmap_minimum = this->heatmap_head_m_minimum;
+        ranges.heatmap_maximum = this->heatmap_head_m_maximum;
+        break;
+    case VisualHeatmap::Pressure:
+        ranges.heatmap_minimum = this->heatmap_pressure_m_minimum;
+        ranges.heatmap_maximum = this->heatmap_pressure_m_maximum;
+        break;
+    case VisualHeatmap::Chlorine:
+        ranges.heatmap_minimum = this->heatmap_chlorine_mg_per_l_minimum;
+        ranges.heatmap_maximum = this->heatmap_chlorine_mg_per_l_maximum;
+        break;
+    case VisualHeatmap::RiverWater:
+        ranges.heatmap_minimum = this->heatmap_river_water_percent_minimum;
+        ranges.heatmap_maximum = this->heatmap_river_water_percent_maximum;
+        break;
+    case VisualHeatmap::LakeWater:
+        ranges.heatmap_minimum = this->heatmap_lake_water_percent_minimum;
+        ranges.heatmap_maximum = this->heatmap_lake_water_percent_maximum;
+        break;
+    case VisualHeatmap::None:
+        break;
+    }
+
+    return ranges;
 }
 
 double HydraulicData::nodeElevationMMinimum() const
@@ -1148,6 +1301,8 @@ std::optional<InfrastructureEntity> HydraulicData::linkEntityType(const QUuid &u
 
 void HydraulicData::markNetworkChanged(NetworkChange change)
 {
+    rebuildSymbologyMinMaxValues();
+
     if (change == NetworkChange::Geometry)
         ++this->geometry_revision;
 

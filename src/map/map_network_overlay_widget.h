@@ -18,6 +18,7 @@
 #include "../_enums_structs.h"
 #include "map_model.h"
 #include "../network_render_snapshot.h"
+#include "../network_symbology.h"
 
 class HydraulicData;
 class QHideEvent;
@@ -52,8 +53,8 @@ public:
 
 public slots:
     void setBackgroundOpacity(int opacity);
-    void setSymbology(VisualNode visual_node, int node_size_percent, int icon_size_percent, VisualLink visual_link, int link_thickness_px);
-    void setHeatmap(VisualHeatmap visual_heatmap, int opacity, int radius_m, int solid_center_percent);
+    void setSymbology(const NetworkSymbologySettings &settings,
+                      const NetworkSymbologyRanges &ranges);
 
 protected:
     void hideEvent(QHideEvent *event) override;
@@ -179,7 +180,7 @@ private:
     static PreparedGeometry prepareGeometry(const NetworkRenderSnapshot &snapshot,
                                             const std::shared_ptr<std::atomic_bool> &cancelled);
     void applyPreparedGeometry(quint64 request_id, PreparedGeometry result);
-    void requestSymbologyPreparation(bool rebuild_ranges, bool force_values);
+    void requestSymbologyPreparation(bool force_values);
     void applyPreparedSymbology(quint64 request_id, quint64 geometry_revision,
                                 std::shared_ptr<RenderSymbology> symbology);
     void clearRenderedCache();
@@ -210,15 +211,8 @@ private:
     NetworkRenderSnapshot snapshot;
 
     int background_opacity = 0;
-    VisualNode visual_node = VisualNode::None;
-    int node_size_percent = 100;
-    int icon_size_percent = 100;
-    VisualLink visual_link = VisualLink::None;
-    int link_thickness_px = 3;
-    VisualHeatmap visual_heatmap = VisualHeatmap::None;
-    int heatmap_opacity = 75;
-    int heatmap_radius_m = 400;
-    int heatmap_solid_center_percent = 70;
+    NetworkSymbologySettings symbology_settings;
+    NetworkSymbologyRanges symbology_ranges;
     NetworkOverlayHit selected_entity;
 
     std::shared_ptr<const RenderGeometry> render_geometry;

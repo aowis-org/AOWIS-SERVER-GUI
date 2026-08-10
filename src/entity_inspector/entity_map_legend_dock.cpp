@@ -607,76 +607,57 @@ void EntityMapLegendDock::updateNodeLegend()
 {
     QString metric;
     QString unit;
-    double minimum = 0.0;
-    double maximum = 0.0;
+    NetworkSymbologySettings settings;
+    settings.visual_node = this->visual_node;
+    const NetworkSymbologyRanges ranges = this->hydraulic_data->symbologyRanges(settings);
+    double minimum = ranges.node_minimum;
+    double maximum = ranges.node_maximum;
 
     switch (this->visual_node)
     {
     case VisualNode::Elevation:
         metric = QStringLiteral("Elevation");
         unit = QStringLiteral("m");
-        minimum = this->hydraulic_data->nodeElevationMMinimum();
-        maximum = this->hydraulic_data->nodeElevationMMaximum();
         break;
     case VisualNode::BaseDemand:
         metric = QStringLiteral("Base Demand");
         unit = QStringLiteral("m³/h");
-        minimum = this->hydraulic_data->nodeBaseDemandM3PerHMinimum();
-        maximum = this->hydraulic_data->nodeBaseDemandM3PerHMaximum();
         break;
     case VisualNode::TotalDemand:
         metric = QStringLiteral("Total Demand");
         unit = QStringLiteral("m³/h");
-        minimum = this->hydraulic_data->nodeTotalDemandM3PerHMinimum();
-        maximum = this->hydraulic_data->nodeTotalDemandM3PerHMaximum();
         break;
     case VisualNode::DemandDeficit:
         metric = QStringLiteral("Demand Deficit");
         unit = QStringLiteral("m³/h");
-        minimum = this->hydraulic_data->nodeDemandDeficitM3PerHMinimum();
-        maximum = this->hydraulic_data->nodeDemandDeficitM3PerHMaximum();
         break;
     case VisualNode::EmitterFlow:
         metric = QStringLiteral("Emitter Flow");
         unit = QStringLiteral("m³/h");
-        minimum = this->hydraulic_data->nodeEmitterFlowM3PerHMinimum();
-        maximum = this->hydraulic_data->nodeEmitterFlowM3PerHMaximum();
         break;
     case VisualNode::Leakage:
         metric = QStringLiteral("Leakage");
         unit = QStringLiteral("m³/h");
-        minimum = this->hydraulic_data->nodeLeakageM3PerHMinimum();
-        maximum = this->hydraulic_data->nodeLeakageM3PerHMaximum();
         break;
     case VisualNode::Head:
         metric = QStringLiteral("Head");
         unit = QStringLiteral("m");
-        minimum = this->hydraulic_data->nodeHeadMMinimum();
-        maximum = this->hydraulic_data->nodeHeadMMaximum();
         break;
     case VisualNode::Pressure:
         metric = QStringLiteral("Pressure Head");
         unit = QStringLiteral("m");
-        minimum = this->hydraulic_data->nodePressureMMinimum();
-        maximum = this->hydraulic_data->nodePressureMMaximum();
         break;
     case VisualNode::Chlorine:
         metric = QStringLiteral("Chlorine");
         unit = QStringLiteral("mg/L");
-        minimum = this->hydraulic_data->nodeChlorineMgPerLMinimum();
-        maximum = this->hydraulic_data->nodeChlorineMgPerLMaximum();
         break;
     case VisualNode::RiverWater:
         metric = QStringLiteral("River Water");
         unit = QStringLiteral("%");
-        minimum = this->hydraulic_data->nodeRiverWaterPercentMinimum();
-        maximum = this->hydraulic_data->nodeRiverWaterPercentMaximum();
         break;
     case VisualNode::LakeWater:
         metric = QStringLiteral("Lake Water");
         unit = QStringLiteral("%");
-        minimum = this->hydraulic_data->nodeLakeWaterPercentMinimum();
-        maximum = this->hydraulic_data->nodeLakeWaterPercentMaximum();
         break;
     case VisualNode::None:
         return;
@@ -690,22 +671,21 @@ void EntityMapLegendDock::updateLinkLegend()
 {
     QString metric;
     QString unit;
-    double minimum = 0.0;
-    double maximum = 0.0;
+    NetworkSymbologySettings settings;
+    settings.visual_link = this->visual_link;
+    const NetworkSymbologyRanges ranges = this->hydraulic_data->symbologyRanges(settings);
+    double minimum = ranges.link_minimum;
+    double maximum = ranges.link_maximum;
 
     switch (this->visual_link)
     {
     case VisualLink::Diameter:
         metric = QStringLiteral("Diameter");
         unit = QStringLiteral("mm");
-        minimum = this->hydraulic_data->linkDiameterMmMinimum();
-        maximum = this->hydraulic_data->linkDiameterMmMaximum();
         break;
     case VisualLink::Length:
     {
         metric = QStringLiteral("Length");
-        minimum = this->hydraulic_data->linkLengthMMinimum();
-        maximum = this->hydraulic_data->linkLengthMMaximum();
         const double maximum_absolute = qMax(std::abs(minimum), std::abs(maximum));
         if (maximum_absolute >= 1000.0)
         {
@@ -721,50 +701,34 @@ void EntityMapLegendDock::updateLinkLegend()
     }
     case VisualLink::Roughness:
         metric = QStringLiteral("Hazen-Williams C");
-        minimum = this->hydraulic_data->linkRoughnessHwMinimum();
-        maximum = this->hydraulic_data->linkRoughnessHwMaximum();
         break;
     case VisualLink::FlowRate:
         metric = QStringLiteral("Flow Rate");
         unit = QStringLiteral("m³/h");
-        minimum = this->hydraulic_data->linkFlowRateM3PerHMinimum();
-        maximum = this->hydraulic_data->linkFlowRateM3PerHMaximum();
         break;
     case VisualLink::Velocity:
         metric = QStringLiteral("Velocity");
         unit = QStringLiteral("m/s");
-        minimum = this->hydraulic_data->linkVelocityMPerSMinimum();
-        maximum = this->hydraulic_data->linkVelocityMPerSMaximum();
         break;
     case VisualLink::HeadLoss:
         metric = QStringLiteral("Head Loss");
         unit = QStringLiteral("m");
-        minimum = this->hydraulic_data->linkHeadLossMMinimum();
-        maximum = this->hydraulic_data->linkHeadLossMMaximum();
         break;
     case VisualLink::Leakage:
         metric = QStringLiteral("Leakage");
         unit = QStringLiteral("m³/h");
-        minimum = this->hydraulic_data->linkLeakageM3PerHMinimum();
-        maximum = this->hydraulic_data->linkLeakageM3PerHMaximum();
         break;
     case VisualLink::Chlorine:
         metric = QStringLiteral("Chlorine");
         unit = QStringLiteral("mg/L");
-        minimum = this->hydraulic_data->linkChlorineMgPerLMinimum();
-        maximum = this->hydraulic_data->linkChlorineMgPerLMaximum();
         break;
     case VisualLink::RiverWater:
         metric = QStringLiteral("River Water");
         unit = QStringLiteral("%");
-        minimum = this->hydraulic_data->linkRiverWaterPercentMinimum();
-        maximum = this->hydraulic_data->linkRiverWaterPercentMaximum();
         break;
     case VisualLink::LakeWater:
         metric = QStringLiteral("Lake Water");
         unit = QStringLiteral("%");
-        minimum = this->hydraulic_data->linkLakeWaterPercentMinimum();
-        maximum = this->hydraulic_data->linkLakeWaterPercentMaximum();
         break;
     case VisualLink::None:
         return;
@@ -778,76 +742,57 @@ void EntityMapLegendDock::updateHeatmapLegend()
 {
     QString metric;
     QString unit;
-    double minimum = 0.0;
-    double maximum = 0.0;
+    NetworkSymbologySettings settings;
+    settings.visual_heatmap = this->visual_heatmap;
+    const NetworkSymbologyRanges ranges = this->hydraulic_data->symbologyRanges(settings);
+    double minimum = ranges.heatmap_minimum;
+    double maximum = ranges.heatmap_maximum;
 
     switch (this->visual_heatmap)
     {
     case VisualHeatmap::Elevation:
         metric = QStringLiteral("Elevation");
         unit = QStringLiteral("m");
-        minimum = this->hydraulic_data->heatmapElevationMMinimum();
-        maximum = this->hydraulic_data->heatmapElevationMMaximum();
         break;
     case VisualHeatmap::BaseDemand:
         metric = QStringLiteral("Base Demand");
         unit = QStringLiteral("m³/h");
-        minimum = this->hydraulic_data->nodeBaseDemandM3PerHMinimum();
-        maximum = this->hydraulic_data->nodeBaseDemandM3PerHMaximum();
         break;
     case VisualHeatmap::TotalDemand:
         metric = QStringLiteral("Total Demand");
         unit = QStringLiteral("m³/h");
-        minimum = this->hydraulic_data->heatmapTotalDemandM3PerHMinimum();
-        maximum = this->hydraulic_data->heatmapTotalDemandM3PerHMaximum();
         break;
     case VisualHeatmap::DemandDeficit:
         metric = QStringLiteral("Demand Deficit");
         unit = QStringLiteral("m³/h");
-        minimum = this->hydraulic_data->heatmapDemandDeficitM3PerHMinimum();
-        maximum = this->hydraulic_data->heatmapDemandDeficitM3PerHMaximum();
         break;
     case VisualHeatmap::EmitterFlow:
         metric = QStringLiteral("Emitter Flow");
         unit = QStringLiteral("m³/h");
-        minimum = this->hydraulic_data->nodeEmitterFlowM3PerHMinimum();
-        maximum = this->hydraulic_data->nodeEmitterFlowM3PerHMaximum();
         break;
     case VisualHeatmap::Leakage:
         metric = QStringLiteral("Leakage");
         unit = QStringLiteral("m³/h");
-        minimum = this->hydraulic_data->heatmapLeakageM3PerHMinimum();
-        maximum = this->hydraulic_data->heatmapLeakageM3PerHMaximum();
         break;
     case VisualHeatmap::Head:
         metric = QStringLiteral("Head");
         unit = QStringLiteral("m");
-        minimum = this->hydraulic_data->heatmapHeadMMinimum();
-        maximum = this->hydraulic_data->heatmapHeadMMaximum();
         break;
     case VisualHeatmap::Pressure:
         metric = QStringLiteral("Pressure Head");
         unit = QStringLiteral("m");
-        minimum = this->hydraulic_data->heatmapPressureMMinimum();
-        maximum = this->hydraulic_data->heatmapPressureMMaximum();
         break;
     case VisualHeatmap::Chlorine:
         metric = QStringLiteral("Chlorine");
         unit = QStringLiteral("mg/L");
-        minimum = this->hydraulic_data->heatmapChlorineMgPerLMinimum();
-        maximum = this->hydraulic_data->heatmapChlorineMgPerLMaximum();
         break;
     case VisualHeatmap::RiverWater:
         metric = QStringLiteral("River Water");
         unit = QStringLiteral("%");
-        minimum = this->hydraulic_data->heatmapRiverWaterPercentMinimum();
-        maximum = this->hydraulic_data->heatmapRiverWaterPercentMaximum();
         break;
     case VisualHeatmap::LakeWater:
         metric = QStringLiteral("Lake Water");
         unit = QStringLiteral("%");
-        minimum = this->hydraulic_data->heatmapLakeWaterPercentMinimum();
-        maximum = this->hydraulic_data->heatmapLakeWaterPercentMaximum();
         break;
     case VisualHeatmap::None:
         return;

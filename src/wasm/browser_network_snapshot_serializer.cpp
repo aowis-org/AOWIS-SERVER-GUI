@@ -2,6 +2,7 @@
 
 #include "../hydraulic_data.h"
 #include "../network_render_snapshot.h"
+#include "../network_symbology.h"
 
 #include <cmath>
 
@@ -9,7 +10,6 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QPair>
 #include <QtGlobal>
 
 namespace
@@ -60,115 +60,6 @@ QByteArray serializeRoot(const NetworkRenderSnapshot &snapshot,
     root.insert(QStringLiteral("nodes"), nodes);
     root.insert(QStringLiteral("links"), links);
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
-}
-
-QPair<double, double> nodeRange(const HydraulicData &hydraulic_data, VisualNode visual_node)
-{
-    switch (visual_node)
-    {
-    case VisualNode::Elevation:
-        return qMakePair(hydraulic_data.nodeElevationMMinimum(), hydraulic_data.nodeElevationMMaximum());
-    case VisualNode::BaseDemand:
-        return qMakePair(hydraulic_data.nodeBaseDemandM3PerHMinimum(), hydraulic_data.nodeBaseDemandM3PerHMaximum());
-    case VisualNode::TotalDemand:
-        return qMakePair(hydraulic_data.nodeTotalDemandM3PerHMinimum(), hydraulic_data.nodeTotalDemandM3PerHMaximum());
-    case VisualNode::DemandDeficit:
-        return qMakePair(hydraulic_data.nodeDemandDeficitM3PerHMinimum(), hydraulic_data.nodeDemandDeficitM3PerHMaximum());
-    case VisualNode::EmitterFlow:
-        return qMakePair(hydraulic_data.nodeEmitterFlowM3PerHMinimum(), hydraulic_data.nodeEmitterFlowM3PerHMaximum());
-    case VisualNode::Leakage:
-        return qMakePair(hydraulic_data.nodeLeakageM3PerHMinimum(), hydraulic_data.nodeLeakageM3PerHMaximum());
-    case VisualNode::Head:
-        return qMakePair(hydraulic_data.nodeHeadMMinimum(), hydraulic_data.nodeHeadMMaximum());
-    case VisualNode::Pressure:
-        return qMakePair(hydraulic_data.nodePressureMMinimum(), hydraulic_data.nodePressureMMaximum());
-    case VisualNode::Chlorine:
-        return qMakePair(hydraulic_data.nodeChlorineMgPerLMinimum(), hydraulic_data.nodeChlorineMgPerLMaximum());
-    case VisualNode::RiverWater:
-        return qMakePair(hydraulic_data.nodeRiverWaterPercentMinimum(), hydraulic_data.nodeRiverWaterPercentMaximum());
-    case VisualNode::LakeWater:
-        return qMakePair(hydraulic_data.nodeLakeWaterPercentMinimum(), hydraulic_data.nodeLakeWaterPercentMaximum());
-    case VisualNode::None:
-        break;
-    }
-
-    return qMakePair(0.0, 0.0);
-}
-
-QPair<double, double> linkRange(const HydraulicData &hydraulic_data, VisualLink visual_link)
-{
-    switch (visual_link)
-    {
-    case VisualLink::Diameter:
-        return qMakePair(hydraulic_data.linkDiameterMmMinimum(), hydraulic_data.linkDiameterMmMaximum());
-    case VisualLink::Length:
-        return qMakePair(hydraulic_data.linkLengthMMinimum(), hydraulic_data.linkLengthMMaximum());
-    case VisualLink::Roughness:
-        return qMakePair(hydraulic_data.linkRoughnessHwMinimum(), hydraulic_data.linkRoughnessHwMaximum());
-    case VisualLink::FlowRate:
-        return qMakePair(hydraulic_data.linkFlowRateM3PerHMinimum(), hydraulic_data.linkFlowRateM3PerHMaximum());
-    case VisualLink::Velocity:
-        return qMakePair(hydraulic_data.linkVelocityMPerSMinimum(), hydraulic_data.linkVelocityMPerSMaximum());
-    case VisualLink::HeadLoss:
-        return qMakePair(hydraulic_data.linkHeadLossMMinimum(), hydraulic_data.linkHeadLossMMaximum());
-    case VisualLink::Leakage:
-        return qMakePair(hydraulic_data.linkLeakageM3PerHMinimum(), hydraulic_data.linkLeakageM3PerHMaximum());
-    case VisualLink::Chlorine:
-        return qMakePair(hydraulic_data.linkChlorineMgPerLMinimum(), hydraulic_data.linkChlorineMgPerLMaximum());
-    case VisualLink::RiverWater:
-        return qMakePair(hydraulic_data.linkRiverWaterPercentMinimum(), hydraulic_data.linkRiverWaterPercentMaximum());
-    case VisualLink::LakeWater:
-        return qMakePair(hydraulic_data.linkLakeWaterPercentMinimum(), hydraulic_data.linkLakeWaterPercentMaximum());
-    case VisualLink::None:
-        break;
-    }
-
-    return qMakePair(0.0, 0.0);
-}
-
-QPair<double, double> heatmapRange(const HydraulicData &hydraulic_data,
-                                   VisualHeatmap visual_heatmap)
-{
-    switch (visual_heatmap)
-    {
-    case VisualHeatmap::Elevation:
-        return qMakePair(hydraulic_data.heatmapElevationMMinimum(),
-                         hydraulic_data.heatmapElevationMMaximum());
-    case VisualHeatmap::BaseDemand:
-        return qMakePair(hydraulic_data.nodeBaseDemandM3PerHMinimum(),
-                         hydraulic_data.nodeBaseDemandM3PerHMaximum());
-    case VisualHeatmap::TotalDemand:
-        return qMakePair(hydraulic_data.heatmapTotalDemandM3PerHMinimum(),
-                         hydraulic_data.heatmapTotalDemandM3PerHMaximum());
-    case VisualHeatmap::DemandDeficit:
-        return qMakePair(hydraulic_data.heatmapDemandDeficitM3PerHMinimum(),
-                         hydraulic_data.heatmapDemandDeficitM3PerHMaximum());
-    case VisualHeatmap::EmitterFlow:
-        return qMakePair(hydraulic_data.nodeEmitterFlowM3PerHMinimum(),
-                         hydraulic_data.nodeEmitterFlowM3PerHMaximum());
-    case VisualHeatmap::Leakage:
-        return qMakePair(hydraulic_data.heatmapLeakageM3PerHMinimum(),
-                         hydraulic_data.heatmapLeakageM3PerHMaximum());
-    case VisualHeatmap::Head:
-        return qMakePair(hydraulic_data.heatmapHeadMMinimum(),
-                         hydraulic_data.heatmapHeadMMaximum());
-    case VisualHeatmap::Pressure:
-        return qMakePair(hydraulic_data.heatmapPressureMMinimum(),
-                         hydraulic_data.heatmapPressureMMaximum());
-    case VisualHeatmap::Chlorine:
-        return qMakePair(hydraulic_data.heatmapChlorineMgPerLMinimum(),
-                         hydraulic_data.heatmapChlorineMgPerLMaximum());
-    case VisualHeatmap::RiverWater:
-        return qMakePair(hydraulic_data.heatmapRiverWaterPercentMinimum(),
-                         hydraulic_data.heatmapRiverWaterPercentMaximum());
-    case VisualHeatmap::LakeWater:
-        return qMakePair(hydraulic_data.heatmapLakeWaterPercentMinimum(),
-                         hydraulic_data.heatmapLakeWaterPercentMaximum());
-    case VisualHeatmap::None:
-        break;
-    }
-
-    return qMakePair(0.0, 0.0);
 }
 
 QHash<QUuid, double> nodeValues(const NetworkHydraulic &network_hydraulic, VisualNode visual_node)
@@ -362,38 +253,38 @@ QByteArray BrowserNetworkSnapshotSerializer::serializeGeometryPatch(
 }
 
 QByteArray BrowserNetworkSnapshotSerializer::serializeSymbology(
-    const HydraulicData &hydraulic_data, VisualNode visual_node, int node_size_percent,
-    int icon_size_percent, VisualLink visual_link, int link_thickness_px, VisualHeatmap visual_heatmap,
-    int heatmap_opacity, int heatmap_radius_m, int heatmap_solid_center_percent)
+    const HydraulicData &hydraulic_data, const NetworkSymbologySettings &settings,
+    const NetworkSymbologyRanges &ranges)
 {
+    const NetworkSymbologySettings bounded_settings = settings.bounded();
     const NetworkRenderSnapshot &snapshot = hydraulic_data.networkRenderSnapshot();
     const NetworkHydraulic &network_hydraulic = hydraulic_data.networkHydraulic();
-    const QPair<double, double> node_range = nodeRange(hydraulic_data, visual_node);
-    const QPair<double, double> link_range = linkRange(hydraulic_data, visual_link);
-    const QPair<double, double> heatmap_range = heatmapRange(hydraulic_data, visual_heatmap);
-    const QHash<QUuid, double> node_values = nodeValues(network_hydraulic, visual_node);
-    const QHash<QUuid, double> link_values = linkValues(network_hydraulic, visual_link);
-    const QHash<QUuid, double> heatmap_values = heatmapValues(network_hydraulic, visual_heatmap);
+    const QHash<QUuid, double> node_values =
+        nodeValues(network_hydraulic, bounded_settings.visual_node);
+    const QHash<QUuid, double> link_values =
+        linkValues(network_hydraulic, bounded_settings.visual_link);
+    const QHash<QUuid, double> heatmap_values =
+        heatmapValues(network_hydraulic, bounded_settings.visual_heatmap);
 
     QJsonObject root;
-    root.insert(QStringLiteral("nodeVisual"), static_cast<int>(visual_node));
-    root.insert(QStringLiteral("nodeSizePercent"), qBound(50, node_size_percent, 250));
-    root.insert(QStringLiteral("iconSizePercent"), qBound(50, icon_size_percent, 250));
-    root.insert(QStringLiteral("nodeMinimum"), node_range.first);
-    root.insert(QStringLiteral("nodeMaximum"), node_range.second);
+    root.insert(QStringLiteral("nodeVisual"), static_cast<int>(bounded_settings.visual_node));
+    root.insert(QStringLiteral("nodeSizePercent"), bounded_settings.node_size_percent);
+    root.insert(QStringLiteral("iconSizePercent"), bounded_settings.icon_size_percent);
+    root.insert(QStringLiteral("nodeMinimum"), ranges.node_minimum);
+    root.insert(QStringLiteral("nodeMaximum"), ranges.node_maximum);
     root.insert(QStringLiteral("nodeValues"), nodeValuesToJson(snapshot, node_values));
-    root.insert(QStringLiteral("linkVisual"), static_cast<int>(visual_link));
-    root.insert(QStringLiteral("linkThicknessPixels"), qBound(1, link_thickness_px, 12));
-    root.insert(QStringLiteral("linkMinimum"), link_range.first);
-    root.insert(QStringLiteral("linkMaximum"), link_range.second);
+    root.insert(QStringLiteral("linkVisual"), static_cast<int>(bounded_settings.visual_link));
+    root.insert(QStringLiteral("linkThicknessPixels"), bounded_settings.link_thickness_px);
+    root.insert(QStringLiteral("linkMinimum"), ranges.link_minimum);
+    root.insert(QStringLiteral("linkMaximum"), ranges.link_maximum);
     root.insert(QStringLiteral("linkValues"), linkValuesToJson(snapshot, link_values));
-    root.insert(QStringLiteral("heatmapVisual"), static_cast<int>(visual_heatmap));
-    root.insert(QStringLiteral("heatmapMinimum"), heatmap_range.first);
-    root.insert(QStringLiteral("heatmapMaximum"), heatmap_range.second);
+    root.insert(QStringLiteral("heatmapVisual"), static_cast<int>(bounded_settings.visual_heatmap));
+    root.insert(QStringLiteral("heatmapMinimum"), ranges.heatmap_minimum);
+    root.insert(QStringLiteral("heatmapMaximum"), ranges.heatmap_maximum);
     root.insert(QStringLiteral("heatmapValues"), nodeValuesToJson(snapshot, heatmap_values));
-    root.insert(QStringLiteral("heatmapOpacity"), qBound(0, heatmap_opacity, 100));
-    root.insert(QStringLiteral("heatmapRadiusMeters"), qBound(10, heatmap_radius_m, 1000));
+    root.insert(QStringLiteral("heatmapOpacity"), bounded_settings.heatmap_opacity);
+    root.insert(QStringLiteral("heatmapRadiusMeters"), bounded_settings.heatmap_radius_m);
     root.insert(QStringLiteral("heatmapSolidCenterPercent"),
-                qBound(0, heatmap_solid_center_percent, 100));
+                bounded_settings.heatmap_solid_center_percent);
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
