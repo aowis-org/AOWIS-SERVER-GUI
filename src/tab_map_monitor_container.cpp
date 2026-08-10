@@ -1,6 +1,7 @@
 #include "tab_map_monitor_container.h"
 
 #include "hydraulic_data.h"
+#include "infrastructure_entity_traits.h"
 
 #ifdef Q_OS_WASM
 #include "wasm/browser_network_snapshot_serializer.h"
@@ -439,9 +440,7 @@ bool MapMonitorContainer::selectNetworkEntity(quint32 render_id, InfrastructureE
     }
 
     const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
-    if (entity_type == InfrastructureEntity::Junction ||
-        entity_type == InfrastructureEntity::Reservoir ||
-        entity_type == InfrastructureEntity::Tank)
+    if (InfrastructureEntityTraits::isHydraulicConnectionNode(entity_type))
     {
         for (const NetworkRenderNode &node : snapshot.nodes)
         {
@@ -454,9 +453,7 @@ bool MapMonitorContainer::selectNetworkEntity(quint32 render_id, InfrastructureE
         return false;
     }
 
-    if (entity_type == InfrastructureEntity::Pipe ||
-        entity_type == InfrastructureEntity::Pump ||
-        entity_type == InfrastructureEntity::Valve)
+    if (InfrastructureEntityTraits::isHydraulicNetworkLink(entity_type))
     {
         for (const NetworkRenderLink &link : snapshot.links)
         {
@@ -562,9 +559,7 @@ void MapMonitorContainer::syncWasmSelectedEntity(InfrastructureEntity entity_typ
     }
 
     const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
-    if (entity_type == InfrastructureEntity::Junction ||
-        entity_type == InfrastructureEntity::Reservoir ||
-        entity_type == InfrastructureEntity::Tank)
+    if (InfrastructureEntityTraits::isHydraulicConnectionNode(entity_type))
     {
         for (const NetworkRenderNode &node : snapshot.nodes)
         {
@@ -575,9 +570,7 @@ void MapMonitorContainer::syncWasmSelectedEntity(InfrastructureEntity entity_typ
             }
         }
     }
-    else if (entity_type == InfrastructureEntity::Pipe ||
-             entity_type == InfrastructureEntity::Pump ||
-             entity_type == InfrastructureEntity::Valve)
+    else if (InfrastructureEntityTraits::isHydraulicNetworkLink(entity_type))
     {
         for (const NetworkRenderLink &link : snapshot.links)
         {

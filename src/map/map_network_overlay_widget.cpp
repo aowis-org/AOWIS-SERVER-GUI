@@ -2,6 +2,7 @@
 
 #include "../geo_web_mercator.h"
 #include "../hydraulic_data.h"
+#include "../infrastructure_entity_traits.h"
 #include "../network_render_snapshot_builder.h"
 #include "map_retained_vector_renderer.h"
 #include "map_vector_document.h"
@@ -1058,8 +1059,7 @@ MapNetworkOverlayWidget::PreparedGeometry MapNetworkOverlayWidget::prepareGeomet
             hit_segments->append(segment);
         }
 
-        if (link.entity_type == InfrastructureEntity::Pump ||
-            link.entity_type == InfrastructureEntity::Valve)
+        if (InfrastructureEntityTraits::isHydraulicDeviceLink(link.entity_type))
         {
             const QPointF center = polylineMidpoint(world_vertices);
 
@@ -1535,9 +1535,7 @@ QImage MapNetworkOverlayWidget::renderHeatmap(const RenderRequest &request, qrea
             return QImage();
         }
 
-        if (marker.entity_type != InfrastructureEntity::Junction &&
-            marker.entity_type != InfrastructureEntity::Reservoir &&
-            marker.entity_type != InfrastructureEntity::Tank)
+        if (!InfrastructureEntityTraits::isHydraulicConnectionNode(marker.entity_type))
         {
             continue;
         }
@@ -1870,9 +1868,8 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
 
                 const RenderGeometry::Marker &marker = request.geometry->markers.at(marker_index);
                 const QPointF &world_position = marker.world_position;
-                const bool node_entity = marker.entity_type == InfrastructureEntity::Junction ||
-                    marker.entity_type == InfrastructureEntity::Reservoir ||
-                    marker.entity_type == InfrastructureEntity::Tank;
+                const bool node_entity =
+                    InfrastructureEntityTraits::isHydraulicConnectionNode(marker.entity_type);
                 const QRgb color = node_entity
                     ? request.symbology->node_colors.value(marker.render_id, NetworkColor.rgb())
                     : request.symbology->link_colors.value(marker.render_id, NetworkColor.rgb());

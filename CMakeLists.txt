@@ -71,6 +71,7 @@ qt_add_executable(aowis-server-gui
     src/map/map_tile_repository.h src/map/map_tile_repository.cpp
     src/footer_statusbar.h src/footer_statusbar.cpp
     src/_enums_structs.h
+    src/infrastructure_entity_traits.h
     src/network_symbology.h
     src/network_render_snapshot.h
     src/network_render_snapshot_builder.h src/network_render_snapshot_builder.cpp

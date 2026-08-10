@@ -2,6 +2,7 @@
 #include "map_canvas_widget.h"
 
 #include "../geo_web_mercator.h"
+#include "../infrastructure_entity_traits.h"
 
 #include <algorithm>
 #include <QtMath>
@@ -10,13 +11,6 @@ namespace
 {
 constexpr double marker_dot_radius = 5.0;
 constexpr double marker_dot_hit_radius = marker_dot_radius * 3.0;
-
-bool isHydraulicConnectionNode(InfrastructureEntity entity)
-{
-    return entity == InfrastructureEntity::Junction ||
-           entity == InfrastructureEntity::Reservoir ||
-           entity == InfrastructureEntity::Tank;
-}
 }
 
 MapCanvasMarkers::MapCanvasMarkers(MapModel *map_model, MapCanvasWidget *map_canvas,
@@ -89,7 +83,8 @@ std::optional<InfrastructureEntityReference> MapCanvasMarkers::nearestConnection
 
     for (const MapEntityMarker &marker : this->list_markers)
     {
-        if (marker.entity.uuid == excluded_uuid || !isHydraulicConnectionNode(marker.entity.type))
+        if (marker.entity.uuid == excluded_uuid ||
+            !InfrastructureEntityTraits::isHydraulicConnectionNode(marker.entity.type))
             continue;
 
         const QPointF point = markerAnchorPosition(marker);

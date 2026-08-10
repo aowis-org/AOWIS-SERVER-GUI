@@ -5,6 +5,7 @@
 #include "map_vector_document.h"
 
 #include "../geo_web_mercator.h"
+#include "../infrastructure_entity_traits.h"
 
 #include <QBrush>
 #include <QColor>
@@ -42,18 +43,6 @@ constexpr int static_cache_maximum_physical_dimension = 4096;
 constexpr qint64 static_cache_maximum_physical_area = 8LL * 1024LL * 1024LL;
 constexpr qreal static_cache_rebuild_edge = 256.0;
 constexpr qreal static_cache_item_padding = 16.0;
-
-bool isHydraulicConnectionNode(InfrastructureEntity entity)
-{
-    return entity == InfrastructureEntity::Junction ||
-           entity == InfrastructureEntity::Reservoir ||
-           entity == InfrastructureEntity::Tank;
-}
-
-bool isHydraulicDeviceLink(InfrastructureEntity entity)
-{
-    return entity == InfrastructureEntity::Pump || entity == InfrastructureEntity::Valve;
-}
 
 bool isFiniteCoordinate(const CoordinateWGS84 &coordinate)
 {
@@ -444,7 +433,7 @@ std::shared_ptr<MapEditorRenderer::StaticGeometry> MapEditorRenderer::buildStati
         if (static_link.world_vertices.size() < 2)
             continue;
 
-        if (isHydraulicDeviceLink(link.entity_type))
+        if (InfrastructureEntityTraits::isHydraulicDeviceLink(link.entity_type))
         {
             if (link.vertices_wgs84.size() > 2 && static_link.world_vertices.size() > 1)
             {
@@ -732,7 +721,7 @@ MapEditorRenderer::StaticRenderResult MapEditorRenderer::renderStaticCache(
 
         qreal padding_x = static_cache_item_padding;
         qreal padding_y = static_cache_item_padding;
-        if (isHydraulicDeviceLink(link.entity_type))
+        if (InfrastructureEntityTraits::isHydraulicDeviceLink(link.entity_type))
         {
             const QImage image = request.entity_images.value(int(link.entity_type));
             padding_x = qMax(padding_x, image.width() / 2.0 + static_cache_item_padding);
@@ -761,7 +750,7 @@ MapEditorRenderer::StaticRenderResult MapEditorRenderer::renderStaticCache(
         {
             if (link.entity_type == InfrastructureEntity::Pipe)
                 band_contents[band_index].pipe_indices.push_back(link_index);
-            else if (isHydraulicDeviceLink(link.entity_type))
+            else if (InfrastructureEntityTraits::isHydraulicDeviceLink(link.entity_type))
                 band_contents[band_index].device_indices.push_back(link_index);
         }
     }
@@ -1135,7 +1124,7 @@ QPainterPath MapEditorRenderer::moveStaticVisibleClipPath(
             QPainterPath link_path;
             QPointF point = screenFromReferenceWorld(link.world_vertices.first());
             link_path.moveTo(point);
-            if (isHydraulicDeviceLink(link.entity_type))
+            if (InfrastructureEntityTraits::isHydraulicDeviceLink(link.entity_type))
             {
                 link_path.lineTo(screenFromReferenceWorld(link.device_center_world_position));
                 link_path.lineTo(screenFromReferenceWorld(link.world_vertices.last()));
@@ -1154,7 +1143,7 @@ QPainterPath MapEditorRenderer::moveStaticVisibleClipPath(
             clear_path.addPath(line_stroker.createStroke(link_path));
         }
 
-        if (isHydraulicDeviceLink(link.entity_type))
+        if (InfrastructureEntityTraits::isHydraulicDeviceLink(link.entity_type))
         {
             const QPointF center_point = screenFromReferenceWorld(
                 link.device_center_world_position);
@@ -1166,7 +1155,7 @@ QPainterPath MapEditorRenderer::moveStaticVisibleClipPath(
 
     for (const MapEditorDynamicMarkerVisualState &dynamic_marker : visual_state.move.markers)
     {
-        if (!isHydraulicConnectionNode(dynamic_marker.entity))
+        if (!InfrastructureEntityTraits::isHydraulicConnectionNode(dynamic_marker.entity))
             continue;
         const auto node_iterator =
             this->static_geometry->node_indices_by_uuid.constFind(dynamic_marker.uuid);
@@ -1445,8 +1434,7 @@ void MapEditorRenderer::paintDirectNetwork(
 {
     QHash<QUuid, const NetworkRenderNode *> nodes_by_uuid;
     const bool needs_node_lookup = visual_state.placement.creating &&
-        (visual_state.placement.entity == InfrastructureEntity::Pipe ||
-         isHydraulicDeviceLink(visual_state.placement.entity));
+        InfrastructureEntityTraits::isHydraulicNetworkLink(visual_state.placement.entity);
     if (needs_node_lookup)
     {
         nodes_by_uuid.reserve(network_snapshot.nodes.size());
@@ -1473,8 +1461,7 @@ void MapEditorRenderer::paintInteractiveNetwork(
 
     QHash<QUuid, const NetworkRenderNode *> nodes_by_uuid;
     const bool needs_node_lookup = visual_state.placement.creating &&
-        (visual_state.placement.entity == InfrastructureEntity::Pipe ||
-         isHydraulicDeviceLink(visual_state.placement.entity));
+        InfrastructureEntityTraits::isHydraulicNetworkLink(visual_state.placement.entity);
     if (needs_node_lookup)
     {
         nodes_by_uuid.reserve(network_snapshot.nodes.size());
@@ -1528,7 +1515,8 @@ void MapEditorRenderer::paintMovingNetwork(
             continue;
         }
 
-        if (!isHydraulicDeviceLink(link.entity) || link.vertices_wgs84.size() < 3)
+        if (!InfrastructureEntityTraits::isHydraulicDeviceLink(link.entity) ||
+            link.vertices_wgs84.size() < 3)
             continue;
 
         const bool selected = visual_state.selected_marker_uuids.contains(link.uuid);
@@ -1558,7 +1546,7 @@ void MapEditorRenderer::paintMovingNetwork(
     painter.setPen(Qt::NoPen);
     for (const MapEditorDynamicMarkerVisualState &marker : visual_state.move.markers)
     {
-        if (!isHydraulicConnectionNode(marker.entity))
+        if (!InfrastructureEntityTraits::isHydraulicConnectionNode(marker.entity))
             continue;
         const QPointF point = screenFromWgs84(
             marker.coordinate_wgs84, visual_state.wrap_reference_longitude);
@@ -1647,7 +1635,8 @@ void MapEditorRenderer::paintSelectedMarkersAndDeviceLinks(
             continue;
 
         const StaticLink &link = this->static_geometry->links.at(link_iterator.value());
-        if (!isHydraulicDeviceLink(link.entity_type) || link.world_vertices.size() < 2)
+        if (!InfrastructureEntityTraits::isHydraulicDeviceLink(link.entity_type) ||
+            link.world_vertices.size() < 2)
             continue;
 
         const QPointF start_point = screenFromReferenceWorld(link.world_vertices.first());
@@ -1765,7 +1754,7 @@ void MapEditorRenderer::paintDeviceLinkPlacement(
     const QHash<QUuid, const NetworkRenderNode *> &nodes_by_uuid)
 {
     if (!visual_state.placement.creating ||
-        !isHydraulicDeviceLink(visual_state.placement.entity) ||
+        !InfrastructureEntityTraits::isHydraulicDeviceLink(visual_state.placement.entity) ||
         visual_state.placement.device_link_start_node_uuid.isNull())
     {
         return;
@@ -1894,7 +1883,7 @@ void MapEditorRenderer::paintDeviceLinks(
 
     for (const NetworkRenderLink &link : network_snapshot.links)
     {
-        if (!isHydraulicDeviceLink(link.entity_type) ||
+        if (!InfrastructureEntityTraits::isHydraulicDeviceLink(link.entity_type) ||
             link.vertices_wgs84.size() < 2)
         {
             continue;
@@ -1918,7 +1907,7 @@ void MapEditorRenderer::paintDeviceLinks(
     }
 
     if (visual_state.placement.creating &&
-        isHydraulicDeviceLink(visual_state.placement.entity) &&
+        InfrastructureEntityTraits::isHydraulicDeviceLink(visual_state.placement.entity) &&
         !visual_state.placement.device_link_start_node_uuid.isNull())
     {
         const NetworkRenderNode *start_node = nodeByUuid(
@@ -1951,7 +1940,7 @@ void MapEditorRenderer::paintDeviceLinks(
 
     for (const NetworkRenderLink &link : network_snapshot.links)
     {
-        if (!isHydraulicDeviceLink(link.entity_type) ||
+        if (!InfrastructureEntityTraits::isHydraulicDeviceLink(link.entity_type) ||
             link.vertices_wgs84.size() < 2)
         {
             continue;
@@ -2044,7 +2033,7 @@ void MapEditorRenderer::paintPlacement(
         visual_state.placement.entity);
     const QPointF mouse_position = visual_state.placement.mouse_position;
 
-    if (isHydraulicDeviceLink(visual_state.placement.entity) &&
+    if (InfrastructureEntityTraits::isHydraulicDeviceLink(visual_state.placement.entity) &&
         !visual_state.placement.device_link_start_node_uuid.isNull())
     {
         const NetworkRenderNode *start_node = nodeByUuid(

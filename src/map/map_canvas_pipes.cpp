@@ -2,6 +2,7 @@
 #include "map_canvas_widget.h"
 
 #include "../geo_web_mercator.h"
+#include "../infrastructure_entity_traits.h"
 
 #include <QAction>
 #include <QHash>
@@ -14,13 +15,6 @@ namespace
 {
 constexpr double link_hit_distance = 7.0;
 constexpr double pipe_vertex_hit_distance = 9.0;
-
-bool isHydraulicConnectionNode(InfrastructureEntity entity)
-{
-    return entity == InfrastructureEntity::Junction ||
-           entity == InfrastructureEntity::Reservoir ||
-           entity == InfrastructureEntity::Tank;
-}
 
 QPointF nearestPointOnSegment(const QPointF &point,
                               const QPointF &segment_start,
@@ -126,7 +120,8 @@ bool MapCanvasPipes::addPipe(const InfrastructureEntityReference &pipe_reference
 {
     if (start_node.uuid.isNull() || end_node.uuid.isNull() || start_node.uuid == end_node.uuid ||
         pipe_reference.type != InfrastructureEntity::Pipe || pipe_reference.uuid.isNull() ||
-        !isHydraulicConnectionNode(start_node.type) || !isHydraulicConnectionNode(end_node.type))
+        !InfrastructureEntityTraits::isHydraulicConnectionNode(start_node.type) ||
+        !InfrastructureEntityTraits::isHydraulicConnectionNode(end_node.type))
     {
         return false;
     }

@@ -2,19 +2,13 @@
 #include "map_canvas_widget.h"
 
 #include "../geo_web_mercator.h"
+#include "../infrastructure_entity_traits.h"
 
 #include <algorithm>
 
 namespace
 {
 constexpr double link_hit_distance = 7.0;
-
-bool isHydraulicConnectionNode(InfrastructureEntity entity)
-{
-    return entity == InfrastructureEntity::Junction ||
-           entity == InfrastructureEntity::Reservoir ||
-           entity == InfrastructureEntity::Tank;
-}
 
 QPointF nearestPointOnSegment(const QPointF &point,
                               const QPointF &segment_start,
@@ -97,9 +91,9 @@ bool MapCanvasDeviceLinks::addDeviceLink(const InfrastructureEntityReference &en
 {
     if (geometry.start_node.uuid.isNull() || geometry.end_node.uuid.isNull() ||
         geometry.start_node.uuid == geometry.end_node.uuid || entity.uuid.isNull() ||
-        !isHydraulicConnectionNode(geometry.start_node.type) ||
-        !isHydraulicConnectionNode(geometry.end_node.type) ||
-        (entity.type != InfrastructureEntity::Pump && entity.type != InfrastructureEntity::Valve))
+        !InfrastructureEntityTraits::isHydraulicConnectionNode(geometry.start_node.type) ||
+        !InfrastructureEntityTraits::isHydraulicConnectionNode(geometry.end_node.type) ||
+        !InfrastructureEntityTraits::isHydraulicDeviceLink(entity.type))
     {
         return false;
     }
@@ -126,7 +120,8 @@ MapCanvasDeviceLinks::AnchorResult MapCanvasDeviceLinks::anchor(
     AnchorResult result;
     const std::optional<MapEntityMarker> target_marker = pointMarkerByUuid(
         connection_target_uuid, markers);
-    if (!target_marker.has_value() || !isHydraulicConnectionNode(target_marker->entity.type))
+    if (!target_marker.has_value() ||
+        !InfrastructureEntityTraits::isHydraulicConnectionNode(target_marker->entity.type))
         return result;
 
     if (this->device_link_start_uuid.isNull())
@@ -165,8 +160,8 @@ std::optional<DeviceLinkGeometry> MapCanvasDeviceLinks::completionGeometry(
     const std::optional<MapEntityMarker> end_marker = pointMarkerByUuid(
         connection_target_uuid, markers);
     if (!start_marker.has_value() || !end_marker.has_value() ||
-        !isHydraulicConnectionNode(start_marker->entity.type) ||
-        !isHydraulicConnectionNode(end_marker->entity.type))
+        !InfrastructureEntityTraits::isHydraulicConnectionNode(start_marker->entity.type) ||
+        !InfrastructureEntityTraits::isHydraulicConnectionNode(end_marker->entity.type))
     {
         return std::nullopt;
     }
