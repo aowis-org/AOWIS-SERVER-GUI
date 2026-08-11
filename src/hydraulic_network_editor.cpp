@@ -961,6 +961,68 @@ bool HydraulicNetworkEditor::setPumpEnergyPriceInput(
     return true;
 }
 
+bool HydraulicNetworkEditor::setValveType(const QUuid &uuid, HydraulicLinkValveType type)
+{
+    HydraulicLinkValve *valve = entityByUuid(this->network.links_valves, uuid);
+    if (valve == nullptr)
+        return false;
+
+    valve->type = type;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setValveSetting(const QUuid &uuid, double setting)
+{
+    HydraulicLinkValve *valve = entityByUuid(this->network.links_valves, uuid);
+    if (valve == nullptr)
+        return false;
+
+    valve->setting = setting;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setValveSettingCurveUuid(
+    const QUuid &uuid, const QUuid &setting_curve_uuid)
+{
+    HydraulicLinkValve *valve = entityByUuid(this->network.links_valves, uuid);
+    if (valve == nullptr)
+        return false;
+
+    valve->setting_curve_uuid = setting_curve_uuid;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setValveInitialStatus(
+    const QUuid &uuid, HydraulicLinkValveInitialStatus initial_status)
+{
+    HydraulicLinkValve *valve = entityByUuid(this->network.links_valves, uuid);
+    if (valve == nullptr)
+        return false;
+
+    valve->initial_status = initial_status;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setValveDiameterMm(const QUuid &uuid, double diameter_mm)
+{
+    HydraulicLinkValve *valve = entityByUuid(this->network.links_valves, uuid);
+    if (valve == nullptr)
+        return false;
+
+    valve->diameter_mm = diameter_mm;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setValveMinorLoss(const QUuid &uuid, double minor_loss)
+{
+    HydraulicLinkValve *valve = entityByUuid(this->network.links_valves, uuid);
+    if (valve == nullptr)
+        return false;
+
+    valve->minor_loss = minor_loss;
+    return true;
+}
+
 bool HydraulicNetworkEditor::setPipeVertexCoordinate(const QUuid &pipe_uuid, int vertex_index,
                                                        const CoordinateWGS84 &coordinate)
 {

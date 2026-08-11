@@ -2033,6 +2033,44 @@ bool HydraulicData::setPumpEnergyPriceInput(
                   uuid, input_type, price_pattern_uuid));
 }
 
+bool HydraulicData::setValveType(const QUuid &uuid, HydraulicLinkValveType type)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setValveType(uuid, type));
+}
+
+bool HydraulicData::setValveSetting(const QUuid &uuid, double setting)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setValveSetting(uuid, setting));
+}
+
+bool HydraulicData::setValveSettingCurveUuid(
+    const QUuid &uuid, const QUuid &setting_curve_uuid)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setValveSettingCurveUuid(uuid, setting_curve_uuid));
+}
+
+bool HydraulicData::setValveInitialStatus(
+    const QUuid &uuid, HydraulicLinkValveInitialStatus initial_status)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setValveInitialStatus(uuid, initial_status));
+}
+
+bool HydraulicData::setValveDiameterMm(const QUuid &uuid, double diameter_mm)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setValveDiameterMm(uuid, diameter_mm));
+}
+
+bool HydraulicData::setValveMinorLoss(const QUuid &uuid, double minor_loss)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setValveMinorLoss(uuid, minor_loss));
+}
+
 bool HydraulicData::setPipeVertexCoordinate(const QUuid &pipe_uuid, int vertex_index,
                                             const CoordinateWGS84 &coordinate)
 {

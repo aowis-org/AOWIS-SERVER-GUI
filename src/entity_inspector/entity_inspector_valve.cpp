@@ -1,12 +1,28 @@
 #include "entity_inspector_valve.h"
 
+#include <optional>
+
+#include <QSignalBlocker>
+
+namespace
+{
+constexpr int uuid_role = Qt::UserRole + 1;
+
+QString entityName(const QString &id, const QUuid &uuid)
+{
+    return id.isEmpty() ? uuid.toString(QUuid::WithoutBraces) : id;
+}
+}
+
 EntityInspectorValve::EntityInspectorValve(HydraulicData *hydraulic_data, const HydraulicLinkValve &valve, QWidget *parent)
-    : EntityInspectorWidget(hydraulic_data, parent)
+    : EntityInspectorWidget(hydraulic_data, parent),
+      hydraulic_data(hydraulic_data),
+      valve_uuid(valve.uuid)
 {
     addGroupOverviewImage(":/icon/valve.png", valve.id);
 
     addGroupGeneral(QString());
-    bindHydraulicLink(InfrastructureEntity::Valve, valve.uuid, "Valve");
+    bindHydraulicLink(InfrastructureEntity::Valve, this->valve_uuid, "Valve");
 
     addGroupEndpoints();
     addGroupValveConfiguration();
@@ -14,6 +30,8 @@ EntityInspectorValve::EntityInspectorValve(HydraulicData *hydraulic_data, const 
     addGroupHistory();
     
     addStretches();
+
+    bindValve();
 }
 
 void EntityInspectorValve::addGroupValveConfiguration()
@@ -65,9 +83,12 @@ void EntityInspectorValve::addGroupValveConfiguration()
     
     QLabel *label_status_initial = new QLabel("Initial Status");
     this->combo_status_initial = new QComboBox();
-    this->combo_status_initial->addItem("Active");
-    this->combo_status_initial->addItem("Open");
-    this->combo_status_initial->addItem("Closed");
+    this->combo_status_initial->addItem(
+        "Active", static_cast<int>(HydraulicLinkValveInitialStatus::Active));
+    this->combo_status_initial->addItem(
+        "Open", static_cast<int>(HydraulicLinkValveInitialStatus::Open));
+    this->combo_status_initial->addItem(
+        "Closed", static_cast<int>(HydraulicLinkValveInitialStatus::Closed));
     
     QLabel *label_diameter = new QLabel("Diameter");
     this->spin_diameter = new QDoubleSpinBox();
@@ -101,31 +122,124 @@ void EntityInspectorValve::addGroupValveConfiguration()
     grid->addWidget(label_loss_coeff, 5, 0);
     grid->addWidget(this->spin_loss_coeff, 5, 1);
     
-    connect(
-        this->combo_valve_type,
-        QOverload<int>::of(&QComboBox::currentIndexChanged),
-        this,
-        [this](int index)
-        {
-            const QVariant data = this->combo_valve_type->itemData(index);
-            
-            if (!data.isValid()) {
-                return;
-            }
-            
-            const HydraulicLinkValveType type = static_cast<HydraulicLinkValveType>(data.toInt());
-            onValveTypeChanged(type);
-        }
-    );
-    
-    onValveTypeChanged(
-        static_cast<HydraulicLinkValveType>(
-            this->combo_valve_type->currentData().toInt()
-            )
-    );
-    
-    this->layoutConfiguration()->addWidget(group);
+    layoutConfiguration()->addWidget(group);
 }
+
+void EntityInspectorValve::bindValve()
+{
+    connect(this->combo_valve_type, &QComboBox::currentIndexChanged, this, [this](int)
+    {
+        const HydraulicLinkValveType type = static_cast<HydraulicLinkValveType>(
+            this->combo_valve_type->currentData().toInt());
+        onValveTypeChanged(type);
+        this->hydraulic_data->setValveType(this->valve_uuid, type);
+    });
+    connect(this->spin_setting, &QDoubleSpinBox::valueChanged, this, [this](double setting)
+    {
+        this->hydraulic_data->setValveSetting(this->valve_uuid, setting);
+    });
+    connect(this->combo_setting_curve, &QComboBox::currentIndexChanged, this, [this](int)
+    {
+        this->hydraulic_data->setValveSettingCurveUuid(
+            this->valve_uuid, this->combo_setting_curve->currentData(uuid_role).toUuid());
+    });
+    connect(this->combo_status_initial, &QComboBox::currentIndexChanged, this, [this](int)
+    {
+        const HydraulicLinkValveInitialStatus initial_status =
+            static_cast<HydraulicLinkValveInitialStatus>(
+                this->combo_status_initial->currentData().toInt());
+        this->hydraulic_data->setValveInitialStatus(this->valve_uuid, initial_status);
+    });
+    connect(this->spin_diameter, &QDoubleSpinBox::valueChanged, this, [this](double diameter_mm)
+    {
+        this->hydraulic_data->setValveDiameterMm(this->valve_uuid, diameter_mm);
+    });
+    connect(this->spin_loss_coeff, &QDoubleSpinBox::valueChanged, this, [this](double minor_loss)
+    {
+        this->hydraulic_data->setValveMinorLoss(this->valve_uuid, minor_loss);
+    });
+
+    connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
+            [this](InfrastructureEntity entity_type, const QUuid &uuid)
+    {
+        if (entity_type == InfrastructureEntity::Valve && uuid == this->valve_uuid)
+            refreshValve();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
+            this, &EntityInspectorValve::refreshValve);
+
+    refreshValve();
+}
+
+void EntityInspectorValve::refreshValve()
+{
+    if (this->hydraulic_data == nullptr || this->valve_uuid.isNull())
+        return;
+
+    const std::optional<HydraulicLinkValve> valve =
+        this->hydraulic_data->valve(this->valve_uuid);
+    if (!valve.has_value())
+        return;
+
+    const QSignalBlocker type_blocker(this->combo_valve_type);
+    const QSignalBlocker setting_blocker(this->spin_setting);
+    const QSignalBlocker curve_blocker(this->combo_setting_curve);
+    const QSignalBlocker status_blocker(this->combo_status_initial);
+    const QSignalBlocker diameter_blocker(this->spin_diameter);
+    const QSignalBlocker loss_blocker(this->spin_loss_coeff);
+
+    const int type_index = this->combo_valve_type->findData(static_cast<int>(valve->type));
+    this->combo_valve_type->setCurrentIndex(type_index >= 0 ? type_index : 0);
+    onValveTypeChanged(valve->type);
+    this->spin_setting->setValue(valve->setting);
+    populateSettingCurveCombo(valve->setting_curve_uuid);
+
+    const int status_index =
+        this->combo_status_initial->findData(static_cast<int>(valve->initial_status));
+    this->combo_status_initial->setCurrentIndex(status_index >= 0 ? status_index : 0);
+    this->spin_diameter->setValue(valve->diameter_mm);
+    this->spin_loss_coeff->setValue(valve->minor_loss);
+}
+
+void EntityInspectorValve::populateSettingCurveCombo(const QUuid &curve_uuid)
+{
+    this->combo_setting_curve->clear();
+    this->combo_setting_curve->addItem("Select curve...");
+    this->combo_setting_curve->setItemData(0, QUuid(), uuid_role);
+
+    bool selected_curve_exists = curve_uuid.isNull();
+    const QList<HydraulicCurveValveHeadloss> &curves =
+        this->hydraulic_data->networkHydraulic().curves_valve_headloss;
+    for (const HydraulicCurveValveHeadloss &curve : curves)
+    {
+        this->combo_setting_curve->addItem(entityName(curve.id, curve.uuid));
+        this->combo_setting_curve->setItemData(
+            this->combo_setting_curve->count() - 1, curve.uuid, uuid_role);
+        if (curve.uuid == curve_uuid)
+            selected_curve_exists = true;
+    }
+
+    if (!curve_uuid.isNull() && !selected_curve_exists)
+    {
+        this->combo_setting_curve->addItem(
+            QStringLiteral("[Missing Curve] %1").arg(
+                curve_uuid.toString(QUuid::WithoutBraces)));
+        this->combo_setting_curve->setItemData(
+            this->combo_setting_curve->count() - 1, curve_uuid, uuid_role);
+    }
+
+    int selected_index = 0;
+    for (int index = 0; index < this->combo_setting_curve->count(); index++)
+    {
+        if (this->combo_setting_curve->itemData(index, uuid_role).toUuid() == curve_uuid)
+        {
+            selected_index = index;
+            break;
+        }
+    }
+    this->combo_setting_curve->setCurrentIndex(selected_index);
+}
+
 void EntityInspectorValve::onValveTypeChanged(HydraulicLinkValveType type)
 {
     this->spin_setting->show();
@@ -208,5 +322,3 @@ void EntityInspectorValve::onValveTypeChanged(HydraulicLinkValveType type)
         break;
     }
 }
-
-

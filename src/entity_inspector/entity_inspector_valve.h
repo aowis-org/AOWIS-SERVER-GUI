@@ -14,6 +14,7 @@
 #include <QDoubleSpinBox>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QUuid>
 
 #include "entity_inspector_widget.h"
 
@@ -31,9 +32,15 @@ public:
     explicit EntityInspectorValve(HydraulicData *hydraulic_data, const HydraulicLinkValve &valve, QWidget *parent = nullptr);
 
 private:
-    QLabel *picture = nullptr;
-    
     void addGroupValveConfiguration();
+    void bindValve();
+    void refreshValve();
+    void populateSettingCurveCombo(const QUuid &curve_uuid);
+    void onValveTypeChanged(HydraulicLinkValveType type);
+
+    HydraulicData *hydraulic_data = nullptr;
+    QUuid valve_uuid;
+
     QComboBox *combo_valve_type = nullptr;
     QLabel *label_setting = nullptr;
     QDoubleSpinBox *spin_setting = nullptr;
@@ -42,10 +49,6 @@ private:
     QComboBox *combo_status_initial = nullptr;
     QDoubleSpinBox *spin_diameter = nullptr;
     QDoubleSpinBox *spin_loss_coeff = nullptr;
-    void onValveTypeChanged(HydraulicLinkValveType type);
-    
-
-signals:
 };
 
 #endif // ENTITY_INSPECTOR_VALVE_H

@@ -145,6 +145,14 @@ public:
                                  HydraulicLinkPumpEnergyPriceInputType input_type,
                                  const QUuid &price_pattern_uuid);
 
+    bool setValveType(const QUuid &uuid, HydraulicLinkValveType type);
+    bool setValveSetting(const QUuid &uuid, double setting);
+    bool setValveSettingCurveUuid(const QUuid &uuid, const QUuid &setting_curve_uuid);
+    bool setValveInitialStatus(const QUuid &uuid,
+                               HydraulicLinkValveInitialStatus initial_status);
+    bool setValveDiameterMm(const QUuid &uuid, double diameter_mm);
+    bool setValveMinorLoss(const QUuid &uuid, double minor_loss);
+
     bool setPipeVertexCoordinate(const QUuid &pipe_uuid, int vertex_index,
                                  const CoordinateWGS84 &coordinate);
     bool setPipeVertices(const QUuid &pipe_uuid,
