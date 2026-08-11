@@ -4,6 +4,9 @@
     const SHARED_RENDERER = window.aowisBrowserVector;
     if (!SHARED_RENDERER)
         throw new Error("AOWIS browser network requires aowis-browser-vector.js");
+    const WEBGL_RENDERER = window.aowisBrowserNetworkWebGl;
+    if (!WEBGL_RENDERER)
+        throw new Error("AOWIS browser network requires aowis-browser-network-webgl.js");
 
     const TILE_SIZE = 256;
     const REFERENCE_ZOOM = SHARED_RENDERER.REFERENCE_ZOOM;
@@ -20,13 +23,10 @@
         "#90d743",
         "#fde725"
     ];
-    const NETWORK_IMAGE_PADDING = 64;
     const NETWORK_STATIC_MAX_PIXEL_RATIO = 1.5;
-    const NETWORK_IMAGE_OVERSCAN_FACTOR = 3;
-    const NETWORK_IMAGE_MAX_DIMENSION = 4096;
-    const NETWORK_IMAGE_MAX_AREA = 8 * 1024 * 1024;
-    const NETWORK_IMAGE_REBUILD_EDGE = 256;
     const HEATMAP_OVERSCAN_FACTOR = 1.5;
+    const HEATMAP_DISPLAY_MAX_DIMENSION = 4096;
+    const HEATMAP_DISPLAY_MAX_AREA = 8 * 1024 * 1024;
     const HEATMAP_RASTER_SCALE = 0.5;
     const HEATMAP_WEBGL_MAX_PIXEL_RATIO = 0.5;
     const HEATMAP_WEBGL_MIN_PIXEL_RATIO = 0.0625;
@@ -73,25 +73,21 @@
             hitShape: "ellipse"
         }]
     ]);
+    const ICON_ATLAS_SLOTS = new Map(
+        Array.from(ICON_DEFINITIONS.keys(), (entityType, index) => [entityType, index]));
 
     const state = {
         layer: null,
-        networkImage: null,
-        networkImageObjectUrl: null,
-        networkImageZoom: null,
-        networkImageOriginX: 0,
-        networkImageOriginY: 0,
-        networkImageStyleRevision: 0,
-        pendingNetworkImage: null,
-        pendingNetworkImageObjectUrl: null,
-        pendingNetworkImageZoom: null,
-        pendingNetworkImageStyleRevision: 0,
-        networkImageGeneration: 0,
-        networkStyleRevision: 1,
-        networkSvgCacheRevision: 0,
-        networkSvgLinkPaths: [],
-        networkSvgJunctionPaths: [],
-        networkSvgIcons: [],
+        networkCanvas: null,
+        networkRenderer: null,
+        networkRenderFrameRequest: 0,
+        networkGeometryRevision: 1,
+        networkRendererGeometryRevision: 0,
+        networkRendererColorRevision: 0,
+        networkRendererIconRevision: 0,
+        networkIconRevision: 1,
+        networkWebGlUnavailable: false,
+        networkColorRevision: 1,
         selectionCanvas: null,
         selectionRenderPending: false,
         selectedRenderId: 0,
@@ -106,12 +102,9 @@
         geometryMaximumX: 0,
         geometryMaximumY: 0,
         iconImages: new Map(),
-        iconSvgTexts: new Map(),
-        coloredIconSvgDataUrls: new Map(),
+        iconLoadGeneration: 0,
         tintedIconCache: new Map(),
         geometryReady: false,
-        width: 0,
-        height: 0,
         lastMapView: null,
         markers: [],
         deviceSegments: [],
@@ -320,14 +313,6 @@
         return rawPixelX + Math.round((referencePixelX - rawPixelX) / size) * size;
     }
 
-    function formatted(value) {
-        return String(Math.round(value * 1000) / 1000);
-    }
-
-    function formattedScale(value) {
-        return value.toFixed(15).replace(/0+$/, "").replace(/\.$/, "");
-    }
-
     function hexadecimalByte(value) {
         return Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, "0");
     }
@@ -408,304 +393,260 @@
         return Math.max(1, window.devicePixelRatio || 1);
     }
 
-    function snapToPhysicalPixel(value) {
-        const ratio = devicePixelRatio();
-        return Math.round(value * ratio) / ratio;
-    }
-
     function vectorRenderer() {
         return SHARED_RENDERER;
     }
 
-    function revokeObjectUrl(objectUrl) {
-        if (objectUrl)
-            URL.revokeObjectURL(objectUrl);
+    const WEBGL_COLOR_COMPONENTS = new Map();
+
+    function webGlColorComponents(color) {
+        let components = WEBGL_COLOR_COMPONENTS.get(color);
+        if (components)
+            return components;
+
+        const value = typeof color === "string" ? color : NETWORK_COLOR;
+        if (/^#[0-9a-f]{6}$/i.test(value)) {
+            components = [
+                Number.parseInt(value.slice(1, 3), 16) / 255,
+                Number.parseInt(value.slice(3, 5), 16) / 255,
+                Number.parseInt(value.slice(5, 7), 16) / 255
+            ];
+        } else {
+            components = [0, 0, 0];
+        }
+        WEBGL_COLOR_COMPONENTS.set(color, components);
+        return components;
     }
 
-    function clearPendingNetworkImage() {
-        ++state.networkImageGeneration;
-        if (state.pendingNetworkImage)
-            state.pendingNetworkImage.remove();
-        revokeObjectUrl(state.pendingNetworkImageObjectUrl);
-        state.pendingNetworkImage = null;
-        state.pendingNetworkImageObjectUrl = null;
-        state.pendingNetworkImageZoom = null;
-        state.pendingNetworkImageStyleRevision = 0;
+    function writeWebGlColor(data, offset, color) {
+        const components = webGlColorComponents(color);
+        data[offset] = components[0];
+        data[offset + 1] = components[1];
+        data[offset + 2] = components[2];
     }
 
-    function clearRenderedNetworkImage() {
-        if (state.networkImage)
-            state.networkImage.remove();
-        revokeObjectUrl(state.networkImageObjectUrl);
-        state.networkImage = null;
-        state.networkImageObjectUrl = null;
-        state.networkImageZoom = null;
-        state.networkImageOriginX = 0;
-        state.networkImageOriginY = 0;
-        state.networkImageStyleRevision = 0;
-    }
-
-    function resetNetworkImage(clearRendered) {
-        clearPendingNetworkImage();
-        if (clearRendered)
-            clearRenderedNetworkImage();
-        state.networkSvgCacheRevision = 0;
-        state.networkSvgLinkPaths = [];
-        state.networkSvgJunctionPaths = [];
-        state.networkSvgIcons = [];
-    }
-
-    function invalidateNetworkCache() {
-        ++state.networkStyleRevision;
-        state.networkSvgCacheRevision = 0;
-        state.tintedIconCache.clear();
-        if (state.lastMapView)
-            requestNetworkImage(state.lastMapView.zoom);
-    }
-
-    function utf8Base64(text) {
-        const bytes = new TextEncoder().encode(text);
-        const chunkSize = 0x8000;
-        let binary = "";
-        for (let offset = 0; offset < bytes.length; offset += chunkSize)
-            binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
-        return window.btoa(binary);
-    }
-
-    function coloredIconSvgDataUrl(entityType, color) {
-        const source = state.iconSvgTexts.get(entityType);
-        if (!source)
-            return null;
-
-        const key = `${entityType}:${color}`;
-        let dataUrl = state.coloredIconSvgDataUrls.get(key);
-        if (dataUrl)
-            return dataUrl;
-
-        const colored = source.replace(/#000000/gi, color);
-        dataUrl = `data:image/svg+xml;base64,${utf8Base64(colored)}`;
-        state.coloredIconSvgDataUrls.set(key, dataUrl);
-        return dataUrl;
-    }
-
-    function escapeXmlAttribute(value) {
-        return String(value).replace(/&/g, "&amp;").replace(/"/g, "&quot;")
-            .replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    }
-
-    function buildNetworkSvgCache() {
-        if (state.networkSvgCacheRevision === state.networkStyleRevision)
-            return;
-
-        const linkCommandsByColor = new Map();
+    function buildNetworkRendererGeometry() {
+        const segmentCount = state.pipeSegments.length + state.deviceSegments.length;
+        const segments = new Float32Array(segmentCount * 4);
+        let segmentOffset = 0;
         const appendSegment = (segment) => {
-            const color = linkColor(segment.renderId);
-            let commands = linkCommandsByColor.get(color);
-            if (!commands) {
-                commands = [];
-                linkCommandsByColor.set(color, commands);
-            }
-            commands.push(
-                "M", formatted(segment.x1 - state.geometryMinimumX), " ",
-                formatted(segment.y1 - state.geometryMinimumY), "L",
-                formatted(segment.x2 - state.geometryMinimumX), " ",
-                formatted(segment.y2 - state.geometryMinimumY));
+            segments[segmentOffset++] = segment.x1 - state.geometryOriginX;
+            segments[segmentOffset++] = segment.y1 - state.geometryOriginY;
+            segments[segmentOffset++] = segment.x2 - state.geometryOriginX;
+            segments[segmentOffset++] = segment.y2 - state.geometryOriginY;
         };
         for (const segment of state.pipeSegments)
             appendSegment(segment);
         for (const segment of state.deviceSegments)
             appendSegment(segment);
 
-        const junctionCommandsByColor = new Map();
-        const icons = [];
+        let junctionCount = 0;
+        let iconCount = 0;
         for (const marker of state.markers) {
-            const color = markerColor(marker);
-            const localX = marker.x - state.geometryMinimumX;
-            const localY = marker.y - state.geometryMinimumY;
+            if (marker.entityType === ENTITY_JUNCTION)
+                ++junctionCount;
+            else if (ICON_DEFINITIONS.has(marker.entityType))
+                ++iconCount;
+        }
+
+        const junctions = new Float32Array(junctionCount * 2);
+        const icons = new Float32Array(iconCount * 5);
+        let junctionOffset = 0;
+        let iconOffset = 0;
+        for (const marker of state.markers) {
+            const localX = marker.x - state.geometryOriginX;
+            const localY = marker.y - state.geometryOriginY;
             if (marker.entityType === ENTITY_JUNCTION) {
-                let commands = junctionCommandsByColor.get(color);
-                if (!commands) {
-                    commands = [];
-                    junctionCommandsByColor.set(color, commands);
-                }
-                commands.push("M", formatted(localX), " ", formatted(localY), "l0.001 0");
+                junctions[junctionOffset++] = localX;
+                junctions[junctionOffset++] = localY;
                 continue;
             }
-            icons.push({
-                entityType: marker.entityType,
-                x: localX,
-                y: localY,
-                color: color
-            });
+
+            const definition = ICON_DEFINITIONS.get(marker.entityType);
+            const slot = ICON_ATLAS_SLOTS.get(marker.entityType);
+            if (!definition || slot === undefined)
+                continue;
+            const maximumDimension = Math.max(
+                definition.viewWidth, definition.viewHeight);
+            icons[iconOffset++] = localX;
+            icons[iconOffset++] = localY;
+            icons[iconOffset++] = definition.viewWidth / maximumDimension;
+            icons[iconOffset++] = definition.viewHeight / maximumDimension;
+            icons[iconOffset++] = slot;
         }
 
-        state.networkSvgLinkPaths = Array.from(linkCommandsByColor, ([color, commands]) => ({
-            color: color,
-            data: commands.join("")
-        }));
-        state.networkSvgJunctionPaths = Array.from(junctionCommandsByColor, ([color, commands]) => ({
-            color: color,
-            data: commands.join("")
-        }));
-        state.networkSvgIcons = icons;
-        state.networkSvgCacheRevision = state.networkStyleRevision;
+        state.networkRenderer.setGeometry({
+            segments: segments,
+            junctions: junctions,
+            icons: icons
+        });
     }
 
-    function networkImageSpecification(zoom) {
-        buildNetworkSvgCache();
-        const scale = scaleForZoom(zoom);
-        const markerPadding = maximumMarkerSizeForZoom(zoom) / 2 + 4;
-        const padding = Math.max(NETWORK_IMAGE_PADDING, markerPadding, state.linkThicknessPixels + 4);
-        const worldWidth = Math.max(0, state.geometryMaximumX - state.geometryMinimumX);
-        const worldHeight = Math.max(0, state.geometryMaximumY - state.geometryMinimumY);
-        const width = Math.max(1, Math.ceil(worldWidth * scale + padding * 2));
-        const height = Math.max(1, Math.ceil(worldHeight * scale + padding * 2));
-        const parts = [
-            `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
-            `<g transform="translate(${formatted(padding)} ${formatted(padding)}) scale(${formattedScale(scale)})">`
-        ];
-
-        for (const path of state.networkSvgLinkPaths) {
-            parts.push(`<path fill="none" stroke="${path.color}" stroke-width="${state.linkThicknessPixels}" `
-                + `stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" d="${path.data}"/>`);
-        }
-
-        const junctionDiameter = junctionDotDiameterForZoom(zoom);
-        for (const path of state.networkSvgJunctionPaths) {
-            parts.push(`<path fill="none" stroke="${path.color}" stroke-width="${formatted(junctionDiameter)}" `
-                + `stroke-linecap="round" vector-effect="non-scaling-stroke" d="${path.data}"/>`);
-        }
-
-        for (const icon of state.networkSvgIcons) {
-            const definition = ICON_DEFINITIONS.get(icon.entityType);
-            if (!definition)
-                continue;
-            const dataUrl = coloredIconSvgDataUrl(icon.entityType, icon.color);
-            if (!dataUrl)
-                continue;
-            const bounds = markerScreenBounds(icon.entityType, zoom);
-            const localWidth = bounds.width / scale;
-            const localHeight = bounds.height / scale;
-            const x = icon.x - localWidth / 2;
-            const y = icon.y - localHeight / 2;
-            parts.push(`<image x="${formatted(x)}" y="${formatted(y)}" width="${formatted(localWidth)}" `
-                + `height="${formatted(localHeight)}" href="${escapeXmlAttribute(dataUrl)}"/>`);
-        }
-
-        parts.push("</g></svg>");
-        return {
-            svg: parts.join(""),
-            width: width,
-            height: height,
-            originX: state.geometryMinimumX - padding / scale,
-            originY: state.geometryMinimumY - padding / scale,
-            styleRevision: state.networkStyleRevision
+    function buildNetworkRendererColors() {
+        const segmentCount = state.pipeSegments.length + state.deviceSegments.length;
+        const segmentColors = new Float32Array(segmentCount * 3);
+        let segmentOffset = 0;
+        const appendSegmentColor = (segment) => {
+            writeWebGlColor(
+                segmentColors, segmentOffset, linkColor(segment.renderId));
+            segmentOffset += 3;
         };
-    }
+        for (const segment of state.pipeSegments)
+            appendSegmentColor(segment);
+        for (const segment of state.deviceSegments)
+            appendSegmentColor(segment);
 
-    function positionNetworkImage(mapView) {
-        if (!state.networkImage || state.networkImageZoom === null)
-            return;
-
-        const renderedScale = scaleForZoom(state.networkImageZoom);
-        const currentScale = scaleForZoom(mapView.zoom);
-        const zoomScale = currentScale / renderedScale;
-        const transform = worldTransform(mapView);
-        const left = snapToPhysicalPixel(
-            transform.translateX + (state.networkImageOriginX - state.geometryOriginX) * currentScale);
-        const top = snapToPhysicalPixel(
-            transform.translateY + (state.networkImageOriginY - state.geometryOriginY) * currentScale);
-        state.networkImage.style.display = shouldDisplayNetwork(mapView) ? "block" : "none";
-        state.networkImage.style.transform =
-            `translate3d(${left}px, ${top}px, 0) scale(${zoomScale})`;
-    }
-
-    function requestNetworkImage(zoom) {
-        if (!state.layer || !state.geometryReady)
-            return;
-        if (state.networkImage && state.networkImageZoom === zoom
-            && state.networkImageStyleRevision === state.networkStyleRevision) {
-            positionNetworkImage(state.lastMapView);
-            return;
-        }
-        if (state.pendingNetworkImage && state.pendingNetworkImageZoom === zoom
-            && state.pendingNetworkImageStyleRevision === state.networkStyleRevision) {
-            return;
+        let junctionCount = 0;
+        let iconCount = 0;
+        for (const marker of state.markers) {
+            if (marker.entityType === ENTITY_JUNCTION)
+                ++junctionCount;
+            else if (ICON_DEFINITIONS.has(marker.entityType))
+                ++iconCount;
         }
 
-        clearPendingNetworkImage();
-        const generation = state.networkImageGeneration;
-        const specification = networkImageSpecification(zoom);
-        const objectUrl = URL.createObjectURL(
-            new Blob([specification.svg], { type: "image/svg+xml" }));
-        const image = document.createElement("img");
-        image.setAttribute("aria-hidden", "true");
-        image.alt = "";
-        image.draggable = false;
-        image.decoding = "async";
-        image.style.position = "absolute";
-        image.style.left = "0";
-        image.style.top = "0";
-        image.style.width = `${specification.width}px`;
-        image.style.height = `${specification.height}px`;
-        image.style.display = "none";
-        image.style.pointerEvents = "none";
-        image.style.zIndex = "2";
-        image.style.transformOrigin = "0 0";
-        image.style.willChange = "transform";
-        image.style.backfaceVisibility = "hidden";
-
-        state.pendingNetworkImage = image;
-        state.pendingNetworkImageObjectUrl = objectUrl;
-        state.pendingNetworkImageZoom = zoom;
-        state.pendingNetworkImageStyleRevision = specification.styleRevision;
-
-        image.addEventListener("load", () => {
-            if (generation !== state.networkImageGeneration || state.pendingNetworkImage !== image) {
-                revokeObjectUrl(objectUrl);
-                return;
+        const junctionColors = new Float32Array(junctionCount * 3);
+        const iconColors = new Float32Array(iconCount * 3);
+        let junctionOffset = 0;
+        let iconOffset = 0;
+        for (const marker of state.markers) {
+            if (marker.entityType === ENTITY_JUNCTION) {
+                writeWebGlColor(
+                    junctionColors, junctionOffset, markerColor(marker));
+                junctionOffset += 3;
+            } else if (ICON_DEFINITIONS.has(marker.entityType)) {
+                writeWebGlColor(iconColors, iconOffset, markerColor(marker));
+                iconOffset += 3;
             }
-            if (specification.styleRevision !== state.networkStyleRevision) {
-                state.pendingNetworkImage = null;
-                state.pendingNetworkImageObjectUrl = null;
-                state.pendingNetworkImageZoom = null;
-                state.pendingNetworkImageStyleRevision = 0;
-                revokeObjectUrl(objectUrl);
-                requestNetworkImage(state.lastMapView ? state.lastMapView.zoom : zoom);
-                return;
-            }
+        }
 
-            clearRenderedNetworkImage();
-            state.pendingNetworkImage = null;
-            state.pendingNetworkImageObjectUrl = null;
-            state.pendingNetworkImageZoom = null;
-            state.pendingNetworkImageStyleRevision = 0;
-            state.networkImage = image;
-            state.networkImageObjectUrl = objectUrl;
-            state.networkImageZoom = zoom;
-            state.networkImageOriginX = specification.originX;
-            state.networkImageOriginY = specification.originY;
-            state.networkImageStyleRevision = specification.styleRevision;
-            state.layer.appendChild(image);
-            if (state.lastMapView) {
-                positionNetworkImage(state.lastMapView);
-                if (state.lastMapView.zoom !== zoom)
-                    requestNetworkImage(state.lastMapView.zoom);
-            }
-        }, { once: true });
+        state.networkRenderer.setColors({
+            segments: segmentColors,
+            junctions: junctionColors,
+            icons: iconColors
+        });
+    }
 
-        image.addEventListener("error", () => {
-            if (state.pendingNetworkImage === image) {
-                state.pendingNetworkImage = null;
-                state.pendingNetworkImageObjectUrl = null;
-                state.pendingNetworkImageZoom = null;
-                state.pendingNetworkImageStyleRevision = 0;
-            }
-            revokeObjectUrl(objectUrl);
-            console.error("Failed to load AOWIS monitor network SVG image");
-        }, { once: true });
+    function buildNetworkRendererIconAtlas() {
+        const icons = [];
+        for (const [entityType, slot] of ICON_ATLAS_SLOTS) {
+            const entry = state.iconImages.get(entityType);
+            if (entry && entry.loaded)
+                icons.push({ slot: slot, image: entry.image });
+        }
+        state.networkRenderer.setIconImages(icons);
+    }
 
-        image.src = objectUrl;
+    function disableNetworkRenderer(error) {
+        if (!state.networkWebGlUnavailable && error)
+            console.error("AOWIS WebGL2 network renderer failed:", error);
+        state.networkWebGlUnavailable = true;
+        if (state.networkRenderer)
+            state.networkRenderer.destroy();
+        state.networkRenderer = null;
+        if (state.networkCanvas)
+            state.networkCanvas.remove();
+        state.networkCanvas = null;
+        state.networkRendererGeometryRevision = 0;
+        state.networkRendererColorRevision = 0;
+        state.networkRendererIconRevision = 0;
+    }
+
+    function ensureNetworkRenderer() {
+        if (state.networkRenderer)
+            return true;
+        if (!state.layer || state.networkWebGlUnavailable)
+            return false;
+
+        const canvas = SHARED_RENDERER.createCanvas(2);
+        canvas.style.display = "none";
+        canvas.style.background = "transparent";
+        canvas.style.willChange = "contents";
+        state.layer.insertBefore(canvas, state.selectionCanvas || null);
+        const renderer = WEBGL_RENDERER.create(canvas, {
+            contextRestored: scheduleNetworkRender,
+            error: disableNetworkRenderer
+        });
+        if (!renderer) {
+            canvas.remove();
+            state.networkWebGlUnavailable = true;
+            return false;
+        }
+
+        state.networkCanvas = canvas;
+        state.networkRenderer = renderer;
+        state.networkRendererGeometryRevision = 0;
+        state.networkRendererColorRevision = 0;
+        state.networkRendererIconRevision = 0;
+        return true;
+    }
+
+    function synchronizeNetworkRenderer() {
+        if (state.networkRendererGeometryRevision !== state.networkGeometryRevision) {
+            buildNetworkRendererGeometry();
+            state.networkRendererGeometryRevision = state.networkGeometryRevision;
+            state.networkRendererColorRevision = 0;
+        }
+        if (state.networkRendererColorRevision !== state.networkColorRevision) {
+            buildNetworkRendererColors();
+            state.networkRendererColorRevision = state.networkColorRevision;
+        }
+        if (state.networkRendererIconRevision !== state.networkIconRevision) {
+            buildNetworkRendererIconAtlas();
+            state.networkRendererIconRevision = state.networkIconRevision;
+        }
+    }
+
+    function renderNetwork() {
+        state.networkRenderFrameRequest = 0;
+        const mapView = state.lastMapView;
+        if (!shouldDisplayNetwork(mapView)) {
+            if (state.networkRenderer)
+                state.networkRenderer.clear();
+            return;
+        }
+        if (!ensureNetworkRenderer())
+            return;
+
+        try {
+            synchronizeNetworkRenderer();
+            const transform = worldTransform(mapView);
+            const rendered = state.networkRenderer.render({
+                width: mapView.width,
+                height: mapView.height,
+                pixelRatio: Math.min(
+                    devicePixelRatio(), NETWORK_STATIC_MAX_PIXEL_RATIO),
+                translateX: transform.translateX,
+                translateY: transform.translateY,
+                scale: transform.scale,
+                linkThickness: state.linkThicknessPixels,
+                junctionDiameter: junctionDotDiameterForZoom(mapView.zoom),
+                iconSize: iconMarkerSizeForZoom(mapView.zoom)
+            });
+            if (!rendered && state.networkCanvas)
+                state.networkCanvas.style.display = "none";
+        } catch (error) {
+            disableNetworkRenderer(error);
+        }
+    }
+
+    function scheduleNetworkRender() {
+        if (!state.lastMapView || state.networkRenderFrameRequest !== 0)
+            return;
+        state.networkRenderFrameRequest = window.requestAnimationFrame(renderNetwork);
+    }
+
+    function clearScheduledNetworkRender() {
+        if (state.networkRenderFrameRequest === 0)
+            return;
+        window.cancelAnimationFrame(state.networkRenderFrameRequest);
+        state.networkRenderFrameRequest = 0;
+    }
+
+    function invalidateNetworkColors() {
+        ++state.networkColorRevision;
+        state.tintedIconCache.clear();
+        scheduleNetworkRender();
     }
 
     function clearScheduledHeatmap() {
@@ -752,38 +693,29 @@
             const image = new Image();
             image.decoding = "async";
             image.onload = function () {
-                state.iconImages.set(entityType, { image: image, loaded: true });
-                resolve();
+                resolve({ entityType: entityType, image: image, loaded: true });
             };
             image.onerror = function () {
                 console.error(`Failed to load AOWIS network icon ${definition.file}`);
-                state.iconImages.set(entityType, { image: image, loaded: false });
-                resolve();
+                resolve({ entityType: entityType, image: image, loaded: false });
             };
             image.src = definition.file;
         });
     }
 
-    async function loadIconSvgText(entityType, definition) {
-        try {
-            const response = await fetch(definition.file);
-            if (!response.ok)
-                throw new Error(`HTTP ${response.status}`);
-            state.iconSvgTexts.set(entityType, await response.text());
-        } catch (error) {
-            console.error(`Failed to load AOWIS network SVG ${definition.file}:`, error);
-        }
-    }
-
     async function loadIconImages() {
+        const generation = ++state.iconLoadGeneration;
         const requests = [];
-        for (const [entityType, definition] of ICON_DEFINITIONS) {
+        for (const [entityType, definition] of ICON_DEFINITIONS)
             requests.push(loadIconImage(entityType, definition));
-            requests.push(loadIconSvgText(entityType, definition));
-        }
-        await Promise.all(requests);
-        state.coloredIconSvgDataUrls.clear();
-        invalidateNetworkCache();
+        const entries = await Promise.all(requests);
+        if (generation !== state.iconLoadGeneration)
+            return;
+        state.iconImages.clear();
+        for (const entry of entries)
+            state.iconImages.set(entry.entityType, entry);
+        ++state.networkIconRevision;
+        scheduleNetworkRender();
         scheduleSelectionRender();
     }
 
@@ -817,27 +749,13 @@
         return canvas;
     }
 
-    function boundedImageDimensions(mapView) {
-        const viewportArea = Math.max(1, mapView.width * mapView.height);
-        const maximumFactor = Math.min(
-            NETWORK_IMAGE_OVERSCAN_FACTOR,
-            NETWORK_IMAGE_MAX_DIMENSION / Math.max(1, mapView.width),
-            NETWORK_IMAGE_MAX_DIMENSION / Math.max(1, mapView.height),
-            Math.sqrt(NETWORK_IMAGE_MAX_AREA / viewportArea));
-        const factor = Math.max(1, maximumFactor);
-        return {
-            width: Math.max(1, Math.floor(mapView.width * factor)),
-            height: Math.max(1, Math.floor(mapView.height * factor))
-        };
-    }
-
     function boundedHeatmapDisplayDimensions(mapView) {
         const viewportArea = Math.max(1, mapView.width * mapView.height);
         const maximumFactor = Math.min(
             HEATMAP_OVERSCAN_FACTOR,
-            NETWORK_IMAGE_MAX_DIMENSION / Math.max(1, mapView.width),
-            NETWORK_IMAGE_MAX_DIMENSION / Math.max(1, mapView.height),
-            Math.sqrt(NETWORK_IMAGE_MAX_AREA / viewportArea));
+            HEATMAP_DISPLAY_MAX_DIMENSION / Math.max(1, mapView.width),
+            HEATMAP_DISPLAY_MAX_DIMENSION / Math.max(1, mapView.height),
+            Math.sqrt(HEATMAP_DISPLAY_MAX_AREA / viewportArea));
         const factor = Math.max(1, maximumFactor);
         return {
             width: Math.max(1, Math.floor(mapView.width * factor)),
@@ -890,20 +808,6 @@
             && innerBounds.minimumY >= outerBounds.minimumY
             && innerBounds.maximumX <= outerBounds.maximumX
             && innerBounds.maximumY <= outerBounds.maximumY);
-    }
-
-    function imageBoundsCoverMapView(bounds, width, height, mapView) {
-        if (!bounds)
-            return false;
-
-        const horizontalOverscan = Math.max(0, (width - mapView.width) / 2);
-        const verticalOverscan = Math.max(0, (height - mapView.height) / 2);
-        const horizontalSafety = Math.min(
-            NETWORK_IMAGE_REBUILD_EDGE, horizontalOverscan / 2);
-        const verticalSafety = Math.min(
-            NETWORK_IMAGE_REBUILD_EDGE, verticalOverscan / 2);
-        return boundsContain(bounds, mapViewWorldBounds(
-            mapView, horizontalSafety, verticalSafety));
     }
 
     function heatmapBoundsCoverMapView(bounds, width, height, mapView) {
@@ -961,23 +865,6 @@
                 result.add(index);
         }
         return result;
-    }
-
-    function segmentIntersectsBounds(segment, bounds) {
-        return Math.max(segment.x1, segment.x2) >= bounds.minimumX
-            && Math.min(segment.x1, segment.x2) <= bounds.maximumX
-            && Math.max(segment.y1, segment.y2) >= bounds.minimumY
-            && Math.min(segment.y1, segment.y2) <= bounds.maximumY;
-    }
-
-    function markerIntersectsBounds(marker, bounds, zoom, scale) {
-        const markerBounds = markerScreenBounds(marker.entityType, zoom);
-        const halfWidth = markerBounds.width / (2 * scale);
-        const halfHeight = markerBounds.height / (2 * scale);
-        return marker.x + halfWidth >= bounds.minimumX
-            && marker.x - halfWidth <= bounds.maximumX
-            && marker.y + halfHeight >= bounds.minimumY
-            && marker.y - halfHeight <= bounds.maximumY;
     }
 
     function ownsMapView(mapView) {
@@ -1766,7 +1653,7 @@
     }
 
     function buildGeometry(snapshot) {
-        resetNetworkImage(true);
+        ++state.networkGeometryRevision;
         clearHeatmap();
         const nodesByRenderId = new Map();
         let anchorX = null;
@@ -1904,11 +1791,6 @@
         rebuildSpatialIndex();
     }
 
-    function updateViewport(width, height) {
-        state.width = width;
-        state.height = height;
-    }
-
     function worldTransform(mapView) {
         const scale = scaleForZoom(mapView.zoom);
         const size = worldSize(mapView.zoom);
@@ -2033,15 +1915,14 @@
             return;
         }
 
-        updateViewport(mapView.width, mapView.height);
         const shouldShow = shouldDisplayOverlay(mapView);
         state.layer.style.display = shouldShow ? "block" : "none";
         if (!shouldShow)
             return;
 
         if (!state.geometryReady) {
-            if (state.networkImage)
-                state.networkImage.style.display = "none";
+            if (state.networkRenderer)
+                state.networkRenderer.clear();
             if (state.heatmapCanvas)
                 state.heatmapCanvas.style.display = "none";
             clearSelectionCanvas();
@@ -2053,8 +1934,7 @@
         else if (state.heatmapCanvas)
             state.heatmapCanvas.style.display = "none";
 
-        positionNetworkImage(mapView);
-        requestNetworkImage(mapView.zoom);
+        scheduleNetworkRender();
         scheduleSelectionRender();
     }
 
@@ -2375,8 +2255,9 @@
             || state.linkMinimum !== linkMinimum
             || state.linkMaximum !== linkMaximum
             || !symbologyValuesEqual(state.linkValues, linkValues);
-        const networkChanged = nodeSymbologyChanged
-            || linkSymbologyChanged
+        const networkColorChanged = nodeSymbologyChanged
+            || linkSymbologyChanged;
+        const networkChanged = networkColorChanged
             || state.nodeSizePercent !== nodeSizePercent
             || state.iconSizePercent !== iconSizePercent
             || state.linkThicknessPixels !== linkThicknessPixels;
@@ -2411,8 +2292,12 @@
         state.heatmapRadiusMeters = heatmapRadiusMeters;
         state.heatmapSolidCenterPercent = heatmapSolidCenterPercent;
 
-        if (networkChanged)
-            invalidateNetworkCache();
+        if (networkColorChanged)
+            invalidateNetworkColors();
+        else if (networkChanged) {
+            state.tintedIconCache.clear();
+            scheduleNetworkRender();
+        }
         if (heatmapChanged)
             clearHeatmap();
         else if (heatmapOpacityChanged)
@@ -2453,7 +2338,13 @@
         state.pointerLeaveHandler = null;
         clearHoverCursor();
 
-        resetNetworkImage(true);
+        clearScheduledNetworkRender();
+        if (state.networkRenderer)
+            state.networkRenderer.destroy();
+        state.networkRenderer = null;
+        if (state.networkCanvas)
+            state.networkCanvas.remove();
+        state.networkCanvas = null;
         clearHeatmap();
         resetHeatmapWebGlState(false);
         if (state.heatmapCanvas)
@@ -2465,10 +2356,13 @@
         if (state.layer)
             state.layer.remove();
         state.layer = null;
-        state.networkImage = null;
-        state.networkImageObjectUrl = null;
-        state.pendingNetworkImage = null;
-        state.pendingNetworkImageObjectUrl = null;
+        state.networkGeometryRevision = 1;
+        state.networkRendererGeometryRevision = 0;
+        state.networkRendererColorRevision = 0;
+        state.networkRendererIconRevision = 0;
+        state.networkIconRevision = 1;
+        state.networkColorRevision = 1;
+        state.networkWebGlUnavailable = false;
         state.selectionCanvas = null;
         state.selectionRenderPending = false;
         state.selectedRenderId = 0;
@@ -2481,13 +2375,10 @@
         state.geometryMinimumY = 0;
         state.geometryMaximumX = 0;
         state.geometryMaximumY = 0;
+        ++state.iconLoadGeneration;
         state.iconImages.clear();
-        state.iconSvgTexts.clear();
-        state.coloredIconSvgDataUrls.clear();
         state.tintedIconCache.clear();
         state.geometryReady = false;
-        state.width = 0;
-        state.height = 0;
         state.lastMapView = null;
         state.markers = [];
         state.deviceSegments = [];

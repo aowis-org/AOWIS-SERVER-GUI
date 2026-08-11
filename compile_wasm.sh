@@ -42,6 +42,7 @@ docker run --rm \
 cp tools/qt-emscripten/index.html build-wasm/
 cp tools/qt-emscripten/aowis-browser-map.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-vector.js build-wasm/
+cp tools/qt-emscripten/aowis-browser-network-webgl.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-network.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-map-editor.js build-wasm/
 
@@ -53,7 +54,9 @@ fi
 
 MAP_JS_VERSION=$(sha256sum tools/qt-emscripten/aowis-browser-map.js | cut -c1-16)
 VECTOR_JS_VERSION=$(sha256sum tools/qt-emscripten/aowis-browser-vector.js | cut -c1-16)
-NETWORK_JS_VERSION=$(sha256sum tools/qt-emscripten/aowis-browser-network.js | cut -c1-16)
+NETWORK_JS_VERSION=$(sha256sum \
+    tools/qt-emscripten/aowis-browser-network-webgl.js \
+    tools/qt-emscripten/aowis-browser-network.js | sha256sum | cut -c1-16)
 EDITOR_JS_VERSION=$(sha256sum tools/qt-emscripten/aowis-browser-map-editor.js | cut -c1-16)
 sed -i "s|__AOWIS_MAP_JS_VERSION__|${MAP_JS_VERSION}|g" build-wasm/index.html
 sed -i "s|__AOWIS_VECTOR_JS_VERSION__|${VECTOR_JS_VERSION}|g" build-wasm/index.html
