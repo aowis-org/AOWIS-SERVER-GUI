@@ -5,6 +5,10 @@
 
 #include "../geo_web_mercator.h"
 
+#ifdef Q_OS_WASM
+#include <QTimer>
+#endif
+
 #include <cmath>
 
 MapEditorController::MapEditorController(MapModel *map_model, MapCanvasEntities *map_canvas_entities,
@@ -16,6 +20,20 @@ MapEditorController::MapEditorController(MapModel *map_model, MapCanvasEntities 
         connect(this->map_canvas_entities, &MapCanvasEntities::signalEntityMarkerSelected,
                 this, &MapEditorController::signalEntitySelectionChanged);
     }
+
+#ifdef Q_OS_WASM
+    this->rectangle_selection_timer = new QTimer(this);
+    this->rectangle_selection_timer->setInterval(16);
+    this->rectangle_selection_timer->setSingleShot(true);
+    connect(this->rectangle_selection_timer, &QTimer::timeout, this, [this]
+    {
+        if (!this->rectangle_selection_update_pending)
+            return;
+
+        applyPendingRectangleSelection();
+        this->rectangle_selection_timer->start();
+    });
+#endif
 }
 
 void MapEditorController::startEntityPositioning(InfrastructureEntity tool)
@@ -42,6 +60,10 @@ void MapEditorController::startRectangleSelection(bool oneshot, bool interact_wi
     this->rectangle_selection_interacts_with_entities = interact_with_entities;
     this->rectangle_selection_active = true;
     this->rectangle_dragging = false;
+#ifdef Q_OS_WASM
+    this->rectangle_selection_timer->stop();
+    this->rectangle_selection_update_pending = false;
+#endif
 
     if (this->rectangle_selection_interacts_with_entities)
         clearTileSelectionOverlayState();
@@ -63,6 +85,10 @@ void MapEditorController::cancelRectangleSelection()
         this->rectangle_selection_active = false;
 
     this->rectangle_dragging = false;
+#ifdef Q_OS_WASM
+    this->rectangle_selection_timer->stop();
+    this->rectangle_selection_update_pending = false;
+#endif
     if (!this->rectangle_selection_interacts_with_entities)
         clearTileSelectionOverlayState();
 
@@ -211,9 +237,17 @@ bool MapEditorController::mouseMove(const QPointF &position, const QSize &viewpo
 
         const QRect selected_rect = currentSelectionRect(viewport_size);
         if (this->rectangle_selection_interacts_with_entities)
+        {
+#ifdef Q_OS_WASM
+            scheduleRectangleSelectionUpdate(selected_rect);
+#else
             this->map_canvas_entities->onRectangleSelect(selected_rect, RectangleSelectMode::Replace);
+#endif
+        }
         else
+        {
             updateTileSelectionOverlay(selected_rect, viewport_size);
+        }
 
         this->cursor_shape = Qt::CrossCursor;
         emit signalStateChanged();
@@ -265,6 +299,10 @@ bool MapEditorController::mouseRelease(const QPointF &position, Qt::MouseButton 
 
     this->rectangle_dragging = false;
     this->cursor_shape.reset();
+#ifdef Q_OS_WASM
+    this->rectangle_selection_timer->stop();
+    this->rectangle_selection_update_pending = false;
+#endif
 
     if (selected_rect.width() > 0 && selected_rect.height() > 0)
     {
@@ -297,6 +335,32 @@ void MapEditorController::beginRectangleDrag(const QPointF &position, const QSiz
     this->cursor_shape = Qt::CrossCursor;
     emit signalStateChanged();
 }
+
+#ifdef Q_OS_WASM
+void MapEditorController::scheduleRectangleSelectionUpdate(const QRect &selected_rect)
+{
+    this->pending_rectangle_selection_rect = selected_rect;
+    this->rectangle_selection_update_pending = true;
+    if (this->rectangle_selection_timer->isActive())
+        return;
+
+    applyPendingRectangleSelection();
+    this->rectangle_selection_timer->start();
+}
+
+void MapEditorController::applyPendingRectangleSelection()
+{
+    this->rectangle_selection_update_pending = false;
+    if (!this->rectangle_selection_active || !this->rectangle_dragging ||
+        !this->rectangle_selection_interacts_with_entities)
+    {
+        return;
+    }
+
+    this->map_canvas_entities->onRectangleSelect(
+        this->pending_rectangle_selection_rect, RectangleSelectMode::Replace);
+}
+#endif
 
 void MapEditorController::setCursorShape(std::optional<Qt::CursorShape> cursor_shape)
 {

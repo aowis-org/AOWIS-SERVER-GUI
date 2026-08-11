@@ -13,6 +13,7 @@
 
 class MapCanvasEntities;
 class MapModel;
+class QTimer;
 
 class MapEditorController : public QObject
 {
@@ -74,6 +75,10 @@ signals:
 
 private:
     void beginRectangleDrag(const QPointF &position, const QSize &viewport_size);
+#ifdef Q_OS_WASM
+    void scheduleRectangleSelectionUpdate(const QRect &selected_rect);
+    void applyPendingRectangleSelection();
+#endif
     void setCursorShape(std::optional<Qt::CursorShape> cursor_shape);
     bool clearTileSelectionOverlayState();
     CoordinateWGS84Rect selectionRectWgs84(const QRect &selected_rect,
@@ -93,6 +98,11 @@ private:
     CoordinateWGS84 rectangle_current_wgs84;
     TileSelectionOverlay tile_selection_overlay;
     std::optional<Qt::CursorShape> cursor_shape;
+#ifdef Q_OS_WASM
+    QTimer *rectangle_selection_timer = nullptr;
+    QRect pending_rectangle_selection_rect;
+    bool rectangle_selection_update_pending = false;
+#endif
 };
 
 #endif // MAP_EDITOR_CONTROLLER_H

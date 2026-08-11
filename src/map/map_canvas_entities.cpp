@@ -1303,9 +1303,18 @@ void MapCanvasEntities::showMarkerContextMenu(const QUuid &uuid,
 
 void MapCanvasEntities::onRectangleSelect(const QRect &rect, RectangleSelectMode mode)
 {
+    const QList<QUuid> previous_marker_uuids = this->selection->selectedMarkerUuids();
+    const QList<QUuid> previous_pipe_uuids = this->pipes->selectedPipeUuids();
     this->selection->selectInRectangle(
         rect, this->point_markers->markers(), this->device_links->markers(),
         mode == RectangleSelectMode::Replace);
+
+    if (previous_marker_uuids == this->selection->selectedMarkerUuids() &&
+        previous_pipe_uuids == this->pipes->selectedPipeUuids())
+    {
+        return;
+    }
+
     emit signalEntityMarkerSelected(this->selection->hasSelection());
     updateCanvas();
 }

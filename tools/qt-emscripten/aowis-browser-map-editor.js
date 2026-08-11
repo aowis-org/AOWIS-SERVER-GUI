@@ -63,6 +63,7 @@
     const state = {
         layer: null,
         underlayCanvas: null,
+        rectangleSelectionElement: null,
         networkCanvas: null,
         networkRenderer: null,
         networkWebGlUnavailable: false,
@@ -205,6 +206,26 @@
             state.layer.appendChild(state.underlayCanvas);
             if (!state.networkWebGlUnavailable)
                 createNetworkRenderer();
+
+            state.rectangleSelectionElement = document.createElement("div");
+            state.rectangleSelectionElement.style.position = "absolute";
+            state.rectangleSelectionElement.style.left = "0";
+            state.rectangleSelectionElement.style.top = "0";
+            state.rectangleSelectionElement.style.display = "none";
+            state.rectangleSelectionElement.style.pointerEvents = "none";
+            state.rectangleSelectionElement.style.boxSizing = "border-box";
+            state.rectangleSelectionElement.style.border =
+                "3px solid rgba(190, 235, 250, 0.96)";
+            state.rectangleSelectionElement.style.borderRadius = "2px";
+            state.rectangleSelectionElement.style.background =
+                "linear-gradient(rgba(35, 151, 211, 0.10), rgba(0, 65, 110, 0.15))";
+            state.rectangleSelectionElement.style.boxShadow =
+                "0 0 0 2px rgba(10, 15, 18, 0.80), "
+                + "0 0 0 6px rgba(23, 190, 255, 0.44), "
+                + "inset 0 0 0 1px rgba(86, 215, 255, 0.71)";
+            state.rectangleSelectionElement.style.willChange = "transform, width, height";
+            state.rectangleSelectionElement.style.zIndex = "3";
+            state.layer.appendChild(state.rectangleSelectionElement);
             applyBackground();
         }
 
@@ -877,17 +898,14 @@
         }
     }
 
-    function roundedRectPath(context, x, y, width, height, radius) {
-        const boundedRadius = Math.max(
-            0, Math.min(radius, width / 2, height / 2));
-        context.beginPath();
-        context.roundRect(x, y, width, height, boundedRadius);
-    }
-
-    function drawRectangleSelection(context) {
+    function updateRectangleSelectionElement() {
+        const element = state.rectangleSelectionElement;
         const rectangle = state.viewportState.rectangleSelection;
+        if (!element)
+            return;
         if (!rectangle || !rectangle.visible
             || rectangle.width <= 0 || rectangle.height <= 0) {
+            element.style.display = "none";
             return;
         }
 
@@ -895,68 +913,14 @@
         const y = Number(rectangle.y) + 2.5;
         const width = Number(rectangle.width) - 5;
         const height = Number(rectangle.height) - 5;
-        if (width <= 0 || height <= 0)
+        if (width <= 0 || height <= 0) {
+            element.style.display = "none";
             return;
-        const radius = Math.min(2, Math.min(width, height) / 8);
-
-        const fill = context.createLinearGradient(x, y, x, y + height);
-        fill.addColorStop(0, "rgba(35, 151, 211, 0.094)");
-        fill.addColorStop(0.45, "rgba(0, 145, 215, 0.125)");
-        fill.addColorStop(1, "rgba(0, 65, 110, 0.149)");
-        roundedRectPath(context, x, y, width, height, radius);
-        context.fillStyle = fill;
-        context.fill();
-
-        function stroke(color, lineWidth, dash, dashOffset) {
-            roundedRectPath(context, x, y, width, height, radius);
-            context.strokeStyle = color;
-            context.lineWidth = lineWidth;
-            context.lineJoin = "miter";
-            context.setLineDash(dash || []);
-            context.lineDashOffset = dashOffset || 0;
-            context.stroke();
         }
-        stroke("rgba(0, 149, 230, 0.204)", 18);
-        stroke("rgba(23, 190, 255, 0.439)", 9);
-        stroke("rgba(10, 15, 18, 0.804)", 5);
-
-        const steel = context.createLinearGradient(x, y, x, y + height);
-        steel.addColorStop(0, "rgba(245, 250, 252, 0.961)");
-        steel.addColorStop(0.24, "rgba(129, 147, 153, 0.941)");
-        steel.addColorStop(0.52, "rgba(48, 61, 66, 0.961)");
-        steel.addColorStop(0.78, "rgba(177, 190, 194, 0.941)");
-        steel.addColorStop(1, "rgba(31, 42, 46, 0.961)");
-        roundedRectPath(context, x, y, width, height, radius);
-        context.strokeStyle = steel;
-        context.lineWidth = 3;
-        context.stroke();
-
-        if (width > 3 && height > 3) {
-            roundedRectPath(
-                context, x + 1.5, y + 1.5, width - 3, height - 3,
-                Math.max(0, radius - 1));
-            context.strokeStyle = "rgba(86, 215, 255, 0.706)";
-            context.lineWidth = 1;
-            context.stroke();
-        }
-        if (width > 6 && height > 6) {
-            context.setLineDash([4, 2]);
-            context.lineDashOffset = 1.5;
-            roundedRectPath(
-                context, x + 3, y + 3, width - 6, height - 6,
-                Math.max(0, radius - 2));
-            context.strokeStyle = "rgba(36, 196, 255, 0.376)";
-            context.lineWidth = 5;
-            context.stroke();
-            roundedRectPath(
-                context, x + 3, y + 3, width - 6, height - 6,
-                Math.max(0, radius - 2));
-            context.strokeStyle = "rgba(102, 224, 255, 0.961)";
-            context.lineWidth = 1.5;
-            context.stroke();
-        }
-        context.setLineDash([]);
-        context.lineDashOffset = 0;
+        element.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+        element.style.width = `${width}px`;
+        element.style.height = `${height}px`;
+        element.style.display = "block";
     }
 
     function renderUnderlay() {
@@ -967,7 +931,6 @@
         const context = viewportContext(
             state.underlayCanvas, mapView.width, mapView.height);
         drawTileSelection(context, mapView);
-        drawRectangleSelection(context);
     }
 
     function scheduleUnderlayRender() {
@@ -975,6 +938,15 @@
             return;
         state.underlayRenderPending = true;
         window.requestAnimationFrame(renderUnderlay);
+    }
+
+    function tileSelectionsEqual(first, second) {
+        return Boolean(first && second
+            && Boolean(first.visible) === Boolean(second.visible)
+            && Number(first.xMin) === Number(second.xMin)
+            && Number(first.xMax) === Number(second.xMax)
+            && Number(first.yMin) === Number(second.yMin)
+            && Number(first.yMax) === Number(second.yMax));
     }
 
     function handleMapViewChanged(mapView) {
@@ -990,14 +962,15 @@
         if (!display)
             return;
 
-        if (resizeViewportCanvas(
-            state.underlayCanvas, mapView.width, mapView.height)) {
-            scheduleUnderlayRender();
-        }
+        resizeViewportCanvas(
+            state.underlayCanvas, mapView.width, mapView.height);
         const placement = state.visualState.placement || {};
         if (placement.creating)
             state.overlayDirty = true;
-        scheduleUnderlayRender();
+        updateRectangleSelectionElement();
+        const tileSelection = state.viewportState.tileSelection;
+        if (tileSelection && tileSelection.visible)
+            scheduleUnderlayRender();
         scheduleNetworkRender();
     }
 
@@ -1079,9 +1052,13 @@
     function setViewportState(viewportState) {
         if (!viewportState || typeof viewportState !== "object")
             throw new TypeError("Invalid AOWIS map editor viewport state");
+        const previousTileSelection = state.viewportState.tileSelection;
         state.viewportState = viewportState;
         applyBackground();
-        scheduleUnderlayRender();
+        updateRectangleSelectionElement();
+        const tileSelection = viewportState.tileSelection;
+        if (!tileSelectionsEqual(previousTileSelection, tileSelection))
+            scheduleUnderlayRender();
     }
 
     function setBackground(red, green, blue) {
@@ -1122,6 +1099,7 @@
         state.overlayDirty = true;
         if (state.networkRenderer)
             state.networkRenderer.clear();
+        updateRectangleSelectionElement();
         clearUnderlay();
         applyBackground();
     }
@@ -1140,6 +1118,7 @@
             state.layer.remove();
         state.layer = null;
         state.underlayCanvas = null;
+        state.rectangleSelectionElement = null;
         state.iconImages.clear();
         state.networkWebGlUnavailable = false;
         state.lastMapView = null;
