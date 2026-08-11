@@ -1,5 +1,6 @@
 #include "hydraulic_data.h"
 #include "network_render_snapshot_builder.h"
+#include "network_symbology_values.h"
 
 #include <cmath>
 
@@ -57,7 +58,7 @@ void HydraulicData::onDatabaseReady()
     loadProject();
     
     //this->network_hydraulic = DummyNetworks::networkSimple();
-    this->network_hydraulic = DummyNetworks::networkTanks();
+    //this->network_hydraulic = DummyNetworks::networkTanks();
     //this->network_hydraulic = DummyMarburgNetworkGenerator::generate();
     //this->network_hydraulic = RandomHydraulicNetworkGenerator::generateFractal();
     rebuildBoundingBoxWgs84();
@@ -247,7 +248,7 @@ void HydraulicData::rebuildSymbologyMinMaxValues()
 
     for (const HydraulicNodeJunction &junction : this->network_hydraulic.nodes_junctions)
     {
-        updateMinimumMaximum(junction.elevation_m,
+        updateMinimumMaximum(resolvedSymbologyElevationM(junction),
                              this->node_elevation_m_minimum,
                              this->node_elevation_m_maximum,
                              node_elevation_m_initialized);
@@ -264,7 +265,7 @@ void HydraulicData::rebuildSymbologyMinMaxValues()
 
     for (const HydraulicNodeReservoir &reservoir : this->network_hydraulic.nodes_reservoirs)
     {
-        updateMinimumMaximum(reservoir.head_m,
+        updateMinimumMaximum(resolvedSymbologyElevationM(reservoir),
                              this->node_elevation_m_minimum,
                              this->node_elevation_m_maximum,
                              node_elevation_m_initialized);
@@ -272,7 +273,7 @@ void HydraulicData::rebuildSymbologyMinMaxValues()
 
     for (const HydraulicNodeTank &tank : this->network_hydraulic.nodes_tanks)
     {
-        updateMinimumMaximum(tank.bottom_elevation_m,
+        updateMinimumMaximum(resolvedSymbologyElevationM(tank),
                              this->node_elevation_m_minimum,
                              this->node_elevation_m_maximum,
                              node_elevation_m_initialized);

@@ -451,6 +451,24 @@ EntityMapLegendDock::EntityMapLegendDock(HydraulicData *hydraulic_data, QWidget 
         scheduleDockHeightUpdate();
     });
 
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, [this]
+    {
+        updateNodeLegend();
+        updateLinkLegend();
+        updateHeatmapLegend();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
+        [this](InfrastructureEntity, const QUuid &)
+    {
+        updateNodeLegend();
+        updateHeatmapLegend();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
+        [this](InfrastructureEntity, const QUuid &)
+    {
+        updateLinkLegend();
+    });
+
     scheduleDockHeightUpdate();
 }
 

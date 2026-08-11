@@ -3,6 +3,7 @@
 #include "../hydraulic_data.h"
 #include "../network_render_snapshot.h"
 #include "../network_symbology.h"
+#include "../network_symbology_values.h"
 
 #include <cmath>
 
@@ -73,11 +74,11 @@ QHash<QUuid, double> nodeValues(const NetworkHydraulic &network_hydraulic, Visua
                        network_hydraulic.nodes_reservoirs.size() +
                        network_hydraulic.nodes_tanks.size());
         for (const HydraulicNodeJunction &junction : network_hydraulic.nodes_junctions)
-            values.insert(junction.uuid, junction.elevation_m);
+            values.insert(junction.uuid, resolvedSymbologyElevationM(junction));
         for (const HydraulicNodeReservoir &reservoir : network_hydraulic.nodes_reservoirs)
-            values.insert(reservoir.uuid, reservoir.head_m);
+            values.insert(reservoir.uuid, resolvedSymbologyElevationM(reservoir));
         for (const HydraulicNodeTank &tank : network_hydraulic.nodes_tanks)
-            values.insert(tank.uuid, tank.bottom_elevation_m);
+            values.insert(tank.uuid, resolvedSymbologyElevationM(tank));
         break;
     case VisualNode::BaseDemand:
         values.reserve(network_hydraulic.nodes_junctions.size());

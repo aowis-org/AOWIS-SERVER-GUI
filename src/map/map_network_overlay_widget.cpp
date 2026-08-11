@@ -4,6 +4,7 @@
 #include "../hydraulic_data.h"
 #include "../infrastructure_entity_traits.h"
 #include "../network_render_snapshot_builder.h"
+#include "../network_symbology_values.h"
 #include "map_render_cache_math.h"
 #include "map_retained_vector_renderer.h"
 #include "map_vector_document.h"
@@ -316,11 +317,11 @@ QHash<QUuid, double> nodeValues(const NetworkHydraulic &network_hydraulic, Visua
                        network_hydraulic.nodes_reservoirs.size() +
                        network_hydraulic.nodes_tanks.size());
         for (const HydraulicNodeJunction &junction : network_hydraulic.nodes_junctions)
-            values.insert(junction.uuid, junction.elevation_m);
+            values.insert(junction.uuid, resolvedSymbologyElevationM(junction));
         for (const HydraulicNodeReservoir &reservoir : network_hydraulic.nodes_reservoirs)
-            values.insert(reservoir.uuid, reservoir.head_m);
+            values.insert(reservoir.uuid, resolvedSymbologyElevationM(reservoir));
         for (const HydraulicNodeTank &tank : network_hydraulic.nodes_tanks)
-            values.insert(tank.uuid, tank.bottom_elevation_m);
+            values.insert(tank.uuid, resolvedSymbologyElevationM(tank));
         break;
     case VisualNode::BaseDemand:
         values.reserve(network_hydraulic.nodes_junctions.size());
@@ -607,8 +608,6 @@ MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicD
     connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
         [this](InfrastructureEntity, const QUuid &)
     {
-        if (!this->rendering_active)
-            return;
         const bool rebuild_node_colors =
             this->symbology_settings.visual_node != VisualNode::None;
         const bool rebuild_heatmap =
@@ -623,8 +622,6 @@ MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicD
     connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
         [this](InfrastructureEntity, const QUuid &)
     {
-        if (!this->rendering_active)
-            return;
         if (this->symbology_settings.visual_link == VisualLink::None)
             return;
 
@@ -824,6 +821,9 @@ void MapNetworkOverlayWidget::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
     this->rendering_active = true;
+    this->symbology_ranges =
+        this->hydraulic_data->symbologyRanges(this->symbology_settings);
+    requestSymbologyPreparation(true);
     requestRenderCache();
 }
 

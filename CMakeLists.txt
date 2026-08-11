@@ -73,6 +73,7 @@ qt_add_executable(aowis-server-gui
     src/_enums_structs.h
     src/infrastructure_entity_traits.h
     src/network_symbology.h
+    src/network_symbology_values.h
     src/network_render_snapshot.h
     src/network_render_snapshot_builder.h src/network_render_snapshot_builder.cpp
     src/wasm/browser_network_snapshot_serializer.h src/wasm/browser_network_snapshot_serializer.cpp
