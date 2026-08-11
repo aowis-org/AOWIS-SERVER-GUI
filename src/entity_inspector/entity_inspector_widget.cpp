@@ -679,8 +679,12 @@ void EntityInspectorWidget::addGroupElevation()
 
     if (!this->terrain_elevation_client)
     {
-        // TODO: Make the elevation provider and dataset configurable.
+#ifdef Q_OS_WASM
+        // The OpenTopoData public service does not allow browser cross-origin requests.
+        this->terrain_elevation_client = new RESTClient("https://api.open-meteo.com", this);
+#else
         this->terrain_elevation_client = new RESTClient("https://api.opentopodata.org", this);
+#endif
         connect(this->terrain_elevation_client, &RESTClient::requestFinished, this,
                 &EntityInspectorWidget::handleTerrainElevationResponse);
         connect(this->terrain_elevation_client, &RESTClient::requestError, this,
@@ -923,7 +927,11 @@ void EntityInspectorWidget::requestTerrainElevation()
         this->label_terrain_elevation_status->clear();
     setTerrainElevationRequestActive(true);
 
+#ifdef Q_OS_WASM
+    const QString endpoint = QStringLiteral("/v1/elevation?latitude=%1&longitude=%2")
+#else
     const QString endpoint = QStringLiteral("/v1/srtm30m,aster30m?locations=%1,%2")
+#endif
         .arg(latitude_deg, 0, 'f', 8)
         .arg(longitude_deg, 0, 'f', 8);
     this->terrain_elevation_client->get(endpoint);
@@ -939,12 +947,34 @@ void EntityInspectorWidget::handleTerrainElevationResponse(const QByteArray &dat
     if (parse_error.error != QJsonParseError::NoError || !document.isObject())
     {
         handleTerrainElevationError(
-            QStringLiteral("OpenTopoData returned invalid JSON: %1")
+            QStringLiteral("The terrain elevation service returned invalid JSON: %1")
                 .arg(parse_error.errorString()));
         return;
     }
 
     const QJsonObject response = document.object();
+#ifdef Q_OS_WASM
+    if (response.value(QStringLiteral("error")).toBool())
+    {
+        const QString api_error = response.value(QStringLiteral("reason")).toString();
+        handleTerrainElevationError(
+            api_error.isEmpty()
+                ? QStringLiteral("Open-Meteo did not return a successful response.")
+                : api_error);
+        return;
+    }
+
+    const QJsonArray elevations = response.value(QStringLiteral("elevation")).toArray();
+    if (elevations.isEmpty() || !elevations.first().isDouble())
+    {
+        handleTerrainElevationError(
+            "Open-Meteo returned no terrain elevation for this position.");
+        return;
+    }
+
+    const double elevation_m = elevations.first().toDouble();
+    const QString dataset = QStringLiteral("Copernicus DEM GLO-90 via Open-Meteo");
+#else
     if (response.value(QStringLiteral("status")).toString() != QStringLiteral("OK"))
     {
         const QString api_error = response.value(QStringLiteral("error")).toString();
@@ -971,6 +1001,10 @@ void EntityInspectorWidget::handleTerrainElevationResponse(const QByteArray &dat
             "No terrain elevation is available for this position in the configured DEM datasets.");
         return;
     }
+
+    const double elevation_m = elevation_value.toDouble();
+    const QString dataset = result.value(QStringLiteral("dataset")).toString();
+#endif
 
     if (this->entity_uuid != this->terrain_elevation_request_entity_uuid)
     {
@@ -1002,7 +1036,6 @@ void EntityInspectorWidget::handleTerrainElevationResponse(const QByteArray &dat
         return;
     }
 
-    const double elevation_m = elevation_value.toDouble();
     if (!std::isfinite(elevation_m) || !setTerrainElevation(elevation_m))
     {
         handleTerrainElevationError(
@@ -1010,7 +1043,6 @@ void EntityInspectorWidget::handleTerrainElevationResponse(const QByteArray &dat
         return;
     }
 
-    const QString dataset = result.value(QStringLiteral("dataset")).toString();
     const QString dataset_suffix = dataset.isEmpty()
         ? QString()
         : QStringLiteral(" (%1)").arg(dataset);
