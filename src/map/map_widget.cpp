@@ -1141,6 +1141,28 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
     const QPoint position = event->position().toPoint();
     this->updatePointerCoordinates(position);
 
+#ifdef Q_OS_WASM
+    // Qt for WebAssembly receives browser pointer events. A pointerdown event is
+    // only generated for the first pressed mouse button, so pressing left while
+    // right is already held does not reach handleMousePressEvent(). Recover the
+    // missing transition from the buttons state carried by pointermove.
+    if (!this->mouse_pan_active && (event->buttons() & Qt::LeftButton))
+    {
+        this->mouse_pan_active = true;
+        this->mouse_pan_last_position = position;
+        this->pan_velocity = QPointF();
+        this->pan_fractional_delta = QPointF();
+        this->mouse_pan_velocity = QPointF();
+        this->mouse_pan_move_elapsed_timer.start();
+        this->mouse_pan_inertia_active = false;
+        this->mouse_pan_drag_distance = 0;
+        beginBrowserMapMousePan();
+        stopPanAnimationIfIdle();
+        event->accept();
+        return true;
+    }
+#endif
+
     if (!this->mouse_pan_active)
         return false;
 
