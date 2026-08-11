@@ -870,6 +870,97 @@ bool HydraulicNetworkEditor::setPipeMinorLoss(const QUuid &uuid, double minor_lo
     return true;
 }
 
+bool HydraulicNetworkEditor::setPumpDefinitionType(
+    const QUuid &uuid, HydraulicLinkPumpDefinitionType definition_type)
+{
+    HydraulicLinkPump *pump = entityByUuid(this->network.links_pumps, uuid);
+    if (pump == nullptr)
+        return false;
+
+    pump->definition_type = definition_type;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setPumpInitialSpeed(const QUuid &uuid, double initial_speed)
+{
+    HydraulicLinkPump *pump = entityByUuid(this->network.links_pumps, uuid);
+    if (pump == nullptr)
+        return false;
+
+    pump->initial_speed = initial_speed;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setPumpInitialStatus(
+    const QUuid &uuid, HydraulicLinkPumpInitialStatus initial_status)
+{
+    HydraulicLinkPump *pump = entityByUuid(this->network.links_pumps, uuid);
+    if (pump == nullptr)
+        return false;
+
+    pump->initial_status = initial_status;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setPumpSpeedPatternUuid(
+    const QUuid &uuid, const QUuid &speed_pattern_uuid)
+{
+    HydraulicLinkPump *pump = entityByUuid(this->network.links_pumps, uuid);
+    if (pump == nullptr)
+        return false;
+
+    pump->speed_pattern_uuid = speed_pattern_uuid;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setPumpControlType(
+    const QUuid &uuid, HydraulicLinkPumpControlType control_type)
+{
+    HydraulicLinkPump *pump = entityByUuid(this->network.links_pumps, uuid);
+    if (pump == nullptr)
+        return false;
+
+    pump->control_type = control_type;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setPumpEfficiencyInput(
+    const QUuid &uuid, HydraulicLinkPumpEfficiencyInputType input_type,
+    const QUuid &efficiency_curve_uuid)
+{
+    HydraulicLinkPump *pump = entityByUuid(this->network.links_pumps, uuid);
+    if (pump == nullptr)
+        return false;
+
+    pump->efficiency_input_type = input_type;
+    pump->efficiency_curve_uuid = efficiency_curve_uuid;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setPumpEnergyPricePerKwh(
+    const QUuid &uuid, double energy_price_per_kw_h)
+{
+    HydraulicLinkPump *pump = entityByUuid(this->network.links_pumps, uuid);
+    if (pump == nullptr)
+        return false;
+
+    pump->energy_price_per_kw_h = energy_price_per_kw_h;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setPumpEnergyPriceInput(
+    const QUuid &uuid, HydraulicLinkPumpEnergyPriceInputType input_type,
+    const QUuid &price_pattern_uuid)
+{
+    HydraulicLinkPump *pump = entityByUuid(this->network.links_pumps, uuid);
+    if (pump == nullptr)
+        return false;
+
+    pump->energy_price_input_type = input_type;
+    pump->price_pattern_uuid = price_pattern_uuid;
+    return true;
+}
+
 bool HydraulicNetworkEditor::setPipeVertexCoordinate(const QUuid &pipe_uuid, int vertex_index,
                                                        const CoordinateWGS84 &coordinate)
 {

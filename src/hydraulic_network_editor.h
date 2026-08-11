@@ -130,6 +130,21 @@ public:
     bool setPipeRoughnessCm(const QUuid &uuid, double roughness_cm);
     bool setPipeMinorLoss(const QUuid &uuid, double minor_loss);
 
+    bool setPumpDefinitionType(const QUuid &uuid,
+                               HydraulicLinkPumpDefinitionType definition_type);
+    bool setPumpInitialSpeed(const QUuid &uuid, double initial_speed);
+    bool setPumpInitialStatus(const QUuid &uuid,
+                              HydraulicLinkPumpInitialStatus initial_status);
+    bool setPumpSpeedPatternUuid(const QUuid &uuid, const QUuid &speed_pattern_uuid);
+    bool setPumpControlType(const QUuid &uuid, HydraulicLinkPumpControlType control_type);
+    bool setPumpEfficiencyInput(const QUuid &uuid,
+                                HydraulicLinkPumpEfficiencyInputType input_type,
+                                const QUuid &efficiency_curve_uuid);
+    bool setPumpEnergyPricePerKwh(const QUuid &uuid, double energy_price_per_kw_h);
+    bool setPumpEnergyPriceInput(const QUuid &uuid,
+                                 HydraulicLinkPumpEnergyPriceInputType input_type,
+                                 const QUuid &price_pattern_uuid);
+
     bool setPipeVertexCoordinate(const QUuid &pipe_uuid, int vertex_index,
                                  const CoordinateWGS84 &coordinate);
     bool setPipeVertices(const QUuid &pipe_uuid,

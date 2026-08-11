@@ -95,7 +95,7 @@ void EntityInspectorTank::addGroupGeometry()
     this->combo_geometry_type->addItem(
         "Uniform Area", static_cast<int>(HydraulicNodeTankGeometryInputType::UniformArea));
     this->combo_geometry_type->addItem(
-        "Volume at Max Level",
+        "Maximum Volume",
         static_cast<int>(HydraulicNodeTankGeometryInputType::VolumeAtMaximumLevel));
     this->combo_geometry_type->addItem(
         "Volume Curve", static_cast<int>(HydraulicNodeTankGeometryInputType::VolumeCurve));
@@ -109,12 +109,12 @@ void EntityInspectorTank::addGroupGeometry()
     this->spin_area = new QDoubleSpinBox();
     configureAreaSpin(this->spin_area);
 
-    this->label_volume_minimum = new QLabel("Minimum<br>Volume");
+    this->label_volume_minimum = new QLabel("Minimum Volume");
     this->label_volume_minimum->setWordWrap(true);
     this->spin_volume_minimum = new QDoubleSpinBox();
     configureVolumeSpin(this->spin_volume_minimum);
 
-    this->label_volume_maximum = new QLabel("Volume at Maximum Level");
+    this->label_volume_maximum = new QLabel("Maximum Volume");
     this->label_volume_maximum->setWordWrap(true);
     this->spin_volume_maximum = new QDoubleSpinBox();
     configureVolumeSpin(this->spin_volume_maximum);
@@ -319,7 +319,7 @@ void EntityInspectorTank::updateGeometryModeUi(
     this->label_volume_curve->setVisible(group_expanded && is_volume_curve);
     this->combo_volume_curve->setVisible(group_expanded && is_volume_curve);
 
-    this->label_diameter->setText(is_cylindrical ? "Diameter" : "Equivalent Diameter");
+    this->label_diameter->setText(is_cylindrical ? "Diameter" : "Equivalent<br>Diameter");
     this->label_area->setText(is_uniform_area ? "Cross-Section Area" : "Derived Cross-Section Area");
 
     if (is_cylindrical)

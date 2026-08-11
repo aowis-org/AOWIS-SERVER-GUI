@@ -1973,6 +1973,66 @@ bool HydraulicData::setPipeMinorLoss(const QUuid &uuid, double minor_loss)
         uuid, this->network_editor.setPipeMinorLoss(uuid, minor_loss));
 }
 
+bool HydraulicData::setPumpDefinitionType(
+    const QUuid &uuid, HydraulicLinkPumpDefinitionType definition_type)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setPumpDefinitionType(uuid, definition_type));
+}
+
+bool HydraulicData::setPumpInitialSpeed(const QUuid &uuid, double initial_speed)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setPumpInitialSpeed(uuid, initial_speed));
+}
+
+bool HydraulicData::setPumpInitialStatus(
+    const QUuid &uuid, HydraulicLinkPumpInitialStatus initial_status)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setPumpInitialStatus(uuid, initial_status));
+}
+
+bool HydraulicData::setPumpSpeedPatternUuid(
+    const QUuid &uuid, const QUuid &speed_pattern_uuid)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setPumpSpeedPatternUuid(uuid, speed_pattern_uuid));
+}
+
+bool HydraulicData::setPumpControlType(
+    const QUuid &uuid, HydraulicLinkPumpControlType control_type)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setPumpControlType(uuid, control_type));
+}
+
+bool HydraulicData::setPumpEfficiencyInput(
+    const QUuid &uuid, HydraulicLinkPumpEfficiencyInputType input_type,
+    const QUuid &efficiency_curve_uuid)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setPumpEfficiencyInput(
+                  uuid, input_type, efficiency_curve_uuid));
+}
+
+bool HydraulicData::setPumpEnergyPricePerKwh(
+    const QUuid &uuid, double energy_price_per_kw_h)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setPumpEnergyPricePerKwh(
+                  uuid, energy_price_per_kw_h));
+}
+
+bool HydraulicData::setPumpEnergyPriceInput(
+    const QUuid &uuid, HydraulicLinkPumpEnergyPriceInputType input_type,
+    const QUuid &price_pattern_uuid)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setPumpEnergyPriceInput(
+                  uuid, input_type, price_pattern_uuid));
+}
+
 bool HydraulicData::setPipeVertexCoordinate(const QUuid &pipe_uuid, int vertex_index,
                                             const CoordinateWGS84 &coordinate)
 {
