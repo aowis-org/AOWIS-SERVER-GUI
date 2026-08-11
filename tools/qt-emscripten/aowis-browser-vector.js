@@ -9,157 +9,6 @@
     const ENTITY_PUMP = 5;
     const ENTITY_VALVE = 6;
 
-    class VectorDocument {
-        constructor() {
-            this.commands = [];
-        }
-
-        addStroke(path, color, width, lineCap = "round", lineJoin = "round") {
-            if (!path || !color || !(width > 0))
-                return;
-            this.commands.push({
-                type: "stroke",
-                path: path,
-                color: color,
-                width: width,
-                lineCap: lineCap,
-                lineJoin: lineJoin
-            });
-        }
-
-        addFill(path, color) {
-            if (!path || !color)
-                return;
-            this.commands.push({ type: "fill", path: path, color: color });
-        }
-
-        addImage(image, x, y, width, height) {
-            if (!image || !(width > 0) || !(height > 0))
-                return;
-            this.commands.push({
-                type: "image",
-                image: image,
-                x: x,
-                y: y,
-                width: width,
-                height: height
-            });
-        }
-
-        paint(context) {
-            if (!context)
-                return;
-
-            context.save();
-            for (const command of this.commands) {
-                if (command.type === "stroke") {
-                    context.strokeStyle = command.color;
-                    context.lineWidth = command.width;
-                    context.lineCap = command.lineCap;
-                    context.lineJoin = command.lineJoin;
-                    context.stroke(command.path);
-                } else if (command.type === "fill") {
-                    context.fillStyle = command.color;
-                    context.fill(command.path);
-                } else if (command.type === "image") {
-                    context.drawImage(
-                        command.image,
-                        command.x,
-                        command.y,
-                        command.width,
-                        command.height);
-                }
-            }
-            context.restore();
-        }
-    }
-
-    class RetainedCanvasLayer {
-        constructor(zIndex) {
-            this.canvas = createCanvas(zIndex);
-            this.frameRequest = 0;
-        }
-
-        attach(parent) {
-            if (parent && this.canvas.parentElement !== parent)
-                parent.appendChild(this.canvas);
-        }
-
-        configure(width, height, ratio) {
-            return configureCanvas(this.canvas, width, height, ratio);
-        }
-
-        render(documentVector, width, height, ratio) {
-            const context = this.configure(width, height, ratio);
-            if (!context)
-                return false;
-            if (documentVector)
-                documentVector.paint(context);
-            return true;
-        }
-
-        schedule(callback) {
-            if (this.frameRequest !== 0)
-                return;
-            this.frameRequest = window.requestAnimationFrame(() => {
-                this.frameRequest = 0;
-                callback();
-            });
-        }
-
-        cancelScheduled() {
-            if (this.frameRequest === 0)
-                return;
-            window.cancelAnimationFrame(this.frameRequest);
-            this.frameRequest = 0;
-        }
-
-        hide() {
-            this.canvas.style.display = "none";
-        }
-
-        show() {
-            this.canvas.style.display = "block";
-        }
-
-        clear() {
-            this.cancelScheduled();
-            this.canvas.style.display = "none";
-            this.canvas.style.transform = "";
-            const context = this.canvas.getContext("2d");
-            if (context)
-                context.clearRect(0, 0, this.canvas.width, this.canvas.height);
-        }
-
-        destroy() {
-            this.cancelScheduled();
-            this.canvas.remove();
-        }
-    }
-
-    function createPath() {
-        return new Path2D();
-    }
-
-    function addPolyline(path, vertices, pointFunction) {
-        if (!path || !Array.isArray(vertices) || vertices.length < 2)
-            return;
-
-        const first = pointFunction(vertices[0]);
-        path.moveTo(first.x, first.y);
-        for (let index = 1; index < vertices.length; ++index) {
-            const point = pointFunction(vertices[index]);
-            path.lineTo(point.x, point.y);
-        }
-    }
-
-    function addCircle(path, x, y, radius) {
-        if (!path || !(radius > 0))
-            return;
-        path.moveTo(x + radius, y);
-        path.arc(x, y, radius, 0, Math.PI * 2);
-    }
-
     function createCanvas(zIndex) {
         const canvas = document.createElement("canvas");
         canvas.setAttribute("aria-hidden", "true");
@@ -171,35 +20,6 @@
         if (zIndex !== undefined && zIndex !== null)
             canvas.style.zIndex = String(zIndex);
         return canvas;
-    }
-
-    function configureCanvas(canvas, width, height, ratio) {
-        if (!canvas)
-            return null;
-
-        const effectiveRatio = Math.max(0.5, Number(ratio) || 1);
-        const cssWidth = Math.max(1, Number(width) || 1);
-        const cssHeight = Math.max(1, Number(height) || 1);
-        const physicalWidth = Math.max(1, Math.ceil(cssWidth * effectiveRatio));
-        const physicalHeight = Math.max(1, Math.ceil(cssHeight * effectiveRatio));
-        if (canvas.width !== physicalWidth)
-            canvas.width = physicalWidth;
-        if (canvas.height !== physicalHeight)
-            canvas.height = physicalHeight;
-        const cssWidthText = `${cssWidth}px`;
-        const cssHeightText = `${cssHeight}px`;
-        if (canvas.style.width !== cssWidthText)
-            canvas.style.width = cssWidthText;
-        if (canvas.style.height !== cssHeightText)
-            canvas.style.height = cssHeightText;
-
-        const context = canvas.getContext("2d");
-        if (!context)
-            return null;
-        context.setTransform(effectiveRatio, 0, 0, effectiveRatio, 0, 0);
-        context.clearRect(0, 0, cssWidth, cssHeight);
-        context.imageSmoothingEnabled = true;
-        return context;
     }
 
     function normalizeUuid(value) {
@@ -367,13 +187,7 @@
         ENTITY_PIPE: ENTITY_PIPE,
         ENTITY_PUMP: ENTITY_PUMP,
         ENTITY_VALVE: ENTITY_VALVE,
-        VectorDocument: VectorDocument,
-        RetainedCanvasLayer: RetainedCanvasLayer,
-        createPath: createPath,
-        addPolyline: addPolyline,
-        addCircle: addCircle,
         createCanvas: createCanvas,
-        configureCanvas: configureCanvas,
         normalizeUuid: normalizeUuid,
         projectNetworkSnapshot: projectNetworkSnapshot,
         polylineMidpoint: polylineMidpoint

@@ -4,32 +4,33 @@
     const SHARED_RENDERER = window.aowisBrowserVector;
     if (!SHARED_RENDERER)
         throw new Error("AOWIS browser map editor requires aowis-browser-vector.js");
+    const WEBGL_RENDERER = window.aowisBrowserNetworkWebGl;
+    if (!WEBGL_RENDERER)
+        throw new Error("AOWIS browser map editor requires aowis-browser-network-webgl.js");
 
     const REFERENCE_ZOOM = SHARED_RENDERER.REFERENCE_ZOOM;
-    const STATIC_PADDING = 64;
-    const MAX_STATIC_DIMENSION = 8192;
-    const MAX_STATIC_AREA = 16 * 1024 * 1024;
-    const STATIC_RASTER_MAX_AREA = 8 * 1024 * 1024;
-    const STATIC_MAX_PIXEL_RATIO = 1.5;
-    const STATIC_ZOOM_SETTLE_DELAY_MS = 90;
+    const NETWORK_MAX_PIXEL_RATIO = 1.5;
     const MARKER_DOT_RADIUS = 5;
     const CONNECTION_TARGET_RADIUS = 9;
     const PIPE_VERTEX_RADIUS = 4;
     const ENTITY_PIPE = SHARED_RENDERER.ENTITY_PIPE;
     const ENTITY_PUMP = SHARED_RENDERER.ENTITY_PUMP;
     const ENTITY_VALVE = SHARED_RENDERER.ENTITY_VALVE;
-    const SELECTED_COLOR = "rgb(0, 190, 255)";
-    const PREVIEW_COLOR = "rgb(0, 140, 255)";
-    const DEVICE_LINK_COLOR = "rgb(139, 90, 43)";
+    const BLACK = Object.freeze([0, 0, 0, 1]);
+    const WHITE = Object.freeze([1, 1, 1, 1]);
+    const SELECTED_COLOR = Object.freeze([0, 190 / 255, 1, 1]);
+    const SELECTED_GLOW_COLOR = Object.freeze([0, 190 / 255, 1, 0.8]);
+    const PREVIEW_COLOR = Object.freeze([0, 140 / 255, 1, 1]);
+    const DEVICE_LINK_COLOR = Object.freeze([139 / 255, 90 / 255, 43 / 255, 1]);
 
-    const glowOffsets = [
+    const GLOW_OFFSETS = Object.freeze([
         [-6, 0], [6, 0], [0, -6], [0, 6], [-5, -3], [-5, 3], [5, -3], [5, 3],
         [-3, -5], [-3, 5], [3, -5], [3, 5], [-4, 0], [4, 0], [0, -4], [0, 4],
         [-3, -3], [-3, 3], [3, -3], [3, 3], [-2, 0], [2, 0], [0, -2], [0, 2],
         [-2, -2], [-2, 2], [2, -2], [2, 2]
-    ];
+    ]);
 
-    const iconPaths = new Map([
+    const ICON_PATHS = new Map([
         [1, "map-editor-icons/junction.png"],
         [2, "map-editor-icons/reservoir.png"],
         [3, "map-editor-icons/tower.png"],
@@ -49,13 +50,27 @@
         [17, "map-editor-icons/electricity.png"],
         [18, "map-editor-icons/geomarker.png"]
     ]);
+    const ICON_SOURCES = [];
+    const ICON_SOURCE_BY_PATH = new Map();
+    for (const path of ICON_PATHS.values()) {
+        if (ICON_SOURCE_BY_PATH.has(path))
+            continue;
+        const source = Object.freeze({ path: path, slot: ICON_SOURCES.length });
+        ICON_SOURCES.push(source);
+        ICON_SOURCE_BY_PATH.set(path, source);
+    }
 
     const state = {
         layer: null,
         underlayCanvas: null,
-        staticCanvas: null,
-        staticRetained: null,
-        dynamicCanvas: null,
+        networkCanvas: null,
+        networkRenderer: null,
+        networkWebGlUnavailable: false,
+        networkRenderFrameRequest: 0,
+        underlayRenderPending: false,
+        baseDirty: true,
+        overlayDirty: true,
+        spriteAtlasDirty: true,
         networkSnapshot: null,
         visualState: defaultVisualState(),
         viewportState: defaultViewportState(),
@@ -65,24 +80,11 @@
         links: [],
         nodesByUuid: new Map(),
         geometryReady: false,
-        geometryMinimumX: 0,
-        geometryMinimumY: 0,
-        geometryMaximumX: 0,
-        geometryMaximumY: 0,
+        geometryOriginX: 0,
+        geometryOriginY: 0,
         geometryWrapReferenceLongitude: Number.NaN,
-        staticZoom: null,
-        staticEntityWidth: 0,
-        staticOriginX: 0,
-        staticOriginY: 0,
-        staticCssWidth: 0,
-        staticCssHeight: 0,
-        staticViewportFallback: false,
-        staticRebuildTimer: 0,
-        staticRebuildNotBefore: 0,
-        underlayRenderPending: false,
-        dynamicRenderPending: false,
-        icons: new Map(),
-        tintedIcons: new Map(),
+        iconImages: new Map(),
+        iconLoadGeneration: 0,
         backgroundRed: 255,
         backgroundGreen: 255,
         backgroundBlue: 255,
@@ -131,17 +133,58 @@
         return window.aowisBrowserMap.projection;
     }
 
-    function vectorRenderer() {
-        return SHARED_RENDERER;
-    }
-
     function devicePixelRatio() {
         return projection().devicePixelRatio();
     }
 
     function createCanvas(zIndex) {
-        return vectorRenderer().createCanvas(zIndex);
+        return SHARED_RENDERER.createCanvas(zIndex);
     }
+
+    function applyBackground() {
+        if (!state.layer)
+            return;
+        const opacity = Math.max(
+            0, Math.min(100, Number(state.viewportState.backgroundOpacity) || 0));
+        state.layer.style.backgroundColor =
+            `rgba(${state.backgroundRed}, ${state.backgroundGreen}, ${state.backgroundBlue}, ${opacity / 100})`;
+    }
+
+    function disableNetworkRenderer(error) {
+        if (!state.networkWebGlUnavailable && error)
+            console.error("AOWIS map editor WebGL2 renderer failed:", error);
+        state.networkWebGlUnavailable = true;
+        if (state.networkRenderer)
+            state.networkRenderer.destroy();
+        state.networkRenderer = null;
+        if (state.networkCanvas)
+            state.networkCanvas.remove();
+        state.networkCanvas = null;
+    }
+
+    function createNetworkRenderer() {
+        const canvas = createCanvas(2);
+        canvas.style.display = "none";
+        canvas.style.background = "transparent";
+        canvas.style.willChange = "contents";
+        state.layer.appendChild(canvas);
+        const renderer = WEBGL_RENDERER.create(canvas, {
+            contextRestored: scheduleNetworkRender,
+            spritesReady: scheduleNetworkRender,
+            error: disableNetworkRenderer
+        });
+        if (!renderer) {
+            canvas.remove();
+            state.networkWebGlUnavailable = true;
+            return;
+        }
+        state.networkCanvas = canvas;
+        state.networkRenderer = renderer;
+        state.baseDirty = true;
+        state.overlayDirty = true;
+        state.spriteAtlasDirty = true;
+    }
+
     function ensureLayer(mapLayer) {
         if (!mapLayer)
             return false;
@@ -159,13 +202,9 @@
             state.layer.style.contain = "strict";
 
             state.underlayCanvas = createCanvas(1);
-            state.staticRetained = new (vectorRenderer().RetainedCanvasLayer)(2);
-            state.staticCanvas = state.staticRetained.canvas;
-            state.staticCanvas.style.willChange = "transform";
-            state.dynamicCanvas = createCanvas(3);
             state.layer.appendChild(state.underlayCanvas);
-            state.staticRetained.attach(state.layer);
-            state.layer.appendChild(state.dynamicCanvas);
+            if (!state.networkWebGlUnavailable)
+                createNetworkRenderer();
             applyBackground();
         }
 
@@ -175,10 +214,10 @@
     }
 
     function shouldDisplay(mapView) {
-        return Boolean(mapView && state.ownerId !== 0 &&
-            mapView.activeOwner === state.ownerId && mapView.topmost &&
-            mapView.visible && mapView.ready && mapView.initialized &&
-            mapView.width > 0 && mapView.height > 0);
+        return Boolean(mapView && state.ownerId !== 0
+            && mapView.activeOwner === state.ownerId && mapView.topmost
+            && mapView.visible && mapView.ready && mapView.initialized
+            && mapView.width > 0 && mapView.height > 0);
     }
 
     function resizeViewportCanvas(canvas, width, height) {
@@ -207,15 +246,8 @@
         return context;
     }
 
-    function applyBackground() {
-        if (!state.layer)
-            return;
-        const opacity = Math.max(0, Math.min(100, Number(state.viewportState.backgroundOpacity) || 0));
-        state.layer.style.backgroundColor = `rgba(${state.backgroundRed}, ${state.backgroundGreen}, ${state.backgroundBlue}, ${opacity / 100})`;
-    }
-
     function normalizeUuid(value) {
-        return vectorRenderer().normalizeUuid(value);
+        return SHARED_RENDERER.normalizeUuid(value);
     }
 
     function selectedSet(values) {
@@ -233,9 +265,19 @@
             wrapReferenceLongitude, REFERENCE_ZOOM);
         const rawX = mapProjection.longitudeToWorldPixel(longitude, REFERENCE_ZOOM);
         return {
-            x: mapProjection.nearestWrappedWorldPixel(rawX, referenceX, REFERENCE_ZOOM),
+            x: mapProjection.nearestWrappedWorldPixel(
+                rawX, referenceX, REFERENCE_ZOOM),
             y: mapProjection.latitudeToWorldPixel(latitude, REFERENCE_ZOOM)
         };
+    }
+
+    function worldPointFromCoordinate(coordinate) {
+        if (!Array.isArray(coordinate) || coordinate.length < 2)
+            return null;
+        return worldPoint(
+            Number(coordinate[0]),
+            Number(coordinate[1]),
+            state.visualState.wrapReferenceLongitude);
     }
 
     function parseNetworkGeometry() {
@@ -243,6 +285,8 @@
         state.links = [];
         state.nodesByUuid.clear();
         state.geometryReady = false;
+        state.geometryOriginX = 0;
+        state.geometryOriginY = 0;
 
         const snapshot = state.networkSnapshot;
         if (!snapshot || !Array.isArray(snapshot.nodes) || !Array.isArray(snapshot.links))
@@ -250,15 +294,17 @@
 
         const mapProjection = projection();
         const wrapReference = Number(state.visualState.wrapReferenceLongitude) || 0;
-        const referenceX = mapProjection.longitudeToWorldPixel(wrapReference, REFERENCE_ZOOM);
-        const geometry = vectorRenderer().projectNetworkSnapshot(snapshot, {
+        const referenceX = mapProjection.longitudeToWorldPixel(
+            wrapReference, REFERENCE_ZOOM);
+        const geometry = SHARED_RENDERER.projectNetworkSnapshot(snapshot, {
             anchorX: referenceX,
             longitudeToWorldPixel: (longitude) =>
                 mapProjection.longitudeToWorldPixel(longitude, REFERENCE_ZOOM),
             latitudeToWorldPixel: (latitude) =>
                 mapProjection.latitudeToWorldPixel(latitude, REFERENCE_ZOOM),
             nearestWrappedWorldPixel: (rawX, reference) =>
-                mapProjection.nearestWrappedWorldPixel(rawX, reference, REFERENCE_ZOOM)
+                mapProjection.nearestWrappedWorldPixel(
+                    rawX, reference, REFERENCE_ZOOM)
         });
         if (!geometry)
             return;
@@ -266,196 +312,76 @@
         state.nodes = geometry.nodes;
         state.links = geometry.links;
         state.nodesByUuid = geometry.nodesByUuid;
+        state.geometryOriginX = geometry.originX;
+        state.geometryOriginY = geometry.originY;
         state.geometryWrapReferenceLongitude = wrapReference;
-        state.geometryMinimumX = geometry.minimumX;
-        state.geometryMinimumY = geometry.minimumY;
-        state.geometryMaximumX = geometry.maximumX;
-        state.geometryMaximumY = geometry.maximumY;
         state.geometryReady = geometry.ready;
     }
 
-    function iconPath(entityType) {
-        return iconPaths.get(entityType) || "map-editor-icons/geomarker.png";
-    }
-
-    function requestIcon(entityType) {
-        const path = iconPath(entityType);
-        let entry = state.icons.get(path);
-        if (entry)
-            return entry;
-
-        const image = new Image();
-        entry = { image: image, loaded: false, failed: false };
-        state.icons.set(path, entry);
-        image.decoding = "async";
-        image.onload = function () {
-            entry.loaded = true;
-            state.tintedIcons.clear();
-            invalidateStaticCache();
-            scheduleDynamicRender();
-        };
-        image.onerror = function () {
-            entry.failed = true;
-            console.error(`Could not load map editor icon: ${path}`);
-        };
-        image.src = path;
-        return entry;
-    }
-
     function iconDimensions(entityType, width) {
-        const entry = requestIcon(entityType);
-        if (!entry.loaded || entry.image.naturalWidth <= 0)
+        const path = ICON_PATHS.get(entityType) || "map-editor-icons/geomarker.png";
+        const source = ICON_SOURCE_BY_PATH.get(path);
+        const entry = state.iconImages.get(path);
+        if (!source || !entry || !entry.loaded || entry.image.naturalWidth <= 0)
             return null;
         return {
             width: width,
             height: entry.image.naturalHeight * width / entry.image.naturalWidth,
-            image: entry.image
+            slot: source.slot
         };
     }
 
-    function tintedIcon(entityType, width) {
-        const key = `${entityType}|${width}`;
-        const cached = state.tintedIcons.get(key);
-        if (cached)
-            return cached;
-
-        const dimensions = iconDimensions(entityType, width);
-        if (!dimensions)
-            return null;
-        const ratio = devicePixelRatio();
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.max(1, Math.ceil(dimensions.width * ratio));
-        canvas.height = Math.max(1, Math.ceil(dimensions.height * ratio));
-        const context = canvas.getContext("2d");
-        context.setTransform(ratio, 0, 0, ratio, 0, 0);
-        context.drawImage(dimensions.image, 0, 0, dimensions.width, dimensions.height);
-        context.globalCompositeOperation = "source-in";
-        context.fillStyle = SELECTED_COLOR;
-        context.fillRect(0, 0, dimensions.width, dimensions.height);
-        context.globalCompositeOperation = "source-over";
-        state.tintedIcons.set(key, canvas);
-        return canvas;
+    function loadIcon(source) {
+        return new Promise((resolve) => {
+            const image = new Image();
+            image.decoding = "async";
+            image.onload = function () {
+                resolve({
+                    path: source.path,
+                    slot: source.slot,
+                    image: image,
+                    loaded: true
+                });
+            };
+            image.onerror = function () {
+                console.error(`Could not load map editor icon: ${source.path}`);
+                resolve({
+                    path: source.path,
+                    slot: source.slot,
+                    image: image,
+                    loaded: false
+                });
+            };
+            image.src = source.path;
+        });
     }
 
-    function drawIcon(context, entityType, width, x, y, centered, selected) {
-        const dimensions = iconDimensions(entityType, width);
-        if (!dimensions)
+    async function loadIconImages() {
+        const generation = ++state.iconLoadGeneration;
+        const entries = await Promise.all(ICON_SOURCES.map(loadIcon));
+        if (generation !== state.iconLoadGeneration)
             return;
-
-        const left = centered ? x - dimensions.width / 2 : Math.round(x);
-        const top = centered ? y - dimensions.height / 2 : Math.round(y) - dimensions.height;
-        if (selected) {
-            const glow = tintedIcon(entityType, width);
-            if (glow) {
-                context.save();
-                context.globalAlpha = 0.8;
-                for (const offset of glowOffsets)
-                    context.drawImage(glow, left + offset[0], top + offset[1], dimensions.width, dimensions.height);
-                context.restore();
-            }
-        }
-        context.drawImage(dimensions.image, left, top, dimensions.width, dimensions.height);
+        state.iconImages.clear();
+        for (const entry of entries)
+            state.iconImages.set(entry.path, entry);
+        state.spriteAtlasDirty = true;
+        state.baseDirty = true;
+        state.overlayDirty = true;
+        scheduleNetworkRender();
     }
 
-    function linkCenter(link) {
-        return vectorRenderer().polylineMidpoint(link.vertices);
+    function linkCenter(vertices) {
+        return SHARED_RENDERER.polylineMidpoint(vertices);
     }
 
     function isDeviceLink(entityType) {
         return entityType === ENTITY_PUMP || entityType === ENTITY_VALVE;
     }
 
-    function staticRenderPixelRatio(width, height) {
-        const cssWidth = Math.max(1, Number(width) || 1);
-        const cssHeight = Math.max(1, Number(height) || 1);
-        return Math.max(0.5, Math.min(
-            devicePixelRatio(),
-            STATIC_MAX_PIXEL_RATIO,
-            MAX_STATIC_DIMENSION / cssWidth,
-            MAX_STATIC_DIMENSION / cssHeight,
-            Math.sqrt(STATIC_RASTER_MAX_AREA / (cssWidth * cssHeight))));
-    }
-
-    function clearScheduledStaticRender() {
-        if (state.staticRebuildTimer !== 0) {
-            window.clearTimeout(state.staticRebuildTimer);
-            state.staticRebuildTimer = 0;
-        }
-        if (state.staticRetained)
-            state.staticRetained.cancelScheduled();
-    }
-
-    function invalidateStaticCache() {
-        state.staticZoom = null;
-        state.staticEntityWidth = 0;
-        scheduleStaticRender();
-    }
-
-    function staticSpecification(mapView) {
-        const scale = Math.pow(2, mapView.zoom - REFERENCE_ZOOM);
-        const width = Math.max(1, (state.geometryMaximumX - state.geometryMinimumX) * scale + STATIC_PADDING * 2);
-        const height = Math.max(1, (state.geometryMaximumY - state.geometryMinimumY) * scale + STATIC_PADDING * 2);
-        const ratio = staticRenderPixelRatio(width, height);
-        const physicalWidth = width * ratio;
-        const physicalHeight = height * ratio;
-        const fallback = physicalWidth > MAX_STATIC_DIMENSION || physicalHeight > MAX_STATIC_DIMENSION ||
-            physicalWidth * physicalHeight > MAX_STATIC_AREA;
-        if (fallback) {
-            return {
-                fallback: true,
-                width: mapView.width,
-                height: mapView.height,
-                originX: 0,
-                originY: 0,
-                scale: scale
-            };
-        }
-        return {
-            fallback: false,
-            width: Math.ceil(width),
-            height: Math.ceil(height),
-            originX: state.geometryMinimumX - STATIC_PADDING / scale,
-            originY: state.geometryMinimumY - STATIC_PADDING / scale,
-            scale: scale
-        };
-    }
-
-    function applyStaticSpecification(specification) {
-        state.staticCssWidth = specification.width;
-        state.staticCssHeight = specification.height;
-        state.staticOriginX = specification.originX;
-        state.staticOriginY = specification.originY;
-        state.staticViewportFallback = specification.fallback;
-    }
-    function cachedPoint(point, specification, mapView) {
-        if (specification.fallback)
-            return screenPoint(point, mapView);
-        return {
-            x: (point.x - specification.originX) * specification.scale,
-            y: (point.y - specification.originY) * specification.scale
-        };
-    }
-
-    function strokePolyline(context, vertices, pointFunction, color, width) {
-        if (vertices.length < 2)
-            return;
-        context.beginPath();
-        let point = pointFunction(vertices[0]);
-        context.moveTo(point.x, point.y);
-        for (let index = 1; index < vertices.length; ++index) {
-            point = pointFunction(vertices[index]);
-            context.lineTo(point.x, point.y);
-        }
-        context.strokeStyle = color;
-        context.lineWidth = width;
-        context.lineCap = "round";
-        context.lineJoin = "round";
-        context.stroke();
-    }
-
     function moveState() {
         const move = state.visualState && state.visualState.move;
-        return move && typeof move === "object" ? move : { active: false, sessionId: "0", markers: [], links: [] };
+        return move && typeof move === "object"
+            ? move : { active: false, sessionId: "0", markers: [], links: [] };
     }
 
     function movingUuidSets() {
@@ -482,179 +408,394 @@
         return { markers: markers, links: links };
     }
 
-    function renderStaticNetwork() {
-        const mapView = state.lastMapView;
-        if (!state.staticCanvas || !state.geometryReady || !shouldDisplay(mapView)) {
-            if (state.staticCanvas)
-                state.staticCanvas.style.display = "none";
-            return;
-        }
-
-        const specification = staticSpecification(mapView);
-        applyStaticSpecification(specification);
-        const renderer = vectorRenderer();
-        const documentVector = new renderer.VectorDocument();
-        const pointFunction = (point) => cachedPoint(point, specification, mapView);
-        const entityWidth = Math.max(1, Number(state.visualState.entityWidth) || 10);
-        const moving = movingUuidSets();
-
-        const pipePath = renderer.createPath();
-        const pipeVertexPath = renderer.createPath();
-        for (const link of state.links) {
-            if (link.entityType !== ENTITY_PIPE || moving.links.has(link.uuid))
-                continue;
-            renderer.addPolyline(pipePath, link.vertices, pointFunction);
-            for (let index = 1; index + 1 < link.vertices.length; ++index) {
-                const point = pointFunction(link.vertices[index]);
-                renderer.addCircle(pipeVertexPath, point.x, point.y, PIPE_VERTEX_RADIUS);
-            }
-        }
-        documentVector.addStroke(pipePath, "black", 3);
-        documentVector.addFill(pipeVertexPath, "black");
-
-        const devicePath = renderer.createPath();
-        for (const link of state.links) {
-            if (!isDeviceLink(link.entityType) || moving.links.has(link.uuid) || link.vertices.length < 2)
-                continue;
-            const center = linkCenter(link);
-            if (!center)
-                continue;
-            const start = pointFunction(link.vertices[0]);
-            const middle = pointFunction(center);
-            const end = pointFunction(link.vertices[link.vertices.length - 1]);
-            devicePath.moveTo(start.x, start.y);
-            devicePath.lineTo(middle.x, middle.y);
-            devicePath.lineTo(end.x, end.y);
-        }
-        documentVector.addStroke(devicePath, DEVICE_LINK_COLOR, 3);
-
-        const nodeDotPath = renderer.createPath();
-        for (const node of state.nodes) {
-            if (moving.markers.has(node.uuid))
-                continue;
-            const point = pointFunction(node);
-            renderer.addCircle(nodeDotPath, point.x, point.y, MARKER_DOT_RADIUS);
-        }
-        documentVector.addFill(nodeDotPath, "black");
-
-        for (const link of state.links) {
-            if (!isDeviceLink(link.entityType) || moving.links.has(link.uuid) || link.vertices.length < 2)
-                continue;
-            const center = linkCenter(link);
-            if (!center)
-                continue;
-            const point = pointFunction(center);
-            const dimensions = iconDimensions(link.entityType, entityWidth);
-            if (!dimensions)
-                continue;
-            documentVector.addImage(
-                dimensions.image,
-                point.x - dimensions.width / 2,
-                point.y - dimensions.height / 2,
-                dimensions.width,
-                dimensions.height);
-        }
-
-        for (const node of state.nodes) {
-            if (moving.markers.has(node.uuid))
-                continue;
-            const point = pointFunction(node);
-            const dimensions = iconDimensions(node.entityType, entityWidth);
-            if (!dimensions)
-                continue;
-            documentVector.addImage(
-                dimensions.image,
-                Math.round(point.x),
-                Math.round(point.y) - dimensions.height,
-                dimensions.width,
-                dimensions.height);
-        }
-
-        if (!state.staticRetained || !state.staticRetained.render(
-            documentVector,
-            specification.width,
-            specification.height,
-            staticRenderPixelRatio(specification.width, specification.height))) {
-            return;
-        }
-        state.staticZoom = mapView.zoom;
-        state.staticEntityWidth = entityWidth;
-        state.staticRebuildNotBefore = 0;
-        state.staticCanvas.style.display = "block";
-        positionStaticCanvas(mapView);
-    }
-    function positionStaticCanvas(mapView) {
-        if (!state.staticCanvas || state.staticZoom === null)
-            return;
-        if (state.staticViewportFallback) {
-            if (state.staticZoom === mapView.zoom) {
-                state.staticCanvas.style.display = "block";
-                state.staticCanvas.style.transform = "translate3d(0, 0, 0)";
-            } else {
-                state.staticCanvas.style.display = "none";
-            }
-            return;
-        }
-
-        const scale = Math.pow(2, mapView.zoom - REFERENCE_ZOOM);
-        const renderedScale = Math.pow(2, state.staticZoom - REFERENCE_ZOOM);
-        const zoomScale = scale / renderedScale;
-        const originAtZoom = worldXAtMapZoom(state.staticOriginX, mapView);
-        const left = projection().snapToPhysicalPixel(
-            mapView.width / 2 + originAtZoom - mapView.centerPixelX);
-        const top = projection().snapToPhysicalPixel(
-            mapView.height / 2 + state.staticOriginY * scale - mapView.centerPixelY);
-        state.staticCanvas.style.display = "block";
-        state.staticCanvas.style.transform =
-            `translate3d(${left}px, ${top}px, 0) scale(${zoomScale})`;
-    }
-
-    function scheduleStaticRender() {
-        if (!state.staticRetained)
-            return;
-
-        const delay = state.staticRebuildNotBefore - performance.now();
-        if (delay > 1) {
-            if (state.staticRebuildTimer === 0) {
-                state.staticRebuildTimer = window.setTimeout(() => {
-                    state.staticRebuildTimer = 0;
-                    scheduleStaticRender();
-                }, Math.ceil(delay));
-            }
-            return;
-        }
-
-        if (state.staticRebuildTimer !== 0) {
-            window.clearTimeout(state.staticRebuildTimer);
-            state.staticRebuildTimer = 0;
-        }
-        state.staticRetained.schedule(renderStaticNetwork);
-    }
-
-    function worldXAtMapZoom(referenceZoomX, mapView) {
+    function worldTransform(mapView) {
         const mapProjection = projection();
         const scale = Math.pow(2, mapView.zoom - REFERENCE_ZOOM);
-        const wrapReferenceX = mapProjection.longitudeToWorldPixel(
-            state.visualState.wrapReferenceLongitude, REFERENCE_ZOOM);
-        const wrappedReferenceX = mapProjection.nearestWrappedWorldPixel(
-            wrapReferenceX * scale, mapView.centerPixelX, mapView.zoom);
-        return wrappedReferenceX + (referenceZoomX - wrapReferenceX) * scale;
-    }
-
-    function screenPoint(point, mapView) {
-        const scale = Math.pow(2, mapView.zoom - REFERENCE_ZOOM);
+        const worldSize = mapProjection.tileSize * Math.pow(2, mapView.zoom);
+        let originPixelX = state.geometryOriginX * scale;
+        originPixelX += Math.round(
+            (mapView.centerPixelX - originPixelX) / worldSize) * worldSize;
         return {
-            x: mapView.width / 2 + worldXAtMapZoom(point.x, mapView) - mapView.centerPixelX,
-            y: mapView.height / 2 + point.y * scale - mapView.centerPixelY
+            scale: scale,
+            translateX: originPixelX
+                - mapView.originTileX * mapProjection.tileSize + mapView.translateX,
+            translateY: state.geometryOriginY * scale
+                - mapView.originTileY * mapProjection.tileSize + mapView.translateY
         };
     }
 
-    function screenFromCoordinate(coordinate, mapView) {
-        if (!Array.isArray(coordinate) || coordinate.length < 2)
-            return null;
-        return screenPoint(worldPoint(
-            Number(coordinate[0]), Number(coordinate[1]),
-            state.visualState.wrapReferenceLongitude), mapView);
+    function worldPointFromScreen(x, y, mapView) {
+        const transform = worldTransform(mapView);
+        return {
+            x: state.geometryOriginX + (x - transform.translateX) / transform.scale,
+            y: state.geometryOriginY + (y - transform.translateY) / transform.scale
+        };
+    }
+
+    function createBatchBuilder() {
+        return {
+            segments: [],
+            segmentColors: [],
+            discs: [],
+            discColors: [],
+            sprites: [],
+            spriteColors: []
+        };
+    }
+
+    function appendColor(target, color) {
+        target.push(color[0], color[1], color[2], color[3]);
+    }
+
+    function appendSegment(builder, start, end, color) {
+        if (!start || !end)
+            return;
+        builder.segments.push(
+            start.x - state.geometryOriginX,
+            start.y - state.geometryOriginY,
+            end.x - state.geometryOriginX,
+            end.y - state.geometryOriginY);
+        appendColor(builder.segmentColors, color);
+    }
+
+    function appendPolyline(builder, vertices, color) {
+        if (!Array.isArray(vertices))
+            return;
+        for (let index = 1; index < vertices.length; ++index)
+            appendSegment(builder, vertices[index - 1], vertices[index], color);
+    }
+
+    function appendDeviceLink(builder, vertices, color) {
+        if (!Array.isArray(vertices) || vertices.length < 2)
+            return;
+        const center = linkCenter(vertices);
+        if (!center)
+            return;
+        appendSegment(builder, vertices[0], center, color);
+        appendSegment(builder, center, vertices[vertices.length - 1], color);
+    }
+
+    function appendDisc(builder, point, radius, color) {
+        if (!point || !(radius > 0))
+            return;
+        builder.discs.push(
+            point.x - state.geometryOriginX,
+            point.y - state.geometryOriginY,
+            radius);
+        appendColor(builder.discColors, color);
+    }
+
+    function appendSprite(
+        builder, point, dimensions, anchorX, anchorY, offsetX, offsetY, tint, color) {
+        if (!point || !dimensions)
+            return;
+        builder.sprites.push(
+            point.x - state.geometryOriginX,
+            point.y - state.geometryOriginY,
+            dimensions.width,
+            dimensions.height,
+            anchorX,
+            anchorY,
+            offsetX,
+            offsetY,
+            dimensions.slot,
+            tint ? 1 : 0);
+        appendColor(builder.spriteColors, color);
+    }
+
+    function appendIcon(builder, entityType, width, point, centered, selected) {
+        const dimensions = iconDimensions(entityType, width);
+        if (!dimensions)
+            return;
+        const anchorX = centered ? 0.5 : 0;
+        const anchorY = centered ? 0.5 : 1;
+        if (selected) {
+            for (const offset of GLOW_OFFSETS) {
+                appendSprite(
+                    builder, point, dimensions, anchorX, anchorY,
+                    offset[0], offset[1], true, SELECTED_GLOW_COLOR);
+            }
+        }
+        appendSprite(
+            builder, point, dimensions, anchorX, anchorY,
+            0, 0, false, WHITE);
+    }
+
+    function commitBatch(batchName, builder) {
+        state.networkRenderer.setGeometry(batchName, {
+            segments: new Float32Array(builder.segments),
+            discs: new Float32Array(builder.discs),
+            sprites: new Float32Array(builder.sprites)
+        });
+        state.networkRenderer.setColors(batchName, {
+            segments: new Float32Array(builder.segmentColors),
+            discs: new Float32Array(builder.discColors),
+            sprites: new Float32Array(builder.spriteColors)
+        });
+    }
+
+    function buildBaseBatch() {
+        const builder = createBatchBuilder();
+        if (!state.geometryReady) {
+            commitBatch("base", builder);
+            return;
+        }
+
+        const moving = movingUuidSets();
+        const entityWidth = Math.max(
+            1, Number(state.visualState.entityWidth) || 10);
+        for (const link of state.links) {
+            if (moving.links.has(link.uuid))
+                continue;
+            if (link.entityType === ENTITY_PIPE) {
+                appendPolyline(builder, link.vertices, BLACK);
+                for (let index = 1; index + 1 < link.vertices.length; ++index)
+                    appendDisc(builder, link.vertices[index], PIPE_VERTEX_RADIUS, BLACK);
+                continue;
+            }
+            if (!isDeviceLink(link.entityType))
+                continue;
+            appendDeviceLink(builder, link.vertices, DEVICE_LINK_COLOR);
+            const center = linkCenter(link.vertices);
+            if (center)
+                appendIcon(builder, link.entityType, entityWidth, center, true, false);
+        }
+
+        for (const node of state.nodes) {
+            if (moving.markers.has(node.uuid))
+                continue;
+            appendDisc(builder, node, MARKER_DOT_RADIUS, BLACK);
+            appendIcon(builder, node.entityType, entityWidth, node, false, false);
+        }
+        commitBatch("base", builder);
+    }
+
+    function appendSelectedNetwork(builder) {
+        const selectedMarkers = selectedSet(state.visualState.selectedMarkerUuids);
+        const selectedPipes = selectedSet(state.visualState.selectedPipeUuids);
+        const moving = movingUuidSets();
+        const entityWidth = Math.max(
+            1, Number(state.visualState.entityWidth) || 10);
+
+        for (const link of state.links) {
+            if (moving.links.has(link.uuid))
+                continue;
+            if (link.entityType === ENTITY_PIPE && selectedPipes.has(link.uuid)) {
+                appendPolyline(builder, link.vertices, SELECTED_COLOR);
+                for (let index = 1; index + 1 < link.vertices.length; ++index) {
+                    appendDisc(
+                        builder, link.vertices[index], PIPE_VERTEX_RADIUS, SELECTED_COLOR);
+                }
+            } else if (isDeviceLink(link.entityType)
+                       && selectedMarkers.has(link.uuid)) {
+                appendDeviceLink(builder, link.vertices, SELECTED_COLOR);
+                const center = linkCenter(link.vertices);
+                if (center)
+                    appendIcon(builder, link.entityType, entityWidth, center, true, true);
+            }
+        }
+
+        for (const node of state.nodes) {
+            if (moving.markers.has(node.uuid) || !selectedMarkers.has(node.uuid))
+                continue;
+            appendIcon(builder, node.entityType, entityWidth, node, false, true);
+        }
+    }
+
+    function appendMove(builder) {
+        const move = moveState();
+        if (!move.active)
+            return;
+
+        const entityWidth = Math.max(
+            1, Number(state.visualState.entityWidth) || 10);
+        if (Array.isArray(move.links)) {
+            for (const link of move.links) {
+                if (!link || !Array.isArray(link.vertices))
+                    continue;
+                const vertices = [];
+                for (const coordinate of link.vertices) {
+                    const point = worldPointFromCoordinate(coordinate);
+                    if (point)
+                        vertices.push(point);
+                }
+                if (vertices.length < 2)
+                    continue;
+
+                const entityType = Number(link.entity) | 0;
+                appendPolyline(builder, vertices, SELECTED_COLOR);
+                if (entityType === ENTITY_PIPE) {
+                    for (let index = 1; index + 1 < vertices.length; ++index) {
+                        appendDisc(
+                            builder, vertices[index], PIPE_VERTEX_RADIUS, SELECTED_COLOR);
+                    }
+                } else if (isDeviceLink(entityType)) {
+                    const center = linkCenter(vertices);
+                    if (center)
+                        appendIcon(builder, entityType, entityWidth, center, true, true);
+                }
+            }
+        }
+
+        if (!Array.isArray(move.markers))
+            return;
+        for (const marker of move.markers) {
+            if (!marker)
+                continue;
+            const entityType = Number(marker.entity) | 0;
+            if (isDeviceLink(entityType))
+                continue;
+            const point = worldPointFromCoordinate(marker.coordinate);
+            if (point)
+                appendIcon(builder, entityType, entityWidth, point, false, true);
+        }
+    }
+
+    function placementEndPoint(placement, targetNode, mapView) {
+        if (targetNode)
+            return targetNode;
+        return worldPointFromScreen(
+            Number(placement.mouseX) || 0,
+            Number(placement.mouseY) || 0,
+            mapView);
+    }
+
+    function appendPlacement(builder, mapView) {
+        const placement = state.visualState.placement || {};
+        if (!placement.creating)
+            return;
+
+        const targetUuid = normalizeUuid(placement.connectionTargetUuid);
+        const targetNode = state.nodesByUuid.get(targetUuid);
+        if (targetNode)
+            appendDisc(builder, targetNode, CONNECTION_TARGET_RADIUS, PREVIEW_COLOR);
+
+        const entityType = Number(placement.entity) | 0;
+        if (entityType === ENTITY_PIPE && placement.pipeStartNodeUuid) {
+            const startNode = state.nodesByUuid.get(
+                normalizeUuid(placement.pipeStartNodeUuid));
+            if (startNode) {
+                const vertices = [startNode];
+                if (Array.isArray(placement.pipeIntermediateVertices)) {
+                    for (const coordinate of placement.pipeIntermediateVertices) {
+                        const point = worldPointFromCoordinate(coordinate);
+                        if (point)
+                            vertices.push(point);
+                    }
+                }
+                vertices.push(placementEndPoint(placement, targetNode, mapView));
+                appendPolyline(builder, vertices, PREVIEW_COLOR);
+            }
+        }
+
+        let deviceCenter = null;
+        if (isDeviceLink(entityType) && placement.deviceLinkStartNodeUuid) {
+            const startNode = state.nodesByUuid.get(
+                normalizeUuid(placement.deviceLinkStartNodeUuid));
+            if (startNode) {
+                const end = placementEndPoint(placement, targetNode, mapView);
+                deviceCenter = {
+                    x: (startNode.x + end.x) / 2,
+                    y: (startNode.y + end.y) / 2
+                };
+                appendSegment(builder, startNode, deviceCenter, PREVIEW_COLOR);
+                appendSegment(builder, deviceCenter, end, PREVIEW_COLOR);
+            }
+        }
+
+        if (!placement.floatingMarkerVisible || entityType === 0
+            || Number(placement.floatingWidth) <= 0) {
+            return;
+        }
+        const width = Number(placement.floatingWidth);
+        if (deviceCenter) {
+            appendIcon(builder, entityType, width, deviceCenter, true, false);
+            return;
+        }
+        const point = worldPointFromScreen(
+            Number(placement.mouseX) || 0,
+            Number(placement.mouseY) || 0,
+            mapView);
+        appendIcon(builder, entityType, width, point, false, false);
+    }
+
+    function buildOverlayBatch(mapView) {
+        const builder = createBatchBuilder();
+        if (state.geometryReady) {
+            appendSelectedNetwork(builder);
+            appendMove(builder);
+            appendPlacement(builder, mapView);
+        }
+        commitBatch("overlay", builder);
+    }
+
+    function synchronizeNetworkRenderer(mapView) {
+        if (state.spriteAtlasDirty) {
+            const sprites = [];
+            for (const entry of state.iconImages.values()) {
+                if (entry.loaded)
+                    sprites.push({ slot: entry.slot, image: entry.image });
+            }
+            state.networkRenderer.setSpriteImages(sprites);
+            state.spriteAtlasDirty = false;
+        }
+        if (state.baseDirty) {
+            buildBaseBatch();
+            state.baseDirty = false;
+        }
+        if (state.overlayDirty) {
+            buildOverlayBatch(mapView);
+            state.overlayDirty = false;
+        }
+    }
+
+    function renderNetwork() {
+        state.networkRenderFrameRequest = 0;
+        const mapView = state.lastMapView;
+        if (!state.networkRenderer || !shouldDisplay(mapView)) {
+            if (state.networkRenderer)
+                state.networkRenderer.clear();
+            return;
+        }
+
+        try {
+            synchronizeNetworkRenderer(mapView);
+            if (!state.geometryReady) {
+                state.networkRenderer.clear();
+                return;
+            }
+            const transform = worldTransform(mapView);
+            const rendered = state.networkRenderer.render({
+                width: mapView.width,
+                height: mapView.height,
+                pixelRatio: Math.min(
+                    devicePixelRatio(), NETWORK_MAX_PIXEL_RATIO),
+                translateX: transform.translateX,
+                translateY: transform.translateY,
+                scale: transform.scale,
+                batches: {
+                    base: { segmentWidth: 3, discScale: 1, spriteScale: 1 },
+                    overlay: { segmentWidth: 3, discScale: 1, spriteScale: 1 }
+                }
+            });
+            if (!rendered && state.networkCanvas)
+                state.networkCanvas.style.display = "none";
+        } catch (error) {
+            disableNetworkRenderer(error);
+        }
+    }
+
+    function scheduleNetworkRender() {
+        if (!state.lastMapView || state.networkRenderFrameRequest !== 0)
+            return;
+        state.networkRenderFrameRequest = window.requestAnimationFrame(renderNetwork);
+    }
+
+    function clearScheduledNetworkRender() {
+        if (state.networkRenderFrameRequest === 0)
+            return;
+        window.cancelAnimationFrame(state.networkRenderFrameRequest);
+        state.networkRenderFrameRequest = 0;
     }
 
     function drawTileSelection(context, mapView) {
@@ -671,7 +812,8 @@
         const northTile = Number(tile.yMin);
         const southTile = Number(tile.yMax) + 1;
         const selectionCenter = (westTile + eastTile) / 2;
-        const wrapShift = Math.round((centerTileX - selectionCenter) / worldTileCount) * worldTileCount;
+        const wrapShift = Math.round(
+            (centerTileX - selectionCenter) / worldTileCount) * worldTileCount;
         westTile += wrapShift;
         eastTile += wrapShift;
 
@@ -681,8 +823,10 @@
         const bottom = mapView.height / 2 + (southTile - centerTileY) * tileSize;
         const width = right - left;
         const height = bottom - top;
-        if (width <= 0 || height <= 0 || right < 0 || bottom < 0 || left > mapView.width || top > mapView.height)
+        if (width <= 0 || height <= 0 || right < 0 || bottom < 0
+            || left > mapView.width || top > mapView.height) {
             return;
+        }
 
         const fill = context.createLinearGradient(left, top, right, bottom);
         fill.addColorStop(0, "rgba(92, 255, 82, 0.212)");
@@ -705,10 +849,13 @@
         context.lineWidth = 1;
         const viewportWestTile = centerTileX - mapView.width / 2 / tileSize;
         const viewportEastTile = centerTileX + mapView.width / 2 / tileSize;
-        const firstVisibleX = Math.max(Number(tile.xMin) + 1, Math.ceil(viewportWestTile - wrapShift));
-        const lastVisibleX = Math.min(Number(tile.xMax), Math.floor(viewportEastTile - wrapShift));
+        const firstVisibleX = Math.max(
+            Number(tile.xMin) + 1, Math.ceil(viewportWestTile - wrapShift));
+        const lastVisibleX = Math.min(
+            Number(tile.xMax), Math.floor(viewportEastTile - wrapShift));
         for (let tileX = firstVisibleX; tileX <= lastVisibleX; ++tileX) {
-            const x = mapView.width / 2 + (tileX + wrapShift - centerTileX) * tileSize;
+            const x = mapView.width / 2
+                + (tileX + wrapShift - centerTileX) * tileSize;
             context.beginPath();
             context.moveTo(x, top);
             context.lineTo(x, bottom);
@@ -717,8 +864,10 @@
 
         const viewportNorthTile = centerTileY - mapView.height / 2 / tileSize;
         const viewportSouthTile = centerTileY + mapView.height / 2 / tileSize;
-        const firstVisibleY = Math.max(Number(tile.yMin) + 1, Math.ceil(viewportNorthTile));
-        const lastVisibleY = Math.min(Number(tile.yMax), Math.floor(viewportSouthTile));
+        const firstVisibleY = Math.max(
+            Number(tile.yMin) + 1, Math.ceil(viewportNorthTile));
+        const lastVisibleY = Math.min(
+            Number(tile.yMax), Math.floor(viewportSouthTile));
         for (let tileY = firstVisibleY; tileY <= lastVisibleY; ++tileY) {
             const y = mapView.height / 2 + (tileY - centerTileY) * tileSize;
             context.beginPath();
@@ -729,15 +878,18 @@
     }
 
     function roundedRectPath(context, x, y, width, height, radius) {
-        const boundedRadius = Math.max(0, Math.min(radius, width / 2, height / 2));
+        const boundedRadius = Math.max(
+            0, Math.min(radius, width / 2, height / 2));
         context.beginPath();
         context.roundRect(x, y, width, height, boundedRadius);
     }
 
     function drawRectangleSelection(context) {
         const rectangle = state.viewportState.rectangleSelection;
-        if (!rectangle || !rectangle.visible || rectangle.width <= 0 || rectangle.height <= 0)
+        if (!rectangle || !rectangle.visible
+            || rectangle.width <= 0 || rectangle.height <= 0) {
             return;
+        }
 
         const x = Number(rectangle.x) + 2.5;
         const y = Number(rectangle.y) + 2.5;
@@ -780,7 +932,9 @@
         context.stroke();
 
         if (width > 3 && height > 3) {
-            roundedRectPath(context, x + 1.5, y + 1.5, width - 3, height - 3, Math.max(0, radius - 1));
+            roundedRectPath(
+                context, x + 1.5, y + 1.5, width - 3, height - 3,
+                Math.max(0, radius - 1));
             context.strokeStyle = "rgba(86, 215, 255, 0.706)";
             context.lineWidth = 1;
             context.stroke();
@@ -788,11 +942,15 @@
         if (width > 6 && height > 6) {
             context.setLineDash([4, 2]);
             context.lineDashOffset = 1.5;
-            roundedRectPath(context, x + 3, y + 3, width - 6, height - 6, Math.max(0, radius - 2));
+            roundedRectPath(
+                context, x + 3, y + 3, width - 6, height - 6,
+                Math.max(0, radius - 2));
             context.strokeStyle = "rgba(36, 196, 255, 0.376)";
             context.lineWidth = 5;
             context.stroke();
-            roundedRectPath(context, x + 3, y + 3, width - 6, height - 6, Math.max(0, radius - 2));
+            roundedRectPath(
+                context, x + 3, y + 3, width - 6, height - 6,
+                Math.max(0, radius - 2));
             context.strokeStyle = "rgba(102, 224, 255, 0.961)";
             context.lineWidth = 1.5;
             context.stroke();
@@ -806,7 +964,8 @@
         const mapView = state.lastMapView;
         if (!state.underlayCanvas || !shouldDisplay(mapView))
             return;
-        const context = viewportContext(state.underlayCanvas, mapView.width, mapView.height);
+        const context = viewportContext(
+            state.underlayCanvas, mapView.width, mapView.height);
         drawTileSelection(context, mapView);
         drawRectangleSelection(context);
     }
@@ -818,215 +977,7 @@
         window.requestAnimationFrame(renderUnderlay);
     }
 
-    function drawSelectedNetwork(context, mapView) {
-        if (!state.geometryReady)
-            return;
-        const selectedMarkers = selectedSet(state.visualState.selectedMarkerUuids);
-        const selectedPipes = selectedSet(state.visualState.selectedPipeUuids);
-        const moving = movingUuidSets();
-        const entityWidth = Math.max(1, Number(state.visualState.entityWidth) || 10);
-
-        for (const link of state.links) {
-            if (link.entityType !== ENTITY_PIPE || moving.links.has(link.uuid) || !selectedPipes.has(link.uuid))
-                continue;
-            strokePolyline(context, link.vertices, (point) => screenPoint(point, mapView), SELECTED_COLOR, 3);
-            context.fillStyle = SELECTED_COLOR;
-            for (let index = 1; index + 1 < link.vertices.length; ++index) {
-                const point = screenPoint(link.vertices[index], mapView);
-                context.beginPath();
-                context.arc(point.x, point.y, PIPE_VERTEX_RADIUS, 0, Math.PI * 2);
-                context.fill();
-            }
-        }
-
-        for (const link of state.links) {
-            if (!isDeviceLink(link.entityType) || moving.links.has(link.uuid) || !selectedMarkers.has(link.uuid) || link.vertices.length < 2)
-                continue;
-            const center = linkCenter(link);
-            if (!center)
-                continue;
-            const start = screenPoint(link.vertices[0], mapView);
-            const middle = screenPoint(center, mapView);
-            const end = screenPoint(link.vertices[link.vertices.length - 1], mapView);
-            context.beginPath();
-            context.moveTo(start.x, start.y);
-            context.lineTo(middle.x, middle.y);
-            context.lineTo(end.x, end.y);
-            context.strokeStyle = SELECTED_COLOR;
-            context.lineWidth = 3;
-            context.lineCap = "round";
-            context.lineJoin = "round";
-            context.stroke();
-            drawIcon(context, link.entityType, entityWidth, middle.x, middle.y, true, true);
-        }
-
-        for (const node of state.nodes) {
-            if (moving.markers.has(node.uuid) || !selectedMarkers.has(node.uuid))
-                continue;
-            const point = screenPoint(node, mapView);
-            drawIcon(context, node.entityType, entityWidth, point.x, point.y, false, true);
-        }
-    }
-
-    function drawMove(context, mapView) {
-        const move = moveState();
-        if (!move.active)
-            return;
-
-        const entityWidth = Math.max(1, Number(state.visualState.entityWidth) || 10);
-        if (Array.isArray(move.links)) {
-            for (const link of move.links) {
-                if (!link || !Array.isArray(link.vertices) || link.vertices.length < 2)
-                    continue;
-
-                const entityType = Number(link.entity) | 0;
-                const vertices = [];
-                for (const coordinate of link.vertices) {
-                    const point = screenFromCoordinate(coordinate, mapView);
-                    if (point)
-                        vertices.push(point);
-                }
-                if (vertices.length < 2)
-                    continue;
-
-                strokePolyline(context, vertices, (point) => point, SELECTED_COLOR, 3);
-                if (entityType === ENTITY_PIPE) {
-                    context.fillStyle = SELECTED_COLOR;
-                    for (let index = 1; index + 1 < vertices.length; ++index) {
-                        context.beginPath();
-                        context.arc(vertices[index].x, vertices[index].y, PIPE_VERTEX_RADIUS, 0, Math.PI * 2);
-                        context.fill();
-                    }
-                } else if (isDeviceLink(entityType)) {
-                    const center = vectorRenderer().polylineMidpoint(vertices);
-                    if (center)
-                        drawIcon(context, entityType, entityWidth, center.x, center.y, true, true);
-                }
-            }
-        }
-
-        if (!Array.isArray(move.markers))
-            return;
-        for (const marker of move.markers) {
-            if (!marker)
-                continue;
-            const entityType = Number(marker.entity) | 0;
-            if (isDeviceLink(entityType))
-                continue;
-            const point = screenFromCoordinate(marker.coordinate, mapView);
-            if (!point)
-                continue;
-            drawIcon(context, entityType, entityWidth, point.x, point.y, false, true);
-        }
-    }
-
-    function drawPlacement(context, mapView) {
-        const placement = state.visualState.placement || {};
-        if (!placement.creating)
-            return;
-
-        const targetUuid = normalizeUuid(placement.connectionTargetUuid);
-        const targetNode = state.nodesByUuid.get(targetUuid);
-        if (targetNode) {
-            const point = screenPoint(targetNode, mapView);
-            context.beginPath();
-            context.arc(point.x, point.y, CONNECTION_TARGET_RADIUS, 0, Math.PI * 2);
-            context.fillStyle = PREVIEW_COLOR;
-            context.fill();
-        }
-
-        if (Number(placement.entity) === ENTITY_PIPE && placement.pipeStartNodeUuid) {
-            const startNode = state.nodesByUuid.get(normalizeUuid(placement.pipeStartNodeUuid));
-            if (startNode) {
-                const vertices = [startNode];
-                if (Array.isArray(placement.pipeIntermediateVertices)) {
-                    for (const coordinate of placement.pipeIntermediateVertices) {
-                        if (!Array.isArray(coordinate) || coordinate.length < 2)
-                            continue;
-                        vertices.push(worldPoint(Number(coordinate[0]), Number(coordinate[1]), state.visualState.wrapReferenceLongitude));
-                    }
-                }
-                let endPoint = { x: Number(placement.mouseX) || 0, y: Number(placement.mouseY) || 0 };
-                if (targetNode)
-                    endPoint = screenPoint(targetNode, mapView);
-                const screenVertices = vertices.map((point) => screenPoint(point, mapView));
-                screenVertices.push(endPoint);
-                strokePolyline(context, screenVertices, (point) => point, PREVIEW_COLOR, 3);
-            }
-        }
-
-        if (isDeviceLink(Number(placement.entity)) && placement.deviceLinkStartNodeUuid) {
-            const startNode = state.nodesByUuid.get(normalizeUuid(placement.deviceLinkStartNodeUuid));
-            if (startNode) {
-                const start = screenPoint(startNode, mapView);
-                const end = targetNode ? screenPoint(targetNode, mapView) : {
-                    x: Number(placement.mouseX) || 0,
-                    y: Number(placement.mouseY) || 0
-                };
-                const middle = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
-                context.beginPath();
-                context.moveTo(start.x, start.y);
-                context.lineTo(middle.x, middle.y);
-                context.lineTo(end.x, end.y);
-                context.strokeStyle = PREVIEW_COLOR;
-                context.lineWidth = 3;
-                context.lineCap = "round";
-                context.lineJoin = "round";
-                context.stroke();
-            }
-        }
-
-        if (!placement.floatingMarkerVisible || Number(placement.entity) === 0 || Number(placement.floatingWidth) <= 0)
-            return;
-
-        const entityType = Number(placement.entity) | 0;
-        const width = Number(placement.floatingWidth);
-        if (isDeviceLink(entityType) && placement.deviceLinkStartNodeUuid) {
-            const startNode = state.nodesByUuid.get(normalizeUuid(placement.deviceLinkStartNodeUuid));
-            if (startNode) {
-                const start = screenPoint(startNode, mapView);
-                const end = targetNode ? screenPoint(targetNode, mapView) : {
-                    x: Number(placement.mouseX) || 0,
-                    y: Number(placement.mouseY) || 0
-                };
-                drawIcon(context, entityType, width, (start.x + end.x) / 2, (start.y + end.y) / 2, true, false);
-                return;
-            }
-        }
-        drawIcon(context, entityType, width, Number(placement.mouseX) || 0, Number(placement.mouseY) || 0, false, false);
-    }
-
-    function renderDynamic() {
-        state.dynamicRenderPending = false;
-        const mapView = state.lastMapView;
-        if (!state.dynamicCanvas || !shouldDisplay(mapView))
-            return;
-        const context = viewportContext(state.dynamicCanvas, mapView.width, mapView.height);
-        drawSelectedNetwork(context, mapView);
-        drawMove(context, mapView);
-        drawPlacement(context, mapView);
-    }
-
-    function scheduleDynamicRender() {
-        if (state.dynamicRenderPending)
-            return;
-        state.dynamicRenderPending = true;
-        window.requestAnimationFrame(renderDynamic);
-    }
-
-    function updateViewport(mapView) {
-        const underlayChanged = resizeViewportCanvas(state.underlayCanvas, mapView.width, mapView.height);
-        const dynamicChanged = resizeViewportCanvas(state.dynamicCanvas, mapView.width, mapView.height);
-        if (underlayChanged)
-            scheduleUnderlayRender();
-        if (dynamicChanged)
-            scheduleDynamicRender();
-    }
-
     function handleMapViewChanged(mapView) {
-        const previousMapView = state.lastMapView;
-        if (previousMapView && mapView && previousMapView.zoom !== mapView.zoom)
-            state.staticRebuildNotBefore = performance.now() + STATIC_ZOOM_SETTLE_DELAY_MS;
         state.lastMapView = mapView;
         if (!mapView || !ensureLayer(mapView.layer)) {
             if (state.layer)
@@ -1039,19 +990,15 @@
         if (!display)
             return;
 
-        updateViewport(mapView);
-        if (!state.geometryReady) {
-            state.staticCanvas.style.display = "none";
-        } else if (state.staticZoom !== mapView.zoom ||
-                   state.staticEntityWidth !== Math.max(1, Number(state.visualState.entityWidth) || 10) ||
-                   state.staticViewportFallback) {
-            positionStaticCanvas(mapView);
-            scheduleStaticRender();
-        } else {
-            positionStaticCanvas(mapView);
+        if (resizeViewportCanvas(
+            state.underlayCanvas, mapView.width, mapView.height)) {
+            scheduleUnderlayRender();
         }
+        const placement = state.visualState.placement || {};
+        if (placement.creating)
+            state.overlayDirty = true;
         scheduleUnderlayRender();
-        scheduleDynamicRender();
+        scheduleNetworkRender();
     }
 
     function setNetworkSnapshot(snapshot) {
@@ -1059,8 +1006,9 @@
             throw new TypeError("Invalid AOWIS map editor network snapshot");
         state.networkSnapshot = snapshot;
         parseNetworkGeometry();
-        invalidateStaticCache();
-        scheduleDynamicRender();
+        state.baseDirty = true;
+        state.overlayDirty = true;
+        scheduleNetworkRender();
     }
 
     function replaceSnapshotItems(targetItems, updates, collectionName) {
@@ -1083,41 +1031,49 @@
     }
 
     function updateGeometry(patch) {
-        if (!state.networkSnapshot || !patch || !Array.isArray(patch.nodes) || !Array.isArray(patch.links))
+        if (!state.networkSnapshot || !patch
+            || !Array.isArray(patch.nodes) || !Array.isArray(patch.links)) {
             throw new TypeError("Invalid AOWIS map editor geometry patch");
+        }
 
         replaceSnapshotItems(state.networkSnapshot.nodes, patch.nodes, "node");
         replaceSnapshotItems(state.networkSnapshot.links, patch.links, "link");
         state.networkSnapshot.geometryRevision = patch.geometryRevision;
         state.networkSnapshot.visualRevision = patch.visualRevision;
         parseNetworkGeometry();
-        invalidateStaticCache();
-        scheduleDynamicRender();
+        state.baseDirty = true;
+        state.overlayDirty = true;
+        scheduleNetworkRender();
     }
 
     function setVisualState(visualState) {
         if (!visualState || typeof visualState !== "object")
             throw new TypeError("Invalid AOWIS map editor visual state");
-        const previousWrapReference = Number(state.visualState.wrapReferenceLongitude) || 0;
+        const previousWrapReference =
+            Number(state.visualState.wrapReferenceLongitude) || 0;
         const previousEntityWidth = Number(state.visualState.entityWidth) || 10;
         const previousMove = moveState();
         const previousMoveActive = Boolean(previousMove.active);
         const previousMoveSessionId = String(previousMove.sessionId || "0");
         state.visualState = visualState;
+
         const wrapReference = Number(visualState.wrapReferenceLongitude) || 0;
         const entityWidth = Number(visualState.entityWidth) || 10;
         const nextMove = moveState();
         const nextMoveActive = Boolean(nextMove.active);
         const nextMoveSessionId = String(nextMove.sessionId || "0");
-        if (wrapReference !== previousWrapReference || wrapReference !== state.geometryWrapReferenceLongitude) {
+        if (wrapReference !== previousWrapReference
+            || wrapReference !== state.geometryWrapReferenceLongitude) {
             parseNetworkGeometry();
-            invalidateStaticCache();
-        } else if (entityWidth !== previousEntityWidth ||
-                   previousMoveActive !== nextMoveActive ||
-                   (nextMoveActive && previousMoveSessionId !== nextMoveSessionId)) {
-            invalidateStaticCache();
+            state.baseDirty = true;
+        } else if (entityWidth !== previousEntityWidth
+                   || previousMoveActive !== nextMoveActive
+                   || (nextMoveActive
+                       && previousMoveSessionId !== nextMoveSessionId)) {
+            state.baseDirty = true;
         }
-        scheduleDynamicRender();
+        state.overlayDirty = true;
+        scheduleNetworkRender();
     }
 
     function setViewportState(viewportState) {
@@ -1141,17 +1097,17 @@
             handleMapViewChanged(state.lastMapView);
     }
 
-    function clearCanvas(canvas) {
-        if (!canvas)
+    function clearUnderlay() {
+        if (!state.underlayCanvas)
             return;
-        const context = canvas.getContext("2d");
+        const context = state.underlayCanvas.getContext("2d");
         context.setTransform(1, 0, 0, 1, 0, 0);
-        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.clearRect(
+            0, 0, state.underlayCanvas.width, state.underlayCanvas.height);
     }
 
     function clear() {
-        clearScheduledStaticRender();
-        state.staticRebuildNotBefore = 0;
+        clearScheduledNetworkRender();
         state.networkSnapshot = null;
         state.visualState = defaultVisualState();
         state.viewportState = defaultViewportState();
@@ -1159,16 +1115,14 @@
         state.links = [];
         state.nodesByUuid.clear();
         state.geometryReady = false;
+        state.geometryOriginX = 0;
+        state.geometryOriginY = 0;
         state.geometryWrapReferenceLongitude = Number.NaN;
-        state.staticZoom = null;
-        state.staticEntityWidth = 0;
-        state.staticViewportFallback = false;
-        clearCanvas(state.underlayCanvas);
-        if (state.staticRetained)
-            state.staticRetained.clear();
-        else
-            clearCanvas(state.staticCanvas);
-        clearCanvas(state.dynamicCanvas);
+        state.baseDirty = true;
+        state.overlayDirty = true;
+        if (state.networkRenderer)
+            state.networkRenderer.clear();
+        clearUnderlay();
         applyBackground();
     }
 
@@ -1176,26 +1130,30 @@
         if (state.unsubscribeView)
             state.unsubscribeView();
         state.unsubscribeView = null;
-        clearScheduledStaticRender();
-        if (state.staticRetained)
-            state.staticRetained.destroy();
-        state.staticRetained = null;
+        clearScheduledNetworkRender();
+        ++state.iconLoadGeneration;
+        if (state.networkRenderer)
+            state.networkRenderer.destroy();
+        state.networkRenderer = null;
+        state.networkCanvas = null;
         if (state.layer)
             state.layer.remove();
         state.layer = null;
         state.underlayCanvas = null;
-        state.staticCanvas = null;
-        state.dynamicCanvas = null;
-        state.icons.clear();
-        state.tintedIcons.clear();
+        state.iconImages.clear();
+        state.networkWebGlUnavailable = false;
+        state.lastMapView = null;
         clear();
     }
 
     function initialize() {
-        if (!window.aowisBrowserMap || typeof window.aowisBrowserMap.subscribeView !== "function")
+        if (!window.aowisBrowserMap
+            || typeof window.aowisBrowserMap.subscribeView !== "function") {
             throw new Error("AOWIS browser map editor requires aowis-browser-map.js");
-        vectorRenderer();
-        state.unsubscribeView = window.aowisBrowserMap.subscribeView(handleMapViewChanged);
+        }
+        state.unsubscribeView =
+            window.aowisBrowserMap.subscribeView(handleMapViewChanged);
+        loadIconImages();
     }
 
     window.aowisBrowserMapEditor = {

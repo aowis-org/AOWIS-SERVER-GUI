@@ -12,7 +12,7 @@
     const REFERENCE_ZOOM = SHARED_RENDERER.REFERENCE_ZOOM;
     const NETWORK_COLOR = "#000000";
     const SYMBOLOGY_VALUE_UNAVAILABLE_COLOR = "#000000";
-    const SELECTED_COLOR = "rgb(0, 190, 255)";
+    const SELECTED_COLOR = "#00beff";
     const SYMBOLOGY_COLOR_BUCKETS = 64;
     const RAMP_COLORS = [
         "#440154",
@@ -23,7 +23,7 @@
         "#90d743",
         "#fde725"
     ];
-    const NETWORK_STATIC_MAX_PIXEL_RATIO = 1.5;
+    const NETWORK_MAX_PIXEL_RATIO = 1.5;
     const HEATMAP_OVERSCAN_FACTOR = 1.5;
     const HEATMAP_DISPLAY_MAX_DIMENSION = 4096;
     const HEATMAP_DISPLAY_MAX_AREA = 8 * 1024 * 1024;
@@ -85,11 +85,11 @@
         networkRendererGeometryRevision: 0,
         networkRendererColorRevision: 0,
         networkRendererIconRevision: 0,
+        networkRendererOverlayRevision: 0,
         networkIconRevision: 1,
         networkWebGlUnavailable: false,
         networkColorRevision: 1,
-        selectionCanvas: null,
-        selectionRenderPending: false,
+        networkOverlayRevision: 1,
         selectedRenderId: 0,
         selectedEntityType: 0,
         entityMarkers: new Map(),
@@ -103,7 +103,6 @@
         geometryMaximumY: 0,
         iconImages: new Map(),
         iconLoadGeneration: 0,
-        tintedIconCache: new Map(),
         geometryReady: false,
         lastMapView: null,
         markers: [],
@@ -192,9 +191,6 @@
             state.layer.style.overflow = "hidden";
             state.layer.style.zIndex = "10";
             state.layer.style.contain = "strict";
-            state.selectionCanvas = SHARED_RENDERER.createCanvas(3);
-            state.selectionCanvas.style.willChange = "transform";
-            state.layer.appendChild(state.selectionCanvas);
             applyBackground();
         }
 
@@ -393,10 +389,6 @@
         return Math.max(1, window.devicePixelRatio || 1);
     }
 
-    function vectorRenderer() {
-        return SHARED_RENDERER;
-    }
-
     const WEBGL_COLOR_COMPONENTS = new Map();
 
     function webGlColorComponents(color) {
@@ -418,11 +410,12 @@
         return components;
     }
 
-    function writeWebGlColor(data, offset, color) {
+    function writeWebGlColor(data, offset, color, alpha) {
         const components = webGlColorComponents(color);
         data[offset] = components[0];
         data[offset + 1] = components[1];
         data[offset + 2] = components[2];
+        data[offset + 3] = alpha === undefined ? 1 : alpha;
     }
 
     function buildNetworkRendererGeometry() {
@@ -440,25 +433,26 @@
         for (const segment of state.deviceSegments)
             appendSegment(segment);
 
-        let junctionCount = 0;
-        let iconCount = 0;
+        let discCount = 0;
+        let spriteCount = 0;
         for (const marker of state.markers) {
             if (marker.entityType === ENTITY_JUNCTION)
-                ++junctionCount;
+                ++discCount;
             else if (ICON_DEFINITIONS.has(marker.entityType))
-                ++iconCount;
+                ++spriteCount;
         }
 
-        const junctions = new Float32Array(junctionCount * 2);
-        const icons = new Float32Array(iconCount * 5);
-        let junctionOffset = 0;
-        let iconOffset = 0;
+        const discs = new Float32Array(discCount * 3);
+        const sprites = new Float32Array(spriteCount * 10);
+        let discOffset = 0;
+        let spriteOffset = 0;
         for (const marker of state.markers) {
             const localX = marker.x - state.geometryOriginX;
             const localY = marker.y - state.geometryOriginY;
             if (marker.entityType === ENTITY_JUNCTION) {
-                junctions[junctionOffset++] = localX;
-                junctions[junctionOffset++] = localY;
+                discs[discOffset++] = localX;
+                discs[discOffset++] = localY;
+                discs[discOffset++] = 1;
                 continue;
             }
 
@@ -468,62 +462,130 @@
                 continue;
             const maximumDimension = Math.max(
                 definition.viewWidth, definition.viewHeight);
-            icons[iconOffset++] = localX;
-            icons[iconOffset++] = localY;
-            icons[iconOffset++] = definition.viewWidth / maximumDimension;
-            icons[iconOffset++] = definition.viewHeight / maximumDimension;
-            icons[iconOffset++] = slot;
+            sprites[spriteOffset++] = localX;
+            sprites[spriteOffset++] = localY;
+            sprites[spriteOffset++] = definition.viewWidth / maximumDimension;
+            sprites[spriteOffset++] = definition.viewHeight / maximumDimension;
+            sprites[spriteOffset++] = 0.5;
+            sprites[spriteOffset++] = 0.5;
+            sprites[spriteOffset++] = 0;
+            sprites[spriteOffset++] = 0;
+            sprites[spriteOffset++] = slot;
+            sprites[spriteOffset++] = 1;
         }
 
-        state.networkRenderer.setGeometry({
+        state.networkRenderer.setGeometry("base", {
             segments: segments,
-            junctions: junctions,
-            icons: icons
+            discs: discs,
+            sprites: sprites
         });
     }
 
     function buildNetworkRendererColors() {
         const segmentCount = state.pipeSegments.length + state.deviceSegments.length;
-        const segmentColors = new Float32Array(segmentCount * 3);
+        const segmentColors = new Float32Array(segmentCount * 4);
         let segmentOffset = 0;
         const appendSegmentColor = (segment) => {
             writeWebGlColor(
                 segmentColors, segmentOffset, linkColor(segment.renderId));
-            segmentOffset += 3;
+            segmentOffset += 4;
         };
         for (const segment of state.pipeSegments)
             appendSegmentColor(segment);
         for (const segment of state.deviceSegments)
             appendSegmentColor(segment);
 
-        let junctionCount = 0;
-        let iconCount = 0;
+        let discCount = 0;
+        let spriteCount = 0;
         for (const marker of state.markers) {
             if (marker.entityType === ENTITY_JUNCTION)
-                ++junctionCount;
+                ++discCount;
             else if (ICON_DEFINITIONS.has(marker.entityType))
-                ++iconCount;
+                ++spriteCount;
         }
 
-        const junctionColors = new Float32Array(junctionCount * 3);
-        const iconColors = new Float32Array(iconCount * 3);
-        let junctionOffset = 0;
-        let iconOffset = 0;
+        const discColors = new Float32Array(discCount * 4);
+        const spriteColors = new Float32Array(spriteCount * 4);
+        let discOffset = 0;
+        let spriteOffset = 0;
         for (const marker of state.markers) {
             if (marker.entityType === ENTITY_JUNCTION) {
                 writeWebGlColor(
-                    junctionColors, junctionOffset, markerColor(marker));
-                junctionOffset += 3;
+                    discColors, discOffset, markerColor(marker));
+                discOffset += 4;
             } else if (ICON_DEFINITIONS.has(marker.entityType)) {
-                writeWebGlColor(iconColors, iconOffset, markerColor(marker));
-                iconOffset += 3;
+                writeWebGlColor(spriteColors, spriteOffset, markerColor(marker));
+                spriteOffset += 4;
             }
         }
 
-        state.networkRenderer.setColors({
+        state.networkRenderer.setColors("base", {
             segments: segmentColors,
-            junctions: junctionColors,
-            icons: iconColors
+            discs: discColors,
+            sprites: spriteColors
+        });
+    }
+
+    function buildNetworkRendererOverlay() {
+        const segments = [];
+        const segmentColors = [];
+        const discs = [];
+        const discColors = [];
+        const sprites = [];
+        const spriteColors = [];
+        const key = `${state.selectedEntityType}:${state.selectedRenderId}`;
+
+        if (state.selectedRenderId !== 0 && state.selectedEntityType !== 0) {
+            const selectedSegments = state.entitySegments.get(key) || [];
+            for (const segment of selectedSegments) {
+                segments.push(
+                    segment.x1 - state.geometryOriginX,
+                    segment.y1 - state.geometryOriginY,
+                    segment.x2 - state.geometryOriginX,
+                    segment.y2 - state.geometryOriginY);
+                writeWebGlColor(
+                    segmentColors, segmentColors.length, SELECTED_COLOR);
+            }
+
+            const marker = state.entityMarkers.get(key);
+            if (marker && marker.entityType === ENTITY_JUNCTION) {
+                discs.push(
+                    marker.x - state.geometryOriginX,
+                    marker.y - state.geometryOriginY,
+                    1);
+                writeWebGlColor(discColors, discColors.length, SELECTED_COLOR);
+            } else if (marker) {
+                const definition = ICON_DEFINITIONS.get(marker.entityType);
+                const slot = ICON_ATLAS_SLOTS.get(marker.entityType);
+                if (definition && slot !== undefined) {
+                    const maximumDimension = Math.max(
+                        definition.viewWidth, definition.viewHeight);
+                    sprites.push(
+                        marker.x - state.geometryOriginX,
+                        marker.y - state.geometryOriginY,
+                        definition.viewWidth / maximumDimension,
+                        definition.viewHeight / maximumDimension,
+                        0.5,
+                        0.5,
+                        0,
+                        0,
+                        slot,
+                        1);
+                    writeWebGlColor(
+                        spriteColors, spriteColors.length, SELECTED_COLOR);
+                }
+            }
+        }
+
+        state.networkRenderer.setGeometry("overlay", {
+            segments: new Float32Array(segments),
+            discs: new Float32Array(discs),
+            sprites: new Float32Array(sprites)
+        });
+        state.networkRenderer.setColors("overlay", {
+            segments: new Float32Array(segmentColors),
+            discs: new Float32Array(discColors),
+            sprites: new Float32Array(spriteColors)
         });
     }
 
@@ -534,7 +596,7 @@
             if (entry && entry.loaded)
                 icons.push({ slot: slot, image: entry.image });
         }
-        state.networkRenderer.setIconImages(icons);
+        state.networkRenderer.setSpriteImages(icons);
     }
 
     function disableNetworkRenderer(error) {
@@ -550,6 +612,7 @@
         state.networkRendererGeometryRevision = 0;
         state.networkRendererColorRevision = 0;
         state.networkRendererIconRevision = 0;
+        state.networkRendererOverlayRevision = 0;
     }
 
     function ensureNetworkRenderer() {
@@ -562,9 +625,10 @@
         canvas.style.display = "none";
         canvas.style.background = "transparent";
         canvas.style.willChange = "contents";
-        state.layer.insertBefore(canvas, state.selectionCanvas || null);
+        state.layer.appendChild(canvas);
         const renderer = WEBGL_RENDERER.create(canvas, {
             contextRestored: scheduleNetworkRender,
+            spritesReady: scheduleNetworkRender,
             error: disableNetworkRenderer
         });
         if (!renderer) {
@@ -578,6 +642,7 @@
         state.networkRendererGeometryRevision = 0;
         state.networkRendererColorRevision = 0;
         state.networkRendererIconRevision = 0;
+        state.networkRendererOverlayRevision = 0;
         return true;
     }
 
@@ -594,6 +659,10 @@
         if (state.networkRendererIconRevision !== state.networkIconRevision) {
             buildNetworkRendererIconAtlas();
             state.networkRendererIconRevision = state.networkIconRevision;
+        }
+        if (state.networkRendererOverlayRevision !== state.networkOverlayRevision) {
+            buildNetworkRendererOverlay();
+            state.networkRendererOverlayRevision = state.networkOverlayRevision;
         }
     }
 
@@ -615,13 +684,22 @@
                 width: mapView.width,
                 height: mapView.height,
                 pixelRatio: Math.min(
-                    devicePixelRatio(), NETWORK_STATIC_MAX_PIXEL_RATIO),
+                    devicePixelRatio(), NETWORK_MAX_PIXEL_RATIO),
                 translateX: transform.translateX,
                 translateY: transform.translateY,
                 scale: transform.scale,
-                linkThickness: state.linkThicknessPixels,
-                junctionDiameter: junctionDotDiameterForZoom(mapView.zoom),
-                iconSize: iconMarkerSizeForZoom(mapView.zoom)
+                batches: {
+                    base: {
+                        segmentWidth: state.linkThicknessPixels,
+                        discScale: junctionDotDiameterForZoom(mapView.zoom) / 2,
+                        spriteScale: iconMarkerSizeForZoom(mapView.zoom)
+                    },
+                    overlay: {
+                        segmentWidth: Math.max(3, state.linkThicknessPixels + 2),
+                        discScale: junctionDotDiameterForZoom(mapView.zoom) / 2 + 2,
+                        spriteScale: iconMarkerSizeForZoom(mapView.zoom)
+                    }
+                }
             });
             if (!rendered && state.networkCanvas)
                 state.networkCanvas.style.display = "none";
@@ -645,7 +723,6 @@
 
     function invalidateNetworkColors() {
         ++state.networkColorRevision;
-        state.tintedIconCache.clear();
         scheduleNetworkRender();
     }
 
@@ -716,37 +793,6 @@
             state.iconImages.set(entry.entityType, entry);
         ++state.networkIconRevision;
         scheduleNetworkRender();
-        scheduleSelectionRender();
-    }
-
-    function tintedIcon(entityType, width, height, color) {
-        const entry = state.iconImages.get(entityType);
-        if (!entry || !entry.loaded || !(width > 0) || !(height > 0))
-            return null;
-
-        const ratio = Math.min(devicePixelRatio(), NETWORK_STATIC_MAX_PIXEL_RATIO);
-        const physicalWidth = Math.max(1, Math.ceil(width * ratio));
-        const physicalHeight = Math.max(1, Math.ceil(height * ratio));
-        const key = `${entityType}:${physicalWidth}:${physicalHeight}:${color}`;
-        let canvas = state.tintedIconCache.get(key);
-        if (canvas)
-            return canvas;
-
-        canvas = document.createElement("canvas");
-        canvas.width = physicalWidth;
-        canvas.height = physicalHeight;
-        const context = canvas.getContext("2d");
-        if (!context)
-            return null;
-        context.setTransform(ratio, 0, 0, ratio, 0, 0);
-        context.clearRect(0, 0, width, height);
-        context.drawImage(entry.image, 0, 0, width, height);
-        context.globalCompositeOperation = "source-in";
-        context.fillStyle = color;
-        context.fillRect(0, 0, width, height);
-        context.globalCompositeOperation = "source-over";
-        state.tintedIconCache.set(key, canvas);
-        return canvas;
     }
 
     function boundedHeatmapDisplayDimensions(mapView) {
@@ -910,7 +956,7 @@
             state.heatmapCanvas.style.pointerEvents = "none";
             state.heatmapCanvas.style.zIndex = "1";
             state.heatmapCanvas.style.background = "transparent";
-            state.layer.insertBefore(state.heatmapCanvas, state.selectionCanvas || null);
+            state.layer.appendChild(state.heatmapCanvas);
         }
         return state.heatmapCanvas;
     }
@@ -1654,6 +1700,7 @@
 
     function buildGeometry(snapshot) {
         ++state.networkGeometryRevision;
+        ++state.networkOverlayRevision;
         clearHeatmap();
         const nodesByRenderId = new Map();
         let anchorX = null;
@@ -1808,92 +1855,6 @@
         };
     }
 
-    function clearSelectionCanvas() {
-        if (!state.selectionCanvas)
-            return;
-        const context = state.selectionCanvas.getContext("2d");
-        if (context)
-            context.clearRect(0, 0, state.selectionCanvas.width, state.selectionCanvas.height);
-        state.selectionCanvas.style.display = "none";
-    }
-
-    function renderSelection() {
-        state.selectionRenderPending = false;
-        const mapView = state.lastMapView;
-        if (!state.selectionCanvas || !shouldDisplayNetwork(mapView)
-            || state.selectedRenderId === 0 || state.selectedEntityType === 0) {
-            clearSelectionCanvas();
-            return;
-        }
-
-        const context = vectorRenderer().configureCanvas(
-            state.selectionCanvas,
-            mapView.width,
-            mapView.height,
-            Math.min(devicePixelRatio(), NETWORK_STATIC_MAX_PIXEL_RATIO));
-        if (!context)
-            return;
-
-        const transform = worldTransform(mapView);
-        const key = `${state.selectedEntityType}:${state.selectedRenderId}`;
-        const segments = state.entitySegments.get(key) || [];
-        if (segments.length > 0) {
-            context.beginPath();
-            for (const segment of segments) {
-                context.moveTo(
-                    transform.translateX + (segment.x1 - state.geometryOriginX) * transform.scale,
-                    transform.translateY + (segment.y1 - state.geometryOriginY) * transform.scale);
-                context.lineTo(
-                    transform.translateX + (segment.x2 - state.geometryOriginX) * transform.scale,
-                    transform.translateY + (segment.y2 - state.geometryOriginY) * transform.scale);
-            }
-            context.strokeStyle = SELECTED_COLOR;
-            context.lineWidth = Math.max(3, state.linkThicknessPixels + 2);
-            context.lineCap = "round";
-            context.lineJoin = "round";
-            context.stroke();
-        }
-
-        const marker = state.entityMarkers.get(key);
-        if (marker) {
-            const centerX = transform.translateX
-                + (marker.x - state.geometryOriginX) * transform.scale;
-            const centerY = transform.translateY
-                + (marker.y - state.geometryOriginY) * transform.scale;
-            if (marker.entityType === ENTITY_JUNCTION) {
-                context.beginPath();
-                context.arc(
-                    centerX, centerY,
-                    junctionDotDiameterForZoom(mapView.zoom) / 2 + 2,
-                    0, Math.PI * 2);
-                context.fillStyle = SELECTED_COLOR;
-                context.fill();
-            } else {
-                const bounds = markerScreenBounds(marker.entityType, mapView.zoom);
-                const image = tintedIcon(
-                    marker.entityType, bounds.width, bounds.height, SELECTED_COLOR);
-                if (image) {
-                    context.drawImage(
-                        image,
-                        centerX - bounds.width / 2,
-                        centerY - bounds.height / 2,
-                        bounds.width,
-                        bounds.height);
-                }
-            }
-        }
-        state.selectionCanvas.style.display = "block";
-    }
-
-    function scheduleSelectionRender() {
-        if (!state.selectionCanvas || state.selectionRenderPending)
-            return;
-        if (state.selectedRenderId === 0 && state.selectionCanvas.style.display !== "block")
-            return;
-        state.selectionRenderPending = true;
-        window.requestAnimationFrame(renderSelection);
-    }
-
     function setSelectedEntity(renderId, entityType) {
         const nextRenderId = Number(renderId) >>> 0;
         const nextEntityType = nextRenderId === 0 ? 0 : Number(entityType) | 0;
@@ -1903,7 +1864,8 @@
         }
         state.selectedRenderId = nextRenderId;
         state.selectedEntityType = nextEntityType;
-        scheduleSelectionRender();
+        ++state.networkOverlayRevision;
+        scheduleNetworkRender();
     }
 
     function handleMapViewChanged(mapView) {
@@ -1925,7 +1887,6 @@
                 state.networkRenderer.clear();
             if (state.heatmapCanvas)
                 state.heatmapCanvas.style.display = "none";
-            clearSelectionCanvas();
             return;
         }
 
@@ -1935,14 +1896,11 @@
             state.heatmapCanvas.style.display = "none";
 
         scheduleNetworkRender();
-        scheduleSelectionRender();
     }
 
     function initialize() {
         if (!window.aowisBrowserMap || typeof window.aowisBrowserMap.subscribeView !== "function")
             throw new Error("AOWIS browser network requires aowis-browser-map.js");
-        vectorRenderer();
-
         state.unsubscribeView = window.aowisBrowserMap.subscribeView(handleMapViewChanged);
         state.pointerMoveHandler = handlePointerMove;
         state.pointerLeaveHandler = clearHoverCursor;
@@ -2294,10 +2252,8 @@
 
         if (networkColorChanged)
             invalidateNetworkColors();
-        else if (networkChanged) {
-            state.tintedIconCache.clear();
+        else if (networkChanged)
             scheduleNetworkRender();
-        }
         if (heatmapChanged)
             clearHeatmap();
         else if (heatmapOpacityChanged)
@@ -2351,8 +2307,6 @@
             state.heatmapCanvas.remove();
         state.heatmapCanvas = null;
         state.heatmapMode = null;
-        if (state.selectionCanvas)
-            state.selectionCanvas.remove();
         if (state.layer)
             state.layer.remove();
         state.layer = null;
@@ -2360,11 +2314,11 @@
         state.networkRendererGeometryRevision = 0;
         state.networkRendererColorRevision = 0;
         state.networkRendererIconRevision = 0;
+        state.networkRendererOverlayRevision = 0;
         state.networkIconRevision = 1;
         state.networkColorRevision = 1;
+        state.networkOverlayRevision = 1;
         state.networkWebGlUnavailable = false;
-        state.selectionCanvas = null;
-        state.selectionRenderPending = false;
         state.selectedRenderId = 0;
         state.selectedEntityType = 0;
         state.entityMarkers.clear();
@@ -2377,7 +2331,6 @@
         state.geometryMaximumY = 0;
         ++state.iconLoadGeneration;
         state.iconImages.clear();
-        state.tintedIconCache.clear();
         state.geometryReady = false;
         state.lastMapView = null;
         state.markers = [];

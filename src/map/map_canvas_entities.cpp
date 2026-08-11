@@ -1250,8 +1250,13 @@ void MapCanvasEntities::showMarkerContextMenu(const QUuid &uuid,
         });
     }
 
-    QAction *action_delete = menu->addAction("Delete");
-    connect(action_delete, &QAction::triggered, this, [this, uuid]()
+    menu->addSeparator();
+
+    const QString delete_this_text = multiple_entities_selected
+                                         ? QStringLiteral("Delete this entity")
+                                         : QStringLiteral("Delete");
+    QAction *action_delete_this = menu->addAction(delete_this_text);
+    connect(action_delete_this, &QAction::triggered, this, [this, uuid]()
     {
         QMessageBox *box = new QMessageBox(this->map_canvas);
         box->setAttribute(Qt::WA_DeleteOnClose);
@@ -1270,6 +1275,28 @@ void MapCanvasEntities::showMarkerContextMenu(const QUuid &uuid,
         });
         box->open();
     });
+
+    if (multiple_entities_selected)
+    {
+        QAction *action_delete_selected = menu->addAction("Delete selected entities");
+        connect(action_delete_selected, &QAction::triggered, this, [this]()
+        {
+            QMessageBox *box = new QMessageBox(this->map_canvas);
+            box->setAttribute(Qt::WA_DeleteOnClose);
+            box->setIcon(QMessageBox::Question);
+            box->setWindowTitle("Delete selected entities");
+            box->setText("Do you really want to delete all selected entities?");
+            box->setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+            box->setDefaultButton(QMessageBox::No);
+            connect(box, &QMessageBox::buttonClicked, this,
+                    [this, box](QAbstractButton *button)
+            {
+                if (box->standardButton(button) == QMessageBox::Yes)
+                    onMarkerSelectedDeleteRequested();
+            });
+            box->open();
+        });
+    }
 
     menu->popup(global_position);
 }

@@ -45,6 +45,8 @@ cp tools/qt-emscripten/aowis-browser-vector.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-network-webgl.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-network.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-map-editor.js build-wasm/
+# Do not carry the retired Canvas renderer worker forward from an older build tree.
+rm -f build-wasm/aowis-browser-monitor-worker.js
 
 # The WASM configuration is administered in the webroot. Never overwrite an existing
 # administrator-edited build configuration with the source template.

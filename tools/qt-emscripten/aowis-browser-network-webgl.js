@@ -1,11 +1,14 @@
 (function () {
     "use strict";
 
-    const ICON_ATLAS_CELL_SIZE = 256;
-    const ICON_ATLAS_GRID_SIZE = 2;
-    const ICON_ATLAS_PADDING = 16;
-    const ICON_ATLAS_SIZE = ICON_ATLAS_CELL_SIZE * ICON_ATLAS_GRID_SIZE;
-    const ICON_ATLAS_INSET = ICON_ATLAS_PADDING / ICON_ATLAS_SIZE;
+    const BATCH_NAMES = Object.freeze(["base", "overlay"]);
+    const SPRITE_ATLAS_CELL_SIZE = 256;
+    const SPRITE_ATLAS_GRID_SIZE = 4;
+    const SPRITE_ATLAS_PADDING = 16;
+    const SPRITE_ATLAS_CONTENT_SIZE =
+        SPRITE_ATLAS_CELL_SIZE - SPRITE_ATLAS_PADDING * 2;
+    const SPRITE_ATLAS_SIZE = SPRITE_ATLAS_CELL_SIZE * SPRITE_ATLAS_GRID_SIZE;
+    const SPRITE_ATLAS_INSET = SPRITE_ATLAS_PADDING / SPRITE_ATLAS_SIZE;
     const FLOAT_SIZE = Float32Array.BYTES_PER_ELEMENT;
 
     const SEGMENT_VERTEX_SHADER = [
@@ -13,7 +16,7 @@
         "precision highp float;",
         "in vec2 a_start;",
         "in vec2 a_end;",
-        "in vec3 a_color;",
+        "in vec4 a_color;",
         "uniform vec2 u_translate;",
         "uniform float u_scale;",
         "uniform vec2 u_viewport;",
@@ -21,7 +24,7 @@
         "out vec2 v_screen;",
         "flat out vec2 v_start;",
         "flat out vec2 v_end;",
-        "flat out vec3 v_color;",
+        "flat out vec4 v_color;",
         "const vec2 CORNERS[6] = vec2[6](",
         "    vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0),",
         "    vec2(-1.0, 1.0), vec2(1.0, -1.0), vec2(1.0, 1.0));",
@@ -53,7 +56,7 @@
         "in vec2 v_screen;",
         "flat in vec2 v_start;",
         "flat in vec2 v_end;",
-        "flat in vec3 v_color;",
+        "flat in vec4 v_color;",
         "uniform float u_half_width;",
         "uniform float u_pixel_ratio;",
         "out vec4 out_color;",
@@ -67,80 +70,92 @@
         "    float distance_from_segment = length(v_screen - nearest);",
         "    float edge = max(fwidth(distance_from_segment),",
         "        0.5 / max(1.0, u_pixel_ratio));",
-        "    float alpha = 1.0 - smoothstep(",
+        "    float coverage = 1.0 - smoothstep(",
         "        u_half_width - edge, u_half_width + edge, distance_from_segment);",
+        "    float alpha = v_color.a * coverage;",
         "    if (alpha <= 0.0)",
         "        discard;",
-        "    out_color = vec4(v_color, alpha);",
+        "    out_color = vec4(v_color.rgb, alpha);",
         "}"
     ].join("\n");
 
-    const JUNCTION_VERTEX_SHADER = [
+    const DISC_VERTEX_SHADER = [
         "#version 300 es",
         "precision highp float;",
         "in vec2 a_center;",
-        "in vec3 a_color;",
+        "in float a_radius;",
+        "in vec4 a_color;",
         "uniform vec2 u_translate;",
         "uniform float u_scale;",
         "uniform vec2 u_viewport;",
-        "uniform float u_radius;",
+        "uniform float u_radius_scale;",
         "out vec2 v_corner;",
-        "flat out vec3 v_color;",
+        "flat out vec4 v_color;",
+        "flat out float v_radius;",
         "const vec2 CORNERS[6] = vec2[6](",
         "    vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0),",
         "    vec2(-1.0, 1.0), vec2(1.0, -1.0), vec2(1.0, 1.0));",
         "void main() {",
         "    vec2 corner = CORNERS[gl_VertexID];",
-        "    vec2 screen = u_translate + a_center * u_scale + corner * u_radius;",
+        "    float radius = max(0.0, a_radius * u_radius_scale);",
+        "    vec2 screen = u_translate + a_center * u_scale + corner * radius;",
         "    vec2 clip = vec2(screen.x / u_viewport.x * 2.0 - 1.0,",
         "        1.0 - screen.y / u_viewport.y * 2.0);",
         "    gl_Position = vec4(clip, 0.0, 1.0);",
         "    v_corner = corner;",
         "    v_color = a_color;",
+        "    v_radius = radius;",
         "}"
     ].join("\n");
 
-    const JUNCTION_FRAGMENT_SHADER = [
+    const DISC_FRAGMENT_SHADER = [
         "#version 300 es",
         "precision highp float;",
         "in vec2 v_corner;",
-        "flat in vec3 v_color;",
-        "uniform float u_radius;",
+        "flat in vec4 v_color;",
+        "flat in float v_radius;",
         "uniform float u_pixel_ratio;",
         "out vec4 out_color;",
         "void main() {",
         "    float distance_from_center = length(v_corner);",
         "    float edge = max(fwidth(distance_from_center),",
-        "        0.5 / max(1.0, u_radius * u_pixel_ratio));",
-        "    float alpha = 1.0 - smoothstep(1.0 - edge, 1.0 + edge, distance_from_center);",
+        "        0.5 / max(1.0, v_radius * u_pixel_ratio));",
+        "    float coverage = 1.0 - smoothstep(",
+        "        1.0 - edge, 1.0 + edge, distance_from_center);",
+        "    float alpha = v_color.a * coverage;",
         "    if (alpha <= 0.0)",
         "        discard;",
-        "    out_color = vec4(v_color, alpha);",
+        "    out_color = vec4(v_color.rgb, alpha);",
         "}"
     ].join("\n");
 
-    const ICON_VERTEX_SHADER = [
+    const SPRITE_VERTEX_SHADER = [
         "#version 300 es",
         "precision highp float;",
         "in vec2 a_center;",
-        "in vec2 a_aspect;",
+        "in vec2 a_size;",
+        "in vec2 a_anchor;",
+        "in vec2 a_offset;",
         "in float a_slot;",
-        "in vec3 a_color;",
+        "in float a_tint;",
+        "in vec4 a_color;",
         "uniform vec2 u_translate;",
         "uniform float u_scale;",
         "uniform vec2 u_viewport;",
-        "uniform float u_half_size;",
+        "uniform float u_size_scale;",
         "out vec2 v_uv;",
-        "flat out vec3 v_color;",
-        "const float GRID_SIZE = " + ICON_ATLAS_GRID_SIZE.toFixed(1) + ";",
-        "const float ATLAS_INSET = " + ICON_ATLAS_INSET.toFixed(8) + ";",
+        "flat out vec4 v_color;",
+        "flat out float v_tint;",
+        "const float GRID_SIZE = " + SPRITE_ATLAS_GRID_SIZE.toFixed(1) + ";",
+        "const float ATLAS_INSET = " + SPRITE_ATLAS_INSET.toFixed(8) + ";",
         "const vec2 CORNERS[6] = vec2[6](",
-        "    vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0),",
-        "    vec2(-1.0, 1.0), vec2(1.0, -1.0), vec2(1.0, 1.0));",
+        "    vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0),",
+        "    vec2(0.0, 1.0), vec2(1.0, 0.0), vec2(1.0, 1.0));",
         "void main() {",
         "    vec2 corner = CORNERS[gl_VertexID];",
-        "    vec2 screen = u_translate + a_center * u_scale",
-        "        + corner * a_aspect * u_half_size;",
+        "    vec2 size = a_size * u_size_scale;",
+        "    vec2 screen = u_translate + a_center * u_scale + a_offset",
+        "        + (corner - a_anchor) * size;",
         "    vec2 clip = vec2(screen.x / u_viewport.x * 2.0 - 1.0,",
         "        1.0 - screen.y / u_viewport.y * 2.0);",
         "    gl_Position = vec4(clip, 0.0, 1.0);",
@@ -149,23 +164,27 @@
         "    vec2 cell_origin = vec2(column, row) / GRID_SIZE;",
         "    vec2 uv_minimum = cell_origin + vec2(ATLAS_INSET);",
         "    vec2 uv_maximum = cell_origin + vec2(1.0 / GRID_SIZE - ATLAS_INSET);",
-        "    v_uv = mix(uv_minimum, uv_maximum, corner * 0.5 + 0.5);",
+        "    v_uv = mix(uv_minimum, uv_maximum, corner);",
         "    v_color = a_color;",
+        "    v_tint = a_tint;",
         "}"
     ].join("\n");
 
-    const ICON_FRAGMENT_SHADER = [
+    const SPRITE_FRAGMENT_SHADER = [
         "#version 300 es",
         "precision highp float;",
         "in vec2 v_uv;",
-        "flat in vec3 v_color;",
+        "flat in vec4 v_color;",
+        "flat in float v_tint;",
         "uniform sampler2D u_atlas;",
         "out vec4 out_color;",
         "void main() {",
-        "    float alpha = texture(u_atlas, v_uv).a;",
+        "    vec4 sampled = texture(u_atlas, v_uv);",
+        "    float alpha = sampled.a * v_color.a;",
         "    if (alpha <= 0.001)",
         "        discard;",
-        "    out_color = vec4(v_color, alpha);",
+        "    vec3 color = v_tint >= 0.5 ? v_color.rgb : sampled.rgb;",
+        "    out_color = vec4(color, alpha);",
         "}"
     ].join("\n");
 
@@ -246,7 +265,7 @@
     function createTexture(gl) {
         const texture = gl.createTexture();
         if (!texture)
-            throw new Error("Unable to create the AOWIS network icon texture");
+            throw new Error("Unable to create the AOWIS network sprite texture");
         return texture;
     }
 
@@ -254,6 +273,74 @@
         gl.enableVertexAttribArray(location);
         gl.vertexAttribPointer(location, size, gl.FLOAT, false, stride, offset);
         gl.vertexAttribDivisor(location, 1);
+    }
+
+    function createBatchResources(gl, programs, resources) {
+        const batch = {
+            geometryRevision: 0,
+            colorRevision: 0,
+            segmentCount: 0,
+            discCount: 0,
+            spriteCount: 0,
+            segmentColorLength: -1,
+            discColorLength: -1,
+            spriteColorLength: -1
+        };
+
+        batch.segmentGeometryBuffer = createBuffer(gl);
+        batch.segmentColorBuffer = createBuffer(gl);
+        batch.discGeometryBuffer = createBuffer(gl);
+        batch.discColorBuffer = createBuffer(gl);
+        batch.spriteGeometryBuffer = createBuffer(gl);
+        batch.spriteColorBuffer = createBuffer(gl);
+        resources.buffers.push(
+            batch.segmentGeometryBuffer,
+            batch.segmentColorBuffer,
+            batch.discGeometryBuffer,
+            batch.discColorBuffer,
+            batch.spriteGeometryBuffer,
+            batch.spriteColorBuffer);
+
+        batch.segmentVertexArray = createVertexArray(gl);
+        batch.discVertexArray = createVertexArray(gl);
+        batch.spriteVertexArray = createVertexArray(gl);
+        resources.vertexArrays.push(
+            batch.segmentVertexArray,
+            batch.discVertexArray,
+            batch.spriteVertexArray);
+
+        gl.bindVertexArray(batch.segmentVertexArray);
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.segmentGeometryBuffer);
+        configureInstanceAttribute(gl, programs.segment.start, 2, 4 * FLOAT_SIZE, 0);
+        configureInstanceAttribute(
+            gl, programs.segment.end, 2, 4 * FLOAT_SIZE, 2 * FLOAT_SIZE);
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.segmentColorBuffer);
+        configureInstanceAttribute(gl, programs.segment.color, 4, 4 * FLOAT_SIZE, 0);
+
+        gl.bindVertexArray(batch.discVertexArray);
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.discGeometryBuffer);
+        configureInstanceAttribute(gl, programs.disc.center, 2, 3 * FLOAT_SIZE, 0);
+        configureInstanceAttribute(
+            gl, programs.disc.radius, 1, 3 * FLOAT_SIZE, 2 * FLOAT_SIZE);
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.discColorBuffer);
+        configureInstanceAttribute(gl, programs.disc.color, 4, 4 * FLOAT_SIZE, 0);
+
+        gl.bindVertexArray(batch.spriteVertexArray);
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.spriteGeometryBuffer);
+        configureInstanceAttribute(gl, programs.sprite.center, 2, 10 * FLOAT_SIZE, 0);
+        configureInstanceAttribute(
+            gl, programs.sprite.size, 2, 10 * FLOAT_SIZE, 2 * FLOAT_SIZE);
+        configureInstanceAttribute(
+            gl, programs.sprite.anchor, 2, 10 * FLOAT_SIZE, 4 * FLOAT_SIZE);
+        configureInstanceAttribute(
+            gl, programs.sprite.offset, 2, 10 * FLOAT_SIZE, 6 * FLOAT_SIZE);
+        configureInstanceAttribute(
+            gl, programs.sprite.slot, 1, 10 * FLOAT_SIZE, 8 * FLOAT_SIZE);
+        configureInstanceAttribute(
+            gl, programs.sprite.tint, 1, 10 * FLOAT_SIZE, 9 * FLOAT_SIZE);
+        gl.bindBuffer(gl.ARRAY_BUFFER, batch.spriteColorBuffer);
+        configureInstanceAttribute(gl, programs.sprite.color, 4, 4 * FLOAT_SIZE, 0);
+        return batch;
     }
 
     function disposeResources(gl, resources) {
@@ -264,128 +351,78 @@
             gl.deleteVertexArray(vertexArray);
         for (const buffer of resources.buffers)
             gl.deleteBuffer(buffer);
-        if (resources.iconTexture)
-            gl.deleteTexture(resources.iconTexture);
-        for (const program of resources.programs)
+        if (resources.spriteTexture)
+            gl.deleteTexture(resources.spriteTexture);
+        for (const program of resources.programHandles)
             gl.deleteProgram(program);
     }
 
     function createResources(gl) {
         const resources = {
-            programs: [],
+            programHandles: [],
             buffers: [],
             vertexArrays: [],
-            iconTexture: null,
-            geometryRevision: 0,
-            colorRevision: 0,
-            iconRevision: 0,
-            segmentCount: 0,
-            junctionCount: 0,
-            iconCount: 0,
-            segmentColorLength: -1,
-            junctionColorLength: -1,
-            iconColorLength: -1
+            batches: Object.create(null),
+            spriteTexture: null,
+            spriteRevision: 0
         };
 
         try {
             const segmentHandle = createProgram(
                 gl, SEGMENT_VERTEX_SHADER, SEGMENT_FRAGMENT_SHADER, "network segment");
-            resources.programs.push(segmentHandle);
-            const junctionHandle = createProgram(
-                gl, JUNCTION_VERTEX_SHADER, JUNCTION_FRAGMENT_SHADER, "network junction");
-            resources.programs.push(junctionHandle);
-            const iconHandle = createProgram(
-                gl, ICON_VERTEX_SHADER, ICON_FRAGMENT_SHADER, "network icon");
-            resources.programs.push(iconHandle);
+            const discHandle = createProgram(
+                gl, DISC_VERTEX_SHADER, DISC_FRAGMENT_SHADER, "network disc");
+            const spriteHandle = createProgram(
+                gl, SPRITE_VERTEX_SHADER, SPRITE_FRAGMENT_SHADER, "network sprite");
+            resources.programHandles.push(segmentHandle, discHandle, spriteHandle);
 
-            resources.segmentProgram = {
-                handle: segmentHandle,
-                start: attributeLocation(gl, segmentHandle, "a_start"),
-                end: attributeLocation(gl, segmentHandle, "a_end"),
-                color: attributeLocation(gl, segmentHandle, "a_color"),
-                translate: uniformLocation(gl, segmentHandle, "u_translate"),
-                scale: uniformLocation(gl, segmentHandle, "u_scale"),
-                viewport: uniformLocation(gl, segmentHandle, "u_viewport"),
-                halfWidth: uniformLocation(gl, segmentHandle, "u_half_width"),
-                pixelRatio: uniformLocation(gl, segmentHandle, "u_pixel_ratio")
+            resources.programs = {
+                segment: {
+                    handle: segmentHandle,
+                    start: attributeLocation(gl, segmentHandle, "a_start"),
+                    end: attributeLocation(gl, segmentHandle, "a_end"),
+                    color: attributeLocation(gl, segmentHandle, "a_color"),
+                    translate: uniformLocation(gl, segmentHandle, "u_translate"),
+                    scale: uniformLocation(gl, segmentHandle, "u_scale"),
+                    viewport: uniformLocation(gl, segmentHandle, "u_viewport"),
+                    halfWidth: uniformLocation(gl, segmentHandle, "u_half_width"),
+                    pixelRatio: uniformLocation(gl, segmentHandle, "u_pixel_ratio")
+                },
+                disc: {
+                    handle: discHandle,
+                    center: attributeLocation(gl, discHandle, "a_center"),
+                    radius: attributeLocation(gl, discHandle, "a_radius"),
+                    color: attributeLocation(gl, discHandle, "a_color"),
+                    translate: uniformLocation(gl, discHandle, "u_translate"),
+                    scale: uniformLocation(gl, discHandle, "u_scale"),
+                    viewport: uniformLocation(gl, discHandle, "u_viewport"),
+                    radiusScale: uniformLocation(gl, discHandle, "u_radius_scale"),
+                    pixelRatio: uniformLocation(gl, discHandle, "u_pixel_ratio")
+                },
+                sprite: {
+                    handle: spriteHandle,
+                    center: attributeLocation(gl, spriteHandle, "a_center"),
+                    size: attributeLocation(gl, spriteHandle, "a_size"),
+                    anchor: attributeLocation(gl, spriteHandle, "a_anchor"),
+                    offset: attributeLocation(gl, spriteHandle, "a_offset"),
+                    slot: attributeLocation(gl, spriteHandle, "a_slot"),
+                    tint: attributeLocation(gl, spriteHandle, "a_tint"),
+                    color: attributeLocation(gl, spriteHandle, "a_color"),
+                    translate: uniformLocation(gl, spriteHandle, "u_translate"),
+                    scale: uniformLocation(gl, spriteHandle, "u_scale"),
+                    viewport: uniformLocation(gl, spriteHandle, "u_viewport"),
+                    sizeScale: uniformLocation(gl, spriteHandle, "u_size_scale"),
+                    atlas: uniformLocation(gl, spriteHandle, "u_atlas")
+                }
             };
-            resources.junctionProgram = {
-                handle: junctionHandle,
-                center: attributeLocation(gl, junctionHandle, "a_center"),
-                color: attributeLocation(gl, junctionHandle, "a_color"),
-                translate: uniformLocation(gl, junctionHandle, "u_translate"),
-                scale: uniformLocation(gl, junctionHandle, "u_scale"),
-                viewport: uniformLocation(gl, junctionHandle, "u_viewport"),
-                radius: uniformLocation(gl, junctionHandle, "u_radius"),
-                pixelRatio: uniformLocation(gl, junctionHandle, "u_pixel_ratio")
-            };
-            resources.iconProgram = {
-                handle: iconHandle,
-                center: attributeLocation(gl, iconHandle, "a_center"),
-                aspect: attributeLocation(gl, iconHandle, "a_aspect"),
-                slot: attributeLocation(gl, iconHandle, "a_slot"),
-                color: attributeLocation(gl, iconHandle, "a_color"),
-                translate: uniformLocation(gl, iconHandle, "u_translate"),
-                scale: uniformLocation(gl, iconHandle, "u_scale"),
-                viewport: uniformLocation(gl, iconHandle, "u_viewport"),
-                halfSize: uniformLocation(gl, iconHandle, "u_half_size"),
-                atlas: uniformLocation(gl, iconHandle, "u_atlas")
-            };
 
-            resources.segmentGeometryBuffer = createBuffer(gl);
-            resources.segmentColorBuffer = createBuffer(gl);
-            resources.junctionGeometryBuffer = createBuffer(gl);
-            resources.junctionColorBuffer = createBuffer(gl);
-            resources.iconGeometryBuffer = createBuffer(gl);
-            resources.iconColorBuffer = createBuffer(gl);
-            resources.buffers.push(
-                resources.segmentGeometryBuffer,
-                resources.segmentColorBuffer,
-                resources.junctionGeometryBuffer,
-                resources.junctionColorBuffer,
-                resources.iconGeometryBuffer,
-                resources.iconColorBuffer);
+            for (const batchName of BATCH_NAMES) {
+                resources.batches[batchName] = createBatchResources(
+                    gl, resources.programs, resources);
+            }
 
-            resources.segmentVertexArray = createVertexArray(gl);
-            resources.junctionVertexArray = createVertexArray(gl);
-            resources.iconVertexArray = createVertexArray(gl);
-            resources.vertexArrays.push(
-                resources.segmentVertexArray,
-                resources.junctionVertexArray,
-                resources.iconVertexArray);
-
-            gl.bindVertexArray(resources.segmentVertexArray);
-            gl.bindBuffer(gl.ARRAY_BUFFER, resources.segmentGeometryBuffer);
-            configureInstanceAttribute(
-                gl, resources.segmentProgram.start, 2, 4 * FLOAT_SIZE, 0);
-            configureInstanceAttribute(
-                gl, resources.segmentProgram.end, 2, 4 * FLOAT_SIZE, 2 * FLOAT_SIZE);
-            gl.bindBuffer(gl.ARRAY_BUFFER, resources.segmentColorBuffer);
-            configureInstanceAttribute(
-                gl, resources.segmentProgram.color, 3, 3 * FLOAT_SIZE, 0);
-
-            gl.bindVertexArray(resources.junctionVertexArray);
-            gl.bindBuffer(gl.ARRAY_BUFFER, resources.junctionGeometryBuffer);
-            configureInstanceAttribute(
-                gl, resources.junctionProgram.center, 2, 2 * FLOAT_SIZE, 0);
-            gl.bindBuffer(gl.ARRAY_BUFFER, resources.junctionColorBuffer);
-            configureInstanceAttribute(
-                gl, resources.junctionProgram.color, 3, 3 * FLOAT_SIZE, 0);
-
-            gl.bindVertexArray(resources.iconVertexArray);
-            gl.bindBuffer(gl.ARRAY_BUFFER, resources.iconGeometryBuffer);
-            configureInstanceAttribute(
-                gl, resources.iconProgram.center, 2, 5 * FLOAT_SIZE, 0);
-            configureInstanceAttribute(
-                gl, resources.iconProgram.aspect, 2, 5 * FLOAT_SIZE, 2 * FLOAT_SIZE);
-            configureInstanceAttribute(
-                gl, resources.iconProgram.slot, 1, 5 * FLOAT_SIZE, 4 * FLOAT_SIZE);
-            gl.bindBuffer(gl.ARRAY_BUFFER, resources.iconColorBuffer);
-            configureInstanceAttribute(
-                gl, resources.iconProgram.color, 3, 3 * FLOAT_SIZE, 0);
-
-            resources.iconTexture = createTexture(gl);
-            gl.bindTexture(gl.TEXTURE_2D, resources.iconTexture);
+            resources.spriteTexture = createTexture(gl);
+            gl.bindTexture(gl.TEXTURE_2D, resources.spriteTexture);
             gl.texParameteri(
                 gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -430,6 +467,26 @@
         return data.length;
     }
 
+    function emptyBatch() {
+        return {
+            segmentGeometry: new Float32Array(0),
+            discGeometry: new Float32Array(0),
+            spriteGeometry: new Float32Array(0),
+            segmentColors: new Float32Array(0),
+            discColors: new Float32Array(0),
+            spriteColors: new Float32Array(0),
+            geometryRevision: 1,
+            colorRevision: 1
+        };
+    }
+
+    function closeSpriteImages(spriteImages) {
+        for (const entry of spriteImages) {
+            if (entry && entry.image && typeof entry.image.close === "function")
+                entry.image.close();
+        }
+    }
+
     class NetworkWebGlRenderer {
         constructor(canvas, callbacks) {
             if (!canvas || typeof canvas.getContext !== "function")
@@ -448,18 +505,16 @@
             });
             if (!this.gl)
                 throw new Error("WebGL2 is unavailable");
+            if (typeof createImageBitmap !== "function")
+                throw new Error("ImageBitmap resizing is unavailable");
 
             this.resources = createResources(this.gl);
-            this.segmentGeometry = new Float32Array(0);
-            this.junctionGeometry = new Float32Array(0);
-            this.iconGeometry = new Float32Array(0);
-            this.segmentColors = new Float32Array(0);
-            this.junctionColors = new Float32Array(0);
-            this.iconColors = new Float32Array(0);
-            this.iconImages = [];
-            this.geometryRevision = 1;
-            this.colorRevision = 1;
-            this.iconRevision = 1;
+            this.batches = Object.create(null);
+            for (const batchName of BATCH_NAMES)
+                this.batches[batchName] = emptyBatch();
+            this.spriteImages = [];
+            this.spriteImageGeneration = 0;
+            this.spriteRevision = 1;
             this.contextLost = false;
             this.destroyed = false;
             this.contextLostHandler = (event) => this.handleContextLost(event);
@@ -468,26 +523,77 @@
             canvas.addEventListener("webglcontextrestored", this.contextRestoredHandler, false);
         }
 
-        setGeometry(geometry) {
+        batch(batchName) {
+            const batch = this.batches[batchName];
+            if (!batch)
+                throw new TypeError("Unknown AOWIS WebGL network batch: " + batchName);
+            return batch;
+        }
+
+        setGeometry(batchName, geometry) {
+            const batch = this.batch(batchName);
             const source = geometry || {};
-            this.segmentGeometry = floatData(source.segments, 4, "segment geometry");
-            this.junctionGeometry = floatData(source.junctions, 2, "junction geometry");
-            this.iconGeometry = floatData(source.icons, 5, "icon geometry");
-            ++this.geometryRevision;
+            batch.segmentGeometry = floatData(
+                source.segments, 4, batchName + " segment geometry");
+            batch.discGeometry = floatData(
+                source.discs, 3, batchName + " disc geometry");
+            batch.spriteGeometry = floatData(
+                source.sprites, 10, batchName + " sprite geometry");
+            ++batch.geometryRevision;
         }
 
-        setColors(colors) {
+        setColors(batchName, colors) {
+            const batch = this.batch(batchName);
             const source = colors || {};
-            this.segmentColors = floatData(source.segments, 3, "segment color");
-            this.junctionColors = floatData(source.junctions, 3, "junction color");
-            this.iconColors = floatData(source.icons, 3, "icon color");
-            ++this.colorRevision;
+            batch.segmentColors = floatData(
+                source.segments, 4, batchName + " segment color");
+            batch.discColors = floatData(
+                source.discs, 4, batchName + " disc color");
+            batch.spriteColors = floatData(
+                source.sprites, 4, batchName + " sprite color");
+            ++batch.colorRevision;
         }
 
-        setIconImages(iconImages) {
-            this.iconImages = Array.isArray(iconImages)
-                ? iconImages.slice() : [];
-            ++this.iconRevision;
+        clearBatch(batchName) {
+            this.setGeometry(batchName, null);
+            this.setColors(batchName, null);
+        }
+
+        setSpriteImages(spriteImages) {
+            const sources = Array.isArray(spriteImages)
+                ? spriteImages.filter((entry) => entry && entry.image) : [];
+            const generation = ++this.spriteImageGeneration;
+            if (sources.length === 0) {
+                closeSpriteImages(this.spriteImages);
+                this.spriteImages = [];
+                ++this.spriteRevision;
+                return;
+            }
+
+            Promise.all(sources.map(async (entry) => {
+                try {
+                    const image = await createImageBitmap(entry.image, {
+                        resizeWidth: SPRITE_ATLAS_CONTENT_SIZE,
+                        resizeHeight: SPRITE_ATLAS_CONTENT_SIZE,
+                        resizeQuality: "high"
+                    });
+                    return { slot: Number(entry.slot), image: image };
+                } catch (error) {
+                    console.error("Unable to prepare an AOWIS WebGL network sprite:", error);
+                    return null;
+                }
+            })).then((entries) => {
+                const prepared = entries.filter((entry) => entry !== null);
+                if (this.destroyed || generation !== this.spriteImageGeneration) {
+                    closeSpriteImages(prepared);
+                    return;
+                }
+                closeSpriteImages(this.spriteImages);
+                this.spriteImages = prepared;
+                ++this.spriteRevision;
+                if (typeof this.callbacks.spritesReady === "function")
+                    this.callbacks.spritesReady();
+            });
         }
 
         handleContextLost(event) {
@@ -515,91 +621,87 @@
             }
         }
 
-        uploadGeometry() {
-            const resources = this.resources;
-            if (resources.geometryRevision === this.geometryRevision)
+        uploadGeometry(batchName) {
+            const batch = this.batches[batchName];
+            const resources = this.resources.batches[batchName];
+            if (resources.geometryRevision === batch.geometryRevision)
                 return;
 
             uploadStaticBuffer(
-                this.gl, resources.segmentGeometryBuffer, this.segmentGeometry);
+                this.gl, resources.segmentGeometryBuffer, batch.segmentGeometry);
             uploadStaticBuffer(
-                this.gl, resources.junctionGeometryBuffer, this.junctionGeometry);
+                this.gl, resources.discGeometryBuffer, batch.discGeometry);
             uploadStaticBuffer(
-                this.gl, resources.iconGeometryBuffer, this.iconGeometry);
-            resources.segmentCount = this.segmentGeometry.length / 4;
-            resources.junctionCount = this.junctionGeometry.length / 2;
-            resources.iconCount = this.iconGeometry.length / 5;
-            resources.geometryRevision = this.geometryRevision;
+                this.gl, resources.spriteGeometryBuffer, batch.spriteGeometry);
+            resources.segmentCount = batch.segmentGeometry.length / 4;
+            resources.discCount = batch.discGeometry.length / 3;
+            resources.spriteCount = batch.spriteGeometry.length / 10;
+            resources.geometryRevision = batch.geometryRevision;
             resources.colorRevision = 0;
         }
 
-        uploadColors() {
-            const resources = this.resources;
-            if (resources.colorRevision === this.colorRevision)
+        uploadColors(batchName) {
+            const batch = this.batches[batchName];
+            const resources = this.resources.batches[batchName];
+            if (resources.colorRevision === batch.colorRevision)
                 return;
-            if (this.segmentColors.length !== resources.segmentCount * 3
-                || this.junctionColors.length !== resources.junctionCount * 3
-                || this.iconColors.length !== resources.iconCount * 3) {
-                throw new Error("AOWIS network WebGL geometry and color counts differ");
+            if (batch.segmentColors.length !== resources.segmentCount * 4
+                || batch.discColors.length !== resources.discCount * 4
+                || batch.spriteColors.length !== resources.spriteCount * 4) {
+                throw new Error(
+                    "AOWIS network WebGL " + batchName + " geometry and color counts differ");
             }
 
             resources.segmentColorLength = uploadColorBuffer(
                 this.gl,
                 resources.segmentColorBuffer,
-                this.segmentColors,
+                batch.segmentColors,
                 resources.segmentColorLength);
-            resources.junctionColorLength = uploadColorBuffer(
+            resources.discColorLength = uploadColorBuffer(
                 this.gl,
-                resources.junctionColorBuffer,
-                this.junctionColors,
-                resources.junctionColorLength);
-            resources.iconColorLength = uploadColorBuffer(
+                resources.discColorBuffer,
+                batch.discColors,
+                resources.discColorLength);
+            resources.spriteColorLength = uploadColorBuffer(
                 this.gl,
-                resources.iconColorBuffer,
-                this.iconColors,
-                resources.iconColorLength);
-            resources.colorRevision = this.colorRevision;
+                resources.spriteColorBuffer,
+                batch.spriteColors,
+                resources.spriteColorLength);
+            resources.colorRevision = batch.colorRevision;
         }
 
-        uploadIconAtlas() {
+        uploadSpriteAtlas() {
             const resources = this.resources;
-            if (resources.iconRevision === this.iconRevision)
+            if (resources.spriteRevision === this.spriteRevision)
                 return;
 
-            const atlas = document.createElement("canvas");
-            atlas.width = ICON_ATLAS_SIZE;
-            atlas.height = ICON_ATLAS_SIZE;
-            const context = atlas.getContext("2d");
-            if (!context)
-                throw new Error("Unable to create the AOWIS network icon atlas");
-
-            context.clearRect(0, 0, ICON_ATLAS_SIZE, ICON_ATLAS_SIZE);
-            for (const entry of this.iconImages) {
+            const gl = this.gl;
+            gl.bindTexture(gl.TEXTURE_2D, resources.spriteTexture);
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+            gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+            gl.texImage2D(
+                gl.TEXTURE_2D, 0, gl.RGBA,
+                SPRITE_ATLAS_SIZE, SPRITE_ATLAS_SIZE, 0,
+                gl.RGBA, gl.UNSIGNED_BYTE, null);
+            for (const entry of this.spriteImages) {
                 if (!entry || !entry.image)
                     continue;
                 const slot = Number(entry.slot);
                 if (!Number.isInteger(slot) || slot < 0
-                    || slot >= ICON_ATLAS_GRID_SIZE * ICON_ATLAS_GRID_SIZE) {
+                    || slot >= SPRITE_ATLAS_GRID_SIZE * SPRITE_ATLAS_GRID_SIZE) {
                     continue;
                 }
-                const column = slot % ICON_ATLAS_GRID_SIZE;
-                const row = Math.floor(slot / ICON_ATLAS_GRID_SIZE);
-                const x = column * ICON_ATLAS_CELL_SIZE + ICON_ATLAS_PADDING;
-                const y = row * ICON_ATLAS_CELL_SIZE + ICON_ATLAS_PADDING;
-                const size = ICON_ATLAS_CELL_SIZE - ICON_ATLAS_PADDING * 2;
-                context.drawImage(entry.image, x, y, size, size);
+                const column = slot % SPRITE_ATLAS_GRID_SIZE;
+                const row = Math.floor(slot / SPRITE_ATLAS_GRID_SIZE);
+                const x = column * SPRITE_ATLAS_CELL_SIZE + SPRITE_ATLAS_PADDING;
+                const y = row * SPRITE_ATLAS_CELL_SIZE + SPRITE_ATLAS_PADDING;
+                gl.texSubImage2D(
+                    gl.TEXTURE_2D, 0, x, y,
+                    gl.RGBA, gl.UNSIGNED_BYTE, entry.image);
             }
-
-            const gl = this.gl;
-            gl.bindTexture(gl.TEXTURE_2D, resources.iconTexture);
-            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-            gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-            gl.texImage2D(
-                gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,
-                gl.UNSIGNED_BYTE, atlas);
             gl.generateMipmap(gl.TEXTURE_2D);
             gl.bindTexture(gl.TEXTURE_2D, null);
-            resources.iconRevision = this.iconRevision;
+            resources.spriteRevision = this.spriteRevision;
         }
 
         configureCanvas(width, height, pixelRatio) {
@@ -633,6 +735,51 @@
             gl.uniform2f(program.viewport, view.width, view.height);
         }
 
+        renderBatch(batchName, view, style) {
+            const gl = this.gl;
+            const resources = this.resources;
+            const batch = resources.batches[batchName];
+            const batchStyle = style || {};
+
+            if (batch.segmentCount > 0) {
+                const program = resources.programs.segment;
+                gl.useProgram(program.handle);
+                gl.bindVertexArray(batch.segmentVertexArray);
+                this.setTransformUniforms(program, view);
+                gl.uniform1f(
+                    program.halfWidth,
+                    Math.max(0.5, (Number(batchStyle.segmentWidth) || 1) / 2));
+                gl.uniform1f(program.pixelRatio, view.pixelRatio);
+                gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, batch.segmentCount);
+            }
+
+            if (batch.discCount > 0) {
+                const program = resources.programs.disc;
+                gl.useProgram(program.handle);
+                gl.bindVertexArray(batch.discVertexArray);
+                this.setTransformUniforms(program, view);
+                gl.uniform1f(
+                    program.radiusScale,
+                    Math.max(0.000001, Number(batchStyle.discScale) || 1));
+                gl.uniform1f(program.pixelRatio, view.pixelRatio);
+                gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, batch.discCount);
+            }
+
+            if (batch.spriteCount > 0) {
+                const program = resources.programs.sprite;
+                gl.useProgram(program.handle);
+                gl.bindVertexArray(batch.spriteVertexArray);
+                this.setTransformUniforms(program, view);
+                gl.uniform1f(
+                    program.sizeScale,
+                    Math.max(0.000001, Number(batchStyle.spriteScale) || 1));
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, resources.spriteTexture);
+                gl.uniform1i(program.atlas, 0);
+                gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, batch.spriteCount);
+            }
+        }
+
         render(view) {
             if (this.destroyed || this.contextLost || !this.resources)
                 return false;
@@ -644,12 +791,13 @@
             configuredView.translateX = Number(view.translateX) || 0;
             configuredView.translateY = Number(view.translateY) || 0;
             configuredView.scale = Math.max(0.000001, Number(view.scale) || 1);
-            this.uploadGeometry();
-            this.uploadColors();
-            this.uploadIconAtlas();
+            for (const batchName of BATCH_NAMES) {
+                this.uploadGeometry(batchName);
+                this.uploadColors(batchName);
+            }
+            this.uploadSpriteAtlas();
 
             const gl = this.gl;
-            const resources = this.resources;
             gl.viewport(0, 0, this.canvas.width, this.canvas.height);
             gl.disable(gl.DEPTH_TEST);
             gl.disable(gl.CULL_FACE);
@@ -660,46 +808,9 @@
             gl.clearColor(0, 0, 0, 0);
             gl.clear(gl.COLOR_BUFFER_BIT);
 
-            if (resources.segmentCount > 0) {
-                const program = resources.segmentProgram;
-                gl.useProgram(program.handle);
-                gl.bindVertexArray(resources.segmentVertexArray);
-                this.setTransformUniforms(program, configuredView);
-                gl.uniform1f(
-                    program.halfWidth,
-                    Math.max(0.5, Number(view.linkThickness) / 2 || 0.5));
-                gl.uniform1f(program.pixelRatio, configuredView.pixelRatio);
-                gl.drawArraysInstanced(
-                    gl.TRIANGLES, 0, 6, resources.segmentCount);
-            }
-
-            if (resources.junctionCount > 0) {
-                const program = resources.junctionProgram;
-                gl.useProgram(program.handle);
-                gl.bindVertexArray(resources.junctionVertexArray);
-                this.setTransformUniforms(program, configuredView);
-                gl.uniform1f(
-                    program.radius,
-                    Math.max(1, Number(view.junctionDiameter) / 2 || 1));
-                gl.uniform1f(program.pixelRatio, configuredView.pixelRatio);
-                gl.drawArraysInstanced(
-                    gl.TRIANGLES, 0, 6, resources.junctionCount);
-            }
-
-            if (resources.iconCount > 0) {
-                const program = resources.iconProgram;
-                gl.useProgram(program.handle);
-                gl.bindVertexArray(resources.iconVertexArray);
-                this.setTransformUniforms(program, configuredView);
-                gl.uniform1f(
-                    program.halfSize,
-                    Math.max(1, Number(view.iconSize) / 2 || 1));
-                gl.activeTexture(gl.TEXTURE0);
-                gl.bindTexture(gl.TEXTURE_2D, resources.iconTexture);
-                gl.uniform1i(program.atlas, 0);
-                gl.drawArraysInstanced(
-                    gl.TRIANGLES, 0, 6, resources.iconCount);
-            }
+            const styles = view.batches || {};
+            for (const batchName of BATCH_NAMES)
+                this.renderBatch(batchName, configuredView, styles[batchName]);
 
             gl.bindTexture(gl.TEXTURE_2D, null);
             gl.bindVertexArray(null);
@@ -726,6 +837,9 @@
             if (!this.contextLost)
                 disposeResources(this.gl, this.resources);
             this.resources = null;
+            ++this.spriteImageGeneration;
+            closeSpriteImages(this.spriteImages);
+            this.spriteImages = [];
             this.canvas.style.display = "none";
         }
     }
