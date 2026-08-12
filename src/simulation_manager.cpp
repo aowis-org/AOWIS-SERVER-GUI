@@ -4,9 +4,13 @@
 #include "simulation_diagnostics_dialog.h"
 
 #include <aowis/epanet/epanet_runner.h>
+#include <aowis/epanet/epanet_result_run.h>
 
 #include <QByteArray>
 #include <QMessageBox>
+#include <QTimer>
+
+#include <memory>
 
 #ifndef Q_OS_WASM
 #include <QFileDialog>
@@ -73,21 +77,104 @@ SimulationManager::SimulationManager(HydraulicData *hydraulic_data, QObject *par
     : QObject{parent},
     hydraulic_data(hydraulic_data)
 {
-    
+}
+
+SimulationManager::~SimulationManager()
+{
+#ifndef Q_OS_WASM
+    if (this->simulation_thread && this->simulation_thread->isRunning())
+        this->simulation_thread->wait();
+#endif
 }
 
 void SimulationManager::run()
 {
+    if (this->simulation_running)
+    {
+        if (this->dialog_simulation_progress)
+            showAndActivateDialog(this->dialog_simulation_progress);
+        return;
+    }
+
+    this->simulation_running = true;
     this->epanet_log.clear();
     if (this->widget_epanet_log)
         this->widget_epanet_log->clear();
     emit signalEpanetLogAvailabilityChanged(false);
 
     const NetworkHydraulic network_hydraulic = this->hydraulic_data->networkHydraulic();
+    showSimulationProgress();
 
-    EpanetRunner runner;
-    const EpanetResultRun run_result = runner.run(network_hydraulic);
+#ifndef Q_OS_WASM
+    std::shared_ptr<EpanetResultRun> run_result = std::make_shared<EpanetResultRun>();
+    QThread *thread = QThread::create([network_hydraulic, run_result]()
+    {
+        EpanetRunner runner;
+        *run_result = runner.run(network_hydraulic);
+    });
+    this->simulation_thread = thread;
 
+    connect(thread, &QThread::finished, this, [this, thread, run_result]()
+    {
+        if (this->simulation_thread == thread)
+            this->simulation_thread = nullptr;
+
+        this->simulation_running = false;
+        closeSimulationProgress();
+        finishSimulation(*run_result);
+    });
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    thread->start();
+#else
+    QTimer::singleShot(0, this, [this, network_hydraulic]()
+    {
+        EpanetRunner runner;
+        const EpanetResultRun run_result = runner.run(network_hydraulic);
+        this->simulation_running = false;
+        closeSimulationProgress();
+        finishSimulation(run_result);
+    });
+#endif
+}
+
+void SimulationManager::showSimulationProgress()
+{
+    if (this->dialog_simulation_progress)
+    {
+        showAndActivateDialog(this->dialog_simulation_progress);
+        return;
+    }
+
+    QWidget *main_window = qobject_cast<QWidget *>(parent());
+    if (main_window == nullptr)
+        main_window = QApplication::activeWindow();
+
+    this->dialog_simulation_progress = new QProgressDialog(main_window);
+    this->dialog_simulation_progress->setAttribute(Qt::WA_DeleteOnClose);
+    this->dialog_simulation_progress->setWindowTitle(tr("Simulation Running"));
+    this->dialog_simulation_progress->setLabelText(tr("Running EPANET hydraulic simulation..."));
+    this->dialog_simulation_progress->setRange(0, 0);
+    this->dialog_simulation_progress->setCancelButton(nullptr);
+    this->dialog_simulation_progress->setAutoClose(false);
+    this->dialog_simulation_progress->setAutoReset(false);
+    this->dialog_simulation_progress->setMinimumDuration(0);
+    this->dialog_simulation_progress->setWindowModality(Qt::ApplicationModal);
+    this->dialog_simulation_progress->setWindowFlag(Qt::WindowCloseButtonHint, false);
+    this->dialog_simulation_progress->resize(420, 110);
+    showAndActivateDialog(this->dialog_simulation_progress);
+}
+
+void SimulationManager::closeSimulationProgress()
+{
+    if (!this->dialog_simulation_progress)
+        return;
+
+    this->dialog_simulation_progress->close();
+    this->dialog_simulation_progress = nullptr;
+}
+
+void SimulationManager::finishSimulation(const EpanetResultRun &run_result)
+{
     this->epanet_log = run_result.report_lines.join('\n');
     if (this->widget_epanet_log)
         this->widget_epanet_log->setPlainText(this->epanet_log);
@@ -97,13 +184,16 @@ void SimulationManager::run()
     this->hydraulic_data->setSimulationResultTimeline(run_result.result_timeline);
 
     bool has_error_diagnostic = false;
+    int warning_count = 0;
     for (const HydraulicSimulationDiagnostic &diagnostic : run_result.result_timeline.diagnostics)
     {
+        if (diagnostic.severity == HydraulicSimulationDiagnosticSeverity::Warning)
+            ++warning_count;
+
         if (diagnostic.severity == HydraulicSimulationDiagnosticSeverity::Error
             || diagnostic.severity == HydraulicSimulationDiagnosticSeverity::Fatal)
         {
             has_error_diagnostic = true;
-            break;
         }
     }
 
@@ -120,6 +210,21 @@ void SimulationManager::run()
 
         return;
     }
+
+    if (has_error_diagnostic
+        || run_result.result_timeline.validity != HydraulicSimulationResultValidity::Valid)
+    {
+        return;
+    }
+
+    QWidget *main_window = qobject_cast<QWidget *>(parent());
+    if (main_window == nullptr)
+        main_window = QApplication::activeWindow();
+
+    const QString message = warning_count > 0
+        ? tr("Simulation completed successfully with %1 warning(s).").arg(warning_count)
+        : tr("Simulation completed successfully.");
+    QMessageBox::information(main_window, tr("Simulation Complete"), message);
 }
 
 void SimulationManager::showSimulationStatistics()
