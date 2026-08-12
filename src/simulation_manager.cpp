@@ -78,7 +78,6 @@ SimulationManager::SimulationManager(HydraulicData *hydraulic_data, QObject *par
 
 void SimulationManager::run()
 {
-    this->hydraulic_data->clearSimulationResultTimeline();
     this->epanet_log.clear();
     if (this->widget_epanet_log)
         this->widget_epanet_log->clear();

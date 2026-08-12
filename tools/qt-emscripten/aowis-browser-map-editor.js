@@ -22,6 +22,8 @@
     const SELECTED_GLOW_COLOR = Object.freeze([0, 190 / 255, 1, 0.8]);
     const ERROR_COLOR = Object.freeze([1, 0, 0, 1]);
     const ERROR_GLOW_COLOR = Object.freeze([1, 0, 0, 0.8]);
+    const STALE_COLOR = Object.freeze([128 / 255, 128 / 255, 128 / 255, 1]);
+    const STALE_GLOW_COLOR = Object.freeze([128 / 255, 128 / 255, 128 / 255, 0.8]);
     const PREVIEW_COLOR = Object.freeze([0, 140 / 255, 1, 1]);
     const DEVICE_LINK_COLOR = Object.freeze([139 / 255, 90 / 255, 43 / 255, 1]);
 
@@ -527,14 +529,16 @@
         appendColor(builder.spriteColors, color);
     }
 
-    function appendIcon(builder, entityType, width, point, centered, selected, error = false) {
+    function appendIcon(builder, entityType, width, point, centered, selected, error = false, errorColor = null) {
         const dimensions = iconDimensions(entityType, width);
         if (!dimensions)
             return;
         const anchorX = centered ? 0.5 : 0;
         const anchorY = centered ? 0.5 : 1;
         if (selected || error) {
-            const glowColor = error ? ERROR_GLOW_COLOR : SELECTED_GLOW_COLOR;
+            const glowColor = error
+                ? (errorColor || ERROR_GLOW_COLOR)
+                : SELECTED_GLOW_COLOR;
             for (const offset of GLOW_OFFSETS) {
                 appendSprite(
                     builder, point, dimensions, anchorX, anchorY,
@@ -621,6 +625,22 @@
         return errors;
     }
 
+    function simulationStaleDiagnosticEntitySet() {
+        const staleEntities = new Set();
+        const entries = state.visualState.simulationErrorEntities;
+        if (!Array.isArray(entries))
+            return staleEntities;
+
+        for (const entry of entries) {
+            if (!entry || !entry.stale)
+                continue;
+            const uuid = normalizeUuid(entry.uuid);
+            if (uuid)
+                staleEntities.add(uuid);
+        }
+        return staleEntities;
+    }
+
     function appendSelectedNetwork(builder) {
         const selectedMarkers = selectedSet(state.visualState.selectedMarkerUuids);
         const selectedPipes = selectedSet(state.visualState.selectedPipeUuids);
@@ -690,25 +710,30 @@
         if (errorEntities.size === 0)
             return;
 
+        const staleEntities = simulationStaleDiagnosticEntitySet();
         const entityWidth = Math.max(1, Number(state.visualState.entityWidth) || 10);
         for (const link of state.links) {
             if (errorEntities.get(link.uuid) !== link.entityType)
                 continue;
+            const diagnosticColor = staleEntities.has(link.uuid) ? STALE_COLOR : ERROR_COLOR;
+            const diagnosticGlowColor = staleEntities.has(link.uuid) ? STALE_GLOW_COLOR : ERROR_GLOW_COLOR;
             if (link.entityType === ENTITY_PIPE) {
-                appendPolyline(builder, link.vertices, ERROR_COLOR);
+                appendPolyline(builder, link.vertices, diagnosticColor);
                 for (let index = 1; index + 1 < link.vertices.length; ++index)
-                    appendDisc(builder, link.vertices[index], PIPE_VERTEX_RADIUS, ERROR_COLOR);
+                    appendDisc(builder, link.vertices[index], PIPE_VERTEX_RADIUS, diagnosticColor);
             } else if (isDeviceLink(link.entityType)) {
-                appendDeviceLink(builder, link.vertices, ERROR_COLOR);
+                appendDeviceLink(builder, link.vertices, diagnosticColor);
                 const center = linkCenter(link.vertices);
                 if (center)
-                    appendIcon(builder, link.entityType, entityWidth, center, true, false, true);
+                    appendIcon(builder, link.entityType, entityWidth, center, true, false, true, diagnosticGlowColor);
             }
         }
 
         for (const node of state.nodes) {
-            if (errorEntities.get(node.uuid) === node.entityType)
-                appendIcon(builder, node.entityType, entityWidth, node, false, false, true);
+            if (errorEntities.get(node.uuid) !== node.entityType)
+                continue;
+            const diagnosticGlowColor = staleEntities.has(node.uuid) ? STALE_GLOW_COLOR : ERROR_GLOW_COLOR;
+            appendIcon(builder, node.entityType, entityWidth, node, false, false, true, diagnosticGlowColor);
         }
     }
 

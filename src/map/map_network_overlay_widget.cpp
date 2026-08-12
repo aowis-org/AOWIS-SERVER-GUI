@@ -2144,7 +2144,13 @@ void MapNetworkOverlayWidget::paintSimulationErrorEntity(QPainter &painter)
 {
     const QList<NetworkOverlayHit> error_entities = simulationErrorEntityHits();
     for (const NetworkOverlayHit &error_entity : error_entities)
-        paintEntityHighlight(painter, error_entity, QColor(255, 0, 0));
+    {
+        const bool stale = this->hydraulic_data != nullptr
+            && this->hydraulic_data->simulationDiagnosticEntityStale(error_entity.uuid);
+        paintEntityHighlight(
+            painter, error_entity,
+            stale ? QColor(128, 128, 128) : QColor(255, 0, 0));
+    }
 }
 
 void MapNetworkOverlayWidget::paintEntityHighlight(

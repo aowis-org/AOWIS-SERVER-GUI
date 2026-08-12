@@ -14,6 +14,7 @@
     const SYMBOLOGY_VALUE_UNAVAILABLE_COLOR = "#000000";
     const SELECTED_COLOR = "#00beff";
     const ERROR_COLOR = "#ff0000";
+    const STALE_COLOR = "#808080";
     const SYMBOLOGY_COLOR_BUCKETS = 64;
     const RAMP_COLORS = [
         "#440154",
@@ -602,8 +603,9 @@
                 segments, segmentColors, discs, discColors, sprites, spriteColors);
         }
         for (const errorEntity of state.errorEntities) {
+            const diagnosticColor = errorEntity.stale ? STALE_COLOR : ERROR_COLOR;
             appendNetworkEntityOverlay(
-                errorEntity.renderId, errorEntity.entityType, ERROR_COLOR,
+                errorEntity.renderId, errorEntity.entityType, diagnosticColor,
                 segments, segmentColors, discs, discColors, sprites, spriteColors);
         }
 
@@ -1921,8 +1923,13 @@
                     continue;
                 const renderId = Number(errorEntity.renderId) >>> 0;
                 const entityType = renderId === 0 ? 0 : Number(errorEntity.entityType) | 0;
-                if (renderId !== 0 && entityType !== 0)
-                    nextErrorEntities.push({ renderId: renderId, entityType: entityType });
+                if (renderId !== 0 && entityType !== 0) {
+                    nextErrorEntities.push({
+                        renderId: renderId,
+                        entityType: entityType,
+                        stale: !!errorEntity.stale
+                    });
+                }
             }
         }
 

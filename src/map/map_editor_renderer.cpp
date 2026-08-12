@@ -50,6 +50,11 @@ bool isSimulationErrorEntity(const MapEditorVisualState &visual_state, Infrastru
     return visual_state.simulation_error_entities.value(uuid, InfrastructureEntity::Unknown) == entity_type;
 }
 
+bool isSimulationDiagnosticEntityStale(const MapEditorVisualState &visual_state, const QUuid &uuid)
+{
+    return visual_state.simulation_stale_diagnostic_entity_uuids.contains(uuid);
+}
+
 }
 
 MapEditorRenderer::MapEditorRenderer(MapModel *map_model, QWidget *canvas)
@@ -1669,7 +1674,6 @@ void MapEditorRenderer::paintSimulationError(
     if (!this->static_geometry || visual_state.simulation_error_entities.isEmpty())
         return;
 
-    const QColor error_color(255, 0, 0);
     painter.save();
 
     for (QHash<QUuid, InfrastructureEntity>::const_iterator error_iterator =
@@ -1678,6 +1682,8 @@ void MapEditorRenderer::paintSimulationError(
     {
         const QUuid &uuid = error_iterator.key();
         const InfrastructureEntity entity_type = error_iterator.value();
+        const bool stale = isSimulationDiagnosticEntityStale(visual_state, uuid);
+        const QColor error_color = stale ? QColor(128, 128, 128) : QColor(255, 0, 0);
         const QHash<QUuid, int>::const_iterator link_iterator =
             this->static_geometry->link_indices_by_uuid.constFind(uuid);
         if (link_iterator != this->static_geometry->link_indices_by_uuid.cend())
@@ -1743,8 +1749,13 @@ void MapEditorRenderer::paintSimulationError(
                 const QString path = MapEntityPixmapRenderer::pixmapPathForEntity(link.entity_type);
                 const QRectF target_rect = this->pixmap_renderer.centeredRect(center_point, path, visual_state.entity_width);
                 this->pixmap_renderer.paint(painter, path, visual_state.entity_width, target_rect,
-                    selected ? MapEntityPixmapRenderer::Highlight::SelectedError
-                             : MapEntityPixmapRenderer::Highlight::Error);
+                    selected
+                        ? (stale
+                            ? MapEntityPixmapRenderer::Highlight::SelectedStale
+                            : MapEntityPixmapRenderer::Highlight::SelectedError)
+                        : (stale
+                            ? MapEntityPixmapRenderer::Highlight::Stale
+                            : MapEntityPixmapRenderer::Highlight::Error));
             }
             continue;
         }
@@ -1764,8 +1775,13 @@ void MapEditorRenderer::paintSimulationError(
         const QPointF rounded_anchor(qRound(point.x()), qRound(point.y()));
         const QRectF target_rect = this->pixmap_renderer.bottomAnchoredRect(rounded_anchor, path, visual_state.entity_width);
         this->pixmap_renderer.paint(painter, path, visual_state.entity_width, target_rect,
-            selected ? MapEntityPixmapRenderer::Highlight::SelectedError
-                     : MapEntityPixmapRenderer::Highlight::Error);
+            selected
+                ? (stale
+                    ? MapEntityPixmapRenderer::Highlight::SelectedStale
+                    : MapEntityPixmapRenderer::Highlight::SelectedError)
+                : (stale
+                    ? MapEntityPixmapRenderer::Highlight::Stale
+                    : MapEntityPixmapRenderer::Highlight::Error));
     }
 
     painter.restore();
@@ -1875,7 +1891,9 @@ void MapEditorRenderer::paintPipes(
 
         const bool selected = visual_state.selected_pipe_uuids.contains(link.uuid);
         const bool error = isSimulationErrorEntity(visual_state, InfrastructureEntity::Pipe, link.uuid);
-        const QColor pipe_color = error ? QColor(255, 0, 0)
+        const bool stale = isSimulationDiagnosticEntityStale(visual_state, link.uuid);
+        const QColor pipe_color = error
+            ? (stale ? QColor(128, 128, 128) : QColor(255, 0, 0))
             : selected ? QColor(0, 190, 255) : QColor(Qt::black);
         QPen pipe_pen(pipe_color);
         pipe_pen.setWidthF(3.0);
@@ -1980,7 +1998,9 @@ void MapEditorRenderer::paintDeviceLinks(
             painter.drawLine(center_point, end_point);
         }
 
-        const QColor placed_color = error ? QColor(255, 0, 0)
+        const bool stale = isSimulationDiagnosticEntityStale(visual_state, link.uuid);
+        const QColor placed_color = error
+            ? (stale ? QColor(128, 128, 128) : QColor(255, 0, 0))
             : selected ? QColor(0, 190, 255) : QColor(139, 90, 43);
         QPen placed_pen(placed_color);
         placed_pen.setWidthF(3.0);
@@ -2038,10 +2058,16 @@ void MapEditorRenderer::paintDeviceLinks(
                             visual_state.wrap_reference_longitude),
             path, visual_state.entity_width);
         const bool error = isSimulationErrorEntity(visual_state, link.entity_type, link.uuid);
+        const bool stale = isSimulationDiagnosticEntityStale(visual_state, link.uuid);
         const bool selected = visual_state.selected_marker_uuids.contains(link.uuid);
         const MapEntityPixmapRenderer::Highlight highlight = error && selected
-            ? MapEntityPixmapRenderer::Highlight::SelectedError
-            : error ? MapEntityPixmapRenderer::Highlight::Error
+            ? (stale
+                ? MapEntityPixmapRenderer::Highlight::SelectedStale
+                : MapEntityPixmapRenderer::Highlight::SelectedError)
+            : error
+                ? (stale
+                    ? MapEntityPixmapRenderer::Highlight::Stale
+                    : MapEntityPixmapRenderer::Highlight::Error)
             : selected ? MapEntityPixmapRenderer::Highlight::Selected
             : MapEntityPixmapRenderer::Highlight::None;
         this->pixmap_renderer.paint(
@@ -2094,10 +2120,16 @@ void MapEditorRenderer::paintMarkers(
         const QRectF target_rect = this->pixmap_renderer.bottomAnchoredRect(
             rounded_anchor, path, visual_state.entity_width);
         const bool error = isSimulationErrorEntity(visual_state, node.entity_type, node.uuid);
+        const bool stale = isSimulationDiagnosticEntityStale(visual_state, node.uuid);
         const bool selected = visual_state.selected_marker_uuids.contains(node.uuid);
         const MapEntityPixmapRenderer::Highlight highlight = error && selected
-            ? MapEntityPixmapRenderer::Highlight::SelectedError
-            : error ? MapEntityPixmapRenderer::Highlight::Error
+            ? (stale
+                ? MapEntityPixmapRenderer::Highlight::SelectedStale
+                : MapEntityPixmapRenderer::Highlight::SelectedError)
+            : error
+                ? (stale
+                    ? MapEntityPixmapRenderer::Highlight::Stale
+                    : MapEntityPixmapRenderer::Highlight::Error)
             : selected ? MapEntityPixmapRenderer::Highlight::Selected
             : MapEntityPixmapRenderer::Highlight::None;
         this->pixmap_renderer.paint(

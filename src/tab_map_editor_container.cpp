@@ -213,6 +213,9 @@ QByteArray serializeMapEditorVisualState(const MapEditorVisualState &state)
         QJsonObject error_entity;
         error_entity.insert(QStringLiteral("entity"), static_cast<int>(error_iterator.value()));
         error_entity.insert(QStringLiteral("uuid"), error_iterator.key().toString(QUuid::WithoutBraces));
+        error_entity.insert(
+            QStringLiteral("stale"),
+            state.simulation_stale_diagnostic_entity_uuids.contains(error_iterator.key()));
         simulation_error_entities.append(error_entity);
     }
 

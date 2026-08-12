@@ -246,6 +246,7 @@ SimulationDiagnosticsDialog::SimulationDiagnosticsDialog(HydraulicData *hydrauli
 
 void SimulationDiagnosticsDialog::refresh()
 {
+    const int previous_diagnostic_index = this->list_diagnostics->currentRow();
     this->label_result_validity->clear();
     this->list_diagnostics->clear();
     this->text_details->clear();
@@ -268,13 +269,37 @@ void SimulationDiagnosticsDialog::refresh()
             ++error_count;
     }
 
-    this->label_result_validity->setText(
-        QStringLiteral("<b>Result validity:</b> <span style=\"color:%1; font-weight:600;\">%2</span>"
-                       " &nbsp;·&nbsp; <b>Errors:</b> <span style=\"color:#d00000; font-weight:600;\">%3</span>"
-                       " &nbsp;·&nbsp; <b>Warnings:</b> <span style=\"color:#c77800; font-weight:600;\">%4</span>")
-            .arg(resultValidityColor(result_timeline->validity), resultValidityText(result_timeline->validity))
-            .arg(error_count)
-            .arg(warning_count));
+    const bool stale = this->hydraulic_data->simulationDiagnosticsStale();
+    if (stale)
+    {
+        int stale_diagnostic_count = 0;
+        for (const HydraulicSimulationDiagnostic &diagnostic : diagnostics)
+        {
+            if (this->hydraulic_data->simulationDiagnosticEntityStale(diagnostic.entity.uuid))
+                ++stale_diagnostic_count;
+        }
+
+        this->label_result_validity->setText(
+            QStringLiteral("<b>Status:</b> <span style=\"color:#808080; font-weight:600;\">OUTDATED</span>"
+                           " &nbsp;·&nbsp; Network edited since this simulation"
+                           "<br>"
+                           "<b>Errors:</b> <span style=\"color:#d00000; font-weight:600;\">%1</span>"
+                           " &nbsp;·&nbsp; <b>Warnings:</b> <span style=\"color:#c77800; font-weight:600;\">%2</span>"
+                           " &nbsp;·&nbsp; <b>Edited diagnostics:</b> <span style=\"color:#808080; font-weight:600;\">%3</span>")
+                .arg(error_count)
+                .arg(warning_count)
+                .arg(stale_diagnostic_count));
+    }
+    else
+    {
+        this->label_result_validity->setText(
+            QStringLiteral("<b>Result validity:</b> <span style=\"color:%1; font-weight:600;\">%2</span>"
+                           " &nbsp;·&nbsp; <b>Errors:</b> <span style=\"color:#d00000; font-weight:600;\">%3</span>"
+                           " &nbsp;·&nbsp; <b>Warnings:</b> <span style=\"color:#c77800; font-weight:600;\">%4</span>")
+                .arg(resultValidityColor(result_timeline->validity), resultValidityText(result_timeline->validity))
+                .arg(error_count)
+                .arg(warning_count));
+    }
     for (qsizetype index = 0; index < diagnostics.size(); ++index)
     {
         const HydraulicSimulationDiagnostic &diagnostic = diagnostics.at(index);
@@ -283,13 +308,21 @@ void SimulationDiagnosticsDialog::refresh()
         QListWidgetItem *item = new QListWidgetItem(list_text, this->list_diagnostics);
         item->setData(Qt::UserRole, static_cast<int>(index));
 
-        const QColor color = severityColor(diagnostic.severity);
+        const bool diagnostic_stale =
+            this->hydraulic_data->simulationDiagnosticEntityStale(diagnostic.entity.uuid);
+        const QColor color = diagnostic_stale
+            ? QColor(128, 128, 128) : severityColor(diagnostic.severity);
         if (color.isValid())
             item->setForeground(QBrush(color));
     }
 
     if (!diagnostics.isEmpty())
-        this->list_diagnostics->setCurrentRow(0);
+    {
+        const int diagnostic_index = previous_diagnostic_index >= 0
+            && previous_diagnostic_index < diagnostics.size()
+            ? previous_diagnostic_index : 0;
+        this->list_diagnostics->setCurrentRow(diagnostic_index);
+    }
 }
 
 void SimulationDiagnosticsDialog::showDiagnosticDetails(int diagnostic_index)
@@ -307,6 +340,12 @@ void SimulationDiagnosticsDialog::showDiagnosticDetails(int diagnostic_index)
 
     const HydraulicSimulationDiagnostic &diagnostic = diagnostics.at(diagnostic_index);
     QString html;
+    if (this->hydraulic_data->simulationDiagnosticEntityStale(diagnostic.entity.uuid))
+    {
+        html += QStringLiteral("<p style=\"color:#808080; font-weight:600;\">"
+                               "Outdated diagnostic — this entity has been edited since this simulation."
+                               "</p>");
+    }
     html += QStringLiteral("<h3>%1</h3>").arg(diagnostic.message.toHtmlEscaped());
     html += QStringLiteral("<table cellspacing=\"5\">");
     html += QStringLiteral("<tr><td><b>Severity</b></td><td>%1</td></tr>").arg(severityText(diagnostic.severity).toHtmlEscaped());

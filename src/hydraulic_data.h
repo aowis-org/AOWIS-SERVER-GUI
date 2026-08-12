@@ -8,6 +8,7 @@
 #include <QHash>
 #include <QList>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QUuid>
 
@@ -60,6 +61,9 @@ public:
     InfrastructureEntity simulationErrorEntityType() const;
     QUuid simulationErrorEntityUuid() const;
     QHash<QUuid, InfrastructureEntity> simulationErrorEntities() const;
+    bool simulationDiagnosticsStale() const;
+    bool simulationDiagnosticEntityStale(const QUuid &uuid) const;
+    const QSet<QUuid> &simulationStaleDiagnosticEntityUuids() const;
     const HydraulicSimulationResult *currentSimulationResult() const;
     int currentSimulationResultIndex() const;
     void setSimulationResultTimeline(const HydraulicSimulationResultTimeline &result_timeline);
@@ -381,7 +385,9 @@ private:
     };
 
     std::optional<InfrastructureEntity> linkEntityType(const QUuid &uuid) const;
-    void markNetworkChanged(NetworkChange change);
+    void markNetworkChanged(NetworkChange change, const QUuid &edited_entity_uuid = QUuid());
+    void markSimulationResultTimelineStale(const QUuid &edited_entity_uuid = QUuid());
+    void markSimulationDiagnosticEntityStale(const QUuid &uuid);
     bool emitNodeChangedIfSuccessful(const QUuid &uuid, bool successful, NetworkChange change = NetworkChange::Visual);
     bool emitLinkChangedIfSuccessful(const QUuid &uuid, bool successful, NetworkChange change = NetworkChange::Visual);
     void emitConnectedPipeChanges(const QUuid &node_uuid);
@@ -399,6 +405,8 @@ private:
     HydraulicNetworkEditor network_editor;
     std::optional<HydraulicSimulationResultTimeline> simulation_result_timeline;
     int current_simulation_result_index = -1;
+    bool simulation_result_timeline_stale = false;
+    QSet<QUuid> simulation_stale_diagnostic_entity_uuids;
 
     quint64 geometry_revision = 0;
     quint64 visual_revision = 0;

@@ -649,12 +649,16 @@ void MapMonitorContainer::syncWasmSimulationErrorEntities()
             QJsonObject error_entity_json;
             error_entity_json.insert(QStringLiteral("renderId"), static_cast<int>(render_id));
             error_entity_json.insert(QStringLiteral("entityType"), static_cast<int>(entity_type));
+            error_entity_json.insert(
+                QStringLiteral("stale"),
+                this->hydraulic_data->simulationDiagnosticEntityStale(uuid));
             error_entities_json.append(error_entity_json);
         }
     }
 
     const QByteArray json = QJsonDocument(error_entities_json).toJson(QJsonDocument::Compact);
-    aowisBrowserNetworkSetErrorEntities(json.constData(), static_cast<int>(json.size()));
+    aowisBrowserNetworkSetErrorEntities(
+        json.constData(), static_cast<int>(json.size()));
 }
 
 void MapMonitorContainer::scheduleWasmMapLayerSync()

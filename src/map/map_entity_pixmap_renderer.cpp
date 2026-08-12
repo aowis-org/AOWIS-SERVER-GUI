@@ -113,7 +113,7 @@ void MapEntityPixmapRenderer::paint(QPainter &painter, const QString &path, int 
     if (image.isNull())
         return;
 
-    if (highlight == Highlight::SelectedError)
+    if (highlight == Highlight::SelectedError || highlight == Highlight::SelectedStale)
     {
         const QPixmap selected_glow = tintedPixmap(image, QColor(0, 190, 255, 255));
         painter.save();
@@ -122,18 +122,25 @@ void MapEntityPixmapRenderer::paint(QPainter &painter, const QString &path, int 
             painter.drawPixmap(target_rect.topLeft() + QPointF(offset), selected_glow);
         painter.restore();
 
-        const QPixmap error_glow = tintedPixmap(image, QColor(255, 0, 0, 255));
+        const QColor diagnostic_color = highlight == Highlight::SelectedStale
+            ? QColor(128, 128, 128, 255)
+            : QColor(255, 0, 0, 255);
+        const QPixmap diagnostic_glow = tintedPixmap(image, diagnostic_color);
         painter.save();
         painter.setOpacity(0.8);
         for (const QPoint &offset : glow_offsets)
-            painter.drawPixmap(target_rect.topLeft() + QPointF(offset), error_glow);
+            painter.drawPixmap(target_rect.topLeft() + QPointF(offset), diagnostic_glow);
         painter.restore();
     }
     else if (highlight != Highlight::None)
     {
-        const QColor highlight_color = highlight == Highlight::Selected
-            ? QColor(0, 190, 255, 255)
-            : QColor(255, 0, 0, 255);
+        QColor highlight_color;
+        if (highlight == Highlight::Selected)
+            highlight_color = QColor(0, 190, 255, 255);
+        else if (highlight == Highlight::Stale)
+            highlight_color = QColor(128, 128, 128, 255);
+        else
+            highlight_color = QColor(255, 0, 0, 255);
         const QPixmap glow = tintedPixmap(image, highlight_color);
         painter.save();
         painter.setOpacity(0.8);

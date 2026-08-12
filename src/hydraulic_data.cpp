@@ -135,6 +135,7 @@ const NetworkHydraulic &HydraulicData::networkHydraulic() const
 bool HydraulicData::hasSimulationResults() const
 {
     return this->simulation_result_timeline.has_value()
+        && !this->simulation_result_timeline_stale
         && this->simulation_result_timeline->validity == HydraulicSimulationResultValidity::Valid
         && !this->simulation_result_timeline->results.isEmpty();
 }
@@ -270,6 +271,21 @@ QHash<QUuid, InfrastructureEntity> HydraulicData::simulationErrorEntities() cons
     return entities;
 }
 
+bool HydraulicData::simulationDiagnosticsStale() const
+{
+    return this->simulation_result_timeline.has_value() && this->simulation_result_timeline_stale;
+}
+
+bool HydraulicData::simulationDiagnosticEntityStale(const QUuid &uuid) const
+{
+    return !uuid.isNull() && this->simulation_stale_diagnostic_entity_uuids.contains(uuid);
+}
+
+const QSet<QUuid> &HydraulicData::simulationStaleDiagnosticEntityUuids() const
+{
+    return this->simulation_stale_diagnostic_entity_uuids;
+}
+
 const HydraulicSimulationResult *HydraulicData::currentSimulationResult() const
 {
     if (!hasSimulationResults())
@@ -292,6 +308,8 @@ int HydraulicData::currentSimulationResultIndex() const
 void HydraulicData::setSimulationResultTimeline(const HydraulicSimulationResultTimeline &result_timeline)
 {
     this->simulation_result_timeline = result_timeline;
+    this->simulation_result_timeline_stale = false;
+    this->simulation_stale_diagnostic_entity_uuids.clear();
     this->current_simulation_result_index = hasSimulationResults() ? 0 : -1;
 
     emit signalSimulationResultTimelineChanged(hasSimulationResults());
@@ -305,6 +323,8 @@ void HydraulicData::clearSimulationResultTimeline()
 
     this->simulation_result_timeline.reset();
     this->current_simulation_result_index = -1;
+    this->simulation_result_timeline_stale = false;
+    this->simulation_stale_diagnostic_entity_uuids.clear();
 
     if (had_timeline)
         emit signalSimulationResultTimelineChanged(false);
@@ -1464,9 +1484,42 @@ std::optional<InfrastructureEntity> HydraulicData::linkEntityType(const QUuid &u
     return std::nullopt;
 }
 
-void HydraulicData::markNetworkChanged(NetworkChange change)
+void HydraulicData::markSimulationDiagnosticEntityStale(const QUuid &uuid)
 {
-    clearSimulationResultTimeline();
+    if (!this->simulation_result_timeline.has_value() || uuid.isNull()
+        || this->simulation_stale_diagnostic_entity_uuids.contains(uuid))
+    {
+        return;
+    }
+
+    this->simulation_stale_diagnostic_entity_uuids.insert(uuid);
+    emit signalSimulationResultTimelineChanged(false);
+}
+
+void HydraulicData::markSimulationResultTimelineStale(const QUuid &edited_entity_uuid)
+{
+    if (!this->simulation_result_timeline.has_value())
+        return;
+
+    const int previous_index = this->current_simulation_result_index;
+    const bool timeline_became_stale = !this->simulation_result_timeline_stale;
+    this->simulation_result_timeline_stale = true;
+    this->current_simulation_result_index = -1;
+
+    const bool entity_became_stale = !edited_entity_uuid.isNull()
+        && !this->simulation_stale_diagnostic_entity_uuids.contains(edited_entity_uuid);
+    if (entity_became_stale)
+        this->simulation_stale_diagnostic_entity_uuids.insert(edited_entity_uuid);
+
+    if (timeline_became_stale || entity_became_stale)
+        emit signalSimulationResultTimelineChanged(false);
+    if (previous_index != -1)
+        emit signalCurrentSimulationResultChanged(-1);
+}
+
+void HydraulicData::markNetworkChanged(NetworkChange change, const QUuid &edited_entity_uuid)
+{
+    markSimulationResultTimelineStale(edited_entity_uuid);
     rebuildSymbologyMinMaxValues();
 
     if (change == NetworkChange::Geometry)
@@ -1484,7 +1537,7 @@ bool HydraulicData::emitNodeChangedIfSuccessful(const QUuid &uuid, bool successf
     if (!successful)
         return false;
 
-    markNetworkChanged(change);
+    markNetworkChanged(change, uuid);
 
     const std::optional<InfrastructureEntity> entity_type = nodeEntityType(uuid);
     if (!entity_type.has_value())
@@ -1498,7 +1551,7 @@ bool HydraulicData::emitLinkChangedIfSuccessful(const QUuid &uuid, bool successf
     if (!successful)
         return false;
 
-    markNetworkChanged(change);
+    markNetworkChanged(change, uuid);
 
     const std::optional<InfrastructureEntity> entity_type = linkEntityType(uuid);
     if (!entity_type.has_value())
@@ -1749,7 +1802,7 @@ QUuid HydraulicData::addJunction(const CoordinateWGS84 &coordinate)
     {
         if (extendBoundingBoxWgs84(coordinate))
             emit signalBoundingBoxWgs84Changed();
-        markNetworkChanged(NetworkChange::Geometry);
+        markNetworkChanged(NetworkChange::Geometry, uuid);
     }
     return uuid;
 }
@@ -1761,7 +1814,7 @@ QUuid HydraulicData::addReservoir(const CoordinateWGS84 &coordinate)
     {
         if (extendBoundingBoxWgs84(coordinate))
             emit signalBoundingBoxWgs84Changed();
-        markNetworkChanged(NetworkChange::Geometry);
+        markNetworkChanged(NetworkChange::Geometry, uuid);
     }
     return uuid;
 }
@@ -1773,7 +1826,7 @@ QUuid HydraulicData::addTank(const CoordinateWGS84 &coordinate)
     {
         if (extendBoundingBoxWgs84(coordinate))
             emit signalBoundingBoxWgs84Changed();
-        markNetworkChanged(NetworkChange::Geometry);
+        markNetworkChanged(NetworkChange::Geometry, uuid);
     }
     return uuid;
 }
@@ -1790,7 +1843,7 @@ QUuid HydraulicData::addPipe(const QUuid &node_uuid_from, const QUuid &node_uuid
             bounding_box_changed = extendBoundingBoxWgs84(coordinate) || bounding_box_changed;
         if (bounding_box_changed)
             emit signalBoundingBoxWgs84Changed();
-        markNetworkChanged(NetworkChange::Geometry);
+        markNetworkChanged(NetworkChange::Geometry, uuid);
     }
     return uuid;
 }
@@ -1804,7 +1857,7 @@ QUuid HydraulicData::addPump(const QUuid &node_uuid_from, const QUuid &node_uuid
     {
         if (extendBoundingBoxWgs84(center_coordinate))
             emit signalBoundingBoxWgs84Changed();
-        markNetworkChanged(NetworkChange::Geometry);
+        markNetworkChanged(NetworkChange::Geometry, uuid);
     }
     return uuid;
 }
@@ -1818,7 +1871,7 @@ QUuid HydraulicData::addValve(const QUuid &node_uuid_from, const QUuid &node_uui
     {
         if (extendBoundingBoxWgs84(center_coordinate))
             emit signalBoundingBoxWgs84Changed();
-        markNetworkChanged(NetworkChange::Geometry);
+        markNetworkChanged(NetworkChange::Geometry, uuid);
     }
     return uuid;
 }
@@ -1865,7 +1918,7 @@ bool HydraulicData::setNodeCoordinate(const QUuid &uuid, const CoordinateWGS84 &
         return false;
 
     updateBoundingBoxWgs84(coordinate_previous.value(), coordinate);
-    markNetworkChanged(NetworkChange::Geometry);
+    markNetworkChanged(NetworkChange::Geometry, uuid);
     emit signalNodeChanged(entity_type.value(), uuid);
     emitConnectedPipeChanges(uuid);
     return true;
@@ -2355,6 +2408,26 @@ bool HydraulicData::applyGeometryBatch(const HydraulicGeometryBatch &batch)
 
     rebuildBoundingBoxWgs84();
     markNetworkChanged(NetworkChange::Geometry);
+    for (QHash<QUuid, CoordinateWGS84>::const_iterator iterator = batch.node_coordinates.cbegin();
+         iterator != batch.node_coordinates.cend(); ++iterator)
+    {
+        markSimulationDiagnosticEntityStale(iterator.key());
+    }
+    for (QHash<QUuid, QList<CoordinateWGS84>>::const_iterator iterator = batch.pipe_vertices.cbegin();
+         iterator != batch.pipe_vertices.cend(); ++iterator)
+    {
+        markSimulationDiagnosticEntityStale(iterator.key());
+    }
+    for (QHash<QUuid, CoordinateWGS84>::const_iterator iterator = batch.pump_center_coordinates.cbegin();
+         iterator != batch.pump_center_coordinates.cend(); ++iterator)
+    {
+        markSimulationDiagnosticEntityStale(iterator.key());
+    }
+    for (QHash<QUuid, CoordinateWGS84>::const_iterator iterator = batch.valve_center_coordinates.cbegin();
+         iterator != batch.valve_center_coordinates.cend(); ++iterator)
+    {
+        markSimulationDiagnosticEntityStale(iterator.key());
+    }
 
     if (snapshot_was_current)
     {
@@ -2483,7 +2556,7 @@ QUuid HydraulicData::splitPipeAtVertex(const QUuid &pipe_uuid, int vertex_index,
     const QUuid second_pipe_uuid =
         this->network_editor.splitPipeAtVertex(pipe_uuid, vertex_index, junction_uuid);
     if (!second_pipe_uuid.isNull())
-        markNetworkChanged(NetworkChange::Geometry);
+        markNetworkChanged(NetworkChange::Geometry, pipe_uuid);
     return second_pipe_uuid;
 }
 
@@ -2493,7 +2566,11 @@ bool HydraulicData::undoPipeSplit(const QUuid &first_pipe_uuid, const QUuid &sec
     const bool successful =
         this->network_editor.undoPipeSplit(first_pipe_uuid, second_pipe_uuid, junction_uuid);
     if (successful)
-        markNetworkChanged(NetworkChange::Geometry);
+    {
+        markNetworkChanged(NetworkChange::Geometry, first_pipe_uuid);
+        markSimulationDiagnosticEntityStale(second_pipe_uuid);
+        markSimulationDiagnosticEntityStale(junction_uuid);
+    }
     return successful;
 }
 
@@ -2503,7 +2580,7 @@ bool HydraulicData::deleteJunction(const QUuid &uuid)
     if (successful)
     {
         rebuildBoundingBoxWgs84();
-        markNetworkChanged(NetworkChange::Geometry);
+        markNetworkChanged(NetworkChange::Geometry, uuid);
     }
     return successful;
 }
@@ -2514,7 +2591,7 @@ bool HydraulicData::deleteReservoir(const QUuid &uuid)
     if (successful)
     {
         rebuildBoundingBoxWgs84();
-        markNetworkChanged(NetworkChange::Geometry);
+        markNetworkChanged(NetworkChange::Geometry, uuid);
     }
     return successful;
 }
@@ -2525,7 +2602,7 @@ bool HydraulicData::deleteTank(const QUuid &uuid)
     if (successful)
     {
         rebuildBoundingBoxWgs84();
-        markNetworkChanged(NetworkChange::Geometry);
+        markNetworkChanged(NetworkChange::Geometry, uuid);
     }
     return successful;
 }
@@ -2536,7 +2613,7 @@ bool HydraulicData::deletePipe(const QUuid &uuid)
     if (successful)
     {
         rebuildBoundingBoxWgs84();
-        markNetworkChanged(NetworkChange::Geometry);
+        markNetworkChanged(NetworkChange::Geometry, uuid);
     }
     return successful;
 }
@@ -2547,7 +2624,7 @@ bool HydraulicData::deletePump(const QUuid &uuid)
     if (successful)
     {
         rebuildBoundingBoxWgs84();
-        markNetworkChanged(NetworkChange::Geometry);
+        markNetworkChanged(NetworkChange::Geometry, uuid);
     }
     return successful;
 }
@@ -2558,7 +2635,7 @@ bool HydraulicData::deleteValve(const QUuid &uuid)
     if (successful)
     {
         rebuildBoundingBoxWgs84();
-        markNetworkChanged(NetworkChange::Geometry);
+        markNetworkChanged(NetworkChange::Geometry, uuid);
     }
     return successful;
 }

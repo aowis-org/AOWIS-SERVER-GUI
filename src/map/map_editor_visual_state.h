@@ -5,6 +5,7 @@
 #include <QList>
 #include <QPointF>
 #include <QRect>
+#include <QSet>
 #include <QString>
 #include <QUuid>
 #include <QtGlobal>
@@ -54,6 +55,7 @@ struct MapEditorVisualState
     QList<QUuid> selected_marker_uuids;
     QList<QUuid> selected_pipe_uuids;
     QHash<QUuid, InfrastructureEntity> simulation_error_entities;
+    QSet<QUuid> simulation_stale_diagnostic_entity_uuids;
     MapEditorPlacementVisualState placement;
     MapEditorMoveVisualState move;
     double wrap_reference_longitude = 0.0;
