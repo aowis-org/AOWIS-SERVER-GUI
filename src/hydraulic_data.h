@@ -16,6 +16,7 @@
 #include <aowis/model/entity.h>
 #include <aowis/model/gis.h>
 #include <aowis/model/hydraulic/network_hydraulic.h>
+#include <aowis/model/hydraulic/hydraulic_simulation_results.h>
 
 #include <aowis/db/database_gui.h>
 
@@ -51,6 +52,14 @@ public:
     void loadProject();
 
     const NetworkHydraulic &networkHydraulic() const;
+
+    bool hasSimulationResults() const;
+    const std::optional<HydraulicSimulationResultTimeline> &simulationResultTimeline() const;
+    const HydraulicSimulationResult *currentSimulationResult() const;
+    int currentSimulationResultIndex() const;
+    void setSimulationResultTimeline(const HydraulicSimulationResultTimeline &result_timeline);
+    void clearSimulationResultTimeline();
+    bool setCurrentSimulationResultIndex(int result_index);
     const NetworkRenderSnapshot &networkRenderSnapshot() const;
     quint64 geometryRevision() const;
     quint64 visualRevision() const;
@@ -382,6 +391,8 @@ private:
     std::optional<Project> project;
     NetworkHydraulic network_hydraulic;
     HydraulicNetworkEditor network_editor;
+    std::optional<HydraulicSimulationResultTimeline> simulation_result_timeline;
+    int current_simulation_result_index = -1;
 
     quint64 geometry_revision = 0;
     quint64 visual_revision = 0;
@@ -464,6 +475,8 @@ private slots:
 
 signals:
     void signalNetworkLoaded();
+    void signalSimulationResultTimelineChanged(bool available);
+    void signalCurrentSimulationResultChanged(int result_index);
     void signalNetworkGeometryChanged(quint64 geometry_revision);
     void signalBoundingBoxWgs84Changed();
     void signalNodeChanged(InfrastructureEntity entity_type, const QUuid &uuid);

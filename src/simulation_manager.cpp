@@ -1,5 +1,7 @@
 #include "simulation_manager.h"
 
+#include "simulation_statistics_dialog.h"
+
 #include <aowis/epanet/epanet_runner.h>
 
 #include <QByteArray>
@@ -33,6 +35,19 @@ EM_JS(void, aowisDownloadTextFile, (const char *filename_utf8, const char *conte
 
 namespace
 {
+void showAndActivateDialog(QDialog *dialog)
+{
+    if (dialog == nullptr)
+        return;
+
+    if (dialog->isMinimized())
+        dialog->setWindowState(dialog->windowState() & ~Qt::WindowMinimized);
+
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
+}
+
 QString exportFailureDetails(const HydraulicSimulationStatus &status)
 {
     QStringList details;
@@ -62,99 +77,118 @@ SimulationManager::SimulationManager(HydraulicData *hydraulic_data, QObject *par
 
 void SimulationManager::run()
 {
+    this->hydraulic_data->clearSimulationResultTimeline();
+    this->epanet_log.clear();
+    if (this->widget_epanet_log)
+        this->widget_epanet_log->clear();
+    emit signalEpanetLogAvailabilityChanged(false);
+
     const NetworkHydraulic network_hydraulic = this->hydraulic_data->networkHydraulic();
-    
+
     EpanetRunner runner;
     const EpanetResultRun run_result = runner.run(network_hydraulic);
-    
+
     this->epanet_log = run_result.report_lines.join('\n');
+    if (this->widget_epanet_log)
+        this->widget_epanet_log->setPlainText(this->epanet_log);
+    emit signalEpanetLogAvailabilityChanged(!this->epanet_log.isEmpty());
     qDebug().noquote() << this->epanet_log;
-    
+
+    if (!run_result.result_timeline.results.isEmpty())
+        this->hydraulic_data->setSimulationResultTimeline(run_result.result_timeline);
+
     if (!run_result.result_timeline.status.success)
     {
         const HydraulicSimulationStatus &status = run_result.result_timeline.status;
         qWarning().noquote() << "EPANET simulation failed:" << status.message;
-        
+
         if (!status.message_backend.isEmpty())
             qWarning().noquote() << status.message_backend;
-        
+
         return;
     }
-    
-    const HydraulicSimulationResultTimeline &result_timeline = run_result.result_timeline;
-    
-    // Process or store result_timeline here.
+}
+
+void SimulationManager::showSimulationStatistics()
+{
+    if (!this->hydraulic_data->hasSimulationResults())
+        return;
+
+    if (this->dialog_simulation_statistics)
+    {
+        showAndActivateDialog(this->dialog_simulation_statistics);
+        return;
+    }
+
+    QWidget *main_window = qobject_cast<QWidget *>(parent());
+    if (main_window == nullptr)
+        main_window = QApplication::activeWindow();
+
+    this->dialog_simulation_statistics = new SimulationStatisticsDialog(this->hydraulic_data, main_window);
+    showAndActivateDialog(this->dialog_simulation_statistics);
 }
 
 void SimulationManager::showEpanetLog()
 {
-    QWidget *main_window = QApplication::activeWindow();
-    
-    QDialog *log_dialog = new QDialog(
+    if (this->dialog_epanet_log)
+    {
+        showAndActivateDialog(this->dialog_epanet_log);
+        return;
+    }
+
+    QWidget *main_window = qobject_cast<QWidget *>(parent());
+    if (main_window == nullptr)
+        main_window = QApplication::activeWindow();
+
+    this->dialog_epanet_log = new QDialog(
         main_window,
         Qt::Dialog
         | Qt::WindowTitleHint
         | Qt::WindowCloseButtonHint
         | Qt::WindowMaximizeButtonHint
     );
-    
-    log_dialog->setAttribute(Qt::WA_DeleteOnClose);
-    log_dialog->setWindowTitle(tr("EPANET Log"));
-    log_dialog->setModal(false);
-    
-    QTextBrowser *log_widget = new QTextBrowser(log_dialog);
-    
+
+    this->dialog_epanet_log->setAttribute(Qt::WA_DeleteOnClose);
+    this->dialog_epanet_log->setWindowTitle(tr("EPANET Log"));
+    this->dialog_epanet_log->setModal(false);
+
+    this->widget_epanet_log = new QTextBrowser(this->dialog_epanet_log);
+
     const QFont fixed_font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-    
-    log_widget->setFont(fixed_font);
-    log_widget->setPlainText(this->epanet_log);
-    log_widget->setOpenExternalLinks(true);
-    log_widget->setLineWrapMode(QTextEdit::NoWrap);
-    
-    QVBoxLayout *layout = new QVBoxLayout(log_dialog);
+
+    this->widget_epanet_log->setFont(fixed_font);
+    this->widget_epanet_log->setPlainText(this->epanet_log);
+    this->widget_epanet_log->setOpenExternalLinks(true);
+    this->widget_epanet_log->setLineWrapMode(QTextEdit::NoWrap);
+
+    QVBoxLayout *layout = new QVBoxLayout(this->dialog_epanet_log);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(log_widget);
-    
+    layout->addWidget(this->widget_epanet_log);
+
     const QFontMetrics font_metrics(fixed_font);
     const QStringList lines = this->epanet_log.split('\n');
-    
+
     int content_width = 0;
-    
+
     for (const QString &line : lines)
-    {
-        content_width = qMax(
-            content_width,
-            font_metrics.horizontalAdvance(line)
-            );
-    }
-    
+        content_width = qMax(content_width, font_metrics.horizontalAdvance(line));
+
     // Space for the frame, scrollbar and some padding.
     const int width_overhead = 50;
     const int desired_width = content_width + width_overhead;
-    
-    QScreen *screen = log_dialog->screen();
-    
+
+    QScreen *screen = this->dialog_epanet_log->screen();
     if (screen == nullptr)
-    {
         screen = QApplication::primaryScreen();
-    }
-    
-    const int maximum_width =
-        screen != nullptr
-            ? static_cast<int>(screen->availableGeometry().width() * 0.9)
-            : 1200;
-    
-    const int dialog_width = qBound(
-        500,
-        desired_width,
-        maximum_width
-        );
-    
-    log_dialog->resize(dialog_width, 600);
-    
-    log_dialog->show();
-    log_dialog->raise();
-    log_dialog->activateWindow();
+
+    const int maximum_width = screen != nullptr
+        ? static_cast<int>(screen->availableGeometry().width() * 0.9)
+        : 1200;
+
+    const int dialog_width = qBound(500, desired_width, maximum_width);
+
+    this->dialog_epanet_log->resize(dialog_width, 600);
+    showAndActivateDialog(this->dialog_epanet_log);
 }
 
 void SimulationManager::exportEpanetNetwork()

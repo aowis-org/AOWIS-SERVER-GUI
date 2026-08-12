@@ -229,6 +229,30 @@ void TopControlBar::setFullScreenState(bool fullscreen)
     this->button_fullscreen->setToolTip(fullscreen ? QStringLiteral("Leave fullscreen [F11]") : QStringLiteral("Enter fullscreen [F11]"));
 }
 
+void TopControlBar::setSimulationResultsAvailable(bool available)
+{
+    if (this->button_sim_statistics == nullptr)
+        return;
+
+    this->button_sim_statistics->setEnabled(available);
+    this->button_sim_statistics->setToolTip(
+        available
+            ? QStringLiteral("Show simulation statistics")
+            : QStringLiteral("Show simulation statistics<br>You need to run a simulation first"));
+}
+
+void TopControlBar::setEpanetLogAvailable(bool available)
+{
+    if (this->button_sim_log == nullptr)
+        return;
+
+    this->button_sim_log->setEnabled(available);
+    this->button_sim_log->setToolTip(
+        available
+            ? QStringLiteral("Show EPANET log")
+            : QStringLiteral("Show EPANET log<br>You need to run a simulation first"));
+}
+
 void TopControlBar::addProjectControls()
 {
     TopControlBarContent *bar_content = barContent(this->content);
@@ -410,6 +434,7 @@ void TopControlBar::addHeadlossFormulaDropdown()
 void TopControlBar::addSimulationControls()
 {
     TopControlBarContent *bar_content = barContent(this->content);
+
     QPushButton *button_sim_start = new QPushButton(this->content);
     button_sim_start->setIcon(QIcon(QStringLiteral(":/icon/simulation_start.png")));
     button_sim_start->setFlat(true);
@@ -418,26 +443,44 @@ void TopControlBar::addSimulationControls()
     button_sim_start->addAction(QString(), QKeySequence(Qt::SHIFT | Qt::Key_Return), button_sim_start, &QPushButton::click);
     button_sim_start->addAction(QString(), QKeySequence(Qt::CTRL | Qt::Key_R), button_sim_start, &QPushButton::click);
 
-    QPushButton *button_sim_log = new QPushButton(this->content);
-    button_sim_log->setIcon(QIcon(QStringLiteral(":/icon/log.png")));
-    button_sim_log->setFlat(true);
-    configureToolbarIconButton(button_sim_log);
-    button_sim_log->setToolTip(QStringLiteral("Show EPANET log<br>You need to run a simulation first"));
-    button_sim_log->setEnabled(false);
+    QWidget *result_button_stack = new QWidget(this->content);
+    QVBoxLayout *result_button_stack_layout = new QVBoxLayout(result_button_stack);
+    result_button_stack_layout->setContentsMargins(0, 0, 0, 0);
+    result_button_stack_layout->setSpacing(0);
 
-    connect(button_sim_start, &QPushButton::clicked, this, [this, button_sim_log]
+    this->button_sim_statistics = new QToolButton(result_button_stack);
+    this->button_sim_statistics->setAutoRaise(true);
+    this->button_sim_statistics->setIcon(QIcon(QStringLiteral(":/icon/dashboard.png")));
+    configureStackedToolbarIconButton(this->button_sim_statistics);
+
+    this->button_sim_log = new QToolButton(result_button_stack);
+    this->button_sim_log->setAutoRaise(true);
+    this->button_sim_log->setIcon(QIcon(QStringLiteral(":/icon/log.png")));
+    configureStackedToolbarIconButton(this->button_sim_log);
+
+    setSimulationResultsAvailable(false);
+    setEpanetLogAvailable(false);
+
+    connect(button_sim_start, &QPushButton::clicked, this, [this]
     {
-        button_sim_log->setEnabled(true);
         emit signalSimulationStart();
     });
 
-    connect(button_sim_log, &QPushButton::clicked, this, [this]
+    connect(this->button_sim_statistics, &QToolButton::clicked, this, [this]
+    {
+        emit signalShowSimulationStatistics();
+    });
+
+    connect(this->button_sim_log, &QToolButton::clicked, this, [this]
     {
         emit signalShowEpanetLog();
     });
 
+    result_button_stack_layout->addWidget(this->button_sim_statistics);
+    result_button_stack_layout->addWidget(this->button_sim_log);
+
     bar_content->centerLayout()->addWidget(button_sim_start);
-    bar_content->centerLayout()->addWidget(button_sim_log);
+    bar_content->centerLayout()->addWidget(result_button_stack);
 }
 
 void TopControlBar::addViewControls()

@@ -7,6 +7,7 @@
 #include <QTextBrowser>
 #include <QFontDatabase>
 #include <QDialog>
+#include <QPointer>
 #include <QVBoxLayout>
 
 #include <aowis/model/hydraulic/network_hydraulic.h>
@@ -22,14 +23,19 @@ public:
     explicit SimulationManager(HydraulicData *hydraulic_data, QObject *parent = nullptr);
     
     void run();
+    void showSimulationStatistics();
     void showEpanetLog();
     void exportEpanetNetwork();
     
 private:
     HydraulicData *hydraulic_data = nullptr;
     QString epanet_log;
+    QPointer<QDialog> dialog_simulation_statistics = nullptr;
+    QPointer<QDialog> dialog_epanet_log = nullptr;
+    QPointer<QTextBrowser> widget_epanet_log = nullptr;
 
 signals:
+    void signalEpanetLogAvailabilityChanged(bool available);
 };
 
 #endif // SIMULATION_MANAGER_H

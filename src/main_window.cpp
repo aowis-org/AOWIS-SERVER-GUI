@@ -295,8 +295,13 @@ MainWindow::MainWindow(QWidget *parent)
     
     connect(this->top_control_bar, &TopControlBar::signalHeadlossFormulaChanged, this->dock_entity_inspector, &EntityInspectorDock::onHeadlossFormulaChanged);
     connect(this->top_control_bar, &TopControlBar::signalSimulationStart, this->simulation_manager, &SimulationManager::run);
+    connect(this->top_control_bar, &TopControlBar::signalShowSimulationStatistics, this->simulation_manager, &SimulationManager::showSimulationStatistics);
     connect(this->top_control_bar, &TopControlBar::signalShowEpanetLog, this->simulation_manager, &SimulationManager::showEpanetLog);
     connect(this->top_control_bar, &TopControlBar::signalExportEpanetNetwork, this->simulation_manager, &SimulationManager::exportEpanetNetwork);
+    connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged,
+            this->top_control_bar, &TopControlBar::setSimulationResultsAvailable);
+    connect(this->simulation_manager, &SimulationManager::signalEpanetLogAvailabilityChanged,
+            this->top_control_bar, &TopControlBar::setEpanetLogAvailable);
     connect(this->top_control_bar, &TopControlBar::signalFullScreenToggle, this, &MainWindow::fullScreenToggle);
 
     connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, this, &MainWindow::showEntityInspectorForMapSelection);

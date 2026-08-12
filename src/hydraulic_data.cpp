@@ -64,7 +64,7 @@ void HydraulicData::onDatabaseReady()
     rebuildBoundingBoxWgs84();
     markNetworkChanged(NetworkChange::Geometry);
     //this->network_hydraulic = DummyNetworks::networkOnMap();
-    //this->network_hydraulic = DummyNetworks::networkTanksTimeline();
+    this->network_hydraulic = DummyNetworks::networkTanksTimeline();
     
     emit signalNetworkLoaded();
 }
@@ -130,6 +130,76 @@ void HydraulicData::loadProject()
 const NetworkHydraulic &HydraulicData::networkHydraulic() const
 {
     return this->network_hydraulic;
+}
+
+bool HydraulicData::hasSimulationResults() const
+{
+    return this->simulation_result_timeline.has_value()
+        && !this->simulation_result_timeline->results.isEmpty();
+}
+
+const std::optional<HydraulicSimulationResultTimeline> &HydraulicData::simulationResultTimeline() const
+{
+    return this->simulation_result_timeline;
+}
+
+const HydraulicSimulationResult *HydraulicData::currentSimulationResult() const
+{
+    if (!hasSimulationResults())
+        return nullptr;
+
+    if (this->current_simulation_result_index < 0
+        || this->current_simulation_result_index >= this->simulation_result_timeline->results.size())
+    {
+        return nullptr;
+    }
+
+    return &this->simulation_result_timeline->results.at(this->current_simulation_result_index);
+}
+
+int HydraulicData::currentSimulationResultIndex() const
+{
+    return this->current_simulation_result_index;
+}
+
+void HydraulicData::setSimulationResultTimeline(const HydraulicSimulationResultTimeline &result_timeline)
+{
+    this->simulation_result_timeline = result_timeline;
+    this->current_simulation_result_index = result_timeline.results.isEmpty() ? -1 : 0;
+
+    emit signalSimulationResultTimelineChanged(hasSimulationResults());
+    emit signalCurrentSimulationResultChanged(this->current_simulation_result_index);
+}
+
+void HydraulicData::clearSimulationResultTimeline()
+{
+    const bool had_results = hasSimulationResults();
+    const int previous_index = this->current_simulation_result_index;
+
+    this->simulation_result_timeline.reset();
+    this->current_simulation_result_index = -1;
+
+    if (had_results)
+        emit signalSimulationResultTimelineChanged(false);
+
+    if (previous_index != -1)
+        emit signalCurrentSimulationResultChanged(-1);
+}
+
+bool HydraulicData::setCurrentSimulationResultIndex(int result_index)
+{
+    if (!hasSimulationResults())
+        return false;
+
+    if (result_index < 0 || result_index >= this->simulation_result_timeline->results.size())
+        return false;
+
+    if (this->current_simulation_result_index == result_index)
+        return true;
+
+    this->current_simulation_result_index = result_index;
+    emit signalCurrentSimulationResultChanged(this->current_simulation_result_index);
+    return true;
 }
 
 const NetworkRenderSnapshot &HydraulicData::networkRenderSnapshot() const
@@ -1269,6 +1339,7 @@ std::optional<InfrastructureEntity> HydraulicData::linkEntityType(const QUuid &u
 
 void HydraulicData::markNetworkChanged(NetworkChange change)
 {
+    clearSimulationResultTimeline();
     rebuildSymbologyMinMaxValues();
 
     if (change == NetworkChange::Geometry)
