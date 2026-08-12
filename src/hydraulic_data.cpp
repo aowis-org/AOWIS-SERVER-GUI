@@ -135,6 +135,7 @@ const NetworkHydraulic &HydraulicData::networkHydraulic() const
 bool HydraulicData::hasSimulationResults() const
 {
     return this->simulation_result_timeline.has_value()
+        && this->simulation_result_timeline->validity == HydraulicSimulationResultValidity::Valid
         && !this->simulation_result_timeline->results.isEmpty();
 }
 
@@ -225,7 +226,7 @@ int HydraulicData::currentSimulationResultIndex() const
 void HydraulicData::setSimulationResultTimeline(const HydraulicSimulationResultTimeline &result_timeline)
 {
     this->simulation_result_timeline = result_timeline;
-    this->current_simulation_result_index = result_timeline.results.isEmpty() ? -1 : 0;
+    this->current_simulation_result_index = hasSimulationResults() ? 0 : -1;
 
     emit signalSimulationResultTimelineChanged(hasSimulationResults());
     emit signalCurrentSimulationResultChanged(this->current_simulation_result_index);

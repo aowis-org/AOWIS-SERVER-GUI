@@ -227,10 +227,10 @@ void SimulationStatisticsDialog::refreshSummary()
     this->tree_summary->clear();
 
     const std::optional<HydraulicSimulationResultTimeline> &timeline_optional = this->hydraulic_data->simulationResultTimeline();
-    if (!timeline_optional.has_value() || timeline_optional->results.isEmpty())
+    if (!this->hydraulic_data->hasSimulationResults() || !timeline_optional.has_value())
     {
         QTreeWidgetItem *group = addSummaryGroup(this->tree_summary, tr("Simulation"));
-        addSummaryValue(group, tr("Result"), tr("No simulation results available"));
+        addSummaryValue(group, tr("Result"), tr("No valid simulation results available"));
         group->setExpanded(true);
         return;
     }
@@ -298,7 +298,7 @@ void SimulationStatisticsDialog::refreshTimeline()
     this->table_timeline->setRowCount(0);
 
     const std::optional<HydraulicSimulationResultTimeline> &timeline_optional = this->hydraulic_data->simulationResultTimeline();
-    if (!timeline_optional.has_value())
+    if (!this->hydraulic_data->hasSimulationResults() || !timeline_optional.has_value())
         return;
 
     const QList<HydraulicSimulationResult> &results = timeline_optional->results;

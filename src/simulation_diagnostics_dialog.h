@@ -4,6 +4,7 @@
 #include <QDialog>
 
 class HydraulicData;
+class QLabel;
 class QListWidget;
 class QTextBrowser;
 
@@ -17,6 +18,7 @@ private:
     void showDiagnosticDetails(int diagnostic_index);
 
     HydraulicData *hydraulic_data = nullptr;
+    QLabel *label_result_validity = nullptr;
     QListWidget *list_diagnostics = nullptr;
     QTextBrowser *text_details = nullptr;
 };

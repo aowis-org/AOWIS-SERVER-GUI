@@ -4,6 +4,7 @@
 
 #include <QBrush>
 #include <QColor>
+#include <QLabel>
 #include <QMetaEnum>
 #include <QSplitter>
 #include <QListWidget>
@@ -75,6 +76,36 @@ QString enumText(HydraulicSimulationStatusEntityType value)
     return enumText("EntityType", static_cast<int>(value));
 }
 
+QString resultValidityText(HydraulicSimulationResultValidity validity)
+{
+    switch (validity)
+    {
+    case HydraulicSimulationResultValidity::Valid:
+        return QStringLiteral("Valid");
+    case HydraulicSimulationResultValidity::Partial:
+        return QStringLiteral("Partial");
+    case HydraulicSimulationResultValidity::Invalid:
+        return QStringLiteral("Invalid");
+    }
+
+    return QStringLiteral("Invalid");
+}
+
+QString resultValidityDescription(HydraulicSimulationResultValidity validity)
+{
+    switch (validity)
+    {
+    case HydraulicSimulationResultValidity::Valid:
+        return QStringLiteral("Numerical simulation results are valid.");
+    case HydraulicSimulationResultValidity::Partial:
+        return QStringLiteral("Partial numerical results were preserved for diagnostics but are not exposed as valid simulation results.");
+    case HydraulicSimulationResultValidity::Invalid:
+        return QStringLiteral("No valid numerical simulation result is available.");
+    }
+
+    return QStringLiteral("No valid numerical simulation result is available.");
+}
+
 QString entityText(const HydraulicSimulationDiagnostic &diagnostic)
 {
     QString text = enumText(diagnostic.entity.type);
@@ -93,6 +124,10 @@ SimulationDiagnosticsDialog::SimulationDiagnosticsDialog(HydraulicData *hydrauli
     setModal(false);
     resize(720, 460);
     setMinimumSize(620, 360);
+
+    this->label_result_validity = new QLabel(this);
+    this->label_result_validity->setWordWrap(true);
+    this->label_result_validity->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
     this->list_diagnostics = new QListWidget(this);
     this->list_diagnostics->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -116,6 +151,7 @@ SimulationDiagnosticsDialog::SimulationDiagnosticsDialog(HydraulicData *hydrauli
     splitter->setSizes({250, 430});
 
     QVBoxLayout *layout = new QVBoxLayout(this);
+    layout->addWidget(this->label_result_validity);
     layout->addWidget(splitter);
 
     connect(this->list_diagnostics, &QListWidget::currentItemChanged, this,
@@ -144,6 +180,7 @@ SimulationDiagnosticsDialog::SimulationDiagnosticsDialog(HydraulicData *hydrauli
 
 void SimulationDiagnosticsDialog::refresh()
 {
+    this->label_result_validity->clear();
     this->list_diagnostics->clear();
     this->text_details->clear();
     if (this->hydraulic_data == nullptr)
@@ -152,6 +189,10 @@ void SimulationDiagnosticsDialog::refresh()
     const std::optional<HydraulicSimulationResultTimeline> &result_timeline = this->hydraulic_data->simulationResultTimeline();
     if (!result_timeline.has_value())
         return;
+
+    this->label_result_validity->setText(
+        QStringLiteral("<b>Result validity: %1</b> — %2")
+            .arg(resultValidityText(result_timeline->validity), resultValidityDescription(result_timeline->validity)));
 
     const QList<HydraulicSimulationDiagnostic> &diagnostics = result_timeline->diagnostics;
     for (qsizetype index = 0; index < diagnostics.size(); ++index)
