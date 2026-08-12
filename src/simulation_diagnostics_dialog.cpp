@@ -2,13 +2,11 @@
 
 #include "hydraulic_data.h"
 
-#include <QAbstractItemView>
 #include <QBrush>
 #include <QColor>
-#include <QHeaderView>
 #include <QMetaEnum>
 #include <QSplitter>
-#include <QTableWidget>
+#include <QListWidget>
 #include <QTextBrowser>
 #include <QVBoxLayout>
 
@@ -93,44 +91,43 @@ SimulationDiagnosticsDialog::SimulationDiagnosticsDialog(HydraulicData *hydrauli
     setAttribute(Qt::WA_DeleteOnClose);
     setWindowTitle(tr("Simulation Diagnostics"));
     setModal(false);
-    resize(900, 600);
+    resize(720, 460);
+    setMinimumSize(620, 360);
 
-    this->table_diagnostics = new QTableWidget(this);
-    this->table_diagnostics->setColumnCount(3);
-    this->table_diagnostics->setHorizontalHeaderLabels({tr("Severity"), tr("Object"), tr("Message")});
-    this->table_diagnostics->setSelectionBehavior(QAbstractItemView::SelectRows);
-    this->table_diagnostics->setSelectionMode(QAbstractItemView::SingleSelection);
-    this->table_diagnostics->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    this->table_diagnostics->verticalHeader()->hide();
-    this->table_diagnostics->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    this->table_diagnostics->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    this->table_diagnostics->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+    this->list_diagnostics = new QListWidget(this);
+    this->list_diagnostics->setSelectionMode(QAbstractItemView::SingleSelection);
+    this->list_diagnostics->setWordWrap(true);
+    this->list_diagnostics->setTextElideMode(Qt::ElideNone);
+    this->list_diagnostics->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    this->list_diagnostics->setSpacing(3);
+    this->list_diagnostics->setMinimumWidth(220);
+    this->list_diagnostics->setMaximumWidth(300);
 
     this->text_details = new QTextBrowser(this);
     this->text_details->setOpenExternalLinks(false);
+    this->text_details->setMinimumWidth(340);
 
-    QSplitter *splitter = new QSplitter(Qt::Vertical, this);
-    splitter->addWidget(this->table_diagnostics);
+    QSplitter *splitter = new QSplitter(Qt::Horizontal, this);
+    splitter->addWidget(this->list_diagnostics);
     splitter->addWidget(this->text_details);
-    splitter->setStretchFactor(0, 2);
+    splitter->setChildrenCollapsible(false);
+    splitter->setStretchFactor(0, 0);
     splitter->setStretchFactor(1, 1);
+    splitter->setSizes({250, 430});
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->addWidget(splitter);
 
-    connect(this->table_diagnostics, &QTableWidget::currentCellChanged, this,
-        [this](int current_row, int, int, int)
+    connect(this->list_diagnostics, &QListWidget::currentItemChanged, this,
+        [this](QListWidgetItem *current)
     {
-        if (current_row < 0)
+        if (current == nullptr)
         {
             this->text_details->clear();
             return;
         }
 
-        QTableWidgetItem *item = this->table_diagnostics->item(current_row, 0);
-        if (item == nullptr)
-            return;
-        showDiagnosticDetails(item->data(Qt::UserRole).toInt());
+        showDiagnosticDetails(current->data(Qt::UserRole).toInt());
     });
 
     if (this->hydraulic_data != nullptr)
@@ -147,7 +144,7 @@ SimulationDiagnosticsDialog::SimulationDiagnosticsDialog(HydraulicData *hydrauli
 
 void SimulationDiagnosticsDialog::refresh()
 {
-    this->table_diagnostics->setRowCount(0);
+    this->list_diagnostics->clear();
     this->text_details->clear();
     if (this->hydraulic_data == nullptr)
         return;
@@ -157,28 +154,21 @@ void SimulationDiagnosticsDialog::refresh()
         return;
 
     const QList<HydraulicSimulationDiagnostic> &diagnostics = result_timeline->diagnostics;
-    this->table_diagnostics->setRowCount(diagnostics.size());
     for (qsizetype index = 0; index < diagnostics.size(); ++index)
     {
         const HydraulicSimulationDiagnostic &diagnostic = diagnostics.at(index);
-        QTableWidgetItem *severity_item = new QTableWidgetItem(severityText(diagnostic.severity));
-        severity_item->setData(Qt::UserRole, static_cast<int>(index));
+        const QString list_text = QStringLiteral("%1 · %2\n%3")
+            .arg(severityText(diagnostic.severity), entityText(diagnostic), diagnostic.message);
+        QListWidgetItem *item = new QListWidgetItem(list_text, this->list_diagnostics);
+        item->setData(Qt::UserRole, static_cast<int>(index));
+
         const QColor color = severityColor(diagnostic.severity);
         if (color.isValid())
-            severity_item->setForeground(QBrush(color));
-
-        QTableWidgetItem *entity_item = new QTableWidgetItem(entityText(diagnostic));
-        QTableWidgetItem *message_item = new QTableWidgetItem(diagnostic.message);
-        this->table_diagnostics->setItem(static_cast<int>(index), 0, severity_item);
-        this->table_diagnostics->setItem(static_cast<int>(index), 1, entity_item);
-        this->table_diagnostics->setItem(static_cast<int>(index), 2, message_item);
+            item->setForeground(QBrush(color));
     }
 
     if (!diagnostics.isEmpty())
-    {
-        this->table_diagnostics->selectRow(0);
-        showDiagnosticDetails(0);
-    }
+        this->list_diagnostics->setCurrentRow(0);
 }
 
 void SimulationDiagnosticsDialog::showDiagnosticDetails(int diagnostic_index)
