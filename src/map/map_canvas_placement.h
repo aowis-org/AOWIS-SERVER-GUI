@@ -23,8 +23,9 @@ public:
     bool rearmCreate(const QString &pixmap_path, int width);
     bool startMove(InfrastructureEntity entity, const QUuid &uuid,
                    const QString &pixmap_path, int width,
-                   const QPointF &mouse_position);
-    void startVirtualMove(InfrastructureEntity entity, const QPointF &mouse_position);
+                   const QPointF &mouse_position, const CoordinateWGS84 &mouse_coordinate);
+    void startVirtualMove(InfrastructureEntity entity, const QPointF &mouse_position,
+                          const CoordinateWGS84 &mouse_coordinate);
     void stop();
 
     MapEntityPlacementMode mode() const;
@@ -41,9 +42,11 @@ public:
     void consumeCreatedMarker();
     void completeMove();
 
-    void updateMousePosition(const QPointF &position);
+    void updateMousePosition(const QPointF &position, const CoordinateWGS84 &coordinate);
     QPointF mousePosition() const;
-    QPointF previousMousePosition() const;
+    CoordinateWGS84 mouseCoordinate() const;
+    CoordinateWGS84 previousMouseCoordinate() const;
+    bool mouseCoordinateValid() const;
     bool revealFloatingMarkerIfReady();
     void setFloatingHiddenUntil(const QPoint &position);
     void scaleFloatingMarker(const QString &pixmap_path, int width);
@@ -69,7 +72,9 @@ private:
     InfrastructureEntity current_entity = InfrastructureEntity::Unknown;
     QPoint floating_hide_until;
     QPointF mouse_position;
-    QPointF previous_mouse_position;
+    CoordinateWGS84 mouse_coordinate;
+    CoordinateWGS84 previous_mouse_coordinate;
+    bool mouse_coordinate_valid = false;
     bool draw_immediately = true;
     bool floating_visible = false;
     bool move_cursor_active = false;

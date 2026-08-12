@@ -370,17 +370,24 @@ bool MapCanvasEntities::cancelActiveMove()
     return true;
 }
 
+bool MapCanvasEntities::positioningActive() const
+{
+    return !this->placement->isIdle();
+}
+
 bool MapCanvasEntities::floatEntity(const QPointF &position)
 {
     if (this->placement->isMoving())
         this->placement->setMoveCursor(true);
 
-    this->placement->updateMousePosition(position);
+    const CoordinateWGS84 mouse_coordinate = this->map_model->wgs84FromScreen(
+        position.toPoint(), this->map_canvas->size());
+    this->placement->updateMousePosition(position, mouse_coordinate);
 
     if (this->placement->movingSelected())
     {
-        this->selection->moveSelected(this->placement->previousMousePosition(),
-                                      this->placement->mousePosition(),
+        this->selection->moveSelected(this->placement->previousMouseCoordinate(),
+                                      this->placement->mouseCoordinate(),
                                       this->move_translated_pipe_uuids);
         updateCanvas();
         return true;
@@ -435,7 +442,11 @@ bool MapCanvasEntities::anchorMarker(const QPointF &position)
 
     if (this->placement->movingSelected())
     {
-        this->selection->moveSelected(this->placement->mousePosition(), position,
+        const CoordinateWGS84 coordinate = this->map_model->wgs84FromScreen(
+            position.toPoint(), this->map_canvas->size());
+        const CoordinateWGS84 from_coordinate = this->placement->mouseCoordinateValid()
+            ? this->placement->mouseCoordinate() : coordinate;
+        this->selection->moveSelected(from_coordinate, coordinate,
                                       this->move_translated_pipe_uuids);
         const bool synchronized = synchronizeSelectedGeometry();
         if (!synchronized)
@@ -1004,6 +1015,12 @@ MapEditorVisualState MapCanvasEntities::visualState() const
     state.placement.device_link_start_node_uuid = this->device_links->startNodeUuid();
     state.placement.floating_width = this->placement->floatingWidth();
     state.placement.mouse_position = this->placement->mousePosition();
+    if (this->map_model && this->map_canvas && !this->map_canvas->size().isEmpty())
+    {
+        state.placement.mouse_coordinate_wgs84 = this->map_model->wgs84FromScreen(
+            this->placement->mousePosition().toPoint(), this->map_canvas->size());
+        state.placement.mouse_coordinate_wgs84_valid = true;
+    }
 
     state.move.active = this->placement->isMoving();
     state.move.session_id = this->move_session_id;
@@ -1200,9 +1217,11 @@ void MapCanvasEntities::startMarkerMove(const QUuid &uuid)
     stopEntityPositioning();
     const QPointF mouse_position = this->map_canvas->mapFromGlobal(QCursor::pos());
     captureMarkerMoveSnapshot(uuid);
+    const CoordinateWGS84 mouse_coordinate = this->map_model->wgs84FromScreen(
+        mouse_position.toPoint(), this->map_canvas->size());
     if (!this->placement->startMove(
             marker->entity.type, uuid, marker->path_pixmap,
-            this->point_markers->entityWidth(), mouse_position))
+            this->point_markers->entityWidth(), mouse_position, mouse_coordinate))
     {
         clearMoveSnapshot();
     }
@@ -1429,7 +1448,10 @@ void MapCanvasEntities::startPipeVertexMove(const QUuid &pipe_uuid, int vertex_i
     selectPipe(pipe_uuid);
     prepareMoveVisualState();
     const QPointF mouse_position = this->map_canvas->mapFromGlobal(QCursor::pos());
-    this->placement->startVirtualMove(InfrastructureEntity::Pipe, mouse_position);
+    const CoordinateWGS84 mouse_coordinate = this->map_model->wgs84FromScreen(
+        mouse_position.toPoint(), this->map_canvas->size());
+    this->placement->startVirtualMove(
+        InfrastructureEntity::Pipe, mouse_position, mouse_coordinate);
 }
 
 void MapCanvasEntities::convertPipeVertexToJunction(const QUuid &pipe_uuid,

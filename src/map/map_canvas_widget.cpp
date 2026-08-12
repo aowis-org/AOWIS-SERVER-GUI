@@ -29,6 +29,8 @@ MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map,
     });
     connect(this->map_model, &MapModel::centerChangedWGS84, this, [this]
     {
+        if (this->editor_controller && this->last_pointer_position_valid)
+            this->editor_controller->mouseMove(this->last_pointer_position, size(), false);
         requestRenderUpdate();
     });
 
@@ -182,8 +184,15 @@ MapEditorViewportRenderState MapCanvasWidget::viewportRenderState() const
         this->editor_controller->rectangleDragging();
     if (state.rectangle_selection_visible)
     {
-        state.rectangle_selection =
-            this->editor_controller->currentSelectionRect(size());
+        state.rectangle_selection = this->editor_controller->currentSelectionRect(size());
+        if (!state.rectangle_selection.isEmpty())
+        {
+            state.rectangle_selection_north_west = this->map_model->wgs84FromScreen(
+                state.rectangle_selection.topLeft(), size());
+            state.rectangle_selection_south_east = this->map_model->wgs84FromScreen(
+                state.rectangle_selection.bottomRight(), size());
+            state.rectangle_selection_wgs84_valid = true;
+        }
     }
 
     return state;
@@ -225,6 +234,9 @@ void MapCanvasWidget::hideEvent(QHideEvent *event)
 
 void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
 {
+    this->last_pointer_position = event->position();
+    this->last_pointer_position_valid = true;
+
     if (this->editor_controller &&
         this->editor_controller->mousePress(event->position(), event->globalPosition().toPoint(),
                                             event->button(), size()))
@@ -241,6 +253,9 @@ void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
 
 void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
 {
+    this->last_pointer_position = event->position();
+    this->last_pointer_position_valid = true;
+
     const bool map_handled_event = this->map->handleMouseMoveEvent(event);
     const bool editor_handled_event = this->editor_controller &&
         this->editor_controller->mouseMove(event->position(), size(), !map_handled_event);
@@ -259,6 +274,9 @@ void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
 
 void MapCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
 {
+    this->last_pointer_position = event->position();
+    this->last_pointer_position_valid = true;
+
     if (this->editor_controller &&
         this->editor_controller->mouseRelease(event->position(), event->button(), size()))
     {
@@ -267,7 +285,11 @@ void MapCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
     }
 
     if (this->map->handleMouseReleaseEvent(event))
+    {
+        if (this->editor_controller)
+            this->editor_controller->mouseMove(event->position(), size(), false);
         return;
+    }
 
     QWidget::mouseReleaseEvent(event);
 }

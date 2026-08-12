@@ -44,6 +44,7 @@ public:
     void startEntityPositioning(InfrastructureEntity entity);
     void stopEntityPositioning();
     bool cancelActiveMove();
+    bool positioningActive() const;
     bool floatEntity(const QPointF &position);
     bool anchorMarker(const QPointF &position);
 

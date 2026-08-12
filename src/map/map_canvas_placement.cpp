@@ -34,7 +34,8 @@ bool MapCanvasPlacement::rearmCreate(const QString &pixmap_path, int width)
 
 bool MapCanvasPlacement::startMove(InfrastructureEntity entity, const QUuid &uuid,
                                    const QString &pixmap_path, int width,
-                                   const QPointF &mouse_position)
+                                   const QPointF &mouse_position,
+                                   const CoordinateWGS84 &mouse_coordinate)
 {
     if (uuid.isNull())
         return false;
@@ -46,20 +47,25 @@ bool MapCanvasPlacement::startMove(InfrastructureEntity entity, const QUuid &uui
     this->floating_pixmap_path = pixmap_path;
     this->floating_width = width;
     this->mouse_position = mouse_position;
-    this->previous_mouse_position = mouse_position;
+    this->mouse_coordinate = mouse_coordinate;
+    this->previous_mouse_coordinate = mouse_coordinate;
+    this->mouse_coordinate_valid = true;
     this->draw_immediately = true;
     prepareFloatingMarker();
     return true;
 }
 
 void MapCanvasPlacement::startVirtualMove(InfrastructureEntity entity,
-                                          const QPointF &mouse_position)
+                                          const QPointF &mouse_position,
+                                          const CoordinateWGS84 &mouse_coordinate)
 {
     stop();
     this->current_entity = entity;
     this->placement_mode = MapEntityPlacementMode::MoveExisting;
     this->mouse_position = mouse_position;
-    this->previous_mouse_position = mouse_position;
+    this->mouse_coordinate = mouse_coordinate;
+    this->previous_mouse_coordinate = mouse_coordinate;
+    this->mouse_coordinate_valid = true;
     focusCanvas();
     setMoveCursor(true);
 }
@@ -75,6 +81,7 @@ void MapCanvasPlacement::stop()
     this->floating_visible = false;
     this->placement_mode = MapEntityPlacementMode::None;
     this->current_entity = InfrastructureEntity::Unknown;
+    this->mouse_coordinate_valid = false;
 }
 
 MapEntityPlacementMode MapCanvasPlacement::mode() const
@@ -149,12 +156,19 @@ void MapCanvasPlacement::completeMove()
     this->placement_mode = MapEntityPlacementMode::None;
     this->current_entity = InfrastructureEntity::Unknown;
     this->moving_selected = false;
+    this->mouse_coordinate_valid = false;
 }
 
-void MapCanvasPlacement::updateMousePosition(const QPointF &position)
+void MapCanvasPlacement::updateMousePosition(const QPointF &position,
+                                             const CoordinateWGS84 &coordinate)
 {
-    this->previous_mouse_position = this->mouse_position;
     this->mouse_position = position;
+    if (this->mouse_coordinate_valid)
+        this->previous_mouse_coordinate = this->mouse_coordinate;
+    else
+        this->previous_mouse_coordinate = coordinate;
+    this->mouse_coordinate = coordinate;
+    this->mouse_coordinate_valid = true;
 }
 
 QPointF MapCanvasPlacement::mousePosition() const
@@ -162,9 +176,19 @@ QPointF MapCanvasPlacement::mousePosition() const
     return this->mouse_position;
 }
 
-QPointF MapCanvasPlacement::previousMousePosition() const
+CoordinateWGS84 MapCanvasPlacement::mouseCoordinate() const
 {
-    return this->previous_mouse_position;
+    return this->mouse_coordinate;
+}
+
+CoordinateWGS84 MapCanvasPlacement::previousMouseCoordinate() const
+{
+    return this->previous_mouse_coordinate;
+}
+
+bool MapCanvasPlacement::mouseCoordinateValid() const
+{
+    return this->mouse_coordinate_valid;
 }
 
 bool MapCanvasPlacement::revealFloatingMarkerIfReady()

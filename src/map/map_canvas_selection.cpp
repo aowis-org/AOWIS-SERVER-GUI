@@ -119,20 +119,13 @@ void MapCanvasSelection::selectInRectangle(
         this->pipes->selectPipesWithSelectedEndpoints(this->list_selected_marker_uuids);
 }
 
-void MapCanvasSelection::moveSelected(const QPointF &from_position,
-                                      const QPointF &to_position,
+void MapCanvasSelection::moveSelected(const CoordinateWGS84 &from_coordinate,
+                                      const CoordinateWGS84 &to_coordinate,
                                       const QList<QUuid> &translated_pipe_uuids)
 {
-    if (!this->map_model || !this->map_canvas || !this->point_markers ||
-        !this->device_links || !this->pipes)
-    {
+    if (!this->point_markers || !this->device_links || !this->pipes)
         return;
-    }
 
-    const CoordinateWGS84 from_coordinate = this->map_model->wgs84FromScreen(
-        from_position.toPoint(), this->map_canvas->size());
-    const CoordinateWGS84 to_coordinate = this->map_model->wgs84FromScreen(
-        to_position.toPoint(), this->map_canvas->size());
     const double latitude_delta = to_coordinate.latitude_deg - from_coordinate.latitude_deg;
     const double longitude_delta = GeoWebMercator::normalizeLongitude(
         to_coordinate.longitude_deg - from_coordinate.longitude_deg);

@@ -196,6 +196,13 @@ QByteArray serializeMapEditorVisualState(const MapEditorVisualState &state)
     placement.insert(QStringLiteral("entity"), static_cast<int>(state.placement.entity));
     placement.insert(QStringLiteral("mouseX"), state.placement.mouse_position.x());
     placement.insert(QStringLiteral("mouseY"), state.placement.mouse_position.y());
+    placement.insert(QStringLiteral("mouseCoordinateValid"),
+                     state.placement.mouse_coordinate_wgs84_valid);
+    if (state.placement.mouse_coordinate_wgs84_valid)
+    {
+        placement.insert(QStringLiteral("mouseCoordinate"),
+                         coordinateToJson(state.placement.mouse_coordinate_wgs84));
+    }
     placement.insert(QStringLiteral("connectionTargetUuid"),
                      state.placement.connection_target_uuid.toString(QUuid::WithoutBraces));
     placement.insert(QStringLiteral("pipeStartNodeUuid"),
@@ -248,6 +255,15 @@ QByteArray serializeMapEditorViewportState(const MapEditorViewportRenderState &s
     rectangle_selection.insert(QStringLiteral("y"), state.rectangle_selection.y());
     rectangle_selection.insert(QStringLiteral("width"), state.rectangle_selection.width());
     rectangle_selection.insert(QStringLiteral("height"), state.rectangle_selection.height());
+    rectangle_selection.insert(QStringLiteral("worldValid"),
+                               state.rectangle_selection_wgs84_valid);
+    if (state.rectangle_selection_wgs84_valid)
+    {
+        rectangle_selection.insert(QStringLiteral("northWest"),
+                                   coordinateToJson(state.rectangle_selection_north_west));
+        rectangle_selection.insert(QStringLiteral("southEast"),
+                                   coordinateToJson(state.rectangle_selection_south_east));
+    }
 
     QJsonObject root;
     root.insert(QStringLiteral("backgroundOpacity"), state.background_opacity);
@@ -331,9 +347,24 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
         this->scheduleWasmMapLayerSync();
     });
     connect(this->map_canvas->mapCanvasEntities(), &MapCanvasEntities::signalVisualStateChanged,
-            this, &MapEditorContainer::scheduleWasmMapLayerSync);
-    connect(this->editor_controller, &MapEditorController::signalStateChanged,
-            this, &MapEditorContainer::scheduleWasmMapLayerSync);
+            this, [this](quint64)
+    {
+        if (this->map_canvas->mapCanvasEntities()->positioningActive())
+        {
+            this->syncWasmVisualState();
+            return;
+        }
+        this->scheduleWasmMapLayerSync();
+    });
+    connect(this->editor_controller, &MapEditorController::signalStateChanged, this, [this]
+    {
+        if (this->editor_controller->rectangleDragging())
+        {
+            this->syncWasmViewportState();
+            return;
+        }
+        this->scheduleWasmMapLayerSync();
+    });
 
     this->syncWasmBackground();
     this->scheduleWasmMapLayerSync();

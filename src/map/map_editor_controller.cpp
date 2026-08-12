@@ -255,7 +255,11 @@ bool MapEditorController::mouseMove(const QPointF &position, const QSize &viewpo
     }
 
     if (!allow_entity_interaction)
+    {
+        if (this->map_canvas_entities->positioningActive())
+            return this->map_canvas_entities->floatEntity(position);
         return false;
+    }
 
     const bool entity_interaction_enabled = !this->rectangle_selection_active ||
                                             this->rectangle_selection_interacts_with_entities;

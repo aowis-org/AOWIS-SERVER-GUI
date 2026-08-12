@@ -43,7 +43,8 @@ public:
                            const QList<MapEntityMarker> &point_markers,
                            const QList<MapEntityMarker> &device_link_markers,
                            bool replace);
-    void moveSelected(const QPointF &from_position, const QPointF &to_position,
+    void moveSelected(const CoordinateWGS84 &from_coordinate,
+                      const CoordinateWGS84 &to_coordinate,
                       const QList<QUuid> &translated_pipe_uuids);
 
 private:

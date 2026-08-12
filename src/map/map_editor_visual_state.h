@@ -18,6 +18,8 @@ struct MapEditorPlacementVisualState
     bool floating_marker_visible = false;
     InfrastructureEntity entity = InfrastructureEntity::Unknown;
     QPointF mouse_position;
+    CoordinateWGS84 mouse_coordinate_wgs84;
+    bool mouse_coordinate_wgs84_valid = false;
     QUuid connection_target_uuid;
     QUuid pipe_start_node_uuid;
     QList<CoordinateWGS84> pipe_intermediate_vertices;
@@ -74,6 +76,9 @@ struct MapEditorViewportRenderState
 
     bool rectangle_selection_visible = false;
     QRect rectangle_selection;
+    CoordinateWGS84 rectangle_selection_north_west;
+    CoordinateWGS84 rectangle_selection_south_east;
+    bool rectangle_selection_wgs84_valid = false;
 };
 
 #endif // MAP_EDITOR_VISUAL_STATE_H

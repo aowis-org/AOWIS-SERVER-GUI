@@ -2,6 +2,7 @@
 #define MAP_CANVAS_WIDGET_H
 
 #include <QPointer>
+#include <QPointF>
 #include <QWidget>
 
 #include "map_editor_renderer.h"
@@ -62,6 +63,8 @@ private:
     MapEditorRenderer map_editor_renderer;
     MapCanvasEntities *map_canvas_entities = nullptr;
     QPointer<MapEditorController> editor_controller;
+    QPointF last_pointer_position;
+    bool last_pointer_position_valid = false;
 
     // 0 = transparent, 100 = fully system background
     int map_background_opacity = 0;

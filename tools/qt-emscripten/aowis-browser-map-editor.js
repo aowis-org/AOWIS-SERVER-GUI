@@ -110,6 +110,8 @@
                 entity: 0,
                 mouseX: 0,
                 mouseY: 0,
+                mouseCoordinateValid: false,
+                mouseCoordinate: null,
                 connectionTargetUuid: "",
                 pipeStartNodeUuid: "",
                 pipeIntermediateVertices: [],
@@ -129,7 +131,16 @@
         return {
             backgroundOpacity: 0,
             tileSelection: { visible: false, xMin: 0, xMax: -1, yMin: 0, yMax: -1 },
-            rectangleSelection: { visible: false, x: 0, y: 0, width: 0, height: 0 }
+            rectangleSelection: {
+                visible: false,
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+                worldValid: false,
+                northWest: null,
+                southEast: null
+            }
         };
     }
 
@@ -304,6 +315,26 @@
             Number(coordinate[0]),
             Number(coordinate[1]),
             state.visualState.wrapReferenceLongitude);
+    }
+
+    function screenPointFromCoordinate(coordinate, mapView) {
+        if (!Array.isArray(coordinate) || coordinate.length < 2 || !mapView)
+            return null;
+
+        const longitude = Number(coordinate[0]);
+        const latitude = Number(coordinate[1]);
+        if (!Number.isFinite(longitude) || !Number.isFinite(latitude))
+            return null;
+
+        const mapProjection = projection();
+        const rawPixelX = mapProjection.longitudeToWorldPixel(longitude, mapView.zoom);
+        const pixelX = mapProjection.nearestWrappedWorldPixel(
+            rawPixelX, mapView.centerPixelX, mapView.zoom);
+        const pixelY = mapProjection.latitudeToWorldPixel(latitude, mapView.zoom);
+        return {
+            x: pixelX - mapView.originTileX * mapProjection.tileSize + mapView.translateX,
+            y: pixelY - mapView.originTileY * mapProjection.tileSize + mapView.translateY
+        };
     }
 
     function parseNetworkGeometry() {
@@ -789,6 +820,11 @@
     function placementEndPoint(placement, targetNode, mapView) {
         if (targetNode)
             return targetNode;
+        if (placement.mouseCoordinateValid) {
+            const point = worldPointFromCoordinate(placement.mouseCoordinate);
+            if (point)
+                return point;
+        }
         return worldPointFromScreen(
             Number(placement.mouseX) || 0,
             Number(placement.mouseY) || 0,
@@ -847,10 +883,15 @@
             appendIcon(builder, entityType, width, deviceCenter, true, false);
             return;
         }
-        const point = worldPointFromScreen(
-            Number(placement.mouseX) || 0,
-            Number(placement.mouseY) || 0,
-            mapView);
+        let point = null;
+        if (placement.mouseCoordinateValid)
+            point = worldPointFromCoordinate(placement.mouseCoordinate);
+        if (!point) {
+            point = worldPointFromScreen(
+                Number(placement.mouseX) || 0,
+                Number(placement.mouseY) || 0,
+                mapView);
+        }
         appendIcon(builder, entityType, width, point, false, false);
     }
 
@@ -1028,10 +1069,27 @@
             return;
         }
 
-        const x = Number(rectangle.x) + 2.5;
-        const y = Number(rectangle.y) + 2.5;
-        const width = Number(rectangle.width) - 5;
-        const height = Number(rectangle.height) - 5;
+        let x = Number(rectangle.x);
+        let y = Number(rectangle.y);
+        let width = Number(rectangle.width);
+        let height = Number(rectangle.height);
+        if (rectangle.worldValid && state.lastMapView) {
+            const northWest = screenPointFromCoordinate(
+                rectangle.northWest, state.lastMapView);
+            const southEast = screenPointFromCoordinate(
+                rectangle.southEast, state.lastMapView);
+            if (northWest && southEast) {
+                x = Math.min(northWest.x, southEast.x);
+                y = Math.min(northWest.y, southEast.y);
+                width = Math.abs(southEast.x - northWest.x);
+                height = Math.abs(southEast.y - northWest.y);
+            }
+        }
+
+        x += 2.5;
+        y += 2.5;
+        width -= 5;
+        height -= 5;
         if (width <= 0 || height <= 0) {
             element.style.display = "none";
             return;
