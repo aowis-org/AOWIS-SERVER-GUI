@@ -204,6 +204,72 @@ InfrastructureEntity HydraulicData::simulationErrorEntityType() const
     return InfrastructureEntity::Unknown;
 }
 
+QHash<QUuid, InfrastructureEntity> HydraulicData::simulationErrorEntities() const
+{
+    QHash<QUuid, InfrastructureEntity> entities;
+    if (!this->simulation_result_timeline.has_value())
+        return entities;
+
+    for (const HydraulicSimulationDiagnostic &diagnostic : this->simulation_result_timeline->diagnostics)
+    {
+        if (diagnostic.severity != HydraulicSimulationDiagnosticSeverity::Error
+            && diagnostic.severity != HydraulicSimulationDiagnosticSeverity::Fatal)
+        {
+            continue;
+        }
+
+        const QUuid uuid = diagnostic.entity.uuid;
+        if (uuid.isNull())
+            continue;
+
+        InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
+        switch (diagnostic.entity.type)
+        {
+        case HydraulicSimulationStatusEntityType::Junction:
+            entity_type = InfrastructureEntity::Junction;
+            break;
+        case HydraulicSimulationStatusEntityType::Reservoir:
+            entity_type = InfrastructureEntity::Reservoir;
+            break;
+        case HydraulicSimulationStatusEntityType::Tank:
+            entity_type = InfrastructureEntity::Tank;
+            break;
+        case HydraulicSimulationStatusEntityType::Pipe:
+            entity_type = InfrastructureEntity::Pipe;
+            break;
+        case HydraulicSimulationStatusEntityType::Pump:
+            entity_type = InfrastructureEntity::Pump;
+            break;
+        case HydraulicSimulationStatusEntityType::Valve:
+            entity_type = InfrastructureEntity::Valve;
+            break;
+        case HydraulicSimulationStatusEntityType::Node:
+            if (junction(uuid).has_value())
+                entity_type = InfrastructureEntity::Junction;
+            else if (reservoir(uuid).has_value())
+                entity_type = InfrastructureEntity::Reservoir;
+            else if (tank(uuid).has_value())
+                entity_type = InfrastructureEntity::Tank;
+            break;
+        case HydraulicSimulationStatusEntityType::Link:
+            if (pipe(uuid).has_value())
+                entity_type = InfrastructureEntity::Pipe;
+            else if (pump(uuid).has_value())
+                entity_type = InfrastructureEntity::Pump;
+            else if (valve(uuid).has_value())
+                entity_type = InfrastructureEntity::Valve;
+            break;
+        default:
+            break;
+        }
+
+        if (entity_type != InfrastructureEntity::Unknown)
+            entities.insert(uuid, entity_type);
+    }
+
+    return entities;
+}
+
 const HydraulicSimulationResult *HydraulicData::currentSimulationResult() const
 {
     if (!hasSimulationResults())

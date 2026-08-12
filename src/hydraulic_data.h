@@ -5,6 +5,7 @@
 
 #include <QDate>
 #include <QDateTime>
+#include <QHash>
 #include <QList>
 #include <QObject>
 #include <QString>
@@ -58,6 +59,7 @@ public:
     const HydraulicSimulationStatus *simulationStatus() const;
     InfrastructureEntity simulationErrorEntityType() const;
     QUuid simulationErrorEntityUuid() const;
+    QHash<QUuid, InfrastructureEntity> simulationErrorEntities() const;
     const HydraulicSimulationResult *currentSimulationResult() const;
     int currentSimulationResultIndex() const;
     void setSimulationResultTimeline(const HydraulicSimulationResultTimeline &result_timeline);

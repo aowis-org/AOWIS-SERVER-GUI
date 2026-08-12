@@ -1,6 +1,7 @@
 #ifndef MAP_EDITOR_VISUAL_STATE_H
 #define MAP_EDITOR_VISUAL_STATE_H
 
+#include <QHash>
 #include <QList>
 #include <QPointF>
 #include <QRect>
@@ -52,8 +53,7 @@ struct MapEditorVisualState
     quint64 revision = 0;
     QList<QUuid> selected_marker_uuids;
     QList<QUuid> selected_pipe_uuids;
-    InfrastructureEntity simulation_error_entity = InfrastructureEntity::Unknown;
-    QUuid simulation_error_entity_uuid;
+    QHash<QUuid, InfrastructureEntity> simulation_error_entities;
     MapEditorPlacementVisualState placement;
     MapEditorMoveVisualState move;
     double wrap_reference_longitude = 0.0;

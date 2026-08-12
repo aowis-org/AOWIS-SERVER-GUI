@@ -956,10 +956,7 @@ MapEditorVisualState MapCanvasEntities::visualState() const
     state.selected_marker_uuids = this->selection->selectedMarkerUuids();
     state.selected_pipe_uuids = this->pipes->selectedPipeUuids();
     if (this->hydraulic_data)
-    {
-        state.simulation_error_entity = this->hydraulic_data->simulationErrorEntityType();
-        state.simulation_error_entity_uuid = this->hydraulic_data->simulationErrorEntityUuid();
-    }
+        state.simulation_error_entities = this->hydraulic_data->simulationErrorEntities();
     state.wrap_reference_longitude = this->wrap_reference_longitude;
     state.entity_width = this->point_markers->entityWidth();
 

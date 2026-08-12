@@ -198,7 +198,7 @@ private:
     void paintSimulationErrorEntity(QPainter &painter);
     void paintEntityHighlight(QPainter &painter, const NetworkOverlayHit &entity,
                               const QColor &color, bool outer = false);
-    NetworkOverlayHit simulationErrorEntityHit() const;
+    QList<NetworkOverlayHit> simulationErrorEntityHits() const;
     QPointF visibleReferenceWorldCenter() const;
     QRectF visibleReferenceWorldRect() const;
     qreal referenceScaleForCurrentZoom() const;

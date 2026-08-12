@@ -99,6 +99,7 @@
             revision: "0",
             selectedMarkerUuids: [],
             selectedPipeUuids: [],
+            simulationErrorEntities: [],
             wrapReferenceLongitude: 0,
             entityWidth: 10,
             placement: {
@@ -603,30 +604,42 @@
         commitBatch("base", builder);
     }
 
+    function simulationErrorEntityMap() {
+        const errors = new Map();
+        const entries = state.visualState.simulationErrorEntities;
+        if (!Array.isArray(entries))
+            return errors;
+
+        for (const entry of entries) {
+            if (!entry)
+                continue;
+            const uuid = normalizeUuid(entry.uuid);
+            const entityType = Number(entry.entity) | 0;
+            if (uuid && entityType !== 0)
+                errors.set(uuid, entityType);
+        }
+        return errors;
+    }
+
     function appendSelectedNetwork(builder) {
         const selectedMarkers = selectedSet(state.visualState.selectedMarkerUuids);
         const selectedPipes = selectedSet(state.visualState.selectedPipeUuids);
-        const errorUuid = normalizeUuid(state.visualState.simulationErrorEntityUuid);
-        const errorEntity = Number(state.visualState.simulationErrorEntity) | 0;
+        const errorEntities = simulationErrorEntityMap();
         const moving = movingUuidSets();
-        const entityWidth = Math.max(
-            1, Number(state.visualState.entityWidth) || 10);
+        const entityWidth = Math.max(1, Number(state.visualState.entityWidth) || 10);
 
         for (const link of state.links) {
             if (moving.links.has(link.uuid))
                 continue;
-            if (link.uuid === errorUuid && link.entityType === errorEntity
+            if (errorEntities.get(link.uuid) === link.entityType
                 && (selectedPipes.has(link.uuid) || selectedMarkers.has(link.uuid))) {
                 continue;
             }
             if (link.entityType === ENTITY_PIPE && selectedPipes.has(link.uuid)) {
                 appendPolyline(builder, link.vertices, SELECTED_COLOR);
-                for (let index = 1; index + 1 < link.vertices.length; ++index) {
-                    appendDisc(
-                        builder, link.vertices[index], PIPE_VERTEX_RADIUS, SELECTED_COLOR);
-                }
-            } else if (isDeviceLink(link.entityType)
-                       && selectedMarkers.has(link.uuid)) {
+                for (let index = 1; index + 1 < link.vertices.length; ++index)
+                    appendDisc(builder, link.vertices[index], PIPE_VERTEX_RADIUS, SELECTED_COLOR);
+            } else if (isDeviceLink(link.entityType) && selectedMarkers.has(link.uuid)) {
                 appendDeviceLink(builder, link.vertices, SELECTED_COLOR);
                 const center = linkCenter(link.vertices);
                 if (center)
@@ -637,23 +650,22 @@
         for (const node of state.nodes) {
             if (moving.markers.has(node.uuid) || !selectedMarkers.has(node.uuid))
                 continue;
-            if (node.uuid === errorUuid && node.entityType === errorEntity)
+            if (errorEntities.get(node.uuid) === node.entityType)
                 continue;
             appendIcon(builder, node.entityType, entityWidth, node, false, true);
         }
     }
 
     function appendSimulationErrorSelectionOuter(builder) {
-        const errorUuid = normalizeUuid(state.visualState.simulationErrorEntityUuid);
-        const errorEntity = Number(state.visualState.simulationErrorEntity) | 0;
-        if (!errorUuid || errorEntity === 0)
+        const errorEntities = simulationErrorEntityMap();
+        if (errorEntities.size === 0)
             return;
 
         const selectedMarkers = selectedSet(state.visualState.selectedMarkerUuids);
         const selectedPipes = selectedSet(state.visualState.selectedPipeUuids);
         const entityWidth = Math.max(1, Number(state.visualState.entityWidth) || 10);
         for (const link of state.links) {
-            if (link.uuid !== errorUuid || link.entityType !== errorEntity)
+            if (errorEntities.get(link.uuid) !== link.entityType)
                 continue;
             if (link.entityType === ENTITY_PIPE && selectedPipes.has(link.uuid)) {
                 appendPolyline(builder, link.vertices, SELECTED_COLOR);
@@ -665,42 +677,39 @@
                 if (center)
                     appendTintedIcon(builder, link.entityType, entityWidth, center, true, SELECTED_COLOR);
             }
-            return;
         }
 
-        const node = state.nodesByUuid.get(errorUuid);
-        if (node && node.entityType === errorEntity && selectedMarkers.has(node.uuid))
-            appendTintedIcon(builder, node.entityType, entityWidth, node, false, SELECTED_COLOR);
+        for (const node of state.nodes) {
+            if (errorEntities.get(node.uuid) === node.entityType && selectedMarkers.has(node.uuid))
+                appendTintedIcon(builder, node.entityType, entityWidth, node, false, SELECTED_COLOR);
+        }
     }
 
     function appendSimulationError(builder) {
-        const errorUuid = normalizeUuid(state.visualState.simulationErrorEntityUuid);
-        const errorEntity = Number(state.visualState.simulationErrorEntity) | 0;
-        if (!errorUuid || errorEntity === 0)
+        const errorEntities = simulationErrorEntityMap();
+        if (errorEntities.size === 0)
             return;
 
         const entityWidth = Math.max(1, Number(state.visualState.entityWidth) || 10);
         for (const link of state.links) {
-            if (link.uuid !== errorUuid || link.entityType !== errorEntity)
+            if (errorEntities.get(link.uuid) !== link.entityType)
                 continue;
             if (link.entityType === ENTITY_PIPE) {
                 appendPolyline(builder, link.vertices, ERROR_COLOR);
                 for (let index = 1; index + 1 < link.vertices.length; ++index)
                     appendDisc(builder, link.vertices[index], PIPE_VERTEX_RADIUS, ERROR_COLOR);
-                return;
-            }
-            if (isDeviceLink(link.entityType)) {
+            } else if (isDeviceLink(link.entityType)) {
                 appendDeviceLink(builder, link.vertices, ERROR_COLOR);
                 const center = linkCenter(link.vertices);
                 if (center)
                     appendIcon(builder, link.entityType, entityWidth, center, true, false, true);
-                return;
             }
         }
 
-        const node = state.nodesByUuid.get(errorUuid);
-        if (node && node.entityType === errorEntity)
-            appendIcon(builder, node.entityType, entityWidth, node, false, false, true);
+        for (const node of state.nodes) {
+            if (errorEntities.get(node.uuid) === node.entityType)
+                appendIcon(builder, node.entityType, entityWidth, node, false, false, true);
+        }
     }
 
     function appendMove(builder) {

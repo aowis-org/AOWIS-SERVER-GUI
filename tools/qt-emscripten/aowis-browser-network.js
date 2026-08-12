@@ -93,8 +93,7 @@
         networkOverlayRevision: 1,
         selectedRenderId: 0,
         selectedEntityType: 0,
-        errorRenderId: 0,
-        errorEntityType: 0,
+        errorEntities: [],
         entityMarkers: new Map(),
         entitySegments: new Map(),
         unsubscribeView: null,
@@ -588,8 +587,9 @@
         const outerSprites = [];
         const outerSpriteColors = [];
         const selectedError = state.selectedRenderId !== 0
-            && state.selectedRenderId === state.errorRenderId
-            && state.selectedEntityType === state.errorEntityType;
+            && state.errorEntities.some((errorEntity) =>
+                errorEntity.renderId === state.selectedRenderId
+                && errorEntity.entityType === state.selectedEntityType);
 
         if (selectedError) {
             appendNetworkEntityOverlay(
@@ -601,9 +601,11 @@
                 state.selectedRenderId, state.selectedEntityType, SELECTED_COLOR,
                 segments, segmentColors, discs, discColors, sprites, spriteColors);
         }
-        appendNetworkEntityOverlay(
-            state.errorRenderId, state.errorEntityType, ERROR_COLOR,
-            segments, segmentColors, discs, discColors, sprites, spriteColors);
+        for (const errorEntity of state.errorEntities) {
+            appendNetworkEntityOverlay(
+                errorEntity.renderId, errorEntity.entityType, ERROR_COLOR,
+                segments, segmentColors, discs, discColors, sprites, spriteColors);
+        }
 
         state.networkRenderer.setGeometry("selectionOuter", {
             segments: new Float32Array(outerSegments),
@@ -1911,15 +1913,20 @@
         scheduleNetworkRender();
     }
 
-    function setErrorEntity(renderId, entityType) {
-        const nextRenderId = Number(renderId) >>> 0;
-        const nextEntityType = nextRenderId === 0 ? 0 : Number(entityType) | 0;
-        if (state.errorRenderId === nextRenderId
-            && state.errorEntityType === nextEntityType) {
-            return;
+    function setErrorEntities(errorEntities) {
+        const nextErrorEntities = [];
+        if (Array.isArray(errorEntities)) {
+            for (const errorEntity of errorEntities) {
+                if (!errorEntity)
+                    continue;
+                const renderId = Number(errorEntity.renderId) >>> 0;
+                const entityType = renderId === 0 ? 0 : Number(errorEntity.entityType) | 0;
+                if (renderId !== 0 && entityType !== 0)
+                    nextErrorEntities.push({ renderId: renderId, entityType: entityType });
+            }
         }
-        state.errorRenderId = nextRenderId;
-        state.errorEntityType = nextEntityType;
+
+        state.errorEntities = nextErrorEntities;
         ++state.networkOverlayRevision;
         scheduleNetworkRender();
     }
@@ -2377,8 +2384,7 @@
         state.networkWebGlUnavailable = false;
         state.selectedRenderId = 0;
         state.selectedEntityType = 0;
-        state.errorRenderId = 0;
-        state.errorEntityType = 0;
+        state.errorEntities = [];
         state.entityMarkers.clear();
         state.entitySegments.clear();
         state.geometryOriginX = 0;
@@ -2429,7 +2435,7 @@
         setBackground: setBackground,
         setOwnerId: setOwnerId,
         setSelectedEntity: setSelectedEntity,
-        setErrorEntity: setErrorEntity,
+        setErrorEntities: setErrorEntities,
         hitTest: hitTest,
         destroy: destroy
     };

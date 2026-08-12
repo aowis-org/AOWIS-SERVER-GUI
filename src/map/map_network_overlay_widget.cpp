@@ -2053,16 +2053,26 @@ void MapNetworkOverlayWidget::paintNetwork(QPainter &painter)
 
 void MapNetworkOverlayWidget::paintSelectedEntity(QPainter &painter)
 {
-    const NetworkOverlayHit error_entity = simulationErrorEntityHit();
-    const bool selected_error = this->selected_entity.isValid() && error_entity.isValid()
-        && this->selected_entity.render_id == error_entity.render_id
-        && this->selected_entity.entity_type == error_entity.entity_type;
+    bool selected_error = false;
+    const QList<NetworkOverlayHit> error_entities = simulationErrorEntityHits();
+    for (const NetworkOverlayHit &error_entity : error_entities)
+    {
+        if (this->selected_entity.isValid()
+            && this->selected_entity.render_id == error_entity.render_id
+            && this->selected_entity.entity_type == error_entity.entity_type)
+        {
+            selected_error = true;
+            break;
+        }
+    }
     paintEntityHighlight(painter, this->selected_entity, QColor(0, 190, 255), selected_error);
 }
 
 void MapNetworkOverlayWidget::paintSimulationErrorEntity(QPainter &painter)
 {
-    paintEntityHighlight(painter, simulationErrorEntityHit(), QColor(255, 0, 0));
+    const QList<NetworkOverlayHit> error_entities = simulationErrorEntityHits();
+    for (const NetworkOverlayHit &error_entity : error_entities)
+        paintEntityHighlight(painter, error_entity, QColor(255, 0, 0));
 }
 
 void MapNetworkOverlayWidget::paintEntityHighlight(
@@ -2163,44 +2173,53 @@ void MapNetworkOverlayWidget::paintEntityHighlight(
     }
 }
 
-NetworkOverlayHit MapNetworkOverlayWidget::simulationErrorEntityHit() const
+QList<NetworkOverlayHit> MapNetworkOverlayWidget::simulationErrorEntityHits() const
 {
-    NetworkOverlayHit hit;
+    QList<NetworkOverlayHit> hits;
     if (this->hydraulic_data == nullptr)
-        return hit;
+        return hits;
 
-    const QUuid uuid = this->hydraulic_data->simulationErrorEntityUuid();
-    const InfrastructureEntity entity_type = this->hydraulic_data->simulationErrorEntityType();
-    if (uuid.isNull() || entity_type == InfrastructureEntity::Unknown)
-        return hit;
+    const QHash<QUuid, InfrastructureEntity> error_entities = this->hydraulic_data->simulationErrorEntities();
+    if (error_entities.isEmpty())
+        return hits;
 
     const NetworkRenderSnapshot &current_snapshot = this->hydraulic_data->networkRenderSnapshot();
-    if (InfrastructureEntityTraits::isHydraulicConnectionNode(entity_type))
+    for (QHash<QUuid, InfrastructureEntity>::const_iterator error_iterator = error_entities.cbegin();
+         error_iterator != error_entities.cend(); ++error_iterator)
     {
-        for (const NetworkRenderNode &node : current_snapshot.nodes)
+        const QUuid &uuid = error_iterator.key();
+        const InfrastructureEntity entity_type = error_iterator.value();
+        NetworkOverlayHit hit;
+        if (InfrastructureEntityTraits::isHydraulicConnectionNode(entity_type))
         {
-            if (node.uuid != uuid || node.entity_type != entity_type)
-                continue;
-            hit.render_id = node.render_id;
-            hit.entity_type = entity_type;
-            hit.uuid = uuid;
-            return hit;
+            for (const NetworkRenderNode &node : current_snapshot.nodes)
+            {
+                if (node.uuid != uuid || node.entity_type != entity_type)
+                    continue;
+                hit.render_id = node.render_id;
+                hit.entity_type = entity_type;
+                hit.uuid = uuid;
+                break;
+            }
         }
-    }
-    else if (InfrastructureEntityTraits::isHydraulicNetworkLink(entity_type))
-    {
-        for (const NetworkRenderLink &link : current_snapshot.links)
+        else if (InfrastructureEntityTraits::isHydraulicNetworkLink(entity_type))
         {
-            if (link.uuid != uuid || link.entity_type != entity_type)
-                continue;
-            hit.render_id = link.render_id;
-            hit.entity_type = entity_type;
-            hit.uuid = uuid;
-            return hit;
+            for (const NetworkRenderLink &link : current_snapshot.links)
+            {
+                if (link.uuid != uuid || link.entity_type != entity_type)
+                    continue;
+                hit.render_id = link.render_id;
+                hit.entity_type = entity_type;
+                hit.uuid = uuid;
+                break;
+            }
         }
+
+        if (hit.isValid())
+            hits.append(hit);
     }
 
-    return hit;
+    return hits;
 }
 
 QPointF MapNetworkOverlayWidget::visibleReferenceWorldCenter() const

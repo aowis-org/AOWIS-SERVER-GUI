@@ -4,8 +4,10 @@
 
 #include <QBrush>
 #include <QColor>
+#include <QFontMetrics>
 #include <QLabel>
 #include <QMetaEnum>
+#include <QSizePolicy>
 #include <QSplitter>
 #include <QListWidget>
 #include <QTextBrowser>
@@ -91,19 +93,19 @@ QString resultValidityText(HydraulicSimulationResultValidity validity)
     return QStringLiteral("Invalid");
 }
 
-QString resultValidityDescription(HydraulicSimulationResultValidity validity)
+QString resultValidityColor(HydraulicSimulationResultValidity validity)
 {
     switch (validity)
     {
     case HydraulicSimulationResultValidity::Valid:
-        return QStringLiteral("Numerical simulation results are valid.");
+        return QStringLiteral("#15803d");
     case HydraulicSimulationResultValidity::Partial:
-        return QStringLiteral("Partial numerical results were preserved for diagnostics but are not exposed as valid simulation results.");
+        return QStringLiteral("#c77800");
     case HydraulicSimulationResultValidity::Invalid:
-        return QStringLiteral("No valid numerical simulation result is available.");
+        return QStringLiteral("#d00000");
     }
 
-    return QStringLiteral("No valid numerical simulation result is available.");
+    return QStringLiteral("#d00000");
 }
 
 QString entityText(const HydraulicSimulationDiagnostic &diagnostic)
@@ -126,8 +128,11 @@ SimulationDiagnosticsDialog::SimulationDiagnosticsDialog(HydraulicData *hydrauli
     setMinimumSize(620, 360);
 
     this->label_result_validity = new QLabel(this);
-    this->label_result_validity->setWordWrap(true);
+    this->label_result_validity->setTextFormat(Qt::RichText);
+    this->label_result_validity->setWordWrap(false);
     this->label_result_validity->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    this->label_result_validity->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    this->label_result_validity->setMaximumHeight(this->label_result_validity->fontMetrics().lineSpacing() * 2 + 12);
 
     this->list_diagnostics = new QListWidget(this);
     this->list_diagnostics->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -190,11 +195,25 @@ void SimulationDiagnosticsDialog::refresh()
     if (!result_timeline.has_value())
         return;
 
-    this->label_result_validity->setText(
-        QStringLiteral("<b>Result validity: %1</b> — %2")
-            .arg(resultValidityText(result_timeline->validity), resultValidityDescription(result_timeline->validity)));
-
     const QList<HydraulicSimulationDiagnostic> &diagnostics = result_timeline->diagnostics;
+    int warning_count = 0;
+    int error_count = 0;
+    for (const HydraulicSimulationDiagnostic &diagnostic : diagnostics)
+    {
+        if (diagnostic.severity == HydraulicSimulationDiagnosticSeverity::Warning)
+            ++warning_count;
+        else if (diagnostic.severity == HydraulicSimulationDiagnosticSeverity::Error
+                 || diagnostic.severity == HydraulicSimulationDiagnosticSeverity::Fatal)
+            ++error_count;
+    }
+
+    this->label_result_validity->setText(
+        QStringLiteral("<b>Result validity:</b> <span style=\"color:%1; font-weight:600;\">%2</span>"
+                       " &nbsp;·&nbsp; <b>Errors:</b> <span style=\"color:#d00000; font-weight:600;\">%3</span>"
+                       " &nbsp;·&nbsp; <b>Warnings:</b> <span style=\"color:#c77800; font-weight:600;\">%4</span>")
+            .arg(resultValidityColor(result_timeline->validity), resultValidityText(result_timeline->validity))
+            .arg(error_count)
+            .arg(warning_count));
     for (qsizetype index = 0; index < diagnostics.size(); ++index)
     {
         const HydraulicSimulationDiagnostic &diagnostic = diagnostics.at(index);

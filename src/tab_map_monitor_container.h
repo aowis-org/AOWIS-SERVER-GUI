@@ -135,7 +135,7 @@ private:
 
     bool selectWasmNetworkEntityAt(const QPointF &position);
     void syncWasmSelectedEntity(InfrastructureEntity entity_type, const QUuid &uuid);
-    void syncWasmSimulationErrorEntity();
+    void syncWasmSimulationErrorEntities();
     void scheduleWasmMapLayerSync();
     void scheduleWasmNetworkSymbologySync();
     void syncWasmMapLayer();

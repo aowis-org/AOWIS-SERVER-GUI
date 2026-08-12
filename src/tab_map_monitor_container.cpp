@@ -14,6 +14,9 @@
 #include <QColor>
 #include <QContextMenuEvent>
 #include <QDebug>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QMouseEvent>
 
 #include <cmath>
@@ -167,13 +170,18 @@ EM_JS(void, aowisBrowserNetworkSetSelectedEntity, (int entity_type, double rende
     window.aowisBrowserNetwork.setSelectedEntity(render_id, entity_type);
 });
 
-EM_JS(void, aowisBrowserNetworkSetErrorEntity, (int entity_type, double render_id),
+EM_JS(void, aowisBrowserNetworkSetErrorEntities, (const char *json_data, int json_size),
 {
     if (!window.aowisBrowserNetwork ||
-        typeof window.aowisBrowserNetwork.setErrorEntity !== "function")
+        typeof window.aowisBrowserNetwork.setErrorEntities !== "function")
         return;
 
-    window.aowisBrowserNetwork.setErrorEntity(render_id, entity_type);
+    try {
+        window.aowisBrowserNetwork.setErrorEntities(
+            JSON.parse(UTF8ToString(json_data, json_size)));
+    } catch (error) {
+        console.error("AOWIS browser network error-entity update failed", error);
+    }
 });
 
 #endif
@@ -280,7 +288,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged, this,
         [this](bool)
     {
-        syncWasmSimulationErrorEntity();
+        syncWasmSimulationErrorEntities();
     });
     connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, this,
         [this](const HydraulicNodeTank &tank)
@@ -599,47 +607,54 @@ void MapMonitorContainer::syncWasmSelectedEntity(InfrastructureEntity entity_typ
     aowisBrowserNetworkSetSelectedEntity(0, 0);
 }
 
-void MapMonitorContainer::syncWasmSimulationErrorEntity()
+void MapMonitorContainer::syncWasmSimulationErrorEntities()
 {
-    if (this->hydraulic_data == nullptr)
+    QJsonArray error_entities_json;
+    if (this->hydraulic_data != nullptr)
     {
-        aowisBrowserNetworkSetErrorEntity(0, 0);
-        return;
-    }
-
-    const InfrastructureEntity entity_type = this->hydraulic_data->simulationErrorEntityType();
-    const QUuid uuid = this->hydraulic_data->simulationErrorEntityUuid();
-    if (entity_type == InfrastructureEntity::Unknown || uuid.isNull())
-    {
-        aowisBrowserNetworkSetErrorEntity(0, 0);
-        return;
-    }
-
-    const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
-    if (InfrastructureEntityTraits::isHydraulicConnectionNode(entity_type))
-    {
-        for (const NetworkRenderNode &node : snapshot.nodes)
+        const QHash<QUuid, InfrastructureEntity> error_entities = this->hydraulic_data->simulationErrorEntities();
+        const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
+        for (QHash<QUuid, InfrastructureEntity>::const_iterator error_iterator = error_entities.cbegin();
+             error_iterator != error_entities.cend(); ++error_iterator)
         {
-            if (node.uuid == uuid && node.entity_type == entity_type)
+            const QUuid &uuid = error_iterator.key();
+            const InfrastructureEntity entity_type = error_iterator.value();
+            quint32 render_id = 0;
+            if (InfrastructureEntityTraits::isHydraulicConnectionNode(entity_type))
             {
-                aowisBrowserNetworkSetErrorEntity(static_cast<int>(entity_type), node.render_id);
-                return;
+                for (const NetworkRenderNode &node : snapshot.nodes)
+                {
+                    if (node.uuid == uuid && node.entity_type == entity_type)
+                    {
+                        render_id = node.render_id;
+                        break;
+                    }
+                }
             }
+            else if (InfrastructureEntityTraits::isHydraulicNetworkLink(entity_type))
+            {
+                for (const NetworkRenderLink &link : snapshot.links)
+                {
+                    if (link.uuid == uuid && link.entity_type == entity_type)
+                    {
+                        render_id = link.render_id;
+                        break;
+                    }
+                }
+            }
+
+            if (render_id == 0)
+                continue;
+
+            QJsonObject error_entity_json;
+            error_entity_json.insert(QStringLiteral("renderId"), static_cast<int>(render_id));
+            error_entity_json.insert(QStringLiteral("entityType"), static_cast<int>(entity_type));
+            error_entities_json.append(error_entity_json);
         }
     }
-    else if (InfrastructureEntityTraits::isHydraulicNetworkLink(entity_type))
-    {
-        for (const NetworkRenderLink &link : snapshot.links)
-        {
-            if (link.uuid == uuid && link.entity_type == entity_type)
-            {
-                aowisBrowserNetworkSetErrorEntity(static_cast<int>(entity_type), link.render_id);
-                return;
-            }
-        }
-    }
 
-    aowisBrowserNetworkSetErrorEntity(0, 0);
+    const QByteArray json = QJsonDocument(error_entities_json).toJson(QJsonDocument::Compact);
+    aowisBrowserNetworkSetErrorEntities(json.constData(), static_cast<int>(json.size()));
 }
 
 void MapMonitorContainer::scheduleWasmMapLayerSync()
@@ -702,7 +717,7 @@ void MapMonitorContainer::syncWasmNetworkSnapshot()
     this->wasm_network_snapshot_sent = true;
     if (!this->wasm_selected_entity_uuid.isNull())
         syncWasmSelectedEntity(this->wasm_selected_entity_type, this->wasm_selected_entity_uuid);
-    syncWasmSimulationErrorEntity();
+    syncWasmSimulationErrorEntities();
     scheduleWasmNetworkSymbologySync();
 }
 
