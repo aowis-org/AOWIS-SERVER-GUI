@@ -1,7 +1,7 @@
 (function () {
     "use strict";
 
-    const BATCH_NAMES = Object.freeze(["base", "overlay"]);
+    const BATCH_NAMES = Object.freeze(["base", "selectionOuter", "overlay"]);
     const SPRITE_ATLAS_CELL_SIZE = 256;
     const SPRITE_ATLAS_GRID_SIZE = 4;
     const SPRITE_ATLAS_PADDING = 16;

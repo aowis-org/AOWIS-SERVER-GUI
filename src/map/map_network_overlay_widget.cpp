@@ -2053,7 +2053,11 @@ void MapNetworkOverlayWidget::paintNetwork(QPainter &painter)
 
 void MapNetworkOverlayWidget::paintSelectedEntity(QPainter &painter)
 {
-    paintEntityHighlight(painter, this->selected_entity, QColor(0, 190, 255));
+    const NetworkOverlayHit error_entity = simulationErrorEntityHit();
+    const bool selected_error = this->selected_entity.isValid() && error_entity.isValid()
+        && this->selected_entity.render_id == error_entity.render_id
+        && this->selected_entity.entity_type == error_entity.entity_type;
+    paintEntityHighlight(painter, this->selected_entity, QColor(0, 190, 255), selected_error);
 }
 
 void MapNetworkOverlayWidget::paintSimulationErrorEntity(QPainter &painter)
@@ -2062,7 +2066,7 @@ void MapNetworkOverlayWidget::paintSimulationErrorEntity(QPainter &painter)
 }
 
 void MapNetworkOverlayWidget::paintEntityHighlight(
-    QPainter &painter, const NetworkOverlayHit &entity, const QColor &color)
+    QPainter &painter, const NetworkOverlayHit &entity, const QColor &color, bool outer)
 {
     if (!entity.isValid() || !this->render_geometry)
         return;
@@ -2098,7 +2102,7 @@ void MapNetworkOverlayWidget::paintEntityHighlight(
             ? this->render_symbology->link_width
             : qreal(this->symbology_settings.link_thickness_px);
         QPen selected_pen(color);
-        selected_pen.setWidthF(qMax<qreal>(3.0, base_width + 2.0));
+        selected_pen.setWidthF(qMax<qreal>(3.0, base_width + (outer ? 6.0 : 2.0)));
         selected_pen.setCapStyle(Qt::RoundCap);
         selected_pen.setJoinStyle(Qt::RoundJoin);
         painter.strokePath(selected_path, selected_pen);
@@ -2124,7 +2128,8 @@ void MapNetworkOverlayWidget::paintEntityHighlight(
             this->map_model->zoom(), this->symbology_settings.node_size_percent) / 2.0;
         painter.setPen(Qt::NoPen);
         painter.setBrush(color);
-        painter.drawEllipse(center, radius + 2.0, radius + 2.0);
+        const qreal highlight_radius = radius + (outer ? 5.0 : 2.0);
+        painter.drawEllipse(center, highlight_radius, highlight_radius);
         return;
     }
 
@@ -2136,11 +2141,22 @@ void MapNetworkOverlayWidget::paintEntityHighlight(
     const QTransform transform(icon_scale, 0.0, 0.0, icon_scale, icon_x, icon_y);
 
     if (!asset->fill_path.isEmpty())
-        painter.fillPath(transform.map(asset->fill_path), QBrush(color));
+    {
+        const QPainterPath fill_path = transform.map(asset->fill_path);
+        if (outer)
+        {
+            QPen outer_pen(color);
+            outer_pen.setWidthF(6.0);
+            outer_pen.setCapStyle(Qt::RoundCap);
+            outer_pen.setJoinStyle(Qt::RoundJoin);
+            painter.strokePath(fill_path, outer_pen);
+        }
+        painter.fillPath(fill_path, QBrush(color));
+    }
     if (!asset->stroke_path.isEmpty())
     {
         QPen selected_pen(color);
-        selected_pen.setWidthF(qMax<qreal>(2.0, asset->stroke_width * icon_scale + 1.5));
+        selected_pen.setWidthF(qMax<qreal>(2.0, asset->stroke_width * icon_scale + (outer ? 5.0 : 1.5)));
         selected_pen.setCapStyle(Qt::RoundCap);
         selected_pen.setJoinStyle(Qt::RoundJoin);
         painter.strokePath(transform.map(asset->stroke_path), selected_pen);

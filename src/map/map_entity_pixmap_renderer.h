@@ -19,7 +19,8 @@ public:
     {
         None,
         Selected,
-        Error
+        Error,
+        SelectedError
     };
 
     static QString pixmapPathForEntity(InfrastructureEntity entity);

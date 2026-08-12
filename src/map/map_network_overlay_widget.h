@@ -197,7 +197,7 @@ private:
     void paintSelectedEntity(QPainter &painter);
     void paintSimulationErrorEntity(QPainter &painter);
     void paintEntityHighlight(QPainter &painter, const NetworkOverlayHit &entity,
-                              const QColor &color);
+                              const QColor &color, bool outer = false);
     NetworkOverlayHit simulationErrorEntityHit() const;
     QPointF visibleReferenceWorldCenter() const;
     QRectF visibleReferenceWorldRect() const;

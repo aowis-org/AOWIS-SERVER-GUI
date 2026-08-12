@@ -7,6 +7,14 @@
 
 namespace
 {
+const QPoint outer_glow_offsets[] = {
+    QPoint(-9, 0), QPoint(9, 0), QPoint(0, -9), QPoint(0, 9),
+    QPoint(-8, -4), QPoint(-8, 4), QPoint(8, -4), QPoint(8, 4),
+    QPoint(-4, -8), QPoint(-4, 8), QPoint(4, -8), QPoint(4, 8),
+    QPoint(-7, 0), QPoint(7, 0), QPoint(0, -7), QPoint(0, 7),
+    QPoint(-6, -4), QPoint(-6, 4), QPoint(6, -4), QPoint(6, 4)
+};
+
 const QPoint glow_offsets[] = {
     QPoint(-6, 0), QPoint(6, 0), QPoint(0, -6), QPoint(0, 6),
     QPoint(-5, -3), QPoint(-5, 3), QPoint(5, -3), QPoint(5, 3),
@@ -105,14 +113,27 @@ void MapEntityPixmapRenderer::paint(QPainter &painter, const QString &path, int 
     if (image.isNull())
         return;
 
-    QColor highlight_color;
-    if (highlight == Highlight::Selected)
-        highlight_color = QColor(0, 190, 255, 255);
-    else if (highlight == Highlight::Error)
-        highlight_color = QColor(255, 0, 0, 255);
-
-    if (highlight != Highlight::None)
+    if (highlight == Highlight::SelectedError)
     {
+        const QPixmap selected_glow = tintedPixmap(image, QColor(0, 190, 255, 255));
+        painter.save();
+        painter.setOpacity(0.8);
+        for (const QPoint &offset : outer_glow_offsets)
+            painter.drawPixmap(target_rect.topLeft() + QPointF(offset), selected_glow);
+        painter.restore();
+
+        const QPixmap error_glow = tintedPixmap(image, QColor(255, 0, 0, 255));
+        painter.save();
+        painter.setOpacity(0.8);
+        for (const QPoint &offset : glow_offsets)
+            painter.drawPixmap(target_rect.topLeft() + QPointF(offset), error_glow);
+        painter.restore();
+    }
+    else if (highlight != Highlight::None)
+    {
+        const QColor highlight_color = highlight == Highlight::Selected
+            ? QColor(0, 190, 255, 255)
+            : QColor(255, 0, 0, 255);
         const QPixmap glow = tintedPixmap(image, highlight_color);
         painter.save();
         painter.setOpacity(0.8);

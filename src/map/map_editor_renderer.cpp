@@ -1676,12 +1676,43 @@ void MapEditorRenderer::paintSimulationError(
         if (link.entity_type == visual_state.simulation_error_entity &&
             link.world_vertices.size() >= 2)
         {
+            const bool selected = link.entity_type == InfrastructureEntity::Pipe
+                ? visual_state.selected_pipe_uuids.contains(link.uuid)
+                : visual_state.selected_marker_uuids.contains(link.uuid);
             QPen error_pen(error_color);
             error_pen.setWidthF(3.0);
             error_pen.setCapStyle(Qt::RoundCap);
             error_pen.setJoinStyle(Qt::RoundJoin);
-            painter.setPen(error_pen);
 
+            if (selected)
+            {
+                QPen selected_outer_pen(QColor(0, 190, 255));
+                selected_outer_pen.setWidthF(7.0);
+                selected_outer_pen.setCapStyle(Qt::RoundCap);
+                selected_outer_pen.setJoinStyle(Qt::RoundJoin);
+                painter.setPen(selected_outer_pen);
+
+                if (link.entity_type == InfrastructureEntity::Pipe)
+                {
+                    QPointF previous_point = screenFromReferenceWorld(link.world_vertices.first());
+                    for (qsizetype index = 1; index < link.world_vertices.size(); ++index)
+                    {
+                        const QPointF point = screenFromReferenceWorld(link.world_vertices.at(index));
+                        painter.drawLine(previous_point, point);
+                        previous_point = point;
+                    }
+                }
+                else if (InfrastructureEntityTraits::isHydraulicDeviceLink(link.entity_type))
+                {
+                    const QPointF start_point = screenFromReferenceWorld(link.world_vertices.first());
+                    const QPointF center_point = screenFromReferenceWorld(link.device_center_world_position);
+                    const QPointF end_point = screenFromReferenceWorld(link.world_vertices.last());
+                    painter.drawLine(start_point, center_point);
+                    painter.drawLine(center_point, end_point);
+                }
+            }
+
+            painter.setPen(error_pen);
             if (link.entity_type == InfrastructureEntity::Pipe)
             {
                 QPointF previous_point = screenFromReferenceWorld(link.world_vertices.first());
@@ -1706,7 +1737,8 @@ void MapEditorRenderer::paintSimulationError(
                     center_point, path, visual_state.entity_width);
                 this->pixmap_renderer.paint(
                     painter, path, visual_state.entity_width, target_rect,
-                    MapEntityPixmapRenderer::Highlight::Error);
+                    selected ? MapEntityPixmapRenderer::Highlight::SelectedError
+                             : MapEntityPixmapRenderer::Highlight::Error);
             }
 
             painter.restore();
@@ -1722,6 +1754,7 @@ void MapEditorRenderer::paintSimulationError(
         const StaticNode &node = this->static_geometry->nodes.at(node_iterator.value());
         if (node.entity_type == visual_state.simulation_error_entity)
         {
+            const bool selected = visual_state.selected_marker_uuids.contains(node.uuid);
             const QPointF point = screenFromReferenceWorld(node.world_position);
             const QString path = MapEntityPixmapRenderer::pixmapPathForEntity(node.entity_type);
             const QPointF rounded_anchor(qRound(point.x()), qRound(point.y()));
@@ -1729,7 +1762,8 @@ void MapEditorRenderer::paintSimulationError(
                 rounded_anchor, path, visual_state.entity_width);
             this->pixmap_renderer.paint(
                 painter, path, visual_state.entity_width, target_rect,
-                MapEntityPixmapRenderer::Highlight::Error);
+                selected ? MapEntityPixmapRenderer::Highlight::SelectedError
+                         : MapEntityPixmapRenderer::Highlight::Error);
         }
     }
 
@@ -1936,9 +1970,19 @@ void MapEditorRenderer::paintDeviceLinks(
         const bool selected = visual_state.selected_marker_uuids.contains(link.uuid);
         const bool error = visual_state.simulation_error_entity == link.entity_type
             && visual_state.simulation_error_entity_uuid == link.uuid;
+        if (selected && error)
+        {
+            QPen selected_outer_pen(QColor(0, 190, 255));
+            selected_outer_pen.setWidthF(7.0);
+            selected_outer_pen.setCapStyle(Qt::RoundCap);
+            selected_outer_pen.setJoinStyle(Qt::RoundJoin);
+            painter.setPen(selected_outer_pen);
+            painter.drawLine(start_point, center_point);
+            painter.drawLine(center_point, end_point);
+        }
+
         const QColor placed_color = error ? QColor(255, 0, 0)
             : selected ? QColor(0, 190, 255) : QColor(139, 90, 43);
-
         QPen placed_pen(placed_color);
         placed_pen.setWidthF(3.0);
         placed_pen.setCapStyle(Qt::RoundCap);
@@ -1996,11 +2040,12 @@ void MapEditorRenderer::paintDeviceLinks(
             path, visual_state.entity_width);
         const bool error = visual_state.simulation_error_entity == link.entity_type
             && visual_state.simulation_error_entity_uuid == link.uuid;
-        const MapEntityPixmapRenderer::Highlight highlight = error
-            ? MapEntityPixmapRenderer::Highlight::Error
-            : visual_state.selected_marker_uuids.contains(link.uuid)
-                ? MapEntityPixmapRenderer::Highlight::Selected
-                : MapEntityPixmapRenderer::Highlight::None;
+        const bool selected = visual_state.selected_marker_uuids.contains(link.uuid);
+        const MapEntityPixmapRenderer::Highlight highlight = error && selected
+            ? MapEntityPixmapRenderer::Highlight::SelectedError
+            : error ? MapEntityPixmapRenderer::Highlight::Error
+            : selected ? MapEntityPixmapRenderer::Highlight::Selected
+            : MapEntityPixmapRenderer::Highlight::None;
         this->pixmap_renderer.paint(
             painter, path, visual_state.entity_width, target_rect, highlight);
     }
@@ -2052,11 +2097,12 @@ void MapEditorRenderer::paintMarkers(
             rounded_anchor, path, visual_state.entity_width);
         const bool error = visual_state.simulation_error_entity == node.entity_type
             && visual_state.simulation_error_entity_uuid == node.uuid;
-        const MapEntityPixmapRenderer::Highlight highlight = error
-            ? MapEntityPixmapRenderer::Highlight::Error
-            : visual_state.selected_marker_uuids.contains(node.uuid)
-                ? MapEntityPixmapRenderer::Highlight::Selected
-                : MapEntityPixmapRenderer::Highlight::None;
+        const bool selected = visual_state.selected_marker_uuids.contains(node.uuid);
+        const MapEntityPixmapRenderer::Highlight highlight = error && selected
+            ? MapEntityPixmapRenderer::Highlight::SelectedError
+            : error ? MapEntityPixmapRenderer::Highlight::Error
+            : selected ? MapEntityPixmapRenderer::Highlight::Selected
+            : MapEntityPixmapRenderer::Highlight::None;
         this->pixmap_renderer.paint(
             painter, path, visual_state.entity_width, target_rect, highlight);
     }

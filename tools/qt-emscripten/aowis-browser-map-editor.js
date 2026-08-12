@@ -545,6 +545,15 @@
             0, 0, false, WHITE);
     }
 
+    function appendTintedIcon(builder, entityType, width, point, centered, color) {
+        const dimensions = iconDimensions(entityType, width);
+        if (!dimensions)
+            return;
+        appendSprite(
+            builder, point, dimensions, centered ? 0.5 : 0, centered ? 0.5 : 1,
+            0, 0, true, color);
+    }
+
     function commitBatch(batchName, builder) {
         state.networkRenderer.setGeometry(batchName, {
             segments: new Float32Array(builder.segments),
@@ -597,6 +606,8 @@
     function appendSelectedNetwork(builder) {
         const selectedMarkers = selectedSet(state.visualState.selectedMarkerUuids);
         const selectedPipes = selectedSet(state.visualState.selectedPipeUuids);
+        const errorUuid = normalizeUuid(state.visualState.simulationErrorEntityUuid);
+        const errorEntity = Number(state.visualState.simulationErrorEntity) | 0;
         const moving = movingUuidSets();
         const entityWidth = Math.max(
             1, Number(state.visualState.entityWidth) || 10);
@@ -604,6 +615,10 @@
         for (const link of state.links) {
             if (moving.links.has(link.uuid))
                 continue;
+            if (link.uuid === errorUuid && link.entityType === errorEntity
+                && (selectedPipes.has(link.uuid) || selectedMarkers.has(link.uuid))) {
+                continue;
+            }
             if (link.entityType === ENTITY_PIPE && selectedPipes.has(link.uuid)) {
                 appendPolyline(builder, link.vertices, SELECTED_COLOR);
                 for (let index = 1; index + 1 < link.vertices.length; ++index) {
@@ -622,8 +637,40 @@
         for (const node of state.nodes) {
             if (moving.markers.has(node.uuid) || !selectedMarkers.has(node.uuid))
                 continue;
+            if (node.uuid === errorUuid && node.entityType === errorEntity)
+                continue;
             appendIcon(builder, node.entityType, entityWidth, node, false, true);
         }
+    }
+
+    function appendSimulationErrorSelectionOuter(builder) {
+        const errorUuid = normalizeUuid(state.visualState.simulationErrorEntityUuid);
+        const errorEntity = Number(state.visualState.simulationErrorEntity) | 0;
+        if (!errorUuid || errorEntity === 0)
+            return;
+
+        const selectedMarkers = selectedSet(state.visualState.selectedMarkerUuids);
+        const selectedPipes = selectedSet(state.visualState.selectedPipeUuids);
+        const entityWidth = Math.max(1, Number(state.visualState.entityWidth) || 10);
+        for (const link of state.links) {
+            if (link.uuid !== errorUuid || link.entityType !== errorEntity)
+                continue;
+            if (link.entityType === ENTITY_PIPE && selectedPipes.has(link.uuid)) {
+                appendPolyline(builder, link.vertices, SELECTED_COLOR);
+                for (let index = 1; index + 1 < link.vertices.length; ++index)
+                    appendDisc(builder, link.vertices[index], PIPE_VERTEX_RADIUS, SELECTED_COLOR);
+            } else if (isDeviceLink(link.entityType) && selectedMarkers.has(link.uuid)) {
+                appendDeviceLink(builder, link.vertices, SELECTED_COLOR);
+                const center = linkCenter(link.vertices);
+                if (center)
+                    appendTintedIcon(builder, link.entityType, entityWidth, center, true, SELECTED_COLOR);
+            }
+            return;
+        }
+
+        const node = state.nodesByUuid.get(errorUuid);
+        if (node && node.entityType === errorEntity && selectedMarkers.has(node.uuid))
+            appendTintedIcon(builder, node.entityType, entityWidth, node, false, SELECTED_COLOR);
     }
 
     function appendSimulationError(builder) {
@@ -774,13 +821,16 @@
     }
 
     function buildOverlayBatch(mapView) {
+        const outerBuilder = createBatchBuilder();
         const builder = createBatchBuilder();
         if (state.geometryReady) {
+            appendSimulationErrorSelectionOuter(outerBuilder);
             appendSelectedNetwork(builder);
             appendSimulationError(builder);
             appendMove(builder);
             appendPlacement(builder, mapView);
         }
+        commitBatch("selectionOuter", outerBuilder);
         commitBatch("overlay", builder);
     }
 
@@ -830,6 +880,7 @@
                 scale: transform.scale,
                 batches: {
                     base: { segmentWidth: 3, discScale: 1, spriteScale: 1 },
+                    selectionOuter: { segmentWidth: 7, discScale: 1.75, spriteScale: 1.3 },
                     overlay: { segmentWidth: 3, discScale: 1, spriteScale: 1 }
                 }
             });

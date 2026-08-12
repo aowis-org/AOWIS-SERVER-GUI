@@ -581,14 +581,40 @@
         const discColors = [];
         const sprites = [];
         const spriteColors = [];
+        const outerSegments = [];
+        const outerSegmentColors = [];
+        const outerDiscs = [];
+        const outerDiscColors = [];
+        const outerSprites = [];
+        const outerSpriteColors = [];
+        const selectedError = state.selectedRenderId !== 0
+            && state.selectedRenderId === state.errorRenderId
+            && state.selectedEntityType === state.errorEntityType;
 
-        appendNetworkEntityOverlay(
-            state.selectedRenderId, state.selectedEntityType, SELECTED_COLOR,
-            segments, segmentColors, discs, discColors, sprites, spriteColors);
+        if (selectedError) {
+            appendNetworkEntityOverlay(
+                state.selectedRenderId, state.selectedEntityType, SELECTED_COLOR,
+                outerSegments, outerSegmentColors, outerDiscs, outerDiscColors,
+                outerSprites, outerSpriteColors);
+        } else {
+            appendNetworkEntityOverlay(
+                state.selectedRenderId, state.selectedEntityType, SELECTED_COLOR,
+                segments, segmentColors, discs, discColors, sprites, spriteColors);
+        }
         appendNetworkEntityOverlay(
             state.errorRenderId, state.errorEntityType, ERROR_COLOR,
             segments, segmentColors, discs, discColors, sprites, spriteColors);
 
+        state.networkRenderer.setGeometry("selectionOuter", {
+            segments: new Float32Array(outerSegments),
+            discs: new Float32Array(outerDiscs),
+            sprites: new Float32Array(outerSprites)
+        });
+        state.networkRenderer.setColors("selectionOuter", {
+            segments: new Float32Array(outerSegmentColors),
+            discs: new Float32Array(outerDiscColors),
+            sprites: new Float32Array(outerSpriteColors)
+        });
         state.networkRenderer.setGeometry("overlay", {
             segments: new Float32Array(segments),
             discs: new Float32Array(discs),
@@ -705,6 +731,11 @@
                         segmentWidth: state.linkThicknessPixels,
                         discScale: junctionDotDiameterForZoom(mapView.zoom) / 2,
                         spriteScale: iconMarkerSizeForZoom(mapView.zoom)
+                    },
+                    selectionOuter: {
+                        segmentWidth: Math.max(7, state.linkThicknessPixels + 6),
+                        discScale: junctionDotDiameterForZoom(mapView.zoom) / 2 + 5,
+                        spriteScale: iconMarkerSizeForZoom(mapView.zoom) + 8
                     },
                     overlay: {
                         segmentWidth: Math.max(3, state.linkThicknessPixels + 2),
