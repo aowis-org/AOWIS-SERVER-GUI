@@ -2,6 +2,7 @@
 
 #include "hydraulic_data.h"
 
+#include <QAbstractItemView>
 #include <QBrush>
 #include <QColor>
 #include <QFontMetrics>
@@ -115,6 +116,50 @@ QString entityText(const HydraulicSimulationDiagnostic &diagnostic)
         text += QStringLiteral(" ") + diagnostic.entity.id;
     return text;
 }
+
+InfrastructureEntity diagnosticInfrastructureEntity(
+    const HydraulicSimulationDiagnostic &diagnostic, const HydraulicData &hydraulic_data)
+{
+    const QUuid uuid = diagnostic.entity.uuid;
+    if (uuid.isNull())
+        return InfrastructureEntity::Unknown;
+
+    switch (diagnostic.entity.type)
+    {
+    case HydraulicSimulationStatusEntityType::Junction:
+        return InfrastructureEntity::Junction;
+    case HydraulicSimulationStatusEntityType::Reservoir:
+        return InfrastructureEntity::Reservoir;
+    case HydraulicSimulationStatusEntityType::Tank:
+        return InfrastructureEntity::Tank;
+    case HydraulicSimulationStatusEntityType::Pipe:
+        return InfrastructureEntity::Pipe;
+    case HydraulicSimulationStatusEntityType::Pump:
+        return InfrastructureEntity::Pump;
+    case HydraulicSimulationStatusEntityType::Valve:
+        return InfrastructureEntity::Valve;
+    case HydraulicSimulationStatusEntityType::Node:
+        if (hydraulic_data.junction(uuid).has_value())
+            return InfrastructureEntity::Junction;
+        if (hydraulic_data.reservoir(uuid).has_value())
+            return InfrastructureEntity::Reservoir;
+        if (hydraulic_data.tank(uuid).has_value())
+            return InfrastructureEntity::Tank;
+        break;
+    case HydraulicSimulationStatusEntityType::Link:
+        if (hydraulic_data.pipe(uuid).has_value())
+            return InfrastructureEntity::Pipe;
+        if (hydraulic_data.pump(uuid).has_value())
+            return InfrastructureEntity::Pump;
+        if (hydraulic_data.valve(uuid).has_value())
+            return InfrastructureEntity::Valve;
+        break;
+    default:
+        break;
+    }
+
+    return InfrastructureEntity::Unknown;
+}
 }
 
 SimulationDiagnosticsDialog::SimulationDiagnosticsDialog(HydraulicData *hydraulic_data, QWidget *parent)
@@ -124,8 +169,8 @@ SimulationDiagnosticsDialog::SimulationDiagnosticsDialog(HydraulicData *hydrauli
     setAttribute(Qt::WA_DeleteOnClose);
     setWindowTitle(tr("Simulation Diagnostics"));
     setModal(false);
-    resize(720, 460);
-    setMinimumSize(620, 360);
+    resize(720, 600);
+    setMinimumSize(620, 460);
 
     this->label_result_validity = new QLabel(this);
     this->label_result_validity->setTextFormat(Qt::RichText);
@@ -168,7 +213,23 @@ SimulationDiagnosticsDialog::SimulationDiagnosticsDialog(HydraulicData *hydrauli
             return;
         }
 
-        showDiagnosticDetails(current->data(Qt::UserRole).toInt());
+        const int diagnostic_index = current->data(Qt::UserRole).toInt();
+        showDiagnosticDetails(diagnostic_index);
+
+        const std::optional<HydraulicSimulationResultTimeline> &result_timeline =
+            this->hydraulic_data->simulationResultTimeline();
+        if (!result_timeline.has_value() || diagnostic_index < 0
+            || diagnostic_index >= result_timeline->diagnostics.size())
+        {
+            return;
+        }
+
+        const HydraulicSimulationDiagnostic &diagnostic =
+            result_timeline->diagnostics.at(diagnostic_index);
+        const InfrastructureEntity entity_type =
+            diagnosticInfrastructureEntity(diagnostic, *this->hydraulic_data);
+        if (entity_type != InfrastructureEntity::Unknown && !diagnostic.entity.uuid.isNull())
+            this->hydraulic_data->setSelectedUuid(entity_type, diagnostic.entity.uuid);
     });
 
     if (this->hydraulic_data != nullptr)

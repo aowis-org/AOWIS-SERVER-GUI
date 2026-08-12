@@ -635,6 +635,36 @@ MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicD
     {
         update();
     });
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, this,
+        [this](const HydraulicNodeTank &tank)
+    {
+        setSelectedEntity(InfrastructureEntity::Tank, tank.uuid);
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedReservoir, this,
+        [this](const HydraulicNodeReservoir &reservoir)
+    {
+        setSelectedEntity(InfrastructureEntity::Reservoir, reservoir.uuid);
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedJunction, this,
+        [this](const HydraulicNodeJunction &junction)
+    {
+        setSelectedEntity(InfrastructureEntity::Junction, junction.uuid);
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedPipe, this,
+        [this](const HydraulicLinkPipe &pipe)
+    {
+        setSelectedEntity(InfrastructureEntity::Pipe, pipe.uuid);
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedPump, this,
+        [this](const HydraulicLinkPump &pump)
+    {
+        setSelectedEntity(InfrastructureEntity::Pump, pump.uuid);
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedValve, this,
+        [this](const HydraulicLinkValve &valve)
+    {
+        setSelectedEntity(InfrastructureEntity::Valve, valve.uuid);
+    });
 
     QTimer::singleShot(0, this, &MapNetworkOverlayWidget::syncSnapshot);
 }
@@ -666,6 +696,48 @@ void MapNetworkOverlayWidget::setSelectedEntity(const NetworkOverlayHit &hit)
 
     this->selected_entity = selected;
     update();
+}
+
+void MapNetworkOverlayWidget::setSelectedEntity(
+    InfrastructureEntity entity_type, const QUuid &uuid)
+{
+    if (uuid.isNull() || entity_type == InfrastructureEntity::Unknown)
+    {
+        clearSelectedEntity();
+        return;
+    }
+
+    const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
+    if (InfrastructureEntityTraits::isHydraulicConnectionNode(entity_type))
+    {
+        for (const NetworkRenderNode &node : snapshot.nodes)
+        {
+            if (node.uuid != uuid || node.entity_type != entity_type)
+                continue;
+
+            NetworkOverlayHit hit;
+            hit.render_id = node.render_id;
+            hit.entity_type = entity_type;
+            hit.uuid = uuid;
+            setSelectedEntity(hit);
+            return;
+        }
+    }
+    else if (InfrastructureEntityTraits::isHydraulicNetworkLink(entity_type))
+    {
+        for (const NetworkRenderLink &link : snapshot.links)
+        {
+            if (link.uuid != uuid || link.entity_type != entity_type)
+                continue;
+
+            NetworkOverlayHit hit;
+            hit.render_id = link.render_id;
+            hit.entity_type = entity_type;
+            hit.uuid = uuid;
+            setSelectedEntity(hit);
+            return;
+        }
+    }
 }
 
 void MapNetworkOverlayWidget::clearSelectedEntity()

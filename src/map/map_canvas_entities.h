@@ -90,6 +90,7 @@ private:
     void deleteMarker(const QUuid &uuid);
     void selectMarker(const QUuid &uuid);
     void selectPipe(const QUuid &pipe_uuid);
+    void applyExternalSelection(InfrastructureEntity entity_type, const QUuid &uuid);
     void startMarkerMove(const QUuid &uuid);
     void startSelectedMarkerMove(const QUuid &uuid);
     void startPipeVertexMove(const QUuid &pipe_uuid, int vertex_index);

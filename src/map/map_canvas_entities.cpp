@@ -93,6 +93,36 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
         });
         connect(this->hydraulic_data, &HydraulicData::signalNodeLocateRequested,
                 this, &MapCanvasEntities::onNodeLocateRequested);
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, this,
+            [this](const HydraulicNodeTank &tank)
+        {
+            applyExternalSelection(InfrastructureEntity::Tank, tank.uuid);
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedReservoir, this,
+            [this](const HydraulicNodeReservoir &reservoir)
+        {
+            applyExternalSelection(InfrastructureEntity::Reservoir, reservoir.uuid);
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedJunction, this,
+            [this](const HydraulicNodeJunction &junction)
+        {
+            applyExternalSelection(InfrastructureEntity::Junction, junction.uuid);
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedPipe, this,
+            [this](const HydraulicLinkPipe &pipe)
+        {
+            applyExternalSelection(InfrastructureEntity::Pipe, pipe.uuid);
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedPump, this,
+            [this](const HydraulicLinkPump &pump)
+        {
+            applyExternalSelection(InfrastructureEntity::Pump, pump.uuid);
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedValve, this,
+            [this](const HydraulicLinkValve &valve)
+        {
+            applyExternalSelection(InfrastructureEntity::Valve, valve.uuid);
+        });
         loadNetwork(this->hydraulic_data->networkHydraulic());
     }
 }
@@ -1129,6 +1159,31 @@ void MapCanvasEntities::selectMarker(const QUuid &uuid)
     emit signalEntityMarkerSelected(true);
     if (this->hydraulic_data)
         this->hydraulic_data->setSelectedUuid(marker->entity.type, marker->entity.uuid);
+    updateCanvas();
+}
+
+void MapCanvasEntities::applyExternalSelection(
+    InfrastructureEntity entity_type, const QUuid &uuid)
+{
+    if (uuid.isNull())
+        return;
+
+    if (entity_type == InfrastructureEntity::Pipe)
+    {
+        const std::optional<InfrastructureEntityReference> selected_pipe =
+            this->selection->replaceWithPipe(uuid);
+        if (!selected_pipe.has_value())
+            return;
+    }
+    else
+    {
+        const std::optional<MapEntityMarker> marker = markerByUuid(uuid);
+        if (!marker.has_value() || marker->entity.type != entity_type)
+            return;
+        this->selection->replaceWithMarker(marker.value());
+    }
+
+    emit signalEntityMarkerSelected(true);
     updateCanvas();
 }
 

@@ -50,6 +50,7 @@ public:
     int backgroundOpacity() const;
     NetworkOverlayHit hitTest(const QPointF &screen_position);
     void setSelectedEntity(const NetworkOverlayHit &hit);
+    void setSelectedEntity(InfrastructureEntity entity_type, const QUuid &uuid);
     void clearSelectedEntity();
 
 public slots:
