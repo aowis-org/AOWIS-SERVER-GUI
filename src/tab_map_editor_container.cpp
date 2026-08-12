@@ -205,16 +205,24 @@ QByteArray serializeMapEditorVisualState(const MapEditorVisualState &state)
                      state.placement.device_link_start_node_uuid.toString(QUuid::WithoutBraces));
     placement.insert(QStringLiteral("floatingWidth"), state.placement.floating_width);
 
+    QJsonArray simulation_error_entities;
+    for (QHash<QUuid, InfrastructureEntity>::const_iterator error_iterator =
+             state.simulation_error_entities.cbegin();
+         error_iterator != state.simulation_error_entities.cend(); ++error_iterator)
+    {
+        QJsonObject error_entity;
+        error_entity.insert(QStringLiteral("entity"), static_cast<int>(error_iterator.value()));
+        error_entity.insert(QStringLiteral("uuid"), error_iterator.key().toString(QUuid::WithoutBraces));
+        simulation_error_entities.append(error_entity);
+    }
+
     QJsonObject root;
     root.insert(QStringLiteral("revision"), QString::number(state.revision));
     root.insert(QStringLiteral("selectedMarkerUuids"),
                 uuidListToJson(state.selected_marker_uuids));
     root.insert(QStringLiteral("selectedPipeUuids"),
                 uuidListToJson(state.selected_pipe_uuids));
-    root.insert(QStringLiteral("simulationErrorEntity"),
-                static_cast<int>(state.simulation_error_entity));
-    root.insert(QStringLiteral("simulationErrorEntityUuid"),
-                state.simulation_error_entity_uuid.toString(QUuid::WithoutBraces));
+    root.insert(QStringLiteral("simulationErrorEntities"), simulation_error_entities);
     root.insert(QStringLiteral("wrapReferenceLongitude"), state.wrap_reference_longitude);
     root.insert(QStringLiteral("entityWidth"), state.entity_width);
     root.insert(QStringLiteral("placement"), placement);

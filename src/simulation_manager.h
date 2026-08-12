@@ -24,6 +24,7 @@ public:
     
     void run();
     void showSimulationStatistics();
+    void showSimulationDiagnostics();
     void showEpanetLog();
     void exportEpanetNetwork();
     
@@ -31,6 +32,7 @@ private:
     HydraulicData *hydraulic_data = nullptr;
     QString epanet_log;
     QPointer<QDialog> dialog_simulation_statistics = nullptr;
+    QPointer<QDialog> dialog_simulation_diagnostics = nullptr;
     QPointer<QDialog> dialog_epanet_log = nullptr;
     QPointer<QTextBrowser> widget_epanet_log = nullptr;
 

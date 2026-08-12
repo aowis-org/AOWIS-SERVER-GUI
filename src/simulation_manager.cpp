@@ -1,6 +1,7 @@
 #include "simulation_manager.h"
 
 #include "simulation_statistics_dialog.h"
+#include "simulation_diagnostics_dialog.h"
 
 #include <aowis/epanet/epanet_runner.h>
 
@@ -96,6 +97,20 @@ void SimulationManager::run()
 
     this->hydraulic_data->setSimulationResultTimeline(run_result.result_timeline);
 
+    bool has_error_diagnostic = false;
+    for (const HydraulicSimulationDiagnostic &diagnostic : run_result.result_timeline.diagnostics)
+    {
+        if (diagnostic.severity == HydraulicSimulationDiagnosticSeverity::Error
+            || diagnostic.severity == HydraulicSimulationDiagnosticSeverity::Fatal)
+        {
+            has_error_diagnostic = true;
+            break;
+        }
+    }
+
+    if (!run_result.result_timeline.status.success || has_error_diagnostic)
+        showSimulationDiagnostics();
+
     if (!run_result.result_timeline.status.success)
     {
         const HydraulicSimulationStatus &status = run_result.result_timeline.status;
@@ -125,6 +140,29 @@ void SimulationManager::showSimulationStatistics()
 
     this->dialog_simulation_statistics = new SimulationStatisticsDialog(this->hydraulic_data, main_window);
     showAndActivateDialog(this->dialog_simulation_statistics);
+}
+
+void SimulationManager::showSimulationDiagnostics()
+{
+    if (this->hydraulic_data == nullptr)
+        return;
+
+    const std::optional<HydraulicSimulationResultTimeline> &result_timeline = this->hydraulic_data->simulationResultTimeline();
+    if (!result_timeline.has_value() || result_timeline->diagnostics.isEmpty())
+        return;
+
+    if (this->dialog_simulation_diagnostics)
+    {
+        showAndActivateDialog(this->dialog_simulation_diagnostics);
+        return;
+    }
+
+    QWidget *main_window = qobject_cast<QWidget *>(parent());
+    if (main_window == nullptr)
+        main_window = QApplication::activeWindow();
+
+    this->dialog_simulation_diagnostics = new SimulationDiagnosticsDialog(this->hydraulic_data, main_window);
+    showAndActivateDialog(this->dialog_simulation_diagnostics);
 }
 
 void SimulationManager::showEpanetLog()
