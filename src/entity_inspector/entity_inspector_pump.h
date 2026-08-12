@@ -3,6 +3,7 @@
 
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QLabel>
 #include <QUuid>
 #include <QWidget>
 
@@ -32,6 +33,8 @@ private:
     QUuid pump_uuid;
 
     QComboBox *combo_type = nullptr;
+    QLabel *label_constant_power = nullptr;
+    QDoubleSpinBox *spin_constant_power = nullptr;
     QDoubleSpinBox *spin_speed_initial = nullptr;
     QComboBox *combo_status_initial = nullptr;
     QComboBox *combo_speed_pattern = nullptr;

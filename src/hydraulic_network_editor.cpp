@@ -881,6 +881,16 @@ bool HydraulicNetworkEditor::setPumpDefinitionType(
     return true;
 }
 
+bool HydraulicNetworkEditor::setPumpConstantPowerKw(const QUuid &uuid, double constant_power_kw)
+{
+    HydraulicLinkPump *pump = entityByUuid(this->network.links_pumps, uuid);
+    if (pump == nullptr)
+        return false;
+
+    pump->constant_power_kw = constant_power_kw;
+    return true;
+}
+
 bool HydraulicNetworkEditor::setPumpInitialSpeed(const QUuid &uuid, double initial_speed)
 {
     HydraulicLinkPump *pump = entityByUuid(this->network.links_pumps, uuid);

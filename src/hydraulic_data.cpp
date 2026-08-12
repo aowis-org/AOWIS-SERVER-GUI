@@ -2111,6 +2111,12 @@ bool HydraulicData::setPumpDefinitionType(
         uuid, this->network_editor.setPumpDefinitionType(uuid, definition_type));
 }
 
+bool HydraulicData::setPumpConstantPowerKw(const QUuid &uuid, double constant_power_kw)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setPumpConstantPowerKw(uuid, constant_power_kw));
+}
+
 bool HydraulicData::setPumpInitialSpeed(const QUuid &uuid, double initial_speed)
 {
     return emitLinkChangedIfSuccessful(

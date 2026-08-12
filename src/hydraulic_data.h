@@ -330,6 +330,7 @@ public:
 
     bool setPumpDefinitionType(const QUuid &uuid,
                                HydraulicLinkPumpDefinitionType definition_type);
+    bool setPumpConstantPowerKw(const QUuid &uuid, double constant_power_kw);
     bool setPumpInitialSpeed(const QUuid &uuid, double initial_speed);
     bool setPumpInitialStatus(const QUuid &uuid,
                               HydraulicLinkPumpInitialStatus initial_status);

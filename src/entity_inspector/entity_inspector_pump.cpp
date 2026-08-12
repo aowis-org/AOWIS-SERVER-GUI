@@ -57,6 +57,14 @@ void EntityInspectorPump::addGroupControls()
     this->combo_type->addItem(
         "From Library", static_cast<int>(HydraulicLinkPumpDefinitionType::Library));
 
+    this->label_constant_power = new QLabel("Power");
+    this->spin_constant_power = new QDoubleSpinBox();
+    this->spin_constant_power->setDecimals(3);
+    this->spin_constant_power->setSingleStep(1.0);
+    this->spin_constant_power->setRange(0.0, 1000000.0);
+    this->spin_constant_power->setSuffix(" kW");
+    this->spin_constant_power->setSpecialValueText("Not configured");
+
     QLabel *label_speed_initial = new QLabel("Initial Speed");
     this->spin_speed_initial = new QDoubleSpinBox();
     this->spin_speed_initial->setDecimals(2);
@@ -86,14 +94,16 @@ void EntityInspectorPump::addGroupControls()
 
     grid->addWidget(label_type, 0, 0);
     grid->addWidget(this->combo_type, 0, 1);
-    grid->addWidget(label_speed_initial, 1, 0);
-    grid->addWidget(this->spin_speed_initial, 1, 1);
-    grid->addWidget(label_status_initial, 2, 0);
-    grid->addWidget(this->combo_status_initial, 2, 1);
-    grid->addWidget(label_speed_pattern, 3, 0);
-    grid->addWidget(this->combo_speed_pattern, 3, 1);
-    grid->addWidget(label_controls, 4, 0);
-    grid->addWidget(this->combo_controls, 4, 1);
+    grid->addWidget(this->label_constant_power, 1, 0);
+    grid->addWidget(this->spin_constant_power, 1, 1);
+    grid->addWidget(label_speed_initial, 2, 0);
+    grid->addWidget(this->spin_speed_initial, 2, 1);
+    grid->addWidget(label_status_initial, 3, 0);
+    grid->addWidget(this->combo_status_initial, 3, 1);
+    grid->addWidget(label_speed_pattern, 4, 0);
+    grid->addWidget(this->combo_speed_pattern, 4, 1);
+    grid->addWidget(label_controls, 5, 0);
+    grid->addWidget(this->combo_controls, 5, 1);
 
     layoutConfiguration()->addWidget(group);
 }
@@ -142,6 +152,10 @@ void EntityInspectorPump::bindPump()
             static_cast<HydraulicLinkPumpDefinitionType>(
                 this->combo_type->currentData(value_role).toInt());
         this->hydraulic_data->setPumpDefinitionType(this->pump_uuid, definition_type);
+    });
+    connect(this->spin_constant_power, &QDoubleSpinBox::valueChanged, this, [this](double power_kw)
+    {
+        this->hydraulic_data->setPumpConstantPowerKw(this->pump_uuid, power_kw);
     });
     connect(this->spin_speed_initial, &QDoubleSpinBox::valueChanged, this, [this](double speed)
     {
@@ -211,6 +225,7 @@ void EntityInspectorPump::refreshPump()
         return;
 
     const QSignalBlocker type_blocker(this->combo_type);
+    const QSignalBlocker constant_power_blocker(this->spin_constant_power);
     const QSignalBlocker speed_blocker(this->spin_speed_initial);
     const QSignalBlocker status_blocker(this->combo_status_initial);
     const QSignalBlocker speed_pattern_blocker(this->combo_speed_pattern);
@@ -222,6 +237,10 @@ void EntityInspectorPump::refreshPump()
     const int type_index = this->combo_type->findData(
         static_cast<int>(pump->definition_type), value_role);
     this->combo_type->setCurrentIndex(type_index >= 0 ? type_index : 0);
+    const bool constant_power = pump->definition_type == HydraulicLinkPumpDefinitionType::ConstantPower;
+    this->label_constant_power->setVisible(constant_power);
+    this->spin_constant_power->setVisible(constant_power);
+    this->spin_constant_power->setValue(pump->constant_power_kw);
     this->spin_speed_initial->setValue(pump->initial_speed);
 
     const int status_index = this->combo_status_initial->findData(
