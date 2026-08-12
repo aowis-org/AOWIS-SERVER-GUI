@@ -55,6 +55,9 @@ public:
 
     bool hasSimulationResults() const;
     const std::optional<HydraulicSimulationResultTimeline> &simulationResultTimeline() const;
+    const HydraulicSimulationStatus *simulationStatus() const;
+    InfrastructureEntity simulationErrorEntityType() const;
+    QUuid simulationErrorEntityUuid() const;
     const HydraulicSimulationResult *currentSimulationResult() const;
     int currentSimulationResultIndex() const;
     void setSimulationResultTimeline(const HydraulicSimulationResultTimeline &result_timeline);

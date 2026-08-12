@@ -20,6 +20,8 @@
     const WHITE = Object.freeze([1, 1, 1, 1]);
     const SELECTED_COLOR = Object.freeze([0, 190 / 255, 1, 1]);
     const SELECTED_GLOW_COLOR = Object.freeze([0, 190 / 255, 1, 0.8]);
+    const ERROR_COLOR = Object.freeze([1, 0, 0, 1]);
+    const ERROR_GLOW_COLOR = Object.freeze([1, 0, 0, 0.8]);
     const PREVIEW_COLOR = Object.freeze([0, 140 / 255, 1, 1]);
     const DEVICE_LINK_COLOR = Object.freeze([139 / 255, 90 / 255, 43 / 255, 1]);
 
@@ -524,17 +526,18 @@
         appendColor(builder.spriteColors, color);
     }
 
-    function appendIcon(builder, entityType, width, point, centered, selected) {
+    function appendIcon(builder, entityType, width, point, centered, selected, error = false) {
         const dimensions = iconDimensions(entityType, width);
         if (!dimensions)
             return;
         const anchorX = centered ? 0.5 : 0;
         const anchorY = centered ? 0.5 : 1;
-        if (selected) {
+        if (selected || error) {
+            const glowColor = error ? ERROR_GLOW_COLOR : SELECTED_GLOW_COLOR;
             for (const offset of GLOW_OFFSETS) {
                 appendSprite(
                     builder, point, dimensions, anchorX, anchorY,
-                    offset[0], offset[1], true, SELECTED_GLOW_COLOR);
+                    offset[0], offset[1], true, glowColor);
             }
         }
         appendSprite(
@@ -621,6 +624,36 @@
                 continue;
             appendIcon(builder, node.entityType, entityWidth, node, false, true);
         }
+    }
+
+    function appendSimulationError(builder) {
+        const errorUuid = normalizeUuid(state.visualState.simulationErrorEntityUuid);
+        const errorEntity = Number(state.visualState.simulationErrorEntity) | 0;
+        if (!errorUuid || errorEntity === 0)
+            return;
+
+        const entityWidth = Math.max(1, Number(state.visualState.entityWidth) || 10);
+        for (const link of state.links) {
+            if (link.uuid !== errorUuid || link.entityType !== errorEntity)
+                continue;
+            if (link.entityType === ENTITY_PIPE) {
+                appendPolyline(builder, link.vertices, ERROR_COLOR);
+                for (let index = 1; index + 1 < link.vertices.length; ++index)
+                    appendDisc(builder, link.vertices[index], PIPE_VERTEX_RADIUS, ERROR_COLOR);
+                return;
+            }
+            if (isDeviceLink(link.entityType)) {
+                appendDeviceLink(builder, link.vertices, ERROR_COLOR);
+                const center = linkCenter(link.vertices);
+                if (center)
+                    appendIcon(builder, link.entityType, entityWidth, center, true, false, true);
+                return;
+            }
+        }
+
+        const node = state.nodesByUuid.get(errorUuid);
+        if (node && node.entityType === errorEntity)
+            appendIcon(builder, node.entityType, entityWidth, node, false, false, true);
     }
 
     function appendMove(builder) {
@@ -744,6 +777,7 @@
         const builder = createBatchBuilder();
         if (state.geometryReady) {
             appendSelectedNetwork(builder);
+            appendSimulationError(builder);
             appendMove(builder);
             appendPlacement(builder, mapView);
         }

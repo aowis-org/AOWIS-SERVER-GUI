@@ -13,6 +13,7 @@
     const NETWORK_COLOR = "#000000";
     const SYMBOLOGY_VALUE_UNAVAILABLE_COLOR = "#000000";
     const SELECTED_COLOR = "#00beff";
+    const ERROR_COLOR = "#ff0000";
     const SYMBOLOGY_COLOR_BUCKETS = 64;
     const RAMP_COLORS = [
         "#440154",
@@ -92,6 +93,8 @@
         networkOverlayRevision: 1,
         selectedRenderId: 0,
         selectedEntityType: 0,
+        errorRenderId: 0,
+        errorEntityType: 0,
         entityMarkers: new Map(),
         entitySegments: new Map(),
         unsubscribeView: null,
@@ -526,6 +529,51 @@
         });
     }
 
+    function appendNetworkEntityOverlay(
+        renderId, entityType, color, segments, segmentColors, discs, discColors, sprites, spriteColors) {
+        if (renderId === 0 || entityType === 0)
+            return;
+
+        const key = `${entityType}:${renderId}`;
+        const entitySegments = state.entitySegments.get(key) || [];
+        for (const segment of entitySegments) {
+            segments.push(
+                segment.x1 - state.geometryOriginX,
+                segment.y1 - state.geometryOriginY,
+                segment.x2 - state.geometryOriginX,
+                segment.y2 - state.geometryOriginY);
+            writeWebGlColor(segmentColors, segmentColors.length, color);
+        }
+
+        const marker = state.entityMarkers.get(key);
+        if (marker && marker.entityType === ENTITY_JUNCTION) {
+            discs.push(
+                marker.x - state.geometryOriginX,
+                marker.y - state.geometryOriginY,
+                1);
+            writeWebGlColor(discColors, discColors.length, color);
+        } else if (marker) {
+            const definition = ICON_DEFINITIONS.get(marker.entityType);
+            const slot = ICON_ATLAS_SLOTS.get(marker.entityType);
+            if (definition && slot !== undefined) {
+                const maximumDimension = Math.max(
+                    definition.viewWidth, definition.viewHeight);
+                sprites.push(
+                    marker.x - state.geometryOriginX,
+                    marker.y - state.geometryOriginY,
+                    definition.viewWidth / maximumDimension,
+                    definition.viewHeight / maximumDimension,
+                    0.5,
+                    0.5,
+                    0,
+                    0,
+                    slot,
+                    1);
+                writeWebGlColor(spriteColors, spriteColors.length, color);
+            }
+        }
+    }
+
     function buildNetworkRendererOverlay() {
         const segments = [];
         const segmentColors = [];
@@ -533,49 +581,13 @@
         const discColors = [];
         const sprites = [];
         const spriteColors = [];
-        const key = `${state.selectedEntityType}:${state.selectedRenderId}`;
 
-        if (state.selectedRenderId !== 0 && state.selectedEntityType !== 0) {
-            const selectedSegments = state.entitySegments.get(key) || [];
-            for (const segment of selectedSegments) {
-                segments.push(
-                    segment.x1 - state.geometryOriginX,
-                    segment.y1 - state.geometryOriginY,
-                    segment.x2 - state.geometryOriginX,
-                    segment.y2 - state.geometryOriginY);
-                writeWebGlColor(
-                    segmentColors, segmentColors.length, SELECTED_COLOR);
-            }
-
-            const marker = state.entityMarkers.get(key);
-            if (marker && marker.entityType === ENTITY_JUNCTION) {
-                discs.push(
-                    marker.x - state.geometryOriginX,
-                    marker.y - state.geometryOriginY,
-                    1);
-                writeWebGlColor(discColors, discColors.length, SELECTED_COLOR);
-            } else if (marker) {
-                const definition = ICON_DEFINITIONS.get(marker.entityType);
-                const slot = ICON_ATLAS_SLOTS.get(marker.entityType);
-                if (definition && slot !== undefined) {
-                    const maximumDimension = Math.max(
-                        definition.viewWidth, definition.viewHeight);
-                    sprites.push(
-                        marker.x - state.geometryOriginX,
-                        marker.y - state.geometryOriginY,
-                        definition.viewWidth / maximumDimension,
-                        definition.viewHeight / maximumDimension,
-                        0.5,
-                        0.5,
-                        0,
-                        0,
-                        slot,
-                        1);
-                    writeWebGlColor(
-                        spriteColors, spriteColors.length, SELECTED_COLOR);
-                }
-            }
-        }
+        appendNetworkEntityOverlay(
+            state.selectedRenderId, state.selectedEntityType, SELECTED_COLOR,
+            segments, segmentColors, discs, discColors, sprites, spriteColors);
+        appendNetworkEntityOverlay(
+            state.errorRenderId, state.errorEntityType, ERROR_COLOR,
+            segments, segmentColors, discs, discColors, sprites, spriteColors);
 
         state.networkRenderer.setGeometry("overlay", {
             segments: new Float32Array(segments),
@@ -1868,6 +1880,19 @@
         scheduleNetworkRender();
     }
 
+    function setErrorEntity(renderId, entityType) {
+        const nextRenderId = Number(renderId) >>> 0;
+        const nextEntityType = nextRenderId === 0 ? 0 : Number(entityType) | 0;
+        if (state.errorRenderId === nextRenderId
+            && state.errorEntityType === nextEntityType) {
+            return;
+        }
+        state.errorRenderId = nextRenderId;
+        state.errorEntityType = nextEntityType;
+        ++state.networkOverlayRevision;
+        scheduleNetworkRender();
+    }
+
     function handleMapViewChanged(mapView) {
         state.lastMapView = mapView;
 
@@ -2321,6 +2346,8 @@
         state.networkWebGlUnavailable = false;
         state.selectedRenderId = 0;
         state.selectedEntityType = 0;
+        state.errorRenderId = 0;
+        state.errorEntityType = 0;
         state.entityMarkers.clear();
         state.entitySegments.clear();
         state.geometryOriginX = 0;
@@ -2371,6 +2398,7 @@
         setBackground: setBackground,
         setOwnerId: setOwnerId,
         setSelectedEntity: setSelectedEntity,
+        setErrorEntity: setErrorEntity,
         hitTest: hitTest,
         destroy: destroy
     };

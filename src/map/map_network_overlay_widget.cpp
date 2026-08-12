@@ -630,6 +630,12 @@ MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicD
         requestSymbologyPreparation(true);
     });
 
+    connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged,
+        this, [this](bool)
+    {
+        update();
+    });
+
     QTimer::singleShot(0, this, &MapNetworkOverlayWidget::syncSnapshot);
 }
 
@@ -804,6 +810,7 @@ void MapNetworkOverlayWidget::paintEvent(QPaintEvent *event)
         requestRenderCache();
         paintNetwork(painter);
         paintSelectedEntity(painter);
+        paintSimulationErrorEntity(painter);
     }
 
     static const QPixmap crosshair_pixmap = QPixmap(QStringLiteral(":/icon/crosshair.png")).scaled(
@@ -2046,7 +2053,18 @@ void MapNetworkOverlayWidget::paintNetwork(QPainter &painter)
 
 void MapNetworkOverlayWidget::paintSelectedEntity(QPainter &painter)
 {
-    if (!this->selected_entity.isValid() || !this->render_geometry)
+    paintEntityHighlight(painter, this->selected_entity, QColor(0, 190, 255));
+}
+
+void MapNetworkOverlayWidget::paintSimulationErrorEntity(QPainter &painter)
+{
+    paintEntityHighlight(painter, simulationErrorEntityHit(), QColor(255, 0, 0));
+}
+
+void MapNetworkOverlayWidget::paintEntityHighlight(
+    QPainter &painter, const NetworkOverlayHit &entity, const QColor &color)
+{
+    if (!entity.isValid() || !this->render_geometry)
         return;
 
     const qreal scale = referenceScaleForCurrentZoom();
@@ -2055,8 +2073,7 @@ void MapNetworkOverlayWidget::paintSelectedEntity(QPainter &painter)
 
     const QPointF world_center = visibleReferenceWorldCenter();
     const quint64 key = entityRenderKey(
-        this->selected_entity.entity_type, this->selected_entity.render_id);
-    const QColor selected_color(0, 190, 255);
+        entity.entity_type, entity.render_id);
 
     const QList<int> segment_indices = this->render_geometry->segment_indices_by_entity.value(key);
     if (!segment_indices.isEmpty())
@@ -2080,7 +2097,7 @@ void MapNetworkOverlayWidget::paintSelectedEntity(QPainter &painter)
         const qreal base_width = this->render_symbology
             ? this->render_symbology->link_width
             : qreal(this->symbology_settings.link_thickness_px);
-        QPen selected_pen(selected_color);
+        QPen selected_pen(color);
         selected_pen.setWidthF(qMax<qreal>(3.0, base_width + 2.0));
         selected_pen.setCapStyle(Qt::RoundCap);
         selected_pen.setJoinStyle(Qt::RoundJoin);
@@ -2106,7 +2123,7 @@ void MapNetworkOverlayWidget::paintSelectedEntity(QPainter &painter)
         const qreal radius = junctionDotDiameterForZoom(
             this->map_model->zoom(), this->symbology_settings.node_size_percent) / 2.0;
         painter.setPen(Qt::NoPen);
-        painter.setBrush(selected_color);
+        painter.setBrush(color);
         painter.drawEllipse(center, radius + 2.0, radius + 2.0);
         return;
     }
@@ -2119,15 +2136,55 @@ void MapNetworkOverlayWidget::paintSelectedEntity(QPainter &painter)
     const QTransform transform(icon_scale, 0.0, 0.0, icon_scale, icon_x, icon_y);
 
     if (!asset->fill_path.isEmpty())
-        painter.fillPath(transform.map(asset->fill_path), QBrush(selected_color));
+        painter.fillPath(transform.map(asset->fill_path), QBrush(color));
     if (!asset->stroke_path.isEmpty())
     {
-        QPen selected_pen(selected_color);
+        QPen selected_pen(color);
         selected_pen.setWidthF(qMax<qreal>(2.0, asset->stroke_width * icon_scale + 1.5));
         selected_pen.setCapStyle(Qt::RoundCap);
         selected_pen.setJoinStyle(Qt::RoundJoin);
         painter.strokePath(transform.map(asset->stroke_path), selected_pen);
     }
+}
+
+NetworkOverlayHit MapNetworkOverlayWidget::simulationErrorEntityHit() const
+{
+    NetworkOverlayHit hit;
+    if (this->hydraulic_data == nullptr)
+        return hit;
+
+    const QUuid uuid = this->hydraulic_data->simulationErrorEntityUuid();
+    const InfrastructureEntity entity_type = this->hydraulic_data->simulationErrorEntityType();
+    if (uuid.isNull() || entity_type == InfrastructureEntity::Unknown)
+        return hit;
+
+    const NetworkRenderSnapshot &current_snapshot = this->hydraulic_data->networkRenderSnapshot();
+    if (InfrastructureEntityTraits::isHydraulicConnectionNode(entity_type))
+    {
+        for (const NetworkRenderNode &node : current_snapshot.nodes)
+        {
+            if (node.uuid != uuid || node.entity_type != entity_type)
+                continue;
+            hit.render_id = node.render_id;
+            hit.entity_type = entity_type;
+            hit.uuid = uuid;
+            return hit;
+        }
+    }
+    else if (InfrastructureEntityTraits::isHydraulicNetworkLink(entity_type))
+    {
+        for (const NetworkRenderLink &link : current_snapshot.links)
+        {
+            if (link.uuid != uuid || link.entity_type != entity_type)
+                continue;
+            hit.render_id = link.render_id;
+            hit.entity_type = entity_type;
+            hit.uuid = uuid;
+            return hit;
+        }
+    }
+
+    return hit;
 }
 
 QPointF MapNetworkOverlayWidget::visibleReferenceWorldCenter() const

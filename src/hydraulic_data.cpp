@@ -58,13 +58,13 @@ void HydraulicData::onDatabaseReady()
     loadProject();
     
     //this->network_hydraulic = DummyNetworks::networkSimple();
-    //this->network_hydraulic = DummyNetworks::networkTanks();
+    this->network_hydraulic = DummyNetworks::networkTanks();
     //this->network_hydraulic = DummyMarburgNetworkGenerator::generate();
     //this->network_hydraulic = RandomHydraulicNetworkGenerator::generateFractal();
     rebuildBoundingBoxWgs84();
     markNetworkChanged(NetworkChange::Geometry);
     //this->network_hydraulic = DummyNetworks::networkOnMap();
-    this->network_hydraulic = DummyNetworks::networkTanksTimeline();
+    //this->network_hydraulic = DummyNetworks::networkTanksTimeline();
     
     emit signalNetworkLoaded();
 }
@@ -143,6 +143,66 @@ const std::optional<HydraulicSimulationResultTimeline> &HydraulicData::simulatio
     return this->simulation_result_timeline;
 }
 
+const HydraulicSimulationStatus *HydraulicData::simulationStatus() const
+{
+    if (!this->simulation_result_timeline.has_value())
+        return nullptr;
+
+    return &this->simulation_result_timeline->status;
+}
+
+QUuid HydraulicData::simulationErrorEntityUuid() const
+{
+    const HydraulicSimulationStatus *status = simulationStatus();
+    if (status == nullptr || status->success)
+        return QUuid();
+
+    return status->entity.uuid;
+}
+
+InfrastructureEntity HydraulicData::simulationErrorEntityType() const
+{
+    const HydraulicSimulationStatus *status = simulationStatus();
+    if (status == nullptr || status->success || status->entity.uuid.isNull())
+        return InfrastructureEntity::Unknown;
+
+    switch (status->entity.type)
+    {
+    case HydraulicSimulationStatusEntityType::Junction:
+        return InfrastructureEntity::Junction;
+    case HydraulicSimulationStatusEntityType::Reservoir:
+        return InfrastructureEntity::Reservoir;
+    case HydraulicSimulationStatusEntityType::Tank:
+        return InfrastructureEntity::Tank;
+    case HydraulicSimulationStatusEntityType::Pipe:
+        return InfrastructureEntity::Pipe;
+    case HydraulicSimulationStatusEntityType::Pump:
+        return InfrastructureEntity::Pump;
+    case HydraulicSimulationStatusEntityType::Valve:
+        return InfrastructureEntity::Valve;
+    case HydraulicSimulationStatusEntityType::Node:
+        if (junction(status->entity.uuid).has_value())
+            return InfrastructureEntity::Junction;
+        if (reservoir(status->entity.uuid).has_value())
+            return InfrastructureEntity::Reservoir;
+        if (tank(status->entity.uuid).has_value())
+            return InfrastructureEntity::Tank;
+        break;
+    case HydraulicSimulationStatusEntityType::Link:
+        if (pipe(status->entity.uuid).has_value())
+            return InfrastructureEntity::Pipe;
+        if (pump(status->entity.uuid).has_value())
+            return InfrastructureEntity::Pump;
+        if (valve(status->entity.uuid).has_value())
+            return InfrastructureEntity::Valve;
+        break;
+    default:
+        break;
+    }
+
+    return InfrastructureEntity::Unknown;
+}
+
 const HydraulicSimulationResult *HydraulicData::currentSimulationResult() const
 {
     if (!hasSimulationResults())
@@ -173,13 +233,13 @@ void HydraulicData::setSimulationResultTimeline(const HydraulicSimulationResultT
 
 void HydraulicData::clearSimulationResultTimeline()
 {
-    const bool had_results = hasSimulationResults();
+    const bool had_timeline = this->simulation_result_timeline.has_value();
     const int previous_index = this->current_simulation_result_index;
 
     this->simulation_result_timeline.reset();
     this->current_simulation_result_index = -1;
 
-    if (had_results)
+    if (had_timeline)
         emit signalSimulationResultTimelineChanged(false);
 
     if (previous_index != -1)

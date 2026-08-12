@@ -94,8 +94,7 @@ void SimulationManager::run()
     emit signalEpanetLogAvailabilityChanged(!this->epanet_log.isEmpty());
     qDebug().noquote() << this->epanet_log;
 
-    if (!run_result.result_timeline.results.isEmpty())
-        this->hydraulic_data->setSimulationResultTimeline(run_result.result_timeline);
+    this->hydraulic_data->setSimulationResultTimeline(run_result.result_timeline);
 
     if (!run_result.result_timeline.status.success)
     {

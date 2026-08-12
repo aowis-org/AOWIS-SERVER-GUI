@@ -1428,6 +1428,7 @@ void MapEditorRenderer::paintInteractiveNetwork(
     paintPipePlacement(painter, visual_state, nodes_by_uuid);
     paintDeviceLinkPlacement(painter, visual_state, nodes_by_uuid);
     paintSelectedMarkersAndDeviceLinks(painter, visual_state);
+    paintSimulationError(painter, visual_state);
     paintPlacement(painter, visual_state, nodes_by_uuid);
 }
 
@@ -1657,6 +1658,84 @@ void MapEditorRenderer::paintSelectedMarkersAndDeviceLinks(
     painter.restore();
 }
 
+void MapEditorRenderer::paintSimulationError(
+    QPainter &painter, const MapEditorVisualState &visual_state)
+{
+    if (!this->static_geometry || visual_state.simulation_error_entity_uuid.isNull())
+        return;
+
+    const QColor error_color(255, 0, 0);
+    painter.save();
+
+    const QHash<QUuid, int>::const_iterator link_iterator =
+        this->static_geometry->link_indices_by_uuid.constFind(
+            visual_state.simulation_error_entity_uuid);
+    if (link_iterator != this->static_geometry->link_indices_by_uuid.cend())
+    {
+        const StaticLink &link = this->static_geometry->links.at(link_iterator.value());
+        if (link.entity_type == visual_state.simulation_error_entity &&
+            link.world_vertices.size() >= 2)
+        {
+            QPen error_pen(error_color);
+            error_pen.setWidthF(3.0);
+            error_pen.setCapStyle(Qt::RoundCap);
+            error_pen.setJoinStyle(Qt::RoundJoin);
+            painter.setPen(error_pen);
+
+            if (link.entity_type == InfrastructureEntity::Pipe)
+            {
+                QPointF previous_point = screenFromReferenceWorld(link.world_vertices.first());
+                for (qsizetype index = 1; index < link.world_vertices.size(); ++index)
+                {
+                    const QPointF point = screenFromReferenceWorld(link.world_vertices.at(index));
+                    painter.drawLine(previous_point, point);
+                    previous_point = point;
+                }
+            }
+            else if (InfrastructureEntityTraits::isHydraulicDeviceLink(link.entity_type))
+            {
+                const QPointF start_point = screenFromReferenceWorld(link.world_vertices.first());
+                const QPointF center_point = screenFromReferenceWorld(
+                    link.device_center_world_position);
+                const QPointF end_point = screenFromReferenceWorld(link.world_vertices.last());
+                painter.drawLine(start_point, center_point);
+                painter.drawLine(center_point, end_point);
+
+                const QString path = MapEntityPixmapRenderer::pixmapPathForEntity(link.entity_type);
+                const QRectF target_rect = this->pixmap_renderer.centeredRect(
+                    center_point, path, visual_state.entity_width);
+                this->pixmap_renderer.paint(
+                    painter, path, visual_state.entity_width, target_rect,
+                    MapEntityPixmapRenderer::Highlight::Error);
+            }
+
+            painter.restore();
+            return;
+        }
+    }
+
+    const QHash<QUuid, int>::const_iterator node_iterator =
+        this->static_geometry->node_indices_by_uuid.constFind(
+            visual_state.simulation_error_entity_uuid);
+    if (node_iterator != this->static_geometry->node_indices_by_uuid.cend())
+    {
+        const StaticNode &node = this->static_geometry->nodes.at(node_iterator.value());
+        if (node.entity_type == visual_state.simulation_error_entity)
+        {
+            const QPointF point = screenFromReferenceWorld(node.world_position);
+            const QString path = MapEntityPixmapRenderer::pixmapPathForEntity(node.entity_type);
+            const QPointF rounded_anchor(qRound(point.x()), qRound(point.y()));
+            const QRectF target_rect = this->pixmap_renderer.bottomAnchoredRect(
+                rounded_anchor, path, visual_state.entity_width);
+            this->pixmap_renderer.paint(
+                painter, path, visual_state.entity_width, target_rect,
+                MapEntityPixmapRenderer::Highlight::Error);
+        }
+    }
+
+    painter.restore();
+}
+
 void MapEditorRenderer::paintPipePlacement(
     QPainter &painter,
     const MapEditorVisualState &visual_state,
@@ -1760,7 +1839,11 @@ void MapEditorRenderer::paintPipes(
         }
 
         const bool selected = visual_state.selected_pipe_uuids.contains(link.uuid);
-        QPen pipe_pen(selected ? QColor(0, 190, 255) : QColor(Qt::black));
+        const bool error = visual_state.simulation_error_entity == InfrastructureEntity::Pipe
+            && visual_state.simulation_error_entity_uuid == link.uuid;
+        const QColor pipe_color = error ? QColor(255, 0, 0)
+            : selected ? QColor(0, 190, 255) : QColor(Qt::black);
+        QPen pipe_pen(pipe_color);
         pipe_pen.setWidthF(3.0);
         pipe_pen.setCapStyle(Qt::RoundCap);
         pipe_pen.setJoinStyle(Qt::RoundJoin);
@@ -1777,7 +1860,7 @@ void MapEditorRenderer::paintPipes(
         }
 
         painter.setPen(Qt::NoPen);
-        painter.setBrush(selected ? QColor(0, 190, 255) : QColor(Qt::black));
+        painter.setBrush(pipe_color);
         for (qsizetype index = 1; index + 1 < link.vertices_wgs84.size(); ++index)
         {
             painter.drawEllipse(
@@ -1851,8 +1934,12 @@ void MapEditorRenderer::paintDeviceLinks(
         const QPointF end_point = screenFromWgs84(
             link.vertices_wgs84.last(), visual_state.wrap_reference_longitude);
         const bool selected = visual_state.selected_marker_uuids.contains(link.uuid);
+        const bool error = visual_state.simulation_error_entity == link.entity_type
+            && visual_state.simulation_error_entity_uuid == link.uuid;
+        const QColor placed_color = error ? QColor(255, 0, 0)
+            : selected ? QColor(0, 190, 255) : QColor(139, 90, 43);
 
-        QPen placed_pen(selected ? QColor(0, 190, 255) : QColor(139, 90, 43));
+        QPen placed_pen(placed_color);
         placed_pen.setWidthF(3.0);
         placed_pen.setCapStyle(Qt::RoundCap);
         placed_pen.setJoinStyle(Qt::RoundJoin);
@@ -1907,10 +1994,13 @@ void MapEditorRenderer::paintDeviceLinks(
             screenFromWgs84(deviceLinkCenterCoordinate(link),
                             visual_state.wrap_reference_longitude),
             path, visual_state.entity_width);
-        const MapEntityPixmapRenderer::Highlight highlight =
-            visual_state.selected_marker_uuids.contains(link.uuid)
-            ? MapEntityPixmapRenderer::Highlight::Selected
-            : MapEntityPixmapRenderer::Highlight::None;
+        const bool error = visual_state.simulation_error_entity == link.entity_type
+            && visual_state.simulation_error_entity_uuid == link.uuid;
+        const MapEntityPixmapRenderer::Highlight highlight = error
+            ? MapEntityPixmapRenderer::Highlight::Error
+            : visual_state.selected_marker_uuids.contains(link.uuid)
+                ? MapEntityPixmapRenderer::Highlight::Selected
+                : MapEntityPixmapRenderer::Highlight::None;
         this->pixmap_renderer.paint(
             painter, path, visual_state.entity_width, target_rect, highlight);
     }
@@ -1960,10 +2050,13 @@ void MapEditorRenderer::paintMarkers(
             qRound(screen_position.x()), qRound(screen_position.y()));
         const QRectF target_rect = this->pixmap_renderer.bottomAnchoredRect(
             rounded_anchor, path, visual_state.entity_width);
-        const MapEntityPixmapRenderer::Highlight highlight =
-            visual_state.selected_marker_uuids.contains(node.uuid)
-            ? MapEntityPixmapRenderer::Highlight::Selected
-            : MapEntityPixmapRenderer::Highlight::None;
+        const bool error = visual_state.simulation_error_entity == node.entity_type
+            && visual_state.simulation_error_entity_uuid == node.uuid;
+        const MapEntityPixmapRenderer::Highlight highlight = error
+            ? MapEntityPixmapRenderer::Highlight::Error
+            : visual_state.selected_marker_uuids.contains(node.uuid)
+                ? MapEntityPixmapRenderer::Highlight::Selected
+                : MapEntityPixmapRenderer::Highlight::None;
         this->pixmap_renderer.paint(
             painter, path, visual_state.entity_width, target_rect, highlight);
     }

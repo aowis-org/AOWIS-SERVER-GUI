@@ -167,6 +167,15 @@ EM_JS(void, aowisBrowserNetworkSetSelectedEntity, (int entity_type, double rende
     window.aowisBrowserNetwork.setSelectedEntity(render_id, entity_type);
 });
 
+EM_JS(void, aowisBrowserNetworkSetErrorEntity, (int entity_type, double render_id),
+{
+    if (!window.aowisBrowserNetwork ||
+        typeof window.aowisBrowserNetwork.setErrorEntity !== "function")
+        return;
+
+    window.aowisBrowserNetwork.setErrorEntity(render_id, entity_type);
+});
+
 #endif
 
 MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository *tile_repository, HydraulicData *hydraulic_data, GpsProvider *gps, QWidget *parent)
@@ -267,6 +276,11 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         [this](InfrastructureEntity, const QUuid &)
     {
         scheduleWasmNetworkSymbologySync();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged, this,
+        [this](bool)
+    {
+        syncWasmSimulationErrorEntity();
     });
     connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, this,
         [this](const HydraulicNodeTank &tank)
@@ -585,6 +599,49 @@ void MapMonitorContainer::syncWasmSelectedEntity(InfrastructureEntity entity_typ
     aowisBrowserNetworkSetSelectedEntity(0, 0);
 }
 
+void MapMonitorContainer::syncWasmSimulationErrorEntity()
+{
+    if (this->hydraulic_data == nullptr)
+    {
+        aowisBrowserNetworkSetErrorEntity(0, 0);
+        return;
+    }
+
+    const InfrastructureEntity entity_type = this->hydraulic_data->simulationErrorEntityType();
+    const QUuid uuid = this->hydraulic_data->simulationErrorEntityUuid();
+    if (entity_type == InfrastructureEntity::Unknown || uuid.isNull())
+    {
+        aowisBrowserNetworkSetErrorEntity(0, 0);
+        return;
+    }
+
+    const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
+    if (InfrastructureEntityTraits::isHydraulicConnectionNode(entity_type))
+    {
+        for (const NetworkRenderNode &node : snapshot.nodes)
+        {
+            if (node.uuid == uuid && node.entity_type == entity_type)
+            {
+                aowisBrowserNetworkSetErrorEntity(static_cast<int>(entity_type), node.render_id);
+                return;
+            }
+        }
+    }
+    else if (InfrastructureEntityTraits::isHydraulicNetworkLink(entity_type))
+    {
+        for (const NetworkRenderLink &link : snapshot.links)
+        {
+            if (link.uuid == uuid && link.entity_type == entity_type)
+            {
+                aowisBrowserNetworkSetErrorEntity(static_cast<int>(entity_type), link.render_id);
+                return;
+            }
+        }
+    }
+
+    aowisBrowserNetworkSetErrorEntity(0, 0);
+}
+
 void MapMonitorContainer::scheduleWasmMapLayerSync()
 {
     if (!this->wasm_map_layer_sync_timer->isActive())
@@ -645,6 +702,7 @@ void MapMonitorContainer::syncWasmNetworkSnapshot()
     this->wasm_network_snapshot_sent = true;
     if (!this->wasm_selected_entity_uuid.isNull())
         syncWasmSelectedEntity(this->wasm_selected_entity_type, this->wasm_selected_entity_uuid);
+    syncWasmSimulationErrorEntity();
     scheduleWasmNetworkSymbologySync();
 }
 

@@ -86,6 +86,11 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
                 this, &MapCanvasEntities::onNodeChanged);
         connect(this->hydraulic_data, &HydraulicData::signalLinkChanged,
                 this, &MapCanvasEntities::onLinkChanged);
+        connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged,
+                this, [this](bool)
+        {
+            updateCanvas();
+        });
         connect(this->hydraulic_data, &HydraulicData::signalNodeLocateRequested,
                 this, &MapCanvasEntities::onNodeLocateRequested);
         loadNetwork(this->hydraulic_data->networkHydraulic());
@@ -950,6 +955,11 @@ MapEditorVisualState MapCanvasEntities::visualState() const
     state.revision = this->visual_state_revision;
     state.selected_marker_uuids = this->selection->selectedMarkerUuids();
     state.selected_pipe_uuids = this->pipes->selectedPipeUuids();
+    if (this->hydraulic_data)
+    {
+        state.simulation_error_entity = this->hydraulic_data->simulationErrorEntityType();
+        state.simulation_error_entity_uuid = this->hydraulic_data->simulationErrorEntityUuid();
+    }
     state.wrap_reference_longitude = this->wrap_reference_longitude;
     state.entity_width = this->point_markers->entityWidth();
 

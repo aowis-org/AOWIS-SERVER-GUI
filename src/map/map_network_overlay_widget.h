@@ -21,6 +21,7 @@
 #include "../network_symbology.h"
 
 class HydraulicData;
+class QColor;
 class QHideEvent;
 class QPaintEvent;
 class QPainter;
@@ -194,6 +195,10 @@ private:
     bool coverageCoversCurrentView(const QRectF &coverage_world_bounds, int zoom) const;
     void paintNetwork(QPainter &painter);
     void paintSelectedEntity(QPainter &painter);
+    void paintSimulationErrorEntity(QPainter &painter);
+    void paintEntityHighlight(QPainter &painter, const NetworkOverlayHit &entity,
+                              const QColor &color);
+    NetworkOverlayHit simulationErrorEntityHit() const;
     QPointF visibleReferenceWorldCenter() const;
     QRectF visibleReferenceWorldRect() const;
     qreal referenceScaleForCurrentZoom() const;

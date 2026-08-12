@@ -211,6 +211,10 @@ QByteArray serializeMapEditorVisualState(const MapEditorVisualState &state)
                 uuidListToJson(state.selected_marker_uuids));
     root.insert(QStringLiteral("selectedPipeUuids"),
                 uuidListToJson(state.selected_pipe_uuids));
+    root.insert(QStringLiteral("simulationErrorEntity"),
+                static_cast<int>(state.simulation_error_entity));
+    root.insert(QStringLiteral("simulationErrorEntityUuid"),
+                state.simulation_error_entity_uuid.toString(QUuid::WithoutBraces));
     root.insert(QStringLiteral("wrapReferenceLongitude"), state.wrap_reference_longitude);
     root.insert(QStringLiteral("entityWidth"), state.entity_width);
     root.insert(QStringLiteral("placement"), placement);

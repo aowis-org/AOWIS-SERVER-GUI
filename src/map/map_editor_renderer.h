@@ -139,6 +139,7 @@ private:
                             const MapEditorVisualState &visual_state) const;
     void paintSelectedMarkersAndDeviceLinks(QPainter &painter,
                                             const MapEditorVisualState &visual_state);
+    void paintSimulationError(QPainter &painter, const MapEditorVisualState &visual_state);
     void paintPipePlacement(QPainter &painter,
                             const MapEditorVisualState &visual_state,
                             const QHash<QUuid, const NetworkRenderNode *> &nodes_by_uuid) const;
