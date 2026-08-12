@@ -298,8 +298,24 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->top_control_bar, &TopControlBar::signalShowSimulationStatistics, this->simulation_manager, &SimulationManager::showSimulationStatistics);
     connect(this->top_control_bar, &TopControlBar::signalShowEpanetLog, this->simulation_manager, &SimulationManager::showEpanetLog);
     connect(this->top_control_bar, &TopControlBar::signalExportEpanetNetwork, this->simulation_manager, &SimulationManager::exportEpanetNetwork);
-    connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged,
-            this->top_control_bar, &TopControlBar::setSimulationResultsAvailable);
+    connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged, this, [this](bool available)
+    {
+        this->top_control_bar->setSimulationResultsAvailable(available);
+
+        if (!available || !this->hydraulic_data->simulationResultTimeline().has_value())
+        {
+            this->top_control_bar->clearSimulationResultTimeline();
+            return;
+        }
+
+        this->top_control_bar->setSimulationResultTimeline(this->hydraulic_data->simulationResultTimeline().value());
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalCurrentSimulationResultChanged,
+            this->top_control_bar, &TopControlBar::setCurrentSimulationResultIndex);
+    connect(this->top_control_bar, &TopControlBar::signalSimulationResultIndexSelected, this, [this](int result_index)
+    {
+        this->hydraulic_data->setCurrentSimulationResultIndex(result_index);
+    });
     connect(this->simulation_manager, &SimulationManager::signalEpanetLogAvailabilityChanged,
             this->top_control_bar, &TopControlBar::setEpanetLogAvailable);
     connect(this->top_control_bar, &TopControlBar::signalFullScreenToggle, this, &MainWindow::fullScreenToggle);

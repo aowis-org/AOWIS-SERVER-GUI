@@ -3,6 +3,8 @@
 #include "_sizes.h"
 #include "widgets/combo_checkboxes.h"
 
+#include <aowis/model/hydraulic/hydraulic_simulation_results.h>
+
 #include <QAbstractButton>
 #include <QAction>
 #include <QComboBox>
@@ -18,6 +20,9 @@
 #include <QPalette>
 #include <QPushButton>
 #include <QResizeEvent>
+#include <QSignalBlocker>
+#include <QStyle>
+#include <QTimer>
 #include <QSizePolicy>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -190,6 +195,14 @@ void configureStackedToolbarIconButton(QAbstractButton *button)
     button->setIconSize(QSize(icon_extent, icon_extent));
     button->setStyleSheet(QStringLiteral("padding: 0;"));
 }
+
+QString formatSimulationElapsedTime(quint64 elapsed_s)
+{
+    const quint64 total_minutes = elapsed_s / 60;
+    const quint64 hours = total_minutes / 60;
+    const quint64 minutes = total_minutes % 60;
+    return QStringLiteral("%1:%2").arg(hours, 2, 10, QLatin1Char('0')).arg(minutes, 2, 10, QLatin1Char('0'));
+}
 }
 
 TopControlBar::TopControlBar(QWidget *parent)
@@ -239,6 +252,124 @@ void TopControlBar::setSimulationResultsAvailable(bool available)
         available
             ? QStringLiteral("Show simulation statistics")
             : QStringLiteral("Show simulation statistics<br>You need to run a simulation first"));
+}
+
+void TopControlBar::setSimulationResultTimeline(const HydraulicSimulationResultTimeline &result_timeline)
+{
+    if (this->combo_sim_timepoint == nullptr)
+        return;
+
+    setSimulationPlaybackActive(false);
+
+    const QSignalBlocker blocker(this->combo_sim_timepoint);
+    this->combo_sim_timepoint->clear();
+    this->simulation_result_count = result_timeline.results.size();
+
+    for (const HydraulicSimulationResult &result : result_timeline.results)
+    {
+        const QString elapsed_time = formatSimulationElapsedTime(result.time_elapsed_s);
+        this->combo_sim_timepoint->addItem(elapsed_time);
+
+        if (result_timeline.simulation_start_utc.isValid())
+        {
+            const QDateTime timestamp = result_timeline.simulation_start_utc.addSecs(static_cast<qint64>(result.time_elapsed_s));
+            this->combo_sim_timepoint->setItemData(
+                this->combo_sim_timepoint->count() - 1,
+                timestamp.toUTC().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss 'UTC'")),
+                Qt::ToolTipRole);
+        }
+    }
+
+    this->combo_sim_timepoint->setCurrentIndex(this->simulation_result_count > 0 ? 0 : -1);
+    updateSimulationNavigationState();
+}
+
+void TopControlBar::clearSimulationResultTimeline()
+{
+    setSimulationPlaybackActive(false);
+    this->simulation_result_count = 0;
+
+    if (this->combo_sim_timepoint != nullptr)
+    {
+        const QSignalBlocker blocker(this->combo_sim_timepoint);
+        this->combo_sim_timepoint->clear();
+    }
+
+    updateSimulationNavigationState();
+}
+
+void TopControlBar::setCurrentSimulationResultIndex(int result_index)
+{
+    if (this->combo_sim_timepoint == nullptr)
+        return;
+
+    if (result_index < 0 || result_index >= this->simulation_result_count)
+    {
+        const QSignalBlocker blocker(this->combo_sim_timepoint);
+        this->combo_sim_timepoint->setCurrentIndex(-1);
+        updateSimulationNavigationState();
+        return;
+    }
+
+    if (this->combo_sim_timepoint->currentIndex() != result_index)
+    {
+        const QSignalBlocker blocker(this->combo_sim_timepoint);
+        this->combo_sim_timepoint->setCurrentIndex(result_index);
+    }
+
+    if (this->simulation_playback_timer != nullptr
+        && this->simulation_playback_timer->isActive()
+        && result_index >= this->simulation_result_count - 1)
+    {
+        setSimulationPlaybackActive(false);
+    }
+
+    updateSimulationNavigationState();
+}
+
+void TopControlBar::updateSimulationNavigationState()
+{
+    const bool has_results = this->simulation_result_count > 0;
+    const int current_index = this->combo_sim_timepoint != nullptr ? this->combo_sim_timepoint->currentIndex() : -1;
+
+    if (this->combo_sim_timepoint != nullptr)
+        this->combo_sim_timepoint->setEnabled(has_results);
+
+    if (this->button_sim_step_previous != nullptr)
+        this->button_sim_step_previous->setEnabled(has_results && current_index > 0);
+
+    if (this->button_sim_step_next != nullptr)
+        this->button_sim_step_next->setEnabled(has_results && current_index >= 0 && current_index < this->simulation_result_count - 1);
+
+    const bool can_play = this->simulation_result_count > 1;
+    if (this->button_sim_playback != nullptr)
+        this->button_sim_playback->setEnabled(can_play);
+
+    if (this->combo_sim_speed != nullptr)
+        this->combo_sim_speed->setEnabled(can_play);
+}
+
+void TopControlBar::setSimulationPlaybackActive(bool active)
+{
+    if (this->simulation_playback_timer == nullptr || this->button_sim_playback == nullptr)
+        return;
+
+    if (active && this->simulation_result_count > 1)
+        this->simulation_playback_timer->start();
+    else
+        this->simulation_playback_timer->stop();
+
+    const bool playing = this->simulation_playback_timer->isActive();
+    this->button_sim_playback->setIcon(style()->standardIcon(playing ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
+    this->button_sim_playback->setToolTip(playing ? QStringLiteral("Pause simulation timeline") : QStringLiteral("Play simulation timeline"));
+}
+
+void TopControlBar::requestSimulationResultIndex(int result_index)
+{
+    if (result_index < 0 || result_index >= this->simulation_result_count)
+        return;
+
+    emit signalSimulationResultIndexSelected(result_index);
 }
 
 void TopControlBar::setEpanetLogAvailable(bool available)
@@ -458,8 +589,77 @@ void TopControlBar::addSimulationControls()
     this->button_sim_log->setIcon(QIcon(QStringLiteral(":/icon/log.png")));
     configureStackedToolbarIconButton(this->button_sim_log);
 
+    const int control_height = toolbarIconButtonSize().height();
+    const int half_height = control_height / 2;
+    const int timeline_width = 104;
+
+    QWidget *timeline_navigation = new QWidget(this->content);
+    timeline_navigation->setFixedSize(timeline_width, control_height);
+    QVBoxLayout *timeline_navigation_layout = new QVBoxLayout(timeline_navigation);
+    timeline_navigation_layout->setContentsMargins(0, 0, 0, 0);
+    timeline_navigation_layout->setSpacing(0);
+
+    this->combo_sim_timepoint = new QComboBox(timeline_navigation);
+    this->combo_sim_timepoint->setFixedSize(timeline_width, half_height);
+    this->combo_sim_timepoint->setToolTip(QStringLiteral("Select simulation time point"));
+
+    QWidget *step_buttons = new QWidget(timeline_navigation);
+    step_buttons->setFixedSize(timeline_width, half_height);
+    QHBoxLayout *step_buttons_layout = new QHBoxLayout(step_buttons);
+    step_buttons_layout->setContentsMargins(0, 0, 0, 0);
+    step_buttons_layout->setSpacing(0);
+
+    this->button_sim_step_previous = new QToolButton(step_buttons);
+    this->button_sim_step_previous->setAutoRaise(true);
+    this->button_sim_step_previous->setIcon(style()->standardIcon(QStyle::SP_MediaSkipBackward));
+    this->button_sim_step_previous->setFixedSize(timeline_width / 2, half_height);
+    this->button_sim_step_previous->setIconSize(QSize(qMax(1, half_height - 4), qMax(1, half_height - 4)));
+    this->button_sim_step_previous->setToolTip(QStringLiteral("Previous simulation time point"));
+
+    this->button_sim_step_next = new QToolButton(step_buttons);
+    this->button_sim_step_next->setAutoRaise(true);
+    this->button_sim_step_next->setIcon(style()->standardIcon(QStyle::SP_MediaSkipForward));
+    this->button_sim_step_next->setFixedSize(timeline_width - timeline_width / 2, half_height);
+    this->button_sim_step_next->setIconSize(QSize(qMax(1, half_height - 4), qMax(1, half_height - 4)));
+    this->button_sim_step_next->setToolTip(QStringLiteral("Next simulation time point"));
+
+    step_buttons_layout->addWidget(this->button_sim_step_previous);
+    step_buttons_layout->addWidget(this->button_sim_step_next);
+    timeline_navigation_layout->addWidget(this->combo_sim_timepoint);
+    timeline_navigation_layout->addWidget(step_buttons);
+
+    QWidget *playback_stack = new QWidget(this->content);
+    playback_stack->setFixedSize(54, control_height);
+    QVBoxLayout *playback_stack_layout = new QVBoxLayout(playback_stack);
+    playback_stack_layout->setContentsMargins(0, 0, 0, 0);
+    playback_stack_layout->setSpacing(0);
+
+    this->button_sim_playback = new QToolButton(playback_stack);
+    this->button_sim_playback->setAutoRaise(true);
+    this->button_sim_playback->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
+    this->button_sim_playback->setFixedSize(54, half_height);
+    this->button_sim_playback->setIconSize(QSize(qMax(1, half_height - 4), qMax(1, half_height - 4)));
+    this->button_sim_playback->setToolTip(QStringLiteral("Play simulation timeline"));
+
+    this->combo_sim_speed = new QComboBox(playback_stack);
+    this->combo_sim_speed->setFixedSize(54, half_height);
+    this->combo_sim_speed->setToolTip(QStringLiteral("Simulation playback speed"));
+    this->combo_sim_speed->addItem(QStringLiteral("¼×"), 0.25);
+    this->combo_sim_speed->addItem(QStringLiteral("½×"), 0.5);
+    this->combo_sim_speed->addItem(QStringLiteral("1×"), 1.0);
+    this->combo_sim_speed->addItem(QStringLiteral("2×"), 2.0);
+    this->combo_sim_speed->addItem(QStringLiteral("4×"), 4.0);
+    this->combo_sim_speed->setCurrentIndex(2);
+
+    playback_stack_layout->addWidget(this->button_sim_playback);
+    playback_stack_layout->addWidget(this->combo_sim_speed);
+
+    this->simulation_playback_timer = new QTimer(this);
+    this->simulation_playback_timer->setInterval(1000);
+
     setSimulationResultsAvailable(false);
     setEpanetLogAvailable(false);
+    clearSimulationResultTimeline();
 
     connect(button_sim_start, &QPushButton::clicked, this, [this]
     {
@@ -476,11 +676,65 @@ void TopControlBar::addSimulationControls()
         emit signalShowEpanetLog();
     });
 
+    connect(this->combo_sim_timepoint, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int result_index)
+    {
+        if (result_index >= 0)
+            requestSimulationResultIndex(result_index);
+    });
+
+    connect(this->button_sim_step_previous, &QToolButton::clicked, this, [this]
+    {
+        requestSimulationResultIndex(this->combo_sim_timepoint->currentIndex() - 1);
+    });
+
+    connect(this->button_sim_step_next, &QToolButton::clicked, this, [this]
+    {
+        requestSimulationResultIndex(this->combo_sim_timepoint->currentIndex() + 1);
+    });
+
+    connect(this->button_sim_playback, &QToolButton::clicked, this, [this]
+    {
+        if (this->simulation_playback_timer->isActive())
+        {
+            setSimulationPlaybackActive(false);
+            return;
+        }
+
+        if (this->simulation_result_count <= 1)
+            return;
+
+        if (this->combo_sim_timepoint->currentIndex() >= this->simulation_result_count - 1)
+            requestSimulationResultIndex(0);
+
+        setSimulationPlaybackActive(true);
+    });
+
+    connect(this->combo_sim_speed, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int)
+    {
+        const double speed = this->combo_sim_speed->currentData().toDouble();
+        const int interval_ms = qMax(1, qRound(1000.0 / qMax(0.01, speed)));
+        this->simulation_playback_timer->setInterval(interval_ms);
+    });
+
+    connect(this->simulation_playback_timer, &QTimer::timeout, this, [this]
+    {
+        const int current_index = this->combo_sim_timepoint->currentIndex();
+        if (current_index < 0 || current_index >= this->simulation_result_count - 1)
+        {
+            setSimulationPlaybackActive(false);
+            return;
+        }
+
+        requestSimulationResultIndex(current_index + 1);
+    });
+
     result_button_stack_layout->addWidget(this->button_sim_statistics);
     result_button_stack_layout->addWidget(this->button_sim_log);
 
     bar_content->centerLayout()->addWidget(button_sim_start);
     bar_content->centerLayout()->addWidget(result_button_stack);
+    bar_content->centerLayout()->addWidget(timeline_navigation);
+    bar_content->centerLayout()->addWidget(playback_stack);
 }
 
 void TopControlBar::addViewControls()

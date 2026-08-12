@@ -5,7 +5,11 @@
 #include "_enums_structs.h"
 #include "epanet2_enums.h"
 
+struct HydraulicSimulationResultTimeline;
+
 class ComboCheckboxes;
+class QComboBox;
+class QTimer;
 class QToolButton;
 class QWidget;
 
@@ -18,12 +22,16 @@ public:
 
     void setFullScreenState(bool fullscreen);
     void setSimulationResultsAvailable(bool available);
+    void setSimulationResultTimeline(const HydraulicSimulationResultTimeline &result_timeline);
+    void clearSimulationResultTimeline();
+    void setCurrentSimulationResultIndex(int result_index);
     void setEpanetLogAvailable(bool available);
 
 signals:
     void signalHeadlossFormulaChanged(HeadlossFormulas formulas);
     void signalSimulationStart();
     void signalShowSimulationStatistics();
+    void signalSimulationResultIndexSelected(int result_index);
     void signalShowEpanetLog();
     void signalExportEpanetNetwork();
     void signalFullScreenToggle();
@@ -34,6 +42,13 @@ private:
     QToolButton *button_fullscreen = nullptr;
     QToolButton *button_sim_statistics = nullptr;
     QToolButton *button_sim_log = nullptr;
+    QToolButton *button_sim_step_previous = nullptr;
+    QToolButton *button_sim_step_next = nullptr;
+    QToolButton *button_sim_playback = nullptr;
+    QComboBox *combo_sim_timepoint = nullptr;
+    QComboBox *combo_sim_speed = nullptr;
+    QTimer *simulation_playback_timer = nullptr;
+    int simulation_result_count = 0;
 
     EN_FlowUnits selected_flow_units = EN_LPS;
 
@@ -43,4 +58,7 @@ private:
     void addHeadlossFormulaDropdown();
     void addSimulationControls();
     void addViewControls();
+    void updateSimulationNavigationState();
+    void setSimulationPlaybackActive(bool active);
+    void requestSimulationResultIndex(int result_index);
 };
