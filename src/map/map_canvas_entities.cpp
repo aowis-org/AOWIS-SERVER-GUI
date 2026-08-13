@@ -17,6 +17,8 @@
 #include <QMessageBox>
 #include <QScopedValueRollback>
 
+#include <GeographicLib/Geodesic.hpp>
+
 #include <cmath>
 #include <functional>
 
@@ -33,6 +35,75 @@ CoordinateWGS84 midpoint(const CoordinateWGS84 &from, const CoordinateWGS84 &to)
     coordinate.longitude_deg = GeoWebMercator::normalizeLongitude(
         from.longitude_deg + longitude_delta / 2.0);
     return coordinate;
+}
+
+std::optional<CoordinateWGS84> polylineMidpoint(
+    const QList<CoordinateWGS84> &coordinates)
+{
+    if (coordinates.isEmpty())
+        return std::nullopt;
+    if (coordinates.size() == 1)
+        return coordinates.first();
+
+    const GeographicLib::Geodesic &geodesic = GeographicLib::Geodesic::WGS84();
+    double total_length_m = 0.0;
+    for (qsizetype index = 1; index < coordinates.size(); ++index)
+    {
+        double segment_length_m = 0.0;
+        geodesic.Inverse(
+            coordinates.at(index - 1).latitude_deg,
+            coordinates.at(index - 1).longitude_deg,
+            coordinates.at(index).latitude_deg,
+            coordinates.at(index).longitude_deg,
+            segment_length_m);
+        if (!std::isfinite(segment_length_m))
+            return std::nullopt;
+        total_length_m += segment_length_m;
+    }
+
+    if (total_length_m <= 0.0)
+        return coordinates.first();
+
+    const double target_length_m = total_length_m / 2.0;
+    double traversed_length_m = 0.0;
+    for (qsizetype index = 1; index < coordinates.size(); ++index)
+    {
+        const CoordinateWGS84 &segment_start = coordinates.at(index - 1);
+        const CoordinateWGS84 &segment_end = coordinates.at(index);
+        double segment_length_m = 0.0;
+        double azimuth_start_deg = 0.0;
+        double azimuth_end_deg = 0.0;
+        geodesic.Inverse(
+            segment_start.latitude_deg,
+            segment_start.longitude_deg,
+            segment_end.latitude_deg,
+            segment_end.longitude_deg,
+            segment_length_m,
+            azimuth_start_deg,
+            azimuth_end_deg);
+
+        if (segment_length_m <= 0.0)
+            continue;
+
+        if (traversed_length_m + segment_length_m >= target_length_m)
+        {
+            CoordinateWGS84 coordinate;
+            geodesic.Direct(
+                segment_start.latitude_deg,
+                segment_start.longitude_deg,
+                azimuth_start_deg,
+                target_length_m - traversed_length_m,
+                coordinate.latitude_deg,
+                coordinate.longitude_deg);
+            coordinate.longitude_deg = GeoWebMercator::normalizeLongitude(
+                coordinate.longitude_deg);
+            return coordinate;
+        }
+
+        traversed_length_m += segment_length_m;
+    }
+
+    return coordinates.last();
 }
 }
 
@@ -93,6 +164,8 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
         });
         connect(this->hydraulic_data, &HydraulicData::signalNodeLocateRequested,
                 this, &MapCanvasEntities::onNodeLocateRequested);
+        connect(this->hydraulic_data, &HydraulicData::signalLinkLocateRequested,
+                this, &MapCanvasEntities::onLinkLocateRequested);
         connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, this,
             [this](const HydraulicNodeTank &tank)
         {
@@ -216,6 +289,28 @@ void MapCanvasEntities::onNodeLocateRequested(InfrastructureEntity entity_type, 
     this->map_model->setCenter(node->coordinate_wgs84.longitude_deg,
                                node->coordinate_wgs84.latitude_deg,
                                this->map_canvas->size());
+}
+
+void MapCanvasEntities::onLinkLocateRequested(InfrastructureEntity entity_type, const QUuid &uuid)
+{
+    if (!this->hydraulic_data || !this->map_canvas)
+        return;
+
+    const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
+    for (const NetworkRenderLink &link : snapshot.links)
+    {
+        if (link.entity_type != entity_type || link.uuid != uuid)
+            continue;
+
+        const std::optional<CoordinateWGS84> coordinate = polylineMidpoint(link.vertices_wgs84);
+        if (!coordinate.has_value())
+            return;
+
+        this->map_model->setCenter(coordinate->longitude_deg,
+                                   coordinate->latitude_deg,
+                                   this->map_canvas->size());
+        return;
+    }
 }
 
 void MapCanvasEntities::loadNetwork(const NetworkHydraulic &network)

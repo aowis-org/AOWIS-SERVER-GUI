@@ -798,6 +798,11 @@ void EntityInspectorWidget::addGroupOverviewImage(const QString &icon_path, cons
     picture->setAlignment(Qt::AlignCenter);
     
     grid->addWidget(picture, 0, 0, 1, 2);
+
+    this->button_overview_find_on_map = new QPushButton("Find on Map");
+    this->button_overview_find_on_map->setEnabled(false);
+    this->button_overview_find_on_map->hide();
+    grid->addWidget(this->button_overview_find_on_map, 1, 0, 1, 2);
     
     this->layoutOverview()->addWidget(group);
 }
@@ -1110,6 +1115,15 @@ void EntityInspectorWidget::bindHydraulicNode(InfrastructureEntity entity_type, 
     {
         this->hydraulic_data->requestNodeLocate(this->entity_type, this->entity_uuid);
     });
+    if (this->button_overview_find_on_map != nullptr)
+    {
+        this->button_overview_find_on_map->setEnabled(true);
+        this->button_overview_find_on_map->show();
+        connect(this->button_overview_find_on_map, &QPushButton::clicked, this, [this]()
+        {
+            this->hydraulic_data->requestNodeLocate(this->entity_type, this->entity_uuid);
+        });
+    }
     connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this, [this](InfrastructureEntity entity_type_changed, const QUuid &uuid_changed)
     {
         if (entity_type_changed == this->entity_type && uuid_changed == this->entity_uuid)
@@ -1159,6 +1173,15 @@ void EntityInspectorWidget::bindHydraulicLink(InfrastructureEntity entity_type, 
     {
         this->hydraulic_data->setLinkEnabled(this->entity_uuid, enabled);
     });
+    if (this->button_overview_find_on_map != nullptr)
+    {
+        this->button_overview_find_on_map->setEnabled(true);
+        this->button_overview_find_on_map->show();
+        connect(this->button_overview_find_on_map, &QPushButton::clicked, this, [this]()
+        {
+            this->hydraulic_data->requestLinkLocate(this->entity_type, this->entity_uuid);
+        });
+    }
     connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
             [this](InfrastructureEntity entity_type_changed, const QUuid &uuid_changed)
     {

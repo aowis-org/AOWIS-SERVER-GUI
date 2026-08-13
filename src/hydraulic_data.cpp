@@ -1795,6 +1795,14 @@ void HydraulicData::requestNodeLocate(InfrastructureEntity entity_type, const QU
     emit signalNodeLocateRequested(entity_type, uuid);
 }
 
+void HydraulicData::requestLinkLocate(InfrastructureEntity entity_type, const QUuid &uuid)
+{
+    if (!linkCommonData(entity_type, uuid).has_value())
+        return;
+
+    emit signalLinkLocateRequested(entity_type, uuid);
+}
+
 QUuid HydraulicData::addJunction(const CoordinateWGS84 &coordinate)
 {
     const QUuid uuid = this->network_editor.addJunction(coordinate);

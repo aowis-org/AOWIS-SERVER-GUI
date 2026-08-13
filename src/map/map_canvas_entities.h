@@ -123,6 +123,7 @@ private slots:
     void onNodeChanged(InfrastructureEntity entity_type, const QUuid &uuid);
     void onLinkChanged(InfrastructureEntity entity_type, const QUuid &uuid);
     void onNodeLocateRequested(InfrastructureEntity entity_type, const QUuid &uuid);
+    void onLinkLocateRequested(InfrastructureEntity entity_type, const QUuid &uuid);
 
 public slots:
     void onMarkerSelectedDeleteRequested();

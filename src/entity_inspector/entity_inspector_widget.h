@@ -57,6 +57,7 @@ protected:
     void setTitle(const QString &title);
     
     void addGroupOverviewImage(const QString &icon_path, const QString &name);
+    QPushButton *button_overview_find_on_map = nullptr;
     
     void addGroupGeneral(const QString &name);
     QLineEdit *line_name = nullptr;
