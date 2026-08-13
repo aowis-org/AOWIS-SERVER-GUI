@@ -1,7 +1,7 @@
 #include "tab_reservoirs_widget.h"
 
-ReservoirsWidget::ReservoirsWidget(QWidget *parent)
-    : QWidget{parent}
+ReservoirsWidget::ReservoirsWidget(HydraulicData *hydraulic_data, QWidget *parent)
+    : HydraulicEntityTableWidget(hydraulic_data, InfrastructureEntity::Reservoir,
+                                 QStringLiteral("Reservoirs"), parent)
 {
-    
 }

@@ -1,22 +1,16 @@
 #ifndef TAB_TANKS_WIDGET_H
 #define TAB_TANKS_WIDGET_H
 
-#include <QObject>
-#include <QWidget>
-#include <QVBoxLayout>
-#include <QTableWidget>
+#include "hydraulic_entity_table_widget.h"
 
-class TanksWidget : public QWidget
+class HydraulicData;
+
+class TanksWidget : public HydraulicEntityTableWidget
 {
     Q_OBJECT
+
 public:
-    explicit TanksWidget(QWidget *parent = nullptr);
-    
-private:
-    QVBoxLayout *layout;
-    QTableWidget *table;
-    
-signals:
+    explicit TanksWidget(HydraulicData *hydraulic_data, QWidget *parent = nullptr);
 };
 
 #endif // TAB_TANKS_WIDGET_H

@@ -1,16 +1,16 @@
 #ifndef TAB_RESERVOIRS_WIDGET_H
 #define TAB_RESERVOIRS_WIDGET_H
 
-#include <QObject>
-#include <QWidget>
+#include "hydraulic_entity_table_widget.h"
 
-class ReservoirsWidget : public QWidget
+class HydraulicData;
+
+class ReservoirsWidget : public HydraulicEntityTableWidget
 {
     Q_OBJECT
-public:
-    explicit ReservoirsWidget(QWidget *parent = nullptr);
 
-signals:
+public:
+    explicit ReservoirsWidget(HydraulicData *hydraulic_data, QWidget *parent = nullptr);
 };
 
 #endif // TAB_RESERVOIRS_WIDGET_H

@@ -1,16 +1,16 @@
 #ifndef TAB_VALVES_WIDGET_H
 #define TAB_VALVES_WIDGET_H
 
-#include <QObject>
-#include <QWidget>
+#include "hydraulic_entity_table_widget.h"
 
-class ValvesWidget : public QWidget
+class HydraulicData;
+
+class ValvesWidget : public HydraulicEntityTableWidget
 {
     Q_OBJECT
-public:
-    explicit ValvesWidget(QWidget *parent = nullptr);
 
-signals:
+public:
+    explicit ValvesWidget(HydraulicData *hydraulic_data, QWidget *parent = nullptr);
 };
 
 #endif // TAB_VALVES_WIDGET_H

@@ -31,12 +31,12 @@ MainWindow::MainWindow(QWidget *parent)
     map_monitor( new MapMonitorContainer(this->map_model_monitor, this->map_tile_repository, this->hydraulic_data, this->gps, this) ),
     map_editor( new MapEditorContainer(this->map_model_editor, this->map_tile_repository, this->hydraulic_data, this->gps, this->dock_entity_inspector, this) ),
     energy( new EnergyWidget(this) ),
-    reservoirs( new ReservoirsWidget(this) ),
-    tanks( new TanksWidget(this) ),
-    pumps( new PumpsWidget(this) ),
-    valves( new ValvesWidget(this) ),
-    junctions( new JunctionsWidget(this) ),
-    pipes( new PipesWidget(this) ),
+    reservoirs( new ReservoirsWidget(this->hydraulic_data, this) ),
+    tanks( new TanksWidget(this->hydraulic_data, this) ),
+    pumps( new PumpsWidget(this->hydraulic_data, this) ),
+    valves( new ValvesWidget(this->hydraulic_data, this) ),
+    junctions( new JunctionsWidget(this->hydraulic_data, this) ),
+    pipes( new PipesWidget(this->hydraulic_data, this) ),
     customerPoints( new CustomerPointsWidget(this) ),
     customers( new CustomersWidget(this) ),
     logs( new LogsWidget(this) ),
@@ -330,13 +330,13 @@ MainWindow::MainWindow(QWidget *parent)
             this->top_control_bar, &TopControlBar::setEpanetLogAvailable);
     connect(this->top_control_bar, &TopControlBar::signalFullScreenToggle, this, &MainWindow::fullScreenToggle);
 
-    connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, this, &MainWindow::showEntityInspectorForMapSelection);
-    connect(this->hydraulic_data, &HydraulicData::signalSelectedReservoir, this, &MainWindow::showEntityInspectorForMapSelection);
-    connect(this->hydraulic_data, &HydraulicData::signalSelectedJunction, this, &MainWindow::showEntityInspectorForMapSelection);
-    connect(this->hydraulic_data, &HydraulicData::signalSelectedPipe, this, &MainWindow::showEntityInspectorForMapSelection);
-    connect(this->hydraulic_data, &HydraulicData::signalSelectedPump, this, &MainWindow::showEntityInspectorForMapSelection);
-    connect(this->hydraulic_data, &HydraulicData::signalSelectedValve, this, &MainWindow::showEntityInspectorForMapSelection);
-    connect(this->hydraulic_data, &HydraulicData::signalSelectedCustomerPoint, this, &MainWindow::showEntityInspectorForMapSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, this, &MainWindow::showEntityInspectorForSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedReservoir, this, &MainWindow::showEntityInspectorForSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedJunction, this, &MainWindow::showEntityInspectorForSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedPipe, this, &MainWindow::showEntityInspectorForSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedPump, this, &MainWindow::showEntityInspectorForSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedValve, this, &MainWindow::showEntityInspectorForSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedCustomerPoint, this, &MainWindow::showEntityInspectorForSelection);
 
 #ifdef Q_OS_WASM
     emscripten_set_fullscreenchange_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, this, EM_TRUE, &MainWindow::fullScreenChangeCallback);
@@ -573,12 +573,8 @@ void MainWindow::toggleRightDockArea()
     scheduleRightDockResize();
 }
 
-void MainWindow::showEntityInspectorForMapSelection()
+void MainWindow::showEntityInspectorForSelection()
 {
-    QWidget *current_tab = this->tabs->currentWidget();
-    if (current_tab != this->map_editor && current_tab != this->map_monitor)
-        return;
-
     if (this->right_dock_area_hidden)
         toggleRightDockArea();
 

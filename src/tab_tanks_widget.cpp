@@ -1,17 +1,7 @@
 #include "tab_tanks_widget.h"
 
-TanksWidget::TanksWidget(QWidget *parent)
-    : QWidget{parent},
-    layout( new QVBoxLayout(this) ),
-    table( new QTableWidget(this) )
+TanksWidget::TanksWidget(HydraulicData *hydraulic_data, QWidget *parent)
+    : HydraulicEntityTableWidget(hydraulic_data, InfrastructureEntity::Tank,
+                                 QStringLiteral("Tanks"), parent)
 {
-    setLayout(this->layout);
-    
-    this->table->setColumnCount(8);
-    this->table->setHorizontalHeaderLabels({"ID", "Elevation", "InitLvl", "MinLvl", "MaxLvl", "Diameter", "Curve", "Overflow"});
-    this->table->setAlternatingRowColors(true);
-    this->table->resizeColumnsToContents();
-    
-    this->layout->addWidget(this->table);
-    
 }

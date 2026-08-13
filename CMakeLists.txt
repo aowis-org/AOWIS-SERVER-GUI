@@ -72,6 +72,7 @@ qt_add_executable(aowis-server-gui
     src/footer_statusbar.h src/footer_statusbar.cpp
     src/_enums_structs.h
     src/infrastructure_entity_traits.h
+    src/hydraulic_entity_table_widget.h src/hydraulic_entity_table_widget.cpp
     src/network_symbology.h
     src/network_symbology_values.h
     src/network_render_snapshot.h

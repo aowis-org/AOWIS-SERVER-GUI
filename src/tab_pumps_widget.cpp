@@ -1,7 +1,7 @@
 #include "tab_pumps_widget.h"
 
-PumpsWidget::PumpsWidget(QWidget *parent)
-    : QWidget{parent}
+PumpsWidget::PumpsWidget(HydraulicData *hydraulic_data, QWidget *parent)
+    : HydraulicEntityTableWidget(hydraulic_data, InfrastructureEntity::Pump,
+                                 QStringLiteral("Pumps"), parent)
 {
-    
 }

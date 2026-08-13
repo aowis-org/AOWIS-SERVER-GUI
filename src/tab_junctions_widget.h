@@ -1,22 +1,16 @@
 #ifndef TAB_JUNCTIONS_WIDGET_H
 #define TAB_JUNCTIONS_WIDGET_H
 
-#include <QObject>
-#include <QWidget>
-#include <QVBoxLayout>
-#include <QTableWidget>
+#include "hydraulic_entity_table_widget.h"
 
-class JunctionsWidget : public QWidget
+class HydraulicData;
+
+class JunctionsWidget : public HydraulicEntityTableWidget
 {
     Q_OBJECT
+
 public:
-    explicit JunctionsWidget(QWidget *parent = nullptr);
-    
-private:
-    QVBoxLayout *layout;
-    QTableWidget *table;
-    
-signals:
+    explicit JunctionsWidget(HydraulicData *hydraulic_data, QWidget *parent = nullptr);
 };
 
 #endif // TAB_JUNCTIONS_WIDGET_H
