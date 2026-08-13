@@ -4,6 +4,8 @@
 #include <QShortcut>
 #include <qapplication.h>
 
+#include <optional>
+
 namespace
 {
 QIcon rotatedIcon(const QString &path)
@@ -302,13 +304,21 @@ MainWindow::MainWindow(QWidget *parent)
     {
         this->top_control_bar->setSimulationResultsAvailable(available);
 
-        if (!available || !this->hydraulic_data->simulationResultTimeline().has_value())
+        const std::optional<HydraulicSimulationResultTimeline> &result_timeline =
+            this->hydraulic_data->simulationResultTimeline();
+
+        if (!result_timeline.has_value() || this->hydraulic_data->simulationDiagnosticsStale())
+            this->top_control_bar->resetSimulationRunIcon();
+        else
+            this->top_control_bar->setSimulationRunResultIcon(result_timeline.value());
+
+        if (!available || !result_timeline.has_value())
         {
             this->top_control_bar->clearSimulationResultTimeline();
             return;
         }
 
-        this->top_control_bar->setSimulationResultTimeline(this->hydraulic_data->simulationResultTimeline().value());
+        this->top_control_bar->setSimulationResultTimeline(result_timeline.value());
     });
     connect(this->hydraulic_data, &HydraulicData::signalCurrentSimulationResultChanged,
             this->top_control_bar, &TopControlBar::setCurrentSimulationResultIndex);

@@ -67,6 +67,10 @@
         <file alias="fullscreen_undo.png">assets/iconsets/gothic/fullscreen_undo.png</file>
         
         <file alias="simulation_start.png">assets/iconsets/gothic/simulation_run.png</file>
+        <file alias="simulation_fail.png">assets/iconsets/gothic/simulation_fail.png</file>
+        <file alias="simulation_warning.png">assets/iconsets/gothic/simulation_warning.png</file>
+        <file alias="simulation_error.png">assets/iconsets/gothic/simulation_fail.png</file>
+        <file alias="simulation_success.png">assets/iconsets/gothic/simulation_success.png</file>
         <file alias="set_active.png">assets/iconsets/gothic/set_active.png</file>
     </qresource>
     <qresource prefix="/network-svg/">

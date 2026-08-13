@@ -254,6 +254,70 @@ void TopControlBar::setSimulationResultsAvailable(bool available)
             : QStringLiteral("Show simulation statistics<br>You need to run a simulation first"));
 }
 
+void TopControlBar::resetSimulationRunIcon()
+{
+    if (this->button_sim_start == nullptr)
+        return;
+
+    this->button_sim_start->setIcon(QIcon(QStringLiteral(":/icon/simulation_start.png")));
+}
+
+void TopControlBar::setSimulationRunResultIcon(const HydraulicSimulationResultTimeline &result_timeline)
+{
+    if (this->button_sim_start == nullptr)
+        return;
+
+    int warning_count = 0;
+    int error_count = 0;
+
+    for (const HydraulicSimulationDiagnostic &diagnostic : result_timeline.diagnostics)
+    {
+        if (diagnostic.severity == HydraulicSimulationDiagnosticSeverity::Warning)
+            ++warning_count;
+        else if (diagnostic.severity == HydraulicSimulationDiagnosticSeverity::Error
+                 || diagnostic.severity == HydraulicSimulationDiagnosticSeverity::Fatal)
+            ++error_count;
+    }
+
+    QString icon_path;
+    QString last_run_status;
+
+    if (!result_timeline.status.success)
+    {
+        icon_path = QStringLiteral(":/icon/simulation_error.png");
+        last_run_status = QStringLiteral("Failed");
+    }
+    else if (error_count > 0)
+    {
+        icon_path = QStringLiteral(":/icon/simulation_error.png");
+        last_run_status = QStringLiteral("Completed with %1 error%2")
+            .arg(error_count)
+            .arg(error_count == 1 ? QString() : QStringLiteral("s"));
+    }
+    else if (result_timeline.validity != HydraulicSimulationResultValidity::Valid)
+    {
+        icon_path = QStringLiteral(":/icon/simulation_error.png");
+        last_run_status = QStringLiteral("Invalid result");
+    }
+    else if (warning_count > 0)
+    {
+        icon_path = QStringLiteral(":/icon/simulation_warning.png");
+        last_run_status = QStringLiteral("Successful with %1 warning%2")
+            .arg(warning_count)
+            .arg(warning_count == 1 ? QString() : QStringLiteral("s"));
+    }
+    else
+    {
+        icon_path = QStringLiteral(":/icon/simulation_success.png");
+        last_run_status = QStringLiteral("Successful");
+    }
+
+    this->button_sim_start->setIcon(QIcon(icon_path));
+    this->button_sim_start->setToolTip(
+        QStringLiteral("Run Configured Simulations<br>[Ctrl]+[R]<br>[Shift]+[Enter]<br><br>Last run: %1")
+            .arg(last_run_status));
+}
+
 void TopControlBar::setSimulationResultTimeline(const HydraulicSimulationResultTimeline &result_timeline)
 {
     if (this->combo_sim_timepoint == nullptr)
@@ -566,13 +630,13 @@ void TopControlBar::addSimulationControls()
 {
     TopControlBarContent *bar_content = barContent(this->content);
 
-    QPushButton *button_sim_start = new QPushButton(this->content);
-    button_sim_start->setIcon(QIcon(QStringLiteral(":/icon/simulation_start.png")));
-    button_sim_start->setFlat(true);
-    configureToolbarIconButton(button_sim_start);
-    button_sim_start->setToolTip(QStringLiteral("Run Configured Simulations<br>[Ctrl]+[R]<br>[Shift]+[Enter]"));
-    button_sim_start->addAction(QString(), QKeySequence(Qt::SHIFT | Qt::Key_Return), button_sim_start, &QPushButton::click);
-    button_sim_start->addAction(QString(), QKeySequence(Qt::CTRL | Qt::Key_R), button_sim_start, &QPushButton::click);
+    this->button_sim_start = new QPushButton(this->content);
+    resetSimulationRunIcon();
+    this->button_sim_start->setFlat(true);
+    configureToolbarIconButton(this->button_sim_start);
+    this->button_sim_start->setToolTip(QStringLiteral("Run Configured Simulations<br>[Ctrl]+[R]<br>[Shift]+[Enter]"));
+    this->button_sim_start->addAction(QString(), QKeySequence(Qt::SHIFT | Qt::Key_Return), this->button_sim_start, &QPushButton::click);
+    this->button_sim_start->addAction(QString(), QKeySequence(Qt::CTRL | Qt::Key_R), this->button_sim_start, &QPushButton::click);
 
     QWidget *result_button_stack = new QWidget(this->content);
     QVBoxLayout *result_button_stack_layout = new QVBoxLayout(result_button_stack);
@@ -661,8 +725,9 @@ void TopControlBar::addSimulationControls()
     setEpanetLogAvailable(false);
     clearSimulationResultTimeline();
 
-    connect(button_sim_start, &QPushButton::clicked, this, [this]
+    connect(this->button_sim_start, &QPushButton::clicked, this, [this]
     {
+        resetSimulationRunIcon();
         emit signalSimulationStart();
     });
 
@@ -731,7 +796,7 @@ void TopControlBar::addSimulationControls()
     result_button_stack_layout->addWidget(this->button_sim_statistics);
     result_button_stack_layout->addWidget(this->button_sim_log);
 
-    bar_content->centerLayout()->addWidget(button_sim_start);
+    bar_content->centerLayout()->addWidget(this->button_sim_start);
     bar_content->centerLayout()->addWidget(result_button_stack);
     bar_content->centerLayout()->addWidget(timeline_navigation);
     bar_content->centerLayout()->addWidget(playback_stack);

@@ -9,6 +9,7 @@ struct HydraulicSimulationResultTimeline;
 
 class ComboCheckboxes;
 class QComboBox;
+class QPushButton;
 class QTimer;
 class QToolButton;
 class QWidget;
@@ -22,6 +23,8 @@ public:
 
     void setFullScreenState(bool fullscreen);
     void setSimulationResultsAvailable(bool available);
+    void resetSimulationRunIcon();
+    void setSimulationRunResultIcon(const HydraulicSimulationResultTimeline &result_timeline);
     void setSimulationResultTimeline(const HydraulicSimulationResultTimeline &result_timeline);
     void clearSimulationResultTimeline();
     void setCurrentSimulationResultIndex(int result_index);
@@ -40,6 +43,7 @@ private:
     QWidget *content = nullptr;
     ComboCheckboxes *combo_headloss_formula = nullptr;
     QToolButton *button_fullscreen = nullptr;
+    QPushButton *button_sim_start = nullptr;
     QToolButton *button_sim_statistics = nullptr;
     QToolButton *button_sim_log = nullptr;
     QToolButton *button_sim_step_previous = nullptr;
