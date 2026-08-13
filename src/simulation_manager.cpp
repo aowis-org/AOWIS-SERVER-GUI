@@ -171,7 +171,11 @@ void SimulationManager::showSimulationProgress()
     this->dialog_simulation_progress->setAutoClose(false);
     this->dialog_simulation_progress->setAutoReset(false);
     this->dialog_simulation_progress->setMinimumDuration(0);
+#ifndef Q_OS_WASM
+    this->dialog_simulation_progress->setWindowModality(Qt::NonModal);
+#else
     this->dialog_simulation_progress->setWindowModality(Qt::ApplicationModal);
+#endif
     this->dialog_simulation_progress->setWindowFlag(Qt::WindowCloseButtonHint, false);
     this->dialog_simulation_progress->resize(420, 110);
     showAndActivateDialog(this->dialog_simulation_progress);
