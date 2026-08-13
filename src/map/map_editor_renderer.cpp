@@ -55,6 +55,32 @@ bool isSimulationDiagnosticEntityStale(const MapEditorVisualState &visual_state,
     return visual_state.simulation_stale_diagnostic_entity_uuids.contains(uuid);
 }
 
+bool isMovingMarkerUuid(const MapEditorVisualState &visual_state, const QUuid &uuid)
+{
+    if (!visual_state.move.active)
+        return false;
+
+    for (const MapEditorDynamicMarkerVisualState &marker : visual_state.move.markers)
+    {
+        if (marker.uuid == uuid)
+            return true;
+    }
+    return false;
+}
+
+bool isMovingLinkUuid(const MapEditorVisualState &visual_state, const QUuid &uuid)
+{
+    if (!visual_state.move.active)
+        return false;
+
+    for (const MapEditorDynamicLinkVisualState &link : visual_state.move.links)
+    {
+        if (link.uuid == uuid)
+            return true;
+    }
+    return false;
+}
+
 }
 
 MapEditorRenderer::MapEditorRenderer(MapModel *map_model, QWidget *canvas)
@@ -1373,19 +1399,18 @@ void MapEditorRenderer::paintNetwork(
         return;
 
     syncStaticGeometry(network_snapshot);
-    requestStaticCache(visual_state.entity_width);
-
-    if (!paintStaticCache(painter, visual_state))
-    {
-        paintDirectNetwork(painter, network_snapshot, visual_state);
-        if (visual_state.move.active)
-            paintMovingNetwork(painter, visual_state);
-        return;
-    }
 
     if (visual_state.move.active)
     {
+        paintDirectNetwork(painter, network_snapshot, visual_state);
         paintMovingNetwork(painter, visual_state);
+        return;
+    }
+
+    requestStaticCache(visual_state.entity_width);
+    if (!paintStaticCache(painter, visual_state))
+    {
+        paintDirectNetwork(painter, network_snapshot, visual_state);
         return;
     }
 
@@ -1884,7 +1909,8 @@ void MapEditorRenderer::paintPipes(
     for (const NetworkRenderLink &link : network_snapshot.links)
     {
         if (link.entity_type != InfrastructureEntity::Pipe ||
-            link.vertices_wgs84.size() < 2)
+            link.vertices_wgs84.size() < 2 ||
+            isMovingLinkUuid(visual_state, link.uuid))
         {
             continue;
         }
@@ -1974,7 +2000,8 @@ void MapEditorRenderer::paintDeviceLinks(
     for (const NetworkRenderLink &link : network_snapshot.links)
     {
         if (!InfrastructureEntityTraits::isHydraulicDeviceLink(link.entity_type) ||
-            link.vertices_wgs84.size() < 2)
+            link.vertices_wgs84.size() < 2 ||
+            isMovingLinkUuid(visual_state, link.uuid))
         {
             continue;
         }
@@ -2096,6 +2123,8 @@ void MapEditorRenderer::paintMarkers(
     for (qsizetype index = 0; index < network_snapshot.nodes.size(); ++index)
     {
         const NetworkRenderNode &node = network_snapshot.nodes.at(index);
+        if (isMovingMarkerUuid(visual_state, node.uuid))
+            continue;
         const QPointF &point = screen_positions.at(index);
         if (node.uuid == visual_state.placement.connection_target_uuid)
         {
@@ -2112,6 +2141,8 @@ void MapEditorRenderer::paintMarkers(
     for (qsizetype index = 0; index < network_snapshot.nodes.size(); ++index)
     {
         const NetworkRenderNode &node = network_snapshot.nodes.at(index);
+        if (isMovingMarkerUuid(visual_state, node.uuid))
+            continue;
         const QString path = MapEntityPixmapRenderer::pixmapPathForEntity(
             node.entity_type);
         const QPointF &screen_position = screen_positions.at(index);
