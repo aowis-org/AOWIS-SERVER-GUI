@@ -1113,7 +1113,7 @@ void EntityInspectorWidget::bindHydraulicNode(InfrastructureEntity entity_type, 
     });
     connect(this->button_find_on_map, &QPushButton::clicked, this, [this]()
     {
-        this->hydraulic_data->requestNodeLocate(this->entity_type, this->entity_uuid);
+        this->hydraulic_data->requestEntityLocate(this->entity_type, this->entity_uuid);
     });
     if (this->button_overview_find_on_map != nullptr)
     {
@@ -1121,7 +1121,7 @@ void EntityInspectorWidget::bindHydraulicNode(InfrastructureEntity entity_type, 
         this->button_overview_find_on_map->show();
         connect(this->button_overview_find_on_map, &QPushButton::clicked, this, [this]()
         {
-            this->hydraulic_data->requestNodeLocate(this->entity_type, this->entity_uuid);
+            this->hydraulic_data->requestEntityLocate(this->entity_type, this->entity_uuid);
         });
     }
     connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this, [this](InfrastructureEntity entity_type_changed, const QUuid &uuid_changed)
@@ -1179,7 +1179,7 @@ void EntityInspectorWidget::bindHydraulicLink(InfrastructureEntity entity_type, 
         this->button_overview_find_on_map->show();
         connect(this->button_overview_find_on_map, &QPushButton::clicked, this, [this]()
         {
-            this->hydraulic_data->requestLinkLocate(this->entity_type, this->entity_uuid);
+            this->hydraulic_data->requestEntityLocate(this->entity_type, this->entity_uuid);
         });
     }
     connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
@@ -1350,7 +1350,7 @@ void EntityInspectorWidget::locateHydraulicEndpoint(const QUuid &node_uuid)
     if (!node_type.has_value())
         return;
 
-    this->hydraulic_data->requestNodeLocate(node_type.value(), node_uuid);
+    this->hydraulic_data->requestEntityLocate(node_type.value(), node_uuid);
 }
 
 void EntityInspectorWidget::inspectHydraulicEndpoint(const QUuid &node_uuid)

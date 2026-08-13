@@ -252,8 +252,7 @@ public:
     std::optional<InfrastructureEntity> nodeEntityType(const QUuid &uuid) const;
 
     void setSelectedUuid(InfrastructureEntity entity_type, const QUuid &uuid);
-    void requestNodeLocate(InfrastructureEntity entity_type, const QUuid &uuid);
-    void requestLinkLocate(InfrastructureEntity entity_type, const QUuid &uuid);
+    void requestEntityLocate(InfrastructureEntity entity_type, const QUuid &uuid);
 
     QUuid addJunction(const CoordinateWGS84 &coordinate);
     QUuid addReservoir(const CoordinateWGS84 &coordinate);
@@ -496,8 +495,7 @@ signals:
     void signalBoundingBoxWgs84Changed();
     void signalNodeChanged(InfrastructureEntity entity_type, const QUuid &uuid);
     void signalLinkChanged(InfrastructureEntity entity_type, const QUuid &uuid);
-    void signalNodeLocateRequested(InfrastructureEntity entity_type, const QUuid &uuid);
-    void signalLinkLocateRequested(InfrastructureEntity entity_type, const QUuid &uuid);
+    void signalEntityLocateRequested(InfrastructureEntity entity_type, const QUuid &uuid);
     void signalSelectedTank(const HydraulicNodeTank &tank);
     void signalSelectedReservoir(const HydraulicNodeReservoir &reservoir);
     void signalSelectedJunction(const HydraulicNodeJunction &junction);

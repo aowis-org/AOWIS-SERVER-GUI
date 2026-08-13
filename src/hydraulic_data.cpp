@@ -1787,20 +1787,15 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
     }
 }
 
-void HydraulicData::requestNodeLocate(InfrastructureEntity entity_type, const QUuid &uuid)
+void HydraulicData::requestEntityLocate(InfrastructureEntity entity_type, const QUuid &uuid)
 {
-    if (!nodeCommonData(entity_type, uuid).has_value())
+    if (!nodeCommonData(entity_type, uuid).has_value() &&
+        !linkCommonData(entity_type, uuid).has_value())
+    {
         return;
+    }
 
-    emit signalNodeLocateRequested(entity_type, uuid);
-}
-
-void HydraulicData::requestLinkLocate(InfrastructureEntity entity_type, const QUuid &uuid)
-{
-    if (!linkCommonData(entity_type, uuid).has_value())
-        return;
-
-    emit signalLinkLocateRequested(entity_type, uuid);
+    emit signalEntityLocateRequested(entity_type, uuid);
 }
 
 QUuid HydraulicData::addJunction(const CoordinateWGS84 &coordinate)
