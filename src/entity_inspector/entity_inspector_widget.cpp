@@ -3,6 +3,7 @@
 #include "../rest_client.h"
 
 #include <cmath>
+#include <optional>
 
 #include <QGridLayout>
 #include <QJsonArray>
@@ -19,6 +20,91 @@ namespace
 {
 constexpr int pattern_mode_role = Qt::UserRole;
 constexpr int pattern_uuid_role = Qt::UserRole + 1;
+
+QString formatSimulationElapsedTime(quint64 time_elapsed_s)
+{
+    const quint64 days = time_elapsed_s / 86400;
+    const quint64 remainder_after_days = time_elapsed_s % 86400;
+    const quint64 hours = remainder_after_days / 3600;
+    const quint64 minutes = (remainder_after_days % 3600) / 60;
+    const quint64 seconds = remainder_after_days % 60;
+
+    const QString clock = QStringLiteral("%1:%2:%3")
+        .arg(hours, 2, 10, QLatin1Char('0'))
+        .arg(minutes, 2, 10, QLatin1Char('0'))
+        .arg(seconds, 2, 10, QLatin1Char('0'));
+
+    if (days == 0)
+        return clock;
+
+    return QStringLiteral("%1d %2").arg(days).arg(clock);
+}
+
+QString formatSimulationNumber(double value, int decimals, const QString &unit)
+{
+    if (!std::isfinite(value))
+        return QStringLiteral("—");
+
+    QString text = QString::number(value, 'f', decimals);
+    while (text.contains(QLatin1Char('.')) && text.endsWith(QLatin1Char('0')))
+        text.chop(1);
+    if (text.endsWith(QLatin1Char('.')))
+        text.chop(1);
+    if (text == QStringLiteral("-0"))
+        text = QStringLiteral("0");
+
+    return text + unit;
+}
+
+template<typename ResultType>
+const ResultType *simulationResultByUuid(const QList<ResultType> &results, const QUuid &uuid)
+{
+    for (const ResultType &result : results)
+    {
+        if (result.uuid == uuid)
+            return &result;
+    }
+
+    return nullptr;
+}
+
+QString pumpStateText(HydraulicSimulationPumpState state)
+{
+    switch (state)
+    {
+    case HydraulicSimulationPumpState::CannotSupplyHead:
+        return QStringLiteral("Cannot supply head");
+    case HydraulicSimulationPumpState::Closed:
+        return QStringLiteral("Closed");
+    case HydraulicSimulationPumpState::Open:
+        return QStringLiteral("Open");
+    case HydraulicSimulationPumpState::CannotSupplyFlow:
+        return QStringLiteral("Cannot supply flow");
+    }
+
+    return QStringLiteral("Unknown");
+}
+
+QString pipeRoughnessText(const HydraulicSimulationResultLinkPipe &result)
+{
+    if (result.roughness_hw.has_value())
+    {
+        return formatSimulationNumber(result.roughness_hw.value(), 3, QString())
+            + QStringLiteral(" (Hazen-Williams)");
+    }
+    if (result.roughness_dw_mm.has_value())
+    {
+        return formatSimulationNumber(result.roughness_dw_mm.value(), 6, QStringLiteral(" mm"))
+            + QStringLiteral(" (Darcy-Weisbach)");
+    }
+    if (result.roughness_cm.has_value())
+    {
+        return formatSimulationNumber(result.roughness_cm.value(), 6, QString())
+            + QStringLiteral(" (Chezy-Manning)");
+    }
+
+    return QStringLiteral("—");
+}
 
 }
 
@@ -136,6 +222,450 @@ QVBoxLayout *EntityInspectorWidget::layoutHistory()
 void EntityInspectorWidget::setTitle(const QString &title)
 {
     this->label_title->setText("<b>" + title.toHtmlEscaped() + "</b>");
+}
+
+void EntityInspectorWidget::addSimulationRow(QGridLayout *grid, int &row,
+                                              SimulationField field,
+                                              const QString &name,
+                                              const QString &tooltip)
+{
+    QLabel *label_name = new QLabel(name);
+    label_name->setWordWrap(true);
+    if (!tooltip.isEmpty())
+        label_name->setToolTip(tooltip);
+
+    QLabel *label_value = new QLabel(QStringLiteral("—"));
+    label_value->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    label_value->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    label_value->setMinimumWidth(105);
+    if (!tooltip.isEmpty())
+        label_value->setToolTip(tooltip);
+
+    grid->addWidget(label_name, row, 0);
+    grid->addWidget(label_value, row, 1);
+
+    SimulationRowWidgets widgets;
+    widgets.name = label_name;
+    widgets.value = label_value;
+    this->simulation_rows.insert(static_cast<int>(field), widgets);
+    row++;
+}
+
+void EntityInspectorWidget::addGroupSimulation()
+{
+    if (this->label_simulation_message != nullptr)
+        return;
+
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Simulation");
+    QGridLayout *grid = new QGridLayout(group);
+    int row = 0;
+
+    this->label_simulation_message = new QLabel();
+    this->label_simulation_message->setWordWrap(true);
+    grid->addWidget(this->label_simulation_message, row++, 0, 1, 2);
+
+    addSimulationRow(grid, row, SimulationField::ResultTime, "Time");
+
+    switch (this->entity_type)
+    {
+    case InfrastructureEntity::Junction:
+        addSimulationRow(grid, row, SimulationField::DemandRequested, "Requested Demand",
+                         "Demand requested before pressure-driven demand reduction.");
+        addSimulationRow(grid, row, SimulationField::DemandDelivered, "Delivered Demand",
+                         "Consumer demand actually delivered at the selected timestep.");
+        addSimulationRow(grid, row, SimulationField::DemandDeficit, "Demand Deficit");
+        addSimulationRow(grid, row, SimulationField::TotalDemand, "Total Demand",
+                         "Total junction outflow: delivered demand, emitter flow, and assigned pipe leakage.");
+        addSimulationRow(grid, row, SimulationField::EmitterFlow, "Emitter Flow");
+        addSimulationRow(grid, row, SimulationField::LeakageFlow, "Leakage Flow");
+        addSimulationRow(grid, row, SimulationField::Head, "Head");
+        addSimulationRow(grid, row, SimulationField::PressureHead, "Pressure Head");
+        addSimulationRow(grid, row, SimulationField::ReferencedByControl, "Referenced by Control");
+        break;
+    case InfrastructureEntity::Reservoir:
+        addSimulationRow(grid, row, SimulationField::NetDemand, "Net Demand",
+                         "Negative means the reservoir supplies the network; positive means it receives water.");
+        addSimulationRow(grid, row, SimulationField::Head, "Head");
+        addSimulationRow(grid, row, SimulationField::PressureHead, "Pressure Head");
+        addSimulationRow(grid, row, SimulationField::ReferencedByControl, "Referenced by Control");
+        break;
+    case InfrastructureEntity::Tank:
+        addSimulationRow(grid, row, SimulationField::NetDemand, "Net Demand",
+                         "Positive means the tank is filling; negative means it supplies the network.");
+        addSimulationRow(grid, row, SimulationField::Head, "Head");
+        addSimulationRow(grid, row, SimulationField::PressureHead, "Pressure Head");
+        addSimulationRow(grid, row, SimulationField::WaterLevel, "Water Level");
+        addSimulationRow(grid, row, SimulationField::Volume, "Volume");
+        addSimulationRow(grid, row, SimulationField::MixingZoneVolume, "Mixing-Zone Volume");
+        addSimulationRow(grid, row, SimulationField::ReferencedByControl, "Referenced by Control");
+        break;
+    case InfrastructureEntity::Pipe:
+        addSimulationRow(grid, row, SimulationField::Flow, "Flow");
+        addSimulationRow(grid, row, SimulationField::LeakageFlow, "Leakage Flow");
+        addSimulationRow(grid, row, SimulationField::Velocity, "Velocity");
+        addSimulationRow(grid, row, SimulationField::HeadLoss, "Head Loss");
+        addSimulationRow(grid, row, SimulationField::UnitHeadLoss, "Unit Head Loss");
+        addSimulationRow(grid, row, SimulationField::FrictionFactor, "Friction Factor");
+        addSimulationRow(grid, row, SimulationField::Status, "Status");
+        addSimulationRow(grid, row, SimulationField::Roughness, "Roughness",
+                         "Effective roughness returned by the hydraulic engine for the configured headloss formula.");
+        addSimulationRow(grid, row, SimulationField::ReferencedByControl, "Referenced by Control");
+        break;
+    case InfrastructureEntity::Pump:
+        addSimulationRow(grid, row, SimulationField::Flow, "Flow");
+        addSimulationRow(grid, row, SimulationField::Velocity, "Velocity");
+        addSimulationRow(grid, row, SimulationField::Head, "Head Gain");
+        addSimulationRow(grid, row, SimulationField::Status, "Status");
+        addSimulationRow(grid, row, SimulationField::PumpState, "Operating State");
+        addSimulationRow(grid, row, SimulationField::Speed, "Speed");
+        addSimulationRow(grid, row, SimulationField::Efficiency, "Efficiency");
+        addSimulationRow(grid, row, SimulationField::Power, "Power");
+        addSimulationRow(grid, row, SimulationField::ReferencedByControl, "Referenced by Control");
+        break;
+    case InfrastructureEntity::Valve:
+        addSimulationRow(grid, row, SimulationField::Flow, "Flow");
+        addSimulationRow(grid, row, SimulationField::Velocity, "Velocity");
+        addSimulationRow(grid, row, SimulationField::HeadLoss, "Head Loss");
+        addSimulationRow(grid, row, SimulationField::Status, "Status");
+        addSimulationRow(grid, row, SimulationField::ValveRegulating, "Regulating");
+        addSimulationRow(grid, row, SimulationField::Setting, "Setting");
+        addSimulationRow(grid, row, SimulationField::ReferencedByControl, "Referenced by Control");
+        break;
+    default:
+        break;
+    }
+
+    grid->setColumnStretch(1, 1);
+    layoutSimMeas()->addWidget(group);
+
+    if (this->entity_type == InfrastructureEntity::Pump)
+    {
+        GroupBoxCollapsible *energy_group = new GroupBoxCollapsible("Simulation Energy Summary");
+        QGridLayout *energy_grid = new QGridLayout(energy_group);
+        int energy_row = 0;
+
+        this->label_simulation_energy_message = new QLabel();
+        this->label_simulation_energy_message->setWordWrap(true);
+        energy_grid->addWidget(this->label_simulation_energy_message, energy_row++, 0, 1, 2);
+
+        addSimulationRow(energy_grid, energy_row, SimulationField::TimeOnline, "Time Online");
+        addSimulationRow(energy_grid, energy_row, SimulationField::AverageEfficiency, "Average Efficiency");
+        addSimulationRow(energy_grid, energy_row, SimulationField::AverageSpecificPower,
+                         "Average Specific Power");
+        addSimulationRow(energy_grid, energy_row, SimulationField::AveragePower, "Average Power");
+        addSimulationRow(energy_grid, energy_row, SimulationField::PeakPower, "Peak Power");
+        addSimulationRow(energy_grid, energy_row, SimulationField::AverageCostPerDay,
+                         "Average Energy Cost");
+        energy_grid->setColumnStretch(1, 1);
+        layoutSimMeas()->addWidget(energy_group);
+    }
+
+    connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged,
+            this, [this](bool)
+    {
+        refreshSimulation();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalCurrentSimulationResultChanged,
+            this, [this](int)
+    {
+        refreshSimulation();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
+            this, &EntityInspectorWidget::refreshSimulation);
+
+    refreshSimulation();
+}
+
+void EntityInspectorWidget::resetSimulationValues()
+{
+    for (const SimulationRowWidgets &widgets : this->simulation_rows)
+    {
+        if (widgets.value != nullptr)
+            widgets.value->setText(QStringLiteral("—"));
+    }
+}
+
+void EntityInspectorWidget::setSimulationText(SimulationField field, const QString &text)
+{
+    const int key = static_cast<int>(field);
+    if (!this->simulation_rows.contains(key))
+        return;
+
+    QLabel *label = this->simulation_rows.value(key).value;
+    if (label != nullptr)
+        label->setText(text);
+}
+
+void EntityInspectorWidget::setSimulationValue(SimulationField field, double value,
+                                                int decimals, const QString &unit)
+{
+    setSimulationText(field, formatSimulationNumber(value, decimals, unit));
+}
+
+void EntityInspectorWidget::setSimulationEntityAvailable(bool available)
+{
+    if (this->label_simulation_message == nullptr)
+        return;
+
+    this->label_simulation_message->setVisible(!available);
+    if (!available)
+        this->label_simulation_message->setText("No result for this entity at the selected timestep.");
+}
+
+void EntityInspectorWidget::refreshPumpEnergySummary(
+    const HydraulicSimulationResultTimeline &timeline)
+{
+    if (this->label_simulation_energy_message == nullptr || timeline.results.isEmpty())
+        return;
+
+    const HydraulicSimulationResult &final_result = timeline.results.constLast();
+    const HydraulicSimulationResultLinkPumpEnergyUsage *energy_usage = nullptr;
+    for (const HydraulicSimulationResultLinkPumpEnergyUsage &candidate :
+         final_result.links_pump_energy_usage)
+    {
+        if (candidate.pump_uuid == this->entity_uuid)
+        {
+            energy_usage = &candidate;
+            break;
+        }
+    }
+
+    const bool available = energy_usage != nullptr;
+    this->label_simulation_energy_message->setVisible(!available);
+    if (!available)
+    {
+        this->label_simulation_energy_message->setText(
+            "No complete-run energy summary is available for this pump.");
+        return;
+    }
+
+    setSimulationValue(SimulationField::TimeOnline, energy_usage->time_online_percent,
+                       2, QStringLiteral(" %"));
+    setSimulationValue(SimulationField::AverageEfficiency,
+                       energy_usage->average_efficiency_percent, 2, QStringLiteral(" %"));
+    setSimulationValue(SimulationField::AverageSpecificPower,
+                       energy_usage->average_kw_per_flow_unit, 6,
+                       QStringLiteral(" kW/(m³/h)"));
+    setSimulationValue(SimulationField::AveragePower, energy_usage->average_power_kw,
+                       3, QStringLiteral(" kW"));
+    setSimulationValue(SimulationField::PeakPower, energy_usage->peak_power_kw,
+                       3, QStringLiteral(" kW"));
+    setSimulationValue(SimulationField::AverageCostPerDay,
+                       energy_usage->average_cost_per_day, 4, QStringLiteral(" /day"));
+}
+
+void EntityInspectorWidget::refreshSimulation()
+{
+    if (this->label_simulation_message == nullptr)
+        return;
+
+    resetSimulationValues();
+    if (this->label_simulation_energy_message != nullptr)
+    {
+        this->label_simulation_energy_message->show();
+        this->label_simulation_energy_message->setText(
+            "No valid simulation results available.");
+    }
+
+    if (this->hydraulic_data == nullptr || !this->hydraulic_data->hasSimulationResults())
+    {
+        this->label_simulation_message->show();
+        this->label_simulation_message->setText("No valid simulation results available.");
+        return;
+    }
+
+    const HydraulicSimulationResult *result = this->hydraulic_data->currentSimulationResult();
+    const std::optional<HydraulicSimulationResultTimeline> &timeline =
+        this->hydraulic_data->simulationResultTimeline();
+    if (result == nullptr || !timeline.has_value())
+    {
+        this->label_simulation_message->show();
+        this->label_simulation_message->setText("No simulation timestep is selected.");
+        return;
+    }
+
+    setSimulationText(SimulationField::ResultTime,
+                      formatSimulationElapsedTime(result->time_elapsed_s));
+
+    bool entity_available = false;
+    switch (this->entity_type)
+    {
+    case InfrastructureEntity::Junction:
+    {
+        const HydraulicSimulationResultNodeJunction *junction =
+            simulationResultByUuid(result->nodes_junctions, this->entity_uuid);
+        if (junction == nullptr)
+            break;
+
+        entity_available = true;
+        setSimulationValue(SimulationField::DemandRequested,
+                           junction->demand_requested_m3_per_h, 3, QStringLiteral(" m³/h"));
+        setSimulationValue(SimulationField::DemandDelivered,
+                           junction->demand_delivered_m3_per_h, 3, QStringLiteral(" m³/h"));
+        setSimulationValue(SimulationField::DemandDeficit,
+                           junction->demand_deficit_m3_per_h, 3, QStringLiteral(" m³/h"));
+        setSimulationValue(SimulationField::TotalDemand,
+                           junction->total_demand_m3_per_h, 3, QStringLiteral(" m³/h"));
+        setSimulationValue(SimulationField::EmitterFlow,
+                           junction->emitter_flow_m3_per_h, 3, QStringLiteral(" m³/h"));
+        setSimulationValue(SimulationField::LeakageFlow,
+                           junction->leakage_flow_m3_per_h, 3, QStringLiteral(" m³/h"));
+        setSimulationValue(SimulationField::Head, junction->head_m, 3, QStringLiteral(" m"));
+        setSimulationValue(SimulationField::PressureHead, junction->pressure_head_m,
+                           3, QStringLiteral(" m"));
+        setSimulationText(SimulationField::ReferencedByControl,
+                          junction->appears_in_control ? QStringLiteral("Yes") : QStringLiteral("No"));
+        break;
+    }
+    case InfrastructureEntity::Reservoir:
+    {
+        const HydraulicSimulationResultNodeReservoir *reservoir =
+            simulationResultByUuid(result->nodes_reservoirs, this->entity_uuid);
+        if (reservoir == nullptr)
+            break;
+
+        entity_available = true;
+        setSimulationValue(SimulationField::NetDemand, reservoir->net_demand_m3_per_h,
+                           3, QStringLiteral(" m³/h"));
+        setSimulationValue(SimulationField::Head, reservoir->head_m, 3, QStringLiteral(" m"));
+        setSimulationValue(SimulationField::PressureHead, reservoir->pressure_head_m,
+                           3, QStringLiteral(" m"));
+        setSimulationText(SimulationField::ReferencedByControl,
+                          reservoir->appears_in_control ? QStringLiteral("Yes") : QStringLiteral("No"));
+        break;
+    }
+    case InfrastructureEntity::Tank:
+    {
+        const HydraulicSimulationResultNodeTank *tank =
+            simulationResultByUuid(result->nodes_tanks, this->entity_uuid);
+        if (tank == nullptr)
+            break;
+
+        entity_available = true;
+        setSimulationValue(SimulationField::NetDemand, tank->net_demand_m3_per_h,
+                           3, QStringLiteral(" m³/h"));
+        setSimulationValue(SimulationField::Head, tank->head_m, 3, QStringLiteral(" m"));
+        setSimulationValue(SimulationField::PressureHead, tank->pressure_head_m,
+                           3, QStringLiteral(" m"));
+        setSimulationValue(SimulationField::WaterLevel, tank->water_level_m,
+                           3, QStringLiteral(" m"));
+        setSimulationValue(SimulationField::Volume, tank->volume_m3,
+                           3, QStringLiteral(" m³"));
+        setSimulationValue(SimulationField::MixingZoneVolume, tank->mixing_zone_volume_m3,
+                           3, QStringLiteral(" m³"));
+        setSimulationText(SimulationField::ReferencedByControl,
+                          tank->appears_in_control ? QStringLiteral("Yes") : QStringLiteral("No"));
+        break;
+    }
+    case InfrastructureEntity::Pipe:
+    {
+        const HydraulicSimulationResultLinkPipe *pipe =
+            simulationResultByUuid(result->links_pipes, this->entity_uuid);
+        if (pipe == nullptr)
+            break;
+
+        entity_available = true;
+        setSimulationValue(SimulationField::Flow, pipe->flow_m3_per_h,
+                           3, QStringLiteral(" m³/h"));
+        setSimulationValue(SimulationField::LeakageFlow, pipe->leakage_flow_m3_per_h,
+                           3, QStringLiteral(" m³/h"));
+        setSimulationValue(SimulationField::Velocity, pipe->velocity_m_per_s,
+                           3, QStringLiteral(" m/s"));
+        setSimulationValue(SimulationField::HeadLoss, pipe->head_loss_m,
+                           3, QStringLiteral(" m"));
+        setSimulationValue(SimulationField::UnitHeadLoss,
+                           pipe->unit_head_loss_m_per_km, 3, QStringLiteral(" m/km"));
+        setSimulationValue(SimulationField::FrictionFactor, pipe->friction_factor, 6);
+        setSimulationText(SimulationField::Status,
+                          pipe->open ? QStringLiteral("Open") : QStringLiteral("Closed"));
+        setSimulationText(SimulationField::Roughness, pipeRoughnessText(*pipe));
+        setSimulationText(SimulationField::ReferencedByControl,
+                          pipe->appears_in_control ? QStringLiteral("Yes") : QStringLiteral("No"));
+        break;
+    }
+    case InfrastructureEntity::Pump:
+    {
+        const HydraulicSimulationResultLinkPump *pump =
+            simulationResultByUuid(result->links_pumps, this->entity_uuid);
+        if (pump == nullptr)
+            break;
+
+        entity_available = true;
+        setSimulationValue(SimulationField::Flow, pump->flow_m3_per_h,
+                           3, QStringLiteral(" m³/h"));
+        setSimulationValue(SimulationField::Velocity, pump->velocity_m_per_s,
+                           3, QStringLiteral(" m/s"));
+        setSimulationValue(SimulationField::Head, pump->head_gain_m,
+                           3, QStringLiteral(" m"));
+        setSimulationText(SimulationField::Status,
+                          pump->open ? QStringLiteral("Open") : QStringLiteral("Closed"));
+        setSimulationText(SimulationField::PumpState, pumpStateText(pump->state));
+        setSimulationValue(SimulationField::Speed, pump->speed, 3, QStringLiteral(" ×"));
+        setSimulationValue(SimulationField::Efficiency, pump->efficiency_percent,
+                           2, QStringLiteral(" %"));
+        setSimulationValue(SimulationField::Power, pump->power_kw,
+                           3, QStringLiteral(" kW"));
+        setSimulationText(SimulationField::ReferencedByControl,
+                          pump->appears_in_control ? QStringLiteral("Yes") : QStringLiteral("No"));
+        break;
+    }
+    case InfrastructureEntity::Valve:
+    {
+        const HydraulicSimulationResultLinkValve *valve_result =
+            simulationResultByUuid(result->links_valves, this->entity_uuid);
+        if (valve_result == nullptr)
+            break;
+
+        entity_available = true;
+        setSimulationValue(SimulationField::Flow, valve_result->flow_m3_per_h,
+                           3, QStringLiteral(" m³/h"));
+        setSimulationValue(SimulationField::Velocity, valve_result->velocity_m_per_s,
+                           3, QStringLiteral(" m/s"));
+        setSimulationValue(SimulationField::HeadLoss, valve_result->head_loss_m,
+                           3, QStringLiteral(" m"));
+        setSimulationText(SimulationField::Status,
+                          valve_result->open ? QStringLiteral("Open") : QStringLiteral("Closed"));
+        setSimulationText(SimulationField::ValveRegulating,
+                          valve_result->active ? QStringLiteral("Yes") : QStringLiteral("No"));
+
+        QString setting_unit;
+        int setting_decimals = 3;
+        const std::optional<HydraulicLinkValve> valve =
+            this->hydraulic_data->valve(this->entity_uuid);
+        if (valve.has_value())
+        {
+            switch (valve->type)
+            {
+            case HydraulicLinkValveType::PRV:
+            case HydraulicLinkValveType::PSV:
+            case HydraulicLinkValveType::PBV:
+                setting_unit = QStringLiteral(" m");
+                break;
+            case HydraulicLinkValveType::FCV:
+                setting_unit = QStringLiteral(" m³/h");
+                break;
+            case HydraulicLinkValveType::PCV:
+                setting_unit = QStringLiteral(" %");
+                setting_decimals = 2;
+                break;
+            case HydraulicLinkValveType::TCV:
+            case HydraulicLinkValveType::GPV:
+                break;
+            }
+        }
+        setSimulationValue(SimulationField::Setting, valve_result->setting,
+                           setting_decimals, setting_unit);
+        setSimulationText(SimulationField::ReferencedByControl,
+                          valve_result->appears_in_control ? QStringLiteral("Yes") : QStringLiteral("No"));
+        break;
+    }
+    default:
+        break;
+    }
+
+    setSimulationEntityAvailable(entity_available);
+    if (this->entity_type == InfrastructureEntity::Pump)
+        refreshPumpEnergySummary(timeline.value());
 }
 
 void EntityInspectorWidget::addGroupOverviewImage(const QString &icon_path, const QString &name)

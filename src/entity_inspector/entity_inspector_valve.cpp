@@ -26,6 +26,7 @@ EntityInspectorValve::EntityInspectorValve(HydraulicData *hydraulic_data, const 
 
     addGroupEndpoints();
     addGroupValveConfiguration();
+    addGroupSimulation();
     
     addGroupHistory();
     

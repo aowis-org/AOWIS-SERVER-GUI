@@ -11,6 +11,7 @@ EntityInspectorJunction::EntityInspectorJunction(HydraulicData *hydraulic_data, 
     addGroupElevation();
 
     addGroupDemands();
+    addGroupSimulation();
     addGroupQuality();
     addStretches();
 }
@@ -24,4 +25,3 @@ void EntityInspectorJunction::addGroupQuality()
     
     this->layoutQuality()->addWidget(group);
 }
-

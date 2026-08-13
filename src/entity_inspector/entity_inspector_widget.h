@@ -18,6 +18,7 @@
 #include <QComboBox>
 #include <QDateEdit>
 #include <QCheckBox>
+#include <QHash>
 
 #include <QTableWidget>
 #include <QHeaderView>
@@ -31,6 +32,7 @@
 
 class RESTClient;
 class QMessageBox;
+class QGridLayout;
 
 class EntityInspectorWidget : public QWidget
 {
@@ -99,6 +101,8 @@ protected:
     QLabel *label_demands_summary = nullptr;
     QDoubleSpinBox *spin_emitter_coefficient = nullptr;
 
+    void addGroupSimulation();
+
     void openDemandsEditor();
     QPointer<QDialog> dialog_demands = nullptr;
     QPointer<QTableWidget> table_demands = nullptr;
@@ -108,6 +112,59 @@ protected:
     void addStretches();
     
 private:
+    enum class SimulationField
+    {
+        ResultTime,
+        DemandRequested,
+        DemandDelivered,
+        DemandDeficit,
+        TotalDemand,
+        NetDemand,
+        EmitterFlow,
+        LeakageFlow,
+        Head,
+        PressureHead,
+        WaterLevel,
+        Volume,
+        MixingZoneVolume,
+        Flow,
+        Velocity,
+        HeadLoss,
+        UnitHeadLoss,
+        FrictionFactor,
+        Roughness,
+        Status,
+        PumpState,
+        Speed,
+        Efficiency,
+        Power,
+        ValveRegulating,
+        Setting,
+        ReferencedByControl,
+        TimeOnline,
+        AverageEfficiency,
+        AverageSpecificPower,
+        AveragePower,
+        PeakPower,
+        AverageCostPerDay
+    };
+
+    struct SimulationRowWidgets
+    {
+        QLabel *name = nullptr;
+        QLabel *value = nullptr;
+    };
+
+    void addSimulationRow(QGridLayout *grid, int &row, SimulationField field,
+                          const QString &name, const QString &tooltip = QString());
+    void refreshSimulation();
+    void resetSimulationValues();
+    void setSimulationText(SimulationField field, const QString &text);
+    void setSimulationValue(SimulationField field, double value, int decimals,
+                            const QString &unit = QString());
+    void setSimulationEntityAvailable(bool available);
+    void refreshPumpEnergySummary(const HydraulicSimulationResultTimeline &timeline);
+
     void refreshHydraulicGeneral(const QString &id, const HydraulicEntityMetadata &metadata);
     void refreshHydraulicNode();
     void refreshHydraulicLink();
@@ -149,6 +206,10 @@ private:
     QUuid terrain_elevation_request_entity_uuid;
     CoordinateWGS84 terrain_elevation_request_coordinate;
     bool terrain_elevation_request_active = false;
+
+    QHash<int, SimulationRowWidgets> simulation_rows;
+    QLabel *label_simulation_message = nullptr;
+    QLabel *label_simulation_energy_message = nullptr;
     
     QTabWidget *tabs = nullptr;
     QVBoxLayout *layout_main = nullptr;

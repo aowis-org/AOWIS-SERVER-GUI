@@ -9,6 +9,7 @@ EntityInspectorReservoir::EntityInspectorReservoir(HydraulicData *hydraulic_data
     bindHydraulicNode(InfrastructureEntity::Reservoir, uuid, "Reservoir");
     addGroupElevation();
 
+    addGroupSimulation();
     addGroupQuality();
     addGroupHistory();
     addStretches();
@@ -23,4 +24,3 @@ void EntityInspectorReservoir::addGroupQuality()
     
     this->layoutQuality()->addWidget(group);
 }
-

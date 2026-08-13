@@ -33,6 +33,7 @@ EntityInspectorPump::EntityInspectorPump(HydraulicData *hydraulic_data,
     addGroupControls();
     addGroupEnergyCostInput();
     addGroupEnergy();
+    addGroupSimulation();
     addGroupHistory();
     addStretches();
 

@@ -15,9 +15,10 @@ EntityInspectorPipe::EntityInspectorPipe(HydraulicData *hydraulic_data, const Hy
     addGroupRoughness();
     addGroupQuality();
     addGroupHistory();
-    addStretches();
 
     bindHydraulicLink(InfrastructureEntity::Pipe, this->pipe_uuid, "Pipe");
+    addGroupSimulation();
+    addStretches();
 
     connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
             [this](InfrastructureEntity entity_type, const QUuid &uuid)
