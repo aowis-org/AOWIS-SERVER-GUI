@@ -43,6 +43,22 @@ namespace
 {
 constexpr int SortRole = Qt::UserRole;
 constexpr int EntityUuidRole = Qt::UserRole + 1;
+constexpr int SimulationStatusRole = Qt::UserRole + 2;
+
+enum class SimulationRowStatus
+{
+    None = 0,
+    Warning = 1,
+    Error = 2
+};
+
+enum class SimulationStatusFilter
+{
+    All = 0,
+    WarningsAndErrors = 1,
+    WarningsOnly = 2,
+    ErrorsOnly = 3
+};
 
 enum class ColumnFilterKind
 {
@@ -72,7 +88,9 @@ struct TableRow
 {
     QUuid uuid;
     QList<TableCell> cells;
+    bool simulation_warning = false;
     bool simulation_error = false;
+    QString simulation_warning_tooltip;
     QString simulation_error_tooltip;
 };
 
@@ -695,6 +713,109 @@ bool isErrorSeverity(HydraulicSimulationDiagnosticSeverity severity)
         || severity == HydraulicSimulationDiagnosticSeverity::Fatal;
 }
 
+InfrastructureEntity diagnosticEntityType(const HydraulicData *hydraulic_data,
+                                          HydraulicSimulationStatusEntityType type,
+                                          const QUuid &uuid)
+{
+    switch (type)
+    {
+    case HydraulicSimulationStatusEntityType::Junction:
+        return InfrastructureEntity::Junction;
+    case HydraulicSimulationStatusEntityType::Reservoir:
+        return InfrastructureEntity::Reservoir;
+    case HydraulicSimulationStatusEntityType::Tank:
+        return InfrastructureEntity::Tank;
+    case HydraulicSimulationStatusEntityType::Pipe:
+        return InfrastructureEntity::Pipe;
+    case HydraulicSimulationStatusEntityType::Pump:
+        return InfrastructureEntity::Pump;
+    case HydraulicSimulationStatusEntityType::Valve:
+        return InfrastructureEntity::Valve;
+    case HydraulicSimulationStatusEntityType::Node:
+        if (hydraulic_data->junction(uuid).has_value())
+            return InfrastructureEntity::Junction;
+        if (hydraulic_data->reservoir(uuid).has_value())
+            return InfrastructureEntity::Reservoir;
+        if (hydraulic_data->tank(uuid).has_value())
+            return InfrastructureEntity::Tank;
+        break;
+    case HydraulicSimulationStatusEntityType::Link:
+        if (hydraulic_data->pipe(uuid).has_value())
+            return InfrastructureEntity::Pipe;
+        if (hydraulic_data->pump(uuid).has_value())
+            return InfrastructureEntity::Pump;
+        if (hydraulic_data->valve(uuid).has_value())
+            return InfrastructureEntity::Valve;
+        break;
+    default:
+        break;
+    }
+
+    return InfrastructureEntity::Unknown;
+}
+
+QHash<QUuid, InfrastructureEntity> simulationWarningEntities(
+    const HydraulicData *hydraulic_data)
+{
+    QHash<QUuid, InfrastructureEntity> entities;
+    const std::optional<HydraulicSimulationResultTimeline> &timeline =
+        hydraulic_data->simulationResultTimeline();
+    if (!timeline.has_value())
+        return entities;
+
+    for (const HydraulicSimulationDiagnostic &diagnostic : timeline->diagnostics)
+    {
+        if (diagnostic.severity != HydraulicSimulationDiagnosticSeverity::Warning
+            || diagnostic.entity.uuid.isNull())
+        {
+            continue;
+        }
+
+        const InfrastructureEntity entity_type = diagnosticEntityType(
+            hydraulic_data, diagnostic.entity.type, diagnostic.entity.uuid);
+        if (entity_type != InfrastructureEntity::Unknown)
+            entities.insert(diagnostic.entity.uuid, entity_type);
+    }
+
+    return entities;
+}
+
+QHash<QUuid, QString> simulationWarningTooltips(const HydraulicData *hydraulic_data)
+{
+    QHash<QUuid, QStringList> messages;
+    const std::optional<HydraulicSimulationResultTimeline> &timeline =
+        hydraulic_data->simulationResultTimeline();
+    if (!timeline.has_value())
+        return QHash<QUuid, QString>();
+
+    for (const HydraulicSimulationDiagnostic &diagnostic : timeline->diagnostics)
+    {
+        if (diagnostic.severity != HydraulicSimulationDiagnosticSeverity::Warning
+            || diagnostic.entity.uuid.isNull())
+        {
+            continue;
+        }
+
+        QString message = diagnostic.message;
+        if (message.isEmpty())
+            message = diagnostic.message_backend;
+        if (message.isEmpty())
+            message = QStringLiteral("Simulation warning for this entity.");
+
+        messages[diagnostic.entity.uuid].append(message);
+    }
+
+    QHash<QUuid, QString> tooltips;
+    QHash<QUuid, QStringList>::const_iterator iterator = messages.constBegin();
+    while (iterator != messages.constEnd())
+    {
+        tooltips.insert(iterator.key(), QStringLiteral("Simulation warning:\n")
+                                      + iterator.value().join(QStringLiteral("\n")));
+        ++iterator;
+    }
+    return tooltips;
+}
+
 QHash<QUuid, QString> simulationErrorTooltips(const HydraulicData *hydraulic_data)
 {
     QHash<QUuid, QStringList> messages;
@@ -788,15 +909,34 @@ public:
             return cell.sort_value;
         case EntityUuidRole:
             return row.uuid;
+        case SimulationStatusRole:
+        {
+            int status = static_cast<int>(SimulationRowStatus::None);
+            if (row.simulation_warning)
+                status |= static_cast<int>(SimulationRowStatus::Warning);
+            if (row.simulation_error)
+                status |= static_cast<int>(SimulationRowStatus::Error);
+            return status;
+        }
         case Qt::TextAlignmentRole:
             return static_cast<int>(cell.alignment);
         case Qt::ToolTipRole:
+            if (row.simulation_error && !row.simulation_error_tooltip.isEmpty()
+                && row.simulation_warning && !row.simulation_warning_tooltip.isEmpty())
+            {
+                return row.simulation_error_tooltip + QStringLiteral("\n\n")
+                    + row.simulation_warning_tooltip;
+            }
             if (row.simulation_error && !row.simulation_error_tooltip.isEmpty())
                 return row.simulation_error_tooltip;
+            if (row.simulation_warning && !row.simulation_warning_tooltip.isEmpty())
+                return row.simulation_warning_tooltip;
             return cell.tooltip;
         case Qt::BackgroundRole:
             if (row.simulation_error)
                 return QBrush(QColor(210, 45, 45, 70));
+            if (row.simulation_warning)
+                return QBrush(QColor(220, 155, 40, 55));
             if (this->columns.at(index.column()).simulation_result)
                 return QBrush(QColor(70, 135, 210, 25));
             return QVariant();
@@ -914,6 +1054,8 @@ public:
 
         const QHash<QUuid, QString> error_tooltips =
             simulationErrorTooltips(this->hydraulic_data);
+        this->warning_entities = simulationWarningEntities(this->hydraulic_data);
+        this->warning_tooltips = simulationWarningTooltips(this->hydraulic_data);
 
         switch (this->entity_type)
         {
@@ -950,7 +1092,11 @@ private:
     {
         row.simulation_error = error_entities.value(row.uuid, InfrastructureEntity::Unknown)
             == this->entity_type;
+        row.simulation_warning =
+            this->warning_entities.value(row.uuid, InfrastructureEntity::Unknown)
+                == this->entity_type;
         row.simulation_error_tooltip = error_tooltips.value(row.uuid);
+        row.simulation_warning_tooltip = this->warning_tooltips.value(row.uuid);
         this->rows.append(row);
     }
 
@@ -1402,6 +1548,8 @@ private:
         }
     }
 
+    QHash<QUuid, InfrastructureEntity> warning_entities;
+    QHash<QUuid, QString> warning_tooltips;
     HydraulicData *hydraulic_data;
     InfrastructureEntity entity_type;
     QList<TableColumn> columns;
@@ -1472,13 +1620,25 @@ public:
         notifyFilterChanged();
     }
 
+    void setSimulationStatusFilter(SimulationStatusFilter filter)
+    {
+        if (this->simulation_status_filter == filter)
+            return;
+
+        this->simulation_status_filter = filter;
+        notifyFilterChanged();
+    }
+
     void clearAllFilters()
     {
-        if (this->filters.isEmpty() && this->numeric_filters.isEmpty())
+        const bool changed = !this->filters.isEmpty() || !this->numeric_filters.isEmpty()
+            || this->simulation_status_filter != SimulationStatusFilter::All;
+        if (!changed)
             return;
 
         this->filters.clear();
         this->numeric_filters.clear();
+        this->simulation_status_filter = SimulationStatusFilter::All;
         notifyFilterChanged();
     }
 
@@ -1527,6 +1687,30 @@ protected:
             ++numeric_iterator;
         }
 
+        const QModelIndex status_index = sourceModel()->index(source_row, 0, source_parent);
+        const int status = sourceModel()->data(status_index, SimulationStatusRole).toInt();
+        const bool has_warning =
+            (status & static_cast<int>(SimulationRowStatus::Warning)) != 0;
+        const bool has_error =
+            (status & static_cast<int>(SimulationRowStatus::Error)) != 0;
+        switch (this->simulation_status_filter)
+        {
+        case SimulationStatusFilter::WarningsAndErrors:
+            if (!has_warning && !has_error)
+                return false;
+            break;
+        case SimulationStatusFilter::WarningsOnly:
+            if (!has_warning)
+                return false;
+            break;
+        case SimulationStatusFilter::ErrorsOnly:
+            if (!has_error)
+                return false;
+            break;
+        case SimulationStatusFilter::All:
+            break;
+        }
+
         return true;
     }
 
@@ -1543,6 +1727,7 @@ private:
 
     QHash<int, QPair<ColumnFilterKind, QString>> filters;
     QHash<int, QPair<double, double>> numeric_filters;
+    SimulationStatusFilter simulation_status_filter = SimulationStatusFilter::All;
 };
 
 struct NumericRangeControl
@@ -2026,17 +2211,47 @@ HydraulicEntityTableWidget::HydraulicEntityTableWidget(HydraulicData *hydraulic_
     QHBoxLayout *bottom_layout = new QHBoxLayout(bottom_row);
     bottom_layout->setContentsMargins(0, 0, 0, 0);
     bottom_layout->setSpacing(8);
-    bottom_layout->addWidget(this->label_help, 1);
 
     QPushButton *reset_filters_button = new QPushButton(QStringLiteral("Reset filters"), bottom_row);
     reset_filters_button->setToolTip(QStringLiteral("Reset all table filters"));
     reset_filters_button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
     bottom_layout->addWidget(reset_filters_button, 0, Qt::AlignVCenter);
+
+    QLabel *simulation_filter_label = new QLabel(QStringLiteral("Simulation:"), bottom_row);
+    bottom_layout->addWidget(simulation_filter_label, 0, Qt::AlignVCenter);
+
+    QComboBox *simulation_filter = new QComboBox(bottom_row);
+    simulation_filter->addItem(QStringLiteral("All"),
+                               static_cast<int>(SimulationStatusFilter::All));
+    simulation_filter->addItem(QStringLiteral("Warnings & errors"),
+                               static_cast<int>(SimulationStatusFilter::WarningsAndErrors));
+    simulation_filter->addItem(QStringLiteral("Warnings only"),
+                               static_cast<int>(SimulationStatusFilter::WarningsOnly));
+    simulation_filter->addItem(QStringLiteral("Errors only"),
+                               static_cast<int>(SimulationStatusFilter::ErrorsOnly));
+    simulation_filter->setToolTip(QStringLiteral("Filter entities by simulation diagnostics"));
+    simulation_filter->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+    bottom_layout->addWidget(simulation_filter, 0, Qt::AlignVCenter);
+
+    bottom_layout->addWidget(this->label_help, 1);
     layout->addWidget(bottom_row);
 
-    connect(reset_filters_button, &QPushButton::clicked, filter_bar,
-            [filter_bar]()
+    connect(simulation_filter, &QComboBox::currentIndexChanged, this,
+            [this, simulation_filter](int)
     {
+        const SimulationStatusFilter filter = static_cast<SimulationStatusFilter>(
+            simulation_filter->currentData().toInt());
+        static_cast<HydraulicEntityFilterProxyModel *>(this->proxy_model)
+            ->setSimulationStatusFilter(filter);
+    });
+
+    connect(reset_filters_button, &QPushButton::clicked, filter_bar,
+            [filter_bar, simulation_filter]()
+    {
+        {
+            const QSignalBlocker blocker(simulation_filter);
+            simulation_filter->setCurrentIndex(0);
+        }
         filter_bar->resetFilters();
     });
 
