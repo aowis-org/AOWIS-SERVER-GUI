@@ -10,6 +10,7 @@ class HydraulicData;
 class HydraulicEntityTableModel;
 class QLabel;
 class QModelIndex;
+class QShowEvent;
 class QSortFilterProxyModel;
 class QTableView;
 
@@ -23,8 +24,12 @@ public:
                                         const QString &entity_plural,
                                         QWidget *parent = nullptr);
 
+protected:
+    void showEvent(QShowEvent *event) override;
+
 private:
     void openEntity(const QModelIndex &proxy_index);
+    void requestRebuild();
     void updateColumnWidths();
 
     HydraulicData *hydraulic_data;
@@ -33,6 +38,8 @@ private:
     QTableView *table;
     HydraulicEntityTableModel *model;
     QSortFilterProxyModel *proxy_model;
+    bool rebuild_pending = false;
+    bool rebuild_scheduled = false;
 };
 
 #endif // HYDRAULIC_ENTITY_TABLE_WIDGET_H

@@ -24,10 +24,12 @@
 #include <QPushButton>
 #include <QStyle>
 #include <QToolButton>
+#include <QTimer>
 #include <QModelIndex>
 #include <QSortFilterProxyModel>
 #include <QScrollBar>
 #include <QSignalBlocker>
+#include <QShowEvent>
 #include <QSizePolicy>
 #include <QSet>
 #include <QStringList>
@@ -405,40 +407,55 @@ QString referencedEntityId(const QList<EntityType> &entities, const QUuid &uuid)
 }
 
 template<typename ResultType>
-const ResultType *simulationResultByUuid(const QList<ResultType> &results, const QUuid &uuid)
+QHash<QUuid, const ResultType *> simulationResultLookup(const QList<ResultType> &results)
 {
+    QHash<QUuid, const ResultType *> lookup;
+    lookup.reserve(results.size());
     for (const ResultType &result : results)
-    {
-        if (result.uuid == uuid)
-            return &result;
-    }
-
-    return nullptr;
+        lookup.insert(result.uuid, &result);
+    return lookup;
 }
 
-const HydraulicSimulationResultLinkPumpEnergyUsage *pumpEnergyUsageByUuid(
-    const QList<HydraulicSimulationResultLinkPumpEnergyUsage> &results, const QUuid &uuid)
+QHash<QUuid, const HydraulicSimulationResultLinkPumpEnergyUsage *> pumpEnergyUsageLookup(
+    const QList<HydraulicSimulationResultLinkPumpEnergyUsage> &results)
 {
+    QHash<QUuid, const HydraulicSimulationResultLinkPumpEnergyUsage *> lookup;
+    lookup.reserve(results.size());
     for (const HydraulicSimulationResultLinkPumpEnergyUsage &result : results)
-    {
-        if (result.pump_uuid == uuid)
-            return &result;
-    }
-
-    return nullptr;
+        lookup.insert(result.pump_uuid, &result);
+    return lookup;
 }
 
-QString nodeId(const NetworkHydraulic &network, const QUuid &uuid)
+template<typename EntityType>
+void appendEntityIds(QHash<QUuid, QString> &lookup, const QList<EntityType> &entities)
 {
-    QString id = referencedEntityId(network.nodes_junctions, uuid);
-    if (id != uuid.toString(QUuid::WithoutBraces) || uuid.isNull())
-        return id;
+    for (const EntityType &entity : entities)
+    {
+        lookup.insert(entity.uuid, entity.id.isEmpty()
+            ? entity.uuid.toString(QUuid::WithoutBraces) : entity.id);
+    }
+}
 
-    id = referencedEntityId(network.nodes_reservoirs, uuid);
-    if (id != uuid.toString(QUuid::WithoutBraces))
-        return id;
+QHash<QUuid, QString> nodeIdLookup(const NetworkHydraulic &network)
+{
+    QHash<QUuid, QString> lookup;
+    lookup.reserve(network.nodes_junctions.size() + network.nodes_reservoirs.size()
+                   + network.nodes_tanks.size());
+    appendEntityIds(lookup, network.nodes_junctions);
+    appendEntityIds(lookup, network.nodes_reservoirs);
+    appendEntityIds(lookup, network.nodes_tanks);
+    return lookup;
+}
 
-    return referencedEntityId(network.nodes_tanks, uuid);
+QString nodeId(const QHash<QUuid, QString> &lookup, const QUuid &uuid)
+{
+    if (uuid.isNull())
+        return QString();
+
+    const QHash<QUuid, QString>::const_iterator iterator = lookup.constFind(uuid);
+    if (iterator != lookup.constEnd())
+        return iterator.value();
+    return uuid.toString(QUuid::WithoutBraces);
 }
 
 QString patternId(const NetworkHydraulic &network, const QUuid &uuid)
@@ -1105,6 +1122,11 @@ private:
                         const QHash<QUuid, InfrastructureEntity> &error_entities,
                         const QHash<QUuid, QString> &error_tooltips)
     {
+        const QHash<QUuid, const HydraulicSimulationResultNodeJunction *> result_lookup =
+            simulation_result == nullptr
+                ? QHash<QUuid, const HydraulicSimulationResultNodeJunction *>()
+                : simulationResultLookup(simulation_result->nodes_junctions);
+
         appendCommonColumns(this->columns);
         appendNodePositionColumns(this->columns);
         this->columns.append({QStringLiteral("Elevation Input"), false});
@@ -1142,8 +1164,8 @@ private:
             row.cells.append(textCell(junctionDemandSummary(network, junction.demands)));
             row.cells.append(numberCell(junction.emitter_coefficient_m3_per_h_per_m_exponent, 6));
 
-            const HydraulicSimulationResultNodeJunction *result = simulation_result == nullptr
-                ? nullptr : simulationResultByUuid(simulation_result->nodes_junctions, junction.uuid);
+            const HydraulicSimulationResultNodeJunction *result =
+                result_lookup.value(junction.uuid, nullptr);
             appendJunctionSimulationCells(row.cells, result);
             finishRow(row, error_entities, error_tooltips);
         }
@@ -1175,6 +1197,11 @@ private:
                          const QHash<QUuid, InfrastructureEntity> &error_entities,
                          const QHash<QUuid, QString> &error_tooltips)
     {
+        const QHash<QUuid, const HydraulicSimulationResultNodeReservoir *> result_lookup =
+            simulation_result == nullptr
+                ? QHash<QUuid, const HydraulicSimulationResultNodeReservoir *>()
+                : simulationResultLookup(simulation_result->nodes_reservoirs);
+
         appendCommonColumns(this->columns);
         appendNodePositionColumns(this->columns);
         this->columns.append({QStringLiteral("Head Input"), false});
@@ -1203,8 +1230,8 @@ private:
             row.cells.append(textCell(patternModeText(reservoir.head_pattern_mode)));
             row.cells.append(textCell(patternId(network, reservoir.head_pattern_uuid)));
 
-            const HydraulicSimulationResultNodeReservoir *result = simulation_result == nullptr
-                ? nullptr : simulationResultByUuid(simulation_result->nodes_reservoirs, reservoir.uuid);
+            const HydraulicSimulationResultNodeReservoir *result =
+                result_lookup.value(reservoir.uuid, nullptr);
             if (result == nullptr)
             {
                 for (int index = 0; index < 4; ++index)
@@ -1227,6 +1254,11 @@ private:
                     const QHash<QUuid, InfrastructureEntity> &error_entities,
                     const QHash<QUuid, QString> &error_tooltips)
     {
+        const QHash<QUuid, const HydraulicSimulationResultNodeTank *> result_lookup =
+            simulation_result == nullptr
+                ? QHash<QUuid, const HydraulicSimulationResultNodeTank *>()
+                : simulationResultLookup(simulation_result->nodes_tanks);
+
         appendCommonColumns(this->columns);
         appendNodePositionColumns(this->columns);
         this->columns.append({QStringLiteral("Elevation Input"), false});
@@ -1274,8 +1306,8 @@ private:
             row.cells.append(textCell(tankVolumeCurveId(network, tank.volume_curve_uuid)));
             row.cells.append(boolCell(tank.can_overflow));
 
-            const HydraulicSimulationResultNodeTank *result = simulation_result == nullptr
-                ? nullptr : simulationResultByUuid(simulation_result->nodes_tanks, tank.uuid);
+            const HydraulicSimulationResultNodeTank *result =
+                result_lookup.value(tank.uuid, nullptr);
             if (result == nullptr)
             {
                 for (int index = 0; index < 7; ++index)
@@ -1301,6 +1333,12 @@ private:
                     const QHash<QUuid, InfrastructureEntity> &error_entities,
                     const QHash<QUuid, QString> &error_tooltips)
     {
+        const QHash<QUuid, QString> node_ids = nodeIdLookup(network);
+        const QHash<QUuid, const HydraulicSimulationResultLinkPipe *> result_lookup =
+            simulation_result == nullptr
+                ? QHash<QUuid, const HydraulicSimulationResultLinkPipe *>()
+                : simulationResultLookup(simulation_result->links_pipes);
+
         appendCommonColumns(this->columns);
         this->columns.append({QStringLiteral("Node 1"), false});
         this->columns.append({QStringLiteral("Node 2"), false});
@@ -1334,8 +1372,8 @@ private:
             TableRow row;
             row.uuid = pipe.uuid;
             appendCommonCells(row.cells, pipe.id, pipe.metadata);
-            row.cells.append(textCell(nodeId(network, pipe.node_uuid_from)));
-            row.cells.append(textCell(nodeId(network, pipe.node_uuid_to)));
+            row.cells.append(textCell(nodeId(node_ids, pipe.node_uuid_from)));
+            row.cells.append(textCell(nodeId(node_ids, pipe.node_uuid_to)));
             row.cells.append(integerCell(pipe.vertices.size()));
             row.cells.append(numberCell(pipe.length_calculated_m, 3, QStringLiteral(" m")));
             row.cells.append(optionalNumberCell(pipe.length_measured_m, 3, QStringLiteral(" m")));
@@ -1352,8 +1390,8 @@ private:
             row.cells.append(numberCell(pipe.leak_expansion_mm2_per_m_head, 6,
                                         QStringLiteral(" mm²/m head")));
 
-            const HydraulicSimulationResultLinkPipe *result = simulation_result == nullptr
-                ? nullptr : simulationResultByUuid(simulation_result->links_pipes, pipe.uuid);
+            const HydraulicSimulationResultLinkPipe *result =
+                result_lookup.value(pipe.uuid, nullptr);
             if (result == nullptr)
             {
                 for (int index = 0; index < 11; ++index)
@@ -1383,6 +1421,12 @@ private:
                     const QHash<QUuid, InfrastructureEntity> &error_entities,
                     const QHash<QUuid, QString> &error_tooltips)
     {
+        const QHash<QUuid, QString> node_ids = nodeIdLookup(network);
+        const QHash<QUuid, const HydraulicSimulationResultLinkPump *> result_lookup =
+            simulation_result == nullptr
+                ? QHash<QUuid, const HydraulicSimulationResultLinkPump *>()
+                : simulationResultLookup(simulation_result->links_pumps);
+
         appendCommonColumns(this->columns);
         this->columns.append({QStringLiteral("Node 1"), false});
         this->columns.append({QStringLiteral("Node 2"), false});
@@ -1425,13 +1469,18 @@ private:
             final_result = &timeline->results.constLast();
         }
 
+        const QHash<QUuid, const HydraulicSimulationResultLinkPumpEnergyUsage *>
+            energy_usage_lookup = final_result == nullptr
+                ? QHash<QUuid, const HydraulicSimulationResultLinkPumpEnergyUsage *>()
+                : pumpEnergyUsageLookup(final_result->links_pump_energy_usage);
+
         for (const HydraulicLinkPump &pump : network.links_pumps)
         {
             TableRow row;
             row.uuid = pump.uuid;
             appendCommonCells(row.cells, pump.id, pump.metadata);
-            row.cells.append(textCell(nodeId(network, pump.node_uuid_from)));
-            row.cells.append(textCell(nodeId(network, pump.node_uuid_to)));
+            row.cells.append(textCell(nodeId(node_ids, pump.node_uuid_from)));
+            row.cells.append(textCell(nodeId(node_ids, pump.node_uuid_to)));
             row.cells.append(integerCell(pump.vertices.size()));
             row.cells.append(textCell(pumpDefinitionText(pump.definition_type)));
             row.cells.append(numberCell(pump.constant_power_kw, 3, QStringLiteral(" kW")));
@@ -1447,8 +1496,8 @@ private:
             row.cells.append(numberCell(pump.energy_price_per_kw_h, 6));
             row.cells.append(textCell(patternId(network, pump.price_pattern_uuid)));
 
-            const HydraulicSimulationResultLinkPump *result = simulation_result == nullptr
-                ? nullptr : simulationResultByUuid(simulation_result->links_pumps, pump.uuid);
+            const HydraulicSimulationResultLinkPump *result =
+                result_lookup.value(pump.uuid, nullptr);
             if (result == nullptr)
             {
                 for (int index = 0; index < 9; ++index)
@@ -1467,8 +1516,8 @@ private:
                 row.cells.append(boolCell(result->appears_in_control));
             }
 
-            const HydraulicSimulationResultLinkPumpEnergyUsage *energy_usage = final_result == nullptr
-                ? nullptr : pumpEnergyUsageByUuid(final_result->links_pump_energy_usage, pump.uuid);
+            const HydraulicSimulationResultLinkPumpEnergyUsage *energy_usage =
+                energy_usage_lookup.value(pump.uuid, nullptr);
             if (energy_usage == nullptr)
             {
                 for (int index = 0; index < 6; ++index)
@@ -1493,6 +1542,12 @@ private:
                      const QHash<QUuid, InfrastructureEntity> &error_entities,
                      const QHash<QUuid, QString> &error_tooltips)
     {
+        const QHash<QUuid, QString> node_ids = nodeIdLookup(network);
+        const QHash<QUuid, const HydraulicSimulationResultLinkValve *> result_lookup =
+            simulation_result == nullptr
+                ? QHash<QUuid, const HydraulicSimulationResultLinkValve *>()
+                : simulationResultLookup(simulation_result->links_valves);
+
         appendCommonColumns(this->columns);
         this->columns.append({QStringLiteral("Node 1"), false});
         this->columns.append({QStringLiteral("Node 2"), false});
@@ -1516,8 +1571,8 @@ private:
             TableRow row;
             row.uuid = valve.uuid;
             appendCommonCells(row.cells, valve.id, valve.metadata);
-            row.cells.append(textCell(nodeId(network, valve.node_uuid_from)));
-            row.cells.append(textCell(nodeId(network, valve.node_uuid_to)));
+            row.cells.append(textCell(nodeId(node_ids, valve.node_uuid_from)));
+            row.cells.append(textCell(nodeId(node_ids, valve.node_uuid_to)));
             row.cells.append(integerCell(valve.vertices.size()));
             row.cells.append(textCell(valveTypeText(valve.type)));
             row.cells.append(numberCell(valve.setting, 6));
@@ -1526,8 +1581,8 @@ private:
             row.cells.append(numberCell(valve.diameter_mm, 3, QStringLiteral(" mm")));
             row.cells.append(numberCell(valve.minor_loss, 6));
 
-            const HydraulicSimulationResultLinkValve *result = simulation_result == nullptr
-                ? nullptr : simulationResultByUuid(simulation_result->links_valves, valve.uuid);
+            const HydraulicSimulationResultLinkValve *result =
+                result_lookup.value(valve.uuid, nullptr);
             if (result == nullptr)
             {
                 for (int index = 0; index < 7; ++index)
@@ -2273,12 +2328,12 @@ HydraulicEntityTableWidget::HydraulicEntityTableWidget(HydraulicData *hydraulic_
     connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this,
             [this]()
     {
-        this->model->rebuild();
+        requestRebuild();
     });
     connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged, this,
             [this](quint64)
     {
-        this->model->rebuild();
+        requestRebuild();
     });
     connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
             [this](InfrastructureEntity changed_type, const QUuid &)
@@ -2291,24 +2346,49 @@ HydraulicEntityTableWidget::HydraulicEntityTableWidget(HydraulicData *hydraulic_
             || this->entity_type == InfrastructureEntity::Valve;
 
         if ((table_is_node && changed_type == this->entity_type) || table_is_link)
-            this->model->rebuild();
+            requestRebuild();
     });
     connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
             [this](InfrastructureEntity changed_type, const QUuid &)
     {
         if (changed_type == this->entity_type)
-            this->model->rebuild();
+            requestRebuild();
     });
     connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged, this,
             [this](bool)
     {
-        this->model->rebuild();
+        requestRebuild();
     });
     connect(this->hydraulic_data, &HydraulicData::signalCurrentSimulationResultChanged, this,
             [this](int)
     {
+        requestRebuild();
+    });
+}
+
+void HydraulicEntityTableWidget::requestRebuild()
+{
+    this->rebuild_pending = true;
+    if (!isVisible() || this->rebuild_scheduled)
+        return;
+
+    this->rebuild_scheduled = true;
+    QTimer::singleShot(0, this, [this]()
+    {
+        this->rebuild_scheduled = false;
+        if (!isVisible() || !this->rebuild_pending)
+            return;
+
+        this->rebuild_pending = false;
         this->model->rebuild();
     });
+}
+
+void HydraulicEntityTableWidget::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    if (this->rebuild_pending)
+        requestRebuild();
 }
 
 void HydraulicEntityTableWidget::updateColumnWidths()
