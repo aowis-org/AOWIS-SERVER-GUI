@@ -5,20 +5,29 @@
 
 #include <QAbstractItemView>
 #include <QAbstractTableModel>
+#include <QComboBox>
 #include <QBrush>
 #include <QColor>
 #include <QDate>
 #include <QFont>
+#include <QFrame>
+#include <QFontMetrics>
 #include <QHash>
 #include <QHeaderView>
 #include <QLabel>
+#include <QLineEdit>
+#include <QPalette>
 #include <QList>
 #include <QModelIndex>
 #include <QSortFilterProxyModel>
+#include <QScrollBar>
+#include <QSignalBlocker>
+#include <QSet>
 #include <QStringList>
 #include <QTableView>
 #include <QVariant>
 #include <QVBoxLayout>
+#include <QResizeEvent>
 
 #include "hydraulic_data.h"
 #include "network_symbology_values.h"
@@ -28,10 +37,18 @@ namespace
 constexpr int SortRole = Qt::UserRole;
 constexpr int EntityUuidRole = Qt::UserRole + 1;
 
+enum class ColumnFilterKind
+{
+    None,
+    Text,
+    Choice
+};
+
 struct TableColumn
 {
     QString title;
     bool simulation_result = false;
+    ColumnFilterKind filter_kind = ColumnFilterKind::None;
 };
 
 struct TableCell
@@ -473,6 +490,90 @@ double junctionBaseDemand(const QList<HydraulicNodeJunctionDemand> &demands)
     return total;
 }
 
+QString twoLineHeaderText(const QString &title)
+{
+    const qsizetype unit_separator = title.lastIndexOf(QStringLiteral(" ["));
+    if (unit_separator > 0)
+    {
+        return title.left(unit_separator) + QLatin1Char('\n')
+            + title.mid(unit_separator + 1);
+    }
+
+    const QStringList words = title.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    if (words.size() < 2)
+        return title;
+
+    qsizetype best_split = 1;
+    qsizetype best_difference = title.size();
+    for (qsizetype split = 1; split < words.size(); ++split)
+    {
+        const qsizetype left_length = words.mid(0, split).join(QLatin1Char(' ')).size();
+        const qsizetype right_length = words.mid(split).join(QLatin1Char(' ')).size();
+        const qsizetype difference = left_length > right_length
+            ? left_length - right_length : right_length - left_length;
+        if (difference < best_difference)
+        {
+            best_difference = difference;
+            best_split = split;
+        }
+    }
+
+    return words.mid(0, best_split).join(QLatin1Char(' ')) + QLatin1Char('\n')
+        + words.mid(best_split).join(QLatin1Char(' '));
+}
+
+ColumnFilterKind columnFilterKind(const QString &title)
+{
+    static const QSet<QString> text_columns = {
+        QStringLiteral("ID"),
+        QStringLiteral("Tag"),
+        QStringLiteral("Comment"),
+        QStringLiteral("Node 1"),
+        QStringLiteral("Node 2"),
+        QStringLiteral("Demand Details"),
+        QStringLiteral("Material"),
+        QStringLiteral("Head Pattern"),
+        QStringLiteral("Volume Curve"),
+        QStringLiteral("Head Curve"),
+        QStringLiteral("Speed Pattern"),
+        QStringLiteral("Efficiency Curve"),
+        QStringLiteral("Price Pattern"),
+        QStringLiteral("Setting Curve")
+    };
+
+    static const QSet<QString> choice_columns = {
+        QStringLiteral("Enabled"),
+        QStringLiteral("Model Role"),
+        QStringLiteral("Elevation Input"),
+        QStringLiteral("Head Input"),
+        QStringLiteral("Head Pattern Mode"),
+        QStringLiteral("Geometry Input"),
+        QStringLiteral("Can Overflow"),
+        QStringLiteral("Initial Status"),
+        QStringLiteral("Definition"),
+        QStringLiteral("Control Type"),
+        QStringLiteral("Efficiency Input"),
+        QStringLiteral("Energy Price Input"),
+        QStringLiteral("Valve Type"),
+        QStringLiteral("Status"),
+        QStringLiteral("Operating State"),
+        QStringLiteral("Regulating"),
+        QStringLiteral("Referenced by Control")
+    };
+
+    if (text_columns.contains(title))
+        return ColumnFilterKind::Text;
+    if (choice_columns.contains(title))
+        return ColumnFilterKind::Choice;
+    return ColumnFilterKind::None;
+}
+
+void configureColumnFilters(QList<TableColumn> &columns)
+{
+    for (TableColumn &column : columns)
+        column.filter_kind = columnFilterKind(column.title);
+}
+
 void appendCommonColumns(QList<TableColumn> &columns)
 {
     columns.append({QStringLiteral("ID"), false});
@@ -642,9 +743,13 @@ public:
 
         const TableColumn &column = this->columns.at(section);
         if (role == Qt::DisplayRole)
+            return twoLineHeaderText(column.title);
+        if (role == Qt::ToolTipRole)
+        {
+            if (column.simulation_result)
+                return column.title + QStringLiteral("\nSimulation result.");
             return column.title;
-        if (role == Qt::ToolTipRole && column.simulation_result)
-            return QStringLiteral("Simulation result.");
+        }
         if (role == Qt::BackgroundRole && column.simulation_result)
             return QBrush(QColor(70, 135, 210, 55));
         if (role == Qt::FontRole && column.simulation_result)
@@ -662,6 +767,20 @@ public:
         if (!index.isValid())
             return Qt::NoItemFlags;
         return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+    }
+
+    ColumnFilterKind filterKind(int column) const
+    {
+        if (column < 0 || column >= this->columns.size())
+            return ColumnFilterKind::None;
+        return this->columns.at(column).filter_kind;
+    }
+
+    QString columnTitle(int column) const
+    {
+        if (column < 0 || column >= this->columns.size())
+            return QString();
+        return this->columns.at(column).title;
     }
 
     void rebuild()
@@ -708,6 +827,7 @@ public:
             break;
         }
 
+        configureColumnFilters(this->columns);
         endResetModel();
     }
 
@@ -1176,6 +1296,245 @@ private:
     QList<TableRow> rows;
 };
 
+class HydraulicEntityFilterProxyModel : public QSortFilterProxyModel
+{
+public:
+    explicit HydraulicEntityFilterProxyModel(QObject *parent = nullptr)
+        : QSortFilterProxyModel(parent)
+    {
+    }
+
+    QString columnFilterValue(int column) const
+    {
+        if (!this->filters.contains(column))
+            return QString();
+        return this->filters.value(column).second;
+    }
+
+    void setColumnFilter(int column, ColumnFilterKind kind, const QString &value)
+    {
+        const QString trimmed_value = value.trimmed();
+        if (trimmed_value.isEmpty())
+        {
+            if (this->filters.remove(column) == 0)
+                return;
+            notifyFilterChanged();
+            return;
+        }
+
+        const QPair<ColumnFilterKind, QString> new_filter = qMakePair(kind, trimmed_value);
+        if (this->filters.value(column) == new_filter)
+            return;
+
+        this->filters.insert(column, new_filter);
+        notifyFilterChanged();
+    }
+
+protected:
+    bool filterAcceptsRow(int source_row, const QModelIndex &source_parent) const override
+    {
+        QHash<int, QPair<ColumnFilterKind, QString>>::const_iterator iterator =
+            this->filters.constBegin();
+        while (iterator != this->filters.constEnd())
+        {
+            const QModelIndex index = sourceModel()->index(source_row, iterator.key(),
+                                                           source_parent);
+            const QString display = sourceModel()->data(index, Qt::DisplayRole).toString();
+            const ColumnFilterKind kind = iterator.value().first;
+            const QString value = iterator.value().second;
+
+            if (kind == ColumnFilterKind::Text)
+            {
+                if (!display.contains(value, Qt::CaseInsensitive))
+                    return false;
+            }
+            else if (kind == ColumnFilterKind::Choice)
+            {
+                if (display.compare(value, Qt::CaseInsensitive) != 0)
+                    return false;
+            }
+
+            ++iterator;
+        }
+
+        return true;
+    }
+
+private:
+    void notifyFilterChanged()
+    {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
+        beginFilterChange();
+        endFilterChange(QSortFilterProxyModel::Direction::Rows);
+#else
+        invalidateFilter();
+#endif
+    }
+
+    QHash<int, QPair<ColumnFilterKind, QString>> filters;
+};
+
+class HydraulicEntityFilterBar : public QWidget
+{
+public:
+    HydraulicEntityFilterBar(QTableView *table, HydraulicEntityTableModel *model,
+                             HydraulicEntityFilterProxyModel *proxy_model,
+                             QWidget *parent = nullptr)
+        : QWidget(parent),
+          table(table),
+          model(model),
+          proxy_model(proxy_model)
+    {
+        setFixedHeight(30);
+        rebuildControls();
+
+        QHeaderView *header = this->table->horizontalHeader();
+        connect(header, &QHeaderView::sectionResized, this,
+                [this](int, int, int) { updateControlGeometries(); });
+        connect(header, &QHeaderView::sectionMoved, this,
+                [this](int, int, int) { updateControlGeometries(); });
+        connect(header, &QHeaderView::geometriesChanged, this,
+                [this]() { updateControlGeometries(); });
+        connect(this->table->horizontalScrollBar(), &QScrollBar::valueChanged, this,
+                [this](int) { updateControlGeometries(); });
+        connect(this->model, &QAbstractItemModel::modelReset, this,
+                [this]()
+        {
+            refreshChoiceControls();
+            updateControlGeometries();
+        });
+    }
+
+protected:
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QWidget::resizeEvent(event);
+        updateControlGeometries();
+    }
+
+private:
+    void rebuildControls()
+    {
+        const int column_count = this->model->columnCount();
+        this->controls.clear();
+        this->controls.reserve(column_count);
+        for (int column = 0; column < column_count; ++column)
+        {
+            const ColumnFilterKind kind = this->model->filterKind(column);
+            const QString active_filter = this->proxy_model->columnFilterValue(column);
+            QWidget *control = nullptr;
+
+            if (kind == ColumnFilterKind::Text)
+            {
+                QLineEdit *line_edit = new QLineEdit(this);
+                line_edit->setPlaceholderText(QStringLiteral("Filter…"));
+                line_edit->setClearButtonEnabled(true);
+                line_edit->setToolTip(QStringLiteral("Filter ")
+                                      + this->model->columnTitle(column));
+                connect(line_edit, &QLineEdit::textChanged, this,
+                        [this, column](const QString &text)
+                {
+                    this->proxy_model->setColumnFilter(column, ColumnFilterKind::Text, text);
+                });
+                line_edit->setText(active_filter);
+                control = line_edit;
+            }
+            else if (kind == ColumnFilterKind::Choice)
+            {
+                QComboBox *combo_box = new QComboBox(this);
+                combo_box->setToolTip(QStringLiteral("Filter ")
+                                      + this->model->columnTitle(column));
+                populateChoiceControl(combo_box, column, active_filter);
+
+                connect(combo_box, &QComboBox::currentIndexChanged, this,
+                        [this, combo_box, column](int)
+                {
+                    this->proxy_model->setColumnFilter(
+                        column, ColumnFilterKind::Choice,
+                        combo_box->currentData().toString());
+                });
+                control = combo_box;
+            }
+
+            this->controls.append(control);
+        }
+
+        updateControlGeometries();
+    }
+
+    void populateChoiceControl(QComboBox *combo_box, int column,
+                               const QString &active_filter)
+    {
+        combo_box->clear();
+        combo_box->addItem(QStringLiteral("All"), QString());
+
+        QSet<QString> values;
+        for (int row = 0; row < this->model->rowCount(); ++row)
+        {
+            const QString value = this->model->index(row, column)
+                                      .data(Qt::DisplayRole).toString();
+            if (!value.isEmpty() && value != QStringLiteral("—"))
+                values.insert(value);
+        }
+
+        QStringList sorted_values;
+        for (const QString &value : values)
+            sorted_values.append(value);
+        sorted_values.sort(Qt::CaseInsensitive);
+        for (const QString &value : sorted_values)
+            combo_box->addItem(value, value);
+
+        const int active_index = combo_box->findData(active_filter);
+        if (active_index >= 0)
+            combo_box->setCurrentIndex(active_index);
+    }
+
+    void refreshChoiceControls()
+    {
+        const int column_count = qMin(this->controls.size(), this->model->columnCount());
+        for (int column = 0; column < column_count; ++column)
+        {
+            QComboBox *combo_box = qobject_cast<QComboBox *>(this->controls.at(column));
+            if (combo_box == nullptr)
+                continue;
+
+            const QString active_filter = this->proxy_model->columnFilterValue(column);
+            {
+                const QSignalBlocker blocker(combo_box);
+                populateChoiceControl(combo_box, column, active_filter);
+            }
+
+            if (!active_filter.isEmpty() && combo_box->findData(active_filter) < 0)
+            {
+                this->proxy_model->setColumnFilter(column, ColumnFilterKind::Choice,
+                                                   QString());
+            }
+        }
+    }
+
+    void updateControlGeometries()
+    {
+        QHeaderView *header = this->table->horizontalHeader();
+        const int x_offset = header->geometry().x();
+        for (int column = 0; column < this->controls.size(); ++column)
+        {
+            QWidget *control = this->controls.at(column);
+            if (control == nullptr)
+                continue;
+
+            const int x = x_offset + header->sectionViewportPosition(column);
+            const int section_width = header->sectionSize(column);
+            control->setGeometry(x + 2, 1, qMax(0, section_width - 4), height() - 2);
+            control->setVisible(x + section_width > 0 && x < width());
+        }
+    }
+
+    QTableView *table;
+    HydraulicEntityTableModel *model;
+    HydraulicEntityFilterProxyModel *proxy_model;
+    QList<QWidget *> controls;
+};
+
 HydraulicEntityTableWidget::HydraulicEntityTableWidget(HydraulicData *hydraulic_data,
                                                        InfrastructureEntity entity_type,
                                                        const QString &entity_plural,
@@ -1186,15 +1545,11 @@ HydraulicEntityTableWidget::HydraulicEntityTableWidget(HydraulicData *hydraulic_
       label_help(new QLabel(this)),
       table(new QTableView(this)),
       model(new HydraulicEntityTableModel(hydraulic_data, entity_type, this)),
-      proxy_model(new QSortFilterProxyModel(this))
+      proxy_model(new HydraulicEntityFilterProxyModel(this))
 {
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(10, 10, 10, 10);
     layout->setSpacing(8);
-
-    this->label_help->setText(entity_plural + QStringLiteral(" are created in the Map Editor."));
-    this->label_help->setWordWrap(true);
-    layout->addWidget(this->label_help);
 
     this->proxy_model->setSourceModel(this->model);
     this->proxy_model->setSortRole(SortRole);
@@ -1213,16 +1568,40 @@ HydraulicEntityTableWidget::HydraulicEntityTableWidget(HydraulicData *hydraulic_
     this->table->horizontalHeader()->setSectionsClickable(true);
     this->table->horizontalHeader()->setSectionsMovable(true);
     this->table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+    this->table->horizontalHeader()->setDefaultAlignment(Qt::AlignCenter);
+    this->table->horizontalHeader()->setTextElideMode(Qt::ElideNone);
     this->table->horizontalHeader()->setDefaultSectionSize(145);
     this->table->horizontalHeader()->setMinimumSectionSize(70);
+    const QFontMetrics header_font_metrics(this->table->horizontalHeader()->font());
+    this->table->horizontalHeader()->setFixedHeight(header_font_metrics.lineSpacing() * 2 + 12);
     this->table->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
     this->table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     this->table->viewport()->setCursor(Qt::PointingHandCursor);
+
+    HydraulicEntityFilterBar *filter_bar = new HydraulicEntityFilterBar(
+        this->table, this->model,
+        static_cast<HydraulicEntityFilterProxyModel *>(this->proxy_model), this);
+    layout->addWidget(filter_bar);
     layout->addWidget(this->table, 1);
 
+    this->label_help->setText(QStringLiteral("<b>Hint:</b> ") + entity_plural
+                              + QStringLiteral(" are created in the Map Editor."));
+    this->label_help->setTextFormat(Qt::RichText);
+    this->label_help->setWordWrap(true);
+    this->label_help->setMargin(8);
+    this->label_help->setFrameShape(QFrame::StyledPanel);
+    this->label_help->setBackgroundRole(QPalette::AlternateBase);
+    this->label_help->setAutoFillBackground(true);
+    layout->addWidget(this->label_help);
+
     this->table->sortByColumn(0, Qt::AscendingOrder);
-    if (this->table->model()->columnCount() > 0)
-        this->table->setColumnWidth(0, 170);
+    updateColumnWidths();
+
+    connect(this->model, &QAbstractItemModel::modelReset, this,
+            [this]()
+    {
+        updateColumnWidths();
+    });
 
     connect(this->table, &QTableView::clicked, this,
             [this](const QModelIndex &index)
@@ -1269,6 +1648,27 @@ HydraulicEntityTableWidget::HydraulicEntityTableWidget(HydraulicData *hydraulic_
     {
         this->model->rebuild();
     });
+}
+
+void HydraulicEntityTableWidget::updateColumnWidths()
+{
+    const QFontMetrics font_metrics(this->table->horizontalHeader()->font());
+    const int column_count = this->table->model()->columnCount();
+    for (int column = 0; column < column_count; ++column)
+    {
+        const QString header_text = this->table->model()
+                                        ->headerData(column, Qt::Horizontal, Qt::DisplayRole)
+                                        .toString();
+        const QStringList lines = header_text.split(QLatin1Char('\n'));
+        int text_width = 0;
+        for (const QString &line : lines)
+            text_width = qMax(text_width, font_metrics.horizontalAdvance(line));
+
+        this->table->setColumnWidth(column, qMax(110, text_width + 30));
+    }
+
+    if (column_count > 0)
+        this->table->setColumnWidth(0, qMax(170, this->table->columnWidth(0)));
 }
 
 void HydraulicEntityTableWidget::openEntity(const QModelIndex &proxy_index)

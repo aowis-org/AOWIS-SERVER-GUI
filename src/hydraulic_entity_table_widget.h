@@ -25,6 +25,7 @@ public:
 
 private:
     void openEntity(const QModelIndex &proxy_index);
+    void updateColumnWidths();
 
     HydraulicData *hydraulic_data;
     InfrastructureEntity entity_type;
