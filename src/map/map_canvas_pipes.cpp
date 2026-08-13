@@ -189,6 +189,17 @@ std::optional<InfrastructureEntityReference> MapCanvasPipes::selectPipe(const QU
     return pipe->entity;
 }
 
+std::optional<InfrastructureEntityReference> MapCanvasPipes::togglePipe(const QUuid &pipe_uuid)
+{
+    PipeCanvasItem *pipe = pipeByUuid(pipe_uuid);
+    if (!pipe)
+        return std::nullopt;
+
+    pipe->selected = !pipe->selected;
+    updateCanvas();
+    return pipe->entity;
+}
+
 bool MapCanvasPipes::removePipe(const QUuid &pipe_uuid)
 {
     const int pipe_index = pipeIndexByUuid(pipe_uuid);

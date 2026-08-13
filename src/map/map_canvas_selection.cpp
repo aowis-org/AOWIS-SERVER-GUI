@@ -104,6 +104,14 @@ std::optional<InfrastructureEntityReference> MapCanvasSelection::replaceWithPipe
     return this->pipes->selectPipe(pipe_uuid);
 }
 
+std::optional<InfrastructureEntityReference> MapCanvasSelection::togglePipe(
+    const QUuid &pipe_uuid)
+{
+    if (!this->pipes)
+        return std::nullopt;
+    return this->pipes->togglePipe(pipe_uuid);
+}
+
 void MapCanvasSelection::selectInRectangle(
     const QRect &rect,
     const QList<MapEntityMarker> &point_markers,

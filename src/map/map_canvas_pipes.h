@@ -63,6 +63,7 @@ public:
     QList<QUuid> selectedPipeUuids() const;
     void clearSelection();
     std::optional<InfrastructureEntityReference> selectPipe(const QUuid &pipe_uuid);
+    std::optional<InfrastructureEntityReference> togglePipe(const QUuid &pipe_uuid);
     bool removePipe(const QUuid &pipe_uuid);
     void selectPipesWithSelectedEndpoints(const QList<QUuid> &selected_marker_uuids);
     void moveIntermediateVertices(const QList<QUuid> &pipe_uuids,

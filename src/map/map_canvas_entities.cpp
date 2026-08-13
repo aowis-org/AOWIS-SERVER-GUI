@@ -1511,6 +1511,14 @@ bool MapCanvasEntities::selectPipeAt(const QPointF &position)
     if (!pipe.has_value())
         return false;
 
+    if (QApplication::keyboardModifiers().testFlag(Qt::ShiftModifier))
+    {
+        this->selection->togglePipe(pipe->uuid);
+        emit signalEntityMarkerSelected(this->selection->hasSelection());
+        updateCanvas();
+        return true;
+    }
+
     selectPipe(pipe->uuid);
     return true;
 }

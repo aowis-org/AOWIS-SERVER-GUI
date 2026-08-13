@@ -39,6 +39,7 @@ public:
     void toggleMarker(const MapEntityMarker &marker);
     void removeMarker(const QUuid &uuid);
     std::optional<InfrastructureEntityReference> replaceWithPipe(const QUuid &pipe_uuid);
+    std::optional<InfrastructureEntityReference> togglePipe(const QUuid &pipe_uuid);
     void selectInRectangle(const QRect &rect,
                            const QList<MapEntityMarker> &point_markers,
                            const QList<MapEntityMarker> &device_link_markers,
