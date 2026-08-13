@@ -53,6 +53,19 @@ void showAndActivateDialog(QDialog *dialog)
     dialog->activateWindow();
 }
 
+void showMessageBox(
+    QWidget *parent,
+    QMessageBox::Icon icon,
+    const QString &title,
+    const QString &text)
+{
+    QMessageBox *message_box = new QMessageBox(icon, title, text, QMessageBox::Ok, parent);
+    message_box->setAttribute(Qt::WA_DeleteOnClose);
+    message_box->open();
+    message_box->raise();
+    message_box->activateWindow();
+}
+
 QString exportFailureDetails(const HydraulicSimulationStatus &status)
 {
     QStringList details;
@@ -224,7 +237,7 @@ void SimulationManager::finishSimulation(const EpanetResultRun &run_result)
     const QString message = warning_count > 0
         ? tr("Simulation completed successfully with %1 warning(s).").arg(warning_count)
         : tr("Simulation completed successfully.");
-    QMessageBox::information(main_window, tr("Simulation Complete"), message);
+    showMessageBox(main_window, QMessageBox::Information, tr("Simulation Complete"), message);
 }
 
 void SimulationManager::showSimulationStatistics()
@@ -362,7 +375,7 @@ void SimulationManager::exportEpanetNetwork()
     {
         const QString details = exportFailureDetails(export_result.status);
         qWarning().noquote() << "EPANET INP export failed:" << details;
-        QMessageBox::critical(main_window, tr("EPANET export failed"), details);
+        showMessageBox(main_window, QMessageBox::Critical, tr("EPANET export failed"), details);
         return;
     }
 
@@ -370,7 +383,7 @@ void SimulationManager::exportEpanetNetwork()
     {
         const QString message = tr("EPANET generated an empty INP document.");
         qWarning().noquote() << message;
-        QMessageBox::critical(main_window, tr("EPANET export failed"), message);
+        showMessageBox(main_window, QMessageBox::Critical, tr("EPANET export failed"), message);
         return;
     }
 
@@ -383,7 +396,7 @@ void SimulationManager::exportEpanetNetwork()
     QSaveFile output_file(file_path);
     if (!output_file.open(QIODevice::WriteOnly))
     {
-        QMessageBox::critical(main_window, tr("EPANET export failed"), tr("Could not open the selected file for writing:\n%1").arg(output_file.errorString()));
+        showMessageBox(main_window, QMessageBox::Critical, tr("EPANET export failed"), tr("Could not open the selected file for writing:\n%1").arg(output_file.errorString()));
         return;
     }
 
@@ -392,11 +405,11 @@ void SimulationManager::exportEpanetNetwork()
     {
         const QString error_message = output_file.errorString();
         output_file.cancelWriting();
-        QMessageBox::critical(main_window, tr("EPANET export failed"), tr("Could not write the complete INP document:\n%1").arg(error_message));
+        showMessageBox(main_window, QMessageBox::Critical, tr("EPANET export failed"), tr("Could not write the complete INP document:\n%1").arg(error_message));
         return;
     }
 
     if (!output_file.commit())
-        QMessageBox::critical(main_window, tr("EPANET export failed"), tr("Could not finalize the exported INP file:\n%1").arg(output_file.errorString()));
+        showMessageBox(main_window, QMessageBox::Critical, tr("EPANET export failed"), tr("Could not finalize the exported INP file:\n%1").arg(output_file.errorString()));
 #endif
 }
