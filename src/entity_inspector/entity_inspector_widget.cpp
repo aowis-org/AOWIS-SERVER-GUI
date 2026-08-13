@@ -11,6 +11,7 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QJsonValue>
+#include <QMetaEnum>
 #include <QMessageBox>
 #include <QPixmap>
 #include <QSignalBlocker>
@@ -104,6 +105,120 @@ QString pipeRoughnessText(const HydraulicSimulationResultLinkPipe &result)
     }
 
     return QStringLiteral("—");
+}
+
+bool isSimulationErrorSeverity(HydraulicSimulationDiagnosticSeverity severity)
+{
+    return severity == HydraulicSimulationDiagnosticSeverity::Error
+        || severity == HydraulicSimulationDiagnosticSeverity::Fatal;
+}
+
+QString simulationErrorSeverityText(HydraulicSimulationDiagnosticSeverity severity)
+{
+    return severity == HydraulicSimulationDiagnosticSeverity::Fatal
+        ? QStringLiteral("Fatal") : QStringLiteral("Error");
+}
+
+QString simulationStatusEnumText(const char *enumerator_name, int value)
+{
+    const QMetaObject &meta_object = HydraulicSimulationStatusEnums::staticMetaObject;
+    const int enumerator_index = meta_object.indexOfEnumerator(enumerator_name);
+    if (enumerator_index < 0)
+        return QString();
+
+    const QMetaEnum meta_enum = meta_object.enumerator(enumerator_index);
+    const char *key = meta_enum.valueToKey(value);
+    return key == nullptr ? QString() : QString::fromLatin1(key);
+}
+
+QString simulationErrorContext(const HydraulicSimulationDiagnostic &diagnostic)
+{
+    QStringList context;
+
+    if (diagnostic.stage != HydraulicSimulationStatusStage::None)
+    {
+        context.append(QStringLiteral("Stage: %1").arg(
+            simulationStatusEnumText("Stage", static_cast<int>(diagnostic.stage))));
+    }
+    if (diagnostic.operation != HydraulicSimulationStatusOperation::None)
+    {
+        context.append(QStringLiteral("Operation: %1").arg(
+            simulationStatusEnumText("Operation", static_cast<int>(diagnostic.operation))));
+    }
+    if (diagnostic.property != HydraulicSimulationStatusProperty::None)
+    {
+        context.append(QStringLiteral("Property: %1").arg(
+            simulationStatusEnumText("Property", static_cast<int>(diagnostic.property))));
+    }
+    if (!diagnostic.backend_name.isEmpty())
+        context.append(QStringLiteral("Backend: %1").arg(diagnostic.backend_name));
+    if (!diagnostic.backend_operation.isEmpty())
+    {
+        context.append(QStringLiteral("Backend operation: %1")
+                           .arg(diagnostic.backend_operation));
+    }
+    if (diagnostic.backend_error_code != 0)
+        context.append(QStringLiteral("Backend code: %1").arg(diagnostic.backend_error_code));
+
+    return context.join(QStringLiteral(" · "));
+}
+
+HydraulicSimulationDiagnostic simulationErrorFromStatus(
+    const HydraulicSimulationStatus &status)
+{
+    HydraulicSimulationDiagnostic diagnostic;
+    diagnostic.severity = HydraulicSimulationDiagnosticSeverity::Error;
+    diagnostic.stage = status.stage;
+    diagnostic.operation = status.operation;
+    diagnostic.property = status.property;
+    diagnostic.entity = status.entity;
+    diagnostic.message = status.message;
+    diagnostic.details = status.details;
+    diagnostic.backend_name = status.backend_name;
+    diagnostic.backend_error_code = status.backend_error_code;
+    diagnostic.backend_operation = status.backend_operation;
+    diagnostic.message_backend = status.message_backend;
+    return diagnostic;
+}
+
+QString simulationErrorHtml(const HydraulicSimulationDiagnostic &diagnostic, bool stale)
+{
+    const QString color = stale ? QStringLiteral("#808080") : QStringLiteral("#d00000");
+    const QString message = diagnostic.message.isEmpty()
+        ? QStringLiteral("Simulation error") : diagnostic.message;
+
+    QString html = QStringLiteral(
+        "<p><span style=\"color:%1; font-weight:600;\">%2</span><br>"
+        "<b>%3</b>")
+        .arg(color,
+             simulationErrorSeverityText(diagnostic.severity).toHtmlEscaped(),
+             message.toHtmlEscaped());
+
+    const QString context = simulationErrorContext(diagnostic);
+    if (!context.isEmpty())
+    {
+        html += QStringLiteral("<br><span style=\"color:%1;\">%2</span>")
+                    .arg(stale ? QStringLiteral("#808080") : QStringLiteral("#606060"),
+                         context.toHtmlEscaped());
+    }
+
+    if (!diagnostic.message_backend.isEmpty()
+        && diagnostic.message_backend != diagnostic.message)
+    {
+        html += QStringLiteral("<br><b>Backend message:</b> %1")
+                    .arg(diagnostic.message_backend.toHtmlEscaped());
+    }
+
+    if (!diagnostic.details.isEmpty())
+    {
+        html += QStringLiteral("<br><b>Details</b><ul>");
+        for (const QString &detail : diagnostic.details)
+            html += QStringLiteral("<li>%1</li>").arg(detail.toHtmlEscaped());
+        html += QStringLiteral("</ul>");
+    }
+
+    html += QStringLiteral("</p>");
+    return html;
 }
 
 }
@@ -687,6 +802,96 @@ void EntityInspectorWidget::addGroupOverviewImage(const QString &icon_path, cons
     this->layoutOverview()->addWidget(group);
 }
 
+void EntityInspectorWidget::addGroupSimulationErrors()
+{
+    if (this->group_simulation_errors != nullptr)
+        return;
+
+    this->group_simulation_errors = new GroupBoxCollapsible("Simulation Error");
+    QVBoxLayout *layout = new QVBoxLayout(this->group_simulation_errors);
+
+    this->label_simulation_errors = new QLabel();
+    this->label_simulation_errors->setTextFormat(Qt::RichText);
+    this->label_simulation_errors->setWordWrap(true);
+    this->label_simulation_errors->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    this->label_simulation_errors->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    layout->addWidget(this->label_simulation_errors);
+
+    this->group_simulation_errors->hide();
+    this->layoutOverview()->addWidget(this->group_simulation_errors);
+
+    if (this->hydraulic_data != nullptr)
+    {
+        connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged,
+                this, [this](bool)
+        {
+            refreshSimulationErrors();
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
+                this, &EntityInspectorWidget::refreshSimulationErrors);
+    }
+
+    refreshSimulationErrors();
+}
+
+void EntityInspectorWidget::refreshSimulationErrors()
+{
+    if (this->group_simulation_errors == nullptr || this->label_simulation_errors == nullptr)
+        return;
+
+    QList<HydraulicSimulationDiagnostic> entity_errors;
+    if (this->hydraulic_data != nullptr && !this->entity_uuid.isNull())
+    {
+        const std::optional<HydraulicSimulationResultTimeline> &timeline =
+            this->hydraulic_data->simulationResultTimeline();
+        if (timeline.has_value())
+        {
+            for (const HydraulicSimulationDiagnostic &diagnostic : timeline->diagnostics)
+            {
+                if (diagnostic.entity.uuid == this->entity_uuid
+                    && isSimulationErrorSeverity(diagnostic.severity))
+                {
+                    entity_errors.append(diagnostic);
+                }
+            }
+
+            if (entity_errors.isEmpty() && !timeline->status.success
+                && timeline->status.entity.uuid == this->entity_uuid)
+            {
+                entity_errors.append(simulationErrorFromStatus(timeline->status));
+            }
+        }
+    }
+
+    if (entity_errors.isEmpty())
+    {
+        this->label_simulation_errors->clear();
+        this->group_simulation_errors->hide();
+        return;
+    }
+
+    const bool stale = this->hydraulic_data->simulationDiagnosticEntityStale(this->entity_uuid);
+    QString html;
+    if (stale)
+    {
+        html += QStringLiteral(
+            "<p style=\"color:#808080; font-weight:600;\">"
+            "Outdated diagnostic — this entity has been edited since this simulation."
+            "</p>");
+    }
+
+    for (const HydraulicSimulationDiagnostic &diagnostic : entity_errors)
+        html += simulationErrorHtml(diagnostic, stale);
+
+    this->group_simulation_errors->setTitle(
+        entity_errors.size() == 1
+            ? QStringLiteral("Simulation Error")
+            : QStringLiteral("Simulation Errors (%1)")
+                  .arg(static_cast<int>(entity_errors.size())));
+    this->label_simulation_errors->setText(html);
+    this->group_simulation_errors->show();
+}
+
 void EntityInspectorWidget::addGroupGeneral(const QString &name)
 {
     GroupBoxCollapsible *group = new GroupBoxCollapsible("General");
@@ -860,6 +1065,8 @@ void EntityInspectorWidget::bindHydraulicNode(InfrastructureEntity entity_type, 
     this->entity_uuid = uuid;
     this->entity_title_prefix = title_prefix;
 
+    addGroupSimulationErrors();
+
     refreshHydraulicNode();
 
     connect(this->line_name, &QLineEdit::textEdited, this, [this](const QString &id)
@@ -924,6 +1131,8 @@ void EntityInspectorWidget::bindHydraulicLink(InfrastructureEntity entity_type, 
     this->entity_type = entity_type;
     this->entity_uuid = uuid;
     this->entity_title_prefix = title_prefix;
+
+    addGroupSimulationErrors();
 
     refreshHydraulicLink();
 

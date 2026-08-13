@@ -157,6 +157,8 @@ private:
 
     void addSimulationRow(QGridLayout *grid, int &row, SimulationField field,
                           const QString &name, const QString &tooltip = QString());
+    void addGroupSimulationErrors();
+    void refreshSimulationErrors();
     void refreshSimulation();
     void resetSimulationValues();
     void setSimulationText(SimulationField field, const QString &text);
@@ -208,6 +210,8 @@ private:
     bool terrain_elevation_request_active = false;
 
     QHash<int, SimulationRowWidgets> simulation_rows;
+    GroupBoxCollapsible *group_simulation_errors = nullptr;
+    QLabel *label_simulation_errors = nullptr;
     QLabel *label_simulation_message = nullptr;
     QLabel *label_simulation_energy_message = nullptr;
     
