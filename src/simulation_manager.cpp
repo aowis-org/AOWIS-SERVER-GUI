@@ -197,11 +197,11 @@ void SimulationManager::finishSimulation(const EpanetResultRun &run_result)
     this->hydraulic_data->setSimulationResultTimeline(run_result.result_timeline);
 
     bool has_error_diagnostic = false;
-    int warning_count = 0;
+    bool has_warning_diagnostic = false;
     for (const HydraulicSimulationDiagnostic &diagnostic : run_result.result_timeline.diagnostics)
     {
         if (diagnostic.severity == HydraulicSimulationDiagnosticSeverity::Warning)
-            ++warning_count;
+            has_warning_diagnostic = true;
 
         if (diagnostic.severity == HydraulicSimulationDiagnosticSeverity::Error
             || diagnostic.severity == HydraulicSimulationDiagnosticSeverity::Fatal)
@@ -210,8 +210,12 @@ void SimulationManager::finishSimulation(const EpanetResultRun &run_result)
         }
     }
 
-    if (!run_result.result_timeline.status.success || has_error_diagnostic)
+    if (!run_result.result_timeline.status.success
+        || has_error_diagnostic
+        || has_warning_diagnostic)
+    {
         showSimulationDiagnostics();
+    }
 
     if (!run_result.result_timeline.status.success)
     {
@@ -225,6 +229,7 @@ void SimulationManager::finishSimulation(const EpanetResultRun &run_result)
     }
 
     if (has_error_diagnostic
+        || has_warning_diagnostic
         || run_result.result_timeline.validity != HydraulicSimulationResultValidity::Valid)
     {
         return;
@@ -234,10 +239,11 @@ void SimulationManager::finishSimulation(const EpanetResultRun &run_result)
     if (main_window == nullptr)
         main_window = QApplication::activeWindow();
 
-    const QString message = warning_count > 0
-        ? tr("Simulation completed successfully with %1 warning(s).").arg(warning_count)
-        : tr("Simulation completed successfully.");
-    showMessageBox(main_window, QMessageBox::Information, tr("Simulation Complete"), message);
+    showMessageBox(
+        main_window,
+        QMessageBox::Information,
+        tr("Simulation Complete"),
+        tr("Simulation completed successfully."));
 }
 
 void SimulationManager::showSimulationStatistics()
