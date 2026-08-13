@@ -4,11 +4,13 @@
 #include <optional>
 
 #include <QAbstractItemView>
+#include <QAbstractSpinBox>
 #include <QAbstractTableModel>
 #include <QComboBox>
 #include <QBrush>
 #include <QColor>
 #include <QDate>
+#include <QDoubleSpinBox>
 #include <QFont>
 #include <QFrame>
 #include <QFontMetrics>
@@ -18,10 +20,15 @@
 #include <QLineEdit>
 #include <QPalette>
 #include <QList>
+#include <QHBoxLayout>
+#include <QPushButton>
+#include <QStyle>
+#include <QToolButton>
 #include <QModelIndex>
 #include <QSortFilterProxyModel>
 #include <QScrollBar>
 #include <QSignalBlocker>
+#include <QSizePolicy>
 #include <QSet>
 #include <QStringList>
 #include <QTableView>
@@ -41,7 +48,9 @@ enum class ColumnFilterKind
 {
     None,
     Text,
-    Choice
+    Choice,
+    Number,
+    Integer
 };
 
 struct TableColumn
@@ -490,36 +499,83 @@ double junctionBaseDemand(const QList<HydraulicNodeJunctionDemand> &demands)
     return total;
 }
 
-QString twoLineHeaderText(const QString &title)
+QString balancedHeaderWords(const QStringList &words, int line_count)
 {
-    const qsizetype unit_separator = title.lastIndexOf(QStringLiteral(" ["));
-    if (unit_separator > 0)
+    if (words.isEmpty())
+        return QString();
+    if (line_count <= 1 || words.size() == 1)
+        return words.join(QLatin1Char(' '));
+
+    if (line_count == 2)
     {
-        return title.left(unit_separator) + QLatin1Char('\n')
-            + title.mid(unit_separator + 1);
+        qsizetype best_split = 1;
+        qsizetype best_maximum_length = words.join(QLatin1Char(' ')).size();
+        for (qsizetype split = 1; split < words.size(); ++split)
+        {
+            const qsizetype first_length = words.mid(0, split).join(QLatin1Char(' ')).size();
+            const qsizetype second_length = words.mid(split).join(QLatin1Char(' ')).size();
+            const qsizetype maximum_length = qMax(first_length, second_length);
+            if (maximum_length < best_maximum_length)
+            {
+                best_maximum_length = maximum_length;
+                best_split = split;
+            }
+        }
+
+        return words.mid(0, best_split).join(QLatin1Char(' ')) + QLatin1Char('\n')
+            + words.mid(best_split).join(QLatin1Char(' '));
     }
 
-    const QStringList words = title.split(QLatin1Char(' '), Qt::SkipEmptyParts);
-    if (words.size() < 2)
-        return title;
-
-    qsizetype best_split = 1;
-    qsizetype best_difference = title.size();
-    for (qsizetype split = 1; split < words.size(); ++split)
+    qsizetype best_first_split = 1;
+    qsizetype best_second_split = 2;
+    qsizetype best_maximum_length = words.join(QLatin1Char(' ')).size();
+    for (qsizetype first_split = 1; first_split < words.size() - 1; ++first_split)
     {
-        const qsizetype left_length = words.mid(0, split).join(QLatin1Char(' ')).size();
-        const qsizetype right_length = words.mid(split).join(QLatin1Char(' ')).size();
-        const qsizetype difference = left_length > right_length
-            ? left_length - right_length : right_length - left_length;
-        if (difference < best_difference)
+        for (qsizetype second_split = first_split + 1; second_split < words.size();
+             ++second_split)
         {
-            best_difference = difference;
-            best_split = split;
+            const qsizetype first_length = words.mid(0, first_split)
+                                               .join(QLatin1Char(' ')).size();
+            const qsizetype second_length = words.mid(first_split,
+                                                       second_split - first_split)
+                                                .join(QLatin1Char(' ')).size();
+            const qsizetype third_length = words.mid(second_split)
+                                               .join(QLatin1Char(' ')).size();
+            const qsizetype maximum_length = qMax(first_length,
+                                                   qMax(second_length, third_length));
+            if (maximum_length < best_maximum_length)
+            {
+                best_maximum_length = maximum_length;
+                best_first_split = first_split;
+                best_second_split = second_split;
+            }
         }
     }
 
-    return words.mid(0, best_split).join(QLatin1Char(' ')) + QLatin1Char('\n')
-        + words.mid(best_split).join(QLatin1Char(' '));
+    return words.mid(0, best_first_split).join(QLatin1Char(' ')) + QLatin1Char('\n')
+        + words.mid(best_first_split, best_second_split - best_first_split)
+              .join(QLatin1Char(' '))
+        + QLatin1Char('\n') + words.mid(best_second_split).join(QLatin1Char(' '));
+}
+
+QString compactHeaderText(const QString &title)
+{
+    QString base = title;
+    QString unit;
+    const qsizetype unit_separator = title.lastIndexOf(QStringLiteral(" ["));
+    if (unit_separator > 0)
+    {
+        base = title.left(unit_separator);
+        unit = title.mid(unit_separator + 1);
+    }
+
+    const QStringList words = base.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    const int available_base_lines = unit.isEmpty() ? 3 : 2;
+    const int base_line_count = qMin(available_base_lines, words.size());
+    QString text = balancedHeaderWords(words, base_line_count);
+    if (!unit.isEmpty())
+        text += QLatin1Char('\n') + unit;
+    return text;
 }
 
 ColumnFilterKind columnFilterKind(const QString &title)
@@ -549,22 +605,46 @@ ColumnFilterKind columnFilterKind(const QString &title)
         QStringLiteral("Head Pattern Mode"),
         QStringLiteral("Geometry Input"),
         QStringLiteral("Can Overflow"),
-        QStringLiteral("Initial Status"),
+        QStringLiteral("Status Initial"),
         QStringLiteral("Definition"),
         QStringLiteral("Control Type"),
         QStringLiteral("Efficiency Input"),
         QStringLiteral("Energy Price Input"),
         QStringLiteral("Valve Type"),
         QStringLiteral("Status"),
-        QStringLiteral("Operating State"),
+        QStringLiteral("State Operating"),
         QStringLiteral("Regulating"),
         QStringLiteral("Referenced by Control")
+    };
+
+    static const QSet<QString> integer_columns = {
+        QStringLiteral("Demand Count"),
+        QStringLiteral("Vertices")
+    };
+
+    static const QSet<QString> number_columns_without_units = {
+        QStringLiteral("Emitter Coefficient"),
+        QStringLiteral("Roughness HW"),
+        QStringLiteral("Roughness CM"),
+        QStringLiteral("Minor Loss"),
+        QStringLiteral("Friction Factor"),
+        QStringLiteral("Roughness HW Effective"),
+        QStringLiteral("Roughness CM Effective"),
+        QStringLiteral("Speed Initial"),
+        QStringLiteral("Setting"),
+        QStringLiteral("Speed"),
+        QStringLiteral("Specific Power Average"),
+        QStringLiteral("Cost Average / Day")
     };
 
     if (text_columns.contains(title))
         return ColumnFilterKind::Text;
     if (choice_columns.contains(title))
         return ColumnFilterKind::Choice;
+    if (integer_columns.contains(title))
+        return ColumnFilterKind::Integer;
+    if (title.contains(QStringLiteral(" [")) || number_columns_without_units.contains(title))
+        return ColumnFilterKind::Number;
     return ColumnFilterKind::None;
 }
 
@@ -580,7 +660,7 @@ void appendCommonColumns(QList<TableColumn> &columns)
     columns.append({QStringLiteral("Enabled"), false});
     columns.append({QStringLiteral("Model Role"), false});
     columns.append({QStringLiteral("Date Added"), false});
-    columns.append({QStringLiteral("Installation Date"), false});
+    columns.append({QStringLiteral("Date Installed"), false});
     columns.append({QStringLiteral("Tag"), false});
     columns.append({QStringLiteral("Comment"), false});
 }
@@ -743,7 +823,7 @@ public:
 
         const TableColumn &column = this->columns.at(section);
         if (role == Qt::DisplayRole)
-            return twoLineHeaderText(column.title);
+            return compactHeaderText(column.title);
         if (role == Qt::ToolTipRole)
         {
             if (column.simulation_result)
@@ -781,6 +861,38 @@ public:
         if (column < 0 || column >= this->columns.size())
             return QString();
         return this->columns.at(column).title;
+    }
+
+    bool columnNumericRange(int column, double &minimum, double &maximum) const
+    {
+        if (column < 0 || column >= this->columns.size())
+            return false;
+
+        bool found_value = false;
+        for (const TableRow &row : this->rows)
+        {
+            if (column >= row.cells.size())
+                continue;
+
+            bool ok = false;
+            const double value = row.cells.at(column).sort_value.toDouble(&ok);
+            if (!ok || !std::isfinite(value))
+                continue;
+
+            if (!found_value)
+            {
+                minimum = value;
+                maximum = value;
+                found_value = true;
+            }
+            else
+            {
+                minimum = qMin(minimum, value);
+                maximum = qMax(maximum, value);
+            }
+        }
+
+        return found_value;
     }
 
     void rebuild()
@@ -850,22 +962,22 @@ private:
         appendCommonColumns(this->columns);
         appendNodePositionColumns(this->columns);
         this->columns.append({QStringLiteral("Elevation Input"), false});
-        this->columns.append({QStringLiteral("Direct Elevation [m]"), false});
-        this->columns.append({QStringLiteral("Terrain Elevation [m]"), false});
+        this->columns.append({QStringLiteral("Elevation Direct [m]"), false});
+        this->columns.append({QStringLiteral("Elevation Terrain [m]"), false});
         this->columns.append({QStringLiteral("Elevation Offset [m]"), false});
-        this->columns.append({QStringLiteral("Resolved Elevation [m]"), false});
+        this->columns.append({QStringLiteral("Elevation Resolved [m]"), false});
         this->columns.append({QStringLiteral("Demand Count"), false});
-        this->columns.append({QStringLiteral("Base Demand [m³/h]"), false});
+        this->columns.append({QStringLiteral("Demand Base [m³/h]"), false});
         this->columns.append({QStringLiteral("Demand Details"), false});
         this->columns.append({QStringLiteral("Emitter Coefficient"), false});
-        this->columns.append({QStringLiteral("Requested Demand [m³/h]"), true});
-        this->columns.append({QStringLiteral("Delivered Demand [m³/h]"), true});
+        this->columns.append({QStringLiteral("Demand Requested [m³/h]"), true});
+        this->columns.append({QStringLiteral("Demand Delivered [m³/h]"), true});
         this->columns.append({QStringLiteral("Demand Deficit [m³/h]"), true});
-        this->columns.append({QStringLiteral("Total Demand [m³/h]"), true});
-        this->columns.append({QStringLiteral("Emitter Flow [m³/h]"), true});
-        this->columns.append({QStringLiteral("Leakage Flow [m³/h]"), true});
+        this->columns.append({QStringLiteral("Demand Total [m³/h]"), true});
+        this->columns.append({QStringLiteral("Flow Emitter [m³/h]"), true});
+        this->columns.append({QStringLiteral("Flow Leakage [m³/h]"), true});
         this->columns.append({QStringLiteral("Head [m]"), true});
-        this->columns.append({QStringLiteral("Pressure Head [m]"), true});
+        this->columns.append({QStringLiteral("Head Pressure [m]"), true});
         this->columns.append({QStringLiteral("Referenced by Control"), true});
 
         for (const HydraulicNodeJunction &junction : network.nodes_junctions)
@@ -920,15 +1032,15 @@ private:
         appendCommonColumns(this->columns);
         appendNodePositionColumns(this->columns);
         this->columns.append({QStringLiteral("Head Input"), false});
-        this->columns.append({QStringLiteral("Direct Head [m]"), false});
-        this->columns.append({QStringLiteral("Terrain Elevation [m]"), false});
+        this->columns.append({QStringLiteral("Head Direct [m]"), false});
+        this->columns.append({QStringLiteral("Elevation Terrain [m]"), false});
         this->columns.append({QStringLiteral("Head Offset [m]"), false});
-        this->columns.append({QStringLiteral("Resolved Head [m]"), false});
+        this->columns.append({QStringLiteral("Head Resolved [m]"), false});
         this->columns.append({QStringLiteral("Head Pattern Mode"), false});
         this->columns.append({QStringLiteral("Head Pattern"), false});
-        this->columns.append({QStringLiteral("Net Demand [m³/h]"), true});
+        this->columns.append({QStringLiteral("Demand Net [m³/h]"), true});
         this->columns.append({QStringLiteral("Head [m]"), true});
-        this->columns.append({QStringLiteral("Pressure Head [m]"), true});
+        this->columns.append({QStringLiteral("Head Pressure [m]"), true});
         this->columns.append({QStringLiteral("Referenced by Control"), true});
 
         for (const HydraulicNodeReservoir &reservoir : network.nodes_reservoirs)
@@ -972,26 +1084,26 @@ private:
         appendCommonColumns(this->columns);
         appendNodePositionColumns(this->columns);
         this->columns.append({QStringLiteral("Elevation Input"), false});
-        this->columns.append({QStringLiteral("Bottom Elevation [m]"), false});
-        this->columns.append({QStringLiteral("Terrain Elevation [m]"), false});
+        this->columns.append({QStringLiteral("Elevation Bottom [m]"), false});
+        this->columns.append({QStringLiteral("Elevation Terrain [m]"), false});
         this->columns.append({QStringLiteral("Bottom Offset [m]"), false});
-        this->columns.append({QStringLiteral("Resolved Bottom Elevation [m]"), false});
-        this->columns.append({QStringLiteral("Initial Level [m]"), false});
-        this->columns.append({QStringLiteral("Minimum Level [m]"), false});
-        this->columns.append({QStringLiteral("Maximum Level [m]"), false});
+        this->columns.append({QStringLiteral("Elevation Bottom Resolved [m]"), false});
+        this->columns.append({QStringLiteral("Level Initial [m]"), false});
+        this->columns.append({QStringLiteral("Level Minimum [m]"), false});
+        this->columns.append({QStringLiteral("Level Maximum [m]"), false});
         this->columns.append({QStringLiteral("Geometry Input"), false});
         this->columns.append({QStringLiteral("Diameter [m]"), false});
-        this->columns.append({QStringLiteral("Cross-Section Area [m²]"), false});
-        this->columns.append({QStringLiteral("Maximum Volume [m³]"), false});
-        this->columns.append({QStringLiteral("Minimum Volume [m³]"), false});
+        this->columns.append({QStringLiteral("Area Cross-Section [m²]"), false});
+        this->columns.append({QStringLiteral("Volume Maximum [m³]"), false});
+        this->columns.append({QStringLiteral("Volume Minimum [m³]"), false});
         this->columns.append({QStringLiteral("Volume Curve"), false});
         this->columns.append({QStringLiteral("Can Overflow"), false});
-        this->columns.append({QStringLiteral("Net Demand [m³/h]"), true});
+        this->columns.append({QStringLiteral("Demand Net [m³/h]"), true});
         this->columns.append({QStringLiteral("Head [m]"), true});
-        this->columns.append({QStringLiteral("Pressure Head [m]"), true});
-        this->columns.append({QStringLiteral("Water Level [m]"), true});
+        this->columns.append({QStringLiteral("Head Pressure [m]"), true});
+        this->columns.append({QStringLiteral("Level Water [m]"), true});
         this->columns.append({QStringLiteral("Volume [m³]"), true});
-        this->columns.append({QStringLiteral("Mixing-Zone Volume [m³]"), true});
+        this->columns.append({QStringLiteral("Volume Mixing-Zone [m³]"), true});
         this->columns.append({QStringLiteral("Referenced by Control"), true});
 
         for (const HydraulicNodeTank &tank : network.nodes_tanks)
@@ -1047,10 +1159,10 @@ private:
         this->columns.append({QStringLiteral("Node 1"), false});
         this->columns.append({QStringLiteral("Node 2"), false});
         this->columns.append({QStringLiteral("Vertices"), false});
-        this->columns.append({QStringLiteral("Calculated Length [m]"), false});
-        this->columns.append({QStringLiteral("Measured Length [m]"), false});
-        this->columns.append({QStringLiteral("Effective Length [m]"), false});
-        this->columns.append({QStringLiteral("Initial Status"), false});
+        this->columns.append({QStringLiteral("Length Calculated [m]"), false});
+        this->columns.append({QStringLiteral("Length Measured [m]"), false});
+        this->columns.append({QStringLiteral("Length Effective [m]"), false});
+        this->columns.append({QStringLiteral("Status Initial"), false});
         this->columns.append({QStringLiteral("Diameter [mm]"), false});
         this->columns.append({QStringLiteral("Material"), false});
         this->columns.append({QStringLiteral("Roughness HW"), false});
@@ -1060,15 +1172,15 @@ private:
         this->columns.append({QStringLiteral("Leak Area [mm²/100m]"), false});
         this->columns.append({QStringLiteral("Leak Expansion [mm²/m head]"), false});
         this->columns.append({QStringLiteral("Flow [m³/h]"), true});
-        this->columns.append({QStringLiteral("Leakage Flow [m³/h]"), true});
+        this->columns.append({QStringLiteral("Flow Leakage [m³/h]"), true});
         this->columns.append({QStringLiteral("Velocity [m/s]"), true});
         this->columns.append({QStringLiteral("Head Loss [m]"), true});
-        this->columns.append({QStringLiteral("Unit Head Loss [m/km]"), true});
+        this->columns.append({QStringLiteral("Head Loss Unit [m/km]"), true});
         this->columns.append({QStringLiteral("Friction Factor"), true});
         this->columns.append({QStringLiteral("Status"), true});
-        this->columns.append({QStringLiteral("Effective Roughness HW"), true});
-        this->columns.append({QStringLiteral("Effective Roughness DW [mm]"), true});
-        this->columns.append({QStringLiteral("Effective Roughness CM"), true});
+        this->columns.append({QStringLiteral("Roughness HW Effective"), true});
+        this->columns.append({QStringLiteral("Roughness DW Effective [mm]"), true});
+        this->columns.append({QStringLiteral("Roughness CM Effective"), true});
         this->columns.append({QStringLiteral("Referenced by Control"), true});
 
         for (const HydraulicLinkPipe &pipe : network.links_pipes)
@@ -1130,14 +1242,14 @@ private:
         this->columns.append({QStringLiteral("Node 2"), false});
         this->columns.append({QStringLiteral("Vertices"), false});
         this->columns.append({QStringLiteral("Definition"), false});
-        this->columns.append({QStringLiteral("Constant Power [kW]"), false});
+        this->columns.append({QStringLiteral("Power Constant [kW]"), false});
         this->columns.append({QStringLiteral("Head Curve"), false});
-        this->columns.append({QStringLiteral("Initial Speed"), false});
-        this->columns.append({QStringLiteral("Initial Status"), false});
+        this->columns.append({QStringLiteral("Speed Initial"), false});
+        this->columns.append({QStringLiteral("Status Initial"), false});
         this->columns.append({QStringLiteral("Speed Pattern"), false});
         this->columns.append({QStringLiteral("Control Type"), false});
         this->columns.append({QStringLiteral("Efficiency Input"), false});
-        this->columns.append({QStringLiteral("Constant Efficiency [%]"), false});
+        this->columns.append({QStringLiteral("Efficiency Constant [%]"), false});
         this->columns.append({QStringLiteral("Efficiency Curve"), false});
         this->columns.append({QStringLiteral("Energy Price Input"), false});
         this->columns.append({QStringLiteral("Energy Price [/kWh]"), false});
@@ -1146,17 +1258,17 @@ private:
         this->columns.append({QStringLiteral("Velocity [m/s]"), true});
         this->columns.append({QStringLiteral("Head Gain [m]"), true});
         this->columns.append({QStringLiteral("Status"), true});
-        this->columns.append({QStringLiteral("Operating State"), true});
+        this->columns.append({QStringLiteral("State Operating"), true});
         this->columns.append({QStringLiteral("Speed"), true});
         this->columns.append({QStringLiteral("Efficiency [%]"), true});
         this->columns.append({QStringLiteral("Power [kW]"), true});
         this->columns.append({QStringLiteral("Referenced by Control"), true});
         this->columns.append({QStringLiteral("Time Online [%]"), true});
-        this->columns.append({QStringLiteral("Average Efficiency [%]"), true});
-        this->columns.append({QStringLiteral("Average Specific Power"), true});
-        this->columns.append({QStringLiteral("Average Power [kW]"), true});
-        this->columns.append({QStringLiteral("Peak Power [kW]"), true});
-        this->columns.append({QStringLiteral("Average Cost / Day"), true});
+        this->columns.append({QStringLiteral("Efficiency Average [%]"), true});
+        this->columns.append({QStringLiteral("Specific Power Average"), true});
+        this->columns.append({QStringLiteral("Power Average [kW]"), true});
+        this->columns.append({QStringLiteral("Power Peak [kW]"), true});
+        this->columns.append({QStringLiteral("Cost Average / Day"), true});
 
         const HydraulicSimulationResult *final_result = nullptr;
         const std::optional<HydraulicSimulationResultTimeline> &timeline =
@@ -1242,7 +1354,7 @@ private:
         this->columns.append({QStringLiteral("Valve Type"), false});
         this->columns.append({QStringLiteral("Setting"), false});
         this->columns.append({QStringLiteral("Setting Curve"), false});
-        this->columns.append({QStringLiteral("Initial Status"), false});
+        this->columns.append({QStringLiteral("Status Initial"), false});
         this->columns.append({QStringLiteral("Diameter [mm]"), false});
         this->columns.append({QStringLiteral("Minor Loss"), false});
         this->columns.append({QStringLiteral("Flow [m³/h]"), true});
@@ -1311,6 +1423,16 @@ public:
         return this->filters.value(column).second;
     }
 
+    bool numericColumnFilter(int column, double &minimum, double &maximum) const
+    {
+        if (!this->numeric_filters.contains(column))
+            return false;
+
+        minimum = this->numeric_filters.value(column).first;
+        maximum = this->numeric_filters.value(column).second;
+        return true;
+    }
+
     void setColumnFilter(int column, ColumnFilterKind kind, const QString &value)
     {
         const QString trimmed_value = value.trimmed();
@@ -1327,6 +1449,36 @@ public:
             return;
 
         this->filters.insert(column, new_filter);
+        notifyFilterChanged();
+    }
+
+    void setNumericColumnFilter(int column, double minimum, double maximum)
+    {
+        const QPair<double, double> new_filter = qMakePair(minimum, maximum);
+        if (this->numeric_filters.contains(column)
+            && this->numeric_filters.value(column) == new_filter)
+        {
+            return;
+        }
+
+        this->numeric_filters.insert(column, new_filter);
+        notifyFilterChanged();
+    }
+
+    void clearNumericColumnFilter(int column)
+    {
+        if (this->numeric_filters.remove(column) == 0)
+            return;
+        notifyFilterChanged();
+    }
+
+    void clearAllFilters()
+    {
+        if (this->filters.isEmpty() && this->numeric_filters.isEmpty())
+            return;
+
+        this->filters.clear();
+        this->numeric_filters.clear();
         notifyFilterChanged();
     }
 
@@ -1357,6 +1509,24 @@ protected:
             ++iterator;
         }
 
+        QHash<int, QPair<double, double>>::const_iterator numeric_iterator =
+            this->numeric_filters.constBegin();
+        while (numeric_iterator != this->numeric_filters.constEnd())
+        {
+            const QModelIndex index = sourceModel()->index(source_row, numeric_iterator.key(),
+                                                           source_parent);
+            bool ok = false;
+            const double value = sourceModel()->data(index, SortRole).toDouble(&ok);
+            if (!ok || !std::isfinite(value)
+                || value < numeric_iterator.value().first
+                || value > numeric_iterator.value().second)
+            {
+                return false;
+            }
+
+            ++numeric_iterator;
+        }
+
         return true;
     }
 
@@ -1372,6 +1542,16 @@ private:
     }
 
     QHash<int, QPair<ColumnFilterKind, QString>> filters;
+    QHash<int, QPair<double, double>> numeric_filters;
+};
+
+struct NumericRangeControl
+{
+    QWidget *container = nullptr;
+    QDoubleSpinBox *minimum = nullptr;
+    QDoubleSpinBox *maximum = nullptr;
+    double global_minimum = 0.0;
+    double global_maximum = 0.0;
 };
 
 class HydraulicEntityFilterBar : public QWidget
@@ -1385,8 +1565,8 @@ public:
           model(model),
           proxy_model(proxy_model)
     {
-        setFixedHeight(30);
-        rebuildControls();
+        setFixedHeight(52);
+        buildControls();
 
         QHeaderView *header = this->table->horizontalHeader();
         connect(header, &QHeaderView::sectionResized, this,
@@ -1401,8 +1581,38 @@ public:
                 [this]()
         {
             refreshChoiceControls();
+            refreshNumericControls();
             updateControlGeometries();
         });
+    }
+
+    void resetFilters()
+    {
+        for (QWidget *control : this->controls)
+        {
+            if (QLineEdit *line_edit = qobject_cast<QLineEdit *>(control))
+            {
+                const QSignalBlocker blocker(line_edit);
+                line_edit->clear();
+            }
+            else if (QComboBox *combo_box = qobject_cast<QComboBox *>(control))
+            {
+                const QSignalBlocker blocker(combo_box);
+                combo_box->setCurrentIndex(0);
+            }
+        }
+
+        const QList<int> numeric_columns = this->numeric_controls.keys();
+        for (int column : numeric_columns)
+        {
+            NumericRangeControl &control = this->numeric_controls[column];
+            const QSignalBlocker minimum_blocker(control.minimum);
+            const QSignalBlocker maximum_blocker(control.maximum);
+            control.minimum->setValue(control.global_minimum);
+            control.maximum->setValue(control.global_maximum);
+        }
+
+        this->proxy_model->clearAllFilters();
     }
 
 protected:
@@ -1413,10 +1623,17 @@ protected:
     }
 
 private:
-    void rebuildControls()
+    static bool sameNumber(double first, double second)
+    {
+        const double scale = qMax(1.0, qMax(std::abs(first), std::abs(second)));
+        return std::abs(first - second) <= scale * 1.0e-12;
+    }
+
+    void buildControls()
     {
         const int column_count = this->model->columnCount();
         this->controls.clear();
+        this->numeric_controls.clear();
         this->controls.reserve(column_count);
         for (int column = 0; column < column_count; ++column)
         {
@@ -1455,11 +1672,109 @@ private:
                 });
                 control = combo_box;
             }
+            else if (kind == ColumnFilterKind::Number
+                     || kind == ColumnFilterKind::Integer)
+            {
+                QWidget *range_widget = new QWidget(this);
+                QVBoxLayout *range_layout = new QVBoxLayout(range_widget);
+                range_layout->setContentsMargins(0, 0, 0, 0);
+                range_layout->setSpacing(2);
+
+                QWidget *minimum_row = new QWidget(range_widget);
+                QHBoxLayout *minimum_row_layout = new QHBoxLayout(minimum_row);
+                minimum_row_layout->setContentsMargins(0, 0, 0, 0);
+                minimum_row_layout->setSpacing(1);
+                QDoubleSpinBox *minimum = new QDoubleSpinBox(minimum_row);
+                configureNumericSpinBox(minimum, column, true, kind);
+                QToolButton *minimum_reset = createNumericResetButton(minimum_row, column, true);
+                minimum_row_layout->addWidget(minimum, 1);
+                minimum_row_layout->addWidget(minimum_reset);
+
+                QWidget *maximum_row = new QWidget(range_widget);
+                QHBoxLayout *maximum_row_layout = new QHBoxLayout(maximum_row);
+                maximum_row_layout->setContentsMargins(0, 0, 0, 0);
+                maximum_row_layout->setSpacing(1);
+                QDoubleSpinBox *maximum = new QDoubleSpinBox(maximum_row);
+                configureNumericSpinBox(maximum, column, false, kind);
+                QToolButton *maximum_reset = createNumericResetButton(maximum_row, column, false);
+                maximum_row_layout->addWidget(maximum, 1);
+                maximum_row_layout->addWidget(maximum_reset);
+
+                range_layout->addWidget(minimum_row);
+                range_layout->addWidget(maximum_row);
+
+                NumericRangeControl range_control;
+                range_control.container = range_widget;
+                range_control.minimum = minimum;
+                range_control.maximum = maximum;
+                this->numeric_controls.insert(column, range_control);
+                refreshNumericControl(column);
+
+                connect(minimum, &QDoubleSpinBox::valueChanged, this,
+                        [this, column](double)
+                {
+                    numericControlChanged(column, true);
+                });
+                connect(maximum, &QDoubleSpinBox::valueChanged, this,
+                        [this, column](double)
+                {
+                    numericControlChanged(column, false);
+                });
+                control = range_widget;
+            }
 
             this->controls.append(control);
         }
 
         updateControlGeometries();
+    }
+
+    void configureNumericSpinBox(QDoubleSpinBox *spin_box, int column, bool minimum,
+                                 ColumnFilterKind kind)
+    {
+        spin_box->setDecimals(kind == ColumnFilterKind::Integer ? 0 : 6);
+        spin_box->setKeyboardTracking(false);
+        spin_box->setAccelerated(true);
+        if (kind == ColumnFilterKind::Integer)
+            spin_box->setSingleStep(1.0);
+        else
+            spin_box->setStepType(QAbstractSpinBox::AdaptiveDecimalStepType);
+        spin_box->setToolTip((minimum ? QStringLiteral("Minimum filter for ")
+                                      : QStringLiteral("Maximum filter for "))
+                             + this->model->columnTitle(column));
+        spin_box->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    }
+
+    QToolButton *createNumericResetButton(QWidget *parent, int column, bool minimum)
+    {
+        QToolButton *button = new QToolButton(parent);
+        button->setAutoRaise(true);
+        button->setIcon(style()->standardIcon(QStyle::SP_DialogResetButton));
+        button->setIconSize(QSize(12, 12));
+        button->setFixedSize(18, 18);
+        button->setToolTip((minimum ? QStringLiteral("Reset minimum to global minimum for ")
+                                    : QStringLiteral("Reset maximum to global maximum for "))
+                           + this->model->columnTitle(column));
+        connect(button, &QToolButton::clicked, this,
+                [this, column, minimum]()
+        {
+            resetNumericBound(column, minimum);
+        });
+        return button;
+    }
+
+    void resetNumericBound(int column, bool minimum)
+    {
+        if (!this->numeric_controls.contains(column))
+            return;
+
+        NumericRangeControl &control = this->numeric_controls[column];
+        QDoubleSpinBox *spin_box = minimum ? control.minimum : control.maximum;
+        {
+            const QSignalBlocker blocker(spin_box);
+            spin_box->setValue(minimum ? control.global_minimum : control.global_maximum);
+        }
+        numericControlChanged(column, minimum);
     }
 
     void populateChoiceControl(QComboBox *combo_box, int column,
@@ -1512,6 +1827,110 @@ private:
         }
     }
 
+    void refreshNumericControl(int column)
+    {
+        if (!this->numeric_controls.contains(column))
+            return;
+
+        NumericRangeControl &control = this->numeric_controls[column];
+        double global_minimum = 0.0;
+        double global_maximum = 0.0;
+        if (!this->model->columnNumericRange(column, global_minimum, global_maximum))
+        {
+            const QSignalBlocker minimum_blocker(control.minimum);
+            const QSignalBlocker maximum_blocker(control.maximum);
+            control.global_minimum = 0.0;
+            control.global_maximum = 0.0;
+            control.minimum->setSpecialValueText(QStringLiteral("—"));
+            control.maximum->setSpecialValueText(QStringLiteral("—"));
+            control.minimum->setRange(0.0, 0.0);
+            control.maximum->setRange(0.0, 0.0);
+            control.minimum->setValue(0.0);
+            control.maximum->setValue(0.0);
+            control.container->setEnabled(false);
+            this->proxy_model->clearNumericColumnFilter(column);
+            return;
+        }
+
+        double selected_minimum = global_minimum;
+        double selected_maximum = global_maximum;
+        const bool has_active_filter = this->proxy_model->numericColumnFilter(
+            column, selected_minimum, selected_maximum);
+        selected_minimum = qBound(global_minimum, selected_minimum, global_maximum);
+        selected_maximum = qBound(global_minimum, selected_maximum, global_maximum);
+        if (selected_minimum > selected_maximum)
+            selected_minimum = selected_maximum;
+
+        {
+            const QSignalBlocker minimum_blocker(control.minimum);
+            const QSignalBlocker maximum_blocker(control.maximum);
+            control.global_minimum = global_minimum;
+            control.global_maximum = global_maximum;
+            control.minimum->setSpecialValueText(QString());
+            control.maximum->setSpecialValueText(QString());
+            control.minimum->setRange(global_minimum, global_maximum);
+            control.maximum->setRange(global_minimum, global_maximum);
+            control.minimum->setValue(selected_minimum);
+            control.maximum->setValue(selected_maximum);
+            control.container->setEnabled(true);
+        }
+
+        if (!has_active_filter)
+            return;
+
+        if (sameNumber(selected_minimum, global_minimum)
+            && sameNumber(selected_maximum, global_maximum))
+        {
+            this->proxy_model->clearNumericColumnFilter(column);
+        }
+        else
+        {
+            this->proxy_model->setNumericColumnFilter(column, selected_minimum,
+                                                       selected_maximum);
+        }
+    }
+
+    void refreshNumericControls()
+    {
+        const QList<int> columns = this->numeric_controls.keys();
+        for (int column : columns)
+            refreshNumericControl(column);
+    }
+
+    void numericControlChanged(int column, bool minimum_changed)
+    {
+        if (!this->numeric_controls.contains(column))
+            return;
+
+        NumericRangeControl &control = this->numeric_controls[column];
+        double minimum = control.minimum->value();
+        double maximum = control.maximum->value();
+        if (minimum > maximum)
+        {
+            if (minimum_changed)
+            {
+                const QSignalBlocker blocker(control.maximum);
+                control.maximum->setValue(minimum);
+                maximum = minimum;
+            }
+            else
+            {
+                const QSignalBlocker blocker(control.minimum);
+                control.minimum->setValue(maximum);
+                minimum = maximum;
+            }
+        }
+
+        if (sameNumber(minimum, control.global_minimum)
+            && sameNumber(maximum, control.global_maximum))
+        {
+            this->proxy_model->clearNumericColumnFilter(column);
+            return;
+        }
+
+        this->proxy_model->setNumericColumnFilter(column, minimum, maximum);
+    }
+
     void updateControlGeometries()
     {
         QHeaderView *header = this->table->horizontalHeader();
@@ -1524,7 +1943,16 @@ private:
 
             const int x = x_offset + header->sectionViewportPosition(column);
             const int section_width = header->sectionSize(column);
-            control->setGeometry(x + 2, 1, qMax(0, section_width - 4), height() - 2);
+            if (this->numeric_controls.contains(column))
+            {
+                control->setGeometry(x + 2, 1, qMax(0, section_width - 4), height() - 2);
+            }
+            else
+            {
+                const int control_height = 28;
+                control->setGeometry(x + 2, (height() - control_height) / 2,
+                                     qMax(0, section_width - 4), control_height);
+            }
             control->setVisible(x + section_width > 0 && x < width());
         }
     }
@@ -1533,6 +1961,7 @@ private:
     HydraulicEntityTableModel *model;
     HydraulicEntityFilterProxyModel *proxy_model;
     QList<QWidget *> controls;
+    QHash<int, NumericRangeControl> numeric_controls;
 };
 
 HydraulicEntityTableWidget::HydraulicEntityTableWidget(HydraulicData *hydraulic_data,
@@ -1570,10 +1999,10 @@ HydraulicEntityTableWidget::HydraulicEntityTableWidget(HydraulicData *hydraulic_
     this->table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
     this->table->horizontalHeader()->setDefaultAlignment(Qt::AlignCenter);
     this->table->horizontalHeader()->setTextElideMode(Qt::ElideNone);
-    this->table->horizontalHeader()->setDefaultSectionSize(145);
-    this->table->horizontalHeader()->setMinimumSectionSize(70);
+    this->table->horizontalHeader()->setDefaultSectionSize(110);
+    this->table->horizontalHeader()->setMinimumSectionSize(68);
     const QFontMetrics header_font_metrics(this->table->horizontalHeader()->font());
-    this->table->horizontalHeader()->setFixedHeight(header_font_metrics.lineSpacing() * 2 + 12);
+    this->table->horizontalHeader()->setFixedHeight(header_font_metrics.lineSpacing() * 3 + 12);
     this->table->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
     this->table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     this->table->viewport()->setCursor(Qt::PointingHandCursor);
@@ -1592,7 +2021,24 @@ HydraulicEntityTableWidget::HydraulicEntityTableWidget(HydraulicData *hydraulic_
     this->label_help->setFrameShape(QFrame::StyledPanel);
     this->label_help->setBackgroundRole(QPalette::AlternateBase);
     this->label_help->setAutoFillBackground(true);
-    layout->addWidget(this->label_help);
+
+    QWidget *bottom_row = new QWidget(this);
+    QHBoxLayout *bottom_layout = new QHBoxLayout(bottom_row);
+    bottom_layout->setContentsMargins(0, 0, 0, 0);
+    bottom_layout->setSpacing(8);
+    bottom_layout->addWidget(this->label_help, 1);
+
+    QPushButton *reset_filters_button = new QPushButton(QStringLiteral("Reset filters"), bottom_row);
+    reset_filters_button->setToolTip(QStringLiteral("Reset all table filters"));
+    reset_filters_button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+    bottom_layout->addWidget(reset_filters_button, 0, Qt::AlignVCenter);
+    layout->addWidget(bottom_row);
+
+    connect(reset_filters_button, &QPushButton::clicked, filter_bar,
+            [filter_bar]()
+    {
+        filter_bar->resetFilters();
+    });
 
     this->table->sortByColumn(0, Qt::AscendingOrder);
     updateColumnWidths();
@@ -1664,11 +2110,19 @@ void HydraulicEntityTableWidget::updateColumnWidths()
         for (const QString &line : lines)
             text_width = qMax(text_width, font_metrics.horizontalAdvance(line));
 
-        this->table->setColumnWidth(column, qMax(110, text_width + 30));
+        int minimum_width = 84;
+        const ColumnFilterKind filter_kind = this->model->filterKind(column);
+        if (filter_kind == ColumnFilterKind::Text || filter_kind == ColumnFilterKind::Choice)
+            minimum_width = 96;
+        else if (filter_kind == ColumnFilterKind::Number
+                 || filter_kind == ColumnFilterKind::Integer)
+            minimum_width = 112;
+
+        this->table->setColumnWidth(column, qMax(minimum_width, text_width + 20));
     }
 
     if (column_count > 0)
-        this->table->setColumnWidth(0, qMax(170, this->table->columnWidth(0)));
+        this->table->setColumnWidth(0, qMax(135, this->table->columnWidth(0)));
 }
 
 void HydraulicEntityTableWidget::openEntity(const QModelIndex &proxy_index)
