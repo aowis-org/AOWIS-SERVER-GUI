@@ -237,9 +237,6 @@ void MapWidget::init()
     this->setAttribute(Qt::WA_OpaquePaintEvent);
     this->setAttribute(Qt::WA_NoSystemBackground);
 
-    this->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(this, &MapWidget::customContextMenuRequested, this, &MapWidget::showContextMenu);
-
     this->setMinimumHeight(500);
     this->setMinimumWidth(550);
     this->setContentsMargins(0, 0, 0, 0);
@@ -1315,14 +1312,4 @@ void MapWidget::drawTiles(QPainter &painter)
             painter.drawPixmap(pixel_x, pixel_y, *pixmap);
         }
     }
-}
-
-void MapWidget::showContextMenu(const QPoint &pos)
-{
-    QMenu *menu = new QMenu(this);
-    menu->setAttribute(Qt::WA_DeleteOnClose);
-    QAction *action_elevation = menu->addAction("Get Elevation");
-    Q_UNUSED(action_elevation)
-
-    menu->popup(this->mapToGlobal(pos));
 }

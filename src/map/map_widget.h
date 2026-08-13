@@ -5,7 +5,6 @@
 #include <QFocusEvent>
 #include <QHideEvent>
 #include <QKeyEvent>
-#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPoint>
@@ -111,7 +110,6 @@ private:
     void updatePointerCoordinates(const QPoint &position);
     void scheduleTileUpdate(const QString &);
     void drawTiles(QPainter &painter);
-    void showContextMenu(const QPoint &pos);
 
     GpsProvider *gps = nullptr;
     CoordinateWGS84 gps_coordinate;
