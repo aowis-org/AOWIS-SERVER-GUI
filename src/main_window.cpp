@@ -90,7 +90,7 @@ MainWindow::MainWindow(QWidget *parent)
         scheduleRightDockResize();
     });
 
-    QShortcut *shortcut_toggle_right_docks = new QShortcut(QKeySequence(Qt::Key_Tab), this);
+    QShortcut *shortcut_toggle_right_docks = new QShortcut(QKeySequence(Qt::META | Qt::Key_Tab), this);
     shortcut_toggle_right_docks->setContext(Qt::WindowShortcut);
     shortcut_toggle_right_docks->setAutoRepeat(false);
     connect(shortcut_toggle_right_docks, &QShortcut::activated, this, &MainWindow::toggleRightDockArea);
@@ -123,7 +123,7 @@ MainWindow::MainWindow(QWidget *parent)
     {
         if (visible && this->right_dock_area_hidden)
         {
-            // Restore first so the guide is not immediately suppressed as a Tab-hidden dock.
+            // Restore first so the guide is not immediately suppressed as a shortcut-hidden dock.
             toggleRightDockArea();
         }
 
