@@ -301,6 +301,24 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->top_control_bar, &TopControlBar::signalShowSimulationStatistics, this->simulation_manager, &SimulationManager::showSimulationStatistics);
     connect(this->top_control_bar, &TopControlBar::signalShowEpanetLog, this->simulation_manager, &SimulationManager::showEpanetLog);
     connect(this->top_control_bar, &TopControlBar::signalExportEpanetNetwork, this->simulation_manager, &SimulationManager::exportEpanetNetwork);
+    connect(this->top_control_bar, &TopControlBar::signalShowNetworkOnMap, this, [this]
+    {
+        if (!this->hydraulic_data->boundingBoxWgs84Valid())
+            return;
+
+        const CoordinateWGS84 &minimum = this->hydraulic_data->boundingBoxWgs84Minimum();
+        const CoordinateWGS84 &maximum = this->hydraulic_data->boundingBoxWgs84Maximum();
+        const double center_latitude = (minimum.latitude_deg + maximum.latitude_deg) / 2.0;
+        const double center_longitude = (minimum.longitude_deg + maximum.longitude_deg) / 2.0;
+
+        if (this->map_model_editor != nullptr)
+            this->map_model_editor->setCenter(center_longitude, center_latitude,
+                                              this->map_edit != nullptr ? this->map_edit->size() : QSize());
+
+        if (this->map_model_monitor != nullptr)
+            this->map_model_monitor->setCenter(center_longitude, center_latitude,
+                                               this->map_mon != nullptr ? this->map_mon->size() : QSize());
+    });
     connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged, this, [this](bool available)
     {
         this->top_control_bar->setSimulationResultsAvailable(available);

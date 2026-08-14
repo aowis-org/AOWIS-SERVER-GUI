@@ -226,8 +226,7 @@ TopControlBar::TopControlBar(QWidget *parent)
 
     addProjectControls();
     addFlowUnitCombo();
-    addChemicalQualityDropdown();
-    addHeadlossFormulaDropdown();
+    addQualityHeadlossControls();
     addSimulationControls();
     addViewControls();
 }
@@ -463,12 +462,21 @@ void TopControlBar::addProjectControls()
     TopControlBarContent *bar_content = barContent(this->content);
 
     QComboBox *combo_project = new QComboBox(this->content);
-    combo_project->setFixedWidth(210);
+    combo_project->setFixedSize(178, 30);
     combo_project->addItem(QStringLiteral("Select project"));
 
     QComboBox *combo_revision = new QComboBox(this->content);
-    combo_revision->setFixedWidth(160);
+    combo_revision->setFixedSize(178, 30);
     combo_revision->addItem(QStringLiteral("Select revision"));
+
+    QToolButton *button_show_on_map = new QToolButton(this->content);
+    button_show_on_map->setAutoRaise(true);
+    button_show_on_map->setIcon(QIcon(QStringLiteral(":/icon/target.png")));
+    button_show_on_map->setIconSize(QSize(28, 28));
+    button_show_on_map->setFixedSize(30, 30);
+    button_show_on_map->setToolTip(QStringLiteral("Show on map"));
+    button_show_on_map->setStyleSheet(QStringLiteral("padding: 0;"));
+    connect(button_show_on_map, &QToolButton::clicked, this, &TopControlBar::signalShowNetworkOnMap);
 
     QToolButton *button_set_active = new QToolButton(this->content);
     button_set_active->setAutoRaise(true);
@@ -478,21 +486,34 @@ void TopControlBar::addProjectControls()
     button_set_active->setToolTip(QStringLiteral("Set active revision"));
     button_set_active->setStyleSheet(QStringLiteral("padding: 0;"));
 
-    QWidget *revision_container = new QWidget(this->content);
-    QVBoxLayout *revision_layout = new QVBoxLayout(revision_container);
+    QWidget *project_revision_container = new QWidget(this->content);
+    QVBoxLayout *project_revision_layout = new QVBoxLayout(project_revision_container);
+    project_revision_layout->setContentsMargins(0, 0, 0, 0);
+    project_revision_layout->setSpacing(2);
+
+    QLabel *project_caption = createCaption(QStringLiteral("Project"), project_revision_container);
+    QLabel *revision_caption = createCaption(QStringLiteral("Revision"), project_revision_container);
+    const int caption_width = qMax(project_caption->sizeHint().width(), revision_caption->sizeHint().width());
+    project_caption->setFixedWidth(caption_width);
+    revision_caption->setFixedWidth(caption_width);
+
+    QHBoxLayout *project_layout = new QHBoxLayout();
+    project_layout->setContentsMargins(0, 0, 0, 0);
+    project_layout->setSpacing(6);
+    project_layout->addWidget(project_caption);
+    project_layout->addWidget(combo_project);
+    project_layout->addWidget(button_show_on_map);
+
+    QHBoxLayout *revision_layout = new QHBoxLayout();
     revision_layout->setContentsMargins(0, 0, 0, 0);
-    revision_layout->setSpacing(1);
-    revision_layout->addWidget(createCaption(QStringLiteral("Revision"), revision_container));
+    revision_layout->setSpacing(6);
+    revision_layout->addWidget(revision_caption);
+    revision_layout->addWidget(combo_revision);
+    revision_layout->addWidget(button_set_active);
 
-    QHBoxLayout *revision_control_layout = new QHBoxLayout();
-    revision_control_layout->setContentsMargins(0, 0, 0, 0);
-    revision_control_layout->setSpacing(2);
-    revision_control_layout->addWidget(combo_revision);
-    revision_control_layout->addWidget(button_set_active);
-    revision_layout->addLayout(revision_control_layout);
-
-    bar_content->leftLayout()->addWidget(createLabeledControl(QStringLiteral("Project"), combo_project, this->content));
-    bar_content->leftLayout()->addWidget(revision_container);
+    project_revision_layout->addLayout(project_layout);
+    project_revision_layout->addLayout(revision_layout);
+    bar_content->leftLayout()->addWidget(project_revision_container);
 }
 
 void TopControlBar::addFlowUnitCombo()
@@ -567,38 +588,31 @@ void TopControlBar::addFlowUnitCombo()
     bar_content->centerLayout()->addWidget(createLabeledControl(QStringLiteral("Flow units"), button_flow_units, this->content));
 }
 
-void TopControlBar::addChemicalQualityDropdown()
+void TopControlBar::addQualityHeadlossControls()
 {
     TopControlBarContent *bar_content = barContent(this->content);
 
-    ComboCheckboxes *combo = new ComboCheckboxes(this->content);
-    combo->setFixedWidth(190);
-    combo->setSummaryLimit(2);
+    ComboCheckboxes *combo_quality = new ComboCheckboxes(this->content);
+    combo_quality->setFixedSize(190, 30);
+    combo_quality->setSummaryLimit(2);
 
-    combo->addItem(QStringLiteral("CHEMICAL"),
-                   1,
-                   true,
-                   QStringLiteral("One dissolved constituent concentration, e.g. chlorine"));
+    combo_quality->addItem(QStringLiteral("CHEMICAL"),
+                           1,
+                           true,
+                           QStringLiteral("One dissolved constituent concentration, e.g. chlorine"));
 
-    combo->addItem(QStringLiteral("AGE"),
-                   1,
-                   true,
-                   QStringLiteral("Water age"));
+    combo_quality->addItem(QStringLiteral("AGE"),
+                           1,
+                           true,
+                           QStringLiteral("Water age"));
 
-    combo->addItem(QStringLiteral("TRACE"),
-                   2,
-                   true,
-                   QStringLiteral("Source tracing: percent of water originating from one node"));
-
-    bar_content->centerLayout()->addWidget(createLabeledControl(QStringLiteral("Water quality"), combo, this->content));
-}
-
-void TopControlBar::addHeadlossFormulaDropdown()
-{
-    TopControlBarContent *bar_content = barContent(this->content);
+    combo_quality->addItem(QStringLiteral("TRACE"),
+                           2,
+                           true,
+                           QStringLiteral("Source tracing: percent of water originating from one node"));
 
     this->combo_headloss_formula = new ComboCheckboxes(this->content);
-    this->combo_headloss_formula->setFixedWidth(190);
+    this->combo_headloss_formula->setFixedSize(190, 30);
 
     this->combo_headloss_formula->addItem(
         QStringLiteral("Hazen-Williams"),
@@ -633,7 +647,32 @@ void TopControlBar::addHeadlossFormulaDropdown()
         emit signalHeadlossFormulaChanged(formulas);
     });
 
-    bar_content->centerLayout()->addWidget(createLabeledControl(QStringLiteral("Headloss"), this->combo_headloss_formula, this->content));
+    QWidget *quality_headloss_container = new QWidget(this->content);
+    QVBoxLayout *quality_headloss_layout = new QVBoxLayout(quality_headloss_container);
+    quality_headloss_layout->setContentsMargins(0, 0, 0, 0);
+    quality_headloss_layout->setSpacing(2);
+
+    QLabel *quality_caption = createCaption(QStringLiteral("Water quality"), quality_headloss_container);
+    QLabel *headloss_caption = createCaption(QStringLiteral("Headloss"), quality_headloss_container);
+    const int caption_width = qMax(quality_caption->sizeHint().width(), headloss_caption->sizeHint().width());
+    quality_caption->setFixedWidth(caption_width);
+    headloss_caption->setFixedWidth(caption_width);
+
+    QHBoxLayout *quality_layout = new QHBoxLayout();
+    quality_layout->setContentsMargins(0, 0, 0, 0);
+    quality_layout->setSpacing(6);
+    quality_layout->addWidget(quality_caption);
+    quality_layout->addWidget(combo_quality);
+
+    QHBoxLayout *headloss_layout = new QHBoxLayout();
+    headloss_layout->setContentsMargins(0, 0, 0, 0);
+    headloss_layout->setSpacing(6);
+    headloss_layout->addWidget(headloss_caption);
+    headloss_layout->addWidget(this->combo_headloss_formula);
+
+    quality_headloss_layout->addLayout(quality_layout);
+    quality_headloss_layout->addLayout(headloss_layout);
+    bar_content->centerLayout()->addWidget(quality_headloss_container);
 }
 
 void TopControlBar::addSimulationControls()

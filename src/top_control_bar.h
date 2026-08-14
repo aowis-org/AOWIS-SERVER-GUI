@@ -38,6 +38,7 @@ signals:
     void signalSimulationResultIndexSelected(int result_index);
     void signalShowEpanetLog();
     void signalExportEpanetNetwork();
+    void signalShowNetworkOnMap();
     void signalFullScreenToggle();
 
 private:
@@ -59,8 +60,7 @@ private:
 
     void addProjectControls();
     void addFlowUnitCombo();
-    void addChemicalQualityDropdown();
-    void addHeadlossFormulaDropdown();
+    void addQualityHeadlossControls();
     void addSimulationControls();
     void addViewControls();
     void updateSimulationNavigationState();

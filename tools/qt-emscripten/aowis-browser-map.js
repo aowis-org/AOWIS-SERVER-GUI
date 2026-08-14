@@ -570,8 +570,8 @@
         state.crosshair.style.position = "absolute";
         state.crosshair.style.left = "50%";
         state.crosshair.style.top = "50%";
-        state.crosshair.style.width = "40px";
-        state.crosshair.style.height = "40px";
+        state.crosshair.style.width = "60px";
+        state.crosshair.style.height = "60px";
         state.crosshair.style.maxWidth = "none";
         state.crosshair.style.objectFit = "contain";
         state.crosshair.style.pointerEvents = "none";

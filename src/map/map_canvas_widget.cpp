@@ -144,7 +144,7 @@ void MapCanvasWidget::paintEvent(QPaintEvent *event)
 
     static const QPixmap crosshair_pixmap =
         QPixmap(QStringLiteral(":/icon/crosshair.png")).scaled(
-            QSize(40, 40), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            QSize(60, 60), Qt::KeepAspectRatio, Qt::SmoothTransformation);
     if (!crosshair_pixmap.isNull())
     {
         const QPoint crosshair_position(
