@@ -14,6 +14,29 @@ find_package(Qt6 REQUIRED COMPONENTS
     Sql
 )
 
+if(EMSCRIPTEN)
+    include(CheckCXXSourceCompiles)
+
+    set(CMAKE_REQUIRED_LIBRARIES Qt6::Core)
+    check_cxx_source_compiles(
+        "#include <QtCore/qglobal.h>
+#if !QT_CONFIG(thread)
+#error Qt WebAssembly thread support is disabled
+#endif
+int main() { return 0; }"
+        AOWIS_QT_WASM_HAS_THREAD_SUPPORT
+    )
+    unset(CMAKE_REQUIRED_LIBRARIES)
+
+    if(NOT AOWIS_QT_WASM_HAS_THREAD_SUPPORT)
+        message(FATAL_ERROR
+            "The WebAssembly build requires a thread-enabled Qt WebAssembly kit. "
+            "Install/use the Qt 'WebAssembly (multi-threaded)' component or build Qt "
+            "for wasm with -feature-thread."
+        )
+    endif()
+endif()
+
 if(NOT EMSCRIPTEN)
     find_package(Qt6 REQUIRED COMPONENTS
         Positioning

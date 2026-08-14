@@ -120,7 +120,7 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     this->button_group_map_select->addButton(this->map_osmcyclo, 4);
     
     // setting canvas opacity to 50 on init
-    if (this->mode == CanvasMode::Edit)
+    if (this->mode == CanvasMode::Edit || this->mode == CanvasMode::Monitor)
     {
         slider_map_visibility->setValue(50);
         QTimer::singleShot(0, this, [this, slider_map_visibility]()

@@ -8,7 +8,6 @@
 
 #include <QByteArray>
 #include <QMessageBox>
-#include <QTimer>
 
 #include <memory>
 
@@ -118,7 +117,6 @@ void SimulationManager::run()
     const NetworkHydraulic network_hydraulic = this->hydraulic_data->networkHydraulic();
     showSimulationProgress();
 
-#ifndef Q_OS_WASM
     std::shared_ptr<EpanetResultRun> run_result = std::make_shared<EpanetResultRun>();
     QThread *thread = QThread::create([network_hydraulic, run_result]()
     {
@@ -138,16 +136,6 @@ void SimulationManager::run()
     });
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
     thread->start();
-#else
-    QTimer::singleShot(0, this, [this, network_hydraulic]()
-    {
-        EpanetRunner runner;
-        const EpanetResultRun run_result = runner.run(network_hydraulic);
-        this->simulation_running = false;
-        closeSimulationProgress();
-        finishSimulation(run_result);
-    });
-#endif
 }
 
 void SimulationManager::showSimulationProgress()
@@ -171,11 +159,7 @@ void SimulationManager::showSimulationProgress()
     this->dialog_simulation_progress->setAutoClose(false);
     this->dialog_simulation_progress->setAutoReset(false);
     this->dialog_simulation_progress->setMinimumDuration(0);
-#ifndef Q_OS_WASM
     this->dialog_simulation_progress->setWindowModality(Qt::NonModal);
-#else
-    this->dialog_simulation_progress->setWindowModality(Qt::ApplicationModal);
-#endif
     this->dialog_simulation_progress->setWindowFlag(Qt::WindowCloseButtonHint, false);
     this->dialog_simulation_progress->resize(420, 110);
     showAndActivateDialog(this->dialog_simulation_progress);

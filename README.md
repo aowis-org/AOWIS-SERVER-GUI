@@ -14,9 +14,11 @@ Run the script `compile_linux.sh`
 Find the result in the folder `build-linux`
 
 ### WebAssembly
-Preparing a working Qt + Emscripten environment takes some effort.
+The WebAssembly compiler is fully self-contained in an AOWIS-owned Docker image. It does not depend on a prebuilt third-party Qt/Emscripten image.
 
-Therefore, `compile_wasm.sh` will pull and run a docker-image first, where everything is already set up, and uses this for the build.
+`compile_wasm.sh` uses the pinned versions from `tools/qt-emscripten/toolchain_versions.sh`. On the first build it automatically runs `prepare_wasm_docker.sh`, which starts from Ubuntu, installs the matching Emscripten SDK, builds same-version Qt host tools, and builds Qt for WebAssembly with thread support (`-feature-thread`). The image also performs a small Qt Widgets/Network/Sql/QThread smoke build before it is accepted.
+
+The default toolchain is Qt 6.10.2 with Emscripten 4.0.7. Re-run `prepare_wasm_docker.sh` manually whenever the Docker definition or pinned toolchain versions change. Building the image compiles Qt from source and is therefore a one-time heavyweight operation; normal `compile_wasm.sh` runs reuse the local Docker image.
 
 Your system user needs to be allowed to run docker, or run the script as root.
 
@@ -25,9 +27,9 @@ Adding your system user to the group `docker`, and log out and in again should b
 usermod -aG docker [USERNAME]
 ```
 
-Find the result in the folder `build-wasm`
+Find the result in the folder `build-wasm`.
 
-To run the result, you need to have a web server set up.
+To run the result, you need to have a web server set up. Threaded WebAssembly additionally requires a secure context and the `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` response headers. The generated webroot includes an `.htaccess` with these headers for Apache deployments that allow overrides.
 
 ### Windows / macOS
 Usually as a Desktop-Client, you might want to prefer [AOWIS-SERVER-Standalone](https://github.com/aowis-org/AOWIS-SERVER-Standalone).

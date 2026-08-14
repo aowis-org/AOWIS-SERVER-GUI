@@ -10,7 +10,9 @@ python3 tools/build/content_hash_guard.py \
     --source-dir "${PROJECT_DIR}" \
     --state-file "${HASH_STATE_FILE}"
 
-echo "=== Starting WASM build using Docker ==="
+source tools/qt-emscripten/toolchain_versions.sh
+
+echo "=== Starting WASM build using AOWIS Docker toolchain ==="
 
 CONFIG_TEMPLATE="tools/qt-emscripten/aowis-server-gui.ini"
 BUILD_CONFIG="build-wasm/aowis-server-gui.ini"
@@ -30,16 +32,23 @@ if [ -f "$DIST_CONFIG" ]; then
     cp "$DIST_CONFIG" "$PRESERVED_DIST_CONFIG"
 fi
 
-# https://hub.docker.com/r/mattbas/qt-emscripten
+if ! docker image inspect "${AOWIS_WASM_IMAGE}" >/dev/null 2>&1; then
+    echo "=== AOWIS WASM toolchain image not found; preparing it first ==="
+    ./prepare_wasm_docker.sh
+fi
+
+echo "Toolchain image: ${AOWIS_WASM_IMAGE}"
+
 docker run --rm \
     -v "$(pwd)":/project \
     -w /project \
-    mattbas/qt-emscripten:6.10.2 \
+    "${AOWIS_WASM_IMAGE}" \
     /bin/bash /project/tools/qt-emscripten/build_wasm_inside_container.sh
 
 # Qt's default HTML wrapper does not work with setShortcut and keyPressEvents reliably.
 # Replace it with the project wrapper.
 cp tools/qt-emscripten/index.html build-wasm/
+cp tools/qt-emscripten/.htaccess build-wasm/
 cp tools/qt-emscripten/aowis-browser-map.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-vector.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-network-webgl.js build-wasm/
@@ -90,6 +99,7 @@ rm -rf build-wasm-dist
 mkdir -p build-wasm-dist
 
 cp build-wasm/*.js build-wasm/*.wasm build-wasm/*.html build-wasm/favicon.ico build-wasm/aowis.png build-wasm/index.html build-wasm-dist 2>/dev/null || true
+cp build-wasm/.htaccess build-wasm-dist/
 cp -r build-wasm/map-editor-icons build-wasm-dist/
 cp -r build-wasm/svg build-wasm-dist/
 

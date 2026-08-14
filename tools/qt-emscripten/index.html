@@ -485,6 +485,16 @@
 
           try {
               showUi(spinner);
+
+              if (!window.crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') {
+                  throw new Error(
+                      'This AOWIS WebAssembly build requires cross-origin isolation for worker threads. '
+                      + 'Serve it over HTTPS (or localhost) with '
+                      + 'Cross-Origin-Opener-Policy: same-origin and '
+                      + 'Cross-Origin-Embedder-Policy: require-corp.'
+                  );
+              }
+
               setQtStatus('Loading configuration...');
               await loadAowisMapServerConfiguration();
               setQtStatus('Loading application...');

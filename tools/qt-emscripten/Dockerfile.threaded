@@ -1,0 +1,118 @@
+FROM ubuntu:24.04
+
+ARG QT_VERSION=6.10.2
+ARG EMSCRIPTEN_VERSION=4.0.7
+ARG QTBASE_SHA256=aeb78d29291a2b5fd53cb55950f8f5065b4978c25fb1d77f627d695ab9adf21e
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV AOWIS_QT_HOST_PATH=/opt/qt-host-build
+ENV AOWIS_QT_WASM_PATH=/opt/qt-wasm
+ENV EMSDK=/opt/emsdk
+
+LABEL org.opencontainers.image.title="AOWIS Qt WebAssembly toolchain"
+LABEL org.opencontainers.image.description="Qt WebAssembly build environment with thread support"
+LABEL org.opencontainers.image.version="Qt ${QT_VERSION} / Emscripten ${EMSCRIPTEN_VERSION}"
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        curl \
+        git \
+        ninja-build \
+        perl \
+        pkg-config \
+        python3 \
+        xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+SHELL ["/bin/bash", "-lc"]
+
+# Install the exact Emscripten SDK version used by Qt 6.10.x.
+RUN git clone --depth 1 --branch "${EMSCRIPTEN_VERSION}" \
+        https://github.com/emscripten-core/emsdk.git "${EMSDK}" \
+    && cd "${EMSDK}" \
+    && ./emsdk install "${EMSCRIPTEN_VERSION}" \
+    && ./emsdk activate "${EMSCRIPTEN_VERSION}" \
+    && source "${EMSDK}/emsdk_env.sh" \
+    && em++ --version
+
+# Download qtbase from Qt itself and verify its published SHA-256 hash.
+RUN QT_SERIES="${QT_VERSION%.*}" \
+    && QT_ARCHIVE="qtbase-everywhere-src-${QT_VERSION}.tar.xz" \
+    && QT_BASE_URL="https://download.qt.io/official_releases/qt/${QT_SERIES}/${QT_VERSION}/submodules" \
+    && mkdir -p /opt/qt-src \
+    && curl -fL --retry 3 "${QT_BASE_URL}/${QT_ARCHIVE}" -o "/tmp/${QT_ARCHIVE}" \
+    && echo "${QTBASE_SHA256}  /tmp/${QT_ARCHIVE}" | sha256sum -c - \
+    && tar -xJf "/tmp/${QT_ARCHIVE}" --strip-components=1 -C /opt/qt-src \
+    && rm -f "/tmp/${QT_ARCHIVE}"
+
+# Qt cross builds require same-version host tools. Build only the host_tools target;
+# this is Qt's documented minimal-host-build path and avoids installing a second full Qt.
+RUN mkdir -p "${AOWIS_QT_HOST_PATH}" \
+    && cd "${AOWIS_QT_HOST_PATH}" \
+    && /opt/qt-src/configure \
+        -opensource \
+        -confirm-license \
+        -developer-build \
+        -release \
+        -nomake tests \
+        -nomake examples \
+        -no-opengl \
+        -no-warnings-are-errors \
+    && cmake --build . --target host_tools --parallel "$(nproc)"
+
+# Build qtbase for WebAssembly from the same sources, explicitly enabling threads.
+RUN source "${EMSDK}/emsdk_env.sh" \
+    && mkdir -p /opt/qt-wasm-build \
+    && cd /opt/qt-wasm-build \
+    && /opt/qt-src/configure \
+        -opensource \
+        -confirm-license \
+        -release \
+        -nomake tests \
+        -nomake examples \
+        -no-warnings-are-errors \
+        -qt-host-path "${AOWIS_QT_HOST_PATH}" \
+        -platform wasm-emscripten \
+        -prefix "${AOWIS_QT_WASM_PATH}" \
+        -feature-thread \
+    && cmake --build . --parallel "$(nproc)" \
+    && cmake --install . \
+    && grep -q '^#define QT_FEATURE_thread 1$' "${AOWIS_QT_WASM_PATH}/include/QtCore/qconfig.h"
+
+# Compile and link a small application using exactly the Qt modules AOWIS needs on WASM.
+# This makes image creation fail immediately if Widgets, Network, Sql, or QThread are broken.
+RUN source "${EMSDK}/emsdk_env.sh" \
+    && mkdir -p /tmp/aowis-wasm-smoke \
+    && printf '%s\n' \
+        'cmake_minimum_required(VERSION 3.22)' \
+        'project(aowis_wasm_smoke LANGUAGES CXX)' \
+        'find_package(Qt6 REQUIRED COMPONENTS Widgets Network Sql)' \
+        'qt_add_executable(aowis_wasm_smoke main.cpp)' \
+        'target_link_libraries(aowis_wasm_smoke PRIVATE Qt6::Widgets Qt6::Network Qt6::Sql)' \
+        > /tmp/aowis-wasm-smoke/CMakeLists.txt \
+    && printf '%s\n' \
+        '#include <QApplication>' \
+        '#include <QThread>' \
+        'int main(int argc, char **argv)' \
+        '{' \
+        '    QApplication application(argc, argv);' \
+        '    QThread thread;' \
+        '    return thread.isRunning() ? 1 : 0;' \
+        '}' \
+        > /tmp/aowis-wasm-smoke/main.cpp \
+    && "${AOWIS_QT_WASM_PATH}/bin/qt-cmake" \
+        -S /tmp/aowis-wasm-smoke \
+        -B /tmp/aowis-wasm-smoke/build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CXX_FLAGS='-pthread' \
+        -DCMAKE_EXE_LINKER_FLAGS='-pthread -sPTHREAD_POOL_SIZE=1' \
+    && cmake --build /tmp/aowis-wasm-smoke/build --parallel "$(nproc)" \
+    && test -f /tmp/aowis-wasm-smoke/build/aowis_wasm_smoke.wasm \
+    && rm -rf /tmp/aowis-wasm-smoke
+
+ENV CMAKE_TOOLCHAIN_FILE=/opt/qt-wasm/lib/cmake/Qt6/qt.toolchain.cmake
+
+WORKDIR /project

@@ -67,6 +67,7 @@
         <file alias="fullscreen_undo.png">assets/iconsets/gothic/fullscreen_undo.png</file>
         
         <file alias="simulation_start.png">assets/iconsets/gothic/simulation_run.png</file>
+        <file alias="simulation_stop.png">assets/iconsets/gothic/simulation_stop.png</file>
         <file alias="simulation_fail.png">assets/iconsets/gothic/simulation_fail.png</file>
         <file alias="simulation_warning.png">assets/iconsets/gothic/simulation_warning.png</file>
         <file alias="simulation_error.png">assets/iconsets/gothic/simulation_fail.png</file>
