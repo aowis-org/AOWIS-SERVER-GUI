@@ -262,6 +262,16 @@ void TopControlBar::resetSimulationRunIcon()
     this->button_sim_start->setIcon(QIcon(QStringLiteral(":/icon/simulation_start.png")));
 }
 
+void TopControlBar::setSimulationRunRunningIcon()
+{
+    if (this->button_sim_start == nullptr)
+        return;
+
+    this->button_sim_start->setIcon(QIcon(QStringLiteral(":/icon/simulation_stop.png")));
+    this->button_sim_start->setToolTip(
+        QStringLiteral("Simulation running...<br>[Ctrl]+[R]<br>[Shift]+[Enter]"));
+}
+
 void TopControlBar::setSimulationRunResultIcon(const HydraulicSimulationResultTimeline &result_timeline)
 {
     if (this->button_sim_start == nullptr)
@@ -727,7 +737,6 @@ void TopControlBar::addSimulationControls()
 
     connect(this->button_sim_start, &QPushButton::clicked, this, [this]
     {
-        resetSimulationRunIcon();
         emit signalSimulationStart();
     });
 

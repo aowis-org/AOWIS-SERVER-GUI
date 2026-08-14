@@ -24,6 +24,7 @@ public:
     void setFullScreenState(bool fullscreen);
     void setSimulationResultsAvailable(bool available);
     void resetSimulationRunIcon();
+    void setSimulationRunRunningIcon();
     void setSimulationRunResultIcon(const HydraulicSimulationResultTimeline &result_timeline);
     void setSimulationResultTimeline(const HydraulicSimulationResultTimeline &result_timeline);
     void clearSimulationResultTimeline();

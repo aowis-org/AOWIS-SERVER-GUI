@@ -102,20 +102,16 @@ SimulationManager::~SimulationManager()
 void SimulationManager::run()
 {
     if (this->simulation_running)
-    {
-        if (this->dialog_simulation_progress)
-            showAndActivateDialog(this->dialog_simulation_progress);
         return;
-    }
 
     this->simulation_running = true;
+    emit signalSimulationStarted();
     this->epanet_log.clear();
     if (this->widget_epanet_log)
         this->widget_epanet_log->clear();
     emit signalEpanetLogAvailabilityChanged(false);
 
     const NetworkHydraulic network_hydraulic = this->hydraulic_data->networkHydraulic();
-    showSimulationProgress();
 
     std::shared_ptr<EpanetResultRun> run_result = std::make_shared<EpanetResultRun>();
     QThread *thread = QThread::create([network_hydraulic, run_result]()
@@ -131,47 +127,10 @@ void SimulationManager::run()
             this->simulation_thread = nullptr;
 
         this->simulation_running = false;
-        closeSimulationProgress();
         finishSimulation(*run_result);
     });
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
     thread->start();
-}
-
-void SimulationManager::showSimulationProgress()
-{
-    if (this->dialog_simulation_progress)
-    {
-        showAndActivateDialog(this->dialog_simulation_progress);
-        return;
-    }
-
-    QWidget *main_window = qobject_cast<QWidget *>(parent());
-    if (main_window == nullptr)
-        main_window = QApplication::activeWindow();
-
-    this->dialog_simulation_progress = new QProgressDialog(main_window);
-    this->dialog_simulation_progress->setAttribute(Qt::WA_DeleteOnClose);
-    this->dialog_simulation_progress->setWindowTitle(tr("Simulation Running"));
-    this->dialog_simulation_progress->setLabelText(tr("Running EPANET hydraulic simulation..."));
-    this->dialog_simulation_progress->setRange(0, 0);
-    this->dialog_simulation_progress->setCancelButton(nullptr);
-    this->dialog_simulation_progress->setAutoClose(false);
-    this->dialog_simulation_progress->setAutoReset(false);
-    this->dialog_simulation_progress->setMinimumDuration(0);
-    this->dialog_simulation_progress->setWindowModality(Qt::NonModal);
-    this->dialog_simulation_progress->setWindowFlag(Qt::WindowCloseButtonHint, false);
-    this->dialog_simulation_progress->resize(420, 110);
-    showAndActivateDialog(this->dialog_simulation_progress);
-}
-
-void SimulationManager::closeSimulationProgress()
-{
-    if (!this->dialog_simulation_progress)
-        return;
-
-    this->dialog_simulation_progress->close();
-    this->dialog_simulation_progress = nullptr;
 }
 
 void SimulationManager::finishSimulation(const EpanetResultRun &run_result)

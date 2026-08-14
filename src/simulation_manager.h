@@ -8,7 +8,6 @@
 #include <QFontDatabase>
 #include <QDialog>
 #include <QPointer>
-#include <QProgressDialog>
 #include <QThread>
 #include <QVBoxLayout>
 
@@ -39,16 +38,14 @@ private:
     QPointer<QDialog> dialog_simulation_statistics = nullptr;
     QPointer<QDialog> dialog_simulation_diagnostics = nullptr;
     QPointer<QDialog> dialog_epanet_log = nullptr;
-    QPointer<QProgressDialog> dialog_simulation_progress = nullptr;
     QPointer<QThread> simulation_thread = nullptr;
     bool simulation_running = false;
     QPointer<QTextBrowser> widget_epanet_log = nullptr;
 
-    void showSimulationProgress();
-    void closeSimulationProgress();
     void finishSimulation(const EpanetResultRun &run_result);
 
 signals:
+    void signalSimulationStarted();
     void signalEpanetLogAvailabilityChanged(bool available);
 };
 
