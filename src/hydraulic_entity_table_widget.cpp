@@ -2239,8 +2239,6 @@ HydraulicEntityTableWidget::HydraulicEntityTableWidget(HydraulicData *hydraulic_
     this->table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
     this->table->horizontalHeader()->setDefaultAlignment(Qt::AlignCenter);
     this->table->horizontalHeader()->setTextElideMode(Qt::ElideNone);
-    this->table->horizontalHeader()->setDefaultSectionSize(110);
-    this->table->horizontalHeader()->setMinimumSectionSize(68);
     const QFontMetrics header_font_metrics(this->table->horizontalHeader()->font());
     this->table->horizontalHeader()->setFixedHeight(header_font_metrics.lineSpacing() * 3 + 12);
     this->table->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
@@ -2311,13 +2309,6 @@ HydraulicEntityTableWidget::HydraulicEntityTableWidget(HydraulicData *hydraulic_
     });
 
     this->table->sortByColumn(0, Qt::AscendingOrder);
-    updateColumnWidths();
-
-    connect(this->model, &QAbstractItemModel::modelReset, this,
-            [this]()
-    {
-        updateColumnWidths();
-    });
 
     connect(this->table, &QTableView::clicked, this,
             [this](const QModelIndex &index)
@@ -2328,6 +2319,7 @@ HydraulicEntityTableWidget::HydraulicEntityTableWidget(HydraulicData *hydraulic_
     connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this,
             [this]()
     {
+        this->resize_columns_after_rebuild = true;
         requestRebuild();
     });
     connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged, this,
@@ -2381,6 +2373,12 @@ void HydraulicEntityTableWidget::requestRebuild()
 
         this->rebuild_pending = false;
         this->model->rebuild();
+
+        if (this->resize_columns_after_rebuild)
+        {
+            this->resize_columns_after_rebuild = false;
+            this->table->resizeColumnsToContents();
+        }
     });
 }
 
@@ -2389,35 +2387,6 @@ void HydraulicEntityTableWidget::showEvent(QShowEvent *event)
     QWidget::showEvent(event);
     if (this->rebuild_pending)
         requestRebuild();
-}
-
-void HydraulicEntityTableWidget::updateColumnWidths()
-{
-    const QFontMetrics font_metrics(this->table->horizontalHeader()->font());
-    const int column_count = this->table->model()->columnCount();
-    for (int column = 0; column < column_count; ++column)
-    {
-        const QString header_text = this->table->model()
-                                        ->headerData(column, Qt::Horizontal, Qt::DisplayRole)
-                                        .toString();
-        const QStringList lines = header_text.split(QLatin1Char('\n'));
-        int text_width = 0;
-        for (const QString &line : lines)
-            text_width = qMax(text_width, font_metrics.horizontalAdvance(line));
-
-        int minimum_width = 84;
-        const ColumnFilterKind filter_kind = this->model->filterKind(column);
-        if (filter_kind == ColumnFilterKind::Text || filter_kind == ColumnFilterKind::Choice)
-            minimum_width = 96;
-        else if (filter_kind == ColumnFilterKind::Number
-                 || filter_kind == ColumnFilterKind::Integer)
-            minimum_width = 112;
-
-        this->table->setColumnWidth(column, qMax(minimum_width, text_width + 20));
-    }
-
-    if (column_count > 0)
-        this->table->setColumnWidth(0, qMax(135, this->table->columnWidth(0)));
 }
 
 void HydraulicEntityTableWidget::openEntity(const QModelIndex &proxy_index)

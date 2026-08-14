@@ -30,7 +30,6 @@ protected:
 private:
     void openEntity(const QModelIndex &proxy_index);
     void requestRebuild();
-    void updateColumnWidths();
 
     HydraulicData *hydraulic_data;
     InfrastructureEntity entity_type;
@@ -40,6 +39,7 @@ private:
     QSortFilterProxyModel *proxy_model;
     bool rebuild_pending = false;
     bool rebuild_scheduled = false;
+    bool resize_columns_after_rebuild = false;
 };
 
 #endif // HYDRAULIC_ENTITY_TABLE_WIDGET_H
