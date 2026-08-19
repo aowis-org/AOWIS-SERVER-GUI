@@ -253,7 +253,7 @@ void EntityInspectorPipe::addGroupQuality()
     this->spin_bulk_reaction->setMaximum(1000.0);
     this->spin_bulk_reaction->setSingleStep(0.001);
     this->spin_bulk_reaction->setValue(0.0);
-    this->spin_bulk_reaction->setSuffix(QStringLiteral(" 1/day"));
+    this->spin_bulk_reaction->setToolTip(QStringLiteral("Coefficient dimensions depend on the configured bulk reaction order."));
     this->spin_bulk_reaction->setAlignment(Qt::AlignRight);
     this->spin_bulk_reaction->setEnabled(false);
     
@@ -266,7 +266,7 @@ void EntityInspectorPipe::addGroupQuality()
     this->spin_wall_reaction->setMaximum(1000.0);
     this->spin_wall_reaction->setSingleStep(0.001);
     this->spin_wall_reaction->setValue(0.0);
-    this->spin_wall_reaction->setSuffix(QStringLiteral(" m/day"));
+    this->spin_wall_reaction->setToolTip(QStringLiteral("Coefficient dimensions depend on the configured wall reaction order."));
     this->spin_wall_reaction->setAlignment(Qt::AlignRight);
     this->spin_wall_reaction->setEnabled(false);
     

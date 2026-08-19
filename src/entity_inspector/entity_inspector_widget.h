@@ -101,6 +101,7 @@ protected:
     void addGroupDemands();
     QLabel *label_demands_summary = nullptr;
     QDoubleSpinBox *spin_emitter_coefficient = nullptr;
+    QDoubleSpinBox *spin_emitter_pressure_exponent = nullptr;
 
     void addGroupSimulation();
 

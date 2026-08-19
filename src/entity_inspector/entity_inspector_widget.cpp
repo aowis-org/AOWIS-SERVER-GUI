@@ -2004,14 +2004,24 @@ void EntityInspectorWidget::addGroupDemands()
 
     QLabel *label_emitter_coefficient = new QLabel("Emitter<br>Coefficient");
     this->spin_emitter_coefficient = new QDoubleSpinBox();
-    this->spin_emitter_coefficient->setRange(-1000000000.0, 1000000000.0);
+    this->spin_emitter_coefficient->setRange(0.0, 1000000000.0);
     this->spin_emitter_coefficient->setDecimals(6);
     this->spin_emitter_coefficient->setSingleStep(0.001);
-    this->spin_emitter_coefficient->setSuffix(QStringLiteral(" m³/h/mⁿ"));
     this->spin_emitter_coefficient->setAlignment(Qt::AlignRight);
     this->spin_emitter_coefficient->setToolTip(
-        "Coefficient C in Q = C · pⁿ. Flow Q is stored in m³/h, pressure head p in m, "
-        "and n is the global emitter exponent."
+        "Coefficient C in Q = C · pⁿ. Flow Q is stored in m³/h and pressure head p in m. "
+        "The coefficient has no fixed standalone unit because its dimension depends on n."
+    );
+
+    QLabel *label_emitter_pressure_exponent = new QLabel("Emitter<br>Exponent");
+    this->spin_emitter_pressure_exponent = new QDoubleSpinBox();
+    this->spin_emitter_pressure_exponent->setRange(0.000001, 1000000.0);
+    this->spin_emitter_pressure_exponent->setDecimals(6);
+    this->spin_emitter_pressure_exponent->setSingleStep(0.01);
+    this->spin_emitter_pressure_exponent->setAlignment(Qt::AlignRight);
+    this->spin_emitter_pressure_exponent->setToolTip(
+        "Pressure exponent n in Q = C · pⁿ. EPANET supports one emitter exponent for the network, "
+        "so all enabled junctions with a non-zero emitter coefficient must use the same value."
     );
 
     QPushButton *button_editor = new QPushButton("Open Editor");
@@ -2021,14 +2031,20 @@ void EntityInspectorWidget::addGroupDemands()
     });
     connect(this->spin_emitter_coefficient, &QDoubleSpinBox::valueChanged, this, [this](double value)
     {
-        this->hydraulic_data->setJunctionEmitterCoefficientM3PerHPerMExponent(
-            this->entity_uuid, value);
+        this->hydraulic_data->setJunctionEmitterCoefficient(this->entity_uuid, value);
+    });
+
+    connect(this->spin_emitter_pressure_exponent, &QDoubleSpinBox::valueChanged, this, [this](double value)
+    {
+        this->hydraulic_data->setJunctionEmitterPressureExponent(this->entity_uuid, value);
     });
 
     grid->addWidget(this->label_demands_summary, 0, 0, 1, 2);
     grid->addWidget(label_emitter_coefficient, 1, 0);
     grid->addWidget(this->spin_emitter_coefficient, 1, 1);
-    grid->addWidget(button_editor, 2, 0, 1, 2);
+    grid->addWidget(label_emitter_pressure_exponent, 2, 0);
+    grid->addWidget(this->spin_emitter_pressure_exponent, 2, 1);
+    grid->addWidget(button_editor, 3, 0, 1, 2);
 
     this->layoutConfiguration()->addWidget(group);
     refreshJunctionDemands();
@@ -2077,8 +2093,13 @@ void EntityInspectorWidget::refreshJunctionDemands()
     if (this->spin_emitter_coefficient)
     {
         const QSignalBlocker emitter_blocker(this->spin_emitter_coefficient);
-        this->spin_emitter_coefficient->setValue(
-            junction->emitter_coefficient_m3_per_h_per_m_exponent);
+        this->spin_emitter_coefficient->setValue(junction->emitter.coefficient);
+    }
+
+    if (this->spin_emitter_pressure_exponent)
+    {
+        const QSignalBlocker emitter_exponent_blocker(this->spin_emitter_pressure_exponent);
+        this->spin_emitter_pressure_exponent->setValue(junction->emitter.pressure_exponent);
     }
 
     if (!this->table_demands)

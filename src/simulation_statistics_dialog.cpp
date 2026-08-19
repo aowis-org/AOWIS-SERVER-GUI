@@ -170,7 +170,7 @@ SimulationStatisticsDialog::SimulationStatisticsDialog(HydraulicData *hydraulic_
     this->tree_summary->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     this->tree_summary->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
 
-    this->table_timeline->setColumnCount(9);
+    this->table_timeline->setColumnCount(8);
     this->table_timeline->setHorizontalHeaderLabels(QStringList{
         tr("Elapsed"),
         tr("Iterations"),
@@ -179,8 +179,7 @@ SimulationStatisticsDialog::SimulationStatisticsDialog(HydraulicData *hydraulic_
         tr("Max flow\nchange [m³/h]"),
         tr("Deficient\nnodes"),
         tr("Demand\nreduction [%]"),
-        tr("Leakage\nloss [%]"),
-        tr("Quality mass\nbalance")
+        tr("Leakage\nloss [%]")
     });
     this->table_timeline->setEditTriggers(QAbstractItemView::NoEditTriggers);
     this->table_timeline->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -196,8 +195,7 @@ SimulationStatisticsDialog::SimulationStatisticsDialog(HydraulicData *hydraulic_
     tabs->addTab(this->table_timeline, tr("By timestep"));
 
     QLabel *hint = new QLabel(
-        tr("Summary values show the worst hydraulic value across the complete timeline. "
-           "Quality mass balance is shown as the final cumulative ratio."),
+        tr("Summary values show the worst hydraulic value across the complete timeline."),
         this);
     hint->setWordWrap(true);
 
@@ -277,16 +275,6 @@ void SimulationStatisticsDialog::refreshSummary()
                     tr("%1 %").arg(formatDouble(aggregate.leakage_loss_percent.value)),
                     statisticTime(results, aggregate.leakage_loss_percent.result_index));
 
-    const HydraulicSimulationResult &final_result = results.constLast();
-    const double quality_mass_balance_ratio = final_result.statistics.quality_mass_balance_ratio;
-    const bool quality_mass_balance_available = std::isfinite(quality_mass_balance_ratio) && quality_mass_balance_ratio > 0.0;
-
-    QTreeWidgetItem *quality_group = addSummaryGroup(this->tree_summary, tr("Water quality"));
-    addSummaryValue(
-        quality_group,
-        tr("Final mass balance ratio"),
-        quality_mass_balance_available ? formatDouble(quality_mass_balance_ratio) : tr("Not available"),
-        quality_mass_balance_available ? formatElapsedTime(final_result.time_elapsed_s) : QStringLiteral("—"));
 
     for (int top_level_index = 0; top_level_index < this->tree_summary->topLevelItemCount(); ++top_level_index)
         this->tree_summary->topLevelItem(top_level_index)->setExpanded(true);
@@ -308,8 +296,6 @@ void SimulationStatisticsDialog::refreshTimeline()
     {
         const HydraulicSimulationResult &result = results.at(result_index);
         const HydraulicSimulationResultStatistics &statistics = result.statistics;
-        const bool quality_mass_balance_available = std::isfinite(statistics.quality_mass_balance_ratio)
-            && statistics.quality_mass_balance_ratio > 0.0;
 
         this->table_timeline->setItem(result_index, 0, new QTableWidgetItem(formatElapsedTime(result.time_elapsed_s)));
         this->table_timeline->setItem(result_index, 1, numericTableItem(QString::number(statistics.hydraulic_iterations)));
@@ -319,10 +305,6 @@ void SimulationStatisticsDialog::refreshTimeline()
         this->table_timeline->setItem(result_index, 5, numericTableItem(QString::number(statistics.deficient_nodes)));
         this->table_timeline->setItem(result_index, 6, numericTableItem(formatDouble(statistics.demand_reduction_percent)));
         this->table_timeline->setItem(result_index, 7, numericTableItem(formatDouble(statistics.leakage_loss_percent)));
-        this->table_timeline->setItem(
-            result_index,
-            8,
-            numericTableItem(quality_mass_balance_available ? formatDouble(statistics.quality_mass_balance_ratio) : QStringLiteral("—")));
     }
 }
 

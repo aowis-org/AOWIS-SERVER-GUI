@@ -692,6 +692,7 @@ ColumnFilterKind columnFilterKind(const QString &title)
 
     static const QSet<QString> number_columns_without_units = {
         QStringLiteral("Emitter Coefficient"),
+        QStringLiteral("Emitter Exponent"),
         QStringLiteral("Roughness HW"),
         QStringLiteral("Roughness CM"),
         QStringLiteral("Minor Loss"),
@@ -1171,6 +1172,7 @@ private:
         this->columns.append({QStringLiteral("Demand Base [m³/h]"), false});
         this->columns.append({QStringLiteral("Demand Details"), false});
         this->columns.append({QStringLiteral("Emitter Coefficient"), false});
+        this->columns.append({QStringLiteral("Emitter Exponent"), false});
         this->columns.append({QStringLiteral("Demand Requested [m³/h]"), true});
         this->columns.append({QStringLiteral("Demand Delivered [m³/h]"), true});
         this->columns.append({QStringLiteral("Demand Deficit [m³/h]"), true});
@@ -1195,7 +1197,8 @@ private:
             row.cells.append(integerCell(junction.demands.size()));
             row.cells.append(numberCell(junctionBaseDemand(junction.demands), 3, QStringLiteral(" m³/h")));
             row.cells.append(textCell(junctionDemandSummary(network, junction.demands)));
-            row.cells.append(numberCell(junction.emitter_coefficient_m3_per_h_per_m_exponent, 6));
+            row.cells.append(numberCell(junction.emitter.coefficient, 6));
+            row.cells.append(numberCell(junction.emitter.pressure_exponent, 6));
 
             const HydraulicSimulationResultNodeJunction *result =
                 result_lookup.value(junction.uuid, nullptr);

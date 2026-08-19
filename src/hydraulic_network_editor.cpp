@@ -564,15 +564,23 @@ bool HydraulicNetworkEditor::setJunctionDemandNote(const QUuid &uuid, int demand
     return true;
 }
 
-bool HydraulicNetworkEditor::setJunctionEmitterCoefficientM3PerHPerMExponent(
-    const QUuid &uuid, double emitter_coefficient_m3_per_h_per_m_exponent)
+bool HydraulicNetworkEditor::setJunctionEmitterCoefficient(const QUuid &uuid, double coefficient)
 {
     HydraulicNodeJunction *junction = entityByUuid(this->network.nodes_junctions, uuid);
     if (junction == nullptr)
         return false;
 
-    junction->emitter_coefficient_m3_per_h_per_m_exponent =
-        emitter_coefficient_m3_per_h_per_m_exponent;
+    junction->emitter.coefficient = coefficient;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setJunctionEmitterPressureExponent(const QUuid &uuid, double pressure_exponent)
+{
+    HydraulicNodeJunction *junction = entityByUuid(this->network.nodes_junctions, uuid);
+    if (junction == nullptr)
+        return false;
+
+    junction->emitter.pressure_exponent = pressure_exponent;
     return true;
 }
 

@@ -2042,12 +2042,16 @@ bool HydraulicData::setJunctionDemandNote(const QUuid &uuid, int demand_index,
         uuid, this->network_editor.setJunctionDemandNote(uuid, demand_index, note));
 }
 
-bool HydraulicData::setJunctionEmitterCoefficientM3PerHPerMExponent(
-    const QUuid &uuid, double emitter_coefficient_m3_per_h_per_m_exponent)
+bool HydraulicData::setJunctionEmitterCoefficient(const QUuid &uuid, double coefficient)
 {
     return emitNodeChangedIfSuccessful(
-        uuid, this->network_editor.setJunctionEmitterCoefficientM3PerHPerMExponent(
-                  uuid, emitter_coefficient_m3_per_h_per_m_exponent));
+        uuid, this->network_editor.setJunctionEmitterCoefficient(uuid, coefficient));
+}
+
+bool HydraulicData::setJunctionEmitterPressureExponent(const QUuid &uuid, double pressure_exponent)
+{
+    return emitNodeChangedIfSuccessful(
+        uuid, this->network_editor.setJunctionEmitterPressureExponent(uuid, pressure_exponent));
 }
 
 bool HydraulicData::setReservoirHeadInputType(

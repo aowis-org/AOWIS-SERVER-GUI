@@ -92,8 +92,8 @@ public:
     bool setJunctionDemandSourceMethod(const QUuid &uuid, int demand_index,
                                        HydraulicNodeJunctionDemandSourceMethod source_method);
     bool setJunctionDemandNote(const QUuid &uuid, int demand_index, const QString &note);
-    bool setJunctionEmitterCoefficientM3PerHPerMExponent(
-        const QUuid &uuid, double emitter_coefficient_m3_per_h_per_m_exponent);
+    bool setJunctionEmitterCoefficient(const QUuid &uuid, double coefficient);
+    bool setJunctionEmitterPressureExponent(const QUuid &uuid, double pressure_exponent);
 
     bool setReservoirHeadInputType(const QUuid &uuid,
                                    HydraulicNodeElevationInputType input_type);
