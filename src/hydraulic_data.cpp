@@ -35,6 +35,28 @@ void updateMinimumMaximum(double value, double &minimum, double &maximum, bool &
         maximum = value;
 }
 
+void updateWaterAgeNodeMinimumMaximum(const WaterQualitySimulationResult &result,
+                                      double &minimum, double &maximum, bool &initialized)
+{
+    for (const WaterQualitySimulationResultNodeJunction &junction : result.nodes_junctions)
+        updateMinimumMaximum(junction.water_age_h, minimum, maximum, initialized);
+    for (const WaterQualitySimulationResultNodeReservoir &reservoir : result.nodes_reservoirs)
+        updateMinimumMaximum(reservoir.water_age_h, minimum, maximum, initialized);
+    for (const WaterQualitySimulationResultNodeTank &tank : result.nodes_tanks)
+        updateMinimumMaximum(tank.water_age_h, minimum, maximum, initialized);
+}
+
+void updateWaterAgeLinkMinimumMaximum(const WaterQualitySimulationResult &result,
+                                      double &minimum, double &maximum, bool &initialized)
+{
+    for (const WaterQualitySimulationResultLinkPipe &pipe : result.links_pipes)
+        updateMinimumMaximum(pipe.water_age_h, minimum, maximum, initialized);
+    for (const WaterQualitySimulationResultLinkPump &pump : result.links_pumps)
+        updateMinimumMaximum(pump.water_age_h, minimum, maximum, initialized);
+    for (const WaterQualitySimulationResultLinkValve &valve : result.links_valves)
+        updateMinimumMaximum(valve.water_age_h, minimum, maximum, initialized);
+}
+
 }
 
 HydraulicData::HydraulicData(QObject *parent)
@@ -618,6 +640,38 @@ NetworkSymbologyRanges HydraulicData::symbologyRanges(
 {
     NetworkSymbologyRanges ranges;
 
+    double water_age_node_minimum = 0.0;
+    double water_age_node_maximum = 0.0;
+    double water_age_link_minimum = 0.0;
+    double water_age_link_maximum = 0.0;
+    bool water_age_node_initialized = false;
+    bool water_age_link_initialized = false;
+
+    const std::optional<WaterQualitySimulationResultTimeline> &quality_timeline =
+        this->waterQualitySimulationResultTimeline();
+    if (quality_timeline.has_value()
+        && quality_timeline->analysis == WaterQualityAnalysisType::WaterAge)
+    {
+        const WaterQualitySimulationResult *quality_result =
+            this->currentWaterQualitySimulationResult();
+        if (quality_result != nullptr)
+        {
+            if (settings.visual_node == VisualNode::WaterAge
+                || settings.visual_heatmap == VisualHeatmap::WaterAge)
+            {
+                updateWaterAgeNodeMinimumMaximum(
+                    *quality_result, water_age_node_minimum, water_age_node_maximum,
+                    water_age_node_initialized);
+            }
+            if (settings.visual_link == VisualLink::WaterAge)
+            {
+                updateWaterAgeLinkMinimumMaximum(
+                    *quality_result, water_age_link_minimum, water_age_link_maximum,
+                    water_age_link_initialized);
+            }
+        }
+    }
+
     switch (settings.visual_node)
     {
     case VisualNode::Elevation:
@@ -664,6 +718,13 @@ NetworkSymbologyRanges HydraulicData::symbologyRanges(
         ranges.node_minimum = this->node_lake_water_percent_minimum;
         ranges.node_maximum = this->node_lake_water_percent_maximum;
         break;
+    case VisualNode::WaterAge:
+        if (water_age_node_initialized)
+        {
+            ranges.node_minimum = water_age_node_minimum;
+            ranges.node_maximum = water_age_node_maximum;
+        }
+        break;
     case VisualNode::None:
         break;
     }
@@ -709,6 +770,13 @@ NetworkSymbologyRanges HydraulicData::symbologyRanges(
     case VisualLink::LakeWater:
         ranges.link_minimum = this->link_lake_water_percent_minimum;
         ranges.link_maximum = this->link_lake_water_percent_maximum;
+        break;
+    case VisualLink::WaterAge:
+        if (water_age_link_initialized)
+        {
+            ranges.link_minimum = water_age_link_minimum;
+            ranges.link_maximum = water_age_link_maximum;
+        }
         break;
     case VisualLink::None:
         break;
@@ -759,6 +827,13 @@ NetworkSymbologyRanges HydraulicData::symbologyRanges(
     case VisualHeatmap::LakeWater:
         ranges.heatmap_minimum = this->heatmap_lake_water_percent_minimum;
         ranges.heatmap_maximum = this->heatmap_lake_water_percent_maximum;
+        break;
+    case VisualHeatmap::WaterAge:
+        if (water_age_node_initialized)
+        {
+            ranges.heatmap_minimum = water_age_node_minimum;
+            ranges.heatmap_maximum = water_age_node_maximum;
+        }
         break;
     case VisualHeatmap::None:
         break;

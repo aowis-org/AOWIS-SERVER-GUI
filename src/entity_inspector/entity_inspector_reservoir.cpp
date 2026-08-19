@@ -10,6 +10,7 @@ EntityInspectorReservoir::EntityInspectorReservoir(HydraulicData *hydraulic_data
     addGroupElevation();
 
     addGroupSimulation();
+    addGroupWaterQualitySimulation();
     addGroupQuality();
     addGroupAlerts();
     addGroupHistory();

@@ -63,6 +63,7 @@ EntityInspectorTank::EntityInspectorTank(HydraulicData *hydraulic_data, const QU
     addGroupGeometry();
     bindGeometry();
     addGroupSimulation();
+    addGroupWaterQualitySimulation();
     addGroupQuality();
     addGroupAlerts();
     addGroupHistory();

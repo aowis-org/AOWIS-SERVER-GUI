@@ -34,6 +34,7 @@ EntityInspectorPump::EntityInspectorPump(HydraulicData *hydraulic_data,
     addGroupEnergyCostInput();
     addGroupEnergy();
     addGroupSimulation();
+    addGroupWaterQualitySimulation();
     addGroupNoEntitySpecificQualityInputs(QStringLiteral("pump"));
     addGroupAlerts();
     addGroupHistory();

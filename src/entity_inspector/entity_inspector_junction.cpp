@@ -12,6 +12,7 @@ EntityInspectorJunction::EntityInspectorJunction(HydraulicData *hydraulic_data, 
 
     addGroupDemands();
     addGroupSimulation();
+    addGroupWaterQualitySimulation();
     addGroupQuality();
     addGroupAlerts();
     addStretches();

@@ -468,6 +468,26 @@ EntityMapLegendDock::EntityMapLegendDock(HydraulicData *hydraulic_data, QWidget 
     {
         updateLinkLegend();
     });
+    connect(this->hydraulic_data, &HydraulicData::signalWaterQualitySimulationResultTimelineChanged,
+        this, [this](bool)
+    {
+        if (this->visual_node == VisualNode::WaterAge)
+            updateNodeLegend();
+        if (this->visual_link == VisualLink::WaterAge)
+            updateLinkLegend();
+        if (this->visual_heatmap == VisualHeatmap::WaterAge)
+            updateHeatmapLegend();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalCurrentSimulationResultChanged,
+        this, [this](int)
+    {
+        if (this->visual_node == VisualNode::WaterAge)
+            updateNodeLegend();
+        if (this->visual_link == VisualLink::WaterAge)
+            updateLinkLegend();
+        if (this->visual_heatmap == VisualHeatmap::WaterAge)
+            updateHeatmapLegend();
+    });
 
     scheduleDockHeightUpdate();
 }
@@ -677,6 +697,10 @@ void EntityMapLegendDock::updateNodeLegend()
         metric = QStringLiteral("Lake Water");
         unit = QStringLiteral("%");
         break;
+    case VisualNode::WaterAge:
+        metric = QStringLiteral("Water Age");
+        unit = QStringLiteral("h");
+        break;
     case VisualNode::None:
         return;
     }
@@ -748,6 +772,10 @@ void EntityMapLegendDock::updateLinkLegend()
         metric = QStringLiteral("Lake Water");
         unit = QStringLiteral("%");
         break;
+    case VisualLink::WaterAge:
+        metric = QStringLiteral("Water Age");
+        unit = QStringLiteral("h");
+        break;
     case VisualLink::None:
         return;
     }
@@ -811,6 +839,10 @@ void EntityMapLegendDock::updateHeatmapLegend()
     case VisualHeatmap::LakeWater:
         metric = QStringLiteral("Lake Water");
         unit = QStringLiteral("%");
+        break;
+    case VisualHeatmap::WaterAge:
+        metric = QStringLiteral("Water Age");
+        unit = QStringLiteral("h");
         break;
     case VisualHeatmap::None:
         return;

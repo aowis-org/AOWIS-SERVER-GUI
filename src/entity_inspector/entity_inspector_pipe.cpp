@@ -19,6 +19,7 @@ EntityInspectorPipe::EntityInspectorPipe(HydraulicData *hydraulic_data, const Hy
 
     bindHydraulicLink(InfrastructureEntity::Pipe, this->pipe_uuid, "Pipe");
     addGroupSimulation();
+    addGroupWaterQualitySimulation();
     addStretches();
 
     connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,

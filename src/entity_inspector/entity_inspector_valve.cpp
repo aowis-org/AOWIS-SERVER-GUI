@@ -27,6 +27,7 @@ EntityInspectorValve::EntityInspectorValve(HydraulicData *hydraulic_data, const 
     addGroupEndpoints();
     addGroupValveConfiguration();
     addGroupSimulation();
+    addGroupWaterQualitySimulation();
     
     addGroupNoEntitySpecificQualityInputs(QStringLiteral("valve"));
     addGroupAlerts();

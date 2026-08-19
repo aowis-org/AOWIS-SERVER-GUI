@@ -100,6 +100,7 @@ QHash<QUuid, double> nodeValues(const NetworkHydraulic &network_hydraulic, Visua
     case VisualNode::Chlorine:
     case VisualNode::RiverWater:
     case VisualNode::LakeWater:
+    case VisualNode::WaterAge:
         break;
     }
 
@@ -135,6 +136,7 @@ QHash<QUuid, double> linkValues(const NetworkHydraulic &network_hydraulic, Visua
     case VisualLink::Chlorine:
     case VisualLink::RiverWater:
     case VisualLink::LakeWater:
+    case VisualLink::WaterAge:
         break;
     }
 
@@ -168,6 +170,8 @@ QHash<QUuid, double> heatmapValues(const NetworkHydraulic &network_hydraulic,
         return nodeValues(network_hydraulic, VisualNode::RiverWater);
     case VisualHeatmap::LakeWater:
         return nodeValues(network_hydraulic, VisualNode::LakeWater);
+    case VisualHeatmap::WaterAge:
+        break;
     case VisualHeatmap::None:
         break;
     }
@@ -260,12 +264,40 @@ QByteArray BrowserNetworkSnapshotSerializer::serializeSymbology(
     const NetworkSymbologySettings bounded_settings = settings.bounded();
     const NetworkRenderSnapshot &snapshot = hydraulic_data.networkRenderSnapshot();
     const NetworkHydraulic &network_hydraulic = hydraulic_data.networkHydraulic();
+
+    QHash<QUuid, double> water_age_node_values;
+    QHash<QUuid, double> water_age_link_values;
+    const std::optional<WaterQualitySimulationResultTimeline> &quality_timeline =
+        hydraulic_data.waterQualitySimulationResultTimeline();
+    if (quality_timeline.has_value()
+        && quality_timeline->analysis == WaterQualityAnalysisType::WaterAge)
+    {
+        const WaterQualitySimulationResult *quality_result =
+            hydraulic_data.currentWaterQualitySimulationResult();
+        if (quality_result != nullptr)
+        {
+            if (bounded_settings.visual_node == VisualNode::WaterAge
+                || bounded_settings.visual_heatmap == VisualHeatmap::WaterAge)
+            {
+                water_age_node_values = waterAgeNodeSymbologyValues(*quality_result);
+            }
+            if (bounded_settings.visual_link == VisualLink::WaterAge)
+                water_age_link_values = waterAgeLinkSymbologyValues(*quality_result);
+        }
+    }
+
     const QHash<QUuid, double> node_values =
-        nodeValues(network_hydraulic, bounded_settings.visual_node);
+        bounded_settings.visual_node == VisualNode::WaterAge
+            ? water_age_node_values
+            : nodeValues(network_hydraulic, bounded_settings.visual_node);
     const QHash<QUuid, double> link_values =
-        linkValues(network_hydraulic, bounded_settings.visual_link);
+        bounded_settings.visual_link == VisualLink::WaterAge
+            ? water_age_link_values
+            : linkValues(network_hydraulic, bounded_settings.visual_link);
     const QHash<QUuid, double> heatmap_values =
-        heatmapValues(network_hydraulic, bounded_settings.visual_heatmap);
+        bounded_settings.visual_heatmap == VisualHeatmap::WaterAge
+            ? water_age_node_values
+            : heatmapValues(network_hydraulic, bounded_settings.visual_heatmap);
 
     QJsonObject root;
     root.insert(QStringLiteral("nodeVisual"), static_cast<int>(bounded_settings.visual_node));

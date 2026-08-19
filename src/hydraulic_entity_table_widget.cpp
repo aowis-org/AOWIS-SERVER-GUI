@@ -230,6 +230,105 @@ QString tankGeometryInputText(HydraulicNodeTankGeometryInputType input_type)
     return QStringLiteral("Unknown");
 }
 
+QString qualitySourceTypeText(HydraulicNodeQualitySourceType source_type)
+{
+    switch (source_type)
+    {
+    case HydraulicNodeQualitySourceType::None:
+        return QStringLiteral("None");
+    case HydraulicNodeQualitySourceType::Concentration:
+        return QStringLiteral("Concentration");
+    case HydraulicNodeQualitySourceType::MassBooster:
+        return QStringLiteral("Mass Booster");
+    case HydraulicNodeQualitySourceType::FlowPacedBooster:
+        return QStringLiteral("Flow-Paced Booster");
+    case HydraulicNodeQualitySourceType::SetpointBooster:
+        return QStringLiteral("Setpoint Booster");
+    }
+    return QStringLiteral("Unknown");
+}
+
+QString tankMixingModelText(HydraulicNodeTankMixingModel mixing_model)
+{
+    switch (mixing_model)
+    {
+    case HydraulicNodeTankMixingModel::CompleteMix:
+        return QStringLiteral("Complete Mix");
+    case HydraulicNodeTankMixingModel::TwoCompartment:
+        return QStringLiteral("Two-Compartment");
+    case HydraulicNodeTankMixingModel::FirstInFirstOut:
+        return QStringLiteral("First In, First Out");
+    case HydraulicNodeTankMixingModel::LastInFirstOut:
+        return QStringLiteral("Last In, First Out");
+    }
+    return QStringLiteral("Unknown");
+}
+
+QString qualityResultColumnTitle(WaterQualityAnalysisType analysis)
+{
+    switch (analysis)
+    {
+    case WaterQualityAnalysisType::Chemical:
+        return QStringLiteral("Chemical Concentration [mg/L]");
+    case WaterQualityAnalysisType::WaterAge:
+        return QStringLiteral("Water Age [h]");
+    case WaterQualityAnalysisType::SourceTrace:
+        return QStringLiteral("Source Trace [%]");
+    case WaterQualityAnalysisType::None:
+        return QStringLiteral("Water Quality Result");
+    }
+    return QStringLiteral("Water Quality Result");
+}
+
+template<typename ResultType>
+TableCell qualityResultCell(const ResultType *result, WaterQualityAnalysisType analysis)
+{
+    if (result == nullptr)
+        return emptyCell();
+
+    switch (analysis)
+    {
+    case WaterQualityAnalysisType::Chemical:
+        return numberCell(result->chemical_concentration_mg_per_l, 6, QStringLiteral(" mg/L"));
+    case WaterQualityAnalysisType::WaterAge:
+        return numberCell(result->water_age_h, 6, QStringLiteral(" h"));
+    case WaterQualityAnalysisType::SourceTrace:
+        return numberCell(result->source_trace_percent, 6, QStringLiteral(" %"));
+    case WaterQualityAnalysisType::None:
+        return emptyCell();
+    }
+    return emptyCell();
+}
+
+void appendNodeQualityInputColumns(QList<TableColumn> &columns)
+{
+    columns.append({QStringLiteral("Initial Chemical [mg/L]"), false});
+    columns.append({QStringLiteral("Initial Water Age [h]"), false});
+    columns.append({QStringLiteral("Initial Source Trace [%]"), false});
+    columns.append({QStringLiteral("Quality Source Type"), false});
+    columns.append({QStringLiteral("Quality Source Concentration [mg/L]"), false});
+    columns.append({QStringLiteral("Quality Source Mass Flow [mg/min]"), false});
+    columns.append({QStringLiteral("Quality Source Pattern"), false});
+}
+
+QString patternId(const NetworkHydraulic &network, const QUuid &uuid);
+
+template<typename NodeType>
+void appendNodeQualityInputCells(QList<TableCell> &cells, const NetworkHydraulic &network,
+                                 const NodeType &node)
+{
+    cells.append(numberCell(node.initial_chemical_concentration_mg_per_l, 6,
+                            QStringLiteral(" mg/L")));
+    cells.append(numberCell(node.initial_water_age_h, 6, QStringLiteral(" h")));
+    cells.append(numberCell(node.initial_source_trace_percent, 6, QStringLiteral(" %")));
+    cells.append(textCell(qualitySourceTypeText(node.quality_source.type)));
+    cells.append(numberCell(node.quality_source.chemical_concentration_mg_per_l, 6,
+                            QStringLiteral(" mg/L")));
+    cells.append(numberCell(node.quality_source.chemical_mass_flow_mg_per_min, 6,
+                            QStringLiteral(" mg/min")));
+    cells.append(textCell(patternId(network, node.quality_source.pattern_uuid)));
+}
+
 QString patternModeText(HydraulicTimePatternMode pattern_mode)
 {
     return pattern_mode == HydraulicTimePatternMode::TimePattern
@@ -662,7 +761,8 @@ ColumnFilterKind columnFilterKind(const QString &title)
         QStringLiteral("Speed Pattern"),
         QStringLiteral("Efficiency Curve"),
         QStringLiteral("Price Pattern"),
-        QStringLiteral("Setting Curve")
+        QStringLiteral("Setting Curve"),
+        QStringLiteral("Quality Source Pattern")
     };
 
     static const QSet<QString> choice_columns = {
@@ -682,7 +782,11 @@ ColumnFilterKind columnFilterKind(const QString &title)
         QStringLiteral("Status"),
         QStringLiteral("State Operating"),
         QStringLiteral("Regulating"),
-        QStringLiteral("Referenced by Control")
+        QStringLiteral("Referenced by Control"),
+        QStringLiteral("Quality Source Type"),
+        QStringLiteral("Quality Mixing Model"),
+        QStringLiteral("Quality Override Bulk Reaction"),
+        QStringLiteral("Quality Override Reactions")
     };
 
     static const QSet<QString> integer_columns = {
@@ -703,7 +807,10 @@ ColumnFilterKind columnFilterKind(const QString &title)
         QStringLiteral("Setting"),
         QStringLiteral("Speed"),
         QStringLiteral("Energy Intensity Average [kWh/m³]"),
-        QStringLiteral("Cost Average / Day")
+        QStringLiteral("Cost Average / Day"),
+        QStringLiteral("Quality Mixing Fraction"),
+        QStringLiteral("Quality Bulk Reaction Coefficient"),
+        QStringLiteral("Quality Wall Reaction Coefficient")
     };
 
     if (text_columns.contains(title))
@@ -1161,6 +1268,17 @@ private:
                 ? QHash<QUuid, const HydraulicSimulationResultNodeJunction *>()
                 : simulationResultLookup(simulation_result->nodes_junctions);
 
+        const std::optional<WaterQualitySimulationResultTimeline> &quality_timeline =
+            this->hydraulic_data->waterQualitySimulationResultTimeline();
+        const WaterQualityAnalysisType quality_analysis = quality_timeline.has_value()
+            ? quality_timeline->analysis : WaterQualityAnalysisType::None;
+        const WaterQualitySimulationResult *quality_result =
+            this->hydraulic_data->currentWaterQualitySimulationResult();
+        const QHash<QUuid, const WaterQualitySimulationResultNodeJunction *> quality_lookup =
+            quality_result == nullptr
+                ? QHash<QUuid, const WaterQualitySimulationResultNodeJunction *>()
+                : simulationResultLookup(quality_result->nodes_junctions);
+
         appendCommonColumns(this->columns);
         appendNodePositionColumns(this->columns);
         this->columns.append({QStringLiteral("Elevation Input"), false});
@@ -1182,6 +1300,10 @@ private:
         this->columns.append({QStringLiteral("Head [m]"), true});
         this->columns.append({QStringLiteral("Head Pressure [m]"), true});
         this->columns.append({QStringLiteral("Referenced by Control"), true});
+        appendNodeQualityInputColumns(this->columns);
+        this->columns.append({qualityResultColumnTitle(quality_analysis), true});
+        if (quality_analysis == WaterQualityAnalysisType::Chemical)
+            this->columns.append({QStringLiteral("Quality Source Mass Flow [mg/min]"), true});
 
         for (const HydraulicNodeJunction &junction : network.nodes_junctions)
         {
@@ -1203,6 +1325,17 @@ private:
             const HydraulicSimulationResultNodeJunction *result =
                 result_lookup.value(junction.uuid, nullptr);
             appendJunctionSimulationCells(row.cells, result);
+            appendNodeQualityInputCells(row.cells, network, junction);
+            const WaterQualitySimulationResultNodeJunction *quality_entity_result =
+                quality_lookup.value(junction.uuid, nullptr);
+            row.cells.append(qualityResultCell(quality_entity_result, quality_analysis));
+            if (quality_analysis == WaterQualityAnalysisType::Chemical)
+            {
+                row.cells.append(quality_entity_result == nullptr
+                    ? emptyCell()
+                    : numberCell(quality_entity_result->source_mass_flow_mg_per_min, 6,
+                                 QStringLiteral(" mg/min")));
+            }
             finishRow(row, error_entities, error_tooltips);
         }
     }
@@ -1238,6 +1371,17 @@ private:
                 ? QHash<QUuid, const HydraulicSimulationResultNodeReservoir *>()
                 : simulationResultLookup(simulation_result->nodes_reservoirs);
 
+        const std::optional<WaterQualitySimulationResultTimeline> &quality_timeline =
+            this->hydraulic_data->waterQualitySimulationResultTimeline();
+        const WaterQualityAnalysisType quality_analysis = quality_timeline.has_value()
+            ? quality_timeline->analysis : WaterQualityAnalysisType::None;
+        const WaterQualitySimulationResult *quality_result =
+            this->hydraulic_data->currentWaterQualitySimulationResult();
+        const QHash<QUuid, const WaterQualitySimulationResultNodeReservoir *> quality_lookup =
+            quality_result == nullptr
+                ? QHash<QUuid, const WaterQualitySimulationResultNodeReservoir *>()
+                : simulationResultLookup(quality_result->nodes_reservoirs);
+
         appendCommonColumns(this->columns);
         appendNodePositionColumns(this->columns);
         this->columns.append({QStringLiteral("Head Input"), false});
@@ -1251,6 +1395,10 @@ private:
         this->columns.append({QStringLiteral("Head [m]"), true});
         this->columns.append({QStringLiteral("Head Pressure [m]"), true});
         this->columns.append({QStringLiteral("Referenced by Control"), true});
+        appendNodeQualityInputColumns(this->columns);
+        this->columns.append({qualityResultColumnTitle(quality_analysis), true});
+        if (quality_analysis == WaterQualityAnalysisType::Chemical)
+            this->columns.append({QStringLiteral("Quality Source Mass Flow [mg/min]"), true});
 
         for (const HydraulicNodeReservoir &reservoir : network.nodes_reservoirs)
         {
@@ -1281,6 +1429,18 @@ private:
                 row.cells.append(boolCell(result->appears_in_control));
             }
 
+            appendNodeQualityInputCells(row.cells, network, reservoir);
+            const WaterQualitySimulationResultNodeReservoir *quality_entity_result =
+                quality_lookup.value(reservoir.uuid, nullptr);
+            row.cells.append(qualityResultCell(quality_entity_result, quality_analysis));
+            if (quality_analysis == WaterQualityAnalysisType::Chemical)
+            {
+                row.cells.append(quality_entity_result == nullptr
+                    ? emptyCell()
+                    : numberCell(quality_entity_result->source_mass_flow_mg_per_min, 6,
+                                 QStringLiteral(" mg/min")));
+            }
+
             finishRow(row, error_entities, error_tooltips);
         }
     }
@@ -1294,6 +1454,17 @@ private:
             simulation_result == nullptr
                 ? QHash<QUuid, const HydraulicSimulationResultNodeTank *>()
                 : simulationResultLookup(simulation_result->nodes_tanks);
+
+        const std::optional<WaterQualitySimulationResultTimeline> &quality_timeline =
+            this->hydraulic_data->waterQualitySimulationResultTimeline();
+        const WaterQualityAnalysisType quality_analysis = quality_timeline.has_value()
+            ? quality_timeline->analysis : WaterQualityAnalysisType::None;
+        const WaterQualitySimulationResult *quality_result =
+            this->hydraulic_data->currentWaterQualitySimulationResult();
+        const QHash<QUuid, const WaterQualitySimulationResultNodeTank *> quality_lookup =
+            quality_result == nullptr
+                ? QHash<QUuid, const WaterQualitySimulationResultNodeTank *>()
+                : simulationResultLookup(quality_result->nodes_tanks);
 
         appendCommonColumns(this->columns);
         appendNodePositionColumns(this->columns);
@@ -1319,6 +1490,14 @@ private:
         this->columns.append({QStringLiteral("Volume [m³]"), true});
         this->columns.append({QStringLiteral("Volume Mixing-Zone [m³]"), true});
         this->columns.append({QStringLiteral("Referenced by Control"), true});
+        appendNodeQualityInputColumns(this->columns);
+        this->columns.append({QStringLiteral("Quality Mixing Model"), false});
+        this->columns.append({QStringLiteral("Quality Mixing Fraction"), false});
+        this->columns.append({QStringLiteral("Quality Override Bulk Reaction"), false});
+        this->columns.append({QStringLiteral("Quality Bulk Reaction Coefficient"), false});
+        this->columns.append({qualityResultColumnTitle(quality_analysis), true});
+        if (quality_analysis == WaterQualityAnalysisType::Chemical)
+            this->columns.append({QStringLiteral("Quality Source Mass Flow [mg/min]"), true});
 
         for (const HydraulicNodeTank &tank : network.nodes_tanks)
         {
@@ -1360,6 +1539,22 @@ private:
                 row.cells.append(boolCell(result->appears_in_control));
             }
 
+            appendNodeQualityInputCells(row.cells, network, tank);
+            row.cells.append(textCell(tankMixingModelText(tank.mixing_model)));
+            row.cells.append(numberCell(tank.mixing_fraction, 4));
+            row.cells.append(boolCell(tank.override_bulk_reaction));
+            row.cells.append(numberCell(tank.bulk_reaction.coefficient, 8));
+            const WaterQualitySimulationResultNodeTank *quality_entity_result =
+                quality_lookup.value(tank.uuid, nullptr);
+            row.cells.append(qualityResultCell(quality_entity_result, quality_analysis));
+            if (quality_analysis == WaterQualityAnalysisType::Chemical)
+            {
+                row.cells.append(quality_entity_result == nullptr
+                    ? emptyCell()
+                    : numberCell(quality_entity_result->source_mass_flow_mg_per_min, 6,
+                                 QStringLiteral(" mg/min")));
+            }
+
             finishRow(row, error_entities, error_tooltips);
         }
     }
@@ -1374,6 +1569,17 @@ private:
             simulation_result == nullptr
                 ? QHash<QUuid, const HydraulicSimulationResultLinkPipe *>()
                 : simulationResultLookup(simulation_result->links_pipes);
+
+        const std::optional<WaterQualitySimulationResultTimeline> &quality_timeline =
+            this->hydraulic_data->waterQualitySimulationResultTimeline();
+        const WaterQualityAnalysisType quality_analysis = quality_timeline.has_value()
+            ? quality_timeline->analysis : WaterQualityAnalysisType::None;
+        const WaterQualitySimulationResult *quality_result =
+            this->hydraulic_data->currentWaterQualitySimulationResult();
+        const QHash<QUuid, const WaterQualitySimulationResultLinkPipe *> quality_lookup =
+            quality_result == nullptr
+                ? QHash<QUuid, const WaterQualitySimulationResultLinkPipe *>()
+                : simulationResultLookup(quality_result->links_pipes);
 
         appendCommonColumns(this->columns);
         this->columns.append({QStringLiteral("Node 1"), false});
@@ -1402,6 +1608,10 @@ private:
         this->columns.append({QStringLiteral("Roughness DW Effective [mm]"), true});
         this->columns.append({QStringLiteral("Roughness CM Effective"), true});
         this->columns.append({QStringLiteral("Referenced by Control"), true});
+        this->columns.append({QStringLiteral("Quality Override Reactions"), false});
+        this->columns.append({QStringLiteral("Quality Bulk Reaction Coefficient"), false});
+        this->columns.append({QStringLiteral("Quality Wall Reaction Coefficient"), false});
+        this->columns.append({qualityResultColumnTitle(quality_analysis), true});
 
         for (const HydraulicLinkPipe &pipe : network.links_pipes)
         {
@@ -1448,6 +1658,13 @@ private:
                 row.cells.append(boolCell(result->appears_in_control));
             }
 
+            row.cells.append(boolCell(pipe.override_reactions));
+            row.cells.append(numberCell(pipe.bulk_reaction.coefficient, 8));
+            row.cells.append(numberCell(pipe.wall_reaction.coefficient, 8));
+            const WaterQualitySimulationResultLinkPipe *quality_entity_result =
+                quality_lookup.value(pipe.uuid, nullptr);
+            row.cells.append(qualityResultCell(quality_entity_result, quality_analysis));
+
             finishRow(row, error_entities, error_tooltips);
         }
     }
@@ -1462,6 +1679,17 @@ private:
             simulation_result == nullptr
                 ? QHash<QUuid, const HydraulicSimulationResultLinkPump *>()
                 : simulationResultLookup(simulation_result->links_pumps);
+
+        const std::optional<WaterQualitySimulationResultTimeline> &quality_timeline =
+            this->hydraulic_data->waterQualitySimulationResultTimeline();
+        const WaterQualityAnalysisType quality_analysis = quality_timeline.has_value()
+            ? quality_timeline->analysis : WaterQualityAnalysisType::None;
+        const WaterQualitySimulationResult *quality_result =
+            this->hydraulic_data->currentWaterQualitySimulationResult();
+        const QHash<QUuid, const WaterQualitySimulationResultLinkPump *> quality_lookup =
+            quality_result == nullptr
+                ? QHash<QUuid, const WaterQualitySimulationResultLinkPump *>()
+                : simulationResultLookup(quality_result->links_pumps);
 
         appendCommonColumns(this->columns);
         this->columns.append({QStringLiteral("Node 1"), false});
@@ -1502,6 +1730,7 @@ private:
         this->columns.append({QStringLiteral("Power Average [kW]"), true});
         this->columns.append({QStringLiteral("Power Peak [kW]"), true});
         this->columns.append({energy_cost_header, true});
+        this->columns.append({qualityResultColumnTitle(quality_analysis), true});
 
         const HydraulicSimulationResult *final_result = nullptr;
         const std::optional<HydraulicSimulationResultTimeline> &timeline =
@@ -1576,6 +1805,10 @@ private:
                 row.cells.append(numberCell(energy_usage->average_cost_per_day, 4));
             }
 
+            const WaterQualitySimulationResultLinkPump *quality_entity_result =
+                quality_lookup.value(pump.uuid, nullptr);
+            row.cells.append(qualityResultCell(quality_entity_result, quality_analysis));
+
             finishRow(row, error_entities, error_tooltips);
         }
     }
@@ -1590,6 +1823,17 @@ private:
             simulation_result == nullptr
                 ? QHash<QUuid, const HydraulicSimulationResultLinkValve *>()
                 : simulationResultLookup(simulation_result->links_valves);
+
+        const std::optional<WaterQualitySimulationResultTimeline> &quality_timeline =
+            this->hydraulic_data->waterQualitySimulationResultTimeline();
+        const WaterQualityAnalysisType quality_analysis = quality_timeline.has_value()
+            ? quality_timeline->analysis : WaterQualityAnalysisType::None;
+        const WaterQualitySimulationResult *quality_result =
+            this->hydraulic_data->currentWaterQualitySimulationResult();
+        const QHash<QUuid, const WaterQualitySimulationResultLinkValve *> quality_lookup =
+            quality_result == nullptr
+                ? QHash<QUuid, const WaterQualitySimulationResultLinkValve *>()
+                : simulationResultLookup(quality_result->links_valves);
 
         appendCommonColumns(this->columns);
         this->columns.append({QStringLiteral("Node 1"), false});
@@ -1608,6 +1852,7 @@ private:
         this->columns.append({QStringLiteral("Regulating"), true});
         this->columns.append({QStringLiteral("Setting"), true});
         this->columns.append({QStringLiteral("Referenced by Control"), true});
+        this->columns.append({qualityResultColumnTitle(quality_analysis), true});
 
         for (const HydraulicLinkValve &valve : network.links_valves)
         {
@@ -1641,6 +1886,10 @@ private:
                 row.cells.append(valveResultSettingCell(*result));
                 row.cells.append(boolCell(result->appears_in_control));
             }
+
+            const WaterQualitySimulationResultLinkValve *quality_entity_result =
+                quality_lookup.value(valve.uuid, nullptr);
+            row.cells.append(qualityResultCell(quality_entity_result, quality_analysis));
 
             finishRow(row, error_entities, error_tooltips);
         }
@@ -2390,6 +2639,11 @@ HydraulicEntityTableWidget::HydraulicEntityTableWidget(HydraulicData *hydraulic_
             requestRebuild();
     });
     connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged, this,
+            [this](bool)
+    {
+        requestRebuild();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalWaterQualitySimulationResultTimelineChanged, this,
             [this](bool)
     {
         requestRebuild();

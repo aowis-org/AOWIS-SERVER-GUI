@@ -772,6 +772,238 @@ void EntityInspectorWidget::refreshSimulation()
         refreshPumpEnergySummary(timeline.value());
 }
 
+void EntityInspectorWidget::addGroupWaterQualitySimulation()
+{
+    if (this->label_quality_simulation_message != nullptr)
+        return;
+
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Simulation");
+    QGridLayout *grid = new QGridLayout(group);
+    int row = 0;
+
+    this->label_quality_simulation_message = new QLabel();
+    this->label_quality_simulation_message->setWordWrap(true);
+    grid->addWidget(this->label_quality_simulation_message, row++, 0, 1, 2);
+
+    QLabel *label_time_name = new QLabel("Time");
+    this->label_quality_simulation_time = new QLabel(QStringLiteral("—"));
+    this->label_quality_simulation_time->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    grid->addWidget(label_time_name, row, 0);
+    grid->addWidget(this->label_quality_simulation_time, row++, 1);
+
+    this->label_quality_simulation_value_name = new QLabel("Water Quality");
+    this->label_quality_simulation_value = new QLabel(QStringLiteral("—"));
+    this->label_quality_simulation_value->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    grid->addWidget(this->label_quality_simulation_value_name, row, 0);
+    grid->addWidget(this->label_quality_simulation_value, row++, 1);
+
+    this->label_quality_simulation_source_mass_name = new QLabel("Source Mass Flow");
+    this->label_quality_simulation_source_mass = new QLabel(QStringLiteral("—"));
+    this->label_quality_simulation_source_mass->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    grid->addWidget(this->label_quality_simulation_source_mass_name, row, 0);
+    grid->addWidget(this->label_quality_simulation_source_mass, row++, 1);
+
+    grid->setColumnStretch(1, 1);
+    layoutQualitySimMeas()->addWidget(group);
+
+    connect(this->hydraulic_data, &HydraulicData::signalWaterQualitySimulationResultTimelineChanged,
+            this, [this](bool)
+    {
+        refreshWaterQualitySimulation();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalCurrentSimulationResultChanged,
+            this, [this](int)
+    {
+        refreshWaterQualitySimulation();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
+            this, &EntityInspectorWidget::refreshWaterQualitySimulation);
+
+    refreshWaterQualitySimulation();
+}
+
+void EntityInspectorWidget::refreshWaterQualitySimulation()
+{
+    if (this->label_quality_simulation_message == nullptr)
+        return;
+
+    this->label_quality_simulation_time->setText(QStringLiteral("—"));
+    this->label_quality_simulation_value->setText(QStringLiteral("—"));
+    this->label_quality_simulation_source_mass->setText(QStringLiteral("—"));
+    this->label_quality_simulation_source_mass_name->setVisible(false);
+    this->label_quality_simulation_source_mass->setVisible(false);
+
+    const std::optional<WaterQualitySimulationResultTimeline> &timeline =
+        this->hydraulic_data->waterQualitySimulationResultTimeline();
+    if (!timeline.has_value() || timeline->analysis == WaterQualityAnalysisType::None)
+    {
+        this->label_quality_simulation_message->setVisible(true);
+        this->label_quality_simulation_message->setText("Water-quality simulation was not run.");
+        this->label_quality_simulation_value_name->setText("Water Quality");
+        return;
+    }
+
+    const WaterQualitySimulationResult *result =
+        this->hydraulic_data->currentWaterQualitySimulationResult();
+    if (result == nullptr)
+    {
+        this->label_quality_simulation_message->setVisible(true);
+        this->label_quality_simulation_message->setText(
+            "No water-quality result is available for the selected hydraulic timestep.");
+        return;
+    }
+
+    double value = 0.0;
+    double source_mass_flow_mg_per_min = 0.0;
+    bool entity_available = false;
+    bool node_entity = false;
+
+    switch (this->entity_type)
+    {
+    case InfrastructureEntity::Junction:
+    {
+        const WaterQualitySimulationResultNodeJunction *entity_result =
+            simulationResultByUuid(result->nodes_junctions, this->entity_uuid);
+        if (entity_result != nullptr)
+        {
+            entity_available = true;
+            node_entity = true;
+            source_mass_flow_mg_per_min = entity_result->source_mass_flow_mg_per_min;
+            if (timeline->analysis == WaterQualityAnalysisType::Chemical)
+                value = entity_result->chemical_concentration_mg_per_l;
+            else if (timeline->analysis == WaterQualityAnalysisType::WaterAge)
+                value = entity_result->water_age_h;
+            else
+                value = entity_result->source_trace_percent;
+        }
+        break;
+    }
+    case InfrastructureEntity::Reservoir:
+    {
+        const WaterQualitySimulationResultNodeReservoir *entity_result =
+            simulationResultByUuid(result->nodes_reservoirs, this->entity_uuid);
+        if (entity_result != nullptr)
+        {
+            entity_available = true;
+            node_entity = true;
+            source_mass_flow_mg_per_min = entity_result->source_mass_flow_mg_per_min;
+            if (timeline->analysis == WaterQualityAnalysisType::Chemical)
+                value = entity_result->chemical_concentration_mg_per_l;
+            else if (timeline->analysis == WaterQualityAnalysisType::WaterAge)
+                value = entity_result->water_age_h;
+            else
+                value = entity_result->source_trace_percent;
+        }
+        break;
+    }
+    case InfrastructureEntity::Tank:
+    {
+        const WaterQualitySimulationResultNodeTank *entity_result =
+            simulationResultByUuid(result->nodes_tanks, this->entity_uuid);
+        if (entity_result != nullptr)
+        {
+            entity_available = true;
+            node_entity = true;
+            source_mass_flow_mg_per_min = entity_result->source_mass_flow_mg_per_min;
+            if (timeline->analysis == WaterQualityAnalysisType::Chemical)
+                value = entity_result->chemical_concentration_mg_per_l;
+            else if (timeline->analysis == WaterQualityAnalysisType::WaterAge)
+                value = entity_result->water_age_h;
+            else
+                value = entity_result->source_trace_percent;
+        }
+        break;
+    }
+    case InfrastructureEntity::Pipe:
+    {
+        const WaterQualitySimulationResultLinkPipe *entity_result =
+            simulationResultByUuid(result->links_pipes, this->entity_uuid);
+        if (entity_result != nullptr)
+        {
+            entity_available = true;
+            if (timeline->analysis == WaterQualityAnalysisType::Chemical)
+                value = entity_result->chemical_concentration_mg_per_l;
+            else if (timeline->analysis == WaterQualityAnalysisType::WaterAge)
+                value = entity_result->water_age_h;
+            else
+                value = entity_result->source_trace_percent;
+        }
+        break;
+    }
+    case InfrastructureEntity::Pump:
+    {
+        const WaterQualitySimulationResultLinkPump *entity_result =
+            simulationResultByUuid(result->links_pumps, this->entity_uuid);
+        if (entity_result != nullptr)
+        {
+            entity_available = true;
+            if (timeline->analysis == WaterQualityAnalysisType::Chemical)
+                value = entity_result->chemical_concentration_mg_per_l;
+            else if (timeline->analysis == WaterQualityAnalysisType::WaterAge)
+                value = entity_result->water_age_h;
+            else
+                value = entity_result->source_trace_percent;
+        }
+        break;
+    }
+    case InfrastructureEntity::Valve:
+    {
+        const WaterQualitySimulationResultLinkValve *entity_result =
+            simulationResultByUuid(result->links_valves, this->entity_uuid);
+        if (entity_result != nullptr)
+        {
+            entity_available = true;
+            if (timeline->analysis == WaterQualityAnalysisType::Chemical)
+                value = entity_result->chemical_concentration_mg_per_l;
+            else if (timeline->analysis == WaterQualityAnalysisType::WaterAge)
+                value = entity_result->water_age_h;
+            else
+                value = entity_result->source_trace_percent;
+        }
+        break;
+    }
+    default:
+        break;
+    }
+
+    this->label_quality_simulation_message->setVisible(!entity_available);
+    if (!entity_available)
+    {
+        this->label_quality_simulation_message->setText(
+            "No water-quality result for this entity at the selected timestep.");
+        return;
+    }
+
+    this->label_quality_simulation_time->setText(
+        formatSimulationElapsedTime(result->time_elapsed_s));
+    if (timeline->analysis == WaterQualityAnalysisType::Chemical)
+    {
+        this->label_quality_simulation_value_name->setText("Chemical Concentration");
+        this->label_quality_simulation_value->setText(
+            formatSimulationNumber(value, 6, QStringLiteral(" mg/L")));
+        if (node_entity)
+        {
+            this->label_quality_simulation_source_mass_name->setVisible(true);
+            this->label_quality_simulation_source_mass->setVisible(true);
+            this->label_quality_simulation_source_mass->setText(
+                formatSimulationNumber(source_mass_flow_mg_per_min, 6,
+                                       QStringLiteral(" mg/min")));
+        }
+    }
+    else if (timeline->analysis == WaterQualityAnalysisType::WaterAge)
+    {
+        this->label_quality_simulation_value_name->setText("Water Age");
+        this->label_quality_simulation_value->setText(
+            formatSimulationNumber(value, 6, QStringLiteral(" h")));
+    }
+    else
+    {
+        this->label_quality_simulation_value_name->setText("Source Trace");
+        this->label_quality_simulation_value->setText(
+            formatSimulationNumber(value, 6, QStringLiteral(" %")));
+    }
+}
+
 void EntityInspectorWidget::addGroupOverviewImage(const QString &icon_path, const QString &name)
 {
     GroupBoxCollapsible *group = new GroupBoxCollapsible("General");
@@ -2648,12 +2880,6 @@ void EntityInspectorWidget::refreshNodeQualityInputs()
 void EntityInspectorWidget::addGroupAlerts()
 {
     GroupBoxCollapsible *group = new GroupBoxCollapsible("Alerts");
-    QGridLayout *grid = new QGridLayout(group);
-
-    QLabel *label = new QLabel("No alerts.");
-    label->setWordWrap(true);
-    grid->addWidget(label, 0, 0);
-
     layoutOverview()->addWidget(group);
 }
 

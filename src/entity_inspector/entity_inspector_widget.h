@@ -103,6 +103,7 @@ protected:
     QDoubleSpinBox *spin_emitter_pressure_exponent = nullptr;
 
     void addGroupSimulation();
+    void addGroupWaterQualitySimulation();
     void addGroupNodeQualityInputs();
     void addGroupNoEntitySpecificQualityInputs(const QString &entity_name);
 
@@ -164,6 +165,7 @@ private:
     void addGroupSimulationErrors();
     void refreshSimulationErrors();
     void refreshSimulation();
+    void refreshWaterQualitySimulation();
     void resetSimulationValues();
     void setSimulationText(SimulationField field, const QString &text);
     void setSimulationValue(SimulationField field, double value, int decimals,
@@ -228,6 +230,12 @@ private:
     QLabel *label_simulation_errors = nullptr;
     QLabel *label_simulation_message = nullptr;
     QLabel *label_simulation_energy_message = nullptr;
+    QLabel *label_quality_simulation_message = nullptr;
+    QLabel *label_quality_simulation_time = nullptr;
+    QLabel *label_quality_simulation_value_name = nullptr;
+    QLabel *label_quality_simulation_value = nullptr;
+    QLabel *label_quality_simulation_source_mass_name = nullptr;
+    QLabel *label_quality_simulation_source_mass = nullptr;
     
     QTabWidget *tabs = nullptr;
     QVBoxLayout *layout_main = nullptr;

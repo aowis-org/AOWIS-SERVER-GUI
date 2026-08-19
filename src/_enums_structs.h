@@ -48,7 +48,8 @@ enum class VisualNode
     Pressure,
     Chlorine,
     RiverWater,
-    LakeWater
+    LakeWater,
+    WaterAge
 };
 enum class VisualLink
 {
@@ -62,7 +63,8 @@ enum class VisualLink
     Leakage,
     Chlorine,
     RiverWater,
-    LakeWater
+    LakeWater,
+    WaterAge
 };
 enum class VisualHeatmap
 {
@@ -77,7 +79,8 @@ enum class VisualHeatmap
     Pressure,
     Chlorine,
     RiverWater,
-    LakeWater
+    LakeWater,
+    WaterAge
 };
 
 

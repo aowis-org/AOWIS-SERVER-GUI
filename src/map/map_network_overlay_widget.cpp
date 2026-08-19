@@ -343,6 +343,7 @@ QHash<QUuid, double> nodeValues(const NetworkHydraulic &network_hydraulic, Visua
     case VisualNode::Chlorine:
     case VisualNode::RiverWater:
     case VisualNode::LakeWater:
+    case VisualNode::WaterAge:
         break;
     }
 
@@ -378,6 +379,7 @@ QHash<QUuid, double> linkValues(const NetworkHydraulic &network_hydraulic, Visua
     case VisualLink::Chlorine:
     case VisualLink::RiverWater:
     case VisualLink::LakeWater:
+    case VisualLink::WaterAge:
         break;
     }
 
@@ -410,6 +412,8 @@ QHash<QUuid, double> heatmapValues(const NetworkHydraulic &network_hydraulic, Vi
         return nodeValues(network_hydraulic, VisualNode::RiverWater);
     case VisualHeatmap::LakeWater:
         return nodeValues(network_hydraulic, VisualNode::LakeWater);
+    case VisualHeatmap::WaterAge:
+        break;
     case VisualHeatmap::None:
         break;
     }
@@ -634,6 +638,34 @@ MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicD
         this, [this](bool)
     {
         update();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalWaterQualitySimulationResultTimelineChanged,
+        this, [this](bool)
+    {
+        if (this->symbology_settings.visual_node != VisualNode::WaterAge
+            && this->symbology_settings.visual_link != VisualLink::WaterAge
+            && this->symbology_settings.visual_heatmap != VisualHeatmap::WaterAge)
+        {
+            return;
+        }
+
+        this->symbology_ranges =
+            this->hydraulic_data->symbologyRanges(this->symbology_settings);
+        requestSymbologyPreparation(true);
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalCurrentSimulationResultChanged,
+        this, [this](int)
+    {
+        if (this->symbology_settings.visual_node != VisualNode::WaterAge
+            && this->symbology_settings.visual_link != VisualLink::WaterAge
+            && this->symbology_settings.visual_heatmap != VisualHeatmap::WaterAge)
+        {
+            return;
+        }
+
+        this->symbology_ranges =
+            this->hydraulic_data->symbologyRanges(this->symbology_settings);
+        requestSymbologyPreparation(true);
     });
     connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, this,
         [this](const HydraulicNodeTank &tank)
@@ -1277,10 +1309,31 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
     const NetworkHydraulic network_copy = this->hydraulic_data->networkHydraulic();
     const NetworkSymbologySettings settings = this->symbology_settings;
     const NetworkSymbologyRanges ranges = this->symbology_ranges;
+    QHash<QUuid, double> water_age_node_values;
+    QHash<QUuid, double> water_age_link_values;
+    const std::optional<WaterQualitySimulationResultTimeline> &quality_timeline =
+        this->hydraulic_data->waterQualitySimulationResultTimeline();
+    if (quality_timeline.has_value()
+        && quality_timeline->analysis == WaterQualityAnalysisType::WaterAge)
+    {
+        const WaterQualitySimulationResult *quality_result =
+            this->hydraulic_data->currentWaterQualitySimulationResult();
+        if (quality_result != nullptr)
+        {
+            if (settings.visual_node == VisualNode::WaterAge
+                || settings.visual_heatmap == VisualHeatmap::WaterAge)
+            {
+                water_age_node_values = waterAgeNodeSymbologyValues(*quality_result);
+            }
+            if (settings.visual_link == VisualLink::WaterAge)
+                water_age_link_values = waterAgeLinkSymbologyValues(*quality_result);
+        }
+    }
     const QPointer<MapNetworkOverlayWidget> widget(this);
 
     QRunnable *runnable = QRunnable::create([widget, request_id, geometry_revision,
-        symbology_revision, snapshot_copy, network_copy, settings, ranges, cancelled]
+        symbology_revision, snapshot_copy, network_copy, settings, ranges,
+        water_age_node_values, water_age_link_values, cancelled]
     {
         if (cancelled->load(std::memory_order_relaxed))
             return;
@@ -1305,7 +1358,9 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
         else
         {
             const QHash<QUuid, double> values =
-                nodeValues(network_copy, settings.visual_node);
+                settings.visual_node == VisualNode::WaterAge
+                    ? water_age_node_values
+                    : nodeValues(network_copy, settings.visual_node);
             for (const NetworkRenderNode &node : snapshot_copy.nodes)
             {
                 const QHash<QUuid, double>::const_iterator iterator = values.constFind(node.uuid);
@@ -1329,7 +1384,9 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
         else
         {
             const QHash<QUuid, double> values =
-                linkValues(network_copy, settings.visual_link);
+                settings.visual_link == VisualLink::WaterAge
+                    ? water_age_link_values
+                    : linkValues(network_copy, settings.visual_link);
             for (const NetworkRenderLink &link : snapshot_copy.links)
             {
                 const QHash<QUuid, double>::const_iterator iterator = values.constFind(link.uuid);
@@ -1347,7 +1404,9 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
         if (settings.visual_heatmap != VisualHeatmap::None)
         {
             const QHash<QUuid, double> values =
-                heatmapValues(network_copy, settings.visual_heatmap);
+                settings.visual_heatmap == VisualHeatmap::WaterAge
+                    ? water_age_node_values
+                    : heatmapValues(network_copy, settings.visual_heatmap);
             symbology->heatmap_fractions.reserve(snapshot_copy.nodes.size());
             for (const NetworkRenderNode &node : snapshot_copy.nodes)
             {

@@ -290,6 +290,26 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     {
         syncWasmSimulationErrorEntities();
     });
+    connect(this->hydraulic_data, &HydraulicData::signalWaterQualitySimulationResultTimelineChanged,
+        this, [this](bool)
+    {
+        if (this->symbology_settings.visual_node == VisualNode::WaterAge
+            || this->symbology_settings.visual_link == VisualLink::WaterAge
+            || this->symbology_settings.visual_heatmap == VisualHeatmap::WaterAge)
+        {
+            scheduleWasmNetworkSymbologySync();
+        }
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalCurrentSimulationResultChanged,
+        this, [this](int)
+    {
+        if (this->symbology_settings.visual_node == VisualNode::WaterAge
+            || this->symbology_settings.visual_link == VisualLink::WaterAge
+            || this->symbology_settings.visual_heatmap == VisualHeatmap::WaterAge)
+        {
+            scheduleWasmNetworkSymbologySync();
+        }
+    });
     connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, this,
         [this](const HydraulicNodeTank &tank)
     {
@@ -863,6 +883,7 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
     QRadioButton *radio_node_leakage = new QRadioButton("Leakage");
     QRadioButton *radio_node_head = new QRadioButton("Head");
     QRadioButton *radio_node_pressure = new QRadioButton("Pressure");
+    QRadioButton *radio_node_water_age = new QRadioButton("Water Age [h]");
     
     QLabel *label_multispecies = new QLabel(
         "EPANET Network 3 has<br>"
@@ -898,6 +919,7 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
     connect_node_visual(radio_node_leakage, VisualNode::Leakage);
     connect_node_visual(radio_node_head, VisualNode::Head);
     connect_node_visual(radio_node_pressure, VisualNode::Pressure);
+    connect_node_visual(radio_node_water_age, VisualNode::WaterAge);
     connect_node_visual(radio_node_chlorine, VisualNode::Chlorine);
     connect_node_visual(radio_node_river, VisualNode::RiverWater);
     connect_node_visual(radio_node_lake, VisualNode::LakeWater);
@@ -911,6 +933,7 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
     vbox->addWidget(radio_node_leakage);
     vbox->addWidget(radio_node_head);
     vbox->addWidget(radio_node_pressure);
+    vbox->addWidget(radio_node_water_age);
 
     vbox->addWidget(label_multispecies);
     
@@ -939,6 +962,7 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     QRadioButton *radio_link_velocity = new QRadioButton("Velocity");
     QRadioButton *radio_link_headloss = new QRadioButton("Head Loss");
     QRadioButton *radio_link_leakage = new QRadioButton("Leakage");
+    QRadioButton *radio_link_water_age = new QRadioButton("Water Age [h]");
     QRadioButton *radio_link_chlorine = new QRadioButton("Cl₂ [mg/L]");
     QRadioButton *radio_link_river = new QRadioButton("River Water [%]");
     QRadioButton *radio_link_lake = new QRadioButton("Lake Water [%]");
@@ -959,6 +983,7 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     connect_link_visual(radio_link_velocity, VisualLink::Velocity);
     connect_link_visual(radio_link_headloss, VisualLink::HeadLoss);
     connect_link_visual(radio_link_leakage, VisualLink::Leakage);
+    connect_link_visual(radio_link_water_age, VisualLink::WaterAge);
     connect_link_visual(radio_link_chlorine, VisualLink::Chlorine);
     connect_link_visual(radio_link_river, VisualLink::RiverWater);
     connect_link_visual(radio_link_lake, VisualLink::LakeWater);
@@ -973,6 +998,7 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     vbox->addWidget(radio_link_velocity);
     vbox->addWidget(radio_link_headloss);
     vbox->addWidget(radio_link_leakage);
+    vbox->addWidget(radio_link_water_age);
     vbox->addWidget(radio_link_chlorine);
     vbox->addWidget(radio_link_river);
     vbox->addWidget(radio_link_lake);
@@ -995,6 +1021,7 @@ void MapMonitorMenuWidget::addGroupHeatmapVisuals()
     QRadioButton *radio_leakage = new QRadioButton("Leakage");
     QRadioButton *radio_head = new QRadioButton("Head");
     QRadioButton *radio_pressure = new QRadioButton("Pressure");
+    QRadioButton *radio_water_age = new QRadioButton("Water Age [h]");
     QRadioButton *radio_chlorine = new QRadioButton("Cl₂ [mg/L]");
     QRadioButton *radio_river = new QRadioButton("River Water [%]");
     QRadioButton *radio_lake = new QRadioButton("Lake Water [%]");
@@ -1015,6 +1042,7 @@ void MapMonitorMenuWidget::addGroupHeatmapVisuals()
     connect_heatmap_visual(radio_leakage, VisualHeatmap::Leakage);
     connect_heatmap_visual(radio_head, VisualHeatmap::Head);
     connect_heatmap_visual(radio_pressure, VisualHeatmap::Pressure);
+    connect_heatmap_visual(radio_water_age, VisualHeatmap::WaterAge);
     connect_heatmap_visual(radio_chlorine, VisualHeatmap::Chlorine);
     connect_heatmap_visual(radio_river, VisualHeatmap::RiverWater);
     connect_heatmap_visual(radio_lake, VisualHeatmap::LakeWater);
@@ -1026,6 +1054,7 @@ void MapMonitorMenuWidget::addGroupHeatmapVisuals()
     vbox->addWidget(radio_leakage);
     vbox->addWidget(radio_head);
     vbox->addWidget(radio_pressure);
+    vbox->addWidget(radio_water_age);
     vbox->addWidget(radio_chlorine);
     vbox->addWidget(radio_river);
     vbox->addWidget(radio_lake);
