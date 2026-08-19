@@ -60,8 +60,12 @@ private:
     QComboBox *combo_volume_curve = nullptr;
 
     void addGroupQuality();
-    QComboBox *combo_chem_source = nullptr;
-    QComboBox *combo_chem_mixing = nullptr;
+    void refreshQuality();
+    void updateQualityUi();
+    QComboBox *combo_quality_mixing = nullptr;
+    QDoubleSpinBox *spin_quality_mixing_fraction = nullptr;
+    QCheckBox *check_quality_override_bulk_reaction = nullptr;
+    QDoubleSpinBox *spin_quality_bulk_reaction_coefficient = nullptr;
 
 private slots:
     void onGroupExpand(GroupBoxCollapsible *group);

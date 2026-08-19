@@ -245,14 +245,10 @@ EntityInspectorWidget::EntityInspectorWidget(HydraulicData *hydraulic_data, QWid
     scroll_quality(new QScrollArea(this)),
     widget_quality(new QWidget()),
     layout_quality(new QVBoxLayout(this->widget_quality)),
-    
-    scroll_alerts(new QScrollArea(this)),
-    widget_alerts(new QWidget()),
-    layout_alerts(new QVBoxLayout(this->widget_alerts)),
-    
-    scroll_history(new QScrollArea(this)),
-    widget_history(new QWidget()),
-    layout_history(new QVBoxLayout(this->widget_history))
+
+    scroll_quality_sim_meas(new QScrollArea(this)),
+    widget_quality_sim_meas(new QWidget()),
+    layout_quality_sim_meas(new QVBoxLayout(this->widget_quality_sim_meas))
 {
     this->scroll_overview->setWidgetResizable(true);
     this->scroll_overview->setWidget(this->widget_overview);
@@ -265,12 +261,9 @@ EntityInspectorWidget::EntityInspectorWidget(HydraulicData *hydraulic_data, QWid
     
     this->scroll_quality->setWidgetResizable(true);
     this->scroll_quality->setWidget(this->widget_quality);
-    
-    this->scroll_alerts->setWidgetResizable(true);
-    this->scroll_alerts->setWidget(this->widget_alerts);
-    
-    this->scroll_history->setWidgetResizable(true);
-    this->scroll_history->setWidget(this->widget_history);
+
+    this->scroll_quality_sim_meas->setWidgetResizable(true);
+    this->scroll_quality_sim_meas->setWidget(this->widget_quality_sim_meas);
     
     this->tabs->setIconSize(QSize(40, 40));
     this->tabs->tabBar()->setStyleSheet(
@@ -281,23 +274,20 @@ EntityInspectorWidget::EntityInspectorWidget(HydraulicData *hydraulic_data, QWid
         "}"
     );
     
-    tabs->addTab(this->scroll_overview, QIcon(":/icon/inspector_dash.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count()-1, "Entity Overview");
+    this->tabs->addTab(this->scroll_overview, QIcon(":/icon/inspector_dash.png"), "");
+    this->tabs->setTabToolTip(this->tabs->count()-1, "General");
     
-    tabs->addTab(this->scroll_configuration, QIcon(":/icon/settings_2.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count()-1, "Configuration");
+    this->tabs->addTab(this->scroll_configuration, QIcon(":/icon/settings_2.png"), "");
+    this->tabs->setTabToolTip(this->tabs->count()-1, "Hydraulic Input");
     
-    tabs->addTab(this->scroll_sim_meas, QIcon(":/icon/sim_meas.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count()-1, "Simulation & Measurement");
+    this->tabs->addTab(this->scroll_sim_meas, QIcon(":/icon/sim_meas.png"), "");
+    this->tabs->setTabToolTip(this->tabs->count()-1, "Hydraulic Simulation & Measurement");
     
-    tabs->addTab(this->scroll_quality, QIcon(":/icon/inspector_quality.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count()-1, "Quality");
-    
-    tabs->addTab(this->scroll_alerts, QIcon(":/icon/alarm.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count()-1, "Alerts");
-    
-    tabs->addTab(this->scroll_history, QIcon(":/icon/history.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count()-1, "History");
+    this->tabs->addTab(this->scroll_quality, QIcon(":/icon/inspector_quality.png"), "");
+    this->tabs->setTabToolTip(this->tabs->count()-1, "Water Quality Input");
+
+    this->tabs->addTab(this->scroll_quality_sim_meas, QIcon(":/icon/sensor.png"), "");
+    this->tabs->setTabToolTip(this->tabs->count()-1, "Water Quality Simulation & Measurement");
 
     connect(this->tabs, &QTabWidget::currentChanged, this, &EntityInspectorWidget::signalCurrentTabChanged);
     
@@ -329,9 +319,9 @@ QVBoxLayout *EntityInspectorWidget::layoutQuality()
 {
     return this->layout_quality;
 }
-QVBoxLayout *EntityInspectorWidget::layoutHistory()
+QVBoxLayout *EntityInspectorWidget::layoutQualitySimMeas()
 {
-    return this->layout_history;
+    return this->layout_quality_sim_meas;
 }
 
 void EntityInspectorWidget::setTitle(const QString &title)
@@ -2421,6 +2411,252 @@ void EntityInspectorWidget::openDemandsEditor()
     this->dialog_demands->show();
 }
 
+void EntityInspectorWidget::addGroupNodeQualityInputs()
+{
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Water Quality Inputs");
+    QGridLayout *grid = new QGridLayout(group);
+    int row = 0;
+
+    QLabel *label_initial_chemical = new QLabel("Initial Chemical Concentration");
+    label_initial_chemical->setWordWrap(true);
+    this->spin_quality_initial_chemical = new QDoubleSpinBox();
+    this->spin_quality_initial_chemical->setRange(0.0, 1000000000.0);
+    this->spin_quality_initial_chemical->setDecimals(6);
+    this->spin_quality_initial_chemical->setSuffix(" mg/L");
+
+    QLabel *label_initial_water_age = new QLabel("Initial Water Age");
+    this->spin_quality_initial_water_age = new QDoubleSpinBox();
+    this->spin_quality_initial_water_age->setRange(0.0, 1000000000.0);
+    this->spin_quality_initial_water_age->setDecimals(6);
+    this->spin_quality_initial_water_age->setSuffix(" h");
+
+    QLabel *label_initial_trace = new QLabel("Initial Source Trace");
+    this->spin_quality_initial_trace = new QDoubleSpinBox();
+    this->spin_quality_initial_trace->setRange(0.0, 100.0);
+    this->spin_quality_initial_trace->setDecimals(6);
+    this->spin_quality_initial_trace->setSuffix(" %");
+
+    QLabel *label_source_type = new QLabel("Source Type");
+    this->combo_quality_source_type = new QComboBox();
+    this->combo_quality_source_type->addItem("None", static_cast<int>(HydraulicNodeQualitySourceType::None));
+    this->combo_quality_source_type->addItem("Concentration", static_cast<int>(HydraulicNodeQualitySourceType::Concentration));
+    this->combo_quality_source_type->addItem("Mass Booster", static_cast<int>(HydraulicNodeQualitySourceType::MassBooster));
+    this->combo_quality_source_type->addItem("Flow-Paced Booster", static_cast<int>(HydraulicNodeQualitySourceType::FlowPacedBooster));
+    this->combo_quality_source_type->addItem("Setpoint Booster", static_cast<int>(HydraulicNodeQualitySourceType::SetpointBooster));
+
+    QLabel *label_source_concentration = new QLabel("Source Concentration");
+    this->spin_quality_source_concentration = new QDoubleSpinBox();
+    this->spin_quality_source_concentration->setRange(0.0, 1000000000.0);
+    this->spin_quality_source_concentration->setDecimals(6);
+    this->spin_quality_source_concentration->setSuffix(" mg/L");
+
+    QLabel *label_source_mass_flow = new QLabel("Source Mass Flow");
+    this->spin_quality_source_mass_flow = new QDoubleSpinBox();
+    this->spin_quality_source_mass_flow->setRange(0.0, 1000000000000.0);
+    this->spin_quality_source_mass_flow->setDecimals(6);
+    this->spin_quality_source_mass_flow->setSuffix(" mg/min");
+
+    QLabel *label_source_pattern = new QLabel("Source Pattern");
+    this->combo_quality_source_pattern = new QComboBox();
+
+    grid->addWidget(label_initial_chemical, row, 0);
+    grid->addWidget(this->spin_quality_initial_chemical, row++, 1);
+    grid->addWidget(label_initial_water_age, row, 0);
+    grid->addWidget(this->spin_quality_initial_water_age, row++, 1);
+    grid->addWidget(label_initial_trace, row, 0);
+    grid->addWidget(this->spin_quality_initial_trace, row++, 1);
+    grid->addWidget(label_source_type, row, 0);
+    grid->addWidget(this->combo_quality_source_type, row++, 1);
+    grid->addWidget(label_source_concentration, row, 0);
+    grid->addWidget(this->spin_quality_source_concentration, row++, 1);
+    grid->addWidget(label_source_mass_flow, row, 0);
+    grid->addWidget(this->spin_quality_source_mass_flow, row++, 1);
+    grid->addWidget(label_source_pattern, row, 0);
+    grid->addWidget(this->combo_quality_source_pattern, row++, 1);
+
+    connect(this->spin_quality_initial_chemical, &QDoubleSpinBox::valueChanged,
+            this, [this](double value)
+    {
+        this->hydraulic_data->setNodeInitialChemicalConcentrationMgPerL(this->entity_uuid, value);
+    });
+    connect(this->spin_quality_initial_water_age, &QDoubleSpinBox::valueChanged,
+            this, [this](double value)
+    {
+        this->hydraulic_data->setNodeInitialWaterAgeH(this->entity_uuid, value);
+    });
+    connect(this->spin_quality_initial_trace, &QDoubleSpinBox::valueChanged,
+            this, [this](double value)
+    {
+        this->hydraulic_data->setNodeInitialSourceTracePercent(this->entity_uuid, value);
+    });
+    connect(this->combo_quality_source_type, &QComboBox::currentIndexChanged,
+            this, [this](int)
+    {
+        const HydraulicNodeQualitySourceType source_type = static_cast<HydraulicNodeQualitySourceType>(
+            this->combo_quality_source_type->currentData().toInt());
+        this->hydraulic_data->setNodeQualitySourceType(this->entity_uuid, source_type);
+        updateQualitySourceInputUi();
+    });
+    connect(this->spin_quality_source_concentration, &QDoubleSpinBox::valueChanged,
+            this, [this](double value)
+    {
+        this->hydraulic_data->setNodeQualitySourceChemicalConcentrationMgPerL(this->entity_uuid, value);
+    });
+    connect(this->spin_quality_source_mass_flow, &QDoubleSpinBox::valueChanged,
+            this, [this](double value)
+    {
+        this->hydraulic_data->setNodeQualitySourceMassFlowMgPerMin(this->entity_uuid, value);
+    });
+    connect(this->combo_quality_source_pattern, &QComboBox::currentIndexChanged,
+            this, [this](int)
+    {
+        this->hydraulic_data->setNodeQualitySourcePatternUuid(
+            this->entity_uuid, this->combo_quality_source_pattern->currentData().toUuid());
+    });
+
+    connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
+            [this](InfrastructureEntity, const QUuid &uuid)
+    {
+        if (uuid == this->entity_uuid)
+            refreshNodeQualityInputs();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
+            this, &EntityInspectorWidget::refreshNodeQualityInputs);
+
+    layoutQuality()->addWidget(group);
+    refreshNodeQualityInputs();
+}
+
+void EntityInspectorWidget::addGroupNoEntitySpecificQualityInputs(const QString &entity_name)
+{
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Water Quality Inputs");
+    QGridLayout *grid = new QGridLayout(group);
+    QLabel *label = new QLabel(
+        QStringLiteral("EPANET defines no %1-specific water-quality input parameters.")
+            .arg(entity_name));
+    label->setWordWrap(true);
+    grid->addWidget(label, 0, 0);
+    layoutQuality()->addWidget(group);
+}
+
+void EntityInspectorWidget::populateQualitySourcePatternCombo(const QUuid &pattern_uuid)
+{
+    if (this->combo_quality_source_pattern == nullptr)
+        return;
+
+    const QSignalBlocker blocker(this->combo_quality_source_pattern);
+    this->combo_quality_source_pattern->clear();
+    this->combo_quality_source_pattern->addItem("None", QUuid());
+    for (const HydraulicPatternTime &pattern : this->hydraulic_data->networkHydraulic().patterns_time)
+    {
+        const QString label = pattern.id.isEmpty()
+            ? pattern.uuid.toString(QUuid::WithoutBraces)
+            : pattern.id;
+        this->combo_quality_source_pattern->addItem(label, pattern.uuid);
+    }
+    const int index = this->combo_quality_source_pattern->findData(pattern_uuid);
+    this->combo_quality_source_pattern->setCurrentIndex(index >= 0 ? index : 0);
+}
+
+void EntityInspectorWidget::updateQualitySourceInputUi()
+{
+    if (this->combo_quality_source_type == nullptr)
+        return;
+
+    const HydraulicNodeQualitySourceType source_type = static_cast<HydraulicNodeQualitySourceType>(
+        this->combo_quality_source_type->currentData().toInt());
+    const bool uses_concentration = source_type == HydraulicNodeQualitySourceType::Concentration
+        || source_type == HydraulicNodeQualitySourceType::FlowPacedBooster
+        || source_type == HydraulicNodeQualitySourceType::SetpointBooster;
+    const bool uses_mass_flow = source_type == HydraulicNodeQualitySourceType::MassBooster;
+    const bool has_source = source_type != HydraulicNodeQualitySourceType::None;
+
+    this->spin_quality_source_concentration->setEnabled(uses_concentration);
+    this->spin_quality_source_mass_flow->setEnabled(uses_mass_flow);
+    this->combo_quality_source_pattern->setEnabled(has_source);
+}
+
+void EntityInspectorWidget::refreshNodeQualityInputs()
+{
+    if (this->combo_quality_source_type == nullptr)
+        return;
+
+    double initial_chemical = 0.0;
+    double initial_water_age = 0.0;
+    double initial_trace = 0.0;
+    HydraulicNodeQualitySource quality_source;
+    bool found = false;
+
+    if (this->entity_type == InfrastructureEntity::Junction)
+    {
+        const std::optional<HydraulicNodeJunction> node = this->hydraulic_data->junction(this->entity_uuid);
+        if (node.has_value())
+        {
+            initial_chemical = node->initial_chemical_concentration_mg_per_l;
+            initial_water_age = node->initial_water_age_h;
+            initial_trace = node->initial_source_trace_percent;
+            quality_source = node->quality_source;
+            found = true;
+        }
+    }
+    else if (this->entity_type == InfrastructureEntity::Reservoir)
+    {
+        const std::optional<HydraulicNodeReservoir> node = this->hydraulic_data->reservoir(this->entity_uuid);
+        if (node.has_value())
+        {
+            initial_chemical = node->initial_chemical_concentration_mg_per_l;
+            initial_water_age = node->initial_water_age_h;
+            initial_trace = node->initial_source_trace_percent;
+            quality_source = node->quality_source;
+            found = true;
+        }
+    }
+    else if (this->entity_type == InfrastructureEntity::Tank)
+    {
+        const std::optional<HydraulicNodeTank> node = this->hydraulic_data->tank(this->entity_uuid);
+        if (node.has_value())
+        {
+            initial_chemical = node->initial_chemical_concentration_mg_per_l;
+            initial_water_age = node->initial_water_age_h;
+            initial_trace = node->initial_source_trace_percent;
+            quality_source = node->quality_source;
+            found = true;
+        }
+    }
+
+    if (!found)
+        return;
+
+    const QSignalBlocker chemical_blocker(this->spin_quality_initial_chemical);
+    const QSignalBlocker age_blocker(this->spin_quality_initial_water_age);
+    const QSignalBlocker trace_blocker(this->spin_quality_initial_trace);
+    const QSignalBlocker source_type_blocker(this->combo_quality_source_type);
+    const QSignalBlocker concentration_blocker(this->spin_quality_source_concentration);
+    const QSignalBlocker mass_blocker(this->spin_quality_source_mass_flow);
+
+    this->spin_quality_initial_chemical->setValue(initial_chemical);
+    this->spin_quality_initial_water_age->setValue(initial_water_age);
+    this->spin_quality_initial_trace->setValue(initial_trace);
+    const int source_index = this->combo_quality_source_type->findData(static_cast<int>(quality_source.type));
+    this->combo_quality_source_type->setCurrentIndex(source_index >= 0 ? source_index : 0);
+    this->spin_quality_source_concentration->setValue(quality_source.chemical_concentration_mg_per_l);
+    this->spin_quality_source_mass_flow->setValue(quality_source.chemical_mass_flow_mg_per_min);
+    populateQualitySourcePatternCombo(quality_source.pattern_uuid);
+    updateQualitySourceInputUi();
+}
+
+void EntityInspectorWidget::addGroupAlerts()
+{
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Alerts");
+    QGridLayout *grid = new QGridLayout(group);
+
+    QLabel *label = new QLabel("No alerts.");
+    label->setWordWrap(true);
+    grid->addWidget(label, 0, 0);
+
+    layoutOverview()->addWidget(group);
+}
+
 void EntityInspectorWidget::addGroupHistory()
 {
     GroupBoxCollapsible *group = new GroupBoxCollapsible("History");
@@ -2428,14 +2664,14 @@ void EntityInspectorWidget::addGroupHistory()
     
     
     
-    this->layoutHistory()->addWidget(group);
+    layoutOverview()->addWidget(group);
 }
 
 void EntityInspectorWidget::addStretches()
 {
-    this->layoutOverview()->addStretch();
-    this->layoutConfiguration()->addStretch();
-    this->layoutSimMeas()->addStretch();
-    this->layoutQuality()->addStretch();
-    this->layoutHistory()->addStretch();
+    layoutOverview()->addStretch();
+    layoutConfiguration()->addStretch();
+    layoutSimMeas()->addStretch();
+    layoutQuality()->addStretch();
+    layoutQualitySimMeas()->addStretch();
 }

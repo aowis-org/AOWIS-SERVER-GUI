@@ -64,6 +64,7 @@ EntityInspectorTank::EntityInspectorTank(HydraulicData *hydraulic_data, const QU
     bindGeometry();
     addGroupSimulation();
     addGroupQuality();
+    addGroupAlerts();
     addGroupHistory();
     addStretches();
 }
@@ -547,26 +548,113 @@ HydraulicNodeTankGeometryInputType EntityInspectorTank::tankGeometryInputType() 
 
 void EntityInspectorTank::addGroupQuality()
 {
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Quality Settings");
+    addGroupNodeQualityInputs();
+
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Tank Mixing & Reactions");
     QGridLayout *grid = new QGridLayout(group);
+    int row = 0;
 
-    this->combo_chem_source = new QComboBox();
-    this->combo_chem_source->addItem("None");
-    this->combo_chem_source->addItem("Concentration");
-    this->combo_chem_source->addItem("Mass Booster");
-    this->combo_chem_source->addItem("Flow Paced Booster");
-    this->combo_chem_source->addItem("Setpoint Booster");
+    QLabel *label_mixing_model = new QLabel("Mixing Model");
+    this->combo_quality_mixing = new QComboBox();
+    this->combo_quality_mixing->addItem("Complete Mix", static_cast<int>(HydraulicNodeTankMixingModel::CompleteMix));
+    this->combo_quality_mixing->addItem("Two-Compartment", static_cast<int>(HydraulicNodeTankMixingModel::TwoCompartment));
+    this->combo_quality_mixing->addItem("First In, First Out", static_cast<int>(HydraulicNodeTankMixingModel::FirstInFirstOut));
+    this->combo_quality_mixing->addItem("Last In, First Out", static_cast<int>(HydraulicNodeTankMixingModel::LastInFirstOut));
 
-    this->combo_chem_mixing = new QComboBox();
-    this->combo_chem_mixing->addItem("Complete Mix");
-    this->combo_chem_mixing->addItem("Two-Compartment");
-    this->combo_chem_mixing->addItem("First In, First Out");
-    this->combo_chem_mixing->addItem("Last In, First Out");
+    QLabel *label_mixing_fraction = new QLabel("Mixing Fraction");
+    this->spin_quality_mixing_fraction = new QDoubleSpinBox();
+    this->spin_quality_mixing_fraction->setRange(0.0, 1.0);
+    this->spin_quality_mixing_fraction->setDecimals(4);
+    this->spin_quality_mixing_fraction->setSingleStep(0.05);
+    this->spin_quality_mixing_fraction->setToolTip(
+        "Fraction of tank volume assigned to the inlet/outlet compartment for the two-compartment model.");
 
-    grid->addWidget(this->combo_chem_source);
-    grid->addWidget(this->combo_chem_mixing);
+    this->check_quality_override_bulk_reaction = new QCheckBox("Override global tank bulk reaction");
+
+    QLabel *label_bulk_coefficient = new QLabel("Bulk Reaction Coefficient");
+    label_bulk_coefficient->setWordWrap(true);
+    this->spin_quality_bulk_reaction_coefficient = new QDoubleSpinBox();
+    this->spin_quality_bulk_reaction_coefficient->setRange(-1000000.0, 1000000.0);
+    this->spin_quality_bulk_reaction_coefficient->setDecimals(8);
+    this->spin_quality_bulk_reaction_coefficient->setToolTip(
+        "Coefficient dimensions depend on the network-wide tank bulk reaction order.");
+
+
+
+    grid->addWidget(label_mixing_model, row, 0);
+    grid->addWidget(this->combo_quality_mixing, row++, 1);
+    grid->addWidget(label_mixing_fraction, row, 0);
+    grid->addWidget(this->spin_quality_mixing_fraction, row++, 1);
+    grid->addWidget(this->check_quality_override_bulk_reaction, row++, 0, 1, 2);
+    grid->addWidget(label_bulk_coefficient, row, 0);
+    grid->addWidget(this->spin_quality_bulk_reaction_coefficient, row++, 1);
+
+    connect(this->combo_quality_mixing, &QComboBox::currentIndexChanged, this, [this](int)
+    {
+        const HydraulicNodeTankMixingModel mixing_model = static_cast<HydraulicNodeTankMixingModel>(
+            this->combo_quality_mixing->currentData().toInt());
+        this->hydraulic_data->setTankQualityMixingModel(this->tank_uuid, mixing_model);
+        updateQualityUi();
+    });
+    connect(this->spin_quality_mixing_fraction, &QDoubleSpinBox::valueChanged,
+            this, [this](double mixing_fraction)
+    {
+        this->hydraulic_data->setTankQualityMixingFraction(this->tank_uuid, mixing_fraction);
+    });
+    connect(this->check_quality_override_bulk_reaction, &QCheckBox::toggled,
+            this, [this](bool enabled)
+    {
+        this->hydraulic_data->setTankOverrideBulkReaction(this->tank_uuid, enabled);
+        updateQualityUi();
+    });
+    connect(this->spin_quality_bulk_reaction_coefficient, &QDoubleSpinBox::valueChanged,
+            this, [this](double coefficient)
+    {
+        this->hydraulic_data->setTankBulkReactionCoefficient(this->tank_uuid, coefficient);
+    });
+
+
+    connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
+            [this](InfrastructureEntity entity_type, const QUuid &uuid)
+    {
+        if (entity_type == InfrastructureEntity::Tank && uuid == this->tank_uuid)
+            refreshQuality();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
+            this, &EntityInspectorTank::refreshQuality);
 
     layoutQuality()->addWidget(group);
+    refreshQuality();
+}
+
+void EntityInspectorTank::refreshQuality()
+{
+    const std::optional<HydraulicNodeTank> tank = this->hydraulic_data->tank(this->tank_uuid);
+    if (!tank.has_value())
+        return;
+
+    const QSignalBlocker mixing_blocker(this->combo_quality_mixing);
+    const QSignalBlocker fraction_blocker(this->spin_quality_mixing_fraction);
+    const QSignalBlocker override_blocker(this->check_quality_override_bulk_reaction);
+    const QSignalBlocker coefficient_blocker(this->spin_quality_bulk_reaction_coefficient);
+
+    const int mixing_index = this->combo_quality_mixing->findData(static_cast<int>(tank->mixing_model));
+    this->combo_quality_mixing->setCurrentIndex(mixing_index >= 0 ? mixing_index : 0);
+    this->spin_quality_mixing_fraction->setValue(tank->mixing_fraction);
+    this->check_quality_override_bulk_reaction->setChecked(tank->override_bulk_reaction);
+    this->spin_quality_bulk_reaction_coefficient->setValue(tank->bulk_reaction.coefficient);
+    updateQualityUi();
+}
+
+void EntityInspectorTank::updateQualityUi()
+{
+    const HydraulicNodeTankMixingModel mixing_model = static_cast<HydraulicNodeTankMixingModel>(
+        this->combo_quality_mixing->currentData().toInt());
+    this->spin_quality_mixing_fraction->setEnabled(
+        mixing_model == HydraulicNodeTankMixingModel::TwoCompartment);
+
+    const bool override_reaction = this->check_quality_override_bulk_reaction->isChecked();
+    this->spin_quality_bulk_reaction_coefficient->setEnabled(override_reaction);
 }
 
 void EntityInspectorTank::onGroupExpand(GroupBoxCollapsible *group)

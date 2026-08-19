@@ -14,6 +14,7 @@ EntityInspectorPipe::EntityInspectorPipe(HydraulicData *hydraulic_data, const Hy
     addGroupGeometry();
     addGroupRoughness();
     addGroupQuality();
+    addGroupAlerts();
     addGroupHistory();
 
     bindHydraulicLink(InfrastructureEntity::Pipe, this->pipe_uuid, "Pipe");
@@ -215,6 +216,9 @@ void EntityInspectorPipe::refreshPipe()
     const QSignalBlocker roughness_dw_blocker(this->spin_roughness_dw);
     const QSignalBlocker roughness_cm_blocker(this->spin_roughness_cm);
     const QSignalBlocker minor_loss_blocker(this->spin_loss_coefficient);
+    const QSignalBlocker quality_override_blocker(this->check_override);
+    const QSignalBlocker quality_bulk_blocker(this->spin_bulk_reaction);
+    const QSignalBlocker quality_wall_blocker(this->spin_wall_reaction);
 
     const int status_index = this->combo_status_initial->findData(static_cast<int>(pipe->initial_status));
     this->combo_status_initial->setCurrentIndex(status_index >= 0 ? status_index : 0);
@@ -234,64 +238,72 @@ void EntityInspectorPipe::refreshPipe()
     this->spin_roughness_dw->setValue(pipe->roughness_darcy_weisbach_mm);
     this->spin_roughness_cm->setValue(pipe->roughness_chezy_manning);
     this->spin_loss_coefficient->setValue(pipe->minor_loss_coefficient);
+    this->check_override->setChecked(pipe->override_reactions);
+    this->spin_bulk_reaction->setValue(pipe->bulk_reaction.coefficient);
+    this->spin_wall_reaction->setValue(pipe->wall_reaction.coefficient);
+    updateQualityUi();
 }
 
 void EntityInspectorPipe::addGroupQuality()
 {
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Quality Settings");
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Pipe Reactions");
     QGridLayout *grid = new QGridLayout(group);
-    
-    this->check_override = new QCheckBox("Override global coefficients");
-    QPushButton *button_override_show = new QPushButton("Edit global reaction coefficients");
-    
-    QLabel *label_spin_bulk = new QLabel("Bulk reaction coefficient");
-    label_spin_bulk->setWordWrap(true);
-    
+    int row = 0;
+
+    this->check_override = new QCheckBox("Override global pipe reactions");
+
+    QLabel *label_bulk = new QLabel("Bulk Reaction Coefficient");
+    label_bulk->setWordWrap(true);
     this->spin_bulk_reaction = new QDoubleSpinBox();
-    this->spin_bulk_reaction->setDecimals(6);
-    this->spin_bulk_reaction->setMinimum(-1000.0);
-    this->spin_bulk_reaction->setMaximum(1000.0);
+    this->spin_bulk_reaction->setDecimals(8);
+    this->spin_bulk_reaction->setRange(-1000000.0, 1000000.0);
     this->spin_bulk_reaction->setSingleStep(0.001);
-    this->spin_bulk_reaction->setValue(0.0);
-    this->spin_bulk_reaction->setToolTip(QStringLiteral("Coefficient dimensions depend on the configured bulk reaction order."));
-    this->spin_bulk_reaction->setAlignment(Qt::AlignRight);
-    this->spin_bulk_reaction->setEnabled(false);
-    
-    QLabel *label_spin_wall = new QLabel("Wall reaction coefficient");
-    label_spin_wall->setWordWrap(true);
-    
+    this->spin_bulk_reaction->setToolTip(
+        "Coefficient dimensions depend on the network-wide pipe bulk reaction order.");
+
+
+
+    QLabel *label_wall = new QLabel("Wall Reaction Coefficient");
+    label_wall->setWordWrap(true);
     this->spin_wall_reaction = new QDoubleSpinBox();
-    this->spin_wall_reaction->setDecimals(6);
-    this->spin_wall_reaction->setMinimum(-1000.0);
-    this->spin_wall_reaction->setMaximum(1000.0);
+    this->spin_wall_reaction->setDecimals(8);
+    this->spin_wall_reaction->setRange(-1000000.0, 1000000.0);
     this->spin_wall_reaction->setSingleStep(0.001);
-    this->spin_wall_reaction->setValue(0.0);
-    this->spin_wall_reaction->setToolTip(QStringLiteral("Coefficient dimensions depend on the configured wall reaction order."));
-    this->spin_wall_reaction->setAlignment(Qt::AlignRight);
-    this->spin_wall_reaction->setEnabled(false);
-    
-    connect(this->check_override, &QCheckBox::checkStateChanged, this, [this]
+    this->spin_wall_reaction->setToolTip(
+        "Coefficient dimensions depend on the network-wide pipe wall reaction order.");
+
+
+
+    grid->addWidget(this->check_override, row++, 0, 1, 2);
+    grid->addWidget(label_bulk, row, 0);
+    grid->addWidget(this->spin_bulk_reaction, row++, 1);
+    grid->addWidget(label_wall, row, 0);
+    grid->addWidget(this->spin_wall_reaction, row++, 1);
+
+    connect(this->check_override, &QCheckBox::toggled, this, [this](bool enabled)
     {
-        if (this->check_override->isChecked())
-        {
-            this->spin_bulk_reaction->setEnabled(true);
-            this->spin_wall_reaction->setEnabled(true);
-        }
-        else
-        {
-            this->spin_bulk_reaction->setEnabled(false);
-            this->spin_wall_reaction->setEnabled(false);
-        }
+        this->hydraulic_data->setPipeOverrideReactions(this->pipe_uuid, enabled);
+        updateQualityUi();
     });
-    
-    grid->addWidget(button_override_show, 0, 0, 1, 2);
-    grid->addWidget(this->check_override, 1, 0, 1, 2);
-    grid->addWidget(label_spin_bulk, 2, 0);
-    grid->addWidget(this->spin_bulk_reaction, 2, 1);
-    grid->addWidget(label_spin_wall, 3, 0);
-    grid->addWidget(this->spin_wall_reaction, 3, 1);
-    
+    connect(this->spin_bulk_reaction, &QDoubleSpinBox::valueChanged, this, [this](double coefficient)
+    {
+        this->hydraulic_data->setPipeBulkReactionCoefficient(this->pipe_uuid, coefficient);
+    });
+
+    connect(this->spin_wall_reaction, &QDoubleSpinBox::valueChanged, this, [this](double coefficient)
+    {
+        this->hydraulic_data->setPipeWallReactionCoefficient(this->pipe_uuid, coefficient);
+    });
+
+
     layoutQuality()->addWidget(group);
+}
+
+void EntityInspectorPipe::updateQualityUi()
+{
+    const bool enabled = this->check_override->isChecked();
+    this->spin_bulk_reaction->setEnabled(enabled);
+    this->spin_wall_reaction->setEnabled(enabled);
 }
 
 void EntityInspectorPipe::onHeadlossFormulaChanged(HeadlossFormulas formulas)

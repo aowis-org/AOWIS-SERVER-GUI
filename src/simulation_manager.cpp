@@ -141,7 +141,10 @@ void SimulationManager::finishSimulation(const EpanetResultRun &run_result)
     emit signalEpanetLogAvailabilityChanged(!this->epanet_log.isEmpty());
     qDebug().noquote() << this->epanet_log;
 
+    this->hydraulic_data->clearWaterQualitySimulationResultTimeline();
     this->hydraulic_data->setSimulationResultTimeline(run_result.result_timeline);
+    this->hydraulic_data->setWaterQualitySimulationResultTimeline(
+        run_result.quality_result_timeline);
 
     bool has_error_diagnostic = false;
     bool has_warning_diagnostic = false;

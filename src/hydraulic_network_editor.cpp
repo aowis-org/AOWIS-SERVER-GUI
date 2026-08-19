@@ -584,6 +584,95 @@ bool HydraulicNetworkEditor::setJunctionEmitterPressureExponent(const QUuid &uui
     return true;
 }
 
+bool HydraulicNetworkEditor::setNodeInitialChemicalConcentrationMgPerL(const QUuid &uuid, double value_mg_per_l)
+{
+    HydraulicNodeJunction *junction = entityByUuid(this->network.nodes_junctions, uuid);
+    if (junction != nullptr)
+    {
+        junction->initial_chemical_concentration_mg_per_l = value_mg_per_l;
+        return true;
+    }
+    HydraulicNodeReservoir *reservoir = entityByUuid(this->network.nodes_reservoirs, uuid);
+    if (reservoir != nullptr)
+    {
+        reservoir->initial_chemical_concentration_mg_per_l = value_mg_per_l;
+        return true;
+    }
+    HydraulicNodeTank *tank = entityByUuid(this->network.nodes_tanks, uuid);
+    if (tank != nullptr)
+    {
+        tank->initial_chemical_concentration_mg_per_l = value_mg_per_l;
+        return true;
+    }
+    return false;
+}
+
+bool HydraulicNetworkEditor::setNodeInitialWaterAgeH(const QUuid &uuid, double value_h)
+{
+    HydraulicNodeJunction *junction = entityByUuid(this->network.nodes_junctions, uuid);
+    if (junction != nullptr) { junction->initial_water_age_h = value_h; return true; }
+    HydraulicNodeReservoir *reservoir = entityByUuid(this->network.nodes_reservoirs, uuid);
+    if (reservoir != nullptr) { reservoir->initial_water_age_h = value_h; return true; }
+    HydraulicNodeTank *tank = entityByUuid(this->network.nodes_tanks, uuid);
+    if (tank != nullptr) { tank->initial_water_age_h = value_h; return true; }
+    return false;
+}
+
+bool HydraulicNetworkEditor::setNodeInitialSourceTracePercent(const QUuid &uuid, double value_percent)
+{
+    HydraulicNodeJunction *junction = entityByUuid(this->network.nodes_junctions, uuid);
+    if (junction != nullptr) { junction->initial_source_trace_percent = value_percent; return true; }
+    HydraulicNodeReservoir *reservoir = entityByUuid(this->network.nodes_reservoirs, uuid);
+    if (reservoir != nullptr) { reservoir->initial_source_trace_percent = value_percent; return true; }
+    HydraulicNodeTank *tank = entityByUuid(this->network.nodes_tanks, uuid);
+    if (tank != nullptr) { tank->initial_source_trace_percent = value_percent; return true; }
+    return false;
+}
+
+bool HydraulicNetworkEditor::setNodeQualitySourceType(const QUuid &uuid, HydraulicNodeQualitySourceType source_type)
+{
+    HydraulicNodeJunction *junction = entityByUuid(this->network.nodes_junctions, uuid);
+    if (junction != nullptr) { junction->quality_source.type = source_type; return true; }
+    HydraulicNodeReservoir *reservoir = entityByUuid(this->network.nodes_reservoirs, uuid);
+    if (reservoir != nullptr) { reservoir->quality_source.type = source_type; return true; }
+    HydraulicNodeTank *tank = entityByUuid(this->network.nodes_tanks, uuid);
+    if (tank != nullptr) { tank->quality_source.type = source_type; return true; }
+    return false;
+}
+
+bool HydraulicNetworkEditor::setNodeQualitySourceChemicalConcentrationMgPerL(const QUuid &uuid, double value_mg_per_l)
+{
+    HydraulicNodeJunction *junction = entityByUuid(this->network.nodes_junctions, uuid);
+    if (junction != nullptr) { junction->quality_source.chemical_concentration_mg_per_l = value_mg_per_l; return true; }
+    HydraulicNodeReservoir *reservoir = entityByUuid(this->network.nodes_reservoirs, uuid);
+    if (reservoir != nullptr) { reservoir->quality_source.chemical_concentration_mg_per_l = value_mg_per_l; return true; }
+    HydraulicNodeTank *tank = entityByUuid(this->network.nodes_tanks, uuid);
+    if (tank != nullptr) { tank->quality_source.chemical_concentration_mg_per_l = value_mg_per_l; return true; }
+    return false;
+}
+
+bool HydraulicNetworkEditor::setNodeQualitySourceMassFlowMgPerMin(const QUuid &uuid, double value_mg_per_min)
+{
+    HydraulicNodeJunction *junction = entityByUuid(this->network.nodes_junctions, uuid);
+    if (junction != nullptr) { junction->quality_source.chemical_mass_flow_mg_per_min = value_mg_per_min; return true; }
+    HydraulicNodeReservoir *reservoir = entityByUuid(this->network.nodes_reservoirs, uuid);
+    if (reservoir != nullptr) { reservoir->quality_source.chemical_mass_flow_mg_per_min = value_mg_per_min; return true; }
+    HydraulicNodeTank *tank = entityByUuid(this->network.nodes_tanks, uuid);
+    if (tank != nullptr) { tank->quality_source.chemical_mass_flow_mg_per_min = value_mg_per_min; return true; }
+    return false;
+}
+
+bool HydraulicNetworkEditor::setNodeQualitySourcePatternUuid(const QUuid &uuid, const QUuid &pattern_uuid)
+{
+    HydraulicNodeJunction *junction = entityByUuid(this->network.nodes_junctions, uuid);
+    if (junction != nullptr) { junction->quality_source.pattern_uuid = pattern_uuid; return true; }
+    HydraulicNodeReservoir *reservoir = entityByUuid(this->network.nodes_reservoirs, uuid);
+    if (reservoir != nullptr) { reservoir->quality_source.pattern_uuid = pattern_uuid; return true; }
+    HydraulicNodeTank *tank = entityByUuid(this->network.nodes_tanks, uuid);
+    if (tank != nullptr) { tank->quality_source.pattern_uuid = pattern_uuid; return true; }
+    return false;
+}
+
 bool HydraulicNetworkEditor::setReservoirHeadInputType(
     const QUuid &uuid, HydraulicNodeElevationInputType input_type)
 {
@@ -796,6 +885,38 @@ bool HydraulicNetworkEditor::setTankCanOverflow(const QUuid &uuid, bool can_over
     return true;
 }
 
+bool HydraulicNetworkEditor::setTankQualityMixingModel(const QUuid &uuid, HydraulicNodeTankMixingModel mixing_model)
+{
+    HydraulicNodeTank *tank = entityByUuid(this->network.nodes_tanks, uuid);
+    if (tank == nullptr) return false;
+    tank->mixing_model = mixing_model;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setTankQualityMixingFraction(const QUuid &uuid, double mixing_fraction)
+{
+    HydraulicNodeTank *tank = entityByUuid(this->network.nodes_tanks, uuid);
+    if (tank == nullptr) return false;
+    tank->mixing_fraction = mixing_fraction;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setTankOverrideBulkReaction(const QUuid &uuid, bool override_bulk_reaction)
+{
+    HydraulicNodeTank *tank = entityByUuid(this->network.nodes_tanks, uuid);
+    if (tank == nullptr) return false;
+    tank->override_bulk_reaction = override_bulk_reaction;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setTankBulkReactionCoefficient(const QUuid &uuid, double coefficient)
+{
+    HydraulicNodeTank *tank = entityByUuid(this->network.nodes_tanks, uuid);
+    if (tank == nullptr) return false;
+    tank->bulk_reaction.coefficient = coefficient;
+    return true;
+}
+
 bool HydraulicNetworkEditor::setPipeInitialStatus(
     const QUuid &uuid, HydraulicLinkPipeInitialStatus initial_status)
 {
@@ -875,6 +996,30 @@ bool HydraulicNetworkEditor::setPipeMinorLoss(const QUuid &uuid, double minor_lo
         return false;
 
     pipe->minor_loss_coefficient = minor_loss_coefficient;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setPipeOverrideReactions(const QUuid &uuid, bool override_reactions)
+{
+    HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, uuid);
+    if (pipe == nullptr) return false;
+    pipe->override_reactions = override_reactions;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setPipeBulkReactionCoefficient(const QUuid &uuid, double coefficient)
+{
+    HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, uuid);
+    if (pipe == nullptr) return false;
+    pipe->bulk_reaction.coefficient = coefficient;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setPipeWallReactionCoefficient(const QUuid &uuid, double coefficient)
+{
+    HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, uuid);
+    if (pipe == nullptr) return false;
+    pipe->wall_reaction.coefficient = coefficient;
     return true;
 }
 

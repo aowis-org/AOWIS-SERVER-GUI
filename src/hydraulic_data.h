@@ -19,6 +19,7 @@
 #include <aowis/model/gis.h>
 #include <aowis/model/hydraulic/network_hydraulic.h>
 #include <aowis/model/hydraulic/hydraulic_simulation_results.h>
+#include <aowis/model/hydraulic/water_quality_simulation_results.h>
 
 #include <aowis/db/database_gui.h>
 
@@ -57,7 +58,11 @@ public:
 
     bool hasSimulationResults() const;
     const std::optional<HydraulicSimulationResultTimeline> &simulationResultTimeline() const;
+    bool hasWaterQualitySimulationResults() const;
+    const std::optional<WaterQualitySimulationResultTimeline> &waterQualitySimulationResultTimeline() const;
+    const WaterQualitySimulationResult *currentWaterQualitySimulationResult() const;
     const HydraulicSimulationStatus *simulationStatus() const;
+    const HydraulicSimulationStatus *waterQualitySimulationStatus() const;
     InfrastructureEntity simulationErrorEntityType() const;
     QUuid simulationErrorEntityUuid() const;
     QHash<QUuid, InfrastructureEntity> simulationErrorEntities() const;
@@ -67,7 +72,10 @@ public:
     const HydraulicSimulationResult *currentSimulationResult() const;
     int currentSimulationResultIndex() const;
     void setSimulationResultTimeline(const HydraulicSimulationResultTimeline &result_timeline);
+    void setWaterQualitySimulationResultTimeline(
+        const WaterQualitySimulationResultTimeline &result_timeline);
     void clearSimulationResultTimeline();
+    void clearWaterQualitySimulationResultTimeline();
     bool setCurrentSimulationResultIndex(int result_index);
     const NetworkRenderSnapshot &networkRenderSnapshot() const;
     quint64 geometryRevision() const;
@@ -299,6 +307,14 @@ public:
     bool setJunctionEmitterCoefficient(const QUuid &uuid, double coefficient);
     bool setJunctionEmitterPressureExponent(const QUuid &uuid, double pressure_exponent);
 
+    bool setNodeInitialChemicalConcentrationMgPerL(const QUuid &uuid, double value_mg_per_l);
+    bool setNodeInitialWaterAgeH(const QUuid &uuid, double value_h);
+    bool setNodeInitialSourceTracePercent(const QUuid &uuid, double value_percent);
+    bool setNodeQualitySourceType(const QUuid &uuid, HydraulicNodeQualitySourceType source_type);
+    bool setNodeQualitySourceChemicalConcentrationMgPerL(const QUuid &uuid, double value_mg_per_l);
+    bool setNodeQualitySourceMassFlowMgPerMin(const QUuid &uuid, double value_mg_per_min);
+    bool setNodeQualitySourcePatternUuid(const QUuid &uuid, const QUuid &pattern_uuid);
+
     bool setReservoirHeadInputType(const QUuid &uuid,
                                    HydraulicNodeElevationInputType input_type);
     bool setReservoirHeadM(const QUuid &uuid, double hydraulic_head_m);
@@ -324,6 +340,10 @@ public:
     bool setTankMinimumVolumeM3(const QUuid &uuid, double minimum_volume_m3);
     bool setTankVolumeCurveUuid(const QUuid &uuid, const QUuid &volume_curve_uuid);
     bool setTankCanOverflow(const QUuid &uuid, bool can_overflow);
+    bool setTankQualityMixingModel(const QUuid &uuid, HydraulicNodeTankMixingModel mixing_model);
+    bool setTankQualityMixingFraction(const QUuid &uuid, double mixing_fraction);
+    bool setTankOverrideBulkReaction(const QUuid &uuid, bool override_bulk_reaction);
+    bool setTankBulkReactionCoefficient(const QUuid &uuid, double coefficient);
 
     bool setPipeInitialStatus(const QUuid &uuid, HydraulicLinkPipeInitialStatus initial_status);
     bool setPipeDiameterMm(const QUuid &uuid, double diameter_mm);
@@ -333,6 +353,9 @@ public:
     bool setPipeRoughnessDwMm(const QUuid &uuid, double roughness_darcy_weisbach_mm);
     bool setPipeRoughnessCm(const QUuid &uuid, double roughness_chezy_manning);
     bool setPipeMinorLoss(const QUuid &uuid, double minor_loss_coefficient);
+    bool setPipeOverrideReactions(const QUuid &uuid, bool override_reactions);
+    bool setPipeBulkReactionCoefficient(const QUuid &uuid, double coefficient);
+    bool setPipeWallReactionCoefficient(const QUuid &uuid, double coefficient);
 
     bool setPumpDefinitionType(const QUuid &uuid,
                                HydraulicLinkPumpDefinitionType definition_type);
@@ -408,6 +431,7 @@ private:
     NetworkHydraulic network_hydraulic;
     HydraulicNetworkEditor network_editor;
     std::optional<HydraulicSimulationResultTimeline> simulation_result_timeline;
+    std::optional<WaterQualitySimulationResultTimeline> water_quality_simulation_result_timeline;
     int current_simulation_result_index = -1;
     bool simulation_result_timeline_stale = false;
     QSet<QUuid> simulation_stale_diagnostic_entity_uuids;
@@ -494,6 +518,7 @@ private slots:
 signals:
     void signalNetworkLoaded();
     void signalSimulationResultTimelineChanged(bool available);
+    void signalWaterQualitySimulationResultTimelineChanged(bool available);
     void signalCurrentSimulationResultChanged(int result_index);
     void signalNetworkGeometryChanged(quint64 geometry_revision);
     void signalBoundingBoxWgs84Changed();

@@ -13,15 +13,11 @@ EntityInspectorJunction::EntityInspectorJunction(HydraulicData *hydraulic_data, 
     addGroupDemands();
     addGroupSimulation();
     addGroupQuality();
+    addGroupAlerts();
     addStretches();
 }
 
 void EntityInspectorJunction::addGroupQuality()
 {
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Quality Settings");
-    QGridLayout *grid = new QGridLayout(group);
-    
-    
-    
-    this->layoutQuality()->addWidget(group);
+    addGroupNodeQualityInputs();
 }

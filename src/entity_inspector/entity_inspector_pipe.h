@@ -54,6 +54,7 @@ private:
     QCheckBox *check_override = nullptr;
     QDoubleSpinBox *spin_bulk_reaction = nullptr;
     QDoubleSpinBox *spin_wall_reaction = nullptr;
+    void updateQualityUi();
 
     void refreshPipe();
 

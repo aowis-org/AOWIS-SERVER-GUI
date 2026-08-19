@@ -11,16 +11,12 @@ EntityInspectorReservoir::EntityInspectorReservoir(HydraulicData *hydraulic_data
 
     addGroupSimulation();
     addGroupQuality();
+    addGroupAlerts();
     addGroupHistory();
     addStretches();
 }
 
 void EntityInspectorReservoir::addGroupQuality()
 {
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Quality Settings");
-    QGridLayout *grid = new QGridLayout(group);
-    
-    
-    
-    this->layoutQuality()->addWidget(group);
+    addGroupNodeQualityInputs();
 }

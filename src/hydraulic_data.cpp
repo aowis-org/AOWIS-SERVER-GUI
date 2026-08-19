@@ -145,12 +145,65 @@ const std::optional<HydraulicSimulationResultTimeline> &HydraulicData::simulatio
     return this->simulation_result_timeline;
 }
 
+bool HydraulicData::hasWaterQualitySimulationResults() const
+{
+    if (!this->water_quality_simulation_result_timeline.has_value()
+        || this->simulation_result_timeline_stale
+        || this->water_quality_simulation_result_timeline->results.isEmpty())
+    {
+        return false;
+    }
+
+    return this->water_quality_simulation_result_timeline->validity
+            == WaterQualitySimulationResultValidity::Valid
+        || this->water_quality_simulation_result_timeline->validity
+            == WaterQualitySimulationResultValidity::Partial;
+}
+
+const std::optional<WaterQualitySimulationResultTimeline> &
+HydraulicData::waterQualitySimulationResultTimeline() const
+{
+    return this->water_quality_simulation_result_timeline;
+}
+
+const WaterQualitySimulationResult *HydraulicData::currentWaterQualitySimulationResult() const
+{
+    if (!hasWaterQualitySimulationResults())
+        return nullptr;
+
+    const HydraulicSimulationResult *hydraulic_result = currentSimulationResult();
+    if (hydraulic_result == nullptr)
+        return nullptr;
+
+    const quint64 hydraulic_time_s = hydraulic_result->time_elapsed_s;
+    const WaterQualitySimulationResult *matched_result = nullptr;
+
+    for (const WaterQualitySimulationResult &quality_result
+         : this->water_quality_simulation_result_timeline->results)
+    {
+        if (quality_result.time_elapsed_s > hydraulic_time_s)
+            break;
+
+        matched_result = &quality_result;
+    }
+
+    return matched_result;
+}
+
 const HydraulicSimulationStatus *HydraulicData::simulationStatus() const
 {
     if (!this->simulation_result_timeline.has_value())
         return nullptr;
 
     return &this->simulation_result_timeline->status;
+}
+
+const HydraulicSimulationStatus *HydraulicData::waterQualitySimulationStatus() const
+{
+    if (!this->water_quality_simulation_result_timeline.has_value())
+        return nullptr;
+
+    return &this->water_quality_simulation_result_timeline->status;
 }
 
 QUuid HydraulicData::simulationErrorEntityUuid() const
@@ -316,21 +369,41 @@ void HydraulicData::setSimulationResultTimeline(const HydraulicSimulationResultT
     emit signalCurrentSimulationResultChanged(this->current_simulation_result_index);
 }
 
+void HydraulicData::setWaterQualitySimulationResultTimeline(
+    const WaterQualitySimulationResultTimeline &result_timeline)
+{
+    this->water_quality_simulation_result_timeline = result_timeline;
+    emit signalWaterQualitySimulationResultTimelineChanged(hasWaterQualitySimulationResults());
+}
+
 void HydraulicData::clearSimulationResultTimeline()
 {
     const bool had_timeline = this->simulation_result_timeline.has_value();
+    const bool had_quality_timeline = this->water_quality_simulation_result_timeline.has_value();
     const int previous_index = this->current_simulation_result_index;
 
     this->simulation_result_timeline.reset();
+    this->water_quality_simulation_result_timeline.reset();
     this->current_simulation_result_index = -1;
     this->simulation_result_timeline_stale = false;
     this->simulation_stale_diagnostic_entity_uuids.clear();
 
     if (had_timeline)
         emit signalSimulationResultTimelineChanged(false);
+    if (had_quality_timeline)
+        emit signalWaterQualitySimulationResultTimelineChanged(false);
 
     if (previous_index != -1)
         emit signalCurrentSimulationResultChanged(-1);
+}
+
+void HydraulicData::clearWaterQualitySimulationResultTimeline()
+{
+    const bool had_timeline = this->water_quality_simulation_result_timeline.has_value();
+    this->water_quality_simulation_result_timeline.reset();
+
+    if (had_timeline)
+        emit signalWaterQualitySimulationResultTimelineChanged(false);
 }
 
 bool HydraulicData::setCurrentSimulationResultIndex(int result_index)
@@ -1513,6 +1586,8 @@ void HydraulicData::markSimulationResultTimelineStale(const QUuid &edited_entity
 
     if (timeline_became_stale || entity_became_stale)
         emit signalSimulationResultTimelineChanged(false);
+    if (timeline_became_stale && this->water_quality_simulation_result_timeline.has_value())
+        emit signalWaterQualitySimulationResultTimelineChanged(false);
     if (previous_index != -1)
         emit signalCurrentSimulationResultChanged(-1);
 }
@@ -2054,6 +2129,41 @@ bool HydraulicData::setJunctionEmitterPressureExponent(const QUuid &uuid, double
         uuid, this->network_editor.setJunctionEmitterPressureExponent(uuid, pressure_exponent));
 }
 
+bool HydraulicData::setNodeInitialChemicalConcentrationMgPerL(const QUuid &uuid, double value_mg_per_l)
+{
+    return emitNodeChangedIfSuccessful(uuid, this->network_editor.setNodeInitialChemicalConcentrationMgPerL(uuid, value_mg_per_l));
+}
+
+bool HydraulicData::setNodeInitialWaterAgeH(const QUuid &uuid, double value_h)
+{
+    return emitNodeChangedIfSuccessful(uuid, this->network_editor.setNodeInitialWaterAgeH(uuid, value_h));
+}
+
+bool HydraulicData::setNodeInitialSourceTracePercent(const QUuid &uuid, double value_percent)
+{
+    return emitNodeChangedIfSuccessful(uuid, this->network_editor.setNodeInitialSourceTracePercent(uuid, value_percent));
+}
+
+bool HydraulicData::setNodeQualitySourceType(const QUuid &uuid, HydraulicNodeQualitySourceType source_type)
+{
+    return emitNodeChangedIfSuccessful(uuid, this->network_editor.setNodeQualitySourceType(uuid, source_type));
+}
+
+bool HydraulicData::setNodeQualitySourceChemicalConcentrationMgPerL(const QUuid &uuid, double value_mg_per_l)
+{
+    return emitNodeChangedIfSuccessful(uuid, this->network_editor.setNodeQualitySourceChemicalConcentrationMgPerL(uuid, value_mg_per_l));
+}
+
+bool HydraulicData::setNodeQualitySourceMassFlowMgPerMin(const QUuid &uuid, double value_mg_per_min)
+{
+    return emitNodeChangedIfSuccessful(uuid, this->network_editor.setNodeQualitySourceMassFlowMgPerMin(uuid, value_mg_per_min));
+}
+
+bool HydraulicData::setNodeQualitySourcePatternUuid(const QUuid &uuid, const QUuid &pattern_uuid)
+{
+    return emitNodeChangedIfSuccessful(uuid, this->network_editor.setNodeQualitySourcePatternUuid(uuid, pattern_uuid));
+}
+
 bool HydraulicData::setReservoirHeadInputType(
     const QUuid &uuid, HydraulicNodeElevationInputType input_type)
 {
@@ -2181,6 +2291,26 @@ bool HydraulicData::setTankCanOverflow(const QUuid &uuid, bool can_overflow)
         uuid, this->network_editor.setTankCanOverflow(uuid, can_overflow));
 }
 
+bool HydraulicData::setTankQualityMixingModel(const QUuid &uuid, HydraulicNodeTankMixingModel mixing_model)
+{
+    return emitNodeChangedIfSuccessful(uuid, this->network_editor.setTankQualityMixingModel(uuid, mixing_model));
+}
+
+bool HydraulicData::setTankQualityMixingFraction(const QUuid &uuid, double mixing_fraction)
+{
+    return emitNodeChangedIfSuccessful(uuid, this->network_editor.setTankQualityMixingFraction(uuid, mixing_fraction));
+}
+
+bool HydraulicData::setTankOverrideBulkReaction(const QUuid &uuid, bool override_bulk_reaction)
+{
+    return emitNodeChangedIfSuccessful(uuid, this->network_editor.setTankOverrideBulkReaction(uuid, override_bulk_reaction));
+}
+
+bool HydraulicData::setTankBulkReactionCoefficient(const QUuid &uuid, double coefficient)
+{
+    return emitNodeChangedIfSuccessful(uuid, this->network_editor.setTankBulkReactionCoefficient(uuid, coefficient));
+}
+
 bool HydraulicData::setPipeInitialStatus(
     const QUuid &uuid, HydraulicLinkPipeInitialStatus initial_status)
 {
@@ -2229,6 +2359,21 @@ bool HydraulicData::setPipeMinorLoss(const QUuid &uuid, double minor_loss_coeffi
 {
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setPipeMinorLoss(uuid, minor_loss_coefficient));
+}
+
+bool HydraulicData::setPipeOverrideReactions(const QUuid &uuid, bool override_reactions)
+{
+    return emitLinkChangedIfSuccessful(uuid, this->network_editor.setPipeOverrideReactions(uuid, override_reactions));
+}
+
+bool HydraulicData::setPipeBulkReactionCoefficient(const QUuid &uuid, double coefficient)
+{
+    return emitLinkChangedIfSuccessful(uuid, this->network_editor.setPipeBulkReactionCoefficient(uuid, coefficient));
+}
+
+bool HydraulicData::setPipeWallReactionCoefficient(const QUuid &uuid, double coefficient)
+{
+    return emitLinkChangedIfSuccessful(uuid, this->network_editor.setPipeWallReactionCoefficient(uuid, coefficient));
 }
 
 bool HydraulicData::setPumpDefinitionType(

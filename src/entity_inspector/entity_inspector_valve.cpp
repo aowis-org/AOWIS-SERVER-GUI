@@ -28,6 +28,8 @@ EntityInspectorValve::EntityInspectorValve(HydraulicData *hydraulic_data, const 
     addGroupValveConfiguration();
     addGroupSimulation();
     
+    addGroupNoEntitySpecificQualityInputs(QStringLiteral("valve"));
+    addGroupAlerts();
     addGroupHistory();
     
     addStretches();

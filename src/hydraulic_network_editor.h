@@ -95,6 +95,14 @@ public:
     bool setJunctionEmitterCoefficient(const QUuid &uuid, double coefficient);
     bool setJunctionEmitterPressureExponent(const QUuid &uuid, double pressure_exponent);
 
+    bool setNodeInitialChemicalConcentrationMgPerL(const QUuid &uuid, double value_mg_per_l);
+    bool setNodeInitialWaterAgeH(const QUuid &uuid, double value_h);
+    bool setNodeInitialSourceTracePercent(const QUuid &uuid, double value_percent);
+    bool setNodeQualitySourceType(const QUuid &uuid, HydraulicNodeQualitySourceType source_type);
+    bool setNodeQualitySourceChemicalConcentrationMgPerL(const QUuid &uuid, double value_mg_per_l);
+    bool setNodeQualitySourceMassFlowMgPerMin(const QUuid &uuid, double value_mg_per_min);
+    bool setNodeQualitySourcePatternUuid(const QUuid &uuid, const QUuid &pattern_uuid);
+
     bool setReservoirHeadInputType(const QUuid &uuid,
                                    HydraulicNodeElevationInputType input_type);
     bool setReservoirHeadM(const QUuid &uuid, double hydraulic_head_m);
@@ -120,6 +128,10 @@ public:
     bool setTankMinimumVolumeM3(const QUuid &uuid, double minimum_volume_m3);
     bool setTankVolumeCurveUuid(const QUuid &uuid, const QUuid &volume_curve_uuid);
     bool setTankCanOverflow(const QUuid &uuid, bool can_overflow);
+    bool setTankQualityMixingModel(const QUuid &uuid, HydraulicNodeTankMixingModel mixing_model);
+    bool setTankQualityMixingFraction(const QUuid &uuid, double mixing_fraction);
+    bool setTankOverrideBulkReaction(const QUuid &uuid, bool override_bulk_reaction);
+    bool setTankBulkReactionCoefficient(const QUuid &uuid, double coefficient);
 
     bool setPipeInitialStatus(const QUuid &uuid, HydraulicLinkPipeInitialStatus initial_status);
     bool setPipeDiameterMm(const QUuid &uuid, double diameter_mm);
@@ -129,6 +141,9 @@ public:
     bool setPipeRoughnessDwMm(const QUuid &uuid, double roughness_darcy_weisbach_mm);
     bool setPipeRoughnessCm(const QUuid &uuid, double roughness_chezy_manning);
     bool setPipeMinorLoss(const QUuid &uuid, double minor_loss_coefficient);
+    bool setPipeOverrideReactions(const QUuid &uuid, bool override_reactions);
+    bool setPipeBulkReactionCoefficient(const QUuid &uuid, double coefficient);
+    bool setPipeWallReactionCoefficient(const QUuid &uuid, double coefficient);
 
     bool setPumpDefinitionType(const QUuid &uuid,
                                HydraulicLinkPumpDefinitionType definition_type);

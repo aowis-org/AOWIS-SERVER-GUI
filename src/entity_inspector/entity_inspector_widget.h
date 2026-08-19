@@ -51,8 +51,7 @@ protected:
     QVBoxLayout *layoutConfiguration();
     QVBoxLayout *layoutSimMeas();
     QVBoxLayout *layoutQuality();
-    QVBoxLayout *layoutAlerts();
-    QVBoxLayout *layoutHistory();
+    QVBoxLayout *layoutQualitySimMeas();
     
     void setTitle(const QString &title);
     
@@ -104,11 +103,14 @@ protected:
     QDoubleSpinBox *spin_emitter_pressure_exponent = nullptr;
 
     void addGroupSimulation();
+    void addGroupNodeQualityInputs();
+    void addGroupNoEntitySpecificQualityInputs(const QString &entity_name);
 
     void openDemandsEditor();
     QPointer<QDialog> dialog_demands = nullptr;
     QPointer<QTableWidget> table_demands = nullptr;
     
+    void addGroupAlerts();
     void addGroupHistory();
     
     void addStretches();
@@ -168,6 +170,9 @@ private:
                             const QString &unit = QString());
     void setSimulationEntityAvailable(bool available);
     void refreshPumpEnergySummary(const HydraulicSimulationResultTimeline &timeline);
+    void refreshNodeQualityInputs();
+    void populateQualitySourcePatternCombo(const QUuid &pattern_uuid);
+    void updateQualitySourceInputUi();
 
     void refreshHydraulicGeneral(const QString &id, const HydraulicEntityMetadata &metadata);
     void refreshHydraulicNode();
@@ -212,6 +217,13 @@ private:
     bool terrain_elevation_request_active = false;
 
     QHash<int, SimulationRowWidgets> simulation_rows;
+    QDoubleSpinBox *spin_quality_initial_chemical = nullptr;
+    QDoubleSpinBox *spin_quality_initial_water_age = nullptr;
+    QDoubleSpinBox *spin_quality_initial_trace = nullptr;
+    QComboBox *combo_quality_source_type = nullptr;
+    QDoubleSpinBox *spin_quality_source_concentration = nullptr;
+    QDoubleSpinBox *spin_quality_source_mass_flow = nullptr;
+    QComboBox *combo_quality_source_pattern = nullptr;
     GroupBoxCollapsible *group_simulation_errors = nullptr;
     QLabel *label_simulation_errors = nullptr;
     QLabel *label_simulation_message = nullptr;
@@ -236,14 +248,10 @@ private:
     QScrollArea *scroll_quality = nullptr;
     QWidget *widget_quality = nullptr;
     QVBoxLayout *layout_quality = nullptr;
-    
-    QScrollArea *scroll_alerts = nullptr;
-    QWidget *widget_alerts = nullptr;
-    QVBoxLayout *layout_alerts = nullptr;
-    
-    QScrollArea *scroll_history = nullptr;
-    QWidget *widget_history = nullptr;
-    QVBoxLayout *layout_history = nullptr;
+
+    QScrollArea *scroll_quality_sim_meas = nullptr;
+    QWidget *widget_quality_sim_meas = nullptr;
+    QVBoxLayout *layout_quality_sim_meas = nullptr;
     
 private slots:
     void onGroupExpand(GroupBoxCollapsible *group);
