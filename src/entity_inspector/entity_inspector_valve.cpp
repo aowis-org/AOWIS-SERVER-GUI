@@ -78,8 +78,10 @@ void EntityInspectorValve::addGroupValveConfiguration()
     this->spin_setting->setSingleStep(1.0);
     this->spin_setting->setValue(0.0);
     
+    this->label_setting_curve = new QLabel("Curve");
     this->combo_setting_curve = new QComboBox();
     this->combo_setting_curve->addItem("Select curve...");
+    this->label_setting_curve->hide();
     this->combo_setting_curve->hide();
     
     QLabel *label_status_initial = new QLabel("Initial Status");
@@ -112,16 +114,18 @@ void EntityInspectorValve::addGroupValveConfiguration()
     
     grid->addWidget(this->label_setting, 2, 0);
     grid->addWidget(this->spin_setting, 2, 1);
-    grid->addWidget(this->combo_setting_curve, 2, 1);
+
+    grid->addWidget(this->label_setting_curve, 3, 0);
+    grid->addWidget(this->combo_setting_curve, 3, 1);
     
-    grid->addWidget(label_status_initial, 3, 0);
-    grid->addWidget(this->combo_status_initial, 3, 1);
+    grid->addWidget(label_status_initial, 4, 0);
+    grid->addWidget(this->combo_status_initial, 4, 1);
     
-    grid->addWidget(label_diameter, 4, 0);
-    grid->addWidget(this->spin_diameter, 4, 1);
+    grid->addWidget(label_diameter, 5, 0);
+    grid->addWidget(this->spin_diameter, 5, 1);
     
-    grid->addWidget(label_loss_coeff, 5, 0);
-    grid->addWidget(this->spin_loss_coeff, 5, 1);
+    grid->addWidget(label_loss_coeff, 6, 0);
+    grid->addWidget(this->spin_loss_coeff, 6, 1);
     
     layoutConfiguration()->addWidget(group);
 }
@@ -137,12 +141,37 @@ void EntityInspectorValve::bindValve()
     });
     connect(this->spin_setting, &QDoubleSpinBox::valueChanged, this, [this](double setting)
     {
-        this->hydraulic_data->setValveSetting(this->valve_uuid, setting);
+        const HydraulicLinkValveType type = static_cast<HydraulicLinkValveType>(
+            this->combo_valve_type->currentData().toInt());
+        switch (type)
+        {
+        case HydraulicLinkValveType::PRV:
+        case HydraulicLinkValveType::PSV:
+        case HydraulicLinkValveType::PBV:
+            this->hydraulic_data->setValveSettingPressureHeadM(this->valve_uuid, setting);
+            break;
+        case HydraulicLinkValveType::FCV:
+            this->hydraulic_data->setValveSettingFlowM3PerH(this->valve_uuid, setting);
+            break;
+        case HydraulicLinkValveType::TCV:
+            this->hydraulic_data->setValveSettingLossCoefficient(this->valve_uuid, setting);
+            break;
+        case HydraulicLinkValveType::PCV:
+            this->hydraulic_data->setValveSettingPositionPercent(this->valve_uuid, setting);
+            break;
+        case HydraulicLinkValveType::GPV:
+            break;
+        }
     });
     connect(this->combo_setting_curve, &QComboBox::currentIndexChanged, this, [this](int)
     {
-        this->hydraulic_data->setValveSettingCurveUuid(
-            this->valve_uuid, this->combo_setting_curve->currentData(uuid_role).toUuid());
+        const HydraulicLinkValveType type = static_cast<HydraulicLinkValveType>(
+            this->combo_valve_type->currentData().toInt());
+        const QUuid curve_uuid = this->combo_setting_curve->currentData(uuid_role).toUuid();
+        if (type == HydraulicLinkValveType::GPV)
+            this->hydraulic_data->setValveHeadLossCurveUuid(this->valve_uuid, curve_uuid);
+        else if (type == HydraulicLinkValveType::PCV)
+            this->hydraulic_data->setValveCharacteristicCurveUuid(this->valve_uuid, curve_uuid);
     });
     connect(this->combo_status_initial, &QComboBox::currentIndexChanged, this, [this](int)
     {
@@ -192,8 +221,29 @@ void EntityInspectorValve::refreshValve()
     const int type_index = this->combo_valve_type->findData(static_cast<int>(valve->type));
     this->combo_valve_type->setCurrentIndex(type_index >= 0 ? type_index : 0);
     onValveTypeChanged(valve->type);
-    this->spin_setting->setValue(valve->setting);
-    populateSettingCurveCombo(valve->setting_curve_uuid);
+    QUuid curve_uuid;
+    switch (valve->type)
+    {
+    case HydraulicLinkValveType::PRV:
+    case HydraulicLinkValveType::PSV:
+    case HydraulicLinkValveType::PBV:
+        this->spin_setting->setValue(valve->setting_pressure_head_m);
+        break;
+    case HydraulicLinkValveType::FCV:
+        this->spin_setting->setValue(valve->setting_flow_m3_per_h);
+        break;
+    case HydraulicLinkValveType::TCV:
+        this->spin_setting->setValue(valve->setting_loss_coefficient);
+        break;
+    case HydraulicLinkValveType::PCV:
+        this->spin_setting->setValue(valve->setting_position_percent);
+        curve_uuid = valve->characteristic_curve_uuid;
+        break;
+    case HydraulicLinkValveType::GPV:
+        curve_uuid = valve->head_loss_curve_uuid;
+        break;
+    }
+    populateSettingCurveCombo(valve->type, curve_uuid);
 
     const int status_index =
         this->combo_status_initial->findData(static_cast<int>(valve->initial_status));
@@ -202,22 +252,39 @@ void EntityInspectorValve::refreshValve()
     this->spin_loss_coeff->setValue(valve->minor_loss_coefficient);
 }
 
-void EntityInspectorValve::populateSettingCurveCombo(const QUuid &curve_uuid)
+void EntityInspectorValve::populateSettingCurveCombo(
+    HydraulicLinkValveType type, const QUuid &curve_uuid)
 {
     this->combo_setting_curve->clear();
     this->combo_setting_curve->addItem("Select curve...");
     this->combo_setting_curve->setItemData(0, QUuid(), uuid_role);
 
     bool selected_curve_exists = curve_uuid.isNull();
-    const QList<HydraulicCurveValveHeadloss> &curves =
-        this->hydraulic_data->networkHydraulic().curves_valve_headloss;
-    for (const HydraulicCurveValveHeadloss &curve : curves)
+    if (type == HydraulicLinkValveType::GPV)
     {
-        this->combo_setting_curve->addItem(entityName(curve.id, curve.uuid));
-        this->combo_setting_curve->setItemData(
-            this->combo_setting_curve->count() - 1, curve.uuid, uuid_role);
-        if (curve.uuid == curve_uuid)
-            selected_curve_exists = true;
+        const QList<HydraulicCurveValveHeadloss> &curves =
+            this->hydraulic_data->networkHydraulic().curves_valve_headloss;
+        for (const HydraulicCurveValveHeadloss &curve : curves)
+        {
+            this->combo_setting_curve->addItem(entityName(curve.id, curve.uuid));
+            this->combo_setting_curve->setItemData(
+                this->combo_setting_curve->count() - 1, curve.uuid, uuid_role);
+            if (curve.uuid == curve_uuid)
+                selected_curve_exists = true;
+        }
+    }
+    else if (type == HydraulicLinkValveType::PCV)
+    {
+        const QList<HydraulicCurveValveCharacteristic> &curves =
+            this->hydraulic_data->networkHydraulic().curves_valve_characteristic;
+        for (const HydraulicCurveValveCharacteristic &curve : curves)
+        {
+            this->combo_setting_curve->addItem(entityName(curve.id, curve.uuid));
+            this->combo_setting_curve->setItemData(
+                this->combo_setting_curve->count() - 1, curve.uuid, uuid_role);
+            if (curve.uuid == curve_uuid)
+                selected_curve_exists = true;
+        }
     }
 
     if (!curve_uuid.isNull() && !selected_curve_exists)
@@ -243,7 +310,9 @@ void EntityInspectorValve::populateSettingCurveCombo(const QUuid &curve_uuid)
 
 void EntityInspectorValve::onValveTypeChanged(HydraulicLinkValveType type)
 {
+    this->label_setting->show();
     this->spin_setting->show();
+    this->label_setting_curve->hide();
     this->combo_setting_curve->hide();
     
     switch (type) {
@@ -287,7 +356,7 @@ void EntityInspectorValve::onValveTypeChanged(HydraulicLinkValveType type)
         this->spin_setting->setRange(0.0, 1000000.0);
         this->spin_setting->setSingleStep(1.0);
         this->spin_setting->setToolTip(
-            "Target flow through the flow control valve,<br>using the current project flow units."
+            "Target flow through the flow control valve in the AOWIS canonical flow unit."
             );
         break;
         
@@ -303,11 +372,13 @@ void EntityInspectorValve::onValveTypeChanged(HydraulicLinkValveType type)
         break;
         
     case HydraulicLinkValveType::GPV:
-        this->label_setting->setText("Headloss Curve");
+        this->label_setting->hide();
         this->spin_setting->hide();
+        this->label_setting_curve->setText("Head Loss Curve");
+        this->label_setting_curve->show();
         this->combo_setting_curve->show();
         this->combo_setting_curve->setToolTip(
-            "Headloss curve used by the general purpose valve."
+            "Head-loss curve used by the general purpose valve."
             );
         break;
         
@@ -319,6 +390,12 @@ void EntityInspectorValve::onValveTypeChanged(HydraulicLinkValveType type)
         this->spin_setting->setSingleStep(1.0);
         this->spin_setting->setToolTip(
             "Valve opening position as a percentage.<br>PCV support requires EPANET 2.3 or newer."
+            );
+        this->label_setting_curve->setText("Characteristic Curve");
+        this->label_setting_curve->show();
+        this->combo_setting_curve->show();
+        this->combo_setting_curve->setToolTip(
+            "Optional valve-characteristic curve used by the positional control valve."
             );
         break;
     }

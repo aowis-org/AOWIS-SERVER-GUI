@@ -144,7 +144,7 @@ private:
         ReferencedByControl,
         TimeOnline,
         AverageEfficiency,
-        AverageSpecificPower,
+        AverageEnergyIntensity,
         AveragePower,
         PeakPower,
         AverageCostPerDay

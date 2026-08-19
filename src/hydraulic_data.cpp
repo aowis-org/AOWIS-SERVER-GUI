@@ -2299,17 +2299,46 @@ bool HydraulicData::setValveType(const QUuid &uuid, HydraulicLinkValveType type)
         uuid, this->network_editor.setValveType(uuid, type));
 }
 
-bool HydraulicData::setValveSetting(const QUuid &uuid, double setting)
+bool HydraulicData::setValveSettingPressureHeadM(
+    const QUuid &uuid, double setting_pressure_head_m)
 {
     return emitLinkChangedIfSuccessful(
-        uuid, this->network_editor.setValveSetting(uuid, setting));
+        uuid, this->network_editor.setValveSettingPressureHeadM(uuid, setting_pressure_head_m));
 }
 
-bool HydraulicData::setValveSettingCurveUuid(
-    const QUuid &uuid, const QUuid &setting_curve_uuid)
+bool HydraulicData::setValveSettingFlowM3PerH(
+    const QUuid &uuid, double setting_flow_m3_per_h)
 {
     return emitLinkChangedIfSuccessful(
-        uuid, this->network_editor.setValveSettingCurveUuid(uuid, setting_curve_uuid));
+        uuid, this->network_editor.setValveSettingFlowM3PerH(uuid, setting_flow_m3_per_h));
+}
+
+bool HydraulicData::setValveSettingLossCoefficient(
+    const QUuid &uuid, double setting_loss_coefficient)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setValveSettingLossCoefficient(uuid, setting_loss_coefficient));
+}
+
+bool HydraulicData::setValveSettingPositionPercent(
+    const QUuid &uuid, double setting_position_percent)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setValveSettingPositionPercent(uuid, setting_position_percent));
+}
+
+bool HydraulicData::setValveHeadLossCurveUuid(
+    const QUuid &uuid, const QUuid &head_loss_curve_uuid)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setValveHeadLossCurveUuid(uuid, head_loss_curve_uuid));
+}
+
+bool HydraulicData::setValveCharacteristicCurveUuid(
+    const QUuid &uuid, const QUuid &characteristic_curve_uuid)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setValveCharacteristicCurveUuid(uuid, characteristic_curve_uuid));
 }
 
 bool HydraulicData::setValveInitialStatus(

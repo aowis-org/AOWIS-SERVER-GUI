@@ -981,24 +981,69 @@ bool HydraulicNetworkEditor::setValveType(const QUuid &uuid, HydraulicLinkValveT
     return true;
 }
 
-bool HydraulicNetworkEditor::setValveSetting(const QUuid &uuid, double setting)
+bool HydraulicNetworkEditor::setValveSettingPressureHeadM(
+    const QUuid &uuid, double setting_pressure_head_m)
 {
     HydraulicLinkValve *valve = entityByUuid(this->network.links_valves, uuid);
     if (valve == nullptr)
         return false;
 
-    valve->setting = setting;
+    valve->setting_pressure_head_m = setting_pressure_head_m;
     return true;
 }
 
-bool HydraulicNetworkEditor::setValveSettingCurveUuid(
-    const QUuid &uuid, const QUuid &setting_curve_uuid)
+bool HydraulicNetworkEditor::setValveSettingFlowM3PerH(
+    const QUuid &uuid, double setting_flow_m3_per_h)
 {
     HydraulicLinkValve *valve = entityByUuid(this->network.links_valves, uuid);
     if (valve == nullptr)
         return false;
 
-    valve->setting_curve_uuid = setting_curve_uuid;
+    valve->setting_flow_m3_per_h = setting_flow_m3_per_h;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setValveSettingLossCoefficient(
+    const QUuid &uuid, double setting_loss_coefficient)
+{
+    HydraulicLinkValve *valve = entityByUuid(this->network.links_valves, uuid);
+    if (valve == nullptr)
+        return false;
+
+    valve->setting_loss_coefficient = setting_loss_coefficient;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setValveSettingPositionPercent(
+    const QUuid &uuid, double setting_position_percent)
+{
+    HydraulicLinkValve *valve = entityByUuid(this->network.links_valves, uuid);
+    if (valve == nullptr)
+        return false;
+
+    valve->setting_position_percent = setting_position_percent;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setValveHeadLossCurveUuid(
+    const QUuid &uuid, const QUuid &head_loss_curve_uuid)
+{
+    HydraulicLinkValve *valve = entityByUuid(this->network.links_valves, uuid);
+    if (valve == nullptr)
+        return false;
+
+    valve->head_loss_curve_uuid = head_loss_curve_uuid;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setValveCharacteristicCurveUuid(
+    const QUuid &uuid, const QUuid &characteristic_curve_uuid)
+{
+    HydraulicLinkValve *valve = entityByUuid(this->network.links_valves, uuid);
+    if (valve == nullptr)
+        return false;
+
+    valve->characteristic_curve_uuid = characteristic_curve_uuid;
     return true;
 }
 

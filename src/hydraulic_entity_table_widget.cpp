@@ -478,23 +478,56 @@ QString pumpEfficiencyCurveId(const NetworkHydraulic &network, const QUuid &uuid
     return referencedEntityId(network.curves_pump_efficiency, uuid);
 }
 
-QString valveSettingCurveId(const NetworkHydraulic &network, HydraulicLinkValveType type,
-                            const QUuid &uuid)
+TableCell valveSettingCell(const HydraulicLinkValve &valve)
 {
-    if (uuid.isNull())
-        return QString();
+    switch (valve.type)
+    {
+    case HydraulicLinkValveType::PRV:
+    case HydraulicLinkValveType::PSV:
+    case HydraulicLinkValveType::PBV:
+        return numberCell(valve.setting_pressure_head_m, 3, QStringLiteral(" m"));
+    case HydraulicLinkValveType::FCV:
+        return numberCell(valve.setting_flow_m3_per_h, 3, QStringLiteral(" m³/h"));
+    case HydraulicLinkValveType::TCV:
+        return numberCell(valve.setting_loss_coefficient, 6);
+    case HydraulicLinkValveType::PCV:
+        return numberCell(valve.setting_position_percent, 2, QStringLiteral(" %"));
+    case HydraulicLinkValveType::GPV:
+        return emptyCell();
+    }
 
-    if (type == HydraulicLinkValveType::PCV)
-        return referencedEntityId(network.curves_valve_characteristic, uuid);
+    return emptyCell();
+}
 
-    if (type == HydraulicLinkValveType::GPV)
-        return referencedEntityId(network.curves_valve_headloss, uuid);
+TableCell valveResultSettingCell(const HydraulicSimulationResultLinkValve &valve)
+{
+    switch (valve.type)
+    {
+    case HydraulicLinkValveType::PRV:
+    case HydraulicLinkValveType::PSV:
+    case HydraulicLinkValveType::PBV:
+        return numberCell(valve.setting_pressure_head_m, 3, QStringLiteral(" m"));
+    case HydraulicLinkValveType::FCV:
+        return numberCell(valve.setting_flow_m3_per_h, 3, QStringLiteral(" m³/h"));
+    case HydraulicLinkValveType::TCV:
+        return numberCell(valve.setting_loss_coefficient, 6);
+    case HydraulicLinkValveType::PCV:
+        return numberCell(valve.setting_position_percent, 2, QStringLiteral(" %"));
+    case HydraulicLinkValveType::GPV:
+        return emptyCell();
+    }
 
-    QString id = referencedEntityId(network.curves_valve_headloss, uuid);
-    if (id != uuid.toString(QUuid::WithoutBraces))
-        return id;
+    return emptyCell();
+}
 
-    return referencedEntityId(network.curves_valve_characteristic, uuid);
+QString valveSettingCurveId(const NetworkHydraulic &network, const HydraulicLinkValve &valve)
+{
+    if (valve.type == HydraulicLinkValveType::GPV)
+        return referencedEntityId(network.curves_valve_headloss, valve.head_loss_curve_uuid);
+    if (valve.type == HydraulicLinkValveType::PCV)
+        return referencedEntityId(network.curves_valve_characteristic, valve.characteristic_curve_uuid);
+
+    return QString();
 }
 
 QString junctionDemandSummary(const NetworkHydraulic &network,
@@ -668,7 +701,7 @@ ColumnFilterKind columnFilterKind(const QString &title)
         QStringLiteral("Speed Initial"),
         QStringLiteral("Setting"),
         QStringLiteral("Speed"),
-        QStringLiteral("Specific Power Average"),
+        QStringLiteral("Energy Intensity Average [kWh/m³]"),
         QStringLiteral("Cost Average / Day")
     };
 
@@ -1442,7 +1475,14 @@ private:
         this->columns.append({QStringLiteral("Efficiency Constant [%]"), false});
         this->columns.append({QStringLiteral("Efficiency Curve"), false});
         this->columns.append({QStringLiteral("Energy Price Input"), false});
-        this->columns.append({QStringLiteral("Energy Price [/kWh]"), false});
+        const QString energy_currency = network.options_energy.currency_iso4217;
+        const QString energy_price_header = energy_currency.isEmpty()
+            ? QStringLiteral("Energy Price [/kWh]")
+            : QStringLiteral("Energy Price [%1/kWh]").arg(energy_currency);
+        const QString energy_cost_header = energy_currency.isEmpty()
+            ? QStringLiteral("Cost Average / Day")
+            : QStringLiteral("Cost Average [%1/day]").arg(energy_currency);
+        this->columns.append({energy_price_header, false});
         this->columns.append({QStringLiteral("Price Pattern"), false});
         this->columns.append({QStringLiteral("Flow [m³/h]"), true});
         this->columns.append({QStringLiteral("Velocity [m/s]"), true});
@@ -1455,10 +1495,10 @@ private:
         this->columns.append({QStringLiteral("Referenced by Control"), true});
         this->columns.append({QStringLiteral("Time Online [%]"), true});
         this->columns.append({QStringLiteral("Efficiency Average [%]"), true});
-        this->columns.append({QStringLiteral("Specific Power Average"), true});
+        this->columns.append({QStringLiteral("Energy Intensity Average [kWh/m³]"), true});
         this->columns.append({QStringLiteral("Power Average [kW]"), true});
         this->columns.append({QStringLiteral("Power Peak [kW]"), true});
-        this->columns.append({QStringLiteral("Cost Average / Day"), true});
+        this->columns.append({energy_cost_header, true});
 
         const HydraulicSimulationResult *final_result = nullptr;
         const std::optional<HydraulicSimulationResultTimeline> &timeline =
@@ -1527,7 +1567,7 @@ private:
             {
                 row.cells.append(numberCell(energy_usage->time_online_percent, 2, QStringLiteral(" %")));
                 row.cells.append(numberCell(energy_usage->average_efficiency_percent, 2, QStringLiteral(" %")));
-                row.cells.append(numberCell(energy_usage->average_kw_per_flow_unit, 6));
+                row.cells.append(numberCell(energy_usage->average_energy_intensity_kw_h_per_m3, 6));
                 row.cells.append(numberCell(energy_usage->average_power_kw, 3, QStringLiteral(" kW")));
                 row.cells.append(numberCell(energy_usage->peak_power_kw, 3, QStringLiteral(" kW")));
                 row.cells.append(numberCell(energy_usage->average_cost_per_day, 4));
@@ -1575,8 +1615,8 @@ private:
             row.cells.append(textCell(nodeId(node_ids, valve.node_uuid_to)));
             row.cells.append(integerCell(valve.vertices.size()));
             row.cells.append(textCell(valveTypeText(valve.type)));
-            row.cells.append(numberCell(valve.setting, 6));
-            row.cells.append(textCell(valveSettingCurveId(network, valve.type, valve.setting_curve_uuid)));
+            row.cells.append(valveSettingCell(valve));
+            row.cells.append(textCell(valveSettingCurveId(network, valve)));
             row.cells.append(textCell(valveInitialStatusText(valve.initial_status)));
             row.cells.append(numberCell(valve.diameter_mm, 3, QStringLiteral(" mm")));
             row.cells.append(numberCell(valve.minor_loss_coefficient, 6));
@@ -1595,7 +1635,7 @@ private:
                 row.cells.append(numberCell(result->head_loss_m, 3, QStringLiteral(" m")));
                 row.cells.append(boolCell(result->open, QStringLiteral("Open"), QStringLiteral("Closed")));
                 row.cells.append(boolCell(result->active));
-                row.cells.append(numberCell(result->setting, 6));
+                row.cells.append(valveResultSettingCell(*result));
                 row.cells.append(boolCell(result->appears_in_control));
             }
 

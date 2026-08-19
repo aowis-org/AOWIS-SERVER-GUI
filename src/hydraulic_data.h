@@ -351,8 +351,12 @@ public:
                                  const QUuid &price_pattern_uuid);
 
     bool setValveType(const QUuid &uuid, HydraulicLinkValveType type);
-    bool setValveSetting(const QUuid &uuid, double setting);
-    bool setValveSettingCurveUuid(const QUuid &uuid, const QUuid &setting_curve_uuid);
+    bool setValveSettingPressureHeadM(const QUuid &uuid, double setting_pressure_head_m);
+    bool setValveSettingFlowM3PerH(const QUuid &uuid, double setting_flow_m3_per_h);
+    bool setValveSettingLossCoefficient(const QUuid &uuid, double setting_loss_coefficient);
+    bool setValveSettingPositionPercent(const QUuid &uuid, double setting_position_percent);
+    bool setValveHeadLossCurveUuid(const QUuid &uuid, const QUuid &head_loss_curve_uuid);
+    bool setValveCharacteristicCurveUuid(const QUuid &uuid, const QUuid &characteristic_curve_uuid);
     bool setValveInitialStatus(const QUuid &uuid,
                                HydraulicLinkValveInitialStatus initial_status);
     bool setValveDiameterMm(const QUuid &uuid, double diameter_mm);

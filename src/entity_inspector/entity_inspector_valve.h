@@ -35,7 +35,7 @@ private:
     void addGroupValveConfiguration();
     void bindValve();
     void refreshValve();
-    void populateSettingCurveCombo(const QUuid &curve_uuid);
+    void populateSettingCurveCombo(HydraulicLinkValveType type, const QUuid &curve_uuid);
     void onValveTypeChanged(HydraulicLinkValveType type);
 
     HydraulicData *hydraulic_data = nullptr;
@@ -44,6 +44,7 @@ private:
     QComboBox *combo_valve_type = nullptr;
     QLabel *label_setting = nullptr;
     QDoubleSpinBox *spin_setting = nullptr;
+    QLabel *label_setting_curve = nullptr;
     QComboBox *combo_setting_curve = nullptr;
     
     QComboBox *combo_status_initial = nullptr;

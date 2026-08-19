@@ -255,6 +255,10 @@ void EntityInspectorPump::refreshPump()
     this->combo_controls->setCurrentIndex(controls_index >= 0 ? controls_index : 0);
 
     populateEfficiencyInputCombo(pump.value());
+    const QString energy_currency = this->hydraulic_data->networkHydraulic().options_energy.currency_iso4217;
+    this->spin_energy_price->setSuffix(energy_currency.isEmpty()
+        ? QStringLiteral(" /kWh")
+        : QStringLiteral(" %1/kWh").arg(energy_currency));
     this->spin_energy_price->setValue(pump->energy_price_per_kw_h);
     this->spin_energy_price->setEnabled(
         pump->energy_price_input_type == HydraulicLinkPumpEnergyPriceInputType::Constant);

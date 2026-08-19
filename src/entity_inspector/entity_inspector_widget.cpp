@@ -465,8 +465,8 @@ void EntityInspectorWidget::addGroupSimulation()
 
         addSimulationRow(energy_grid, energy_row, SimulationField::TimeOnline, "Time Online");
         addSimulationRow(energy_grid, energy_row, SimulationField::AverageEfficiency, "Average Efficiency");
-        addSimulationRow(energy_grid, energy_row, SimulationField::AverageSpecificPower,
-                         "Average Specific Power");
+        addSimulationRow(energy_grid, energy_row, SimulationField::AverageEnergyIntensity,
+                         "Average Energy Intensity");
         addSimulationRow(energy_grid, energy_row, SimulationField::AveragePower, "Average Power");
         addSimulationRow(energy_grid, energy_row, SimulationField::PeakPower, "Peak Power");
         addSimulationRow(energy_grid, energy_row, SimulationField::AverageCostPerDay,
@@ -558,15 +558,18 @@ void EntityInspectorWidget::refreshPumpEnergySummary(
                        2, QStringLiteral(" %"));
     setSimulationValue(SimulationField::AverageEfficiency,
                        energy_usage->average_efficiency_percent, 2, QStringLiteral(" %"));
-    setSimulationValue(SimulationField::AverageSpecificPower,
-                       energy_usage->average_kw_per_flow_unit, 6,
-                       QStringLiteral(" kW/(m³/h)"));
+    setSimulationValue(SimulationField::AverageEnergyIntensity,
+                       energy_usage->average_energy_intensity_kw_h_per_m3, 6,
+                       QStringLiteral(" kWh/m³"));
     setSimulationValue(SimulationField::AveragePower, energy_usage->average_power_kw,
                        3, QStringLiteral(" kW"));
     setSimulationValue(SimulationField::PeakPower, energy_usage->peak_power_kw,
                        3, QStringLiteral(" kW"));
+    const QString cost_suffix = energy_usage->currency_iso4217.isEmpty()
+        ? QStringLiteral(" /day")
+        : QStringLiteral(" %1/day").arg(energy_usage->currency_iso4217);
     setSimulationValue(SimulationField::AverageCostPerDay,
-                       energy_usage->average_cost_per_day, 4, QStringLiteral(" /day"));
+                       energy_usage->average_cost_per_day, 4, cost_suffix);
 }
 
 void EntityInspectorWidget::refreshSimulation()
@@ -743,33 +746,29 @@ void EntityInspectorWidget::refreshSimulation()
         setSimulationText(SimulationField::ValveRegulating,
                           valve_result->active ? QStringLiteral("Yes") : QStringLiteral("No"));
 
-        QString setting_unit;
-        int setting_decimals = 3;
-        const std::optional<HydraulicLinkValve> valve =
-            this->hydraulic_data->valve(this->entity_uuid);
-        if (valve.has_value())
+        switch (valve_result->type)
         {
-            switch (valve->type)
-            {
-            case HydraulicLinkValveType::PRV:
-            case HydraulicLinkValveType::PSV:
-            case HydraulicLinkValveType::PBV:
-                setting_unit = QStringLiteral(" m");
-                break;
-            case HydraulicLinkValveType::FCV:
-                setting_unit = QStringLiteral(" m³/h");
-                break;
-            case HydraulicLinkValveType::PCV:
-                setting_unit = QStringLiteral(" %");
-                setting_decimals = 2;
-                break;
-            case HydraulicLinkValveType::TCV:
-            case HydraulicLinkValveType::GPV:
-                break;
-            }
+        case HydraulicLinkValveType::PRV:
+        case HydraulicLinkValveType::PSV:
+        case HydraulicLinkValveType::PBV:
+            setSimulationValue(SimulationField::Setting, valve_result->setting_pressure_head_m,
+                               3, QStringLiteral(" m"));
+            break;
+        case HydraulicLinkValveType::FCV:
+            setSimulationValue(SimulationField::Setting, valve_result->setting_flow_m3_per_h,
+                               3, QStringLiteral(" m³/h"));
+            break;
+        case HydraulicLinkValveType::TCV:
+            setSimulationValue(SimulationField::Setting, valve_result->setting_loss_coefficient, 6);
+            break;
+        case HydraulicLinkValveType::PCV:
+            setSimulationValue(SimulationField::Setting, valve_result->setting_position_percent,
+                               2, QStringLiteral(" %"));
+            break;
+        case HydraulicLinkValveType::GPV:
+            setSimulationText(SimulationField::Setting, QStringLiteral("Curve-defined"));
+            break;
         }
-        setSimulationValue(SimulationField::Setting, valve_result->setting,
-                           setting_decimals, setting_unit);
         setSimulationText(SimulationField::ReferencedByControl,
                           valve_result->appears_in_control ? QStringLiteral("Yes") : QStringLiteral("No"));
         break;
