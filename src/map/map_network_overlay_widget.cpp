@@ -368,7 +368,7 @@ QHash<QUuid, double> linkValues(const NetworkHydraulic &network_hydraulic, Visua
     case VisualLink::Roughness:
         values.reserve(network_hydraulic.links_pipes.size());
         for (const HydraulicLinkPipe &pipe : network_hydraulic.links_pipes)
-            values.insert(pipe.uuid, pipe.roughness_hw);
+            values.insert(pipe.uuid, pipe.roughness_hazen_williams);
         break;
     case VisualLink::None:
     case VisualLink::FlowRate:

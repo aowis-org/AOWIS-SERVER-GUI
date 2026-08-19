@@ -88,19 +88,19 @@ QString pumpStateText(HydraulicSimulationPumpState state)
 
 QString pipeRoughnessText(const HydraulicSimulationResultLinkPipe &result)
 {
-    if (result.roughness_hw.has_value())
+    if (result.roughness_hazen_williams.has_value())
     {
-        return formatSimulationNumber(result.roughness_hw.value(), 3, QString())
+        return formatSimulationNumber(result.roughness_hazen_williams.value(), 3, QString())
             + QStringLiteral(" (Hazen-Williams)");
     }
-    if (result.roughness_dw_mm.has_value())
+    if (result.roughness_darcy_weisbach_mm.has_value())
     {
-        return formatSimulationNumber(result.roughness_dw_mm.value(), 6, QStringLiteral(" mm"))
+        return formatSimulationNumber(result.roughness_darcy_weisbach_mm.value(), 6, QStringLiteral(" mm"))
             + QStringLiteral(" (Darcy-Weisbach)");
     }
-    if (result.roughness_cm.has_value())
+    if (result.roughness_chezy_manning.has_value())
     {
-        return formatSimulationNumber(result.roughness_cm.value(), 6, QString())
+        return formatSimulationNumber(result.roughness_chezy_manning.value(), 6, QString())
             + QStringLiteral(" (Chezy-Manning)");
     }
 
@@ -625,7 +625,7 @@ void EntityInspectorWidget::refreshSimulation()
                            junction->emitter_flow_m3_per_h, 3, QStringLiteral(" m³/h"));
         setSimulationValue(SimulationField::LeakageFlow,
                            junction->leakage_flow_m3_per_h, 3, QStringLiteral(" m³/h"));
-        setSimulationValue(SimulationField::Head, junction->head_m, 3, QStringLiteral(" m"));
+        setSimulationValue(SimulationField::Head, junction->hydraulic_head_m, 3, QStringLiteral(" m"));
         setSimulationValue(SimulationField::PressureHead, junction->pressure_head_m,
                            3, QStringLiteral(" m"));
         setSimulationText(SimulationField::ReferencedByControl,
@@ -642,7 +642,7 @@ void EntityInspectorWidget::refreshSimulation()
         entity_available = true;
         setSimulationValue(SimulationField::NetDemand, reservoir->net_demand_m3_per_h,
                            3, QStringLiteral(" m³/h"));
-        setSimulationValue(SimulationField::Head, reservoir->head_m, 3, QStringLiteral(" m"));
+        setSimulationValue(SimulationField::Head, reservoir->hydraulic_head_m, 3, QStringLiteral(" m"));
         setSimulationValue(SimulationField::PressureHead, reservoir->pressure_head_m,
                            3, QStringLiteral(" m"));
         setSimulationText(SimulationField::ReferencedByControl,
@@ -659,7 +659,7 @@ void EntityInspectorWidget::refreshSimulation()
         entity_available = true;
         setSimulationValue(SimulationField::NetDemand, tank->net_demand_m3_per_h,
                            3, QStringLiteral(" m³/h"));
-        setSimulationValue(SimulationField::Head, tank->head_m, 3, QStringLiteral(" m"));
+        setSimulationValue(SimulationField::Head, tank->hydraulic_head_m, 3, QStringLiteral(" m"));
         setSimulationValue(SimulationField::PressureHead, tank->pressure_head_m,
                            3, QStringLiteral(" m"));
         setSimulationValue(SimulationField::WaterLevel, tank->water_level_m,
@@ -689,7 +689,7 @@ void EntityInspectorWidget::refreshSimulation()
         setSimulationValue(SimulationField::HeadLoss, pipe->head_loss_m,
                            3, QStringLiteral(" m"));
         setSimulationValue(SimulationField::UnitHeadLoss,
-                           pipe->unit_head_loss_m_per_km, 3, QStringLiteral(" m/km"));
+                           pipe->head_loss_gradient_m_per_km, 3, QStringLiteral(" m/km"));
         setSimulationValue(SimulationField::FrictionFactor, pipe->friction_factor, 6);
         setSimulationText(SimulationField::Status,
                           pipe->open ? QStringLiteral("Open") : QStringLiteral("Closed"));
@@ -715,7 +715,7 @@ void EntityInspectorWidget::refreshSimulation()
         setSimulationText(SimulationField::Status,
                           pump->open ? QStringLiteral("Open") : QStringLiteral("Closed"));
         setSimulationText(SimulationField::PumpState, pumpStateText(pump->state));
-        setSimulationValue(SimulationField::Speed, pump->speed, 3, QStringLiteral(" ×"));
+        setSimulationValue(SimulationField::Speed, pump->speed_ratio, 3, QStringLiteral(" ×"));
         setSimulationValue(SimulationField::Efficiency, pump->efficiency_percent,
                            2, QStringLiteral(" %"));
         setSimulationValue(SimulationField::Power, pump->power_kw,
@@ -1562,9 +1562,9 @@ void EntityInspectorWidget::refreshHydraulicNodeElevation()
             return;
 
         input_type = reservoir->head_input_type;
-        value_m = reservoir->head_m;
+        value_m = reservoir->hydraulic_head_m;
         terrain_elevation_m = reservoir->terrain_elevation_m;
-        offset_m = reservoir->head_offset_m;
+        offset_m = reservoir->hydraulic_head_offset_m;
         head_pattern_mode = reservoir->head_pattern_mode;
         head_pattern_uuid = reservoir->head_pattern_uuid;
         break;

@@ -155,9 +155,9 @@ void EntityInspectorValve::bindValve()
     {
         this->hydraulic_data->setValveDiameterMm(this->valve_uuid, diameter_mm);
     });
-    connect(this->spin_loss_coeff, &QDoubleSpinBox::valueChanged, this, [this](double minor_loss)
+    connect(this->spin_loss_coeff, &QDoubleSpinBox::valueChanged, this, [this](double minor_loss_coefficient)
     {
-        this->hydraulic_data->setValveMinorLoss(this->valve_uuid, minor_loss);
+        this->hydraulic_data->setValveMinorLoss(this->valve_uuid, minor_loss_coefficient);
     });
 
     connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
@@ -199,7 +199,7 @@ void EntityInspectorValve::refreshValve()
         this->combo_status_initial->findData(static_cast<int>(valve->initial_status));
     this->combo_status_initial->setCurrentIndex(status_index >= 0 ? status_index : 0);
     this->spin_diameter->setValue(valve->diameter_mm);
-    this->spin_loss_coeff->setValue(valve->minor_loss);
+    this->spin_loss_coeff->setValue(valve->minor_loss_coefficient);
 }
 
 void EntityInspectorValve::populateSettingCurveCombo(const QUuid &curve_uuid)

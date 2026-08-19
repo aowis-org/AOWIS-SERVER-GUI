@@ -1187,7 +1187,7 @@ private:
         cells.append(numberCell(result->total_demand_m3_per_h, 3, QStringLiteral(" m³/h")));
         cells.append(numberCell(result->emitter_flow_m3_per_h, 3, QStringLiteral(" m³/h")));
         cells.append(numberCell(result->leakage_flow_m3_per_h, 3, QStringLiteral(" m³/h")));
-        cells.append(numberCell(result->head_m, 3, QStringLiteral(" m")));
+        cells.append(numberCell(result->hydraulic_head_m, 3, QStringLiteral(" m")));
         cells.append(numberCell(result->pressure_head_m, 3, QStringLiteral(" m")));
         cells.append(boolCell(result->appears_in_control));
     }
@@ -1223,9 +1223,9 @@ private:
             appendCommonCells(row.cells, reservoir.id, reservoir.metadata);
             appendNodePositionCells(row.cells, reservoir.coordinate_wgs84);
             row.cells.append(textCell(elevationInputText(reservoir.head_input_type)));
-            row.cells.append(numberCell(reservoir.head_m, 3, QStringLiteral(" m")));
+            row.cells.append(numberCell(reservoir.hydraulic_head_m, 3, QStringLiteral(" m")));
             row.cells.append(numberCell(reservoir.terrain_elevation_m, 3, QStringLiteral(" m")));
-            row.cells.append(numberCell(reservoir.head_offset_m, 3, QStringLiteral(" m")));
+            row.cells.append(numberCell(reservoir.hydraulic_head_offset_m, 3, QStringLiteral(" m")));
             row.cells.append(numberCell(resolvedSymbologyElevationM(reservoir), 3, QStringLiteral(" m")));
             row.cells.append(textCell(patternModeText(reservoir.head_pattern_mode)));
             row.cells.append(textCell(patternId(network, reservoir.head_pattern_uuid)));
@@ -1240,7 +1240,7 @@ private:
             else
             {
                 row.cells.append(numberCell(result->net_demand_m3_per_h, 3, QStringLiteral(" m³/h")));
-                row.cells.append(numberCell(result->head_m, 3, QStringLiteral(" m")));
+                row.cells.append(numberCell(result->hydraulic_head_m, 3, QStringLiteral(" m")));
                 row.cells.append(numberCell(result->pressure_head_m, 3, QStringLiteral(" m")));
                 row.cells.append(boolCell(result->appears_in_control));
             }
@@ -1316,7 +1316,7 @@ private:
             else
             {
                 row.cells.append(numberCell(result->net_demand_m3_per_h, 3, QStringLiteral(" m³/h")));
-                row.cells.append(numberCell(result->head_m, 3, QStringLiteral(" m")));
+                row.cells.append(numberCell(result->hydraulic_head_m, 3, QStringLiteral(" m")));
                 row.cells.append(numberCell(result->pressure_head_m, 3, QStringLiteral(" m")));
                 row.cells.append(numberCell(result->water_level_m, 3, QStringLiteral(" m")));
                 row.cells.append(numberCell(result->volume_m3, 3, QStringLiteral(" m³")));
@@ -1382,12 +1382,12 @@ private:
             row.cells.append(textCell(pipeInitialStatusText(pipe.initial_status)));
             row.cells.append(numberCell(pipe.diameter_mm, 3, QStringLiteral(" mm")));
             row.cells.append(textCell(pipe.material_id));
-            row.cells.append(numberCell(pipe.roughness_hw, 3));
-            row.cells.append(numberCell(pipe.roughness_dw_mm, 6, QStringLiteral(" mm")));
-            row.cells.append(numberCell(pipe.roughness_cm, 6));
-            row.cells.append(numberCell(pipe.minor_loss, 6));
+            row.cells.append(numberCell(pipe.roughness_hazen_williams, 3));
+            row.cells.append(numberCell(pipe.roughness_darcy_weisbach_mm, 6, QStringLiteral(" mm")));
+            row.cells.append(numberCell(pipe.roughness_chezy_manning, 6));
+            row.cells.append(numberCell(pipe.minor_loss_coefficient, 6));
             row.cells.append(numberCell(pipe.leak_area_mm2_per_100m, 6, QStringLiteral(" mm²/100m")));
-            row.cells.append(numberCell(pipe.leak_expansion_mm2_per_m_head, 6,
+            row.cells.append(numberCell(pipe.leak_area_expansion_per_pressure_head_mm2_per_m, 6,
                                         QStringLiteral(" mm²/m head")));
 
             const HydraulicSimulationResultLinkPipe *result =
@@ -1403,12 +1403,12 @@ private:
                 row.cells.append(numberCell(result->leakage_flow_m3_per_h, 3, QStringLiteral(" m³/h")));
                 row.cells.append(numberCell(result->velocity_m_per_s, 3, QStringLiteral(" m/s")));
                 row.cells.append(numberCell(result->head_loss_m, 3, QStringLiteral(" m")));
-                row.cells.append(numberCell(result->unit_head_loss_m_per_km, 3, QStringLiteral(" m/km")));
+                row.cells.append(numberCell(result->head_loss_gradient_m_per_km, 3, QStringLiteral(" m/km")));
                 row.cells.append(numberCell(result->friction_factor, 6));
                 row.cells.append(boolCell(result->open, QStringLiteral("Open"), QStringLiteral("Closed")));
-                row.cells.append(optionalNumberCell(result->roughness_hw, 3));
-                row.cells.append(optionalNumberCell(result->roughness_dw_mm, 6, QStringLiteral(" mm")));
-                row.cells.append(optionalNumberCell(result->roughness_cm, 6));
+                row.cells.append(optionalNumberCell(result->roughness_hazen_williams, 3));
+                row.cells.append(optionalNumberCell(result->roughness_darcy_weisbach_mm, 6, QStringLiteral(" mm")));
+                row.cells.append(optionalNumberCell(result->roughness_chezy_manning, 6));
                 row.cells.append(boolCell(result->appears_in_control));
             }
 
@@ -1485,7 +1485,7 @@ private:
             row.cells.append(textCell(pumpDefinitionText(pump.definition_type)));
             row.cells.append(numberCell(pump.constant_power_kw, 3, QStringLiteral(" kW")));
             row.cells.append(textCell(pumpHeadCurveId(network, pump.head_curve_uuid)));
-            row.cells.append(numberCell(pump.initial_speed, 4));
+            row.cells.append(numberCell(pump.initial_speed_ratio, 4));
             row.cells.append(textCell(pumpInitialStatusText(pump.initial_status)));
             row.cells.append(textCell(patternId(network, pump.speed_pattern_uuid)));
             row.cells.append(textCell(pumpControlTypeText(pump.control_type)));
@@ -1510,7 +1510,7 @@ private:
                 row.cells.append(numberCell(result->head_gain_m, 3, QStringLiteral(" m")));
                 row.cells.append(boolCell(result->open, QStringLiteral("Open"), QStringLiteral("Closed")));
                 row.cells.append(textCell(pumpStateText(result->state)));
-                row.cells.append(numberCell(result->speed, 4));
+                row.cells.append(numberCell(result->speed_ratio, 4));
                 row.cells.append(numberCell(result->efficiency_percent, 3, QStringLiteral(" %")));
                 row.cells.append(numberCell(result->power_kw, 3, QStringLiteral(" kW")));
                 row.cells.append(boolCell(result->appears_in_control));
@@ -1579,7 +1579,7 @@ private:
             row.cells.append(textCell(valveSettingCurveId(network, valve.type, valve.setting_curve_uuid)));
             row.cells.append(textCell(valveInitialStatusText(valve.initial_status)));
             row.cells.append(numberCell(valve.diameter_mm, 3, QStringLiteral(" mm")));
-            row.cells.append(numberCell(valve.minor_loss, 6));
+            row.cells.append(numberCell(valve.minor_loss_coefficient, 6));
 
             const HydraulicSimulationResultLinkValve *result =
                 result_lookup.value(valve.uuid, nullptr);

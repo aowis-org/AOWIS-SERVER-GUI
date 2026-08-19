@@ -242,7 +242,7 @@ void EntityInspectorPump::refreshPump()
     this->label_constant_power->setVisible(constant_power);
     this->spin_constant_power->setVisible(constant_power);
     this->spin_constant_power->setValue(pump->constant_power_kw);
-    this->spin_speed_initial->setValue(pump->initial_speed);
+    this->spin_speed_initial->setValue(pump->initial_speed_ratio);
 
     const int status_index = this->combo_status_initial->findData(
         static_cast<int>(pump->initial_status), value_role);

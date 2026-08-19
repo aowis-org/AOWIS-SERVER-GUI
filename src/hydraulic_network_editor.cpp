@@ -587,13 +587,13 @@ bool HydraulicNetworkEditor::setReservoirHeadInputType(
     return true;
 }
 
-bool HydraulicNetworkEditor::setReservoirHeadM(const QUuid &uuid, double head_m)
+bool HydraulicNetworkEditor::setReservoirHeadM(const QUuid &uuid, double hydraulic_head_m)
 {
     HydraulicNodeReservoir *reservoir = entityByUuid(this->network.nodes_reservoirs, uuid);
     if (reservoir == nullptr)
         return false;
 
-    reservoir->head_m = head_m;
+    reservoir->hydraulic_head_m = hydraulic_head_m;
     return true;
 }
 
@@ -608,13 +608,13 @@ bool HydraulicNetworkEditor::setReservoirTerrainElevationM(const QUuid &uuid,
     return true;
 }
 
-bool HydraulicNetworkEditor::setReservoirHeadOffsetM(const QUuid &uuid, double head_offset_m)
+bool HydraulicNetworkEditor::setReservoirHeadOffsetM(const QUuid &uuid, double hydraulic_head_offset_m)
 {
     HydraulicNodeReservoir *reservoir = entityByUuid(this->network.nodes_reservoirs, uuid);
     if (reservoir == nullptr)
         return false;
 
-    reservoir->head_offset_m = head_offset_m;
+    reservoir->hydraulic_head_offset_m = hydraulic_head_offset_m;
     return true;
 }
 
@@ -830,43 +830,43 @@ bool HydraulicNetworkEditor::setPipeMaterialId(const QUuid &uuid, const QString 
     return true;
 }
 
-bool HydraulicNetworkEditor::setPipeRoughnessHw(const QUuid &uuid, double roughness_hw)
+bool HydraulicNetworkEditor::setPipeRoughnessHw(const QUuid &uuid, double roughness_hazen_williams)
 {
     HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, uuid);
     if (pipe == nullptr)
         return false;
 
-    pipe->roughness_hw = roughness_hw;
+    pipe->roughness_hazen_williams = roughness_hazen_williams;
     return true;
 }
 
-bool HydraulicNetworkEditor::setPipeRoughnessDwMm(const QUuid &uuid, double roughness_dw_mm)
+bool HydraulicNetworkEditor::setPipeRoughnessDwMm(const QUuid &uuid, double roughness_darcy_weisbach_mm)
 {
     HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, uuid);
     if (pipe == nullptr)
         return false;
 
-    pipe->roughness_dw_mm = roughness_dw_mm;
+    pipe->roughness_darcy_weisbach_mm = roughness_darcy_weisbach_mm;
     return true;
 }
 
-bool HydraulicNetworkEditor::setPipeRoughnessCm(const QUuid &uuid, double roughness_cm)
+bool HydraulicNetworkEditor::setPipeRoughnessCm(const QUuid &uuid, double roughness_chezy_manning)
 {
     HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, uuid);
     if (pipe == nullptr)
         return false;
 
-    pipe->roughness_cm = roughness_cm;
+    pipe->roughness_chezy_manning = roughness_chezy_manning;
     return true;
 }
 
-bool HydraulicNetworkEditor::setPipeMinorLoss(const QUuid &uuid, double minor_loss)
+bool HydraulicNetworkEditor::setPipeMinorLoss(const QUuid &uuid, double minor_loss_coefficient)
 {
     HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, uuid);
     if (pipe == nullptr)
         return false;
 
-    pipe->minor_loss = minor_loss;
+    pipe->minor_loss_coefficient = minor_loss_coefficient;
     return true;
 }
 
@@ -891,13 +891,13 @@ bool HydraulicNetworkEditor::setPumpConstantPowerKw(const QUuid &uuid, double co
     return true;
 }
 
-bool HydraulicNetworkEditor::setPumpInitialSpeed(const QUuid &uuid, double initial_speed)
+bool HydraulicNetworkEditor::setPumpInitialSpeed(const QUuid &uuid, double initial_speed_ratio)
 {
     HydraulicLinkPump *pump = entityByUuid(this->network.links_pumps, uuid);
     if (pump == nullptr)
         return false;
 
-    pump->initial_speed = initial_speed;
+    pump->initial_speed_ratio = initial_speed_ratio;
     return true;
 }
 
@@ -1023,13 +1023,13 @@ bool HydraulicNetworkEditor::setValveDiameterMm(const QUuid &uuid, double diamet
     return true;
 }
 
-bool HydraulicNetworkEditor::setValveMinorLoss(const QUuid &uuid, double minor_loss)
+bool HydraulicNetworkEditor::setValveMinorLoss(const QUuid &uuid, double minor_loss_coefficient)
 {
     HydraulicLinkValve *valve = entityByUuid(this->network.links_valves, uuid);
     if (valve == nullptr)
         return false;
 
-    valve->minor_loss = minor_loss;
+    valve->minor_loss_coefficient = minor_loss_coefficient;
     return true;
 }
 

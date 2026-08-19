@@ -58,8 +58,8 @@ void HydraulicData::onDatabaseReady()
     loadProject();
     
     //this->network_hydraulic = DummyNetworks::networkSimple();
-    //this->network_hydraulic = DummyNetworks::networkTanks();
-    this->network_hydraulic = DummyMarburgNetworkGenerator::generate();
+    this->network_hydraulic = DummyNetworks::networkTanks();
+    //this->network_hydraulic = DummyMarburgNetworkGenerator::generate();
     //this->network_hydraulic = RandomHydraulicNetworkGenerator::generateFractal();
     rebuildBoundingBoxWgs84();
     markNetworkChanged(NetworkChange::Geometry);
@@ -506,15 +506,15 @@ void HydraulicData::rebuildSymbologyMinMaxValues()
                              this->link_length_m_minimum,
                              this->link_length_m_maximum,
                              link_length_m_initialized);
-        updateMinimumMaximum(pipe.roughness_hw,
+        updateMinimumMaximum(pipe.roughness_hazen_williams,
                              this->link_roughness_hw_minimum,
                              this->link_roughness_hw_maximum,
                              link_roughness_hw_initialized);
-        updateMinimumMaximum(pipe.roughness_dw_mm,
+        updateMinimumMaximum(pipe.roughness_darcy_weisbach_mm,
                              this->link_roughness_dw_mm_minimum,
                              this->link_roughness_dw_mm_maximum,
                              link_roughness_dw_mm_initialized);
-        updateMinimumMaximum(pipe.roughness_cm,
+        updateMinimumMaximum(pipe.roughness_chezy_manning,
                              this->link_roughness_cm_minimum,
                              this->link_roughness_cm_maximum,
                              link_roughness_cm_initialized);
@@ -2057,10 +2057,10 @@ bool HydraulicData::setReservoirHeadInputType(
         uuid, this->network_editor.setReservoirHeadInputType(uuid, input_type));
 }
 
-bool HydraulicData::setReservoirHeadM(const QUuid &uuid, double head_m)
+bool HydraulicData::setReservoirHeadM(const QUuid &uuid, double hydraulic_head_m)
 {
     return emitNodeChangedIfSuccessful(
-        uuid, this->network_editor.setReservoirHeadM(uuid, head_m));
+        uuid, this->network_editor.setReservoirHeadM(uuid, hydraulic_head_m));
 }
 
 bool HydraulicData::setReservoirTerrainElevationM(const QUuid &uuid,
@@ -2071,10 +2071,10 @@ bool HydraulicData::setReservoirTerrainElevationM(const QUuid &uuid,
                   uuid, terrain_elevation_m));
 }
 
-bool HydraulicData::setReservoirHeadOffsetM(const QUuid &uuid, double head_offset_m)
+bool HydraulicData::setReservoirHeadOffsetM(const QUuid &uuid, double hydraulic_head_offset_m)
 {
     return emitNodeChangedIfSuccessful(
-        uuid, this->network_editor.setReservoirHeadOffsetM(uuid, head_offset_m));
+        uuid, this->network_editor.setReservoirHeadOffsetM(uuid, hydraulic_head_offset_m));
 }
 
 bool HydraulicData::setReservoirHeadPatternMode(const QUuid &uuid, HydraulicTimePatternMode pattern_mode)
@@ -2203,28 +2203,28 @@ bool HydraulicData::setPipeMaterialId(const QUuid &uuid, const QString &material
         uuid, this->network_editor.setPipeMaterialId(uuid, material_id));
 }
 
-bool HydraulicData::setPipeRoughnessHw(const QUuid &uuid, double roughness_hw)
+bool HydraulicData::setPipeRoughnessHw(const QUuid &uuid, double roughness_hazen_williams)
 {
     return emitLinkChangedIfSuccessful(
-        uuid, this->network_editor.setPipeRoughnessHw(uuid, roughness_hw));
+        uuid, this->network_editor.setPipeRoughnessHw(uuid, roughness_hazen_williams));
 }
 
-bool HydraulicData::setPipeRoughnessDwMm(const QUuid &uuid, double roughness_dw_mm)
+bool HydraulicData::setPipeRoughnessDwMm(const QUuid &uuid, double roughness_darcy_weisbach_mm)
 {
     return emitLinkChangedIfSuccessful(
-        uuid, this->network_editor.setPipeRoughnessDwMm(uuid, roughness_dw_mm));
+        uuid, this->network_editor.setPipeRoughnessDwMm(uuid, roughness_darcy_weisbach_mm));
 }
 
-bool HydraulicData::setPipeRoughnessCm(const QUuid &uuid, double roughness_cm)
+bool HydraulicData::setPipeRoughnessCm(const QUuid &uuid, double roughness_chezy_manning)
 {
     return emitLinkChangedIfSuccessful(
-        uuid, this->network_editor.setPipeRoughnessCm(uuid, roughness_cm));
+        uuid, this->network_editor.setPipeRoughnessCm(uuid, roughness_chezy_manning));
 }
 
-bool HydraulicData::setPipeMinorLoss(const QUuid &uuid, double minor_loss)
+bool HydraulicData::setPipeMinorLoss(const QUuid &uuid, double minor_loss_coefficient)
 {
     return emitLinkChangedIfSuccessful(
-        uuid, this->network_editor.setPipeMinorLoss(uuid, minor_loss));
+        uuid, this->network_editor.setPipeMinorLoss(uuid, minor_loss_coefficient));
 }
 
 bool HydraulicData::setPumpDefinitionType(
@@ -2240,10 +2240,10 @@ bool HydraulicData::setPumpConstantPowerKw(const QUuid &uuid, double constant_po
         uuid, this->network_editor.setPumpConstantPowerKw(uuid, constant_power_kw));
 }
 
-bool HydraulicData::setPumpInitialSpeed(const QUuid &uuid, double initial_speed)
+bool HydraulicData::setPumpInitialSpeed(const QUuid &uuid, double initial_speed_ratio)
 {
     return emitLinkChangedIfSuccessful(
-        uuid, this->network_editor.setPumpInitialSpeed(uuid, initial_speed));
+        uuid, this->network_editor.setPumpInitialSpeed(uuid, initial_speed_ratio));
 }
 
 bool HydraulicData::setPumpInitialStatus(
@@ -2325,10 +2325,10 @@ bool HydraulicData::setValveDiameterMm(const QUuid &uuid, double diameter_mm)
         uuid, this->network_editor.setValveDiameterMm(uuid, diameter_mm));
 }
 
-bool HydraulicData::setValveMinorLoss(const QUuid &uuid, double minor_loss)
+bool HydraulicData::setValveMinorLoss(const QUuid &uuid, double minor_loss_coefficient)
 {
     return emitLinkChangedIfSuccessful(
-        uuid, this->network_editor.setValveMinorLoss(uuid, minor_loss));
+        uuid, this->network_editor.setValveMinorLoss(uuid, minor_loss_coefficient));
 }
 
 bool HydraulicData::setPipeVertexCoordinate(const QUuid &pipe_uuid, int vertex_index,

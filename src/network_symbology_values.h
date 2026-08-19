@@ -19,10 +19,10 @@ inline double resolvedSymbologyElevationM(const HydraulicNodeReservoir &reservoi
     if (reservoir.head_input_type ==
         HydraulicNodeElevationInputType::TerrainElevationAndOffset)
     {
-        return reservoir.terrain_elevation_m + reservoir.head_offset_m;
+        return reservoir.terrain_elevation_m + reservoir.hydraulic_head_offset_m;
     }
 
-    return reservoir.head_m;
+    return reservoir.hydraulic_head_m;
 }
 
 inline double resolvedSymbologyElevationM(const HydraulicNodeTank &tank)

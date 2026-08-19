@@ -301,9 +301,9 @@ public:
 
     bool setReservoirHeadInputType(const QUuid &uuid,
                                    HydraulicNodeElevationInputType input_type);
-    bool setReservoirHeadM(const QUuid &uuid, double head_m);
+    bool setReservoirHeadM(const QUuid &uuid, double hydraulic_head_m);
     bool setReservoirTerrainElevationM(const QUuid &uuid, double terrain_elevation_m);
-    bool setReservoirHeadOffsetM(const QUuid &uuid, double head_offset_m);
+    bool setReservoirHeadOffsetM(const QUuid &uuid, double hydraulic_head_offset_m);
     bool setReservoirHeadPatternMode(const QUuid &uuid, HydraulicTimePatternMode pattern_mode);
     bool setReservoirHeadPatternUuid(const QUuid &uuid, const QUuid &pattern_uuid);
 
@@ -329,15 +329,15 @@ public:
     bool setPipeDiameterMm(const QUuid &uuid, double diameter_mm);
     bool setPipeMeasuredLengthM(const QUuid &uuid, const std::optional<double> &length_measured_m);
     bool setPipeMaterialId(const QUuid &uuid, const QString &material_id);
-    bool setPipeRoughnessHw(const QUuid &uuid, double roughness_hw);
-    bool setPipeRoughnessDwMm(const QUuid &uuid, double roughness_dw_mm);
-    bool setPipeRoughnessCm(const QUuid &uuid, double roughness_cm);
-    bool setPipeMinorLoss(const QUuid &uuid, double minor_loss);
+    bool setPipeRoughnessHw(const QUuid &uuid, double roughness_hazen_williams);
+    bool setPipeRoughnessDwMm(const QUuid &uuid, double roughness_darcy_weisbach_mm);
+    bool setPipeRoughnessCm(const QUuid &uuid, double roughness_chezy_manning);
+    bool setPipeMinorLoss(const QUuid &uuid, double minor_loss_coefficient);
 
     bool setPumpDefinitionType(const QUuid &uuid,
                                HydraulicLinkPumpDefinitionType definition_type);
     bool setPumpConstantPowerKw(const QUuid &uuid, double constant_power_kw);
-    bool setPumpInitialSpeed(const QUuid &uuid, double initial_speed);
+    bool setPumpInitialSpeed(const QUuid &uuid, double initial_speed_ratio);
     bool setPumpInitialStatus(const QUuid &uuid,
                               HydraulicLinkPumpInitialStatus initial_status);
     bool setPumpSpeedPatternUuid(const QUuid &uuid, const QUuid &speed_pattern_uuid);
@@ -356,7 +356,7 @@ public:
     bool setValveInitialStatus(const QUuid &uuid,
                                HydraulicLinkValveInitialStatus initial_status);
     bool setValveDiameterMm(const QUuid &uuid, double diameter_mm);
-    bool setValveMinorLoss(const QUuid &uuid, double minor_loss);
+    bool setValveMinorLoss(const QUuid &uuid, double minor_loss_coefficient);
 
     bool setPipeVertexCoordinate(const QUuid &pipe_uuid, int vertex_index,
                                  const CoordinateWGS84 &coordinate);

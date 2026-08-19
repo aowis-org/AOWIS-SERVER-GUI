@@ -176,21 +176,21 @@ void EntityInspectorPipe::addGroupRoughness()
     {
         this->hydraulic_data->setPipeMaterialId(this->pipe_uuid, material_id);
     });
-    connect(this->spin_roughness_hw, &QDoubleSpinBox::valueChanged, this, [this](double roughness_hw)
+    connect(this->spin_roughness_hw, &QDoubleSpinBox::valueChanged, this, [this](double roughness_hazen_williams)
     {
-        this->hydraulic_data->setPipeRoughnessHw(this->pipe_uuid, roughness_hw);
+        this->hydraulic_data->setPipeRoughnessHw(this->pipe_uuid, roughness_hazen_williams);
     });
-    connect(this->spin_roughness_dw, &QDoubleSpinBox::valueChanged, this, [this](double roughness_dw_mm)
+    connect(this->spin_roughness_dw, &QDoubleSpinBox::valueChanged, this, [this](double roughness_darcy_weisbach_mm)
     {
-        this->hydraulic_data->setPipeRoughnessDwMm(this->pipe_uuid, roughness_dw_mm);
+        this->hydraulic_data->setPipeRoughnessDwMm(this->pipe_uuid, roughness_darcy_weisbach_mm);
     });
-    connect(this->spin_roughness_cm, &QDoubleSpinBox::valueChanged, this, [this](double roughness_cm)
+    connect(this->spin_roughness_cm, &QDoubleSpinBox::valueChanged, this, [this](double roughness_chezy_manning)
     {
-        this->hydraulic_data->setPipeRoughnessCm(this->pipe_uuid, roughness_cm);
+        this->hydraulic_data->setPipeRoughnessCm(this->pipe_uuid, roughness_chezy_manning);
     });
-    connect(this->spin_loss_coefficient, &QDoubleSpinBox::valueChanged, this, [this](double minor_loss)
+    connect(this->spin_loss_coefficient, &QDoubleSpinBox::valueChanged, this, [this](double minor_loss_coefficient)
     {
-        this->hydraulic_data->setPipeMinorLoss(this->pipe_uuid, minor_loss);
+        this->hydraulic_data->setPipeMinorLoss(this->pipe_uuid, minor_loss_coefficient);
     });
 
     layoutConfiguration()->addWidget(group);
@@ -230,10 +230,10 @@ void EntityInspectorPipe::refreshPipe()
         this->combo_material->addItem(pipe->material_id);
     this->combo_material->setCurrentText(pipe->material_id);
 
-    this->spin_roughness_hw->setValue(pipe->roughness_hw);
-    this->spin_roughness_dw->setValue(pipe->roughness_dw_mm);
-    this->spin_roughness_cm->setValue(pipe->roughness_cm);
-    this->spin_loss_coefficient->setValue(pipe->minor_loss);
+    this->spin_roughness_hw->setValue(pipe->roughness_hazen_williams);
+    this->spin_roughness_dw->setValue(pipe->roughness_darcy_weisbach_mm);
+    this->spin_roughness_cm->setValue(pipe->roughness_chezy_manning);
+    this->spin_loss_coefficient->setValue(pipe->minor_loss_coefficient);
 }
 
 void EntityInspectorPipe::addGroupQuality()
