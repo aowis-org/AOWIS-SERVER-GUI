@@ -345,7 +345,10 @@ QByteArray BrowserNetworkSnapshotSerializer::serializeSymbology(
     root.insert(QStringLiteral("heatmapMaximum"), ranges.heatmap_maximum);
     root.insert(QStringLiteral("heatmapValues"), nodeValuesToJson(snapshot, heatmap_values));
     root.insert(QStringLiteral("heatmapOpacity"), bounded_settings.heatmap_opacity);
+    root.insert(QStringLiteral("heatmapRadiusUnit"),
+                static_cast<int>(bounded_settings.heatmap_radius_unit));
     root.insert(QStringLiteral("heatmapRadiusMeters"), bounded_settings.heatmap_radius_m);
+    root.insert(QStringLiteral("heatmapRadiusPixels"), bounded_settings.heatmap_radius_px);
     root.insert(QStringLiteral("heatmapSolidCenterPercent"),
                 bounded_settings.heatmap_solid_center_percent);
     return QJsonDocument(root).toJson(QJsonDocument::Compact);

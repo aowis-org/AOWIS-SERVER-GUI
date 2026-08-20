@@ -180,7 +180,9 @@
         heatmapMaximum: 0,
         heatmapValues: new Map(),
         heatmapOpacity: 75,
+        heatmapRadiusUnit: 0,
         heatmapRadiusMeters: 400,
+        heatmapRadiusPixels: 50,
         heatmapSolidCenterPercent: 70
     };
 
@@ -1393,7 +1395,7 @@
     }
 
     function heatmapWebGlPixelRatio(mapView) {
-        const cssRadius = Math.max(1, heatmapRadiusWorldPixels() * scaleForZoom(mapView.zoom));
+        const cssRadius = heatmapRadiusCssPixels(scaleForZoom(mapView.zoom));
         const nodeCount = Math.max(1, heatmapWebGlNodeCount());
         const viewportArea = Math.max(1, mapView.width * mapView.height);
         const circleArea = Math.PI * cssRadius * cssRadius;
@@ -1421,7 +1423,7 @@
         const locations = state.heatmapGlLocations;
         const canvas = state.heatmapCanvas;
         const transform = worldTransform(mapView);
-        const radius = Math.max(1, heatmapRadiusWorldPixels() * transform.scale);
+        const radius = heatmapRadiusCssPixels(transform.scale);
         const stride = 7 * Float32Array.BYTES_PER_ELEMENT;
 
         gl.viewport(0, 0, canvas.width, canvas.height);
@@ -1496,11 +1498,18 @@
                 / (state.heatmapMaximum - state.heatmapMinimum)));
     }
 
-    function heatmapRadiusWorldPixels() {
+    function heatmapRadiusCssPixels(scale) {
+        if (state.heatmapRadiusUnit === 1)
+            return Math.max(1, state.heatmapRadiusPixels);
+
         const centerY = (state.geometryMinimumY + state.geometryMaximumY) / 2;
         const centerLatitude = worldPixelToLatitude(centerY);
         const metersPerPixel = Math.max(0.000001, metersPerReferencePixel(centerLatitude));
-        return Math.max(1, state.heatmapRadiusMeters / metersPerPixel);
+        return Math.max(1, state.heatmapRadiusMeters / metersPerPixel) * scale;
+    }
+
+    function heatmapRadiusWorldPixels(scale) {
+        return heatmapRadiusCssPixels(scale) / Math.max(0.000001, scale);
     }
 
     function heatmapKernelRadius(radius) {
@@ -1578,9 +1587,9 @@
         if (!context)
             return null;
 
-        const radiusWorldPixels = heatmapRadiusWorldPixels();
-        const radius = Math.max(
-            1, radiusWorldPixels * specification.scale * specification.rasterScale);
+        const radiusCssPixels = heatmapRadiusCssPixels(specification.scale);
+        const radiusWorldPixels = heatmapRadiusWorldPixels(specification.scale);
+        const radius = Math.max(1, radiusCssPixels * specification.rasterScale);
         const colorBucketCount = heatmapColorBucketCount(radius);
         const queryPadding = radiusWorldPixels;
         const queryBounds = expandedBounds(specification.bounds, queryPadding);
@@ -2402,8 +2411,11 @@
         const heatmapValues = symbologyValues(symbology.heatmapValues);
         const heatmapOpacity = Math.max(
             0, Math.min(100, Number(symbology.heatmapOpacity) || 0));
+        const heatmapRadiusUnit = Number(symbology.heatmapRadiusUnit) === 1 ? 1 : 0;
         const heatmapRadiusMeters = Math.max(
             10, Math.min(1000, Number(symbology.heatmapRadiusMeters) || 400));
+        const heatmapRadiusPixels = Math.max(
+            5, Math.min(250, Number(symbology.heatmapRadiusPixels) || 50));
         const heatmapSolidCenterPercent = Math.max(0, Math.min(100,
             Number(symbology.heatmapSolidCenterPercent) || 0));
 
@@ -2426,7 +2438,9 @@
         const heatmapChanged = state.heatmapVisual !== heatmapVisual
             || state.heatmapMinimum !== heatmapMinimum
             || state.heatmapMaximum !== heatmapMaximum
+            || state.heatmapRadiusUnit !== heatmapRadiusUnit
             || state.heatmapRadiusMeters !== heatmapRadiusMeters
+            || state.heatmapRadiusPixels !== heatmapRadiusPixels
             || state.heatmapSolidCenterPercent !== heatmapSolidCenterPercent
             || !symbologyValuesEqual(state.heatmapValues, heatmapValues);
         const heatmapOpacityChanged = state.heatmapOpacity !== heatmapOpacity;
@@ -2455,7 +2469,9 @@
         state.heatmapMaximum = heatmapMaximum;
         state.heatmapValues = heatmapValues;
         state.heatmapOpacity = heatmapOpacity;
+        state.heatmapRadiusUnit = heatmapRadiusUnit;
         state.heatmapRadiusMeters = heatmapRadiusMeters;
+        state.heatmapRadiusPixels = heatmapRadiusPixels;
         state.heatmapSolidCenterPercent = heatmapSolidCenterPercent;
 
         if (networkColorChanged)
@@ -2567,7 +2583,9 @@
         state.heatmapMaximum = 0;
         state.heatmapValues = new Map();
         state.heatmapOpacity = 75;
+        state.heatmapRadiusUnit = 0;
         state.heatmapRadiusMeters = 400;
+        state.heatmapRadiusPixels = 50;
         state.heatmapSolidCenterPercent = 70;
         state.heatmapGlVertexCount = 0;
         state.heatmapGlNodeCount = 0;

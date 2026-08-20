@@ -5,6 +5,12 @@
 
 #include "_enums_structs.h"
 
+enum class HeatmapRadiusUnit
+{
+    Meters,
+    Pixels
+};
+
 struct NetworkSymbologySettings
 {
     VisualNode visual_node = VisualNode::None;
@@ -15,7 +21,9 @@ struct NetworkSymbologySettings
     bool show_flow_direction = true;
     VisualHeatmap visual_heatmap = VisualHeatmap::None;
     int heatmap_opacity = 75;
+    HeatmapRadiusUnit heatmap_radius_unit = HeatmapRadiusUnit::Meters;
     int heatmap_radius_m = 400;
+    int heatmap_radius_px = 50;
     int heatmap_solid_center_percent = 70;
 
     NetworkSymbologySettings bounded() const
@@ -26,6 +34,7 @@ struct NetworkSymbologySettings
         result.link_thickness_px = qBound(1, this->link_thickness_px, 12);
         result.heatmap_opacity = qBound(0, this->heatmap_opacity, 100);
         result.heatmap_radius_m = qBound(10, this->heatmap_radius_m, 1000);
+        result.heatmap_radius_px = qBound(5, this->heatmap_radius_px, 250);
         result.heatmap_solid_center_percent =
             qBound(0, this->heatmap_solid_center_percent, 100);
         return result;

@@ -828,7 +828,9 @@ void MapNetworkOverlayWidget::setSymbology(
     const bool heatmap_opacity_changed =
         this->symbology_settings.heatmap_opacity != bounded_settings.heatmap_opacity;
     const bool heatmap_radius_changed =
-        this->symbology_settings.heatmap_radius_m != bounded_settings.heatmap_radius_m;
+        this->symbology_settings.heatmap_radius_unit != bounded_settings.heatmap_radius_unit ||
+        this->symbology_settings.heatmap_radius_m != bounded_settings.heatmap_radius_m ||
+        this->symbology_settings.heatmap_radius_px != bounded_settings.heatmap_radius_px;
     const bool heatmap_solid_center_changed =
         this->symbology_settings.heatmap_solid_center_percent !=
         bounded_settings.heatmap_solid_center_percent;
@@ -1311,7 +1313,9 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
         symbology->icon_size_percent = this->symbology_settings.icon_size_percent;
         symbology->link_width = qreal(this->symbology_settings.link_thickness_px);
         symbology->show_flow_direction = this->symbology_settings.show_flow_direction;
+        symbology->heatmap_radius_unit = this->symbology_settings.heatmap_radius_unit;
         symbology->heatmap_radius_m = this->symbology_settings.heatmap_radius_m;
+        symbology->heatmap_radius_px = this->symbology_settings.heatmap_radius_px;
         symbology->heatmap_solid_center_percent =
             this->symbology_settings.heatmap_solid_center_percent;
         this->render_symbology = symbology;
@@ -1395,7 +1399,9 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
                 }
             }
         }
+        symbology->heatmap_radius_unit = settings.heatmap_radius_unit;
         symbology->heatmap_radius_m = settings.heatmap_radius_m;
+        symbology->heatmap_radius_px = settings.heatmap_radius_px;
         symbology->heatmap_solid_center_percent = settings.heatmap_solid_center_percent;
 
         symbology->node_colors.reserve(snapshot_copy.nodes.size());
@@ -1620,9 +1626,16 @@ MapNetworkOverlayWidget::RenderRequest MapNetworkOverlayWidget::createRenderRequ
         qMax(markerSizeForZoom(request.zoom, request.symbology->node_size_percent) / 2.0,
              markerSizeForZoom(request.zoom, request.symbology->icon_size_percent) / 2.0),
         request.symbology->link_width / 2.0);
-    const qreal heatmap_padding = request.symbology->heatmap_fractions.isEmpty()
-        ? 0.0 : heatmapRadiusReferencePixels(
-            this->render_geometry->world_bounds, request.symbology->heatmap_radius_m) + NetworkImagePadding / scale;
+    qreal heatmap_padding = 0.0;
+    if (!request.symbology->heatmap_fractions.isEmpty())
+    {
+        const qreal heatmap_radius_world_pixels =
+            request.symbology->heatmap_radius_unit == HeatmapRadiusUnit::Pixels
+                ? qreal(request.symbology->heatmap_radius_px) / scale
+                : heatmapRadiusReferencePixels(
+                    this->render_geometry->world_bounds, request.symbology->heatmap_radius_m);
+        heatmap_padding = heatmap_radius_world_pixels + NetworkImagePadding / scale;
+    }
     const qreal geometry_padding = qMax(
         (render_half_width + NetworkImagePadding) / scale, heatmap_padding);
     const QRectF padded_geometry_bounds = this->render_geometry->world_bounds.adjusted(
@@ -1660,9 +1673,11 @@ QImage MapNetworkOverlayWidget::renderHeatmap(const RenderRequest &request, qrea
     if (!raster.size.isValid() || raster.scale <= 0.0)
         return QImage();
 
-    const qreal radius_reference_pixels = heatmapRadiusReferencePixels(
-        request.geometry->world_bounds, request.symbology->heatmap_radius_m);
-    const qreal radius = qMax<qreal>(1.0, radius_reference_pixels * scale * raster.scale);
+    const qreal radius = request.symbology->heatmap_radius_unit == HeatmapRadiusUnit::Pixels
+        ? qMax<qreal>(1.0, qreal(request.symbology->heatmap_radius_px) * raster.scale)
+        : qMax<qreal>(1.0, heatmapRadiusReferencePixels(
+            request.geometry->world_bounds, request.symbology->heatmap_radius_m)
+            * scale * raster.scale);
     const int color_bucket_count = heatmapColorBucketCount(radius);
     const qreal display_diameter = qMax<qreal>(3.0, qCeil(radius * 2.0) + 2.0);
     const qreal display_half = display_diameter / 2.0;

@@ -18,6 +18,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMouseEvent>
+#include <QSignalBlocker>
 
 #include <cmath>
 #include <functional>
@@ -39,6 +40,18 @@ public:
         {
             updateToolTip();
         });
+        updateToolTip();
+    }
+
+    void setConfiguration(int value_minimum, int value_maximum, int value_default,
+                          int value, const QString &description, const QString &unit_suffix)
+    {
+        const QSignalBlocker blocker(this);
+        this->value_default = value_default;
+        this->description = description;
+        this->unit_suffix = unit_suffix;
+        setRange(value_minimum, value_maximum);
+        setValue(value);
         updateToolTip();
     }
 
@@ -391,9 +404,19 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         this->symbology_settings.heatmap_opacity = opacity;
         applySymbology();
     });
-    connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapRadiusChanged, this, [this](int radius)
+    connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapRadiusUnitChanged, this,
+        [this](HeatmapRadiusUnit unit)
     {
-        this->symbology_settings.heatmap_radius_m = radius;
+        this->symbology_settings.heatmap_radius_unit = unit;
+        applySymbology();
+    });
+    connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapRadiusChanged, this,
+        [this](HeatmapRadiusUnit unit, int radius)
+    {
+        if (unit == HeatmapRadiusUnit::Pixels)
+            this->symbology_settings.heatmap_radius_px = radius;
+        else
+            this->symbology_settings.heatmap_radius_m = radius;
         applySymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapSolidCenterChanged, this, [this](int percent)
@@ -808,7 +831,7 @@ MapMonitorMenuWidget::MapMonitorMenuWidget(MapWidget *map, QWidget *parent)
     
     this->layout->addWidget(this->map_nav);
     
-    addGroupVisualSizes();
+    addGroupVisualSettings();
     addGroupNodeVisuals();
     addGroupLinkVisuals();
     addGroupHeatmapVisuals();
@@ -821,9 +844,9 @@ MapNavigationWidget *MapMonitorMenuWidget::mapNavigationWidget()
     return this->map_nav;
 }
 
-void MapMonitorMenuWidget::addGroupVisualSizes()
+void MapMonitorMenuWidget::addGroupVisualSettings()
 {
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Visual Sizes", this);
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Visual Settings", this);
     this->layout->addWidget(group);
 
     QVBoxLayout *vbox = new QVBoxLayout();
@@ -841,11 +864,59 @@ void MapMonitorMenuWidget::addGroupVisualSizes()
         QStringLiteral("Sets the rendered link width and keeps link hit detection aligned with it."), QStringLiteral(" px"), this);
     connect(slider_link_thickness, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalLinkThicknessChanged);
 
+    QCheckBox *check_flow_direction = new QCheckBox("Show Flow Direction");
+    check_flow_direction->setChecked(true);
+    check_flow_direction->setToolTip(
+        QStringLiteral("Shows the direction of the signed simulated link flow for the current timestep."));
+    connect(check_flow_direction, &QCheckBox::toggled,
+            this, &MapMonitorMenuWidget::signalFlowDirectionChanged);
+
     QLabel *label_heatmap_section = new QLabel("<b>Heatmap</b>");
-    QLabel *label_heatmap_radius = new QLabel("Radius [m]");
-    QSlider *slider_heatmap_radius = new SymbologySlider(10, 1000, 400,
-        QStringLiteral("Sets each heatmap point's geographic influence radius. It remains consistent across zoom levels."), QStringLiteral(" m"), this);
-    connect(slider_heatmap_radius, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalHeatmapRadiusChanged);
+    QLabel *label_heatmap_radius = new QLabel("Radius");
+    QComboBox *combo_heatmap_radius_unit = new QComboBox(this);
+    combo_heatmap_radius_unit->addItem(QStringLiteral("m"),
+        static_cast<int>(HeatmapRadiusUnit::Meters));
+    combo_heatmap_radius_unit->addItem(QStringLiteral("px"),
+        static_cast<int>(HeatmapRadiusUnit::Pixels));
+    combo_heatmap_radius_unit->setToolTip(QStringLiteral(
+        "Meters keep the heatmap radius geographic as the map zoom changes. "
+        "Pixels keep a constant on-screen radius."));
+
+    SymbologySlider *slider_heatmap_radius = new SymbologySlider(10, 1000, 400,
+        QStringLiteral("Sets each heatmap point's geographic influence radius. It remains consistent in meters across zoom levels."),
+        QStringLiteral(" m"), this);
+    connect(slider_heatmap_radius, &QSlider::valueChanged, this,
+        [this](int radius)
+    {
+        if (this->heatmap_radius_unit == HeatmapRadiusUnit::Pixels)
+            this->heatmap_radius_px = radius;
+        else
+            this->heatmap_radius_m = radius;
+        emit signalHeatmapRadiusChanged(this->heatmap_radius_unit, radius);
+    });
+    connect(combo_heatmap_radius_unit, &QComboBox::currentIndexChanged, this,
+        [this, combo_heatmap_radius_unit, slider_heatmap_radius](int index)
+    {
+        const HeatmapRadiusUnit unit = static_cast<HeatmapRadiusUnit>(
+            combo_heatmap_radius_unit->itemData(index).toInt());
+        if (unit == this->heatmap_radius_unit)
+            return;
+
+        this->heatmap_radius_unit = unit;
+        if (unit == HeatmapRadiusUnit::Pixels)
+        {
+            slider_heatmap_radius->setConfiguration(5, 250, 50, this->heatmap_radius_px,
+                QStringLiteral("Sets each heatmap point's on-screen influence radius. It remains constant in pixels across zoom levels."),
+                QStringLiteral(" px"));
+        }
+        else
+        {
+            slider_heatmap_radius->setConfiguration(10, 1000, 400, this->heatmap_radius_m,
+                QStringLiteral("Sets each heatmap point's geographic influence radius. It remains consistent in meters across zoom levels."),
+                QStringLiteral(" m"));
+        }
+        emit signalHeatmapRadiusUnitChanged(unit);
+    });
 
     QLabel *label_heatmap_solid_center = new QLabel("Solid Center [%]");
     QSlider *slider_heatmap_solid_center = new SymbologySlider(0, 100, 70,
@@ -864,9 +935,14 @@ void MapMonitorMenuWidget::addGroupVisualSizes()
     vbox->addWidget(label_link_section);
     vbox->addWidget(label_link_thickness);
     vbox->addWidget(slider_link_thickness);
+    vbox->addWidget(check_flow_direction);
     vbox->addSpacing(4);
     vbox->addWidget(label_heatmap_section);
-    vbox->addWidget(label_heatmap_radius);
+    QHBoxLayout *heatmap_radius_header = new QHBoxLayout();
+    heatmap_radius_header->addWidget(label_heatmap_radius);
+    heatmap_radius_header->addStretch();
+    heatmap_radius_header->addWidget(combo_heatmap_radius_unit);
+    vbox->addLayout(heatmap_radius_header);
     vbox->addWidget(slider_heatmap_radius);
     vbox->addWidget(label_heatmap_solid_center);
     vbox->addWidget(slider_heatmap_solid_center);
@@ -958,13 +1034,6 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     QVBoxLayout *vbox = new QVBoxLayout();
     group->setLayout(vbox);
     
-    QCheckBox *check_flow_direction = new QCheckBox("Show Flow Direction");
-    check_flow_direction->setChecked(true);
-    check_flow_direction->setToolTip(
-        QStringLiteral("Shows the direction of the signed simulated link flow for the current timestep."));
-    connect(check_flow_direction, &QCheckBox::toggled,
-            this, &MapMonitorMenuWidget::signalFlowDirectionChanged);
-    
     QRadioButton *radio_link_none = new QRadioButton("None");
     radio_link_none->setChecked(true);
     QRadioButton *radio_link_diameter = new QRadioButton("Diameter");
@@ -999,8 +1068,6 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     connect_link_visual(radio_link_chlorine, VisualLink::Chlorine);
     connect_link_visual(radio_link_river, VisualLink::RiverWater);
     connect_link_visual(radio_link_lake, VisualLink::LakeWater);
-    
-    vbox->addWidget(check_flow_direction);
     
     vbox->addWidget(radio_link_none);
     vbox->addWidget(radio_link_diameter);

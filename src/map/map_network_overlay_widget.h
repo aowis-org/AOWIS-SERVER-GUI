@@ -124,7 +124,9 @@ private:
         qreal link_width = 3.0;
         bool show_flow_direction = true;
         QHash<quint32, qint8> flow_directions;
+        HeatmapRadiusUnit heatmap_radius_unit = HeatmapRadiusUnit::Meters;
         int heatmap_radius_m = 400;
+        int heatmap_radius_px = 50;
         int heatmap_solid_center_percent = 70;
         QHash<quint32, QRgb> node_colors;
         QHash<quint32, QRgb> link_colors;

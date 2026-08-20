@@ -22,6 +22,7 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QSlider>
 #include <QLabel>
 
@@ -60,7 +61,10 @@ private:
     MapWidget *map;
     
     MapNavigationWidget *map_nav;
-    void addGroupVisualSizes();
+    HeatmapRadiusUnit heatmap_radius_unit = HeatmapRadiusUnit::Meters;
+    int heatmap_radius_m = 400;
+    int heatmap_radius_px = 50;
+    void addGroupVisualSettings();
     void addGroupNodeVisuals();
     void addGroupLinkVisuals();
     void addGroupHeatmapVisuals();
@@ -76,7 +80,8 @@ signals:
     void signalFlowDirectionChanged(bool visible);
     void signalHeatmapVisualClicked(VisualHeatmap visual_heatmap);
     void signalHeatmapOpacityChanged(int opacity);
-    void signalHeatmapRadiusChanged(int radius);
+    void signalHeatmapRadiusUnitChanged(HeatmapRadiusUnit unit);
+    void signalHeatmapRadiusChanged(HeatmapRadiusUnit unit, int radius);
     void signalHeatmapSolidCenterChanged(int percent);
 };
 
