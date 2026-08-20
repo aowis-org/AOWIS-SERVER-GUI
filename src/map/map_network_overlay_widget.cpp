@@ -44,6 +44,12 @@ namespace
 constexpr qreal NetworkImagePadding = 8.0;
 constexpr qreal LinkHitDistance = 7.0;
 constexpr qreal SpatialCellSize = 128.0;
+constexpr qreal FlowDirectionMinimumLinkPixels = 18.0;
+constexpr qreal FlowDirectionSpacingPixels = 100.0;
+constexpr qreal FlowDirectionChevronLengthPixels = 10.0;
+constexpr qreal FlowDirectionChevronHalfWidthPixels = 4.0;
+constexpr qreal FlowDirectionStrokeWidthPixels = 2.0;
+constexpr int FlowDirectionMaximumMarkersPerLink = 32;
 constexpr int SymbologyColorBucketCount = 256;
 constexpr int HeatmapMaximumDimension = 2048;
 constexpr qint64 HeatmapMaximumArea = 2LL * 1024LL * 1024LL;
@@ -106,6 +112,15 @@ NetworkPreparationWorkers &networkPreparationWorkers()
 quint64 entityRenderKey(InfrastructureEntity entity_type, quint32 render_id)
 {
     return (quint64(quint32(int(entity_type))) << 32) | quint64(render_id);
+}
+
+QRgb flowDirectionColor(QRgb link_color)
+{
+    const int red = qRed(link_color);
+    const int green = qGreen(link_color);
+    const int blue = qBlue(link_color);
+    const double luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+    return luminance >= 150.0 ? qRgb(0, 0, 0) : qRgb(255, 255, 255);
 }
 
 bool isFiniteCoordinate(const CoordinateWGS84 &coordinate)
@@ -637,6 +652,8 @@ MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicD
     connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged,
         this, [this](bool)
     {
+        if (this->symbology_settings.show_flow_direction)
+            requestSymbologyPreparation(true);
         update();
     });
     connect(this->hydraulic_data, &HydraulicData::signalWaterQualitySimulationResultTimelineChanged,
@@ -656,15 +673,18 @@ MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicD
     connect(this->hydraulic_data, &HydraulicData::signalCurrentSimulationResultChanged,
         this, [this](int)
     {
-        if (this->symbology_settings.visual_node != VisualNode::WaterAge
-            && this->symbology_settings.visual_link != VisualLink::WaterAge
-            && this->symbology_settings.visual_heatmap != VisualHeatmap::WaterAge)
-        {
+        const bool water_age_active =
+            this->symbology_settings.visual_node == VisualNode::WaterAge
+            || this->symbology_settings.visual_link == VisualLink::WaterAge
+            || this->symbology_settings.visual_heatmap == VisualHeatmap::WaterAge;
+        if (!this->symbology_settings.show_flow_direction && !water_age_active)
             return;
-        }
 
-        this->symbology_ranges =
-            this->hydraulic_data->symbologyRanges(this->symbology_settings);
+        if (water_age_active)
+        {
+            this->symbology_ranges =
+                this->hydraulic_data->symbologyRanges(this->symbology_settings);
+        }
         requestSymbologyPreparation(true);
     });
     connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, this,
@@ -803,6 +823,8 @@ void MapNetworkOverlayWidget::setSymbology(
         this->symbology_settings.icon_size_percent != bounded_settings.icon_size_percent;
     const bool link_thickness_changed =
         this->symbology_settings.link_thickness_px != bounded_settings.link_thickness_px;
+    const bool flow_direction_changed =
+        this->symbology_settings.show_flow_direction != bounded_settings.show_flow_direction;
     const bool heatmap_opacity_changed =
         this->symbology_settings.heatmap_opacity != bounded_settings.heatmap_opacity;
     const bool heatmap_radius_changed =
@@ -821,7 +843,7 @@ void MapNetworkOverlayWidget::setSymbology(
         this->symbology_ranges.heatmap_maximum != ranges.heatmap_maximum;
 
     const bool values_changed = node_visual_changed || link_visual_changed ||
-        heatmap_visual_changed ||
+        heatmap_visual_changed || flow_direction_changed ||
         (bounded_settings.visual_node != VisualNode::None && node_range_changed) ||
         (bounded_settings.visual_link != VisualLink::None && link_range_changed) ||
         (bounded_settings.visual_heatmap != VisualHeatmap::None && heatmap_range_changed);
@@ -1271,7 +1293,9 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
     const bool values_current = this->render_symbology &&
         this->render_symbology->visual_node == this->symbology_settings.visual_node &&
         this->render_symbology->visual_link == this->symbology_settings.visual_link &&
-        this->render_symbology->visual_heatmap == this->symbology_settings.visual_heatmap;
+        this->render_symbology->visual_heatmap == this->symbology_settings.visual_heatmap &&
+        this->render_symbology->show_flow_direction ==
+            this->symbology_settings.show_flow_direction;
 
     if (!force_values && values_current && this->active_symbology_prepare_request_id == 0)
     {
@@ -1286,6 +1310,7 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
         symbology->node_size_percent = this->symbology_settings.node_size_percent;
         symbology->icon_size_percent = this->symbology_settings.icon_size_percent;
         symbology->link_width = qreal(this->symbology_settings.link_thickness_px);
+        symbology->show_flow_direction = this->symbology_settings.show_flow_direction;
         symbology->heatmap_radius_m = this->symbology_settings.heatmap_radius_m;
         symbology->heatmap_solid_center_percent =
             this->symbology_settings.heatmap_solid_center_percent;
@@ -1309,6 +1334,14 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
     const NetworkHydraulic network_copy = this->hydraulic_data->networkHydraulic();
     const NetworkSymbologySettings settings = this->symbology_settings;
     const NetworkSymbologyRanges ranges = this->symbology_ranges;
+    QHash<QUuid, qint8> flow_directions_by_uuid;
+    if (settings.show_flow_direction)
+    {
+        const HydraulicSimulationResult *hydraulic_result =
+            this->hydraulic_data->currentSimulationResult();
+        if (hydraulic_result != nullptr)
+            flow_directions_by_uuid = hydraulicLinkFlowDirections(*hydraulic_result);
+    }
     QHash<QUuid, double> water_age_node_values;
     QHash<QUuid, double> water_age_link_values;
     const std::optional<WaterQualitySimulationResultTimeline> &quality_timeline =
@@ -1333,7 +1366,7 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
 
     QRunnable *runnable = QRunnable::create([widget, request_id, geometry_revision,
         symbology_revision, snapshot_copy, network_copy, settings, ranges,
-        water_age_node_values, water_age_link_values, cancelled]
+        flow_directions_by_uuid, water_age_node_values, water_age_link_values, cancelled]
     {
         if (cancelled->load(std::memory_order_relaxed))
             return;
@@ -1346,6 +1379,22 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
         symbology->node_size_percent = settings.node_size_percent;
         symbology->icon_size_percent = settings.icon_size_percent;
         symbology->link_width = qreal(settings.link_thickness_px);
+        symbology->show_flow_direction = settings.show_flow_direction;
+        if (settings.show_flow_direction)
+        {
+            symbology->flow_directions.reserve(snapshot_copy.links.size());
+            for (const NetworkRenderLink &link : snapshot_copy.links)
+            {
+                const QHash<QUuid, qint8>::const_iterator direction_iterator =
+                    flow_directions_by_uuid.constFind(link.uuid);
+                if (direction_iterator != flow_directions_by_uuid.cend()
+                    && direction_iterator.value() != 0)
+                {
+                    symbology->flow_directions.insert(
+                        link.render_id, direction_iterator.value());
+                }
+            }
+        }
         symbology->heatmap_radius_m = settings.heatmap_radius_m;
         symbology->heatmap_solid_center_percent = settings.heatmap_solid_center_percent;
 
@@ -1447,7 +1496,8 @@ void MapNetworkOverlayWidget::applyPreparedSymbology(
         geometry_revision != this->geometry_revision || !symbology ||
         symbology->visual_node != this->symbology_settings.visual_node ||
         symbology->visual_link != this->symbology_settings.visual_link ||
-        symbology->visual_heatmap != this->symbology_settings.visual_heatmap)
+        symbology->visual_heatmap != this->symbology_settings.visual_heatmap ||
+        symbology->show_flow_direction != this->symbology_settings.show_flow_direction)
     {
         return;
     }
@@ -1828,9 +1878,18 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
     {
         std::vector<int> segment_indices;
         std::vector<int> marker_indices;
+        std::vector<int> flow_direction_arrow_indices;
+    };
+
+    struct FlowDirectionArrow
+    {
+        QPointF center;
+        QPointF direction;
+        QRgb color = qRgb(255, 255, 255);
     };
 
     std::vector<BandContent> band_contents(bands.size());
+    std::vector<FlowDirectionArrow> flow_direction_arrows;
     const int band_count = int(bands.size());
     const qreal link_padding = request.symbology->link_width / 2.0 + NetworkImagePadding;
     const std::function<int(qreal)> band_for_logical_y =
@@ -1870,6 +1929,99 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
         const int last_band = band_for_logical_y(maximum_y);
         for (int band_index = first_band; band_index <= last_band; ++band_index)
             band_contents[band_index].segment_indices.push_back(segment_index);
+    }
+
+    if (request.symbology->show_flow_direction
+        && !request.symbology->flow_directions.isEmpty())
+    {
+        for (QHash<quint64, QList<int>>::const_iterator entity_iterator =
+                 request.geometry->segment_indices_by_entity.cbegin();
+             entity_iterator != request.geometry->segment_indices_by_entity.cend();
+             ++entity_iterator)
+        {
+            const QList<int> &segment_indices = entity_iterator.value();
+            if (segment_indices.isEmpty())
+                continue;
+
+            const RenderGeometry::Segment &first_segment =
+                request.geometry->link_segments.at(segment_indices.constFirst());
+            const qint8 flow_direction =
+                request.symbology->flow_directions.value(first_segment.render_id, 0);
+            if (flow_direction == 0)
+                continue;
+
+            qreal total_world_length = 0.0;
+            for (int segment_index : segment_indices)
+                total_world_length += request.geometry->link_segments.at(segment_index).line.length();
+
+            const qreal total_screen_length = total_world_length * scale;
+            if (total_screen_length < FlowDirectionMinimumLinkPixels || total_world_length <= 0.0)
+                continue;
+
+            const int marker_count = qBound(
+                1, int(std::floor(total_screen_length / FlowDirectionSpacingPixels)),
+                FlowDirectionMaximumMarkersPerLink);
+            for (int marker_index = 0; marker_index < marker_count; ++marker_index)
+            {
+                qreal target_world_distance = total_world_length
+                    * qreal(marker_index + 1) / qreal(marker_count + 1);
+                if (marker_count == 1 && first_segment.entity_type != InfrastructureEntity::Pipe)
+                    target_world_distance = total_world_length * 0.3;
+
+                qreal traversed_world_distance = 0.0;
+                for (int segment_index : segment_indices)
+                {
+                    const QLineF &line = request.geometry->link_segments.at(segment_index).line;
+                    const qreal segment_world_length = line.length();
+                    if (segment_world_length <= 0.0)
+                        continue;
+                    if (traversed_world_distance + segment_world_length < target_world_distance)
+                    {
+                        traversed_world_distance += segment_world_length;
+                        continue;
+                    }
+
+                    const qreal ratio = qBound<qreal>(0.0,
+                        (target_world_distance - traversed_world_distance) / segment_world_length, 1.0);
+                    const QPointF world_center(
+                        line.x1() + (line.x2() - line.x1()) * ratio,
+                        line.y1() + (line.y2() - line.y1()) * ratio);
+                    QPointF direction(
+                        (line.x2() - line.x1()) / segment_world_length,
+                        (line.y2() - line.y1()) / segment_world_length);
+                    if (flow_direction < 0)
+                        direction *= -1.0;
+
+                    FlowDirectionArrow arrow;
+                    arrow.center = QPointF(
+                        (world_center.x() - image_left) * scale,
+                        (world_center.y() - image_top) * scale);
+                    arrow.direction = direction;
+                    arrow.color = flowDirectionColor(request.symbology->link_colors.value(
+                        first_segment.render_id, NetworkColor.rgb()));
+
+                    const qreal arrow_padding = FlowDirectionChevronLengthPixels;
+                    if (arrow.center.x() + arrow_padding >= 0.0
+                        && arrow.center.x() - arrow_padding <= logical_width
+                        && arrow.center.y() + arrow_padding >= 0.0
+                        && arrow.center.y() - arrow_padding <= logical_height)
+                    {
+                        const int arrow_index = int(flow_direction_arrows.size());
+                        flow_direction_arrows.push_back(arrow);
+                        const int first_band = band_for_logical_y(
+                            arrow.center.y() - arrow_padding);
+                        const int last_band = band_for_logical_y(
+                            arrow.center.y() + arrow_padding);
+                        for (int band_index = first_band; band_index <= last_band; ++band_index)
+                        {
+                            band_contents[band_index].flow_direction_arrow_indices.push_back(
+                                arrow_index);
+                        }
+                    }
+                    break;
+                }
+            }
+        }
     }
 
     for (int marker_index = 0; marker_index < request.geometry->markers.size(); ++marker_index)
@@ -1919,7 +2071,7 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
 
     result.image = MapRetainedVectorRenderer::renderHorizontalBands(
         request.logical_size, request.device_pixel_ratio, bands, request.cancelled,
-        [&request, &band_contents, scale, image_left, image_top](
+        [&request, &band_contents, &flow_direction_arrows, scale, image_left, image_top](
             int band_index,
             const MapRetainedVectorRenderer::HorizontalBand &band,
             MapVectorDocument &document) -> bool
@@ -1929,6 +2081,7 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
 
             const BandContent &content = band_contents.at(band_index);
             QHash<QRgb, QPainterPath> link_paths;
+            QHash<QRgb, QPainterPath> flow_direction_paths;
             QHash<QRgb, QPainterPath> junction_paths;
             QHash<quint64, QPainterPath> icon_stroke_paths;
             QHash<QRgb, QPainterPath> icon_fill_paths;
@@ -1955,6 +2108,26 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
                 link_path.lineTo(QPointF(
                     (segment.x2() - image_left) * scale,
                     (segment.y2() - image_top) * scale - band.logical_top));
+            }
+
+            for (int arrow_index : content.flow_direction_arrow_indices)
+            {
+                if (arrow_index < 0 || arrow_index >= int(flow_direction_arrows.size()))
+                    continue;
+
+                const FlowDirectionArrow &arrow = flow_direction_arrows.at(arrow_index);
+                const QPointF center(arrow.center.x(), arrow.center.y() - band.logical_top);
+                const QPointF direction = arrow.direction;
+                const QPointF normal(-direction.y(), direction.x());
+                const QPointF tip = center + direction * (FlowDirectionChevronLengthPixels / 2.0);
+                const QPointF base = center - direction * (FlowDirectionChevronLengthPixels / 2.0);
+                const QPointF tail_first = base + normal * FlowDirectionChevronHalfWidthPixels;
+                const QPointF tail_second = base - normal * FlowDirectionChevronHalfWidthPixels;
+                QPainterPath &path = flow_direction_paths[arrow.color];
+                path.moveTo(tail_first);
+                path.lineTo(tip);
+                path.moveTo(tail_second);
+                path.lineTo(tip);
             }
 
             const qreal junction_radius = junctionDotDiameterForZoom(
@@ -2005,6 +2178,15 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
             {
                 QPen pen(QColor::fromRgb(iterator.key()));
                 pen.setWidthF(request.symbology->link_width);
+                pen.setCapStyle(Qt::RoundCap);
+                pen.setJoinStyle(Qt::RoundJoin);
+                document.addStroke(std::move(iterator.value()), pen);
+            }
+            for (QHash<QRgb, QPainterPath>::iterator iterator = flow_direction_paths.begin();
+                 iterator != flow_direction_paths.end(); ++iterator)
+            {
+                QPen pen(QColor::fromRgb(iterator.key()));
+                pen.setWidthF(FlowDirectionStrokeWidthPixels);
                 pen.setCapStyle(Qt::RoundCap);
                 pen.setJoinStyle(Qt::RoundJoin);
                 document.addStroke(std::move(iterator.value()), pen);

@@ -42,6 +42,11 @@
     const HEATMAP_MAX_COLOR_BUCKETS = 64;
     const MAX_SPATIAL_QUERY_CELLS = 4096;
     const LINK_HIT_DISTANCE = 7;
+    const FLOW_DIRECTION_MIN_LINK_PIXELS = 18;
+    const FLOW_DIRECTION_SPACING_PIXELS = 100;
+    const FLOW_DIRECTION_MAX_MARKERS_PER_LINK = 32;
+    const FLOW_DIRECTION_CHEVRON_LENGTH_PIXELS = 10;
+    const FLOW_DIRECTION_CHEVRON_WIDTH_PIXELS = 2;
     const SPATIAL_CELL_SIZE = 128;
     const ENTITY_JUNCTION = SHARED_RENDERER.ENTITY_JUNCTION;
     const ENTITY_RESERVOIR = SHARED_RENDERER.ENTITY_RESERVOIR;
@@ -88,10 +93,15 @@
         networkRendererColorRevision: 0,
         networkRendererIconRevision: 0,
         networkRendererOverlayRevision: 0,
+        networkRendererFlowDirectionRevision: 0,
+        networkRendererFlowDirectionGeometryRevision: 0,
+        networkRendererFlowDirectionColorRevision: 0,
+        networkRendererFlowDirectionZoom: null,
         networkIconRevision: 1,
         networkWebGlUnavailable: false,
         networkColorRevision: 1,
         networkOverlayRevision: 1,
+        networkFlowDirectionRevision: 1,
         selectedRenderId: 0,
         selectedEntityType: 0,
         errorEntities: [],
@@ -109,6 +119,7 @@
         geometryReady: false,
         lastMapView: null,
         markers: [],
+        projectedLinks: [],
         deviceSegments: [],
         pipeSegments: [],
         globalDeviceSegments: [],
@@ -139,6 +150,9 @@
         linkMaximum: 0,
         linkValues: new Map(),
         linkColors: new Map(),
+        showFlowDirection: true,
+        flowDirections: new Map(),
+        flowDirectionArrowRenderIds: [],
         heatmapCanvas: null,
         heatmapMode: null,
         heatmapGl: null,
@@ -380,6 +394,13 @@
         return state.linkColors.get(renderId) || SYMBOLOGY_VALUE_UNAVAILABLE_COLOR;
     }
 
+    function flowDirectionColor(renderId) {
+        const components = webGlColorComponents(linkColor(renderId));
+        const luminance = 0.2126 * components[0]
+            + 0.7152 * components[1] + 0.0722 * components[2];
+        return luminance >= 0.59 ? "#000000" : "#ffffff";
+    }
+
     function markerColor(marker) {
         if (marker.entityType === ENTITY_JUNCTION || marker.entityType === ENTITY_RESERVOIR
             || marker.entityType === ENTITY_TANK) {
@@ -529,6 +550,86 @@
         });
     }
 
+    function buildNetworkRendererFlowDirectionGeometry(mapView) {
+        const arrows = [];
+        const arrowRenderIds = [];
+        if (state.showFlowDirection && state.flowDirections.size > 0 && mapView) {
+            const transform = worldTransform(mapView);
+            for (const link of state.projectedLinks) {
+                const flowDirection = state.flowDirections.get(link.renderId) || 0;
+                if (flowDirection === 0 || link.vertices.length < 2)
+                    continue;
+
+                const segmentLengths = [];
+                let totalWorldLength = 0;
+                for (let index = 1; index < link.vertices.length; ++index) {
+                    const start = link.vertices[index - 1];
+                    const end = link.vertices[index];
+                    const deltaX = end.x - start.x;
+                    const deltaY = end.y - start.y;
+                    const length = Math.hypot(deltaX, deltaY);
+                    segmentLengths.push(length);
+                    totalWorldLength += length;
+                }
+
+                const totalScreenLength = totalWorldLength * transform.scale;
+                if (totalWorldLength <= 0 || totalScreenLength < FLOW_DIRECTION_MIN_LINK_PIXELS)
+                    continue;
+
+                const markerCount = Math.max(1, Math.min(
+                    FLOW_DIRECTION_MAX_MARKERS_PER_LINK,
+                    Math.floor(totalScreenLength / FLOW_DIRECTION_SPACING_PIXELS)));
+                for (let markerIndex = 0; markerIndex < markerCount; ++markerIndex) {
+                    let targetDistance = totalWorldLength
+                        * (markerIndex + 1) / (markerCount + 1);
+                    if (markerCount === 1 && link.entityType !== ENTITY_PIPE)
+                        targetDistance = totalWorldLength * 0.3;
+
+                    let traversed = 0;
+                    for (let segmentIndex = 0; segmentIndex < segmentLengths.length; ++segmentIndex) {
+                        const segmentLength = segmentLengths[segmentIndex];
+                        if (segmentLength <= 0)
+                            continue;
+                        if (traversed + segmentLength < targetDistance) {
+                            traversed += segmentLength;
+                            continue;
+                        }
+
+                        const start = link.vertices[segmentIndex];
+                        const end = link.vertices[segmentIndex + 1];
+                        const ratio = Math.max(0, Math.min(1,
+                            (targetDistance - traversed) / segmentLength));
+                        const centerX = start.x + (end.x - start.x) * ratio;
+                        const centerY = start.y + (end.y - start.y) * ratio;
+                        const directionSign = flowDirection < 0 ? -1 : 1;
+                        arrows.push(
+                            centerX - state.geometryOriginX,
+                            centerY - state.geometryOriginY,
+                            (end.x - start.x) / segmentLength * directionSign,
+                            (end.y - start.y) / segmentLength * directionSign);
+                        arrowRenderIds.push(link.renderId);
+                        break;
+                    }
+                }
+            }
+        }
+
+        state.flowDirectionArrowRenderIds = arrowRenderIds;
+        state.networkRenderer.setGeometry("flowDirection", {
+            arrows: new Float32Array(arrows)
+        });
+    }
+
+    function buildNetworkRendererFlowDirectionColors() {
+        const colors = new Float32Array(state.flowDirectionArrowRenderIds.length * 4);
+        let offset = 0;
+        for (const renderId of state.flowDirectionArrowRenderIds) {
+            writeWebGlColor(colors, offset, flowDirectionColor(renderId));
+            offset += 4;
+        }
+        state.networkRenderer.setColors("flowDirection", { arrows: colors });
+    }
+
     function appendNetworkEntityOverlay(
         renderId, entityType, color, segments, segmentColors, discs, discColors, sprites, spriteColors) {
         if (renderId === 0 || entityType === 0)
@@ -655,6 +756,10 @@
         state.networkRendererColorRevision = 0;
         state.networkRendererIconRevision = 0;
         state.networkRendererOverlayRevision = 0;
+        state.networkRendererFlowDirectionRevision = 0;
+        state.networkRendererFlowDirectionGeometryRevision = 0;
+        state.networkRendererFlowDirectionColorRevision = 0;
+        state.networkRendererFlowDirectionZoom = null;
     }
 
     function ensureNetworkRenderer() {
@@ -685,10 +790,14 @@
         state.networkRendererColorRevision = 0;
         state.networkRendererIconRevision = 0;
         state.networkRendererOverlayRevision = 0;
+        state.networkRendererFlowDirectionRevision = 0;
+        state.networkRendererFlowDirectionGeometryRevision = 0;
+        state.networkRendererFlowDirectionColorRevision = 0;
+        state.networkRendererFlowDirectionZoom = null;
         return true;
     }
 
-    function synchronizeNetworkRenderer() {
+    function synchronizeNetworkRenderer(mapView) {
         if (state.networkRendererGeometryRevision !== state.networkGeometryRevision) {
             buildNetworkRendererGeometry();
             state.networkRendererGeometryRevision = state.networkGeometryRevision;
@@ -697,6 +806,21 @@
         if (state.networkRendererColorRevision !== state.networkColorRevision) {
             buildNetworkRendererColors();
             state.networkRendererColorRevision = state.networkColorRevision;
+        }
+        const flowDirectionGeometryChanged =
+            state.networkRendererFlowDirectionRevision !== state.networkFlowDirectionRevision
+            || state.networkRendererFlowDirectionGeometryRevision !== state.networkGeometryRevision
+            || state.networkRendererFlowDirectionZoom !== mapView.zoom;
+        if (flowDirectionGeometryChanged) {
+            buildNetworkRendererFlowDirectionGeometry(mapView);
+            state.networkRendererFlowDirectionRevision = state.networkFlowDirectionRevision;
+            state.networkRendererFlowDirectionGeometryRevision = state.networkGeometryRevision;
+            state.networkRendererFlowDirectionZoom = mapView.zoom;
+            state.networkRendererFlowDirectionColorRevision = 0;
+        }
+        if (state.networkRendererFlowDirectionColorRevision !== state.networkColorRevision) {
+            buildNetworkRendererFlowDirectionColors();
+            state.networkRendererFlowDirectionColorRevision = state.networkColorRevision;
         }
         if (state.networkRendererIconRevision !== state.networkIconRevision) {
             buildNetworkRendererIconAtlas();
@@ -720,7 +844,7 @@
             return;
 
         try {
-            synchronizeNetworkRenderer();
+            synchronizeNetworkRenderer(mapView);
             const transform = worldTransform(mapView);
             const rendered = state.networkRenderer.render({
                 width: mapView.width,
@@ -735,6 +859,10 @@
                         segmentWidth: state.linkThicknessPixels,
                         discScale: junctionDotDiameterForZoom(mapView.zoom) / 2,
                         spriteScale: iconMarkerSizeForZoom(mapView.zoom)
+                    },
+                    flowDirection: {
+                        arrowLength: FLOW_DIRECTION_CHEVRON_LENGTH_PIXELS,
+                        arrowWidth: FLOW_DIRECTION_CHEVRON_WIDTH_PIXELS
                     },
                     selectionOuter: {
                         segmentWidth: Math.max(7, state.linkThicknessPixels + 6),
@@ -1757,6 +1885,7 @@
         let maximumY = Number.NEGATIVE_INFINITY;
 
         state.markers = [];
+        state.projectedLinks = [];
         state.deviceSegments = [];
         state.pipeSegments = [];
         state.entityMarkers.clear();
@@ -1830,6 +1959,7 @@
                 entityType: Number(link[1]),
                 vertices: vertices
             };
+            state.projectedLinks.push(projectedLink);
             const segmentCollection = projectedLink.entityType === ENTITY_PIPE
                 ? state.pipeSegments : state.deviceSegments;
             for (let index = 1; index < vertices.length; ++index) {
@@ -2264,6 +2394,8 @@
         const linkMinimum = Number(symbology.linkMinimum);
         const linkMaximum = Number(symbology.linkMaximum);
         const linkValues = symbologyValues(symbology.linkValues);
+        const showFlowDirection = !!symbology.showFlowDirection;
+        const flowDirections = symbologyValues(symbology.flowDirections);
         const heatmapVisual = Number(symbology.heatmapVisual) | 0;
         const heatmapMinimum = Number(symbology.heatmapMinimum);
         const heatmapMaximum = Number(symbology.heatmapMaximum);
@@ -2283,6 +2415,8 @@
             || state.linkMinimum !== linkMinimum
             || state.linkMaximum !== linkMaximum
             || !symbologyValuesEqual(state.linkValues, linkValues);
+        const flowDirectionChanged = state.showFlowDirection !== showFlowDirection
+            || !symbologyValuesEqual(state.flowDirections, flowDirections);
         const networkColorChanged = nodeSymbologyChanged
             || linkSymbologyChanged;
         const networkChanged = networkColorChanged
@@ -2312,6 +2446,10 @@
         state.linkValues = linkValues;
         if (linkSymbologyChanged)
             state.linkColors = buildSymbologyColorMap(linkVisual, linkValues, linkMinimum, linkMaximum);
+        state.showFlowDirection = showFlowDirection;
+        state.flowDirections = flowDirections;
+        if (flowDirectionChanged)
+            ++state.networkFlowDirectionRevision;
         state.heatmapVisual = heatmapVisual;
         state.heatmapMinimum = heatmapMinimum;
         state.heatmapMaximum = heatmapMaximum;
@@ -2322,7 +2460,7 @@
 
         if (networkColorChanged)
             invalidateNetworkColors();
-        else if (networkChanged)
+        else if (networkChanged || flowDirectionChanged)
             scheduleNetworkRender();
         if (heatmapChanged)
             clearHeatmap();
@@ -2405,6 +2543,7 @@
         state.geometryReady = false;
         state.lastMapView = null;
         state.markers = [];
+        state.projectedLinks = [];
         state.deviceSegments = [];
         state.pipeSegments = [];
         state.globalDeviceSegments = [];

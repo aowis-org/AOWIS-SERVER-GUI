@@ -179,6 +179,24 @@ QHash<QUuid, double> heatmapValues(const NetworkHydraulic &network_hydraulic,
     return QHash<QUuid, double>();
 }
 
+QJsonArray flowDirectionsToJson(const NetworkRenderSnapshot &snapshot,
+                                const QHash<QUuid, qint8> &directions)
+{
+    QJsonArray result;
+    for (const NetworkRenderLink &link : snapshot.links)
+    {
+        const QHash<QUuid, qint8>::const_iterator iterator = directions.constFind(link.uuid);
+        if (iterator == directions.cend() || iterator.value() == 0)
+            continue;
+
+        QJsonArray entry;
+        entry.append(static_cast<double>(link.render_id));
+        entry.append(static_cast<int>(iterator.value()));
+        result.append(entry);
+    }
+    return result;
+}
+
 QJsonArray nodeValuesToJson(const NetworkRenderSnapshot &snapshot,
                             const QHash<QUuid, double> &values)
 {
@@ -299,6 +317,15 @@ QByteArray BrowserNetworkSnapshotSerializer::serializeSymbology(
             ? water_age_node_values
             : heatmapValues(network_hydraulic, bounded_settings.visual_heatmap);
 
+    QHash<QUuid, qint8> flow_directions;
+    if (bounded_settings.show_flow_direction)
+    {
+        const HydraulicSimulationResult *hydraulic_result =
+            hydraulic_data.currentSimulationResult();
+        if (hydraulic_result != nullptr)
+            flow_directions = hydraulicLinkFlowDirections(*hydraulic_result);
+    }
+
     QJsonObject root;
     root.insert(QStringLiteral("nodeVisual"), static_cast<int>(bounded_settings.visual_node));
     root.insert(QStringLiteral("nodeSizePercent"), bounded_settings.node_size_percent);
@@ -311,6 +338,8 @@ QByteArray BrowserNetworkSnapshotSerializer::serializeSymbology(
     root.insert(QStringLiteral("linkMinimum"), ranges.link_minimum);
     root.insert(QStringLiteral("linkMaximum"), ranges.link_maximum);
     root.insert(QStringLiteral("linkValues"), linkValuesToJson(snapshot, link_values));
+    root.insert(QStringLiteral("showFlowDirection"), bounded_settings.show_flow_direction);
+    root.insert(QStringLiteral("flowDirections"), flowDirectionsToJson(snapshot, flow_directions));
     root.insert(QStringLiteral("heatmapVisual"), static_cast<int>(bounded_settings.visual_heatmap));
     root.insert(QStringLiteral("heatmapMinimum"), ranges.heatmap_minimum);
     root.insert(QStringLiteral("heatmapMaximum"), ranges.heatmap_maximum);

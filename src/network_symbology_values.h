@@ -1,10 +1,14 @@
 #ifndef NETWORK_SYMBOLOGY_VALUES_H
 #define NETWORK_SYMBOLOGY_VALUES_H
 
+#include <cmath>
+
 #include <QHash>
+#include <QtGlobal>
 #include <QUuid>
 
 #include <aowis/model/hydraulic/network_hydraulic.h>
+#include <aowis/model/hydraulic/hydraulic_simulation_results.h>
 #include <aowis/model/hydraulic/water_quality_simulation_results.h>
 
 inline double resolvedSymbologyElevationM(const HydraulicNodeJunction &junction)
@@ -38,6 +42,47 @@ inline double resolvedSymbologyElevationM(const HydraulicNodeTank &tank)
     }
 
     return tank.bottom_elevation_m;
+}
+
+inline qint8 hydraulicFlowDirection(double flow_m3_per_h)
+{
+    constexpr double FlowDirectionEpsilonM3PerH = 1e-9;
+    if (!std::isfinite(flow_m3_per_h) ||
+        std::abs(flow_m3_per_h) <= FlowDirectionEpsilonM3PerH)
+    {
+        return 0;
+    }
+
+    return flow_m3_per_h > 0.0 ? qint8(1) : qint8(-1);
+}
+
+inline QHash<QUuid, qint8> hydraulicLinkFlowDirections(
+    const HydraulicSimulationResult &result)
+{
+    QHash<QUuid, qint8> directions;
+    directions.reserve(result.links_pipes.size() + result.links_pumps.size()
+                       + result.links_valves.size());
+
+    for (const HydraulicSimulationResultLinkPipe &pipe : result.links_pipes)
+    {
+        const qint8 direction = hydraulicFlowDirection(pipe.flow_m3_per_h);
+        if (direction != 0)
+            directions.insert(pipe.uuid, direction);
+    }
+    for (const HydraulicSimulationResultLinkPump &pump : result.links_pumps)
+    {
+        const qint8 direction = hydraulicFlowDirection(pump.flow_m3_per_h);
+        if (direction != 0)
+            directions.insert(pump.uuid, direction);
+    }
+    for (const HydraulicSimulationResultLinkValve &valve : result.links_valves)
+    {
+        const qint8 direction = hydraulicFlowDirection(valve.flow_m3_per_h);
+        if (direction != 0)
+            directions.insert(valve.uuid, direction);
+    }
+
+    return directions;
 }
 
 inline QHash<QUuid, double> waterAgeNodeSymbologyValues(

@@ -122,6 +122,8 @@ private:
         int node_size_percent = 100;
         int icon_size_percent = 100;
         qreal link_width = 3.0;
+        bool show_flow_direction = true;
+        QHash<quint32, qint8> flow_directions;
         int heatmap_radius_m = 400;
         int heatmap_solid_center_percent = 70;
         QHash<quint32, QRgb> node_colors;

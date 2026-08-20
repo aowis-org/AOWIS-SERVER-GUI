@@ -289,6 +289,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         [this](bool)
     {
         syncWasmSimulationErrorEntities();
+        if (this->symbology_settings.show_flow_direction)
+            scheduleWasmNetworkSymbologySync();
     });
     connect(this->hydraulic_data, &HydraulicData::signalWaterQualitySimulationResultTimelineChanged,
         this, [this](bool)
@@ -303,7 +305,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     connect(this->hydraulic_data, &HydraulicData::signalCurrentSimulationResultChanged,
         this, [this](int)
     {
-        if (this->symbology_settings.visual_node == VisualNode::WaterAge
+        if (this->symbology_settings.show_flow_direction
+            || this->symbology_settings.visual_node == VisualNode::WaterAge
             || this->symbology_settings.visual_link == VisualLink::WaterAge
             || this->symbology_settings.visual_heatmap == VisualHeatmap::WaterAge)
         {
@@ -370,6 +373,11 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     connect(this->map_menu, &MapMonitorMenuWidget::signalLinkThicknessChanged, this, [this](int thickness_px)
     {
         this->symbology_settings.link_thickness_px = thickness_px;
+        applySymbology();
+    });
+    connect(this->map_menu, &MapMonitorMenuWidget::signalFlowDirectionChanged, this, [this](bool visible)
+    {
+        this->symbology_settings.show_flow_direction = visible;
         applySymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapVisualClicked, this, [this](VisualHeatmap visual_heatmap)
@@ -952,6 +960,10 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     
     QCheckBox *check_flow_direction = new QCheckBox("Show Flow Direction");
     check_flow_direction->setChecked(true);
+    check_flow_direction->setToolTip(
+        QStringLiteral("Shows the direction of the signed simulated link flow for the current timestep."));
+    connect(check_flow_direction, &QCheckBox::toggled,
+            this, &MapMonitorMenuWidget::signalFlowDirectionChanged);
     
     QRadioButton *radio_link_none = new QRadioButton("None");
     radio_link_none->setChecked(true);

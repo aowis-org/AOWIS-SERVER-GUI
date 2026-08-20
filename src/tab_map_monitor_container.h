@@ -73,6 +73,7 @@ signals:
     void signalNodeSizeChanged(int size_percent);
     void signalLinkVisualClicked(VisualLink visual_link);
     void signalLinkThicknessChanged(int thickness_px);
+    void signalFlowDirectionChanged(bool visible);
     void signalHeatmapVisualClicked(VisualHeatmap visual_heatmap);
     void signalHeatmapOpacityChanged(int opacity);
     void signalHeatmapRadiusChanged(int radius);

@@ -12,6 +12,7 @@ struct NetworkSymbologySettings
     int icon_size_percent = 100;
     VisualLink visual_link = VisualLink::None;
     int link_thickness_px = 3;
+    bool show_flow_direction = true;
     VisualHeatmap visual_heatmap = VisualHeatmap::None;
     int heatmap_opacity = 75;
     int heatmap_radius_m = 400;
