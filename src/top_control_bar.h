@@ -25,6 +25,8 @@ public:
     void setSimulationResultsAvailable(bool available);
     void resetSimulationRunIcon();
     void setSimulationRunRunningIcon();
+    void setSimulationRunStoppingIcon();
+    void setSimulationRunCancelledIcon();
     void setSimulationRunResultIcon(const HydraulicSimulationResultTimeline &result_timeline);
     void setSimulationResultTimeline(const HydraulicSimulationResultTimeline &result_timeline);
     void clearSimulationResultTimeline();

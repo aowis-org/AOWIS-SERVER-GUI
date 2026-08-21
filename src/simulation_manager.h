@@ -11,6 +11,9 @@
 #include <QThread>
 #include <QVBoxLayout>
 
+#include <atomic>
+#include <memory>
+
 #include <aowis/model/hydraulic/network_hydraulic.h>
 #include <aowis/model/hydraulic/hydraulic_simulation_results.h>
 #include <aowis/model/hydraulic/hydraulic_simulation_status.h>
@@ -26,7 +29,9 @@ public:
     explicit SimulationManager(HydraulicData *hydraulic_data, QObject *parent = nullptr);
     ~SimulationManager() override;
     
+    void runOrStop();
     void run();
+    void stop();
     void showSimulationStatistics();
     void showSimulationDiagnostics();
     void showEpanetLog();
@@ -39,6 +44,7 @@ private:
     QPointer<QDialog> dialog_simulation_diagnostics = nullptr;
     QPointer<QDialog> dialog_epanet_log = nullptr;
     QPointer<QThread> simulation_thread = nullptr;
+    std::shared_ptr<std::atomic_bool> simulation_cancellation_flag;
     bool simulation_running = false;
     QPointer<QTextBrowser> widget_epanet_log = nullptr;
 
@@ -46,6 +52,8 @@ private:
 
 signals:
     void signalSimulationStarted();
+    void signalSimulationStopRequested();
+    void signalSimulationFinished(bool cancelled);
     void signalEpanetLogAvailabilityChanged(bool available);
 };
 

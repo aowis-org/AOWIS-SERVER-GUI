@@ -296,8 +296,14 @@ MainWindow::MainWindow(QWidget *parent)
     });
     
     connect(this->top_control_bar, &TopControlBar::signalHeadlossFormulaChanged, this->dock_entity_inspector, &EntityInspectorDock::onHeadlossFormulaChanged);
-    connect(this->top_control_bar, &TopControlBar::signalSimulationStart, this->simulation_manager, &SimulationManager::run);
+    connect(this->top_control_bar, &TopControlBar::signalSimulationStart, this->simulation_manager, &SimulationManager::runOrStop);
     connect(this->simulation_manager, &SimulationManager::signalSimulationStarted, this->top_control_bar, &TopControlBar::setSimulationRunRunningIcon);
+    connect(this->simulation_manager, &SimulationManager::signalSimulationStopRequested, this->top_control_bar, &TopControlBar::setSimulationRunStoppingIcon);
+    connect(this->simulation_manager, &SimulationManager::signalSimulationFinished, this, [this](bool cancelled)
+    {
+        if (cancelled)
+            this->top_control_bar->setSimulationRunCancelledIcon();
+    });
     connect(this->top_control_bar, &TopControlBar::signalShowSimulationStatistics, this->simulation_manager, &SimulationManager::showSimulationStatistics);
     connect(this->top_control_bar, &TopControlBar::signalShowEpanetLog, this->simulation_manager, &SimulationManager::showEpanetLog);
     connect(this->top_control_bar, &TopControlBar::signalExportEpanetNetwork, this->simulation_manager, &SimulationManager::exportEpanetNetwork);

@@ -268,7 +268,27 @@ void TopControlBar::setSimulationRunRunningIcon()
 
     this->button_sim_start->setIcon(QIcon(QStringLiteral(":/icon/simulation_stop.png")));
     this->button_sim_start->setToolTip(
-        QStringLiteral("Simulation running...<br>[Ctrl]+[R]<br>[Shift]+[Enter]"));
+        QStringLiteral("Stop Simulation<br>Simulation running...<br>[Ctrl]+[R]<br>[Shift]+[Enter]"));
+}
+
+void TopControlBar::setSimulationRunStoppingIcon()
+{
+    if (this->button_sim_start == nullptr)
+        return;
+
+    this->button_sim_start->setIcon(QIcon(QStringLiteral(":/icon/simulation_stop.png")));
+    this->button_sim_start->setToolTip(
+        QStringLiteral("Stopping Simulation...<br>The current EPANET solver step will finish before cancellation."));
+}
+
+void TopControlBar::setSimulationRunCancelledIcon()
+{
+    if (this->button_sim_start == nullptr)
+        return;
+
+    this->button_sim_start->setIcon(QIcon(QStringLiteral(":/icon/simulation_start.png")));
+    this->button_sim_start->setToolTip(
+        QStringLiteral("Run Configured Simulations<br>[Ctrl]+[R]<br>[Shift]+[Enter]<br><br>Last run: Cancelled"));
 }
 
 void TopControlBar::setSimulationRunResultIcon(const HydraulicSimulationResultTimeline &result_timeline)

@@ -93,10 +93,33 @@ SimulationManager::SimulationManager(HydraulicData *hydraulic_data, QObject *par
 
 SimulationManager::~SimulationManager()
 {
+    if (this->simulation_cancellation_flag)
+        this->simulation_cancellation_flag->store(true);
+
 #ifndef Q_OS_WASM
     if (this->simulation_thread && this->simulation_thread->isRunning())
         this->simulation_thread->wait();
 #endif
+}
+
+void SimulationManager::runOrStop()
+{
+    if (this->simulation_running)
+    {
+        stop();
+        return;
+    }
+
+    run();
+}
+
+void SimulationManager::stop()
+{
+    if (!this->simulation_running || !this->simulation_cancellation_flag)
+        return;
+
+    if (!this->simulation_cancellation_flag->exchange(true))
+        emit signalSimulationStopRequested();
 }
 
 void SimulationManager::run()
@@ -114,20 +137,30 @@ void SimulationManager::run()
     const NetworkHydraulic network_hydraulic = this->hydraulic_data->networkHydraulic();
 
     std::shared_ptr<EpanetResultRun> run_result = std::make_shared<EpanetResultRun>();
-    QThread *thread = QThread::create([network_hydraulic, run_result]()
+    const std::shared_ptr<std::atomic_bool> cancellation_flag = std::make_shared<std::atomic_bool>(false);
+    this->simulation_cancellation_flag = cancellation_flag;
+
+    QThread *thread = QThread::create([network_hydraulic, run_result, cancellation_flag]()
     {
         EpanetRunner runner;
-        *run_result = runner.run(network_hydraulic);
+        *run_result = runner.run(network_hydraulic, [cancellation_flag]()
+        {
+            return cancellation_flag->load();
+        });
     });
     this->simulation_thread = thread;
 
-    connect(thread, &QThread::finished, this, [this, thread, run_result]()
+    connect(thread, &QThread::finished, this, [this, thread, run_result, cancellation_flag]()
     {
         if (this->simulation_thread == thread)
             this->simulation_thread = nullptr;
 
+        if (this->simulation_cancellation_flag == cancellation_flag)
+            this->simulation_cancellation_flag.reset();
+
         this->simulation_running = false;
         finishSimulation(*run_result);
+        emit signalSimulationFinished(run_result->cancelled);
     });
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
     thread->start();
