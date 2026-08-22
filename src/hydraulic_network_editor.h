@@ -97,7 +97,6 @@ public:
 
     bool setNodeInitialChemicalConcentrationMgPerL(const QUuid &uuid, double value_mg_per_l);
     bool setNodeInitialWaterAgeH(const QUuid &uuid, double value_h);
-    bool setNodeInitialSourceTracePercent(const QUuid &uuid, double value_percent);
     bool setNodeQualitySourceType(const QUuid &uuid, HydraulicNodeQualitySourceType source_type);
     bool setNodeQualitySourceChemicalConcentrationMgPerL(const QUuid &uuid, double value_mg_per_l);
     bool setNodeQualitySourceMassFlowMgPerMin(const QUuid &uuid, double value_mg_per_min);

@@ -618,17 +618,6 @@ bool HydraulicNetworkEditor::setNodeInitialWaterAgeH(const QUuid &uuid, double v
     return false;
 }
 
-bool HydraulicNetworkEditor::setNodeInitialSourceTracePercent(const QUuid &uuid, double value_percent)
-{
-    HydraulicNodeJunction *junction = entityByUuid(this->network.nodes_junctions, uuid);
-    if (junction != nullptr) { junction->initial_source_trace_percent = value_percent; return true; }
-    HydraulicNodeReservoir *reservoir = entityByUuid(this->network.nodes_reservoirs, uuid);
-    if (reservoir != nullptr) { reservoir->initial_source_trace_percent = value_percent; return true; }
-    HydraulicNodeTank *tank = entityByUuid(this->network.nodes_tanks, uuid);
-    if (tank != nullptr) { tank->initial_source_trace_percent = value_percent; return true; }
-    return false;
-}
-
 bool HydraulicNetworkEditor::setNodeQualitySourceType(const QUuid &uuid, HydraulicNodeQualitySourceType source_type)
 {
     HydraulicNodeJunction *junction = entityByUuid(this->network.nodes_junctions, uuid);

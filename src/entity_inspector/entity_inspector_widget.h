@@ -221,7 +221,6 @@ private:
     QHash<int, SimulationRowWidgets> simulation_rows;
     QDoubleSpinBox *spin_quality_initial_chemical = nullptr;
     QDoubleSpinBox *spin_quality_initial_water_age = nullptr;
-    QDoubleSpinBox *spin_quality_initial_trace = nullptr;
     QComboBox *combo_quality_source_type = nullptr;
     QDoubleSpinBox *spin_quality_source_concentration = nullptr;
     QDoubleSpinBox *spin_quality_source_mass_flow = nullptr;

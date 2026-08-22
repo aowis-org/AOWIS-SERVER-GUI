@@ -1,6 +1,9 @@
 #pragma once
 
+#include <QList>
 #include <QToolBar>
+
+#include <aowis/model/hydraulic/hydraulic_types.h>
 
 #include "_enums_structs.h"
 #include "epanet2_enums.h"
@@ -20,6 +23,10 @@ class TopControlBar : public QToolBar
 
 public:
     explicit TopControlBar(QWidget *parent = nullptr);
+
+    HydraulicHeadlossFormula selectedSimulationHeadlossFormula() const;
+    QList<WaterQualityAnalysisType> selectedSimulationQualityAnalyses() const;
+    void setSelectedSimulationHeadlossFormula(HydraulicHeadlossFormula formula);
 
     void setFullScreenState(bool fullscreen);
     void setSimulationResultsAvailable(bool available);
@@ -45,7 +52,8 @@ signals:
 
 private:
     QWidget *content = nullptr;
-    ComboCheckboxes *combo_headloss_formula = nullptr;
+    ComboCheckboxes *combo_quality_analysis = nullptr;
+    QComboBox *combo_headloss_formula = nullptr;
     QToolButton *button_fullscreen = nullptr;
     QPushButton *button_sim_start = nullptr;
     QToolButton *button_sim_statistics = nullptr;

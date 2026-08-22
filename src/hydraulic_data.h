@@ -55,10 +55,12 @@ public:
     void loadProject();
 
     const NetworkHydraulic &networkHydraulic() const;
+    void setSimulationHeadlossFormula(HydraulicHeadlossFormula formula);
 
     bool hasSimulationResults() const;
     const std::optional<HydraulicSimulationResultTimeline> &simulationResultTimeline() const;
     bool hasWaterQualitySimulationResults() const;
+    const QList<WaterQualitySimulationResultTimeline> &waterQualitySimulationResultTimelines() const;
     const std::optional<WaterQualitySimulationResultTimeline> &waterQualitySimulationResultTimeline() const;
     const WaterQualitySimulationResult *currentWaterQualitySimulationResult() const;
     const HydraulicSimulationStatus *simulationStatus() const;
@@ -72,6 +74,8 @@ public:
     const HydraulicSimulationResult *currentSimulationResult() const;
     int currentSimulationResultIndex() const;
     void setSimulationResultTimeline(const HydraulicSimulationResultTimeline &result_timeline);
+    void setWaterQualitySimulationResultTimelines(
+        const QList<WaterQualitySimulationResultTimeline> &result_timelines);
     void setWaterQualitySimulationResultTimeline(
         const WaterQualitySimulationResultTimeline &result_timeline);
     void clearSimulationResultTimeline();
@@ -309,7 +313,6 @@ public:
 
     bool setNodeInitialChemicalConcentrationMgPerL(const QUuid &uuid, double value_mg_per_l);
     bool setNodeInitialWaterAgeH(const QUuid &uuid, double value_h);
-    bool setNodeInitialSourceTracePercent(const QUuid &uuid, double value_percent);
     bool setNodeQualitySourceType(const QUuid &uuid, HydraulicNodeQualitySourceType source_type);
     bool setNodeQualitySourceChemicalConcentrationMgPerL(const QUuid &uuid, double value_mg_per_l);
     bool setNodeQualitySourceMassFlowMgPerMin(const QUuid &uuid, double value_mg_per_min);
@@ -431,6 +434,7 @@ private:
     NetworkHydraulic network_hydraulic;
     HydraulicNetworkEditor network_editor;
     std::optional<HydraulicSimulationResultTimeline> simulation_result_timeline;
+    QList<WaterQualitySimulationResultTimeline> water_quality_simulation_result_timelines;
     std::optional<WaterQualitySimulationResultTimeline> water_quality_simulation_result_timeline;
     int current_simulation_result_index = -1;
     bool simulation_result_timeline_stale = false;

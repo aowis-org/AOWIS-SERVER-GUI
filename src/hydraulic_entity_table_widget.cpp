@@ -304,7 +304,6 @@ void appendNodeQualityInputColumns(QList<TableColumn> &columns)
 {
     columns.append({QStringLiteral("Initial Chemical [mg/L]"), false});
     columns.append({QStringLiteral("Initial Water Age [h]"), false});
-    columns.append({QStringLiteral("Initial Source Trace [%]"), false});
     columns.append({QStringLiteral("Quality Source Type"), false});
     columns.append({QStringLiteral("Quality Source Concentration [mg/L]"), false});
     columns.append({QStringLiteral("Quality Source Mass Flow [mg/min]"), false});
@@ -320,7 +319,6 @@ void appendNodeQualityInputCells(QList<TableCell> &cells, const NetworkHydraulic
     cells.append(numberCell(node.initial_chemical_concentration_mg_per_l, 6,
                             QStringLiteral(" mg/L")));
     cells.append(numberCell(node.initial_water_age_h, 6, QStringLiteral(" h")));
-    cells.append(numberCell(node.initial_source_trace_percent, 6, QStringLiteral(" %")));
     cells.append(textCell(qualitySourceTypeText(node.quality_source.type)));
     cells.append(numberCell(node.quality_source.chemical_concentration_mg_per_l, 6,
                             QStringLiteral(" mg/L")));

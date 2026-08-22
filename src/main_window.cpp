@@ -296,7 +296,21 @@ MainWindow::MainWindow(QWidget *parent)
     });
     
     connect(this->top_control_bar, &TopControlBar::signalHeadlossFormulaChanged, this->dock_entity_inspector, &EntityInspectorDock::onHeadlossFormulaChanged);
-    connect(this->top_control_bar, &TopControlBar::signalSimulationStart, this->simulation_manager, &SimulationManager::runOrStop);
+    connect(this->top_control_bar, &TopControlBar::signalHeadlossFormulaChanged, this, [this](HeadlossFormulas)
+    {
+        this->hydraulic_data->setSimulationHeadlossFormula(
+            this->top_control_bar->selectedSimulationHeadlossFormula());
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, [this]
+    {
+        this->top_control_bar->setSelectedSimulationHeadlossFormula(
+            this->hydraulic_data->networkHydraulic().options_hydraulic.headloss_formula);
+    });
+    connect(this->top_control_bar, &TopControlBar::signalSimulationStart, this, [this]
+    {
+        this->simulation_manager->runOrStop(
+            this->top_control_bar->selectedSimulationQualityAnalyses());
+    });
     connect(this->simulation_manager, &SimulationManager::signalSimulationStarted, this->top_control_bar, &TopControlBar::setSimulationRunRunningIcon);
     connect(this->simulation_manager, &SimulationManager::signalSimulationStopRequested, this->top_control_bar, &TopControlBar::setSimulationRunStoppingIcon);
     connect(this->simulation_manager, &SimulationManager::signalSimulationFinished, this, [this](bool cancelled)

@@ -2662,12 +2662,6 @@ void EntityInspectorWidget::addGroupNodeQualityInputs()
     this->spin_quality_initial_water_age->setDecimals(6);
     this->spin_quality_initial_water_age->setSuffix(" h");
 
-    QLabel *label_initial_trace = new QLabel("Initial Source Trace");
-    this->spin_quality_initial_trace = new QDoubleSpinBox();
-    this->spin_quality_initial_trace->setRange(0.0, 100.0);
-    this->spin_quality_initial_trace->setDecimals(6);
-    this->spin_quality_initial_trace->setSuffix(" %");
-
     QLabel *label_source_type = new QLabel("Source Type");
     this->combo_quality_source_type = new QComboBox();
     this->combo_quality_source_type->addItem("None", static_cast<int>(HydraulicNodeQualitySourceType::None));
@@ -2695,8 +2689,6 @@ void EntityInspectorWidget::addGroupNodeQualityInputs()
     grid->addWidget(this->spin_quality_initial_chemical, row++, 1);
     grid->addWidget(label_initial_water_age, row, 0);
     grid->addWidget(this->spin_quality_initial_water_age, row++, 1);
-    grid->addWidget(label_initial_trace, row, 0);
-    grid->addWidget(this->spin_quality_initial_trace, row++, 1);
     grid->addWidget(label_source_type, row, 0);
     grid->addWidget(this->combo_quality_source_type, row++, 1);
     grid->addWidget(label_source_concentration, row, 0);
@@ -2715,11 +2707,6 @@ void EntityInspectorWidget::addGroupNodeQualityInputs()
             this, [this](double value)
     {
         this->hydraulic_data->setNodeInitialWaterAgeH(this->entity_uuid, value);
-    });
-    connect(this->spin_quality_initial_trace, &QDoubleSpinBox::valueChanged,
-            this, [this](double value)
-    {
-        this->hydraulic_data->setNodeInitialSourceTracePercent(this->entity_uuid, value);
     });
     connect(this->combo_quality_source_type, &QComboBox::currentIndexChanged,
             this, [this](int)
@@ -2815,7 +2802,6 @@ void EntityInspectorWidget::refreshNodeQualityInputs()
 
     double initial_chemical = 0.0;
     double initial_water_age = 0.0;
-    double initial_trace = 0.0;
     HydraulicNodeQualitySource quality_source;
     bool found = false;
 
@@ -2826,7 +2812,6 @@ void EntityInspectorWidget::refreshNodeQualityInputs()
         {
             initial_chemical = node->initial_chemical_concentration_mg_per_l;
             initial_water_age = node->initial_water_age_h;
-            initial_trace = node->initial_source_trace_percent;
             quality_source = node->quality_source;
             found = true;
         }
@@ -2838,7 +2823,6 @@ void EntityInspectorWidget::refreshNodeQualityInputs()
         {
             initial_chemical = node->initial_chemical_concentration_mg_per_l;
             initial_water_age = node->initial_water_age_h;
-            initial_trace = node->initial_source_trace_percent;
             quality_source = node->quality_source;
             found = true;
         }
@@ -2850,7 +2834,6 @@ void EntityInspectorWidget::refreshNodeQualityInputs()
         {
             initial_chemical = node->initial_chemical_concentration_mg_per_l;
             initial_water_age = node->initial_water_age_h;
-            initial_trace = node->initial_source_trace_percent;
             quality_source = node->quality_source;
             found = true;
         }
@@ -2861,14 +2844,12 @@ void EntityInspectorWidget::refreshNodeQualityInputs()
 
     const QSignalBlocker chemical_blocker(this->spin_quality_initial_chemical);
     const QSignalBlocker age_blocker(this->spin_quality_initial_water_age);
-    const QSignalBlocker trace_blocker(this->spin_quality_initial_trace);
     const QSignalBlocker source_type_blocker(this->combo_quality_source_type);
     const QSignalBlocker concentration_blocker(this->spin_quality_source_concentration);
     const QSignalBlocker mass_blocker(this->spin_quality_source_mass_flow);
 
     this->spin_quality_initial_chemical->setValue(initial_chemical);
     this->spin_quality_initial_water_age->setValue(initial_water_age);
-    this->spin_quality_initial_trace->setValue(initial_trace);
     const int source_index = this->combo_quality_source_type->findData(static_cast<int>(quality_source.type));
     this->combo_quality_source_type->setCurrentIndex(source_index >= 0 ? source_index : 0);
     this->spin_quality_source_concentration->setValue(quality_source.chemical_concentration_mg_per_l);

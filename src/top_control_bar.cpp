@@ -231,6 +231,69 @@ TopControlBar::TopControlBar(QWidget *parent)
     addViewControls();
 }
 
+HydraulicHeadlossFormula TopControlBar::selectedSimulationHeadlossFormula() const
+{
+    if (this->combo_headloss_formula == nullptr || this->combo_headloss_formula->currentIndex() < 0)
+        return HydraulicHeadlossFormula::HazenWilliams;
+
+    const HeadlossFormula formula = static_cast<HeadlossFormula>(
+        this->combo_headloss_formula->currentData().toInt());
+
+    switch (formula)
+    {
+    case HeadlossFormula::HazenWilliams:
+        return HydraulicHeadlossFormula::HazenWilliams;
+    case HeadlossFormula::DarcyWeisbach:
+        return HydraulicHeadlossFormula::DarcyWeisbach;
+    case HeadlossFormula::ChezyManning:
+        return HydraulicHeadlossFormula::ChezyManning;
+    case HeadlossFormula::None:
+        break;
+    }
+
+    return HydraulicHeadlossFormula::HazenWilliams;
+}
+
+QList<WaterQualityAnalysisType> TopControlBar::selectedSimulationQualityAnalyses() const
+{
+    QList<WaterQualityAnalysisType> analyses;
+    if (this->combo_quality_analysis == nullptr)
+        return analyses;
+
+    const QList<int> indexes_checked = this->combo_quality_analysis->checkedIndexes();
+    for (const int index : indexes_checked)
+    {
+        analyses.append(static_cast<WaterQualityAnalysisType>(
+            this->combo_quality_analysis->itemData(index).toInt()));
+    }
+
+    return analyses;
+}
+
+void TopControlBar::setSelectedSimulationHeadlossFormula(HydraulicHeadlossFormula formula)
+{
+    if (this->combo_headloss_formula == nullptr)
+        return;
+
+    HeadlossFormula gui_formula = HeadlossFormula::HazenWilliams;
+    switch (formula)
+    {
+    case HydraulicHeadlossFormula::HazenWilliams:
+        gui_formula = HeadlossFormula::HazenWilliams;
+        break;
+    case HydraulicHeadlossFormula::DarcyWeisbach:
+        gui_formula = HeadlossFormula::DarcyWeisbach;
+        break;
+    case HydraulicHeadlossFormula::ChezyManning:
+        gui_formula = HeadlossFormula::ChezyManning;
+        break;
+    }
+
+    const int index = this->combo_headloss_formula->findData(static_cast<int>(gui_formula));
+    if (index >= 0)
+        this->combo_headloss_formula->setCurrentIndex(index);
+}
+
 void TopControlBar::setFullScreenState(bool fullscreen)
 {
     if (this->button_fullscreen == nullptr)
@@ -612,55 +675,62 @@ void TopControlBar::addQualityHeadlossControls()
 {
     TopControlBarContent *bar_content = barContent(this->content);
 
-    ComboCheckboxes *combo_quality = new ComboCheckboxes(this->content);
-    combo_quality->setFixedSize(190, 30);
-    combo_quality->setSummaryLimit(2);
+    this->combo_quality_analysis = new ComboCheckboxes(this->content);
+    this->combo_quality_analysis->setFixedSize(190, 30);
+    this->combo_quality_analysis->setSummaryLimit(2);
 
-    combo_quality->addItem(QStringLiteral("CHEMICAL"),
-                           1,
-                           true,
-                           QStringLiteral("One dissolved constituent concentration, e.g. chlorine"));
+    this->combo_quality_analysis->addItem(
+        QStringLiteral("CHEMICAL"),
+        static_cast<int>(WaterQualityAnalysisType::Chemical),
+        true,
+        QStringLiteral("One dissolved constituent concentration, e.g. chlorine"));
 
-    combo_quality->addItem(QStringLiteral("AGE"),
-                           1,
-                           true,
-                           QStringLiteral("Water age"));
+    this->combo_quality_analysis->addItem(
+        QStringLiteral("AGE"),
+        static_cast<int>(WaterQualityAnalysisType::WaterAge),
+        true,
+        QStringLiteral("Water age"));
 
-    combo_quality->addItem(QStringLiteral("TRACE"),
-                           2,
-                           true,
-                           QStringLiteral("Source tracing: percent of water originating from one node"));
+    this->combo_quality_analysis->addItem(
+        QStringLiteral("TRACE"),
+        static_cast<int>(WaterQualityAnalysisType::SourceTrace),
+        true,
+        QStringLiteral("Source tracing: percent of water originating from one node"));
 
-    this->combo_headloss_formula = new ComboCheckboxes(this->content);
+    this->combo_headloss_formula = new QComboBox(this->content);
     this->combo_headloss_formula->setFixedSize(190, 30);
 
     this->combo_headloss_formula->addItem(
         QStringLiteral("Hazen-Williams"),
-        static_cast<int>(HeadlossFormula::HazenWilliams),
-        true,
-        QStringLiteral("Run simulation with the Hazen-Williams headloss formula.<br><br>Requires pipe roughness coefficient C."));
+        static_cast<int>(HeadlossFormula::HazenWilliams));
+    this->combo_headloss_formula->setItemData(
+        this->combo_headloss_formula->count() - 1,
+        QStringLiteral("Run simulation with the Hazen-Williams headloss formula.<br><br>Requires pipe roughness coefficient C."),
+        Qt::ToolTipRole);
 
     this->combo_headloss_formula->addItem(
         QStringLiteral("Darcy-Weisbach"),
-        static_cast<int>(HeadlossFormula::DarcyWeisbach),
-        false,
-        QStringLiteral("Run simulation with the Darcy-Weisbach headloss formula.<br><br>Requires absolute pipe roughness ε in mm."));
+        static_cast<int>(HeadlossFormula::DarcyWeisbach));
+    this->combo_headloss_formula->setItemData(
+        this->combo_headloss_formula->count() - 1,
+        QStringLiteral("Run simulation with the Darcy-Weisbach headloss formula.<br><br>Requires absolute pipe roughness ε in mm."),
+        Qt::ToolTipRole);
 
     this->combo_headloss_formula->addItem(
         QStringLiteral("Chezy-Manning"),
-        static_cast<int>(HeadlossFormula::ChezyManning),
-        false,
-        QStringLiteral("Run simulation with the Chezy-Manning headloss formula.<br><br>Requires Manning roughness coefficient n."));
+        static_cast<int>(HeadlossFormula::ChezyManning));
+    this->combo_headloss_formula->setItemData(
+        this->combo_headloss_formula->count() - 1,
+        QStringLiteral("Run simulation with the Chezy-Manning headloss formula.<br><br>Requires Manning roughness coefficient n."),
+        Qt::ToolTipRole);
 
-    connect(this->combo_headloss_formula, &ComboCheckboxes::checkedItemsChanged, this, [this]
+    connect(this->combo_headloss_formula, &QComboBox::currentIndexChanged, this, [this](int index)
     {
-        const QList<int> indexes_checked = this->combo_headloss_formula->checkedIndexes();
         HeadlossFormulas formulas = HeadlossFormula::None;
-
-        for (const int index : indexes_checked)
+        if (index >= 0)
         {
-            const int value = this->combo_headloss_formula->itemData(index).toInt();
-            const HeadlossFormula formula = static_cast<HeadlossFormula>(value);
+            const HeadlossFormula formula = static_cast<HeadlossFormula>(
+                this->combo_headloss_formula->itemData(index).toInt());
             formulas |= formula;
         }
 
@@ -682,7 +752,7 @@ void TopControlBar::addQualityHeadlossControls()
     quality_layout->setContentsMargins(0, 0, 0, 0);
     quality_layout->setSpacing(6);
     quality_layout->addWidget(quality_caption);
-    quality_layout->addWidget(combo_quality);
+    quality_layout->addWidget(this->combo_quality_analysis);
 
     QHBoxLayout *headloss_layout = new QHBoxLayout();
     headloss_layout->setContentsMargins(0, 0, 0, 0);

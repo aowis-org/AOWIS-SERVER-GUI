@@ -5,6 +5,7 @@
 
 #include <aowis/epanet/epanet_runner.h>
 #include <aowis/epanet/epanet_result_run.h>
+#include <aowis/epanet/epanet_run_request.h>
 
 #include <QByteArray>
 #include <QMessageBox>
@@ -83,6 +84,46 @@ QString exportFailureDetails(const HydraulicSimulationStatus &status)
 
     return details.join('\n');
 }
+
+QString qualityAnalysisName(WaterQualityAnalysisType analysis)
+{
+    switch (analysis)
+    {
+    case WaterQualityAnalysisType::None:
+        return QStringLiteral("None");
+    case WaterQualityAnalysisType::Chemical:
+        return QStringLiteral("Chemical");
+    case WaterQualityAnalysisType::WaterAge:
+        return QStringLiteral("Water age");
+    case WaterQualityAnalysisType::SourceTrace:
+        return QStringLiteral("Source trace");
+    }
+
+    return QStringLiteral("Unknown quality analysis");
+}
+
+QString runReportText(const EpanetResultRun &run_result)
+{
+    QStringList sections;
+
+    if (!run_result.report_lines.isEmpty())
+    {
+        sections.append(QStringLiteral("=== Hydraulics ==="));
+        sections.append(run_result.report_lines.join('\n'));
+    }
+
+    for (const EpanetQualityResult &quality_result : run_result.quality_results)
+    {
+        if (quality_result.report_lines.isEmpty())
+            continue;
+
+        sections.append(QStringLiteral("=== Water quality: %1 ===")
+                            .arg(qualityAnalysisName(quality_result.options.analysis)));
+        sections.append(quality_result.report_lines.join('\n'));
+    }
+
+    return sections.join(QStringLiteral("\n\n"));
+}
 }
 
 SimulationManager::SimulationManager(HydraulicData *hydraulic_data, QObject *parent)
@@ -102,7 +143,7 @@ SimulationManager::~SimulationManager()
 #endif
 }
 
-void SimulationManager::runOrStop()
+void SimulationManager::runOrStop(const QList<WaterQualityAnalysisType> &quality_analyses)
 {
     if (this->simulation_running)
     {
@@ -110,7 +151,7 @@ void SimulationManager::runOrStop()
         return;
     }
 
-    run();
+    run(quality_analyses);
 }
 
 void SimulationManager::stop()
@@ -122,10 +163,22 @@ void SimulationManager::stop()
         emit signalSimulationStopRequested();
 }
 
-void SimulationManager::run()
+void SimulationManager::run(const QList<WaterQualityAnalysisType> &quality_analyses)
 {
     if (this->simulation_running)
         return;
+
+    const NetworkHydraulic network_hydraulic = this->hydraulic_data->networkHydraulic();
+
+    EpanetRunRequest run_request;
+    run_request.network = network_hydraulic;
+
+    for (const WaterQualityAnalysisType analysis : quality_analyses)
+    {
+        WaterQualitySolverOptions quality_options = network_hydraulic.options_quality;
+        quality_options.analysis = analysis;
+        run_request.quality_runs.append(quality_options);
+    }
 
     this->simulation_running = true;
     emit signalSimulationStarted();
@@ -134,16 +187,14 @@ void SimulationManager::run()
         this->widget_epanet_log->clear();
     emit signalEpanetLogAvailabilityChanged(false);
 
-    const NetworkHydraulic network_hydraulic = this->hydraulic_data->networkHydraulic();
-
     std::shared_ptr<EpanetResultRun> run_result = std::make_shared<EpanetResultRun>();
     const std::shared_ptr<std::atomic_bool> cancellation_flag = std::make_shared<std::atomic_bool>(false);
     this->simulation_cancellation_flag = cancellation_flag;
 
-    QThread *thread = QThread::create([network_hydraulic, run_result, cancellation_flag]()
+    QThread *thread = QThread::create([run_request, run_result, cancellation_flag]()
     {
         EpanetRunner runner;
-        *run_result = runner.run(network_hydraulic, [cancellation_flag]()
+        *run_result = runner.run(run_request, [cancellation_flag]()
         {
             return cancellation_flag->load();
         });
@@ -168,20 +219,26 @@ void SimulationManager::run()
 
 void SimulationManager::finishSimulation(const EpanetResultRun &run_result)
 {
-    this->epanet_log = run_result.report_lines.join('\n');
+    this->epanet_log = runReportText(run_result);
     if (this->widget_epanet_log)
         this->widget_epanet_log->setPlainText(this->epanet_log);
     emit signalEpanetLogAvailabilityChanged(!this->epanet_log.isEmpty());
     qDebug().noquote() << this->epanet_log;
 
-    this->hydraulic_data->clearWaterQualitySimulationResultTimeline();
-    this->hydraulic_data->setSimulationResultTimeline(run_result.result_timeline);
-    this->hydraulic_data->setWaterQualitySimulationResultTimeline(
-        run_result.quality_result_timeline);
+    HydraulicSimulationResultTimeline hydraulic_timeline = run_result.result_timeline;
+    if (!run_result.diagnostics.isEmpty())
+        hydraulic_timeline.diagnostics = run_result.diagnostics;
+
+    QList<WaterQualitySimulationResultTimeline> quality_timelines;
+    for (const EpanetQualityResult &quality_result : run_result.quality_results)
+        quality_timelines.append(quality_result.result_timeline);
+
+    this->hydraulic_data->setSimulationResultTimeline(hydraulic_timeline);
+    this->hydraulic_data->setWaterQualitySimulationResultTimelines(quality_timelines);
 
     bool has_error_diagnostic = false;
     bool has_warning_diagnostic = false;
-    for (const HydraulicSimulationDiagnostic &diagnostic : run_result.result_timeline.diagnostics)
+    for (const HydraulicSimulationDiagnostic &diagnostic : run_result.diagnostics)
     {
         if (diagnostic.severity == HydraulicSimulationDiagnosticSeverity::Warning)
             has_warning_diagnostic = true;
@@ -193,27 +250,31 @@ void SimulationManager::finishSimulation(const EpanetResultRun &run_result)
         }
     }
 
-    if (!run_result.result_timeline.status.success
+    if (run_result.cancelled)
+        return;
+
+    if (run_result.state == EpanetRunState::Error
+        || run_result.state == EpanetRunState::Warning
         || has_error_diagnostic
         || has_warning_diagnostic)
     {
         showSimulationDiagnostics();
     }
 
-    if (!run_result.result_timeline.status.success)
+    if (run_result.state == EpanetRunState::Error)
     {
-        const HydraulicSimulationStatus &status = run_result.result_timeline.status;
-        qWarning().noquote() << "EPANET simulation failed:" << status.message;
+        qWarning().noquote() << "EPANET simulation failed:" << run_result.status.message;
 
-        if (!status.message_backend.isEmpty())
-            qWarning().noquote() << status.message_backend;
+        if (!run_result.status.message_backend.isEmpty())
+            qWarning().noquote() << run_result.status.message_backend;
 
         return;
     }
 
-    if (has_error_diagnostic
+    if (run_result.state == EpanetRunState::Warning
+        || has_error_diagnostic
         || has_warning_diagnostic
-        || run_result.result_timeline.validity != HydraulicSimulationResultValidity::Valid)
+        || hydraulic_timeline.validity != HydraulicSimulationResultValidity::Valid)
     {
         return;
     }
@@ -226,7 +287,7 @@ void SimulationManager::finishSimulation(const EpanetResultRun &run_result)
         main_window,
         QMessageBox::Information,
         tr("Simulation Complete"),
-        tr("Simulation completed successfully."));
+        tr("Simulation and all configured water-quality analyses completed successfully."));
 }
 
 void SimulationManager::showSimulationStatistics()

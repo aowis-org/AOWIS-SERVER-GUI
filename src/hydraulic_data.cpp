@@ -154,6 +154,15 @@ const NetworkHydraulic &HydraulicData::networkHydraulic() const
     return this->network_hydraulic;
 }
 
+void HydraulicData::setSimulationHeadlossFormula(HydraulicHeadlossFormula formula)
+{
+    if (this->network_hydraulic.options_hydraulic.headloss_formula == formula)
+        return;
+
+    this->network_hydraulic.options_hydraulic.headloss_formula = formula;
+    markNetworkChanged(NetworkChange::Visual);
+}
+
 bool HydraulicData::hasSimulationResults() const
 {
     return this->simulation_result_timeline.has_value()
@@ -180,6 +189,12 @@ bool HydraulicData::hasWaterQualitySimulationResults() const
             == WaterQualitySimulationResultValidity::Valid
         || this->water_quality_simulation_result_timeline->validity
             == WaterQualitySimulationResultValidity::Partial;
+}
+
+const QList<WaterQualitySimulationResultTimeline> &
+HydraulicData::waterQualitySimulationResultTimelines() const
+{
+    return this->water_quality_simulation_result_timelines;
 }
 
 const std::optional<WaterQualitySimulationResultTimeline> &
@@ -391,11 +406,25 @@ void HydraulicData::setSimulationResultTimeline(const HydraulicSimulationResultT
     emit signalCurrentSimulationResultChanged(this->current_simulation_result_index);
 }
 
+void HydraulicData::setWaterQualitySimulationResultTimelines(
+    const QList<WaterQualitySimulationResultTimeline> &result_timelines)
+{
+    this->water_quality_simulation_result_timelines = result_timelines;
+
+    if (this->water_quality_simulation_result_timelines.isEmpty())
+        this->water_quality_simulation_result_timeline.reset();
+    else
+        this->water_quality_simulation_result_timeline = this->water_quality_simulation_result_timelines.constFirst();
+
+    emit signalWaterQualitySimulationResultTimelineChanged(hasWaterQualitySimulationResults());
+}
+
 void HydraulicData::setWaterQualitySimulationResultTimeline(
     const WaterQualitySimulationResultTimeline &result_timeline)
 {
-    this->water_quality_simulation_result_timeline = result_timeline;
-    emit signalWaterQualitySimulationResultTimelineChanged(hasWaterQualitySimulationResults());
+    QList<WaterQualitySimulationResultTimeline> result_timelines;
+    result_timelines.append(result_timeline);
+    setWaterQualitySimulationResultTimelines(result_timelines);
 }
 
 void HydraulicData::clearSimulationResultTimeline()
@@ -405,6 +434,7 @@ void HydraulicData::clearSimulationResultTimeline()
     const int previous_index = this->current_simulation_result_index;
 
     this->simulation_result_timeline.reset();
+    this->water_quality_simulation_result_timelines.clear();
     this->water_quality_simulation_result_timeline.reset();
     this->current_simulation_result_index = -1;
     this->simulation_result_timeline_stale = false;
@@ -421,7 +451,9 @@ void HydraulicData::clearSimulationResultTimeline()
 
 void HydraulicData::clearWaterQualitySimulationResultTimeline()
 {
-    const bool had_timeline = this->water_quality_simulation_result_timeline.has_value();
+    const bool had_timeline = this->water_quality_simulation_result_timeline.has_value()
+        || !this->water_quality_simulation_result_timelines.isEmpty();
+    this->water_quality_simulation_result_timelines.clear();
     this->water_quality_simulation_result_timeline.reset();
 
     if (had_timeline)
@@ -2214,11 +2246,6 @@ bool HydraulicData::setNodeInitialWaterAgeH(const QUuid &uuid, double value_h)
     return emitNodeChangedIfSuccessful(uuid, this->network_editor.setNodeInitialWaterAgeH(uuid, value_h));
 }
 
-bool HydraulicData::setNodeInitialSourceTracePercent(const QUuid &uuid, double value_percent)
-{
-    return emitNodeChangedIfSuccessful(uuid, this->network_editor.setNodeInitialSourceTracePercent(uuid, value_percent));
-}
-
 bool HydraulicData::setNodeQualitySourceType(const QUuid &uuid, HydraulicNodeQualitySourceType source_type)
 {
     return emitNodeChangedIfSuccessful(uuid, this->network_editor.setNodeQualitySourceType(uuid, source_type));
@@ -2690,7 +2717,8 @@ bool HydraulicData::applyGeometryBatch(const HydraulicGeometryBatch &batch)
         QSet<quint32> moved_node_render_ids;
         for (NetworkRenderNode &node : this->network_render_snapshot.nodes)
         {
-            const auto iterator = batch.node_coordinates.constFind(node.uuid);
+            const QHash<QUuid, CoordinateWGS84>::const_iterator iterator =
+                batch.node_coordinates.constFind(node.uuid);
             if (iterator == batch.node_coordinates.cend())
                 continue;
             node.coordinate_wgs84 = iterator.value();
@@ -2737,7 +2765,8 @@ bool HydraulicData::applyGeometryBatch(const HydraulicGeometryBatch &batch)
 
             if (link.entity_type == InfrastructureEntity::Pipe)
             {
-                const auto source_iterator = pipes_by_uuid.constFind(link.uuid);
+                const QHash<QUuid, const HydraulicLinkPipe *>::const_iterator source_iterator =
+                    pipes_by_uuid.constFind(link.uuid);
                 if (source_iterator == pipes_by_uuid.cend())
                     continue;
                 const HydraulicLinkPipe *source = source_iterator.value();
@@ -2755,7 +2784,8 @@ bool HydraulicData::applyGeometryBatch(const HydraulicGeometryBatch &batch)
             if (link.entity_type == InfrastructureEntity::Pump &&
                 (endpoint_moved || batch.pump_center_coordinates.contains(link.uuid)))
             {
-                const auto source_iterator = pumps_by_uuid.constFind(link.uuid);
+                const QHash<QUuid, const HydraulicLinkPump *>::const_iterator source_iterator =
+                    pumps_by_uuid.constFind(link.uuid);
                 if (source_iterator == pumps_by_uuid.cend())
                     continue;
                 const HydraulicLinkPump *source = source_iterator.value();
@@ -2771,7 +2801,8 @@ bool HydraulicData::applyGeometryBatch(const HydraulicGeometryBatch &batch)
             else if (link.entity_type == InfrastructureEntity::Valve &&
                      (endpoint_moved || batch.valve_center_coordinates.contains(link.uuid)))
             {
-                const auto source_iterator = valves_by_uuid.constFind(link.uuid);
+                const QHash<QUuid, const HydraulicLinkValve *>::const_iterator source_iterator =
+                    valves_by_uuid.constFind(link.uuid);
                 if (source_iterator == valves_by_uuid.cend())
                     continue;
                 const HydraulicLinkValve *source = source_iterator.value();
@@ -2790,15 +2821,18 @@ bool HydraulicData::applyGeometryBatch(const HydraulicGeometryBatch &batch)
         this->network_render_snapshot.visual_revision = this->visual_revision;
     }
 
-    for (auto iterator = batch.node_coordinates.cbegin(); iterator != batch.node_coordinates.cend(); ++iterator)
+    for (QHash<QUuid, CoordinateWGS84>::const_iterator iterator = batch.node_coordinates.cbegin();
+         iterator != batch.node_coordinates.cend(); ++iterator)
     {
         const std::optional<InfrastructureEntity> entity_type = nodeEntityType(iterator.key());
         if (entity_type.has_value())
             emit signalNodeChanged(entity_type.value(), iterator.key());
     }
-    for (auto iterator = batch.pump_center_coordinates.cbegin(); iterator != batch.pump_center_coordinates.cend(); ++iterator)
+    for (QHash<QUuid, CoordinateWGS84>::const_iterator iterator = batch.pump_center_coordinates.cbegin();
+         iterator != batch.pump_center_coordinates.cend(); ++iterator)
         emit signalLinkChanged(InfrastructureEntity::Pump, iterator.key());
-    for (auto iterator = batch.valve_center_coordinates.cbegin(); iterator != batch.valve_center_coordinates.cend(); ++iterator)
+    for (QHash<QUuid, CoordinateWGS84>::const_iterator iterator = batch.valve_center_coordinates.cbegin();
+         iterator != batch.valve_center_coordinates.cend(); ++iterator)
         emit signalLinkChanged(InfrastructureEntity::Valve, iterator.key());
     for (const QUuid &pipe_uuid : result.affected_pipe_uuids)
         emit signalLinkChanged(InfrastructureEntity::Pipe, pipe_uuid);

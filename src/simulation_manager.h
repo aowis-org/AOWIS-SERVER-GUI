@@ -7,6 +7,7 @@
 #include <QTextBrowser>
 #include <QFontDatabase>
 #include <QDialog>
+#include <QList>
 #include <QPointer>
 #include <QThread>
 #include <QVBoxLayout>
@@ -17,6 +18,7 @@
 #include <aowis/model/hydraulic/network_hydraulic.h>
 #include <aowis/model/hydraulic/hydraulic_simulation_results.h>
 #include <aowis/model/hydraulic/hydraulic_simulation_status.h>
+#include <aowis/model/hydraulic/hydraulic_types.h>
 
 #include "hydraulic_data.h"
 
@@ -29,8 +31,8 @@ public:
     explicit SimulationManager(HydraulicData *hydraulic_data, QObject *parent = nullptr);
     ~SimulationManager() override;
     
-    void runOrStop();
-    void run();
+    void runOrStop(const QList<WaterQualityAnalysisType> &quality_analyses);
+    void run(const QList<WaterQualityAnalysisType> &quality_analyses);
     void stop();
     void showSimulationStatistics();
     void showSimulationDiagnostics();
