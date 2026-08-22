@@ -22,6 +22,21 @@ namespace
 constexpr int pattern_mode_role = Qt::UserRole;
 constexpr int pattern_uuid_role = Qt::UserRole + 1;
 
+QString hydraulicNodeTypeName(InfrastructureEntity entity_type)
+{
+    switch (entity_type)
+    {
+    case InfrastructureEntity::Junction:
+        return QStringLiteral("Junction");
+    case InfrastructureEntity::Reservoir:
+        return QStringLiteral("Reservoir");
+    case InfrastructureEntity::Tank:
+        return QStringLiteral("Tank");
+    default:
+        return QStringLiteral("Node");
+    }
+}
+
 QString formatSimulationElapsedTime(quint64 time_elapsed_s)
 {
     const quint64 days = time_elapsed_s / 86400;
@@ -2702,12 +2717,25 @@ void EntityInspectorWidget::addGroupNodeQualityInputs()
     grid_water_age->addWidget(label_initial_water_age, 0, 0);
     grid_water_age->addWidget(this->spin_quality_initial_water_age, 0, 1);
 
-    GroupBoxCollapsible *group_source_trace = new GroupBoxCollapsible("Source Trace — Node Inputs");
+    GroupBoxCollapsible *group_source_trace = new GroupBoxCollapsible("Source Trace — Trace Origin");
     QGridLayout *grid_source_trace = new QGridLayout(group_source_trace);
-    QLabel *label_source_trace = new QLabel(
-        "No entity-specific Source Trace inputs. The trace source is a network-level quality setting.");
-    label_source_trace->setWordWrap(true);
-    grid_source_trace->addWidget(label_source_trace, 0, 0);
+
+    QLabel *label_source_trace_origin = new QLabel("Current Trace Origin:");
+    this->label_source_trace_origin_value = new QLabel();
+    this->label_source_trace_origin_value->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    this->button_source_trace_origin_inspect = new QPushButton(QIcon(":/icon/target.png"), "");
+    this->button_source_trace_origin_inspect->setIconSize(QSize(20, 20));
+    this->button_source_trace_origin_inspect->setToolTip("Open Trace Origin in Inspector");
+    this->button_source_trace_origin_inspect->setMaximumWidth(35);
+    this->check_source_trace_origin_current_node = new QCheckBox("Use This Node as Trace Origin");
+    this->check_source_trace_origin_current_node->setToolTip(
+        "Sets this node as the Source Trace origin. Only one trace origin can be configured at a time.");
+
+    grid_source_trace->addWidget(label_source_trace_origin, 0, 0);
+    grid_source_trace->addWidget(this->label_source_trace_origin_value, 0, 1);
+    grid_source_trace->addWidget(this->button_source_trace_origin_inspect, 0, 2);
+    grid_source_trace->addWidget(this->check_source_trace_origin_current_node, 1, 0, 1, 3);
+    grid_source_trace->setColumnStretch(1, 1);
 
     connect(this->spin_quality_initial_chemical, &QDoubleSpinBox::valueChanged,
             this, [this](double value)
@@ -2744,6 +2772,22 @@ void EntityInspectorWidget::addGroupNodeQualityInputs()
             this->entity_uuid, this->combo_quality_source_pattern->currentData().toUuid());
     });
 
+    connect(this->button_source_trace_origin_inspect, &QPushButton::clicked, this, [this]()
+    {
+        inspectHydraulicEndpoint(this->hydraulic_data->sourceTraceOriginNodeUuid());
+    });
+    connect(this->check_source_trace_origin_current_node, &QCheckBox::toggled, this, [this](bool checked)
+    {
+        if (checked)
+        {
+            requestUseCurrentNodeAsSourceTraceOrigin();
+            return;
+        }
+
+        if (this->hydraulic_data->sourceTraceOriginNodeUuid() == this->entity_uuid)
+            this->hydraulic_data->setSourceTraceOriginNodeUuid(QUuid());
+    });
+
     connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
             [this](InfrastructureEntity, const QUuid &uuid)
     {
@@ -2752,11 +2796,156 @@ void EntityInspectorWidget::addGroupNodeQualityInputs()
     });
     connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
             this, &EntityInspectorWidget::refreshNodeQualityInputs);
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
+            this, &EntityInspectorWidget::refreshSourceTraceInputs);
+    connect(this->hydraulic_data, &HydraulicData::signalWaterQualityOptionsChanged,
+            this, &EntityInspectorWidget::refreshSourceTraceInputs);
+    connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
+            [this](InfrastructureEntity, const QUuid &uuid)
+    {
+        if (uuid == this->hydraulic_data->sourceTraceOriginNodeUuid())
+            refreshSourceTraceInputs();
+    });
 
     layoutQuality()->addWidget(group_chemical);
     layoutQuality()->addWidget(group_water_age);
     layoutQuality()->addWidget(group_source_trace);
     refreshNodeQualityInputs();
+    refreshSourceTraceInputs();
+}
+
+QString EntityInspectorWidget::sourceTraceNodeDisplayName(const QUuid &uuid) const
+{
+    if (this->hydraulic_data == nullptr || uuid.isNull())
+        return QStringLiteral("None");
+
+    const std::optional<InfrastructureEntity> entity_type = this->hydraulic_data->nodeEntityType(uuid);
+    if (!entity_type.has_value())
+        return QStringLiteral("Unknown node (%1)").arg(uuid.toString(QUuid::WithoutBraces));
+
+    const std::optional<HydraulicNodeCommonData> node =
+        this->hydraulic_data->nodeCommonData(entity_type.value(), uuid);
+    if (!node.has_value())
+        return QStringLiteral("Unknown node (%1)").arg(uuid.toString(QUuid::WithoutBraces));
+
+    const QString node_identifier = node->id.isEmpty()
+        ? uuid.toString(QUuid::WithoutBraces)
+        : node->id;
+    return QStringLiteral("%1 %2")
+        .arg(hydraulicNodeTypeName(entity_type.value()), node_identifier);
+}
+
+void EntityInspectorWidget::refreshSourceTraceInputs()
+{
+    if (this->hydraulic_data == nullptr
+        || this->label_source_trace_origin_value == nullptr
+        || this->button_source_trace_origin_inspect == nullptr
+        || this->check_source_trace_origin_current_node == nullptr)
+    {
+        return;
+    }
+
+    const QUuid trace_origin_uuid = this->hydraulic_data->sourceTraceOriginNodeUuid();
+    this->label_source_trace_origin_value->setText(sourceTraceNodeDisplayName(trace_origin_uuid));
+
+    const bool trace_origin_exists = !trace_origin_uuid.isNull()
+        && this->hydraulic_data->nodeEntityType(trace_origin_uuid).has_value();
+    const bool current_node_is_origin = trace_origin_uuid == this->entity_uuid;
+
+    this->button_source_trace_origin_inspect->setEnabled(
+        trace_origin_exists && !current_node_is_origin);
+    this->button_source_trace_origin_inspect->setToolTip(
+        current_node_is_origin
+            ? QStringLiteral("This node is already open in the Inspector")
+            : QStringLiteral("Open Trace Origin in Inspector"));
+
+    const QSignalBlocker blocker(this->check_source_trace_origin_current_node);
+    this->check_source_trace_origin_current_node->setChecked(current_node_is_origin);
+}
+
+void EntityInspectorWidget::requestUseCurrentNodeAsSourceTraceOrigin()
+{
+    if (this->hydraulic_data == nullptr || this->entity_uuid.isNull())
+        return;
+
+    const QUuid existing_origin_uuid = this->hydraulic_data->sourceTraceOriginNodeUuid();
+    if (existing_origin_uuid.isNull() || existing_origin_uuid == this->entity_uuid)
+    {
+        if (!this->hydraulic_data->setSourceTraceOriginNodeUuid(this->entity_uuid))
+            refreshSourceTraceInputs();
+        return;
+    }
+
+    const QSignalBlocker blocker(this->check_source_trace_origin_current_node);
+    this->check_source_trace_origin_current_node->setChecked(false);
+
+    if (this->source_trace_origin_message_box)
+        this->source_trace_origin_message_box->close();
+
+    const QString existing_origin_name = sourceTraceNodeDisplayName(existing_origin_uuid);
+    const QString new_origin_name = sourceTraceNodeDisplayName(this->entity_uuid);
+
+    QWidget *parent_window = this->window();
+    if (parent_window == nullptr)
+        parent_window = this;
+
+    QMessageBox *message_box = new QMessageBox(
+        QMessageBox::Question,
+        QStringLiteral("Change Source Trace Origin?"),
+        QStringLiteral("Source Trace currently uses <b>%1</b> as its origin.<br><br>Replace it with <b>%2</b>?")
+            .arg(existing_origin_name.toHtmlEscaped(), new_origin_name.toHtmlEscaped()),
+        QMessageBox::NoButton,
+        parent_window);
+    message_box->setTextFormat(Qt::RichText);
+    QPushButton *button_use_node = message_box->addButton(
+        QStringLiteral("Use %1").arg(new_origin_name), QMessageBox::AcceptRole);
+    message_box->addButton(QMessageBox::Cancel);
+    message_box->setDefaultButton(button_use_node);
+    message_box->setAttribute(Qt::WA_DeleteOnClose);
+
+#ifdef Q_OS_WASM
+    message_box->setWindowModality(Qt::NonModal);
+    message_box->adjustSize();
+    const QPoint initial_parent_center = parent_window->mapToGlobal(parent_window->rect().center());
+    message_box->move(
+        initial_parent_center.x() - message_box->width() / 2,
+        initial_parent_center.y() - message_box->height() / 2);
+#else
+    message_box->setWindowModality(Qt::WindowModal);
+#endif
+
+    this->source_trace_origin_message_box = message_box;
+    connect(message_box, &QMessageBox::finished, this, [this, message_box, button_use_node](int)
+    {
+        if (message_box->clickedButton() == button_use_node)
+        {
+            if (!this->hydraulic_data->setSourceTraceOriginNodeUuid(this->entity_uuid))
+                refreshSourceTraceInputs();
+        }
+        else
+        {
+            refreshSourceTraceInputs();
+        }
+    });
+
+    message_box->open();
+
+#ifdef Q_OS_WASM
+    QPointer<QMessageBox> guarded_message_box = message_box;
+    QPointer<QWidget> guarded_parent_window = parent_window;
+    QTimer::singleShot(0, message_box, [guarded_message_box, guarded_parent_window]()
+    {
+        if (!guarded_message_box || !guarded_parent_window)
+            return;
+
+        guarded_message_box->adjustSize();
+        const QPoint parent_center = guarded_parent_window->mapToGlobal(
+            guarded_parent_window->rect().center());
+        guarded_message_box->move(
+            parent_center.x() - guarded_message_box->width() / 2,
+            parent_center.y() - guarded_message_box->height() / 2);
+    });
+#endif
 }
 
 void EntityInspectorWidget::addGroupNoEntitySpecificQualityInputs(const QString &entity_name)

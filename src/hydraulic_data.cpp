@@ -163,6 +163,25 @@ void HydraulicData::setSimulationHeadlossFormula(HydraulicHeadlossFormula formul
     markNetworkChanged(NetworkChange::Visual);
 }
 
+QUuid HydraulicData::sourceTraceOriginNodeUuid() const
+{
+    return this->network_hydraulic.options_quality.trace_node_uuid;
+}
+
+bool HydraulicData::setSourceTraceOriginNodeUuid(const QUuid &uuid)
+{
+    if (!uuid.isNull() && !nodeEntityType(uuid).has_value())
+        return false;
+
+    if (this->network_hydraulic.options_quality.trace_node_uuid == uuid)
+        return true;
+
+    this->network_hydraulic.options_quality.trace_node_uuid = uuid;
+    markNetworkChanged(NetworkChange::Visual);
+    emit signalWaterQualityOptionsChanged();
+    return true;
+}
+
 bool HydraulicData::hasSimulationResults() const
 {
     return this->simulation_result_timeline.has_value()
@@ -2866,9 +2885,16 @@ bool HydraulicData::undoPipeSplit(const QUuid &first_pipe_uuid, const QUuid &sec
 
 bool HydraulicData::deleteJunction(const QUuid &uuid)
 {
+    const bool was_source_trace_origin = this->network_hydraulic.options_quality.trace_node_uuid == uuid;
     const bool successful = this->network_editor.deleteJunction(uuid);
     if (successful)
     {
+        if (was_source_trace_origin)
+        {
+            this->network_hydraulic.options_quality.trace_node_uuid = QUuid();
+            emit signalWaterQualityOptionsChanged();
+        }
+
         rebuildBoundingBoxWgs84();
         markNetworkChanged(NetworkChange::Geometry, uuid);
     }
@@ -2877,9 +2903,16 @@ bool HydraulicData::deleteJunction(const QUuid &uuid)
 
 bool HydraulicData::deleteReservoir(const QUuid &uuid)
 {
+    const bool was_source_trace_origin = this->network_hydraulic.options_quality.trace_node_uuid == uuid;
     const bool successful = this->network_editor.deleteReservoir(uuid);
     if (successful)
     {
+        if (was_source_trace_origin)
+        {
+            this->network_hydraulic.options_quality.trace_node_uuid = QUuid();
+            emit signalWaterQualityOptionsChanged();
+        }
+
         rebuildBoundingBoxWgs84();
         markNetworkChanged(NetworkChange::Geometry, uuid);
     }
@@ -2888,9 +2921,16 @@ bool HydraulicData::deleteReservoir(const QUuid &uuid)
 
 bool HydraulicData::deleteTank(const QUuid &uuid)
 {
+    const bool was_source_trace_origin = this->network_hydraulic.options_quality.trace_node_uuid == uuid;
     const bool successful = this->network_editor.deleteTank(uuid);
     if (successful)
     {
+        if (was_source_trace_origin)
+        {
+            this->network_hydraulic.options_quality.trace_node_uuid = QUuid();
+            emit signalWaterQualityOptionsChanged();
+        }
+
         rebuildBoundingBoxWgs84();
         markNetworkChanged(NetworkChange::Geometry, uuid);
     }

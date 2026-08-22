@@ -173,8 +173,11 @@ private:
     void setSimulationEntityAvailable(bool available);
     void refreshPumpEnergySummary(const HydraulicSimulationResultTimeline &timeline);
     void refreshNodeQualityInputs();
+    void refreshSourceTraceInputs();
     void populateQualitySourcePatternCombo(const QUuid &pattern_uuid);
     void updateQualitySourceInputUi();
+    QString sourceTraceNodeDisplayName(const QUuid &uuid) const;
+    void requestUseCurrentNodeAsSourceTraceOrigin();
 
     void refreshHydraulicGeneral(const QString &id, const HydraulicEntityMetadata &metadata);
     void refreshHydraulicNode();
@@ -214,6 +217,7 @@ private:
     bool junction_demands_refresh_pending = false;
     RESTClient *terrain_elevation_client = nullptr;
     QPointer<QMessageBox> terrain_elevation_message_box = nullptr;
+    QPointer<QMessageBox> source_trace_origin_message_box = nullptr;
     QUuid terrain_elevation_request_entity_uuid;
     CoordinateWGS84 terrain_elevation_request_coordinate;
     bool terrain_elevation_request_active = false;
@@ -225,6 +229,9 @@ private:
     QDoubleSpinBox *spin_quality_source_concentration = nullptr;
     QDoubleSpinBox *spin_quality_source_mass_flow = nullptr;
     QComboBox *combo_quality_source_pattern = nullptr;
+    QLabel *label_source_trace_origin_value = nullptr;
+    QPushButton *button_source_trace_origin_inspect = nullptr;
+    QCheckBox *check_source_trace_origin_current_node = nullptr;
     GroupBoxCollapsible *group_simulation_errors = nullptr;
     QLabel *label_simulation_errors = nullptr;
     QLabel *label_simulation_message = nullptr;

@@ -56,6 +56,8 @@ public:
 
     const NetworkHydraulic &networkHydraulic() const;
     void setSimulationHeadlossFormula(HydraulicHeadlossFormula formula);
+    QUuid sourceTraceOriginNodeUuid() const;
+    bool setSourceTraceOriginNodeUuid(const QUuid &uuid);
 
     bool hasSimulationResults() const;
     const std::optional<HydraulicSimulationResultTimeline> &simulationResultTimeline() const;
@@ -521,6 +523,7 @@ private slots:
 
 signals:
     void signalNetworkLoaded();
+    void signalWaterQualityOptionsChanged();
     void signalSimulationResultTimelineChanged(bool available);
     void signalWaterQualitySimulationResultTimelineChanged(bool available);
     void signalCurrentSimulationResultChanged(int result_index);
