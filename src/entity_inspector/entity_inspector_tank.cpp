@@ -551,9 +551,9 @@ void EntityInspectorTank::addGroupQuality()
 {
     addGroupNodeQualityInputs();
 
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Tank Mixing & Reactions");
-    QGridLayout *grid = new QGridLayout(group);
-    int row = 0;
+    GroupBoxCollapsible *group_mixing = new GroupBoxCollapsible("Tank Mixing — All Quality Modes");
+    QGridLayout *grid_mixing = new QGridLayout(group_mixing);
+    int mixing_row = 0;
 
     QLabel *label_mixing_model = new QLabel("Mixing Model");
     this->combo_quality_mixing = new QComboBox();
@@ -570,6 +570,15 @@ void EntityInspectorTank::addGroupQuality()
     this->spin_quality_mixing_fraction->setToolTip(
         "Fraction of tank volume assigned to the inlet/outlet compartment for the two-compartment model.");
 
+    grid_mixing->addWidget(label_mixing_model, mixing_row, 0);
+    grid_mixing->addWidget(this->combo_quality_mixing, mixing_row++, 1);
+    grid_mixing->addWidget(label_mixing_fraction, mixing_row, 0);
+    grid_mixing->addWidget(this->spin_quality_mixing_fraction, mixing_row++, 1);
+
+    GroupBoxCollapsible *group_reactions = new GroupBoxCollapsible("Chemical — Tank Reactions");
+    QGridLayout *grid_reactions = new QGridLayout(group_reactions);
+    int reaction_row = 0;
+
     this->check_quality_override_bulk_reaction = new QCheckBox("Override global tank bulk reaction");
 
     QLabel *label_bulk_coefficient = new QLabel("Bulk Reaction Coefficient");
@@ -580,15 +589,9 @@ void EntityInspectorTank::addGroupQuality()
     this->spin_quality_bulk_reaction_coefficient->setToolTip(
         "Coefficient dimensions depend on the network-wide tank bulk reaction order.");
 
-
-
-    grid->addWidget(label_mixing_model, row, 0);
-    grid->addWidget(this->combo_quality_mixing, row++, 1);
-    grid->addWidget(label_mixing_fraction, row, 0);
-    grid->addWidget(this->spin_quality_mixing_fraction, row++, 1);
-    grid->addWidget(this->check_quality_override_bulk_reaction, row++, 0, 1, 2);
-    grid->addWidget(label_bulk_coefficient, row, 0);
-    grid->addWidget(this->spin_quality_bulk_reaction_coefficient, row++, 1);
+    grid_reactions->addWidget(this->check_quality_override_bulk_reaction, reaction_row++, 0, 1, 2);
+    grid_reactions->addWidget(label_bulk_coefficient, reaction_row, 0);
+    grid_reactions->addWidget(this->spin_quality_bulk_reaction_coefficient, reaction_row++, 1);
 
     connect(this->combo_quality_mixing, &QComboBox::currentIndexChanged, this, [this](int)
     {
@@ -614,7 +617,6 @@ void EntityInspectorTank::addGroupQuality()
         this->hydraulic_data->setTankBulkReactionCoefficient(this->tank_uuid, coefficient);
     });
 
-
     connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
             [this](InfrastructureEntity entity_type, const QUuid &uuid)
     {
@@ -624,7 +626,8 @@ void EntityInspectorTank::addGroupQuality()
     connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
             this, &EntityInspectorTank::refreshQuality);
 
-    layoutQuality()->addWidget(group);
+    layoutQuality()->addWidget(group_mixing);
+    layoutQuality()->addWidget(group_reactions);
     refreshQuality();
 }
 

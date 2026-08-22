@@ -2645,9 +2645,9 @@ void EntityInspectorWidget::openDemandsEditor()
 
 void EntityInspectorWidget::addGroupNodeQualityInputs()
 {
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Water Quality Inputs");
-    QGridLayout *grid = new QGridLayout(group);
-    int row = 0;
+    GroupBoxCollapsible *group_chemical = new GroupBoxCollapsible("Chemical — Node Inputs");
+    QGridLayout *grid_chemical = new QGridLayout(group_chemical);
+    int chemical_row = 0;
 
     QLabel *label_initial_chemical = new QLabel("Initial Chemical Concentration");
     label_initial_chemical->setWordWrap(true);
@@ -2655,12 +2655,6 @@ void EntityInspectorWidget::addGroupNodeQualityInputs()
     this->spin_quality_initial_chemical->setRange(0.0, 1000000000.0);
     this->spin_quality_initial_chemical->setDecimals(6);
     this->spin_quality_initial_chemical->setSuffix(" mg/L");
-
-    QLabel *label_initial_water_age = new QLabel("Initial Water Age");
-    this->spin_quality_initial_water_age = new QDoubleSpinBox();
-    this->spin_quality_initial_water_age->setRange(0.0, 1000000000.0);
-    this->spin_quality_initial_water_age->setDecimals(6);
-    this->spin_quality_initial_water_age->setSuffix(" h");
 
     QLabel *label_source_type = new QLabel("Source Type");
     this->combo_quality_source_type = new QComboBox();
@@ -2685,18 +2679,35 @@ void EntityInspectorWidget::addGroupNodeQualityInputs()
     QLabel *label_source_pattern = new QLabel("Source Pattern");
     this->combo_quality_source_pattern = new QComboBox();
 
-    grid->addWidget(label_initial_chemical, row, 0);
-    grid->addWidget(this->spin_quality_initial_chemical, row++, 1);
-    grid->addWidget(label_initial_water_age, row, 0);
-    grid->addWidget(this->spin_quality_initial_water_age, row++, 1);
-    grid->addWidget(label_source_type, row, 0);
-    grid->addWidget(this->combo_quality_source_type, row++, 1);
-    grid->addWidget(label_source_concentration, row, 0);
-    grid->addWidget(this->spin_quality_source_concentration, row++, 1);
-    grid->addWidget(label_source_mass_flow, row, 0);
-    grid->addWidget(this->spin_quality_source_mass_flow, row++, 1);
-    grid->addWidget(label_source_pattern, row, 0);
-    grid->addWidget(this->combo_quality_source_pattern, row++, 1);
+    grid_chemical->addWidget(label_initial_chemical, chemical_row, 0);
+    grid_chemical->addWidget(this->spin_quality_initial_chemical, chemical_row++, 1);
+    grid_chemical->addWidget(label_source_type, chemical_row, 0);
+    grid_chemical->addWidget(this->combo_quality_source_type, chemical_row++, 1);
+    grid_chemical->addWidget(label_source_concentration, chemical_row, 0);
+    grid_chemical->addWidget(this->spin_quality_source_concentration, chemical_row++, 1);
+    grid_chemical->addWidget(label_source_mass_flow, chemical_row, 0);
+    grid_chemical->addWidget(this->spin_quality_source_mass_flow, chemical_row++, 1);
+    grid_chemical->addWidget(label_source_pattern, chemical_row, 0);
+    grid_chemical->addWidget(this->combo_quality_source_pattern, chemical_row++, 1);
+
+    GroupBoxCollapsible *group_water_age = new GroupBoxCollapsible("Water Age — Node Inputs");
+    QGridLayout *grid_water_age = new QGridLayout(group_water_age);
+
+    QLabel *label_initial_water_age = new QLabel("Initial Water Age");
+    this->spin_quality_initial_water_age = new QDoubleSpinBox();
+    this->spin_quality_initial_water_age->setRange(0.0, 1000000000.0);
+    this->spin_quality_initial_water_age->setDecimals(6);
+    this->spin_quality_initial_water_age->setSuffix(" h");
+
+    grid_water_age->addWidget(label_initial_water_age, 0, 0);
+    grid_water_age->addWidget(this->spin_quality_initial_water_age, 0, 1);
+
+    GroupBoxCollapsible *group_source_trace = new GroupBoxCollapsible("Source Trace — Node Inputs");
+    QGridLayout *grid_source_trace = new QGridLayout(group_source_trace);
+    QLabel *label_source_trace = new QLabel(
+        "No entity-specific Source Trace inputs. The trace source is a network-level quality setting.");
+    label_source_trace->setWordWrap(true);
+    grid_source_trace->addWidget(label_source_trace, 0, 0);
 
     connect(this->spin_quality_initial_chemical, &QDoubleSpinBox::valueChanged,
             this, [this](double value)
@@ -2742,7 +2753,9 @@ void EntityInspectorWidget::addGroupNodeQualityInputs()
     connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
             this, &EntityInspectorWidget::refreshNodeQualityInputs);
 
-    layoutQuality()->addWidget(group);
+    layoutQuality()->addWidget(group_chemical);
+    layoutQuality()->addWidget(group_water_age);
+    layoutQuality()->addWidget(group_source_trace);
     refreshNodeQualityInputs();
 }
 

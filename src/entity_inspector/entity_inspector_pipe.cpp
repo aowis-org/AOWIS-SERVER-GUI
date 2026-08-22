@@ -247,7 +247,7 @@ void EntityInspectorPipe::refreshPipe()
 
 void EntityInspectorPipe::addGroupQuality()
 {
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Pipe Reactions");
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Chemical — Pipe Reactions");
     QGridLayout *grid = new QGridLayout(group);
     int row = 0;
 
