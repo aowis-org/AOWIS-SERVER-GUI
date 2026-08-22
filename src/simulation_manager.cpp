@@ -175,8 +175,12 @@ void SimulationManager::run(const QList<WaterQualityAnalysisType> &quality_analy
 
     for (const WaterQualityAnalysisType analysis : quality_analyses)
     {
-        WaterQualitySolverOptions quality_options = network_hydraulic.options_quality;
+        WaterQualitySolverOptions quality_options;
         quality_options.analysis = analysis;
+        if (analysis == WaterQualityAnalysisType::Chemical)
+            quality_options.chemical_name = QStringLiteral("Chlorine");
+        else if (analysis == WaterQualityAnalysisType::SourceTrace)
+            quality_options.trace_node_uuid = this->hydraulic_data->sourceTraceOriginNodeUuid();
         run_request.quality_runs.append(quality_options);
     }
 
@@ -418,8 +422,11 @@ void SimulationManager::exportEpanetNetwork()
 #endif
 
     const NetworkHydraulic &network_hydraulic = this->hydraulic_data->networkHydraulic();
+    EpanetRunRequest export_request;
+    export_request.network = network_hydraulic;
+
     EpanetRunner runner;
-    const EpanetResultInp export_result = runner.retrieveInp(network_hydraulic);
+    const EpanetResultInp export_result = runner.retrieveInp(export_request);
 
     if (!export_result.status.success)
     {

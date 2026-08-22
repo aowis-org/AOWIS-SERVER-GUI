@@ -434,6 +434,7 @@ private:
 
     std::optional<Project> project;
     NetworkHydraulic network_hydraulic;
+    QUuid source_trace_origin_node_uuid;
     HydraulicNetworkEditor network_editor;
     std::optional<HydraulicSimulationResultTimeline> simulation_result_timeline;
     QList<WaterQualitySimulationResultTimeline> water_quality_simulation_result_timelines;
