@@ -388,19 +388,54 @@ QString pumpInitialStatusText(HydraulicLinkPumpInitialStatus status)
         ? QStringLiteral("On") : QStringLiteral("Off");
 }
 
-QString pumpControlTypeText(HydraulicLinkPumpControlType control_type)
+QString pumpControlSummary(const NetworkHydraulic &network, const QUuid &pump_uuid)
 {
-    switch (control_type)
+    int level_count = 0;
+    int timer_count = 0;
+    int time_of_day_count = 0;
+    for (const HydraulicControlSimple &control : network.controls_simple)
     {
-    case HydraulicLinkPumpControlType::None:
-        return QStringLiteral("None");
-    case HydraulicLinkPumpControlType::LevelBased:
-        return QStringLiteral("Level-Based");
-    case HydraulicLinkPumpControlType::TimeBased:
-        return QStringLiteral("Time-Based");
+        if (control.link_uuid != pump_uuid)
+            continue;
+
+        switch (control.type)
+        {
+        case HydraulicControlSimpleType::LowLevel:
+        case HydraulicControlSimpleType::HighLevel:
+            level_count++;
+            break;
+        case HydraulicControlSimpleType::Timer:
+            timer_count++;
+            break;
+        case HydraulicControlSimpleType::TimeOfDay:
+            time_of_day_count++;
+            break;
+        }
     }
 
-    return QStringLiteral("Unknown");
+    int rule_count = 0;
+    for (const HydraulicControlRule &rule : network.controls_rules)
+    {
+        bool targets_pump = false;
+        for (const HydraulicControlRuleAction &action : rule.actions_then)
+            targets_pump = targets_pump || action.link_uuid == pump_uuid;
+        for (const HydraulicControlRuleAction &action : rule.actions_else)
+            targets_pump = targets_pump || action.link_uuid == pump_uuid;
+        if (targets_pump)
+            rule_count++;
+    }
+
+    QStringList parts;
+    if (level_count > 0)
+        parts.append(QStringLiteral("Level (%1)").arg(level_count));
+    if (timer_count > 0)
+        parts.append(QStringLiteral("Elapsed Time (%1)").arg(timer_count));
+    if (time_of_day_count > 0)
+        parts.append(QStringLiteral("Time of Day (%1)").arg(time_of_day_count));
+    if (rule_count > 0)
+        parts.append(QStringLiteral("Rule (%1)").arg(rule_count));
+
+    return parts.isEmpty() ? QStringLiteral("None") : parts.join(QStringLiteral(", "));
 }
 
 QString pumpEfficiencyInputText(HydraulicLinkPumpEfficiencyInputType input_type)
@@ -773,7 +808,6 @@ ColumnFilterKind columnFilterKind(const QString &title)
         QStringLiteral("Can Overflow"),
         QStringLiteral("Status Initial"),
         QStringLiteral("Definition"),
-        QStringLiteral("Control Type"),
         QStringLiteral("Efficiency Input"),
         QStringLiteral("Energy Price Input"),
         QStringLiteral("Valve Type"),
@@ -1699,7 +1733,7 @@ private:
         this->columns.append({QStringLiteral("Speed Initial"), false});
         this->columns.append({QStringLiteral("Status Initial"), false});
         this->columns.append({QStringLiteral("Speed Pattern"), false});
-        this->columns.append({QStringLiteral("Control Type"), false});
+        this->columns.append({QStringLiteral("Controls"), false});
         this->columns.append({QStringLiteral("Efficiency Input"), false});
         this->columns.append({QStringLiteral("Efficiency Constant [%]"), false});
         this->columns.append({QStringLiteral("Efficiency Curve"), false});
@@ -1758,7 +1792,7 @@ private:
             row.cells.append(numberCell(pump.initial_speed_ratio, 4));
             row.cells.append(textCell(pumpInitialStatusText(pump.initial_status)));
             row.cells.append(textCell(patternId(network, pump.speed_pattern_uuid)));
-            row.cells.append(textCell(pumpControlTypeText(pump.control_type)));
+            row.cells.append(textCell(pumpControlSummary(network, pump.uuid)));
             row.cells.append(textCell(pumpEfficiencyInputText(pump.efficiency_input_type)));
             row.cells.append(numberCell(pump.constant_efficiency_percent, 3, QStringLiteral(" %")));
             row.cells.append(textCell(pumpEfficiencyCurveId(network, pump.efficiency_curve_uuid)));

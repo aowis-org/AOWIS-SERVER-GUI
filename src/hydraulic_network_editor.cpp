@@ -1065,15 +1065,51 @@ bool HydraulicNetworkEditor::setPumpSpeedPatternUuid(
     return true;
 }
 
-bool HydraulicNetworkEditor::setPumpControlType(
-    const QUuid &uuid, HydraulicLinkPumpControlType control_type)
+QUuid HydraulicNetworkEditor::addPumpSimpleControl(
+    const QUuid &pump_uuid, HydraulicControlSimpleType type, const QUuid &trigger_node_uuid)
 {
-    HydraulicLinkPump *pump = entityByUuid(this->network.links_pumps, uuid);
-    if (pump == nullptr)
+    if (entityByUuid(this->network.links_pumps, pump_uuid) == nullptr)
+        return QUuid();
+
+    HydraulicControlSimple control;
+    control.id = nextSimpleControlId();
+    control.uuid = QUuid::createUuid();
+    control.type = type;
+    control.link_uuid = pump_uuid;
+    control.action = type == HydraulicControlSimpleType::HighLevel
+        ? HydraulicControlActionType::Close : HydraulicControlActionType::Open;
+    control.trigger_node_uuid = trigger_node_uuid;
+    this->network.controls_simple.append(control);
+    return control.uuid;
+}
+
+bool HydraulicNetworkEditor::setPumpSimpleControl(
+    const QUuid &pump_uuid, const HydraulicControlSimple &control)
+{
+    if (entityByUuid(this->network.links_pumps, pump_uuid) == nullptr)
+        return false;
+    if (control.uuid.isNull() || control.link_uuid != pump_uuid)
         return false;
 
-    pump->control_type = control_type;
+    HydraulicControlSimple *stored = entityByUuid(this->network.controls_simple, control.uuid);
+    if (stored == nullptr || stored->link_uuid != pump_uuid)
+        return false;
+
+    *stored = control;
     return true;
+}
+
+bool HydraulicNetworkEditor::removePumpSimpleControl(
+    const QUuid &pump_uuid, const QUuid &control_uuid)
+{
+    if (entityByUuid(this->network.links_pumps, pump_uuid) == nullptr)
+        return false;
+
+    HydraulicControlSimple *control = entityByUuid(this->network.controls_simple, control_uuid);
+    if (control == nullptr || control->link_uuid != pump_uuid)
+        return false;
+
+    return removeEntityByUuid(this->network.controls_simple, control_uuid);
 }
 
 bool HydraulicNetworkEditor::setPumpEfficiencyInput(
@@ -1637,6 +1673,20 @@ QString HydraulicNetworkEditor::nextLinkId(const QString &prefix) const
             used = used || pump.id == candidate;
         for (const HydraulicLinkValve &valve : this->network.links_valves)
             used = used || valve.id == candidate;
+
+        if (!used)
+            return candidate;
+    }
+}
+
+QString HydraulicNetworkEditor::nextSimpleControlId() const
+{
+    for (int number = 1; ; number++)
+    {
+        const QString candidate = QStringLiteral("C") + QString::number(number);
+        bool used = false;
+        for (const HydraulicControlSimple &control : this->network.controls_simple)
+            used = used || control.id == candidate;
 
         if (!used)
             return candidate;

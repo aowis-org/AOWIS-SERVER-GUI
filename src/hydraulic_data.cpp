@@ -2530,11 +2530,31 @@ bool HydraulicData::setPumpSpeedPatternUuid(
         uuid, this->network_editor.setPumpSpeedPatternUuid(uuid, speed_pattern_uuid));
 }
 
-bool HydraulicData::setPumpControlType(
-    const QUuid &uuid, HydraulicLinkPumpControlType control_type)
+QUuid HydraulicData::addPumpSimpleControl(
+    const QUuid &pump_uuid, HydraulicControlSimpleType type, const QUuid &trigger_node_uuid)
+{
+    const QUuid control_uuid = this->network_editor.addPumpSimpleControl(
+        pump_uuid, type, trigger_node_uuid);
+    if (control_uuid.isNull())
+        return QUuid();
+
+    markNetworkChanged(NetworkChange::Visual, pump_uuid);
+    emit signalLinkChanged(InfrastructureEntity::Pump, pump_uuid);
+    return control_uuid;
+}
+
+bool HydraulicData::setPumpSimpleControl(
+    const QUuid &pump_uuid, const HydraulicControlSimple &control)
 {
     return emitLinkChangedIfSuccessful(
-        uuid, this->network_editor.setPumpControlType(uuid, control_type));
+        pump_uuid, this->network_editor.setPumpSimpleControl(pump_uuid, control));
+}
+
+bool HydraulicData::removePumpSimpleControl(
+    const QUuid &pump_uuid, const QUuid &control_uuid)
+{
+    return emitLinkChangedIfSuccessful(
+        pump_uuid, this->network_editor.removePumpSimpleControl(pump_uuid, control_uuid));
 }
 
 bool HydraulicData::setPumpEfficiencyInput(

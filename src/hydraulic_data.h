@@ -369,7 +369,10 @@ public:
     bool setPumpInitialStatus(const QUuid &uuid,
                               HydraulicLinkPumpInitialStatus initial_status);
     bool setPumpSpeedPatternUuid(const QUuid &uuid, const QUuid &speed_pattern_uuid);
-    bool setPumpControlType(const QUuid &uuid, HydraulicLinkPumpControlType control_type);
+    QUuid addPumpSimpleControl(const QUuid &pump_uuid, HydraulicControlSimpleType type,
+                               const QUuid &trigger_node_uuid = QUuid());
+    bool setPumpSimpleControl(const QUuid &pump_uuid, const HydraulicControlSimple &control);
+    bool removePumpSimpleControl(const QUuid &pump_uuid, const QUuid &control_uuid);
     bool setPumpEfficiencyInput(const QUuid &uuid,
                                 HydraulicLinkPumpEfficiencyInputType input_type,
                                 const QUuid &efficiency_curve_uuid);

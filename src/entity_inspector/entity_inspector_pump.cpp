@@ -1,9 +1,20 @@
 #include "entity_inspector_pump.h"
 
+#include <cmath>
 #include <optional>
+
+#include <QAbstractItemView>
+#include <QCheckBox>
+#include <QHeaderView>
+#include <QHBoxLayout>
 
 #include <QGridLayout>
 #include <QLabel>
+#include <QPushButton>
+#include <QTime>
+#include <QTimeEdit>
+#include <QTimer>
+#include <QVBoxLayout>
 #include <QSignalBlocker>
 
 namespace
@@ -14,6 +25,58 @@ constexpr int uuid_role = Qt::UserRole + 1;
 QString entityName(const QString &id, const QUuid &uuid)
 {
     return id.isEmpty() ? uuid.toString(QUuid::WithoutBraces) : id;
+}
+
+bool isJunction(const NetworkHydraulic &network, const QUuid &uuid)
+{
+    for (const HydraulicNodeJunction &junction : network.nodes_junctions)
+    {
+        if (junction.uuid == uuid)
+            return true;
+    }
+    return false;
+}
+
+bool isTank(const NetworkHydraulic &network, const QUuid &uuid)
+{
+    for (const HydraulicNodeTank &tank : network.nodes_tanks)
+    {
+        if (tank.uuid == uuid)
+            return true;
+    }
+    return false;
+}
+
+bool isReservoir(const NetworkHydraulic &network, const QUuid &uuid)
+{
+    for (const HydraulicNodeReservoir &reservoir : network.nodes_reservoirs)
+    {
+        if (reservoir.uuid == uuid)
+            return true;
+    }
+    return false;
+}
+
+bool isLevelControl(HydraulicControlSimpleType type)
+{
+    return type == HydraulicControlSimpleType::LowLevel
+        || type == HydraulicControlSimpleType::HighLevel;
+}
+
+int ruleCountForPump(const NetworkHydraulic &network, const QUuid &pump_uuid)
+{
+    int count = 0;
+    for (const HydraulicControlRule &rule : network.controls_rules)
+    {
+        bool targets_pump = false;
+        for (const HydraulicControlRuleAction &action : rule.actions_then)
+            targets_pump = targets_pump || action.link_uuid == pump_uuid;
+        for (const HydraulicControlRuleAction &action : rule.actions_else)
+            targets_pump = targets_pump || action.link_uuid == pump_uuid;
+        if (targets_pump)
+            count++;
+    }
+    return count;
 }
 }
 
@@ -30,6 +93,7 @@ EntityInspectorPump::EntityInspectorPump(HydraulicData *hydraulic_data,
     bindHydraulicLink(InfrastructureEntity::Pump, this->pump_uuid, "Pump");
     addGroupEndpoints();
 
+    addGroupPumpInput();
     addGroupControls();
     addGroupEnergyCostInput();
     addGroupEnergy();
@@ -43,9 +107,9 @@ EntityInspectorPump::EntityInspectorPump(HydraulicData *hydraulic_data,
     bindPump();
 }
 
-void EntityInspectorPump::addGroupControls()
+void EntityInspectorPump::addGroupPumpInput()
 {
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Controls");
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Pump Input");
     QGridLayout *grid = new QGridLayout(group);
 
     QLabel *label_type = new QLabel("Type");
@@ -87,15 +151,6 @@ void EntityInspectorPump::addGroupControls()
     QLabel *label_speed_pattern = new QLabel("Speed Pattern");
     this->combo_speed_pattern = new QComboBox();
 
-    QLabel *label_controls = new QLabel("Control Type");
-    this->combo_controls = new QComboBox();
-    this->combo_controls->addItem(
-        "None", static_cast<int>(HydraulicLinkPumpControlType::None));
-    this->combo_controls->addItem(
-        "Level-based", static_cast<int>(HydraulicLinkPumpControlType::LevelBased));
-    this->combo_controls->addItem(
-        "Time-based", static_cast<int>(HydraulicLinkPumpControlType::TimeBased));
-
     grid->addWidget(label_type, 0, 0);
     grid->addWidget(this->combo_type, 0, 1);
     grid->addWidget(this->label_constant_power, 1, 0);
@@ -106,8 +161,56 @@ void EntityInspectorPump::addGroupControls()
     grid->addWidget(this->combo_status_initial, 3, 1);
     grid->addWidget(label_speed_pattern, 4, 0);
     grid->addWidget(this->combo_speed_pattern, 4, 1);
-    grid->addWidget(label_controls, 5, 0);
-    grid->addWidget(this->combo_controls, 5, 1);
+
+    layoutConfiguration()->addWidget(group);
+}
+
+void EntityInspectorPump::addGroupControls()
+{
+    GroupBoxCollapsible *group = new GroupBoxCollapsible("Controls");
+    QVBoxLayout *layout = new QVBoxLayout(group);
+
+    this->table_controls = new QTableWidget(group);
+    this->table_controls->setColumnCount(7);
+    this->table_controls->setHorizontalHeaderLabels({
+        QStringLiteral("Enabled"),
+        QStringLiteral("Trigger"),
+        QStringLiteral("Trigger Node"),
+        QStringLiteral("Threshold / Time"),
+        QStringLiteral("Action"),
+        QStringLiteral("Speed"),
+        QString()});
+    this->table_controls->verticalHeader()->setVisible(false);
+    this->table_controls->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    this->table_controls->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+    this->table_controls->setSelectionMode(QAbstractItemView::NoSelection);
+    this->table_controls->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    this->table_controls->setMinimumHeight(170);
+    layout->addWidget(this->table_controls);
+
+    QHBoxLayout *add_layout = new QHBoxLayout();
+    this->combo_new_control_type = new QComboBox(group);
+    this->combo_new_control_type->addItem(
+        QStringLiteral("Below level / pressure"),
+        static_cast<int>(HydraulicControlSimpleType::LowLevel));
+    this->combo_new_control_type->addItem(
+        QStringLiteral("Above level / pressure"),
+        static_cast<int>(HydraulicControlSimpleType::HighLevel));
+    this->combo_new_control_type->addItem(
+        QStringLiteral("Elapsed time"),
+        static_cast<int>(HydraulicControlSimpleType::Timer));
+    this->combo_new_control_type->addItem(
+        QStringLiteral("Time of day"),
+        static_cast<int>(HydraulicControlSimpleType::TimeOfDay));
+    this->button_add_control = new QPushButton(QStringLiteral("Add Control"), group);
+    add_layout->addWidget(this->combo_new_control_type, 1);
+    add_layout->addWidget(this->button_add_control);
+    layout->addLayout(add_layout);
+
+    this->label_rule_controls = new QLabel(group);
+    this->label_rule_controls->setWordWrap(true);
+    this->label_rule_controls->setVisible(false);
+    layout->addWidget(this->label_rule_controls);
 
     layoutConfiguration()->addWidget(group);
 }
@@ -177,12 +280,13 @@ void EntityInspectorPump::bindPump()
         this->hydraulic_data->setPumpSpeedPatternUuid(
             this->pump_uuid, this->combo_speed_pattern->currentData(uuid_role).toUuid());
     });
-    connect(this->combo_controls, &QComboBox::currentIndexChanged, this, [this](int)
+    connect(this->button_add_control, &QPushButton::clicked, this, [this]()
     {
-        const HydraulicLinkPumpControlType control_type =
-            static_cast<HydraulicLinkPumpControlType>(
-                this->combo_controls->currentData(value_role).toInt());
-        this->hydraulic_data->setPumpControlType(this->pump_uuid, control_type);
+        const HydraulicControlSimpleType type = static_cast<HydraulicControlSimpleType>(
+            this->combo_new_control_type->currentData(value_role).toInt());
+        const QUuid trigger_node_uuid = isLevelControl(type)
+            ? firstPumpControlTriggerNodeUuid() : QUuid();
+        this->hydraulic_data->addPumpSimpleControl(this->pump_uuid, type, trigger_node_uuid);
     });
     connect(this->combo_efficiency_curve, &QComboBox::currentIndexChanged, this, [this](int)
     {
@@ -211,7 +315,7 @@ void EntityInspectorPump::bindPump()
             [this](InfrastructureEntity entity_type, const QUuid &uuid)
     {
         if (entity_type == InfrastructureEntity::Pump && uuid == this->pump_uuid)
-            refreshPump();
+            QTimer::singleShot(0, this, &EntityInspectorPump::refreshPump);
     });
     connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
             this, &EntityInspectorPump::refreshPump);
@@ -233,7 +337,6 @@ void EntityInspectorPump::refreshPump()
     const QSignalBlocker speed_blocker(this->spin_speed_initial);
     const QSignalBlocker status_blocker(this->combo_status_initial);
     const QSignalBlocker speed_pattern_blocker(this->combo_speed_pattern);
-    const QSignalBlocker controls_blocker(this->combo_controls);
     const QSignalBlocker efficiency_blocker(this->combo_efficiency_curve);
     const QSignalBlocker energy_price_blocker(this->spin_energy_price);
     const QSignalBlocker price_pattern_blocker(this->combo_price_pattern);
@@ -253,10 +356,6 @@ void EntityInspectorPump::refreshPump()
 
     populateSpeedPatternCombo(pump->speed_pattern_uuid);
 
-    const int controls_index = this->combo_controls->findData(
-        static_cast<int>(pump->control_type), value_role);
-    this->combo_controls->setCurrentIndex(controls_index >= 0 ? controls_index : 0);
-
     populateEfficiencyInputCombo(pump.value());
     const QString energy_currency = this->hydraulic_data->networkHydraulic().options_energy.currency_iso4217;
     this->spin_energy_price->setSuffix(energy_currency.isEmpty()
@@ -266,6 +365,318 @@ void EntityInspectorPump::refreshPump()
     this->spin_energy_price->setEnabled(
         pump->energy_price_input_type == HydraulicLinkPumpEnergyPriceInputType::Constant);
     populatePricePatternCombo(pump.value());
+    refreshPumpControls();
+}
+
+QUuid EntityInspectorPump::firstPumpControlTriggerNodeUuid() const
+{
+    if (this->hydraulic_data == nullptr)
+        return QUuid();
+
+    const NetworkHydraulic &network = this->hydraulic_data->networkHydraulic();
+    for (const HydraulicNodeTank &tank : network.nodes_tanks)
+    {
+        if (tank.metadata.enabled)
+            return tank.uuid;
+    }
+    for (const HydraulicNodeReservoir &reservoir : network.nodes_reservoirs)
+    {
+        if (reservoir.metadata.enabled)
+            return reservoir.uuid;
+    }
+    for (const HydraulicNodeJunction &junction : network.nodes_junctions)
+    {
+        if (junction.metadata.enabled)
+            return junction.uuid;
+    }
+    return QUuid();
+}
+
+bool EntityInspectorPump::updatePumpSimpleControl(
+    const QUuid &control_uuid,
+    const std::function<void(HydraulicControlSimple &)> &mutation)
+{
+    if (this->hydraulic_data == nullptr)
+        return false;
+
+    const QList<HydraulicControlSimple> &controls =
+        this->hydraulic_data->networkHydraulic().controls_simple;
+    for (const HydraulicControlSimple &control : controls)
+    {
+        if (control.uuid != control_uuid || control.link_uuid != this->pump_uuid)
+            continue;
+
+        HydraulicControlSimple updated = control;
+        mutation(updated);
+        return this->hydraulic_data->setPumpSimpleControl(this->pump_uuid, updated);
+    }
+
+    return false;
+}
+
+void EntityInspectorPump::refreshPumpControls()
+{
+    if (this->hydraulic_data == nullptr || this->table_controls == nullptr)
+        return;
+
+    const NetworkHydraulic &network = this->hydraulic_data->networkHydraulic();
+    QList<HydraulicControlSimple> controls;
+    for (const HydraulicControlSimple &control : network.controls_simple)
+    {
+        if (control.link_uuid == this->pump_uuid)
+            controls.append(control);
+    }
+
+    this->table_controls->setRowCount(controls.size());
+    for (int row = 0; row < controls.size(); row++)
+    {
+        const HydraulicControlSimple control = controls.at(row);
+
+        QCheckBox *enabled = new QCheckBox(this->table_controls);
+        enabled->setChecked(control.enabled);
+        enabled->setToolTip(QStringLiteral("Enable or disable this EPANET control."));
+        this->table_controls->setCellWidget(row, 0, enabled);
+        connect(enabled, &QCheckBox::toggled, this, [this, control_uuid = control.uuid](bool checked)
+        {
+            updatePumpSimpleControl(control_uuid, [checked](HydraulicControlSimple &updated)
+            {
+                updated.enabled = checked;
+            });
+        });
+
+        QComboBox *trigger_type = new QComboBox(this->table_controls);
+        trigger_type->addItem(
+            QStringLiteral("Below level / pressure"),
+            static_cast<int>(HydraulicControlSimpleType::LowLevel));
+        trigger_type->addItem(
+            QStringLiteral("Above level / pressure"),
+            static_cast<int>(HydraulicControlSimpleType::HighLevel));
+        trigger_type->addItem(
+            QStringLiteral("Elapsed time"),
+            static_cast<int>(HydraulicControlSimpleType::Timer));
+        trigger_type->addItem(
+            QStringLiteral("Time of day"),
+            static_cast<int>(HydraulicControlSimpleType::TimeOfDay));
+        const int trigger_type_index = trigger_type->findData(
+            static_cast<int>(control.type), value_role);
+        trigger_type->setCurrentIndex(trigger_type_index >= 0 ? trigger_type_index : 0);
+        this->table_controls->setCellWidget(row, 1, trigger_type);
+        connect(trigger_type, &QComboBox::currentIndexChanged, this,
+                [this, trigger_type, control_uuid = control.uuid](int)
+        {
+            const HydraulicControlSimpleType type = static_cast<HydraulicControlSimpleType>(
+                trigger_type->currentData(value_role).toInt());
+            updatePumpSimpleControl(control_uuid, [this, type](HydraulicControlSimple &updated)
+            {
+                updated.type = type;
+                if (isLevelControl(type))
+                {
+                    const NetworkHydraulic &current_network =
+                        this->hydraulic_data->networkHydraulic();
+                    if (!isJunction(current_network, updated.trigger_node_uuid)
+                        && !isTank(current_network, updated.trigger_node_uuid)
+                        && !isReservoir(current_network, updated.trigger_node_uuid))
+                    {
+                        updated.trigger_node_uuid = firstPumpControlTriggerNodeUuid();
+                    }
+                }
+                else
+                {
+                    updated.trigger_node_uuid = QUuid();
+                }
+            });
+        });
+
+        const bool level_control = isLevelControl(control.type);
+        if (level_control)
+        {
+            QComboBox *trigger_node = new QComboBox(this->table_controls);
+            trigger_node->addItem(QStringLiteral("Select node"));
+            trigger_node->setItemData(0, QUuid(), uuid_role);
+
+            bool selected_node_present = control.trigger_node_uuid.isNull();
+            for (const HydraulicNodeTank &tank : network.nodes_tanks)
+            {
+                if (!tank.metadata.enabled)
+                    continue;
+                trigger_node->addItem(QStringLiteral("Tank: %1").arg(entityName(tank.id, tank.uuid)));
+                trigger_node->setItemData(trigger_node->count() - 1, tank.uuid, uuid_role);
+                selected_node_present = selected_node_present || tank.uuid == control.trigger_node_uuid;
+            }
+            for (const HydraulicNodeReservoir &reservoir : network.nodes_reservoirs)
+            {
+                if (!reservoir.metadata.enabled)
+                    continue;
+                trigger_node->addItem(
+                    QStringLiteral("Reservoir: %1").arg(entityName(reservoir.id, reservoir.uuid)));
+                trigger_node->setItemData(trigger_node->count() - 1, reservoir.uuid, uuid_role);
+                selected_node_present = selected_node_present || reservoir.uuid == control.trigger_node_uuid;
+            }
+            for (const HydraulicNodeJunction &junction : network.nodes_junctions)
+            {
+                if (!junction.metadata.enabled)
+                    continue;
+                trigger_node->addItem(
+                    QStringLiteral("Junction: %1").arg(entityName(junction.id, junction.uuid)));
+                trigger_node->setItemData(trigger_node->count() - 1, junction.uuid, uuid_role);
+                selected_node_present = selected_node_present || junction.uuid == control.trigger_node_uuid;
+            }
+            if (!control.trigger_node_uuid.isNull() && !selected_node_present)
+            {
+                trigger_node->addItem(QStringLiteral("[Missing or disabled] %1").arg(
+                    control.trigger_node_uuid.toString(QUuid::WithoutBraces)));
+                trigger_node->setItemData(
+                    trigger_node->count() - 1, control.trigger_node_uuid, uuid_role);
+            }
+
+            int trigger_node_index = 0;
+            for (int index = 0; index < trigger_node->count(); index++)
+            {
+                if (trigger_node->itemData(index, uuid_role).toUuid() == control.trigger_node_uuid)
+                {
+                    trigger_node_index = index;
+                    break;
+                }
+            }
+            trigger_node->setCurrentIndex(trigger_node_index);
+            this->table_controls->setCellWidget(row, 2, trigger_node);
+            connect(trigger_node, &QComboBox::currentIndexChanged, this,
+                    [this, trigger_node, control_uuid = control.uuid](int)
+            {
+                const QUuid node_uuid = trigger_node->currentData(uuid_role).toUuid();
+                updatePumpSimpleControl(control_uuid, [node_uuid](HydraulicControlSimple &updated)
+                {
+                    updated.trigger_node_uuid = node_uuid;
+                });
+            });
+
+            const bool trigger_is_junction = isJunction(network, control.trigger_node_uuid);
+            QDoubleSpinBox *threshold = new QDoubleSpinBox(this->table_controls);
+            threshold->setDecimals(3);
+            threshold->setSingleStep(0.1);
+            threshold->setRange(-1000000.0, 1000000.0);
+            threshold->setSuffix(trigger_is_junction
+                ? QStringLiteral(" m pressure") : QStringLiteral(" m level"));
+            threshold->setValue(trigger_is_junction
+                ? control.trigger_pressure_head_m : control.trigger_water_level_m);
+            this->table_controls->setCellWidget(row, 3, threshold);
+            connect(threshold, &QDoubleSpinBox::valueChanged, this,
+                    [this, control_uuid = control.uuid, trigger_is_junction](double value)
+            {
+                updatePumpSimpleControl(control_uuid,
+                    [trigger_is_junction, value](HydraulicControlSimple &updated)
+                {
+                    if (trigger_is_junction)
+                        updated.trigger_pressure_head_m = value;
+                    else
+                        updated.trigger_water_level_m = value;
+                });
+            });
+        }
+        else
+        {
+            QLabel *no_node = new QLabel(QStringLiteral("—"), this->table_controls);
+            this->table_controls->setCellWidget(row, 2, no_node);
+
+            if (control.type == HydraulicControlSimpleType::Timer)
+            {
+                QDoubleSpinBox *elapsed_time = new QDoubleSpinBox(this->table_controls);
+                elapsed_time->setDecimals(3);
+                elapsed_time->setSingleStep(0.25);
+                elapsed_time->setRange(0.0, 596523.0);
+                elapsed_time->setSuffix(QStringLiteral(" h elapsed"));
+                elapsed_time->setValue(static_cast<double>(control.trigger_elapsed_time_s) / 3600.0);
+                this->table_controls->setCellWidget(row, 3, elapsed_time);
+                connect(elapsed_time, &QDoubleSpinBox::valueChanged, this,
+                        [this, control_uuid = control.uuid](double hours)
+                {
+                    const quint64 seconds = static_cast<quint64>(std::llround(hours * 3600.0));
+                    updatePumpSimpleControl(control_uuid, [seconds](HydraulicControlSimple &updated)
+                    {
+                        updated.trigger_elapsed_time_s = seconds;
+                    });
+                });
+            }
+            else
+            {
+                QTimeEdit *time_of_day = new QTimeEdit(this->table_controls);
+                time_of_day->setDisplayFormat(QStringLiteral("HH:mm:ss"));
+                time_of_day->setTime(QTime(0, 0, 0).addSecs(
+                    static_cast<int>(control.trigger_time_of_day_s % (24 * 60 * 60))));
+                this->table_controls->setCellWidget(row, 3, time_of_day);
+                connect(time_of_day, &QTimeEdit::timeChanged, this,
+                        [this, control_uuid = control.uuid](const QTime &time)
+                {
+                    const quint64 seconds = static_cast<quint64>(QTime(0, 0, 0).secsTo(time));
+                    updatePumpSimpleControl(control_uuid, [seconds](HydraulicControlSimple &updated)
+                    {
+                        updated.trigger_time_of_day_s = seconds;
+                    });
+                });
+            }
+        }
+
+        QComboBox *action = new QComboBox(this->table_controls);
+        action->addItem(QStringLiteral("Turn on"), static_cast<int>(HydraulicControlActionType::Open));
+        action->addItem(QStringLiteral("Turn off"), static_cast<int>(HydraulicControlActionType::Close));
+        action->addItem(QStringLiteral("Set speed"), static_cast<int>(HydraulicControlActionType::Setting));
+        const int action_index = action->findData(static_cast<int>(control.action), value_role);
+        action->setCurrentIndex(action_index >= 0 ? action_index : 0);
+        this->table_controls->setCellWidget(row, 4, action);
+        connect(action, &QComboBox::currentIndexChanged, this,
+                [this, action, control_uuid = control.uuid](int)
+        {
+            const HydraulicControlActionType action_type = static_cast<HydraulicControlActionType>(
+                action->currentData(value_role).toInt());
+            updatePumpSimpleControl(control_uuid, [action_type](HydraulicControlSimple &updated)
+            {
+                updated.action = action_type;
+                updated.setting = HydraulicControlLinkSetting();
+                if (action_type == HydraulicControlActionType::Setting)
+                    updated.setting.pump_speed_ratio = 1.0;
+            });
+        });
+
+        QDoubleSpinBox *speed = new QDoubleSpinBox(this->table_controls);
+        speed->setDecimals(3);
+        speed->setSingleStep(0.05);
+        speed->setRange(0.0, 1000.0);
+        speed->setSuffix(QStringLiteral(" ×"));
+        speed->setValue(control.setting.pump_speed_ratio.value_or(1.0));
+        speed->setEnabled(control.action == HydraulicControlActionType::Setting);
+        this->table_controls->setCellWidget(row, 5, speed);
+        connect(speed, &QDoubleSpinBox::valueChanged, this,
+                [this, control_uuid = control.uuid](double speed_ratio)
+        {
+            updatePumpSimpleControl(control_uuid, [speed_ratio](HydraulicControlSimple &updated)
+            {
+                updated.setting = HydraulicControlLinkSetting();
+                updated.setting.pump_speed_ratio = speed_ratio;
+                updated.action = HydraulicControlActionType::Setting;
+            });
+        });
+
+        QPushButton *remove = new QPushButton(QStringLiteral("Remove"), this->table_controls);
+        this->table_controls->setCellWidget(row, 6, remove);
+        connect(remove, &QPushButton::clicked, this, [this, control_uuid = control.uuid]()
+        {
+            this->hydraulic_data->removePumpSimpleControl(this->pump_uuid, control_uuid);
+        });
+    }
+
+    this->table_controls->resizeRowsToContents();
+
+    const int rule_count = ruleCountForPump(network, this->pump_uuid);
+    this->label_rule_controls->setVisible(rule_count > 0);
+    if (rule_count > 0)
+    {
+        this->label_rule_controls->setText(
+            QStringLiteral("%1 rule-based control%2 also target%3 this pump. "
+                           "The controls above are the pump's simple EPANET controls.")
+                .arg(rule_count)
+                .arg(rule_count == 1 ? QString() : QStringLiteral("s"))
+                .arg(rule_count == 1 ? QStringLiteral("s") : QString()));
+    }
 }
 
 void EntityInspectorPump::populateSpeedPatternCombo(const QUuid &pattern_uuid)
