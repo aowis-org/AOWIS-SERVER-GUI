@@ -358,7 +358,8 @@ public:
     bool setPipeRoughnessDwMm(const QUuid &uuid, double roughness_darcy_weisbach_mm);
     bool setPipeRoughnessCm(const QUuid &uuid, double roughness_chezy_manning);
     bool setPipeMinorLoss(const QUuid &uuid, double minor_loss_coefficient);
-    bool setPipeOverrideReactions(const QUuid &uuid, bool override_reactions);
+    bool setPipeOverrideBulkReaction(const QUuid &uuid, bool override_bulk_reaction);
+    bool setPipeOverrideWallReaction(const QUuid &uuid, bool override_wall_reaction);
     bool setPipeBulkReactionCoefficient(const QUuid &uuid, double coefficient);
     bool setPipeWallReactionCoefficient(const QUuid &uuid, double coefficient);
 

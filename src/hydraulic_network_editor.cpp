@@ -988,11 +988,23 @@ bool HydraulicNetworkEditor::setPipeMinorLoss(const QUuid &uuid, double minor_lo
     return true;
 }
 
-bool HydraulicNetworkEditor::setPipeOverrideReactions(const QUuid &uuid, bool override_reactions)
+bool HydraulicNetworkEditor::setPipeOverrideBulkReaction(
+    const QUuid &uuid, bool override_bulk_reaction)
 {
     HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, uuid);
-    if (pipe == nullptr) return false;
-    pipe->override_reactions = override_reactions;
+    if (pipe == nullptr)
+        return false;
+    pipe->override_bulk_reaction = override_bulk_reaction;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setPipeOverrideWallReaction(
+    const QUuid &uuid, bool override_wall_reaction)
+{
+    HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, uuid);
+    if (pipe == nullptr)
+        return false;
+    pipe->override_wall_reaction = override_wall_reaction;
     return true;
 }
 

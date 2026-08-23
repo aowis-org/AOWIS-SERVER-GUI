@@ -51,7 +51,8 @@ private:
     QDoubleSpinBox *spin_loss_coefficient = nullptr;
 
     void addGroupQuality();
-    QCheckBox *check_override = nullptr;
+    QCheckBox *check_override_bulk = nullptr;
+    QCheckBox *check_override_wall = nullptr;
     QDoubleSpinBox *spin_bulk_reaction = nullptr;
     QDoubleSpinBox *spin_wall_reaction = nullptr;
     void updateQualityUi();

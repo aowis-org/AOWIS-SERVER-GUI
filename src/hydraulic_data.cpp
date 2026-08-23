@@ -2482,9 +2482,18 @@ bool HydraulicData::setPipeMinorLoss(const QUuid &uuid, double minor_loss_coeffi
         uuid, this->network_editor.setPipeMinorLoss(uuid, minor_loss_coefficient));
 }
 
-bool HydraulicData::setPipeOverrideReactions(const QUuid &uuid, bool override_reactions)
+bool HydraulicData::setPipeOverrideBulkReaction(
+    const QUuid &uuid, bool override_bulk_reaction)
 {
-    return emitLinkChangedIfSuccessful(uuid, this->network_editor.setPipeOverrideReactions(uuid, override_reactions));
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setPipeOverrideBulkReaction(uuid, override_bulk_reaction));
+}
+
+bool HydraulicData::setPipeOverrideWallReaction(
+    const QUuid &uuid, bool override_wall_reaction)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setPipeOverrideWallReaction(uuid, override_wall_reaction));
 }
 
 bool HydraulicData::setPipeBulkReactionCoefficient(const QUuid &uuid, double coefficient)

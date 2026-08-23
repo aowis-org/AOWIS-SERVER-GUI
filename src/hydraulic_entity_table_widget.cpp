@@ -818,7 +818,7 @@ ColumnFilterKind columnFilterKind(const QString &title)
         QStringLiteral("Quality Source Type"),
         QStringLiteral("Quality Mixing Model"),
         QStringLiteral("Quality Override Bulk Reaction"),
-        QStringLiteral("Quality Override Reactions")
+        QStringLiteral("Quality Override Wall Reaction")
     };
 
     static const QSet<QString> integer_columns = {
@@ -1640,8 +1640,9 @@ private:
         this->columns.append({QStringLiteral("Roughness DW Effective [mm]"), true});
         this->columns.append({QStringLiteral("Roughness CM Effective"), true});
         this->columns.append({QStringLiteral("Referenced by Control"), true});
-        this->columns.append({QStringLiteral("Quality Override Reactions"), false});
+        this->columns.append({QStringLiteral("Quality Override Bulk Reaction"), false});
         this->columns.append({QStringLiteral("Quality Bulk Reaction Coefficient"), false});
+        this->columns.append({QStringLiteral("Quality Override Wall Reaction"), false});
         this->columns.append({QStringLiteral("Quality Wall Reaction Coefficient"), false});
         this->columns.append({qualityResultColumnTitle(quality_analysis), true});
 
@@ -1690,8 +1691,9 @@ private:
                 row.cells.append(boolCell(result->appears_in_control));
             }
 
-            row.cells.append(boolCell(pipe.override_reactions));
+            row.cells.append(boolCell(pipe.override_bulk_reaction));
             row.cells.append(numberCell(pipe.bulk_reaction.coefficient, 8));
+            row.cells.append(boolCell(pipe.override_wall_reaction));
             row.cells.append(numberCell(pipe.wall_reaction.coefficient, 8));
             const WaterQualitySimulationResultLinkPipe *quality_entity_result =
                 quality_lookup.value(pipe.uuid, nullptr);

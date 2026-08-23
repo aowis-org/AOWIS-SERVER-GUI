@@ -217,7 +217,8 @@ void EntityInspectorPipe::refreshPipe()
     const QSignalBlocker roughness_dw_blocker(this->spin_roughness_dw);
     const QSignalBlocker roughness_cm_blocker(this->spin_roughness_cm);
     const QSignalBlocker minor_loss_blocker(this->spin_loss_coefficient);
-    const QSignalBlocker quality_override_blocker(this->check_override);
+    const QSignalBlocker quality_bulk_override_blocker(this->check_override_bulk);
+    const QSignalBlocker quality_wall_override_blocker(this->check_override_wall);
     const QSignalBlocker quality_bulk_blocker(this->spin_bulk_reaction);
     const QSignalBlocker quality_wall_blocker(this->spin_wall_reaction);
 
@@ -239,7 +240,8 @@ void EntityInspectorPipe::refreshPipe()
     this->spin_roughness_dw->setValue(pipe->roughness_darcy_weisbach_mm);
     this->spin_roughness_cm->setValue(pipe->roughness_chezy_manning);
     this->spin_loss_coefficient->setValue(pipe->minor_loss_coefficient);
-    this->check_override->setChecked(pipe->override_reactions);
+    this->check_override_bulk->setChecked(pipe->override_bulk_reaction);
+    this->check_override_wall->setChecked(pipe->override_wall_reaction);
     this->spin_bulk_reaction->setValue(pipe->bulk_reaction.coefficient);
     this->spin_wall_reaction->setValue(pipe->wall_reaction.coefficient);
     updateQualityUi();
@@ -251,7 +253,8 @@ void EntityInspectorPipe::addGroupQuality()
     QGridLayout *grid = new QGridLayout(group);
     int row = 0;
 
-    this->check_override = new QCheckBox("Override global pipe reactions");
+    this->check_override_bulk = new QCheckBox("Override global bulk reaction");
+    this->check_override_wall = new QCheckBox("Override global wall reaction");
 
     QLabel *label_bulk = new QLabel("Bulk Reaction Coefficient");
     label_bulk->setWordWrap(true);
@@ -275,15 +278,21 @@ void EntityInspectorPipe::addGroupQuality()
 
 
 
-    grid->addWidget(this->check_override, row++, 0, 1, 2);
+    grid->addWidget(this->check_override_bulk, row++, 0, 1, 2);
     grid->addWidget(label_bulk, row, 0);
     grid->addWidget(this->spin_bulk_reaction, row++, 1);
+    grid->addWidget(this->check_override_wall, row++, 0, 1, 2);
     grid->addWidget(label_wall, row, 0);
     grid->addWidget(this->spin_wall_reaction, row++, 1);
 
-    connect(this->check_override, &QCheckBox::toggled, this, [this](bool enabled)
+    connect(this->check_override_bulk, &QCheckBox::toggled, this, [this](bool enabled)
     {
-        this->hydraulic_data->setPipeOverrideReactions(this->pipe_uuid, enabled);
+        this->hydraulic_data->setPipeOverrideBulkReaction(this->pipe_uuid, enabled);
+        updateQualityUi();
+    });
+    connect(this->check_override_wall, &QCheckBox::toggled, this, [this](bool enabled)
+    {
+        this->hydraulic_data->setPipeOverrideWallReaction(this->pipe_uuid, enabled);
         updateQualityUi();
     });
     connect(this->spin_bulk_reaction, &QDoubleSpinBox::valueChanged, this, [this](double coefficient)
@@ -302,9 +311,8 @@ void EntityInspectorPipe::addGroupQuality()
 
 void EntityInspectorPipe::updateQualityUi()
 {
-    const bool enabled = this->check_override->isChecked();
-    this->spin_bulk_reaction->setEnabled(enabled);
-    this->spin_wall_reaction->setEnabled(enabled);
+    this->spin_bulk_reaction->setEnabled(this->check_override_bulk->isChecked());
+    this->spin_wall_reaction->setEnabled(this->check_override_wall->isChecked());
 }
 
 void EntityInspectorPipe::onHeadlossFormulaChanged(HeadlossFormulas formulas)
