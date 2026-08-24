@@ -45,8 +45,6 @@
     const FLOW_DIRECTION_MIN_LINK_PIXELS = 18;
     const FLOW_DIRECTION_SPACING_PIXELS = 100;
     const FLOW_DIRECTION_MAX_MARKERS_PER_LINK = 32;
-    const FLOW_DIRECTION_CHEVRON_LENGTH_PIXELS = 10;
-    const FLOW_DIRECTION_CHEVRON_WIDTH_PIXELS = 2;
     const SPATIAL_CELL_SIZE = 128;
     const ENTITY_JUNCTION = SHARED_RENDERER.ENTITY_JUNCTION;
     const ENTITY_RESERVOIR = SHARED_RENDERER.ENTITY_RESERVOIR;
@@ -151,6 +149,7 @@
         linkValues: new Map(),
         linkColors: new Map(),
         showFlowDirection: true,
+        flowDirectionSizePixels: 10,
         flowDirections: new Map(),
         flowDirectionArrowRenderIds: [],
         heatmapCanvas: null,
@@ -863,8 +862,8 @@
                         spriteScale: iconMarkerSizeForZoom(mapView.zoom)
                     },
                     flowDirection: {
-                        arrowLength: FLOW_DIRECTION_CHEVRON_LENGTH_PIXELS,
-                        arrowWidth: FLOW_DIRECTION_CHEVRON_WIDTH_PIXELS
+                        arrowLength: state.flowDirectionSizePixels,
+                        arrowWidth: Math.max(1, state.flowDirectionSizePixels * 0.2)
                     },
                     selectionOuter: {
                         segmentWidth: Math.max(7, state.linkThicknessPixels + 6),
@@ -2404,6 +2403,11 @@
         const linkMaximum = Number(symbology.linkMaximum);
         const linkValues = symbologyValues(symbology.linkValues);
         const showFlowDirection = !!symbology.showFlowDirection;
+        const rawFlowDirectionSizePixels = Number(symbology.flowDirectionSizePixels);
+        const flowDirectionSizePixels = rawFlowDirectionSizePixels <= 0
+            ? 0
+            : Math.max(6, Math.min(24,
+                Number.isFinite(rawFlowDirectionSizePixels) ? rawFlowDirectionSizePixels : 10));
         const flowDirections = symbologyValues(symbology.flowDirections);
         const heatmapVisual = Number(symbology.heatmapVisual) | 0;
         const heatmapMinimum = Number(symbology.heatmapMinimum);
@@ -2429,6 +2433,8 @@
             || !symbologyValuesEqual(state.linkValues, linkValues);
         const flowDirectionChanged = state.showFlowDirection !== showFlowDirection
             || !symbologyValuesEqual(state.flowDirections, flowDirections);
+        const flowDirectionSizeChanged =
+            state.flowDirectionSizePixels !== flowDirectionSizePixels;
         const networkColorChanged = nodeSymbologyChanged
             || linkSymbologyChanged;
         const networkChanged = networkColorChanged
@@ -2461,6 +2467,7 @@
         if (linkSymbologyChanged)
             state.linkColors = buildSymbologyColorMap(linkVisual, linkValues, linkMinimum, linkMaximum);
         state.showFlowDirection = showFlowDirection;
+        state.flowDirectionSizePixels = flowDirectionSizePixels;
         state.flowDirections = flowDirections;
         if (flowDirectionChanged)
             ++state.networkFlowDirectionRevision;
@@ -2476,7 +2483,7 @@
 
         if (networkColorChanged)
             invalidateNetworkColors();
-        else if (networkChanged || flowDirectionChanged)
+        else if (networkChanged || flowDirectionChanged || flowDirectionSizeChanged)
             scheduleNetworkRender();
         if (heatmapChanged)
             clearHeatmap();

@@ -19,6 +19,7 @@ struct NetworkSymbologySettings
     VisualLink visual_link = VisualLink::None;
     int link_thickness_px = 3;
     bool show_flow_direction = true;
+    int flow_direction_size_px = 10;
     VisualHeatmap visual_heatmap = VisualHeatmap::None;
     int heatmap_opacity = 75;
     HeatmapRadiusUnit heatmap_radius_unit = HeatmapRadiusUnit::Meters;
@@ -32,6 +33,15 @@ struct NetworkSymbologySettings
         result.node_size_percent = qBound(50, this->node_size_percent, 250);
         result.icon_size_percent = qBound(50, this->icon_size_percent, 250);
         result.link_thickness_px = qBound(1, this->link_thickness_px, 12);
+        if (this->flow_direction_size_px <= 0)
+        {
+            result.flow_direction_size_px = 0;
+            result.show_flow_direction = false;
+        }
+        else
+        {
+            result.flow_direction_size_px = qBound(6, this->flow_direction_size_px, 24);
+        }
         result.heatmap_opacity = qBound(0, this->heatmap_opacity, 100);
         result.heatmap_radius_m = qBound(10, this->heatmap_radius_m, 1000);
         result.heatmap_radius_px = qBound(5, this->heatmap_radius_px, 250);

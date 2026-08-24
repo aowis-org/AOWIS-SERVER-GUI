@@ -123,6 +123,7 @@ private:
         int icon_size_percent = 100;
         qreal link_width = 3.0;
         bool show_flow_direction = true;
+        qreal flow_direction_size_px = 10.0;
         QHash<quint32, qint8> flow_directions;
         HeatmapRadiusUnit heatmap_radius_unit = HeatmapRadiusUnit::Meters;
         int heatmap_radius_m = 400;

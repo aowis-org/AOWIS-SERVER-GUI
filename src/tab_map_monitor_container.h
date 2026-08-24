@@ -21,7 +21,6 @@
 #include <QButtonGroup>
 #include <QPushButton>
 #include <QRadioButton>
-#include <QCheckBox>
 #include <QComboBox>
 #include <QSlider>
 #include <QLabel>
@@ -77,7 +76,7 @@ signals:
     void signalNodeSizeChanged(int size_percent);
     void signalLinkVisualClicked(VisualLink visual_link);
     void signalLinkThicknessChanged(int thickness_px);
-    void signalFlowDirectionChanged(bool visible);
+    void signalFlowDirectionSizeChanged(int size_px);
     void signalHeatmapVisualClicked(VisualHeatmap visual_heatmap);
     void signalHeatmapOpacityChanged(int opacity);
     void signalHeatmapRadiusUnitChanged(HeatmapRadiusUnit unit);

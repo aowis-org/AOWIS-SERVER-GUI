@@ -90,6 +90,72 @@ private:
     QString description;
     QString unit_suffix;
 };
+
+
+class FlowDirectionSizeSlider final : public QSlider
+{
+public:
+    explicit FlowDirectionSizeSlider(QWidget *parent = nullptr)
+        : QSlider(Qt::Horizontal, parent)
+    {
+        setRange(0, 19);
+        setSingleStep(1);
+        setPageStep(1);
+        setValue(positionForArrowSize(10));
+        connect(this, &QSlider::valueChanged, this, [this]
+        {
+            updateToolTip();
+        });
+        updateToolTip();
+    }
+
+    int arrowSizePx() const
+    {
+        if (value() == 0)
+            return 0;
+        return 5 + value();
+    }
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        if (event->button() == Qt::RightButton)
+        {
+            setValue(positionForArrowSize(10));
+            event->accept();
+            return;
+        }
+
+        QSlider::mousePressEvent(event);
+    }
+
+    void contextMenuEvent(QContextMenuEvent *event) override
+    {
+        setValue(positionForArrowSize(10));
+        event->accept();
+    }
+
+private:
+    static int positionForArrowSize(int size_px)
+    {
+        if (size_px <= 0)
+            return 0;
+        return qBound(1, size_px - 5, 19);
+    }
+
+    void updateToolTip()
+    {
+        const int size_px = arrowSizePx();
+        const QString current = size_px == 0
+            ? QStringLiteral("Off")
+            : QStringLiteral("%1 px").arg(size_px);
+        setToolTip(QStringLiteral(
+            "Controls the flow-direction arrow size for the current simulation timestep.\n"
+            "The far-left detent is Off; moving one step right snaps directly to the minimum useful size.\n"
+            "Current: %1\nActive range: 6 px to 24 px\nDefault: 10 px\nRight-click to reset.")
+            .arg(current));
+    }
+};
 }
 
 #ifdef Q_OS_WASM
@@ -388,9 +454,10 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         this->symbology_settings.link_thickness_px = thickness_px;
         applySymbology();
     });
-    connect(this->map_menu, &MapMonitorMenuWidget::signalFlowDirectionChanged, this, [this](bool visible)
+    connect(this->map_menu, &MapMonitorMenuWidget::signalFlowDirectionSizeChanged, this, [this](int size_px)
     {
-        this->symbology_settings.show_flow_direction = visible;
+        this->symbology_settings.flow_direction_size_px = size_px;
+        this->symbology_settings.show_flow_direction = size_px > 0;
         applySymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapVisualClicked, this, [this](VisualHeatmap visual_heatmap)
@@ -864,12 +931,13 @@ void MapMonitorMenuWidget::addGroupVisualSettings()
         QStringLiteral("Sets the rendered link width and keeps link hit detection aligned with it."), QStringLiteral(" px"), this);
     connect(slider_link_thickness, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalLinkThicknessChanged);
 
-    QCheckBox *check_flow_direction = new QCheckBox("Show Flow Direction");
-    check_flow_direction->setChecked(true);
-    check_flow_direction->setToolTip(
-        QStringLiteral("Shows the direction of the signed simulated link flow for the current timestep."));
-    connect(check_flow_direction, &QCheckBox::toggled,
-            this, &MapMonitorMenuWidget::signalFlowDirectionChanged);
+    QLabel *label_flow_direction_size = new QLabel("Flow Arrows [px]");
+    FlowDirectionSizeSlider *slider_flow_direction_size = new FlowDirectionSizeSlider(this);
+    connect(slider_flow_direction_size, &QSlider::valueChanged, this,
+        [this, slider_flow_direction_size](int)
+    {
+        emit signalFlowDirectionSizeChanged(slider_flow_direction_size->arrowSizePx());
+    });
 
     QLabel *label_heatmap_section = new QLabel("<b>Heatmap</b>");
     QLabel *label_heatmap_radius = new QLabel("Radius");
@@ -935,7 +1003,8 @@ void MapMonitorMenuWidget::addGroupVisualSettings()
     vbox->addWidget(label_link_section);
     vbox->addWidget(label_link_thickness);
     vbox->addWidget(slider_link_thickness);
-    vbox->addWidget(check_flow_direction);
+    vbox->addWidget(label_flow_direction_size);
+    vbox->addWidget(slider_flow_direction_size);
     vbox->addSpacing(4);
     vbox->addWidget(label_heatmap_section);
     QHBoxLayout *heatmap_radius_header = new QHBoxLayout();

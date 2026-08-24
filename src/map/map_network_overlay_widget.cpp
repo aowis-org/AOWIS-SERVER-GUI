@@ -47,9 +47,8 @@ constexpr qreal LinkHitDistance = 7.0;
 constexpr qreal SpatialCellSize = 128.0;
 constexpr qreal FlowDirectionMinimumLinkPixels = 18.0;
 constexpr qreal FlowDirectionSpacingPixels = 100.0;
-constexpr qreal FlowDirectionChevronLengthPixels = 10.0;
-constexpr qreal FlowDirectionChevronHalfWidthPixels = 4.0;
-constexpr qreal FlowDirectionStrokeWidthPixels = 2.0;
+constexpr qreal FlowDirectionChevronHalfWidthRatio = 0.4;
+constexpr qreal FlowDirectionStrokeWidthRatio = 0.2;
 constexpr int FlowDirectionMaximumMarkersPerLink = 32;
 constexpr int SymbologyColorBucketCount = 256;
 constexpr int HeatmapMaximumDimension = 2048;
@@ -824,8 +823,10 @@ void MapNetworkOverlayWidget::setSymbology(
         this->symbology_settings.icon_size_percent != bounded_settings.icon_size_percent;
     const bool link_thickness_changed =
         this->symbology_settings.link_thickness_px != bounded_settings.link_thickness_px;
-    const bool flow_direction_changed =
+    const bool flow_direction_visibility_changed =
         this->symbology_settings.show_flow_direction != bounded_settings.show_flow_direction;
+    const bool flow_direction_size_changed =
+        this->symbology_settings.flow_direction_size_px != bounded_settings.flow_direction_size_px;
     const bool heatmap_opacity_changed =
         this->symbology_settings.heatmap_opacity != bounded_settings.heatmap_opacity;
     const bool heatmap_radius_changed =
@@ -846,12 +847,12 @@ void MapNetworkOverlayWidget::setSymbology(
         this->symbology_ranges.heatmap_maximum != ranges.heatmap_maximum;
 
     const bool values_changed = node_visual_changed || link_visual_changed ||
-        heatmap_visual_changed || flow_direction_changed ||
+        heatmap_visual_changed || flow_direction_visibility_changed ||
         (bounded_settings.visual_node != VisualNode::None && node_range_changed) ||
         (bounded_settings.visual_link != VisualLink::None && link_range_changed) ||
         (bounded_settings.visual_heatmap != VisualHeatmap::None && heatmap_range_changed);
     const bool cached_render_changed = values_changed || node_size_changed ||
-        icon_size_changed || link_thickness_changed ||
+        icon_size_changed || link_thickness_changed || flow_direction_size_changed ||
         (bounded_settings.visual_heatmap != VisualHeatmap::None &&
             (heatmap_radius_changed || heatmap_solid_center_changed));
     const bool any_change = cached_render_changed || heatmap_opacity_changed ||
@@ -1316,6 +1317,7 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
         symbology->icon_size_percent = this->symbology_settings.icon_size_percent;
         symbology->link_width = qreal(this->symbology_settings.link_thickness_px);
         symbology->show_flow_direction = this->symbology_settings.show_flow_direction;
+        symbology->flow_direction_size_px = qreal(this->symbology_settings.flow_direction_size_px);
         symbology->heatmap_radius_unit = this->symbology_settings.heatmap_radius_unit;
         symbology->heatmap_radius_m = this->symbology_settings.heatmap_radius_m;
         symbology->heatmap_radius_px = this->symbology_settings.heatmap_radius_px;
@@ -1387,6 +1389,7 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
         symbology->icon_size_percent = settings.icon_size_percent;
         symbology->link_width = qreal(settings.link_thickness_px);
         symbology->show_flow_direction = settings.show_flow_direction;
+        symbology->flow_direction_size_px = qreal(settings.flow_direction_size_px);
         if (settings.show_flow_direction)
         {
             symbology->flow_directions.reserve(snapshot_copy.links.size());
@@ -1506,7 +1509,8 @@ void MapNetworkOverlayWidget::applyPreparedSymbology(
         symbology->visual_node != this->symbology_settings.visual_node ||
         symbology->visual_link != this->symbology_settings.visual_link ||
         symbology->visual_heatmap != this->symbology_settings.visual_heatmap ||
-        symbology->show_flow_direction != this->symbology_settings.show_flow_direction)
+        symbology->show_flow_direction != this->symbology_settings.show_flow_direction ||
+        symbology->flow_direction_size_px != qreal(this->symbology_settings.flow_direction_size_px))
     {
         return;
     }
@@ -2018,7 +2022,7 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
                     arrow.color = flowDirectionColor(request.symbology->link_colors.value(
                         first_segment.render_id, NetworkColor.rgb()));
 
-                    const qreal arrow_padding = FlowDirectionChevronLengthPixels;
+                    const qreal arrow_padding = request.symbology->flow_direction_size_px;
                     if (arrow.center.x() + arrow_padding >= 0.0
                         && arrow.center.x() - arrow_padding <= logical_width
                         && arrow.center.y() + arrow_padding >= 0.0
@@ -2137,10 +2141,13 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
                 const QPointF center(arrow.center.x(), arrow.center.y() - band.logical_top);
                 const QPointF direction = arrow.direction;
                 const QPointF normal(-direction.y(), direction.x());
-                const QPointF tip = center + direction * (FlowDirectionChevronLengthPixels / 2.0);
-                const QPointF base = center - direction * (FlowDirectionChevronLengthPixels / 2.0);
-                const QPointF tail_first = base + normal * FlowDirectionChevronHalfWidthPixels;
-                const QPointF tail_second = base - normal * FlowDirectionChevronHalfWidthPixels;
+                const qreal chevron_length = request.symbology->flow_direction_size_px;
+                const qreal chevron_half_width =
+                    chevron_length * FlowDirectionChevronHalfWidthRatio;
+                const QPointF tip = center + direction * (chevron_length / 2.0);
+                const QPointF base = center - direction * (chevron_length / 2.0);
+                const QPointF tail_first = base + normal * chevron_half_width;
+                const QPointF tail_second = base - normal * chevron_half_width;
                 QPainterPath &path = flow_direction_paths[arrow.color];
                 path.moveTo(tail_first);
                 path.lineTo(tip);
@@ -2204,7 +2211,8 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
                  iterator != flow_direction_paths.end(); ++iterator)
             {
                 QPen pen(QColor::fromRgb(iterator.key()));
-                pen.setWidthF(FlowDirectionStrokeWidthPixels);
+                pen.setWidthF(qMax<qreal>(1.0,
+                    request.symbology->flow_direction_size_px * FlowDirectionStrokeWidthRatio));
                 pen.setCapStyle(Qt::RoundCap);
                 pen.setJoinStyle(Qt::RoundJoin);
                 document.addStroke(std::move(iterator.value()), pen);

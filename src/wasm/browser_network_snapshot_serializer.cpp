@@ -339,6 +339,7 @@ QByteArray BrowserNetworkSnapshotSerializer::serializeSymbology(
     root.insert(QStringLiteral("linkMaximum"), ranges.link_maximum);
     root.insert(QStringLiteral("linkValues"), linkValuesToJson(snapshot, link_values));
     root.insert(QStringLiteral("showFlowDirection"), bounded_settings.show_flow_direction);
+    root.insert(QStringLiteral("flowDirectionSizePixels"), bounded_settings.flow_direction_size_px);
     root.insert(QStringLiteral("flowDirections"), flowDirectionsToJson(snapshot, flow_directions));
     root.insert(QStringLiteral("heatmapVisual"), static_cast<int>(bounded_settings.visual_heatmap));
     root.insert(QStringLiteral("heatmapMinimum"), ranges.heatmap_minimum);
