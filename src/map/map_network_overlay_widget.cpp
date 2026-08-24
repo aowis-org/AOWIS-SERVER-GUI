@@ -6,6 +6,7 @@
 #include "../network_render_snapshot_builder.h"
 #include "../network_symbology_values.h"
 #include "map_render_cache_math.h"
+#include "map_scale_renderer.h"
 #include "map_retained_vector_renderer.h"
 #include "map_vector_document.h"
 
@@ -950,6 +951,8 @@ void MapNetworkOverlayWidget::paintEvent(QPaintEvent *event)
             (height() - crosshair_pixmap.height()) / 2);
         painter.drawPixmap(crosshair_position, crosshair_pixmap);
     }
+
+    MapScaleRenderer::draw(painter, *this->map_model, size());
 }
 
 void MapNetworkOverlayWidget::showEvent(QShowEvent *event)

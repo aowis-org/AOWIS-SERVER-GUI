@@ -1,6 +1,7 @@
 #include "map_canvas_widget.h"
 
 #include "map_editor_controller.h"
+#include "map_scale_renderer.h"
 
 #include <QFocusEvent>
 #include <QHideEvent>
@@ -152,6 +153,8 @@ void MapCanvasWidget::paintEvent(QPaintEvent *event)
             (height() - crosshair_pixmap.height()) / 2);
         painter.drawPixmap(crosshair_position, crosshair_pixmap);
     }
+
+    MapScaleRenderer::draw(painter, *this->map_model, size());
 #endif
 }
 
