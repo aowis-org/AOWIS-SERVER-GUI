@@ -1,0 +1,28 @@
+#ifndef MAP_RHI_SYMBOLOGY_H
+#define MAP_RHI_SYMBOLOGY_H
+
+#include "../network_symbology.h"
+
+#include <QColor>
+#include <QHash>
+#include <QtGlobal>
+
+class HydraulicData;
+
+struct MapRhiSymbology
+{
+    int node_size_percent = 100;
+    int link_thickness_px = 3;
+    bool show_flow_direction = true;
+    int flow_direction_size_px = 10;
+    QHash<quint32, QRgb> node_colors;
+    QHash<quint32, QRgb> link_colors;
+    QHash<quint32, qint8> flow_directions;
+};
+
+MapRhiSymbology resolveMapRhiSymbology(
+    const HydraulicData &hydraulic_data,
+    const NetworkSymbologySettings &settings,
+    const NetworkSymbologyRanges &ranges);
+
+#endif // MAP_RHI_SYMBOLOGY_H

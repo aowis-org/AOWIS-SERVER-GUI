@@ -37,6 +37,7 @@
 
 class HydraulicData;
 class MapNetworkOverlayWidget;
+class MapRhiWidget;
 
 #ifdef Q_OS_WASM
 #include "gps_provider_dummy.h"
@@ -113,6 +114,7 @@ private:
     MapWidget *map = nullptr;
 #ifndef Q_OS_WASM
     MapNetworkOverlayWidget *desktop_network_overlay = nullptr;
+    MapRhiWidget *desktop_rhi_surface = nullptr;
 #endif
     MapMonitorMenuWidget *map_menu = nullptr;
     int network_background_opacity = 0;
@@ -127,6 +129,10 @@ private:
 
     void updateDesktopNetworkHover(const QPointF &position, Qt::MouseButtons buttons);
     void setDesktopNetworkHovered(bool hovered);
+#if AOWIS_HAS_QRHI
+    void applyDesktopRhiSymbology();
+    void applyDesktopRhiHighlights();
+#endif
 #endif
 
 #ifdef Q_OS_WASM

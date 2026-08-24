@@ -48,6 +48,7 @@ Native builds create the following file automatically on first use:
 ```ini
 [gui]
 examples_builtin_enable=true
+map_desktop_renderer=cpu
 
 [map_server]
 base_url=http://aowis-server-map.localhost:80
@@ -58,5 +59,7 @@ delete_api_key=
 Restart the application after editing the file.
 
 Set `examples_builtin_enable=false` to hide the bundled `Examples` project and its revisions from the toolbar. If the option is missing, built-in examples are enabled.
+
+Native builds accept `map_desktop_renderer=cpu` or `map_desktop_renderer=rhi`. `cpu` requests the existing QPainter-based desktop renderer. `rhi` requests the native QRhi backend when the build provides Qt 6.7+ and `Qt6::GuiPrivate`; otherwise renderer selection resolves to CPU and logs the reason. WebAssembly ignores this desktop-only option and continues to use its browser renderer.
 
 WebAssembly builds include `aowis-server-gui.ini` in the generated webroot. Set `examples_builtin_enable`, `base_url`, `api_key`, and `delete_api_key` there and reload the page. The browser always loads `/aowis-server-gui.ini` from the webroot root. Existing administrator-edited files in `build-wasm` and `build-wasm-dist` are preserved across rebuilds. The normal API key is used for tile requests; the delete API key is used only for tile-cache deletion requests.

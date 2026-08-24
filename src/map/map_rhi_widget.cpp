@@ -1,0 +1,760 @@
+#include "map_rhi_widget.h"
+
+#include "map_model.h"
+#include "../network_symbology_rendering.h"
+
+#include <QColor>
+#include <QDebug>
+#include <QFile>
+#include <QMatrix4x4>
+#include <QResizeEvent>
+#include <rhi/qshader.h>
+
+#include <rhi/qrhi.h>
+
+#include <array>
+#include <cstddef>
+#include <limits>
+
+namespace
+{
+constexpr int CameraUniformBytes = 20 * int(sizeof(float));
+
+QRhiWidget::Api platformGraphicsApi()
+{
+#if defined(Q_OS_MACOS)
+    return QRhiWidget::Api::Metal;
+#elif defined(Q_OS_WIN)
+    return QRhiWidget::Api::Direct3D11;
+#else
+    return QRhiWidget::Api::OpenGL;
+#endif
+}
+
+QString graphicsApiDisplayName(QRhiWidget::Api api)
+{
+    switch (api)
+    {
+        case QRhiWidget::Api::OpenGL:
+            return QStringLiteral("OpenGL");
+        case QRhiWidget::Api::Metal:
+            return QStringLiteral("Metal");
+        case QRhiWidget::Api::Vulkan:
+            return QStringLiteral("Vulkan");
+        case QRhiWidget::Api::Direct3D11:
+            return QStringLiteral("Direct3D 11");
+        case QRhiWidget::Api::Direct3D12:
+            return QStringLiteral("Direct3D 12");
+        case QRhiWidget::Api::Null:
+        default:
+            return QStringLiteral("Null");
+    }
+}
+
+QShader loadShader(const QString &resource_path)
+{
+    QFile file(resource_path);
+    if (!file.open(QIODevice::ReadOnly))
+        return QShader();
+    return QShader::fromSerialized(file.readAll());
+}
+
+int boundedBufferSize(qsizetype vertex_count, qsizetype vertex_size)
+{
+    const qsizetype bytes = vertex_count * vertex_size;
+    if (bytes <= 0)
+        return 1;
+    if (bytes > qsizetype(std::numeric_limits<int>::max()))
+        return 0;
+    return int(bytes);
+}
+}
+
+MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWidget *parent)
+    : QRhiWidget(parent),
+      map_model(map_model),
+      surface_name(surface_name)
+{
+    Q_ASSERT(this->map_model != nullptr);
+
+    setApi(platformGraphicsApi());
+    setAttribute(Qt::WA_TransparentForMouseEvents);
+    setFocusPolicy(Qt::NoFocus);
+
+    syncViewState();
+
+    connect(this->map_model, &MapModel::centerChangedWGS84, this, [this]
+    {
+        syncViewState();
+        update();
+    });
+    connect(this->map_model, &MapModel::zoomChanged, this, [this]
+    {
+        syncViewState();
+        update();
+    });
+    connect(this, &QRhiWidget::renderFailed, this, [this]
+    {
+        reportFailure(QStringLiteral("QRhiWidget reported a rendering failure"));
+    });
+    connect(this, &QRhiWidget::frameSubmitted, this, [this]
+    {
+        if (this->ready_reported || this->failure_reported)
+            return;
+
+        this->ready_reported = true;
+        qInfo().noquote()
+            << QStringLiteral("Desktop map RHI surface '%1' submitted its first frame using %2 "
+                              "(%3 link vertices, %4 node vertices).")
+                   .arg(this->surface_name, graphicsApiName())
+                   .arg(this->scene.linkVertices().size())
+                   .arg(this->scene.nodeVertices().size());
+        emit signalRendererReady();
+    });
+}
+
+MapRhiWidget::~MapRhiWidget() = default;
+
+QString MapRhiWidget::graphicsApiName() const
+{
+    return graphicsApiDisplayName(api());
+}
+
+void MapRhiWidget::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
+{
+    if (this->scene.geometryRevision() == snapshot.geometry_revision &&
+        this->scene.hasGeometry())
+    {
+        return;
+    }
+
+    this->scene.setNetworkSnapshot(snapshot);
+    this->scene.setViewZoom(this->map_model->zoom());
+    this->camera.setSceneOriginWorld(this->scene.originWorld());
+    syncViewState();
+    this->geometry_upload_pending = true;
+    this->highlight_upload_pending = true;
+    this->flow_direction_upload_pending = true;
+    update();
+}
+
+
+void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
+{
+    const bool base_symbology_changed =
+        !this->symbology_initialized
+        || this->applied_symbology.node_size_percent != symbology.node_size_percent
+        || this->applied_symbology.link_thickness_px != symbology.link_thickness_px
+        || this->applied_symbology.node_colors != symbology.node_colors
+        || this->applied_symbology.link_colors != symbology.link_colors;
+    const bool flow_direction_changed =
+        !this->symbology_initialized
+        || this->applied_symbology.show_flow_direction != symbology.show_flow_direction
+        || this->applied_symbology.flow_direction_size_px != symbology.flow_direction_size_px
+        || this->applied_symbology.flow_directions != symbology.flow_directions
+        || this->applied_symbology.link_thickness_px != symbology.link_thickness_px
+        || this->applied_symbology.link_colors != symbology.link_colors;
+
+    this->scene.setViewZoom(this->map_model->zoom());
+    this->scene.setSymbology(symbology);
+    this->applied_symbology = symbology;
+    this->symbology_initialized = true;
+
+    if (base_symbology_changed)
+    {
+        this->geometry_upload_pending = true;
+        this->highlight_upload_pending = true;
+    }
+    if (flow_direction_changed)
+        this->flow_direction_upload_pending = true;
+
+    update();
+}
+
+void MapRhiWidget::setSelectedEntity(InfrastructureEntity entity_type, const QUuid &uuid)
+{
+    this->scene.setSelectedEntity(entity_type, uuid);
+    this->highlight_upload_pending = true;
+    update();
+}
+
+void MapRhiWidget::setSimulationErrorEntities(
+    const QHash<QUuid, InfrastructureEntity> &error_entities,
+    const QSet<QUuid> &stale_entity_uuids)
+{
+    this->scene.setSimulationErrorEntities(error_entities, stale_entity_uuids);
+    this->highlight_upload_pending = true;
+    update();
+}
+
+void MapRhiWidget::initialize(QRhiCommandBuffer *command_buffer)
+{
+    Q_UNUSED(command_buffer);
+
+    QRhi *current_rhi = rhi();
+    if (current_rhi == nullptr)
+    {
+        reportFailure(QStringLiteral("QRhiWidget did not provide a QRhi instance"));
+        return;
+    }
+
+    QRhiRenderTarget *target = renderTarget();
+    if (target == nullptr || target->renderPassDescriptor() == nullptr)
+    {
+        reportFailure(QStringLiteral("QRhiWidget did not provide a render target"));
+        return;
+    }
+
+    const bool rhi_changed = this->active_rhi != current_rhi;
+    const bool render_pass_changed =
+        this->render_pass_descriptor != target->renderPassDescriptor();
+    if (rhi_changed)
+    {
+        resetGpuResources();
+        this->active_rhi = current_rhi;
+        this->ready_reported = false;
+        this->failure_reported = false;
+    }
+    else if (render_pass_changed)
+    {
+        this->link_pipeline.reset();
+        this->node_pipeline.reset();
+    }
+
+    this->render_pass_descriptor = target->renderPassDescriptor();
+
+    syncViewState();
+    if (this->scene.setViewZoom(this->map_model->zoom()))
+        this->flow_direction_upload_pending = true;
+
+    if (!createPersistentResources() || !ensureGeometryBuffers() || !createPipelines())
+        return;
+
+    qInfo().noquote()
+        << QStringLiteral("Desktop map RHI surface '%1' initialized using %2.")
+               .arg(this->surface_name, graphicsApiName());
+}
+
+void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
+{
+    if (this->active_rhi == nullptr || command_buffer == nullptr)
+    {
+        reportFailure(QStringLiteral("QRhi render called without an initialized QRhi context"));
+        return;
+    }
+
+    QRhiRenderTarget *target = renderTarget();
+    if (target == nullptr)
+    {
+        reportFailure(QStringLiteral("QRhiWidget did not provide a render target"));
+        return;
+    }
+
+    syncViewState();
+    if (this->scene.setViewZoom(this->map_model->zoom()))
+        this->flow_direction_upload_pending = true;
+
+    if (!createPersistentResources() || !ensureGeometryBuffers() || !createPipelines())
+        return;
+
+    const QMatrix4x4 view_projection = this->camera.viewProjectionMatrix(*this->active_rhi);
+    std::array<float, 20> uniform_data{};
+    const float *matrix_data = view_projection.constData();
+    for (int index = 0; index < 16; ++index)
+        uniform_data[size_t(index)] = matrix_data[index];
+    uniform_data[16] = float(qMax(1, this->viewport_size.width()));
+    uniform_data[17] = float(qMax(1, this->viewport_size.height()));
+    uniform_data[18] = float(this->scene.linkThicknessPx()) / 2.0f;
+    uniform_data[19] = float(networkSymbologyJunctionDotDiameterForZoom(
+        this->map_model->zoom(), this->scene.nodeSizePercent()) / 2.0);
+
+    QRhiResourceUpdateBatch *resource_updates = this->active_rhi->nextResourceUpdateBatch();
+    resource_updates->updateDynamicBuffer(
+        this->uniform_buffer.get(), 0, CameraUniformBytes, uniform_data.data());
+
+    if (this->geometry_upload_pending)
+    {
+        const QVector<MapRhiScene::LinkVertex> &link_vertices = this->scene.linkVertices();
+        const QVector<MapRhiScene::NodeVertex> &node_vertices = this->scene.nodeVertices();
+        if (!link_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->link_vertex_buffer.get(), 0,
+                int(link_vertices.size() * qsizetype(sizeof(MapRhiScene::LinkVertex))),
+                link_vertices.constData());
+        }
+        if (!node_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->node_vertex_buffer.get(), 0,
+                int(node_vertices.size() * qsizetype(sizeof(MapRhiScene::NodeVertex))),
+                node_vertices.constData());
+        }
+        this->geometry_upload_pending = false;
+    }
+
+    if (this->highlight_upload_pending)
+    {
+        const QVector<MapRhiScene::LinkVertex> &selected_link_vertices =
+            this->scene.selectedLinkVertices();
+        const QVector<MapRhiScene::NodeVertex> &selected_node_vertices =
+            this->scene.selectedNodeVertices();
+        const QVector<MapRhiScene::LinkVertex> &diagnostic_link_vertices =
+            this->scene.diagnosticLinkVertices();
+        const QVector<MapRhiScene::NodeVertex> &diagnostic_node_vertices =
+            this->scene.diagnosticNodeVertices();
+
+        if (!selected_link_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->selected_link_vertex_buffer.get(), 0,
+                int(selected_link_vertices.size() * qsizetype(sizeof(MapRhiScene::LinkVertex))),
+                selected_link_vertices.constData());
+        }
+        if (!selected_node_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->selected_node_vertex_buffer.get(), 0,
+                int(selected_node_vertices.size() * qsizetype(sizeof(MapRhiScene::NodeVertex))),
+                selected_node_vertices.constData());
+        }
+        if (!diagnostic_link_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->diagnostic_link_vertex_buffer.get(), 0,
+                int(diagnostic_link_vertices.size() * qsizetype(sizeof(MapRhiScene::LinkVertex))),
+                diagnostic_link_vertices.constData());
+        }
+        if (!diagnostic_node_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->diagnostic_node_vertex_buffer.get(), 0,
+                int(diagnostic_node_vertices.size() * qsizetype(sizeof(MapRhiScene::NodeVertex))),
+                diagnostic_node_vertices.constData());
+        }
+        this->highlight_upload_pending = false;
+    }
+
+    if (this->flow_direction_upload_pending)
+    {
+        const QVector<MapRhiScene::LinkVertex> &flow_direction_vertices =
+            this->scene.flowDirectionVertices();
+        if (!flow_direction_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->flow_direction_vertex_buffer.get(), 0,
+                int(flow_direction_vertices.size() * qsizetype(sizeof(MapRhiScene::LinkVertex))),
+                flow_direction_vertices.constData());
+        }
+        this->flow_direction_upload_pending = false;
+    }
+
+    const QColor clear_color(245, 245, 245, 255);
+    command_buffer->beginPass(target, clear_color, {1.0f, 0}, resource_updates);
+
+    const QSize output_size = target->pixelSize();
+    command_buffer->setViewport(QRhiViewport(
+        0.0f, 0.0f, float(output_size.width()), float(output_size.height())));
+
+    const QVector<MapRhiScene::LinkVertex> &link_vertices = this->scene.linkVertices();
+    if (!link_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->link_pipeline.get());
+        command_buffer->setShaderResources();
+        const QRhiCommandBuffer::VertexInput link_binding(this->link_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &link_binding);
+        command_buffer->draw(quint32(link_vertices.size()));
+    }
+
+    const QVector<MapRhiScene::LinkVertex> &flow_direction_vertices =
+        this->scene.flowDirectionVertices();
+    if (!flow_direction_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->link_pipeline.get());
+        command_buffer->setShaderResources();
+        const QRhiCommandBuffer::VertexInput binding(
+            this->flow_direction_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &binding);
+        command_buffer->draw(quint32(flow_direction_vertices.size()));
+    }
+
+    const QVector<MapRhiScene::NodeVertex> &node_vertices = this->scene.nodeVertices();
+    if (!node_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->node_pipeline.get());
+        command_buffer->setShaderResources();
+        const QRhiCommandBuffer::VertexInput node_binding(this->node_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &node_binding);
+        command_buffer->draw(quint32(node_vertices.size()));
+    }
+
+    const QVector<MapRhiScene::LinkVertex> &selected_link_vertices =
+        this->scene.selectedLinkVertices();
+    if (!selected_link_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->link_pipeline.get());
+        command_buffer->setShaderResources();
+        const QRhiCommandBuffer::VertexInput binding(this->selected_link_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &binding);
+        command_buffer->draw(quint32(selected_link_vertices.size()));
+    }
+
+    const QVector<MapRhiScene::NodeVertex> &selected_node_vertices =
+        this->scene.selectedNodeVertices();
+    if (!selected_node_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->node_pipeline.get());
+        command_buffer->setShaderResources();
+        const QRhiCommandBuffer::VertexInput binding(this->selected_node_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &binding);
+        command_buffer->draw(quint32(selected_node_vertices.size()));
+    }
+
+    const QVector<MapRhiScene::LinkVertex> &diagnostic_link_vertices =
+        this->scene.diagnosticLinkVertices();
+    if (!diagnostic_link_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->link_pipeline.get());
+        command_buffer->setShaderResources();
+        const QRhiCommandBuffer::VertexInput binding(this->diagnostic_link_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &binding);
+        command_buffer->draw(quint32(diagnostic_link_vertices.size()));
+    }
+
+    const QVector<MapRhiScene::NodeVertex> &diagnostic_node_vertices =
+        this->scene.diagnosticNodeVertices();
+    if (!diagnostic_node_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->node_pipeline.get());
+        command_buffer->setShaderResources();
+        const QRhiCommandBuffer::VertexInput binding(this->diagnostic_node_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &binding);
+        command_buffer->draw(quint32(diagnostic_node_vertices.size()));
+    }
+
+    command_buffer->endPass();
+}
+
+void MapRhiWidget::releaseResources()
+{
+    resetGpuResources();
+    this->active_rhi = nullptr;
+    this->render_pass_descriptor = nullptr;
+    this->ready_reported = false;
+}
+
+void MapRhiWidget::resizeEvent(QResizeEvent *event)
+{
+    this->viewport_size = event->size();
+    this->camera.setViewportSize(this->viewport_size);
+    QRhiWidget::resizeEvent(event);
+}
+
+bool MapRhiWidget::createPersistentResources()
+{
+    if (this->active_rhi == nullptr)
+        return false;
+
+    if (!this->uniform_buffer)
+    {
+        this->uniform_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, CameraUniformBytes));
+        if (!this->uniform_buffer || !this->uniform_buffer->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI camera uniform buffer"));
+            return false;
+        }
+    }
+
+    if (!this->shader_resource_bindings)
+    {
+        this->shader_resource_bindings.reset(this->active_rhi->newShaderResourceBindings());
+        if (!this->shader_resource_bindings)
+        {
+            reportFailure(QStringLiteral("Failed to allocate RHI shader resource bindings"));
+            return false;
+        }
+        this->shader_resource_bindings->setBindings({
+            QRhiShaderResourceBinding::uniformBuffer(
+                0, QRhiShaderResourceBinding::VertexStage, this->uniform_buffer.get())
+        });
+        if (!this->shader_resource_bindings->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI shader resource bindings"));
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool MapRhiWidget::createPipelines()
+{
+    if (this->active_rhi == nullptr || this->render_pass_descriptor == nullptr ||
+        !this->shader_resource_bindings)
+    {
+        return false;
+    }
+
+    if (!this->link_pipeline)
+    {
+        const QShader vertex_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_link.vert.qsb"));
+        const QShader fragment_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_link.frag.qsb"));
+        if (!vertex_shader.isValid() || !fragment_shader.isValid())
+        {
+            reportFailure(QStringLiteral("Failed to load RHI link shaders"));
+            return false;
+        }
+
+        QRhiVertexInputLayout input_layout;
+        input_layout.setBindings({
+            {quint32(sizeof(MapRhiScene::LinkVertex))}
+        });
+        input_layout.setAttributes({
+            {0, 0, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiScene::LinkVertex, start_x))},
+            {0, 1, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiScene::LinkVertex, end_x))},
+            {0, 2, QRhiVertexInputAttribute::Float2,
+             quint32(offsetof(MapRhiScene::LinkVertex, along))},
+            {0, 3, QRhiVertexInputAttribute::Float4,
+             quint32(offsetof(MapRhiScene::LinkVertex, red))},
+            {0, 4, QRhiVertexInputAttribute::Float,
+             quint32(offsetof(MapRhiScene::LinkVertex, size_adjust_px))}
+        });
+
+        this->link_pipeline.reset(this->active_rhi->newGraphicsPipeline());
+        this->link_pipeline->setShaderStages({
+            {QRhiShaderStage::Vertex, vertex_shader},
+            {QRhiShaderStage::Fragment, fragment_shader}
+        });
+        this->link_pipeline->setVertexInputLayout(input_layout);
+        this->link_pipeline->setShaderResourceBindings(this->shader_resource_bindings.get());
+        this->link_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
+        this->link_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+        if (!this->link_pipeline->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI link graphics pipeline"));
+            return false;
+        }
+    }
+
+    if (!this->node_pipeline)
+    {
+        const QShader vertex_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_node.vert.qsb"));
+        const QShader fragment_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_node.frag.qsb"));
+        if (!vertex_shader.isValid() || !fragment_shader.isValid())
+        {
+            reportFailure(QStringLiteral("Failed to load RHI node shaders"));
+            return false;
+        }
+
+        QRhiVertexInputLayout input_layout;
+        input_layout.setBindings({
+            {quint32(sizeof(MapRhiScene::NodeVertex))}
+        });
+        input_layout.setAttributes({
+            {0, 0, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiScene::NodeVertex, center_x))},
+            {0, 1, QRhiVertexInputAttribute::Float2,
+             quint32(offsetof(MapRhiScene::NodeVertex, corner_x))},
+            {0, 2, QRhiVertexInputAttribute::Float4,
+             quint32(offsetof(MapRhiScene::NodeVertex, red))},
+            {0, 3, QRhiVertexInputAttribute::Float,
+             quint32(offsetof(MapRhiScene::NodeVertex, size_adjust_px))}
+        });
+
+        this->node_pipeline.reset(this->active_rhi->newGraphicsPipeline());
+        this->node_pipeline->setShaderStages({
+            {QRhiShaderStage::Vertex, vertex_shader},
+            {QRhiShaderStage::Fragment, fragment_shader}
+        });
+        this->node_pipeline->setVertexInputLayout(input_layout);
+        this->node_pipeline->setShaderResourceBindings(this->shader_resource_bindings.get());
+        this->node_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
+        this->node_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+        if (!this->node_pipeline->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI node graphics pipeline"));
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool MapRhiWidget::ensureGeometryBuffers()
+{
+    if (this->active_rhi == nullptr)
+        return false;
+
+    const int required_link_bytes = boundedBufferSize(
+        this->scene.linkVertices().size(), qsizetype(sizeof(MapRhiScene::LinkVertex)));
+    const int required_node_bytes = boundedBufferSize(
+        this->scene.nodeVertices().size(), qsizetype(sizeof(MapRhiScene::NodeVertex)));
+    const int required_selected_link_bytes = boundedBufferSize(
+        this->scene.selectedLinkVertices().size(), qsizetype(sizeof(MapRhiScene::LinkVertex)));
+    const int required_selected_node_bytes = boundedBufferSize(
+        this->scene.selectedNodeVertices().size(), qsizetype(sizeof(MapRhiScene::NodeVertex)));
+    const int required_diagnostic_link_bytes = boundedBufferSize(
+        this->scene.diagnosticLinkVertices().size(), qsizetype(sizeof(MapRhiScene::LinkVertex)));
+    const int required_diagnostic_node_bytes = boundedBufferSize(
+        this->scene.diagnosticNodeVertices().size(), qsizetype(sizeof(MapRhiScene::NodeVertex)));
+    const int required_flow_direction_bytes = boundedBufferSize(
+        this->scene.flowDirectionVertices().size(), qsizetype(sizeof(MapRhiScene::LinkVertex)));
+    if (required_link_bytes == 0 || required_node_bytes == 0
+        || required_selected_link_bytes == 0 || required_selected_node_bytes == 0
+        || required_diagnostic_link_bytes == 0 || required_diagnostic_node_bytes == 0
+        || required_flow_direction_bytes == 0)
+    {
+        reportFailure(QStringLiteral("RHI network geometry exceeds supported buffer size"));
+        return false;
+    }
+
+    if (!this->link_vertex_buffer || this->link_vertex_buffer_size != required_link_bytes)
+    {
+        this->link_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_link_bytes));
+        if (!this->link_vertex_buffer || !this->link_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI link vertex buffer"));
+            return false;
+        }
+        this->link_vertex_buffer_size = required_link_bytes;
+        this->geometry_upload_pending = true;
+    }
+
+    if (!this->node_vertex_buffer || this->node_vertex_buffer_size != required_node_bytes)
+    {
+        this->node_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_node_bytes));
+        if (!this->node_vertex_buffer || !this->node_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI node vertex buffer"));
+            return false;
+        }
+        this->node_vertex_buffer_size = required_node_bytes;
+        this->geometry_upload_pending = true;
+    }
+
+    if (!this->selected_link_vertex_buffer
+        || this->selected_link_vertex_buffer_size != required_selected_link_bytes)
+    {
+        this->selected_link_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_selected_link_bytes));
+        if (!this->selected_link_vertex_buffer || !this->selected_link_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI selected-link vertex buffer"));
+            return false;
+        }
+        this->selected_link_vertex_buffer_size = required_selected_link_bytes;
+        this->highlight_upload_pending = true;
+    }
+
+    if (!this->selected_node_vertex_buffer
+        || this->selected_node_vertex_buffer_size != required_selected_node_bytes)
+    {
+        this->selected_node_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_selected_node_bytes));
+        if (!this->selected_node_vertex_buffer || !this->selected_node_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI selected-node vertex buffer"));
+            return false;
+        }
+        this->selected_node_vertex_buffer_size = required_selected_node_bytes;
+        this->highlight_upload_pending = true;
+    }
+
+    if (!this->diagnostic_link_vertex_buffer
+        || this->diagnostic_link_vertex_buffer_size != required_diagnostic_link_bytes)
+    {
+        this->diagnostic_link_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_diagnostic_link_bytes));
+        if (!this->diagnostic_link_vertex_buffer || !this->diagnostic_link_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI diagnostic-link vertex buffer"));
+            return false;
+        }
+        this->diagnostic_link_vertex_buffer_size = required_diagnostic_link_bytes;
+        this->highlight_upload_pending = true;
+    }
+
+    if (!this->diagnostic_node_vertex_buffer
+        || this->diagnostic_node_vertex_buffer_size != required_diagnostic_node_bytes)
+    {
+        this->diagnostic_node_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_diagnostic_node_bytes));
+        if (!this->diagnostic_node_vertex_buffer || !this->diagnostic_node_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI diagnostic-node vertex buffer"));
+            return false;
+        }
+        this->diagnostic_node_vertex_buffer_size = required_diagnostic_node_bytes;
+        this->highlight_upload_pending = true;
+    }
+
+    if (!this->flow_direction_vertex_buffer
+        || this->flow_direction_vertex_buffer_size != required_flow_direction_bytes)
+    {
+        this->flow_direction_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_flow_direction_bytes));
+        if (!this->flow_direction_vertex_buffer || !this->flow_direction_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI flow-direction vertex buffer"));
+            return false;
+        }
+        this->flow_direction_vertex_buffer_size = required_flow_direction_bytes;
+        this->flow_direction_upload_pending = true;
+    }
+
+    return true;
+}
+
+void MapRhiWidget::resetGpuResources()
+{
+    this->node_pipeline.reset();
+    this->link_pipeline.reset();
+    this->shader_resource_bindings.reset();
+    this->flow_direction_vertex_buffer.reset();
+    this->diagnostic_node_vertex_buffer.reset();
+    this->diagnostic_link_vertex_buffer.reset();
+    this->selected_node_vertex_buffer.reset();
+    this->selected_link_vertex_buffer.reset();
+    this->node_vertex_buffer.reset();
+    this->link_vertex_buffer.reset();
+    this->uniform_buffer.reset();
+    this->flow_direction_vertex_buffer_size = 0;
+    this->diagnostic_node_vertex_buffer_size = 0;
+    this->diagnostic_link_vertex_buffer_size = 0;
+    this->selected_node_vertex_buffer_size = 0;
+    this->selected_link_vertex_buffer_size = 0;
+    this->node_vertex_buffer_size = 0;
+    this->link_vertex_buffer_size = 0;
+    this->geometry_upload_pending = true;
+    this->highlight_upload_pending = true;
+    this->flow_direction_upload_pending = true;
+}
+
+void MapRhiWidget::syncViewState()
+{
+    this->viewport_size = size();
+    this->camera.setViewportSize(this->viewport_size);
+    this->camera.setSceneOriginWorld(this->scene.originWorld());
+    this->camera.syncFromMapModel(*this->map_model);
+}
+
+void MapRhiWidget::reportFailure(const QString &reason)
+{
+    if (this->failure_reported)
+        return;
+
+    this->failure_reported = true;
+    qWarning().noquote()
+        << QStringLiteral("Desktop map RHI surface '%1' failed: %2.")
+               .arg(this->surface_name, reason);
+    emit signalRendererFailed(reason);
+}

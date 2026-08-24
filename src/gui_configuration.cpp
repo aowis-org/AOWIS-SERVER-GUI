@@ -4,6 +4,10 @@
 #include <QDebug>
 #include <QString>
 
+#ifndef AOWIS_HAS_QRHI
+#define AOWIS_HAS_QRHI 0
+#endif
+
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #else
@@ -67,6 +71,7 @@ bool createDefaultConfiguration(const QString &path)
         "\n"
         "[gui]\n"
         "examples_builtin_enable=true\n"
+        "map_desktop_renderer=cpu\n"
         "\n"
         "[map_server]\n"
         "base_url=http://aowis-server-map.localhost:80\n"
@@ -92,6 +97,28 @@ bool createDefaultConfiguration(const QString &path)
     return true;
 }
 
+DesktopMapRenderer parseDesktopMapRenderer(const QString &value, bool *valid)
+{
+    const QString normalized = value.trimmed().toLower();
+    if (normalized == QStringLiteral("cpu"))
+    {
+        if (valid != nullptr)
+            *valid = true;
+        return DesktopMapRenderer::Cpu;
+    }
+
+    if (normalized == QStringLiteral("rhi"))
+    {
+        if (valid != nullptr)
+            *valid = true;
+        return DesktopMapRenderer::Rhi;
+    }
+
+    if (valid != nullptr)
+        *valid = false;
+    return DesktopMapRenderer::Cpu;
+}
+
 GuiConfiguration loadConfiguration()
 {
     const QString path = nativeConfigurationPath();
@@ -104,11 +131,25 @@ GuiConfiguration loadConfiguration()
     configuration.examples_builtin_enable = settings.value(
         QStringLiteral("gui/examples_builtin_enable"), true).toBool();
 
+    const QString configured_renderer = settings.value(
+        QStringLiteral("gui/map_desktop_renderer"), QStringLiteral("cpu")).toString();
+    bool renderer_valid = false;
+    configuration.map_desktop_renderer = parseDesktopMapRenderer(
+        configured_renderer, &renderer_valid);
+    if (!renderer_valid)
+    {
+        qWarning() << "Invalid gui/map_desktop_renderer value" << configured_renderer
+                   << "in" << path << "- using cpu. Valid values are: cpu, rhi.";
+    }
+
     if (settings.status() != QSettings::NoError)
         qWarning() << "Failed to read GUI configuration:" << path;
     else
         qInfo() << "Loaded GUI configuration:" << path
-                << "examples_builtin_enable =" << configuration.examples_builtin_enable;
+                << "examples_builtin_enable =" << configuration.examples_builtin_enable
+                << "map_desktop_renderer ="
+                << desktopMapRendererName(configuration.map_desktop_renderer)
+                << "rhi_build_available =" << desktopMapRhiBuildAvailable();
 
     return configuration;
 }
@@ -119,4 +160,46 @@ const GuiConfiguration &guiConfiguration()
 {
     static const GuiConfiguration configuration = loadConfiguration();
     return configuration;
+}
+
+const char *desktopMapRendererName(DesktopMapRenderer renderer)
+{
+    switch (renderer)
+    {
+        case DesktopMapRenderer::Rhi:
+            return "rhi";
+        case DesktopMapRenderer::Cpu:
+        default:
+            return "cpu";
+    }
+}
+
+bool desktopMapRhiBuildAvailable()
+{
+#ifdef __EMSCRIPTEN__
+    return false;
+#else
+    return AOWIS_HAS_QRHI != 0;
+#endif
+}
+
+DesktopMapRenderer desktopMapRenderer()
+{
+#ifdef __EMSCRIPTEN__
+    return DesktopMapRenderer::Cpu;
+#else
+    static const DesktopMapRenderer renderer = []()
+    {
+        const DesktopMapRenderer requested = guiConfiguration().map_desktop_renderer;
+        if (requested == DesktopMapRenderer::Rhi && !desktopMapRhiBuildAvailable())
+        {
+            qWarning() << "Desktop map renderer 'rhi' was requested, but this build has no "
+                          "QRhi support. Falling back to the CPU renderer.";
+            return DesktopMapRenderer::Cpu;
+        }
+
+        return requested;
+    }();
+    return renderer;
+#endif
 }

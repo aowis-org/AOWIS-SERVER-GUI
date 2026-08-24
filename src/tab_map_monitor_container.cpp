@@ -9,7 +9,12 @@
 #endif
 
 #ifndef Q_OS_WASM
+#include "gui_configuration.h"
 #include "map/map_network_overlay_widget.h"
+#if AOWIS_HAS_QRHI
+#include "map/map_rhi_widget.h"
+#include "map/map_rhi_symbology.h"
+#endif
 #endif
 
 #include <QColor>
@@ -325,6 +330,142 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
 #ifndef Q_OS_WASM
     this->map_stack_layout->addWidget(this->desktop_network_overlay);
     this->map_stack_layout->setCurrentWidget(this->desktop_network_overlay);
+#if AOWIS_HAS_QRHI
+    if (desktopMapRenderer() == DesktopMapRenderer::Rhi)
+    {
+        MapRhiWidget *rhi_surface =
+            new MapRhiWidget(this->map_model, QStringLiteral("monitor"), this->map_stack);
+        this->desktop_rhi_surface = rhi_surface;
+        rhi_surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
+        applyDesktopRhiSymbology();
+        applyDesktopRhiHighlights();
+
+        // Initialize and submit the first GPU frame as a tiny probe behind the working CPU map.
+        // Only promote the RHI widget to the visible map surface after that frame succeeded.
+        this->desktop_rhi_surface->setGeometry(0, 0, 1, 1);
+        this->desktop_rhi_surface->lower();
+        this->desktop_rhi_surface->show();
+        this->desktop_network_overlay->raise();
+
+        connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
+                rhi_surface, [this, rhi_surface]
+        {
+            rhi_surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
+            applyDesktopRhiSymbology();
+            applyDesktopRhiHighlights();
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged,
+                rhi_surface, [this, rhi_surface](quint64)
+        {
+            rhi_surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
+            applyDesktopRhiSymbology();
+            applyDesktopRhiHighlights();
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
+                [this](InfrastructureEntity, const QUuid &)
+        {
+            if (this->symbology_settings.visual_node != VisualNode::None)
+                applyDesktopRhiSymbology();
+            applyDesktopRhiHighlights();
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
+                [this](InfrastructureEntity, const QUuid &)
+        {
+            if (this->symbology_settings.visual_link != VisualLink::None)
+                applyDesktopRhiSymbology();
+            applyDesktopRhiHighlights();
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalSimulationHeadlossFormulaChanged,
+                this, [this]
+        {
+            if (this->symbology_settings.visual_link == VisualLink::Roughness)
+                applyDesktopRhiSymbology();
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged,
+                this, [this](bool)
+        {
+            applyDesktopRhiHighlights();
+            if (this->symbology_settings.show_flow_direction
+                || nodeVisualUsesHydraulicSimulationResult(this->symbology_settings.visual_node)
+                || linkVisualUsesHydraulicSimulationResult(this->symbology_settings.visual_link))
+            {
+                applyDesktopRhiSymbology();
+            }
+        });
+        connect(this->hydraulic_data,
+                &HydraulicData::signalWaterQualitySimulationResultTimelineChanged,
+                this, [this](bool)
+        {
+            if (this->symbology_settings.visual_node == VisualNode::WaterAge
+                || this->symbology_settings.visual_link == VisualLink::WaterAge)
+            {
+                applyDesktopRhiSymbology();
+            }
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalCurrentSimulationResultChanged,
+                this, [this](int)
+        {
+            if (this->symbology_settings.show_flow_direction
+                || nodeVisualUsesHydraulicSimulationResult(this->symbology_settings.visual_node)
+                || linkVisualUsesHydraulicSimulationResult(this->symbology_settings.visual_link)
+                || this->symbology_settings.visual_node == VisualNode::WaterAge
+                || this->symbology_settings.visual_link == VisualLink::WaterAge)
+            {
+                applyDesktopRhiSymbology();
+            }
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, rhi_surface,
+                [rhi_surface](const HydraulicNodeTank &tank)
+        {
+            rhi_surface->setSelectedEntity(InfrastructureEntity::Tank, tank.uuid);
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedReservoir, rhi_surface,
+                [rhi_surface](const HydraulicNodeReservoir &reservoir)
+        {
+            rhi_surface->setSelectedEntity(InfrastructureEntity::Reservoir, reservoir.uuid);
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedJunction, rhi_surface,
+                [rhi_surface](const HydraulicNodeJunction &junction)
+        {
+            rhi_surface->setSelectedEntity(InfrastructureEntity::Junction, junction.uuid);
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedPipe, rhi_surface,
+                [rhi_surface](const HydraulicLinkPipe &pipe)
+        {
+            rhi_surface->setSelectedEntity(InfrastructureEntity::Pipe, pipe.uuid);
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedPump, rhi_surface,
+                [rhi_surface](const HydraulicLinkPump &pump)
+        {
+            rhi_surface->setSelectedEntity(InfrastructureEntity::Pump, pump.uuid);
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedValve, rhi_surface,
+                [rhi_surface](const HydraulicLinkValve &valve)
+        {
+            rhi_surface->setSelectedEntity(InfrastructureEntity::Valve, valve.uuid);
+        });
+        connect(rhi_surface, &MapRhiWidget::signalRendererReady, this,
+                [this, rhi_surface]
+        {
+            this->map_stack_layout->addWidget(rhi_surface);
+            this->map_stack_layout->setCurrentWidget(rhi_surface);
+            this->desktop_network_overlay->hide();
+            qInfo() << "Monitor map renderer: RHI 2D scene active; CPU renderer retained as fallback.";
+        });
+        connect(rhi_surface, &MapRhiWidget::signalRendererFailed, this,
+                [this](const QString &reason)
+        {
+            qWarning().noquote()
+                << QStringLiteral("Monitor RHI surface failed (%1). "
+                                  "Falling back to the existing CPU renderer.")
+                       .arg(reason);
+            this->desktop_network_overlay->show();
+            this->map_stack_layout->setCurrentWidget(this->desktop_network_overlay);
+            if (this->desktop_rhi_surface != nullptr)
+                this->desktop_rhi_surface->hide();
+        });
+    }
+#endif
 #endif
 
 #ifdef Q_OS_WASM
@@ -540,6 +681,11 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
                     return true;
                 }
                 this->desktop_network_overlay->clearSelectedEntity();
+#if AOWIS_HAS_QRHI
+                if (this->desktop_rhi_surface != nullptr)
+                    this->desktop_rhi_surface->setSelectedEntity(
+                        InfrastructureEntity::Unknown, QUuid());
+#endif
 #endif
             }
         }
@@ -647,6 +793,30 @@ void MapMonitorContainer::setDesktopNetworkHovered(bool hovered)
     else
         this->map->unsetCursor();
 }
+
+#if AOWIS_HAS_QRHI
+void MapMonitorContainer::applyDesktopRhiSymbology()
+{
+    if (this->desktop_rhi_surface == nullptr)
+        return;
+
+    this->symbology_settings = this->symbology_settings.bounded();
+    const NetworkSymbologyRanges ranges =
+        this->hydraulic_data->symbologyRanges(this->symbology_settings);
+    this->desktop_rhi_surface->setSymbology(resolveMapRhiSymbology(
+        *this->hydraulic_data, this->symbology_settings, ranges));
+}
+
+void MapMonitorContainer::applyDesktopRhiHighlights()
+{
+    if (this->desktop_rhi_surface == nullptr || this->hydraulic_data == nullptr)
+        return;
+
+    this->desktop_rhi_surface->setSimulationErrorEntities(
+        this->hydraulic_data->simulationErrorEntities(),
+        this->hydraulic_data->simulationStaleDiagnosticEntityUuids());
+}
+#endif
 #endif
 
 void MapMonitorContainer::applySymbology()
@@ -657,6 +827,13 @@ void MapMonitorContainer::applySymbology()
     const NetworkSymbologyRanges ranges =
         this->hydraulic_data->symbologyRanges(this->symbology_settings);
     this->desktop_network_overlay->setSymbology(this->symbology_settings, ranges);
+#if AOWIS_HAS_QRHI
+    if (this->desktop_rhi_surface != nullptr)
+    {
+        this->desktop_rhi_surface->setSymbology(resolveMapRhiSymbology(
+            *this->hydraulic_data, this->symbology_settings, ranges));
+    }
+#endif
 #else
     scheduleWasmNetworkSymbologySync();
 #endif

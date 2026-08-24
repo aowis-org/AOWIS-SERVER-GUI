@@ -47,6 +47,140 @@ inline double resolvedSymbologyElevationM(const HydraulicNodeTank &tank)
 }
 
 
+
+inline QHash<QUuid, double> networkNodeSymbologyValues(
+    const NetworkHydraulic &network_hydraulic, VisualNode visual_node)
+{
+    QHash<QUuid, double> values;
+
+    switch (visual_node)
+    {
+    case VisualNode::Elevation:
+        values.reserve(network_hydraulic.nodes_junctions.size() +
+                       network_hydraulic.nodes_reservoirs.size() +
+                       network_hydraulic.nodes_tanks.size());
+        for (const HydraulicNodeJunction &junction : network_hydraulic.nodes_junctions)
+            values.insert(junction.uuid, resolvedSymbologyElevationM(junction));
+        for (const HydraulicNodeReservoir &reservoir : network_hydraulic.nodes_reservoirs)
+            values.insert(reservoir.uuid, resolvedSymbologyElevationM(reservoir));
+        for (const HydraulicNodeTank &tank : network_hydraulic.nodes_tanks)
+            values.insert(tank.uuid, resolvedSymbologyElevationM(tank));
+        break;
+    case VisualNode::BaseDemand:
+        values.reserve(network_hydraulic.nodes_junctions.size());
+        for (const HydraulicNodeJunction &junction : network_hydraulic.nodes_junctions)
+        {
+            double base_demand_m3_per_h = 0.0;
+            for (const HydraulicNodeJunctionDemand &demand : junction.demands)
+                base_demand_m3_per_h += demand.base_demand_m3_per_h;
+            values.insert(junction.uuid, base_demand_m3_per_h);
+        }
+        break;
+    case VisualNode::None:
+    case VisualNode::TotalDemand:
+    case VisualNode::DemandDeficit:
+    case VisualNode::EmitterFlow:
+    case VisualNode::Leakage:
+    case VisualNode::Head:
+    case VisualNode::Pressure:
+    case VisualNode::Chlorine:
+    case VisualNode::RiverWater:
+    case VisualNode::LakeWater:
+    case VisualNode::WaterAge:
+        break;
+    }
+
+    return values;
+}
+
+inline QHash<QUuid, double> networkLinkSymbologyValues(
+    const NetworkHydraulic &network_hydraulic, VisualLink visual_link)
+{
+    QHash<QUuid, double> values;
+
+    switch (visual_link)
+    {
+    case VisualLink::Diameter:
+        values.reserve(network_hydraulic.links_pipes.size()
+                       + network_hydraulic.links_valves.size());
+        for (const HydraulicLinkPipe &pipe : network_hydraulic.links_pipes)
+            values.insert(pipe.uuid, pipe.diameter_mm);
+        for (const HydraulicLinkValve &valve : network_hydraulic.links_valves)
+            values.insert(valve.uuid, valve.diameter_mm);
+        break;
+    case VisualLink::Length:
+        values.reserve(network_hydraulic.links_pipes.size());
+        for (const HydraulicLinkPipe &pipe : network_hydraulic.links_pipes)
+            values.insert(pipe.uuid, pipe.length_measured_m.value_or(pipe.length_calculated_m));
+        break;
+    case VisualLink::Roughness:
+        values.reserve(network_hydraulic.links_pipes.size());
+        for (const HydraulicLinkPipe &pipe : network_hydraulic.links_pipes)
+        {
+            switch (network_hydraulic.options_hydraulic.headloss_formula)
+            {
+            case HydraulicHeadlossFormula::HazenWilliams:
+                values.insert(pipe.uuid, pipe.roughness_hazen_williams);
+                break;
+            case HydraulicHeadlossFormula::DarcyWeisbach:
+                values.insert(pipe.uuid, pipe.roughness_darcy_weisbach_mm);
+                break;
+            case HydraulicHeadlossFormula::ChezyManning:
+                values.insert(pipe.uuid, pipe.roughness_chezy_manning);
+                break;
+            }
+        }
+        break;
+    case VisualLink::None:
+    case VisualLink::FlowRate:
+    case VisualLink::Velocity:
+    case VisualLink::HeadLoss:
+    case VisualLink::Leakage:
+    case VisualLink::Chlorine:
+    case VisualLink::RiverWater:
+    case VisualLink::LakeWater:
+    case VisualLink::WaterAge:
+        break;
+    }
+
+    return values;
+}
+
+inline QHash<QUuid, double> networkHeatmapSymbologyValues(
+    const NetworkHydraulic &network_hydraulic, VisualHeatmap visual_heatmap)
+{
+    switch (visual_heatmap)
+    {
+    case VisualHeatmap::Elevation:
+        return networkNodeSymbologyValues(network_hydraulic, VisualNode::Elevation);
+    case VisualHeatmap::BaseDemand:
+        return networkNodeSymbologyValues(network_hydraulic, VisualNode::BaseDemand);
+    case VisualHeatmap::TotalDemand:
+        return networkNodeSymbologyValues(network_hydraulic, VisualNode::TotalDemand);
+    case VisualHeatmap::DemandDeficit:
+        return networkNodeSymbologyValues(network_hydraulic, VisualNode::DemandDeficit);
+    case VisualHeatmap::EmitterFlow:
+        return networkNodeSymbologyValues(network_hydraulic, VisualNode::EmitterFlow);
+    case VisualHeatmap::Leakage:
+        return networkNodeSymbologyValues(network_hydraulic, VisualNode::Leakage);
+    case VisualHeatmap::Head:
+        return networkNodeSymbologyValues(network_hydraulic, VisualNode::Head);
+    case VisualHeatmap::Pressure:
+        return networkNodeSymbologyValues(network_hydraulic, VisualNode::Pressure);
+    case VisualHeatmap::Chlorine:
+        return networkNodeSymbologyValues(network_hydraulic, VisualNode::Chlorine);
+    case VisualHeatmap::RiverWater:
+        return networkNodeSymbologyValues(network_hydraulic, VisualNode::RiverWater);
+    case VisualHeatmap::LakeWater:
+        return networkNodeSymbologyValues(network_hydraulic, VisualNode::LakeWater);
+    case VisualHeatmap::WaterAge:
+    case VisualHeatmap::None:
+        break;
+    }
+
+    return QHash<QUuid, double>();
+}
+
 inline bool nodeVisualUsesHydraulicSimulationResult(VisualNode visual_node)
 {
     switch (visual_node)

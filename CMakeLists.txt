@@ -12,7 +12,18 @@ find_package(Qt6 REQUIRED COMPONENTS
     Widgets
     Network
     Sql
+    OPTIONAL_COMPONENTS
+    GuiPrivate
+    ShaderTools
 )
+
+set(AOWIS_HAS_QRHI 0)
+if(NOT EMSCRIPTEN
+   AND Qt6_VERSION VERSION_GREATER_EQUAL 6.7
+   AND TARGET Qt6::GuiPrivate
+   AND Qt6ShaderTools_FOUND)
+    set(AOWIS_HAS_QRHI 1)
+endif()
 
 if(EMSCRIPTEN)
     include(CheckCXXSourceCompiles)
@@ -184,6 +195,11 @@ if(AOWIS_STANDALONE_BUILD)
     )
 endif()
 
+target_compile_definitions(aowis-server-gui
+    PRIVATE
+        AOWIS_HAS_QRHI=${AOWIS_HAS_QRHI}
+)
+
 target_link_libraries(aowis-server-gui
     PRIVATE
         Qt6::Widgets
@@ -201,6 +217,35 @@ if(NOT EMSCRIPTEN)
             Qt6::Positioning
             Qt6::SerialPort
     )
+
+    if(AOWIS_HAS_QRHI)
+        target_sources(aowis-server-gui
+            PRIVATE
+                src/map/map_rhi_camera.h
+                src/map/map_rhi_camera.cpp
+                src/map/map_rhi_scene.h
+                src/map/map_rhi_scene.cpp
+                src/map/map_rhi_symbology.h
+                src/map/map_rhi_symbology.cpp
+                src/map/map_rhi_widget.h
+                src/map/map_rhi_widget.cpp
+        )
+        target_link_libraries(aowis-server-gui PRIVATE Qt6::GuiPrivate)
+        qt_add_shaders(aowis-server-gui "aowis_map_rhi_shaders"
+            PREFIX
+                "/aowis/map/rhi"
+            BASE
+                "src/map/shaders"
+            FILES
+                src/map/shaders/map_rhi_link.vert
+                src/map/shaders/map_rhi_link.frag
+                src/map/shaders/map_rhi_node.vert
+                src/map/shaders/map_rhi_node.frag
+        )
+        message(STATUS "AOWIS desktop QRhi support: enabled")
+    else()
+        message(STATUS "AOWIS desktop QRhi support: unavailable (Qt 6.7+, GuiPrivate and ShaderTools are required); CPU map renderer remains available")
+    endif()
     
     target_sources(aowis-server-gui
         PRIVATE

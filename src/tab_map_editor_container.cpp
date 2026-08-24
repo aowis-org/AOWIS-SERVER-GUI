@@ -2,8 +2,14 @@
 
 #ifdef Q_OS_WASM
 #include "wasm/browser_network_snapshot_serializer.h"
+#else
+#include "gui_configuration.h"
+#if AOWIS_HAS_QRHI
+#include "map/map_rhi_widget.h"
+#endif
 #endif
 
+#include <QDebug>
 #include <QMessageBox>
 
 #ifdef Q_OS_WASM
@@ -313,6 +319,36 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     this->map_stack_layout->addWidget(this->map);
     this->map_stack_layout->addWidget(this->map_canvas);
     this->map_stack_layout->setCurrentWidget(this->map_canvas);
+#if !defined(Q_OS_WASM) && AOWIS_HAS_QRHI
+    if (desktopMapRenderer() == DesktopMapRenderer::Rhi)
+    {
+        MapRhiWidget *rhi_surface =
+            new MapRhiWidget(this->map_model, QStringLiteral("editor"), this->map_stack);
+        this->desktop_rhi_surface = rhi_surface;
+
+        // This widget is only an RHI availability/composition probe. A full-size transparent
+        // QRhiWidget cannot safely be stacked over QWidget content: its transparent pixels
+        // may expose a stale top-level backing-store image instead of the widgets below.
+        // Keep the probe alive and visible so it initializes/submits frames, but place it
+        // behind the real CPU map at a 1x1 size until the RHI backend renders the map itself.
+        this->desktop_rhi_surface->setGeometry(0, 0, 1, 1);
+        this->desktop_rhi_surface->lower();
+        this->desktop_rhi_surface->show();
+        this->map_canvas->raise();
+
+        connect(rhi_surface, &MapRhiWidget::signalRendererFailed, this,
+                [this](const QString &reason)
+        {
+            qWarning().noquote()
+                << QStringLiteral("Editor RHI surface failed (%1). "
+                                  "The existing CPU renderer remains active.")
+                       .arg(reason);
+            if (this->desktop_rhi_surface != nullptr)
+                this->desktop_rhi_surface->hide();
+            this->map_stack_layout->setCurrentWidget(this->map_canvas);
+        });
+    }
+#endif
 #ifdef Q_OS_WASM
     this->map->setBrowserMapLayerEnabled(true);
     this->map->setBrowserMapLayerTopmost(true);

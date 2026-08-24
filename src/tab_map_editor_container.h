@@ -125,6 +125,9 @@ private:
     QStackedLayout *map_stack_layout;
     MapWidget *map;
     MapCanvasWidget *map_canvas;
+#ifndef Q_OS_WASM
+    QWidget *desktop_rhi_surface = nullptr;
+#endif
     MapEditorController *editor_controller;
     MapEditorMenuWidget *map_menu;
     
