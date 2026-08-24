@@ -6,15 +6,6 @@
 
 #include <optional>
 
-namespace
-{
-QIcon rotatedIcon(const QString &path)
-{
-    const QPixmap pixmap(path);
-    return QIcon(pixmap.transformed(QTransform().rotate(90), Qt::SmoothTransformation));
-}
-}
-
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
     hydraulic_data(new HydraulicData(this)),
@@ -26,7 +17,6 @@ MainWindow::MainWindow(QWidget *parent)
     map_tile_repository( new MapTileRepository(this) ),
     map_model_monitor( new MapModel(this) ),
     map_model_editor( new MapModel(this) ),
-    tabs( new QTabWidget(this) ),
     settings( new SettingsWidget(this) ),
     map_monitor( new MapMonitorContainer(this->map_model_monitor, this->map_tile_repository, this->hydraulic_data, this->gps, this) ),
     map_editor( new MapEditorContainer(this->map_model_editor, this->map_tile_repository, this->hydraulic_data, this->gps, this->dock_entity_inspector, this) ),
@@ -43,6 +33,8 @@ MainWindow::MainWindow(QWidget *parent)
     alarms( new AlarmsWidget(this) ),
     simulation_manager( new SimulationManager(hydraulic_data, this) )
 {
+    this->main_navigation = new MainNavigationWidget(this);
+
     #ifdef AOWIS_STANDALONE
     setWindowTitle("AOWIS Controller [Standalone]");
     #else
@@ -100,21 +92,21 @@ MainWindow::MainWindow(QWidget *parent)
     scheduleRightDockResize();
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendLink, this, [this](VisualLink visual_link)
     {
-        if (visual_link != VisualLink::None && this->right_dock_area_hidden && this->tabs->currentWidget() == this->map_monitor)
+        if (visual_link != VisualLink::None && this->right_dock_area_hidden && this->main_navigation->currentWidget() == this->map_monitor)
             toggleRightDockArea();
 
         this->dock_entity_map_legend->showMapLegendLink(visual_link);
     });
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendNode, this, [this](VisualNode visual_node)
     {
-        if (visual_node != VisualNode::None && this->right_dock_area_hidden && this->tabs->currentWidget() == this->map_monitor)
+        if (visual_node != VisualNode::None && this->right_dock_area_hidden && this->main_navigation->currentWidget() == this->map_monitor)
             toggleRightDockArea();
 
         this->dock_entity_map_legend->showMapLegendNode(visual_node);
     });
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendHeatmap, this, [this](VisualHeatmap visual_heatmap)
     {
-        if (visual_heatmap != VisualHeatmap::None && this->right_dock_area_hidden && this->tabs->currentWidget() == this->map_monitor)
+        if (visual_heatmap != VisualHeatmap::None && this->right_dock_area_hidden && this->main_navigation->currentWidget() == this->map_monitor)
             toggleRightDockArea();
 
         this->dock_entity_map_legend->showMapLegendHeatmap(visual_heatmap);
@@ -146,9 +138,9 @@ MainWindow::MainWindow(QWidget *parent)
     this->map_mon = this->map_monitor->getMap();
     this->map_edit = this->map_editor->getMap();
     
-    this->tabs->setContentsMargins(0, 0, 0, 0);
+    this->main_navigation->setContentsMargins(0, 0, 0, 0);
     
-    this->setCentralWidget(this->tabs);
+    setCentralWidget(this->main_navigation);
     
     this->footer = new FooterStatusBar(this);
     setStatusBar(this->footer->statusBar());
@@ -157,93 +149,75 @@ MainWindow::MainWindow(QWidget *parent)
     this->setMinimumHeight(700);
     this->setMinimumWidth(1222);
     
-    this->tabs->setIconSize(QSize(40, 40));
-    this->tabs->setTabPosition(QTabWidget::West);
-    
-    /*
-    this->tabs->addTab(this->settings, QIcon(":/icon/settings.png"), "Settings");
-    this->tabs->addTab(this->map_editor, QIcon(":/icon/map_edit.png"), "Map Editor");
-    this->tabs->addTab(this->map_monitor, QIcon(":/icon/map_monitor.png"), "Map Monitor");
-    this->tabs->addTab(this->energy, QIcon(":/icon/energy.png"), "Energy");
-    
-    this->tabs->addTab(this->reservoirs, QIcon(":/icon/reservoir.png"), "Reservoirs");
-    this->tabs->addTab(this->tanks, QIcon(":/icon/tower.png"), "Tanks");
-    this->tabs->addTab(this->pumps, QIcon(":/icon/pump.png"), "Pumps");
-    this->tabs->addTab(this->valves, QIcon(":/icon/valve.png"), "Valves");
-    this->tabs->addTab(this->junctions, QIcon(":/icon/junction.png"), "Junctions");
-    
-    this->tabs->addTab(this->pipes, QIcon(":/icon/pipe.png"), "Pipes");
-    
-    this->tabs->addTab(this->customerPoints, QIcon(":/icon/customer.png"), "Customer Points");
-    this->tabs->addTab(this->customers, QIcon(":/icon/users.png"), "Customers");
-    */
-    
-    this->tabs->addTab(new QWidget(this), rotatedIcon(":/icon/dashboard_global.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count() - 1, "Dashboard");
-    
-    //this->tabs->addTab(new QWidget(this), rotatedIcon(":/icon/site_switcher.png"), "");
-    //this->tabs->setTabToolTip(this->tabs->count() - 1, "Site Switcher");
-    
-    //this->tabs->addTab(new QWidget(this), rotatedIcon(":/icon/dashboard.png"), "");
-    //this->tabs->setTabToolTip(this->tabs->count() - 1, "Site Dashboard");
-    
-    this->tabs->addTab(this->map_editor, rotatedIcon(":/icon/map_edit.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count() - 1, "Map Editor");
-    
-    this->tabs->addTab(this->map_monitor, rotatedIcon(":/icon/map_monitor.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count() - 1, "Map Monitor");
-    
-    this->tabs->addTab(this->energy, rotatedIcon(":/icon/energy.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count() - 1, "Energy");
-    
-    this->tabs->addTab(this->reservoirs, rotatedIcon(":/icon/reservoir.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count() - 1, "Reservoirs");
-    
-    this->tabs->addTab(this->tanks, rotatedIcon(":/icon/tower.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count() - 1, "Tanks");
-    
-    this->tabs->addTab(this->pumps, rotatedIcon(":/icon/pump.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count() - 1, "Pumps");
-    
-    this->tabs->addTab(this->valves, rotatedIcon(":/icon/valve.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count() - 1, "Valves");
-    
-    this->tabs->addTab(this->junctions, rotatedIcon(":/icon/junction.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count() - 1, "Junctions");
-    
-    this->tabs->addTab(this->pipes, rotatedIcon(":/icon/pipe.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count() - 1, "Pipes");
-    
-    this->tabs->addTab(this->customerPoints, rotatedIcon(":/icon/customer.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count() - 1, "Customer Points");
-    
-    this->tabs->addTab(this->customers, rotatedIcon(":/icon/users.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count() - 1, "Customers");
-    
-    this->tab_spacer_tab_index = this->tabs->addTab(new QWidget(this->tabs), "");
-    this->tabs->setTabEnabled(this->tab_spacer_tab_index, false);
-    
-    this->tabs->addTab(this->alarms, rotatedIcon(":/icon/alarm.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count() - 1, "Alarms");
-    
-    this->tabs->addTab(this->logs, rotatedIcon(":/icon/log.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count() - 1, "Logs");
-    
-    this->tabs->addTab(this->settings, rotatedIcon(":/icon/settings.png"), "");
-    this->tabs->setTabToolTip(this->tabs->count() - 1, "Settings");
-    
-    this->tabs->setCurrentIndex(2);
+    this->main_navigation->addPage(new QWidget(this->main_navigation),
+                                  QIcon(":/icon/dashboard_global.png"),
+                                  "Dashboard");
 
-    connect(this->tabs, &QTabWidget::currentChanged, this, [this](int)
+    //this->main_navigation->addPage(new QWidget(this->main_navigation),
+    //                              QIcon(":/icon/site_switcher.png"),
+    //                              "Site Switcher");
+
+    //this->main_navigation->addPage(new QWidget(this->main_navigation),
+    //                              QIcon(":/icon/dashboard.png"),
+    //                              "Site Dashboard");
+
+    this->main_navigation->addPage(this->map_editor,
+                                  QIcon(":/icon/map_edit.png"),
+                                  "Map Editor");
+    this->main_navigation->addPage(this->map_monitor,
+                                  QIcon(":/icon/map_monitor.png"),
+                                  "Map Monitor");
+    this->main_navigation->addPage(this->energy,
+                                  QIcon(":/icon/energy.png"),
+                                  "Energy");
+    this->main_navigation->addPage(this->reservoirs,
+                                  QIcon(":/icon/reservoir.png"),
+                                  "Reservoirs");
+    this->main_navigation->addPage(this->tanks,
+                                  QIcon(":/icon/tower.png"),
+                                  "Tanks");
+    this->main_navigation->addPage(this->pumps,
+                                  QIcon(":/icon/pump.png"),
+                                  "Pumps");
+    this->main_navigation->addPage(this->valves,
+                                  QIcon(":/icon/valve.png"),
+                                  "Valves");
+    this->main_navigation->addPage(this->junctions,
+                                  QIcon(":/icon/junction.png"),
+                                  "Junctions");
+    this->main_navigation->addPage(this->pipes,
+                                  QIcon(":/icon/pipe.png"),
+                                  "Pipes");
+    this->main_navigation->addPage(this->customerPoints,
+                                  QIcon(":/icon/customer.png"),
+                                  "Customer Points");
+    this->main_navigation->addPage(this->customers,
+                                  QIcon(":/icon/users.png"),
+                                  "Customers");
+
+    this->main_navigation->addPage(this->alarms,
+                                  QIcon(":/icon/alarm.png"),
+                                  "Alarms",
+                                  MainNavigationWidget::Placement::Bottom);
+    this->main_navigation->addPage(this->logs,
+                                  QIcon(":/icon/log.png"),
+                                  "Logs",
+                                  MainNavigationWidget::Placement::Bottom);
+    this->main_navigation->addPage(this->settings,
+                                  QIcon(":/icon/settings.png"),
+                                  "Settings",
+                                  MainNavigationWidget::Placement::Bottom);
+
+    this->main_navigation->setCurrentIndex(2);
+
+    connect(this->main_navigation, &MainNavigationWidget::currentChanged, this, [this](int)
     {
-        this->updateMapEdgePanning();
-        this->dock_entity_map_legend->setMapMonitorActive(this->tabs->currentWidget() == this->map_monitor);
-        this->dock_map_editor_guide->setMapEditorActive(this->tabs->currentWidget() == this->map_editor);
+        updateMapEdgePanning();
+        this->dock_entity_map_legend->setMapMonitorActive(this->main_navigation->currentWidget() == this->map_monitor);
+        this->dock_map_editor_guide->setMapEditorActive(this->main_navigation->currentWidget() == this->map_editor);
     });
-    this->dock_entity_map_legend->setMapMonitorActive(this->tabs->currentWidget() == this->map_monitor);
-    this->dock_map_editor_guide->setMapEditorActive(this->tabs->currentWidget() == this->map_editor);
-    
-    QTimer::singleShot(0, this, &MainWindow::updateTabSpacer);
+    this->dock_entity_map_legend->setMapMonitorActive(this->main_navigation->currentWidget() == this->map_monitor);
+    this->dock_map_editor_guide->setMapEditorActive(this->main_navigation->currentWidget() == this->map_editor);
     
     connect(this->map_mon, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
     connect(this->map_mon, &MapWidget::signalCoordsChangedWgs84, this->footer, &FooterStatusBar::setMapCoordinatesWGS84);
@@ -496,51 +470,7 @@ void MainWindow::checkServerMap()
 void MainWindow::resizeEvent(QResizeEvent *event)
 {
     QMainWindow::resizeEvent(event);
-    this->updateTabSpacer();
     scheduleRightDockResize();
-}
-
-void MainWindow::updateTabSpacer()
-{
-    if (this->tab_spacer_tab_index < 0)
-        return;
-    
-    QTabBar *bar = this->tabs->tabBar();
-    
-    int used_height = 0;
-    
-    for (int tab = 0; tab < this->tabs->count(); ++tab)
-    {
-        if (tab == this->tab_spacer_tab_index)
-            continue;
-        
-        used_height += bar->tabRect(tab).height();
-    }
-    
-    const int available_height = this->tabs->contentsRect().height();
-    
-    // Small universal breathing room. Usually 0-6 is enough.
-    const int bottom_padding = 2;
-    
-    const int spacer_height = qMax(0, available_height - used_height - bottom_padding);
-    
-    if (spacer_height == this->tab_last_spacer_height)
-        return;
-    
-    this->tab_last_spacer_height = spacer_height;
-    
-    this->tabs->setStyleSheet(QString(R"(
-        QTabBar::tab {
-            width: 56px;
-            height: 56px;
-        }
-        
-        QTabBar::tab:disabled {
-            width: 56px;
-            height: %1px;
-            background: transparent;
-        }
-    )").arg(spacer_height));
 }
 
 void MainWindow::keyPressEvent(QKeyEvent *event)
@@ -814,7 +744,7 @@ EM_BOOL MainWindow::fullScreenChangeCallback(int event_type, const EmscriptenFul
 
 void MainWindow::updateMapEdgePanning()
 {
-    if (!this->map_mon || !this->map_edit || !this->tabs)
+    if (!this->map_mon || !this->map_edit || !this->main_navigation)
         return;
 
 #ifdef Q_OS_WASM
@@ -823,6 +753,6 @@ void MainWindow::updateMapEdgePanning()
     const bool fullscreen = this->isFullScreen();
 #endif
 
-    this->map_edit->setEdgePanningEnabled(fullscreen && this->tabs->currentWidget() == this->map_editor);
-    this->map_mon->setEdgePanningEnabled(fullscreen && this->tabs->currentWidget() == this->map_monitor);
+    this->map_edit->setEdgePanningEnabled(fullscreen && this->main_navigation->currentWidget() == this->map_editor);
+    this->map_mon->setEdgePanningEnabled(fullscreen && this->main_navigation->currentWidget() == this->map_monitor);
 }

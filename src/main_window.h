@@ -8,9 +8,6 @@
 #include <QSet>
 #include <QWidget>
 #include <QGridLayout>
-#include <QTabWidget>
-#include <QTabBar>
-#include <QTransform>
 #include <QResizeEvent>
 #include <QProcessEnvironment>
 
@@ -58,6 +55,7 @@
 #include "entity_inspector/entity_map_legend_dock.h"
 #include "map/map_editor_guide_dock.h"
 #include "simulation_manager.h"
+#include "widgets/main_navigation_widget.h"
 
 #include "hydraulic_data.h"
 
@@ -123,7 +121,7 @@ private:
     bool syncing_map_movement = false;
     void syncMapMovement(MapWidget *source, MapWidget *target);
     
-    QTabWidget *tabs;
+    MainNavigationWidget *main_navigation = nullptr;
     SettingsWidget *settings;
     MapMonitorContainer *map_monitor;
     MapEditorContainer *map_editor;
@@ -152,10 +150,6 @@ private:
     void checkServerMapInit();
     void checkServerMap();
     bool checking_server_map = false;
-    
-    int tab_spacer_tab_index = -1;
-    int tab_last_spacer_height = -1;
-    void updateTabSpacer();
     
 protected:
     void resizeEvent(QResizeEvent *event) override;
