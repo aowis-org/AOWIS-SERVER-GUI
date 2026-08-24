@@ -55,6 +55,10 @@ public:
     void loadProject();
 
     const NetworkHydraulic &networkHydraulic() const;
+    void replaceNetworkHydraulic(
+        NetworkHydraulic network,
+        QList<WaterQualitySolverOptions> quality_run_options);
+    const QList<WaterQualitySolverOptions> &simulationQualityRunOptions() const;
     void setSimulationHeadlossFormula(HydraulicHeadlossFormula formula);
     QUuid sourceTraceOriginNodeUuid() const;
     bool setSourceTraceOriginNodeUuid(const QUuid &uuid);
@@ -438,6 +442,7 @@ private:
 
     std::optional<Project> project;
     NetworkHydraulic network_hydraulic;
+    QList<WaterQualitySolverOptions> simulation_quality_run_options;
     QUuid source_trace_origin_node_uuid;
     HydraulicNetworkEditor network_editor;
     std::optional<HydraulicSimulationResultTimeline> simulation_result_timeline;

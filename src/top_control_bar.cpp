@@ -294,6 +294,20 @@ void TopControlBar::setSelectedSimulationHeadlossFormula(HydraulicHeadlossFormul
         this->combo_headloss_formula->setCurrentIndex(index);
 }
 
+void TopControlBar::setSelectedSimulationQualityAnalyses(
+    const QList<WaterQualityAnalysisType> &analyses)
+{
+    if (this->combo_quality_analysis == nullptr)
+        return;
+
+    for (int index = 0; index < this->combo_quality_analysis->count(); ++index)
+    {
+        const WaterQualityAnalysisType analysis = static_cast<WaterQualityAnalysisType>(
+            this->combo_quality_analysis->itemData(index).toInt());
+        this->combo_quality_analysis->setItemChecked(index, analyses.contains(analysis));
+    }
+}
+
 void TopControlBar::setFullScreenState(bool fullscreen)
 {
     if (this->button_fullscreen == nullptr)
@@ -544,15 +558,29 @@ void TopControlBar::addProjectControls()
 {
     TopControlBarContent *bar_content = barContent(this->content);
 
-    QComboBox *combo_project = new QComboBox(this->content);
+    QWidget *project_revision_container = new QWidget(this->content);
+    QVBoxLayout *project_revision_layout = new QVBoxLayout(project_revision_container);
+    project_revision_layout->setContentsMargins(0, 0, 0, 0);
+    project_revision_layout->setSpacing(2);
+
+    QComboBox *combo_project = new QComboBox(project_revision_container);
     combo_project->setFixedSize(178, 30);
     combo_project->addItem(QStringLiteral("Select project"));
 
-    QComboBox *combo_revision = new QComboBox(this->content);
+    QComboBox *combo_revision = new QComboBox(project_revision_container);
     combo_revision->setFixedSize(178, 30);
     combo_revision->addItem(QStringLiteral("Select revision"));
 
-    QToolButton *button_show_on_map = new QToolButton(this->content);
+    QToolButton *button_import_project = new QToolButton(project_revision_container);
+    button_import_project->setAutoRaise(true);
+    button_import_project->setIcon(QIcon(QStringLiteral(":/icon/download_export.png")));
+    button_import_project->setIconSize(QSize(28, 28));
+    button_import_project->setFixedSize(30, 30);
+    button_import_project->setToolTip(QStringLiteral("Import project"));
+    button_import_project->setStyleSheet(QStringLiteral("padding: 0;"));
+    connect(button_import_project, &QToolButton::clicked, this, &TopControlBar::signalImportProject);
+
+    QToolButton *button_show_on_map = new QToolButton(project_revision_container);
     button_show_on_map->setAutoRaise(true);
     button_show_on_map->setIcon(QIcon(QStringLiteral(":/icon/target.png")));
     button_show_on_map->setIconSize(QSize(28, 28));
@@ -561,18 +589,13 @@ void TopControlBar::addProjectControls()
     button_show_on_map->setStyleSheet(QStringLiteral("padding: 0;"));
     connect(button_show_on_map, &QToolButton::clicked, this, &TopControlBar::signalShowNetworkOnMap);
 
-    QToolButton *button_set_active = new QToolButton(this->content);
+    QToolButton *button_set_active = new QToolButton(project_revision_container);
     button_set_active->setAutoRaise(true);
     button_set_active->setIcon(QIcon(QStringLiteral(":/icon/set_active.png")));
     button_set_active->setIconSize(QSize(28, 28));
     button_set_active->setFixedSize(30, 30);
     button_set_active->setToolTip(QStringLiteral("Set active revision"));
     button_set_active->setStyleSheet(QStringLiteral("padding: 0;"));
-
-    QWidget *project_revision_container = new QWidget(this->content);
-    QVBoxLayout *project_revision_layout = new QVBoxLayout(project_revision_container);
-    project_revision_layout->setContentsMargins(0, 0, 0, 0);
-    project_revision_layout->setSpacing(2);
 
     QLabel *project_caption = createCaption(QStringLiteral("Project"), project_revision_container);
     QLabel *revision_caption = createCaption(QStringLiteral("Revision"), project_revision_container);
@@ -585,7 +608,9 @@ void TopControlBar::addProjectControls()
     project_layout->setSpacing(6);
     project_layout->addWidget(project_caption);
     project_layout->addWidget(combo_project);
+    project_layout->addWidget(button_import_project);
     project_layout->addWidget(button_show_on_map);
+    project_layout->addStretch(1);
 
     QHBoxLayout *revision_layout = new QHBoxLayout();
     revision_layout->setContentsMargins(0, 0, 0, 0);
@@ -593,6 +618,7 @@ void TopControlBar::addProjectControls()
     revision_layout->addWidget(revision_caption);
     revision_layout->addWidget(combo_revision);
     revision_layout->addWidget(button_set_active);
+    revision_layout->addStretch(1);
 
     project_revision_layout->addLayout(project_layout);
     project_revision_layout->addLayout(revision_layout);

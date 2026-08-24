@@ -4,19 +4,66 @@
 #include "simulation_diagnostics_dialog.h"
 
 #include <aowis/epanet/epanet_runner.h>
+#include <aowis/epanet/epanet_result_import.h>
 #include <aowis/epanet/epanet_result_run.h>
 #include <aowis/epanet/epanet_run_request.h>
 
 #include <QByteArray>
+#include <QFile>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QMessageBox>
+#include <QTemporaryDir>
 
 #include <memory>
+#include <utility>
 
 #ifndef Q_OS_WASM
-#include <QFileDialog>
 #include <QSaveFile>
 #else
 #include <emscripten.h>
+
+EM_JS(void, aowisOpenEpanetInpFile, (),
+{
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".inp";
+    input.style.display = "none";
+
+    const cleanup = () => {
+        input.remove();
+    };
+
+    input.addEventListener("change", async () => {
+        const file = input.files && input.files.length > 0 ? input.files[0] : null;
+        if (!file)
+        {
+            cleanup();
+            return;
+        }
+
+        try
+        {
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            const file_name_utf8 = stringToNewUTF8(file.name);
+            const contents = _malloc(bytes.length);
+            if (bytes.length > 0)
+                HEAPU8.set(bytes, contents);
+
+            _aowisReceiveEpanetInpFile(file_name_utf8, contents, bytes.length);
+
+            _free(contents);
+            _free(file_name_utf8);
+        }
+        finally
+        {
+            cleanup();
+        }
+    }, { once: true });
+
+    document.body.appendChild(input);
+    input.click();
+});
 
 EM_JS(void, aowisDownloadTextFile, (const char *filename_utf8, const char *contents_utf8),
 {
@@ -36,6 +83,31 @@ EM_JS(void, aowisDownloadTextFile, (const char *filename_utf8, const char *conte
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
+#endif
+
+#ifdef Q_OS_WASM
+namespace
+{
+QPointer<SimulationManager> pending_epanet_import_manager;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE void aowisReceiveEpanetInpFile(
+    const char *file_name_utf8,
+    const char *contents,
+    int size)
+{
+    if (!pending_epanet_import_manager || file_name_utf8 == nullptr || size < 0)
+        return;
+
+    const QString file_name = QString::fromUtf8(file_name_utf8);
+    const QByteArray file_content(contents, size);
+    QMetaObject::invokeMethod(
+        pending_epanet_import_manager,
+        "importEpanetNetworkContent",
+        Qt::DirectConnection,
+        Q_ARG(QString, file_name),
+        Q_ARG(QByteArray, file_content));
+}
 #endif
 
 namespace
@@ -61,6 +133,56 @@ void showMessageBox(
 {
     QMessageBox *message_box = new QMessageBox(icon, title, text, QMessageBox::Ok, parent);
     message_box->setAttribute(Qt::WA_DeleteOnClose);
+    message_box->open();
+    message_box->raise();
+    message_box->activateWindow();
+}
+
+QString diagnosticDetails(const HydraulicSimulationDiagnostic &diagnostic)
+{
+    QStringList details;
+    if (!diagnostic.message.isEmpty())
+        details.append(diagnostic.message);
+    if (!diagnostic.message_backend.isEmpty())
+        details.append(diagnostic.message_backend);
+    details.append(diagnostic.details);
+    return details.join('\n');
+}
+
+QString importFailureDetails(const EpanetResultImport &result)
+{
+    QStringList details;
+
+    if (!result.status.message.isEmpty())
+        details.append(result.status.message);
+    if (!result.status.message_backend.isEmpty())
+        details.append(result.status.message_backend);
+    details.append(result.status.details);
+
+    for (const HydraulicSimulationDiagnostic &diagnostic : result.diagnostics)
+    {
+        const QString diagnostic_text = diagnosticDetails(diagnostic);
+        if (!diagnostic_text.isEmpty() && !details.contains(diagnostic_text))
+            details.append(diagnostic_text);
+    }
+
+    if (details.isEmpty())
+        return QStringLiteral("EPANET could not import the INP project.");
+
+    return details.join(QStringLiteral("\n\n"));
+}
+
+void showDetailedMessageBox(
+    QWidget *parent,
+    QMessageBox::Icon icon,
+    const QString &title,
+    const QString &text,
+    const QString &details)
+{
+    QMessageBox *message_box = new QMessageBox(icon, title, text, QMessageBox::Ok, parent);
+    message_box->setAttribute(Qt::WA_DeleteOnClose);
+    if (!details.isEmpty())
+        message_box->setDetailedText(details);
     message_box->open();
     message_box->raise();
     message_box->activateWindow();
@@ -176,8 +298,17 @@ void SimulationManager::run(const QList<WaterQualityAnalysisType> &quality_analy
     for (const WaterQualityAnalysisType analysis : quality_analyses)
     {
         WaterQualitySolverOptions quality_options;
+        for (const WaterQualitySolverOptions &stored_options : this->hydraulic_data->simulationQualityRunOptions())
+        {
+            if (stored_options.analysis == analysis)
+            {
+                quality_options = stored_options;
+                break;
+            }
+        }
+
         quality_options.analysis = analysis;
-        if (analysis == WaterQualityAnalysisType::Chemical)
+        if (analysis == WaterQualityAnalysisType::Chemical && quality_options.chemical_name.isEmpty())
             quality_options.chemical_name = QStringLiteral("Chlorine");
         else if (analysis == WaterQualityAnalysisType::SourceTrace)
             quality_options.trace_node_uuid = this->hydraulic_data->sourceTraceOriginNodeUuid();
@@ -399,6 +530,112 @@ void SimulationManager::showEpanetLog()
     showAndActivateDialog(this->dialog_epanet_log);
 }
 
+void SimulationManager::importEpanetNetwork()
+{
+#ifdef Q_OS_WASM
+    pending_epanet_import_manager = this;
+    aowisOpenEpanetInpFile();
+#else
+    QWidget *main_window = QApplication::activeWindow();
+    QPointer<SimulationManager> manager(this);
+
+    QFileDialog::getOpenFileContent(
+        tr("EPANET input files (*.inp)"),
+        [manager](const QString &file_name, const QByteArray &file_content)
+        {
+            if (!manager || file_name.isEmpty())
+                return;
+
+            QMetaObject::invokeMethod(
+                manager,
+                "importEpanetNetworkContent",
+                Qt::DirectConnection,
+                Q_ARG(QString, file_name),
+                Q_ARG(QByteArray, file_content));
+        },
+        main_window);
+#endif
+}
+
+void SimulationManager::importEpanetNetworkContent(
+    const QString &file_name,
+    const QByteArray &file_content)
+{
+    if (file_name.isEmpty())
+        return;
+
+    QWidget *main_window = QApplication::activeWindow();
+    QPointer<QWidget> parent_widget(main_window);
+
+    QTemporaryDir temporary_directory;
+    if (!temporary_directory.isValid())
+    {
+        showMessageBox(
+            parent_widget,
+            QMessageBox::Critical,
+            tr("EPANET import failed"),
+            tr("Could not create temporary storage for the selected INP file."));
+        return;
+    }
+
+    const QString local_file_name = QFileInfo(file_name).fileName();
+    const QString temporary_file_path = temporary_directory.filePath(
+        local_file_name.isEmpty() ? QStringLiteral("import.inp") : local_file_name);
+
+    QFile temporary_file(temporary_file_path);
+    if (!temporary_file.open(QIODevice::WriteOnly)
+        || temporary_file.write(file_content) != file_content.size())
+    {
+        showMessageBox(
+            parent_widget,
+            QMessageBox::Critical,
+            tr("EPANET import failed"),
+            tr("Could not prepare the selected INP file for import."));
+        return;
+    }
+    temporary_file.close();
+
+    EpanetRunner runner;
+    EpanetResultImport import_result = runner.importInp(temporary_file_path);
+    finishEpanetNetworkImport(std::move(import_result), parent_widget);
+}
+
+void SimulationManager::finishEpanetNetworkImport(
+    EpanetResultImport import_result,
+    QWidget *parent_widget)
+{
+    if (!import_result.status.success)
+    {
+        showDetailedMessageBox(
+            parent_widget,
+            QMessageBox::Critical,
+            tr("EPANET import failed"),
+            tr("The selected EPANET project could not be imported."),
+            importFailureDetails(import_result));
+        return;
+    }
+
+    const int diagnostic_count = import_result.diagnostics.size();
+    const bool complete = import_result.complete;
+    const QString diagnostic_text = importFailureDetails(import_result);
+
+    this->hydraulic_data->replaceNetworkHydraulic(
+        std::move(import_result.request.network),
+        std::move(import_result.request.quality_runs));
+    emit signalEpanetNetworkImported();
+
+    if (!complete)
+    {
+        showDetailedMessageBox(
+            parent_widget,
+            QMessageBox::Warning,
+            tr("Project imported with warnings"),
+            tr("The project was imported, but %1 import issue(s) were reported.")
+                .arg(diagnostic_count),
+            diagnostic_text);
+    }
+}
+
 void SimulationManager::exportEpanetNetwork()
 {
     QWidget *main_window = QApplication::activeWindow();
@@ -424,6 +661,7 @@ void SimulationManager::exportEpanetNetwork()
     const NetworkHydraulic &network_hydraulic = this->hydraulic_data->networkHydraulic();
     EpanetRunRequest export_request;
     export_request.network = network_hydraulic;
+    export_request.quality_runs = this->hydraulic_data->simulationQualityRunOptions();
 
     EpanetRunner runner;
     const EpanetResultInp export_result = runner.retrieveInp(export_request);

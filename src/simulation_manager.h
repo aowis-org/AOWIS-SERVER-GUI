@@ -2,6 +2,7 @@
 #define SIMULATION_MANAGER_H
 
 #include <QObject>
+#include <QByteArray>
 #include <QApplication>
 #include <QScreen>
 #include <QTextBrowser>
@@ -22,6 +23,7 @@
 
 #include "hydraulic_data.h"
 
+struct EpanetResultImport;
 struct EpanetResultRun;
 
 class SimulationManager : public QObject
@@ -37,8 +39,12 @@ public:
     void showSimulationStatistics();
     void showSimulationDiagnostics();
     void showEpanetLog();
+    void importEpanetNetwork();
     void exportEpanetNetwork();
     
+private slots:
+    void importEpanetNetworkContent(const QString &file_name, const QByteArray &file_content);
+
 private:
     HydraulicData *hydraulic_data = nullptr;
     QString epanet_log;
@@ -51,12 +57,14 @@ private:
     QPointer<QTextBrowser> widget_epanet_log = nullptr;
 
     void finishSimulation(const EpanetResultRun &run_result);
+    void finishEpanetNetworkImport(EpanetResultImport import_result, QWidget *parent_widget);
 
 signals:
     void signalSimulationStarted();
     void signalSimulationStopRequested();
     void signalSimulationFinished(bool cancelled);
     void signalEpanetLogAvailabilityChanged(bool available);
+    void signalEpanetNetworkImported();
 };
 
 #endif // SIMULATION_MANAGER_H

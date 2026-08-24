@@ -320,7 +320,32 @@ MainWindow::MainWindow(QWidget *parent)
     });
     connect(this->top_control_bar, &TopControlBar::signalShowSimulationStatistics, this->simulation_manager, &SimulationManager::showSimulationStatistics);
     connect(this->top_control_bar, &TopControlBar::signalShowEpanetLog, this->simulation_manager, &SimulationManager::showEpanetLog);
+#ifdef Q_OS_WASM
+    connect(
+        this->top_control_bar,
+        &TopControlBar::signalImportProject,
+        this->simulation_manager,
+        &SimulationManager::importEpanetNetwork,
+        Qt::DirectConnection);
+#else
+    connect(this->top_control_bar, &TopControlBar::signalImportProject, this->simulation_manager, &SimulationManager::importEpanetNetwork);
+#endif
     connect(this->top_control_bar, &TopControlBar::signalExportEpanetNetwork, this->simulation_manager, &SimulationManager::exportEpanetNetwork);
+    connect(this->simulation_manager, &SimulationManager::signalEpanetNetworkImported, this, [this]
+    {
+        QList<WaterQualityAnalysisType> analyses;
+        for (const WaterQualitySolverOptions &quality_options : this->hydraulic_data->simulationQualityRunOptions())
+        {
+            if (quality_options.analysis != WaterQualityAnalysisType::None
+                && !analyses.contains(quality_options.analysis))
+            {
+                analyses.append(quality_options.analysis);
+            }
+        }
+        this->top_control_bar->setSelectedSimulationQualityAnalyses(analyses);
+    });
+    connect(this->simulation_manager, &SimulationManager::signalEpanetNetworkImported,
+            this->top_control_bar, &TopControlBar::signalShowNetworkOnMap);
     connect(this->top_control_bar, &TopControlBar::signalShowNetworkOnMap, this, [this]
     {
         if (!this->hydraulic_data->boundingBoxWgs84Valid())

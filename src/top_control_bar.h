@@ -27,6 +27,7 @@ public:
     HydraulicHeadlossFormula selectedSimulationHeadlossFormula() const;
     QList<WaterQualityAnalysisType> selectedSimulationQualityAnalyses() const;
     void setSelectedSimulationHeadlossFormula(HydraulicHeadlossFormula formula);
+    void setSelectedSimulationQualityAnalyses(const QList<WaterQualityAnalysisType> &analyses);
 
     void setFullScreenState(bool fullscreen);
     void setSimulationResultsAvailable(bool available);
@@ -47,6 +48,7 @@ signals:
     void signalSimulationResultIndexSelected(int result_index);
     void signalShowEpanetLog();
     void signalExportEpanetNetwork();
+    void signalImportProject();
     void signalShowNetworkOnMap();
     void signalFullScreenToggle();
 

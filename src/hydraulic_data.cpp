@@ -3,6 +3,7 @@
 #include "network_symbology_values.h"
 
 #include <cmath>
+#include <utility>
 
 #include <QHash>
 
@@ -81,7 +82,7 @@ void HydraulicData::onDatabaseReady()
     
     //this->network_hydraulic = DummyNetworks::networkSimple();
     //this->network_hydraulic = DummyNetworks::networkTanks();
-    this->network_hydraulic = DummyMarburgNetworkGenerator::generate();
+    //this->network_hydraulic = DummyMarburgNetworkGenerator::generate();
     //this->network_hydraulic = RandomHydraulicNetworkGenerator::generateFractal();
     rebuildBoundingBoxWgs84();
     markNetworkChanged(NetworkChange::Geometry);
@@ -154,6 +155,36 @@ const NetworkHydraulic &HydraulicData::networkHydraulic() const
     return this->network_hydraulic;
 }
 
+void HydraulicData::replaceNetworkHydraulic(
+    NetworkHydraulic network,
+    QList<WaterQualitySolverOptions> quality_run_options)
+{
+    clearSimulationResultTimeline();
+
+    this->network_hydraulic = std::move(network);
+    this->simulation_quality_run_options = std::move(quality_run_options);
+    this->source_trace_origin_node_uuid = QUuid();
+
+    for (const WaterQualitySolverOptions &quality_options : this->simulation_quality_run_options)
+    {
+        if (quality_options.analysis == WaterQualityAnalysisType::SourceTrace)
+        {
+            this->source_trace_origin_node_uuid = quality_options.trace_node_uuid;
+            break;
+        }
+    }
+
+    rebuildBoundingBoxWgs84();
+    markNetworkChanged(NetworkChange::Geometry);
+    emit signalWaterQualityOptionsChanged();
+    emit signalNetworkLoaded();
+}
+
+const QList<WaterQualitySolverOptions> &HydraulicData::simulationQualityRunOptions() const
+{
+    return this->simulation_quality_run_options;
+}
+
 void HydraulicData::setSimulationHeadlossFormula(HydraulicHeadlossFormula formula)
 {
     if (this->network_hydraulic.options_hydraulic.headloss_formula == formula)
@@ -177,6 +208,11 @@ bool HydraulicData::setSourceTraceOriginNodeUuid(const QUuid &uuid)
         return true;
 
     this->source_trace_origin_node_uuid = uuid;
+    for (WaterQualitySolverOptions &quality_options : this->simulation_quality_run_options)
+    {
+        if (quality_options.analysis == WaterQualityAnalysisType::SourceTrace)
+            quality_options.trace_node_uuid = uuid;
+    }
     clearWaterQualitySimulationResultTimeline();
     emit signalWaterQualityOptionsChanged();
     return true;
