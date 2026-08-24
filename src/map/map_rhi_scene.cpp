@@ -2,6 +2,7 @@
 
 #include "map_render_cache_math.h"
 #include "../geo_web_mercator.h"
+#include "../infrastructure_entity_traits.h"
 #include "../network_symbology_rendering.h"
 
 #include <cmath>
@@ -34,6 +35,8 @@ void MapRhiScene::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
     this->diagnostic_link_vertices.clear();
     this->diagnostic_node_vertices.clear();
     this->flow_direction_vertices.clear();
+    this->icon_vertices.clear();
+    this->icon_markers.clear();
     this->link_paths.clear();
     this->entity_keys_by_uuid.clear();
     this->link_vertex_indices_by_entity.clear();
@@ -57,6 +60,14 @@ void MapRhiScene::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
         this->entity_keys_by_uuid.insert(
             node.uuid, entityRenderKey(node.entity_type, node.render_id));
         appendNode(node.entity_type, node.render_id, center);
+        if (mapRhiHasIcon(node.entity_type))
+        {
+            IconMarker marker;
+            marker.entity_type = node.entity_type;
+            marker.render_id = node.render_id;
+            marker.center = center;
+            this->icon_markers.append(marker);
+        }
     }
 
     qsizetype segment_count = 0;
@@ -103,9 +114,46 @@ void MapRhiScene::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
         this->entity_keys_by_uuid.insert(
             link.uuid, entityRenderKey(link.entity_type, link.render_id));
         if (!link_path.segments.isEmpty())
+        {
+            if (mapRhiHasIcon(link.entity_type))
+            {
+                qreal total_length = 0.0;
+                for (const QLineF &segment : link_path.segments)
+                    total_length += segment.length();
+
+                if (total_length > 0.0)
+                {
+                    const qreal target = total_length / 2.0;
+                    qreal traversed = 0.0;
+                    for (const QLineF &segment : link_path.segments)
+                    {
+                        const qreal segment_length = segment.length();
+                        if (segment_length <= 0.0)
+                            continue;
+                        if (traversed + segment_length < target)
+                        {
+                            traversed += segment_length;
+                            continue;
+                        }
+
+                        const qreal ratio = qBound<qreal>(
+                            0.0, (target - traversed) / segment_length, 1.0);
+                        IconMarker marker;
+                        marker.entity_type = link.entity_type;
+                        marker.render_id = link.render_id;
+                        marker.center = QPointF(
+                            segment.x1() + segment.dx() * ratio,
+                            segment.y1() + segment.dy() * ratio);
+                        this->icon_markers.append(marker);
+                        break;
+                    }
+                }
+            }
             this->link_paths.append(link_path);
+        }
     }
 
+    rebuildIcons();
     rebuildFlowDirections();
     rebuildHighlights();
 }
@@ -117,6 +165,9 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
     const bool node_colors_changed = this->symbology.node_colors != symbology.node_colors;
     const bool link_thickness_changed =
         this->symbology.link_thickness_px != symbology.link_thickness_px;
+    const bool icon_changed =
+        this->symbology.icon_size_percent != symbology.icon_size_percent
+        || link_colors_changed || node_colors_changed;
     const bool flow_direction_changed =
         this->symbology.show_flow_direction != symbology.show_flow_direction
         || this->symbology.flow_direction_size_px != symbology.flow_direction_size_px
@@ -136,6 +187,8 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
         for (NodeVertex &vertex : this->node_vertices)
             applyNodeColor(&vertex);
     }
+    if (icon_changed)
+        rebuildIcons();
     if (flow_direction_changed)
         rebuildFlowDirections();
     if (link_thickness_changed)
@@ -158,6 +211,7 @@ bool MapRhiScene::setViewZoom(int zoom)
         return false;
 
     this->view_zoom = zoom;
+    rebuildIcons();
     rebuildFlowDirections();
     return true;
 }
@@ -204,6 +258,11 @@ const QVector<MapRhiScene::NodeVertex> &MapRhiScene::diagnosticNodeVertices() co
 const QVector<MapRhiScene::LinkVertex> &MapRhiScene::flowDirectionVertices() const
 {
     return this->flow_direction_vertices;
+}
+
+const QVector<MapRhiScene::IconVertex> &MapRhiScene::iconVertices() const
+{
+    return this->icon_vertices;
 }
 
 QPointF MapRhiScene::originWorld() const
@@ -371,7 +430,64 @@ void MapRhiScene::applyNodeColor(NodeVertex *vertex) const
     vertex->red = qRed(color) / 255.0f;
     vertex->green = qGreen(color) / 255.0f;
     vertex->blue = qBlue(color) / 255.0f;
-    vertex->alpha = qAlpha(color) / 255.0f;
+    vertex->alpha = mapRhiHasIcon(vertex->entity_type)
+        ? 0.0f
+        : qAlpha(color) / 255.0f;
+}
+
+void MapRhiScene::rebuildIcons()
+{
+    this->icon_vertices.clear();
+    this->icon_vertices.reserve(this->icon_markers.size() * 6);
+    for (const IconMarker &marker : this->icon_markers)
+        appendIcon(marker);
+}
+
+void MapRhiScene::appendIcon(const IconMarker &marker)
+{
+    const MapRhiIconAtlasEntry atlas_entry = mapRhiIconAtlasEntry(marker.entity_type);
+    if (!atlas_entry.valid)
+        return;
+
+    const qreal marker_size = networkSymbologyMarkerSizeForZoom(
+        this->view_zoom, this->symbology.icon_size_percent);
+    const float half_width_px = float(marker_size * atlas_entry.width_ratio / 2.0);
+    const float half_height_px = float(marker_size * atlas_entry.height_ratio / 2.0);
+    const QRgb color = InfrastructureEntityTraits::isHydraulicConnectionNode(marker.entity_type)
+        ? this->symbology.node_colors.value(marker.render_id, networkSymbologyDefaultColor())
+        : this->symbology.link_colors.value(marker.render_id, networkSymbologyDefaultColor());
+
+    const float corners[6][2] = {
+        {-1.0f, -1.0f},
+        {1.0f, -1.0f},
+        {1.0f, 1.0f},
+        {-1.0f, -1.0f},
+        {1.0f, 1.0f},
+        {-1.0f, 1.0f}
+    };
+
+    const float u_left = float(atlas_entry.uv_rect.left());
+    const float u_right = float(atlas_entry.uv_rect.right());
+    const float v_top = float(atlas_entry.uv_rect.top());
+    const float v_bottom = float(atlas_entry.uv_rect.bottom());
+    for (int index = 0; index < 6; ++index)
+    {
+        IconVertex vertex;
+        vertex.center_x = float(marker.center.x());
+        vertex.center_y = float(marker.center.y());
+        vertex.center_z = 0.0f;
+        vertex.offset_x_px = corners[index][0] * half_width_px;
+        vertex.offset_y_px = corners[index][1] * half_height_px;
+        vertex.u = corners[index][0] < 0.0f ? u_left : u_right;
+        vertex.v = corners[index][1] < 0.0f ? v_bottom : v_top;
+        vertex.red = qRed(color) / 255.0f;
+        vertex.green = qGreen(color) / 255.0f;
+        vertex.blue = qBlue(color) / 255.0f;
+        vertex.alpha = qAlpha(color) / 255.0f;
+        vertex.render_id = marker.render_id;
+        vertex.entity_type = marker.entity_type;
+        this->icon_vertices.append(vertex);
+    }
 }
 
 void MapRhiScene::rebuildFlowDirections()

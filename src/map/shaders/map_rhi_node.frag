@@ -6,8 +6,13 @@ layout(location = 0) out vec4 fragment_color;
 
 void main()
 {
-    if (dot(node_corner, node_corner) > 1.0)
+    float radius_squared = dot(node_corner, node_corner);
+    float edge_width = max(fwidth(radius_squared), 0.0001);
+    float coverage = 1.0 - smoothstep(
+        1.0 - edge_width, 1.0 + edge_width, radius_squared);
+    float alpha = vertex_color.a * coverage;
+    if (alpha <= 0.001)
         discard;
 
-    fragment_color = vertex_color;
+    fragment_color = vec4(vertex_color.rgb * alpha, alpha);
 }

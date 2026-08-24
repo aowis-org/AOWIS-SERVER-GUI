@@ -225,6 +225,8 @@ if(NOT EMSCRIPTEN)
                 src/map/map_rhi_camera.cpp
                 src/map/map_rhi_scene.h
                 src/map/map_rhi_scene.cpp
+                src/map/map_rhi_icon_atlas.h
+                src/map/map_rhi_icon_atlas.cpp
                 src/map/map_rhi_symbology.h
                 src/map/map_rhi_symbology.cpp
                 src/map/map_rhi_widget.h
@@ -241,6 +243,8 @@ if(NOT EMSCRIPTEN)
                 src/map/shaders/map_rhi_link.frag
                 src/map/shaders/map_rhi_node.vert
                 src/map/shaders/map_rhi_node.frag
+                src/map/shaders/map_rhi_icon.vert
+                src/map/shaders/map_rhi_icon.frag
         )
         message(STATUS "AOWIS desktop QRhi support: enabled")
     else()

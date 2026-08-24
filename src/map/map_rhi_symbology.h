@@ -12,6 +12,7 @@ class HydraulicData;
 struct MapRhiSymbology
 {
     int node_size_percent = 100;
+    int icon_size_percent = 100;
     int link_thickness_px = 3;
     bool show_flow_direction = true;
     int flow_direction_size_px = 10;

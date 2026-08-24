@@ -6,6 +6,7 @@
 #include <QColor>
 #include <QDebug>
 #include <QFile>
+#include <QImage>
 #include <QMatrix4x4>
 #include <QResizeEvent>
 #include <rhi/qshader.h>
@@ -19,6 +20,7 @@
 namespace
 {
 constexpr int CameraUniformBytes = 20 * int(sizeof(float));
+constexpr int RendererMsaaSamples = 4;
 
 QRhiWidget::Api platformGraphicsApi()
 {
@@ -78,6 +80,7 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     Q_ASSERT(this->map_model != nullptr);
 
     setApi(platformGraphicsApi());
+    setSampleCount(RendererMsaaSamples);
     setAttribute(Qt::WA_TransparentForMouseEvents);
     setFocusPolicy(Qt::NoFocus);
 
@@ -135,6 +138,7 @@ void MapRhiWidget::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
     this->geometry_upload_pending = true;
     this->highlight_upload_pending = true;
     this->flow_direction_upload_pending = true;
+    this->icon_upload_pending = true;
     update();
 }
 
@@ -145,6 +149,11 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
         !this->symbology_initialized
         || this->applied_symbology.node_size_percent != symbology.node_size_percent
         || this->applied_symbology.link_thickness_px != symbology.link_thickness_px
+        || this->applied_symbology.node_colors != symbology.node_colors
+        || this->applied_symbology.link_colors != symbology.link_colors;
+    const bool icon_changed =
+        !this->symbology_initialized
+        || this->applied_symbology.icon_size_percent != symbology.icon_size_percent
         || this->applied_symbology.node_colors != symbology.node_colors
         || this->applied_symbology.link_colors != symbology.link_colors;
     const bool flow_direction_changed =
@@ -167,6 +176,8 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
     }
     if (flow_direction_changed)
         this->flow_direction_upload_pending = true;
+    if (icon_changed)
+        this->icon_upload_pending = true;
 
     update();
 }
@@ -219,20 +230,25 @@ void MapRhiWidget::initialize(QRhiCommandBuffer *command_buffer)
     {
         this->link_pipeline.reset();
         this->node_pipeline.reset();
+        this->icon_pipeline.reset();
     }
 
     this->render_pass_descriptor = target->renderPassDescriptor();
 
     syncViewState();
     if (this->scene.setViewZoom(this->map_model->zoom()))
+    {
         this->flow_direction_upload_pending = true;
+        this->icon_upload_pending = true;
+    }
 
     if (!createPersistentResources() || !ensureGeometryBuffers() || !createPipelines())
         return;
 
     qInfo().noquote()
-        << QStringLiteral("Desktop map RHI surface '%1' initialized using %2.")
-               .arg(this->surface_name, graphicsApiName());
+        << QStringLiteral("Desktop map RHI surface '%1' initialized using %2 with %3x MSAA.")
+               .arg(this->surface_name, graphicsApiName())
+               .arg(sampleCount());
 }
 
 void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
@@ -252,7 +268,10 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
 
     syncViewState();
     if (this->scene.setViewZoom(this->map_model->zoom()))
+    {
         this->flow_direction_upload_pending = true;
+        this->icon_upload_pending = true;
+    }
 
     if (!createPersistentResources() || !ensureGeometryBuffers() || !createPipelines())
         return;
@@ -271,6 +290,13 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     QRhiResourceUpdateBatch *resource_updates = this->active_rhi->nextResourceUpdateBatch();
     resource_updates->updateDynamicBuffer(
         this->uniform_buffer.get(), 0, CameraUniformBytes, uniform_data.data());
+
+    if (this->icon_atlas_upload_pending)
+    {
+        resource_updates->uploadTexture(
+            this->icon_atlas_texture.get(), mapRhiIconAtlasImage());
+        this->icon_atlas_upload_pending = false;
+    }
 
     if (this->geometry_upload_pending)
     {
@@ -349,6 +375,19 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         this->flow_direction_upload_pending = false;
     }
 
+    if (this->icon_upload_pending)
+    {
+        const QVector<MapRhiScene::IconVertex> &icon_vertices = this->scene.iconVertices();
+        if (!icon_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->icon_vertex_buffer.get(), 0,
+                int(icon_vertices.size() * qsizetype(sizeof(MapRhiScene::IconVertex))),
+                icon_vertices.constData());
+        }
+        this->icon_upload_pending = false;
+    }
+
     const QColor clear_color(245, 245, 245, 255);
     command_buffer->beginPass(target, clear_color, {1.0f, 0}, resource_updates);
 
@@ -386,6 +425,16 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         const QRhiCommandBuffer::VertexInput node_binding(this->node_vertex_buffer.get(), 0);
         command_buffer->setVertexInput(0, 1, &node_binding);
         command_buffer->draw(quint32(node_vertices.size()));
+    }
+
+    const QVector<MapRhiScene::IconVertex> &icon_vertices = this->scene.iconVertices();
+    if (!icon_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->icon_pipeline.get());
+        command_buffer->setShaderResources(this->icon_shader_resource_bindings.get());
+        const QRhiCommandBuffer::VertexInput icon_binding(this->icon_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &icon_binding);
+        command_buffer->draw(quint32(icon_vertices.size()));
     }
 
     const QVector<MapRhiScene::LinkVertex> &selected_link_vertices =
@@ -485,13 +534,61 @@ bool MapRhiWidget::createPersistentResources()
         }
     }
 
+    if (!this->icon_atlas_texture)
+    {
+        const QImage atlas_image = mapRhiIconAtlasImage();
+        this->icon_atlas_texture.reset(this->active_rhi->newTexture(
+            QRhiTexture::RGBA8, atlas_image.size()));
+        if (!this->icon_atlas_texture || !this->icon_atlas_texture->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI icon atlas texture"));
+            return false;
+        }
+        this->icon_atlas_upload_pending = true;
+    }
+
+    if (!this->icon_sampler)
+    {
+        this->icon_sampler.reset(this->active_rhi->newSampler(
+            QRhiSampler::Linear, QRhiSampler::Linear, QRhiSampler::None,
+            QRhiSampler::ClampToEdge, QRhiSampler::ClampToEdge));
+        if (!this->icon_sampler || !this->icon_sampler->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI icon atlas sampler"));
+            return false;
+        }
+    }
+
+    if (!this->icon_shader_resource_bindings)
+    {
+        this->icon_shader_resource_bindings.reset(
+            this->active_rhi->newShaderResourceBindings());
+        if (!this->icon_shader_resource_bindings)
+        {
+            reportFailure(QStringLiteral("Failed to allocate RHI icon shader bindings"));
+            return false;
+        }
+        this->icon_shader_resource_bindings->setBindings({
+            QRhiShaderResourceBinding::uniformBuffer(
+                0, QRhiShaderResourceBinding::VertexStage, this->uniform_buffer.get()),
+            QRhiShaderResourceBinding::sampledTexture(
+                1, QRhiShaderResourceBinding::FragmentStage,
+                this->icon_atlas_texture.get(), this->icon_sampler.get())
+        });
+        if (!this->icon_shader_resource_bindings->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI icon shader bindings"));
+            return false;
+        }
+    }
+
     return true;
 }
 
 bool MapRhiWidget::createPipelines()
 {
     if (this->active_rhi == nullptr || this->render_pass_descriptor == nullptr ||
-        !this->shader_resource_bindings)
+        !this->shader_resource_bindings || !this->icon_shader_resource_bindings)
     {
         return false;
     }
@@ -533,6 +630,7 @@ bool MapRhiWidget::createPipelines()
         this->link_pipeline->setVertexInputLayout(input_layout);
         this->link_pipeline->setShaderResourceBindings(this->shader_resource_bindings.get());
         this->link_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
+        this->link_pipeline->setSampleCount(sampleCount());
         this->link_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
         if (!this->link_pipeline->create())
         {
@@ -576,10 +674,62 @@ bool MapRhiWidget::createPipelines()
         this->node_pipeline->setVertexInputLayout(input_layout);
         this->node_pipeline->setShaderResourceBindings(this->shader_resource_bindings.get());
         this->node_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
+        this->node_pipeline->setSampleCount(sampleCount());
         this->node_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+        QRhiGraphicsPipeline::TargetBlend node_blend;
+        node_blend.enable = true;
+        this->node_pipeline->setTargetBlends({node_blend});
         if (!this->node_pipeline->create())
         {
             reportFailure(QStringLiteral("Failed to create RHI node graphics pipeline"));
+            return false;
+        }
+    }
+
+    if (!this->icon_pipeline)
+    {
+        const QShader vertex_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_icon.vert.qsb"));
+        const QShader fragment_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_icon.frag.qsb"));
+        if (!vertex_shader.isValid() || !fragment_shader.isValid())
+        {
+            reportFailure(QStringLiteral("Failed to load RHI icon shaders"));
+            return false;
+        }
+
+        QRhiVertexInputLayout input_layout;
+        input_layout.setBindings({
+            {quint32(sizeof(MapRhiScene::IconVertex))}
+        });
+        input_layout.setAttributes({
+            {0, 0, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiScene::IconVertex, center_x))},
+            {0, 1, QRhiVertexInputAttribute::Float2,
+             quint32(offsetof(MapRhiScene::IconVertex, offset_x_px))},
+            {0, 2, QRhiVertexInputAttribute::Float2,
+             quint32(offsetof(MapRhiScene::IconVertex, u))},
+            {0, 3, QRhiVertexInputAttribute::Float4,
+             quint32(offsetof(MapRhiScene::IconVertex, red))}
+        });
+
+        this->icon_pipeline.reset(this->active_rhi->newGraphicsPipeline());
+        this->icon_pipeline->setShaderStages({
+            {QRhiShaderStage::Vertex, vertex_shader},
+            {QRhiShaderStage::Fragment, fragment_shader}
+        });
+        this->icon_pipeline->setVertexInputLayout(input_layout);
+        this->icon_pipeline->setShaderResourceBindings(
+            this->icon_shader_resource_bindings.get());
+        this->icon_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
+        this->icon_pipeline->setSampleCount(sampleCount());
+        this->icon_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+        QRhiGraphicsPipeline::TargetBlend blend;
+        blend.enable = true;
+        this->icon_pipeline->setTargetBlends({blend});
+        if (!this->icon_pipeline->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI icon graphics pipeline"));
             return false;
         }
     }
@@ -606,10 +756,12 @@ bool MapRhiWidget::ensureGeometryBuffers()
         this->scene.diagnosticNodeVertices().size(), qsizetype(sizeof(MapRhiScene::NodeVertex)));
     const int required_flow_direction_bytes = boundedBufferSize(
         this->scene.flowDirectionVertices().size(), qsizetype(sizeof(MapRhiScene::LinkVertex)));
+    const int required_icon_bytes = boundedBufferSize(
+        this->scene.iconVertices().size(), qsizetype(sizeof(MapRhiScene::IconVertex)));
     if (required_link_bytes == 0 || required_node_bytes == 0
         || required_selected_link_bytes == 0 || required_selected_node_bytes == 0
         || required_diagnostic_link_bytes == 0 || required_diagnostic_node_bytes == 0
-        || required_flow_direction_bytes == 0)
+        || required_flow_direction_bytes == 0 || required_icon_bytes == 0)
     {
         reportFailure(QStringLiteral("RHI network geometry exceeds supported buffer size"));
         return false;
@@ -711,14 +863,32 @@ bool MapRhiWidget::ensureGeometryBuffers()
         this->flow_direction_upload_pending = true;
     }
 
+    if (!this->icon_vertex_buffer || this->icon_vertex_buffer_size != required_icon_bytes)
+    {
+        this->icon_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_icon_bytes));
+        if (!this->icon_vertex_buffer || !this->icon_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI icon vertex buffer"));
+            return false;
+        }
+        this->icon_vertex_buffer_size = required_icon_bytes;
+        this->icon_upload_pending = true;
+    }
+
     return true;
 }
 
 void MapRhiWidget::resetGpuResources()
 {
+    this->icon_pipeline.reset();
     this->node_pipeline.reset();
     this->link_pipeline.reset();
+    this->icon_shader_resource_bindings.reset();
     this->shader_resource_bindings.reset();
+    this->icon_sampler.reset();
+    this->icon_atlas_texture.reset();
+    this->icon_vertex_buffer.reset();
     this->flow_direction_vertex_buffer.reset();
     this->diagnostic_node_vertex_buffer.reset();
     this->diagnostic_link_vertex_buffer.reset();
@@ -727,6 +897,7 @@ void MapRhiWidget::resetGpuResources()
     this->node_vertex_buffer.reset();
     this->link_vertex_buffer.reset();
     this->uniform_buffer.reset();
+    this->icon_vertex_buffer_size = 0;
     this->flow_direction_vertex_buffer_size = 0;
     this->diagnostic_node_vertex_buffer_size = 0;
     this->diagnostic_link_vertex_buffer_size = 0;
@@ -737,6 +908,8 @@ void MapRhiWidget::resetGpuResources()
     this->geometry_upload_pending = true;
     this->highlight_upload_pending = true;
     this->flow_direction_upload_pending = true;
+    this->icon_upload_pending = true;
+    this->icon_atlas_upload_pending = true;
 }
 
 void MapRhiWidget::syncViewState()

@@ -3,6 +3,7 @@
 
 #include "../network_render_snapshot.h"
 #include "map_rhi_symbology.h"
+#include "map_rhi_icon_atlas.h"
 
 #include <QColor>
 #include <QHash>
@@ -30,6 +31,23 @@ public:
         float blue = 0.0f;
         float alpha = 1.0f;
         float size_adjust_px = 0.0f;
+        quint32 render_id = 0;
+        InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
+    };
+
+    struct IconVertex
+    {
+        float center_x = 0.0f;
+        float center_y = 0.0f;
+        float center_z = 0.0f;
+        float offset_x_px = 0.0f;
+        float offset_y_px = 0.0f;
+        float u = 0.0f;
+        float v = 0.0f;
+        float red = 0.0f;
+        float green = 0.0f;
+        float blue = 0.0f;
+        float alpha = 1.0f;
         quint32 render_id = 0;
         InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
     };
@@ -65,6 +83,7 @@ public:
     const QVector<LinkVertex> &diagnosticLinkVertices() const;
     const QVector<NodeVertex> &diagnosticNodeVertices() const;
     const QVector<LinkVertex> &flowDirectionVertices() const;
+    const QVector<IconVertex> &iconVertices() const;
     QPointF originWorld() const;
     quint64 geometryRevision() const;
     bool hasGeometry() const;
@@ -72,6 +91,13 @@ public:
     int linkThicknessPx() const;
 
 private:
+    struct IconMarker
+    {
+        InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
+        quint32 render_id = 0;
+        QPointF center;
+    };
+
     struct LinkPath
     {
         InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
@@ -87,6 +113,8 @@ private:
     void appendNode(InfrastructureEntity entity_type, quint32 render_id, const QPointF &center);
     void applyLinkColor(LinkVertex *vertex) const;
     void applyNodeColor(NodeVertex *vertex) const;
+    void rebuildIcons();
+    void appendIcon(const IconMarker &marker);
     void rebuildFlowDirections();
     void appendFlowDirectionStroke(
         const QPointF &start, const QPointF &end, QRgb color, float half_width_px);
@@ -105,6 +133,8 @@ private:
     QVector<LinkVertex> diagnostic_link_vertices;
     QVector<NodeVertex> diagnostic_node_vertices;
     QVector<LinkVertex> flow_direction_vertices;
+    QVector<IconVertex> icon_vertices;
+    QVector<IconMarker> icon_markers;
     QVector<LinkPath> link_paths;
     QPointF origin_world;
     MapRhiSymbology symbology;
