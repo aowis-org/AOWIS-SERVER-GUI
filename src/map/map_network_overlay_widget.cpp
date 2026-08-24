@@ -2233,7 +2233,9 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
                 const NetworkIconAsset *asset = iconAssetForEntity(marker.entity_type);
                 if (!asset)
                 {
-                    junction_paths[color].addEllipse(center, junction_radius, junction_radius);
+                    QPainterPath &junction_path = junction_paths[color];
+                    junction_path.setFillRule(Qt::WindingFill);
+                    junction_path.addEllipse(center, junction_radius, junction_radius);
                     continue;
                 }
 
