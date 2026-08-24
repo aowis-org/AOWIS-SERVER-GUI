@@ -69,6 +69,8 @@ public:
     const QList<WaterQualitySimulationResultTimeline> &waterQualitySimulationResultTimelines() const;
     const std::optional<WaterQualitySimulationResultTimeline> &waterQualitySimulationResultTimeline() const;
     const WaterQualitySimulationResult *currentWaterQualitySimulationResult() const;
+    const WaterQualitySimulationResult *currentWaterQualitySimulationResult(
+        WaterQualityAnalysisType analysis) const;
     const HydraulicSimulationStatus *simulationStatus() const;
     const HydraulicSimulationStatus *waterQualitySimulationStatus() const;
     InfrastructureEntity simulationErrorEntityType() const;
@@ -537,6 +539,7 @@ signals:
     void signalSimulationResultTimelineChanged(bool available);
     void signalWaterQualitySimulationResultTimelineChanged(bool available);
     void signalCurrentSimulationResultChanged(int result_index);
+    void signalSimulationHeadlossFormulaChanged();
     void signalNetworkGeometryChanged(quint64 geometry_revision);
     void signalBoundingBoxWgs84Changed();
     void signalNodeChanged(InfrastructureEntity entity_type, const QUuid &uuid);

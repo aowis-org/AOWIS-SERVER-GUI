@@ -36,6 +36,16 @@ void updateMinimumMaximum(double value, double &minimum, double &maximum, bool &
         maximum = value;
 }
 
+void updateSymbologyValuesMinimumMaximum(const QHash<QUuid, double> &values,
+                                         double &minimum, double &maximum, bool &initialized)
+{
+    for (QHash<QUuid, double>::const_iterator iterator = values.cbegin();
+         iterator != values.cend(); ++iterator)
+    {
+        updateMinimumMaximum(iterator.value(), minimum, maximum, initialized);
+    }
+}
+
 void updateWaterAgeNodeMinimumMaximum(const WaterQualitySimulationResult &result,
                                       double &minimum, double &maximum, bool &initialized)
 {
@@ -192,6 +202,7 @@ void HydraulicData::setSimulationHeadlossFormula(HydraulicHeadlossFormula formul
 
     this->network_hydraulic.options_hydraulic.headloss_formula = formula;
     markNetworkChanged(NetworkChange::Visual);
+    emit signalSimulationHeadlossFormulaChanged();
 }
 
 QUuid HydraulicData::sourceTraceOriginNodeUuid() const
@@ -280,6 +291,41 @@ const WaterQualitySimulationResult *HydraulicData::currentWaterQualitySimulation
     }
 
     return matched_result;
+}
+
+const WaterQualitySimulationResult *HydraulicData::currentWaterQualitySimulationResult(
+    WaterQualityAnalysisType analysis) const
+{
+    if (this->simulation_result_timeline_stale)
+        return nullptr;
+
+    const HydraulicSimulationResult *hydraulic_result = currentSimulationResult();
+    if (hydraulic_result == nullptr)
+        return nullptr;
+
+    const quint64 hydraulic_time_s = hydraulic_result->time_elapsed_s;
+    for (const WaterQualitySimulationResultTimeline &timeline
+         : this->water_quality_simulation_result_timelines)
+    {
+        if (timeline.analysis != analysis || timeline.results.isEmpty())
+            continue;
+        if (timeline.validity != WaterQualitySimulationResultValidity::Valid
+            && timeline.validity != WaterQualitySimulationResultValidity::Partial)
+        {
+            continue;
+        }
+
+        const WaterQualitySimulationResult *matched_result = nullptr;
+        for (const WaterQualitySimulationResult &quality_result : timeline.results)
+        {
+            if (quality_result.time_elapsed_s > hydraulic_time_s)
+                break;
+            matched_result = &quality_result;
+        }
+        return matched_result;
+    }
+
+    return nullptr;
 }
 
 const HydraulicSimulationStatus *HydraulicData::simulationStatus() const
@@ -702,6 +748,14 @@ void HydraulicData::rebuildSymbologyMinMaxValues()
                              link_roughness_cm_initialized);
     }
 
+    for (const HydraulicLinkValve &valve : this->network_hydraulic.links_valves)
+    {
+        updateMinimumMaximum(valve.diameter_mm,
+                             this->link_diameter_mm_minimum,
+                             this->link_diameter_mm_maximum,
+                             link_diameter_mm_initialized);
+    }
+
     this->heatmap_elevation_m_minimum = this->node_elevation_m_minimum;
     this->heatmap_elevation_m_maximum = this->node_elevation_m_maximum;
     this->heatmap_total_demand_m3_per_h_minimum = this->node_total_demand_m3_per_h_minimum;
@@ -734,30 +788,26 @@ NetworkSymbologyRanges HydraulicData::symbologyRanges(
     bool water_age_node_initialized = false;
     bool water_age_link_initialized = false;
 
-    const std::optional<WaterQualitySimulationResultTimeline> &quality_timeline =
-        this->waterQualitySimulationResultTimeline();
-    if (quality_timeline.has_value()
-        && quality_timeline->analysis == WaterQualityAnalysisType::WaterAge)
+    const WaterQualitySimulationResult *quality_result =
+        this->currentWaterQualitySimulationResult(WaterQualityAnalysisType::WaterAge);
+    if (quality_result != nullptr)
     {
-        const WaterQualitySimulationResult *quality_result =
-            this->currentWaterQualitySimulationResult();
-        if (quality_result != nullptr)
+        if (settings.visual_node == VisualNode::WaterAge
+            || settings.visual_heatmap == VisualHeatmap::WaterAge)
         {
-            if (settings.visual_node == VisualNode::WaterAge
-                || settings.visual_heatmap == VisualHeatmap::WaterAge)
-            {
-                updateWaterAgeNodeMinimumMaximum(
-                    *quality_result, water_age_node_minimum, water_age_node_maximum,
-                    water_age_node_initialized);
-            }
-            if (settings.visual_link == VisualLink::WaterAge)
-            {
-                updateWaterAgeLinkMinimumMaximum(
-                    *quality_result, water_age_link_minimum, water_age_link_maximum,
-                    water_age_link_initialized);
-            }
+            updateWaterAgeNodeMinimumMaximum(
+                *quality_result, water_age_node_minimum, water_age_node_maximum,
+                water_age_node_initialized);
+        }
+        if (settings.visual_link == VisualLink::WaterAge)
+        {
+            updateWaterAgeLinkMinimumMaximum(
+                *quality_result, water_age_link_minimum, water_age_link_maximum,
+                water_age_link_initialized);
         }
     }
+
+    const HydraulicSimulationResult *hydraulic_result = this->currentSimulationResult();
 
     switch (settings.visual_node)
     {
@@ -770,28 +820,19 @@ NetworkSymbologyRanges HydraulicData::symbologyRanges(
         ranges.node_maximum = this->node_base_demand_m3_per_h_maximum;
         break;
     case VisualNode::TotalDemand:
-        ranges.node_minimum = this->node_total_demand_m3_per_h_minimum;
-        ranges.node_maximum = this->node_total_demand_m3_per_h_maximum;
-        break;
     case VisualNode::DemandDeficit:
-        ranges.node_minimum = this->node_demand_deficit_m3_per_h_minimum;
-        ranges.node_maximum = this->node_demand_deficit_m3_per_h_maximum;
-        break;
     case VisualNode::EmitterFlow:
-        ranges.node_minimum = this->node_emitter_flow_m3_per_h_minimum;
-        ranges.node_maximum = this->node_emitter_flow_m3_per_h_maximum;
-        break;
     case VisualNode::Leakage:
-        ranges.node_minimum = this->node_leakage_m3_per_h_minimum;
-        ranges.node_maximum = this->node_leakage_m3_per_h_maximum;
-        break;
     case VisualNode::Head:
-        ranges.node_minimum = this->node_head_m_minimum;
-        ranges.node_maximum = this->node_head_m_maximum;
-        break;
     case VisualNode::Pressure:
-        ranges.node_minimum = this->node_pressure_m_minimum;
-        ranges.node_maximum = this->node_pressure_m_maximum;
+        if (hydraulic_result != nullptr)
+        {
+            bool initialized = false;
+            const QHash<QUuid, double> values =
+                hydraulicNodeSymbologyValues(*hydraulic_result, settings.visual_node);
+            updateSymbologyValuesMinimumMaximum(
+                values, ranges.node_minimum, ranges.node_maximum, initialized);
+        }
         break;
     case VisualNode::Chlorine:
         ranges.node_minimum = this->node_chlorine_mg_per_l_minimum;
@@ -827,24 +868,34 @@ NetworkSymbologyRanges HydraulicData::symbologyRanges(
         ranges.link_maximum = this->link_length_m_maximum;
         break;
     case VisualLink::Roughness:
-        ranges.link_minimum = this->link_roughness_hw_minimum;
-        ranges.link_maximum = this->link_roughness_hw_maximum;
+        switch (this->network_hydraulic.options_hydraulic.headloss_formula)
+        {
+        case HydraulicHeadlossFormula::HazenWilliams:
+            ranges.link_minimum = this->link_roughness_hw_minimum;
+            ranges.link_maximum = this->link_roughness_hw_maximum;
+            break;
+        case HydraulicHeadlossFormula::DarcyWeisbach:
+            ranges.link_minimum = this->link_roughness_dw_mm_minimum;
+            ranges.link_maximum = this->link_roughness_dw_mm_maximum;
+            break;
+        case HydraulicHeadlossFormula::ChezyManning:
+            ranges.link_minimum = this->link_roughness_cm_minimum;
+            ranges.link_maximum = this->link_roughness_cm_maximum;
+            break;
+        }
         break;
     case VisualLink::FlowRate:
-        ranges.link_minimum = this->link_flow_rate_m3_per_h_minimum;
-        ranges.link_maximum = this->link_flow_rate_m3_per_h_maximum;
-        break;
     case VisualLink::Velocity:
-        ranges.link_minimum = this->link_velocity_m_per_s_minimum;
-        ranges.link_maximum = this->link_velocity_m_per_s_maximum;
-        break;
     case VisualLink::HeadLoss:
-        ranges.link_minimum = this->link_head_loss_m_minimum;
-        ranges.link_maximum = this->link_head_loss_m_maximum;
-        break;
     case VisualLink::Leakage:
-        ranges.link_minimum = this->link_leakage_m3_per_h_minimum;
-        ranges.link_maximum = this->link_leakage_m3_per_h_maximum;
+        if (hydraulic_result != nullptr)
+        {
+            bool initialized = false;
+            const QHash<QUuid, double> values =
+                hydraulicLinkSymbologyValues(*hydraulic_result, settings.visual_link);
+            updateSymbologyValuesMinimumMaximum(
+                values, ranges.link_minimum, ranges.link_maximum, initialized);
+        }
         break;
     case VisualLink::Chlorine:
         ranges.link_minimum = this->link_chlorine_mg_per_l_minimum;
@@ -880,28 +931,19 @@ NetworkSymbologyRanges HydraulicData::symbologyRanges(
         ranges.heatmap_maximum = this->node_base_demand_m3_per_h_maximum;
         break;
     case VisualHeatmap::TotalDemand:
-        ranges.heatmap_minimum = this->heatmap_total_demand_m3_per_h_minimum;
-        ranges.heatmap_maximum = this->heatmap_total_demand_m3_per_h_maximum;
-        break;
     case VisualHeatmap::DemandDeficit:
-        ranges.heatmap_minimum = this->heatmap_demand_deficit_m3_per_h_minimum;
-        ranges.heatmap_maximum = this->heatmap_demand_deficit_m3_per_h_maximum;
-        break;
     case VisualHeatmap::EmitterFlow:
-        ranges.heatmap_minimum = this->node_emitter_flow_m3_per_h_minimum;
-        ranges.heatmap_maximum = this->node_emitter_flow_m3_per_h_maximum;
-        break;
     case VisualHeatmap::Leakage:
-        ranges.heatmap_minimum = this->heatmap_leakage_m3_per_h_minimum;
-        ranges.heatmap_maximum = this->heatmap_leakage_m3_per_h_maximum;
-        break;
     case VisualHeatmap::Head:
-        ranges.heatmap_minimum = this->heatmap_head_m_minimum;
-        ranges.heatmap_maximum = this->heatmap_head_m_maximum;
-        break;
     case VisualHeatmap::Pressure:
-        ranges.heatmap_minimum = this->heatmap_pressure_m_minimum;
-        ranges.heatmap_maximum = this->heatmap_pressure_m_maximum;
+        if (hydraulic_result != nullptr)
+        {
+            bool initialized = false;
+            const QHash<QUuid, double> values =
+                hydraulicHeatmapSymbologyValues(*hydraulic_result, settings.visual_heatmap);
+            updateSymbologyValuesMinimumMaximum(
+                values, ranges.heatmap_minimum, ranges.heatmap_maximum, initialized);
+        }
         break;
     case VisualHeatmap::Chlorine:
         ranges.heatmap_minimum = this->heatmap_chlorine_mg_per_l_minimum;

@@ -114,9 +114,12 @@ QHash<QUuid, double> linkValues(const NetworkHydraulic &network_hydraulic, Visua
     switch (visual_link)
     {
     case VisualLink::Diameter:
-        values.reserve(network_hydraulic.links_pipes.size());
+        values.reserve(network_hydraulic.links_pipes.size()
+                       + network_hydraulic.links_valves.size());
         for (const HydraulicLinkPipe &pipe : network_hydraulic.links_pipes)
             values.insert(pipe.uuid, pipe.diameter_mm);
+        for (const HydraulicLinkValve &valve : network_hydraulic.links_valves)
+            values.insert(valve.uuid, valve.diameter_mm);
         break;
     case VisualLink::Length:
         values.reserve(network_hydraulic.links_pipes.size());
@@ -126,7 +129,20 @@ QHash<QUuid, double> linkValues(const NetworkHydraulic &network_hydraulic, Visua
     case VisualLink::Roughness:
         values.reserve(network_hydraulic.links_pipes.size());
         for (const HydraulicLinkPipe &pipe : network_hydraulic.links_pipes)
-            values.insert(pipe.uuid, pipe.roughness_hazen_williams);
+        {
+            switch (network_hydraulic.options_hydraulic.headloss_formula)
+            {
+            case HydraulicHeadlossFormula::HazenWilliams:
+                values.insert(pipe.uuid, pipe.roughness_hazen_williams);
+                break;
+            case HydraulicHeadlossFormula::DarcyWeisbach:
+                values.insert(pipe.uuid, pipe.roughness_darcy_weisbach_mm);
+                break;
+            case HydraulicHeadlossFormula::ChezyManning:
+                values.insert(pipe.uuid, pipe.roughness_chezy_manning);
+                break;
+            }
+        }
         break;
     case VisualLink::None:
     case VisualLink::FlowRate:
@@ -285,37 +301,51 @@ QByteArray BrowserNetworkSnapshotSerializer::serializeSymbology(
 
     QHash<QUuid, double> water_age_node_values;
     QHash<QUuid, double> water_age_link_values;
-    const std::optional<WaterQualitySimulationResultTimeline> &quality_timeline =
-        hydraulic_data.waterQualitySimulationResultTimeline();
-    if (quality_timeline.has_value()
-        && quality_timeline->analysis == WaterQualityAnalysisType::WaterAge)
+    const WaterQualitySimulationResult *quality_result =
+        hydraulic_data.currentWaterQualitySimulationResult(WaterQualityAnalysisType::WaterAge);
+    if (quality_result != nullptr)
     {
-        const WaterQualitySimulationResult *quality_result =
-            hydraulic_data.currentWaterQualitySimulationResult();
-        if (quality_result != nullptr)
+        if (bounded_settings.visual_node == VisualNode::WaterAge
+            || bounded_settings.visual_heatmap == VisualHeatmap::WaterAge)
         {
-            if (bounded_settings.visual_node == VisualNode::WaterAge
-                || bounded_settings.visual_heatmap == VisualHeatmap::WaterAge)
-            {
-                water_age_node_values = waterAgeNodeSymbologyValues(*quality_result);
-            }
-            if (bounded_settings.visual_link == VisualLink::WaterAge)
-                water_age_link_values = waterAgeLinkSymbologyValues(*quality_result);
+            water_age_node_values = waterAgeNodeSymbologyValues(*quality_result);
         }
+        if (bounded_settings.visual_link == VisualLink::WaterAge)
+            water_age_link_values = waterAgeLinkSymbologyValues(*quality_result);
+    }
+
+    QHash<QUuid, double> hydraulic_node_values;
+    QHash<QUuid, double> hydraulic_link_values;
+    QHash<QUuid, double> hydraulic_heatmap_values;
+    const HydraulicSimulationResult *hydraulic_result = hydraulic_data.currentSimulationResult();
+    if (hydraulic_result != nullptr)
+    {
+        if (nodeVisualUsesHydraulicSimulationResult(bounded_settings.visual_node))
+            hydraulic_node_values = hydraulicNodeSymbologyValues(*hydraulic_result, bounded_settings.visual_node);
+        if (linkVisualUsesHydraulicSimulationResult(bounded_settings.visual_link))
+            hydraulic_link_values = hydraulicLinkSymbologyValues(*hydraulic_result, bounded_settings.visual_link);
+        if (heatmapVisualUsesHydraulicSimulationResult(bounded_settings.visual_heatmap))
+            hydraulic_heatmap_values = hydraulicHeatmapSymbologyValues(*hydraulic_result, bounded_settings.visual_heatmap);
     }
 
     const QHash<QUuid, double> node_values =
         bounded_settings.visual_node == VisualNode::WaterAge
             ? water_age_node_values
-            : nodeValues(network_hydraulic, bounded_settings.visual_node);
+            : nodeVisualUsesHydraulicSimulationResult(bounded_settings.visual_node)
+                ? hydraulic_node_values
+                : nodeValues(network_hydraulic, bounded_settings.visual_node);
     const QHash<QUuid, double> link_values =
         bounded_settings.visual_link == VisualLink::WaterAge
             ? water_age_link_values
-            : linkValues(network_hydraulic, bounded_settings.visual_link);
+            : linkVisualUsesHydraulicSimulationResult(bounded_settings.visual_link)
+                ? hydraulic_link_values
+                : linkValues(network_hydraulic, bounded_settings.visual_link);
     const QHash<QUuid, double> heatmap_values =
         bounded_settings.visual_heatmap == VisualHeatmap::WaterAge
             ? water_age_node_values
-            : heatmapValues(network_hydraulic, bounded_settings.visual_heatmap);
+            : heatmapVisualUsesHydraulicSimulationResult(bounded_settings.visual_heatmap)
+                ? hydraulic_heatmap_values
+                : heatmapValues(network_hydraulic, bounded_settings.visual_heatmap);
 
     QHash<QUuid, qint8> flow_directions;
     if (bounded_settings.show_flow_direction)

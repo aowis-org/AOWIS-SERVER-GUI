@@ -1,6 +1,7 @@
 #include "tab_map_monitor_container.h"
 
 #include "hydraulic_data.h"
+#include "network_symbology_values.h"
 #include "infrastructure_entity_traits.h"
 
 #ifdef Q_OS_WASM
@@ -364,11 +365,21 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     {
         scheduleWasmNetworkSymbologySync();
     });
+    connect(this->hydraulic_data, &HydraulicData::signalSimulationHeadlossFormulaChanged,
+        this, [this]
+    {
+        if (this->symbology_settings.visual_link == VisualLink::Roughness)
+            scheduleWasmNetworkSymbologySync();
+    });
     connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged, this,
         [this](bool)
     {
         syncWasmSimulationErrorEntities();
-        if (this->symbology_settings.show_flow_direction)
+        const bool hydraulic_symbology_active =
+            nodeVisualUsesHydraulicSimulationResult(this->symbology_settings.visual_node)
+            || linkVisualUsesHydraulicSimulationResult(this->symbology_settings.visual_link)
+            || heatmapVisualUsesHydraulicSimulationResult(this->symbology_settings.visual_heatmap);
+        if (this->symbology_settings.show_flow_direction || hydraulic_symbology_active)
             scheduleWasmNetworkSymbologySync();
     });
     connect(this->hydraulic_data, &HydraulicData::signalWaterQualitySimulationResultTimelineChanged,
@@ -384,7 +395,12 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     connect(this->hydraulic_data, &HydraulicData::signalCurrentSimulationResultChanged,
         this, [this](int)
     {
+        const bool hydraulic_symbology_active =
+            nodeVisualUsesHydraulicSimulationResult(this->symbology_settings.visual_node)
+            || linkVisualUsesHydraulicSimulationResult(this->symbology_settings.visual_link)
+            || heatmapVisualUsesHydraulicSimulationResult(this->symbology_settings.visual_heatmap);
         if (this->symbology_settings.show_flow_direction
+            || hydraulic_symbology_active
             || this->symbology_settings.visual_node == VisualNode::WaterAge
             || this->symbology_settings.visual_link == VisualLink::WaterAge
             || this->symbology_settings.visual_heatmap == VisualHeatmap::WaterAge)
@@ -1164,8 +1180,10 @@ void MapMonitorMenuWidget::addGroupHeatmapVisuals()
     radio_none->setChecked(true);
     
     QRadioButton *radio_elevation = new QRadioButton("Elevation");
+    QRadioButton *radio_base_demand = new QRadioButton("Base Demand");
     QRadioButton *radio_total_demand = new QRadioButton("Total Demand");
     QRadioButton *radio_demand_deficit = new QRadioButton("Demand Deficit");
+    QRadioButton *radio_emitter_flow = new QRadioButton("Emitter Flow");
     QRadioButton *radio_leakage = new QRadioButton("Leakage");
     QRadioButton *radio_head = new QRadioButton("Head");
     QRadioButton *radio_pressure = new QRadioButton("Pressure");
@@ -1185,8 +1203,10 @@ void MapMonitorMenuWidget::addGroupHeatmapVisuals()
     
     connect_heatmap_visual(radio_none, VisualHeatmap::None);
     connect_heatmap_visual(radio_elevation, VisualHeatmap::Elevation);
+    connect_heatmap_visual(radio_base_demand, VisualHeatmap::BaseDemand);
     connect_heatmap_visual(radio_total_demand, VisualHeatmap::TotalDemand);
     connect_heatmap_visual(radio_demand_deficit, VisualHeatmap::DemandDeficit);
+    connect_heatmap_visual(radio_emitter_flow, VisualHeatmap::EmitterFlow);
     connect_heatmap_visual(radio_leakage, VisualHeatmap::Leakage);
     connect_heatmap_visual(radio_head, VisualHeatmap::Head);
     connect_heatmap_visual(radio_pressure, VisualHeatmap::Pressure);
@@ -1197,8 +1217,10 @@ void MapMonitorMenuWidget::addGroupHeatmapVisuals()
 
     vbox->addWidget(radio_none);
     vbox->addWidget(radio_elevation);
+    vbox->addWidget(radio_base_demand);
     vbox->addWidget(radio_total_demand);
     vbox->addWidget(radio_demand_deficit);
+    vbox->addWidget(radio_emitter_flow);
     vbox->addWidget(radio_leakage);
     vbox->addWidget(radio_head);
     vbox->addWidget(radio_pressure);
