@@ -632,6 +632,9 @@ bool MapRhiWidget::createPipelines()
         this->link_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
         this->link_pipeline->setSampleCount(sampleCount());
         this->link_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+        QRhiGraphicsPipeline::TargetBlend link_blend;
+        link_blend.enable = true;
+        this->link_pipeline->setTargetBlends({link_blend});
         if (!this->link_pipeline->create())
         {
             reportFailure(QStringLiteral("Failed to create RHI link graphics pipeline"));

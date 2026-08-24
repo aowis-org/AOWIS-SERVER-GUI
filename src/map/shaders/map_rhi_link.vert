@@ -13,6 +13,9 @@ layout(std140, binding = 0) uniform CameraBlock
 } camera;
 
 layout(location = 0) out vec4 vertex_color;
+layout(location = 1) out vec2 segment_local_px;
+layout(location = 2) out float segment_length_px;
+layout(location = 3) out float segment_half_width_px;
 
 void main()
 {
@@ -23,15 +26,27 @@ void main()
     vec2 end_ndc = end_clip.xy / end_clip.w;
     vec2 direction_pixels = (end_ndc - start_ndc) * viewport * 0.5;
     float direction_length = length(direction_pixels);
-    vec2 normal = direction_length > 0.0001
-        ? normalize(vec2(-direction_pixels.y, direction_pixels.x))
-        : vec2(0.0, 1.0);
+    vec2 tangent = direction_length > 0.0001
+        ? direction_pixels / direction_length
+        : vec2(1.0, 0.0);
+    vec2 normal = vec2(-tangent.y, tangent.x);
+
+    float half_width = max(camera.viewport_and_sizes.z + size_adjust_px, 0.0);
+    float raster_margin = 1.0;
+    float extent = half_width + raster_margin;
+    float endpoint_sign = corner.x * 2.0 - 1.0;
 
     vec4 clip_position = mix(start_clip, end_clip, corner.x);
-    vec2 offset_ndc = normal * corner.y
-        * (camera.viewport_and_sizes.z + size_adjust_px) * 2.0 / viewport;
+    vec2 offset_pixels = tangent * endpoint_sign * extent
+        + normal * corner.y * extent;
+    vec2 offset_ndc = offset_pixels * 2.0 / viewport;
     clip_position.xy += offset_ndc * clip_position.w;
 
     gl_Position = clip_position;
     vertex_color = color;
+    segment_local_px = vec2(
+        mix(-extent, direction_length + extent, corner.x),
+        corner.y * extent);
+    segment_length_px = direction_length;
+    segment_half_width_px = half_width;
 }
