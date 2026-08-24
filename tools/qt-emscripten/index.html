@@ -426,7 +426,28 @@
           return values;
       }
 
-      async function loadAowisMapServerConfiguration()
+      function parseAowisBoolean(value, defaultValue)
+      {
+          if (typeof value !== 'string' || value.trim().length === 0)
+              return defaultValue;
+
+          switch (value.trim().toLowerCase()) {
+          case '1':
+          case 'true':
+          case 'yes':
+          case 'on':
+              return true;
+          case '0':
+          case 'false':
+          case 'no':
+          case 'off':
+              return false;
+          default:
+              return defaultValue;
+          }
+      }
+
+      async function loadAowisConfiguration()
       {
           const configurationUrl = new URL('/aowis-server-gui.ini', window.location.origin);
           configurationUrl.searchParams.set('aowis-config-revision', Date.now().toString());
@@ -439,6 +460,10 @@
               throw new Error(`Unable to load ${configurationUrl.pathname}: HTTP ${response.status} ${response.statusText}`);
 
           const values = parseAowisIni(await response.text());
+          const guiConfiguration = Object.freeze({
+              examplesBuiltinEnable: parseAowisBoolean(
+                  values['gui/examples_builtin_enable'], true)
+          });
           const baseUrl = (values['map_server/base_url'] || '').trim().replace(/\/+$/, '');
           if (!baseUrl)
               throw new Error(`${configurationUrl.pathname} does not contain a non-empty map_server/base_url setting`);
@@ -452,11 +477,13 @@
           if (typeof window.aowisSetMapServerConfiguration !== 'function')
               throw new Error('Browser map configuration receiver is unavailable');
 
+          window.aowisGuiConfiguration = guiConfiguration;
           window.aowisMapServerConfiguration = configuration;
           window.aowisSetMapServerConfiguration(configuration);
 
-          console.info('Loaded and activated map server configuration:', {
+          console.info('Loaded and activated AOWIS configuration:', {
               configurationUrl: configurationUrl.toString(),
+              examplesBuiltinEnable: guiConfiguration.examplesBuiltinEnable,
               baseUrl,
               hasApiKey: configuration.apiKey.length > 0,
               hasDeleteApiKey: configuration.deleteApiKey.length > 0
@@ -496,7 +523,7 @@
               }
 
               setQtStatus('Loading configuration...');
-              await loadAowisMapServerConfiguration();
+              await loadAowisConfiguration();
               setQtStatus('Loading application...');
 
               const instance = await qtLoad({

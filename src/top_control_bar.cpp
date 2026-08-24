@@ -1,6 +1,8 @@
 #include "top_control_bar.h"
 
 #include "_sizes.h"
+#include "builtin_examples.h"
+#include "gui_configuration.h"
 #include "widgets/combo_checkboxes.h"
 
 #include <aowis/model/hydraulic/hydraulic_simulation_results.h>
@@ -563,13 +565,20 @@ void TopControlBar::addProjectControls()
     project_revision_layout->setContentsMargins(0, 0, 0, 0);
     project_revision_layout->setSpacing(2);
 
-    QComboBox *combo_project = new QComboBox(project_revision_container);
-    combo_project->setFixedSize(178, 30);
-    combo_project->addItem(QStringLiteral("Select project"));
+    this->combo_project = new QComboBox(project_revision_container);
+    this->combo_project->setFixedSize(178, 30);
+    this->combo_project->addItem(QStringLiteral("Select project"), QString());
+    if (guiConfiguration().examples_builtin_enable)
+    {
+        this->combo_project->addItem(
+            QStringLiteral("Examples"),
+            QStringLiteral("builtin_examples"));
+    }
 
-    QComboBox *combo_revision = new QComboBox(project_revision_container);
-    combo_revision->setFixedSize(178, 30);
-    combo_revision->addItem(QStringLiteral("Select revision"));
+    this->combo_revision = new QComboBox(project_revision_container);
+    this->combo_revision->setFixedSize(178, 30);
+    this->combo_revision->addItem(QStringLiteral("Select revision"), QString());
+    this->combo_revision->setEnabled(false);
 
     QToolButton *button_import_project = new QToolButton(project_revision_container);
     button_import_project->setAutoRaise(true);
@@ -589,13 +598,19 @@ void TopControlBar::addProjectControls()
     button_show_on_map->setStyleSheet(QStringLiteral("padding: 0;"));
     connect(button_show_on_map, &QToolButton::clicked, this, &TopControlBar::signalShowNetworkOnMap);
 
-    QToolButton *button_set_active = new QToolButton(project_revision_container);
-    button_set_active->setAutoRaise(true);
-    button_set_active->setIcon(QIcon(QStringLiteral(":/icon/set_active.png")));
-    button_set_active->setIconSize(QSize(28, 28));
-    button_set_active->setFixedSize(30, 30);
-    button_set_active->setToolTip(QStringLiteral("Set active revision"));
-    button_set_active->setStyleSheet(QStringLiteral("padding: 0;"));
+    connect(this->combo_project, &QComboBox::currentIndexChanged, this, [this](int)
+    {
+        updateRevisionControls();
+    });
+    connect(this->combo_revision, &QComboBox::currentIndexChanged, this, [this](int)
+    {
+        const QString resource_path = this->combo_revision->currentData(Qt::UserRole).toString();
+        const QString file_name = this->combo_revision->currentData(Qt::UserRole + 1).toString();
+        if (resource_path.isEmpty() || file_name.isEmpty())
+            return;
+
+        emit signalBuiltinRevisionActivationRequested(resource_path, file_name);
+    });
 
     QLabel *project_caption = createCaption(QStringLiteral("Project"), project_revision_container);
     QLabel *revision_caption = createCaption(QStringLiteral("Revision"), project_revision_container);
@@ -607,7 +622,7 @@ void TopControlBar::addProjectControls()
     project_layout->setContentsMargins(0, 0, 0, 0);
     project_layout->setSpacing(6);
     project_layout->addWidget(project_caption);
-    project_layout->addWidget(combo_project);
+    project_layout->addWidget(this->combo_project);
     project_layout->addWidget(button_import_project);
     project_layout->addWidget(button_show_on_map);
     project_layout->addStretch(1);
@@ -616,13 +631,41 @@ void TopControlBar::addProjectControls()
     revision_layout->setContentsMargins(0, 0, 0, 0);
     revision_layout->setSpacing(6);
     revision_layout->addWidget(revision_caption);
-    revision_layout->addWidget(combo_revision);
-    revision_layout->addWidget(button_set_active);
+    revision_layout->addWidget(this->combo_revision);
     revision_layout->addStretch(1);
 
     project_revision_layout->addLayout(project_layout);
     project_revision_layout->addLayout(revision_layout);
     bar_content->leftLayout()->addWidget(project_revision_container);
+}
+
+void TopControlBar::updateRevisionControls()
+{
+    if (this->combo_project == nullptr || this->combo_revision == nullptr)
+        return;
+
+    const QString project_id = this->combo_project->currentData(Qt::UserRole).toString();
+    const QSignalBlocker blocker(this->combo_revision);
+
+    this->combo_revision->clear();
+    this->combo_revision->addItem(QStringLiteral("Select revision"), QString());
+
+    if (project_id == QStringLiteral("builtin_examples"))
+    {
+        const QList<BuiltinExampleRevision> &revisions = builtinExampleRevisions();
+        for (const BuiltinExampleRevision &revision : revisions)
+        {
+            this->combo_revision->addItem(revision.display_name, revision.resource_path);
+            const int item_index = this->combo_revision->count() - 1;
+            this->combo_revision->setItemData(
+                item_index,
+                revision.file_name,
+                Qt::UserRole + 1);
+        }
+    }
+
+    const bool has_revisions = this->combo_revision->count() > 1;
+    this->combo_revision->setEnabled(has_revisions);
 }
 
 void TopControlBar::addFlowUnitCombo()

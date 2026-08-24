@@ -1,0 +1,49 @@
+[TITLE]
+Chlorine Decay with 2 Water Sources
+
+[OPTIONS]
+AREA_UNITS  FT2
+RATE_UNITS  DAY
+SOLVER      EUL
+COUPLING    NONE
+TIMESTEP    100
+ATOL        0.01000
+RTOL        0.01000
+COMPILER    NONE
+SEGMENTS    5000
+PECLET      1000
+
+[SPECIES]
+BULK        CL2            MG/L                               
+BULK        River          %                                  
+BULK        Lake           %                                  
+
+[PIPES]
+RATE        River          0.0                                
+RATE        Lake           0.0                                
+RATE        CL2            -K*CL2                             
+
+[TANKS]
+
+[TERMS]
+K           k1 * (River/100) + k2 * (Lake / 100) 
+
+[COEFFICIENTS]
+CONSTANT    k1             1.3             ;River decay const.
+CONSTANT    k2             14              ;Lake decay const.
+
+[PARAMETERS]
+
+[QUALITY]
+NODE        4              CL2            1.0           
+NODE        5              CL2            1.0           
+NODE        4              River          100.0         
+NODE        4              Lake           0.0           
+NODE        5              River          0.0           
+NODE        5              Lake           100.0         
+
+[SOURCES]
+
+[PATTERNS]
+
+[DIFFUSIVITY]

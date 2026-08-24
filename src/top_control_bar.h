@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QList>
+#include <QString>
 #include <QToolBar>
 
 #include <aowis/model/hydraulic/hydraulic_types.h>
@@ -49,12 +50,17 @@ signals:
     void signalShowEpanetLog();
     void signalExportEpanetNetwork();
     void signalImportProject();
+    void signalBuiltinRevisionActivationRequested(
+        const QString &resource_path,
+        const QString &file_name);
     void signalShowNetworkOnMap();
     void signalFullScreenToggle();
 
 private:
     QWidget *content = nullptr;
     ComboCheckboxes *combo_quality_analysis = nullptr;
+    QComboBox *combo_project = nullptr;
+    QComboBox *combo_revision = nullptr;
     QComboBox *combo_headloss_formula = nullptr;
     QToolButton *button_fullscreen = nullptr;
     QPushButton *button_sim_start = nullptr;
@@ -71,6 +77,7 @@ private:
     EN_FlowUnits selected_flow_units = EN_LPS;
 
     void addProjectControls();
+    void updateRevisionControls();
     void addFlowUnitCombo();
     void addQualityHeadlossControls();
     void addSimulationControls();

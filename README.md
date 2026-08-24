@@ -35,7 +35,7 @@ To run the result, you need to have a web server set up. Threaded WebAssembly ad
 Usually as a Desktop-Client, you might want to prefer [AOWIS-SERVER-Standalone](https://github.com/aowis-org/AOWIS-SERVER-Standalone).
 
 
-## Map server client configuration
+## GUI configuration
 
 Native builds create the following file automatically on first use:
 
@@ -46,6 +46,9 @@ Native builds create the following file automatically on first use:
 `XDG_DATA_HOME` is respected when it is set. The default file is:
 
 ```ini
+[gui]
+examples_builtin_enable=true
+
 [map_server]
 base_url=http://aowis-server-map.localhost:80
 api_key=
@@ -54,4 +57,6 @@ delete_api_key=
 
 Restart the application after editing the file.
 
-WebAssembly builds include `aowis-server-gui.ini` in the generated webroot. Set `base_url`, `api_key`, and `delete_api_key` there and reload the page. The browser always loads `/aowis-server-gui.ini` from the webroot root. Existing administrator-edited files in `build-wasm` and `build-wasm-dist` are preserved across rebuilds. The normal API key is used for tile requests; the delete API key is used only for tile-cache deletion requests.
+Set `examples_builtin_enable=false` to hide the bundled `Examples` project and its revisions from the toolbar. If the option is missing, built-in examples are enabled.
+
+WebAssembly builds include `aowis-server-gui.ini` in the generated webroot. Set `examples_builtin_enable`, `base_url`, `api_key`, and `delete_api_key` there and reload the page. The browser always loads `/aowis-server-gui.ini` from the webroot root. Existing administrator-edited files in `build-wasm` and `build-wasm-dist` are preserved across rebuilds. The normal API key is used for tile requests; the delete API key is used only for tile-cache deletion requests.

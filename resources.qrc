@@ -80,4 +80,19 @@
         <file alias="tank.svg">tools/qt-emscripten/svg/tank.svg</file>
         <file alias="valve.svg">tools/qt-emscripten/svg/valve.svg</file>
     </qresource>
+    <qresource prefix="/examples/epanet/">
+        <file alias="01-uk-style.inp">assets/examples/epanet/01-uk-style.inp</file>
+        <file alias="02-us-style.inp">assets/examples/epanet/02-us-style.inp</file>
+        <file alias="NET3.INP">assets/examples/epanet/NET3.INP</file>
+        <file alias="NET3.ini">assets/examples/epanet/NET3.ini</file>
+        <file alias="net3-cl2.msx">assets/examples/epanet/net3-cl2.msx</file>
+        <file alias="exnet-3.inp">assets/examples/epanet/exnet-3.inp</file>
+        <file alias="exnet-3.ini">assets/examples/epanet/exnet-3.ini</file>
+        <file alias="ky4.inp">assets/examples/epanet/ky4.inp</file>
+        <file alias="ky4.ini">assets/examples/epanet/ky4.ini</file>
+        <file alias="tutorial-eps.inp">assets/examples/epanet/tutorial-eps.inp</file>
+        <file alias="tutorial-eps.ini">assets/examples/epanet/tutorial-eps.ini</file>
+        <file alias="tutorial-leakage.inp">assets/examples/epanet/tutorial-leakage.inp</file>
+        <file alias="tutorial-leakage.ini">assets/examples/epanet/tutorial-leakage.ini</file>
+    </qresource>
 </RCC>

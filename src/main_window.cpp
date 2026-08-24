@@ -330,6 +330,11 @@ MainWindow::MainWindow(QWidget *parent)
 #else
     connect(this->top_control_bar, &TopControlBar::signalImportProject, this->simulation_manager, &SimulationManager::importEpanetNetwork);
 #endif
+    connect(
+        this->top_control_bar,
+        &TopControlBar::signalBuiltinRevisionActivationRequested,
+        this->simulation_manager,
+        &SimulationManager::importEpanetNetworkResource);
     connect(this->top_control_bar, &TopControlBar::signalExportEpanetNetwork, this->simulation_manager, &SimulationManager::exportEpanetNetwork);
     connect(this->simulation_manager, &SimulationManager::signalEpanetNetworkImported, this, [this]
     {

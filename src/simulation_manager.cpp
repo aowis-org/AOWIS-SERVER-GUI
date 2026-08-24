@@ -557,6 +557,32 @@ void SimulationManager::importEpanetNetwork()
 #endif
 }
 
+void SimulationManager::importEpanetNetworkResource(
+    const QString &resource_path,
+    const QString &file_name)
+{
+    if (resource_path.isEmpty() || file_name.isEmpty())
+        return;
+
+    QWidget *main_window = QApplication::activeWindow();
+    QPointer<QWidget> parent_widget(main_window);
+
+    QFile resource_file(resource_path);
+    if (!resource_file.open(QIODevice::ReadOnly))
+    {
+        showMessageBox(
+            parent_widget,
+            QMessageBox::Critical,
+            tr("Example project failed"),
+            tr("Could not open the bundled example revision: %1").arg(file_name));
+        return;
+    }
+
+    const QByteArray file_content = resource_file.readAll();
+    resource_file.close();
+    importEpanetNetworkContent(file_name, file_content);
+}
+
 void SimulationManager::importEpanetNetworkContent(
     const QString &file_name,
     const QByteArray &file_content)

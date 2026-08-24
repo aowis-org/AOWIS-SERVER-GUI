@@ -40,6 +40,7 @@ public:
     void showSimulationDiagnostics();
     void showEpanetLog();
     void importEpanetNetwork();
+    void importEpanetNetworkResource(const QString &resource_path, const QString &file_name);
     void exportEpanetNetwork();
     
 private slots:

@@ -97,8 +97,11 @@ bool createDefaultConfiguration(const QString &path)
     }
 
     static const QByteArray contents(
-        "; AOWIS Server GUI map server client configuration\n"
+        "; AOWIS Server GUI configuration\n"
         "; Restart the application after changing this file.\n"
+        "\n"
+        "[gui]\n"
+        "examples_builtin_enable=true\n"
         "\n"
         "[map_server]\n"
         "base_url=http://aowis-server-map.localhost:80\n"
