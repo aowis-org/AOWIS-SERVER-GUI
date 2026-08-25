@@ -106,6 +106,8 @@ qt_add_executable(aowis-server-gui
     src/map/map_widget.h src/map/map_widget.cpp
     src/map/map_scale_renderer.h
     src/map/map_tile_repository.h src/map/map_tile_repository.cpp
+    src/map/map_terrain_tile.h src/map/map_terrain_tile.cpp
+    src/map/map_terrain_repository.h src/map/map_terrain_repository.cpp
     src/footer_statusbar.h src/footer_statusbar.cpp
     src/_enums_structs.h
     src/infrastructure_entity_traits.h

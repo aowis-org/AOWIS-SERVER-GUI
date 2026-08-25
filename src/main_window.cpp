@@ -15,6 +15,7 @@ MainWindow::MainWindow(QWidget *parent)
     dock_map_editor_guide( new MapEditorGuideDock(this) ),
     top_control_bar( new TopControlBar(this) ),
     map_tile_repository( new MapTileRepository(this) ),
+    map_terrain_repository( new MapTerrainRepository(this) ),
     map_model_monitor( new MapModel(this) ),
     map_model_editor( new MapModel(this) ),
     settings( new SettingsWidget(this) ),

@@ -35,6 +35,7 @@
 
 #include "map/map_model.h"
 #include "map/map_tile_repository.h"
+#include "map/map_terrain_repository.h"
 #include "map/map_widget.h"
 #include "tab_map_monitor_container.h"
 #include "tab_map_editor_container.h"
@@ -112,6 +113,7 @@ private:
     bool right_dock_resize_pending = false;
     
     MapTileRepository *map_tile_repository;
+    MapTerrainRepository *map_terrain_repository;
     MapModel *map_model_monitor;
     MapModel *map_model_editor;
     MapWidget *map_mon = nullptr;

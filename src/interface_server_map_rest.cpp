@@ -39,6 +39,30 @@ void InterfaceServerMapREST::initRestConnection()
         emit signalTileFailed(key);
     });
 
+    connect(this->rest, &RESTClient::requestFinishedTerrainTile, this,
+            [this](const QByteArray &data, const QString &key)
+    {
+        this->terrain_pending.remove(key);
+
+        if (data.isEmpty())
+        {
+            const QString error = QStringLiteral("Terrain response is empty");
+            qWarning() << error << key;
+            emit signalTerrainTileFailed(key, error);
+            return;
+        }
+
+        emit signalTerrainTileDataReceived(key, data);
+    });
+
+    connect(this->rest, &RESTClient::requestTerrainTileError, this,
+            [this](const QString &key, const QString &error)
+    {
+        this->terrain_pending.remove(key);
+        qWarning() << "Terrain tile request failed:" << key << error;
+        emit signalTerrainTileFailed(key, error);
+    });
+
     connect(this->rest, &RESTClient::requestFinishedDelete, this,
             [this](quint64 request_id)
     {
@@ -62,6 +86,15 @@ void InterfaceServerMapREST::requestTile(const QString &endpoint, const QString 
 
     this->rest_pending.insert(key);
     this->rest->getTile(endpoint, key);
+}
+
+void InterfaceServerMapREST::requestTerrainTile(const QString &endpoint, const QString &key)
+{
+    if (this->terrain_pending.contains(key))
+        return;
+
+    this->terrain_pending.insert(key);
+    this->rest->getTerrainTile(endpoint, key);
 }
 
 void InterfaceServerMapREST::deleteTiles(quint64 request_id, const QString &provider, int zoom,

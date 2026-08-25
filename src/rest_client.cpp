@@ -122,6 +122,19 @@ void RESTClient::getTile(const QString &endpoint, const QString &key)
     });
 }
 
+void RESTClient::getTerrainTile(const QString &endpoint, const QString &key)
+{
+    QNetworkRequest request = createRequest(endpoint, this->api_key);
+    request.setRawHeader("Accept", "application/vnd.aowis.terrain");
+    QNetworkReply *reply = this->network_manager.get(request);
+    monitorReply(reply);
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, key]
+    {
+        handleReplyTerrainTile(reply, key);
+    });
+}
+
 void RESTClient::post(const QString &endpoint, const QJsonObject &payload)
 {
     QNetworkRequest request = createRequest(endpoint, this->api_key);
@@ -185,6 +198,36 @@ void RESTClient::handleReplyTile(QNetworkReply *reply, const QString &key)
     }
 
     emit requestFinishedTile(reply->readAll(), key);
+    reply->deleteLater();
+}
+
+void RESTClient::handleReplyTerrainTile(QNetworkReply *reply, const QString &key)
+{
+    if (reply->error() != QNetworkReply::NoError)
+    {
+        emit requestTerrainTileError(key, replyErrorDescription(reply));
+        reply->deleteLater();
+        return;
+    }
+
+    const QByteArray content_type =
+        reply->header(QNetworkRequest::ContentTypeHeader).toByteArray().toLower();
+    if (!content_type.isEmpty() &&
+        !content_type.startsWith("application/vnd.aowis.terrain"))
+    {
+        const QByteArray response_body =
+            reply->readAll().left(MaximumErrorBodyLength).simplified();
+        emit requestTerrainTileError(
+            key,
+            QStringLiteral("%1 returned non-terrain content type %2. Response: %3")
+                .arg(reply->request().url().toString(),
+                     QString::fromLatin1(content_type),
+                     QString::fromUtf8(response_body)));
+        reply->deleteLater();
+        return;
+    }
+
+    emit requestFinishedTerrainTile(reply->readAll(), key);
     reply->deleteLater();
 }
 
