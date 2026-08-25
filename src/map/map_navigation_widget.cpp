@@ -112,7 +112,8 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     });
 
 #ifndef Q_OS_WASM
-    const bool view_mode_selector_visible = desktopMapRenderer() == DesktopMapRenderer::Rhi;
+    const bool view_mode_selector_visible =
+        desktopMapRenderer() == DesktopMapRenderer::Rhi && this->mode != CanvasMode::Monitor;
 #else
     const bool view_mode_selector_visible = false;
 #endif

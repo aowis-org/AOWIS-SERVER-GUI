@@ -21,6 +21,9 @@ public:
     static constexpr int TileSize = GeoWebMercator::TileSize;
     static constexpr int MinZoom = 1;
     static constexpr int MaxZoom = 19;
+    static constexpr double MinView3dPitchDeg = 0.0;
+    static constexpr double MaxView3dPitchDeg = 90.0;
+    static constexpr double DefaultView3dPitchDeg = 55.0;
 
     int zoom() const;
     double centerLon() const;
@@ -58,6 +61,8 @@ public:
 
     void setProvider(MapProvider provider);
     void setViewMode(MapViewMode view_mode);
+    void setView3dYawDeg(double yaw_deg);
+    void setView3dPitchDeg(double pitch_deg);
     void orbitView3d(double yaw_delta_deg, double pitch_delta_deg);
     void resetView3dCamera();
 
@@ -88,7 +93,7 @@ private:
     MapProvider m_provider = MapProvider::ArcGISSat;
     MapViewMode m_view_mode = MapViewMode::TwoD;
     double m_view_3d_yaw_deg = 0.0;
-    double m_view_3d_pitch_deg = 55.0;
+    double m_view_3d_pitch_deg = DefaultView3dPitchDeg;
 };
 
 #endif // MAP_MODEL_H

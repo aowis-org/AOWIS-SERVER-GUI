@@ -1334,8 +1334,11 @@ void MapWidget::drawTiles(QPainter &painter)
     const int viewport_height = this->height();
     const int tiles_x = viewport_width / MapModel::TileSize + 4;
     const int tiles_y = viewport_height / MapModel::TileSize + 4;
-    const int start_x = int(std::floor(center_x)) - tiles_x / 2;
-    const int start_y = int(std::floor(center_y)) - tiles_y / 2;
+    const int center_tile_x = int(std::floor(center_x));
+    const int center_tile_y = int(std::floor(center_y));
+    const int start_x = center_tile_x - tiles_x / 2;
+    const int start_y = center_tile_y - tiles_y / 2;
+    const quint64 request_batch = this->tile_repository->beginTileRequestBatch();
 
     for (int delta_x = 0; delta_x < tiles_x; ++delta_x)
     {
@@ -1353,7 +1356,12 @@ void MapWidget::drawTiles(QPainter &painter)
 
             if (!pixmap)
             {
-                this->tile_repository->requestTile(this->m_model->tileEndpoint(tile_x, y), key, tile_x, y);
+                const int priority_x = virtual_x - center_tile_x;
+                const int priority_y = y - center_tile_y;
+                const int priority = priority_x * priority_x + priority_y * priority_y;
+                this->tile_repository->requestTile(
+                    this->m_model->tileEndpoint(tile_x, y), key, tile_x, y,
+                    priority, request_batch);
                 continue;
             }
 

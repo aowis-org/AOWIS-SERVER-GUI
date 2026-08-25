@@ -57,10 +57,10 @@ QMatrix4x4 MapRhiCamera::viewProjectionMatrix(const QRhi &rhi) const
     if (this->view_mode == MapViewMode::ThreeD)
     {
         constexpr float FieldOfViewDeg = 45.0f;
-        constexpr double MinimumPitchDeg = 20.0;
-        constexpr double MaximumPitchDeg = 80.0;
         const double pitch_rad = qDegreesToRadians(qBound(
-            MinimumPitchDeg, this->view_3d_pitch_deg, MaximumPitchDeg));
+            MapModel::MinView3dPitchDeg,
+            this->view_3d_pitch_deg,
+            MapModel::MaxView3dPitchDeg));
         const double yaw_rad = qDegreesToRadians(this->view_3d_yaw_deg);
         const double distance = half_height_world
             / std::tan(qDegreesToRadians(double(FieldOfViewDeg) / 2.0));
@@ -77,8 +77,12 @@ QMatrix4x4 MapRhiCamera::viewProjectionMatrix(const QRhi &rhi) const
             FieldOfViewDeg, float(viewport_width) / float(viewport_height),
             float(qMax(0.01, distance * 0.01)),
             float(qMax(10.0, distance * 20.0)));
+        const QVector3D forward = (target - eye).normalized();
+        const QVector3D right(
+            float(-std::cos(yaw_rad)), float(std::sin(yaw_rad)), 0.0f);
+        const QVector3D camera_up = QVector3D::crossProduct(right, forward).normalized();
         QMatrix4x4 view;
-        view.lookAt(eye, target, QVector3D(0.0f, 0.0f, 1.0f));
+        view.lookAt(eye, target, camera_up);
 
         QMatrix4x4 result = rhi.clipSpaceCorrMatrix();
         result *= projection;
@@ -113,11 +117,11 @@ QPointF MapRhiCamera::projectWorldToScreen(const QVector3D &world_position) cons
     }
 
     constexpr double FieldOfViewDeg = 45.0;
-    constexpr double MinimumPitchDeg = 20.0;
-    constexpr double MaximumPitchDeg = 80.0;
     const double half_height_world = double(viewport_height) / (2.0 * safe_scale);
     const double pitch_rad = qDegreesToRadians(qBound(
-        MinimumPitchDeg, this->view_3d_pitch_deg, MaximumPitchDeg));
+        MapModel::MinView3dPitchDeg,
+        this->view_3d_pitch_deg,
+        MapModel::MaxView3dPitchDeg));
     const double yaw_rad = qDegreesToRadians(this->view_3d_yaw_deg);
     const double distance = half_height_world
         / std::tan(qDegreesToRadians(FieldOfViewDeg / 2.0));
@@ -129,8 +133,8 @@ QPointF MapRhiCamera::projectWorldToScreen(const QVector3D &world_position) cons
         target.y() + float(std::cos(yaw_rad) * horizontal_distance),
         float(distance * std::sin(pitch_rad)));
     const QVector3D forward = (target - eye).normalized();
-    const QVector3D right = QVector3D::crossProduct(
-        forward, QVector3D(0.0f, 0.0f, 1.0f)).normalized();
+    const QVector3D right(
+        float(-std::cos(yaw_rad)), float(std::sin(yaw_rad)), 0.0f);
     const QVector3D up = QVector3D::crossProduct(right, forward).normalized();
     const QVector3D relative = world_position - eye;
     const double depth = QVector3D::dotProduct(relative, forward);

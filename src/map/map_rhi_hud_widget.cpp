@@ -77,7 +77,8 @@ void MapRhiHudWidget::paintEvent(QPaintEvent *event)
         painter.drawPixmap(crosshair_position, crosshair_pixmap);
     }
 
-    MapScaleRenderer::draw(painter, *this->map_model, size());
+    if (this->map_model->viewMode() == MapViewMode::TwoD)
+        MapScaleRenderer::draw(painter, *this->map_model, size());
 }
 
 void MapRhiHudWidget::updateGpsPosition(const QGeoPositionInfo &info)

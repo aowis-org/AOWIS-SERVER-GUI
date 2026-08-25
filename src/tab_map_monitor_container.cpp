@@ -14,6 +14,7 @@
 #if AOWIS_HAS_QRHI
 #include "map/map_rhi_widget.h"
 #include "map/map_rhi_hud_widget.h"
+#include "map/map_monitor_hud_controls.h"
 #include "map/map_rhi_symbology.h"
 #endif
 #endif
@@ -341,9 +342,17 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             new MapRhiWidget(this->map_model, QStringLiteral("monitor"), this->map_stack);
         MapRhiHudWidget *rhi_hud =
             new MapRhiHudWidget(this->map_model, this->gps, this->map_stack);
+        MapMonitorViewModeHudWidget *view_mode_hud =
+            new MapMonitorViewModeHudWidget(this->map_model, this->map_stack);
+        MapMonitorCameraHudWidget *camera_hud =
+            new MapMonitorCameraHudWidget(this->map_model, this->map_stack);
         this->desktop_rhi_surface = rhi_surface;
         this->desktop_rhi_hud = rhi_hud;
+        this->desktop_view_mode_hud = view_mode_hud;
+        this->desktop_camera_hud = camera_hud;
         this->desktop_rhi_hud->hide();
+        this->desktop_view_mode_hud->hide();
+        this->desktop_camera_hud->hide();
         rhi_surface->setTileRepository(this->tile_repository);
         rhi_surface->setBackgroundOpacity(this->network_background_opacity);
         rhi_surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
@@ -464,18 +473,20 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             rhi_surface->setSelectedEntity(InfrastructureEntity::Valve, valve.uuid);
         });
         connect(rhi_surface, &MapRhiWidget::signalRendererReady, this,
-                [this, rhi_surface, rhi_hud]
+                [this, rhi_surface, rhi_hud, view_mode_hud]
         {
             this->map_stack_layout->addWidget(rhi_surface);
             this->map_stack_layout->setCurrentWidget(rhi_surface);
             this->desktop_network_overlay->hide();
             rhi_surface->show();
 
-            // The HUD is intentionally not managed by QStackedLayout. It is a plain
-            // child of map_stack that always sits above the active RHI surface.
-            rhi_hud->setGeometry(this->map_stack->rect());
+            // The HUD widgets are plain children of map_stack, not members of the
+            // stacked layout. This leaves the map surface itself free to receive
+            // mouse input everywhere outside the compact interactive controls.
             rhi_hud->show();
-            rhi_hud->raise();
+            view_mode_hud->show();
+            positionDesktopHudWidgets();
+            syncDesktopCameraHudVisibility();
 
             qInfo() << "Monitor map renderer: RHI map active with GPU basemap/heatmap and QWidget HUD; CPU renderer retained as fallback.";
         });
@@ -492,8 +503,17 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             this->map_stack_layout->setCurrentWidget(this->desktop_network_overlay);
             if (this->desktop_rhi_hud != nullptr)
                 this->desktop_rhi_hud->hide();
+            if (this->desktop_view_mode_hud != nullptr)
+                this->desktop_view_mode_hud->hide();
+            if (this->desktop_camera_hud != nullptr)
+                this->desktop_camera_hud->hide();
             if (this->desktop_rhi_surface != nullptr)
                 this->desktop_rhi_surface->hide();
+        });
+        connect(this->map_model, &MapModel::viewModeChanged, this,
+                [this](MapViewMode)
+        {
+            syncDesktopCameraHudVisibility();
         });
     }
 #endif
@@ -688,6 +708,59 @@ MapMonitorContainer::~MapMonitorContainer()
 #endif
 }
 
+#ifndef Q_OS_WASM
+#if AOWIS_HAS_QRHI
+void MapMonitorContainer::positionDesktopHudWidgets()
+{
+    constexpr int hud_margin_px = 12;
+
+    if (this->desktop_rhi_hud != nullptr)
+    {
+        this->desktop_rhi_hud->setGeometry(this->map_stack->rect());
+        if (this->desktop_rhi_hud->isVisible())
+            this->desktop_rhi_hud->raise();
+    }
+
+    if (this->desktop_view_mode_hud != nullptr)
+    {
+        this->desktop_view_mode_hud->adjustSize();
+        this->desktop_view_mode_hud->move(hud_margin_px, hud_margin_px);
+        if (this->desktop_view_mode_hud->isVisible())
+            this->desktop_view_mode_hud->raise();
+    }
+
+    if (this->desktop_camera_hud != nullptr)
+    {
+        this->desktop_camera_hud->adjustSize();
+        const int camera_y = qMax(
+            hud_margin_px,
+            this->map_stack->height() - this->desktop_camera_hud->height() - hud_margin_px);
+        this->desktop_camera_hud->move(hud_margin_px, camera_y);
+        if (this->desktop_camera_hud->isVisible())
+            this->desktop_camera_hud->raise();
+    }
+}
+
+void MapMonitorContainer::syncDesktopCameraHudVisibility()
+{
+    if (this->desktop_camera_hud == nullptr)
+        return;
+
+    const bool rhi_active = this->desktop_rhi_surface != nullptr
+        && this->desktop_rhi_surface->isVisible()
+        && this->desktop_view_mode_hud != nullptr
+        && this->desktop_view_mode_hud->isVisible();
+    this->desktop_camera_hud->setVisible(
+        rhi_active && this->map_model->viewMode() == MapViewMode::ThreeD);
+    if (this->desktop_camera_hud->isVisible())
+    {
+        this->desktop_camera_hud->raise();
+        positionDesktopHudWidgets();
+    }
+}
+#endif
+#endif
+
 bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
 {
 #ifndef Q_OS_WASM
@@ -695,9 +768,7 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
     if (watched == this->map_stack && event->type() == QEvent::Resize
         && this->desktop_rhi_hud != nullptr)
     {
-        this->desktop_rhi_hud->setGeometry(this->map_stack->rect());
-        if (this->desktop_rhi_hud->isVisible())
-            this->desktop_rhi_hud->raise();
+        positionDesktopHudWidgets();
     }
 #endif
 #endif

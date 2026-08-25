@@ -13,9 +13,7 @@
 #include <QImage>
 #include <QThreadPool>
 #endif
-#ifdef Q_OS_WIN
 #include <QTimer>
-#endif
 
 #include "../_enums_structs.h"
 #include "../interface_server_map.h"
@@ -29,7 +27,9 @@ public:
     ~MapTileRepository() override;
 
     const QPixmap *tile(const QString &key) const;
-    void requestTile(const QString &endpoint, const QString &key, int x, int y);
+    quint64 beginTileRequestBatch();
+    void requestTile(const QString &endpoint, const QString &key, int x, int y,
+                     int priority, quint64 request_batch);
     void deleteTiles(const QString &provider, int zoom,
                      int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max);
     void setMapServerMode(MapServerMode mode);
@@ -46,14 +46,15 @@ private:
         qint64 retry_after_msecs = 0;
     };
 
-#ifdef Q_OS_WIN
     struct PendingTileRequest
     {
         QString endpoint;
         int x = 0;
         int y = 0;
+        int priority = 0;
+        quint64 request_batch = 0;
+        quint64 request_sequence = 0;
     };
-#endif
 
     struct PendingTileDeletion
     {
@@ -66,9 +67,9 @@ private:
     };
 
     void initServerMapInterface();
-#ifdef Q_OS_WIN
+    void scheduleTileRequestDispatch();
     void processTileRequestQueue();
-#endif
+    void trimTileRequestQueue();
     void invalidateTiles(const PendingTileDeletion &deletion);
     bool tileDeletionPending(const QString &key, int x, int y) const;
     void finishTileDeletion(quint64 request_id, const QString &error = QString());
@@ -88,11 +89,11 @@ private:
 
     InterfaceServerMap *interface_map = nullptr;
     QSet<QString> tiles_pending;
-#ifdef Q_OS_WIN
+    QSet<QString> tiles_in_flight;
     QHash<QString, PendingTileRequest> tile_requests_queued;
-    QList<QString> tile_request_order;
     QTimer *tile_request_timer = nullptr;
-#endif
+    quint64 next_tile_request_batch = 1;
+    quint64 next_tile_request_sequence = 1;
     QSet<QString> tiles_invalidated_while_pending;
     QHash<QString, TileFailure> tile_failures;
     QHash<quint64, PendingTileDeletion> tile_deletions_pending;

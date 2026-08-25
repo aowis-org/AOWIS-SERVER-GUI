@@ -39,6 +39,8 @@ class HydraulicData;
 class MapNetworkOverlayWidget;
 class MapRhiWidget;
 class MapRhiHudWidget;
+class MapMonitorViewModeHudWidget;
+class MapMonitorCameraHudWidget;
 
 #ifdef Q_OS_WASM
 #include "gps_provider_dummy.h"
@@ -117,6 +119,8 @@ private:
     MapNetworkOverlayWidget *desktop_network_overlay = nullptr;
     MapRhiWidget *desktop_rhi_surface = nullptr;
     MapRhiHudWidget *desktop_rhi_hud = nullptr;
+    MapMonitorViewModeHudWidget *desktop_view_mode_hud = nullptr;
+    MapMonitorCameraHudWidget *desktop_camera_hud = nullptr;
 #endif
     MapMonitorMenuWidget *map_menu = nullptr;
     int network_background_opacity = 0;
@@ -134,6 +138,8 @@ private:
 #if AOWIS_HAS_QRHI
     void applyDesktopRhiSymbology();
     void applyDesktopRhiHighlights();
+    void positionDesktopHudWidgets();
+    void syncDesktopCameraHudVisibility();
 #endif
 #endif
 

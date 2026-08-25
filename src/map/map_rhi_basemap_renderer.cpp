@@ -285,8 +285,11 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
         tiles_x = tiles_x * 2 + 4;
         tiles_y = tiles_y * 3 + 6;
     }
-    const int start_x = int(std::floor(rendered_center_x)) - tiles_x / 2;
-    const int start_y = int(std::floor(center.y())) - tiles_y / 2;
+    const int center_tile_x = int(std::floor(rendered_center_x));
+    const int center_tile_y = int(std::floor(center.y()));
+    const int start_x = center_tile_x - tiles_x / 2;
+    const int start_y = center_tile_y - tiles_y / 2;
+    const quint64 request_batch = this->tile_repository->beginTileRequestBatch();
 
     QVector<VisibleTile> next_tiles;
     next_tiles.reserve(tiles_x * tiles_y);
@@ -308,9 +311,12 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
 
             if (this->tile_repository->tile(tile.key) == nullptr)
             {
+                const int priority_x = virtual_x - center_tile_x;
+                const int priority_y = y - center_tile_y;
+                const int priority = priority_x * priority_x + priority_y * priority_y;
                 this->tile_repository->requestTile(
                     this->map_model->tileEndpoint(tile_x, y),
-                    tile.key, tile_x, y);
+                    tile.key, tile_x, y, priority, request_batch);
             }
         }
     }

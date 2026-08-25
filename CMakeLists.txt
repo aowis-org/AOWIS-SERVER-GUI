@@ -229,6 +229,8 @@ if(NOT EMSCRIPTEN)
                 src/map/map_rhi_camera.cpp
                 src/map/map_rhi_hud_widget.h
                 src/map/map_rhi_hud_widget.cpp
+                src/map/map_monitor_hud_controls.h
+                src/map/map_monitor_hud_controls.cpp
                 src/map/map_rhi_scene.h
                 src/map/map_rhi_scene.cpp
                 src/map/map_rhi_icon_atlas.h

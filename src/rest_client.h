@@ -10,6 +10,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QUrl>
+#include <QVector>
 
 class RESTClient : public QObject
 {
@@ -46,6 +47,10 @@ private:
     void handleReplyDelete(QNetworkReply *reply, quint64 request_id);
 
     QNetworkAccessManager network_manager;
+#ifndef Q_OS_WASM
+    QVector<QNetworkAccessManager *> tile_network_managers;
+    QVector<int> tile_network_manager_loads;
+#endif
     QString url_base;
     QByteArray api_key;
     QByteArray delete_api_key;

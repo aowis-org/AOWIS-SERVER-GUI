@@ -10,9 +10,6 @@ namespace
 {
 constexpr double CoordinateComparisonEpsilon = 1e-12;
 constexpr double View3dFieldOfViewDeg = 45.0;
-constexpr double View3dMinimumPitchDeg = 20.0;
-constexpr double View3dMaximumPitchDeg = 80.0;
-constexpr double View3dDefaultPitchDeg = 55.0;
 
 struct View3dCameraBasis
 {
@@ -36,8 +33,8 @@ View3dCameraBasis view3dCameraBasis(double yaw_deg, double pitch_deg, const QSiz
     const double half_height = safe_height / 2.0;
     const double half_fov_rad = qDegreesToRadians(View3dFieldOfViewDeg / 2.0);
     const double distance = half_height / std::tan(half_fov_rad);
-    const double pitch_rad = qDegreesToRadians(
-        qBound(View3dMinimumPitchDeg, pitch_deg, View3dMaximumPitchDeg));
+    const double pitch_rad = qDegreesToRadians(qBound(
+        MapModel::MinView3dPitchDeg, pitch_deg, MapModel::MaxView3dPitchDeg));
     const double yaw_rad = qDegreesToRadians(normalizedYawDegrees(yaw_deg));
     const double horizontal_distance = distance * std::cos(pitch_rad);
 
@@ -47,8 +44,8 @@ View3dCameraBasis view3dCameraBasis(double yaw_deg, double pitch_deg, const QSiz
         float(std::cos(yaw_rad) * horizontal_distance),
         float(distance * std::sin(pitch_rad)));
     basis.forward = (-basis.eye).normalized();
-    const QVector3D world_up(0.0f, 0.0f, 1.0f);
-    basis.right = QVector3D::crossProduct(basis.forward, world_up).normalized();
+    basis.right = QVector3D(
+        float(-std::cos(yaw_rad)), float(std::sin(yaw_rad)), 0.0f);
     basis.up = QVector3D::crossProduct(basis.right, basis.forward).normalized();
     return basis;
 }
@@ -331,13 +328,34 @@ void MapModel::setViewMode(MapViewMode view_mode)
     emit viewModeChanged(this->m_view_mode);
 }
 
+void MapModel::setView3dYawDeg(double yaw_deg)
+{
+    const double next_yaw = normalizedYawDegrees(yaw_deg);
+    if (coordinatesEqual(next_yaw, this->m_view_3d_yaw_deg))
+        return;
+
+    this->m_view_3d_yaw_deg = next_yaw;
+    emit view3dCameraChanged();
+}
+
+void MapModel::setView3dPitchDeg(double pitch_deg)
+{
+    const double next_pitch = qBound(
+        MinView3dPitchDeg, pitch_deg, MaxView3dPitchDeg);
+    if (coordinatesEqual(next_pitch, this->m_view_3d_pitch_deg))
+        return;
+
+    this->m_view_3d_pitch_deg = next_pitch;
+    emit view3dCameraChanged();
+}
+
 void MapModel::orbitView3d(double yaw_delta_deg, double pitch_delta_deg)
 {
     const double next_yaw = normalizedYawDegrees(this->m_view_3d_yaw_deg + yaw_delta_deg);
     const double next_pitch = qBound(
-        View3dMinimumPitchDeg,
+        MinView3dPitchDeg,
         this->m_view_3d_pitch_deg + pitch_delta_deg,
-        View3dMaximumPitchDeg);
+        MaxView3dPitchDeg);
     if (coordinatesEqual(next_yaw, this->m_view_3d_yaw_deg)
         && coordinatesEqual(next_pitch, this->m_view_3d_pitch_deg))
     {
@@ -352,9 +370,9 @@ void MapModel::orbitView3d(double yaw_delta_deg, double pitch_delta_deg)
 void MapModel::resetView3dCamera()
 {
     const bool changed = !coordinatesEqual(this->m_view_3d_yaw_deg, 0.0)
-        || !coordinatesEqual(this->m_view_3d_pitch_deg, View3dDefaultPitchDeg);
+        || !coordinatesEqual(this->m_view_3d_pitch_deg, DefaultView3dPitchDeg);
     this->m_view_3d_yaw_deg = 0.0;
-    this->m_view_3d_pitch_deg = View3dDefaultPitchDeg;
+    this->m_view_3d_pitch_deg = DefaultView3dPitchDeg;
     if (changed)
         emit view3dCameraChanged();
 }

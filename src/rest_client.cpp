@@ -12,6 +12,9 @@
 namespace
 {
 constexpr int MaximumErrorBodyLength = 512;
+#ifndef Q_OS_WASM
+constexpr int TileNetworkManagerCount = 4;
+#endif
 }
 
 RESTClient::RESTClient(const QString &url_base, QObject *parent)
@@ -43,6 +46,14 @@ RESTClient::RESTClient(const QString &url_base, const QByteArray &api_key,
 
         if (!QSslSocket::supportsSsl())
             qCritical() << "Qt cannot use HTTPS because no TLS backend is available";
+    }
+
+    this->tile_network_managers.reserve(TileNetworkManagerCount);
+    this->tile_network_manager_loads.reserve(TileNetworkManagerCount);
+    for (int index = 0; index < TileNetworkManagerCount; ++index)
+    {
+        this->tile_network_managers.append(new QNetworkAccessManager(this));
+        this->tile_network_manager_loads.append(0);
     }
 #endif
 }
@@ -113,11 +124,42 @@ void RESTClient::getTile(const QString &endpoint, const QString &key)
 {
     QNetworkRequest request = createRequest(endpoint, this->api_key);
     request.setRawHeader("Accept", "image/*");
-    QNetworkReply *reply = this->network_manager.get(request);
+
+    QNetworkAccessManager *manager = &this->network_manager;
+    int manager_index = -1;
+#ifndef Q_OS_WASM
+    if (!this->tile_network_managers.isEmpty())
+    {
+        manager_index = 0;
+        for (int index = 1; index < this->tile_network_managers.size(); ++index)
+        {
+            if (this->tile_network_manager_loads.at(index) <
+                this->tile_network_manager_loads.at(manager_index))
+            {
+                manager_index = index;
+            }
+        }
+
+        manager = this->tile_network_managers.at(manager_index);
+        this->tile_network_manager_loads[manager_index]++;
+    }
+#endif
+
+    QNetworkReply *reply = manager->get(request);
     monitorReply(reply);
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, key]
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply, key, manager_index]
     {
+#ifndef Q_OS_WASM
+        if (manager_index >= 0 && manager_index < this->tile_network_manager_loads.size())
+        {
+            this->tile_network_manager_loads[manager_index] = qMax(
+                0, this->tile_network_manager_loads.at(manager_index) - 1);
+        }
+#else
+        Q_UNUSED(manager_index)
+#endif
         handleReplyTile(reply, key);
     });
 }

@@ -22,11 +22,18 @@ namespace
 constexpr int TileCacheMaximumCostKiB = 512 * 1024;
 constexpr qint64 TileRetryInitialDelayMs = 1000;
 constexpr qint64 TileRetryMaximumDelayMs = 30000;
+constexpr int MaximumQueuedTileRequests = 1024;
+constexpr quint64 TileRequestBatchRetention = 8;
+#ifdef __EMSCRIPTEN__
+constexpr int MaximumTileRequestsInFlight = 12;
+#else
+constexpr int MaximumTileRequestsInFlight = 24;
+constexpr int TileDecodeThreadCountMaximum = 8;
+#endif
 #ifdef Q_OS_WIN
 constexpr int TileRequestDispatchIntervalMs = 1;
-#endif
-#ifndef __EMSCRIPTEN__
-constexpr int TileDecodeThreadCountMaximum = 4;
+#else
+constexpr int TileRequestDispatchIntervalMs = 0;
 #endif
 
 int positiveModulo(int value, int divisor)
@@ -51,13 +58,13 @@ MapTileRepository::MapTileRepository(QObject *parent)
     : QObject(parent),
     cache(TileCacheMaximumCostKiB)
 {
-#ifdef Q_OS_WIN
     this->tile_request_timer = new QTimer(this);
     this->tile_request_timer->setSingleShot(true);
     this->tile_request_timer->setTimerType(Qt::PreciseTimer);
     this->tile_request_timer->setInterval(TileRequestDispatchIntervalMs);
-    connect(this->tile_request_timer, &QTimer::timeout, this, &MapTileRepository::processTileRequestQueue);
-#endif
+    connect(this->tile_request_timer, &QTimer::timeout,
+            this, &MapTileRepository::processTileRequestQueue);
+
 #ifndef __EMSCRIPTEN__
     const int decode_threads = qMax(1, qMin(TileDecodeThreadCountMaximum,
         qMax(1, QThread::idealThreadCount() / 2)));
@@ -81,69 +88,198 @@ const QPixmap *MapTileRepository::tile(const QString &key) const
     return this->cache.object(key);
 }
 
-void MapTileRepository::requestTile(const QString &endpoint, const QString &key, int x, int y)
+quint64 MapTileRepository::beginTileRequestBatch()
 {
-    if (this->cache.contains(key) || this->tiles_pending.contains(key) ||
-        !this->interface_map || tileDeletionPending(key, x, y))
+    quint64 request_batch = this->next_tile_request_batch++;
+    if (request_batch == 0)
+        request_batch = this->next_tile_request_batch++;
+
+    if (request_batch > TileRequestBatchRetention)
+    {
+        const quint64 oldest_retained_batch = request_batch - TileRequestBatchRetention;
+        QHash<QString, PendingTileRequest>::iterator iterator =
+            this->tile_requests_queued.begin();
+        while (iterator != this->tile_requests_queued.end())
+        {
+            if (iterator.value().request_batch >= oldest_retained_batch)
+            {
+                ++iterator;
+                continue;
+            }
+
+            const QString key = iterator.key();
+            iterator = this->tile_requests_queued.erase(iterator);
+            this->tiles_pending.remove(key);
+            this->tiles_invalidated_while_pending.remove(key);
+        }
+    }
+
+    return request_batch;
+}
+
+void MapTileRepository::requestTile(const QString &endpoint, const QString &key,
+                                    int x, int y, int priority,
+                                    quint64 request_batch)
+{
+    if (this->cache.contains(key) || !this->interface_map ||
+        tileDeletionPending(key, x, y))
     {
         return;
     }
 
-    const QHash<QString, TileFailure>::const_iterator failure = this->tile_failures.constFind(key);
+    const QHash<QString, TileFailure>::const_iterator failure =
+        this->tile_failures.constFind(key);
     if (failure != this->tile_failures.constEnd() &&
         QDateTime::currentMSecsSinceEpoch() < failure->retry_after_msecs)
     {
         return;
     }
 
-    this->tiles_pending.insert(key);
-#ifdef Q_OS_WIN
+    if (this->tiles_in_flight.contains(key))
+        return;
+
+    QHash<QString, PendingTileRequest>::iterator queued =
+        this->tile_requests_queued.find(key);
+    if (queued != this->tile_requests_queued.end())
+    {
+        if (request_batch >= queued.value().request_batch)
+        {
+            queued.value().endpoint = endpoint;
+            queued.value().x = x;
+            queued.value().y = y;
+            queued.value().priority = qMax(0, priority);
+            queued.value().request_batch = request_batch;
+            queued.value().request_sequence = this->next_tile_request_sequence++;
+        }
+        return;
+    }
+
+    // The HTTP transfer may already have completed while PNG decoding is still
+    // running. Keep that state pending without issuing a duplicate request.
+    if (this->tiles_pending.contains(key))
+        return;
+
     PendingTileRequest request;
     request.endpoint = endpoint;
     request.x = x;
     request.y = y;
+    request.priority = qMax(0, priority);
+    request.request_batch = request_batch;
+    request.request_sequence = this->next_tile_request_sequence++;
 
+    this->tiles_pending.insert(key);
     this->tile_requests_queued.insert(key, request);
-    this->tile_request_order.append(key);
-
-    if (!this->tile_request_timer->isActive())
-        this->tile_request_timer->start();
-#else
-    this->interface_map->requestTile(endpoint, key, x, y);
-#endif
+    trimTileRequestQueue();
+    scheduleTileRequestDispatch();
 }
 
-#ifdef Q_OS_WIN
+void MapTileRepository::scheduleTileRequestDispatch()
+{
+    if (!this->interface_map || this->tile_requests_queued.isEmpty() ||
+        this->tiles_in_flight.size() >= MaximumTileRequestsInFlight ||
+        this->tile_request_timer->isActive())
+    {
+        return;
+    }
+
+    this->tile_request_timer->start();
+}
+
 void MapTileRepository::processTileRequestQueue()
 {
-    while (!this->tile_request_order.isEmpty())
+    if (!this->interface_map)
+        return;
+
+#ifdef Q_OS_WIN
+    const int dispatch_limit = 1;
+#else
+    const int dispatch_limit = MaximumTileRequestsInFlight;
+#endif
+    int dispatched = 0;
+
+    while (!this->tile_requests_queued.isEmpty() &&
+           this->tiles_in_flight.size() < MaximumTileRequestsInFlight &&
+           dispatched < dispatch_limit)
     {
-        const QString key = this->tile_request_order.takeLast();
-        const QHash<QString, PendingTileRequest>::iterator request_iterator =
-            this->tile_requests_queued.find(key);
-        if (request_iterator == this->tile_requests_queued.end())
-            continue;
+        QHash<QString, PendingTileRequest>::iterator best =
+            this->tile_requests_queued.end();
+        QHash<QString, PendingTileRequest>::iterator iterator =
+            this->tile_requests_queued.begin();
+        while (iterator != this->tile_requests_queued.end())
+        {
+            if (best == this->tile_requests_queued.end() ||
+                iterator.value().request_batch > best.value().request_batch ||
+                (iterator.value().request_batch == best.value().request_batch &&
+                 iterator.value().priority < best.value().priority) ||
+                (iterator.value().request_batch == best.value().request_batch &&
+                 iterator.value().priority == best.value().priority &&
+                 iterator.value().request_sequence > best.value().request_sequence))
+            {
+                best = iterator;
+            }
+            ++iterator;
+        }
 
-        const PendingTileRequest request = request_iterator.value();
-        this->tile_requests_queued.erase(request_iterator);
+        if (best == this->tile_requests_queued.end())
+            break;
 
-        if (!this->interface_map || this->cache.contains(key) ||
+        const QString key = best.key();
+        const PendingTileRequest request = best.value();
+        this->tile_requests_queued.erase(best);
+
+        if (this->cache.contains(key) ||
             tileDeletionPending(key, request.x, request.y))
         {
             this->tiles_pending.remove(key);
-        }
-        else
-        {
-            this->interface_map->requestTile(request.endpoint, key, request.x, request.y);
+            this->tiles_invalidated_while_pending.remove(key);
+            continue;
         }
 
-        break;
+        this->tiles_in_flight.insert(key);
+        ++dispatched;
+        this->interface_map->requestTile(
+            request.endpoint, key, request.x, request.y);
     }
 
-    if (!this->tile_request_order.isEmpty())
-        this->tile_request_timer->start();
+    if (!this->tile_requests_queued.isEmpty() &&
+        this->tiles_in_flight.size() < MaximumTileRequestsInFlight)
+    {
+        scheduleTileRequestDispatch();
+    }
 }
-#endif
+
+void MapTileRepository::trimTileRequestQueue()
+{
+    while (this->tile_requests_queued.size() > MaximumQueuedTileRequests)
+    {
+        QHash<QString, PendingTileRequest>::iterator worst =
+            this->tile_requests_queued.end();
+        QHash<QString, PendingTileRequest>::iterator iterator =
+            this->tile_requests_queued.begin();
+        while (iterator != this->tile_requests_queued.end())
+        {
+            if (worst == this->tile_requests_queued.end() ||
+                iterator.value().request_batch < worst.value().request_batch ||
+                (iterator.value().request_batch == worst.value().request_batch &&
+                 iterator.value().priority > worst.value().priority) ||
+                (iterator.value().request_batch == worst.value().request_batch &&
+                 iterator.value().priority == worst.value().priority &&
+                 iterator.value().request_sequence < worst.value().request_sequence))
+            {
+                worst = iterator;
+            }
+            ++iterator;
+        }
+
+        if (worst == this->tile_requests_queued.end())
+            break;
+
+        const QString key = worst.key();
+        this->tile_requests_queued.erase(worst);
+        this->tiles_pending.remove(key);
+        this->tiles_invalidated_while_pending.remove(key);
+    }
+}
 
 void MapTileRepository::deleteTiles(const QString &provider, int zoom,
                                     int tile_x_min, int tile_x_max,
@@ -216,14 +352,12 @@ void MapTileRepository::invalidateTiles(const PendingTileDeletion &deletion)
         this->cache.remove(key);
         this->tile_failures.remove(key);
 
-#ifdef Q_OS_WIN
         if (this->tile_requests_queued.remove(key) > 0)
         {
             this->tiles_pending.remove(key);
             this->tiles_invalidated_while_pending.remove(key);
             continue;
         }
-#endif
         if (this->tiles_pending.contains(key))
             this->tiles_invalidated_while_pending.insert(key);
         else
@@ -289,11 +423,9 @@ void MapTileRepository::initServerMapInterface()
     }
 
     this->tile_generation++;
-#ifdef Q_OS_WIN
     this->tile_request_timer->stop();
     this->tile_requests_queued.clear();
-    this->tile_request_order.clear();
-#endif
+    this->tiles_in_flight.clear();
     this->tiles_pending.clear();
     this->tiles_invalidated_while_pending.clear();
     this->tile_failures.clear();
@@ -331,6 +463,9 @@ void MapTileRepository::initServerMapInterface()
 
 void MapTileRepository::tileDataReceived(const QString &key, const QByteArray &data)
 {
+    this->tiles_in_flight.remove(key);
+    scheduleTileRequestDispatch();
+
     if (!this->tiles_pending.contains(key))
         return;
 
@@ -408,7 +543,10 @@ void MapTileRepository::finishTileDecode(const QString &key, const QPixmap &pixm
 
 void MapTileRepository::tileFailed(const QString &key)
 {
+    this->tile_requests_queued.remove(key);
+    this->tiles_in_flight.remove(key);
     this->tiles_pending.remove(key);
+    scheduleTileRequestDispatch();
 
     if (this->tiles_invalidated_while_pending.remove(key))
     {
