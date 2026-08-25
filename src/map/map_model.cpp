@@ -119,7 +119,9 @@ double MapModel::view3dNativeCameraDistanceM() const
 
 double MapModel::view3dMaximumCameraDistanceM() const
 {
-    return view3dNativeCameraDistanceM() + MaxView3dCameraDistanceAboveDefaultM;
+    return qMax(
+        view3dNativeCameraDistanceM() + MaxView3dCameraDistanceAboveDefaultM,
+        this->m_view_3d_extended_camera_distance_maximum_m);
 }
 
 double MapModel::view3dCameraDistanceWorld() const
@@ -466,9 +468,16 @@ void MapModel::syncView3dNativeCameraDistanceM(double distance_m)
     const double native_delta_m =
         next_native_distance - this->m_view_3d_native_camera_distance_m;
     this->m_view_3d_native_camera_distance_m = next_native_distance;
+
+    const double next_camera_distance_m = qMax(
+        MinView3dCameraDistanceM,
+        this->m_view_3d_camera_distance_m + native_delta_m);
+    this->m_view_3d_extended_camera_distance_maximum_m = qMax(
+        this->m_view_3d_extended_camera_distance_maximum_m,
+        next_camera_distance_m);
     this->m_view_3d_camera_distance_m = qBound(
         MinView3dCameraDistanceM,
-        this->m_view_3d_camera_distance_m + native_delta_m,
+        next_camera_distance_m,
         view3dMaximumCameraDistanceM());
     emit view3dCameraChanged();
 }
@@ -523,6 +532,7 @@ void MapModel::setView3dFocusAnchor(
     const double old_lat = this->m_centerLat;
     const double old_offset_world = this->m_view_3d_vertical_offset_world;
     const double old_distance_m = this->m_view_3d_camera_distance_m;
+    const double old_maximum_distance_m = view3dMaximumCameraDistanceM();
 
     this->m_centerLon = GeoWebMercator::normalizeLongitude(lon);
     this->m_centerLat = std::clamp(
@@ -531,14 +541,18 @@ void MapModel::setView3dFocusAnchor(
         clampCenter(viewport);
 
     this->m_view_3d_vertical_offset_world = offset_world;
-    this->m_view_3d_camera_distance_m = qBound(
-        MinView3dCameraDistanceM, distance_m, view3dMaximumCameraDistanceM());
+    const double captured_distance_m = qMax(MinView3dCameraDistanceM, distance_m);
+    this->m_view_3d_extended_camera_distance_maximum_m = qMax(
+        this->m_view_3d_extended_camera_distance_maximum_m,
+        captured_distance_m);
+    this->m_view_3d_camera_distance_m = captured_distance_m;
 
     const bool center_changed = !coordinatesEqual(this->m_centerLon, old_lon)
         || !coordinatesEqual(this->m_centerLat, old_lat);
     const bool camera_changed = !coordinatesEqual(
         this->m_view_3d_vertical_offset_world, old_offset_world)
-        || !coordinatesEqual(this->m_view_3d_camera_distance_m, old_distance_m);
+        || !coordinatesEqual(this->m_view_3d_camera_distance_m, old_distance_m)
+        || !coordinatesEqual(view3dMaximumCameraDistanceM(), old_maximum_distance_m);
 
     if (center_changed)
         emitCenterChanged();

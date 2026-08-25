@@ -123,6 +123,7 @@ private:
     double m_view_3d_pitch_deg = DefaultView3dPitchDeg;
     double m_view_3d_camera_distance_m = MinView3dCameraDistanceM;
     double m_view_3d_native_camera_distance_m = MinView3dCameraDistanceM;
+    double m_view_3d_extended_camera_distance_maximum_m = MinView3dCameraDistanceM;
     double m_view_3d_camera_distance_world = 0.0;
     double m_view_3d_camera_collision_lift_world = 0.0;
     double m_view_3d_vertical_offset_world = 0.0;

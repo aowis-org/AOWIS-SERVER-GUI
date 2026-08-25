@@ -462,7 +462,7 @@ MapMonitorCameraDistanceHudWidget::MapMonitorCameraDistanceHudWidget(
         "Distance to focus\n"
         "Straight-line orbit radius to the terrain point under the crosshair\n"
         "Minimum requested distance: 150 m\n"
-        "Maximum: native camera distance + 500 m\n"
+        "Maximum: native camera distance + 500 m, extended automatically for farther captured focus points\n"
         "Terrain collision keeps at least 2 m ground clearance without moving the focus point\n"
         "Right-click: animate back to the native camera distance"));
     this->distance_value_label->setText(cameraDistanceText(
