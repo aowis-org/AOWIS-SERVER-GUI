@@ -37,6 +37,7 @@
 
 class HydraulicData;
 class MapNetworkOverlayWidget;
+class MapTerrainRepository;
 class MapRhiWidget;
 class MapRhiHudWidget;
 class MapMonitorViewModeHudWidget;
@@ -97,7 +98,10 @@ class MapMonitorContainer : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapMonitorContainer(MapModel *map_model, MapTileRepository *tile_repository, HydraulicData *hydraulic_data, GpsProvider *gps, QWidget *parent = nullptr);
+    explicit MapMonitorContainer(MapModel *map_model, MapTileRepository *tile_repository,
+                                 MapTerrainRepository *terrain_repository,
+                                 HydraulicData *hydraulic_data, GpsProvider *gps,
+                                 QWidget *parent = nullptr);
     ~MapMonitorContainer() override;
     
     MapWidget *getMap();
@@ -112,6 +116,7 @@ private:
     GpsProvider *gps = nullptr;
     MapModel *map_model = nullptr;
     MapTileRepository *tile_repository = nullptr;
+    MapTerrainRepository *terrain_repository = nullptr;
     HydraulicData *hydraulic_data = nullptr;
     QWidget *map_stack = nullptr;
     QStackedLayout *map_stack_layout = nullptr;

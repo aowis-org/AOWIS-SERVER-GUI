@@ -507,6 +507,11 @@ int MapRhiScene::linkThicknessPx() const
     return this->symbology.link_thickness_px;
 }
 
+float MapRhiScene::elevationToWorldZ(double elevation_m) const
+{
+    return localElevationWorld(elevation_m);
+}
+
 QPointF MapRhiScene::chooseOriginWorld(const NetworkRenderSnapshot &snapshot) const
 {
     for (const NetworkRenderNode &node : snapshot.nodes)

@@ -16,6 +16,7 @@
 #include <memory>
 
 class MapModel;
+class MapTerrainRepository;
 class MapTileRepository;
 class QRhi;
 class QRhiBuffer;
@@ -55,6 +56,7 @@ public:
     void setNetworkScreenTranslation(const QPointF &translation_pixels);
     void setSymbology(const MapRhiSymbology &symbology);
     void setTileRepository(MapTileRepository *tile_repository);
+    void setTerrainRepository(MapTerrainRepository *terrain_repository);
     void setBackgroundOpacity(int opacity);
     void setSelectedEntity(InfrastructureEntity entity_type, const QUuid &uuid);
     void setSimulationErrorEntities(
@@ -92,6 +94,7 @@ private:
     MapRhiScene scene;
     MapRhiSymbology applied_symbology;
     MapTileRepository *tile_repository = nullptr;
+    MapTerrainRepository *terrain_repository = nullptr;
     std::unique_ptr<MapRhiBasemapRenderer> basemap_renderer;
     int background_opacity = 0;
     QPointF network_screen_translation;

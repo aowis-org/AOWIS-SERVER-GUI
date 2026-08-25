@@ -10,6 +10,9 @@
 #include <memory>
 
 class MapModel;
+class MapRhiScene;
+class MapTerrainRepository;
+struct MapTerrainTile;
 class MapTileRepository;
 class QRhi;
 class QRhiBuffer;
@@ -33,10 +36,13 @@ public:
         float v = 0.0f;
     };
 
-    MapRhiBasemapRenderer(MapModel *map_model, MapTileRepository *tile_repository);
+    MapRhiBasemapRenderer(MapModel *map_model, MapRhiScene *scene,
+                          MapTileRepository *tile_repository,
+                          MapTerrainRepository *terrain_repository = nullptr);
     ~MapRhiBasemapRenderer();
 
     void setTileRepository(MapTileRepository *tile_repository);
+    void setTerrainRepository(MapTerrainRepository *terrain_repository);
     void invalidate();
     void releaseResources();
 
@@ -57,17 +63,28 @@ private:
 
     struct VisibleTile
     {
-        QString key;
+        QString imagery_key;
+        QString terrain_key;
         int virtual_x = 0;
+        int tile_x = 0;
         int y = 0;
+        int imagery_zoom = 0;
+        int terrain_zoom = 0;
         int first_vertex = 0;
+        int vertex_count = 0;
+        bool foreground = false;
         TileResource *resource = nullptr;
 
         bool operator==(const VisibleTile &other) const
         {
-            return this->key == other.key
+            return this->imagery_key == other.imagery_key
+                && this->terrain_key == other.terrain_key
                 && this->virtual_x == other.virtual_x
-                && this->y == other.y;
+                && this->tile_x == other.tile_x
+                && this->y == other.y
+                && this->imagery_zoom == other.imagery_zoom
+                && this->terrain_zoom == other.terrain_zoom
+                && this->foreground == other.foreground;
         }
     };
 
@@ -76,9 +93,17 @@ private:
     bool ensureTileResource(const QString &key, TileResource **resource,
                             QRhiResourceUpdateBatch *resource_updates);
     void pruneTextureCache();
+    void appendFlatTileVertices(VisibleTile *tile, float left, float top,
+                                float right, float bottom);
+    bool appendReliefTileVertices(VisibleTile *tile, const MapTerrainTile &terrain_tile,
+                                  float tile_left, float tile_top,
+                                  float tile_world_size);
+    float terrainElevationWorldZ(double elevation_m) const;
 
     MapModel *map_model = nullptr;
+    MapRhiScene *scene = nullptr;
     MapTileRepository *tile_repository = nullptr;
+    MapTerrainRepository *terrain_repository = nullptr;
     QRhi *rhi = nullptr;
     QRhiRenderPassDescriptor *render_pass_descriptor = nullptr;
     QRhiBuffer *camera_uniform_buffer = nullptr;

@@ -1,5 +1,7 @@
 #include "map_rhi_widget.h"
 
+#include "map_terrain_repository.h"
+
 #include "map_model.h"
 #include "map_render_cache_math.h"
 #include "map_tile_repository.h"
@@ -117,7 +119,7 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
         GeoWebMercator::normalizeLongitude(this->map_model->centerLon()),
         this->map_model->centerLat(), MapRenderCacheMath::ReferenceZoom);
     this->basemap_renderer = std::make_unique<MapRhiBasemapRenderer>(
-        this->map_model, this->tile_repository);
+        this->map_model, &this->scene, this->tile_repository, this->terrain_repository);
     syncViewState();
 
     connect(this->map_model, &MapModel::centerChangedWGS84, this, [this]
@@ -143,6 +145,8 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode)
     {
         syncViewState();
+        if (this->basemap_renderer)
+            this->basemap_renderer->invalidate();
         update();
     });
     connect(this->map_model, &MapModel::view3dCameraChanged, this, [this]
@@ -496,6 +500,37 @@ void MapRhiWidget::setTileRepository(MapTileRepository *tile_repository)
         {
             if (this->basemap_renderer)
                 this->basemap_renderer->invalidate();
+            update();
+        });
+    }
+
+    update();
+}
+
+void MapRhiWidget::setTerrainRepository(MapTerrainRepository *terrain_repository)
+{
+    if (this->terrain_repository == terrain_repository)
+        return;
+
+    if (this->terrain_repository != nullptr)
+        disconnect(this->terrain_repository, nullptr, this, nullptr);
+
+    this->terrain_repository = terrain_repository;
+    if (this->basemap_renderer)
+        this->basemap_renderer->setTerrainRepository(this->terrain_repository);
+
+    if (this->terrain_repository != nullptr)
+    {
+        connect(this->terrain_repository, &MapTerrainRepository::signalTerrainTileAvailable,
+                this, [this](const QString &)
+        {
+            if (this->basemap_renderer)
+                this->basemap_renderer->invalidate();
+            update();
+        });
+        connect(this->terrain_repository, &MapTerrainRepository::signalTerrainTileRetryReady,
+                this, [this](const QString &)
+        {
             update();
         });
     }

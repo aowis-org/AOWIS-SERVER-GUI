@@ -11,6 +11,7 @@
 #ifndef Q_OS_WASM
 #include "gui_configuration.h"
 #include "map/map_network_overlay_widget.h"
+#include "map/map_terrain_repository.h"
 #if AOWIS_HAS_QRHI
 #include "map/map_rhi_widget.h"
 #include "map/map_rhi_hud_widget.h"
@@ -273,12 +274,15 @@ EM_JS(void, aowisBrowserNetworkSetErrorEntities, (const char *json_data, int jso
 
 #endif
 
-MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository *tile_repository, HydraulicData *hydraulic_data, GpsProvider *gps, QWidget *parent)
+MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository *tile_repository,
+                                         MapTerrainRepository *terrain_repository,
+                                         HydraulicData *hydraulic_data, GpsProvider *gps, QWidget *parent)
     : QWidget{parent},
     layout( new QHBoxLayout(this) ),
     gps( gps ),
     map_model( map_model ),
     tile_repository( tile_repository ),
+    terrain_repository( terrain_repository ),
     hydraulic_data( hydraulic_data ),
     map_stack( new QWidget(this) ),
     map_stack_layout( new QStackedLayout(this->map_stack) ),
@@ -358,6 +362,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         this->desktop_compass_hud->hide();
         this->desktop_tilt_hud->hide();
         rhi_surface->setTileRepository(this->tile_repository);
+        rhi_surface->setTerrainRepository(this->terrain_repository);
         rhi_surface->setBackgroundOpacity(this->network_background_opacity);
         rhi_surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
         applyDesktopRhiSymbology();

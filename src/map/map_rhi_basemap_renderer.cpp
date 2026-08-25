@@ -2,6 +2,9 @@
 
 #include "map_model.h"
 #include "map_render_cache_math.h"
+#include "map_rhi_scene.h"
+#include "map_terrain_repository.h"
+#include "map_terrain_tile.h"
 #include "map_tile_repository.h"
 #include "../geo_web_mercator.h"
 
@@ -18,6 +21,112 @@
 namespace
 {
 constexpr int MaximumCachedGpuTiles = 160;
+constexpr int TerrainReliefMinimumZoom = 8;
+constexpr int TerrainReliefMaximumZoom = 14;
+constexpr double TerrainVerticalExaggerationFallback = 2.5;
+
+bool reliefTerrainEnabled(const MapModel &map_model, const MapTerrainRepository *terrain_repository)
+{
+    return map_model.viewMode() == MapViewMode::ThreeD
+        && terrain_repository != nullptr
+        && map_model.zoom() >= TerrainReliefMinimumZoom;
+}
+
+int terrainZoomForImageryZoom(int imagery_zoom)
+{
+    return qBound(TerrainReliefMinimumZoom, imagery_zoom, TerrainReliefMaximumZoom);
+}
+
+QString terrainDatasetId()
+{
+    return QStringLiteral("copernicus-glo30");
+}
+
+float terrainSample(const MapTerrainTile &terrain_tile, int row, int column)
+{
+    const int bounded_row = qBound(0, row, MapTerrainTileGridSize - 1);
+    const int bounded_column = qBound(0, column, MapTerrainTileGridSize - 1);
+    return terrain_tile.elevations_m.at(
+        bounded_row * MapTerrainTileGridSize + bounded_column);
+}
+
+float nearestFiniteTerrainSample(const MapTerrainTile &terrain_tile, int row, int column)
+{
+    const int bounded_row = qBound(0, row, MapTerrainTileGridSize - 1);
+    const int bounded_column = qBound(0, column, MapTerrainTileGridSize - 1);
+    const float direct = terrainSample(terrain_tile, bounded_row, bounded_column);
+    if (std::isfinite(double(direct)))
+        return direct;
+
+    for (int ring = 1; ring < MapTerrainTileGridSize; ++ring)
+    {
+        const int row_minimum = qMax(0, bounded_row - ring);
+        const int row_maximum = qMin(MapTerrainTileGridSize - 1, bounded_row + ring);
+        const int column_minimum = qMax(0, bounded_column - ring);
+        const int column_maximum = qMin(MapTerrainTileGridSize - 1, bounded_column + ring);
+
+        for (int sample_column = column_minimum; sample_column <= column_maximum; ++sample_column)
+        {
+            const float top = terrainSample(terrain_tile, row_minimum, sample_column);
+            if (std::isfinite(double(top)))
+                return top;
+            const float bottom = terrainSample(terrain_tile, row_maximum, sample_column);
+            if (std::isfinite(double(bottom)))
+                return bottom;
+        }
+        for (int sample_row = row_minimum + 1; sample_row < row_maximum; ++sample_row)
+        {
+            const float left = terrainSample(terrain_tile, sample_row, column_minimum);
+            if (std::isfinite(double(left)))
+                return left;
+            const float right = terrainSample(terrain_tile, sample_row, column_maximum);
+            if (std::isfinite(double(right)))
+                return right;
+        }
+    }
+
+    return 0.0f;
+}
+
+float bilinearTerrainSample(const MapTerrainTile &terrain_tile, double u, double v)
+{
+    const double sample_x = qBound(0.0, u, 1.0) * MapTerrainTileCellCount;
+    const double sample_y = qBound(0.0, v, 1.0) * MapTerrainTileCellCount;
+    const int x0 = qBound(0, int(std::floor(sample_x)), MapTerrainTileGridSize - 1);
+    const int y0 = qBound(0, int(std::floor(sample_y)), MapTerrainTileGridSize - 1);
+    const int x1 = qMin(x0 + 1, MapTerrainTileGridSize - 1);
+    const int y1 = qMin(y0 + 1, MapTerrainTileGridSize - 1);
+    const double tx = sample_x - x0;
+    const double ty = sample_y - y0;
+
+    const float samples[4] = {
+        terrainSample(terrain_tile, y0, x0),
+        terrainSample(terrain_tile, y0, x1),
+        terrainSample(terrain_tile, y1, x0),
+        terrainSample(terrain_tile, y1, x1)
+    };
+    const double weights[4] = {
+        (1.0 - tx) * (1.0 - ty),
+        tx * (1.0 - ty),
+        (1.0 - tx) * ty,
+        tx * ty
+    };
+
+    double weighted_sum = 0.0;
+    double weight_sum = 0.0;
+    for (int index = 0; index < 4; ++index)
+    {
+        if (!std::isfinite(double(samples[index])))
+            continue;
+        weighted_sum += double(samples[index]) * weights[index];
+        weight_sum += weights[index];
+    }
+    if (weight_sum > 0.0)
+        return float(weighted_sum / weight_sum);
+
+    return nearestFiniteTerrainSample(
+        terrain_tile, int(std::lround(sample_y)), int(std::lround(sample_x)));
+}
 
 QShader loadBasemapShader(const QString &resource_path)
 {
@@ -39,9 +148,12 @@ int boundedBufferSize(qsizetype vertex_count, qsizetype vertex_size)
 }
 
 MapRhiBasemapRenderer::MapRhiBasemapRenderer(
-    MapModel *map_model, MapTileRepository *tile_repository)
+    MapModel *map_model, MapRhiScene *scene, MapTileRepository *tile_repository,
+    MapTerrainRepository *terrain_repository)
     : map_model(map_model),
-      tile_repository(tile_repository)
+      scene(scene),
+      tile_repository(tile_repository),
+      terrain_repository(terrain_repository)
 {
 }
 
@@ -53,6 +165,15 @@ void MapRhiBasemapRenderer::setTileRepository(MapTileRepository *tile_repository
         return;
 
     this->tile_repository = tile_repository;
+    invalidate();
+}
+
+void MapRhiBasemapRenderer::setTerrainRepository(MapTerrainRepository *terrain_repository)
+{
+    if (this->terrain_repository == terrain_repository)
+        return;
+
+    this->terrain_repository = terrain_repository;
     invalidate();
 }
 
@@ -123,7 +244,7 @@ bool MapRhiBasemapRenderer::prepare(
     for (VisibleTile &tile : this->visible_tiles)
     {
         TileResource *resource = nullptr;
-        if (!ensureTileResource(tile.key, &resource, resource_updates))
+        if (!ensureTileResource(tile.imagery_key, &resource, resource_updates))
             return false;
         tile.resource = resource;
         if (resource != nullptr)
@@ -171,7 +292,7 @@ void MapRhiBasemapRenderer::draw(QRhiCommandBuffer *command_buffer)
             tile.first_vertex * int(sizeof(TileVertex)));
         const QRhiCommandBuffer::VertexInput binding(this->vertex_buffer.get(), byte_offset);
         command_buffer->setVertexInput(0, 1, &binding);
-        command_buffer->draw(6);
+        command_buffer->draw(quint32(tile.vertex_count));
     }
 }
 
@@ -266,11 +387,11 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     if (this->map_model == nullptr || !viewport_size.isValid())
         return true;
 
-    const int zoom = this->map_model->zoom();
+    const int imagery_zoom = this->map_model->zoom();
     const int tile_count = this->map_model->tileCount();
     const QPointF center = this->map_model->centerTile();
     const double tile_reference_size = MapModel::TileSize
-        * std::pow(2.0, MapRenderCacheMath::ReferenceZoom - zoom);
+        * std::pow(2.0, MapRenderCacheMath::ReferenceZoom - imagery_zoom);
     const double origin_tile_x = origin_world.x() / tile_reference_size;
     const double wrap_offset = std::round(
         (origin_tile_x - center.x()) / qMax(1, tile_count)) * tile_count;
@@ -281,10 +402,8 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     int tiles_y = foreground_tiles_y;
     if (this->map_model->viewMode() == MapViewMode::ThreeD)
     {
-        // The pitched camera sees substantially farther along the ground plane
-        // than the orthographic viewport. Keep a wider tile apron so orbiting
-        // never exposes the clear color around the map. The apron is background
-        // work: screen-covering tiles must finish first during initial loading.
+        // Keep the existing 3D apron. Step 6 will replace this coarse coverage
+        // policy with view-frustum culling and distance-dependent terrain LOD.
         tiles_x = tiles_x * 2 + 4;
         tiles_y = tiles_y * 3 + 6;
     }
@@ -295,13 +414,20 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     const int foreground_start_x = center_tile_x - foreground_tiles_x / 2;
     const int foreground_start_y = center_tile_y - foreground_tiles_y / 2;
     const QString request_layout_key = QStringLiteral("%1|%2|%3|%4|%5")
-        .arg(this->map_model->tileCachePrefix(zoom))
+        .arg(this->map_model->tileCachePrefix(imagery_zoom))
         .arg(start_x)
         .arg(start_y)
         .arg(tiles_x)
         .arg(tiles_y);
     const quint64 request_batch = this->tile_repository->beginTileRequestBatch(
         this, request_layout_key);
+    const bool relief_enabled = reliefTerrainEnabled(*this->map_model, this->terrain_repository);
+    const int terrain_zoom = relief_enabled
+        ? terrainZoomForImageryZoom(imagery_zoom)
+        : 0;
+    const int terrain_zoom_delta = relief_enabled
+        ? imagery_zoom - terrain_zoom
+        : 0;
 
     QVector<VisibleTile> next_tiles;
     next_tiles.reserve(tiles_x * tiles_y);
@@ -314,26 +440,44 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
             if (y < 0 || y >= tile_count)
                 continue;
 
-            const int tile_x = GeoWebMercator::wrapTileX(virtual_x, zoom);
+            const int tile_x = GeoWebMercator::wrapTileX(virtual_x, imagery_zoom);
             VisibleTile tile;
-            tile.key = this->map_model->tileCacheKey(tile_x, y);
+            tile.imagery_key = this->map_model->tileCacheKey(tile_x, y);
             tile.virtual_x = virtual_x;
+            tile.tile_x = tile_x;
             tile.y = y;
+            tile.imagery_zoom = imagery_zoom;
+            tile.terrain_zoom = terrain_zoom;
+            tile.foreground =
+                virtual_x >= foreground_start_x
+                && virtual_x < foreground_start_x + foreground_tiles_x
+                && y >= foreground_start_y
+                && y < foreground_start_y + foreground_tiles_y;
+
+            if (relief_enabled)
+            {
+                MapTerrainTileAddress terrain_address;
+                terrain_address.zoom = terrain_zoom;
+                terrain_address.x = quint32(tile_x) >> terrain_zoom_delta;
+                terrain_address.y = quint32(y) >> terrain_zoom_delta;
+                tile.terrain_key = mapTerrainTileKey(terrainDatasetId(), terrain_address);
+                if (tile.foreground)
+                {
+                    this->terrain_repository->requestTile(
+                        terrainDatasetId(), terrain_address.zoom,
+                        terrain_address.x, terrain_address.y);
+                }
+            }
             next_tiles.append(tile);
 
-            if (this->tile_repository->tile(tile.key) == nullptr)
+            if (this->tile_repository->tile(tile.imagery_key) == nullptr)
             {
                 const int priority_x = virtual_x - center_tile_x;
                 const int priority_y = y - center_tile_y;
                 const int priority = priority_x * priority_x + priority_y * priority_y;
-                const bool foreground =
-                    virtual_x >= foreground_start_x
-                    && virtual_x < foreground_start_x + foreground_tiles_x
-                    && y >= foreground_start_y
-                    && y < foreground_start_y + foreground_tiles_y;
                 this->tile_repository->requestTile(
                     this->map_model->tileEndpoint(tile_x, y),
-                    tile.key, tile_x, y, priority, request_batch, foreground);
+                    tile.imagery_key, tile_x, y, priority, request_batch, tile.foreground);
             }
         }
     }
@@ -365,16 +509,19 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
         const float bottom = float(top + tile_reference_size);
         tile.first_vertex = this->vertices.size();
 
-        const TileVertex tile_vertices[6] = {
-            {left,  top,    0.0f, 0.0f, 0.0f},
-            {right, top,    0.0f, 1.0f, 0.0f},
-            {right, bottom, 0.0f, 1.0f, 1.0f},
-            {left,  top,    0.0f, 0.0f, 0.0f},
-            {right, bottom, 0.0f, 1.0f, 1.0f},
-            {left,  bottom, 0.0f, 0.0f, 1.0f}
-        };
-        for (const TileVertex &vertex : tile_vertices)
-            this->vertices.append(vertex);
+        bool relief_built = false;
+        if (relief_enabled && !tile.terrain_key.isEmpty() && this->terrain_repository != nullptr)
+        {
+            const MapTerrainTile *terrain_tile = this->terrain_repository->tile(tile.terrain_key);
+            if (terrain_tile != nullptr)
+            {
+                relief_built = appendReliefTileVertices(
+                    &tile, *terrain_tile, left, top, float(tile_reference_size));
+            }
+        }
+
+        if (!relief_built)
+            appendFlatTileVertices(&tile, left, top, right, bottom);
     }
 
     this->visible_tiles = next_tiles;
@@ -467,4 +614,120 @@ void MapRhiBasemapRenderer::pruneTextureCache()
             break;
         this->tile_resources.erase(oldest);
     }
+}
+
+
+void MapRhiBasemapRenderer::appendFlatTileVertices(
+    VisibleTile *tile, float left, float top, float right, float bottom)
+{
+    if (tile == nullptr)
+        return;
+
+    const TileVertex tile_vertices[6] = {
+        {left,  top,    0.0f, 0.0f, 0.0f},
+        {right, top,    0.0f, 1.0f, 0.0f},
+        {right, bottom, 0.0f, 1.0f, 1.0f},
+        {left,  top,    0.0f, 0.0f, 0.0f},
+        {right, bottom, 0.0f, 1.0f, 1.0f},
+        {left,  bottom, 0.0f, 0.0f, 1.0f}
+    };
+    for (const TileVertex &vertex : tile_vertices)
+        this->vertices.append(vertex);
+    tile->vertex_count = 6;
+}
+
+bool MapRhiBasemapRenderer::appendReliefTileVertices(
+    VisibleTile *tile, const MapTerrainTile &terrain_tile,
+    float tile_left, float tile_top, float tile_world_size)
+{
+    if (tile == nullptr || terrain_tile.elevations_m.size() != MapTerrainTileSampleCount
+        || tile->imagery_zoom < tile->terrain_zoom)
+    {
+        return false;
+    }
+
+    const int zoom_delta = tile->imagery_zoom - tile->terrain_zoom;
+    const double subdivision_count = std::ldexp(1.0, zoom_delta);
+    const quint32 terrain_x = terrain_tile.address.x;
+    const quint32 terrain_y = terrain_tile.address.y;
+    const double local_tile_x = double(tile->tile_x) - double(terrain_x) * subdivision_count;
+    const double local_tile_y = double(tile->y) - double(terrain_y) * subdivision_count;
+    const double terrain_u_min = local_tile_x / subdivision_count;
+    const double terrain_v_min = local_tile_y / subdivision_count;
+    const double terrain_u_span = 1.0 / subdivision_count;
+    const double terrain_v_span = 1.0 / subdivision_count;
+
+    const int cell_divisor = 1 << qMin(zoom_delta, 6);
+    const int native_cell_count = qMax(1, MapTerrainTileCellCount / cell_divisor);
+    // The large 3D apron prevents horizon gaps. Keep those background tiles
+    // relieved but coarse so this first terrain pass cannot allocate tens of
+    // millions of vertices at terrain zoom 14. Foreground tiles retain every
+    // DEM cell; Step 6 will replace this with proper distance/frustum LOD.
+    const int cell_count = tile->foreground
+        ? native_cell_count
+        : qMin(native_cell_count, 8);
+    const float step = tile_world_size / float(cell_count);
+
+    for (int row = 0; row < cell_count; ++row)
+    {
+        for (int column = 0; column < cell_count; ++column)
+        {
+            const float left = tile_left + float(column) * step;
+            const float right = left + step;
+            const float top = tile_top + float(row) * step;
+            const float bottom = top + step;
+            const float u0 = float(column) / float(cell_count);
+            const float u1 = float(column + 1) / float(cell_count);
+            const float v0 = float(row) / float(cell_count);
+            const float v1 = float(row + 1) / float(cell_count);
+            const double terrain_u0 = terrain_u_min + double(u0) * terrain_u_span;
+            const double terrain_u1 = terrain_u_min + double(u1) * terrain_u_span;
+            const double terrain_v0 = terrain_v_min + double(v0) * terrain_v_span;
+            const double terrain_v1 = terrain_v_min + double(v1) * terrain_v_span;
+            const float z00 = terrainElevationWorldZ(
+                bilinearTerrainSample(terrain_tile, terrain_u0, terrain_v0));
+            const float z10 = terrainElevationWorldZ(
+                bilinearTerrainSample(terrain_tile, terrain_u1, terrain_v0));
+            const float z11 = terrainElevationWorldZ(
+                bilinearTerrainSample(terrain_tile, terrain_u1, terrain_v1));
+            const float z01 = terrainElevationWorldZ(
+                bilinearTerrainSample(terrain_tile, terrain_u0, terrain_v1));
+
+            const TileVertex cell_vertices[6] = {
+                {left,  top,    z00, u0, v0},
+                {right, top,    z10, u1, v0},
+                {right, bottom, z11, u1, v1},
+                {left,  top,    z00, u0, v0},
+                {right, bottom, z11, u1, v1},
+                {left,  bottom, z01, u0, v1}
+            };
+            for (const TileVertex &vertex : cell_vertices)
+                this->vertices.append(vertex);
+        }
+    }
+
+    tile->vertex_count = cell_count * cell_count * 6;
+    return tile->vertex_count > 0;
+}
+
+float MapRhiBasemapRenderer::terrainElevationWorldZ(double elevation_m) const
+{
+    if (this->scene != nullptr && this->scene->hasGeometry())
+    {
+        // MapRhiScene intentionally lifts network geometry by one reference-world
+        // pixel above its elevation plane. Keep terrain on the plane so pipes and
+        // nodes at ground elevation remain visible instead of z-fighting it.
+        return this->scene->elevationToWorldZ(elevation_m) - 1.0f;
+    }
+
+    if (!std::isfinite(elevation_m) || this->map_model == nullptr)
+        return 0.0f;
+
+    const double meters_per_world_pixel = GeoWebMercator::metersPerPixel(
+        this->map_model->centerLat(), MapRenderCacheMath::ReferenceZoom);
+    if (!std::isfinite(meters_per_world_pixel) || meters_per_world_pixel <= 0.0)
+        return 0.0f;
+
+    return float(elevation_m / meters_per_world_pixel
+        * TerrainVerticalExaggerationFallback);
 }

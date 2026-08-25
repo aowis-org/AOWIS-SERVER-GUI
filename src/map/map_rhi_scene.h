@@ -114,6 +114,7 @@ public:
     bool hasGeometry() const;
     int nodeSizePercent() const;
     int linkThicknessPx() const;
+    float elevationToWorldZ(double elevation_m) const;
 
 private:
     struct HeatmapMarker
