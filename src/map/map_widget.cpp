@@ -1338,7 +1338,14 @@ void MapWidget::drawTiles(QPainter &painter)
     const int center_tile_y = int(std::floor(center_y));
     const int start_x = center_tile_x - tiles_x / 2;
     const int start_y = center_tile_y - tiles_y / 2;
-    const quint64 request_batch = this->tile_repository->beginTileRequestBatch();
+    const QString request_layout_key = QStringLiteral("%1|%2|%3|%4|%5")
+        .arg(this->m_model->tileCachePrefix(this->m_model->zoom()))
+        .arg(start_x)
+        .arg(start_y)
+        .arg(tiles_x)
+        .arg(tiles_y);
+    const quint64 request_batch = this->tile_repository->beginTileRequestBatch(
+        this, request_layout_key);
 
     for (int delta_x = 0; delta_x < tiles_x; ++delta_x)
     {

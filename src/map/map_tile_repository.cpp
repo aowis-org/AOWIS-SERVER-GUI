@@ -26,8 +26,10 @@ constexpr int MaximumQueuedTileRequests = 1024;
 constexpr quint64 TileRequestBatchRetention = 8;
 #ifdef __EMSCRIPTEN__
 constexpr int MaximumTileRequestsInFlight = 12;
+constexpr int MaximumBackgroundTileRequestsInFlight = 6;
 #else
-constexpr int MaximumTileRequestsInFlight = 24;
+constexpr int MaximumTileRequestsInFlight = 48;
+constexpr int MaximumBackgroundTileRequestsInFlight = 16;
 constexpr int TileDecodeThreadCountMaximum = 8;
 #endif
 #ifdef Q_OS_WIN
@@ -67,7 +69,7 @@ MapTileRepository::MapTileRepository(QObject *parent)
 
 #ifndef __EMSCRIPTEN__
     const int decode_threads = qMax(1, qMin(TileDecodeThreadCountMaximum,
-        qMax(1, QThread::idealThreadCount() / 2)));
+        qMax(1, QThread::idealThreadCount())));
     this->tile_decode_pool.setMaxThreadCount(decode_threads);
     this->tile_decode_pool.setExpiryTimeout(30000);
 #endif
@@ -88,11 +90,25 @@ const QPixmap *MapTileRepository::tile(const QString &key) const
     return this->cache.object(key);
 }
 
-quint64 MapTileRepository::beginTileRequestBatch()
+quint64 MapTileRepository::beginTileRequestBatch(
+    const void *owner, const QString &layout_key)
 {
+    const quintptr owner_id = reinterpret_cast<quintptr>(owner);
+    if (owner_id != 0
+        && this->active_tile_request_owner == owner_id
+        && this->active_tile_request_layout_key == layout_key
+        && this->active_tile_request_batch != 0)
+    {
+        return this->active_tile_request_batch;
+    }
+
     quint64 request_batch = this->next_tile_request_batch++;
     if (request_batch == 0)
         request_batch = this->next_tile_request_batch++;
+
+    this->active_tile_request_owner = owner_id;
+    this->active_tile_request_layout_key = layout_key;
+    this->active_tile_request_batch = request_batch;
 
     if (request_batch > TileRequestBatchRetention)
     {
@@ -119,7 +135,7 @@ quint64 MapTileRepository::beginTileRequestBatch()
 
 void MapTileRepository::requestTile(const QString &endpoint, const QString &key,
                                     int x, int y, int priority,
-                                    quint64 request_batch)
+                                    quint64 request_batch, bool foreground)
 {
     if (this->cache.contains(key) || !this->interface_map ||
         tileDeletionPending(key, x, y))
@@ -142,7 +158,7 @@ void MapTileRepository::requestTile(const QString &endpoint, const QString &key,
         this->tile_requests_queued.find(key);
     if (queued != this->tile_requests_queued.end())
     {
-        if (request_batch >= queued.value().request_batch)
+        if (request_batch > queued.value().request_batch)
         {
             queued.value().endpoint = endpoint;
             queued.value().x = x;
@@ -150,6 +166,12 @@ void MapTileRepository::requestTile(const QString &endpoint, const QString &key,
             queued.value().priority = qMax(0, priority);
             queued.value().request_batch = request_batch;
             queued.value().request_sequence = this->next_tile_request_sequence++;
+            queued.value().foreground = foreground;
+        }
+        else if (request_batch == queued.value().request_batch)
+        {
+            queued.value().priority = qMin(queued.value().priority, qMax(0, priority));
+            queued.value().foreground = queued.value().foreground || foreground;
         }
         return;
     }
@@ -166,6 +188,7 @@ void MapTileRepository::requestTile(const QString &endpoint, const QString &key,
     request.priority = qMax(0, priority);
     request.request_batch = request_batch;
     request.request_sequence = this->next_tile_request_sequence++;
+    request.foreground = foreground;
 
     this->tiles_pending.insert(key);
     this->tile_requests_queued.insert(key, request);
@@ -210,8 +233,12 @@ void MapTileRepository::processTileRequestQueue()
             if (best == this->tile_requests_queued.end() ||
                 iterator.value().request_batch > best.value().request_batch ||
                 (iterator.value().request_batch == best.value().request_batch &&
+                 iterator.value().foreground && !best.value().foreground) ||
+                (iterator.value().request_batch == best.value().request_batch &&
+                 iterator.value().foreground == best.value().foreground &&
                  iterator.value().priority < best.value().priority) ||
                 (iterator.value().request_batch == best.value().request_batch &&
+                 iterator.value().foreground == best.value().foreground &&
                  iterator.value().priority == best.value().priority &&
                  iterator.value().request_sequence > best.value().request_sequence))
             {
@@ -222,6 +249,13 @@ void MapTileRepository::processTileRequestQueue()
 
         if (best == this->tile_requests_queued.end())
             break;
+
+        if (!best.value().foreground
+            && this->background_tiles_in_flight.size() >=
+                MaximumBackgroundTileRequestsInFlight)
+        {
+            break;
+        }
 
         const QString key = best.key();
         const PendingTileRequest request = best.value();
@@ -236,13 +270,15 @@ void MapTileRepository::processTileRequestQueue()
         }
 
         this->tiles_in_flight.insert(key);
+        if (!request.foreground)
+            this->background_tiles_in_flight.insert(key);
         ++dispatched;
         this->interface_map->requestTile(
             request.endpoint, key, request.x, request.y);
     }
 
-    if (!this->tile_requests_queued.isEmpty() &&
-        this->tiles_in_flight.size() < MaximumTileRequestsInFlight)
+    if (dispatched > 0 && !this->tile_requests_queued.isEmpty()
+        && this->tiles_in_flight.size() < MaximumTileRequestsInFlight)
     {
         scheduleTileRequestDispatch();
     }
@@ -261,8 +297,12 @@ void MapTileRepository::trimTileRequestQueue()
             if (worst == this->tile_requests_queued.end() ||
                 iterator.value().request_batch < worst.value().request_batch ||
                 (iterator.value().request_batch == worst.value().request_batch &&
+                 !iterator.value().foreground && worst.value().foreground) ||
+                (iterator.value().request_batch == worst.value().request_batch &&
+                 iterator.value().foreground == worst.value().foreground &&
                  iterator.value().priority > worst.value().priority) ||
                 (iterator.value().request_batch == worst.value().request_batch &&
+                 iterator.value().foreground == worst.value().foreground &&
                  iterator.value().priority == worst.value().priority &&
                  iterator.value().request_sequence < worst.value().request_sequence))
             {
@@ -426,6 +466,10 @@ void MapTileRepository::initServerMapInterface()
     this->tile_request_timer->stop();
     this->tile_requests_queued.clear();
     this->tiles_in_flight.clear();
+    this->background_tiles_in_flight.clear();
+    this->active_tile_request_owner = 0;
+    this->active_tile_request_layout_key.clear();
+    this->active_tile_request_batch = 0;
     this->tiles_pending.clear();
     this->tiles_invalidated_while_pending.clear();
     this->tile_failures.clear();
@@ -464,6 +508,7 @@ void MapTileRepository::initServerMapInterface()
 void MapTileRepository::tileDataReceived(const QString &key, const QByteArray &data)
 {
     this->tiles_in_flight.remove(key);
+    this->background_tiles_in_flight.remove(key);
     scheduleTileRequestDispatch();
 
     if (!this->tiles_pending.contains(key))
@@ -545,6 +590,7 @@ void MapTileRepository::tileFailed(const QString &key)
 {
     this->tile_requests_queued.remove(key);
     this->tiles_in_flight.remove(key);
+    this->background_tiles_in_flight.remove(key);
     this->tiles_pending.remove(key);
     scheduleTileRequestDispatch();
 

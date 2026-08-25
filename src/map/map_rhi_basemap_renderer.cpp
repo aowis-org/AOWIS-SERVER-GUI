@@ -275,13 +275,16 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     const double wrap_offset = std::round(
         (origin_tile_x - center.x()) / qMax(1, tile_count)) * tile_count;
     const double rendered_center_x = center.x() + wrap_offset;
-    int tiles_x = viewport_size.width() / MapModel::TileSize + 4;
-    int tiles_y = viewport_size.height() / MapModel::TileSize + 4;
+    const int foreground_tiles_x = viewport_size.width() / MapModel::TileSize + 4;
+    const int foreground_tiles_y = viewport_size.height() / MapModel::TileSize + 4;
+    int tiles_x = foreground_tiles_x;
+    int tiles_y = foreground_tiles_y;
     if (this->map_model->viewMode() == MapViewMode::ThreeD)
     {
         // The pitched camera sees substantially farther along the ground plane
         // than the orthographic viewport. Keep a wider tile apron so orbiting
-        // never exposes the clear color around the map.
+        // never exposes the clear color around the map. The apron is background
+        // work: screen-covering tiles must finish first during initial loading.
         tiles_x = tiles_x * 2 + 4;
         tiles_y = tiles_y * 3 + 6;
     }
@@ -289,7 +292,16 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     const int center_tile_y = int(std::floor(center.y()));
     const int start_x = center_tile_x - tiles_x / 2;
     const int start_y = center_tile_y - tiles_y / 2;
-    const quint64 request_batch = this->tile_repository->beginTileRequestBatch();
+    const int foreground_start_x = center_tile_x - foreground_tiles_x / 2;
+    const int foreground_start_y = center_tile_y - foreground_tiles_y / 2;
+    const QString request_layout_key = QStringLiteral("%1|%2|%3|%4|%5")
+        .arg(this->map_model->tileCachePrefix(zoom))
+        .arg(start_x)
+        .arg(start_y)
+        .arg(tiles_x)
+        .arg(tiles_y);
+    const quint64 request_batch = this->tile_repository->beginTileRequestBatch(
+        this, request_layout_key);
 
     QVector<VisibleTile> next_tiles;
     next_tiles.reserve(tiles_x * tiles_y);
@@ -314,9 +326,14 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
                 const int priority_x = virtual_x - center_tile_x;
                 const int priority_y = y - center_tile_y;
                 const int priority = priority_x * priority_x + priority_y * priority_y;
+                const bool foreground =
+                    virtual_x >= foreground_start_x
+                    && virtual_x < foreground_start_x + foreground_tiles_x
+                    && y >= foreground_start_y
+                    && y < foreground_start_y + foreground_tiles_y;
                 this->tile_repository->requestTile(
                     this->map_model->tileEndpoint(tile_x, y),
-                    tile.key, tile_x, y, priority, request_batch);
+                    tile.key, tile_x, y, priority, request_batch, foreground);
             }
         }
     }

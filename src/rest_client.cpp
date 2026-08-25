@@ -13,7 +13,7 @@ namespace
 {
 constexpr int MaximumErrorBodyLength = 512;
 #ifndef Q_OS_WASM
-constexpr int TileNetworkManagerCount = 4;
+constexpr int TileNetworkManagerCount = 8;
 #endif
 }
 

@@ -27,9 +27,9 @@ public:
     ~MapTileRepository() override;
 
     const QPixmap *tile(const QString &key) const;
-    quint64 beginTileRequestBatch();
+    quint64 beginTileRequestBatch(const void *owner, const QString &layout_key);
     void requestTile(const QString &endpoint, const QString &key, int x, int y,
-                     int priority, quint64 request_batch);
+                     int priority, quint64 request_batch, bool foreground = true);
     void deleteTiles(const QString &provider, int zoom,
                      int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max);
     void setMapServerMode(MapServerMode mode);
@@ -54,6 +54,7 @@ private:
         int priority = 0;
         quint64 request_batch = 0;
         quint64 request_sequence = 0;
+        bool foreground = true;
     };
 
     struct PendingTileDeletion
@@ -90,9 +91,13 @@ private:
     InterfaceServerMap *interface_map = nullptr;
     QSet<QString> tiles_pending;
     QSet<QString> tiles_in_flight;
+    QSet<QString> background_tiles_in_flight;
     QHash<QString, PendingTileRequest> tile_requests_queued;
     QTimer *tile_request_timer = nullptr;
     quint64 next_tile_request_batch = 1;
+    quintptr active_tile_request_owner = 0;
+    QString active_tile_request_layout_key;
+    quint64 active_tile_request_batch = 0;
     quint64 next_tile_request_sequence = 1;
     QSet<QString> tiles_invalidated_while_pending;
     QHash<QString, TileFailure> tile_failures;
