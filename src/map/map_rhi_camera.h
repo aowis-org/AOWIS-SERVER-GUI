@@ -5,6 +5,8 @@
 #include <QPointF>
 #include <QSize>
 
+#include "../_enums_structs.h"
+
 class MapModel;
 class QRhi;
 
@@ -24,6 +26,7 @@ private:
     QPointF center_world;
     QSize viewport_size;
     int zoom = 0;
+    MapViewMode view_mode = MapViewMode::TwoD;
 };
 
 #endif // MAP_RHI_CAMERA_H

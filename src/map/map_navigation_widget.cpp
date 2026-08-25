@@ -1,5 +1,9 @@
 #include "map_navigation_widget.h"
 
+#ifndef Q_OS_WASM
+#include "../gui_configuration.h"
+#endif
+
 MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidget *keyboard_focus_target, QWidget *parent)
     : QWidget{parent},
     mode( mode ),
@@ -76,6 +80,43 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
         this->activateMapProvider(MapProvider::OSMCyclo);
     });
     
+    QLabel *label_map_view_mode = new QLabel("View Mode");
+    this->combo_map_view_mode = new QComboBox();
+    this->combo_map_view_mode->addItem("2D", int(MapViewMode::TwoD));
+    this->combo_map_view_mode->addItem("3D", int(MapViewMode::ThreeD));
+    this->combo_map_view_mode->setToolTip("Switch between the top-down 2D map and the 3D map view.");
+
+    const MapViewMode initial_view_mode = this->map->model()->viewMode();
+    const int initial_view_index = this->combo_map_view_mode->findData(int(initial_view_mode));
+    if (initial_view_index >= 0)
+        this->combo_map_view_mode->setCurrentIndex(initial_view_index);
+
+    connect(this->combo_map_view_mode, &QComboBox::currentIndexChanged, this, [this](int index)
+    {
+        const QVariant view_mode_data = this->combo_map_view_mode->itemData(index);
+        if (!view_mode_data.isValid())
+            return;
+
+        this->map->model()->setViewMode(static_cast<MapViewMode>(view_mode_data.toInt()));
+    });
+    connect(this->map->model(), &MapModel::viewModeChanged, this, [this](MapViewMode view_mode)
+    {
+        const int index = this->combo_map_view_mode->findData(int(view_mode));
+        if (index < 0 || index == this->combo_map_view_mode->currentIndex())
+            return;
+
+        const QSignalBlocker blocker(this->combo_map_view_mode);
+        this->combo_map_view_mode->setCurrentIndex(index);
+    });
+
+#ifndef Q_OS_WASM
+    const bool view_mode_selector_visible = desktopMapRenderer() == DesktopMapRenderer::Rhi;
+#else
+    const bool view_mode_selector_visible = false;
+#endif
+    label_map_view_mode->setVisible(view_mode_selector_visible);
+    this->combo_map_view_mode->setVisible(view_mode_selector_visible);
+
     QLabel *label_slider_map_visibility = new QLabel("Opacity");
     QSlider *slider_map_visibility = new QSlider(Qt::Horizontal);
     slider_map_visibility->setRange(0, 100);
@@ -107,11 +148,13 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     this->grid->addWidget(map_openstreetmap, 3, 0, 1, 3);
     this->grid->addWidget(map_opentopomap, 4, 0, 1, 3);
     this->grid->addWidget(map_osmcyclo, 5, 0, 1, 3);
-    this->grid->addWidget(label_slider_map_visibility, 6, 0, 1, 3);
-    this->grid->addWidget(slider_map_visibility, 7, 0, 1, 3);
-    this->grid->addWidget(label_slider_icon_size, 8, 0, 1, 3);
-    this->grid->addWidget(this->slider_icon_size, 9, 0, 1, 3);
-    this->grid->addWidget(check_map_sync, 10, 0, 1, 3);
+    this->grid->addWidget(label_map_view_mode, 6, 0, 1, 3);
+    this->grid->addWidget(this->combo_map_view_mode, 7, 0, 1, 3);
+    this->grid->addWidget(label_slider_map_visibility, 8, 0, 1, 3);
+    this->grid->addWidget(slider_map_visibility, 9, 0, 1, 3);
+    this->grid->addWidget(label_slider_icon_size, 10, 0, 1, 3);
+    this->grid->addWidget(this->slider_icon_size, 11, 0, 1, 3);
+    this->grid->addWidget(check_map_sync, 12, 0, 1, 3);
     
     this->button_group_map_select = new QButtonGroup(this);
     this->button_group_map_select->addButton(this->map_arcgissat, 1);

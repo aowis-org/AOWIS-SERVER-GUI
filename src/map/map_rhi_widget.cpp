@@ -116,6 +116,11 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
             this->basemap_renderer->invalidate();
         update();
     });
+    connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode)
+    {
+        syncViewState();
+        update();
+    });
     connect(this->map_model, &MapModel::providerChanged, this, [this](MapProvider)
     {
         if (this->basemap_renderer)

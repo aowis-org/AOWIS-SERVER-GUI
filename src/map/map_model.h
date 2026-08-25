@@ -27,6 +27,7 @@ public:
     double centerLat() const;
 
     MapProvider provider() const;
+    MapViewMode viewMode() const;
     QString tileCacheKey(int x, int y) const;
     QString tileCachePrefix(int zoom) const;
     QString tileEndpoint(int x, int y) const;
@@ -53,12 +54,14 @@ public:
     void panByPixels(const QPoint &delta, const QSize &viewport);
 
     void setProvider(MapProvider provider);
+    void setViewMode(MapViewMode view_mode);
 
 signals:
     void zoomChanged(int zoom);
     void centerChangedWGS84(CoordinateWGS84 wgs);
     void centerChangedUTM(CoordinateUTM utm);
     void providerChanged(MapProvider provider);
+    void viewModeChanged(MapViewMode view_mode);
 
 private:
     void clampCenter(const QSize &viewport);
@@ -75,6 +78,7 @@ private:
     */
 
     MapProvider m_provider = MapProvider::ArcGISSat;
+    MapViewMode m_view_mode = MapViewMode::TwoD;
 };
 
 #endif // MAP_MODEL_H

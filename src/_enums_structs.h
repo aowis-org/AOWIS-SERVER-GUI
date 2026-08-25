@@ -35,6 +35,12 @@ enum CanvasMode
     Monitor
 };
 
+enum class MapViewMode
+{
+    TwoD,
+    ThreeD
+};
+
 enum class VisualNode
 {
     None,

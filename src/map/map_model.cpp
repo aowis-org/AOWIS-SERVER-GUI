@@ -38,6 +38,11 @@ MapProvider MapModel::provider() const
     return this->m_provider;
 }
 
+MapViewMode MapModel::viewMode() const
+{
+    return this->m_view_mode;
+}
+
 int MapModel::tileCount() const
 {
     return 1 << this->m_zoom;
@@ -232,6 +237,15 @@ void MapModel::setProvider(MapProvider provider)
 
     this->m_provider = provider;
     emit providerChanged(this->m_provider);
+}
+
+void MapModel::setViewMode(MapViewMode view_mode)
+{
+    if (this->m_view_mode == view_mode)
+        return;
+
+    this->m_view_mode = view_mode;
+    emit viewModeChanged(this->m_view_mode);
 }
 
 CoordinateWGS84 MapModel::wgs84FromScreen(const QPoint &pos, const QSize &viewport) const

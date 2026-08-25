@@ -21,6 +21,7 @@ void MapRhiCamera::setViewportSize(const QSize &viewport_size)
 void MapRhiCamera::syncFromMapModel(const MapModel &map_model)
 {
     this->zoom = map_model.zoom();
+    this->view_mode = map_model.viewMode();
 
     const QPointF raw_center_world = GeoWebMercator::lonLatToWorldPixel(
         GeoWebMercator::normalizeLongitude(map_model.centerLon()),
@@ -38,6 +39,10 @@ void MapRhiCamera::syncFromMapModel(const MapModel &map_model)
 
 QMatrix4x4 MapRhiCamera::viewProjectionMatrix(const QRhi &rhi) const
 {
+    // Keep the established top-down projection until the perspective camera uses
+    // the runtime view-mode state.
+    Q_UNUSED(this->view_mode);
+
     const int viewport_width = qMax(1, this->viewport_size.width());
     const int viewport_height = qMax(1, this->viewport_size.height());
     const double scale = GeoWebMercator::zoomScale(
