@@ -115,6 +115,7 @@ public:
     int nodeSizePercent() const;
     int linkThicknessPx() const;
     float elevationToWorldZ(double elevation_m) const;
+    float terrainElevationToWorldZ(double elevation_m) const;
 
 private:
     struct HeatmapMarker

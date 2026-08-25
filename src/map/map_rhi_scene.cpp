@@ -512,6 +512,25 @@ float MapRhiScene::elevationToWorldZ(double elevation_m) const
     return localElevationWorld(elevation_m);
 }
 
+float MapRhiScene::terrainElevationToWorldZ(double elevation_m) const
+{
+    if (!std::isfinite(elevation_m))
+        return 1.0f;
+
+    const double meters_per_world_pixel = GeoWebMercator::metersPerPixel(
+        this->reference_latitude_deg, MapRenderCacheMath::ReferenceZoom);
+    if (!std::isfinite(meters_per_world_pixel) || meters_per_world_pixel <= 0.0)
+        return 1.0f;
+
+    // Terrain must retain its physical relief. The network renderer may use an
+    // adaptive vertical exaggeration for readability, but applying that same
+    // exaggeration to the ground makes mountains artificially tall. Keep the
+    // same elevation reference and one-pixel network separation, but use 1:1
+    // vertical scale for terrain.
+    return float(1.0 + (elevation_m - this->elevation_reference_m)
+        / meters_per_world_pixel);
+}
+
 QPointF MapRhiScene::chooseOriginWorld(const NetworkRenderSnapshot &snapshot) const
 {
     for (const NetworkRenderNode &node : snapshot.nodes)

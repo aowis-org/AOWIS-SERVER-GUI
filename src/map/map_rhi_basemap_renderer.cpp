@@ -23,7 +23,7 @@ namespace
 constexpr int MaximumCachedGpuTiles = 160;
 constexpr int TerrainReliefMinimumZoom = 8;
 constexpr int TerrainReliefMaximumZoom = 14;
-constexpr double TerrainVerticalExaggerationFallback = 2.5;
+constexpr double TerrainVerticalScale = 1.0;
 
 bool reliefTerrainEnabled(const MapModel &map_model, const MapTerrainRepository *terrain_repository)
 {
@@ -717,7 +717,7 @@ float MapRhiBasemapRenderer::terrainElevationWorldZ(double elevation_m) const
         // MapRhiScene intentionally lifts network geometry by one reference-world
         // pixel above its elevation plane. Keep terrain on the plane so pipes and
         // nodes at ground elevation remain visible instead of z-fighting it.
-        return this->scene->elevationToWorldZ(elevation_m) - 1.0f;
+        return this->scene->terrainElevationToWorldZ(elevation_m) - 1.0f;
     }
 
     if (!std::isfinite(elevation_m) || this->map_model == nullptr)
@@ -729,5 +729,5 @@ float MapRhiBasemapRenderer::terrainElevationWorldZ(double elevation_m) const
         return 0.0f;
 
     return float(elevation_m / meters_per_world_pixel
-        * TerrainVerticalExaggerationFallback);
+        * TerrainVerticalScale);
 }
