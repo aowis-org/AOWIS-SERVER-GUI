@@ -44,9 +44,10 @@ View3dCameraBasis view3dCameraBasis(double yaw_deg, double pitch_deg, const QSiz
         float(std::cos(yaw_rad) * horizontal_distance),
         float(distance * std::sin(pitch_rad)));
     basis.forward = (-basis.eye).normalized();
+    // Web Mercator X grows eastward, so north-up yaw 0 has +X on screen-right.
     basis.right = QVector3D(
-        float(-std::cos(yaw_rad)), float(std::sin(yaw_rad)), 0.0f);
-    basis.up = QVector3D::crossProduct(basis.right, basis.forward).normalized();
+        float(std::cos(yaw_rad)), float(-std::sin(yaw_rad)), 0.0f);
+    basis.up = QVector3D::crossProduct(basis.forward, basis.right).normalized();
     return basis;
 }
 

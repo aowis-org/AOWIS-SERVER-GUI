@@ -13,6 +13,7 @@
 #include <QPainter>
 #include <QPalette>
 #include <QPolygonF>
+#include <QRadialGradient>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QVariantAnimation>
@@ -25,7 +26,7 @@
 namespace
 {
 constexpr int HudMarginPx = 6;
-constexpr int CompassDiameterPx = 72;
+constexpr int CompassDiameterPx = 82;
 constexpr double CompassWheelStepDeg = 5.0;
 constexpr int NorthAnimationDurationMs = 280;
 constexpr int CompassDragThresholdPx = 4;
@@ -55,6 +56,7 @@ public:
         Q_ASSERT(this->map_model != nullptr);
 
         setFixedSize(CompassDiameterPx, CompassDiameterPx);
+        setAttribute(Qt::WA_TranslucentBackground, true);
         setCursor(Qt::OpenHandCursor);
         setToolTip(QStringLiteral(
             "Compass\n"
@@ -87,46 +89,95 @@ protected:
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing, true);
 
-        const QRectF dial_rect = rect().adjusted(4, 4, -4, -4);
-        QColor dial_background = palette().color(QPalette::Base);
-        dial_background.setAlpha(225);
-        painter.setPen(QPen(palette().color(QPalette::Mid), 1.0));
-        painter.setBrush(dial_background);
-        painter.drawEllipse(dial_rect);
+        const QRectF outer_rect = rect().adjusted(2.5, 2.5, -2.5, -2.5);
+        const QPointF center = outer_rect.center();
+        const double radius = outer_rect.width() / 2.0;
 
-        const QPointF center = dial_rect.center();
+        QColor shadow = palette().color(QPalette::Shadow);
+        shadow.setAlpha(85);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(shadow);
+        painter.drawEllipse(outer_rect.translated(0.0, 1.5));
+
+        QColor center_color = palette().color(QPalette::Base);
+        center_color.setAlpha(245);
+        QColor edge_color = palette().color(QPalette::Window);
+        edge_color.setAlpha(225);
+        QRadialGradient face_gradient(center, radius);
+        face_gradient.setColorAt(0.0, center_color);
+        face_gradient.setColorAt(1.0, edge_color);
+        painter.setBrush(face_gradient);
+        painter.setPen(QPen(palette().color(QPalette::Mid), 1.2));
+        painter.drawEllipse(outer_rect);
+
+        const QRectF ring_rect = outer_rect.adjusted(5.0, 5.0, -5.0, -5.0);
+        painter.setBrush(Qt::NoBrush);
+        painter.setPen(QPen(palette().color(QPalette::Midlight), 1.0));
+        painter.drawEllipse(ring_rect);
+
         painter.save();
         painter.translate(center);
-        painter.rotate(-this->map_model->view3dYawDeg());
+        painter.rotate(this->map_model->view3dYawDeg());
 
-        QFont north_font = font();
-        north_font.setBold(true);
-        north_font.setPointSizeF(qMax(8.0, north_font.pointSizeF()));
-        painter.setFont(north_font);
+        const double tick_outer = ring_rect.width() / 2.0 - 1.5;
+        for (int tick = 0; tick < 24; ++tick)
+        {
+            const bool major = tick % 6 == 0;
+            const bool medium = !major && tick % 3 == 0;
+            const double tick_length = major ? 7.0 : (medium ? 5.0 : 3.0);
+            painter.setPen(QPen(
+                major ? palette().color(QPalette::Text) : palette().color(QPalette::Mid),
+                major ? 1.5 : 1.0));
+            painter.drawLine(
+                QPointF(0.0, -tick_outer),
+                QPointF(0.0, -tick_outer + tick_length));
+            painter.rotate(15.0);
+        }
+
+        QFont cardinal_font = font();
+        cardinal_font.setBold(true);
+        cardinal_font.setPointSizeF(qMax(7.5, cardinal_font.pointSizeF() - 0.5));
+        painter.setFont(cardinal_font);
+
+        const QColor accent = palette().color(QPalette::Highlight);
+        painter.setPen(accent);
+        painter.drawText(QRectF(-12.0, -radius + 10.0, 24.0, 16.0),
+                         Qt::AlignCenter, QStringLiteral("N"));
         painter.setPen(palette().color(QPalette::Text));
-        const QRectF north_rect(-14.0, -dial_rect.height() / 2.0 + 6.0, 28.0, 18.0);
-        painter.drawText(north_rect, Qt::AlignCenter, QStringLiteral("N"));
+        painter.drawText(QRectF(radius - 25.0, -8.0, 20.0, 16.0),
+                         Qt::AlignCenter, QStringLiteral("E"));
+        painter.drawText(QRectF(-10.0, radius - 26.0, 20.0, 16.0),
+                         Qt::AlignCenter, QStringLiteral("S"));
+        painter.drawText(QRectF(-radius + 5.0, -8.0, 20.0, 16.0),
+                         Qt::AlignCenter, QStringLiteral("W"));
 
-        QPolygonF north_pointer;
-        north_pointer << QPointF(0.0, -dial_rect.height() / 2.0 + 24.0)
-                      << QPointF(-5.0, -4.0)
-                      << QPointF(5.0, -4.0);
-        painter.setBrush(palette().color(QPalette::Text));
+        QPolygonF north_needle;
+        north_needle << QPointF(0.0, -radius + 27.0)
+                     << QPointF(-5.0, 4.0)
+                     << QPointF(5.0, 4.0);
         painter.setPen(Qt::NoPen);
-        painter.drawPolygon(north_pointer);
+        painter.setBrush(accent);
+        painter.drawPolygon(north_needle);
 
-        QPolygonF south_pointer;
-        south_pointer << QPointF(0.0, dial_rect.height() / 2.0 - 9.0)
-                      << QPointF(-4.0, 4.0)
-                      << QPointF(4.0, 4.0);
-        QColor south_color = palette().color(QPalette::Mid);
-        painter.setBrush(south_color);
-        painter.drawPolygon(south_pointer);
+        QPolygonF south_needle;
+        south_needle << QPointF(0.0, radius - 19.0)
+                     << QPointF(-4.0, -4.0)
+                     << QPointF(4.0, -4.0);
+        painter.setBrush(palette().color(QPalette::Mid));
+        painter.drawPolygon(south_needle);
         painter.restore();
 
-        painter.setPen(QPen(palette().color(QPalette::Text), 1.5));
+        painter.setPen(QPen(palette().color(QPalette::Text), 1.0));
         painter.setBrush(palette().color(QPalette::Window));
-        painter.drawEllipse(center, 3.0, 3.0);
+        painter.drawEllipse(center, 3.5, 3.5);
+
+        QPolygonF heading_marker;
+        heading_marker << QPointF(center.x(), outer_rect.top() + 1.0)
+                       << QPointF(center.x() - 4.0, outer_rect.top() + 7.0)
+                       << QPointF(center.x() + 4.0, outer_rect.top() + 7.0);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(palette().color(QPalette::Text));
+        painter.drawPolygon(heading_marker);
     }
 
     void mousePressEvent(QMouseEvent *event) override
@@ -164,7 +215,7 @@ protected:
         if (std::isfinite(pointer_delta_deg))
         {
             this->map_model->setView3dYawDeg(
-                this->map_model->view3dYawDeg() - pointer_delta_deg);
+                this->map_model->view3dYawDeg() + pointer_delta_deg);
         }
 
         event->accept();
@@ -283,7 +334,21 @@ MapMonitorViewModeHudWidget::MapMonitorViewModeHudWidget(
     });
 }
 
-MapMonitorCameraHudWidget::MapMonitorCameraHudWidget(MapModel *map_model, QWidget *parent)
+MapMonitorCompassHudWidget::MapMonitorCompassHudWidget(
+    MapModel *map_model, QWidget *parent)
+    : QWidget(parent)
+{
+    Q_ASSERT(map_model != nullptr);
+    setAttribute(Qt::WA_TranslucentBackground, true);
+    setFocusPolicy(Qt::NoFocus);
+
+    QHBoxLayout *layout = new QHBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    layout->addWidget(new MapCompassWidget(map_model, this));
+}
+
+MapMonitorTiltHudWidget::MapMonitorTiltHudWidget(MapModel *map_model, QWidget *parent)
     : QFrame(parent),
       map_model(map_model),
       tilt_slider(new QSlider(Qt::Vertical, this)),
@@ -292,16 +357,9 @@ MapMonitorCameraHudWidget::MapMonitorCameraHudWidget(MapModel *map_model, QWidge
     Q_ASSERT(this->map_model != nullptr);
     configureHudFrame(this);
 
-    QHBoxLayout *layout = new QHBoxLayout(this);
-    layout->setContentsMargins(HudMarginPx, HudMarginPx, HudMarginPx, HudMarginPx);
-    layout->setSpacing(7);
-
-    MapCompassWidget *compass = new MapCompassWidget(this->map_model, this);
-    layout->addWidget(compass, 0, Qt::AlignBottom);
-
-    QVBoxLayout *tilt_layout = new QVBoxLayout();
-    tilt_layout->setContentsMargins(0, 0, 0, 0);
-    tilt_layout->setSpacing(1);
+    QVBoxLayout *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(4, 5, 4, 5);
+    layout->setSpacing(1);
 
     QLabel *maximum_label = new QLabel(QStringLiteral("90°"), this);
     maximum_label->setAlignment(Qt::AlignHCenter);
@@ -312,17 +370,16 @@ MapMonitorCameraHudWidget::MapMonitorCameraHudWidget(MapModel *map_model, QWidge
     this->tilt_slider->setRange(
         qRound(MapModel::MinView3dPitchDeg), qRound(MapModel::MaxView3dPitchDeg));
     this->tilt_slider->setValue(qRound(this->map_model->view3dPitchDeg()));
-    this->tilt_slider->setFixedHeight(92);
+    this->tilt_slider->setFixedHeight(82);
     this->tilt_slider->setToolTip(QStringLiteral(
         "Camera tilt\n0° = horizon\n90° = straight down"));
     this->tilt_value_label->setText(
         QStringLiteral("%1°").arg(qRound(this->map_model->view3dPitchDeg())));
 
-    tilt_layout->addWidget(maximum_label);
-    tilt_layout->addWidget(this->tilt_slider, 1, Qt::AlignHCenter);
-    tilt_layout->addWidget(minimum_label);
-    tilt_layout->addWidget(this->tilt_value_label);
-    layout->addLayout(tilt_layout);
+    layout->addWidget(maximum_label);
+    layout->addWidget(this->tilt_slider, 1, Qt::AlignHCenter);
+    layout->addWidget(minimum_label);
+    layout->addWidget(this->tilt_value_label);
 
     connect(this->tilt_slider, &QSlider::valueChanged, this, [this](int pitch_deg)
     {

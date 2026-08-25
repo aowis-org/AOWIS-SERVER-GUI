@@ -2,6 +2,7 @@
 #define MAP_MONITOR_HUD_CONTROLS_H
 
 #include <QFrame>
+#include <QWidget>
 
 class MapModel;
 class QComboBox;
@@ -20,12 +21,20 @@ private:
     QComboBox *view_mode_combo = nullptr;
 };
 
-class MapMonitorCameraHudWidget final : public QFrame
+class MapMonitorCompassHudWidget final : public QWidget
 {
     Q_OBJECT
 
 public:
-    explicit MapMonitorCameraHudWidget(MapModel *map_model, QWidget *parent = nullptr);
+    explicit MapMonitorCompassHudWidget(MapModel *map_model, QWidget *parent = nullptr);
+};
+
+class MapMonitorTiltHudWidget final : public QFrame
+{
+    Q_OBJECT
+
+public:
+    explicit MapMonitorTiltHudWidget(MapModel *map_model, QWidget *parent = nullptr);
 
 private:
     MapModel *map_model = nullptr;

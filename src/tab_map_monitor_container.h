@@ -40,7 +40,8 @@ class MapNetworkOverlayWidget;
 class MapRhiWidget;
 class MapRhiHudWidget;
 class MapMonitorViewModeHudWidget;
-class MapMonitorCameraHudWidget;
+class MapMonitorCompassHudWidget;
+class MapMonitorTiltHudWidget;
 
 #ifdef Q_OS_WASM
 #include "gps_provider_dummy.h"
@@ -120,7 +121,8 @@ private:
     MapRhiWidget *desktop_rhi_surface = nullptr;
     MapRhiHudWidget *desktop_rhi_hud = nullptr;
     MapMonitorViewModeHudWidget *desktop_view_mode_hud = nullptr;
-    MapMonitorCameraHudWidget *desktop_camera_hud = nullptr;
+    MapMonitorCompassHudWidget *desktop_compass_hud = nullptr;
+    MapMonitorTiltHudWidget *desktop_tilt_hud = nullptr;
 #endif
     MapMonitorMenuWidget *map_menu = nullptr;
     int network_background_opacity = 0;

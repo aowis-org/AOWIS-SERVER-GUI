@@ -77,10 +77,21 @@ QMatrix4x4 MapRhiCamera::viewProjectionMatrix(const QRhi &rhi) const
             FieldOfViewDeg, float(viewport_width) / float(viewport_height),
             float(qMax(0.01, distance * 0.01)),
             float(qMax(10.0, distance * 20.0)));
+
+        // Web Mercator uses +X east and +Y south. Together with +Z up this
+        // gives the map plane the opposite handedness from QMatrix4x4::lookAt().
+        // lookAt() therefore places geographic east on the left even though the
+        // logical 3D camera/picking basis correctly uses +X as screen-right.
+        // Flip only the perspective X projection so rendering matches that basis;
+        // do not invert yaw, panning, picking, or map coordinates to compensate.
+        projection(0, 0) = -projection(0, 0);
+
         const QVector3D forward = (target - eye).normalized();
+        // Web Mercator X grows eastward. At yaw 0, screen-right must therefore
+        // point east (+X), otherwise the entire perspective map is mirrored.
         const QVector3D right(
-            float(-std::cos(yaw_rad)), float(std::sin(yaw_rad)), 0.0f);
-        const QVector3D camera_up = QVector3D::crossProduct(right, forward).normalized();
+            float(std::cos(yaw_rad)), float(-std::sin(yaw_rad)), 0.0f);
+        const QVector3D camera_up = QVector3D::crossProduct(forward, right).normalized();
         QMatrix4x4 view;
         view.lookAt(eye, target, camera_up);
 
@@ -133,9 +144,10 @@ QPointF MapRhiCamera::projectWorldToScreen(const QVector3D &world_position) cons
         target.y() + float(std::cos(yaw_rad) * horizontal_distance),
         float(distance * std::sin(pitch_rad)));
     const QVector3D forward = (target - eye).normalized();
+    // Keep CPU projection in the same east-right basis as the GPU view matrix.
     const QVector3D right(
-        float(-std::cos(yaw_rad)), float(std::sin(yaw_rad)), 0.0f);
-    const QVector3D up = QVector3D::crossProduct(right, forward).normalized();
+        float(std::cos(yaw_rad)), float(-std::sin(yaw_rad)), 0.0f);
+    const QVector3D up = QVector3D::crossProduct(forward, right).normalized();
     const QVector3D relative = world_position - eye;
     const double depth = QVector3D::dotProduct(relative, forward);
     if (depth <= 1e-6)
