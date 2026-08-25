@@ -963,21 +963,20 @@ bool MapMonitorContainer::selectNetworkEntity(quint32 render_id, InfrastructureE
 #ifndef Q_OS_WASM
 void MapMonitorContainer::updateDesktopNetworkHover(const QPointF &position, Qt::MouseButtons buttons)
 {
-#if AOWIS_HAS_QRHI
-    if (this->map_model->viewMode() == MapViewMode::ThreeD
-        && this->desktop_rhi_surface != nullptr
-        && this->desktop_rhi_surface->isVisible())
-    {
-        setDesktopNetworkHovered(false);
-        return;
-    }
-#endif
-
     if (buttons != Qt::NoButton)
     {
         setDesktopNetworkHovered(false);
         return;
     }
+
+#if AOWIS_HAS_QRHI
+    if (this->desktop_rhi_surface != nullptr
+        && this->desktop_rhi_surface->isVisible())
+    {
+        setDesktopNetworkHovered(this->desktop_rhi_surface->hitTest(position).isValid());
+        return;
+    }
+#endif
 
     setDesktopNetworkHovered(this->desktop_network_overlay->hitTest(position).isValid());
 }
