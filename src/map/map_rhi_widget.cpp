@@ -1994,10 +1994,6 @@ void MapRhiWidget::syncTerrainAwareCameraDistance()
     QScopedValueRollback<bool> sync_guard(
         this->terrain_camera_distance_sync_active, true);
 
-    CoordinateWGS84 target_coordinate;
-    target_coordinate.longitude_deg = this->map_model->centerLon();
-    target_coordinate.latitude_deg = this->map_model->centerLat();
-
     double world_units_per_meter = 0.0;
     if (this->scene.hasGeometry())
     {
@@ -2010,7 +2006,7 @@ void MapRhiWidget::syncTerrainAwareCameraDistance()
     else
     {
         const double meters_per_world_pixel = GeoWebMercator::metersPerPixel(
-            target_coordinate.latitude_deg, MapRenderCacheMath::ReferenceZoom);
+            this->map_model->centerLat(), MapRenderCacheMath::ReferenceZoom);
         if (std::isfinite(meters_per_world_pixel) && meters_per_world_pixel > 0.0)
             world_units_per_meter = TerrainVerticalScale / meters_per_world_pixel;
     }
@@ -2028,28 +2024,6 @@ void MapRhiWidget::syncTerrainAwareCameraDistance()
         this->map_model->view3dMaximumCameraDistanceM());
     double effective_distance_world = requested_distance_m * world_units_per_meter;
 
-    // The orbit target is the terrain point under the crosshair. Camera distance,
-    // tilt and collision handling must never move this point vertically.
-    double target_terrain_elevation_m = 0.0;
-    if (!terrainElevationAtCoordinate(target_coordinate, &target_terrain_elevation_m))
-    {
-        this->map_model->setView3dCameraDistanceWorld(effective_distance_world);
-        this->map_model->setView3dCameraCollisionLiftWorld(0.0);
-        return;
-    }
-
-    double target_world_z = 0.0;
-    if (this->scene.hasGeometry())
-    {
-        target_world_z = double(
-            this->scene.terrainElevationToWorldZ(target_terrain_elevation_m)) - 1.0;
-    }
-    else
-    {
-        target_world_z = target_terrain_elevation_m * world_units_per_meter;
-    }
-    this->map_model->setView3dVerticalOffsetWorld(target_world_z);
-
     const double pitch_rad = qDegreesToRadians(qBound(
         MapModel::MinView3dPitchDeg,
         this->map_model->view3dPitchDeg(),
@@ -2058,10 +2032,18 @@ void MapRhiWidget::syncTerrainAwareCameraDistance()
     const double minimum_clearance_world =
         MapModel::MinView3dCameraGroundClearanceM * world_units_per_meter;
 
-    // Prefer preserving the requested orbit angle by increasing radius when the
-    // eye would enter terrain. Terrain under the eye is re-sampled after each
-    // radius correction because moving along the orbit ray also moves its XY
-    // footprint across the DEM.
+    // Terrain following is driven by the ground directly below the camera eye,
+    // not by the terrain under the crosshair. Moving the crosshair onto a
+    // mountain must therefore not raise the orbit rig before the camera itself
+    // reaches that mountain. The whole rig is translated vertically so yaw,
+    // pitch, radius and all existing controls keep their current geometry.
+    double rig_world_z = this->map_model->view3dVerticalOffsetWorld();
+    bool camera_terrain_available = false;
+
+    // Preserve the requested orbit angle by increasing radius only when the
+    // vertical component of that radius is smaller than the hard ground
+    // clearance. Re-sample after a radius correction because that moves the
+    // camera footprint horizontally across the DEM.
     for (int iteration = 0; iteration < 4; ++iteration)
     {
         const QPointF camera_world =
@@ -2076,21 +2058,20 @@ void MapRhiWidget::syncTerrainAwareCameraDistance()
             break;
         }
 
-        double camera_terrain_world_z = 0.0;
+        camera_terrain_available = true;
         if (this->scene.hasGeometry())
         {
-            camera_terrain_world_z = double(
+            rig_world_z = double(
                 this->scene.terrainElevationToWorldZ(camera_terrain_elevation_m)) - 1.0;
         }
         else
         {
-            camera_terrain_world_z =
-                camera_terrain_elevation_m * world_units_per_meter;
+            rig_world_z = camera_terrain_elevation_m * world_units_per_meter;
         }
 
-        const double eye_world_z = target_world_z
+        const double eye_world_z = rig_world_z
             + effective_distance_world * pitch_sine;
-        const double clearance_deficit_world = camera_terrain_world_z
+        const double clearance_deficit_world = rig_world_z
             + minimum_clearance_world - eye_world_z;
         if (clearance_deficit_world <= 0.0)
             break;
@@ -2101,11 +2082,16 @@ void MapRhiWidget::syncTerrainAwareCameraDistance()
         effective_distance_world += clearance_deficit_world / pitch_sine;
     }
 
-    // At an exactly horizontal view radius cannot create vertical clearance.
-    // Also handle any residual error after the terrain/radius iterations with a
-    // collision-only eye lift. The target remains fixed at the crosshair terrain
-    // point, so orbiting never starts rotating around an invisible floating point.
-    double collision_lift_world = 0.0;
+    if (!camera_terrain_available)
+    {
+        this->map_model->setView3dCameraDistanceWorld(effective_distance_world);
+        this->map_model->setView3dCameraCollisionLiftWorld(0.0);
+        return;
+    }
+
+    // Resolve the final camera footprint once more because the clearance pass
+    // above may have changed the orbit radius. This is the terrain height that
+    // controls the rig's absolute altitude.
     const QPointF final_camera_world =
         this->camera.cameraGroundWorldPixelForDistance(effective_distance_world);
     const CoordinateWGS84 final_camera_coordinate = GeoWebMercator::worldPixelToLonLat(
@@ -2114,25 +2100,28 @@ void MapRhiWidget::syncTerrainAwareCameraDistance()
     if (terrainElevationAtCoordinate(
             final_camera_coordinate, &final_camera_terrain_elevation_m))
     {
-        double final_camera_terrain_world_z = 0.0;
         if (this->scene.hasGeometry())
         {
-            final_camera_terrain_world_z = double(
+            rig_world_z = double(
                 this->scene.terrainElevationToWorldZ(final_camera_terrain_elevation_m)) - 1.0;
         }
         else
         {
-            final_camera_terrain_world_z =
-                final_camera_terrain_elevation_m * world_units_per_meter;
+            rig_world_z = final_camera_terrain_elevation_m * world_units_per_meter;
         }
-
-        const double eye_world_z = target_world_z
-            + effective_distance_world * pitch_sine;
-        collision_lift_world = qMax(
-            0.0,
-            final_camera_terrain_world_z + minimum_clearance_world - eye_world_z);
     }
 
+    // At an exactly horizontal view radius cannot create vertical clearance.
+    // Apply only the residual eye lift needed for the 2 m safety floor; terrain
+    // elevation itself is already carried by rig_world_z from the camera
+    // footprint above.
+    const double eye_world_z = rig_world_z
+        + effective_distance_world * pitch_sine;
+    const double collision_lift_world = qMax(
+        0.0,
+        rig_world_z + minimum_clearance_world - eye_world_z);
+
+    this->map_model->setView3dVerticalOffsetWorld(rig_world_z);
     this->map_model->setView3dCameraDistanceWorld(effective_distance_world);
     this->map_model->setView3dCameraCollisionLiftWorld(collision_lift_world);
 }
