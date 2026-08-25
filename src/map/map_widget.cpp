@@ -966,7 +966,10 @@ void MapWidget::panMapByPixels(const QPoint &delta)
     const QPointF old_center = this->m_model->centerTile();
 
     this->backing_store_pan_active = true;
-    this->m_model->panByPixels(delta, this->size());
+    if (this->m_model->viewMode() == MapViewMode::ThreeD)
+        this->m_model->panByPixels3d(delta, size());
+    else
+        this->m_model->panByPixels(delta, size());
     this->backing_store_pan_active = false;
 
     const QPointF new_center = this->m_model->centerTile();
@@ -1035,7 +1038,10 @@ void MapWidget::handleWheelEvent(QWheelEvent *event)
     const int steps = this->wheel_delta_accumulated / threshold;
     this->wheel_delta_accumulated %= threshold;
 
-    this->m_model->zoomByAt(steps, event->position().toPoint(), this->size());
+    if (this->m_model->viewMode() == MapViewMode::ThreeD)
+        this->m_model->setZoom(this->m_model->zoom() + steps, size());
+    else
+        this->m_model->zoomByAt(steps, event->position().toPoint(), size());
     event->accept();
 }
 
@@ -1049,7 +1055,22 @@ void MapWidget::mousePressEvent(QMouseEvent *event)
 
 bool MapWidget::handleMousePressEvent(QMouseEvent *event)
 {
-    if (!event || event->button() != Qt::LeftButton)
+    if (!event)
+        return false;
+
+    if (this->m_model->viewMode() == MapViewMode::ThreeD
+        && event->button() == Qt::MiddleButton)
+    {
+        this->view_3d_orbit_active = true;
+        this->view_3d_orbit_last_position = event->position().toPoint();
+        this->pan_velocity = QPointF();
+        this->mouse_pan_inertia_active = false;
+        stopPanAnimationIfIdle();
+        event->accept();
+        return true;
+    }
+
+    if (event->button() != Qt::LeftButton)
         return false;
 
     this->mouse_pan_active = true;
@@ -1076,7 +1097,17 @@ void MapWidget::mouseReleaseEvent(QMouseEvent *event)
 
 bool MapWidget::handleMouseReleaseEvent(QMouseEvent *event)
 {
-    if (!event || event->button() != Qt::LeftButton || !this->mouse_pan_active)
+    if (!event)
+        return false;
+
+    if (event->button() == Qt::MiddleButton && this->view_3d_orbit_active)
+    {
+        this->view_3d_orbit_active = false;
+        event->accept();
+        return true;
+    }
+
+    if (event->button() != Qt::LeftButton || !this->mouse_pan_active)
         return false;
 
     this->mouse_pan_active = false;
@@ -1137,6 +1168,25 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
 
     const QPoint position = event->position().toPoint();
     this->updatePointerCoordinates(position);
+
+    if (this->view_3d_orbit_active)
+    {
+        if (!(event->buttons() & Qt::MiddleButton))
+        {
+            this->view_3d_orbit_active = false;
+            return false;
+        }
+
+        const QPoint delta = position - this->view_3d_orbit_last_position;
+        this->view_3d_orbit_last_position = position;
+        if (!delta.isNull())
+        {
+            this->m_model->orbitView3d(
+                double(delta.x()) * 0.35, double(-delta.y()) * 0.25);
+        }
+        event->accept();
+        return true;
+    }
 
 #ifdef Q_OS_WASM
     // Qt for WebAssembly receives browser pointer events. A pointerdown event is

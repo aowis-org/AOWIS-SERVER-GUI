@@ -177,6 +177,12 @@ void MapEditorRenderer::paintRhiOverlay(
 
     syncStaticGeometry(network_snapshot);
 
+    // 3D editor mode is navigation/inspection only. QRhi owns the complete static
+    // scene, including device icons. Geometry editing remains available in 2D,
+    // where the precise existing editor interaction layer is retained.
+    if (this->map_model->viewMode() == MapViewMode::ThreeD)
+        return;
+
     // These are editor interaction/HUD overlays. The basemap and static hydraulic
     // geometry remain in QRhi; only transient editor chrome is painted here.
     paintTileSelection(painter, viewport_state);
@@ -251,6 +257,12 @@ QPointF MapEditorRenderer::screenFromWgs84(const CoordinateWGS84 &coordinate,
 
     if (!this->projection_ready)
         return QPointF();
+
+    if (this->map_model->viewMode() == MapViewMode::ThreeD)
+    {
+        return this->map_model->screenFromWgs84(
+            coordinate, this->projection_viewport_size, wrap_reference_longitude);
+    }
 
     const double wrapped_longitude = GeoWebMercator::normalizeLongitude(
         coordinate.longitude_deg);

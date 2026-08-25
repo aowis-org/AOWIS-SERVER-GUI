@@ -10,6 +10,7 @@
 #include <QDebug>
 #include <QFile>
 #include <QImage>
+#include <QLineF>
 #include <QMatrix4x4>
 #include <QPalette>
 #include <QResizeEvent>
@@ -19,8 +20,8 @@
 
 #include <array>
 #include <cstddef>
-#include <limits>
 #include <cmath>
+#include <limits>
 
 namespace
 {
@@ -75,6 +76,28 @@ int boundedBufferSize(qsizetype vertex_count, qsizetype vertex_size)
         return 0;
     return int(bytes);
 }
+
+double pointSegmentDistance(const QPointF &point, const QPointF &start, const QPointF &end)
+{
+    const QPointF segment = end - start;
+    const double length_squared = segment.x() * segment.x() + segment.y() * segment.y();
+    if (length_squared <= 1e-12)
+        return QLineF(point, start).length();
+
+    const QPointF relative = point - start;
+    const double ratio = qBound(
+        0.0,
+        (relative.x() * segment.x() + relative.y() * segment.y()) / length_squared,
+        1.0);
+    return QLineF(
+        point,
+        QPointF(start.x() + segment.x() * ratio, start.y() + segment.y() * ratio)).length();
+}
+
+bool finiteScreenPoint(const QPointF &point)
+{
+    return std::isfinite(point.x()) && std::isfinite(point.y());
+}
 }
 
 MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWidget *parent)
@@ -121,6 +144,11 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
         syncViewState();
         update();
     });
+    connect(this->map_model, &MapModel::view3dCameraChanged, this, [this]
+    {
+        syncViewState();
+        update();
+    });
     connect(this->map_model, &MapModel::providerChanged, this, [this](MapProvider)
     {
         if (this->basemap_renderer)
@@ -152,6 +180,95 @@ MapRhiWidget::~MapRhiWidget() = default;
 QString MapRhiWidget::graphicsApiName() const
 {
     return graphicsApiDisplayName(api());
+}
+
+MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
+{
+    MapRhiHit no_hit;
+    if (this->map_model == nullptr || this->map_model->viewMode() != MapViewMode::ThreeD
+        || !finiteScreenPoint(screen_position)
+        || screen_position.x() < 0.0 || screen_position.y() < 0.0
+        || screen_position.x() > width() || screen_position.y() > height())
+    {
+        return no_hit;
+    }
+
+    const NetworkRenderSnapshot &snapshot = this->scene.networkSnapshot();
+    const double node_hit_radius = qMax(
+        8.0, networkSymbologyMarkerSizeForZoom(
+            this->map_model->zoom(), this->scene.nodeSizePercent()) / 2.0 + 4.0);
+    double best_node_distance = node_hit_radius;
+    MapRhiHit best_node_hit;
+    for (const NetworkRenderNode &node : snapshot.nodes)
+    {
+        if (this->scene.isEntityHidden(node.uuid))
+            continue;
+
+        const QVector3D world_position = this->scene.worldPosition(
+            node.coordinate_wgs84, node.elevation_m, this->scene.originWorld().x());
+        const QPointF projected = this->camera.projectWorldToScreen(world_position);
+        if (!finiteScreenPoint(projected))
+            continue;
+
+        const double distance = QLineF(screen_position, projected).length();
+        if (distance > best_node_distance)
+            continue;
+
+        best_node_distance = distance;
+        best_node_hit.render_id = node.render_id;
+        best_node_hit.entity_type = node.entity_type;
+        best_node_hit.uuid = node.uuid;
+    }
+    if (best_node_hit.isValid())
+        return best_node_hit;
+
+    const double link_hit_radius = qMax(7.0, this->scene.linkThicknessPx() / 2.0 + 5.0);
+    double best_link_distance = link_hit_radius;
+    MapRhiHit best_link_hit;
+    for (const NetworkRenderLink &link : snapshot.links)
+    {
+        if (this->scene.isEntityHidden(link.uuid) || link.vertices_wgs84.size() < 2)
+            continue;
+
+        bool have_previous = false;
+        QPointF previous_screen;
+        double wrap_reference_x = this->scene.originWorld().x();
+        for (qsizetype vertex_index = 0; vertex_index < link.vertices_wgs84.size(); ++vertex_index)
+        {
+            const double elevation_m = vertex_index < link.elevations_m.size()
+                ? link.elevations_m.at(vertex_index)
+                : 0.0;
+            double resolved_x = wrap_reference_x;
+            const QVector3D world_position = this->scene.worldPosition(
+                link.vertices_wgs84.at(vertex_index), elevation_m,
+                wrap_reference_x, &resolved_x);
+            wrap_reference_x = resolved_x;
+            const QPointF current_screen = this->camera.projectWorldToScreen(world_position);
+            if (!finiteScreenPoint(current_screen))
+            {
+                have_previous = false;
+                continue;
+            }
+
+            if (have_previous)
+            {
+                const double distance = pointSegmentDistance(
+                    screen_position, previous_screen, current_screen);
+                if (distance <= best_link_distance)
+                {
+                    best_link_distance = distance;
+                    best_link_hit.render_id = link.render_id;
+                    best_link_hit.entity_type = link.entity_type;
+                    best_link_hit.uuid = link.uuid;
+                }
+            }
+
+            previous_screen = current_screen;
+            have_previous = true;
+        }
+    }
+
+    return best_link_hit;
 }
 
 void MapRhiWidget::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
@@ -418,6 +535,10 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     uniform_data[21] = qBound(0.0f, this->applied_symbology.heatmap_opacity / 100.0f, 1.0f);
     uniform_data[22] = qBound(0.0f,
         this->applied_symbology.heatmap_solid_center_percent / 100.0f, 0.9f);
+    const double heatmap_scale = GeoWebMercator::zoomScale(
+        this->map_model->zoom(), MapRenderCacheMath::ReferenceZoom);
+    uniform_data[23] = float(heatmapRadiusPixels()
+        / qMax(heatmap_scale, 0.000001));
 
     const QColor background_color = palette().color(QPalette::Window);
     uniform_data[24] = background_color.redF();
@@ -832,6 +953,9 @@ bool MapRhiWidget::createPipelines()
         this->link_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
         this->link_pipeline->setSampleCount(sampleCount());
         this->link_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+        this->link_pipeline->setDepthTest(true);
+        this->link_pipeline->setDepthWrite(true);
+        this->link_pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
         QRhiGraphicsPipeline::TargetBlend link_blend;
         link_blend.enable = true;
         this->link_pipeline->setTargetBlends({link_blend});
@@ -879,6 +1003,9 @@ bool MapRhiWidget::createPipelines()
         this->node_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
         this->node_pipeline->setSampleCount(sampleCount());
         this->node_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+        this->node_pipeline->setDepthTest(true);
+        this->node_pipeline->setDepthWrite(true);
+        this->node_pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
         QRhiGraphicsPipeline::TargetBlend node_blend;
         node_blend.enable = true;
         this->node_pipeline->setTargetBlends({node_blend});
@@ -927,6 +1054,9 @@ bool MapRhiWidget::createPipelines()
         this->icon_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
         this->icon_pipeline->setSampleCount(sampleCount());
         this->icon_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+        this->icon_pipeline->setDepthTest(true);
+        this->icon_pipeline->setDepthWrite(false);
+        this->icon_pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
         QRhiGraphicsPipeline::TargetBlend blend;
         blend.enable = true;
         this->icon_pipeline->setTargetBlends({blend});
@@ -973,6 +1103,9 @@ bool MapRhiWidget::createPipelines()
         this->heatmap_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
         this->heatmap_pipeline->setSampleCount(sampleCount());
         this->heatmap_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+        this->heatmap_pipeline->setDepthTest(true);
+        this->heatmap_pipeline->setDepthWrite(false);
+        this->heatmap_pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
         QRhiGraphicsPipeline::TargetBlend heatmap_blend;
         heatmap_blend.enable = true;
         this->heatmap_pipeline->setTargetBlends({heatmap_blend});

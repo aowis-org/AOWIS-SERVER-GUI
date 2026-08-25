@@ -1,6 +1,26 @@
 #include "network_render_snapshot_builder.h"
+#include "network_symbology_values.h"
 
 #include <QHash>
+#include <QVector>
+
+#include <cmath>
+
+namespace
+{
+constexpr double Pi = 3.14159265358979323846;
+
+double approximateCoordinateDistance(const CoordinateWGS84 &first,
+                                     const CoordinateWGS84 &second)
+{
+    const double average_latitude_rad =
+        (first.latitude_deg + second.latitude_deg) * Pi / 360.0;
+    const double longitude_delta =
+        (second.longitude_deg - first.longitude_deg) * std::cos(average_latitude_rad);
+    const double latitude_delta = second.latitude_deg - first.latitude_deg;
+    return std::hypot(longitude_delta, latitude_delta);
+}
+}
 
 template <typename LinkType>
 static bool appendNetworkRenderLink(const LinkType &source, InfrastructureEntity entity_type,
@@ -32,6 +52,32 @@ static bool appendNetworkRenderLink(const LinkType &source, InfrastructureEntity
     for (const HydraulicLinkVertex &vertex : source.vertices)
         link.vertices_wgs84.append(vertex.coordinate_wgs84);
     link.vertices_wgs84.append(end_node.coordinate_wgs84);
+
+    link.elevations_m.reserve(link.vertices_wgs84.size());
+    QVector<double> cumulative_distance;
+    cumulative_distance.reserve(link.vertices_wgs84.size());
+    cumulative_distance.append(0.0);
+    double total_distance = 0.0;
+    for (qsizetype index = 1; index < link.vertices_wgs84.size(); ++index)
+    {
+        total_distance += approximateCoordinateDistance(
+            link.vertices_wgs84.at(index - 1), link.vertices_wgs84.at(index));
+        cumulative_distance.append(total_distance);
+    }
+
+    for (qsizetype index = 0; index < link.vertices_wgs84.size(); ++index)
+    {
+        double fraction = 0.0;
+        if (total_distance > 0.0)
+            fraction = cumulative_distance.at(index) / total_distance;
+        else if (link.vertices_wgs84.size() > 1)
+            fraction = double(index) / double(link.vertices_wgs84.size() - 1);
+
+        link.elevations_m.append(
+            start_node.elevation_m
+            + (end_node.elevation_m - start_node.elevation_m) * fraction);
+    }
+
     links.append(link);
     return true;
 }
@@ -66,6 +112,7 @@ NetworkRenderSnapshot buildNetworkRenderSnapshot(const NetworkHydraulic &network
         node.uuid = source.uuid;
         node.entity_type = entity_type;
         node.coordinate_wgs84 = source.coordinate_wgs84;
+        node.elevation_m = resolvedSymbologyElevationM(source);
         node_indices.insert(node.uuid, snapshot.nodes.size());
         snapshot.nodes.append(node);
     };

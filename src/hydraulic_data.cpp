@@ -2240,25 +2240,29 @@ bool HydraulicData::setJunctionElevationInputType(
     const QUuid &uuid, HydraulicNodeElevationInputType input_type)
 {
     return emitNodeChangedIfSuccessful(
-        uuid, this->network_editor.setJunctionElevationInputType(uuid, input_type));
+        uuid, this->network_editor.setJunctionElevationInputType(uuid, input_type),
+        NetworkChange::Geometry);
 }
 
 bool HydraulicData::setJunctionElevationM(const QUuid &uuid, double elevation_m)
 {
     return emitNodeChangedIfSuccessful(
-        uuid, this->network_editor.setJunctionElevationM(uuid, elevation_m));
+        uuid, this->network_editor.setJunctionElevationM(uuid, elevation_m),
+        NetworkChange::Geometry);
 }
 
 bool HydraulicData::setJunctionTerrainElevationM(const QUuid &uuid, double terrain_elevation_m)
 {
     return emitNodeChangedIfSuccessful(
-        uuid, this->network_editor.setJunctionTerrainElevationM(uuid, terrain_elevation_m));
+        uuid, this->network_editor.setJunctionTerrainElevationM(uuid, terrain_elevation_m),
+        NetworkChange::Geometry);
 }
 
 bool HydraulicData::setJunctionElevationOffsetM(const QUuid &uuid, double elevation_offset_m)
 {
     return emitNodeChangedIfSuccessful(
-        uuid, this->network_editor.setJunctionElevationOffsetM(uuid, elevation_offset_m));
+        uuid, this->network_editor.setJunctionElevationOffsetM(uuid, elevation_offset_m),
+        NetworkChange::Geometry);
 }
 
 bool HydraulicData::addJunctionDemand(const QUuid &uuid,
@@ -2367,13 +2371,15 @@ bool HydraulicData::setReservoirHeadInputType(
     const QUuid &uuid, HydraulicNodeElevationInputType input_type)
 {
     return emitNodeChangedIfSuccessful(
-        uuid, this->network_editor.setReservoirHeadInputType(uuid, input_type));
+        uuid, this->network_editor.setReservoirHeadInputType(uuid, input_type),
+        NetworkChange::Geometry);
 }
 
 bool HydraulicData::setReservoirHeadM(const QUuid &uuid, double hydraulic_head_m)
 {
     return emitNodeChangedIfSuccessful(
-        uuid, this->network_editor.setReservoirHeadM(uuid, hydraulic_head_m));
+        uuid, this->network_editor.setReservoirHeadM(uuid, hydraulic_head_m),
+        NetworkChange::Geometry);
 }
 
 bool HydraulicData::setReservoirTerrainElevationM(const QUuid &uuid,
@@ -2381,13 +2387,15 @@ bool HydraulicData::setReservoirTerrainElevationM(const QUuid &uuid,
 {
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setReservoirTerrainElevationM(
-                  uuid, terrain_elevation_m));
+                  uuid, terrain_elevation_m),
+        NetworkChange::Geometry);
 }
 
 bool HydraulicData::setReservoirHeadOffsetM(const QUuid &uuid, double hydraulic_head_offset_m)
 {
     return emitNodeChangedIfSuccessful(
-        uuid, this->network_editor.setReservoirHeadOffsetM(uuid, hydraulic_head_offset_m));
+        uuid, this->network_editor.setReservoirHeadOffsetM(uuid, hydraulic_head_offset_m),
+        NetworkChange::Geometry);
 }
 
 bool HydraulicData::setReservoirHeadPatternMode(const QUuid &uuid, HydraulicTimePatternMode pattern_mode)
@@ -2406,25 +2414,29 @@ bool HydraulicData::setTankElevationInputType(
     const QUuid &uuid, HydraulicNodeTankElevationInputType input_type)
 {
     return emitNodeChangedIfSuccessful(
-        uuid, this->network_editor.setTankElevationInputType(uuid, input_type));
+        uuid, this->network_editor.setTankElevationInputType(uuid, input_type),
+        NetworkChange::Geometry);
 }
 
 bool HydraulicData::setTankBottomElevationM(const QUuid &uuid, double bottom_elevation_m)
 {
     return emitNodeChangedIfSuccessful(
-        uuid, this->network_editor.setTankBottomElevationM(uuid, bottom_elevation_m));
+        uuid, this->network_editor.setTankBottomElevationM(uuid, bottom_elevation_m),
+        NetworkChange::Geometry);
 }
 
 bool HydraulicData::setTankTerrainElevationM(const QUuid &uuid, double terrain_elevation_m)
 {
     return emitNodeChangedIfSuccessful(
-        uuid, this->network_editor.setTankTerrainElevationM(uuid, terrain_elevation_m));
+        uuid, this->network_editor.setTankTerrainElevationM(uuid, terrain_elevation_m),
+        NetworkChange::Geometry);
 }
 
 bool HydraulicData::setTankBottomOffsetM(const QUuid &uuid, double bottom_offset_m)
 {
     return emitNodeChangedIfSuccessful(
-        uuid, this->network_editor.setTankBottomOffsetM(uuid, bottom_offset_m));
+        uuid, this->network_editor.setTankBottomOffsetM(uuid, bottom_offset_m),
+        NetworkChange::Geometry);
 }
 
 bool HydraulicData::setTankWaterLevelInitialM(const QUuid &uuid, double water_level_initial_m)

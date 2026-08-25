@@ -25,6 +25,18 @@ class QRhiShaderResourceBindings;
 class QRhiTexture;
 class QResizeEvent;
 
+struct MapRhiHit
+{
+    quint32 render_id = 0;
+    InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
+    QUuid uuid;
+
+    bool isValid() const
+    {
+        return this->render_id != 0 && this->entity_type != InfrastructureEntity::Unknown;
+    }
+};
+
 class MapRhiWidget final : public QRhiWidget
 {
     Q_OBJECT
@@ -35,6 +47,7 @@ public:
     ~MapRhiWidget() override;
 
     QString graphicsApiName() const;
+    MapRhiHit hitTest(const QPointF &screen_position) const;
     void setNetworkSnapshot(const NetworkRenderSnapshot &snapshot);
     void setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids);
     void setNetworkScreenTranslation(const QPointF &translation_pixels);

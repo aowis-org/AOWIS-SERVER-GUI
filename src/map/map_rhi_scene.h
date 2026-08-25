@@ -12,6 +12,7 @@
 #include <QSet>
 #include <QUuid>
 #include <QVector>
+#include <QVector3D>
 
 class MapRhiScene
 {
@@ -99,6 +100,10 @@ public:
     const QVector<IconVertex> &iconVertices() const;
     const QVector<HeatmapVertex> &heatmapVertices() const;
     QPointF originWorld() const;
+    const NetworkRenderSnapshot &networkSnapshot() const;
+    QVector3D worldPosition(const CoordinateWGS84 &coordinate, double elevation_m,
+                            double wrap_reference_x, double *resolved_world_x = nullptr) const;
+    bool isEntityHidden(const QUuid &uuid) const;
     quint64 geometryRevision() const;
     bool hasGeometry() const;
     int nodeSizePercent() const;
@@ -116,22 +121,34 @@ private:
         InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
         quint32 render_id = 0;
         QPointF center;
+        float z = 0.0f;
+    };
+
+    struct SceneSegment
+    {
+        QPointF start;
+        QPointF end;
+        float start_z = 0.0f;
+        float end_z = 0.0f;
     };
 
     struct LinkPath
     {
         InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
         quint32 render_id = 0;
-        QVector<QLineF> segments;
+        QVector<SceneSegment> segments;
     };
 
     void rebuildNetworkGeometry();
     QPointF chooseOriginWorld(const NetworkRenderSnapshot &snapshot) const;
     QPointF localWorldPosition(const CoordinateWGS84 &coordinate, double wrap_reference_x,
                                double *resolved_world_x) const;
+    float localElevationWorld(double elevation_m) const;
     void appendLinkSegment(InfrastructureEntity entity_type, quint32 render_id,
-                           const QPointF &start, const QPointF &end);
-    void appendNode(InfrastructureEntity entity_type, quint32 render_id, const QPointF &center);
+                           const QPointF &start, float start_z,
+                           const QPointF &end, float end_z);
+    void appendNode(InfrastructureEntity entity_type, quint32 render_id,
+                    const QPointF &center, float center_z);
     void applyLinkColor(LinkVertex *vertex) const;
     void applyNodeColor(NodeVertex *vertex) const;
     void rebuildHeatmap();
@@ -140,7 +157,8 @@ private:
     void appendIcon(const IconMarker &marker);
     void rebuildFlowDirections();
     void appendFlowDirectionStroke(
-        const QPointF &start, const QPointF &end, QRgb color, float half_width_px);
+        const QPointF &start, const QPointF &end, float z,
+        QRgb color, float half_width_px);
     QRgb flowDirectionColor(quint32 render_id) const;
     void rebuildHighlights();
     void appendEntityHighlight(InfrastructureEntity entity_type, quint32 render_id,
@@ -174,6 +192,9 @@ private:
     QHash<quint64, QVector<int>> node_vertex_indices_by_entity;
     quint64 geometry_revision = 0;
     int view_zoom = 0;
+    double reference_latitude_deg = 0.0;
+    double elevation_reference_m = 0.0;
+    double vertical_exaggeration = 2.5;
     bool origin_valid = false;
 };
 

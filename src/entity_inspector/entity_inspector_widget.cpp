@@ -1,12 +1,12 @@
 #include "entity_inspector_widget.h"
 
+#include "../map_server_client_configuration.h"
 #include "../rest_client.h"
 
 #include <cmath>
 #include <optional>
 
 #include <QGridLayout>
-#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
@@ -21,6 +21,20 @@ namespace
 {
 constexpr int pattern_mode_role = Qt::UserRole;
 constexpr int pattern_uuid_role = Qt::UserRole + 1;
+QString terrainDatumDisplayName(const QString &datum_id)
+{
+    if (datum_id == QStringLiteral("egm2008"))
+        return QStringLiteral("EGM2008");
+    if (datum_id == QStringLiteral("egm96"))
+        return QStringLiteral("EGM96");
+    if (datum_id == QStringLiteral("wgs84-ellipsoid"))
+        return QStringLiteral("WGS84 ellipsoid");
+    if (datum_id == QStringLiteral("local"))
+        return QStringLiteral("local datum");
+    if (datum_id.isEmpty() || datum_id == QStringLiteral("unknown"))
+        return QStringLiteral("unknown vertical datum");
+    return datum_id;
+}
 
 QString hydraulicNodeTypeName(InfrastructureEntity entity_type)
 {
@@ -1667,9 +1681,10 @@ void EntityInspectorWidget::addGroupElevation()
         "Terrain Elevation + Offset",
         static_cast<int>(HydraulicNodeElevationInputType::TerrainElevationAndOffset));
     
-    this->button_terrain_elevation = new QPushButton("Terrain Elevation from GIS");
+    this->button_terrain_elevation = new QPushButton("Retrieve Terrain Elevation");
     this->button_terrain_elevation->setToolTip(
-        "Uses terrain elevation from GIS/DEM data.<br>Accuracy depends on the dataset and local terrain."
+        "Uses the AOWIS terrain service and its shared DEM cache.<br>"
+        "Accuracy depends on the dataset and local terrain."
         );
     this->label_terrain_elevation_status = new QLabel();
     this->label_terrain_elevation_status->setWordWrap(true);
@@ -1677,12 +1692,9 @@ void EntityInspectorWidget::addGroupElevation()
 
     if (!this->terrain_elevation_client)
     {
-#ifdef Q_OS_WASM
-        // The OpenTopoData public service does not allow browser cross-origin requests.
-        this->terrain_elevation_client = new RESTClient("https://api.open-meteo.com", this);
-#else
-        this->terrain_elevation_client = new RESTClient("https://api.opentopodata.org", this);
-#endif
+        const MapServerClientConfiguration &configuration = mapServerClientConfiguration();
+        this->terrain_elevation_client = new RESTClient(
+            configuration.base_url, configuration.api_key, configuration.delete_api_key, this);
         connect(this->terrain_elevation_client, &RESTClient::requestFinished, this,
                 &EntityInspectorWidget::handleTerrainElevationResponse);
         connect(this->terrain_elevation_client, &RESTClient::requestError, this,
@@ -1925,11 +1937,8 @@ void EntityInspectorWidget::requestTerrainElevation()
         this->label_terrain_elevation_status->clear();
     setTerrainElevationRequestActive(true);
 
-#ifdef Q_OS_WASM
-    const QString endpoint = QStringLiteral("/v1/elevation?latitude=%1&longitude=%2")
-#else
-    const QString endpoint = QStringLiteral("/v1/srtm30m,aster30m?locations=%1,%2")
-#endif
+    const QString endpoint = QStringLiteral(
+        "/terrain/v1/elevation?latitude=%1&longitude=%2")
         .arg(latitude_deg, 0, 'f', 8)
         .arg(longitude_deg, 0, 'f', 8);
     this->terrain_elevation_client->get(endpoint);
@@ -1945,64 +1954,35 @@ void EntityInspectorWidget::handleTerrainElevationResponse(const QByteArray &dat
     if (parse_error.error != QJsonParseError::NoError || !document.isObject())
     {
         handleTerrainElevationError(
-            QStringLiteral("The terrain elevation service returned invalid JSON: %1")
+            QStringLiteral("The AOWIS terrain service returned invalid JSON: %1")
                 .arg(parse_error.errorString()));
         return;
     }
 
     const QJsonObject response = document.object();
-#ifdef Q_OS_WASM
-    if (response.value(QStringLiteral("error")).toBool())
+    if (response.value(QStringLiteral("status")).toString() != QStringLiteral("ready"))
     {
-        const QString api_error = response.value(QStringLiteral("reason")).toString();
+        const QString service_error = response.value(QStringLiteral("error")).toString();
         handleTerrainElevationError(
-            api_error.isEmpty()
-                ? QStringLiteral("Open-Meteo did not return a successful response.")
-                : api_error);
+            service_error.isEmpty()
+                ? QStringLiteral("The AOWIS terrain service did not return a successful response.")
+                : service_error);
         return;
     }
 
-    const QJsonArray elevations = response.value(QStringLiteral("elevation")).toArray();
-    if (elevations.isEmpty() || !elevations.first().isDouble())
-    {
-        handleTerrainElevationError(
-            "Open-Meteo returned no terrain elevation for this position.");
-        return;
-    }
-
-    const double elevation_m = elevations.first().toDouble();
-    const QString dataset = QStringLiteral("Copernicus DEM GLO-90 via Open-Meteo");
-#else
-    if (response.value(QStringLiteral("status")).toString() != QStringLiteral("OK"))
-    {
-        const QString api_error = response.value(QStringLiteral("error")).toString();
-        handleTerrainElevationError(
-            api_error.isEmpty()
-                ? QStringLiteral("OpenTopoData did not return a successful response.")
-                : api_error);
-        return;
-    }
-
-    const QJsonArray results = response.value(QStringLiteral("results")).toArray();
-    if (results.isEmpty() || !results.first().isObject())
-    {
-        handleTerrainElevationError(
-            "OpenTopoData returned no elevation result for this position.");
-        return;
-    }
-
-    const QJsonObject result = results.first().toObject();
-    const QJsonValue elevation_value = result.value(QStringLiteral("elevation"));
+    const QJsonValue elevation_value = response.value(QStringLiteral("elevation_m"));
     if (!elevation_value.isDouble())
     {
         handleTerrainElevationError(
-            "No terrain elevation is available for this position in the configured DEM datasets.");
+            "The AOWIS terrain service returned no elevation for this position.");
         return;
     }
 
     const double elevation_m = elevation_value.toDouble();
-    const QString dataset = result.value(QStringLiteral("dataset")).toString();
-#endif
+    const QString dataset = response.value(QStringLiteral("dataset")).toString();
+    const QString vertical_datum = response.value(QStringLiteral("vertical_datum")).toString();
+    const double nominal_resolution_m =
+        response.value(QStringLiteral("nominal_resolution_m")).toDouble(-1.0);
 
     if (this->entity_uuid != this->terrain_elevation_request_entity_uuid)
     {
@@ -2041,21 +2021,34 @@ void EntityInspectorWidget::handleTerrainElevationResponse(const QByteArray &dat
         return;
     }
 
-    const QString dataset_suffix = dataset.isEmpty()
+    QStringList metadata;
+    if (!dataset.isEmpty())
+        metadata.append(dataset);
+    metadata.append(terrainDatumDisplayName(vertical_datum));
+    if (std::isfinite(nominal_resolution_m) && nominal_resolution_m > 0.0)
+    {
+        metadata.append(QStringLiteral("%1 m source resolution")
+                            .arg(nominal_resolution_m, 0, 'f',
+                                 nominal_resolution_m < 10.0 ? 1 : 0));
+    }
+
+    const QString metadata_suffix = metadata.isEmpty()
         ? QString()
-        : QStringLiteral(" (%1)").arg(dataset);
+        : QStringLiteral(" (%1)").arg(metadata.join(QStringLiteral(", ")));
     this->button_terrain_elevation->setToolTip(
         QStringLiteral(
-            "Uses terrain elevation from GIS/DEM data.<br>"
+            "Uses the AOWIS terrain service and its shared DEM cache.<br>"
             "Accuracy depends on the dataset and local terrain.<br>"
             "Last result: %1 m%2")
             .arg(elevation_m, 0, 'f', 3)
-            .arg(dataset_suffix));
+            .arg(metadata_suffix));
     if (this->label_terrain_elevation_status)
+    {
         this->label_terrain_elevation_status->setText(
             QStringLiteral("Retrieved %1 m%2.")
                 .arg(elevation_m, 0, 'f', 3)
-                .arg(dataset_suffix));
+                .arg(metadata_suffix));
+    }
     setTerrainElevationRequestActive(false);
 }
 
@@ -2079,7 +2072,7 @@ void EntityInspectorWidget::showTerrainElevationErrorMessage(const QString &erro
 
     QMessageBox *message_box = new QMessageBox(
         QMessageBox::Warning,
-        "Terrain Elevation from GIS",
+        "Terrain Elevation",
         "The terrain elevation could not be retrieved.",
         QMessageBox::Ok,
         parent_window);
@@ -2127,7 +2120,7 @@ void EntityInspectorWidget::setTerrainElevationRequestActive(bool active)
         return;
 
     this->button_terrain_elevation->setText(
-        active ? "Retrieving Terrain Elevation..." : "Terrain Elevation from GIS");
+        active ? "Retrieving Terrain Elevation..." : "Retrieve Terrain Elevation");
     updateElevationModeUi();
 }
 

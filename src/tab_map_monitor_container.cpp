@@ -477,7 +477,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             rhi_hud->show();
             rhi_hud->raise();
 
-            qInfo() << "Monitor map renderer: RHI 2D map active with GPU basemap/heatmap and QWidget HUD; CPU renderer retained as fallback.";
+            qInfo() << "Monitor map renderer: RHI map active with GPU basemap/heatmap and QWidget HUD; CPU renderer retained as fallback.";
         });
         connect(rhi_surface, &MapRhiWidget::signalRendererFailed, this,
                 [this](const QString &reason)
@@ -486,6 +486,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                 << QStringLiteral("Monitor RHI surface failed (%1). "
                                   "Falling back to the existing CPU renderer.")
                        .arg(reason);
+            if (this->map_model->viewMode() != MapViewMode::TwoD)
+                this->map_model->setViewMode(MapViewMode::TwoD);
             this->desktop_network_overlay->show();
             this->map_stack_layout->setCurrentWidget(this->desktop_network_overlay);
             if (this->desktop_rhi_hud != nullptr)
@@ -714,19 +716,43 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
                     return true;
                 }
 #else
-                const NetworkOverlayHit hit = this->desktop_network_overlay->hitTest(mouse_event->position());
-                if (hit.isValid() && selectNetworkEntity(hit.render_id, hit.entity_type, hit.uuid))
-                {
-                    this->desktop_network_overlay->setSelectedEntity(hit);
-                    mouse_event->accept();
-                    return true;
-                }
-                this->desktop_network_overlay->clearSelectedEntity();
 #if AOWIS_HAS_QRHI
-                if (this->desktop_rhi_surface != nullptr)
+                if (this->map_model->viewMode() == MapViewMode::ThreeD
+                    && this->desktop_rhi_surface != nullptr
+                    && this->desktop_rhi_surface->isVisible())
+                {
+                    const MapRhiHit hit = this->desktop_rhi_surface->hitTest(
+                        mouse_event->position());
+                    if (hit.isValid()
+                        && selectNetworkEntity(hit.render_id, hit.entity_type, hit.uuid))
+                    {
+                        this->desktop_rhi_surface->setSelectedEntity(hit.entity_type, hit.uuid);
+                        mouse_event->accept();
+                        return true;
+                    }
                     this->desktop_rhi_surface->setSelectedEntity(
                         InfrastructureEntity::Unknown, QUuid());
+                    this->desktop_network_overlay->clearSelectedEntity();
+                }
+                else
 #endif
+                {
+                    const NetworkOverlayHit hit =
+                        this->desktop_network_overlay->hitTest(mouse_event->position());
+                    if (hit.isValid()
+                        && selectNetworkEntity(hit.render_id, hit.entity_type, hit.uuid))
+                    {
+                        this->desktop_network_overlay->setSelectedEntity(hit);
+                        mouse_event->accept();
+                        return true;
+                    }
+                    this->desktop_network_overlay->clearSelectedEntity();
+#if AOWIS_HAS_QRHI
+                    if (this->desktop_rhi_surface != nullptr)
+                        this->desktop_rhi_surface->setSelectedEntity(
+                            InfrastructureEntity::Unknown, QUuid());
+#endif
+                }
 #endif
             }
         }
@@ -814,6 +840,16 @@ bool MapMonitorContainer::selectNetworkEntity(quint32 render_id, InfrastructureE
 #ifndef Q_OS_WASM
 void MapMonitorContainer::updateDesktopNetworkHover(const QPointF &position, Qt::MouseButtons buttons)
 {
+#if AOWIS_HAS_QRHI
+    if (this->map_model->viewMode() == MapViewMode::ThreeD
+        && this->desktop_rhi_surface != nullptr
+        && this->desktop_rhi_surface->isVisible())
+    {
+        setDesktopNetworkHovered(false);
+        return;
+    }
+#endif
+
     if (buttons != Qt::NoButton)
     {
         setDesktopNetworkHovered(false);

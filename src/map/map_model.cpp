@@ -3,9 +3,55 @@
 #include <algorithm>
 #include <cmath>
 
+#include <QVector3D>
+#include <QtMath>
+
 namespace
 {
 constexpr double CoordinateComparisonEpsilon = 1e-12;
+constexpr double View3dFieldOfViewDeg = 45.0;
+constexpr double View3dMinimumPitchDeg = 20.0;
+constexpr double View3dMaximumPitchDeg = 80.0;
+constexpr double View3dDefaultPitchDeg = 55.0;
+
+struct View3dCameraBasis
+{
+    QVector3D eye;
+    QVector3D forward;
+    QVector3D right;
+    QVector3D up;
+};
+
+double normalizedYawDegrees(double yaw_deg)
+{
+    double normalized = std::fmod(yaw_deg, 360.0);
+    if (normalized < 0.0)
+        normalized += 360.0;
+    return normalized;
+}
+
+View3dCameraBasis view3dCameraBasis(double yaw_deg, double pitch_deg, const QSize &viewport)
+{
+    const double safe_height = qMax(1, viewport.height());
+    const double half_height = safe_height / 2.0;
+    const double half_fov_rad = qDegreesToRadians(View3dFieldOfViewDeg / 2.0);
+    const double distance = half_height / std::tan(half_fov_rad);
+    const double pitch_rad = qDegreesToRadians(
+        qBound(View3dMinimumPitchDeg, pitch_deg, View3dMaximumPitchDeg));
+    const double yaw_rad = qDegreesToRadians(normalizedYawDegrees(yaw_deg));
+    const double horizontal_distance = distance * std::cos(pitch_rad);
+
+    View3dCameraBasis basis;
+    basis.eye = QVector3D(
+        float(std::sin(yaw_rad) * horizontal_distance),
+        float(std::cos(yaw_rad) * horizontal_distance),
+        float(distance * std::sin(pitch_rad)));
+    basis.forward = (-basis.eye).normalized();
+    const QVector3D world_up(0.0f, 0.0f, 1.0f);
+    basis.right = QVector3D::crossProduct(basis.forward, world_up).normalized();
+    basis.up = QVector3D::crossProduct(basis.right, basis.forward).normalized();
+    return basis;
+}
 
 bool coordinatesEqual(double first, double second)
 {
@@ -41,6 +87,16 @@ MapProvider MapModel::provider() const
 MapViewMode MapModel::viewMode() const
 {
     return this->m_view_mode;
+}
+
+double MapModel::view3dYawDeg() const
+{
+    return this->m_view_3d_yaw_deg;
+}
+
+double MapModel::view3dPitchDeg() const
+{
+    return this->m_view_3d_pitch_deg;
 }
 
 int MapModel::tileCount() const
@@ -205,6 +261,33 @@ void MapModel::panByPixels(const QPoint &delta, const QSize &viewport)
         viewport);
 }
 
+void MapModel::panByPixels3d(const QPoint &delta, const QSize &viewport)
+{
+    if (delta.isNull() || !viewport.isValid())
+        return;
+
+    const QPointF viewport_center(
+        viewport.width() / 2.0, viewport.height() / 2.0);
+    const QPointF center_ground = groundOffsetFromScreen3d(viewport_center, viewport);
+    const QPointF dragged_ground = groundOffsetFromScreen3d(
+        viewport_center - QPointF(delta), viewport);
+    if (!std::isfinite(center_ground.x()) || !std::isfinite(center_ground.y())
+        || !std::isfinite(dragged_ground.x()) || !std::isfinite(dragged_ground.y()))
+    {
+        return;
+    }
+
+    QPointF center = centerTile();
+    const QPointF offset = dragged_ground - center_ground;
+    center.rx() += offset.x() / TileSize;
+    center.ry() += offset.y() / TileSize;
+
+    setCenter(
+        GeoWebMercator::tileXToLon(center.x(), this->m_zoom),
+        GeoWebMercator::tileYToLat(center.y(), this->m_zoom),
+        viewport);
+}
+
 void MapModel::clampCenter(const QSize &viewport)
 {
     if (!viewport.isValid())
@@ -248,9 +331,53 @@ void MapModel::setViewMode(MapViewMode view_mode)
     emit viewModeChanged(this->m_view_mode);
 }
 
+void MapModel::orbitView3d(double yaw_delta_deg, double pitch_delta_deg)
+{
+    const double next_yaw = normalizedYawDegrees(this->m_view_3d_yaw_deg + yaw_delta_deg);
+    const double next_pitch = qBound(
+        View3dMinimumPitchDeg,
+        this->m_view_3d_pitch_deg + pitch_delta_deg,
+        View3dMaximumPitchDeg);
+    if (coordinatesEqual(next_yaw, this->m_view_3d_yaw_deg)
+        && coordinatesEqual(next_pitch, this->m_view_3d_pitch_deg))
+    {
+        return;
+    }
+
+    this->m_view_3d_yaw_deg = next_yaw;
+    this->m_view_3d_pitch_deg = next_pitch;
+    emit view3dCameraChanged();
+}
+
+void MapModel::resetView3dCamera()
+{
+    const bool changed = !coordinatesEqual(this->m_view_3d_yaw_deg, 0.0)
+        || !coordinatesEqual(this->m_view_3d_pitch_deg, View3dDefaultPitchDeg);
+    this->m_view_3d_yaw_deg = 0.0;
+    this->m_view_3d_pitch_deg = View3dDefaultPitchDeg;
+    if (changed)
+        emit view3dCameraChanged();
+}
+
 CoordinateWGS84 MapModel::wgs84FromScreen(const QPoint &pos, const QSize &viewport) const
 {
     const QPointF center = centerTile();
+    if (this->m_view_mode == MapViewMode::ThreeD)
+    {
+        const QPointF ground_offset = groundOffsetFromScreen3d(pos, viewport);
+        if (std::isfinite(ground_offset.x()) && std::isfinite(ground_offset.y()))
+        {
+            const double tile_x = center.x() + ground_offset.x() / TileSize;
+            const double tile_y = std::clamp(
+                center.y() + ground_offset.y() / TileSize, 0.0, double(tileCount()));
+            CoordinateWGS84 wgs;
+            wgs.latitude_deg = GeoWebMercator::tileYToLat(tile_y, this->m_zoom);
+            wgs.longitude_deg = GeoWebMercator::normalizeLongitude(
+                GeoWebMercator::tileXToLon(tile_x, this->m_zoom));
+            return wgs;
+        }
+    }
+
     const double tile_x = center.x() + (pos.x() - viewport.width() / 2.0) / TileSize;
     const double unclamped_tile_y = center.y() + (pos.y() - viewport.height() / 2.0) / TileSize;
     const double tile_y = std::clamp(unclamped_tile_y, 0.0, double(tileCount()));
@@ -276,10 +403,15 @@ QPointF MapModel::screenFromWgs84(double lon, double lat, const QSize &viewport)
         base_tile_x, center.x(), this->m_zoom);
     const double tile_y = GeoWebMercator::latToTileY(lat, this->m_zoom);
 
+    const QPointF offset_pixels(
+        (tile_x - center.x()) * TileSize,
+        (tile_y - center.y()) * TileSize);
+    if (this->m_view_mode == MapViewMode::ThreeD)
+        return screenFromTileOffset3d(offset_pixels, viewport);
+
     return QPointF(
-        double(viewport.width()) / 2.0 + (tile_x - center.x()) * TileSize,
-        double(viewport.height()) / 2.0 + (tile_y - center.y()) * TileSize
-    );
+        double(viewport.width()) / 2.0 + offset_pixels.x(),
+        double(viewport.height()) / 2.0 + offset_pixels.y());
 }
 
 QPointF MapModel::screenFromWgs84(const CoordinateWGS84 &coord, const QSize &viewport,
@@ -306,10 +438,74 @@ QPointF MapModel::screenFromWgs84(double lon, double lat, const QSize &viewport,
     const double tile_x = local_tile_x + reference_tile_x - reference_base_tile_x;
     const double tile_y = GeoWebMercator::latToTileY(lat, this->m_zoom);
 
+    const QPointF offset_pixels(
+        (tile_x - center.x()) * TileSize,
+        (tile_y - center.y()) * TileSize);
+    if (this->m_view_mode == MapViewMode::ThreeD)
+        return screenFromTileOffset3d(offset_pixels, viewport);
+
     return QPointF(
-        double(viewport.width()) / 2.0 + (tile_x - center.x()) * TileSize,
-        double(viewport.height()) / 2.0 + (tile_y - center.y()) * TileSize
-    );
+        double(viewport.width()) / 2.0 + offset_pixels.x(),
+        double(viewport.height()) / 2.0 + offset_pixels.y());
+}
+
+QPointF MapModel::groundOffsetFromScreen3d(
+    const QPointF &position, const QSize &viewport) const
+{
+    if (!viewport.isValid())
+        return QPointF(qQNaN(), qQNaN());
+
+    const View3dCameraBasis basis = view3dCameraBasis(
+        this->m_view_3d_yaw_deg, this->m_view_3d_pitch_deg, viewport);
+    const double width = qMax(1, viewport.width());
+    const double height = qMax(1, viewport.height());
+    const double aspect = width / height;
+    const double tan_half_fov = std::tan(qDegreesToRadians(View3dFieldOfViewDeg / 2.0));
+    const double ndc_x = position.x() * 2.0 / width - 1.0;
+    const double ndc_y = 1.0 - position.y() * 2.0 / height;
+
+    QVector3D direction = basis.forward
+        + basis.right * float(ndc_x * tan_half_fov * aspect)
+        + basis.up * float(ndc_y * tan_half_fov);
+    direction.normalize();
+    if (std::abs(direction.z()) < 1e-6f)
+        return QPointF(qQNaN(), qQNaN());
+
+    const double distance = -double(basis.eye.z()) / double(direction.z());
+    if (!std::isfinite(distance) || distance <= 0.0)
+        return QPointF(qQNaN(), qQNaN());
+
+    const QVector3D ground = basis.eye + direction * float(distance);
+    return QPointF(ground.x(), ground.y());
+}
+
+QPointF MapModel::screenFromTileOffset3d(
+    const QPointF &offset_pixels, const QSize &viewport) const
+{
+    if (!viewport.isValid())
+        return QPointF(qQNaN(), qQNaN());
+
+    const View3dCameraBasis basis = view3dCameraBasis(
+        this->m_view_3d_yaw_deg, this->m_view_3d_pitch_deg, viewport);
+    const QVector3D point(
+        float(offset_pixels.x()), float(offset_pixels.y()), 0.0f);
+    const QVector3D relative = point - basis.eye;
+    const double depth = QVector3D::dotProduct(relative, basis.forward);
+    if (depth <= 1e-6)
+        return QPointF(qQNaN(), qQNaN());
+
+    const double width = qMax(1, viewport.width());
+    const double height = qMax(1, viewport.height());
+    const double aspect = width / height;
+    const double tan_half_fov = std::tan(qDegreesToRadians(View3dFieldOfViewDeg / 2.0));
+    const double camera_x = QVector3D::dotProduct(relative, basis.right);
+    const double camera_y = QVector3D::dotProduct(relative, basis.up);
+    const double ndc_x = camera_x / (depth * tan_half_fov * aspect);
+    const double ndc_y = camera_y / (depth * tan_half_fov);
+
+    return QPointF(
+        (ndc_x + 1.0) * width / 2.0,
+        (1.0 - ndc_y) * height / 2.0);
 }
 
 void MapModel::emitCenterChanged()

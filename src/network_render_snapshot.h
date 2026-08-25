@@ -17,6 +17,7 @@ struct NetworkRenderNode
     QUuid uuid;
     InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
     CoordinateWGS84 coordinate_wgs84;
+    double elevation_m = 0.0;
 };
 
 struct NetworkRenderLink
@@ -30,6 +31,10 @@ struct NetworkRenderLink
 
     // Complete ordered geometry: start node, optional vertices, end node.
     QList<CoordinateWGS84> vertices_wgs84;
+    // Elevation for every entry in vertices_wgs84. Intermediate link vertices
+    // interpolate between endpoint elevations because the hydraulic model does
+    // not currently store a dedicated elevation for those geometry vertices.
+    QList<double> elevations_m;
 };
 
 struct NetworkRenderSnapshot

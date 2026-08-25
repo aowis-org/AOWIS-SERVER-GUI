@@ -250,6 +250,9 @@ bool MapRhiBasemapRenderer::createSharedResources()
         this->pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
         this->pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
         this->pipeline->setSampleCount(this->sample_count);
+        this->pipeline->setDepthTest(true);
+        this->pipeline->setDepthWrite(true);
+        this->pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
         if (!this->pipeline->create())
             return false;
     }
@@ -272,8 +275,16 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     const double wrap_offset = std::round(
         (origin_tile_x - center.x()) / qMax(1, tile_count)) * tile_count;
     const double rendered_center_x = center.x() + wrap_offset;
-    const int tiles_x = viewport_size.width() / MapModel::TileSize + 4;
-    const int tiles_y = viewport_size.height() / MapModel::TileSize + 4;
+    int tiles_x = viewport_size.width() / MapModel::TileSize + 4;
+    int tiles_y = viewport_size.height() / MapModel::TileSize + 4;
+    if (this->map_model->viewMode() == MapViewMode::ThreeD)
+    {
+        // The pitched camera sees substantially farther along the ground plane
+        // than the orthographic viewport. Keep a wider tile apron so orbiting
+        // never exposes the clear color around the map.
+        tiles_x = tiles_x * 2 + 4;
+        tiles_y = tiles_y * 3 + 6;
+    }
     const int start_x = int(std::floor(rendered_center_x)) - tiles_x / 2;
     const int start_y = int(std::floor(center.y())) - tiles_y / 2;
 
@@ -332,12 +343,12 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
         tile.first_vertex = this->vertices.size();
 
         const TileVertex tile_vertices[6] = {
-            {left,  top,    -100.0f, 0.0f, 0.0f},
-            {right, top,    -100.0f, 1.0f, 0.0f},
-            {right, bottom, -100.0f, 1.0f, 1.0f},
-            {left,  top,    -100.0f, 0.0f, 0.0f},
-            {right, bottom, -100.0f, 1.0f, 1.0f},
-            {left,  bottom, -100.0f, 0.0f, 1.0f}
+            {left,  top,    0.0f, 0.0f, 0.0f},
+            {right, top,    0.0f, 1.0f, 0.0f},
+            {right, bottom, 0.0f, 1.0f, 1.0f},
+            {left,  top,    0.0f, 0.0f, 0.0f},
+            {right, bottom, 0.0f, 1.0f, 1.0f},
+            {left,  bottom, 0.0f, 0.0f, 1.0f}
         };
         for (const TileVertex &vertex : tile_vertices)
             this->vertices.append(vertex);

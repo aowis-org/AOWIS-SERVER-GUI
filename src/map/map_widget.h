@@ -120,6 +120,8 @@ private:
 
     bool mouse_pan_active = false;
     QPoint mouse_pan_last_position;
+    bool view_3d_orbit_active = false;
+    QPoint view_3d_orbit_last_position;
     QPointF mouse_pan_velocity;
     QElapsedTimer mouse_pan_move_elapsed_timer;
     bool mouse_pan_inertia_active = false;

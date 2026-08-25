@@ -23,6 +23,7 @@ constexpr qreal FlowDirectionMinimumLinkPixels = 18.0;
 constexpr qreal FlowDirectionSpacingPixels = 100.0;
 constexpr qreal FlowDirectionChevronHalfWidthRatio = 0.4;
 constexpr qreal FlowDirectionStrokeWidthRatio = 0.2;
+constexpr qreal FlowDirectionMinimumElevationPixels = 4.0;
 constexpr int FlowDirectionMaximumMarkersPerLink = 32;
 }
 
@@ -67,6 +68,80 @@ void MapRhiScene::rebuildNetworkGeometry()
     if (!this->origin_valid)
         return;
 
+    bool elevation_reference_initialized = false;
+    double elevation_maximum_m = 0.0;
+    for (const NetworkRenderNode &node : this->network_snapshot.nodes)
+    {
+        if (!finiteCoordinate(node.coordinate_wgs84) || !std::isfinite(node.elevation_m))
+            continue;
+
+        if (!elevation_reference_initialized)
+        {
+            this->reference_latitude_deg = node.coordinate_wgs84.latitude_deg;
+            this->elevation_reference_m = node.elevation_m;
+            elevation_maximum_m = node.elevation_m;
+            elevation_reference_initialized = true;
+        }
+        else
+        {
+            this->elevation_reference_m = qMin(this->elevation_reference_m, node.elevation_m);
+            elevation_maximum_m = qMax(elevation_maximum_m, node.elevation_m);
+        }
+    }
+    if (!elevation_reference_initialized)
+    {
+        this->reference_latitude_deg = 0.0;
+        this->elevation_reference_m = 0.0;
+        elevation_maximum_m = 0.0;
+    }
+
+    bool horizontal_bounds_initialized = false;
+    double horizontal_minimum_x = 0.0;
+    double horizontal_maximum_x = 0.0;
+    double horizontal_minimum_y = 0.0;
+    double horizontal_maximum_y = 0.0;
+    for (const NetworkRenderNode &node : this->network_snapshot.nodes)
+    {
+        if (!finiteCoordinate(node.coordinate_wgs84))
+            continue;
+        double resolved_x = this->origin_world.x();
+        const QPointF position = localWorldPosition(
+            node.coordinate_wgs84, this->origin_world.x(), &resolved_x);
+        if (!horizontal_bounds_initialized)
+        {
+            horizontal_minimum_x = position.x();
+            horizontal_maximum_x = position.x();
+            horizontal_minimum_y = position.y();
+            horizontal_maximum_y = position.y();
+            horizontal_bounds_initialized = true;
+        }
+        else
+        {
+            horizontal_minimum_x = qMin(horizontal_minimum_x, position.x());
+            horizontal_maximum_x = qMax(horizontal_maximum_x, position.x());
+            horizontal_minimum_y = qMin(horizontal_minimum_y, position.y());
+            horizontal_maximum_y = qMax(horizontal_maximum_y, position.y());
+        }
+    }
+
+    this->vertical_exaggeration = 2.5;
+    const double meters_per_world_pixel = GeoWebMercator::metersPerPixel(
+        this->reference_latitude_deg, MapRenderCacheMath::ReferenceZoom);
+    if (horizontal_bounds_initialized && meters_per_world_pixel > 0.0)
+    {
+        const double horizontal_span = qMax(
+            horizontal_maximum_x - horizontal_minimum_x,
+            horizontal_maximum_y - horizontal_minimum_y);
+        const double elevation_relief_world =
+            (elevation_maximum_m - this->elevation_reference_m) / meters_per_world_pixel;
+        if (horizontal_span > 0.0 && elevation_relief_world > 0.0)
+        {
+            const double fit_exaggeration =
+                horizontal_span * 0.35 / elevation_relief_world;
+            this->vertical_exaggeration = qBound(0.25, fit_exaggeration, 2.5);
+        }
+    }
+
     this->node_vertices.reserve(this->network_snapshot.nodes.size() * 6);
     for (const NetworkRenderNode &node : this->network_snapshot.nodes)
     {
@@ -79,9 +154,10 @@ void MapRhiScene::rebuildNetworkGeometry()
         double resolved_x = this->origin_world.x();
         const QPointF center = localWorldPosition(
             node.coordinate_wgs84, this->origin_world.x(), &resolved_x);
+        const float center_z = localElevationWorld(node.elevation_m);
         this->entity_keys_by_uuid.insert(
             node.uuid, entityRenderKey(node.entity_type, node.render_id));
-        appendNode(node.entity_type, node.render_id, center);
+        appendNode(node.entity_type, node.render_id, center, center_z);
         HeatmapMarker heatmap_marker;
         heatmap_marker.render_id = node.render_id;
         heatmap_marker.center = center;
@@ -92,6 +168,7 @@ void MapRhiScene::rebuildNetworkGeometry()
             marker.entity_type = node.entity_type;
             marker.render_id = node.render_id;
             marker.center = center;
+            marker.z = center_z;
             this->icon_markers.append(marker);
         }
     }
@@ -118,9 +195,12 @@ void MapRhiScene::rebuildNetworkGeometry()
 
         bool have_previous = false;
         QPointF previous;
+        float previous_z = 0.0f;
         double wrap_reference_x = this->origin_world.x();
-        for (const CoordinateWGS84 &coordinate : link.vertices_wgs84)
+        for (qsizetype vertex_index = 0;
+             vertex_index < link.vertices_wgs84.size(); ++vertex_index)
         {
+            const CoordinateWGS84 &coordinate = link.vertices_wgs84.at(vertex_index);
             if (!finiteCoordinate(coordinate))
             {
                 have_previous = false;
@@ -132,14 +212,26 @@ void MapRhiScene::rebuildNetworkGeometry()
             const QPointF current = localWorldPosition(
                 coordinate, wrap_reference_x, &resolved_x);
             wrap_reference_x = resolved_x;
+            const double elevation_m = vertex_index < link.elevations_m.size()
+                ? link.elevations_m.at(vertex_index)
+                : this->elevation_reference_m;
+            const float current_z = localElevationWorld(elevation_m);
 
             if (have_previous)
             {
-                appendLinkSegment(link.entity_type, link.render_id, previous, current);
-                link_path.segments.append(QLineF(previous, current));
+                appendLinkSegment(
+                    link.entity_type, link.render_id,
+                    previous, previous_z, current, current_z);
+                SceneSegment segment;
+                segment.start = previous;
+                segment.end = current;
+                segment.start_z = previous_z;
+                segment.end_z = current_z;
+                link_path.segments.append(segment);
             }
 
             previous = current;
+            previous_z = current_z;
             have_previous = true;
         }
 
@@ -150,16 +242,17 @@ void MapRhiScene::rebuildNetworkGeometry()
             if (mapRhiHasIcon(link.entity_type))
             {
                 qreal total_length = 0.0;
-                for (const QLineF &segment : link_path.segments)
-                    total_length += segment.length();
+                for (const SceneSegment &segment : link_path.segments)
+                    total_length += QLineF(segment.start, segment.end).length();
 
                 if (total_length > 0.0)
                 {
                     const qreal target = total_length / 2.0;
                     qreal traversed = 0.0;
-                    for (const QLineF &segment : link_path.segments)
+                    for (const SceneSegment &segment : link_path.segments)
                     {
-                        const qreal segment_length = segment.length();
+                        const QLineF segment_line(segment.start, segment.end);
+                        const qreal segment_length = segment_line.length();
                         if (segment_length <= 0.0)
                             continue;
                         if (traversed + segment_length < target)
@@ -174,8 +267,9 @@ void MapRhiScene::rebuildNetworkGeometry()
                         marker.entity_type = link.entity_type;
                         marker.render_id = link.render_id;
                         marker.center = QPointF(
-                            segment.x1() + segment.dx() * ratio,
-                            segment.y1() + segment.dy() * ratio);
+                            segment.start.x() + (segment.end.x() - segment.start.x()) * ratio,
+                            segment.start.y() + (segment.end.y() - segment.start.y()) * ratio);
+                        marker.z = segment.start_z + (segment.end_z - segment.start_z) * float(ratio);
                         this->icon_markers.append(marker);
                         break;
                     }
@@ -314,6 +408,29 @@ QPointF MapRhiScene::originWorld() const
     return this->origin_world;
 }
 
+const NetworkRenderSnapshot &MapRhiScene::networkSnapshot() const
+{
+    return this->network_snapshot;
+}
+
+QVector3D MapRhiScene::worldPosition(
+    const CoordinateWGS84 &coordinate, double elevation_m,
+    double wrap_reference_x, double *resolved_world_x) const
+{
+    double resolved_x = wrap_reference_x;
+    const QPointF position = localWorldPosition(
+        coordinate, wrap_reference_x, &resolved_x);
+    if (resolved_world_x != nullptr)
+        *resolved_world_x = resolved_x;
+    return QVector3D(
+        float(position.x()), float(position.y()), localElevationWorld(elevation_m));
+}
+
+bool MapRhiScene::isEntityHidden(const QUuid &uuid) const
+{
+    return this->hidden_entity_uuids.contains(uuid);
+}
+
 quint64 MapRhiScene::geometryRevision() const
 {
     return this->geometry_revision;
@@ -383,9 +500,24 @@ QPointF MapRhiScene::localWorldPosition(const CoordinateWGS84 &coordinate,
         raw_world.y() - this->origin_world.y());
 }
 
+float MapRhiScene::localElevationWorld(double elevation_m) const
+{
+    if (!std::isfinite(elevation_m))
+        return 1.0f;
+
+    const double meters_per_world_pixel = GeoWebMercator::metersPerPixel(
+        this->reference_latitude_deg, MapRenderCacheMath::ReferenceZoom);
+    if (!std::isfinite(meters_per_world_pixel) || meters_per_world_pixel <= 0.0)
+        return 1.0f;
+
+    return float(1.0 + (elevation_m - this->elevation_reference_m)
+        / meters_per_world_pixel * this->vertical_exaggeration);
+}
+
 void MapRhiScene::appendLinkSegment(
     InfrastructureEntity entity_type, quint32 render_id,
-    const QPointF &start, const QPointF &end)
+    const QPointF &start, float start_z,
+    const QPointF &end, float end_z)
 {
     const quint64 entity_key = entityRenderKey(entity_type, render_id);
     const float corners[6][2] = {
@@ -402,10 +534,10 @@ void MapRhiScene::appendLinkSegment(
         LinkVertex vertex;
         vertex.start_x = float(start.x());
         vertex.start_y = float(start.y());
-        vertex.start_z = 0.0f;
+        vertex.start_z = start_z;
         vertex.end_x = float(end.x());
         vertex.end_y = float(end.y());
-        vertex.end_z = 0.0f;
+        vertex.end_z = end_z;
         vertex.along = corners[index][0];
         vertex.side = corners[index][1];
         vertex.red = 0.05f;
@@ -420,7 +552,8 @@ void MapRhiScene::appendLinkSegment(
 }
 
 void MapRhiScene::appendNode(
-    InfrastructureEntity entity_type, quint32 render_id, const QPointF &center)
+    InfrastructureEntity entity_type, quint32 render_id,
+    const QPointF &center, float center_z)
 {
     const quint64 entity_key = entityRenderKey(entity_type, render_id);
     const float corners[6][2] = {
@@ -437,7 +570,7 @@ void MapRhiScene::appendNode(
         NodeVertex vertex;
         vertex.center_x = float(center.x());
         vertex.center_y = float(center.y());
-        vertex.center_z = 0.0f;
+        vertex.center_z = center_z;
         vertex.corner_x = corners[index][0];
         vertex.corner_y = corners[index][1];
         vertex.red = 0.02f;
@@ -516,7 +649,10 @@ void MapRhiScene::appendHeatmap(const HeatmapMarker &marker)
         HeatmapVertex vertex;
         vertex.center_x = float(marker.center.x());
         vertex.center_y = float(marker.center.y());
-        vertex.center_z = -10.0f;
+        // Keep the heatmap just above the basemap to avoid coplanar depth fighting.
+        // The heatmap shader expands this center in the XY world plane, so in 3D it
+        // lies flat on the ground instead of facing the camera.
+        vertex.center_z = 0.05f;
         vertex.corner_x = corners[index][0];
         vertex.corner_y = corners[index][1];
         vertex.red = color.redF();
@@ -569,7 +705,7 @@ void MapRhiScene::appendIcon(const IconMarker &marker)
         IconVertex vertex;
         vertex.center_x = float(marker.center.x());
         vertex.center_y = float(marker.center.y());
-        vertex.center_z = 0.0f;
+        vertex.center_z = marker.z;
         vertex.offset_x_px = corners[index][0] * half_width_px;
         vertex.offset_y_px = corners[index][1] * half_height_px;
         vertex.u = corners[index][0] < 0.0f ? u_left : u_right;
@@ -604,8 +740,8 @@ void MapRhiScene::rebuildFlowDirections()
     for (const LinkPath &path : this->link_paths)
     {
         qreal total_world_length = 0.0;
-        for (const QLineF &segment : path.segments)
-            total_world_length += segment.length();
+        for (const SceneSegment &segment : path.segments)
+            total_world_length += QLineF(segment.start, segment.end).length();
 
         const qreal total_screen_length = total_world_length * scale;
         if (total_screen_length < FlowDirectionMinimumLinkPixels)
@@ -625,8 +761,8 @@ void MapRhiScene::rebuildFlowDirections()
             continue;
 
         qreal total_world_length = 0.0;
-        for (const QLineF &segment : path.segments)
-            total_world_length += segment.length();
+        for (const SceneSegment &segment : path.segments)
+            total_world_length += QLineF(segment.start, segment.end).length();
 
         const qreal total_screen_length = total_world_length * scale;
         if (total_screen_length < FlowDirectionMinimumLinkPixels || total_world_length <= 0.0)
@@ -653,9 +789,10 @@ void MapRhiScene::rebuildFlowDirections()
                 target_world_distance = total_world_length * 0.3;
 
             qreal traversed_world_distance = 0.0;
-            for (const QLineF &segment : path.segments)
+            for (const SceneSegment &segment : path.segments)
             {
-                const qreal segment_world_length = segment.length();
+                const QLineF segment_line(segment.start, segment.end);
+                const qreal segment_world_length = segment_line.length();
                 if (segment_world_length <= 0.0)
                     continue;
                 if (traversed_world_distance + segment_world_length < target_world_distance)
@@ -669,15 +806,22 @@ void MapRhiScene::rebuildFlowDirections()
                     (target_world_distance - traversed_world_distance) / segment_world_length,
                     1.0);
                 const QPointF direction_base(
-                    segment.dx() / segment_world_length,
-                    segment.dy() / segment_world_length);
+                    (segment.end.x() - segment.start.x()) / segment_world_length,
+                    (segment.end.y() - segment.start.y()) / segment_world_length);
                 QPointF direction = direction_base;
                 if (flow_direction < 0)
                     direction *= -1.0;
 
                 const QPointF center(
-                    segment.x1() + segment.dx() * ratio,
-                    segment.y1() + segment.dy() * ratio);
+                    segment.start.x() + (segment.end.x() - segment.start.x()) * ratio,
+                    segment.start.y() + (segment.end.y() - segment.start.y()) * ratio);
+                const qreal elevation_pixels = qMax<qreal>(
+                    FlowDirectionMinimumElevationPixels,
+                    qreal(this->symbology.link_thickness_px) / 2.0 + 2.0);
+                const float elevation_world = float(elevation_pixels / scale);
+                const float center_z = segment.start_z
+                    + (segment.end_z - segment.start_z) * float(ratio)
+                    + elevation_world;
                 const QPointF normal(-direction.y(), direction.x());
                 const QPointF tip =
                     center + direction * (chevron_length_world / 2.0);
@@ -689,9 +833,9 @@ void MapRhiScene::rebuildFlowDirections()
                     base - normal * chevron_half_width_world;
 
                 appendFlowDirectionStroke(
-                    tail_first, tip, arrow_color, half_stroke_px);
+                    tail_first, tip, center_z, arrow_color, half_stroke_px);
                 appendFlowDirectionStroke(
-                    tail_second, tip, arrow_color, half_stroke_px);
+                    tail_second, tip, center_z, arrow_color, half_stroke_px);
                 break;
             }
         }
@@ -699,7 +843,8 @@ void MapRhiScene::rebuildFlowDirections()
 }
 
 void MapRhiScene::appendFlowDirectionStroke(
-    const QPointF &start, const QPointF &end, QRgb color, float half_width_px)
+    const QPointF &start, const QPointF &end, float z,
+    QRgb color, float half_width_px)
 {
     const float corners[6][2] = {
         {0.0f, -1.0f},
@@ -716,10 +861,10 @@ void MapRhiScene::appendFlowDirectionStroke(
         LinkVertex vertex;
         vertex.start_x = float(start.x());
         vertex.start_y = float(start.y());
-        vertex.start_z = 0.0f;
+        vertex.start_z = z;
         vertex.end_x = float(end.x());
         vertex.end_y = float(end.y());
-        vertex.end_z = 0.0f;
+        vertex.end_z = z;
         vertex.along = corners[index][0];
         vertex.side = corners[index][1];
         vertex.red = qRed(color) / 255.0f;

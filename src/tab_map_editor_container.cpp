@@ -378,7 +378,7 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
             this->map_canvas->raise();
             this->map_canvas->setFocus(Qt::OtherFocusReason);
 
-            qInfo() << "Editor map renderer: RHI 2D map active with GPU basemap/static network "
+            qInfo() << "Editor map renderer: RHI map active with GPU basemap/static network "
                        "and lightweight QWidget interaction overlay; CPU renderer retained as fallback.";
         });
         connect(rhi_surface, &MapRhiWidget::signalRendererFailed, this,
@@ -388,6 +388,8 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
                 << QStringLiteral("Editor RHI surface failed (%1). "
                                   "Falling back to the existing CPU editor renderer.")
                        .arg(reason);
+            if (this->map_model->viewMode() != MapViewMode::TwoD)
+                this->map_model->setViewMode(MapViewMode::TwoD);
             this->map_canvas->setRhiOverlayMode(false);
             this->map_canvas->show();
             this->map_stack_layout->setCurrentWidget(this->map_canvas);
@@ -467,6 +469,18 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
             this, [this](int)
     {
         applyDesktopRhiEditorSymbology();
+    });
+    connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode view_mode)
+    {
+        if (view_mode == MapViewMode::ThreeD && this->editor_controller != nullptr)
+        {
+            this->editor_controller->keyPress(Qt::Key_Escape);
+            if (this->editor_controller->rectangleSelectionActive())
+                this->editor_controller->cancelRectangleSelection();
+            this->editor_controller->stopEntityPositioning();
+        }
+        applyDesktopRhiEditorSymbology();
+        this->map_canvas->requestRenderUpdate();
     });
 #endif
 #ifdef Q_OS_WASM
@@ -608,7 +622,7 @@ void MapEditorContainer::applyDesktopRhiEditorSymbology()
         50, qRound(1000.0 / base_node_diameter), 250);
     symbology.icon_size_percent =
         this->map_canvas->mapCanvasEntities()->iconSizePercent();
-    symbology.show_icons = false;
+    symbology.show_icons = this->map_model->viewMode() == MapViewMode::ThreeD;
     symbology.link_thickness_px = 3;
     symbology.show_flow_direction = false;
     symbology.visual_heatmap = VisualHeatmap::None;

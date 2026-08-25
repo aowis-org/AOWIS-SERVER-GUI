@@ -29,6 +29,14 @@ MapRhiHudWidget::MapRhiHudWidget(MapModel *map_model, GpsProvider *gps, QWidget 
     {
         update();
     });
+    connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode)
+    {
+        update();
+    });
+    connect(this->map_model, &MapModel::view3dCameraChanged, this, [this]
+    {
+        update();
+    });
 
     if (this->gps != nullptr)
     {

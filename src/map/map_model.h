@@ -28,6 +28,8 @@ public:
 
     MapProvider provider() const;
     MapViewMode viewMode() const;
+    double view3dYawDeg() const;
+    double view3dPitchDeg() const;
     QString tileCacheKey(int x, int y) const;
     QString tileCachePrefix(int zoom) const;
     QString tileEndpoint(int x, int y) const;
@@ -52,9 +54,12 @@ public:
 
     void zoomByAt(int steps, const QPoint &anchorPos, const QSize &viewport);
     void panByPixels(const QPoint &delta, const QSize &viewport);
+    void panByPixels3d(const QPoint &delta, const QSize &viewport);
 
     void setProvider(MapProvider provider);
     void setViewMode(MapViewMode view_mode);
+    void orbitView3d(double yaw_delta_deg, double pitch_delta_deg);
+    void resetView3dCamera();
 
 signals:
     void zoomChanged(int zoom);
@@ -62,10 +67,13 @@ signals:
     void centerChangedUTM(CoordinateUTM utm);
     void providerChanged(MapProvider provider);
     void viewModeChanged(MapViewMode view_mode);
+    void view3dCameraChanged();
 
 private:
     void clampCenter(const QSize &viewport);
     void emitCenterChanged();
+    QPointF groundOffsetFromScreen3d(const QPointF &position, const QSize &viewport) const;
+    QPointF screenFromTileOffset3d(const QPointF &offset_pixels, const QSize &viewport) const;
     QString providerPath() const;
 
     int m_zoom = 18;
@@ -79,6 +87,8 @@ private:
 
     MapProvider m_provider = MapProvider::ArcGISSat;
     MapViewMode m_view_mode = MapViewMode::TwoD;
+    double m_view_3d_yaw_deg = 0.0;
+    double m_view_3d_pitch_deg = 55.0;
 };
 
 #endif // MAP_MODEL_H

@@ -4,6 +4,7 @@
 #include <QMatrix4x4>
 #include <QPointF>
 #include <QSize>
+#include <QVector3D>
 
 #include "../_enums_structs.h"
 
@@ -20,6 +21,7 @@ public:
     void syncFromMapModel(const MapModel &map_model);
 
     QMatrix4x4 viewProjectionMatrix(const QRhi &rhi) const;
+    QPointF projectWorldToScreen(const QVector3D &world_position) const;
 
 private:
     QPointF scene_origin_world;
@@ -27,6 +29,8 @@ private:
     QSize viewport_size;
     int zoom = 0;
     MapViewMode view_mode = MapViewMode::TwoD;
+    double view_3d_yaw_deg = 0.0;
+    double view_3d_pitch_deg = 55.0;
 };
 
 #endif // MAP_RHI_CAMERA_H

@@ -34,6 +34,14 @@ MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map,
             this->editor_controller->mouseMove(this->last_pointer_position, size(), false);
         requestRenderUpdate();
     });
+    connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode)
+    {
+        requestRenderUpdate();
+    });
+    connect(this->map_model, &MapModel::view3dCameraChanged, this, [this]
+    {
+        requestRenderUpdate();
+    });
 
     if (this->hydraulic_data)
     {
@@ -237,6 +245,14 @@ MapEditorViewportRenderState MapCanvasWidget::viewportRenderState() const
 
 void MapCanvasWidget::keyPressEvent(QKeyEvent *event)
 {
+    if (this->map_model->viewMode() == MapViewMode::ThreeD)
+    {
+        if (this->map->handleKeyPressEvent(event))
+            return;
+        QWidget::keyPressEvent(event);
+        return;
+    }
+
     if (this->editor_controller && this->editor_controller->keyPress(Qt::Key(event->key())))
     {
         event->accept();
@@ -274,6 +290,14 @@ void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
     this->last_pointer_position = event->position();
     this->last_pointer_position_valid = true;
 
+    if (this->map_model->viewMode() == MapViewMode::ThreeD)
+    {
+        if (this->map->handleMousePressEvent(event))
+            return;
+        QWidget::mousePressEvent(event);
+        return;
+    }
+
     if (this->editor_controller &&
         this->editor_controller->mousePress(event->position(), event->globalPosition().toPoint(),
                                             event->button(), size()))
@@ -292,6 +316,14 @@ void MapCanvasWidget::mouseMoveEvent(QMouseEvent *event)
 {
     this->last_pointer_position = event->position();
     this->last_pointer_position_valid = true;
+
+    if (this->map_model->viewMode() == MapViewMode::ThreeD)
+    {
+        if (this->map->handleMouseMoveEvent(event))
+            return;
+        QWidget::mouseMoveEvent(event);
+        return;
+    }
 
     const bool map_handled_event = this->map->handleMouseMoveEvent(event);
     const bool editor_handled_event = this->editor_controller &&
@@ -313,6 +345,14 @@ void MapCanvasWidget::mouseReleaseEvent(QMouseEvent *event)
 {
     this->last_pointer_position = event->position();
     this->last_pointer_position_valid = true;
+
+    if (this->map_model->viewMode() == MapViewMode::ThreeD)
+    {
+        if (this->map->handleMouseReleaseEvent(event))
+            return;
+        QWidget::mouseReleaseEvent(event);
+        return;
+    }
 
     if (this->editor_controller &&
         this->editor_controller->mouseRelease(event->position(), event->button(), size()))

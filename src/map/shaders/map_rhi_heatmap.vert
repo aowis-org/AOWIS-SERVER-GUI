@@ -18,13 +18,12 @@ layout(location = 1) out vec3 heatmap_color;
 
 void main()
 {
-    vec4 clip_position = camera.view_projection * vec4(center_position, 1.0);
+    float radius_world = max(camera.heatmap_settings.w, 0.000001);
+    vec3 world_position = center_position + vec3(corner * radius_world, 0.0);
+    vec4 clip_position = camera.view_projection * vec4(world_position, 1.0);
     vec2 viewport = max(camera.viewport_and_sizes.xy, vec2(1.0));
     vec2 translation_ndc = camera.network_translation.xy * 2.0 / viewport;
     clip_position.xy += translation_ndc * clip_position.w;
-    float radius_px = max(camera.heatmap_settings.x, 1.0);
-    vec2 offset_ndc = corner * radius_px * 2.0 / viewport;
-    clip_position.xy += offset_ndc * clip_position.w;
 
     gl_Position = clip_position;
     heatmap_corner = corner;

@@ -6,6 +6,11 @@
 
 #include <rhi/qrhi.h>
 
+#include <QVector3D>
+#include <QtMath>
+
+#include <cmath>
+
 MapRhiCamera::MapRhiCamera() = default;
 
 void MapRhiCamera::setSceneOriginWorld(const QPointF &origin_world)
@@ -22,6 +27,8 @@ void MapRhiCamera::syncFromMapModel(const MapModel &map_model)
 {
     this->zoom = map_model.zoom();
     this->view_mode = map_model.viewMode();
+    this->view_3d_yaw_deg = map_model.view3dYawDeg();
+    this->view_3d_pitch_deg = map_model.view3dPitchDeg();
 
     const QPointF raw_center_world = GeoWebMercator::lonLatToWorldPixel(
         GeoWebMercator::normalizeLongitude(map_model.centerLon()),
@@ -39,10 +46,6 @@ void MapRhiCamera::syncFromMapModel(const MapModel &map_model)
 
 QMatrix4x4 MapRhiCamera::viewProjectionMatrix(const QRhi &rhi) const
 {
-    // Keep the established top-down projection until the perspective camera uses
-    // the runtime view-mode state.
-    Q_UNUSED(this->view_mode);
-
     const int viewport_width = qMax(1, this->viewport_size.width());
     const int viewport_height = qMax(1, this->viewport_size.height());
     const double scale = GeoWebMercator::zoomScale(
@@ -50,6 +53,38 @@ QMatrix4x4 MapRhiCamera::viewProjectionMatrix(const QRhi &rhi) const
     const double safe_scale = scale > 0.0 ? scale : 1.0;
     const double half_width_world = double(viewport_width) / (2.0 * safe_scale);
     const double half_height_world = double(viewport_height) / (2.0 * safe_scale);
+
+    if (this->view_mode == MapViewMode::ThreeD)
+    {
+        constexpr float FieldOfViewDeg = 45.0f;
+        constexpr double MinimumPitchDeg = 20.0;
+        constexpr double MaximumPitchDeg = 80.0;
+        const double pitch_rad = qDegreesToRadians(qBound(
+            MinimumPitchDeg, this->view_3d_pitch_deg, MaximumPitchDeg));
+        const double yaw_rad = qDegreesToRadians(this->view_3d_yaw_deg);
+        const double distance = half_height_world
+            / std::tan(qDegreesToRadians(double(FieldOfViewDeg) / 2.0));
+        const double horizontal_distance = distance * std::cos(pitch_rad);
+        const QVector3D target(
+            float(this->center_world.x()), float(this->center_world.y()), 0.0f);
+        const QVector3D eye(
+            target.x() + float(std::sin(yaw_rad) * horizontal_distance),
+            target.y() + float(std::cos(yaw_rad) * horizontal_distance),
+            float(distance * std::sin(pitch_rad)));
+
+        QMatrix4x4 projection;
+        projection.perspective(
+            FieldOfViewDeg, float(viewport_width) / float(viewport_height),
+            float(qMax(0.01, distance * 0.01)),
+            float(qMax(10.0, distance * 20.0)));
+        QMatrix4x4 view;
+        view.lookAt(eye, target, QVector3D(0.0f, 0.0f, 1.0f));
+
+        QMatrix4x4 result = rhi.clipSpaceCorrMatrix();
+        result *= projection;
+        result *= view;
+        return result;
+    }
 
     const float left = float(this->center_world.x() - half_width_world);
     const float right = float(this->center_world.x() + half_width_world);
@@ -60,3 +95,56 @@ QMatrix4x4 MapRhiCamera::viewProjectionMatrix(const QRhi &rhi) const
     result.ortho(left, right, bottom, top, -1000000.0f, 1000000.0f);
     return result;
 }
+QPointF MapRhiCamera::projectWorldToScreen(const QVector3D &world_position) const
+{
+    const int viewport_width = qMax(1, this->viewport_size.width());
+    const int viewport_height = qMax(1, this->viewport_size.height());
+    const double scale = GeoWebMercator::zoomScale(
+        this->zoom, MapRenderCacheMath::ReferenceZoom);
+    const double safe_scale = scale > 0.0 ? scale : 1.0;
+
+    if (this->view_mode != MapViewMode::ThreeD)
+    {
+        return QPointF(
+            viewport_width / 2.0
+                + (double(world_position.x()) - this->center_world.x()) * safe_scale,
+            viewport_height / 2.0
+                + (double(world_position.y()) - this->center_world.y()) * safe_scale);
+    }
+
+    constexpr double FieldOfViewDeg = 45.0;
+    constexpr double MinimumPitchDeg = 20.0;
+    constexpr double MaximumPitchDeg = 80.0;
+    const double half_height_world = double(viewport_height) / (2.0 * safe_scale);
+    const double pitch_rad = qDegreesToRadians(qBound(
+        MinimumPitchDeg, this->view_3d_pitch_deg, MaximumPitchDeg));
+    const double yaw_rad = qDegreesToRadians(this->view_3d_yaw_deg);
+    const double distance = half_height_world
+        / std::tan(qDegreesToRadians(FieldOfViewDeg / 2.0));
+    const double horizontal_distance = distance * std::cos(pitch_rad);
+    const QVector3D target(
+        float(this->center_world.x()), float(this->center_world.y()), 0.0f);
+    const QVector3D eye(
+        target.x() + float(std::sin(yaw_rad) * horizontal_distance),
+        target.y() + float(std::cos(yaw_rad) * horizontal_distance),
+        float(distance * std::sin(pitch_rad)));
+    const QVector3D forward = (target - eye).normalized();
+    const QVector3D right = QVector3D::crossProduct(
+        forward, QVector3D(0.0f, 0.0f, 1.0f)).normalized();
+    const QVector3D up = QVector3D::crossProduct(right, forward).normalized();
+    const QVector3D relative = world_position - eye;
+    const double depth = QVector3D::dotProduct(relative, forward);
+    if (depth <= 1e-6)
+        return QPointF(qQNaN(), qQNaN());
+
+    const double aspect = double(viewport_width) / double(viewport_height);
+    const double tan_half_fov = std::tan(qDegreesToRadians(FieldOfViewDeg / 2.0));
+    const double camera_x = QVector3D::dotProduct(relative, right);
+    const double camera_y = QVector3D::dotProduct(relative, up);
+    const double ndc_x = camera_x / (depth * tan_half_fov * aspect);
+    const double ndc_y = camera_y / (depth * tan_half_fov);
+    return QPointF(
+        (ndc_x + 1.0) * viewport_width / 2.0,
+        (1.0 - ndc_y) * viewport_height / 2.0);
+}
+
