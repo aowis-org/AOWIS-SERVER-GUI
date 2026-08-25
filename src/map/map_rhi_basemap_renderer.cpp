@@ -488,6 +488,49 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
         }
     }
 
+    // During an integer zoom/LOD transition, keep rendering the previous
+    // complete layer until the replacement foreground tiles are actually
+    // available. Switching visible_tiles immediately would make draw() skip
+    // every not-yet-loaded texture and expose the clear color as black holes.
+    //
+    // The old geometry remains valid because it is expressed in the common
+    // ReferenceZoom world coordinate system. In 2D, the continuous scale is
+    // adjusted when the integer tile zoom changes, so the retained old layer
+    // stays at exactly the same apparent scale while the new LOD loads.
+    const bool zoom_transition = !this->visible_tiles.isEmpty()
+        && this->visible_tiles.constFirst().imagery_zoom != imagery_zoom;
+    if (zoom_transition)
+    {
+        bool foreground_ready = true;
+        for (const VisibleTile &tile : next_tiles)
+        {
+            if (!tile.foreground)
+                continue;
+
+            const QPixmap *pixmap = this->tile_repository->tile(tile.imagery_key);
+            if (pixmap == nullptr || pixmap->isNull())
+            {
+                foreground_ready = false;
+                break;
+            }
+
+            if (relief_enabled && !tile.terrain_key.isEmpty()
+                && this->terrain_repository != nullptr
+                && this->terrain_repository->tile(tile.terrain_key) == nullptr)
+            {
+                foreground_ready = false;
+                break;
+            }
+        }
+
+        if (!foreground_ready)
+        {
+            // Keep layout_dirty set. signalTileAvailable() schedules another
+            // frame, at which point this readiness check is repeated.
+            return true;
+        }
+    }
+
     bool same_layout = !this->layout_dirty
         && next_tiles.size() == this->visible_tiles.size();
     if (same_layout)
@@ -544,14 +587,26 @@ bool MapRhiBasemapRenderer::ensureTileResource(
         return false;
     *resource = nullptr;
 
+    std::map<QString, std::unique_ptr<TileResource>>::iterator iterator =
+        this->tile_resources.find(key);
+
     const QPixmap *pixmap = this->tile_repository != nullptr
         ? this->tile_repository->tile(key)
         : nullptr;
     if (pixmap == nullptr || pixmap->isNull())
+    {
+        // A retained zoom-transition layer may outlive its CPU QPixmap cache
+        // entry. Keep using the already-uploaded GPU texture instead of
+        // turning that tile into a hole merely because the CPU cache evicted it.
+        if (iterator != this->tile_resources.end()
+            && iterator->second->texture
+            && iterator->second->bindings)
+        {
+            *resource = iterator->second.get();
+        }
         return true;
+    }
 
-    std::map<QString, std::unique_ptr<TileResource>>::iterator iterator =
-        this->tile_resources.find(key);
     if (iterator == this->tile_resources.end())
     {
         std::unique_ptr<TileResource> created = std::make_unique<TileResource>();
