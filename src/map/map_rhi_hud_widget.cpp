@@ -29,6 +29,11 @@ MapRhiHudWidget::MapRhiHudWidget(MapModel *map_model, GpsProvider *gps, QWidget 
     {
         update();
     });
+    connect(this->map_model, &MapModel::view2dContinuousScaleChanged,
+            this, [this](double)
+    {
+        update();
+    });
     connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode)
     {
         update();

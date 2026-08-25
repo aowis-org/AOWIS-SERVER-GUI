@@ -58,6 +58,7 @@ public:
 public slots:
     void zoomIn();
     void zoomOut();
+    void setRhiViewActive(bool active);
     void panUp();
     void panDown();
     void panLeft();
@@ -102,7 +103,9 @@ private:
     bool setKeyboardPanKey(int key, bool pressed);
     bool hasKeyboardPanInput() const;
     bool hasFastKeyboardPanInput() const;
+    bool hasView2dKeyboardZoomInput() const;
     bool hasView3dKeyboardZoomInput() const;
+    void updateView2dKeyboardZoom(qreal elapsed_seconds);
     void updateView3dKeyboardZoom(qreal elapsed_seconds);
     void beginView3dKeyboardZoomInteraction();
     void endView3dKeyboardZoomInteraction();
@@ -143,6 +146,9 @@ private:
     bool pan_key_up_pressed = false;
     bool pan_key_down_pressed = false;
     bool pan_fast_modifier_pressed = false;
+    bool rhi_view_active = false;
+    bool view_2d_zoom_in_key_pressed = false;
+    bool view_2d_zoom_out_key_pressed = false;
     bool view_3d_zoom_in_key_pressed = false;
     bool view_3d_zoom_out_key_pressed = false;
     bool view_3d_keyboard_zoom_interaction_active = false;

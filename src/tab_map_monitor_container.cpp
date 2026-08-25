@@ -490,6 +490,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         {
             this->map_stack_layout->addWidget(rhi_surface);
             this->map_stack_layout->setCurrentWidget(rhi_surface);
+            this->map->setRhiViewActive(true);
             this->desktop_network_overlay->hide();
             rhi_surface->show();
 
@@ -512,6 +513,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                        .arg(reason);
             if (this->map_model->viewMode() != MapViewMode::TwoD)
                 this->map_model->setViewMode(MapViewMode::TwoD);
+            this->map->setRhiViewActive(false);
             this->desktop_network_overlay->show();
             this->map_stack_layout->setCurrentWidget(this->desktop_network_overlay);
             if (this->desktop_rhi_hud != nullptr)

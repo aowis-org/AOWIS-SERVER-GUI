@@ -33,6 +33,7 @@ private:
     QPointF center_world;
     QSize viewport_size;
     int zoom = 0;
+    double view_2d_continuous_scale = 1.0;
     MapViewMode view_mode = MapViewMode::TwoD;
     double view_3d_yaw_deg = 0.0;
     double view_3d_pitch_deg = 55.0;

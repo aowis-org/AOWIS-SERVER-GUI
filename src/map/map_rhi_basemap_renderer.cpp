@@ -396,8 +396,14 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     const double wrap_offset = std::round(
         (origin_tile_x - center.x()) / qMax(1, tile_count)) * tile_count;
     const double rendered_center_x = center.x() + wrap_offset;
-    const int foreground_tiles_x = viewport_size.width() / MapModel::TileSize + 4;
-    const int foreground_tiles_y = viewport_size.height() / MapModel::TileSize + 4;
+    const double view_scale = this->map_model->viewMode() == MapViewMode::TwoD
+        ? qMax(1e-9, this->map_model->view2dContinuousScale())
+        : 1.0;
+    const double rendered_tile_size = MapModel::TileSize * view_scale;
+    const int foreground_tiles_x =
+        int(std::ceil(viewport_size.width() / rendered_tile_size)) + 4;
+    const int foreground_tiles_y =
+        int(std::ceil(viewport_size.height() / rendered_tile_size)) + 4;
     int tiles_x = foreground_tiles_x;
     int tiles_y = foreground_tiles_y;
     if (this->map_model->viewMode() == MapViewMode::ThreeD)

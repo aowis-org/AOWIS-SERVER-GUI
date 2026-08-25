@@ -35,6 +35,8 @@ public:
     static constexpr double MinView3dCameraGroundClearanceM = 2.0;
 
     int zoom() const;
+    double view2dContinuousScale() const;
+    double view2dContinuousZoom() const;
     double centerLon() const;
     double centerLat() const;
 
@@ -70,6 +72,8 @@ public:
     void setZoom(int zoom, const QSize &viewport = QSize());
     void zoomIn(const QSize &viewport = QSize());
     void zoomOut(const QSize &viewport = QSize());
+    void setView2dContinuousZoom(double continuous_zoom, const QSize &viewport = QSize());
+    void resetView2dContinuousZoom(const QSize &viewport = QSize());
 
     void zoomByAt(int steps, const QPoint &anchorPos, const QSize &viewport);
     void panByPixels(const QPoint &delta, const QSize &viewport);
@@ -100,6 +104,7 @@ signals:
     void centerChangedUTM(CoordinateUTM utm);
     void providerChanged(MapProvider provider);
     void viewModeChanged(MapViewMode view_mode);
+    void view2dContinuousScaleChanged(double scale);
     void view3dCameraChanged();
     void view3dNavigationStateChanged(MapView3dNavigationState state);
 
@@ -111,6 +116,7 @@ private:
     QString providerPath() const;
 
     int m_zoom = 18;
+    double m_view_2d_continuous_scale = 1.0;
     double m_centerLon = 18.19331;
     double m_centerLat = 11.98119;
     /*

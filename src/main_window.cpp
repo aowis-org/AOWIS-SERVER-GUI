@@ -242,11 +242,21 @@ MainWindow::MainWindow(QWidget *parent)
     {
         this->syncMapMovement(this->map_edit, this->map_mon);
     });
+    connect(this->map_model_editor, &MapModel::view2dContinuousScaleChanged,
+            this, [this](double)
+    {
+        this->syncMapMovement(this->map_edit, this->map_mon);
+    });
     connect(this->map_model_editor, &MapModel::centerChangedWGS84, this, [this](CoordinateWGS84)
     {
         this->syncMapMovement(this->map_edit, this->map_mon);
     });
     connect(this->map_model_monitor, &MapModel::zoomChanged, this, [this](int)
+    {
+        this->syncMapMovement(this->map_mon, this->map_edit);
+    });
+    connect(this->map_model_monitor, &MapModel::view2dContinuousScaleChanged,
+            this, [this](double)
     {
         this->syncMapMovement(this->map_mon, this->map_edit);
     });
@@ -417,6 +427,8 @@ void MainWindow::syncMapMovement(MapWidget *source, MapWidget *target)
     this->syncing_map_movement = true;
     target_model->setView(
         source_model->centerLon(), source_model->centerLat(), source_model->zoom(), target->size());
+    if (source_model->viewMode() == MapViewMode::TwoD)
+        target_model->setView2dContinuousZoom(source_model->view2dContinuousZoom(), target->size());
     this->syncing_map_movement = false;
 }
 

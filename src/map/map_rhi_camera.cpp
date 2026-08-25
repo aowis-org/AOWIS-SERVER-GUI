@@ -26,6 +26,7 @@ void MapRhiCamera::setViewportSize(const QSize &viewport_size)
 void MapRhiCamera::syncFromMapModel(const MapModel &map_model)
 {
     this->zoom = map_model.zoom();
+    this->view_2d_continuous_scale = map_model.view2dContinuousScale();
     this->view_mode = map_model.viewMode();
     this->view_3d_yaw_deg = map_model.view3dYawDeg();
     this->view_3d_pitch_deg = map_model.view3dPitchDeg();
@@ -52,8 +53,11 @@ QMatrix4x4 MapRhiCamera::viewProjectionMatrix(const QRhi &rhi) const
 {
     const int viewport_width = qMax(1, this->viewport_size.width());
     const int viewport_height = qMax(1, this->viewport_size.height());
-    const double scale = GeoWebMercator::zoomScale(
+    const double base_scale = GeoWebMercator::zoomScale(
         this->zoom, MapRenderCacheMath::ReferenceZoom);
+    const double scale = this->view_mode == MapViewMode::TwoD
+        ? base_scale * qMax(1e-9, this->view_2d_continuous_scale)
+        : base_scale;
     const double safe_scale = scale > 0.0 ? scale : 1.0;
     const double half_width_world = double(viewport_width) / (2.0 * safe_scale);
     const double half_height_world = double(viewport_height) / (2.0 * safe_scale);
@@ -123,8 +127,11 @@ QPointF MapRhiCamera::projectWorldToScreen(const QVector3D &world_position) cons
 {
     const int viewport_width = qMax(1, this->viewport_size.width());
     const int viewport_height = qMax(1, this->viewport_size.height());
-    const double scale = GeoWebMercator::zoomScale(
+    const double base_scale = GeoWebMercator::zoomScale(
         this->zoom, MapRenderCacheMath::ReferenceZoom);
+    const double scale = this->view_mode == MapViewMode::TwoD
+        ? base_scale * qMax(1e-9, this->view_2d_continuous_scale)
+        : base_scale;
     const double safe_scale = scale > 0.0 ? scale : 1.0;
 
     if (this->view_mode != MapViewMode::ThreeD)

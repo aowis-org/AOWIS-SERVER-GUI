@@ -161,6 +161,7 @@ constexpr double MousePanVelocitySmoothing = 0.65;
 constexpr double MousePanMaximumSpeedPixelsPerSecond = 2400.0;
 constexpr double MousePanMinimumInertiaSpeedPixelsPerSecond = 70.0;
 constexpr double MousePanInertiaDecelerationPixelsPerSecondSquared = 2600.0;
+constexpr double View2dKeyboardZoomOctavesPerSecond = 1.0;
 constexpr double View3dKeyboardZoomOctavesPerSecond = 1.0;
 constexpr double View3dKeyboardZoomFastMultiplier = 2.0;
 
@@ -293,6 +294,11 @@ void MapWidget::init()
 
     connect(this->m_model, &MapModel::viewModeChanged, this, [this](MapViewMode view_mode)
     {
+        if (view_mode != MapViewMode::TwoD)
+        {
+            this->view_2d_zoom_in_key_pressed = false;
+            this->view_2d_zoom_out_key_pressed = false;
+        }
         if (view_mode != MapViewMode::ThreeD)
         {
             this->view_3d_zoom_in_key_pressed = false;
@@ -407,7 +413,8 @@ void MapWidget::ensurePanAnimationRunning()
 
 void MapWidget::stopPanAnimationIfIdle()
 {
-    if (hasKeyboardPanInput() || hasView3dKeyboardZoomInput()
+    if (hasKeyboardPanInput() || hasView2dKeyboardZoomInput()
+        || hasView3dKeyboardZoomInput()
         || vectorLength(this->pan_velocity) >= PanVelocityStopThreshold
         || browserMapInertiaActive())
     {
@@ -427,6 +434,8 @@ void MapWidget::stopAllPanMovement()
     this->pan_key_up_pressed = false;
     this->pan_key_down_pressed = false;
     this->pan_fast_modifier_pressed = false;
+    this->view_2d_zoom_in_key_pressed = false;
+    this->view_2d_zoom_out_key_pressed = false;
     this->view_3d_zoom_in_key_pressed = false;
     this->view_3d_zoom_out_key_pressed = false;
     this->keyboard_pan_motion_active = false;
@@ -455,6 +464,7 @@ void MapWidget::updatePanAnimation()
         return;
     }
 
+    updateView2dKeyboardZoom(elapsed_seconds);
     updateView3dKeyboardZoom(elapsed_seconds);
 
     if (this->mouse_pan_active)
@@ -691,6 +701,38 @@ bool MapWidget::hasFastKeyboardPanInput() const
     return this->pan_fast_modifier_pressed && this->hasKeyboardPanInput();
 }
 
+bool MapWidget::hasView2dKeyboardZoomInput() const
+{
+#ifndef Q_OS_WASM
+    return this->rhi_view_active
+        && this->m_model != nullptr
+        && this->m_model->viewMode() == MapViewMode::TwoD
+        && (this->view_2d_zoom_in_key_pressed || this->view_2d_zoom_out_key_pressed);
+#else
+    return false;
+#endif
+}
+
+void MapWidget::updateView2dKeyboardZoom(qreal elapsed_seconds)
+{
+    if (!hasView2dKeyboardZoomInput() || elapsed_seconds <= 0.0)
+        return;
+
+    int direction = 0;
+    if (this->view_2d_zoom_in_key_pressed)
+        ++direction;
+    if (this->view_2d_zoom_out_key_pressed)
+        --direction;
+    if (direction == 0)
+        return;
+
+    const double current_zoom = this->m_model->view2dContinuousZoom();
+    const double next_zoom = current_zoom
+        + double(direction) * View2dKeyboardZoomOctavesPerSecond
+            * double(elapsed_seconds);
+    this->m_model->setView2dContinuousZoom(next_zoom, size());
+}
+
 bool MapWidget::hasView3dKeyboardZoomInput() const
 {
     return this->m_model != nullptr
@@ -855,6 +897,8 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
     if (event->key() == Qt::Key_Shift)
     {
         this->pan_fast_modifier_pressed = true;
+        this->view_2d_zoom_in_key_pressed = false;
+        this->view_2d_zoom_out_key_pressed = false;
         if (this->hasKeyboardPanInput())
             this->ensurePanAnimationRunning();
 
@@ -885,6 +929,14 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
             this->pan_fast_modifier_pressed = event->modifiers().testFlag(Qt::ShiftModifier);
             ensurePanAnimationRunning();
         }
+#ifndef Q_OS_WASM
+        else if (this->rhi_view_active
+                 && !event->modifiers().testFlag(Qt::ShiftModifier))
+        {
+            this->view_2d_zoom_in_key_pressed = true;
+            ensurePanAnimationRunning();
+        }
+#endif
         else
         {
             zoomIn();
@@ -903,6 +955,14 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
             this->pan_fast_modifier_pressed = event->modifiers().testFlag(Qt::ShiftModifier);
             ensurePanAnimationRunning();
         }
+#ifndef Q_OS_WASM
+        else if (this->rhi_view_active
+                 && !event->modifiers().testFlag(Qt::ShiftModifier))
+        {
+            this->view_2d_zoom_out_key_pressed = true;
+            ensurePanAnimationRunning();
+        }
+#endif
         else
         {
             zoomOut();
@@ -943,12 +1003,18 @@ bool MapWidget::handleKeyReleaseEvent(QKeyEvent *event)
 
     if (event->key() == Qt::Key_L || event->key() == Qt::Key_X)
     {
-        if (!event->isAutoRepeat() && this->m_model->viewMode() == MapViewMode::ThreeD)
+        if (!event->isAutoRepeat())
         {
             if (event->key() == Qt::Key_L)
+            {
+                this->view_2d_zoom_in_key_pressed = false;
                 this->view_3d_zoom_in_key_pressed = false;
+            }
             else
+            {
+                this->view_2d_zoom_out_key_pressed = false;
                 this->view_3d_zoom_out_key_pressed = false;
+            }
             if (!hasView3dKeyboardZoomInput())
                 endView3dKeyboardZoomInteraction();
             stopPanAnimationIfIdle();
@@ -968,6 +1034,8 @@ void MapWidget::clearKeyboardPanInput()
     this->pan_key_up_pressed = false;
     this->pan_key_down_pressed = false;
     this->pan_fast_modifier_pressed = false;
+    this->view_2d_zoom_in_key_pressed = false;
+    this->view_2d_zoom_out_key_pressed = false;
     this->view_3d_zoom_in_key_pressed = false;
     this->view_3d_zoom_out_key_pressed = false;
     this->stopPanAnimationIfIdle();
@@ -1504,6 +1572,22 @@ void MapWidget::zoomIn()
 void MapWidget::zoomOut()
 {
     this->m_model->zoomOut(this->size());
+}
+
+void MapWidget::setRhiViewActive(bool active)
+{
+    if (this->rhi_view_active == active)
+        return;
+
+    this->rhi_view_active = active;
+    if (active)
+        return;
+
+    this->view_2d_zoom_in_key_pressed = false;
+    this->view_2d_zoom_out_key_pressed = false;
+    if (this->m_model != nullptr && this->m_model->viewMode() == MapViewMode::TwoD)
+        this->m_model->resetView2dContinuousZoom(this->size());
+    stopPanAnimationIfIdle();
 }
 
 void MapWidget::changeMapProvider(MapProvider provider)

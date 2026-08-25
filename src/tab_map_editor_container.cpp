@@ -369,6 +369,7 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
                 [this, rhi_surface]
         {
             this->map_stack_layout->addWidget(rhi_surface);
+            this->map->setRhiViewActive(true);
             rhi_surface->show();
             rhi_surface->raise();
 
@@ -390,6 +391,7 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
                        .arg(reason);
             if (this->map_model->viewMode() != MapViewMode::TwoD)
                 this->map_model->setViewMode(MapViewMode::TwoD);
+            this->map->setRhiViewActive(false);
             this->map_canvas->setRhiOverlayMode(false);
             this->map_canvas->show();
             this->map_stack_layout->setCurrentWidget(this->map_canvas);

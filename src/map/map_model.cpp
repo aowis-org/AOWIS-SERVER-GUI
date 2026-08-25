@@ -77,6 +77,16 @@ int MapModel::zoom() const
     return this->m_zoom;
 }
 
+double MapModel::view2dContinuousScale() const
+{
+    return this->m_view_2d_continuous_scale;
+}
+
+double MapModel::view2dContinuousZoom() const
+{
+    return double(this->m_zoom) + std::log2(qMax(1e-9, this->m_view_2d_continuous_scale));
+}
+
 double MapModel::centerLon() const
 {
     return this->m_centerLon;
@@ -240,7 +250,10 @@ void MapModel::setCenter(double lon, double lat, const QSize &viewport)
 
 void MapModel::setZoom(int zoom_value, const QSize &viewport)
 {
-    setView(this->m_centerLon, this->m_centerLat, zoom_value, viewport);
+    const int bounded_zoom = std::clamp(zoom_value, MinZoom, MaxZoom);
+    if (bounded_zoom != this->m_zoom)
+        resetView2dContinuousZoom(viewport);
+    setView(this->m_centerLon, this->m_centerLat, bounded_zoom, viewport);
 }
 
 void MapModel::zoomIn(const QSize &viewport)
@@ -251,6 +264,57 @@ void MapModel::zoomIn(const QSize &viewport)
 void MapModel::zoomOut(const QSize &viewport)
 {
     setZoom(this->m_zoom - 1, viewport);
+}
+
+
+void MapModel::setView2dContinuousZoom(double continuous_zoom, const QSize &viewport)
+{
+    if (!std::isfinite(continuous_zoom))
+        return;
+
+    const double bounded_zoom = qBound(
+        double(MinZoom), continuous_zoom, double(MaxZoom));
+    const int next_tile_zoom = qBound(
+        MinZoom, qRound(bounded_zoom), MaxZoom);
+    const double next_scale = std::exp2(bounded_zoom - double(next_tile_zoom));
+
+    const int old_zoom = this->m_zoom;
+    const double old_scale = this->m_view_2d_continuous_scale;
+    const double old_lon = this->m_centerLon;
+    const double old_lat = this->m_centerLat;
+
+    this->m_zoom = next_tile_zoom;
+    this->m_view_2d_continuous_scale = next_scale;
+    if (viewport.isValid())
+        clampCenter(viewport);
+
+    if (this->m_zoom != old_zoom)
+        emit zoomChanged(this->m_zoom);
+    if (!coordinatesEqual(this->m_view_2d_continuous_scale, old_scale))
+        emit view2dContinuousScaleChanged(this->m_view_2d_continuous_scale);
+    if (!coordinatesEqual(this->m_centerLon, old_lon)
+        || !coordinatesEqual(this->m_centerLat, old_lat))
+    {
+        emitCenterChanged();
+    }
+}
+
+void MapModel::resetView2dContinuousZoom(const QSize &viewport)
+{
+    if (coordinatesEqual(this->m_view_2d_continuous_scale, 1.0))
+        return;
+
+    const double old_lon = this->m_centerLon;
+    const double old_lat = this->m_centerLat;
+    this->m_view_2d_continuous_scale = 1.0;
+    if (viewport.isValid())
+        clampCenter(viewport);
+    emit view2dContinuousScaleChanged(this->m_view_2d_continuous_scale);
+    if (!coordinatesEqual(this->m_centerLon, old_lon)
+        || !coordinatesEqual(this->m_centerLat, old_lat))
+    {
+        emitCenterChanged();
+    }
 }
 
 void MapModel::zoomByAt(int steps, const QPoint &anchorPos, const QSize &viewport)
@@ -267,22 +331,33 @@ void MapModel::zoomByAt(int steps, const QPoint &anchorPos, const QSize &viewpor
     const double old_lon = this->m_centerLon;
     const double old_lat = this->m_centerLat;
     const QPointF old_center = centerTile();
-    const double anchor_offset_x = (anchorPos.x() - viewport.width() / 2.0) / TileSize;
-    const double anchor_offset_y = (anchorPos.y() - viewport.height() / 2.0) / TileSize;
+    const double old_scale = qMax(1e-9, this->m_view_2d_continuous_scale);
+    const double screen_offset_x_tiles =
+        (anchorPos.x() - viewport.width() / 2.0) / TileSize;
+    const double screen_offset_y_tiles =
+        (anchorPos.y() - viewport.height() / 2.0) / TileSize;
+    const double anchor_offset_x_old = screen_offset_x_tiles / old_scale;
+    const double anchor_offset_y_old = screen_offset_y_tiles / old_scale;
     const double zoom_scale = GeoWebMercator::zoomScale(new_zoom, old_zoom);
 
-    const double anchor_tile_x_new = (old_center.x() + anchor_offset_x) * zoom_scale;
-    const double anchor_tile_y_new = (old_center.y() + anchor_offset_y) * zoom_scale;
-    const double center_tile_x_new = anchor_tile_x_new - anchor_offset_x;
-    const double center_tile_y_new = anchor_tile_y_new - anchor_offset_y;
+    const double anchor_tile_x_new =
+        (old_center.x() + anchor_offset_x_old) * zoom_scale;
+    const double anchor_tile_y_new =
+        (old_center.y() + anchor_offset_y_old) * zoom_scale;
+    const double center_tile_x_new = anchor_tile_x_new - screen_offset_x_tiles;
+    const double center_tile_y_new = anchor_tile_y_new - screen_offset_y_tiles;
 
     this->m_zoom = new_zoom;
+    const bool scale_changed = !coordinatesEqual(this->m_view_2d_continuous_scale, 1.0);
+    this->m_view_2d_continuous_scale = 1.0;
     this->m_centerLon = GeoWebMercator::normalizeLongitude(
         GeoWebMercator::tileXToLon(center_tile_x_new, this->m_zoom));
     this->m_centerLat = GeoWebMercator::tileYToLat(center_tile_y_new, this->m_zoom);
     clampCenter(viewport);
 
     emit zoomChanged(this->m_zoom);
+    if (scale_changed)
+        emit view2dContinuousScaleChanged(this->m_view_2d_continuous_scale);
 
     if (!coordinatesEqual(this->m_centerLon, old_lon) ||
         !coordinatesEqual(this->m_centerLat, old_lat))
@@ -297,8 +372,11 @@ void MapModel::panByPixels(const QPoint &delta, const QSize &viewport)
         return;
 
     QPointF center = centerTile();
-    center.rx() -= double(delta.x()) / TileSize;
-    center.ry() -= double(delta.y()) / TileSize;
+    const double scale = this->m_view_mode == MapViewMode::TwoD
+        ? qMax(1e-9, this->m_view_2d_continuous_scale)
+        : 1.0;
+    center.rx() -= double(delta.x()) / (TileSize * scale);
+    center.ry() -= double(delta.y()) / (TileSize * scale);
 
     setCenter(
         GeoWebMercator::tileXToLon(center.x(), this->m_zoom),
@@ -365,7 +443,11 @@ void MapModel::clampCenter(const QSize &viewport)
         return;
 
     const double world_tile_count = double(tileCount());
-    const double half_viewport_height_tiles = viewport.height() / double(TileSize) / 2.0;
+    const double scale = this->m_view_mode == MapViewMode::TwoD
+        ? qMax(1e-9, this->m_view_2d_continuous_scale)
+        : 1.0;
+    const double half_viewport_height_tiles =
+        viewport.height() / (double(TileSize) * scale) / 2.0;
     double center_tile_y = GeoWebMercator::latToTileY(this->m_centerLat, this->m_zoom);
 
     if (half_viewport_height_tiles >= world_tile_count / 2.0)
@@ -716,8 +798,11 @@ CoordinateWGS84 MapModel::wgs84FromScreen(const QPoint &pos, const QSize &viewpo
         }
     }
 
-    const double tile_x = center.x() + (pos.x() - viewport.width() / 2.0) / TileSize;
-    const double unclamped_tile_y = center.y() + (pos.y() - viewport.height() / 2.0) / TileSize;
+    const double view_scale = qMax(1e-9, this->m_view_2d_continuous_scale);
+    const double tile_x = center.x()
+        + (pos.x() - viewport.width() / 2.0) / (TileSize * view_scale);
+    const double unclamped_tile_y = center.y()
+        + (pos.y() - viewport.height() / 2.0) / (TileSize * view_scale);
     const double tile_y = std::clamp(unclamped_tile_y, 0.0, double(tileCount()));
 
     CoordinateWGS84 wgs;
@@ -747,9 +832,10 @@ QPointF MapModel::screenFromWgs84(double lon, double lat, const QSize &viewport)
     if (this->m_view_mode == MapViewMode::ThreeD)
         return screenFromTileOffset3d(offset_pixels, viewport);
 
+    const double view_scale = qMax(1e-9, this->m_view_2d_continuous_scale);
     return QPointF(
-        double(viewport.width()) / 2.0 + offset_pixels.x(),
-        double(viewport.height()) / 2.0 + offset_pixels.y());
+        double(viewport.width()) / 2.0 + offset_pixels.x() * view_scale,
+        double(viewport.height()) / 2.0 + offset_pixels.y() * view_scale);
 }
 
 QPointF MapModel::screenFromWgs84(const CoordinateWGS84 &coord, const QSize &viewport,
@@ -782,9 +868,10 @@ QPointF MapModel::screenFromWgs84(double lon, double lat, const QSize &viewport,
     if (this->m_view_mode == MapViewMode::ThreeD)
         return screenFromTileOffset3d(offset_pixels, viewport);
 
+    const double view_scale = qMax(1e-9, this->m_view_2d_continuous_scale);
     return QPointF(
-        double(viewport.width()) / 2.0 + offset_pixels.x(),
-        double(viewport.height()) / 2.0 + offset_pixels.y());
+        double(viewport.width()) / 2.0 + offset_pixels.x() * view_scale,
+        double(viewport.height()) / 2.0 + offset_pixels.y() * view_scale);
 }
 
 QPointF MapModel::groundOffsetFromScreen3d(
