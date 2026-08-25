@@ -352,6 +352,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             new MapMonitorCompassHudWidget(this->map_model, this->map_stack);
         MapMonitorTiltHudWidget *tilt_hud =
             new MapMonitorTiltHudWidget(this->map_model, this->map_stack);
+        MapMonitorNetworkGroundOffsetHudWidget *network_ground_offset_hud =
+            new MapMonitorNetworkGroundOffsetHudWidget(this->map_model, this->map_stack);
         MapMonitorCameraDistanceHudWidget *camera_distance_hud =
             new MapMonitorCameraDistanceHudWidget(this->map_model, this->map_stack);
         this->desktop_rhi_surface = rhi_surface;
@@ -360,11 +362,13 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         this->desktop_compass_hud = compass_hud;
         this->desktop_camera_distance_hud = camera_distance_hud;
         this->desktop_tilt_hud = tilt_hud;
+        this->desktop_network_ground_offset_hud = network_ground_offset_hud;
         this->desktop_rhi_hud->hide();
         this->desktop_view_mode_hud->hide();
         this->desktop_compass_hud->hide();
         this->desktop_camera_distance_hud->hide();
         this->desktop_tilt_hud->hide();
+        this->desktop_network_ground_offset_hud->hide();
         rhi_surface->setTileRepository(this->tile_repository);
         rhi_surface->setTerrainRepository(this->terrain_repository);
         rhi_surface->setBackgroundOpacity(this->network_background_opacity);
@@ -524,6 +528,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                 this->desktop_compass_hud->hide();
             if (this->desktop_tilt_hud != nullptr)
                 this->desktop_tilt_hud->hide();
+            if (this->desktop_network_ground_offset_hud != nullptr)
+                this->desktop_network_ground_offset_hud->hide();
             if (this->desktop_rhi_surface != nullptr)
                 this->desktop_rhi_surface->hide();
         });
@@ -746,13 +752,28 @@ void MapMonitorContainer::positionDesktopHudWidgets()
             this->desktop_view_mode_hud->raise();
     }
 
+    if (this->desktop_network_ground_offset_hud != nullptr)
+    {
+        this->desktop_network_ground_offset_hud->adjustSize();
+        const int network_offset_y = qMax(
+            hud_margin_px,
+            this->map_stack->height() - this->desktop_network_ground_offset_hud->height()
+                - hud_margin_px);
+        this->desktop_network_ground_offset_hud->move(hud_margin_px, network_offset_y);
+        if (this->desktop_network_ground_offset_hud->isVisible())
+            this->desktop_network_ground_offset_hud->raise();
+    }
+
     if (this->desktop_tilt_hud != nullptr)
     {
         this->desktop_tilt_hud->adjustSize();
+        const int tilt_x = hud_margin_px
+            + (this->desktop_network_ground_offset_hud != nullptr
+                ? this->desktop_network_ground_offset_hud->width() + 8 : 0);
         const int tilt_y = qMax(
             hud_margin_px,
             this->map_stack->height() - this->desktop_tilt_hud->height() - hud_margin_px);
-        this->desktop_tilt_hud->move(hud_margin_px, tilt_y);
+        this->desktop_tilt_hud->move(tilt_x, tilt_y);
         if (this->desktop_tilt_hud->isVisible())
             this->desktop_tilt_hud->raise();
     }
@@ -761,6 +782,8 @@ void MapMonitorContainer::positionDesktopHudWidgets()
     {
         this->desktop_camera_distance_hud->adjustSize();
         const int distance_x = hud_margin_px
+            + (this->desktop_network_ground_offset_hud != nullptr
+                ? this->desktop_network_ground_offset_hud->width() + 8 : 0)
             + (this->desktop_tilt_hud != nullptr ? this->desktop_tilt_hud->width() + 8 : 0);
         const int distance_y = qMax(
             hud_margin_px,
@@ -774,6 +797,8 @@ void MapMonitorContainer::positionDesktopHudWidgets()
     {
         this->desktop_compass_hud->adjustSize();
         const int compass_x = hud_margin_px
+            + (this->desktop_network_ground_offset_hud != nullptr
+                ? this->desktop_network_ground_offset_hud->width() + 8 : 0)
             + (this->desktop_tilt_hud != nullptr ? this->desktop_tilt_hud->width() + 8 : 0)
             + (this->desktop_camera_distance_hud != nullptr
                 ? this->desktop_camera_distance_hud->width() + 8 : 0);
@@ -789,7 +814,8 @@ void MapMonitorContainer::positionDesktopHudWidgets()
 void MapMonitorContainer::syncDesktopCameraHudVisibility()
 {
     if (this->desktop_compass_hud == nullptr || this->desktop_tilt_hud == nullptr
-        || this->desktop_camera_distance_hud == nullptr)
+        || this->desktop_camera_distance_hud == nullptr
+        || this->desktop_network_ground_offset_hud == nullptr)
     {
         return;
     }
@@ -803,11 +829,13 @@ void MapMonitorContainer::syncDesktopCameraHudVisibility()
     this->desktop_compass_hud->setVisible(camera_hud_visible);
     this->desktop_camera_distance_hud->setVisible(camera_hud_visible);
     this->desktop_tilt_hud->setVisible(camera_hud_visible);
+    this->desktop_network_ground_offset_hud->setVisible(camera_hud_visible);
     if (camera_hud_visible)
     {
         this->desktop_compass_hud->raise();
         this->desktop_camera_distance_hud->raise();
         this->desktop_tilt_hud->raise();
+        this->desktop_network_ground_offset_hud->raise();
         positionDesktopHudWidgets();
     }
 }

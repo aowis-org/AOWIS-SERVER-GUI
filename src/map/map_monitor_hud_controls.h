@@ -56,4 +56,18 @@ private:
     QLabel *tilt_value_label = nullptr;
 };
 
+class MapMonitorNetworkGroundOffsetHudWidget final : public QFrame
+{
+    Q_OBJECT
+
+public:
+    explicit MapMonitorNetworkGroundOffsetHudWidget(
+        MapModel *map_model, QWidget *parent = nullptr);
+
+private:
+    MapModel *map_model = nullptr;
+    QSlider *offset_slider = nullptr;
+    QLabel *offset_value_label = nullptr;
+};
+
 #endif // MAP_MONITOR_HUD_CONTROLS_H

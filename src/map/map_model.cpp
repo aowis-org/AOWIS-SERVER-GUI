@@ -149,6 +149,11 @@ double MapModel::view3dVerticalOffsetWorld() const
     return this->m_view_3d_vertical_offset_world;
 }
 
+double MapModel::view3dNetworkGroundOffsetM() const
+{
+    return this->m_view_3d_network_ground_offset_m;
+}
+
 MapView3dNavigationState MapModel::view3dNavigationState() const
 {
     return this->m_view_3d_navigation_state;
@@ -679,6 +684,22 @@ void MapModel::setView3dVerticalOffsetWorld(double offset_world)
 
     this->m_view_3d_vertical_offset_world = offset_world;
     emit view3dCameraChanged();
+}
+
+void MapModel::setView3dNetworkGroundOffsetM(double offset_m)
+{
+    if (!std::isfinite(offset_m))
+        return;
+
+    const double bounded_offset_m = qBound(
+        MinView3dNetworkGroundOffsetM,
+        offset_m,
+        MaxView3dNetworkGroundOffsetM);
+    if (coordinatesEqual(bounded_offset_m, this->m_view_3d_network_ground_offset_m))
+        return;
+
+    this->m_view_3d_network_ground_offset_m = bounded_offset_m;
+    emit view3dNetworkGroundOffsetChanged(bounded_offset_m);
 }
 
 void MapModel::setView3dFocusAnchor(

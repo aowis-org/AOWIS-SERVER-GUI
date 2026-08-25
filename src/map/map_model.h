@@ -33,6 +33,8 @@ public:
     static constexpr double MinView3dCameraDistanceM = 150.0;
     static constexpr double MaxView3dCameraDistanceAboveDefaultM = 500.0;
     static constexpr double MinView3dCameraGroundClearanceM = 2.0;
+    static constexpr double MinView3dNetworkGroundOffsetM = 0.0;
+    static constexpr double MaxView3dNetworkGroundOffsetM = 5.0;
 
     int zoom() const;
     double view2dContinuousScale() const;
@@ -50,6 +52,7 @@ public:
     double view3dCameraDistanceWorld() const;
     double view3dCameraCollisionLiftWorld() const;
     double view3dVerticalOffsetWorld() const;
+    double view3dNetworkGroundOffsetM() const;
     MapView3dNavigationState view3dNavigationState() const;
     QString tileCacheKey(int x, int y) const;
     QString tileCachePrefix(int zoom) const;
@@ -91,6 +94,7 @@ public:
     void setView3dCameraDistanceWorld(double distance_world);
     void setView3dCameraCollisionLiftWorld(double lift_world);
     void setView3dVerticalOffsetWorld(double offset_world);
+    void setView3dNetworkGroundOffsetM(double offset_m);
     void setView3dFocusAnchor(double lon, double lat, double offset_world,
                               double distance_m, const QSize &viewport = QSize());
     void beginView3dRotateInteraction();
@@ -107,6 +111,7 @@ signals:
     void view2dContinuousScaleChanged(double scale);
     void view3dCameraChanged();
     void view3dNavigationStateChanged(MapView3dNavigationState state);
+    void view3dNetworkGroundOffsetChanged(double offset_m);
 
 private:
     void clampCenter(const QSize &viewport);
@@ -135,6 +140,7 @@ private:
     double m_view_3d_camera_distance_world = 0.0;
     double m_view_3d_camera_collision_lift_world = 0.0;
     double m_view_3d_vertical_offset_world = 0.0;
+    double m_view_3d_network_ground_offset_m = 0.0;
     bool m_view_3d_native_camera_distance_initialized = false;
     bool m_view_3d_preserve_camera_distance_on_next_native_sync = false;
     MapView3dNavigationState m_view_3d_navigation_state = MapView3dNavigationState::Pan;

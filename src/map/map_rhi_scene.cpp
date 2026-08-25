@@ -71,7 +71,6 @@ void MapRhiScene::rebuildNetworkGeometry()
         return;
 
     bool elevation_reference_initialized = false;
-    double elevation_maximum_m = 0.0;
     for (const NetworkRenderNode &node : this->network_snapshot.nodes)
     {
         if (!finiteCoordinate(node.coordinate_wgs84) || !std::isfinite(node.elevation_m))
@@ -81,67 +80,17 @@ void MapRhiScene::rebuildNetworkGeometry()
         {
             this->reference_latitude_deg = node.coordinate_wgs84.latitude_deg;
             this->elevation_reference_m = node.elevation_m;
-            elevation_maximum_m = node.elevation_m;
             elevation_reference_initialized = true;
         }
         else
         {
             this->elevation_reference_m = qMin(this->elevation_reference_m, node.elevation_m);
-            elevation_maximum_m = qMax(elevation_maximum_m, node.elevation_m);
         }
     }
     if (!elevation_reference_initialized)
     {
         this->reference_latitude_deg = 0.0;
         this->elevation_reference_m = 0.0;
-        elevation_maximum_m = 0.0;
-    }
-
-    bool horizontal_bounds_initialized = false;
-    double horizontal_minimum_x = 0.0;
-    double horizontal_maximum_x = 0.0;
-    double horizontal_minimum_y = 0.0;
-    double horizontal_maximum_y = 0.0;
-    for (const NetworkRenderNode &node : this->network_snapshot.nodes)
-    {
-        if (!finiteCoordinate(node.coordinate_wgs84))
-            continue;
-        double resolved_x = this->origin_world.x();
-        const QPointF position = localWorldPosition(
-            node.coordinate_wgs84, this->origin_world.x(), &resolved_x);
-        if (!horizontal_bounds_initialized)
-        {
-            horizontal_minimum_x = position.x();
-            horizontal_maximum_x = position.x();
-            horizontal_minimum_y = position.y();
-            horizontal_maximum_y = position.y();
-            horizontal_bounds_initialized = true;
-        }
-        else
-        {
-            horizontal_minimum_x = qMin(horizontal_minimum_x, position.x());
-            horizontal_maximum_x = qMax(horizontal_maximum_x, position.x());
-            horizontal_minimum_y = qMin(horizontal_minimum_y, position.y());
-            horizontal_maximum_y = qMax(horizontal_maximum_y, position.y());
-        }
-    }
-
-    this->vertical_exaggeration = 2.5;
-    const double meters_per_world_pixel = GeoWebMercator::metersPerPixel(
-        this->reference_latitude_deg, MapRenderCacheMath::ReferenceZoom);
-    if (horizontal_bounds_initialized && meters_per_world_pixel > 0.0)
-    {
-        const double horizontal_span = qMax(
-            horizontal_maximum_x - horizontal_minimum_x,
-            horizontal_maximum_y - horizontal_minimum_y);
-        const double elevation_relief_world =
-            (elevation_maximum_m - this->elevation_reference_m) / meters_per_world_pixel;
-        if (horizontal_span > 0.0 && elevation_relief_world > 0.0)
-        {
-            const double fit_exaggeration =
-                horizontal_span * 0.35 / elevation_relief_world;
-            this->vertical_exaggeration = qBound(0.25, fit_exaggeration, 2.5);
-        }
     }
 
     this->node_vertices.reserve(this->network_snapshot.nodes.size() * 6);
@@ -404,6 +353,20 @@ bool MapRhiScene::setUse3dJunctionModels(bool enabled)
     return true;
 }
 
+bool MapRhiScene::setNetworkGroundOffsetM(double offset_m)
+{
+    if (!std::isfinite(offset_m))
+        return false;
+
+    const double bounded_offset_m = qBound(0.0, offset_m, 5.0);
+    if (qFuzzyCompare(1.0 + this->network_ground_offset_m, 1.0 + bounded_offset_m))
+        return false;
+
+    this->network_ground_offset_m = bounded_offset_m;
+    rebuildNetworkGeometry();
+    return true;
+}
+
 const QVector<MapRhiScene::LinkVertex> &MapRhiScene::linkVertices() const
 {
     return this->link_vertices;
@@ -590,8 +553,9 @@ float MapRhiScene::localElevationWorld(double elevation_m) const
     if (!std::isfinite(meters_per_world_pixel) || meters_per_world_pixel <= 0.0)
         return 1.0f;
 
-    return float(1.0 + (elevation_m - this->elevation_reference_m)
-        / meters_per_world_pixel * this->vertical_exaggeration);
+    return float(1.0
+        + (elevation_m - this->elevation_reference_m + this->network_ground_offset_m)
+            / meters_per_world_pixel);
 }
 
 void MapRhiScene::appendLinkSegment(

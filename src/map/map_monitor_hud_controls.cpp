@@ -34,6 +34,7 @@ constexpr int SliderResetAnimationDurationMs = 240;
 constexpr int CompassDragThresholdPx = 4;
 constexpr int CameraDistanceSliderSteps = 1000;
 constexpr int CameraControlSliderHeightPx = 82;
+constexpr int NetworkGroundOffsetSliderSteps = 50;
 
 int cameraDistanceSliderValue(double distance_m, double maximum_distance_m)
 {
@@ -630,5 +631,83 @@ MapMonitorTiltHudWidget::MapMonitorTiltHudWidget(MapModel *map_model, QWidget *p
             this->tilt_slider->setValue(pitch_deg);
         }
         this->tilt_value_label->setText(QStringLiteral("%1°").arg(pitch_deg));
+    });
+}
+
+MapMonitorNetworkGroundOffsetHudWidget::MapMonitorNetworkGroundOffsetHudWidget(
+    MapModel *map_model, QWidget *parent)
+    : QFrame(parent),
+      map_model(map_model),
+      offset_slider(new ResettableVerticalSlider(this)),
+      offset_value_label(new QLabel(this))
+{
+    Q_ASSERT(this->map_model != nullptr);
+    configureHudFrame(this);
+
+    QVBoxLayout *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(4, 5, 4, 5);
+    layout->setSpacing(1);
+
+    QLabel *maximum_label = new QLabel(QStringLiteral("5 m"), this);
+    maximum_label->setAlignment(Qt::AlignHCenter);
+    QLabel *minimum_label = new QLabel(QStringLiteral("0 m"), this);
+    minimum_label->setAlignment(Qt::AlignHCenter);
+    this->offset_value_label->setAlignment(Qt::AlignHCenter);
+
+    this->offset_slider->setRange(0, NetworkGroundOffsetSliderSteps);
+    this->offset_slider->setSingleStep(1);
+    this->offset_slider->setPageStep(5);
+    this->offset_slider->setFixedHeight(CameraControlSliderHeightPx);
+    this->offset_slider->setValue(qRound(
+        this->map_model->view3dNetworkGroundOffsetM() * 10.0));
+    this->offset_slider->setToolTip(QStringLiteral(
+        "Water network height above its real model elevation\n"
+        "0 m = true elevation\n"
+        "Up to 5 m render-only lift to avoid terrain z-fighting\n"
+        "Right-click: animate back to 0 m"));
+    this->offset_value_label->setText(QStringLiteral("%1 m").arg(
+        this->map_model->view3dNetworkGroundOffsetM(), 0, 'f', 1));
+
+    layout->addWidget(maximum_label);
+    layout->addWidget(this->offset_slider, 1, Qt::AlignHCenter);
+    layout->addWidget(minimum_label);
+    layout->addWidget(this->offset_value_label);
+
+    QVariantAnimation *reset_animation = new QVariantAnimation(this);
+    reset_animation->setDuration(SliderResetAnimationDurationMs);
+    reset_animation->setEasingCurve(QEasingCurve::InOutCubic);
+    connect(reset_animation, &QVariantAnimation::valueChanged, this,
+            [this](const QVariant &value)
+    {
+        this->map_model->setView3dNetworkGroundOffsetM(value.toDouble());
+    });
+
+    ResettableVerticalSlider *resettable_slider =
+        static_cast<ResettableVerticalSlider *>(this->offset_slider);
+    resettable_slider->setResetCallback([this, reset_animation]
+    {
+        reset_animation->stop();
+        reset_animation->setStartValue(this->map_model->view3dNetworkGroundOffsetM());
+        reset_animation->setEndValue(MapModel::MinView3dNetworkGroundOffsetM);
+        reset_animation->start();
+    });
+    connect(this->offset_slider, &QSlider::sliderPressed, reset_animation,
+            &QVariantAnimation::stop);
+
+    connect(this->offset_slider, &QSlider::valueChanged, this, [this](int value)
+    {
+        this->map_model->setView3dNetworkGroundOffsetM(double(value) / 10.0);
+    });
+    connect(this->map_model, &MapModel::view3dNetworkGroundOffsetChanged, this,
+            [this](double offset_m)
+    {
+        const int slider_value = qRound(offset_m * 10.0);
+        if (this->offset_slider->value() != slider_value)
+        {
+            const QSignalBlocker blocker(this->offset_slider);
+            this->offset_slider->setValue(slider_value);
+        }
+        this->offset_value_label->setText(
+            QStringLiteral("%1 m").arg(offset_m, 0, 'f', 1));
     });
 }

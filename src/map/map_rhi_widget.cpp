@@ -232,6 +232,7 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
         this->map_model->centerLat(), MapRenderCacheMath::ReferenceZoom);
     this->basemap_renderer = std::make_unique<MapRhiBasemapRenderer>(
         this->map_model, &this->scene, this->tile_repository, this->terrain_repository);
+    this->scene.setNetworkGroundOffsetM(this->map_model->view3dNetworkGroundOffsetM());
     syncViewState();
 
     connect(this->map_model, &MapModel::centerChangedWGS84, this, [this]
@@ -276,6 +277,21 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     connect(this->map_model, &MapModel::view3dCameraChanged, this, [this]
     {
         syncViewState();
+        update();
+    });
+    connect(this->map_model, &MapModel::view3dNetworkGroundOffsetChanged,
+            this, [this](double offset_m)
+    {
+        if (!this->scene.setNetworkGroundOffsetM(offset_m))
+            return;
+
+        this->geometry_upload_pending = true;
+        this->highlight_upload_pending = true;
+        this->flow_direction_upload_pending = true;
+        this->icon_upload_pending = true;
+        this->heatmap_upload_pending = true;
+        this->tank_upload_pending = true;
+        this->junction_instance_upload_pending = true;
         update();
     });
     connect(this->map_model, &MapModel::view3dNavigationStateChanged,
