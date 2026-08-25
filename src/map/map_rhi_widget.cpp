@@ -32,7 +32,8 @@ namespace
 {
 constexpr int CameraUniformBytes = 32 * int(sizeof(float));
 constexpr int RendererMsaaSamples = 4;
-constexpr int CameraTerrainZoom = 14;
+constexpr int CameraTerrainMinimumZoom = 8;
+constexpr int CameraTerrainMaximumZoom = 14;
 constexpr double TerrainVerticalScale = 1.0;
 
 QString cameraTerrainDatasetId()
@@ -249,6 +250,12 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     {
         syncViewState();
         update();
+    });
+    connect(this->map_model, &MapModel::view3dNavigationStateChanged,
+            this, [this](MapView3dNavigationState state)
+    {
+        if (state == MapView3dNavigationState::Rotate)
+            captureView3dFocusAnchor();
     });
     connect(this->map_model, &MapModel::providerChanged, this, [this](MapProvider)
     {
@@ -1944,42 +1951,295 @@ bool MapRhiWidget::terrainElevationAtCoordinate(
     const CoordinateWGS84 &coordinate, double *elevation_m)
 {
     if (elevation_m == nullptr || this->terrain_repository == nullptr
+        || this->map_model == nullptr
         || !std::isfinite(coordinate.longitude_deg)
-        || !std::isfinite(coordinate.latitude_deg))
+        || !std::isfinite(coordinate.latitude_deg)
+        || this->map_model->zoom() < CameraTerrainMinimumZoom)
     {
         return false;
     }
 
+    // Match the exact terrain LOD and triangle split used by
+    // MapRhiBasemapRenderer. The old fixed-z14 bilinear sampler described a
+    // different surface from the visible GPU mesh, which allowed an otherwise
+    // correct ray hit to appear inside a steep mountain.
+    const int terrain_zoom = qBound(
+        CameraTerrainMinimumZoom,
+        this->map_model->zoom(),
+        CameraTerrainMaximumZoom);
     const double terrain_tile_x = GeoWebMercator::lonToTileX(
-        coordinate.longitude_deg, CameraTerrainZoom);
+        coordinate.longitude_deg, terrain_zoom);
     const double terrain_tile_y = GeoWebMercator::latToTileY(
-        coordinate.latitude_deg, CameraTerrainZoom);
-    const int terrain_tile_count = 1 << CameraTerrainZoom;
+        coordinate.latitude_deg, terrain_zoom);
+    const int terrain_tile_count = 1 << terrain_zoom;
     const int tile_x_unwrapped = int(std::floor(terrain_tile_x));
     const int tile_y = qBound(
         0, int(std::floor(terrain_tile_y)), terrain_tile_count - 1);
     const int tile_x = GeoWebMercator::wrapTileX(
-        tile_x_unwrapped, CameraTerrainZoom);
+        tile_x_unwrapped, terrain_zoom);
     const QString dataset = cameraTerrainDatasetId();
 
     const MapTerrainTile *terrain_tile = this->terrain_repository->tile(
-        dataset, CameraTerrainZoom, quint32(tile_x), quint32(tile_y));
+        dataset, terrain_zoom, quint32(tile_x), quint32(tile_y));
     if (terrain_tile == nullptr)
     {
         this->terrain_repository->requestTile(
-            dataset, CameraTerrainZoom, quint32(tile_x), quint32(tile_y));
+            dataset, terrain_zoom, quint32(tile_x), quint32(tile_y));
         return false;
     }
 
     const double local_u = terrain_tile_x - std::floor(terrain_tile_x);
     const double local_v = terrain_tile_y - std::floor(terrain_tile_y);
-    const double sampled_elevation_m = bilinearTerrainElevation(
-        *terrain_tile, local_u, local_v);
+    const double sample_x = qBound(0.0, local_u, 1.0) * MapTerrainTileCellCount;
+    const double sample_y = qBound(0.0, local_v, 1.0) * MapTerrainTileCellCount;
+    const int cell_x = qBound(
+        0, int(std::floor(sample_x)), MapTerrainTileCellCount - 1);
+    const int cell_y = qBound(
+        0, int(std::floor(sample_y)), MapTerrainTileCellCount - 1);
+    const double tx = qBound(0.0, sample_x - cell_x, 1.0);
+    const double ty = qBound(0.0, sample_y - cell_y, 1.0);
+    const double u0 = double(cell_x) / MapTerrainTileCellCount;
+    const double u1 = double(cell_x + 1) / MapTerrainTileCellCount;
+    const double v0 = double(cell_y) / MapTerrainTileCellCount;
+    const double v1 = double(cell_y + 1) / MapTerrainTileCellCount;
+    const double z00 = bilinearTerrainElevation(*terrain_tile, u0, v0);
+    const double z10 = bilinearTerrainElevation(*terrain_tile, u1, v0);
+    const double z11 = bilinearTerrainElevation(*terrain_tile, u1, v1);
+    const double z01 = bilinearTerrainElevation(*terrain_tile, u0, v1);
+    if (!std::isfinite(z00) || !std::isfinite(z10)
+        || !std::isfinite(z11) || !std::isfinite(z01))
+    {
+        return false;
+    }
+
+    // The renderer splits every terrain cell along z00 -> z11. Interpolate
+    // on those same two triangles rather than across the bilinear quad.
+    double sampled_elevation_m = 0.0;
+    if (ty <= tx)
+    {
+        sampled_elevation_m = z00 * (1.0 - tx)
+            + z10 * (tx - ty)
+            + z11 * ty;
+    }
+    else
+    {
+        sampled_elevation_m = z00 * (1.0 - ty)
+            + z11 * tx
+            + z01 * (ty - tx);
+    }
+
     if (!std::isfinite(sampled_elevation_m))
         return false;
 
     *elevation_m = sampled_elevation_m;
     return true;
+}
+
+double MapRhiWidget::terrainWorldUnitsPerMeter() const
+{
+    if (this->map_model == nullptr)
+        return 0.0;
+
+    if (this->scene.hasGeometry())
+    {
+        const double terrain_zero_z = double(
+            this->scene.terrainElevationToWorldZ(0.0));
+        const double terrain_one_meter_z = double(
+            this->scene.terrainElevationToWorldZ(1.0));
+        const double world_units_per_meter = terrain_one_meter_z - terrain_zero_z;
+        return std::isfinite(world_units_per_meter) && world_units_per_meter > 0.0
+            ? world_units_per_meter : 0.0;
+    }
+
+    const double meters_per_world_pixel = GeoWebMercator::metersPerPixel(
+        this->map_model->centerLat(), MapRenderCacheMath::ReferenceZoom);
+    if (!std::isfinite(meters_per_world_pixel) || meters_per_world_pixel <= 0.0)
+        return 0.0;
+
+    return TerrainVerticalScale / meters_per_world_pixel;
+}
+
+double MapRhiWidget::terrainWorldZ(
+    double elevation_m, double world_units_per_meter) const
+{
+    if (!std::isfinite(elevation_m))
+        return 0.0;
+
+    if (this->scene.hasGeometry())
+    {
+        return double(this->scene.terrainElevationToWorldZ(elevation_m)) - 1.0;
+    }
+
+    return elevation_m * world_units_per_meter;
+}
+
+void MapRhiWidget::captureView3dFocusAnchor()
+{
+    if (this->map_model == nullptr || this->terrain_repository == nullptr
+        || this->map_model->viewMode() != MapViewMode::ThreeD
+        || !this->viewport_size.isValid())
+    {
+        return;
+    }
+
+    const double world_units_per_meter = terrainWorldUnitsPerMeter();
+    if (!std::isfinite(world_units_per_meter) || world_units_per_meter <= 0.0)
+        return;
+
+    // Capture the exact screen-center ray before yaw, pitch, or distance changes.
+    // PAN is allowed to let the crosshair slip, so MapModel::centerLon/centerLat
+    // is not necessarily the terrain point currently visible below the reticle.
+    this->camera.setViewportSize(this->viewport_size);
+    this->camera.setSceneOriginWorld(renderOriginWorld());
+    this->camera.syncFromMapModel(*this->map_model);
+
+    QVector3D eye_local;
+    QVector3D direction_local;
+    if (!this->camera.crosshairRay(&eye_local, &direction_local)
+        || direction_local.z() >= -1e-6f)
+    {
+        return;
+    }
+
+    const QPointF origin_world = renderOriginWorld();
+    const double terrain_tile_reference_size = MapModel::TileSize
+        * std::pow(2.0, MapRenderCacheMath::ReferenceZoom - qBound(
+            CameraTerrainMinimumZoom,
+            this->map_model->zoom(),
+            CameraTerrainMaximumZoom));
+    const double terrain_cell_world = terrain_tile_reference_size
+        / MapTerrainTileCellCount;
+    const double horizontal_ray_speed = std::hypot(
+        double(direction_local.x()), double(direction_local.y()));
+
+    // March front-to-back in sub-cell increments. Unlike the old Newton solver,
+    // this can only ever select the first terrain surface crossing along the ray.
+    // A quarter DEM cell is small enough not to step over a GLO-30 ridge while
+    // keeping this one-shot interaction inexpensive.
+    double march_step_world = terrain_cell_world * 0.25;
+    if (horizontal_ray_speed > 1e-9)
+        march_step_world /= horizontal_ray_speed;
+    else
+        march_step_world = qMax(1.0, 5.0 * world_units_per_meter);
+    march_step_world = qMax(0.25, march_step_world);
+
+    const double native_search_world = qMax(
+        this->camera.orbitDistanceWorld() * 8.0,
+        terrain_cell_world * 256.0);
+    const double maximum_search_world = qMin(
+        native_search_world,
+        qMax(terrain_cell_world * 256.0, 100000.0 * world_units_per_meter));
+    if (!std::isfinite(maximum_search_world) || maximum_search_world <= 0.0)
+        return;
+
+    const double surface_tolerance_world = qMax(
+        0.01 * world_units_per_meter, 0.0005);
+
+    double previous_distance_world = 0.0;
+    double previous_clearance_world = 0.0;
+    bool previous_sample_available = false;
+    bool bracket_found = false;
+    double bracket_near_world = 0.0;
+    double bracket_far_world = 0.0;
+
+    const int maximum_march_steps = 20000;
+    double distance_world = 0.0;
+    for (int step = 0; step <= maximum_march_steps; ++step)
+    {
+        if (step == 0)
+            distance_world = 0.0;
+        else
+            distance_world = qMin(maximum_search_world, distance_world + march_step_world);
+
+        const QVector3D point = eye_local + direction_local * float(distance_world);
+        const QPointF absolute_world(
+            origin_world.x() + double(point.x()),
+            origin_world.y() + double(point.y()));
+        const CoordinateWGS84 coordinate = GeoWebMercator::worldPixelToLonLat(
+            absolute_world.x(), absolute_world.y(), MapRenderCacheMath::ReferenceZoom);
+
+        double terrain_elevation_m = 0.0;
+        if (!terrainElevationAtCoordinate(coordinate, &terrain_elevation_m))
+            return;
+
+        const double sampled_world_z = terrainWorldZ(
+            terrain_elevation_m, world_units_per_meter);
+        const double clearance_world = double(point.z()) - sampled_world_z;
+
+        if (previous_sample_available
+            && previous_clearance_world > 0.0
+            && clearance_world <= 0.0)
+        {
+            bracket_found = true;
+            bracket_near_world = previous_distance_world;
+            bracket_far_world = distance_world;
+            break;
+        }
+
+
+        previous_distance_world = distance_world;
+        previous_clearance_world = clearance_world;
+        previous_sample_available = true;
+
+        if (distance_world >= maximum_search_world)
+            break;
+    }
+
+    if (!bracket_found)
+        return;
+
+    // Refine only inside the first bracket. This guarantees that the anchor is
+    // on the visible front surface rather than a second root behind a mountain.
+    for (int iteration = 0; iteration < 24; ++iteration)
+    {
+        const double midpoint_world =
+            (bracket_near_world + bracket_far_world) * 0.5;
+        const QVector3D point = eye_local + direction_local * float(midpoint_world);
+        const QPointF absolute_world(
+            origin_world.x() + double(point.x()),
+            origin_world.y() + double(point.y()));
+        const CoordinateWGS84 coordinate = GeoWebMercator::worldPixelToLonLat(
+            absolute_world.x(), absolute_world.y(), MapRenderCacheMath::ReferenceZoom);
+
+        double terrain_elevation_m = 0.0;
+        if (!terrainElevationAtCoordinate(coordinate, &terrain_elevation_m))
+            return;
+
+        const double sampled_world_z = terrainWorldZ(
+            terrain_elevation_m, world_units_per_meter);
+        const double clearance_world = double(point.z()) - sampled_world_z;
+
+        if (clearance_world > 0.0)
+            bracket_near_world = midpoint_world;
+        else
+            bracket_far_world = midpoint_world;
+
+        if (bracket_far_world - bracket_near_world <= surface_tolerance_world)
+            break;
+    }
+
+    const double hit_distance_world = bracket_far_world;
+    const QVector3D hit_point = eye_local + direction_local * float(hit_distance_world);
+    const QPointF hit_absolute_world(
+        origin_world.x() + double(hit_point.x()),
+        origin_world.y() + double(hit_point.y()));
+    const CoordinateWGS84 hit_coordinate = GeoWebMercator::worldPixelToLonLat(
+        hit_absolute_world.x(), hit_absolute_world.y(),
+        MapRenderCacheMath::ReferenceZoom);
+
+    double hit_terrain_elevation_m = 0.0;
+    if (!terrainElevationAtCoordinate(hit_coordinate, &hit_terrain_elevation_m))
+        return;
+
+    const double hit_world_z = terrainWorldZ(
+        hit_terrain_elevation_m, world_units_per_meter);
+    const double distance_m = hit_distance_world / world_units_per_meter;
+    this->map_model->setView3dFocusAnchor(
+        hit_coordinate.longitude_deg,
+        hit_coordinate.latitude_deg,
+        hit_world_z,
+        distance_m,
+        this->viewport_size);
 }
 
 void MapRhiWidget::syncTerrainAwareCameraDistance()
@@ -1994,22 +2254,7 @@ void MapRhiWidget::syncTerrainAwareCameraDistance()
     QScopedValueRollback<bool> sync_guard(
         this->terrain_camera_distance_sync_active, true);
 
-    double world_units_per_meter = 0.0;
-    if (this->scene.hasGeometry())
-    {
-        const double terrain_zero_z = double(
-            this->scene.terrainElevationToWorldZ(0.0));
-        const double terrain_one_meter_z = double(
-            this->scene.terrainElevationToWorldZ(1.0));
-        world_units_per_meter = terrain_one_meter_z - terrain_zero_z;
-    }
-    else
-    {
-        const double meters_per_world_pixel = GeoWebMercator::metersPerPixel(
-            this->map_model->centerLat(), MapRenderCacheMath::ReferenceZoom);
-        if (std::isfinite(meters_per_world_pixel) && meters_per_world_pixel > 0.0)
-            world_units_per_meter = TerrainVerticalScale / meters_per_world_pixel;
-    }
+    const double world_units_per_meter = terrainWorldUnitsPerMeter();
     if (!std::isfinite(world_units_per_meter) || world_units_per_meter <= 0.0)
         return;
 
@@ -2018,110 +2263,66 @@ void MapRhiWidget::syncTerrainAwareCameraDistance()
         this->camera.nativeOrbitDistanceWorld() / world_units_per_meter);
     this->map_model->syncView3dNativeCameraDistanceM(native_distance_m);
 
-    const double requested_distance_m = qBound(
+    const double requested_distance_m = qMax(
         MapModel::MinView3dCameraDistanceM,
-        this->map_model->view3dCameraDistanceM(),
-        this->map_model->view3dMaximumCameraDistanceM());
-    double effective_distance_world = requested_distance_m * world_units_per_meter;
+        this->map_model->view3dCameraDistanceM());
+    const double effective_distance_world = requested_distance_m * world_units_per_meter;
 
     const double pitch_rad = qDegreesToRadians(qBound(
         MapModel::MinView3dPitchDeg,
         this->map_model->view3dPitchDeg(),
         MapModel::MaxView3dPitchDeg));
-    const double pitch_sine = std::sin(pitch_rad);
+    const double vertical_orbit_world = effective_distance_world * std::sin(pitch_rad);
     const double minimum_clearance_world =
         MapModel::MinView3dCameraGroundClearanceM * world_units_per_meter;
 
-    // Terrain following is driven by the ground directly below the camera eye,
-    // not by the terrain under the crosshair. Moving the crosshair onto a
-    // mountain must therefore not raise the orbit rig before the camera itself
-    // reaches that mountain. The whole rig is translated vertically so yaw,
-    // pitch, radius and all existing controls keep their current geometry.
-    double rig_world_z = this->map_model->view3dVerticalOffsetWorld();
-    bool camera_terrain_available = false;
+    const QPointF camera_world =
+        this->camera.cameraGroundWorldPixelForDistance(effective_distance_world);
+    const CoordinateWGS84 camera_coordinate = GeoWebMercator::worldPixelToLonLat(
+        camera_world.x(), camera_world.y(), MapRenderCacheMath::ReferenceZoom);
 
-    // Preserve the requested orbit angle by increasing radius only when the
-    // vertical component of that radius is smaller than the hard ground
-    // clearance. Re-sample after a radius correction because that moves the
-    // camera footprint horizontally across the DEM.
-    for (int iteration = 0; iteration < 4; ++iteration)
+    double camera_terrain_elevation_m = 0.0;
+    const bool camera_terrain_available = terrainElevationAtCoordinate(
+        camera_coordinate, &camera_terrain_elevation_m);
+    const double camera_terrain_world_z = camera_terrain_available
+        ? terrainWorldZ(camera_terrain_elevation_m, world_units_per_meter)
+        : this->map_model->view3dVerticalOffsetWorld();
+
+    if (this->map_model->view3dNavigationState() == MapView3dNavigationState::Pan)
     {
-        const QPointF camera_world =
-            this->camera.cameraGroundWorldPixelForDistance(effective_distance_world);
-        const CoordinateWGS84 camera_coordinate = GeoWebMercator::worldPixelToLonLat(
-            camera_world.x(), camera_world.y(), MapRenderCacheMath::ReferenceZoom);
-
-        double camera_terrain_elevation_m = 0.0;
-        if (!terrainElevationAtCoordinate(
-                camera_coordinate, &camera_terrain_elevation_m))
+        // PAN state is deliberately simple and feedback-free:
+        //   * camera X/Y, yaw, pitch, and requested distance stay untouched;
+        //   * the whole orbit rig is translated vertically from the DEM directly
+        //     below the camera footprint;
+        //   * the crosshair is allowed to slip across the terrain.
+        // No radius correction is allowed here because changing radius changes
+        // the camera footprint, which can create terrain-sample feedback/bouncing.
+        if (camera_terrain_available)
         {
-            break;
+            const double safety_lift_world = qMax(
+                0.0, minimum_clearance_world - vertical_orbit_world);
+            this->map_model->setView3dVerticalOffsetWorld(
+                camera_terrain_world_z + safety_lift_world);
         }
 
-        camera_terrain_available = true;
-        if (this->scene.hasGeometry())
-        {
-            rig_world_z = double(
-                this->scene.terrainElevationToWorldZ(camera_terrain_elevation_m)) - 1.0;
-        }
-        else
-        {
-            rig_world_z = camera_terrain_elevation_m * world_units_per_meter;
-        }
-
-        const double eye_world_z = rig_world_z
-            + effective_distance_world * pitch_sine;
-        const double clearance_deficit_world = rig_world_z
-            + minimum_clearance_world - eye_world_z;
-        if (clearance_deficit_world <= 0.0)
-            break;
-
-        if (pitch_sine <= 1e-5)
-            break;
-
-        effective_distance_world += clearance_deficit_world / pitch_sine;
-    }
-
-    if (!camera_terrain_available)
-    {
         this->map_model->setView3dCameraDistanceWorld(effective_distance_world);
         this->map_model->setView3dCameraCollisionLiftWorld(0.0);
         return;
     }
 
-    // Resolve the final camera footprint once more because the clearance pass
-    // above may have changed the orbit radius. This is the terrain height that
-    // controls the rig's absolute altitude.
-    const QPointF final_camera_world =
-        this->camera.cameraGroundWorldPixelForDistance(effective_distance_world);
-    const CoordinateWGS84 final_camera_coordinate = GeoWebMercator::worldPixelToLonLat(
-        final_camera_world.x(), final_camera_world.y(), MapRenderCacheMath::ReferenceZoom);
-    double final_camera_terrain_elevation_m = 0.0;
-    if (terrainElevationAtCoordinate(
-            final_camera_coordinate, &final_camera_terrain_elevation_m))
+    // ROTATE state keeps the terrain point captured under the crosshair as an
+    // immutable orbit target. Camera-ground collision may move only the eye
+    // vertically; it must never rebase or move that target while rotating.
+    const double focus_world_z = this->map_model->view3dVerticalOffsetWorld();
+    double collision_lift_world = 0.0;
+    if (camera_terrain_available)
     {
-        if (this->scene.hasGeometry())
-        {
-            rig_world_z = double(
-                this->scene.terrainElevationToWorldZ(final_camera_terrain_elevation_m)) - 1.0;
-        }
-        else
-        {
-            rig_world_z = final_camera_terrain_elevation_m * world_units_per_meter;
-        }
+        const double eye_world_z = focus_world_z + vertical_orbit_world;
+        collision_lift_world = qMax(
+            0.0,
+            camera_terrain_world_z + minimum_clearance_world - eye_world_z);
     }
 
-    // At an exactly horizontal view radius cannot create vertical clearance.
-    // Apply only the residual eye lift needed for the 2 m safety floor; terrain
-    // elevation itself is already carried by rig_world_z from the camera
-    // footprint above.
-    const double eye_world_z = rig_world_z
-        + effective_distance_world * pitch_sine;
-    const double collision_lift_world = qMax(
-        0.0,
-        rig_world_z + minimum_clearance_world - eye_world_z);
-
-    this->map_model->setView3dVerticalOffsetWorld(rig_world_z);
     this->map_model->setView3dCameraDistanceWorld(effective_distance_world);
     this->map_model->setView3dCameraCollisionLiftWorld(collision_lift_world);
 }

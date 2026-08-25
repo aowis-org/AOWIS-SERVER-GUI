@@ -140,6 +140,21 @@ public:
                 + this->north_animation_delta_yaw_deg * progress);
         });
 
+        connect(this->north_animation, &QVariantAnimation::stateChanged, this,
+                [this](QAbstractAnimation::State new_state, QAbstractAnimation::State old_state)
+        {
+            if (old_state == QAbstractAnimation::Stopped
+                && new_state != QAbstractAnimation::Stopped)
+            {
+                this->map_model->beginView3dRotateInteraction();
+            }
+            else if (old_state != QAbstractAnimation::Stopped
+                     && new_state == QAbstractAnimation::Stopped)
+            {
+                this->map_model->endView3dRotateInteraction();
+            }
+        });
+
         connect(this->map_model, &MapModel::view3dCameraChanged, this, [this]
         {
             update();
@@ -252,6 +267,7 @@ protected:
         }
 
         stopNorthAnimation();
+        this->map_model->beginView3dRotateInteraction();
         this->drag_active = true;
         this->dragged = false;
         this->press_position = event->position();
@@ -294,6 +310,7 @@ protected:
 
         this->drag_active = false;
         setCursor(Qt::OpenHandCursor);
+        this->map_model->endView3dRotateInteraction();
         if (!this->dragged)
             animateNorth();
         event->accept();
@@ -309,9 +326,11 @@ protected:
             return;
         }
 
+        this->map_model->beginView3dRotateInteraction();
         const double steps = double(angle_delta.y()) / 120.0;
         this->map_model->setView3dYawDeg(
             this->map_model->view3dYawDeg() + steps * CompassWheelStepDeg);
+        this->map_model->endView3dRotateInteraction();
         event->accept();
     }
 
@@ -444,7 +463,7 @@ MapMonitorCameraDistanceHudWidget::MapMonitorCameraDistanceHudWidget(
         "Straight-line orbit radius to the terrain point under the crosshair\n"
         "Minimum requested distance: 150 m\n"
         "Maximum: native camera distance + 500 m\n"
-        "Terrain collision may increase the effective distance to keep 2 m clearance\n"
+        "Terrain collision keeps at least 2 m ground clearance without moving the focus point\n"
         "Right-click: animate back to the native camera distance"));
     this->distance_value_label->setText(cameraDistanceText(
         this->map_model->view3dCameraDistanceM()));
@@ -462,6 +481,20 @@ MapMonitorCameraDistanceHudWidget::MapMonitorCameraDistanceHudWidget(
     {
         this->map_model->setView3dCameraDistanceM(value.toDouble());
     });
+    connect(distance_reset_animation, &QVariantAnimation::stateChanged, this,
+            [this](QAbstractAnimation::State new_state, QAbstractAnimation::State old_state)
+    {
+        if (old_state == QAbstractAnimation::Stopped
+            && new_state != QAbstractAnimation::Stopped)
+        {
+            this->map_model->beginView3dRotateInteraction();
+        }
+        else if (old_state != QAbstractAnimation::Stopped
+                 && new_state == QAbstractAnimation::Stopped)
+        {
+            this->map_model->endView3dRotateInteraction();
+        }
+    });
     ResettableVerticalSlider *resettable_distance_slider =
         static_cast<ResettableVerticalSlider *>(this->distance_slider);
     resettable_distance_slider->setResetCallback([this, distance_reset_animation]
@@ -474,6 +507,15 @@ MapMonitorCameraDistanceHudWidget::MapMonitorCameraDistanceHudWidget(
     });
     connect(this->distance_slider, &QSlider::sliderPressed, distance_reset_animation,
             &QVariantAnimation::stop);
+
+    connect(this->distance_slider, &QSlider::sliderPressed, this, [this]
+    {
+        this->map_model->beginView3dRotateInteraction();
+    });
+    connect(this->distance_slider, &QSlider::sliderReleased, this, [this]
+    {
+        this->map_model->endView3dRotateInteraction();
+    });
 
     connect(this->distance_slider, &QSlider::valueChanged, this, [this](int slider_value)
     {
@@ -540,6 +582,20 @@ MapMonitorTiltHudWidget::MapMonitorTiltHudWidget(MapModel *map_model, QWidget *p
     {
         this->map_model->setView3dPitchDeg(value.toDouble());
     });
+    connect(tilt_reset_animation, &QVariantAnimation::stateChanged, this,
+            [this](QAbstractAnimation::State new_state, QAbstractAnimation::State old_state)
+    {
+        if (old_state == QAbstractAnimation::Stopped
+            && new_state != QAbstractAnimation::Stopped)
+        {
+            this->map_model->beginView3dRotateInteraction();
+        }
+        else if (old_state != QAbstractAnimation::Stopped
+                 && new_state == QAbstractAnimation::Stopped)
+        {
+            this->map_model->endView3dRotateInteraction();
+        }
+    });
     ResettableVerticalSlider *resettable_tilt_slider =
         static_cast<ResettableVerticalSlider *>(this->tilt_slider);
     resettable_tilt_slider->setResetCallback([this, tilt_reset_animation]
@@ -551,6 +607,15 @@ MapMonitorTiltHudWidget::MapMonitorTiltHudWidget(MapModel *map_model, QWidget *p
     });
     connect(this->tilt_slider, &QSlider::sliderPressed, tilt_reset_animation,
             &QVariantAnimation::stop);
+
+    connect(this->tilt_slider, &QSlider::sliderPressed, this, [this]
+    {
+        this->map_model->beginView3dRotateInteraction();
+    });
+    connect(this->tilt_slider, &QSlider::sliderReleased, this, [this]
+    {
+        this->map_model->endView3dRotateInteraction();
+    });
 
     connect(this->tilt_slider, &QSlider::valueChanged, this, [this](int pitch_deg)
     {

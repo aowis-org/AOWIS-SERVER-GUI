@@ -11,6 +11,12 @@
 #include "../geo_metric_projection.h"
 #include "../geo_web_mercator.h"
 
+enum class MapView3dNavigationState
+{
+    Pan,
+    Rotate
+};
+
 class MapModel : public QObject
 {
     Q_OBJECT
@@ -42,6 +48,7 @@ public:
     double view3dCameraDistanceWorld() const;
     double view3dCameraCollisionLiftWorld() const;
     double view3dVerticalOffsetWorld() const;
+    MapView3dNavigationState view3dNavigationState() const;
     QString tileCacheKey(int x, int y) const;
     QString tileCachePrefix(int zoom) const;
     QString tileEndpoint(int x, int y) const;
@@ -78,6 +85,10 @@ public:
     void setView3dCameraDistanceWorld(double distance_world);
     void setView3dCameraCollisionLiftWorld(double lift_world);
     void setView3dVerticalOffsetWorld(double offset_world);
+    void setView3dFocusAnchor(double lon, double lat, double offset_world,
+                              double distance_m, const QSize &viewport = QSize());
+    void beginView3dRotateInteraction();
+    void endView3dRotateInteraction();
     void orbitView3d(double yaw_delta_deg, double pitch_delta_deg);
     void resetView3dCamera();
 
@@ -88,6 +99,7 @@ signals:
     void providerChanged(MapProvider provider);
     void viewModeChanged(MapViewMode view_mode);
     void view3dCameraChanged();
+    void view3dNavigationStateChanged(MapView3dNavigationState state);
 
 private:
     void clampCenter(const QSize &viewport);
@@ -115,6 +127,8 @@ private:
     double m_view_3d_camera_collision_lift_world = 0.0;
     double m_view_3d_vertical_offset_world = 0.0;
     bool m_view_3d_native_camera_distance_initialized = false;
+    MapView3dNavigationState m_view_3d_navigation_state = MapView3dNavigationState::Pan;
+    int m_view_3d_rotate_interaction_depth = 0;
 };
 
 #endif // MAP_MODEL_H

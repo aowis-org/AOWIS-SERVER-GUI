@@ -81,6 +81,9 @@ private:
     void resetGpuResources();
     void syncViewState();
     void syncTerrainAwareCameraDistance();
+    void captureView3dFocusAnchor();
+    double terrainWorldUnitsPerMeter() const;
+    double terrainWorldZ(double elevation_m, double world_units_per_meter) const;
     bool terrainElevationAtCoordinate(
         const CoordinateWGS84 &coordinate, double *elevation_m);
     QPointF renderOriginWorld() const;

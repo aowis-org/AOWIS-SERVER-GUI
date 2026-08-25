@@ -137,6 +137,11 @@ double MapModel::view3dVerticalOffsetWorld() const
     return this->m_view_3d_vertical_offset_world;
 }
 
+MapView3dNavigationState MapModel::view3dNavigationState() const
+{
+    return this->m_view_3d_navigation_state;
+}
+
 int MapModel::tileCount() const
 {
     return 1 << this->m_zoom;
@@ -392,6 +397,13 @@ void MapModel::setViewMode(MapViewMode view_mode)
         return;
 
     this->m_view_mode = view_mode;
+    if (this->m_view_mode != MapViewMode::ThreeD
+        && this->m_view_3d_navigation_state == MapView3dNavigationState::Rotate)
+    {
+        this->m_view_3d_rotate_interaction_depth = 0;
+        this->m_view_3d_navigation_state = MapView3dNavigationState::Pan;
+        emit view3dNavigationStateChanged(this->m_view_3d_navigation_state);
+    }
     emit viewModeChanged(this->m_view_mode);
 }
 
@@ -496,6 +508,71 @@ void MapModel::setView3dVerticalOffsetWorld(double offset_world)
 
     this->m_view_3d_vertical_offset_world = offset_world;
     emit view3dCameraChanged();
+}
+
+void MapModel::setView3dFocusAnchor(
+    double lon, double lat, double offset_world, double distance_m, const QSize &viewport)
+{
+    if (!std::isfinite(lon) || !std::isfinite(lat) || !std::isfinite(offset_world)
+        || !std::isfinite(distance_m))
+    {
+        return;
+    }
+
+    const double old_lon = this->m_centerLon;
+    const double old_lat = this->m_centerLat;
+    const double old_offset_world = this->m_view_3d_vertical_offset_world;
+    const double old_distance_m = this->m_view_3d_camera_distance_m;
+
+    this->m_centerLon = GeoWebMercator::normalizeLongitude(lon);
+    this->m_centerLat = std::clamp(
+        lat, -GeoWebMercator::MaximumLatitude, GeoWebMercator::MaximumLatitude);
+    if (viewport.isValid())
+        clampCenter(viewport);
+
+    this->m_view_3d_vertical_offset_world = offset_world;
+    this->m_view_3d_camera_distance_m = qBound(
+        MinView3dCameraDistanceM, distance_m, view3dMaximumCameraDistanceM());
+
+    const bool center_changed = !coordinatesEqual(this->m_centerLon, old_lon)
+        || !coordinatesEqual(this->m_centerLat, old_lat);
+    const bool camera_changed = !coordinatesEqual(
+        this->m_view_3d_vertical_offset_world, old_offset_world)
+        || !coordinatesEqual(this->m_view_3d_camera_distance_m, old_distance_m);
+
+    if (center_changed)
+        emitCenterChanged();
+    if (camera_changed)
+        emit view3dCameraChanged();
+}
+
+void MapModel::beginView3dRotateInteraction()
+{
+    if (this->m_view_mode != MapViewMode::ThreeD)
+        return;
+
+    ++this->m_view_3d_rotate_interaction_depth;
+    if (this->m_view_3d_navigation_state == MapView3dNavigationState::Rotate)
+        return;
+
+    this->m_view_3d_navigation_state = MapView3dNavigationState::Rotate;
+    emit view3dNavigationStateChanged(this->m_view_3d_navigation_state);
+}
+
+void MapModel::endView3dRotateInteraction()
+{
+    if (this->m_view_3d_rotate_interaction_depth <= 0)
+        return;
+
+    --this->m_view_3d_rotate_interaction_depth;
+    if (this->m_view_3d_rotate_interaction_depth > 0)
+        return;
+
+    if (this->m_view_3d_navigation_state == MapView3dNavigationState::Pan)
+        return;
+
+    this->m_view_3d_navigation_state = MapView3dNavigationState::Pan;
+    emit view3dNavigationStateChanged(this->m_view_3d_navigation_state);
 }
 
 void MapModel::orbitView3d(double yaw_delta_deg, double pitch_delta_deg)

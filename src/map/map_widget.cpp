@@ -1079,6 +1079,7 @@ void MapWidget::beginView3dOrbit(const QMouseEvent *event)
         return;
 
     this->view_3d_orbit_active = true;
+    this->m_model->beginView3dRotateInteraction();
 #ifdef Q_OS_WASM
     this->view_3d_orbit_last_position = event->position().toPoint();
 #else
@@ -1102,6 +1103,7 @@ void MapWidget::endView3dOrbit(bool restore_cursor_position)
     }
 
     this->view_3d_orbit_active = false;
+    this->m_model->endView3dRotateInteraction();
 #ifndef Q_OS_WASM
     if (this->view_3d_orbit_mouse_grabbed)
     {

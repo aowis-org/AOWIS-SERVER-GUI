@@ -197,6 +197,51 @@ double MapRhiCamera::orbitDistanceWorld() const
         : nativeOrbitDistanceWorld();
 }
 
+
+bool MapRhiCamera::crosshairRay(QVector3D *eye_world, QVector3D *direction_world) const
+{
+    if (eye_world == nullptr || direction_world == nullptr
+        || this->view_mode != MapViewMode::ThreeD)
+    {
+        return false;
+    }
+
+    const int viewport_height = qMax(1, this->viewport_size.height());
+    const double scale = GeoWebMercator::zoomScale(
+        this->zoom, MapRenderCacheMath::ReferenceZoom);
+    const double safe_scale = scale > 0.0 ? scale : 1.0;
+    const double half_height_world = double(viewport_height) / (2.0 * safe_scale);
+    const double pitch_rad = qDegreesToRadians(qBound(
+        MapModel::MinView3dPitchDeg,
+        this->view_3d_pitch_deg,
+        MapModel::MaxView3dPitchDeg));
+    const double yaw_rad = qDegreesToRadians(this->view_3d_yaw_deg);
+    const double native_distance = half_height_world
+        / std::tan(qDegreesToRadians(45.0 / 2.0));
+    const double distance = this->view_3d_camera_distance_world > 0.0
+        ? this->view_3d_camera_distance_world : native_distance;
+    const double horizontal_distance = distance * std::cos(pitch_rad);
+
+    const QVector3D target(
+        float(this->center_world.x()),
+        float(this->center_world.y()),
+        float(this->view_3d_vertical_offset_world));
+    const QVector3D eye(
+        target.x() + float(std::sin(yaw_rad) * horizontal_distance),
+        target.y() + float(std::cos(yaw_rad) * horizontal_distance),
+        float(this->view_3d_vertical_offset_world
+            + distance * std::sin(pitch_rad)
+            + this->view_3d_camera_collision_lift_world));
+    QVector3D direction = target - eye;
+    if (direction.lengthSquared() <= 1e-12f)
+        return false;
+
+    direction.normalize();
+    *eye_world = eye;
+    *direction_world = direction;
+    return true;
+}
+
 QPointF MapRhiCamera::cameraGroundWorldPixelForDistance(double distance_world) const
 {
     const double pitch_rad = qDegreesToRadians(qBound(

@@ -26,6 +26,7 @@ public:
     QPointF cameraGroundWorldPixelForDistance(double distance_world) const;
     double nativeOrbitDistanceWorld() const;
     double orbitDistanceWorld() const;
+    bool crosshairRay(QVector3D *eye_world, QVector3D *direction_world) const;
 
 private:
     QPointF scene_origin_world;
