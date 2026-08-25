@@ -35,6 +35,7 @@ constexpr int RendererMsaaSamples = 4;
 constexpr int CameraTerrainMinimumZoom = 8;
 constexpr int CameraTerrainMaximumZoom = 14;
 constexpr double TerrainVerticalScale = 1.0;
+constexpr double FallbackOriginRecenterThresholdWorld = MapModel::TileSize * 1024.0;
 
 QString cameraTerrainDatasetId()
 {
@@ -223,11 +224,17 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     {
         if (!this->scene.hasGeometry())
         {
-            this->fallback_origin_world = GeoWebMercator::lonLatToWorldPixel(
+            const QPointF center_world = GeoWebMercator::lonLatToWorldPixel(
                 GeoWebMercator::normalizeLongitude(this->map_model->centerLon()),
                 this->map_model->centerLat(), MapRenderCacheMath::ReferenceZoom);
-            if (this->basemap_renderer)
-                this->basemap_renderer->invalidate();
+            const double delta_x = center_world.x() - this->fallback_origin_world.x();
+            const double delta_y = center_world.y() - this->fallback_origin_world.y();
+            if (std::hypot(delta_x, delta_y) > FallbackOriginRecenterThresholdWorld)
+            {
+                this->fallback_origin_world = center_world;
+                if (this->basemap_renderer)
+                    this->basemap_renderer->invalidate();
+            }
         }
         syncViewState();
         update();
@@ -631,10 +638,10 @@ void MapRhiWidget::setTerrainRepository(MapTerrainRepository *terrain_repository
     if (this->terrain_repository != nullptr)
     {
         connect(this->terrain_repository, &MapTerrainRepository::signalTerrainTileAvailable,
-                this, [this](const QString &)
+                this, [this](const QString &key)
         {
             if (this->basemap_renderer)
-                this->basemap_renderer->invalidate();
+                this->basemap_renderer->notifyTerrainTileAvailable(key);
             syncViewState();
             update();
         });

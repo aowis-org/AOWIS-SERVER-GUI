@@ -24,6 +24,7 @@ constexpr int MaximumCachedGpuTiles = 160;
 constexpr int TerrainReliefMinimumZoom = 8;
 constexpr int TerrainReliefMaximumZoom = 14;
 constexpr double TerrainVerticalScale = 1.0;
+constexpr int TwoDPanRetentionMarginTiles = 4;
 
 bool reliefTerrainEnabled(const MapModel &map_model, const MapTerrainRepository *terrain_repository)
 {
@@ -174,7 +175,14 @@ void MapRhiBasemapRenderer::setTerrainRepository(MapTerrainRepository *terrain_r
         return;
 
     this->terrain_repository = terrain_repository;
+    this->dirty_terrain_keys.clear();
     invalidate();
+}
+
+void MapRhiBasemapRenderer::notifyTerrainTileAvailable(const QString &key)
+{
+    if (!key.isEmpty())
+        this->dirty_terrain_keys.insert(key);
 }
 
 void MapRhiBasemapRenderer::invalidate()
@@ -193,6 +201,8 @@ void MapRhiBasemapRenderer::releaseResources()
     this->tile_resources.clear();
     this->visible_tiles.clear();
     this->vertices.clear();
+    this->dirty_terrain_keys.clear();
+    this->layout_origin_world = QPointF();
     this->vertex_buffer_size = 0;
     this->vertex_upload_pending = true;
     this->layout_dirty = true;
@@ -270,6 +280,11 @@ bool MapRhiBasemapRenderer::prepare(
         resource_updates->updateDynamicBuffer(
             this->vertex_buffer.get(), 0, required_bytes, this->vertices.constData());
         this->vertex_upload_pending = false;
+        this->dirty_terrain_keys.clear();
+    }
+    else if (!updateDirtyTerrainTiles(resource_updates))
+    {
+        return false;
     }
 
     pruneTextureCache();
@@ -404,14 +419,14 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
         int(std::ceil(viewport_size.width() / rendered_tile_size)) + 4;
     const int foreground_tiles_y =
         int(std::ceil(viewport_size.height() / rendered_tile_size)) + 4;
-    int tiles_x = foreground_tiles_x;
-    int tiles_y = foreground_tiles_y;
+    int tiles_x = foreground_tiles_x + TwoDPanRetentionMarginTiles * 2;
+    int tiles_y = foreground_tiles_y + TwoDPanRetentionMarginTiles * 2;
     if (this->map_model->viewMode() == MapViewMode::ThreeD)
     {
         // Keep the existing 3D apron. Step 6 will replace this coarse coverage
         // policy with view-frustum culling and distance-dependent terrain LOD.
-        tiles_x = tiles_x * 2 + 4;
-        tiles_y = tiles_y * 3 + 6;
+        tiles_x = foreground_tiles_x * 2 + 4;
+        tiles_y = foreground_tiles_y * 3 + 6;
     }
     const int center_tile_x = int(std::floor(rendered_center_x));
     const int center_tile_y = int(std::floor(center.y()));
@@ -419,6 +434,55 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     const int start_y = center_tile_y - tiles_y / 2;
     const int foreground_start_x = center_tile_x - foreground_tiles_x / 2;
     const int foreground_start_y = center_tile_y - foreground_tiles_y / 2;
+    const bool relief_enabled = reliefTerrainEnabled(*this->map_model, this->terrain_repository);
+    const int terrain_zoom = relief_enabled
+        ? terrainZoomForImageryZoom(imagery_zoom)
+        : 0;
+    const int terrain_zoom_delta = relief_enabled
+        ? imagery_zoom - terrain_zoom
+        : 0;
+
+    // The retained tile window is deliberately larger than the foreground.
+    // While the foreground still fits, do not create a new request batch or
+    // rebuild geometry merely because the center crossed an XYZ boundary.
+    // All imagery in the retained window was already requested; only terrain
+    // that has newly become foreground may need to be requested here. This
+    // also avoids repeatedly reprioritizing/scanning a large request queue
+    // during continuous panning.
+    const bool layout_origin_matches =
+        std::abs(origin_world.x() - this->layout_origin_world.x()) < 0.5
+        && std::abs(origin_world.y() - this->layout_origin_world.y()) < 0.5;
+    if (!this->layout_dirty && layout_origin_matches
+        && currentLayoutCoversForeground(
+            imagery_zoom, foreground_start_x, foreground_start_y,
+            foreground_tiles_x, foreground_tiles_y, tile_count))
+    {
+        if (relief_enabled && this->terrain_repository != nullptr)
+        {
+            const int foreground_end_x = foreground_start_x + foreground_tiles_x;
+            const int foreground_end_y = foreground_start_y + foreground_tiles_y;
+            for (const VisibleTile &tile : this->visible_tiles)
+            {
+                if (tile.virtual_x < foreground_start_x || tile.virtual_x >= foreground_end_x
+                    || tile.y < foreground_start_y || tile.y >= foreground_end_y
+                    || tile.terrain_key.isEmpty()
+                    || this->terrain_repository->tile(tile.terrain_key) != nullptr)
+                {
+                    continue;
+                }
+
+                MapTerrainTileAddress terrain_address;
+                terrain_address.zoom = tile.terrain_zoom;
+                terrain_address.x = quint32(tile.tile_x) >> terrain_zoom_delta;
+                terrain_address.y = quint32(tile.y) >> terrain_zoom_delta;
+                this->terrain_repository->requestTile(
+                    terrainDatasetId(), terrain_address.zoom,
+                    terrain_address.x, terrain_address.y);
+            }
+        }
+        return true;
+    }
+
     const QString request_layout_key = QStringLiteral("%1|%2|%3|%4|%5")
         .arg(this->map_model->tileCachePrefix(imagery_zoom))
         .arg(start_x)
@@ -427,13 +491,6 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
         .arg(tiles_y);
     const quint64 request_batch = this->tile_repository->beginTileRequestBatch(
         this, request_layout_key);
-    const bool relief_enabled = reliefTerrainEnabled(*this->map_model, this->terrain_repository);
-    const int terrain_zoom = relief_enabled
-        ? terrainZoomForImageryZoom(imagery_zoom)
-        : 0;
-    const int terrain_zoom_delta = relief_enabled
-        ? imagery_zoom - terrain_zoom
-        : 0;
 
     QVector<VisibleTile> next_tiles;
     next_tiles.reserve(tiles_x * tiles_y);
@@ -488,18 +545,18 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
         }
     }
 
-    // During an integer zoom/LOD transition, keep rendering the previous
-    // complete layer until the replacement foreground tiles are actually
-    // available. Switching visible_tiles immediately would make draw() skip
-    // every not-yet-loaded texture and expose the clear color as black holes.
+    // Keep the previous complete layer during both zoom-LOD handoffs and pan
+    // window recenters until the replacement foreground is resident. The old
+    // window deliberately extends beyond the actual viewport, so it can cover
+    // the screen while the newly exposed edge tiles finish loading.
     //
     // The old geometry remains valid because it is expressed in the common
     // ReferenceZoom world coordinate system. In 2D, the continuous scale is
-    // adjusted when the integer tile zoom changes, so the retained old layer
-    // stays at exactly the same apparent scale while the new LOD loads.
-    const bool zoom_transition = !this->visible_tiles.isEmpty()
-        && this->visible_tiles.constFirst().imagery_zoom != imagery_zoom;
-    if (zoom_transition)
+    // adjusted when the integer tile zoom changes, so an LOD handoff also
+    // retains exactly the same apparent scale.
+    const bool retained_layer_transition = !this->visible_tiles.isEmpty()
+        && layout_origin_matches;
+    if (retained_layer_transition)
     {
         bool foreground_ready = true;
         for (const VisibleTile &tile : next_tiles)
@@ -525,8 +582,8 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
 
         if (!foreground_ready)
         {
-            // Keep layout_dirty set. signalTileAvailable() schedules another
-            // frame, at which point this readiness check is repeated.
+            // Keep drawing the retained layer. Tile-availability signals schedule
+            // another frame, where this readiness check is repeated.
             return true;
         }
     }
@@ -562,20 +619,119 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
         if (relief_enabled && !tile.terrain_key.isEmpty() && this->terrain_repository != nullptr)
         {
             const MapTerrainTile *terrain_tile = this->terrain_repository->tile(tile.terrain_key);
-            if (terrain_tile != nullptr)
-            {
-                relief_built = appendReliefTileVertices(
-                    &tile, *terrain_tile, left, top, float(tile_reference_size));
-            }
+            // Build the full relief grid even before its DEM arrives. A flat
+            // grid with identical vertex count lets a later terrain response
+            // patch only this tile's vertex range instead of rebuilding the
+            // entire basemap mesh.
+            relief_built = appendReliefTileVertices(
+                &this->vertices, &tile, terrain_tile,
+                left, top, float(tile_reference_size));
         }
 
         if (!relief_built)
-            appendFlatTileVertices(&tile, left, top, right, bottom);
+            appendFlatTileVertices(&this->vertices, &tile, left, top, right, bottom);
     }
 
     this->visible_tiles = next_tiles;
+    this->layout_origin_world = origin_world;
     this->vertex_upload_pending = true;
     this->layout_dirty = false;
+    return true;
+}
+
+bool MapRhiBasemapRenderer::currentLayoutCoversForeground(
+    int imagery_zoom, int foreground_start_x, int foreground_start_y,
+    int foreground_tiles_x, int foreground_tiles_y, int tile_count) const
+{
+    if (this->visible_tiles.isEmpty()
+        || this->visible_tiles.constFirst().imagery_zoom != imagery_zoom)
+    {
+        return false;
+    }
+
+    int minimum_x = std::numeric_limits<int>::max();
+    int maximum_x = std::numeric_limits<int>::min();
+    int minimum_y = std::numeric_limits<int>::max();
+    int maximum_y = std::numeric_limits<int>::min();
+    for (const VisibleTile &tile : this->visible_tiles)
+    {
+        minimum_x = qMin(minimum_x, tile.virtual_x);
+        maximum_x = qMax(maximum_x, tile.virtual_x);
+        minimum_y = qMin(minimum_y, tile.y);
+        maximum_y = qMax(maximum_y, tile.y);
+    }
+
+    const int required_minimum_x = foreground_start_x;
+    const int required_maximum_x = foreground_start_x + foreground_tiles_x - 1;
+    const int required_minimum_y = qMax(0, foreground_start_y);
+    const int required_maximum_y = qMin(
+        tile_count - 1, foreground_start_y + foreground_tiles_y - 1);
+
+    return minimum_x <= required_minimum_x
+        && maximum_x >= required_maximum_x
+        && minimum_y <= required_minimum_y
+        && maximum_y >= required_maximum_y;
+}
+
+bool MapRhiBasemapRenderer::updateDirtyTerrainTiles(
+    QRhiResourceUpdateBatch *resource_updates)
+{
+    if (this->dirty_terrain_keys.isEmpty() || resource_updates == nullptr
+        || this->vertex_buffer == nullptr || this->terrain_repository == nullptr)
+    {
+        return true;
+    }
+
+    const QSet<QString> dirty_keys = this->dirty_terrain_keys;
+    this->dirty_terrain_keys.clear();
+
+    for (VisibleTile &tile : this->visible_tiles)
+    {
+        if (tile.terrain_key.isEmpty() || !dirty_keys.contains(tile.terrain_key))
+            continue;
+
+        const MapTerrainTile *terrain_tile = this->terrain_repository->tile(tile.terrain_key);
+        if (terrain_tile == nullptr)
+            continue;
+
+        const double tile_reference_size = MapModel::TileSize
+            * std::pow(2.0, MapRenderCacheMath::ReferenceZoom - tile.imagery_zoom);
+        const float left = float(
+            tile.virtual_x * tile_reference_size - this->layout_origin_world.x());
+        const float top = float(
+            tile.y * tile_reference_size - this->layout_origin_world.y());
+
+        QVector<TileVertex> replacement;
+        replacement.reserve(tile.vertex_count);
+        VisibleTile replacement_tile = tile;
+        replacement_tile.first_vertex = 0;
+        if (!appendReliefTileVertices(
+                &replacement, &replacement_tile, terrain_tile,
+                left, top, float(tile_reference_size))
+            || replacement.size() != tile.vertex_count)
+        {
+            // The mesh density changed unexpectedly. Fall back to a complete
+            // rebuild on the next frame rather than corrupting vertex ranges.
+            this->layout_dirty = true;
+            this->vertex_upload_pending = true;
+            return true;
+        }
+
+        const qsizetype first_vertex = tile.first_vertex;
+        for (qsizetype index = 0; index < replacement.size(); ++index)
+            this->vertices[first_vertex + index] = replacement.at(index);
+
+        const int byte_offset = int(first_vertex * qsizetype(sizeof(TileVertex)));
+        const int byte_count = boundedBufferSize(
+            replacement.size(), qsizetype(sizeof(TileVertex)));
+        if (byte_count <= 0)
+            return false;
+
+        resource_updates->updateDynamicBuffer(
+            this->vertex_buffer.get(), byte_offset, byte_count,
+            replacement.constData());
+    }
+
     return true;
 }
 
@@ -679,9 +835,10 @@ void MapRhiBasemapRenderer::pruneTextureCache()
 
 
 void MapRhiBasemapRenderer::appendFlatTileVertices(
-    VisibleTile *tile, float left, float top, float right, float bottom)
+    QVector<TileVertex> *target, VisibleTile *tile,
+    float left, float top, float right, float bottom)
 {
-    if (tile == nullptr)
+    if (target == nullptr || tile == nullptr)
         return;
 
     const TileVertex tile_vertices[6] = {
@@ -693,24 +850,30 @@ void MapRhiBasemapRenderer::appendFlatTileVertices(
         {left,  bottom, 0.0f, 0.0f, 1.0f}
     };
     for (const TileVertex &vertex : tile_vertices)
-        this->vertices.append(vertex);
+        target->append(vertex);
     tile->vertex_count = 6;
 }
 
 bool MapRhiBasemapRenderer::appendReliefTileVertices(
-    VisibleTile *tile, const MapTerrainTile &terrain_tile,
+    QVector<TileVertex> *target, VisibleTile *tile,
+    const MapTerrainTile *terrain_tile,
     float tile_left, float tile_top, float tile_world_size)
 {
-    if (tile == nullptr || terrain_tile.elevations_m.size() != MapTerrainTileSampleCount
+    if (target == nullptr || tile == nullptr
         || tile->imagery_zoom < tile->terrain_zoom)
     {
         return false;
     }
 
+    const bool terrain_available = terrain_tile != nullptr
+        && terrain_tile->elevations_m.size() == MapTerrainTileSampleCount;
+
     const int zoom_delta = tile->imagery_zoom - tile->terrain_zoom;
     const double subdivision_count = std::ldexp(1.0, zoom_delta);
-    const quint32 terrain_x = terrain_tile.address.x;
-    const quint32 terrain_y = terrain_tile.address.y;
+    const quint32 terrain_x = terrain_available ? terrain_tile->address.x
+                                                : (quint32(tile->tile_x) >> zoom_delta);
+    const quint32 terrain_y = terrain_available ? terrain_tile->address.y
+                                                : (quint32(tile->y) >> zoom_delta);
     const double local_tile_x = double(tile->tile_x) - double(terrain_x) * subdivision_count;
     const double local_tile_y = double(tile->y) - double(terrain_y) * subdivision_count;
     const double terrain_u_min = local_tile_x / subdivision_count;
@@ -745,14 +908,22 @@ bool MapRhiBasemapRenderer::appendReliefTileVertices(
             const double terrain_u1 = terrain_u_min + double(u1) * terrain_u_span;
             const double terrain_v0 = terrain_v_min + double(v0) * terrain_v_span;
             const double terrain_v1 = terrain_v_min + double(v1) * terrain_v_span;
-            const float z00 = terrainElevationWorldZ(
-                bilinearTerrainSample(terrain_tile, terrain_u0, terrain_v0));
-            const float z10 = terrainElevationWorldZ(
-                bilinearTerrainSample(terrain_tile, terrain_u1, terrain_v0));
-            const float z11 = terrainElevationWorldZ(
-                bilinearTerrainSample(terrain_tile, terrain_u1, terrain_v1));
-            const float z01 = terrainElevationWorldZ(
-                bilinearTerrainSample(terrain_tile, terrain_u0, terrain_v1));
+            const float z00 = terrain_available
+                ? terrainElevationWorldZ(
+                    bilinearTerrainSample(*terrain_tile, terrain_u0, terrain_v0))
+                : 0.0f;
+            const float z10 = terrain_available
+                ? terrainElevationWorldZ(
+                    bilinearTerrainSample(*terrain_tile, terrain_u1, terrain_v0))
+                : 0.0f;
+            const float z11 = terrain_available
+                ? terrainElevationWorldZ(
+                    bilinearTerrainSample(*terrain_tile, terrain_u1, terrain_v1))
+                : 0.0f;
+            const float z01 = terrain_available
+                ? terrainElevationWorldZ(
+                    bilinearTerrainSample(*terrain_tile, terrain_u0, terrain_v1))
+                : 0.0f;
 
             const TileVertex cell_vertices[6] = {
                 {left,  top,    z00, u0, v0},
@@ -763,7 +934,7 @@ bool MapRhiBasemapRenderer::appendReliefTileVertices(
                 {left,  bottom, z01, u0, v1}
             };
             for (const TileVertex &vertex : cell_vertices)
-                this->vertices.append(vertex);
+                target->append(vertex);
         }
     }
 

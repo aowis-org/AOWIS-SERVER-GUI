@@ -2,6 +2,7 @@
 #define MAP_RHI_BASEMAP_RENDERER_H
 
 #include <QPointF>
+#include <QSet>
 #include <QSize>
 #include <QString>
 #include <QVector>
@@ -43,6 +44,7 @@ public:
 
     void setTileRepository(MapTileRepository *tile_repository);
     void setTerrainRepository(MapTerrainRepository *terrain_repository);
+    void notifyTerrainTileAvailable(const QString &key);
     void invalidate();
     void releaseResources();
 
@@ -90,12 +92,17 @@ private:
 
     bool createSharedResources();
     bool rebuildVisibleTiles(const QPointF &origin_world, const QSize &viewport_size);
+    bool updateDirtyTerrainTiles(QRhiResourceUpdateBatch *resource_updates);
+    bool currentLayoutCoversForeground(int imagery_zoom, int foreground_start_x,
+                                       int foreground_start_y, int foreground_tiles_x,
+                                       int foreground_tiles_y, int tile_count) const;
     bool ensureTileResource(const QString &key, TileResource **resource,
                             QRhiResourceUpdateBatch *resource_updates);
     void pruneTextureCache();
-    void appendFlatTileVertices(VisibleTile *tile, float left, float top,
-                                float right, float bottom);
-    bool appendReliefTileVertices(VisibleTile *tile, const MapTerrainTile &terrain_tile,
+    void appendFlatTileVertices(QVector<TileVertex> *target, VisibleTile *tile,
+                                float left, float top, float right, float bottom);
+    bool appendReliefTileVertices(QVector<TileVertex> *target, VisibleTile *tile,
+                                  const MapTerrainTile *terrain_tile,
                                   float tile_left, float tile_top,
                                   float tile_world_size);
     float terrainElevationWorldZ(double elevation_m) const;
@@ -121,6 +128,8 @@ private:
 
     QVector<TileVertex> vertices;
     QVector<VisibleTile> visible_tiles;
+    QSet<QString> dirty_terrain_keys;
+    QPointF layout_origin_world;
     std::map<QString, std::unique_ptr<TileResource>> tile_resources;
 };
 
