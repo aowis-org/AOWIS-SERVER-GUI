@@ -81,6 +81,7 @@ public:
     };
 
     void setNetworkSnapshot(const NetworkRenderSnapshot &snapshot);
+    bool setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids);
     void setSymbology(const MapRhiSymbology &symbology);
     void setSelectedEntity(InfrastructureEntity entity_type, const QUuid &uuid);
     bool setViewZoom(int zoom);
@@ -124,6 +125,7 @@ private:
         QVector<QLineF> segments;
     };
 
+    void rebuildNetworkGeometry();
     QPointF chooseOriginWorld(const NetworkRenderSnapshot &snapshot) const;
     QPointF localWorldPosition(const CoordinateWGS84 &coordinate, double wrap_reference_x,
                                double *resolved_world_x) const;
@@ -147,6 +149,8 @@ private:
                                QVector<LinkVertex> *link_target,
                                QVector<NodeVertex> *node_target) const;
 
+    NetworkRenderSnapshot network_snapshot;
+    QSet<QUuid> hidden_entity_uuids;
     QVector<LinkVertex> link_vertices;
     QVector<NodeVertex> node_vertices;
     QVector<LinkVertex> selected_link_vertices;

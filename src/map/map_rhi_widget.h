@@ -6,6 +6,8 @@
 #include "map_rhi_scene.h"
 
 #include <QRhiWidget>
+#include <QPointF>
+#include <QSet>
 #include <QSize>
 #include <QString>
 
@@ -34,6 +36,8 @@ public:
 
     QString graphicsApiName() const;
     void setNetworkSnapshot(const NetworkRenderSnapshot &snapshot);
+    void setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids);
+    void setNetworkScreenTranslation(const QPointF &translation_pixels);
     void setSymbology(const MapRhiSymbology &symbology);
     void setTileRepository(MapTileRepository *tile_repository);
     void setBackgroundOpacity(int opacity);
@@ -74,6 +78,7 @@ private:
     MapTileRepository *tile_repository = nullptr;
     std::unique_ptr<MapRhiBasemapRenderer> basemap_renderer;
     int background_opacity = 0;
+    QPointF network_screen_translation;
 
     std::unique_ptr<QRhiBuffer> uniform_buffer;
     std::unique_ptr<QRhiBuffer> link_vertex_buffer;

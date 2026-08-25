@@ -52,6 +52,7 @@ public:
     void scaleMarkers();
     void positionMarkers();
     MapEditorVisualState visualState() const;
+    int iconSizePercent() const;
 
     bool selectMarkerAt(const QPointF &position);
     bool isMarkerAt(const QPointF &position) const;

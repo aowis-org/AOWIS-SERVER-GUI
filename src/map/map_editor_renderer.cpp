@@ -112,7 +112,28 @@ void MapEditorRenderer::setRenderingActive(bool active)
         return;
     }
 
-    requestStaticCache(this->current_entity_width);
+    if (!this->rhi_overlay_mode)
+        requestStaticCache(this->current_entity_width);
+}
+
+void MapEditorRenderer::setRhiOverlayMode(bool enabled)
+{
+    if (this->rhi_overlay_mode == enabled)
+        return;
+
+    this->rhi_overlay_mode = enabled;
+    if (enabled)
+        clearStaticRenderedCache();
+    else if (this->rendering_active)
+        requestStaticCache(this->current_entity_width, true);
+}
+
+void MapEditorRenderer::setRhiFullNetworkMoveState(
+    bool active, const QPointF &translation_pixels)
+{
+    this->rhi_full_network_move_active = active;
+    this->rhi_full_network_move_translation =
+        active ? translation_pixels : QPointF();
 }
 
 void MapEditorRenderer::paint(QPainter &painter, const QPaintEvent &event,
@@ -140,6 +161,65 @@ void MapEditorRenderer::paint(QPainter &painter, const QPaintEvent &event,
     paintTileSelection(painter, viewport_state);
     paintRectangleSelection(painter, viewport_state);
     paintNetwork(painter, network_snapshot, visual_state);
+}
+
+
+void MapEditorRenderer::paintRhiOverlay(
+    QPainter &painter,
+    const NetworkRenderSnapshot &network_snapshot,
+    const MapEditorVisualState &visual_state,
+    const MapEditorViewportRenderState &viewport_state)
+{
+    this->current_entity_width = qMax(1, visual_state.entity_width);
+    prepareProjection(visual_state.wrap_reference_longitude);
+    if (!this->projection_ready)
+        return;
+
+    syncStaticGeometry(network_snapshot);
+
+    // These are editor interaction/HUD overlays. The basemap and static hydraulic
+    // geometry remain in QRhi; only transient editor chrome is painted here.
+    paintTileSelection(painter, viewport_state);
+    paintRectangleSelection(painter, viewport_state);
+
+    if (visual_state.move.active && this->rhi_full_network_move_active)
+    {
+        // The entire hydraulic scene is already translated by QRhi. Paint only the
+        // editor-specific pixmaps/pipe vertices once at the same screen translation.
+        // Do not scan the moving lists per static entity and do not repaint the
+        // complete link/node network on the CPU.
+        painter.save();
+        painter.translate(this->rhi_full_network_move_translation);
+        paintRhiStaticDetails(painter, network_snapshot, visual_state, true);
+        painter.restore();
+        return;
+    }
+
+    paintRhiStaticDetails(painter, network_snapshot, visual_state);
+
+    if (visual_state.move.active)
+    {
+        paintMovingNetwork(painter, visual_state);
+        return;
+    }
+
+    if (this->static_geometry &&
+        this->static_geometry->geometry_revision == network_snapshot.geometry_revision)
+    {
+        paintInteractiveNetwork(painter, network_snapshot, visual_state);
+        return;
+    }
+
+    // Static geometry is built asynchronously. Placement feedback must remain
+    // responsive while that small cache is becoming available.
+    QHash<QUuid, const NetworkRenderNode *> nodes_by_uuid;
+    nodes_by_uuid.reserve(network_snapshot.nodes.size());
+    for (const NetworkRenderNode &node : network_snapshot.nodes)
+        nodes_by_uuid.insert(node.uuid, &node);
+
+    paintPipePlacement(painter, visual_state, nodes_by_uuid);
+    paintDeviceLinkPlacement(painter, visual_state, nodes_by_uuid);
+    paintPlacement(painter, visual_state, nodes_by_uuid);
 }
 
 void MapEditorRenderer::prepareProjection(double wrap_reference_longitude)
@@ -502,7 +582,8 @@ void MapEditorRenderer::applyStaticGeometryBuild(
     {
         this->static_geometry = std::move(geometry);
         clearStaticRenderedCache();
-        requestStaticCache(this->current_entity_width, true);
+        if (!this->rhi_overlay_mode)
+            requestStaticCache(this->current_entity_width, true);
         if (this->canvas)
             this->canvas->update();
     }
@@ -1415,6 +1496,85 @@ void MapEditorRenderer::paintNetwork(
     }
 
     paintInteractiveNetwork(painter, network_snapshot, visual_state);
+}
+
+
+void MapEditorRenderer::paintRhiStaticDetails(
+    QPainter &painter,
+    const NetworkRenderSnapshot &network_snapshot,
+    const MapEditorVisualState &visual_state,
+    bool include_moving_entities)
+{
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    // The editor's entity pixmaps deliberately remain in this lightweight overlay:
+    // unlike the monitor's centered monochrome atlas, editor markers are bottom-
+    // anchored and use the original full-color assets.
+    for (const NetworkRenderNode &node : network_snapshot.nodes)
+    {
+        if (!include_moving_entities && isMovingMarkerUuid(visual_state, node.uuid))
+            continue;
+
+        const QPointF point = screenFromWgs84(
+            node.coordinate_wgs84, visual_state.wrap_reference_longitude);
+        const QString path = MapEntityPixmapRenderer::pixmapPathForEntity(node.entity_type);
+        const QPointF rounded_anchor(qRound(point.x()), qRound(point.y()));
+        const QRectF target_rect = this->pixmap_renderer.bottomAnchoredRect(
+            rounded_anchor, path, visual_state.entity_width);
+        this->pixmap_renderer.paint(
+            painter, path, visual_state.entity_width, target_rect,
+            include_moving_entities &&
+                    visual_state.selected_marker_uuids.contains(node.uuid)
+                ? MapEntityPixmapRenderer::Highlight::Selected
+                : MapEntityPixmapRenderer::Highlight::None);
+    }
+
+    for (const NetworkRenderLink &link : network_snapshot.links)
+    {
+        if (!include_moving_entities && isMovingLinkUuid(visual_state, link.uuid))
+            continue;
+
+        if (link.entity_type == InfrastructureEntity::Pipe)
+        {
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(
+                include_moving_entities &&
+                        visual_state.selected_pipe_uuids.contains(link.uuid)
+                    ? QColor(0, 190, 255)
+                    : QColor(Qt::black));
+            for (qsizetype index = 1; index + 1 < link.vertices_wgs84.size(); ++index)
+            {
+                painter.drawEllipse(
+                    screenFromWgs84(
+                        link.vertices_wgs84.at(index),
+                        visual_state.wrap_reference_longitude),
+                    pipe_vertex_radius, pipe_vertex_radius);
+            }
+            continue;
+        }
+
+        if (!InfrastructureEntityTraits::isHydraulicDeviceLink(link.entity_type) ||
+            link.vertices_wgs84.size() < 2)
+        {
+            continue;
+        }
+
+        const QString path = MapEntityPixmapRenderer::pixmapPathForEntity(link.entity_type);
+        const QRectF target_rect = this->pixmap_renderer.centeredRect(
+            screenFromWgs84(
+                deviceLinkCenterCoordinate(link),
+                visual_state.wrap_reference_longitude),
+            path, visual_state.entity_width);
+        this->pixmap_renderer.paint(
+            painter, path, visual_state.entity_width, target_rect,
+            include_moving_entities &&
+                    visual_state.selected_marker_uuids.contains(link.uuid)
+                ? MapEntityPixmapRenderer::Highlight::Selected
+                : MapEntityPixmapRenderer::Highlight::None);
+    }
+
+    painter.restore();
 }
 
 void MapEditorRenderer::paintDirectNetwork(

@@ -32,7 +32,13 @@ public:
                const NetworkRenderSnapshot &network_snapshot,
                const MapEditorVisualState &visual_state,
                const MapEditorViewportRenderState &viewport_state);
+    void paintRhiOverlay(QPainter &painter,
+                         const NetworkRenderSnapshot &network_snapshot,
+                         const MapEditorVisualState &visual_state,
+                         const MapEditorViewportRenderState &viewport_state);
     void setRenderingActive(bool active);
+    void setRhiOverlayMode(bool enabled);
+    void setRhiFullNetworkMoveState(bool active, const QPointF &translation_pixels);
 
 private:
     struct StaticNode
@@ -127,6 +133,10 @@ private:
     void paintNetwork(QPainter &painter,
                       const NetworkRenderSnapshot &network_snapshot,
                       const MapEditorVisualState &visual_state);
+    void paintRhiStaticDetails(QPainter &painter,
+                               const NetworkRenderSnapshot &network_snapshot,
+                               const MapEditorVisualState &visual_state,
+                               bool include_moving_entities = false);
     void paintDirectNetwork(QPainter &painter,
                             const NetworkRenderSnapshot &network_snapshot,
                             const MapEditorVisualState &visual_state);
@@ -175,6 +185,9 @@ private:
     bool projection_ready = false;
 
     bool rendering_active = true;
+    bool rhi_overlay_mode = false;
+    bool rhi_full_network_move_active = false;
+    QPointF rhi_full_network_move_translation;
     quint64 current_geometry_revision = 0;
     int current_entity_width = 10;
     std::shared_ptr<const NetworkRenderSnapshot> pending_geometry_snapshot;

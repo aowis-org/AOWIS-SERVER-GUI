@@ -8,6 +8,7 @@ layout(std140, binding = 0) uniform CameraBlock
     vec4 viewport_and_sizes;
     vec4 heatmap_settings;
     vec4 basemap_settings;
+    vec4 network_translation;
 } camera;
 
 layout(location = 0) in vec2 vertex_texture_coordinate;

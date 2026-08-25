@@ -28,6 +28,22 @@ constexpr int FlowDirectionMaximumMarkersPerLink = 32;
 
 void MapRhiScene::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
 {
+    this->network_snapshot = snapshot;
+    rebuildNetworkGeometry();
+}
+
+bool MapRhiScene::setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids)
+{
+    if (this->hidden_entity_uuids == hidden_entity_uuids)
+        return false;
+
+    this->hidden_entity_uuids = hidden_entity_uuids;
+    rebuildNetworkGeometry();
+    return true;
+}
+
+void MapRhiScene::rebuildNetworkGeometry()
+{
     this->link_vertices.clear();
     this->node_vertices.clear();
     this->selected_link_vertices.clear();
@@ -43,18 +59,22 @@ void MapRhiScene::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
     this->entity_keys_by_uuid.clear();
     this->link_vertex_indices_by_entity.clear();
     this->node_vertex_indices_by_entity.clear();
-    this->geometry_revision = snapshot.geometry_revision;
-    this->origin_world = chooseOriginWorld(snapshot);
-    this->origin_valid = !snapshot.nodes.isEmpty() || !snapshot.links.isEmpty();
+    this->geometry_revision = this->network_snapshot.geometry_revision;
+    this->origin_world = chooseOriginWorld(this->network_snapshot);
+    this->origin_valid =
+        !this->network_snapshot.nodes.isEmpty() || !this->network_snapshot.links.isEmpty();
 
     if (!this->origin_valid)
         return;
 
-    this->node_vertices.reserve(snapshot.nodes.size() * 6);
-    for (const NetworkRenderNode &node : snapshot.nodes)
+    this->node_vertices.reserve(this->network_snapshot.nodes.size() * 6);
+    for (const NetworkRenderNode &node : this->network_snapshot.nodes)
     {
-        if (!finiteCoordinate(node.coordinate_wgs84))
+        if (this->hidden_entity_uuids.contains(node.uuid) ||
+            !finiteCoordinate(node.coordinate_wgs84))
+        {
             continue;
+        }
 
         double resolved_x = this->origin_world.x();
         const QPointF center = localWorldPosition(
@@ -77,14 +97,20 @@ void MapRhiScene::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
     }
 
     qsizetype segment_count = 0;
-    for (const NetworkRenderLink &link : snapshot.links)
-        segment_count += qMax<qsizetype>(0, link.vertices_wgs84.size() - 1);
+    for (const NetworkRenderLink &link : this->network_snapshot.links)
+    {
+        if (!this->hidden_entity_uuids.contains(link.uuid))
+            segment_count += qMax<qsizetype>(0, link.vertices_wgs84.size() - 1);
+    }
     this->link_vertices.reserve(segment_count * 6);
 
-    for (const NetworkRenderLink &link : snapshot.links)
+    for (const NetworkRenderLink &link : this->network_snapshot.links)
     {
-        if (link.vertices_wgs84.size() < 2)
+        if (this->hidden_entity_uuids.contains(link.uuid) ||
+            link.vertices_wgs84.size() < 2)
+        {
             continue;
+        }
 
         LinkPath link_path;
         link_path.entity_type = link.entity_type;
@@ -165,15 +191,16 @@ void MapRhiScene::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
     rebuildHighlights();
 }
 
-
 void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
 {
     const bool link_colors_changed = this->symbology.link_colors != symbology.link_colors;
     const bool node_colors_changed = this->symbology.node_colors != symbology.node_colors;
+    const bool icon_visibility_changed = this->symbology.show_icons != symbology.show_icons;
     const bool link_thickness_changed =
         this->symbology.link_thickness_px != symbology.link_thickness_px;
     const bool icon_changed =
         this->symbology.icon_size_percent != symbology.icon_size_percent
+        || this->symbology.show_icons != symbology.show_icons
         || link_colors_changed || node_colors_changed;
     const bool heatmap_changed =
         this->symbology.visual_heatmap != symbology.visual_heatmap
@@ -192,7 +219,7 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
         for (LinkVertex &vertex : this->link_vertices)
             applyLinkColor(&vertex);
     }
-    if (node_colors_changed)
+    if (node_colors_changed || icon_visibility_changed)
     {
         for (NodeVertex &vertex : this->node_vertices)
             applyNodeColor(&vertex);
@@ -447,7 +474,7 @@ void MapRhiScene::applyNodeColor(NodeVertex *vertex) const
     vertex->red = qRed(color) / 255.0f;
     vertex->green = qGreen(color) / 255.0f;
     vertex->blue = qBlue(color) / 255.0f;
-    vertex->alpha = mapRhiHasIcon(vertex->entity_type)
+    vertex->alpha = this->symbology.show_icons && mapRhiHasIcon(vertex->entity_type)
         ? 0.0f
         : qAlpha(color) / 255.0f;
 }
@@ -502,6 +529,9 @@ void MapRhiScene::appendHeatmap(const HeatmapMarker &marker)
 void MapRhiScene::rebuildIcons()
 {
     this->icon_vertices.clear();
+    if (!this->symbology.show_icons)
+        return;
+
     this->icon_vertices.reserve(this->icon_markers.size() * 6);
     for (const IconMarker &marker : this->icon_markers)
         appendIcon(marker);

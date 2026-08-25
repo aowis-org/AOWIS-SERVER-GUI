@@ -1037,6 +1037,11 @@ void MapCanvasEntities::positionMarkers()
     repaintCanvas();
 }
 
+int MapCanvasEntities::iconSizePercent() const
+{
+    return this->point_markers->iconSizePercent();
+}
+
 MapEditorVisualState MapCanvasEntities::visualState() const
 {
     MapEditorVisualState state;

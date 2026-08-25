@@ -24,7 +24,7 @@
 
 namespace
 {
-constexpr int CameraUniformBytes = 28 * int(sizeof(float));
+constexpr int CameraUniformBytes = 32 * int(sizeof(float));
 constexpr int RendererMsaaSamples = 4;
 
 QRhiWidget::Api platformGraphicsApi()
@@ -171,6 +171,31 @@ void MapRhiWidget::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
 }
 
 
+void MapRhiWidget::setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids)
+{
+    if (!this->scene.setHiddenEntityUuids(hidden_entity_uuids))
+        return;
+
+    syncViewState();
+    this->geometry_upload_pending = true;
+    this->highlight_upload_pending = true;
+    this->flow_direction_upload_pending = true;
+    this->icon_upload_pending = true;
+    this->heatmap_upload_pending = true;
+    update();
+}
+
+
+void MapRhiWidget::setNetworkScreenTranslation(const QPointF &translation_pixels)
+{
+    if (this->network_screen_translation == translation_pixels)
+        return;
+
+    this->network_screen_translation = translation_pixels;
+    update();
+}
+
+
 void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
 {
     const bool base_symbology_changed =
@@ -182,6 +207,7 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
     const bool icon_changed =
         !this->symbology_initialized
         || this->applied_symbology.icon_size_percent != symbology.icon_size_percent
+        || this->applied_symbology.show_icons != symbology.show_icons
         || this->applied_symbology.node_colors != symbology.node_colors
         || this->applied_symbology.link_colors != symbology.link_colors;
     const bool heatmap_changed =
@@ -374,7 +400,7 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     }
 
     const QMatrix4x4 view_projection = this->camera.viewProjectionMatrix(*this->active_rhi);
-    std::array<float, 28> uniform_data{};
+    std::array<float, 32> uniform_data{};
     const float *matrix_data = view_projection.constData();
     for (int index = 0; index < 16; ++index)
         uniform_data[size_t(index)] = matrix_data[index];
@@ -393,6 +419,8 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     uniform_data[25] = background_color.greenF();
     uniform_data[26] = background_color.blueF();
     uniform_data[27] = qBound(0.0f, this->background_opacity / 100.0f, 1.0f);
+    uniform_data[28] = float(this->network_screen_translation.x());
+    uniform_data[29] = -float(this->network_screen_translation.y());
 
     QRhiResourceUpdateBatch *resource_updates = this->active_rhi->nextResourceUpdateBatch();
     resource_updates->updateDynamicBuffer(

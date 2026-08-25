@@ -2,6 +2,7 @@
 #define TAB_MAP_EDITOR_CONTAINER_H
 
 #include <QObject>
+#include <QPointF>
 #include <QWidget>
 
 #ifdef Q_OS_WASM
@@ -45,6 +46,8 @@
 #include "_enums_structs.h"
 
 #include <QDebug>
+
+class MapRhiWidget;
 
 class MapEditorMenuWidget : public QWidget
 {
@@ -126,12 +129,22 @@ private:
     MapWidget *map;
     MapCanvasWidget *map_canvas;
 #ifndef Q_OS_WASM
-    QWidget *desktop_rhi_surface = nullptr;
+    MapRhiWidget *desktop_rhi_surface = nullptr;
 #endif
     MapEditorController *editor_controller;
     MapEditorMenuWidget *map_menu;
     
     QHBoxLayout *layout;
+
+#if !defined(Q_OS_WASM) && AOWIS_HAS_QRHI
+    void syncDesktopRhiEditorState();
+    void syncDesktopRhiNetworkSnapshot();
+    void applyDesktopRhiEditorSymbology();
+    void setDesktopRhiBackgroundOpacity(int opacity);
+    quint64 desktop_rhi_move_session_id = 0;
+    QPointF desktop_rhi_move_start_mouse_position;
+    bool desktop_rhi_full_network_move = false;
+#endif
 
 #ifdef Q_OS_WASM
     QTimer *wasm_map_layer_sync_timer = nullptr;

@@ -10,6 +10,9 @@ layout(std140, binding = 0) uniform CameraBlock
 {
     mat4 view_projection;
     vec4 viewport_and_sizes;
+    vec4 heatmap_settings;
+    vec4 basemap_settings;
+    vec4 network_translation;
 } camera;
 
 layout(location = 0) out vec4 vertex_color;
@@ -22,6 +25,9 @@ void main()
     vec4 start_clip = camera.view_projection * vec4(start_position, 1.0);
     vec4 end_clip = camera.view_projection * vec4(end_position, 1.0);
     vec2 viewport = max(camera.viewport_and_sizes.xy, vec2(1.0));
+    vec2 translation_ndc = camera.network_translation.xy * 2.0 / viewport;
+    start_clip.xy += translation_ndc * start_clip.w;
+    end_clip.xy += translation_ndc * end_clip.w;
     vec2 start_ndc = start_clip.xy / start_clip.w;
     vec2 end_ndc = end_clip.xy / end_clip.w;
     vec2 direction_pixels = (end_ndc - start_ndc) * viewport * 0.5;

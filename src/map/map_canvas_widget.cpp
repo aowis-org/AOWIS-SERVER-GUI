@@ -120,6 +120,27 @@ void MapCanvasWidget::applyControllerState()
     requestRenderUpdate();
 }
 
+void MapCanvasWidget::setRhiOverlayMode(bool enabled)
+{
+    if (this->rhi_overlay_mode == enabled)
+        return;
+
+    this->rhi_overlay_mode = enabled;
+    this->map_editor_renderer.setRhiOverlayMode(enabled);
+    requestRenderUpdate();
+}
+
+void MapCanvasWidget::setRhiFullNetworkMoveState(
+    bool active, const QPointF &translation_pixels)
+{
+    this->map_editor_renderer.setRhiFullNetworkMoveState(active, translation_pixels);
+}
+
+bool MapCanvasWidget::rhiOverlayMode() const
+{
+    return this->rhi_overlay_mode;
+}
+
 void MapCanvasWidget::requestRenderUpdate()
 {
 #ifndef Q_OS_WASM
@@ -139,9 +160,22 @@ void MapCanvasWidget::paintEvent(QPaintEvent *event)
         : empty_network_snapshot;
 
     QPainter painter(this);
-    this->map_editor_renderer.paint(
-        painter, *event, network_snapshot, this->map_canvas_entities->visualState(),
-        viewportRenderState());
+    if (this->rhi_overlay_mode)
+    {
+        painter.save();
+        painter.setCompositionMode(QPainter::CompositionMode_Source);
+        painter.fillRect(event->rect(), Qt::transparent);
+        painter.restore();
+        this->map_editor_renderer.paintRhiOverlay(
+            painter, network_snapshot, this->map_canvas_entities->visualState(),
+            viewportRenderState());
+    }
+    else
+    {
+        this->map_editor_renderer.paint(
+            painter, *event, network_snapshot, this->map_canvas_entities->visualState(),
+            viewportRenderState());
+    }
 
     static const QPixmap crosshair_pixmap =
         QPixmap(QStringLiteral(":/icon/crosshair.png")).scaled(
