@@ -80,6 +80,9 @@
         <file alias="tank.svg">tools/qt-emscripten/svg/tank.svg</file>
         <file alias="valve.svg">tools/qt-emscripten/svg/valve.svg</file>
     </qresource>
+    <qresource prefix="/map-3d/">
+        <file alias="tank_albedo.png">assets/map3d/tank_albedo.png</file>
+    </qresource>
     <qresource prefix="/examples/epanet/">
         <file alias="01-uk-style.inp">assets/examples/epanet/01-uk-style.inp</file>
         <file alias="02-us-style.inp">assets/examples/epanet/02-us-style.inp</file>

@@ -50,8 +50,11 @@ private:
     QCheckBox* check_map_sync = nullptr;
     QComboBox *combo_map_view_mode = nullptr;
     QSlider *slider_icon_size = nullptr;
+    int icon_size_2d_percent = 100;
+    int icon_size_3d_percent = 100;
 
     void activateMapProvider(MapProvider provider);
+    void syncIconSizeSliderForViewMode(MapViewMode view_mode);
     
 signals:
     void signalSlideOpacityChanged(int opacity);

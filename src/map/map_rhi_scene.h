@@ -4,6 +4,8 @@
 #include "../network_render_snapshot.h"
 #include "map_rhi_symbology.h"
 #include "map_rhi_icon_atlas.h"
+#include "map_rhi_junction_model.h"
+#include "map_rhi_tank_model.h"
 
 #include <QColor>
 #include <QHash>
@@ -89,6 +91,8 @@ public:
     void setSimulationErrorEntities(
         const QHash<QUuid, InfrastructureEntity> &error_entities,
         const QSet<QUuid> &stale_entity_uuids);
+    bool setUse3dTankModels(bool enabled);
+    bool setUse3dJunctionModels(bool enabled);
 
     const QVector<LinkVertex> &linkVertices() const;
     const QVector<NodeVertex> &nodeVertices() const;
@@ -99,6 +103,8 @@ public:
     const QVector<LinkVertex> &flowDirectionVertices() const;
     const QVector<IconVertex> &iconVertices() const;
     const QVector<HeatmapVertex> &heatmapVertices() const;
+    const QVector<MapRhiTankInstance> &tankInstances() const;
+    const QVector<MapRhiJunctionInstance> &junctionInstances() const;
     QPointF originWorld() const;
     const NetworkRenderSnapshot &networkSnapshot() const;
     QVector3D worldPosition(const CoordinateWGS84 &coordinate, double elevation_m,
@@ -119,6 +125,13 @@ private:
     struct IconMarker
     {
         InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
+        quint32 render_id = 0;
+        QPointF center;
+        float z = 0.0f;
+    };
+
+    struct JunctionMarker
+    {
         quint32 render_id = 0;
         QPointF center;
         float z = 0.0f;
@@ -154,6 +167,8 @@ private:
     void rebuildHeatmap();
     void appendHeatmap(const HeatmapMarker &marker);
     void rebuildIcons();
+    void rebuildTankInstances();
+    void rebuildJunctionInstances();
     void appendIcon(const IconMarker &marker);
     void rebuildFlowDirections();
     void appendFlowDirectionStroke(
@@ -178,8 +193,11 @@ private:
     QVector<LinkVertex> flow_direction_vertices;
     QVector<IconVertex> icon_vertices;
     QVector<HeatmapVertex> heatmap_vertices;
+    QVector<MapRhiTankInstance> tank_instances;
+    QVector<MapRhiJunctionInstance> junction_instances;
     QVector<HeatmapMarker> heatmap_markers;
     QVector<IconMarker> icon_markers;
+    QVector<JunctionMarker> junction_markers;
     QVector<LinkPath> link_paths;
     QPointF origin_world;
     MapRhiSymbology symbology;
@@ -196,6 +214,8 @@ private:
     double elevation_reference_m = 0.0;
     double vertical_exaggeration = 2.5;
     bool origin_valid = false;
+    bool use_3d_tank_models = false;
+    bool use_3d_junction_models = false;
 };
 
 #endif // MAP_RHI_SCENE_H

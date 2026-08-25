@@ -54,8 +54,10 @@ void MapRhiScene::rebuildNetworkGeometry()
     this->flow_direction_vertices.clear();
     this->icon_vertices.clear();
     this->heatmap_vertices.clear();
+    this->junction_instances.clear();
     this->heatmap_markers.clear();
     this->icon_markers.clear();
+    this->junction_markers.clear();
     this->link_paths.clear();
     this->entity_keys_by_uuid.clear();
     this->link_vertex_indices_by_entity.clear();
@@ -171,6 +173,14 @@ void MapRhiScene::rebuildNetworkGeometry()
             marker.z = center_z;
             this->icon_markers.append(marker);
         }
+        if (node.entity_type == InfrastructureEntity::Junction)
+        {
+            JunctionMarker marker;
+            marker.render_id = node.render_id;
+            marker.center = center;
+            marker.z = center_z;
+            this->junction_markers.append(marker);
+        }
     }
 
     qsizetype segment_count = 0;
@@ -281,6 +291,8 @@ void MapRhiScene::rebuildNetworkGeometry()
 
     rebuildHeatmap();
     rebuildIcons();
+    rebuildTankInstances();
+    rebuildJunctionInstances();
     rebuildFlowDirections();
     rebuildHighlights();
 }
@@ -305,6 +317,10 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
         || this->symbology.flow_directions != symbology.flow_directions
         || link_thickness_changed
         || link_colors_changed;
+    const bool junction_changed =
+        this->symbology.node_size_percent != symbology.node_size_percent
+        || node_colors_changed
+        || link_thickness_changed;
 
     this->symbology = symbology;
 
@@ -321,7 +337,12 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
     if (heatmap_changed)
         rebuildHeatmap();
     if (icon_changed)
+    {
         rebuildIcons();
+        rebuildTankInstances();
+    }
+    if (junction_changed)
+        rebuildJunctionInstances();
     if (flow_direction_changed)
         rebuildFlowDirections();
     if (link_thickness_changed)
@@ -345,6 +366,8 @@ bool MapRhiScene::setViewZoom(int zoom)
 
     this->view_zoom = zoom;
     rebuildIcons();
+    rebuildTankInstances();
+    rebuildJunctionInstances();
     rebuildFlowDirections();
     return true;
 }
@@ -356,6 +379,29 @@ void MapRhiScene::setSimulationErrorEntities(
     this->simulation_error_entities = error_entities;
     this->simulation_stale_entity_uuids = stale_entity_uuids;
     rebuildHighlights();
+}
+
+bool MapRhiScene::setUse3dTankModels(bool enabled)
+{
+    if (this->use_3d_tank_models == enabled)
+        return false;
+
+    this->use_3d_tank_models = enabled;
+    rebuildIcons();
+    rebuildTankInstances();
+    return true;
+}
+
+bool MapRhiScene::setUse3dJunctionModels(bool enabled)
+{
+    if (this->use_3d_junction_models == enabled)
+        return false;
+
+    this->use_3d_junction_models = enabled;
+    for (NodeVertex &vertex : this->node_vertices)
+        applyNodeColor(&vertex);
+    rebuildJunctionInstances();
+    return true;
 }
 
 const QVector<MapRhiScene::LinkVertex> &MapRhiScene::linkVertices() const
@@ -401,6 +447,16 @@ const QVector<MapRhiScene::IconVertex> &MapRhiScene::iconVertices() const
 const QVector<MapRhiScene::HeatmapVertex> &MapRhiScene::heatmapVertices() const
 {
     return this->heatmap_vertices;
+}
+
+const QVector<MapRhiTankInstance> &MapRhiScene::tankInstances() const
+{
+    return this->tank_instances;
+}
+
+const QVector<MapRhiJunctionInstance> &MapRhiScene::junctionInstances() const
+{
+    return this->junction_instances;
 }
 
 QPointF MapRhiScene::originWorld() const
@@ -607,7 +663,11 @@ void MapRhiScene::applyNodeColor(NodeVertex *vertex) const
     vertex->red = qRed(color) / 255.0f;
     vertex->green = qGreen(color) / 255.0f;
     vertex->blue = qBlue(color) / 255.0f;
-    vertex->alpha = this->symbology.show_icons && mapRhiHasIcon(vertex->entity_type)
+    const bool hidden_by_3d_junction =
+        this->use_3d_junction_models
+        && vertex->entity_type == InfrastructureEntity::Junction;
+    vertex->alpha = hidden_by_3d_junction
+        || (this->symbology.show_icons && mapRhiHasIcon(vertex->entity_type))
         ? 0.0f
         : qAlpha(color) / 255.0f;
 }
@@ -675,6 +735,9 @@ void MapRhiScene::rebuildIcons()
 
 void MapRhiScene::appendIcon(const IconMarker &marker)
 {
+    if (this->use_3d_tank_models && marker.entity_type == InfrastructureEntity::Tank)
+        return;
+
     const MapRhiIconAtlasEntry atlas_entry = mapRhiIconAtlasEntry(marker.entity_type);
     if (!atlas_entry.valid)
         return;
@@ -719,6 +782,83 @@ void MapRhiScene::appendIcon(const IconMarker &marker)
         this->icon_vertices.append(vertex);
     }
 }
+
+void MapRhiScene::rebuildTankInstances()
+{
+    this->tank_instances.clear();
+    if (!this->symbology.show_icons || !this->use_3d_tank_models)
+        return;
+
+    const qreal scale = GeoWebMercator::zoomScale(
+        this->view_zoom, MapRenderCacheMath::ReferenceZoom);
+    if (!std::isfinite(scale) || scale <= 0.0)
+        return;
+
+    const qreal marker_size = networkSymbologyMarkerSizeForZoom(
+        this->view_zoom, this->symbology.icon_size_percent);
+    const float world_marker_size = float(marker_size / scale);
+    const float radius_world = world_marker_size * 0.44f;
+    const float base_height_world = world_marker_size * 0.20f;
+    const float body_height_world = world_marker_size * 0.78f;
+    const float roof_height_world = world_marker_size * 0.26f;
+
+    for (const IconMarker &marker : this->icon_markers)
+    {
+        if (marker.entity_type != InfrastructureEntity::Tank)
+            continue;
+
+        MapRhiTankInstance instance;
+        instance.render_id = marker.render_id;
+        instance.base_center = QVector3D(
+            float(marker.center.x()),
+            float(marker.center.y()),
+            marker.z + 0.02f);
+        instance.radius_world = radius_world;
+        instance.base_height_world = base_height_world;
+        instance.body_height_world = body_height_world;
+        instance.roof_height_world = roof_height_world;
+        this->tank_instances.append(instance);
+    }
+}
+
+
+void MapRhiScene::rebuildJunctionInstances()
+{
+    this->junction_instances.clear();
+    if (!this->use_3d_junction_models || this->junction_markers.isEmpty())
+        return;
+
+    const qreal scale = GeoWebMercator::zoomScale(
+        this->view_zoom, MapRenderCacheMath::ReferenceZoom);
+    if (!std::isfinite(scale) || scale <= 0.0)
+        return;
+
+    const qreal node_diameter_px = networkSymbologyJunctionDotDiameterForZoom(
+        this->view_zoom, this->symbology.node_size_percent);
+    const qreal pipe_diameter_px = qMax<qreal>(1.0, this->symbology.link_thickness_px);
+    const qreal sphere_diameter_px = qMax(
+        node_diameter_px, pipe_diameter_px * 1.35);
+    const float radius_world = float(sphere_diameter_px / (2.0 * scale));
+
+    this->junction_instances.reserve(this->junction_markers.size());
+    for (const JunctionMarker &marker : this->junction_markers)
+    {
+        const QRgb color = this->symbology.node_colors.value(
+            marker.render_id, networkSymbologyDefaultColor());
+
+        MapRhiJunctionInstance instance;
+        instance.center_x = float(marker.center.x());
+        instance.center_y = float(marker.center.y());
+        instance.center_z = marker.z;
+        instance.radius_world = radius_world;
+        instance.red = qRed(color) / 255.0f;
+        instance.green = qGreen(color) / 255.0f;
+        instance.blue = qBlue(color) / 255.0f;
+        instance.alpha = qAlpha(color) / 255.0f;
+        this->junction_instances.append(instance);
+    }
+}
+
 
 void MapRhiScene::rebuildFlowDirections()
 {

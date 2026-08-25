@@ -4,6 +4,8 @@
 #include "map_rhi_basemap_renderer.h"
 #include "map_rhi_camera.h"
 #include "map_rhi_scene.h"
+#include "map_rhi_junction_model.h"
+#include "map_rhi_tank_model.h"
 
 #include <QRhiWidget>
 #include <QPointF>
@@ -73,6 +75,7 @@ private:
     bool createPersistentResources();
     bool createPipelines();
     bool ensureGeometryBuffers();
+    void rebuildTankModelGeometry();
     void resetGpuResources();
     void syncViewState();
     QPointF renderOriginWorld() const;
@@ -103,15 +106,24 @@ private:
     std::unique_ptr<QRhiBuffer> flow_direction_vertex_buffer;
     std::unique_ptr<QRhiBuffer> icon_vertex_buffer;
     std::unique_ptr<QRhiBuffer> heatmap_vertex_buffer;
+    std::unique_ptr<QRhiBuffer> tank_vertex_buffer;
+    std::unique_ptr<QRhiBuffer> junction_mesh_vertex_buffer;
+    std::unique_ptr<QRhiBuffer> junction_instance_buffer;
     std::unique_ptr<QRhiTexture> icon_atlas_texture;
+    std::unique_ptr<QRhiTexture> tank_texture;
     std::unique_ptr<QRhiSampler> icon_sampler;
+    std::unique_ptr<QRhiSampler> tank_sampler;
     std::unique_ptr<QRhiShaderResourceBindings> shader_resource_bindings;
     std::unique_ptr<QRhiShaderResourceBindings> heatmap_shader_resource_bindings;
     std::unique_ptr<QRhiShaderResourceBindings> icon_shader_resource_bindings;
+    std::unique_ptr<QRhiShaderResourceBindings> tank_shader_resource_bindings;
     std::unique_ptr<QRhiGraphicsPipeline> link_pipeline;
+    std::unique_ptr<QRhiGraphicsPipeline> selected_link_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> node_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> icon_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> heatmap_pipeline;
+    std::unique_ptr<QRhiGraphicsPipeline> tank_pipeline;
+    std::unique_ptr<QRhiGraphicsPipeline> junction_pipeline;
     int link_vertex_buffer_size = 0;
     int node_vertex_buffer_size = 0;
     int selected_link_vertex_buffer_size = 0;
@@ -121,12 +133,20 @@ private:
     int flow_direction_vertex_buffer_size = 0;
     int icon_vertex_buffer_size = 0;
     int heatmap_vertex_buffer_size = 0;
+    int tank_vertex_buffer_size = 0;
+    int junction_mesh_vertex_buffer_size = 0;
+    int junction_instance_buffer_size = 0;
     bool geometry_upload_pending = true;
     bool highlight_upload_pending = true;
     bool flow_direction_upload_pending = true;
     bool icon_upload_pending = true;
     bool heatmap_upload_pending = true;
+    bool tank_upload_pending = true;
+    bool junction_mesh_upload_pending = true;
+    bool junction_instance_upload_pending = true;
     bool icon_atlas_upload_pending = true;
+    bool tank_texture_upload_pending = true;
+    QVector<MapRhiTankModelVertex> tank_model_vertices;
     bool symbology_initialized = false;
     bool ready_reported = false;
     bool failure_reported = false;

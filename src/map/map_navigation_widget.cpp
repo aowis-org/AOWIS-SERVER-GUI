@@ -102,11 +102,13 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     connect(this->map->model(), &MapModel::viewModeChanged, this, [this](MapViewMode view_mode)
     {
         const int index = this->combo_map_view_mode->findData(int(view_mode));
-        if (index < 0 || index == this->combo_map_view_mode->currentIndex())
-            return;
+        if (index >= 0 && index != this->combo_map_view_mode->currentIndex())
+        {
+            const QSignalBlocker blocker(this->combo_map_view_mode);
+            this->combo_map_view_mode->setCurrentIndex(index);
+        }
 
-        const QSignalBlocker blocker(this->combo_map_view_mode);
-        this->combo_map_view_mode->setCurrentIndex(index);
+        syncIconSizeSliderForViewMode(view_mode);
     });
 
 #ifndef Q_OS_WASM
@@ -124,10 +126,17 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
 
     QLabel *label_slider_icon_size = new QLabel("Icon Size [%]");
     this->slider_icon_size = new QSlider(Qt::Horizontal);
-    this->slider_icon_size->setRange(50, 250);
-    this->slider_icon_size->setValue(100);
-    this->slider_icon_size->setToolTip("Scales pixmap/SVG icons only.");
-    connect(this->slider_icon_size, &QSlider::valueChanged, this, &MapNavigationWidget::signalIconSizeChanged);
+    this->slider_icon_size->setToolTip("Scales entity icons and 3D entity models.");
+    syncIconSizeSliderForViewMode(initial_view_mode);
+    connect(this->slider_icon_size, &QSlider::valueChanged, this, [this](int size_percent)
+    {
+        if (this->map->model()->viewMode() == MapViewMode::ThreeD)
+            this->icon_size_3d_percent = size_percent;
+        else
+            this->icon_size_2d_percent = size_percent;
+
+        emit signalIconSizeChanged(size_percent);
+    });
     
     this->check_map_sync = new QCheckBox("Sync Map Movement");
     this->check_map_sync->setToolTip("Synchronize Map movement between Editor and Monitor");
@@ -173,6 +182,32 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     }
     
     
+}
+
+void MapNavigationWidget::syncIconSizeSliderForViewMode(MapViewMode view_mode)
+{
+    if (this->slider_icon_size == nullptr)
+        return;
+
+    const bool is_3d = view_mode == MapViewMode::ThreeD;
+    const int maximum = is_3d ? 200 : 250;
+    const int remembered_value = is_3d
+        ? this->icon_size_3d_percent
+        : this->icon_size_2d_percent;
+    const int bounded_value = qBound(50, remembered_value, maximum);
+
+    {
+        const QSignalBlocker blocker(this->slider_icon_size);
+        this->slider_icon_size->setRange(50, maximum);
+        this->slider_icon_size->setValue(bounded_value);
+    }
+
+    if (is_3d)
+        this->icon_size_3d_percent = bounded_value;
+    else
+        this->icon_size_2d_percent = bounded_value;
+
+    emit signalIconSizeChanged(bounded_value);
 }
 
 void MapNavigationWidget::activateMapProvider(MapProvider provider)

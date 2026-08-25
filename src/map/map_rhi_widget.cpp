@@ -14,6 +14,7 @@
 #include <QMatrix4x4>
 #include <QPalette>
 #include <QResizeEvent>
+#include <QRectF>
 #include <rhi/qshader.h>
 
 #include <rhi/qrhi.h>
@@ -194,6 +195,100 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
     }
 
     const NetworkRenderSnapshot &snapshot = this->scene.networkSnapshot();
+
+    // The 3D tank replaces its old SVG billboard, so hit-test the projected bounds
+    // of the actual model before falling back to the generic node-center radius.
+    quint32 best_tank_render_id = 0;
+    double best_tank_distance = std::numeric_limits<double>::max();
+    const QVector<MapRhiTankInstance> &tank_instances = this->scene.tankInstances();
+    for (const MapRhiTankInstance &instance : tank_instances)
+    {
+        const float top_z = instance.base_center.z()
+            + instance.base_height_world
+            + instance.body_height_world
+            + instance.roof_height_world;
+        const float middle_z = (instance.base_center.z() + top_z) / 2.0f;
+        const QVector3D center(
+            instance.base_center.x(), instance.base_center.y(), middle_z);
+
+        const QVector<QVector3D> bounds_points = {
+            QVector3D(instance.base_center.x() - instance.radius_world,
+                      instance.base_center.y(), instance.base_center.z()),
+            QVector3D(instance.base_center.x() + instance.radius_world,
+                      instance.base_center.y(), instance.base_center.z()),
+            QVector3D(instance.base_center.x(),
+                      instance.base_center.y() - instance.radius_world, instance.base_center.z()),
+            QVector3D(instance.base_center.x(),
+                      instance.base_center.y() + instance.radius_world, instance.base_center.z()),
+            QVector3D(instance.base_center.x() - instance.radius_world,
+                      instance.base_center.y(), top_z),
+            QVector3D(instance.base_center.x() + instance.radius_world,
+                      instance.base_center.y(), top_z),
+            QVector3D(instance.base_center.x(),
+                      instance.base_center.y() - instance.radius_world, top_z),
+            QVector3D(instance.base_center.x(),
+                      instance.base_center.y() + instance.radius_world, top_z),
+            QVector3D(instance.base_center.x(), instance.base_center.y(), top_z),
+            QVector3D(instance.base_center.x(), instance.base_center.y(), instance.base_center.z())
+        };
+
+        QRectF projected_bounds;
+        bool have_projected_bounds = false;
+        for (const QVector3D &point : bounds_points)
+        {
+            const QPointF projected = this->camera.projectWorldToScreen(point);
+            if (!finiteScreenPoint(projected))
+                continue;
+
+            if (!have_projected_bounds)
+            {
+                projected_bounds = QRectF(projected, QSizeF(0.0, 0.0));
+                have_projected_bounds = true;
+            }
+            else
+            {
+                projected_bounds = projected_bounds.united(
+                    QRectF(projected, QSizeF(0.0, 0.0)));
+            }
+        }
+
+        if (!have_projected_bounds)
+            continue;
+
+        projected_bounds.adjust(-5.0, -5.0, 5.0, 5.0);
+        if (!projected_bounds.contains(screen_position))
+            continue;
+
+        const QPointF projected_center = this->camera.projectWorldToScreen(center);
+        const double distance = finiteScreenPoint(projected_center)
+            ? QLineF(screen_position, projected_center).length()
+            : 0.0;
+        if (distance >= best_tank_distance)
+            continue;
+
+        best_tank_distance = distance;
+        best_tank_render_id = instance.render_id;
+    }
+
+    if (best_tank_render_id != 0)
+    {
+        for (const NetworkRenderNode &node : snapshot.nodes)
+        {
+            if (node.entity_type != InfrastructureEntity::Tank
+                || node.render_id != best_tank_render_id
+                || this->scene.isEntityHidden(node.uuid))
+            {
+                continue;
+            }
+
+            MapRhiHit tank_hit;
+            tank_hit.render_id = node.render_id;
+            tank_hit.entity_type = node.entity_type;
+            tank_hit.uuid = node.uuid;
+            return tank_hit;
+        }
+    }
+
     const double node_hit_radius = qMax(
         8.0, networkSymbologyMarkerSizeForZoom(
             this->map_model->zoom(), this->scene.nodeSizePercent()) / 2.0 + 4.0);
@@ -289,6 +384,8 @@ void MapRhiWidget::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
     this->flow_direction_upload_pending = true;
     this->icon_upload_pending = true;
     this->heatmap_upload_pending = true;
+    this->tank_upload_pending = true;
+    this->junction_instance_upload_pending = true;
     update();
 }
 
@@ -304,6 +401,8 @@ void MapRhiWidget::setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids)
     this->flow_direction_upload_pending = true;
     this->icon_upload_pending = true;
     this->heatmap_upload_pending = true;
+    this->tank_upload_pending = true;
+    this->junction_instance_upload_pending = true;
     update();
 }
 
@@ -353,11 +452,15 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
     {
         this->geometry_upload_pending = true;
         this->highlight_upload_pending = true;
+        this->junction_instance_upload_pending = true;
     }
     if (flow_direction_changed)
         this->flow_direction_upload_pending = true;
     if (icon_changed)
+    {
         this->icon_upload_pending = true;
+        this->tank_upload_pending = true;
+    }
     if (heatmap_changed)
         this->heatmap_upload_pending = true;
 
@@ -457,9 +560,12 @@ void MapRhiWidget::initialize(QRhiCommandBuffer *command_buffer)
     else if (render_pass_changed)
     {
         this->link_pipeline.reset();
+        this->selected_link_pipeline.reset();
         this->node_pipeline.reset();
         this->icon_pipeline.reset();
         this->heatmap_pipeline.reset();
+        this->tank_pipeline.reset();
+        this->junction_pipeline.reset();
     }
 
     this->render_pass_descriptor = target->renderPassDescriptor();
@@ -469,6 +575,8 @@ void MapRhiWidget::initialize(QRhiCommandBuffer *command_buffer)
     {
         this->flow_direction_upload_pending = true;
         this->icon_upload_pending = true;
+        this->tank_upload_pending = true;
+        this->junction_instance_upload_pending = true;
     }
 
     if (!createPersistentResources() || !ensureGeometryBuffers() || !createPipelines())
@@ -508,6 +616,8 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     {
         this->flow_direction_upload_pending = true;
         this->icon_upload_pending = true;
+        this->tank_upload_pending = true;
+        this->junction_instance_upload_pending = true;
     }
 
     if (!createPersistentResources() || !ensureGeometryBuffers() || !createPipelines())
@@ -557,6 +667,14 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         resource_updates->uploadTexture(
             this->icon_atlas_texture.get(), mapRhiIconAtlasImage());
         this->icon_atlas_upload_pending = false;
+    }
+
+    if (this->tank_texture_upload_pending)
+    {
+        resource_updates->uploadTexture(
+            this->tank_texture.get(), mapRhiTankAlbedoImage());
+        resource_updates->generateMips(this->tank_texture.get());
+        this->tank_texture_upload_pending = false;
     }
 
     if (this->geometry_upload_pending)
@@ -663,6 +781,42 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         this->heatmap_upload_pending = false;
     }
 
+    if (this->tank_upload_pending)
+    {
+        if (!this->tank_model_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->tank_vertex_buffer.get(), 0,
+                int(this->tank_model_vertices.size() * qsizetype(sizeof(MapRhiTankModelVertex))),
+                this->tank_model_vertices.constData());
+        }
+        this->tank_upload_pending = false;
+    }
+
+    if (this->junction_mesh_upload_pending)
+    {
+        const QVector<MapRhiJunctionMeshVertex> &junction_mesh =
+            mapRhiJunctionSphereMeshVertices();
+        if (!junction_mesh.isEmpty())
+            resource_updates->uploadStaticBuffer(
+                this->junction_mesh_vertex_buffer.get(), junction_mesh.constData());
+        this->junction_mesh_upload_pending = false;
+    }
+
+    if (this->junction_instance_upload_pending)
+    {
+        const QVector<MapRhiJunctionInstance> &junction_instances =
+            this->scene.junctionInstances();
+        if (!junction_instances.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->junction_instance_buffer.get(), 0,
+                int(junction_instances.size() * qsizetype(sizeof(MapRhiJunctionInstance))),
+                junction_instances.constData());
+        }
+        this->junction_instance_upload_pending = false;
+    }
+
     if (this->basemap_renderer
         && !this->basemap_renderer->prepare(
             resource_updates, renderOriginWorld(), this->viewport_size))
@@ -725,6 +879,23 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         command_buffer->draw(quint32(node_vertices.size()));
     }
 
+    const QVector<MapRhiJunctionInstance> &junction_instances =
+        this->scene.junctionInstances();
+    const QVector<MapRhiJunctionMeshVertex> &junction_mesh =
+        mapRhiJunctionSphereMeshVertices();
+    if (!junction_instances.isEmpty() && !junction_mesh.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->junction_pipeline.get());
+        command_buffer->setShaderResources();
+        const QRhiCommandBuffer::VertexInput junction_bindings[] = {
+            {this->junction_mesh_vertex_buffer.get(), 0},
+            {this->junction_instance_buffer.get(), 0}
+        };
+        command_buffer->setVertexInput(0, 2, junction_bindings);
+        command_buffer->draw(
+            quint32(junction_mesh.size()), quint32(junction_instances.size()));
+    }
+
     const QVector<MapRhiScene::IconVertex> &icon_vertices = this->scene.iconVertices();
     if (!icon_vertices.isEmpty())
     {
@@ -735,11 +906,20 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         command_buffer->draw(quint32(icon_vertices.size()));
     }
 
+    if (!this->tank_model_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->tank_pipeline.get());
+        command_buffer->setShaderResources(this->tank_shader_resource_bindings.get());
+        const QRhiCommandBuffer::VertexInput tank_binding(this->tank_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &tank_binding);
+        command_buffer->draw(quint32(this->tank_model_vertices.size()));
+    }
+
     const QVector<MapRhiScene::LinkVertex> &selected_link_vertices =
         this->scene.selectedLinkVertices();
     if (!selected_link_vertices.isEmpty())
     {
-        command_buffer->setGraphicsPipeline(this->link_pipeline.get());
+        command_buffer->setGraphicsPipeline(this->selected_link_pipeline.get());
         command_buffer->setShaderResources();
         const QRhiCommandBuffer::VertexInput binding(this->selected_link_vertex_buffer.get(), 0);
         command_buffer->setVertexInput(0, 1, &binding);
@@ -902,6 +1082,60 @@ bool MapRhiWidget::createPersistentResources()
         }
     }
 
+    if (!this->tank_texture)
+    {
+        const QImage tank_image = mapRhiTankAlbedoImage();
+        if (tank_image.isNull())
+        {
+            reportFailure(QStringLiteral("Failed to load RHI tank model texture"));
+            return false;
+        }
+        this->tank_texture.reset(this->active_rhi->newTexture(
+            QRhiTexture::RGBA8, tank_image.size(), 1,
+            QRhiTexture::MipMapped | QRhiTexture::UsedWithGenerateMips));
+        if (!this->tank_texture || !this->tank_texture->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI tank model texture"));
+            return false;
+        }
+        this->tank_texture_upload_pending = true;
+    }
+
+    if (!this->tank_sampler)
+    {
+        this->tank_sampler.reset(this->active_rhi->newSampler(
+            QRhiSampler::Linear, QRhiSampler::Linear, QRhiSampler::Linear,
+            QRhiSampler::Repeat, QRhiSampler::ClampToEdge));
+        if (!this->tank_sampler || !this->tank_sampler->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI tank model sampler"));
+            return false;
+        }
+    }
+
+    if (!this->tank_shader_resource_bindings)
+    {
+        this->tank_shader_resource_bindings.reset(
+            this->active_rhi->newShaderResourceBindings());
+        if (!this->tank_shader_resource_bindings)
+        {
+            reportFailure(QStringLiteral("Failed to allocate RHI tank shader bindings"));
+            return false;
+        }
+        this->tank_shader_resource_bindings->setBindings({
+            QRhiShaderResourceBinding::uniformBuffer(
+                0, QRhiShaderResourceBinding::VertexStage, this->uniform_buffer.get()),
+            QRhiShaderResourceBinding::sampledTexture(
+                1, QRhiShaderResourceBinding::FragmentStage,
+                this->tank_texture.get(), this->tank_sampler.get())
+        });
+        if (!this->tank_shader_resource_bindings->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI tank shader bindings"));
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -909,7 +1143,7 @@ bool MapRhiWidget::createPipelines()
 {
     if (this->active_rhi == nullptr || this->render_pass_descriptor == nullptr
         || !this->shader_resource_bindings || !this->heatmap_shader_resource_bindings
-        || !this->icon_shader_resource_bindings)
+        || !this->icon_shader_resource_bindings || !this->tank_shader_resource_bindings)
     {
         return false;
     }
@@ -962,6 +1196,62 @@ bool MapRhiWidget::createPipelines()
         if (!this->link_pipeline->create())
         {
             reportFailure(QStringLiteral("Failed to create RHI link graphics pipeline"));
+            return false;
+        }
+    }
+
+    if (!this->selected_link_pipeline)
+    {
+        const QShader vertex_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_link.vert.qsb"));
+        const QShader fragment_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_link.frag.qsb"));
+        if (!vertex_shader.isValid() || !fragment_shader.isValid())
+        {
+            reportFailure(QStringLiteral("Failed to load RHI selected-link shaders"));
+            return false;
+        }
+
+        QRhiVertexInputLayout input_layout;
+        input_layout.setBindings({
+            {quint32(sizeof(MapRhiScene::LinkVertex))}
+        });
+        input_layout.setAttributes({
+            {0, 0, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiScene::LinkVertex, start_x))},
+            {0, 1, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiScene::LinkVertex, end_x))},
+            {0, 2, QRhiVertexInputAttribute::Float2,
+             quint32(offsetof(MapRhiScene::LinkVertex, along))},
+            {0, 3, QRhiVertexInputAttribute::Float4,
+             quint32(offsetof(MapRhiScene::LinkVertex, red))},
+            {0, 4, QRhiVertexInputAttribute::Float,
+             quint32(offsetof(MapRhiScene::LinkVertex, size_adjust_px))}
+        });
+
+        this->selected_link_pipeline.reset(this->active_rhi->newGraphicsPipeline());
+        this->selected_link_pipeline->setShaderStages({
+            {QRhiShaderStage::Vertex, vertex_shader},
+            {QRhiShaderStage::Fragment, fragment_shader}
+        });
+        this->selected_link_pipeline->setVertexInputLayout(input_layout);
+        this->selected_link_pipeline->setShaderResourceBindings(
+            this->shader_resource_bindings.get());
+        this->selected_link_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
+        this->selected_link_pipeline->setSampleCount(sampleCount());
+        this->selected_link_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+
+        // Selection is a UI overlay. Do not depth-test it against the pipe it is
+        // highlighting, otherwise equal-depth segment joins can make the cyan stroke
+        // appear to weave in and out of the selected pipe in perspective view.
+        this->selected_link_pipeline->setDepthTest(false);
+        this->selected_link_pipeline->setDepthWrite(false);
+        QRhiGraphicsPipeline::TargetBlend selected_blend;
+        selected_blend.enable = true;
+        this->selected_link_pipeline->setTargetBlends({selected_blend});
+        if (!this->selected_link_pipeline->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI selected-link pipeline"));
             return false;
         }
     }
@@ -1116,6 +1406,109 @@ bool MapRhiWidget::createPipelines()
         }
     }
 
+    if (!this->tank_pipeline)
+    {
+        const QShader vertex_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_tank.vert.qsb"));
+        const QShader fragment_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_tank.frag.qsb"));
+        if (!vertex_shader.isValid() || !fragment_shader.isValid())
+        {
+            reportFailure(QStringLiteral("Failed to load RHI tank model shaders"));
+            return false;
+        }
+
+        QRhiVertexInputLayout input_layout;
+        input_layout.setBindings({
+            {quint32(sizeof(MapRhiTankModelVertex))}
+        });
+        input_layout.setAttributes({
+            {0, 0, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiTankModelVertex, position_x))},
+            {0, 1, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiTankModelVertex, normal_x))},
+            {0, 2, QRhiVertexInputAttribute::Float2,
+             quint32(offsetof(MapRhiTankModelVertex, u))}
+        });
+
+        this->tank_pipeline.reset(this->active_rhi->newGraphicsPipeline());
+        this->tank_pipeline->setShaderStages({
+            {QRhiShaderStage::Vertex, vertex_shader},
+            {QRhiShaderStage::Fragment, fragment_shader}
+        });
+        this->tank_pipeline->setVertexInputLayout(input_layout);
+        this->tank_pipeline->setShaderResourceBindings(
+            this->tank_shader_resource_bindings.get());
+        this->tank_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
+        this->tank_pipeline->setSampleCount(sampleCount());
+        this->tank_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+        this->tank_pipeline->setDepthTest(true);
+        this->tank_pipeline->setDepthWrite(true);
+        this->tank_pipeline->setCullMode(QRhiGraphicsPipeline::Back);
+        this->tank_pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
+        QRhiGraphicsPipeline::TargetBlend tank_blend;
+        tank_blend.enable = true;
+        this->tank_pipeline->setTargetBlends({tank_blend});
+        if (!this->tank_pipeline->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI tank graphics pipeline"));
+            return false;
+        }
+    }
+
+
+    if (!this->junction_pipeline)
+    {
+        const QShader vertex_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_junction.vert.qsb"));
+        const QShader fragment_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_junction.frag.qsb"));
+        if (!vertex_shader.isValid() || !fragment_shader.isValid())
+        {
+            reportFailure(QStringLiteral("Failed to load RHI junction sphere shaders"));
+            return false;
+        }
+
+        QRhiVertexInputLayout input_layout;
+        input_layout.setBindings({
+            {quint32(sizeof(MapRhiJunctionMeshVertex))},
+            {quint32(sizeof(MapRhiJunctionInstance)), QRhiVertexInputBinding::PerInstance}
+        });
+        input_layout.setAttributes({
+            {0, 0, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiJunctionMeshVertex, position_x))},
+            {0, 1, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiJunctionMeshVertex, normal_x))},
+            {1, 2, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiJunctionInstance, center_x))},
+            {1, 3, QRhiVertexInputAttribute::Float,
+             quint32(offsetof(MapRhiJunctionInstance, radius_world))},
+            {1, 4, QRhiVertexInputAttribute::Float4,
+             quint32(offsetof(MapRhiJunctionInstance, red))}
+        });
+
+        this->junction_pipeline.reset(this->active_rhi->newGraphicsPipeline());
+        this->junction_pipeline->setShaderStages({
+            {QRhiShaderStage::Vertex, vertex_shader},
+            {QRhiShaderStage::Fragment, fragment_shader}
+        });
+        this->junction_pipeline->setVertexInputLayout(input_layout);
+        this->junction_pipeline->setShaderResourceBindings(this->shader_resource_bindings.get());
+        this->junction_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
+        this->junction_pipeline->setSampleCount(sampleCount());
+        this->junction_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+        this->junction_pipeline->setDepthTest(true);
+        this->junction_pipeline->setDepthWrite(true);
+        this->junction_pipeline->setCullMode(QRhiGraphicsPipeline::Back);
+        this->junction_pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
+        if (!this->junction_pipeline->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI junction sphere pipeline"));
+            return false;
+        }
+    }
+
+
     return true;
 }
 
@@ -1123,6 +1516,9 @@ bool MapRhiWidget::ensureGeometryBuffers()
 {
     if (this->active_rhi == nullptr)
         return false;
+
+    if (this->tank_upload_pending)
+        rebuildTankModelGeometry();
 
     const int required_link_bytes = boundedBufferSize(
         this->scene.linkVertices().size(), qsizetype(sizeof(MapRhiScene::LinkVertex)));
@@ -1142,11 +1538,20 @@ bool MapRhiWidget::ensureGeometryBuffers()
         this->scene.iconVertices().size(), qsizetype(sizeof(MapRhiScene::IconVertex)));
     const int required_heatmap_bytes = boundedBufferSize(
         this->scene.heatmapVertices().size(), qsizetype(sizeof(MapRhiScene::HeatmapVertex)));
+    const int required_tank_bytes = boundedBufferSize(
+        this->tank_model_vertices.size(), qsizetype(sizeof(MapRhiTankModelVertex)));
+    const QVector<MapRhiJunctionMeshVertex> &junction_mesh =
+        mapRhiJunctionSphereMeshVertices();
+    const int required_junction_mesh_bytes = boundedBufferSize(
+        junction_mesh.size(), qsizetype(sizeof(MapRhiJunctionMeshVertex)));
+    const int required_junction_instance_bytes = boundedBufferSize(
+        this->scene.junctionInstances().size(), qsizetype(sizeof(MapRhiJunctionInstance)));
     if (required_link_bytes == 0 || required_node_bytes == 0
         || required_selected_link_bytes == 0 || required_selected_node_bytes == 0
         || required_diagnostic_link_bytes == 0 || required_diagnostic_node_bytes == 0
         || required_flow_direction_bytes == 0 || required_icon_bytes == 0
-        || required_heatmap_bytes == 0)
+        || required_heatmap_bytes == 0 || required_tank_bytes == 0
+        || required_junction_mesh_bytes == 0 || required_junction_instance_bytes == 0)
     {
         reportFailure(QStringLiteral("RHI network geometry exceeds supported buffer size"));
         return false;
@@ -1275,6 +1680,47 @@ bool MapRhiWidget::ensureGeometryBuffers()
         this->heatmap_upload_pending = true;
     }
 
+    if (!this->tank_vertex_buffer || this->tank_vertex_buffer_size != required_tank_bytes)
+    {
+        this->tank_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_tank_bytes));
+        if (!this->tank_vertex_buffer || !this->tank_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI tank vertex buffer"));
+            return false;
+        }
+        this->tank_vertex_buffer_size = required_tank_bytes;
+        this->tank_upload_pending = true;
+    }
+
+    if (!this->junction_mesh_vertex_buffer
+        || this->junction_mesh_vertex_buffer_size != required_junction_mesh_bytes)
+    {
+        this->junction_mesh_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, required_junction_mesh_bytes));
+        if (!this->junction_mesh_vertex_buffer || !this->junction_mesh_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI junction sphere mesh buffer"));
+            return false;
+        }
+        this->junction_mesh_vertex_buffer_size = required_junction_mesh_bytes;
+        this->junction_mesh_upload_pending = true;
+    }
+
+    if (!this->junction_instance_buffer
+        || this->junction_instance_buffer_size != required_junction_instance_bytes)
+    {
+        this->junction_instance_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_junction_instance_bytes));
+        if (!this->junction_instance_buffer || !this->junction_instance_buffer->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI junction sphere instance buffer"));
+            return false;
+        }
+        this->junction_instance_buffer_size = required_junction_instance_bytes;
+        this->junction_instance_upload_pending = true;
+    }
+
     return true;
 }
 
@@ -1282,15 +1728,24 @@ void MapRhiWidget::resetGpuResources()
 {
     if (this->basemap_renderer)
         this->basemap_renderer->releaseResources();
+    this->junction_pipeline.reset();
+    this->tank_pipeline.reset();
     this->heatmap_pipeline.reset();
     this->icon_pipeline.reset();
     this->node_pipeline.reset();
+    this->selected_link_pipeline.reset();
     this->link_pipeline.reset();
+    this->tank_shader_resource_bindings.reset();
     this->icon_shader_resource_bindings.reset();
     this->heatmap_shader_resource_bindings.reset();
     this->shader_resource_bindings.reset();
+    this->tank_sampler.reset();
     this->icon_sampler.reset();
+    this->tank_texture.reset();
     this->icon_atlas_texture.reset();
+    this->junction_instance_buffer.reset();
+    this->junction_mesh_vertex_buffer.reset();
+    this->tank_vertex_buffer.reset();
     this->heatmap_vertex_buffer.reset();
     this->icon_vertex_buffer.reset();
     this->flow_direction_vertex_buffer.reset();
@@ -1301,6 +1756,9 @@ void MapRhiWidget::resetGpuResources()
     this->node_vertex_buffer.reset();
     this->link_vertex_buffer.reset();
     this->uniform_buffer.reset();
+    this->junction_instance_buffer_size = 0;
+    this->junction_mesh_vertex_buffer_size = 0;
+    this->tank_vertex_buffer_size = 0;
     this->heatmap_vertex_buffer_size = 0;
     this->icon_vertex_buffer_size = 0;
     this->flow_direction_vertex_buffer_size = 0;
@@ -1315,7 +1773,17 @@ void MapRhiWidget::resetGpuResources()
     this->flow_direction_upload_pending = true;
     this->icon_upload_pending = true;
     this->heatmap_upload_pending = true;
+    this->tank_upload_pending = true;
+    this->junction_mesh_upload_pending = true;
+    this->junction_instance_upload_pending = true;
     this->icon_atlas_upload_pending = true;
+    this->tank_texture_upload_pending = true;
+    this->tank_model_vertices.clear();
+}
+
+void MapRhiWidget::rebuildTankModelGeometry()
+{
+    this->tank_model_vertices = mapRhiBuildTankModelVertices(this->scene.tankInstances());
 }
 
 void MapRhiWidget::syncViewState()
@@ -1324,6 +1792,18 @@ void MapRhiWidget::syncViewState()
     this->camera.setViewportSize(this->viewport_size);
     this->camera.setSceneOriginWorld(renderOriginWorld());
     this->camera.syncFromMapModel(*this->map_model);
+
+    const bool use_3d_models = this->map_model->viewMode() == MapViewMode::ThreeD;
+    if (this->scene.setUse3dTankModels(use_3d_models))
+    {
+        this->icon_upload_pending = true;
+        this->tank_upload_pending = true;
+    }
+    if (this->scene.setUse3dJunctionModels(use_3d_models))
+    {
+        this->geometry_upload_pending = true;
+        this->junction_instance_upload_pending = true;
+    }
 }
 
 QPointF MapRhiWidget::renderOriginWorld() const
