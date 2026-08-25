@@ -1,6 +1,9 @@
 #include "map_rhi_widget.h"
 
 #include "map_model.h"
+#include "map_render_cache_math.h"
+#include "map_tile_repository.h"
+#include "../geo_web_mercator.h"
 #include "../network_symbology_rendering.h"
 
 #include <QColor>
@@ -8,6 +11,7 @@
 #include <QFile>
 #include <QImage>
 #include <QMatrix4x4>
+#include <QPalette>
 #include <QResizeEvent>
 #include <rhi/qshader.h>
 
@@ -16,10 +20,11 @@
 #include <array>
 #include <cstddef>
 #include <limits>
+#include <cmath>
 
 namespace
 {
-constexpr int CameraUniformBytes = 20 * int(sizeof(float));
+constexpr int CameraUniformBytes = 28 * int(sizeof(float));
 constexpr int RendererMsaaSamples = 4;
 
 QRhiWidget::Api platformGraphicsApi()
@@ -84,16 +89,37 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     setAttribute(Qt::WA_TransparentForMouseEvents);
     setFocusPolicy(Qt::NoFocus);
 
+    this->fallback_origin_world = GeoWebMercator::lonLatToWorldPixel(
+        GeoWebMercator::normalizeLongitude(this->map_model->centerLon()),
+        this->map_model->centerLat(), MapRenderCacheMath::ReferenceZoom);
+    this->basemap_renderer = std::make_unique<MapRhiBasemapRenderer>(
+        this->map_model, this->tile_repository);
     syncViewState();
 
     connect(this->map_model, &MapModel::centerChangedWGS84, this, [this]
     {
+        if (!this->scene.hasGeometry())
+        {
+            this->fallback_origin_world = GeoWebMercator::lonLatToWorldPixel(
+                GeoWebMercator::normalizeLongitude(this->map_model->centerLon()),
+                this->map_model->centerLat(), MapRenderCacheMath::ReferenceZoom);
+            if (this->basemap_renderer)
+                this->basemap_renderer->invalidate();
+        }
         syncViewState();
         update();
     });
     connect(this->map_model, &MapModel::zoomChanged, this, [this]
     {
         syncViewState();
+        if (this->basemap_renderer)
+            this->basemap_renderer->invalidate();
+        update();
+    });
+    connect(this->map_model, &MapModel::providerChanged, this, [this](MapProvider)
+    {
+        if (this->basemap_renderer)
+            this->basemap_renderer->invalidate();
         update();
     });
     connect(this, &QRhiWidget::renderFailed, this, [this]
@@ -133,12 +159,14 @@ void MapRhiWidget::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
 
     this->scene.setNetworkSnapshot(snapshot);
     this->scene.setViewZoom(this->map_model->zoom());
-    this->camera.setSceneOriginWorld(this->scene.originWorld());
     syncViewState();
+    if (this->basemap_renderer)
+        this->basemap_renderer->invalidate();
     this->geometry_upload_pending = true;
     this->highlight_upload_pending = true;
     this->flow_direction_upload_pending = true;
     this->icon_upload_pending = true;
+    this->heatmap_upload_pending = true;
     update();
 }
 
@@ -156,6 +184,10 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
         || this->applied_symbology.icon_size_percent != symbology.icon_size_percent
         || this->applied_symbology.node_colors != symbology.node_colors
         || this->applied_symbology.link_colors != symbology.link_colors;
+    const bool heatmap_changed =
+        !this->symbology_initialized
+        || this->applied_symbology.visual_heatmap != symbology.visual_heatmap
+        || this->applied_symbology.heatmap_fractions != symbology.heatmap_fractions;
     const bool flow_direction_changed =
         !this->symbology_initialized
         || this->applied_symbology.show_flow_direction != symbology.show_flow_direction
@@ -178,7 +210,55 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
         this->flow_direction_upload_pending = true;
     if (icon_changed)
         this->icon_upload_pending = true;
+    if (heatmap_changed)
+        this->heatmap_upload_pending = true;
 
+    update();
+}
+
+void MapRhiWidget::setTileRepository(MapTileRepository *tile_repository)
+{
+    if (this->tile_repository == tile_repository)
+        return;
+
+    if (this->tile_repository != nullptr)
+        disconnect(this->tile_repository, nullptr, this, nullptr);
+
+    this->tile_repository = tile_repository;
+    if (this->basemap_renderer)
+        this->basemap_renderer->setTileRepository(this->tile_repository);
+
+    if (this->tile_repository != nullptr)
+    {
+        connect(this->tile_repository, &MapTileRepository::signalTileAvailable,
+                this, [this](const QString &)
+        {
+            update();
+        });
+        connect(this->tile_repository, &MapTileRepository::signalTileRetryReady,
+                this, [this](const QString &)
+        {
+            update();
+        });
+        connect(this->tile_repository, &MapTileRepository::signalTilesDeleted,
+                this, [this]
+        {
+            if (this->basemap_renderer)
+                this->basemap_renderer->invalidate();
+            update();
+        });
+    }
+
+    update();
+}
+
+void MapRhiWidget::setBackgroundOpacity(int opacity)
+{
+    const int bounded_opacity = qBound(0, opacity, 100);
+    if (this->background_opacity == bounded_opacity)
+        return;
+
+    this->background_opacity = bounded_opacity;
     update();
 }
 
@@ -231,6 +311,7 @@ void MapRhiWidget::initialize(QRhiCommandBuffer *command_buffer)
         this->link_pipeline.reset();
         this->node_pipeline.reset();
         this->icon_pipeline.reset();
+        this->heatmap_pipeline.reset();
     }
 
     this->render_pass_descriptor = target->renderPassDescriptor();
@@ -244,6 +325,14 @@ void MapRhiWidget::initialize(QRhiCommandBuffer *command_buffer)
 
     if (!createPersistentResources() || !ensureGeometryBuffers() || !createPipelines())
         return;
+    if (this->basemap_renderer
+        && !this->basemap_renderer->initialize(
+            this->active_rhi, this->render_pass_descriptor,
+            this->uniform_buffer.get(), sampleCount()))
+    {
+        reportFailure(QStringLiteral("Failed to initialize RHI basemap renderer"));
+        return;
+    }
 
     qInfo().noquote()
         << QStringLiteral("Desktop map RHI surface '%1' initialized using %2 with %3x MSAA.")
@@ -275,9 +364,17 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
 
     if (!createPersistentResources() || !ensureGeometryBuffers() || !createPipelines())
         return;
+    if (this->basemap_renderer
+        && !this->basemap_renderer->initialize(
+            this->active_rhi, this->render_pass_descriptor,
+            this->uniform_buffer.get(), sampleCount()))
+    {
+        reportFailure(QStringLiteral("Failed to initialize RHI basemap renderer"));
+        return;
+    }
 
     const QMatrix4x4 view_projection = this->camera.viewProjectionMatrix(*this->active_rhi);
-    std::array<float, 20> uniform_data{};
+    std::array<float, 28> uniform_data{};
     const float *matrix_data = view_projection.constData();
     for (int index = 0; index < 16; ++index)
         uniform_data[size_t(index)] = matrix_data[index];
@@ -286,6 +383,16 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     uniform_data[18] = float(this->scene.linkThicknessPx()) / 2.0f;
     uniform_data[19] = float(networkSymbologyJunctionDotDiameterForZoom(
         this->map_model->zoom(), this->scene.nodeSizePercent()) / 2.0);
+    uniform_data[20] = heatmapRadiusPixels();
+    uniform_data[21] = qBound(0.0f, this->applied_symbology.heatmap_opacity / 100.0f, 1.0f);
+    uniform_data[22] = qBound(0.0f,
+        this->applied_symbology.heatmap_solid_center_percent / 100.0f, 0.9f);
+
+    const QColor background_color = palette().color(QPalette::Window);
+    uniform_data[24] = background_color.redF();
+    uniform_data[25] = background_color.greenF();
+    uniform_data[26] = background_color.blueF();
+    uniform_data[27] = qBound(0.0f, this->background_opacity / 100.0f, 1.0f);
 
     QRhiResourceUpdateBatch *resource_updates = this->active_rhi->nextResourceUpdateBatch();
     resource_updates->updateDynamicBuffer(
@@ -388,12 +495,49 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         this->icon_upload_pending = false;
     }
 
-    const QColor clear_color(245, 245, 245, 255);
-    command_buffer->beginPass(target, clear_color, {1.0f, 0}, resource_updates);
+    if (this->heatmap_upload_pending)
+    {
+        const QVector<MapRhiScene::HeatmapVertex> &heatmap_vertices =
+            this->scene.heatmapVertices();
+        if (!heatmap_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->heatmap_vertex_buffer.get(), 0,
+                int(heatmap_vertices.size() * qsizetype(sizeof(MapRhiScene::HeatmapVertex))),
+                heatmap_vertices.constData());
+        }
+        this->heatmap_upload_pending = false;
+    }
+
+    if (this->basemap_renderer
+        && !this->basemap_renderer->prepare(
+            resource_updates, renderOriginWorld(), this->viewport_size))
+    {
+        resource_updates->release();
+        reportFailure(QStringLiteral("Failed to prepare RHI basemap tiles"));
+        return;
+    }
+
+    command_buffer->beginPass(target, background_color, {1.0f, 0}, resource_updates);
 
     const QSize output_size = target->pixelSize();
     command_buffer->setViewport(QRhiViewport(
         0.0f, 0.0f, float(output_size.width()), float(output_size.height())));
+
+    if (this->basemap_renderer)
+        this->basemap_renderer->draw(command_buffer);
+
+    const QVector<MapRhiScene::HeatmapVertex> &heatmap_vertices =
+        this->scene.heatmapVertices();
+    if (!heatmap_vertices.isEmpty() && this->applied_symbology.heatmap_opacity > 0)
+    {
+        command_buffer->setGraphicsPipeline(this->heatmap_pipeline.get());
+        command_buffer->setShaderResources(this->heatmap_shader_resource_bindings.get());
+        const QRhiCommandBuffer::VertexInput heatmap_binding(
+            this->heatmap_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &heatmap_binding);
+        command_buffer->draw(quint32(heatmap_vertices.size()));
+    }
 
     const QVector<MapRhiScene::LinkVertex> &link_vertices = this->scene.linkVertices();
     if (!link_vertices.isEmpty())
@@ -534,6 +678,28 @@ bool MapRhiWidget::createPersistentResources()
         }
     }
 
+    if (!this->heatmap_shader_resource_bindings)
+    {
+        this->heatmap_shader_resource_bindings.reset(
+            this->active_rhi->newShaderResourceBindings());
+        if (!this->heatmap_shader_resource_bindings)
+        {
+            reportFailure(QStringLiteral("Failed to allocate RHI heatmap shader bindings"));
+            return false;
+        }
+        this->heatmap_shader_resource_bindings->setBindings({
+            QRhiShaderResourceBinding::uniformBuffer(
+                0, QRhiShaderResourceBinding::VertexStage
+                    | QRhiShaderResourceBinding::FragmentStage,
+                this->uniform_buffer.get())
+        });
+        if (!this->heatmap_shader_resource_bindings->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI heatmap shader bindings"));
+            return false;
+        }
+    }
+
     if (!this->icon_atlas_texture)
     {
         const QImage atlas_image = mapRhiIconAtlasImage();
@@ -587,8 +753,9 @@ bool MapRhiWidget::createPersistentResources()
 
 bool MapRhiWidget::createPipelines()
 {
-    if (this->active_rhi == nullptr || this->render_pass_descriptor == nullptr ||
-        !this->shader_resource_bindings || !this->icon_shader_resource_bindings)
+    if (this->active_rhi == nullptr || this->render_pass_descriptor == nullptr
+        || !this->shader_resource_bindings || !this->heatmap_shader_resource_bindings
+        || !this->icon_shader_resource_bindings)
     {
         return false;
     }
@@ -737,6 +904,52 @@ bool MapRhiWidget::createPipelines()
         }
     }
 
+    if (!this->heatmap_pipeline)
+    {
+        const QShader vertex_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_heatmap.vert.qsb"));
+        const QShader fragment_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_heatmap.frag.qsb"));
+        if (!vertex_shader.isValid() || !fragment_shader.isValid())
+        {
+            reportFailure(QStringLiteral("Failed to load RHI heatmap shaders"));
+            return false;
+        }
+
+        QRhiVertexInputLayout input_layout;
+        input_layout.setBindings({
+            {quint32(sizeof(MapRhiScene::HeatmapVertex))}
+        });
+        input_layout.setAttributes({
+            {0, 0, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiScene::HeatmapVertex, center_x))},
+            {0, 1, QRhiVertexInputAttribute::Float2,
+             quint32(offsetof(MapRhiScene::HeatmapVertex, corner_x))},
+            {0, 2, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiScene::HeatmapVertex, red))}
+        });
+
+        this->heatmap_pipeline.reset(this->active_rhi->newGraphicsPipeline());
+        this->heatmap_pipeline->setShaderStages({
+            {QRhiShaderStage::Vertex, vertex_shader},
+            {QRhiShaderStage::Fragment, fragment_shader}
+        });
+        this->heatmap_pipeline->setVertexInputLayout(input_layout);
+        this->heatmap_pipeline->setShaderResourceBindings(
+            this->heatmap_shader_resource_bindings.get());
+        this->heatmap_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
+        this->heatmap_pipeline->setSampleCount(sampleCount());
+        this->heatmap_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+        QRhiGraphicsPipeline::TargetBlend heatmap_blend;
+        heatmap_blend.enable = true;
+        this->heatmap_pipeline->setTargetBlends({heatmap_blend});
+        if (!this->heatmap_pipeline->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI heatmap graphics pipeline"));
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -761,10 +974,13 @@ bool MapRhiWidget::ensureGeometryBuffers()
         this->scene.flowDirectionVertices().size(), qsizetype(sizeof(MapRhiScene::LinkVertex)));
     const int required_icon_bytes = boundedBufferSize(
         this->scene.iconVertices().size(), qsizetype(sizeof(MapRhiScene::IconVertex)));
+    const int required_heatmap_bytes = boundedBufferSize(
+        this->scene.heatmapVertices().size(), qsizetype(sizeof(MapRhiScene::HeatmapVertex)));
     if (required_link_bytes == 0 || required_node_bytes == 0
         || required_selected_link_bytes == 0 || required_selected_node_bytes == 0
         || required_diagnostic_link_bytes == 0 || required_diagnostic_node_bytes == 0
-        || required_flow_direction_bytes == 0 || required_icon_bytes == 0)
+        || required_flow_direction_bytes == 0 || required_icon_bytes == 0
+        || required_heatmap_bytes == 0)
     {
         reportFailure(QStringLiteral("RHI network geometry exceeds supported buffer size"));
         return false;
@@ -879,18 +1095,37 @@ bool MapRhiWidget::ensureGeometryBuffers()
         this->icon_upload_pending = true;
     }
 
+    if (!this->heatmap_vertex_buffer
+        || this->heatmap_vertex_buffer_size != required_heatmap_bytes)
+    {
+        this->heatmap_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_heatmap_bytes));
+        if (!this->heatmap_vertex_buffer || !this->heatmap_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI heatmap vertex buffer"));
+            return false;
+        }
+        this->heatmap_vertex_buffer_size = required_heatmap_bytes;
+        this->heatmap_upload_pending = true;
+    }
+
     return true;
 }
 
 void MapRhiWidget::resetGpuResources()
 {
+    if (this->basemap_renderer)
+        this->basemap_renderer->releaseResources();
+    this->heatmap_pipeline.reset();
     this->icon_pipeline.reset();
     this->node_pipeline.reset();
     this->link_pipeline.reset();
     this->icon_shader_resource_bindings.reset();
+    this->heatmap_shader_resource_bindings.reset();
     this->shader_resource_bindings.reset();
     this->icon_sampler.reset();
     this->icon_atlas_texture.reset();
+    this->heatmap_vertex_buffer.reset();
     this->icon_vertex_buffer.reset();
     this->flow_direction_vertex_buffer.reset();
     this->diagnostic_node_vertex_buffer.reset();
@@ -900,6 +1135,7 @@ void MapRhiWidget::resetGpuResources()
     this->node_vertex_buffer.reset();
     this->link_vertex_buffer.reset();
     this->uniform_buffer.reset();
+    this->heatmap_vertex_buffer_size = 0;
     this->icon_vertex_buffer_size = 0;
     this->flow_direction_vertex_buffer_size = 0;
     this->diagnostic_node_vertex_buffer_size = 0;
@@ -912,6 +1148,7 @@ void MapRhiWidget::resetGpuResources()
     this->highlight_upload_pending = true;
     this->flow_direction_upload_pending = true;
     this->icon_upload_pending = true;
+    this->heatmap_upload_pending = true;
     this->icon_atlas_upload_pending = true;
 }
 
@@ -919,8 +1156,32 @@ void MapRhiWidget::syncViewState()
 {
     this->viewport_size = size();
     this->camera.setViewportSize(this->viewport_size);
-    this->camera.setSceneOriginWorld(this->scene.originWorld());
+    this->camera.setSceneOriginWorld(renderOriginWorld());
     this->camera.syncFromMapModel(*this->map_model);
+}
+
+QPointF MapRhiWidget::renderOriginWorld() const
+{
+    return this->scene.hasGeometry()
+        ? this->scene.originWorld()
+        : this->fallback_origin_world;
+}
+
+float MapRhiWidget::heatmapRadiusPixels() const
+{
+    if (this->applied_symbology.visual_heatmap == VisualHeatmap::None)
+        return 1.0f;
+
+    if (this->applied_symbology.heatmap_radius_unit == HeatmapRadiusUnit::Pixels)
+        return float(qMax(1, this->applied_symbology.heatmap_radius_px));
+
+    const double meters_per_pixel = GeoWebMercator::metersPerPixel(
+        this->map_model->centerLat(), this->map_model->zoom());
+    if (!std::isfinite(meters_per_pixel) || meters_per_pixel <= 0.0)
+        return 1.0f;
+
+    return float(qMax(1.0,
+        this->applied_symbology.heatmap_radius_m / meters_per_pixel));
 }
 
 void MapRhiWidget::reportFailure(const QString &reason)

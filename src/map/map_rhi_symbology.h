@@ -16,6 +16,13 @@ struct MapRhiSymbology
     int link_thickness_px = 3;
     bool show_flow_direction = true;
     int flow_direction_size_px = 10;
+    VisualHeatmap visual_heatmap = VisualHeatmap::None;
+    int heatmap_opacity = 75;
+    HeatmapRadiusUnit heatmap_radius_unit = HeatmapRadiusUnit::Meters;
+    int heatmap_radius_m = 400;
+    int heatmap_radius_px = 50;
+    int heatmap_solid_center_percent = 70;
+    QHash<quint32, double> heatmap_fractions;
     QHash<quint32, QRgb> node_colors;
     QHash<quint32, QRgb> link_colors;
     QHash<quint32, qint8> flow_directions;

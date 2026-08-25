@@ -5,6 +5,8 @@
 #include "../network_symbology_rendering.h"
 #include "../network_symbology_values.h"
 
+#include <cmath>
+
 MapRhiSymbology resolveMapRhiSymbology(
     const HydraulicData &hydraulic_data,
     const NetworkSymbologySettings &settings,
@@ -20,14 +22,18 @@ MapRhiSymbology resolveMapRhiSymbology(
         hydraulic_data.currentWaterQualitySimulationResult(WaterQualityAnalysisType::WaterAge);
     if (quality_result != nullptr)
     {
-        if (bounded_settings.visual_node == VisualNode::WaterAge)
+        if (bounded_settings.visual_node == VisualNode::WaterAge
+            || bounded_settings.visual_heatmap == VisualHeatmap::WaterAge)
+        {
             water_age_node_values = waterAgeNodeSymbologyValues(*quality_result);
+        }
         if (bounded_settings.visual_link == VisualLink::WaterAge)
             water_age_link_values = waterAgeLinkSymbologyValues(*quality_result);
     }
 
     QHash<QUuid, double> hydraulic_node_values;
     QHash<QUuid, double> hydraulic_link_values;
+    QHash<QUuid, double> hydraulic_heatmap_values;
     QHash<QUuid, qint8> hydraulic_flow_directions;
     const HydraulicSimulationResult *hydraulic_result = hydraulic_data.currentSimulationResult();
     if (hydraulic_result != nullptr)
@@ -41,6 +47,11 @@ MapRhiSymbology resolveMapRhiSymbology(
         {
             hydraulic_link_values = hydraulicLinkSymbologyValues(
                 *hydraulic_result, bounded_settings.visual_link);
+        }
+        if (heatmapVisualUsesHydraulicSimulationResult(bounded_settings.visual_heatmap))
+        {
+            hydraulic_heatmap_values = hydraulicHeatmapSymbologyValues(
+                *hydraulic_result, bounded_settings.visual_heatmap);
         }
         if (bounded_settings.show_flow_direction)
             hydraulic_flow_directions = hydraulicLinkFlowDirections(*hydraulic_result);
@@ -58,6 +69,13 @@ MapRhiSymbology resolveMapRhiSymbology(
             : linkVisualUsesHydraulicSimulationResult(bounded_settings.visual_link)
                 ? hydraulic_link_values
                 : networkLinkSymbologyValues(network_hydraulic, bounded_settings.visual_link);
+    const QHash<QUuid, double> heatmap_values =
+        bounded_settings.visual_heatmap == VisualHeatmap::WaterAge
+            ? water_age_node_values
+            : heatmapVisualUsesHydraulicSimulationResult(bounded_settings.visual_heatmap)
+                ? hydraulic_heatmap_values
+                : networkHeatmapSymbologyValues(
+                    network_hydraulic, bounded_settings.visual_heatmap);
 
     MapRhiSymbology result;
     result.node_size_percent = bounded_settings.node_size_percent;
@@ -65,6 +83,37 @@ MapRhiSymbology resolveMapRhiSymbology(
     result.link_thickness_px = bounded_settings.link_thickness_px;
     result.show_flow_direction = bounded_settings.show_flow_direction;
     result.flow_direction_size_px = bounded_settings.flow_direction_size_px;
+    result.visual_heatmap = bounded_settings.visual_heatmap;
+    result.heatmap_opacity = bounded_settings.heatmap_opacity;
+    result.heatmap_radius_unit = bounded_settings.heatmap_radius_unit;
+    result.heatmap_radius_m = bounded_settings.heatmap_radius_m;
+    result.heatmap_radius_px = bounded_settings.heatmap_radius_px;
+    result.heatmap_solid_center_percent = bounded_settings.heatmap_solid_center_percent;
+
+    if (result.visual_heatmap != VisualHeatmap::None)
+    {
+        result.heatmap_fractions.reserve(snapshot.nodes.size());
+        for (const NetworkRenderNode &node : snapshot.nodes)
+        {
+            const QHash<QUuid, double>::const_iterator iterator = heatmap_values.constFind(node.uuid);
+            if (iterator == heatmap_values.cend())
+                continue;
+            const double value = iterator.value();
+            if (!std::isfinite(value)
+                || !std::isfinite(ranges.heatmap_minimum)
+                || !std::isfinite(ranges.heatmap_maximum))
+            {
+                continue;
+            }
+            const double fraction = ranges.heatmap_minimum == ranges.heatmap_maximum
+                ? 0.5
+                : qBound(0.0,
+                    (value - ranges.heatmap_minimum)
+                        / (ranges.heatmap_maximum - ranges.heatmap_minimum),
+                    1.0);
+            result.heatmap_fractions.insert(node.render_id, fraction);
+        }
+    }
 
     if (result.show_flow_direction)
     {

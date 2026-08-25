@@ -13,6 +13,7 @@
 #include "map/map_network_overlay_widget.h"
 #if AOWIS_HAS_QRHI
 #include "map/map_rhi_widget.h"
+#include "map/map_rhi_hud_widget.h"
 #include "map/map_rhi_symbology.h"
 #endif
 #endif
@@ -326,6 +327,9 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         applySymbology();
     });
     this->map->installEventFilter(this);
+#ifndef Q_OS_WASM
+    this->map_stack->installEventFilter(this);
+#endif
     this->map_stack_layout->addWidget(this->map);
 #ifndef Q_OS_WASM
     this->map_stack_layout->addWidget(this->desktop_network_overlay);
@@ -335,7 +339,13 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     {
         MapRhiWidget *rhi_surface =
             new MapRhiWidget(this->map_model, QStringLiteral("monitor"), this->map_stack);
+        MapRhiHudWidget *rhi_hud =
+            new MapRhiHudWidget(this->map_model, this->gps, this->map_stack);
         this->desktop_rhi_surface = rhi_surface;
+        this->desktop_rhi_hud = rhi_hud;
+        this->desktop_rhi_hud->hide();
+        rhi_surface->setTileRepository(this->tile_repository);
+        rhi_surface->setBackgroundOpacity(this->network_background_opacity);
         rhi_surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
         applyDesktopRhiSymbology();
         applyDesktopRhiHighlights();
@@ -364,8 +374,11 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
                 [this](InfrastructureEntity, const QUuid &)
         {
-            if (this->symbology_settings.visual_node != VisualNode::None)
+            if (this->symbology_settings.visual_node != VisualNode::None
+                || this->symbology_settings.visual_heatmap != VisualHeatmap::None)
+            {
                 applyDesktopRhiSymbology();
+            }
             applyDesktopRhiHighlights();
         });
         connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
@@ -387,7 +400,9 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             applyDesktopRhiHighlights();
             if (this->symbology_settings.show_flow_direction
                 || nodeVisualUsesHydraulicSimulationResult(this->symbology_settings.visual_node)
-                || linkVisualUsesHydraulicSimulationResult(this->symbology_settings.visual_link))
+                || linkVisualUsesHydraulicSimulationResult(this->symbology_settings.visual_link)
+                || heatmapVisualUsesHydraulicSimulationResult(
+                    this->symbology_settings.visual_heatmap))
             {
                 applyDesktopRhiSymbology();
             }
@@ -397,7 +412,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                 this, [this](bool)
         {
             if (this->symbology_settings.visual_node == VisualNode::WaterAge
-                || this->symbology_settings.visual_link == VisualLink::WaterAge)
+                || this->symbology_settings.visual_link == VisualLink::WaterAge
+                || this->symbology_settings.visual_heatmap == VisualHeatmap::WaterAge)
             {
                 applyDesktopRhiSymbology();
             }
@@ -408,8 +424,11 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             if (this->symbology_settings.show_flow_direction
                 || nodeVisualUsesHydraulicSimulationResult(this->symbology_settings.visual_node)
                 || linkVisualUsesHydraulicSimulationResult(this->symbology_settings.visual_link)
+                || heatmapVisualUsesHydraulicSimulationResult(
+                    this->symbology_settings.visual_heatmap)
                 || this->symbology_settings.visual_node == VisualNode::WaterAge
-                || this->symbology_settings.visual_link == VisualLink::WaterAge)
+                || this->symbology_settings.visual_link == VisualLink::WaterAge
+                || this->symbology_settings.visual_heatmap == VisualHeatmap::WaterAge)
             {
                 applyDesktopRhiSymbology();
             }
@@ -445,12 +464,20 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             rhi_surface->setSelectedEntity(InfrastructureEntity::Valve, valve.uuid);
         });
         connect(rhi_surface, &MapRhiWidget::signalRendererReady, this,
-                [this, rhi_surface]
+                [this, rhi_surface, rhi_hud]
         {
             this->map_stack_layout->addWidget(rhi_surface);
             this->map_stack_layout->setCurrentWidget(rhi_surface);
             this->desktop_network_overlay->hide();
-            qInfo() << "Monitor map renderer: RHI 2D scene active; CPU renderer retained as fallback.";
+            rhi_surface->show();
+
+            // The HUD is intentionally not managed by QStackedLayout. It is a plain
+            // child of map_stack that always sits above the active RHI surface.
+            rhi_hud->setGeometry(this->map_stack->rect());
+            rhi_hud->show();
+            rhi_hud->raise();
+
+            qInfo() << "Monitor map renderer: RHI 2D map active with GPU basemap/heatmap and QWidget HUD; CPU renderer retained as fallback.";
         });
         connect(rhi_surface, &MapRhiWidget::signalRendererFailed, this,
                 [this](const QString &reason)
@@ -461,6 +488,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                        .arg(reason);
             this->desktop_network_overlay->show();
             this->map_stack_layout->setCurrentWidget(this->desktop_network_overlay);
+            if (this->desktop_rhi_hud != nullptr)
+                this->desktop_rhi_hud->hide();
             if (this->desktop_rhi_surface != nullptr)
                 this->desktop_rhi_surface->hide();
         });
@@ -659,6 +688,18 @@ MapMonitorContainer::~MapMonitorContainer()
 
 bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
 {
+#ifndef Q_OS_WASM
+#if AOWIS_HAS_QRHI
+    if (watched == this->map_stack && event->type() == QEvent::Resize
+        && this->desktop_rhi_hud != nullptr)
+    {
+        this->desktop_rhi_hud->setGeometry(this->map_stack->rect());
+        if (this->desktop_rhi_hud->isVisible())
+            this->desktop_rhi_hud->raise();
+    }
+#endif
+#endif
+
     if (watched == this->map)
     {
         if (event->type() == QEvent::MouseButtonPress)
@@ -848,6 +889,10 @@ void MapMonitorContainer::setNetworkBackgroundOpacity(int opacity)
     this->network_background_opacity = bounded_opacity;
 #ifndef Q_OS_WASM
     this->desktop_network_overlay->setBackgroundOpacity(bounded_opacity);
+#if AOWIS_HAS_QRHI
+    if (this->desktop_rhi_surface != nullptr)
+        this->desktop_rhi_surface->setBackgroundOpacity(bounded_opacity);
+#endif
 #else
     syncWasmNetworkBackground();
 #endif

@@ -36,6 +36,8 @@ void MapRhiScene::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
     this->diagnostic_node_vertices.clear();
     this->flow_direction_vertices.clear();
     this->icon_vertices.clear();
+    this->heatmap_vertices.clear();
+    this->heatmap_markers.clear();
     this->icon_markers.clear();
     this->link_paths.clear();
     this->entity_keys_by_uuid.clear();
@@ -60,6 +62,10 @@ void MapRhiScene::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
         this->entity_keys_by_uuid.insert(
             node.uuid, entityRenderKey(node.entity_type, node.render_id));
         appendNode(node.entity_type, node.render_id, center);
+        HeatmapMarker heatmap_marker;
+        heatmap_marker.render_id = node.render_id;
+        heatmap_marker.center = center;
+        this->heatmap_markers.append(heatmap_marker);
         if (mapRhiHasIcon(node.entity_type))
         {
             IconMarker marker;
@@ -153,6 +159,7 @@ void MapRhiScene::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
         }
     }
 
+    rebuildHeatmap();
     rebuildIcons();
     rebuildFlowDirections();
     rebuildHighlights();
@@ -168,6 +175,9 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
     const bool icon_changed =
         this->symbology.icon_size_percent != symbology.icon_size_percent
         || link_colors_changed || node_colors_changed;
+    const bool heatmap_changed =
+        this->symbology.visual_heatmap != symbology.visual_heatmap
+        || this->symbology.heatmap_fractions != symbology.heatmap_fractions;
     const bool flow_direction_changed =
         this->symbology.show_flow_direction != symbology.show_flow_direction
         || this->symbology.flow_direction_size_px != symbology.flow_direction_size_px
@@ -187,6 +197,8 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
         for (NodeVertex &vertex : this->node_vertices)
             applyNodeColor(&vertex);
     }
+    if (heatmap_changed)
+        rebuildHeatmap();
     if (icon_changed)
         rebuildIcons();
     if (flow_direction_changed)
@@ -263,6 +275,11 @@ const QVector<MapRhiScene::LinkVertex> &MapRhiScene::flowDirectionVertices() con
 const QVector<MapRhiScene::IconVertex> &MapRhiScene::iconVertices() const
 {
     return this->icon_vertices;
+}
+
+const QVector<MapRhiScene::HeatmapVertex> &MapRhiScene::heatmapVertices() const
+{
+    return this->heatmap_vertices;
 }
 
 QPointF MapRhiScene::originWorld() const
@@ -433,6 +450,53 @@ void MapRhiScene::applyNodeColor(NodeVertex *vertex) const
     vertex->alpha = mapRhiHasIcon(vertex->entity_type)
         ? 0.0f
         : qAlpha(color) / 255.0f;
+}
+
+
+void MapRhiScene::rebuildHeatmap()
+{
+    this->heatmap_vertices.clear();
+    if (this->symbology.visual_heatmap == VisualHeatmap::None
+        || this->symbology.heatmap_fractions.isEmpty())
+    {
+        return;
+    }
+
+    this->heatmap_vertices.reserve(this->heatmap_markers.size() * 6);
+    for (const HeatmapMarker &marker : this->heatmap_markers)
+        appendHeatmap(marker);
+}
+
+void MapRhiScene::appendHeatmap(const HeatmapMarker &marker)
+{
+    const QHash<quint32, double>::const_iterator fraction_iterator =
+        this->symbology.heatmap_fractions.constFind(marker.render_id);
+    if (fraction_iterator == this->symbology.heatmap_fractions.cend())
+        return;
+
+    const QColor color = networkSymbologyInterpolatedRampColor(fraction_iterator.value());
+    const float corners[6][2] = {
+        {-1.0f, -1.0f},
+        {1.0f, -1.0f},
+        {1.0f, 1.0f},
+        {-1.0f, -1.0f},
+        {1.0f, 1.0f},
+        {-1.0f, 1.0f}
+    };
+
+    for (int index = 0; index < 6; ++index)
+    {
+        HeatmapVertex vertex;
+        vertex.center_x = float(marker.center.x());
+        vertex.center_y = float(marker.center.y());
+        vertex.center_z = -10.0f;
+        vertex.corner_x = corners[index][0];
+        vertex.corner_y = corners[index][1];
+        vertex.red = color.redF();
+        vertex.green = color.greenF();
+        vertex.blue = color.blueF();
+        this->heatmap_vertices.append(vertex);
+    }
 }
 
 void MapRhiScene::rebuildIcons()

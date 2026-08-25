@@ -52,6 +52,18 @@ public:
         InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
     };
 
+    struct HeatmapVertex
+    {
+        float center_x = 0.0f;
+        float center_y = 0.0f;
+        float center_z = 0.0f;
+        float corner_x = 0.0f;
+        float corner_y = 0.0f;
+        float red = 0.0f;
+        float green = 0.0f;
+        float blue = 0.0f;
+    };
+
     struct NodeVertex
     {
         float center_x = 0.0f;
@@ -84,6 +96,7 @@ public:
     const QVector<NodeVertex> &diagnosticNodeVertices() const;
     const QVector<LinkVertex> &flowDirectionVertices() const;
     const QVector<IconVertex> &iconVertices() const;
+    const QVector<HeatmapVertex> &heatmapVertices() const;
     QPointF originWorld() const;
     quint64 geometryRevision() const;
     bool hasGeometry() const;
@@ -91,6 +104,12 @@ public:
     int linkThicknessPx() const;
 
 private:
+    struct HeatmapMarker
+    {
+        quint32 render_id = 0;
+        QPointF center;
+    };
+
     struct IconMarker
     {
         InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
@@ -113,6 +132,8 @@ private:
     void appendNode(InfrastructureEntity entity_type, quint32 render_id, const QPointF &center);
     void applyLinkColor(LinkVertex *vertex) const;
     void applyNodeColor(NodeVertex *vertex) const;
+    void rebuildHeatmap();
+    void appendHeatmap(const HeatmapMarker &marker);
     void rebuildIcons();
     void appendIcon(const IconMarker &marker);
     void rebuildFlowDirections();
@@ -134,6 +155,8 @@ private:
     QVector<NodeVertex> diagnostic_node_vertices;
     QVector<LinkVertex> flow_direction_vertices;
     QVector<IconVertex> icon_vertices;
+    QVector<HeatmapVertex> heatmap_vertices;
+    QVector<HeatmapMarker> heatmap_markers;
     QVector<IconMarker> icon_markers;
     QVector<LinkPath> link_paths;
     QPointF origin_world;

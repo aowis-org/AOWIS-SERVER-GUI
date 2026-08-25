@@ -221,8 +221,12 @@ if(NOT EMSCRIPTEN)
     if(AOWIS_HAS_QRHI)
         target_sources(aowis-server-gui
             PRIVATE
+                src/map/map_rhi_basemap_renderer.h
+                src/map/map_rhi_basemap_renderer.cpp
                 src/map/map_rhi_camera.h
                 src/map/map_rhi_camera.cpp
+                src/map/map_rhi_hud_widget.h
+                src/map/map_rhi_hud_widget.cpp
                 src/map/map_rhi_scene.h
                 src/map/map_rhi_scene.cpp
                 src/map/map_rhi_icon_atlas.h
@@ -245,6 +249,10 @@ if(NOT EMSCRIPTEN)
                 src/map/shaders/map_rhi_node.frag
                 src/map/shaders/map_rhi_icon.vert
                 src/map/shaders/map_rhi_icon.frag
+                src/map/shaders/map_rhi_basemap.vert
+                src/map/shaders/map_rhi_basemap.frag
+                src/map/shaders/map_rhi_heatmap.vert
+                src/map/shaders/map_rhi_heatmap.frag
         )
         message(STATUS "AOWIS desktop QRhi support: enabled")
     else()
