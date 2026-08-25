@@ -29,6 +29,9 @@ void MapRhiCamera::syncFromMapModel(const MapModel &map_model)
     this->view_mode = map_model.viewMode();
     this->view_3d_yaw_deg = map_model.view3dYawDeg();
     this->view_3d_pitch_deg = map_model.view3dPitchDeg();
+    this->view_3d_camera_distance_world = map_model.view3dCameraDistanceWorld();
+    this->view_3d_camera_collision_lift_world =
+        map_model.view3dCameraCollisionLiftWorld();
     this->view_3d_vertical_offset_world = map_model.view3dVerticalOffsetWorld();
 
     const QPointF raw_center_world = GeoWebMercator::lonLatToWorldPixel(
@@ -63,8 +66,10 @@ QMatrix4x4 MapRhiCamera::viewProjectionMatrix(const QRhi &rhi) const
             this->view_3d_pitch_deg,
             MapModel::MaxView3dPitchDeg));
         const double yaw_rad = qDegreesToRadians(this->view_3d_yaw_deg);
-        const double distance = half_height_world
+        const double native_distance = half_height_world
             / std::tan(qDegreesToRadians(double(FieldOfViewDeg) / 2.0));
+        const double distance = this->view_3d_camera_distance_world > 0.0
+            ? this->view_3d_camera_distance_world : native_distance;
         const double horizontal_distance = distance * std::cos(pitch_rad);
         const QVector3D target(
             float(this->center_world.x()), float(this->center_world.y()),
@@ -72,12 +77,14 @@ QMatrix4x4 MapRhiCamera::viewProjectionMatrix(const QRhi &rhi) const
         const QVector3D eye(
             target.x() + float(std::sin(yaw_rad) * horizontal_distance),
             target.y() + float(std::cos(yaw_rad) * horizontal_distance),
-            float(this->view_3d_vertical_offset_world + distance * std::sin(pitch_rad)));
+            float(this->view_3d_vertical_offset_world
+                + distance * std::sin(pitch_rad)
+                + this->view_3d_camera_collision_lift_world));
 
         QMatrix4x4 projection;
         projection.perspective(
             FieldOfViewDeg, float(viewport_width) / float(viewport_height),
-            float(qMax(0.01, distance * 0.01)),
+            float(qMax(0.001, qMin(0.25, distance * 0.001))),
             float(qMax(10.0, distance * 20.0)));
 
         // Web Mercator uses +X east and +Y south. Together with +Z up this
@@ -136,8 +143,10 @@ QPointF MapRhiCamera::projectWorldToScreen(const QVector3D &world_position) cons
         this->view_3d_pitch_deg,
         MapModel::MaxView3dPitchDeg));
     const double yaw_rad = qDegreesToRadians(this->view_3d_yaw_deg);
-    const double distance = half_height_world
+    const double native_distance = half_height_world
         / std::tan(qDegreesToRadians(FieldOfViewDeg / 2.0));
+    const double distance = this->view_3d_camera_distance_world > 0.0
+        ? this->view_3d_camera_distance_world : native_distance;
     const double horizontal_distance = distance * std::cos(pitch_rad);
     const QVector3D target(
         float(this->center_world.x()), float(this->center_world.y()),
@@ -145,7 +154,9 @@ QPointF MapRhiCamera::projectWorldToScreen(const QVector3D &world_position) cons
     const QVector3D eye(
         target.x() + float(std::sin(yaw_rad) * horizontal_distance),
         target.y() + float(std::cos(yaw_rad) * horizontal_distance),
-        float(this->view_3d_vertical_offset_world + distance * std::sin(pitch_rad)));
+        float(this->view_3d_vertical_offset_world
+            + distance * std::sin(pitch_rad)
+            + this->view_3d_camera_collision_lift_world));
     const QVector3D forward = (target - eye).normalized();
     // Keep CPU projection in the same east-right basis as the GPU view matrix.
     const QVector3D right(
@@ -169,44 +180,40 @@ QPointF MapRhiCamera::projectWorldToScreen(const QVector3D &world_position) cons
 
 
 
-double MapRhiCamera::nativeEyeHeightWorld() const
+double MapRhiCamera::nativeOrbitDistanceWorld() const
 {
-    if (this->view_mode != MapViewMode::ThreeD)
-        return 0.0;
-
     const int viewport_height = qMax(1, this->viewport_size.height());
     const double scale = GeoWebMercator::zoomScale(
         this->zoom, MapRenderCacheMath::ReferenceZoom);
     const double safe_scale = scale > 0.0 ? scale : 1.0;
     const double half_height_world = double(viewport_height) / (2.0 * safe_scale);
-    const double pitch_rad = qDegreesToRadians(qBound(
-        MapModel::MinView3dPitchDeg,
-        this->view_3d_pitch_deg,
-        MapModel::MaxView3dPitchDeg));
-    const double distance = half_height_world
-        / std::tan(qDegreesToRadians(45.0 / 2.0));
-    return qMax(0.0, distance * std::sin(pitch_rad));
+    return half_height_world / std::tan(qDegreesToRadians(45.0 / 2.0));
 }
 
-QPointF MapRhiCamera::cameraGroundWorldPixel() const
+double MapRhiCamera::orbitDistanceWorld() const
 {
-    const int viewport_height = qMax(1, this->viewport_size.height());
-    const double scale = GeoWebMercator::zoomScale(
-        this->zoom, MapRenderCacheMath::ReferenceZoom);
-    const double safe_scale = scale > 0.0 ? scale : 1.0;
-    const double half_height_world = double(viewport_height) / (2.0 * safe_scale);
+    return this->view_3d_camera_distance_world > 0.0
+        ? this->view_3d_camera_distance_world
+        : nativeOrbitDistanceWorld();
+}
+
+QPointF MapRhiCamera::cameraGroundWorldPixelForDistance(double distance_world) const
+{
     const double pitch_rad = qDegreesToRadians(qBound(
         MapModel::MinView3dPitchDeg,
         this->view_3d_pitch_deg,
         MapModel::MaxView3dPitchDeg));
     const double yaw_rad = qDegreesToRadians(this->view_3d_yaw_deg);
-    const double distance = half_height_world
-        / std::tan(qDegreesToRadians(45.0 / 2.0));
-    const double horizontal_distance = distance * std::cos(pitch_rad);
+    const double horizontal_distance = qMax(0.0, distance_world) * std::cos(pitch_rad);
 
     return QPointF(
         this->scene_origin_world.x() + this->center_world.x()
             + std::sin(yaw_rad) * horizontal_distance,
         this->scene_origin_world.y() + this->center_world.y()
             + std::cos(yaw_rad) * horizontal_distance);
+}
+
+QPointF MapRhiCamera::cameraGroundWorldPixel() const
+{
+    return cameraGroundWorldPixelForDistance(orbitDistanceWorld());
 }

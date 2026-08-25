@@ -352,18 +352,18 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             new MapMonitorCompassHudWidget(this->map_model, this->map_stack);
         MapMonitorTiltHudWidget *tilt_hud =
             new MapMonitorTiltHudWidget(this->map_model, this->map_stack);
-        MapMonitorCameraHeightHudWidget *camera_height_hud =
-            new MapMonitorCameraHeightHudWidget(this->map_model, this->map_stack);
+        MapMonitorCameraDistanceHudWidget *camera_distance_hud =
+            new MapMonitorCameraDistanceHudWidget(this->map_model, this->map_stack);
         this->desktop_rhi_surface = rhi_surface;
         this->desktop_rhi_hud = rhi_hud;
         this->desktop_view_mode_hud = view_mode_hud;
         this->desktop_compass_hud = compass_hud;
-        this->desktop_camera_height_hud = camera_height_hud;
+        this->desktop_camera_distance_hud = camera_distance_hud;
         this->desktop_tilt_hud = tilt_hud;
         this->desktop_rhi_hud->hide();
         this->desktop_view_mode_hud->hide();
         this->desktop_compass_hud->hide();
-        this->desktop_camera_height_hud->hide();
+        this->desktop_camera_distance_hud->hide();
         this->desktop_tilt_hud->hide();
         rhi_surface->setTileRepository(this->tile_repository);
         rhi_surface->setTerrainRepository(this->terrain_repository);
@@ -755,17 +755,17 @@ void MapMonitorContainer::positionDesktopHudWidgets()
             this->desktop_tilt_hud->raise();
     }
 
-    if (this->desktop_camera_height_hud != nullptr)
+    if (this->desktop_camera_distance_hud != nullptr)
     {
-        this->desktop_camera_height_hud->adjustSize();
-        const int height_x = hud_margin_px
+        this->desktop_camera_distance_hud->adjustSize();
+        const int distance_x = hud_margin_px
             + (this->desktop_tilt_hud != nullptr ? this->desktop_tilt_hud->width() + 8 : 0);
-        const int height_y = qMax(
+        const int distance_y = qMax(
             hud_margin_px,
-            this->map_stack->height() - this->desktop_camera_height_hud->height() - hud_margin_px);
-        this->desktop_camera_height_hud->move(height_x, height_y);
-        if (this->desktop_camera_height_hud->isVisible())
-            this->desktop_camera_height_hud->raise();
+            this->map_stack->height() - this->desktop_camera_distance_hud->height() - hud_margin_px);
+        this->desktop_camera_distance_hud->move(distance_x, distance_y);
+        if (this->desktop_camera_distance_hud->isVisible())
+            this->desktop_camera_distance_hud->raise();
     }
 
     if (this->desktop_compass_hud != nullptr)
@@ -773,8 +773,8 @@ void MapMonitorContainer::positionDesktopHudWidgets()
         this->desktop_compass_hud->adjustSize();
         const int compass_x = hud_margin_px
             + (this->desktop_tilt_hud != nullptr ? this->desktop_tilt_hud->width() + 8 : 0)
-            + (this->desktop_camera_height_hud != nullptr
-                ? this->desktop_camera_height_hud->width() + 8 : 0);
+            + (this->desktop_camera_distance_hud != nullptr
+                ? this->desktop_camera_distance_hud->width() + 8 : 0);
         const int compass_y = qMax(
             hud_margin_px,
             this->map_stack->height() - this->desktop_compass_hud->height() - hud_margin_px);
@@ -787,7 +787,7 @@ void MapMonitorContainer::positionDesktopHudWidgets()
 void MapMonitorContainer::syncDesktopCameraHudVisibility()
 {
     if (this->desktop_compass_hud == nullptr || this->desktop_tilt_hud == nullptr
-        || this->desktop_camera_height_hud == nullptr)
+        || this->desktop_camera_distance_hud == nullptr)
     {
         return;
     }
@@ -799,12 +799,12 @@ void MapMonitorContainer::syncDesktopCameraHudVisibility()
     const bool camera_hud_visible =
         rhi_active && this->map_model->viewMode() == MapViewMode::ThreeD;
     this->desktop_compass_hud->setVisible(camera_hud_visible);
-    this->desktop_camera_height_hud->setVisible(camera_hud_visible);
+    this->desktop_camera_distance_hud->setVisible(camera_hud_visible);
     this->desktop_tilt_hud->setVisible(camera_hud_visible);
     if (camera_hud_visible)
     {
         this->desktop_compass_hud->raise();
-        this->desktop_camera_height_hud->raise();
+        this->desktop_camera_distance_hud->raise();
         this->desktop_tilt_hud->raise();
         positionDesktopHudWidgets();
     }

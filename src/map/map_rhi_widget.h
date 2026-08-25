@@ -80,7 +80,9 @@ private:
     void rebuildTankModelGeometry();
     void resetGpuResources();
     void syncViewState();
-    void syncTerrainAwareCameraHeight();
+    void syncTerrainAwareCameraDistance();
+    bool terrainElevationAtCoordinate(
+        const CoordinateWGS84 &coordinate, double *elevation_m);
     QPointF renderOriginWorld() const;
     float heatmapRadiusPixels() const;
     void reportFailure(const QString &reason);
@@ -154,7 +156,7 @@ private:
     bool symbology_initialized = false;
     bool ready_reported = false;
     bool failure_reported = false;
-    bool terrain_camera_height_sync_active = false;
+    bool terrain_camera_distance_sync_active = false;
 };
 
 #endif // MAP_RHI_WIDGET_H

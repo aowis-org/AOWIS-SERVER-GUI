@@ -104,7 +104,7 @@ private:
     bool hasFastKeyboardPanInput() const;
     QPointF keyboardPanDirection() const;
     QPointF edgePanDirection() const;
-    void panMapByPixels(const QPoint &delta);
+    void panMapByPixels(const QPoint &delta, bool angle_independent_3d = false);
     void panByStep(const QPoint &delta);
 
     void updatePointerCoordinates(const QPoint &position);
@@ -132,6 +132,7 @@ private:
     bool pan_key_up_pressed = false;
     bool pan_key_down_pressed = false;
     bool pan_fast_modifier_pressed = false;
+    bool keyboard_pan_motion_active = false;
 
     bool edge_panning_enabled = false;
     QPointF pan_velocity;

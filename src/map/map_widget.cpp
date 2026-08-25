@@ -404,6 +404,7 @@ void MapWidget::stopAllPanMovement()
     this->pan_key_up_pressed = false;
     this->pan_key_down_pressed = false;
     this->pan_fast_modifier_pressed = false;
+    this->keyboard_pan_motion_active = false;
     this->mouse_pan_active = false;
     this->pan_velocity = QPointF();
     this->pan_fractional_delta = QPointF();
@@ -439,10 +440,16 @@ void MapWidget::updatePanAnimation()
     QPointF direction = keyboardPanDirection();
     const bool keyboard_pan_active = !direction.isNull();
     bool edge_pan_active = false;
-    if (!keyboard_pan_active)
+    if (keyboard_pan_active)
+    {
+        this->keyboard_pan_motion_active = true;
+    }
+    else
     {
         direction = edgePanDirection();
         edge_pan_active = !direction.isNull();
+        if (edge_pan_active)
+            this->keyboard_pan_motion_active = false;
     }
     direction = normalized(direction);
 
@@ -487,6 +494,7 @@ void MapWidget::updatePanAnimation()
     {
         this->pan_velocity = QPointF();
         this->mouse_pan_inertia_active = false;
+        this->keyboard_pan_motion_active = false;
     }
 
     const QPointF precise_delta = this->pan_velocity * elapsed_seconds + this->pan_fractional_delta;
@@ -494,7 +502,7 @@ void MapWidget::updatePanAnimation()
     this->pan_fractional_delta = precise_delta - QPointF(delta);
 
     if (!delta.isNull())
-        panMapByPixels(delta);
+        panMapByPixels(delta, this->keyboard_pan_motion_active);
 
     stopPanAnimationIfIdle();
 }
@@ -958,7 +966,7 @@ void MapWidget::panByStep(const QPoint &delta)
     panMapByPixels(delta);
 }
 
-void MapWidget::panMapByPixels(const QPoint &delta)
+void MapWidget::panMapByPixels(const QPoint &delta, bool angle_independent_3d)
 {
     if (delta.isNull())
         return;
@@ -967,9 +975,16 @@ void MapWidget::panMapByPixels(const QPoint &delta)
 
     this->backing_store_pan_active = true;
     if (this->m_model->viewMode() == MapViewMode::ThreeD)
-        this->m_model->panByPixels3d(delta, size());
+    {
+        if (angle_independent_3d)
+            this->m_model->panByPixels3dKeyboard(delta, size());
+        else
+            this->m_model->panByPixels3d(delta, size());
+    }
     else
+    {
         this->m_model->panByPixels(delta, size());
+    }
     this->backing_store_pan_active = false;
 
     const QPointF new_center = this->m_model->centerTile();
@@ -1257,7 +1272,10 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
     }
 
     if (!delta.isNull())
+    {
+        this->keyboard_pan_motion_active = false;
         panMapByPixels(delta);
+    }
 
     event->accept();
     return true;

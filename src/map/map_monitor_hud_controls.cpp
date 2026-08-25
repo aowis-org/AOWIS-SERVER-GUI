@@ -32,35 +32,35 @@ constexpr double CompassWheelStepDeg = 5.0;
 constexpr int NorthAnimationDurationMs = 280;
 constexpr int SliderResetAnimationDurationMs = 240;
 constexpr int CompassDragThresholdPx = 4;
-constexpr int CameraHeightSliderSteps = 1000;
+constexpr int CameraDistanceSliderSteps = 1000;
 constexpr int CameraControlSliderHeightPx = 82;
 
-int cameraHeightSliderValue(double height_m, double maximum_height_m)
+int cameraDistanceSliderValue(double distance_m, double maximum_distance_m)
 {
     const double bounded_maximum = qMax(
-        MapModel::MinView3dCameraHeightM, maximum_height_m);
-    const double bounded_height = qBound(
-        MapModel::MinView3dCameraHeightM, height_m, bounded_maximum);
-    const double range = bounded_maximum - MapModel::MinView3dCameraHeightM;
+        MapModel::MinView3dCameraDistanceM, maximum_distance_m);
+    const double bounded_distance = qBound(
+        MapModel::MinView3dCameraDistanceM, distance_m, bounded_maximum);
+    const double range = bounded_maximum - MapModel::MinView3dCameraDistanceM;
     if (range <= 0.0)
         return 0;
-    return qRound((bounded_height - MapModel::MinView3dCameraHeightM)
-        / range * CameraHeightSliderSteps);
+    return qRound((bounded_distance - MapModel::MinView3dCameraDistanceM)
+        / range * CameraDistanceSliderSteps);
 }
 
-double cameraHeightMeters(int slider_value, double maximum_height_m)
+double cameraDistanceMeters(int slider_value, double maximum_distance_m)
 {
     const double bounded_maximum = qMax(
-        MapModel::MinView3dCameraHeightM, maximum_height_m);
-    const double ratio = qBound(0, slider_value, CameraHeightSliderSteps)
-        / double(CameraHeightSliderSteps);
-    return MapModel::MinView3dCameraHeightM
-        + ratio * (bounded_maximum - MapModel::MinView3dCameraHeightM);
+        MapModel::MinView3dCameraDistanceM, maximum_distance_m);
+    const double ratio = qBound(0, slider_value, CameraDistanceSliderSteps)
+        / double(CameraDistanceSliderSteps);
+    return MapModel::MinView3dCameraDistanceM
+        + ratio * (bounded_maximum - MapModel::MinView3dCameraDistanceM);
 }
 
-QString cameraHeightText(double height_m)
+QString cameraDistanceText(double distance_m)
 {
-    return QStringLiteral("%1 m AGL").arg(qRound(height_m));
+    return QStringLiteral("%1 m").arg(qRound(distance_m));
 }
 
 void configureHudFrame(QFrame *frame)
@@ -411,13 +411,13 @@ MapMonitorCompassHudWidget::MapMonitorCompassHudWidget(
     layout->addWidget(new MapCompassWidget(map_model, this));
 }
 
-MapMonitorCameraHeightHudWidget::MapMonitorCameraHeightHudWidget(
+MapMonitorCameraDistanceHudWidget::MapMonitorCameraDistanceHudWidget(
     MapModel *map_model, QWidget *parent)
     : QFrame(parent),
       map_model(map_model),
-      height_slider(new ResettableVerticalSlider(this)),
-      height_maximum_label(new QLabel(this)),
-      height_value_label(new QLabel(this))
+      distance_slider(new ResettableVerticalSlider(this)),
+      distance_maximum_label(new QLabel(this)),
+      distance_value_label(new QLabel(this))
 {
     Q_ASSERT(this->map_model != nullptr);
     configureHudFrame(this);
@@ -426,74 +426,75 @@ MapMonitorCameraHeightHudWidget::MapMonitorCameraHeightHudWidget(
     layout->setContentsMargins(4, 5, 4, 5);
     layout->setSpacing(1);
 
-    this->height_maximum_label->setAlignment(Qt::AlignHCenter);
-    QLabel *minimum_label = new QLabel(QStringLiteral("2 m"), this);
+    this->distance_maximum_label->setAlignment(Qt::AlignHCenter);
+    QLabel *minimum_label = new QLabel(QStringLiteral("150 m"), this);
     minimum_label->setAlignment(Qt::AlignHCenter);
-    this->height_value_label->setAlignment(Qt::AlignHCenter);
+    this->distance_value_label->setAlignment(Qt::AlignHCenter);
 
-    const double initial_maximum_height_m =
-        this->map_model->view3dMaximumCameraHeightM();
-    this->height_maximum_label->setText(
-        QStringLiteral("%1 m").arg(qRound(initial_maximum_height_m)));
-    this->height_slider->setRange(0, CameraHeightSliderSteps);
-    this->height_slider->setValue(cameraHeightSliderValue(
-        this->map_model->view3dCameraHeightM(), initial_maximum_height_m));
-    this->height_slider->setFixedHeight(CameraControlSliderHeightPx);
-    this->height_slider->setToolTip(QStringLiteral(
-        "Camera height above ground\n"
-        "Minimum: 2 m AGL\n"
-        "Maximum: native camera height + 500 m\n"
-        "Right-click: animate back to the native camera height\n"
-        "Zoom and tilt dynamically move that native height as before"));
-    this->height_value_label->setText(cameraHeightText(
-        this->map_model->view3dCameraHeightM()));
+    const double initial_maximum_distance_m =
+        this->map_model->view3dMaximumCameraDistanceM();
+    this->distance_maximum_label->setText(
+        QStringLiteral("%1 m").arg(qRound(initial_maximum_distance_m)));
+    this->distance_slider->setRange(0, CameraDistanceSliderSteps);
+    this->distance_slider->setValue(cameraDistanceSliderValue(
+        this->map_model->view3dCameraDistanceM(), initial_maximum_distance_m));
+    this->distance_slider->setFixedHeight(CameraControlSliderHeightPx);
+    this->distance_slider->setToolTip(QStringLiteral(
+        "Distance to focus\n"
+        "Straight-line orbit radius to the terrain point under the crosshair\n"
+        "Minimum requested distance: 150 m\n"
+        "Maximum: native camera distance + 500 m\n"
+        "Terrain collision may increase the effective distance to keep 2 m clearance\n"
+        "Right-click: animate back to the native camera distance"));
+    this->distance_value_label->setText(cameraDistanceText(
+        this->map_model->view3dCameraDistanceM()));
 
-    layout->addWidget(this->height_maximum_label);
-    layout->addWidget(this->height_slider, 1, Qt::AlignHCenter);
+    layout->addWidget(this->distance_maximum_label);
+    layout->addWidget(this->distance_slider, 1, Qt::AlignHCenter);
     layout->addWidget(minimum_label);
-    layout->addWidget(this->height_value_label);
+    layout->addWidget(this->distance_value_label);
 
-    QVariantAnimation *height_reset_animation = new QVariantAnimation(this);
-    height_reset_animation->setDuration(SliderResetAnimationDurationMs);
-    height_reset_animation->setEasingCurve(QEasingCurve::InOutCubic);
-    connect(height_reset_animation, &QVariantAnimation::valueChanged, this,
+    QVariantAnimation *distance_reset_animation = new QVariantAnimation(this);
+    distance_reset_animation->setDuration(SliderResetAnimationDurationMs);
+    distance_reset_animation->setEasingCurve(QEasingCurve::InOutCubic);
+    connect(distance_reset_animation, &QVariantAnimation::valueChanged, this,
             [this](const QVariant &value)
     {
-        this->map_model->setView3dCameraHeightM(value.toDouble());
+        this->map_model->setView3dCameraDistanceM(value.toDouble());
     });
-    ResettableVerticalSlider *resettable_height_slider =
-        static_cast<ResettableVerticalSlider *>(this->height_slider);
-    resettable_height_slider->setResetCallback([this, height_reset_animation]
+    ResettableVerticalSlider *resettable_distance_slider =
+        static_cast<ResettableVerticalSlider *>(this->distance_slider);
+    resettable_distance_slider->setResetCallback([this, distance_reset_animation]
     {
-        height_reset_animation->stop();
-        height_reset_animation->setStartValue(this->map_model->view3dCameraHeightM());
-        height_reset_animation->setEndValue(
-            this->map_model->view3dNativeCameraHeightM());
-        height_reset_animation->start();
+        distance_reset_animation->stop();
+        distance_reset_animation->setStartValue(this->map_model->view3dCameraDistanceM());
+        distance_reset_animation->setEndValue(
+            this->map_model->view3dNativeCameraDistanceM());
+        distance_reset_animation->start();
     });
-    connect(this->height_slider, &QSlider::sliderPressed, height_reset_animation,
+    connect(this->distance_slider, &QSlider::sliderPressed, distance_reset_animation,
             &QVariantAnimation::stop);
 
-    connect(this->height_slider, &QSlider::valueChanged, this, [this](int slider_value)
+    connect(this->distance_slider, &QSlider::valueChanged, this, [this](int slider_value)
     {
-        this->map_model->setView3dCameraHeightM(cameraHeightMeters(
-            slider_value, this->map_model->view3dMaximumCameraHeightM()));
+        this->map_model->setView3dCameraDistanceM(cameraDistanceMeters(
+            slider_value, this->map_model->view3dMaximumCameraDistanceM()));
     });
     connect(this->map_model, &MapModel::view3dCameraChanged, this, [this]
     {
-        const double height_m = this->map_model->view3dCameraHeightM();
-        const double maximum_height_m =
-            this->map_model->view3dMaximumCameraHeightM();
-        const int slider_value = cameraHeightSliderValue(
-            height_m, maximum_height_m);
-        if (this->height_slider->value() != slider_value)
+        const double distance_m = this->map_model->view3dCameraDistanceM();
+        const double maximum_distance_m =
+            this->map_model->view3dMaximumCameraDistanceM();
+        const int slider_value = cameraDistanceSliderValue(
+            distance_m, maximum_distance_m);
+        if (this->distance_slider->value() != slider_value)
         {
-            const QSignalBlocker blocker(this->height_slider);
-            this->height_slider->setValue(slider_value);
+            const QSignalBlocker blocker(this->distance_slider);
+            this->distance_slider->setValue(slider_value);
         }
-        this->height_maximum_label->setText(
-            QStringLiteral("%1 m").arg(qRound(maximum_height_m)));
-        this->height_value_label->setText(cameraHeightText(height_m));
+        this->distance_maximum_label->setText(
+            QStringLiteral("%1 m").arg(qRound(maximum_distance_m)));
+        this->distance_value_label->setText(cameraDistanceText(distance_m));
     });
 }
 
