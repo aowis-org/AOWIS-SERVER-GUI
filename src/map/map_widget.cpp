@@ -161,6 +161,8 @@ constexpr double MousePanVelocitySmoothing = 0.65;
 constexpr double MousePanMaximumSpeedPixelsPerSecond = 2400.0;
 constexpr double MousePanMinimumInertiaSpeedPixelsPerSecond = 70.0;
 constexpr double MousePanInertiaDecelerationPixelsPerSecondSquared = 2600.0;
+constexpr double View3dKeyboardZoomOctavesPerSecond = 1.0;
+constexpr double View3dKeyboardZoomFastMultiplier = 2.0;
 
 qreal vectorLength(const QPointF &vector)
 {
@@ -291,8 +293,15 @@ void MapWidget::init()
 
     connect(this->m_model, &MapModel::viewModeChanged, this, [this](MapViewMode view_mode)
     {
-        if (view_mode != MapViewMode::ThreeD && this->view_3d_orbit_active)
-            endView3dOrbit();
+        if (view_mode != MapViewMode::ThreeD)
+        {
+            this->view_3d_zoom_in_key_pressed = false;
+            this->view_3d_zoom_out_key_pressed = false;
+            this->view_3d_keyboard_zoom_interaction_active = false;
+            if (this->view_3d_orbit_active)
+                endView3dOrbit();
+            stopPanAnimationIfIdle();
+        }
     });
 
     this->tile_update_timer = new QTimer(this);
@@ -398,8 +407,12 @@ void MapWidget::ensurePanAnimationRunning()
 
 void MapWidget::stopPanAnimationIfIdle()
 {
-    if (hasKeyboardPanInput() || vectorLength(this->pan_velocity) >= PanVelocityStopThreshold || browserMapInertiaActive())
+    if (hasKeyboardPanInput() || hasView3dKeyboardZoomInput()
+        || vectorLength(this->pan_velocity) >= PanVelocityStopThreshold
+        || browserMapInertiaActive())
+    {
         return;
+    }
 
     this->pan_velocity = QPointF();
     this->pan_fractional_delta = QPointF();
@@ -408,11 +421,14 @@ void MapWidget::stopPanAnimationIfIdle()
 
 void MapWidget::stopAllPanMovement()
 {
+    endView3dKeyboardZoomInteraction();
     this->pan_key_left_pressed = false;
     this->pan_key_right_pressed = false;
     this->pan_key_up_pressed = false;
     this->pan_key_down_pressed = false;
     this->pan_fast_modifier_pressed = false;
+    this->view_3d_zoom_in_key_pressed = false;
+    this->view_3d_zoom_out_key_pressed = false;
     this->keyboard_pan_motion_active = false;
     this->mouse_pan_active = false;
     this->pan_velocity = QPointF();
@@ -438,6 +454,8 @@ void MapWidget::updatePanAnimation()
         stopAllPanMovement();
         return;
     }
+
+    updateView3dKeyboardZoom(elapsed_seconds);
 
     if (this->mouse_pan_active)
     {
@@ -673,6 +691,78 @@ bool MapWidget::hasFastKeyboardPanInput() const
     return this->pan_fast_modifier_pressed && this->hasKeyboardPanInput();
 }
 
+bool MapWidget::hasView3dKeyboardZoomInput() const
+{
+    return this->m_model != nullptr
+        && this->m_model->viewMode() == MapViewMode::ThreeD
+        && (this->view_3d_zoom_in_key_pressed || this->view_3d_zoom_out_key_pressed);
+}
+
+void MapWidget::updateView3dKeyboardZoom(qreal elapsed_seconds)
+{
+    if (!hasView3dKeyboardZoomInput() || elapsed_seconds <= 0.0)
+        return;
+
+    int direction = 0;
+    if (this->view_3d_zoom_in_key_pressed)
+        ++direction;
+    if (this->view_3d_zoom_out_key_pressed)
+        --direction;
+    if (direction == 0)
+        return;
+
+    double octaves_per_second = View3dKeyboardZoomOctavesPerSecond;
+    if (this->pan_fast_modifier_pressed)
+        octaves_per_second *= View3dKeyboardZoomFastMultiplier;
+
+    const double current_distance_m = qMax(
+        MapModel::MinView3dCameraDistanceM,
+        this->m_model->view3dCameraDistanceM());
+    const double distance_scale = std::exp2(
+        -double(direction) * octaves_per_second * double(elapsed_seconds));
+    const double next_distance_m = qMax(
+        MapModel::MinView3dCameraDistanceM,
+        current_distance_m * distance_scale);
+
+    const double native_distance_m = qMax(
+        MapModel::MinView3dCameraDistanceM,
+        this->m_model->view3dNativeCameraDistanceM());
+    const double continuous_zoom = double(this->m_model->zoom())
+        + std::log2(native_distance_m / next_distance_m);
+    const int tile_zoom = qBound(
+        MapModel::MinZoom,
+        qRound(continuous_zoom),
+        MapModel::MaxZoom);
+
+    if (tile_zoom != this->m_model->zoom())
+        this->m_model->setView3dTileZoomPreservingCameraDistance(tile_zoom, size());
+
+    this->m_model->setView3dContinuousCameraDistanceM(next_distance_m);
+}
+
+void MapWidget::beginView3dKeyboardZoomInteraction()
+{
+    if (this->view_3d_keyboard_zoom_interaction_active
+        || this->m_model == nullptr
+        || this->m_model->viewMode() != MapViewMode::ThreeD)
+    {
+        return;
+    }
+
+    this->view_3d_keyboard_zoom_interaction_active = true;
+    this->m_model->beginView3dRotateInteraction();
+}
+
+void MapWidget::endView3dKeyboardZoomInteraction()
+{
+    if (!this->view_3d_keyboard_zoom_interaction_active)
+        return;
+
+    this->view_3d_keyboard_zoom_interaction_active = false;
+    if (this->m_model != nullptr)
+        this->m_model->endView3dRotateInteraction();
+}
+
 QPointF MapWidget::keyboardPanDirection() const
 {
     QPointF direction;
@@ -785,12 +875,38 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
     switch (event->key())
     {
     case Qt::Key_L:
-        this->zoomIn();
+        if (this->m_model->viewMode() == MapViewMode::ThreeD)
+        {
+            if (!event->isAutoRepeat())
+            {
+                this->view_3d_zoom_in_key_pressed = true;
+                beginView3dKeyboardZoomInteraction();
+            }
+            this->pan_fast_modifier_pressed = event->modifiers().testFlag(Qt::ShiftModifier);
+            ensurePanAnimationRunning();
+        }
+        else
+        {
+            zoomIn();
+        }
         event->accept();
         return true;
 
     case Qt::Key_X:
-        this->zoomOut();
+        if (this->m_model->viewMode() == MapViewMode::ThreeD)
+        {
+            if (!event->isAutoRepeat())
+            {
+                this->view_3d_zoom_out_key_pressed = true;
+                beginView3dKeyboardZoomInteraction();
+            }
+            this->pan_fast_modifier_pressed = event->modifiers().testFlag(Qt::ShiftModifier);
+            ensurePanAnimationRunning();
+        }
+        else
+        {
+            zoomOut();
+        }
         event->accept();
         return true;
 
@@ -827,6 +943,16 @@ bool MapWidget::handleKeyReleaseEvent(QKeyEvent *event)
 
     if (event->key() == Qt::Key_L || event->key() == Qt::Key_X)
     {
+        if (!event->isAutoRepeat() && this->m_model->viewMode() == MapViewMode::ThreeD)
+        {
+            if (event->key() == Qt::Key_L)
+                this->view_3d_zoom_in_key_pressed = false;
+            else
+                this->view_3d_zoom_out_key_pressed = false;
+            if (!hasView3dKeyboardZoomInput())
+                endView3dKeyboardZoomInteraction();
+            stopPanAnimationIfIdle();
+        }
         event->accept();
         return true;
     }
@@ -836,11 +962,14 @@ bool MapWidget::handleKeyReleaseEvent(QKeyEvent *event)
 
 void MapWidget::clearKeyboardPanInput()
 {
+    endView3dKeyboardZoomInteraction();
     this->pan_key_left_pressed = false;
     this->pan_key_right_pressed = false;
     this->pan_key_up_pressed = false;
     this->pan_key_down_pressed = false;
     this->pan_fast_modifier_pressed = false;
+    this->view_3d_zoom_in_key_pressed = false;
+    this->view_3d_zoom_out_key_pressed = false;
     this->stopPanAnimationIfIdle();
 }
 

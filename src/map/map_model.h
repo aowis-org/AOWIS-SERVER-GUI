@@ -81,6 +81,8 @@ public:
     void setView3dYawDeg(double yaw_deg);
     void setView3dPitchDeg(double pitch_deg);
     void setView3dCameraDistanceM(double distance_m);
+    void setView3dContinuousCameraDistanceM(double distance_m);
+    void setView3dTileZoomPreservingCameraDistance(int zoom, const QSize &viewport = QSize());
     void syncView3dNativeCameraDistanceM(double distance_m);
     void setView3dCameraDistanceWorld(double distance_world);
     void setView3dCameraCollisionLiftWorld(double lift_world);
@@ -128,6 +130,7 @@ private:
     double m_view_3d_camera_collision_lift_world = 0.0;
     double m_view_3d_vertical_offset_world = 0.0;
     bool m_view_3d_native_camera_distance_initialized = false;
+    bool m_view_3d_preserve_camera_distance_on_next_native_sync = false;
     MapView3dNavigationState m_view_3d_navigation_state = MapView3dNavigationState::Pan;
     int m_view_3d_rotate_interaction_depth = 0;
 };

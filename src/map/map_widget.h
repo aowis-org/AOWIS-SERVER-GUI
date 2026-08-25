@@ -102,6 +102,10 @@ private:
     bool setKeyboardPanKey(int key, bool pressed);
     bool hasKeyboardPanInput() const;
     bool hasFastKeyboardPanInput() const;
+    bool hasView3dKeyboardZoomInput() const;
+    void updateView3dKeyboardZoom(qreal elapsed_seconds);
+    void beginView3dKeyboardZoomInteraction();
+    void endView3dKeyboardZoomInteraction();
     QPointF keyboardPanDirection() const;
     QPointF edgePanDirection() const;
     void panMapByPixels(const QPoint &delta, bool angle_independent_3d = false);
@@ -139,6 +143,9 @@ private:
     bool pan_key_up_pressed = false;
     bool pan_key_down_pressed = false;
     bool pan_fast_modifier_pressed = false;
+    bool view_3d_zoom_in_key_pressed = false;
+    bool view_3d_zoom_out_key_pressed = false;
+    bool view_3d_keyboard_zoom_interaction_active = false;
     bool keyboard_pan_motion_active = false;
 
     bool edge_panning_enabled = false;

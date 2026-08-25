@@ -444,6 +444,69 @@ void MapModel::setView3dCameraDistanceM(double distance_m)
     emit view3dCameraChanged();
 }
 
+void MapModel::setView3dContinuousCameraDistanceM(double distance_m)
+{
+    if (!std::isfinite(distance_m))
+        return;
+
+    const double next_distance = qMax(MinView3dCameraDistanceM, distance_m);
+    const double old_maximum_distance = view3dMaximumCameraDistanceM();
+    this->m_view_3d_extended_camera_distance_maximum_m = qMax(
+        this->m_view_3d_extended_camera_distance_maximum_m, next_distance);
+
+    if (coordinatesEqual(next_distance, this->m_view_3d_camera_distance_m)
+        && coordinatesEqual(old_maximum_distance, view3dMaximumCameraDistanceM()))
+    {
+        return;
+    }
+
+    this->m_view_3d_camera_distance_m = next_distance;
+    emit view3dCameraChanged();
+}
+
+void MapModel::setView3dTileZoomPreservingCameraDistance(
+    int zoom_value, const QSize &viewport)
+{
+    const int next_zoom = std::clamp(zoom_value, MinZoom, MaxZoom);
+    if (next_zoom == this->m_zoom)
+        return;
+
+    const int old_zoom = this->m_zoom;
+    const double old_lon = this->m_centerLon;
+    const double old_lat = this->m_centerLat;
+    const double old_native_distance = this->m_view_3d_native_camera_distance_m;
+    const double old_maximum_distance = view3dMaximumCameraDistanceM();
+
+    this->m_zoom = next_zoom;
+    if (viewport.isValid())
+        clampCenter(viewport);
+
+    if (this->m_view_3d_native_camera_distance_initialized)
+    {
+        const double native_scale = std::pow(2.0, double(old_zoom - next_zoom));
+        this->m_view_3d_native_camera_distance_m = qMax(
+            MinView3dCameraDistanceM, old_native_distance * native_scale);
+        this->m_view_3d_extended_camera_distance_maximum_m = qMax(
+            this->m_view_3d_extended_camera_distance_maximum_m,
+            this->m_view_3d_camera_distance_m);
+        this->m_view_3d_preserve_camera_distance_on_next_native_sync = true;
+    }
+
+    emit zoomChanged(this->m_zoom);
+
+    if (!coordinatesEqual(this->m_centerLon, old_lon)
+        || !coordinatesEqual(this->m_centerLat, old_lat))
+    {
+        emitCenterChanged();
+    }
+
+    if (!coordinatesEqual(old_native_distance, this->m_view_3d_native_camera_distance_m)
+        || !coordinatesEqual(old_maximum_distance, view3dMaximumCameraDistanceM()))
+    {
+        emit view3dCameraChanged();
+    }
+}
+
 void MapModel::syncView3dNativeCameraDistanceM(double distance_m)
 {
     if (!std::isfinite(distance_m))
@@ -456,6 +519,23 @@ void MapModel::syncView3dNativeCameraDistanceM(double distance_m)
         this->m_view_3d_native_camera_distance_m = next_native_distance;
         this->m_view_3d_camera_distance_m = next_native_distance;
         emit view3dCameraChanged();
+        return;
+    }
+
+    if (this->m_view_3d_preserve_camera_distance_on_next_native_sync)
+    {
+        this->m_view_3d_preserve_camera_distance_on_next_native_sync = false;
+        const double old_native_distance = this->m_view_3d_native_camera_distance_m;
+        const double old_maximum_distance = view3dMaximumCameraDistanceM();
+        this->m_view_3d_native_camera_distance_m = next_native_distance;
+        this->m_view_3d_extended_camera_distance_maximum_m = qMax(
+            this->m_view_3d_extended_camera_distance_maximum_m,
+            this->m_view_3d_camera_distance_m);
+        if (!coordinatesEqual(old_native_distance, this->m_view_3d_native_camera_distance_m)
+            || !coordinatesEqual(old_maximum_distance, view3dMaximumCameraDistanceM()))
+        {
+            emit view3dCameraChanged();
+        }
         return;
     }
 
