@@ -199,6 +199,20 @@ bool finiteScreenPoint(const QPointF &point)
 {
     return std::isfinite(point.x()) && std::isfinite(point.y());
 }
+
+constexpr double Rhi2dMinimumNodeHitRadiusPx = 10.0;
+constexpr double Rhi3dMinimumNodeHitRadiusPx = 16.0;
+constexpr double Rhi2dNodeHitPaddingPx = 5.0;
+constexpr double Rhi3dNodeHitPaddingPx = 9.0;
+constexpr double Rhi2dMinimumLinkHitRadiusPx = 8.0;
+constexpr double Rhi3dMinimumLinkHitRadiusPx = 12.0;
+constexpr double Rhi2dLinkHitPaddingPx = 5.0;
+constexpr double Rhi3dLinkHitPaddingPx = 8.0;
+constexpr double Rhi2dMinimumIconHitRadiusPx = 12.0;
+constexpr double Rhi3dMinimumIconHitRadiusPx = 18.0;
+constexpr double Rhi2dIconHitPaddingPx = 6.0;
+constexpr double Rhi3dIconHitPaddingPx = 10.0;
+constexpr double Rhi3dTankBoundsPaddingPx = 10.0;
 }
 
 MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWidget *parent)
@@ -306,7 +320,7 @@ QString MapRhiWidget::graphicsApiName() const
 MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
 {
     MapRhiHit no_hit;
-    if (this->map_model == nullptr || this->map_model->viewMode() != MapViewMode::ThreeD
+    if (this->map_model == nullptr
         || !finiteScreenPoint(screen_position)
         || screen_position.x() < 0.0 || screen_position.y() < 0.0
         || screen_position.x() > width() || screen_position.y() > height())
@@ -316,78 +330,88 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
 
     const NetworkRenderSnapshot &snapshot = this->scene.networkSnapshot();
 
+    const bool three_d = this->map_model->viewMode() == MapViewMode::ThreeD;
+
     // The 3D tank replaces its old SVG billboard, so hit-test the projected bounds
-    // of the actual model before falling back to the generic node-center radius.
+    // of the actual model before falling back to the generic node/icon radii.
     quint32 best_tank_render_id = 0;
     double best_tank_distance = std::numeric_limits<double>::max();
     const QVector<MapRhiTankInstance> &tank_instances = this->scene.tankInstances();
-    for (const MapRhiTankInstance &instance : tank_instances)
+    if (three_d)
     {
-        const float top_z = instance.base_center.z()
-            + instance.base_height_world
-            + instance.body_height_world
-            + instance.roof_height_world;
-        const float middle_z = (instance.base_center.z() + top_z) / 2.0f;
-        const QVector3D center(
-            instance.base_center.x(), instance.base_center.y(), middle_z);
-
-        const QVector<QVector3D> bounds_points = {
-            QVector3D(instance.base_center.x() - instance.radius_world,
-                      instance.base_center.y(), instance.base_center.z()),
-            QVector3D(instance.base_center.x() + instance.radius_world,
-                      instance.base_center.y(), instance.base_center.z()),
-            QVector3D(instance.base_center.x(),
-                      instance.base_center.y() - instance.radius_world, instance.base_center.z()),
-            QVector3D(instance.base_center.x(),
-                      instance.base_center.y() + instance.radius_world, instance.base_center.z()),
-            QVector3D(instance.base_center.x() - instance.radius_world,
-                      instance.base_center.y(), top_z),
-            QVector3D(instance.base_center.x() + instance.radius_world,
-                      instance.base_center.y(), top_z),
-            QVector3D(instance.base_center.x(),
-                      instance.base_center.y() - instance.radius_world, top_z),
-            QVector3D(instance.base_center.x(),
-                      instance.base_center.y() + instance.radius_world, top_z),
-            QVector3D(instance.base_center.x(), instance.base_center.y(), top_z),
-            QVector3D(instance.base_center.x(), instance.base_center.y(), instance.base_center.z())
-        };
-
-        QRectF projected_bounds;
-        bool have_projected_bounds = false;
-        for (const QVector3D &point : bounds_points)
+        for (const MapRhiTankInstance &instance : tank_instances)
         {
-            const QPointF projected = this->camera.projectWorldToScreen(point);
-            if (!finiteScreenPoint(projected))
-                continue;
+            const float top_z = instance.base_center.z()
+                + instance.base_height_world
+                + instance.body_height_world
+                + instance.roof_height_world;
+            const float middle_z = (instance.base_center.z() + top_z) / 2.0f;
+            const QVector3D center(
+                instance.base_center.x(), instance.base_center.y(), middle_z);
+
+            const QVector<QVector3D> bounds_points = {
+                QVector3D(instance.base_center.x() - instance.radius_world,
+                          instance.base_center.y(), instance.base_center.z()),
+                QVector3D(instance.base_center.x() + instance.radius_world,
+                          instance.base_center.y(), instance.base_center.z()),
+                QVector3D(instance.base_center.x(),
+                          instance.base_center.y() - instance.radius_world,
+                          instance.base_center.z()),
+                QVector3D(instance.base_center.x(),
+                          instance.base_center.y() + instance.radius_world,
+                          instance.base_center.z()),
+                QVector3D(instance.base_center.x() - instance.radius_world,
+                          instance.base_center.y(), top_z),
+                QVector3D(instance.base_center.x() + instance.radius_world,
+                          instance.base_center.y(), top_z),
+                QVector3D(instance.base_center.x(),
+                          instance.base_center.y() - instance.radius_world, top_z),
+                QVector3D(instance.base_center.x(),
+                          instance.base_center.y() + instance.radius_world, top_z),
+                QVector3D(instance.base_center.x(), instance.base_center.y(), top_z),
+                QVector3D(instance.base_center.x(), instance.base_center.y(),
+                          instance.base_center.z())
+            };
+
+            QRectF projected_bounds;
+            bool have_projected_bounds = false;
+            for (const QVector3D &point : bounds_points)
+            {
+                const QPointF projected = this->camera.projectWorldToScreen(point);
+                if (!finiteScreenPoint(projected))
+                    continue;
+
+                if (!have_projected_bounds)
+                {
+                    projected_bounds = QRectF(projected, QSizeF(0.0, 0.0));
+                    have_projected_bounds = true;
+                }
+                else
+                {
+                    projected_bounds = projected_bounds.united(
+                        QRectF(projected, QSizeF(0.0, 0.0)));
+                }
+            }
 
             if (!have_projected_bounds)
-            {
-                projected_bounds = QRectF(projected, QSizeF(0.0, 0.0));
-                have_projected_bounds = true;
-            }
-            else
-            {
-                projected_bounds = projected_bounds.united(
-                    QRectF(projected, QSizeF(0.0, 0.0)));
-            }
+                continue;
+
+            projected_bounds.adjust(
+                -Rhi3dTankBoundsPaddingPx, -Rhi3dTankBoundsPaddingPx,
+                Rhi3dTankBoundsPaddingPx, Rhi3dTankBoundsPaddingPx);
+            if (!projected_bounds.contains(screen_position))
+                continue;
+
+            const QPointF projected_center = this->camera.projectWorldToScreen(center);
+            const double distance = finiteScreenPoint(projected_center)
+                ? QLineF(screen_position, projected_center).length()
+                : 0.0;
+            if (distance >= best_tank_distance)
+                continue;
+
+            best_tank_distance = distance;
+            best_tank_render_id = instance.render_id;
         }
-
-        if (!have_projected_bounds)
-            continue;
-
-        projected_bounds.adjust(-5.0, -5.0, 5.0, 5.0);
-        if (!projected_bounds.contains(screen_position))
-            continue;
-
-        const QPointF projected_center = this->camera.projectWorldToScreen(center);
-        const double distance = finiteScreenPoint(projected_center)
-            ? QLineF(screen_position, projected_center).length()
-            : 0.0;
-        if (distance >= best_tank_distance)
-            continue;
-
-        best_tank_distance = distance;
-        best_tank_render_id = instance.render_id;
     }
 
     if (best_tank_render_id != 0)
@@ -409,9 +433,81 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
         }
     }
 
+    // Pick visible icon billboards as icons, not merely by the much smaller
+    // underlying node/link center geometry. This matters especially for pumps
+    // and valves, whose icon can be substantially larger than the pipe itself.
+    const double icon_padding = three_d
+        ? Rhi3dIconHitPaddingPx : Rhi2dIconHitPaddingPx;
+    const double minimum_icon_radius = three_d
+        ? Rhi3dMinimumIconHitRadiusPx : Rhi2dMinimumIconHitRadiusPx;
+    const double icon_hit_radius = qMax(
+        minimum_icon_radius,
+        networkSymbologyMarkerSizeForZoom(
+            this->map_model->zoom(), this->applied_symbology.icon_size_percent) / 2.0
+            + icon_padding);
+    double best_icon_distance = icon_hit_radius;
+    quint32 best_icon_render_id = 0;
+    InfrastructureEntity best_icon_entity_type = InfrastructureEntity::Unknown;
+    const QVector<MapRhiScene::IconVertex> &icon_vertices = this->scene.iconVertices();
+    for (qsizetype vertex_index = 0; vertex_index + 5 < icon_vertices.size();
+         vertex_index += 6)
+    {
+        const MapRhiScene::IconVertex &icon = icon_vertices.at(vertex_index);
+        const QPointF projected = this->camera.projectWorldToScreen(
+            QVector3D(icon.center_x, icon.center_y, icon.center_z));
+        if (!finiteScreenPoint(projected))
+            continue;
+
+        const double distance = QLineF(screen_position, projected).length();
+        if (distance > best_icon_distance)
+            continue;
+
+        best_icon_distance = distance;
+        best_icon_render_id = icon.render_id;
+        best_icon_entity_type = icon.entity_type;
+    }
+
+    if (best_icon_render_id != 0)
+    {
+        for (const NetworkRenderNode &node : snapshot.nodes)
+        {
+            if (node.render_id != best_icon_render_id
+                || node.entity_type != best_icon_entity_type
+                || this->scene.isEntityHidden(node.uuid))
+            {
+                continue;
+            }
+
+            MapRhiHit icon_hit;
+            icon_hit.render_id = node.render_id;
+            icon_hit.entity_type = node.entity_type;
+            icon_hit.uuid = node.uuid;
+            return icon_hit;
+        }
+        for (const NetworkRenderLink &link : snapshot.links)
+        {
+            if (link.render_id != best_icon_render_id
+                || link.entity_type != best_icon_entity_type
+                || this->scene.isEntityHidden(link.uuid))
+            {
+                continue;
+            }
+
+            MapRhiHit icon_hit;
+            icon_hit.render_id = link.render_id;
+            icon_hit.entity_type = link.entity_type;
+            icon_hit.uuid = link.uuid;
+            return icon_hit;
+        }
+    }
+
+    const double node_padding = three_d
+        ? Rhi3dNodeHitPaddingPx : Rhi2dNodeHitPaddingPx;
+    const double minimum_node_radius = three_d
+        ? Rhi3dMinimumNodeHitRadiusPx : Rhi2dMinimumNodeHitRadiusPx;
     const double node_hit_radius = qMax(
-        8.0, networkSymbologyMarkerSizeForZoom(
-            this->map_model->zoom(), this->scene.nodeSizePercent()) / 2.0 + 4.0);
+        minimum_node_radius, networkSymbologyMarkerSizeForZoom(
+            this->map_model->zoom(), this->scene.nodeSizePercent()) / 2.0 + node_padding);
     double best_node_distance = node_hit_radius;
     MapRhiHit best_node_hit;
     for (const NetworkRenderNode &node : snapshot.nodes)
@@ -437,7 +533,12 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
     if (best_node_hit.isValid())
         return best_node_hit;
 
-    const double link_hit_radius = qMax(7.0, this->scene.linkThicknessPx() / 2.0 + 5.0);
+    const double link_padding = three_d
+        ? Rhi3dLinkHitPaddingPx : Rhi2dLinkHitPaddingPx;
+    const double minimum_link_radius = three_d
+        ? Rhi3dMinimumLinkHitRadiusPx : Rhi2dMinimumLinkHitRadiusPx;
+    const double link_hit_radius = qMax(
+        minimum_link_radius, this->scene.linkThicknessPx() / 2.0 + link_padding);
     double best_link_distance = link_hit_radius;
     MapRhiHit best_link_hit;
     for (const NetworkRenderLink &link : snapshot.links)

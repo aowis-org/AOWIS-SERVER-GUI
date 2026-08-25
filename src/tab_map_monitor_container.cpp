@@ -841,8 +841,7 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
                 }
 #else
 #if AOWIS_HAS_QRHI
-                if (this->map_model->viewMode() == MapViewMode::ThreeD
-                    && this->desktop_rhi_surface != nullptr
+                if (this->desktop_rhi_surface != nullptr
                     && this->desktop_rhi_surface->isVisible())
                 {
                     const MapRhiHit hit = this->desktop_rhi_surface->hitTest(
