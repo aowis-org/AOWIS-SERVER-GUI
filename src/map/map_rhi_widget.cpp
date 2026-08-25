@@ -662,6 +662,10 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
         || this->applied_symbology.link_thickness_px != symbology.link_thickness_px
         || this->applied_symbology.node_colors != symbology.node_colors
         || this->applied_symbology.link_colors != symbology.link_colors;
+    const bool junction_changed =
+        !this->symbology_initialized
+        || this->applied_symbology.node_size_percent != symbology.node_size_percent
+        || this->applied_symbology.node_colors != symbology.node_colors;
     const bool icon_changed =
         !this->symbology_initialized
         || this->applied_symbology.icon_size_percent != symbology.icon_size_percent
@@ -689,8 +693,9 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
     {
         this->geometry_upload_pending = true;
         this->highlight_upload_pending = true;
-        this->junction_instance_upload_pending = true;
     }
+    if (junction_changed)
+        this->junction_instance_upload_pending = true;
     if (flow_direction_changed)
         this->flow_direction_upload_pending = true;
     if (icon_changed)

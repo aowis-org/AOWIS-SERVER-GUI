@@ -46,9 +46,12 @@ void appendTriangle(
     const QVector2D &uv_b,
     const QVector2D &uv_c)
 {
+    // The 3D map projection contains a horizontal reflection so geographic east
+    // stays screen-right. Reverse the model-space triangle winding here to keep
+    // the tank exterior front-facing with the RHI back-face culling pipeline.
     vertices->append(makeVertex(a, normal, uv_a));
-    vertices->append(makeVertex(b, normal, uv_b));
     vertices->append(makeVertex(c, normal, uv_c));
+    vertices->append(makeVertex(b, normal, uv_b));
 }
 
 void appendQuad(
@@ -97,11 +100,11 @@ void appendCylinderSide(
         const QVector3D normal1 = QVector3D(std::cos(angle1), std::sin(angle1), 0.0f).normalized();
 
         vertices->append(makeVertex(p00, normal0, QVector2D(u0 + (u1 - u0) * t0, v1)));
+        vertices->append(makeVertex(p11, normal1, QVector2D(u0 + (u1 - u0) * t1, v0)));
         vertices->append(makeVertex(p01, normal1, QVector2D(u0 + (u1 - u0) * t1, v1)));
-        vertices->append(makeVertex(p11, normal1, QVector2D(u0 + (u1 - u0) * t1, v0)));
         vertices->append(makeVertex(p00, normal0, QVector2D(u0 + (u1 - u0) * t0, v1)));
-        vertices->append(makeVertex(p11, normal1, QVector2D(u0 + (u1 - u0) * t1, v0)));
         vertices->append(makeVertex(p10, normal0, QVector2D(u0 + (u1 - u0) * t0, v0)));
+        vertices->append(makeVertex(p11, normal1, QVector2D(u0 + (u1 - u0) * t1, v0)));
     }
 }
 
@@ -230,11 +233,11 @@ void appendDome(
                 roof_center_v + std::sin(phi0) * radial1 * roof_radius_v);
 
             vertices->append(makeVertex(p00, n00, uv00));
+            vertices->append(makeVertex(p11, n11, uv11));
             vertices->append(makeVertex(p01, n01, uv01));
-            vertices->append(makeVertex(p11, n11, uv11));
             vertices->append(makeVertex(p00, n00, uv00));
-            vertices->append(makeVertex(p11, n11, uv11));
             vertices->append(makeVertex(p10, n10, uv10));
+            vertices->append(makeVertex(p11, n11, uv11));
         }
     }
 }

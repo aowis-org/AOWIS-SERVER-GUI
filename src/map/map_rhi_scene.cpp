@@ -268,8 +268,7 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
         || link_colors_changed;
     const bool junction_changed =
         this->symbology.node_size_percent != symbology.node_size_percent
-        || node_colors_changed
-        || link_thickness_changed;
+        || node_colors_changed;
 
     this->symbology = symbology;
 
@@ -821,11 +820,8 @@ void MapRhiScene::rebuildJunctionInstances()
     if (!std::isfinite(scale) || scale <= 0.0)
         return;
 
-    const qreal node_diameter_px = networkSymbologyJunctionDotDiameterForZoom(
+    const qreal sphere_diameter_px = networkSymbologyJunctionDotDiameterForZoom(
         this->view_zoom, this->symbology.node_size_percent);
-    const qreal pipe_diameter_px = qMax<qreal>(1.0, this->symbology.link_thickness_px);
-    const qreal sphere_diameter_px = qMax(
-        node_diameter_px, pipe_diameter_px * 1.35);
     const float radius_world = float(sphere_diameter_px / (2.0 * scale));
 
     this->junction_instances.reserve(this->junction_markers.size());
