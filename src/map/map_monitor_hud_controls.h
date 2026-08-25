@@ -29,6 +29,20 @@ public:
     explicit MapMonitorCompassHudWidget(MapModel *map_model, QWidget *parent = nullptr);
 };
 
+class MapMonitorCameraHeightHudWidget final : public QFrame
+{
+    Q_OBJECT
+
+public:
+    explicit MapMonitorCameraHeightHudWidget(MapModel *map_model, QWidget *parent = nullptr);
+
+private:
+    MapModel *map_model = nullptr;
+    QSlider *height_slider = nullptr;
+    QLabel *height_maximum_label = nullptr;
+    QLabel *height_value_label = nullptr;
+};
+
 class MapMonitorTiltHudWidget final : public QFrame
 {
     Q_OBJECT

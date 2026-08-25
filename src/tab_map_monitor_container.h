@@ -42,6 +42,7 @@ class MapRhiWidget;
 class MapRhiHudWidget;
 class MapMonitorViewModeHudWidget;
 class MapMonitorCompassHudWidget;
+class MapMonitorCameraHeightHudWidget;
 class MapMonitorTiltHudWidget;
 
 #ifdef Q_OS_WASM
@@ -127,6 +128,7 @@ private:
     MapRhiHudWidget *desktop_rhi_hud = nullptr;
     MapMonitorViewModeHudWidget *desktop_view_mode_hud = nullptr;
     MapMonitorCompassHudWidget *desktop_compass_hud = nullptr;
+    MapMonitorCameraHeightHudWidget *desktop_camera_height_hud = nullptr;
     MapMonitorTiltHudWidget *desktop_tilt_hud = nullptr;
 #endif
     MapMonitorMenuWidget *map_menu = nullptr;

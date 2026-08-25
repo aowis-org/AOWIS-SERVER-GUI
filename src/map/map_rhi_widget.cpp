@@ -1,6 +1,7 @@
 #include "map_rhi_widget.h"
 
 #include "map_terrain_repository.h"
+#include "map_terrain_tile.h"
 
 #include "map_model.h"
 #include "map_render_cache_math.h"
@@ -16,6 +17,7 @@
 #include <QMatrix4x4>
 #include <QPalette>
 #include <QResizeEvent>
+#include <QScopedValueRollback>
 #include <QRectF>
 #include <rhi/qshader.h>
 
@@ -30,6 +32,100 @@ namespace
 {
 constexpr int CameraUniformBytes = 32 * int(sizeof(float));
 constexpr int RendererMsaaSamples = 4;
+constexpr int CameraTerrainZoom = 14;
+constexpr double TerrainVerticalScale = 1.0;
+
+QString cameraTerrainDatasetId()
+{
+    return QStringLiteral("copernicus-glo30");
+}
+
+double terrainSample(const MapTerrainTile &terrain_tile, int row, int column)
+{
+    const int bounded_row = qBound(0, row, MapTerrainTileGridSize - 1);
+    const int bounded_column = qBound(0, column, MapTerrainTileGridSize - 1);
+    return double(terrain_tile.elevations_m.at(
+        bounded_row * MapTerrainTileGridSize + bounded_column));
+}
+
+double nearestFiniteTerrainElevation(
+    const MapTerrainTile &terrain_tile, int row, int column)
+{
+    const int bounded_row = qBound(0, row, MapTerrainTileGridSize - 1);
+    const int bounded_column = qBound(0, column, MapTerrainTileGridSize - 1);
+    const double direct = terrainSample(terrain_tile, bounded_row, bounded_column);
+    if (std::isfinite(direct))
+        return direct;
+
+    for (int ring = 1; ring < MapTerrainTileGridSize; ++ring)
+    {
+        const int row_minimum = qMax(0, bounded_row - ring);
+        const int row_maximum = qMin(MapTerrainTileGridSize - 1, bounded_row + ring);
+        const int column_minimum = qMax(0, bounded_column - ring);
+        const int column_maximum = qMin(MapTerrainTileGridSize - 1, bounded_column + ring);
+        for (int sample_column = column_minimum; sample_column <= column_maximum; ++sample_column)
+        {
+            const double top = terrainSample(terrain_tile, row_minimum, sample_column);
+            if (std::isfinite(top))
+                return top;
+            const double bottom = terrainSample(terrain_tile, row_maximum, sample_column);
+            if (std::isfinite(bottom))
+                return bottom;
+        }
+        for (int sample_row = row_minimum + 1; sample_row < row_maximum; ++sample_row)
+        {
+            const double left = terrainSample(terrain_tile, sample_row, column_minimum);
+            if (std::isfinite(left))
+                return left;
+            const double right = terrainSample(terrain_tile, sample_row, column_maximum);
+            if (std::isfinite(right))
+                return right;
+        }
+    }
+
+    return qQNaN();
+}
+
+double bilinearTerrainElevation(const MapTerrainTile &terrain_tile, double u, double v)
+{
+    if (terrain_tile.elevations_m.size() != MapTerrainTileSampleCount)
+        return qQNaN();
+
+    const double sample_x = qBound(0.0, u, 1.0) * MapTerrainTileCellCount;
+    const double sample_y = qBound(0.0, v, 1.0) * MapTerrainTileCellCount;
+    const int x0 = qBound(0, int(std::floor(sample_x)), MapTerrainTileGridSize - 1);
+    const int y0 = qBound(0, int(std::floor(sample_y)), MapTerrainTileGridSize - 1);
+    const int x1 = qMin(x0 + 1, MapTerrainTileGridSize - 1);
+    const int y1 = qMin(y0 + 1, MapTerrainTileGridSize - 1);
+    const double tx = sample_x - x0;
+    const double ty = sample_y - y0;
+    const double samples[4] = {
+        terrainSample(terrain_tile, y0, x0),
+        terrainSample(terrain_tile, y0, x1),
+        terrainSample(terrain_tile, y1, x0),
+        terrainSample(terrain_tile, y1, x1)
+    };
+    const double weights[4] = {
+        (1.0 - tx) * (1.0 - ty),
+        tx * (1.0 - ty),
+        (1.0 - tx) * ty,
+        tx * ty
+    };
+
+    double weighted_sum = 0.0;
+    double weight_sum = 0.0;
+    for (int index = 0; index < 4; ++index)
+    {
+        if (!std::isfinite(samples[index]))
+            continue;
+        weighted_sum += samples[index] * weights[index];
+        weight_sum += weights[index];
+    }
+    if (weight_sum > 0.0)
+        return weighted_sum / weight_sum;
+    return nearestFiniteTerrainElevation(
+        terrain_tile, int(std::lround(sample_y)), int(std::lround(sample_x)));
+}
 
 QRhiWidget::Api platformGraphicsApi()
 {
@@ -526,6 +622,7 @@ void MapRhiWidget::setTerrainRepository(MapTerrainRepository *terrain_repository
         {
             if (this->basemap_renderer)
                 this->basemap_renderer->invalidate();
+            syncViewState();
             update();
         });
         connect(this->terrain_repository, &MapTerrainRepository::signalTerrainTileRetryReady,
@@ -1827,6 +1924,8 @@ void MapRhiWidget::syncViewState()
     this->camera.setViewportSize(this->viewport_size);
     this->camera.setSceneOriginWorld(renderOriginWorld());
     this->camera.syncFromMapModel(*this->map_model);
+    syncTerrainAwareCameraHeight();
+    this->camera.syncFromMapModel(*this->map_model);
 
     const bool use_3d_models = this->map_model->viewMode() == MapViewMode::ThreeD;
     if (this->scene.setUse3dTankModels(use_3d_models))
@@ -1839,6 +1938,113 @@ void MapRhiWidget::syncViewState()
         this->geometry_upload_pending = true;
         this->junction_instance_upload_pending = true;
     }
+}
+
+void MapRhiWidget::syncTerrainAwareCameraHeight()
+{
+    if (this->map_model == nullptr || this->terrain_repository == nullptr
+        || this->map_model->viewMode() != MapViewMode::ThreeD
+        || this->terrain_camera_height_sync_active)
+    {
+        return;
+    }
+
+    QScopedValueRollback<bool> sync_guard(
+        this->terrain_camera_height_sync_active, true);
+
+    const QPointF camera_world = this->camera.cameraGroundWorldPixel();
+    if (!std::isfinite(camera_world.x()) || !std::isfinite(camera_world.y()))
+        return;
+
+    const CoordinateWGS84 camera_coordinate = GeoWebMercator::worldPixelToLonLat(
+        camera_world.x(), camera_world.y(), MapRenderCacheMath::ReferenceZoom);
+    if (!std::isfinite(camera_coordinate.longitude_deg)
+        || !std::isfinite(camera_coordinate.latitude_deg))
+    {
+        return;
+    }
+
+    double world_units_per_meter = 0.0;
+    if (this->scene.hasGeometry())
+    {
+        const double terrain_zero_z = double(
+            this->scene.terrainElevationToWorldZ(0.0));
+        const double terrain_one_meter_z = double(
+            this->scene.terrainElevationToWorldZ(1.0));
+        world_units_per_meter = terrain_one_meter_z - terrain_zero_z;
+    }
+    else
+    {
+        const double meters_per_world_pixel = GeoWebMercator::metersPerPixel(
+            camera_coordinate.latitude_deg, MapRenderCacheMath::ReferenceZoom);
+        if (std::isfinite(meters_per_world_pixel) && meters_per_world_pixel > 0.0)
+            world_units_per_meter = TerrainVerticalScale / meters_per_world_pixel;
+    }
+    if (!std::isfinite(world_units_per_meter) || world_units_per_meter <= 0.0)
+        return;
+
+    // The height slider is absolute AGL, but the original camera geometry remains
+    // the moving baseline. Zoom and tilt therefore retain their old behaviour:
+    // whenever that native eye height changes, MapModel moves the requested AGL
+    // by the same amount and preserves only the user's manual height difference.
+    const double native_height_m = qMax(
+        0.0, this->camera.nativeEyeHeightWorld() / world_units_per_meter);
+    this->map_model->syncView3dNativeCameraHeightM(native_height_m);
+
+    const double requested_height_m = qBound(
+        MapModel::MinView3dCameraHeightM,
+        this->map_model->view3dCameraHeightM(),
+        this->map_model->view3dMaximumCameraHeightM());
+    const double height_adjustment_world =
+        (requested_height_m - native_height_m) * world_units_per_meter;
+
+    const double terrain_tile_x = GeoWebMercator::lonToTileX(
+        camera_coordinate.longitude_deg, CameraTerrainZoom);
+    const double terrain_tile_y = GeoWebMercator::latToTileY(
+        camera_coordinate.latitude_deg, CameraTerrainZoom);
+    const int terrain_tile_count = 1 << CameraTerrainZoom;
+    const int tile_x_unwrapped = int(std::floor(terrain_tile_x));
+    const int tile_y = qBound(0, int(std::floor(terrain_tile_y)), terrain_tile_count - 1);
+    const int tile_x = GeoWebMercator::wrapTileX(tile_x_unwrapped, CameraTerrainZoom);
+    const QString dataset = cameraTerrainDatasetId();
+
+    const MapTerrainTile *terrain_tile = this->terrain_repository->tile(
+        dataset, CameraTerrainZoom, quint32(tile_x), quint32(tile_y));
+    if (terrain_tile == nullptr)
+    {
+        // The relief tile has not arrived yet. Apply the manual AGL correction
+        // relative to the flat fallback immediately, then add real terrain Z as
+        // soon as the requested DEM tile becomes available.
+        this->map_model->setView3dVerticalOffsetWorld(height_adjustment_world);
+        this->terrain_repository->requestTile(
+            dataset, CameraTerrainZoom, quint32(tile_x), quint32(tile_y));
+        return;
+    }
+
+    const double local_u = terrain_tile_x - std::floor(terrain_tile_x);
+    const double local_v = terrain_tile_y - std::floor(terrain_tile_y);
+    const double terrain_elevation_m = bilinearTerrainElevation(
+        *terrain_tile, local_u, local_v);
+    if (!std::isfinite(terrain_elevation_m))
+        return;
+
+    double terrain_world_z = 0.0;
+    if (this->scene.hasGeometry())
+    {
+        terrain_world_z = double(
+            this->scene.terrainElevationToWorldZ(terrain_elevation_m)) - 1.0;
+    }
+    else
+    {
+        terrain_world_z = terrain_elevation_m * world_units_per_meter;
+    }
+
+    // Exact camera AGL:
+    // eye Z = target/native offset + native eye height
+    //       = terrain Z + requested AGL.
+    // This makes 2 m mean truly 2 m above the sampled ground under the camera.
+    this->map_model->setView3dVerticalOffsetWorld(
+        terrain_world_z + height_adjustment_world);
 }
 
 QPointF MapRhiWidget::renderOriginWorld() const

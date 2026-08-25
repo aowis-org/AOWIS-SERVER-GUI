@@ -22,6 +22,8 @@ public:
 
     QMatrix4x4 viewProjectionMatrix(const QRhi &rhi) const;
     QPointF projectWorldToScreen(const QVector3D &world_position) const;
+    QPointF cameraGroundWorldPixel() const;
+    double nativeEyeHeightWorld() const;
 
 private:
     QPointF scene_origin_world;
@@ -31,6 +33,7 @@ private:
     MapViewMode view_mode = MapViewMode::TwoD;
     double view_3d_yaw_deg = 0.0;
     double view_3d_pitch_deg = 55.0;
+    double view_3d_vertical_offset_world = 0.0;
 };
 
 #endif // MAP_RHI_CAMERA_H

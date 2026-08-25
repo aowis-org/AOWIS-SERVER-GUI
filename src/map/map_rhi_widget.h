@@ -80,6 +80,7 @@ private:
     void rebuildTankModelGeometry();
     void resetGpuResources();
     void syncViewState();
+    void syncTerrainAwareCameraHeight();
     QPointF renderOriginWorld() const;
     float heatmapRadiusPixels() const;
     void reportFailure(const QString &reason);
@@ -153,6 +154,7 @@ private:
     bool symbology_initialized = false;
     bool ready_reported = false;
     bool failure_reported = false;
+    bool terrain_camera_height_sync_active = false;
 };
 
 #endif // MAP_RHI_WIDGET_H

@@ -1,5 +1,7 @@
 #include "map_model.h"
 
+#include "map_render_cache_math.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -27,7 +29,8 @@ double normalizedYawDegrees(double yaw_deg)
     return normalized;
 }
 
-View3dCameraBasis view3dCameraBasis(double yaw_deg, double pitch_deg, const QSize &viewport)
+View3dCameraBasis view3dCameraBasis(double yaw_deg, double pitch_deg,
+                                    double vertical_offset_pixels, const QSize &viewport)
 {
     const double safe_height = qMax(1, viewport.height());
     const double half_height = safe_height / 2.0;
@@ -38,12 +41,14 @@ View3dCameraBasis view3dCameraBasis(double yaw_deg, double pitch_deg, const QSiz
     const double yaw_rad = qDegreesToRadians(normalizedYawDegrees(yaw_deg));
     const double horizontal_distance = distance * std::cos(pitch_rad);
 
+    const QVector3D target(0.0f, 0.0f, float(vertical_offset_pixels));
+
     View3dCameraBasis basis;
     basis.eye = QVector3D(
         float(std::sin(yaw_rad) * horizontal_distance),
         float(std::cos(yaw_rad) * horizontal_distance),
-        float(distance * std::sin(pitch_rad)));
-    basis.forward = (-basis.eye).normalized();
+        float(vertical_offset_pixels + distance * std::sin(pitch_rad)));
+    basis.forward = (target - basis.eye).normalized();
     // Web Mercator X grows eastward, so north-up yaw 0 has +X on screen-right.
     basis.right = QVector3D(
         float(std::cos(yaw_rad)), float(-std::sin(yaw_rad)), 0.0f);
@@ -95,6 +100,26 @@ double MapModel::view3dYawDeg() const
 double MapModel::view3dPitchDeg() const
 {
     return this->m_view_3d_pitch_deg;
+}
+
+double MapModel::view3dCameraHeightM() const
+{
+    return this->m_view_3d_camera_height_m;
+}
+
+double MapModel::view3dNativeCameraHeightM() const
+{
+    return qMax(MinView3dCameraHeightM, this->m_view_3d_native_camera_height_m);
+}
+
+double MapModel::view3dMaximumCameraHeightM() const
+{
+    return view3dNativeCameraHeightM() + MaxView3dCameraHeightAboveDefaultM;
+}
+
+double MapModel::view3dVerticalOffsetWorld() const
+{
+    return this->m_view_3d_vertical_offset_world;
 }
 
 int MapModel::tileCount() const
@@ -350,6 +375,61 @@ void MapModel::setView3dPitchDeg(double pitch_deg)
     emit view3dCameraChanged();
 }
 
+void MapModel::setView3dCameraHeightM(double height_m)
+{
+    if (!std::isfinite(height_m))
+        return;
+
+    const double next_height = qBound(
+        MinView3dCameraHeightM, height_m, view3dMaximumCameraHeightM());
+    if (coordinatesEqual(next_height, this->m_view_3d_camera_height_m))
+        return;
+
+    this->m_view_3d_camera_height_m = next_height;
+    emit view3dCameraChanged();
+}
+
+void MapModel::syncView3dNativeCameraHeightM(double height_m)
+{
+    if (!std::isfinite(height_m))
+        return;
+
+    const double next_native_height = qMax(0.0, height_m);
+    if (!this->m_view_3d_native_camera_height_initialized)
+    {
+        this->m_view_3d_native_camera_height_initialized = true;
+        this->m_view_3d_native_camera_height_m = next_native_height;
+        this->m_view_3d_camera_height_m = qMax(
+            MinView3dCameraHeightM, next_native_height);
+        emit view3dCameraChanged();
+        return;
+    }
+
+    if (coordinatesEqual(next_native_height, this->m_view_3d_native_camera_height_m))
+        return;
+
+    const double native_delta_m =
+        next_native_height - this->m_view_3d_native_camera_height_m;
+    this->m_view_3d_native_camera_height_m = next_native_height;
+    this->m_view_3d_camera_height_m = qBound(
+        MinView3dCameraHeightM,
+        this->m_view_3d_camera_height_m + native_delta_m,
+        view3dMaximumCameraHeightM());
+    emit view3dCameraChanged();
+}
+
+void MapModel::setView3dVerticalOffsetWorld(double offset_world)
+{
+    if (!std::isfinite(offset_world)
+        || coordinatesEqual(offset_world, this->m_view_3d_vertical_offset_world))
+    {
+        return;
+    }
+
+    this->m_view_3d_vertical_offset_world = offset_world;
+    emit view3dCameraChanged();
+}
+
 void MapModel::orbitView3d(double yaw_delta_deg, double pitch_delta_deg)
 {
     const double next_yaw = normalizedYawDegrees(this->m_view_3d_yaw_deg + yaw_delta_deg);
@@ -474,8 +554,11 @@ QPointF MapModel::groundOffsetFromScreen3d(
     if (!viewport.isValid())
         return QPointF(qQNaN(), qQNaN());
 
+    const double vertical_offset_pixels = this->m_view_3d_vertical_offset_world
+        * GeoWebMercator::zoomScale(this->m_zoom, MapRenderCacheMath::ReferenceZoom);
     const View3dCameraBasis basis = view3dCameraBasis(
-        this->m_view_3d_yaw_deg, this->m_view_3d_pitch_deg, viewport);
+        this->m_view_3d_yaw_deg, this->m_view_3d_pitch_deg,
+        vertical_offset_pixels, viewport);
     const double width = qMax(1, viewport.width());
     const double height = qMax(1, viewport.height());
     const double aspect = width / height;
@@ -504,8 +587,11 @@ QPointF MapModel::screenFromTileOffset3d(
     if (!viewport.isValid())
         return QPointF(qQNaN(), qQNaN());
 
+    const double vertical_offset_pixels = this->m_view_3d_vertical_offset_world
+        * GeoWebMercator::zoomScale(this->m_zoom, MapRenderCacheMath::ReferenceZoom);
     const View3dCameraBasis basis = view3dCameraBasis(
-        this->m_view_3d_yaw_deg, this->m_view_3d_pitch_deg, viewport);
+        this->m_view_3d_yaw_deg, this->m_view_3d_pitch_deg,
+        vertical_offset_pixels, viewport);
     const QVector3D point(
         float(offset_pixels.x()), float(offset_pixels.y()), 0.0f);
     const QVector3D relative = point - basis.eye;

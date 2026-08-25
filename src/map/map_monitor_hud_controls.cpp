@@ -22,6 +22,7 @@
 #include <QtMath>
 
 #include <cmath>
+#include <functional>
 
 namespace
 {
@@ -29,7 +30,38 @@ constexpr int HudMarginPx = 6;
 constexpr int CompassDiameterPx = 82;
 constexpr double CompassWheelStepDeg = 5.0;
 constexpr int NorthAnimationDurationMs = 280;
+constexpr int SliderResetAnimationDurationMs = 240;
 constexpr int CompassDragThresholdPx = 4;
+constexpr int CameraHeightSliderSteps = 1000;
+constexpr int CameraControlSliderHeightPx = 82;
+
+int cameraHeightSliderValue(double height_m, double maximum_height_m)
+{
+    const double bounded_maximum = qMax(
+        MapModel::MinView3dCameraHeightM, maximum_height_m);
+    const double bounded_height = qBound(
+        MapModel::MinView3dCameraHeightM, height_m, bounded_maximum);
+    const double range = bounded_maximum - MapModel::MinView3dCameraHeightM;
+    if (range <= 0.0)
+        return 0;
+    return qRound((bounded_height - MapModel::MinView3dCameraHeightM)
+        / range * CameraHeightSliderSteps);
+}
+
+double cameraHeightMeters(int slider_value, double maximum_height_m)
+{
+    const double bounded_maximum = qMax(
+        MapModel::MinView3dCameraHeightM, maximum_height_m);
+    const double ratio = qBound(0, slider_value, CameraHeightSliderSteps)
+        / double(CameraHeightSliderSteps);
+    return MapModel::MinView3dCameraHeightM
+        + ratio * (bounded_maximum - MapModel::MinView3dCameraHeightM);
+}
+
+QString cameraHeightText(double height_m)
+{
+    return QStringLiteral("%1 m AGL").arg(qRound(height_m));
+}
 
 void configureHudFrame(QFrame *frame)
 {
@@ -44,6 +76,37 @@ void configureHudFrame(QFrame *frame)
     hud_palette.setColor(QPalette::Window, background);
     frame->setPalette(hud_palette);
 }
+
+class ResettableVerticalSlider final : public QSlider
+{
+public:
+    explicit ResettableVerticalSlider(QWidget *parent = nullptr)
+        : QSlider(Qt::Vertical, parent)
+    {
+    }
+
+    void setResetCallback(const std::function<void()> &callback)
+    {
+        this->reset_callback = callback;
+    }
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        if (event->button() == Qt::RightButton)
+        {
+            if (this->reset_callback)
+                this->reset_callback();
+            event->accept();
+            return;
+        }
+
+        QSlider::mousePressEvent(event);
+    }
+
+private:
+    std::function<void()> reset_callback;
+};
 
 class MapCompassWidget final : public QWidget
 {
@@ -348,10 +411,96 @@ MapMonitorCompassHudWidget::MapMonitorCompassHudWidget(
     layout->addWidget(new MapCompassWidget(map_model, this));
 }
 
+MapMonitorCameraHeightHudWidget::MapMonitorCameraHeightHudWidget(
+    MapModel *map_model, QWidget *parent)
+    : QFrame(parent),
+      map_model(map_model),
+      height_slider(new ResettableVerticalSlider(this)),
+      height_maximum_label(new QLabel(this)),
+      height_value_label(new QLabel(this))
+{
+    Q_ASSERT(this->map_model != nullptr);
+    configureHudFrame(this);
+
+    QVBoxLayout *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(4, 5, 4, 5);
+    layout->setSpacing(1);
+
+    this->height_maximum_label->setAlignment(Qt::AlignHCenter);
+    QLabel *minimum_label = new QLabel(QStringLiteral("2 m"), this);
+    minimum_label->setAlignment(Qt::AlignHCenter);
+    this->height_value_label->setAlignment(Qt::AlignHCenter);
+
+    const double initial_maximum_height_m =
+        this->map_model->view3dMaximumCameraHeightM();
+    this->height_maximum_label->setText(
+        QStringLiteral("%1 m").arg(qRound(initial_maximum_height_m)));
+    this->height_slider->setRange(0, CameraHeightSliderSteps);
+    this->height_slider->setValue(cameraHeightSliderValue(
+        this->map_model->view3dCameraHeightM(), initial_maximum_height_m));
+    this->height_slider->setFixedHeight(CameraControlSliderHeightPx);
+    this->height_slider->setToolTip(QStringLiteral(
+        "Camera height above ground\n"
+        "Minimum: 2 m AGL\n"
+        "Maximum: native camera height + 500 m\n"
+        "Right-click: animate back to the native camera height\n"
+        "Zoom and tilt dynamically move that native height as before"));
+    this->height_value_label->setText(cameraHeightText(
+        this->map_model->view3dCameraHeightM()));
+
+    layout->addWidget(this->height_maximum_label);
+    layout->addWidget(this->height_slider, 1, Qt::AlignHCenter);
+    layout->addWidget(minimum_label);
+    layout->addWidget(this->height_value_label);
+
+    QVariantAnimation *height_reset_animation = new QVariantAnimation(this);
+    height_reset_animation->setDuration(SliderResetAnimationDurationMs);
+    height_reset_animation->setEasingCurve(QEasingCurve::InOutCubic);
+    connect(height_reset_animation, &QVariantAnimation::valueChanged, this,
+            [this](const QVariant &value)
+    {
+        this->map_model->setView3dCameraHeightM(value.toDouble());
+    });
+    ResettableVerticalSlider *resettable_height_slider =
+        static_cast<ResettableVerticalSlider *>(this->height_slider);
+    resettable_height_slider->setResetCallback([this, height_reset_animation]
+    {
+        height_reset_animation->stop();
+        height_reset_animation->setStartValue(this->map_model->view3dCameraHeightM());
+        height_reset_animation->setEndValue(
+            this->map_model->view3dNativeCameraHeightM());
+        height_reset_animation->start();
+    });
+    connect(this->height_slider, &QSlider::sliderPressed, height_reset_animation,
+            &QVariantAnimation::stop);
+
+    connect(this->height_slider, &QSlider::valueChanged, this, [this](int slider_value)
+    {
+        this->map_model->setView3dCameraHeightM(cameraHeightMeters(
+            slider_value, this->map_model->view3dMaximumCameraHeightM()));
+    });
+    connect(this->map_model, &MapModel::view3dCameraChanged, this, [this]
+    {
+        const double height_m = this->map_model->view3dCameraHeightM();
+        const double maximum_height_m =
+            this->map_model->view3dMaximumCameraHeightM();
+        const int slider_value = cameraHeightSliderValue(
+            height_m, maximum_height_m);
+        if (this->height_slider->value() != slider_value)
+        {
+            const QSignalBlocker blocker(this->height_slider);
+            this->height_slider->setValue(slider_value);
+        }
+        this->height_maximum_label->setText(
+            QStringLiteral("%1 m").arg(qRound(maximum_height_m)));
+        this->height_value_label->setText(cameraHeightText(height_m));
+    });
+}
+
 MapMonitorTiltHudWidget::MapMonitorTiltHudWidget(MapModel *map_model, QWidget *parent)
     : QFrame(parent),
       map_model(map_model),
-      tilt_slider(new QSlider(Qt::Vertical, this)),
+      tilt_slider(new ResettableVerticalSlider(this)),
       tilt_value_label(new QLabel(this))
 {
     Q_ASSERT(this->map_model != nullptr);
@@ -370,9 +519,10 @@ MapMonitorTiltHudWidget::MapMonitorTiltHudWidget(MapModel *map_model, QWidget *p
     this->tilt_slider->setRange(
         qRound(MapModel::MinView3dPitchDeg), qRound(MapModel::MaxView3dPitchDeg));
     this->tilt_slider->setValue(qRound(this->map_model->view3dPitchDeg()));
-    this->tilt_slider->setFixedHeight(82);
+    this->tilt_slider->setFixedHeight(CameraControlSliderHeightPx);
     this->tilt_slider->setToolTip(QStringLiteral(
-        "Camera tilt\n0° = horizon\n90° = straight down"));
+        "Camera tilt\n0° = horizon\n90° = straight down\n"
+        "Right-click: animate back to the default tilt"));
     this->tilt_value_label->setText(
         QStringLiteral("%1°").arg(qRound(this->map_model->view3dPitchDeg())));
 
@@ -380,6 +530,26 @@ MapMonitorTiltHudWidget::MapMonitorTiltHudWidget(MapModel *map_model, QWidget *p
     layout->addWidget(this->tilt_slider, 1, Qt::AlignHCenter);
     layout->addWidget(minimum_label);
     layout->addWidget(this->tilt_value_label);
+
+    QVariantAnimation *tilt_reset_animation = new QVariantAnimation(this);
+    tilt_reset_animation->setDuration(SliderResetAnimationDurationMs);
+    tilt_reset_animation->setEasingCurve(QEasingCurve::InOutCubic);
+    connect(tilt_reset_animation, &QVariantAnimation::valueChanged, this,
+            [this](const QVariant &value)
+    {
+        this->map_model->setView3dPitchDeg(value.toDouble());
+    });
+    ResettableVerticalSlider *resettable_tilt_slider =
+        static_cast<ResettableVerticalSlider *>(this->tilt_slider);
+    resettable_tilt_slider->setResetCallback([this, tilt_reset_animation]
+    {
+        tilt_reset_animation->stop();
+        tilt_reset_animation->setStartValue(this->map_model->view3dPitchDeg());
+        tilt_reset_animation->setEndValue(MapModel::DefaultView3dPitchDeg);
+        tilt_reset_animation->start();
+    });
+    connect(this->tilt_slider, &QSlider::sliderPressed, tilt_reset_animation,
+            &QVariantAnimation::stop);
 
     connect(this->tilt_slider, &QSlider::valueChanged, this, [this](int pitch_deg)
     {

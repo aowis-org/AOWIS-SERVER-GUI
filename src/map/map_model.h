@@ -24,6 +24,8 @@ public:
     static constexpr double MinView3dPitchDeg = 0.0;
     static constexpr double MaxView3dPitchDeg = 90.0;
     static constexpr double DefaultView3dPitchDeg = 55.0;
+    static constexpr double MinView3dCameraHeightM = 2.0;
+    static constexpr double MaxView3dCameraHeightAboveDefaultM = 500.0;
 
     int zoom() const;
     double centerLon() const;
@@ -33,6 +35,10 @@ public:
     MapViewMode viewMode() const;
     double view3dYawDeg() const;
     double view3dPitchDeg() const;
+    double view3dCameraHeightM() const;
+    double view3dNativeCameraHeightM() const;
+    double view3dMaximumCameraHeightM() const;
+    double view3dVerticalOffsetWorld() const;
     QString tileCacheKey(int x, int y) const;
     QString tileCachePrefix(int zoom) const;
     QString tileEndpoint(int x, int y) const;
@@ -63,6 +69,9 @@ public:
     void setViewMode(MapViewMode view_mode);
     void setView3dYawDeg(double yaw_deg);
     void setView3dPitchDeg(double pitch_deg);
+    void setView3dCameraHeightM(double height_m);
+    void syncView3dNativeCameraHeightM(double height_m);
+    void setView3dVerticalOffsetWorld(double offset_world);
     void orbitView3d(double yaw_delta_deg, double pitch_delta_deg);
     void resetView3dCamera();
 
@@ -94,6 +103,10 @@ private:
     MapViewMode m_view_mode = MapViewMode::TwoD;
     double m_view_3d_yaw_deg = 0.0;
     double m_view_3d_pitch_deg = DefaultView3dPitchDeg;
+    double m_view_3d_camera_height_m = MinView3dCameraHeightM;
+    double m_view_3d_native_camera_height_m = MinView3dCameraHeightM;
+    double m_view_3d_vertical_offset_world = 0.0;
+    bool m_view_3d_native_camera_height_initialized = false;
 };
 
 #endif // MAP_MODEL_H
