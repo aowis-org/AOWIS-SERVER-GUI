@@ -106,6 +106,8 @@ private:
     QPointF edgePanDirection() const;
     void panMapByPixels(const QPoint &delta, bool angle_independent_3d = false);
     void panByStep(const QPoint &delta);
+    void beginView3dOrbit(const QMouseEvent *event);
+    void endView3dOrbit(bool restore_cursor_position = true);
 
     void updatePointerCoordinates(const QPoint &position);
     void scheduleTileUpdate(const QString &);
@@ -122,6 +124,11 @@ private:
     QPoint mouse_pan_last_position;
     bool view_3d_orbit_active = false;
     QPoint view_3d_orbit_last_position;
+#ifndef Q_OS_WASM
+    QPoint view_3d_orbit_anchor_global;
+    QPoint view_3d_orbit_restore_global;
+    bool view_3d_orbit_mouse_grabbed = false;
+#endif
     QPointF mouse_pan_velocity;
     QElapsedTimer mouse_pan_move_elapsed_timer;
     bool mouse_pan_inertia_active = false;

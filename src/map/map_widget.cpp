@@ -206,6 +206,9 @@ MapWidget::MapWidget(MapModel *model, MapTileRepository *tile_repository, GpsPro
 
 MapWidget::~MapWidget()
 {
+#ifndef Q_OS_WASM
+    endView3dOrbit(false);
+#endif
 #ifdef Q_OS_WASM
     if (this->browser_map_layer_enabled)
         aowisBrowserMapRelease(this->browser_map_layer_owner_id);
@@ -284,6 +287,12 @@ void MapWidget::init()
         }
 #endif
         update();
+    });
+
+    connect(this->m_model, &MapModel::viewModeChanged, this, [this](MapViewMode view_mode)
+    {
+        if (view_mode != MapViewMode::ThreeD && this->view_3d_orbit_active)
+            endView3dOrbit();
     });
 
     this->tile_update_timer = new QTimer(this);
@@ -936,11 +945,15 @@ void MapWidget::keyReleaseEvent(QKeyEvent *event)
 void MapWidget::focusOutEvent(QFocusEvent *event)
 {
     this->clearKeyboardPanInput();
+    if (this->view_3d_orbit_active)
+        endView3dOrbit();
     QWidget::focusOutEvent(event);
 }
 
 void MapWidget::hideEvent(QHideEvent *event)
 {
+    if (this->view_3d_orbit_active)
+        endView3dOrbit(false);
     this->stopAllPanMovement();
     this->edge_pan_poll_timer->stop();
     QWidget::hideEvent(event);
@@ -1060,6 +1073,46 @@ void MapWidget::handleWheelEvent(QWheelEvent *event)
     event->accept();
 }
 
+void MapWidget::beginView3dOrbit(const QMouseEvent *event)
+{
+    if (event == nullptr || this->view_3d_orbit_active)
+        return;
+
+    this->view_3d_orbit_active = true;
+#ifdef Q_OS_WASM
+    this->view_3d_orbit_last_position = event->position().toPoint();
+#else
+    this->view_3d_orbit_restore_global = event->globalPosition().toPoint();
+    this->view_3d_orbit_anchor_global = mapToGlobal(rect().center());
+    grabMouse(QCursor(Qt::BlankCursor));
+    this->view_3d_orbit_mouse_grabbed = true;
+    QCursor::setPos(this->view_3d_orbit_anchor_global);
+#endif
+}
+
+void MapWidget::endView3dOrbit(bool restore_cursor_position)
+{
+    if (!this->view_3d_orbit_active
+#ifndef Q_OS_WASM
+        && !this->view_3d_orbit_mouse_grabbed
+#endif
+    )
+    {
+        return;
+    }
+
+    this->view_3d_orbit_active = false;
+#ifndef Q_OS_WASM
+    if (this->view_3d_orbit_mouse_grabbed)
+    {
+        releaseMouse();
+        this->view_3d_orbit_mouse_grabbed = false;
+    }
+    if (restore_cursor_position)
+        QCursor::setPos(this->view_3d_orbit_restore_global);
+#endif
+}
+
 void MapWidget::mousePressEvent(QMouseEvent *event)
 {
     if (this->handleMousePressEvent(event))
@@ -1076,8 +1129,7 @@ bool MapWidget::handleMousePressEvent(QMouseEvent *event)
     if (this->m_model->viewMode() == MapViewMode::ThreeD
         && event->button() == Qt::MiddleButton)
     {
-        this->view_3d_orbit_active = true;
-        this->view_3d_orbit_last_position = event->position().toPoint();
+        beginView3dOrbit(event);
         this->pan_velocity = QPointF();
         this->mouse_pan_inertia_active = false;
         stopPanAnimationIfIdle();
@@ -1117,7 +1169,7 @@ bool MapWidget::handleMouseReleaseEvent(QMouseEvent *event)
 
     if (event->button() == Qt::MiddleButton && this->view_3d_orbit_active)
     {
-        this->view_3d_orbit_active = false;
+        endView3dOrbit();
         event->accept();
         return true;
     }
@@ -1188,10 +1240,20 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
     {
         if (!(event->buttons() & Qt::MiddleButton))
         {
-            this->view_3d_orbit_active = false;
+            endView3dOrbit();
             return false;
         }
 
+#ifndef Q_OS_WASM
+        const QPoint global_position = event->globalPosition().toPoint();
+        const QPoint delta = global_position - this->view_3d_orbit_anchor_global;
+        if (!delta.isNull())
+        {
+            this->m_model->orbitView3d(
+                double(delta.x()) * 0.35, double(-delta.y()) * 0.25);
+            QCursor::setPos(this->view_3d_orbit_anchor_global);
+        }
+#else
         const QPoint delta = position - this->view_3d_orbit_last_position;
         this->view_3d_orbit_last_position = position;
         if (!delta.isNull())
@@ -1199,6 +1261,7 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
             this->m_model->orbitView3d(
                 double(delta.x()) * 0.35, double(-delta.y()) * 0.25);
         }
+#endif
         event->accept();
         return true;
     }
