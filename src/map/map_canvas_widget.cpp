@@ -28,6 +28,12 @@ MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map,
     {
         requestRenderUpdate();
     });
+    connect(this->map_model, &MapModel::view2dContinuousScaleChanged, this, [this](double)
+    {
+        if (this->editor_controller && this->last_pointer_position_valid)
+            this->editor_controller->mouseMove(this->last_pointer_position, size(), false);
+        requestRenderUpdate();
+    });
     connect(this->map_model, &MapModel::centerChangedWGS84, this, [this]
     {
         if (this->editor_controller && this->last_pointer_position_valid)

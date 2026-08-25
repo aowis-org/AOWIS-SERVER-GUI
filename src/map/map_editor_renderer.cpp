@@ -275,11 +275,12 @@ QPointF MapEditorRenderer::screenFromWgs84(const CoordinateWGS84 &coordinate,
     const double tile_y = GeoWebMercator::latToTileY(
         coordinate.latitude_deg, this->projection_zoom);
 
+    const double view_scale = qMax(1e-9, this->map_model->view2dContinuousScale());
     return QPointF(
         double(this->projection_viewport_size.width()) / 2.0 +
-            (tile_x - this->projection_center_tile.x()) * MapModel::TileSize,
+            (tile_x - this->projection_center_tile.x()) * MapModel::TileSize * view_scale,
         double(this->projection_viewport_size.height()) / 2.0 +
-            (tile_y - this->projection_center_tile.y()) * MapModel::TileSize);
+            (tile_y - this->projection_center_tile.y()) * MapModel::TileSize * view_scale);
 }
 
 QPointF MapEditorRenderer::screenFromReferenceWorld(const QPointF &world_position) const
@@ -329,8 +330,12 @@ qreal MapEditorRenderer::referenceScaleForCurrentZoom() const
 {
     if (!this->map_model)
         return 0.0;
-    return GeoWebMercator::zoomScale(
+    const qreal base_scale = GeoWebMercator::zoomScale(
         this->map_model->zoom(), MapRenderCacheMath::ReferenceZoom);
+    if (this->map_model->viewMode() != MapViewMode::TwoD)
+        return base_scale;
+
+    return base_scale * qMax<qreal>(1e-9, this->map_model->view2dContinuousScale());
 }
 
 const NetworkRenderNode *MapEditorRenderer::nodeByUuid(
@@ -1291,6 +1296,10 @@ void MapEditorRenderer::paintTileSelection(
     const int current_zoom = this->map_model->zoom();
     const int world_tile_count = 1 << current_zoom;
     const QPointF center_tile = this->map_model->centerTile();
+    const double view_scale = this->map_model->viewMode() == MapViewMode::TwoD
+        ? qMax(1e-9, this->map_model->view2dContinuousScale())
+        : 1.0;
+    const double rendered_tile_size = MapModel::TileSize * view_scale;
     double west_tile = viewport_state.tile_x_min;
     double east_tile = viewport_state.tile_x_max + 1.0;
     const double north_tile = viewport_state.tile_y_min;
@@ -1303,11 +1312,11 @@ void MapEditorRenderer::paintTileSelection(
     east_tile += wrap_shift;
 
     const QPointF top_left(
-        this->canvas->width() / 2.0 + (west_tile - center_tile.x()) * MapModel::TileSize,
-        this->canvas->height() / 2.0 + (north_tile - center_tile.y()) * MapModel::TileSize);
+        this->canvas->width() / 2.0 + (west_tile - center_tile.x()) * rendered_tile_size,
+        this->canvas->height() / 2.0 + (north_tile - center_tile.y()) * rendered_tile_size);
     const QPointF bottom_right(
-        this->canvas->width() / 2.0 + (east_tile - center_tile.x()) * MapModel::TileSize,
-        this->canvas->height() / 2.0 + (south_tile - center_tile.y()) * MapModel::TileSize);
+        this->canvas->width() / 2.0 + (east_tile - center_tile.x()) * rendered_tile_size,
+        this->canvas->height() / 2.0 + (south_tile - center_tile.y()) * rendered_tile_size);
     const QRectF overlay_rect = QRectF(top_left, bottom_right).normalized();
 
     if (overlay_rect.isEmpty() || !overlay_rect.intersects(this->canvas->rect()))
@@ -1346,9 +1355,9 @@ void MapEditorRenderer::paintTileSelection(
     painter.setPen(grid_pen);
 
     const double viewport_west_tile = center_tile.x() -
-        this->canvas->width() / 2.0 / MapModel::TileSize;
+        this->canvas->width() / 2.0 / rendered_tile_size;
     const double viewport_east_tile = center_tile.x() +
-        this->canvas->width() / 2.0 / MapModel::TileSize;
+        this->canvas->width() / 2.0 / rendered_tile_size;
     const int first_visible_tile_x = qMax(
         viewport_state.tile_x_min + 1,
         int(std::ceil(viewport_west_tile - wrap_shift)));
@@ -1358,15 +1367,15 @@ void MapEditorRenderer::paintTileSelection(
     for (int tile_x = first_visible_tile_x; tile_x <= last_visible_tile_x; ++tile_x)
     {
         const double screen_x = this->canvas->width() / 2.0 +
-            (tile_x + wrap_shift - center_tile.x()) * MapModel::TileSize;
+            (tile_x + wrap_shift - center_tile.x()) * rendered_tile_size;
         painter.drawLine(QPointF(screen_x, overlay_rect.top()),
                          QPointF(screen_x, overlay_rect.bottom()));
     }
 
     const double viewport_north_tile = center_tile.y() -
-        this->canvas->height() / 2.0 / MapModel::TileSize;
+        this->canvas->height() / 2.0 / rendered_tile_size;
     const double viewport_south_tile = center_tile.y() +
-        this->canvas->height() / 2.0 / MapModel::TileSize;
+        this->canvas->height() / 2.0 / rendered_tile_size;
     const int first_visible_tile_y = qMax(
         viewport_state.tile_y_min + 1, int(std::ceil(viewport_north_tile)));
     const int last_visible_tile_y = qMin(
@@ -1374,7 +1383,7 @@ void MapEditorRenderer::paintTileSelection(
     for (int tile_y = first_visible_tile_y; tile_y <= last_visible_tile_y; ++tile_y)
     {
         const double screen_y = this->canvas->height() / 2.0 +
-            (tile_y - center_tile.y()) * MapModel::TileSize;
+            (tile_y - center_tile.y()) * rendered_tile_size;
         painter.drawLine(QPointF(overlay_rect.left(), screen_y),
                          QPointF(overlay_rect.right(), screen_y));
     }
