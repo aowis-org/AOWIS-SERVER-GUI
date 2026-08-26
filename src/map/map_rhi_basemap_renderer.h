@@ -1,6 +1,7 @@
 #ifndef MAP_RHI_BASEMAP_RENDERER_H
 #define MAP_RHI_BASEMAP_RENDERER_H
 
+#include <QColor>
 #include <QPointF>
 #include <QSet>
 #include <QSize>
@@ -24,10 +25,22 @@ class QRhiResourceUpdateBatch;
 class QRhiSampler;
 class QRhiShaderResourceBindings;
 class QRhiTexture;
+class QImage;
 
 class MapRhiBasemapRenderer
 {
 public:
+    struct HeatmapMarker
+    {
+        QPointF center;
+        QColor color;
+
+        bool operator==(const HeatmapMarker &other) const
+        {
+            return this->center == other.center && this->color == other.color;
+        }
+    };
+
     struct TileVertex
     {
         float x = 0.0f;
@@ -45,6 +58,8 @@ public:
     void setTileRepository(MapTileRepository *tile_repository);
     void setTerrainRepository(MapTerrainRepository *terrain_repository);
     void notifyTerrainTileAvailable(const QString &key);
+    void setHeatmapOverlay(const QVector<HeatmapMarker> &markers,
+                           double radius_world, double solid_fraction);
     void invalidate();
     void releaseResources();
 
@@ -58,8 +73,10 @@ private:
     struct TileResource
     {
         std::unique_ptr<QRhiTexture> texture;
+        std::unique_ptr<QRhiTexture> heatmap_texture;
         std::unique_ptr<QRhiShaderResourceBindings> bindings;
         qint64 pixmap_cache_key = 0;
+        quint64 heatmap_revision = 0;
         quint64 last_used_serial = 0;
     };
 
@@ -96,8 +113,12 @@ private:
     bool currentLayoutCoversForeground(int imagery_zoom, int foreground_start_x,
                                        int foreground_start_y, int foreground_tiles_x,
                                        int foreground_tiles_y, int tile_count) const;
-    bool ensureTileResource(const QString &key, TileResource **resource,
+    bool ensureTileResource(const VisibleTile &tile, TileResource **resource,
                             QRhiResourceUpdateBatch *resource_updates);
+    bool ensureHeatmapTexture(const VisibleTile &tile, TileResource *resource,
+                              QRhiResourceUpdateBatch *resource_updates);
+    bool rebuildTileBindings(TileResource *resource);
+    QImage renderHeatmapTile(const VisibleTile &tile) const;
     void pruneTextureCache();
     void appendFlatTileVertices(QVector<TileVertex> *target, VisibleTile *tile,
                                 float left, float top, float right, float bottom);
@@ -123,6 +144,7 @@ private:
     std::unique_ptr<QRhiGraphicsPipeline> pipeline;
     int vertex_buffer_size = 0;
     bool vertex_upload_pending = true;
+    bool dummy_texture_upload_pending = true;
     bool layout_dirty = true;
     quint64 usage_serial = 0;
 
@@ -130,6 +152,10 @@ private:
     QVector<VisibleTile> visible_tiles;
     QSet<QString> dirty_terrain_keys;
     QPointF layout_origin_world;
+    QVector<HeatmapMarker> heatmap_markers;
+    double heatmap_radius_world = 0.0;
+    double heatmap_solid_fraction = 0.0;
+    quint64 heatmap_revision = 1;
     std::map<QString, std::unique_ptr<TileResource>> tile_resources;
 };
 

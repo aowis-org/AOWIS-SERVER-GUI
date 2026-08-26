@@ -82,6 +82,8 @@ private:
     void syncViewState();
     void syncTerrainAwareCameraDistance();
     void captureView3dFocusAnchor();
+    void rebuildHeatmapRenderVertices();
+    void syncBasemapHeatmapOverlay();
     double terrainWorldUnitsPerMeter() const;
     double terrainWorldZ(double elevation_m, double world_units_per_meter) const;
     bool terrainElevationAtCoordinate(
@@ -155,6 +157,7 @@ private:
     bool junction_instance_upload_pending = true;
     bool icon_atlas_upload_pending = true;
     bool tank_texture_upload_pending = true;
+    QVector<MapRhiScene::HeatmapVertex> heatmap_render_vertices;
     QVector<MapRhiTankModelVertex> tank_model_vertices;
     bool symbology_initialized = false;
     bool ready_reported = false;

@@ -10,6 +10,8 @@
 
 #include <QFile>
 #include <QImage>
+#include <QPainter>
+#include <QRadialGradient>
 #include <QPixmap>
 #include <rhi/qshader.h>
 #include <rhi/qrhi.h>
@@ -25,6 +27,7 @@ constexpr int TerrainReliefMinimumZoom = 8;
 constexpr int TerrainReliefMaximumZoom = 14;
 constexpr double TerrainVerticalScale = 1.0;
 constexpr int TwoDPanRetentionMarginTiles = 4;
+constexpr int HeatmapTextureSize = 256;
 
 bool reliefTerrainEnabled(const MapModel &map_model, const MapTerrainRepository *terrain_repository)
 {
@@ -185,6 +188,29 @@ void MapRhiBasemapRenderer::notifyTerrainTileAvailable(const QString &key)
         this->dirty_terrain_keys.insert(key);
 }
 
+void MapRhiBasemapRenderer::setHeatmapOverlay(
+    const QVector<HeatmapMarker> &markers, double radius_world,
+    double solid_fraction)
+{
+    const double bounded_radius_world = qMax(0.0, radius_world);
+    const double bounded_solid_fraction = qBound(0.0, solid_fraction, 0.9);
+    if (this->heatmap_markers == markers
+        && qFuzzyCompare(1.0 + this->heatmap_radius_world,
+                         1.0 + bounded_radius_world)
+        && qFuzzyCompare(1.0 + this->heatmap_solid_fraction,
+                         1.0 + bounded_solid_fraction))
+    {
+        return;
+    }
+
+    this->heatmap_markers = markers;
+    this->heatmap_radius_world = bounded_radius_world;
+    this->heatmap_solid_fraction = bounded_solid_fraction;
+    ++this->heatmap_revision;
+    if (this->heatmap_revision == 0)
+        this->heatmap_revision = 1;
+}
+
 void MapRhiBasemapRenderer::invalidate()
 {
     this->layout_dirty = true;
@@ -205,6 +231,7 @@ void MapRhiBasemapRenderer::releaseResources()
     this->layout_origin_world = QPointF();
     this->vertex_buffer_size = 0;
     this->vertex_upload_pending = true;
+    this->dummy_texture_upload_pending = true;
     this->layout_dirty = true;
     this->rhi = nullptr;
     this->render_pass_descriptor = nullptr;
@@ -250,11 +277,19 @@ bool MapRhiBasemapRenderer::prepare(
     if (!rebuildVisibleTiles(origin_world, viewport_size))
         return false;
 
+    if (this->dummy_texture_upload_pending && this->dummy_texture)
+    {
+        QImage transparent_pixel(1, 1, QImage::Format_RGBA8888);
+        transparent_pixel.fill(Qt::transparent);
+        resource_updates->uploadTexture(this->dummy_texture.get(), transparent_pixel);
+        this->dummy_texture_upload_pending = false;
+    }
+
     ++this->usage_serial;
     for (VisibleTile &tile : this->visible_tiles)
     {
         TileResource *resource = nullptr;
-        if (!ensureTileResource(tile.imagery_key, &resource, resource_updates))
+        if (!ensureTileResource(tile, &resource, resource_updates))
             return false;
         tile.resource = resource;
         if (resource != nullptr)
@@ -348,6 +383,9 @@ bool MapRhiBasemapRenderer::createSharedResources()
                 this->camera_uniform_buffer),
             QRhiShaderResourceBinding::sampledTexture(
                 1, QRhiShaderResourceBinding::FragmentStage,
+                this->dummy_texture.get(), this->sampler.get()),
+            QRhiShaderResourceBinding::sampledTexture(
+                2, QRhiShaderResourceBinding::FragmentStage,
                 this->dummy_texture.get(), this->sampler.get())
         });
         if (!this->template_bindings->create())
@@ -736,13 +774,14 @@ bool MapRhiBasemapRenderer::updateDirtyTerrainTiles(
 }
 
 bool MapRhiBasemapRenderer::ensureTileResource(
-    const QString &key, TileResource **resource,
+    const VisibleTile &tile, TileResource **resource,
     QRhiResourceUpdateBatch *resource_updates)
 {
     if (resource == nullptr)
         return false;
     *resource = nullptr;
 
+    const QString &key = tile.imagery_key;
     std::map<QString, std::unique_ptr<TileResource>>::iterator iterator =
         this->tile_resources.find(key);
 
@@ -751,13 +790,12 @@ bool MapRhiBasemapRenderer::ensureTileResource(
         : nullptr;
     if (pixmap == nullptr || pixmap->isNull())
     {
-        // A retained zoom-transition layer may outlive its CPU QPixmap cache
-        // entry. Keep using the already-uploaded GPU texture instead of
-        // turning that tile into a hole merely because the CPU cache evicted it.
         if (iterator != this->tile_resources.end()
             && iterator->second->texture
             && iterator->second->bindings)
         {
+            if (!ensureHeatmapTexture(tile, iterator->second.get(), resource_updates))
+                return false;
             *resource = iterator->second.get();
         }
         return true;
@@ -785,27 +823,163 @@ bool MapRhiBasemapRenderer::ensureTileResource(
         if (!tile_resource->texture || !tile_resource->texture->create())
             return false;
 
-        tile_resource->bindings.reset(this->rhi->newShaderResourceBindings());
-        if (!tile_resource->bindings)
-            return false;
-        tile_resource->bindings->setBindings({
-            QRhiShaderResourceBinding::uniformBuffer(
-                0, QRhiShaderResourceBinding::VertexStage
-                    | QRhiShaderResourceBinding::FragmentStage,
-                this->camera_uniform_buffer),
-            QRhiShaderResourceBinding::sampledTexture(
-                1, QRhiShaderResourceBinding::FragmentStage,
-                tile_resource->texture.get(), this->sampler.get())
-        });
-        if (!tile_resource->bindings->create())
-            return false;
-
         resource_updates->uploadTexture(tile_resource->texture.get(), image);
         tile_resource->pixmap_cache_key = cache_key;
     }
 
+    if (!ensureHeatmapTexture(tile, tile_resource, resource_updates))
+        return false;
+    if (!tile_resource->bindings && !rebuildTileBindings(tile_resource))
+        return false;
+
     *resource = tile_resource;
     return true;
+}
+
+bool MapRhiBasemapRenderer::ensureHeatmapTexture(
+    const VisibleTile &tile, TileResource *resource,
+    QRhiResourceUpdateBatch *resource_updates)
+{
+    if (resource == nullptr || resource_updates == nullptr)
+        return false;
+    if (resource->heatmap_revision == this->heatmap_revision)
+        return true;
+
+    const QImage image = renderHeatmapTile(tile);
+    resource->bindings.reset();
+    resource->heatmap_texture.reset();
+
+    if (!image.isNull())
+    {
+        resource->heatmap_texture.reset(this->rhi->newTexture(
+            QRhiTexture::RGBA8, image.size()));
+        if (!resource->heatmap_texture || !resource->heatmap_texture->create())
+            return false;
+        resource_updates->uploadTexture(resource->heatmap_texture.get(), image);
+    }
+
+    resource->heatmap_revision = this->heatmap_revision;
+    return rebuildTileBindings(resource);
+}
+
+bool MapRhiBasemapRenderer::rebuildTileBindings(TileResource *resource)
+{
+    if (resource == nullptr || !resource->texture || !this->dummy_texture
+        || !this->sampler || this->camera_uniform_buffer == nullptr)
+    {
+        return false;
+    }
+
+    QRhiTexture *heatmap_texture = resource->heatmap_texture
+        ? resource->heatmap_texture.get()
+        : this->dummy_texture.get();
+
+    resource->bindings.reset(this->rhi->newShaderResourceBindings());
+    if (!resource->bindings)
+        return false;
+    resource->bindings->setBindings({
+        QRhiShaderResourceBinding::uniformBuffer(
+            0, QRhiShaderResourceBinding::VertexStage
+                | QRhiShaderResourceBinding::FragmentStage,
+            this->camera_uniform_buffer),
+        QRhiShaderResourceBinding::sampledTexture(
+            1, QRhiShaderResourceBinding::FragmentStage,
+            resource->texture.get(), this->sampler.get()),
+        QRhiShaderResourceBinding::sampledTexture(
+            2, QRhiShaderResourceBinding::FragmentStage,
+            heatmap_texture, this->sampler.get())
+    });
+    return resource->bindings->create();
+}
+
+QImage MapRhiBasemapRenderer::renderHeatmapTile(const VisibleTile &tile) const
+{
+    if (this->heatmap_markers.isEmpty()
+        || !(this->heatmap_radius_world > 0.0)
+        || tile.imagery_zoom < 0)
+    {
+        return QImage();
+    }
+
+    const double tile_world_size = MapModel::TileSize
+        * std::pow(2.0, MapRenderCacheMath::ReferenceZoom - tile.imagery_zoom);
+    if (!std::isfinite(tile_world_size) || tile_world_size <= 0.0)
+        return QImage();
+
+    const double tile_left = double(tile.virtual_x) * tile_world_size
+        - this->layout_origin_world.x();
+    const double tile_top = double(tile.y) * tile_world_size
+        - this->layout_origin_world.y();
+    const double tile_right = tile_left + tile_world_size;
+    const double tile_bottom = tile_top + tile_world_size;
+    const double radius = this->heatmap_radius_world;
+
+    bool intersects = false;
+    for (const HeatmapMarker &marker : this->heatmap_markers)
+    {
+        if (marker.center.x() + radius < tile_left
+            || marker.center.x() - radius > tile_right
+            || marker.center.y() + radius < tile_top
+            || marker.center.y() - radius > tile_bottom)
+        {
+            continue;
+        }
+        intersects = true;
+        break;
+    }
+    if (!intersects)
+        return QImage();
+
+    QImage image(
+        HeatmapTextureSize, HeatmapTextureSize,
+        QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+    painter.setPen(Qt::NoPen);
+
+    const double pixels_per_world = double(HeatmapTextureSize) / tile_world_size;
+    const double radius_pixels = radius * pixels_per_world;
+    if (!std::isfinite(radius_pixels) || radius_pixels <= 0.0)
+        return QImage();
+
+    const double half_fraction = this->heatmap_solid_fraction
+        + (1.0 - this->heatmap_solid_fraction) * 0.4375;
+
+    for (const HeatmapMarker &marker : this->heatmap_markers)
+    {
+        if (marker.center.x() + radius < tile_left
+            || marker.center.x() - radius > tile_right
+            || marker.center.y() + radius < tile_top
+            || marker.center.y() - radius > tile_bottom)
+        {
+            continue;
+        }
+
+        const QPointF center_pixels(
+            (marker.center.x() - tile_left) * pixels_per_world,
+            (marker.center.y() - tile_top) * pixels_per_world);
+        QColor full_color = marker.color;
+        full_color.setAlpha(255);
+        QColor half_color = marker.color;
+        half_color.setAlpha(128);
+        QColor edge_color = marker.color;
+        edge_color.setAlpha(0);
+
+        QRadialGradient gradient(center_pixels, radius_pixels);
+        gradient.setColorAt(0.0, full_color);
+        if (this->heatmap_solid_fraction > 0.0)
+            gradient.setColorAt(this->heatmap_solid_fraction, full_color);
+        gradient.setColorAt(half_fraction, half_color);
+        gradient.setColorAt(1.0, edge_color);
+        painter.setBrush(gradient);
+        painter.drawEllipse(center_pixels, radius_pixels, radius_pixels);
+    }
+    painter.end();
+
+    return image.convertToFormat(QImage::Format_RGBA8888);
 }
 
 void MapRhiBasemapRenderer::pruneTextureCache()

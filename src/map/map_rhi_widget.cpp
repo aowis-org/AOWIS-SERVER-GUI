@@ -13,6 +13,7 @@
 #include <QDebug>
 #include <QFile>
 #include <QImage>
+#include <QHash>
 #include <QLineF>
 #include <QMatrix4x4>
 #include <QPalette>
@@ -257,6 +258,8 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     connect(this->map_model, &MapModel::zoomChanged, this, [this]
     {
         syncViewState();
+        this->heatmap_upload_pending = true;
+        syncBasemapHeatmapOverlay();
         if (this->basemap_renderer)
             this->basemap_renderer->invalidate();
         update();
@@ -270,6 +273,8 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode)
     {
         syncViewState();
+        this->heatmap_upload_pending = true;
+        syncBasemapHeatmapOverlay();
         if (this->basemap_renderer)
             this->basemap_renderer->invalidate();
         update();
@@ -289,7 +294,6 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
         this->highlight_upload_pending = true;
         this->flow_direction_upload_pending = true;
         this->icon_upload_pending = true;
-        this->heatmap_upload_pending = true;
         this->tank_upload_pending = true;
         this->junction_instance_upload_pending = true;
         update();
@@ -614,6 +618,7 @@ void MapRhiWidget::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
     this->scene.setNetworkSnapshot(snapshot);
     this->scene.setViewZoom(this->map_model->zoom());
     syncViewState();
+    syncBasemapHeatmapOverlay();
     if (this->basemap_renderer)
         this->basemap_renderer->invalidate();
     this->geometry_upload_pending = true;
@@ -633,6 +638,7 @@ void MapRhiWidget::setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids)
         return;
 
     syncViewState();
+    syncBasemapHeatmapOverlay();
     this->geometry_upload_pending = true;
     this->highlight_upload_pending = true;
     this->flow_direction_upload_pending = true;
@@ -675,7 +681,12 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
     const bool heatmap_changed =
         !this->symbology_initialized
         || this->applied_symbology.visual_heatmap != symbology.visual_heatmap
-        || this->applied_symbology.heatmap_fractions != symbology.heatmap_fractions;
+        || this->applied_symbology.heatmap_fractions != symbology.heatmap_fractions
+        || this->applied_symbology.heatmap_radius_unit != symbology.heatmap_radius_unit
+        || this->applied_symbology.heatmap_radius_m != symbology.heatmap_radius_m
+        || this->applied_symbology.heatmap_radius_px != symbology.heatmap_radius_px
+        || this->applied_symbology.heatmap_solid_center_percent
+            != symbology.heatmap_solid_center_percent;
     const bool flow_direction_changed =
         !this->symbology_initialized
         || this->applied_symbology.show_flow_direction != symbology.show_flow_direction
@@ -704,7 +715,10 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
         this->tank_upload_pending = true;
     }
     if (heatmap_changed)
+    {
         this->heatmap_upload_pending = true;
+        syncBasemapHeatmapOverlay();
+    }
 
     update();
 }
@@ -774,6 +788,8 @@ void MapRhiWidget::setTerrainRepository(MapTerrainRepository *terrain_repository
         });
     }
 
+    this->heatmap_upload_pending = true;
+    syncBasemapHeatmapOverlay();
     update();
 }
 
@@ -893,6 +909,9 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         this->tank_upload_pending = true;
         this->junction_instance_upload_pending = true;
     }
+
+    if (this->heatmap_upload_pending)
+        rebuildHeatmapRenderVertices();
 
     if (!createPersistentResources() || !ensureGeometryBuffers() || !createPipelines())
         return;
@@ -1043,14 +1062,13 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
 
     if (this->heatmap_upload_pending)
     {
-        const QVector<MapRhiScene::HeatmapVertex> &heatmap_vertices =
-            this->scene.heatmapVertices();
-        if (!heatmap_vertices.isEmpty())
+        if (!this->heatmap_render_vertices.isEmpty())
         {
             resource_updates->updateDynamicBuffer(
                 this->heatmap_vertex_buffer.get(), 0,
-                int(heatmap_vertices.size() * qsizetype(sizeof(MapRhiScene::HeatmapVertex))),
-                heatmap_vertices.constData());
+                int(this->heatmap_render_vertices.size()
+                    * qsizetype(sizeof(MapRhiScene::HeatmapVertex))),
+                this->heatmap_render_vertices.constData());
         }
         this->heatmap_upload_pending = false;
     }
@@ -1109,16 +1127,16 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     if (this->basemap_renderer)
         this->basemap_renderer->draw(command_buffer);
 
-    const QVector<MapRhiScene::HeatmapVertex> &heatmap_vertices =
-        this->scene.heatmapVertices();
-    if (!heatmap_vertices.isEmpty() && this->applied_symbology.heatmap_opacity > 0)
+    if (this->map_model->viewMode() != MapViewMode::ThreeD
+        && !this->heatmap_render_vertices.isEmpty()
+        && this->applied_symbology.heatmap_opacity > 0)
     {
         command_buffer->setGraphicsPipeline(this->heatmap_pipeline.get());
         command_buffer->setShaderResources(this->heatmap_shader_resource_bindings.get());
         const QRhiCommandBuffer::VertexInput heatmap_binding(
             this->heatmap_vertex_buffer.get(), 0);
         command_buffer->setVertexInput(0, 1, &heatmap_binding);
-        command_buffer->draw(quint32(heatmap_vertices.size()));
+        command_buffer->draw(quint32(this->heatmap_render_vertices.size()));
     }
 
     const QVector<MapRhiScene::LinkVertex> &link_vertices = this->scene.linkVertices();
@@ -1811,7 +1829,7 @@ bool MapRhiWidget::ensureGeometryBuffers()
     const int required_icon_bytes = boundedBufferSize(
         this->scene.iconVertices().size(), qsizetype(sizeof(MapRhiScene::IconVertex)));
     const int required_heatmap_bytes = boundedBufferSize(
-        this->scene.heatmapVertices().size(), qsizetype(sizeof(MapRhiScene::HeatmapVertex)));
+        this->heatmap_render_vertices.size(), qsizetype(sizeof(MapRhiScene::HeatmapVertex)));
     const int required_tank_bytes = boundedBufferSize(
         this->tank_model_vertices.size(), qsizetype(sizeof(MapRhiTankModelVertex)));
     const QVector<MapRhiJunctionMeshVertex> &junction_mesh =
@@ -2052,6 +2070,7 @@ void MapRhiWidget::resetGpuResources()
     this->junction_instance_upload_pending = true;
     this->icon_atlas_upload_pending = true;
     this->tank_texture_upload_pending = true;
+    this->heatmap_render_vertices.clear();
     this->tank_model_vertices.clear();
 }
 
@@ -2168,6 +2187,18 @@ bool MapRhiWidget::terrainElevationAtCoordinate(
 
     *elevation_m = sampled_elevation_m;
     return true;
+}
+
+void MapRhiWidget::rebuildHeatmapRenderVertices()
+{
+    this->heatmap_render_vertices.clear();
+    if (this->map_model == nullptr
+        || this->map_model->viewMode() == MapViewMode::ThreeD)
+    {
+        return;
+    }
+
+    this->heatmap_render_vertices = this->scene.heatmapVertices();
 }
 
 double MapRhiWidget::terrainWorldUnitsPerMeter() const
@@ -2460,6 +2491,45 @@ void MapRhiWidget::syncTerrainAwareCameraDistance()
 
     this->map_model->setView3dCameraDistanceWorld(effective_distance_world);
     this->map_model->setView3dCameraCollisionLiftWorld(collision_lift_world);
+}
+
+void MapRhiWidget::syncBasemapHeatmapOverlay()
+{
+    if (!this->basemap_renderer || this->map_model == nullptr)
+        return;
+
+    QVector<MapRhiBasemapRenderer::HeatmapMarker> markers;
+    if (this->map_model->viewMode() == MapViewMode::ThreeD
+        && this->applied_symbology.visual_heatmap != VisualHeatmap::None)
+    {
+        const QVector<MapRhiScene::HeatmapVertex> &vertices =
+            this->scene.heatmapVertices();
+        if (vertices.size() % 6 == 0)
+        {
+            markers.reserve(vertices.size() / 6);
+            for (qsizetype index = 0; index < vertices.size(); index += 6)
+            {
+                const MapRhiScene::HeatmapVertex &vertex = vertices.at(index);
+                MapRhiBasemapRenderer::HeatmapMarker marker;
+                marker.center = QPointF(vertex.center_x, vertex.center_y);
+                marker.color = QColor::fromRgbF(
+                    vertex.red, vertex.green, vertex.blue, 1.0f);
+                markers.append(marker);
+            }
+        }
+    }
+
+    const double heatmap_scale = GeoWebMercator::zoomScale(
+        this->map_model->zoom(), MapRenderCacheMath::ReferenceZoom);
+    const double radius_world = markers.isEmpty()
+        ? 0.0
+        : double(heatmapRadiusPixels()) / qMax(heatmap_scale, 0.000001);
+    const double solid_fraction = qBound(
+        0.0,
+        double(this->applied_symbology.heatmap_solid_center_percent) / 100.0,
+        0.9);
+    this->basemap_renderer->setHeatmapOverlay(
+        markers, radius_world, solid_fraction);
 }
 
 QPointF MapRhiWidget::renderOriginWorld() const

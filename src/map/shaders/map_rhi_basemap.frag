@@ -1,6 +1,7 @@
 #version 440
 
 layout(binding = 1) uniform sampler2D basemap_tile;
+layout(binding = 2) uniform sampler2D heatmap_tile;
 
 layout(std140, binding = 0) uniform CameraBlock
 {
@@ -21,5 +22,11 @@ void main()
         tile_color.rgb,
         camera.basemap_settings.rgb,
         clamp(camera.basemap_settings.a, 0.0, 1.0));
+
+    vec4 heatmap_color = texture(heatmap_tile, vertex_texture_coordinate);
+    float heatmap_alpha = heatmap_color.a
+        * clamp(camera.heatmap_settings.y, 0.0, 1.0);
+    mixed_rgb = mix(mixed_rgb, heatmap_color.rgb, heatmap_alpha);
+
     fragment_color = vec4(mixed_rgb, 1.0);
 }
