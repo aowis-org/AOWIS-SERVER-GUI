@@ -790,6 +790,16 @@ void MapModel::orbitView3d(double yaw_delta_deg, double pitch_delta_deg)
     emit view3dCameraChanged();
 }
 
+void MapModel::orbitView3dByPointerDelta(const QPoint &delta_pixels, bool include_pitch)
+{
+    const double yaw_delta_deg =
+        double(delta_pixels.x()) * View3dOrbitYawDegreesPerPixel;
+    const double pitch_delta_deg = include_pitch
+        ? double(-delta_pixels.y()) * View3dOrbitPitchDegreesPerPixel
+        : 0.0;
+    orbitView3d(yaw_delta_deg, pitch_delta_deg);
+}
+
 void MapModel::resetView3dCamera()
 {
     const bool changed = !coordinatesEqual(this->m_view_3d_yaw_deg, 0.0)

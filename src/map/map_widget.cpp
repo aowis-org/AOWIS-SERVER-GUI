@@ -1448,8 +1448,7 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
         const QPoint delta = global_position - this->view_3d_orbit_anchor_global;
         if (!delta.isNull())
         {
-            this->m_model->orbitView3d(
-                double(delta.x()) * 0.35, double(-delta.y()) * 0.25);
+            this->m_model->orbitView3dByPointerDelta(delta, true);
             QCursor::setPos(this->view_3d_orbit_anchor_global);
         }
 #else
@@ -1457,8 +1456,7 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
         this->view_3d_orbit_last_position = position;
         if (!delta.isNull())
         {
-            this->m_model->orbitView3d(
-                double(delta.x()) * 0.35, double(-delta.y()) * 0.25);
+            this->m_model->orbitView3dByPointerDelta(delta, true);
         }
 #endif
         event->accept();

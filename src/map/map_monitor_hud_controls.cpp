@@ -5,10 +5,10 @@
 #include <QAbstractAnimation>
 #include <QColor>
 #include <QComboBox>
+#include <QCursor>
 #include <QEasingCurve>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QLineF>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPalette>
@@ -16,6 +16,7 @@
 #include <QRadialGradient>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QTimer>
 #include <QVariantAnimation>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -32,9 +33,11 @@ constexpr double CompassWheelStepDeg = 5.0;
 constexpr int NorthAnimationDurationMs = 280;
 constexpr int SliderResetAnimationDurationMs = 240;
 constexpr int CompassDragThresholdPx = 4;
+constexpr int CompassWheelRotateEndDelayMs = 350;
 constexpr int CameraDistanceSliderSteps = 1000;
 constexpr int CameraControlSliderHeightPx = 82;
-constexpr int NetworkGroundOffsetSliderSteps = 50;
+constexpr int NetworkGroundOffsetSliderSteps =
+    static_cast<int>(MapModel::MaxView3dNetworkGroundOffsetM * 10.0);
 
 int cameraDistanceSliderValue(double distance_m, double maximum_distance_m)
 {
@@ -128,6 +131,13 @@ public:
             "Drag or mouse wheel: rotate map"));
         setFocusPolicy(Qt::NoFocus);
 
+        this->wheel_rotate_end_timer.setSingleShot(true);
+        this->wheel_rotate_end_timer.setInterval(CompassWheelRotateEndDelayMs);
+        connect(&this->wheel_rotate_end_timer, &QTimer::timeout, this, [this]
+        {
+            finishWheelRotation();
+        });
+
         this->north_animation->setDuration(NorthAnimationDurationMs);
         this->north_animation->setStartValue(0.0);
         this->north_animation->setEndValue(1.0);
@@ -136,9 +146,10 @@ public:
                 [this](const QVariant &value)
         {
             const double progress = value.toDouble();
-            this->map_model->setView3dYawDeg(
-                this->north_animation_start_yaw_deg
-                + this->north_animation_delta_yaw_deg * progress);
+            const double progress_delta = progress - this->north_animation_last_progress;
+            this->north_animation_last_progress = progress;
+            this->map_model->orbitView3d(
+                this->north_animation_delta_yaw_deg * progress_delta, 0.0);
         });
 
         connect(this->north_animation, &QVariantAnimation::stateChanged, this,
@@ -160,6 +171,11 @@ public:
         {
             update();
         });
+    }
+
+    ~MapCompassWidget() override
+    {
+        finishWheelRotation();
     }
 
 protected:
@@ -268,12 +284,21 @@ protected:
         }
 
         stopNorthAnimation();
+        finishWheelRotation();
         this->map_model->beginView3dRotateInteraction();
         this->drag_active = true;
         this->dragged = false;
-        this->press_position = event->position();
-        this->last_drag_angle_deg = angleForPosition(event->position());
+        this->drag_distance_px = 0;
+#ifdef Q_OS_WASM
+        this->last_drag_position = event->position().toPoint();
         setCursor(Qt::ClosedHandCursor);
+#else
+        this->drag_restore_global = event->globalPosition().toPoint();
+        this->drag_anchor_global = mapToGlobal(rect().center());
+        grabMouse(QCursor(Qt::BlankCursor));
+        this->drag_mouse_grabbed = true;
+        QCursor::setPos(this->drag_anchor_global);
+#endif
         event->accept();
     }
 
@@ -281,21 +306,31 @@ protected:
     {
         if (!this->drag_active || !(event->buttons() & Qt::LeftButton))
         {
+            if (this->drag_active)
+                finishDrag();
             QWidget::mouseMoveEvent(event);
             return;
         }
 
-        if (QLineF(this->press_position, event->position()).length() >= CompassDragThresholdPx)
-            this->dragged = true;
-
-        const double current_angle_deg = angleForPosition(event->position());
-        const double pointer_delta_deg = std::remainder(
-            current_angle_deg - this->last_drag_angle_deg, 360.0);
-        this->last_drag_angle_deg = current_angle_deg;
-        if (std::isfinite(pointer_delta_deg))
+#ifdef Q_OS_WASM
+        const QPoint current_position = event->position().toPoint();
+        const QPoint delta = current_position - this->last_drag_position;
+        this->last_drag_position = current_position;
+#else
+        const QPoint global_position = event->globalPosition().toPoint();
+        const QPoint delta = global_position - this->drag_anchor_global;
+#endif
+        if (!delta.isNull())
         {
-            this->map_model->setView3dYawDeg(
-                this->map_model->view3dYawDeg() + pointer_delta_deg);
+            this->drag_distance_px += std::abs(delta.x()) + std::abs(delta.y());
+            if (this->drag_distance_px >= CompassDragThresholdPx)
+                this->dragged = true;
+
+            const QPoint yaw_delta(delta.x(), 0);
+            this->map_model->orbitView3dByPointerDelta(yaw_delta, false);
+#ifndef Q_OS_WASM
+            QCursor::setPos(this->drag_anchor_global);
+#endif
         }
 
         event->accept();
@@ -309,10 +344,9 @@ protected:
             return;
         }
 
-        this->drag_active = false;
-        setCursor(Qt::OpenHandCursor);
-        this->map_model->endView3dRotateInteraction();
-        if (!this->dragged)
+        const bool was_dragged = this->dragged;
+        finishDrag();
+        if (!was_dragged)
             animateNorth();
         event->accept();
     }
@@ -327,22 +361,51 @@ protected:
             return;
         }
 
-        this->map_model->beginView3dRotateInteraction();
+        if (!this->wheel_rotate_active)
+        {
+            this->map_model->beginView3dRotateInteraction();
+            this->wheel_rotate_active = true;
+        }
+
         const double steps = double(angle_delta.y()) / 120.0;
-        this->map_model->setView3dYawDeg(
-            this->map_model->view3dYawDeg() + steps * CompassWheelStepDeg);
-        this->map_model->endView3dRotateInteraction();
+        this->map_model->orbitView3d(steps * CompassWheelStepDeg, 0.0);
+        this->wheel_rotate_end_timer.start();
         event->accept();
     }
 
 private:
-    double angleForPosition(const QPointF &position) const
+    void finishWheelRotation()
     {
-        const QPointF center(width() / 2.0, height() / 2.0);
-        const QPointF offset = position - center;
-        if (std::abs(offset.x()) < 0.001 && std::abs(offset.y()) < 0.001)
-            return this->last_drag_angle_deg;
-        return qRadiansToDegrees(std::atan2(offset.x(), -offset.y()));
+        if (!this->wheel_rotate_active)
+            return;
+
+        this->wheel_rotate_end_timer.stop();
+        this->wheel_rotate_active = false;
+        this->map_model->endView3dRotateInteraction();
+    }
+
+    void finishDrag()
+    {
+        if (!this->drag_active
+#ifndef Q_OS_WASM
+            && !this->drag_mouse_grabbed
+#endif
+        )
+        {
+            return;
+        }
+
+        this->drag_active = false;
+        this->map_model->endView3dRotateInteraction();
+#ifndef Q_OS_WASM
+        if (this->drag_mouse_grabbed)
+        {
+            releaseMouse();
+            this->drag_mouse_grabbed = false;
+        }
+        QCursor::setPos(this->drag_restore_global);
+#endif
+        setCursor(Qt::OpenHandCursor);
     }
 
     void animateNorth()
@@ -352,10 +415,9 @@ private:
         this->north_animation_delta_yaw_deg = std::remainder(
             -this->north_animation_start_yaw_deg, 360.0);
         if (std::abs(this->north_animation_delta_yaw_deg) < 0.01)
-        {
-            this->map_model->setView3dYawDeg(0.0);
             return;
-        }
+
+        this->north_animation_last_progress = 0.0;
         this->north_animation->start();
     }
 
@@ -369,10 +431,19 @@ private:
     QVariantAnimation *north_animation = nullptr;
     bool drag_active = false;
     bool dragged = false;
-    QPointF press_position;
-    double last_drag_angle_deg = 0.0;
+    int drag_distance_px = 0;
+    QTimer wheel_rotate_end_timer;
+    bool wheel_rotate_active = false;
+#ifdef Q_OS_WASM
+    QPoint last_drag_position;
+#else
+    QPoint drag_restore_global;
+    QPoint drag_anchor_global;
+    bool drag_mouse_grabbed = false;
+#endif
     double north_animation_start_yaw_deg = 0.0;
     double north_animation_delta_yaw_deg = 0.0;
+    double north_animation_last_progress = 0.0;
 };
 }
 
@@ -648,7 +719,9 @@ MapMonitorNetworkGroundOffsetHudWidget::MapMonitorNetworkGroundOffsetHudWidget(
     layout->setContentsMargins(4, 5, 4, 5);
     layout->setSpacing(1);
 
-    QLabel *maximum_label = new QLabel(QStringLiteral("5 m"), this);
+    QLabel *maximum_label = new QLabel(
+        QStringLiteral("%1 m").arg(
+            MapModel::MaxView3dNetworkGroundOffsetM, 0, 'f', 0), this);
     maximum_label->setAlignment(Qt::AlignHCenter);
     QLabel *minimum_label = new QLabel(QStringLiteral("0 m"), this);
     minimum_label->setAlignment(Qt::AlignHCenter);
@@ -663,8 +736,9 @@ MapMonitorNetworkGroundOffsetHudWidget::MapMonitorNetworkGroundOffsetHudWidget(
     this->offset_slider->setToolTip(QStringLiteral(
         "Water network height above its real model elevation\n"
         "0 m = true elevation\n"
-        "Up to 5 m render-only lift to avoid terrain z-fighting\n"
-        "Right-click: animate back to 0 m"));
+        "Up to %1 m render-only lift to avoid terrain z-fighting\n"
+        "Right-click: animate back to 0 m")
+        .arg(MapModel::MaxView3dNetworkGroundOffsetM, 0, 'f', 0));
     this->offset_value_label->setText(QStringLiteral("%1 m").arg(
         this->map_model->view3dNetworkGroundOffsetM(), 0, 'f', 1));
 

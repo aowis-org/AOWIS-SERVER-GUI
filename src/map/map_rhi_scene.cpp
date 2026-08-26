@@ -1,6 +1,7 @@
 #include "map_rhi_scene.h"
 
 #include "map_render_cache_math.h"
+#include "map_model.h"
 #include "../geo_web_mercator.h"
 #include "../infrastructure_entity_traits.h"
 #include "../network_symbology_rendering.h"
@@ -357,7 +358,10 @@ bool MapRhiScene::setNetworkGroundOffsetM(double offset_m)
     if (!std::isfinite(offset_m))
         return false;
 
-    const double bounded_offset_m = qBound(0.0, offset_m, 5.0);
+    const double bounded_offset_m = qBound(
+        MapModel::MinView3dNetworkGroundOffsetM,
+        offset_m,
+        MapModel::MaxView3dNetworkGroundOffsetM);
     if (qFuzzyCompare(1.0 + this->network_ground_offset_m, 1.0 + bounded_offset_m))
         return false;
 

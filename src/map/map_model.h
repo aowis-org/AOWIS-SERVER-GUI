@@ -34,7 +34,9 @@ public:
     static constexpr double MaxView3dCameraDistanceAboveDefaultM = 500.0;
     static constexpr double MinView3dCameraGroundClearanceM = 2.0;
     static constexpr double MinView3dNetworkGroundOffsetM = 0.0;
-    static constexpr double MaxView3dNetworkGroundOffsetM = 5.0;
+    static constexpr double MaxView3dNetworkGroundOffsetM = 50.0;
+    static constexpr double View3dOrbitYawDegreesPerPixel = 0.35;
+    static constexpr double View3dOrbitPitchDegreesPerPixel = 0.25;
 
     int zoom() const;
     double view2dContinuousScale() const;
@@ -100,6 +102,7 @@ public:
     void beginView3dRotateInteraction();
     void endView3dRotateInteraction();
     void orbitView3d(double yaw_delta_deg, double pitch_delta_deg);
+    void orbitView3dByPointerDelta(const QPoint &delta_pixels, bool include_pitch);
     void resetView3dCamera();
 
 signals:
