@@ -63,6 +63,26 @@ void InterfaceServerMapREST::initRestConnection()
         emit signalTerrainTileFailed(key, error);
     });
 
+    connect(this->rest, &RESTClient::requestFinished, this,
+            [this](const QByteArray &data)
+    {
+        if (!this->terrain_elevation_pending)
+            return;
+
+        this->terrain_elevation_pending = false;
+        emit signalTerrainElevationDataReceived(data);
+    });
+
+    connect(this->rest, &RESTClient::requestError, this,
+            [this](const QString &error)
+    {
+        if (!this->terrain_elevation_pending)
+            return;
+
+        this->terrain_elevation_pending = false;
+        emit signalTerrainElevationFailed(error);
+    });
+
     connect(this->rest, &RESTClient::requestFinishedDelete, this,
             [this](quint64 request_id)
     {
@@ -95,6 +115,19 @@ void InterfaceServerMapREST::requestTerrainTile(const QString &endpoint, const Q
 
     this->terrain_pending.insert(key);
     this->rest->getTerrainTile(endpoint, key);
+}
+
+void InterfaceServerMapREST::requestTerrainElevation(const QString &endpoint)
+{
+    if (this->terrain_elevation_pending)
+    {
+        emit signalTerrainElevationFailed(
+            QStringLiteral("A terrain elevation request is already in progress"));
+        return;
+    }
+
+    this->terrain_elevation_pending = true;
+    this->rest->get(endpoint);
 }
 
 void InterfaceServerMapREST::deleteTiles(quint64 request_id, const QString &provider, int zoom,

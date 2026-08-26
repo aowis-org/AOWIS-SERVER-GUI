@@ -30,7 +30,7 @@
 #include "../_enums_structs.h"
 #include "../_sizes.h"
 
-class RESTClient;
+class InterfaceServerMap;
 class QMessageBox;
 class QGridLayout;
 
@@ -215,7 +215,7 @@ private:
     QUuid node_uuid_2;
     QString entity_title_prefix;
     bool junction_demands_refresh_pending = false;
-    RESTClient *terrain_elevation_client = nullptr;
+    InterfaceServerMap *terrain_elevation_client = nullptr;
     QPointer<QMessageBox> terrain_elevation_message_box = nullptr;
     QPointer<QMessageBox> source_trace_origin_message_box = nullptr;
     QUuid terrain_elevation_request_entity_uuid;

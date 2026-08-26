@@ -1,7 +1,9 @@
 #include "entity_inspector_widget.h"
 
-#include "../map_server_client_configuration.h"
-#include "../rest_client.h"
+#include "../interface_server_map_rest.h"
+#ifdef AOWIS_STANDALONE
+#include "../interface_server_map_standalone.h"
+#endif
 
 #include <cmath>
 #include <optional>
@@ -1683,7 +1685,7 @@ void EntityInspectorWidget::addGroupElevation()
     
     this->button_terrain_elevation = new QPushButton("Retrieve Terrain Elevation");
     this->button_terrain_elevation->setToolTip(
-        "Uses the AOWIS terrain service and its shared DEM cache.<br>"
+        "Uses the AOWIS terrain subsystem and its shared DEM cache.<br>"
         "Accuracy depends on the dataset and local terrain."
         );
     this->label_terrain_elevation_status = new QLabel();
@@ -1692,12 +1694,16 @@ void EntityInspectorWidget::addGroupElevation()
 
     if (!this->terrain_elevation_client)
     {
-        const MapServerClientConfiguration &configuration = mapServerClientConfiguration();
-        this->terrain_elevation_client = new RESTClient(
-            configuration.base_url, configuration.api_key, configuration.delete_api_key, this);
-        connect(this->terrain_elevation_client, &RESTClient::requestFinished, this,
+#ifdef AOWIS_STANDALONE
+        this->terrain_elevation_client = new InterfaceServerMapStandalone(this);
+#else
+        this->terrain_elevation_client = new InterfaceServerMapREST(this);
+#endif
+        connect(this->terrain_elevation_client,
+                &InterfaceServerMap::signalTerrainElevationDataReceived, this,
                 &EntityInspectorWidget::handleTerrainElevationResponse);
-        connect(this->terrain_elevation_client, &RESTClient::requestError, this,
+        connect(this->terrain_elevation_client,
+                &InterfaceServerMap::signalTerrainElevationFailed, this,
                 &EntityInspectorWidget::handleTerrainElevationError);
     }
     
@@ -1941,7 +1947,7 @@ void EntityInspectorWidget::requestTerrainElevation()
         "/terrain/v1/elevation?latitude=%1&longitude=%2")
         .arg(latitude_deg, 0, 'f', 8)
         .arg(longitude_deg, 0, 'f', 8);
-    this->terrain_elevation_client->get(endpoint);
+    this->terrain_elevation_client->requestTerrainElevation(endpoint);
 }
 
 void EntityInspectorWidget::handleTerrainElevationResponse(const QByteArray &data)
@@ -1954,7 +1960,7 @@ void EntityInspectorWidget::handleTerrainElevationResponse(const QByteArray &dat
     if (parse_error.error != QJsonParseError::NoError || !document.isObject())
     {
         handleTerrainElevationError(
-            QStringLiteral("The AOWIS terrain service returned invalid JSON: %1")
+            QStringLiteral("The AOWIS terrain subsystem returned invalid JSON: %1")
                 .arg(parse_error.errorString()));
         return;
     }
@@ -1965,7 +1971,7 @@ void EntityInspectorWidget::handleTerrainElevationResponse(const QByteArray &dat
         const QString service_error = response.value(QStringLiteral("error")).toString();
         handleTerrainElevationError(
             service_error.isEmpty()
-                ? QStringLiteral("The AOWIS terrain service did not return a successful response.")
+                ? QStringLiteral("The AOWIS terrain subsystem did not return a successful response.")
                 : service_error);
         return;
     }
@@ -1974,7 +1980,7 @@ void EntityInspectorWidget::handleTerrainElevationResponse(const QByteArray &dat
     if (!elevation_value.isDouble())
     {
         handleTerrainElevationError(
-            "The AOWIS terrain service returned no elevation for this position.");
+            "The AOWIS terrain subsystem returned no elevation for this position.");
         return;
     }
 
@@ -2037,7 +2043,7 @@ void EntityInspectorWidget::handleTerrainElevationResponse(const QByteArray &dat
         : QStringLiteral(" (%1)").arg(metadata.join(QStringLiteral(", ")));
     this->button_terrain_elevation->setToolTip(
         QStringLiteral(
-            "Uses the AOWIS terrain service and its shared DEM cache.<br>"
+            "Uses the AOWIS terrain subsystem and its shared DEM cache.<br>"
             "Accuracy depends on the dataset and local terrain.<br>"
             "Last result: %1 m%2")
             .arg(elevation_m, 0, 'f', 3)

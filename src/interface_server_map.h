@@ -22,6 +22,12 @@ public:
         emit signalTerrainTileFailed(
             key, QStringLiteral("Terrain transport is not available in this map-server mode"));
     }
+    virtual void requestTerrainElevation(const QString &endpoint)
+    {
+        Q_UNUSED(endpoint)
+        emit signalTerrainElevationFailed(
+            QStringLiteral("Terrain elevation transport is not available in this map-server mode"));
+    }
     virtual void deleteTiles(quint64 request_id, const QString &provider, int zoom,
                              int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max) = 0;
 
@@ -30,6 +36,8 @@ signals:
     void signalTileFailed(const QString &key);
     void signalTerrainTileDataReceived(const QString &key, const QByteArray &data);
     void signalTerrainTileFailed(const QString &key, const QString &error);
+    void signalTerrainElevationDataReceived(const QByteArray &data);
+    void signalTerrainElevationFailed(const QString &error);
     void signalTilesDeleted(quint64 request_id);
     void signalTileDeletionFailed(quint64 request_id, const QString &error);
 };
