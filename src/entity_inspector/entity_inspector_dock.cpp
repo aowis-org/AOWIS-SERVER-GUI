@@ -1,14 +1,25 @@
 #include "entity_inspector_dock.h"
 #include "../gui_configuration.h"
+#include "../shortcut_registry.h"
 
 
 EntityInspectorDock::EntityInspectorDock(HydraulicData *hydraulic_data, QWidget *parent)
     : QDockWidget(QStringLiteral("Entity Inspector  |  [%1] Toggle sidebar")
-                      .arg(guiConfiguration().shortcuts.sidebar_toggle), parent),
+                      .arg(guiShortcutPresentation(GuiShortcutId::SidebarToggle)), parent),
     hydraulic_data(hydraulic_data)
 {
     setToolTip(QStringLiteral("Press %1 to show or hide the right sidebar.")
-                   .arg(guiConfiguration().shortcuts.sidebar_toggle));
+                   .arg(guiShortcutPresentation(GuiShortcutId::SidebarToggle)));
+    connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutChanged,
+            this, [this](GuiShortcutId id)
+    {
+        if (id != GuiShortcutId::SidebarToggle)
+            return;
+
+        const QString shortcut = guiShortcutPresentation(GuiShortcutId::SidebarToggle);
+        setWindowTitle(QStringLiteral("Entity Inspector  |  [%1] Toggle sidebar").arg(shortcut));
+        setToolTip(QStringLiteral("Press %1 to show or hide the right sidebar.").arg(shortcut));
+    });
     setMinimumWidth(Sizes::SidebarRightWidth);
     this->resize(Sizes::SidebarRightWidth, this->height());
     this->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);

@@ -1,5 +1,6 @@
 #include "map_widget.h"
 #include "../gui_configuration.h"
+#include "../shortcut_registry.h"
 
 #include <QApplication>
 #include <QFile>
@@ -668,33 +669,32 @@ bool MapWidget::setKeyboardPanKey(QKeyEvent *event, bool pressed)
     if (event == nullptr)
         return false;
 
-    const GuiShortcutConfiguration &shortcuts = guiConfiguration().shortcuts;
     const Qt::KeyboardModifiers arrow_modifiers =
         event->modifiers() & ~(Qt::ShiftModifier | Qt::KeypadModifier);
 
     if ((event->key() == Qt::Key_Left && arrow_modifiers == Qt::NoModifier)
-        || guiShortcutMatches(event, shortcuts.map_pan_left, Qt::ShiftModifier))
+        || guiShortcutMatches(event, guiShortcutRegistry().shortcut(GuiShortcutId::MapPanLeft), Qt::ShiftModifier))
     {
         this->pan_key_left_pressed = pressed;
         return true;
     }
 
     if ((event->key() == Qt::Key_Right && arrow_modifiers == Qt::NoModifier)
-        || guiShortcutMatches(event, shortcuts.map_pan_right, Qt::ShiftModifier))
+        || guiShortcutMatches(event, guiShortcutRegistry().shortcut(GuiShortcutId::MapPanRight), Qt::ShiftModifier))
     {
         this->pan_key_right_pressed = pressed;
         return true;
     }
 
     if ((event->key() == Qt::Key_Up && arrow_modifiers == Qt::NoModifier)
-        || guiShortcutMatches(event, shortcuts.map_pan_up, Qt::ShiftModifier))
+        || guiShortcutMatches(event, guiShortcutRegistry().shortcut(GuiShortcutId::MapPanUp), Qt::ShiftModifier))
     {
         this->pan_key_up_pressed = pressed;
         return true;
     }
 
     if ((event->key() == Qt::Key_Down && arrow_modifiers == Qt::NoModifier)
-        || guiShortcutMatches(event, shortcuts.map_pan_down, Qt::ShiftModifier))
+        || guiShortcutMatches(event, guiShortcutRegistry().shortcut(GuiShortcutId::MapPanDown), Qt::ShiftModifier))
     {
         this->pan_key_down_pressed = pressed;
         return true;
@@ -902,7 +902,6 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
     if (!event)
         return false;
 
-    const GuiShortcutConfiguration &shortcuts = guiConfiguration().shortcuts;
 
     if (event->key() == Qt::Key_Shift)
     {
@@ -926,8 +925,8 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
         return true;
     }
 
-    const bool zoom_in = guiShortcutMatches(event, shortcuts.map_zoom_in, Qt::ShiftModifier);
-    const bool zoom_out = guiShortcutMatches(event, shortcuts.map_zoom_out, Qt::ShiftModifier);
+    const bool zoom_in = guiShortcutMatches(event, guiShortcutRegistry().shortcut(GuiShortcutId::MapZoomIn), Qt::ShiftModifier);
+    const bool zoom_out = guiShortcutMatches(event, guiShortcutRegistry().shortcut(GuiShortcutId::MapZoomOut), Qt::ShiftModifier);
     if (zoom_in || zoom_out)
     {
         if (this->m_model->viewMode() == MapViewMode::ThreeD)
@@ -1009,9 +1008,8 @@ bool MapWidget::handleKeyReleaseEvent(QKeyEvent *event)
         return true;
     }
 
-    const GuiShortcutConfiguration &shortcuts = guiConfiguration().shortcuts;
-    const bool zoom_in = guiShortcutMatches(event, shortcuts.map_zoom_in, Qt::ShiftModifier);
-    const bool zoom_out = guiShortcutMatches(event, shortcuts.map_zoom_out, Qt::ShiftModifier);
+    const bool zoom_in = guiShortcutMatches(event, guiShortcutRegistry().shortcut(GuiShortcutId::MapZoomIn), Qt::ShiftModifier);
+    const bool zoom_out = guiShortcutMatches(event, guiShortcutRegistry().shortcut(GuiShortcutId::MapZoomOut), Qt::ShiftModifier);
     if (zoom_in || zoom_out)
     {
         if (!event->isAutoRepeat())

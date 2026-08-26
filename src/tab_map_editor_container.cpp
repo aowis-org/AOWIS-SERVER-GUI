@@ -1,5 +1,6 @@
 #include "tab_map_editor_container.h"
 #include "gui_configuration.h"
+#include "shortcut_registry.h"
 
 #ifdef Q_OS_WASM
 #include "wasm/browser_network_snapshot_serializer.h"
@@ -12,6 +13,32 @@
 
 #include <QDebug>
 #include <QMessageBox>
+
+namespace
+{
+void bindEditorShortcut(QAbstractButton *button, GuiShortcutId id,
+                        const QString &label, QObject *context)
+{
+    if (button == nullptr || context == nullptr)
+        return;
+
+    button->setText(QStringLiteral("[%1] %2").arg(
+        guiShortcutPresentation(id), label));
+    button->setShortcut(guiShortcutRegistry().keySequence(id));
+    installShortcutEditContextMenu(button, id);
+
+    QObject::connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutChanged,
+                     context, [button, id, label](GuiShortcutId changed_id)
+    {
+        if (changed_id != id)
+            return;
+
+        button->setText(QStringLiteral("[%1] %2").arg(
+            guiShortcutPresentation(id), label));
+        button->setShortcut(guiShortcutRegistry().keySequence(id));
+    });
+}
+}
 
 #ifdef Q_OS_WASM
 #include <QColor>
@@ -1005,12 +1032,10 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     QVBoxLayout *lay = new QVBoxLayout(wgt);
     
     this->button_group_tools = new QButtonGroup(this);
-    const GuiShortcutConfiguration &shortcuts = guiConfiguration().shortcuts;
-    
-    this->button_radio_select = new QRadioButton(
-        QStringLiteral("[%1] Select").arg(shortcuts.map_editor_select), wgt);
+    this->button_radio_select = new QRadioButton(wgt);
     this->button_radio_select->setToolTip("Cancel placement and return to selection mode");
-    this->button_radio_select->setShortcut(guiShortcutKeySequence(shortcuts.map_editor_select));
+    bindEditorShortcut(this->button_radio_select, GuiShortcutId::MapEditorSelect,
+                       QStringLiteral("Select"), this);
     lay->addWidget(this->button_radio_select);
     this->button_group_tools->addButton(this->button_radio_select, 100);
     connect(this->button_radio_select, &QRadioButton::clicked, this, [this]
@@ -1023,8 +1048,8 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     });
     
     QToolButton *button_delete = new QToolButton(wgt);
-    button_delete->setText(QStringLiteral("[%1] Delete Selected").arg(shortcuts.map_editor_delete));
-    button_delete->setShortcut(guiShortcutKeySequence(shortcuts.map_editor_delete));
+    bindEditorShortcut(button_delete, GuiShortcutId::MapEditorDelete,
+                       QStringLiteral("Delete Selected"), this);
     button_delete->setEnabled(false);
     lay->addWidget(button_delete);
     connect(this->editor_controller, &MapEditorController::signalEntitySelectionChanged, this,
@@ -1038,9 +1063,9 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     QLabel *label_add = new QLabel("Add:", this);
     lay->addWidget(label_add);
     
-    QRadioButton *button_radio_pipe = new QRadioButton(
-        QStringLiteral("[%1] Pipe / Cable").arg(shortcuts.map_editor_add_pipe), wgt);
-    button_radio_pipe->setShortcut(guiShortcutKeySequence(shortcuts.map_editor_add_pipe));
+    QRadioButton *button_radio_pipe = new QRadioButton(wgt);
+    bindEditorShortcut(button_radio_pipe, GuiShortcutId::MapEditorAddPipe,
+                       QStringLiteral("Pipe / Cable"), this);
     lay->addWidget(button_radio_pipe);
     this->button_group_tools->addButton(button_radio_pipe, 1);
     connect(button_radio_pipe, &QRadioButton::clicked, this, [this]
@@ -1048,9 +1073,9 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
         this->editor_controller->startEntityPositioning(InfrastructureEntity::Pipe);
     });
     
-    QRadioButton *button_radio_junction = new QRadioButton(
-        QStringLiteral("[%1] Junction").arg(shortcuts.map_editor_add_junction), wgt);
-    button_radio_junction->setShortcut(guiShortcutKeySequence(shortcuts.map_editor_add_junction));
+    QRadioButton *button_radio_junction = new QRadioButton(wgt);
+    bindEditorShortcut(button_radio_junction, GuiShortcutId::MapEditorAddJunction,
+                       QStringLiteral("Junction"), this);
     lay->addWidget(button_radio_junction);
     this->button_group_tools->addButton(button_radio_junction, 2);
     connect(button_radio_junction, &QRadioButton::clicked, this, [this]
@@ -1058,34 +1083,34 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
         this->editor_controller->startEntityPositioning(InfrastructureEntity::Junction);
     });
     
-    QRadioButton *button_radio_valve = new QRadioButton(
-        QStringLiteral("[%1] Valve / Switch").arg(shortcuts.map_editor_add_valve), wgt);
-    button_radio_valve->setShortcut(guiShortcutKeySequence(shortcuts.map_editor_add_valve));
+    QRadioButton *button_radio_valve = new QRadioButton(wgt);
+    bindEditorShortcut(button_radio_valve, GuiShortcutId::MapEditorAddValve,
+                       QStringLiteral("Valve / Switch"), this);
     lay->addWidget(button_radio_valve);
     this->button_group_tools->addButton(button_radio_valve, 3);
     connect(button_radio_valve, &QRadioButton::clicked, this, [this] {
         this->editor_controller->startEntityPositioning(InfrastructureEntity::Valve);
     });
     
-    QRadioButton *button_radio_customer = new QRadioButton(
-        QStringLiteral("[%1] Customer Point").arg(shortcuts.map_editor_add_customer_point), wgt);
-    button_radio_customer->setShortcut(guiShortcutKeySequence(shortcuts.map_editor_add_customer_point));
+    QRadioButton *button_radio_customer = new QRadioButton(wgt);
+    bindEditorShortcut(button_radio_customer, GuiShortcutId::MapEditorAddCustomerPoint,
+                       QStringLiteral("Customer Point"), this);
     lay->addWidget(button_radio_customer);
     this->button_group_tools->addButton(button_radio_customer, 4);
     button_radio_customer->setEnabled(false);
     
-    QRadioButton *button_radio_pump = new QRadioButton(
-        QStringLiteral("[%1] Pump").arg(shortcuts.map_editor_add_pump), wgt);
-    button_radio_pump->setShortcut(guiShortcutKeySequence(shortcuts.map_editor_add_pump));
+    QRadioButton *button_radio_pump = new QRadioButton(wgt);
+    bindEditorShortcut(button_radio_pump, GuiShortcutId::MapEditorAddPump,
+                       QStringLiteral("Pump"), this);
     lay->addWidget(button_radio_pump);
     this->button_group_tools->addButton(button_radio_pump, 5);
     connect(button_radio_pump, &QRadioButton::clicked, this, [this] {
         this->editor_controller->startEntityPositioning(InfrastructureEntity::Pump);
     });
     
-    QRadioButton *button_radio_tank = new QRadioButton(
-        QStringLiteral("[%1] Tank").arg(shortcuts.map_editor_add_tank), wgt);
-    button_radio_tank->setShortcut(guiShortcutKeySequence(shortcuts.map_editor_add_tank));
+    QRadioButton *button_radio_tank = new QRadioButton(wgt);
+    bindEditorShortcut(button_radio_tank, GuiShortcutId::MapEditorAddTank,
+                       QStringLiteral("Tank"), this);
     lay->addWidget(button_radio_tank);
     this->button_group_tools->addButton(button_radio_tank, 6);
     connect(button_radio_tank, &QRadioButton::clicked, this, [this]
@@ -1093,16 +1118,16 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
         this->editor_controller->startEntityPositioning(InfrastructureEntity::Tank);
     });
     
-    QRadioButton *button_radio_power = new QRadioButton(
-        QStringLiteral("[%1] Power Source").arg(shortcuts.map_editor_add_power_source), wgt);
-    button_radio_power->setShortcut(guiShortcutKeySequence(shortcuts.map_editor_add_power_source));
+    QRadioButton *button_radio_power = new QRadioButton(wgt);
+    bindEditorShortcut(button_radio_power, GuiShortcutId::MapEditorAddPowerSource,
+                       QStringLiteral("Power Source"), this);
     lay->addWidget(button_radio_power);
     this->button_group_tools->addButton(button_radio_power, 7);
     button_radio_power->setEnabled(false);
     
-    QRadioButton *button_radio_reservoir = new QRadioButton(
-        QStringLiteral("[%1] Reservoir").arg(shortcuts.map_editor_add_reservoir), wgt);
-    button_radio_reservoir->setShortcut(guiShortcutKeySequence(shortcuts.map_editor_add_reservoir));
+    QRadioButton *button_radio_reservoir = new QRadioButton(wgt);
+    bindEditorShortcut(button_radio_reservoir, GuiShortcutId::MapEditorAddReservoir,
+                       QStringLiteral("Reservoir"), this);
     lay->addWidget(button_radio_reservoir);
     this->button_group_tools->addButton(button_radio_reservoir, 8);
     connect(button_radio_reservoir, &QRadioButton::clicked, this, [this]
@@ -1110,9 +1135,9 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
         this->editor_controller->startEntityPositioning(InfrastructureEntity::Reservoir);
     });
     
-    QRadioButton *button_radio_note = new QRadioButton(
-        QStringLiteral("[%1] Note").arg(shortcuts.map_editor_add_note), wgt);
-    button_radio_note->setShortcut(guiShortcutKeySequence(shortcuts.map_editor_add_note));
+    QRadioButton *button_radio_note = new QRadioButton(wgt);
+    bindEditorShortcut(button_radio_note, GuiShortcutId::MapEditorAddNote,
+                       QStringLiteral("Note"), this);
     lay->addWidget(button_radio_note);
     this->button_group_tools->addButton(button_radio_note, 9);
     button_radio_note->setEnabled(false);

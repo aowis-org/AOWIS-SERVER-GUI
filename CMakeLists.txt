@@ -100,6 +100,7 @@ qt_add_executable(aowis-server-gui
     src/main_window.h
     src/rest_client.h src/rest_client.cpp
     src/gui_configuration.h src/gui_configuration.cpp
+    src/shortcut_registry.h src/shortcut_registry.cpp
     src/builtin_examples.h src/builtin_examples.cpp
     src/map_server_client_configuration.h src/map_server_client_configuration.cpp
     src/menubar.h src/menubar.cpp

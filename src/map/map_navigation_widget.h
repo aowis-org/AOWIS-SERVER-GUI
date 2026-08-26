@@ -53,6 +53,7 @@ private:
 
     void activateMapProvider(MapProvider provider);
     void syncIconSizeSliderForViewMode(MapViewMode view_mode);
+    void refreshShortcutPresentation();
     
 signals:
     void signalSlideOpacityChanged(int opacity);

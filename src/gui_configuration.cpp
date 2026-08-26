@@ -42,7 +42,9 @@ void ensureSettingDefault(QSettings &settings, const QString &key, const QString
 QString loadShortcutSetting(QSettings &settings, const QString &key, const QString &default_value)
 {
     const QString value = settings.value(key, default_value).toString().trimmed();
-    if (!value.isEmpty() && !parseShortcutKeySequence(value).isEmpty())
+    if (value.isEmpty())
+        return QString();
+    if (!parseShortcutKeySequence(value).isEmpty())
         return value;
 
     qWarning() << "Invalid shortcut" << key << "=" << value

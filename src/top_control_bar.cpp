@@ -3,6 +3,7 @@
 #include "_sizes.h"
 #include "builtin_examples.h"
 #include "gui_configuration.h"
+#include "shortcut_registry.h"
 #include "widgets/combo_checkboxes.h"
 
 #include <aowis/model/hydraulic/hydraulic_simulation_results.h>
@@ -45,10 +46,9 @@ QString shortcutTooltipToken(const QString &shortcut)
 
 QString simulationShortcutTooltip()
 {
-    const GuiShortcutConfiguration &shortcuts = guiConfiguration().shortcuts;
-    return shortcutTooltipToken(shortcuts.simulation_run)
+    return shortcutTooltipToken(guiShortcutPresentation(GuiShortcutId::SimulationRun))
         + QStringLiteral("<br>")
-        + shortcutTooltipToken(shortcuts.simulation_run_alternate);
+        + shortcutTooltipToken(guiShortcutPresentation(GuiShortcutId::SimulationRunAlternate));
 }
 class TopControlBarContent : public QWidget
 {
@@ -335,7 +335,8 @@ void TopControlBar::setFullScreenState(bool fullscreen)
 
     const QString icon_path = fullscreen ? QStringLiteral(":/icon/fullscreen_undo.png") : QStringLiteral(":/icon/fullscreen.png");
     this->button_fullscreen->setIcon(QIcon(icon_path));
-    const QString fullscreen_shortcut = shortcutTooltipToken(guiConfiguration().shortcuts.fullscreen);
+    const QString fullscreen_shortcut = shortcutTooltipToken(
+        guiShortcutPresentation(GuiShortcutId::Fullscreen));
     this->button_fullscreen->setToolTip(
         (fullscreen ? QStringLiteral("Leave fullscreen ") : QStringLiteral("Enter fullscreen "))
         + fullscreen_shortcut);
@@ -864,15 +865,50 @@ void TopControlBar::addSimulationControls()
     resetSimulationRunIcon();
     this->button_sim_start->setFlat(true);
     configureToolbarIconButton(this->button_sim_start);
-    const GuiShortcutConfiguration &shortcuts = guiConfiguration().shortcuts;
     this->button_sim_start->setToolTip(
         QStringLiteral("Run Configured Simulations<br>") + simulationShortcutTooltip());
-    this->button_sim_start->addAction(
-        QString(), guiShortcutKeySequence(shortcuts.simulation_run_alternate),
+    QAction *simulation_alternate_action = this->button_sim_start->addAction(
+        QString(), guiShortcutRegistry().keySequence(GuiShortcutId::SimulationRunAlternate),
         this->button_sim_start, &QPushButton::click);
-    this->button_sim_start->addAction(
-        QString(), guiShortcutKeySequence(shortcuts.simulation_run),
+    QAction *simulation_primary_action = this->button_sim_start->addAction(
+        QString(), guiShortcutRegistry().keySequence(GuiShortcutId::SimulationRun),
         this->button_sim_start, &QPushButton::click);
+    installShortcutEditContextMenu(this->button_sim_start, GuiShortcutId::SimulationRun);
+    connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutChanged,
+            this, [this, simulation_primary_action, simulation_alternate_action](GuiShortcutId id)
+    {
+        if (id == GuiShortcutId::SimulationRun)
+        {
+            simulation_primary_action->setShortcut(
+                guiShortcutRegistry().shortcutCaptureActive()
+                    ? QKeySequence()
+                    : guiShortcutRegistry().keySequence(GuiShortcutId::SimulationRun));
+        }
+        else if (id == GuiShortcutId::SimulationRunAlternate)
+        {
+            simulation_alternate_action->setShortcut(
+                guiShortcutRegistry().shortcutCaptureActive()
+                    ? QKeySequence()
+                    : guiShortcutRegistry().keySequence(GuiShortcutId::SimulationRunAlternate));
+        }
+        else
+        {
+            return;
+        }
+
+        this->button_sim_start->setToolTip(
+            QStringLiteral("Run Configured Simulations<br>") + simulationShortcutTooltip());
+    });
+    connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutCaptureActiveChanged,
+            this, [simulation_primary_action, simulation_alternate_action](bool active)
+    {
+        simulation_primary_action->setShortcut(
+            active ? QKeySequence()
+                   : guiShortcutRegistry().keySequence(GuiShortcutId::SimulationRun));
+        simulation_alternate_action->setShortcut(
+            active ? QKeySequence()
+                   : guiShortcutRegistry().keySequence(GuiShortcutId::SimulationRunAlternate));
+    });
 
     QWidget *result_button_stack = new QWidget(this->content);
     QVBoxLayout *result_button_stack_layout = new QVBoxLayout(result_button_stack);
@@ -1054,6 +1090,13 @@ void TopControlBar::addViewControls()
     connect(this->button_fullscreen, &QToolButton::clicked, this, [this]
     {
         emit signalFullScreenToggle();
+    });
+    installShortcutEditContextMenu(this->button_fullscreen, GuiShortcutId::Fullscreen);
+    connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutChanged,
+            this, [this](GuiShortcutId id)
+    {
+        if (id == GuiShortcutId::Fullscreen)
+            setFullScreenState(window() != nullptr && window()->isFullScreen());
     });
 
     QToolButton *button_export_epanet = new QToolButton(button_stack);

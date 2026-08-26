@@ -1,5 +1,6 @@
 #include "main_window.h"
 #include "gui_configuration.h"
+#include "shortcut_registry.h"
 #include "map_server_client_configuration.h"
 #include <QPushButton>
 #include <QShortcut>
@@ -86,11 +87,24 @@ MainWindow::MainWindow(QWidget *parent)
         scheduleRightDockResize();
     });
 
-    QShortcut *shortcut_toggle_right_docks = new QShortcut(
-        guiShortcutKeySequence(guiConfiguration().shortcuts.sidebar_toggle), this);
-    shortcut_toggle_right_docks->setContext(Qt::WindowShortcut);
-    shortcut_toggle_right_docks->setAutoRepeat(false);
-    connect(shortcut_toggle_right_docks, &QShortcut::activated, this, &MainWindow::toggleRightDockArea);
+    this->shortcut_toggle_right_docks = new QShortcut(
+        guiShortcutRegistry().keySequence(GuiShortcutId::SidebarToggle), this);
+    this->shortcut_toggle_right_docks->setContext(Qt::WindowShortcut);
+    this->shortcut_toggle_right_docks->setAutoRepeat(false);
+    connect(this->shortcut_toggle_right_docks, &QShortcut::activated,
+            this, &MainWindow::toggleRightDockArea);
+    connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutChanged,
+            this, [this](GuiShortcutId id)
+    {
+        if (id == GuiShortcutId::SidebarToggle)
+            this->shortcut_toggle_right_docks->setKey(
+                guiShortcutRegistry().keySequence(GuiShortcutId::SidebarToggle));
+    });
+    connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutCaptureActiveChanged,
+            this, [this](bool active)
+    {
+        this->shortcut_toggle_right_docks->setEnabled(!active);
+    });
     
     this->dock_entity_map_legend->setVisible(false);
     this->dock_map_editor_guide->setVisible(false);
@@ -208,10 +222,21 @@ MainWindow::MainWindow(QWidget *parent)
                                   QIcon(":/icon/log.png"),
                                   "Logs",
                                   MainNavigationWidget::Placement::Bottom);
-    this->main_navigation->addPage(this->settings,
+    this->settings_page_index = this->main_navigation->addPage(
+                                  this->settings,
                                   QIcon(":/icon/settings.png"),
                                   "Settings",
                                   MainNavigationWidget::Placement::Bottom);
+
+    connect(&guiShortcutRegistry(), &GuiShortcutRegistry::editShortcutRequested,
+            this, [this](GuiShortcutId id)
+    {
+        if (this->settings_page_index < 0)
+            return;
+
+        this->main_navigation->setCurrentIndex(this->settings_page_index);
+        this->settings->focusShortcut(id);
+    });
 
     this->main_navigation->setCurrentIndex(2);
 
@@ -493,7 +518,8 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 void MainWindow::keyPressEvent(QKeyEvent *event)
 {
 #ifndef Q_OS_WASM
-    if (guiShortcutMatches(event, guiConfiguration().shortcuts.fullscreen))
+    if (!guiShortcutRegistry().shortcutCaptureActive()
+        && guiShortcutMatches(event, guiShortcutRegistry().shortcut(GuiShortcutId::Fullscreen)))
     {
         fullScreenToggle();
         event->accept();

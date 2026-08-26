@@ -32,6 +32,7 @@
 #include "menubar.h"
 
 #include "tab_settings_widget.h"
+#include "shortcut_registry.h"
 
 #include "map/map_model.h"
 #include "map/map_tile_repository.h"
@@ -67,6 +68,8 @@
 #else
 #include "gps_provider.h"
 #endif
+
+class QShortcut;
 
 class MainWindow : public QMainWindow
 {
@@ -125,6 +128,8 @@ private:
     
     MainNavigationWidget *main_navigation = nullptr;
     SettingsWidget *settings;
+    int settings_page_index = -1;
+    QShortcut *shortcut_toggle_right_docks = nullptr;
     MapMonitorContainer *map_monitor;
     MapEditorContainer *map_editor;
     EnergyWidget *energy;
