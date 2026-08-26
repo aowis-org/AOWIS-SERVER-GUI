@@ -4,6 +4,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaObject>
+#ifdef Q_OS_WIN
+#include <QPointer>
+#endif
 #include <QRunnable>
 #include <QThread>
 #include <QTimer>
@@ -83,8 +86,19 @@ QByteArray terrainElevationJson(const Aowis::Map::TerrainElevationLookupResult &
 
 InterfaceServerMapStandalone::InterfaceServerMapStandalone(QObject *parent)
     : InterfaceServerMap(parent),
+#ifdef Q_OS_WIN
+      map_tiles(new MapTiles())
+#else
       map_tiles(new MapTiles(this))
+#endif
 {
+#ifdef Q_OS_WIN
+    this->map_tiles->moveToThread(&this->map_tile_thread);
+    connect(&this->map_tile_thread, &QThread::finished,
+            this->map_tiles, &QObject::deleteLater);
+    this->map_tile_thread.start();
+#endif
+
     connect(this->map_tiles, &MapTiles::tileReady, this,
             [this](const QString &key, const QByteArray &data)
     {
@@ -128,6 +142,12 @@ InterfaceServerMapStandalone::~InterfaceServerMapStandalone()
 {
     this->terrain_request_pool.clear();
     this->terrain_request_pool.waitForDone();
+
+#ifdef Q_OS_WIN
+    this->map_tile_thread.quit();
+    this->map_tile_thread.wait();
+    this->map_tiles = nullptr;
+#endif
 }
 
 void InterfaceServerMapStandalone::requestTile(const QString &endpoint, const QString &key, int x, int y)
@@ -141,6 +161,7 @@ void InterfaceServerMapStandalone::requestTile(const QString &endpoint, const QS
         emit signalTileFailed(key);
         return;
     }
+
     const QString provider = parts[0];
     bool zoom_valid = false;
     const int zoom = parts[1].toInt(&zoom_valid);
@@ -150,6 +171,35 @@ void InterfaceServerMapStandalone::requestTile(const QString &endpoint, const QS
         emit signalTileFailed(key);
         return;
     }
+
+#ifdef Q_OS_WIN
+    MapTiles *map_tiles = this->map_tiles;
+    if (map_tiles == nullptr || !this->map_tile_thread.isRunning())
+    {
+        emit signalTileFailed(key);
+        return;
+    }
+
+    const QPointer<InterfaceServerMapStandalone> receiver(this);
+    QMetaObject::invokeMethod(map_tiles,
+        [receiver, map_tiles, provider, zoom, x, y, key, endpoint]
+    {
+        if (receiver.isNull())
+            return;
+
+        const MapTiles::TileRequestResult result =
+            map_tiles->getTile(provider, zoom, x, y, key);
+
+        QMetaObject::invokeMethod(receiver.data(),
+            [receiver, endpoint, key, x, y, result]
+        {
+            if (receiver.isNull())
+                return;
+
+            receiver->finishTileRequest(endpoint, key, x, y, result);
+        }, Qt::QueuedConnection);
+    }, Qt::QueuedConnection);
+#else
     const MapTiles::TileRequestResult result = this->map_tiles->getTile(provider, zoom, x, y, key);
     switch (result.status)
     {
@@ -166,6 +216,41 @@ void InterfaceServerMapStandalone::requestTile(const QString &endpoint, const QS
             emit signalTileDataReceived(key, data);
         });
         return;
+
+    case MapTiles::TileRequestStatus::Pending:
+        return;
+
+    case MapTiles::TileRequestStatus::InvalidRequest:
+        qWarning() << "Invalid tile request:" << endpoint << x << y;
+        emit signalTileFailed(key);
+        return;
+
+    case MapTiles::TileRequestStatus::ServerBusy:
+        qWarning() << "Map tile downloader is busy:" << key;
+        emit signalTileFailed(key);
+        return;
+    }
+#endif
+}
+
+#ifdef Q_OS_WIN
+void InterfaceServerMapStandalone::finishTileRequest(
+    const QString &endpoint, const QString &key, int x, int y,
+    const MapTiles::TileRequestResult &result)
+{
+    switch (result.status)
+    {
+    case MapTiles::TileRequestStatus::Ready:
+        if (result.data.isEmpty())
+        {
+            qWarning() << "Cached tile is empty:" << key;
+            emit signalTileFailed(key);
+            return;
+        }
+
+        emit signalTileDataReceived(key, result.data);
+        return;
+
     case MapTiles::TileRequestStatus::Pending:
         return;
 
@@ -180,6 +265,7 @@ void InterfaceServerMapStandalone::requestTile(const QString &endpoint, const QS
         return;
     }
 }
+#endif
 
 void InterfaceServerMapStandalone::requestTerrainTile(const QString &endpoint, const QString &key)
 {
@@ -340,6 +426,36 @@ void InterfaceServerMapStandalone::deleteTiles(quint64 request_id, const QString
                                                int tile_x_min, int tile_x_max,
                                                int tile_y_min, int tile_y_max)
 {
+#ifdef Q_OS_WIN
+    MapTiles *map_tiles = this->map_tiles;
+    if (map_tiles == nullptr || !this->map_tile_thread.isRunning())
+    {
+        emit signalTileDeletionFailed(
+            request_id, QStringLiteral("Standalone map tile worker is not running"));
+        return;
+    }
+
+    const QPointer<InterfaceServerMapStandalone> receiver(this);
+    QMetaObject::invokeMethod(map_tiles,
+        [receiver, map_tiles, request_id, provider, zoom,
+         tile_x_min, tile_x_max, tile_y_min, tile_y_max]
+    {
+        if (receiver.isNull())
+            return;
+
+        const int deleted_count = map_tiles->deleteTiles(
+            provider, zoom, tile_x_min, tile_x_max, tile_y_min, tile_y_max);
+
+        QMetaObject::invokeMethod(receiver.data(),
+            [receiver, request_id, deleted_count]
+        {
+            if (receiver.isNull())
+                return;
+
+            receiver->finishTileDeletion(request_id, deleted_count);
+        }, Qt::QueuedConnection);
+    }, Qt::QueuedConnection);
+#else
     const int deleted_count = this->map_tiles->deleteTiles(
         provider, zoom, tile_x_min, tile_x_max, tile_y_min, tile_y_max);
     if (deleted_count == -1)
@@ -353,4 +469,25 @@ void InterfaceServerMapStandalone::deleteTiles(quint64 request_id, const QString
         return;
     }
     emit signalTilesDeleted(request_id);
+#endif
 }
+
+#ifdef Q_OS_WIN
+void InterfaceServerMapStandalone::finishTileDeletion(quint64 request_id, int deleted_count)
+{
+    if (deleted_count == -1)
+    {
+        emit signalTileDeletionFailed(
+            request_id, QStringLiteral("Invalid tile cache deletion request"));
+        return;
+    }
+    if (deleted_count < -1)
+    {
+        emit signalTileDeletionFailed(
+            request_id, QStringLiteral("Failed to delete one or more cached tiles"));
+        return;
+    }
+    emit signalTilesDeleted(request_id);
+}
+#endif
+

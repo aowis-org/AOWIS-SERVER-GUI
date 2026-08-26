@@ -5,6 +5,9 @@
 
 #include <aowis/map/maptiles.h>
 #include <aowis/map/terrain_data.h>
+#ifdef Q_OS_WIN
+#include <QThread>
+#endif
 #include <QThreadPool>
 
 class InterfaceServerMapStandalone : public InterfaceServerMap
@@ -20,6 +23,12 @@ public:
     void deleteTiles(quint64 request_id, const QString &provider, int zoom,
                      int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max) override;
 private:
+#ifdef Q_OS_WIN
+    void finishTileRequest(const QString &endpoint, const QString &key, int x, int y,
+                           const MapTiles::TileRequestResult &result);
+    void finishTileDeletion(quint64 request_id, int deleted_count);
+    QThread map_tile_thread;
+#endif
     MapTiles *map_tiles = nullptr;
     Aowis::Map::TerrainData *terrain_data = nullptr;
     QThreadPool terrain_request_pool;
