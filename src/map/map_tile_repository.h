@@ -68,6 +68,8 @@ private:
     };
 
     void initServerMapInterface();
+    int tileRequestInFlightLimit() const;
+    int backgroundTileRequestInFlightLimit() const;
     void scheduleTileRequestDispatch();
     void processTileRequestQueue();
     void trimTileRequestQueue();

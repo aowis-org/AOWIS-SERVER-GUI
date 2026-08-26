@@ -196,10 +196,34 @@ void MapTileRepository::requestTile(const QString &endpoint, const QString &key,
     scheduleTileRequestDispatch();
 }
 
+int MapTileRepository::tileRequestInFlightLimit() const
+{
+#if defined(Q_OS_WIN) && defined(AOWIS_STANDALONE)
+    // The embedded map client uses one QNetworkAccessManager. Qt's desktop
+    // HTTP/1 implementation executes at most six requests concurrently per
+    // host/port, so keeping more than six direct Windows requests "in flight"
+    // only hides them inside Qt's network queue and makes them susceptible to
+    // transfer timeouts before useful work can start. Keep the excess in this
+    // repository instead, where viewport/batch priority can still reorder it.
+    if (this->map_server_mode == MapServerMode::Standalone)
+        return 6;
+#endif
+    return MaximumTileRequestsInFlight;
+}
+
+int MapTileRepository::backgroundTileRequestInFlightLimit() const
+{
+#if defined(Q_OS_WIN) && defined(AOWIS_STANDALONE)
+    if (this->map_server_mode == MapServerMode::Standalone)
+        return 2;
+#endif
+    return MaximumBackgroundTileRequestsInFlight;
+}
+
 void MapTileRepository::scheduleTileRequestDispatch()
 {
     if (!this->interface_map || this->tile_requests_queued.isEmpty() ||
-        this->tiles_in_flight.size() >= MaximumTileRequestsInFlight ||
+        this->tiles_in_flight.size() >= tileRequestInFlightLimit() ||
         this->tile_request_timer->isActive())
     {
         return;
@@ -213,15 +237,17 @@ void MapTileRepository::processTileRequestQueue()
     if (!this->interface_map)
         return;
 
+    const int in_flight_limit = tileRequestInFlightLimit();
+    const int background_in_flight_limit = backgroundTileRequestInFlightLimit();
 #ifdef Q_OS_WIN
     const int dispatch_limit = 1;
 #else
-    const int dispatch_limit = MaximumTileRequestsInFlight;
+    const int dispatch_limit = in_flight_limit;
 #endif
     int dispatched = 0;
 
     while (!this->tile_requests_queued.isEmpty() &&
-           this->tiles_in_flight.size() < MaximumTileRequestsInFlight &&
+           this->tiles_in_flight.size() < in_flight_limit &&
            dispatched < dispatch_limit)
     {
         QHash<QString, PendingTileRequest>::iterator best =
@@ -252,7 +278,7 @@ void MapTileRepository::processTileRequestQueue()
 
         if (!best.value().foreground
             && this->background_tiles_in_flight.size() >=
-                MaximumBackgroundTileRequestsInFlight)
+                background_in_flight_limit)
         {
             break;
         }
@@ -278,7 +304,7 @@ void MapTileRepository::processTileRequestQueue()
     }
 
     if (dispatched > 0 && !this->tile_requests_queued.isEmpty()
-        && this->tiles_in_flight.size() < MaximumTileRequestsInFlight)
+        && this->tiles_in_flight.size() < in_flight_limit)
     {
         scheduleTileRequestDispatch();
     }
