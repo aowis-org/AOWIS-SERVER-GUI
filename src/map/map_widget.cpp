@@ -980,6 +980,16 @@ bool MapWidget::handleKeyReleaseEvent(QKeyEvent *event)
     if (!event)
         return false;
 
+    if (event->key() == Qt::Key_Control
+        && this->view_3d_orbit_active
+        && this->view_3d_orbit_input == View3dOrbitInput::CtrlMouse)
+    {
+        if (!event->isAutoRepeat())
+            endView3dOrbit();
+        event->accept();
+        return true;
+    }
+
     if (event->key() == Qt::Key_Shift)
     {
         if (!event->isAutoRepeat())
@@ -1029,6 +1039,11 @@ bool MapWidget::handleKeyReleaseEvent(QKeyEvent *event)
 void MapWidget::clearKeyboardPanInput()
 {
     endView3dKeyboardZoomInteraction();
+    if (this->view_3d_orbit_active
+        && this->view_3d_orbit_input == View3dOrbitInput::CtrlMouse)
+    {
+        endView3dOrbit();
+    }
     this->pan_key_left_pressed = false;
     this->pan_key_right_pressed = false;
     this->pan_key_up_pressed = false;
@@ -1270,12 +1285,17 @@ void MapWidget::handleWheelEvent(QWheelEvent *event)
     event->accept();
 }
 
-void MapWidget::beginView3dOrbit(const QMouseEvent *event)
+void MapWidget::beginView3dOrbit(
+    const QMouseEvent *event, View3dOrbitInput input)
 {
-    if (event == nullptr || this->view_3d_orbit_active)
+    if (event == nullptr || this->view_3d_orbit_active
+        || input == View3dOrbitInput::None)
+    {
         return;
+    }
 
     this->view_3d_orbit_active = true;
+    this->view_3d_orbit_input = input;
     this->m_model->beginView3dRotateInteraction();
 #ifdef Q_OS_WASM
     this->view_3d_orbit_last_position = event->position().toPoint();
@@ -1300,6 +1320,7 @@ void MapWidget::endView3dOrbit(bool restore_cursor_position)
     }
 
     this->view_3d_orbit_active = false;
+    this->view_3d_orbit_input = View3dOrbitInput::None;
     this->m_model->endView3dRotateInteraction();
 #ifndef Q_OS_WASM
     if (this->view_3d_orbit_mouse_grabbed)
@@ -1328,7 +1349,7 @@ bool MapWidget::handleMousePressEvent(QMouseEvent *event)
     if (this->m_model->viewMode() == MapViewMode::ThreeD
         && event->button() == Qt::MiddleButton)
     {
-        beginView3dOrbit(event);
+        beginView3dOrbit(event, View3dOrbitInput::MiddleMouse);
         this->pan_velocity = QPointF();
         this->mouse_pan_inertia_active = false;
         stopPanAnimationIfIdle();
@@ -1435,9 +1456,30 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
     const QPoint position = event->position().toPoint();
     this->updatePointerCoordinates(position);
 
+    const bool ctrl_mouse_orbit_requested =
+        this->m_model->viewMode() == MapViewMode::ThreeD
+        && event->modifiers().testFlag(Qt::ControlModifier)
+        && event->buttons() == Qt::NoButton;
+
+    if (!this->view_3d_orbit_active && ctrl_mouse_orbit_requested)
+    {
+        beginView3dOrbit(event, View3dOrbitInput::CtrlMouse);
+        this->pan_velocity = QPointF();
+        this->mouse_pan_inertia_active = false;
+        stopPanAnimationIfIdle();
+        event->accept();
+        return true;
+    }
+
     if (this->view_3d_orbit_active)
     {
-        if (!(event->buttons() & Qt::MiddleButton))
+        bool orbit_input_still_active = false;
+        if (this->view_3d_orbit_input == View3dOrbitInput::MiddleMouse)
+            orbit_input_still_active = event->buttons().testFlag(Qt::MiddleButton);
+        else if (this->view_3d_orbit_input == View3dOrbitInput::CtrlMouse)
+            orbit_input_still_active = ctrl_mouse_orbit_requested;
+
+        if (!orbit_input_still_active)
         {
             endView3dOrbit();
             return false;
