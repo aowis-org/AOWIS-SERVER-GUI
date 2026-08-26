@@ -115,6 +115,10 @@ private:
     bool currentLayoutCoversForeground(int imagery_zoom, int foreground_start_x,
                                        int foreground_start_y, int foreground_tiles_x,
                                        int foreground_tiles_y, int tile_count) const;
+    bool tileReadyForZoomHandoff(const VisibleTile &tile, bool relief_enabled) const;
+    QVector<VisibleTile> progressiveZoomLayout(
+        const QVector<VisibleTile> &target_tiles, int target_zoom,
+        bool relief_enabled) const;
     bool ensureTileResource(const VisibleTile &tile, TileResource **resource,
                             QRhiResourceUpdateBatch *resource_updates);
     bool ensureHeatmapTexture(const VisibleTile &tile, TileResource *resource,

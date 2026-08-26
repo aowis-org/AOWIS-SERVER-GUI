@@ -35,6 +35,16 @@ quint64 heatmapMarkerBucketKey(int bucket_x, int bucket_y)
     return (quint64(quint32(bucket_x)) << 32) | quint64(quint32(bucket_y));
 }
 
+quint64 tilePositionKey(int virtual_x, int y)
+{
+    return (quint64(quint32(virtual_x)) << 32) | quint64(quint32(y));
+}
+
+int parentVirtualTileX(int child_virtual_x)
+{
+    return int(std::floor(double(child_virtual_x) * 0.5));
+}
+
 int heatmapMarkerBucketCoordinate(double world_coordinate)
 {
     return int(std::floor(world_coordinate / HeatmapMarkerBucketWorldSize));
@@ -621,15 +631,15 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
         }
     }
 
-    // Keep the previous complete layer during both zoom-LOD handoffs and pan
-    // window recenters until the replacement foreground is resident. The old
-    // window deliberately extends beyond the actual viewport, so it can cover
-    // the screen while the newly exposed edge tiles finish loading.
+    // Retain old coverage while replacement data arrives, but make zoom LOD
+    // handoffs progressive per parent/child group instead of waiting for the
+    // entire foreground. On zoom-in a parent is replaced only when all four
+    // direct children are ready. On zoom-out each ready parent immediately
+    // replaces its corresponding old children. Panning at one fixed LOD keeps
+    // the existing all-foreground-ready barrier.
     //
-    // The old geometry remains valid because it is expressed in the common
-    // ReferenceZoom world coordinate system. In 2D, the continuous scale is
-    // adjusted when the integer tile zoom changes, so an LOD handoff also
-    // retains exactly the same apparent scale.
+    // Mixed-LOD geometry is safe because every tile is expressed in the common
+    // ReferenceZoom world coordinate system.
     const bool retained_layer_transition = !this->visible_tiles.isEmpty()
         && layout_origin_matches;
     if (retained_layer_transition)
@@ -639,17 +649,7 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
         {
             if (!tile.foreground)
                 continue;
-
-            const QPixmap *pixmap = this->tile_repository->tile(tile.imagery_key);
-            if (pixmap == nullptr || pixmap->isNull())
-            {
-                foreground_ready = false;
-                break;
-            }
-
-            if (relief_enabled && !tile.terrain_key.isEmpty()
-                && this->terrain_repository != nullptr
-                && this->terrain_repository->tile(tile.terrain_key) == nullptr)
+            if (!tileReadyForZoomHandoff(tile, relief_enabled))
             {
                 foreground_ready = false;
                 break;
@@ -658,9 +658,15 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
 
         if (!foreground_ready)
         {
-            // Keep drawing the retained layer. Tile-availability signals schedule
-            // another frame, where this readiness check is repeated.
-            return true;
+            const QVector<VisibleTile> progressive_tiles = progressiveZoomLayout(
+                next_tiles, imagery_zoom, relief_enabled);
+            if (progressive_tiles.isEmpty())
+            {
+                // Same-LOD pan/recenter, unsupported multi-level zoom jump, or
+                // no replaceable zoom group yet: keep drawing the retained layer.
+                return true;
+            }
+            next_tiles = progressive_tiles;
         }
     }
 
@@ -685,10 +691,14 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     this->vertices.reserve(next_tiles.size() * 6);
     for (VisibleTile &tile : next_tiles)
     {
-        const float left = float(tile.virtual_x * tile_reference_size - origin_world.x());
-        const float top = float(tile.y * tile_reference_size - origin_world.y());
-        const float right = float(left + tile_reference_size);
-        const float bottom = float(top + tile_reference_size);
+        const double visible_tile_reference_size = MapModel::TileSize
+            * std::pow(2.0, MapRenderCacheMath::ReferenceZoom - tile.imagery_zoom);
+        const float left = float(
+            tile.virtual_x * visible_tile_reference_size - origin_world.x());
+        const float top = float(
+            tile.y * visible_tile_reference_size - origin_world.y());
+        const float right = float(left + visible_tile_reference_size);
+        const float bottom = float(top + visible_tile_reference_size);
         tile.first_vertex = this->vertices.size();
 
         bool relief_built = false;
@@ -701,7 +711,7 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
             // entire basemap mesh.
             relief_built = appendReliefTileVertices(
                 &this->vertices, &tile, terrain_tile,
-                left, top, float(tile_reference_size));
+                left, top, float(visible_tile_reference_size));
         }
 
         if (!relief_built)
@@ -715,38 +725,267 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     return true;
 }
 
+bool MapRhiBasemapRenderer::tileReadyForZoomHandoff(
+    const VisibleTile &tile, bool relief_enabled) const
+{
+    if (this->tile_repository == nullptr)
+        return false;
+
+    const QPixmap *pixmap = this->tile_repository->tile(tile.imagery_key);
+    if (pixmap == nullptr || pixmap->isNull())
+        return false;
+
+    if (relief_enabled && !tile.terrain_key.isEmpty())
+    {
+        if (this->terrain_repository == nullptr
+            || this->terrain_repository->tile(tile.terrain_key) == nullptr)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+QVector<MapRhiBasemapRenderer::VisibleTile> MapRhiBasemapRenderer::progressiveZoomLayout(
+    const QVector<VisibleTile> &target_tiles, int target_zoom,
+    bool relief_enabled) const
+{
+    QVector<VisibleTile> result;
+    if (target_tiles.isEmpty() || this->visible_tiles.isEmpty())
+        return result;
+
+    bool has_parent_source = false;
+    bool has_child_source = false;
+    bool unsupported_zoom = false;
+    for (const VisibleTile &tile : this->visible_tiles)
+    {
+        if (tile.imagery_zoom == target_zoom)
+            continue;
+        if (tile.imagery_zoom == target_zoom - 1)
+            has_parent_source = true;
+        else if (tile.imagery_zoom == target_zoom + 1)
+            has_child_source = true;
+        else
+            unsupported_zoom = true;
+    }
+
+    if (unsupported_zoom || (has_parent_source && has_child_source)
+        || (!has_parent_source && !has_child_source))
+    {
+        return result;
+    }
+
+    QHash<quint64, qsizetype> target_by_position;
+    target_by_position.reserve(target_tiles.size());
+    for (qsizetype index = 0; index < target_tiles.size(); ++index)
+    {
+        const VisibleTile &tile = target_tiles.at(index);
+        target_by_position.insert(tilePositionKey(tile.virtual_x, tile.y), index);
+    }
+
+    if (has_parent_source)
+    {
+        QHash<quint64, qsizetype> current_parents;
+        QSet<quint64> appended_targets;
+        current_parents.reserve(this->visible_tiles.size());
+        appended_targets.reserve(target_tiles.size());
+        result.reserve(this->visible_tiles.size() + 16);
+        bool changed = false;
+
+        // Keep child groups that were already promoted by an earlier frame.
+        for (const VisibleTile &tile : this->visible_tiles)
+        {
+            if (tile.imagery_zoom != target_zoom)
+                continue;
+
+            const quint64 position_key = tilePositionKey(tile.virtual_x, tile.y);
+            const QHash<quint64, qsizetype>::const_iterator target_iterator =
+                target_by_position.constFind(position_key);
+            if (target_iterator == target_by_position.cend())
+                continue;
+
+            result.append(target_tiles.at(target_iterator.value()));
+            appended_targets.insert(position_key);
+        }
+
+        for (qsizetype index = 0; index < this->visible_tiles.size(); ++index)
+        {
+            const VisibleTile &parent = this->visible_tiles.at(index);
+            if (parent.imagery_zoom != target_zoom - 1)
+                continue;
+            current_parents.insert(tilePositionKey(parent.virtual_x, parent.y), index);
+
+            qsizetype child_indices[4] = {-1, -1, -1, -1};
+            bool complete_child_group = true;
+            bool replacement_ready = true;
+            bool replacement_foreground = false;
+            bool has_target_child = false;
+            int child_index = 0;
+            for (int child_y = 0; child_y < 2; ++child_y)
+            {
+                for (int child_x = 0; child_x < 2; ++child_x)
+                {
+                    const int virtual_x = parent.virtual_x * 2 + child_x;
+                    const int y = parent.y * 2 + child_y;
+                    const quint64 child_key = tilePositionKey(virtual_x, y);
+                    const QHash<quint64, qsizetype>::const_iterator target_iterator =
+                        target_by_position.constFind(child_key);
+                    if (target_iterator == target_by_position.cend())
+                    {
+                        complete_child_group = false;
+                        replacement_ready = false;
+                    }
+                    else
+                    {
+                        has_target_child = true;
+                        child_indices[child_index] = target_iterator.value();
+                        const VisibleTile &child = target_tiles.at(target_iterator.value());
+                        replacement_foreground = replacement_foreground || child.foreground;
+                        if (!tileReadyForZoomHandoff(child, relief_enabled))
+                            replacement_ready = false;
+                    }
+                    ++child_index;
+                }
+            }
+
+            if (complete_child_group && replacement_ready)
+            {
+                for (int index_in_group = 0; index_in_group < 4; ++index_in_group)
+                {
+                    const VisibleTile &child = target_tiles.at(child_indices[index_in_group]);
+                    const quint64 child_key = tilePositionKey(child.virtual_x, child.y);
+                    if (appended_targets.contains(child_key))
+                        continue;
+                    result.append(child);
+                    appended_targets.insert(child_key);
+                }
+                changed = true;
+                continue;
+            }
+
+            if (!has_target_child)
+            {
+                changed = true;
+                continue;
+            }
+
+            VisibleTile retained_parent = parent;
+            retained_parent.foreground = replacement_foreground;
+            result.append(retained_parent);
+        }
+
+        // A newly exposed target area may not have a retained parent in the old
+        // apron. Add any ready target tile there rather than leaving a hole.
+        for (const VisibleTile &tile : target_tiles)
+        {
+            const quint64 position_key = tilePositionKey(tile.virtual_x, tile.y);
+            if (appended_targets.contains(position_key))
+                continue;
+
+            const quint64 parent_key = tilePositionKey(
+                parentVirtualTileX(tile.virtual_x), tile.y / 2);
+            if (current_parents.contains(parent_key))
+                continue;
+            if (!tileReadyForZoomHandoff(tile, relief_enabled))
+                continue;
+
+            result.append(tile);
+            appended_targets.insert(position_key);
+            changed = true;
+        }
+
+        if (!changed)
+            result.clear();
+        return result;
+    }
+
+    QHash<quint64, qsizetype> current_targets;
+    QHash<quint64, qsizetype> current_children;
+    current_targets.reserve(this->visible_tiles.size());
+    current_children.reserve(this->visible_tiles.size());
+    for (qsizetype index = 0; index < this->visible_tiles.size(); ++index)
+    {
+        const VisibleTile &tile = this->visible_tiles.at(index);
+        const quint64 position_key = tilePositionKey(tile.virtual_x, tile.y);
+        if (tile.imagery_zoom == target_zoom)
+            current_targets.insert(position_key, index);
+        else if (tile.imagery_zoom == target_zoom + 1)
+            current_children.insert(position_key, index);
+    }
+
+    result.reserve(this->visible_tiles.size() + 16);
+    bool changed = false;
+    for (const VisibleTile &target : target_tiles)
+    {
+        const quint64 target_key = tilePositionKey(target.virtual_x, target.y);
+        if (current_targets.contains(target_key))
+        {
+            result.append(target);
+            continue;
+        }
+
+        if (tileReadyForZoomHandoff(target, relief_enabled))
+        {
+            result.append(target);
+            changed = true;
+            continue;
+        }
+
+        for (int child_y = 0; child_y < 2; ++child_y)
+        {
+            for (int child_x = 0; child_x < 2; ++child_x)
+            {
+                const quint64 child_key = tilePositionKey(
+                    target.virtual_x * 2 + child_x,
+                    target.y * 2 + child_y);
+                const QHash<quint64, qsizetype>::const_iterator child_iterator =
+                    current_children.constFind(child_key);
+                if (child_iterator == current_children.cend())
+                    continue;
+
+                VisibleTile retained_child = this->visible_tiles.at(child_iterator.value());
+                retained_child.foreground = target.foreground;
+                result.append(retained_child);
+            }
+        }
+    }
+
+    if (!changed)
+        result.clear();
+    return result;
+}
+
 bool MapRhiBasemapRenderer::currentLayoutCoversForeground(
     int imagery_zoom, int foreground_start_x, int foreground_start_y,
     int foreground_tiles_x, int foreground_tiles_y, int tile_count) const
 {
-    if (this->visible_tiles.isEmpty()
-        || this->visible_tiles.constFirst().imagery_zoom != imagery_zoom)
-    {
+    if (this->visible_tiles.isEmpty())
         return false;
-    }
 
-    int minimum_x = std::numeric_limits<int>::max();
-    int maximum_x = std::numeric_limits<int>::min();
-    int minimum_y = std::numeric_limits<int>::max();
-    int maximum_y = std::numeric_limits<int>::min();
+    QSet<quint64> target_zoom_positions;
+    target_zoom_positions.reserve(this->visible_tiles.size());
     for (const VisibleTile &tile : this->visible_tiles)
     {
-        minimum_x = qMin(minimum_x, tile.virtual_x);
-        maximum_x = qMax(maximum_x, tile.virtual_x);
-        minimum_y = qMin(minimum_y, tile.y);
-        maximum_y = qMax(maximum_y, tile.y);
+        if (tile.imagery_zoom != imagery_zoom)
+            return false;
+        target_zoom_positions.insert(tilePositionKey(tile.virtual_x, tile.y));
     }
 
-    const int required_minimum_x = foreground_start_x;
-    const int required_maximum_x = foreground_start_x + foreground_tiles_x - 1;
     const int required_minimum_y = qMax(0, foreground_start_y);
     const int required_maximum_y = qMin(
         tile_count - 1, foreground_start_y + foreground_tiles_y - 1);
+    for (int virtual_x = foreground_start_x;
+         virtual_x < foreground_start_x + foreground_tiles_x; ++virtual_x)
+    {
+        for (int y = required_minimum_y; y <= required_maximum_y; ++y)
+        {
+            if (!target_zoom_positions.contains(tilePositionKey(virtual_x, y)))
+                return false;
+        }
+    }
 
-    return minimum_x <= required_minimum_x
-        && maximum_x >= required_maximum_x
-        && minimum_y <= required_minimum_y
-        && maximum_y >= required_maximum_y;
+    return true;
 }
 
 bool MapRhiBasemapRenderer::updateDirtyTerrainTiles(
