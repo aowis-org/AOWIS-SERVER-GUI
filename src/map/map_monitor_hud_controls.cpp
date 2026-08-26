@@ -1,6 +1,7 @@
 #include "map_monitor_hud_controls.h"
 
 #include "map_model.h"
+#include "map_scale_renderer.h"
 
 #include <QAbstractAnimation>
 #include <QColor>
@@ -11,6 +12,7 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPaintEvent>
 #include <QPalette>
 #include <QPolygonF>
 #include <QRadialGradient>
@@ -36,7 +38,12 @@ constexpr int CompassDragThresholdPx = 4;
 constexpr int CompassWheelRotateEndDelayMs = 350;
 constexpr int CameraDistanceSliderSteps = 1000;
 constexpr int CameraControlSliderHeightPx = 82;
-constexpr int CameraControlMinimumWidthPx = 72;
+constexpr int CameraControlWidthPx = 72;
+constexpr int ScaleHudWidthPx = 116;
+constexpr int ScaleHudHeightPx = 42;
+constexpr int ScaleHudPaddingPx = 6;
+constexpr int ScaleHudTickHeightPx = 6;
+constexpr double View3dFieldOfViewDeg = 45.0;
 constexpr int NetworkGroundOffsetSliderSteps =
     static_cast<int>(MapModel::MaxView3dNetworkGroundOffsetM * 10.0);
 
@@ -65,18 +72,49 @@ double cameraDistanceMeters(int slider_value, double maximum_distance_m)
 
 QString cameraDistanceText(double distance_m)
 {
+    if (distance_m >= 10000.0)
+        return QStringLiteral("%1 km").arg(QString::number(distance_m / 1000.0, 'f', 1));
+
     return QStringLiteral("%1 m").arg(qRound(distance_m));
 }
 
 QString cameraDistanceMaximumText(double distance_m)
 {
-    if (distance_m >= 100000.0)
-        return QStringLiteral("%1 km").arg(qRound(distance_m / 1000.0));
-
-    if (distance_m >= 10000.0)
-        return QStringLiteral("%1 km").arg(distance_m / 1000.0, 0, 'f', 1);
-
     return cameraDistanceText(distance_m);
+}
+
+double normalizedHeadingDegrees(double yaw_deg)
+{
+    double heading_deg = std::fmod(-yaw_deg, 360.0);
+    if (heading_deg < 0.0)
+        heading_deg += 360.0;
+    return heading_deg;
+}
+
+QString headingCardinal(double heading_deg)
+{
+    const int sector = int(std::floor((heading_deg + 22.5) / 45.0)) % 8;
+    switch (sector)
+    {
+    case 0: return QStringLiteral("N");
+    case 1: return QStringLiteral("NE");
+    case 2: return QStringLiteral("E");
+    case 3: return QStringLiteral("SE");
+    case 4: return QStringLiteral("S");
+    case 5: return QStringLiteral("SW");
+    case 6: return QStringLiteral("W");
+    case 7: return QStringLiteral("NW");
+    default: return QStringLiteral("N");
+    }
+}
+
+QString compassOrientationText(double yaw_deg)
+{
+    const double heading_deg = normalizedHeadingDegrees(yaw_deg);
+    const int rounded_heading_deg = qRound(heading_deg) % 360;
+    return QStringLiteral("%1  %2°")
+        .arg(headingCardinal(heading_deg))
+        .arg(rounded_heading_deg);
 }
 
 void configureHudFrame(QFrame *frame)
@@ -508,10 +546,127 @@ MapMonitorCompassHudWidget::MapMonitorCompassHudWidget(
     setAttribute(Qt::WA_TranslucentBackground, true);
     setFocusPolicy(Qt::NoFocus);
 
-    QHBoxLayout *layout = new QHBoxLayout(this);
+    QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
-    layout->addWidget(new MapCompassWidget(map_model, this));
+    layout->setSpacing(3);
+
+    MapCompassWidget *compass_widget = new MapCompassWidget(map_model, this);
+    QLabel *orientation_label = new QLabel(
+        compassOrientationText(map_model->view3dYawDeg()), this);
+    configureHudFrame(orientation_label);
+    orientation_label->setAlignment(Qt::AlignCenter);
+    orientation_label->setMinimumWidth(CompassDiameterPx);
+    orientation_label->setToolTip(QStringLiteral(
+        "Current view heading at the top of the map."));
+
+    layout->addWidget(compass_widget, 0, Qt::AlignHCenter);
+    layout->addWidget(orientation_label, 0, Qt::AlignHCenter);
+
+    connect(map_model, &MapModel::view3dCameraChanged, this,
+            [map_model, orientation_label]
+    {
+        orientation_label->setText(
+            compassOrientationText(map_model->view3dYawDeg()));
+    });
+}
+
+MapMonitorScaleHudWidget::MapMonitorScaleHudWidget(
+    MapModel *map_model, QWidget *parent)
+    : QFrame(parent),
+      map_model(map_model)
+{
+    Q_ASSERT(this->map_model != nullptr);
+    configureHudFrame(this);
+    setAttribute(Qt::WA_TransparentForMouseEvents);
+    setFixedSize(ScaleHudWidthPx, ScaleHudHeightPx);
+    setToolTip(QStringLiteral(
+        "Horizontal map scale at the 3D terrain focus under the crosshair."));
+
+    connect(this->map_model, &MapModel::view3dCameraChanged, this, [this]
+    {
+        update();
+    });
+    connect(this->map_model, &MapModel::zoomChanged, this, [this]
+    {
+        update();
+    });
+    connect(this->map_model, &MapModel::centerChangedWGS84, this, [this]
+    {
+        update();
+    });
+}
+
+void MapMonitorScaleHudWidget::paintEvent(QPaintEvent *event)
+{
+    QFrame::paintEvent(event);
+
+    if (this->map_model == nullptr || this->map_model->viewMode() != MapViewMode::ThreeD)
+        return;
+
+    const QWidget *viewport_widget = parentWidget();
+    const int viewport_height = qMax(1,
+        viewport_widget != nullptr ? viewport_widget->height() : height());
+    const int maximum_bar_width = qMax(1, width() - ScaleHudPaddingPx * 2);
+
+    const double orbit_distance_m = qMax(
+        MapModel::MinView3dCameraDistanceM,
+        this->map_model->view3dCameraDistanceM());
+    const double orbit_distance_world = this->map_model->view3dCameraDistanceWorld();
+    const double world_units_per_meter = orbit_distance_world > 0.0
+        ? orbit_distance_world / orbit_distance_m
+        : 0.0;
+    const double collision_lift_m = world_units_per_meter > 0.0
+        ? this->map_model->view3dCameraCollisionLiftWorld() / world_units_per_meter
+        : 0.0;
+    const double pitch_rad = qDegreesToRadians(qBound(
+        MapModel::MinView3dPitchDeg,
+        this->map_model->view3dPitchDeg(),
+        MapModel::MaxView3dPitchDeg));
+    const double horizontal_distance_m = orbit_distance_m * std::cos(pitch_rad);
+    const double vertical_distance_m =
+        orbit_distance_m * std::sin(pitch_rad) + collision_lift_m;
+    const double focus_distance_m = std::hypot(
+        horizontal_distance_m, vertical_distance_m);
+    const double meters_per_pixel = 2.0 * focus_distance_m
+        * std::tan(qDegreesToRadians(View3dFieldOfViewDeg / 2.0))
+        / double(viewport_height);
+    const double maximum_distance_m = meters_per_pixel * maximum_bar_width;
+    const double scale_distance_m =
+        MapScaleRenderer::Detail::roundedDistanceMeters(maximum_distance_m);
+    if (!(maximum_distance_m > 0.0) || !(scale_distance_m > 0.0)
+        || !std::isfinite(maximum_distance_m))
+    {
+        return;
+    }
+
+    const int scale_width = qBound(
+        1,
+        qRound(maximum_bar_width * scale_distance_m / maximum_distance_m),
+        maximum_bar_width);
+    const QString label = MapScaleRenderer::Detail::distanceLabel(scale_distance_m);
+    const int scale_left = (width() - scale_width) / 2;
+    const int scale_right = scale_left + scale_width;
+    const int scale_bottom = height() - ScaleHudPaddingPx;
+    const int scale_top = scale_bottom - ScaleHudTickHeightPx;
+
+    QPainter painter(this);
+    painter.setClipRegion(event->region());
+    painter.setRenderHint(QPainter::Antialiasing, false);
+
+    QFont label_font = painter.font();
+    label_font.setPixelSize(11);
+    painter.setFont(label_font);
+    painter.setPen(palette().color(QPalette::Text));
+    painter.drawText(
+        QRect(ScaleHudPaddingPx, 2, width() - ScaleHudPaddingPx * 2, 18),
+        Qt::AlignCenter, label);
+
+    QPen scale_pen(palette().color(QPalette::Text));
+    scale_pen.setWidth(2);
+    painter.setPen(scale_pen);
+    painter.drawLine(scale_left, scale_bottom, scale_right, scale_bottom);
+    painter.drawLine(scale_left, scale_top, scale_left, scale_bottom);
+    painter.drawLine(scale_right, scale_top, scale_right, scale_bottom);
 }
 
 MapMonitorCameraDistanceHudWidget::MapMonitorCameraDistanceHudWidget(
@@ -524,7 +679,7 @@ MapMonitorCameraDistanceHudWidget::MapMonitorCameraDistanceHudWidget(
 {
     Q_ASSERT(this->map_model != nullptr);
     configureHudFrame(this);
-    this->setMinimumWidth(CameraControlMinimumWidthPx);
+    setFixedWidth(CameraControlWidthPx);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(4, 5, 4, 5);
@@ -633,7 +788,7 @@ MapMonitorTiltHudWidget::MapMonitorTiltHudWidget(MapModel *map_model, QWidget *p
 {
     Q_ASSERT(this->map_model != nullptr);
     configureHudFrame(this);
-    this->setMinimumWidth(CameraControlMinimumWidthPx);
+    setFixedWidth(CameraControlWidthPx);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(4, 5, 4, 5);
@@ -728,7 +883,7 @@ MapMonitorNetworkGroundOffsetHudWidget::MapMonitorNetworkGroundOffsetHudWidget(
 {
     Q_ASSERT(this->map_model != nullptr);
     configureHudFrame(this);
-    this->setMinimumWidth(CameraControlMinimumWidthPx);
+    setFixedWidth(CameraControlWidthPx);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(4, 5, 4, 5);

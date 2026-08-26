@@ -7,6 +7,7 @@
 class MapModel;
 class QComboBox;
 class QLabel;
+class QPaintEvent;
 class QSlider;
 
 class MapMonitorViewModeHudWidget final : public QFrame
@@ -27,6 +28,20 @@ class MapMonitorCompassHudWidget final : public QWidget
 
 public:
     explicit MapMonitorCompassHudWidget(MapModel *map_model, QWidget *parent = nullptr);
+};
+
+class MapMonitorScaleHudWidget final : public QFrame
+{
+    Q_OBJECT
+
+public:
+    explicit MapMonitorScaleHudWidget(MapModel *map_model, QWidget *parent = nullptr);
+
+protected:
+    void paintEvent(QPaintEvent *event) override;
+
+private:
+    MapModel *map_model = nullptr;
 };
 
 class MapMonitorCameraDistanceHudWidget final : public QFrame

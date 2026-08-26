@@ -43,6 +43,7 @@ class MapRhiHudWidget;
 class MapMonitorViewModeHudWidget;
 class MapMonitorCompassHudWidget;
 class MapMonitorCameraDistanceHudWidget;
+class MapMonitorScaleHudWidget;
 class MapMonitorTiltHudWidget;
 class MapMonitorNetworkGroundOffsetHudWidget;
 
@@ -129,6 +130,7 @@ private:
     MapRhiHudWidget *desktop_rhi_hud = nullptr;
     MapMonitorViewModeHudWidget *desktop_view_mode_hud = nullptr;
     MapMonitorCompassHudWidget *desktop_compass_hud = nullptr;
+    MapMonitorScaleHudWidget *desktop_scale_hud = nullptr;
     MapMonitorCameraDistanceHudWidget *desktop_camera_distance_hud = nullptr;
     MapMonitorTiltHudWidget *desktop_tilt_hud = nullptr;
     MapMonitorNetworkGroundOffsetHudWidget *desktop_network_ground_offset_hud = nullptr;
