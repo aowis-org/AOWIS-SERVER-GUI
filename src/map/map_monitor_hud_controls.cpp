@@ -36,6 +36,7 @@ constexpr int CompassDragThresholdPx = 4;
 constexpr int CompassWheelRotateEndDelayMs = 350;
 constexpr int CameraDistanceSliderSteps = 1000;
 constexpr int CameraControlSliderHeightPx = 82;
+constexpr int CameraControlMinimumWidthPx = 72;
 constexpr int NetworkGroundOffsetSliderSteps =
     static_cast<int>(MapModel::MaxView3dNetworkGroundOffsetM * 10.0);
 
@@ -65,6 +66,17 @@ double cameraDistanceMeters(int slider_value, double maximum_distance_m)
 QString cameraDistanceText(double distance_m)
 {
     return QStringLiteral("%1 m").arg(qRound(distance_m));
+}
+
+QString cameraDistanceMaximumText(double distance_m)
+{
+    if (distance_m >= 100000.0)
+        return QStringLiteral("%1 km").arg(qRound(distance_m / 1000.0));
+
+    if (distance_m >= 10000.0)
+        return QStringLiteral("%1 km").arg(distance_m / 1000.0, 0, 'f', 1);
+
+    return cameraDistanceText(distance_m);
 }
 
 void configureHudFrame(QFrame *frame)
@@ -512,6 +524,7 @@ MapMonitorCameraDistanceHudWidget::MapMonitorCameraDistanceHudWidget(
 {
     Q_ASSERT(this->map_model != nullptr);
     configureHudFrame(this);
+    this->setMinimumWidth(CameraControlMinimumWidthPx);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(4, 5, 4, 5);
@@ -525,7 +538,7 @@ MapMonitorCameraDistanceHudWidget::MapMonitorCameraDistanceHudWidget(
     const double initial_maximum_distance_m =
         this->map_model->view3dMaximumCameraDistanceM();
     this->distance_maximum_label->setText(
-        QStringLiteral("%1 m").arg(qRound(initial_maximum_distance_m)));
+        cameraDistanceMaximumText(initial_maximum_distance_m));
     this->distance_slider->setRange(0, CameraDistanceSliderSteps);
     this->distance_slider->setValue(cameraDistanceSliderValue(
         this->map_model->view3dCameraDistanceM(), initial_maximum_distance_m));
@@ -607,7 +620,7 @@ MapMonitorCameraDistanceHudWidget::MapMonitorCameraDistanceHudWidget(
             this->distance_slider->setValue(slider_value);
         }
         this->distance_maximum_label->setText(
-            QStringLiteral("%1 m").arg(qRound(maximum_distance_m)));
+            cameraDistanceMaximumText(maximum_distance_m));
         this->distance_value_label->setText(cameraDistanceText(distance_m));
     });
 }
@@ -620,6 +633,7 @@ MapMonitorTiltHudWidget::MapMonitorTiltHudWidget(MapModel *map_model, QWidget *p
 {
     Q_ASSERT(this->map_model != nullptr);
     configureHudFrame(this);
+    this->setMinimumWidth(CameraControlMinimumWidthPx);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(4, 5, 4, 5);
@@ -714,6 +728,7 @@ MapMonitorNetworkGroundOffsetHudWidget::MapMonitorNetworkGroundOffsetHudWidget(
 {
     Q_ASSERT(this->map_model != nullptr);
     configureHudFrame(this);
+    this->setMinimumWidth(CameraControlMinimumWidthPx);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(4, 5, 4, 5);
