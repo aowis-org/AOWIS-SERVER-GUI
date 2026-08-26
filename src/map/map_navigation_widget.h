@@ -8,7 +8,6 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QCheckBox>
-#include <QComboBox>
 #include <QSlider>
 #include <QLabel>
 #include <QIcon>
@@ -48,7 +47,6 @@ private:
     QRadioButton* map_osmcyclo = nullptr;
     
     QCheckBox* check_map_sync = nullptr;
-    QComboBox *combo_map_view_mode = nullptr;
     QSlider *slider_icon_size = nullptr;
     int icon_size_2d_percent = 100;
     int icon_size_3d_percent = 100;

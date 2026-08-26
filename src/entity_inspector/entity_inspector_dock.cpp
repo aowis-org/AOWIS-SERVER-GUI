@@ -1,11 +1,14 @@
 #include "entity_inspector_dock.h"
+#include "../gui_configuration.h"
 
 
 EntityInspectorDock::EntityInspectorDock(HydraulicData *hydraulic_data, QWidget *parent)
-    : QDockWidget("Entity Inspector  |  [Win+Tab] Toggle sidebar", parent),
+    : QDockWidget(QStringLiteral("Entity Inspector  |  [%1] Toggle sidebar")
+                      .arg(guiConfiguration().shortcuts.sidebar_toggle), parent),
     hydraulic_data(hydraulic_data)
 {
-    setToolTip("Press Win+Tab to show or hide the right sidebar.");
+    setToolTip(QStringLiteral("Press %1 to show or hide the right sidebar.")
+                   .arg(guiConfiguration().shortcuts.sidebar_toggle));
     setMinimumWidth(Sizes::SidebarRightWidth);
     this->resize(Sizes::SidebarRightWidth, this->height());
     this->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);

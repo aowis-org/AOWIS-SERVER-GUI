@@ -100,7 +100,7 @@ private:
     void syncBrowserMapView();
 #endif
 
-    bool setKeyboardPanKey(int key, bool pressed);
+    bool setKeyboardPanKey(QKeyEvent *event, bool pressed);
     bool hasKeyboardPanInput() const;
     bool hasFastKeyboardPanInput() const;
     bool hasView2dKeyboardZoomInput() const;

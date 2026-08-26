@@ -23,6 +23,7 @@
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QSignalBlocker>
+#include <QStringList>
 #include <QStyle>
 #include <QTimer>
 #include <QSizePolicy>
@@ -32,6 +33,23 @@
 
 namespace
 {
+
+QString shortcutTooltipToken(const QString &shortcut)
+{
+    const QStringList parts = shortcut.split(QLatin1Char('+'), Qt::SkipEmptyParts);
+    QStringList wrapped;
+    for (const QString &part : parts)
+        wrapped.append(QStringLiteral("[%1]").arg(part.trimmed()));
+    return wrapped.join(QLatin1Char('+'));
+}
+
+QString simulationShortcutTooltip()
+{
+    const GuiShortcutConfiguration &shortcuts = guiConfiguration().shortcuts;
+    return shortcutTooltipToken(shortcuts.simulation_run)
+        + QStringLiteral("<br>")
+        + shortcutTooltipToken(shortcuts.simulation_run_alternate);
+}
 class TopControlBarContent : public QWidget
 {
 public:
@@ -317,7 +335,10 @@ void TopControlBar::setFullScreenState(bool fullscreen)
 
     const QString icon_path = fullscreen ? QStringLiteral(":/icon/fullscreen_undo.png") : QStringLiteral(":/icon/fullscreen.png");
     this->button_fullscreen->setIcon(QIcon(icon_path));
-    this->button_fullscreen->setToolTip(fullscreen ? QStringLiteral("Leave fullscreen [F11]") : QStringLiteral("Enter fullscreen [F11]"));
+    const QString fullscreen_shortcut = shortcutTooltipToken(guiConfiguration().shortcuts.fullscreen);
+    this->button_fullscreen->setToolTip(
+        (fullscreen ? QStringLiteral("Leave fullscreen ") : QStringLiteral("Enter fullscreen "))
+        + fullscreen_shortcut);
 }
 
 void TopControlBar::setSimulationResultsAvailable(bool available)
@@ -347,7 +368,7 @@ void TopControlBar::setSimulationRunRunningIcon()
 
     this->button_sim_start->setIcon(QIcon(QStringLiteral(":/icon/simulation_stop.png")));
     this->button_sim_start->setToolTip(
-        QStringLiteral("Stop Simulation<br>Simulation running...<br>[Ctrl]+[R]<br>[Shift]+[Enter]"));
+        QStringLiteral("Stop Simulation<br>Simulation running...<br>") + simulationShortcutTooltip());
 }
 
 void TopControlBar::setSimulationRunStoppingIcon()
@@ -367,7 +388,8 @@ void TopControlBar::setSimulationRunCancelledIcon()
 
     this->button_sim_start->setIcon(QIcon(QStringLiteral(":/icon/simulation_start.png")));
     this->button_sim_start->setToolTip(
-        QStringLiteral("Run Configured Simulations<br>[Ctrl]+[R]<br>[Shift]+[Enter]<br><br>Last run: Cancelled"));
+        QStringLiteral("Run Configured Simulations<br>") + simulationShortcutTooltip()
+            + QStringLiteral("<br><br>Last run: Cancelled"));
 }
 
 void TopControlBar::setSimulationRunResultIcon(const HydraulicSimulationResultTimeline &result_timeline)
@@ -422,8 +444,8 @@ void TopControlBar::setSimulationRunResultIcon(const HydraulicSimulationResultTi
 
     this->button_sim_start->setIcon(QIcon(icon_path));
     this->button_sim_start->setToolTip(
-        QStringLiteral("Run Configured Simulations<br>[Ctrl]+[R]<br>[Shift]+[Enter]<br><br>Last run: %1")
-            .arg(last_run_status));
+        QStringLiteral("Run Configured Simulations<br>") + simulationShortcutTooltip()
+            + QStringLiteral("<br><br>Last run: %1").arg(last_run_status));
 }
 
 void TopControlBar::setSimulationResultTimeline(const HydraulicSimulationResultTimeline &result_timeline)
@@ -842,9 +864,15 @@ void TopControlBar::addSimulationControls()
     resetSimulationRunIcon();
     this->button_sim_start->setFlat(true);
     configureToolbarIconButton(this->button_sim_start);
-    this->button_sim_start->setToolTip(QStringLiteral("Run Configured Simulations<br>[Ctrl]+[R]<br>[Shift]+[Enter]"));
-    this->button_sim_start->addAction(QString(), QKeySequence(Qt::SHIFT | Qt::Key_Return), this->button_sim_start, &QPushButton::click);
-    this->button_sim_start->addAction(QString(), QKeySequence(Qt::CTRL | Qt::Key_R), this->button_sim_start, &QPushButton::click);
+    const GuiShortcutConfiguration &shortcuts = guiConfiguration().shortcuts;
+    this->button_sim_start->setToolTip(
+        QStringLiteral("Run Configured Simulations<br>") + simulationShortcutTooltip());
+    this->button_sim_start->addAction(
+        QString(), guiShortcutKeySequence(shortcuts.simulation_run_alternate),
+        this->button_sim_start, &QPushButton::click);
+    this->button_sim_start->addAction(
+        QString(), guiShortcutKeySequence(shortcuts.simulation_run),
+        this->button_sim_start, &QPushButton::click);
 
     QWidget *result_button_stack = new QWidget(this->content);
     QVBoxLayout *result_button_stack_layout = new QVBoxLayout(result_button_stack);

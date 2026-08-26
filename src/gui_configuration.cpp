@@ -2,6 +2,7 @@
 
 #include <QByteArray>
 #include <QDebug>
+#include <QKeyEvent>
 #include <QString>
 
 #ifndef AOWIS_HAS_QRHI
@@ -22,6 +23,34 @@
 
 namespace
 {
+QKeySequence parseShortcutKeySequence(const QString &shortcut)
+{
+    QString portable_text = shortcut.trimmed();
+    if (portable_text.startsWith(QStringLiteral("Win+"), Qt::CaseInsensitive))
+        portable_text.replace(0, 4, QStringLiteral("Meta+"));
+
+    return QKeySequence::fromString(portable_text, QKeySequence::PortableText);
+}
+
+#ifndef __EMSCRIPTEN__
+void ensureSettingDefault(QSettings &settings, const QString &key, const QString &value)
+{
+    if (!settings.contains(key))
+        settings.setValue(key, value);
+}
+
+QString loadShortcutSetting(QSettings &settings, const QString &key, const QString &default_value)
+{
+    const QString value = settings.value(key, default_value).toString().trimmed();
+    if (!value.isEmpty() && !parseShortcutKeySequence(value).isEmpty())
+        return value;
+
+    qWarning() << "Invalid shortcut" << key << "=" << value
+               << "- using advertised default" << default_value;
+    return default_value;
+}
+#endif
+
 #ifdef __EMSCRIPTEN__
 EM_JS(int, aowisBuiltinExamplesEnabled, (),
 {
@@ -91,6 +120,33 @@ bool createDefaultConfiguration(const QString &path)
         "[gui]\n"
         "examples_builtin_enable=true\n"
         "map_desktop_renderer=cpu\n"
+        "\n"
+        "[shortcuts]\n"
+        "sidebar_toggle=Win+Tab\n"
+        "fullscreen=F11\n"
+        "simulation_run=Ctrl+R\n"
+        "simulation_run_alternate=Shift+Enter\n"
+        "map_zoom_in=E\n"
+        "map_zoom_out=Q\n"
+        "map_pan_up=W\n"
+        "map_pan_down=S\n"
+        "map_pan_left=A\n"
+        "map_pan_right=D\n"
+        "map_provider_arcgis_sat=F1\n"
+        "map_provider_openstreetmap=F2\n"
+        "map_provider_opentopomap=F3\n"
+        "map_provider_cycloosm=F4\n"
+        "map_editor_select=Esc\n"
+        "map_editor_delete=Del\n"
+        "map_editor_add_pipe=1\n"
+        "map_editor_add_junction=2\n"
+        "map_editor_add_valve=3\n"
+        "map_editor_add_customer_point=4\n"
+        "map_editor_add_pump=5\n"
+        "map_editor_add_tank=6\n"
+        "map_editor_add_power_source=7\n"
+        "map_editor_add_reservoir=8\n"
+        "map_editor_add_note=9\n"
         "\n"
         "[map_server]\n"
         "base_url=http://aowis-server-map.localhost:80\n"
@@ -162,6 +218,34 @@ GuiConfiguration loadConfiguration()
 
     QSettings settings(path, QSettings::IniFormat);
 
+    const GuiShortcutConfiguration advertised_shortcuts;
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/sidebar_toggle"), advertised_shortcuts.sidebar_toggle);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/fullscreen"), advertised_shortcuts.fullscreen);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/simulation_run"), advertised_shortcuts.simulation_run);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/simulation_run_alternate"), advertised_shortcuts.simulation_run_alternate);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_zoom_in"), advertised_shortcuts.map_zoom_in);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_zoom_out"), advertised_shortcuts.map_zoom_out);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_pan_up"), advertised_shortcuts.map_pan_up);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_pan_down"), advertised_shortcuts.map_pan_down);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_pan_left"), advertised_shortcuts.map_pan_left);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_pan_right"), advertised_shortcuts.map_pan_right);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_provider_arcgis_sat"), advertised_shortcuts.map_provider_arcgis_sat);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_provider_openstreetmap"), advertised_shortcuts.map_provider_openstreetmap);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_provider_opentopomap"), advertised_shortcuts.map_provider_opentopomap);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_provider_cycloosm"), advertised_shortcuts.map_provider_cycloosm);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_select"), advertised_shortcuts.map_editor_select);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_delete"), advertised_shortcuts.map_editor_delete);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_pipe"), advertised_shortcuts.map_editor_add_pipe);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_junction"), advertised_shortcuts.map_editor_add_junction);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_valve"), advertised_shortcuts.map_editor_add_valve);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_customer_point"), advertised_shortcuts.map_editor_add_customer_point);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_pump"), advertised_shortcuts.map_editor_add_pump);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_tank"), advertised_shortcuts.map_editor_add_tank);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_power_source"), advertised_shortcuts.map_editor_add_power_source);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_reservoir"), advertised_shortcuts.map_editor_add_reservoir);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_note"), advertised_shortcuts.map_editor_add_note);
+    settings.sync();
+
     GuiConfiguration configuration;
     configuration.examples_builtin_enable = settings.value(
         QStringLiteral("gui/examples_builtin_enable"), true).toBool();
@@ -177,6 +261,32 @@ GuiConfiguration loadConfiguration()
                    << "in" << path << "- using cpu. Valid values are: cpu, rhi.";
     }
 
+    configuration.shortcuts.sidebar_toggle = loadShortcutSetting(settings, QStringLiteral("shortcuts/sidebar_toggle"), advertised_shortcuts.sidebar_toggle);
+    configuration.shortcuts.fullscreen = loadShortcutSetting(settings, QStringLiteral("shortcuts/fullscreen"), advertised_shortcuts.fullscreen);
+    configuration.shortcuts.simulation_run = loadShortcutSetting(settings, QStringLiteral("shortcuts/simulation_run"), advertised_shortcuts.simulation_run);
+    configuration.shortcuts.simulation_run_alternate = loadShortcutSetting(settings, QStringLiteral("shortcuts/simulation_run_alternate"), advertised_shortcuts.simulation_run_alternate);
+    configuration.shortcuts.map_zoom_in = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_zoom_in"), advertised_shortcuts.map_zoom_in);
+    configuration.shortcuts.map_zoom_out = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_zoom_out"), advertised_shortcuts.map_zoom_out);
+    configuration.shortcuts.map_pan_up = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_pan_up"), advertised_shortcuts.map_pan_up);
+    configuration.shortcuts.map_pan_down = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_pan_down"), advertised_shortcuts.map_pan_down);
+    configuration.shortcuts.map_pan_left = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_pan_left"), advertised_shortcuts.map_pan_left);
+    configuration.shortcuts.map_pan_right = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_pan_right"), advertised_shortcuts.map_pan_right);
+    configuration.shortcuts.map_provider_arcgis_sat = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_provider_arcgis_sat"), advertised_shortcuts.map_provider_arcgis_sat);
+    configuration.shortcuts.map_provider_openstreetmap = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_provider_openstreetmap"), advertised_shortcuts.map_provider_openstreetmap);
+    configuration.shortcuts.map_provider_opentopomap = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_provider_opentopomap"), advertised_shortcuts.map_provider_opentopomap);
+    configuration.shortcuts.map_provider_cycloosm = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_provider_cycloosm"), advertised_shortcuts.map_provider_cycloosm);
+    configuration.shortcuts.map_editor_select = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_select"), advertised_shortcuts.map_editor_select);
+    configuration.shortcuts.map_editor_delete = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_delete"), advertised_shortcuts.map_editor_delete);
+    configuration.shortcuts.map_editor_add_pipe = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_pipe"), advertised_shortcuts.map_editor_add_pipe);
+    configuration.shortcuts.map_editor_add_junction = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_junction"), advertised_shortcuts.map_editor_add_junction);
+    configuration.shortcuts.map_editor_add_valve = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_valve"), advertised_shortcuts.map_editor_add_valve);
+    configuration.shortcuts.map_editor_add_customer_point = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_customer_point"), advertised_shortcuts.map_editor_add_customer_point);
+    configuration.shortcuts.map_editor_add_pump = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_pump"), advertised_shortcuts.map_editor_add_pump);
+    configuration.shortcuts.map_editor_add_tank = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_tank"), advertised_shortcuts.map_editor_add_tank);
+    configuration.shortcuts.map_editor_add_power_source = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_power_source"), advertised_shortcuts.map_editor_add_power_source);
+    configuration.shortcuts.map_editor_add_reservoir = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_reservoir"), advertised_shortcuts.map_editor_add_reservoir);
+    configuration.shortcuts.map_editor_add_note = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_note"), advertised_shortcuts.map_editor_add_note);
+
     if (settings.status() != QSettings::NoError)
         qWarning() << "Failed to read GUI configuration:" << path;
     else
@@ -189,6 +299,33 @@ GuiConfiguration loadConfiguration()
     return configuration;
 }
 #endif
+}
+
+QKeySequence guiShortcutKeySequence(const QString &shortcut)
+{
+    return parseShortcutKeySequence(shortcut);
+}
+
+bool guiShortcutMatches(const QKeyEvent *event, const QString &shortcut,
+                        Qt::KeyboardModifiers allowed_extra_modifiers)
+{
+    if (event == nullptr)
+        return false;
+
+    const QKeySequence sequence = parseShortcutKeySequence(shortcut);
+    if (sequence.count() != 1)
+        return false;
+
+    const QKeyCombination combination = sequence[0];
+    if (event->key() != combination.key())
+        return false;
+
+    const Qt::KeyboardModifiers expected_modifiers = combination.keyboardModifiers();
+    const Qt::KeyboardModifiers actual_modifiers = event->modifiers();
+    if ((actual_modifiers & expected_modifiers) != expected_modifiers)
+        return false;
+
+    return (actual_modifiers & ~(expected_modifiers | allowed_extra_modifiers)) == Qt::NoModifier;
 }
 
 QString guiConfigurationFilePath()

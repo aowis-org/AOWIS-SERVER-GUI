@@ -52,13 +52,40 @@ On Windows, `%APPDATA%` normally resolves to `C:\Users\<user>\AppData\Roaming`. 
 examples_builtin_enable=true
 map_desktop_renderer=cpu
 
+[shortcuts]
+sidebar_toggle=Win+Tab
+fullscreen=F11
+simulation_run=Ctrl+R
+simulation_run_alternate=Shift+Enter
+map_zoom_in=E
+map_zoom_out=Q
+map_pan_up=W
+map_pan_down=S
+map_pan_left=A
+map_pan_right=D
+map_provider_arcgis_sat=F1
+map_provider_openstreetmap=F2
+map_provider_opentopomap=F3
+map_provider_cycloosm=F4
+map_editor_select=Esc
+map_editor_delete=Del
+map_editor_add_pipe=1
+map_editor_add_junction=2
+map_editor_add_valve=3
+map_editor_add_customer_point=4
+map_editor_add_pump=5
+map_editor_add_tank=6
+map_editor_add_power_source=7
+map_editor_add_reservoir=8
+map_editor_add_note=9
+
 [map_server]
 base_url=http://aowis-server-map.localhost:80
 api_key=
 delete_api_key=
 ```
 
-Restart the application after editing the file.
+Restart the application after editing the file. Missing native `[shortcuts]` entries are added automatically using the advertised UI shortcuts.
 
 Set `examples_builtin_enable=false` to hide the bundled `Examples` project and its revisions from the toolbar. If the option is missing, built-in examples are enabled.
 

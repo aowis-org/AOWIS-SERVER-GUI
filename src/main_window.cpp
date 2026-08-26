@@ -1,4 +1,5 @@
 #include "main_window.h"
+#include "gui_configuration.h"
 #include "map_server_client_configuration.h"
 #include <QPushButton>
 #include <QShortcut>
@@ -85,7 +86,8 @@ MainWindow::MainWindow(QWidget *parent)
         scheduleRightDockResize();
     });
 
-    QShortcut *shortcut_toggle_right_docks = new QShortcut(QKeySequence(Qt::META | Qt::Key_Tab), this);
+    QShortcut *shortcut_toggle_right_docks = new QShortcut(
+        guiShortcutKeySequence(guiConfiguration().shortcuts.sidebar_toggle), this);
     shortcut_toggle_right_docks->setContext(Qt::WindowShortcut);
     shortcut_toggle_right_docks->setAutoRepeat(false);
     connect(shortcut_toggle_right_docks, &QShortcut::activated, this, &MainWindow::toggleRightDockArea);
@@ -490,18 +492,18 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 
 void MainWindow::keyPressEvent(QKeyEvent *event)
 {
-    const int key = event->key();
-    
-    switch (key)
+#ifndef Q_OS_WASM
+    if (guiShortcutMatches(event, guiConfiguration().shortcuts.fullscreen))
     {
-    #ifndef Q_OS_WASM    
-    case Qt::Key_F11:
         fullScreenToggle();
         event->accept();
         return;
-    #endif
-    
-    #ifdef Q_OS_WASM
+    }
+#endif
+
+#ifdef Q_OS_WASM
+    switch (event->key())
+    {
     case Qt::Key_F5:
         QMessageBox *box = new QMessageBox(this);
         box->setAttribute(Qt::WA_DeleteOnClose);
@@ -525,9 +527,9 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
         
         event->accept();
         return;
-    #endif
     }
-    
+#endif
+
     QWidget::keyPressEvent(event);
 }
 

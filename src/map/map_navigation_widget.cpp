@@ -1,8 +1,6 @@
 #include "map_navigation_widget.h"
 
-#ifndef Q_OS_WASM
 #include "../gui_configuration.h"
-#endif
 
 MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidget *keyboard_focus_target, QWidget *parent)
     : QWidget{parent},
@@ -11,35 +9,37 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     map( map ),
     keyboard_focus_target( keyboard_focus_target != nullptr ? keyboard_focus_target : map )
 {
+    const GuiShortcutConfiguration &shortcuts = guiConfiguration().shortcuts;
+
     this->button_zoom_in = new QPushButton();
     this->button_zoom_in->setIcon(QIcon(":/icon/zoom_in.png"));
     this->button_zoom_in->setIconSize(QSize(35, 35));
-    this->button_zoom_in->setToolTip("Shortcut: [E]");
+    this->button_zoom_in->setToolTip(QStringLiteral("Shortcut: [%1]").arg(shortcuts.map_zoom_in));
     
     this->button_zoom_out = new QPushButton();
     this->button_zoom_out->setIcon(QIcon(":/icon/zoom_out.png"));
     this->button_zoom_out->setIconSize(QSize(35, 35));
-    this->button_zoom_out->setToolTip("Shortcut: [Q]");
+    this->button_zoom_out->setToolTip(QStringLiteral("Shortcut: [%1]").arg(shortcuts.map_zoom_out));
     
     this->button_up = new QPushButton();
     this->button_up->setIcon(QIcon(":/icon/arrow_up"));
     this->button_up->setIconSize(QSize(25, 25));
-    this->button_up->setToolTip("Shortcut: [W]");
+    this->button_up->setToolTip(QStringLiteral("Shortcut: [%1]").arg(shortcuts.map_pan_up));
     
     this->button_down = new QPushButton();
     this->button_down->setIcon(QIcon(":/icon/arrow_down"));
     this->button_down->setIconSize(QSize(25, 25));
-    this->button_down->setToolTip("Shortcut: [S]");
+    this->button_down->setToolTip(QStringLiteral("Shortcut: [%1]").arg(shortcuts.map_pan_down));
     
     this->button_left = new QPushButton();
     this->button_left->setIcon(QIcon(":/icon/arrow_left"));
     this->button_left->setIconSize(QSize(25, 25));
-    this->button_left->setToolTip("Shortcut: [A]");
+    this->button_left->setToolTip(QStringLiteral("Shortcut: [%1]").arg(shortcuts.map_pan_left));
     
     this->button_right = new QPushButton();
     this->button_right->setIcon(QIcon(":/icon/arrow_right"));
     this->button_right->setIconSize(QSize(25, 25));
-    this->button_right->setToolTip("Shortcut: [D]");
+    this->button_right->setToolTip(QStringLiteral("Shortcut: [%1]").arg(shortcuts.map_pan_right));
     
     connect(button_zoom_in, &QPushButton::clicked, this->map, &MapWidget::zoomIn);
     connect(button_zoom_out, &QPushButton::clicked, this->map, &MapWidget::zoomOut);
@@ -49,17 +49,17 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     connect(button_left, &QPushButton::clicked, this->map, &MapWidget::panLeft);
     connect(button_right, &QPushButton::clicked, this->map, &MapWidget::panRight);
     
-    this->map_arcgissat = new QRadioButton("[F1] ArcGIS SAT");
-    this->map_arcgissat->setShortcut(Qt::Key_F1);
+    this->map_arcgissat = new QRadioButton(QStringLiteral("[%1] ArcGIS SAT").arg(shortcuts.map_provider_arcgis_sat));
+    this->map_arcgissat->setShortcut(guiShortcutKeySequence(shortcuts.map_provider_arcgis_sat));
     
-    this->map_openstreetmap = new QRadioButton("[F2] OpenStreetMap");
-    this->map_openstreetmap->setShortcut(Qt::Key_F2);
+    this->map_openstreetmap = new QRadioButton(QStringLiteral("[%1] OpenStreetMap").arg(shortcuts.map_provider_openstreetmap));
+    this->map_openstreetmap->setShortcut(guiShortcutKeySequence(shortcuts.map_provider_openstreetmap));
     
-    this->map_opentopomap = new QRadioButton("[F3] OpenTopoMap");
-    this->map_opentopomap->setShortcut(Qt::Key_F3);
+    this->map_opentopomap = new QRadioButton(QStringLiteral("[%1] OpenTopoMap").arg(shortcuts.map_provider_opentopomap));
+    this->map_opentopomap->setShortcut(guiShortcutKeySequence(shortcuts.map_provider_opentopomap));
     
-    this->map_osmcyclo = new QRadioButton("[F4] CycloOSM");
-    this->map_osmcyclo->setShortcut(Qt::Key_F4);
+    this->map_osmcyclo = new QRadioButton(QStringLiteral("[%1] CycloOSM").arg(shortcuts.map_provider_cycloosm));
+    this->map_osmcyclo->setShortcut(guiShortcutKeySequence(shortcuts.map_provider_cycloosm));
     
     map_arcgissat->setChecked(true);
     
@@ -80,45 +80,11 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
         this->activateMapProvider(MapProvider::OSMCyclo);
     });
     
-    QLabel *label_map_view_mode = new QLabel("View Mode");
-    this->combo_map_view_mode = new QComboBox();
-    this->combo_map_view_mode->addItem("2D", int(MapViewMode::TwoD));
-    this->combo_map_view_mode->addItem("3D", int(MapViewMode::ThreeD));
-    this->combo_map_view_mode->setToolTip("Switch between the top-down 2D map and the 3D map view.");
-
     const MapViewMode initial_view_mode = this->map->model()->viewMode();
-    const int initial_view_index = this->combo_map_view_mode->findData(int(initial_view_mode));
-    if (initial_view_index >= 0)
-        this->combo_map_view_mode->setCurrentIndex(initial_view_index);
-
-    connect(this->combo_map_view_mode, &QComboBox::currentIndexChanged, this, [this](int index)
-    {
-        const QVariant view_mode_data = this->combo_map_view_mode->itemData(index);
-        if (!view_mode_data.isValid())
-            return;
-
-        this->map->model()->setViewMode(static_cast<MapViewMode>(view_mode_data.toInt()));
-    });
     connect(this->map->model(), &MapModel::viewModeChanged, this, [this](MapViewMode view_mode)
     {
-        const int index = this->combo_map_view_mode->findData(int(view_mode));
-        if (index >= 0 && index != this->combo_map_view_mode->currentIndex())
-        {
-            const QSignalBlocker blocker(this->combo_map_view_mode);
-            this->combo_map_view_mode->setCurrentIndex(index);
-        }
-
         syncIconSizeSliderForViewMode(view_mode);
     });
-
-#ifndef Q_OS_WASM
-    const bool view_mode_selector_visible =
-        desktopMapRenderer() == DesktopMapRenderer::Rhi && this->mode != CanvasMode::Monitor;
-#else
-    const bool view_mode_selector_visible = false;
-#endif
-    label_map_view_mode->setVisible(view_mode_selector_visible);
-    this->combo_map_view_mode->setVisible(view_mode_selector_visible);
 
     QLabel *label_slider_map_visibility = new QLabel("Opacity");
     QSlider *slider_map_visibility = new QSlider(Qt::Horizontal);
@@ -158,13 +124,11 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     this->grid->addWidget(map_openstreetmap, 3, 0, 1, 3);
     this->grid->addWidget(map_opentopomap, 4, 0, 1, 3);
     this->grid->addWidget(map_osmcyclo, 5, 0, 1, 3);
-    this->grid->addWidget(label_map_view_mode, 6, 0, 1, 3);
-    this->grid->addWidget(this->combo_map_view_mode, 7, 0, 1, 3);
-    this->grid->addWidget(label_slider_map_visibility, 8, 0, 1, 3);
-    this->grid->addWidget(slider_map_visibility, 9, 0, 1, 3);
-    this->grid->addWidget(label_slider_icon_size, 10, 0, 1, 3);
-    this->grid->addWidget(this->slider_icon_size, 11, 0, 1, 3);
-    this->grid->addWidget(check_map_sync, 12, 0, 1, 3);
+    this->grid->addWidget(label_slider_map_visibility, 6, 0, 1, 3);
+    this->grid->addWidget(slider_map_visibility, 7, 0, 1, 3);
+    this->grid->addWidget(label_slider_icon_size, 8, 0, 1, 3);
+    this->grid->addWidget(this->slider_icon_size, 9, 0, 1, 3);
+    this->grid->addWidget(check_map_sync, 10, 0, 1, 3);
     
     this->button_group_map_select = new QButtonGroup(this);
     this->button_group_map_select->addButton(this->map_arcgissat, 1);

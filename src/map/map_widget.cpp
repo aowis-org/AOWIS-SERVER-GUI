@@ -1,4 +1,5 @@
 #include "map_widget.h"
+#include "../gui_configuration.h"
 
 #include <QApplication>
 #include <QFile>
@@ -662,33 +663,44 @@ EM_BOOL MapWidget::browserMouseLeaveCallback(int event_type, const EmscriptenMou
 }
 #endif
 
-bool MapWidget::setKeyboardPanKey(int key, bool pressed)
+bool MapWidget::setKeyboardPanKey(QKeyEvent *event, bool pressed)
 {
-    switch (key)
+    if (event == nullptr)
+        return false;
+
+    const GuiShortcutConfiguration &shortcuts = guiConfiguration().shortcuts;
+    const Qt::KeyboardModifiers arrow_modifiers =
+        event->modifiers() & ~(Qt::ShiftModifier | Qt::KeypadModifier);
+
+    if ((event->key() == Qt::Key_Left && arrow_modifiers == Qt::NoModifier)
+        || guiShortcutMatches(event, shortcuts.map_pan_left, Qt::ShiftModifier))
     {
-    case Qt::Key_Left:
-    case Qt::Key_U:
         this->pan_key_left_pressed = pressed;
         return true;
+    }
 
-    case Qt::Key_Right:
-    case Qt::Key_A:
+    if ((event->key() == Qt::Key_Right && arrow_modifiers == Qt::NoModifier)
+        || guiShortcutMatches(event, shortcuts.map_pan_right, Qt::ShiftModifier))
+    {
         this->pan_key_right_pressed = pressed;
         return true;
+    }
 
-    case Qt::Key_Up:
-    case Qt::Key_V:
+    if ((event->key() == Qt::Key_Up && arrow_modifiers == Qt::NoModifier)
+        || guiShortcutMatches(event, shortcuts.map_pan_up, Qt::ShiftModifier))
+    {
         this->pan_key_up_pressed = pressed;
         return true;
+    }
 
-    case Qt::Key_Down:
-    case Qt::Key_I:
+    if ((event->key() == Qt::Key_Down && arrow_modifiers == Qt::NoModifier)
+        || guiShortcutMatches(event, shortcuts.map_pan_down, Qt::ShiftModifier))
+    {
         this->pan_key_down_pressed = pressed;
         return true;
-
-    default:
-        return false;
     }
+
+    return false;
 }
 
 bool MapWidget::hasKeyboardPanInput() const
@@ -890,9 +902,7 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
     if (!event)
         return false;
 
-    const Qt::KeyboardModifiers blocked_modifiers = Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier;
-    if (event->modifiers() & blocked_modifiers)
-        return false;
+    const GuiShortcutConfiguration &shortcuts = guiConfiguration().shortcuts;
 
     if (event->key() == Qt::Key_Shift)
     {
@@ -906,7 +916,7 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
         return true;
     }
 
-    if (this->setKeyboardPanKey(event->key(), true))
+    if (this->setKeyboardPanKey(event, true))
     {
         this->pan_fast_modifier_pressed = event->modifiers().testFlag(Qt::ShiftModifier);
         this->mouse_pan_inertia_active = false;
@@ -916,14 +926,18 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
         return true;
     }
 
-    switch (event->key())
+    const bool zoom_in = guiShortcutMatches(event, shortcuts.map_zoom_in, Qt::ShiftModifier);
+    const bool zoom_out = guiShortcutMatches(event, shortcuts.map_zoom_out, Qt::ShiftModifier);
+    if (zoom_in || zoom_out)
     {
-    case Qt::Key_L:
         if (this->m_model->viewMode() == MapViewMode::ThreeD)
         {
             if (!event->isAutoRepeat())
             {
-                this->view_3d_zoom_in_key_pressed = true;
+                if (zoom_in)
+                    this->view_3d_zoom_in_key_pressed = true;
+                else
+                    this->view_3d_zoom_out_key_pressed = true;
                 beginView3dKeyboardZoomInteraction();
             }
             this->pan_fast_modifier_pressed = event->modifiers().testFlag(Qt::ShiftModifier);
@@ -933,46 +947,30 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
         else if (this->rhi_view_active
                  && !event->modifiers().testFlag(Qt::ShiftModifier))
         {
-            this->view_2d_zoom_in_key_pressed = true;
+            if (zoom_in)
+                this->view_2d_zoom_in_key_pressed = true;
+            else
+                this->view_2d_zoom_out_key_pressed = true;
             ensurePanAnimationRunning();
         }
 #endif
-        else
+        else if (zoom_in)
         {
             zoomIn();
         }
-        event->accept();
-        return true;
-
-    case Qt::Key_X:
-        if (this->m_model->viewMode() == MapViewMode::ThreeD)
-        {
-            if (!event->isAutoRepeat())
-            {
-                this->view_3d_zoom_out_key_pressed = true;
-                beginView3dKeyboardZoomInteraction();
-            }
-            this->pan_fast_modifier_pressed = event->modifiers().testFlag(Qt::ShiftModifier);
-            ensurePanAnimationRunning();
-        }
-#ifndef Q_OS_WASM
-        else if (this->rhi_view_active
-                 && !event->modifiers().testFlag(Qt::ShiftModifier))
-        {
-            this->view_2d_zoom_out_key_pressed = true;
-            ensurePanAnimationRunning();
-        }
-#endif
         else
         {
             zoomOut();
         }
         event->accept();
         return true;
-
-    default:
-        return false;
     }
+
+    const Qt::KeyboardModifiers blocked_modifiers = Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier;
+    if (event->modifiers() & blocked_modifiers)
+        return false;
+
+    return false;
 }
 
 bool MapWidget::handleKeyReleaseEvent(QKeyEvent *event)
@@ -1002,7 +1000,7 @@ bool MapWidget::handleKeyReleaseEvent(QKeyEvent *event)
         return true;
     }
 
-    if (this->setKeyboardPanKey(event->key(), event->isAutoRepeat()))
+    if (this->setKeyboardPanKey(event, event->isAutoRepeat()))
     {
         if (!event->isAutoRepeat())
             this->ensurePanAnimationRunning();
@@ -1011,11 +1009,14 @@ bool MapWidget::handleKeyReleaseEvent(QKeyEvent *event)
         return true;
     }
 
-    if (event->key() == Qt::Key_L || event->key() == Qt::Key_X)
+    const GuiShortcutConfiguration &shortcuts = guiConfiguration().shortcuts;
+    const bool zoom_in = guiShortcutMatches(event, shortcuts.map_zoom_in, Qt::ShiftModifier);
+    const bool zoom_out = guiShortcutMatches(event, shortcuts.map_zoom_out, Qt::ShiftModifier);
+    if (zoom_in || zoom_out)
     {
         if (!event->isAutoRepeat())
         {
-            if (event->key() == Qt::Key_L)
+            if (zoom_in)
             {
                 this->view_2d_zoom_in_key_pressed = false;
                 this->view_3d_zoom_in_key_pressed = false;
