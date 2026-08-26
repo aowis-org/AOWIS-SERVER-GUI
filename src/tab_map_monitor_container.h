@@ -138,9 +138,11 @@ private:
     MapMonitorMenuWidget *map_menu = nullptr;
     int network_background_opacity = 0;
     NetworkSymbologySettings symbology_settings;
+    bool visual_control_symbology_apply_pending = false;
 
     bool selectNetworkEntity(quint32 render_id, InfrastructureEntity entity_type, const QUuid &uuid = QUuid());
     void applySymbology();
+    void applyVisualControlSymbology();
     void setNetworkBackgroundOpacity(int opacity);
 
 #ifndef Q_OS_WASM

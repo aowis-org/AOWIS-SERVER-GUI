@@ -2,6 +2,7 @@
 #define MAP_RHI_BASEMAP_RENDERER_H
 
 #include <QColor>
+#include <QHash>
 #include <QPointF>
 #include <QSet>
 #include <QSize>
@@ -60,6 +61,7 @@ public:
     void notifyTerrainTileAvailable(const QString &key);
     void setHeatmapOverlay(const QVector<HeatmapMarker> &markers,
                            double radius_world, double solid_fraction);
+    void setHeatmapStyle(double radius_world, double solid_fraction);
     void invalidate();
     void releaseResources();
 
@@ -119,6 +121,10 @@ private:
                               QRhiResourceUpdateBatch *resource_updates);
     bool rebuildTileBindings(TileResource *resource);
     QImage renderHeatmapTile(const VisibleTile &tile) const;
+    void rebuildHeatmapMarkerBuckets();
+    QVector<int> heatmapMarkerCandidates(double tile_left, double tile_top,
+                                         double tile_right, double tile_bottom,
+                                         double radius_world) const;
     void pruneTextureCache();
     void appendFlatTileVertices(QVector<TileVertex> *target, VisibleTile *tile,
                                 float left, float top, float right, float bottom);
@@ -153,6 +159,7 @@ private:
     QSet<QString> dirty_terrain_keys;
     QPointF layout_origin_world;
     QVector<HeatmapMarker> heatmap_markers;
+    QHash<quint64, QVector<int>> heatmap_marker_buckets;
     double heatmap_radius_world = 0.0;
     double heatmap_solid_fraction = 0.0;
     quint64 heatmap_revision = 1;

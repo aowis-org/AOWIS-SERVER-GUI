@@ -28,6 +28,17 @@ constexpr int TerrainReliefMaximumZoom = 14;
 constexpr double TerrainVerticalScale = 1.0;
 constexpr int TwoDPanRetentionMarginTiles = 4;
 constexpr int HeatmapTextureSize = 256;
+constexpr double HeatmapMarkerBucketWorldSize = 16384.0;
+
+quint64 heatmapMarkerBucketKey(int bucket_x, int bucket_y)
+{
+    return (quint64(quint32(bucket_x)) << 32) | quint64(quint32(bucket_y));
+}
+
+int heatmapMarkerBucketCoordinate(double world_coordinate)
+{
+    return int(std::floor(world_coordinate / HeatmapMarkerBucketWorldSize));
+}
 
 bool reliefTerrainEnabled(const MapModel &map_model, const MapTerrainRepository *terrain_repository)
 {
@@ -194,18 +205,45 @@ void MapRhiBasemapRenderer::setHeatmapOverlay(
 {
     const double bounded_radius_world = qMax(0.0, radius_world);
     const double bounded_solid_fraction = qBound(0.0, solid_fraction, 0.9);
-    if (this->heatmap_markers == markers
-        && qFuzzyCompare(1.0 + this->heatmap_radius_world,
-                         1.0 + bounded_radius_world)
+    const bool markers_changed = this->heatmap_markers != markers;
+    const bool style_changed =
+        !qFuzzyCompare(1.0 + this->heatmap_radius_world,
+                       1.0 + bounded_radius_world)
+        || !qFuzzyCompare(1.0 + this->heatmap_solid_fraction,
+                          1.0 + bounded_solid_fraction);
+    if (!markers_changed && !style_changed)
+        return;
+
+    if (markers_changed)
+    {
+        this->heatmap_markers = markers;
+        rebuildHeatmapMarkerBuckets();
+    }
+    this->heatmap_radius_world = bounded_radius_world;
+    this->heatmap_solid_fraction = bounded_solid_fraction;
+    ++this->heatmap_revision;
+    if (this->heatmap_revision == 0)
+        this->heatmap_revision = 1;
+}
+
+void MapRhiBasemapRenderer::setHeatmapStyle(
+    double radius_world, double solid_fraction)
+{
+    const double bounded_radius_world = qMax(0.0, radius_world);
+    const double bounded_solid_fraction = qBound(0.0, solid_fraction, 0.9);
+    if (qFuzzyCompare(1.0 + this->heatmap_radius_world,
+                      1.0 + bounded_radius_world)
         && qFuzzyCompare(1.0 + this->heatmap_solid_fraction,
                          1.0 + bounded_solid_fraction))
     {
         return;
     }
 
-    this->heatmap_markers = markers;
     this->heatmap_radius_world = bounded_radius_world;
     this->heatmap_solid_fraction = bounded_solid_fraction;
+    if (this->heatmap_markers.isEmpty())
+        return;
+
     ++this->heatmap_revision;
     if (this->heatmap_revision == 0)
         this->heatmap_revision = 1;
@@ -843,23 +881,35 @@ bool MapRhiBasemapRenderer::ensureHeatmapTexture(
     if (resource == nullptr || resource_updates == nullptr)
         return false;
     if (resource->heatmap_revision == this->heatmap_revision)
-        return true;
+        return resource->bindings != nullptr || rebuildTileBindings(resource);
 
-    const QImage image = renderHeatmapTile(tile);
-    resource->bindings.reset();
-    resource->heatmap_texture.reset();
-
+    QImage image = renderHeatmapTile(tile);
+    bool bindings_changed = false;
     if (!image.isNull())
     {
-        resource->heatmap_texture.reset(this->rhi->newTexture(
-            QRhiTexture::RGBA8, image.size()));
-        if (!resource->heatmap_texture || !resource->heatmap_texture->create())
-            return false;
+        if (!resource->heatmap_texture)
+        {
+            resource->heatmap_texture.reset(this->rhi->newTexture(
+                QRhiTexture::RGBA8, image.size()));
+            if (!resource->heatmap_texture || !resource->heatmap_texture->create())
+                return false;
+            bindings_changed = true;
+        }
+        resource_updates->uploadTexture(resource->heatmap_texture.get(), image);
+    }
+    else if (resource->heatmap_texture)
+    {
+        image = QImage(
+            HeatmapTextureSize, HeatmapTextureSize,
+            QImage::Format_RGBA8888);
+        image.fill(Qt::transparent);
         resource_updates->uploadTexture(resource->heatmap_texture.get(), image);
     }
 
     resource->heatmap_revision = this->heatmap_revision;
-    return rebuildTileBindings(resource);
+    if (bindings_changed || resource->bindings == nullptr)
+        return rebuildTileBindings(resource);
+    return true;
 }
 
 bool MapRhiBasemapRenderer::rebuildTileBindings(TileResource *resource)
@@ -914,20 +964,9 @@ QImage MapRhiBasemapRenderer::renderHeatmapTile(const VisibleTile &tile) const
     const double tile_bottom = tile_top + tile_world_size;
     const double radius = this->heatmap_radius_world;
 
-    bool intersects = false;
-    for (const HeatmapMarker &marker : this->heatmap_markers)
-    {
-        if (marker.center.x() + radius < tile_left
-            || marker.center.x() - radius > tile_right
-            || marker.center.y() + radius < tile_top
-            || marker.center.y() - radius > tile_bottom)
-        {
-            continue;
-        }
-        intersects = true;
-        break;
-    }
-    if (!intersects)
+    const QVector<int> candidate_indices = heatmapMarkerCandidates(
+        tile_left, tile_top, tile_right, tile_bottom, radius);
+    if (candidate_indices.isEmpty())
         return QImage();
 
     QImage image(
@@ -948,8 +987,11 @@ QImage MapRhiBasemapRenderer::renderHeatmapTile(const VisibleTile &tile) const
     const double half_fraction = this->heatmap_solid_fraction
         + (1.0 - this->heatmap_solid_fraction) * 0.4375;
 
-    for (const HeatmapMarker &marker : this->heatmap_markers)
+    for (int marker_index : candidate_indices)
     {
+        if (marker_index < 0 || marker_index >= this->heatmap_markers.size())
+            continue;
+        const HeatmapMarker &marker = this->heatmap_markers.at(marker_index);
         if (marker.center.x() + radius < tile_left
             || marker.center.x() - radius > tile_right
             || marker.center.y() + radius < tile_top
@@ -980,6 +1022,51 @@ QImage MapRhiBasemapRenderer::renderHeatmapTile(const VisibleTile &tile) const
     painter.end();
 
     return image.convertToFormat(QImage::Format_RGBA8888);
+}
+
+void MapRhiBasemapRenderer::rebuildHeatmapMarkerBuckets()
+{
+    this->heatmap_marker_buckets.clear();
+    for (int marker_index = 0; marker_index < this->heatmap_markers.size(); ++marker_index)
+    {
+        const HeatmapMarker &marker = this->heatmap_markers.at(marker_index);
+        const int bucket_x = heatmapMarkerBucketCoordinate(marker.center.x());
+        const int bucket_y = heatmapMarkerBucketCoordinate(marker.center.y());
+        this->heatmap_marker_buckets[heatmapMarkerBucketKey(bucket_x, bucket_y)]
+            .append(marker_index);
+    }
+}
+
+QVector<int> MapRhiBasemapRenderer::heatmapMarkerCandidates(
+    double tile_left, double tile_top, double tile_right, double tile_bottom,
+    double radius_world) const
+{
+    QVector<int> result;
+    if (this->heatmap_marker_buckets.isEmpty())
+        return result;
+
+    const int minimum_bucket_x = heatmapMarkerBucketCoordinate(
+        tile_left - radius_world);
+    const int maximum_bucket_x = heatmapMarkerBucketCoordinate(
+        tile_right + radius_world);
+    const int minimum_bucket_y = heatmapMarkerBucketCoordinate(
+        tile_top - radius_world);
+    const int maximum_bucket_y = heatmapMarkerBucketCoordinate(
+        tile_bottom + radius_world);
+
+    for (int bucket_y = minimum_bucket_y; bucket_y <= maximum_bucket_y; ++bucket_y)
+    {
+        for (int bucket_x = minimum_bucket_x; bucket_x <= maximum_bucket_x; ++bucket_x)
+        {
+            const quint64 key = heatmapMarkerBucketKey(bucket_x, bucket_y);
+            const QHash<quint64, QVector<int>>::const_iterator iterator =
+                this->heatmap_marker_buckets.constFind(key);
+            if (iterator == this->heatmap_marker_buckets.cend())
+                continue;
+            result.append(iterator.value());
+        }
+    }
+    return result;
 }
 
 void MapRhiBasemapRenderer::pruneTextureCache()

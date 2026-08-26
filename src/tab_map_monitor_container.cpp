@@ -28,6 +28,7 @@
 #include <QJsonObject>
 #include <QMouseEvent>
 #include <QSignalBlocker>
+#include <QTimer>
 
 #include <cmath>
 #include <functional>
@@ -329,7 +330,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         [this](int size_percent)
     {
         this->symbology_settings.icon_size_percent = size_percent;
-        applySymbology();
+        applyVisualControlSymbology();
     });
     this->map->installEventFilter(this);
 #ifndef Q_OS_WASM
@@ -522,6 +523,11 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             if (this->map_model->viewMode() != MapViewMode::TwoD)
                 this->map_model->setViewMode(MapViewMode::TwoD);
             this->map->setRhiViewActive(false);
+            this->symbology_settings = this->symbology_settings.bounded();
+            const NetworkSymbologyRanges fallback_ranges =
+                this->hydraulic_data->symbologyRanges(this->symbology_settings);
+            this->desktop_network_overlay->setSymbology(
+                this->symbology_settings, fallback_ranges);
             this->desktop_network_overlay->show();
             this->map_stack_layout->setCurrentWidget(this->desktop_network_overlay);
             if (this->desktop_rhi_hud != nullptr)
@@ -679,7 +685,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     connect(this->map_menu, &MapMonitorMenuWidget::signalNodeSizeChanged, this, [this](int size_percent)
     {
         this->symbology_settings.node_size_percent = size_percent;
-        applySymbology();
+        applyVisualControlSymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalLinkVisualClicked, this,
         [this](VisualLink visual_link)
@@ -691,13 +697,17 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     connect(this->map_menu, &MapMonitorMenuWidget::signalLinkThicknessChanged, this, [this](int thickness_px)
     {
         this->symbology_settings.link_thickness_px = thickness_px;
-        applySymbology();
+        applyVisualControlSymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalFlowDirectionSizeChanged, this, [this](int size_px)
     {
+        const bool was_visible = this->symbology_settings.show_flow_direction;
         this->symbology_settings.flow_direction_size_px = size_px;
         this->symbology_settings.show_flow_direction = size_px > 0;
-        applySymbology();
+        if (was_visible != this->symbology_settings.show_flow_direction)
+            applySymbology();
+        else
+            applyVisualControlSymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapVisualClicked, this, [this](VisualHeatmap visual_heatmap)
     {
@@ -708,13 +718,13 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapOpacityChanged, this, [this](int opacity)
     {
         this->symbology_settings.heatmap_opacity = opacity;
-        applySymbology();
+        applyVisualControlSymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapRadiusUnitChanged, this,
         [this](HeatmapRadiusUnit unit)
     {
         this->symbology_settings.heatmap_radius_unit = unit;
-        applySymbology();
+        applyVisualControlSymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapRadiusChanged, this,
         [this](HeatmapRadiusUnit unit, int radius)
@@ -723,12 +733,12 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             this->symbology_settings.heatmap_radius_px = radius;
         else
             this->symbology_settings.heatmap_radius_m = radius;
-        applySymbology();
+        applyVisualControlSymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapSolidCenterChanged, this, [this](int percent)
     {
         this->symbology_settings.heatmap_solid_center_percent = percent;
-        applySymbology();
+        applyVisualControlSymbology();
     });
 }
 
@@ -1114,6 +1124,35 @@ void MapMonitorContainer::applySymbology()
 #else
     scheduleWasmNetworkSymbologySync();
 #endif
+}
+
+void MapMonitorContainer::applyVisualControlSymbology()
+{
+    this->symbology_settings = this->symbology_settings.bounded();
+    if (this->visual_control_symbology_apply_pending)
+        return;
+
+    this->visual_control_symbology_apply_pending = true;
+    QTimer::singleShot(16, this, [this]
+    {
+        this->visual_control_symbology_apply_pending = false;
+        this->symbology_settings = this->symbology_settings.bounded();
+
+#ifndef Q_OS_WASM
+#if AOWIS_HAS_QRHI
+        if (this->desktop_rhi_surface != nullptr
+            && this->desktop_rhi_surface->isVisible())
+        {
+            this->desktop_rhi_surface->setVisualControlSettings(
+                this->symbology_settings);
+            return;
+        }
+#endif
+        applySymbology();
+#else
+        scheduleWasmNetworkSymbologySync();
+#endif
+    });
 }
 
 void MapMonitorContainer::setNetworkBackgroundOpacity(int opacity)

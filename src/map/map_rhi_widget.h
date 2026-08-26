@@ -55,6 +55,7 @@ public:
     void setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids);
     void setNetworkScreenTranslation(const QPointF &translation_pixels);
     void setSymbology(const MapRhiSymbology &symbology);
+    void setVisualControlSettings(const NetworkSymbologySettings &settings);
     void setTileRepository(MapTileRepository *tile_repository);
     void setTerrainRepository(MapTerrainRepository *terrain_repository);
     void setBackgroundOpacity(int opacity);
@@ -84,6 +85,7 @@ private:
     void captureView3dFocusAnchor();
     void rebuildHeatmapRenderVertices();
     void syncBasemapHeatmapOverlay();
+    void syncBasemapHeatmapStyle();
     double terrainWorldUnitsPerMeter() const;
     double terrainWorldZ(double elevation_m, double world_units_per_meter) const;
     bool terrainElevationAtCoordinate(

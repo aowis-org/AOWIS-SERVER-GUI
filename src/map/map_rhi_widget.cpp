@@ -664,8 +664,6 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
 {
     const bool base_symbology_changed =
         !this->symbology_initialized
-        || this->applied_symbology.node_size_percent != symbology.node_size_percent
-        || this->applied_symbology.link_thickness_px != symbology.link_thickness_px
         || this->applied_symbology.node_colors != symbology.node_colors
         || this->applied_symbology.link_colors != symbology.link_colors;
     const bool junction_changed =
@@ -678,10 +676,12 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
         || this->applied_symbology.show_icons != symbology.show_icons
         || this->applied_symbology.node_colors != symbology.node_colors
         || this->applied_symbology.link_colors != symbology.link_colors;
-    const bool heatmap_changed =
+    const bool heatmap_data_changed =
         !this->symbology_initialized
         || this->applied_symbology.visual_heatmap != symbology.visual_heatmap
-        || this->applied_symbology.heatmap_fractions != symbology.heatmap_fractions
+        || this->applied_symbology.heatmap_fractions != symbology.heatmap_fractions;
+    const bool heatmap_style_changed =
+        !this->symbology_initialized
         || this->applied_symbology.heatmap_radius_unit != symbology.heatmap_radius_unit
         || this->applied_symbology.heatmap_radius_m != symbology.heatmap_radius_m
         || this->applied_symbology.heatmap_radius_px != symbology.heatmap_radius_px
@@ -714,13 +714,39 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
         this->icon_upload_pending = true;
         this->tank_upload_pending = true;
     }
-    if (heatmap_changed)
+    if (heatmap_data_changed)
     {
         this->heatmap_upload_pending = true;
         syncBasemapHeatmapOverlay();
     }
+    else if (heatmap_style_changed)
+    {
+        syncBasemapHeatmapStyle();
+    }
 
     update();
+}
+
+void MapRhiWidget::setVisualControlSettings(
+    const NetworkSymbologySettings &settings)
+{
+    if (!this->symbology_initialized)
+        return;
+
+    const NetworkSymbologySettings bounded_settings = settings.bounded();
+    MapRhiSymbology symbology = this->applied_symbology;
+    symbology.node_size_percent = bounded_settings.node_size_percent;
+    symbology.icon_size_percent = bounded_settings.icon_size_percent;
+    symbology.link_thickness_px = bounded_settings.link_thickness_px;
+    symbology.show_flow_direction = bounded_settings.show_flow_direction;
+    symbology.flow_direction_size_px = bounded_settings.flow_direction_size_px;
+    symbology.heatmap_opacity = bounded_settings.heatmap_opacity;
+    symbology.heatmap_radius_unit = bounded_settings.heatmap_radius_unit;
+    symbology.heatmap_radius_m = bounded_settings.heatmap_radius_m;
+    symbology.heatmap_radius_px = bounded_settings.heatmap_radius_px;
+    symbology.heatmap_solid_center_percent =
+        bounded_settings.heatmap_solid_center_percent;
+    setSymbology(symbology);
 }
 
 void MapRhiWidget::setTileRepository(MapTileRepository *tile_repository)
@@ -2530,6 +2556,28 @@ void MapRhiWidget::syncBasemapHeatmapOverlay()
         0.9);
     this->basemap_renderer->setHeatmapOverlay(
         markers, radius_world, solid_fraction);
+}
+
+void MapRhiWidget::syncBasemapHeatmapStyle()
+{
+    if (!this->basemap_renderer || this->map_model == nullptr)
+        return;
+
+    double radius_world = 0.0;
+    if (this->map_model->viewMode() == MapViewMode::ThreeD
+        && this->applied_symbology.visual_heatmap != VisualHeatmap::None)
+    {
+        const double heatmap_scale = GeoWebMercator::zoomScale(
+            this->map_model->zoom(), MapRenderCacheMath::ReferenceZoom);
+        radius_world = double(heatmapRadiusPixels())
+            / qMax(heatmap_scale, 0.000001);
+    }
+
+    const double solid_fraction = qBound(
+        0.0,
+        double(this->applied_symbology.heatmap_solid_center_percent) / 100.0,
+        0.9);
+    this->basemap_renderer->setHeatmapStyle(radius_world, solid_fraction);
 }
 
 QPointF MapRhiWidget::renderOriginWorld() const
