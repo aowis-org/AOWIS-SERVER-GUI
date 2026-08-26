@@ -1,5 +1,7 @@
 #include "map_server_client_configuration.h"
 
+#include "gui_configuration.h"
+
 #include <QDebug>
 
 #ifdef __EMSCRIPTEN__
@@ -12,7 +14,6 @@
 #include <QFileInfo>
 #include <QSaveFile>
 #include <QSettings>
-#include <QStandardPaths>
 #endif
 
 #ifdef __EMSCRIPTEN__
@@ -70,12 +71,7 @@ MapServerClientConfiguration loadConfiguration()
 #else
 QString nativeConfigurationPath()
 {
-    QString data_directory = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-    if (data_directory.isEmpty())
-        data_directory = QDir::home().filePath(QStringLiteral(".local/share"));
-
-    return QDir(data_directory).filePath(
-        QStringLiteral("aowis-server-gui/aowis-server-gui.ini"));
+    return guiConfigurationFilePath();
 }
 
 bool createDefaultConfiguration(const QString &path)

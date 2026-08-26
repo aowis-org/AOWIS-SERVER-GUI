@@ -17,6 +17,7 @@
 #include <QSaveFile>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QtGlobal>
 #endif
 
 namespace
@@ -37,11 +38,29 @@ GuiConfiguration loadConfiguration()
     return configuration;
 }
 #else
-QString nativeConfigurationPath()
+#ifdef Q_OS_WIN
+QString legacyNativeConfigurationPath()
 {
     QString data_directory = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
     if (data_directory.isEmpty())
+        data_directory = QDir::home().filePath(QStringLiteral("AppData/Local"));
+
+    return QDir(data_directory).filePath(
+        QStringLiteral("aowis-server-gui/aowis-server-gui.ini"));
+}
+#endif
+
+QString nativeConfigurationPath()
+{
+#ifdef Q_OS_WIN
+    QString data_directory = qEnvironmentVariable("APPDATA");
+    if (data_directory.isEmpty())
+        data_directory = QDir::home().filePath(QStringLiteral("AppData/Roaming"));
+#else
+    QString data_directory = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    if (data_directory.isEmpty())
         data_directory = QDir::home().filePath(QStringLiteral(".local/share"));
+#endif
 
     return QDir(data_directory).filePath(
         QStringLiteral("aowis-server-gui/aowis-server-gui.ini"));
@@ -123,7 +142,23 @@ GuiConfiguration loadConfiguration()
 {
     const QString path = nativeConfigurationPath();
     if (!QFile::exists(path))
-        createDefaultConfiguration(path);
+    {
+#ifdef Q_OS_WIN
+        const QString legacy_path = legacyNativeConfigurationPath();
+        if (legacy_path != path && QFile::exists(legacy_path))
+        {
+            const QFileInfo file_info(path);
+            if (QDir().mkpath(file_info.absolutePath()) && QFile::copy(legacy_path, path))
+                qInfo() << "Migrated GUI configuration from" << legacy_path << "to" << path;
+            else
+                qWarning() << "Failed to migrate GUI configuration from" << legacy_path
+                           << "to" << path;
+        }
+#endif
+
+        if (!QFile::exists(path))
+            createDefaultConfiguration(path);
+    }
 
     QSettings settings(path, QSettings::IniFormat);
 
@@ -153,6 +188,15 @@ GuiConfiguration loadConfiguration()
 
     return configuration;
 }
+#endif
+}
+
+QString guiConfigurationFilePath()
+{
+#ifdef __EMSCRIPTEN__
+    return QStringLiteral("webroot/aowis-server-gui.ini");
+#else
+    return nativeConfigurationPath();
 #endif
 }
 

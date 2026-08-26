@@ -37,13 +37,15 @@ Usually as a Desktop-Client, you might want to prefer [AOWIS-SERVER-Standalone](
 
 ## GUI configuration
 
-Native builds create the following file automatically on first use:
+Native builds create the configuration file automatically on first startup. The default location is platform-specific:
 
 ```text
-~/.local/share/aowis-server-gui/aowis-server-gui.ini
+Windows: %APPDATA%\aowis-server-gui\aowis-server-gui.ini
+Linux:   ~/.local/share/aowis-server-gui/aowis-server-gui.ini
+macOS:   ~/Library/Application Support/aowis-server-gui/aowis-server-gui.ini
 ```
 
-`XDG_DATA_HOME` is respected when it is set. The default file is:
+On Windows, `%APPDATA%` normally resolves to `C:\Users\<user>\AppData\Roaming`. Existing configurations from the previous `AppData\Local` location are migrated automatically when the roaming file does not exist. On Linux, `XDG_DATA_HOME` is respected when it is set. The default file contents are:
 
 ```ini
 [gui]
