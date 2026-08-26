@@ -5,6 +5,7 @@ layout(location = 1) in vec3 sphere_normal;
 layout(location = 2) in vec3 instance_center;
 layout(location = 3) in float instance_radius;
 layout(location = 4) in vec4 instance_color;
+layout(location = 5) in float instance_selected;
 
 layout(std140, binding = 0) uniform CameraBlock
 {
@@ -17,6 +18,7 @@ layout(std140, binding = 0) uniform CameraBlock
 
 layout(location = 0) out vec3 vertex_normal;
 layout(location = 1) out vec4 vertex_color;
+layout(location = 2) out float vertex_selected;
 
 void main()
 {
@@ -27,6 +29,10 @@ void main()
     clip_position.xy += translation_ndc * clip_position.w;
 
     gl_Position = clip_position;
-    vertex_normal = normalize(sphere_normal);
+    // Transform the sphere normal into camera-facing space for stable orb
+    // shading. The sphere is isotropic, so normalizing after the transform is
+    // sufficient here and keeps the highlight/rim visually tied to the view.
+    vertex_normal = normalize(mat3(camera.view_projection) * sphere_normal);
     vertex_color = instance_color;
+    vertex_selected = instance_selected;
 }

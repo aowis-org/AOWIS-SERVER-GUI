@@ -205,14 +205,17 @@ double MapRhiCamera::orbitDistanceWorld() const
 }
 
 
-bool MapRhiCamera::crosshairRay(QVector3D *eye_world, QVector3D *direction_world) const
+bool MapRhiCamera::screenRay(
+    const QPointF &screen_position, QVector3D *eye_world, QVector3D *direction_world) const
 {
     if (eye_world == nullptr || direction_world == nullptr
-        || this->view_mode != MapViewMode::ThreeD)
+        || this->view_mode != MapViewMode::ThreeD
+        || !std::isfinite(screen_position.x()) || !std::isfinite(screen_position.y()))
     {
         return false;
     }
 
+    const int viewport_width = qMax(1, this->viewport_size.width());
     const int viewport_height = qMax(1, this->viewport_size.height());
     const double scale = GeoWebMercator::zoomScale(
         this->zoom, MapRenderCacheMath::ReferenceZoom);
@@ -239,7 +242,25 @@ bool MapRhiCamera::crosshairRay(QVector3D *eye_world, QVector3D *direction_world
         float(this->view_3d_vertical_offset_world
             + distance * std::sin(pitch_rad)
             + this->view_3d_camera_collision_lift_world));
-    QVector3D direction = target - eye;
+    const QVector3D forward = (target - eye).normalized();
+    if (forward.lengthSquared() <= 1e-12f)
+        return false;
+
+    const QVector3D right(
+        float(std::cos(yaw_rad)), float(-std::sin(yaw_rad)), 0.0f);
+    const QVector3D up = QVector3D::crossProduct(forward, right).normalized();
+    if (up.lengthSquared() <= 1e-12f)
+        return false;
+
+    constexpr double FieldOfViewDeg = 45.0;
+    const double aspect = double(viewport_width) / double(viewport_height);
+    const double tan_half_fov = std::tan(qDegreesToRadians(FieldOfViewDeg / 2.0));
+    const double ndc_x = 2.0 * screen_position.x() / double(viewport_width) - 1.0;
+    const double ndc_y = 1.0 - 2.0 * screen_position.y() / double(viewport_height);
+
+    QVector3D direction = forward
+        + right * float(ndc_x * tan_half_fov * aspect)
+        + up * float(ndc_y * tan_half_fov);
     if (direction.lengthSquared() <= 1e-12f)
         return false;
 
@@ -247,6 +268,13 @@ bool MapRhiCamera::crosshairRay(QVector3D *eye_world, QVector3D *direction_world
     *eye_world = eye;
     *direction_world = direction;
     return true;
+}
+
+bool MapRhiCamera::crosshairRay(QVector3D *eye_world, QVector3D *direction_world) const
+{
+    return screenRay(
+        QPointF(this->viewport_size.width() / 2.0, this->viewport_size.height() / 2.0),
+        eye_world, direction_world);
 }
 
 QPointF MapRhiCamera::cameraGroundWorldPixelForDistance(double distance_world) const

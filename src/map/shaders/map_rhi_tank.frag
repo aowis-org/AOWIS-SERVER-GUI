@@ -5,6 +5,7 @@ layout(binding = 1) uniform sampler2D tank_texture;
 layout(location = 0) in vec3 vertex_normal;
 layout(location = 1) in vec2 vertex_texcoord;
 layout(location = 2) in float vertex_height;
+layout(location = 3) in float vertex_selected;
 layout(location = 0) out vec4 fragment_color;
 
 void main()
@@ -28,5 +29,12 @@ void main()
 
     vec3 base_color = max(albedo.rgb, vec3(0.035));
     vec3 lit = base_color * (lighting + height_tint) + vec3(specular);
-    fragment_color = vec4(lit, albedo.a);
+
+    float selected = clamp(vertex_selected, 0.0, 1.0);
+    vec3 selection_color = vec3(0.0, 0.745, 1.0);
+    vec3 selected_surface = selection_color * (0.78 + key * 0.18 + sky * 0.06);
+    selected_surface += vec3(specular * 0.24);
+    lit = mix(lit, selected_surface, selected);
+
+    fragment_color = vec4(clamp(lit, vec3(0.0), vec3(1.0)), albedo.a);
 }

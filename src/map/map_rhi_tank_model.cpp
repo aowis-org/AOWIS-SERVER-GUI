@@ -329,6 +329,15 @@ QVector<MapRhiTankModelVertex> mapRhiBuildTankModelVertices(
     QVector<MapRhiTankModelVertex> vertices;
     vertices.reserve(instances.size() * 18000);
     for (const MapRhiTankInstance &instance : instances)
+    {
+        const qsizetype first_vertex = vertices.size();
         appendTank(&vertices, instance);
+        for (qsizetype vertex_index = first_vertex; vertex_index < vertices.size(); ++vertex_index)
+        {
+            MapRhiTankModelVertex &vertex = vertices[vertex_index];
+            vertex.selected = instance.selected;
+            vertex.render_id = instance.render_id;
+        }
+    }
     return vertices;
 }

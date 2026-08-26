@@ -2,6 +2,7 @@
 #define MAP_RHI_JUNCTION_MODEL_H
 
 #include <QVector>
+#include <QtGlobal>
 
 struct MapRhiJunctionMeshVertex
 {
@@ -15,6 +16,7 @@ struct MapRhiJunctionMeshVertex
 
 struct MapRhiJunctionInstance
 {
+    quint32 render_id = 0;
     float center_x = 0.0f;
     float center_y = 0.0f;
     float center_z = 0.0f;
@@ -23,6 +25,7 @@ struct MapRhiJunctionInstance
     float green = 0.0f;
     float blue = 0.0f;
     float alpha = 1.0f;
+    float selected = 0.0f;
 };
 
 const QVector<MapRhiJunctionMeshVertex> &mapRhiJunctionSphereMeshVertices();

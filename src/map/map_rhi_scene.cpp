@@ -306,6 +306,8 @@ void MapRhiScene::setSelectedEntity(InfrastructureEntity entity_type, const QUui
     this->selected_entity_type = entity_type;
     this->selected_entity_uuid = uuid;
     rebuildHighlights();
+    rebuildTankInstances();
+    rebuildJunctionInstances();
 }
 
 bool MapRhiScene::setViewZoom(int zoom)
@@ -793,6 +795,23 @@ void MapRhiScene::rebuildTankInstances()
     const float body_height_world = world_marker_size * 0.78f;
     const float roof_height_world = world_marker_size * 0.26f;
 
+    quint32 selected_tank_render_id = 0;
+    if (this->selected_entity_type == InfrastructureEntity::Tank
+        && !this->selected_entity_uuid.isNull())
+    {
+        const QHash<QUuid, quint64>::const_iterator selected_iterator =
+            this->entity_keys_by_uuid.constFind(this->selected_entity_uuid);
+        if (selected_iterator != this->entity_keys_by_uuid.cend())
+        {
+            const quint32 render_id = quint32(selected_iterator.value() & 0xffffffffULL);
+            if (entityRenderKey(InfrastructureEntity::Tank, render_id)
+                == selected_iterator.value())
+            {
+                selected_tank_render_id = render_id;
+            }
+        }
+    }
+
     for (const IconMarker &marker : this->icon_markers)
     {
         if (marker.entity_type != InfrastructureEntity::Tank)
@@ -808,6 +827,7 @@ void MapRhiScene::rebuildTankInstances()
         instance.base_height_world = base_height_world;
         instance.body_height_world = body_height_world;
         instance.roof_height_world = roof_height_world;
+        instance.selected = marker.render_id == selected_tank_render_id ? 1.0f : 0.0f;
         this->tank_instances.append(instance);
     }
 }
@@ -828,13 +848,33 @@ void MapRhiScene::rebuildJunctionInstances()
         this->view_zoom, this->symbology.node_size_percent);
     const float radius_world = float(sphere_diameter_px / (2.0 * scale));
 
+    quint32 selected_junction_render_id = 0;
+    if (this->selected_entity_type == InfrastructureEntity::Junction
+        && !this->selected_entity_uuid.isNull())
+    {
+        const QHash<QUuid, quint64>::const_iterator selected_iterator =
+            this->entity_keys_by_uuid.constFind(this->selected_entity_uuid);
+        if (selected_iterator != this->entity_keys_by_uuid.cend())
+        {
+            const quint32 render_id = quint32(selected_iterator.value() & 0xffffffffULL);
+            if (entityRenderKey(InfrastructureEntity::Junction, render_id)
+                == selected_iterator.value())
+            {
+                selected_junction_render_id = render_id;
+            }
+        }
+    }
+
     this->junction_instances.reserve(this->junction_markers.size());
     for (const JunctionMarker &marker : this->junction_markers)
     {
-        const QRgb color = this->symbology.node_colors.value(
-            marker.render_id, networkSymbologyDefaultColor());
+        const QRgb color = marker.render_id == selected_junction_render_id
+            ? QColor(0, 190, 255).rgba()
+            : this->symbology.node_colors.value(
+                  marker.render_id, networkSymbologyDefaultColor());
 
         MapRhiJunctionInstance instance;
+        instance.render_id = marker.render_id;
         instance.center_x = float(marker.center.x());
         instance.center_y = float(marker.center.y());
         instance.center_z = marker.z;
@@ -843,6 +883,7 @@ void MapRhiScene::rebuildJunctionInstances()
         instance.green = qGreen(color) / 255.0f;
         instance.blue = qBlue(color) / 255.0f;
         instance.alpha = qAlpha(color) / 255.0f;
+        instance.selected = marker.render_id == selected_junction_render_id ? 1.0f : 0.0f;
         this->junction_instances.append(instance);
     }
 }
@@ -1041,6 +1082,14 @@ void MapRhiScene::rebuildHighlights()
                 const float base_link_width = float(this->symbology.link_thickness_px);
                 const float selected_link_width = qMax(
                     3.0f, base_link_width + (selected_has_error ? 6.0f : 2.0f));
+                const bool selected_is_3d_model =
+                    (this->use_3d_junction_models
+                        && this->selected_entity_type == InfrastructureEntity::Junction)
+                    || (this->use_3d_tank_models
+                        && this->selected_entity_type == InfrastructureEntity::Tank);
+                QVector<NodeVertex> *selected_node_target = selected_is_3d_model
+                    ? nullptr
+                    : &this->selected_node_vertices;
                 appendEntityHighlight(
                     this->selected_entity_type,
                     quint32(selected_iterator.value() & 0xffffffffULL),
@@ -1048,7 +1097,7 @@ void MapRhiScene::rebuildHighlights()
                     (selected_link_width - base_link_width) / 2.0f,
                     selected_has_error ? 5.0f : 2.0f,
                     &this->selected_link_vertices,
-                    &this->selected_node_vertices);
+                    selected_node_target);
             }
         }
     }

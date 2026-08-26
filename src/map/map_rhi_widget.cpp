@@ -201,6 +201,67 @@ bool finiteScreenPoint(const QPointF &point)
     return std::isfinite(point.x()) && std::isfinite(point.y());
 }
 
+bool raySphereIntersectionDistance(
+    const QVector3D &ray_origin, const QVector3D &ray_direction,
+    const QVector3D &sphere_center, double sphere_radius, double *distance)
+{
+    if (distance == nullptr || !(sphere_radius > 0.0) || !std::isfinite(sphere_radius))
+        return false;
+
+    const QVector3D offset = ray_origin - sphere_center;
+    const double b = QVector3D::dotProduct(offset, ray_direction);
+    const double c = double(QVector3D::dotProduct(offset, offset))
+        - sphere_radius * sphere_radius;
+    const double discriminant = b * b - c;
+    if (discriminant < 0.0)
+        return false;
+
+    const double root = std::sqrt(discriminant);
+    double hit_distance = -b - root;
+    if (hit_distance < 0.0)
+        hit_distance = -b + root;
+    if (hit_distance < 0.0 || !std::isfinite(hit_distance))
+        return false;
+
+    *distance = hit_distance;
+    return true;
+}
+
+bool rayTriangleIntersectionDistance(
+    const QVector3D &ray_origin, const QVector3D &ray_direction,
+    const QVector3D &a, const QVector3D &b, const QVector3D &c,
+    double *distance)
+{
+    if (distance == nullptr)
+        return false;
+
+    const QVector3D edge1 = b - a;
+    const QVector3D edge2 = c - a;
+    const QVector3D cross = QVector3D::crossProduct(ray_direction, edge2);
+    const double determinant = double(QVector3D::dotProduct(edge1, cross));
+    if (std::abs(determinant) <= 1e-10)
+        return false;
+
+    const double inverse_determinant = 1.0 / determinant;
+    const QVector3D from_a = ray_origin - a;
+    const double u = double(QVector3D::dotProduct(from_a, cross)) * inverse_determinant;
+    if (u < 0.0 || u > 1.0)
+        return false;
+
+    const QVector3D q = QVector3D::crossProduct(from_a, edge1);
+    const double v = double(QVector3D::dotProduct(ray_direction, q)) * inverse_determinant;
+    if (v < 0.0 || u + v > 1.0)
+        return false;
+
+    const double hit_distance = double(QVector3D::dotProduct(edge2, q))
+        * inverse_determinant;
+    if (hit_distance < 0.0 || !std::isfinite(hit_distance))
+        return false;
+
+    *distance = hit_distance;
+    return true;
+}
+
 constexpr double Rhi2dMinimumNodeHitRadiusPx = 10.0;
 constexpr double Rhi3dMinimumNodeHitRadiusPx = 16.0;
 constexpr double Rhi2dNodeHitPaddingPx = 5.0;
@@ -213,7 +274,6 @@ constexpr double Rhi2dMinimumIconHitRadiusPx = 12.0;
 constexpr double Rhi3dMinimumIconHitRadiusPx = 18.0;
 constexpr double Rhi2dIconHitPaddingPx = 6.0;
 constexpr double Rhi3dIconHitPaddingPx = 10.0;
-constexpr double Rhi3dTankBoundsPaddingPx = 10.0;
 }
 
 MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWidget *parent)
@@ -352,85 +412,55 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
 
     const bool three_d = this->map_model->viewMode() == MapViewMode::ThreeD;
 
-    // The 3D tank replaces its old SVG billboard, so hit-test the projected bounds
-    // of the actual model before falling back to the generic node/icon radii.
+    // In 3D the tank mesh itself is authoritative. Cast the camera ray against
+    // the exact triangles uploaded for the rendered tank model, including the
+    // current model dimensions. This avoids the old padded projected rectangle
+    // selecting empty space around the tank or missing visible roof/body parts.
     quint32 best_tank_render_id = 0;
     double best_tank_distance = std::numeric_limits<double>::max();
-    const QVector<MapRhiTankInstance> &tank_instances = this->scene.tankInstances();
-    if (three_d)
+    if (three_d && !this->tank_model_vertices.isEmpty())
     {
-        for (const MapRhiTankInstance &instance : tank_instances)
+        QVector3D tank_ray_origin;
+        QVector3D tank_ray_direction;
+        const QPointF tank_screen_position =
+            screen_position - this->network_screen_translation;
+        if (this->camera.screenRay(
+                tank_screen_position, &tank_ray_origin, &tank_ray_direction))
         {
-            const float top_z = instance.base_center.z()
-                + instance.base_height_world
-                + instance.body_height_world
-                + instance.roof_height_world;
-            const float middle_z = (instance.base_center.z() + top_z) / 2.0f;
-            const QVector3D center(
-                instance.base_center.x(), instance.base_center.y(), middle_z);
-
-            const QVector<QVector3D> bounds_points = {
-                QVector3D(instance.base_center.x() - instance.radius_world,
-                          instance.base_center.y(), instance.base_center.z()),
-                QVector3D(instance.base_center.x() + instance.radius_world,
-                          instance.base_center.y(), instance.base_center.z()),
-                QVector3D(instance.base_center.x(),
-                          instance.base_center.y() - instance.radius_world,
-                          instance.base_center.z()),
-                QVector3D(instance.base_center.x(),
-                          instance.base_center.y() + instance.radius_world,
-                          instance.base_center.z()),
-                QVector3D(instance.base_center.x() - instance.radius_world,
-                          instance.base_center.y(), top_z),
-                QVector3D(instance.base_center.x() + instance.radius_world,
-                          instance.base_center.y(), top_z),
-                QVector3D(instance.base_center.x(),
-                          instance.base_center.y() - instance.radius_world, top_z),
-                QVector3D(instance.base_center.x(),
-                          instance.base_center.y() + instance.radius_world, top_z),
-                QVector3D(instance.base_center.x(), instance.base_center.y(), top_z),
-                QVector3D(instance.base_center.x(), instance.base_center.y(),
-                          instance.base_center.z())
-            };
-
-            QRectF projected_bounds;
-            bool have_projected_bounds = false;
-            for (const QVector3D &point : bounds_points)
+            for (qsizetype vertex_index = 0;
+                 vertex_index + 2 < this->tank_model_vertices.size();
+                 vertex_index += 3)
             {
-                const QPointF projected = this->camera.projectWorldToScreen(point);
-                if (!finiteScreenPoint(projected))
+                const MapRhiTankModelVertex &vertex_a =
+                    this->tank_model_vertices.at(vertex_index);
+                const MapRhiTankModelVertex &vertex_b =
+                    this->tank_model_vertices.at(vertex_index + 1);
+                const MapRhiTankModelVertex &vertex_c =
+                    this->tank_model_vertices.at(vertex_index + 2);
+                if (vertex_a.render_id == 0
+                    || vertex_a.render_id != vertex_b.render_id
+                    || vertex_a.render_id != vertex_c.render_id)
+                {
                     continue;
+                }
 
-                if (!have_projected_bounds)
+                const QVector3D a(
+                    vertex_a.position_x, vertex_a.position_y, vertex_a.position_z);
+                const QVector3D b(
+                    vertex_b.position_x, vertex_b.position_y, vertex_b.position_z);
+                const QVector3D c(
+                    vertex_c.position_x, vertex_c.position_y, vertex_c.position_z);
+                double hit_distance = 0.0;
+                if (!rayTriangleIntersectionDistance(
+                        tank_ray_origin, tank_ray_direction, a, b, c, &hit_distance)
+                    || hit_distance >= best_tank_distance)
                 {
-                    projected_bounds = QRectF(projected, QSizeF(0.0, 0.0));
-                    have_projected_bounds = true;
+                    continue;
                 }
-                else
-                {
-                    projected_bounds = projected_bounds.united(
-                        QRectF(projected, QSizeF(0.0, 0.0)));
-                }
+
+                best_tank_distance = hit_distance;
+                best_tank_render_id = vertex_a.render_id;
             }
-
-            if (!have_projected_bounds)
-                continue;
-
-            projected_bounds.adjust(
-                -Rhi3dTankBoundsPaddingPx, -Rhi3dTankBoundsPaddingPx,
-                Rhi3dTankBoundsPaddingPx, Rhi3dTankBoundsPaddingPx);
-            if (!projected_bounds.contains(screen_position))
-                continue;
-
-            const QPointF projected_center = this->camera.projectWorldToScreen(center);
-            const double distance = finiteScreenPoint(projected_center)
-                ? QLineF(screen_position, projected_center).length()
-                : 0.0;
-            if (distance >= best_tank_distance)
-                continue;
-
-            best_tank_distance = distance;
-            best_tank_render_id = instance.render_id;
         }
     }
 
@@ -450,6 +480,63 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
             tank_hit.entity_type = node.entity_type;
             tank_hit.uuid = node.uuid;
             return tank_hit;
+        }
+    }
+
+    // In 3D the junction orb is the authoritative junction representation.
+    // Hit-test the actual sphere volume from the camera ray instead of falling
+    // back to the old screen-space circle around the junction center.
+    if (three_d)
+    {
+        QVector3D ray_origin;
+        QVector3D ray_direction;
+        const QPointF sphere_screen_position =
+            screen_position - this->network_screen_translation;
+        if (this->camera.screenRay(
+                sphere_screen_position, &ray_origin, &ray_direction))
+        {
+            quint32 best_junction_render_id = 0;
+            double best_junction_distance = std::numeric_limits<double>::max();
+            const QVector<MapRhiJunctionInstance> &junction_instances =
+                this->scene.junctionInstances();
+            for (const MapRhiJunctionInstance &instance : junction_instances)
+            {
+                if (!(instance.alpha > 0.0f) || !(instance.radius_world > 0.0f))
+                    continue;
+
+                const QVector3D sphere_center(
+                    instance.center_x, instance.center_y, instance.center_z);
+                double hit_distance = 0.0;
+                if (!raySphereIntersectionDistance(
+                        ray_origin, ray_direction, sphere_center,
+                        double(instance.radius_world), &hit_distance)
+                    || hit_distance >= best_junction_distance)
+                {
+                    continue;
+                }
+
+                best_junction_distance = hit_distance;
+                best_junction_render_id = instance.render_id;
+            }
+
+            if (best_junction_render_id != 0)
+            {
+                for (const NetworkRenderNode &node : snapshot.nodes)
+                {
+                    if (node.entity_type != InfrastructureEntity::Junction
+                        || node.render_id != best_junction_render_id
+                        || this->scene.isEntityHidden(node.uuid))
+                    {
+                        continue;
+                    }
+
+                    MapRhiHit junction_hit;
+                    junction_hit.render_id = node.render_id;
+                    junction_hit.entity_type = node.entity_type;
+                    junction_hit.uuid = node.uuid;
+                    return junction_hit;
+                }
+            }
         }
     }
 
@@ -532,8 +619,13 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
     MapRhiHit best_node_hit;
     for (const NetworkRenderNode &node : snapshot.nodes)
     {
-        if (this->scene.isEntityHidden(node.uuid))
+        if (this->scene.isEntityHidden(node.uuid)
+            || (three_d
+                && (node.entity_type == InfrastructureEntity::Junction
+                    || node.entity_type == InfrastructureEntity::Tank)))
+        {
             continue;
+        }
 
         const QVector3D world_position = this->scene.worldPosition(
             node.coordinate_wgs84, node.elevation_m, this->scene.originWorld().x());
@@ -833,6 +925,8 @@ void MapRhiWidget::setSelectedEntity(InfrastructureEntity entity_type, const QUu
 {
     this->scene.setSelectedEntity(entity_type, uuid);
     this->highlight_upload_pending = true;
+    this->tank_upload_pending = true;
+    this->junction_instance_upload_pending = true;
     update();
 }
 
@@ -1746,7 +1840,9 @@ bool MapRhiWidget::createPipelines()
             {0, 1, QRhiVertexInputAttribute::Float3,
              quint32(offsetof(MapRhiTankModelVertex, normal_x))},
             {0, 2, QRhiVertexInputAttribute::Float2,
-             quint32(offsetof(MapRhiTankModelVertex, u))}
+             quint32(offsetof(MapRhiTankModelVertex, u))},
+            {0, 3, QRhiVertexInputAttribute::Float,
+             quint32(offsetof(MapRhiTankModelVertex, selected))}
         });
 
         this->tank_pipeline.reset(this->active_rhi->newGraphicsPipeline());
@@ -1802,7 +1898,9 @@ bool MapRhiWidget::createPipelines()
             {1, 3, QRhiVertexInputAttribute::Float,
              quint32(offsetof(MapRhiJunctionInstance, radius_world))},
             {1, 4, QRhiVertexInputAttribute::Float4,
-             quint32(offsetof(MapRhiJunctionInstance, red))}
+             quint32(offsetof(MapRhiJunctionInstance, red))},
+            {1, 5, QRhiVertexInputAttribute::Float,
+             quint32(offsetof(MapRhiJunctionInstance, selected))}
         });
 
         this->junction_pipeline.reset(this->active_rhi->newGraphicsPipeline());

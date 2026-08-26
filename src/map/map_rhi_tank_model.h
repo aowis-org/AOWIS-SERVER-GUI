@@ -14,6 +14,7 @@ struct MapRhiTankInstance
     float base_height_world = 0.0f;
     float body_height_world = 0.0f;
     float roof_height_world = 0.0f;
+    float selected = 0.0f;
 };
 
 struct MapRhiTankModelVertex
@@ -26,6 +27,8 @@ struct MapRhiTankModelVertex
     float normal_z = 1.0f;
     float u = 0.0f;
     float v = 0.0f;
+    float selected = 0.0f;
+    quint32 render_id = 0;
 };
 
 QImage mapRhiTankAlbedoImage();

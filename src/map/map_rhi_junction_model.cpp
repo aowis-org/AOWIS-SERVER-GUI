@@ -7,8 +7,8 @@
 
 namespace
 {
-constexpr int LongitudeSegments = 24;
-constexpr int LatitudeSegments = 16;
+constexpr int LongitudeSegments = 48;
+constexpr int LatitudeSegments = 32;
 constexpr float Pi = 3.14159265358979323846f;
 
 MapRhiJunctionMeshVertex makeVertex(float latitude_angle, float longitude_angle)
@@ -53,12 +53,16 @@ QVector<MapRhiJunctionMeshVertex> buildSphereMesh()
             const MapRhiJunctionMeshVertex p11 = makeVertex(latitude1, longitude1);
             const MapRhiJunctionMeshVertex p10 = makeVertex(latitude1, longitude0);
 
+            // The 3D map projection contains a horizontal reflection so
+            // geographic east stays screen-right. Reverse the model-space
+            // triangle winding, just like the tank mesh, so the sphere
+            // exterior remains front-facing with back-face culling enabled.
             vertices.append(p00);
+            vertices.append(p11);
             vertices.append(p01);
-            vertices.append(p11);
             vertices.append(p00);
-            vertices.append(p11);
             vertices.append(p10);
+            vertices.append(p11);
         }
     }
 

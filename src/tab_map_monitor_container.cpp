@@ -1433,15 +1433,15 @@ void MapMonitorMenuWidget::addGroupVisualSettings()
     group->setLayout(vbox);
 
     QLabel *label_node_section = new QLabel("<b>Node</b>");
-    QLabel *label_node_size = new QLabel("Circle Size [%]");
+    QLabel *label_node_size = new QLabel("Junction Size [%]");
     QSlider *slider_node_size = new SymbologySlider(50, 250, 100,
-        QStringLiteral("Scales regular node circles only."), QStringLiteral(" %"), this);
+        QStringLiteral("Scales junction markers in 2D and junction orbs in 3D."), QStringLiteral(" %"), this);
     connect(slider_node_size, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalNodeSizeChanged);
 
     QLabel *label_link_section = new QLabel("<b>Link</b>");
-    QLabel *label_link_thickness = new QLabel("Line Width [px]");
+    QLabel *label_link_thickness = new QLabel("Pipe Thickness [px]");
     QSlider *slider_link_thickness = new SymbologySlider(1, 12, 3,
-        QStringLiteral("Sets the rendered link width and keeps link hit detection aligned with it."), QStringLiteral(" px"), this);
+        QStringLiteral("Sets rendered pipe thickness and keeps pipe hit detection aligned with it."), QStringLiteral(" px"), this);
     connect(slider_link_thickness, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalLinkThicknessChanged);
 
     QLabel *label_flow_direction_size = new QLabel("Flow Arrows [px]");

@@ -3,6 +3,7 @@
 layout(location = 0) in vec3 position_world;
 layout(location = 1) in vec3 normal_world;
 layout(location = 2) in vec2 texcoord;
+layout(location = 3) in float selected;
 
 layout(std140, binding = 0) uniform CameraBlock
 {
@@ -16,6 +17,7 @@ layout(std140, binding = 0) uniform CameraBlock
 layout(location = 0) out vec3 vertex_normal;
 layout(location = 1) out vec2 vertex_texcoord;
 layout(location = 2) out float vertex_height;
+layout(location = 3) out float vertex_selected;
 
 void main()
 {
@@ -28,4 +30,5 @@ void main()
     vertex_normal = normalize(normal_world);
     vertex_texcoord = texcoord;
     vertex_height = position_world.z;
+    vertex_selected = selected;
 }
