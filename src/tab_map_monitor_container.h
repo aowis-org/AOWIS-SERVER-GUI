@@ -46,6 +46,7 @@ class MapMonitorCompassHudWidget;
 class MapMonitorScaleHudWidget;
 class MapMonitorVerticalControlsHudWidget;
 class EntityMapLegendHud;
+class QFrame;
 class QShortcut;
 class QToolButton;
 
@@ -144,6 +145,7 @@ private:
     MapMonitorScaleHudWidget *desktop_scale_hud = nullptr;
     MapMonitorVerticalControlsHudWidget *desktop_vertical_controls_hud = nullptr;
     EntityMapLegendHud *desktop_legend_hud = nullptr;
+    QFrame *desktop_scene_fullscreen_hud = nullptr;
     QToolButton *desktop_scene_fullscreen_button = nullptr;
     QShortcut *desktop_scene_fullscreen_shortcut = nullptr;
     bool desktop_scene_fullscreen_active = false;

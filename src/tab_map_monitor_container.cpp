@@ -26,10 +26,12 @@
 #include <QColor>
 #include <QContextMenuEvent>
 #include <QDebug>
+#include <QFrame>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMouseEvent>
+#include <QPalette>
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QTimer>
@@ -374,18 +376,36 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             new MapMonitorVerticalControlsHudWidget(this->map_model, this->map_stack);
         EntityMapLegendHud *legend_hud =
             new EntityMapLegendHud(this->hydraulic_data, this->map_stack);
+        QFrame *scene_fullscreen_hud = nullptr;
         QToolButton *scene_fullscreen_button = nullptr;
         QShortcut *scene_fullscreen_shortcut = nullptr;
 #ifndef Q_OS_WASM
-        scene_fullscreen_button = new QToolButton(this->map_stack);
+        scene_fullscreen_hud = new QFrame(this->map_stack);
+        scene_fullscreen_hud->setFrameShape(QFrame::StyledPanel);
+        scene_fullscreen_hud->setFrameShadow(QFrame::Raised);
+        scene_fullscreen_hud->setAutoFillBackground(true);
+        scene_fullscreen_hud->setFocusPolicy(Qt::NoFocus);
+        QPalette scene_fullscreen_palette = scene_fullscreen_hud->palette();
+        QColor scene_fullscreen_background = scene_fullscreen_palette.color(QPalette::Window);
+        scene_fullscreen_background.setAlpha(220);
+        scene_fullscreen_palette.setColor(QPalette::Window, scene_fullscreen_background);
+        scene_fullscreen_hud->setPalette(scene_fullscreen_palette);
+
+        scene_fullscreen_button = new QToolButton(scene_fullscreen_hud);
         scene_fullscreen_button->setAutoRaise(true);
         const int scene_fullscreen_button_extent = (Sizes::TopControlBarHeight - 8) / 2;
         const int scene_fullscreen_icon_extent = qMax(1, scene_fullscreen_button_extent - 2);
+        const int scene_fullscreen_hud_padding = 4;
         scene_fullscreen_button->setFixedSize(
             scene_fullscreen_button_extent, scene_fullscreen_button_extent);
         scene_fullscreen_button->setIconSize(
             QSize(scene_fullscreen_icon_extent, scene_fullscreen_icon_extent));
         scene_fullscreen_button->setStyleSheet(QStringLiteral("padding: 0;"));
+        scene_fullscreen_button->move(
+            scene_fullscreen_hud_padding, scene_fullscreen_hud_padding);
+        scene_fullscreen_hud->setFixedSize(
+            scene_fullscreen_button_extent + scene_fullscreen_hud_padding * 2,
+            scene_fullscreen_button_extent + scene_fullscreen_hud_padding * 2);
         scene_fullscreen_shortcut = new QShortcut(
             guiShortcutRegistry().keySequence(GuiShortcutId::MapMonitorFullscreen),
             this->map_stack);
@@ -400,6 +420,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         this->desktop_scale_hud = scale_hud;
         this->desktop_vertical_controls_hud = vertical_controls_hud;
         this->desktop_legend_hud = legend_hud;
+        this->desktop_scene_fullscreen_hud = scene_fullscreen_hud;
         this->desktop_scene_fullscreen_button = scene_fullscreen_button;
         this->desktop_scene_fullscreen_shortcut = scene_fullscreen_shortcut;
         this->desktop_rhi_hud->hide();
@@ -413,7 +434,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         if (this->desktop_scene_fullscreen_button != nullptr
             && this->desktop_scene_fullscreen_shortcut != nullptr)
         {
-            this->desktop_scene_fullscreen_button->hide();
+            if (this->desktop_scene_fullscreen_hud != nullptr)
+                this->desktop_scene_fullscreen_hud->hide();
             this->desktop_scene_fullscreen_shortcut->setEnabled(false);
             updateDesktopRhiSceneFullscreenControl();
             connect(this->desktop_scene_fullscreen_button, &QToolButton::clicked, this, [this]
@@ -619,10 +641,10 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             rhi_hud->show();
             download_activity_hud->setHudActive(true);
             view_mode_hud->show();
-            if (this->desktop_scene_fullscreen_button != nullptr)
+            if (this->desktop_scene_fullscreen_hud != nullptr)
             {
-                this->desktop_scene_fullscreen_button->show();
-                this->desktop_scene_fullscreen_button->raise();
+                this->desktop_scene_fullscreen_hud->show();
+                this->desktop_scene_fullscreen_hud->raise();
             }
             if (this->desktop_scene_fullscreen_shortcut != nullptr)
             {
@@ -706,8 +728,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                 this->desktop_vertical_controls_hud->hide();
             if (this->desktop_legend_hud != nullptr)
                 this->desktop_legend_hud->setMapMonitorActive(false);
-            if (this->desktop_scene_fullscreen_button != nullptr)
-                this->desktop_scene_fullscreen_button->hide();
+            if (this->desktop_scene_fullscreen_hud != nullptr)
+                this->desktop_scene_fullscreen_hud->hide();
             if (this->desktop_scene_fullscreen_shortcut != nullptr)
                 this->desktop_scene_fullscreen_shortcut->setEnabled(false);
             if (this->desktop_rhi_surface != nullptr)
@@ -1023,8 +1045,10 @@ void MapMonitorContainer::positionDesktopHudWidgets()
     {
         int scale_x = hud_margin_px
             + (this->desktop_vertical_controls_hud != nullptr
+                && this->desktop_vertical_controls_hud->isVisible()
                 ? this->desktop_vertical_controls_hud->width() + 8 : 0)
             + (this->desktop_compass_hud != nullptr
+                && this->desktop_compass_hud->isVisible()
                 ? this->desktop_compass_hud->width() + 8 : 0);
         int scale_y = qMax(
             hud_margin_px,
@@ -1034,10 +1058,16 @@ void MapMonitorContainer::positionDesktopHudWidgets()
             > this->map_stack->width() - hud_margin_px)
         {
             int controls_top = this->map_stack->height() - hud_margin_px;
-            if (this->desktop_vertical_controls_hud != nullptr)
+            if (this->desktop_vertical_controls_hud != nullptr
+                && this->desktop_vertical_controls_hud->isVisible())
+            {
                 controls_top = qMin(controls_top, this->desktop_vertical_controls_hud->y());
-            if (this->desktop_compass_hud != nullptr)
+            }
+            if (this->desktop_compass_hud != nullptr
+                && this->desktop_compass_hud->isVisible())
+            {
                 controls_top = qMin(controls_top, this->desktop_compass_hud->y());
+            }
 
             scale_x = hud_margin_px;
             scale_y = qMax(
@@ -1051,15 +1081,15 @@ void MapMonitorContainer::positionDesktopHudWidgets()
             this->desktop_scale_hud->raise();
     }
 
-    if (this->desktop_scene_fullscreen_button != nullptr)
+    if (this->desktop_scene_fullscreen_hud != nullptr)
     {
         const int fullscreen_x = qMax(
             hud_margin_px,
-            this->map_stack->width() - this->desktop_scene_fullscreen_button->width()
+            this->map_stack->width() - this->desktop_scene_fullscreen_hud->width()
                 - hud_margin_px);
-        this->desktop_scene_fullscreen_button->move(fullscreen_x, hud_margin_px);
-        if (this->desktop_scene_fullscreen_button->isVisible())
-            this->desktop_scene_fullscreen_button->raise();
+        this->desktop_scene_fullscreen_hud->move(fullscreen_x, hud_margin_px);
+        if (this->desktop_scene_fullscreen_hud->isVisible())
+            this->desktop_scene_fullscreen_hud->raise();
     }
 
     if (this->desktop_legend_hud != nullptr)
@@ -1148,13 +1178,16 @@ void MapMonitorContainer::syncDesktopCameraHudVisibility()
     const bool camera_hud_visible =
         rhi_active && this->map_model->viewMode() == MapViewMode::ThreeD;
     this->desktop_compass_hud->setVisible(camera_hud_visible);
-    this->desktop_scale_hud->setVisible(camera_hud_visible);
+    this->desktop_scale_hud->setVisible(rhi_active);
     this->desktop_vertical_controls_hud->setVisible(camera_hud_visible);
-    if (camera_hud_visible)
+    if (rhi_active)
     {
-        this->desktop_compass_hud->raise();
+        if (camera_hud_visible)
+        {
+            this->desktop_compass_hud->raise();
+            this->desktop_vertical_controls_hud->raise();
+        }
         this->desktop_scale_hud->raise();
-        this->desktop_vertical_controls_hud->raise();
         positionDesktopHudWidgets();
     }
 }

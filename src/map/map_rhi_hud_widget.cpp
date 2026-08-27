@@ -1,6 +1,5 @@
 #include "map_rhi_hud_widget.h"
 
-#include "map_scale_renderer.h"
 #ifdef Q_OS_WASM
 #include "../gps_provider_dummy.h"
 #else
@@ -120,8 +119,6 @@ void MapRhiHudWidget::paintEvent(QPaintEvent *event)
         painter.drawPixmap(crosshair_position, crosshair_pixmap);
     }
 
-    if (this->map_model->viewMode() == MapViewMode::TwoD)
-        MapScaleRenderer::draw(painter, *this->map_model, size());
 }
 
 #ifndef Q_OS_WASM
