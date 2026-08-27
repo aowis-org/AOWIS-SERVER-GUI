@@ -1,11 +1,13 @@
 #include "entity_map_legend_dock.h"
 
+#include "../gui_configuration.h"
 #include "../network_symbology_rendering.h"
 
 #include <array>
 #include <cmath>
 #include <functional>
 
+#include <QAction>
 #include <QColor>
 #include <QFontMetricsF>
 #include <QHideEvent>
@@ -261,6 +263,12 @@ public:
         this->palette_changed_callback = callback;
     }
 
+    void setDefaultPaletteSelection(NetworkSymbologyPalette palette, bool flipped)
+    {
+        this->default_palette = palette;
+        this->default_palette_flipped = flipped;
+    }
+
     void setPaletteSelection(NetworkSymbologyPalette palette, bool flipped)
     {
         if (this->palette == palette && this->palette_flipped == flipped)
@@ -382,6 +390,8 @@ private:
     QPointer<MapSymbologyHoverSwatch> hover_swatch;
     NetworkSymbologyPalette palette = NetworkSymbologyPalette::Viridis;
     bool palette_flipped = false;
+    NetworkSymbologyPalette default_palette = NetworkSymbologyPalette::Viridis;
+    bool default_palette_flipped = false;
     PaletteChangedCallback palette_changed_callback;
 
     QRectF rampRect() const
@@ -472,6 +482,15 @@ private:
                 menu.close();
             });
         }
+
+        menu.addSeparator();
+        QAction *reset_action = menu.addAction(QStringLiteral("Reset"));
+        reset_action->setToolTip(QStringLiteral("Reset colors to the default palette"));
+        connect(reset_action, &QAction::triggered, &menu, [this, &menu]
+        {
+            selectPalette(this->default_palette, this->default_palette_flipped);
+            menu.close();
+        });
 
         const QPoint popup_position = mapToGlobal(
             QPoint(0, qRound(rampRect().bottom()) + 4));
@@ -754,6 +773,13 @@ EntityMapLegendHud::EntityMapLegendHud(HydraulicData *hydraulic_data, QWidget *p
     this->layout->addWidget(this->legend_link);
     this->layout->addWidget(this->combo_heatmap);
     this->layout->addWidget(this->legend_heatmap);
+
+    this->legend_node->setDefaultPaletteSelection(
+        NetworkSymbologyDefaultNodePalette, false);
+    this->legend_link->setDefaultPaletteSelection(
+        NetworkSymbologyDefaultLinkPalette, false);
+    this->legend_heatmap->setDefaultPaletteSelection(
+        NetworkSymbologyDefaultHeatmapPalette, false);
 
     this->legend_node->setPaletteChangedCallback(
         [this](NetworkSymbologyPalette palette, bool flipped)
@@ -1041,6 +1067,22 @@ EntityMapLegendDock::EntityMapLegendDock(HydraulicData *hydraulic_data, QWidget 
     addGroupNode();
     addGroupLink();
     addGroupHeatmap();
+
+    this->legend_node->setDefaultPaletteSelection(
+        NetworkSymbologyDefaultNodePalette, false);
+    this->legend_link->setDefaultPaletteSelection(
+        NetworkSymbologyDefaultLinkPalette, false);
+    this->legend_heat->setDefaultPaletteSelection(
+        NetworkSymbologyDefaultHeatmapPalette, false);
+
+    const GuiSymbologyPaletteConfiguration &palette_configuration =
+        guiConfiguration().symbology_palettes;
+    setNodePalette(
+        palette_configuration.node_palette, palette_configuration.node_palette_flipped);
+    setLinkPalette(
+        palette_configuration.link_palette, palette_configuration.link_palette_flipped);
+    setHeatmapPalette(
+        palette_configuration.heatmap_palette, palette_configuration.heatmap_palette_flipped);
 
     this->legend_node->setPaletteChangedCallback(
         [this](NetworkSymbologyPalette palette, bool flipped)

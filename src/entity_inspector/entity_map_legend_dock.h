@@ -50,11 +50,11 @@ private:
     VisualNode visual_node = VisualNode::None;
     VisualLink visual_link = VisualLink::None;
     VisualHeatmap visual_heatmap = VisualHeatmap::None;
-    NetworkSymbologyPalette node_palette = NetworkSymbologyPalette::Viridis;
+    NetworkSymbologyPalette node_palette = NetworkSymbologyDefaultNodePalette;
     bool node_palette_flipped = false;
-    NetworkSymbologyPalette link_palette = NetworkSymbologyPalette::Viridis;
+    NetworkSymbologyPalette link_palette = NetworkSymbologyDefaultLinkPalette;
     bool link_palette_flipped = false;
-    NetworkSymbologyPalette heatmap_palette = NetworkSymbologyPalette::Viridis;
+    NetworkSymbologyPalette heatmap_palette = NetworkSymbologyDefaultHeatmapPalette;
     bool heatmap_palette_flipped = false;
     bool map_monitor_active = false;
 
@@ -95,11 +95,11 @@ private:
     VisualNode visual_node = VisualNode::None;
     VisualLink visual_link = VisualLink::None;
     VisualHeatmap visual_heatmap = VisualHeatmap::None;
-    NetworkSymbologyPalette node_palette = NetworkSymbologyPalette::Viridis;
+    NetworkSymbologyPalette node_palette = NetworkSymbologyDefaultNodePalette;
     bool node_palette_flipped = false;
-    NetworkSymbologyPalette link_palette = NetworkSymbologyPalette::Viridis;
+    NetworkSymbologyPalette link_palette = NetworkSymbologyDefaultLinkPalette;
     bool link_palette_flipped = false;
-    NetworkSymbologyPalette heatmap_palette = NetworkSymbologyPalette::Viridis;
+    NetworkSymbologyPalette heatmap_palette = NetworkSymbologyDefaultHeatmapPalette;
     bool heatmap_palette_flipped = false;
     bool map_monitor_active = false;
 

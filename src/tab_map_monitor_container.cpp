@@ -300,6 +300,16 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
 #endif
     map_menu( new MapMonitorMenuWidget(this->map, this) )
 {
+    const GuiSymbologyPaletteConfiguration &palette_configuration =
+        guiConfiguration().symbology_palettes;
+    this->symbology_settings.node_palette = palette_configuration.node_palette;
+    this->symbology_settings.node_palette_flipped = palette_configuration.node_palette_flipped;
+    this->symbology_settings.link_palette = palette_configuration.link_palette;
+    this->symbology_settings.link_palette_flipped = palette_configuration.link_palette_flipped;
+    this->symbology_settings.heatmap_palette = palette_configuration.heatmap_palette;
+    this->symbology_settings.heatmap_palette_flipped =
+        palette_configuration.heatmap_palette_flipped;
+
     setContentsMargins(0, 0, 0, 0);
     this->layout->setContentsMargins(0, 0, 0, 0);
     this->layout->setSpacing(0);
@@ -973,6 +983,9 @@ void MapMonitorContainer::setNodePalette(NetworkSymbologyPalette palette, bool f
     if (!changed)
         return;
 
+    if (!saveGuiNodeSymbologyPalette(palette, flipped))
+        qWarning() << "Failed to save node symbology palette preference.";
+
     emit signalNodePaletteChanged(palette, flipped);
     applySymbology();
 }
@@ -993,6 +1006,9 @@ void MapMonitorContainer::setLinkPalette(NetworkSymbologyPalette palette, bool f
     if (!changed)
         return;
 
+    if (!saveGuiLinkSymbologyPalette(palette, flipped))
+        qWarning() << "Failed to save link symbology palette preference.";
+
     emit signalLinkPaletteChanged(palette, flipped);
     applySymbology();
 }
@@ -1012,6 +1028,9 @@ void MapMonitorContainer::setHeatmapPalette(NetworkSymbologyPalette palette, boo
 
     if (!changed)
         return;
+
+    if (!saveGuiHeatmapSymbologyPalette(palette, flipped))
+        qWarning() << "Failed to save heatmap symbology palette preference.";
 
     emit signalHeatmapPaletteChanged(palette, flipped);
     applySymbology();

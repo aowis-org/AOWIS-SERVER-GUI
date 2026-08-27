@@ -23,6 +23,25 @@
 
 namespace
 {
+bool isValidSymbologyPaletteValue(int value)
+{
+    switch (static_cast<NetworkSymbologyPalette>(value))
+    {
+        case NetworkSymbologyPalette::Viridis:
+        case NetworkSymbologyPalette::Plasma:
+        case NetworkSymbologyPalette::Inferno:
+        case NetworkSymbologyPalette::Turbo:
+        case NetworkSymbologyPalette::CoolWarm:
+        case NetworkSymbologyPalette::Cividis:
+        case NetworkSymbologyPalette::Magma:
+        case NetworkSymbologyPalette::Batlow:
+        case NetworkSymbologyPalette::RedBlue:
+            return true;
+    }
+
+    return false;
+}
+
 QKeySequence parseShortcutKeySequence(const QString &shortcut)
 {
     QString portable_text = shortcut.trimmed();
@@ -33,6 +52,59 @@ QKeySequence parseShortcutKeySequence(const QString &shortcut)
 }
 
 #ifndef __EMSCRIPTEN__
+QString symbologyPaletteConfigName(NetworkSymbologyPalette palette)
+{
+    switch (palette)
+    {
+        case NetworkSymbologyPalette::Viridis:
+            return QStringLiteral("viridis");
+        case NetworkSymbologyPalette::Plasma:
+            return QStringLiteral("plasma");
+        case NetworkSymbologyPalette::Inferno:
+            return QStringLiteral("inferno");
+        case NetworkSymbologyPalette::Turbo:
+            return QStringLiteral("turbo");
+        case NetworkSymbologyPalette::CoolWarm:
+            return QStringLiteral("cool_warm");
+        case NetworkSymbologyPalette::Cividis:
+            return QStringLiteral("cividis");
+        case NetworkSymbologyPalette::Magma:
+            return QStringLiteral("magma");
+        case NetworkSymbologyPalette::Batlow:
+            return QStringLiteral("batlow");
+        case NetworkSymbologyPalette::RedBlue:
+            return QStringLiteral("red_blue");
+    }
+
+    return QStringLiteral("viridis");
+}
+
+NetworkSymbologyPalette parseSymbologyPaletteSetting(
+    const QString &value, NetworkSymbologyPalette default_palette)
+{
+    const QString normalized = value.trimmed().toLower();
+    if (normalized == QStringLiteral("viridis"))
+        return NetworkSymbologyPalette::Viridis;
+    if (normalized == QStringLiteral("plasma"))
+        return NetworkSymbologyPalette::Plasma;
+    if (normalized == QStringLiteral("inferno"))
+        return NetworkSymbologyPalette::Inferno;
+    if (normalized == QStringLiteral("turbo"))
+        return NetworkSymbologyPalette::Turbo;
+    if (normalized == QStringLiteral("cool_warm") || normalized == QStringLiteral("cool/warm"))
+        return NetworkSymbologyPalette::CoolWarm;
+    if (normalized == QStringLiteral("cividis"))
+        return NetworkSymbologyPalette::Cividis;
+    if (normalized == QStringLiteral("magma"))
+        return NetworkSymbologyPalette::Magma;
+    if (normalized == QStringLiteral("batlow"))
+        return NetworkSymbologyPalette::Batlow;
+    if (normalized == QStringLiteral("red_blue") || normalized == QStringLiteral("red/blue"))
+        return NetworkSymbologyPalette::RedBlue;
+
+    return default_palette;
+}
+
 void ensureSettingDefault(QSettings &settings, const QString &key, const QString &value)
 {
     if (!settings.contains(key))
@@ -69,6 +141,58 @@ EM_JS(int, aowisWasmRhiRendererRequested, (),
     return renderer === "browser" ? 0 : 1;
 });
 
+EM_JS(int, aowisSymbologyPalettePreference, (const char *key, int default_value),
+{
+    try
+    {
+        const raw = globalThis.localStorage
+            ? globalThis.localStorage.getItem(UTF8ToString(key))
+            : null;
+        if (raw === null)
+            return default_value;
+        const parsed = Number.parseInt(raw, 10);
+        return Number.isFinite(parsed) ? parsed : default_value;
+    }
+    catch (error)
+    {
+        return default_value;
+    }
+});
+
+EM_JS(int, aowisSymbologyPaletteFlippedPreference, (const char *key, int default_value),
+{
+    try
+    {
+        const raw = globalThis.localStorage
+            ? globalThis.localStorage.getItem(UTF8ToString(key))
+            : null;
+        if (raw === null)
+            return default_value;
+        return raw === "true" || raw === "1" ? 1 : 0;
+    }
+    catch (error)
+    {
+        return default_value;
+    }
+});
+
+EM_JS(int, aowisSaveSymbologyPalettePreference,
+      (const char *palette_key, int palette, const char *flipped_key, int flipped),
+{
+    try
+    {
+        if (!globalThis.localStorage)
+            return 0;
+        globalThis.localStorage.setItem(UTF8ToString(palette_key), String(palette));
+        globalThis.localStorage.setItem(UTF8ToString(flipped_key), flipped ? "true" : "false");
+        return 1;
+    }
+    catch (error)
+    {
+        return 0;
+    }
+});
+
 GuiConfiguration loadConfiguration()
 {
     GuiConfiguration configuration;
@@ -76,6 +200,33 @@ GuiConfiguration loadConfiguration()
     configuration.map_wasm_renderer = aowisWasmRhiRendererRequested() != 0
         ? WasmMapRenderer::Rhi
         : WasmMapRenderer::Browser;
+    const int node_palette_value = aowisSymbologyPalettePreference(
+        "aowis.symbology.node_palette",
+        static_cast<int>(NetworkSymbologyDefaultNodePalette));
+    const int link_palette_value = aowisSymbologyPalettePreference(
+        "aowis.symbology.link_palette",
+        static_cast<int>(NetworkSymbologyDefaultLinkPalette));
+    const int heatmap_palette_value = aowisSymbologyPalettePreference(
+        "aowis.symbology.heatmap_palette",
+        static_cast<int>(NetworkSymbologyDefaultHeatmapPalette));
+    configuration.symbology_palettes.node_palette = isValidSymbologyPaletteValue(node_palette_value)
+        ? static_cast<NetworkSymbologyPalette>(node_palette_value)
+        : NetworkSymbologyDefaultNodePalette;
+    configuration.symbology_palettes.node_palette_flipped =
+        aowisSymbologyPaletteFlippedPreference(
+            "aowis.symbology.node_palette_flipped", 0) != 0;
+    configuration.symbology_palettes.link_palette = isValidSymbologyPaletteValue(link_palette_value)
+        ? static_cast<NetworkSymbologyPalette>(link_palette_value)
+        : NetworkSymbologyDefaultLinkPalette;
+    configuration.symbology_palettes.link_palette_flipped =
+        aowisSymbologyPaletteFlippedPreference(
+            "aowis.symbology.link_palette_flipped", 0) != 0;
+    configuration.symbology_palettes.heatmap_palette = isValidSymbologyPaletteValue(heatmap_palette_value)
+        ? static_cast<NetworkSymbologyPalette>(heatmap_palette_value)
+        : NetworkSymbologyDefaultHeatmapPalette;
+    configuration.symbology_palettes.heatmap_palette_flipped =
+        aowisSymbologyPaletteFlippedPreference(
+            "aowis.symbology.heatmap_palette_flipped", 0) != 0;
     qInfo() << "Loaded GUI configuration from webroot/aowis-server-gui.ini: examples_builtin_enable ="
             << configuration.examples_builtin_enable
             << "map_wasm_renderer =" << wasmMapRendererName(configuration.map_wasm_renderer);
@@ -267,6 +418,24 @@ GuiConfiguration loadConfiguration()
     GuiConfiguration configuration;
     configuration.examples_builtin_enable = settings.value(
         QStringLiteral("gui/examples_builtin_enable"), true).toBool();
+    configuration.symbology_palettes.node_palette = parseSymbologyPaletteSetting(
+        settings.value(QStringLiteral("symbology/node_palette"),
+                       symbologyPaletteConfigName(NetworkSymbologyDefaultNodePalette)).toString(),
+        NetworkSymbologyDefaultNodePalette);
+    configuration.symbology_palettes.node_palette_flipped = settings.value(
+        QStringLiteral("symbology/node_palette_flipped"), false).toBool();
+    configuration.symbology_palettes.link_palette = parseSymbologyPaletteSetting(
+        settings.value(QStringLiteral("symbology/link_palette"),
+                       symbologyPaletteConfigName(NetworkSymbologyDefaultLinkPalette)).toString(),
+        NetworkSymbologyDefaultLinkPalette);
+    configuration.symbology_palettes.link_palette_flipped = settings.value(
+        QStringLiteral("symbology/link_palette_flipped"), false).toBool();
+    configuration.symbology_palettes.heatmap_palette = parseSymbologyPaletteSetting(
+        settings.value(QStringLiteral("symbology/heatmap_palette"),
+                       symbologyPaletteConfigName(NetworkSymbologyDefaultHeatmapPalette)).toString(),
+        NetworkSymbologyDefaultHeatmapPalette);
+    configuration.symbology_palettes.heatmap_palette_flipped = settings.value(
+        QStringLiteral("symbology/heatmap_palette_flipped"), false).toBool();
 
     const QString configured_renderer = settings.value(
         QStringLiteral("gui/map_desktop_renderer"), QStringLiteral("rhi")).toString();
@@ -318,6 +487,12 @@ GuiConfiguration loadConfiguration()
     return configuration;
 }
 #endif
+
+GuiConfiguration &mutableGuiConfiguration()
+{
+    static GuiConfiguration configuration = loadConfiguration();
+    return configuration;
+}
 }
 
 QKeySequence guiShortcutKeySequence(const QString &shortcut)
@@ -358,8 +533,7 @@ QString guiConfigurationFilePath()
 
 const GuiConfiguration &guiConfiguration()
 {
-    static const GuiConfiguration configuration = loadConfiguration();
-    return configuration;
+    return mutableGuiConfiguration();
 }
 
 const char *desktopMapRendererName(DesktopMapRenderer renderer)
@@ -439,4 +613,67 @@ WasmMapRenderer wasmMapRenderer()
 #else
     return WasmMapRenderer::Browser;
 #endif
+}
+
+bool saveGuiNodeSymbologyPalette(NetworkSymbologyPalette palette, bool flipped)
+{
+#ifdef __EMSCRIPTEN__
+    const bool saved = aowisSaveSymbologyPalettePreference(
+        "aowis.symbology.node_palette", static_cast<int>(palette),
+        "aowis.symbology.node_palette_flipped", flipped ? 1 : 0) != 0;
+#else
+    QSettings settings(guiConfigurationFilePath(), QSettings::IniFormat);
+    settings.setValue(QStringLiteral("symbology/node_palette"), symbologyPaletteConfigName(palette));
+    settings.setValue(QStringLiteral("symbology/node_palette_flipped"), flipped);
+    settings.sync();
+    const bool saved = settings.status() == QSettings::NoError;
+#endif
+    if (saved)
+    {
+        mutableGuiConfiguration().symbology_palettes.node_palette = palette;
+        mutableGuiConfiguration().symbology_palettes.node_palette_flipped = flipped;
+    }
+    return saved;
+}
+
+bool saveGuiLinkSymbologyPalette(NetworkSymbologyPalette palette, bool flipped)
+{
+#ifdef __EMSCRIPTEN__
+    const bool saved = aowisSaveSymbologyPalettePreference(
+        "aowis.symbology.link_palette", static_cast<int>(palette),
+        "aowis.symbology.link_palette_flipped", flipped ? 1 : 0) != 0;
+#else
+    QSettings settings(guiConfigurationFilePath(), QSettings::IniFormat);
+    settings.setValue(QStringLiteral("symbology/link_palette"), symbologyPaletteConfigName(palette));
+    settings.setValue(QStringLiteral("symbology/link_palette_flipped"), flipped);
+    settings.sync();
+    const bool saved = settings.status() == QSettings::NoError;
+#endif
+    if (saved)
+    {
+        mutableGuiConfiguration().symbology_palettes.link_palette = palette;
+        mutableGuiConfiguration().symbology_palettes.link_palette_flipped = flipped;
+    }
+    return saved;
+}
+
+bool saveGuiHeatmapSymbologyPalette(NetworkSymbologyPalette palette, bool flipped)
+{
+#ifdef __EMSCRIPTEN__
+    const bool saved = aowisSaveSymbologyPalettePreference(
+        "aowis.symbology.heatmap_palette", static_cast<int>(palette),
+        "aowis.symbology.heatmap_palette_flipped", flipped ? 1 : 0) != 0;
+#else
+    QSettings settings(guiConfigurationFilePath(), QSettings::IniFormat);
+    settings.setValue(QStringLiteral("symbology/heatmap_palette"), symbologyPaletteConfigName(palette));
+    settings.setValue(QStringLiteral("symbology/heatmap_palette_flipped"), flipped);
+    settings.sync();
+    const bool saved = settings.status() == QSettings::NoError;
+#endif
+    if (saved)
+    {
+        mutableGuiConfiguration().symbology_palettes.heatmap_palette = palette;
+        mutableGuiConfiguration().symbology_palettes.heatmap_palette_flipped = flipped;
+    }
+    return saved;
 }

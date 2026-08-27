@@ -4,6 +4,8 @@
 #include <QKeySequence>
 #include <QString>
 
+#include "network_symbology.h"
+
 class QKeyEvent;
 
 enum class DesktopMapRenderer
@@ -50,11 +52,22 @@ struct GuiShortcutConfiguration
     QString map_editor_add_note = QStringLiteral("9");
 };
 
+struct GuiSymbologyPaletteConfiguration
+{
+    NetworkSymbologyPalette node_palette = NetworkSymbologyDefaultNodePalette;
+    bool node_palette_flipped = false;
+    NetworkSymbologyPalette link_palette = NetworkSymbologyDefaultLinkPalette;
+    bool link_palette_flipped = false;
+    NetworkSymbologyPalette heatmap_palette = NetworkSymbologyDefaultHeatmapPalette;
+    bool heatmap_palette_flipped = false;
+};
+
 struct GuiConfiguration
 {
     bool examples_builtin_enable = true;
     DesktopMapRenderer map_desktop_renderer = DesktopMapRenderer::Rhi;
     WasmMapRenderer map_wasm_renderer = WasmMapRenderer::Rhi;
+    GuiSymbologyPaletteConfiguration symbology_palettes;
     GuiShortcutConfiguration shortcuts;
 };
 
@@ -69,5 +82,8 @@ const char *desktopMapRendererName(DesktopMapRenderer renderer);
 WasmMapRenderer wasmMapRenderer();
 bool wasmMapRhiBuildAvailable();
 const char *wasmMapRendererName(WasmMapRenderer renderer);
+bool saveGuiNodeSymbologyPalette(NetworkSymbologyPalette palette, bool flipped);
+bool saveGuiLinkSymbologyPalette(NetworkSymbologyPalette palette, bool flipped);
+bool saveGuiHeatmapSymbologyPalette(NetworkSymbologyPalette palette, bool flipped);
 
 #endif // GUI_CONFIGURATION_H
