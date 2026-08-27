@@ -2,24 +2,20 @@
 
 #include <array>
 #include <cmath>
-#include <utility>
 
-#include <QAction>
-#include <QActionGroup>
 #include <QColor>
 #include <QFontMetricsF>
 #include <QHideEvent>
 #include <QLinearGradient>
 #include <QLocale>
-#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QPalette>
 #include <QPointer>
+#include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QTimer>
-#include <QToolButton>
 
 namespace
 {
@@ -54,6 +50,120 @@ QColor interpolateColor(const QColor &left, const QColor &right, double ratio)
     const int green = qRound(left.green() + ((right.green() - left.green()) * limited_ratio));
     const int blue = qRound(left.blue() + ((right.blue() - left.blue()) * limited_ratio));
     return QColor(red, green, blue);
+}
+
+struct LegendDescriptor
+{
+    QString metric;
+    QString unit;
+};
+
+LegendDescriptor nodeLegendDescriptor(VisualNode visual_node)
+{
+    switch (visual_node)
+    {
+    case VisualNode::Elevation:
+        return {QStringLiteral("Elevation"), QStringLiteral("m")};
+    case VisualNode::BaseDemand:
+        return {QStringLiteral("Base Demand"), QStringLiteral("m³/h")};
+    case VisualNode::TotalDemand:
+        return {QStringLiteral("Total Demand"), QStringLiteral("m³/h")};
+    case VisualNode::DemandDeficit:
+        return {QStringLiteral("Demand Deficit"), QStringLiteral("m³/h")};
+    case VisualNode::EmitterFlow:
+        return {QStringLiteral("Emitter Flow"), QStringLiteral("m³/h")};
+    case VisualNode::Leakage:
+        return {QStringLiteral("Leakage"), QStringLiteral("m³/h")};
+    case VisualNode::Head:
+        return {QStringLiteral("Head"), QStringLiteral("m")};
+    case VisualNode::Pressure:
+        return {QStringLiteral("Pressure Head"), QStringLiteral("m")};
+    case VisualNode::Chlorine:
+        return {QStringLiteral("Cl₂"), QStringLiteral("mg/L")};
+    case VisualNode::RiverWater:
+        return {QStringLiteral("River Water"), QStringLiteral("%")};
+    case VisualNode::LakeWater:
+        return {QStringLiteral("Lake Water"), QStringLiteral("%")};
+    case VisualNode::WaterAge:
+        return {QStringLiteral("Water Age"), QStringLiteral("h")};
+    case VisualNode::None:
+        return {QStringLiteral("None"), QString()};
+    }
+
+    return {QStringLiteral("None"), QString()};
+}
+
+LegendDescriptor linkLegendDescriptor(VisualLink visual_link)
+{
+    switch (visual_link)
+    {
+    case VisualLink::Diameter:
+        return {QStringLiteral("Diameter"), QStringLiteral("mm")};
+    case VisualLink::Length:
+        return {QStringLiteral("Length"), QStringLiteral("m")};
+    case VisualLink::Roughness:
+        return {QStringLiteral("Hazen-Williams C"), QString()};
+    case VisualLink::FlowRate:
+        return {QStringLiteral("Flow Rate"), QStringLiteral("m³/h")};
+    case VisualLink::Velocity:
+        return {QStringLiteral("Velocity"), QStringLiteral("m/s")};
+    case VisualLink::HeadLoss:
+        return {QStringLiteral("Head Loss"), QStringLiteral("m")};
+    case VisualLink::Leakage:
+        return {QStringLiteral("Leakage"), QStringLiteral("m³/h")};
+    case VisualLink::Chlorine:
+        return {QStringLiteral("Cl₂"), QStringLiteral("mg/L")};
+    case VisualLink::RiverWater:
+        return {QStringLiteral("River Water"), QStringLiteral("%")};
+    case VisualLink::LakeWater:
+        return {QStringLiteral("Lake Water"), QStringLiteral("%")};
+    case VisualLink::WaterAge:
+        return {QStringLiteral("Water Age"), QStringLiteral("h")};
+    case VisualLink::None:
+        return {QStringLiteral("None"), QString()};
+    }
+
+    return {QStringLiteral("None"), QString()};
+}
+
+LegendDescriptor heatmapLegendDescriptor(VisualHeatmap visual_heatmap)
+{
+    switch (visual_heatmap)
+    {
+    case VisualHeatmap::Elevation:
+        return {QStringLiteral("Elevation"), QStringLiteral("m")};
+    case VisualHeatmap::BaseDemand:
+        return {QStringLiteral("Base Demand"), QStringLiteral("m³/h")};
+    case VisualHeatmap::TotalDemand:
+        return {QStringLiteral("Total Demand"), QStringLiteral("m³/h")};
+    case VisualHeatmap::DemandDeficit:
+        return {QStringLiteral("Demand Deficit"), QStringLiteral("m³/h")};
+    case VisualHeatmap::EmitterFlow:
+        return {QStringLiteral("Emitter Flow"), QStringLiteral("m³/h")};
+    case VisualHeatmap::Leakage:
+        return {QStringLiteral("Leakage"), QStringLiteral("m³/h")};
+    case VisualHeatmap::Head:
+        return {QStringLiteral("Head"), QStringLiteral("m")};
+    case VisualHeatmap::Pressure:
+        return {QStringLiteral("Pressure Head"), QStringLiteral("m")};
+    case VisualHeatmap::Chlorine:
+        return {QStringLiteral("Cl₂"), QStringLiteral("mg/L")};
+    case VisualHeatmap::RiverWater:
+        return {QStringLiteral("River Water"), QStringLiteral("%")};
+    case VisualHeatmap::LakeWater:
+        return {QStringLiteral("Lake Water"), QStringLiteral("%")};
+    case VisualHeatmap::WaterAge:
+        return {QStringLiteral("Water Age"), QStringLiteral("h")};
+    case VisualHeatmap::None:
+        return {QStringLiteral("None"), QString()};
+    }
+
+    return {QStringLiteral("None"), QString()};
+}
+
+QString hudComboText(const QString &scope, const LegendDescriptor &descriptor)
+{
+    return legendGroupTitle(scope, descriptor.metric, descriptor.unit);
 }
 }
 
@@ -409,6 +519,318 @@ private:
     }
 };
 
+EntityMapLegendHud::EntityMapLegendHud(HydraulicData *hydraulic_data, QWidget *parent)
+    : QWidget(parent),
+      hydraulic_data(hydraulic_data),
+      layout(new QVBoxLayout(this)),
+      combo_node(new QComboBox(this)),
+      combo_link(new QComboBox(this)),
+      combo_heatmap(new QComboBox(this)),
+      legend_node(new MapSymbologyRampWidget(this, this)),
+      legend_link(new MapSymbologyRampWidget(this, this)),
+      legend_heatmap(new MapSymbologyRampWidget(this, this))
+{
+    setAutoFillBackground(true);
+    QPalette hud_palette = palette();
+    QColor background = hud_palette.color(QPalette::Window);
+    background.setAlpha(220);
+    hud_palette.setColor(QPalette::Window, background);
+    setPalette(hud_palette);
+
+    setFixedWidth(Sizes::SidebarRightWidth);
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Maximum);
+    this->layout->setContentsMargins(7, 7, 7, 7);
+    this->layout->setSpacing(4);
+
+    const std::array<VisualNode, 13> node_visuals = {{
+        VisualNode::None,
+        VisualNode::Elevation,
+        VisualNode::BaseDemand,
+        VisualNode::TotalDemand,
+        VisualNode::DemandDeficit,
+        VisualNode::EmitterFlow,
+        VisualNode::Leakage,
+        VisualNode::Head,
+        VisualNode::Pressure,
+        VisualNode::WaterAge,
+        VisualNode::Chlorine,
+        VisualNode::RiverWater,
+        VisualNode::LakeWater
+    }};
+    for (const VisualNode visual_node : node_visuals)
+    {
+        this->combo_node->addItem(
+            hudComboText(QStringLiteral("Node"), nodeLegendDescriptor(visual_node)),
+            static_cast<int>(visual_node));
+    }
+
+    const std::array<VisualLink, 12> link_visuals = {{
+        VisualLink::None,
+        VisualLink::Diameter,
+        VisualLink::Length,
+        VisualLink::Roughness,
+        VisualLink::FlowRate,
+        VisualLink::Velocity,
+        VisualLink::HeadLoss,
+        VisualLink::Leakage,
+        VisualLink::WaterAge,
+        VisualLink::Chlorine,
+        VisualLink::RiverWater,
+        VisualLink::LakeWater
+    }};
+    for (const VisualLink visual_link : link_visuals)
+    {
+        this->combo_link->addItem(
+            hudComboText(QStringLiteral("Link"), linkLegendDescriptor(visual_link)),
+            static_cast<int>(visual_link));
+    }
+
+    const std::array<VisualHeatmap, 13> heatmap_visuals = {{
+        VisualHeatmap::None,
+        VisualHeatmap::Elevation,
+        VisualHeatmap::BaseDemand,
+        VisualHeatmap::TotalDemand,
+        VisualHeatmap::DemandDeficit,
+        VisualHeatmap::EmitterFlow,
+        VisualHeatmap::Leakage,
+        VisualHeatmap::Head,
+        VisualHeatmap::Pressure,
+        VisualHeatmap::WaterAge,
+        VisualHeatmap::Chlorine,
+        VisualHeatmap::RiverWater,
+        VisualHeatmap::LakeWater
+    }};
+    for (const VisualHeatmap visual_heatmap : heatmap_visuals)
+    {
+        this->combo_heatmap->addItem(
+            hudComboText(QStringLiteral("Heatmap"), heatmapLegendDescriptor(visual_heatmap)),
+            static_cast<int>(visual_heatmap));
+    }
+
+    this->layout->addWidget(this->combo_node);
+    this->layout->addWidget(this->legend_node);
+    this->layout->addWidget(this->combo_link);
+    this->layout->addWidget(this->legend_link);
+    this->layout->addWidget(this->combo_heatmap);
+    this->layout->addWidget(this->legend_heatmap);
+
+    connect(this->combo_node, &QComboBox::currentIndexChanged, this, [this](int index)
+    {
+        if (index < 0)
+            return;
+        this->visual_node = static_cast<VisualNode>(this->combo_node->itemData(index).toInt());
+        updateNodeLegend();
+        emit signalNodeVisualSelected(this->visual_node);
+    });
+    connect(this->combo_link, &QComboBox::currentIndexChanged, this, [this](int index)
+    {
+        if (index < 0)
+            return;
+        this->visual_link = static_cast<VisualLink>(this->combo_link->itemData(index).toInt());
+        updateLinkLegend();
+        emit signalLinkVisualSelected(this->visual_link);
+    });
+    connect(this->combo_heatmap, &QComboBox::currentIndexChanged, this, [this](int index)
+    {
+        if (index < 0)
+            return;
+        this->visual_heatmap = static_cast<VisualHeatmap>(this->combo_heatmap->itemData(index).toInt());
+        updateHeatmapLegend();
+        emit signalHeatmapVisualSelected(this->visual_heatmap);
+    });
+
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, [this]
+    {
+        updateNodeLegend();
+        updateLinkLegend();
+        updateHeatmapLegend();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
+            [this](InfrastructureEntity, const QUuid &)
+    {
+        updateNodeLegend();
+        updateHeatmapLegend();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
+            [this](InfrastructureEntity, const QUuid &)
+    {
+        updateLinkLegend();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalSimulationHeadlossFormulaChanged,
+            this, [this]
+    {
+        if (this->visual_link == VisualLink::Roughness)
+            updateLinkLegend();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged,
+            this, [this](bool)
+    {
+        updateNodeLegend();
+        updateLinkLegend();
+        updateHeatmapLegend();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalWaterQualitySimulationResultTimelineChanged,
+            this, [this](bool)
+    {
+        updateNodeLegend();
+        updateLinkLegend();
+        updateHeatmapLegend();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalCurrentSimulationResultChanged,
+            this, [this](int)
+    {
+        updateNodeLegend();
+        updateLinkLegend();
+        updateHeatmapLegend();
+    });
+
+    setNodeVisual(VisualNode::None);
+    setLinkVisual(VisualLink::None);
+    setHeatmapVisual(VisualHeatmap::None);
+    updateVisibility();
+}
+
+void EntityMapLegendHud::setMapMonitorActive(bool active)
+{
+    this->map_monitor_active = active;
+    updateVisibility();
+}
+
+void EntityMapLegendHud::setNodeVisual(VisualNode visual_node)
+{
+    this->visual_node = visual_node;
+    const int index = this->combo_node->findData(static_cast<int>(visual_node));
+    if (index >= 0)
+    {
+        const QSignalBlocker blocker(this->combo_node);
+        this->combo_node->setCurrentIndex(index);
+    }
+    updateNodeLegend();
+}
+
+void EntityMapLegendHud::setLinkVisual(VisualLink visual_link)
+{
+    this->visual_link = visual_link;
+    const int index = this->combo_link->findData(static_cast<int>(visual_link));
+    if (index >= 0)
+    {
+        const QSignalBlocker blocker(this->combo_link);
+        this->combo_link->setCurrentIndex(index);
+    }
+    updateLinkLegend();
+}
+
+void EntityMapLegendHud::setHeatmapVisual(VisualHeatmap visual_heatmap)
+{
+    this->visual_heatmap = visual_heatmap;
+    const int index = this->combo_heatmap->findData(static_cast<int>(visual_heatmap));
+    if (index >= 0)
+    {
+        const QSignalBlocker blocker(this->combo_heatmap);
+        this->combo_heatmap->setCurrentIndex(index);
+    }
+    updateHeatmapLegend();
+}
+
+void EntityMapLegendHud::updateNodeLegend()
+{
+    const LegendDescriptor descriptor = nodeLegendDescriptor(this->visual_node);
+    const int index = this->combo_node->findData(static_cast<int>(this->visual_node));
+    if (index >= 0)
+        this->combo_node->setItemText(index, hudComboText(QStringLiteral("Node"), descriptor));
+
+    if (this->visual_node != VisualNode::None)
+    {
+        NetworkSymbologySettings settings;
+        settings.visual_node = this->visual_node;
+        const NetworkSymbologyRanges ranges = this->hydraulic_data->symbologyRanges(settings);
+        this->legend_node->setRange(ranges.node_minimum, ranges.node_maximum, descriptor.unit);
+    }
+
+    updateVisibility();
+}
+
+void EntityMapLegendHud::updateLinkLegend()
+{
+    LegendDescriptor descriptor = linkLegendDescriptor(this->visual_link);
+    NetworkSymbologyRanges ranges;
+
+    if (this->visual_link != VisualLink::None)
+    {
+        NetworkSymbologySettings settings;
+        settings.visual_link = this->visual_link;
+        ranges = this->hydraulic_data->symbologyRanges(settings);
+
+        if (this->visual_link == VisualLink::Length)
+        {
+            const double maximum_absolute = qMax(
+                std::abs(ranges.link_minimum), std::abs(ranges.link_maximum));
+            if (maximum_absolute >= 1000.0)
+            {
+                descriptor.unit = QStringLiteral("km");
+                ranges.link_minimum /= 1000.0;
+                ranges.link_maximum /= 1000.0;
+            }
+        }
+        else if (this->visual_link == VisualLink::Roughness)
+        {
+            switch (this->hydraulic_data->networkHydraulic().options_hydraulic.headloss_formula)
+            {
+            case HydraulicHeadlossFormula::HazenWilliams:
+                descriptor.metric = QStringLiteral("Hazen-Williams C");
+                descriptor.unit.clear();
+                break;
+            case HydraulicHeadlossFormula::DarcyWeisbach:
+                descriptor.metric = QStringLiteral("Absolute Roughness ε");
+                descriptor.unit = QStringLiteral("mm");
+                break;
+            case HydraulicHeadlossFormula::ChezyManning:
+                descriptor.metric = QStringLiteral("Manning Roughness n");
+                descriptor.unit.clear();
+                break;
+            }
+        }
+    }
+
+    const int index = this->combo_link->findData(static_cast<int>(this->visual_link));
+    if (index >= 0)
+        this->combo_link->setItemText(index, hudComboText(QStringLiteral("Link"), descriptor));
+
+    if (this->visual_link != VisualLink::None)
+        this->legend_link->setRange(ranges.link_minimum, ranges.link_maximum, descriptor.unit);
+
+    updateVisibility();
+}
+
+void EntityMapLegendHud::updateHeatmapLegend()
+{
+    const LegendDescriptor descriptor = heatmapLegendDescriptor(this->visual_heatmap);
+    const int index = this->combo_heatmap->findData(static_cast<int>(this->visual_heatmap));
+    if (index >= 0)
+        this->combo_heatmap->setItemText(index, hudComboText(QStringLiteral("Heatmap"), descriptor));
+
+    if (this->visual_heatmap != VisualHeatmap::None)
+    {
+        NetworkSymbologySettings settings;
+        settings.visual_heatmap = this->visual_heatmap;
+        const NetworkSymbologyRanges ranges = this->hydraulic_data->symbologyRanges(settings);
+        this->legend_heatmap->setRange(
+            ranges.heatmap_minimum, ranges.heatmap_maximum, descriptor.unit);
+    }
+
+    updateVisibility();
+}
+
+void EntityMapLegendHud::updateVisibility()
+{
+    this->legend_node->setVisible(this->visual_node != VisualNode::None);
+    this->legend_link->setVisible(this->visual_link != VisualLink::None);
+    this->legend_heatmap->setVisible(this->visual_heatmap != VisualHeatmap::None);
+    setVisible(this->map_monitor_active);
+    adjustSize();
+    updateGeometry();
+}
+
 EntityMapLegendDock::EntityMapLegendDock(HydraulicData *hydraulic_data, QWidget *parent)
     : QDockWidget("Map Symbology Legend", parent),
       hydraulic_data(hydraulic_data)
@@ -504,7 +926,6 @@ int EntityMapLegendDock::dockHeightPreferred() const
 
 void EntityMapLegendDock::configureAsHud()
 {
-    this->hud_mode = true;
     setAllowedAreas(Qt::NoDockWidgetArea);
     setFeatures(QDockWidget::NoDockWidgetFeatures);
 
@@ -526,43 +947,14 @@ void EntityMapLegendDock::configureAsHud()
         this->content->setPalette(hud_palette);
     }
 
-    this->group_node->setCollapsed(false);
-    this->group_link->setCollapsed(false);
-    this->group_heat->setCollapsed(false);
-    this->group_node->setCheckable(false);
-    this->group_link->setCheckable(false);
-    this->group_heat->setCheckable(false);
-    this->group_node->hide();
-    this->group_link->hide();
-    this->group_heat->hide();
-
-    createHudSymbologyMenu();
-    setVisibility();
     scheduleDockHeightUpdate();
 }
 
 void EntityMapLegendDock::showMapLegendNode(VisualNode visual_node)
 {
     this->visual_node = visual_node;
-    syncHudNodeSelection();
-
-    if (this->hud_mode)
-    {
-        if (visual_node == VisualNode::None)
-        {
-            this->group_node->hide();
-        }
-        else
-        {
-            updateNodeLegend();
-            this->group_node->show();
-        }
-        setVisibility();
-        scheduleDockHeightUpdate();
-        return;
-    }
-
     setVisibility();
+
     if (visual_node == VisualNode::None)
     {
         this->group_node->setTitle(QStringLiteral("Node Legend"));
@@ -579,25 +971,8 @@ void EntityMapLegendDock::showMapLegendNode(VisualNode visual_node)
 void EntityMapLegendDock::showMapLegendLink(VisualLink visual_link)
 {
     this->visual_link = visual_link;
-    syncHudLinkSelection();
-
-    if (this->hud_mode)
-    {
-        if (visual_link == VisualLink::None)
-        {
-            this->group_link->hide();
-        }
-        else
-        {
-            updateLinkLegend();
-            this->group_link->show();
-        }
-        setVisibility();
-        scheduleDockHeightUpdate();
-        return;
-    }
-
     setVisibility();
+
     if (visual_link == VisualLink::None)
     {
         this->group_link->setTitle(QStringLiteral("Link Legend"));
@@ -614,25 +989,8 @@ void EntityMapLegendDock::showMapLegendLink(VisualLink visual_link)
 void EntityMapLegendDock::showMapLegendHeatmap(VisualHeatmap visual_heatmap)
 {
     this->visual_heatmap = visual_heatmap;
-    syncHudHeatmapSelection();
-
-    if (this->hud_mode)
-    {
-        if (visual_heatmap == VisualHeatmap::None)
-        {
-            this->group_heat->hide();
-        }
-        else
-        {
-            updateHeatmapLegend();
-            this->group_heat->show();
-        }
-        setVisibility();
-        scheduleDockHeightUpdate();
-        return;
-    }
-
     setVisibility();
+
     if (visual_heatmap == VisualHeatmap::None)
     {
         this->group_heat->setTitle(QStringLiteral("Heatmap Overlay"));
@@ -657,131 +1015,10 @@ void EntityMapLegendDock::setVisibility()
     const bool has_visible_legend = this->visual_link != VisualLink::None ||
                                     this->visual_node != VisualNode::None ||
                                     this->visual_heatmap != VisualHeatmap::None;
-    setVisible(this->map_monitor_active && (this->hud_mode || has_visible_legend));
+    setVisible(this->map_monitor_active && has_visible_legend);
 
     if (isVisible())
         scheduleDockHeightUpdate();
-}
-
-void EntityMapLegendDock::createHudSymbologyMenu()
-{
-    if (!this->hud_mode || this->hud_symbology_button != nullptr || this->layout == nullptr)
-        return;
-
-    this->hud_symbology_button = new QToolButton(this->content);
-    this->hud_symbology_button->setText(QStringLiteral("Symbology"));
-    this->hud_symbology_button->setPopupMode(QToolButton::InstantPopup);
-    this->hud_symbology_button->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    this->hud_symbology_button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-
-    QMenu *menu = new QMenu(this->hud_symbology_button);
-    QMenu *node_menu = menu->addMenu(QStringLiteral("Node"));
-    QMenu *link_menu = menu->addMenu(QStringLiteral("Link"));
-    QMenu *heatmap_menu = menu->addMenu(QStringLiteral("Heatmap"));
-
-    this->hud_node_actions = new QActionGroup(this);
-    this->hud_node_actions->setExclusive(true);
-    const std::array<std::pair<const char *, VisualNode>, 13> node_items = {{
-        {"None", VisualNode::None}, {"Elevation", VisualNode::Elevation},
-        {"Base Demand", VisualNode::BaseDemand}, {"Total Demand", VisualNode::TotalDemand},
-        {"Demand Deficit", VisualNode::DemandDeficit}, {"Emitter Flow", VisualNode::EmitterFlow},
-        {"Leakage", VisualNode::Leakage}, {"Head", VisualNode::Head},
-        {"Pressure", VisualNode::Pressure}, {"Water Age [h]", VisualNode::WaterAge},
-        {"Cl₂ [mg/L]", VisualNode::Chlorine}, {"River Water [%]", VisualNode::RiverWater},
-        {"Lake Water [%]", VisualNode::LakeWater}
-    }};
-    for (const std::pair<const char *, VisualNode> &item : node_items)
-    {
-        QAction *action = node_menu->addAction(QString::fromUtf8(item.first));
-        action->setCheckable(true);
-        action->setData(static_cast<int>(item.second));
-        this->hud_node_actions->addAction(action);
-    }
-    connect(this->hud_node_actions, &QActionGroup::triggered, this, [this](QAction *action)
-    {
-        if (action != nullptr)
-            emit signalHudNodeVisualSelected(static_cast<VisualNode>(action->data().toInt()));
-    });
-
-    this->hud_link_actions = new QActionGroup(this);
-    this->hud_link_actions->setExclusive(true);
-    const std::array<std::pair<const char *, VisualLink>, 12> link_items = {{
-        {"None", VisualLink::None}, {"Diameter", VisualLink::Diameter},
-        {"Length", VisualLink::Length}, {"Roughness", VisualLink::Roughness},
-        {"Flow Rate", VisualLink::FlowRate}, {"Velocity", VisualLink::Velocity},
-        {"Head Loss", VisualLink::HeadLoss}, {"Leakage", VisualLink::Leakage},
-        {"Water Age [h]", VisualLink::WaterAge}, {"Cl₂ [mg/L]", VisualLink::Chlorine},
-        {"River Water [%]", VisualLink::RiverWater}, {"Lake Water [%]", VisualLink::LakeWater}
-    }};
-    for (const std::pair<const char *, VisualLink> &item : link_items)
-    {
-        QAction *action = link_menu->addAction(QString::fromUtf8(item.first));
-        action->setCheckable(true);
-        action->setData(static_cast<int>(item.second));
-        this->hud_link_actions->addAction(action);
-    }
-    connect(this->hud_link_actions, &QActionGroup::triggered, this, [this](QAction *action)
-    {
-        if (action != nullptr)
-            emit signalHudLinkVisualSelected(static_cast<VisualLink>(action->data().toInt()));
-    });
-
-    this->hud_heatmap_actions = new QActionGroup(this);
-    this->hud_heatmap_actions->setExclusive(true);
-    const std::array<std::pair<const char *, VisualHeatmap>, 13> heatmap_items = {{
-        {"None", VisualHeatmap::None}, {"Elevation", VisualHeatmap::Elevation},
-        {"Base Demand", VisualHeatmap::BaseDemand}, {"Total Demand", VisualHeatmap::TotalDemand},
-        {"Demand Deficit", VisualHeatmap::DemandDeficit}, {"Emitter Flow", VisualHeatmap::EmitterFlow},
-        {"Leakage", VisualHeatmap::Leakage}, {"Head", VisualHeatmap::Head},
-        {"Pressure", VisualHeatmap::Pressure}, {"Water Age [h]", VisualHeatmap::WaterAge},
-        {"Cl₂ [mg/L]", VisualHeatmap::Chlorine}, {"River Water [%]", VisualHeatmap::RiverWater},
-        {"Lake Water [%]", VisualHeatmap::LakeWater}
-    }};
-    for (const std::pair<const char *, VisualHeatmap> &item : heatmap_items)
-    {
-        QAction *action = heatmap_menu->addAction(QString::fromUtf8(item.first));
-        action->setCheckable(true);
-        action->setData(static_cast<int>(item.second));
-        this->hud_heatmap_actions->addAction(action);
-    }
-    connect(this->hud_heatmap_actions, &QActionGroup::triggered, this, [this](QAction *action)
-    {
-        if (action != nullptr)
-            emit signalHudHeatmapVisualSelected(static_cast<VisualHeatmap>(action->data().toInt()));
-    });
-
-    this->hud_symbology_button->setMenu(menu);
-    this->layout->insertWidget(0, this->hud_symbology_button);
-    syncHudNodeSelection();
-    syncHudLinkSelection();
-    syncHudHeatmapSelection();
-}
-
-void EntityMapLegendDock::syncHudNodeSelection()
-{
-    if (this->hud_node_actions == nullptr)
-        return;
-    const QList<QAction *> actions = this->hud_node_actions->actions();
-    for (QAction *action : actions)
-        action->setChecked(action->data().toInt() == static_cast<int>(this->visual_node));
-}
-
-void EntityMapLegendDock::syncHudLinkSelection()
-{
-    if (this->hud_link_actions == nullptr)
-        return;
-    const QList<QAction *> actions = this->hud_link_actions->actions();
-    for (QAction *action : actions)
-        action->setChecked(action->data().toInt() == static_cast<int>(this->visual_link));
-}
-
-void EntityMapLegendDock::syncHudHeatmapSelection()
-{
-    if (this->hud_heatmap_actions == nullptr)
-        return;
-    const QList<QAction *> actions = this->hud_heatmap_actions->actions();
-    for (QAction *action : actions)
-        action->setChecked(action->data().toInt() == static_cast<int>(this->visual_heatmap));
 }
 
 void EntityMapLegendDock::addGroupNode()

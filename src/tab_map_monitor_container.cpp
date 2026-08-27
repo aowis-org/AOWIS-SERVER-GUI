@@ -21,6 +21,7 @@
 #include "entity_inspector/entity_map_legend_dock.h"
 #endif
 
+#include <QAbstractButton>
 #include <QColor>
 #include <QContextMenuEvent>
 #include <QDebug>
@@ -368,9 +369,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             new MapMonitorScaleHudWidget(this->map_model, this->map_stack);
         MapMonitorVerticalControlsHudWidget *vertical_controls_hud =
             new MapMonitorVerticalControlsHudWidget(this->map_model, this->map_stack);
-        EntityMapLegendDock *legend_hud =
-            new EntityMapLegendDock(this->hydraulic_data, this->map_stack);
-        legend_hud->configureAsHud();
+        EntityMapLegendHud *legend_hud =
+            new EntityMapLegendHud(this->hydraulic_data, this->map_stack);
         this->desktop_rhi_surface = rhi_surface;
         this->desktop_rhi_hud = rhi_hud;
         this->desktop_download_activity_hud = download_activity_hud;
@@ -387,12 +387,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         this->desktop_vertical_controls_hud->hide();
         this->desktop_legend_hud->setMapMonitorActive(false);
         this->desktop_legend_hud->hide();
-        connect(this->desktop_legend_hud, &EntityMapLegendDock::signalDockHeightPreferredChanged,
-                this, [this](int)
-        {
-            positionDesktopHudWidgets();
-        });
-        connect(this->desktop_legend_hud, &EntityMapLegendDock::signalHudNodeVisualSelected,
+        connect(this->desktop_legend_hud, &EntityMapLegendHud::signalNodeVisualSelected,
                 this, [this](VisualNode visual_node)
         {
             this->symbology_settings.visual_node = visual_node;
@@ -400,7 +395,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             showMapLegendNode(visual_node);
             applySymbology();
         });
-        connect(this->desktop_legend_hud, &EntityMapLegendDock::signalHudLinkVisualSelected,
+        connect(this->desktop_legend_hud, &EntityMapLegendHud::signalLinkVisualSelected,
                 this, [this](VisualLink visual_link)
         {
             this->symbology_settings.visual_link = visual_link;
@@ -408,7 +403,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             showMapLegendLink(visual_link);
             applySymbology();
         });
-        connect(this->desktop_legend_hud, &EntityMapLegendDock::signalHudHeatmapVisualSelected,
+        connect(this->desktop_legend_hud, &EntityMapLegendHud::signalHeatmapVisualSelected,
                 this, [this](VisualHeatmap visual_heatmap)
         {
             this->symbology_settings.visual_heatmap = visual_heatmap;
@@ -561,11 +556,11 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             view_mode_hud->show();
             if (this->desktop_legend_hud != nullptr)
             {
-                this->desktop_legend_hud->showMapLegendNode(
+                this->desktop_legend_hud->setNodeVisual(
                     this->symbology_settings.visual_node);
-                this->desktop_legend_hud->showMapLegendLink(
+                this->desktop_legend_hud->setLinkVisual(
                     this->symbology_settings.visual_link);
-                this->desktop_legend_hud->showMapLegendHeatmap(
+                this->desktop_legend_hud->setHeatmapVisual(
                     this->symbology_settings.visual_heatmap);
                 this->desktop_legend_hud->setMapMonitorActive(true);
             }
@@ -844,7 +839,7 @@ void MapMonitorContainer::showMapLegendNode(VisualNode visual_node)
 #if AOWIS_HAS_QRHI
     if (this->rhi_renderer_active && this->desktop_legend_hud != nullptr)
     {
-        this->desktop_legend_hud->showMapLegendNode(visual_node);
+        this->desktop_legend_hud->setNodeVisual(visual_node);
         positionDesktopHudWidgets();
         return;
     }
@@ -858,7 +853,7 @@ void MapMonitorContainer::showMapLegendLink(VisualLink visual_link)
 #if AOWIS_HAS_QRHI
     if (this->rhi_renderer_active && this->desktop_legend_hud != nullptr)
     {
-        this->desktop_legend_hud->showMapLegendLink(visual_link);
+        this->desktop_legend_hud->setLinkVisual(visual_link);
         positionDesktopHudWidgets();
         return;
     }
@@ -872,7 +867,7 @@ void MapMonitorContainer::showMapLegendHeatmap(VisualHeatmap visual_heatmap)
 #if AOWIS_HAS_QRHI
     if (this->rhi_renderer_active && this->desktop_legend_hud != nullptr)
     {
-        this->desktop_legend_hud->showMapLegendHeatmap(visual_heatmap);
+        this->desktop_legend_hud->setHeatmapVisual(visual_heatmap);
         positionDesktopHudWidgets();
         return;
     }
@@ -1578,6 +1573,7 @@ void MapMonitorMenuWidget::setNodeVisualSelection(VisualNode visual_node)
 {
     if (this->node_visual_group == nullptr)
         return;
+
     QAbstractButton *button = this->node_visual_group->button(static_cast<int>(visual_node));
     if (button != nullptr)
         button->setChecked(true);
@@ -1587,6 +1583,7 @@ void MapMonitorMenuWidget::setLinkVisualSelection(VisualLink visual_link)
 {
     if (this->link_visual_group == nullptr)
         return;
+
     QAbstractButton *button = this->link_visual_group->button(static_cast<int>(visual_link));
     if (button != nullptr)
         button->setChecked(true);
@@ -1596,6 +1593,7 @@ void MapMonitorMenuWidget::setHeatmapVisualSelection(VisualHeatmap visual_heatma
 {
     if (this->heatmap_visual_group == nullptr)
         return;
+
     QAbstractButton *button = this->heatmap_visual_group->button(static_cast<int>(visual_heatmap));
     if (button != nullptr)
         button->setChecked(true);
@@ -1894,6 +1892,21 @@ void MapMonitorMenuWidget::addGroupHeatmapVisuals()
     QRadioButton *radio_chlorine = new QRadioButton("Cl₂ [mg/L]");
     QRadioButton *radio_river = new QRadioButton("River Water [%]");
     QRadioButton *radio_lake = new QRadioButton("Lake Water [%]");
+
+    this->heatmap_visual_group = new QButtonGroup(this);
+    this->heatmap_visual_group->addButton(radio_none, static_cast<int>(VisualHeatmap::None));
+    this->heatmap_visual_group->addButton(radio_elevation, static_cast<int>(VisualHeatmap::Elevation));
+    this->heatmap_visual_group->addButton(radio_base_demand, static_cast<int>(VisualHeatmap::BaseDemand));
+    this->heatmap_visual_group->addButton(radio_total_demand, static_cast<int>(VisualHeatmap::TotalDemand));
+    this->heatmap_visual_group->addButton(radio_demand_deficit, static_cast<int>(VisualHeatmap::DemandDeficit));
+    this->heatmap_visual_group->addButton(radio_emitter_flow, static_cast<int>(VisualHeatmap::EmitterFlow));
+    this->heatmap_visual_group->addButton(radio_leakage, static_cast<int>(VisualHeatmap::Leakage));
+    this->heatmap_visual_group->addButton(radio_head, static_cast<int>(VisualHeatmap::Head));
+    this->heatmap_visual_group->addButton(radio_pressure, static_cast<int>(VisualHeatmap::Pressure));
+    this->heatmap_visual_group->addButton(radio_water_age, static_cast<int>(VisualHeatmap::WaterAge));
+    this->heatmap_visual_group->addButton(radio_chlorine, static_cast<int>(VisualHeatmap::Chlorine));
+    this->heatmap_visual_group->addButton(radio_river, static_cast<int>(VisualHeatmap::RiverWater));
+    this->heatmap_visual_group->addButton(radio_lake, static_cast<int>(VisualHeatmap::LakeWater));
     
     const std::function<void(QRadioButton *, VisualHeatmap)> connect_heatmap_visual =
         [this](QRadioButton *button, VisualHeatmap visual)

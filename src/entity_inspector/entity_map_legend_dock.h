@@ -1,12 +1,10 @@
 #ifndef ENTITY_MAP_LEGEND_DOCK_H
 #define ENTITY_MAP_LEGEND_DOCK_H
 
+#include <QComboBox>
 #include <QDockWidget>
 #include <QVBoxLayout>
 #include <QWidget>
-
-class QActionGroup;
-class QToolButton;
 
 #include "../widgets/group_box_collapsible.h"
 #include "../hydraulic_data.h"
@@ -15,6 +13,43 @@ class QToolButton;
 #include "../_sizes.h"
 
 class MapSymbologyRampWidget;
+
+
+class EntityMapLegendHud : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit EntityMapLegendHud(HydraulicData *hydraulic_data, QWidget *parent = nullptr);
+
+    void setMapMonitorActive(bool active);
+    void setNodeVisual(VisualNode visual_node);
+    void setLinkVisual(VisualLink visual_link);
+    void setHeatmapVisual(VisualHeatmap visual_heatmap);
+
+signals:
+    void signalNodeVisualSelected(VisualNode visual_node);
+    void signalLinkVisualSelected(VisualLink visual_link);
+    void signalHeatmapVisualSelected(VisualHeatmap visual_heatmap);
+
+private:
+    HydraulicData *hydraulic_data = nullptr;
+    QVBoxLayout *layout = nullptr;
+    QComboBox *combo_node = nullptr;
+    QComboBox *combo_link = nullptr;
+    QComboBox *combo_heatmap = nullptr;
+    MapSymbologyRampWidget *legend_node = nullptr;
+    MapSymbologyRampWidget *legend_link = nullptr;
+    MapSymbologyRampWidget *legend_heatmap = nullptr;
+    VisualNode visual_node = VisualNode::None;
+    VisualLink visual_link = VisualLink::None;
+    VisualHeatmap visual_heatmap = VisualHeatmap::None;
+    bool map_monitor_active = false;
+
+    void updateNodeLegend();
+    void updateLinkLegend();
+    void updateHeatmapLegend();
+    void updateVisibility();
+};
 
 class EntityMapLegendDock : public QDockWidget
 {
@@ -32,9 +67,6 @@ public slots:
 
 signals:
     void signalDockHeightPreferredChanged(int height);
-    void signalHudNodeVisualSelected(VisualNode visual_node);
-    void signalHudLinkVisualSelected(VisualLink visual_link);
-    void signalHudHeatmapVisualSelected(VisualHeatmap visual_heatmap);
 
 private:
     HydraulicData *hydraulic_data = nullptr;
@@ -54,11 +86,6 @@ private:
     MapSymbologyRampWidget *legend_link = nullptr;
     MapSymbologyRampWidget *legend_heat = nullptr;
     int dock_height_preferred = 0;
-    bool hud_mode = false;
-    QToolButton *hud_symbology_button = nullptr;
-    QActionGroup *hud_node_actions = nullptr;
-    QActionGroup *hud_link_actions = nullptr;
-    QActionGroup *hud_heatmap_actions = nullptr;
 
     void setVisibility();
     void addGroupNode();
@@ -69,10 +96,6 @@ private:
     void updateHeatmapLegend();
     void scheduleDockHeightUpdate();
     void updateDockHeight();
-    void createHudSymbologyMenu();
-    void syncHudNodeSelection();
-    void syncHudLinkSelection();
-    void syncHudHeatmapSelection();
 };
 
 #endif // ENTITY_MAP_LEGEND_DOCK_H

@@ -45,7 +45,7 @@ class MapMonitorViewModeHudWidget;
 class MapMonitorCompassHudWidget;
 class MapMonitorScaleHudWidget;
 class MapMonitorVerticalControlsHudWidget;
-class EntityMapLegendDock;
+class EntityMapLegendHud;
 
 #ifdef Q_OS_WASM
 #include "gps_provider_dummy.h"
@@ -72,12 +72,12 @@ private:
     MapWidget *map;
     
     MapNavigationWidget *map_nav;
-    HeatmapRadiusUnit heatmap_radius_unit = HeatmapRadiusUnit::Meters;
-    int heatmap_radius_m = 400;
-    int heatmap_radius_px = 50;
     QButtonGroup *node_visual_group = nullptr;
     QButtonGroup *link_visual_group = nullptr;
     QButtonGroup *heatmap_visual_group = nullptr;
+    HeatmapRadiusUnit heatmap_radius_unit = HeatmapRadiusUnit::Meters;
+    int heatmap_radius_m = 400;
+    int heatmap_radius_px = 50;
     void addGroupVisualSettings();
     void addGroupNodeVisuals();
     void addGroupLinkVisuals();
@@ -141,7 +141,7 @@ private:
     MapMonitorCompassHudWidget *desktop_compass_hud = nullptr;
     MapMonitorScaleHudWidget *desktop_scale_hud = nullptr;
     MapMonitorVerticalControlsHudWidget *desktop_vertical_controls_hud = nullptr;
-    EntityMapLegendDock *desktop_legend_hud = nullptr;
+    EntityMapLegendHud *desktop_legend_hud = nullptr;
     bool rhi_renderer_active = false;
 #endif
     MapMonitorMenuWidget *map_menu = nullptr;
