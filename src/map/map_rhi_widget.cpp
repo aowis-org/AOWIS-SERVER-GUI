@@ -788,7 +788,9 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
     const bool heatmap_data_changed =
         !this->symbology_initialized
         || this->applied_symbology.visual_heatmap != symbology.visual_heatmap
-        || this->applied_symbology.heatmap_fractions != symbology.heatmap_fractions;
+        || this->applied_symbology.heatmap_fractions != symbology.heatmap_fractions
+        || this->applied_symbology.heatmap_palette != symbology.heatmap_palette
+        || this->applied_symbology.heatmap_palette_flipped != symbology.heatmap_palette_flipped;
     const bool heatmap_style_changed =
         !this->symbology_initialized
         || this->applied_symbology.heatmap_radius_unit != symbology.heatmap_radius_unit

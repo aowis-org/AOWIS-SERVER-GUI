@@ -90,6 +90,8 @@ MapRhiSymbology resolveMapRhiSymbology(
     result.heatmap_radius_m = bounded_settings.heatmap_radius_m;
     result.heatmap_radius_px = bounded_settings.heatmap_radius_px;
     result.heatmap_solid_center_percent = bounded_settings.heatmap_solid_center_percent;
+    result.heatmap_palette = bounded_settings.heatmap_palette;
+    result.heatmap_palette_flipped = bounded_settings.heatmap_palette_flipped;
 
     if (result.visual_heatmap != VisualHeatmap::None)
     {
@@ -138,7 +140,8 @@ MapRhiSymbology resolveMapRhiSymbology(
             color = iterator == node_values.cend()
                 ? networkSymbologyUnavailableColor()
                 : networkSymbologyColor(
-                    iterator.value(), ranges.node_minimum, ranges.node_maximum);
+                    iterator.value(), ranges.node_minimum, ranges.node_maximum,
+                    bounded_settings.node_palette, bounded_settings.node_palette_flipped);
         }
         result.node_colors.insert(node.render_id, color);
     }
@@ -153,7 +156,8 @@ MapRhiSymbology resolveMapRhiSymbology(
             color = iterator == link_values.cend()
                 ? networkSymbologyUnavailableColor()
                 : networkSymbologyColor(
-                    iterator.value(), ranges.link_minimum, ranges.link_maximum);
+                    iterator.value(), ranges.link_minimum, ranges.link_maximum,
+                    bounded_settings.link_palette, bounded_settings.link_palette_flipped);
         }
         result.link_colors.insert(link.render_id, color);
     }

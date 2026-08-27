@@ -120,6 +120,11 @@ public:
     
     MapNavigationWidget *mapNavigationWidget();
 
+public slots:
+    void setNodePalette(NetworkSymbologyPalette palette, bool flipped);
+    void setLinkPalette(NetworkSymbologyPalette palette, bool flipped);
+    void setHeatmapPalette(NetworkSymbologyPalette palette, bool flipped);
+
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
@@ -204,6 +209,9 @@ signals:
     void signalShowMapLegendNode(VisualNode visual_node);
     void signalShowMapLegendLink(VisualLink visual_link);
     void signalShowMapLegendHeatmap(VisualHeatmap visual_heatmap);
+    void signalNodePaletteChanged(NetworkSymbologyPalette palette, bool flipped);
+    void signalLinkPaletteChanged(NetworkSymbologyPalette palette, bool flipped);
+    void signalHeatmapPaletteChanged(NetworkSymbologyPalette palette, bool flipped);
 };
 
 

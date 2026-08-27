@@ -11,16 +11,31 @@ enum class HeatmapRadiusUnit
     Pixels
 };
 
+enum class NetworkSymbologyPalette
+{
+    Viridis,
+    Plasma,
+    Inferno,
+    Turbo,
+    CoolWarm
+};
+
 struct NetworkSymbologySettings
 {
     VisualNode visual_node = VisualNode::None;
+    NetworkSymbologyPalette node_palette = NetworkSymbologyPalette::Viridis;
+    bool node_palette_flipped = false;
     int node_size_percent = 100;
     int icon_size_percent = 100;
     VisualLink visual_link = VisualLink::None;
+    NetworkSymbologyPalette link_palette = NetworkSymbologyPalette::Viridis;
+    bool link_palette_flipped = false;
     int link_thickness_px = 3;
     bool show_flow_direction = true;
     int flow_direction_size_px = 10;
     VisualHeatmap visual_heatmap = VisualHeatmap::None;
+    NetworkSymbologyPalette heatmap_palette = NetworkSymbologyPalette::Viridis;
+    bool heatmap_palette_flipped = false;
     int heatmap_opacity = 75;
     HeatmapRadiusUnit heatmap_radius_unit = HeatmapRadiusUnit::Meters;
     int heatmap_radius_m = 400;

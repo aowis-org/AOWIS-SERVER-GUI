@@ -4,6 +4,7 @@
 #include "../hydraulic_data.h"
 #include "../infrastructure_entity_traits.h"
 #include "../network_render_snapshot_builder.h"
+#include "../network_symbology_rendering.h"
 #include "../network_symbology_values.h"
 #include "map_render_cache_math.h"
 #include "map_scale_renderer.h"
@@ -59,16 +60,6 @@ constexpr int HeatmapMaximumColorBuckets = 64;
 constexpr int HeatmapTileSize = 256;
 const QColor NetworkColor(Qt::black);
 const QColor SymbologyValueUnavailableColor(Qt::black);
-
-const std::array<QColor, 7> SymbologyRampColors = {{
-    QColor(QStringLiteral("#440154")),
-    QColor(QStringLiteral("#443983")),
-    QColor(QStringLiteral("#31688e")),
-    QColor(QStringLiteral("#21918c")),
-    QColor(QStringLiteral("#35b779")),
-    QColor(QStringLiteral("#90d743")),
-    QColor(QStringLiteral("#fde725"))
-}};
 
 struct NetworkRenderWorkers
 {
@@ -452,37 +443,6 @@ QHash<QUuid, double> heatmapValues(const NetworkHydraulic &network_hydraulic, Vi
     return QHash<QUuid, double>();
 }
 
-QColor interpolatedRampColor(double fraction)
-{
-    const double limited_fraction = qBound(0.0, fraction, 1.0);
-    const double scaled = limited_fraction * (SymbologyRampColors.size() - 1);
-    const int left_index = qMin(int(SymbologyRampColors.size()) - 1, int(std::floor(scaled)));
-    const int right_index = qMin(int(SymbologyRampColors.size()) - 1, left_index + 1);
-    const double ratio = scaled - left_index;
-    const QColor &left = SymbologyRampColors.at(left_index);
-    const QColor &right = SymbologyRampColors.at(right_index);
-    return QColor(
-        qRound(left.red() + (right.red() - left.red()) * ratio),
-        qRound(left.green() + (right.green() - left.green()) * ratio),
-        qRound(left.blue() + (right.blue() - left.blue()) * ratio));
-}
-
-QColor rampColor(double fraction)
-{
-    const double limited_fraction = qBound(0.0, fraction, 1.0);
-    const int bucket = qRound(limited_fraction * (SymbologyColorBucketCount - 1));
-    return interpolatedRampColor(double(bucket) / double(SymbologyColorBucketCount - 1));
-}
-
-QRgb symbologyColor(double value, double minimum, double maximum)
-{
-    if (!std::isfinite(value) || !std::isfinite(minimum) || !std::isfinite(maximum))
-        return SymbologyValueUnavailableColor.rgb();
-    if (minimum == maximum)
-        return rampColor(0.5).rgb();
-    return rampColor((value - minimum) / (maximum - minimum)).rgb();
-}
-
 double heatmapValueFraction(double value, double minimum, double maximum)
 {
     if (!std::isfinite(value) || !std::isfinite(minimum) || !std::isfinite(maximum))
@@ -542,7 +502,7 @@ int heatmapColorBucketCount(qreal radius)
     const qreal kernel_radius = heatmapKernelRadius(radius);
     const int diameter = qMax(3, qCeil(kernel_radius * 2.0) + 2);
     const int maximum_by_memory = qMax(1, int(HeatmapMaximumKernelCachePixels / (qint64(diameter) * diameter)));
-    return qMax(int(SymbologyRampColors.size()), qMin(HeatmapMaximumColorBuckets, maximum_by_memory));
+    return qMax(NetworkSymbologyRampColorCount, qMin(HeatmapMaximumColorBuckets, maximum_by_memory));
 }
 
 QImage createHeatmapKernel(qreal radius, const QColor &color, int solid_center_percent)
@@ -859,6 +819,15 @@ void MapNetworkOverlayWidget::setSymbology(
         this->symbology_settings.visual_link != bounded_settings.visual_link;
     const bool heatmap_visual_changed =
         this->symbology_settings.visual_heatmap != bounded_settings.visual_heatmap;
+    const bool node_palette_changed =
+        this->symbology_settings.node_palette != bounded_settings.node_palette
+        || this->symbology_settings.node_palette_flipped != bounded_settings.node_palette_flipped;
+    const bool link_palette_changed =
+        this->symbology_settings.link_palette != bounded_settings.link_palette
+        || this->symbology_settings.link_palette_flipped != bounded_settings.link_palette_flipped;
+    const bool heatmap_palette_changed =
+        this->symbology_settings.heatmap_palette != bounded_settings.heatmap_palette
+        || this->symbology_settings.heatmap_palette_flipped != bounded_settings.heatmap_palette_flipped;
     const bool node_size_changed =
         this->symbology_settings.node_size_percent != bounded_settings.node_size_percent;
     const bool icon_size_changed =
@@ -890,6 +859,9 @@ void MapNetworkOverlayWidget::setSymbology(
 
     const bool values_changed = node_visual_changed || link_visual_changed ||
         heatmap_visual_changed || flow_direction_visibility_changed ||
+        (bounded_settings.visual_node != VisualNode::None && node_palette_changed) ||
+        (bounded_settings.visual_link != VisualLink::None && link_palette_changed) ||
+        (bounded_settings.visual_heatmap != VisualHeatmap::None && heatmap_palette_changed) ||
         (bounded_settings.visual_node != VisualNode::None && node_range_changed) ||
         (bounded_settings.visual_link != VisualLink::None && link_range_changed) ||
         (bounded_settings.visual_heatmap != VisualHeatmap::None && heatmap_range_changed);
@@ -899,7 +871,8 @@ void MapNetworkOverlayWidget::setSymbology(
             (heatmap_radius_changed || heatmap_solid_center_changed));
     const bool any_change = cached_render_changed || heatmap_opacity_changed ||
         heatmap_radius_changed || heatmap_solid_center_changed ||
-        node_range_changed || link_range_changed || heatmap_range_changed;
+        node_range_changed || link_range_changed || heatmap_range_changed ||
+        node_palette_changed || link_palette_changed || heatmap_palette_changed;
 
     if (!any_change)
         return;
@@ -1431,8 +1404,14 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
         std::shared_ptr<RenderSymbology> symbology = std::make_shared<RenderSymbology>();
         symbology->revision = symbology_revision;
         symbology->visual_node = settings.visual_node;
+        symbology->node_palette = settings.node_palette;
+        symbology->node_palette_flipped = settings.node_palette_flipped;
         symbology->visual_link = settings.visual_link;
+        symbology->link_palette = settings.link_palette;
+        symbology->link_palette_flipped = settings.link_palette_flipped;
         symbology->visual_heatmap = settings.visual_heatmap;
+        symbology->heatmap_palette = settings.heatmap_palette;
+        symbology->heatmap_palette_flipped = settings.heatmap_palette_flipped;
         symbology->node_size_percent = settings.node_size_percent;
         symbology->icon_size_percent = settings.icon_size_percent;
         symbology->link_width = qreal(settings.link_thickness_px);
@@ -1477,8 +1456,9 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
                 const QHash<QUuid, double>::const_iterator iterator = values.constFind(node.uuid);
                 const QRgb color = iterator == values.cend()
                     ? SymbologyValueUnavailableColor.rgb()
-                    : symbologyColor(
-                        iterator.value(), ranges.node_minimum, ranges.node_maximum);
+                    : networkSymbologyColor(
+                        iterator.value(), ranges.node_minimum, ranges.node_maximum,
+                        settings.node_palette, settings.node_palette_flipped);
                 symbology->node_colors.insert(node.render_id, color);
             }
         }
@@ -1505,8 +1485,9 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
                 const QHash<QUuid, double>::const_iterator iterator = values.constFind(link.uuid);
                 const QRgb color = iterator == values.cend()
                     ? SymbologyValueUnavailableColor.rgb()
-                    : symbologyColor(
-                        iterator.value(), ranges.link_minimum, ranges.link_maximum);
+                    : networkSymbologyColor(
+                        iterator.value(), ranges.link_minimum, ranges.link_maximum,
+                        settings.link_palette, settings.link_palette_flipped);
                 symbology->link_colors.insert(link.render_id, color);
             }
         }
@@ -1800,7 +1781,11 @@ QImage MapNetworkOverlayWidget::renderHeatmap(const RenderRequest &request, qrea
         const double bucket_fraction = color_bucket_count <= 1
             ? 0.5 : double(bucket) / double(color_bucket_count - 1);
         kernels[bucket] = createHeatmapKernel(
-            radius, interpolatedRampColor(bucket_fraction),
+            radius,
+            networkSymbologyInterpolatedRampColor(
+                bucket_fraction,
+                request.symbology->heatmap_palette,
+                request.symbology->heatmap_palette_flipped),
             request.symbology->heatmap_solid_center_percent);
         if (kernels[bucket].isNull())
             return QImage();

@@ -1,38 +1,40 @@
 #include "entity_map_legend_dock.h"
 
+#include "../network_symbology_rendering.h"
+
 #include <array>
 #include <cmath>
+#include <functional>
 
 #include <QColor>
 #include <QFontMetricsF>
 #include <QHideEvent>
+#include <QHBoxLayout>
+#include <QIcon>
+#include <QLabel>
 #include <QLinearGradient>
 #include <QLocale>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QPalette>
+#include <QPixmap>
 #include <QPointer>
+#include <QPushButton>
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QTimer>
+#include <QWidgetAction>
 
 namespace
 {
-struct RampStop
-{
-    double position = 0.0;
-    QColor color;
-};
-
-const std::array<RampStop, 7> ramp_stops = {{
-    {0.000000, QColor(QStringLiteral("#440154"))},
-    {0.166667, QColor(QStringLiteral("#443983"))},
-    {0.333333, QColor(QStringLiteral("#31688e"))},
-    {0.500000, QColor(QStringLiteral("#21918c"))},
-    {0.666667, QColor(QStringLiteral("#35b779"))},
-    {0.833333, QColor(QStringLiteral("#90d743"))},
-    {1.000000, QColor(QStringLiteral("#fde725"))}
+const std::array<NetworkSymbologyPalette, NetworkSymbologyPaletteCount> palette_choices = {{
+    NetworkSymbologyPalette::Viridis,
+    NetworkSymbologyPalette::Plasma,
+    NetworkSymbologyPalette::Inferno,
+    NetworkSymbologyPalette::Turbo,
+    NetworkSymbologyPalette::CoolWarm
 }};
 
 QString legendGroupTitle(const QString &scope, const QString &metric, const QString &unit)
@@ -43,13 +45,24 @@ QString legendGroupTitle(const QString &scope, const QString &metric, const QStr
     return QStringLiteral("%1 · %2 [%3]").arg(scope, metric, unit);
 }
 
-QColor interpolateColor(const QColor &left, const QColor &right, double ratio)
+QIcon palettePreviewIcon(NetworkSymbologyPalette palette)
 {
-    const double limited_ratio = qBound(0.0, ratio, 1.0);
-    const int red = qRound(left.red() + ((right.red() - left.red()) * limited_ratio));
-    const int green = qRound(left.green() + ((right.green() - left.green()) * limited_ratio));
-    const int blue = qRound(left.blue() + ((right.blue() - left.blue()) * limited_ratio));
-    return QColor(red, green, blue);
+    QPixmap pixmap(112, 16);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    QLinearGradient gradient(0.0, 0.0, pixmap.width(), 0.0);
+    const std::array<QColor, NetworkSymbologyRampColorCount> &colors =
+        networkSymbologyPaletteColors(palette);
+    for (int index = 0; index < int(colors.size()); ++index)
+    {
+        gradient.setColorAt(
+            double(index) / double(colors.size() - 1), colors.at(index));
+    }
+    painter.fillRect(pixmap.rect(), gradient);
+    painter.setPen(QPen(QColor(0, 0, 0, 120), 1.0));
+    painter.drawRect(pixmap.rect().adjusted(0, 0, -1, -1));
+    return QIcon(pixmap);
 }
 
 struct LegendDescriptor
@@ -217,6 +230,8 @@ private:
 class MapSymbologyRampWidget final : public QWidget
 {
 public:
+    using PaletteChangedCallback = std::function<void(NetworkSymbologyPalette, bool)>;
+
     explicit MapSymbologyRampWidget(QWidget *hover_parent, QWidget *parent = nullptr)
         : QWidget(parent),
           hover_parent(hover_parent),
@@ -237,17 +252,30 @@ public:
         return QSize(220, 54);
     }
 
+    void setPaletteChangedCallback(const PaletteChangedCallback &callback)
+    {
+        this->palette_changed_callback = callback;
+    }
+
+    void setPaletteSelection(NetworkSymbologyPalette palette, bool flipped)
+    {
+        if (this->palette == palette && this->palette_flipped == flipped)
+            return;
+
+        this->palette = palette;
+        this->palette_flipped = flipped;
+        hideHoverSwatch();
+        updateToolTip();
+        update();
+    }
+
     void setRange(double minimum, double maximum, const QString &unit)
     {
         this->value_minimum = minimum;
         this->value_maximum = maximum;
         this->unit = unit;
         hideHoverSwatch();
-
-        const QString minimum_text = formatValue(this->value_minimum);
-        const QString maximum_text = formatValue(this->value_maximum);
-        const QString unit_suffix = this->unit.isEmpty() ? QString() : QStringLiteral(" %1").arg(this->unit);
-        setToolTip(QStringLiteral("Minimum: %1%3\nMaximum: %2%3").arg(minimum_text, maximum_text, unit_suffix));
+        updateToolTip();
         update();
     }
 
@@ -260,8 +288,8 @@ protected:
         painter.setRenderHint(QPainter::Antialiasing, true);
 
         const QRectF ramp_rect = rampRect();
-        const QColor border_color = palette().color(QPalette::Mid);
-        const QColor text_color = palette().color(QPalette::Text);
+        const QColor border_color = QWidget::palette().color(QPalette::Mid);
+        const QColor text_color = QWidget::palette().color(QPalette::Text);
         const bool finite = std::isfinite(this->value_minimum) && std::isfinite(this->value_maximum);
         const bool uniform = finite && qFuzzyCompare(this->value_minimum + 1.0, this->value_maximum + 1.0);
 
@@ -269,7 +297,7 @@ protected:
 
         if (!finite)
         {
-            painter.setBrush(palette().brush(QPalette::AlternateBase));
+            painter.setBrush(QWidget::palette().brush(QPalette::AlternateBase));
             painter.drawRoundedRect(ramp_rect, 4.0, 4.0);
             painter.setPen(text_color);
             painter.drawText(rect(), Qt::AlignCenter, QStringLiteral("No finite values"));
@@ -283,8 +311,11 @@ protected:
         else
         {
             QLinearGradient gradient(ramp_rect.topLeft(), ramp_rect.topRight());
-            for (const RampStop &stop : ramp_stops)
-                gradient.setColorAt(stop.position, stop.color);
+            for (int index = 0; index < NetworkSymbologyRampColorCount; ++index)
+            {
+                const double fraction = double(index) / double(NetworkSymbologyRampColorCount - 1);
+                gradient.setColorAt(fraction, rampColor(fraction));
+            }
             painter.setBrush(gradient);
         }
 
@@ -313,6 +344,19 @@ protected:
         QWidget::mouseMoveEvent(event);
     }
 
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        if (event->button() == Qt::LeftButton && rampRect().contains(event->position()))
+        {
+            hideHoverSwatch();
+            showPaletteMenu();
+            event->accept();
+            return;
+        }
+
+        QWidget::mousePressEvent(event);
+    }
+
     void leaveEvent(QEvent *event) override
     {
         hideHoverSwatch();
@@ -332,6 +376,9 @@ private:
     QString unit;
     QWidget *hover_parent = nullptr;
     QPointer<MapSymbologyHoverSwatch> hover_swatch;
+    NetworkSymbologyPalette palette = NetworkSymbologyPalette::Viridis;
+    bool palette_flipped = false;
+    PaletteChangedCallback palette_changed_callback;
 
     QRectF rampRect() const
     {
@@ -341,22 +388,108 @@ private:
 
     QColor rampColor(double fraction) const
     {
-        const double limited_fraction = qBound(0.0, fraction, 1.0);
+        return networkSymbologyInterpolatedRampColor(
+            fraction, this->palette, this->palette_flipped);
+    }
 
-        for (std::size_t index = 1; index < ramp_stops.size(); ++index)
+    void showPaletteMenu()
+    {
+        QMenu menu(this);
+
+        const QFontMetrics menu_font_metrics(menu.font());
+        int palette_label_width = 0;
+        for (const NetworkSymbologyPalette palette_choice : palette_choices)
         {
-            const RampStop &left = ramp_stops[index - 1];
-            const RampStop &right = ramp_stops[index];
+            palette_label_width = qMax(
+                palette_label_width,
+                menu_font_metrics.horizontalAdvance(
+                    networkSymbologyPaletteName(palette_choice)));
+        }
+        palette_label_width += 8;
 
-            if (limited_fraction > right.position)
-                continue;
+        constexpr int preview_width = 124;
+        constexpr int preview_height = 26;
 
-            const double interval = right.position - left.position;
-            const double ratio = interval > 0.0 ? (limited_fraction - left.position) / interval : 0.0;
-            return interpolateColor(left.color, right.color, ratio);
+        for (const NetworkSymbologyPalette palette_choice : palette_choices)
+        {
+            QWidget *row = new QWidget(&menu);
+            QHBoxLayout *row_layout = new QHBoxLayout(row);
+            row_layout->setContentsMargins(6, 3, 6, 3);
+            row_layout->setSpacing(8);
+
+            QLabel *palette_label = new QLabel(
+                networkSymbologyPaletteName(palette_choice), row);
+            palette_label->setFixedWidth(palette_label_width);
+            palette_label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+
+            QPushButton *palette_button = new QPushButton(row);
+            palette_button->setIcon(palettePreviewIcon(palette_choice));
+            palette_button->setIconSize(QSize(112, 16));
+            palette_button->setCheckable(true);
+            palette_button->setChecked(this->palette == palette_choice);
+            palette_button->setFixedSize(preview_width, preview_height);
+            palette_button->setToolTip(
+                QStringLiteral("Use %1 colors")
+                    .arg(networkSymbologyPaletteName(palette_choice)));
+
+            QPushButton *flip_button = new QPushButton(QStringLiteral("Flip"), row);
+            flip_button->setCheckable(true);
+            flip_button->setChecked(
+                this->palette == palette_choice && this->palette_flipped);
+            flip_button->setFixedHeight(preview_height);
+            flip_button->setToolTip(QStringLiteral("Flip color direction"));
+
+            row_layout->addWidget(palette_label);
+            row_layout->addStretch(1);
+            row_layout->addWidget(palette_button);
+            row_layout->addWidget(flip_button);
+
+            QWidgetAction *row_action = new QWidgetAction(&menu);
+            row_action->setDefaultWidget(row);
+            menu.addAction(row_action);
+
+            connect(palette_button, &QPushButton::clicked, &menu,
+                    [this, palette_choice, &menu]
+            {
+                selectPalette(palette_choice, false);
+                menu.close();
+            });
+            connect(flip_button, &QPushButton::clicked, &menu,
+                    [this, palette_choice, &menu]
+            {
+                const bool flipped = this->palette == palette_choice
+                    ? !this->palette_flipped
+                    : true;
+                selectPalette(palette_choice, flipped);
+                menu.close();
+            });
         }
 
-        return ramp_stops.back().color;
+        const QPoint popup_position = mapToGlobal(
+            QPoint(0, qRound(rampRect().bottom()) + 4));
+        menu.exec(popup_position);
+    }
+
+    void selectPalette(NetworkSymbologyPalette palette, bool flipped)
+    {
+        setPaletteSelection(palette, flipped);
+        if (this->palette_changed_callback)
+            this->palette_changed_callback(palette, flipped);
+    }
+
+    void updateToolTip()
+    {
+        const QString minimum_text = formatValue(this->value_minimum);
+        const QString maximum_text = formatValue(this->value_maximum);
+        const QString unit_suffix = this->unit.isEmpty()
+            ? QString()
+            : QStringLiteral(" %1").arg(this->unit);
+        const QString palette_text = this->palette_flipped
+            ? QStringLiteral("%1 · flipped").arg(networkSymbologyPaletteName(this->palette))
+            : networkSymbologyPaletteName(this->palette);
+        setToolTip(
+            QStringLiteral("Minimum: %1%3\nMaximum: %2%3\nColors: %4\nClick to choose colors")
+                .arg(minimum_text, maximum_text, unit_suffix, palette_text));
     }
 
     void drawTicksAndLabels(QPainter &painter, const QRectF &ramp_rect, const QColor &text_color, bool uniform) const
@@ -614,6 +747,28 @@ EntityMapLegendHud::EntityMapLegendHud(HydraulicData *hydraulic_data, QWidget *p
     this->layout->addWidget(this->combo_heatmap);
     this->layout->addWidget(this->legend_heatmap);
 
+    this->legend_node->setPaletteChangedCallback(
+        [this](NetworkSymbologyPalette palette, bool flipped)
+    {
+        this->node_palette = palette;
+        this->node_palette_flipped = flipped;
+        emit signalNodePaletteSelected(palette, flipped);
+    });
+    this->legend_link->setPaletteChangedCallback(
+        [this](NetworkSymbologyPalette palette, bool flipped)
+    {
+        this->link_palette = palette;
+        this->link_palette_flipped = flipped;
+        emit signalLinkPaletteSelected(palette, flipped);
+    });
+    this->legend_heatmap->setPaletteChangedCallback(
+        [this](NetworkSymbologyPalette palette, bool flipped)
+    {
+        this->heatmap_palette = palette;
+        this->heatmap_palette_flipped = flipped;
+        emit signalHeatmapPaletteSelected(palette, flipped);
+    });
+
     connect(this->combo_node, &QComboBox::currentIndexChanged, this, [this](int index)
     {
         if (index < 0)
@@ -732,8 +887,31 @@ void EntityMapLegendHud::setHeatmapVisual(VisualHeatmap visual_heatmap)
     updateHeatmapLegend();
 }
 
+void EntityMapLegendHud::setNodePalette(NetworkSymbologyPalette palette, bool flipped)
+{
+    this->node_palette = palette;
+    this->node_palette_flipped = flipped;
+    this->legend_node->setPaletteSelection(palette, flipped);
+}
+
+void EntityMapLegendHud::setLinkPalette(NetworkSymbologyPalette palette, bool flipped)
+{
+    this->link_palette = palette;
+    this->link_palette_flipped = flipped;
+    this->legend_link->setPaletteSelection(palette, flipped);
+}
+
+void EntityMapLegendHud::setHeatmapPalette(NetworkSymbologyPalette palette, bool flipped)
+{
+    this->heatmap_palette = palette;
+    this->heatmap_palette_flipped = flipped;
+    this->legend_heatmap->setPaletteSelection(palette, flipped);
+}
+
 void EntityMapLegendHud::updateNodeLegend()
 {
+    this->legend_node->setPaletteSelection(
+        this->node_palette, this->node_palette_flipped);
     const LegendDescriptor descriptor = nodeLegendDescriptor(this->visual_node);
     const int index = this->combo_node->findData(static_cast<int>(this->visual_node));
     if (index >= 0)
@@ -752,6 +930,8 @@ void EntityMapLegendHud::updateNodeLegend()
 
 void EntityMapLegendHud::updateLinkLegend()
 {
+    this->legend_link->setPaletteSelection(
+        this->link_palette, this->link_palette_flipped);
     LegendDescriptor descriptor = linkLegendDescriptor(this->visual_link);
     NetworkSymbologyRanges ranges;
 
@@ -804,6 +984,8 @@ void EntityMapLegendHud::updateLinkLegend()
 
 void EntityMapLegendHud::updateHeatmapLegend()
 {
+    this->legend_heatmap->setPaletteSelection(
+        this->heatmap_palette, this->heatmap_palette_flipped);
     const LegendDescriptor descriptor = heatmapLegendDescriptor(this->visual_heatmap);
     const int index = this->combo_heatmap->findData(static_cast<int>(this->visual_heatmap));
     if (index >= 0)
@@ -851,6 +1033,28 @@ EntityMapLegendDock::EntityMapLegendDock(HydraulicData *hydraulic_data, QWidget 
     addGroupNode();
     addGroupLink();
     addGroupHeatmap();
+
+    this->legend_node->setPaletteChangedCallback(
+        [this](NetworkSymbologyPalette palette, bool flipped)
+    {
+        this->node_palette = palette;
+        this->node_palette_flipped = flipped;
+        emit signalNodePaletteSelected(palette, flipped);
+    });
+    this->legend_link->setPaletteChangedCallback(
+        [this](NetworkSymbologyPalette palette, bool flipped)
+    {
+        this->link_palette = palette;
+        this->link_palette_flipped = flipped;
+        emit signalLinkPaletteSelected(palette, flipped);
+    });
+    this->legend_heat->setPaletteChangedCallback(
+        [this](NetworkSymbologyPalette palette, bool flipped)
+    {
+        this->heatmap_palette = palette;
+        this->heatmap_palette_flipped = flipped;
+        emit signalHeatmapPaletteSelected(palette, flipped);
+    });
 
     this->group_node->setCollapsed(true);
     this->group_link->setCollapsed(true);
@@ -1004,6 +1208,27 @@ void EntityMapLegendDock::showMapLegendHeatmap(VisualHeatmap visual_heatmap)
     scheduleDockHeightUpdate();
 }
 
+void EntityMapLegendDock::setNodePalette(NetworkSymbologyPalette palette, bool flipped)
+{
+    this->node_palette = palette;
+    this->node_palette_flipped = flipped;
+    this->legend_node->setPaletteSelection(palette, flipped);
+}
+
+void EntityMapLegendDock::setLinkPalette(NetworkSymbologyPalette palette, bool flipped)
+{
+    this->link_palette = palette;
+    this->link_palette_flipped = flipped;
+    this->legend_link->setPaletteSelection(palette, flipped);
+}
+
+void EntityMapLegendDock::setHeatmapPalette(NetworkSymbologyPalette palette, bool flipped)
+{
+    this->heatmap_palette = palette;
+    this->heatmap_palette_flipped = flipped;
+    this->legend_heat->setPaletteSelection(palette, flipped);
+}
+
 void EntityMapLegendDock::setMapMonitorActive(bool active)
 {
     this->map_monitor_active = active;
@@ -1096,6 +1321,8 @@ void EntityMapLegendDock::updateDockHeight()
 
 void EntityMapLegendDock::updateNodeLegend()
 {
+    this->legend_node->setPaletteSelection(
+        this->node_palette, this->node_palette_flipped);
     QString metric;
     QString unit;
     NetworkSymbologySettings settings;
@@ -1164,6 +1391,8 @@ void EntityMapLegendDock::updateNodeLegend()
 
 void EntityMapLegendDock::updateLinkLegend()
 {
+    this->legend_link->setPaletteSelection(
+        this->link_palette, this->link_palette_flipped);
     QString metric;
     QString unit;
     NetworkSymbologySettings settings;
@@ -1239,6 +1468,8 @@ void EntityMapLegendDock::updateLinkLegend()
 
 void EntityMapLegendDock::updateHeatmapLegend()
 {
+    this->legend_heat->setPaletteSelection(
+        this->heatmap_palette, this->heatmap_palette_flipped);
     QString metric;
     QString unit;
     NetworkSymbologySettings settings;

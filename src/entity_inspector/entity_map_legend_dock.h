@@ -8,6 +8,7 @@
 
 #include "../widgets/group_box_collapsible.h"
 #include "../hydraulic_data.h"
+#include "../network_symbology.h"
 
 #include "../_enums_structs.h"
 #include "../_sizes.h"
@@ -25,11 +26,17 @@ public:
     void setNodeVisual(VisualNode visual_node);
     void setLinkVisual(VisualLink visual_link);
     void setHeatmapVisual(VisualHeatmap visual_heatmap);
+    void setNodePalette(NetworkSymbologyPalette palette, bool flipped);
+    void setLinkPalette(NetworkSymbologyPalette palette, bool flipped);
+    void setHeatmapPalette(NetworkSymbologyPalette palette, bool flipped);
 
 signals:
     void signalNodeVisualSelected(VisualNode visual_node);
     void signalLinkVisualSelected(VisualLink visual_link);
     void signalHeatmapVisualSelected(VisualHeatmap visual_heatmap);
+    void signalNodePaletteSelected(NetworkSymbologyPalette palette, bool flipped);
+    void signalLinkPaletteSelected(NetworkSymbologyPalette palette, bool flipped);
+    void signalHeatmapPaletteSelected(NetworkSymbologyPalette palette, bool flipped);
 
 private:
     HydraulicData *hydraulic_data = nullptr;
@@ -43,6 +50,12 @@ private:
     VisualNode visual_node = VisualNode::None;
     VisualLink visual_link = VisualLink::None;
     VisualHeatmap visual_heatmap = VisualHeatmap::None;
+    NetworkSymbologyPalette node_palette = NetworkSymbologyPalette::Viridis;
+    bool node_palette_flipped = false;
+    NetworkSymbologyPalette link_palette = NetworkSymbologyPalette::Viridis;
+    bool link_palette_flipped = false;
+    NetworkSymbologyPalette heatmap_palette = NetworkSymbologyPalette::Viridis;
+    bool heatmap_palette_flipped = false;
     bool map_monitor_active = false;
 
     void updateNodeLegend();
@@ -64,9 +77,15 @@ public slots:
     void showMapLegendLink(VisualLink visual_link);
     void showMapLegendHeatmap(VisualHeatmap visual_heatmap);
     void setMapMonitorActive(bool active);
+    void setNodePalette(NetworkSymbologyPalette palette, bool flipped);
+    void setLinkPalette(NetworkSymbologyPalette palette, bool flipped);
+    void setHeatmapPalette(NetworkSymbologyPalette palette, bool flipped);
 
 signals:
     void signalDockHeightPreferredChanged(int height);
+    void signalNodePaletteSelected(NetworkSymbologyPalette palette, bool flipped);
+    void signalLinkPaletteSelected(NetworkSymbologyPalette palette, bool flipped);
+    void signalHeatmapPaletteSelected(NetworkSymbologyPalette palette, bool flipped);
 
 private:
     HydraulicData *hydraulic_data = nullptr;
@@ -76,6 +95,12 @@ private:
     VisualNode visual_node = VisualNode::None;
     VisualLink visual_link = VisualLink::None;
     VisualHeatmap visual_heatmap = VisualHeatmap::None;
+    NetworkSymbologyPalette node_palette = NetworkSymbologyPalette::Viridis;
+    bool node_palette_flipped = false;
+    NetworkSymbologyPalette link_palette = NetworkSymbologyPalette::Viridis;
+    bool link_palette_flipped = false;
+    NetworkSymbologyPalette heatmap_palette = NetworkSymbologyPalette::Viridis;
+    bool heatmap_palette_flipped = false;
     bool map_monitor_active = false;
 
     GroupBoxCollapsible *group_node = nullptr;

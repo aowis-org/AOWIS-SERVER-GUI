@@ -260,7 +260,9 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
         || link_colors_changed || node_colors_changed;
     const bool heatmap_changed =
         this->symbology.visual_heatmap != symbology.visual_heatmap
-        || this->symbology.heatmap_fractions != symbology.heatmap_fractions;
+        || this->symbology.heatmap_fractions != symbology.heatmap_fractions
+        || this->symbology.heatmap_palette != symbology.heatmap_palette
+        || this->symbology.heatmap_palette_flipped != symbology.heatmap_palette_flipped;
     const bool flow_direction_changed =
         this->symbology.show_flow_direction != symbology.show_flow_direction
         || this->symbology.flow_direction_size_px != symbology.flow_direction_size_px
@@ -700,7 +702,10 @@ void MapRhiScene::appendHeatmap(const HeatmapMarker &marker)
     if (fraction_iterator == this->symbology.heatmap_fractions.cend())
         return;
 
-    const QColor color = networkSymbologyInterpolatedRampColor(fraction_iterator.value());
+    const QColor color = networkSymbologyInterpolatedRampColor(
+        fraction_iterator.value(),
+        this->symbology.heatmap_palette,
+        this->symbology.heatmap_palette_flipped);
     const float corners[6][2] = {
         {-1.0f, -1.0f},
         {1.0f, -1.0f},

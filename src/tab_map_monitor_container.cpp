@@ -498,6 +498,21 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             showMapLegendHeatmap(visual_heatmap);
             applySymbology();
         });
+        connect(this->desktop_legend_hud, &EntityMapLegendHud::signalNodePaletteSelected,
+                this, &MapMonitorContainer::setNodePalette);
+        connect(this->desktop_legend_hud, &EntityMapLegendHud::signalLinkPaletteSelected,
+                this, &MapMonitorContainer::setLinkPalette);
+        connect(this->desktop_legend_hud, &EntityMapLegendHud::signalHeatmapPaletteSelected,
+                this, &MapMonitorContainer::setHeatmapPalette);
+        this->desktop_legend_hud->setNodePalette(
+            this->symbology_settings.node_palette,
+            this->symbology_settings.node_palette_flipped);
+        this->desktop_legend_hud->setLinkPalette(
+            this->symbology_settings.link_palette,
+            this->symbology_settings.link_palette_flipped);
+        this->desktop_legend_hud->setHeatmapPalette(
+            this->symbology_settings.heatmap_palette,
+            this->symbology_settings.heatmap_palette_flipped);
         rhi_surface->setTileRepository(this->tile_repository);
         rhi_surface->setTerrainRepository(this->terrain_repository);
         rhi_surface->setBackgroundOpacity(this->network_background_opacity);
@@ -940,6 +955,66 @@ MapMonitorContainer::~MapMonitorContainer()
 #ifdef Q_OS_WASM
     this->map->setBrowserMapLayerGeometry(QRect(), false);
 #endif
+}
+
+void MapMonitorContainer::setNodePalette(NetworkSymbologyPalette palette, bool flipped)
+{
+    const bool changed =
+        this->symbology_settings.node_palette != palette
+        || this->symbology_settings.node_palette_flipped != flipped;
+    this->symbology_settings.node_palette = palette;
+    this->symbology_settings.node_palette_flipped = flipped;
+
+#if AOWIS_HAS_QRHI
+    if (this->desktop_legend_hud != nullptr)
+        this->desktop_legend_hud->setNodePalette(palette, flipped);
+#endif
+
+    if (!changed)
+        return;
+
+    emit signalNodePaletteChanged(palette, flipped);
+    applySymbology();
+}
+
+void MapMonitorContainer::setLinkPalette(NetworkSymbologyPalette palette, bool flipped)
+{
+    const bool changed =
+        this->symbology_settings.link_palette != palette
+        || this->symbology_settings.link_palette_flipped != flipped;
+    this->symbology_settings.link_palette = palette;
+    this->symbology_settings.link_palette_flipped = flipped;
+
+#if AOWIS_HAS_QRHI
+    if (this->desktop_legend_hud != nullptr)
+        this->desktop_legend_hud->setLinkPalette(palette, flipped);
+#endif
+
+    if (!changed)
+        return;
+
+    emit signalLinkPaletteChanged(palette, flipped);
+    applySymbology();
+}
+
+void MapMonitorContainer::setHeatmapPalette(NetworkSymbologyPalette palette, bool flipped)
+{
+    const bool changed =
+        this->symbology_settings.heatmap_palette != palette
+        || this->symbology_settings.heatmap_palette_flipped != flipped;
+    this->symbology_settings.heatmap_palette = palette;
+    this->symbology_settings.heatmap_palette_flipped = flipped;
+
+#if AOWIS_HAS_QRHI
+    if (this->desktop_legend_hud != nullptr)
+        this->desktop_legend_hud->setHeatmapPalette(palette, flipped);
+#endif
+
+    if (!changed)
+        return;
+
+    emit signalHeatmapPaletteChanged(palette, flipped);
+    applySymbology();
 }
 
 void MapMonitorContainer::showMapLegendNode(VisualNode visual_node)

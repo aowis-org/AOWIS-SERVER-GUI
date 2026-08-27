@@ -117,8 +117,14 @@ private:
     {
         quint64 revision = 0;
         VisualNode visual_node = VisualNode::None;
+        NetworkSymbologyPalette node_palette = NetworkSymbologyPalette::Viridis;
+        bool node_palette_flipped = false;
         VisualLink visual_link = VisualLink::None;
+        NetworkSymbologyPalette link_palette = NetworkSymbologyPalette::Viridis;
+        bool link_palette_flipped = false;
         VisualHeatmap visual_heatmap = VisualHeatmap::None;
+        NetworkSymbologyPalette heatmap_palette = NetworkSymbologyPalette::Viridis;
+        bool heatmap_palette_flipped = false;
         int node_size_percent = 100;
         int icon_size_percent = 100;
         qreal link_width = 3.0;

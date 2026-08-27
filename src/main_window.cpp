@@ -130,6 +130,18 @@ MainWindow::MainWindow(QWidget *parent)
 
         this->dock_entity_map_legend->showMapLegendHeatmap(visual_heatmap);
     });
+    connect(this->dock_entity_map_legend, &EntityMapLegendDock::signalNodePaletteSelected,
+            this->map_monitor, &MapMonitorContainer::setNodePalette);
+    connect(this->dock_entity_map_legend, &EntityMapLegendDock::signalLinkPaletteSelected,
+            this->map_monitor, &MapMonitorContainer::setLinkPalette);
+    connect(this->dock_entity_map_legend, &EntityMapLegendDock::signalHeatmapPaletteSelected,
+            this->map_monitor, &MapMonitorContainer::setHeatmapPalette);
+    connect(this->map_monitor, &MapMonitorContainer::signalNodePaletteChanged,
+            this->dock_entity_map_legend, &EntityMapLegendDock::setNodePalette);
+    connect(this->map_monitor, &MapMonitorContainer::signalLinkPaletteChanged,
+            this->dock_entity_map_legend, &EntityMapLegendDock::setLinkPalette);
+    connect(this->map_monitor, &MapMonitorContainer::signalHeatmapPaletteChanged,
+            this->dock_entity_map_legend, &EntityMapLegendDock::setHeatmapPalette);
     connect(this->map_editor, &MapEditorContainer::signalMapEditorGuideVisibilityChanged, this, [this](bool visible)
     {
         if (visible && this->right_dock_area_hidden)
