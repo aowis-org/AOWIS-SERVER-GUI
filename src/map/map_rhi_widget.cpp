@@ -1266,7 +1266,13 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     if (this->basemap_renderer)
         this->basemap_renderer->draw(command_buffer);
 
-    if (this->map_model->viewMode() != MapViewMode::ThreeD
+    const bool is_2d_view = this->map_model->viewMode() != MapViewMode::ThreeD;
+
+    QRhiGraphicsPipeline *node_render_pipeline = is_2d_view
+        ? this->node_overlay_pipeline.get()
+        : this->node_pipeline.get();
+
+    if (is_2d_view
         && !this->heatmap_render_vertices.isEmpty()
         && this->applied_symbology.heatmap_opacity > 0)
     {
@@ -1300,10 +1306,32 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         command_buffer->draw(quint32(flow_direction_vertices.size()));
     }
 
+    const QVector<MapRhiScene::LinkVertex> &selected_link_vertices =
+        this->scene.selectedLinkVertices();
+    if (is_2d_view && !selected_link_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->selected_link_pipeline.get());
+        command_buffer->setShaderResources();
+        const QRhiCommandBuffer::VertexInput binding(this->selected_link_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &binding);
+        command_buffer->draw(quint32(selected_link_vertices.size()));
+    }
+
+    const QVector<MapRhiScene::LinkVertex> &diagnostic_link_vertices =
+        this->scene.diagnosticLinkVertices();
+    if (is_2d_view && !diagnostic_link_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->link_pipeline.get());
+        command_buffer->setShaderResources();
+        const QRhiCommandBuffer::VertexInput binding(this->diagnostic_link_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &binding);
+        command_buffer->draw(quint32(diagnostic_link_vertices.size()));
+    }
+
     const QVector<MapRhiScene::NodeVertex> &node_vertices = this->scene.nodeVertices();
     if (!node_vertices.isEmpty())
     {
-        command_buffer->setGraphicsPipeline(this->node_pipeline.get());
+        command_buffer->setGraphicsPipeline(node_render_pipeline);
         command_buffer->setShaderResources();
         const QRhiCommandBuffer::VertexInput node_binding(this->node_vertex_buffer.get(), 0);
         command_buffer->setVertexInput(0, 1, &node_binding);
@@ -1346,9 +1374,7 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         command_buffer->draw(quint32(this->tank_model_vertices.size()));
     }
 
-    const QVector<MapRhiScene::LinkVertex> &selected_link_vertices =
-        this->scene.selectedLinkVertices();
-    if (!selected_link_vertices.isEmpty())
+    if (!is_2d_view && !selected_link_vertices.isEmpty())
     {
         command_buffer->setGraphicsPipeline(this->selected_link_pipeline.get());
         command_buffer->setShaderResources();
@@ -1361,16 +1387,14 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         this->scene.selectedNodeVertices();
     if (!selected_node_vertices.isEmpty())
     {
-        command_buffer->setGraphicsPipeline(this->node_pipeline.get());
+        command_buffer->setGraphicsPipeline(node_render_pipeline);
         command_buffer->setShaderResources();
         const QRhiCommandBuffer::VertexInput binding(this->selected_node_vertex_buffer.get(), 0);
         command_buffer->setVertexInput(0, 1, &binding);
         command_buffer->draw(quint32(selected_node_vertices.size()));
     }
 
-    const QVector<MapRhiScene::LinkVertex> &diagnostic_link_vertices =
-        this->scene.diagnosticLinkVertices();
-    if (!diagnostic_link_vertices.isEmpty())
+    if (!is_2d_view && !diagnostic_link_vertices.isEmpty())
     {
         command_buffer->setGraphicsPipeline(this->link_pipeline.get());
         command_buffer->setShaderResources();
@@ -1383,7 +1407,7 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         this->scene.diagnosticNodeVertices();
     if (!diagnostic_node_vertices.isEmpty())
     {
-        command_buffer->setGraphicsPipeline(this->node_pipeline.get());
+        command_buffer->setGraphicsPipeline(node_render_pipeline);
         command_buffer->setShaderResources();
         const QRhiCommandBuffer::VertexInput binding(this->diagnostic_node_vertex_buffer.get(), 0);
         command_buffer->setVertexInput(0, 1, &binding);
@@ -1733,6 +1757,56 @@ bool MapRhiWidget::createPipelines()
         if (!this->node_pipeline->create())
         {
             reportFailure(QStringLiteral("Failed to create RHI node graphics pipeline"));
+            return false;
+        }
+    }
+
+    if (!this->node_overlay_pipeline)
+    {
+        const QShader vertex_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_node.vert.qsb"));
+        const QShader fragment_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_node.frag.qsb"));
+        if (!vertex_shader.isValid() || !fragment_shader.isValid())
+        {
+            reportFailure(QStringLiteral("Failed to load RHI 2D node overlay shaders"));
+            return false;
+        }
+
+        QRhiVertexInputLayout input_layout;
+        input_layout.setBindings({
+            {quint32(sizeof(MapRhiScene::NodeVertex))}
+        });
+        input_layout.setAttributes({
+            {0, 0, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiScene::NodeVertex, center_x))},
+            {0, 1, QRhiVertexInputAttribute::Float2,
+             quint32(offsetof(MapRhiScene::NodeVertex, corner_x))},
+            {0, 2, QRhiVertexInputAttribute::Float4,
+             quint32(offsetof(MapRhiScene::NodeVertex, red))},
+            {0, 3, QRhiVertexInputAttribute::Float,
+             quint32(offsetof(MapRhiScene::NodeVertex, size_adjust_px))}
+        });
+
+        this->node_overlay_pipeline.reset(this->active_rhi->newGraphicsPipeline());
+        this->node_overlay_pipeline->setShaderStages({
+            {QRhiShaderStage::Vertex, vertex_shader},
+            {QRhiShaderStage::Fragment, fragment_shader}
+        });
+        this->node_overlay_pipeline->setVertexInputLayout(input_layout);
+        this->node_overlay_pipeline->setShaderResourceBindings(
+            this->shader_resource_bindings.get());
+        this->node_overlay_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
+        this->node_overlay_pipeline->setSampleCount(sampleCount());
+        this->node_overlay_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+        this->node_overlay_pipeline->setDepthTest(false);
+        this->node_overlay_pipeline->setDepthWrite(false);
+        QRhiGraphicsPipeline::TargetBlend node_overlay_blend;
+        node_overlay_blend.enable = true;
+        this->node_overlay_pipeline->setTargetBlends({node_overlay_blend});
+        if (!this->node_overlay_pipeline->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI 2D node overlay pipeline"));
             return false;
         }
     }
@@ -2167,6 +2241,7 @@ void MapRhiWidget::resetGpuResources()
     this->tank_pipeline.reset();
     this->heatmap_pipeline.reset();
     this->icon_pipeline.reset();
+    this->node_overlay_pipeline.reset();
     this->node_pipeline.reset();
     this->selected_link_pipeline.reset();
     this->link_pipeline.reset();

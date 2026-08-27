@@ -133,6 +133,7 @@ private:
     std::unique_ptr<QRhiGraphicsPipeline> link_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> selected_link_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> node_pipeline;
+    std::unique_ptr<QRhiGraphicsPipeline> node_overlay_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> icon_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> heatmap_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> tank_pipeline;
