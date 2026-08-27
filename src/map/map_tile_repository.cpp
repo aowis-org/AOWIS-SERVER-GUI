@@ -470,6 +470,18 @@ void MapTileRepository::finishTileDeletion(quint64 request_id, const QString &er
     emit signalTileRetryReady(deletion.key_prefix);
 }
 
+void MapTileRepository::requestUpstreamActivity()
+{
+    if (this->interface_map != nullptr)
+        this->interface_map->requestMapTileUpstreamActivity();
+}
+
+void MapTileRepository::cancelUpstreamDownloads()
+{
+    if (this->interface_map != nullptr)
+        this->interface_map->cancelMapTileUpstreamDownloads();
+}
+
 void MapTileRepository::setMapServerMode(MapServerMode mode)
 {
     if (this->map_server_mode == mode)
@@ -519,6 +531,10 @@ void MapTileRepository::initServerMapInterface()
             this, &MapTileRepository::tileDataReceived);
     connect(this->interface_map, &InterfaceServerMap::signalTileFailed,
             this, &MapTileRepository::tileFailed);
+    connect(this->interface_map, &InterfaceServerMap::signalMapTileUpstreamActivity,
+            this, &MapTileRepository::signalUpstreamActivityChanged);
+    connect(this->interface_map, &InterfaceServerMap::signalUpstreamControlError,
+            this, &MapTileRepository::signalUpstreamControlError);
     connect(this->interface_map, &InterfaceServerMap::signalTilesDeleted,
             this, [this](quint64 request_id)
     {

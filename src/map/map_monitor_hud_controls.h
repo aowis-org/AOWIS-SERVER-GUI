@@ -8,7 +8,42 @@ class MapModel;
 class QComboBox;
 class QLabel;
 class QPaintEvent;
+class QProgressBar;
+class QPushButton;
+class QTimer;
+class MapTileRepository;
+class MapTerrainRepository;
 class QSlider;
+
+
+class MapMonitorDownloadActivityHudWidget final : public QWidget
+{
+    Q_OBJECT
+
+public:
+    explicit MapMonitorDownloadActivityHudWidget(
+        MapTileRepository *tile_repository, MapTerrainRepository *terrain_repository,
+        QWidget *parent = nullptr);
+    void setHudActive(bool active);
+
+private:
+    void setMapTileActivity(int active, int queued);
+    void setTerrainActivity(int active, int queued);
+    void updatePanel(QFrame *panel, QLabel *label, QPushButton *cancel_button,
+                     const QString &name, int active, int queued);
+    void refreshActivity();
+
+    MapTileRepository *tile_repository = nullptr;
+    MapTerrainRepository *terrain_repository = nullptr;
+    QFrame *map_tiles_panel = nullptr;
+    QLabel *map_tiles_label = nullptr;
+    QPushButton *map_tiles_cancel = nullptr;
+    QFrame *terrain_panel = nullptr;
+    QLabel *terrain_label = nullptr;
+    QPushButton *terrain_cancel = nullptr;
+    QTimer *poll_timer = nullptr;
+    bool hud_active = false;
+};
 
 class MapMonitorViewModeHudWidget final : public QFrame
 {

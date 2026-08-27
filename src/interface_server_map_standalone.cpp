@@ -491,3 +491,48 @@ void InterfaceServerMapStandalone::finishTileDeletion(quint64 request_id, int de
 }
 #endif
 
+
+void InterfaceServerMapStandalone::requestMapTileUpstreamActivity()
+{
+    MapUpstreamActivity activity;
+    if (this->map_tiles != nullptr)
+    {
+        const MapTiles::UpstreamActivity source = this->map_tiles->upstreamActivity();
+        activity.active = source.active;
+        activity.queued = source.queued;
+    }
+    emit signalMapTileUpstreamActivity(activity);
+}
+
+void InterfaceServerMapStandalone::requestTerrainUpstreamActivity()
+{
+    MapUpstreamActivity activity;
+    if (this->terrain_data != nullptr)
+    {
+        const Aowis::Map::TerrainUpstreamActivity source = this->terrain_data->upstreamActivity();
+        activity.active = source.active;
+        activity.queued = source.queued;
+    }
+    emit signalTerrainUpstreamActivity(activity);
+}
+
+void InterfaceServerMapStandalone::cancelMapTileUpstreamDownloads()
+{
+    if (this->map_tiles == nullptr)
+        return;
+#ifdef Q_OS_WIN
+    MapTiles *map_tiles = this->map_tiles;
+    QMetaObject::invokeMethod(map_tiles, [map_tiles]
+    {
+        map_tiles->cancelUpstreamDownloads();
+    }, Qt::QueuedConnection);
+#else
+    this->map_tiles->cancelUpstreamDownloads();
+#endif
+}
+
+void InterfaceServerMapStandalone::cancelTerrainUpstreamDownloads()
+{
+    if (this->terrain_data != nullptr)
+        this->terrain_data->cancelUpstreamDownloads();
+}

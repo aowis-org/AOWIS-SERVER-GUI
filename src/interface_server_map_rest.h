@@ -18,6 +18,10 @@ public:
     void requestTerrainElevation(const QString &endpoint) override;
     void deleteTiles(quint64 request_id, const QString &provider, int zoom,
                      int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max) override;
+    void requestMapTileUpstreamActivity() override;
+    void requestTerrainUpstreamActivity() override;
+    void cancelMapTileUpstreamDownloads() override;
+    void cancelTerrainUpstreamDownloads() override;
 
 private:
     void initRestConnection();
@@ -26,6 +30,8 @@ private:
     QSet<QString> rest_pending;
     QSet<QString> terrain_pending;
     bool terrain_elevation_pending = false;
+    bool map_upstream_activity_pending = false;
+    bool terrain_upstream_activity_pending = false;
 };
 
 #endif // INTERFACE_SERVER_MAP_REST_H

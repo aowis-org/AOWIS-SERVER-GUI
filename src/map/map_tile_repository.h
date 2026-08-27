@@ -33,11 +33,15 @@ public:
     void deleteTiles(const QString &provider, int zoom,
                      int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max);
     void setMapServerMode(MapServerMode mode);
+    void requestUpstreamActivity();
+    void cancelUpstreamDownloads();
 
 signals:
     void signalTileAvailable(const QString &key);
     void signalTileRetryReady(const QString &key);
     void signalTilesDeleted();
+    void signalUpstreamActivityChanged(const MapUpstreamActivity &activity);
+    void signalUpstreamControlError(const QString &error);
 
 private:
     struct TileFailure

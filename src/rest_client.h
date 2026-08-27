@@ -25,6 +25,8 @@ public:
     void getTile(const QString &endpoint, const QString &key);
     void getTerrainTile(const QString &endpoint, const QString &key);
     void post(const QString &endpoint, const QJsonObject &payload);
+    void getControl(const QString &endpoint, const QString &request_key);
+    void deleteControl(const QString &endpoint, const QString &request_key);
     void deleteResource(const QString &endpoint, quint64 request_id);
 
 signals:
@@ -32,10 +34,12 @@ signals:
     void requestFinishedTile(const QByteArray &data, const QString &key);
     void requestFinishedTerrainTile(const QByteArray &data, const QString &key);
     void requestFinishedDelete(quint64 request_id);
+    void requestFinishedControl(const QString &request_key, const QByteArray &data);
     void requestError(const QString &error);
     void requestTileError(const QString &key, const QString &error);
     void requestTerrainTileError(const QString &key, const QString &error);
     void requestDeleteError(quint64 request_id, const QString &error);
+    void requestControlError(const QString &request_key, const QString &error);
 
 private:
     QNetworkRequest createRequest(const QString &endpoint, const QByteArray &key) const;

@@ -102,6 +102,18 @@ void MapTerrainRepository::requestTile(const QString &dataset, int zoom, quint32
     this->interface_map->requestTerrainTile(endpoint, key);
 }
 
+void MapTerrainRepository::requestUpstreamActivity()
+{
+    if (this->interface_map != nullptr)
+        this->interface_map->requestTerrainUpstreamActivity();
+}
+
+void MapTerrainRepository::cancelUpstreamDownloads()
+{
+    if (this->interface_map != nullptr)
+        this->interface_map->cancelTerrainUpstreamDownloads();
+}
+
 void MapTerrainRepository::setMapServerMode(MapServerMode mode)
 {
     if (this->map_server_mode == mode)
@@ -143,6 +155,10 @@ void MapTerrainRepository::initServerMapInterface()
             this, &MapTerrainRepository::terrainDataReceived);
     connect(this->interface_map, &InterfaceServerMap::signalTerrainTileFailed,
             this, &MapTerrainRepository::terrainFailed);
+    connect(this->interface_map, &InterfaceServerMap::signalTerrainUpstreamActivity,
+            this, &MapTerrainRepository::signalUpstreamActivityChanged);
+    connect(this->interface_map, &InterfaceServerMap::signalUpstreamControlError,
+            this, &MapTerrainRepository::signalUpstreamControlError);
 }
 
 void MapTerrainRepository::terrainDataReceived(const QString &key, const QByteArray &data)

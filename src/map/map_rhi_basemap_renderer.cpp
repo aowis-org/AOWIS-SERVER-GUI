@@ -527,6 +527,8 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     const int terrain_zoom_delta = relief_enabled
         ? imagery_zoom - terrain_zoom
         : 0;
+    const QString imagery_key_prefix =
+        this->map_model->tileCachePrefix(imagery_zoom);
 
     // The retained tile window is deliberately larger than the foreground.
     // While the foreground still fits, do not create a new request batch or
@@ -541,7 +543,8 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     if (!this->layout_dirty && layout_origin_matches
         && currentLayoutCoversForeground(
             imagery_zoom, foreground_start_x, foreground_start_y,
-            foreground_tiles_x, foreground_tiles_y, tile_count))
+            foreground_tiles_x, foreground_tiles_y, tile_count,
+            imagery_key_prefix))
     {
         if (relief_enabled && this->terrain_repository != nullptr)
         {
@@ -570,7 +573,7 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     }
 
     const QString request_layout_key = QStringLiteral("%1|%2|%3|%4|%5")
-        .arg(this->map_model->tileCachePrefix(imagery_zoom))
+        .arg(imagery_key_prefix)
         .arg(start_x)
         .arg(start_y)
         .arg(tiles_x)
@@ -631,42 +634,70 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
         }
     }
 
-    // Retain old coverage while replacement data arrives, but make zoom LOD
-    // handoffs progressive per parent/child group instead of waiting for the
-    // entire foreground. On zoom-in a parent is replaced only when all four
-    // direct children are ready. On zoom-out each ready parent immediately
-    // replaces its corresponding old children. Panning at one fixed LOD keeps
-    // the existing all-foreground-ready barrier.
+    // Retain old coverage while replacement data arrives. Provider changes are
+    // deliberately progressive per XYZ position: a newly selected provider tile
+    // replaces the old provider tile immediately when it becomes ready. This is
+    // different from same-provider panning, where keeping the retained foreground
+    // together avoids visible holes.
     //
-    // Mixed-LOD geometry is safe because every tile is expressed in the common
-    // ReferenceZoom world coordinate system.
+    // Zoom LOD handoffs remain progressive per parent/child group. On zoom-in a
+    // parent is replaced only when all four direct children are ready. On zoom-out
+    // each ready parent immediately replaces its corresponding old children.
+    //
+    // Mixed-source and mixed-LOD geometry is safe because every tile is expressed
+    // in the common ReferenceZoom world coordinate system.
     const bool retained_layer_transition = !this->visible_tiles.isEmpty()
         && layout_origin_matches;
     if (retained_layer_transition)
     {
-        bool foreground_ready = true;
-        for (const VisibleTile &tile : next_tiles)
+        bool same_lod = true;
+        bool provider_transition = false;
+        for (const VisibleTile &tile : this->visible_tiles)
         {
-            if (!tile.foreground)
-                continue;
-            if (!tileReadyForZoomHandoff(tile, relief_enabled))
+            if (tile.imagery_zoom != imagery_zoom)
             {
-                foreground_ready = false;
+                same_lod = false;
                 break;
             }
+            if (!tile.imagery_key.startsWith(imagery_key_prefix))
+                provider_transition = true;
         }
 
-        if (!foreground_ready)
+        if (same_lod && provider_transition)
         {
-            const QVector<VisibleTile> progressive_tiles = progressiveZoomLayout(
-                next_tiles, imagery_zoom, relief_enabled);
+            const QVector<VisibleTile> progressive_tiles = progressiveProviderLayout(
+                next_tiles, imagery_zoom, imagery_key_prefix, relief_enabled);
             if (progressive_tiles.isEmpty())
-            {
-                // Same-LOD pan/recenter, unsupported multi-level zoom jump, or
-                // no replaceable zoom group yet: keep drawing the retained layer.
                 return true;
-            }
             next_tiles = progressive_tiles;
+        }
+        else
+        {
+            bool foreground_ready = true;
+            for (const VisibleTile &tile : next_tiles)
+            {
+                if (!tile.foreground)
+                    continue;
+                if (!tileReadyForZoomHandoff(tile, relief_enabled))
+                {
+                    foreground_ready = false;
+                    break;
+                }
+            }
+
+            if (!foreground_ready)
+            {
+                const QVector<VisibleTile> progressive_tiles = progressiveZoomLayout(
+                    next_tiles, imagery_zoom, relief_enabled);
+                if (progressive_tiles.isEmpty())
+                {
+                    // Same-provider, same-LOD pan/recenter, unsupported multi-level
+                    // zoom jump, or no replaceable zoom group yet: keep drawing
+                    // the retained layer.
+                    return true;
+                }
+                next_tiles = progressive_tiles;
+            }
         }
     }
 
@@ -745,6 +776,69 @@ bool MapRhiBasemapRenderer::tileReadyForZoomHandoff(
     }
 
     return true;
+}
+
+QVector<MapRhiBasemapRenderer::VisibleTile>
+MapRhiBasemapRenderer::progressiveProviderLayout(
+    const QVector<VisibleTile> &target_tiles, int target_zoom,
+    const QString &imagery_key_prefix, bool relief_enabled) const
+{
+    QVector<VisibleTile> result;
+    if (target_tiles.isEmpty() || this->visible_tiles.isEmpty())
+        return result;
+
+    QHash<quint64, qsizetype> current_by_position;
+    current_by_position.reserve(this->visible_tiles.size());
+    for (qsizetype index = 0; index < this->visible_tiles.size(); ++index)
+    {
+        const VisibleTile &tile = this->visible_tiles.at(index);
+        if (tile.imagery_zoom != target_zoom)
+            return QVector<VisibleTile>();
+        current_by_position.insert(
+            tilePositionKey(tile.virtual_x, tile.y), index);
+    }
+
+    result.reserve(target_tiles.size());
+    bool changed = false;
+    for (const VisibleTile &target : target_tiles)
+    {
+        const quint64 position_key = tilePositionKey(target.virtual_x, target.y);
+        const QHash<quint64, qsizetype>::const_iterator current_iterator =
+            current_by_position.constFind(position_key);
+
+        if (tileReadyForZoomHandoff(target, relief_enabled))
+        {
+            result.append(target);
+            if (current_iterator == current_by_position.cend()
+                || this->visible_tiles.at(current_iterator.value()).imagery_key
+                    != target.imagery_key)
+            {
+                changed = true;
+            }
+            continue;
+        }
+
+        if (current_iterator == current_by_position.cend())
+            continue;
+
+        VisibleTile retained = this->visible_tiles.at(current_iterator.value());
+        retained.foreground = target.foreground;
+
+        // Once a position already uses the new source, keep that exact target
+        // entry. In normal operation it is also ready; this branch mainly keeps
+        // terrain readiness changes from ever reverting a provider handoff.
+        if (retained.imagery_key.startsWith(imagery_key_prefix))
+        {
+            result.append(target);
+            continue;
+        }
+
+        result.append(retained);
+    }
+
+    if (!changed)
+        result.clear();
+    return result;
 }
 
 QVector<MapRhiBasemapRenderer::VisibleTile> MapRhiBasemapRenderer::progressiveZoomLayout(
@@ -958,7 +1052,8 @@ QVector<MapRhiBasemapRenderer::VisibleTile> MapRhiBasemapRenderer::progressiveZo
 
 bool MapRhiBasemapRenderer::currentLayoutCoversForeground(
     int imagery_zoom, int foreground_start_x, int foreground_start_y,
-    int foreground_tiles_x, int foreground_tiles_y, int tile_count) const
+    int foreground_tiles_x, int foreground_tiles_y, int tile_count,
+    const QString &imagery_key_prefix) const
 {
     if (this->visible_tiles.isEmpty())
         return false;
@@ -967,8 +1062,11 @@ bool MapRhiBasemapRenderer::currentLayoutCoversForeground(
     target_zoom_positions.reserve(this->visible_tiles.size());
     for (const VisibleTile &tile : this->visible_tiles)
     {
-        if (tile.imagery_zoom != imagery_zoom)
+        if (tile.imagery_zoom != imagery_zoom
+            || !tile.imagery_key.startsWith(imagery_key_prefix))
+        {
             return false;
+        }
         target_zoom_positions.insert(tilePositionKey(tile.virtual_x, tile.y));
     }
 

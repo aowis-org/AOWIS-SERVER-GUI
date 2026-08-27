@@ -347,6 +347,9 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             new MapRhiWidget(this->map_model, QStringLiteral("monitor"), this->map_stack);
         MapRhiHudWidget *rhi_hud =
             new MapRhiHudWidget(this->map_model, this->gps, this->map_stack);
+        MapMonitorDownloadActivityHudWidget *download_activity_hud =
+            new MapMonitorDownloadActivityHudWidget(
+                this->tile_repository, this->terrain_repository, this->map_stack);
         MapMonitorViewModeHudWidget *view_mode_hud =
             new MapMonitorViewModeHudWidget(this->map_model, this->map_stack);
         MapMonitorCompassHudWidget *compass_hud =
@@ -361,6 +364,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             new MapMonitorCameraDistanceHudWidget(this->map_model, this->map_stack);
         this->desktop_rhi_surface = rhi_surface;
         this->desktop_rhi_hud = rhi_hud;
+        this->desktop_download_activity_hud = download_activity_hud;
         this->desktop_view_mode_hud = view_mode_hud;
         this->desktop_compass_hud = compass_hud;
         this->desktop_scale_hud = scale_hud;
@@ -368,6 +372,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         this->desktop_tilt_hud = tilt_hud;
         this->desktop_network_ground_offset_hud = network_ground_offset_hud;
         this->desktop_rhi_hud->hide();
+        this->desktop_download_activity_hud->setHudActive(false);
         this->desktop_view_mode_hud->hide();
         this->desktop_compass_hud->hide();
         this->desktop_scale_hud->hide();
@@ -495,7 +500,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             rhi_surface->setSelectedEntity(InfrastructureEntity::Valve, valve.uuid);
         });
         connect(rhi_surface, &MapRhiWidget::signalRendererReady, this,
-                [this, rhi_surface, rhi_hud, view_mode_hud]
+                [this, rhi_surface, rhi_hud, download_activity_hud, view_mode_hud]
         {
             this->map_stack_layout->addWidget(rhi_surface);
             this->map_stack_layout->setCurrentWidget(rhi_surface);
@@ -507,6 +512,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             // stacked layout. This leaves the map surface itself free to receive
             // mouse input everywhere outside the compact interactive controls.
             rhi_hud->show();
+            download_activity_hud->setHudActive(true);
             view_mode_hud->show();
             positionDesktopHudWidgets();
             syncDesktopCameraHudVisibility();
@@ -532,6 +538,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             this->map_stack_layout->setCurrentWidget(this->desktop_network_overlay);
             if (this->desktop_rhi_hud != nullptr)
                 this->desktop_rhi_hud->hide();
+            if (this->desktop_download_activity_hud != nullptr)
+                this->desktop_download_activity_hud->setHudActive(false);
             if (this->desktop_view_mode_hud != nullptr)
                 this->desktop_view_mode_hud->hide();
             if (this->desktop_compass_hud != nullptr)
@@ -760,6 +768,17 @@ void MapMonitorContainer::positionDesktopHudWidgets()
         this->desktop_rhi_hud->setGeometry(this->map_stack->rect());
         if (this->desktop_rhi_hud->isVisible())
             this->desktop_rhi_hud->raise();
+    }
+
+    if (this->desktop_download_activity_hud != nullptr)
+    {
+        this->desktop_download_activity_hud->adjustSize();
+        const int download_x = qMax(
+            hud_margin_px,
+            (this->map_stack->width() - this->desktop_download_activity_hud->width()) / 2);
+        this->desktop_download_activity_hud->move(download_x, hud_margin_px);
+        if (this->desktop_download_activity_hud->isVisible())
+            this->desktop_download_activity_hud->raise();
     }
 
     if (this->desktop_view_mode_hud != nullptr)

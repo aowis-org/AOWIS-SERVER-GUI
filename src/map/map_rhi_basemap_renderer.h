@@ -114,8 +114,12 @@ private:
     bool updateDirtyTerrainTiles(QRhiResourceUpdateBatch *resource_updates);
     bool currentLayoutCoversForeground(int imagery_zoom, int foreground_start_x,
                                        int foreground_start_y, int foreground_tiles_x,
-                                       int foreground_tiles_y, int tile_count) const;
+                                       int foreground_tiles_y, int tile_count,
+                                       const QString &imagery_key_prefix) const;
     bool tileReadyForZoomHandoff(const VisibleTile &tile, bool relief_enabled) const;
+    QVector<VisibleTile> progressiveProviderLayout(
+        const QVector<VisibleTile> &target_tiles, int target_zoom,
+        const QString &imagery_key_prefix, bool relief_enabled) const;
     QVector<VisibleTile> progressiveZoomLayout(
         const QVector<VisibleTile> &target_tiles, int target_zoom,
         bool relief_enabled) const;

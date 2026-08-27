@@ -192,6 +192,49 @@ void RESTClient::post(const QString &endpoint, const QJsonObject &payload)
     });
 }
 
+
+void RESTClient::getControl(const QString &endpoint, const QString &request_key)
+{
+    QNetworkRequest request = createRequest(endpoint, this->api_key);
+    request.setRawHeader("Accept", "application/json, text/plain");
+    QNetworkReply *reply = this->network_manager.get(request);
+    monitorReply(reply);
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, request_key]
+    {
+        if (reply->error() != QNetworkReply::NoError)
+        {
+            emit requestControlError(request_key, replyErrorDescription(reply));
+            reply->deleteLater();
+            return;
+        }
+
+        emit requestFinishedControl(request_key, reply->readAll());
+        reply->deleteLater();
+    });
+}
+
+void RESTClient::deleteControl(const QString &endpoint, const QString &request_key)
+{
+    QNetworkRequest request = createRequest(endpoint, this->delete_api_key);
+    request.setRawHeader("Accept", "application/json, text/plain, */*");
+    QNetworkReply *reply = this->network_manager.deleteResource(request);
+    monitorReply(reply);
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, request_key]
+    {
+        if (reply->error() != QNetworkReply::NoError)
+        {
+            emit requestControlError(request_key, replyErrorDescription(reply));
+            reply->deleteLater();
+            return;
+        }
+
+        emit requestFinishedControl(request_key, reply->readAll());
+        reply->deleteLater();
+    });
+}
+
 void RESTClient::deleteResource(const QString &endpoint, quint64 request_id)
 {
     QNetworkRequest request = createRequest(endpoint, this->delete_api_key);

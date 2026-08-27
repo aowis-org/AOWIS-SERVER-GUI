@@ -3,6 +3,16 @@
 #include "map_server_client_configuration.h"
 
 #include <QDebug>
+#include <QJsonDocument>
+#include <QJsonObject>
+
+namespace
+{
+bool isUpstreamCancellationError(const QString &error)
+{
+    return error.contains(QStringLiteral("upstream download canceled"), Qt::CaseInsensitive);
+}
+}
 
 InterfaceServerMapREST::InterfaceServerMapREST(QObject *parent)
     : InterfaceServerMap(parent)
@@ -35,7 +45,8 @@ void InterfaceServerMapREST::initRestConnection()
             [this](const QString &key, const QString &error)
     {
         this->rest_pending.remove(key);
-        qWarning() << "Tile request failed:" << key << error;
+        if (!isUpstreamCancellationError(error))
+            qWarning() << "Tile request failed:" << key << error;
         emit signalTileFailed(key);
     });
 
@@ -59,7 +70,8 @@ void InterfaceServerMapREST::initRestConnection()
             [this](const QString &key, const QString &error)
     {
         this->terrain_pending.remove(key);
-        qWarning() << "Terrain tile request failed:" << key << error;
+        if (!isUpstreamCancellationError(error))
+            qWarning() << "Terrain tile request failed:" << key << error;
         emit signalTerrainTileFailed(key, error);
     });
 
@@ -81,6 +93,52 @@ void InterfaceServerMapREST::initRestConnection()
 
         this->terrain_elevation_pending = false;
         emit signalTerrainElevationFailed(error);
+    });
+
+    connect(this->rest, &RESTClient::requestFinishedControl, this,
+            [this](const QString &request_key, const QByteArray &data)
+    {
+        if (request_key == QStringLiteral("map-upstream-activity"))
+            this->map_upstream_activity_pending = false;
+        else if (request_key == QStringLiteral("terrain-upstream-activity"))
+            this->terrain_upstream_activity_pending = false;
+
+        if (request_key != QStringLiteral("map-upstream-activity") &&
+            request_key != QStringLiteral("terrain-upstream-activity"))
+        {
+            return;
+        }
+
+        const QJsonDocument document = QJsonDocument::fromJson(data);
+        if (!document.isObject())
+        {
+            emit signalUpstreamControlError(QStringLiteral("Map server returned invalid upstream activity JSON"));
+            return;
+        }
+
+        const QJsonObject root = document.object();
+        const QString section_name = request_key == QStringLiteral("map-upstream-activity")
+            ? QStringLiteral("map_tiles")
+            : QStringLiteral("terrain");
+        const QJsonObject section = root.value(section_name).toObject();
+        MapUpstreamActivity activity;
+        activity.active = qMax(0, section.value(QStringLiteral("active")).toInt());
+        activity.queued = qMax(0, section.value(QStringLiteral("queued")).toInt());
+
+        if (request_key == QStringLiteral("map-upstream-activity"))
+            emit signalMapTileUpstreamActivity(activity);
+        else
+            emit signalTerrainUpstreamActivity(activity);
+    });
+
+    connect(this->rest, &RESTClient::requestControlError, this,
+            [this](const QString &request_key, const QString &error)
+    {
+        if (request_key == QStringLiteral("map-upstream-activity"))
+            this->map_upstream_activity_pending = false;
+        else if (request_key == QStringLiteral("terrain-upstream-activity"))
+            this->terrain_upstream_activity_pending = false;
+        emit signalUpstreamControlError(error);
     });
 
     connect(this->rest, &RESTClient::requestFinishedDelete, this,
@@ -142,4 +200,34 @@ void InterfaceServerMapREST::deleteTiles(quint64 request_id, const QString &prov
         .arg(tile_y_min)
         .arg(tile_y_max);
     this->rest->deleteResource(endpoint, request_id);
+}
+
+void InterfaceServerMapREST::requestMapTileUpstreamActivity()
+{
+    if (this->map_upstream_activity_pending)
+        return;
+    this->map_upstream_activity_pending = true;
+    this->rest->getControl(QStringLiteral("/upstream/v1/activity"),
+                           QStringLiteral("map-upstream-activity"));
+}
+
+void InterfaceServerMapREST::requestTerrainUpstreamActivity()
+{
+    if (this->terrain_upstream_activity_pending)
+        return;
+    this->terrain_upstream_activity_pending = true;
+    this->rest->getControl(QStringLiteral("/upstream/v1/activity"),
+                           QStringLiteral("terrain-upstream-activity"));
+}
+
+void InterfaceServerMapREST::cancelMapTileUpstreamDownloads()
+{
+    this->rest->deleteControl(QStringLiteral("/upstream/v1/map-tiles"),
+                              QStringLiteral("cancel-map-upstream"));
+}
+
+void InterfaceServerMapREST::cancelTerrainUpstreamDownloads()
+{
+    this->rest->deleteControl(QStringLiteral("/upstream/v1/terrain"),
+                              QStringLiteral("cancel-terrain-upstream"));
 }

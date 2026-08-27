@@ -2,6 +2,8 @@
 
 #include "map_model.h"
 #include "map_scale_renderer.h"
+#include "map_tile_repository.h"
+#include "map_terrain_repository.h"
 
 #include <QAbstractAnimation>
 #include <QColor>
@@ -15,6 +17,8 @@
 #include <QPaintEvent>
 #include <QPalette>
 #include <QPolygonF>
+#include <QProgressBar>
+#include <QPushButton>
 #include <QRadialGradient>
 #include <QSignalBlocker>
 #include <QSlider>
@@ -495,6 +499,199 @@ private:
     double north_animation_delta_yaw_deg = 0.0;
     double north_animation_last_progress = 0.0;
 };
+}
+
+MapMonitorDownloadActivityHudWidget::MapMonitorDownloadActivityHudWidget(
+    MapTileRepository *tile_repository, MapTerrainRepository *terrain_repository, QWidget *parent)
+    : QWidget(parent),
+      tile_repository(tile_repository),
+      terrain_repository(terrain_repository),
+      map_tiles_panel(new QFrame(this)),
+      map_tiles_label(new QLabel(this->map_tiles_panel)),
+      map_tiles_cancel(new QPushButton(QStringLiteral("Cancel"), this->map_tiles_panel)),
+      terrain_panel(new QFrame(this)),
+      terrain_label(new QLabel(this->terrain_panel)),
+      terrain_cancel(new QPushButton(QStringLiteral("Cancel"), this->terrain_panel)),
+      poll_timer(new QTimer(this))
+{
+    Q_ASSERT(this->tile_repository != nullptr);
+    Q_ASSERT(this->terrain_repository != nullptr);
+
+    setAttribute(Qt::WA_TranslucentBackground, true);
+    setFocusPolicy(Qt::NoFocus);
+
+    QHBoxLayout *root_layout = new QHBoxLayout(this);
+    root_layout->setContentsMargins(0, 0, 0, 0);
+    root_layout->setSpacing(8);
+
+    configureHudFrame(this->map_tiles_panel);
+    QHBoxLayout *map_layout = new QHBoxLayout(this->map_tiles_panel);
+    map_layout->setContentsMargins(8, 5, 6, 5);
+    map_layout->setSpacing(7);
+    QLabel *map_title = new QLabel(QStringLiteral("Map tiles"), this->map_tiles_panel);
+    QFont map_title_font = map_title->font();
+    map_title_font.setBold(true);
+    map_title->setFont(map_title_font);
+    QProgressBar *map_progress = new QProgressBar(this->map_tiles_panel);
+    map_progress->setRange(0, 0);
+    map_progress->setTextVisible(false);
+    map_progress->setFixedSize(54, 10);
+    this->map_tiles_label->setMinimumWidth(82);
+    this->map_tiles_cancel->setFocusPolicy(Qt::NoFocus);
+    this->map_tiles_cancel->setToolTip(QStringLiteral(
+        "Cancel internet downloads of raster map tiles into AOWIS-SERVER-MAP."));
+    map_layout->addWidget(map_title);
+    map_layout->addWidget(map_progress);
+    map_layout->addWidget(this->map_tiles_label);
+    map_layout->addWidget(this->map_tiles_cancel);
+
+    configureHudFrame(this->terrain_panel);
+    QHBoxLayout *terrain_layout = new QHBoxLayout(this->terrain_panel);
+    terrain_layout->setContentsMargins(8, 5, 6, 5);
+    terrain_layout->setSpacing(7);
+    QLabel *terrain_title = new QLabel(QStringLiteral("Terrain"), this->terrain_panel);
+    QFont terrain_title_font = terrain_title->font();
+    terrain_title_font.setBold(true);
+    terrain_title->setFont(terrain_title_font);
+    QProgressBar *terrain_progress = new QProgressBar(this->terrain_panel);
+    terrain_progress->setRange(0, 0);
+    terrain_progress->setTextVisible(false);
+    terrain_progress->setFixedSize(54, 10);
+    this->terrain_label->setMinimumWidth(82);
+    this->terrain_cancel->setFocusPolicy(Qt::NoFocus);
+    this->terrain_cancel->setToolTip(QStringLiteral(
+        "Cancel internet downloads of terrain source data into AOWIS-SERVER-MAP."));
+    terrain_layout->addWidget(terrain_title);
+    terrain_layout->addWidget(terrain_progress);
+    terrain_layout->addWidget(this->terrain_label);
+    terrain_layout->addWidget(this->terrain_cancel);
+
+    root_layout->addWidget(this->map_tiles_panel);
+    root_layout->addWidget(this->terrain_panel);
+    this->map_tiles_panel->hide();
+    this->terrain_panel->hide();
+    hide();
+
+    connect(this->tile_repository, &MapTileRepository::signalUpstreamActivityChanged,
+            this, [this](const MapUpstreamActivity &activity)
+    {
+        setMapTileActivity(activity.active, activity.queued);
+    });
+    connect(this->terrain_repository, &MapTerrainRepository::signalUpstreamActivityChanged,
+            this, [this](const MapUpstreamActivity &activity)
+    {
+        setTerrainActivity(activity.active, activity.queued);
+    });
+    connect(this->map_tiles_cancel, &QPushButton::clicked, this, [this]
+    {
+        this->map_tiles_cancel->setEnabled(false);
+        this->tile_repository->cancelUpstreamDownloads();
+        QTimer::singleShot(100, this, [this]
+        {
+            refreshActivity();
+        });
+    });
+    connect(this->terrain_cancel, &QPushButton::clicked, this, [this]
+    {
+        this->terrain_cancel->setEnabled(false);
+        this->terrain_repository->cancelUpstreamDownloads();
+        QTimer::singleShot(100, this, [this]
+        {
+            refreshActivity();
+        });
+    });
+
+    this->poll_timer->setInterval(400);
+    connect(this->poll_timer, &QTimer::timeout, this, [this]
+    {
+        refreshActivity();
+    });
+}
+
+void MapMonitorDownloadActivityHudWidget::setHudActive(bool active)
+{
+    this->hud_active = active;
+    if (!this->hud_active)
+    {
+        this->poll_timer->stop();
+        hide();
+        return;
+    }
+
+    if (!this->poll_timer->isActive())
+        this->poll_timer->start();
+    refreshActivity();
+
+    const bool any_busy = !this->map_tiles_panel->isHidden() || !this->terrain_panel->isHidden();
+    setVisible(any_busy);
+    if (!isVisible())
+        return;
+
+    adjustSize();
+    QWidget *container = parentWidget();
+    if (container != nullptr)
+    {
+        const int x = qMax(HudMarginPx, (container->width() - width()) / 2);
+        move(x, HudMarginPx);
+    }
+    raise();
+}
+
+void MapMonitorDownloadActivityHudWidget::setMapTileActivity(int active, int queued)
+{
+    updatePanel(this->map_tiles_panel, this->map_tiles_label, this->map_tiles_cancel,
+                QStringLiteral("Map tiles"), active, queued);
+}
+
+void MapMonitorDownloadActivityHudWidget::setTerrainActivity(int active, int queued)
+{
+    updatePanel(this->terrain_panel, this->terrain_label, this->terrain_cancel,
+                QStringLiteral("Terrain"), active, queued);
+}
+
+void MapMonitorDownloadActivityHudWidget::updatePanel(
+    QFrame *panel, QLabel *label, QPushButton *cancel_button, const QString &name,
+    int active, int queued)
+{
+    const int bounded_active = qMax(0, active);
+    const int bounded_queued = qMax(0, queued);
+    const bool busy = bounded_active > 0 || bounded_queued > 0;
+    panel->setVisible(busy);
+    cancel_button->setEnabled(busy);
+
+    if (bounded_queued > 0)
+    {
+        label->setText(QStringLiteral("%1 active · %2 queued")
+                           .arg(bounded_active)
+                           .arg(bounded_queued));
+    }
+    else
+    {
+        label->setText(QStringLiteral("%1 active").arg(bounded_active));
+    }
+    panel->setToolTip(QStringLiteral(
+        "%1 internet → map server activity. Cached/local transfers are not counted.")
+                          .arg(name));
+
+    const bool any_busy = !this->map_tiles_panel->isHidden() || !this->terrain_panel->isHidden();
+    setVisible(this->hud_active && any_busy);
+    if (this->hud_active && any_busy)
+    {
+        adjustSize();
+        QWidget *container = parentWidget();
+        if (container != nullptr)
+        {
+            const int x = qMax(HudMarginPx, (container->width() - width()) / 2);
+            move(x, HudMarginPx);
+        }
+        raise();
+    }
+}
+
+void MapMonitorDownloadActivityHudWidget::refreshActivity()
+{
+    this->tile_repository->requestUpstreamActivity();
+    this->terrain_repository->requestUpstreamActivity();
 }
 
 MapMonitorViewModeHudWidget::MapMonitorViewModeHudWidget(

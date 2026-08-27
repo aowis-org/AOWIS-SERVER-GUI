@@ -5,6 +5,12 @@
 #include <QObject>
 #include <QString>
 
+struct MapUpstreamActivity
+{
+    int active = 0;
+    int queued = 0;
+};
+
 class InterfaceServerMap : public QObject
 {
     Q_OBJECT
@@ -30,6 +36,10 @@ public:
     }
     virtual void deleteTiles(quint64 request_id, const QString &provider, int zoom,
                              int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max) = 0;
+    virtual void requestMapTileUpstreamActivity() = 0;
+    virtual void requestTerrainUpstreamActivity() = 0;
+    virtual void cancelMapTileUpstreamDownloads() = 0;
+    virtual void cancelTerrainUpstreamDownloads() = 0;
 
 signals:
     void signalTileDataReceived(const QString &key, const QByteArray &data);
@@ -40,6 +50,9 @@ signals:
     void signalTerrainElevationFailed(const QString &error);
     void signalTilesDeleted(quint64 request_id);
     void signalTileDeletionFailed(quint64 request_id, const QString &error);
+    void signalMapTileUpstreamActivity(const MapUpstreamActivity &activity);
+    void signalTerrainUpstreamActivity(const MapUpstreamActivity &activity);
+    void signalUpstreamControlError(const QString &error);
 };
 
 #endif // INTERFACE_SERVER_MAP_H

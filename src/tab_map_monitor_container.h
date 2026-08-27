@@ -40,6 +40,7 @@ class MapNetworkOverlayWidget;
 class MapTerrainRepository;
 class MapRhiWidget;
 class MapRhiHudWidget;
+class MapMonitorDownloadActivityHudWidget;
 class MapMonitorViewModeHudWidget;
 class MapMonitorCompassHudWidget;
 class MapMonitorCameraDistanceHudWidget;
@@ -128,6 +129,7 @@ private:
     MapNetworkOverlayWidget *desktop_network_overlay = nullptr;
     MapRhiWidget *desktop_rhi_surface = nullptr;
     MapRhiHudWidget *desktop_rhi_hud = nullptr;
+    MapMonitorDownloadActivityHudWidget *desktop_download_activity_hud = nullptr;
     MapMonitorViewModeHudWidget *desktop_view_mode_hud = nullptr;
     MapMonitorCompassHudWidget *desktop_compass_hud = nullptr;
     MapMonitorScaleHudWidget *desktop_scale_hud = nullptr;

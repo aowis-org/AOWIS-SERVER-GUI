@@ -26,10 +26,14 @@ public:
     const MapTerrainTile *tile(const QString &dataset, int zoom, quint32 x, quint32 y) const;
     void requestTile(const QString &dataset, int zoom, quint32 x, quint32 y);
     void setMapServerMode(MapServerMode mode);
+    void requestUpstreamActivity();
+    void cancelUpstreamDownloads();
 
 signals:
     void signalTerrainTileAvailable(const QString &key);
     void signalTerrainTileRetryReady(const QString &key);
+    void signalUpstreamActivityChanged(const MapUpstreamActivity &activity);
+    void signalUpstreamControlError(const QString &error);
     void signalTerrainTileFailed(const QString &key, const QString &error);
 
 private:
