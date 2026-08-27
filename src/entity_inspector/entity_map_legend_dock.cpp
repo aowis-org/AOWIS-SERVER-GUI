@@ -497,6 +497,32 @@ int EntityMapLegendDock::dockHeightPreferred() const
     return this->dock_height_preferred;
 }
 
+void EntityMapLegendDock::configureAsHud()
+{
+    setAllowedAreas(Qt::NoDockWidgetArea);
+    setFeatures(QDockWidget::NoDockWidgetFeatures);
+
+    QWidget *title_bar = new QWidget(this);
+    title_bar->setFixedHeight(0);
+    setTitleBarWidget(title_bar);
+
+    setMinimumWidth(300);
+    setMaximumWidth(Sizes::SidebarRightWidth);
+    resize(Sizes::SidebarRightWidth, height());
+
+    if (this->content != nullptr)
+    {
+        this->content->setAutoFillBackground(true);
+        QPalette hud_palette = this->content->palette();
+        QColor background = hud_palette.color(QPalette::Window);
+        background.setAlpha(220);
+        hud_palette.setColor(QPalette::Window, background);
+        this->content->setPalette(hud_palette);
+    }
+
+    scheduleDockHeightUpdate();
+}
+
 void EntityMapLegendDock::showMapLegendNode(VisualNode visual_node)
 {
     this->visual_node = visual_node;

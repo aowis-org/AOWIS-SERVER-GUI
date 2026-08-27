@@ -18,6 +18,7 @@
 #include "map/map_rhi_hud_widget.h"
 #include "map/map_monitor_hud_controls.h"
 #include "map/map_rhi_symbology.h"
+#include "entity_inspector/entity_map_legend_dock.h"
 #endif
 
 #include <QColor>
@@ -367,6 +368,9 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             new MapMonitorScaleHudWidget(this->map_model, this->map_stack);
         MapMonitorVerticalControlsHudWidget *vertical_controls_hud =
             new MapMonitorVerticalControlsHudWidget(this->map_model, this->map_stack);
+        EntityMapLegendDock *legend_hud =
+            new EntityMapLegendDock(this->hydraulic_data, this->map_stack);
+        legend_hud->configureAsHud();
         this->desktop_rhi_surface = rhi_surface;
         this->desktop_rhi_hud = rhi_hud;
         this->desktop_download_activity_hud = download_activity_hud;
@@ -374,12 +378,20 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         this->desktop_compass_hud = compass_hud;
         this->desktop_scale_hud = scale_hud;
         this->desktop_vertical_controls_hud = vertical_controls_hud;
+        this->desktop_legend_hud = legend_hud;
         this->desktop_rhi_hud->hide();
         this->desktop_download_activity_hud->setHudActive(false);
         this->desktop_view_mode_hud->hide();
         this->desktop_compass_hud->hide();
         this->desktop_scale_hud->hide();
         this->desktop_vertical_controls_hud->hide();
+        this->desktop_legend_hud->setMapMonitorActive(false);
+        this->desktop_legend_hud->hide();
+        connect(this->desktop_legend_hud, &EntityMapLegendDock::signalDockHeightPreferredChanged,
+                this, [this](int)
+        {
+            positionDesktopHudWidgets();
+        });
         rhi_surface->setTileRepository(this->tile_repository);
         rhi_surface->setTerrainRepository(this->terrain_repository);
         rhi_surface->setBackgroundOpacity(this->network_background_opacity);
@@ -523,6 +535,19 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             rhi_hud->show();
             download_activity_hud->setHudActive(true);
             view_mode_hud->show();
+            if (this->desktop_legend_hud != nullptr)
+            {
+                this->desktop_legend_hud->showMapLegendNode(
+                    this->symbology_settings.visual_node);
+                this->desktop_legend_hud->showMapLegendLink(
+                    this->symbology_settings.visual_link);
+                this->desktop_legend_hud->showMapLegendHeatmap(
+                    this->symbology_settings.visual_heatmap);
+                this->desktop_legend_hud->setMapMonitorActive(true);
+            }
+            emit signalShowMapLegendNode(VisualNode::None);
+            emit signalShowMapLegendLink(VisualLink::None);
+            emit signalShowMapLegendHeatmap(VisualHeatmap::None);
             positionDesktopHudWidgets();
             syncDesktopCameraHudVisibility();
 
@@ -582,8 +607,13 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                 this->desktop_scale_hud->hide();
             if (this->desktop_vertical_controls_hud != nullptr)
                 this->desktop_vertical_controls_hud->hide();
+            if (this->desktop_legend_hud != nullptr)
+                this->desktop_legend_hud->setMapMonitorActive(false);
             if (this->desktop_rhi_surface != nullptr)
                 this->desktop_rhi_surface->hide();
+            emit signalShowMapLegendNode(this->symbology_settings.visual_node);
+            emit signalShowMapLegendLink(this->symbology_settings.visual_link);
+            emit signalShowMapLegendHeatmap(this->symbology_settings.visual_heatmap);
         });
         connect(this->map_model, &MapModel::viewModeChanged, this,
                 [this](MapViewMode)
@@ -715,7 +745,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         [this](VisualNode visual_node)
     {
         this->symbology_settings.visual_node = visual_node;
-        emit signalShowMapLegendNode(visual_node);
+        showMapLegendNode(visual_node);
         applySymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalNodeSizeChanged, this, [this](int size_percent)
@@ -727,7 +757,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         [this](VisualLink visual_link)
     {
         this->symbology_settings.visual_link = visual_link;
-        emit signalShowMapLegendLink(visual_link);
+        showMapLegendLink(visual_link);
         applySymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalLinkThicknessChanged, this, [this](int thickness_px)
@@ -748,7 +778,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapVisualClicked, this, [this](VisualHeatmap visual_heatmap)
     {
         this->symbology_settings.visual_heatmap = visual_heatmap;
-        emit signalShowMapLegendHeatmap(visual_heatmap);
+        showMapLegendHeatmap(visual_heatmap);
         applySymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalHeatmapOpacityChanged, this, [this](int opacity)
@@ -783,6 +813,48 @@ MapMonitorContainer::~MapMonitorContainer()
 #ifdef Q_OS_WASM
     this->map->setBrowserMapLayerGeometry(QRect(), false);
 #endif
+}
+
+void MapMonitorContainer::showMapLegendNode(VisualNode visual_node)
+{
+#if AOWIS_HAS_QRHI
+    if (this->rhi_renderer_active && this->desktop_legend_hud != nullptr)
+    {
+        this->desktop_legend_hud->showMapLegendNode(visual_node);
+        positionDesktopHudWidgets();
+        return;
+    }
+#endif
+
+    emit signalShowMapLegendNode(visual_node);
+}
+
+void MapMonitorContainer::showMapLegendLink(VisualLink visual_link)
+{
+#if AOWIS_HAS_QRHI
+    if (this->rhi_renderer_active && this->desktop_legend_hud != nullptr)
+    {
+        this->desktop_legend_hud->showMapLegendLink(visual_link);
+        positionDesktopHudWidgets();
+        return;
+    }
+#endif
+
+    emit signalShowMapLegendLink(visual_link);
+}
+
+void MapMonitorContainer::showMapLegendHeatmap(VisualHeatmap visual_heatmap)
+{
+#if AOWIS_HAS_QRHI
+    if (this->rhi_renderer_active && this->desktop_legend_hud != nullptr)
+    {
+        this->desktop_legend_hud->showMapLegendHeatmap(visual_heatmap);
+        positionDesktopHudWidgets();
+        return;
+    }
+#endif
+
+    emit signalShowMapLegendHeatmap(visual_heatmap);
 }
 
 #if AOWIS_HAS_QRHI
@@ -872,6 +944,20 @@ void MapMonitorContainer::positionDesktopHudWidgets()
         this->desktop_scale_hud->update();
         if (this->desktop_scale_hud->isVisible())
             this->desktop_scale_hud->raise();
+    }
+
+    if (this->desktop_legend_hud != nullptr)
+    {
+        this->desktop_legend_hud->adjustSize();
+        const int legend_x = qMax(
+            hud_margin_px,
+            this->map_stack->width() - this->desktop_legend_hud->width() - hud_margin_px);
+        const int legend_y = qMax(
+            hud_margin_px,
+            this->map_stack->height() - this->desktop_legend_hud->height() - hud_margin_px);
+        this->desktop_legend_hud->move(legend_x, legend_y);
+        if (this->desktop_legend_hud->isVisible())
+            this->desktop_legend_hud->raise();
     }
 }
 

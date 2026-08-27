@@ -45,6 +45,7 @@ class MapMonitorViewModeHudWidget;
 class MapMonitorCompassHudWidget;
 class MapMonitorScaleHudWidget;
 class MapMonitorVerticalControlsHudWidget;
+class EntityMapLegendDock;
 
 #ifdef Q_OS_WASM
 #include "gps_provider_dummy.h"
@@ -134,6 +135,7 @@ private:
     MapMonitorCompassHudWidget *desktop_compass_hud = nullptr;
     MapMonitorScaleHudWidget *desktop_scale_hud = nullptr;
     MapMonitorVerticalControlsHudWidget *desktop_vertical_controls_hud = nullptr;
+    EntityMapLegendDock *desktop_legend_hud = nullptr;
     bool rhi_renderer_active = false;
 #endif
     MapMonitorMenuWidget *map_menu = nullptr;
@@ -158,6 +160,9 @@ private:
     void positionDesktopHudWidgets();
     void syncDesktopCameraHudVisibility();
 #endif
+    void showMapLegendNode(VisualNode visual_node);
+    void showMapLegendLink(VisualLink visual_link);
+    void showMapLegendHeatmap(VisualHeatmap visual_heatmap);
 
 #ifdef Q_OS_WASM
     QTimer *wasm_map_layer_sync_timer = nullptr;

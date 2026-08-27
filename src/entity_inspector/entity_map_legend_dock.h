@@ -19,6 +19,7 @@ class EntityMapLegendDock : public QDockWidget
 public:
     explicit EntityMapLegendDock(HydraulicData *hydraulic_data, QWidget *parent = nullptr);
     int dockHeightPreferred() const;
+    void configureAsHud();
 
 public slots:
     void showMapLegendNode(VisualNode visual_node);
