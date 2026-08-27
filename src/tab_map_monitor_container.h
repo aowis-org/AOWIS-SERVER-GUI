@@ -125,6 +125,8 @@ private:
     MapWidget *map = nullptr;
 #ifndef Q_OS_WASM
     MapNetworkOverlayWidget *desktop_network_overlay = nullptr;
+#endif
+#if AOWIS_HAS_QRHI
     MapRhiWidget *desktop_rhi_surface = nullptr;
     MapRhiHudWidget *desktop_rhi_hud = nullptr;
     MapMonitorDownloadActivityHudWidget *desktop_download_activity_hud = nullptr;
@@ -132,6 +134,7 @@ private:
     MapMonitorCompassHudWidget *desktop_compass_hud = nullptr;
     MapMonitorScaleHudWidget *desktop_scale_hud = nullptr;
     MapMonitorVerticalControlsHudWidget *desktop_vertical_controls_hud = nullptr;
+    bool rhi_renderer_active = false;
 #endif
     MapMonitorMenuWidget *map_menu = nullptr;
     int network_background_opacity = 0;
@@ -148,17 +151,18 @@ private:
 
     void updateDesktopNetworkHover(const QPointF &position, Qt::MouseButtons buttons);
     void setDesktopNetworkHovered(bool hovered);
+#endif
 #if AOWIS_HAS_QRHI
     void applyDesktopRhiSymbology();
     void applyDesktopRhiHighlights();
     void positionDesktopHudWidgets();
     void syncDesktopCameraHudVisibility();
 #endif
-#endif
 
 #ifdef Q_OS_WASM
     QTimer *wasm_map_layer_sync_timer = nullptr;
     QTimer *wasm_network_symbology_sync_timer = nullptr;
+    bool wasm_browser_renderer_active = true;
     quint64 wasm_network_geometry_revision_sent = 0;
     bool wasm_network_snapshot_sent = false;
     int wasm_network_symbology_sync_retry_count = 0;

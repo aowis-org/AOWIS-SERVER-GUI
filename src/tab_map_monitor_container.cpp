@@ -8,16 +8,16 @@
 #include "wasm/browser_network_snapshot_serializer.h"
 #endif
 
-#ifndef Q_OS_WASM
 #include "gui_configuration.h"
-#include "map/map_network_overlay_widget.h"
 #include "map/map_terrain_repository.h"
+#ifndef Q_OS_WASM
+#include "map/map_network_overlay_widget.h"
+#endif
 #if AOWIS_HAS_QRHI
 #include "map/map_rhi_widget.h"
 #include "map/map_rhi_hud_widget.h"
 #include "map/map_monitor_hud_controls.h"
 #include "map/map_rhi_symbology.h"
-#endif
 #endif
 
 #include <QColor>
@@ -340,8 +340,17 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
 #ifndef Q_OS_WASM
     this->map_stack_layout->addWidget(this->desktop_network_overlay);
     this->map_stack_layout->setCurrentWidget(this->desktop_network_overlay);
+#else
+    this->map_stack_layout->setCurrentWidget(this->map);
+#endif
 #if AOWIS_HAS_QRHI
-    if (desktopMapRenderer() == DesktopMapRenderer::Rhi)
+    bool rhi_requested = false;
+#ifdef Q_OS_WASM
+    rhi_requested = wasmMapRenderer() == WasmMapRenderer::Rhi;
+#else
+    rhi_requested = desktopMapRenderer() == DesktopMapRenderer::Rhi;
+#endif
+    if (rhi_requested)
     {
         MapRhiWidget *rhi_surface =
             new MapRhiWidget(this->map_model, QStringLiteral("monitor"), this->map_stack);
@@ -378,12 +387,16 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         applyDesktopRhiSymbology();
         applyDesktopRhiHighlights();
 
-        // Initialize and submit the first GPU frame as a tiny probe behind the working CPU map.
-        // Only promote the RHI widget to the visible map surface after that frame succeeded.
+        // Probe QRhi behind the working fallback renderer. The RHI surface is only
+        // promoted after its first GPU frame succeeds.
         this->desktop_rhi_surface->setGeometry(0, 0, 1, 1);
         this->desktop_rhi_surface->lower();
         this->desktop_rhi_surface->show();
+#ifndef Q_OS_WASM
         this->desktop_network_overlay->raise();
+#else
+        this->map->raise();
+#endif
 
         connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
                 rhi_surface, [this, rhi_surface]
@@ -494,33 +507,50 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         connect(rhi_surface, &MapRhiWidget::signalRendererReady, this,
                 [this, rhi_surface, rhi_hud, download_activity_hud, view_mode_hud]
         {
+            this->rhi_renderer_active = true;
             this->map_stack_layout->addWidget(rhi_surface);
             this->map_stack_layout->setCurrentWidget(rhi_surface);
             this->map->setRhiViewActive(true);
+#ifndef Q_OS_WASM
             this->desktop_network_overlay->hide();
+#else
+            this->wasm_browser_renderer_active = false;
+            this->map->setBrowserMapLayerGeometry(QRect(), false);
+            this->map->setBrowserMapLayerEnabled(false);
+#endif
             rhi_surface->show();
 
-            // The HUD widgets are plain children of map_stack, not members of the
-            // stacked layout. This leaves the map surface itself free to receive
-            // mouse input everywhere outside the compact interactive controls.
             rhi_hud->show();
             download_activity_hud->setHudActive(true);
             view_mode_hud->show();
             positionDesktopHudWidgets();
             syncDesktopCameraHudVisibility();
 
-            qInfo() << "Monitor map renderer: RHI map active with GPU basemap/heatmap and QWidget HUD; CPU renderer retained as fallback.";
+#ifdef Q_OS_WASM
+            qInfo() << "Monitor map renderer: QRhi/WebGL 2 active; browser renderer retained as fallback.";
+#else
+            qInfo() << "Monitor map renderer: RHI active; CPU renderer retained as fallback.";
+#endif
         });
         connect(rhi_surface, &MapRhiWidget::signalRendererFailed, this,
                 [this](const QString &reason)
         {
+            this->rhi_renderer_active = false;
+#ifdef Q_OS_WASM
+            qWarning().noquote()
+                << QStringLiteral("Monitor RHI surface failed (%1). "
+                                  "Falling back to the browser renderer.")
+                       .arg(reason);
+#else
             qWarning().noquote()
                 << QStringLiteral("Monitor RHI surface failed (%1). "
                                   "Falling back to the existing CPU renderer.")
                        .arg(reason);
+#endif
             if (this->map_model->viewMode() != MapViewMode::TwoD)
                 this->map_model->setViewMode(MapViewMode::TwoD);
             this->map->setRhiViewActive(false);
+#ifndef Q_OS_WASM
             this->symbology_settings = this->symbology_settings.bounded();
             const NetworkSymbologyRanges fallback_ranges =
                 this->hydraulic_data->symbologyRanges(this->symbology_settings);
@@ -528,6 +558,18 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                 this->symbology_settings, fallback_ranges);
             this->desktop_network_overlay->show();
             this->map_stack_layout->setCurrentWidget(this->desktop_network_overlay);
+#else
+            this->wasm_browser_renderer_active = true;
+            this->wasm_network_snapshot_sent = false;
+            this->wasm_network_geometry_revision_sent = 0;
+            this->wasm_network_symbology_sync_retry_count = 0;
+            this->map_stack_layout->setCurrentWidget(this->map);
+            this->map->show();
+            this->map->setBrowserMapLayerEnabled(true);
+            this->map->setBrowserMapLayerTopmost(true);
+            scheduleWasmMapLayerSync();
+            scheduleWasmNetworkSymbologySync();
+#endif
             if (this->desktop_rhi_hud != nullptr)
                 this->desktop_rhi_hud->hide();
             if (this->desktop_download_activity_hud != nullptr)
@@ -550,8 +592,6 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         });
     }
 #endif
-#endif
-
 #ifdef Q_OS_WASM
     this->map->setBrowserMapLayerEnabled(true);
     this->map->setBrowserMapLayerTopmost(true);
@@ -745,7 +785,6 @@ MapMonitorContainer::~MapMonitorContainer()
 #endif
 }
 
-#ifndef Q_OS_WASM
 #if AOWIS_HAS_QRHI
 void MapMonitorContainer::positionDesktopHudWidgets()
 {
@@ -862,18 +901,15 @@ void MapMonitorContainer::syncDesktopCameraHudVisibility()
     }
 }
 #endif
-#endif
 
 bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
 {
-#ifndef Q_OS_WASM
 #if AOWIS_HAS_QRHI
     if (watched == this->map_stack && event->type() == QEvent::Resize
         && this->desktop_rhi_hud != nullptr)
     {
         positionDesktopHudWidgets();
     }
-#endif
 #endif
 
     if (watched == this->map)
@@ -884,6 +920,24 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
             if (mouse_event->button() == Qt::LeftButton)
             {
 #ifdef Q_OS_WASM
+#if AOWIS_HAS_QRHI
+                if (this->rhi_renderer_active && this->desktop_rhi_surface != nullptr)
+                {
+                    const MapRhiHit hit = this->desktop_rhi_surface->hitTest(
+                        mouse_event->position());
+                    if (hit.isValid()
+                        && selectNetworkEntity(hit.render_id, hit.entity_type, hit.uuid))
+                    {
+                        this->desktop_rhi_surface->setSelectedEntity(
+                            hit.entity_type, hit.uuid);
+                        mouse_event->accept();
+                        return true;
+                    }
+                    this->desktop_rhi_surface->setSelectedEntity(
+                        InfrastructureEntity::Unknown, QUuid());
+                }
+                else
+#endif
                 if (selectWasmNetworkEntityAt(mouse_event->position()))
                 {
                     mouse_event->accept();
@@ -1042,6 +1096,7 @@ void MapMonitorContainer::setDesktopNetworkHovered(bool hovered)
     else
         this->map->unsetCursor();
 }
+#endif
 
 #if AOWIS_HAS_QRHI
 void MapMonitorContainer::applyDesktopRhiSymbology()
@@ -1066,16 +1121,13 @@ void MapMonitorContainer::applyDesktopRhiHighlights()
         this->hydraulic_data->simulationStaleDiagnosticEntityUuids());
 }
 #endif
-#endif
 
 void MapMonitorContainer::applySymbology()
 {
     this->symbology_settings = this->symbology_settings.bounded();
 
-#ifndef Q_OS_WASM
     const NetworkSymbologyRanges ranges =
         this->hydraulic_data->symbologyRanges(this->symbology_settings);
-    this->desktop_network_overlay->setSymbology(this->symbology_settings, ranges);
 #if AOWIS_HAS_QRHI
     if (this->desktop_rhi_surface != nullptr)
     {
@@ -1083,8 +1135,11 @@ void MapMonitorContainer::applySymbology()
             *this->hydraulic_data, this->symbology_settings, ranges));
     }
 #endif
+#ifndef Q_OS_WASM
+    this->desktop_network_overlay->setSymbology(this->symbology_settings, ranges);
 #else
-    scheduleWasmNetworkSymbologySync();
+    if (this->wasm_browser_renderer_active)
+        scheduleWasmNetworkSymbologySync();
 #endif
 }
 
@@ -1100,10 +1155,8 @@ void MapMonitorContainer::applyVisualControlSymbology()
         this->visual_control_symbology_apply_pending = false;
         this->symbology_settings = this->symbology_settings.bounded();
 
-#ifndef Q_OS_WASM
 #if AOWIS_HAS_QRHI
-        if (this->desktop_rhi_surface != nullptr
-            && this->desktop_rhi_surface->isVisible())
+        if (this->rhi_renderer_active && this->desktop_rhi_surface != nullptr)
         {
             this->desktop_rhi_surface->setVisualControlSettings(
                 this->symbology_settings);
@@ -1111,9 +1164,6 @@ void MapMonitorContainer::applyVisualControlSymbology()
         }
 #endif
         applySymbology();
-#else
-        scheduleWasmNetworkSymbologySync();
-#endif
     });
 }
 
@@ -1124,20 +1174,23 @@ void MapMonitorContainer::setNetworkBackgroundOpacity(int opacity)
         return;
 
     this->network_background_opacity = bounded_opacity;
-#ifndef Q_OS_WASM
-    this->desktop_network_overlay->setBackgroundOpacity(bounded_opacity);
 #if AOWIS_HAS_QRHI
     if (this->desktop_rhi_surface != nullptr)
         this->desktop_rhi_surface->setBackgroundOpacity(bounded_opacity);
 #endif
+#ifndef Q_OS_WASM
+    this->desktop_network_overlay->setBackgroundOpacity(bounded_opacity);
 #else
-    syncWasmNetworkBackground();
+    if (this->wasm_browser_renderer_active)
+        syncWasmNetworkBackground();
 #endif
 }
 
 #ifdef Q_OS_WASM
 bool MapMonitorContainer::selectWasmNetworkEntityAt(const QPointF &position)
 {
+    if (!this->wasm_browser_renderer_active)
+        return false;
     if (this->hydraulic_data == nullptr || !this->wasm_network_snapshot_sent)
         return false;
 
@@ -1166,6 +1219,8 @@ void MapMonitorContainer::syncWasmSelectedEntity(InfrastructureEntity entity_typ
 {
     this->wasm_selected_entity_type = entity_type;
     this->wasm_selected_entity_uuid = uuid;
+    if (!this->wasm_browser_renderer_active)
+        return;
 
     if (this->hydraulic_data == nullptr || uuid.isNull())
     {
@@ -1202,6 +1257,9 @@ void MapMonitorContainer::syncWasmSelectedEntity(InfrastructureEntity entity_typ
 
 void MapMonitorContainer::syncWasmSimulationErrorEntities()
 {
+    if (!this->wasm_browser_renderer_active)
+        return;
+
     QJsonArray error_entities_json;
     if (this->hydraulic_data != nullptr)
     {
@@ -1256,12 +1314,19 @@ void MapMonitorContainer::syncWasmSimulationErrorEntities()
 
 void MapMonitorContainer::scheduleWasmMapLayerSync()
 {
+    if (!this->wasm_browser_renderer_active || this->wasm_map_layer_sync_timer == nullptr)
+        return;
     if (!this->wasm_map_layer_sync_timer->isActive())
         this->wasm_map_layer_sync_timer->start(0);
 }
 
 void MapMonitorContainer::scheduleWasmNetworkSymbologySync()
 {
+    if (!this->wasm_browser_renderer_active
+        || this->wasm_network_symbology_sync_timer == nullptr)
+    {
+        return;
+    }
     this->wasm_network_symbology_sync_retry_count = 0;
     if (!this->wasm_network_symbology_sync_timer->isActive())
         this->wasm_network_symbology_sync_timer->start(0);
@@ -1269,6 +1334,12 @@ void MapMonitorContainer::scheduleWasmNetworkSymbologySync()
 
 void MapMonitorContainer::syncWasmMapLayer()
 {
+    if (!this->wasm_browser_renderer_active)
+    {
+        this->map->setBrowserMapLayerGeometry(QRect(), false);
+        return;
+    }
+
     const bool visible = this->isVisible() && this->map->isVisible()
         && this->map->width() > 0 && this->map->height() > 0;
 
@@ -1285,6 +1356,9 @@ void MapMonitorContainer::syncWasmMapLayer()
 
 void MapMonitorContainer::syncWasmNetworkBackground()
 {
+    if (!this->wasm_browser_renderer_active)
+        return;
+
     const QColor background = this->map->palette().color(QPalette::Window);
     aowisBrowserNetworkSetBackground(
         background.red(),
@@ -1295,6 +1369,8 @@ void MapMonitorContainer::syncWasmNetworkBackground()
 
 void MapMonitorContainer::syncWasmNetworkSnapshot()
 {
+    if (!this->wasm_browser_renderer_active)
+        return;
     if (this->hydraulic_data == nullptr)
         return;
 
@@ -1320,6 +1396,8 @@ void MapMonitorContainer::syncWasmNetworkSnapshot()
 
 void MapMonitorContainer::syncWasmNetworkSymbology()
 {
+    if (!this->wasm_browser_renderer_active)
+        return;
     if (this->hydraulic_data == nullptr)
         return;
 

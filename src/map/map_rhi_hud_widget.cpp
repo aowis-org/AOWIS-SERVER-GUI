@@ -1,13 +1,18 @@
 #include "map_rhi_hud_widget.h"
 
 #include "map_scale_renderer.h"
+#ifdef Q_OS_WASM
+#include "../gps_provider_dummy.h"
+#else
 #include "../gps_provider.h"
-
 #include <QGeoCoordinate>
 #include <QGeoPositionInfo>
+#endif
+
 #include <QPainter>
 #include <QPaintEvent>
 #include <QPixmap>
+#include <QRect>
 
 MapRhiHudWidget::MapRhiHudWidget(MapModel *map_model, GpsProvider *gps, QWidget *parent)
     : QWidget(parent),
@@ -23,16 +28,43 @@ MapRhiHudWidget::MapRhiHudWidget(MapModel *map_model, GpsProvider *gps, QWidget 
 
     connect(this->map_model, &MapModel::centerChangedWGS84, this, [this]
     {
+#ifdef Q_OS_WASM
+        if (this->map_model->viewMode() == MapViewMode::TwoD)
+        {
+            const int scale_region_width = qMin(width(), 140);
+            const int scale_region_height = qMin(height(), 64);
+            update(QRect(
+                0, height() - scale_region_height,
+                scale_region_width, scale_region_height));
+        }
+#else
         update();
+#endif
     });
     connect(this->map_model, &MapModel::zoomChanged, this, [this]
     {
+#ifdef Q_OS_WASM
+        const int scale_region_width = qMin(width(), 140);
+        const int scale_region_height = qMin(height(), 64);
+        update(QRect(
+            0, height() - scale_region_height,
+            scale_region_width, scale_region_height));
+#else
         update();
+#endif
     });
     connect(this->map_model, &MapModel::view2dContinuousScaleChanged,
             this, [this](double)
     {
+#ifdef Q_OS_WASM
+        const int scale_region_width = qMin(width(), 140);
+        const int scale_region_height = qMin(height(), 64);
+        update(QRect(
+            0, height() - scale_region_height,
+            scale_region_width, scale_region_height));
+#else
         update();
+#endif
     });
     connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode)
     {
@@ -43,6 +75,7 @@ MapRhiHudWidget::MapRhiHudWidget(MapModel *map_model, GpsProvider *gps, QWidget 
         update();
     });
 
+#ifndef Q_OS_WASM
     if (this->gps != nullptr)
     {
         connect(this->gps, &GpsProvider::positionChanged,
@@ -53,6 +86,9 @@ MapRhiHudWidget::MapRhiHudWidget(MapModel *map_model, GpsProvider *gps, QWidget 
             update();
         });
     }
+#else
+    Q_UNUSED(this->gps)
+#endif
 }
 
 void MapRhiHudWidget::paintEvent(QPaintEvent *event)
@@ -62,6 +98,7 @@ void MapRhiHudWidget::paintEvent(QPaintEvent *event)
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
 
+#ifndef Q_OS_WASM
     if (this->has_gps_coordinate)
     {
         const QPointF gps_point = this->map_model->screenFromWgs84(
@@ -70,6 +107,7 @@ void MapRhiHudWidget::paintEvent(QPaintEvent *event)
         painter.setBrush(Qt::red);
         painter.drawEllipse(gps_point, 5.0, 5.0);
     }
+#endif
 
     static const QPixmap crosshair_pixmap =
         QPixmap(QStringLiteral(":/icon/crosshair.png")).scaled(
@@ -86,6 +124,7 @@ void MapRhiHudWidget::paintEvent(QPaintEvent *event)
         MapScaleRenderer::draw(painter, *this->map_model, size());
 }
 
+#ifndef Q_OS_WASM
 void MapRhiHudWidget::updateGpsPosition(const QGeoPositionInfo &info)
 {
     const QGeoCoordinate coordinate = info.coordinate();
@@ -102,3 +141,4 @@ void MapRhiHudWidget::updateGpsPosition(const QGeoPositionInfo &info)
     this->has_gps_coordinate = true;
     update();
 }
+#endif

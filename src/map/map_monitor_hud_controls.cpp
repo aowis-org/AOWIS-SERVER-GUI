@@ -239,7 +239,7 @@ protected:
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing, true);
 
-        const QRectF outer_rect = rect().adjusted(2.5, 2.5, -2.5, -2.5);
+        const QRectF outer_rect = QRectF(rect()).adjusted(2.5, 2.5, -2.5, -2.5);
         const QPointF center = outer_rect.center();
         const double radius = outer_rect.width() / 2.0;
 

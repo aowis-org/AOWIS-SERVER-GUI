@@ -10,12 +10,10 @@
 #include <QDebug>
 #include <QList>
 #include <QTimer>
-#ifndef __EMSCRIPTEN__
 #include <QImage>
 #include <QMetaObject>
 #include <QRunnable>
 #include <QThread>
-#endif
 
 namespace
 {
@@ -24,12 +22,11 @@ constexpr qint64 TileRetryInitialDelayMs = 1000;
 constexpr qint64 TileRetryMaximumDelayMs = 30000;
 constexpr int MaximumQueuedTileRequests = 1024;
 constexpr quint64 TileRequestBatchRetention = 8;
-#ifdef __EMSCRIPTEN__
-constexpr int MaximumTileRequestsInFlight = 12;
-constexpr int MaximumBackgroundTileRequestsInFlight = 6;
-#else
 constexpr int MaximumTileRequestsInFlight = 48;
 constexpr int MaximumBackgroundTileRequestsInFlight = 16;
+#ifdef Q_OS_WASM
+constexpr int TileDecodeThreadCountMaximum = 2;
+#else
 constexpr int TileDecodeThreadCountMaximum = 8;
 #endif
 #ifdef Q_OS_WIN
@@ -67,22 +64,18 @@ MapTileRepository::MapTileRepository(QObject *parent)
     connect(this->tile_request_timer, &QTimer::timeout,
             this, &MapTileRepository::processTileRequestQueue);
 
-#ifndef __EMSCRIPTEN__
     const int decode_threads = qMax(1, qMin(TileDecodeThreadCountMaximum,
         qMax(1, QThread::idealThreadCount())));
     this->tile_decode_pool.setMaxThreadCount(decode_threads);
     this->tile_decode_pool.setExpiryTimeout(30000);
-#endif
 
     initServerMapInterface();
 }
 
 MapTileRepository::~MapTileRepository()
 {
-#ifndef __EMSCRIPTEN__
     this->tile_decode_pool.clear();
     this->tile_decode_pool.waitForDone();
-#endif
 }
 
 const QPixmap *MapTileRepository::tile(const QString &key) const
@@ -562,7 +555,6 @@ void MapTileRepository::tileDataReceived(const QString &key, const QByteArray &d
         return;
     }
 
-#ifndef __EMSCRIPTEN__
     const quint64 generation = this->tile_generation;
     MapTileRepository *repository = this;
     this->tile_decode_pool.start(QRunnable::create([repository, key, data, generation]
@@ -577,26 +569,15 @@ void MapTileRepository::tileDataReceived(const QString &key, const QByteArray &d
             repository->finishTileDecode(key, generation, image);
         }, Qt::QueuedConnection);
     }));
-#else
-    QPixmap pixmap;
-    pixmap.loadFromData(data);
-    finishTileDecode(key, pixmap);
-#endif
 }
 
-#ifndef __EMSCRIPTEN__
-void MapTileRepository::finishTileDecode(const QString &key, quint64 generation, const QImage &image)
+void MapTileRepository::finishTileDecode(
+    const QString &key, quint64 generation, const QImage &image)
 {
     if (generation != this->tile_generation || !this->tiles_pending.contains(key))
         return;
 
     const QPixmap pixmap = QPixmap::fromImage(image);
-#else
-void MapTileRepository::finishTileDecode(const QString &key, const QPixmap &pixmap)
-{
-    if (!this->tiles_pending.contains(key))
-        return;
-#endif
     this->tiles_pending.remove(key);
 
     if (this->tiles_invalidated_while_pending.remove(key))

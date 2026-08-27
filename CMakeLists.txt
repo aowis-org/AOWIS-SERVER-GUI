@@ -18,8 +18,7 @@ find_package(Qt6 REQUIRED COMPONENTS
 )
 
 set(AOWIS_HAS_QRHI 0)
-if(NOT EMSCRIPTEN
-   AND Qt6_VERSION VERSION_GREATER_EQUAL 6.7
+if(Qt6_VERSION VERSION_GREATER_EQUAL 6.7
    AND TARGET Qt6::GuiPrivate
    AND Qt6ShaderTools_FOUND)
     set(AOWIS_HAS_QRHI 1)
@@ -214,38 +213,57 @@ target_link_libraries(aowis-server-gui
         GeographicLib_STATIC
 )
 
-if(NOT EMSCRIPTEN)
-    target_link_libraries(aowis-server-gui
+if(AOWIS_HAS_QRHI)
+    target_sources(aowis-server-gui
         PRIVATE
-            Qt6::Positioning
-            Qt6::SerialPort
+            src/map/map_rhi_basemap_renderer.h
+            src/map/map_rhi_basemap_renderer.cpp
+            src/map/map_rhi_camera.h
+            src/map/map_rhi_camera.cpp
+            src/map/map_rhi_hud_widget.h
+            src/map/map_rhi_hud_widget.cpp
+            src/map/map_monitor_hud_controls.h
+            src/map/map_monitor_hud_controls.cpp
+            src/map/map_rhi_scene.h
+            src/map/map_rhi_scene.cpp
+            src/map/map_rhi_icon_atlas.h
+            src/map/map_rhi_icon_atlas.cpp
+            src/map/map_rhi_junction_model.h
+            src/map/map_rhi_junction_model.cpp
+            src/map/map_rhi_symbology.h
+            src/map/map_rhi_symbology.cpp
+            src/map/map_rhi_tank_model.h
+            src/map/map_rhi_tank_model.cpp
+            src/map/map_rhi_widget.h
+            src/map/map_rhi_widget.cpp
     )
+    target_link_libraries(aowis-server-gui PRIVATE Qt6::GuiPrivate)
 
-    if(AOWIS_HAS_QRHI)
-        target_sources(aowis-server-gui
-            PRIVATE
-                src/map/map_rhi_basemap_renderer.h
-                src/map/map_rhi_basemap_renderer.cpp
-                src/map/map_rhi_camera.h
-                src/map/map_rhi_camera.cpp
-                src/map/map_rhi_hud_widget.h
-                src/map/map_rhi_hud_widget.cpp
-                src/map/map_monitor_hud_controls.h
-                src/map/map_monitor_hud_controls.cpp
-                src/map/map_rhi_scene.h
-                src/map/map_rhi_scene.cpp
-                src/map/map_rhi_icon_atlas.h
-                src/map/map_rhi_icon_atlas.cpp
-                src/map/map_rhi_junction_model.h
-                src/map/map_rhi_junction_model.cpp
-                src/map/map_rhi_symbology.h
-                src/map/map_rhi_symbology.cpp
-                src/map/map_rhi_tank_model.h
-                src/map/map_rhi_tank_model.cpp
-                src/map/map_rhi_widget.h
-                src/map/map_rhi_widget.cpp
+    if(EMSCRIPTEN)
+        qt_add_shaders(aowis-server-gui "aowis_map_rhi_shaders"
+            GLSL
+                "300 es"
+            PREFIX
+                "/aowis/map/rhi"
+            BASE
+                "src/map/shaders"
+            FILES
+                src/map/shaders/map_rhi_link.vert
+                src/map/shaders/map_rhi_link.frag
+                src/map/shaders/map_rhi_node.vert
+                src/map/shaders/map_rhi_node.frag
+                src/map/shaders/map_rhi_icon.vert
+                src/map/shaders/map_rhi_icon.frag
+                src/map/shaders/map_rhi_basemap.vert
+                src/map/shaders/map_rhi_basemap.frag
+                src/map/shaders/map_rhi_heatmap.vert
+                src/map/shaders/map_rhi_heatmap.frag
+                src/map/shaders/map_rhi_junction.vert
+                src/map/shaders/map_rhi_junction.frag
+                src/map/shaders/map_rhi_tank.vert
+                src/map/shaders/map_rhi_tank.frag
         )
-        target_link_libraries(aowis-server-gui PRIVATE Qt6::GuiPrivate)
+    else()
         qt_add_shaders(aowis-server-gui "aowis_map_rhi_shaders"
             PREFIX
                 "/aowis/map/rhi"
@@ -267,11 +285,36 @@ if(NOT EMSCRIPTEN)
                 src/map/shaders/map_rhi_tank.vert
                 src/map/shaders/map_rhi_tank.frag
         )
+    endif()
+
+    if(EMSCRIPTEN)
+        # AOWIS RHI intentionally targets WebGL 2 / OpenGL ES 3 in the browser.
+        # Instancing and derivative-heavy map shaders are core functionality there,
+        # and avoiding a WebGL 1 compatibility path keeps the renderer identical to
+        # the native QRhi implementation.
+        target_link_options(aowis-server-gui PRIVATE
+            "-sMIN_WEBGL_VERSION=2"
+            "-sMAX_WEBGL_VERSION=2"
+        )
+        message(STATUS "AOWIS QRhi compile support: enabled for WebAssembly/WebGL 2")
+    else()
         message(STATUS "AOWIS desktop QRhi support: enabled")
+    endif()
+else()
+    if(EMSCRIPTEN)
+        message(STATUS "AOWIS QRhi compile support: unavailable for WebAssembly (Qt 6.7+, GuiPrivate and ShaderTools are required)")
     else()
         message(STATUS "AOWIS desktop QRhi support: unavailable (Qt 6.7+, GuiPrivate and ShaderTools are required); CPU map renderer remains available")
     endif()
-    
+endif()
+
+if(NOT EMSCRIPTEN)
+    target_link_libraries(aowis-server-gui
+        PRIVATE
+            Qt6::Positioning
+            Qt6::SerialPort
+    )
+
     target_sources(aowis-server-gui
         PRIVATE
             src/gps_provider.h
@@ -279,7 +322,7 @@ if(NOT EMSCRIPTEN)
             src/map/map_network_overlay_widget.h
             src/map/map_network_overlay_widget.cpp
     )
-    
+
     target_compile_definitions(aowis-server-gui
         PRIVATE
             AOWIS_HAS_SERIAL_GPS=1

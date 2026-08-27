@@ -9,10 +9,8 @@
 #include <QPixmap>
 #include <QSet>
 #include <QString>
-#ifndef __EMSCRIPTEN__
 #include <QImage>
 #include <QThreadPool>
-#endif
 #include <QTimer>
 
 #include "../_enums_structs.h"
@@ -81,11 +79,7 @@ private:
     bool tileDeletionPending(const QString &key, int x, int y) const;
     void finishTileDeletion(quint64 request_id, const QString &error = QString());
     void tileDataReceived(const QString &key, const QByteArray &data);
-#ifndef __EMSCRIPTEN__
     void finishTileDecode(const QString &key, quint64 generation, const QImage &image);
-#else
-    void finishTileDecode(const QString &key, const QPixmap &pixmap);
-#endif
     void tileFailed(const QString &key);
 
 #ifdef AOWIS_STANDALONE
@@ -110,9 +104,7 @@ private:
     QHash<quint64, PendingTileDeletion> tile_deletions_pending;
     quint64 next_tile_deletion_id = 1;
     quint64 tile_generation = 0;
-#ifndef __EMSCRIPTEN__
     QThreadPool tile_decode_pool;
-#endif
     QCache<QString, QPixmap> cache;
 };
 

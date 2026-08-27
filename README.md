@@ -50,7 +50,7 @@ On Windows, `%APPDATA%` normally resolves to `C:\Users\<user>\AppData\Roaming`. 
 ```ini
 [gui]
 examples_builtin_enable=true
-map_desktop_renderer=cpu
+map_desktop_renderer=rhi
 
 [shortcuts]
 sidebar_toggle=Win+Tab
@@ -89,6 +89,8 @@ Restart the application after editing the file. Missing native `[shortcuts]` ent
 
 Set `examples_builtin_enable=false` to hide the bundled `Examples` project and its revisions from the toolbar. If the option is missing, built-in examples are enabled.
 
-Native builds accept `map_desktop_renderer=cpu` or `map_desktop_renderer=rhi`. `cpu` requests the existing QPainter-based desktop renderer. `rhi` requests the native QRhi backend when the build provides Qt 6.7+ and `Qt6::GuiPrivate`; otherwise renderer selection resolves to CPU and logs the reason. WebAssembly ignores this desktop-only option and continues to use its browser renderer.
+Native builds accept `map_desktop_renderer=cpu` or `map_desktop_renderer=rhi`. `rhi` is the default and requests the QRhi backend when the build provides the required Qt support; `cpu` keeps the QPainter fallback. If RHI initialization fails at runtime, the existing CPU renderer is promoted automatically.
 
-WebAssembly builds include `aowis-server-gui.ini` in the generated webroot. Set `examples_builtin_enable`, `base_url`, `api_key`, and `delete_api_key` there and reload the page. The browser always loads `/aowis-server-gui.ini` from the webroot root. Existing administrator-edited files in `build-wasm` and `build-wasm-dist` are preserved across rebuilds. The normal API key is used for tile requests; the delete API key is used only for tile-cache deletion requests.
+WebAssembly builds accept `map_wasm_renderer=rhi` or `map_wasm_renderer=browser`. `rhi` is the default for Map Monitor and uses the same QRhi renderer through WebGL 2. `browser` keeps the existing JavaScript/WebGL renderer. If QRhi initialization fails in the browser, Map Monitor automatically falls back to the browser renderer. Map Editor remains on the existing browser renderer during this first WASM runtime-validation stage.
+
+WebAssembly builds include `aowis-server-gui.ini` in the generated webroot. Set `examples_builtin_enable`, `map_wasm_renderer`, `base_url`, `api_key`, and `delete_api_key` there and reload the page. The browser always loads `/aowis-server-gui.ini` from the webroot root. Existing administrator-edited files in `build-wasm` and `build-wasm-dist` are preserved across rebuilds. The normal API key is used for tile requests; the delete API key is used only for tile-cache deletion requests.

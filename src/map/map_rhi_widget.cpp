@@ -32,7 +32,11 @@
 namespace
 {
 constexpr int CameraUniformBytes = 32 * int(sizeof(float));
+#ifdef Q_OS_WASM
+constexpr int RendererMsaaSamples = 1;
+#else
 constexpr int RendererMsaaSamples = 4;
+#endif
 constexpr int CameraTerrainMinimumZoom = 8;
 constexpr int CameraTerrainMaximumZoom = 14;
 constexpr double FallbackOriginRecenterThresholdWorld = MapModel::TileSize * 1024.0;

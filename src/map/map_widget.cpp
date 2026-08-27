@@ -715,14 +715,10 @@ bool MapWidget::hasFastKeyboardPanInput() const
 
 bool MapWidget::hasView2dKeyboardZoomInput() const
 {
-#ifndef Q_OS_WASM
     return this->rhi_view_active
         && this->m_model != nullptr
         && this->m_model->viewMode() == MapViewMode::TwoD
         && (this->view_2d_zoom_in_key_pressed || this->view_2d_zoom_out_key_pressed);
-#else
-    return false;
-#endif
 }
 
 void MapWidget::updateView2dKeyboardZoom(qreal elapsed_seconds)
@@ -942,7 +938,6 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
             this->pan_fast_modifier_pressed = event->modifiers().testFlag(Qt::ShiftModifier);
             ensurePanAnimationRunning();
         }
-#ifndef Q_OS_WASM
         else if (this->rhi_view_active
                  && !event->modifiers().testFlag(Qt::ShiftModifier))
         {
@@ -952,7 +947,6 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
                 this->view_2d_zoom_out_key_pressed = true;
             ensurePanAnimationRunning();
         }
-#endif
         else if (zoom_in)
         {
             zoomIn();
@@ -1594,6 +1588,8 @@ void MapWidget::updatePointerCoordinates(const QPoint &position)
 
 void MapWidget::scheduleTileUpdate(const QString &)
 {
+    if (this->rhi_view_active)
+        return;
 #ifdef Q_OS_WASM
     if (this->browser_map_layer_enabled)
         return;
@@ -1636,6 +1632,11 @@ void MapWidget::changeMapProvider(MapProvider provider)
 
 void MapWidget::paintEvent(QPaintEvent *event)
 {
+    if (this->rhi_view_active)
+    {
+        Q_UNUSED(event)
+        return;
+    }
 #ifdef Q_OS_WASM
     if (this->browser_map_layer_enabled)
     {

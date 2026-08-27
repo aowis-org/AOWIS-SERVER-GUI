@@ -460,9 +460,18 @@
               throw new Error(`Unable to load ${configurationUrl.pathname}: HTTP ${response.status} ${response.statusText}`);
 
           const values = parseAowisIni(await response.text());
+          const configuredWasmRenderer = (values['gui/map_wasm_renderer'] || 'rhi')
+              .trim().toLowerCase();
+          const mapWasmRenderer = configuredWasmRenderer === 'browser'
+              ? 'browser'
+              : 'rhi';
+          if (configuredWasmRenderer !== 'rhi' && configuredWasmRenderer !== 'browser')
+              console.warn(`Invalid gui/map_wasm_renderer '${configuredWasmRenderer}', using rhi`);
+
           const guiConfiguration = Object.freeze({
               examplesBuiltinEnable: parseAowisBoolean(
-                  values['gui/examples_builtin_enable'], true)
+                  values['gui/examples_builtin_enable'], true),
+              mapWasmRenderer
           });
           const baseUrl = (values['map_server/base_url'] || '').trim().replace(/\/+$/, '');
           if (!baseUrl)
@@ -484,6 +493,7 @@
           console.info('Loaded and activated AOWIS configuration:', {
               configurationUrl: configurationUrl.toString(),
               examplesBuiltinEnable: guiConfiguration.examplesBuiltinEnable,
+              mapWasmRenderer: guiConfiguration.mapWasmRenderer,
               baseUrl,
               hasApiKey: configuration.apiKey.length > 0,
               hasDeleteApiKey: configuration.deleteApiKey.length > 0

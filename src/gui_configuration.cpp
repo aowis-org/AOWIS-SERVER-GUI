@@ -60,12 +60,25 @@ EM_JS(int, aowisBuiltinExamplesEnabled, (),
     return configuration.examplesBuiltinEnable === false ? 0 : 1;
 });
 
+EM_JS(int, aowisWasmRhiRendererRequested, (),
+{
+    const configuration = globalThis.aowisGuiConfiguration || {};
+    const renderer = typeof configuration.mapWasmRenderer === "string"
+        ? configuration.mapWasmRenderer.trim().toLowerCase()
+        : "rhi";
+    return renderer === "browser" ? 0 : 1;
+});
+
 GuiConfiguration loadConfiguration()
 {
     GuiConfiguration configuration;
     configuration.examples_builtin_enable = aowisBuiltinExamplesEnabled() != 0;
+    configuration.map_wasm_renderer = aowisWasmRhiRendererRequested() != 0
+        ? WasmMapRenderer::Rhi
+        : WasmMapRenderer::Browser;
     qInfo() << "Loaded GUI configuration from webroot/aowis-server-gui.ini: examples_builtin_enable ="
-            << configuration.examples_builtin_enable;
+            << configuration.examples_builtin_enable
+            << "map_wasm_renderer =" << wasmMapRendererName(configuration.map_wasm_renderer);
     return configuration;
 }
 #else
@@ -121,7 +134,7 @@ bool createDefaultConfiguration(const QString &path)
         "\n"
         "[gui]\n"
         "examples_builtin_enable=true\n"
-        "map_desktop_renderer=cpu\n"
+        "map_desktop_renderer=rhi\n"
         "\n"
         "[shortcuts]\n"
         "sidebar_toggle=Win+Tab\n"
@@ -193,7 +206,7 @@ DesktopMapRenderer parseDesktopMapRenderer(const QString &value, bool *valid)
 
     if (valid != nullptr)
         *valid = false;
-    return DesktopMapRenderer::Cpu;
+    return DesktopMapRenderer::Rhi;
 }
 
 GuiConfiguration loadConfiguration()
@@ -221,6 +234,7 @@ GuiConfiguration loadConfiguration()
     QSettings settings(path, QSettings::IniFormat);
 
     const GuiShortcutConfiguration advertised_shortcuts;
+    ensureSettingDefault(settings, QStringLiteral("gui/map_desktop_renderer"), QStringLiteral("rhi"));
     ensureSettingDefault(settings, QStringLiteral("shortcuts/sidebar_toggle"), advertised_shortcuts.sidebar_toggle);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/fullscreen"), advertised_shortcuts.fullscreen);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/simulation_run"), advertised_shortcuts.simulation_run);
@@ -253,14 +267,14 @@ GuiConfiguration loadConfiguration()
         QStringLiteral("gui/examples_builtin_enable"), true).toBool();
 
     const QString configured_renderer = settings.value(
-        QStringLiteral("gui/map_desktop_renderer"), QStringLiteral("cpu")).toString();
+        QStringLiteral("gui/map_desktop_renderer"), QStringLiteral("rhi")).toString();
     bool renderer_valid = false;
     configuration.map_desktop_renderer = parseDesktopMapRenderer(
         configured_renderer, &renderer_valid);
     if (!renderer_valid)
     {
         qWarning() << "Invalid gui/map_desktop_renderer value" << configured_renderer
-                   << "in" << path << "- using cpu. Valid values are: cpu, rhi.";
+                   << "in" << path << "- using rhi. Valid values are: cpu, rhi.";
     }
 
     configuration.shortcuts.sidebar_toggle = loadShortcutSetting(settings, QStringLiteral("shortcuts/sidebar_toggle"), advertised_shortcuts.sidebar_toggle);
@@ -359,17 +373,13 @@ const char *desktopMapRendererName(DesktopMapRenderer renderer)
 
 bool desktopMapRhiBuildAvailable()
 {
-#ifdef __EMSCRIPTEN__
-    return false;
-#else
     return AOWIS_HAS_QRHI != 0;
-#endif
 }
 
 DesktopMapRenderer desktopMapRenderer()
 {
 #ifdef __EMSCRIPTEN__
-    return DesktopMapRenderer::Cpu;
+    return DesktopMapRenderer::Rhi;
 #else
     static const DesktopMapRenderer renderer = []()
     {
@@ -384,5 +394,46 @@ DesktopMapRenderer desktopMapRenderer()
         return requested;
     }();
     return renderer;
+#endif
+}
+
+const char *wasmMapRendererName(WasmMapRenderer renderer)
+{
+    switch (renderer)
+    {
+        case WasmMapRenderer::Browser:
+            return "browser";
+        case WasmMapRenderer::Rhi:
+        default:
+            return "rhi";
+    }
+}
+
+bool wasmMapRhiBuildAvailable()
+{
+#ifdef __EMSCRIPTEN__
+    return AOWIS_HAS_QRHI != 0;
+#else
+    return false;
+#endif
+}
+
+WasmMapRenderer wasmMapRenderer()
+{
+#ifdef __EMSCRIPTEN__
+    static const WasmMapRenderer renderer = []()
+    {
+        const WasmMapRenderer requested = guiConfiguration().map_wasm_renderer;
+        if (requested == WasmMapRenderer::Rhi && !wasmMapRhiBuildAvailable())
+        {
+            qWarning() << "WASM map renderer 'rhi' was requested, but this build has no "
+                          "QRhi support. Falling back to the browser renderer.";
+            return WasmMapRenderer::Browser;
+        }
+        return requested;
+    }();
+    return renderer;
+#else
+    return WasmMapRenderer::Browser;
 #endif
 }

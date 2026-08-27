@@ -12,6 +12,12 @@ enum class DesktopMapRenderer
     Rhi
 };
 
+enum class WasmMapRenderer
+{
+    Browser,
+    Rhi
+};
+
 struct GuiShortcutConfiguration
 {
     QString sidebar_toggle = QStringLiteral("Win+Tab");
@@ -46,7 +52,8 @@ struct GuiShortcutConfiguration
 struct GuiConfiguration
 {
     bool examples_builtin_enable = true;
-    DesktopMapRenderer map_desktop_renderer = DesktopMapRenderer::Cpu;
+    DesktopMapRenderer map_desktop_renderer = DesktopMapRenderer::Rhi;
+    WasmMapRenderer map_wasm_renderer = WasmMapRenderer::Rhi;
     GuiShortcutConfiguration shortcuts;
 };
 
@@ -58,5 +65,8 @@ bool guiShortcutMatches(const QKeyEvent *event, const QString &shortcut,
 DesktopMapRenderer desktopMapRenderer();
 bool desktopMapRhiBuildAvailable();
 const char *desktopMapRendererName(DesktopMapRenderer renderer);
+WasmMapRenderer wasmMapRenderer();
+bool wasmMapRhiBuildAvailable();
+const char *wasmMapRendererName(WasmMapRenderer renderer);
 
 #endif // GUI_CONFIGURATION_H
