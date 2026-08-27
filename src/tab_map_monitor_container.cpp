@@ -9,6 +9,7 @@
 #endif
 
 #include "gui_configuration.h"
+#include "shortcut_registry.h"
 #include "map/map_terrain_repository.h"
 #ifndef Q_OS_WASM
 #include "map/map_network_overlay_widget.h"
@@ -29,8 +30,10 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMouseEvent>
+#include <QShortcut>
 #include <QSignalBlocker>
 #include <QTimer>
+#include <QToolButton>
 
 #include <cmath>
 #include <functional>
@@ -371,6 +374,24 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             new MapMonitorVerticalControlsHudWidget(this->map_model, this->map_stack);
         EntityMapLegendHud *legend_hud =
             new EntityMapLegendHud(this->hydraulic_data, this->map_stack);
+        QToolButton *scene_fullscreen_button = nullptr;
+        QShortcut *scene_fullscreen_shortcut = nullptr;
+#ifndef Q_OS_WASM
+        scene_fullscreen_button = new QToolButton(this->map_stack);
+        scene_fullscreen_button->setAutoRaise(true);
+        const int scene_fullscreen_button_extent = (Sizes::TopControlBarHeight - 8) / 2;
+        const int scene_fullscreen_icon_extent = qMax(1, scene_fullscreen_button_extent - 2);
+        scene_fullscreen_button->setFixedSize(
+            scene_fullscreen_button_extent, scene_fullscreen_button_extent);
+        scene_fullscreen_button->setIconSize(
+            QSize(scene_fullscreen_icon_extent, scene_fullscreen_icon_extent));
+        scene_fullscreen_button->setStyleSheet(QStringLiteral("padding: 0;"));
+        scene_fullscreen_shortcut = new QShortcut(
+            guiShortcutRegistry().keySequence(GuiShortcutId::MapMonitorFullscreen),
+            this->map_stack);
+        scene_fullscreen_shortcut->setContext(Qt::ApplicationShortcut);
+        scene_fullscreen_shortcut->setAutoRepeat(false);
+#endif
         this->desktop_rhi_surface = rhi_surface;
         this->desktop_rhi_hud = rhi_hud;
         this->desktop_download_activity_hud = download_activity_hud;
@@ -379,6 +400,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         this->desktop_scale_hud = scale_hud;
         this->desktop_vertical_controls_hud = vertical_controls_hud;
         this->desktop_legend_hud = legend_hud;
+        this->desktop_scene_fullscreen_button = scene_fullscreen_button;
+        this->desktop_scene_fullscreen_shortcut = scene_fullscreen_shortcut;
         this->desktop_rhi_hud->hide();
         this->desktop_download_activity_hud->setHudActive(false);
         this->desktop_view_mode_hud->hide();
@@ -387,6 +410,48 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         this->desktop_vertical_controls_hud->hide();
         this->desktop_legend_hud->setMapMonitorActive(false);
         this->desktop_legend_hud->hide();
+        if (this->desktop_scene_fullscreen_button != nullptr
+            && this->desktop_scene_fullscreen_shortcut != nullptr)
+        {
+            this->desktop_scene_fullscreen_button->hide();
+            this->desktop_scene_fullscreen_shortcut->setEnabled(false);
+            updateDesktopRhiSceneFullscreenControl();
+            connect(this->desktop_scene_fullscreen_button, &QToolButton::clicked, this, [this]
+            {
+                setDesktopRhiSceneFullscreen(!this->desktop_scene_fullscreen_active);
+            });
+            connect(this->desktop_scene_fullscreen_shortcut, &QShortcut::activated, this, [this]
+            {
+                if (!this->rhi_renderer_active)
+                    return;
+                if (!this->desktop_scene_fullscreen_active && !isVisible())
+                    return;
+                setDesktopRhiSceneFullscreen(!this->desktop_scene_fullscreen_active);
+            });
+            connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutChanged, this,
+                    [this](GuiShortcutId id)
+            {
+                if (id != GuiShortcutId::MapMonitorFullscreen
+                    || this->desktop_scene_fullscreen_shortcut == nullptr)
+                {
+                    return;
+                }
+                this->desktop_scene_fullscreen_shortcut->setKey(
+                    guiShortcutRegistry().keySequence(GuiShortcutId::MapMonitorFullscreen));
+                updateDesktopRhiSceneFullscreenControl();
+            });
+            connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutCaptureActiveChanged,
+                    this, [this](bool active)
+            {
+                if (this->desktop_scene_fullscreen_shortcut != nullptr)
+                {
+                    this->desktop_scene_fullscreen_shortcut->setEnabled(
+                        this->rhi_renderer_active && !active);
+                }
+            });
+            installShortcutEditContextMenu(
+                this->desktop_scene_fullscreen_button, GuiShortcutId::MapMonitorFullscreen);
+        }
         connect(this->desktop_legend_hud, &EntityMapLegendHud::signalNodeVisualSelected,
                 this, [this](VisualNode visual_node)
         {
@@ -554,6 +619,17 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             rhi_hud->show();
             download_activity_hud->setHudActive(true);
             view_mode_hud->show();
+            if (this->desktop_scene_fullscreen_button != nullptr)
+            {
+                this->desktop_scene_fullscreen_button->show();
+                this->desktop_scene_fullscreen_button->raise();
+            }
+            if (this->desktop_scene_fullscreen_shortcut != nullptr)
+            {
+                this->desktop_scene_fullscreen_shortcut->setEnabled(
+                    !guiShortcutRegistry().shortcutCaptureActive());
+            }
+            updateDesktopRhiSceneFullscreenControl();
             if (this->desktop_legend_hud != nullptr)
             {
                 this->desktop_legend_hud->setNodeVisual(
@@ -579,6 +655,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         connect(rhi_surface, &MapRhiWidget::signalRendererFailed, this,
                 [this](const QString &reason)
         {
+            if (this->desktop_scene_fullscreen_active)
+                setDesktopRhiSceneFullscreen(false);
             this->rhi_renderer_active = false;
 #ifdef Q_OS_WASM
             qWarning().noquote()
@@ -628,6 +706,10 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                 this->desktop_vertical_controls_hud->hide();
             if (this->desktop_legend_hud != nullptr)
                 this->desktop_legend_hud->setMapMonitorActive(false);
+            if (this->desktop_scene_fullscreen_button != nullptr)
+                this->desktop_scene_fullscreen_button->hide();
+            if (this->desktop_scene_fullscreen_shortcut != nullptr)
+                this->desktop_scene_fullscreen_shortcut->setEnabled(false);
             if (this->desktop_rhi_surface != nullptr)
                 this->desktop_rhi_surface->hide();
             emit signalShowMapLegendNode(this->symbology_settings.visual_node);
@@ -829,6 +911,10 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
 
 MapMonitorContainer::~MapMonitorContainer()
 {
+#if AOWIS_HAS_QRHI
+    if (this->desktop_scene_fullscreen_active)
+        setDesktopRhiSceneFullscreen(false);
+#endif
 #ifdef Q_OS_WASM
     this->map->setBrowserMapLayerGeometry(QRect(), false);
 #endif
@@ -965,6 +1051,17 @@ void MapMonitorContainer::positionDesktopHudWidgets()
             this->desktop_scale_hud->raise();
     }
 
+    if (this->desktop_scene_fullscreen_button != nullptr)
+    {
+        const int fullscreen_x = qMax(
+            hud_margin_px,
+            this->map_stack->width() - this->desktop_scene_fullscreen_button->width()
+                - hud_margin_px);
+        this->desktop_scene_fullscreen_button->move(fullscreen_x, hud_margin_px);
+        if (this->desktop_scene_fullscreen_button->isVisible())
+            this->desktop_scene_fullscreen_button->raise();
+    }
+
     if (this->desktop_legend_hud != nullptr)
     {
         this->desktop_legend_hud->adjustSize();
@@ -978,6 +1075,62 @@ void MapMonitorContainer::positionDesktopHudWidgets()
         if (this->desktop_legend_hud->isVisible())
             this->desktop_legend_hud->raise();
     }
+}
+
+void MapMonitorContainer::setDesktopRhiSceneFullscreen(bool fullscreen)
+{
+    if (fullscreen == this->desktop_scene_fullscreen_active)
+        return;
+    if (fullscreen && (!this->rhi_renderer_active || this->desktop_rhi_surface == nullptr))
+        return;
+
+    if (fullscreen)
+    {
+        const QPoint previous_global_position = this->map_stack->mapToGlobal(QPoint(0, 0));
+        this->layout->removeWidget(this->map_stack);
+        this->map_stack->setParent(nullptr, Qt::Window);
+        this->map_stack->move(previous_global_position);
+        this->desktop_scene_fullscreen_active = true;
+        updateDesktopRhiSceneFullscreenControl();
+        this->map_stack->showFullScreen();
+    }
+    else
+    {
+        this->desktop_scene_fullscreen_active = false;
+        this->map_stack->hide();
+        this->map_stack->setWindowState(Qt::WindowNoState);
+        this->map_stack->setParent(this, Qt::Widget);
+        this->layout->addWidget(this->map_stack);
+        this->map_stack->show();
+        updateDesktopRhiSceneFullscreenControl();
+    }
+
+    positionDesktopHudWidgets();
+    if (this->desktop_rhi_surface != nullptr)
+    {
+        this->desktop_rhi_surface->update();
+        this->desktop_rhi_surface->setFocus(Qt::ShortcutFocusReason);
+    }
+}
+
+void MapMonitorContainer::updateDesktopRhiSceneFullscreenControl()
+{
+    if (this->desktop_scene_fullscreen_button == nullptr)
+        return;
+
+    const QString icon_path = this->desktop_scene_fullscreen_active
+        ? QStringLiteral(":/icon/fullscreen_undo.png")
+        : QStringLiteral(":/icon/fullscreen.png");
+    this->desktop_scene_fullscreen_button->setIcon(QIcon(icon_path));
+
+    const QString shortcut = guiShortcutPresentation(GuiShortcutId::MapMonitorFullscreen);
+    const QString action = this->desktop_scene_fullscreen_active
+        ? QStringLiteral("Exit map fullscreen")
+        : QStringLiteral("Fullscreen map");
+    this->desktop_scene_fullscreen_button->setToolTip(
+        shortcut.isEmpty()
+            ? action
+            : QStringLiteral("%1 [%2]").arg(action, shortcut));
 }
 
 void MapMonitorContainer::syncDesktopCameraHudVisibility()
@@ -1010,6 +1163,13 @@ void MapMonitorContainer::syncDesktopCameraHudVisibility()
 bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
 {
 #if AOWIS_HAS_QRHI
+    if (watched == this->map_stack && event->type() == QEvent::Close
+        && this->desktop_scene_fullscreen_active)
+    {
+        setDesktopRhiSceneFullscreen(false);
+        event->ignore();
+        return true;
+    }
     if (watched == this->map_stack && event->type() == QEvent::Resize
         && this->desktop_rhi_hud != nullptr)
     {

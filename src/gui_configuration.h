@@ -22,6 +22,7 @@ struct GuiShortcutConfiguration
 {
     QString sidebar_toggle = QStringLiteral("Win+Tab");
     QString fullscreen = QStringLiteral("F11");
+    QString map_monitor_fullscreen = QStringLiteral("Ctrl+F11");
     QString simulation_run = QStringLiteral("Ctrl+R");
     QString simulation_run_alternate = QStringLiteral("Shift+Enter");
 

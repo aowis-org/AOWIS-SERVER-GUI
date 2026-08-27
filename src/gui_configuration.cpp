@@ -139,6 +139,7 @@ bool createDefaultConfiguration(const QString &path)
         "[shortcuts]\n"
         "sidebar_toggle=Win+Tab\n"
         "fullscreen=F11\n"
+        "map_monitor_fullscreen=Ctrl+F11\n"
         "simulation_run=Ctrl+R\n"
         "simulation_run_alternate=Shift+Enter\n"
         "map_zoom_in=E\n"
@@ -237,6 +238,7 @@ GuiConfiguration loadConfiguration()
     ensureSettingDefault(settings, QStringLiteral("gui/map_desktop_renderer"), QStringLiteral("rhi"));
     ensureSettingDefault(settings, QStringLiteral("shortcuts/sidebar_toggle"), advertised_shortcuts.sidebar_toggle);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/fullscreen"), advertised_shortcuts.fullscreen);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_monitor_fullscreen"), advertised_shortcuts.map_monitor_fullscreen);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/simulation_run"), advertised_shortcuts.simulation_run);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/simulation_run_alternate"), advertised_shortcuts.simulation_run_alternate);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/map_zoom_in"), advertised_shortcuts.map_zoom_in);
@@ -279,6 +281,7 @@ GuiConfiguration loadConfiguration()
 
     configuration.shortcuts.sidebar_toggle = loadShortcutSetting(settings, QStringLiteral("shortcuts/sidebar_toggle"), advertised_shortcuts.sidebar_toggle);
     configuration.shortcuts.fullscreen = loadShortcutSetting(settings, QStringLiteral("shortcuts/fullscreen"), advertised_shortcuts.fullscreen);
+    configuration.shortcuts.map_monitor_fullscreen = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_monitor_fullscreen"), advertised_shortcuts.map_monitor_fullscreen);
     configuration.shortcuts.simulation_run = loadShortcutSetting(settings, QStringLiteral("shortcuts/simulation_run"), advertised_shortcuts.simulation_run);
     configuration.shortcuts.simulation_run_alternate = loadShortcutSetting(settings, QStringLiteral("shortcuts/simulation_run_alternate"), advertised_shortcuts.simulation_run_alternate);
     configuration.shortcuts.map_zoom_in = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_zoom_in"), advertised_shortcuts.map_zoom_in);

@@ -11,6 +11,7 @@ enum class GuiShortcutId
 {
     SidebarToggle,
     Fullscreen,
+    MapMonitorFullscreen,
     SimulationRun,
     SimulationRunAlternate,
     MapZoomIn,

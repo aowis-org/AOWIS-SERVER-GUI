@@ -46,6 +46,8 @@ class MapMonitorCompassHudWidget;
 class MapMonitorScaleHudWidget;
 class MapMonitorVerticalControlsHudWidget;
 class EntityMapLegendHud;
+class QShortcut;
+class QToolButton;
 
 #ifdef Q_OS_WASM
 #include "gps_provider_dummy.h"
@@ -142,6 +144,9 @@ private:
     MapMonitorScaleHudWidget *desktop_scale_hud = nullptr;
     MapMonitorVerticalControlsHudWidget *desktop_vertical_controls_hud = nullptr;
     EntityMapLegendHud *desktop_legend_hud = nullptr;
+    QToolButton *desktop_scene_fullscreen_button = nullptr;
+    QShortcut *desktop_scene_fullscreen_shortcut = nullptr;
+    bool desktop_scene_fullscreen_active = false;
     bool rhi_renderer_active = false;
 #endif
     MapMonitorMenuWidget *map_menu = nullptr;
@@ -165,6 +170,8 @@ private:
     void applyDesktopRhiHighlights();
     void positionDesktopHudWidgets();
     void syncDesktopCameraHudVisibility();
+    void setDesktopRhiSceneFullscreen(bool fullscreen);
+    void updateDesktopRhiSceneFullscreenControl();
 #endif
     void showMapLegendNode(VisualNode visual_node);
     void showMapLegendLink(VisualLink visual_link);

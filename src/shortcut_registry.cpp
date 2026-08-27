@@ -17,6 +17,8 @@ QString configuredShortcut(const GuiShortcutConfiguration &configuration, GuiSho
             return configuration.sidebar_toggle;
         case GuiShortcutId::Fullscreen:
             return configuration.fullscreen;
+        case GuiShortcutId::MapMonitorFullscreen:
+            return configuration.map_monitor_fullscreen;
         case GuiShortcutId::SimulationRun:
             return configuration.simulation_run;
         case GuiShortcutId::SimulationRunAlternate:
@@ -120,7 +122,7 @@ QVector<GuiShortcutDefinition> createDefinitions()
 {
     const GuiShortcutConfiguration defaults;
     QVector<GuiShortcutDefinition> definitions;
-    definitions.reserve(25);
+    definitions.reserve(26);
 
     definitions.append({GuiShortcutId::SidebarToggle, QStringLiteral("sidebar_toggle"),
                         QStringLiteral("Toggle right sidebar"), QStringLiteral("Application"),
@@ -128,6 +130,9 @@ QVector<GuiShortcutDefinition> createDefinitions()
     definitions.append({GuiShortcutId::Fullscreen, QStringLiteral("fullscreen"),
                         QStringLiteral("Toggle fullscreen"), QStringLiteral("Application"),
                         QStringLiteral("Application"), defaults.fullscreen});
+    definitions.append({GuiShortcutId::MapMonitorFullscreen, QStringLiteral("map_monitor_fullscreen"),
+                        QStringLiteral("Toggle map fullscreen"), QStringLiteral("Map Navigation"),
+                        QStringLiteral("Map Monitor"), defaults.map_monitor_fullscreen});
     definitions.append({GuiShortcutId::SimulationRun, QStringLiteral("simulation_run"),
                         QStringLiteral("Run simulation"), QStringLiteral("Simulation"),
                         QStringLiteral("Application"), defaults.simulation_run});

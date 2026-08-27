@@ -103,6 +103,7 @@ bool createDefaultConfiguration(const QString &path)
         "[shortcuts]\n"
         "sidebar_toggle=Win+Tab\n"
         "fullscreen=F11\n"
+        "map_monitor_fullscreen=Ctrl+F11\n"
         "simulation_run=Ctrl+R\n"
         "simulation_run_alternate=Shift+Enter\n"
         "map_zoom_in=E\n"
