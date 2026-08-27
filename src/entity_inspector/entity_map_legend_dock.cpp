@@ -31,10 +31,14 @@ namespace
 {
 const std::array<NetworkSymbologyPalette, NetworkSymbologyPaletteCount> palette_choices = {{
     NetworkSymbologyPalette::Viridis,
+    NetworkSymbologyPalette::Cividis,
     NetworkSymbologyPalette::Plasma,
     NetworkSymbologyPalette::Inferno,
+    NetworkSymbologyPalette::Magma,
+    NetworkSymbologyPalette::Batlow,
     NetworkSymbologyPalette::Turbo,
-    NetworkSymbologyPalette::CoolWarm
+    NetworkSymbologyPalette::CoolWarm,
+    NetworkSymbologyPalette::RedBlue
 }};
 
 QString legendGroupTitle(const QString &scope, const QString &metric, const QString &unit)
@@ -410,8 +414,12 @@ private:
         constexpr int preview_width = 124;
         constexpr int preview_height = 26;
 
+        menu.addSection(QStringLiteral("Sequential"));
+
         for (const NetworkSymbologyPalette palette_choice : palette_choices)
         {
+            if (palette_choice == NetworkSymbologyPalette::CoolWarm)
+                menu.addSection(QStringLiteral("Diverging"));
             QWidget *row = new QWidget(&menu);
             QHBoxLayout *row_layout = new QHBoxLayout(row);
             row_layout->setContentsMargins(6, 3, 6, 3);

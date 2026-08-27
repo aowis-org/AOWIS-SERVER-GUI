@@ -17,7 +17,11 @@ enum class NetworkSymbologyPalette
     Plasma,
     Inferno,
     Turbo,
-    CoolWarm
+    CoolWarm,
+    Cividis,
+    Magma,
+    Batlow,
+    RedBlue
 };
 
 struct NetworkSymbologySettings

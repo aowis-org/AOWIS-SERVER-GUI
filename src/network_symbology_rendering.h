@@ -12,7 +12,7 @@
 
 constexpr int NetworkSymbologyColorBucketCount = 256;
 constexpr int NetworkSymbologyRampColorCount = 7;
-constexpr int NetworkSymbologyPaletteCount = 5;
+constexpr int NetworkSymbologyPaletteCount = 9;
 
 inline QRgb networkSymbologyDefaultColor()
 {
@@ -62,6 +62,15 @@ inline const std::array<QColor, NetworkSymbologyRampColorCount> &networkSymbolog
         QColor(QStringLiteral("#90d743")),
         QColor(QStringLiteral("#fde725"))
     }};
+    static const std::array<QColor, NetworkSymbologyRampColorCount> Cividis = {{
+        QColor(QStringLiteral("#00224e")),
+        QColor(QStringLiteral("#2a3f6d")),
+        QColor(QStringLiteral("#575d6d")),
+        QColor(QStringLiteral("#7d7c78")),
+        QColor(QStringLiteral("#a59c74")),
+        QColor(QStringLiteral("#d2c060")),
+        QColor(QStringLiteral("#fee838"))
+    }};
     static const std::array<QColor, NetworkSymbologyRampColorCount> Plasma = {{
         QColor(QStringLiteral("#0d0887")),
         QColor(QStringLiteral("#5b02a3")),
@@ -79,6 +88,26 @@ inline const std::array<QColor, NetworkSymbologyRampColorCount> &networkSymbolog
         QColor(QStringLiteral("#ed6925")),
         QColor(QStringLiteral("#fbb61a")),
         QColor(QStringLiteral("#fcffa4"))
+    }};
+    static const std::array<QColor, NetworkSymbologyRampColorCount> Magma = {{
+        QColor(QStringLiteral("#000004")),
+        QColor(QStringLiteral("#2c115f")),
+        QColor(QStringLiteral("#721f81")),
+        QColor(QStringLiteral("#b73779")),
+        QColor(QStringLiteral("#f1605d")),
+        QColor(QStringLiteral("#feb078")),
+        QColor(QStringLiteral("#fcfdbf"))
+    }};
+    // Fabio Crameri Scientific Colour Maps 8.0.1, batlow sampled at seven
+    // evenly spaced positions. https://doi.org/10.5281/zenodo.1243862
+    static const std::array<QColor, NetworkSymbologyRampColorCount> Batlow = {{
+        QColor(QStringLiteral("#011959")),
+        QColor(QStringLiteral("#144d62")),
+        QColor(QStringLiteral("#3c6d56")),
+        QColor(QStringLiteral("#828231")),
+        QColor(QStringLiteral("#d29343")),
+        QColor(QStringLiteral("#fdac9e")),
+        QColor(QStringLiteral("#faccfa"))
     }};
     static const std::array<QColor, NetworkSymbologyRampColorCount> Turbo = {{
         QColor(QStringLiteral("#30123b")),
@@ -98,17 +127,34 @@ inline const std::array<QColor, NetworkSymbologyRampColorCount> &networkSymbolog
         QColor(QStringLiteral("#dc6a4f")),
         QColor(QStringLiteral("#b40426"))
     }};
+    static const std::array<QColor, NetworkSymbologyRampColorCount> RedBlue = {{
+        QColor(QStringLiteral("#67001f")),
+        QColor(QStringLiteral("#c94741")),
+        QColor(QStringLiteral("#f7b799")),
+        QColor(QStringLiteral("#f6f7f7")),
+        QColor(QStringLiteral("#a7d0e4")),
+        QColor(QStringLiteral("#3783bb")),
+        QColor(QStringLiteral("#053061"))
+    }};
 
     switch (palette)
     {
+    case NetworkSymbologyPalette::Cividis:
+        return Cividis;
     case NetworkSymbologyPalette::Plasma:
         return Plasma;
     case NetworkSymbologyPalette::Inferno:
         return Inferno;
+    case NetworkSymbologyPalette::Magma:
+        return Magma;
+    case NetworkSymbologyPalette::Batlow:
+        return Batlow;
     case NetworkSymbologyPalette::Turbo:
         return Turbo;
     case NetworkSymbologyPalette::CoolWarm:
         return CoolWarm;
+    case NetworkSymbologyPalette::RedBlue:
+        return RedBlue;
     case NetworkSymbologyPalette::Viridis:
         return Viridis;
     }
@@ -122,14 +168,22 @@ inline QString networkSymbologyPaletteName(NetworkSymbologyPalette palette)
     {
     case NetworkSymbologyPalette::Viridis:
         return QStringLiteral("Viridis");
+    case NetworkSymbologyPalette::Cividis:
+        return QStringLiteral("Cividis");
     case NetworkSymbologyPalette::Plasma:
         return QStringLiteral("Plasma");
     case NetworkSymbologyPalette::Inferno:
         return QStringLiteral("Inferno");
+    case NetworkSymbologyPalette::Magma:
+        return QStringLiteral("Magma");
+    case NetworkSymbologyPalette::Batlow:
+        return QStringLiteral("Batlow");
     case NetworkSymbologyPalette::Turbo:
         return QStringLiteral("Turbo");
     case NetworkSymbologyPalette::CoolWarm:
         return QStringLiteral("Cool/Warm");
+    case NetworkSymbologyPalette::RedBlue:
+        return QStringLiteral("Red/Blue");
     }
 
     return QStringLiteral("Viridis");
