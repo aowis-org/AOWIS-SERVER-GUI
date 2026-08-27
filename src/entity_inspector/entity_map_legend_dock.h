@@ -5,6 +5,9 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+class QActionGroup;
+class QToolButton;
+
 #include "../widgets/group_box_collapsible.h"
 #include "../hydraulic_data.h"
 
@@ -29,6 +32,9 @@ public slots:
 
 signals:
     void signalDockHeightPreferredChanged(int height);
+    void signalHudNodeVisualSelected(VisualNode visual_node);
+    void signalHudLinkVisualSelected(VisualLink visual_link);
+    void signalHudHeatmapVisualSelected(VisualHeatmap visual_heatmap);
 
 private:
     HydraulicData *hydraulic_data = nullptr;
@@ -48,6 +54,11 @@ private:
     MapSymbologyRampWidget *legend_link = nullptr;
     MapSymbologyRampWidget *legend_heat = nullptr;
     int dock_height_preferred = 0;
+    bool hud_mode = false;
+    QToolButton *hud_symbology_button = nullptr;
+    QActionGroup *hud_node_actions = nullptr;
+    QActionGroup *hud_link_actions = nullptr;
+    QActionGroup *hud_heatmap_actions = nullptr;
 
     void setVisibility();
     void addGroupNode();
@@ -58,6 +69,10 @@ private:
     void updateHeatmapLegend();
     void scheduleDockHeightUpdate();
     void updateDockHeight();
+    void createHudSymbologyMenu();
+    void syncHudNodeSelection();
+    void syncHudLinkSelection();
+    void syncHudHeatmapSelection();
 };
 
 #endif // ENTITY_MAP_LEGEND_DOCK_H

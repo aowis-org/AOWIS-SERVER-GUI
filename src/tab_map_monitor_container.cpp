@@ -392,6 +392,30 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         {
             positionDesktopHudWidgets();
         });
+        connect(this->desktop_legend_hud, &EntityMapLegendDock::signalHudNodeVisualSelected,
+                this, [this](VisualNode visual_node)
+        {
+            this->symbology_settings.visual_node = visual_node;
+            this->map_menu->setNodeVisualSelection(visual_node);
+            showMapLegendNode(visual_node);
+            applySymbology();
+        });
+        connect(this->desktop_legend_hud, &EntityMapLegendDock::signalHudLinkVisualSelected,
+                this, [this](VisualLink visual_link)
+        {
+            this->symbology_settings.visual_link = visual_link;
+            this->map_menu->setLinkVisualSelection(visual_link);
+            showMapLegendLink(visual_link);
+            applySymbology();
+        });
+        connect(this->desktop_legend_hud, &EntityMapLegendDock::signalHudHeatmapVisualSelected,
+                this, [this](VisualHeatmap visual_heatmap)
+        {
+            this->symbology_settings.visual_heatmap = visual_heatmap;
+            this->map_menu->setHeatmapVisualSelection(visual_heatmap);
+            showMapLegendHeatmap(visual_heatmap);
+            applySymbology();
+        });
         rhi_surface->setTileRepository(this->tile_repository);
         rhi_surface->setTerrainRepository(this->terrain_repository);
         rhi_surface->setBackgroundOpacity(this->network_background_opacity);
@@ -1550,6 +1574,33 @@ MapNavigationWidget *MapMonitorMenuWidget::mapNavigationWidget()
     return this->map_nav;
 }
 
+void MapMonitorMenuWidget::setNodeVisualSelection(VisualNode visual_node)
+{
+    if (this->node_visual_group == nullptr)
+        return;
+    QAbstractButton *button = this->node_visual_group->button(static_cast<int>(visual_node));
+    if (button != nullptr)
+        button->setChecked(true);
+}
+
+void MapMonitorMenuWidget::setLinkVisualSelection(VisualLink visual_link)
+{
+    if (this->link_visual_group == nullptr)
+        return;
+    QAbstractButton *button = this->link_visual_group->button(static_cast<int>(visual_link));
+    if (button != nullptr)
+        button->setChecked(true);
+}
+
+void MapMonitorMenuWidget::setHeatmapVisualSelection(VisualHeatmap visual_heatmap)
+{
+    if (this->heatmap_visual_group == nullptr)
+        return;
+    QAbstractButton *button = this->heatmap_visual_group->button(static_cast<int>(visual_heatmap));
+    if (button != nullptr)
+        button->setChecked(true);
+}
+
 void MapMonitorMenuWidget::addGroupVisualSettings()
 {
     GroupBoxCollapsible *group = new GroupBoxCollapsible("Visual Settings", this);
@@ -1687,6 +1738,21 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
     QRadioButton *radio_node_chlorine = new QRadioButton("Cl₂ [mg/L]");
     QRadioButton *radio_node_river = new QRadioButton("River Water [%]");
     QRadioButton *radio_node_lake = new QRadioButton("Lake Water [%]");
+
+    this->node_visual_group = new QButtonGroup(this);
+    this->node_visual_group->addButton(radio_node_none, static_cast<int>(VisualNode::None));
+    this->node_visual_group->addButton(radio_node_elevation, static_cast<int>(VisualNode::Elevation));
+    this->node_visual_group->addButton(radio_node_basedemand, static_cast<int>(VisualNode::BaseDemand));
+    this->node_visual_group->addButton(radio_node_totaldemand, static_cast<int>(VisualNode::TotalDemand));
+    this->node_visual_group->addButton(radio_node_demanddeficit, static_cast<int>(VisualNode::DemandDeficit));
+    this->node_visual_group->addButton(radio_node_emitterflow, static_cast<int>(VisualNode::EmitterFlow));
+    this->node_visual_group->addButton(radio_node_leakage, static_cast<int>(VisualNode::Leakage));
+    this->node_visual_group->addButton(radio_node_head, static_cast<int>(VisualNode::Head));
+    this->node_visual_group->addButton(radio_node_pressure, static_cast<int>(VisualNode::Pressure));
+    this->node_visual_group->addButton(radio_node_water_age, static_cast<int>(VisualNode::WaterAge));
+    this->node_visual_group->addButton(radio_node_chlorine, static_cast<int>(VisualNode::Chlorine));
+    this->node_visual_group->addButton(radio_node_river, static_cast<int>(VisualNode::RiverWater));
+    this->node_visual_group->addButton(radio_node_lake, static_cast<int>(VisualNode::LakeWater));
     
     QLabel *label_chlorine = new QLabel(
         "Chlorine decay constant<br>"
@@ -1755,6 +1821,20 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     QRadioButton *radio_link_chlorine = new QRadioButton("Cl₂ [mg/L]");
     QRadioButton *radio_link_river = new QRadioButton("River Water [%]");
     QRadioButton *radio_link_lake = new QRadioButton("Lake Water [%]");
+
+    this->link_visual_group = new QButtonGroup(this);
+    this->link_visual_group->addButton(radio_link_none, static_cast<int>(VisualLink::None));
+    this->link_visual_group->addButton(radio_link_diameter, static_cast<int>(VisualLink::Diameter));
+    this->link_visual_group->addButton(radio_link_length, static_cast<int>(VisualLink::Length));
+    this->link_visual_group->addButton(radio_link_roughness, static_cast<int>(VisualLink::Roughness));
+    this->link_visual_group->addButton(radio_link_flowrate, static_cast<int>(VisualLink::FlowRate));
+    this->link_visual_group->addButton(radio_link_velocity, static_cast<int>(VisualLink::Velocity));
+    this->link_visual_group->addButton(radio_link_headloss, static_cast<int>(VisualLink::HeadLoss));
+    this->link_visual_group->addButton(radio_link_leakage, static_cast<int>(VisualLink::Leakage));
+    this->link_visual_group->addButton(radio_link_water_age, static_cast<int>(VisualLink::WaterAge));
+    this->link_visual_group->addButton(radio_link_chlorine, static_cast<int>(VisualLink::Chlorine));
+    this->link_visual_group->addButton(radio_link_river, static_cast<int>(VisualLink::RiverWater));
+    this->link_visual_group->addButton(radio_link_lake, static_cast<int>(VisualLink::LakeWater));
     
     const std::function<void(QRadioButton *, VisualLink)> connect_link_visual =
         [this](QRadioButton *button, VisualLink visual)

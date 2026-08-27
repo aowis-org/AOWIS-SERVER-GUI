@@ -62,6 +62,9 @@ public:
     explicit MapMonitorMenuWidget(MapWidget *map, QWidget *parent = nullptr);
     
     MapNavigationWidget *mapNavigationWidget();
+    void setNodeVisualSelection(VisualNode visual_node);
+    void setLinkVisualSelection(VisualLink visual_link);
+    void setHeatmapVisualSelection(VisualHeatmap visual_heatmap);
 
 private:
     QVBoxLayout *layout;
@@ -72,6 +75,9 @@ private:
     HeatmapRadiusUnit heatmap_radius_unit = HeatmapRadiusUnit::Meters;
     int heatmap_radius_m = 400;
     int heatmap_radius_px = 50;
+    QButtonGroup *node_visual_group = nullptr;
+    QButtonGroup *link_visual_group = nullptr;
+    QButtonGroup *heatmap_visual_group = nullptr;
     void addGroupVisualSettings();
     void addGroupNodeVisuals();
     void addGroupLinkVisuals();

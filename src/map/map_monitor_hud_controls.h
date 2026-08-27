@@ -4,16 +4,20 @@
 #include <QFrame>
 #include <QWidget>
 
+#include "../_enums_structs.h"
+
 class MapModel;
 class QComboBox;
 class QLabel;
 class QPaintEvent;
 class QProgressBar;
 class QPushButton;
+class QActionGroup;
 class QTimer;
 class MapTileRepository;
 class MapTerrainRepository;
 class QSlider;
+class QToolButton;
 
 
 class MapMonitorDownloadActivityHudWidget final : public QWidget
@@ -55,6 +59,34 @@ public:
 private:
     MapModel *map_model = nullptr;
     QComboBox *view_mode_combo = nullptr;
+};
+
+class MapMonitorSymbologyHudWidget final : public QFrame
+{
+    Q_OBJECT
+
+public:
+    explicit MapMonitorSymbologyHudWidget(QWidget *parent = nullptr);
+
+    void setNodeVisual(VisualNode visual_node);
+    void setLinkVisual(VisualLink visual_link);
+    void setHeatmapVisual(VisualHeatmap visual_heatmap);
+
+signals:
+    void signalNodeVisualSelected(VisualNode visual_node);
+    void signalLinkVisualSelected(VisualLink visual_link);
+    void signalHeatmapVisualSelected(VisualHeatmap visual_heatmap);
+
+private:
+    void updateToolTip();
+
+    QToolButton *symbology_button = nullptr;
+    QActionGroup *node_action_group = nullptr;
+    QActionGroup *link_action_group = nullptr;
+    QActionGroup *heatmap_action_group = nullptr;
+    VisualNode visual_node = VisualNode::None;
+    VisualLink visual_link = VisualLink::None;
+    VisualHeatmap visual_heatmap = VisualHeatmap::None;
 };
 
 class MapMonitorCompassHudWidget final : public QWidget

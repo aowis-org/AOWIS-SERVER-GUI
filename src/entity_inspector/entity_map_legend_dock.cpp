@@ -2,12 +2,16 @@
 
 #include <array>
 #include <cmath>
+#include <utility>
 
+#include <QAction>
+#include <QActionGroup>
 #include <QColor>
 #include <QFontMetricsF>
 #include <QHideEvent>
 #include <QLinearGradient>
 #include <QLocale>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPaintEvent>
@@ -15,6 +19,7 @@
 #include <QPointer>
 #include <QSizePolicy>
 #include <QTimer>
+#include <QToolButton>
 
 namespace
 {
@@ -499,6 +504,7 @@ int EntityMapLegendDock::dockHeightPreferred() const
 
 void EntityMapLegendDock::configureAsHud()
 {
+    this->hud_mode = true;
     setAllowedAreas(Qt::NoDockWidgetArea);
     setFeatures(QDockWidget::NoDockWidgetFeatures);
 
@@ -520,14 +526,43 @@ void EntityMapLegendDock::configureAsHud()
         this->content->setPalette(hud_palette);
     }
 
+    this->group_node->setCollapsed(false);
+    this->group_link->setCollapsed(false);
+    this->group_heat->setCollapsed(false);
+    this->group_node->setCheckable(false);
+    this->group_link->setCheckable(false);
+    this->group_heat->setCheckable(false);
+    this->group_node->hide();
+    this->group_link->hide();
+    this->group_heat->hide();
+
+    createHudSymbologyMenu();
+    setVisibility();
     scheduleDockHeightUpdate();
 }
 
 void EntityMapLegendDock::showMapLegendNode(VisualNode visual_node)
 {
     this->visual_node = visual_node;
-    setVisibility();
+    syncHudNodeSelection();
 
+    if (this->hud_mode)
+    {
+        if (visual_node == VisualNode::None)
+        {
+            this->group_node->hide();
+        }
+        else
+        {
+            updateNodeLegend();
+            this->group_node->show();
+        }
+        setVisibility();
+        scheduleDockHeightUpdate();
+        return;
+    }
+
+    setVisibility();
     if (visual_node == VisualNode::None)
     {
         this->group_node->setTitle(QStringLiteral("Node Legend"));
@@ -544,8 +579,25 @@ void EntityMapLegendDock::showMapLegendNode(VisualNode visual_node)
 void EntityMapLegendDock::showMapLegendLink(VisualLink visual_link)
 {
     this->visual_link = visual_link;
-    setVisibility();
+    syncHudLinkSelection();
 
+    if (this->hud_mode)
+    {
+        if (visual_link == VisualLink::None)
+        {
+            this->group_link->hide();
+        }
+        else
+        {
+            updateLinkLegend();
+            this->group_link->show();
+        }
+        setVisibility();
+        scheduleDockHeightUpdate();
+        return;
+    }
+
+    setVisibility();
     if (visual_link == VisualLink::None)
     {
         this->group_link->setTitle(QStringLiteral("Link Legend"));
@@ -562,8 +614,25 @@ void EntityMapLegendDock::showMapLegendLink(VisualLink visual_link)
 void EntityMapLegendDock::showMapLegendHeatmap(VisualHeatmap visual_heatmap)
 {
     this->visual_heatmap = visual_heatmap;
-    setVisibility();
+    syncHudHeatmapSelection();
 
+    if (this->hud_mode)
+    {
+        if (visual_heatmap == VisualHeatmap::None)
+        {
+            this->group_heat->hide();
+        }
+        else
+        {
+            updateHeatmapLegend();
+            this->group_heat->show();
+        }
+        setVisibility();
+        scheduleDockHeightUpdate();
+        return;
+    }
+
+    setVisibility();
     if (visual_heatmap == VisualHeatmap::None)
     {
         this->group_heat->setTitle(QStringLiteral("Heatmap Overlay"));
@@ -588,10 +657,131 @@ void EntityMapLegendDock::setVisibility()
     const bool has_visible_legend = this->visual_link != VisualLink::None ||
                                     this->visual_node != VisualNode::None ||
                                     this->visual_heatmap != VisualHeatmap::None;
-    setVisible(this->map_monitor_active && has_visible_legend);
+    setVisible(this->map_monitor_active && (this->hud_mode || has_visible_legend));
 
     if (isVisible())
         scheduleDockHeightUpdate();
+}
+
+void EntityMapLegendDock::createHudSymbologyMenu()
+{
+    if (!this->hud_mode || this->hud_symbology_button != nullptr || this->layout == nullptr)
+        return;
+
+    this->hud_symbology_button = new QToolButton(this->content);
+    this->hud_symbology_button->setText(QStringLiteral("Symbology"));
+    this->hud_symbology_button->setPopupMode(QToolButton::InstantPopup);
+    this->hud_symbology_button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    this->hud_symbology_button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+
+    QMenu *menu = new QMenu(this->hud_symbology_button);
+    QMenu *node_menu = menu->addMenu(QStringLiteral("Node"));
+    QMenu *link_menu = menu->addMenu(QStringLiteral("Link"));
+    QMenu *heatmap_menu = menu->addMenu(QStringLiteral("Heatmap"));
+
+    this->hud_node_actions = new QActionGroup(this);
+    this->hud_node_actions->setExclusive(true);
+    const std::array<std::pair<const char *, VisualNode>, 13> node_items = {{
+        {"None", VisualNode::None}, {"Elevation", VisualNode::Elevation},
+        {"Base Demand", VisualNode::BaseDemand}, {"Total Demand", VisualNode::TotalDemand},
+        {"Demand Deficit", VisualNode::DemandDeficit}, {"Emitter Flow", VisualNode::EmitterFlow},
+        {"Leakage", VisualNode::Leakage}, {"Head", VisualNode::Head},
+        {"Pressure", VisualNode::Pressure}, {"Water Age [h]", VisualNode::WaterAge},
+        {"Cl₂ [mg/L]", VisualNode::Chlorine}, {"River Water [%]", VisualNode::RiverWater},
+        {"Lake Water [%]", VisualNode::LakeWater}
+    }};
+    for (const std::pair<const char *, VisualNode> &item : node_items)
+    {
+        QAction *action = node_menu->addAction(QString::fromUtf8(item.first));
+        action->setCheckable(true);
+        action->setData(static_cast<int>(item.second));
+        this->hud_node_actions->addAction(action);
+    }
+    connect(this->hud_node_actions, &QActionGroup::triggered, this, [this](QAction *action)
+    {
+        if (action != nullptr)
+            emit signalHudNodeVisualSelected(static_cast<VisualNode>(action->data().toInt()));
+    });
+
+    this->hud_link_actions = new QActionGroup(this);
+    this->hud_link_actions->setExclusive(true);
+    const std::array<std::pair<const char *, VisualLink>, 12> link_items = {{
+        {"None", VisualLink::None}, {"Diameter", VisualLink::Diameter},
+        {"Length", VisualLink::Length}, {"Roughness", VisualLink::Roughness},
+        {"Flow Rate", VisualLink::FlowRate}, {"Velocity", VisualLink::Velocity},
+        {"Head Loss", VisualLink::HeadLoss}, {"Leakage", VisualLink::Leakage},
+        {"Water Age [h]", VisualLink::WaterAge}, {"Cl₂ [mg/L]", VisualLink::Chlorine},
+        {"River Water [%]", VisualLink::RiverWater}, {"Lake Water [%]", VisualLink::LakeWater}
+    }};
+    for (const std::pair<const char *, VisualLink> &item : link_items)
+    {
+        QAction *action = link_menu->addAction(QString::fromUtf8(item.first));
+        action->setCheckable(true);
+        action->setData(static_cast<int>(item.second));
+        this->hud_link_actions->addAction(action);
+    }
+    connect(this->hud_link_actions, &QActionGroup::triggered, this, [this](QAction *action)
+    {
+        if (action != nullptr)
+            emit signalHudLinkVisualSelected(static_cast<VisualLink>(action->data().toInt()));
+    });
+
+    this->hud_heatmap_actions = new QActionGroup(this);
+    this->hud_heatmap_actions->setExclusive(true);
+    const std::array<std::pair<const char *, VisualHeatmap>, 13> heatmap_items = {{
+        {"None", VisualHeatmap::None}, {"Elevation", VisualHeatmap::Elevation},
+        {"Base Demand", VisualHeatmap::BaseDemand}, {"Total Demand", VisualHeatmap::TotalDemand},
+        {"Demand Deficit", VisualHeatmap::DemandDeficit}, {"Emitter Flow", VisualHeatmap::EmitterFlow},
+        {"Leakage", VisualHeatmap::Leakage}, {"Head", VisualHeatmap::Head},
+        {"Pressure", VisualHeatmap::Pressure}, {"Water Age [h]", VisualHeatmap::WaterAge},
+        {"Cl₂ [mg/L]", VisualHeatmap::Chlorine}, {"River Water [%]", VisualHeatmap::RiverWater},
+        {"Lake Water [%]", VisualHeatmap::LakeWater}
+    }};
+    for (const std::pair<const char *, VisualHeatmap> &item : heatmap_items)
+    {
+        QAction *action = heatmap_menu->addAction(QString::fromUtf8(item.first));
+        action->setCheckable(true);
+        action->setData(static_cast<int>(item.second));
+        this->hud_heatmap_actions->addAction(action);
+    }
+    connect(this->hud_heatmap_actions, &QActionGroup::triggered, this, [this](QAction *action)
+    {
+        if (action != nullptr)
+            emit signalHudHeatmapVisualSelected(static_cast<VisualHeatmap>(action->data().toInt()));
+    });
+
+    this->hud_symbology_button->setMenu(menu);
+    this->layout->insertWidget(0, this->hud_symbology_button);
+    syncHudNodeSelection();
+    syncHudLinkSelection();
+    syncHudHeatmapSelection();
+}
+
+void EntityMapLegendDock::syncHudNodeSelection()
+{
+    if (this->hud_node_actions == nullptr)
+        return;
+    const QList<QAction *> actions = this->hud_node_actions->actions();
+    for (QAction *action : actions)
+        action->setChecked(action->data().toInt() == static_cast<int>(this->visual_node));
+}
+
+void EntityMapLegendDock::syncHudLinkSelection()
+{
+    if (this->hud_link_actions == nullptr)
+        return;
+    const QList<QAction *> actions = this->hud_link_actions->actions();
+    for (QAction *action : actions)
+        action->setChecked(action->data().toInt() == static_cast<int>(this->visual_link));
+}
+
+void EntityMapLegendDock::syncHudHeatmapSelection()
+{
+    if (this->hud_heatmap_actions == nullptr)
+        return;
+    const QList<QAction *> actions = this->hud_heatmap_actions->actions();
+    for (QAction *action : actions)
+        action->setChecked(action->data().toInt() == static_cast<int>(this->visual_heatmap));
 }
 
 void EntityMapLegendDock::addGroupNode()

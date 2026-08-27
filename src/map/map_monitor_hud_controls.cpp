@@ -6,6 +6,8 @@
 #include "map_terrain_repository.h"
 
 #include <QAbstractAnimation>
+#include <QAction>
+#include <QActionGroup>
 #include <QColor>
 #include <QComboBox>
 #include <QCursor>
@@ -13,6 +15,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QMenu>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QPalette>
@@ -23,6 +26,7 @@
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QTimer>
+#include <QToolButton>
 #include <QVariantAnimation>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -134,6 +138,39 @@ void configureHudFrame(QFrame *frame)
     background.setAlpha(220);
     hud_palette.setColor(QPalette::Window, background);
     frame->setPalette(hud_palette);
+}
+
+QAction *addSymbologyAction(
+    QMenu *menu, QActionGroup *group, const QString &text, int value)
+{
+    QAction *action = menu->addAction(text);
+    action->setCheckable(true);
+    action->setData(value);
+    group->addAction(action);
+    return action;
+}
+
+void setCheckedSymbologyAction(QActionGroup *group, int value)
+{
+    if (group == nullptr)
+        return;
+
+    const QList<QAction *> actions = group->actions();
+    for (QAction *action : actions)
+    {
+        if (action != nullptr && action->data().toInt() == value)
+        {
+            action->setChecked(true);
+            return;
+        }
+    }
+}
+
+QString checkedSymbologyText(QActionGroup *group)
+{
+    if (group == nullptr || group->checkedAction() == nullptr)
+        return QStringLiteral("None");
+    return group->checkedAction()->text();
 }
 
 class ResettableVerticalSlider final : public QSlider
@@ -734,6 +771,185 @@ MapMonitorViewModeHudWidget::MapMonitorViewModeHudWidget(
         const QSignalBlocker blocker(this->view_mode_combo);
         this->view_mode_combo->setCurrentIndex(index);
     });
+}
+
+MapMonitorSymbologyHudWidget::MapMonitorSymbologyHudWidget(QWidget *parent)
+    : QFrame(parent),
+      symbology_button(new QToolButton(this)),
+      node_action_group(new QActionGroup(this)),
+      link_action_group(new QActionGroup(this)),
+      heatmap_action_group(new QActionGroup(this))
+{
+    configureHudFrame(this);
+
+    QHBoxLayout *layout = new QHBoxLayout(this);
+    layout->setContentsMargins(HudMarginPx, HudMarginPx, HudMarginPx, HudMarginPx);
+    layout->setSpacing(0);
+
+    QMenu *symbology_menu = new QMenu(this->symbology_button);
+    QMenu *node_menu = symbology_menu->addMenu(QStringLiteral("Node"));
+    QMenu *link_menu = symbology_menu->addMenu(QStringLiteral("Link"));
+    QMenu *heatmap_menu = symbology_menu->addMenu(QStringLiteral("Heatmap"));
+
+    this->node_action_group->setExclusive(true);
+    addSymbologyAction(node_menu, this->node_action_group,
+                       QStringLiteral("None"), static_cast<int>(VisualNode::None));
+    addSymbologyAction(node_menu, this->node_action_group,
+                       QStringLiteral("Elevation"), static_cast<int>(VisualNode::Elevation));
+    addSymbologyAction(node_menu, this->node_action_group,
+                       QStringLiteral("Base Demand"), static_cast<int>(VisualNode::BaseDemand));
+    addSymbologyAction(node_menu, this->node_action_group,
+                       QStringLiteral("Total Demand"), static_cast<int>(VisualNode::TotalDemand));
+    addSymbologyAction(node_menu, this->node_action_group,
+                       QStringLiteral("Demand Deficit"), static_cast<int>(VisualNode::DemandDeficit));
+    addSymbologyAction(node_menu, this->node_action_group,
+                       QStringLiteral("Emitter Flow"), static_cast<int>(VisualNode::EmitterFlow));
+    addSymbologyAction(node_menu, this->node_action_group,
+                       QStringLiteral("Leakage"), static_cast<int>(VisualNode::Leakage));
+    addSymbologyAction(node_menu, this->node_action_group,
+                       QStringLiteral("Head"), static_cast<int>(VisualNode::Head));
+    addSymbologyAction(node_menu, this->node_action_group,
+                       QStringLiteral("Pressure"), static_cast<int>(VisualNode::Pressure));
+    addSymbologyAction(node_menu, this->node_action_group,
+                       QStringLiteral("Water Age [h]"), static_cast<int>(VisualNode::WaterAge));
+    node_menu->addSeparator();
+    addSymbologyAction(node_menu, this->node_action_group,
+                       QStringLiteral("Cl₂ [mg/L]"), static_cast<int>(VisualNode::Chlorine));
+    addSymbologyAction(node_menu, this->node_action_group,
+                       QStringLiteral("River Water [%]"), static_cast<int>(VisualNode::RiverWater));
+    addSymbologyAction(node_menu, this->node_action_group,
+                       QStringLiteral("Lake Water [%]"), static_cast<int>(VisualNode::LakeWater));
+
+    this->link_action_group->setExclusive(true);
+    addSymbologyAction(link_menu, this->link_action_group,
+                       QStringLiteral("None"), static_cast<int>(VisualLink::None));
+    addSymbologyAction(link_menu, this->link_action_group,
+                       QStringLiteral("Diameter"), static_cast<int>(VisualLink::Diameter));
+    addSymbologyAction(link_menu, this->link_action_group,
+                       QStringLiteral("Length"), static_cast<int>(VisualLink::Length));
+    addSymbologyAction(link_menu, this->link_action_group,
+                       QStringLiteral("Roughness"), static_cast<int>(VisualLink::Roughness));
+    addSymbologyAction(link_menu, this->link_action_group,
+                       QStringLiteral("Flow Rate"), static_cast<int>(VisualLink::FlowRate));
+    addSymbologyAction(link_menu, this->link_action_group,
+                       QStringLiteral("Velocity"), static_cast<int>(VisualLink::Velocity));
+    addSymbologyAction(link_menu, this->link_action_group,
+                       QStringLiteral("Head Loss"), static_cast<int>(VisualLink::HeadLoss));
+    addSymbologyAction(link_menu, this->link_action_group,
+                       QStringLiteral("Leakage"), static_cast<int>(VisualLink::Leakage));
+    addSymbologyAction(link_menu, this->link_action_group,
+                       QStringLiteral("Water Age [h]"), static_cast<int>(VisualLink::WaterAge));
+    link_menu->addSeparator();
+    addSymbologyAction(link_menu, this->link_action_group,
+                       QStringLiteral("Cl₂ [mg/L]"), static_cast<int>(VisualLink::Chlorine));
+    addSymbologyAction(link_menu, this->link_action_group,
+                       QStringLiteral("River Water [%]"), static_cast<int>(VisualLink::RiverWater));
+    addSymbologyAction(link_menu, this->link_action_group,
+                       QStringLiteral("Lake Water [%]"), static_cast<int>(VisualLink::LakeWater));
+
+    this->heatmap_action_group->setExclusive(true);
+    addSymbologyAction(heatmap_menu, this->heatmap_action_group,
+                       QStringLiteral("None"), static_cast<int>(VisualHeatmap::None));
+    addSymbologyAction(heatmap_menu, this->heatmap_action_group,
+                       QStringLiteral("Elevation"), static_cast<int>(VisualHeatmap::Elevation));
+    addSymbologyAction(heatmap_menu, this->heatmap_action_group,
+                       QStringLiteral("Base Demand"), static_cast<int>(VisualHeatmap::BaseDemand));
+    addSymbologyAction(heatmap_menu, this->heatmap_action_group,
+                       QStringLiteral("Total Demand"), static_cast<int>(VisualHeatmap::TotalDemand));
+    addSymbologyAction(heatmap_menu, this->heatmap_action_group,
+                       QStringLiteral("Demand Deficit"), static_cast<int>(VisualHeatmap::DemandDeficit));
+    addSymbologyAction(heatmap_menu, this->heatmap_action_group,
+                       QStringLiteral("Emitter Flow"), static_cast<int>(VisualHeatmap::EmitterFlow));
+    addSymbologyAction(heatmap_menu, this->heatmap_action_group,
+                       QStringLiteral("Leakage"), static_cast<int>(VisualHeatmap::Leakage));
+    addSymbologyAction(heatmap_menu, this->heatmap_action_group,
+                       QStringLiteral("Head"), static_cast<int>(VisualHeatmap::Head));
+    addSymbologyAction(heatmap_menu, this->heatmap_action_group,
+                       QStringLiteral("Pressure"), static_cast<int>(VisualHeatmap::Pressure));
+    addSymbologyAction(heatmap_menu, this->heatmap_action_group,
+                       QStringLiteral("Water Age [h]"), static_cast<int>(VisualHeatmap::WaterAge));
+    heatmap_menu->addSeparator();
+    addSymbologyAction(heatmap_menu, this->heatmap_action_group,
+                       QStringLiteral("Cl₂ [mg/L]"), static_cast<int>(VisualHeatmap::Chlorine));
+    addSymbologyAction(heatmap_menu, this->heatmap_action_group,
+                       QStringLiteral("River Water [%]"), static_cast<int>(VisualHeatmap::RiverWater));
+    addSymbologyAction(heatmap_menu, this->heatmap_action_group,
+                       QStringLiteral("Lake Water [%]"), static_cast<int>(VisualHeatmap::LakeWater));
+
+    setCheckedSymbologyAction(this->node_action_group, static_cast<int>(this->visual_node));
+    setCheckedSymbologyAction(this->link_action_group, static_cast<int>(this->visual_link));
+    setCheckedSymbologyAction(this->heatmap_action_group, static_cast<int>(this->visual_heatmap));
+
+    this->symbology_button->setText(QStringLiteral("Symbology"));
+    this->symbology_button->setPopupMode(QToolButton::InstantPopup);
+    this->symbology_button->setMenu(symbology_menu);
+    this->symbology_button->setMinimumWidth(108);
+    this->symbology_button->setFocusPolicy(Qt::NoFocus);
+    layout->addWidget(this->symbology_button);
+
+    connect(this->node_action_group, &QActionGroup::triggered, this,
+            [this](QAction *action)
+    {
+        if (action == nullptr)
+            return;
+        this->visual_node = static_cast<VisualNode>(action->data().toInt());
+        updateToolTip();
+        emit signalNodeVisualSelected(this->visual_node);
+    });
+    connect(this->link_action_group, &QActionGroup::triggered, this,
+            [this](QAction *action)
+    {
+        if (action == nullptr)
+            return;
+        this->visual_link = static_cast<VisualLink>(action->data().toInt());
+        updateToolTip();
+        emit signalLinkVisualSelected(this->visual_link);
+    });
+    connect(this->heatmap_action_group, &QActionGroup::triggered, this,
+            [this](QAction *action)
+    {
+        if (action == nullptr)
+            return;
+        this->visual_heatmap = static_cast<VisualHeatmap>(action->data().toInt());
+        updateToolTip();
+        emit signalHeatmapVisualSelected(this->visual_heatmap);
+    });
+
+    updateToolTip();
+}
+
+void MapMonitorSymbologyHudWidget::setNodeVisual(VisualNode visual_node)
+{
+    this->visual_node = visual_node;
+    setCheckedSymbologyAction(this->node_action_group, static_cast<int>(visual_node));
+    updateToolTip();
+}
+
+void MapMonitorSymbologyHudWidget::setLinkVisual(VisualLink visual_link)
+{
+    this->visual_link = visual_link;
+    setCheckedSymbologyAction(this->link_action_group, static_cast<int>(visual_link));
+    updateToolTip();
+}
+
+void MapMonitorSymbologyHudWidget::setHeatmapVisual(VisualHeatmap visual_heatmap)
+{
+    this->visual_heatmap = visual_heatmap;
+    setCheckedSymbologyAction(this->heatmap_action_group, static_cast<int>(visual_heatmap));
+    updateToolTip();
+}
+
+void MapMonitorSymbologyHudWidget::updateToolTip()
+{
+    this->symbology_button->setToolTip(QStringLiteral(
+        "Map symbology\n"
+        "Node: %1\n"
+        "Link: %2\n"
+        "Heatmap: %3\n\n"
+        "Alternative to the symbology controls in the left sidebar.")
+        .arg(checkedSymbologyText(this->node_action_group))
+        .arg(checkedSymbologyText(this->link_action_group))
+        .arg(checkedSymbologyText(this->heatmap_action_group)));
 }
 
 MapMonitorCompassHudWidget::MapMonitorCompassHudWidget(
