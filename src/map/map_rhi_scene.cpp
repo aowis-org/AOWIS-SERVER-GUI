@@ -372,6 +372,23 @@ bool MapRhiScene::setNetworkGroundOffsetM(double offset_m)
     return true;
 }
 
+bool MapRhiScene::setVerticalExaggeration(double exaggeration)
+{
+    if (!std::isfinite(exaggeration))
+        return false;
+
+    const double bounded_exaggeration = qBound(
+        MapModel::MinView3dVerticalExaggeration,
+        exaggeration,
+        MapModel::MaxView3dVerticalExaggeration);
+    if (qFuzzyCompare(1.0 + this->vertical_exaggeration, 1.0 + bounded_exaggeration))
+        return false;
+
+    this->vertical_exaggeration = bounded_exaggeration;
+    rebuildNetworkGeometry();
+    return true;
+}
+
 const QVector<MapRhiScene::LinkVertex> &MapRhiScene::linkVertices() const
 {
     return this->link_vertices;
@@ -490,13 +507,9 @@ float MapRhiScene::terrainElevationToWorldZ(double elevation_m) const
     if (!std::isfinite(meters_per_world_pixel) || meters_per_world_pixel <= 0.0)
         return 1.0f;
 
-    // Terrain must retain its physical relief. The network renderer may use an
-    // adaptive vertical exaggeration for readability, but applying that same
-    // exaggeration to the ground makes mountains artificially tall. Keep the
-    // same elevation reference and one-pixel network separation, but use 1:1
-    // vertical scale for terrain.
-    return float(1.0 + (elevation_m - this->elevation_reference_m)
-        / meters_per_world_pixel);
+    return float(1.0
+        + (elevation_m - this->elevation_reference_m)
+            * this->vertical_exaggeration / meters_per_world_pixel);
 }
 
 QPointF MapRhiScene::chooseOriginWorld(const NetworkRenderSnapshot &snapshot) const
@@ -559,8 +572,8 @@ float MapRhiScene::localElevationWorld(double elevation_m) const
         return 1.0f;
 
     return float(1.0
-        + (elevation_m - this->elevation_reference_m + this->network_ground_offset_m)
-            / meters_per_world_pixel);
+        + ((elevation_m - this->elevation_reference_m) * this->vertical_exaggeration
+            + this->network_ground_offset_m) / meters_per_world_pixel);
 }
 
 void MapRhiScene::appendLinkSegment(

@@ -35,7 +35,6 @@ constexpr int CameraUniformBytes = 32 * int(sizeof(float));
 constexpr int RendererMsaaSamples = 4;
 constexpr int CameraTerrainMinimumZoom = 8;
 constexpr int CameraTerrainMaximumZoom = 14;
-constexpr double TerrainVerticalScale = 1.0;
 constexpr double FallbackOriginRecenterThresholdWorld = MapModel::TileSize * 1024.0;
 
 QString cameraTerrainDatasetId()
@@ -294,6 +293,7 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     this->basemap_renderer = std::make_unique<MapRhiBasemapRenderer>(
         this->map_model, &this->scene, this->tile_repository, this->terrain_repository);
     this->scene.setNetworkGroundOffsetM(this->map_model->view3dNetworkGroundOffsetM());
+    this->scene.setVerticalExaggeration(this->map_model->view3dVerticalExaggeration());
     syncViewState();
 
     connect(this->map_model, &MapModel::centerChangedWGS84, this, [this]
@@ -341,6 +341,19 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     });
     connect(this->map_model, &MapModel::view3dCameraChanged, this, [this]
     {
+        if (this->scene.setVerticalExaggeration(this->map_model->view3dVerticalExaggeration()))
+        {
+            this->geometry_upload_pending = true;
+            this->highlight_upload_pending = true;
+            this->flow_direction_upload_pending = true;
+            this->icon_upload_pending = true;
+            this->heatmap_upload_pending = true;
+            this->tank_upload_pending = true;
+            this->junction_instance_upload_pending = true;
+            if (this->basemap_renderer)
+                this->basemap_renderer->invalidate();
+        }
+
         syncViewState();
         update();
     });
@@ -2346,7 +2359,7 @@ double MapRhiWidget::terrainWorldUnitsPerMeter() const
     if (!std::isfinite(meters_per_world_pixel) || meters_per_world_pixel <= 0.0)
         return 0.0;
 
-    return TerrainVerticalScale / meters_per_world_pixel;
+    return this->map_model->view3dVerticalExaggeration() / meters_per_world_pixel;
 }
 
 double MapRhiWidget::terrainWorldZ(

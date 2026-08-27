@@ -25,7 +25,6 @@ namespace
 constexpr int MaximumCachedGpuTiles = 160;
 constexpr int TerrainReliefMinimumZoom = 8;
 constexpr int TerrainReliefMaximumZoom = 14;
-constexpr double TerrainVerticalScale = 1.0;
 constexpr int TwoDPanRetentionMarginTiles = 4;
 constexpr int HeatmapTextureSize = 256;
 constexpr double HeatmapMarkerBucketWorldSize = 16384.0;
@@ -1559,5 +1558,5 @@ float MapRhiBasemapRenderer::terrainElevationWorldZ(double elevation_m) const
         return 0.0f;
 
     return float(elevation_m / meters_per_world_pixel
-        * TerrainVerticalScale);
+        * this->map_model->view3dVerticalExaggeration());
 }

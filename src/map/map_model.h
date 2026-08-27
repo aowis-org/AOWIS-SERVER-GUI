@@ -35,6 +35,9 @@ public:
     static constexpr double MinView3dCameraGroundClearanceM = 2.0;
     static constexpr double MinView3dNetworkGroundOffsetM = 0.0;
     static constexpr double MaxView3dNetworkGroundOffsetM = 50.0;
+    static constexpr double MinView3dVerticalExaggeration = 0.5;
+    static constexpr double MaxView3dVerticalExaggeration = 5.0;
+    static constexpr double DefaultView3dVerticalExaggeration = 1.0;
     static constexpr double View3dOrbitYawDegreesPerPixel = 0.35;
     static constexpr double View3dOrbitPitchDegreesPerPixel = 0.25;
 
@@ -55,6 +58,7 @@ public:
     double view3dCameraCollisionLiftWorld() const;
     double view3dVerticalOffsetWorld() const;
     double view3dNetworkGroundOffsetM() const;
+    double view3dVerticalExaggeration() const;
     MapView3dNavigationState view3dNavigationState() const;
     QString tileCacheKey(int x, int y) const;
     QString tileCachePrefix(int zoom) const;
@@ -97,6 +101,7 @@ public:
     void setView3dCameraCollisionLiftWorld(double lift_world);
     void setView3dVerticalOffsetWorld(double offset_world);
     void setView3dNetworkGroundOffsetM(double offset_m);
+    void setView3dVerticalExaggeration(double exaggeration);
     void setView3dFocusAnchor(double lon, double lat, double offset_world,
                               double distance_m, const QSize &viewport = QSize());
     void beginView3dRotateInteraction();
@@ -144,6 +149,7 @@ private:
     double m_view_3d_camera_collision_lift_world = 0.0;
     double m_view_3d_vertical_offset_world = 0.0;
     double m_view_3d_network_ground_offset_m = 0.0;
+    double m_view_3d_vertical_exaggeration = DefaultView3dVerticalExaggeration;
     bool m_view_3d_native_camera_distance_initialized = false;
     bool m_view_3d_preserve_camera_distance_on_next_native_sync = false;
     MapView3dNavigationState m_view_3d_navigation_state = MapView3dNavigationState::Pan;

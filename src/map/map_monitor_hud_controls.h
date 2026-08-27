@@ -120,4 +120,28 @@ private:
     QLabel *offset_value_label = nullptr;
 };
 
+
+class MapMonitorVerticalExaggerationHudWidget final : public QFrame
+{
+    Q_OBJECT
+
+public:
+    explicit MapMonitorVerticalExaggerationHudWidget(
+        MapModel *map_model, QWidget *parent = nullptr);
+
+private:
+    MapModel *map_model = nullptr;
+    QSlider *exaggeration_slider = nullptr;
+    QLabel *exaggeration_value_label = nullptr;
+};
+
+class MapMonitorVerticalControlsHudWidget final : public QFrame
+{
+    Q_OBJECT
+
+public:
+    explicit MapMonitorVerticalControlsHudWidget(
+        MapModel *map_model, QWidget *parent = nullptr);
+};
+
 #endif // MAP_MONITOR_HUD_CONTROLS_H

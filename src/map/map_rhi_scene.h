@@ -94,6 +94,7 @@ public:
     bool setUse3dTankModels(bool enabled);
     bool setUse3dJunctionModels(bool enabled);
     bool setNetworkGroundOffsetM(double offset_m);
+    bool setVerticalExaggeration(double exaggeration);
 
     const QVector<LinkVertex> &linkVertices() const;
     const QVector<NodeVertex> &nodeVertices() const;
@@ -216,6 +217,7 @@ private:
     double reference_latitude_deg = 0.0;
     double elevation_reference_m = 0.0;
     double network_ground_offset_m = 0.0;
+    double vertical_exaggeration = 1.0;
     bool origin_valid = false;
     bool use_3d_tank_models = false;
     bool use_3d_junction_models = false;

@@ -154,6 +154,11 @@ double MapModel::view3dNetworkGroundOffsetM() const
     return this->m_view_3d_network_ground_offset_m;
 }
 
+double MapModel::view3dVerticalExaggeration() const
+{
+    return this->m_view_3d_vertical_exaggeration;
+}
+
 MapView3dNavigationState MapModel::view3dNavigationState() const
 {
     return this->m_view_3d_navigation_state;
@@ -700,6 +705,22 @@ void MapModel::setView3dNetworkGroundOffsetM(double offset_m)
 
     this->m_view_3d_network_ground_offset_m = bounded_offset_m;
     emit view3dNetworkGroundOffsetChanged(bounded_offset_m);
+}
+
+void MapModel::setView3dVerticalExaggeration(double exaggeration)
+{
+    if (!std::isfinite(exaggeration))
+        return;
+
+    const double bounded_exaggeration = qBound(
+        MinView3dVerticalExaggeration,
+        exaggeration,
+        MaxView3dVerticalExaggeration);
+    if (coordinatesEqual(bounded_exaggeration, this->m_view_3d_vertical_exaggeration))
+        return;
+
+    this->m_view_3d_vertical_exaggeration = bounded_exaggeration;
+    emit view3dCameraChanged();
 }
 
 void MapModel::setView3dFocusAnchor(

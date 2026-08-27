@@ -41,8 +41,8 @@ constexpr int SliderResetAnimationDurationMs = 240;
 constexpr int CompassDragThresholdPx = 4;
 constexpr int CompassWheelRotateEndDelayMs = 350;
 constexpr int CameraDistanceSliderSteps = 1000;
-constexpr int CameraControlSliderHeightPx = 82;
-constexpr int CameraControlWidthPx = 72;
+constexpr int CameraControlSliderHeightPx = 74;
+constexpr int CameraControlWidthPx = 56;
 constexpr int ScaleHudWidthPx = 116;
 constexpr int ScaleHudHeightPx = 42;
 constexpr int ScaleHudPaddingPx = 6;
@@ -50,6 +50,7 @@ constexpr int ScaleHudTickHeightPx = 6;
 constexpr double View3dFieldOfViewDeg = 45.0;
 constexpr int NetworkGroundOffsetSliderSteps =
     static_cast<int>(MapModel::MaxView3dNetworkGroundOffsetM * 10.0);
+constexpr int VerticalExaggerationSliderScale = 10;
 
 int cameraDistanceSliderValue(double distance_m, double maximum_distance_m)
 {
@@ -879,7 +880,7 @@ MapMonitorCameraDistanceHudWidget::MapMonitorCameraDistanceHudWidget(
     setFixedWidth(CameraControlWidthPx);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(4, 5, 4, 5);
+    layout->setContentsMargins(2, 3, 2, 3);
     layout->setSpacing(1);
 
     this->distance_maximum_label->setAlignment(Qt::AlignHCenter);
@@ -988,7 +989,7 @@ MapMonitorTiltHudWidget::MapMonitorTiltHudWidget(MapModel *map_model, QWidget *p
     setFixedWidth(CameraControlWidthPx);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(4, 5, 4, 5);
+    layout->setContentsMargins(2, 3, 2, 3);
     layout->setSpacing(1);
 
     QLabel *maximum_label = new QLabel(QStringLiteral("90°"), this);
@@ -1083,7 +1084,7 @@ MapMonitorNetworkGroundOffsetHudWidget::MapMonitorNetworkGroundOffsetHudWidget(
     setFixedWidth(CameraControlWidthPx);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(4, 5, 4, 5);
+    layout->setContentsMargins(2, 3, 2, 3);
     layout->setSpacing(1);
 
     QLabel *maximum_label = new QLabel(
@@ -1151,4 +1152,126 @@ MapMonitorNetworkGroundOffsetHudWidget::MapMonitorNetworkGroundOffsetHudWidget(
         this->offset_value_label->setText(
             QStringLiteral("%1 m").arg(offset_m, 0, 'f', 1));
     });
+}
+
+MapMonitorVerticalExaggerationHudWidget::MapMonitorVerticalExaggerationHudWidget(
+    MapModel *map_model, QWidget *parent)
+    : QFrame(parent),
+      map_model(map_model),
+      exaggeration_slider(new ResettableVerticalSlider(this)),
+      exaggeration_value_label(new QLabel(this))
+{
+    Q_ASSERT(this->map_model != nullptr);
+    configureHudFrame(this);
+    setFixedWidth(CameraControlWidthPx);
+
+    QVBoxLayout *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(2, 3, 2, 3);
+    layout->setSpacing(1);
+
+    QLabel *maximum_label = new QLabel(
+        QStringLiteral("%1×").arg(MapModel::MaxView3dVerticalExaggeration, 0, 'f', 0),
+        this);
+    QLabel *minimum_label = new QLabel(
+        QStringLiteral("%1×").arg(MapModel::MinView3dVerticalExaggeration, 0, 'f', 1),
+        this);
+    maximum_label->setAlignment(Qt::AlignHCenter);
+    minimum_label->setAlignment(Qt::AlignHCenter);
+    this->exaggeration_value_label->setAlignment(Qt::AlignHCenter);
+
+    this->exaggeration_slider->setRange(
+        qRound(MapModel::MinView3dVerticalExaggeration * VerticalExaggerationSliderScale),
+        qRound(MapModel::MaxView3dVerticalExaggeration * VerticalExaggerationSliderScale));
+    this->exaggeration_slider->setSingleStep(1);
+    this->exaggeration_slider->setPageStep(5);
+    this->exaggeration_slider->setFixedHeight(CameraControlSliderHeightPx);
+    this->exaggeration_slider->setValue(qRound(
+        this->map_model->view3dVerticalExaggeration() * VerticalExaggerationSliderScale));
+    this->exaggeration_slider->setToolTip(QStringLiteral(
+        "Vertical exaggeration\n"
+        "Scales terrain relief and water-network elevation differences together\n"
+        "1.0× = true vertical scale\n"
+        "The separate network-height control remains a render-only lift in metres\n"
+        "Right-click: animate back to 1.0×"));
+    this->exaggeration_value_label->setText(QStringLiteral("%1×").arg(
+        this->map_model->view3dVerticalExaggeration(), 0, 'f', 1));
+
+    layout->addWidget(maximum_label);
+    layout->addWidget(this->exaggeration_slider, 1, Qt::AlignHCenter);
+    layout->addWidget(minimum_label);
+    layout->addWidget(this->exaggeration_value_label);
+
+    QVariantAnimation *reset_animation = new QVariantAnimation(this);
+    reset_animation->setDuration(SliderResetAnimationDurationMs);
+    reset_animation->setEasingCurve(QEasingCurve::InOutCubic);
+    connect(reset_animation, &QVariantAnimation::valueChanged, this,
+            [this](const QVariant &value)
+    {
+        this->map_model->setView3dVerticalExaggeration(value.toDouble());
+    });
+
+    ResettableVerticalSlider *resettable_slider =
+        static_cast<ResettableVerticalSlider *>(this->exaggeration_slider);
+    resettable_slider->setResetCallback([this, reset_animation]
+    {
+        reset_animation->stop();
+        reset_animation->setStartValue(this->map_model->view3dVerticalExaggeration());
+        reset_animation->setEndValue(MapModel::DefaultView3dVerticalExaggeration);
+        reset_animation->start();
+    });
+    connect(this->exaggeration_slider, &QSlider::sliderPressed, reset_animation,
+            &QVariantAnimation::stop);
+
+    connect(this->exaggeration_slider, &QSlider::valueChanged, this, [this](int value)
+    {
+        this->map_model->setView3dVerticalExaggeration(
+            double(value) / VerticalExaggerationSliderScale);
+    });
+    connect(this->map_model, &MapModel::view3dCameraChanged, this, [this]
+    {
+        const double exaggeration = this->map_model->view3dVerticalExaggeration();
+        const int slider_value = qRound(exaggeration * VerticalExaggerationSliderScale);
+        if (this->exaggeration_slider->value() != slider_value)
+        {
+            const QSignalBlocker blocker(this->exaggeration_slider);
+            this->exaggeration_slider->setValue(slider_value);
+        }
+        this->exaggeration_value_label->setText(
+            QStringLiteral("%1×").arg(exaggeration, 0, 'f', 1));
+    });
+}
+
+MapMonitorVerticalControlsHudWidget::MapMonitorVerticalControlsHudWidget(
+    MapModel *map_model, QWidget *parent)
+    : QFrame(parent)
+{
+    Q_ASSERT(map_model != nullptr);
+    configureHudFrame(this);
+
+    QHBoxLayout *layout = new QHBoxLayout(this);
+    layout->setContentsMargins(3, 3, 3, 3);
+    layout->setSpacing(0);
+
+    MapMonitorNetworkGroundOffsetHudWidget *network_ground_offset =
+        new MapMonitorNetworkGroundOffsetHudWidget(map_model, this);
+    MapMonitorTiltHudWidget *tilt =
+        new MapMonitorTiltHudWidget(map_model, this);
+    MapMonitorCameraDistanceHudWidget *camera_distance =
+        new MapMonitorCameraDistanceHudWidget(map_model, this);
+    MapMonitorVerticalExaggerationHudWidget *vertical_exaggeration =
+        new MapMonitorVerticalExaggerationHudWidget(map_model, this);
+
+    QFrame *controls[4] = {
+        network_ground_offset,
+        tilt,
+        camera_distance,
+        vertical_exaggeration
+    };
+    for (QFrame *control : controls)
+    {
+        control->setFrameShape(QFrame::NoFrame);
+        control->setFrameShadow(QFrame::Plain);
+        control->setAutoFillBackground(false);
+        layout->addWidget(control);
+    }
 }
