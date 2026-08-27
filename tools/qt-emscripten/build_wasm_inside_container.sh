@@ -23,6 +23,28 @@ source "${EMSDK_ROOT}/emsdk_env.sh"
 em++ --version | head -n 1
 "${QT_CMAKE}" --version | head -n 1
 
+# Fail early when an old/non-RHI toolchain image is used. qsb must execute on the
+# Linux build host, while ShaderTools and GuiPrivate belong to the WASM Qt target.
+if [ ! -x "/opt/qt-host/bin/qsb" ]; then
+    echo "Qt Shader Baker (host qsb) is missing from the WASM toolchain image." >&2
+    echo "Rebuild it with ./prepare_wasm_docker.sh." >&2
+    exit 1
+fi
+
+if [ ! -f "${QT_WASM_PATH}/lib/cmake/Qt6ShaderTools/Qt6ShaderToolsConfig.cmake" ]; then
+    echo "Qt ShaderTools target package is missing from the WASM toolchain image." >&2
+    echo "Rebuild it with ./prepare_wasm_docker.sh." >&2
+    exit 1
+fi
+
+if ! find "${QT_WASM_PATH}/include/QtGui" -path '*/rhi/qrhi.h' -print -quit | grep -q .; then
+    echo "Qt Gui private QRhi headers are missing from the WASM toolchain image." >&2
+    echo "Rebuild it with ./prepare_wasm_docker.sh." >&2
+    exit 1
+fi
+
+"/opt/qt-host/bin/qsb" --version
+
 cd /project
 mkdir -p build-wasm
 

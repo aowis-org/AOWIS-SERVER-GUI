@@ -3,14 +3,15 @@ FROM ubuntu:24.04
 ARG QT_VERSION=6.10.2
 ARG EMSCRIPTEN_VERSION=4.0.7
 ARG QTBASE_SHA256=aeb78d29291a2b5fd53cb55950f8f5065b4978c25fb1d77f627d695ab9adf21e
+ARG QTSHADERTOOLS_SHA256=18d9dbbc4f7e6e96e6ed89a9965dc032e2b58158b65156c035537826216716c9
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV AOWIS_QT_HOST_PATH=/opt/qt-host-build
+ENV AOWIS_QT_HOST_PATH=/opt/qt-host
 ENV AOWIS_QT_WASM_PATH=/opt/qt-wasm
 ENV EMSDK=/opt/emsdk
 
 LABEL org.opencontainers.image.title="AOWIS Qt WebAssembly toolchain"
-LABEL org.opencontainers.image.description="Qt WebAssembly build environment with thread support"
+LABEL org.opencontainers.image.description="Threaded Qt WebAssembly build environment with QRhi and ShaderTools/qsb support"
 LABEL org.opencontainers.image.version="Qt ${QT_VERSION} / Emscripten ${EMSCRIPTEN_VERSION}"
 
 RUN apt-get update \
@@ -38,36 +39,61 @@ RUN git clone --depth 1 --branch "${EMSCRIPTEN_VERSION}" \
     && source "${EMSDK}/emsdk_env.sh" \
     && em++ --version
 
-# Download qtbase from Qt itself and verify its published SHA-256 hash.
+# Download the exact Qt modules AOWIS needs and verify the hashes published by Qt.
+# QRhi/QRhiWidget and GuiPrivate are provided by qtbase. Shader baking is provided
+# by qtshadertools and requires a native host qsb when cross-compiling to WASM.
 RUN QT_SERIES="${QT_VERSION%.*}" \
-    && QT_ARCHIVE="qtbase-everywhere-src-${QT_VERSION}.tar.xz" \
-    && QT_BASE_URL="https://download.qt.io/official_releases/qt/${QT_SERIES}/${QT_VERSION}/submodules" \
-    && mkdir -p /opt/qt-src \
-    && curl -fL --retry 3 "${QT_BASE_URL}/${QT_ARCHIVE}" -o "/tmp/${QT_ARCHIVE}" \
-    && echo "${QTBASE_SHA256}  /tmp/${QT_ARCHIVE}" | sha256sum -c - \
-    && tar -xJf "/tmp/${QT_ARCHIVE}" --strip-components=1 -C /opt/qt-src \
-    && rm -f "/tmp/${QT_ARCHIVE}"
+    && QT_BASE_ARCHIVE="qtbase-everywhere-src-${QT_VERSION}.tar.xz" \
+    && QT_SHADERTOOLS_ARCHIVE="qtshadertools-everywhere-src-${QT_VERSION}.tar.xz" \
+    && QT_MODULE_URL="https://download.qt.io/official_releases/qt/${QT_SERIES}/${QT_VERSION}/submodules" \
+    && mkdir -p /opt/qt-src/qtbase /opt/qt-src/qtshadertools \
+    && curl -fL --retry 3 "${QT_MODULE_URL}/${QT_BASE_ARCHIVE}" -o "/tmp/${QT_BASE_ARCHIVE}" \
+    && echo "${QTBASE_SHA256}  /tmp/${QT_BASE_ARCHIVE}" | sha256sum -c - \
+    && tar -xJf "/tmp/${QT_BASE_ARCHIVE}" --strip-components=1 -C /opt/qt-src/qtbase \
+    && curl -fL --retry 3 "${QT_MODULE_URL}/${QT_SHADERTOOLS_ARCHIVE}" -o "/tmp/${QT_SHADERTOOLS_ARCHIVE}" \
+    && echo "${QTSHADERTOOLS_SHA256}  /tmp/${QT_SHADERTOOLS_ARCHIVE}" | sha256sum -c - \
+    && tar -xJf "/tmp/${QT_SHADERTOOLS_ARCHIVE}" --strip-components=1 -C /opt/qt-src/qtshadertools \
+    && rm -f "/tmp/${QT_BASE_ARCHIVE}" "/tmp/${QT_SHADERTOOLS_ARCHIVE}"
 
-# Qt cross builds require same-version host tools. Build only the host_tools target;
-# this is Qt's documented minimal-host-build path and avoids installing a second full Qt.
-RUN mkdir -p "${AOWIS_QT_HOST_PATH}" \
-    && cd "${AOWIS_QT_HOST_PATH}" \
-    && /opt/qt-src/configure \
+# Cross-compiling Qt modules that invoke qsb requires a same-version native host Qt
+# containing Qt Gui and the ShaderTools host tool. Build/install a compact host qtbase
+# first, then build/install qtshadertools into the same host prefix.
+RUN mkdir -p /opt/qt-host-build \
+    && cd /opt/qt-host-build \
+    && /opt/qt-src/qtbase/configure \
         -opensource \
         -confirm-license \
-        -developer-build \
         -release \
+        -prefix "${AOWIS_QT_HOST_PATH}" \
         -nomake tests \
         -nomake examples \
         -no-opengl \
         -no-warnings-are-errors \
-    && cmake --build . --target host_tools --parallel "$(nproc)"
+    && cmake --build . --parallel "$(nproc)" \
+    && cmake --install . \
+    && test -x "${AOWIS_QT_HOST_PATH}/bin/qt-configure-module"
+
+RUN mkdir -p /opt/qt-host-shadertools-build \
+    && cd /opt/qt-host-shadertools-build \
+    && "${AOWIS_QT_HOST_PATH}/bin/qt-configure-module" /opt/qt-src/qtshadertools \
+        -- \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX="${AOWIS_QT_HOST_PATH}" \
+        -DQT_BUILD_TESTS=OFF \
+        -DQT_BUILD_EXAMPLES=OFF \
+    && cmake --build . --parallel "$(nproc)" \
+    && cmake --install . \
+    && test -x "${AOWIS_QT_HOST_PATH}/bin/qsb" \
+    && test -f "${AOWIS_QT_HOST_PATH}/lib/cmake/Qt6ShaderToolsTools/Qt6ShaderToolsToolsConfig.cmake" \
+    && "${AOWIS_QT_HOST_PATH}/bin/qsb" --version
 
 # Build qtbase for WebAssembly from the same sources, explicitly enabling threads.
+# Qt's WASM platform uses WebGL through its OpenGL/OpenGL ES graphics path; QRhiWidget
+# therefore does not require a separate browser-side WebGL implementation in the SDK.
 RUN source "${EMSDK}/emsdk_env.sh" \
     && mkdir -p /opt/qt-wasm-build \
     && cd /opt/qt-wasm-build \
-    && /opt/qt-src/configure \
+    && /opt/qt-src/qtbase/configure \
         -opensource \
         -confirm-license \
         -release \
@@ -80,38 +106,101 @@ RUN source "${EMSDK}/emsdk_env.sh" \
         -feature-thread \
     && cmake --build . --parallel "$(nproc)" \
     && cmake --install . \
-    && grep -q '^#define QT_FEATURE_thread 1$' "${AOWIS_QT_WASM_PATH}/include/QtCore/qconfig.h"
+    && grep -q '^#define QT_FEATURE_thread 1$' "${AOWIS_QT_WASM_PATH}/include/QtCore/qconfig.h" \
+    && test -x "${AOWIS_QT_WASM_PATH}/bin/qt-configure-module"
 
-# Compile and link a small application using exactly the Qt modules AOWIS needs on WASM.
-# This makes image creation fail immediately if Widgets, Network, Sql, or QThread are broken.
+# Cross-build/install the target ShaderTools module. The target CMake package is needed
+# by qt_add_shaders(), while qsb itself is deliberately taken from the host Qt above.
 RUN source "${EMSDK}/emsdk_env.sh" \
-    && mkdir -p /tmp/aowis-wasm-smoke \
+    && mkdir -p /opt/qt-wasm-shadertools-build \
+    && cd /opt/qt-wasm-shadertools-build \
+    && "${AOWIS_QT_WASM_PATH}/bin/qt-configure-module" /opt/qt-src/qtshadertools \
+        -- \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX="${AOWIS_QT_WASM_PATH}" \
+        -DQT_HOST_PATH="${AOWIS_QT_HOST_PATH}" \
+        -DQt6ShaderToolsTools_DIR="${AOWIS_QT_HOST_PATH}/lib/cmake/Qt6ShaderToolsTools" \
+        -DQT_BUILD_TESTS=OFF \
+        -DQT_BUILD_EXAMPLES=OFF \
+    && cmake --build . --parallel "$(nproc)" \
+    && cmake --install . \
+    && test -f "${AOWIS_QT_WASM_PATH}/lib/cmake/Qt6ShaderTools/Qt6ShaderToolsConfig.cmake"
+
+# Compile and link a threaded QRhiWidget application and bake a GLSL ES 3 shader.
+# This makes image creation fail immediately unless all pieces AOWIS needs are usable:
+# Widgets, Network, Sql, GuiPrivate/QRhi headers, target ShaderTools, and host qsb.
+RUN source "${EMSDK}/emsdk_env.sh" \
+    && mkdir -p /tmp/aowis-wasm-rhi-smoke \
     && printf '%s\n' \
         'cmake_minimum_required(VERSION 3.22)' \
-        'project(aowis_wasm_smoke LANGUAGES CXX)' \
-        'find_package(Qt6 REQUIRED COMPONENTS Widgets Network Sql)' \
-        'qt_add_executable(aowis_wasm_smoke main.cpp)' \
-        'target_link_libraries(aowis_wasm_smoke PRIVATE Qt6::Widgets Qt6::Network Qt6::Sql)' \
-        > /tmp/aowis-wasm-smoke/CMakeLists.txt \
+        'project(aowis_wasm_rhi_smoke LANGUAGES CXX)' \
+        'find_package(Qt6 REQUIRED COMPONENTS Widgets Network Sql ShaderTools GuiPrivate)' \
+        'if(NOT TARGET Qt6::GuiPrivate)' \
+        '    message(FATAL_ERROR "Qt6::GuiPrivate is unavailable; QRhi headers cannot be used")' \
+        'endif()' \
+        'qt_add_executable(aowis_wasm_rhi_smoke main.cpp)' \
+        'target_link_libraries(aowis_wasm_rhi_smoke PRIVATE Qt6::Widgets Qt6::Network Qt6::Sql Qt6::GuiPrivate)' \
+        'target_link_options(aowis_wasm_rhi_smoke PRIVATE "-sMIN_WEBGL_VERSION=2" "-sMAX_WEBGL_VERSION=2")' \
+        'qt_add_shaders(aowis_wasm_rhi_smoke "aowis_wasm_rhi_smoke_shaders"' \
+        '    PREFIX "/aowis/smoke"' \
+        '    GLSL "300 es"' \
+        '    NOHLSL' \
+        '    NOMSL' \
+        '    FILES smoke.vert smoke.frag' \
+        ')' \
+        > /tmp/aowis-wasm-rhi-smoke/CMakeLists.txt \
     && printf '%s\n' \
         '#include <QApplication>' \
+        '#include <QRhiWidget>' \
         '#include <QThread>' \
+        '#include <rhi/qrhi.h>' \
+        'class SmokeRhiWidget final : public QRhiWidget' \
+        '{' \
+        'protected:' \
+        '    void initialize(QRhiCommandBuffer *command_buffer) override' \
+        '    {' \
+        '        (void)command_buffer;' \
+        '    }' \
+        '    void render(QRhiCommandBuffer *command_buffer) override' \
+        '    {' \
+        '        (void)command_buffer;' \
+        '    }' \
+        '};' \
         'int main(int argc, char **argv)' \
         '{' \
         '    QApplication application(argc, argv);' \
+        '    SmokeRhiWidget widget;' \
+        '    widget.setApi(QRhiWidget::Api::OpenGL);' \
         '    QThread thread;' \
         '    return thread.isRunning() ? 1 : 0;' \
         '}' \
-        > /tmp/aowis-wasm-smoke/main.cpp \
+        > /tmp/aowis-wasm-rhi-smoke/main.cpp \
+    && printf '%s\n' \
+        '#version 440' \
+        'layout(location = 0) in vec2 position;' \
+        'void main()' \
+        '{' \
+        '    gl_Position = vec4(position, 0.0, 1.0);' \
+        '}' \
+        > /tmp/aowis-wasm-rhi-smoke/smoke.vert \
+    && printf '%s\n' \
+        '#version 440' \
+        'layout(location = 0) out vec4 frag_color;' \
+        'void main()' \
+        '{' \
+        '    frag_color = vec4(1.0);' \
+        '}' \
+        > /tmp/aowis-wasm-rhi-smoke/smoke.frag \
     && "${AOWIS_QT_WASM_PATH}/bin/qt-cmake" \
-        -S /tmp/aowis-wasm-smoke \
-        -B /tmp/aowis-wasm-smoke/build \
+        -S /tmp/aowis-wasm-rhi-smoke \
+        -B /tmp/aowis-wasm-rhi-smoke/build \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_CXX_FLAGS='-pthread' \
         -DCMAKE_EXE_LINKER_FLAGS='-pthread -sPTHREAD_POOL_SIZE=1' \
-    && cmake --build /tmp/aowis-wasm-smoke/build --parallel "$(nproc)" \
-    && test -f /tmp/aowis-wasm-smoke/build/aowis_wasm_smoke.wasm \
-    && rm -rf /tmp/aowis-wasm-smoke
+    && cmake --build /tmp/aowis-wasm-rhi-smoke/build --parallel "$(nproc)" \
+    && test -f /tmp/aowis-wasm-rhi-smoke/build/aowis_wasm_rhi_smoke.wasm \
+    && find /tmp/aowis-wasm-rhi-smoke/build -name '*.qsb' -print -quit | grep -q . \
+    && rm -rf /tmp/aowis-wasm-rhi-smoke
 
 ENV CMAKE_TOOLCHAIN_FILE=/opt/qt-wasm/lib/cmake/Qt6/qt.toolchain.cmake
 

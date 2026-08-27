@@ -9,6 +9,7 @@ source tools/qt-emscripten/toolchain_versions.sh
 echo "=== Preparing AOWIS Qt WebAssembly Docker image ==="
 echo "Qt:         ${AOWIS_QT_VERSION}"
 echo "Emscripten: ${AOWIS_EMSCRIPTEN_VERSION}"
+echo "Revision:   ${AOWIS_WASM_TOOLCHAIN_REVISION}"
 echo "Image:      ${AOWIS_WASM_IMAGE}"
 
 # Docker's isolated build network can fail DNS resolution on Linux hosts that use
@@ -32,6 +33,7 @@ docker build \
     --build-arg "QT_VERSION=${AOWIS_QT_VERSION}" \
     --build-arg "EMSCRIPTEN_VERSION=${AOWIS_EMSCRIPTEN_VERSION}" \
     --build-arg "QTBASE_SHA256=${AOWIS_QTBASE_SHA256}" \
+    --build-arg "QTSHADERTOOLS_SHA256=${AOWIS_QTSHADERTOOLS_SHA256}" \
     -f tools/qt-emscripten/Dockerfile.threaded \
     -t "${AOWIS_WASM_IMAGE}" \
     tools/qt-emscripten
