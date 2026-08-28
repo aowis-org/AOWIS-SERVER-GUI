@@ -1,0 +1,182 @@
+[TITLE]
+
+[JUNCTIONS]
+;;ID                             	Elev        	Demand      	Pattern                        
+ J1                             	447.0067    
+ J2                             	448.6877    
+ J3                             	447.7641    
+ J4                             	452.1887    
+ J5                             	450.7671    
+
+[RESERVOIRS]
+;;ID                             	Head        	Pattern                        
+ R1                             	445.6264    	                               
+
+[TANKS]
+;;ID                             	Elevation   	InitLevel   	MinLevel    	MaxLevel    	Diameter    	MinVol      	VolCurve                       	Overflow    
+ T1                             	450.0799    	6.0000      	2.0000      	16.0000     	8.0000      	100.5310    	                               
+ T2                             	448.0509    	12.0000     	2.0000      	18.0000     	8.7404      	20.0000     	                               
+ T3                             	452.7214    	8.0000      	2.0000      	20.0000     	5.6419      	40.0000     	                               
+ T4                             	449.8338    	12.0000     	3.0000      	16.0000     	4.9668      	25.0000     	VC_T4                          
+
+[PIPES]
+;;ID                             	Node1                          	Node2                          	Length      	Diameter    	Roughness   	MinorLoss   	Status
+ P1                             	R1                             	J1                             	250.0000    	300.0000    	130.0000    	0.0000      	      
+ P2                             	J1                             	J2                             	300.0000    	250.0000    	130.0000    	0.0000      	      
+ P3                             	J1                             	J3                             	350.0000    	250.0000    	130.0000    	0.0000      	      
+ P4                             	J2                             	J4                             	400.0000    	200.0000    	130.0000    	0.0000      	      
+ P5                             	J3                             	J5                             	375.0000    	200.0000    	130.0000    	0.0000      	      
+ P6                             	J4                             	J5                             	500.0000    	180.0000    	130.0000    	0.0000      	      
+ P7                             	J2                             	J3                             	450.0000    	180.0000    	130.0000    	0.0000      	      
+ PT1                            	T1                             	J2                             	80.0000     	200.0000    	130.0000    	0.0000      	      
+ PT2                            	T2                             	J3                             	100.0000    	200.0000    	130.0000    	0.0000      	      
+ PT3                            	T3                             	J4                             	120.0000    	180.0000    	130.0000    	0.0000      	      
+ PT4                            	T4                             	J5                             	90.0000     	180.0000    	130.0000    	0.0000      	      
+
+[PUMPS]
+;;ID                             	Node1                          	Node2                          	Parameters  
+
+[VALVES]
+;;ID                             	Node1                          	Node2                          	Diameter    	Type  	Setting     	MinorLoss   
+
+[DEMANDS]
+;;Junction	Demand	Pattern	Category
+ J1	5.4000000000000004	
+ J2	7.2000000000000011	
+ J3	3.6000000000000005	
+ J4	5.4000000000000004	
+ J5	3.6000000000000005	
+
+[EMITTERS]
+;;Junction                       	Coefficient   
+
+[LEAKAGE]
+;;Pipe                           	Leak Area     	Leak Expansion
+
+[STATUS]
+;;ID                             	Status/Setting
+
+[PATTERNS]
+;;ID                             	Multipliers 
+
+[CURVES]
+;;ID                             	X-Value     	Y-Value     
+;;ID                             	X-Value     	Y-Value
+ VC_T4                          	0.0000      	0.0000      	VOLUME
+ VC_T4                          	3.0000      	25.0000     
+ VC_T4                          	6.0000      	65.0000     
+ VC_T4                          	9.0000      	120.0000    
+ VC_T4                          	12.0000     	190.0000    
+ VC_T4                          	16.0000     	310.0000    
+
+[CONTROLS]
+
+[RULES]
+
+[QUALITY]
+;;ID                             	InitQual      
+
+[SOURCES]
+;;ID                             	Type     	Quality       	Pattern                        
+
+[MIXING]
+;;ID                             	Model   
+ T1                             	MIXED   	      1.0000
+ T2                             	MIXED   	      1.0000
+ T3                             	MIXED   	      1.0000
+ T4                             	MIXED   	      1.0000
+
+[REACTIONS]
+ ORDER  BULK            1.00
+ ORDER  WALL            1
+ ORDER  TANK            1.00
+ GLOBAL BULK            0.000000
+ GLOBAL WALL            0.000000
+
+[REACTIONS]
+;Type     	Pipe/Tank                      	Coefficient 
+
+[ENERGY]
+ GLOBAL EFFIC        75.0000
+ DEMAND CHARGE       0.0000
+
+[TIMES]
+ DURATION            0:00:00
+ HYDRAULIC TIMESTEP  1:00:00
+ QUALITY TIMESTEP    0:05:00
+ REPORT TIMESTEP     1:00:00
+ REPORT START        0:00:00
+ PATTERN TIMESTEP    1:00:00
+ PATTERN START       0:00:00
+ RULE TIMESTEP       0:06:00
+ START CLOCKTIME     0:00:00
+ STATISTIC           NONE
+
+[OPTIONS]
+ PATTERN             __AOWIS_NO_DEFAULT
+ UNITS               CMH
+ PRESSURE            METERS
+ HEADLOSS            H-W
+ UNBALANCED          STOP
+ QUALITY             NONE
+ DEMAND MULTIPLIER   1.0000
+ EMITTER EXPONENT    0.5000
+ BACKFLOW ALLOWED    NO
+ VISCOSITY           1.000000
+ DIFFUSIVITY         1.000000
+ SPECIFIC GRAVITY    1.000000
+ TRIALS              200
+ ACCURACY            0.00100000
+ TOLERANCE           0.01000000
+ CHECKFREQ           2
+ MAXCHECK            10
+ DAMPLIMIT           0.00000000
+
+[REPORT]
+ PAGESIZE            0
+ STATUS              YES
+ SUMMARY             YES
+ ENERGY              NO
+ MESSAGES            YES
+ NODES               ALL
+ LINKS               ALL
+ Elevation           PRECISION 2
+ Demand              PRECISION 2
+ Head                PRECISION 2
+ Pressure            PRECISION 2
+ Quality             NO
+ Length              PRECISION 2
+ Diameter            PRECISION 2
+ Flow                PRECISION 2
+ Velocity            PRECISION 2
+ Headloss            PRECISION 2
+ Quality             NO
+ State               PRECISION 2
+ Setting             PRECISION 2
+ Reaction            PRECISION 2
+
+ F-FACTOR YES
+ F-FACTOR PRECISION 3
+[TAGS]
+;;Object  	ID                             	Tag
+
+[COORDINATES]
+;;ID                             	X-Coord       	Y-Coord       
+ J1                             	18.192000     	11.981190     
+ J2                             	18.193200     	11.982000     
+ J3                             	18.193200     	11.980380     
+ J4                             	18.195000     	11.982000     
+ J5                             	18.195000     	11.980380     
+ R1                             	18.190800     	11.981190     
+ T1                             	18.193200     	11.982800     
+ T2                             	18.193200     	11.979580     
+ T3                             	18.195000     	11.982800     
+ T4                             	18.195000     	11.979580     
+
+[VERTICES]
+;;ID                             	X-Coord       	Y-Coord       
+
+[BACKDROP]
+UNITS DEGREES
+
+[END]

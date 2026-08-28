@@ -97,5 +97,6 @@
         <file alias="tutorial-eps.ini">assets/examples/epanet/tutorial-eps.ini</file>
         <file alias="tutorial-leakage.inp">assets/examples/epanet/tutorial-leakage.inp</file>
         <file alias="tutorial-leakage.ini">assets/examples/epanet/tutorial-leakage.ini</file>
+        <file alias="4tanks.inp">assets/examples/epanet/4tanks.inp</file>
     </qresource>
 </RCC>
