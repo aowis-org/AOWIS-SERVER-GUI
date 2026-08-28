@@ -898,6 +898,27 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
     if (!event)
         return false;
 
+#ifndef Q_OS_WASM
+    if (event->key() == Qt::Key_Control
+        && !event->isAutoRepeat()
+        && this->m_model->viewMode() == MapViewMode::ThreeD
+        && !this->view_3d_orbit_active
+        && QApplication::mouseButtons() == Qt::NoButton)
+    {
+        const QPoint global_position = QCursor::pos();
+        const QPoint local_position = mapFromGlobal(global_position);
+        if (rect().contains(local_position))
+        {
+            beginView3dOrbit(
+                local_position, global_position, View3dOrbitInput::CtrlMouse);
+            this->pan_velocity = QPointF();
+            this->mouse_pan_inertia_active = false;
+            stopPanAnimationIfIdle();
+            event->accept();
+            return true;
+        }
+    }
+#endif
 
     if (event->key() == Qt::Key_Shift)
     {
@@ -1279,22 +1300,26 @@ void MapWidget::handleWheelEvent(QWheelEvent *event)
 }
 
 void MapWidget::beginView3dOrbit(
-    const QMouseEvent *event, View3dOrbitInput input)
+    const QPoint &position, const QPoint &global_position, View3dOrbitInput input)
 {
-    if (event == nullptr || this->view_3d_orbit_active
-        || input == View3dOrbitInput::None)
-    {
+    if (this->view_3d_orbit_active || input == View3dOrbitInput::None)
         return;
-    }
+
+#ifdef Q_OS_WASM
+    Q_UNUSED(global_position);
+#else
+    Q_UNUSED(position);
+#endif
 
     this->view_3d_orbit_active = true;
     this->view_3d_orbit_input = input;
     this->m_model->beginView3dRotateInteraction();
 #ifdef Q_OS_WASM
-    this->view_3d_orbit_last_position = event->position().toPoint();
+    this->view_3d_orbit_last_position = position;
 #else
-    this->view_3d_orbit_restore_global = event->globalPosition().toPoint();
+    this->view_3d_orbit_restore_global = global_position;
     this->view_3d_orbit_anchor_global = mapToGlobal(rect().center());
+    this->view_3d_orbit_ignore_next_mouse_move = true;
     grabMouse(QCursor(Qt::BlankCursor));
     this->view_3d_orbit_mouse_grabbed = true;
     QCursor::setPos(this->view_3d_orbit_anchor_global);
@@ -1316,6 +1341,7 @@ void MapWidget::endView3dOrbit(bool restore_cursor_position)
     this->view_3d_orbit_input = View3dOrbitInput::None;
     this->m_model->endView3dRotateInteraction();
 #ifndef Q_OS_WASM
+    this->view_3d_orbit_ignore_next_mouse_move = false;
     if (this->view_3d_orbit_mouse_grabbed)
     {
         releaseMouse();
@@ -1342,7 +1368,10 @@ bool MapWidget::handleMousePressEvent(QMouseEvent *event)
     if (this->m_model->viewMode() == MapViewMode::ThreeD
         && event->button() == Qt::MiddleButton)
     {
-        beginView3dOrbit(event, View3dOrbitInput::MiddleMouse);
+        beginView3dOrbit(
+            event->position().toPoint(),
+            event->globalPosition().toPoint(),
+            View3dOrbitInput::MiddleMouse);
         this->pan_velocity = QPointF();
         this->mouse_pan_inertia_active = false;
         stopPanAnimationIfIdle();
@@ -1456,7 +1485,10 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
 
     if (!this->view_3d_orbit_active && ctrl_mouse_orbit_requested)
     {
-        beginView3dOrbit(event, View3dOrbitInput::CtrlMouse);
+        beginView3dOrbit(
+            event->position().toPoint(),
+            event->globalPosition().toPoint(),
+            View3dOrbitInput::CtrlMouse);
         this->pan_velocity = QPointF();
         this->mouse_pan_inertia_active = false;
         stopPanAnimationIfIdle();
@@ -1480,6 +1512,15 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
 
 #ifndef Q_OS_WASM
         const QPoint global_position = event->globalPosition().toPoint();
+        if (this->view_3d_orbit_ignore_next_mouse_move)
+        {
+            this->view_3d_orbit_ignore_next_mouse_move = false;
+            if (global_position != this->view_3d_orbit_anchor_global)
+                QCursor::setPos(this->view_3d_orbit_anchor_global);
+            event->accept();
+            return true;
+        }
+
         const QPoint delta = global_position - this->view_3d_orbit_anchor_global;
         if (!delta.isNull())
         {

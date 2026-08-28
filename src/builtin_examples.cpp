@@ -9,7 +9,8 @@ const QList<BuiltinExampleRevision> &builtinExampleRevisions()
         {QStringLiteral("EXNET-3"), QStringLiteral("exnet-3.inp"), QStringLiteral(":/examples/epanet/exnet-3.inp")},
         {QStringLiteral("KY4"), QStringLiteral("ky4.inp"), QStringLiteral(":/examples/epanet/ky4.inp")},
         {QStringLiteral("Tutorial - Extended Period"), QStringLiteral("tutorial-eps.inp"), QStringLiteral(":/examples/epanet/tutorial-eps.inp")},
-        {QStringLiteral("Tutorial - Leakage"), QStringLiteral("tutorial-leakage.inp"), QStringLiteral(":/examples/epanet/tutorial-leakage.inp")}
+        {QStringLiteral("Tutorial - Leakage"), QStringLiteral("tutorial-leakage.inp"), QStringLiteral(":/examples/epanet/tutorial-leakage.inp")},
+        {QStringLiteral("AOWIS 4 Tanks"), QStringLiteral("4tanks.inp"), QStringLiteral(":/examples/epanet/4tanks.inp")}
     };
 
     return revisions;

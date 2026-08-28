@@ -91,7 +91,7 @@ void HydraulicData::onDatabaseReady()
     loadProject();
     
     //this->network_hydraulic = DummyNetworks::networkSimple();
-    this->network_hydraulic = DummyNetworks::networkTanks();
+    //this->network_hydraulic = DummyNetworks::networkTanks();
     //this->network_hydraulic = DummyMarburgNetworkGenerator::generate();
     //this->network_hydraulic = RandomHydraulicNetworkGenerator::generateFractal();
     rebuildBoundingBoxWgs84();

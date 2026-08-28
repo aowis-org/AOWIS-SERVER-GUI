@@ -120,7 +120,8 @@ private:
         CtrlMouse
     };
 
-    void beginView3dOrbit(const QMouseEvent *event, View3dOrbitInput input);
+    void beginView3dOrbit(
+        const QPoint &position, const QPoint &global_position, View3dOrbitInput input);
     void endView3dOrbit(bool restore_cursor_position = true);
 
     void updatePointerCoordinates(const QPoint &position);
@@ -143,6 +144,7 @@ private:
     QPoint view_3d_orbit_anchor_global;
     QPoint view_3d_orbit_restore_global;
     bool view_3d_orbit_mouse_grabbed = false;
+    bool view_3d_orbit_ignore_next_mouse_move = false;
 #endif
     QPointF mouse_pan_velocity;
     QElapsedTimer mouse_pan_move_elapsed_timer;
