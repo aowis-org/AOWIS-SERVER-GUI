@@ -22,6 +22,7 @@
 #include <QPushButton>
 #include <QRadialGradient>
 #include <QSignalBlocker>
+#include <QSizePolicy>
 #include <QSlider>
 #include <QTimer>
 #include <QVariantAnimation>
@@ -1270,13 +1271,9 @@ MapMonitorUndergroundHudWidget::MapMonitorUndergroundHudWidget(
     Q_ASSERT(this->rhi_widget != nullptr);
     configureHudFrame(this);
 
-    QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(HudMarginPx, HudMarginPx, HudMarginPx, HudMarginPx);
-    layout->setSpacing(3);
-
-    QLabel *title = new QLabel(QStringLiteral("Underground"), this);
-    title->setAlignment(Qt::AlignHCenter | Qt::AlignVCenter);
-    layout->addWidget(title);
+    QHBoxLayout *layout = new QHBoxLayout(this);
+    layout->setContentsMargins(4, 4, 4, 4);
+    layout->setSpacing(0);
 
     this->underground_combo->addItem(QStringLiteral("X-Ray"),
         int(MapRhiUndergroundMode::XRay));
@@ -1284,8 +1281,9 @@ MapMonitorUndergroundHudWidget::MapMonitorUndergroundHudWidget(
         int(MapRhiUndergroundMode::Hide));
     this->underground_combo->addItem(QStringLiteral("Solid"),
         int(MapRhiUndergroundMode::Solid));
+    this->underground_combo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     this->underground_combo->setToolTip(QStringLiteral(
-        "Controls how the 3D water network is shown where terrain covers it.\n"
+        "Underground network display\n"
         "X-Ray: show actual underground pipe sections and junctions with a distinct pattern.\n"
         "Hide: let terrain hide the network normally.\n"
         "Solid: show the network through terrain without an underground pattern."));
@@ -1306,6 +1304,7 @@ MapMonitorUndergroundHudWidget::MapMonitorUndergroundHudWidget(
     });
 
     layout->addWidget(this->underground_combo);
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
 }
 
 MapMonitorVerticalControlsHudWidget::MapMonitorVerticalControlsHudWidget(
@@ -1314,35 +1313,49 @@ MapMonitorVerticalControlsHudWidget::MapMonitorVerticalControlsHudWidget(
 {
     Q_ASSERT(map_model != nullptr);
     Q_ASSERT(rhi_widget != nullptr);
-    configureHudFrame(this);
+
+    setFrameShape(QFrame::NoFrame);
+    setFrameShadow(QFrame::Plain);
+    setAutoFillBackground(false);
+    setFocusPolicy(Qt::NoFocus);
 
     QHBoxLayout *layout = new QHBoxLayout(this);
-    layout->setContentsMargins(3, 3, 3, 3);
-    layout->setSpacing(0);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(4);
+    layout->setAlignment(Qt::AlignBottom);
+
+    QFrame *slider_panel = new QFrame(this);
+    configureHudFrame(slider_panel);
+    QHBoxLayout *slider_layout = new QHBoxLayout(slider_panel);
+    slider_layout->setContentsMargins(3, 3, 3, 3);
+    slider_layout->setSpacing(0);
 
     MapMonitorNetworkGroundOffsetHudWidget *network_ground_offset =
-        new MapMonitorNetworkGroundOffsetHudWidget(map_model, this);
+        new MapMonitorNetworkGroundOffsetHudWidget(map_model, slider_panel);
     MapMonitorTiltHudWidget *tilt =
-        new MapMonitorTiltHudWidget(map_model, this);
+        new MapMonitorTiltHudWidget(map_model, slider_panel);
     MapMonitorCameraDistanceHudWidget *camera_distance =
-        new MapMonitorCameraDistanceHudWidget(map_model, this);
+        new MapMonitorCameraDistanceHudWidget(map_model, slider_panel);
     MapMonitorVerticalExaggerationHudWidget *vertical_exaggeration =
-        new MapMonitorVerticalExaggerationHudWidget(map_model, this);
-    MapMonitorUndergroundHudWidget *underground =
-        new MapMonitorUndergroundHudWidget(rhi_widget, this);
+        new MapMonitorVerticalExaggerationHudWidget(map_model, slider_panel);
 
-    QFrame *controls[5] = {
+    QFrame *slider_controls[4] = {
         network_ground_offset,
         tilt,
         camera_distance,
-        vertical_exaggeration,
-        underground
+        vertical_exaggeration
     };
-    for (QFrame *control : controls)
+    for (QFrame *control : slider_controls)
     {
         control->setFrameShape(QFrame::NoFrame);
         control->setFrameShadow(QFrame::Plain);
         control->setAutoFillBackground(false);
-        layout->addWidget(control);
+        slider_layout->addWidget(control);
     }
+
+    MapMonitorUndergroundHudWidget *underground =
+        new MapMonitorUndergroundHudWidget(rhi_widget, this);
+
+    layout->addWidget(slider_panel, 0, Qt::AlignBottom);
+    layout->addWidget(underground, 0, Qt::AlignBottom);
 }
