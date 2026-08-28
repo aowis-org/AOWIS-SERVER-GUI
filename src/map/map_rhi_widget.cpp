@@ -3014,32 +3014,40 @@ double MapRhiWidget::terrainWorldZ(
     return elevation_m * world_units_per_meter;
 }
 
-void MapRhiWidget::captureView3dFocusAnchor()
+bool MapRhiWidget::terrainCoordinateAtScreen(
+    const QPointF &screen_position, CoordinateWGS84 *coordinate,
+    bool request_missing_tile)
 {
-    if (this->map_model == nullptr || this->terrain_repository == nullptr
+    return terrainRayHitAtScreen(
+        screen_position, coordinate, nullptr, nullptr, request_missing_tile);
+}
+
+bool MapRhiWidget::terrainRayHitAtScreen(
+    const QPointF &screen_position, CoordinateWGS84 *coordinate,
+    double *world_z, double *distance_m, bool request_missing_tile)
+{
+    if (coordinate == nullptr || this->map_model == nullptr
+        || this->terrain_repository == nullptr
         || this->map_model->viewMode() != MapViewMode::ThreeD
         || !this->viewport_size.isValid())
     {
-        return;
+        return false;
     }
 
     const double world_units_per_meter = terrainWorldUnitsPerMeter();
     if (!std::isfinite(world_units_per_meter) || world_units_per_meter <= 0.0)
-        return;
+        return false;
 
-    // Capture the exact screen-center ray before yaw, pitch, or distance changes.
-    // PAN is allowed to let the crosshair slip, so MapModel::centerLon/centerLat
-    // is not necessarily the terrain point currently visible below the reticle.
     this->camera.setViewportSize(this->viewport_size);
     this->camera.setSceneOriginWorld(renderOriginWorld());
     this->camera.syncFromMapModel(*this->map_model);
 
     QVector3D eye_local;
     QVector3D direction_local;
-    if (!this->camera.crosshairRay(&eye_local, &direction_local)
+    if (!this->camera.screenRay(screen_position, &eye_local, &direction_local)
         || direction_local.z() >= -1e-6f)
     {
-        return;
+        return false;
     }
 
     const QPointF origin_world = renderOriginWorld();
@@ -3053,10 +3061,9 @@ void MapRhiWidget::captureView3dFocusAnchor()
     const double horizontal_ray_speed = std::hypot(
         double(direction_local.x()), double(direction_local.y()));
 
-    // March front-to-back in sub-cell increments. Unlike the old Newton solver,
-    // this can only ever select the first terrain surface crossing along the ray.
-    // A quarter DEM cell is small enough not to step over a GLO-30 ridge while
-    // keeping this one-shot interaction inexpensive.
+    // Search strictly front-to-back so the coordinate always belongs to the
+    // first visible terrain surface below the cursor, never a second surface
+    // behind a ridge or mountain.
     double march_step_world = terrain_cell_world * 0.25;
     if (horizontal_ray_speed > 1e-9)
         march_step_world /= horizontal_ray_speed;
@@ -3071,7 +3078,7 @@ void MapRhiWidget::captureView3dFocusAnchor()
         native_search_world,
         qMax(terrain_cell_world * 256.0, 100000.0 * world_units_per_meter));
     if (!std::isfinite(maximum_search_world) || maximum_search_world <= 0.0)
-        return;
+        return false;
 
     const double surface_tolerance_world = qMax(
         0.01 * world_units_per_meter, 0.0005);
@@ -3084,24 +3091,31 @@ void MapRhiWidget::captureView3dFocusAnchor()
     double bracket_far_world = 0.0;
 
     const int maximum_march_steps = 20000;
-    double distance_world = 0.0;
+    double ray_distance_world = 0.0;
     for (int step = 0; step <= maximum_march_steps; ++step)
     {
         if (step == 0)
-            distance_world = 0.0;
+            ray_distance_world = 0.0;
         else
-            distance_world = qMin(maximum_search_world, distance_world + march_step_world);
+            ray_distance_world = qMin(
+                maximum_search_world, ray_distance_world + march_step_world);
 
-        const QVector3D point = eye_local + direction_local * float(distance_world);
+        const QVector3D point =
+            eye_local + direction_local * float(ray_distance_world);
         const QPointF absolute_world(
             origin_world.x() + double(point.x()),
             origin_world.y() + double(point.y()));
-        const CoordinateWGS84 coordinate = GeoWebMercator::worldPixelToLonLat(
-            absolute_world.x(), absolute_world.y(), MapRenderCacheMath::ReferenceZoom);
+        const CoordinateWGS84 sample_coordinate =
+            GeoWebMercator::worldPixelToLonLat(
+                absolute_world.x(), absolute_world.y(),
+                MapRenderCacheMath::ReferenceZoom);
 
         double terrain_elevation_m = 0.0;
-        if (!terrainElevationAtCoordinate(coordinate, &terrain_elevation_m))
-            return;
+        if (!terrainElevationAtCoordinate(
+                sample_coordinate, &terrain_elevation_m, request_missing_tile))
+        {
+            return false;
+        }
 
         const double sampled_world_z = terrainWorldZ(
             terrain_elevation_m, world_units_per_meter);
@@ -3113,38 +3127,41 @@ void MapRhiWidget::captureView3dFocusAnchor()
         {
             bracket_found = true;
             bracket_near_world = previous_distance_world;
-            bracket_far_world = distance_world;
+            bracket_far_world = ray_distance_world;
             break;
         }
 
-
-        previous_distance_world = distance_world;
+        previous_distance_world = ray_distance_world;
         previous_clearance_world = clearance_world;
         previous_sample_available = true;
 
-        if (distance_world >= maximum_search_world)
+        if (ray_distance_world >= maximum_search_world)
             break;
     }
 
     if (!bracket_found)
-        return;
+        return false;
 
-    // Refine only inside the first bracket. This guarantees that the anchor is
-    // on the visible front surface rather than a second root behind a mountain.
     for (int iteration = 0; iteration < 24; ++iteration)
     {
         const double midpoint_world =
             (bracket_near_world + bracket_far_world) * 0.5;
-        const QVector3D point = eye_local + direction_local * float(midpoint_world);
+        const QVector3D point =
+            eye_local + direction_local * float(midpoint_world);
         const QPointF absolute_world(
             origin_world.x() + double(point.x()),
             origin_world.y() + double(point.y()));
-        const CoordinateWGS84 coordinate = GeoWebMercator::worldPixelToLonLat(
-            absolute_world.x(), absolute_world.y(), MapRenderCacheMath::ReferenceZoom);
+        const CoordinateWGS84 sample_coordinate =
+            GeoWebMercator::worldPixelToLonLat(
+                absolute_world.x(), absolute_world.y(),
+                MapRenderCacheMath::ReferenceZoom);
 
         double terrain_elevation_m = 0.0;
-        if (!terrainElevationAtCoordinate(coordinate, &terrain_elevation_m))
-            return;
+        if (!terrainElevationAtCoordinate(
+                sample_coordinate, &terrain_elevation_m, request_missing_tile))
+        {
+            return false;
+        }
 
         const double sampled_world_z = terrainWorldZ(
             terrain_elevation_m, world_units_per_meter);
@@ -3160,21 +3177,52 @@ void MapRhiWidget::captureView3dFocusAnchor()
     }
 
     const double hit_distance_world = bracket_far_world;
-    const QVector3D hit_point = eye_local + direction_local * float(hit_distance_world);
+    const QVector3D hit_point =
+        eye_local + direction_local * float(hit_distance_world);
     const QPointF hit_absolute_world(
         origin_world.x() + double(hit_point.x()),
         origin_world.y() + double(hit_point.y()));
-    const CoordinateWGS84 hit_coordinate = GeoWebMercator::worldPixelToLonLat(
-        hit_absolute_world.x(), hit_absolute_world.y(),
-        MapRenderCacheMath::ReferenceZoom);
+    const CoordinateWGS84 hit_coordinate =
+        GeoWebMercator::worldPixelToLonLat(
+            hit_absolute_world.x(), hit_absolute_world.y(),
+            MapRenderCacheMath::ReferenceZoom);
 
     double hit_terrain_elevation_m = 0.0;
-    if (!terrainElevationAtCoordinate(hit_coordinate, &hit_terrain_elevation_m))
+    if (!terrainElevationAtCoordinate(
+            hit_coordinate, &hit_terrain_elevation_m, request_missing_tile))
+    {
+        return false;
+    }
+
+    *coordinate = hit_coordinate;
+    if (world_z != nullptr)
+    {
+        *world_z = terrainWorldZ(
+            hit_terrain_elevation_m, world_units_per_meter);
+    }
+    if (distance_m != nullptr)
+        *distance_m = hit_distance_world / world_units_per_meter;
+
+    return true;
+}
+
+void MapRhiWidget::captureView3dFocusAnchor()
+{
+    if (this->map_model == nullptr || !this->viewport_size.isValid())
         return;
 
-    const double hit_world_z = terrainWorldZ(
-        hit_terrain_elevation_m, world_units_per_meter);
-    const double distance_m = hit_distance_world / world_units_per_meter;
+    CoordinateWGS84 hit_coordinate;
+    double hit_world_z = 0.0;
+    double distance_m = 0.0;
+    if (!terrainRayHitAtScreen(
+            QPointF(
+                this->viewport_size.width() / 2.0,
+                this->viewport_size.height() / 2.0),
+            &hit_coordinate, &hit_world_z, &distance_m, true))
+    {
+        return;
+    }
+
     this->map_model->setView3dFocusAnchor(
         hit_coordinate.longitude_deg,
         hit_coordinate.latitude_deg,

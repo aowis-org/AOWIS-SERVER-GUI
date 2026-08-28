@@ -14,6 +14,8 @@
 #include <QWheelEvent>
 #include <QWidget>
 
+#include <functional>
+
 #include "map_model.h"
 #include "map_tile_repository.h"
 
@@ -32,6 +34,9 @@ class MapWidget : public QWidget
     Q_OBJECT
 
 public:
+    using ScreenCoordinateResolver =
+        std::function<bool(const QPointF &screen_position, CoordinateWGS84 *coordinate)>;
+
     explicit MapWidget(MapModel *model, MapTileRepository *tile_repository, GpsProvider *gps, QWidget *parent = nullptr);
     ~MapWidget() override;
 
@@ -47,6 +52,7 @@ public:
 
     void clearKeyboardPanInput();
     void setEdgePanningEnabled(bool enabled);
+    void setRhiScreenCoordinateResolver(ScreenCoordinateResolver resolver);
 
 #ifdef Q_OS_WASM
     void setBrowserMapLayerEnabled(bool enabled);
@@ -125,6 +131,7 @@ private:
     void endView3dOrbit(bool restore_cursor_position = true);
 
     void updatePointerCoordinates(const QPoint &position);
+    void emitPointerCoordinate(const CoordinateWGS84 &wgs);
     void scheduleTileUpdate(const QString &);
     void drawTiles(QPainter &painter);
 
@@ -157,6 +164,7 @@ private:
     bool pan_key_down_pressed = false;
     bool pan_fast_modifier_pressed = false;
     bool rhi_view_active = false;
+    ScreenCoordinateResolver rhi_screen_coordinate_resolver;
     bool view_2d_zoom_in_key_pressed = false;
     bool view_2d_zoom_out_key_pressed = false;
     bool view_3d_zoom_in_key_pressed = false;
@@ -187,6 +195,7 @@ signals:
     void signalZoomChanged(int zoom);
     void signalCoordsChangedWgs84(CoordinateWGS84 wgs);
     void signalCoordsChangedUTM(CoordinateUTM utm);
+    void signalCoordsUnavailable();
 };
 
 #endif // MAP_WIDGET_H

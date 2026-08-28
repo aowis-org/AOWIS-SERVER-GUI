@@ -17,6 +17,7 @@
 #endif
 
 #include <cmath>
+#include <utility>
 
 #ifdef Q_OS_WASM
 EM_JS(int, aowisBrowserViewportWidth, (),
@@ -268,7 +269,17 @@ void MapWidget::init()
 
     connect(this->m_model, &MapModel::centerChangedWGS84, this, [this](CoordinateWGS84 wgs)
     {
-        emit signalCoordsChangedWgs84(wgs);
+        if (this->rhi_view_active
+            && this->m_model->viewMode() == MapViewMode::ThreeD
+            && this->rhi_screen_coordinate_resolver)
+        {
+            updatePointerCoordinates(
+                QPoint(width() / 2, height() / 2));
+        }
+        else
+        {
+            emit signalCoordsChangedWgs84(wgs);
+        }
         if (this->backing_store_pan_active)
             return;
 #ifdef Q_OS_WASM
@@ -281,7 +292,17 @@ void MapWidget::init()
         update();
     });
 
-    connect(this->m_model, &MapModel::centerChangedUTM, this, &MapWidget::signalCoordsChangedUTM);
+    connect(this->m_model, &MapModel::centerChangedUTM, this,
+            [this](CoordinateUTM utm)
+    {
+        if (this->rhi_view_active
+            && this->m_model->viewMode() == MapViewMode::ThreeD
+            && this->rhi_screen_coordinate_resolver)
+        {
+            return;
+        }
+        emit signalCoordsChangedUTM(utm);
+    });
     connect(this->m_model, &MapModel::providerChanged, this, [this](MapProvider)
     {
 #ifdef Q_OS_WASM
@@ -309,6 +330,12 @@ void MapWidget::init()
             if (this->view_3d_orbit_active)
                 endView3dOrbit();
             stopPanAnimationIfIdle();
+        }
+
+        if (this->rhi_view_active && this->rhi_screen_coordinate_resolver)
+        {
+            updatePointerCoordinates(
+                QPoint(width() / 2, height() / 2));
         }
     });
 
@@ -1619,12 +1646,38 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
 
 void MapWidget::updatePointerCoordinates(const QPoint &position)
 {
+    if (this->rhi_view_active
+        && this->m_model->viewMode() == MapViewMode::ThreeD
+        && this->rhi_screen_coordinate_resolver)
+    {
+        CoordinateWGS84 terrain_coordinate;
+        if (!this->rhi_screen_coordinate_resolver(
+                QPointF(position), &terrain_coordinate))
+        {
+            emit signalCoordsUnavailable();
+            return;
+        }
+
+        emitPointerCoordinate(terrain_coordinate);
+        return;
+    }
+
     const CoordinateWGS84 wgs = this->m_model->wgs84FromScreen(position, this->size());
+    emitPointerCoordinate(wgs);
+}
+
+void MapWidget::emitPointerCoordinate(const CoordinateWGS84 &wgs)
+{
     emit signalCoordsChangedWgs84(wgs);
 
     GeoMetricProjection projection;
     const CoordinateUTM utm = projection.wgs84ToUtm(wgs);
     emit signalCoordsChangedUTM(utm);
+}
+
+void MapWidget::setRhiScreenCoordinateResolver(ScreenCoordinateResolver resolver)
+{
+    this->rhi_screen_coordinate_resolver = std::move(resolver);
 }
 
 void MapWidget::scheduleTileUpdate(const QString &)

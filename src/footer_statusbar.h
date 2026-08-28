@@ -18,6 +18,7 @@ public:
     void setMapZoom(int zoom);
     void setMapCoordinatesWGS84(const CoordinateWGS84 &wgs);
     void setMapCoordinatesUTM(const CoordinateUTM &utm);
+    void clearMapCoordinates();
     
     QStatusBar* statusBar() const { return bar; };
     

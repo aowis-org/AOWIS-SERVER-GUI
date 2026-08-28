@@ -76,6 +76,14 @@ void FooterStatusBar::setMapCoordinatesUTM(const CoordinateUTM &utm)
         );
 }
 
+void FooterStatusBar::clearMapCoordinates()
+{
+    this->label_map_coords_lat->clear();
+    this->label_map_coords_lon->clear();
+    this->label_map_coords_utm_easting->clear();
+    this->label_map_coords_utm_northing->clear();
+}
+
 void FooterStatusBar::statusUpdateServerMap(StatusColorCode code)
 {
     QString style = "color: black;";

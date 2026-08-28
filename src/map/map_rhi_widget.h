@@ -59,6 +59,9 @@ public:
 
     QString graphicsApiName() const;
     MapRhiHit hitTest(const QPointF &screen_position) const;
+    bool terrainCoordinateAtScreen(
+        const QPointF &screen_position, CoordinateWGS84 *coordinate,
+        bool request_missing_tile = true);
     void setNetworkSnapshot(const NetworkRenderSnapshot &snapshot);
     void setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids);
     void setNetworkScreenTranslation(const QPointF &translation_pixels);
@@ -101,6 +104,9 @@ private:
     void syncViewState();
     void syncTerrainAwareCameraDistance();
     void captureView3dFocusAnchor();
+    bool terrainRayHitAtScreen(
+        const QPointF &screen_position, CoordinateWGS84 *coordinate,
+        double *world_z, double *distance_m, bool request_missing_tile);
     void rebuildHeatmapRenderVertices();
     void syncBasemapHeatmapOverlay();
     void syncBasemapHeatmapStyle();

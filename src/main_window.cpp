@@ -264,10 +264,12 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->map_mon, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
     connect(this->map_mon, &MapWidget::signalCoordsChangedWgs84, this->footer, &FooterStatusBar::setMapCoordinatesWGS84);
     connect(this->map_mon, &MapWidget::signalCoordsChangedUTM, this->footer, &FooterStatusBar::setMapCoordinatesUTM);
+    connect(this->map_mon, &MapWidget::signalCoordsUnavailable, this->footer, &FooterStatusBar::clearMapCoordinates);
     
     connect(this->map_edit, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
     connect(this->map_edit, &MapWidget::signalCoordsChangedWgs84, this->footer, &FooterStatusBar::setMapCoordinatesWGS84);
     connect(this->map_edit, &MapWidget::signalCoordsChangedUTM, this->footer, &FooterStatusBar::setMapCoordinatesUTM);
+    connect(this->map_edit, &MapWidget::signalCoordsUnavailable, this->footer, &FooterStatusBar::clearMapCoordinates);
     
     MapNavigationWidget *map_edit_nav = this->map_editor->mapNavigationWidget();
     MapNavigationWidget *map_mon_nav = this->map_monitor->mapNavigationWidget();
