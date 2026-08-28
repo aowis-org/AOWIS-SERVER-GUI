@@ -696,6 +696,96 @@ void TopControlBar::addFlowUnitCombo()
     TopControlBarContent *bar_content = barContent(this->content);
     bar_content->centerLayout()->addWidget(createSeparator(this->content));
 
+#ifdef Q_OS_WASM
+    // QMenu popups are unreliable in Qt/WASM (geometry and nested popup handling
+    // can expand far beyond the toolbar). Use a regular combobox in the browser
+    // so every unit is a single directly clickable/tappable item.
+    QComboBox *combo_flow_units = new QComboBox(this->content);
+    combo_flow_units->setFixedSize(110, 30);
+    combo_flow_units->setMaxVisibleItems(12);
+
+    combo_flow_units->addItem(QStringLiteral("CMH"), static_cast<int>(EN_CMH));
+    combo_flow_units->setItemData(
+        combo_flow_units->count() - 1,
+        QStringLiteral("cubic meters per hour"),
+        Qt::ToolTipRole);
+
+    combo_flow_units->addItem(QStringLiteral("LPS"), static_cast<int>(EN_LPS));
+    combo_flow_units->setItemData(
+        combo_flow_units->count() - 1,
+        QStringLiteral("liters per second"),
+        Qt::ToolTipRole);
+
+    combo_flow_units->addItem(QStringLiteral("LPM"), static_cast<int>(EN_LPM));
+    combo_flow_units->setItemData(
+        combo_flow_units->count() - 1,
+        QStringLiteral("liters per minute"),
+        Qt::ToolTipRole);
+
+    combo_flow_units->addItem(QStringLiteral("MLD"), static_cast<int>(EN_MLD));
+    combo_flow_units->setItemData(
+        combo_flow_units->count() - 1,
+        QStringLiteral("million liters per day"),
+        Qt::ToolTipRole);
+
+    combo_flow_units->addItem(QStringLiteral("CMD"), static_cast<int>(EN_CMD));
+    combo_flow_units->setItemData(
+        combo_flow_units->count() - 1,
+        QStringLiteral("cubic meters per day"),
+        Qt::ToolTipRole);
+
+    combo_flow_units->addItem(QStringLiteral("CMS"), static_cast<int>(EN_CMS));
+    combo_flow_units->setItemData(
+        combo_flow_units->count() - 1,
+        QStringLiteral("cubic meters per second"),
+        Qt::ToolTipRole);
+
+    combo_flow_units->addItem(QStringLiteral("CFS"), static_cast<int>(EN_CFS));
+    combo_flow_units->setItemData(
+        combo_flow_units->count() - 1,
+        QStringLiteral("cubic feet per second"),
+        Qt::ToolTipRole);
+
+    combo_flow_units->addItem(QStringLiteral("GPM"), static_cast<int>(EN_GPM));
+    combo_flow_units->setItemData(
+        combo_flow_units->count() - 1,
+        QStringLiteral("gallons per minute"),
+        Qt::ToolTipRole);
+
+    combo_flow_units->addItem(QStringLiteral("MGD"), static_cast<int>(EN_MGD));
+    combo_flow_units->setItemData(
+        combo_flow_units->count() - 1,
+        QStringLiteral("million gallons per day"),
+        Qt::ToolTipRole);
+
+    combo_flow_units->addItem(QStringLiteral("IMGD"), static_cast<int>(EN_IMGD));
+    combo_flow_units->setItemData(
+        combo_flow_units->count() - 1,
+        QStringLiteral("imperial million gallons per day"),
+        Qt::ToolTipRole);
+
+    combo_flow_units->addItem(QStringLiteral("AFD"), static_cast<int>(EN_AFD));
+    combo_flow_units->setItemData(
+        combo_flow_units->count() - 1,
+        QStringLiteral("acre-feet per day"),
+        Qt::ToolTipRole);
+
+    connect(combo_flow_units, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this, combo_flow_units](int index)
+    {
+        bool ok = false;
+        const int value = combo_flow_units->itemData(index).toInt(&ok);
+        if (!ok)
+            return;
+
+        this->selected_flow_units = static_cast<EN_FlowUnits>(value);
+    });
+
+    combo_flow_units->setCurrentIndex(0);
+    this->selected_flow_units = EN_CMH;
+    bar_content->centerLayout()->addWidget(
+        createLabeledControl(QStringLiteral("Flow units"), combo_flow_units, this->content));
+#else
     QToolButton *button_flow_units = new QToolButton(this->content);
     button_flow_units->setText(QStringLiteral("CMH"));
     button_flow_units->setFixedSize(82, 30);
@@ -751,7 +841,6 @@ void TopControlBar::addFlowUnitCombo()
 
         bool ok = false;
         const int value = action->data().toInt(&ok);
-
         if (!ok)
             return;
 
@@ -760,7 +849,9 @@ void TopControlBar::addFlowUnitCombo()
     });
 
     this->selected_flow_units = EN_CMH;
-    bar_content->centerLayout()->addWidget(createLabeledControl(QStringLiteral("Flow units"), button_flow_units, this->content));
+    bar_content->centerLayout()->addWidget(
+        createLabeledControl(QStringLiteral("Flow units"), button_flow_units, this->content));
+#endif
 }
 
 void TopControlBar::addQualityHeadlossControls()

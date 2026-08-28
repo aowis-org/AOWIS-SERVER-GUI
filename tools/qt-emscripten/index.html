@@ -447,19 +447,47 @@
           }
       }
 
+      async function fetchAowisConfiguration()
+      {
+          const colocatedUrl = new URL('aowis-server-gui.ini', document.baseURI);
+          const rootUrl = new URL('/aowis-server-gui.ini', window.location.origin);
+          const candidateUrls = [colocatedUrl];
+          if (rootUrl.href !== colocatedUrl.href)
+              candidateUrls.push(rootUrl);
+
+          const failures = [];
+          for (const candidate of candidateUrls) {
+              const configurationUrl = new URL(candidate.href);
+              configurationUrl.searchParams.set('aowis-config-revision', Date.now().toString());
+
+              try {
+                  const response = await fetch(configurationUrl, {
+                      cache: 'no-store',
+                      credentials: 'same-origin'
+                  });
+                  if (response.ok) {
+                      return {
+                          url: configurationUrl,
+                          text: await response.text()
+                      };
+                  }
+
+                  failures.push(
+                      `${configurationUrl.pathname}: HTTP ${response.status} ${response.statusText}`);
+              } catch (error) {
+                  failures.push(`${configurationUrl.pathname}: ${formatQtStartupError(error)}`);
+              }
+          }
+
+          throw new Error(
+              `Unable to load aowis-server-gui.ini. Tried:\n${failures.join('\n')}`);
+      }
+
       async function loadAowisConfiguration()
       {
-          const configurationUrl = new URL('/aowis-server-gui.ini', window.location.origin);
-          configurationUrl.searchParams.set('aowis-config-revision', Date.now().toString());
-
-          const response = await fetch(configurationUrl, {
-              cache: 'no-store',
-              credentials: 'same-origin'
-          });
-          if (!response.ok)
-              throw new Error(`Unable to load ${configurationUrl.pathname}: HTTP ${response.status} ${response.statusText}`);
-
-          const values = parseAowisIni(await response.text());
+          const loadedConfiguration = await fetchAowisConfiguration();
+          const configurationUrl = loadedConfiguration.url;
+          const values = parseAowisIni(loadedConfiguration.text);
           const configuredWasmRenderer = (values['gui/map_wasm_renderer'] || 'rhi')
               .trim().toLowerCase();
           const mapWasmRenderer = configuredWasmRenderer === 'browser'

@@ -415,10 +415,17 @@ void installShortcutEditContextMenu(QWidget *widget, GuiShortcutId id)
     QObject::connect(widget, &QWidget::customContextMenuRequested, widget,
                      [widget, id](const QPoint &position)
     {
-        QMenu menu(widget);
-        QAction *edit_action = menu.addAction(QStringLiteral("Edit keyboard shortcut…"));
-        QAction *selected_action = menu.exec(widget->mapToGlobal(position));
-        if (selected_action == edit_action)
+        QMenu *menu = new QMenu(widget);
+        menu->setAttribute(Qt::WA_DeleteOnClose);
+#ifdef Q_OS_WASM
+        menu->setStyleSheet(QStringLiteral(
+            "QMenu::item { min-height: 34px; padding: 4px 12px; }"));
+#endif
+        QAction *edit_action = menu->addAction(QStringLiteral("Edit keyboard shortcut…"));
+        QObject::connect(edit_action, &QAction::triggered, widget, [id]
+        {
             guiShortcutRegistry().requestEdit(id);
+        });
+        menu->popup(widget->mapToGlobal(position));
     });
 }
