@@ -250,6 +250,7 @@ if(AOWIS_HAS_QRHI)
             FILES
                 src/map/shaders/map_rhi_link.vert
                 src/map/shaders/map_rhi_link.frag
+                src/map/shaders/map_rhi_link_xray.frag
                 src/map/shaders/map_rhi_node.vert
                 src/map/shaders/map_rhi_node.frag
                 src/map/shaders/map_rhi_icon.vert
@@ -260,6 +261,7 @@ if(AOWIS_HAS_QRHI)
                 src/map/shaders/map_rhi_heatmap.frag
                 src/map/shaders/map_rhi_junction.vert
                 src/map/shaders/map_rhi_junction.frag
+                src/map/shaders/map_rhi_junction_xray.frag
                 src/map/shaders/map_rhi_tank.vert
                 src/map/shaders/map_rhi_tank.frag
         )
@@ -272,6 +274,7 @@ if(AOWIS_HAS_QRHI)
             FILES
                 src/map/shaders/map_rhi_link.vert
                 src/map/shaders/map_rhi_link.frag
+                src/map/shaders/map_rhi_link_xray.frag
                 src/map/shaders/map_rhi_node.vert
                 src/map/shaders/map_rhi_node.frag
                 src/map/shaders/map_rhi_icon.vert
@@ -282,6 +285,7 @@ if(AOWIS_HAS_QRHI)
                 src/map/shaders/map_rhi_heatmap.frag
                 src/map/shaders/map_rhi_junction.vert
                 src/map/shaders/map_rhi_junction.frag
+                src/map/shaders/map_rhi_junction_xray.frag
                 src/map/shaders/map_rhi_tank.vert
                 src/map/shaders/map_rhi_tank.frag
         )

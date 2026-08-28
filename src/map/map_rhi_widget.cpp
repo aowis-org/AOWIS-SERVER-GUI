@@ -322,6 +322,7 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     connect(this->map_model, &MapModel::zoomChanged, this, [this]
     {
         syncViewState();
+        markUndergroundGeometryDirty();
         this->heatmap_upload_pending = true;
         syncBasemapHeatmapOverlay();
         if (this->basemap_renderer)
@@ -337,6 +338,7 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode)
     {
         syncViewState();
+        markUndergroundGeometryDirty();
         this->heatmap_upload_pending = true;
         syncBasemapHeatmapOverlay();
         if (this->basemap_renderer)
@@ -354,6 +356,7 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
             this->heatmap_upload_pending = true;
             this->tank_upload_pending = true;
             this->junction_instance_upload_pending = true;
+            markUndergroundGeometryDirty();
             if (this->basemap_renderer)
                 this->basemap_renderer->invalidate();
         }
@@ -373,6 +376,7 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
         this->icon_upload_pending = true;
         this->tank_upload_pending = true;
         this->junction_instance_upload_pending = true;
+        markUndergroundGeometryDirty();
         update();
     });
     connect(this->map_model, &MapModel::view3dNavigationStateChanged,
@@ -737,6 +741,7 @@ void MapRhiWidget::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
     this->heatmap_upload_pending = true;
     this->tank_upload_pending = true;
     this->junction_instance_upload_pending = true;
+    markUndergroundGeometryDirty();
     update();
 }
 
@@ -755,6 +760,7 @@ void MapRhiWidget::setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids)
     this->heatmap_upload_pending = true;
     this->tank_upload_pending = true;
     this->junction_instance_upload_pending = true;
+    markUndergroundGeometryDirty();
     update();
 }
 
@@ -815,9 +821,13 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
     {
         this->geometry_upload_pending = true;
         this->highlight_upload_pending = true;
+        markUndergroundGeometryDirty();
     }
     if (junction_changed)
+    {
         this->junction_instance_upload_pending = true;
+        markUndergroundGeometryDirty();
+    }
     if (flow_direction_changed)
         this->flow_direction_upload_pending = true;
     if (icon_changed)
@@ -916,6 +926,7 @@ void MapRhiWidget::setTerrainRepository(MapTerrainRepository *terrain_repository
             if (this->basemap_renderer)
                 this->basemap_renderer->notifyTerrainTileAvailable(key);
             syncViewState();
+            markUndergroundGeometryDirty();
             update();
         });
         connect(this->terrain_repository, &MapTerrainRepository::signalTerrainTileRetryReady,
@@ -925,9 +936,26 @@ void MapRhiWidget::setTerrainRepository(MapTerrainRepository *terrain_repository
         });
     }
 
+    markUndergroundGeometryDirty();
     this->heatmap_upload_pending = true;
     syncBasemapHeatmapOverlay();
     update();
+}
+
+void MapRhiWidget::setUndergroundMode(MapRhiUndergroundMode mode)
+{
+    if (this->underground_mode == mode)
+        return;
+
+    this->underground_mode = mode;
+    if (mode == MapRhiUndergroundMode::XRay)
+        markUndergroundGeometryDirty();
+    update();
+}
+
+MapRhiUndergroundMode MapRhiWidget::undergroundMode() const
+{
+    return this->underground_mode;
 }
 
 void MapRhiWidget::setBackgroundOpacity(int opacity)
@@ -946,6 +974,7 @@ void MapRhiWidget::setSelectedEntity(InfrastructureEntity entity_type, const QUu
     this->highlight_upload_pending = true;
     this->tank_upload_pending = true;
     this->junction_instance_upload_pending = true;
+    markUndergroundGeometryDirty();
     update();
 }
 
@@ -995,6 +1024,10 @@ void MapRhiWidget::initialize(QRhiCommandBuffer *command_buffer)
         this->heatmap_pipeline.reset();
         this->tank_pipeline.reset();
         this->junction_pipeline.reset();
+        this->link_xray_pipeline.reset();
+        this->junction_xray_pipeline.reset();
+        this->link_no_depth_pipeline.reset();
+        this->junction_no_depth_pipeline.reset();
     }
 
     this->render_pass_descriptor = target->renderPassDescriptor();
@@ -1006,6 +1039,7 @@ void MapRhiWidget::initialize(QRhiCommandBuffer *command_buffer)
         this->icon_upload_pending = true;
         this->tank_upload_pending = true;
         this->junction_instance_upload_pending = true;
+        markUndergroundGeometryDirty();
     }
 
     if (!createPersistentResources() || !ensureGeometryBuffers() || !createPipelines())
@@ -1248,6 +1282,27 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         this->junction_instance_upload_pending = false;
     }
 
+    if (this->underground_geometry_upload_pending)
+    {
+        if (!this->underground_link_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->underground_link_vertex_buffer.get(), 0,
+                int(this->underground_link_vertices.size()
+                    * qsizetype(sizeof(MapRhiScene::LinkVertex))),
+                this->underground_link_vertices.constData());
+        }
+        if (!this->underground_junction_instances.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->underground_junction_instance_buffer.get(), 0,
+                int(this->underground_junction_instances.size()
+                    * qsizetype(sizeof(MapRhiJunctionInstance))),
+                this->underground_junction_instances.constData());
+        }
+        this->underground_geometry_upload_pending = false;
+    }
+
     if (this->basemap_renderer
         && !this->basemap_renderer->prepare(
             resource_updates, renderOriginWorld(), this->viewport_size))
@@ -1372,6 +1427,58 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         const QRhiCommandBuffer::VertexInput tank_binding(this->tank_vertex_buffer.get(), 0);
         command_buffer->setVertexInput(0, 1, &tank_binding);
         command_buffer->draw(quint32(this->tank_model_vertices.size()));
+    }
+
+    if (!is_2d_view && this->underground_mode == MapRhiUndergroundMode::Solid)
+    {
+        if (!link_vertices.isEmpty())
+        {
+            command_buffer->setGraphicsPipeline(this->link_no_depth_pipeline.get());
+            command_buffer->setShaderResources();
+            const QRhiCommandBuffer::VertexInput link_binding(
+                this->link_vertex_buffer.get(), 0);
+            command_buffer->setVertexInput(0, 1, &link_binding);
+            command_buffer->draw(quint32(link_vertices.size()));
+        }
+
+        if (!junction_instances.isEmpty() && !junction_mesh.isEmpty())
+        {
+            command_buffer->setGraphicsPipeline(this->junction_no_depth_pipeline.get());
+            command_buffer->setShaderResources();
+            const QRhiCommandBuffer::VertexInput junction_bindings[] = {
+                {this->junction_mesh_vertex_buffer.get(), 0},
+                {this->junction_instance_buffer.get(), 0}
+            };
+            command_buffer->setVertexInput(0, 2, junction_bindings);
+            command_buffer->draw(
+                quint32(junction_mesh.size()), quint32(junction_instances.size()));
+        }
+    }
+    else if (!is_2d_view && this->underground_mode == MapRhiUndergroundMode::XRay)
+    {
+        if (!this->underground_link_vertices.isEmpty())
+        {
+            command_buffer->setGraphicsPipeline(this->link_xray_pipeline.get());
+            command_buffer->setShaderResources();
+            const QRhiCommandBuffer::VertexInput underground_link_binding(
+                this->underground_link_vertex_buffer.get(), 0);
+            command_buffer->setVertexInput(0, 1, &underground_link_binding);
+            command_buffer->draw(quint32(this->underground_link_vertices.size()));
+        }
+
+        if (!this->underground_junction_instances.isEmpty() && !junction_mesh.isEmpty())
+        {
+            command_buffer->setGraphicsPipeline(this->junction_xray_pipeline.get());
+            command_buffer->setShaderResources();
+            const QRhiCommandBuffer::VertexInput underground_junction_bindings[] = {
+                {this->junction_mesh_vertex_buffer.get(), 0},
+                {this->underground_junction_instance_buffer.get(), 0}
+            };
+            command_buffer->setVertexInput(0, 2, underground_junction_bindings);
+            command_buffer->draw(
+                quint32(junction_mesh.size()),
+                quint32(this->underground_junction_instances.size()));
+        }
     }
 
     if (!is_2d_view && !selected_link_vertices.isEmpty())
@@ -2018,6 +2125,178 @@ bool MapRhiWidget::createPipelines()
     }
 
 
+    if (!this->link_xray_pipeline || !this->link_no_depth_pipeline)
+    {
+        const QShader vertex_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_link.vert.qsb"));
+        const QShader normal_fragment_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_link.frag.qsb"));
+        const QShader xray_fragment_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_link_xray.frag.qsb"));
+        if (!vertex_shader.isValid() || !normal_fragment_shader.isValid()
+            || !xray_fragment_shader.isValid())
+        {
+            reportFailure(QStringLiteral("Failed to load RHI underground-link shaders"));
+            return false;
+        }
+
+        QRhiVertexInputLayout input_layout;
+        input_layout.setBindings({
+            {quint32(sizeof(MapRhiScene::LinkVertex))}
+        });
+        input_layout.setAttributes({
+            {0, 0, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiScene::LinkVertex, start_x))},
+            {0, 1, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiScene::LinkVertex, end_x))},
+            {0, 2, QRhiVertexInputAttribute::Float2,
+             quint32(offsetof(MapRhiScene::LinkVertex, along))},
+            {0, 3, QRhiVertexInputAttribute::Float4,
+             quint32(offsetof(MapRhiScene::LinkVertex, red))},
+            {0, 4, QRhiVertexInputAttribute::Float,
+             quint32(offsetof(MapRhiScene::LinkVertex, size_adjust_px))}
+        });
+
+        if (!this->link_xray_pipeline)
+        {
+            this->link_xray_pipeline.reset(this->active_rhi->newGraphicsPipeline());
+            this->link_xray_pipeline->setShaderStages({
+                {QRhiShaderStage::Vertex, vertex_shader},
+                {QRhiShaderStage::Fragment, xray_fragment_shader}
+            });
+            this->link_xray_pipeline->setVertexInputLayout(input_layout);
+            this->link_xray_pipeline->setShaderResourceBindings(
+                this->shader_resource_bindings.get());
+            this->link_xray_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
+            this->link_xray_pipeline->setSampleCount(sampleCount());
+            this->link_xray_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+            this->link_xray_pipeline->setDepthTest(false);
+            this->link_xray_pipeline->setDepthWrite(false);
+            QRhiGraphicsPipeline::TargetBlend xray_blend;
+            xray_blend.enable = true;
+            this->link_xray_pipeline->setTargetBlends({xray_blend});
+            if (!this->link_xray_pipeline->create())
+            {
+                reportFailure(QStringLiteral("Failed to create RHI underground-link X-ray pipeline"));
+                return false;
+            }
+        }
+
+        if (!this->link_no_depth_pipeline)
+        {
+            this->link_no_depth_pipeline.reset(this->active_rhi->newGraphicsPipeline());
+            this->link_no_depth_pipeline->setShaderStages({
+                {QRhiShaderStage::Vertex, vertex_shader},
+                {QRhiShaderStage::Fragment, normal_fragment_shader}
+            });
+            this->link_no_depth_pipeline->setVertexInputLayout(input_layout);
+            this->link_no_depth_pipeline->setShaderResourceBindings(
+                this->shader_resource_bindings.get());
+            this->link_no_depth_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
+            this->link_no_depth_pipeline->setSampleCount(sampleCount());
+            this->link_no_depth_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+            this->link_no_depth_pipeline->setDepthTest(false);
+            this->link_no_depth_pipeline->setDepthWrite(false);
+            QRhiGraphicsPipeline::TargetBlend solid_blend;
+            solid_blend.enable = true;
+            this->link_no_depth_pipeline->setTargetBlends({solid_blend});
+            if (!this->link_no_depth_pipeline->create())
+            {
+                reportFailure(QStringLiteral("Failed to create RHI no-depth link pipeline"));
+                return false;
+            }
+        }
+    }
+
+    if (!this->junction_xray_pipeline || !this->junction_no_depth_pipeline)
+    {
+        const QShader vertex_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_junction.vert.qsb"));
+        const QShader normal_fragment_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_junction.frag.qsb"));
+        const QShader xray_fragment_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_junction_xray.frag.qsb"));
+        if (!vertex_shader.isValid() || !normal_fragment_shader.isValid()
+            || !xray_fragment_shader.isValid())
+        {
+            reportFailure(QStringLiteral("Failed to load RHI underground-junction shaders"));
+            return false;
+        }
+
+        QRhiVertexInputLayout input_layout;
+        input_layout.setBindings({
+            {quint32(sizeof(MapRhiJunctionMeshVertex))},
+            {quint32(sizeof(MapRhiJunctionInstance)), QRhiVertexInputBinding::PerInstance}
+        });
+        input_layout.setAttributes({
+            {0, 0, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiJunctionMeshVertex, position_x))},
+            {0, 1, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiJunctionMeshVertex, normal_x))},
+            {1, 2, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiJunctionInstance, center_x))},
+            {1, 3, QRhiVertexInputAttribute::Float,
+             quint32(offsetof(MapRhiJunctionInstance, radius_world))},
+            {1, 4, QRhiVertexInputAttribute::Float4,
+             quint32(offsetof(MapRhiJunctionInstance, red))},
+            {1, 5, QRhiVertexInputAttribute::Float,
+             quint32(offsetof(MapRhiJunctionInstance, selected))}
+        });
+
+        if (!this->junction_xray_pipeline)
+        {
+            this->junction_xray_pipeline.reset(this->active_rhi->newGraphicsPipeline());
+            this->junction_xray_pipeline->setShaderStages({
+                {QRhiShaderStage::Vertex, vertex_shader},
+                {QRhiShaderStage::Fragment, xray_fragment_shader}
+            });
+            this->junction_xray_pipeline->setVertexInputLayout(input_layout);
+            this->junction_xray_pipeline->setShaderResourceBindings(
+                this->shader_resource_bindings.get());
+            this->junction_xray_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
+            this->junction_xray_pipeline->setSampleCount(sampleCount());
+            this->junction_xray_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+            this->junction_xray_pipeline->setDepthTest(false);
+            this->junction_xray_pipeline->setDepthWrite(false);
+            this->junction_xray_pipeline->setCullMode(QRhiGraphicsPipeline::Back);
+            QRhiGraphicsPipeline::TargetBlend xray_blend;
+            xray_blend.enable = true;
+            this->junction_xray_pipeline->setTargetBlends({xray_blend});
+            if (!this->junction_xray_pipeline->create())
+            {
+                reportFailure(QStringLiteral(
+                    "Failed to create RHI underground-junction X-ray pipeline"));
+                return false;
+            }
+        }
+
+        if (!this->junction_no_depth_pipeline)
+        {
+            this->junction_no_depth_pipeline.reset(this->active_rhi->newGraphicsPipeline());
+            this->junction_no_depth_pipeline->setShaderStages({
+                {QRhiShaderStage::Vertex, vertex_shader},
+                {QRhiShaderStage::Fragment, normal_fragment_shader}
+            });
+            this->junction_no_depth_pipeline->setVertexInputLayout(input_layout);
+            this->junction_no_depth_pipeline->setShaderResourceBindings(
+                this->shader_resource_bindings.get());
+            this->junction_no_depth_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
+            this->junction_no_depth_pipeline->setSampleCount(sampleCount());
+            this->junction_no_depth_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+            this->junction_no_depth_pipeline->setDepthTest(false);
+            this->junction_no_depth_pipeline->setDepthWrite(false);
+            this->junction_no_depth_pipeline->setCullMode(QRhiGraphicsPipeline::Back);
+            QRhiGraphicsPipeline::TargetBlend solid_blend;
+            solid_blend.enable = true;
+            this->junction_no_depth_pipeline->setTargetBlends({solid_blend});
+            if (!this->junction_no_depth_pipeline->create())
+            {
+                reportFailure(QStringLiteral("Failed to create RHI no-depth junction pipeline"));
+                return false;
+            }
+        }
+    }
+
     return true;
 }
 
@@ -2025,6 +2304,9 @@ bool MapRhiWidget::ensureGeometryBuffers()
 {
     if (this->active_rhi == nullptr)
         return false;
+
+    if (this->underground_geometry_dirty)
+        rebuildUndergroundGeometry();
 
     if (this->tank_upload_pending)
         rebuildTankModelGeometry();
@@ -2055,12 +2337,18 @@ bool MapRhiWidget::ensureGeometryBuffers()
         junction_mesh.size(), qsizetype(sizeof(MapRhiJunctionMeshVertex)));
     const int required_junction_instance_bytes = boundedBufferSize(
         this->scene.junctionInstances().size(), qsizetype(sizeof(MapRhiJunctionInstance)));
+    const int required_underground_link_bytes = boundedBufferSize(
+        this->underground_link_vertices.size(), qsizetype(sizeof(MapRhiScene::LinkVertex)));
+    const int required_underground_junction_instance_bytes = boundedBufferSize(
+        this->underground_junction_instances.size(), qsizetype(sizeof(MapRhiJunctionInstance)));
     if (required_link_bytes == 0 || required_node_bytes == 0
         || required_selected_link_bytes == 0 || required_selected_node_bytes == 0
         || required_diagnostic_link_bytes == 0 || required_diagnostic_node_bytes == 0
         || required_flow_direction_bytes == 0 || required_icon_bytes == 0
         || required_heatmap_bytes == 0 || required_tank_bytes == 0
-        || required_junction_mesh_bytes == 0 || required_junction_instance_bytes == 0)
+        || required_junction_mesh_bytes == 0 || required_junction_instance_bytes == 0
+        || required_underground_link_bytes == 0
+        || required_underground_junction_instance_bytes == 0)
     {
         reportFailure(QStringLiteral("RHI network geometry exceeds supported buffer size"));
         return false;
@@ -2230,6 +2518,41 @@ bool MapRhiWidget::ensureGeometryBuffers()
         this->junction_instance_upload_pending = true;
     }
 
+
+    if (!this->underground_link_vertex_buffer
+        || this->underground_link_vertex_buffer_size != required_underground_link_bytes)
+    {
+        this->underground_link_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_underground_link_bytes));
+        if (!this->underground_link_vertex_buffer
+            || !this->underground_link_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI underground-link vertex buffer"));
+            return false;
+        }
+        this->underground_link_vertex_buffer_size = required_underground_link_bytes;
+        this->underground_geometry_upload_pending = true;
+    }
+
+    if (!this->underground_junction_instance_buffer
+        || this->underground_junction_instance_buffer_size
+            != required_underground_junction_instance_bytes)
+    {
+        this->underground_junction_instance_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer,
+            required_underground_junction_instance_bytes));
+        if (!this->underground_junction_instance_buffer
+            || !this->underground_junction_instance_buffer->create())
+        {
+            reportFailure(QStringLiteral(
+                "Failed to create RHI underground-junction instance buffer"));
+            return false;
+        }
+        this->underground_junction_instance_buffer_size =
+            required_underground_junction_instance_bytes;
+        this->underground_geometry_upload_pending = true;
+    }
+
     return true;
 }
 
@@ -2237,6 +2560,10 @@ void MapRhiWidget::resetGpuResources()
 {
     if (this->basemap_renderer)
         this->basemap_renderer->releaseResources();
+    this->junction_xray_pipeline.reset();
+    this->junction_no_depth_pipeline.reset();
+    this->link_xray_pipeline.reset();
+    this->link_no_depth_pipeline.reset();
     this->junction_pipeline.reset();
     this->tank_pipeline.reset();
     this->heatmap_pipeline.reset();
@@ -2253,6 +2580,8 @@ void MapRhiWidget::resetGpuResources()
     this->icon_sampler.reset();
     this->tank_texture.reset();
     this->icon_atlas_texture.reset();
+    this->underground_junction_instance_buffer.reset();
+    this->underground_link_vertex_buffer.reset();
     this->junction_instance_buffer.reset();
     this->junction_mesh_vertex_buffer.reset();
     this->tank_vertex_buffer.reset();
@@ -2266,6 +2595,8 @@ void MapRhiWidget::resetGpuResources()
     this->node_vertex_buffer.reset();
     this->link_vertex_buffer.reset();
     this->uniform_buffer.reset();
+    this->underground_junction_instance_buffer_size = 0;
+    this->underground_link_vertex_buffer_size = 0;
     this->junction_instance_buffer_size = 0;
     this->junction_mesh_vertex_buffer_size = 0;
     this->tank_vertex_buffer_size = 0;
@@ -2286,15 +2617,238 @@ void MapRhiWidget::resetGpuResources()
     this->tank_upload_pending = true;
     this->junction_mesh_upload_pending = true;
     this->junction_instance_upload_pending = true;
+    this->underground_geometry_upload_pending = true;
+    this->underground_geometry_dirty = true;
     this->icon_atlas_upload_pending = true;
     this->tank_texture_upload_pending = true;
     this->heatmap_render_vertices.clear();
     this->tank_model_vertices.clear();
+    this->underground_link_vertices.clear();
+    this->underground_junction_instances.clear();
 }
 
 void MapRhiWidget::rebuildTankModelGeometry()
 {
     this->tank_model_vertices = mapRhiBuildTankModelVertices(this->scene.tankInstances());
+}
+
+void MapRhiWidget::markUndergroundGeometryDirty()
+{
+    this->underground_geometry_dirty = true;
+    this->underground_geometry_upload_pending = true;
+}
+
+double MapRhiWidget::terrainCellWorldSize() const
+{
+    if (this->map_model == nullptr)
+        return 0.0;
+
+    const int terrain_zoom = qBound(
+        CameraTerrainMinimumZoom,
+        this->map_model->zoom(),
+        CameraTerrainMaximumZoom);
+    const double tile_reference_size = MapModel::TileSize
+        * std::pow(2.0, MapRenderCacheMath::ReferenceZoom - terrain_zoom);
+    return tile_reference_size / MapTerrainTileCellCount;
+}
+
+bool MapRhiWidget::isUndergroundAtCoordinate(
+    const CoordinateWGS84 &coordinate, double elevation_m)
+{
+    double terrain_elevation_m = 0.0;
+    if (!terrainElevationAtCoordinate(coordinate, &terrain_elevation_m, false))
+        return false;
+
+    const double network_world_z = double(this->scene.elevationToWorldZ(elevation_m));
+    const double terrain_world_z = double(this->scene.terrainElevationToWorldZ(
+        terrain_elevation_m));
+    const double world_units_per_meter = terrainWorldUnitsPerMeter();
+    const double tolerance_world = std::isfinite(world_units_per_meter)
+        ? qMax(0.0001, world_units_per_meter * 0.05)
+        : 0.0001;
+    return network_world_z < terrain_world_z - tolerance_world;
+}
+
+void MapRhiWidget::appendUndergroundLinkSegment(
+    InfrastructureEntity entity_type, quint32 render_id,
+    const QVector3D &start, const QVector3D &end)
+{
+    const QRgb color = this->applied_symbology.link_colors.value(
+        render_id, networkSymbologyDefaultColor());
+    const float corners[6][2] = {
+        {0.0f, -1.0f},
+        {1.0f, -1.0f},
+        {1.0f, 1.0f},
+        {0.0f, -1.0f},
+        {1.0f, 1.0f},
+        {0.0f, 1.0f}
+    };
+
+    for (int index = 0; index < 6; ++index)
+    {
+        MapRhiScene::LinkVertex vertex;
+        vertex.start_x = start.x();
+        vertex.start_y = start.y();
+        vertex.start_z = start.z();
+        vertex.end_x = end.x();
+        vertex.end_y = end.y();
+        vertex.end_z = end.z();
+        vertex.along = corners[index][0];
+        vertex.side = corners[index][1];
+        vertex.red = qRed(color) / 255.0f;
+        vertex.green = qGreen(color) / 255.0f;
+        vertex.blue = qBlue(color) / 255.0f;
+        vertex.alpha = qAlpha(color) / 255.0f;
+        vertex.render_id = render_id;
+        vertex.entity_type = entity_type;
+        this->underground_link_vertices.append(vertex);
+    }
+}
+
+void MapRhiWidget::rebuildUndergroundGeometry()
+{
+    this->underground_geometry_dirty = false;
+    this->underground_link_vertices.clear();
+    this->underground_junction_instances.clear();
+    this->underground_geometry_upload_pending = true;
+
+    if (this->underground_mode != MapRhiUndergroundMode::XRay
+        || this->map_model == nullptr
+        || this->map_model->viewMode() != MapViewMode::ThreeD
+        || this->terrain_repository == nullptr
+        || !this->scene.hasGeometry())
+    {
+        return;
+    }
+
+    const NetworkRenderSnapshot &snapshot = this->scene.networkSnapshot();
+    const QPointF origin_world = this->scene.originWorld();
+    const double terrain_cell_world = terrainCellWorldSize();
+    const double target_segment_world = terrain_cell_world > 0.0
+        ? qMax(terrain_cell_world * 0.5, 0.25)
+        : 1.0;
+
+    for (const NetworkRenderLink &link : snapshot.links)
+    {
+        if (this->scene.isEntityHidden(link.uuid) || link.vertices_wgs84.size() < 2)
+            continue;
+
+        bool have_previous = false;
+        QVector3D previous_position;
+        double previous_elevation_m = 0.0;
+        double wrap_reference_x = origin_world.x();
+        for (qsizetype vertex_index = 0;
+             vertex_index < link.vertices_wgs84.size(); ++vertex_index)
+        {
+            const CoordinateWGS84 &coordinate = link.vertices_wgs84.at(vertex_index);
+            if (!std::isfinite(coordinate.longitude_deg)
+                || !std::isfinite(coordinate.latitude_deg))
+            {
+                have_previous = false;
+                wrap_reference_x = origin_world.x();
+                continue;
+            }
+
+            if (vertex_index >= link.elevations_m.size()
+                || !std::isfinite(link.elevations_m.at(vertex_index)))
+            {
+                have_previous = false;
+                wrap_reference_x = origin_world.x();
+                continue;
+            }
+
+            const double elevation_m = link.elevations_m.at(vertex_index);
+            double resolved_world_x = wrap_reference_x;
+            const QVector3D current_position = this->scene.worldPosition(
+                coordinate, elevation_m, wrap_reference_x, &resolved_world_x);
+            wrap_reference_x = resolved_world_x;
+
+            if (have_previous)
+            {
+                const double dx = double(current_position.x() - previous_position.x());
+                const double dy = double(current_position.y() - previous_position.y());
+                const double horizontal_length_world = std::hypot(dx, dy);
+                const int subdivision_count = qBound(
+                    1,
+                    int(std::ceil(horizontal_length_world / target_segment_world)),
+                    128);
+
+                bool buried_run_active = false;
+                double buried_run_start_ratio = 0.0;
+                for (int subdivision = 0; subdivision < subdivision_count; ++subdivision)
+                {
+                    const double start_ratio = double(subdivision) / subdivision_count;
+                    const double end_ratio = double(subdivision + 1) / subdivision_count;
+                    const double middle_ratio = (start_ratio + end_ratio) * 0.5;
+                    const double local_middle_x = double(previous_position.x())
+                        + dx * middle_ratio;
+                    const double local_middle_y = double(previous_position.y())
+                        + dy * middle_ratio;
+                    const CoordinateWGS84 middle_coordinate =
+                        GeoWebMercator::worldPixelToLonLat(
+                            origin_world.x() + local_middle_x,
+                            origin_world.y() + local_middle_y,
+                            MapRenderCacheMath::ReferenceZoom);
+                    const double middle_elevation_m = previous_elevation_m
+                        + (elevation_m - previous_elevation_m) * middle_ratio;
+                    const bool buried = isUndergroundAtCoordinate(
+                        middle_coordinate, middle_elevation_m);
+
+                    if (buried && !buried_run_active)
+                    {
+                        buried_run_active = true;
+                        buried_run_start_ratio = start_ratio;
+                    }
+                    else if (!buried && buried_run_active)
+                    {
+                        const QVector3D segment_start = previous_position
+                            + (current_position - previous_position)
+                                * float(buried_run_start_ratio);
+                        const QVector3D segment_end = previous_position
+                            + (current_position - previous_position) * float(start_ratio);
+                        appendUndergroundLinkSegment(
+                            link.entity_type, link.render_id, segment_start, segment_end);
+                        buried_run_active = false;
+                    }
+                }
+
+                if (buried_run_active)
+                {
+                    const QVector3D segment_start = previous_position
+                        + (current_position - previous_position)
+                            * float(buried_run_start_ratio);
+                    appendUndergroundLinkSegment(
+                        link.entity_type, link.render_id, segment_start, current_position);
+                }
+            }
+
+            previous_position = current_position;
+            previous_elevation_m = elevation_m;
+            have_previous = true;
+        }
+    }
+
+    QHash<quint32, MapRhiJunctionInstance> junction_instances_by_render_id;
+    const QVector<MapRhiJunctionInstance> &junction_instances =
+        this->scene.junctionInstances();
+    junction_instances_by_render_id.reserve(junction_instances.size());
+    for (const MapRhiJunctionInstance &instance : junction_instances)
+        junction_instances_by_render_id.insert(instance.render_id, instance);
+
+    for (const NetworkRenderNode &node : snapshot.nodes)
+    {
+        if (node.entity_type != InfrastructureEntity::Junction
+            || this->scene.isEntityHidden(node.uuid)
+            || !isUndergroundAtCoordinate(node.coordinate_wgs84, node.elevation_m))
+        {
+            continue;
+        }
+
+        const QHash<quint32, MapRhiJunctionInstance>::const_iterator instance_iterator =
+            junction_instances_by_render_id.constFind(node.render_id);
+        if (instance_iterator != junction_instances_by_render_id.cend())
+            this->underground_junction_instances.append(instance_iterator.value());
+    }
 }
 
 void MapRhiWidget::syncViewState()
@@ -2320,7 +2874,7 @@ void MapRhiWidget::syncViewState()
 }
 
 bool MapRhiWidget::terrainElevationAtCoordinate(
-    const CoordinateWGS84 &coordinate, double *elevation_m)
+    const CoordinateWGS84 &coordinate, double *elevation_m, bool request_missing_tile)
 {
     if (elevation_m == nullptr || this->terrain_repository == nullptr
         || this->map_model == nullptr
@@ -2355,8 +2909,11 @@ bool MapRhiWidget::terrainElevationAtCoordinate(
         dataset, terrain_zoom, quint32(tile_x), quint32(tile_y));
     if (terrain_tile == nullptr)
     {
-        this->terrain_repository->requestTile(
-            dataset, terrain_zoom, quint32(tile_x), quint32(tile_y));
+        if (request_missing_tile)
+        {
+            this->terrain_repository->requestTile(
+                dataset, terrain_zoom, quint32(tile_x), quint32(tile_y));
+        }
         return false;
     }
 
@@ -2674,25 +3231,73 @@ void MapRhiWidget::syncTerrainAwareCameraDistance()
 
     if (this->map_model->view3dNavigationState() == MapView3dNavigationState::Pan)
     {
-        // PAN state is deliberately simple and feedback-free:
-        //   * camera X/Y, yaw, pitch, and requested distance stay untouched;
-        //   * the whole orbit rig is translated vertically from the DEM directly
-        //     below the camera footprint;
-        //   * the crosshair is allowed to slip across the terrain.
-        // No radius correction is allowed here because changing radius changes
-        // the camera footprint, which can create terrain-sample feedback/bouncing.
+        // Keep terrain following feedback-free in X/Y, but ease the vertical
+        // orbit-rig translation instead of snapping to every DEM sample.  This
+        // removes most of the bumpy ride over rough or exaggerated terrain.
+        // A hard eye-clearance floor remains active, so smoothing can never put
+        // the camera below the required terrain clearance.
         if (camera_terrain_available)
         {
+            constexpr double RiseTimeConstantSeconds = 0.14;
+            constexpr double FallTimeConstantSeconds = 0.30;
+            constexpr double MaximumSmoothingStepSeconds = 1.0 / 30.0;
+            constexpr double MinimumSmoothingStepSeconds = 1.0 / 240.0;
+            constexpr double SettleDistanceM = 0.05;
+
             const double safety_lift_world = qMax(
                 0.0, minimum_clearance_world - vertical_orbit_world);
-            this->map_model->setView3dVerticalOffsetWorld(
-                camera_terrain_world_z + safety_lift_world);
+            const double target_offset_world =
+                camera_terrain_world_z + safety_lift_world;
+            const double current_offset_world =
+                this->map_model->view3dVerticalOffsetWorld();
+            const double hard_floor_world =
+                camera_terrain_world_z + minimum_clearance_world - vertical_orbit_world;
+
+            double elapsed_seconds = 1.0 / 60.0;
+            if (this->terrain_pan_smoothing_clock.isValid())
+            {
+                const qint64 elapsed_ms = this->terrain_pan_smoothing_clock.restart();
+                elapsed_seconds = qBound(
+                    MinimumSmoothingStepSeconds,
+                    double(elapsed_ms) / 1000.0,
+                    MaximumSmoothingStepSeconds);
+            }
+            else
+            {
+                this->terrain_pan_smoothing_clock.start();
+            }
+
+            const double time_constant_seconds =
+                target_offset_world >= current_offset_world
+                ? RiseTimeConstantSeconds
+                : FallTimeConstantSeconds;
+            const double blend = 1.0 - std::exp(
+                -elapsed_seconds / time_constant_seconds);
+            double next_offset_world = current_offset_world
+                + (target_offset_world - current_offset_world) * blend;
+
+            next_offset_world = qMax(next_offset_world, hard_floor_world);
+
+            if (std::abs(target_offset_world - next_offset_world)
+                <= SettleDistanceM * world_units_per_meter)
+            {
+                next_offset_world = target_offset_world;
+                this->terrain_pan_smoothing_clock.invalidate();
+            }
+
+            this->map_model->setView3dVerticalOffsetWorld(next_offset_world);
+        }
+        else
+        {
+            this->terrain_pan_smoothing_clock.invalidate();
         }
 
         this->map_model->setView3dCameraDistanceWorld(effective_distance_world);
         this->map_model->setView3dCameraCollisionLiftWorld(0.0);
         return;
     }
+
+    this->terrain_pan_smoothing_clock.invalidate();
 
     // ROTATE state keeps the terrain point captured under the crosshair as an
     // immutable orbit target. Camera-ground collision may move only the eye

@@ -15,6 +15,7 @@ class QPushButton;
 class QTimer;
 class MapTileRepository;
 class MapTerrainRepository;
+class MapRhiWidget;
 class QSlider;
 
 
@@ -137,13 +138,27 @@ private:
     QLabel *exaggeration_value_label = nullptr;
 };
 
+
+class MapMonitorUndergroundHudWidget final : public QFrame
+{
+    Q_OBJECT
+
+public:
+    explicit MapMonitorUndergroundHudWidget(
+        MapRhiWidget *rhi_widget, QWidget *parent = nullptr);
+
+private:
+    MapRhiWidget *rhi_widget = nullptr;
+    QComboBox *underground_combo = nullptr;
+};
+
 class MapMonitorVerticalControlsHudWidget final : public QFrame
 {
     Q_OBJECT
 
 public:
     explicit MapMonitorVerticalControlsHudWidget(
-        MapModel *map_model, QWidget *parent = nullptr);
+        MapModel *map_model, MapRhiWidget *rhi_widget, QWidget *parent = nullptr);
 };
 
 #endif // MAP_MONITOR_HUD_CONTROLS_H

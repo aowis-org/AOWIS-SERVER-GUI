@@ -8,6 +8,7 @@
 #include "map_rhi_tank_model.h"
 
 #include <QRhiWidget>
+#include <QElapsedTimer>
 #include <QPointF>
 #include <QSet>
 #include <QSize>
@@ -27,6 +28,13 @@ class QRhiSampler;
 class QRhiShaderResourceBindings;
 class QRhiTexture;
 class QResizeEvent;
+
+enum class MapRhiUndergroundMode
+{
+    XRay,
+    Hide,
+    Solid
+};
 
 struct MapRhiHit
 {
@@ -63,6 +71,8 @@ public:
     void setSimulationErrorEntities(
         const QHash<QUuid, InfrastructureEntity> &error_entities,
         const QSet<QUuid> &stale_entity_uuids);
+    void setUndergroundMode(MapRhiUndergroundMode mode);
+    MapRhiUndergroundMode undergroundMode() const;
 
 signals:
     void signalRendererReady();
@@ -79,6 +89,14 @@ private:
     bool createPipelines();
     bool ensureGeometryBuffers();
     void rebuildTankModelGeometry();
+    void rebuildUndergroundGeometry();
+    void markUndergroundGeometryDirty();
+    bool isUndergroundAtCoordinate(
+        const CoordinateWGS84 &coordinate, double elevation_m);
+    double terrainCellWorldSize() const;
+    void appendUndergroundLinkSegment(
+        InfrastructureEntity entity_type, quint32 render_id,
+        const QVector3D &start, const QVector3D &end);
     void resetGpuResources();
     void syncViewState();
     void syncTerrainAwareCameraDistance();
@@ -89,7 +107,8 @@ private:
     double terrainWorldUnitsPerMeter() const;
     double terrainWorldZ(double elevation_m, double world_units_per_meter) const;
     bool terrainElevationAtCoordinate(
-        const CoordinateWGS84 &coordinate, double *elevation_m);
+        const CoordinateWGS84 &coordinate, double *elevation_m,
+        bool request_missing_tile = true);
     QPointF renderOriginWorld() const;
     float heatmapRadiusPixels() const;
     void reportFailure(const QString &reason);
@@ -122,6 +141,8 @@ private:
     std::unique_ptr<QRhiBuffer> tank_vertex_buffer;
     std::unique_ptr<QRhiBuffer> junction_mesh_vertex_buffer;
     std::unique_ptr<QRhiBuffer> junction_instance_buffer;
+    std::unique_ptr<QRhiBuffer> underground_link_vertex_buffer;
+    std::unique_ptr<QRhiBuffer> underground_junction_instance_buffer;
     std::unique_ptr<QRhiTexture> icon_atlas_texture;
     std::unique_ptr<QRhiTexture> tank_texture;
     std::unique_ptr<QRhiSampler> icon_sampler;
@@ -138,6 +159,10 @@ private:
     std::unique_ptr<QRhiGraphicsPipeline> heatmap_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> tank_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> junction_pipeline;
+    std::unique_ptr<QRhiGraphicsPipeline> link_xray_pipeline;
+    std::unique_ptr<QRhiGraphicsPipeline> junction_xray_pipeline;
+    std::unique_ptr<QRhiGraphicsPipeline> link_no_depth_pipeline;
+    std::unique_ptr<QRhiGraphicsPipeline> junction_no_depth_pipeline;
     int link_vertex_buffer_size = 0;
     int node_vertex_buffer_size = 0;
     int selected_link_vertex_buffer_size = 0;
@@ -150,6 +175,8 @@ private:
     int tank_vertex_buffer_size = 0;
     int junction_mesh_vertex_buffer_size = 0;
     int junction_instance_buffer_size = 0;
+    int underground_link_vertex_buffer_size = 0;
+    int underground_junction_instance_buffer_size = 0;
     bool geometry_upload_pending = true;
     bool highlight_upload_pending = true;
     bool flow_direction_upload_pending = true;
@@ -158,14 +185,20 @@ private:
     bool tank_upload_pending = true;
     bool junction_mesh_upload_pending = true;
     bool junction_instance_upload_pending = true;
+    bool underground_geometry_upload_pending = true;
+    bool underground_geometry_dirty = true;
     bool icon_atlas_upload_pending = true;
     bool tank_texture_upload_pending = true;
     QVector<MapRhiScene::HeatmapVertex> heatmap_render_vertices;
     QVector<MapRhiTankModelVertex> tank_model_vertices;
+    QVector<MapRhiScene::LinkVertex> underground_link_vertices;
+    QVector<MapRhiJunctionInstance> underground_junction_instances;
+    MapRhiUndergroundMode underground_mode = MapRhiUndergroundMode::XRay;
     bool symbology_initialized = false;
     bool ready_reported = false;
     bool failure_reported = false;
     bool terrain_camera_distance_sync_active = false;
+    QElapsedTimer terrain_pan_smoothing_clock;
 };
 
 #endif // MAP_RHI_WIDGET_H

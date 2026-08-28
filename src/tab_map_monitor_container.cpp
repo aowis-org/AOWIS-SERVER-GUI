@@ -383,7 +383,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         MapMonitorScaleHudWidget *scale_hud =
             new MapMonitorScaleHudWidget(this->map_model, this->map_stack);
         MapMonitorVerticalControlsHudWidget *vertical_controls_hud =
-            new MapMonitorVerticalControlsHudWidget(this->map_model, this->map_stack);
+            new MapMonitorVerticalControlsHudWidget(
+                this->map_model, rhi_surface, this->map_stack);
         EntityMapLegendHud *legend_hud =
             new EntityMapLegendHud(this->hydraulic_data, this->map_stack);
         QFrame *scene_fullscreen_hud = nullptr;

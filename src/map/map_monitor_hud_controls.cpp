@@ -1,6 +1,7 @@
 #include "map_monitor_hud_controls.h"
 
 #include "map_model.h"
+#include "map_rhi_widget.h"
 #include "map_scale_renderer.h"
 #include "map_tile_repository.h"
 #include "map_terrain_repository.h"
@@ -1260,11 +1261,59 @@ MapMonitorVerticalExaggerationHudWidget::MapMonitorVerticalExaggerationHudWidget
     });
 }
 
+MapMonitorUndergroundHudWidget::MapMonitorUndergroundHudWidget(
+    MapRhiWidget *rhi_widget, QWidget *parent)
+    : QFrame(parent),
+      rhi_widget(rhi_widget),
+      underground_combo(new QComboBox(this))
+{
+    Q_ASSERT(this->rhi_widget != nullptr);
+    configureHudFrame(this);
+
+    QVBoxLayout *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(HudMarginPx, HudMarginPx, HudMarginPx, HudMarginPx);
+    layout->setSpacing(3);
+
+    QLabel *title = new QLabel(QStringLiteral("Underground"), this);
+    title->setAlignment(Qt::AlignHCenter | Qt::AlignVCenter);
+    layout->addWidget(title);
+
+    this->underground_combo->addItem(QStringLiteral("X-Ray"),
+        int(MapRhiUndergroundMode::XRay));
+    this->underground_combo->addItem(QStringLiteral("Hide"),
+        int(MapRhiUndergroundMode::Hide));
+    this->underground_combo->addItem(QStringLiteral("Solid"),
+        int(MapRhiUndergroundMode::Solid));
+    this->underground_combo->setToolTip(QStringLiteral(
+        "Controls how the 3D water network is shown where terrain covers it.\n"
+        "X-Ray: show actual underground pipe sections and junctions with a distinct pattern.\n"
+        "Hide: let terrain hide the network normally.\n"
+        "Solid: show the network through terrain without an underground pattern."));
+
+    const int current_index = this->underground_combo->findData(
+        int(this->rhi_widget->undergroundMode()));
+    if (current_index >= 0)
+        this->underground_combo->setCurrentIndex(current_index);
+
+    connect(this->underground_combo, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](int index)
+    {
+        if (index < 0)
+            return;
+        const MapRhiUndergroundMode mode = static_cast<MapRhiUndergroundMode>(
+            this->underground_combo->itemData(index).toInt());
+        this->rhi_widget->setUndergroundMode(mode);
+    });
+
+    layout->addWidget(this->underground_combo);
+}
+
 MapMonitorVerticalControlsHudWidget::MapMonitorVerticalControlsHudWidget(
-    MapModel *map_model, QWidget *parent)
+    MapModel *map_model, MapRhiWidget *rhi_widget, QWidget *parent)
     : QFrame(parent)
 {
     Q_ASSERT(map_model != nullptr);
+    Q_ASSERT(rhi_widget != nullptr);
     configureHudFrame(this);
 
     QHBoxLayout *layout = new QHBoxLayout(this);
@@ -1279,12 +1328,15 @@ MapMonitorVerticalControlsHudWidget::MapMonitorVerticalControlsHudWidget(
         new MapMonitorCameraDistanceHudWidget(map_model, this);
     MapMonitorVerticalExaggerationHudWidget *vertical_exaggeration =
         new MapMonitorVerticalExaggerationHudWidget(map_model, this);
+    MapMonitorUndergroundHudWidget *underground =
+        new MapMonitorUndergroundHudWidget(rhi_widget, this);
 
-    QFrame *controls[4] = {
+    QFrame *controls[5] = {
         network_ground_offset,
         tilt,
         camera_distance,
-        vertical_exaggeration
+        vertical_exaggeration,
+        underground
     };
     for (QFrame *control : controls)
     {
