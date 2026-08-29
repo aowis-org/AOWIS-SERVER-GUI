@@ -2,6 +2,9 @@
 
 #include "../gui_configuration.h"
 #include "../network_symbology_rendering.h"
+#ifdef Q_OS_WASM
+#include "../widgets/wasm_popup_menu.h"
+#endif
 
 #include <array>
 #include <cmath>
@@ -408,12 +411,9 @@ private:
 
     void showPaletteMenu()
     {
-        QMenu *menu = new QMenu(this);
-        menu->setAttribute(Qt::WA_DeleteOnClose);
 #ifdef Q_OS_WASM
-        menu->setStyleSheet(QStringLiteral(
-            "QMenu::item { min-height: 34px; padding: 4px 10px; }"));
-#endif
+        WasmPopupMenu *menu = new WasmPopupMenu(this);
+        menu->setDeleteOnClose(true);
 
         const QFontMetrics menu_font_metrics(menu->font());
         int palette_label_width = 0;
@@ -427,11 +427,94 @@ private:
         palette_label_width += 8;
 
         constexpr int preview_width = 124;
-#ifdef Q_OS_WASM
         constexpr int preview_height = 36;
+
+        menu->addSection(QStringLiteral("Sequential"));
+
+        for (const NetworkSymbologyPalette palette_choice : palette_choices)
+        {
+            if (palette_choice == NetworkSymbologyPalette::CoolWarm)
+                menu->addSection(QStringLiteral("Diverging"));
+
+            QWidget *row = new QWidget(menu);
+            QHBoxLayout *row_layout = new QHBoxLayout(row);
+            row_layout->setContentsMargins(6, 3, 6, 3);
+            row_layout->setSpacing(8);
+
+            QLabel *palette_label = new QLabel(
+                networkSymbologyPaletteName(palette_choice), row);
+            palette_label->setFixedWidth(palette_label_width);
+            palette_label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+
+            QPushButton *palette_button = new QPushButton(row);
+            palette_button->setIcon(palettePreviewIcon(palette_choice));
+            palette_button->setIconSize(QSize(112, 16));
+            palette_button->setCheckable(true);
+            palette_button->setChecked(this->palette == palette_choice);
+            palette_button->setFixedSize(preview_width, preview_height);
+            palette_button->setToolTip(
+                QStringLiteral("Use %1 colors")
+                    .arg(networkSymbologyPaletteName(palette_choice)));
+
+            QPushButton *flip_button = new QPushButton(QStringLiteral("Flip"), row);
+            flip_button->setCheckable(true);
+            flip_button->setChecked(
+                this->palette == palette_choice && this->palette_flipped);
+            flip_button->setFixedHeight(preview_height);
+            flip_button->setToolTip(QStringLiteral("Flip color direction"));
+
+            row_layout->addWidget(palette_label);
+            row_layout->addStretch(1);
+            row_layout->addWidget(palette_button);
+            row_layout->addWidget(flip_button);
+            menu->addWidget(row);
+
+            connect(palette_button, &QPushButton::clicked, menu,
+                    [this, palette_choice, menu]
+            {
+                selectPalette(palette_choice, false);
+                menu->closeAll();
+            });
+            connect(flip_button, &QPushButton::clicked, menu,
+                    [this, palette_choice, menu]
+            {
+                const bool flipped = this->palette == palette_choice
+                    ? !this->palette_flipped
+                    : true;
+                selectPalette(palette_choice, flipped);
+                menu->closeAll();
+            });
+        }
+
+        menu->addSeparator();
+        menu->addAction(
+            QStringLiteral("Reset"),
+            [this]
+            {
+                selectPalette(this->default_palette, this->default_palette_flipped);
+            },
+            QStringLiteral("Reset colors to the default palette"));
+
+        const QPoint popup_position = mapToGlobal(
+            QPoint(0, qRound(rampRect().bottom()) + 4));
+        menu->popup(popup_position);
 #else
+        QMenu *menu = new QMenu(this);
+        menu->setAttribute(Qt::WA_DeleteOnClose);
+
+        const QFontMetrics menu_font_metrics(menu->font());
+        int palette_label_width = 0;
+        for (const NetworkSymbologyPalette palette_choice : palette_choices)
+        {
+            palette_label_width = qMax(
+                palette_label_width,
+                menu_font_metrics.horizontalAdvance(
+                    networkSymbologyPaletteName(palette_choice)));
+        }
+        palette_label_width += 8;
+
+        constexpr int preview_width = 124;
         constexpr int preview_height = 26;
-#endif
 
         menu->addSection(QStringLiteral("Sequential"));
 
@@ -504,6 +587,7 @@ private:
         const QPoint popup_position = mapToGlobal(
             QPoint(0, qRound(rampRect().bottom()) + 4));
         menu->popup(popup_position);
+#endif
     }
 
     void selectPalette(NetworkSymbologyPalette palette, bool flipped)

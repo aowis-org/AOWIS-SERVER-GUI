@@ -5,8 +5,13 @@
 #include "gui_configuration.h"
 #include "shortcut_registry.h"
 #include "widgets/combo_checkboxes.h"
+#ifdef Q_OS_WASM
+#include "widgets/wasm_popup_menu.h"
+#endif
 
 #include <aowis/model/hydraulic/hydraulic_simulation_results.h>
+
+#include <functional>
 
 #include <QAbstractButton>
 #include <QAction>
@@ -696,100 +701,77 @@ void TopControlBar::addFlowUnitCombo()
     TopControlBarContent *bar_content = barContent(this->content);
     bar_content->centerLayout()->addWidget(createSeparator(this->content));
 
-#ifdef Q_OS_WASM
-    // QMenu popups are unreliable in Qt/WASM (geometry and nested popup handling
-    // can expand far beyond the toolbar). Use a regular combobox in the browser
-    // so every unit is a single directly clickable/tappable item.
-    QComboBox *combo_flow_units = new QComboBox(this->content);
-    combo_flow_units->setFixedSize(110, 30);
-    combo_flow_units->setMaxVisibleItems(12);
-
-    combo_flow_units->addItem(QStringLiteral("CMH"), static_cast<int>(EN_CMH));
-    combo_flow_units->setItemData(
-        combo_flow_units->count() - 1,
-        QStringLiteral("cubic meters per hour"),
-        Qt::ToolTipRole);
-
-    combo_flow_units->addItem(QStringLiteral("LPS"), static_cast<int>(EN_LPS));
-    combo_flow_units->setItemData(
-        combo_flow_units->count() - 1,
-        QStringLiteral("liters per second"),
-        Qt::ToolTipRole);
-
-    combo_flow_units->addItem(QStringLiteral("LPM"), static_cast<int>(EN_LPM));
-    combo_flow_units->setItemData(
-        combo_flow_units->count() - 1,
-        QStringLiteral("liters per minute"),
-        Qt::ToolTipRole);
-
-    combo_flow_units->addItem(QStringLiteral("MLD"), static_cast<int>(EN_MLD));
-    combo_flow_units->setItemData(
-        combo_flow_units->count() - 1,
-        QStringLiteral("million liters per day"),
-        Qt::ToolTipRole);
-
-    combo_flow_units->addItem(QStringLiteral("CMD"), static_cast<int>(EN_CMD));
-    combo_flow_units->setItemData(
-        combo_flow_units->count() - 1,
-        QStringLiteral("cubic meters per day"),
-        Qt::ToolTipRole);
-
-    combo_flow_units->addItem(QStringLiteral("CMS"), static_cast<int>(EN_CMS));
-    combo_flow_units->setItemData(
-        combo_flow_units->count() - 1,
-        QStringLiteral("cubic meters per second"),
-        Qt::ToolTipRole);
-
-    combo_flow_units->addItem(QStringLiteral("CFS"), static_cast<int>(EN_CFS));
-    combo_flow_units->setItemData(
-        combo_flow_units->count() - 1,
-        QStringLiteral("cubic feet per second"),
-        Qt::ToolTipRole);
-
-    combo_flow_units->addItem(QStringLiteral("GPM"), static_cast<int>(EN_GPM));
-    combo_flow_units->setItemData(
-        combo_flow_units->count() - 1,
-        QStringLiteral("gallons per minute"),
-        Qt::ToolTipRole);
-
-    combo_flow_units->addItem(QStringLiteral("MGD"), static_cast<int>(EN_MGD));
-    combo_flow_units->setItemData(
-        combo_flow_units->count() - 1,
-        QStringLiteral("million gallons per day"),
-        Qt::ToolTipRole);
-
-    combo_flow_units->addItem(QStringLiteral("IMGD"), static_cast<int>(EN_IMGD));
-    combo_flow_units->setItemData(
-        combo_flow_units->count() - 1,
-        QStringLiteral("imperial million gallons per day"),
-        Qt::ToolTipRole);
-
-    combo_flow_units->addItem(QStringLiteral("AFD"), static_cast<int>(EN_AFD));
-    combo_flow_units->setItemData(
-        combo_flow_units->count() - 1,
-        QStringLiteral("acre-feet per day"),
-        Qt::ToolTipRole);
-
-    connect(combo_flow_units, qOverload<int>(&QComboBox::currentIndexChanged),
-            this, [this, combo_flow_units](int index)
-    {
-        bool ok = false;
-        const int value = combo_flow_units->itemData(index).toInt(&ok);
-        if (!ok)
-            return;
-
-        this->selected_flow_units = static_cast<EN_FlowUnits>(value);
-    });
-
-    combo_flow_units->setCurrentIndex(0);
-    this->selected_flow_units = EN_CMH;
-    bar_content->centerLayout()->addWidget(
-        createLabeledControl(QStringLiteral("Flow units"), combo_flow_units, this->content));
-#else
     QToolButton *button_flow_units = new QToolButton(this->content);
     button_flow_units->setText(QStringLiteral("CMH"));
     button_flow_units->setFixedSize(82, 30);
     button_flow_units->setToolButtonStyle(Qt::ToolButtonTextOnly);
+
+#ifdef Q_OS_WASM
+    // Qt/WASM transient QMenu windows are unreliable, especially for nested
+    // menus. Keep the desktop hierarchy and interaction model, but render the
+    // menu as ordinary child widgets inside the main window instead.
+    button_flow_units->setText(QStringLiteral("CMH  ▾"));
+
+    WasmPopupMenu *menu_flow_units = new WasmPopupMenu(button_flow_units);
+
+    const std::function<void(EN_FlowUnits, const QString &)> select_unit =
+        [this, button_flow_units](EN_FlowUnits units, const QString &label)
+    {
+        this->selected_flow_units = units;
+        button_flow_units->setText(label + QStringLiteral("  ▾"));
+    };
+
+    menu_flow_units->addAction(
+        QStringLiteral("CMH — cubic meters per hour"),
+        [select_unit] { select_unit(EN_CMH, QStringLiteral("CMH")); });
+    menu_flow_units->addAction(
+        QStringLiteral("LPS — liters per second"),
+        [select_unit] { select_unit(EN_LPS, QStringLiteral("LPS")); });
+    menu_flow_units->addSeparator();
+
+    WasmPopupMenu *menu_other_metric = menu_flow_units->addSubMenu(
+        QStringLiteral("Other metric"));
+    WasmPopupMenu *menu_imperial = menu_flow_units->addSubMenu(
+        QStringLiteral("Imperial / US"));
+
+    menu_other_metric->addAction(
+        QStringLiteral("LPM — liters per minute"),
+        [select_unit] { select_unit(EN_LPM, QStringLiteral("LPM")); });
+    menu_other_metric->addAction(
+        QStringLiteral("MLD — million liters per day"),
+        [select_unit] { select_unit(EN_MLD, QStringLiteral("MLD")); });
+    menu_other_metric->addAction(
+        QStringLiteral("CMD — cubic meters per day"),
+        [select_unit] { select_unit(EN_CMD, QStringLiteral("CMD")); });
+    menu_other_metric->addAction(
+        QStringLiteral("CMS — cubic meters per second"),
+        [select_unit] { select_unit(EN_CMS, QStringLiteral("CMS")); });
+
+    menu_imperial->addAction(
+        QStringLiteral("CFS — cubic feet per second"),
+        [select_unit] { select_unit(EN_CFS, QStringLiteral("CFS")); });
+    menu_imperial->addAction(
+        QStringLiteral("GPM — gallons per minute"),
+        [select_unit] { select_unit(EN_GPM, QStringLiteral("GPM")); });
+    menu_imperial->addAction(
+        QStringLiteral("MGD — million gallons per day"),
+        [select_unit] { select_unit(EN_MGD, QStringLiteral("MGD")); });
+    menu_imperial->addAction(
+        QStringLiteral("IMGD — imperial million gallons per day"),
+        [select_unit] { select_unit(EN_IMGD, QStringLiteral("IMGD")); });
+    menu_imperial->addAction(
+        QStringLiteral("AFD — acre-feet per day"),
+        [select_unit] { select_unit(EN_AFD, QStringLiteral("AFD")); });
+
+    connect(button_flow_units, &QToolButton::clicked, this,
+            [button_flow_units, menu_flow_units]
+    {
+        if (menu_flow_units->isPopupVisible())
+            menu_flow_units->closeAll();
+        else
+            menu_flow_units->popupBelow(button_flow_units);
+    });
+#else
     button_flow_units->setPopupMode(QToolButton::InstantPopup);
 
     QMenu *menu_flow_units = new QMenu(button_flow_units);
@@ -847,11 +829,11 @@ void TopControlBar::addFlowUnitCombo()
         this->selected_flow_units = static_cast<EN_FlowUnits>(value);
         button_flow_units->setText(action->text().section(' ', 0, 0));
     });
+#endif
 
     this->selected_flow_units = EN_CMH;
     bar_content->centerLayout()->addWidget(
         createLabeledControl(QStringLiteral("Flow units"), button_flow_units, this->content));
-#endif
 }
 
 void TopControlBar::addQualityHeadlossControls()

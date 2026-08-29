@@ -8,6 +8,9 @@
 
 #include "../geo_web_mercator.h"
 #include "../infrastructure_entity_traits.h"
+#ifdef Q_OS_WASM
+#include "../widgets/wasm_popup_menu.h"
+#endif
 
 #include <QAbstractButton>
 #include <QAction>
@@ -1362,6 +1365,78 @@ void MapCanvasEntities::showMarkerContextMenu(const QUuid &uuid,
 
     const bool multiple_entities_selected = this->selection->isMarkerSelected(uuid) &&
                                             this->selection->selectedMarkerCount() > 1;
+#ifdef Q_OS_WASM
+    WasmPopupMenu *menu = new WasmPopupMenu(this->map_canvas);
+    menu->setDeleteOnClose(true);
+
+    if (multiple_entities_selected)
+    {
+        menu->addAction(QStringLiteral("Move this entity"), [this, uuid]
+        {
+            startMarkerMove(uuid);
+        });
+        menu->addAction(QStringLiteral("Move selected entities"), [this, uuid]
+        {
+            startSelectedMarkerMove(uuid);
+        });
+    }
+    else
+    {
+        menu->addAction(QStringLiteral("Move"), [this, uuid]
+        {
+            startMarkerMove(uuid);
+        });
+    }
+
+    menu->addSeparator();
+    menu->addAction(
+        multiple_entities_selected
+            ? QStringLiteral("Delete this entity")
+            : QStringLiteral("Delete"),
+        [this, uuid]
+        {
+            QMessageBox *box = new QMessageBox(this->map_canvas);
+            box->setAttribute(Qt::WA_DeleteOnClose);
+            box->setIcon(QMessageBox::Question);
+            box->setWindowTitle(QStringLiteral("Delete entity"));
+            box->setText(QStringLiteral("Do you really want to delete this entity?"));
+            box->setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+            box->setDefaultButton(QMessageBox::No);
+            connect(box, &QMessageBox::buttonClicked, this,
+                    [this, box, uuid](QAbstractButton *button)
+            {
+                if (box->standardButton(button) == QMessageBox::Yes)
+                {
+                    deleteMarker(uuid);
+                    updateCanvas();
+                }
+            });
+            box->open();
+        });
+
+    if (multiple_entities_selected)
+    {
+        menu->addAction(QStringLiteral("Delete selected entities"), [this]
+        {
+            QMessageBox *box = new QMessageBox(this->map_canvas);
+            box->setAttribute(Qt::WA_DeleteOnClose);
+            box->setIcon(QMessageBox::Question);
+            box->setWindowTitle(QStringLiteral("Delete selected entities"));
+            box->setText(QStringLiteral("Do you really want to delete all selected entities?"));
+            box->setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+            box->setDefaultButton(QMessageBox::No);
+            connect(box, &QMessageBox::buttonClicked, this,
+                    [this, box](QAbstractButton *button)
+            {
+                if (box->standardButton(button) == QMessageBox::Yes)
+                    onMarkerSelectedDeleteRequested();
+            });
+            box->open();
+        });
+    }
+
+    menu->popup(global_position);
+#else
     QMenu *menu = new QMenu(this->map_canvas);
     menu->setAttribute(Qt::WA_DeleteOnClose);
 
@@ -1436,6 +1511,7 @@ void MapCanvasEntities::showMarkerContextMenu(const QUuid &uuid,
     }
 
     menu->popup(global_position);
+#endif
 }
 
 void MapCanvasEntities::onRectangleSelect(const QRect &rect, RectangleSelectMode mode)

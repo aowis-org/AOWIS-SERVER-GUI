@@ -150,6 +150,7 @@ qt_add_executable(aowis-server-gui
     src/entity_inspector/entity_inspector_dock.h src/entity_inspector/entity_inspector_dock.cpp
     src/widgets/group_box_collapsible.h src/widgets/group_box_collapsible.cpp
     src/widgets/main_navigation_widget.h src/widgets/main_navigation_widget.cpp
+    src/widgets/wasm_popup_menu.h src/widgets/wasm_popup_menu.cpp
     src/entity_inspector/entity_inspector_tank.h src/entity_inspector/entity_inspector_tank.cpp
     src/top_control_bar.h src/top_control_bar.cpp
     

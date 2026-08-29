@@ -1,4 +1,7 @@
 #include "combo_checkboxes.h"
+#ifdef Q_OS_WASM
+#include "wasm_popup_menu.h"
+#endif
 
 #include <QCheckBox>
 #include <QHBoxLayout>
@@ -9,19 +12,30 @@
 
 ComboCheckboxes::ComboCheckboxes(QWidget *parent)
     : QWidget(parent),
-    button(new QPushButton(this)),
-    menu(new QMenu(this))
+      button(new QPushButton(this))
 {
     QHBoxLayout *layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
-    
+
+#ifdef Q_OS_WASM
+    this->wasm_menu = new WasmPopupMenu(this->button);
+    connect(this->button, &QPushButton::clicked, this, [this]
+    {
+        if (this->wasm_menu->isPopupVisible())
+            this->wasm_menu->closeAll();
+        else
+            this->wasm_menu->popupBelow(this->button);
+    });
+#else
+    this->menu = new QMenu(this);
     this->button->setMenu(this->menu);
+#endif
     this->button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     this->button->setText(this->placeholder_text);
-    
+
     layout->addWidget(this->button);
-    
+
     updateSummaryText();
 }
 
@@ -55,7 +69,11 @@ void ComboCheckboxes::insertItem(int index,
         index = this->items.count();
     }
     
+#ifdef Q_OS_WASM
+    QWidget *row_widget = new QWidget(this->wasm_menu);
+#else
     QWidget *row_widget = new QWidget(this->menu);
+#endif
     QHBoxLayout *row_layout = new QHBoxLayout(row_widget);
     row_layout->setContentsMargins(8, 4, 8, 4);
     row_layout->setSpacing(0);
@@ -67,9 +85,13 @@ void ComboCheckboxes::insertItem(int index,
     
     row_layout->addWidget(check_box);
     
+#ifdef Q_OS_WASM
+    this->wasm_menu->addWidget(row_widget, index);
+    QWidgetAction *action = nullptr;
+#else
     QWidgetAction *action = new QWidgetAction(this->menu);
     action->setDefaultWidget(row_widget);
-    
+
     if (index < this->items.count())
     {
         this->menu->insertAction(this->items.at(index).action, action);
@@ -78,7 +100,8 @@ void ComboCheckboxes::insertItem(int index,
     {
         this->menu->addAction(action);
     }
-    
+#endif
+
     Item item;
     item.text = text;
     item.data = data;
@@ -108,9 +131,13 @@ void ComboCheckboxes::insertItem(int index,
 
 void ComboCheckboxes::clear()
 {
+#ifdef Q_OS_WASM
+    this->wasm_menu->clear();
+#else
     this->menu->clear();
+#endif
     this->items.clear();
-    
+
     updateSummaryText();
 }
 
@@ -293,31 +320,31 @@ int ComboCheckboxes::indexOfCheckBox(const QCheckBox *check_box) const
 
 void ComboCheckboxes::updateSummaryText()
 {
-    QStringList selected = checkedTexts();
-    
+    const QStringList selected = checkedTexts();
+    QString text;
+
     if (selected.isEmpty())
     {
-        this->button->setText(this->placeholder_text);
-        return;
+        text = this->placeholder_text;
     }
-    
-    if (selected.count() <= this->summary_limit)
+    else if (selected.count() <= this->summary_limit)
     {
-        this->button->setText(selected.join(QStringLiteral(", ")));
-        return;
+        text = selected.join(QStringLiteral(", "));
     }
-    
-    QStringList visible_items;
-    
-    for (int index = 0; index < this->summary_limit; ++index)
+    else
     {
-        visible_items << selected.at(index);
+        QStringList visible_items;
+        for (int index = 0; index < this->summary_limit; ++index)
+            visible_items << selected.at(index);
+
+        const int hidden_count = selected.count() - this->summary_limit;
+        text = QStringLiteral("%1 +%2")
+                   .arg(visible_items.join(QStringLiteral(", ")))
+                   .arg(hidden_count);
     }
-    
-    const int hidden_count = selected.count() - this->summary_limit;
-    const QString text = QStringLiteral("%1 +%2")
-                             .arg(visible_items.join(QStringLiteral(", ")))
-                             .arg(hidden_count);
-    
+
+#ifdef Q_OS_WASM
+    text += QStringLiteral("  ▾");
+#endif
     this->button->setText(text);
 }

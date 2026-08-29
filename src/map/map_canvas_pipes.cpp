@@ -3,6 +3,9 @@
 
 #include "../geo_web_mercator.h"
 #include "../infrastructure_entity_traits.h"
+#ifdef Q_OS_WASM
+#include "../widgets/wasm_popup_menu.h"
+#endif
 
 #include <QAction>
 #include <QHash>
@@ -408,6 +411,36 @@ bool MapCanvasPipes::showContextMenuAt(const QPointF &position,
         const int vertex_index = vertex_hit.vertex_index;
         emit pipeSelectionRequested(pipe_uuid);
 
+#ifdef Q_OS_WASM
+        WasmPopupMenu *menu = new WasmPopupMenu(this->map_canvas);
+        menu->setDeleteOnClose(true);
+        menu->addAction(QStringLiteral("Move vertex"), [this, pipe_uuid, vertex_index]
+        {
+            emit pipeVertexMoveRequested(pipe_uuid, vertex_index);
+        });
+        menu->addAction(QStringLiteral("Delete vertex"), [this, pipe_uuid, vertex_index]
+        {
+            emit pipeVertexDeleteRequested(pipe_uuid, vertex_index);
+        });
+        menu->addAction(QStringLiteral("Convert to junction"), [this, pipe_uuid, vertex_index]
+        {
+            QMessageBox *message_box = new QMessageBox(
+                QMessageBox::Question, QStringLiteral("Convert pipe vertex"),
+                QStringLiteral("Do you really want to convert this pipe vertex to a junction?"),
+                QMessageBox::Yes | QMessageBox::No, this->map_canvas);
+            message_box->setDefaultButton(QMessageBox::No);
+            connect(message_box, &QMessageBox::finished, this,
+                    [this, pipe_uuid, vertex_index](int result)
+            {
+                if (result == QMessageBox::Yes)
+                    emit pipeVertexConversionRequested(pipe_uuid, vertex_index);
+            });
+            connect(message_box, &QMessageBox::finished,
+                    message_box, &QObject::deleteLater);
+            message_box->open();
+        });
+        menu->popup(global_position);
+#else
         QMenu *menu = new QMenu(this->map_canvas);
         menu->setAttribute(Qt::WA_DeleteOnClose);
         QAction *action_move = menu->addAction("Move vertex");
@@ -441,6 +474,7 @@ bool MapCanvasPipes::showContextMenuAt(const QPointF &position,
         });
 
         menu->popup(global_position);
+#endif
         return true;
     }
 

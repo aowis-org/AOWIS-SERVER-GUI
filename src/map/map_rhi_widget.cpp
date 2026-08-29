@@ -1340,6 +1340,66 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     }
 
     const QVector<MapRhiScene::LinkVertex> &link_vertices = this->scene.linkVertices();
+    const QVector<MapRhiJunctionInstance> &junction_instances =
+        this->scene.junctionInstances();
+    const QVector<MapRhiJunctionMeshVertex> &junction_mesh =
+        mapRhiJunctionSphereMeshVertices();
+
+    // Underground visualization is a terrain-occlusion override only. Draw its
+    // no-depth pass before every regular network component so arrows, tanks,
+    // icons and other network geometry remain authoritative and can cover it.
+    if (!is_2d_view && this->underground_mode == MapRhiUndergroundMode::Solid)
+    {
+        if (!link_vertices.isEmpty())
+        {
+            command_buffer->setGraphicsPipeline(this->link_no_depth_pipeline.get());
+            command_buffer->setShaderResources();
+            const QRhiCommandBuffer::VertexInput link_binding(
+                this->link_vertex_buffer.get(), 0);
+            command_buffer->setVertexInput(0, 1, &link_binding);
+            command_buffer->draw(quint32(link_vertices.size()));
+        }
+
+        if (!junction_instances.isEmpty() && !junction_mesh.isEmpty())
+        {
+            command_buffer->setGraphicsPipeline(this->junction_no_depth_pipeline.get());
+            command_buffer->setShaderResources();
+            const QRhiCommandBuffer::VertexInput junction_bindings[] = {
+                {this->junction_mesh_vertex_buffer.get(), 0},
+                {this->junction_instance_buffer.get(), 0}
+            };
+            command_buffer->setVertexInput(0, 2, junction_bindings);
+            command_buffer->draw(
+                quint32(junction_mesh.size()), quint32(junction_instances.size()));
+        }
+    }
+    else if (!is_2d_view && this->underground_mode == MapRhiUndergroundMode::XRay)
+    {
+        if (!this->underground_link_vertices.isEmpty())
+        {
+            command_buffer->setGraphicsPipeline(this->link_xray_pipeline.get());
+            command_buffer->setShaderResources();
+            const QRhiCommandBuffer::VertexInput underground_link_binding(
+                this->underground_link_vertex_buffer.get(), 0);
+            command_buffer->setVertexInput(0, 1, &underground_link_binding);
+            command_buffer->draw(quint32(this->underground_link_vertices.size()));
+        }
+
+        if (!this->underground_junction_instances.isEmpty() && !junction_mesh.isEmpty())
+        {
+            command_buffer->setGraphicsPipeline(this->junction_xray_pipeline.get());
+            command_buffer->setShaderResources();
+            const QRhiCommandBuffer::VertexInput underground_junction_bindings[] = {
+                {this->junction_mesh_vertex_buffer.get(), 0},
+                {this->underground_junction_instance_buffer.get(), 0}
+            };
+            command_buffer->setVertexInput(0, 2, underground_junction_bindings);
+            command_buffer->draw(
+                quint32(junction_mesh.size()),
+                quint32(this->underground_junction_instances.size()));
+        }
+    }
+
     if (!link_vertices.isEmpty())
     {
         command_buffer->setGraphicsPipeline(this->link_pipeline.get());
@@ -1393,10 +1453,6 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         command_buffer->draw(quint32(node_vertices.size()));
     }
 
-    const QVector<MapRhiJunctionInstance> &junction_instances =
-        this->scene.junctionInstances();
-    const QVector<MapRhiJunctionMeshVertex> &junction_mesh =
-        mapRhiJunctionSphereMeshVertices();
     if (!junction_instances.isEmpty() && !junction_mesh.isEmpty())
     {
         command_buffer->setGraphicsPipeline(this->junction_pipeline.get());
@@ -1427,58 +1483,6 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         const QRhiCommandBuffer::VertexInput tank_binding(this->tank_vertex_buffer.get(), 0);
         command_buffer->setVertexInput(0, 1, &tank_binding);
         command_buffer->draw(quint32(this->tank_model_vertices.size()));
-    }
-
-    if (!is_2d_view && this->underground_mode == MapRhiUndergroundMode::Solid)
-    {
-        if (!link_vertices.isEmpty())
-        {
-            command_buffer->setGraphicsPipeline(this->link_no_depth_pipeline.get());
-            command_buffer->setShaderResources();
-            const QRhiCommandBuffer::VertexInput link_binding(
-                this->link_vertex_buffer.get(), 0);
-            command_buffer->setVertexInput(0, 1, &link_binding);
-            command_buffer->draw(quint32(link_vertices.size()));
-        }
-
-        if (!junction_instances.isEmpty() && !junction_mesh.isEmpty())
-        {
-            command_buffer->setGraphicsPipeline(this->junction_no_depth_pipeline.get());
-            command_buffer->setShaderResources();
-            const QRhiCommandBuffer::VertexInput junction_bindings[] = {
-                {this->junction_mesh_vertex_buffer.get(), 0},
-                {this->junction_instance_buffer.get(), 0}
-            };
-            command_buffer->setVertexInput(0, 2, junction_bindings);
-            command_buffer->draw(
-                quint32(junction_mesh.size()), quint32(junction_instances.size()));
-        }
-    }
-    else if (!is_2d_view && this->underground_mode == MapRhiUndergroundMode::XRay)
-    {
-        if (!this->underground_link_vertices.isEmpty())
-        {
-            command_buffer->setGraphicsPipeline(this->link_xray_pipeline.get());
-            command_buffer->setShaderResources();
-            const QRhiCommandBuffer::VertexInput underground_link_binding(
-                this->underground_link_vertex_buffer.get(), 0);
-            command_buffer->setVertexInput(0, 1, &underground_link_binding);
-            command_buffer->draw(quint32(this->underground_link_vertices.size()));
-        }
-
-        if (!this->underground_junction_instances.isEmpty() && !junction_mesh.isEmpty())
-        {
-            command_buffer->setGraphicsPipeline(this->junction_xray_pipeline.get());
-            command_buffer->setShaderResources();
-            const QRhiCommandBuffer::VertexInput underground_junction_bindings[] = {
-                {this->junction_mesh_vertex_buffer.get(), 0},
-                {this->underground_junction_instance_buffer.get(), 0}
-            };
-            command_buffer->setVertexInput(0, 2, underground_junction_bindings);
-            command_buffer->draw(
-                quint32(junction_mesh.size()),
-                quint32(this->underground_junction_instances.size()));
-        }
     }
 
     if (!is_2d_view && !selected_link_vertices.isEmpty())

@@ -12,6 +12,9 @@ class QCheckBox;
 class QMenu;
 class QPushButton;
 class QWidgetAction;
+#ifdef Q_OS_WASM
+class WasmPopupMenu;
+#endif
 
 class ComboCheckboxes : public QWidget
 {
@@ -71,7 +74,11 @@ private:
     };
     
     QPushButton *button = nullptr;
+#ifdef Q_OS_WASM
+    WasmPopupMenu *wasm_menu = nullptr;
+#else
     QMenu *menu = nullptr;
+#endif
     QVector<Item> items;
     
     QString placeholder_text = QStringLiteral("None Selected");
