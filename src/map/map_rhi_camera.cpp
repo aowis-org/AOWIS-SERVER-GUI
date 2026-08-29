@@ -204,6 +204,34 @@ double MapRhiCamera::orbitDistanceWorld() const
         : nativeOrbitDistanceWorld();
 }
 
+double MapRhiCamera::perspectiveDepthWorld(const QVector3D &world_position) const
+{
+    if (this->view_mode != MapViewMode::ThreeD)
+        return qQNaN();
+
+    const double pitch_rad = qDegreesToRadians(qBound(
+        MapModel::MinView3dPitchDeg,
+        this->view_3d_pitch_deg,
+        MapModel::MaxView3dPitchDeg));
+    const double yaw_rad = qDegreesToRadians(this->view_3d_yaw_deg);
+    const double distance = orbitDistanceWorld();
+    const double horizontal_distance = distance * std::cos(pitch_rad);
+    const QVector3D target(
+        float(this->center_world.x()),
+        float(this->center_world.y()),
+        float(this->view_3d_vertical_offset_world));
+    const QVector3D eye(
+        target.x() + float(std::sin(yaw_rad) * horizontal_distance),
+        target.y() + float(std::cos(yaw_rad) * horizontal_distance),
+        float(this->view_3d_vertical_offset_world
+            + distance * std::sin(pitch_rad)
+            + this->view_3d_camera_collision_lift_world));
+    const QVector3D forward = (target - eye).normalized();
+    if (forward.lengthSquared() <= 1e-12f)
+        return qQNaN();
+
+    return QVector3D::dotProduct(world_position - eye, forward);
+}
 
 bool MapRhiCamera::screenRay(
     const QPointF &screen_position, QVector3D *eye_world, QVector3D *direction_world) const

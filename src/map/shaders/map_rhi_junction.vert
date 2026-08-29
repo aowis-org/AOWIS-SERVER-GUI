@@ -22,9 +22,21 @@ layout(location = 2) out float vertex_selected;
 
 void main()
 {
-    vec3 world_position = instance_center + sphere_position * instance_radius;
-    vec4 clip_position = camera.view_projection * vec4(world_position, 1.0);
     vec2 viewport = max(camera.viewport_and_sizes.xy, vec2(1.0));
+
+    // Junction size must not depend on the discrete map/tile zoom, otherwise
+    // changing tile LOD makes every sphere jump in size. Use the continuous
+    // orbit distance as the reference depth instead. A junction at the orbit
+    // focus therefore keeps the familiar marker size, while normal perspective
+    // naturally makes farther junctions smaller and nearer junctions larger.
+    const float tan_half_fov = 0.4142135623730950;
+    float pixel_radius = max(camera.viewport_and_sizes.w, 0.0);
+    float reference_depth = max(camera.network_translation.z, 0.000001);
+    float radius_world =
+        2.0 * pixel_radius * reference_depth * tan_half_fov / viewport.y;
+
+    vec3 world_position = instance_center + sphere_position * radius_world;
+    vec4 clip_position = camera.view_projection * vec4(world_position, 1.0);
     vec2 translation_ndc = camera.network_translation.xy * 2.0 / viewport;
     clip_position.xy += translation_ndc * clip_position.w;
 

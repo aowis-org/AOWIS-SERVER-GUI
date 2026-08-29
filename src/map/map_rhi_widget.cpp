@@ -204,32 +204,6 @@ bool finiteScreenPoint(const QPointF &point)
     return std::isfinite(point.x()) && std::isfinite(point.y());
 }
 
-bool raySphereIntersectionDistance(
-    const QVector3D &ray_origin, const QVector3D &ray_direction,
-    const QVector3D &sphere_center, double sphere_radius, double *distance)
-{
-    if (distance == nullptr || !(sphere_radius > 0.0) || !std::isfinite(sphere_radius))
-        return false;
-
-    const QVector3D offset = ray_origin - sphere_center;
-    const double b = QVector3D::dotProduct(offset, ray_direction);
-    const double c = double(QVector3D::dotProduct(offset, offset))
-        - sphere_radius * sphere_radius;
-    const double discriminant = b * b - c;
-    if (discriminant < 0.0)
-        return false;
-
-    const double root = std::sqrt(discriminant);
-    double hit_distance = -b - root;
-    if (hit_distance < 0.0)
-        hit_distance = -b + root;
-    if (hit_distance < 0.0 || !std::isfinite(hit_distance))
-        return false;
-
-    *distance = hit_distance;
-    return true;
-}
-
 bool rayTriangleIntersectionDistance(
     const QVector3D &ray_origin, const QVector3D &ray_direction,
     const QVector3D &a, const QVector3D &b, const QVector3D &c,
@@ -504,59 +478,76 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
         }
     }
 
-    // In 3D the junction orb is the authoritative junction representation.
-    // Hit-test the actual sphere volume from the camera ray instead of falling
-    // back to the old screen-space circle around the junction center.
+    // Keep 3D junction sizing independent from the discrete map/tile zoom,
+    // but preserve real perspective. Junctions near the orbit focus retain the
+    // familiar 2D marker size, while geometry farther from the camera projects
+    // smaller and nearer geometry projects larger. Hit-testing follows the same
+    // continuous depth ratio so there is no zoom-level size jump.
     if (three_d)
     {
-        QVector3D ray_origin;
-        QVector3D ray_direction;
-        const QPointF sphere_screen_position =
+        const QPointF junction_screen_position =
             screen_position - this->network_screen_translation;
-        if (this->camera.screenRay(
-                sphere_screen_position, &ray_origin, &ray_direction))
+        const double base_junction_radius_px =
+            networkSymbologyJunctionDotDiameterForZoom(
+                MapRenderCacheMath::ReferenceZoom,
+                this->scene.nodeSizePercent()) / 2.0;
+        const double reference_depth_world = qMax(
+            this->camera.orbitDistanceWorld(), 0.000001);
+        double best_junction_screen_distance =
+            std::numeric_limits<double>::infinity();
+        quint32 best_junction_render_id = 0;
+        const QVector<MapRhiJunctionInstance> &junction_instances =
+            this->scene.junctionInstances();
+        for (const MapRhiJunctionInstance &instance : junction_instances)
         {
-            quint32 best_junction_render_id = 0;
-            double best_junction_distance = std::numeric_limits<double>::max();
-            const QVector<MapRhiJunctionInstance> &junction_instances =
-                this->scene.junctionInstances();
-            for (const MapRhiJunctionInstance &instance : junction_instances)
+            if (!(instance.alpha > 0.0f))
+                continue;
+
+            const QVector3D junction_world_position(
+                instance.center_x, instance.center_y, instance.center_z);
+            const double depth_world =
+                this->camera.perspectiveDepthWorld(junction_world_position);
+            if (!std::isfinite(depth_world) || depth_world <= 0.000001)
+                continue;
+
+            const QPointF projected =
+                this->camera.projectWorldToScreen(junction_world_position);
+            if (!finiteScreenPoint(projected))
+                continue;
+
+            const double visual_radius_px =
+                base_junction_radius_px * reference_depth_world / depth_world;
+            const double junction_hit_radius = qMax(
+                Rhi3dMinimumNodeHitRadiusPx,
+                visual_radius_px + Rhi3dNodeHitPaddingPx);
+            const double screen_distance =
+                QLineF(junction_screen_position, projected).length();
+            if (screen_distance > junction_hit_radius
+                || screen_distance >= best_junction_screen_distance)
             {
-                if (!(instance.alpha > 0.0f) || !(instance.radius_world > 0.0f))
-                    continue;
-
-                const QVector3D sphere_center(
-                    instance.center_x, instance.center_y, instance.center_z);
-                double hit_distance = 0.0;
-                if (!raySphereIntersectionDistance(
-                        ray_origin, ray_direction, sphere_center,
-                        double(instance.radius_world), &hit_distance)
-                    || hit_distance >= best_junction_distance)
-                {
-                    continue;
-                }
-
-                best_junction_distance = hit_distance;
-                best_junction_render_id = instance.render_id;
+                continue;
             }
 
-            if (best_junction_render_id != 0)
-            {
-                for (const NetworkRenderNode &node : snapshot.nodes)
-                {
-                    if (node.entity_type != InfrastructureEntity::Junction
-                        || node.render_id != best_junction_render_id
-                        || this->scene.isEntityHidden(node.uuid))
-                    {
-                        continue;
-                    }
+            best_junction_screen_distance = screen_distance;
+            best_junction_render_id = instance.render_id;
+        }
 
-                    MapRhiHit junction_hit;
-                    junction_hit.render_id = node.render_id;
-                    junction_hit.entity_type = node.entity_type;
-                    junction_hit.uuid = node.uuid;
-                    return junction_hit;
+        if (best_junction_render_id != 0)
+        {
+            for (const NetworkRenderNode &node : snapshot.nodes)
+            {
+                if (node.entity_type != InfrastructureEntity::Junction
+                    || node.render_id != best_junction_render_id
+                    || this->scene.isEntityHidden(node.uuid))
+                {
+                    continue;
                 }
+
+                MapRhiHit junction_hit;
+                junction_hit.render_id = node.render_id;
+                junction_hit.entity_type = node.entity_type;
+                junction_hit.uuid = node.uuid;
+                return junction_hit;
             }
         }
     }
@@ -1105,8 +1096,11 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     uniform_data[16] = float(qMax(1, this->viewport_size.width()));
     uniform_data[17] = float(qMax(1, this->viewport_size.height()));
     uniform_data[18] = float(this->scene.linkThicknessPx()) / 2.0f;
+    const int junction_size_zoom = this->map_model->viewMode() == MapViewMode::ThreeD
+        ? MapRenderCacheMath::ReferenceZoom
+        : this->map_model->zoom();
     uniform_data[19] = float(networkSymbologyJunctionDotDiameterForZoom(
-        this->map_model->zoom(), this->scene.nodeSizePercent()) / 2.0);
+        junction_size_zoom, this->scene.nodeSizePercent()) / 2.0);
     uniform_data[20] = heatmapRadiusPixels();
     uniform_data[21] = qBound(0.0f, this->applied_symbology.heatmap_opacity / 100.0f, 1.0f);
     uniform_data[22] = qBound(0.0f,
@@ -1123,6 +1117,10 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     uniform_data[27] = qBound(0.0f, this->background_opacity / 100.0f, 1.0f);
     uniform_data[28] = float(this->network_screen_translation.x());
     uniform_data[29] = -float(this->network_screen_translation.y());
+    // Z carries the continuous 3D orbit depth used only by the junction shader.
+    // It is deliberately independent from the discrete map/tile zoom so sphere
+    // size cannot jump when the renderer changes tile LOD.
+    uniform_data[30] = float(this->camera.orbitDistanceWorld());
 
     QRhiResourceUpdateBatch *resource_updates = this->active_rhi->nextResourceUpdateBatch();
     resource_updates->updateDynamicBuffer(
