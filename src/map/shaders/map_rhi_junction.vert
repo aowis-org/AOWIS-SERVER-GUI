@@ -24,16 +24,20 @@ void main()
 {
     vec2 viewport = max(camera.viewport_and_sizes.xy, vec2(1.0));
 
-    // Junction size must not depend on the discrete map/tile zoom, otherwise
-    // changing tile LOD makes every sphere jump in size. Use the continuous
-    // orbit distance as the reference depth instead. A junction at the orbit
-    // focus therefore keeps the familiar marker size, while normal perspective
-    // naturally makes farther junctions smaller and nearer junctions larger.
+    // Positive W means a requested pixel radius. Keep that size stable at the
+    // orbit focus depth while retaining normal perspective for junctions that
+    // are nearer/farther than the focus. Negative W selects true world-space
+    // sizing; the instance carries the already converted world-space radius.
     const float tan_half_fov = 0.4142135623730950;
-    float pixel_radius = max(camera.viewport_and_sizes.w, 0.0);
-    float reference_depth = max(camera.network_translation.z, 0.000001);
-    float radius_world =
-        2.0 * pixel_radius * reference_depth * tan_half_fov / viewport.y;
+    float configured_radius = camera.viewport_and_sizes.w;
+    float radius_world = instance_radius;
+    if (configured_radius >= 0.0)
+    {
+        float pixel_radius = configured_radius;
+        float reference_depth = max(camera.network_translation.z, 0.000001);
+        radius_world =
+            2.0 * pixel_radius * reference_depth * tan_half_fov / viewport.y;
+    }
 
     vec3 world_position = instance_center + sphere_position * radius_world;
     vec4 clip_position = camera.view_projection * vec4(world_position, 1.0);
@@ -41,9 +45,6 @@ void main()
     clip_position.xy += translation_ndc * clip_position.w;
 
     gl_Position = clip_position;
-    // Transform the sphere normal into camera-facing space for stable orb
-    // shading. The sphere is isotropic, so normalizing after the transform is
-    // sufficient here and keeps the highlight/rim visually tied to the view.
     vertex_normal = normalize(mat3(camera.view_projection) * sphere_normal);
     vertex_color = instance_color;
     vertex_selected = instance_selected;

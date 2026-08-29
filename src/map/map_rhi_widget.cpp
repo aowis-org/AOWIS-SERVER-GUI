@@ -41,6 +41,14 @@ constexpr int CameraTerrainMinimumZoom = 8;
 constexpr int CameraTerrainMaximumZoom = 14;
 constexpr double FallbackOriginRecenterThresholdWorld = MapModel::TileSize * 1024.0;
 
+double metersToScreenPixels(double meters, double latitude_deg, int zoom)
+{
+    const double meters_per_pixel = GeoWebMercator::metersPerPixel(latitude_deg, zoom);
+    if (!std::isfinite(meters_per_pixel) || meters_per_pixel <= 0.0)
+        return 0.0;
+    return meters / meters_per_pixel;
+}
+
 QString cameraTerrainDatasetId()
 {
     return QStringLiteral("copernicus-glo30");
@@ -487,12 +495,11 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
     {
         const QPointF junction_screen_position =
             screen_position - this->network_screen_translation;
-        const double base_junction_radius_px =
-            networkSymbologyJunctionDotDiameterForZoom(
-                MapRenderCacheMath::ReferenceZoom,
-                this->scene.nodeSizePercent()) / 2.0;
+        const double base_junction_radius_px = this->scene.nodeSizePx() * 0.5;
         const double reference_depth_world = qMax(
             this->camera.orbitDistanceWorld(), 0.000001);
+        const double junction_radius_world = this->scene.nodeSizeM()
+            * this->scene.worldUnitsPerMeter() * 0.5;
         double best_junction_screen_distance =
             std::numeric_limits<double>::infinity();
         quint32 best_junction_render_id = 0;
@@ -515,8 +522,16 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
             if (!finiteScreenPoint(projected))
                 continue;
 
-            const double visual_radius_px =
+            double visual_radius_px =
                 base_junction_radius_px * reference_depth_world / depth_world;
+            if (this->scene.nodeSizeUnit() == NetworkSymbologySizeUnit::Meters
+                && std::isfinite(junction_radius_world) && junction_radius_world > 0.0)
+            {
+                const QPointF projected_edge = this->camera.projectWorldToScreen(
+                    junction_world_position + QVector3D(float(junction_radius_world), 0.0f, 0.0f));
+                if (finiteScreenPoint(projected_edge))
+                    visual_radius_px = QLineF(projected, projected_edge).length();
+            }
             const double junction_hit_radius = qMax(
                 Rhi3dMinimumNodeHitRadiusPx,
                 visual_radius_px + Rhi3dNodeHitPaddingPx);
@@ -624,9 +639,12 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
         ? Rhi3dNodeHitPaddingPx : Rhi2dNodeHitPaddingPx;
     const double minimum_node_radius = three_d
         ? Rhi3dMinimumNodeHitRadiusPx : Rhi2dMinimumNodeHitRadiusPx;
+    const double node_radius_px = this->scene.nodeSizeUnit() == NetworkSymbologySizeUnit::Meters
+        ? metersToScreenPixels(this->scene.nodeSizeM(), this->map_model->centerLat(),
+            this->map_model->zoom()) * 0.5
+        : this->scene.nodeSizePx() * 0.5;
     const double node_hit_radius = qMax(
-        minimum_node_radius, networkSymbologyMarkerSizeForZoom(
-            this->map_model->zoom(), this->scene.nodeSizePercent()) / 2.0 + node_padding);
+        minimum_node_radius, node_radius_px + node_padding);
     double best_node_distance = node_hit_radius;
     MapRhiHit best_node_hit;
     for (const NetworkRenderNode &node : snapshot.nodes)
@@ -661,9 +679,12 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
         ? Rhi3dLinkHitPaddingPx : Rhi2dLinkHitPaddingPx;
     const double minimum_link_radius = three_d
         ? Rhi3dMinimumLinkHitRadiusPx : Rhi2dMinimumLinkHitRadiusPx;
-    const double link_hit_radius = qMax(
-        minimum_link_radius, this->scene.linkThicknessPx() / 2.0 + link_padding);
-    double best_link_distance = link_hit_radius;
+    const double fixed_link_half_width_px =
+        this->scene.linkThicknessUnit() == NetworkSymbologySizeUnit::Meters
+            ? metersToScreenPixels(this->scene.linkThicknessM(), this->map_model->centerLat(),
+                this->map_model->zoom()) * 0.5
+            : this->scene.linkThicknessPx() * 0.5;
+    double best_link_distance = std::numeric_limits<double>::infinity();
     MapRhiHit best_link_hit;
     for (const NetworkRenderLink &link : snapshot.links)
     {
@@ -672,6 +693,7 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
 
         bool have_previous = false;
         QPointF previous_screen;
+        QVector3D previous_world_position;
         double wrap_reference_x = this->scene.originWorld().x();
         for (qsizetype vertex_index = 0; vertex_index < link.vertices_wgs84.size(); ++vertex_index)
         {
@@ -692,9 +714,34 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
 
             if (have_previous)
             {
+                double segment_hit_radius = qMax(
+                    minimum_link_radius, fixed_link_half_width_px + link_padding);
+                if (three_d
+                    && this->scene.linkThicknessUnit() == NetworkSymbologySizeUnit::Meters)
+                {
+                    const QVector3D segment_direction = world_position - previous_world_position;
+                    QVector3D width_direction(-segment_direction.y(), segment_direction.x(), 0.0f);
+                    if (width_direction.lengthSquared() > 0.000001f)
+                    {
+                        width_direction.normalize();
+                        const double half_width_world = this->scene.linkThicknessM()
+                            * this->scene.worldUnitsPerMeter() * 0.5;
+                        const QVector3D midpoint = (world_position + previous_world_position) * 0.5f;
+                        const QPointF midpoint_screen = this->camera.projectWorldToScreen(midpoint);
+                        const QPointF edge_screen = this->camera.projectWorldToScreen(
+                            midpoint + width_direction * float(half_width_world));
+                        if (finiteScreenPoint(midpoint_screen) && finiteScreenPoint(edge_screen))
+                        {
+                            segment_hit_radius = qMax(
+                                minimum_link_radius,
+                                QLineF(midpoint_screen, edge_screen).length() + link_padding);
+                        }
+                    }
+                }
+
                 const double distance = pointSegmentDistance(
                     screen_position, previous_screen, current_screen);
-                if (distance <= best_link_distance)
+                if (distance <= segment_hit_radius && distance <= best_link_distance)
                 {
                     best_link_distance = distance;
                     best_link_hit.render_id = link.render_id;
@@ -704,6 +751,7 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
             }
 
             previous_screen = current_screen;
+            previous_world_position = world_position;
             have_previous = true;
         }
     }
@@ -774,7 +822,9 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
         || this->applied_symbology.link_colors != symbology.link_colors;
     const bool junction_changed =
         !this->symbology_initialized
-        || this->applied_symbology.node_size_percent != symbology.node_size_percent
+        || this->applied_symbology.node_size_unit != symbology.node_size_unit
+        || this->applied_symbology.node_size_px != symbology.node_size_px
+        || this->applied_symbology.node_size_m != symbology.node_size_m
         || this->applied_symbology.node_colors != symbology.node_colors;
     const bool icon_changed =
         !this->symbology_initialized
@@ -800,7 +850,9 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
         || this->applied_symbology.show_flow_direction != symbology.show_flow_direction
         || this->applied_symbology.flow_direction_size_px != symbology.flow_direction_size_px
         || this->applied_symbology.flow_directions != symbology.flow_directions
+        || this->applied_symbology.link_thickness_unit != symbology.link_thickness_unit
         || this->applied_symbology.link_thickness_px != symbology.link_thickness_px
+        || this->applied_symbology.link_thickness_m != symbology.link_thickness_m
         || this->applied_symbology.link_colors != symbology.link_colors;
 
     this->scene.setViewZoom(this->map_model->zoom());
@@ -847,9 +899,13 @@ void MapRhiWidget::setVisualControlSettings(
 
     const NetworkSymbologySettings bounded_settings = settings.bounded();
     MapRhiSymbology symbology = this->applied_symbology;
-    symbology.node_size_percent = bounded_settings.node_size_percent;
+    symbology.node_size_unit = bounded_settings.node_size_unit;
+    symbology.node_size_px = bounded_settings.node_size_px;
+    symbology.node_size_m = bounded_settings.node_size_m;
     symbology.icon_size_percent = bounded_settings.icon_size_percent;
+    symbology.link_thickness_unit = bounded_settings.link_thickness_unit;
     symbology.link_thickness_px = bounded_settings.link_thickness_px;
+    symbology.link_thickness_m = bounded_settings.link_thickness_m;
     symbology.show_flow_direction = bounded_settings.show_flow_direction;
     symbology.flow_direction_size_px = bounded_settings.flow_direction_size_px;
     symbology.heatmap_opacity = bounded_settings.heatmap_opacity;
@@ -1095,12 +1151,17 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         uniform_data[size_t(index)] = matrix_data[index];
     uniform_data[16] = float(qMax(1, this->viewport_size.width()));
     uniform_data[17] = float(qMax(1, this->viewport_size.height()));
-    uniform_data[18] = float(this->scene.linkThicknessPx()) / 2.0f;
-    const int junction_size_zoom = this->map_model->viewMode() == MapViewMode::ThreeD
-        ? MapRenderCacheMath::ReferenceZoom
-        : this->map_model->zoom();
-    uniform_data[19] = float(networkSymbologyJunctionDotDiameterForZoom(
-        junction_size_zoom, this->scene.nodeSizePercent()) / 2.0);
+    const double horizontal_world_units_per_meter = this->scene.worldUnitsPerMeter();
+    uniform_data[18] = this->scene.linkThicknessUnit() == NetworkSymbologySizeUnit::Meters
+        && std::isfinite(horizontal_world_units_per_meter)
+        && horizontal_world_units_per_meter > 0.0
+        ? -float(this->scene.linkThicknessM() * horizontal_world_units_per_meter * 0.5)
+        : float(this->scene.linkThicknessPx()) * 0.5f;
+    uniform_data[19] = this->scene.nodeSizeUnit() == NetworkSymbologySizeUnit::Meters
+        && std::isfinite(horizontal_world_units_per_meter)
+        && horizontal_world_units_per_meter > 0.0
+        ? -float(this->scene.nodeSizeM() * horizontal_world_units_per_meter * 0.5)
+        : float(this->scene.nodeSizePx()) * 0.5f;
     uniform_data[20] = heatmapRadiusPixels();
     uniform_data[21] = qBound(0.0f, this->applied_symbology.heatmap_opacity / 100.0f, 1.0f);
     uniform_data[22] = qBound(0.0f,

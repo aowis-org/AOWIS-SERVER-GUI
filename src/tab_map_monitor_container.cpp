@@ -45,12 +45,14 @@ namespace
 class SymbologySlider final : public QSlider
 {
 public:
-    SymbologySlider(int value_minimum, int value_maximum, int value_default, const QString &description, const QString &unit_suffix, QWidget *parent = nullptr)
+    SymbologySlider(int value_minimum, int value_maximum, int value_default, const QString &description, const QString &unit_suffix, QWidget *parent = nullptr, double display_scale = 1.0, int display_decimals = 0)
         : QSlider(Qt::Horizontal, parent),
           value_default(value_default),
           description(description),
           unit_suffix(unit_suffix)
     {
+        this->display_scale = display_scale;
+        this->display_decimals = display_decimals;
         setRange(value_minimum, value_maximum);
         setValue(this->value_default);
         connect(this, &QSlider::valueChanged, this, [this]
@@ -61,12 +63,15 @@ public:
     }
 
     void setConfiguration(int value_minimum, int value_maximum, int value_default,
-                          int value, const QString &description, const QString &unit_suffix)
+                          int value, const QString &description, const QString &unit_suffix,
+                          double display_scale = 1.0, int display_decimals = 0)
     {
         const QSignalBlocker blocker(this);
         this->value_default = value_default;
         this->description = description;
         this->unit_suffix = unit_suffix;
+        this->display_scale = display_scale;
+        this->display_decimals = display_decimals;
         setRange(value_minimum, value_maximum);
         setValue(value);
         updateToolTip();
@@ -92,20 +97,27 @@ protected:
     }
 
 private:
+    QString displayValue(int raw_value) const
+    {
+        return QString::number(raw_value * this->display_scale, 'f', this->display_decimals);
+    }
+
     void updateToolTip()
     {
         setToolTip(QStringLiteral("%1\nCurrent: %2%3\nRange: %4%3 to %5%3\nDefault: %6%3\nRight-click to reset.")
                        .arg(this->description)
-                       .arg(value())
+                       .arg(displayValue(value()))
                        .arg(this->unit_suffix)
-                       .arg(minimum())
-                       .arg(maximum())
-                       .arg(this->value_default));
+                       .arg(displayValue(minimum()))
+                       .arg(displayValue(maximum()))
+                       .arg(displayValue(this->value_default)));
     }
 
     int value_default;
     QString description;
     QString unit_suffix;
+    double display_scale = 1.0;
+    int display_decimals = 0;
 };
 
 
@@ -903,9 +915,20 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         showMapLegendNode(visual_node);
         applySymbology();
     });
-    connect(this->map_menu, &MapMonitorMenuWidget::signalNodeSizeChanged, this, [this](int size_percent)
+    connect(this->map_menu, &MapMonitorMenuWidget::signalNodeSizeUnitChanged, this,
+        [this](NetworkSymbologySizeUnit unit)
     {
-        this->symbology_settings.node_size_percent = size_percent;
+        this->symbology_settings.node_size_unit = unit;
+        applyVisualControlSymbology();
+    });
+    connect(this->map_menu, &MapMonitorMenuWidget::signalNodeSizeChanged, this,
+        [this](NetworkSymbologySizeUnit unit, double size)
+    {
+        this->symbology_settings.node_size_unit = unit;
+        if (unit == NetworkSymbologySizeUnit::Meters)
+            this->symbology_settings.node_size_m = size;
+        else
+            this->symbology_settings.node_size_px = qRound(size);
         applyVisualControlSymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalLinkVisualClicked, this,
@@ -915,9 +938,20 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         showMapLegendLink(visual_link);
         applySymbology();
     });
-    connect(this->map_menu, &MapMonitorMenuWidget::signalLinkThicknessChanged, this, [this](int thickness_px)
+    connect(this->map_menu, &MapMonitorMenuWidget::signalLinkThicknessUnitChanged, this,
+        [this](NetworkSymbologySizeUnit unit)
     {
-        this->symbology_settings.link_thickness_px = thickness_px;
+        this->symbology_settings.link_thickness_unit = unit;
+        applyVisualControlSymbology();
+    });
+    connect(this->map_menu, &MapMonitorMenuWidget::signalLinkThicknessChanged, this,
+        [this](NetworkSymbologySizeUnit unit, double thickness)
+    {
+        this->symbology_settings.link_thickness_unit = unit;
+        if (unit == NetworkSymbologySizeUnit::Meters)
+            this->symbology_settings.link_thickness_m = thickness;
+        else
+            this->symbology_settings.link_thickness_px = qRound(thickness);
         applyVisualControlSymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalFlowDirectionSizeChanged, this, [this](int size_px)
@@ -1903,16 +1937,114 @@ void MapMonitorMenuWidget::addGroupVisualSettings()
     group->setLayout(vbox);
 
     QLabel *label_node_section = new QLabel("<b>Node</b>");
-    QLabel *label_node_size = new QLabel("Junction Size [%]");
-    QSlider *slider_node_size = new SymbologySlider(50, 250, 100,
-        QStringLiteral("Scales junction markers in 2D and junction orbs in 3D."), QStringLiteral(" %"), this);
-    connect(slider_node_size, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalNodeSizeChanged);
+    QLabel *label_node_size = new QLabel("Junction Size");
+    QComboBox *combo_node_size_unit = new QComboBox(this);
+    combo_node_size_unit->addItem(QStringLiteral("m"),
+        static_cast<int>(NetworkSymbologySizeUnit::Meters));
+    combo_node_size_unit->addItem(QStringLiteral("px"),
+        static_cast<int>(NetworkSymbologySizeUnit::Pixels));
+    combo_node_size_unit->setCurrentIndex(1);
+    combo_node_size_unit->setToolTip(QStringLiteral(
+        "Meters keep a true world-space junction size. Pixels keep a stable visual size while preserving 3D perspective."));
+    SymbologySlider *slider_node_size = new SymbologySlider(4, 64,
+        NetworkSymbologyDefaultNodeSizePx,
+        QStringLiteral("Sets the junction marker/orb diameter in screen pixels."),
+        QStringLiteral(" px"), this);
+    connect(slider_node_size, &QSlider::valueChanged, this,
+        [this](int raw_value)
+    {
+        if (this->node_size_unit == NetworkSymbologySizeUnit::Meters)
+        {
+            this->node_size_m = raw_value * 0.1;
+            emit signalNodeSizeChanged(this->node_size_unit, this->node_size_m);
+        }
+        else
+        {
+            this->node_size_px = raw_value;
+            emit signalNodeSizeChanged(this->node_size_unit, this->node_size_px);
+        }
+    });
+    connect(combo_node_size_unit, &QComboBox::currentIndexChanged, this,
+        [this, combo_node_size_unit, slider_node_size](int index)
+    {
+        const NetworkSymbologySizeUnit unit = static_cast<NetworkSymbologySizeUnit>(
+            combo_node_size_unit->itemData(index).toInt());
+        if (unit == this->node_size_unit)
+            return;
+
+        this->node_size_unit = unit;
+        if (unit == NetworkSymbologySizeUnit::Meters)
+        {
+            slider_node_size->setConfiguration(1, 200,
+                qRound(NetworkSymbologyDefaultNodeSizeM * 10.0),
+                qRound(this->node_size_m * 10.0),
+                QStringLiteral("Sets the true world-space junction diameter."),
+                QStringLiteral(" m"), 0.1, 1);
+        }
+        else
+        {
+            slider_node_size->setConfiguration(4, 64,
+                NetworkSymbologyDefaultNodeSizePx, this->node_size_px,
+                QStringLiteral("Sets the junction marker/orb diameter in screen pixels."),
+                QStringLiteral(" px"));
+        }
+        emit signalNodeSizeUnitChanged(unit);
+    });
 
     QLabel *label_link_section = new QLabel("<b>Link</b>");
-    QLabel *label_link_thickness = new QLabel("Pipe Thickness [px]");
-    QSlider *slider_link_thickness = new SymbologySlider(1, 12, 3,
-        QStringLiteral("Sets rendered pipe thickness and keeps pipe hit detection aligned with it."), QStringLiteral(" px"), this);
-    connect(slider_link_thickness, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalLinkThicknessChanged);
+    QLabel *label_link_thickness = new QLabel("Pipe Thickness");
+    QComboBox *combo_link_thickness_unit = new QComboBox(this);
+    combo_link_thickness_unit->addItem(QStringLiteral("m"),
+        static_cast<int>(NetworkSymbologySizeUnit::Meters));
+    combo_link_thickness_unit->addItem(QStringLiteral("px"),
+        static_cast<int>(NetworkSymbologySizeUnit::Pixels));
+    combo_link_thickness_unit->setCurrentIndex(1);
+    combo_link_thickness_unit->setToolTip(QStringLiteral(
+        "Meters keep a true world-space pipe thickness. Pixels keep a constant screen-space thickness."));
+    SymbologySlider *slider_link_thickness = new SymbologySlider(1, 24,
+        NetworkSymbologyDefaultLinkThicknessPx,
+        QStringLiteral("Sets rendered pipe thickness and keeps pipe hit detection aligned with it."),
+        QStringLiteral(" px"), this);
+    connect(slider_link_thickness, &QSlider::valueChanged, this,
+        [this](int raw_value)
+    {
+        if (this->link_thickness_unit == NetworkSymbologySizeUnit::Meters)
+        {
+            this->link_thickness_m = raw_value * 0.01;
+            emit signalLinkThicknessChanged(this->link_thickness_unit, this->link_thickness_m);
+        }
+        else
+        {
+            this->link_thickness_px = raw_value;
+            emit signalLinkThicknessChanged(this->link_thickness_unit, this->link_thickness_px);
+        }
+    });
+    connect(combo_link_thickness_unit, &QComboBox::currentIndexChanged, this,
+        [this, combo_link_thickness_unit, slider_link_thickness](int index)
+    {
+        const NetworkSymbologySizeUnit unit = static_cast<NetworkSymbologySizeUnit>(
+            combo_link_thickness_unit->itemData(index).toInt());
+        if (unit == this->link_thickness_unit)
+            return;
+
+        this->link_thickness_unit = unit;
+        if (unit == NetworkSymbologySizeUnit::Meters)
+        {
+            slider_link_thickness->setConfiguration(1, 500,
+                qRound(NetworkSymbologyDefaultLinkThicknessM * 100.0),
+                qRound(this->link_thickness_m * 100.0),
+                QStringLiteral("Sets the true world-space pipe thickness."),
+                QStringLiteral(" m"), 0.01, 2);
+        }
+        else
+        {
+            slider_link_thickness->setConfiguration(1, 24,
+                NetworkSymbologyDefaultLinkThicknessPx, this->link_thickness_px,
+                QStringLiteral("Sets rendered pipe thickness and keeps pipe hit detection aligned with it."),
+                QStringLiteral(" px"));
+        }
+        emit signalLinkThicknessUnitChanged(unit);
+    });
 
     QLabel *label_flow_direction_size = new QLabel("Flow Arrows [px]");
     FlowDirectionSizeSlider *slider_flow_direction_size = new FlowDirectionSizeSlider(this);
@@ -1980,11 +2112,19 @@ void MapMonitorMenuWidget::addGroupVisualSettings()
     connect(slider_heatmap_opacity, &QSlider::valueChanged, this, &MapMonitorMenuWidget::signalHeatmapOpacityChanged);
 
     vbox->addWidget(label_node_section);
-    vbox->addWidget(label_node_size);
+    QHBoxLayout *node_size_header = new QHBoxLayout();
+    node_size_header->addWidget(label_node_size);
+    node_size_header->addStretch();
+    node_size_header->addWidget(combo_node_size_unit);
+    vbox->addLayout(node_size_header);
     vbox->addWidget(slider_node_size);
     vbox->addSpacing(4);
     vbox->addWidget(label_link_section);
-    vbox->addWidget(label_link_thickness);
+    QHBoxLayout *link_thickness_header = new QHBoxLayout();
+    link_thickness_header->addWidget(label_link_thickness);
+    link_thickness_header->addStretch();
+    link_thickness_header->addWidget(combo_link_thickness_unit);
+    vbox->addLayout(link_thickness_header);
     vbox->addWidget(slider_link_thickness);
     vbox->addWidget(label_flow_direction_size);
     vbox->addWidget(slider_flow_direction_size);

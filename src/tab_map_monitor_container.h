@@ -78,6 +78,12 @@ private:
     QButtonGroup *node_visual_group = nullptr;
     QButtonGroup *link_visual_group = nullptr;
     QButtonGroup *heatmap_visual_group = nullptr;
+    NetworkSymbologySizeUnit node_size_unit = NetworkSymbologySizeUnit::Pixels;
+    double node_size_m = NetworkSymbologyDefaultNodeSizeM;
+    int node_size_px = NetworkSymbologyDefaultNodeSizePx;
+    NetworkSymbologySizeUnit link_thickness_unit = NetworkSymbologySizeUnit::Pixels;
+    double link_thickness_m = NetworkSymbologyDefaultLinkThicknessM;
+    int link_thickness_px = NetworkSymbologyDefaultLinkThicknessPx;
     HeatmapRadiusUnit heatmap_radius_unit = HeatmapRadiusUnit::Meters;
     int heatmap_radius_m = 400;
     int heatmap_radius_px = 50;
@@ -91,9 +97,11 @@ signals:
     void mapZoomOut();
     
     void signalNodeVisualClicked(VisualNode visual_node);
-    void signalNodeSizeChanged(int size_percent);
+    void signalNodeSizeUnitChanged(NetworkSymbologySizeUnit unit);
+    void signalNodeSizeChanged(NetworkSymbologySizeUnit unit, double size);
     void signalLinkVisualClicked(VisualLink visual_link);
-    void signalLinkThicknessChanged(int thickness_px);
+    void signalLinkThicknessUnitChanged(NetworkSymbologySizeUnit unit);
+    void signalLinkThicknessChanged(NetworkSymbologySizeUnit unit, double thickness);
     void signalFlowDirectionSizeChanged(int size_px);
     void signalHeatmapVisualClicked(VisualHeatmap visual_heatmap);
     void signalHeatmapOpacityChanged(int opacity);

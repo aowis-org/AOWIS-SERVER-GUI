@@ -78,10 +78,14 @@ MapRhiSymbology resolveMapRhiSymbology(
                     network_hydraulic, bounded_settings.visual_heatmap);
 
     MapRhiSymbology result;
-    result.node_size_percent = bounded_settings.node_size_percent;
+    result.node_size_unit = bounded_settings.node_size_unit;
+    result.node_size_px = bounded_settings.node_size_px;
+    result.node_size_m = bounded_settings.node_size_m;
     result.icon_size_percent = bounded_settings.icon_size_percent;
     result.show_icons = true;
+    result.link_thickness_unit = bounded_settings.link_thickness_unit;
     result.link_thickness_px = bounded_settings.link_thickness_px;
+    result.link_thickness_m = bounded_settings.link_thickness_m;
     result.show_flow_direction = bounded_settings.show_flow_direction;
     result.flow_direction_size_px = bounded_settings.flow_direction_size_px;
     result.visual_heatmap = bounded_settings.visual_heatmap;

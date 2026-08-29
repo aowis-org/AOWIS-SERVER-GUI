@@ -114,8 +114,13 @@ public:
     bool isEntityHidden(const QUuid &uuid) const;
     quint64 geometryRevision() const;
     bool hasGeometry() const;
-    int nodeSizePercent() const;
+    NetworkSymbologySizeUnit nodeSizeUnit() const;
+    int nodeSizePx() const;
+    double nodeSizeM() const;
+    NetworkSymbologySizeUnit linkThicknessUnit() const;
     int linkThicknessPx() const;
+    double linkThicknessM() const;
+    double worldUnitsPerMeter() const;
     float elevationToWorldZ(double elevation_m) const;
     float terrainElevationToWorldZ(double elevation_m) const;
 

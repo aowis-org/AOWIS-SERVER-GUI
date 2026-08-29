@@ -11,10 +11,14 @@ class HydraulicData;
 
 struct MapRhiSymbology
 {
-    int node_size_percent = 100;
+    NetworkSymbologySizeUnit node_size_unit = NetworkSymbologySizeUnit::Pixels;
+    int node_size_px = NetworkSymbologyDefaultNodeSizePx;
+    double node_size_m = NetworkSymbologyDefaultNodeSizeM;
     int icon_size_percent = 100;
     bool show_icons = true;
-    int link_thickness_px = 3;
+    NetworkSymbologySizeUnit link_thickness_unit = NetworkSymbologySizeUnit::Pixels;
+    int link_thickness_px = NetworkSymbologyDefaultLinkThicknessPx;
+    double link_thickness_m = NetworkSymbologyDefaultLinkThicknessM;
     bool show_flow_direction = true;
     int flow_direction_size_px = 10;
     VisualHeatmap visual_heatmap = VisualHeatmap::None;

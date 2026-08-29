@@ -37,7 +37,30 @@ void main()
         : vec2(1.0, 0.0);
     vec2 normal = vec2(-tangent.y, tangent.x);
 
-    float half_width = max(camera.viewport_and_sizes.z + size_adjust_px, 0.0);
+    float configured_half_width = camera.viewport_and_sizes.z;
+    float half_width = max(configured_half_width, 0.0);
+    if (configured_half_width < 0.0)
+    {
+        float half_width_world = -configured_half_width;
+        vec3 world_direction = end_position - start_position;
+        vec2 world_direction_xy = world_direction.xy;
+        float world_direction_length = length(world_direction_xy);
+        vec2 world_normal = world_direction_length > 0.000001
+            ? vec2(-world_direction_xy.y, world_direction_xy.x) / world_direction_length
+            : vec2(1.0, 0.0);
+        vec3 midpoint = mix(start_position, end_position, 0.5);
+        vec4 midpoint_clip = camera.view_projection * vec4(midpoint, 1.0);
+        vec4 width_clip = camera.view_projection
+            * vec4(midpoint + vec3(world_normal * half_width_world, 0.0), 1.0);
+        vec2 midpoint_ndc = midpoint_clip.xy / midpoint_clip.w;
+        vec2 width_ndc = width_clip.xy / width_clip.w;
+        half_width = length((width_ndc - midpoint_ndc) * viewport * 0.5);
+    }
+    if (configured_half_width < 0.0 && size_adjust_px < 0.0)
+        half_width = -size_adjust_px;
+    else
+        half_width = max(half_width + size_adjust_px, 0.0);
+
     float raster_margin = 1.0;
     float extent = half_width + raster_margin;
     float endpoint_sign = corner.x * 2.0 - 1.0;

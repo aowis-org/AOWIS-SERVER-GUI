@@ -148,10 +148,12 @@ private:
     View3dOrbitInput view_3d_orbit_input = View3dOrbitInput::None;
     QPoint view_3d_orbit_last_position;
 #ifndef Q_OS_WASM
-    QPoint view_3d_orbit_anchor_global;
+    QPoint view_3d_orbit_last_global_position;
     QPoint view_3d_orbit_restore_global;
+    QPoint view_3d_orbit_warp_source_global;
+    QPoint view_3d_orbit_warp_target_global;
+    bool view_3d_orbit_warp_pending = false;
     bool view_3d_orbit_mouse_grabbed = false;
-    bool view_3d_orbit_ignore_next_mouse_move = false;
 #endif
     QPointF mouse_pan_velocity;
     QElapsedTimer mouse_pan_move_elapsed_timer;

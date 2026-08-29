@@ -119,25 +119,40 @@ bool isFiniteCoordinate(const CoordinateWGS84 &coordinate)
     return std::isfinite(coordinate.longitude_deg) && std::isfinite(coordinate.latitude_deg);
 }
 
-qreal nodeSizeScale(int node_size_percent)
-{
-    return qBound<qreal>(0.5, node_size_percent / 100.0, 2.5);
-}
-
 qreal baseMarkerSizeForZoom(int zoom)
 {
     return qBound<qreal>(10.0, 10.0 + (zoom - 16) * 10.0, 40.0);
 }
 
-qreal markerSizeForZoom(int zoom, int node_size_percent)
+qreal markerSizeForZoom(int zoom, int icon_size_percent)
 {
-    return qMax<qreal>(5.0, baseMarkerSizeForZoom(zoom) * nodeSizeScale(node_size_percent));
+    const qreal scale = qBound<qreal>(0.5, icon_size_percent / 100.0, 2.5);
+    return qMax<qreal>(5.0, baseMarkerSizeForZoom(zoom) * scale);
 }
 
-qreal junctionDotDiameterForZoom(int zoom, int node_size_percent)
+qreal nodeDiameterPixels(
+    NetworkSymbologySizeUnit unit, int size_px, double size_m, qreal meters_per_pixel)
 {
-    const qreal base_diameter = qBound<qreal>(8.0, baseMarkerSizeForZoom(zoom) * 0.3, 12.0);
-    return qMax<qreal>(4.0, base_diameter * nodeSizeScale(node_size_percent));
+    if (unit == NetworkSymbologySizeUnit::Meters)
+    {
+        if (!std::isfinite(meters_per_pixel) || meters_per_pixel <= 0.0)
+            return qreal(size_px);
+        return qMax<qreal>(1.0, qreal(size_m) / meters_per_pixel);
+    }
+    return qreal(size_px);
+}
+
+qreal linkThicknessPixels(
+    NetworkSymbologySizeUnit unit, int thickness_px, double thickness_m,
+    qreal meters_per_pixel)
+{
+    if (unit == NetworkSymbologySizeUnit::Meters)
+    {
+        if (!std::isfinite(meters_per_pixel) || meters_per_pixel <= 0.0)
+            return qreal(thickness_px);
+        return qMax<qreal>(0.5, qreal(thickness_m) / meters_per_pixel);
+    }
+    return qreal(thickness_px);
 }
 
 struct NetworkIconAsset
@@ -265,10 +280,10 @@ const NetworkIconAsset *iconAssetForEntity(InfrastructureEntity entity_type)
     return nullptr;
 }
 
-QSizeF markerScreenSize(InfrastructureEntity entity_type, int zoom, int node_size_percent, int icon_size_percent)
+QSizeF markerScreenSize(InfrastructureEntity entity_type, int zoom, qreal node_size_px, int icon_size_percent)
 {
     const NetworkIconAsset *asset = iconAssetForEntity(entity_type);
-    const qreal marker_size = markerSizeForZoom(zoom, asset ? icon_size_percent : node_size_percent);
+    const qreal marker_size = asset ? markerSizeForZoom(zoom, icon_size_percent) : node_size_px;
     if (!asset)
         return QSizeF(marker_size, marker_size);
 
@@ -829,11 +844,15 @@ void MapNetworkOverlayWidget::setSymbology(
         this->symbology_settings.heatmap_palette != bounded_settings.heatmap_palette
         || this->symbology_settings.heatmap_palette_flipped != bounded_settings.heatmap_palette_flipped;
     const bool node_size_changed =
-        this->symbology_settings.node_size_percent != bounded_settings.node_size_percent;
+        this->symbology_settings.node_size_unit != bounded_settings.node_size_unit
+        || this->symbology_settings.node_size_px != bounded_settings.node_size_px
+        || this->symbology_settings.node_size_m != bounded_settings.node_size_m;
     const bool icon_size_changed =
         this->symbology_settings.icon_size_percent != bounded_settings.icon_size_percent;
     const bool link_thickness_changed =
-        this->symbology_settings.link_thickness_px != bounded_settings.link_thickness_px;
+        this->symbology_settings.link_thickness_unit != bounded_settings.link_thickness_unit
+        || this->symbology_settings.link_thickness_px != bounded_settings.link_thickness_px
+        || this->symbology_settings.link_thickness_m != bounded_settings.link_thickness_m;
     const bool flow_direction_visibility_changed =
         this->symbology_settings.show_flow_direction != bounded_settings.show_flow_direction;
     const bool flow_direction_size_changed =
@@ -906,18 +925,26 @@ NetworkOverlayHit MapNetworkOverlayWidget::hitTest(const QPointF &screen_positio
     if (scale <= 0.0)
         return no_hit;
 
+    const qreal meters_per_pixel = GeoWebMercator::metersPerPixel(
+        this->map_model->centerLat(), this->map_model->zoom());
+    const qreal node_diameter_px = nodeDiameterPixels(
+        this->symbology_settings.node_size_unit, this->symbology_settings.node_size_px,
+        this->symbology_settings.node_size_m, meters_per_pixel);
     const QPointF world_position = geometryWorldPosition(screen_position);
     const NetworkOverlayHit marker_hit = nearestMarkerHit(
         world_position.x(), world_position.y(),
-        markerSizeForZoom(this->map_model->zoom(),
-            this->symbology_settings.node_size_percent) / (2.0 * scale),
+        node_diameter_px / (2.0 * scale),
         markerSizeForZoom(this->map_model->zoom(),
             this->symbology_settings.icon_size_percent) / (2.0 * scale));
     if (marker_hit.isValid())
         return marker_hit;
 
+    const qreal link_thickness_px = linkThicknessPixels(
+        this->symbology_settings.link_thickness_unit,
+        this->symbology_settings.link_thickness_px,
+        this->symbology_settings.link_thickness_m, meters_per_pixel);
     const qreal link_hit_distance = qMax(
-        LinkHitDistance, this->symbology_settings.link_thickness_px / 2.0 + 3.0) / scale;
+        LinkHitDistance, link_thickness_px / 2.0 + 3.0) / scale;
     const NetworkOverlayHit device_hit = nearestSegmentHit(
         world_position.x(), world_position.y(), link_hit_distance, HitCollection::DeviceSegments);
     if (device_hit.isValid())
@@ -1328,9 +1355,13 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
         std::shared_ptr<RenderSymbology> symbology =
             std::make_shared<RenderSymbology>(*this->render_symbology);
         symbology->revision = ++this->symbology_revision;
-        symbology->node_size_percent = this->symbology_settings.node_size_percent;
+        symbology->node_size_unit = this->symbology_settings.node_size_unit;
+        symbology->node_size_px = this->symbology_settings.node_size_px;
+        symbology->node_size_m = this->symbology_settings.node_size_m;
         symbology->icon_size_percent = this->symbology_settings.icon_size_percent;
-        symbology->link_width = qreal(this->symbology_settings.link_thickness_px);
+        symbology->link_thickness_unit = this->symbology_settings.link_thickness_unit;
+        symbology->link_thickness_px = this->symbology_settings.link_thickness_px;
+        symbology->link_thickness_m = this->symbology_settings.link_thickness_m;
         symbology->show_flow_direction = this->symbology_settings.show_flow_direction;
         symbology->flow_direction_size_px = qreal(this->symbology_settings.flow_direction_size_px);
         symbology->heatmap_radius_unit = this->symbology_settings.heatmap_radius_unit;
@@ -1412,9 +1443,13 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
         symbology->visual_heatmap = settings.visual_heatmap;
         symbology->heatmap_palette = settings.heatmap_palette;
         symbology->heatmap_palette_flipped = settings.heatmap_palette_flipped;
-        symbology->node_size_percent = settings.node_size_percent;
+        symbology->node_size_unit = settings.node_size_unit;
+        symbology->node_size_px = settings.node_size_px;
+        symbology->node_size_m = settings.node_size_m;
         symbology->icon_size_percent = settings.icon_size_percent;
-        symbology->link_width = qreal(settings.link_thickness_px);
+        symbology->link_thickness_unit = settings.link_thickness_unit;
+        symbology->link_thickness_px = settings.link_thickness_px;
+        symbology->link_thickness_m = settings.link_thickness_m;
         symbology->show_flow_direction = settings.show_flow_direction;
         symbology->flow_direction_size_px = qreal(settings.flow_direction_size_px);
         if (settings.show_flow_direction)
@@ -1647,6 +1682,8 @@ MapNetworkOverlayWidget::RenderRequest MapNetworkOverlayWidget::createRenderRequ
     request.geometry_revision = this->geometry_revision;
     request.symbology_revision = this->render_symbology->revision;
     request.zoom = this->map_model->zoom();
+    request.meters_per_pixel = GeoWebMercator::metersPerPixel(
+        this->map_model->centerLat(), request.zoom);
     request.device_pixel_ratio = qMax<qreal>(1.0, devicePixelRatioF());
     request.geometry = this->render_geometry;
     request.symbology = this->render_symbology;
@@ -1664,10 +1701,16 @@ MapNetworkOverlayWidget::RenderRequest MapNetworkOverlayWidget::createRenderRequ
     request.coverage_world_bounds = MapRenderCacheMath::centeredWorldRect(
         visibleReferenceWorldCenter(), cache_size, scale);
 
+    const qreal node_diameter_px = nodeDiameterPixels(
+        request.symbology->node_size_unit, request.symbology->node_size_px,
+        request.symbology->node_size_m, request.meters_per_pixel);
+    const qreal link_thickness_px = linkThicknessPixels(
+        request.symbology->link_thickness_unit, request.symbology->link_thickness_px,
+        request.symbology->link_thickness_m, request.meters_per_pixel);
     const qreal render_half_width = qMax(
-        qMax(markerSizeForZoom(request.zoom, request.symbology->node_size_percent) / 2.0,
+        qMax(node_diameter_px / 2.0,
              markerSizeForZoom(request.zoom, request.symbology->icon_size_percent) / 2.0),
-        request.symbology->link_width / 2.0);
+        link_thickness_px / 2.0);
     qreal heatmap_padding = 0.0;
     if (!request.symbology->heatmap_fractions.isEmpty())
     {
@@ -1952,7 +1995,13 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
     std::vector<BandContent> band_contents(bands.size());
     std::vector<FlowDirectionArrow> flow_direction_arrows;
     const int band_count = int(bands.size());
-    const qreal link_padding = request.symbology->link_width / 2.0 + NetworkImagePadding;
+    const qreal node_diameter_px = nodeDiameterPixels(
+        request.symbology->node_size_unit, request.symbology->node_size_px,
+        request.symbology->node_size_m, request.meters_per_pixel);
+    const qreal link_width_px = linkThicknessPixels(
+        request.symbology->link_thickness_unit, request.symbology->link_thickness_px,
+        request.symbology->link_thickness_m, request.meters_per_pixel);
+    const qreal link_padding = link_width_px / 2.0 + NetworkImagePadding;
     const std::function<int(qreal)> band_for_logical_y =
         [band_count, logical_height](qreal logical_y)
     {
@@ -2096,7 +2145,7 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
         const RenderGeometry::Marker &marker = request.geometry->markers.at(marker_index);
         const QPointF &world_position = marker.world_position;
         const QSizeF marker_size = markerScreenSize(
-            marker.entity_type, request.zoom, request.symbology->node_size_percent,
+            marker.entity_type, request.zoom, node_diameter_px,
             request.symbology->icon_size_percent);
         const qreal marker_padding_x = marker_size.width() / 2.0 + NetworkImagePadding;
         const qreal marker_padding_y = marker_size.height() / 2.0 + NetworkImagePadding;
@@ -2132,7 +2181,8 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
 
     result.image = MapRetainedVectorRenderer::renderHorizontalBands(
         request.logical_size, request.device_pixel_ratio, bands, request.cancelled,
-        [&request, &band_contents, &flow_direction_arrows, scale, image_left, image_top](
+        [&request, &band_contents, &flow_direction_arrows, scale, image_left, image_top,
+         node_diameter_px, link_width_px](
             int band_index,
             const MapRetainedVectorRenderer::HorizontalBand &band,
             MapVectorDocument &document) -> bool
@@ -2194,8 +2244,7 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
                 path.lineTo(tip);
             }
 
-            const qreal junction_radius = junctionDotDiameterForZoom(
-                request.zoom, request.symbology->node_size_percent) / 2.0;
+            const qreal junction_radius = node_diameter_px / 2.0;
             int processed_markers = 0;
             for (int marker_index : content.marker_indices)
             {
@@ -2243,7 +2292,7 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
                  iterator != link_paths.end(); ++iterator)
             {
                 QPen pen(QColor::fromRgb(iterator.key()));
-                pen.setWidthF(request.symbology->link_width);
+                pen.setWidthF(link_width_px);
                 pen.setCapStyle(Qt::RoundCap);
                 pen.setJoinStyle(Qt::RoundJoin);
                 document.addStroke(std::move(iterator.value()), pen);
@@ -2494,9 +2543,12 @@ void MapNetworkOverlayWidget::paintEntityHighlight(
             selected_path.lineTo(end);
         }
 
-        const qreal base_width = this->render_symbology
-            ? this->render_symbology->link_width
-            : qreal(this->symbology_settings.link_thickness_px);
+        const qreal meters_per_pixel = GeoWebMercator::metersPerPixel(
+            this->map_model->centerLat(), this->map_model->zoom());
+        const qreal base_width = linkThicknessPixels(
+            this->symbology_settings.link_thickness_unit,
+            this->symbology_settings.link_thickness_px,
+            this->symbology_settings.link_thickness_m, meters_per_pixel);
         QPen selected_pen(color);
         selected_pen.setWidthF(qMax<qreal>(3.0, base_width + (outer ? 6.0 : 2.0)));
         selected_pen.setCapStyle(Qt::RoundCap);
@@ -2520,8 +2572,11 @@ void MapNetworkOverlayWidget::paintEntityHighlight(
     const NetworkIconAsset *asset = iconAssetForEntity(marker.entity_type);
     if (!asset)
     {
-        const qreal radius = junctionDotDiameterForZoom(
-            this->map_model->zoom(), this->symbology_settings.node_size_percent) / 2.0;
+        const qreal meters_per_pixel = GeoWebMercator::metersPerPixel(
+            this->map_model->centerLat(), this->map_model->zoom());
+        const qreal radius = nodeDiameterPixels(
+            this->symbology_settings.node_size_unit, this->symbology_settings.node_size_px,
+            this->symbology_settings.node_size_m, meters_per_pixel) / 2.0;
         painter.setPen(Qt::NoPen);
         painter.setBrush(color);
         const qreal highlight_radius = radius + (outer ? 5.0 : 2.0);

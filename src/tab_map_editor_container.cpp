@@ -643,16 +643,15 @@ void MapEditorContainer::applyDesktopRhiEditorSymbology()
         this->hydraulic_data->networkRenderSnapshot();
 
     MapRhiSymbology symbology;
-    const qreal base_node_diameter = qBound<qreal>(
-        8.0,
-        networkSymbologyBaseMarkerSizeForZoom(this->map_model->zoom()) * 0.3,
-        12.0);
-    symbology.node_size_percent = qBound(
-        50, qRound(1000.0 / base_node_diameter), 250);
+    symbology.node_size_unit = NetworkSymbologySizeUnit::Pixels;
+    symbology.node_size_px = 10;
+    symbology.node_size_m = NetworkSymbologyDefaultNodeSizeM;
     symbology.icon_size_percent =
         this->map_canvas->mapCanvasEntities()->iconSizePercent();
     symbology.show_icons = this->map_model->viewMode() == MapViewMode::ThreeD;
-    symbology.link_thickness_px = 3;
+    symbology.link_thickness_unit = NetworkSymbologySizeUnit::Pixels;
+    symbology.link_thickness_px = NetworkSymbologyDefaultLinkThicknessPx;
+    symbology.link_thickness_m = NetworkSymbologyDefaultLinkThicknessM;
     symbology.show_flow_direction = false;
     symbology.visual_heatmap = VisualHeatmap::None;
 

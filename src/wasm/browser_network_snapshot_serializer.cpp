@@ -358,13 +358,17 @@ QByteArray BrowserNetworkSnapshotSerializer::serializeSymbology(
 
     QJsonObject root;
     root.insert(QStringLiteral("nodeVisual"), static_cast<int>(bounded_settings.visual_node));
-    root.insert(QStringLiteral("nodeSizePercent"), bounded_settings.node_size_percent);
+    root.insert(QStringLiteral("nodeSizeUnit"), static_cast<int>(bounded_settings.node_size_unit));
+    root.insert(QStringLiteral("nodeSizePixels"), bounded_settings.node_size_px);
+    root.insert(QStringLiteral("nodeSizeMeters"), bounded_settings.node_size_m);
     root.insert(QStringLiteral("iconSizePercent"), bounded_settings.icon_size_percent);
     root.insert(QStringLiteral("nodeMinimum"), ranges.node_minimum);
     root.insert(QStringLiteral("nodeMaximum"), ranges.node_maximum);
     root.insert(QStringLiteral("nodeValues"), nodeValuesToJson(snapshot, node_values));
     root.insert(QStringLiteral("linkVisual"), static_cast<int>(bounded_settings.visual_link));
+    root.insert(QStringLiteral("linkThicknessUnit"), static_cast<int>(bounded_settings.link_thickness_unit));
     root.insert(QStringLiteral("linkThicknessPixels"), bounded_settings.link_thickness_px);
+    root.insert(QStringLiteral("linkThicknessMeters"), bounded_settings.link_thickness_m);
     root.insert(QStringLiteral("linkMinimum"), ranges.link_minimum);
     root.insert(QStringLiteral("linkMaximum"), ranges.link_maximum);
     root.insert(QStringLiteral("linkValues"), linkValuesToJson(snapshot, link_values));

@@ -23,7 +23,21 @@ void main()
     vec2 viewport = max(camera.viewport_and_sizes.xy, vec2(1.0));
     vec2 translation_ndc = camera.network_translation.xy * 2.0 / viewport;
     clip_position.xy += translation_ndc * clip_position.w;
-    vec2 offset_ndc = corner * (camera.viewport_and_sizes.w + size_adjust_px) * 2.0 / viewport;
+
+    float configured_radius = camera.viewport_and_sizes.w;
+    float radius_px = max(configured_radius, 0.0);
+    if (configured_radius < 0.0)
+    {
+        float radius_world = -configured_radius;
+        vec4 edge_clip = camera.view_projection
+            * vec4(center_position + vec3(radius_world, 0.0, 0.0), 1.0);
+        edge_clip.xy += translation_ndc * edge_clip.w;
+        vec2 center_ndc = clip_position.xy / clip_position.w;
+        vec2 edge_ndc = edge_clip.xy / edge_clip.w;
+        radius_px = length((edge_ndc - center_ndc) * viewport * 0.5);
+    }
+
+    vec2 offset_ndc = corner * max(radius_px + size_adjust_px, 0.0) * 2.0 / viewport;
     clip_position.xy += offset_ndc * clip_position.w;
 
     gl_Position = clip_position;

@@ -1345,11 +1345,10 @@ void MapWidget::beginView3dOrbit(
     this->view_3d_orbit_last_position = position;
 #else
     this->view_3d_orbit_restore_global = global_position;
-    this->view_3d_orbit_anchor_global = mapToGlobal(rect().center());
-    this->view_3d_orbit_ignore_next_mouse_move = true;
+    this->view_3d_orbit_last_global_position = global_position;
+    this->view_3d_orbit_warp_pending = false;
     grabMouse(QCursor(Qt::BlankCursor));
     this->view_3d_orbit_mouse_grabbed = true;
-    QCursor::setPos(this->view_3d_orbit_anchor_global);
 #endif
 }
 
@@ -1368,7 +1367,7 @@ void MapWidget::endView3dOrbit(bool restore_cursor_position)
     this->view_3d_orbit_input = View3dOrbitInput::None;
     this->m_model->endView3dRotateInteraction();
 #ifndef Q_OS_WASM
-    this->view_3d_orbit_ignore_next_mouse_move = false;
+    this->view_3d_orbit_warp_pending = false;
     if (this->view_3d_orbit_mouse_grabbed)
     {
         releaseMouse();
@@ -1539,20 +1538,72 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
 
 #ifndef Q_OS_WASM
         const QPoint global_position = event->globalPosition().toPoint();
-        if (this->view_3d_orbit_ignore_next_mouse_move)
+
+        if (this->view_3d_orbit_warp_pending)
         {
-            this->view_3d_orbit_ignore_next_mouse_move = false;
-            if (global_position != this->view_3d_orbit_anchor_global)
-                QCursor::setPos(this->view_3d_orbit_anchor_global);
-            event->accept();
-            return true;
+            const bool reached_warp_target =
+                (global_position - this->view_3d_orbit_warp_target_global)
+                    .manhattanLength() <= 2;
+            if (reached_warp_target)
+            {
+                this->view_3d_orbit_warp_pending = false;
+                this->view_3d_orbit_last_global_position = global_position;
+                event->accept();
+                return true;
+            }
+
+            const int distance_to_warp_target =
+                (global_position - this->view_3d_orbit_warp_target_global)
+                    .manhattanLength();
+            const int distance_to_warp_source =
+                (global_position - this->view_3d_orbit_warp_source_global)
+                    .manhattanLength();
+            if (distance_to_warp_source < distance_to_warp_target)
+            {
+                // This event still belongs to the pre-warp edge position.
+                event->accept();
+                return true;
+            }
+
+            // The platform may coalesce away the exact warp-target event. A
+            // subsequent event nearer the target is genuine post-warp motion.
+            this->view_3d_orbit_warp_pending = false;
+            this->view_3d_orbit_last_global_position =
+                this->view_3d_orbit_warp_target_global;
         }
 
-        const QPoint delta = global_position - this->view_3d_orbit_anchor_global;
+        const QPoint delta =
+            global_position - this->view_3d_orbit_last_global_position;
+        this->view_3d_orbit_last_global_position = global_position;
         if (!delta.isNull())
-        {
             this->m_model->orbitView3dByPointerDelta(delta, true);
-            QCursor::setPos(this->view_3d_orbit_anchor_global);
+
+        // Do not recenter on every mouse event. Apart from being unnecessary,
+        // that creates a stream of synthetic motion events whose ordering is
+        // platform-dependent. Recenter only when the hidden cursor is actually
+        // about to hit a physical screen edge.
+        constexpr int OrbitCursorEdgeMarginPixels = 24;
+        QScreen *screen = QApplication::screenAt(global_position);
+        if (screen != nullptr)
+        {
+            const QRect screen_geometry = screen->geometry();
+            const bool near_screen_edge =
+                global_position.x() <= screen_geometry.left() + OrbitCursorEdgeMarginPixels
+                || global_position.x() >= screen_geometry.right() - OrbitCursorEdgeMarginPixels
+                || global_position.y() <= screen_geometry.top() + OrbitCursorEdgeMarginPixels
+                || global_position.y() >= screen_geometry.bottom() - OrbitCursorEdgeMarginPixels;
+            if (near_screen_edge)
+            {
+                const QPoint warp_target_global = mapToGlobal(rect().center());
+                if (warp_target_global != global_position)
+                {
+                    this->view_3d_orbit_warp_pending = true;
+                    this->view_3d_orbit_warp_source_global = global_position;
+                    this->view_3d_orbit_warp_target_global = warp_target_global;
+                    this->view_3d_orbit_last_global_position = warp_target_global;
+                    QCursor::setPos(warp_target_global);
+                }
+            }
         }
 #else
         const QPoint delta = position - this->view_3d_orbit_last_position;

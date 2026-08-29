@@ -125,9 +125,13 @@ private:
         VisualHeatmap visual_heatmap = VisualHeatmap::None;
         NetworkSymbologyPalette heatmap_palette = NetworkSymbologyPalette::Viridis;
         bool heatmap_palette_flipped = false;
-        int node_size_percent = 100;
+        NetworkSymbologySizeUnit node_size_unit = NetworkSymbologySizeUnit::Pixels;
+        int node_size_px = NetworkSymbologyDefaultNodeSizePx;
+        double node_size_m = NetworkSymbologyDefaultNodeSizeM;
         int icon_size_percent = 100;
-        qreal link_width = 3.0;
+        NetworkSymbologySizeUnit link_thickness_unit = NetworkSymbologySizeUnit::Pixels;
+        int link_thickness_px = NetworkSymbologyDefaultLinkThicknessPx;
+        double link_thickness_m = NetworkSymbologyDefaultLinkThicknessM;
         bool show_flow_direction = true;
         qreal flow_direction_size_px = 10.0;
         QHash<quint32, qint8> flow_directions;
@@ -146,6 +150,7 @@ private:
         quint64 geometry_revision = 0;
         quint64 symbology_revision = 0;
         int zoom = -1;
+        qreal meters_per_pixel = 1.0;
         qreal device_pixel_ratio = 1.0;
         QSize logical_size;
         QRectF coverage_world_bounds;

@@ -136,14 +136,18 @@
         backgroundOpacity: 0,
         ownerId: 0,
         nodeVisual: 0,
-        nodeSizePercent: 100,
+        nodeSizeUnit: 1,
+        nodeSizePixels: 12,
+        nodeSizeMeters: 1.0,
         iconSizePercent: 100,
         nodeMinimum: 0,
         nodeMaximum: 0,
         nodeValues: new Map(),
         nodeColors: new Map(),
         linkVisual: 0,
+        linkThicknessUnit: 1,
         linkThicknessPixels: 3,
+        linkThicknessMeters: 0.3,
         linkMinimum: 0,
         linkMaximum: 0,
         linkValues: new Map(),
@@ -222,10 +226,6 @@
         return Math.pow(2, zoom - REFERENCE_ZOOM);
     }
 
-    function nodeSizeScale() {
-        return Math.max(0.5, Math.min(2.5, state.nodeSizePercent / 100));
-    }
-
     function iconSizeScale() {
         return Math.max(0.5, Math.min(2.5, state.iconSizePercent / 100));
     }
@@ -234,31 +234,42 @@
         return Math.max(10, Math.min(40, 10 + (zoom - 16) * 10));
     }
 
-    function nodeMarkerSizeForZoom(zoom) {
-        return Math.max(5, baseMarkerSizeForZoom(zoom) * nodeSizeScale());
-    }
-
     function iconMarkerSizeForZoom(zoom) {
         return Math.max(5, baseMarkerSizeForZoom(zoom) * iconSizeScale());
     }
 
-    function maximumMarkerSizeForZoom(zoom) {
-        return Math.max(nodeMarkerSizeForZoom(zoom), iconMarkerSizeForZoom(zoom));
+    function metersToCssPixels(meters, mapView) {
+        if (!mapView)
+            return 0;
+        const centerY = (state.geometryMinimumY + state.geometryMaximumY) / 2;
+        const centerLatitude = worldPixelToLatitude(centerY);
+        const metersPerPixel = Math.max(0.000001, metersPerReferencePixel(centerLatitude));
+        return Math.max(0, meters / metersPerPixel) * scaleForZoom(mapView.zoom);
     }
 
-    function junctionDotDiameterForZoom(zoom) {
-        const baseDiameter = Math.max(
-            8, Math.min(12, baseMarkerSizeForZoom(zoom) * 0.3));
-        return Math.max(4, baseDiameter * nodeSizeScale());
+    function nodeDiameterPixels(mapView) {
+        return state.nodeSizeUnit === 0
+            ? Math.max(1, metersToCssPixels(state.nodeSizeMeters, mapView))
+            : state.nodeSizePixels;
     }
 
-    function linkHitDistance() {
-        return Math.max(LINK_HIT_DISTANCE, state.linkThicknessPixels / 2 + 3);
+    function linkThicknessPixelsForView(mapView) {
+        return state.linkThicknessUnit === 0
+            ? Math.max(0.5, metersToCssPixels(state.linkThicknessMeters, mapView))
+            : state.linkThicknessPixels;
     }
 
-    function markerScreenBounds(entityType, zoom) {
+    function maximumMarkerSize(mapView) {
+        return Math.max(nodeDiameterPixels(mapView), iconMarkerSizeForZoom(mapView.zoom));
+    }
+
+    function linkHitDistance(mapView) {
+        return Math.max(LINK_HIT_DISTANCE, linkThicknessPixelsForView(mapView) / 2 + 3);
+    }
+
+    function markerScreenBounds(entityType, mapView) {
         const markerSize = entityType === ENTITY_JUNCTION
-            ? nodeMarkerSizeForZoom(zoom) : iconMarkerSizeForZoom(zoom);
+            ? nodeDiameterPixels(mapView) : iconMarkerSizeForZoom(mapView.zoom);
         if (entityType === ENTITY_JUNCTION) {
             return {
                 width: markerSize,
@@ -847,6 +858,8 @@
         try {
             synchronizeNetworkRenderer(mapView);
             const transform = worldTransform(mapView);
+            const nodeDiameter = nodeDiameterPixels(mapView);
+            const linkThickness = linkThicknessPixelsForView(mapView);
             const rendered = state.networkRenderer.render({
                 width: mapView.width,
                 height: mapView.height,
@@ -857,8 +870,8 @@
                 scale: transform.scale,
                 batches: {
                     base: {
-                        segmentWidth: state.linkThicknessPixels,
-                        discScale: junctionDotDiameterForZoom(mapView.zoom) / 2,
+                        segmentWidth: linkThickness,
+                        discScale: nodeDiameter / 2,
                         spriteScale: iconMarkerSizeForZoom(mapView.zoom)
                     },
                     flowDirection: {
@@ -866,13 +879,13 @@
                         arrowWidth: Math.max(1, state.flowDirectionSizePixels * 0.2)
                     },
                     selectionOuter: {
-                        segmentWidth: Math.max(7, state.linkThicknessPixels + 6),
-                        discScale: junctionDotDiameterForZoom(mapView.zoom) / 2 + 5,
+                        segmentWidth: Math.max(7, linkThickness + 6),
+                        discScale: nodeDiameter / 2 + 5,
                         spriteScale: iconMarkerSizeForZoom(mapView.zoom) + 8
                     },
                     overlay: {
-                        segmentWidth: Math.max(3, state.linkThicknessPixels + 2),
-                        discScale: junctionDotDiameterForZoom(mapView.zoom) / 2 + 2,
+                        segmentWidth: Math.max(3, linkThickness + 2),
+                        discScale: nodeDiameter / 2 + 2,
                         spriteScale: iconMarkerSizeForZoom(mapView.zoom)
                     }
                 }
@@ -2171,8 +2184,8 @@
         return result;
     }
 
-    function nearestMarkerHit(pointX, pointY, scale, zoom) {
-        const worldTolerance = maximumMarkerSizeForZoom(zoom) / (2 * scale);
+    function nearestMarkerHit(pointX, pointY, scale, mapView) {
+        const worldTolerance = maximumMarkerSize(mapView) / (2 * scale);
         const candidates = candidateIndices(pointX, pointY, worldTolerance, "markers");
         let bestHit = null;
         let bestDistanceSquared = Number.POSITIVE_INFINITY;
@@ -2181,7 +2194,7 @@
             const marker = state.markers[index];
             const deltaXScreen = (pointX - marker.x) * scale;
             const deltaYScreen = (pointY - marker.y) * scale;
-            const bounds = markerScreenBounds(marker.entityType, zoom);
+            const bounds = markerScreenBounds(marker.entityType, mapView);
             const halfWidth = bounds.width / 2;
             const halfHeight = bounds.height / 2;
             if (Math.abs(deltaXScreen) > halfWidth || Math.abs(deltaYScreen) > halfHeight)
@@ -2204,8 +2217,8 @@
         return bestHit;
     }
 
-    function nearestSegmentHit(pointX, pointY, scale, collectionName) {
-        const worldTolerance = linkHitDistance() / scale;
+    function nearestSegmentHit(pointX, pointY, scale, collectionName, mapView) {
+        const worldTolerance = linkHitDistance(mapView) / scale;
         const candidates = candidateIndices(pointX, pointY, worldTolerance, collectionName);
         const segments = collectionName === "deviceSegments"
             ? state.deviceSegments : state.pipeSegments;
@@ -2240,15 +2253,15 @@
         const transform = worldTransform(mapView);
         const pointX = state.geometryOriginX + (screenX - transform.translateX) / transform.scale;
         const pointY = state.geometryOriginY + (screenY - transform.translateY) / transform.scale;
-        const markerHit = nearestMarkerHit(pointX, pointY, transform.scale, mapView.zoom);
+        const markerHit = nearestMarkerHit(pointX, pointY, transform.scale, mapView);
         if (markerHit)
             return markerHit;
 
-        const deviceHit = nearestSegmentHit(pointX, pointY, transform.scale, "deviceSegments");
+        const deviceHit = nearestSegmentHit(pointX, pointY, transform.scale, "deviceSegments", mapView);
         if (deviceHit)
             return deviceHit;
 
-        return nearestSegmentHit(pointX, pointY, transform.scale, "pipeSegments");
+        return nearestSegmentHit(pointX, pointY, transform.scale, "pipeSegments", mapView);
     }
 
     function restoreCursorElement() {
@@ -2389,16 +2402,22 @@
             throw new TypeError("Invalid AOWIS browser network symbology");
 
         const nodeVisual = Number(symbology.nodeVisual) | 0;
-        const nodeSizePercent = Math.max(
-            50, Math.min(250, Number(symbology.nodeSizePercent) || 100));
+        const nodeSizeUnit = Number(symbology.nodeSizeUnit) === 0 ? 0 : 1;
+        const nodeSizePixels = Math.max(
+            4, Math.min(64, Number(symbology.nodeSizePixels) || 12));
+        const nodeSizeMeters = Math.max(
+            0.1, Math.min(20, Number(symbology.nodeSizeMeters) || 1.0));
         const iconSizePercent = Math.max(
             50, Math.min(250, Number(symbology.iconSizePercent) || 100));
         const nodeMinimum = Number(symbology.nodeMinimum);
         const nodeMaximum = Number(symbology.nodeMaximum);
         const nodeValues = symbologyValues(symbology.nodeValues);
         const linkVisual = Number(symbology.linkVisual) | 0;
+        const linkThicknessUnit = Number(symbology.linkThicknessUnit) === 0 ? 0 : 1;
         const linkThicknessPixels = Math.max(
-            1, Math.min(12, Number(symbology.linkThicknessPixels) || 3));
+            1, Math.min(24, Number(symbology.linkThicknessPixels) || 3));
+        const linkThicknessMeters = Math.max(
+            0.01, Math.min(5, Number(symbology.linkThicknessMeters) || 0.3));
         const linkMinimum = Number(symbology.linkMinimum);
         const linkMaximum = Number(symbology.linkMaximum);
         const linkValues = symbologyValues(symbology.linkValues);
@@ -2438,9 +2457,13 @@
         const networkColorChanged = nodeSymbologyChanged
             || linkSymbologyChanged;
         const networkChanged = networkColorChanged
-            || state.nodeSizePercent !== nodeSizePercent
+            || state.nodeSizeUnit !== nodeSizeUnit
+            || state.nodeSizePixels !== nodeSizePixels
+            || state.nodeSizeMeters !== nodeSizeMeters
             || state.iconSizePercent !== iconSizePercent
-            || state.linkThicknessPixels !== linkThicknessPixels;
+            || state.linkThicknessUnit !== linkThicknessUnit
+            || state.linkThicknessPixels !== linkThicknessPixels
+            || state.linkThicknessMeters !== linkThicknessMeters;
         const heatmapChanged = state.heatmapVisual !== heatmapVisual
             || state.heatmapMinimum !== heatmapMinimum
             || state.heatmapMaximum !== heatmapMaximum
@@ -2452,7 +2475,9 @@
         const heatmapOpacityChanged = state.heatmapOpacity !== heatmapOpacity;
 
         state.nodeVisual = nodeVisual;
-        state.nodeSizePercent = nodeSizePercent;
+        state.nodeSizeUnit = nodeSizeUnit;
+        state.nodeSizePixels = nodeSizePixels;
+        state.nodeSizeMeters = nodeSizeMeters;
         state.iconSizePercent = iconSizePercent;
         state.nodeMinimum = nodeMinimum;
         state.nodeMaximum = nodeMaximum;
@@ -2460,7 +2485,9 @@
         if (nodeSymbologyChanged)
             state.nodeColors = buildSymbologyColorMap(nodeVisual, nodeValues, nodeMinimum, nodeMaximum);
         state.linkVisual = linkVisual;
+        state.linkThicknessUnit = linkThicknessUnit;
         state.linkThicknessPixels = linkThicknessPixels;
+        state.linkThicknessMeters = linkThicknessMeters;
         state.linkMinimum = linkMinimum;
         state.linkMaximum = linkMaximum;
         state.linkValues = linkValues;
@@ -2573,14 +2600,18 @@
         state.globalPipeSegments = [];
         state.spatialCells.clear();
         state.nodeVisual = 0;
-        state.nodeSizePercent = 100;
+        state.nodeSizeUnit = 1;
+        state.nodeSizePixels = 12;
+        state.nodeSizeMeters = 1.0;
         state.iconSizePercent = 100;
         state.nodeMinimum = 0;
         state.nodeMaximum = 0;
         state.nodeValues = new Map();
         state.nodeColors = new Map();
         state.linkVisual = 0;
+        state.linkThicknessUnit = 1;
         state.linkThicknessPixels = 3;
+        state.linkThicknessMeters = 0.3;
         state.linkMinimum = 0;
         state.linkMaximum = 0;
         state.linkValues = new Map();

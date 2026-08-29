@@ -253,7 +253,9 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
     const bool node_colors_changed = this->symbology.node_colors != symbology.node_colors;
     const bool icon_visibility_changed = this->symbology.show_icons != symbology.show_icons;
     const bool link_thickness_changed =
-        this->symbology.link_thickness_px != symbology.link_thickness_px;
+        this->symbology.link_thickness_unit != symbology.link_thickness_unit
+        || this->symbology.link_thickness_px != symbology.link_thickness_px
+        || this->symbology.link_thickness_m != symbology.link_thickness_m;
     const bool icon_changed =
         this->symbology.icon_size_percent != symbology.icon_size_percent
         || this->symbology.show_icons != symbology.show_icons
@@ -270,7 +272,9 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
         || link_thickness_changed
         || link_colors_changed;
     const bool junction_changed =
-        this->symbology.node_size_percent != symbology.node_size_percent
+        this->symbology.node_size_unit != symbology.node_size_unit
+        || this->symbology.node_size_px != symbology.node_size_px
+        || this->symbology.node_size_m != symbology.node_size_m
         || node_colors_changed;
 
     this->symbology = symbology;
@@ -484,14 +488,44 @@ bool MapRhiScene::hasGeometry() const
     return !this->link_vertices.isEmpty() || !this->node_vertices.isEmpty();
 }
 
-int MapRhiScene::nodeSizePercent() const
+NetworkSymbologySizeUnit MapRhiScene::nodeSizeUnit() const
 {
-    return this->symbology.node_size_percent;
+    return this->symbology.node_size_unit;
+}
+
+int MapRhiScene::nodeSizePx() const
+{
+    return this->symbology.node_size_px;
+}
+
+double MapRhiScene::nodeSizeM() const
+{
+    return this->symbology.node_size_m;
+}
+
+NetworkSymbologySizeUnit MapRhiScene::linkThicknessUnit() const
+{
+    return this->symbology.link_thickness_unit;
 }
 
 int MapRhiScene::linkThicknessPx() const
 {
     return this->symbology.link_thickness_px;
+}
+
+double MapRhiScene::linkThicknessM() const
+{
+    return this->symbology.link_thickness_m;
+}
+
+double MapRhiScene::worldUnitsPerMeter() const
+{
+    const double meters_per_world_pixel = GeoWebMercator::metersPerPixel(
+        this->reference_latitude_deg, MapRenderCacheMath::ReferenceZoom);
+    if (!std::isfinite(meters_per_world_pixel) || meters_per_world_pixel <= 0.0)
+        return 0.0;
+
+    return 1.0 / meters_per_world_pixel;
 }
 
 float MapRhiScene::elevationToWorldZ(double elevation_m) const
@@ -857,14 +891,13 @@ void MapRhiScene::rebuildJunctionInstances()
     if (!this->use_3d_junction_models || this->junction_markers.isEmpty())
         return;
 
-    const qreal scale = GeoWebMercator::zoomScale(
-        this->view_zoom, MapRenderCacheMath::ReferenceZoom);
-    if (!std::isfinite(scale) || scale <= 0.0)
-        return;
-
-    const qreal sphere_diameter_px = networkSymbologyJunctionDotDiameterForZoom(
-        this->view_zoom, this->symbology.node_size_percent);
-    const float radius_world = float(sphere_diameter_px / (2.0 * scale));
+    float radius_world = 1.0f;
+    if (this->symbology.node_size_unit == NetworkSymbologySizeUnit::Meters)
+    {
+        const double units_per_meter = worldUnitsPerMeter();
+        if (std::isfinite(units_per_meter) && units_per_meter > 0.0)
+            radius_world = float(this->symbology.node_size_m * units_per_meter * 0.5);
+    }
 
     quint32 selected_junction_render_id = 0;
     if (this->selected_entity_type == InfrastructureEntity::Junction
@@ -1058,7 +1091,10 @@ void MapRhiScene::appendFlowDirectionStroke(
         vertex.green = qGreen(color) / 255.0f;
         vertex.blue = qBlue(color) / 255.0f;
         vertex.alpha = qAlpha(color) / 255.0f;
-        vertex.size_adjust_px = half_width_px - base_half_width_px;
+        vertex.size_adjust_px = this->symbology.link_thickness_unit
+                == NetworkSymbologySizeUnit::Meters
+            ? -half_width_px
+            : half_width_px - base_half_width_px;
         this->flow_direction_vertices.append(vertex);
     }
 }
