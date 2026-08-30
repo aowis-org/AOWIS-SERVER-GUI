@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include <QVector3D>
 #include <QtMath>
@@ -251,6 +252,112 @@ void MapModel::setView(double lon, double lat, int zoom_value, const QSize &view
         emit zoomChanged(this->m_zoom);
     if (center_changed)
         emitCenterChanged();
+}
+
+void MapModel::fitViewToBounds(
+    const CoordinateWGS84 &minimum, const CoordinateWGS84 &maximum,
+    const QSize &viewport, double elevation_minimum_m, double elevation_maximum_m,
+    bool allow_continuous_2d_zoom)
+{
+    constexpr double FitMarginFraction = 0.10;
+    constexpr double MinimumWorldExtent = 1.0;
+
+    const QSize safe_viewport = viewport.isValid() ? viewport : QSize(1024, 768);
+    const double available_width = qMax(
+        1.0, double(safe_viewport.width()) * (1.0 - 2.0 * FitMarginFraction));
+    const double available_height = qMax(
+        1.0, double(safe_viewport.height()) * (1.0 - 2.0 * FitMarginFraction));
+
+    const QPointF minimum_world = GeoWebMercator::lonLatToWorldPixel(
+        GeoWebMercator::normalizeLongitude(minimum.longitude_deg),
+        minimum.latitude_deg,
+        MapRenderCacheMath::ReferenceZoom);
+    const QPointF maximum_world_raw = GeoWebMercator::lonLatToWorldPixel(
+        GeoWebMercator::normalizeLongitude(maximum.longitude_deg),
+        maximum.latitude_deg,
+        MapRenderCacheMath::ReferenceZoom);
+    const double maximum_world_x = GeoWebMercator::nearestWrappedWorldPixelX(
+        maximum_world_raw.x(), minimum_world.x(), MapRenderCacheMath::ReferenceZoom);
+
+    const double left_world = qMin(minimum_world.x(), maximum_world_x);
+    const double right_world = qMax(minimum_world.x(), maximum_world_x);
+    const double top_world = qMin(minimum_world.y(), maximum_world_raw.y());
+    const double bottom_world = qMax(minimum_world.y(), maximum_world_raw.y());
+    const double width_world = right_world - left_world;
+    const double height_world = bottom_world - top_world;
+
+    const QPointF center_world(
+        (left_world + right_world) * 0.5,
+        (top_world + bottom_world) * 0.5);
+    const CoordinateWGS84 center = GeoWebMercator::worldPixelToLonLat(
+        center_world.x(), center_world.y(), MapRenderCacheMath::ReferenceZoom);
+
+    double fit_scale = std::numeric_limits<double>::infinity();
+    if (width_world > 1e-9)
+        fit_scale = qMin(fit_scale, available_width / width_world);
+    if (height_world > 1e-9)
+        fit_scale = qMin(fit_scale, available_height / height_world);
+    if (!std::isfinite(fit_scale) || fit_scale <= 0.0)
+        fit_scale = GeoWebMercator::zoomScale(MaxZoom, MapRenderCacheMath::ReferenceZoom);
+
+    const double continuous_zoom = qBound(
+        double(MinZoom),
+        double(MapRenderCacheMath::ReferenceZoom) + std::log2(fit_scale),
+        double(MaxZoom));
+    const int tile_zoom = allow_continuous_2d_zoom
+        ? qBound(MinZoom, qRound(continuous_zoom), MaxZoom)
+        : qBound(MinZoom, int(std::floor(continuous_zoom)), MaxZoom);
+
+    setView(center.longitude_deg, center.latitude_deg, tile_zoom, safe_viewport);
+    if (allow_continuous_2d_zoom)
+        setView2dContinuousZoom(continuous_zoom, safe_viewport);
+    else
+        resetView2dContinuousZoom(safe_viewport);
+
+    if (this->m_view_mode != MapViewMode::ThreeD)
+        return;
+
+    const double meters_per_world_pixel = GeoWebMercator::metersPerPixel(
+        center.latitude_deg, MapRenderCacheMath::ReferenceZoom);
+    if (!std::isfinite(meters_per_world_pixel) || meters_per_world_pixel <= 0.0)
+        return;
+
+    const double horizontal_radius_world = 0.5 * std::hypot(
+        qMax(MinimumWorldExtent, width_world),
+        qMax(MinimumWorldExtent, height_world));
+    const double elevation_span_m =
+        std::isfinite(elevation_minimum_m) && std::isfinite(elevation_maximum_m)
+            ? std::abs(elevation_maximum_m - elevation_minimum_m)
+            : 0.0;
+    const double vertical_radius_world = elevation_span_m
+        * this->m_view_3d_vertical_exaggeration / meters_per_world_pixel;
+    const double bounding_radius_world = qMax(
+        MinimumWorldExtent,
+        std::hypot(horizontal_radius_world, vertical_radius_world));
+
+    const double half_vertical_fov_rad = qDegreesToRadians(View3dFieldOfViewDeg / 2.0);
+    const double aspect = qMax(
+        1e-6, double(safe_viewport.width()) / double(qMax(1, safe_viewport.height())));
+    const double usable_vertical_tangent = std::tan(half_vertical_fov_rad)
+        * available_height / double(qMax(1, safe_viewport.height()));
+    const double usable_horizontal_tangent = std::tan(half_vertical_fov_rad)
+        * aspect * available_width / double(qMax(1, safe_viewport.width()));
+    const double limiting_half_angle = qMin(
+        std::atan(usable_vertical_tangent),
+        std::atan(usable_horizontal_tangent));
+    const double safe_half_angle = qMax(qDegreesToRadians(1.0), limiting_half_angle);
+    const double desired_distance_world = bounding_radius_world / std::sin(safe_half_angle);
+
+    const double world_units_per_meter =
+        this->m_view_3d_vertical_exaggeration / meters_per_world_pixel;
+    const double desired_distance_m = qMax(
+        MinView3dCameraDistanceM,
+        desired_distance_world / qMax(1e-12, world_units_per_meter));
+
+    this->m_view_3d_preserve_camera_distance_on_next_native_sync = true;
+    setView3dContinuousCameraDistanceM(desired_distance_m);
+    setView3dCameraDistanceWorld(desired_distance_world);
+    setView3dCameraCollisionLiftWorld(0.0);
 }
 
 void MapModel::setCenter(double lon, double lat, const QSize &viewport)

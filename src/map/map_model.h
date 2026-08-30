@@ -77,6 +77,9 @@ public:
                             double wrap_reference_lon) const;
 
     void setView(double lon, double lat, int zoom, const QSize &viewport = QSize());
+    void fitViewToBounds(const CoordinateWGS84 &minimum, const CoordinateWGS84 &maximum,
+                         const QSize &viewport, double elevation_minimum_m,
+                         double elevation_maximum_m, bool allow_continuous_2d_zoom);
     void setCenter(double lon, double lat, const QSize &viewport = QSize());
     void setZoom(int zoom, const QSize &viewport = QSize());
     void zoomIn(const QSize &viewport = QSize());

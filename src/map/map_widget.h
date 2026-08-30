@@ -41,6 +41,8 @@ public:
     ~MapWidget() override;
 
     MapModel *model() const;
+    void fitViewToBounds(const CoordinateWGS84 &minimum, const CoordinateWGS84 &maximum,
+                         double elevation_minimum_m, double elevation_maximum_m);
     void deleteCachedTiles(int zoom, int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max);
 
     bool handleKeyPressEvent(QKeyEvent *event);

@@ -386,16 +386,24 @@ MainWindow::MainWindow(QWidget *parent)
 
         const CoordinateWGS84 &minimum = this->hydraulic_data->boundingBoxWgs84Minimum();
         const CoordinateWGS84 &maximum = this->hydraulic_data->boundingBoxWgs84Maximum();
-        const double center_latitude = (minimum.latitude_deg + maximum.latitude_deg) / 2.0;
-        const double center_longitude = (minimum.longitude_deg + maximum.longitude_deg) / 2.0;
+        const double elevation_minimum_m = this->hydraulic_data->nodeElevationMMinimum();
+        const double elevation_maximum_m = this->hydraulic_data->nodeElevationMMaximum();
+        const bool movement_sync_was_active = this->syncing_map_movement;
+        this->syncing_map_movement = true;
 
-        if (this->map_model_editor != nullptr)
-            this->map_model_editor->setCenter(center_longitude, center_latitude,
-                                              this->map_edit != nullptr ? this->map_edit->size() : QSize());
+        if (this->map_edit != nullptr)
+        {
+            this->map_edit->fitViewToBounds(
+                minimum, maximum, elevation_minimum_m, elevation_maximum_m);
+        }
 
-        if (this->map_model_monitor != nullptr)
-            this->map_model_monitor->setCenter(center_longitude, center_latitude,
-                                               this->map_mon != nullptr ? this->map_mon->size() : QSize());
+        if (this->map_mon != nullptr)
+        {
+            this->map_mon->fitViewToBounds(
+                minimum, maximum, elevation_minimum_m, elevation_maximum_m);
+        }
+
+        this->syncing_map_movement = movement_sync_was_active;
     });
     connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged, this, [this](bool available)
     {

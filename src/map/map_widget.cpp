@@ -229,6 +229,18 @@ MapModel *MapWidget::model() const
     return this->m_model;
 }
 
+void MapWidget::fitViewToBounds(
+    const CoordinateWGS84 &minimum, const CoordinateWGS84 &maximum,
+    double elevation_minimum_m, double elevation_maximum_m)
+{
+    if (this->m_model == nullptr)
+        return;
+
+    this->m_model->fitViewToBounds(
+        minimum, maximum, size(), elevation_minimum_m, elevation_maximum_m,
+        this->rhi_view_active);
+}
+
 void MapWidget::deleteCachedTiles(int zoom, int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max)
 {
     const int bounded_zoom = qBound(MapModel::MinZoom, zoom, MapModel::MaxZoom);
