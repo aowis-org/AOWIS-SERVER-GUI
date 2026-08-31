@@ -2,9 +2,12 @@
 #define SIMULATION_STATISTICS_DIALOG_H
 
 #include <QDialog>
+#include <QString>
 
 class HydraulicData;
 class QTableWidget;
+class QTabWidget;
+class QTextBrowser;
 class QTreeWidget;
 
 class SimulationStatisticsDialog : public QDialog
@@ -13,16 +16,19 @@ class SimulationStatisticsDialog : public QDialog
 
 public:
     explicit SimulationStatisticsDialog(HydraulicData *hydraulic_data, QWidget *parent = nullptr);
+    void setEpanetLog(const QString &epanet_log);
+    void showEpanetLogTab();
 
 private:
     HydraulicData *hydraulic_data = nullptr;
     QTreeWidget *tree_summary = nullptr;
     QTableWidget *table_timeline = nullptr;
+    QTabWidget *tabs = nullptr;
+    QTextBrowser *text_epanet_log = nullptr;
 
     void refresh();
     void refreshSummary();
     void refreshTimeline();
     void syncCurrentResultSelection(int result_index);
 };
-
 #endif // SIMULATION_STATISTICS_DIALOG_H

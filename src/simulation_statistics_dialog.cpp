@@ -3,15 +3,17 @@
 #include "hydraulic_data.h"
 
 #include <cmath>
-
 #include <QAbstractItemView>
 #include <QFont>
+#include <QFontDatabase>
 #include <QHeaderView>
 #include <QLabel>
 #include <QSignalBlocker>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTableWidgetItem>
+#include <QTextBrowser>
+#include <QTextEdit>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 #include <QVBoxLayout>
@@ -48,7 +50,6 @@ QString formatElapsedTime(quint64 time_elapsed_s)
     const quint64 hours = remainder_after_days / 3600;
     const quint64 minutes = (remainder_after_days % 3600) / 60;
     const quint64 seconds = remainder_after_days % 60;
-
     const QString clock = QStringLiteral("%1:%2:%3")
         .arg(hours, 2, 10, QLatin1Char('0'))
         .arg(minutes, 2, 10, QLatin1Char('0'))
@@ -64,7 +65,6 @@ QString formatDouble(double value)
 {
     if (!std::isfinite(value))
         return QStringLiteral("—");
-
     const double absolute_value = std::abs(value);
     if (absolute_value != 0.0 && (absolute_value < 0.0001 || absolute_value >= 1000000.0))
         return QString::number(value, 'e', 4);
@@ -106,7 +106,6 @@ void updateMaximum(IntegerStatisticExtreme &extreme, qint64 value, int result_in
 AggregateStatistics aggregateStatistics(const QList<HydraulicSimulationResult> &results)
 {
     AggregateStatistics aggregate;
-
     for (int result_index = 0; result_index < results.size(); ++result_index)
     {
         const HydraulicSimulationResultStatistics &statistics = results.at(result_index).statistics;
@@ -118,7 +117,6 @@ AggregateStatistics aggregateStatistics(const QList<HydraulicSimulationResult> &
         updateMaximum(aggregate.demand_reduction_percent, statistics.demand_reduction_percent, result_index);
         updateMaximum(aggregate.leakage_loss_percent, statistics.leakage_loss_percent, result_index);
     }
-
     return aggregate;
 }
 
@@ -154,7 +152,9 @@ SimulationStatisticsDialog::SimulationStatisticsDialog(HydraulicData *hydraulic_
     : QDialog(parent),
     hydraulic_data(hydraulic_data),
     tree_summary(new QTreeWidget(this)),
-    table_timeline(new QTableWidget(this))
+    table_timeline(new QTableWidget(this)),
+    tabs(new QTabWidget(this)),
+    text_epanet_log(new QTextBrowser(this))
 {
     setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
     setAttribute(Qt::WA_DeleteOnClose);
@@ -187,21 +187,34 @@ SimulationStatisticsDialog::SimulationStatisticsDialog(HydraulicData *hydraulic_
     this->table_timeline->setAlternatingRowColors(true);
     this->table_timeline->verticalHeader()->setVisible(false);
     this->table_timeline->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-    this->table_timeline->horizontalHeader()->setMinimumHeight(this->table_timeline->horizontalHeader()->fontMetrics().height() * 2 + 10);
+    this->table_timeline->horizontalHeader()->setMinimumHeight(
+        this->table_timeline->horizontalHeader()->fontMetrics().height() * 2 + 10);
     this->table_timeline->horizontalHeader()->setStretchLastSection(true);
 
-    QTabWidget *tabs = new QTabWidget(this);
-    tabs->addTab(this->tree_summary, tr("Summary"));
-    tabs->addTab(this->table_timeline, tr("By timestep"));
+    const QFont fixed_font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    this->text_epanet_log->setFont(fixed_font);
+    this->text_epanet_log->setOpenExternalLinks(true);
+    this->text_epanet_log->setLineWrapMode(QTextEdit::NoWrap);
+    this->text_epanet_log->setPlaceholderText(
+        tr("No EPANET log is available for the current simulation."));
 
+    QWidget *summary_page = new QWidget(this->tabs);
     QLabel *hint = new QLabel(
         tr("Summary values show the worst hydraulic value across the complete timeline."),
-        this);
+        summary_page);
     hint->setWordWrap(true);
 
+    QVBoxLayout *summary_layout = new QVBoxLayout(summary_page);
+    summary_layout->setContentsMargins(0, 0, 0, 0);
+    summary_layout->addWidget(hint);
+    summary_layout->addWidget(this->tree_summary);
+
+    this->tabs->addTab(summary_page, tr("Summary"));
+    this->tabs->addTab(this->table_timeline, tr("By timestep"));
+    this->tabs->addTab(this->text_epanet_log, tr("EPANET Log"));
+
     QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->addWidget(hint);
-    layout->addWidget(tabs);
+    layout->addWidget(this->tabs);
 
     connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged, this, [this](bool)
     {
@@ -211,6 +224,24 @@ SimulationStatisticsDialog::SimulationStatisticsDialog(HydraulicData *hydraulic_
             this, &SimulationStatisticsDialog::syncCurrentResultSelection);
 
     refresh();
+}
+
+void SimulationStatisticsDialog::setEpanetLog(const QString &epanet_log)
+{
+    if (this->text_epanet_log == nullptr)
+        return;
+
+    this->text_epanet_log->setPlainText(epanet_log);
+}
+
+void SimulationStatisticsDialog::showEpanetLogTab()
+{
+    if (this->tabs == nullptr || this->text_epanet_log == nullptr)
+        return;
+
+    const int tab_index = this->tabs->indexOf(this->text_epanet_log);
+    if (tab_index >= 0)
+        this->tabs->setCurrentIndex(tab_index);
 }
 
 void SimulationStatisticsDialog::refresh()
@@ -223,7 +254,6 @@ void SimulationStatisticsDialog::refresh()
 void SimulationStatisticsDialog::refreshSummary()
 {
     this->tree_summary->clear();
-
     const std::optional<HydraulicSimulationResultTimeline> &timeline_optional = this->hydraulic_data->simulationResultTimeline();
     if (!this->hydraulic_data->hasSimulationResults() || !timeline_optional.has_value())
     {
@@ -275,7 +305,6 @@ void SimulationStatisticsDialog::refreshSummary()
                     tr("%1 %").arg(formatDouble(aggregate.leakage_loss_percent.value)),
                     statisticTime(results, aggregate.leakage_loss_percent.result_index));
 
-
     for (int top_level_index = 0; top_level_index < this->tree_summary->topLevelItemCount(); ++top_level_index)
         this->tree_summary->topLevelItem(top_level_index)->setExpanded(true);
 }
@@ -284,19 +313,16 @@ void SimulationStatisticsDialog::refreshTimeline()
 {
     const QSignalBlocker blocker(this->table_timeline);
     this->table_timeline->setRowCount(0);
-
     const std::optional<HydraulicSimulationResultTimeline> &timeline_optional = this->hydraulic_data->simulationResultTimeline();
     if (!this->hydraulic_data->hasSimulationResults() || !timeline_optional.has_value())
         return;
 
     const QList<HydraulicSimulationResult> &results = timeline_optional->results;
     this->table_timeline->setRowCount(results.size());
-
     for (int result_index = 0; result_index < results.size(); ++result_index)
     {
         const HydraulicSimulationResult &result = results.at(result_index);
         const HydraulicSimulationResultStatistics &statistics = result.statistics;
-
         this->table_timeline->setItem(result_index, 0, new QTableWidgetItem(formatElapsedTime(result.time_elapsed_s)));
         this->table_timeline->setItem(result_index, 1, numericTableItem(QString::number(statistics.hydraulic_iterations)));
         this->table_timeline->setItem(result_index, 2, numericTableItem(formatDouble(statistics.relative_error)));
@@ -319,5 +345,7 @@ void SimulationStatisticsDialog::syncCurrentResultSelection(int result_index)
     }
 
     this->table_timeline->selectRow(result_index);
-    this->table_timeline->scrollToItem(this->table_timeline->item(result_index, 0), QAbstractItemView::EnsureVisible);
+    this->table_timeline->scrollToItem(
+        this->table_timeline->item(result_index, 0),
+        QAbstractItemView::EnsureVisible);
 }

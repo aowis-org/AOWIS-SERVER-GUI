@@ -1,11 +1,11 @@
 #pragma once
 
 #include <QList>
+#include <QPointer>
 #include <QString>
 #include <QToolBar>
 
 #include <aowis/model/hydraulic/hydraulic_types.h>
-
 #include "_enums_structs.h"
 #include "epanet2_enums.h"
 
@@ -13,6 +13,7 @@ struct HydraulicSimulationResultTimeline;
 
 class ComboCheckboxes;
 class QComboBox;
+class QDialog;
 class QPushButton;
 class QTimer;
 class QToolButton;
@@ -24,12 +25,10 @@ class TopControlBar : public QToolBar
 
 public:
     explicit TopControlBar(QWidget *parent = nullptr);
-
     HydraulicHeadlossFormula selectedSimulationHeadlossFormula() const;
     QList<WaterQualityAnalysisType> selectedSimulationQualityAnalyses() const;
     void setSelectedSimulationHeadlossFormula(HydraulicHeadlossFormula formula);
     void setSelectedSimulationQualityAnalyses(const QList<WaterQualityAnalysisType> &analyses);
-
     void setFullScreenState(bool fullscreen);
     void setSimulationResultsAvailable(bool available);
     void resetSimulationRunIcon();
@@ -65,15 +64,17 @@ private:
     QToolButton *button_fullscreen = nullptr;
     QPushButton *button_sim_start = nullptr;
     QToolButton *button_sim_statistics = nullptr;
-    QToolButton *button_sim_log = nullptr;
+    QToolButton *button_sim_settings = nullptr;
     QToolButton *button_sim_step_previous = nullptr;
     QToolButton *button_sim_step_next = nullptr;
     QToolButton *button_sim_playback = nullptr;
     QComboBox *combo_sim_timepoint = nullptr;
     QComboBox *combo_sim_speed = nullptr;
     QTimer *simulation_playback_timer = nullptr;
+    QPointer<QDialog> dialog_simulation_settings = nullptr;
     int simulation_result_count = 0;
-
+    bool simulation_results_available = false;
+    bool simulation_report_available = false;
     EN_FlowUnits selected_flow_units = EN_LPS;
 
     void addProjectControls();
@@ -82,7 +83,9 @@ private:
     void addQualityHeadlossControls();
     void addSimulationControls();
     void addViewControls();
+    void updateSimulationStatisticsAvailability();
     void updateSimulationNavigationState();
     void setSimulationPlaybackActive(bool active);
     void requestSimulationResultIndex(int result_index);
+    void showSimulationSettings();
 };

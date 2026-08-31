@@ -12,34 +12,36 @@
 #include <aowis/model/hydraulic/hydraulic_simulation_results.h>
 
 #include <functional>
-
 #include <QAbstractButton>
 #include <QAction>
 #include <QComboBox>
+#include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QEvent>
 #include <QFont>
+#include <QFormLayout>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QKeySequence>
-#include <QLayout>
 #include <QLabel>
+#include <QLayout>
 #include <QMenu>
 #include <QPalette>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QSignalBlocker>
+#include <QSizePolicy>
 #include <QStringList>
 #include <QStyle>
 #include <QTimer>
-#include <QSizePolicy>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
 
 namespace
 {
-
 QString shortcutTooltipToken(const QString &shortcut)
 {
     const QStringList parts = shortcut.split(QLatin1Char('+'), Qt::SkipEmptyParts);
@@ -55,6 +57,7 @@ QString simulationShortcutTooltip()
         + QStringLiteral("<br>")
         + shortcutTooltipToken(guiShortcutPresentation(GuiShortcutId::SimulationRunAlternate));
 }
+
 class TopControlBarContent : public QWidget
 {
 public:
@@ -69,7 +72,6 @@ public:
     {
         this->left_layout->setContentsMargins(0, 0, 0, 0);
         this->left_layout->setSpacing(10);
-
         this->center_layout->setContentsMargins(0, 0, 0, 0);
         this->center_layout->setSpacing(10);
 
@@ -115,14 +117,12 @@ protected:
         const QSize left_size = this->left_group->sizeHint();
         const QSize center_size = this->center_group->sizeHint();
         const QSize right_size = this->right_group->sizeHint();
-
         const int left_y = qMax(0, (height() - left_size.height()) / 2);
         const int center_y = qMax(0, (height() - center_size.height()) / 2);
         const int right_y = qMax(0, (height() - right_size.height()) / 2);
 
         const int left_x = side_margin;
         const int right_x = width() - side_margin - right_size.width();
-
         const int centered_x = (width() - center_size.width()) / 2;
         const int minimum_center_x = left_x + left_size.width() + group_spacing;
         const int maximum_center_x = right_x - group_spacing - center_size.width();
@@ -142,7 +142,6 @@ private:
     QWidget *left_group = nullptr;
     QWidget *center_group = nullptr;
     QWidget *right_group = nullptr;
-
     QHBoxLayout *left_layout = nullptr;
     QHBoxLayout *center_layout = nullptr;
     QHBoxLayout *right_layout = nullptr;
@@ -160,7 +159,6 @@ QLabel *createCaption(const QString &text, QWidget *parent)
 
     label->setFont(font);
     label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-
     QPalette palette = label->palette();
     palette.setColor(QPalette::WindowText, palette.color(QPalette::PlaceholderText));
     label->setPalette(palette);
@@ -226,7 +224,9 @@ QString formatSimulationElapsedTime(quint64 elapsed_s)
     const quint64 total_minutes = elapsed_s / 60;
     const quint64 hours = total_minutes / 60;
     const quint64 minutes = total_minutes % 60;
-    return QStringLiteral("%1:%2").arg(hours, 2, 10, QLatin1Char('0')).arg(minutes, 2, 10, QLatin1Char('0'));
+    return QStringLiteral("%1:%2")
+        .arg(hours, 2, 10, QLatin1Char('0'))
+        .arg(minutes, 2, 10, QLatin1Char('0'));
 }
 }
 
@@ -338,8 +338,11 @@ void TopControlBar::setFullScreenState(bool fullscreen)
     if (this->button_fullscreen == nullptr)
         return;
 
-    const QString icon_path = fullscreen ? QStringLiteral(":/icon/fullscreen_undo.png") : QStringLiteral(":/icon/fullscreen.png");
+    const QString icon_path = fullscreen
+        ? QStringLiteral(":/icon/fullscreen_undo.png")
+        : QStringLiteral(":/icon/fullscreen.png");
     this->button_fullscreen->setIcon(QIcon(icon_path));
+
     const QString fullscreen_shortcut = shortcutTooltipToken(
         guiShortcutPresentation(GuiShortcutId::Fullscreen));
     this->button_fullscreen->setToolTip(
@@ -349,9 +352,17 @@ void TopControlBar::setFullScreenState(bool fullscreen)
 
 void TopControlBar::setSimulationResultsAvailable(bool available)
 {
+    this->simulation_results_available = available;
+    updateSimulationStatisticsAvailability();
+}
+
+void TopControlBar::updateSimulationStatisticsAvailability()
+{
     if (this->button_sim_statistics == nullptr)
         return;
 
+    const bool available =
+        this->simulation_results_available || this->simulation_report_available;
     this->button_sim_statistics->setEnabled(available);
     this->button_sim_statistics->setToolTip(
         available
@@ -398,14 +409,14 @@ void TopControlBar::setSimulationRunCancelledIcon()
             + QStringLiteral("<br><br>Last run: Cancelled"));
 }
 
-void TopControlBar::setSimulationRunResultIcon(const HydraulicSimulationResultTimeline &result_timeline)
+void TopControlBar::setSimulationRunResultIcon(
+    const HydraulicSimulationResultTimeline &result_timeline)
 {
     if (this->button_sim_start == nullptr)
         return;
 
     int warning_count = 0;
     int error_count = 0;
-
     for (const HydraulicSimulationDiagnostic &diagnostic : result_timeline.diagnostics)
     {
         if (diagnostic.severity == HydraulicSimulationDiagnosticSeverity::Warning)
@@ -417,7 +428,6 @@ void TopControlBar::setSimulationRunResultIcon(const HydraulicSimulationResultTi
 
     QString icon_path;
     QString last_run_status;
-
     if (!result_timeline.status.success)
     {
         icon_path = QStringLiteral(":/icon/simulation_error.png");
@@ -454,13 +464,13 @@ void TopControlBar::setSimulationRunResultIcon(const HydraulicSimulationResultTi
             + QStringLiteral("<br><br>Last run: %1").arg(last_run_status));
 }
 
-void TopControlBar::setSimulationResultTimeline(const HydraulicSimulationResultTimeline &result_timeline)
+void TopControlBar::setSimulationResultTimeline(
+    const HydraulicSimulationResultTimeline &result_timeline)
 {
     if (this->combo_sim_timepoint == nullptr)
         return;
 
     setSimulationPlaybackActive(false);
-
     const QSignalBlocker blocker(this->combo_sim_timepoint);
     this->combo_sim_timepoint->clear();
     this->simulation_result_count = result_timeline.results.size();
@@ -472,7 +482,8 @@ void TopControlBar::setSimulationResultTimeline(const HydraulicSimulationResultT
 
         if (result_timeline.simulation_start_utc.isValid())
         {
-            const QDateTime timestamp = result_timeline.simulation_start_utc.addSecs(static_cast<qint64>(result.time_elapsed_s));
+            const QDateTime timestamp = result_timeline.simulation_start_utc.addSecs(
+                static_cast<qint64>(result.time_elapsed_s));
             this->combo_sim_timepoint->setItemData(
                 this->combo_sim_timepoint->count() - 1,
                 timestamp.toUTC().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss 'UTC'")),
@@ -480,7 +491,8 @@ void TopControlBar::setSimulationResultTimeline(const HydraulicSimulationResultT
         }
     }
 
-    this->combo_sim_timepoint->setCurrentIndex(this->simulation_result_count > 0 ? 0 : -1);
+    this->combo_sim_timepoint->setCurrentIndex(
+        this->simulation_result_count > 0 ? 0 : -1);
     updateSimulationNavigationState();
 }
 
@@ -530,7 +542,9 @@ void TopControlBar::setCurrentSimulationResultIndex(int result_index)
 void TopControlBar::updateSimulationNavigationState()
 {
     const bool has_results = this->simulation_result_count > 0;
-    const int current_index = this->combo_sim_timepoint != nullptr ? this->combo_sim_timepoint->currentIndex() : -1;
+    const int current_index = this->combo_sim_timepoint != nullptr
+        ? this->combo_sim_timepoint->currentIndex()
+        : -1;
 
     if (this->combo_sim_timepoint != nullptr)
         this->combo_sim_timepoint->setEnabled(has_results);
@@ -539,7 +553,12 @@ void TopControlBar::updateSimulationNavigationState()
         this->button_sim_step_previous->setEnabled(has_results && current_index > 0);
 
     if (this->button_sim_step_next != nullptr)
-        this->button_sim_step_next->setEnabled(has_results && current_index >= 0 && current_index < this->simulation_result_count - 1);
+    {
+        this->button_sim_step_next->setEnabled(
+            has_results
+            && current_index >= 0
+            && current_index < this->simulation_result_count - 1);
+    }
 
     const bool can_play = this->simulation_result_count > 1;
     if (this->button_sim_playback != nullptr)
@@ -551,8 +570,11 @@ void TopControlBar::updateSimulationNavigationState()
 
 void TopControlBar::setSimulationPlaybackActive(bool active)
 {
-    if (this->simulation_playback_timer == nullptr || this->button_sim_playback == nullptr)
+    if (this->simulation_playback_timer == nullptr
+        || this->button_sim_playback == nullptr)
+    {
         return;
+    }
 
     if (active && this->simulation_result_count > 1)
         this->simulation_playback_timer->start();
@@ -560,8 +582,12 @@ void TopControlBar::setSimulationPlaybackActive(bool active)
         this->simulation_playback_timer->stop();
 
     const bool playing = this->simulation_playback_timer->isActive();
-    this->button_sim_playback->setIcon(style()->standardIcon(playing ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
-    this->button_sim_playback->setToolTip(playing ? QStringLiteral("Pause simulation timeline") : QStringLiteral("Play simulation timeline"));
+    this->button_sim_playback->setIcon(
+        style()->standardIcon(playing ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
+    this->button_sim_playback->setToolTip(
+        playing
+            ? QStringLiteral("Pause simulation timeline")
+            : QStringLiteral("Play simulation timeline"));
 }
 
 void TopControlBar::requestSimulationResultIndex(int result_index)
@@ -574,14 +600,146 @@ void TopControlBar::requestSimulationResultIndex(int result_index)
 
 void TopControlBar::setEpanetLogAvailable(bool available)
 {
-    if (this->button_sim_log == nullptr)
-        return;
+    this->simulation_report_available = available;
+    updateSimulationStatisticsAvailability();
+}
 
-    this->button_sim_log->setEnabled(available);
-    this->button_sim_log->setToolTip(
-        available
-            ? QStringLiteral("Show EPANET log")
-            : QStringLiteral("Show EPANET log<br>You need to run a simulation first"));
+void TopControlBar::showSimulationSettings()
+{
+    if (this->dialog_simulation_settings)
+    {
+        if (this->dialog_simulation_settings->isMinimized())
+        {
+            this->dialog_simulation_settings->setWindowState(
+                this->dialog_simulation_settings->windowState() & ~Qt::WindowMinimized);
+        }
+
+        this->dialog_simulation_settings->show();
+        this->dialog_simulation_settings->raise();
+        this->dialog_simulation_settings->activateWindow();
+        return;
+    }
+
+    QWidget *dialog_parent = window();
+    this->dialog_simulation_settings = new QDialog(
+        dialog_parent,
+        Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
+    this->dialog_simulation_settings->setAttribute(Qt::WA_DeleteOnClose);
+    this->dialog_simulation_settings->setWindowTitle(tr("Simulation Settings"));
+    this->dialog_simulation_settings->setModal(false);
+
+    QLabel *hint = new QLabel(
+        tr("These settings are used for the next simulation run."),
+        this->dialog_simulation_settings);
+    hint->setWordWrap(true);
+
+    ComboCheckboxes *quality_analysis = new ComboCheckboxes(
+        this->dialog_simulation_settings);
+    quality_analysis->setSummaryLimit(2);
+
+    if (this->combo_quality_analysis != nullptr)
+    {
+        for (int index = 0; index < this->combo_quality_analysis->count(); ++index)
+        {
+            quality_analysis->addItem(
+                this->combo_quality_analysis->itemText(index),
+                this->combo_quality_analysis->itemData(index),
+                this->combo_quality_analysis->isItemChecked(index),
+                QString());
+        }
+    }
+
+    QComboBox *headloss_formula = new QComboBox(this->dialog_simulation_settings);
+    if (this->combo_headloss_formula != nullptr)
+    {
+        for (int index = 0; index < this->combo_headloss_formula->count(); ++index)
+        {
+            headloss_formula->addItem(
+                this->combo_headloss_formula->itemText(index),
+                this->combo_headloss_formula->itemData(index));
+            headloss_formula->setItemData(
+                index,
+                this->combo_headloss_formula->itemData(index, Qt::ToolTipRole),
+                Qt::ToolTipRole);
+        }
+
+        headloss_formula->setCurrentIndex(this->combo_headloss_formula->currentIndex());
+    }
+
+    connect(quality_analysis, &ComboCheckboxes::itemCheckedChanged,
+            this, [this](int index, bool checked)
+    {
+        if (this->combo_quality_analysis == nullptr
+            || index < 0
+            || index >= this->combo_quality_analysis->count())
+        {
+            return;
+        }
+
+        this->combo_quality_analysis->setItemChecked(index, checked);
+    });
+
+    if (this->combo_quality_analysis != nullptr)
+    {
+        connect(this->combo_quality_analysis, &ComboCheckboxes::itemCheckedChanged,
+                this->dialog_simulation_settings,
+                [quality_analysis](int index, bool checked)
+        {
+            if (index < 0 || index >= quality_analysis->count())
+                return;
+
+            const QSignalBlocker blocker(quality_analysis);
+            quality_analysis->setItemChecked(index, checked);
+        });
+    }
+
+    connect(headloss_formula, &QComboBox::currentIndexChanged,
+            this, [this](int index)
+    {
+        if (this->combo_headloss_formula == nullptr
+            || index < 0
+            || index >= this->combo_headloss_formula->count())
+        {
+            return;
+        }
+
+        this->combo_headloss_formula->setCurrentIndex(index);
+    });
+
+    if (this->combo_headloss_formula != nullptr)
+    {
+        connect(this->combo_headloss_formula, &QComboBox::currentIndexChanged,
+                this->dialog_simulation_settings,
+                [headloss_formula](int index)
+        {
+            if (index < 0 || index >= headloss_formula->count())
+                return;
+
+            const QSignalBlocker blocker(headloss_formula);
+            headloss_formula->setCurrentIndex(index);
+        });
+    }
+
+    QFormLayout *form_layout = new QFormLayout();
+    form_layout->addRow(tr("Water quality analyses"), quality_analysis);
+    form_layout->addRow(tr("Headloss formula"), headloss_formula);
+
+    QDialogButtonBox *button_box = new QDialogButtonBox(
+        QDialogButtonBox::Close,
+        this->dialog_simulation_settings);
+    connect(button_box, &QDialogButtonBox::rejected,
+            this->dialog_simulation_settings, &QDialog::close);
+
+    QVBoxLayout *layout = new QVBoxLayout(this->dialog_simulation_settings);
+    layout->addWidget(hint);
+    layout->addLayout(form_layout);
+    layout->addStretch(1);
+    layout->addWidget(button_box);
+
+    this->dialog_simulation_settings->resize(470, 180);
+    this->dialog_simulation_settings->show();
+    this->dialog_simulation_settings->raise();
+    this->dialog_simulation_settings->activateWindow();
 }
 
 void TopControlBar::addProjectControls()
@@ -615,7 +773,8 @@ void TopControlBar::addProjectControls()
     button_import_project->setFixedSize(30, 30);
     button_import_project->setToolTip(QStringLiteral("Import project"));
     button_import_project->setStyleSheet(QStringLiteral("padding: 0;"));
-    connect(button_import_project, &QToolButton::clicked, this, &TopControlBar::signalImportProject);
+    connect(button_import_project, &QToolButton::clicked,
+            this, &TopControlBar::signalImportProject);
 
     QToolButton *button_show_on_map = new QToolButton(project_revision_container);
     button_show_on_map->setAutoRaise(true);
@@ -624,25 +783,33 @@ void TopControlBar::addProjectControls()
     button_show_on_map->setFixedSize(30, 30);
     button_show_on_map->setToolTip(QStringLiteral("Show on map"));
     button_show_on_map->setStyleSheet(QStringLiteral("padding: 0;"));
-    connect(button_show_on_map, &QToolButton::clicked, this, &TopControlBar::signalShowNetworkOnMap);
+    connect(button_show_on_map, &QToolButton::clicked,
+            this, &TopControlBar::signalShowNetworkOnMap);
 
     connect(this->combo_project, &QComboBox::currentIndexChanged, this, [this](int)
     {
         updateRevisionControls();
     });
+
     connect(this->combo_revision, &QComboBox::currentIndexChanged, this, [this](int)
     {
-        const QString resource_path = this->combo_revision->currentData(Qt::UserRole).toString();
-        const QString file_name = this->combo_revision->currentData(Qt::UserRole + 1).toString();
+        const QString resource_path =
+            this->combo_revision->currentData(Qt::UserRole).toString();
+        const QString file_name =
+            this->combo_revision->currentData(Qt::UserRole + 1).toString();
         if (resource_path.isEmpty() || file_name.isEmpty())
             return;
 
         emit signalBuiltinRevisionActivationRequested(resource_path, file_name);
     });
 
-    QLabel *project_caption = createCaption(QStringLiteral("Project"), project_revision_container);
-    QLabel *revision_caption = createCaption(QStringLiteral("Revision"), project_revision_container);
-    const int caption_width = qMax(project_caption->sizeHint().width(), revision_caption->sizeHint().width());
+    QLabel *project_caption = createCaption(
+        QStringLiteral("Project"), project_revision_container);
+    QLabel *revision_caption = createCaption(
+        QStringLiteral("Revision"), project_revision_container);
+    const int caption_width = qMax(
+        project_caption->sizeHint().width(),
+        revision_caption->sizeHint().width());
     project_caption->setFixedWidth(caption_width);
     revision_caption->setFixedWidth(caption_width);
 
@@ -672,7 +839,8 @@ void TopControlBar::updateRevisionControls()
     if (this->combo_project == nullptr || this->combo_revision == nullptr)
         return;
 
-    const QString project_id = this->combo_project->currentData(Qt::UserRole).toString();
+    const QString project_id =
+        this->combo_project->currentData(Qt::UserRole).toString();
     const QSignalBlocker blocker(this->combo_revision);
 
     this->combo_revision->clear();
@@ -683,7 +851,9 @@ void TopControlBar::updateRevisionControls()
         const QList<BuiltinExampleRevision> &revisions = builtinExampleRevisions();
         for (const BuiltinExampleRevision &revision : revisions)
         {
-            this->combo_revision->addItem(revision.display_name, revision.resource_path);
+            this->combo_revision->addItem(
+                revision.display_name,
+                revision.resource_path);
             const int item_index = this->combo_revision->count() - 1;
             this->combo_revision->setItemData(
                 item_index,
@@ -713,7 +883,6 @@ void TopControlBar::addFlowUnitCombo()
     button_flow_units->setText(QStringLiteral("CMH  ▾"));
 
     WasmPopupMenu *menu_flow_units = new WasmPopupMenu(button_flow_units);
-
     const std::function<void(EN_FlowUnits, const QString &)> select_unit =
         [this, button_flow_units](EN_FlowUnits units, const QString &label)
     {
@@ -777,46 +946,59 @@ void TopControlBar::addFlowUnitCombo()
     QMenu *menu_flow_units = new QMenu(button_flow_units);
     button_flow_units->setMenu(menu_flow_units);
 
-    QAction *action_cmh = menu_flow_units->addAction(QStringLiteral("CMH — cubic meters per hour"));
+    QAction *action_cmh =
+        menu_flow_units->addAction(QStringLiteral("CMH — cubic meters per hour"));
     action_cmh->setData(static_cast<int>(EN_CMH));
 
-    QAction *action_lps = menu_flow_units->addAction(QStringLiteral("LPS — liters per second"));
+    QAction *action_lps =
+        menu_flow_units->addAction(QStringLiteral("LPS — liters per second"));
     action_lps->setData(static_cast<int>(EN_LPS));
 
     menu_flow_units->addSeparator();
 
-    QMenu *menu_other_metric = menu_flow_units->addMenu(QStringLiteral("Other metric"));
-
-    QAction *action_lpm = menu_other_metric->addAction(QStringLiteral("LPM — liters per minute"));
+    QMenu *menu_other_metric =
+        menu_flow_units->addMenu(QStringLiteral("Other metric"));
+    QAction *action_lpm =
+        menu_other_metric->addAction(QStringLiteral("LPM — liters per minute"));
     action_lpm->setData(static_cast<int>(EN_LPM));
 
-    QAction *action_mld = menu_other_metric->addAction(QStringLiteral("MLD — million liters per day"));
+    QAction *action_mld =
+        menu_other_metric->addAction(QStringLiteral("MLD — million liters per day"));
     action_mld->setData(static_cast<int>(EN_MLD));
 
-    QAction *action_cmd = menu_other_metric->addAction(QStringLiteral("CMD — cubic meters per day"));
+    QAction *action_cmd =
+        menu_other_metric->addAction(QStringLiteral("CMD — cubic meters per day"));
     action_cmd->setData(static_cast<int>(EN_CMD));
 
-    QAction *action_cms = menu_other_metric->addAction(QStringLiteral("CMS — cubic meters per second"));
+    QAction *action_cms =
+        menu_other_metric->addAction(QStringLiteral("CMS — cubic meters per second"));
     action_cms->setData(static_cast<int>(EN_CMS));
 
-    QMenu *menu_imperial = menu_flow_units->addMenu(QStringLiteral("Imperial / US"));
+    QMenu *menu_imperial =
+        menu_flow_units->addMenu(QStringLiteral("Imperial / US"));
 
-    QAction *action_cfs = menu_imperial->addAction(QStringLiteral("CFS — cubic feet per second"));
+    QAction *action_cfs =
+        menu_imperial->addAction(QStringLiteral("CFS — cubic feet per second"));
     action_cfs->setData(static_cast<int>(EN_CFS));
 
-    QAction *action_gpm = menu_imperial->addAction(QStringLiteral("GPM — gallons per minute"));
+    QAction *action_gpm =
+        menu_imperial->addAction(QStringLiteral("GPM — gallons per minute"));
     action_gpm->setData(static_cast<int>(EN_GPM));
 
-    QAction *action_mgd = menu_imperial->addAction(QStringLiteral("MGD — million gallons per day"));
+    QAction *action_mgd =
+        menu_imperial->addAction(QStringLiteral("MGD — million gallons per day"));
     action_mgd->setData(static_cast<int>(EN_MGD));
 
-    QAction *action_imgd = menu_imperial->addAction(QStringLiteral("IMGD — imperial million gallons per day"));
+    QAction *action_imgd =
+        menu_imperial->addAction(QStringLiteral("IMGD — imperial million gallons per day"));
     action_imgd->setData(static_cast<int>(EN_IMGD));
 
-    QAction *action_afd = menu_imperial->addAction(QStringLiteral("AFD — acre-feet per day"));
+    QAction *action_afd =
+        menu_imperial->addAction(QStringLiteral("AFD — acre-feet per day"));
     action_afd->setData(static_cast<int>(EN_AFD));
 
-    connect(menu_flow_units, &QMenu::triggered, this, [this, button_flow_units](QAction *action)
+    connect(menu_flow_units, &QMenu::triggered, this,
+            [this, button_flow_units](QAction *action)
     {
         if (action == nullptr || action->menu() != nullptr)
             return;
@@ -833,7 +1015,10 @@ void TopControlBar::addFlowUnitCombo()
 
     this->selected_flow_units = EN_CMH;
     bar_content->centerLayout()->addWidget(
-        createLabeledControl(QStringLiteral("Flow units"), button_flow_units, this->content));
+        createLabeledControl(
+            QStringLiteral("Flow units"),
+            button_flow_units,
+            this->content));
 }
 
 void TopControlBar::addQualityHeadlossControls()
@@ -849,13 +1034,11 @@ void TopControlBar::addQualityHeadlossControls()
         static_cast<int>(WaterQualityAnalysisType::Chemical),
         true,
         QStringLiteral("One dissolved constituent concentration, e.g. chlorine"));
-
     this->combo_quality_analysis->addItem(
         QStringLiteral("AGE"),
         static_cast<int>(WaterQualityAnalysisType::WaterAge),
         true,
         QStringLiteral("Water age"));
-
     this->combo_quality_analysis->addItem(
         QStringLiteral("TRACE"),
         static_cast<int>(WaterQualityAnalysisType::SourceTrace),
@@ -864,7 +1047,6 @@ void TopControlBar::addQualityHeadlossControls()
 
     this->combo_headloss_formula = new QComboBox(this->content);
     this->combo_headloss_formula->setFixedSize(190, 30);
-
     this->combo_headloss_formula->addItem(
         QStringLiteral("Hazen-Williams"),
         static_cast<int>(HeadlossFormula::HazenWilliams));
@@ -872,7 +1054,6 @@ void TopControlBar::addQualityHeadlossControls()
         this->combo_headloss_formula->count() - 1,
         QStringLiteral("Run simulation with the Hazen-Williams headloss formula.<br><br>Requires pipe roughness coefficient C."),
         Qt::ToolTipRole);
-
     this->combo_headloss_formula->addItem(
         QStringLiteral("Darcy-Weisbach"),
         static_cast<int>(HeadlossFormula::DarcyWeisbach));
@@ -880,7 +1061,6 @@ void TopControlBar::addQualityHeadlossControls()
         this->combo_headloss_formula->count() - 1,
         QStringLiteral("Run simulation with the Darcy-Weisbach headloss formula.<br><br>Requires absolute pipe roughness ε in mm."),
         Qt::ToolTipRole);
-
     this->combo_headloss_formula->addItem(
         QStringLiteral("Chezy-Manning"),
         static_cast<int>(HeadlossFormula::ChezyManning));
@@ -889,7 +1069,8 @@ void TopControlBar::addQualityHeadlossControls()
         QStringLiteral("Run simulation with the Chezy-Manning headloss formula.<br><br>Requires Manning roughness coefficient n."),
         Qt::ToolTipRole);
 
-    connect(this->combo_headloss_formula, &QComboBox::currentIndexChanged, this, [this](int index)
+    connect(this->combo_headloss_formula, &QComboBox::currentIndexChanged,
+            this, [this](int index)
     {
         HeadlossFormulas formulas = HeadlossFormula::None;
         if (index >= 0)
@@ -903,13 +1084,18 @@ void TopControlBar::addQualityHeadlossControls()
     });
 
     QWidget *quality_headloss_container = new QWidget(this->content);
-    QVBoxLayout *quality_headloss_layout = new QVBoxLayout(quality_headloss_container);
+    QVBoxLayout *quality_headloss_layout =
+        new QVBoxLayout(quality_headloss_container);
     quality_headloss_layout->setContentsMargins(0, 0, 0, 0);
     quality_headloss_layout->setSpacing(2);
 
-    QLabel *quality_caption = createCaption(QStringLiteral("Water quality"), quality_headloss_container);
-    QLabel *headloss_caption = createCaption(QStringLiteral("Headloss"), quality_headloss_container);
-    const int caption_width = qMax(quality_caption->sizeHint().width(), headloss_caption->sizeHint().width());
+    QLabel *quality_caption =
+        createCaption(QStringLiteral("Water quality"), quality_headloss_container);
+    QLabel *headloss_caption =
+        createCaption(QStringLiteral("Headloss"), quality_headloss_container);
+    const int caption_width = qMax(
+        quality_caption->sizeHint().width(),
+        headloss_caption->sizeHint().width());
     quality_caption->setFixedWidth(caption_width);
     headloss_caption->setFixedWidth(caption_width);
 
@@ -940,13 +1126,22 @@ void TopControlBar::addSimulationControls()
     configureToolbarIconButton(this->button_sim_start);
     this->button_sim_start->setToolTip(
         QStringLiteral("Run Configured Simulations<br>") + simulationShortcutTooltip());
+
     QAction *simulation_alternate_action = this->button_sim_start->addAction(
-        QString(), guiShortcutRegistry().keySequence(GuiShortcutId::SimulationRunAlternate),
-        this->button_sim_start, &QPushButton::click);
+        QString(),
+        guiShortcutRegistry().keySequence(GuiShortcutId::SimulationRunAlternate),
+        this->button_sim_start,
+        &QPushButton::click);
     QAction *simulation_primary_action = this->button_sim_start->addAction(
-        QString(), guiShortcutRegistry().keySequence(GuiShortcutId::SimulationRun),
-        this->button_sim_start, &QPushButton::click);
-    installShortcutEditContextMenu(this->button_sim_start, GuiShortcutId::SimulationRun);
+        QString(),
+        guiShortcutRegistry().keySequence(GuiShortcutId::SimulationRun),
+        this->button_sim_start,
+        &QPushButton::click);
+
+    installShortcutEditContextMenu(
+        this->button_sim_start,
+        GuiShortcutId::SimulationRun);
+
     connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutChanged,
             this, [this, simulation_primary_action, simulation_alternate_action](GuiShortcutId id)
     {
@@ -972,15 +1167,18 @@ void TopControlBar::addSimulationControls()
         this->button_sim_start->setToolTip(
             QStringLiteral("Run Configured Simulations<br>") + simulationShortcutTooltip());
     });
+
     connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutCaptureActiveChanged,
             this, [simulation_primary_action, simulation_alternate_action](bool active)
     {
         simulation_primary_action->setShortcut(
-            active ? QKeySequence()
-                   : guiShortcutRegistry().keySequence(GuiShortcutId::SimulationRun));
+            active
+                ? QKeySequence()
+                : guiShortcutRegistry().keySequence(GuiShortcutId::SimulationRun));
         simulation_alternate_action->setShortcut(
-            active ? QKeySequence()
-                   : guiShortcutRegistry().keySequence(GuiShortcutId::SimulationRunAlternate));
+            active
+                ? QKeySequence()
+                : guiShortcutRegistry().keySequence(GuiShortcutId::SimulationRunAlternate));
     });
 
     QWidget *result_button_stack = new QWidget(this->content);
@@ -990,13 +1188,16 @@ void TopControlBar::addSimulationControls()
 
     this->button_sim_statistics = new QToolButton(result_button_stack);
     this->button_sim_statistics->setAutoRaise(true);
-    this->button_sim_statistics->setIcon(QIcon(QStringLiteral(":/icon/dashboard.png")));
+    this->button_sim_statistics->setIcon(
+        QIcon(QStringLiteral(":/icon/dashboard.png")));
     configureStackedToolbarIconButton(this->button_sim_statistics);
 
-    this->button_sim_log = new QToolButton(result_button_stack);
-    this->button_sim_log->setAutoRaise(true);
-    this->button_sim_log->setIcon(QIcon(QStringLiteral(":/icon/log.png")));
-    configureStackedToolbarIconButton(this->button_sim_log);
+    this->button_sim_settings = new QToolButton(result_button_stack);
+    this->button_sim_settings->setAutoRaise(true);
+    this->button_sim_settings->setIcon(
+        QIcon(QStringLiteral(":/icon/settings.png")));
+    this->button_sim_settings->setToolTip(QStringLiteral("Simulation settings"));
+    configureStackedToolbarIconButton(this->button_sim_settings);
 
     const int control_height = toolbarIconButtonSize().height();
     const int half_height = control_height / 2;
@@ -1004,13 +1205,15 @@ void TopControlBar::addSimulationControls()
 
     QWidget *timeline_navigation = new QWidget(this->content);
     timeline_navigation->setFixedSize(timeline_width, control_height);
-    QVBoxLayout *timeline_navigation_layout = new QVBoxLayout(timeline_navigation);
+    QVBoxLayout *timeline_navigation_layout =
+        new QVBoxLayout(timeline_navigation);
     timeline_navigation_layout->setContentsMargins(0, 0, 0, 0);
     timeline_navigation_layout->setSpacing(0);
 
     this->combo_sim_timepoint = new QComboBox(timeline_navigation);
     this->combo_sim_timepoint->setFixedSize(timeline_width, half_height);
-    this->combo_sim_timepoint->setToolTip(QStringLiteral("Select simulation time point"));
+    this->combo_sim_timepoint->setToolTip(
+        QStringLiteral("Select simulation time point"));
 
     QWidget *step_buttons = new QWidget(timeline_navigation);
     step_buttons->setFixedSize(timeline_width, half_height);
@@ -1020,17 +1223,27 @@ void TopControlBar::addSimulationControls()
 
     this->button_sim_step_previous = new QToolButton(step_buttons);
     this->button_sim_step_previous->setAutoRaise(true);
-    this->button_sim_step_previous->setIcon(style()->standardIcon(QStyle::SP_MediaSkipBackward));
-    this->button_sim_step_previous->setFixedSize(timeline_width / 2, half_height);
-    this->button_sim_step_previous->setIconSize(QSize(qMax(1, half_height - 4), qMax(1, half_height - 4)));
-    this->button_sim_step_previous->setToolTip(QStringLiteral("Previous simulation time point"));
+    this->button_sim_step_previous->setIcon(
+        style()->standardIcon(QStyle::SP_MediaSkipBackward));
+    this->button_sim_step_previous->setFixedSize(
+        timeline_width / 2,
+        half_height);
+    this->button_sim_step_previous->setIconSize(
+        QSize(qMax(1, half_height - 4), qMax(1, half_height - 4)));
+    this->button_sim_step_previous->setToolTip(
+        QStringLiteral("Previous simulation time point"));
 
     this->button_sim_step_next = new QToolButton(step_buttons);
     this->button_sim_step_next->setAutoRaise(true);
-    this->button_sim_step_next->setIcon(style()->standardIcon(QStyle::SP_MediaSkipForward));
-    this->button_sim_step_next->setFixedSize(timeline_width - timeline_width / 2, half_height);
-    this->button_sim_step_next->setIconSize(QSize(qMax(1, half_height - 4), qMax(1, half_height - 4)));
-    this->button_sim_step_next->setToolTip(QStringLiteral("Next simulation time point"));
+    this->button_sim_step_next->setIcon(
+        style()->standardIcon(QStyle::SP_MediaSkipForward));
+    this->button_sim_step_next->setFixedSize(
+        timeline_width - timeline_width / 2,
+        half_height);
+    this->button_sim_step_next->setIconSize(
+        QSize(qMax(1, half_height - 4), qMax(1, half_height - 4)));
+    this->button_sim_step_next->setToolTip(
+        QStringLiteral("Next simulation time point"));
 
     step_buttons_layout->addWidget(this->button_sim_step_previous);
     step_buttons_layout->addWidget(this->button_sim_step_next);
@@ -1045,14 +1258,18 @@ void TopControlBar::addSimulationControls()
 
     this->button_sim_playback = new QToolButton(playback_stack);
     this->button_sim_playback->setAutoRaise(true);
-    this->button_sim_playback->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
+    this->button_sim_playback->setIcon(
+        style()->standardIcon(QStyle::SP_MediaPlay));
     this->button_sim_playback->setFixedSize(54, half_height);
-    this->button_sim_playback->setIconSize(QSize(qMax(1, half_height - 4), qMax(1, half_height - 4)));
-    this->button_sim_playback->setToolTip(QStringLiteral("Play simulation timeline"));
+    this->button_sim_playback->setIconSize(
+        QSize(qMax(1, half_height - 4), qMax(1, half_height - 4)));
+    this->button_sim_playback->setToolTip(
+        QStringLiteral("Play simulation timeline"));
 
     this->combo_sim_speed = new QComboBox(playback_stack);
     this->combo_sim_speed->setFixedSize(54, half_height);
-    this->combo_sim_speed->setToolTip(QStringLiteral("Simulation playback speed"));
+    this->combo_sim_speed->setToolTip(
+        QStringLiteral("Simulation playback speed"));
     this->combo_sim_speed->addItem(QStringLiteral("¼×"), 0.25);
     this->combo_sim_speed->addItem(QStringLiteral("½×"), 0.5);
     this->combo_sim_speed->addItem(QStringLiteral("1×"), 1.0);
@@ -1080,12 +1297,14 @@ void TopControlBar::addSimulationControls()
         emit signalShowSimulationStatistics();
     });
 
-    connect(this->button_sim_log, &QToolButton::clicked, this, [this]
+    connect(this->button_sim_settings, &QToolButton::clicked, this, [this]
     {
-        emit signalShowEpanetLog();
+        showSimulationSettings();
     });
 
-    connect(this->combo_sim_timepoint, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int result_index)
+    connect(this->combo_sim_timepoint,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int result_index)
     {
         if (result_index >= 0)
             requestSimulationResultIndex(result_index);
@@ -1093,12 +1312,14 @@ void TopControlBar::addSimulationControls()
 
     connect(this->button_sim_step_previous, &QToolButton::clicked, this, [this]
     {
-        requestSimulationResultIndex(this->combo_sim_timepoint->currentIndex() - 1);
+        requestSimulationResultIndex(
+            this->combo_sim_timepoint->currentIndex() - 1);
     });
 
     connect(this->button_sim_step_next, &QToolButton::clicked, this, [this]
     {
-        requestSimulationResultIndex(this->combo_sim_timepoint->currentIndex() + 1);
+        requestSimulationResultIndex(
+            this->combo_sim_timepoint->currentIndex() + 1);
     });
 
     connect(this->button_sim_playback, &QToolButton::clicked, this, [this]
@@ -1112,23 +1333,32 @@ void TopControlBar::addSimulationControls()
         if (this->simulation_result_count <= 1)
             return;
 
-        if (this->combo_sim_timepoint->currentIndex() >= this->simulation_result_count - 1)
+        if (this->combo_sim_timepoint->currentIndex()
+            >= this->simulation_result_count - 1)
+        {
             requestSimulationResultIndex(0);
+        }
 
         setSimulationPlaybackActive(true);
     });
 
-    connect(this->combo_sim_speed, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int)
+    connect(this->combo_sim_speed,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int)
     {
         const double speed = this->combo_sim_speed->currentData().toDouble();
-        const int interval_ms = qMax(1, qRound(1000.0 / qMax(0.01, speed)));
+        const int interval_ms = qMax(
+            1,
+            qRound(1000.0 / qMax(0.01, speed)));
         this->simulation_playback_timer->setInterval(interval_ms);
     });
 
     connect(this->simulation_playback_timer, &QTimer::timeout, this, [this]
     {
-        const int current_index = this->combo_sim_timepoint->currentIndex();
-        if (current_index < 0 || current_index >= this->simulation_result_count - 1)
+        const int current_index =
+            this->combo_sim_timepoint->currentIndex();
+        if (current_index < 0
+            || current_index >= this->simulation_result_count - 1)
         {
             setSimulationPlaybackActive(false);
             return;
@@ -1138,7 +1368,7 @@ void TopControlBar::addSimulationControls()
     });
 
     result_button_stack_layout->addWidget(this->button_sim_statistics);
-    result_button_stack_layout->addWidget(this->button_sim_log);
+    result_button_stack_layout->addWidget(this->button_sim_settings);
 
     bar_content->centerLayout()->addWidget(this->button_sim_start);
     bar_content->centerLayout()->addWidget(result_button_stack);
@@ -1164,7 +1394,11 @@ void TopControlBar::addViewControls()
     {
         emit signalFullScreenToggle();
     });
-    installShortcutEditContextMenu(this->button_fullscreen, GuiShortcutId::Fullscreen);
+
+    installShortcutEditContextMenu(
+        this->button_fullscreen,
+        GuiShortcutId::Fullscreen);
+
     connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutChanged,
             this, [this](GuiShortcutId id)
     {

@@ -8,6 +8,7 @@
 #include <aowis/epanet/epanet_result_run.h>
 #include <aowis/epanet/epanet_run_request.h>
 
+#include <QApplication>
 #include <QByteArray>
 #include <QFile>
 #include <QFileDialog>
@@ -49,7 +50,6 @@ EM_JS(void, aowisOpenEpanetInpFile, (),
             const contents = _malloc(bytes.length);
             if (bytes.length > 0)
                 HEAPU8.set(bytes, contents);
-
             _aowisReceiveEpanetInpFile(file_name_utf8, contents, bytes.length);
 
             _free(contents);
@@ -152,7 +152,6 @@ QString diagnosticDetails(const HydraulicSimulationDiagnostic &diagnostic)
 QString importFailureDetails(const EpanetResultImport &result)
 {
     QStringList details;
-
     if (!result.status.message.isEmpty())
         details.append(result.status.message);
     if (!result.status.message_backend.isEmpty())
@@ -312,14 +311,21 @@ void SimulationManager::run(const QList<WaterQualityAnalysisType> &quality_analy
             quality_options.chemical_name = QStringLiteral("Chlorine");
         else if (analysis == WaterQualityAnalysisType::SourceTrace)
             quality_options.trace_node_uuid = this->hydraulic_data->sourceTraceOriginNodeUuid();
+
         run_request.quality_runs.append(quality_options);
     }
 
     this->simulation_running = true;
     emit signalSimulationStarted();
+
     this->epanet_log.clear();
-    if (this->widget_epanet_log)
-        this->widget_epanet_log->clear();
+    if (this->dialog_simulation_statistics)
+    {
+        SimulationStatisticsDialog *statistics_dialog =
+            qobject_cast<SimulationStatisticsDialog *>(this->dialog_simulation_statistics.data());
+        if (statistics_dialog != nullptr)
+            statistics_dialog->setEpanetLog(QString());
+    }
     emit signalEpanetLogAvailabilityChanged(false);
 
     std::shared_ptr<EpanetResultRun> run_result = std::make_shared<EpanetResultRun>();
@@ -340,7 +346,6 @@ void SimulationManager::run(const QList<WaterQualityAnalysisType> &quality_analy
     {
         if (this->simulation_thread == thread)
             this->simulation_thread = nullptr;
-
         if (this->simulation_cancellation_flag == cancellation_flag)
             this->simulation_cancellation_flag.reset();
 
@@ -355,8 +360,13 @@ void SimulationManager::run(const QList<WaterQualityAnalysisType> &quality_analy
 void SimulationManager::finishSimulation(const EpanetResultRun &run_result)
 {
     this->epanet_log = runReportText(run_result);
-    if (this->widget_epanet_log)
-        this->widget_epanet_log->setPlainText(this->epanet_log);
+    if (this->dialog_simulation_statistics)
+    {
+        SimulationStatisticsDialog *statistics_dialog =
+            qobject_cast<SimulationStatisticsDialog *>(this->dialog_simulation_statistics.data());
+        if (statistics_dialog != nullptr)
+            statistics_dialog->setEpanetLog(this->epanet_log);
+    }
     emit signalEpanetLogAvailabilityChanged(!this->epanet_log.isEmpty());
     qDebug().noquote() << this->epanet_log;
 
@@ -427,11 +437,20 @@ void SimulationManager::finishSimulation(const EpanetResultRun &run_result)
 
 void SimulationManager::showSimulationStatistics()
 {
-    if (!this->hydraulic_data->hasSimulationResults())
+    if (!this->hydraulic_data->hasSimulationResults() && this->epanet_log.isEmpty())
         return;
 
     if (this->dialog_simulation_statistics)
     {
+        SimulationStatisticsDialog *statistics_dialog =
+            qobject_cast<SimulationStatisticsDialog *>(this->dialog_simulation_statistics.data());
+        if (statistics_dialog != nullptr)
+        {
+            statistics_dialog->setEpanetLog(this->epanet_log);
+            if (!this->hydraulic_data->hasSimulationResults() && !this->epanet_log.isEmpty())
+                statistics_dialog->showEpanetLogTab();
+        }
+
         showAndActivateDialog(this->dialog_simulation_statistics);
         return;
     }
@@ -440,7 +459,12 @@ void SimulationManager::showSimulationStatistics()
     if (main_window == nullptr)
         main_window = QApplication::activeWindow();
 
-    this->dialog_simulation_statistics = new SimulationStatisticsDialog(this->hydraulic_data, main_window);
+    SimulationStatisticsDialog *statistics_dialog =
+        new SimulationStatisticsDialog(this->hydraulic_data, main_window);
+    statistics_dialog->setEpanetLog(this->epanet_log);
+    if (!this->hydraulic_data->hasSimulationResults() && !this->epanet_log.isEmpty())
+        statistics_dialog->showEpanetLogTab();
+    this->dialog_simulation_statistics = statistics_dialog;
     showAndActivateDialog(this->dialog_simulation_statistics);
 }
 
@@ -449,7 +473,8 @@ void SimulationManager::showSimulationDiagnostics()
     if (this->hydraulic_data == nullptr)
         return;
 
-    const std::optional<HydraulicSimulationResultTimeline> &result_timeline = this->hydraulic_data->simulationResultTimeline();
+    const std::optional<HydraulicSimulationResultTimeline> &result_timeline =
+        this->hydraulic_data->simulationResultTimeline();
     if (!result_timeline.has_value() || result_timeline->diagnostics.isEmpty())
         return;
 
@@ -463,71 +488,22 @@ void SimulationManager::showSimulationDiagnostics()
     if (main_window == nullptr)
         main_window = QApplication::activeWindow();
 
-    this->dialog_simulation_diagnostics = new SimulationDiagnosticsDialog(this->hydraulic_data, main_window);
+    this->dialog_simulation_diagnostics =
+        new SimulationDiagnosticsDialog(this->hydraulic_data, main_window);
     showAndActivateDialog(this->dialog_simulation_diagnostics);
 }
 
 void SimulationManager::showEpanetLog()
 {
-    if (this->dialog_epanet_log)
-    {
-        showAndActivateDialog(this->dialog_epanet_log);
+    showSimulationStatistics();
+
+    if (!this->dialog_simulation_statistics)
         return;
-    }
 
-    QWidget *main_window = qobject_cast<QWidget *>(parent());
-    if (main_window == nullptr)
-        main_window = QApplication::activeWindow();
-
-    this->dialog_epanet_log = new QDialog(
-        main_window,
-        Qt::Dialog
-        | Qt::WindowTitleHint
-        | Qt::WindowCloseButtonHint
-        | Qt::WindowMaximizeButtonHint
-    );
-
-    this->dialog_epanet_log->setAttribute(Qt::WA_DeleteOnClose);
-    this->dialog_epanet_log->setWindowTitle(tr("EPANET Log"));
-    this->dialog_epanet_log->setModal(false);
-
-    this->widget_epanet_log = new QTextBrowser(this->dialog_epanet_log);
-
-    const QFont fixed_font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-
-    this->widget_epanet_log->setFont(fixed_font);
-    this->widget_epanet_log->setPlainText(this->epanet_log);
-    this->widget_epanet_log->setOpenExternalLinks(true);
-    this->widget_epanet_log->setLineWrapMode(QTextEdit::NoWrap);
-
-    QVBoxLayout *layout = new QVBoxLayout(this->dialog_epanet_log);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(this->widget_epanet_log);
-
-    const QFontMetrics font_metrics(fixed_font);
-    const QStringList lines = this->epanet_log.split('\n');
-
-    int content_width = 0;
-
-    for (const QString &line : lines)
-        content_width = qMax(content_width, font_metrics.horizontalAdvance(line));
-
-    // Space for the frame, scrollbar and some padding.
-    const int width_overhead = 50;
-    const int desired_width = content_width + width_overhead;
-
-    QScreen *screen = this->dialog_epanet_log->screen();
-    if (screen == nullptr)
-        screen = QApplication::primaryScreen();
-
-    const int maximum_width = screen != nullptr
-        ? static_cast<int>(screen->availableGeometry().width() * 0.9)
-        : 1200;
-
-    const int dialog_width = qBound(500, desired_width, maximum_width);
-
-    this->dialog_epanet_log->resize(dialog_width, 600);
-    showAndActivateDialog(this->dialog_epanet_log);
+    SimulationStatisticsDialog *statistics_dialog =
+        qobject_cast<SimulationStatisticsDialog *>(this->dialog_simulation_statistics.data());
+    if (statistics_dialog != nullptr)
+        statistics_dialog->showEpanetLogTab();
 }
 
 void SimulationManager::importEpanetNetwork()
@@ -619,6 +595,7 @@ void SimulationManager::importEpanetNetworkContent(
             tr("Could not prepare the selected INP file for import."));
         return;
     }
+
     temporary_file.close();
 
     EpanetRunner runner;
@@ -717,7 +694,11 @@ void SimulationManager::exportEpanetNetwork()
     QSaveFile output_file(file_path);
     if (!output_file.open(QIODevice::WriteOnly))
     {
-        showMessageBox(main_window, QMessageBox::Critical, tr("EPANET export failed"), tr("Could not open the selected file for writing:\n%1").arg(output_file.errorString()));
+        showMessageBox(
+            main_window,
+            QMessageBox::Critical,
+            tr("EPANET export failed"),
+            tr("Could not open the selected file for writing:\n%1").arg(output_file.errorString()));
         return;
     }
 
@@ -726,11 +707,21 @@ void SimulationManager::exportEpanetNetwork()
     {
         const QString error_message = output_file.errorString();
         output_file.cancelWriting();
-        showMessageBox(main_window, QMessageBox::Critical, tr("EPANET export failed"), tr("Could not write the complete INP document:\n%1").arg(error_message));
+        showMessageBox(
+            main_window,
+            QMessageBox::Critical,
+            tr("EPANET export failed"),
+            tr("Could not write the complete INP document:\n%1").arg(error_message));
         return;
     }
 
     if (!output_file.commit())
-        showMessageBox(main_window, QMessageBox::Critical, tr("EPANET export failed"), tr("Could not finalize the exported INP file:\n%1").arg(output_file.errorString()));
+    {
+        showMessageBox(
+            main_window,
+            QMessageBox::Critical,
+            tr("EPANET export failed"),
+            tr("Could not finalize the exported INP file:\n%1").arg(output_file.errorString()));
+    }
 #endif
 }
