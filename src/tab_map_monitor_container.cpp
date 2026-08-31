@@ -1975,7 +1975,9 @@ void MapMonitorMenuWidget::addGroupVisualSettings()
         this->node_size_unit = unit;
         if (unit == NetworkSymbologySizeUnit::Meters)
         {
-            slider_node_size->setConfiguration(1, 200,
+            slider_node_size->setConfiguration(
+                qRound(NetworkSymbologyMinimumNodeSizeM * 10.0),
+                qRound(NetworkSymbologyMaximumNodeSizeM * 10.0),
                 qRound(NetworkSymbologyDefaultNodeSizeM * 10.0),
                 qRound(this->node_size_m * 10.0),
                 QStringLiteral("Sets the true world-space junction diameter."),
@@ -2030,7 +2032,9 @@ void MapMonitorMenuWidget::addGroupVisualSettings()
         this->link_thickness_unit = unit;
         if (unit == NetworkSymbologySizeUnit::Meters)
         {
-            slider_link_thickness->setConfiguration(1, 500,
+            slider_link_thickness->setConfiguration(
+                qRound(NetworkSymbologyMinimumLinkThicknessM * 100.0),
+                qRound(NetworkSymbologyMaximumLinkThicknessM * 100.0),
                 qRound(NetworkSymbologyDefaultLinkThicknessM * 100.0),
                 qRound(this->link_thickness_m * 100.0),
                 QStringLiteral("Sets the true world-space pipe thickness."),
