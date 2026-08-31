@@ -28,6 +28,7 @@ class QRhiSampler;
 class QRhiShaderResourceBindings;
 class QRhiTexture;
 class QResizeEvent;
+class QEvent;
 
 enum class MapRhiUndergroundMode
 {
@@ -82,6 +83,7 @@ signals:
     void signalRendererFailed(const QString &reason);
 
 protected:
+    void changeEvent(QEvent *event) override;
     void initialize(QRhiCommandBuffer *command_buffer) override;
     void render(QRhiCommandBuffer *command_buffer) override;
     void releaseResources() override;
@@ -162,6 +164,7 @@ private:
     std::unique_ptr<QRhiGraphicsPipeline> node_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> node_overlay_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> icon_pipeline;
+    std::unique_ptr<QRhiGraphicsPipeline> icon_overlay_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> heatmap_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> tank_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> junction_pipeline;

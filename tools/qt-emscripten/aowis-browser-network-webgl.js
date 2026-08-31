@@ -259,7 +259,16 @@
         "    float alpha = sampled.a * v_color.a;",
         "    if (alpha <= 0.001)",
         "        discard;",
-        "    vec3 color = v_tint >= 0.5 ? v_color.rgb : sampled.rgb;",
+        "    vec3 color = sampled.rgb;",
+        "    if (v_tint >= 1.5) {",
+        "        float maximum_channel = max(sampled.r, max(sampled.g, sampled.b));",
+        "        float minimum_channel = min(sampled.r, min(sampled.g, sampled.b));",
+        "        float fill_mask = smoothstep(0.08, 0.20,",
+        "            maximum_channel - minimum_channel);",
+        "        color = mix(sampled.rgb, v_color.rgb, fill_mask);",
+        "    } else if (v_tint >= 0.5) {",
+        "        color = v_color.rgb;",
+        "    }",
         "    out_color = vec4(color, alpha);",
         "}"
     ].join("\n");
@@ -856,13 +865,15 @@
             gl.uniform2f(program.viewport, view.width, view.height);
         }
 
-        renderBatch(batchName, view, style) {
+        renderBatch(batchName, view, style, drawNonSprites, drawSprites) {
             const gl = this.gl;
             const resources = this.resources;
             const batch = resources.batches[batchName];
             const batchStyle = style || {};
+            const renderNonSprites = drawNonSprites === undefined ? true : !!drawNonSprites;
+            const renderSprites = drawSprites === undefined ? true : !!drawSprites;
 
-            if (batch.segmentCount > 0) {
+            if (renderNonSprites && batch.segmentCount > 0) {
                 const program = resources.programs.segment;
                 gl.useProgram(program.handle);
                 gl.bindVertexArray(batch.segmentVertexArray);
@@ -874,7 +885,7 @@
                 gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, batch.segmentCount);
             }
 
-            if (batch.arrowCount > 0) {
+            if (renderNonSprites && batch.arrowCount > 0) {
                 const program = resources.programs.arrow;
                 gl.useProgram(program.handle);
                 gl.bindVertexArray(batch.arrowVertexArray);
@@ -888,7 +899,7 @@
                 gl.drawArraysInstanced(gl.TRIANGLES, 0, 12, batch.arrowCount);
             }
 
-            if (batch.discCount > 0) {
+            if (renderNonSprites && batch.discCount > 0) {
                 const program = resources.programs.disc;
                 gl.useProgram(program.handle);
                 gl.bindVertexArray(batch.discVertexArray);
@@ -900,7 +911,7 @@
                 gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, batch.discCount);
             }
 
-            if (batch.spriteCount > 0) {
+            if (renderSprites && batch.spriteCount > 0) {
                 const program = resources.programs.sprite;
                 gl.useProgram(program.handle);
                 gl.bindVertexArray(batch.spriteVertexArray);
@@ -944,8 +955,21 @@
             gl.clear(gl.COLOR_BUFFER_BIT);
 
             const styles = view.batches || {};
-            for (const batchName of BATCH_NAMES)
-                this.renderBatch(batchName, configuredView, styles[batchName]);
+            this.renderBatch("base", configuredView, styles.base, true, false);
+            this.renderBatch(
+                "flowDirection", configuredView, styles.flowDirection, true, false);
+            this.renderBatch(
+                "selectionOuter", configuredView, styles.selectionOuter, true, false);
+            this.renderBatch("overlay", configuredView, styles.overlay, true, false);
+            // Device/node icons are semantic markers, not link geometry. Draw
+            // every sprite pass after all network strokes so links, arrows and
+            // highlight strokes cannot cut through pumps, valves, reservoirs
+            // or tanks. Selection/diagnostic sprite passes still remain above
+            // the base icon itself.
+            this.renderBatch("base", configuredView, styles.base, false, true);
+            this.renderBatch(
+                "selectionOuter", configuredView, styles.selectionOuter, false, true);
+            this.renderBatch("overlay", configuredView, styles.overlay, false, true);
 
             gl.bindTexture(gl.TEXTURE_2D, null);
             gl.bindVertexArray(null);

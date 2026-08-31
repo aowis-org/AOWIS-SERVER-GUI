@@ -22,6 +22,7 @@
 
 class HydraulicData;
 class QColor;
+class QEvent;
 class QHideEvent;
 class QPaintEvent;
 class QPainter;
@@ -59,6 +60,7 @@ public slots:
                       const NetworkSymbologyRanges &ranges);
 
 protected:
+    void changeEvent(QEvent *event) override;
     void hideEvent(QHideEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
     void showEvent(QShowEvent *event) override;
@@ -128,7 +130,9 @@ private:
         NetworkSymbologySizeUnit node_size_unit = NetworkSymbologySizeUnit::Pixels;
         int node_size_px = NetworkSymbologyDefaultNodeSizePx;
         double node_size_m = NetworkSymbologyDefaultNodeSizeM;
-        int icon_size_percent = 100;
+        NetworkSymbologySizeUnit icon_size_unit = NetworkSymbologySizeUnit::Pixels;
+        int icon_size_px = NetworkSymbologyDefaultIconSizePx;
+        double icon_size_m = NetworkSymbologyDefaultIconSizeM;
         NetworkSymbologySizeUnit link_thickness_unit = NetworkSymbologySizeUnit::Pixels;
         int link_thickness_px = NetworkSymbologyDefaultLinkThicknessPx;
         double link_thickness_m = NetworkSymbologyDefaultLinkThicknessM;
@@ -152,6 +156,7 @@ private:
         int zoom = -1;
         qreal meters_per_pixel = 1.0;
         qreal device_pixel_ratio = 1.0;
+        QRgb icon_default_fill_color = qRgb(70, 70, 70);
         QSize logical_size;
         QRectF coverage_world_bounds;
         QRectF image_world_bounds;

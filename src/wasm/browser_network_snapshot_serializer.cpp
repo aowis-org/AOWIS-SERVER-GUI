@@ -361,7 +361,9 @@ QByteArray BrowserNetworkSnapshotSerializer::serializeSymbology(
     root.insert(QStringLiteral("nodeSizeUnit"), static_cast<int>(bounded_settings.node_size_unit));
     root.insert(QStringLiteral("nodeSizePixels"), bounded_settings.node_size_px);
     root.insert(QStringLiteral("nodeSizeMeters"), bounded_settings.node_size_m);
-    root.insert(QStringLiteral("iconSizePercent"), bounded_settings.icon_size_percent);
+    root.insert(QStringLiteral("iconSizeUnit"), static_cast<int>(bounded_settings.icon_size_unit));
+    root.insert(QStringLiteral("iconSizePixels"), bounded_settings.icon_size_px);
+    root.insert(QStringLiteral("iconSizeMeters"), bounded_settings.icon_size_m);
     root.insert(QStringLiteral("nodeMinimum"), ranges.node_minimum);
     root.insert(QStringLiteral("nodeMaximum"), ranges.node_maximum);
     root.insert(QStringLiteral("nodeValues"), nodeValuesToJson(snapshot, node_values));

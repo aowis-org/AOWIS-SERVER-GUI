@@ -355,10 +355,22 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     this->map_stack_layout->setStackingMode(QStackedLayout::StackAll);
     connect(this->map_menu->mapNavigationWidget(), &MapNavigationWidget::signalSlideOpacityChanged,
         this, &MapMonitorContainer::setNetworkBackgroundOpacity);
-    connect(this->map_menu->mapNavigationWidget(), &MapNavigationWidget::signalIconSizeChanged, this,
-        [this](int size_percent)
+    connect(this->map_menu->mapNavigationWidget(),
+        &MapNavigationWidget::signalMonitorIconSizeUnitChanged, this,
+        [this](NetworkSymbologySizeUnit unit)
     {
-        this->symbology_settings.icon_size_percent = size_percent;
+        this->symbology_settings.icon_size_unit = unit;
+        applyVisualControlSymbology();
+    });
+    connect(this->map_menu->mapNavigationWidget(),
+        &MapNavigationWidget::signalMonitorIconSizeChanged, this,
+        [this](NetworkSymbologySizeUnit unit, double size)
+    {
+        this->symbology_settings.icon_size_unit = unit;
+        if (unit == NetworkSymbologySizeUnit::Meters)
+            this->symbology_settings.icon_size_m = size;
+        else
+            this->symbology_settings.icon_size_px = qRound(size);
         applyVisualControlSymbology();
     });
     this->map->installEventFilter(this);

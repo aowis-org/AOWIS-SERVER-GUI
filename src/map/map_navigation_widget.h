@@ -8,6 +8,7 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QSlider>
 #include <QLabel>
 #include <QIcon>
@@ -18,6 +19,7 @@
 
 #include "map_widget.h"
 #include "../_enums_structs.h"
+#include "../network_symbology.h"
 
 class MapNavigationWidget : public QWidget
 {
@@ -48,8 +50,15 @@ private:
     
     QCheckBox* check_map_sync = nullptr;
     QSlider *slider_icon_size = nullptr;
+    QComboBox *combo_icon_size_unit = nullptr;
     int icon_size_2d_percent = 100;
     int icon_size_3d_percent = 100;
+    NetworkSymbologySizeUnit icon_size_2d_unit = NetworkSymbologySizeUnit::Pixels;
+    int icon_size_2d_px = NetworkSymbologyDefaultIconSizePx;
+    double icon_size_2d_m = NetworkSymbologyDefaultIconSizeM;
+    NetworkSymbologySizeUnit icon_size_3d_unit = NetworkSymbologySizeUnit::Pixels;
+    int icon_size_3d_px = NetworkSymbologyDefaultIconSizePx;
+    double icon_size_3d_m = NetworkSymbologyDefaultIconSizeM;
 
     void activateMapProvider(MapProvider provider);
     void syncIconSizeSliderForViewMode(MapViewMode view_mode);
@@ -58,6 +67,8 @@ private:
 signals:
     void signalSlideOpacityChanged(int opacity);
     void signalIconSizeChanged(int size_percent);
+    void signalMonitorIconSizeUnitChanged(NetworkSymbologySizeUnit unit);
+    void signalMonitorIconSizeChanged(NetworkSymbologySizeUnit unit, double size);
     void signalSyncMapMovementStateChanged(bool sync);
     
 public slots:

@@ -646,8 +646,11 @@ void MapEditorContainer::applyDesktopRhiEditorSymbology()
     symbology.node_size_unit = NetworkSymbologySizeUnit::Pixels;
     symbology.node_size_px = 10;
     symbology.node_size_m = NetworkSymbologyDefaultNodeSizeM;
-    symbology.icon_size_percent =
-        this->map_canvas->mapCanvasEntities()->iconSizePercent();
+    symbology.icon_size_unit = NetworkSymbologySizeUnit::Pixels;
+    symbology.icon_size_px = qRound(networkSymbologyMarkerSizeForZoom(
+        this->map_model->zoom(),
+        this->map_canvas->mapCanvasEntities()->iconSizePercent()));
+    symbology.icon_size_m = NetworkSymbologyDefaultIconSizeM;
     symbology.show_icons = this->map_model->viewMode() == MapViewMode::ThreeD;
     symbology.link_thickness_unit = NetworkSymbologySizeUnit::Pixels;
     symbology.link_thickness_px = NetworkSymbologyDefaultLinkThicknessPx;

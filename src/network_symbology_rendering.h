@@ -24,6 +24,29 @@ inline QRgb networkSymbologyUnavailableColor()
     return qRgb(0, 0, 0);
 }
 
+inline QRgb networkSymbologyIconDefaultFillColor()
+{
+    // The atlas needs a saturated fill so the shader can distinguish the
+    // colorizable body from the dark outline/details. The actual display
+    // color comes from the themed overload below.
+    return qRgb(46, 139, 192);
+}
+
+inline QRgb networkSymbologyIconDefaultFillColor(const QColor &)
+{
+    return qRgb(210, 210, 210);
+}
+
+inline QRgb networkSymbologyIconUnavailableFillColor()
+{
+    return qRgb(112, 120, 126);
+}
+
+inline QRgb networkSymbologyIconOutlineColor()
+{
+    return qRgb(17, 24, 32);
+}
+
 inline qreal networkSymbologyNodeSizeScale(int node_size_percent)
 {
     return qBound<qreal>(0.5, node_size_percent / 100.0, 2.5);
@@ -40,6 +63,19 @@ inline qreal networkSymbologyMarkerSizeForZoom(int zoom, int node_size_percent)
         5.0,
         networkSymbologyBaseMarkerSizeForZoom(zoom)
             * networkSymbologyNodeSizeScale(node_size_percent));
+}
+
+
+inline qreal networkSymbologyIconSizePixels(
+    NetworkSymbologySizeUnit unit, int size_px, double size_m, qreal meters_per_pixel)
+{
+    if (unit == NetworkSymbologySizeUnit::Meters)
+    {
+        if (!std::isfinite(meters_per_pixel) || meters_per_pixel <= 0.0)
+            return qreal(size_px);
+        return qMax<qreal>(1.0, qreal(size_m) / meters_per_pixel);
+    }
+    return qreal(size_px);
 }
 
 inline qreal networkSymbologyJunctionDotDiameterForZoom(int zoom, int node_size_percent)

@@ -14,8 +14,13 @@ struct MapRhiSymbology
     NetworkSymbologySizeUnit node_size_unit = NetworkSymbologySizeUnit::Pixels;
     int node_size_px = NetworkSymbologyDefaultNodeSizePx;
     double node_size_m = NetworkSymbologyDefaultNodeSizeM;
-    int icon_size_percent = 100;
+    NetworkSymbologySizeUnit icon_size_unit = NetworkSymbologySizeUnit::Pixels;
+    int icon_size_px = NetworkSymbologyDefaultIconSizePx;
+    double icon_size_m = NetworkSymbologyDefaultIconSizeM;
     bool show_icons = true;
+    QRgb icon_default_fill_color = qRgb(70, 70, 70);
+    VisualNode visual_node = VisualNode::None;
+    VisualLink visual_link = VisualLink::None;
     NetworkSymbologySizeUnit link_thickness_unit = NetworkSymbologySizeUnit::Pixels;
     int link_thickness_px = NetworkSymbologyDefaultLinkThicknessPx;
     double link_thickness_m = NetworkSymbologyDefaultLinkThicknessM;

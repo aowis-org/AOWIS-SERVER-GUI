@@ -13,9 +13,8 @@
 
 #include <QBrush>
 #include <QColor>
-#include <QFont>
-#include <QFontMetricsF>
 #include <QCoreApplication>
+#include <QEvent>
 #include <QHideEvent>
 #include <QMetaObject>
 #include <QPainter>
@@ -119,17 +118,6 @@ bool isFiniteCoordinate(const CoordinateWGS84 &coordinate)
     return std::isfinite(coordinate.longitude_deg) && std::isfinite(coordinate.latitude_deg);
 }
 
-qreal baseMarkerSizeForZoom(int zoom)
-{
-    return qBound<qreal>(10.0, 10.0 + (zoom - 16) * 10.0, 40.0);
-}
-
-qreal markerSizeForZoom(int zoom, int icon_size_percent)
-{
-    const qreal scale = qBound<qreal>(0.5, icon_size_percent / 100.0, 2.5);
-    return qMax<qreal>(5.0, baseMarkerSizeForZoom(zoom) * scale);
-}
-
 qreal nodeDiameterPixels(
     NetworkSymbologySizeUnit unit, int size_px, double size_m, qreal meters_per_pixel)
 {
@@ -160,12 +148,13 @@ struct NetworkIconAsset
     InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
     qreal view_width = 0.0;
     qreal view_height = 0.0;
-    qreal stroke_width = 10.0;
+    qreal stroke_width = 14.0;
     QPainterPath stroke_path;
     QPainterPath fill_path;
+    QPainterPath detail_path;
 };
 
-QPainterPath reservoirStrokePath()
+QPainterPath reservoirFillPath()
 {
     QPainterPath path;
     path.moveTo(5.0, 5.0);
@@ -174,6 +163,19 @@ QPainterPath reservoirStrokePath()
     path.lineTo(125.0, 133.0);
     path.cubicTo(145.0, 133.0, 159.0, 117.0, 163.0, 97.0);
     path.lineTo(181.0, 5.0);
+    path.closeSubpath();
+    return path;
+}
+
+QPainterPath reservoirStrokePath()
+{
+    QPainterPath path;
+    path.moveTo(7.0, 7.0);
+    path.lineTo(24.0, 96.0);
+    path.cubicTo(27.0, 117.0, 41.0, 133.0, 61.0, 133.0);
+    path.lineTo(125.0, 133.0);
+    path.cubicTo(145.0, 133.0, 159.0, 117.0, 163.0, 97.0);
+    path.lineTo(179.0, 7.0);
 
     QPointF current(13.640777, 19.11651);
     path.moveTo(current);
@@ -196,17 +198,17 @@ QPainterPath tankStrokePath()
     path.moveTo(49.0, 14.0);
     path.lineTo(89.0, 14.0);
     path.moveTo(49.0, 14.0);
-    path.cubicTo(53.0, 2.0, 85.0, 2.0, 89.0, 14.0);
+    path.cubicTo(53.0, 7.0, 85.0, 7.0, 89.0, 14.0);
     path.moveTo(24.0, 142.0);
-    path.lineTo(24.0, 178.0);
+    path.lineTo(24.0, 176.0);
     path.moveTo(46.0, 142.0);
-    path.lineTo(46.0, 178.0);
+    path.lineTo(46.0, 176.0);
     path.moveTo(92.0, 142.0);
-    path.lineTo(92.0, 178.0);
+    path.lineTo(92.0, 176.0);
     path.moveTo(114.0, 142.0);
-    path.lineTo(114.0, 178.0);
-    path.moveTo(5.0, 178.0);
-    path.lineTo(133.0, 178.0);
+    path.lineTo(114.0, 176.0);
+    path.moveTo(7.0, 176.0);
+    path.lineTo(131.0, 176.0);
     return path;
 }
 
@@ -214,25 +216,28 @@ NetworkIconAsset pumpIconAsset()
 {
     NetworkIconAsset asset;
     asset.entity_type = InfrastructureEntity::Pump;
-    asset.view_width = 126.0;
-    asset.view_height = 110.0;
-    asset.stroke_path.addRoundedRect(QRectF(5.0, 5.0, 116.0, 100.0), 18.0, 18.0);
+    asset.view_width = 164.0;
+    asset.view_height = 122.0;
+    asset.stroke_width = 12.0;
 
-    QFont font(QStringLiteral("Arial"));
-    font.setPixelSize(72);
-    font.setBold(true);
-    const QString text = QStringLiteral("P");
-    const QFontMetricsF metrics(font);
-    const QRectF bounds = metrics.boundingRect(text);
-    const qreal x = 64.242722 - bounds.width() / 2.0 - bounds.left();
-    asset.fill_path.addText(QPointF(x, 80.077667), font, text);
+    QPainterPath body;
+    body.addEllipse(QRectF(8.0, 8.0, 106.0, 106.0));
+    QPainterPath outlet;
+    outlet.addRoundedRect(QRectF(98.0, 38.0, 58.0, 46.0), 6.0, 6.0);
+    const QPainterPath silhouette = body.united(outlet);
+
+    asset.fill_path = silhouette;
+    asset.fill_path.setFillRule(Qt::OddEvenFill);
+    asset.fill_path.addEllipse(QRectF(43.0, 43.0, 36.0, 36.0));
+    asset.stroke_path = silhouette;
+    asset.stroke_path.addEllipse(QRectF(43.0, 43.0, 36.0, 36.0));
     return asset;
 }
 
 QPainterPath valveStrokePath()
 {
     QPainterPath path;
-    path.addEllipse(QRectF(5.0, 5.0, 128.0, 128.0));
+    path.addEllipse(QRectF(8.0, 8.0, 122.0, 122.0));
     path.moveTo(25.0, 33.0);
     path.lineTo(69.0, 69.0);
     path.lineTo(113.0, 33.0);
@@ -252,11 +257,14 @@ const std::array<NetworkIconAsset, 4> &networkIconAssets()
         result[0].view_width = 186.0;
         result[0].view_height = 138.0;
         result[0].stroke_path = reservoirStrokePath();
+        result[0].fill_path = reservoirFillPath();
 
         result[1].entity_type = InfrastructureEntity::Tank;
         result[1].view_width = 138.0;
         result[1].view_height = 183.0;
         result[1].stroke_path = tankStrokePath();
+        result[1].fill_path.addRoundedRect(
+            QRectF(11.0, 22.0, 116.0, 120.0), 10.0, 10.0);
 
         result[2] = pumpIconAsset();
 
@@ -264,6 +272,7 @@ const std::array<NetworkIconAsset, 4> &networkIconAssets()
         result[3].view_width = 138.0;
         result[3].view_height = 138.0;
         result[3].stroke_path = valveStrokePath();
+        result[3].fill_path.addEllipse(QRectF(8.0, 8.0, 122.0, 122.0));
         return result;
     }();
     return assets;
@@ -280,10 +289,15 @@ const NetworkIconAsset *iconAssetForEntity(InfrastructureEntity entity_type)
     return nullptr;
 }
 
-QSizeF markerScreenSize(InfrastructureEntity entity_type, int zoom, qreal node_size_px, int icon_size_percent)
+QSizeF markerScreenSize(InfrastructureEntity entity_type, qreal node_size_px,
+                        NetworkSymbologySizeUnit icon_size_unit, int icon_size_px,
+                        double icon_size_m, qreal meters_per_pixel)
 {
     const NetworkIconAsset *asset = iconAssetForEntity(entity_type);
-    const qreal marker_size = asset ? markerSizeForZoom(zoom, icon_size_percent) : node_size_px;
+    const qreal marker_size = asset
+        ? networkSymbologyIconSizePixels(
+            icon_size_unit, icon_size_px, icon_size_m, meters_per_pixel)
+        : node_size_px;
     if (!asset)
         return QSizeF(marker_size, marker_size);
 
@@ -824,6 +838,20 @@ void MapNetworkOverlayWidget::setBackgroundOpacity(int opacity)
     update();
 }
 
+void MapNetworkOverlayWidget::changeEvent(QEvent *event)
+{
+    if (event != nullptr
+        && (event->type() == QEvent::ApplicationPaletteChange
+            || event->type() == QEvent::PaletteChange
+            || event->type() == QEvent::StyleChange))
+    {
+        clearRenderedCache();
+        requestRenderCache(true);
+    }
+
+    QWidget::changeEvent(event);
+}
+
 void MapNetworkOverlayWidget::setSymbology(
     const NetworkSymbologySettings &settings, const NetworkSymbologyRanges &ranges)
 {
@@ -848,7 +876,9 @@ void MapNetworkOverlayWidget::setSymbology(
         || this->symbology_settings.node_size_px != bounded_settings.node_size_px
         || this->symbology_settings.node_size_m != bounded_settings.node_size_m;
     const bool icon_size_changed =
-        this->symbology_settings.icon_size_percent != bounded_settings.icon_size_percent;
+        this->symbology_settings.icon_size_unit != bounded_settings.icon_size_unit
+        || this->symbology_settings.icon_size_px != bounded_settings.icon_size_px
+        || this->symbology_settings.icon_size_m != bounded_settings.icon_size_m;
     const bool link_thickness_changed =
         this->symbology_settings.link_thickness_unit != bounded_settings.link_thickness_unit
         || this->symbology_settings.link_thickness_px != bounded_settings.link_thickness_px
@@ -934,8 +964,10 @@ NetworkOverlayHit MapNetworkOverlayWidget::hitTest(const QPointF &screen_positio
     const NetworkOverlayHit marker_hit = nearestMarkerHit(
         world_position.x(), world_position.y(),
         node_diameter_px / (2.0 * scale),
-        markerSizeForZoom(this->map_model->zoom(),
-            this->symbology_settings.icon_size_percent) / (2.0 * scale));
+        networkSymbologyIconSizePixels(
+            this->symbology_settings.icon_size_unit,
+            this->symbology_settings.icon_size_px,
+            this->symbology_settings.icon_size_m, meters_per_pixel) / (2.0 * scale));
     if (marker_hit.isValid())
         return marker_hit;
 
@@ -981,8 +1013,8 @@ void MapNetworkOverlayWidget::paintEvent(QPaintEvent *event)
     {
         requestRenderCache();
         paintNetwork(painter);
-        paintSelectedEntity(painter);
         paintSimulationErrorEntity(painter);
+        paintSelectedEntity(painter);
     }
 
     static const QPixmap crosshair_pixmap = QPixmap(QStringLiteral(":/icon/crosshair.png")).scaled(
@@ -1358,7 +1390,9 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
         symbology->node_size_unit = this->symbology_settings.node_size_unit;
         symbology->node_size_px = this->symbology_settings.node_size_px;
         symbology->node_size_m = this->symbology_settings.node_size_m;
-        symbology->icon_size_percent = this->symbology_settings.icon_size_percent;
+        symbology->icon_size_unit = this->symbology_settings.icon_size_unit;
+        symbology->icon_size_px = this->symbology_settings.icon_size_px;
+        symbology->icon_size_m = this->symbology_settings.icon_size_m;
         symbology->link_thickness_unit = this->symbology_settings.link_thickness_unit;
         symbology->link_thickness_px = this->symbology_settings.link_thickness_px;
         symbology->link_thickness_m = this->symbology_settings.link_thickness_m;
@@ -1446,7 +1480,9 @@ void MapNetworkOverlayWidget::requestSymbologyPreparation(bool force_values)
         symbology->node_size_unit = settings.node_size_unit;
         symbology->node_size_px = settings.node_size_px;
         symbology->node_size_m = settings.node_size_m;
-        symbology->icon_size_percent = settings.icon_size_percent;
+        symbology->icon_size_unit = settings.icon_size_unit;
+        symbology->icon_size_px = settings.icon_size_px;
+        symbology->icon_size_m = settings.icon_size_m;
         symbology->link_thickness_unit = settings.link_thickness_unit;
         symbology->link_thickness_px = settings.link_thickness_px;
         symbology->link_thickness_m = settings.link_thickness_m;
@@ -1685,6 +1721,8 @@ MapNetworkOverlayWidget::RenderRequest MapNetworkOverlayWidget::createRenderRequ
     request.meters_per_pixel = GeoWebMercator::metersPerPixel(
         this->map_model->centerLat(), request.zoom);
     request.device_pixel_ratio = qMax<qreal>(1.0, devicePixelRatioF());
+    request.icon_default_fill_color = networkSymbologyIconDefaultFillColor(
+        palette().color(QPalette::Window));
     request.geometry = this->render_geometry;
     request.symbology = this->render_symbology;
 
@@ -1709,7 +1747,9 @@ MapNetworkOverlayWidget::RenderRequest MapNetworkOverlayWidget::createRenderRequ
         request.symbology->link_thickness_m, request.meters_per_pixel);
     const qreal render_half_width = qMax(
         qMax(node_diameter_px / 2.0,
-             markerSizeForZoom(request.zoom, request.symbology->icon_size_percent) / 2.0),
+             networkSymbologyIconSizePixels(
+                 request.symbology->icon_size_unit, request.symbology->icon_size_px,
+                 request.symbology->icon_size_m, request.meters_per_pixel) / 2.0),
         link_thickness_px / 2.0);
     qreal heatmap_padding = 0.0;
     if (!request.symbology->heatmap_fractions.isEmpty())
@@ -2145,8 +2185,9 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
         const RenderGeometry::Marker &marker = request.geometry->markers.at(marker_index);
         const QPointF &world_position = marker.world_position;
         const QSizeF marker_size = markerScreenSize(
-            marker.entity_type, request.zoom, node_diameter_px,
-            request.symbology->icon_size_percent);
+            marker.entity_type, node_diameter_px,
+            request.symbology->icon_size_unit, request.symbology->icon_size_px,
+            request.symbology->icon_size_m, request.meters_per_pixel);
         const qreal marker_padding_x = marker_size.width() / 2.0 + NetworkImagePadding;
         const qreal marker_padding_y = marker_size.height() / 2.0 + NetworkImagePadding;
         const qreal x = (world_position.x() - image_left) * scale;
@@ -2194,8 +2235,9 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
             QHash<QRgb, QPainterPath> link_paths;
             QHash<QRgb, QPainterPath> flow_direction_paths;
             QHash<QRgb, QPainterPath> junction_paths;
-            QHash<quint64, QPainterPath> icon_stroke_paths;
+            QHash<quint32, QPainterPath> icon_stroke_paths;
             QHash<QRgb, QPainterPath> icon_fill_paths;
+            QHash<quint32, QPainterPath> icon_detail_paths;
             link_paths.reserve(qMin(SymbologyColorBucketCount + 1, int(content.segment_indices.size())));
             junction_paths.reserve(qMin(SymbologyColorBucketCount + 1, int(content.marker_indices.size())));
 
@@ -2273,19 +2315,35 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
                     continue;
                 }
 
-                const qreal marker_size = markerSizeForZoom(
-                    request.zoom, request.symbology->icon_size_percent);
+                const qreal marker_size = networkSymbologyIconSizePixels(
+                    request.symbology->icon_size_unit, request.symbology->icon_size_px,
+                    request.symbology->icon_size_m, request.meters_per_pixel);
                 const qreal icon_scale = marker_size / qMax(asset->view_width, asset->view_height);
                 const qreal icon_x = center.x() - asset->view_width * icon_scale / 2.0;
                 const qreal icon_y = center.y() - asset->view_height * icon_scale / 2.0;
                 const QTransform icon_transform(
                     icon_scale, 0.0, 0.0, icon_scale, icon_x, icon_y);
-                const quint64 icon_key = (quint64(color) << 32) |
-                    quint32(int(marker.entity_type));
+                const bool colorization_active = node_entity
+                    ? request.symbology->visual_node != VisualNode::None
+                    : request.symbology->visual_link != VisualLink::None;
+                QRgb icon_fill_color = request.icon_default_fill_color;
+                if (colorization_active)
+                {
+                    icon_fill_color = color == networkSymbologyUnavailableColor()
+                        ? networkSymbologyIconUnavailableFillColor()
+                        : color;
+                }
+
+                const quint32 icon_key = quint32(int(marker.entity_type));
                 if (!asset->stroke_path.isEmpty())
-                    icon_stroke_paths[icon_key].addPath(icon_transform.map(asset->stroke_path));
+                    icon_stroke_paths[icon_key].addPath(
+                        icon_transform.map(asset->stroke_path));
                 if (!asset->fill_path.isEmpty())
-                    icon_fill_paths[color].addPath(icon_transform.map(asset->fill_path));
+                    icon_fill_paths[icon_fill_color].addPath(
+                        icon_transform.map(asset->fill_path));
+                if (!asset->detail_path.isEmpty())
+                    icon_detail_paths[icon_key].addPath(
+                        icon_transform.map(asset->detail_path));
             }
 
             for (QHash<QRgb, QPainterPath>::iterator iterator = link_paths.begin();
@@ -2312,28 +2370,36 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
             {
                 document.addFill(std::move(iterator.value()), QBrush(QColor::fromRgb(iterator.key())));
             }
-            for (QHash<quint64, QPainterPath>::iterator iterator = icon_stroke_paths.begin();
-                 iterator != icon_stroke_paths.end(); ++iterator)
-            {
-                const QRgb color = QRgb(iterator.key() >> 32);
-                const InfrastructureEntity entity_type = static_cast<InfrastructureEntity>(
-                    quint32(iterator.key()));
-                const NetworkIconAsset *asset = iconAssetForEntity(entity_type);
-                if (!asset)
-                    continue;
-                const qreal marker_size = markerSizeForZoom(
-                    request.zoom, request.symbology->icon_size_percent);
-                const qreal icon_scale = marker_size / qMax(asset->view_width, asset->view_height);
-                QPen pen(QColor::fromRgb(color));
-                pen.setWidthF(asset->stroke_width * icon_scale);
-                pen.setCapStyle(Qt::RoundCap);
-                pen.setJoinStyle(Qt::RoundJoin);
-                document.addStroke(std::move(iterator.value()), pen);
-            }
             for (QHash<QRgb, QPainterPath>::iterator iterator = icon_fill_paths.begin();
                  iterator != icon_fill_paths.end(); ++iterator)
             {
-                document.addFill(std::move(iterator.value()), QBrush(QColor::fromRgb(iterator.key())));
+                document.addFill(
+                    std::move(iterator.value()), QBrush(QColor::fromRgb(iterator.key())));
+            }
+            for (QHash<quint32, QPainterPath>::iterator iterator = icon_stroke_paths.begin();
+                 iterator != icon_stroke_paths.end(); ++iterator)
+            {
+                const InfrastructureEntity entity_type = static_cast<InfrastructureEntity>(
+                    iterator.key());
+                const NetworkIconAsset *asset = iconAssetForEntity(entity_type);
+                if (!asset)
+                    continue;
+                const qreal marker_size = networkSymbologyIconSizePixels(
+                    request.symbology->icon_size_unit, request.symbology->icon_size_px,
+                    request.symbology->icon_size_m, request.meters_per_pixel);
+                const qreal icon_scale = marker_size / qMax(asset->view_width, asset->view_height);
+                QPen outline_pen(QColor::fromRgb(networkSymbologyIconOutlineColor()));
+                outline_pen.setWidthF(qMax<qreal>(1.5, asset->stroke_width * icon_scale));
+                outline_pen.setCapStyle(Qt::RoundCap);
+                outline_pen.setJoinStyle(Qt::RoundJoin);
+                document.addStroke(std::move(iterator.value()), outline_pen);
+            }
+            for (QHash<quint32, QPainterPath>::iterator iterator = icon_detail_paths.begin();
+                 iterator != icon_detail_paths.end(); ++iterator)
+            {
+                document.addFill(
+                    std::move(iterator.value()),
+                    QBrush(QColor::fromRgb(networkSymbologyIconOutlineColor())));
             }
 
             return !(request.cancelled && request.cancelled->load(std::memory_order_relaxed));
@@ -2584,8 +2650,11 @@ void MapNetworkOverlayWidget::paintEntityHighlight(
         return;
     }
 
-    const qreal marker_size = markerSizeForZoom(
-        this->map_model->zoom(), this->symbology_settings.icon_size_percent);
+    const qreal meters_per_pixel = GeoWebMercator::metersPerPixel(
+        this->map_model->centerLat(), this->map_model->zoom());
+    const qreal marker_size = networkSymbologyIconSizePixels(
+        this->symbology_settings.icon_size_unit, this->symbology_settings.icon_size_px,
+        this->symbology_settings.icon_size_m, meters_per_pixel);
     const qreal icon_scale = marker_size / qMax(asset->view_width, asset->view_height);
     const qreal icon_x = center.x() - asset->view_width * icon_scale / 2.0;
     const qreal icon_y = center.y() - asset->view_height * icon_scale / 2.0;
@@ -2606,12 +2675,17 @@ void MapNetworkOverlayWidget::paintEntityHighlight(
     }
     if (!asset->stroke_path.isEmpty())
     {
-        QPen selected_pen(color);
-        selected_pen.setWidthF(qMax<qreal>(2.0, asset->stroke_width * icon_scale + (outer ? 5.0 : 1.5)));
+        QPen selected_pen(QColor::fromRgba(networkSymbologyIconOutlineColor()));
+        selected_pen.setWidthF(qMax<qreal>(
+            2.0, asset->stroke_width * icon_scale + (outer ? 5.0 : 1.5)));
         selected_pen.setCapStyle(Qt::RoundCap);
         selected_pen.setJoinStyle(Qt::RoundJoin);
         painter.strokePath(transform.map(asset->stroke_path), selected_pen);
     }
+    if (!asset->detail_path.isEmpty())
+        painter.fillPath(
+            transform.map(asset->detail_path),
+            QBrush(QColor::fromRgba(networkSymbologyIconOutlineColor())));
 }
 
 QList<NetworkOverlayHit> MapNetworkOverlayWidget::simulationErrorEntityHits() const

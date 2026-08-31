@@ -43,8 +43,8 @@ public:
         float center_x = 0.0f;
         float center_y = 0.0f;
         float center_z = 0.0f;
-        float offset_x_px = 0.0f;
-        float offset_y_px = 0.0f;
+        float offset_x_ratio = 0.0f;
+        float offset_y_ratio = 0.0f;
         float u = 0.0f;
         float v = 0.0f;
         float red = 0.0f;
@@ -117,6 +117,9 @@ public:
     NetworkSymbologySizeUnit nodeSizeUnit() const;
     int nodeSizePx() const;
     double nodeSizeM() const;
+    NetworkSymbologySizeUnit iconSizeUnit() const;
+    int iconSizePx() const;
+    double iconSizeM() const;
     NetworkSymbologySizeUnit linkThicknessUnit() const;
     int linkThicknessPx() const;
     double linkThicknessM() const;

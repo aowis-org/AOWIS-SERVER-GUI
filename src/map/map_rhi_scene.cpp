@@ -257,8 +257,13 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
         || this->symbology.link_thickness_px != symbology.link_thickness_px
         || this->symbology.link_thickness_m != symbology.link_thickness_m;
     const bool icon_changed =
-        this->symbology.icon_size_percent != symbology.icon_size_percent
+        this->symbology.icon_size_unit != symbology.icon_size_unit
+        || this->symbology.icon_size_px != symbology.icon_size_px
+        || this->symbology.icon_size_m != symbology.icon_size_m
         || this->symbology.show_icons != symbology.show_icons
+        || this->symbology.icon_default_fill_color != symbology.icon_default_fill_color
+        || this->symbology.visual_node != symbology.visual_node
+        || this->symbology.visual_link != symbology.visual_link
         || link_colors_changed || node_colors_changed;
     const bool heatmap_changed =
         this->symbology.visual_heatmap != symbology.visual_heatmap
@@ -312,6 +317,7 @@ void MapRhiScene::setSelectedEntity(InfrastructureEntity entity_type, const QUui
     this->selected_entity_type = entity_type;
     this->selected_entity_uuid = uuid;
     rebuildHighlights();
+    rebuildIcons();
     rebuildTankInstances();
     rebuildJunctionInstances();
 }
@@ -501,6 +507,21 @@ int MapRhiScene::nodeSizePx() const
 double MapRhiScene::nodeSizeM() const
 {
     return this->symbology.node_size_m;
+}
+
+NetworkSymbologySizeUnit MapRhiScene::iconSizeUnit() const
+{
+    return this->symbology.icon_size_unit;
+}
+
+int MapRhiScene::iconSizePx() const
+{
+    return this->symbology.icon_size_px;
+}
+
+double MapRhiScene::iconSizeM() const
+{
+    return this->symbology.icon_size_m;
 }
 
 NetworkSymbologySizeUnit MapRhiScene::linkThicknessUnit() const
@@ -787,13 +808,36 @@ void MapRhiScene::appendIcon(const IconMarker &marker)
     if (!atlas_entry.valid)
         return;
 
-    const qreal marker_size = networkSymbologyMarkerSizeForZoom(
-        this->view_zoom, this->symbology.icon_size_percent);
-    const float half_width_px = float(marker_size * atlas_entry.width_ratio / 2.0);
-    const float half_height_px = float(marker_size * atlas_entry.height_ratio / 2.0);
-    const QRgb color = InfrastructureEntityTraits::isHydraulicConnectionNode(marker.entity_type)
-        ? this->symbology.node_colors.value(marker.render_id, networkSymbologyDefaultColor())
-        : this->symbology.link_colors.value(marker.render_id, networkSymbologyDefaultColor());
+    const float half_width_ratio = float(atlas_entry.width_ratio / 2.0);
+    const float half_height_ratio = float(atlas_entry.height_ratio / 2.0);
+    const bool node_entity =
+        InfrastructureEntityTraits::isHydraulicConnectionNode(marker.entity_type);
+    const bool colorization_active = node_entity
+        ? this->symbology.visual_node != VisualNode::None
+        : this->symbology.visual_link != VisualLink::None;
+    QRgb color = this->symbology.icon_default_fill_color;
+    if (colorization_active)
+    {
+        color = node_entity
+            ? this->symbology.node_colors.value(
+                marker.render_id, networkSymbologyUnavailableColor())
+            : this->symbology.link_colors.value(
+                marker.render_id, networkSymbologyUnavailableColor());
+        if (color == networkSymbologyUnavailableColor())
+            color = networkSymbologyIconUnavailableFillColor();
+    }
+
+    if (this->selected_entity_type == marker.entity_type
+        && !this->selected_entity_uuid.isNull())
+    {
+        const QHash<QUuid, quint64>::const_iterator selected_iterator =
+            this->entity_keys_by_uuid.constFind(this->selected_entity_uuid);
+        if (selected_iterator != this->entity_keys_by_uuid.cend()
+            && selected_iterator.value() == entityRenderKey(marker.entity_type, marker.render_id))
+        {
+            color = QColor(0, 190, 255).rgba();
+        }
+    }
 
     const float corners[6][2] = {
         {-1.0f, -1.0f},
@@ -814,8 +858,8 @@ void MapRhiScene::appendIcon(const IconMarker &marker)
         vertex.center_x = float(marker.center.x());
         vertex.center_y = float(marker.center.y());
         vertex.center_z = marker.z;
-        vertex.offset_x_px = corners[index][0] * half_width_px;
-        vertex.offset_y_px = corners[index][1] * half_height_px;
+        vertex.offset_x_ratio = corners[index][0] * half_width_ratio;
+        vertex.offset_y_ratio = corners[index][1] * half_height_ratio;
         vertex.u = corners[index][0] < 0.0f ? u_left : u_right;
         vertex.v = corners[index][1] < 0.0f ? v_bottom : v_top;
         vertex.red = qRed(color) / 255.0f;
@@ -839,9 +883,18 @@ void MapRhiScene::rebuildTankInstances()
     if (!std::isfinite(scale) || scale <= 0.0)
         return;
 
-    const qreal marker_size = networkSymbologyMarkerSizeForZoom(
-        this->view_zoom, this->symbology.icon_size_percent);
-    const float world_marker_size = float(marker_size / scale);
+    float world_marker_size = 0.0f;
+    if (this->symbology.icon_size_unit == NetworkSymbologySizeUnit::Meters)
+    {
+        const double units_per_meter = worldUnitsPerMeter();
+        if (!std::isfinite(units_per_meter) || units_per_meter <= 0.0)
+            return;
+        world_marker_size = float(this->symbology.icon_size_m * units_per_meter);
+    }
+    else
+    {
+        world_marker_size = float(this->symbology.icon_size_px / scale);
+    }
     const float radius_world = world_marker_size * 0.44f;
     const float base_height_world = world_marker_size * 0.20f;
     const float body_height_world = world_marker_size * 0.78f;

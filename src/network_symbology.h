@@ -41,6 +41,12 @@ constexpr int NetworkSymbologyDefaultNodeSizePx = 12;
 constexpr double NetworkSymbologyMinimumNodeSizeM = 0.1;
 constexpr double NetworkSymbologyMaximumNodeSizeM = 100.0;
 constexpr double NetworkSymbologyDefaultNodeSizeM = 25.0;
+constexpr int NetworkSymbologyMinimumIconSizePx = 5;
+constexpr int NetworkSymbologyMaximumIconSizePx = 90;
+constexpr int NetworkSymbologyDefaultIconSizePx = 20;
+constexpr double NetworkSymbologyMinimumIconSizeM = 25.0;
+constexpr double NetworkSymbologyMaximumIconSizeM = 450.0;
+constexpr double NetworkSymbologyDefaultIconSizeM = 150.0;
 constexpr int NetworkSymbologyDefaultLinkThicknessPx = 3;
 constexpr double NetworkSymbologyMinimumLinkThicknessM = 0.01;
 constexpr double NetworkSymbologyMaximumLinkThicknessM = 50.0;
@@ -54,7 +60,9 @@ struct NetworkSymbologySettings
     NetworkSymbologySizeUnit node_size_unit = NetworkSymbologySizeUnit::Pixels;
     int node_size_px = NetworkSymbologyDefaultNodeSizePx;
     double node_size_m = NetworkSymbologyDefaultNodeSizeM;
-    int icon_size_percent = 100;
+    NetworkSymbologySizeUnit icon_size_unit = NetworkSymbologySizeUnit::Pixels;
+    int icon_size_px = NetworkSymbologyDefaultIconSizePx;
+    double icon_size_m = NetworkSymbologyDefaultIconSizeM;
     VisualLink visual_link = VisualLink::None;
     NetworkSymbologyPalette link_palette = NetworkSymbologyDefaultLinkPalette;
     bool link_palette_flipped = false;
@@ -78,7 +86,10 @@ struct NetworkSymbologySettings
         result.node_size_px = qBound(4, this->node_size_px, 64);
         result.node_size_m = qBound(NetworkSymbologyMinimumNodeSizeM, this->node_size_m,
                                     NetworkSymbologyMaximumNodeSizeM);
-        result.icon_size_percent = qBound(50, this->icon_size_percent, 250);
+        result.icon_size_px = qBound(NetworkSymbologyMinimumIconSizePx, this->icon_size_px,
+                                     NetworkSymbologyMaximumIconSizePx);
+        result.icon_size_m = qBound(NetworkSymbologyMinimumIconSizeM, this->icon_size_m,
+                                    NetworkSymbologyMaximumIconSizeM);
         result.link_thickness_px = qBound(1, this->link_thickness_px, 24);
         result.link_thickness_m = qBound(NetworkSymbologyMinimumLinkThicknessM,
                                          this->link_thickness_m,

@@ -11,6 +11,7 @@
 
 #include <QColor>
 #include <QDebug>
+#include <QEvent>
 #include <QFile>
 #include <QImage>
 #include <QHash>
@@ -574,12 +575,7 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
         ? Rhi3dIconHitPaddingPx : Rhi2dIconHitPaddingPx;
     const double minimum_icon_radius = three_d
         ? Rhi3dMinimumIconHitRadiusPx : Rhi2dMinimumIconHitRadiusPx;
-    const double icon_hit_radius = qMax(
-        minimum_icon_radius,
-        networkSymbologyMarkerSizeForZoom(
-            this->map_model->zoom(), this->applied_symbology.icon_size_percent) / 2.0
-            + icon_padding);
-    double best_icon_distance = icon_hit_radius;
+    double best_icon_distance = std::numeric_limits<double>::infinity();
     quint32 best_icon_render_id = 0;
     InfrastructureEntity best_icon_entity_type = InfrastructureEntity::Unknown;
     const QVector<MapRhiScene::IconVertex> &icon_vertices = this->scene.iconVertices();
@@ -592,8 +588,46 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
         if (!finiteScreenPoint(projected))
             continue;
 
+        double icon_size_px = double(this->applied_symbology.icon_size_px);
+        if (this->applied_symbology.icon_size_unit == NetworkSymbologySizeUnit::Meters)
+        {
+            if (three_d)
+            {
+                const double world_units_per_meter = this->scene.worldUnitsPerMeter();
+                const double depth_world = this->camera.perspectiveDepthWorld(
+                    QVector3D(icon.center_x, icon.center_y, icon.center_z));
+                constexpr double tan_half_fov = 0.4142135623730950;
+                if (std::isfinite(world_units_per_meter) && world_units_per_meter > 0.0
+                    && std::isfinite(depth_world) && depth_world > 0.0)
+                {
+                    const double icon_size_world =
+                        this->applied_symbology.icon_size_m * world_units_per_meter;
+                    icon_size_px = icon_size_world * qMax(1, this->viewport_size.height())
+                        / (2.0 * depth_world * tan_half_fov);
+                }
+            }
+            else
+            {
+                icon_size_px = metersToScreenPixels(
+                    this->applied_symbology.icon_size_m,
+                    this->map_model->centerLat(), this->map_model->zoom());
+            }
+        }
+        else if (three_d)
+        {
+            const double depth_world = this->camera.perspectiveDepthWorld(
+                QVector3D(icon.center_x, icon.center_y, icon.center_z));
+            const double reference_depth_world = this->camera.orbitDistanceWorld();
+            if (std::isfinite(depth_world) && depth_world > 0.0
+                && std::isfinite(reference_depth_world) && reference_depth_world > 0.0)
+            {
+                icon_size_px *= reference_depth_world / depth_world;
+            }
+        }
+        const double icon_hit_radius = qMax(
+            minimum_icon_radius, icon_size_px / 2.0 + icon_padding);
         const double distance = QLineF(screen_position, projected).length();
-        if (distance > best_icon_distance)
+        if (distance > icon_hit_radius || distance >= best_icon_distance)
             continue;
 
         best_icon_distance = distance;
@@ -816,48 +850,60 @@ void MapRhiWidget::setNetworkScreenTranslation(const QPointF &translation_pixels
 
 void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
 {
+    MapRhiSymbology themed_symbology = symbology;
+    themed_symbology.icon_default_fill_color = networkSymbologyIconDefaultFillColor(
+        palette().color(QPalette::Window));
+
     const bool base_symbology_changed =
         !this->symbology_initialized
-        || this->applied_symbology.node_colors != symbology.node_colors
-        || this->applied_symbology.link_colors != symbology.link_colors;
+        || this->applied_symbology.node_colors != themed_symbology.node_colors
+        || this->applied_symbology.link_colors != themed_symbology.link_colors;
     const bool junction_changed =
         !this->symbology_initialized
-        || this->applied_symbology.node_size_unit != symbology.node_size_unit
-        || this->applied_symbology.node_size_px != symbology.node_size_px
-        || this->applied_symbology.node_size_m != symbology.node_size_m
-        || this->applied_symbology.node_colors != symbology.node_colors;
+        || this->applied_symbology.node_size_unit != themed_symbology.node_size_unit
+        || this->applied_symbology.node_size_px != themed_symbology.node_size_px
+        || this->applied_symbology.node_size_m != themed_symbology.node_size_m
+        || this->applied_symbology.node_colors != themed_symbology.node_colors;
     const bool icon_changed =
         !this->symbology_initialized
-        || this->applied_symbology.icon_size_percent != symbology.icon_size_percent
-        || this->applied_symbology.show_icons != symbology.show_icons
-        || this->applied_symbology.node_colors != symbology.node_colors
-        || this->applied_symbology.link_colors != symbology.link_colors;
+        || this->applied_symbology.icon_size_unit != themed_symbology.icon_size_unit
+        || this->applied_symbology.icon_size_px != themed_symbology.icon_size_px
+        || this->applied_symbology.icon_size_m != themed_symbology.icon_size_m
+        || this->applied_symbology.show_icons != themed_symbology.show_icons
+        || this->applied_symbology.icon_default_fill_color
+            != themed_symbology.icon_default_fill_color
+        || this->applied_symbology.visual_node != themed_symbology.visual_node
+        || this->applied_symbology.visual_link != themed_symbology.visual_link
+        || this->applied_symbology.node_colors != themed_symbology.node_colors
+        || this->applied_symbology.link_colors != themed_symbology.link_colors;
     const bool heatmap_data_changed =
         !this->symbology_initialized
-        || this->applied_symbology.visual_heatmap != symbology.visual_heatmap
-        || this->applied_symbology.heatmap_fractions != symbology.heatmap_fractions
-        || this->applied_symbology.heatmap_palette != symbology.heatmap_palette
-        || this->applied_symbology.heatmap_palette_flipped != symbology.heatmap_palette_flipped;
+        || this->applied_symbology.visual_heatmap != themed_symbology.visual_heatmap
+        || this->applied_symbology.heatmap_fractions != themed_symbology.heatmap_fractions
+        || this->applied_symbology.heatmap_palette != themed_symbology.heatmap_palette
+        || this->applied_symbology.heatmap_palette_flipped
+            != themed_symbology.heatmap_palette_flipped;
     const bool heatmap_style_changed =
         !this->symbology_initialized
-        || this->applied_symbology.heatmap_radius_unit != symbology.heatmap_radius_unit
-        || this->applied_symbology.heatmap_radius_m != symbology.heatmap_radius_m
-        || this->applied_symbology.heatmap_radius_px != symbology.heatmap_radius_px
+        || this->applied_symbology.heatmap_radius_unit != themed_symbology.heatmap_radius_unit
+        || this->applied_symbology.heatmap_radius_m != themed_symbology.heatmap_radius_m
+        || this->applied_symbology.heatmap_radius_px != themed_symbology.heatmap_radius_px
         || this->applied_symbology.heatmap_solid_center_percent
-            != symbology.heatmap_solid_center_percent;
+            != themed_symbology.heatmap_solid_center_percent;
     const bool flow_direction_changed =
         !this->symbology_initialized
-        || this->applied_symbology.show_flow_direction != symbology.show_flow_direction
-        || this->applied_symbology.flow_direction_size_px != symbology.flow_direction_size_px
-        || this->applied_symbology.flow_directions != symbology.flow_directions
-        || this->applied_symbology.link_thickness_unit != symbology.link_thickness_unit
-        || this->applied_symbology.link_thickness_px != symbology.link_thickness_px
-        || this->applied_symbology.link_thickness_m != symbology.link_thickness_m
-        || this->applied_symbology.link_colors != symbology.link_colors;
+        || this->applied_symbology.show_flow_direction != themed_symbology.show_flow_direction
+        || this->applied_symbology.flow_direction_size_px
+            != themed_symbology.flow_direction_size_px
+        || this->applied_symbology.flow_directions != themed_symbology.flow_directions
+        || this->applied_symbology.link_thickness_unit != themed_symbology.link_thickness_unit
+        || this->applied_symbology.link_thickness_px != themed_symbology.link_thickness_px
+        || this->applied_symbology.link_thickness_m != themed_symbology.link_thickness_m
+        || this->applied_symbology.link_colors != themed_symbology.link_colors;
 
     this->scene.setViewZoom(this->map_model->zoom());
-    this->scene.setSymbology(symbology);
-    this->applied_symbology = symbology;
+    this->scene.setSymbology(themed_symbology);
+    this->applied_symbology = themed_symbology;
     this->symbology_initialized = true;
 
     if (base_symbology_changed)
@@ -902,7 +948,9 @@ void MapRhiWidget::setVisualControlSettings(
     symbology.node_size_unit = bounded_settings.node_size_unit;
     symbology.node_size_px = bounded_settings.node_size_px;
     symbology.node_size_m = bounded_settings.node_size_m;
-    symbology.icon_size_percent = bounded_settings.icon_size_percent;
+    symbology.icon_size_unit = bounded_settings.icon_size_unit;
+    symbology.icon_size_px = bounded_settings.icon_size_px;
+    symbology.icon_size_m = bounded_settings.icon_size_m;
     symbology.link_thickness_unit = bounded_settings.link_thickness_unit;
     symbology.link_thickness_px = bounded_settings.link_thickness_px;
     symbology.link_thickness_m = bounded_settings.link_thickness_m;
@@ -1019,6 +1067,7 @@ void MapRhiWidget::setSelectedEntity(InfrastructureEntity entity_type, const QUu
 {
     this->scene.setSelectedEntity(entity_type, uuid);
     this->highlight_upload_pending = true;
+    this->icon_upload_pending = true;
     this->tank_upload_pending = true;
     this->junction_instance_upload_pending = true;
     markUndergroundGeometryDirty();
@@ -1067,7 +1116,9 @@ void MapRhiWidget::initialize(QRhiCommandBuffer *command_buffer)
         this->link_pipeline.reset();
         this->selected_link_pipeline.reset();
         this->node_pipeline.reset();
+        this->node_overlay_pipeline.reset();
         this->icon_pipeline.reset();
+        this->icon_overlay_pipeline.reset();
         this->heatmap_pipeline.reset();
         this->tank_pipeline.reset();
         this->junction_pipeline.reset();
@@ -1182,6 +1233,11 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     // It is deliberately independent from the discrete map/tile zoom so sphere
     // size cannot jump when the renderer changes tile LOD.
     uniform_data[30] = float(this->camera.orbitDistanceWorld());
+    uniform_data[31] = this->scene.iconSizeUnit() == NetworkSymbologySizeUnit::Meters
+        && std::isfinite(horizontal_world_units_per_meter)
+        && horizontal_world_units_per_meter > 0.0
+        ? -float(this->scene.iconSizeM() * horizontal_world_units_per_meter)
+        : float(this->scene.iconSizePx());
 
     QRhiResourceUpdateBatch *resource_updates = this->active_rhi->nextResourceUpdateBatch();
     resource_updates->updateDynamicBuffer(
@@ -1525,16 +1581,6 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
             quint32(junction_mesh.size()), quint32(junction_instances.size()));
     }
 
-    const QVector<MapRhiScene::IconVertex> &icon_vertices = this->scene.iconVertices();
-    if (!icon_vertices.isEmpty())
-    {
-        command_buffer->setGraphicsPipeline(this->icon_pipeline.get());
-        command_buffer->setShaderResources(this->icon_shader_resource_bindings.get());
-        const QRhiCommandBuffer::VertexInput icon_binding(this->icon_vertex_buffer.get(), 0);
-        command_buffer->setVertexInput(0, 1, &icon_binding);
-        command_buffer->draw(quint32(icon_vertices.size()));
-    }
-
     if (!this->tank_model_vertices.isEmpty())
     {
         command_buffer->setGraphicsPipeline(this->tank_pipeline.get());
@@ -1584,6 +1630,20 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         command_buffer->draw(quint32(diagnostic_node_vertices.size()));
     }
 
+    // Icons are semantic markers and must remain visually authoritative over
+    // every network stroke/highlight. In 2D the overlay pipeline also ignores
+    // network depth so a pump or valve cannot be cut through by its link.
+    const QVector<MapRhiScene::IconVertex> &icon_vertices = this->scene.iconVertices();
+    if (!icon_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(
+            is_2d_view ? this->icon_overlay_pipeline.get() : this->icon_pipeline.get());
+        command_buffer->setShaderResources(this->icon_shader_resource_bindings.get());
+        const QRhiCommandBuffer::VertexInput icon_binding(this->icon_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &icon_binding);
+        command_buffer->draw(quint32(icon_vertices.size()));
+    }
+
     command_buffer->endPass();
 }
 
@@ -1593,6 +1653,20 @@ void MapRhiWidget::releaseResources()
     this->active_rhi = nullptr;
     this->render_pass_descriptor = nullptr;
     this->ready_reported = false;
+}
+
+void MapRhiWidget::changeEvent(QEvent *event)
+{
+    if (event != nullptr
+        && this->symbology_initialized
+        && (event->type() == QEvent::ApplicationPaletteChange
+            || event->type() == QEvent::PaletteChange
+            || event->type() == QEvent::StyleChange))
+    {
+        setSymbology(this->applied_symbology);
+    }
+
+    QRhiWidget::changeEvent(event);
 }
 
 void MapRhiWidget::resizeEvent(QResizeEvent *event)
@@ -1981,7 +2055,7 @@ bool MapRhiWidget::createPipelines()
         }
     }
 
-    if (!this->icon_pipeline)
+    if (!this->icon_pipeline || !this->icon_overlay_pipeline)
     {
         const QShader vertex_shader = loadShader(
             QStringLiteral(":/aowis/map/rhi/map_rhi_icon.vert.qsb"));
@@ -2001,12 +2075,15 @@ bool MapRhiWidget::createPipelines()
             {0, 0, QRhiVertexInputAttribute::Float3,
              quint32(offsetof(MapRhiScene::IconVertex, center_x))},
             {0, 1, QRhiVertexInputAttribute::Float2,
-             quint32(offsetof(MapRhiScene::IconVertex, offset_x_px))},
+             quint32(offsetof(MapRhiScene::IconVertex, offset_x_ratio))},
             {0, 2, QRhiVertexInputAttribute::Float2,
              quint32(offsetof(MapRhiScene::IconVertex, u))},
             {0, 3, QRhiVertexInputAttribute::Float4,
              quint32(offsetof(MapRhiScene::IconVertex, red))}
         });
+
+        QRhiGraphicsPipeline::TargetBlend blend;
+        blend.enable = true;
 
         this->icon_pipeline.reset(this->active_rhi->newGraphicsPipeline());
         this->icon_pipeline->setShaderStages({
@@ -2022,12 +2099,30 @@ bool MapRhiWidget::createPipelines()
         this->icon_pipeline->setDepthTest(true);
         this->icon_pipeline->setDepthWrite(false);
         this->icon_pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
-        QRhiGraphicsPipeline::TargetBlend blend;
-        blend.enable = true;
         this->icon_pipeline->setTargetBlends({blend});
         if (!this->icon_pipeline->create())
         {
             reportFailure(QStringLiteral("Failed to create RHI icon graphics pipeline"));
+            return false;
+        }
+
+        this->icon_overlay_pipeline.reset(this->active_rhi->newGraphicsPipeline());
+        this->icon_overlay_pipeline->setShaderStages({
+            {QRhiShaderStage::Vertex, vertex_shader},
+            {QRhiShaderStage::Fragment, fragment_shader}
+        });
+        this->icon_overlay_pipeline->setVertexInputLayout(input_layout);
+        this->icon_overlay_pipeline->setShaderResourceBindings(
+            this->icon_shader_resource_bindings.get());
+        this->icon_overlay_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
+        this->icon_overlay_pipeline->setSampleCount(sampleCount());
+        this->icon_overlay_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+        this->icon_overlay_pipeline->setDepthTest(false);
+        this->icon_overlay_pipeline->setDepthWrite(false);
+        this->icon_overlay_pipeline->setTargetBlends({blend});
+        if (!this->icon_overlay_pipeline->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI 2D icon overlay pipeline"));
             return false;
         }
     }
@@ -2630,6 +2725,7 @@ void MapRhiWidget::resetGpuResources()
     this->junction_pipeline.reset();
     this->tank_pipeline.reset();
     this->heatmap_pipeline.reset();
+    this->icon_overlay_pipeline.reset();
     this->icon_pipeline.reset();
     this->node_overlay_pipeline.reset();
     this->node_pipeline.reset();

@@ -2,6 +2,10 @@
 
 #include "../gui_configuration.h"
 #include "../shortcut_registry.h"
+#include "map_symbology_slider.h"
+
+#include <QSignalBlocker>
+#include <QtMath>
 
 MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidget *keyboard_focus_target, QWidget *parent)
     : QWidget{parent},
@@ -106,19 +110,77 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     slider_map_visibility->setRange(0, 100);
     connect(slider_map_visibility, &QSlider::valueChanged, this, &MapNavigationWidget::signalSlideOpacityChanged);
 
-    QLabel *label_slider_icon_size = new QLabel("Icon Size [%]");
-    this->slider_icon_size = new QSlider(Qt::Horizontal);
-    this->slider_icon_size->setToolTip("Scales entity icons and 3D entity models.");
-    syncIconSizeSliderForViewMode(initial_view_mode);
-    connect(this->slider_icon_size, &QSlider::valueChanged, this, [this](int size_percent)
+    QLabel *label_slider_icon_size = new QLabel(
+        this->mode == CanvasMode::Monitor ? QStringLiteral("Icon Size") : QStringLiteral("Icon Size [%]"));
+    if (this->mode == CanvasMode::Monitor)
     {
-        if (this->map->model()->viewMode() == MapViewMode::ThreeD)
-            this->icon_size_3d_percent = size_percent;
-        else
-            this->icon_size_2d_percent = size_percent;
+        this->combo_icon_size_unit = new QComboBox(this);
+        this->combo_icon_size_unit->addItem(QStringLiteral("m"),
+            static_cast<int>(NetworkSymbologySizeUnit::Meters));
+        this->combo_icon_size_unit->addItem(QStringLiteral("px"),
+            static_cast<int>(NetworkSymbologySizeUnit::Pixels));
+        this->combo_icon_size_unit->setCurrentIndex(1);
+        this->combo_icon_size_unit->setToolTip(QStringLiteral(
+            "Meters keep a true world-space icon size. Pixels keep a compact visual size while preserving 3D perspective."));
+        this->slider_icon_size = new MapSymbologySlider(
+            NetworkSymbologyMinimumIconSizePx,
+            NetworkSymbologyMaximumIconSizePx,
+            NetworkSymbologyDefaultIconSizePx,
+            QStringLiteral("Sets the reservoir, tank, pump and valve icon size."),
+            QStringLiteral(" px"), this);
+        connect(this->slider_icon_size, &QSlider::valueChanged, this, [this](int raw_value)
+        {
+            const bool is_3d = this->map->model()->viewMode() == MapViewMode::ThreeD;
+            const NetworkSymbologySizeUnit unit = is_3d
+                ? this->icon_size_3d_unit : this->icon_size_2d_unit;
+            if (unit == NetworkSymbologySizeUnit::Meters)
+            {
+                if (is_3d)
+                    this->icon_size_3d_m = raw_value;
+                else
+                    this->icon_size_2d_m = raw_value;
+                emit signalMonitorIconSizeChanged(unit, raw_value);
+            }
+            else
+            {
+                if (is_3d)
+                    this->icon_size_3d_px = raw_value;
+                else
+                    this->icon_size_2d_px = raw_value;
+                emit signalMonitorIconSizeChanged(unit, raw_value);
+            }
+        });
+        connect(this->combo_icon_size_unit, &QComboBox::currentIndexChanged, this,
+            [this](int index)
+        {
+            const NetworkSymbologySizeUnit unit = static_cast<NetworkSymbologySizeUnit>(
+                this->combo_icon_size_unit->itemData(index).toInt());
+            const bool is_3d = this->map->model()->viewMode() == MapViewMode::ThreeD;
+            NetworkSymbologySizeUnit &current_unit = is_3d
+                ? this->icon_size_3d_unit : this->icon_size_2d_unit;
+            if (current_unit == unit)
+                return;
 
-        emit signalIconSizeChanged(size_percent);
-    });
+            current_unit = unit;
+            syncIconSizeSliderForViewMode(this->map->model()->viewMode());
+            emit signalMonitorIconSizeUnitChanged(unit);
+        });
+    }
+    else
+    {
+        this->slider_icon_size = new QSlider(Qt::Horizontal);
+        this->slider_icon_size->setToolTip("Scales entity icons and 3D entity models.");
+        connect(this->slider_icon_size, &QSlider::valueChanged, this, [this](int size_percent)
+        {
+            if (this->map->model()->viewMode() == MapViewMode::ThreeD)
+                this->icon_size_3d_percent = size_percent;
+            else
+                this->icon_size_2d_percent = size_percent;
+
+            emit signalIconSizeChanged(size_percent);
+        });
+    }
+    syncIconSizeSliderForViewMode(initial_view_mode);
     
     this->check_map_sync = new QCheckBox("Sync Map Movement");
     this->check_map_sync->setToolTip("Synchronize Map movement between Editor and Monitor");
@@ -141,7 +203,10 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     this->grid->addWidget(map_osmcyclo, 5, 0, 1, 3);
     this->grid->addWidget(label_slider_map_visibility, 6, 0, 1, 3);
     this->grid->addWidget(slider_map_visibility, 7, 0, 1, 3);
-    this->grid->addWidget(label_slider_icon_size, 8, 0, 1, 3);
+    this->grid->addWidget(label_slider_icon_size, 8, 0, 1,
+        this->mode == CanvasMode::Monitor ? 2 : 3);
+    if (this->combo_icon_size_unit != nullptr)
+        this->grid->addWidget(this->combo_icon_size_unit, 8, 2);
     this->grid->addWidget(this->slider_icon_size, 9, 0, 1, 3);
     this->grid->addWidget(check_map_sync, 10, 0, 1, 3);
     
@@ -170,8 +235,50 @@ void MapNavigationWidget::syncIconSizeSliderForViewMode(MapViewMode view_mode)
         return;
 
     const bool is_3d = view_mode == MapViewMode::ThreeD;
-    const int maximum = is_3d ? 200 : 250;
-    const int remembered_value = is_3d
+    if (this->mode == CanvasMode::Monitor)
+    {
+        const NetworkSymbologySizeUnit unit = is_3d
+            ? this->icon_size_3d_unit : this->icon_size_2d_unit;
+        const int remembered_value = unit == NetworkSymbologySizeUnit::Meters
+            ? qRound(is_3d ? this->icon_size_3d_m : this->icon_size_2d_m)
+            : (is_3d ? this->icon_size_3d_px : this->icon_size_2d_px);
+        MapSymbologySlider *symbology_slider =
+            static_cast<MapSymbologySlider *>(this->slider_icon_size);
+        if (unit == NetworkSymbologySizeUnit::Meters)
+        {
+            symbology_slider->setConfiguration(
+                qRound(NetworkSymbologyMinimumIconSizeM),
+                qRound(NetworkSymbologyMaximumIconSizeM),
+                qRound(NetworkSymbologyDefaultIconSizeM),
+                remembered_value,
+                QStringLiteral("Sets the true world-space reservoir, tank, pump and valve icon size."),
+                QStringLiteral(" m"));
+        }
+        else
+        {
+            symbology_slider->setConfiguration(
+                NetworkSymbologyMinimumIconSizePx,
+                NetworkSymbologyMaximumIconSizePx,
+                NetworkSymbologyDefaultIconSizePx,
+                remembered_value,
+                QStringLiteral("Sets the reservoir, tank, pump and valve icon size at the 3D focus depth or directly on the 2D map."),
+                QStringLiteral(" px"));
+        }
+
+        if (this->combo_icon_size_unit != nullptr)
+        {
+            const QSignalBlocker blocker(this->combo_icon_size_unit);
+            const int combo_index = this->combo_icon_size_unit->findData(static_cast<int>(unit));
+            if (combo_index >= 0)
+                this->combo_icon_size_unit->setCurrentIndex(combo_index);
+        }
+
+        emit signalMonitorIconSizeChanged(unit, remembered_value);
+        return;
+    }
+
+    const int maximum = view_mode == MapViewMode::ThreeD ? 200 : 250;
+    const int remembered_value = view_mode == MapViewMode::ThreeD
         ? this->icon_size_3d_percent
         : this->icon_size_2d_percent;
     const int bounded_value = qBound(50, remembered_value, maximum);
@@ -182,7 +289,7 @@ void MapNavigationWidget::syncIconSizeSliderForViewMode(MapViewMode view_mode)
         this->slider_icon_size->setValue(bounded_value);
     }
 
-    if (is_3d)
+    if (view_mode == MapViewMode::ThreeD)
         this->icon_size_3d_percent = bounded_value;
     else
         this->icon_size_2d_percent = bounded_value;

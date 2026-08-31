@@ -1,7 +1,7 @@
 #include "map_rhi_icon_atlas.h"
 
-#include <QFont>
-#include <QFontMetricsF>
+#include "../network_symbology_rendering.h"
+
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
@@ -24,13 +24,14 @@ struct IconAsset
     InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
     qreal view_width = 0.0;
     qreal view_height = 0.0;
-    qreal stroke_width = 10.0;
+    qreal stroke_width = 14.0;
     QPainterPath stroke_path;
     QPainterPath fill_path;
+    QPainterPath detail_path;
     QRect pixel_rect;
 };
 
-QPainterPath reservoirStrokePath()
+QPainterPath reservoirFillPath()
 {
     QPainterPath path;
     path.moveTo(5.0, 5.0);
@@ -39,6 +40,19 @@ QPainterPath reservoirStrokePath()
     path.lineTo(125.0, 133.0);
     path.cubicTo(145.0, 133.0, 159.0, 117.0, 163.0, 97.0);
     path.lineTo(181.0, 5.0);
+    path.closeSubpath();
+    return path;
+}
+
+QPainterPath reservoirStrokePath()
+{
+    QPainterPath path;
+    path.moveTo(7.0, 7.0);
+    path.lineTo(24.0, 96.0);
+    path.cubicTo(27.0, 117.0, 41.0, 133.0, 61.0, 133.0);
+    path.lineTo(125.0, 133.0);
+    path.cubicTo(145.0, 133.0, 159.0, 117.0, 163.0, 97.0);
+    path.lineTo(179.0, 7.0);
 
     QPointF current(13.640777, 19.11651);
     path.moveTo(current);
@@ -62,17 +76,17 @@ QPainterPath tankStrokePath()
     path.moveTo(49.0, 14.0);
     path.lineTo(89.0, 14.0);
     path.moveTo(49.0, 14.0);
-    path.cubicTo(53.0, 2.0, 85.0, 2.0, 89.0, 14.0);
+    path.cubicTo(53.0, 7.0, 85.0, 7.0, 89.0, 14.0);
     path.moveTo(24.0, 142.0);
-    path.lineTo(24.0, 178.0);
+    path.lineTo(24.0, 176.0);
     path.moveTo(46.0, 142.0);
-    path.lineTo(46.0, 178.0);
+    path.lineTo(46.0, 176.0);
     path.moveTo(92.0, 142.0);
-    path.lineTo(92.0, 178.0);
+    path.lineTo(92.0, 176.0);
     path.moveTo(114.0, 142.0);
-    path.lineTo(114.0, 178.0);
-    path.moveTo(5.0, 178.0);
-    path.lineTo(133.0, 178.0);
+    path.lineTo(114.0, 176.0);
+    path.moveTo(7.0, 176.0);
+    path.lineTo(131.0, 176.0);
     return path;
 }
 
@@ -80,25 +94,28 @@ IconAsset pumpIconAsset()
 {
     IconAsset asset;
     asset.entity_type = InfrastructureEntity::Pump;
-    asset.view_width = 126.0;
-    asset.view_height = 110.0;
-    asset.stroke_path.addRoundedRect(QRectF(5.0, 5.0, 116.0, 100.0), 18.0, 18.0);
+    asset.view_width = 164.0;
+    asset.view_height = 122.0;
+    asset.stroke_width = 12.0;
 
-    QFont font(QStringLiteral("Arial"));
-    font.setPixelSize(72);
-    font.setBold(true);
-    const QString text = QStringLiteral("P");
-    const QFontMetricsF metrics(font);
-    const QRectF bounds = metrics.boundingRect(text);
-    const qreal x = 64.242722 - bounds.width() / 2.0 - bounds.left();
-    asset.fill_path.addText(QPointF(x, 80.077667), font, text);
+    QPainterPath body;
+    body.addEllipse(QRectF(8.0, 8.0, 106.0, 106.0));
+    QPainterPath outlet;
+    outlet.addRoundedRect(QRectF(98.0, 38.0, 58.0, 46.0), 6.0, 6.0);
+    const QPainterPath silhouette = body.united(outlet);
+
+    asset.fill_path = silhouette;
+    asset.fill_path.setFillRule(Qt::OddEvenFill);
+    asset.fill_path.addEllipse(QRectF(43.0, 43.0, 36.0, 36.0));
+    asset.stroke_path = silhouette;
+    asset.stroke_path.addEllipse(QRectF(43.0, 43.0, 36.0, 36.0));
     return asset;
 }
 
 QPainterPath valveStrokePath()
 {
     QPainterPath path;
-    path.addEllipse(QRectF(5.0, 5.0, 128.0, 128.0));
+    path.addEllipse(QRectF(8.0, 8.0, 122.0, 122.0));
     path.moveTo(25.0, 33.0);
     path.lineTo(69.0, 69.0);
     path.lineTo(113.0, 33.0);
@@ -116,11 +133,13 @@ std::array<IconAsset, 4> buildAssets()
     result[0].view_width = 186.0;
     result[0].view_height = 138.0;
     result[0].stroke_path = reservoirStrokePath();
+    result[0].fill_path = reservoirFillPath();
 
     result[1].entity_type = InfrastructureEntity::Tank;
     result[1].view_width = 138.0;
     result[1].view_height = 183.0;
     result[1].stroke_path = tankStrokePath();
+    result[1].fill_path.addRoundedRect(QRectF(11.0, 22.0, 116.0, 120.0), 10.0, 10.0);
 
     result[2] = pumpIconAsset();
 
@@ -128,6 +147,7 @@ std::array<IconAsset, 4> buildAssets()
     result[3].view_width = 138.0;
     result[3].view_height = 138.0;
     result[3].stroke_path = valveStrokePath();
+    result[3].fill_path.addEllipse(QRectF(8.0, 8.0, 122.0, 122.0));
 
     int x = CellGap;
     for (IconAsset &asset : result)
@@ -180,19 +200,25 @@ QImage mapRhiIconAtlasImage()
             scale_x, 0.0, 0.0, scale_y,
             asset.pixel_rect.left(), asset.pixel_rect.top());
 
-        QPen pen(Qt::white);
-        pen.setWidthF(asset.stroke_width * qMin(scale_x, scale_y));
-        pen.setCapStyle(Qt::RoundCap);
-        pen.setJoinStyle(Qt::RoundJoin);
-        painter.setPen(pen);
+        const qreal stroke_scale = qMin(scale_x, scale_y);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor::fromRgb(networkSymbologyIconDefaultFillColor()));
+        if (!asset.fill_path.isEmpty())
+            painter.drawPath(transform.map(asset.fill_path));
+
+        QPen outline_pen(QColor::fromRgb(networkSymbologyIconOutlineColor()));
+        outline_pen.setWidthF(asset.stroke_width * stroke_scale);
+        outline_pen.setCapStyle(Qt::RoundCap);
+        outline_pen.setJoinStyle(Qt::RoundJoin);
+        painter.setPen(outline_pen);
         painter.setBrush(Qt::NoBrush);
         if (!asset.stroke_path.isEmpty())
             painter.drawPath(transform.map(asset.stroke_path));
 
         painter.setPen(Qt::NoPen);
-        painter.setBrush(Qt::white);
-        if (!asset.fill_path.isEmpty())
-            painter.drawPath(transform.map(asset.fill_path));
+        painter.setBrush(QColor::fromRgb(networkSymbologyIconOutlineColor()));
+        if (!asset.detail_path.isEmpty())
+            painter.drawPath(transform.map(asset.detail_path));
     }
 
     painter.end();

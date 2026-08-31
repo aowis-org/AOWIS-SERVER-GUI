@@ -12,6 +12,9 @@
     const REFERENCE_ZOOM = SHARED_RENDERER.REFERENCE_ZOOM;
     const NETWORK_COLOR = "#000000";
     const SYMBOLOGY_VALUE_UNAVAILABLE_COLOR = "#000000";
+    const ICON_DEFAULT_FILL_COLOR_DARK_THEME = "#d2d2d2";
+    const ICON_DEFAULT_FILL_COLOR_LIGHT_THEME = "#d2d2d2";
+    const ICON_UNAVAILABLE_FILL_COLOR = "#70787e";
     const SELECTED_COLOR = "#00beff";
     const ERROR_COLOR = "#ff0000";
     const STALE_COLOR = "#808080";
@@ -67,8 +70,8 @@
         }],
         [ENTITY_PUMP, {
             file: "svg/pump.svg",
-            viewWidth: 126,
-            viewHeight: 110,
+            viewWidth: 164,
+            viewHeight: 122,
             hitShape: "rectangle"
         }],
         [ENTITY_VALVE, {
@@ -139,7 +142,9 @@
         nodeSizeUnit: 1,
         nodeSizePixels: 12,
         nodeSizeMeters: 1.0,
-        iconSizePercent: 100,
+        iconSizeUnit: 1,
+        iconSizePixels: 20,
+        iconSizeMeters: 150,
         nodeMinimum: 0,
         nodeMaximum: 0,
         nodeValues: new Map(),
@@ -226,16 +231,10 @@
         return Math.pow(2, zoom - REFERENCE_ZOOM);
     }
 
-    function iconSizeScale() {
-        return Math.max(0.5, Math.min(2.5, state.iconSizePercent / 100));
-    }
-
-    function baseMarkerSizeForZoom(zoom) {
-        return Math.max(10, Math.min(40, 10 + (zoom - 16) * 10));
-    }
-
-    function iconMarkerSizeForZoom(zoom) {
-        return Math.max(5, baseMarkerSizeForZoom(zoom) * iconSizeScale());
+    function iconMarkerSize(mapView) {
+        return state.iconSizeUnit === 0
+            ? Math.max(1, metersToCssPixels(state.iconSizeMeters, mapView))
+            : state.iconSizePixels;
     }
 
     function metersToCssPixels(meters, mapView) {
@@ -260,7 +259,7 @@
     }
 
     function maximumMarkerSize(mapView) {
-        return Math.max(nodeDiameterPixels(mapView), iconMarkerSizeForZoom(mapView.zoom));
+        return Math.max(nodeDiameterPixels(mapView), iconMarkerSize(mapView));
     }
 
     function linkHitDistance(mapView) {
@@ -269,7 +268,7 @@
 
     function markerScreenBounds(entityType, mapView) {
         const markerSize = entityType === ENTITY_JUNCTION
-            ? nodeDiameterPixels(mapView) : iconMarkerSizeForZoom(mapView.zoom);
+            ? nodeDiameterPixels(mapView) : iconMarkerSize(mapView);
         if (entityType === ENTITY_JUNCTION) {
             return {
                 width: markerSize,
@@ -413,12 +412,33 @@
         return luminance >= 0.59 ? "#000000" : "#ffffff";
     }
 
+    function iconDefaultFillColor() {
+        const luminance = 0.2126 * state.backgroundRed
+            + 0.7152 * state.backgroundGreen
+            + 0.0722 * state.backgroundBlue;
+        return luminance < 128
+            ? ICON_DEFAULT_FILL_COLOR_DARK_THEME
+            : ICON_DEFAULT_FILL_COLOR_LIGHT_THEME;
+    }
+
     function markerColor(marker) {
-        if (marker.entityType === ENTITY_JUNCTION || marker.entityType === ENTITY_RESERVOIR
-            || marker.entityType === ENTITY_TANK) {
+        if (marker.entityType === ENTITY_JUNCTION)
             return nodeColor(marker.renderId);
+
+        const nodeIcon = marker.entityType === ENTITY_RESERVOIR
+            || marker.entityType === ENTITY_TANK;
+        if (nodeIcon) {
+            if (state.nodeVisual === 0)
+                return iconDefaultFillColor();
+            const color = nodeColor(marker.renderId);
+            return color === SYMBOLOGY_VALUE_UNAVAILABLE_COLOR
+                ? ICON_UNAVAILABLE_FILL_COLOR : color;
         }
-        return linkColor(marker.renderId);
+        if (state.linkVisual === 0)
+            return iconDefaultFillColor();
+        const color = linkColor(marker.renderId);
+        return color === SYMBOLOGY_VALUE_UNAVAILABLE_COLOR
+            ? ICON_UNAVAILABLE_FILL_COLOR : color;
     }
 
     function devicePixelRatio() {
@@ -507,7 +527,8 @@
             sprites[spriteOffset++] = 0;
             sprites[spriteOffset++] = 0;
             sprites[spriteOffset++] = slot;
-            sprites[spriteOffset++] = 1;
+            // Mode 2 tints only the colored fill while preserving the SVG border.
+            sprites[spriteOffset++] = 2;
         }
 
         state.networkRenderer.setGeometry("base", {
@@ -681,7 +702,7 @@
                     0,
                     0,
                     slot,
-                    1);
+                    2);
                 writeWebGlColor(spriteColors, spriteColors.length, color);
             }
         }
@@ -710,12 +731,15 @@
                 state.selectedRenderId, state.selectedEntityType, SELECTED_COLOR,
                 outerSegments, outerSegmentColors, outerDiscs, outerDiscColors,
                 outerSprites, outerSpriteColors);
-        } else {
-            appendNetworkEntityOverlay(
-                state.selectedRenderId, state.selectedEntityType, SELECTED_COLOR,
-                segments, segmentColors, discs, discColors, sprites, spriteColors);
         }
+        appendNetworkEntityOverlay(
+            state.selectedRenderId, state.selectedEntityType, SELECTED_COLOR,
+            segments, segmentColors, discs, discColors, sprites, spriteColors);
         for (const errorEntity of state.errorEntities) {
+            if (errorEntity.renderId === state.selectedRenderId
+                && errorEntity.entityType === state.selectedEntityType) {
+                continue;
+            }
             const diagnosticColor = errorEntity.stale ? STALE_COLOR : ERROR_COLOR;
             appendNetworkEntityOverlay(
                 errorEntity.renderId, errorEntity.entityType, diagnosticColor,
@@ -872,7 +896,7 @@
                     base: {
                         segmentWidth: linkThickness,
                         discScale: nodeDiameter / 2,
-                        spriteScale: iconMarkerSizeForZoom(mapView.zoom)
+                        spriteScale: iconMarkerSize(mapView)
                     },
                     flowDirection: {
                         arrowLength: state.flowDirectionSizePixels,
@@ -881,12 +905,12 @@
                     selectionOuter: {
                         segmentWidth: Math.max(7, linkThickness + 6),
                         discScale: nodeDiameter / 2 + 5,
-                        spriteScale: iconMarkerSizeForZoom(mapView.zoom) + 8
+                        spriteScale: iconMarkerSize(mapView) + 8
                     },
                     overlay: {
                         segmentWidth: Math.max(3, linkThickness + 2),
                         discScale: nodeDiameter / 2 + 2,
-                        spriteScale: iconMarkerSizeForZoom(mapView.zoom)
+                        spriteScale: iconMarkerSize(mapView)
                     }
                 }
             });
@@ -2407,8 +2431,11 @@
             4, Math.min(64, Number(symbology.nodeSizePixels) || 12));
         const nodeSizeMeters = Math.max(
             0.1, Math.min(20, Number(symbology.nodeSizeMeters) || 1.0));
-        const iconSizePercent = Math.max(
-            50, Math.min(250, Number(symbology.iconSizePercent) || 100));
+        const iconSizeUnit = Number(symbology.iconSizeUnit) === 0 ? 0 : 1;
+        const iconSizePixels = Math.max(
+            5, Math.min(90, Number(symbology.iconSizePixels) || 20));
+        const iconSizeMeters = Math.max(
+            25, Math.min(450, Number(symbology.iconSizeMeters) || 150));
         const nodeMinimum = Number(symbology.nodeMinimum);
         const nodeMaximum = Number(symbology.nodeMaximum);
         const nodeValues = symbologyValues(symbology.nodeValues);
@@ -2460,7 +2487,9 @@
             || state.nodeSizeUnit !== nodeSizeUnit
             || state.nodeSizePixels !== nodeSizePixels
             || state.nodeSizeMeters !== nodeSizeMeters
-            || state.iconSizePercent !== iconSizePercent
+            || state.iconSizeUnit !== iconSizeUnit
+            || state.iconSizePixels !== iconSizePixels
+            || state.iconSizeMeters !== iconSizeMeters
             || state.linkThicknessUnit !== linkThicknessUnit
             || state.linkThicknessPixels !== linkThicknessPixels
             || state.linkThicknessMeters !== linkThicknessMeters;
@@ -2478,7 +2507,9 @@
         state.nodeSizeUnit = nodeSizeUnit;
         state.nodeSizePixels = nodeSizePixels;
         state.nodeSizeMeters = nodeSizeMeters;
-        state.iconSizePercent = iconSizePercent;
+        state.iconSizeUnit = iconSizeUnit;
+        state.iconSizePixels = iconSizePixels;
+        state.iconSizeMeters = iconSizeMeters;
         state.nodeMinimum = nodeMinimum;
         state.nodeMaximum = nodeMaximum;
         state.nodeValues = nodeValues;
@@ -2521,11 +2552,14 @@
     }
 
     function setBackground(red, green, blue, opacity) {
+        const previousIconDefaultFillColor = iconDefaultFillColor();
         state.backgroundRed = Math.max(0, Math.min(255, Number(red) || 0));
         state.backgroundGreen = Math.max(0, Math.min(255, Number(green) || 0));
         state.backgroundBlue = Math.max(0, Math.min(255, Number(blue) || 0));
         state.backgroundOpacity = Math.max(0, Math.min(100, Number(opacity) || 0));
         applyBackground();
+        if (previousIconDefaultFillColor !== iconDefaultFillColor())
+            invalidateNetworkColors();
         if (state.lastMapView)
             handleMapViewChanged(state.lastMapView);
     }
@@ -2603,7 +2637,9 @@
         state.nodeSizeUnit = 1;
         state.nodeSizePixels = 12;
         state.nodeSizeMeters = 1.0;
-        state.iconSizePercent = 100;
+        state.iconSizeUnit = 1;
+        state.iconSizePixels = 20;
+        state.iconSizeMeters = 150;
         state.nodeMinimum = 0;
         state.nodeMaximum = 0;
         state.nodeValues = new Map();

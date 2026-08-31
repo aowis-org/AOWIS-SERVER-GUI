@@ -81,8 +81,12 @@ MapRhiSymbology resolveMapRhiSymbology(
     result.node_size_unit = bounded_settings.node_size_unit;
     result.node_size_px = bounded_settings.node_size_px;
     result.node_size_m = bounded_settings.node_size_m;
-    result.icon_size_percent = bounded_settings.icon_size_percent;
+    result.icon_size_unit = bounded_settings.icon_size_unit;
+    result.icon_size_px = bounded_settings.icon_size_px;
+    result.icon_size_m = bounded_settings.icon_size_m;
     result.show_icons = true;
+    result.visual_node = bounded_settings.visual_node;
+    result.visual_link = bounded_settings.visual_link;
     result.link_thickness_unit = bounded_settings.link_thickness_unit;
     result.link_thickness_px = bounded_settings.link_thickness_px;
     result.link_thickness_m = bounded_settings.link_thickness_m;
