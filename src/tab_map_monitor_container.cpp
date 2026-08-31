@@ -798,6 +798,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                 [this](MapViewMode)
         {
             syncDesktopCameraHudVisibility();
+            applyDesktopRhiSymbology();
         });
     }
 #endif

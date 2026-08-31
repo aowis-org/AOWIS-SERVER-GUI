@@ -42,6 +42,21 @@ constexpr int CameraTerrainMinimumZoom = 8;
 constexpr int CameraTerrainMaximumZoom = 14;
 constexpr double FallbackOriginRecenterThresholdWorld = MapModel::TileSize * 1024.0;
 
+// Soft pink default fill for the SVG-derived reservoir/tank/pump/valve icons
+// on the 2D map monitor in light mode, for better visibility against the
+// basemap. Only applies when the icon is neither colorized (VisualNode /
+// VisualLink symbology active) nor selected -- both of those continue to
+// override this via the existing fill color branches in MapRhiScene.
+constexpr QRgb MonitorLightThemeIconFillColor = qRgb(244, 174, 194);
+
+bool isLightThemeWindowColor(const QColor &window_color)
+{
+    const double luminance = 0.2126 * window_color.red()
+        + 0.7152 * window_color.green()
+        + 0.0722 * window_color.blue();
+    return luminance >= 128.0;
+}
+
 double metersToScreenPixels(double meters, double latitude_deg, int zoom)
 {
     const double meters_per_pixel = GeoWebMercator::metersPerPixel(latitude_deg, zoom);
@@ -851,8 +866,14 @@ void MapRhiWidget::setNetworkScreenTranslation(const QPointF &translation_pixels
 void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
 {
     MapRhiSymbology themed_symbology = symbology;
-    themed_symbology.icon_default_fill_color = networkSymbologyIconDefaultFillColor(
-        palette().color(QPalette::Window));
+    const QColor window_color = palette().color(QPalette::Window);
+    themed_symbology.icon_default_fill_color =
+        networkSymbologyIconDefaultFillColor(window_color);
+
+    const bool is_monitor_surface = this->surface_name == QStringLiteral("monitor");
+    const bool is_2d_view = this->map_model->viewMode() != MapViewMode::ThreeD;
+    if (is_monitor_surface && is_2d_view && isLightThemeWindowColor(window_color))
+        themed_symbology.icon_default_fill_color = MonitorLightThemeIconFillColor;
 
     const bool base_symbology_changed =
         !this->symbology_initialized
