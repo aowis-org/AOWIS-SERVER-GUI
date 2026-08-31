@@ -242,6 +242,7 @@ void MapRhiScene::rebuildNetworkGeometry()
     rebuildHeatmap();
     rebuildIcons();
     rebuildTankInstances();
+    rebuildReservoirInstances();
     rebuildJunctionInstances();
     rebuildFlowDirections();
     rebuildHighlights();
@@ -300,6 +301,7 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
     {
         rebuildIcons();
         rebuildTankInstances();
+        rebuildReservoirInstances();
     }
     if (junction_changed)
         rebuildJunctionInstances();
@@ -319,6 +321,7 @@ void MapRhiScene::setSelectedEntity(InfrastructureEntity entity_type, const QUui
     rebuildHighlights();
     rebuildIcons();
     rebuildTankInstances();
+    rebuildReservoirInstances();
     rebuildJunctionInstances();
 }
 
@@ -330,6 +333,7 @@ bool MapRhiScene::setViewZoom(int zoom)
     this->view_zoom = zoom;
     rebuildIcons();
     rebuildTankInstances();
+    rebuildReservoirInstances();
     rebuildJunctionInstances();
     rebuildFlowDirections();
     return true;
@@ -352,6 +356,17 @@ bool MapRhiScene::setUse3dTankModels(bool enabled)
     this->use_3d_tank_models = enabled;
     rebuildIcons();
     rebuildTankInstances();
+    return true;
+}
+
+bool MapRhiScene::setUse3dReservoirModels(bool enabled)
+{
+    if (this->use_3d_reservoir_models == enabled)
+        return false;
+
+    this->use_3d_reservoir_models = enabled;
+    rebuildIcons();
+    rebuildReservoirInstances();
     return true;
 }
 
@@ -449,6 +464,11 @@ const QVector<MapRhiScene::HeatmapVertex> &MapRhiScene::heatmapVertices() const
 const QVector<MapRhiTankInstance> &MapRhiScene::tankInstances() const
 {
     return this->tank_instances;
+}
+
+const QVector<MapRhiReservoirInstance> &MapRhiScene::reservoirInstances() const
+{
+    return this->reservoir_instances;
 }
 
 const QVector<MapRhiJunctionInstance> &MapRhiScene::junctionInstances() const
@@ -803,6 +823,8 @@ void MapRhiScene::appendIcon(const IconMarker &marker)
 {
     if (this->use_3d_tank_models && marker.entity_type == InfrastructureEntity::Tank)
         return;
+    if (this->use_3d_reservoir_models && marker.entity_type == InfrastructureEntity::Reservoir)
+        return;
 
     const MapRhiIconAtlasEntry atlas_entry = mapRhiIconAtlasEntry(marker.entity_type);
     if (!atlas_entry.valid)
@@ -934,6 +956,71 @@ void MapRhiScene::rebuildTankInstances()
         instance.roof_height_world = roof_height_world;
         instance.selected = marker.render_id == selected_tank_render_id ? 1.0f : 0.0f;
         this->tank_instances.append(instance);
+    }
+}
+
+
+void MapRhiScene::rebuildReservoirInstances()
+{
+    this->reservoir_instances.clear();
+    if (!this->symbology.show_icons || !this->use_3d_reservoir_models)
+        return;
+
+    const qreal scale = GeoWebMercator::zoomScale(
+        this->view_zoom, MapRenderCacheMath::ReferenceZoom);
+    if (!std::isfinite(scale) || scale <= 0.0)
+        return;
+
+    float world_marker_size = 0.0f;
+    if (this->symbology.icon_size_unit == NetworkSymbologySizeUnit::Meters)
+    {
+        const double units_per_meter = worldUnitsPerMeter();
+        if (!std::isfinite(units_per_meter) || units_per_meter <= 0.0)
+            return;
+        world_marker_size = float(this->symbology.icon_size_m * units_per_meter);
+    }
+    else
+    {
+        world_marker_size = float(this->symbology.icon_size_px / scale);
+    }
+    // Reservoirs have no diameter/level data in the hydraulic model (unlike
+    // tanks), so - same as the junction sphere - the footprint is derived
+    // entirely from the configured icon/marker size rather than network data.
+    const float radius_world = world_marker_size * 0.48f;
+    const float wall_height_world = world_marker_size * 0.34f;
+
+    quint32 selected_reservoir_render_id = 0;
+    if (this->selected_entity_type == InfrastructureEntity::Reservoir
+        && !this->selected_entity_uuid.isNull())
+    {
+        const QHash<QUuid, quint64>::const_iterator selected_iterator =
+            this->entity_keys_by_uuid.constFind(this->selected_entity_uuid);
+        if (selected_iterator != this->entity_keys_by_uuid.cend())
+        {
+            const quint32 render_id = quint32(selected_iterator.value() & 0xffffffffULL);
+            if (entityRenderKey(InfrastructureEntity::Reservoir, render_id)
+                == selected_iterator.value())
+            {
+                selected_reservoir_render_id = render_id;
+            }
+        }
+    }
+
+    for (const IconMarker &marker : this->icon_markers)
+    {
+        if (marker.entity_type != InfrastructureEntity::Reservoir)
+            continue;
+
+        MapRhiReservoirInstance instance;
+        instance.render_id = marker.render_id;
+        instance.base_center = QVector3D(
+            float(marker.center.x()),
+            float(marker.center.y()),
+            marker.z + 0.02f);
+        instance.radius_world = radius_world;
+        instance.wall_height_world = wall_height_world;
+        instance.selected = marker.render_id == selected_reservoir_render_id ? 1.0f : 0.0f;
+        this->reservoir_instances.append(instance);
     }
 }
 
@@ -1193,7 +1280,9 @@ void MapRhiScene::rebuildHighlights()
                     (this->use_3d_junction_models
                         && this->selected_entity_type == InfrastructureEntity::Junction)
                     || (this->use_3d_tank_models
-                        && this->selected_entity_type == InfrastructureEntity::Tank);
+                        && this->selected_entity_type == InfrastructureEntity::Tank)
+                    || (this->use_3d_reservoir_models
+                        && this->selected_entity_type == InfrastructureEntity::Reservoir);
                 QVector<NodeVertex> *selected_node_target = selected_is_3d_model
                     ? nullptr
                     : &this->selected_node_vertices;

@@ -235,6 +235,8 @@ if(AOWIS_HAS_QRHI)
             src/map/map_rhi_symbology.cpp
             src/map/map_rhi_tank_model.h
             src/map/map_rhi_tank_model.cpp
+            src/map/map_rhi_reservoir_model.h
+            src/map/map_rhi_reservoir_model.cpp
             src/map/map_rhi_widget.h
             src/map/map_rhi_widget.cpp
     )

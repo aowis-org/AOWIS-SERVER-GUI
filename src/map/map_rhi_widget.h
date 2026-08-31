@@ -5,6 +5,7 @@
 #include "map_rhi_camera.h"
 #include "map_rhi_scene.h"
 #include "map_rhi_junction_model.h"
+#include "map_rhi_reservoir_model.h"
 #include "map_rhi_tank_model.h"
 
 #include <QRhiWidget>
@@ -94,6 +95,7 @@ private:
     bool createPipelines();
     bool ensureGeometryBuffers();
     void rebuildTankModelGeometry();
+    void rebuildReservoirModelGeometry();
     void rebuildUndergroundGeometry();
     void markUndergroundGeometryDirty();
     bool isUndergroundAtCoordinate(
@@ -147,18 +149,22 @@ private:
     std::unique_ptr<QRhiBuffer> icon_vertex_buffer;
     std::unique_ptr<QRhiBuffer> heatmap_vertex_buffer;
     std::unique_ptr<QRhiBuffer> tank_vertex_buffer;
+    std::unique_ptr<QRhiBuffer> reservoir_vertex_buffer;
     std::unique_ptr<QRhiBuffer> junction_mesh_vertex_buffer;
     std::unique_ptr<QRhiBuffer> junction_instance_buffer;
     std::unique_ptr<QRhiBuffer> underground_link_vertex_buffer;
     std::unique_ptr<QRhiBuffer> underground_junction_instance_buffer;
     std::unique_ptr<QRhiTexture> icon_atlas_texture;
     std::unique_ptr<QRhiTexture> tank_texture;
+    std::unique_ptr<QRhiTexture> reservoir_texture;
     std::unique_ptr<QRhiSampler> icon_sampler;
     std::unique_ptr<QRhiSampler> tank_sampler;
+    std::unique_ptr<QRhiSampler> reservoir_sampler;
     std::unique_ptr<QRhiShaderResourceBindings> shader_resource_bindings;
     std::unique_ptr<QRhiShaderResourceBindings> heatmap_shader_resource_bindings;
     std::unique_ptr<QRhiShaderResourceBindings> icon_shader_resource_bindings;
     std::unique_ptr<QRhiShaderResourceBindings> tank_shader_resource_bindings;
+    std::unique_ptr<QRhiShaderResourceBindings> reservoir_shader_resource_bindings;
     std::unique_ptr<QRhiGraphicsPipeline> link_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> selected_link_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> node_pipeline;
@@ -167,6 +173,7 @@ private:
     std::unique_ptr<QRhiGraphicsPipeline> icon_overlay_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> heatmap_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> tank_pipeline;
+    std::unique_ptr<QRhiGraphicsPipeline> reservoir_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> junction_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> link_xray_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> junction_xray_pipeline;
@@ -182,6 +189,7 @@ private:
     int icon_vertex_buffer_size = 0;
     int heatmap_vertex_buffer_size = 0;
     int tank_vertex_buffer_size = 0;
+    int reservoir_vertex_buffer_size = 0;
     int junction_mesh_vertex_buffer_size = 0;
     int junction_instance_buffer_size = 0;
     int underground_link_vertex_buffer_size = 0;
@@ -192,14 +200,17 @@ private:
     bool icon_upload_pending = true;
     bool heatmap_upload_pending = true;
     bool tank_upload_pending = true;
+    bool reservoir_upload_pending = true;
     bool junction_mesh_upload_pending = true;
     bool junction_instance_upload_pending = true;
     bool underground_geometry_upload_pending = true;
     bool underground_geometry_dirty = true;
     bool icon_atlas_upload_pending = true;
     bool tank_texture_upload_pending = true;
+    bool reservoir_texture_upload_pending = true;
     QVector<MapRhiScene::HeatmapVertex> heatmap_render_vertices;
     QVector<MapRhiTankModelVertex> tank_model_vertices;
+    QVector<MapRhiReservoirModelVertex> reservoir_model_vertices;
     QVector<MapRhiScene::LinkVertex> underground_link_vertices;
     QVector<MapRhiJunctionInstance> underground_junction_instances;
     MapRhiUndergroundMode underground_mode = MapRhiUndergroundMode::XRay;

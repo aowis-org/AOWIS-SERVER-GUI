@@ -5,6 +5,7 @@
 #include "map_rhi_symbology.h"
 #include "map_rhi_icon_atlas.h"
 #include "map_rhi_junction_model.h"
+#include "map_rhi_reservoir_model.h"
 #include "map_rhi_tank_model.h"
 
 #include <QColor>
@@ -92,6 +93,7 @@ public:
         const QHash<QUuid, InfrastructureEntity> &error_entities,
         const QSet<QUuid> &stale_entity_uuids);
     bool setUse3dTankModels(bool enabled);
+    bool setUse3dReservoirModels(bool enabled);
     bool setUse3dJunctionModels(bool enabled);
     bool setNetworkGroundOffsetM(double offset_m);
     bool setVerticalExaggeration(double exaggeration);
@@ -106,6 +108,7 @@ public:
     const QVector<IconVertex> &iconVertices() const;
     const QVector<HeatmapVertex> &heatmapVertices() const;
     const QVector<MapRhiTankInstance> &tankInstances() const;
+    const QVector<MapRhiReservoirInstance> &reservoirInstances() const;
     const QVector<MapRhiJunctionInstance> &junctionInstances() const;
     QPointF originWorld() const;
     const NetworkRenderSnapshot &networkSnapshot() const;
@@ -180,6 +183,7 @@ private:
     void appendHeatmap(const HeatmapMarker &marker);
     void rebuildIcons();
     void rebuildTankInstances();
+    void rebuildReservoirInstances();
     void rebuildJunctionInstances();
     void appendIcon(const IconMarker &marker);
     void rebuildFlowDirections();
@@ -206,6 +210,7 @@ private:
     QVector<IconVertex> icon_vertices;
     QVector<HeatmapVertex> heatmap_vertices;
     QVector<MapRhiTankInstance> tank_instances;
+    QVector<MapRhiReservoirInstance> reservoir_instances;
     QVector<MapRhiJunctionInstance> junction_instances;
     QVector<HeatmapMarker> heatmap_markers;
     QVector<IconMarker> icon_markers;
@@ -228,6 +233,7 @@ private:
     double vertical_exaggeration = 1.0;
     bool origin_valid = false;
     bool use_3d_tank_models = false;
+    bool use_3d_reservoir_models = false;
     bool use_3d_junction_models = false;
 };
 

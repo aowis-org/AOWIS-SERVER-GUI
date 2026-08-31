@@ -82,6 +82,7 @@
     </qresource>
     <qresource prefix="/map-3d/">
         <file alias="tank_albedo.png">assets/map3d/tank_albedo.png</file>
+        <file alias="reservoir_albedo.png">assets/map3d/reservoir_albedo.png</file>
     </qresource>
     <qresource prefix="/examples/epanet/">
         <file alias="01-uk-style.inp">assets/examples/epanet/01-uk-style.inp</file>

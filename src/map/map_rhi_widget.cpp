@@ -353,6 +353,7 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
             this->icon_upload_pending = true;
             this->heatmap_upload_pending = true;
             this->tank_upload_pending = true;
+            this->reservoir_upload_pending = true;
             this->junction_instance_upload_pending = true;
             markUndergroundGeometryDirty();
             if (this->basemap_renderer)
@@ -373,6 +374,7 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
         this->flow_direction_upload_pending = true;
         this->icon_upload_pending = true;
         this->tank_upload_pending = true;
+        this->reservoir_upload_pending = true;
         this->junction_instance_upload_pending = true;
         markUndergroundGeometryDirty();
         update();
@@ -499,6 +501,76 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
             tank_hit.entity_type = node.entity_type;
             tank_hit.uuid = node.uuid;
             return tank_hit;
+        }
+    }
+
+    // Same reasoning as the tank block above: in 3D, cast the camera ray
+    // against the actual uploaded reservoir mesh triangles rather than a
+    // padded projected rectangle.
+    quint32 best_reservoir_render_id = 0;
+    double best_reservoir_distance = std::numeric_limits<double>::max();
+    if (three_d && !this->reservoir_model_vertices.isEmpty())
+    {
+        QVector3D reservoir_ray_origin;
+        QVector3D reservoir_ray_direction;
+        const QPointF reservoir_screen_position =
+            screen_position - this->network_screen_translation;
+        if (this->camera.screenRay(
+                reservoir_screen_position, &reservoir_ray_origin, &reservoir_ray_direction))
+        {
+            for (qsizetype vertex_index = 0;
+                 vertex_index + 2 < this->reservoir_model_vertices.size();
+                 vertex_index += 3)
+            {
+                const MapRhiReservoirModelVertex &vertex_a =
+                    this->reservoir_model_vertices.at(vertex_index);
+                const MapRhiReservoirModelVertex &vertex_b =
+                    this->reservoir_model_vertices.at(vertex_index + 1);
+                const MapRhiReservoirModelVertex &vertex_c =
+                    this->reservoir_model_vertices.at(vertex_index + 2);
+                if (vertex_a.render_id == 0
+                    || vertex_a.render_id != vertex_b.render_id
+                    || vertex_a.render_id != vertex_c.render_id)
+                {
+                    continue;
+                }
+
+                const QVector3D a(
+                    vertex_a.position_x, vertex_a.position_y, vertex_a.position_z);
+                const QVector3D b(
+                    vertex_b.position_x, vertex_b.position_y, vertex_b.position_z);
+                const QVector3D c(
+                    vertex_c.position_x, vertex_c.position_y, vertex_c.position_z);
+                double hit_distance = 0.0;
+                if (!rayTriangleIntersectionDistance(
+                        reservoir_ray_origin, reservoir_ray_direction, a, b, c, &hit_distance)
+                    || hit_distance >= best_reservoir_distance)
+                {
+                    continue;
+                }
+
+                best_reservoir_distance = hit_distance;
+                best_reservoir_render_id = vertex_a.render_id;
+            }
+        }
+    }
+
+    if (best_reservoir_render_id != 0)
+    {
+        for (const NetworkRenderNode &node : snapshot.nodes)
+        {
+            if (node.entity_type != InfrastructureEntity::Reservoir
+                || node.render_id != best_reservoir_render_id
+                || this->scene.isEntityHidden(node.uuid))
+            {
+                continue;
+            }
+
+            MapRhiHit reservoir_hit;
+            reservoir_hit.render_id = node.render_id;
+            reservoir_hit.entity_type = node.entity_type;
+            reservoir_hit.uuid = node.uuid;
+            return reservoir_hit;
         }
     }
 
@@ -701,7 +773,8 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
         if (this->scene.isEntityHidden(node.uuid)
             || (three_d
                 && (node.entity_type == InfrastructureEntity::Junction
-                    || node.entity_type == InfrastructureEntity::Tank)))
+                    || node.entity_type == InfrastructureEntity::Tank
+                    || node.entity_type == InfrastructureEntity::Reservoir)))
         {
             continue;
         }
@@ -828,6 +901,7 @@ void MapRhiWidget::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
     this->icon_upload_pending = true;
     this->heatmap_upload_pending = true;
     this->tank_upload_pending = true;
+    this->reservoir_upload_pending = true;
     this->junction_instance_upload_pending = true;
     markUndergroundGeometryDirty();
     update();
@@ -847,6 +921,7 @@ void MapRhiWidget::setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids)
     this->icon_upload_pending = true;
     this->heatmap_upload_pending = true;
     this->tank_upload_pending = true;
+    this->reservoir_upload_pending = true;
     this->junction_instance_upload_pending = true;
     markUndergroundGeometryDirty();
     update();
@@ -944,6 +1019,7 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
     {
         this->icon_upload_pending = true;
         this->tank_upload_pending = true;
+        this->reservoir_upload_pending = true;
     }
     if (heatmap_data_changed)
     {
@@ -1090,6 +1166,7 @@ void MapRhiWidget::setSelectedEntity(InfrastructureEntity entity_type, const QUu
     this->highlight_upload_pending = true;
     this->icon_upload_pending = true;
     this->tank_upload_pending = true;
+    this->reservoir_upload_pending = true;
     this->junction_instance_upload_pending = true;
     markUndergroundGeometryDirty();
     update();
@@ -1142,6 +1219,7 @@ void MapRhiWidget::initialize(QRhiCommandBuffer *command_buffer)
         this->icon_overlay_pipeline.reset();
         this->heatmap_pipeline.reset();
         this->tank_pipeline.reset();
+        this->reservoir_pipeline.reset();
         this->junction_pipeline.reset();
         this->link_xray_pipeline.reset();
         this->junction_xray_pipeline.reset();
@@ -1157,6 +1235,7 @@ void MapRhiWidget::initialize(QRhiCommandBuffer *command_buffer)
         this->flow_direction_upload_pending = true;
         this->icon_upload_pending = true;
         this->tank_upload_pending = true;
+        this->reservoir_upload_pending = true;
         this->junction_instance_upload_pending = true;
         markUndergroundGeometryDirty();
     }
@@ -1199,6 +1278,7 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         this->flow_direction_upload_pending = true;
         this->icon_upload_pending = true;
         this->tank_upload_pending = true;
+        this->reservoir_upload_pending = true;
         this->junction_instance_upload_pending = true;
     }
 
@@ -1277,6 +1357,14 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
             this->tank_texture.get(), mapRhiTankAlbedoImage());
         resource_updates->generateMips(this->tank_texture.get());
         this->tank_texture_upload_pending = false;
+    }
+
+    if (this->reservoir_texture_upload_pending)
+    {
+        resource_updates->uploadTexture(
+            this->reservoir_texture.get(), mapRhiReservoirAlbedoImage());
+        resource_updates->generateMips(this->reservoir_texture.get());
+        this->reservoir_texture_upload_pending = false;
     }
 
     if (this->geometry_upload_pending)
@@ -1392,6 +1480,18 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
                 this->tank_model_vertices.constData());
         }
         this->tank_upload_pending = false;
+    }
+
+    if (this->reservoir_upload_pending)
+    {
+        if (!this->reservoir_model_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->reservoir_vertex_buffer.get(), 0,
+                int(this->reservoir_model_vertices.size() * qsizetype(sizeof(MapRhiReservoirModelVertex))),
+                this->reservoir_model_vertices.constData());
+        }
+        this->reservoir_upload_pending = false;
     }
 
     if (this->junction_mesh_upload_pending)
@@ -1609,6 +1709,16 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         const QRhiCommandBuffer::VertexInput tank_binding(this->tank_vertex_buffer.get(), 0);
         command_buffer->setVertexInput(0, 1, &tank_binding);
         command_buffer->draw(quint32(this->tank_model_vertices.size()));
+    }
+
+    if (!this->reservoir_model_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->reservoir_pipeline.get());
+        command_buffer->setShaderResources(this->reservoir_shader_resource_bindings.get());
+        const QRhiCommandBuffer::VertexInput reservoir_binding(
+            this->reservoir_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &reservoir_binding);
+        command_buffer->draw(quint32(this->reservoir_model_vertices.size()));
     }
 
     if (!is_2d_view && !selected_link_vertices.isEmpty())
@@ -1856,6 +1966,60 @@ bool MapRhiWidget::createPersistentResources()
         }
     }
 
+    if (!this->reservoir_texture)
+    {
+        const QImage reservoir_image = mapRhiReservoirAlbedoImage();
+        if (reservoir_image.isNull())
+        {
+            reportFailure(QStringLiteral("Failed to load RHI reservoir model texture"));
+            return false;
+        }
+        this->reservoir_texture.reset(this->active_rhi->newTexture(
+            QRhiTexture::RGBA8, reservoir_image.size(), 1,
+            QRhiTexture::MipMapped | QRhiTexture::UsedWithGenerateMips));
+        if (!this->reservoir_texture || !this->reservoir_texture->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI reservoir model texture"));
+            return false;
+        }
+        this->reservoir_texture_upload_pending = true;
+    }
+
+    if (!this->reservoir_sampler)
+    {
+        this->reservoir_sampler.reset(this->active_rhi->newSampler(
+            QRhiSampler::Linear, QRhiSampler::Linear, QRhiSampler::Linear,
+            QRhiSampler::Repeat, QRhiSampler::ClampToEdge));
+        if (!this->reservoir_sampler || !this->reservoir_sampler->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI reservoir model sampler"));
+            return false;
+        }
+    }
+
+    if (!this->reservoir_shader_resource_bindings)
+    {
+        this->reservoir_shader_resource_bindings.reset(
+            this->active_rhi->newShaderResourceBindings());
+        if (!this->reservoir_shader_resource_bindings)
+        {
+            reportFailure(QStringLiteral("Failed to allocate RHI reservoir shader bindings"));
+            return false;
+        }
+        this->reservoir_shader_resource_bindings->setBindings({
+            QRhiShaderResourceBinding::uniformBuffer(
+                0, QRhiShaderResourceBinding::VertexStage, this->uniform_buffer.get()),
+            QRhiShaderResourceBinding::sampledTexture(
+                1, QRhiShaderResourceBinding::FragmentStage,
+                this->reservoir_texture.get(), this->reservoir_sampler.get())
+        });
+        if (!this->reservoir_shader_resource_bindings->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI reservoir shader bindings"));
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -1863,7 +2027,8 @@ bool MapRhiWidget::createPipelines()
 {
     if (this->active_rhi == nullptr || this->render_pass_descriptor == nullptr
         || !this->shader_resource_bindings || !this->heatmap_shader_resource_bindings
-        || !this->icon_shader_resource_bindings || !this->tank_shader_resource_bindings)
+        || !this->icon_shader_resource_bindings || !this->tank_shader_resource_bindings
+        || !this->reservoir_shader_resource_bindings)
     {
         return false;
     }
@@ -2249,6 +2414,63 @@ bool MapRhiWidget::createPipelines()
         }
     }
 
+    if (!this->reservoir_pipeline)
+    {
+        // MapRhiReservoirModelVertex mirrors MapRhiTankModelVertex field for
+        // field (position/normal/uv/selected), and the lighting model in the
+        // tank shader is generic (not tank-specific), so the reservoir
+        // pipeline reuses the same compiled shader rather than needing its
+        // own .vert/.frag pair.
+        const QShader vertex_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_tank.vert.qsb"));
+        const QShader fragment_shader = loadShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_tank.frag.qsb"));
+        if (!vertex_shader.isValid() || !fragment_shader.isValid())
+        {
+            reportFailure(QStringLiteral("Failed to load RHI reservoir model shaders"));
+            return false;
+        }
+
+        QRhiVertexInputLayout input_layout;
+        input_layout.setBindings({
+            {quint32(sizeof(MapRhiReservoirModelVertex))}
+        });
+        input_layout.setAttributes({
+            {0, 0, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiReservoirModelVertex, position_x))},
+            {0, 1, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiReservoirModelVertex, normal_x))},
+            {0, 2, QRhiVertexInputAttribute::Float2,
+             quint32(offsetof(MapRhiReservoirModelVertex, u))},
+            {0, 3, QRhiVertexInputAttribute::Float,
+             quint32(offsetof(MapRhiReservoirModelVertex, selected))}
+        });
+
+        this->reservoir_pipeline.reset(this->active_rhi->newGraphicsPipeline());
+        this->reservoir_pipeline->setShaderStages({
+            {QRhiShaderStage::Vertex, vertex_shader},
+            {QRhiShaderStage::Fragment, fragment_shader}
+        });
+        this->reservoir_pipeline->setVertexInputLayout(input_layout);
+        this->reservoir_pipeline->setShaderResourceBindings(
+            this->reservoir_shader_resource_bindings.get());
+        this->reservoir_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
+        this->reservoir_pipeline->setSampleCount(sampleCount());
+        this->reservoir_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+        this->reservoir_pipeline->setDepthTest(true);
+        this->reservoir_pipeline->setDepthWrite(true);
+        this->reservoir_pipeline->setCullMode(QRhiGraphicsPipeline::Back);
+        this->reservoir_pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
+        QRhiGraphicsPipeline::TargetBlend reservoir_blend;
+        reservoir_blend.enable = true;
+        this->reservoir_pipeline->setTargetBlends({reservoir_blend});
+        if (!this->reservoir_pipeline->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI reservoir graphics pipeline"));
+            return false;
+        }
+    }
+
 
     if (!this->junction_pipeline)
     {
@@ -2490,6 +2712,9 @@ bool MapRhiWidget::ensureGeometryBuffers()
     if (this->tank_upload_pending)
         rebuildTankModelGeometry();
 
+    if (this->reservoir_upload_pending)
+        rebuildReservoirModelGeometry();
+
     const int required_link_bytes = boundedBufferSize(
         this->scene.linkVertices().size(), qsizetype(sizeof(MapRhiScene::LinkVertex)));
     const int required_node_bytes = boundedBufferSize(
@@ -2510,6 +2735,8 @@ bool MapRhiWidget::ensureGeometryBuffers()
         this->heatmap_render_vertices.size(), qsizetype(sizeof(MapRhiScene::HeatmapVertex)));
     const int required_tank_bytes = boundedBufferSize(
         this->tank_model_vertices.size(), qsizetype(sizeof(MapRhiTankModelVertex)));
+    const int required_reservoir_bytes = boundedBufferSize(
+        this->reservoir_model_vertices.size(), qsizetype(sizeof(MapRhiReservoirModelVertex)));
     const QVector<MapRhiJunctionMeshVertex> &junction_mesh =
         mapRhiJunctionSphereMeshVertices();
     const int required_junction_mesh_bytes = boundedBufferSize(
@@ -2525,6 +2752,7 @@ bool MapRhiWidget::ensureGeometryBuffers()
         || required_diagnostic_link_bytes == 0 || required_diagnostic_node_bytes == 0
         || required_flow_direction_bytes == 0 || required_icon_bytes == 0
         || required_heatmap_bytes == 0 || required_tank_bytes == 0
+        || required_reservoir_bytes == 0
         || required_junction_mesh_bytes == 0 || required_junction_instance_bytes == 0
         || required_underground_link_bytes == 0
         || required_underground_junction_instance_bytes == 0)
@@ -2669,6 +2897,20 @@ bool MapRhiWidget::ensureGeometryBuffers()
         this->tank_upload_pending = true;
     }
 
+    if (!this->reservoir_vertex_buffer
+        || this->reservoir_vertex_buffer_size != required_reservoir_bytes)
+    {
+        this->reservoir_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_reservoir_bytes));
+        if (!this->reservoir_vertex_buffer || !this->reservoir_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI reservoir vertex buffer"));
+            return false;
+        }
+        this->reservoir_vertex_buffer_size = required_reservoir_bytes;
+        this->reservoir_upload_pending = true;
+    }
+
     if (!this->junction_mesh_vertex_buffer
         || this->junction_mesh_vertex_buffer_size != required_junction_mesh_bytes)
     {
@@ -2745,6 +2987,7 @@ void MapRhiWidget::resetGpuResources()
     this->link_no_depth_pipeline.reset();
     this->junction_pipeline.reset();
     this->tank_pipeline.reset();
+    this->reservoir_pipeline.reset();
     this->heatmap_pipeline.reset();
     this->icon_overlay_pipeline.reset();
     this->icon_pipeline.reset();
@@ -2753,18 +2996,22 @@ void MapRhiWidget::resetGpuResources()
     this->selected_link_pipeline.reset();
     this->link_pipeline.reset();
     this->tank_shader_resource_bindings.reset();
+    this->reservoir_shader_resource_bindings.reset();
     this->icon_shader_resource_bindings.reset();
     this->heatmap_shader_resource_bindings.reset();
     this->shader_resource_bindings.reset();
     this->tank_sampler.reset();
+    this->reservoir_sampler.reset();
     this->icon_sampler.reset();
     this->tank_texture.reset();
+    this->reservoir_texture.reset();
     this->icon_atlas_texture.reset();
     this->underground_junction_instance_buffer.reset();
     this->underground_link_vertex_buffer.reset();
     this->junction_instance_buffer.reset();
     this->junction_mesh_vertex_buffer.reset();
     this->tank_vertex_buffer.reset();
+    this->reservoir_vertex_buffer.reset();
     this->heatmap_vertex_buffer.reset();
     this->icon_vertex_buffer.reset();
     this->flow_direction_vertex_buffer.reset();
@@ -2780,6 +3027,7 @@ void MapRhiWidget::resetGpuResources()
     this->junction_instance_buffer_size = 0;
     this->junction_mesh_vertex_buffer_size = 0;
     this->tank_vertex_buffer_size = 0;
+    this->reservoir_vertex_buffer_size = 0;
     this->heatmap_vertex_buffer_size = 0;
     this->icon_vertex_buffer_size = 0;
     this->flow_direction_vertex_buffer_size = 0;
@@ -2795,14 +3043,17 @@ void MapRhiWidget::resetGpuResources()
     this->icon_upload_pending = true;
     this->heatmap_upload_pending = true;
     this->tank_upload_pending = true;
+    this->reservoir_upload_pending = true;
     this->junction_mesh_upload_pending = true;
     this->junction_instance_upload_pending = true;
     this->underground_geometry_upload_pending = true;
     this->underground_geometry_dirty = true;
     this->icon_atlas_upload_pending = true;
     this->tank_texture_upload_pending = true;
+    this->reservoir_texture_upload_pending = true;
     this->heatmap_render_vertices.clear();
     this->tank_model_vertices.clear();
+    this->reservoir_model_vertices.clear();
     this->underground_link_vertices.clear();
     this->underground_junction_instances.clear();
 }
@@ -2810,6 +3061,12 @@ void MapRhiWidget::resetGpuResources()
 void MapRhiWidget::rebuildTankModelGeometry()
 {
     this->tank_model_vertices = mapRhiBuildTankModelVertices(this->scene.tankInstances());
+}
+
+void MapRhiWidget::rebuildReservoirModelGeometry()
+{
+    this->reservoir_model_vertices =
+        mapRhiBuildReservoirModelVertices(this->scene.reservoirInstances());
 }
 
 void MapRhiWidget::markUndergroundGeometryDirty()
@@ -3045,6 +3302,11 @@ void MapRhiWidget::syncViewState()
     {
         this->icon_upload_pending = true;
         this->tank_upload_pending = true;
+    }
+    if (this->scene.setUse3dReservoirModels(use_3d_models))
+    {
+        this->icon_upload_pending = true;
+        this->reservoir_upload_pending = true;
     }
     if (this->scene.setUse3dJunctionModels(use_3d_models))
     {
