@@ -170,6 +170,8 @@ private:
                           const QString &name, const QString &tooltip = QString());
     void addGroupSimulationErrors();
     void refreshSimulationErrors();
+    void addGroupSimulationWarnings();
+    void refreshSimulationWarnings();
     void refreshSimulation();
     void refreshWaterQualitySimulation();
     void resetSimulationValues();
@@ -240,6 +242,8 @@ private:
     QCheckBox *check_source_trace_origin_current_node = nullptr;
     GroupBoxCollapsible *group_simulation_errors = nullptr;
     QLabel *label_simulation_errors = nullptr;
+    GroupBoxCollapsible *group_simulation_warnings = nullptr;
+    QLabel *label_simulation_warnings = nullptr;
     QLabel *label_simulation_message = nullptr;
     QLabel *label_simulation_energy_message = nullptr;
     QLabel *label_quality_simulation_message = nullptr;
