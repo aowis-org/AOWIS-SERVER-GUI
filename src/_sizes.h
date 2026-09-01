@@ -14,7 +14,7 @@ namespace Sizes
     
     inline constexpr int TopControlBarHeight = 62;
     
-    inline constexpr int SidebarRightWidth = 360;
+    inline constexpr int SidebarRightWidth = 380;
     inline constexpr int SidebarRightImageHeight = 100;
 }
 

@@ -21,6 +21,7 @@ EntityInspectorDock::EntityInspectorDock(HydraulicData *hydraulic_data, QWidget 
         setToolTip(QStringLiteral("Press %1 to show or hide the right sidebar.").arg(shortcut));
     });
     setMinimumWidth(Sizes::SidebarRightWidth);
+    setMaximumWidth(Sizes::SidebarRightWidth);
     this->resize(Sizes::SidebarRightWidth, this->height());
     this->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     

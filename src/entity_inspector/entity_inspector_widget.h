@@ -55,6 +55,12 @@ protected:
     
     void setTitle(const QString &title);
     
+    // Bounds a combo box's preferred width so a single long or dynamically-populated
+    // item (e.g. a curve/pattern name, or a "[Missing ...] <uuid>" fallback) cannot
+    // force the entity inspector wider than Sizes::SidebarRightWidth. The full text
+    // remains visible in the drop-down popup, which is not width-constrained.
+    void constrainComboWidth(QComboBox *combo, int minimum_contents_length = 18);
+    
     void addGroupOverviewImage(const QString &icon_path, const QString &name);
     QPushButton *button_overview_find_on_map = nullptr;
     

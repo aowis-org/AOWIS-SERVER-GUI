@@ -150,6 +150,7 @@ void EntityInspectorPump::addGroupPumpInput()
 
     QLabel *label_speed_pattern = new QLabel("Speed Pattern");
     this->combo_speed_pattern = new QComboBox();
+    constrainComboWidth(this->combo_speed_pattern);
 
     grid->addWidget(label_type, 0, 0);
     grid->addWidget(this->combo_type, 0, 1);
@@ -203,6 +204,7 @@ void EntityInspectorPump::addGroupControls()
         QStringLiteral("Time of day"),
         static_cast<int>(HydraulicControlSimpleType::TimeOfDay));
     this->button_add_control = new QPushButton(QStringLiteral("Add Control"), group);
+    constrainComboWidth(this->combo_new_control_type);
     add_layout->addWidget(this->combo_new_control_type, 1);
     add_layout->addWidget(this->button_add_control);
     layout->addLayout(add_layout);
@@ -222,6 +224,7 @@ void EntityInspectorPump::addGroupEnergyCostInput()
 
     QLabel *label_efficiency_curve = new QLabel("Efficiency Curve");
     this->combo_efficiency_curve = new QComboBox();
+    constrainComboWidth(this->combo_efficiency_curve);
 
     QLabel *label_energy_price = new QLabel("Energy Price");
     this->spin_energy_price = new QDoubleSpinBox();
@@ -233,6 +236,7 @@ void EntityInspectorPump::addGroupEnergyCostInput()
 
     QLabel *label_price_pattern = new QLabel("Price Pattern");
     this->combo_price_pattern = new QComboBox();
+    constrainComboWidth(this->combo_price_pattern);
 
     grid->addWidget(label_efficiency_curve, 0, 0);
     grid->addWidget(this->combo_efficiency_curve, 0, 1);

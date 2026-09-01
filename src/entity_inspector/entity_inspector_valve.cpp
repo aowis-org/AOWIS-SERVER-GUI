@@ -73,6 +73,7 @@ void EntityInspectorValve::addGroupValveConfiguration()
         "PCV: Positional Control Valve",
         static_cast<int>(HydraulicLinkValveType::PCV)
         );
+    constrainComboWidth(this->combo_valve_type);
     
     this->label_setting = new QLabel("Setting");
     this->spin_setting = new QDoubleSpinBox();
@@ -83,6 +84,7 @@ void EntityInspectorValve::addGroupValveConfiguration()
     
     this->label_setting_curve = new QLabel("Curve");
     this->combo_setting_curve = new QComboBox();
+    constrainComboWidth(this->combo_setting_curve);
     this->combo_setting_curve->addItem("Select curve...");
     this->label_setting_curve->hide();
     this->combo_setting_curve->hide();

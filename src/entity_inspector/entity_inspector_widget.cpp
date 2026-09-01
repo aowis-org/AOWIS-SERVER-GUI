@@ -360,6 +360,15 @@ void EntityInspectorWidget::setTitle(const QString &title)
     this->label_title->setText("<b>" + title.toHtmlEscaped() + "</b>");
 }
 
+void EntityInspectorWidget::constrainComboWidth(QComboBox *combo, int minimum_contents_length)
+{
+    if (combo == nullptr)
+        return;
+
+    combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    combo->setMinimumContentsLength(minimum_contents_length);
+}
+
 void EntityInspectorWidget::addSimulationRow(QGridLayout *grid, int &row,
                                               SimulationField field,
                                               const QString &name,
@@ -1746,6 +1755,7 @@ void EntityInspectorWidget::addGroupElevation()
         QLabel *label_head_pattern = new QLabel("Head Pattern");
         this->combo_head_pattern = new QComboBox();
         this->combo_head_pattern->setToolTip("Select a time pattern for variable reservoir head, or Constant for a fixed head.");
+        constrainComboWidth(this->combo_head_pattern);
         grid->addWidget(label_head_pattern, 6, 0);
         grid->addWidget(this->combo_head_pattern, 6, 1);
 
@@ -2692,6 +2702,7 @@ void EntityInspectorWidget::addGroupNodeQualityInputs()
 
     QLabel *label_source_pattern = new QLabel("Source Pattern");
     this->combo_quality_source_pattern = new QComboBox();
+    constrainComboWidth(this->combo_quality_source_pattern);
 
     grid_chemical->addWidget(label_initial_chemical, chemical_row, 0);
     grid_chemical->addWidget(this->spin_quality_initial_chemical, chemical_row++, 1);

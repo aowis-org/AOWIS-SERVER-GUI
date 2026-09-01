@@ -124,6 +124,7 @@ void EntityInspectorTank::addGroupGeometry()
 
     this->label_volume_curve = new QLabel("Volume Curve");
     this->combo_volume_curve = new QComboBox();
+    constrainComboWidth(this->combo_volume_curve);
 
     grid->addWidget(label_level_initial, 0, 0);
     grid->addWidget(this->spin_level_initial, 0, 1);
@@ -561,6 +562,7 @@ void EntityInspectorTank::addGroupQuality()
     this->combo_quality_mixing->addItem("Two-Compartment", static_cast<int>(HydraulicNodeTankMixingModel::TwoCompartment));
     this->combo_quality_mixing->addItem("First In, First Out", static_cast<int>(HydraulicNodeTankMixingModel::FirstInFirstOut));
     this->combo_quality_mixing->addItem("Last In, First Out", static_cast<int>(HydraulicNodeTankMixingModel::LastInFirstOut));
+    constrainComboWidth(this->combo_quality_mixing);
 
     QLabel *label_mixing_fraction = new QLabel("Mixing Fraction");
     this->spin_quality_mixing_fraction = new QDoubleSpinBox();
