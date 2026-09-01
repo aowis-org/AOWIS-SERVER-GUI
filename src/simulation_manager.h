@@ -23,6 +23,7 @@
 
 struct EpanetResultImport;
 struct EpanetResultRun;
+class SimulationStatisticsDialog;
 
 class SimulationManager : public QObject
 {
@@ -48,13 +49,13 @@ private:
     HydraulicData *hydraulic_data = nullptr;
     QString epanet_log;
     QPointer<QDialog> dialog_simulation_statistics = nullptr;
-    QPointer<QDialog> dialog_simulation_diagnostics = nullptr;
     QPointer<QThread> simulation_thread = nullptr;
     std::shared_ptr<std::atomic_bool> simulation_cancellation_flag;
     bool simulation_running = false;
 
     void finishSimulation(const EpanetResultRun &run_result);
     void finishEpanetNetworkImport(EpanetResultImport import_result, QWidget *parent_widget);
+    SimulationStatisticsDialog *ensureSimulationStatisticsDialog();
 
 signals:
     void signalSimulationStarted();

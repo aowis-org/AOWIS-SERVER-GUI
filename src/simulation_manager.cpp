@@ -1,7 +1,6 @@
 #include "simulation_manager.h"
 
 #include "simulation_statistics_dialog.h"
-#include "simulation_diagnostics_dialog.h"
 
 #include <aowis/epanet/epanet_runner.h>
 #include <aowis/epanet/epanet_result_import.h>
@@ -435,24 +434,15 @@ void SimulationManager::finishSimulation(const EpanetResultRun &run_result)
         tr("Simulation and all configured water-quality analyses completed successfully."));
 }
 
-void SimulationManager::showSimulationStatistics()
+SimulationStatisticsDialog *SimulationManager::ensureSimulationStatisticsDialog()
 {
-    if (!this->hydraulic_data->hasSimulationResults() && this->epanet_log.isEmpty())
-        return;
-
     if (this->dialog_simulation_statistics)
     {
         SimulationStatisticsDialog *statistics_dialog =
             qobject_cast<SimulationStatisticsDialog *>(this->dialog_simulation_statistics.data());
         if (statistics_dialog != nullptr)
-        {
             statistics_dialog->setEpanetLog(this->epanet_log);
-            if (!this->hydraulic_data->hasSimulationResults() && !this->epanet_log.isEmpty())
-                statistics_dialog->showEpanetLogTab();
-        }
-
-        showAndActivateDialog(this->dialog_simulation_statistics);
-        return;
+        return statistics_dialog;
     }
 
     QWidget *main_window = qobject_cast<QWidget *>(parent());
@@ -462,9 +452,22 @@ void SimulationManager::showSimulationStatistics()
     SimulationStatisticsDialog *statistics_dialog =
         new SimulationStatisticsDialog(this->hydraulic_data, main_window);
     statistics_dialog->setEpanetLog(this->epanet_log);
-    if (!this->hydraulic_data->hasSimulationResults() && !this->epanet_log.isEmpty())
-        statistics_dialog->showEpanetLogTab();
     this->dialog_simulation_statistics = statistics_dialog;
+    return statistics_dialog;
+}
+
+void SimulationManager::showSimulationStatistics()
+{
+    if (!this->hydraulic_data->hasSimulationResults() && this->epanet_log.isEmpty())
+        return;
+
+    SimulationStatisticsDialog *statistics_dialog = ensureSimulationStatisticsDialog();
+    if (statistics_dialog != nullptr
+        && !this->hydraulic_data->hasSimulationResults() && !this->epanet_log.isEmpty())
+    {
+        statistics_dialog->showEpanetLogTab();
+    }
+
     showAndActivateDialog(this->dialog_simulation_statistics);
 }
 
@@ -478,19 +481,11 @@ void SimulationManager::showSimulationDiagnostics()
     if (!result_timeline.has_value() || result_timeline->diagnostics.isEmpty())
         return;
 
-    if (this->dialog_simulation_diagnostics)
-    {
-        showAndActivateDialog(this->dialog_simulation_diagnostics);
-        return;
-    }
+    SimulationStatisticsDialog *statistics_dialog = ensureSimulationStatisticsDialog();
+    if (statistics_dialog != nullptr)
+        statistics_dialog->showDiagnosticsTab();
 
-    QWidget *main_window = qobject_cast<QWidget *>(parent());
-    if (main_window == nullptr)
-        main_window = QApplication::activeWindow();
-
-    this->dialog_simulation_diagnostics =
-        new SimulationDiagnosticsDialog(this->hydraulic_data, main_window);
-    showAndActivateDialog(this->dialog_simulation_diagnostics);
+    showAndActivateDialog(this->dialog_simulation_statistics);
 }
 
 void SimulationManager::showEpanetLog()

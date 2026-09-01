@@ -9,6 +9,7 @@ class QTableWidget;
 class QTabWidget;
 class QTextBrowser;
 class QTreeWidget;
+class SimulationDiagnosticsWidget;
 
 class SimulationStatisticsDialog : public QDialog
 {
@@ -18,9 +19,11 @@ public:
     explicit SimulationStatisticsDialog(HydraulicData *hydraulic_data, QWidget *parent = nullptr);
     void setEpanetLog(const QString &epanet_log);
     void showEpanetLogTab();
+    void showDiagnosticsTab();
 
 private:
     HydraulicData *hydraulic_data = nullptr;
+    SimulationDiagnosticsWidget *widget_diagnostics = nullptr;
     QTreeWidget *tree_summary = nullptr;
     QTableWidget *table_timeline = nullptr;
     QTabWidget *tabs = nullptr;

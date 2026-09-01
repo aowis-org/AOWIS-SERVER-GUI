@@ -1,6 +1,7 @@
 #include "simulation_statistics_dialog.h"
 
 #include "hydraulic_data.h"
+#include "simulation_diagnostics_widget.h"
 
 #include <cmath>
 #include <QAbstractItemView>
@@ -158,7 +159,7 @@ SimulationStatisticsDialog::SimulationStatisticsDialog(HydraulicData *hydraulic_
 {
     setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
     setAttribute(Qt::WA_DeleteOnClose);
-    setWindowTitle(tr("Simulation Statistics"));
+    setWindowTitle(tr("Simulation Results"));
     setModal(false);
     resize(1050, 650);
 
@@ -209,6 +210,9 @@ SimulationStatisticsDialog::SimulationStatisticsDialog(HydraulicData *hydraulic_
     summary_layout->addWidget(hint);
     summary_layout->addWidget(this->tree_summary);
 
+    this->widget_diagnostics = new SimulationDiagnosticsWidget(this->hydraulic_data, this->tabs);
+
+    this->tabs->addTab(this->widget_diagnostics, tr("Diagnostics"));
     this->tabs->addTab(summary_page, tr("Summary"));
     this->tabs->addTab(this->table_timeline, tr("By timestep"));
     this->tabs->addTab(this->text_epanet_log, tr("EPANET Log"));
@@ -240,6 +244,16 @@ void SimulationStatisticsDialog::showEpanetLogTab()
         return;
 
     const int tab_index = this->tabs->indexOf(this->text_epanet_log);
+    if (tab_index >= 0)
+        this->tabs->setCurrentIndex(tab_index);
+}
+
+void SimulationStatisticsDialog::showDiagnosticsTab()
+{
+    if (this->tabs == nullptr || this->widget_diagnostics == nullptr)
+        return;
+
+    const int tab_index = this->tabs->indexOf(this->widget_diagnostics);
     if (tab_index >= 0)
         this->tabs->setCurrentIndex(tab_index);
 }

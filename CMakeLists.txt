@@ -164,7 +164,7 @@ qt_add_executable(aowis-server-gui
     src/entity_inspector/entity_inspector_customer_point.h src/entity_inspector/entity_inspector_customer_point.cpp
     src/simulation_manager.h src/simulation_manager.cpp
     src/simulation_statistics_dialog.h src/simulation_statistics_dialog.cpp
-    src/simulation_diagnostics_dialog.h src/simulation_diagnostics_dialog.cpp
+    src/simulation_diagnostics_widget.h src/simulation_diagnostics_widget.cpp
     src/entity_inspector/entity_map_legend_dock.h src/entity_inspector/entity_map_legend_dock.cpp
     src/map/map_editor_guide_dock.h src/map/map_editor_guide_dock.cpp
     src/hydraulic_data.h src/hydraulic_data.cpp
