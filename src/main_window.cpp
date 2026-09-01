@@ -639,12 +639,32 @@ void MainWindow::toggleRightDockArea()
 
 void MainWindow::showEntityInspectorForSelection()
 {
-    if (this->right_dock_area_hidden)
+    const bool area_was_hidden = this->right_dock_area_hidden;
+    if (area_was_hidden)
         toggleRightDockArea();
 
+    // The inspector dock is also independently closable via its own title
+    // bar button (DockWidgetClosable), which never touches
+    // right_dock_area_hidden - that flag only tracks the "toggle sidebar"
+    // shortcut/action closing the whole right-hand area at once. So closing
+    // just the inspector this way leaves the flag false and
+    // toggleRightDockArea() above never runs for it. Force it visible (and
+    // the resize-blocking flag clear) unconditionally, regardless of which
+    // way it was closed.
+    this->right_dock_area_hidden = false;
+    this->dock_entity_inspector->setVisible(true);
     this->dock_entity_inspector->show();
     this->dock_entity_inspector->raise();
     scheduleRightDockResize();
+
+    // The dock lives inside this window, so raising it only reorders
+    // widgets within our own stacking - it does nothing if another
+    // top-level window (e.g. the non-modal "Simulation Results" dialog) is
+    // currently in front of us. Bring the whole window forward too, so a
+    // click that selects an entity is actually visible to the person who
+    // clicked it.
+    raise();
+    activateWindow();
 }
 
 void MainWindow::hideRightDock(QDockWidget *dock)

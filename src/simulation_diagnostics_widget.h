@@ -16,6 +16,7 @@ public:
 private:
     void refresh();
     void showDiagnosticDetails(int diagnostic_index);
+    void selectDiagnosticEntity(int diagnostic_index);
 
     HydraulicData *hydraulic_data = nullptr;
     QLabel *label_result_validity = nullptr;

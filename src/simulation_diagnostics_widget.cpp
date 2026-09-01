@@ -6,8 +6,12 @@
 #include <QBrush>
 #include <QColor>
 #include <QFontMetrics>
+#include <QIcon>
 #include <QLabel>
 #include <QMetaEnum>
+#include <QPainter>
+#include <QPixmap>
+#include <QSize>
 #include <QSizePolicy>
 #include <QSplitter>
 #include <QListWidget>
@@ -45,6 +49,28 @@ QColor severityColor(HydraulicSimulationDiagnosticSeverity severity)
     default:
         return QColor();
     }
+}
+
+QIcon severityIndicatorIcon(const QColor &color)
+{
+    // The list's selection highlight overrides an item's own text color (a
+    // selected row is painted with the palette's "highlighted text" color,
+    // not Qt::ForegroundRole), so severity would otherwise disappear the
+    // moment a diagnostic is selected. An icon isn't subject to that
+    // substitution - it always paints as given - so it's a small colored
+    // dot that keeps conveying severity regardless of selection state.
+    constexpr int diameter = 10;
+    QPixmap pixmap(diameter, diameter);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(color);
+    painter.drawEllipse(0, 0, diameter, diameter);
+    painter.end();
+
+    return QIcon(pixmap);
 }
 
 QString enumText(const char *enumerator_name, int value)
@@ -183,6 +209,16 @@ SimulationDiagnosticsWidget::SimulationDiagnosticsWidget(HydraulicData *hydrauli
     this->list_diagnostics->setSpacing(3);
     this->list_diagnostics->setMinimumWidth(220);
     this->list_diagnostics->setMaximumWidth(300);
+    this->list_diagnostics->setIconSize(QSize(10, 10));
+    // A solid selection fill would paint over each item's own severity
+    // color; keep it a translucent tint (no explicit "color:" rule) so the
+    // item's Qt::ForegroundRole text color and the severity icon both stay
+    // visible while selected.
+    this->list_diagnostics->setStyleSheet(QStringLiteral(
+        "QListWidget::item { padding: 3px; border-radius: 4px; }"
+        "QListWidget::item:selected { background-color: rgba(90, 140, 200, 60);"
+        " border: 1px solid rgba(90, 140, 200, 150); }"
+        "QListWidget::item:hover:!selected { background-color: rgba(255, 255, 255, 18); }"));
 
     this->text_details = new QTextBrowser(this);
     this->text_details->setOpenExternalLinks(false);
@@ -209,23 +245,17 @@ SimulationDiagnosticsWidget::SimulationDiagnosticsWidget(HydraulicData *hydrauli
             return;
         }
 
-        const int diagnostic_index = current->data(Qt::UserRole).toInt();
-        showDiagnosticDetails(diagnostic_index);
-
-        const std::optional<HydraulicSimulationResultTimeline> &result_timeline =
-            this->hydraulic_data->simulationResultTimeline();
-        if (!result_timeline.has_value() || diagnostic_index < 0
-            || diagnostic_index >= result_timeline->diagnostics.size())
-        {
-            return;
-        }
-
-        const HydraulicSimulationDiagnostic &diagnostic =
-            result_timeline->diagnostics.at(diagnostic_index);
-        const InfrastructureEntity entity_type =
-            diagnosticInfrastructureEntity(diagnostic, *this->hydraulic_data);
-        if (entity_type != InfrastructureEntity::Unknown && !diagnostic.entity.uuid.isNull())
-            this->hydraulic_data->setSelectedUuid(entity_type, diagnostic.entity.uuid);
+        showDiagnosticDetails(current->data(Qt::UserRole).toInt());
+    });
+    // currentItemChanged only fires when the current row actually changes,
+    // so re-clicking the already-selected diagnostic wouldn't do anything.
+    // Hook the click itself so every click reliably opens the entity's
+    // inspector, not just the first click that moves the selection there.
+    connect(this->list_diagnostics, &QListWidget::itemClicked, this,
+        [this](QListWidgetItem *item)
+    {
+        if (item != nullptr)
+            selectDiagnosticEntity(item->data(Qt::UserRole).toInt());
     });
 
     if (this->hydraulic_data != nullptr)
@@ -309,7 +339,10 @@ void SimulationDiagnosticsWidget::refresh()
         const QColor color = diagnostic_stale
             ? QColor(128, 128, 128) : severityColor(diagnostic.severity);
         if (color.isValid())
+        {
             item->setForeground(QBrush(color));
+            item->setIcon(severityIndicatorIcon(color));
+        }
     }
 
     if (!diagnostics.isEmpty())
@@ -368,4 +401,25 @@ void SimulationDiagnosticsWidget::showDiagnosticDetails(int diagnostic_index)
     }
 
     this->text_details->setHtml(html);
+}
+
+void SimulationDiagnosticsWidget::selectDiagnosticEntity(int diagnostic_index)
+{
+    if (this->hydraulic_data == nullptr)
+        return;
+
+    const std::optional<HydraulicSimulationResultTimeline> &result_timeline =
+        this->hydraulic_data->simulationResultTimeline();
+    if (!result_timeline.has_value() || diagnostic_index < 0
+        || diagnostic_index >= result_timeline->diagnostics.size())
+    {
+        return;
+    }
+
+    const HydraulicSimulationDiagnostic &diagnostic =
+        result_timeline->diagnostics.at(diagnostic_index);
+    const InfrastructureEntity entity_type =
+        diagnosticInfrastructureEntity(diagnostic, *this->hydraulic_data);
+    if (entity_type != InfrastructureEntity::Unknown && !diagnostic.entity.uuid.isNull())
+        this->hydraulic_data->setSelectedUuid(entity_type, diagnostic.entity.uuid);
 }
