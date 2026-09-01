@@ -182,8 +182,20 @@ void EntityInspectorPump::addGroupControls()
         QStringLiteral("Speed"),
         QString()});
     this->table_controls->verticalHeader()->setVisible(false);
-    this->table_controls->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    // Fixed, modest column widths rather than ResizeToContents: ResizeToContents sizes
+    // every column (including the header text itself, even with zero rows) from its
+    // content, and that summed width was propagating into the panel's own layout,
+    // forcing this tab wider than Sizes::SidebarRightWidth. With explicit widths, any
+    // cell content that doesn't fit is handled by the table's own horizontal scrollbar
+    // instead of by growing the whole sidebar.
+    this->table_controls->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
     this->table_controls->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+    this->table_controls->setColumnWidth(0, 55);
+    this->table_controls->setColumnWidth(1, 90);
+    this->table_controls->setColumnWidth(3, 80);
+    this->table_controls->setColumnWidth(4, 65);
+    this->table_controls->setColumnWidth(5, 60);
+    this->table_controls->setColumnWidth(6, 60);
     this->table_controls->setSelectionMode(QAbstractItemView::NoSelection);
     this->table_controls->setEditTriggers(QAbstractItemView::NoEditTriggers);
     this->table_controls->setMinimumHeight(170);
@@ -461,6 +473,7 @@ void EntityInspectorPump::refreshPumpControls()
         trigger_type->addItem(
             QStringLiteral("Time of day"),
             static_cast<int>(HydraulicControlSimpleType::TimeOfDay));
+        constrainComboWidth(trigger_type);
         const int trigger_type_index = trigger_type->findData(
             static_cast<int>(control.type), value_role);
         trigger_type->setCurrentIndex(trigger_type_index >= 0 ? trigger_type_index : 0);
@@ -558,7 +571,11 @@ void EntityInspectorPump::refreshPumpControls()
             QDoubleSpinBox *threshold = new QDoubleSpinBox(this->table_controls);
             threshold->setDecimals(3);
             threshold->setSingleStep(0.1);
-            threshold->setRange(-1000000.0, 1000000.0);
+            // Matches the range already used for elevation/head fields elsewhere in the
+            // inspector (see addGroupElevation) rather than +/-1,000,000, which forced this
+            // spin box's non-shrinkable sizeHint to accommodate an implausible 1,000,000 m
+            // pressure/level reading.
+            threshold->setRange(-10000.0, 10000.0);
             threshold->setSuffix(trigger_is_junction
                 ? QStringLiteral(" m pressure") : QStringLiteral(" m level"));
             threshold->setValue(trigger_is_junction

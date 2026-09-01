@@ -296,6 +296,27 @@ EntityInspectorWidget::EntityInspectorWidget(HydraulicData *hydraulic_data, QWid
     this->scroll_quality_sim_meas->setWidgetResizable(true);
     this->scroll_quality_sim_meas->setWidget(this->widget_quality_sim_meas);
     
+    // Every one of these QVBoxLayouts otherwise falls back to the style's default
+    // layout margin/spacing (commonly ~9-11px per side). Stacked across layout_main,
+    // the per-tab content layout, and each group's own grid layout inside it, those
+    // untouched defaults add up to real, avoidable width in a fixed-width sidebar
+    // panel. Tighten them here to match the compact margins already used by the
+    // other right-hand docks (see EntityMapLegendDock).
+    const QMargins compact_margins(6, 6, 6, 6);
+    constexpr int compact_spacing = 4;
+    this->layout_main->setContentsMargins(compact_margins);
+    this->layout_main->setSpacing(compact_spacing);
+    this->layout_overview->setContentsMargins(compact_margins);
+    this->layout_overview->setSpacing(compact_spacing);
+    this->layout_configuration->setContentsMargins(compact_margins);
+    this->layout_configuration->setSpacing(compact_spacing);
+    this->layout_sim_meas->setContentsMargins(compact_margins);
+    this->layout_sim_meas->setSpacing(compact_spacing);
+    this->layout_quality->setContentsMargins(compact_margins);
+    this->layout_quality->setSpacing(compact_spacing);
+    this->layout_quality_sim_meas->setContentsMargins(compact_margins);
+    this->layout_quality_sim_meas->setSpacing(compact_spacing);
+    
     this->tabs->setIconSize(QSize(40, 40));
     this->tabs->tabBar()->setStyleSheet(
         "QTabBar::tab"

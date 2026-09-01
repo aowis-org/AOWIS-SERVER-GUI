@@ -59,6 +59,17 @@ void GroupBoxCollapsible::childEvent(QChildEvent *event)
     if (!event->added())
         return;
     
+    if (QLayout *child_layout = qobject_cast<QLayout *>(event->child()))
+    {
+        // Every group's own QGridLayout/QVBoxLayout otherwise falls back to the
+        // style's default layout margin/spacing (commonly ~9-11px per side). With
+        // several group boxes stacked inside a fixed-width sidebar panel, those
+        // untouched defaults add up to real, avoidable width.
+        child_layout->setContentsMargins(6, 4, 6, 6);
+        child_layout->setSpacing(4);
+        return;
+    }
+    
     if (!isCollapsed())
         return;
     

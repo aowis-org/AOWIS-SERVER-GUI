@@ -8,8 +8,13 @@
 namespace
 {
 constexpr int volume_curve_uuid_role = Qt::UserRole;
-constexpr double geometry_spin_minimum = -1000000000000000.0;
-constexpr double geometry_spin_maximum = 1000000000000000.0;
+// Kept well below the extreme ranges used elsewhere (e.g. configureLengthSpin) so the
+// QDoubleSpinBox's formatted min/max text — which drives its non-shrinkable sizeHint,
+// independent of whatever value is actually displayed — stays reasonably narrow.
+// No real tank needs a 1,000,000 m² cross-section or a 1,000,000 m³ volume; this is
+// already about three orders of magnitude larger than any plausible network asset.
+constexpr double geometry_spin_minimum = -1000000.0;
+constexpr double geometry_spin_maximum = 1000000.0;
 
 void configureLengthSpin(QDoubleSpinBox *spin)
 {
@@ -552,7 +557,7 @@ void EntityInspectorTank::addGroupQuality()
 {
     addGroupNodeQualityInputs();
 
-    GroupBoxCollapsible *group_mixing = new GroupBoxCollapsible("Tank Mixing — All Quality Modes");
+    GroupBoxCollapsible *group_mixing = new GroupBoxCollapsible("Tank Mixing — All Modes");
     QGridLayout *grid_mixing = new QGridLayout(group_mixing);
     int mixing_row = 0;
 

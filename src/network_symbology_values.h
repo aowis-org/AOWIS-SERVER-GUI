@@ -402,7 +402,19 @@ inline QHash<QUuid, double> hydraulicHeatmapSymbologyValues(
 
 inline qint8 hydraulicFlowDirection(double flow_m3_per_h)
 {
-    constexpr double FlowDirectionEpsilonM3PerH = 1e-9;
+    // EPANET always solves internally in US customary units (cubic feet per
+    // second) regardless of the network's declared display units, and treats
+    // any flow below its own internal TINY threshold (1.E-6 cfs, see
+    // external/epanet/src/types.h) as numerically meaningless solver noise
+    // rather than a real flow (see e.g. hydstatus.c's pump/tank status
+    // checks). Converted to this field's m3/h units, that noise floor is
+    // roughly 1.E-6 * 101.94 =~ 1.E-4 m3/h. A network that cannot pass any
+    // real flow (e.g. a dead-ended branch, or a tank that cannot accept
+    // inflow) still converges with residual flows on that order, which used
+    // to render as a confident directional arrow. Use a dead band comfortably
+    // above that noise floor so only flow EPANET itself considers meaningful
+    // is shown as directional.
+    constexpr double FlowDirectionEpsilonM3PerH = 1.0e-3;
     if (!std::isfinite(flow_m3_per_h) ||
         std::abs(flow_m3_per_h) <= FlowDirectionEpsilonM3PerH)
     {
