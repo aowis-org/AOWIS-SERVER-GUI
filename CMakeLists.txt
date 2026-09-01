@@ -227,6 +227,8 @@ if(AOWIS_HAS_QRHI)
             src/map/map_monitor_hud_controls.cpp
             src/map/map_rhi_scene.h
             src/map/map_rhi_scene.cpp
+            src/map/map_node_declutter.h
+            src/map/map_node_declutter.cpp
             src/map/map_rhi_icon_atlas.h
             src/map/map_rhi_icon_atlas.cpp
             src/map/map_rhi_junction_model.h

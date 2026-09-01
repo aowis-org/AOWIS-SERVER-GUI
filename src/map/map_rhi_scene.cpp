@@ -1,5 +1,6 @@
 #include "map_rhi_scene.h"
 
+#include "map_node_declutter.h"
 #include "map_render_cache_math.h"
 #include "map_model.h"
 #include "../geo_web_mercator.h"
@@ -26,6 +27,16 @@ constexpr qreal FlowDirectionChevronHalfWidthRatio = 0.4;
 constexpr qreal FlowDirectionStrokeWidthRatio = 0.2;
 constexpr qreal FlowDirectionMinimumElevationPixels = 4.0;
 constexpr int FlowDirectionMaximumMarkersPerLink = 32;
+
+// Nodes whose real-world positions are closer together than this are spread
+// apart just enough to stay individually visible and clickable. Deliberately
+// small: it exists to break exact/near-exact coincidences that come from
+// modeling conventions (a pump or valve has no physical length, so its
+// inlet/outlet junctions are conventionally digitized at one point) or
+// duplicate digitizing, not to "clean up" genuinely dense, correctly
+// surveyed clusters of distinct junctions that happen to sit a few metres
+// apart.
+constexpr double NodeDeclutterMinimumSeparationMeters = 1.0;
 }
 
 void MapRhiScene::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
@@ -94,7 +105,15 @@ void MapRhiScene::rebuildNetworkGeometry()
         this->elevation_reference_m = 0.0;
     }
 
-    this->node_vertices.reserve(this->network_snapshot.nodes.size() * 6);
+    struct PreparedNode
+    {
+        const NetworkRenderNode *node = nullptr;
+        QPointF raw_center;
+        float center_z = 0.0f;
+    };
+
+    QVector<PreparedNode> prepared_nodes;
+    prepared_nodes.reserve(this->network_snapshot.nodes.size());
     for (const NetworkRenderNode &node : this->network_snapshot.nodes)
     {
         if (this->hidden_entity_uuids.contains(node.uuid) ||
@@ -104,9 +123,32 @@ void MapRhiScene::rebuildNetworkGeometry()
         }
 
         double resolved_x = this->origin_world.x();
-        const QPointF center = localWorldPosition(
+        const QPointF raw_center = localWorldPosition(
             node.coordinate_wgs84, this->origin_world.x(), &resolved_x);
         const float center_z = localElevationWorld(node.elevation_m);
+        prepared_nodes.append({&node, raw_center, center_z});
+    }
+
+    // Nodes that share (or nearly share) a coordinate are spread apart just
+    // enough to stay individually visible and clickable - see
+    // map_node_declutter.h and NodeDeclutterMinimumSeparationMeters above.
+    QVector<MapNodeDeclutterInput> declutter_inputs;
+    declutter_inputs.reserve(prepared_nodes.size());
+    for (const PreparedNode &prepared : prepared_nodes)
+        declutter_inputs.append({prepared.node->render_id, prepared.raw_center});
+
+    const double declutter_separation_world =
+        NodeDeclutterMinimumSeparationMeters * worldUnitsPerMeter();
+    const QHash<quint32, QPointF> node_declutter_offsets = computeNodeDeclutterOffsets(
+        declutter_inputs, declutter_separation_world);
+
+    this->node_vertices.reserve(prepared_nodes.size() * 6);
+    for (const PreparedNode &prepared : prepared_nodes)
+    {
+        const NetworkRenderNode &node = *prepared.node;
+        const QPointF center = prepared.raw_center
+            + node_declutter_offsets.value(node.render_id);
+        const float center_z = prepared.center_z;
         this->entity_keys_by_uuid.insert(
             node.uuid, entityRenderKey(node.entity_type, node.render_id));
         appendNode(node.entity_type, node.render_id, center, center_z);
@@ -169,9 +211,20 @@ void MapRhiScene::rebuildNetworkGeometry()
             }
 
             double resolved_x = wrap_reference_x;
-            const QPointF current = localWorldPosition(
+            QPointF current = localWorldPosition(
                 coordinate, wrap_reference_x, &resolved_x);
             wrap_reference_x = resolved_x;
+
+            // The first and last vertex of a link's polyline are its
+            // start/end node's own coordinate (see
+            // network_render_snapshot_builder), so they need the same
+            // declutter nudge that node's marker got above, or the link
+            // would visually detach from it.
+            if (vertex_index == 0)
+                current += node_declutter_offsets.value(link.start_node_render_id);
+            else if (vertex_index == link.vertices_wgs84.size() - 1)
+                current += node_declutter_offsets.value(link.end_node_render_id);
+
             const double elevation_m = vertex_index < link.elevations_m.size()
                 ? link.elevations_m.at(vertex_index)
                 : this->elevation_reference_m;
