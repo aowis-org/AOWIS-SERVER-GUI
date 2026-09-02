@@ -258,26 +258,53 @@ void MapRhiBasemapRenderer::setHeatmapStyle(
         this->heatmap_revision = 1;
 }
 
+
+void MapRhiBasemapRenderer::setWireframeVisible(bool visible)
+{
+    if (this->wireframe_visible == visible)
+        return;
+
+    this->wireframe_visible = visible;
+    if (visible)
+        this->wireframe_vertex_upload_pending = true;
+}
+
+void MapRhiBasemapRenderer::setMapVisible(bool visible)
+{
+    if (this->map_visible == visible)
+        return;
+
+    this->map_visible = visible;
+    invalidate();
+}
+
 void MapRhiBasemapRenderer::invalidate()
 {
     this->layout_dirty = true;
     this->vertex_upload_pending = true;
+    this->wireframe_vertex_upload_pending = true;
 }
 
 void MapRhiBasemapRenderer::releaseResources()
 {
     this->pipeline.reset();
+    this->wireframe_pipeline.reset();
     this->template_bindings.reset();
+    this->wireframe_bindings.reset();
     this->dummy_texture.reset();
     this->sampler.reset();
     this->vertex_buffer.reset();
+    this->wireframe_vertex_buffer.reset();
     this->tile_resources.clear();
     this->visible_tiles.clear();
     this->vertices.clear();
+    this->wireframe_vertices.clear();
     this->dirty_terrain_keys.clear();
     this->layout_origin_world = QPointF();
     this->vertex_buffer_size = 0;
+    this->wireframe_vertex_buffer_size = 0;
     this->vertex_upload_pending = true;
+    this->wireframe_vertex_upload_pending = true;
     this->dummy_texture_upload_pending = true;
     this->layout_dirty = true;
     this->rhi = nullptr;
@@ -299,7 +326,10 @@ bool MapRhiBasemapRenderer::initialize(
     if (context_changed)
         releaseResources();
     else if (render_pass_changed)
+    {
         this->pipeline.reset();
+        this->wireframe_pipeline.reset();
+    }
 
     this->rhi = rhi;
     this->render_pass_descriptor = render_pass_descriptor;
@@ -324,23 +354,33 @@ bool MapRhiBasemapRenderer::prepare(
     if (!rebuildVisibleTiles(origin_world, viewport_size))
         return false;
 
-    if (this->dummy_texture_upload_pending && this->dummy_texture)
+    const bool map_draw_enabled = this->map_model->viewMode() != MapViewMode::ThreeD
+        || this->map_visible;
+    if (map_draw_enabled)
     {
-        QImage transparent_pixel(1, 1, QImage::Format_RGBA8888);
-        transparent_pixel.fill(Qt::transparent);
-        resource_updates->uploadTexture(this->dummy_texture.get(), transparent_pixel);
-        this->dummy_texture_upload_pending = false;
-    }
+        if (this->dummy_texture_upload_pending && this->dummy_texture)
+        {
+            QImage transparent_pixel(1, 1, QImage::Format_RGBA8888);
+            transparent_pixel.fill(Qt::transparent);
+            resource_updates->uploadTexture(this->dummy_texture.get(), transparent_pixel);
+            this->dummy_texture_upload_pending = false;
+        }
 
-    ++this->usage_serial;
-    for (VisibleTile &tile : this->visible_tiles)
+        ++this->usage_serial;
+        for (VisibleTile &tile : this->visible_tiles)
+        {
+            TileResource *resource = nullptr;
+            if (!ensureTileResource(tile, &resource, resource_updates))
+                return false;
+            tile.resource = resource;
+            if (resource != nullptr)
+                resource->last_used_serial = this->usage_serial;
+        }
+    }
+    else
     {
-        TileResource *resource = nullptr;
-        if (!ensureTileResource(tile, &resource, resource_updates))
-            return false;
-        tile.resource = resource;
-        if (resource != nullptr)
-            resource->last_used_serial = this->usage_serial;
+        for (VisibleTile &tile : this->visible_tiles)
+            tile.resource = nullptr;
     }
 
     if (this->vertex_upload_pending && !this->vertices.isEmpty())
@@ -369,27 +409,53 @@ bool MapRhiBasemapRenderer::prepare(
         return false;
     }
 
-    pruneTextureCache();
+    if (this->map_model->viewMode() == MapViewMode::ThreeD
+        && this->wireframe_visible
+        && !uploadWireframeVertices(resource_updates))
+    {
+        return false;
+    }
+
+    if (map_draw_enabled)
+        pruneTextureCache();
     return true;
 }
 
 void MapRhiBasemapRenderer::draw(QRhiCommandBuffer *command_buffer)
 {
-    if (command_buffer == nullptr || !this->pipeline || !this->vertex_buffer)
+    if (command_buffer == nullptr || !this->vertex_buffer)
         return;
 
-    command_buffer->setGraphicsPipeline(this->pipeline.get());
-    for (const VisibleTile &tile : this->visible_tiles)
+    const bool three_d = this->map_model != nullptr
+        && this->map_model->viewMode() == MapViewMode::ThreeD;
+    if ((!three_d || this->map_visible) && this->pipeline)
     {
-        if (tile.resource == nullptr || !tile.resource->bindings)
-            continue;
+        command_buffer->setGraphicsPipeline(this->pipeline.get());
+        for (const VisibleTile &tile : this->visible_tiles)
+        {
+            if (tile.resource == nullptr || !tile.resource->bindings)
+                continue;
 
-        command_buffer->setShaderResources(tile.resource->bindings.get());
-        const quint32 byte_offset = quint32(
-            tile.first_vertex * int(sizeof(TileVertex)));
-        const QRhiCommandBuffer::VertexInput binding(this->vertex_buffer.get(), byte_offset);
+            command_buffer->setShaderResources(tile.resource->bindings.get());
+            const quint32 byte_offset = quint32(
+                tile.first_vertex * int(sizeof(TileVertex)));
+            const QRhiCommandBuffer::VertexInput binding(
+                this->vertex_buffer.get(), byte_offset);
+            command_buffer->setVertexInput(0, 1, &binding);
+            command_buffer->draw(quint32(tile.vertex_count));
+        }
+    }
+
+    if (three_d && this->wireframe_visible
+        && this->wireframe_pipeline && this->wireframe_bindings
+        && this->wireframe_vertex_buffer && !this->wireframe_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->wireframe_pipeline.get());
+        command_buffer->setShaderResources(this->wireframe_bindings.get());
+        const QRhiCommandBuffer::VertexInput binding(
+            this->wireframe_vertex_buffer.get(), 0);
         command_buffer->setVertexInput(0, 1, &binding);
-        command_buffer->draw(quint32(tile.vertex_count));
+        command_buffer->draw(quint32(this->wireframe_vertices.size()));
     }
 }
 
@@ -439,6 +505,21 @@ bool MapRhiBasemapRenderer::createSharedResources()
             return false;
     }
 
+    if (!this->wireframe_bindings)
+    {
+        this->wireframe_bindings.reset(this->rhi->newShaderResourceBindings());
+        if (!this->wireframe_bindings)
+            return false;
+        this->wireframe_bindings->setBindings({
+            QRhiShaderResourceBinding::uniformBuffer(
+                0, QRhiShaderResourceBinding::VertexStage
+                    | QRhiShaderResourceBinding::FragmentStage,
+                this->camera_uniform_buffer)
+        });
+        if (!this->wireframe_bindings->create())
+            return false;
+    }
+
     if (!this->pipeline)
     {
         const QShader vertex_shader = loadBasemapShader(
@@ -475,6 +556,45 @@ bool MapRhiBasemapRenderer::createSharedResources()
         this->pipeline->setDepthWrite(true);
         this->pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
         if (!this->pipeline->create())
+            return false;
+    }
+
+    if (!this->wireframe_pipeline)
+    {
+        const QShader vertex_shader = loadBasemapShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_wireframe.vert.qsb"));
+        const QShader fragment_shader = loadBasemapShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_wireframe.frag.qsb"));
+        if (!vertex_shader.isValid() || !fragment_shader.isValid())
+            return false;
+
+        QRhiVertexInputLayout input_layout;
+        input_layout.setBindings({
+            {quint32(sizeof(WireframeVertex))}
+        });
+        input_layout.setAttributes({
+            {0, 0, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(WireframeVertex, x))}
+        });
+
+        this->wireframe_pipeline.reset(this->rhi->newGraphicsPipeline());
+        if (!this->wireframe_pipeline)
+            return false;
+        this->wireframe_pipeline->setShaderStages({
+            {QRhiShaderStage::Vertex, vertex_shader},
+            {QRhiShaderStage::Fragment, fragment_shader}
+        });
+        this->wireframe_pipeline->setVertexInputLayout(input_layout);
+        this->wireframe_pipeline->setShaderResourceBindings(
+            this->wireframe_bindings.get());
+        this->wireframe_pipeline->setRenderPassDescriptor(
+            this->render_pass_descriptor);
+        this->wireframe_pipeline->setTopology(QRhiGraphicsPipeline::Lines);
+        this->wireframe_pipeline->setSampleCount(this->sample_count);
+        this->wireframe_pipeline->setDepthTest(true);
+        this->wireframe_pipeline->setDepthWrite(false);
+        this->wireframe_pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
+        if (!this->wireframe_pipeline->create())
             return false;
     }
 
@@ -528,6 +648,8 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
         : 0;
     const QString imagery_key_prefix =
         this->map_model->tileCachePrefix(imagery_zoom);
+    const bool imagery_enabled = this->map_model->viewMode() != MapViewMode::ThreeD
+        || this->map_visible;
 
     // The retained tile window is deliberately larger than the foreground.
     // While the foreground still fits, do not create a new request batch or
@@ -577,8 +699,9 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
         .arg(start_y)
         .arg(tiles_x)
         .arg(tiles_y);
-    const quint64 request_batch = this->tile_repository->beginTileRequestBatch(
-        this, request_layout_key);
+    const quint64 request_batch = imagery_enabled
+        ? this->tile_repository->beginTileRequestBatch(this, request_layout_key)
+        : 0;
 
     QVector<VisibleTile> next_tiles;
     next_tiles.reserve(tiles_x * tiles_y);
@@ -621,7 +744,8 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
             }
             next_tiles.append(tile);
 
-            if (this->tile_repository->tile(tile.imagery_key) == nullptr)
+            if (imagery_enabled
+                && this->tile_repository->tile(tile.imagery_key) == nullptr)
             {
                 const int priority_x = virtual_x - center_tile_x;
                 const int priority_y = y - center_tile_y;
@@ -647,7 +771,7 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     // in the common ReferenceZoom world coordinate system.
     const bool retained_layer_transition = !this->visible_tiles.isEmpty()
         && layout_origin_matches;
-    if (retained_layer_transition)
+    if (imagery_enabled && retained_layer_transition)
     {
         bool same_lod = true;
         bool provider_transition = false;
@@ -751,6 +875,7 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     this->visible_tiles = next_tiles;
     this->layout_origin_world = origin_world;
     this->vertex_upload_pending = true;
+    this->wireframe_vertex_upload_pending = true;
     this->layout_dirty = false;
     return true;
 }
@@ -1096,6 +1221,7 @@ bool MapRhiBasemapRenderer::updateDirtyTerrainTiles(
 
     const QSet<QString> dirty_keys = this->dirty_terrain_keys;
     this->dirty_terrain_keys.clear();
+    bool wireframe_changed = false;
 
     for (VisibleTile &tile : this->visible_tiles)
     {
@@ -1142,8 +1268,11 @@ bool MapRhiBasemapRenderer::updateDirtyTerrainTiles(
         resource_updates->updateDynamicBuffer(
             this->vertex_buffer.get(), byte_offset, byte_count,
             replacement.constData());
+        wireframe_changed = true;
     }
 
+    if (wireframe_changed)
+        this->wireframe_vertex_upload_pending = true;
     return true;
 }
 
@@ -1430,6 +1559,69 @@ void MapRhiBasemapRenderer::pruneTextureCache()
     }
 }
 
+
+void MapRhiBasemapRenderer::rebuildWireframeVertices()
+{
+    this->wireframe_vertices.clear();
+    this->wireframe_vertices.reserve(this->vertices.size() * 2);
+
+    for (qsizetype index = 0; index + 2 < this->vertices.size(); index += 3)
+    {
+        const TileVertex &a = this->vertices.at(index);
+        const TileVertex &b = this->vertices.at(index + 1);
+        const TileVertex &c = this->vertices.at(index + 2);
+        const WireframeVertex wa{a.x, a.y, a.z};
+        const WireframeVertex wb{b.x, b.y, b.z};
+        const WireframeVertex wc{c.x, c.y, c.z};
+
+        this->wireframe_vertices.append(wa);
+        this->wireframe_vertices.append(wb);
+        this->wireframe_vertices.append(wb);
+        this->wireframe_vertices.append(wc);
+        this->wireframe_vertices.append(wc);
+        this->wireframe_vertices.append(wa);
+    }
+}
+
+bool MapRhiBasemapRenderer::uploadWireframeVertices(
+    QRhiResourceUpdateBatch *resource_updates)
+{
+    if (!this->wireframe_vertex_upload_pending)
+        return true;
+    if (resource_updates == nullptr || this->rhi == nullptr)
+        return false;
+
+    rebuildWireframeVertices();
+    if (this->wireframe_vertices.isEmpty())
+    {
+        this->wireframe_vertex_upload_pending = false;
+        return true;
+    }
+
+    const int required_bytes = boundedBufferSize(
+        this->wireframe_vertices.size(), qsizetype(sizeof(WireframeVertex)));
+    if (required_bytes <= 0)
+        return false;
+
+    if (!this->wireframe_vertex_buffer
+        || this->wireframe_vertex_buffer_size != required_bytes)
+    {
+        this->wireframe_vertex_buffer.reset(this->rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_bytes));
+        if (!this->wireframe_vertex_buffer
+            || !this->wireframe_vertex_buffer->create())
+        {
+            return false;
+        }
+        this->wireframe_vertex_buffer_size = required_bytes;
+    }
+
+    resource_updates->updateDynamicBuffer(
+        this->wireframe_vertex_buffer.get(), 0, required_bytes,
+        this->wireframe_vertices.constData());
+    this->wireframe_vertex_upload_pending = false;
+    return true;
+}
 
 void MapRhiBasemapRenderer::appendFlatTileVertices(
     QVector<TileVertex> *target, VisibleTile *tile,

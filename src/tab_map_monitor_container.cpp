@@ -401,7 +401,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             new MapMonitorDownloadActivityHudWidget(
                 this->tile_repository, this->terrain_repository, this->map_stack);
         MapMonitorViewModeHudWidget *view_mode_hud =
-            new MapMonitorViewModeHudWidget(this->map_model, this->map_stack);
+            new MapMonitorViewModeHudWidget(
+                this->map_model, rhi_surface, this->map_stack);
         MapMonitorCompassHudWidget *compass_hud =
             new MapMonitorCompassHudWidget(this->map_model, this->map_stack);
         MapMonitorScaleHudWidget *scale_hud =

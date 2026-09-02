@@ -7,6 +7,7 @@
 #include "map_terrain_repository.h"
 
 #include <QAbstractAnimation>
+#include <QCheckBox>
 #include <QColor>
 #include <QComboBox>
 #include <QCursor>
@@ -698,17 +699,21 @@ void MapMonitorDownloadActivityHudWidget::refreshActivity()
 }
 
 MapMonitorViewModeHudWidget::MapMonitorViewModeHudWidget(
-    MapModel *map_model, QWidget *parent)
+    MapModel *map_model, MapRhiWidget *rhi_widget, QWidget *parent)
     : QFrame(parent),
       map_model(map_model),
-      view_mode_combo(new QComboBox(this))
+      rhi_widget(rhi_widget),
+      view_mode_combo(new QComboBox(this)),
+      wireframe_checkbox(new QCheckBox(QStringLiteral("wireframe"), this)),
+      map_checkbox(new QCheckBox(QStringLiteral("map"), this))
 {
     Q_ASSERT(this->map_model != nullptr);
+    Q_ASSERT(this->rhi_widget != nullptr);
     configureHudFrame(this);
 
     QHBoxLayout *layout = new QHBoxLayout(this);
     layout->setContentsMargins(HudMarginPx, HudMarginPx, HudMarginPx, HudMarginPx);
-    layout->setSpacing(0);
+    layout->setSpacing(8);
 
     this->view_mode_combo->addItem(QStringLiteral("2D"), int(MapViewMode::TwoD));
     this->view_mode_combo->addItem(QStringLiteral("3D"), int(MapViewMode::ThreeD));
@@ -716,6 +721,18 @@ MapMonitorViewModeHudWidget::MapMonitorViewModeHudWidget(
     this->view_mode_combo->setToolTip(QStringLiteral(
         "Switch between the top-down 2D map and the 3D map view."));
     layout->addWidget(this->view_mode_combo);
+
+    this->wireframe_checkbox->setChecked(false);
+    this->wireframe_checkbox->setFocusPolicy(Qt::NoFocus);
+    this->wireframe_checkbox->setToolTip(QStringLiteral(
+        "Draw the 3D terrain mesh as a wireframe."));
+    layout->addWidget(this->wireframe_checkbox);
+
+    this->map_checkbox->setChecked(true);
+    this->map_checkbox->setFocusPolicy(Qt::NoFocus);
+    this->map_checkbox->setToolTip(QStringLiteral(
+        "Draw map tiles as textures on the 3D terrain."));
+    layout->addWidget(this->map_checkbox);
 
     const int initial_index = this->view_mode_combo->findData(int(this->map_model->viewMode()));
     if (initial_index >= 0)
@@ -727,15 +744,36 @@ MapMonitorViewModeHudWidget::MapMonitorViewModeHudWidget(
         if (data.isValid())
             this->map_model->setViewMode(static_cast<MapViewMode>(data.toInt()));
     });
+    connect(this->wireframe_checkbox, &QCheckBox::toggled, this, [this](bool checked)
+    {
+        this->rhi_widget->setTerrainWireframeVisible(checked);
+    });
+    connect(this->map_checkbox, &QCheckBox::toggled, this, [this](bool checked)
+    {
+        this->rhi_widget->setMapTilesVisible(checked);
+    });
     connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode view_mode)
     {
         const int index = this->view_mode_combo->findData(int(view_mode));
-        if (index < 0 || index == this->view_mode_combo->currentIndex())
-            return;
-
-        const QSignalBlocker blocker(this->view_mode_combo);
-        this->view_mode_combo->setCurrentIndex(index);
+        if (index >= 0 && index != this->view_mode_combo->currentIndex())
+        {
+            const QSignalBlocker blocker(this->view_mode_combo);
+            this->view_mode_combo->setCurrentIndex(index);
+        }
+        update3dControlsVisibility();
     });
+
+    this->rhi_widget->setTerrainWireframeVisible(this->wireframe_checkbox->isChecked());
+    this->rhi_widget->setMapTilesVisible(this->map_checkbox->isChecked());
+    update3dControlsVisibility();
+}
+
+void MapMonitorViewModeHudWidget::update3dControlsVisibility()
+{
+    const bool visible = this->map_model->viewMode() == MapViewMode::ThreeD;
+    this->wireframe_checkbox->setVisible(visible);
+    this->map_checkbox->setVisible(visible);
+    adjustSize();
 }
 
 MapMonitorCompassHudWidget::MapMonitorCompassHudWidget(

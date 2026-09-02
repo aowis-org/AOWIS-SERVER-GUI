@@ -78,6 +78,8 @@ public:
         const QSet<QUuid> &stale_entity_uuids);
     void setUndergroundMode(MapRhiUndergroundMode mode);
     MapRhiUndergroundMode undergroundMode() const;
+    void setTerrainWireframeVisible(bool visible);
+    void setMapTilesVisible(bool visible);
 
 signals:
     void signalRendererReady();

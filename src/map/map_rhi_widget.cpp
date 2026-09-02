@@ -1150,6 +1150,20 @@ MapRhiUndergroundMode MapRhiWidget::undergroundMode() const
     return this->underground_mode;
 }
 
+void MapRhiWidget::setTerrainWireframeVisible(bool visible)
+{
+    if (this->basemap_renderer)
+        this->basemap_renderer->setWireframeVisible(visible);
+    update();
+}
+
+void MapRhiWidget::setMapTilesVisible(bool visible)
+{
+    if (this->basemap_renderer)
+        this->basemap_renderer->setMapVisible(visible);
+    update();
+}
+
 void MapRhiWidget::setBackgroundOpacity(int opacity)
 {
     const int bounded_opacity = qBound(0, opacity, 100);

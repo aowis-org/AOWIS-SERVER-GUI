@@ -7,6 +7,7 @@
 #include "../_enums_structs.h"
 
 class MapModel;
+class QCheckBox;
 class QComboBox;
 class QLabel;
 class QPaintEvent;
@@ -53,11 +54,17 @@ class MapMonitorViewModeHudWidget final : public QFrame
     Q_OBJECT
 
 public:
-    explicit MapMonitorViewModeHudWidget(MapModel *map_model, QWidget *parent = nullptr);
+    explicit MapMonitorViewModeHudWidget(
+        MapModel *map_model, MapRhiWidget *rhi_widget, QWidget *parent = nullptr);
 
 private:
+    void update3dControlsVisibility();
+
     MapModel *map_model = nullptr;
+    MapRhiWidget *rhi_widget = nullptr;
     QComboBox *view_mode_combo = nullptr;
+    QCheckBox *wireframe_checkbox = nullptr;
+    QCheckBox *map_checkbox = nullptr;
 };
 
 class MapMonitorCompassHudWidget final : public QWidget

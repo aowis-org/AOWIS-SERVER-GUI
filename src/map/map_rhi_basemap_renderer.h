@@ -51,6 +51,13 @@ public:
         float v = 0.0f;
     };
 
+    struct WireframeVertex
+    {
+        float x = 0.0f;
+        float y = 0.0f;
+        float z = 0.0f;
+    };
+
     MapRhiBasemapRenderer(MapModel *map_model, MapRhiScene *scene,
                           MapTileRepository *tile_repository,
                           MapTerrainRepository *terrain_repository = nullptr);
@@ -62,6 +69,8 @@ public:
     void setHeatmapOverlay(const QVector<HeatmapMarker> &markers,
                            double radius_world, double solid_fraction);
     void setHeatmapStyle(double radius_world, double solid_fraction);
+    void setWireframeVisible(bool visible);
+    void setMapVisible(bool visible);
     void invalidate();
     void releaseResources();
 
@@ -134,6 +143,8 @@ private:
                                          double tile_right, double tile_bottom,
                                          double radius_world) const;
     void pruneTextureCache();
+    void rebuildWireframeVertices();
+    bool uploadWireframeVertices(QRhiResourceUpdateBatch *resource_updates);
     void appendFlatTileVertices(QVector<TileVertex> *target, VisibleTile *tile,
                                 float left, float top, float right, float bottom);
     bool appendReliefTileVertices(QVector<TileVertex> *target, VisibleTile *tile,
@@ -152,17 +163,25 @@ private:
     int sample_count = 1;
 
     std::unique_ptr<QRhiBuffer> vertex_buffer;
+    std::unique_ptr<QRhiBuffer> wireframe_vertex_buffer;
     std::unique_ptr<QRhiSampler> sampler;
     std::unique_ptr<QRhiTexture> dummy_texture;
     std::unique_ptr<QRhiShaderResourceBindings> template_bindings;
+    std::unique_ptr<QRhiShaderResourceBindings> wireframe_bindings;
     std::unique_ptr<QRhiGraphicsPipeline> pipeline;
+    std::unique_ptr<QRhiGraphicsPipeline> wireframe_pipeline;
     int vertex_buffer_size = 0;
+    int wireframe_vertex_buffer_size = 0;
     bool vertex_upload_pending = true;
+    bool wireframe_vertex_upload_pending = true;
     bool dummy_texture_upload_pending = true;
     bool layout_dirty = true;
     quint64 usage_serial = 0;
+    bool wireframe_visible = false;
+    bool map_visible = true;
 
     QVector<TileVertex> vertices;
+    QVector<WireframeVertex> wireframe_vertices;
     QVector<VisibleTile> visible_tiles;
     QSet<QString> dirty_terrain_keys;
     QPointF layout_origin_world;
