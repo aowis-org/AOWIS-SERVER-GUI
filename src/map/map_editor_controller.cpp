@@ -405,14 +405,18 @@ void MapEditorController::updateTileSelectionOverlay(const QRect &selected_rect,
     const int zoom = this->map_model->zoom();
     const int tile_count = 1 << zoom;
     const QPointF center_tile = this->map_model->centerTile();
+    const double view_scale = this->map_model->viewMode() == MapViewMode::TwoD
+        ? qMax(1e-9, this->map_model->view2dContinuousScale())
+        : 1.0;
+    const double rendered_tile_size = MapModel::TileSize * view_scale;
     const double tile_x_first = center_tile.x() +
-        (selected_rect.left() - viewport_size.width() / 2.0) / MapModel::TileSize;
+        (selected_rect.left() - viewport_size.width() / 2.0) / rendered_tile_size;
     const double tile_x_second = center_tile.x() +
-        (selected_rect.right() - viewport_size.width() / 2.0) / MapModel::TileSize;
+        (selected_rect.right() - viewport_size.width() / 2.0) / rendered_tile_size;
     const double tile_y_first = center_tile.y() +
-        (selected_rect.top() - viewport_size.height() / 2.0) / MapModel::TileSize;
+        (selected_rect.top() - viewport_size.height() / 2.0) / rendered_tile_size;
     const double tile_y_second = center_tile.y() +
-        (selected_rect.bottom() - viewport_size.height() / 2.0) / MapModel::TileSize;
+        (selected_rect.bottom() - viewport_size.height() / 2.0) / rendered_tile_size;
 
     const int tile_y_min = int(std::floor(qMin(tile_y_first, tile_y_second)));
     const int tile_y_max = int(std::floor(qMax(tile_y_first, tile_y_second)));
