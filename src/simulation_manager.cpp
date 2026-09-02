@@ -423,15 +423,11 @@ void SimulationManager::finishSimulation(const EpanetResultRun &run_result)
         return;
     }
 
-    QWidget *main_window = qobject_cast<QWidget *>(parent());
-    if (main_window == nullptr)
-        main_window = QApplication::activeWindow();
-
-    showMessageBox(
-        main_window,
-        QMessageBox::Information,
-        tr("Simulation Complete"),
-        tr("Simulation and all configured water-quality analyses completed successfully."));
+    // A fully clean run (no errors, no warnings) used to need its own
+    // confirmation popup here. It doesn't anymore - "Simulation Results" ->
+    // "Diagnostics" now says so itself (see
+    // SimulationDiagnosticsWidget::refresh()) for anyone who checks,
+    // without interrupting anyone who doesn't.
 }
 
 SimulationStatisticsDialog *SimulationManager::ensureSimulationStatisticsDialog()

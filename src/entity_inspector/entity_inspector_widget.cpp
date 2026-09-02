@@ -417,6 +417,14 @@ void EntityInspectorWidget::constrainComboWidth(QComboBox *combo, int minimum_co
     combo->setMinimumContentsLength(minimum_contents_length);
 }
 
+void EntityInspectorWidget::constrainSpinWidth(QAbstractSpinBox *spin, int maximum_width)
+{
+    if (spin == nullptr)
+        return;
+
+    spin->setMaximumWidth(maximum_width);
+}
+
 void EntityInspectorWidget::addSimulationRow(QGridLayout *grid, int &row,
                                               SimulationField field,
                                               const QString &name,
@@ -2813,6 +2821,7 @@ void EntityInspectorWidget::addGroupNodeQualityInputs()
     this->spin_quality_initial_chemical->setRange(0.0, 1000000000.0);
     this->spin_quality_initial_chemical->setDecimals(6);
     this->spin_quality_initial_chemical->setSuffix(" mg/L");
+    constrainSpinWidth(this->spin_quality_initial_chemical);
 
     QLabel *label_source_type = new QLabel("Source Type");
     this->combo_quality_source_type = new QComboBox();
@@ -2822,17 +2831,19 @@ void EntityInspectorWidget::addGroupNodeQualityInputs()
     this->combo_quality_source_type->addItem("Flow-Paced Booster", static_cast<int>(HydraulicNodeQualitySourceType::FlowPacedBooster));
     this->combo_quality_source_type->addItem("Setpoint Booster", static_cast<int>(HydraulicNodeQualitySourceType::SetpointBooster));
 
-    QLabel *label_source_concentration = new QLabel("Source Concentration");
+    QLabel *label_source_concentration = new QLabel("Source<br>Concentration");
     this->spin_quality_source_concentration = new QDoubleSpinBox();
     this->spin_quality_source_concentration->setRange(0.0, 1000000000.0);
     this->spin_quality_source_concentration->setDecimals(6);
     this->spin_quality_source_concentration->setSuffix(" mg/L");
+    constrainSpinWidth(this->spin_quality_source_concentration);
 
-    QLabel *label_source_mass_flow = new QLabel("Source Mass Flow");
+    QLabel *label_source_mass_flow = new QLabel("Source<br>Mass Flow");
     this->spin_quality_source_mass_flow = new QDoubleSpinBox();
     this->spin_quality_source_mass_flow->setRange(0.0, 1000000000000.0);
     this->spin_quality_source_mass_flow->setDecimals(6);
     this->spin_quality_source_mass_flow->setSuffix(" mg/min");
+    constrainSpinWidth(this->spin_quality_source_mass_flow);
 
     QLabel *label_source_pattern = new QLabel("Source Pattern");
     this->combo_quality_source_pattern = new QComboBox();

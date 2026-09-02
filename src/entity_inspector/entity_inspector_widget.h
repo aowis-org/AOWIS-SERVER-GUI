@@ -61,6 +61,14 @@ protected:
     // remains visible in the drop-down popup, which is not width-constrained.
     void constrainComboWidth(QComboBox *combo, int minimum_contents_length = 14);
     
+    // Bounds a spin box's preferred width. QAbstractSpinBox derives its (non-shrinkable)
+    // sizeHint from the formatted min/max text, independent of the value actually shown,
+    // so a wide range + many decimals + a multi-character suffix (e.g. "mg/min") can force
+    // the entity inspector wider than Sizes::SidebarRightWidth even though the displayed
+    // value ("0.000000 mg/L") is short. Typed values remain fully editable; only the
+    // widget's width is capped.
+    void constrainSpinWidth(QAbstractSpinBox *spin, int maximum_width = 180);
+    
     void addGroupOverviewImage(const QString &icon_path, const QString &name);
     QPushButton *button_overview_find_on_map = nullptr;
     

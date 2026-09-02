@@ -352,6 +352,25 @@ void SimulationDiagnosticsWidget::refresh()
             ? previous_diagnostic_index : 0;
         this->list_diagnostics->setCurrentRow(diagnostic_index);
     }
+    else if (!stale && result_timeline->validity == HydraulicSimulationResultValidity::Valid)
+    {
+        // Nothing to report - say so explicitly instead of leaving the list
+        // and detail panes blank, which reads as "nothing loaded" rather
+        // than "nothing wrong". Not selectable: it isn't a diagnostic to
+        // click through to an entity for.
+        const QColor success_color(60, 150, 90);
+        QListWidgetItem *item = new QListWidgetItem(
+            QStringLiteral("No issues · Simulation completed successfully"), this->list_diagnostics);
+        item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
+        item->setForeground(QBrush(success_color));
+        item->setIcon(severityIndicatorIcon(success_color));
+
+        this->text_details->setHtml(QStringLiteral(
+            "<p style=\"color:%1; font-weight:600; font-size:14px;\">"
+            "Simulation completed successfully</p>"
+            "<p>No errors or warnings were reported for this run.</p>")
+            .arg(success_color.name()));
+    }
 }
 
 void SimulationDiagnosticsWidget::showDiagnosticDetails(int diagnostic_index)
