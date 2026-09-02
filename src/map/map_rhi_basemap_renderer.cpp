@@ -13,6 +13,7 @@
 #include <QPainter>
 #include <QRadialGradient>
 #include <QPixmap>
+#include <QtMath>
 #include <rhi/qshader.h>
 #include <rhi/qrhi.h>
 
@@ -26,6 +27,9 @@ constexpr int MaximumCachedGpuTiles = 160;
 constexpr int TerrainReliefMinimumZoom = 8;
 constexpr int TerrainReliefMaximumZoom = 14;
 constexpr int TwoDPanRetentionMarginTiles = 4;
+constexpr int TerrainMinimumLodCellCount = 1;
+constexpr int TerrainBackgroundRequestMinimumLodCellCount = 4;
+constexpr double TerrainTargetCellSizePixels = 32.0;
 constexpr int HeatmapTextureSize = 256;
 constexpr double HeatmapMarkerBucketWorldSize = 16384.0;
 
@@ -628,8 +632,8 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     int tiles_y = foreground_tiles_y + TwoDPanRetentionMarginTiles * 2;
     if (this->map_model->viewMode() == MapViewMode::ThreeD)
     {
-        // Keep the existing 3D apron. Step 6 will replace this coarse coverage
-        // policy with view-frustum culling and distance-dependent terrain LOD.
+        // Keep the existing 3D apron for horizon coverage and request
+        // retention. Terrain mesh detail is positioned independently below.
         tiles_x = foreground_tiles_x * 2 + 4;
         tiles_y = foreground_tiles_y * 3 + 6;
     }
@@ -640,6 +644,7 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     const int foreground_start_x = center_tile_x - foreground_tiles_x / 2;
     const int foreground_start_y = center_tile_y - foreground_tiles_y / 2;
     const bool relief_enabled = reliefTerrainEnabled(*this->map_model, this->terrain_repository);
+
     const int terrain_zoom = relief_enabled
         ? terrainZoomForImageryZoom(imagery_zoom)
         : 0;
@@ -661,11 +666,16 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     const bool layout_origin_matches =
         std::abs(origin_world.x() - this->layout_origin_world.x()) < 0.5
         && std::abs(origin_world.y() - this->layout_origin_world.y()) < 0.5;
-    if (!this->layout_dirty && layout_origin_matches
+    const bool current_layout_covers_foreground =
+        !this->layout_dirty
+        && layout_origin_matches
         && currentLayoutCoversForeground(
             imagery_zoom, foreground_start_x, foreground_start_y,
             foreground_tiles_x, foreground_tiles_y, tile_count,
-            imagery_key_prefix))
+            imagery_key_prefix);
+    const bool terrain_lod_matches =
+        !relief_enabled || currentTerrainLodMatches(viewport_size);
+    if (current_layout_covers_foreground && terrain_lod_matches)
     {
         if (relief_enabled && this->terrain_repository != nullptr)
         {
@@ -673,8 +683,13 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
             const int foreground_end_y = foreground_start_y + foreground_tiles_y;
             for (const VisibleTile &tile : this->visible_tiles)
             {
-                if (tile.virtual_x < foreground_start_x || tile.virtual_x >= foreground_end_x
-                    || tile.y < foreground_start_y || tile.y >= foreground_end_y
+                const bool terrain_needed =
+                    (tile.virtual_x >= foreground_start_x
+                     && tile.virtual_x < foreground_end_x
+                     && tile.y >= foreground_start_y
+                     && tile.y < foreground_end_y)
+                    || tile.terrain_cell_count > TerrainBackgroundRequestMinimumLodCellCount;
+                if (!terrain_needed
                     || tile.terrain_key.isEmpty()
                     || this->terrain_repository->tile(tile.terrain_key) != nullptr)
                 {
@@ -693,66 +708,111 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
         return true;
     }
 
+    const bool terrain_lod_only_rebuild =
+        current_layout_covers_foreground && !terrain_lod_matches;
     const QString request_layout_key = QStringLiteral("%1|%2|%3|%4|%5")
         .arg(imagery_key_prefix)
         .arg(start_x)
         .arg(start_y)
         .arg(tiles_x)
         .arg(tiles_y);
-    const quint64 request_batch = imagery_enabled
+    const quint64 request_batch = imagery_enabled && !terrain_lod_only_rebuild
         ? this->tile_repository->beginTileRequestBatch(this, request_layout_key)
         : 0;
 
     QVector<VisibleTile> next_tiles;
-    next_tiles.reserve(tiles_x * tiles_y);
-    for (int delta_x = 0; delta_x < tiles_x; ++delta_x)
+    if (terrain_lod_only_rebuild)
     {
-        for (int delta_y = 0; delta_y < tiles_y; ++delta_y)
+        // LOD changes must not recenter the retained imagery apron. Reuse the
+        // exact current tile positions and rebuild only their terrain meshes.
+        next_tiles = this->visible_tiles;
+        for (VisibleTile &tile : next_tiles)
         {
-            const int virtual_x = start_x + delta_x;
-            const int y = start_y + delta_y;
-            if (y < 0 || y >= tile_count)
-                continue;
-
-            const int tile_x = GeoWebMercator::wrapTileX(virtual_x, imagery_zoom);
-            VisibleTile tile;
-            tile.imagery_key = this->map_model->tileCacheKey(tile_x, y);
-            tile.virtual_x = virtual_x;
-            tile.tile_x = tile_x;
-            tile.y = y;
-            tile.imagery_zoom = imagery_zoom;
-            tile.terrain_zoom = terrain_zoom;
             tile.foreground =
-                virtual_x >= foreground_start_x
-                && virtual_x < foreground_start_x + foreground_tiles_x
-                && y >= foreground_start_y
-                && y < foreground_start_y + foreground_tiles_y;
+                tile.virtual_x >= foreground_start_x
+                && tile.virtual_x < foreground_start_x + foreground_tiles_x
+                && tile.y >= foreground_start_y
+                && tile.y < foreground_start_y + foreground_tiles_y;
+            tile.terrain_cell_count =
+                terrainCellCountForTile(tile, viewport_size);
 
-            if (relief_enabled)
+            if (this->terrain_repository == nullptr
+                || tile.terrain_key.isEmpty()
+                || (!tile.foreground
+                    && tile.terrain_cell_count <= TerrainBackgroundRequestMinimumLodCellCount)
+                || this->terrain_repository->tile(tile.terrain_key) != nullptr)
             {
-                MapTerrainTileAddress terrain_address;
-                terrain_address.zoom = terrain_zoom;
-                terrain_address.x = quint32(tile_x) >> terrain_zoom_delta;
-                terrain_address.y = quint32(y) >> terrain_zoom_delta;
-                tile.terrain_key = mapTerrainTileKey(terrainDatasetId(), terrain_address);
-                if (tile.foreground)
-                {
-                    this->terrain_repository->requestTile(
-                        terrainDatasetId(), terrain_address.zoom,
-                        terrain_address.x, terrain_address.y);
-                }
+                continue;
             }
-            next_tiles.append(tile);
 
-            if (imagery_enabled
-                && this->tile_repository->tile(tile.imagery_key) == nullptr)
+            MapTerrainTileAddress terrain_address;
+            terrain_address.zoom = tile.terrain_zoom;
+            terrain_address.x = quint32(tile.tile_x) >> terrain_zoom_delta;
+            terrain_address.y = quint32(tile.y) >> terrain_zoom_delta;
+            this->terrain_repository->requestTile(
+                terrainDatasetId(), terrain_address.zoom,
+                terrain_address.x, terrain_address.y);
+        }
+    }
+    else
+    {
+        next_tiles.reserve(tiles_x * tiles_y);
+        for (int delta_x = 0; delta_x < tiles_x; ++delta_x)
+        {
+            for (int delta_y = 0; delta_y < tiles_y; ++delta_y)
             {
-                const int priority_x = virtual_x - center_tile_x;
-                const int priority_y = y - center_tile_y;
-                const int priority = priority_x * priority_x + priority_y * priority_y;
-                this->tile_repository->requestTile(
-                    this->map_model->tileEndpoint(tile_x, y),
-                    tile.imagery_key, tile_x, y, priority, request_batch, tile.foreground);
+                const int virtual_x = start_x + delta_x;
+                const int y = start_y + delta_y;
+                if (y < 0 || y >= tile_count)
+                    continue;
+
+                const int tile_x = GeoWebMercator::wrapTileX(virtual_x, imagery_zoom);
+                VisibleTile tile;
+                tile.imagery_key = this->map_model->tileCacheKey(tile_x, y);
+                tile.virtual_x = virtual_x;
+                tile.tile_x = tile_x;
+                tile.y = y;
+                tile.imagery_zoom = imagery_zoom;
+                tile.terrain_zoom = terrain_zoom;
+                tile.foreground =
+                    virtual_x >= foreground_start_x
+                    && virtual_x < foreground_start_x + foreground_tiles_x
+                    && y >= foreground_start_y
+                    && y < foreground_start_y + foreground_tiles_y;
+                tile.terrain_cell_count = relief_enabled
+                    ? terrainCellCountForTile(tile, viewport_size)
+                    : 0;
+
+                if (relief_enabled)
+                {
+                    MapTerrainTileAddress terrain_address;
+                    terrain_address.zoom = terrain_zoom;
+                    terrain_address.x = quint32(tile_x) >> terrain_zoom_delta;
+                    terrain_address.y = quint32(y) >> terrain_zoom_delta;
+                    tile.terrain_key = mapTerrainTileKey(
+                        terrainDatasetId(), terrain_address);
+                    if (tile.foreground
+                        || tile.terrain_cell_count > TerrainBackgroundRequestMinimumLodCellCount)
+                    {
+                        this->terrain_repository->requestTile(
+                            terrainDatasetId(), terrain_address.zoom,
+                            terrain_address.x, terrain_address.y);
+                    }
+                }
+                next_tiles.append(tile);
+
+                if (imagery_enabled
+                    && this->tile_repository->tile(tile.imagery_key) == nullptr)
+                {
+                    const int priority_x = virtual_x - center_tile_x;
+                    const int priority_y = y - center_tile_y;
+                    const int priority =
+                        priority_x * priority_x + priority_y * priority_y;
+                    this->tile_repository->requestTile(
+                        this->map_model->tileEndpoint(tile_x, y),
+                        tile.imagery_key, tile_x, y, priority,
+                        request_batch, tile.foreground);
+                }
             }
         }
     }
@@ -771,7 +831,8 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     // in the common ReferenceZoom world coordinate system.
     const bool retained_layer_transition = !this->visible_tiles.isEmpty()
         && layout_origin_matches;
-    if (imagery_enabled && retained_layer_transition)
+    if (imagery_enabled && !terrain_lod_only_rebuild
+        && retained_layer_transition)
     {
         bool same_lod = true;
         bool provider_transition = false;
@@ -947,6 +1008,7 @@ MapRhiBasemapRenderer::progressiveProviderLayout(
 
         VisibleTile retained = this->visible_tiles.at(current_iterator.value());
         retained.foreground = target.foreground;
+        retained.terrain_cell_count = target.terrain_cell_count;
 
         // Once a position already uses the new source, keep that exact target
         // entry. In normal operation it is also ready; this branch mainly keeps
@@ -1038,6 +1100,7 @@ QVector<MapRhiBasemapRenderer::VisibleTile> MapRhiBasemapRenderer::progressiveZo
             bool complete_child_group = true;
             bool replacement_ready = true;
             bool replacement_foreground = false;
+            int replacement_terrain_cell_count = 0;
             bool has_target_child = false;
             int child_index = 0;
             for (int child_y = 0; child_y < 2; ++child_y)
@@ -1060,6 +1123,9 @@ QVector<MapRhiBasemapRenderer::VisibleTile> MapRhiBasemapRenderer::progressiveZo
                         child_indices[child_index] = target_iterator.value();
                         const VisibleTile &child = target_tiles.at(target_iterator.value());
                         replacement_foreground = replacement_foreground || child.foreground;
+                        replacement_terrain_cell_count = qMax(
+                            replacement_terrain_cell_count,
+                            child.terrain_cell_count);
                         if (!tileReadyForZoomHandoff(child, relief_enabled))
                             replacement_ready = false;
                     }
@@ -1090,6 +1156,7 @@ QVector<MapRhiBasemapRenderer::VisibleTile> MapRhiBasemapRenderer::progressiveZo
 
             VisibleTile retained_parent = parent;
             retained_parent.foreground = replacement_foreground;
+            retained_parent.terrain_cell_count = replacement_terrain_cell_count;
             result.append(retained_parent);
         }
 
@@ -1164,6 +1231,7 @@ QVector<MapRhiBasemapRenderer::VisibleTile> MapRhiBasemapRenderer::progressiveZo
 
                 VisibleTile retained_child = this->visible_tiles.at(child_iterator.value());
                 retained_child.foreground = target.foreground;
+                retained_child.terrain_cell_count = target.terrain_cell_count;
                 result.append(retained_child);
             }
         }
@@ -1204,6 +1272,151 @@ bool MapRhiBasemapRenderer::currentLayoutCoversForeground(
         {
             if (!target_zoom_positions.contains(tilePositionKey(virtual_x, y)))
                 return false;
+        }
+    }
+
+    return true;
+}
+
+int MapRhiBasemapRenderer::terrainCellCountForTile(
+    const VisibleTile &tile, const QSize &viewport_size) const
+{
+    if (this->map_model == nullptr
+        || tile.imagery_zoom < tile.terrain_zoom
+        || !viewport_size.isValid())
+    {
+        return 1;
+    }
+
+    const int zoom_delta = tile.imagery_zoom - tile.terrain_zoom;
+    const int cell_divisor = 1 << qMin(zoom_delta, 6);
+    const int native_cell_count = qMax(
+        1, MapTerrainTileCellCount / cell_divisor);
+
+    const int maximum_cell_count = native_cell_count;
+    const int minimum_cell_count = qMin(
+        maximum_cell_count, TerrainMinimumLodCellCount);
+    if (maximum_cell_count <= minimum_cell_count)
+        return maximum_cell_count;
+
+    const double tile_reference_size = MapModel::TileSize
+        * std::pow(
+            2.0,
+            MapRenderCacheMath::ReferenceZoom - tile.imagery_zoom);
+    const int tile_count = 1 << tile.imagery_zoom;
+    const double raw_focus_tile_x = GeoWebMercator::lonToTileX(
+        this->map_model->centerLon(), tile.imagery_zoom);
+    const double focus_wrap_offset = std::round(
+        (double(tile.virtual_x) + 0.5 - raw_focus_tile_x)
+        / double(qMax(1, tile_count))) * double(qMax(1, tile_count));
+    const double focus_tile_x = raw_focus_tile_x + focus_wrap_offset;
+    const double focus_tile_y = GeoWebMercator::latToTileY(
+        this->map_model->centerLat(), tile.imagery_zoom);
+    const double delta_x_world =
+        (double(tile.virtual_x) + 0.5 - focus_tile_x)
+        * tile_reference_size;
+    const double delta_y_world =
+        (double(tile.y) + 0.5 - focus_tile_y)
+        * tile_reference_size;
+    const double ground_distance_from_focus_world = std::hypot(
+        delta_x_world, delta_y_world);
+
+    const double base_scale = GeoWebMercator::zoomScale(
+        tile.imagery_zoom, MapRenderCacheMath::ReferenceZoom);
+    const double safe_scale = qMax(1e-12, base_scale);
+    const double half_height_world =
+        double(qMax(1, viewport_size.height())) / (2.0 * safe_scale);
+    const double native_camera_distance_world = half_height_world
+        / std::tan(qDegreesToRadians(45.0 / 2.0));
+    double camera_distance_world =
+        this->map_model->view3dCameraDistanceWorld();
+    if (!std::isfinite(camera_distance_world)
+        || camera_distance_world <= 0.0)
+    {
+        camera_distance_world = native_camera_distance_world;
+    }
+
+    // Drive terrain LOD from projected screen size instead of multiplying a
+    // discrete imagery-zoom cap by the native terrain resolution. The latter
+    // made a 17 -> 16 tile-zoom handoff increase both factors at once, causing
+    // a visible jump back toward maximum mesh density.
+    //
+    // Estimate the distance from the actual camera to this tile center. At the
+    // crosshair this is the orbit distance; toward/away from the camera the LOD
+    // then follows perspective naturally.
+    const double pitch_rad = qDegreesToRadians(qBound(
+        MapModel::MinView3dPitchDeg,
+        this->map_model->view3dPitchDeg(),
+        MapModel::MaxView3dPitchDeg));
+    const double yaw_rad = qDegreesToRadians(
+        this->map_model->view3dYawDeg());
+    const double horizontal_camera_distance_world =
+        camera_distance_world * std::cos(pitch_rad);
+    const double camera_offset_x_world =
+        std::sin(yaw_rad) * horizontal_camera_distance_world;
+    const double camera_offset_y_world =
+        std::cos(yaw_rad) * horizontal_camera_distance_world;
+    const double camera_height_world =
+        camera_distance_world * std::sin(pitch_rad)
+        + this->map_model->view3dCameraCollisionLiftWorld();
+    const double camera_to_tile_distance_world = std::sqrt(
+        std::pow(delta_x_world - camera_offset_x_world, 2.0)
+        + std::pow(delta_y_world - camera_offset_y_world, 2.0)
+        + camera_height_world * camera_height_world);
+    const double camera_to_focus_distance_world = std::sqrt(
+        horizontal_camera_distance_world * horizontal_camera_distance_world
+        + camera_height_world * camera_height_world);
+    const double focus_falloff_distance_world = std::hypot(
+        camera_to_focus_distance_world, ground_distance_from_focus_world);
+
+    // Keep the crosshair/focus as the highest-detail location. True camera
+    // distance may lower detail further, but a tile merely being underneath
+    // an oblique camera must never become more detailed than the focus target.
+    const double lod_distance_world = qMax(
+        camera_to_tile_distance_world, focus_falloff_distance_world);
+
+    // A tile at the native camera distance is split into about eight cells
+    // across a 256 px tile. The desired count is screen-space based instead of
+    // native-resolution based, so switching imagery tile zoom cannot multiply
+    // the LOD and spike the mesh. Pulling back, zooming out, or moving farther
+    // from the focus/camera progressively lowers the mesh density.
+    const double projected_tile_scale = qBound(
+        0.0,
+        native_camera_distance_world
+            / qMax(1e-9, lod_distance_world),
+        4.0);
+    const double desired_cell_count =
+        (double(MapModel::TileSize) / TerrainTargetCellSizePixels)
+        * projected_tile_scale;
+
+    // Meshes change only in powers of two. Geometric-mean thresholds avoid
+    // immediately dropping a 64-cell focus tile to 32 for tiny movements.
+    int cell_count = minimum_cell_count;
+    while (cell_count < maximum_cell_count)
+    {
+        const int next_cell_count = qMin(
+            maximum_cell_count, cell_count * 2);
+        const double threshold = std::sqrt(
+            double(cell_count) * double(next_cell_count));
+        if (desired_cell_count < threshold)
+            break;
+        cell_count = next_cell_count;
+    }
+
+    return cell_count;
+}
+
+bool MapRhiBasemapRenderer::currentTerrainLodMatches(
+    const QSize &viewport_size) const
+{
+    for (const VisibleTile &tile : this->visible_tiles)
+    {
+        if (tile.terrain_key.isEmpty())
+            continue;
+        if (tile.terrain_cell_count
+            != terrainCellCountForTile(tile, viewport_size))
+        {
+            return false;
         }
     }
 
@@ -1672,13 +1885,11 @@ bool MapRhiBasemapRenderer::appendReliefTileVertices(
 
     const int cell_divisor = 1 << qMin(zoom_delta, 6);
     const int native_cell_count = qMax(1, MapTerrainTileCellCount / cell_divisor);
-    // The large 3D apron prevents horizon gaps. Keep those background tiles
-    // relieved but coarse so this first terrain pass cannot allocate tens of
-    // millions of vertices at terrain zoom 14. Foreground tiles retain every
-    // DEM cell; Step 6 will replace this with proper distance/frustum LOD.
-    const int cell_count = tile->foreground
-        ? native_cell_count
-        : qMin(native_cell_count, 8);
+    // Mesh density is selected per tile from the current 3D viewing scale.
+    // It is highest around the crosshair/focus target, then falls off with
+    // camera distance and ground distance from that target.
+    const int cell_count = qBound(
+        1, tile->terrain_cell_count, native_cell_count);
     const float step = tile_world_size / float(cell_count);
 
     for (int row = 0; row < cell_count; ++row)

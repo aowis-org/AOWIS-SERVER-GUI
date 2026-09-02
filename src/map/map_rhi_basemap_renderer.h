@@ -103,6 +103,7 @@ private:
         int first_vertex = 0;
         int vertex_count = 0;
         bool foreground = false;
+        int terrain_cell_count = 0;
         TileResource *resource = nullptr;
 
         bool operator==(const VisibleTile &other) const
@@ -114,7 +115,8 @@ private:
                 && this->y == other.y
                 && this->imagery_zoom == other.imagery_zoom
                 && this->terrain_zoom == other.terrain_zoom
-                && this->foreground == other.foreground;
+                && this->foreground == other.foreground
+                && this->terrain_cell_count == other.terrain_cell_count;
         }
     };
 
@@ -125,6 +127,9 @@ private:
                                        int foreground_start_y, int foreground_tiles_x,
                                        int foreground_tiles_y, int tile_count,
                                        const QString &imagery_key_prefix) const;
+    int terrainCellCountForTile(const VisibleTile &tile,
+                                const QSize &viewport_size) const;
+    bool currentTerrainLodMatches(const QSize &viewport_size) const;
     bool tileReadyForZoomHandoff(const VisibleTile &tile, bool relief_enabled) const;
     QVector<VisibleTile> progressiveProviderLayout(
         const QVector<VisibleTile> &target_tiles, int target_zoom,
