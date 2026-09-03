@@ -119,6 +119,10 @@ private:
         int vertex_count = 0;
         bool foreground = false;
         int terrain_cell_count = 0;
+        int terrain_stitch_top_cell_count = 0;
+        int terrain_stitch_right_cell_count = 0;
+        int terrain_stitch_bottom_cell_count = 0;
+        int terrain_stitch_left_cell_count = 0;
         TileResource *resource = nullptr;
         // Per-tile, per-frame: true when this tile currently has a valid,
         // up-to-date array layer, so draw() knows to skip it in the
@@ -137,7 +141,15 @@ private:
                 && this->imagery_zoom == other.imagery_zoom
                 && this->terrain_zoom == other.terrain_zoom
                 && this->foreground == other.foreground
-                && this->terrain_cell_count == other.terrain_cell_count;
+                && this->terrain_cell_count == other.terrain_cell_count
+                && this->terrain_stitch_top_cell_count
+                    == other.terrain_stitch_top_cell_count
+                && this->terrain_stitch_right_cell_count
+                    == other.terrain_stitch_right_cell_count
+                && this->terrain_stitch_bottom_cell_count
+                    == other.terrain_stitch_bottom_cell_count
+                && this->terrain_stitch_left_cell_count
+                    == other.terrain_stitch_left_cell_count;
         }
     };
 
@@ -156,6 +168,7 @@ private:
                                        const QString &imagery_key_prefix) const;
     int terrainCellCountForTile(const VisibleTile &tile,
                                 const QSize &viewport_size) const;
+    void updateTerrainStitchCellCounts(QVector<VisibleTile> *tiles) const;
     bool currentTerrainLodMatches(const QSize &viewport_size) const;
     bool tileReadyForZoomHandoff(const VisibleTile &tile, bool relief_enabled) const;
     QVector<VisibleTile> progressiveProviderLayout(
@@ -193,6 +206,7 @@ private:
     bool appendReliefTileVertices(QVector<TileVertex> *target, VisibleTile *tile,
                                   const MapTerrainTile *terrain_tile,
                                   float tile_left, float tile_top,
+                                  float tile_right, float tile_bottom,
                                   float tile_world_size);
 
     MapModel *map_model = nullptr;

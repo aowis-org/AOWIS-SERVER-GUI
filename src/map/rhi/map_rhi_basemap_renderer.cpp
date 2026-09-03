@@ -192,6 +192,161 @@ float elevationWorldZ(double elevation_m, float offset, float scale)
     return offset + float(elevation_m) * scale;
 }
 
+int normalizedTerrainStitchCellCount(int requested_cell_count, int cell_count)
+{
+    if (requested_cell_count <= 0
+        || requested_cell_count >= cell_count
+        || cell_count % requested_cell_count != 0)
+    {
+        return 0;
+    }
+
+    return requested_cell_count;
+}
+
+float terrainWorldZAt(
+    const MapRhiTerrainMeshRequest &request, double terrain_u, double terrain_v)
+{
+    if (!request.terrain_available
+        || request.terrain_tile.elevations_m.size() != MapTerrainTileSampleCount)
+    {
+        return 0.0f;
+    }
+
+    return elevationWorldZ(
+        bilinearTerrainSample(request.terrain_tile, terrain_u, terrain_v),
+        request.elevation_world_z_offset, request.elevation_world_z_scale);
+}
+
+float stitchedHorizontalTerrainEdgeWorldZ(
+    const MapRhiTerrainMeshRequest &request, int vertex_column, int cell_count,
+    int stitch_cell_count, double terrain_u_min, double terrain_u_span,
+    double terrain_v)
+{
+    const int normalized_stitch_cell_count =
+        normalizedTerrainStitchCellCount(stitch_cell_count, cell_count);
+    if (normalized_stitch_cell_count <= 0)
+    {
+        const double terrain_u = terrain_u_min
+            + double(vertex_column) / double(cell_count) * terrain_u_span;
+        return terrainWorldZAt(request, terrain_u, terrain_v);
+    }
+
+    const int fine_cells_per_stitch_cell =
+        cell_count / normalized_stitch_cell_count;
+    const int stitch_vertex_index =
+        vertex_column / fine_cells_per_stitch_cell;
+    const int remainder =
+        vertex_column % fine_cells_per_stitch_cell;
+    if (remainder == 0)
+    {
+        const double terrain_u = terrain_u_min
+            + double(stitch_vertex_index)
+                / double(normalized_stitch_cell_count)
+                * terrain_u_span;
+        return terrainWorldZAt(request, terrain_u, terrain_v);
+    }
+
+    const double terrain_u0 = terrain_u_min
+        + double(stitch_vertex_index)
+            / double(normalized_stitch_cell_count)
+            * terrain_u_span;
+    const double terrain_u1 = terrain_u_min
+        + double(stitch_vertex_index + 1)
+            / double(normalized_stitch_cell_count)
+            * terrain_u_span;
+    const float z0 = terrainWorldZAt(request, terrain_u0, terrain_v);
+    const float z1 = terrainWorldZAt(request, terrain_u1, terrain_v);
+    const float interpolation = float(remainder)
+        / float(fine_cells_per_stitch_cell);
+    return z0 + (z1 - z0) * interpolation;
+}
+
+float stitchedVerticalTerrainEdgeWorldZ(
+    const MapRhiTerrainMeshRequest &request, int vertex_row, int cell_count,
+    int stitch_cell_count, double terrain_v_min, double terrain_v_span,
+    double terrain_u)
+{
+    const int normalized_stitch_cell_count =
+        normalizedTerrainStitchCellCount(stitch_cell_count, cell_count);
+    if (normalized_stitch_cell_count <= 0)
+    {
+        const double terrain_v = terrain_v_min
+            + double(vertex_row) / double(cell_count) * terrain_v_span;
+        return terrainWorldZAt(request, terrain_u, terrain_v);
+    }
+
+    const int fine_cells_per_stitch_cell =
+        cell_count / normalized_stitch_cell_count;
+    const int stitch_vertex_index =
+        vertex_row / fine_cells_per_stitch_cell;
+    const int remainder =
+        vertex_row % fine_cells_per_stitch_cell;
+    if (remainder == 0)
+    {
+        const double terrain_v = terrain_v_min
+            + double(stitch_vertex_index)
+                / double(normalized_stitch_cell_count)
+                * terrain_v_span;
+        return terrainWorldZAt(request, terrain_u, terrain_v);
+    }
+
+    const double terrain_v0 = terrain_v_min
+        + double(stitch_vertex_index)
+            / double(normalized_stitch_cell_count)
+            * terrain_v_span;
+    const double terrain_v1 = terrain_v_min
+        + double(stitch_vertex_index + 1)
+            / double(normalized_stitch_cell_count)
+            * terrain_v_span;
+    const float z0 = terrainWorldZAt(request, terrain_u, terrain_v0);
+    const float z1 = terrainWorldZAt(request, terrain_u, terrain_v1);
+    const float interpolation = float(remainder)
+        / float(fine_cells_per_stitch_cell);
+    return z0 + (z1 - z0) * interpolation;
+}
+
+float terrainMeshVertexWorldZ(
+    const MapRhiTerrainMeshRequest &request,
+    int vertex_column, int vertex_row, int cell_count,
+    int stitch_top_cell_count, int stitch_right_cell_count,
+    int stitch_bottom_cell_count, int stitch_left_cell_count,
+    double terrain_u_min, double terrain_v_min,
+    double terrain_u_span, double terrain_v_span)
+{
+    const double terrain_u = terrain_u_min
+        + double(vertex_column) / double(cell_count) * terrain_u_span;
+    const double terrain_v = terrain_v_min
+        + double(vertex_row) / double(cell_count) * terrain_v_span;
+
+    if (vertex_row == 0 && stitch_top_cell_count > 0)
+    {
+        return stitchedHorizontalTerrainEdgeWorldZ(
+            request, vertex_column, cell_count, stitch_top_cell_count,
+            terrain_u_min, terrain_u_span, terrain_v_min);
+    }
+    if (vertex_row == cell_count && stitch_bottom_cell_count > 0)
+    {
+        return stitchedHorizontalTerrainEdgeWorldZ(
+            request, vertex_column, cell_count, stitch_bottom_cell_count,
+            terrain_u_min, terrain_u_span, terrain_v_min + terrain_v_span);
+    }
+    if (vertex_column == 0 && stitch_left_cell_count > 0)
+    {
+        return stitchedVerticalTerrainEdgeWorldZ(
+            request, vertex_row, cell_count, stitch_left_cell_count,
+            terrain_v_min, terrain_v_span, terrain_u_min);
+    }
+    if (vertex_column == cell_count && stitch_right_cell_count > 0)
+    {
+        return stitchedVerticalTerrainEdgeWorldZ(
+            request, vertex_row, cell_count, stitch_right_cell_count,
+            terrain_v_min, terrain_v_span, terrain_u_min + terrain_u_span);
+    }
+
+    return terrainWorldZAt(request, terrain_u, terrain_v);
+}
+
 QShader loadBasemapShader(const QString &resource_path)
 {
     QFile file(resource_path);
@@ -1197,6 +1352,13 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
         }
     }
 
+    // A fine terrain tile whose neighbor uses a coarser mesh must make its
+    // shared edge follow the coarser edge polyline. Otherwise the extra fine
+    // edge vertices sample real relief between the coarse vertices while the
+    // coarse tile spans those points with one straight triangle edge, opening
+    // the visible cracks/T-junctions seen at terrain LOD boundaries.
+    updateTerrainStitchCellCounts(&next_tiles);
+
     bool same_layout = !this->layout_dirty
         && next_tiles.size() == this->visible_tiles.size();
     if (same_layout)
@@ -1285,8 +1447,10 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
             tile.virtual_x * visible_tile_reference_size - origin_world.x());
         const float top = float(
             tile.y * visible_tile_reference_size - origin_world.y());
-        const float right = float(left + visible_tile_reference_size);
-        const float bottom = float(top + visible_tile_reference_size);
+        const float right = float(
+            (tile.virtual_x + 1) * visible_tile_reference_size - origin_world.x());
+        const float bottom = float(
+            (tile.y + 1) * visible_tile_reference_size - origin_world.y());
         tile.first_vertex = this->vertices.size();
 
         bool reused = false;
@@ -1305,7 +1469,15 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
                     && previous_tile.vertex_count > 0
                     && previous_tile.imagery_key == tile.imagery_key
                     && previous_tile.terrain_key == tile.terrain_key
-                    && previous_tile.terrain_cell_count == tile.terrain_cell_count)
+                    && previous_tile.terrain_cell_count == tile.terrain_cell_count
+                    && previous_tile.terrain_stitch_top_cell_count
+                        == tile.terrain_stitch_top_cell_count
+                    && previous_tile.terrain_stitch_right_cell_count
+                        == tile.terrain_stitch_right_cell_count
+                    && previous_tile.terrain_stitch_bottom_cell_count
+                        == tile.terrain_stitch_bottom_cell_count
+                    && previous_tile.terrain_stitch_left_cell_count
+                        == tile.terrain_stitch_left_cell_count)
                 {
                     const TileVertex *source = previous_vertices.constData()
                         + previous_tile.first_vertex;
@@ -1347,8 +1519,18 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
                 request.imagery_zoom = tile.imagery_zoom;
                 request.terrain_zoom = tile.terrain_zoom;
                 request.requested_cell_count = tile.terrain_cell_count;
+                request.stitch_top_cell_count =
+                    tile.terrain_stitch_top_cell_count;
+                request.stitch_right_cell_count =
+                    tile.terrain_stitch_right_cell_count;
+                request.stitch_bottom_cell_count =
+                    tile.terrain_stitch_bottom_cell_count;
+                request.stitch_left_cell_count =
+                    tile.terrain_stitch_left_cell_count;
                 request.tile_left = left;
                 request.tile_top = top;
+                request.tile_right = right;
+                request.tile_bottom = bottom;
                 request.tile_world_size = float(visible_tile_reference_size);
                 terrainElevationWorldZCoefficients(
                     &request.elevation_world_z_offset, &request.elevation_world_z_scale);
@@ -1380,7 +1562,7 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
                 // rebuilding the entire basemap mesh.
                 relief_built = appendReliefTileVertices(
                     &this->vertices, &tile, terrain_tile,
-                    left, top, float(visible_tile_reference_size));
+                    left, top, right, bottom, float(visible_tile_reference_size));
             }
         }
 
@@ -1900,6 +2082,104 @@ int MapRhiBasemapRenderer::terrainCellCountForTile(
     return cell_count;
 }
 
+void MapRhiBasemapRenderer::updateTerrainStitchCellCounts(
+    QVector<VisibleTile> *tiles) const
+{
+    if (tiles == nullptr)
+        return;
+
+    QHash<int, QHash<quint64, qsizetype>> tiles_by_zoom;
+    for (qsizetype index = 0; index < tiles->size(); ++index)
+    {
+        VisibleTile &tile = (*tiles)[index];
+        tile.terrain_stitch_top_cell_count = 0;
+        tile.terrain_stitch_right_cell_count = 0;
+        tile.terrain_stitch_bottom_cell_count = 0;
+        tile.terrain_stitch_left_cell_count = 0;
+
+        if (tile.terrain_key.isEmpty() || tile.terrain_cell_count <= 0)
+            continue;
+
+        tiles_by_zoom[tile.imagery_zoom].insert(
+            tilePositionKey(tile.virtual_x, tile.y), index);
+    }
+
+    for (qsizetype index = 0; index < tiles->size(); ++index)
+    {
+        VisibleTile &tile = (*tiles)[index];
+        if (tile.terrain_key.isEmpty() || tile.terrain_cell_count <= 1)
+            continue;
+
+        const QHash<int, QHash<quint64, qsizetype>>::const_iterator zoom_iterator =
+            tiles_by_zoom.constFind(tile.imagery_zoom);
+        if (zoom_iterator == tiles_by_zoom.cend())
+            continue;
+
+        const QHash<quint64, qsizetype> &same_zoom_tiles =
+            zoom_iterator.value();
+
+        const QHash<quint64, qsizetype>::const_iterator top_iterator =
+            same_zoom_tiles.constFind(
+                tilePositionKey(tile.virtual_x, tile.y - 1));
+        if (top_iterator != same_zoom_tiles.cend())
+        {
+            const VisibleTile &neighbor = tiles->at(top_iterator.value());
+            if (neighbor.terrain_cell_count > 0
+                && neighbor.terrain_cell_count < tile.terrain_cell_count
+                && tile.terrain_cell_count % neighbor.terrain_cell_count == 0)
+            {
+                tile.terrain_stitch_top_cell_count =
+                    neighbor.terrain_cell_count;
+            }
+        }
+
+        const QHash<quint64, qsizetype>::const_iterator right_iterator =
+            same_zoom_tiles.constFind(
+                tilePositionKey(tile.virtual_x + 1, tile.y));
+        if (right_iterator != same_zoom_tiles.cend())
+        {
+            const VisibleTile &neighbor = tiles->at(right_iterator.value());
+            if (neighbor.terrain_cell_count > 0
+                && neighbor.terrain_cell_count < tile.terrain_cell_count
+                && tile.terrain_cell_count % neighbor.terrain_cell_count == 0)
+            {
+                tile.terrain_stitch_right_cell_count =
+                    neighbor.terrain_cell_count;
+            }
+        }
+
+        const QHash<quint64, qsizetype>::const_iterator bottom_iterator =
+            same_zoom_tiles.constFind(
+                tilePositionKey(tile.virtual_x, tile.y + 1));
+        if (bottom_iterator != same_zoom_tiles.cend())
+        {
+            const VisibleTile &neighbor = tiles->at(bottom_iterator.value());
+            if (neighbor.terrain_cell_count > 0
+                && neighbor.terrain_cell_count < tile.terrain_cell_count
+                && tile.terrain_cell_count % neighbor.terrain_cell_count == 0)
+            {
+                tile.terrain_stitch_bottom_cell_count =
+                    neighbor.terrain_cell_count;
+            }
+        }
+
+        const QHash<quint64, qsizetype>::const_iterator left_iterator =
+            same_zoom_tiles.constFind(
+                tilePositionKey(tile.virtual_x - 1, tile.y));
+        if (left_iterator != same_zoom_tiles.cend())
+        {
+            const VisibleTile &neighbor = tiles->at(left_iterator.value());
+            if (neighbor.terrain_cell_count > 0
+                && neighbor.terrain_cell_count < tile.terrain_cell_count
+                && tile.terrain_cell_count % neighbor.terrain_cell_count == 0)
+            {
+                tile.terrain_stitch_left_cell_count =
+                    neighbor.terrain_cell_count;
+            }
+        }
+    }
+}
+
 bool MapRhiBasemapRenderer::currentTerrainLodMatches(
     const QSize &viewport_size) const
 {
@@ -1945,6 +2225,12 @@ bool MapRhiBasemapRenderer::updateDirtyTerrainTiles(
             tile.virtual_x * tile_reference_size - this->layout_origin_world.x());
         const float top = float(
             tile.y * tile_reference_size - this->layout_origin_world.y());
+        const float right = float(
+            (tile.virtual_x + 1) * tile_reference_size
+            - this->layout_origin_world.x());
+        const float bottom = float(
+            (tile.y + 1) * tile_reference_size
+            - this->layout_origin_world.y());
 
         QVector<TileVertex> replacement;
         replacement.reserve(tile.vertex_count);
@@ -1952,7 +2238,7 @@ bool MapRhiBasemapRenderer::updateDirtyTerrainTiles(
         replacement_tile.first_vertex = 0;
         if (!appendReliefTileVertices(
                 &replacement, &replacement_tile, terrain_tile,
-                left, top, float(tile_reference_size))
+                left, top, right, bottom, float(tile_reference_size))
             || replacement.size() != tile.vertex_count)
         {
             // The mesh density changed unexpectedly. Fall back to a complete
@@ -2012,6 +2298,14 @@ void MapRhiBasemapRenderer::applyReadyTerrainMeshResultsToMemory()
                 || tile.y != result.y
                 || tile.terrain_key != result.terrain_key
                 || tile.terrain_cell_count != result.cell_count
+                || tile.terrain_stitch_top_cell_count
+                    != result.stitch_top_cell_count
+                || tile.terrain_stitch_right_cell_count
+                    != result.stitch_right_cell_count
+                || tile.terrain_stitch_bottom_cell_count
+                    != result.stitch_bottom_cell_count
+                || tile.terrain_stitch_left_cell_count
+                    != result.stitch_left_cell_count
                 || tile.vertex_count != result.vertices.size())
             {
                 continue;
@@ -2716,7 +3010,8 @@ void MapRhiBasemapRenderer::appendFlatTileVertices(
 bool MapRhiBasemapRenderer::appendReliefTileVertices(
     QVector<TileVertex> *target, VisibleTile *tile,
     const MapTerrainTile *terrain_tile,
-    float tile_left, float tile_top, float tile_world_size)
+    float tile_left, float tile_top, float tile_right, float tile_bottom,
+    float tile_world_size)
 {
     if (target == nullptr || tile == nullptr
         || tile->imagery_zoom < tile->terrain_zoom)
@@ -2735,8 +3030,18 @@ bool MapRhiBasemapRenderer::appendReliefTileVertices(
     request.imagery_zoom = tile->imagery_zoom;
     request.terrain_zoom = tile->terrain_zoom;
     request.requested_cell_count = tile->terrain_cell_count;
+    request.stitch_top_cell_count =
+        tile->terrain_stitch_top_cell_count;
+    request.stitch_right_cell_count =
+        tile->terrain_stitch_right_cell_count;
+    request.stitch_bottom_cell_count =
+        tile->terrain_stitch_bottom_cell_count;
+    request.stitch_left_cell_count =
+        tile->terrain_stitch_left_cell_count;
     request.tile_left = tile_left;
     request.tile_top = tile_top;
+    request.tile_right = tile_right;
+    request.tile_bottom = tile_bottom;
     request.tile_world_size = tile_world_size;
     terrainElevationWorldZCoefficients(
         &request.elevation_world_z_offset, &request.elevation_world_z_scale);
@@ -2833,42 +3138,63 @@ MapRhiTerrainMeshResult buildTerrainMeshResult(const MapRhiTerrainMeshRequest &r
     // camera distance and ground distance from that target.
     const int cell_count = qBound(1, request.requested_cell_count, native_cell_count);
     result.cell_count = cell_count;
-    const float step = request.tile_world_size / float(cell_count);
-
+    result.stitch_top_cell_count = normalizedTerrainStitchCellCount(
+        request.stitch_top_cell_count, cell_count);
+    result.stitch_right_cell_count = normalizedTerrainStitchCellCount(
+        request.stitch_right_cell_count, cell_count);
+    result.stitch_bottom_cell_count = normalizedTerrainStitchCellCount(
+        request.stitch_bottom_cell_count, cell_count);
+    result.stitch_left_cell_count = normalizedTerrainStitchCellCount(
+        request.stitch_left_cell_count, cell_count);
     result.vertices.reserve(qsizetype(cell_count) * qsizetype(cell_count) * 6);
     for (int row = 0; row < cell_count; ++row)
     {
         for (int column = 0; column < cell_count; ++column)
         {
-            const float left = request.tile_left + float(column) * step;
-            const float right = left + step;
-            const float top = request.tile_top + float(row) * step;
-            const float bottom = top + step;
+            const float x_fraction0 = float(column) / float(cell_count);
+            const float x_fraction1 = float(column + 1) / float(cell_count);
+            const float y_fraction0 = float(row) / float(cell_count);
+            const float y_fraction1 = float(row + 1) / float(cell_count);
+            const float left = column == 0
+                ? request.tile_left
+                : request.tile_left
+                    + (request.tile_right - request.tile_left) * x_fraction0;
+            const float right = column + 1 == cell_count
+                ? request.tile_right
+                : request.tile_left
+                    + (request.tile_right - request.tile_left) * x_fraction1;
+            const float top = row == 0
+                ? request.tile_top
+                : request.tile_top
+                    + (request.tile_bottom - request.tile_top) * y_fraction0;
+            const float bottom = row + 1 == cell_count
+                ? request.tile_bottom
+                : request.tile_top
+                    + (request.tile_bottom - request.tile_top) * y_fraction1;
             const float u0 = float(column) / float(cell_count);
             const float u1 = float(column + 1) / float(cell_count);
             const float v0 = float(row) / float(cell_count);
             const float v1 = float(row + 1) / float(cell_count);
-            const double terrain_u0 = terrain_u_min + double(u0) * terrain_u_span;
-            const double terrain_u1 = terrain_u_min + double(u1) * terrain_u_span;
-            const double terrain_v0 = terrain_v_min + double(v0) * terrain_v_span;
-            const double terrain_v1 = terrain_v_min + double(v1) * terrain_v_span;
-
-            const float z00 = result.terrain_available
-                ? elevationWorldZ(bilinearTerrainSample(request.terrain_tile, terrain_u0, terrain_v0),
-                    request.elevation_world_z_offset, request.elevation_world_z_scale)
-                : 0.0f;
-            const float z10 = result.terrain_available
-                ? elevationWorldZ(bilinearTerrainSample(request.terrain_tile, terrain_u1, terrain_v0),
-                    request.elevation_world_z_offset, request.elevation_world_z_scale)
-                : 0.0f;
-            const float z11 = result.terrain_available
-                ? elevationWorldZ(bilinearTerrainSample(request.terrain_tile, terrain_u1, terrain_v1),
-                    request.elevation_world_z_offset, request.elevation_world_z_scale)
-                : 0.0f;
-            const float z01 = result.terrain_available
-                ? elevationWorldZ(bilinearTerrainSample(request.terrain_tile, terrain_u0, terrain_v1),
-                    request.elevation_world_z_offset, request.elevation_world_z_scale)
-                : 0.0f;
+            const float z00 = terrainMeshVertexWorldZ(
+                request, column, row, cell_count,
+                result.stitch_top_cell_count, result.stitch_right_cell_count,
+                result.stitch_bottom_cell_count, result.stitch_left_cell_count,
+                terrain_u_min, terrain_v_min, terrain_u_span, terrain_v_span);
+            const float z10 = terrainMeshVertexWorldZ(
+                request, column + 1, row, cell_count,
+                result.stitch_top_cell_count, result.stitch_right_cell_count,
+                result.stitch_bottom_cell_count, result.stitch_left_cell_count,
+                terrain_u_min, terrain_v_min, terrain_u_span, terrain_v_span);
+            const float z11 = terrainMeshVertexWorldZ(
+                request, column + 1, row + 1, cell_count,
+                result.stitch_top_cell_count, result.stitch_right_cell_count,
+                result.stitch_bottom_cell_count, result.stitch_left_cell_count,
+                terrain_u_min, terrain_v_min, terrain_u_span, terrain_v_span);
+            const float z01 = terrainMeshVertexWorldZ(
+                request, column, row + 1, cell_count,
+                result.stitch_top_cell_count, result.stitch_right_cell_count,
+                result.stitch_bottom_cell_count, result.stitch_left_cell_count,
+                terrain_u_min, terrain_v_min, terrain_u_span, terrain_v_span);
 
             const MapRhiTerrainMeshVertex cell_vertices[6] = {
                 {left,  top,    z00, u0, v0},

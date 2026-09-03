@@ -68,8 +68,20 @@ struct MapRhiTerrainMeshRequest
     // what the DEM's own resolution and the imagery/terrain zoom delta
     // allow -- is echoed back in MapRhiTerrainMeshResult::cell_count.
     int requested_cell_count = 1;
+    // Crack-free terrain LOD stitching. Each value is the number of edge
+    // segments used by a coarser, same-zoom neighboring tile on that side,
+    // or 0 when no stitching is needed. The fine tile keeps its interior
+    // density, but boundary vertices are constrained to the coarser edge
+    // polyline so both meshes meet exactly instead of forming T-junction
+    // cracks.
+    int stitch_top_cell_count = 0;
+    int stitch_right_cell_count = 0;
+    int stitch_bottom_cell_count = 0;
+    int stitch_left_cell_count = 0;
     float tile_left = 0.0f;
     float tile_top = 0.0f;
+    float tile_right = 0.0f;
+    float tile_bottom = 0.0f;
     float tile_world_size = 0.0f;
     float elevation_world_z_offset = 0.0f;
     float elevation_world_z_scale = 0.0f;
@@ -83,6 +95,10 @@ struct MapRhiTerrainMeshResult
     int y = 0;
     bool terrain_available = false;
     int cell_count = 0;
+    int stitch_top_cell_count = 0;
+    int stitch_right_cell_count = 0;
+    int stitch_bottom_cell_count = 0;
+    int stitch_left_cell_count = 0;
     QVector<MapRhiTerrainMeshVertex> vertices;
 };
 
