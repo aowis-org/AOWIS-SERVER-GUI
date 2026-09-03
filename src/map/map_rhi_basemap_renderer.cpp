@@ -4,6 +4,7 @@
 #include "map_render_cache_math.h"
 #include "map_rhi_camera.h"
 #include "map_rhi_scene.h"
+#include "map_rhi_terrain_mesh_scheduler.h"
 #include "map_terrain_repository.h"
 #include "map_terrain_tile.h"
 #include "map_tile_repository.h"
@@ -41,6 +42,10 @@ constexpr double HeatmapMarkerBucketWorldSize = 16384.0;
 // instead of being allowed to run at input/vsync frequency. Imagery panning
 // keeps using its own, already tile-grid-bounded gate and is unaffected.
 constexpr qint64 MinimumTerrainLodRebuildIntervalMs = 120;
+// Relief tiles at or above this LOD build their mesh on the background
+// terrain-mesh scheduler instead of inline; see the comment at its use site
+// in rebuildVisibleTiles for why the threshold sits here.
+constexpr int AsyncTerrainMeshMinimumCellCount = 16;
 
 quint64 heatmapMarkerBucketKey(int bucket_x, int bucket_y)
 {
@@ -165,6 +170,18 @@ float bilinearTerrainSample(const MapTerrainTile &terrain_tile, double u, double
         terrain_tile, int(std::lround(sample_y)), int(std::lround(sample_x)));
 }
 
+// Applies the affine elevation(m)->world-Z conversion computed by
+// MapRhiBasemapRenderer::terrainElevationWorldZCoefficients(). Pure and
+// touches no live object, so it is safe to call from any thread -- this is
+// the per-vertex hot path buildTerrainMeshResult() uses on the background
+// mesh scheduler thread.
+float elevationWorldZ(double elevation_m, float offset, float scale)
+{
+    if (!std::isfinite(elevation_m))
+        return 0.0f;
+    return offset + float(elevation_m) * scale;
+}
+
 QShader loadBasemapShader(const QString &resource_path)
 {
     QFile file(resource_path);
@@ -190,7 +207,8 @@ MapRhiBasemapRenderer::MapRhiBasemapRenderer(
     : map_model(map_model),
       scene(scene),
       tile_repository(tile_repository),
-      terrain_repository(terrain_repository)
+      terrain_repository(terrain_repository),
+      mesh_scheduler(std::make_unique<MapRhiTerrainMeshScheduler>())
 {
 }
 
@@ -373,6 +391,12 @@ bool MapRhiBasemapRenderer::prepare(
     if (!rebuildVisibleTiles(origin_world, viewport_size))
         return false;
 
+    // Merge any background-computed relief meshes that finished since the
+    // last frame into this->vertices now, before deciding below whether a
+    // full buffer upload or a targeted patch is needed this frame -- either
+    // way picks up the merge for free.
+    applyReadyTerrainMeshResultsToMemory();
+
     const bool map_draw_enabled = this->map_model->viewMode() != MapViewMode::ThreeD
         || this->map_visible;
     if (map_draw_enabled)
@@ -437,10 +461,18 @@ bool MapRhiBasemapRenderer::prepare(
             this->vertex_buffer.get(), 0, required_bytes, this->vertices.constData());
         this->vertex_upload_pending = false;
         this->dirty_terrain_keys.clear();
+        // The full upload above already covers this->vertices in its
+        // entirety, including anything applyReadyTerrainMeshResultsToMemory()
+        // just merged in, so any queued targeted patch is now redundant.
+        this->pending_mesh_result_upload_ranges.clear();
     }
     else if (!updateDirtyTerrainTiles(resource_updates))
     {
         return false;
+    }
+    else
+    {
+        uploadPendingTerrainMeshResultRanges(resource_updates);
     }
 
     if (this->map_model->viewMode() == MapViewMode::ThreeD
@@ -1055,13 +1087,66 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
             && this->terrain_repository != nullptr)
         {
             const MapTerrainTile *terrain_tile = this->terrain_repository->tile(tile.terrain_key);
-            // Build the full relief grid even before its DEM arrives. A flat
-            // grid with identical vertex count lets a later terrain response
-            // patch only this tile's vertex range instead of rebuilding the
-            // entire basemap mesh.
-            relief_built = appendReliefTileVertices(
-                &this->vertices, &tile, terrain_tile,
-                left, top, float(visible_tile_reference_size));
+            const bool terrain_available = terrain_tile != nullptr
+                && terrain_tile->elevations_m.size() == MapTerrainTileSampleCount;
+
+            // Resampling a tile's relief mesh means up to 64x64 bilinear DEM
+            // lookups -- real work for the largest, closest tiles. Below the
+            // threshold it's cheap enough to build inline as before; at or
+            // above it, show an instant flat placeholder sized to this
+            // tile's exact vertex-buffer slot and hand the actual resampling
+            // to the background mesh scheduler so it never lands in this
+            // frame's budget. applyReadyTerrainMeshResultsToMemory() patches
+            // the real mesh into that same slot in place, whichever later
+            // frame the background result finishes on.
+            if (terrain_available
+                && tile.terrain_cell_count >= AsyncTerrainMeshMinimumCellCount
+                && this->mesh_scheduler != nullptr)
+            {
+                MapRhiTerrainMeshRequest request;
+                request.request_id = this->next_mesh_request_id++;
+                request.terrain_key = tile.terrain_key;
+                request.virtual_x = tile.virtual_x;
+                request.tile_x = tile.tile_x;
+                request.y = tile.y;
+                request.imagery_zoom = tile.imagery_zoom;
+                request.terrain_zoom = tile.terrain_zoom;
+                request.requested_cell_count = tile.terrain_cell_count;
+                request.tile_left = left;
+                request.tile_top = top;
+                request.tile_world_size = float(visible_tile_reference_size);
+                terrainElevationWorldZCoefficients(
+                    &request.elevation_world_z_offset, &request.elevation_world_z_scale);
+
+                MapRhiTerrainMeshRequest placeholder_request = request;
+                placeholder_request.terrain_available = false;
+                const MapRhiTerrainMeshResult placeholder =
+                    buildTerrainMeshResult(placeholder_request);
+                for (const MapRhiTerrainMeshVertex &vertex : placeholder.vertices)
+                {
+                    this->vertices.append(
+                        TileVertex{vertex.x, vertex.y, vertex.z, vertex.u, vertex.v});
+                }
+                tile.vertex_count = int(placeholder.vertices.size());
+                relief_built = tile.vertex_count > 0;
+
+                if (relief_built)
+                {
+                    request.terrain_available = true;
+                    request.terrain_tile = *terrain_tile;
+                    this->mesh_scheduler->submit(request);
+                }
+            }
+            else
+            {
+                // Build the full relief grid even before its DEM arrives. A
+                // flat grid with identical vertex count lets a later terrain
+                // response patch only this tile's vertex range instead of
+                // rebuilding the entire basemap mesh.
+                relief_built = appendReliefTileVertices(
+                    &this->vertices, &tile, terrain_tile,
+                    left, top, float(visible_tile_reference_size));
+            }
         }
 
         if (!reused && !relief_built)
@@ -1625,6 +1710,102 @@ bool MapRhiBasemapRenderer::updateDirtyTerrainTiles(
     return true;
 }
 
+void MapRhiBasemapRenderer::applyReadyTerrainMeshResultsToMemory()
+{
+    if (this->mesh_scheduler == nullptr)
+        return;
+
+    QVector<MapRhiTerrainMeshResult> results;
+    this->mesh_scheduler->collectReady(&results);
+    if (results.isEmpty())
+        return;
+
+    for (const MapRhiTerrainMeshResult &result : results)
+    {
+        if (result.vertices.isEmpty())
+            continue;
+
+        // A background result can outlive its usefulness: the tile may have
+        // scrolled out of the apron, or its LOD may have moved on to a
+        // different cell count before this result finished computing.
+        // Re-validate against the CURRENT layout rather than trusting
+        // anything decided at submission time; a mismatch on either point
+        // means this result is simply stale and is dropped -- whatever LOD
+        // the tile actually needs now already has its own request in
+        // flight (see rebuildVisibleTiles).
+        for (VisibleTile &tile : this->visible_tiles)
+        {
+            if (tile.virtual_x != result.virtual_x
+                || tile.y != result.y
+                || tile.terrain_key != result.terrain_key
+                || tile.terrain_cell_count != result.cell_count
+                || tile.vertex_count != result.vertices.size())
+            {
+                continue;
+            }
+
+            // A tile whose DEM was not yet loaded when this result was
+            // requested was rendered as a flat placeholder in the
+            // meantime. If the DEM has since arrived, updateDirtyTerrainTiles
+            // above already owns patching it in with the real data (it
+            // always reads the latest DEM); applying this now-stale
+            // "not-yet-loaded" result here would overwrite that with a flat
+            // placeholder again.
+            if (!result.terrain_available
+                && this->terrain_repository != nullptr
+                && this->terrain_repository->tile(tile.terrain_key) != nullptr)
+            {
+                continue;
+            }
+
+            const qsizetype first_vertex = tile.first_vertex;
+            for (qsizetype index = 0; index < result.vertices.size(); ++index)
+            {
+                const MapRhiTerrainMeshVertex &vertex = result.vertices.at(index);
+                this->vertices[first_vertex + index] =
+                    TileVertex{vertex.x, vertex.y, vertex.z, vertex.u, vertex.v};
+            }
+
+            PendingMeshResultUploadRange range;
+            range.first_vertex = int(first_vertex);
+            range.vertex_count = int(result.vertices.size());
+            this->pending_mesh_result_upload_ranges.append(range);
+            this->wireframe_vertex_upload_pending = true;
+            // virtual_x/y uniquely identify a tile within the apron, so at
+            // most one entry can ever match.
+            break;
+        }
+    }
+}
+
+void MapRhiBasemapRenderer::uploadPendingTerrainMeshResultRanges(
+    QRhiResourceUpdateBatch *resource_updates)
+{
+    if (this->pending_mesh_result_upload_ranges.isEmpty())
+        return;
+
+    // Safe to issue targeted, in-place buffer updates here: this is only
+    // ever called from the branch of prepare() that runs when no full
+    // vertex-buffer (re)upload is happening this frame, so the buffer's
+    // current size and layout are guaranteed to already match this->vertices.
+    if (resource_updates != nullptr && this->vertex_buffer)
+    {
+        for (const PendingMeshResultUploadRange &range : this->pending_mesh_result_upload_ranges)
+        {
+            const int byte_offset = int(qsizetype(range.first_vertex) * qsizetype(sizeof(TileVertex)));
+            const int byte_count = boundedBufferSize(range.vertex_count, qsizetype(sizeof(TileVertex)));
+            if (byte_count <= 0)
+                continue;
+
+            resource_updates->updateDynamicBuffer(
+                this->vertex_buffer.get(), byte_offset, byte_count,
+                this->vertices.constData() + range.first_vertex);
+        }
+    }
+
+    this->pending_mesh_result_upload_ranges.clear();
+}
+
 bool MapRhiBasemapRenderer::ensureTileResource(
     const VisibleTile &tile, TileResource **resource,
     QRhiResourceUpdateBatch *resource_updates)
@@ -2076,17 +2257,103 @@ bool MapRhiBasemapRenderer::appendReliefTileVertices(
         return false;
     }
 
-    const bool terrain_available = terrain_tile != nullptr
+    // Thin adapter over the pure, thread-safe buildTerrainMeshResult(): this
+    // keeps exactly one implementation of the terrain-mesh math, shared with
+    // the background scheduler (see rebuildVisibleTiles's async branch)
+    // instead of two copies that could quietly drift apart.
+    MapRhiTerrainMeshRequest request;
+    request.terrain_key = tile->terrain_key;
+    request.tile_x = tile->tile_x;
+    request.y = tile->y;
+    request.imagery_zoom = tile->imagery_zoom;
+    request.terrain_zoom = tile->terrain_zoom;
+    request.requested_cell_count = tile->terrain_cell_count;
+    request.tile_left = tile_left;
+    request.tile_top = tile_top;
+    request.tile_world_size = tile_world_size;
+    terrainElevationWorldZCoefficients(
+        &request.elevation_world_z_offset, &request.elevation_world_z_scale);
+    request.terrain_available = terrain_tile != nullptr
         && terrain_tile->elevations_m.size() == MapTerrainTileSampleCount;
+    if (request.terrain_available)
+        request.terrain_tile = *terrain_tile;
 
-    const int zoom_delta = tile->imagery_zoom - tile->terrain_zoom;
+    const MapRhiTerrainMeshResult result = buildTerrainMeshResult(request);
+    target->reserve(target->size() + result.vertices.size());
+    for (const MapRhiTerrainMeshVertex &vertex : result.vertices)
+        target->append(TileVertex{vertex.x, vertex.y, vertex.z, vertex.u, vertex.v});
+    tile->vertex_count = int(result.vertices.size());
+    return tile->vertex_count > 0;
+}
+
+void MapRhiBasemapRenderer::terrainElevationWorldZCoefficients(
+    float *offset, float *scale) const
+{
+    if (offset == nullptr || scale == nullptr)
+        return;
+
+    *offset = 0.0f;
+    *scale = 0.0f;
+
+    // Mirrors the branching of the elevation(m)->world-Z conversion exactly,
+    // but yields its affine coefficients (world_z = offset + scale *
+    // elevation_m) instead of converting a single value, so
+    // buildTerrainMeshResult() can reproduce the identical conversion on any
+    // thread without touching MapRhiScene or MapModel. Sampling the scene
+    // conversion at 0 and 1 recovers its coefficients exactly -- it is
+    // affine in elevation_m -- without duplicating MapRhiScene's internal
+    // formula here.
+    if (this->scene != nullptr && this->scene->hasGeometry())
+    {
+        // MapRhiScene intentionally lifts network geometry by one
+        // reference-world pixel above its elevation plane. Keep terrain on
+        // the plane so pipes and nodes at ground elevation remain visible
+        // instead of z-fighting it.
+        *offset = this->scene->terrainElevationToWorldZ(0.0) - 1.0f;
+        *scale = this->scene->terrainElevationToWorldZ(1.0)
+            - this->scene->terrainElevationToWorldZ(0.0);
+        return;
+    }
+
+    if (this->map_model == nullptr)
+        return;
+
+    const double meters_per_world_pixel = GeoWebMercator::metersPerPixel(
+        this->map_model->centerLat(), MapRenderCacheMath::ReferenceZoom);
+    if (!std::isfinite(meters_per_world_pixel) || meters_per_world_pixel <= 0.0)
+        return;
+
+    *scale = float(this->map_model->view3dVerticalExaggeration() / meters_per_world_pixel);
+}
+
+MapRhiTerrainMeshResult buildTerrainMeshResult(const MapRhiTerrainMeshRequest &request)
+{
+    MapRhiTerrainMeshResult result;
+    result.request_id = request.request_id;
+    result.terrain_key = request.terrain_key;
+    result.virtual_x = request.virtual_x;
+    result.y = request.y;
+    result.terrain_available = request.terrain_available
+        && request.terrain_tile.elevations_m.size() == MapTerrainTileSampleCount;
+
+    if (request.imagery_zoom < request.terrain_zoom)
+        return result;
+
+    // Identical to the grid-construction math this replaces in
+    // appendReliefTileVertices, just reading its inputs from a plain,
+    // by-value request instead of a VisibleTile/MapTerrainTile pointer pair,
+    // so it can run equally well inline or on the background mesh scheduler
+    // thread.
+    const int zoom_delta = request.imagery_zoom - request.terrain_zoom;
     const double subdivision_count = std::ldexp(1.0, zoom_delta);
-    const quint32 terrain_x = terrain_available ? terrain_tile->address.x
-                                                : (quint32(tile->tile_x) >> zoom_delta);
-    const quint32 terrain_y = terrain_available ? terrain_tile->address.y
-                                                : (quint32(tile->y) >> zoom_delta);
-    const double local_tile_x = double(tile->tile_x) - double(terrain_x) * subdivision_count;
-    const double local_tile_y = double(tile->y) - double(terrain_y) * subdivision_count;
+    const quint32 terrain_x = result.terrain_available
+        ? request.terrain_tile.address.x
+        : (quint32(request.tile_x) >> zoom_delta);
+    const quint32 terrain_y = result.terrain_available
+        ? request.terrain_tile.address.y
+        : (quint32(request.y) >> zoom_delta);
+    const double local_tile_x = double(request.tile_x) - double(terrain_x) * subdivision_count;
+    const double local_tile_y = double(request.y) - double(terrain_y) * subdivision_count;
     const double terrain_u_min = local_tile_x / subdivision_count;
     const double terrain_v_min = local_tile_y / subdivision_count;
     const double terrain_u_span = 1.0 / subdivision_count;
@@ -2097,17 +2364,18 @@ bool MapRhiBasemapRenderer::appendReliefTileVertices(
     // Mesh density is selected per tile from the current 3D viewing scale.
     // It is highest around the crosshair/focus target, then falls off with
     // camera distance and ground distance from that target.
-    const int cell_count = qBound(
-        1, tile->terrain_cell_count, native_cell_count);
-    const float step = tile_world_size / float(cell_count);
+    const int cell_count = qBound(1, request.requested_cell_count, native_cell_count);
+    result.cell_count = cell_count;
+    const float step = request.tile_world_size / float(cell_count);
 
+    result.vertices.reserve(qsizetype(cell_count) * qsizetype(cell_count) * 6);
     for (int row = 0; row < cell_count; ++row)
     {
         for (int column = 0; column < cell_count; ++column)
         {
-            const float left = tile_left + float(column) * step;
+            const float left = request.tile_left + float(column) * step;
             const float right = left + step;
-            const float top = tile_top + float(row) * step;
+            const float top = request.tile_top + float(row) * step;
             const float bottom = top + step;
             const float u0 = float(column) / float(cell_count);
             const float u1 = float(column + 1) / float(cell_count);
@@ -2117,24 +2385,25 @@ bool MapRhiBasemapRenderer::appendReliefTileVertices(
             const double terrain_u1 = terrain_u_min + double(u1) * terrain_u_span;
             const double terrain_v0 = terrain_v_min + double(v0) * terrain_v_span;
             const double terrain_v1 = terrain_v_min + double(v1) * terrain_v_span;
-            const float z00 = terrain_available
-                ? terrainElevationWorldZ(
-                    bilinearTerrainSample(*terrain_tile, terrain_u0, terrain_v0))
+
+            const float z00 = result.terrain_available
+                ? elevationWorldZ(bilinearTerrainSample(request.terrain_tile, terrain_u0, terrain_v0),
+                    request.elevation_world_z_offset, request.elevation_world_z_scale)
                 : 0.0f;
-            const float z10 = terrain_available
-                ? terrainElevationWorldZ(
-                    bilinearTerrainSample(*terrain_tile, terrain_u1, terrain_v0))
+            const float z10 = result.terrain_available
+                ? elevationWorldZ(bilinearTerrainSample(request.terrain_tile, terrain_u1, terrain_v0),
+                    request.elevation_world_z_offset, request.elevation_world_z_scale)
                 : 0.0f;
-            const float z11 = terrain_available
-                ? terrainElevationWorldZ(
-                    bilinearTerrainSample(*terrain_tile, terrain_u1, terrain_v1))
+            const float z11 = result.terrain_available
+                ? elevationWorldZ(bilinearTerrainSample(request.terrain_tile, terrain_u1, terrain_v1),
+                    request.elevation_world_z_offset, request.elevation_world_z_scale)
                 : 0.0f;
-            const float z01 = terrain_available
-                ? terrainElevationWorldZ(
-                    bilinearTerrainSample(*terrain_tile, terrain_u0, terrain_v1))
+            const float z01 = result.terrain_available
+                ? elevationWorldZ(bilinearTerrainSample(request.terrain_tile, terrain_u0, terrain_v1),
+                    request.elevation_world_z_offset, request.elevation_world_z_scale)
                 : 0.0f;
 
-            const TileVertex cell_vertices[6] = {
+            const MapRhiTerrainMeshVertex cell_vertices[6] = {
                 {left,  top,    z00, u0, v0},
                 {right, top,    z10, u1, v0},
                 {right, bottom, z11, u1, v1},
@@ -2142,33 +2411,11 @@ bool MapRhiBasemapRenderer::appendReliefTileVertices(
                 {right, bottom, z11, u1, v1},
                 {left,  bottom, z01, u0, v1}
             };
-            for (const TileVertex &vertex : cell_vertices)
-                target->append(vertex);
+            for (const MapRhiTerrainMeshVertex &vertex : cell_vertices)
+                result.vertices.append(vertex);
         }
     }
 
-    tile->vertex_count = cell_count * cell_count * 6;
-    return tile->vertex_count > 0;
+    return result;
 }
 
-float MapRhiBasemapRenderer::terrainElevationWorldZ(double elevation_m) const
-{
-    if (this->scene != nullptr && this->scene->hasGeometry())
-    {
-        // MapRhiScene intentionally lifts network geometry by one reference-world
-        // pixel above its elevation plane. Keep terrain on the plane so pipes and
-        // nodes at ground elevation remain visible instead of z-fighting it.
-        return this->scene->terrainElevationToWorldZ(elevation_m) - 1.0f;
-    }
-
-    if (!std::isfinite(elevation_m) || this->map_model == nullptr)
-        return 0.0f;
-
-    const double meters_per_world_pixel = GeoWebMercator::metersPerPixel(
-        this->map_model->centerLat(), MapRenderCacheMath::ReferenceZoom);
-    if (!std::isfinite(meters_per_world_pixel) || meters_per_world_pixel <= 0.0)
-        return 0.0f;
-
-    return float(elevation_m / meters_per_world_pixel
-        * this->map_model->view3dVerticalExaggeration());
-}

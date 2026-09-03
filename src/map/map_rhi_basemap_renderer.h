@@ -16,6 +16,7 @@
 class MapModel;
 class MapRhiCamera;
 class MapRhiScene;
+class MapRhiTerrainMeshScheduler;
 class MapTerrainRepository;
 struct MapTerrainTile;
 class MapTileRepository;
@@ -123,6 +124,12 @@ private:
         }
     };
 
+    struct PendingMeshResultUploadRange
+    {
+        int first_vertex = 0;
+        int vertex_count = 0;
+    };
+
     bool createSharedResources();
     bool rebuildVisibleTiles(const QPointF &origin_world, const QSize &viewport_size);
     bool updateDirtyTerrainTiles(QRhiResourceUpdateBatch *resource_updates);
@@ -147,6 +154,9 @@ private:
     bool rebuildTileBindings(TileResource *resource);
     bool isTileInViewFrustum(const VisibleTile &tile, const QSize &viewport_size,
                              const QPointF &origin_world) const;
+    void terrainElevationWorldZCoefficients(float *offset, float *scale) const;
+    void applyReadyTerrainMeshResultsToMemory();
+    void uploadPendingTerrainMeshResultRanges(QRhiResourceUpdateBatch *resource_updates);
     QImage renderHeatmapTile(const VisibleTile &tile) const;
     void rebuildHeatmapMarkerBuckets();
     QVector<int> heatmapMarkerCandidates(double tile_left, double tile_top,
@@ -161,7 +171,6 @@ private:
                                   const MapTerrainTile *terrain_tile,
                                   float tile_left, float tile_top,
                                   float tile_world_size);
-    float terrainElevationWorldZ(double elevation_m) const;
 
     MapModel *map_model = nullptr;
     MapRhiScene *scene = nullptr;
@@ -203,6 +212,13 @@ private:
     double heatmap_solid_fraction = 0.0;
     quint64 heatmap_revision = 1;
     std::map<QString, std::unique_ptr<TileResource>> tile_resources;
+
+    // Background terrain-mesh generation: see map_rhi_terrain_mesh_scheduler.h.
+    // Owned for the lifetime of this renderer and independent of RHI/GPU
+    // state, so it is not touched by releaseResources()/RHI context resets.
+    std::unique_ptr<MapRhiTerrainMeshScheduler> mesh_scheduler;
+    quint64 next_mesh_request_id = 1;
+    QVector<PendingMeshResultUploadRange> pending_mesh_result_upload_ranges;
 };
 
 #endif // MAP_RHI_BASEMAP_RENDERER_H
