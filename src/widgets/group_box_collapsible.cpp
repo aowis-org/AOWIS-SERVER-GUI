@@ -1,4 +1,4 @@
-#include "group_box_collapsible.h"
+#include "widgets/group_box_collapsible.h"
 
 #include <QChildEvent>
 #include <QLayout>

@@ -6,12 +6,12 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
-#include "../widgets/group_box_collapsible.h"
-#include "../hydraulic_data.h"
-#include "../network_symbology.h"
+#include "widgets/group_box_collapsible.h"
+#include "network/hydraulic_data.h"
+#include "network/network_symbology.h"
 
-#include "../_enums_structs.h"
-#include "../_sizes.h"
+#include "common/_enums_structs.h"
+#include "common/_sizes.h"
 
 class MapSymbologyRampWidget;
 

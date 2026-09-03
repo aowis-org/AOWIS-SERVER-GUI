@@ -1,4 +1,4 @@
-#include "wasm_popup_menu.h"
+#include "widgets/wasm_popup_menu.h"
 
 #include <QApplication>
 #include <QEnterEvent>

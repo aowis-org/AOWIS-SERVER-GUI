@@ -1,4 +1,4 @@
-#include "main_navigation_widget.h"
+#include "widgets/main_navigation_widget.h"
 
 #include <QColor>
 #include <QEvent>

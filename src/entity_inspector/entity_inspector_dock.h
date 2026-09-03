@@ -6,21 +6,21 @@
 
 #include <QVBoxLayout>
 
-#include "entity_inspector_tank.h"
-#include "entity_inspector_junction.h"
-#include "entity_inspector_pipe.h"
-#include "entity_inspector_pump.h"
-#include "entity_inspector_valve.h"
-#include "entity_inspector_reservoir.h"
-#include "entity_inspector_customer_point.h"
+#include "entity_inspector/entity_inspector_tank.h"
+#include "entity_inspector/entity_inspector_junction.h"
+#include "entity_inspector/entity_inspector_pipe.h"
+#include "entity_inspector/entity_inspector_pump.h"
+#include "entity_inspector/entity_inspector_valve.h"
+#include "entity_inspector/entity_inspector_reservoir.h"
+#include "entity_inspector/entity_inspector_customer_point.h"
 
-#include "../widgets/group_box_collapsible.h"
-#include "../hydraulic_data.h"
+#include "widgets/group_box_collapsible.h"
+#include "network/hydraulic_data.h"
 
 #include <aowis/model/hydraulic/network_hydraulic.h>
-#include "../_enums_structs.h"
-#include "../_sizes.h"
-#include "../map/map_models.h"
+#include "common/_enums_structs.h"
+#include "common/_sizes.h"
+#include "map/core/map_models.h"
 
 class EntityInspectorDock : public QDockWidget
 {

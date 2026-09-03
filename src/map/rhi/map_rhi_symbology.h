@@ -1,0 +1,48 @@
+#ifndef MAP_RHI_SYMBOLOGY_H
+#define MAP_RHI_SYMBOLOGY_H
+
+#include "network/network_symbology.h"
+
+#include <QColor>
+#include <QHash>
+#include <QtGlobal>
+
+class HydraulicData;
+
+struct MapRhiSymbology
+{
+    NetworkSymbologySizeUnit node_size_unit = NetworkSymbologySizeUnit::Pixels;
+    int node_size_px = NetworkSymbologyDefaultNodeSizePx;
+    double node_size_m = NetworkSymbologyDefaultNodeSizeM;
+    NetworkSymbologySizeUnit icon_size_unit = NetworkSymbologySizeUnit::Pixels;
+    int icon_size_px = NetworkSymbologyDefaultIconSizePx;
+    double icon_size_m = NetworkSymbologyDefaultIconSizeM;
+    bool show_icons = true;
+    QRgb icon_default_fill_color = qRgb(70, 70, 70);
+    VisualNode visual_node = VisualNode::None;
+    VisualLink visual_link = VisualLink::None;
+    NetworkSymbologySizeUnit link_thickness_unit = NetworkSymbologySizeUnit::Pixels;
+    int link_thickness_px = NetworkSymbologyDefaultLinkThicknessPx;
+    double link_thickness_m = NetworkSymbologyDefaultLinkThicknessM;
+    bool show_flow_direction = true;
+    int flow_direction_size_px = 10;
+    VisualHeatmap visual_heatmap = VisualHeatmap::None;
+    int heatmap_opacity = 75;
+    HeatmapRadiusUnit heatmap_radius_unit = HeatmapRadiusUnit::Meters;
+    int heatmap_radius_m = 400;
+    int heatmap_radius_px = 50;
+    int heatmap_solid_center_percent = 70;
+    NetworkSymbologyPalette heatmap_palette = NetworkSymbologyPalette::Viridis;
+    bool heatmap_palette_flipped = false;
+    QHash<quint32, double> heatmap_fractions;
+    QHash<quint32, QRgb> node_colors;
+    QHash<quint32, QRgb> link_colors;
+    QHash<quint32, qint8> flow_directions;
+};
+
+MapRhiSymbology resolveMapRhiSymbology(
+    const HydraulicData &hydraulic_data,
+    const NetworkSymbologySettings &settings,
+    const NetworkSymbologyRanges &ranges);
+
+#endif // MAP_RHI_SYMBOLOGY_H

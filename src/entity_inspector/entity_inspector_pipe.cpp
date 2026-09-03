@@ -1,4 +1,4 @@
-#include "entity_inspector_pipe.h"
+#include "entity_inspector/entity_inspector_pipe.h"
 
 #include <optional>
 

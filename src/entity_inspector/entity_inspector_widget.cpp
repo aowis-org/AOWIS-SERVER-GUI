@@ -1,8 +1,8 @@
-#include "entity_inspector_widget.h"
+#include "entity_inspector/entity_inspector_widget.h"
 
-#include "../interface_server_map_rest.h"
+#include "services/interface_server_map_rest.h"
 #ifdef AOWIS_STANDALONE
-#include "../interface_server_map_standalone.h"
+#include "services/interface_server_map_standalone.h"
 #endif
 
 #include <cmath>

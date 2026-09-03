@@ -1,4 +1,4 @@
-#include "entity_inspector_pump.h"
+#include "entity_inspector/entity_inspector_pump.h"
 
 #include <cmath>
 #include <optional>

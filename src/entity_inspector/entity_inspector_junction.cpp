@@ -1,4 +1,4 @@
-#include "entity_inspector_junction.h"
+#include "entity_inspector/entity_inspector_junction.h"
 
 EntityInspectorJunction::EntityInspectorJunction(HydraulicData *hydraulic_data, const QUuid &uuid, QWidget *parent)
     : EntityInspectorWidget(hydraulic_data, parent)

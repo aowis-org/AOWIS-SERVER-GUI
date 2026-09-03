@@ -1,9 +1,9 @@
-#include "entity_map_legend_dock.h"
+#include "entity_inspector/entity_map_legend_dock.h"
 
-#include "../gui_configuration.h"
-#include "../network_symbology_rendering.h"
+#include "config/gui_configuration.h"
+#include "network/network_symbology_rendering.h"
 #ifdef Q_OS_WASM
-#include "../widgets/wasm_popup_menu.h"
+#include "widgets/wasm_popup_menu.h"
 #endif
 
 #include <array>

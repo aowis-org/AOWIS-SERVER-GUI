@@ -1,4 +1,4 @@
-#include "entity_inspector_reservoir.h"
+#include "entity_inspector/entity_inspector_reservoir.h"
 
 EntityInspectorReservoir::EntityInspectorReservoir(HydraulicData *hydraulic_data, const QUuid &uuid, QWidget *parent)
     : EntityInspectorWidget(hydraulic_data, parent)

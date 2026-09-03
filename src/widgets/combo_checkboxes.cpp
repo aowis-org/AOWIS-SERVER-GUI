@@ -1,6 +1,6 @@
-#include "combo_checkboxes.h"
+#include "widgets/combo_checkboxes.h"
 #ifdef Q_OS_WASM
-#include "wasm_popup_menu.h"
+#include "widgets/wasm_popup_menu.h"
 #endif
 
 #include <QCheckBox>

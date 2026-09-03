@@ -1,4 +1,4 @@
-#include "entity_inspector_valve.h"
+#include "entity_inspector/entity_inspector_valve.h"
 
 #include <optional>
 

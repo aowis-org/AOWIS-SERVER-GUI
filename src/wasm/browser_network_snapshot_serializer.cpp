@@ -1,9 +1,9 @@
-#include "browser_network_snapshot_serializer.h"
+#include "wasm/browser_network_snapshot_serializer.h"
 
-#include "../hydraulic_data.h"
-#include "../network_render_snapshot.h"
-#include "../network_symbology.h"
-#include "../network_symbology_values.h"
+#include "network/hydraulic_data.h"
+#include "network/network_render_snapshot.h"
+#include "network/network_symbology.h"
+#include "network/network_symbology_values.h"
 
 #include <cmath>
 

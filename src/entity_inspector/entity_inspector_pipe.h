@@ -16,13 +16,13 @@
 #include <QComboBox>
 #include <QUuid>
 
-#include "entity_inspector_widget.h"
+#include "entity_inspector/entity_inspector_widget.h"
 
-#include "../widgets/group_box_collapsible.h"
+#include "widgets/group_box_collapsible.h"
 
-#include "../_enums_structs.h"
-#include "../_sizes.h"
-#include "../map/map_models.h"
+#include "common/_enums_structs.h"
+#include "common/_sizes.h"
+#include "map/core/map_models.h"
 
 class EntityInspectorPipe : public EntityInspectorWidget
 {

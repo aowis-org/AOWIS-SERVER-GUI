@@ -1,4 +1,4 @@
-#include "entity_inspector_tank.h"
+#include "entity_inspector/entity_inspector_tank.h"
 
 #include <QAbstractSpinBox>
 #include <QGridLayout>

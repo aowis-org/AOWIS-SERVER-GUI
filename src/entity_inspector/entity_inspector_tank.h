@@ -10,9 +10,9 @@
 #include <QUuid>
 #include <QWidget>
 
-#include "entity_inspector_widget.h"
+#include "entity_inspector/entity_inspector_widget.h"
 
-#include "../widgets/group_box_collapsible.h"
+#include "widgets/group_box_collapsible.h"
 
 #include <aowis/model/hydraulic/network_hydraulic.h>
 

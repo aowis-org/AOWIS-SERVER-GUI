@@ -1,6 +1,6 @@
-#include "entity_inspector_dock.h"
-#include "../gui_configuration.h"
-#include "../shortcut_registry.h"
+#include "entity_inspector/entity_inspector_dock.h"
+#include "config/gui_configuration.h"
+#include "config/shortcut_registry.h"
 
 
 EntityInspectorDock::EntityInspectorDock(HydraulicData *hydraulic_data, QWidget *parent)
