@@ -175,6 +175,21 @@ MapView3dNavigationState MapModel::view3dNavigationState() const
     return this->m_view_3d_navigation_state;
 }
 
+double MapModel::viewGlobeYawDeg() const
+{
+    return this->m_view_globe_yaw_deg;
+}
+
+double MapModel::viewGlobePitchDeg() const
+{
+    return this->m_view_globe_pitch_deg;
+}
+
+double MapModel::viewGlobeDistanceM() const
+{
+    return this->m_view_globe_distance_m;
+}
+
 int MapModel::tileCount() const
 {
     return 1 << this->m_zoom;
@@ -207,6 +222,23 @@ QString MapModel::tileEndpoint(int x, int y) const
     return QString("/%1/%2/%3/%4.png")
         .arg(tileSourcePath(this->m_zoom))
         .arg(this->m_zoom)
+        .arg(wrapped_x)
+        .arg(y);
+}
+
+QString MapModel::tileCacheKeyAtZoom(int x, int y, int zoom) const
+{
+    const int wrapped_x = GeoWebMercator::wrapTileX(x, zoom);
+    return tileCachePrefix(zoom) + QString("%1/%2").arg(wrapped_x).arg(y);
+}
+
+QString MapModel::tileEndpointAtZoom(int x, int y, int zoom) const
+{
+    const int wrapped_x = GeoWebMercator::wrapTileX(x, zoom);
+
+    return QString("/%1/%2/%3/%4.png")
+        .arg(tileSourcePath(zoom))
+        .arg(zoom)
         .arg(wrapped_x)
         .arg(y);
 }
@@ -946,6 +978,69 @@ void MapModel::resetView3dCamera()
     this->m_view_3d_pitch_deg = DefaultView3dPitchDeg;
     if (changed)
         emit view3dCameraChanged();
+}
+
+void MapModel::setViewGlobeYawDeg(double yaw_deg)
+{
+    const double next_yaw = normalizedYawDegrees(yaw_deg);
+    if (coordinatesEqual(next_yaw, this->m_view_globe_yaw_deg))
+        return;
+
+    this->m_view_globe_yaw_deg = next_yaw;
+    emit viewGlobeCameraChanged();
+}
+
+void MapModel::setViewGlobePitchDeg(double pitch_deg)
+{
+    const double next_pitch = qBound(
+        MinViewGlobePitchDeg, pitch_deg, MaxViewGlobePitchDeg);
+    if (coordinatesEqual(next_pitch, this->m_view_globe_pitch_deg))
+        return;
+
+    this->m_view_globe_pitch_deg = next_pitch;
+    emit viewGlobeCameraChanged();
+}
+
+void MapModel::setViewGlobeDistanceM(double distance_m)
+{
+    if (!std::isfinite(distance_m))
+        return;
+
+    const double next_distance = qBound(
+        MinViewGlobeDistanceM, distance_m, MaxViewGlobeDistanceM);
+    if (coordinatesEqual(next_distance, this->m_view_globe_distance_m))
+        return;
+
+    this->m_view_globe_distance_m = next_distance;
+    emit viewGlobeCameraChanged();
+}
+
+void MapModel::orbitViewGlobe(double yaw_delta_deg, double pitch_delta_deg)
+{
+    const double next_yaw = normalizedYawDegrees(this->m_view_globe_yaw_deg + yaw_delta_deg);
+    const double next_pitch = qBound(
+        MinViewGlobePitchDeg,
+        this->m_view_globe_pitch_deg + pitch_delta_deg,
+        MaxViewGlobePitchDeg);
+    if (coordinatesEqual(next_yaw, this->m_view_globe_yaw_deg)
+        && coordinatesEqual(next_pitch, this->m_view_globe_pitch_deg))
+    {
+        return;
+    }
+
+    this->m_view_globe_yaw_deg = next_yaw;
+    this->m_view_globe_pitch_deg = next_pitch;
+    emit viewGlobeCameraChanged();
+}
+
+void MapModel::orbitViewGlobeByPointerDelta(const QPoint &delta_pixels, bool include_pitch)
+{
+    const double yaw_delta_deg =
+        double(delta_pixels.x()) * ViewGlobeOrbitYawDegreesPerPixel;
+    const double pitch_delta_deg = include_pitch
+        ? double(-delta_pixels.y()) * ViewGlobeOrbitPitchDegreesPerPixel
+        : 0.0;
+    orbitViewGlobe(yaw_delta_deg, pitch_delta_deg);
 }
 
 CoordinateWGS84 MapModel::wgs84FromScreen(const QPoint &pos, const QSize &viewport) const

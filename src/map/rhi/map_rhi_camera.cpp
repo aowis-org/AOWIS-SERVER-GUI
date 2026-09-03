@@ -3,6 +3,7 @@
 #include "map/core/map_model.h"
 #include "map/render/map_render_cache_math.h"
 #include "geo/geo_web_mercator.h"
+#include "geo/geo_wgs84_ellipsoid.h"
 
 #include <rhi/qrhi.h>
 
@@ -34,6 +35,12 @@ void MapRhiCamera::syncFromMapModel(const MapModel &map_model)
     this->view_3d_camera_collision_lift_world =
         map_model.view3dCameraCollisionLiftWorld();
     this->view_3d_vertical_offset_world = map_model.view3dVerticalOffsetWorld();
+
+    this->globe_target_lon_deg = map_model.centerLon();
+    this->globe_target_lat_deg = map_model.centerLat();
+    this->view_globe_yaw_deg = map_model.viewGlobeYawDeg();
+    this->view_globe_pitch_deg = map_model.viewGlobePitchDeg();
+    this->view_globe_distance_m = map_model.viewGlobeDistanceM();
 
     const QPointF raw_center_world = GeoWebMercator::lonLatToWorldPixel(
         GeoWebMercator::normalizeLongitude(map_model.centerLon()),
@@ -123,6 +130,69 @@ QMatrix4x4 MapRhiCamera::viewProjectionMatrix(const QRhi &rhi) const
     result.ortho(left, right, bottom, top, -1000000.0f, 1000000.0f);
     return result;
 }
+QMatrix4x4 MapRhiCamera::globeViewProjectionMatrix(const QRhi &rhi) const
+{
+    const int viewport_width = qMax(1, this->viewport_size.width());
+    const int viewport_height = qMax(1, this->viewport_size.height());
+
+    const GeoWgs84Ellipsoid::LocalFrame target_frame = GeoWgs84Ellipsoid::localFrameAtGeodetic(
+        this->globe_target_lon_deg, this->globe_target_lat_deg, 0.0);
+
+    const double pitch_rad = qDegreesToRadians(qBound(
+        MapModel::MinViewGlobePitchDeg, this->view_globe_pitch_deg,
+        MapModel::MaxViewGlobePitchDeg));
+    const double yaw_rad = qDegreesToRadians(this->view_globe_yaw_deg);
+    const double distance = qMax(MapModel::MinViewGlobeDistanceM, this->view_globe_distance_m);
+    const double horizontal_distance = distance * std::cos(pitch_rad);
+
+    // Both "horizontal_direction" (where the camera sits around the target,
+    // by yaw) and "right" (the yaw-only tangent-plane direction 90 degrees
+    // from it) are unit vectors, since east/north are themselves orthonormal
+    // and each is a sin/cos combination of the two.
+    const QVector3D horizontal_direction =
+        target_frame.east * float(std::sin(yaw_rad))
+        + target_frame.north * float(std::cos(yaw_rad));
+    const QVector3D right =
+        target_frame.east * float(std::cos(yaw_rad))
+        - target_frame.north * float(std::sin(yaw_rad));
+
+    const QVector3D eye = target_frame.position
+        + target_frame.up * float(distance * std::sin(pitch_rad))
+        + horizontal_direction * float(horizontal_distance);
+    const QVector3D forward = (target_frame.position - eye).normalized();
+
+    // "right" is constructed purely from yaw, in the target's tangent
+    // plane, so it is always perpendicular to "forward" (which only ever
+    // combines "up" and "horizontal_direction", both of which "right" is
+    // perpendicular to by construction) -- including at pitch 90 degrees,
+    // where a naive up-vector-based lookAt() would degenerate. Passing
+    // cross(right, forward) as the up hint (rather than cross(forward,
+    // right)) is deliberate: lookAt() derives its screen-right axis as
+    // cross(forward, up_hint), and cross(forward, cross(right, forward))
+    // reduces to +right (by the vector triple product identity, since
+    // right and forward are perpendicular and forward is unit length),
+    // which keeps geographic east on screen-right. The other cross order
+    // would silently mirror the globe left/right, the same failure mode
+    // the ThreeD camera above works around with a projection-matrix flip.
+    const QVector3D camera_up = QVector3D::crossProduct(right, forward).normalized();
+
+    constexpr float FieldOfViewDeg = 45.0f;
+    const double near_plane = qMax(1000.0, distance * 0.001);
+    const double far_plane = (distance + GeoWgs84Ellipsoid::EquatorialRadiusM) * 3.0;
+    QMatrix4x4 projection;
+    projection.perspective(
+        FieldOfViewDeg, float(viewport_width) / float(viewport_height),
+        float(near_plane), float(far_plane));
+
+    QMatrix4x4 view;
+    view.lookAt(eye, target_frame.position, camera_up);
+
+    QMatrix4x4 result = rhi.clipSpaceCorrMatrix();
+    result *= projection;
+    result *= view;
+    return result;
+}
+
 QPointF MapRhiCamera::projectWorldToScreen(const QVector3D &world_position) const
 {
     const int viewport_width = qMax(1, this->viewport_size.width());

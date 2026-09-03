@@ -21,6 +21,7 @@ public:
     void syncFromMapModel(const MapModel &map_model);
 
     QMatrix4x4 viewProjectionMatrix(const QRhi &rhi) const;
+    QMatrix4x4 globeViewProjectionMatrix(const QRhi &rhi) const;
     QPointF projectWorldToScreen(const QVector3D &world_position) const;
     QPointF cameraGroundWorldPixel() const;
     QPointF cameraGroundWorldPixelForDistance(double distance_world) const;
@@ -43,6 +44,17 @@ private:
     double view_3d_camera_distance_world = 0.0;
     double view_3d_camera_collision_lift_world = 0.0;
     double view_3d_vertical_offset_world = 0.0;
+
+    // Globe view mode camera state, synced from MapModel like the ThreeD
+    // fields above. Kept separate rather than reusing the ThreeD fields
+    // because the two cameras operate in different spaces (flat Web
+    // Mercator "world pixel" units above vs. WGS84 ECEF meters here) and
+    // are never active at the same time.
+    double globe_target_lon_deg = 0.0;
+    double globe_target_lat_deg = 0.0;
+    double view_globe_yaw_deg = 0.0;
+    double view_globe_pitch_deg = 55.0;
+    double view_globe_distance_m = 0.0;
 };
 
 #endif // MAP_RHI_CAMERA_H

@@ -1331,7 +1331,15 @@ void MapWidget::handleWheelEvent(QWheelEvent *event)
     const int steps = this->wheel_delta_accumulated / threshold;
     this->wheel_delta_accumulated %= threshold;
 
-    if (this->m_model->viewMode() == MapViewMode::ThreeD)
+    if (this->m_model->viewMode() == MapViewMode::Globe)
+    {
+        // Multiplicative zoom (rather than the additive tile-zoom step used
+        // by ThreeD) since globe distance is a continuous meters value with
+        // no discrete zoom levels to snap to.
+        this->m_model->setViewGlobeDistanceM(
+            this->m_model->viewGlobeDistanceM() * std::pow(0.85, steps));
+    }
+    else if (this->m_model->viewMode() == MapViewMode::ThreeD)
         this->m_model->setZoom(this->m_model->zoom() + steps, size());
     else
         this->m_model->zoomByAt(steps, event->position().toPoint(), size());
@@ -1403,7 +1411,8 @@ bool MapWidget::handleMousePressEvent(QMouseEvent *event)
     if (!event)
         return false;
 
-    if (this->m_model->viewMode() == MapViewMode::ThreeD
+    if ((this->m_model->viewMode() == MapViewMode::ThreeD
+            || this->m_model->viewMode() == MapViewMode::Globe)
         && event->button() == Qt::MiddleButton)
     {
         beginView3dOrbit(
@@ -1588,7 +1597,12 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
             global_position - this->view_3d_orbit_last_global_position;
         this->view_3d_orbit_last_global_position = global_position;
         if (!delta.isNull())
-            this->m_model->orbitView3dByPointerDelta(delta, true);
+        {
+            if (this->m_model->viewMode() == MapViewMode::Globe)
+                this->m_model->orbitViewGlobeByPointerDelta(delta, true);
+            else
+                this->m_model->orbitView3dByPointerDelta(delta, true);
+        }
 
         // Do not recenter on every mouse event. Apart from being unnecessary,
         // that creates a stream of synthetic motion events whose ordering is
@@ -1622,7 +1636,10 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
         this->view_3d_orbit_last_position = position;
         if (!delta.isNull())
         {
-            this->m_model->orbitView3dByPointerDelta(delta, true);
+            if (this->m_model->viewMode() == MapViewMode::Globe)
+                this->m_model->orbitViewGlobeByPointerDelta(delta, true);
+            else
+                this->m_model->orbitView3dByPointerDelta(delta, true);
         }
 #endif
         event->accept();

@@ -190,6 +190,8 @@ qt_add_executable(aowis-server-gui
     src/geo/geo_metric_projection.h
     src/geo/geo_web_mercator.cpp
     src/geo/geo_web_mercator.h
+    src/geo/geo_wgs84_ellipsoid.cpp
+    src/geo/geo_wgs84_ellipsoid.h
 
     # Map core
     src/map/core/map_model.cpp
@@ -350,6 +352,8 @@ if(AOWIS_HAS_QRHI)
             src/map/rhi/map_rhi_tank_model.cpp
             src/map/rhi/map_rhi_reservoir_model.h
             src/map/rhi/map_rhi_reservoir_model.cpp
+            src/map/rhi/map_rhi_globe_renderer.h
+            src/map/rhi/map_rhi_globe_renderer.cpp
             src/map/rhi/map_rhi_widget.h
             src/map/rhi/map_rhi_widget.cpp
     )
@@ -384,6 +388,8 @@ if(AOWIS_HAS_QRHI)
                 src/map/rhi/shaders/map_rhi_junction_xray.frag
                 src/map/rhi/shaders/map_rhi_tank.vert
                 src/map/rhi/shaders/map_rhi_tank.frag
+                src/map/rhi/shaders/map_rhi_globe.vert
+                src/map/rhi/shaders/map_rhi_globe.frag
         )
     else()
         qt_add_shaders(aowis-server-gui "aowis_map_rhi_shaders"
@@ -412,6 +418,8 @@ if(AOWIS_HAS_QRHI)
                 src/map/rhi/shaders/map_rhi_junction_xray.frag
                 src/map/rhi/shaders/map_rhi_tank.vert
                 src/map/rhi/shaders/map_rhi_tank.frag
+                src/map/rhi/shaders/map_rhi_globe.vert
+                src/map/rhi/shaders/map_rhi_globe.frag
         )
     endif()
 

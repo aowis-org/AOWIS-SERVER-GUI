@@ -295,6 +295,8 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     this->basemap_renderer = std::make_unique<MapRhiBasemapRenderer>(
         this->map_model, &this->scene, this->tile_repository, this->terrain_repository);
     this->basemap_renderer->setCamera(&this->camera);
+    this->globe_renderer = std::make_unique<MapRhiGlobeRenderer>(
+        this->map_model, this->tile_repository);
     this->scene.setNetworkGroundOffsetM(this->map_model->view3dNetworkGroundOffsetM());
     this->scene.setVerticalExaggeration(this->map_model->view3dVerticalExaggeration());
     syncViewState();
@@ -388,6 +390,12 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     {
         if (this->basemap_renderer)
             this->basemap_renderer->invalidate();
+        if (this->globe_renderer)
+            this->globe_renderer->invalidateImagery();
+        update();
+    });
+    connect(this->map_model, &MapModel::viewGlobeCameraChanged, this, [this]
+    {
         update();
     });
     connect(this, &QRhiWidget::renderFailed, this, [this]
@@ -1072,6 +1080,8 @@ void MapRhiWidget::setTileRepository(MapTileRepository *tile_repository)
     this->tile_repository = tile_repository;
     if (this->basemap_renderer)
         this->basemap_renderer->setTileRepository(this->tile_repository);
+    if (this->globe_renderer)
+        this->globe_renderer->setTileRepository(this->tile_repository);
 
     if (this->tile_repository != nullptr)
     {
@@ -1263,6 +1273,13 @@ void MapRhiWidget::initialize(QRhiCommandBuffer *command_buffer)
         reportFailure(QStringLiteral("Failed to initialize RHI basemap renderer"));
         return;
     }
+    if (this->globe_renderer
+        && !this->globe_renderer->initialize(
+            this->active_rhi, this->render_pass_descriptor, sampleCount()))
+    {
+        reportFailure(QStringLiteral("Failed to initialize RHI globe renderer"));
+        return;
+    }
 
     qInfo().noquote()
         << QStringLiteral("Desktop map RHI surface '%1' initialized using %2 with %3x MSAA.")
@@ -1306,6 +1323,19 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
             this->uniform_buffer.get(), sampleCount()))
     {
         reportFailure(QStringLiteral("Failed to initialize RHI basemap renderer"));
+        return;
+    }
+    if (this->globe_renderer
+        && !this->globe_renderer->initialize(
+            this->active_rhi, this->render_pass_descriptor, sampleCount()))
+    {
+        reportFailure(QStringLiteral("Failed to initialize RHI globe renderer"));
+        return;
+    }
+
+    if (this->map_model->viewMode() == MapViewMode::Globe)
+    {
+        renderGlobe(command_buffer, target);
         return;
     }
 
@@ -1787,6 +1817,36 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         command_buffer->setVertexInput(0, 1, &icon_binding);
         command_buffer->draw(quint32(icon_vertices.size()));
     }
+
+    command_buffer->endPass();
+}
+
+void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarget *target)
+{
+    if (this->globe_renderer == nullptr)
+        return;
+
+    const QMatrix4x4 view_projection = this->camera.globeViewProjectionMatrix(*this->active_rhi);
+
+    QRhiResourceUpdateBatch *resource_updates = this->active_rhi->nextResourceUpdateBatch();
+    if (!this->globe_renderer->prepare(resource_updates, view_projection, this->viewport_size))
+    {
+        resource_updates->release();
+        reportFailure(QStringLiteral("Failed to prepare RHI globe renderer"));
+        return;
+    }
+
+    // A near-black, slightly blue "deep space" background rather than the
+    // app palette's window color -- the globe is viewed from space, not
+    // sitting on a UI background the way the flat 2D/3D map does.
+    const QColor background_color = QColor::fromRgbF(0.02f, 0.02f, 0.05f);
+    command_buffer->beginPass(target, background_color, {1.0f, 0}, resource_updates);
+
+    const QSize output_size = target->pixelSize();
+    command_buffer->setViewport(QRhiViewport(
+        0.0f, 0.0f, float(output_size.width()), float(output_size.height())));
+
+    this->globe_renderer->draw(command_buffer);
 
     command_buffer->endPass();
 }
@@ -2994,6 +3054,8 @@ void MapRhiWidget::resetGpuResources()
 {
     if (this->basemap_renderer)
         this->basemap_renderer->releaseResources();
+    if (this->globe_renderer)
+        this->globe_renderer->releaseResources();
     this->junction_xray_pipeline.reset();
     this->junction_no_depth_pipeline.reset();
     this->link_xray_pipeline.reset();

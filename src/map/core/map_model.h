@@ -39,6 +39,20 @@ public:
     static constexpr double DefaultView3dVerticalExaggeration = 1.0;
     static constexpr double View3dOrbitYawDegreesPerPixel = 0.35;
     static constexpr double View3dOrbitPitchDegreesPerPixel = 0.25;
+    // "Globe" view mode: orbit camera around the WGS84 ellipsoid, target is
+    // always the ordinary map center (centerLon()/centerLat()), so the globe
+    // opens centered on wherever 2D/3D already is -- no separate target
+    // state needed. Distance is in meters (unlike the 2D/3D fields above,
+    // which are in tile pixels/world units); defaults to roughly 3x Earth's
+    // radius so the whole planet is comfortably in view on entry.
+    static constexpr double MinViewGlobeDistanceM = 500000.0;
+    static constexpr double MaxViewGlobeDistanceM = 60000000.0;
+    static constexpr double DefaultViewGlobeDistanceM = 20000000.0;
+    static constexpr double MinViewGlobePitchDeg = 5.0;
+    static constexpr double MaxViewGlobePitchDeg = 90.0;
+    static constexpr double DefaultViewGlobePitchDeg = 55.0;
+    static constexpr double ViewGlobeOrbitYawDegreesPerPixel = 0.2;
+    static constexpr double ViewGlobeOrbitPitchDegreesPerPixel = 0.2;
 
     int zoom() const;
     double view2dContinuousScale() const;
@@ -59,10 +73,18 @@ public:
     double view3dNetworkGroundOffsetM() const;
     double view3dVerticalExaggeration() const;
     MapView3dNavigationState view3dNavigationState() const;
+    double viewGlobeYawDeg() const;
+    double viewGlobePitchDeg() const;
+    double viewGlobeDistanceM() const;
     QString tileCacheKey(int x, int y) const;
     QString tileCachePrefix(int zoom) const;
     QString tileEndpoint(int x, int y) const;
     QString tileSourcePath(int zoom) const;
+    // Zoom-independent siblings of tileCacheKey()/tileEndpoint(): those two
+    // always resolve against the current 2D/3D zoom (zoom()), which is not
+    // useful for the globe view's own fixed, independent imagery zoom level.
+    QString tileCacheKeyAtZoom(int x, int y, int zoom) const;
+    QString tileEndpointAtZoom(int x, int y, int zoom) const;
 
     int tileCount() const;
 
@@ -112,6 +134,12 @@ public:
     void orbitView3dByPointerDelta(const QPoint &delta_pixels, bool include_pitch);
     void resetView3dCamera();
 
+    void setViewGlobeYawDeg(double yaw_deg);
+    void setViewGlobePitchDeg(double pitch_deg);
+    void setViewGlobeDistanceM(double distance_m);
+    void orbitViewGlobe(double yaw_delta_deg, double pitch_delta_deg);
+    void orbitViewGlobeByPointerDelta(const QPoint &delta_pixels, bool include_pitch);
+
 signals:
     void zoomChanged(int zoom);
     void centerChangedWGS84(CoordinateWGS84 wgs);
@@ -122,6 +150,7 @@ signals:
     void view3dCameraChanged();
     void view3dNavigationStateChanged(MapView3dNavigationState state);
     void view3dNetworkGroundOffsetChanged(double offset_m);
+    void viewGlobeCameraChanged();
 
 private:
     void clampCenter(const QSize &viewport);
@@ -156,6 +185,10 @@ private:
     bool m_view_3d_preserve_camera_distance_on_next_native_sync = false;
     MapView3dNavigationState m_view_3d_navigation_state = MapView3dNavigationState::Pan;
     int m_view_3d_rotate_interaction_depth = 0;
+
+    double m_view_globe_yaw_deg = 0.0;
+    double m_view_globe_pitch_deg = DefaultViewGlobePitchDeg;
+    double m_view_globe_distance_m = DefaultViewGlobeDistanceM;
 };
 
 #endif // MAP_MODEL_H

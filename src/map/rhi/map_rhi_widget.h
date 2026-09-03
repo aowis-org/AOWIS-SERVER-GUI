@@ -3,6 +3,7 @@
 
 #include "map/rhi/map_rhi_basemap_renderer.h"
 #include "map/rhi/map_rhi_camera.h"
+#include "map/rhi/map_rhi_globe_renderer.h"
 #include "map/rhi/map_rhi_scene.h"
 #include "map/rhi/map_rhi_junction_model.h"
 #include "map/rhi/map_rhi_reservoir_model.h"
@@ -25,6 +26,7 @@ class QRhiBuffer;
 class QRhiCommandBuffer;
 class QRhiGraphicsPipeline;
 class QRhiRenderPassDescriptor;
+class QRhiRenderTarget;
 class QRhiSampler;
 class QRhiShaderResourceBindings;
 class QRhiTexture;
@@ -107,6 +109,7 @@ private:
         InfrastructureEntity entity_type, quint32 render_id,
         const QVector3D &start, const QVector3D &end);
     void resetGpuResources();
+    void renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarget *target);
     void syncViewState();
     void syncTerrainAwareCameraDistance();
     void captureView3dFocusAnchor();
@@ -137,6 +140,7 @@ private:
     MapTileRepository *tile_repository = nullptr;
     MapTerrainRepository *terrain_repository = nullptr;
     std::unique_ptr<MapRhiBasemapRenderer> basemap_renderer;
+    std::unique_ptr<MapRhiGlobeRenderer> globe_renderer;
     int background_opacity = 0;
     QPointF network_screen_translation;
 

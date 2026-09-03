@@ -717,9 +717,11 @@ MapMonitorViewModeHudWidget::MapMonitorViewModeHudWidget(
 
     this->view_mode_combo->addItem(QStringLiteral("2D"), int(MapViewMode::TwoD));
     this->view_mode_combo->addItem(QStringLiteral("3D"), int(MapViewMode::ThreeD));
+    this->view_mode_combo->addItem(QStringLiteral("Globe"), int(MapViewMode::Globe));
     this->view_mode_combo->setMinimumWidth(72);
     this->view_mode_combo->setToolTip(QStringLiteral(
-        "Switch between the top-down 2D map and the 3D map view."));
+        "Switch between the top-down 2D map, the 3D map view, and the "
+        "whole-planet WGS84 globe view."));
     layout->addWidget(this->view_mode_combo);
 
     this->wireframe_checkbox->setChecked(false);
