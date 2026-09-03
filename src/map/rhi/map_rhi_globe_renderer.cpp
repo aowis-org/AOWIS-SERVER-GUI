@@ -8,29 +8,45 @@
 #include <QFile>
 #include <QImage>
 #include <QPixmap>
+#include <QSet>
+#include <QtMath>
 #include <rhi/qshader.h>
 #include <rhi/qrhi.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 
 namespace
 {
-// Fixed whole-planet imagery zoom level: 2^GlobeImageryZoom tiles per axis.
-// Deliberately low/conservative for a first version -- it keeps the globe's
-// initial tile request burst small (16 tiles at zoom 2) while still giving
-// a recognizable, reasonably sharp view of the whole Earth from space. Easy
-// to raise once this is proven out.
-constexpr int GlobeImageryZoom = 2;
-// Vertex grid subdivisions per tile edge. Tiles at zoom 2 span 90 degrees of
-// longitude each, so a fair amount of subdivision is needed for the curved
-// ellipsoid surface (and Web Mercator's own per-tile latitude compression
-// near the poles) to look smooth rather than faceted.
-constexpr int GlobeTileGridSubdivisions = 10;
-// Longitude segments used for each polar cap fan. Independent of the tile
-// grid above -- a small seam between the imagery tiles' edge at +-85.05
-// degrees and the cap fan's ring is not visually significant at whole-globe
-// viewing distance.
+// Highest imagery zoom the globe will ever request. Matches MapModel::MaxZoom
+// (19) exactly, since MapModel::MinViewGlobeDistanceM is itself pinned to
+// zoom 19 via viewGlobeDistanceMForZoomLevel() -- the globe's maximum zoom-in
+// should reach exactly as much detail as 2D/3D ever do, no more, no less.
+constexpr int GlobeImageryMaxZoom = MapModel::MaxZoom;
+// Hard cap on the (square) tile window's radius around the center tile, in
+// tiles -- bounds the worst-case request/mesh burden regardless of zoom or
+// viewing angle (see foregroundTileRadius() below).
+constexpr int GlobeForegroundMaxTileRadius = 5;
+// Extra ring of tiles kept beyond the strictly-visible foreground, so an
+// ordinary pan/orbit does not immediately fall outside the built window and
+// force a rebuild on every frame -- the same role
+// MapRhiBasemapRenderer's own retention margin plays for 2D/3D.
+constexpr int GlobeWindowRetentionMarginTiles = 1;
+// Dead zone (in zoom levels) around the current zoom before
+// computeDesiredZoom() will actually switch -- without this, distance
+// values that hover near an integer boundary would flicker the window
+// between two zoom levels every frame.
+constexpr double GlobeZoomHysteresis = 0.6;
+// Safety multiplier applied to the horizon-angle visible-radius estimate in
+// foregroundTileRadius(), so the requested window comfortably covers what's
+// on screen even though the estimate itself (see that function) is a rough
+// one.
+constexpr double GlobeForegroundAngleMarginFactor = 1.3;
+// Longitude segments used for each polar cap fan. Independent of the
+// imagery tile grid -- a small seam between the imagery tiles' edge at
+// +-85.05 degrees and the cap fan's ring is not visually significant at
+// whole-globe viewing distance.
 constexpr int GlobePolarCapSegments = 48;
 // Flat fallback color for the polar caps (area above/below Web Mercator's
 // +-85.05 degree limit, which basemap tiles never cover). A light,
@@ -39,6 +55,68 @@ constexpr int GlobePolarCapSegments = 48;
 const QColor GlobePolarCapColor(235, 240, 245);
 
 constexpr int GlobeCameraUniformBytes = 16 * int(sizeof(float));
+
+// Vertex grid subdivisions per tile edge, by zoom level. Low zoom tiles
+// span a huge angular area (a zoom-0 tile is the entire planet, a zoom-1
+// tile is a full hemisphere) and need heavy subdivision for the ellipsoid
+// curvature to look smooth -- 8 subdivisions across an entire 360-degree
+// tile is only 45 degrees per facet, which renders as a visibly faceted
+// polyhedron rather than a sphere. By the time tiles are a few degrees
+// across or smaller, the curvature within a single tile is negligible and
+// a coarse grid is indistinguishable from a fine one while costing far
+// less geometry across a whole tile window. In practice MapModel's own
+// Min/MaxViewGlobeDistanceM keep the picked zoom at 4 or above, so zoom
+// 0-3 should rarely if ever be hit -- these are still handled properly in
+// case that ever changes.
+int subdivisionsForZoom(int zoom)
+{
+    if (zoom <= 0)
+        return 32;
+    if (zoom <= 1)
+        return 24;
+    if (zoom <= 3)
+        return 12;
+    if (zoom <= 6)
+        return 4;
+    return 2;
+}
+
+// Picks the imagery zoom level from camera distance, using the exact same
+// distance<->zoom relationship the footer zoom control and MapModel's own
+// Min/MaxViewGlobeDistanceM are pinned to (see
+// MapModel::viewGlobeZoomLevelForDistanceM()), so the imagery resolution
+// shown always matches what that same zoom level would show in 2D/3D.
+// Hysteresis-gated against the previously chosen zoom to avoid flicker at
+// exact boundaries.
+int computeDesiredZoom(
+    double continuous_zoom_level, int current_zoom)
+{
+    if (current_zoom >= 0
+        && std::abs(continuous_zoom_level - double(current_zoom)) < GlobeZoomHysteresis)
+    {
+        return current_zoom;
+    }
+    return qBound(0, int(std::lround(continuous_zoom_level)), GlobeImageryMaxZoom);
+}
+
+// Rough visible-radius estimate, in tiles at the given zoom, around the
+// camera's target. Treats camera distance as if it were altitude directly
+// above the target (distance is actually eye-to-target, not eye-to-center,
+// so this over-estimates the true horizon angle at low pitch) -- a
+// deliberate simplification that errs toward requesting a bit more
+// coverage than strictly visible rather than leaving gaps, since exact
+// per-tile view-frustum culling (as MapRhiBasemapRenderer does for the flat
+// view) is not worth the complexity at whole-globe scale.
+int foregroundTileRadius(double distance_m, int zoom)
+{
+    const double eye_radius = GeoWgs84Ellipsoid::EquatorialRadiusM + qMax(0.0, distance_m);
+    const double ratio = qBound(0.0, GeoWgs84Ellipsoid::EquatorialRadiusM / eye_radius, 1.0);
+    const double half_angle_deg =
+        qRadiansToDegrees(std::acos(ratio)) * GlobeForegroundAngleMarginFactor;
+    const double tiles_per_degree = double(1 << zoom) / 360.0;
+    const int radius = int(std::ceil(half_angle_deg * tiles_per_degree));
+    return qBound(1, radius, GlobeForegroundMaxTileRadius);
+}
 
 QShader loadGlobeShader(const QString &resource_path)
 {
@@ -87,7 +165,7 @@ void MapRhiGlobeRenderer::buildPolarCap(bool north)
 
     GlobeTile cap;
     cap.is_cap = true;
-    cap.first_vertex = this->tile_vertices.size();
+    cap.first_vertex = this->cap_vertices.size();
 
     const TileVertex pole_vertex = makeTileVertex(0.0, pole_lat, 0.5f, 0.5f);
     for (int segment = 0; segment < GlobePolarCapSegments; ++segment)
@@ -97,80 +175,131 @@ void MapRhiGlobeRenderer::buildPolarCap(bool north)
         const TileVertex ring0 = makeTileVertex(lon0, ring_lat, 0.5f, 0.5f);
         const TileVertex ring1 = makeTileVertex(lon1, ring_lat, 0.5f, 0.5f);
 
-        this->tile_vertices.append(pole_vertex);
+        this->cap_vertices.append(pole_vertex);
         if (north)
         {
-            this->tile_vertices.append(ring0);
-            this->tile_vertices.append(ring1);
+            this->cap_vertices.append(ring0);
+            this->cap_vertices.append(ring1);
         }
         else
         {
-            this->tile_vertices.append(ring1);
-            this->tile_vertices.append(ring0);
+            this->cap_vertices.append(ring1);
+            this->cap_vertices.append(ring0);
         }
     }
 
-    cap.vertex_count = this->tile_vertices.size() - cap.first_vertex;
-    this->tiles.append(cap);
+    cap.vertex_count = this->cap_vertices.size() - cap.first_vertex;
+    this->cap_tiles.append(cap);
 }
 
-void MapRhiGlobeRenderer::buildMesh()
+void MapRhiGlobeRenderer::buildCaps()
 {
-    if (this->mesh_built)
+    if (this->caps_built)
         return;
 
-    this->tile_vertices.clear();
-    this->tiles.clear();
+    this->cap_vertices.clear();
+    this->cap_tiles.clear();
+    buildPolarCap(true);
+    buildPolarCap(false);
+    this->caps_built = true;
+    this->cap_vertex_upload_pending = true;
+}
 
-    const int tile_span = 1 << GlobeImageryZoom;
-    for (int tile_y = 0; tile_y < tile_span; ++tile_y)
+void MapRhiGlobeRenderer::rebuildWindow(
+    int zoom, int x_min, int x_max, int y_min, int y_max, int tile_span)
+{
+    const int clamped_y_min = qBound(0, y_min, tile_span - 1);
+    const int clamped_y_max = qBound(0, y_max, tile_span - 1);
+    const int subdivisions = subdivisionsForZoom(zoom);
+
+    this->window_vertices.clear();
+    this->window_tiles.clear();
+
+    // At low zoom (small tile_span) the requested window, expanded by
+    // radius + retention margin, can wrap around the whole planet more
+    // than once in X; dedupe by (wrapped_x, y) so that just produces a few
+    // redundant loop iterations rather than duplicate geometry.
+    QSet<quint64> seen_positions;
+    for (int x = x_min; x <= x_max; ++x)
     {
-        for (int tile_x = 0; tile_x < tile_span; ++tile_x)
+        const int wrapped_x = GeoWebMercator::wrapTileX(x, zoom);
+        for (int y = clamped_y_min; y <= clamped_y_max; ++y)
         {
+            const quint64 position_key =
+                (quint64(quint32(wrapped_x)) << 32) | quint64(quint32(y));
+            if (seen_positions.contains(position_key))
+                continue;
+            seen_positions.insert(position_key);
+
             GlobeTile tile;
-            tile.tile_x = tile_x;
-            tile.tile_y = tile_y;
-            tile.zoom = GlobeImageryZoom;
-            tile.first_vertex = this->tile_vertices.size();
+            tile.tile_x = wrapped_x;
+            tile.tile_y = y;
+            tile.zoom = zoom;
+            tile.imagery_key = this->map_model->tileCacheKeyAtZoom(wrapped_x, y, zoom);
+            tile.first_vertex = this->window_vertices.size();
 
-            for (int row = 0; row < GlobeTileGridSubdivisions; ++row)
+            for (int row = 0; row < subdivisions; ++row)
             {
-                const double v0 = double(row) / double(GlobeTileGridSubdivisions);
-                const double v1 = double(row + 1) / double(GlobeTileGridSubdivisions);
-                const double lat0 = GeoWebMercator::tileYToLat(tile_y + v0, GlobeImageryZoom);
-                const double lat1 = GeoWebMercator::tileYToLat(tile_y + v1, GlobeImageryZoom);
+                const double v0 = double(row) / double(subdivisions);
+                const double v1 = double(row + 1) / double(subdivisions);
+                const double lat0 = GeoWebMercator::tileYToLat(y + v0, zoom);
+                const double lat1 = GeoWebMercator::tileYToLat(y + v1, zoom);
 
-                for (int col = 0; col < GlobeTileGridSubdivisions; ++col)
+                for (int col = 0; col < subdivisions; ++col)
                 {
-                    const double u0 = double(col) / double(GlobeTileGridSubdivisions);
-                    const double u1 = double(col + 1) / double(GlobeTileGridSubdivisions);
-                    const double lon0 = GeoWebMercator::tileXToLon(tile_x + u0, GlobeImageryZoom);
-                    const double lon1 = GeoWebMercator::tileXToLon(tile_x + u1, GlobeImageryZoom);
+                    const double u0 = double(col) / double(subdivisions);
+                    const double u1 = double(col + 1) / double(subdivisions);
+                    const double lon0 = GeoWebMercator::tileXToLon(x + u0, zoom);
+                    const double lon1 = GeoWebMercator::tileXToLon(x + u1, zoom);
 
                     const TileVertex p00 = makeTileVertex(lon0, lat0, float(u0), float(v0));
                     const TileVertex p10 = makeTileVertex(lon1, lat0, float(u1), float(v0));
                     const TileVertex p01 = makeTileVertex(lon0, lat1, float(u0), float(v1));
                     const TileVertex p11 = makeTileVertex(lon1, lat1, float(u1), float(v1));
 
-                    this->tile_vertices.append(p00);
-                    this->tile_vertices.append(p01);
-                    this->tile_vertices.append(p10);
-                    this->tile_vertices.append(p10);
-                    this->tile_vertices.append(p01);
-                    this->tile_vertices.append(p11);
+                    this->window_vertices.append(p00);
+                    this->window_vertices.append(p01);
+                    this->window_vertices.append(p10);
+                    this->window_vertices.append(p10);
+                    this->window_vertices.append(p01);
+                    this->window_vertices.append(p11);
                 }
             }
 
-            tile.vertex_count = this->tile_vertices.size() - tile.first_vertex;
-            this->tiles.append(tile);
+            tile.vertex_count = this->window_vertices.size() - tile.first_vertex;
+            this->window_tiles.append(tile);
         }
     }
 
-    buildPolarCap(true);
-    buildPolarCap(false);
+    this->window_zoom = zoom;
+    this->window_tile_x_min = x_min;
+    this->window_tile_x_max = x_max;
+    this->window_tile_y_min = clamped_y_min;
+    this->window_tile_y_max = clamped_y_max;
+    this->window_dirty = false;
+    this->window_tiles_requested = false;
+    this->window_vertex_upload_pending = true;
 
-    this->mesh_built = true;
-    this->tile_vertex_upload_pending = true;
+    pruneUnusedTileResources();
+}
+
+void MapRhiGlobeRenderer::pruneUnusedTileResources()
+{
+    QSet<QString> keys_in_use;
+    keys_in_use.reserve(this->window_tiles.size());
+    for (const GlobeTile &tile : this->window_tiles)
+    {
+        if (!tile.imagery_key.isEmpty())
+            keys_in_use.insert(tile.imagery_key);
+    }
+
+    for (auto it = this->tile_resources.begin(); it != this->tile_resources.end();)
+    {
+        if (keys_in_use.contains(it->first))
+            ++it;
+        else
+            it = this->tile_resources.erase(it);
+    }
 }
 
 bool MapRhiGlobeRenderer::rebuildTileBindings(TileResource *resource)
@@ -249,17 +378,12 @@ bool MapRhiGlobeRenderer::ensureTileResource(
 
 void MapRhiGlobeRenderer::requestMissingTiles(QRhiResourceUpdateBatch *resource_updates)
 {
-    if (this->tile_repository != nullptr && !this->tiles_requested)
+    if (this->tile_repository != nullptr && !this->window_tiles_requested)
     {
         const quint64 batch = this->tile_repository->beginTileRequestBatch(
             this, QStringLiteral("globe"));
-        for (GlobeTile &tile : this->tiles)
+        for (const GlobeTile &tile : this->window_tiles)
         {
-            if (tile.is_cap)
-                continue;
-
-            tile.imagery_key = this->map_model->tileCacheKeyAtZoom(
-                tile.tile_x, tile.tile_y, tile.zoom);
             if (this->tile_repository->tile(tile.imagery_key) != nullptr)
                 continue;
 
@@ -267,10 +391,12 @@ void MapRhiGlobeRenderer::requestMissingTiles(QRhiResourceUpdateBatch *resource_
                 this->map_model->tileEndpointAtZoom(tile.tile_x, tile.tile_y, tile.zoom),
                 tile.imagery_key, tile.tile_x, tile.tile_y, 0, batch, true);
         }
-        this->tiles_requested = true;
+        this->window_tiles_requested = true;
     }
 
-    for (GlobeTile &tile : this->tiles)
+    for (GlobeTile &tile : this->window_tiles)
+        ensureTileResource(tile, resource_updates);
+    for (GlobeTile &tile : this->cap_tiles)
         ensureTileResource(tile, resource_updates);
 }
 
@@ -374,7 +500,7 @@ bool MapRhiGlobeRenderer::initialize(
     this->render_pass_descriptor = render_pass_descriptor_instance;
     this->sample_count = sample_count_value;
 
-    buildMesh();
+    buildCaps();
     return ensureSharedResources();
 }
 
@@ -382,29 +508,85 @@ bool MapRhiGlobeRenderer::prepare(
     QRhiResourceUpdateBatch *resource_updates, const QMatrix4x4 &view_projection,
     const QSize &viewport_size)
 {
-    Q_UNUSED(viewport_size);
-
-    if (this->rhi == nullptr || resource_updates == nullptr)
+    if (this->rhi == nullptr || resource_updates == nullptr || this->map_model == nullptr)
         return false;
     if (!ensureSharedResources())
         return false;
 
-    if (this->tile_vertex_upload_pending && !this->tile_vertices.isEmpty())
+    const double distance_m = qMax(1.0, this->map_model->viewGlobeDistanceM());
+    const double continuous_zoom_level = MapModel::viewGlobeZoomLevelForDistanceM(
+        distance_m, this->map_model->centerLat(),
+        viewport_size.isValid()
+            ? viewport_size.height() : MapModel::GlobeZoomReferenceViewportHeightPx);
+    const int desired_zoom = computeDesiredZoom(continuous_zoom_level, this->window_zoom);
+    const int tile_span = 1 << desired_zoom;
+    const int foreground_radius = foregroundTileRadius(distance_m, desired_zoom);
+    const int center_tile_x = int(std::floor(
+        GeoWebMercator::lonToTileX(this->map_model->centerLon(), desired_zoom)));
+    const int center_tile_y = qBound(0, int(std::floor(
+        GeoWebMercator::latToTileY(this->map_model->centerLat(), desired_zoom))), tile_span - 1);
+
+    const int foreground_x_min = center_tile_x - foreground_radius;
+    const int foreground_x_max = center_tile_x + foreground_radius;
+    const int foreground_y_min = qMax(0, center_tile_y - foreground_radius);
+    const int foreground_y_max = qMin(tile_span - 1, center_tile_y + foreground_radius);
+
+    // Mirrors MapRhiBasemapRenderer's currentLayoutCoversForeground() short
+    // circuit: only rebuild the window (new mesh, new tile requests) when
+    // the zoom level changed or the foreground has moved outside the
+    // already-built (foreground + retention margin) window, not on every
+    // frame a pan/orbit is in progress.
+    const bool window_covers_foreground =
+        !this->window_dirty
+        && this->window_zoom == desired_zoom
+        && foreground_x_min >= this->window_tile_x_min
+        && foreground_x_max <= this->window_tile_x_max
+        && foreground_y_min >= this->window_tile_y_min
+        && foreground_y_max <= this->window_tile_y_max;
+
+    if (!window_covers_foreground)
+    {
+        rebuildWindow(
+            desired_zoom,
+            foreground_x_min - GlobeWindowRetentionMarginTiles,
+            foreground_x_max + GlobeWindowRetentionMarginTiles,
+            foreground_y_min - GlobeWindowRetentionMarginTiles,
+            foreground_y_max + GlobeWindowRetentionMarginTiles,
+            tile_span);
+    }
+
+    if (this->window_vertex_upload_pending && !this->window_vertices.isEmpty())
     {
         const int required_bytes =
-            int(this->tile_vertices.size() * qsizetype(sizeof(TileVertex)));
-        if (!this->tile_vertex_buffer || this->tile_vertex_buffer_size != required_bytes)
+            int(this->window_vertices.size() * qsizetype(sizeof(TileVertex)));
+        if (!this->window_vertex_buffer || this->window_vertex_buffer_size != required_bytes)
         {
-            this->tile_vertex_buffer.reset(this->rhi->newBuffer(
+            this->window_vertex_buffer.reset(this->rhi->newBuffer(
                 QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_bytes));
-            if (!this->tile_vertex_buffer || !this->tile_vertex_buffer->create())
+            if (!this->window_vertex_buffer || !this->window_vertex_buffer->create())
                 return false;
-            this->tile_vertex_buffer_size = required_bytes;
+            this->window_vertex_buffer_size = required_bytes;
         }
         resource_updates->updateDynamicBuffer(
-            this->tile_vertex_buffer.get(), 0, required_bytes,
-            this->tile_vertices.constData());
-        this->tile_vertex_upload_pending = false;
+            this->window_vertex_buffer.get(), 0, required_bytes,
+            this->window_vertices.constData());
+        this->window_vertex_upload_pending = false;
+    }
+
+    if (this->cap_vertex_upload_pending && !this->cap_vertices.isEmpty())
+    {
+        const int required_bytes =
+            int(this->cap_vertices.size() * qsizetype(sizeof(TileVertex)));
+        if (!this->cap_vertex_buffer)
+        {
+            this->cap_vertex_buffer.reset(this->rhi->newBuffer(
+                QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_bytes));
+            if (!this->cap_vertex_buffer || !this->cap_vertex_buffer->create())
+                return false;
+        }
+        resource_updates->updateDynamicBuffer(
+            this->cap_vertex_buffer.get(), 0, required_bytes, this->cap_vertices.constData());
+        this->cap_vertex_upload_pending = false;
     }
 
     requestMissingTiles(resource_updates);
@@ -419,20 +601,41 @@ bool MapRhiGlobeRenderer::prepare(
 
 void MapRhiGlobeRenderer::draw(QRhiCommandBuffer *command_buffer)
 {
-    if (command_buffer == nullptr || !this->tile_vertex_buffer || !this->pipeline)
+    if (command_buffer == nullptr || !this->pipeline)
         return;
 
     command_buffer->setGraphicsPipeline(this->pipeline.get());
-    for (const GlobeTile &tile : this->tiles)
-    {
-        if (tile.resource == nullptr || !tile.resource->bindings || tile.vertex_count <= 0)
-            continue;
 
-        command_buffer->setShaderResources(tile.resource->bindings.get());
-        const quint32 byte_offset = quint32(tile.first_vertex * int(sizeof(TileVertex)));
-        const QRhiCommandBuffer::VertexInput binding(this->tile_vertex_buffer.get(), byte_offset);
-        command_buffer->setVertexInput(0, 1, &binding);
-        command_buffer->draw(quint32(tile.vertex_count));
+    if (this->window_vertex_buffer)
+    {
+        for (const GlobeTile &tile : this->window_tiles)
+        {
+            if (tile.resource == nullptr || !tile.resource->bindings || tile.vertex_count <= 0)
+                continue;
+
+            command_buffer->setShaderResources(tile.resource->bindings.get());
+            const quint32 byte_offset = quint32(tile.first_vertex * int(sizeof(TileVertex)));
+            const QRhiCommandBuffer::VertexInput binding(
+                this->window_vertex_buffer.get(), byte_offset);
+            command_buffer->setVertexInput(0, 1, &binding);
+            command_buffer->draw(quint32(tile.vertex_count));
+        }
+    }
+
+    if (this->cap_vertex_buffer)
+    {
+        for (const GlobeTile &tile : this->cap_tiles)
+        {
+            if (tile.resource == nullptr || !tile.resource->bindings || tile.vertex_count <= 0)
+                continue;
+
+            command_buffer->setShaderResources(tile.resource->bindings.get());
+            const quint32 byte_offset = quint32(tile.first_vertex * int(sizeof(TileVertex)));
+            const QRhiCommandBuffer::VertexInput binding(
+                this->cap_vertex_buffer.get(), byte_offset);
+            command_buffer->setVertexInput(0, 1, &binding);
+            command_buffer->draw(quint32(tile.vertex_count));
+        }
     }
 }
 
@@ -440,12 +643,11 @@ void MapRhiGlobeRenderer::invalidateImagery()
 {
     this->tile_resources.clear();
     this->cap_resource = TileResource();
-    for (GlobeTile &tile : this->tiles)
-    {
-        tile.imagery_key.clear();
+    for (GlobeTile &tile : this->window_tiles)
         tile.resource = nullptr;
-    }
-    this->tiles_requested = false;
+    for (GlobeTile &tile : this->cap_tiles)
+        tile.resource = nullptr;
+    this->window_tiles_requested = false;
 }
 
 void MapRhiGlobeRenderer::releaseResources()
@@ -455,8 +657,16 @@ void MapRhiGlobeRenderer::releaseResources()
     this->dummy_texture.reset();
     this->sampler.reset();
     this->camera_uniform_buffer.reset();
-    this->tile_vertex_buffer.reset();
-    this->tile_vertex_buffer_size = 0;
-    this->tile_vertex_upload_pending = true;
+    this->window_vertex_buffer.reset();
+    this->window_vertex_buffer_size = 0;
+    this->window_vertex_upload_pending = true;
+    this->window_dirty = true;
+    this->window_zoom = -1;
+    this->window_tile_x_min = 0;
+    this->window_tile_x_max = -1;
+    this->window_tile_y_min = 0;
+    this->window_tile_y_max = -1;
+    this->cap_vertex_buffer.reset();
+    this->cap_vertex_upload_pending = true;
     invalidateImagery();
 }

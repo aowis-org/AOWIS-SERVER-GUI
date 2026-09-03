@@ -269,6 +269,7 @@ void MapWidget::init()
     connect(this->m_model, &MapModel::zoomChanged, this, [this](int zoom)
     {
         emit signalZoomChanged(zoom);
+        emit signalZoomLevelChanged(double(zoom));
 #ifdef Q_OS_WASM
         if (this->browser_map_layer_enabled)
         {
@@ -279,8 +280,16 @@ void MapWidget::init()
         update();
     });
 
+    connect(this->m_model, &MapModel::viewGlobeCameraChanged, this, [this]
+    {
+        if (this->m_model->viewMode() == MapViewMode::Globe)
+            emit signalZoomLevelChanged(this->m_model->viewGlobeZoomLevel(size()));
+    });
+
     connect(this->m_model, &MapModel::centerChangedWGS84, this, [this](CoordinateWGS84 wgs)
     {
+        if (this->m_model->viewMode() == MapViewMode::Globe)
+            emit signalZoomLevelChanged(this->m_model->viewGlobeZoomLevel(size()));
         if (this->rhi_view_active
             && this->m_model->viewMode() == MapViewMode::ThreeD
             && this->rhi_screen_coordinate_resolver)
@@ -349,6 +358,11 @@ void MapWidget::init()
             updatePointerCoordinates(
                 QPoint(width() / 2, height() / 2));
         }
+
+        if (view_mode == MapViewMode::Globe)
+            emit signalZoomLevelChanged(this->m_model->viewGlobeZoomLevel(size()));
+        else
+            emit signalZoomLevelChanged(double(this->m_model->zoom()));
     });
 
     this->tile_update_timer = new QTimer(this);
@@ -783,7 +797,8 @@ void MapWidget::updateView2dKeyboardZoom(qreal elapsed_seconds)
 bool MapWidget::hasView3dKeyboardZoomInput() const
 {
     return this->m_model != nullptr
-        && this->m_model->viewMode() == MapViewMode::ThreeD
+        && (this->m_model->viewMode() == MapViewMode::ThreeD
+            || this->m_model->viewMode() == MapViewMode::Globe)
         && (this->view_3d_zoom_in_key_pressed || this->view_3d_zoom_out_key_pressed);
 }
 
@@ -803,6 +818,16 @@ void MapWidget::updateView3dKeyboardZoom(qreal elapsed_seconds)
     double octaves_per_second = View3dKeyboardZoomOctavesPerSecond;
     if (this->pan_fast_modifier_pressed)
         octaves_per_second *= View3dKeyboardZoomFastMultiplier;
+
+    if (this->m_model->viewMode() == MapViewMode::Globe)
+    {
+        const double current_distance_m = qMax(
+            MapModel::MinViewGlobeDistanceM, this->m_model->viewGlobeDistanceM());
+        const double distance_scale = std::exp2(
+            -double(direction) * octaves_per_second * double(elapsed_seconds));
+        this->m_model->setViewGlobeDistanceM(current_distance_m * distance_scale);
+        return;
+    }
 
     const double current_distance_m = qMax(
         MapModel::MinView3dCameraDistanceM,
@@ -985,7 +1010,8 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
     const bool zoom_out = guiShortcutMatches(event, guiShortcutRegistry().shortcut(GuiShortcutId::MapZoomOut), Qt::ShiftModifier);
     if (zoom_in || zoom_out)
     {
-        if (this->m_model->viewMode() == MapViewMode::ThreeD)
+        if (this->m_model->viewMode() == MapViewMode::ThreeD
+            || this->m_model->viewMode() == MapViewMode::Globe)
         {
             if (!event->isAutoRepeat())
             {
@@ -1258,6 +1284,10 @@ void MapWidget::panMapByPixels(const QPoint &delta, bool angle_independent_3d)
             this->m_model->panByPixels3dKeyboard(delta, size());
         else
             this->m_model->panByPixels3d(delta, size());
+    }
+    else if (this->m_model->viewMode() == MapViewMode::Globe)
+    {
+        this->m_model->panByPixelsGlobe(delta, size());
     }
     else
     {

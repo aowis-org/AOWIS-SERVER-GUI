@@ -261,15 +261,29 @@ MainWindow::MainWindow(QWidget *parent)
     this->dock_entity_map_legend->setMapMonitorActive(this->main_navigation->currentWidget() == this->map_monitor);
     this->dock_map_editor_guide->setMapEditorActive(this->main_navigation->currentWidget() == this->map_editor);
     
-    connect(this->map_mon, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
+    connect(this->map_mon, &MapWidget::signalZoomLevelChanged, this->footer, &FooterStatusBar::setMapZoom);
     connect(this->map_mon, &MapWidget::signalCoordsChangedWgs84, this->footer, &FooterStatusBar::setMapCoordinatesWGS84);
     connect(this->map_mon, &MapWidget::signalCoordsChangedUTM, this->footer, &FooterStatusBar::setMapCoordinatesUTM);
     connect(this->map_mon, &MapWidget::signalCoordsUnavailable, this->footer, &FooterStatusBar::clearMapCoordinates);
     
-    connect(this->map_edit, &MapWidget::signalZoomChanged, this->footer, &FooterStatusBar::setMapZoom);
+    connect(this->map_edit, &MapWidget::signalZoomLevelChanged, this->footer, &FooterStatusBar::setMapZoom);
     connect(this->map_edit, &MapWidget::signalCoordsChangedWgs84, this->footer, &FooterStatusBar::setMapCoordinatesWGS84);
     connect(this->map_edit, &MapWidget::signalCoordsChangedUTM, this->footer, &FooterStatusBar::setMapCoordinatesUTM);
     connect(this->map_edit, &MapWidget::signalCoordsUnavailable, this->footer, &FooterStatusBar::clearMapCoordinates);
+
+    // Writes a footer zoom edit back to whichever tab is currently active
+    // (Globe only ever exists on the monitor tab, but this stays correct
+    // either way since it checks the active model's own view mode).
+    connect(this->footer, &FooterStatusBar::zoomEdited, this, [this](double zoom)
+    {
+        const bool editor_active = this->main_navigation->currentWidget() == this->map_editor;
+        MapWidget *active_widget = editor_active ? this->map_edit : this->map_mon;
+        MapModel *active_model = editor_active ? this->map_model_editor : this->map_model_monitor;
+        if (active_model->viewMode() == MapViewMode::Globe)
+            active_model->setViewGlobeZoomLevel(zoom, active_widget->size());
+        else
+            active_model->setZoom(qRound(zoom), active_widget->size());
+    });
     
     MapNavigationWidget *map_edit_nav = this->map_editor->mapNavigationWidget();
     MapNavigationWidget *map_mon_nav = this->map_monitor->mapNavigationWidget();

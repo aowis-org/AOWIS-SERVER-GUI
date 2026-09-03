@@ -197,6 +197,12 @@ private:
 
 signals:
     void signalZoomChanged(int zoom);
+    // Continuous zoom-level counterpart to signalZoomChanged() above,
+    // purely additive: fires the discrete 2D/3D zoom as a double in those
+    // modes, and the 2D-equivalent continuous zoom level (see
+    // MapModel::viewGlobeZoomLevel()) while in Globe mode, where there is
+    // no discrete zoom to report. Used by the footer's live zoom control.
+    void signalZoomLevelChanged(double zoom);
     void signalCoordsChangedWgs84(CoordinateWGS84 wgs);
     void signalCoordsChangedUTM(CoordinateUTM utm);
     void signalCoordsUnavailable();

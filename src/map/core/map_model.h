@@ -6,6 +6,7 @@
 #include <QPointF>
 #include <QSize>
 #include <QString>
+#include <QVector3D>
 
 #include "common/_enums_structs.h"
 #include "geo/geo_metric_projection.h"
@@ -43,14 +44,47 @@ public:
     // always the ordinary map center (centerLon()/centerLat()), so the globe
     // opens centered on wherever 2D/3D already is -- no separate target
     // state needed. Distance is in meters (unlike the 2D/3D fields above,
-    // which are in tile pixels/world units); defaults to roughly 3x Earth's
-    // radius so the whole planet is comfortably in view on entry.
-    static constexpr double MinViewGlobeDistanceM = 500000.0;
-    static constexpr double MaxViewGlobeDistanceM = 60000000.0;
-    static constexpr double DefaultViewGlobeDistanceM = 20000000.0;
+    // which are in tile pixels/world units).
+    //
+    // The Min/Max/Default distances below are pinned to specific 2D-
+    // equivalent zoom levels via viewGlobeDistanceMForZoomLevel() (see
+    // that function for the exact formula, which mirrors
+    // MapRhiCamera::nativeOrbitDistanceWorld()'s zoom<->distance
+    // relationship for ThreeD, just derived directly in meters since Globe
+    // has no "world units" scene) -- using a reference viewport height of
+    // GlobeZoomReferenceViewportHeightPx and latitude 0 (equator). Actual
+    // interactive display/editing (the footer zoom control, wheel/keyboard
+    // zoom) uses the live viewport height and current latitude instead, so
+    // this reference only sets where the outer clamps sit, not the
+    // reported zoom level.
+    //   MinViewGlobeDistanceM  == viewGlobeDistanceMForZoomLevel(MaxZoom, 0, 1000)
+    //     ~360 m -- matches 2D's own maximum zoom (19), i.e. as close/
+    //     detailed as 2D ever gets.
+    //   MaxViewGlobeDistanceM  == viewGlobeDistanceMForZoomLevel(GlobeMinZoomLevel, 0, 1000)
+    //     ~11.81 Mm -- deliberately NOT 2D's own minimum zoom (1): zoom 1
+    //     shows the entire planet compressed into a couple of tiles, which
+    //     on a globe camera means the sphere shrinks to a small fraction of
+    //     the viewport (all but unusable). GlobeMinZoomLevel is chosen so
+    //     the globe still fills most of the view when fully zoomed out.
+    static constexpr int GlobeZoomReferenceViewportHeightPx = 1000;
+    static constexpr double GlobeMinZoomLevel = 4.0;
+    static constexpr double GlobeFieldOfViewDeg = 45.0;
+    static constexpr double MinViewGlobeDistanceM = 360.42;
+    static constexpr double MaxViewGlobeDistanceM = 11810260.0;
+    static constexpr double DefaultViewGlobeDistanceM = MaxViewGlobeDistanceM;
     static constexpr double MinViewGlobePitchDeg = 5.0;
     static constexpr double MaxViewGlobePitchDeg = 90.0;
-    static constexpr double DefaultViewGlobePitchDeg = 55.0;
+    // Straight down (90 degrees) rather than an oblique angle: looking
+    // directly along the local "up" axis at the target is the only pitch
+    // that geometrically guarantees the ellipsoid renders as a symmetric
+    // disc centered exactly on the crosshair on entry, regardless of
+    // viewing distance or FOV. An oblique default pitch makes the visible
+    // near/far horizon asymmetric around the target -- the target point
+    // itself still projects to dead center (the camera math guarantees
+    // that at any pitch), but the sphere's visible silhouette skews to one
+    // side of it, which reads as "the globe isn't centered". Middle-drag
+    // still tilts away from this if a person wants the oblique look.
+    static constexpr double DefaultViewGlobePitchDeg = 90.0;
     static constexpr double ViewGlobeOrbitYawDegreesPerPixel = 0.2;
     static constexpr double ViewGlobeOrbitPitchDegreesPerPixel = 0.2;
 
@@ -59,6 +93,25 @@ public:
     double view2dContinuousZoom() const;
     double centerLon() const;
     double centerLat() const;
+
+    // The globe camera distance (meters, looking straight down) that shows
+    // the same vertical ground resolution as MapViewMode::TwoD would at
+    // the given (continuous) zoom level, for the given viewport height and
+    // latitude. Derived from the exact same relationship
+    // MapRhiCamera::nativeOrbitDistanceWorld() establishes for ThreeD
+    // (a camera distance such that a viewport-height's worth of vertical
+    // extent, at GlobeFieldOfViewDeg vertical FOV, matches the given zoom
+    // level's meters-per-pixel) -- reduced algebraically to remove the
+    // "world units"/reference-zoom indirection ThreeD needs (Globe works
+    // directly in real meters, so that indirection is unnecessary here):
+    //   metersPerPixel(lat, zoom) = circumference * cos(lat) / (TileSize * 2^zoom)
+    //   distance_m = viewport_height_px * metersPerPixel(lat, zoom) / (2 * tan(FOV/2))
+    static double viewGlobeDistanceMForZoomLevel(
+        double zoom_level, double latitude_deg, int viewport_height_px);
+    // Inverse of the above: the continuous 2D-equivalent zoom level whose
+    // ground resolution matches the given globe camera distance.
+    static double viewGlobeZoomLevelForDistanceM(
+        double distance_m, double latitude_deg, int viewport_height_px);
 
     MapProvider provider() const;
     MapViewMode viewMode() const;
@@ -76,6 +129,11 @@ public:
     double viewGlobeYawDeg() const;
     double viewGlobePitchDeg() const;
     double viewGlobeDistanceM() const;
+    // Continuous, 2D-equivalent zoom level for the globe's current camera
+    // distance and center latitude, using the live viewport height --
+    // see viewGlobeZoomLevelForDistanceM() for the exact relationship.
+    // This is what the footer zoom control displays while in Globe mode.
+    double viewGlobeZoomLevel(const QSize &viewport) const;
     QString tileCacheKey(int x, int y) const;
     QString tileCachePrefix(int zoom) const;
     QString tileEndpoint(int x, int y) const;
@@ -112,6 +170,7 @@ public:
     void panByPixels(const QPoint &delta, const QSize &viewport);
     void panByPixels3d(const QPoint &delta, const QSize &viewport);
     void panByPixels3dKeyboard(const QPoint &delta, const QSize &viewport);
+    void panByPixelsGlobe(const QPoint &delta, const QSize &viewport);
 
     void setProvider(MapProvider provider);
     void setViewMode(MapViewMode view_mode);
@@ -137,8 +196,26 @@ public:
     void setViewGlobeYawDeg(double yaw_deg);
     void setViewGlobePitchDeg(double pitch_deg);
     void setViewGlobeDistanceM(double distance_m);
+    // Sets distance from a 2D-equivalent zoom level via
+    // viewGlobeDistanceMForZoomLevel(), using the current center latitude
+    // and the given (live) viewport height. Used by the footer zoom
+    // control's edit path.
+    void setViewGlobeZoomLevel(double zoom_level, const QSize &viewport);
     void orbitViewGlobe(double yaw_delta_deg, double pitch_delta_deg);
     void orbitViewGlobeByPointerDelta(const QPoint &delta_pixels, bool include_pitch);
+    // Marble/Google-Earth style "grab and drag": ray-casts previous_screen_position
+    // and new_screen_position against the WGS84 ellipsoid (using the *current*,
+    // not-yet-updated camera for both, so a single drag step is a single
+    // consistent rotation) and rotates the globe so the ground point that was
+    // under previous_screen_position ends up under new_screen_position. A no-op,
+    // rather than a jump, if either ray misses the globe (e.g. dragging past the
+    // horizon).
+    void panGlobeByPointerDrag(const QPoint &previous_screen_position,
+                               const QPoint &new_screen_position, const QSize &viewport);
+    // Returns the geodetic coordinate under screen_position, or false if that
+    // screen ray does not hit the ellipsoid.
+    bool globeCoordinateAtScreen(const QPoint &screen_position, const QSize &viewport,
+                                 CoordinateWGS84 *coordinate) const;
 
 signals:
     void zoomChanged(int zoom);
@@ -157,6 +234,8 @@ private:
     void emitCenterChanged();
     QPointF groundOffsetFromScreen3d(const QPointF &position, const QSize &viewport) const;
     QPointF screenFromTileOffset3d(const QPointF &offset_pixels, const QSize &viewport) const;
+    bool globeScreenRay(const QPoint &screen_position, const QSize &viewport,
+                        QVector3D *eye, QVector3D *direction) const;
     QString providerPath() const;
 
     int m_zoom = 18;

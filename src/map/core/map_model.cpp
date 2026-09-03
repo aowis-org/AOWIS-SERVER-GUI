@@ -2,11 +2,13 @@
 
 #include "map/render/map_render_cache_math.h"
 #include "config/gui_configuration.h"
+#include "geo/geo_wgs84_ellipsoid.h"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 
+#include <QQuaternion>
 #include <QVector3D>
 #include <QtMath>
 
@@ -188,6 +190,41 @@ double MapModel::viewGlobePitchDeg() const
 double MapModel::viewGlobeDistanceM() const
 {
     return this->m_view_globe_distance_m;
+}
+
+double MapModel::viewGlobeDistanceMForZoomLevel(
+    double zoom_level, double latitude_deg, int viewport_height_px)
+{
+    const double latitude_clamped = qBound(
+        -GeoWebMercator::MaximumLatitude, latitude_deg, GeoWebMercator::MaximumLatitude);
+    const double circumference_m = 2.0 * M_PI * GeoWgs84Ellipsoid::EquatorialRadiusM;
+    const double meters_per_pixel = circumference_m * std::cos(qDegreesToRadians(latitude_clamped))
+        / (double(TileSize) * std::exp2(zoom_level));
+    const double tan_half_fov = std::tan(qDegreesToRadians(GlobeFieldOfViewDeg / 2.0));
+    const double safe_viewport_height = double(qMax(1, viewport_height_px));
+    return safe_viewport_height * meters_per_pixel / (2.0 * tan_half_fov);
+}
+
+double MapModel::viewGlobeZoomLevelForDistanceM(
+    double distance_m, double latitude_deg, int viewport_height_px)
+{
+    const double latitude_clamped = qBound(
+        -GeoWebMercator::MaximumLatitude, latitude_deg, GeoWebMercator::MaximumLatitude);
+    const double circumference_m = 2.0 * M_PI * GeoWgs84Ellipsoid::EquatorialRadiusM;
+    const double tan_half_fov = std::tan(qDegreesToRadians(GlobeFieldOfViewDeg / 2.0));
+    const double safe_viewport_height = double(qMax(1, viewport_height_px));
+    const double meters_per_pixel_target =
+        qMax(1.0, distance_m) * 2.0 * tan_half_fov / safe_viewport_height;
+    return std::log2(
+        circumference_m * std::cos(qDegreesToRadians(latitude_clamped))
+        / (double(TileSize) * meters_per_pixel_target));
+}
+
+double MapModel::viewGlobeZoomLevel(const QSize &viewport) const
+{
+    return viewGlobeZoomLevelForDistanceM(
+        this->m_view_globe_distance_m, this->m_centerLat,
+        viewport.isValid() ? viewport.height() : GlobeZoomReferenceViewportHeightPx);
 }
 
 int MapModel::tileCount() const
@@ -594,6 +631,125 @@ void MapModel::panByPixels3dKeyboard(const QPoint &delta, const QSize &viewport)
         GeoWebMercator::tileXToLon(center.x(), this->m_zoom),
         GeoWebMercator::tileYToLat(center.y(), this->m_zoom),
         viewport);
+}
+
+bool MapModel::globeScreenRay(
+    const QPoint &screen_position, const QSize &viewport,
+    QVector3D *eye, QVector3D *direction) const
+{
+    if (eye == nullptr || direction == nullptr || !viewport.isValid())
+        return false;
+
+    const int viewport_width = qMax(1, viewport.width());
+    const int viewport_height = qMax(1, viewport.height());
+    const double pitch_deg = qBound(
+        MinViewGlobePitchDeg, this->m_view_globe_pitch_deg, MaxViewGlobePitchDeg);
+    const double distance_m = qMax(MinViewGlobeDistanceM, this->m_view_globe_distance_m);
+    const GeoWgs84Ellipsoid::OrbitCameraBasis basis = GeoWgs84Ellipsoid::orbitCameraBasis(
+        this->m_centerLon, this->m_centerLat,
+        this->m_view_globe_yaw_deg, pitch_deg, distance_m);
+
+    // Same FOV as MapRhiCamera::globeViewProjectionMatrix() -- this has to
+    // stay in lockstep with the GPU projection for the ray to correspond to
+    // the pixel the person is actually looking at.
+    constexpr double FieldOfViewDeg = GlobeFieldOfViewDeg;
+    const double aspect = double(viewport_width) / double(viewport_height);
+    const double tan_half_fov = std::tan(qDegreesToRadians(FieldOfViewDeg / 2.0));
+    const double ndc_x = 2.0 * screen_position.x() / double(viewport_width) - 1.0;
+    const double ndc_y = 1.0 - 2.0 * screen_position.y() / double(viewport_height);
+
+    QVector3D ray_direction = basis.forward
+        + basis.right * float(ndc_x * tan_half_fov * aspect)
+        + basis.up * float(ndc_y * tan_half_fov);
+    if (ray_direction.lengthSquared() <= 1e-12f)
+        return false;
+
+    ray_direction.normalize();
+    *eye = basis.eye;
+    *direction = ray_direction;
+    return true;
+}
+
+bool MapModel::globeCoordinateAtScreen(
+    const QPoint &screen_position, const QSize &viewport, CoordinateWGS84 *coordinate) const
+{
+    if (coordinate == nullptr)
+        return false;
+
+    QVector3D eye;
+    QVector3D direction;
+    if (!globeScreenRay(screen_position, viewport, &eye, &direction))
+        return false;
+
+    QVector3D intersection;
+    if (!GeoWgs84Ellipsoid::rayIntersection(eye, direction, &intersection))
+        return false;
+
+    double lon_deg = 0.0;
+    double lat_deg = 0.0;
+    if (!GeoWgs84Ellipsoid::ecefToGeodetic(intersection, &lon_deg, &lat_deg))
+        return false;
+
+    coordinate->longitude_deg = lon_deg;
+    coordinate->latitude_deg = lat_deg;
+    return true;
+}
+
+void MapModel::panGlobeByPointerDrag(
+    const QPoint &previous_screen_position, const QPoint &new_screen_position,
+    const QSize &viewport)
+{
+    if (previous_screen_position == new_screen_position)
+        return;
+
+    QVector3D eye;
+    QVector3D direction;
+    if (!globeScreenRay(previous_screen_position, viewport, &eye, &direction))
+        return;
+    QVector3D previous_point;
+    if (!GeoWgs84Ellipsoid::rayIntersection(eye, direction, &previous_point))
+        return;
+
+    if (!globeScreenRay(new_screen_position, viewport, &eye, &direction))
+        return;
+    QVector3D new_point;
+    if (!GeoWgs84Ellipsoid::rayIntersection(eye, direction, &new_point))
+        return;
+
+    const QVector3D target_ecef =
+        GeoWgs84Ellipsoid::geodeticToEcef(this->m_centerLon, this->m_centerLat, 0.0);
+
+    // Rotating the camera's target by the rotation that maps "new_point"
+    // back onto "previous_point" is equivalent to rotating the globe itself
+    // by the rotation that maps "previous_point" onto "new_point" -- i.e.
+    // the ground point the user grabbed follows the cursor, the classic
+    // Marble/Google Earth "drag to pan" feel. QQuaternion::rotationTo()
+    // finds that rotation directly from the two (unit) directions.
+    const QQuaternion rotation = QQuaternion::rotationTo(
+        new_point.normalized(), previous_point.normalized());
+    const QVector3D rotated_target = rotation.rotatedVector(target_ecef);
+
+    double lon_deg = 0.0;
+    double lat_deg = 0.0;
+    if (!GeoWgs84Ellipsoid::ecefToGeodetic(rotated_target, &lon_deg, &lat_deg))
+        return;
+
+    setCenter(lon_deg, lat_deg, viewport);
+}
+
+void MapModel::panByPixelsGlobe(const QPoint &delta, const QSize &viewport)
+{
+    if (delta.isNull() || !viewport.isValid())
+        return;
+
+    // Same "grab the point at screen center and drag it by delta pixels"
+    // shape as panByPixels3d() above, just via the ellipsoid ray-cast
+    // instead of the flat-plane ground offset. The screen center is always
+    // a safe ray to cast -- the camera's forward vector is, by
+    // construction, aimed exactly at the current target, which is always a
+    // point on the ellipsoid.
+    const QPoint viewport_center(viewport.width() / 2, viewport.height() / 2);
+    panGlobeByPointerDrag(viewport_center - delta, viewport_center, viewport);
 }
 
 void MapModel::clampCenter(const QSize &viewport)
@@ -1013,6 +1169,17 @@ void MapModel::setViewGlobeDistanceM(double distance_m)
 
     this->m_view_globe_distance_m = next_distance;
     emit viewGlobeCameraChanged();
+}
+
+void MapModel::setViewGlobeZoomLevel(double zoom_level, const QSize &viewport)
+{
+    if (!std::isfinite(zoom_level))
+        return;
+
+    const double distance_m = viewGlobeDistanceMForZoomLevel(
+        zoom_level, this->m_centerLat,
+        viewport.isValid() ? viewport.height() : GlobeZoomReferenceViewportHeightPx);
+    setViewGlobeDistanceM(distance_m);
 }
 
 void MapModel::orbitViewGlobe(double yaw_delta_deg, double pitch_delta_deg)

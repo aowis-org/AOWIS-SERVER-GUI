@@ -24,16 +24,25 @@ class QRhiTexture;
 
 // Renders planet Earth as a WGS84 ellipsoid for the "Globe" map view mode.
 //
-// This is intentionally much simpler than MapRhiBasemapRenderer: the globe
-// is a whole-planet overview, not a navigable close-up surface, so there is
-// no LOD streaming, no terrain relief, and no network entity rendering here
-// (yet) -- just a fixed, low zoom level tile grid of basemap imagery draped
-// over the ellipsoid, plus simple flat-colored polar caps covering the area
-// above/below Web Mercator's +-85.05 degree limit that basemap tiles don't
-// reach. The imagery zoom level is intentionally decoupled from the 2D/3D
-// zoom (see MapModel::tileCacheKeyAtZoom()/tileEndpointAtZoom()): panning
-// into a close 2D/3D zoom should not also fetch dozens of high zoom globe
-// tiles, and the globe's own zoom has no reason to track it.
+// This mirrors MapRhiBasemapRenderer's own architecture rather than
+// reinventing one: a single dynamic imagery zoom level (picked from camera
+// distance, playing the same role MapModel::zoom() plays for 2D/3D), a tile
+// window covering the visible area plus a retention margin so ordinary
+// panning does not immediately fall outside it, and a "does the current
+// window still cover what's needed" dirty check so the mesh/tile requests
+// are only rebuilt when the window actually needs to move or the zoom level
+// changes -- not every frame. There is no terrain relief or network entity
+// rendering on the globe yet, and (unlike the flat renderer) no per-tile
+// view-frustum culling: the tile window is already bounded by a horizon
+// based visible-radius estimate, which is enough at whole-globe scale.
+//
+// Two independent pieces of geometry:
+//  - "window" tiles: the dynamic, zoom/pan-dependent basemap imagery grid
+//    described above.
+//  - "cap" tiles: a small, fixed pair of flat-colored polar fans covering
+//    the area above/below Web Mercator's +-85.05 degree limit, which no
+//    imagery tile at any zoom will ever cover. Built once and never
+//    rebuilt; entirely unrelated to the LOD system above.
 class MapRhiGlobeRenderer
 {
 public:
@@ -48,18 +57,19 @@ public:
     bool initialize(QRhi *rhi, QRhiRenderPassDescriptor *render_pass_descriptor,
                     int sample_count);
 
-    // Uploads any pending geometry/camera data and requests any imagery
-    // tiles that are not yet cached. Must be called before draw() each
-    // frame, inside the same resource-update batch that beginPass() below
-    // will consume.
+    // Recomputes the visible tile window (rebuilding it only if the zoom
+    // level or window actually needs to change), uploads any pending
+    // geometry/camera data, and requests any imagery tiles that are not yet
+    // cached. Must be called before draw() each frame, inside the same
+    // resource-update batch that beginPass() below will consume.
     bool prepare(QRhiResourceUpdateBatch *resource_updates,
                 const QMatrix4x4 &view_projection, const QSize &viewport_size);
     void draw(QRhiCommandBuffer *command_buffer);
 
-    // Drops all cached tile textures/bindings so the next prepare() call
-    // re-requests and re-uploads them, without rebuilding the (static)
-    // ellipsoid mesh itself. Used when the imagery provider changes, since
-    // the tile keys/endpoints already requested are for the old provider.
+    // Drops all cached tile textures/bindings and forces the window to be
+    // rebuilt from scratch on the next prepare() call. Used when the
+    // imagery provider changes, since the tile keys/endpoints already
+    // requested are for the old provider.
     void invalidateImagery();
 
     // Releases all GPU resources; call before the RHI instance itself goes
@@ -97,8 +107,10 @@ private:
         TileResource *resource = nullptr;
     };
 
-    void buildMesh();
+    void buildCaps();
     void buildPolarCap(bool north);
+    void rebuildWindow(int zoom, int x_min, int x_max, int y_min, int y_max, int tile_span);
+    void pruneUnusedTileResources();
     static TileVertex makeTileVertex(double lon_deg, double lat_deg, float u, float v);
     bool ensureSharedResources();
     bool rebuildTileBindings(TileResource *resource);
@@ -111,14 +123,27 @@ private:
     QRhiRenderPassDescriptor *render_pass_descriptor = nullptr;
     int sample_count = 1;
 
-    QVector<TileVertex> tile_vertices;
-    QVector<GlobeTile> tiles;
-    bool mesh_built = false;
-    bool tiles_requested = false;
-    bool tile_vertex_upload_pending = true;
+    // Dynamic imagery window (see class comment above).
+    QVector<TileVertex> window_vertices;
+    QVector<GlobeTile> window_tiles;
+    int window_zoom = -1; // -1 == not yet built
+    int window_tile_x_min = 0;
+    int window_tile_x_max = -1;
+    int window_tile_y_min = 0;
+    int window_tile_y_max = -1;
+    bool window_dirty = true;
+    bool window_tiles_requested = false;
+    bool window_vertex_upload_pending = false;
+    std::unique_ptr<QRhiBuffer> window_vertex_buffer;
+    int window_vertex_buffer_size = 0;
 
-    std::unique_ptr<QRhiBuffer> tile_vertex_buffer;
-    int tile_vertex_buffer_size = 0;
+    // Static polar caps (see class comment above).
+    QVector<TileVertex> cap_vertices;
+    QVector<GlobeTile> cap_tiles;
+    bool caps_built = false;
+    bool cap_vertex_upload_pending = true;
+    std::unique_ptr<QRhiBuffer> cap_vertex_buffer;
+
     std::unique_ptr<QRhiBuffer> camera_uniform_buffer;
     std::unique_ptr<QRhiSampler> sampler;
     std::unique_ptr<QRhiTexture> dummy_texture;
