@@ -324,8 +324,6 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
         markUndergroundGeometryDirty();
         this->heatmap_upload_pending = true;
         syncBasemapHeatmapOverlay();
-        if (this->basemap_renderer)
-            this->basemap_renderer->invalidate();
         update();
     });
     connect(this->map_model, &MapModel::view2dContinuousScaleChanged,
