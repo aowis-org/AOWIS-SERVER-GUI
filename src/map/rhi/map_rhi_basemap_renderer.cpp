@@ -1132,32 +1132,67 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
                 return true;
             next_tiles = progressive_tiles;
         }
+        else if (!same_lod)
+        {
+            // A direct zoom-level transition goes through the retained
+            // parent/child handoff so old imagery stays visible until each
+            // replacement region is ready. A rapid multi-level jump or a
+            // direction reversal can temporarily leave a mixed layout that
+            // has no direct parent/child relation to the requested zoom; that
+            // case must retain the old layout only until the new foreground is
+            // ready, then recover by installing the requested layout instead
+            // of getting stuck forever.
+            const QVector<VisibleTile> progressive_tiles = progressiveZoomLayout(
+                next_tiles, imagery_zoom, relief_enabled);
+            if (!progressive_tiles.isEmpty())
+            {
+                next_tiles = progressive_tiles;
+            }
+            else
+            {
+                bool direct_zoom_handoff = true;
+                bool has_parent_source = false;
+                bool has_child_source = false;
+                for (const VisibleTile &tile : this->visible_tiles)
+                {
+                    if (tile.imagery_zoom == imagery_zoom)
+                        continue;
+                    if (tile.imagery_zoom == imagery_zoom - 1)
+                        has_parent_source = true;
+                    else if (tile.imagery_zoom == imagery_zoom + 1)
+                        has_child_source = true;
+                    else
+                    {
+                        direct_zoom_handoff = false;
+                        break;
+                    }
+                }
+                if (has_parent_source && has_child_source)
+                    direct_zoom_handoff = false;
+
+                if (direct_zoom_handoff)
+                    return true;
+
+                for (const VisibleTile &tile : next_tiles)
+                {
+                    if (!tile.foreground)
+                        continue;
+                    if (!tileReadyForZoomHandoff(tile, relief_enabled))
+                        return true;
+                }
+            }
+        }
         else
         {
-            bool foreground_ready = true;
+            // Same-provider, same-LOD pan/recenter: keep the retained layout
+            // until the complete foreground is ready, as before. Unlike a zoom
+            // transition there is no parent/child geometry to promote.
             for (const VisibleTile &tile : next_tiles)
             {
                 if (!tile.foreground)
                     continue;
                 if (!tileReadyForZoomHandoff(tile, relief_enabled))
-                {
-                    foreground_ready = false;
-                    break;
-                }
-            }
-
-            if (!foreground_ready)
-            {
-                const QVector<VisibleTile> progressive_tiles = progressiveZoomLayout(
-                    next_tiles, imagery_zoom, relief_enabled);
-                if (progressive_tiles.isEmpty())
-                {
-                    // Same-provider, same-LOD pan/recenter, unsupported multi-level
-                    // zoom jump, or no replaceable zoom group yet: keep drawing
-                    // the retained layer.
                     return true;
-                }
-                next_tiles = progressive_tiles;
             }
         }
     }
@@ -1372,7 +1407,9 @@ bool MapRhiBasemapRenderer::tileReadyForZoomHandoff(
     if (pixmap == nullptr || pixmap->isNull())
         return false;
 
-    if (relief_enabled && !tile.terrain_key.isEmpty())
+    const bool terrain_required = tile.foreground
+        || tile.terrain_cell_count > TerrainBackgroundRequestMinimumLodCellCount;
+    if (relief_enabled && terrain_required && !tile.terrain_key.isEmpty())
     {
         if (this->terrain_repository == nullptr
             || this->terrain_repository->tile(tile.terrain_key) == nullptr)
@@ -1493,6 +1530,17 @@ QVector<MapRhiBasemapRenderer::VisibleTile> MapRhiBasemapRenderer::progressiveZo
         appended_targets.reserve(target_tiles.size());
         result.reserve(this->visible_tiles.size() + 16);
         bool changed = false;
+        bool target_foreground_ready = true;
+        for (const VisibleTile &tile : target_tiles)
+        {
+            if (!tile.foreground)
+                continue;
+            if (!tileReadyForZoomHandoff(tile, relief_enabled))
+            {
+                target_foreground_ready = false;
+                break;
+            }
+        }
 
         // Keep child groups that were already promoted by an earlier frame.
         for (const VisibleTile &tile : this->visible_tiles)
@@ -1518,7 +1566,6 @@ QVector<MapRhiBasemapRenderer::VisibleTile> MapRhiBasemapRenderer::progressiveZo
             current_parents.insert(tilePositionKey(parent.virtual_x, parent.y), index);
 
             qsizetype child_indices[4] = {-1, -1, -1, -1};
-            bool complete_child_group = true;
             bool replacement_ready = true;
             bool replacement_foreground = false;
             int replacement_terrain_cell_count = 0;
@@ -1533,12 +1580,7 @@ QVector<MapRhiBasemapRenderer::VisibleTile> MapRhiBasemapRenderer::progressiveZo
                     const quint64 child_key = tilePositionKey(virtual_x, y);
                     const QHash<quint64, qsizetype>::const_iterator target_iterator =
                         target_by_position.constFind(child_key);
-                    if (target_iterator == target_by_position.cend())
-                    {
-                        complete_child_group = false;
-                        replacement_ready = false;
-                    }
-                    else
+                    if (target_iterator != target_by_position.cend())
                     {
                         has_target_child = true;
                         child_indices[child_index] = target_iterator.value();
@@ -1554,10 +1596,12 @@ QVector<MapRhiBasemapRenderer::VisibleTile> MapRhiBasemapRenderer::progressiveZo
                 }
             }
 
-            if (complete_child_group && replacement_ready)
+            if (has_target_child && replacement_ready)
             {
                 for (int index_in_group = 0; index_in_group < 4; ++index_in_group)
                 {
+                    if (child_indices[index_in_group] < 0)
+                        continue;
                     const VisibleTile &child = target_tiles.at(child_indices[index_in_group]);
                     const quint64 child_key = tilePositionKey(child.virtual_x, child.y);
                     if (appended_targets.contains(child_key))
@@ -1571,7 +1615,15 @@ QVector<MapRhiBasemapRenderer::VisibleTile> MapRhiBasemapRenderer::progressiveZo
 
             if (!has_target_child)
             {
-                changed = true;
+                // The target apron can become smaller in world space when the
+                // XYZ level increases. Do not let that fact alone strip the old
+                // outer coverage at the start of the transition: retain it
+                // until the new foreground is complete, then it is safe to
+                // discard because it lies outside the requested target apron.
+                if (!target_foreground_ready)
+                    result.append(parent);
+                else
+                    changed = true;
                 continue;
             }
 
