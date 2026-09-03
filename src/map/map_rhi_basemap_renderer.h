@@ -52,6 +52,14 @@ public:
         float z = 0.0f;
         float u = 0.0f;
         float v = 0.0f;
+        // Texture-array layer index for the batched array rendering path
+        // (see "Texture-array batching" below). 0 is the "not assigned yet"
+        // sentinel the array fragment shader discards on and is never a
+        // real layer index (see the reservation comment in
+        // createTileArrayResources), so this is the layer index as-is, with
+        // no offset applied on either the upload or the sampling side.
+        // Unused by, and harmless to, the single-texture pipeline.
+        float layer = 0.0f;
     };
 
     struct WireframeVertex
@@ -93,6 +101,9 @@ private:
         qint64 pixmap_cache_key = 0;
         quint64 heatmap_revision = 0;
         quint64 last_used_serial = 0;
+        // Layer this tile occupies in tile_array_texture for the batched
+        // rendering path, or -1 if it has none assigned.
+        int array_layer = -1;
     };
 
     struct VisibleTile
@@ -109,6 +120,12 @@ private:
         bool foreground = false;
         int terrain_cell_count = 0;
         TileResource *resource = nullptr;
+        // Per-tile, per-frame: true when this tile currently has a valid,
+        // up-to-date array layer, so draw() knows to skip it in the
+        // per-tile fill-in pass (the array pass above already drew it).
+        // Deliberately excluded from operator== below, same as resource --
+        // it's transient render state, not part of a tile's identity.
+        bool array_ready = false;
 
         bool operator==(const VisibleTile &other) const
         {
@@ -124,7 +141,7 @@ private:
         }
     };
 
-    struct PendingMeshResultUploadRange
+    struct PendingVertexPatchRange
     {
         int first_vertex = 0;
         int vertex_count = 0;
@@ -156,13 +173,19 @@ private:
                              const QPointF &origin_world) const;
     void terrainElevationWorldZCoefficients(float *offset, float *scale) const;
     void applyReadyTerrainMeshResultsToMemory();
-    void uploadPendingTerrainMeshResultRanges(QRhiResourceUpdateBatch *resource_updates);
+    void uploadPendingVertexPatchRanges(QRhiResourceUpdateBatch *resource_updates);
+    bool arrayBatchingActive() const;
+    bool createTileArrayResources();
+    bool ensureTileArrayLayer(const VisibleTile &tile, TileResource **resource,
+                              QRhiResourceUpdateBatch *resource_updates);
+    void stampTileArrayLayerIfNeeded(VisibleTile &tile, const TileResource *resource);
     QImage renderHeatmapTile(const VisibleTile &tile) const;
     void rebuildHeatmapMarkerBuckets();
     QVector<int> heatmapMarkerCandidates(double tile_left, double tile_top,
                                          double tile_right, double tile_bottom,
                                          double radius_world) const;
     void pruneTextureCache();
+    void resetVertexArrayLayerForKey(const QString &imagery_key, int stale_layer);
     void rebuildWireframeVertices();
     bool uploadWireframeVertices(QRhiResourceUpdateBatch *resource_updates);
     void appendFlatTileVertices(QVector<TileVertex> *target, VisibleTile *tile,
@@ -190,6 +213,20 @@ private:
     std::unique_ptr<QRhiShaderResourceBindings> wireframe_bindings;
     std::unique_ptr<QRhiGraphicsPipeline> pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> wireframe_pipeline;
+
+    // Texture-array batching (used when arrayBatchingActive() is true, i.e.
+    // no basemap heatmap overlay is active -- see arrayBatchingActive()):
+    // every visible tile's imagery is uploaded into one shared texture array
+    // layer instead of its own dedicated QRhiTexture, so the entire apron
+    // can be drawn with a single setShaderResources()+draw() pair instead of
+    // one pair per tile. Falls back to the per-tile pipeline/bindings above
+    // when a heatmap overlay is active, since that path blends a second,
+    // per-tile-dynamic texture the array shader does not support.
+    std::unique_ptr<QRhiTexture> tile_array_texture;
+    std::unique_ptr<QRhiShaderResourceBindings> array_bindings;
+    std::unique_ptr<QRhiGraphicsPipeline> array_pipeline;
+    QVector<int> free_array_layers;
+
     int vertex_buffer_size = 0;
     int wireframe_vertex_buffer_size = 0;
     bool vertex_upload_pending = true;
@@ -218,7 +255,7 @@ private:
     // state, so it is not touched by releaseResources()/RHI context resets.
     std::unique_ptr<MapRhiTerrainMeshScheduler> mesh_scheduler;
     quint64 next_mesh_request_id = 1;
-    QVector<PendingMeshResultUploadRange> pending_mesh_result_upload_ranges;
+    QVector<PendingVertexPatchRange> pending_vertex_patch_ranges;
 };
 
 #endif // MAP_RHI_BASEMAP_RENDERER_H

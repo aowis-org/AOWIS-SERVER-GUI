@@ -46,6 +46,11 @@ constexpr qint64 MinimumTerrainLodRebuildIntervalMs = 120;
 // terrain-mesh scheduler instead of inline; see the comment at its use site
 // in rebuildVisibleTiles for why the threshold sits here.
 constexpr int AsyncTerrainMeshMinimumCellCount = 16;
+// Capacity of the shared texture array used to batch basemap tile draw
+// calls (see arrayBatchingActive()). 256 layers at 256x256 RGBA8 is ~64 MB
+// at full occupancy -- comfortable headroom over what the frustum-culled,
+// LRU-capped working set (MaximumCachedGpuTiles) actually needs at once.
+constexpr int TileArrayLayerCount = 256;
 
 quint64 heatmapMarkerBucketKey(int bucket_x, int bucket_y)
 {
@@ -331,11 +336,16 @@ void MapRhiBasemapRenderer::releaseResources()
     this->sampler.reset();
     this->vertex_buffer.reset();
     this->wireframe_vertex_buffer.reset();
+    this->tile_array_texture.reset();
+    this->array_bindings.reset();
+    this->array_pipeline.reset();
+    this->free_array_layers.clear();
     this->tile_resources.clear();
     this->visible_tiles.clear();
     this->vertices.clear();
     this->wireframe_vertices.clear();
     this->dirty_terrain_keys.clear();
+    this->pending_vertex_patch_ranges.clear();
     this->layout_origin_world = QPointF();
     this->vertex_buffer_size = 0;
     this->wireframe_vertex_buffer_size = 0;
@@ -411,6 +421,16 @@ bool MapRhiBasemapRenderer::prepare(
 
         ++this->usage_serial;
         const bool three_d = this->map_model->viewMode() == MapViewMode::ThreeD;
+        // arrayBatchingActive() says the array-batched draw pass is
+        // possible right now (no heatmap overlay, array resources exist).
+        // It is issued unconditionally below whenever true -- individual
+        // tiles that aren't array-ready yet simply carry the layer-0
+        // sentinel and are discarded per-fragment (see
+        // map_rhi_basemap_array.frag), so the array pass naturally draws
+        // whichever tiles it can. draw()'s per-tile pass then fills in only
+        // the tiles this loop marks !array_ready, so nothing waits on the
+        // whole apron being ready at once.
+        const bool array_batching_supported = arrayBatchingActive();
         for (VisibleTile &tile : this->visible_tiles)
         {
             // The 3D apron is deliberately over-provisioned for horizon
@@ -424,22 +444,52 @@ bool MapRhiBasemapRenderer::prepare(
             if (three_d && !isTileInViewFrustum(tile, viewport_size, origin_world))
             {
                 tile.resource = nullptr;
+                tile.array_ready = false;
                 continue;
             }
 
+            // Per-tile texture loading is unconditional: this is the
+            // always-correct baseline that was smooth before array batching
+            // existed, and it stays the source of truth for what CAN be
+            // drawn. The array layer below is populated in parallel,
+            // opportunistically; draw() uses whichever of the two a given
+            // tile actually has ready.
             TileResource *resource = nullptr;
             if (!ensureTileResource(tile, &resource, resource_updates))
                 return false;
             tile.resource = resource;
             if (resource != nullptr)
                 resource->last_used_serial = this->usage_serial;
+
+            tile.array_ready = false;
+            if (array_batching_supported)
+            {
+                TileResource *array_resource = nullptr;
+                if (!ensureTileArrayLayer(tile, &array_resource, resource_updates))
+                    return false;
+                stampTileArrayLayerIfNeeded(tile, array_resource);
+                tile.array_ready = array_resource != nullptr
+                    && array_resource->array_layer >= 0;
+            }
         }
     }
     else
     {
         for (VisibleTile &tile : this->visible_tiles)
+        {
             tile.resource = nullptr;
+            tile.array_ready = false;
+        }
     }
+
+    // Evict (and, per resetVertexArrayLayerForKey, invalidate any stale
+    // vertex references to) over-budget cached tile resources before
+    // deciding below whether this frame does a full vertex-buffer upload or
+    // a set of targeted patches -- either way must include any reset this
+    // step just queued, or a tile whose layer was just freed and reassigned
+    // could keep showing the wrong content for another frame.
+    if (map_draw_enabled)
+        pruneTextureCache();
 
     if (this->vertex_upload_pending && !this->vertices.isEmpty())
     {
@@ -464,7 +514,7 @@ bool MapRhiBasemapRenderer::prepare(
         // The full upload above already covers this->vertices in its
         // entirety, including anything applyReadyTerrainMeshResultsToMemory()
         // just merged in, so any queued targeted patch is now redundant.
-        this->pending_mesh_result_upload_ranges.clear();
+        this->pending_vertex_patch_ranges.clear();
     }
     else if (!updateDirtyTerrainTiles(resource_updates))
     {
@@ -472,7 +522,7 @@ bool MapRhiBasemapRenderer::prepare(
     }
     else
     {
-        uploadPendingTerrainMeshResultRanges(resource_updates);
+        uploadPendingVertexPatchRanges(resource_updates);
     }
 
     if (this->map_model->viewMode() == MapViewMode::ThreeD
@@ -482,8 +532,6 @@ bool MapRhiBasemapRenderer::prepare(
         return false;
     }
 
-    if (map_draw_enabled)
-        pruneTextureCache();
     return true;
 }
 
@@ -494,21 +542,61 @@ void MapRhiBasemapRenderer::draw(QRhiCommandBuffer *command_buffer)
 
     const bool three_d = this->map_model != nullptr
         && this->map_model->viewMode() == MapViewMode::ThreeD;
-    if ((!three_d || this->map_visible) && this->pipeline)
+    if (!three_d || this->map_visible)
     {
-        command_buffer->setGraphicsPipeline(this->pipeline.get());
-        for (const VisibleTile &tile : this->visible_tiles)
+        // arrayBatchingActive() says the array pass below is possible (no
+        // heatmap overlay, array resources exist) -- not that every tile is
+        // in it. It's issued unconditionally whenever possible: tiles
+        // without a valid, up-to-date array layer carry the layer-0
+        // sentinel and are discarded per-fragment by
+        // map_rhi_basemap_array.frag, so this one call draws whichever
+        // tiles are actually ready and simply contributes nothing for the
+        // rest -- it never waits for the whole apron.
+        const bool use_array = arrayBatchingActive();
+        if (use_array)
         {
-            if (tile.resource == nullptr || !tile.resource->bindings)
-                continue;
+            // One draw call for however much of the retained apron
+            // currently has a valid array layer: every tile's quad/relief
+            // mesh carries its own texture-array layer index per vertex
+            // (TileVertex::layer), so tiles sharing this pass need no
+            // per-tile setShaderResources()+draw() pair at all. This is the
+            // whole point of the texture array -- turning what used to be
+            // one draw call per visible tile (hundreds to a couple thousand
+            // in a typical 3D view) into exactly one for whatever fraction
+            // of them is currently ready.
+            command_buffer->setGraphicsPipeline(this->array_pipeline.get());
+            command_buffer->setShaderResources(this->array_bindings.get());
+            const QRhiCommandBuffer::VertexInput array_binding(
+                this->vertex_buffer.get(), 0);
+            command_buffer->setVertexInput(0, 1, &array_binding);
+            command_buffer->draw(quint32(this->vertices.size()));
+        }
 
-            command_buffer->setShaderResources(tile.resource->bindings.get());
-            const quint32 byte_offset = quint32(
-                tile.first_vertex * int(sizeof(TileVertex)));
-            const QRhiCommandBuffer::VertexInput binding(
-                this->vertex_buffer.get(), byte_offset);
-            command_buffer->setVertexInput(0, 1, &binding);
-            command_buffer->draw(quint32(tile.vertex_count));
+        if (this->pipeline)
+        {
+            // Fill in whatever the array pass above didn't cover: tiles
+            // with per-tile image data available but not (yet, or -- when
+            // a heatmap overlay is active -- ever, this session) drawn by
+            // the array pass. In the common steady-state case this is empty
+            // or tiny; it only grows during active loading or a view
+            // transition, and only for the specific tiles still catching
+            // up, never the whole apron.
+            command_buffer->setGraphicsPipeline(this->pipeline.get());
+            for (const VisibleTile &tile : this->visible_tiles)
+            {
+                if (tile.resource == nullptr || !tile.resource->bindings)
+                    continue;
+                if (use_array && tile.array_ready)
+                    continue;
+
+                command_buffer->setShaderResources(tile.resource->bindings.get());
+                const quint32 byte_offset = quint32(
+                    tile.first_vertex * int(sizeof(TileVertex)));
+                const QRhiCommandBuffer::VertexInput binding(
+                    this->vertex_buffer.get(), byte_offset);
+                command_buffer->setVertexInput(0, 1, &binding);
+                command_buffer->draw(quint32(tile.vertex_count));
+            }
         }
     }
 
@@ -661,6 +749,113 @@ bool MapRhiBasemapRenderer::createSharedResources()
         this->wireframe_pipeline->setDepthWrite(false);
         this->wireframe_pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
         if (!this->wireframe_pipeline->create())
+            return false;
+    }
+
+    // Array-batched rendering is a perf optimization on top of the always-
+    // available per-tile path above, not a requirement, so its failure (or
+    // the backend simply not supporting texture arrays) must not fail
+    // resource creation as a whole -- draw()/prepare() already fall back to
+    // the per-tile path whenever tile_array_texture/array_pipeline/
+    // array_bindings aren't all present.
+    createTileArrayResources();
+
+    return true;
+}
+
+bool MapRhiBasemapRenderer::createTileArrayResources()
+{
+    if (this->rhi == nullptr || this->render_pass_descriptor == nullptr
+        || this->camera_uniform_buffer == nullptr || !this->sampler)
+    {
+        return false;
+    }
+
+    if (!this->tile_array_texture)
+    {
+        if (!this->rhi->isFeatureSupported(QRhi::TextureArrays))
+            return false;
+
+        this->tile_array_texture.reset(this->rhi->newTextureArray(
+            QRhiTexture::RGBA8, TileArrayLayerCount,
+            QSize(MapModel::TileSize, MapModel::TileSize)));
+        if (!this->tile_array_texture || !this->tile_array_texture->create())
+        {
+            this->tile_array_texture.reset();
+            return false;
+        }
+
+        // Layer 0 is deliberately never handed out below: the array
+        // fragment shader (map_rhi_basemap_array.frag) uses the vertex
+        // "layer" attribute directly as the sampler2DArray layer coordinate
+        // -- there is no subtract-one step, it only tests the value against
+        // 0.5 to decide whether to discard. So the "not assigned yet"
+        // sentinel (TileVertex::layer's default of 0.0f) has to correspond
+        // to a layer index that is never actually uploaded to, rather than
+        // being offset from the real array index; array_layer is used as
+        // the vertex value as-is (see stampTileArrayLayerIfNeeded).
+        this->free_array_layers.clear();
+        this->free_array_layers.reserve(TileArrayLayerCount - 1);
+        for (int layer = TileArrayLayerCount - 1; layer >= 1; --layer)
+            this->free_array_layers.append(layer);
+    }
+
+    if (!this->array_bindings)
+    {
+        this->array_bindings.reset(this->rhi->newShaderResourceBindings());
+        if (!this->array_bindings)
+            return false;
+        this->array_bindings->setBindings({
+            QRhiShaderResourceBinding::uniformBuffer(
+                0, QRhiShaderResourceBinding::VertexStage
+                    | QRhiShaderResourceBinding::FragmentStage,
+                this->camera_uniform_buffer),
+            QRhiShaderResourceBinding::sampledTexture(
+                1, QRhiShaderResourceBinding::FragmentStage,
+                this->tile_array_texture.get(), this->sampler.get())
+        });
+        if (!this->array_bindings->create())
+            return false;
+    }
+
+    if (!this->array_pipeline)
+    {
+        const QShader vertex_shader = loadBasemapShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_basemap_array.vert.qsb"));
+        const QShader fragment_shader = loadBasemapShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_basemap_array.frag.qsb"));
+        if (!vertex_shader.isValid() || !fragment_shader.isValid())
+            return false;
+
+        QRhiVertexInputLayout input_layout;
+        input_layout.setBindings({
+            {quint32(sizeof(TileVertex))}
+        });
+        input_layout.setAttributes({
+            {0, 0, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(TileVertex, x))},
+            {0, 1, QRhiVertexInputAttribute::Float2,
+             quint32(offsetof(TileVertex, u))},
+            {0, 2, QRhiVertexInputAttribute::Float,
+             quint32(offsetof(TileVertex, layer))}
+        });
+
+        this->array_pipeline.reset(this->rhi->newGraphicsPipeline());
+        if (!this->array_pipeline)
+            return false;
+        this->array_pipeline->setShaderStages({
+            {QRhiShaderStage::Vertex, vertex_shader},
+            {QRhiShaderStage::Fragment, fragment_shader}
+        });
+        this->array_pipeline->setVertexInputLayout(input_layout);
+        this->array_pipeline->setShaderResourceBindings(this->array_bindings.get());
+        this->array_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
+        this->array_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+        this->array_pipeline->setSampleCount(this->sample_count);
+        this->array_pipeline->setDepthTest(true);
+        this->array_pipeline->setDepthWrite(true);
+        this->array_pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
+        if (!this->array_pipeline->create())
             return false;
     }
 
@@ -1766,10 +1961,10 @@ void MapRhiBasemapRenderer::applyReadyTerrainMeshResultsToMemory()
                     TileVertex{vertex.x, vertex.y, vertex.z, vertex.u, vertex.v};
             }
 
-            PendingMeshResultUploadRange range;
+            PendingVertexPatchRange range;
             range.first_vertex = int(first_vertex);
             range.vertex_count = int(result.vertices.size());
-            this->pending_mesh_result_upload_ranges.append(range);
+            this->pending_vertex_patch_ranges.append(range);
             this->wireframe_vertex_upload_pending = true;
             // virtual_x/y uniquely identify a tile within the apron, so at
             // most one entry can ever match.
@@ -1778,10 +1973,10 @@ void MapRhiBasemapRenderer::applyReadyTerrainMeshResultsToMemory()
     }
 }
 
-void MapRhiBasemapRenderer::uploadPendingTerrainMeshResultRanges(
+void MapRhiBasemapRenderer::uploadPendingVertexPatchRanges(
     QRhiResourceUpdateBatch *resource_updates)
 {
-    if (this->pending_mesh_result_upload_ranges.isEmpty())
+    if (this->pending_vertex_patch_ranges.isEmpty())
         return;
 
     // Safe to issue targeted, in-place buffer updates here: this is only
@@ -1790,7 +1985,7 @@ void MapRhiBasemapRenderer::uploadPendingTerrainMeshResultRanges(
     // current size and layout are guaranteed to already match this->vertices.
     if (resource_updates != nullptr && this->vertex_buffer)
     {
-        for (const PendingMeshResultUploadRange &range : this->pending_mesh_result_upload_ranges)
+        for (const PendingVertexPatchRange &range : this->pending_vertex_patch_ranges)
         {
             const int byte_offset = int(qsizetype(range.first_vertex) * qsizetype(sizeof(TileVertex)));
             const int byte_count = boundedBufferSize(range.vertex_count, qsizetype(sizeof(TileVertex)));
@@ -1803,7 +1998,7 @@ void MapRhiBasemapRenderer::uploadPendingTerrainMeshResultRanges(
         }
     }
 
-    this->pending_mesh_result_upload_ranges.clear();
+    this->pending_vertex_patch_ranges.clear();
 }
 
 bool MapRhiBasemapRenderer::ensureTileResource(
@@ -1867,6 +2062,152 @@ bool MapRhiBasemapRenderer::ensureTileResource(
 
     *resource = tile_resource;
     return true;
+}
+
+bool MapRhiBasemapRenderer::arrayBatchingActive() const
+{
+    // This says the array-batched pass is POSSIBLE and gets issued this
+    // frame -- not that every tile ends up in it (see draw()'s use of
+    // VisibleTile::array_ready for the per-tile part of that). Heatmap
+    // overlay tiles blend a second, per-tile-dynamic texture that the array
+    // shader (map_rhi_basemap_array.frag) does not sample, so the batched
+    // pass is only ever considered while no heatmap overlay is showing.
+    // This is a global, not per-tile, condition: heatmapMarkers is only
+    // ever non-empty while the overlay is actually active (see
+    // MapRhiWidget::syncBasemapHeatmapOverlay), matching how
+    // ensureTileResource's per-tile heatmap texture already behaves as a
+    // no-op (transparent dummy texture) whenever it's empty.
+    return this->heatmap_markers.isEmpty()
+        && this->tile_array_texture && this->array_pipeline && this->array_bindings;
+}
+
+bool MapRhiBasemapRenderer::ensureTileArrayLayer(
+    const VisibleTile &tile, TileResource **resource,
+    QRhiResourceUpdateBatch *resource_updates)
+{
+    if (resource == nullptr || !this->tile_array_texture)
+        return false;
+    *resource = nullptr;
+
+    const QString &key = tile.imagery_key;
+    std::map<QString, std::unique_ptr<TileResource>>::iterator iterator =
+        this->tile_resources.find(key);
+
+    const QPixmap *pixmap = this->tile_repository != nullptr
+        ? this->tile_repository->tile(key)
+        : nullptr;
+    if (pixmap == nullptr || pixmap->isNull())
+    {
+        // No image yet: if this tile already has a layer from an earlier
+        // frame, keep showing it rather than losing the resource.
+        if (iterator != this->tile_resources.end() && iterator->second->array_layer >= 0)
+            *resource = iterator->second.get();
+        return true;
+    }
+
+    if (iterator == this->tile_resources.end())
+    {
+        std::unique_ptr<TileResource> created = std::make_unique<TileResource>();
+        std::pair<std::map<QString, std::unique_ptr<TileResource>>::iterator, bool> inserted =
+            this->tile_resources.emplace(key, std::move(created));
+        iterator = inserted.first;
+    }
+
+    TileResource *tile_resource = iterator->second.get();
+    const qint64 cache_key = pixmap->cacheKey();
+    if (tile_resource->array_layer < 0 || tile_resource->pixmap_cache_key != cache_key)
+    {
+        if (tile_resource->array_layer < 0)
+        {
+            if (this->free_array_layers.isEmpty())
+            {
+                // Every layer is in use. This tile simply doesn't render via
+                // the batched path until one frees up (its vertices keep the
+                // "not assigned" sentinel, see TileVertex::layer) -- the
+                // frustum culling and LRU eviction above already keep the
+                // working set well under TileArrayLayerCount in practice, so
+                // this is expected to be rare.
+                return true;
+            }
+            tile_resource->array_layer = this->free_array_layers.takeLast();
+        }
+
+        if (resource_updates == nullptr)
+            return false;
+
+        QImage image = pixmap->toImage().convertToFormat(QImage::Format_RGBA8888);
+        if (image.isNull())
+        {
+            *resource = tile_resource;
+            return true;
+        }
+
+        // Real-world XYZ tile providers are essentially always exactly
+        // MapModel::TileSize square, but nothing in the fetch/decode
+        // pipeline enforces that (map_tile_repository.cpp just decodes
+        // whatever bytes the provider returned). Every layer in the shared
+        // array has the same fixed pixel size, so guard against a provider
+        // that happens to return a different resolution (e.g. an @2x tile)
+        // rather than risk an out-of-bounds or corrupted upload -- this is a
+        // no-op in the expected, overwhelmingly common case where the size
+        // already matches.
+        const QSize array_layer_size(MapModel::TileSize, MapModel::TileSize);
+        if (image.size() != array_layer_size)
+        {
+            image = image.scaled(
+                array_layer_size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        }
+        if (image.isNull())
+        {
+            *resource = tile_resource;
+            return true;
+        }
+
+        const QRhiTextureSubresourceUploadDescription subresource(image);
+        const QRhiTextureUploadEntry entry(tile_resource->array_layer, 0, subresource);
+        resource_updates->uploadTexture(
+            this->tile_array_texture.get(), QRhiTextureUploadDescription(entry));
+        tile_resource->pixmap_cache_key = cache_key;
+    }
+
+    *resource = tile_resource;
+    return true;
+}
+
+void MapRhiBasemapRenderer::stampTileArrayLayerIfNeeded(
+    VisibleTile &tile, const TileResource *resource)
+{
+    if (resource == nullptr || resource->array_layer < 0)
+        return;
+    if (tile.vertex_count <= 0 || tile.first_vertex < 0
+        || qsizetype(tile.first_vertex) + tile.vertex_count > this->vertices.size())
+    {
+        return;
+    }
+
+    // Array-layer indices are small non-negative integers, exactly
+    // representable in float, so a direct comparison is safe and avoids a
+    // pointless per-tile buffer patch (and GPU upload) once a tile's
+    // vertices already carry the layer they're assigned. Mismatches happen
+    // rarely: the tile's mesh was just (re)built (layer defaults to the 0
+    // "unassigned" sentinel), or its layer was just reassigned after
+    // eviction.
+    //
+    // No +1 here: array_layer is already never 0 (see the reservation
+    // comment in createTileArrayResources), and the array shader samples
+    // this value directly as the array layer with no offset of its own, so
+    // upload index and sample index have to be the exact same number.
+    const float expected_layer = float(resource->array_layer);
+    if (this->vertices.at(tile.first_vertex).layer == expected_layer)
+        return;
+
+    for (int index = 0; index < tile.vertex_count; ++index)
+        this->vertices[tile.first_vertex + index].layer = expected_layer;
+
+    PendingVertexPatchRange range;
+    range.first_vertex = tile.first_vertex;
+    range.vertex_count = tile.vertex_count;
+    this->pending_vertex_patch_ranges.append(range);
 }
 
 bool MapRhiBasemapRenderer::ensureHeatmapTexture(
@@ -2085,7 +2426,51 @@ void MapRhiBasemapRenderer::pruneTextureCache()
 
         if (oldest == this->tile_resources.end())
             break;
+        if (oldest->second->array_layer >= 0)
+        {
+            // The layer being freed here is about to be handed to a
+            // different tile and re-uploaded with different content. If
+            // this tile's own vertex range still bakes in that same layer
+            // index -- which it will, until it happens to be reprocessed by
+            // ensureTileArrayLayer()/stampTileArrayLayerIfNeeded() again --
+            // it would keep sampling whatever the layer now holds, i.e. the
+            // wrong tile's imagery, until then. Reset it to the "not
+            // assigned" sentinel now so that window shows as not-yet-loaded
+            // instead of as the wrong tile.
+            resetVertexArrayLayerForKey(oldest->first, oldest->second->array_layer);
+            this->free_array_layers.append(oldest->second->array_layer);
+            oldest->second->array_layer = -1;
+        }
         this->tile_resources.erase(oldest);
+    }
+}
+
+void MapRhiBasemapRenderer::resetVertexArrayLayerForKey(
+    const QString &imagery_key, int stale_layer)
+{
+    const float stale_layer_value = float(stale_layer);
+    for (VisibleTile &tile : this->visible_tiles)
+    {
+        if (tile.imagery_key != imagery_key)
+            continue;
+        if (tile.vertex_count <= 0 || tile.first_vertex < 0
+            || qsizetype(tile.first_vertex) + tile.vertex_count > this->vertices.size())
+        {
+            continue;
+        }
+        // Only reset if the vertex data still actually points at the layer
+        // being freed -- it may already have been re-stamped to something
+        // else this frame, in which case there is nothing stale to fix.
+        if (this->vertices.at(tile.first_vertex).layer != stale_layer_value)
+            continue;
+
+        for (int index = 0; index < tile.vertex_count; ++index)
+            this->vertices[tile.first_vertex + index].layer = 0.0f;
+
+        PendingVertexPatchRange range;
+        range.first_vertex = tile.first_vertex;
+        range.vertex_count = tile.vertex_count;
+        this->pending_vertex_patch_ranges.append(range);
     }
 }
 

@@ -264,6 +264,8 @@ if(AOWIS_HAS_QRHI)
                 src/map/shaders/map_rhi_icon.frag
                 src/map/shaders/map_rhi_basemap.vert
                 src/map/shaders/map_rhi_basemap.frag
+                src/map/shaders/map_rhi_basemap_array.vert
+                src/map/shaders/map_rhi_basemap_array.frag
                 src/map/shaders/map_rhi_wireframe.vert
                 src/map/shaders/map_rhi_wireframe.frag
                 src/map/shaders/map_rhi_heatmap.vert
@@ -290,6 +292,8 @@ if(AOWIS_HAS_QRHI)
                 src/map/shaders/map_rhi_icon.frag
                 src/map/shaders/map_rhi_basemap.vert
                 src/map/shaders/map_rhi_basemap.frag
+                src/map/shaders/map_rhi_basemap_array.vert
+                src/map/shaders/map_rhi_basemap_array.frag
                 src/map/shaders/map_rhi_wireframe.vert
                 src/map/shaders/map_rhi_wireframe.frag
                 src/map/shaders/map_rhi_heatmap.vert
