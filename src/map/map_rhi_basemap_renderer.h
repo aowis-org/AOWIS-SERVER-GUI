@@ -2,6 +2,7 @@
 #define MAP_RHI_BASEMAP_RENDERER_H
 
 #include <QColor>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QPointF>
 #include <QSet>
@@ -181,6 +182,7 @@ private:
     bool wireframe_vertex_upload_pending = true;
     bool dummy_texture_upload_pending = true;
     bool layout_dirty = true;
+    QElapsedTimer terrain_lod_rebuild_clock;
     quint64 usage_serial = 0;
     bool wireframe_visible = false;
     bool map_visible = true;

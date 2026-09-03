@@ -32,6 +32,13 @@ constexpr int TerrainBackgroundRequestMinimumLodCellCount = 4;
 constexpr double TerrainTargetCellSizePixels = 32.0;
 constexpr int HeatmapTextureSize = 256;
 constexpr double HeatmapMarkerBucketWorldSize = 16384.0;
+// A LOD-only terrain rebuild resamples the DEM for, and re-uploads, the
+// entire retained tile apron. During continuous 3D camera motion (orbit
+// drag, wheel zoom) the desired mesh density for some tile in the apron
+// changes on nearly every input frame, so this rebuild is rate-limited
+// instead of being allowed to run at input/vsync frequency. Imagery panning
+// keeps using its own, already tile-grid-bounded gate and is unaffected.
+constexpr qint64 MinimumTerrainLodRebuildIntervalMs = 120;
 
 quint64 heatmapMarkerBucketKey(int bucket_x, int bucket_y)
 {
@@ -311,6 +318,7 @@ void MapRhiBasemapRenderer::releaseResources()
     this->wireframe_vertex_upload_pending = true;
     this->dummy_texture_upload_pending = true;
     this->layout_dirty = true;
+    this->terrain_lod_rebuild_clock.invalidate();
     this->rhi = nullptr;
     this->render_pass_descriptor = nullptr;
     this->camera_uniform_buffer = nullptr;
@@ -673,8 +681,23 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
             imagery_zoom, foreground_start_x, foreground_start_y,
             foreground_tiles_x, foreground_tiles_y, tile_count,
             imagery_key_prefix);
-    const bool terrain_lod_matches =
+    bool terrain_lod_matches =
         !relief_enabled || currentTerrainLodMatches(viewport_size);
+
+    // See MinimumTerrainLodRebuildIntervalMs above: without this gate, a
+    // mismatch here forced a full DEM resample of the whole apron on
+    // essentially every frame while the 3D camera was being manipulated,
+    // which was the dominant cost behind poor 3D frame times. Defer the
+    // rebuild instead of performing it immediately; the retained mesh keeps
+    // drawing in the meantime and the next frame past the interval catches
+    // up.
+    if (!terrain_lod_matches && current_layout_covers_foreground
+        && this->terrain_lod_rebuild_clock.isValid()
+        && this->terrain_lod_rebuild_clock.elapsed() < MinimumTerrainLodRebuildIntervalMs)
+    {
+        terrain_lod_matches = true;
+    }
+
     if (current_layout_covers_foreground && terrain_lod_matches)
     {
         if (relief_enabled && this->terrain_repository != nullptr)
@@ -902,8 +925,69 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     if (same_layout)
         return true;
 
+    // Reuse already-computed vertex data for tiles whose position, imagery
+    // source, and terrain LOD/content are all unchanged from the previously
+    // built mesh. Both the debounced LOD rebuild above and the progressive
+    // zoom/provider handoff below advance in many small steps while imagery
+    // or terrain streams in -- on any single step, only a handful of tiles
+    // in the retained apron are actually newly promoted or re-leveled, the
+    // rest are byte-for-byte the same tile as last frame. Without this, every
+    // such step still re-resampled the DEM and rebuilt the mesh for the
+    // ENTIRE apron (up to thousands of tiles) instead of just the tiles that
+    // changed, which is what produced a hitch on every incoming terrain or
+    // imagery tile while a zoom transition settled.
+    //
+    // Position (not tile identity/content) is the reuse key because a
+    // retained tile from progressiveZoomLayout/progressiveProviderLayout is
+    // the same VisibleTile value as before at the same (virtual_x, y) slot;
+    // matching by position and then verifying its content is unchanged is
+    // both sufficient and cheap. Reuse requires the world origin to be
+    // unchanged too, since tile screen positions are computed relative to
+    // it, and is skipped entirely right after an explicit invalidate() (map
+    // visibility toggled, terrain/tile repository swapped, RHI reset, or a
+    // detected mesh-size anomaly) so a structural reset always re-reads
+    // current repository state instead of trusting old vertex data.
+    QVector<TileVertex> previous_vertices;
+    QHash<quint64, qsizetype> previous_tiles_by_position;
+    const bool positions_reusable =
+        !this->layout_dirty && layout_origin_matches && !this->vertices.isEmpty();
+    if (positions_reusable)
+    {
+        previous_vertices = std::move(this->vertices);
+        previous_tiles_by_position.reserve(this->visible_tiles.size());
+        for (qsizetype index = 0; index < this->visible_tiles.size(); ++index)
+        {
+            const VisibleTile &tile = this->visible_tiles.at(index);
+            previous_tiles_by_position.insert(
+                tilePositionKey(tile.virtual_x, tile.y), index);
+        }
+    }
+
     this->vertices.clear();
-    this->vertices.reserve(next_tiles.size() * 6);
+    // A relief (terrain) tile contributes cell_count^2 * 6 vertices, not the
+    // flat-tile constant of 6 -- near/focus tiles can reach 64 cells per side
+    // (24576 vertices). Reserving as if every tile were flat left this
+    // QVector to grow via repeated doubling reallocations (each copying
+    // everything appended so far) whenever relief tiles were present, on top
+    // of the DEM resampling cost itself. Estimate the real vertex count up
+    // front so the buffer is sized in one allocation.
+    qsizetype estimated_vertex_count = 0;
+    for (const VisibleTile &tile : next_tiles)
+    {
+        const bool tile_has_relief_mesh = relief_enabled
+            && !tile.terrain_key.isEmpty()
+            && tile.imagery_zoom >= tile.terrain_zoom;
+        if (tile_has_relief_mesh)
+        {
+            const qsizetype cell_count = qMax(1, tile.terrain_cell_count);
+            estimated_vertex_count += cell_count * cell_count * 6;
+        }
+        else
+        {
+            estimated_vertex_count += 6;
+        }
+    }
+    this->vertices.reserve(estimated_vertex_count);
     for (VisibleTile &tile : next_tiles)
     {
         const double visible_tile_reference_size = MapModel::TileSize
@@ -916,8 +1000,37 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
         const float bottom = float(top + visible_tile_reference_size);
         tile.first_vertex = this->vertices.size();
 
+        bool reused = false;
+        if (positions_reusable)
+        {
+            const QHash<quint64, qsizetype>::const_iterator previous_iterator =
+                previous_tiles_by_position.constFind(
+                    tilePositionKey(tile.virtual_x, tile.y));
+            if (previous_iterator != previous_tiles_by_position.cend())
+            {
+                const VisibleTile &previous_tile =
+                    this->visible_tiles.at(previous_iterator.value());
+                const bool terrain_data_dirty = !tile.terrain_key.isEmpty()
+                    && this->dirty_terrain_keys.contains(tile.terrain_key);
+                if (!terrain_data_dirty
+                    && previous_tile.vertex_count > 0
+                    && previous_tile.imagery_key == tile.imagery_key
+                    && previous_tile.terrain_key == tile.terrain_key
+                    && previous_tile.terrain_cell_count == tile.terrain_cell_count)
+                {
+                    const TileVertex *source = previous_vertices.constData()
+                        + previous_tile.first_vertex;
+                    for (int index = 0; index < previous_tile.vertex_count; ++index)
+                        this->vertices.append(source[index]);
+                    tile.vertex_count = previous_tile.vertex_count;
+                    reused = true;
+                }
+            }
+        }
+
         bool relief_built = false;
-        if (relief_enabled && !tile.terrain_key.isEmpty() && this->terrain_repository != nullptr)
+        if (!reused && relief_enabled && !tile.terrain_key.isEmpty()
+            && this->terrain_repository != nullptr)
         {
             const MapTerrainTile *terrain_tile = this->terrain_repository->tile(tile.terrain_key);
             // Build the full relief grid even before its DEM arrives. A flat
@@ -929,7 +1042,7 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
                 left, top, float(visible_tile_reference_size));
         }
 
-        if (!relief_built)
+        if (!reused && !relief_built)
             appendFlatTileVertices(&this->vertices, &tile, left, top, right, bottom);
     }
 
@@ -938,6 +1051,7 @@ bool MapRhiBasemapRenderer::rebuildVisibleTiles(
     this->vertex_upload_pending = true;
     this->wireframe_vertex_upload_pending = true;
     this->layout_dirty = false;
+    this->terrain_lod_rebuild_clock.restart();
     return true;
 }
 
