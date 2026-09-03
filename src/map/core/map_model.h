@@ -69,6 +69,23 @@ public:
     static constexpr int GlobeZoomReferenceViewportHeightPx = 1000;
     static constexpr double GlobeMinZoomLevel = 4.0;
     static constexpr double GlobeFieldOfViewDeg = 45.0;
+    // The zoom<->distance formula's cos(latitude) term means its
+    // sensitivity to latitude itself grows without bound approaching a
+    // pole (d(zoom)/d(lat) is proportional to tan(lat)): near the equator,
+    // dragging a few degrees changes the implied zoom by a fraction of a
+    // level, but within a degree or two of 90 degrees the same drag can
+    // swing it by several levels. Interactively that means the globe's
+    // imagery window can end up trying to rebuild itself at a rapidly
+    // thrashing sequence of zoom levels while panning near a pole, which
+    // is what the visible tearing/mismatched-tile artifacts near the poles
+    // actually were -- not a rendering bug so much as feeding the formula
+    // a latitude where its own derivative is enormous. Clamping the
+    // latitude *input to the zoom formula only* (not the camera, and not
+    // where a person can actually pan to -- see clampCenter()) keeps the
+    // implied zoom level -- and therefore the imagery window -- stable
+    // once close to a pole, without limiting how close the camera itself
+    // can get.
+    static constexpr double GlobeZoomFormulaMaxLatitudeDeg = 75.0;
     static constexpr double MinViewGlobeDistanceM = 360.42;
     static constexpr double MaxViewGlobeDistanceM = 11810260.0;
     static constexpr double DefaultViewGlobeDistanceM = MaxViewGlobeDistanceM;

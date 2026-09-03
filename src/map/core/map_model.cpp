@@ -196,7 +196,7 @@ double MapModel::viewGlobeDistanceMForZoomLevel(
     double zoom_level, double latitude_deg, int viewport_height_px)
 {
     const double latitude_clamped = qBound(
-        -GeoWebMercator::MaximumLatitude, latitude_deg, GeoWebMercator::MaximumLatitude);
+        -GlobeZoomFormulaMaxLatitudeDeg, latitude_deg, GlobeZoomFormulaMaxLatitudeDeg);
     const double circumference_m = 2.0 * M_PI * GeoWgs84Ellipsoid::EquatorialRadiusM;
     const double meters_per_pixel = circumference_m * std::cos(qDegreesToRadians(latitude_clamped))
         / (double(TileSize) * std::exp2(zoom_level));
@@ -209,7 +209,7 @@ double MapModel::viewGlobeZoomLevelForDistanceM(
     double distance_m, double latitude_deg, int viewport_height_px)
 {
     const double latitude_clamped = qBound(
-        -GeoWebMercator::MaximumLatitude, latitude_deg, GeoWebMercator::MaximumLatitude);
+        -GlobeZoomFormulaMaxLatitudeDeg, latitude_deg, GlobeZoomFormulaMaxLatitudeDeg);
     const double circumference_m = 2.0 * M_PI * GeoWgs84Ellipsoid::EquatorialRadiusM;
     const double tan_half_fov = std::tan(qDegreesToRadians(GlobeFieldOfViewDeg / 2.0));
     const double safe_viewport_height = double(qMax(1, viewport_height_px));
@@ -755,6 +755,18 @@ void MapModel::panByPixelsGlobe(const QPoint &delta, const QSize &viewport)
 void MapModel::clampCenter(const QSize &viewport)
 {
     if (!viewport.isValid())
+        return;
+
+    // This clamp exists to keep the flat 2D/3D map's on-screen extent within
+    // Web Mercator's own representable range (it round-trips centerLat
+    // through latToTileY()/tileYToLat(), both of which clamp internally to
+    // +-GeoWebMercator::MaximumLatitude, i.e. ~85.05 degrees). The Globe
+    // camera has no such limit -- it looks directly at the WGS84 ellipsoid
+    // via ECEF math, which is perfectly well-defined all the way to the
+    // true poles (90 degrees) -- so applying this here would silently stop
+    // any attempt to pan the globe to a real polar latitude a few degrees
+    // short of the actual pole, for no reason that applies to Globe at all.
+    if (this->m_view_mode == MapViewMode::Globe)
         return;
 
     const double world_tile_count = double(tileCount());
