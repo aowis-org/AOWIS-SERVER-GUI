@@ -131,13 +131,17 @@ double MapModel::view3dNativeCameraDistanceM() const
 
 double MapModel::view3dMaximumCameraDistanceM() const
 {
-    // The extra distance above the zoom level's default is user-adjustable
-    // (Settings > Map Settings > Map Performance > View distance); the
-    // static MaxView3dCameraDistanceAboveDefaultM constant is only its
-    // advertised default now.
+    // Absolute, user-adjustable (Settings > Map Settings > Map Performance
+    // > View distance) -- deliberately independent of the current zoom
+    // level. This used to be added on top of view3dNativeCameraDistanceM(),
+    // a zoom-dependent "native" distance, which made the effective maximum
+    // silently grow or shrink as the zoom level changed even though the
+    // setting itself hadn't; the extended-maximum term below is unrelated
+    // to that and is preserved as-is (it tracks how far a continuous
+    // scroll/drag has already taken the camera, so it never gets yanked
+    // back mid-gesture -- see setView3dContinuousCameraDistanceM()).
     return qMax(
-        view3dNativeCameraDistanceM()
-            + guiConfiguration().map_performance.max_view_distance_above_default_m,
+        guiConfiguration().map_performance.max_view_distance_m,
         this->m_view_3d_extended_camera_distance_maximum_m);
 }
 

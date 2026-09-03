@@ -1742,6 +1742,21 @@ int MapRhiBasemapRenderer::terrainCellCountForTile(
     const double ground_distance_from_focus_world = std::hypot(
         delta_x_world, delta_y_world);
 
+    // User-adjustable (Settings > Map Settings > Map Performance > Full
+    // detail down to zoom): keep the focus/crosshair tile at maximum mesh
+    // detail regardless of camera distance for any imagery zoom at or
+    // above this threshold, instead of always following the distance-based
+    // falloff below. "Near the focus" means this tile is the one actually
+    // containing the focus point -- roughly its half-diagonal away at most
+    // -- not a wider neighborhood, and no other tile is affected, so this
+    // cannot force the whole apron to maximum detail (which is exactly what
+    // the falloff below exists to prevent).
+    if (tile.imagery_zoom >= guiConfiguration().map_performance.terrain_full_detail_zoom
+        && ground_distance_from_focus_world < tile_reference_size * 0.75)
+    {
+        return maximum_cell_count;
+    }
+
     const double base_scale = GeoWebMercator::zoomScale(
         tile.imagery_zoom, MapRenderCacheMath::ReferenceZoom);
     const double safe_scale = qMax(1e-12, base_scale);

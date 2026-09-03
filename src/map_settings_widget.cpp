@@ -95,15 +95,15 @@ void MapSettingsWidget::buildPerformanceSection(QWidget *parent_widget)
     const GuiMapPerformanceConfiguration &current = guiConfiguration().map_performance;
 
     this->view_distance_control = new SliderNumberControl(group);
-    this->view_distance_control->setRange(100.0, 5000.0);
-    this->view_distance_control->setSingleStep(50.0);
+    this->view_distance_control->setRange(150.0, 50000.0);
+    this->view_distance_control->setSingleStep(100.0);
     this->view_distance_control->setDecimals(0);
     this->view_distance_control->setSuffix(QStringLiteral(" m"));
-    this->view_distance_control->setValue(current.max_view_distance_above_default_m);
+    this->view_distance_control->setValue(current.max_view_distance_m);
     form->addRow(QStringLiteral("View distance"), this->view_distance_control);
     form->addRow(QString(), helpLabel(
-        QStringLiteral("How much farther than each zoom level's default distance the 3D camera "
-                       "can be pulled back."), group));
+        QStringLiteral("Absolute maximum distance the 3D camera can be pulled back to, "
+                       "independent of the current zoom level."), group));
 
     this->terrain_lod_target_control = new SliderNumberControl(group);
     this->terrain_lod_target_control->setRange(8.0, 128.0);
@@ -128,6 +128,24 @@ void MapSettingsWidget::buildPerformanceSection(QWidget *parent_widget)
         QStringLiteral("Highest zoom level at which the terrain elevation data is still used at "
                        "increasing resolution. Raise this to keep full terrain detail available "
                        "when zoomed in further."),
+        group));
+
+    this->terrain_full_detail_zoom_control = new SliderNumberControl(group);
+    this->terrain_full_detail_zoom_control->setRange(
+        double(TerrainMinDetailZoomBound), double(TerrainMaxDetailZoomBound));
+    this->terrain_full_detail_zoom_control->setSingleStep(1.0);
+    this->terrain_full_detail_zoom_control->setDecimals(0);
+    this->terrain_full_detail_zoom_control->setValue(double(current.terrain_full_detail_zoom));
+    form->addRow(QStringLiteral("Full detail at center down to zoom"),
+                 this->terrain_full_detail_zoom_control);
+    form->addRow(QString(), helpLabel(
+        QStringLiteral("At or above this zoom level, the terrain tile right at the crosshair is "
+                       "forced to maximum mesh detail regardless of camera distance -- instead of "
+                       "the usual falloff, which otherwise reduces it there by one LOD step per "
+                       "zoom level (e.g. zoom 19 -> 18 already looks less detailed by default). "
+                       "Lower this to keep the center fully detailed across a wider zoom range; "
+                       "everywhere else, and below this zoom level, still follows the normal "
+                       "falloff."),
         group));
 
     this->array_batching_checkbox = new QCheckBox(
@@ -162,15 +180,18 @@ void MapSettingsWidget::buildPerformanceSection(QWidget *parent_widget)
             this, [this](double) { schedulePerformanceSave(); });
     connect(this->terrain_max_detail_zoom_control, &SliderNumberControl::valueChanged,
             this, [this](double) { schedulePerformanceSave(); });
+    connect(this->terrain_full_detail_zoom_control, &SliderNumberControl::valueChanged,
+            this, [this](double) { schedulePerformanceSave(); });
     connect(this->array_batching_checkbox, &QCheckBox::toggled,
             this, [this](bool) { schedulePerformanceSave(); });
 
     connect(restore_defaults, &QPushButton::clicked, this, [this]
     {
         const GuiMapPerformanceConfiguration defaults;
-        this->view_distance_control->setValue(defaults.max_view_distance_above_default_m);
+        this->view_distance_control->setValue(defaults.max_view_distance_m);
         this->terrain_lod_target_control->setValue(defaults.terrain_lod_target_cell_size_px);
         this->terrain_max_detail_zoom_control->setValue(double(defaults.terrain_max_detail_zoom));
+        this->terrain_full_detail_zoom_control->setValue(double(defaults.terrain_full_detail_zoom));
         this->array_batching_checkbox->setChecked(defaults.array_batching_enabled);
         savePerformanceSettingsNow();
     });
@@ -244,9 +265,10 @@ void MapSettingsWidget::schedulePerformanceSave()
 void MapSettingsWidget::savePerformanceSettingsNow()
 {
     GuiMapPerformanceConfiguration configuration;
-    configuration.max_view_distance_above_default_m = this->view_distance_control->value();
+    configuration.max_view_distance_m = this->view_distance_control->value();
     configuration.terrain_lod_target_cell_size_px = this->terrain_lod_target_control->value();
     configuration.terrain_max_detail_zoom = int(this->terrain_max_detail_zoom_control->value());
+    configuration.terrain_full_detail_zoom = int(this->terrain_full_detail_zoom_control->value());
     configuration.array_batching_enabled = this->array_batching_checkbox->isChecked();
 
     if (saveGuiMapPerformanceConfiguration(configuration))

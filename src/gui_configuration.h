@@ -64,11 +64,12 @@ struct GuiSymbologyPaletteConfiguration
 
 struct GuiMapPerformanceConfiguration
 {
-    // How much farther than the zoom level's default distance the 3D
-    // camera can be pulled back. Mirrors MapModel::MaxView3dCameraDistanceAboveDefaultM's
-    // default; kept independent (not referencing MapModel directly) so this
-    // header doesn't need to depend on the map module.
-    double max_view_distance_above_default_m = 500.0;
+    // Absolute maximum distance, in meters, the 3D camera can be pulled
+    // back to -- independent of the current zoom level (previously this
+    // was added on top of a zoom-dependent "native" distance, which made
+    // the effective maximum silently shift as the zoom level changed; see
+    // MapModel::view3dMaximumCameraDistanceM()).
+    double max_view_distance_m = 10000.0;
     // Target on-screen size, in pixels, of one terrain relief mesh cell.
     // Smaller values keep a denser (higher quality) mesh out to a greater
     // distance; larger values let quality fall off sooner. Mirrors
@@ -79,6 +80,13 @@ struct GuiMapPerformanceConfiguration
     // and just re-subdivided rather than re-fetched at a finer level.
     // Mirrors MapRhiBasemapRenderer's TerrainReliefMaximumZoom default.
     int terrain_max_detail_zoom = 14;
+    // Lowest zoom level at which the focus/crosshair tile's terrain mesh is
+    // still forced to maximum detail regardless of camera distance, instead
+    // of following the normal distance-based falloff. Only the one tile at
+    // the focus is affected. Default of 19 (MapModel::MaxZoom) matches the
+    // falloff's un-forced behavior; lower this to keep full detail at the
+    // focus across a wider zoom range.
+    int terrain_full_detail_zoom = 19;
     // Whether the RHI 3D renderer's texture-array draw-call batching is
     // used at all. Purely a performance path -- disabling it always falls
     // back to the per-tile path, never changes what is drawn.

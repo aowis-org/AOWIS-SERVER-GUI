@@ -249,22 +249,25 @@ EM_JS(int, aowisMapPerformanceBoolPreference, (const char *key, int default_valu
 });
 
 EM_JS(int, aowisSaveMapPerformancePreference,
-      (double max_view_distance_above_default_m, double terrain_lod_target_cell_size_px,
-       int terrain_max_detail_zoom, int array_batching_enabled),
+      (double max_view_distance_m, double terrain_lod_target_cell_size_px,
+       int terrain_max_detail_zoom, int terrain_full_detail_zoom, int array_batching_enabled),
 {
     try
     {
         if (!globalThis.localStorage)
             return 0;
         globalThis.localStorage.setItem(
-            "aowis.map_performance.max_view_distance_above_default_m",
-            String(max_view_distance_above_default_m));
+            "aowis.map_performance.max_view_distance_m",
+            String(max_view_distance_m));
         globalThis.localStorage.setItem(
             "aowis.map_performance.terrain_lod_target_cell_size_px",
             String(terrain_lod_target_cell_size_px));
         globalThis.localStorage.setItem(
             "aowis.map_performance.terrain_max_detail_zoom",
             String(terrain_max_detail_zoom));
+        globalThis.localStorage.setItem(
+            "aowis.map_performance.terrain_full_detail_zoom",
+            String(terrain_full_detail_zoom));
         globalThis.localStorage.setItem(
             "aowis.map_performance.array_batching_enabled",
             array_batching_enabled ? "true" : "false");
@@ -311,10 +314,10 @@ GuiConfiguration loadConfiguration()
         aowisSymbologyPaletteFlippedPreference(
             "aowis.symbology.heatmap_palette_flipped", 0) != 0;
     const GuiMapPerformanceConfiguration default_map_performance;
-    configuration.map_performance.max_view_distance_above_default_m =
+    configuration.map_performance.max_view_distance_m =
         aowisMapPerformanceDoublePreference(
-            "aowis.map_performance.max_view_distance_above_default_m",
-            default_map_performance.max_view_distance_above_default_m);
+            "aowis.map_performance.max_view_distance_m",
+            default_map_performance.max_view_distance_m);
     configuration.map_performance.terrain_lod_target_cell_size_px =
         aowisMapPerformanceDoublePreference(
             "aowis.map_performance.terrain_lod_target_cell_size_px",
@@ -323,6 +326,10 @@ GuiConfiguration loadConfiguration()
         aowisMapPerformanceIntPreference(
             "aowis.map_performance.terrain_max_detail_zoom",
             default_map_performance.terrain_max_detail_zoom);
+    configuration.map_performance.terrain_full_detail_zoom =
+        aowisMapPerformanceIntPreference(
+            "aowis.map_performance.terrain_full_detail_zoom",
+            default_map_performance.terrain_full_detail_zoom);
     configuration.map_performance.array_batching_enabled =
         aowisMapPerformanceBoolPreference(
             "aowis.map_performance.array_batching_enabled",
@@ -416,9 +423,10 @@ bool createDefaultConfiguration(const QString &path)
         "map_editor_add_note=9\n"
         "\n"
         "[map_performance]\n"
-        "max_view_distance_above_default_m=500\n"
+        "max_view_distance_m=10000\n"
         "terrain_lod_target_cell_size_px=32\n"
         "terrain_max_detail_zoom=14\n"
+        "terrain_full_detail_zoom=19\n"
         "array_batching_enabled=true\n"
         "\n"
         "[map_server]\n"
@@ -520,12 +528,14 @@ GuiConfiguration loadConfiguration()
     ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_reservoir"), advertised_shortcuts.map_editor_add_reservoir);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_note"), advertised_shortcuts.map_editor_add_note);
     const GuiMapPerformanceConfiguration advertised_map_performance;
-    ensureSettingDefault(settings, QStringLiteral("map_performance/max_view_distance_above_default_m"),
-                         QString::number(advertised_map_performance.max_view_distance_above_default_m));
+    ensureSettingDefault(settings, QStringLiteral("map_performance/max_view_distance_m"),
+                         QString::number(advertised_map_performance.max_view_distance_m));
     ensureSettingDefault(settings, QStringLiteral("map_performance/terrain_lod_target_cell_size_px"),
                          QString::number(advertised_map_performance.terrain_lod_target_cell_size_px));
     ensureSettingDefault(settings, QStringLiteral("map_performance/terrain_max_detail_zoom"),
                          QString::number(advertised_map_performance.terrain_max_detail_zoom));
+    ensureSettingDefault(settings, QStringLiteral("map_performance/terrain_full_detail_zoom"),
+                         QString::number(advertised_map_performance.terrain_full_detail_zoom));
     ensureSettingDefault(settings, QStringLiteral("map_performance/array_batching_enabled"),
                          advertised_map_performance.array_batching_enabled
                              ? QStringLiteral("true") : QStringLiteral("false"));
@@ -594,11 +604,11 @@ GuiConfiguration loadConfiguration()
     const GuiMapPerformanceConfiguration default_map_performance;
     bool view_distance_valid = false;
     const double loaded_view_distance = settings.value(
-        QStringLiteral("map_performance/max_view_distance_above_default_m")).toDouble(&view_distance_valid);
-    configuration.map_performance.max_view_distance_above_default_m =
+        QStringLiteral("map_performance/max_view_distance_m")).toDouble(&view_distance_valid);
+    configuration.map_performance.max_view_distance_m =
         (view_distance_valid && std::isfinite(loaded_view_distance) && loaded_view_distance > 0.0)
             ? loaded_view_distance
-            : default_map_performance.max_view_distance_above_default_m;
+            : default_map_performance.max_view_distance_m;
 
     bool lod_target_valid = false;
     const double loaded_lod_target = settings.value(
@@ -617,6 +627,19 @@ GuiConfiguration loadConfiguration()
         (max_detail_zoom_valid && loaded_max_detail_zoom >= 1 && loaded_max_detail_zoom <= 19)
             ? loaded_max_detail_zoom
             : default_map_performance.terrain_max_detail_zoom;
+
+    bool full_detail_zoom_valid = false;
+    const int loaded_full_detail_zoom = settings.value(
+        QStringLiteral("map_performance/terrain_full_detail_zoom")).toInt(&full_detail_zoom_valid);
+    // Lower-bounded at 8 (mirrors TerrainReliefMinimumZoom), not 1 like the
+    // setting above: a value below that would force maximum terrain mesh
+    // detail across the entire relief-enabled zoom range rather than just
+    // near the focus at high zoom, reintroducing the performance problem
+    // the distance-based falloff exists to prevent.
+    configuration.map_performance.terrain_full_detail_zoom =
+        (full_detail_zoom_valid && loaded_full_detail_zoom >= 8 && loaded_full_detail_zoom <= 19)
+            ? loaded_full_detail_zoom
+            : default_map_performance.terrain_full_detail_zoom;
 
     configuration.map_performance.array_batching_enabled = settings.value(
         QStringLiteral("map_performance/array_batching_enabled"),
@@ -829,18 +852,21 @@ bool saveGuiMapPerformanceConfiguration(const GuiMapPerformanceConfiguration &co
 {
 #ifdef __EMSCRIPTEN__
     const bool saved = aowisSaveMapPerformancePreference(
-        configuration.max_view_distance_above_default_m,
+        configuration.max_view_distance_m,
         configuration.terrain_lod_target_cell_size_px,
         configuration.terrain_max_detail_zoom,
+        configuration.terrain_full_detail_zoom,
         configuration.array_batching_enabled ? 1 : 0) != 0;
 #else
     QSettings settings(guiConfigurationFilePath(), QSettings::IniFormat);
-    settings.setValue(QStringLiteral("map_performance/max_view_distance_above_default_m"),
-                      configuration.max_view_distance_above_default_m);
+    settings.setValue(QStringLiteral("map_performance/max_view_distance_m"),
+                      configuration.max_view_distance_m);
     settings.setValue(QStringLiteral("map_performance/terrain_lod_target_cell_size_px"),
                       configuration.terrain_lod_target_cell_size_px);
     settings.setValue(QStringLiteral("map_performance/terrain_max_detail_zoom"),
                       configuration.terrain_max_detail_zoom);
+    settings.setValue(QStringLiteral("map_performance/terrain_full_detail_zoom"),
+                      configuration.terrain_full_detail_zoom);
     settings.setValue(QStringLiteral("map_performance/array_batching_enabled"),
                       configuration.array_batching_enabled);
     settings.sync();

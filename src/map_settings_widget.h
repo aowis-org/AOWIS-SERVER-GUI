@@ -25,6 +25,7 @@ private:
     SliderNumberControl *view_distance_control = nullptr;
     SliderNumberControl *terrain_lod_target_control = nullptr;
     SliderNumberControl *terrain_max_detail_zoom_control = nullptr;
+    SliderNumberControl *terrain_full_detail_zoom_control = nullptr;
     QCheckBox *array_batching_checkbox = nullptr;
     QLabel *performance_status = nullptr;
     QTimer *performance_save_debounce = nullptr;

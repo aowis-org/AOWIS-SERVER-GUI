@@ -31,7 +31,6 @@ public:
     static constexpr double MaxView3dPitchDeg = 90.0;
     static constexpr double DefaultView3dPitchDeg = 55.0;
     static constexpr double MinView3dCameraDistanceM = 150.0;
-    static constexpr double MaxView3dCameraDistanceAboveDefaultM = 500.0;
     static constexpr double MinView3dCameraGroundClearanceM = 2.0;
     static constexpr double MinView3dNetworkGroundOffsetM = 0.0;
     static constexpr double MaxView3dNetworkGroundOffsetM = 50.0;
