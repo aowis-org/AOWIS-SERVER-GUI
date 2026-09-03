@@ -5,6 +5,8 @@
 #include <QKeyEvent>
 #include <QString>
 
+#include <cmath>
+
 #ifndef AOWIS_HAS_QRHI
 #define AOWIS_HAS_QRHI 0
 #endif
@@ -193,6 +195,87 @@ EM_JS(int, aowisSaveSymbologyPalettePreference,
     }
 });
 
+EM_JS(double, aowisMapPerformanceDoublePreference, (const char *key, double default_value),
+{
+    try
+    {
+        const raw = globalThis.localStorage
+            ? globalThis.localStorage.getItem(UTF8ToString(key))
+            : null;
+        if (raw === null)
+            return default_value;
+        const parsed = Number.parseFloat(raw);
+        return Number.isFinite(parsed) ? parsed : default_value;
+    }
+    catch (error)
+    {
+        return default_value;
+    }
+});
+
+EM_JS(int, aowisMapPerformanceIntPreference, (const char *key, int default_value),
+{
+    try
+    {
+        const raw = globalThis.localStorage
+            ? globalThis.localStorage.getItem(UTF8ToString(key))
+            : null;
+        if (raw === null)
+            return default_value;
+        const parsed = Number.parseInt(raw, 10);
+        return Number.isFinite(parsed) ? parsed : default_value;
+    }
+    catch (error)
+    {
+        return default_value;
+    }
+});
+
+EM_JS(int, aowisMapPerformanceBoolPreference, (const char *key, int default_value),
+{
+    try
+    {
+        const raw = globalThis.localStorage
+            ? globalThis.localStorage.getItem(UTF8ToString(key))
+            : null;
+        if (raw === null)
+            return default_value;
+        return raw === "true" || raw === "1" ? 1 : 0;
+    }
+    catch (error)
+    {
+        return default_value;
+    }
+});
+
+EM_JS(int, aowisSaveMapPerformancePreference,
+      (double max_view_distance_above_default_m, double terrain_lod_target_cell_size_px,
+       int terrain_max_detail_zoom, int array_batching_enabled),
+{
+    try
+    {
+        if (!globalThis.localStorage)
+            return 0;
+        globalThis.localStorage.setItem(
+            "aowis.map_performance.max_view_distance_above_default_m",
+            String(max_view_distance_above_default_m));
+        globalThis.localStorage.setItem(
+            "aowis.map_performance.terrain_lod_target_cell_size_px",
+            String(terrain_lod_target_cell_size_px));
+        globalThis.localStorage.setItem(
+            "aowis.map_performance.terrain_max_detail_zoom",
+            String(terrain_max_detail_zoom));
+        globalThis.localStorage.setItem(
+            "aowis.map_performance.array_batching_enabled",
+            array_batching_enabled ? "true" : "false");
+        return 1;
+    }
+    catch (error)
+    {
+        return 0;
+    }
+});
+
 GuiConfiguration loadConfiguration()
 {
     GuiConfiguration configuration;
@@ -227,6 +310,23 @@ GuiConfiguration loadConfiguration()
     configuration.symbology_palettes.heatmap_palette_flipped =
         aowisSymbologyPaletteFlippedPreference(
             "aowis.symbology.heatmap_palette_flipped", 0) != 0;
+    const GuiMapPerformanceConfiguration default_map_performance;
+    configuration.map_performance.max_view_distance_above_default_m =
+        aowisMapPerformanceDoublePreference(
+            "aowis.map_performance.max_view_distance_above_default_m",
+            default_map_performance.max_view_distance_above_default_m);
+    configuration.map_performance.terrain_lod_target_cell_size_px =
+        aowisMapPerformanceDoublePreference(
+            "aowis.map_performance.terrain_lod_target_cell_size_px",
+            default_map_performance.terrain_lod_target_cell_size_px);
+    configuration.map_performance.terrain_max_detail_zoom =
+        aowisMapPerformanceIntPreference(
+            "aowis.map_performance.terrain_max_detail_zoom",
+            default_map_performance.terrain_max_detail_zoom);
+    configuration.map_performance.array_batching_enabled =
+        aowisMapPerformanceBoolPreference(
+            "aowis.map_performance.array_batching_enabled",
+            default_map_performance.array_batching_enabled ? 1 : 0) != 0;
     qInfo() << "Loaded GUI configuration from webroot/aowis-server-gui.ini: examples_builtin_enable ="
             << configuration.examples_builtin_enable
             << "map_wasm_renderer =" << wasmMapRendererName(configuration.map_wasm_renderer);
@@ -314,6 +414,12 @@ bool createDefaultConfiguration(const QString &path)
         "map_editor_add_power_source=7\n"
         "map_editor_add_reservoir=8\n"
         "map_editor_add_note=9\n"
+        "\n"
+        "[map_performance]\n"
+        "max_view_distance_above_default_m=500\n"
+        "terrain_lod_target_cell_size_px=32\n"
+        "terrain_max_detail_zoom=14\n"
+        "array_batching_enabled=true\n"
         "\n"
         "[map_server]\n"
         "base_url=http://aowis-server-map.localhost:80\n"
@@ -413,6 +519,16 @@ GuiConfiguration loadConfiguration()
     ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_power_source"), advertised_shortcuts.map_editor_add_power_source);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_reservoir"), advertised_shortcuts.map_editor_add_reservoir);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_note"), advertised_shortcuts.map_editor_add_note);
+    const GuiMapPerformanceConfiguration advertised_map_performance;
+    ensureSettingDefault(settings, QStringLiteral("map_performance/max_view_distance_above_default_m"),
+                         QString::number(advertised_map_performance.max_view_distance_above_default_m));
+    ensureSettingDefault(settings, QStringLiteral("map_performance/terrain_lod_target_cell_size_px"),
+                         QString::number(advertised_map_performance.terrain_lod_target_cell_size_px));
+    ensureSettingDefault(settings, QStringLiteral("map_performance/terrain_max_detail_zoom"),
+                         QString::number(advertised_map_performance.terrain_max_detail_zoom));
+    ensureSettingDefault(settings, QStringLiteral("map_performance/array_batching_enabled"),
+                         advertised_map_performance.array_batching_enabled
+                             ? QStringLiteral("true") : QStringLiteral("false"));
     settings.sync();
 
     GuiConfiguration configuration;
@@ -474,6 +590,37 @@ GuiConfiguration loadConfiguration()
     configuration.shortcuts.map_editor_add_power_source = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_power_source"), advertised_shortcuts.map_editor_add_power_source);
     configuration.shortcuts.map_editor_add_reservoir = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_reservoir"), advertised_shortcuts.map_editor_add_reservoir);
     configuration.shortcuts.map_editor_add_note = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_note"), advertised_shortcuts.map_editor_add_note);
+
+    const GuiMapPerformanceConfiguration default_map_performance;
+    bool view_distance_valid = false;
+    const double loaded_view_distance = settings.value(
+        QStringLiteral("map_performance/max_view_distance_above_default_m")).toDouble(&view_distance_valid);
+    configuration.map_performance.max_view_distance_above_default_m =
+        (view_distance_valid && std::isfinite(loaded_view_distance) && loaded_view_distance > 0.0)
+            ? loaded_view_distance
+            : default_map_performance.max_view_distance_above_default_m;
+
+    bool lod_target_valid = false;
+    const double loaded_lod_target = settings.value(
+        QStringLiteral("map_performance/terrain_lod_target_cell_size_px")).toDouble(&lod_target_valid);
+    configuration.map_performance.terrain_lod_target_cell_size_px =
+        (lod_target_valid && std::isfinite(loaded_lod_target) && loaded_lod_target > 0.0)
+            ? loaded_lod_target
+            : default_map_performance.terrain_lod_target_cell_size_px;
+
+    bool max_detail_zoom_valid = false;
+    const int loaded_max_detail_zoom = settings.value(
+        QStringLiteral("map_performance/terrain_max_detail_zoom")).toInt(&max_detail_zoom_valid);
+    // Mirrors MapModel::MinZoom/MaxZoom (1/19); hardcoded rather than
+    // including map/map_model.h here for two bounds.
+    configuration.map_performance.terrain_max_detail_zoom =
+        (max_detail_zoom_valid && loaded_max_detail_zoom >= 1 && loaded_max_detail_zoom <= 19)
+            ? loaded_max_detail_zoom
+            : default_map_performance.terrain_max_detail_zoom;
+
+    configuration.map_performance.array_batching_enabled = settings.value(
+        QStringLiteral("map_performance/array_batching_enabled"),
+        default_map_performance.array_batching_enabled).toBool();
 
     if (settings.status() != QSettings::NoError)
         qWarning() << "Failed to read GUI configuration:" << path;
@@ -675,5 +822,31 @@ bool saveGuiHeatmapSymbologyPalette(NetworkSymbologyPalette palette, bool flippe
         mutableGuiConfiguration().symbology_palettes.heatmap_palette = palette;
         mutableGuiConfiguration().symbology_palettes.heatmap_palette_flipped = flipped;
     }
+    return saved;
+}
+
+bool saveGuiMapPerformanceConfiguration(const GuiMapPerformanceConfiguration &configuration)
+{
+#ifdef __EMSCRIPTEN__
+    const bool saved = aowisSaveMapPerformancePreference(
+        configuration.max_view_distance_above_default_m,
+        configuration.terrain_lod_target_cell_size_px,
+        configuration.terrain_max_detail_zoom,
+        configuration.array_batching_enabled ? 1 : 0) != 0;
+#else
+    QSettings settings(guiConfigurationFilePath(), QSettings::IniFormat);
+    settings.setValue(QStringLiteral("map_performance/max_view_distance_above_default_m"),
+                      configuration.max_view_distance_above_default_m);
+    settings.setValue(QStringLiteral("map_performance/terrain_lod_target_cell_size_px"),
+                      configuration.terrain_lod_target_cell_size_px);
+    settings.setValue(QStringLiteral("map_performance/terrain_max_detail_zoom"),
+                      configuration.terrain_max_detail_zoom);
+    settings.setValue(QStringLiteral("map_performance/array_batching_enabled"),
+                      configuration.array_batching_enabled);
+    settings.sync();
+    const bool saved = settings.status() == QSettings::NoError;
+#endif
+    if (saved)
+        mutableGuiConfiguration().map_performance = configuration;
     return saved;
 }

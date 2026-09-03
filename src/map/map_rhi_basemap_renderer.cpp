@@ -9,6 +9,7 @@
 #include "map_terrain_tile.h"
 #include "map_tile_repository.h"
 #include "../geo_web_mercator.h"
+#include "../gui_configuration.h"
 
 #include <QFile>
 #include <QImage>
@@ -28,11 +29,9 @@ namespace
 {
 constexpr int MaximumCachedGpuTiles = 160;
 constexpr int TerrainReliefMinimumZoom = 8;
-constexpr int TerrainReliefMaximumZoom = 14;
 constexpr int TwoDPanRetentionMarginTiles = 4;
 constexpr int TerrainMinimumLodCellCount = 1;
 constexpr int TerrainBackgroundRequestMinimumLodCellCount = 4;
-constexpr double TerrainTargetCellSizePixels = 32.0;
 constexpr int HeatmapTextureSize = 256;
 constexpr double HeatmapMarkerBucketWorldSize = 16384.0;
 // A LOD-only terrain rebuild resamples the DEM for, and re-uploads, the
@@ -81,7 +80,13 @@ bool reliefTerrainEnabled(const MapModel &map_model, const MapTerrainRepository 
 
 int terrainZoomForImageryZoom(int imagery_zoom)
 {
-    return qBound(TerrainReliefMinimumZoom, imagery_zoom, TerrainReliefMaximumZoom);
+    // User-adjustable (Settings > Map Settings > Map Performance > Max
+    // detail zoom); defensively clamped in case a hand-edited config file
+    // ever put it below TerrainReliefMinimumZoom, which qBound below
+    // requires (min must not exceed max).
+    const int configured_max_detail_zoom = qMax(
+        TerrainReliefMinimumZoom, guiConfiguration().map_performance.terrain_max_detail_zoom);
+    return qBound(TerrainReliefMinimumZoom, imagery_zoom, configured_max_detail_zoom);
 }
 
 QString terrainDatasetId()
@@ -1801,8 +1806,14 @@ int MapRhiBasemapRenderer::terrainCellCountForTile(
         native_camera_distance_world
             / qMax(1e-9, lod_distance_world),
         4.0);
+    // User-adjustable (Settings > Map Settings > Map Performance > Terrain
+    // detail target size): smaller keeps a denser mesh out to a greater
+    // distance, larger lets quality fall off sooner. Defensively floored
+    // since it's divided into below and comes from a persisted config file.
+    const double target_cell_size_px = qMax(
+        1.0, guiConfiguration().map_performance.terrain_lod_target_cell_size_px);
     const double desired_cell_count =
-        (double(MapModel::TileSize) / TerrainTargetCellSizePixels)
+        (double(MapModel::TileSize) / target_cell_size_px)
         * projected_tile_scale;
 
     // Meshes change only in powers of two. Geometric-mean thresholds avoid
@@ -2077,7 +2088,11 @@ bool MapRhiBasemapRenderer::arrayBatchingActive() const
     // MapRhiWidget::syncBasemapHeatmapOverlay), matching how
     // ensureTileResource's per-tile heatmap texture already behaves as a
     // no-op (transparent dummy texture) whenever it's empty.
-    return this->heatmap_markers.isEmpty()
+    // User-adjustable (Settings > Map Settings > Map Performance > Enable
+    // draw-call batching): purely a perf path, so disabling it just always
+    // falls back to the per-tile pass below -- never changes what's drawn.
+    return guiConfiguration().map_performance.array_batching_enabled
+        && this->heatmap_markers.isEmpty()
         && this->tile_array_texture && this->array_pipeline && this->array_bindings;
 }
 

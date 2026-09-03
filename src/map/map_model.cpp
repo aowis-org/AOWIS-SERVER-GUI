@@ -1,6 +1,7 @@
 #include "map_model.h"
 
 #include "map_render_cache_math.h"
+#include "../gui_configuration.h"
 
 #include <algorithm>
 #include <cmath>
@@ -130,8 +131,13 @@ double MapModel::view3dNativeCameraDistanceM() const
 
 double MapModel::view3dMaximumCameraDistanceM() const
 {
+    // The extra distance above the zoom level's default is user-adjustable
+    // (Settings > Map Settings > Map Performance > View distance); the
+    // static MaxView3dCameraDistanceAboveDefaultM constant is only its
+    // advertised default now.
     return qMax(
-        view3dNativeCameraDistanceM() + MaxView3dCameraDistanceAboveDefaultM,
+        view3dNativeCameraDistanceM()
+            + guiConfiguration().map_performance.max_view_distance_above_default_m,
         this->m_view_3d_extended_camera_distance_maximum_m);
 }
 

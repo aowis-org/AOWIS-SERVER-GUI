@@ -3,17 +3,16 @@
 
 #include "shortcut_registry.h"
 
-#include <QHash>
 #include <QWidget>
 
-class QEvent;
-class QLabel;
-class QKeySequenceEdit;
-class QLineEdit;
-class QPushButton;
-class QTreeWidget;
-class QTreeWidgetItem;
+class KeyboardShortcutsSettingsWidget;
+class MapSettingsWidget;
+class QListWidget;
+class QStackedWidget;
 
+// Settings page: a left-hand table of contents next to a stacked content
+// area, so new settings categories (Map Settings, and whatever comes after
+// it) are added as their own entry rather than growing one long page.
 class SettingsWidget : public QWidget
 {
     Q_OBJECT
@@ -23,23 +22,11 @@ public:
 
     void focusShortcut(GuiShortcutId id);
 
-protected:
-    bool eventFilter(QObject *watched, QEvent *event) override;
-
 private:
-    QLineEdit *shortcut_search = nullptr;
-    QLabel *shortcut_status = nullptr;
-    QTreeWidget *shortcut_tree = nullptr;
-    QPushButton *reset_all_shortcuts = nullptr;
-    QHash<int, QTreeWidgetItem *> shortcut_items;
-    QHash<int, QKeySequenceEdit *> shortcut_editors;
-
-    void buildShortcutSettings();
-    void refreshShortcutEditor(GuiShortcutId id);
-    void refreshShortcutFilter();
-    void validateShortcutEditor(GuiShortcutId id, const QKeySequence &sequence);
-    void commitShortcutEditor(GuiShortcutId id);
-    void showStatus(const QString &message, bool error);
+    QListWidget *table_of_contents = nullptr;
+    QStackedWidget *pages = nullptr;
+    KeyboardShortcutsSettingsWidget *keyboard_shortcuts_page = nullptr;
+    MapSettingsWidget *map_settings_page = nullptr;
 };
 
 #endif // TAB_SETTINGS_WIDGET_H

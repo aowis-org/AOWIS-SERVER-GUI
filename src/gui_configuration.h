@@ -62,6 +62,29 @@ struct GuiSymbologyPaletteConfiguration
     bool heatmap_palette_flipped = false;
 };
 
+struct GuiMapPerformanceConfiguration
+{
+    // How much farther than the zoom level's default distance the 3D
+    // camera can be pulled back. Mirrors MapModel::MaxView3dCameraDistanceAboveDefaultM's
+    // default; kept independent (not referencing MapModel directly) so this
+    // header doesn't need to depend on the map module.
+    double max_view_distance_above_default_m = 500.0;
+    // Target on-screen size, in pixels, of one terrain relief mesh cell.
+    // Smaller values keep a denser (higher quality) mesh out to a greater
+    // distance; larger values let quality fall off sooner. Mirrors
+    // MapRhiBasemapRenderer's TerrainTargetCellSizePixels default.
+    double terrain_lod_target_cell_size_px = 32.0;
+    // Highest zoom level at which the terrain DEM is still fetched/used at
+    // increasing resolution; beyond this the same elevation data is reused
+    // and just re-subdivided rather than re-fetched at a finer level.
+    // Mirrors MapRhiBasemapRenderer's TerrainReliefMaximumZoom default.
+    int terrain_max_detail_zoom = 14;
+    // Whether the RHI 3D renderer's texture-array draw-call batching is
+    // used at all. Purely a performance path -- disabling it always falls
+    // back to the per-tile path, never changes what is drawn.
+    bool array_batching_enabled = true;
+};
+
 struct GuiConfiguration
 {
     bool examples_builtin_enable = true;
@@ -69,6 +92,7 @@ struct GuiConfiguration
     WasmMapRenderer map_wasm_renderer = WasmMapRenderer::Rhi;
     GuiSymbologyPaletteConfiguration symbology_palettes;
     GuiShortcutConfiguration shortcuts;
+    GuiMapPerformanceConfiguration map_performance;
 };
 
 QString guiConfigurationFilePath();
@@ -85,5 +109,6 @@ const char *wasmMapRendererName(WasmMapRenderer renderer);
 bool saveGuiNodeSymbologyPalette(NetworkSymbologyPalette palette, bool flipped);
 bool saveGuiLinkSymbologyPalette(NetworkSymbologyPalette palette, bool flipped);
 bool saveGuiHeatmapSymbologyPalette(NetworkSymbologyPalette palette, bool flipped);
+bool saveGuiMapPerformanceConfiguration(const GuiMapPerformanceConfiguration &configuration);
 
 #endif // GUI_CONFIGURATION_H

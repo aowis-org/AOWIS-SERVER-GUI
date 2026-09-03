@@ -138,6 +138,9 @@ qt_add_executable(aowis-server-gui
     src/map/map_vector_document.h src/map/map_vector_document.cpp
     src/map/map_retained_vector_renderer.h src/map/map_retained_vector_renderer.cpp
     src/tab_settings_widget.h src/tab_settings_widget.cpp
+    src/keyboard_shortcuts_settings_widget.h src/keyboard_shortcuts_settings_widget.cpp
+    src/map_settings_widget.h src/map_settings_widget.cpp
+    src/slider_number_control.h src/slider_number_control.cpp
     src/_sizes.h
     src/geo_web_mercator.h src/geo_web_mercator.cpp
     src/geo_metric_projection.h src/geo_metric_projection.cpp

@@ -186,3 +186,32 @@ const MapServerClientConfiguration &mapServerClientConfiguration()
     static const MapServerClientConfiguration configuration = loadConfiguration();
     return configuration;
 }
+
+bool saveMapServerClientConfiguration(const MapServerClientConfiguration &configuration)
+{
+#ifdef __EMSCRIPTEN__
+    Q_UNUSED(configuration);
+    // In WASM builds this configuration comes from
+    // globalThis.aowisMapServerConfiguration, set by the hosting page
+    // before the app loads -- it isn't something the in-app settings UI can
+    // meaningfully override, so there is nothing to persist here.
+    qWarning() << "Map server configuration cannot be changed from within "
+                  "the WASM build; it is set by the hosting page.";
+    return false;
+#else
+    QSettings settings(guiConfigurationFilePath(), QSettings::IniFormat);
+    settings.setValue(QStringLiteral("map_server/base_url"), configuration.base_url.trimmed());
+    settings.setValue(QStringLiteral("map_server/api_key"),
+                      QString::fromUtf8(configuration.api_key).trimmed());
+    settings.setValue(QStringLiteral("map_server/delete_api_key"),
+                      QString::fromUtf8(configuration.delete_api_key).trimmed());
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+    {
+        qWarning() << "Failed to save map server client configuration:"
+                   << guiConfigurationFilePath();
+        return false;
+    }
+    return true;
+#endif
+}
