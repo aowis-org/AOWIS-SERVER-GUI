@@ -2,6 +2,7 @@
 
 #include "map_model.h"
 #include "map_render_cache_math.h"
+#include "map_rhi_camera.h"
 #include "map_rhi_scene.h"
 #include "map_terrain_repository.h"
 #include "map_terrain_tile.h"
@@ -14,6 +15,7 @@
 #include <QRadialGradient>
 #include <QPixmap>
 #include <QtMath>
+#include <QVector3D>
 #include <rhi/qshader.h>
 #include <rhi/qrhi.h>
 
@@ -213,6 +215,11 @@ void MapRhiBasemapRenderer::setTerrainRepository(MapTerrainRepository *terrain_r
     invalidate();
 }
 
+void MapRhiBasemapRenderer::setCamera(const MapRhiCamera *camera)
+{
+    this->camera = camera;
+}
+
 void MapRhiBasemapRenderer::notifyTerrainTileAvailable(const QString &key)
 {
     if (!key.isEmpty())
@@ -379,8 +386,23 @@ bool MapRhiBasemapRenderer::prepare(
         }
 
         ++this->usage_serial;
+        const bool three_d = this->map_model->viewMode() == MapViewMode::ThreeD;
         for (VisibleTile &tile : this->visible_tiles)
         {
+            // The 3D apron is deliberately over-provisioned for horizon
+            // coverage across any yaw (see rebuildVisibleTiles), so most of
+            // it is off screen at any given moment. Skipping GPU texture
+            // binding -- and, via tile.resource staying null, the draw call
+            // in draw() -- for tiles that are definitely not on screen cuts
+            // per-frame draw-call count and texture upload/decode work by a
+            // large factor in oblique views without touching what is
+            // actually rendered.
+            if (three_d && !isTileInViewFrustum(tile, viewport_size, origin_world))
+            {
+                tile.resource = nullptr;
+                continue;
+            }
+
             TileResource *resource = nullptr;
             if (!ensureTileResource(tile, &resource, resource_updates))
                 return false;
@@ -1886,6 +1908,79 @@ void MapRhiBasemapRenderer::pruneTextureCache()
     }
 }
 
+bool MapRhiBasemapRenderer::isTileInViewFrustum(
+    const VisibleTile &tile, const QSize &viewport_size,
+    const QPointF &origin_world) const
+{
+    if (this->camera == nullptr)
+        return true;
+
+    // Coarse screen-space bounding-box test against the tile's flat
+    // footprint (not its actual relief mesh, so this stays O(1) per tile
+    // regardless of terrain density). The 3D apron is deliberately sized for
+    // worst-case horizon coverage across any yaw, so at any given moment
+    // most of it sits outside the ~45 degree field of view; skipping GPU
+    // resource binding and the draw call for those tiles is what actually
+    // matters, not sub-pixel cull precision. A generous vertical bound plus
+    // a wide screen-space margin means real terrain relief cannot make a
+    // tile that is genuinely on screen fail this test.
+    const double tile_reference_size = MapModel::TileSize
+        * std::pow(2.0, MapRenderCacheMath::ReferenceZoom - tile.imagery_zoom);
+    const float left = float(tile.virtual_x * tile_reference_size - origin_world.x());
+    const float top = float(tile.y * tile_reference_size - origin_world.y());
+    const float right = float(left + tile_reference_size);
+    const float bottom = float(top + tile_reference_size);
+    const float z_padding = float(tile_reference_size) * 2.0f;
+
+    const float corner_x[4] = {left, right, right, left};
+    const float corner_y[4] = {top, top, bottom, bottom};
+
+    const int viewport_width = qMax(1, viewport_size.width());
+    const int viewport_height = qMax(1, viewport_size.height());
+    // Half a viewport of slack on every side.
+    const double margin_x = double(viewport_width) * 0.5;
+    const double margin_y = double(viewport_height) * 0.5;
+
+    bool any_finite = false;
+    double min_x = 0.0;
+    double max_x = 0.0;
+    double min_y = 0.0;
+    double max_y = 0.0;
+    for (int corner = 0; corner < 4; ++corner)
+    {
+        for (int z_sign = -1; z_sign <= 1; z_sign += 2)
+        {
+            const QVector3D world_position(
+                corner_x[corner], corner_y[corner], float(z_sign) * z_padding);
+            const QPointF screen = this->camera->projectWorldToScreen(world_position);
+            if (!std::isfinite(screen.x()) || !std::isfinite(screen.y()))
+                continue;
+
+            if (!any_finite)
+            {
+                min_x = max_x = screen.x();
+                min_y = max_y = screen.y();
+                any_finite = true;
+            }
+            else
+            {
+                min_x = qMin(min_x, screen.x());
+                max_x = qMax(max_x, screen.x());
+                min_y = qMin(min_y, screen.y());
+                max_y = qMax(max_y, screen.y());
+            }
+        }
+    }
+
+    // Every corner behind the camera: the tile cannot be visible. Anything
+    // else is deliberately resolved in favor of keeping the tile -- this is
+    // a "definitely offscreen" filter, not an exact frustum test.
+    if (!any_finite)
+        return false;
+
+    return max_x >= -margin_x && min_x <= double(viewport_width) + margin_x
+        && max_y >= -margin_y && min_y <= double(viewport_height) + margin_y;
+}
 
 void MapRhiBasemapRenderer::rebuildWireframeVertices()
 {

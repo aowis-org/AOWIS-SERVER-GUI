@@ -14,6 +14,7 @@
 #include <memory>
 
 class MapModel;
+class MapRhiCamera;
 class MapRhiScene;
 class MapTerrainRepository;
 struct MapTerrainTile;
@@ -66,6 +67,7 @@ public:
 
     void setTileRepository(MapTileRepository *tile_repository);
     void setTerrainRepository(MapTerrainRepository *terrain_repository);
+    void setCamera(const MapRhiCamera *camera);
     void notifyTerrainTileAvailable(const QString &key);
     void setHeatmapOverlay(const QVector<HeatmapMarker> &markers,
                            double radius_world, double solid_fraction);
@@ -143,6 +145,8 @@ private:
     bool ensureHeatmapTexture(const VisibleTile &tile, TileResource *resource,
                               QRhiResourceUpdateBatch *resource_updates);
     bool rebuildTileBindings(TileResource *resource);
+    bool isTileInViewFrustum(const VisibleTile &tile, const QSize &viewport_size,
+                             const QPointF &origin_world) const;
     QImage renderHeatmapTile(const VisibleTile &tile) const;
     void rebuildHeatmapMarkerBuckets();
     QVector<int> heatmapMarkerCandidates(double tile_left, double tile_top,
@@ -163,6 +167,7 @@ private:
     MapRhiScene *scene = nullptr;
     MapTileRepository *tile_repository = nullptr;
     MapTerrainRepository *terrain_repository = nullptr;
+    const MapRhiCamera *camera = nullptr;
     QRhi *rhi = nullptr;
     QRhiRenderPassDescriptor *render_pass_descriptor = nullptr;
     QRhiBuffer *camera_uniform_buffer = nullptr;

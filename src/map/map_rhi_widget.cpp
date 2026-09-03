@@ -294,6 +294,7 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
         this->map_model->centerLat(), MapRenderCacheMath::ReferenceZoom);
     this->basemap_renderer = std::make_unique<MapRhiBasemapRenderer>(
         this->map_model, &this->scene, this->tile_repository, this->terrain_repository);
+    this->basemap_renderer->setCamera(&this->camera);
     this->scene.setNetworkGroundOffsetM(this->map_model->view3dNetworkGroundOffsetM());
     this->scene.setVerticalExaggeration(this->map_model->view3dVerticalExaggeration());
     syncViewState();
