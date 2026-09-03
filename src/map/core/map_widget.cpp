@@ -1756,6 +1756,19 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
 
 void MapWidget::updatePointerCoordinates(const QPoint &position)
 {
+    if (this->m_model->viewMode() == MapViewMode::Globe)
+    {
+        CoordinateWGS84 globe_coordinate;
+        if (!this->m_model->globeCoordinateAtScreen(position, this->size(), &globe_coordinate))
+        {
+            emit signalCoordsUnavailable();
+            return;
+        }
+
+        emitPointerCoordinate(globe_coordinate);
+        return;
+    }
+
     if (this->rhi_view_active
         && this->m_model->viewMode() == MapViewMode::ThreeD
         && this->rhi_screen_coordinate_resolver)
