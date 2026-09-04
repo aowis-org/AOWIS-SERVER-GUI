@@ -285,6 +285,7 @@ private:
     double m_view_globe_yaw_deg = 0.0;
     double m_view_globe_pitch_deg = DefaultViewGlobePitchDeg;
     double m_view_globe_distance_m = DefaultViewGlobeDistanceM;
+    bool m_view_globe_north_up_locked = true;
 };
 
 #endif // MAP_MODEL_H

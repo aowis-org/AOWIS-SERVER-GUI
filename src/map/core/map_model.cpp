@@ -756,21 +756,6 @@ void MapModel::panGlobeByPointerDrag(
     const double next_lon_deg = GeoWebMercator::normalizeLongitude(lon_deg);
     const double next_lat_deg = std::clamp(lat_deg, -90.0, 90.0);
 
-    // Latitude/longitude itself is still a singular coordinate system at a
-    // pole: at +/-90 degrees every longitude denotes the same physical point.
-    // GeographicLib is therefore free to return a longitude that differs by
-    // 180 degrees (or more generally any angle) when tiny floating-point
-    // noise moves the ECEF target across the pole. If we kept the numeric yaw
-    // unchanged, the new east/north tangent frame would rotate with that
-    // arbitrary longitude and the rendered globe would visibly snap between
-    // equivalent but differently-oriented pole representations. This is not
-    // gimbal lock; it is the unavoidable longitude coordinate singularity.
-    //
-    // Transport the actual ECEF screen-right direction through the same drag
-    // rotation, then re-express that physical direction as yaw in the new
-    // local tangent frame. Thus a longitude jump is exactly cancelled by the
-    // corresponding yaw change and the camera orientation stays continuous
-    // through and across either pole.
     QVector3D transported_right = rotation.rotatedVector(old_camera_basis.right);
     const GeoWgs84Ellipsoid::LocalFrame next_frame =
         GeoWgs84Ellipsoid::localFrameAtGeodetic(next_lon_deg, next_lat_deg, 0.0);
@@ -780,12 +765,43 @@ void MapModel::panGlobeByPointerDrag(
         return;
     transported_right.normalize();
 
-    const double right_east =
-        double(QVector3D::dotProduct(transported_right, next_frame.east));
-    const double right_north =
-        double(QVector3D::dotProduct(transported_right, next_frame.north));
-    const double next_yaw_deg = normalizedYawDegrees(
-        qRadiansToDegrees(std::atan2(-right_north, right_east)));
+    double next_yaw_deg = this->m_view_globe_yaw_deg;
+    if (this->m_view_globe_north_up_locked)
+    {
+        // North-up lock must suppress the small parallel-transport heading
+        // drift produced by ordinary movement over a curved surface, but it
+        // must NOT force yaw back to zero at a pole. Latitude/longitude has an
+        // unavoidable tangent-frame discontinuity there: after crossing a
+        // pole the canonical longitude can jump by 180 degrees, which flips
+        // east/north even though the physical camera orientation is smooth.
+        //
+        // Keep the locked yaw unchanged during normal panning. At each step,
+        // compare that candidate screen-right direction with the physically
+        // transported screen-right vector. If the canonical tangent frame has
+        // flipped, the two directions become opposite; adding exactly 180
+        // degrees cancels the coordinate-frame flip without reintroducing the
+        // ordinary curved-surface wobble that the lock is meant to suppress.
+        const double yaw_rad = qDegreesToRadians(next_yaw_deg);
+        const QVector3D locked_right =
+            next_frame.east * float(std::cos(yaw_rad))
+            - next_frame.north * float(std::sin(yaw_rad));
+        if (QVector3D::dotProduct(locked_right, transported_right) < 0.0f)
+            next_yaw_deg = normalizedYawDegrees(next_yaw_deg + 180.0);
+    }
+    else
+    {
+        // For a freely rotated globe, transport the actual ECEF screen-right
+        // direction through the same drag rotation, then re-express that
+        // physical direction as yaw in the new local tangent frame. Thus a
+        // longitude jump is cancelled by the corresponding yaw change and the
+        // camera orientation stays continuous through and across either pole.
+        const double right_east =
+            double(QVector3D::dotProduct(transported_right, next_frame.east));
+        const double right_north =
+            double(QVector3D::dotProduct(transported_right, next_frame.north));
+        next_yaw_deg = normalizedYawDegrees(
+            qRadiansToDegrees(std::atan2(-right_north, right_east)));
+    }
 
     // Update center and yaw as one state change before emitting either signal.
     // Emitting centerChanged first and fixing yaw afterwards would still expose
@@ -1238,8 +1254,20 @@ void MapModel::resetView3dCamera()
 void MapModel::setViewGlobeYawDeg(double yaw_deg)
 {
     const double next_yaw = normalizedYawDegrees(yaw_deg);
+
+    // Setting an exact north-up heading is also the explicit north-up lock
+    // used by the globe compass. Any other absolute heading releases it.
+    // Update the lock even when the numeric yaw is already unchanged so a
+    // compass click at 0 degrees can re-enable north-up panning.
+    this->m_view_globe_north_up_locked = coordinatesEqual(next_yaw, 0.0);
+
     if (coordinatesEqual(next_yaw, this->m_view_globe_yaw_deg))
+    {
+        // Keep the stored north heading exact as well; the comparison epsilon
+        // should not leave a tiny residual yaw behind after a compass reset.
+        this->m_view_globe_yaw_deg = next_yaw;
         return;
+    }
 
     this->m_view_globe_yaw_deg = next_yaw;
     emit viewGlobeCameraChanged();
@@ -1288,6 +1316,12 @@ void MapModel::orbitViewGlobe(double yaw_delta_deg, double pitch_delta_deg)
         MinViewGlobePitchDeg,
         this->m_view_globe_pitch_deg + pitch_delta_deg,
         MaxViewGlobePitchDeg);
+
+    // Any deliberate yaw rotation leaves north-up mode. Pitch-only orbiting
+    // does not, so the user can tilt the globe while keeping north locked.
+    if (!coordinatesEqual(yaw_delta_deg, 0.0))
+        this->m_view_globe_north_up_locked = false;
+
     if (coordinatesEqual(next_yaw, this->m_view_globe_yaw_deg)
         && coordinatesEqual(next_pitch, this->m_view_globe_pitch_deg))
     {

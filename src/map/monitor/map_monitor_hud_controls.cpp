@@ -165,6 +165,15 @@ void orbitCompassByPointerDelta(MapModel *map_model, const QPoint &delta_pixels)
         map_model->orbitView3dByPointerDelta(delta_pixels, false);
 }
 
+void snapCompassNorth(MapModel *map_model)
+{
+    Q_ASSERT(map_model != nullptr);
+    if (map_model->viewMode() == MapViewMode::Globe)
+        map_model->setViewGlobeYawDeg(0.0);
+    else if (map_model->viewMode() == MapViewMode::ThreeD)
+        map_model->setView3dYawDeg(0.0);
+}
+
 void configureHudFrame(QFrame *frame)
 {
     frame->setFrameShape(QFrame::StyledPanel);
@@ -264,6 +273,10 @@ public:
             {
                 endCompassRotateInteraction(this->map_model);
             }
+        });
+        connect(this->north_animation, &QAbstractAnimation::finished, this, [this]
+        {
+            snapCompassNorth(this->map_model);
         });
 
         connect(this->map_model, &MapModel::view3dCameraChanged, this, [this]
@@ -526,7 +539,10 @@ private:
         this->north_animation_delta_yaw_deg = std::remainder(
             -this->north_animation_start_yaw_deg, 360.0);
         if (std::abs(this->north_animation_delta_yaw_deg) < 0.01)
+        {
+            snapCompassNorth(this->map_model);
             return;
+        }
 
         this->north_animation_last_progress = 0.0;
         this->north_animation->start();
