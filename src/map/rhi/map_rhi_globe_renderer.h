@@ -33,8 +33,10 @@ class QRhiTexture;
 // are only rebuilt when the window actually needs to move or the zoom level
 // changes -- not every frame. There is no terrain relief or network entity
 // rendering on the globe yet, and (unlike the flat renderer) no per-tile
-// view-frustum culling: the tile window is already bounded by a horizon
-// based visible-radius estimate, which is enough at whole-globe scale.
+// view-frustum culling: the retained tile window is derived from samples of
+// the actual projected ellipsoid boundary, including the visible limb. This
+// keeps the complete on-screen globe footprint covered even where Mercator
+// tile density changes strongly or longitude wraps.
 //
 // Two independent pieces of geometry:
 //  - "window" tiles: the dynamic, zoom/pan-dependent basemap imagery grid

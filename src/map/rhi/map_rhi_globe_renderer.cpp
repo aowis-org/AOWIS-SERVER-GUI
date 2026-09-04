@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 
 namespace
 {
@@ -24,10 +25,6 @@ namespace
 // zoom 19 via viewGlobeDistanceMForZoomLevel() -- the globe's maximum zoom-in
 // should reach exactly as much detail as 2D/3D ever do, no more, no less.
 constexpr int GlobeImageryMaxZoom = MapModel::MaxZoom;
-// Hard cap on the (square) tile window's radius around the center tile, in
-// tiles -- bounds the worst-case request/mesh burden regardless of zoom or
-// viewing angle (see foregroundTileRadius() below).
-constexpr int GlobeForegroundMaxTileRadius = 5;
 // At the globe's whole-planet zoom levels, a Mercator-centred square is not
 // sufficient coverage: near either pole all longitudes converge into the
 // visible disc, and clipping the request window around one arbitrary
@@ -41,17 +38,12 @@ constexpr int GlobeFullCoverageMaxZoom = 4;
 // ordinary pan/orbit does not immediately fall outside the built window and
 // force a rebuild on every frame -- the same role
 // MapRhiBasemapRenderer's own retention margin plays for 2D/3D.
-constexpr int GlobeWindowRetentionMarginTiles = 1;
+constexpr int GlobeWindowRetentionMarginTiles = 2;
 // Dead zone (in zoom levels) around the current zoom before
 // computeDesiredZoom() will actually switch -- without this, distance
 // values that hover near an integer boundary would flicker the window
 // between two zoom levels every frame.
 constexpr double GlobeZoomHysteresis = 0.6;
-// Safety multiplier applied to the horizon-angle visible-radius estimate in
-// foregroundTileRadius(), so the requested window comfortably covers what's
-// on screen even though the estimate itself (see that function) is a rough
-// one.
-constexpr double GlobeForegroundAngleMarginFactor = 1.3;
 // Longitude segments used for each polar cap fan. Independent of the
 // imagery tile grid -- a small seam between the imagery tiles' edge at
 // +-85.05 degrees and the cap fan's ring is not visually significant at
@@ -112,23 +104,207 @@ int computeDesiredZoom(
     return qBound(0, int(std::lround(continuous_zoom_level)), GlobeImageryMaxZoom);
 }
 
-// Rough visible-radius estimate, in tiles at the given zoom, around the
-// camera's target. Treats camera distance as if it were altitude directly
-// above the target (distance is actually eye-to-target, not eye-to-center,
-// so this over-estimates the true horizon angle at low pitch) -- a
-// deliberate simplification that errs toward requesting a bit more
-// coverage than strictly visible rather than leaving gaps, since exact
-// per-tile view-frustum culling (as MapRhiBasemapRenderer does for the flat
-// view) is not worth the complexity at whole-globe scale.
-int foregroundTileRadius(double distance_m, int zoom)
+// The globe's visible footprint is not a fixed square in XYZ tile space.
+// Near a visible limb, perspective compression can put many more Mercator
+// rows/columns on screen than the centre tile suggests; near a pole the
+// Mercator Y density grows strongly; and longitude wraps at the dateline.
+// A fixed tile-radius window therefore eventually exposes its own edge and
+// makes tiles appear/disappear in chunks while panning.
+//
+// Sample the actual projected ellipsoid boundary instead. The projected
+// ellipsoid is convex and the screen centre always looks at the current globe
+// target, so every ray from screen centre to the viewport boundary has one
+// contiguous visible interval. If the viewport edge is outside the globe,
+// binary-search that radial line to the true limb. Converting only the final
+// surface point to geodetic coordinates keeps this cheap enough to do while
+// moving, while describing the real on-screen footprint rather than a rough
+// horizon-radius approximation.
+constexpr int GlobeVisibleBoundarySampleCount = 32;
+constexpr int GlobeVisibleLimbSearchIterations = 10;
+constexpr int GlobeVisibleBoundarySafetyMarginTiles = 1;
+
+struct GlobeVisibleTileBounds
 {
-    const double eye_radius = GeoWgs84Ellipsoid::EquatorialRadiusM + qMax(0.0, distance_m);
-    const double ratio = qBound(0.0, GeoWgs84Ellipsoid::EquatorialRadiusM / eye_radius, 1.0);
-    const double half_angle_deg =
-        qRadiansToDegrees(std::acos(ratio)) * GlobeForegroundAngleMarginFactor;
-    const double tiles_per_degree = double(1 << zoom) / 360.0;
-    const int radius = int(std::ceil(half_angle_deg * tiles_per_degree));
-    return qBound(1, radius, GlobeForegroundMaxTileRadius);
+    int x_min = 0;
+    int x_max = -1;
+    int y_min = 0;
+    int y_max = -1;
+    bool valid = false;
+};
+
+struct GlobeScreenRayContext
+{
+    GeoWgs84Ellipsoid::OrbitCameraBasis basis;
+    double viewport_width = 1.0;
+    double viewport_height = 1.0;
+    double aspect = 1.0;
+    double tan_half_fov = 1.0;
+};
+
+bool globeSurfacePointAtScreen(
+    const GlobeScreenRayContext &context, double screen_x, double screen_y,
+    QVector3D *surface_point)
+{
+    if (surface_point == nullptr)
+        return false;
+
+    const double ndc_x = 2.0 * screen_x / context.viewport_width - 1.0;
+    const double ndc_y = 1.0 - 2.0 * screen_y / context.viewport_height;
+    QVector3D direction = context.basis.forward
+        + context.basis.right * float(ndc_x * context.tan_half_fov * context.aspect)
+        + context.basis.up * float(ndc_y * context.tan_half_fov);
+    if (direction.lengthSquared() <= 1e-12f)
+        return false;
+
+    direction.normalize();
+    return GeoWgs84Ellipsoid::rayIntersection(
+        context.basis.eye, direction, surface_point);
+}
+
+void includeGlobeSurfacePointInTileBounds(
+    const QVector3D &surface_point, int zoom, int tile_span,
+    double reference_virtual_x, GlobeVisibleTileBounds *bounds)
+{
+    if (bounds == nullptr)
+        return;
+
+    double lon_deg = 0.0;
+    double lat_deg = 0.0;
+    if (!GeoWgs84Ellipsoid::ecefToGeodetic(surface_point, &lon_deg, &lat_deg))
+        return;
+
+    const double wrapped_x = GeoWebMercator::lonToTileX(
+        GeoWebMercator::normalizeLongitude(lon_deg), zoom);
+    const double virtual_x = GeoWebMercator::nearestWrappedTileX(
+        wrapped_x, reference_virtual_x, zoom);
+    const int tile_x = int(std::floor(virtual_x));
+    const int tile_y = qBound(
+        0, int(std::floor(GeoWebMercator::latToTileY(lat_deg, zoom))), tile_span - 1);
+
+    if (!bounds->valid)
+    {
+        bounds->x_min = tile_x;
+        bounds->x_max = tile_x;
+        bounds->y_min = tile_y;
+        bounds->y_max = tile_y;
+        bounds->valid = true;
+        return;
+    }
+
+    bounds->x_min = qMin(bounds->x_min, tile_x);
+    bounds->x_max = qMax(bounds->x_max, tile_x);
+    bounds->y_min = qMin(bounds->y_min, tile_y);
+    bounds->y_max = qMax(bounds->y_max, tile_y);
+}
+
+GlobeVisibleTileBounds globeVisibleTileBounds(
+    const MapModel &map_model, const QSize &viewport_size, int zoom,
+    double reference_virtual_x)
+{
+    GlobeVisibleTileBounds bounds;
+    if (!viewport_size.isValid())
+        return bounds;
+
+    const int tile_span = 1 << zoom;
+    const double viewport_width = double(qMax(1, viewport_size.width()));
+    const double viewport_height = double(qMax(1, viewport_size.height()));
+    const double center_x = viewport_width * 0.5;
+    const double center_y = viewport_height * 0.5;
+
+    GlobeScreenRayContext context;
+    context.basis = GeoWgs84Ellipsoid::orbitCameraBasis(
+        map_model.centerLon(), map_model.centerLat(),
+        map_model.viewGlobeYawDeg(),
+        qBound(MapModel::MinViewGlobePitchDeg, map_model.viewGlobePitchDeg(),
+               MapModel::MaxViewGlobePitchDeg),
+        qMax(MapModel::MinViewGlobeDistanceM, map_model.viewGlobeDistanceM()));
+    context.viewport_width = viewport_width;
+    context.viewport_height = viewport_height;
+    context.aspect = viewport_width / viewport_height;
+    context.tan_half_fov = std::tan(
+        qDegreesToRadians(MapModel::GlobeFieldOfViewDeg * 0.5));
+
+    QVector3D center_surface_point;
+    if (!globeSurfacePointAtScreen(context, center_x, center_y, &center_surface_point))
+        return bounds;
+
+    includeGlobeSurfacePointInTileBounds(
+        center_surface_point, zoom, tile_span, reference_virtual_x, &bounds);
+
+    const double half_width = viewport_width * 0.5;
+    const double half_height = viewport_height * 0.5;
+    for (int sample = 0; sample < GlobeVisibleBoundarySampleCount; ++sample)
+    {
+        const double angle = 2.0 * M_PI * double(sample)
+            / double(GlobeVisibleBoundarySampleCount);
+        const double direction_x = std::cos(angle);
+        const double direction_y = std::sin(angle);
+
+        double maximum_distance = std::numeric_limits<double>::infinity();
+        if (std::abs(direction_x) > 1e-12)
+            maximum_distance = qMin(maximum_distance, half_width / std::abs(direction_x));
+        if (std::abs(direction_y) > 1e-12)
+            maximum_distance = qMin(maximum_distance, half_height / std::abs(direction_y));
+        if (!std::isfinite(maximum_distance) || maximum_distance <= 0.0)
+            continue;
+
+        QVector3D boundary_surface_point;
+        const double edge_x = center_x + direction_x * maximum_distance;
+        const double edge_y = center_y + direction_y * maximum_distance;
+        if (!globeSurfacePointAtScreen(
+                context, edge_x, edge_y, &boundary_surface_point))
+        {
+            double hit_distance = 0.0;
+            double miss_distance = maximum_distance;
+            QVector3D last_hit = center_surface_point;
+            for (int iteration = 0;
+                 iteration < GlobeVisibleLimbSearchIterations; ++iteration)
+            {
+                const double test_distance = (hit_distance + miss_distance) * 0.5;
+                QVector3D test_surface_point;
+                const bool hit = globeSurfacePointAtScreen(
+                    context,
+                    center_x + direction_x * test_distance,
+                    center_y + direction_y * test_distance,
+                    &test_surface_point);
+                if (hit)
+                {
+                    hit_distance = test_distance;
+                    last_hit = test_surface_point;
+                }
+                else
+                {
+                    miss_distance = test_distance;
+                }
+            }
+            boundary_surface_point = last_hit;
+        }
+
+        includeGlobeSurfacePointInTileBounds(
+            boundary_surface_point, zoom, tile_span, reference_virtual_x, &bounds);
+    }
+
+    if (!bounds.valid)
+        return bounds;
+
+    bounds.x_min -= GlobeVisibleBoundarySafetyMarginTiles;
+    bounds.x_max += GlobeVisibleBoundarySafetyMarginTiles;
+    bounds.y_min = qMax(0, bounds.y_min - GlobeVisibleBoundarySafetyMarginTiles);
+    bounds.y_max = qMin(
+        tile_span - 1, bounds.y_max + GlobeVisibleBoundarySafetyMarginTiles);
+
+    // Once the sampled visible footprint spans a complete XYZ world in X,
+    // canonicalize it. rebuildWindow() already wraps X, but keeping an
+    // arbitrary >world-width virtual interval would make the coverage test
+    // needlessly sensitive to longitude representation changes at the
+    // dateline/poles.
+    if (bounds.x_max - bounds.x_min + 1 >= tile_span)
+    {
+        bounds.x_min = 0;
+        bounds.x_max = tile_span - 1;
+    }
+
+    return bounds;
 }
 
 // Request priority measured on the globe, not in raw XYZ x/y space. This is
@@ -572,37 +748,76 @@ bool MapRhiGlobeRenderer::prepare(
             ? viewport_size.height() : MapModel::GlobeZoomReferenceViewportHeightPx);
     const int desired_zoom = computeDesiredZoom(continuous_zoom_level, this->window_zoom);
     const int tile_span = 1 << desired_zoom;
-    const int foreground_radius = foregroundTileRadius(distance_m, desired_zoom);
-    const int center_tile_x = int(std::floor(
-        GeoWebMercator::lonToTileX(this->map_model->centerLon(), desired_zoom)));
-    const int center_tile_y = qBound(0, int(std::floor(
-        GeoWebMercator::latToTileY(this->map_model->centerLat(), desired_zoom))), tile_span - 1);
-
-    const int foreground_x_min = center_tile_x - foreground_radius;
-    const int foreground_x_max = center_tile_x + foreground_radius;
-    const int foreground_y_min = qMax(0, center_tile_y - foreground_radius);
-    const int foreground_y_max = qMin(tile_span - 1, center_tile_y + foreground_radius);
     const bool full_globe_coverage = desired_zoom <= GlobeFullCoverageMaxZoom;
 
+    // Keep X in a continuous virtual tile space, exactly like the flat RHI
+    // renderer does. A wrapped longitude jumps numerically from tile 0 to
+    // tile N-1 at the dateline even though the globe moved continuously;
+    // anchoring the new center to the current retained window prevents that
+    // representation jump from rebuilding the opposite side of the globe.
+    const double wrapped_center_tile_x = GeoWebMercator::lonToTileX(
+        GeoWebMercator::normalizeLongitude(this->map_model->centerLon()), desired_zoom);
+    double reference_virtual_x = wrapped_center_tile_x;
+    if (this->window_zoom == desired_zoom
+        && this->window_tile_x_max >= this->window_tile_x_min)
+    {
+        reference_virtual_x =
+            (double(this->window_tile_x_min) + double(this->window_tile_x_max)) * 0.5;
+    }
+    const double center_virtual_x = GeoWebMercator::nearestWrappedTileX(
+        wrapped_center_tile_x, reference_virtual_x, desired_zoom);
+
+    GlobeVisibleTileBounds foreground_bounds;
+    if (full_globe_coverage)
+    {
+        foreground_bounds.x_min = 0;
+        foreground_bounds.x_max = tile_span - 1;
+        foreground_bounds.y_min = 0;
+        foreground_bounds.y_max = tile_span - 1;
+        foreground_bounds.valid = true;
+    }
+    else
+    {
+        foreground_bounds = globeVisibleTileBounds(
+            *this->map_model, viewport_size, desired_zoom, center_virtual_x);
+    }
+
+    // The screen centre is guaranteed to hit the target ellipsoid, so this is
+    // only a defensive fallback for an invalid viewport/camera state. Keep a
+    // small local window rather than dropping the globe geometry entirely.
+    if (!foreground_bounds.valid)
+    {
+        const int center_tile_x = int(std::floor(center_virtual_x));
+        const int center_tile_y = qBound(
+            0, int(std::floor(GeoWebMercator::latToTileY(
+                   this->map_model->centerLat(), desired_zoom))), tile_span - 1);
+        foreground_bounds.x_min = center_tile_x - 2;
+        foreground_bounds.x_max = center_tile_x + 2;
+        foreground_bounds.y_min = qMax(0, center_tile_y - 2);
+        foreground_bounds.y_max = qMin(tile_span - 1, center_tile_y + 2);
+        foreground_bounds.valid = true;
+    }
+
     // Mirrors MapRhiBasemapRenderer's currentLayoutCoversForeground() short
-    // circuit: only rebuild the window (new mesh, new tile requests) when
-    // the zoom level changed or the foreground has moved outside the
-    // already-built (foreground + retention margin) window, not on every
-    // frame a pan/orbit is in progress.
-    const bool window_is_complete_globe =
-        this->window_tile_x_min == 0
-        && this->window_tile_x_max == tile_span - 1
-        && this->window_tile_y_min == 0
-        && this->window_tile_y_max == tile_span - 1;
+    // circuit: only rebuild the window when the actual projected globe
+    // footprint has moved outside the already-built retention apron. This is
+    // what keeps the high-resolution edge off-screen while a pan is in
+    // progress instead of exposing/replacing whole tile rows at the limb.
+    const int window_x_width = this->window_tile_x_max - this->window_tile_x_min + 1;
+    const bool window_covers_all_x = window_x_width >= tile_span;
+    const bool foreground_needs_all_x =
+        foreground_bounds.x_max - foreground_bounds.x_min + 1 >= tile_span;
+    const bool window_covers_foreground_x =
+        window_covers_all_x
+        || (!foreground_needs_all_x
+            && foreground_bounds.x_min >= this->window_tile_x_min
+            && foreground_bounds.x_max <= this->window_tile_x_max);
     const bool window_covers_foreground =
         !this->window_dirty
         && this->window_zoom == desired_zoom
-        && ((full_globe_coverage && window_is_complete_globe)
-            || (!full_globe_coverage
-                && foreground_x_min >= this->window_tile_x_min
-                && foreground_x_max <= this->window_tile_x_max
-                && foreground_y_min >= this->window_tile_y_min
-                && foreground_y_max <= this->window_tile_y_max));
+        && window_covers_foreground_x
+        && foreground_bounds.y_min >= this->window_tile_y_min
+        && foreground_bounds.y_max <= this->window_tile_y_max;
 
     if (!window_covers_foreground)
     {
@@ -613,12 +828,20 @@ bool MapRhiGlobeRenderer::prepare(
         }
         else
         {
+            int retained_x_min =
+                foreground_bounds.x_min - GlobeWindowRetentionMarginTiles;
+            int retained_x_max =
+                foreground_bounds.x_max + GlobeWindowRetentionMarginTiles;
+            if (retained_x_max - retained_x_min + 1 >= tile_span)
+            {
+                retained_x_min = 0;
+                retained_x_max = tile_span - 1;
+            }
+
             rebuildWindow(
-                desired_zoom,
-                foreground_x_min - GlobeWindowRetentionMarginTiles,
-                foreground_x_max + GlobeWindowRetentionMarginTiles,
-                foreground_y_min - GlobeWindowRetentionMarginTiles,
-                foreground_y_max + GlobeWindowRetentionMarginTiles,
+                desired_zoom, retained_x_min, retained_x_max,
+                foreground_bounds.y_min - GlobeWindowRetentionMarginTiles,
+                foreground_bounds.y_max + GlobeWindowRetentionMarginTiles,
                 tile_span);
         }
     }
