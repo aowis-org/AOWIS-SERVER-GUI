@@ -9,6 +9,7 @@
 #include "map/data/map_terrain_tile.h"
 #include "map/data/map_tile_repository.h"
 #include "geo/geo_web_mercator.h"
+#include "geo/geo_wgs84_ellipsoid.h"
 #include "config/gui_configuration.h"
 
 #include <QFile>
@@ -192,6 +193,18 @@ float elevationWorldZ(double elevation_m, float offset, float scale)
     return offset + float(elevation_m) * scale;
 }
 
+float terrainElevationMetersAt(
+    const MapRhiTerrainMeshRequest &request, double terrain_u, double terrain_v)
+{
+    if (!request.terrain_available
+        || request.terrain_tile.elevations_m.size() != MapTerrainTileSampleCount)
+    {
+        return 0.0f;
+    }
+
+    return bilinearTerrainSample(request.terrain_tile, terrain_u, terrain_v);
+}
+
 int normalizedTerrainStitchCellCount(int requested_cell_count, int cell_count)
 {
     if (requested_cell_count <= 0
@@ -345,6 +358,175 @@ float terrainMeshVertexWorldZ(
     }
 
     return terrainWorldZAt(request, terrain_u, terrain_v);
+}
+
+QVector3D globeTerrainPositionAt(
+    const MapRhiTerrainMeshRequest &request,
+    double imagery_u, double imagery_v,
+    double terrain_u, double terrain_v)
+{
+    double elevation_m = double(
+        terrainElevationMetersAt(request, terrain_u, terrain_v))
+        * request.globe_vertical_exaggeration;
+
+    // Web Mercator imagery/DEM coverage ends at +-85.051 degrees, while the
+    // globe renderer closes the last few degrees with its static polar fans.
+    // Keep that shared ring exactly on the ellipsoid so terrain cannot open a
+    // vertical crack against the polar cap.
+    const int imagery_tile_span = 1 << request.imagery_zoom;
+    if ((request.y == 0 && imagery_v <= 0.0)
+        || (request.y == imagery_tile_span - 1 && imagery_v >= 1.0))
+    {
+        elevation_m = 0.0;
+    }
+
+    const double lon_deg = GeoWebMercator::tileXToLon(
+        double(request.virtual_x) + imagery_u, request.imagery_zoom);
+    const double lat_deg = GeoWebMercator::tileYToLat(
+        double(request.y) + imagery_v, request.imagery_zoom);
+    return GeoWgs84Ellipsoid::geodeticToEcef(
+        lon_deg, lat_deg, elevation_m);
+}
+
+QVector3D stitchedHorizontalGlobeTerrainEdgePosition(
+    const MapRhiTerrainMeshRequest &request,
+    int vertex_column, int cell_count, int stitch_cell_count,
+    double imagery_v, double terrain_u_min, double terrain_u_span,
+    double terrain_v)
+{
+    const int normalized_stitch_cell_count =
+        normalizedTerrainStitchCellCount(stitch_cell_count, cell_count);
+    if (normalized_stitch_cell_count <= 0)
+    {
+        const double imagery_u =
+            double(vertex_column) / double(cell_count);
+        const double terrain_u = terrain_u_min
+            + imagery_u * terrain_u_span;
+        return globeTerrainPositionAt(
+            request, imagery_u, imagery_v, terrain_u, terrain_v);
+    }
+
+    const int fine_cells_per_stitch_cell =
+        cell_count / normalized_stitch_cell_count;
+    const int stitch_vertex_index =
+        vertex_column / fine_cells_per_stitch_cell;
+    const int remainder =
+        vertex_column % fine_cells_per_stitch_cell;
+    const double imagery_u0 =
+        double(stitch_vertex_index) / double(normalized_stitch_cell_count);
+    const double terrain_u0 = terrain_u_min + imagery_u0 * terrain_u_span;
+    if (remainder == 0)
+    {
+        return globeTerrainPositionAt(
+            request, imagery_u0, imagery_v, terrain_u0, terrain_v);
+    }
+
+    const double imagery_u1 =
+        double(stitch_vertex_index + 1) / double(normalized_stitch_cell_count);
+    const double terrain_u1 = terrain_u_min + imagery_u1 * terrain_u_span;
+    const QVector3D p0 = globeTerrainPositionAt(
+        request, imagery_u0, imagery_v, terrain_u0, terrain_v);
+    const QVector3D p1 = globeTerrainPositionAt(
+        request, imagery_u1, imagery_v, terrain_u1, terrain_v);
+    const float interpolation = float(remainder)
+        / float(fine_cells_per_stitch_cell);
+
+    // The coarse neighbor's shared edge is one straight ECEF segment between
+    // its vertices. Interpolating only height would put the fine edge back on
+    // the curved ellipsoid and still leave a T-junction gap. Interpolate the
+    // full ECEF position so both meshes literally share the same polyline.
+    return p0 + (p1 - p0) * interpolation;
+}
+
+QVector3D stitchedVerticalGlobeTerrainEdgePosition(
+    const MapRhiTerrainMeshRequest &request,
+    int vertex_row, int cell_count, int stitch_cell_count,
+    double imagery_u, double terrain_v_min, double terrain_v_span,
+    double terrain_u)
+{
+    const int normalized_stitch_cell_count =
+        normalizedTerrainStitchCellCount(stitch_cell_count, cell_count);
+    if (normalized_stitch_cell_count <= 0)
+    {
+        const double imagery_v =
+            double(vertex_row) / double(cell_count);
+        const double terrain_v = terrain_v_min
+            + imagery_v * terrain_v_span;
+        return globeTerrainPositionAt(
+            request, imagery_u, imagery_v, terrain_u, terrain_v);
+    }
+
+    const int fine_cells_per_stitch_cell =
+        cell_count / normalized_stitch_cell_count;
+    const int stitch_vertex_index =
+        vertex_row / fine_cells_per_stitch_cell;
+    const int remainder =
+        vertex_row % fine_cells_per_stitch_cell;
+    const double imagery_v0 =
+        double(stitch_vertex_index) / double(normalized_stitch_cell_count);
+    const double terrain_v0 = terrain_v_min + imagery_v0 * terrain_v_span;
+    if (remainder == 0)
+    {
+        return globeTerrainPositionAt(
+            request, imagery_u, imagery_v0, terrain_u, terrain_v0);
+    }
+
+    const double imagery_v1 =
+        double(stitch_vertex_index + 1) / double(normalized_stitch_cell_count);
+    const double terrain_v1 = terrain_v_min + imagery_v1 * terrain_v_span;
+    const QVector3D p0 = globeTerrainPositionAt(
+        request, imagery_u, imagery_v0, terrain_u, terrain_v0);
+    const QVector3D p1 = globeTerrainPositionAt(
+        request, imagery_u, imagery_v1, terrain_u, terrain_v1);
+    const float interpolation = float(remainder)
+        / float(fine_cells_per_stitch_cell);
+    return p0 + (p1 - p0) * interpolation;
+}
+
+QVector3D globeTerrainMeshVertexPosition(
+    const MapRhiTerrainMeshRequest &request,
+    int vertex_column, int vertex_row, int cell_count,
+    int stitch_top_cell_count, int stitch_right_cell_count,
+    int stitch_bottom_cell_count, int stitch_left_cell_count,
+    double terrain_u_min, double terrain_v_min,
+    double terrain_u_span, double terrain_v_span)
+{
+    const double imagery_u =
+        double(vertex_column) / double(cell_count);
+    const double imagery_v =
+        double(vertex_row) / double(cell_count);
+    const double terrain_u = terrain_u_min + imagery_u * terrain_u_span;
+    const double terrain_v = terrain_v_min + imagery_v * terrain_v_span;
+
+    if (vertex_row == 0 && stitch_top_cell_count > 0)
+    {
+        return stitchedHorizontalGlobeTerrainEdgePosition(
+            request, vertex_column, cell_count, stitch_top_cell_count,
+            0.0, terrain_u_min, terrain_u_span, terrain_v_min);
+    }
+    if (vertex_row == cell_count && stitch_bottom_cell_count > 0)
+    {
+        return stitchedHorizontalGlobeTerrainEdgePosition(
+            request, vertex_column, cell_count, stitch_bottom_cell_count,
+            1.0, terrain_u_min, terrain_u_span,
+            terrain_v_min + terrain_v_span);
+    }
+    if (vertex_column == 0 && stitch_left_cell_count > 0)
+    {
+        return stitchedVerticalGlobeTerrainEdgePosition(
+            request, vertex_row, cell_count, stitch_left_cell_count,
+            0.0, terrain_v_min, terrain_v_span, terrain_u_min);
+    }
+    if (vertex_column == cell_count && stitch_right_cell_count > 0)
+    {
+        return stitchedVerticalGlobeTerrainEdgePosition(
+            request, vertex_row, cell_count, stitch_right_cell_count,
+            1.0, terrain_v_min, terrain_v_span,
+            terrain_u_min + terrain_u_span);
+    }
+
+    return globeTerrainPositionAt(
+        request, imagery_u, imagery_v, terrain_u, terrain_v);
 }
 
 QShader loadBasemapShader(const QString &resource_path)
@@ -3147,6 +3329,67 @@ MapRhiTerrainMeshResult buildTerrainMeshResult(const MapRhiTerrainMeshRequest &r
     result.stitch_left_cell_count = normalizedTerrainStitchCellCount(
         request.stitch_left_cell_count, cell_count);
     result.vertices.reserve(qsizetype(cell_count) * qsizetype(cell_count) * 6);
+
+    if (request.geometry == MapRhiTerrainMeshGeometry::GlobeEcef)
+    {
+        for (int row = 0; row < cell_count; ++row)
+        {
+            for (int column = 0; column < cell_count; ++column)
+            {
+                const double u0 = double(column) / double(cell_count);
+                const double u1 = double(column + 1) / double(cell_count);
+                const double v0 = double(row) / double(cell_count);
+                const double v1 = double(row + 1) / double(cell_count);
+
+                const QVector3D p00 = globeTerrainMeshVertexPosition(
+                    request, column, row, cell_count,
+                    result.stitch_top_cell_count,
+                    result.stitch_right_cell_count,
+                    result.stitch_bottom_cell_count,
+                    result.stitch_left_cell_count,
+                    terrain_u_min, terrain_v_min,
+                    terrain_u_span, terrain_v_span);
+                const QVector3D p10 = globeTerrainMeshVertexPosition(
+                    request, column + 1, row, cell_count,
+                    result.stitch_top_cell_count,
+                    result.stitch_right_cell_count,
+                    result.stitch_bottom_cell_count,
+                    result.stitch_left_cell_count,
+                    terrain_u_min, terrain_v_min,
+                    terrain_u_span, terrain_v_span);
+                const QVector3D p01 = globeTerrainMeshVertexPosition(
+                    request, column, row + 1, cell_count,
+                    result.stitch_top_cell_count,
+                    result.stitch_right_cell_count,
+                    result.stitch_bottom_cell_count,
+                    result.stitch_left_cell_count,
+                    terrain_u_min, terrain_v_min,
+                    terrain_u_span, terrain_v_span);
+                const QVector3D p11 = globeTerrainMeshVertexPosition(
+                    request, column + 1, row + 1, cell_count,
+                    result.stitch_top_cell_count,
+                    result.stitch_right_cell_count,
+                    result.stitch_bottom_cell_count,
+                    result.stitch_left_cell_count,
+                    terrain_u_min, terrain_v_min,
+                    terrain_u_span, terrain_v_span);
+
+                const MapRhiTerrainMeshVertex cell_vertices[6] = {
+                    {p00.x(), p00.y(), p00.z(), float(u0), float(v0)},
+                    {p01.x(), p01.y(), p01.z(), float(u0), float(v1)},
+                    {p10.x(), p10.y(), p10.z(), float(u1), float(v0)},
+                    {p10.x(), p10.y(), p10.z(), float(u1), float(v0)},
+                    {p01.x(), p01.y(), p01.z(), float(u0), float(v1)},
+                    {p11.x(), p11.y(), p11.z(), float(u1), float(v1)}
+                };
+                for (const MapRhiTerrainMeshVertex &vertex : cell_vertices)
+                    result.vertices.append(vertex);
+            }
+        }
+
+        return result;
+    }
+
     for (int row = 0; row < cell_count; ++row)
     {
         for (int column = 0; column < cell_count; ++column)

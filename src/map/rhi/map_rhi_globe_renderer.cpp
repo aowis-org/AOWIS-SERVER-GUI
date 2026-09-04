@@ -2,10 +2,16 @@
 
 #include "map/core/map_model.h"
 #include "map/data/map_tile_repository.h"
+#include "map/data/map_terrain_repository.h"
+#include "map/data/map_terrain_tile.h"
+#include "map/rhi/map_rhi_terrain_mesh_scheduler.h"
+#include "config/gui_configuration.h"
 #include "geo/geo_web_mercator.h"
 #include "geo/geo_wgs84_ellipsoid.h"
 
+#include <QDebug>
 #include <QFile>
+#include <QHash>
 #include <QImage>
 #include <QPixmap>
 #include <QSet>
@@ -17,6 +23,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <utility>
 
 namespace
 {
@@ -25,6 +32,14 @@ namespace
 // zoom 19 via viewGlobeDistanceMForZoomLevel() -- the globe's maximum zoom-in
 // should reach exactly as much detail as 2D/3D ever do, no more, no less.
 constexpr int GlobeImageryMaxZoom = MapModel::MaxZoom;
+constexpr int GlobeTerrainReliefMinimumZoom = 8;
+// Keep the same terrain LOD policy as the flat RHI 3D renderer: powers of
+// two from one cell up to the DEM-native density, with camera-driven rebuilds
+// rate-limited so continuous orbit/zoom never resamples the retained apron at
+// vsync frequency.
+constexpr int GlobeTerrainMinimumLodCellCount = 1;
+constexpr int GlobeAsyncTerrainMeshMinimumCellCount = 16;
+constexpr qint64 GlobeMinimumTerrainLodRebuildIntervalMs = 120;
 // At the globe's whole-planet zoom levels, a Mercator-centred square is not
 // sufficient coverage: near either pole all longitudes converge into the
 // visible disc, and clipping the request window around one arbitrary
@@ -334,6 +349,39 @@ int globeTileRequestPriority(
     return int(std::lround((1.0 - cosine_angle) * 1000000.0));
 }
 
+
+int globeTerrainZoomForImageryZoom(int imagery_zoom)
+{
+    const int configured_max_detail_zoom = qMax(
+        GlobeTerrainReliefMinimumZoom,
+        guiConfiguration().map_performance.terrain_max_detail_zoom);
+    return qBound(
+        GlobeTerrainReliefMinimumZoom, imagery_zoom, configured_max_detail_zoom);
+}
+
+QString globeTerrainDatasetId()
+{
+    return QStringLiteral("copernicus-glo30");
+}
+
+quint64 globeTilePositionKey(int tile_x, int tile_y)
+{
+    return (quint64(quint32(tile_x)) << 32) | quint64(quint32(tile_y));
+}
+
+bool globeTerrainDatumUsable(MapTerrainVerticalDatum datum)
+{
+    return datum == MapTerrainVerticalDatum::Wgs84Ellipsoid
+        || datum == MapTerrainVerticalDatum::Egm96
+        || datum == MapTerrainVerticalDatum::Egm2008;
+}
+
+bool globeTerrainDatumIsOrthometric(MapTerrainVerticalDatum datum)
+{
+    return datum == MapTerrainVerticalDatum::Egm96
+        || datum == MapTerrainVerticalDatum::Egm2008;
+}
+
 QShader loadGlobeShader(const QString &resource_path)
 {
     QFile file(resource_path);
@@ -344,7 +392,9 @@ QShader loadGlobeShader(const QString &resource_path)
 }
 
 MapRhiGlobeRenderer::MapRhiGlobeRenderer(MapModel *map_model, MapTileRepository *tile_repository)
-    : map_model(map_model), tile_repository(tile_repository)
+    : map_model(map_model),
+      tile_repository(tile_repository),
+      terrain_mesh_scheduler(std::make_unique<MapRhiTerrainMeshScheduler>())
 {
 }
 
@@ -359,6 +409,51 @@ void MapRhiGlobeRenderer::setTileRepository(MapTileRepository *new_tile_reposito
     invalidateImagery();
 }
 
+void MapRhiGlobeRenderer::setTerrainRepository(MapTerrainRepository *new_terrain_repository)
+{
+    if (this->terrain_repository == new_terrain_repository)
+        return;
+
+    this->terrain_repository = new_terrain_repository;
+    this->reported_orthometric_datum_warning = false;
+    this->reported_unusable_datum_warning = false;
+    this->terrain_lod_rebuild_pending = false;
+    this->terrain_lod_rebuild_clock.invalidate();
+
+    // Terrain availability changes the fallback mesh density as well as the
+    // data source, so rebuild the window from the ellipsoid. Old background
+    // results are harmless: their request ids no longer match new tiles.
+    this->window_dirty = true;
+}
+
+void MapRhiGlobeRenderer::notifyTerrainTileAvailable(const QString &key)
+{
+    if (key.isEmpty())
+        return;
+
+    for (GlobeTile &tile : this->window_tiles)
+    {
+        if (tile.terrain_key != key)
+            continue;
+        tile.terrain_mesh_request_id = 0;
+        tile.terrain_mesh_applied = false;
+    }
+}
+
+void MapRhiGlobeRenderer::invalidateTerrain()
+{
+    // Do not flatten the currently displayed relief while a replacement is
+    // built (for example after vertical exaggeration changed). Mark it stale
+    // and let the async worker replace it in-place when ready.
+    for (GlobeTile &tile : this->window_tiles)
+    {
+        if (tile.terrain_key.isEmpty())
+            continue;
+        tile.terrain_mesh_request_id = 0;
+        tile.terrain_mesh_applied = false;
+    }
+}
+
 void MapRhiGlobeRenderer::setWireframeVisible(bool visible)
 {
     if (this->wireframe_visible == visible)
@@ -366,7 +461,7 @@ void MapRhiGlobeRenderer::setWireframeVisible(bool visible)
 
     this->wireframe_visible = visible;
     if (visible)
-        this->wireframe_vertex_upload_pending = true;
+        rebuildWireframeVertices();
 }
 
 void MapRhiGlobeRenderer::setMapVisible(bool visible)
@@ -377,6 +472,19 @@ void MapRhiGlobeRenderer::setMapVisible(bool visible)
     this->map_visible = visible;
     if (visible)
         this->window_tiles_requested = false;
+}
+
+bool MapRhiGlobeRenderer::hasPendingTerrainMeshes() const
+{
+    if (this->terrain_lod_rebuild_pending)
+        return true;
+
+    for (const GlobeTile &tile : this->window_tiles)
+    {
+        if (tile.terrain_mesh_request_id != 0)
+            return true;
+    }
+    return false;
 }
 
 MapRhiGlobeRenderer::TileVertex MapRhiGlobeRenderer::makeTileVertex(
@@ -442,70 +550,455 @@ void MapRhiGlobeRenderer::buildCaps()
     rebuildWireframeVertices();
 }
 
+int MapRhiGlobeRenderer::terrainCellCountForTile(
+    const GlobeTile &tile, const QSize &viewport_size) const
+{
+    if (this->map_model == nullptr
+        || tile.terrain_zoom < GlobeTerrainReliefMinimumZoom
+        || tile.zoom < tile.terrain_zoom
+        || !viewport_size.isValid())
+    {
+        return 1;
+    }
+
+    const int zoom_delta = tile.zoom - tile.terrain_zoom;
+    const int cell_divisor = 1 << qMin(zoom_delta, 6);
+    const int native_cell_count = qMax(
+        1, MapTerrainTileCellCount / cell_divisor);
+    const int maximum_cell_count = native_cell_count;
+    const int minimum_cell_count = qMin(
+        maximum_cell_count, GlobeTerrainMinimumLodCellCount);
+    if (maximum_cell_count <= minimum_cell_count)
+        return maximum_cell_count;
+
+    const double tile_center_lon_deg = GeoWebMercator::tileXToLon(
+        double(tile.virtual_x) + 0.5, tile.zoom);
+    const double tile_center_lat_deg = GeoWebMercator::tileYToLat(
+        double(tile.tile_y) + 0.5, tile.zoom);
+    const QVector3D tile_center = GeoWgs84Ellipsoid::geodeticToEcef(
+        tile_center_lon_deg, tile_center_lat_deg, 0.0);
+
+    const double tile_lat_top_deg = GeoWebMercator::tileYToLat(
+        double(tile.tile_y), tile.zoom);
+    const double tile_lat_bottom_deg = GeoWebMercator::tileYToLat(
+        double(tile.tile_y) + 1.0, tile.zoom);
+    const double tile_width_m =
+        (2.0 * M_PI * GeoWgs84Ellipsoid::EquatorialRadiusM
+         * qMax(0.0, std::cos(qDegreesToRadians(tile_center_lat_deg))))
+        / double(1 << tile.zoom);
+    const double tile_height_m = GeoWgs84Ellipsoid::EquatorialRadiusM
+        * std::abs(qDegreesToRadians(tile_lat_top_deg - tile_lat_bottom_deg));
+    const double tile_reference_size_m = qMax(tile_width_m, tile_height_m);
+
+    const GeoWgs84Ellipsoid::OrbitCameraBasis camera_basis =
+        GeoWgs84Ellipsoid::orbitCameraBasis(
+            this->map_model->centerLon(), this->map_model->centerLat(),
+            this->map_model->viewGlobeYawDeg(),
+            qBound(
+                MapModel::MinViewGlobePitchDeg,
+                this->map_model->viewGlobePitchDeg(),
+                MapModel::MaxViewGlobePitchDeg),
+            qMax(MapModel::MinViewGlobeDistanceM,
+                 this->map_model->viewGlobeDistanceM()));
+
+    const double ground_distance_from_focus_m =
+        double((tile_center - camera_basis.target).length());
+
+    // Exactly the same "full detail down to zoom" rule as flat RHI 3D:
+    // only the focus tile is forced to the DEM-native density. The rest of
+    // the retained globe still follows screen-space falloff.
+    if (tile.zoom >= guiConfiguration().map_performance.terrain_full_detail_zoom
+        && ground_distance_from_focus_m < tile_reference_size_m * 0.75)
+    {
+        return maximum_cell_count;
+    }
+
+    const double native_camera_distance_m = MapModel::viewGlobeDistanceMForZoomLevel(
+        double(tile.zoom), this->map_model->centerLat(),
+        qMax(1, viewport_size.height()));
+    const double camera_to_tile_distance_m =
+        double((tile_center - camera_basis.eye).length());
+    const double camera_to_focus_distance_m =
+        double((camera_basis.target - camera_basis.eye).length());
+    const double focus_falloff_distance_m = std::hypot(
+        camera_to_focus_distance_m, ground_distance_from_focus_m);
+
+    // Matching the RHI 3D policy, a tile beneath an oblique camera must not
+    // become more detailed than the crosshair/focus merely because the eye is
+    // physically closer to it. The focus remains the highest-detail location.
+    const double lod_distance_m = qMax(
+        camera_to_tile_distance_m, focus_falloff_distance_m);
+    const double projected_tile_scale = qBound(
+        0.0,
+        native_camera_distance_m / qMax(1e-9, lod_distance_m),
+        4.0);
+    const double target_cell_size_px = qMax(
+        1.0, guiConfiguration().map_performance.terrain_lod_target_cell_size_px);
+    const double desired_cell_count =
+        (double(MapModel::TileSize) / target_cell_size_px)
+        * projected_tile_scale;
+
+    int cell_count = minimum_cell_count;
+    while (cell_count < maximum_cell_count)
+    {
+        const int next_cell_count = qMin(
+            maximum_cell_count, cell_count * 2);
+        const double threshold = std::sqrt(
+            double(cell_count) * double(next_cell_count));
+        if (desired_cell_count < threshold)
+            break;
+        cell_count = next_cell_count;
+    }
+
+    return cell_count;
+}
+
+void MapRhiGlobeRenderer::updateTerrainStitchCellCounts(
+    QVector<GlobeTile> *tiles) const
+{
+    if (tiles == nullptr)
+        return;
+
+    QHash<quint64, qsizetype> tiles_by_position;
+    tiles_by_position.reserve(tiles->size());
+    for (qsizetype index = 0; index < tiles->size(); ++index)
+    {
+        GlobeTile &tile = (*tiles)[index];
+        tile.terrain_stitch_top_cell_count = 0;
+        tile.terrain_stitch_right_cell_count = 0;
+        tile.terrain_stitch_bottom_cell_count = 0;
+        tile.terrain_stitch_left_cell_count = 0;
+
+        if (tile.terrain_key.isEmpty() || tile.terrain_cell_count <= 0)
+            continue;
+        tiles_by_position.insert(
+            globeTilePositionKey(tile.tile_x, tile.tile_y), index);
+    }
+
+    for (qsizetype index = 0; index < tiles->size(); ++index)
+    {
+        GlobeTile &tile = (*tiles)[index];
+        if (tile.terrain_key.isEmpty() || tile.terrain_cell_count <= 1)
+            continue;
+
+        const int left_x = GeoWebMercator::wrapTileX(tile.tile_x - 1, tile.zoom);
+        const int right_x = GeoWebMercator::wrapTileX(tile.tile_x + 1, tile.zoom);
+
+        const QHash<quint64, qsizetype>::const_iterator top_iterator =
+            tiles_by_position.constFind(
+                globeTilePositionKey(tile.tile_x, tile.tile_y - 1));
+        if (top_iterator != tiles_by_position.cend())
+        {
+            const GlobeTile &neighbor = tiles->at(top_iterator.value());
+            if (neighbor.terrain_cell_count > 0
+                && neighbor.terrain_cell_count < tile.terrain_cell_count
+                && tile.terrain_cell_count % neighbor.terrain_cell_count == 0)
+            {
+                tile.terrain_stitch_top_cell_count =
+                    neighbor.terrain_cell_count;
+            }
+        }
+
+        const QHash<quint64, qsizetype>::const_iterator right_iterator =
+            tiles_by_position.constFind(
+                globeTilePositionKey(right_x, tile.tile_y));
+        if (right_iterator != tiles_by_position.cend())
+        {
+            const GlobeTile &neighbor = tiles->at(right_iterator.value());
+            if (neighbor.terrain_cell_count > 0
+                && neighbor.terrain_cell_count < tile.terrain_cell_count
+                && tile.terrain_cell_count % neighbor.terrain_cell_count == 0)
+            {
+                tile.terrain_stitch_right_cell_count =
+                    neighbor.terrain_cell_count;
+            }
+        }
+
+        const QHash<quint64, qsizetype>::const_iterator bottom_iterator =
+            tiles_by_position.constFind(
+                globeTilePositionKey(tile.tile_x, tile.tile_y + 1));
+        if (bottom_iterator != tiles_by_position.cend())
+        {
+            const GlobeTile &neighbor = tiles->at(bottom_iterator.value());
+            if (neighbor.terrain_cell_count > 0
+                && neighbor.terrain_cell_count < tile.terrain_cell_count
+                && tile.terrain_cell_count % neighbor.terrain_cell_count == 0)
+            {
+                tile.terrain_stitch_bottom_cell_count =
+                    neighbor.terrain_cell_count;
+            }
+        }
+
+        const QHash<quint64, qsizetype>::const_iterator left_iterator =
+            tiles_by_position.constFind(
+                globeTilePositionKey(left_x, tile.tile_y));
+        if (left_iterator != tiles_by_position.cend())
+        {
+            const GlobeTile &neighbor = tiles->at(left_iterator.value());
+            if (neighbor.terrain_cell_count > 0
+                && neighbor.terrain_cell_count < tile.terrain_cell_count
+                && tile.terrain_cell_count % neighbor.terrain_cell_count == 0)
+            {
+                tile.terrain_stitch_left_cell_count =
+                    neighbor.terrain_cell_count;
+            }
+        }
+
+    }
+}
+
+bool MapRhiGlobeRenderer::currentTerrainLodMatches(
+    const QSize &viewport_size) const
+{
+    for (const GlobeTile &tile : this->window_tiles)
+    {
+        if (tile.terrain_key.isEmpty())
+            continue;
+        if (tile.terrain_cell_count
+            != terrainCellCountForTile(tile, viewport_size))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 void MapRhiGlobeRenderer::rebuildWindow(
-    int zoom, int x_min, int x_max, int y_min, int y_max, int tile_span)
+    int zoom, int x_min, int x_max, int y_min, int y_max, int tile_span,
+    const QSize &viewport_size)
 {
     const int clamped_y_min = qBound(0, y_min, tile_span - 1);
     const int clamped_y_max = qBound(0, y_max, tile_span - 1);
-    const int subdivisions = subdivisionsForZoom(zoom);
+    const bool terrain_enabled =
+        this->terrain_repository != nullptr && zoom >= GlobeTerrainReliefMinimumZoom;
+    const int terrain_zoom = terrain_enabled
+        ? globeTerrainZoomForImageryZoom(zoom)
+        : -1;
 
-    this->window_vertices.clear();
-    this->window_tiles.clear();
+    const bool geometry_reuse_allowed = !this->window_dirty;
+    QVector<TileVertex> previous_vertices = std::move(this->window_vertices);
+    QVector<GlobeTile> previous_tiles = std::move(this->window_tiles);
+    QHash<quint64, qsizetype> previous_tiles_by_position;
+    if (geometry_reuse_allowed)
+    {
+        previous_tiles_by_position.reserve(previous_tiles.size());
+        for (qsizetype index = 0; index < previous_tiles.size(); ++index)
+        {
+            const GlobeTile &tile = previous_tiles.at(index);
+            previous_tiles_by_position.insert(
+                globeTilePositionKey(tile.tile_x, tile.tile_y), index);
+        }
+    }
 
-    // At low zoom (small tile_span) the requested window, expanded by
-    // radius + retention margin, can wrap around the whole planet more
-    // than once in X; dedupe by (wrapped_x, y) so that just produces a few
-    // redundant loop iterations rather than duplicate geometry.
+    QVector<GlobeTile> next_tiles;
     QSet<quint64> seen_positions;
     for (int x = x_min; x <= x_max; ++x)
     {
         const int wrapped_x = GeoWebMercator::wrapTileX(x, zoom);
         for (int y = clamped_y_min; y <= clamped_y_max; ++y)
         {
-            const quint64 position_key =
-                (quint64(quint32(wrapped_x)) << 32) | quint64(quint32(y));
+            const quint64 position_key = globeTilePositionKey(wrapped_x, y);
             if (seen_positions.contains(position_key))
                 continue;
             seen_positions.insert(position_key);
 
             GlobeTile tile;
+            tile.virtual_x = x;
             tile.tile_x = wrapped_x;
             tile.tile_y = y;
             tile.zoom = zoom;
             tile.imagery_key = this->map_model->tileCacheKeyAtZoom(wrapped_x, y, zoom);
-            tile.first_vertex = this->window_vertices.size();
 
-            for (int row = 0; row < subdivisions; ++row)
+            if (terrain_enabled)
             {
-                const double v0 = double(row) / double(subdivisions);
-                const double v1 = double(row + 1) / double(subdivisions);
-                const double lat0 = GeoWebMercator::tileYToLat(y + v0, zoom);
-                const double lat1 = GeoWebMercator::tileYToLat(y + v1, zoom);
+                const int zoom_delta = zoom - terrain_zoom;
+                MapTerrainTileAddress terrain_address;
+                terrain_address.zoom = terrain_zoom;
+                terrain_address.x = quint32(wrapped_x) >> zoom_delta;
+                terrain_address.y = quint32(y) >> zoom_delta;
+                tile.terrain_zoom = terrain_zoom;
+                tile.terrain_key =
+                    mapTerrainTileKey(globeTerrainDatasetId(), terrain_address);
+                tile.terrain_cell_count =
+                    terrainCellCountForTile(tile, viewport_size);
+            }
 
-                for (int col = 0; col < subdivisions; ++col)
+            next_tiles.append(tile);
+        }
+    }
+
+    if (terrain_enabled)
+        updateTerrainStitchCellCounts(&next_tiles);
+
+    qsizetype estimated_vertex_count = 0;
+    for (const GlobeTile &tile : next_tiles)
+    {
+        const int subdivisions = terrain_enabled
+            ? qMax(1, tile.terrain_cell_count)
+            : subdivisionsForZoom(zoom);
+        estimated_vertex_count +=
+            qsizetype(subdivisions) * qsizetype(subdivisions) * 6;
+    }
+
+    this->window_vertices.clear();
+    this->window_vertices.reserve(estimated_vertex_count);
+    this->window_tiles.clear();
+    this->window_tiles.reserve(next_tiles.size());
+
+    for (GlobeTile &tile : next_tiles)
+    {
+        tile.first_vertex = this->window_vertices.size();
+        const int subdivisions = terrain_enabled
+            ? qMax(1, tile.terrain_cell_count)
+            : subdivisionsForZoom(zoom);
+        const int expected_vertex_count = subdivisions * subdivisions * 6;
+
+        bool reused = false;
+        const QHash<quint64, qsizetype>::const_iterator previous_iterator =
+            previous_tiles_by_position.constFind(
+                globeTilePositionKey(tile.tile_x, tile.tile_y));
+        if (geometry_reuse_allowed
+            && previous_iterator != previous_tiles_by_position.cend())
+        {
+            const GlobeTile &previous_tile =
+                previous_tiles.at(previous_iterator.value());
+            const bool same_geometry =
+                previous_tile.zoom == tile.zoom
+                && previous_tile.imagery_key == tile.imagery_key
+                && previous_tile.terrain_key == tile.terrain_key
+                && previous_tile.terrain_cell_count == tile.terrain_cell_count
+                && previous_tile.terrain_stitch_top_cell_count
+                    == tile.terrain_stitch_top_cell_count
+                && previous_tile.terrain_stitch_right_cell_count
+                    == tile.terrain_stitch_right_cell_count
+                && previous_tile.terrain_stitch_bottom_cell_count
+                    == tile.terrain_stitch_bottom_cell_count
+                && previous_tile.terrain_stitch_left_cell_count
+                    == tile.terrain_stitch_left_cell_count
+                && previous_tile.vertex_count == expected_vertex_count
+                && previous_tile.first_vertex >= 0
+                && previous_tile.first_vertex + previous_tile.vertex_count
+                    <= previous_vertices.size();
+            if (same_geometry)
+            {
+                const TileVertex *source = previous_vertices.constData()
+                    + previous_tile.first_vertex;
+                for (int index = 0; index < previous_tile.vertex_count; ++index)
+                    this->window_vertices.append(source[index]);
+                tile.vertex_count = previous_tile.vertex_count;
+                tile.terrain_mesh_request_id =
+                    previous_tile.terrain_mesh_request_id;
+                tile.terrain_mesh_applied =
+                    previous_tile.terrain_mesh_applied;
+                reused = true;
+            }
+        }
+
+        if (!reused)
+        {
+            bool terrain_built = false;
+            if (terrain_enabled
+                && this->terrain_repository != nullptr
+                && !tile.terrain_key.isEmpty()
+                && tile.terrain_cell_count < GlobeAsyncTerrainMeshMinimumCellCount)
+            {
+                const MapTerrainTile *terrain_tile =
+                    this->terrain_repository->tile(tile.terrain_key);
+                if (terrain_tile != nullptr
+                    && terrain_tile->elevations_m.size() == MapTerrainTileSampleCount
+                    && globeTerrainDatumUsable(terrain_tile->vertical_datum))
                 {
-                    const double u0 = double(col) / double(subdivisions);
-                    const double u1 = double(col + 1) / double(subdivisions);
-                    const double lon0 = GeoWebMercator::tileXToLon(x + u0, zoom);
-                    const double lon1 = GeoWebMercator::tileXToLon(x + u1, zoom);
+                    if (globeTerrainDatumIsOrthometric(terrain_tile->vertical_datum)
+                        && !this->reported_orthometric_datum_warning)
+                    {
+                        qWarning().noquote()
+                            << QStringLiteral(
+                                   "Globe terrain tiles use an orthometric EGM vertical datum; "
+                                   "using it directly as local ellipsoid-normal displacement until "
+                                   "the terrain service exposes WGS84-ellipsoid tile heights.");
+                        this->reported_orthometric_datum_warning = true;
+                    }
 
-                    const TileVertex p00 = makeTileVertex(lon0, lat0, float(u0), float(v0));
-                    const TileVertex p10 = makeTileVertex(lon1, lat0, float(u1), float(v0));
-                    const TileVertex p01 = makeTileVertex(lon0, lat1, float(u0), float(v1));
-                    const TileVertex p11 = makeTileVertex(lon1, lat1, float(u1), float(v1));
+                    MapRhiTerrainMeshRequest request;
+                    request.terrain_key = tile.terrain_key;
+                    request.terrain_tile = *terrain_tile;
+                    request.terrain_available = true;
+                    request.virtual_x = tile.virtual_x;
+                    request.tile_x = tile.tile_x;
+                    request.y = tile.tile_y;
+                    request.imagery_zoom = tile.zoom;
+                    request.terrain_zoom = tile.terrain_zoom;
+                    request.requested_cell_count = tile.terrain_cell_count;
+                    request.stitch_top_cell_count =
+                        tile.terrain_stitch_top_cell_count;
+                    request.stitch_right_cell_count =
+                        tile.terrain_stitch_right_cell_count;
+                    request.stitch_bottom_cell_count =
+                        tile.terrain_stitch_bottom_cell_count;
+                    request.stitch_left_cell_count =
+                        tile.terrain_stitch_left_cell_count;
+                    request.geometry = MapRhiTerrainMeshGeometry::GlobeEcef;
+                    request.globe_vertical_exaggeration =
+                        this->map_model->view3dVerticalExaggeration();
 
-                    this->window_vertices.append(p00);
-                    this->window_vertices.append(p01);
-                    this->window_vertices.append(p10);
-                    this->window_vertices.append(p10);
-                    this->window_vertices.append(p01);
-                    this->window_vertices.append(p11);
+                    const MapRhiTerrainMeshResult result =
+                        buildTerrainMeshResult(request);
+                    if (result.vertices.size() == expected_vertex_count)
+                    {
+                        for (const MapRhiTerrainMeshVertex &vertex : result.vertices)
+                        {
+                            this->window_vertices.append(TileVertex{
+                                vertex.x, vertex.y, vertex.z, vertex.u, vertex.v});
+                        }
+                        tile.vertex_count = expected_vertex_count;
+                        tile.terrain_mesh_applied = true;
+                        terrain_built = true;
+                    }
                 }
             }
 
-            tile.vertex_count = this->window_vertices.size() - tile.first_vertex;
-            this->window_tiles.append(tile);
+            if (!terrain_built)
+            {
+                for (int row = 0; row < subdivisions; ++row)
+                {
+                    const double v0 = double(row) / double(subdivisions);
+                    const double v1 = double(row + 1) / double(subdivisions);
+                    const double lat0 = GeoWebMercator::tileYToLat(
+                        double(tile.tile_y) + v0, zoom);
+                    const double lat1 = GeoWebMercator::tileYToLat(
+                        double(tile.tile_y) + v1, zoom);
+
+                    for (int column = 0; column < subdivisions; ++column)
+                    {
+                        const double u0 = double(column) / double(subdivisions);
+                        const double u1 = double(column + 1) / double(subdivisions);
+                        const double lon0 = GeoWebMercator::tileXToLon(
+                            double(tile.virtual_x) + u0, zoom);
+                        const double lon1 = GeoWebMercator::tileXToLon(
+                            double(tile.virtual_x) + u1, zoom);
+
+                        const TileVertex p00 = makeTileVertex(
+                            lon0, lat0, float(u0), float(v0));
+                        const TileVertex p10 = makeTileVertex(
+                            lon1, lat0, float(u1), float(v0));
+                        const TileVertex p01 = makeTileVertex(
+                            lon0, lat1, float(u0), float(v1));
+                        const TileVertex p11 = makeTileVertex(
+                            lon1, lat1, float(u1), float(v1));
+
+                        this->window_vertices.append(p00);
+                        this->window_vertices.append(p01);
+                        this->window_vertices.append(p10);
+                        this->window_vertices.append(p10);
+                        this->window_vertices.append(p01);
+                        this->window_vertices.append(p11);
+                    }
+                }
+                tile.vertex_count = expected_vertex_count;
+            }
         }
+
+        this->window_tiles.append(tile);
     }
 
     this->window_zoom = zoom;
@@ -516,6 +1009,8 @@ void MapRhiGlobeRenderer::rebuildWindow(
     this->window_dirty = false;
     this->window_tiles_requested = false;
     this->window_vertex_upload_pending = true;
+    this->terrain_lod_rebuild_pending = false;
+    this->terrain_lod_rebuild_clock.restart();
 
     rebuildWireframeVertices();
     pruneUnusedTileResources();
@@ -710,6 +1205,242 @@ void MapRhiGlobeRenderer::requestMissingTiles(QRhiResourceUpdateBatch *resource_
         ensureTileResource(tile, resource_updates);
     for (GlobeTile &tile : this->cap_tiles)
         ensureTileResource(tile, resource_updates);
+}
+
+
+void MapRhiGlobeRenderer::requestMissingTerrainTiles()
+{
+    if (this->terrain_repository == nullptr || this->window_tiles.isEmpty())
+        return;
+
+    QVector<const GlobeTile *> candidates;
+    candidates.reserve(this->window_tiles.size());
+    for (const GlobeTile &tile : this->window_tiles)
+    {
+        if (tile.terrain_zoom < GlobeTerrainReliefMinimumZoom
+            || tile.terrain_key.isEmpty())
+        {
+            continue;
+        }
+        candidates.append(&tile);
+    }
+
+    std::sort(
+        candidates.begin(), candidates.end(),
+        [this](const GlobeTile *first, const GlobeTile *second)
+    {
+        const int first_priority = globeTileRequestPriority(
+            first->tile_x, first->tile_y, first->zoom,
+            this->map_model->centerLon(), this->map_model->centerLat());
+        const int second_priority = globeTileRequestPriority(
+            second->tile_x, second->tile_y, second->zoom,
+            this->map_model->centerLon(), this->map_model->centerLat());
+        if (first_priority != second_priority)
+            return first_priority < second_priority;
+        if (first->terrain_zoom != second->terrain_zoom)
+            return first->terrain_zoom > second->terrain_zoom;
+        if (first->tile_y != second->tile_y)
+            return first->tile_y < second->tile_y;
+        return first->tile_x < second->tile_x;
+    });
+
+    QSet<QString> requested_keys;
+    requested_keys.reserve(candidates.size());
+    for (const GlobeTile *tile : candidates)
+    {
+        if (tile == nullptr
+            || requested_keys.contains(tile->terrain_key)
+            || this->terrain_repository->tile(tile->terrain_key) != nullptr)
+        {
+            continue;
+        }
+        requested_keys.insert(tile->terrain_key);
+
+        const int zoom_delta = tile->zoom - tile->terrain_zoom;
+        const quint32 terrain_x = quint32(tile->tile_x) >> zoom_delta;
+        const quint32 terrain_y = quint32(tile->tile_y) >> zoom_delta;
+        this->terrain_repository->requestTile(
+            globeTerrainDatasetId(), tile->terrain_zoom, terrain_x, terrain_y);
+    }
+}
+
+void MapRhiGlobeRenderer::scheduleReadyTerrainMeshes()
+{
+    if (this->terrain_repository == nullptr
+        || this->terrain_mesh_scheduler == nullptr
+        || this->map_model == nullptr)
+    {
+        return;
+    }
+
+    QVector<GlobeTile *> candidates;
+    candidates.reserve(this->window_tiles.size());
+    for (GlobeTile &tile : this->window_tiles)
+    {
+        if (tile.terrain_key.isEmpty()
+            || tile.terrain_mesh_applied
+            || tile.terrain_mesh_request_id != 0)
+        {
+            continue;
+        }
+
+        if (this->terrain_repository->tile(tile.terrain_key) == nullptr)
+            continue;
+        candidates.append(&tile);
+    }
+
+    std::sort(
+        candidates.begin(), candidates.end(),
+        [this](const GlobeTile *first, const GlobeTile *second)
+    {
+        const int first_priority = globeTileRequestPriority(
+            first->tile_x, first->tile_y, first->zoom,
+            this->map_model->centerLon(), this->map_model->centerLat());
+        const int second_priority = globeTileRequestPriority(
+            second->tile_x, second->tile_y, second->zoom,
+            this->map_model->centerLon(), this->map_model->centerLat());
+        return first_priority < second_priority;
+    });
+
+    for (GlobeTile *tile : candidates)
+    {
+        if (tile == nullptr)
+            continue;
+
+        const MapTerrainTile *terrain_tile =
+            this->terrain_repository->tile(tile->terrain_key);
+        if (terrain_tile == nullptr)
+            continue;
+
+        if (!globeTerrainDatumUsable(terrain_tile->vertical_datum))
+        {
+            if (!this->reported_unusable_datum_warning)
+            {
+                qWarning().noquote()
+                    << QStringLiteral(
+                           "Globe terrain is ignoring terrain tiles with an unknown/local "
+                           "vertical datum because they cannot be interpreted as global height.");
+                this->reported_unusable_datum_warning = true;
+            }
+            tile->terrain_mesh_applied = true;
+            continue;
+        }
+
+        if (globeTerrainDatumIsOrthometric(terrain_tile->vertical_datum)
+            && !this->reported_orthometric_datum_warning)
+        {
+            // The normalized terrain tile API currently has no per-tile
+            // WGS84-ellipsoid conversion selector. Preserve the real relief
+            // shape by using EGM orthometric height as the local displacement
+            // for now, but make the datum approximation explicit rather than
+            // silently pretending it is ellipsoidal height. A later datum
+            // conversion boundary can replace this without changing the ECEF
+            // mesh architecture introduced here.
+            qWarning().noquote()
+                << QStringLiteral(
+                       "Globe terrain tiles use an orthometric EGM vertical datum; "
+                       "using it directly as local ellipsoid-normal displacement until "
+                       "the terrain service exposes WGS84-ellipsoid tile heights.");
+            this->reported_orthometric_datum_warning = true;
+        }
+
+        MapRhiTerrainMeshRequest request;
+        request.request_id = this->next_terrain_mesh_request_id++;
+        request.terrain_key = tile->terrain_key;
+        request.terrain_tile = *terrain_tile;
+        request.terrain_available =
+            terrain_tile->elevations_m.size() == MapTerrainTileSampleCount;
+        request.virtual_x = tile->virtual_x;
+        request.tile_x = tile->tile_x;
+        request.y = tile->tile_y;
+        request.imagery_zoom = tile->zoom;
+        request.terrain_zoom = tile->terrain_zoom;
+        request.requested_cell_count = tile->terrain_cell_count;
+        request.stitch_top_cell_count =
+            tile->terrain_stitch_top_cell_count;
+        request.stitch_right_cell_count =
+            tile->terrain_stitch_right_cell_count;
+        request.stitch_bottom_cell_count =
+            tile->terrain_stitch_bottom_cell_count;
+        request.stitch_left_cell_count =
+            tile->terrain_stitch_left_cell_count;
+        request.geometry = MapRhiTerrainMeshGeometry::GlobeEcef;
+        request.globe_vertical_exaggeration =
+            this->map_model->view3dVerticalExaggeration();
+
+        tile->terrain_mesh_request_id = request.request_id;
+        this->terrain_mesh_scheduler->submit(request);
+    }
+}
+
+bool MapRhiGlobeRenderer::applyReadyTerrainMeshes(
+    QRhiResourceUpdateBatch *resource_updates)
+{
+    if (this->terrain_mesh_scheduler == nullptr || resource_updates == nullptr)
+        return true;
+
+    QVector<MapRhiTerrainMeshResult> results;
+    this->terrain_mesh_scheduler->collectReady(&results);
+    if (results.isEmpty())
+        return true;
+
+    bool wireframe_changed = false;
+    for (const MapRhiTerrainMeshResult &result : results)
+    {
+        for (GlobeTile &tile : this->window_tiles)
+        {
+            if (tile.terrain_mesh_request_id != result.request_id)
+                continue;
+
+            tile.terrain_mesh_request_id = 0;
+            if (!result.terrain_available
+                || result.cell_count != tile.terrain_cell_count
+                || result.stitch_top_cell_count
+                    != tile.terrain_stitch_top_cell_count
+                || result.stitch_right_cell_count
+                    != tile.terrain_stitch_right_cell_count
+                || result.stitch_bottom_cell_count
+                    != tile.terrain_stitch_bottom_cell_count
+                || result.stitch_left_cell_count
+                    != tile.terrain_stitch_left_cell_count
+                || result.vertices.size() != tile.vertex_count)
+            {
+                break;
+            }
+
+            const qsizetype first_vertex = tile.first_vertex;
+            for (qsizetype index = 0; index < result.vertices.size(); ++index)
+            {
+                const MapRhiTerrainMeshVertex &vertex = result.vertices.at(index);
+                this->window_vertices[first_vertex + index] =
+                    TileVertex{vertex.x, vertex.y, vertex.z, vertex.u, vertex.v};
+            }
+
+            tile.terrain_mesh_applied = true;
+            wireframe_changed = true;
+
+            if (this->window_vertex_buffer)
+            {
+                const int byte_offset =
+                    int(first_vertex * qsizetype(sizeof(TileVertex)));
+                const int byte_count =
+                    int(result.vertices.size() * qsizetype(sizeof(TileVertex)));
+                resource_updates->updateDynamicBuffer(
+                    this->window_vertex_buffer.get(), byte_offset, byte_count,
+                    this->window_vertices.constData() + first_vertex);
+            }
+            else
+            {
+                this->window_vertex_upload_pending = true;
+            }
+
+            break;
+        }
+    }
+
+    if (wireframe_changed && this->wireframe_visible)
+        rebuildWireframeVertices();
+    return true;
 }
 
 bool MapRhiGlobeRenderer::ensureSharedResources()
@@ -962,7 +1693,8 @@ bool MapRhiGlobeRenderer::prepare(
         if (full_globe_coverage)
         {
             rebuildWindow(
-                desired_zoom, 0, tile_span - 1, 0, tile_span - 1, tile_span);
+                desired_zoom, 0, tile_span - 1, 0, tile_span - 1, tile_span,
+                viewport_size);
         }
         else
         {
@@ -980,9 +1712,48 @@ bool MapRhiGlobeRenderer::prepare(
                 desired_zoom, retained_x_min, retained_x_max,
                 foreground_bounds.y_min - GlobeWindowRetentionMarginTiles,
                 foreground_bounds.y_max + GlobeWindowRetentionMarginTiles,
-                tile_span);
+                tile_span, viewport_size);
         }
     }
+    else
+    {
+        const bool terrain_enabled =
+            this->terrain_repository != nullptr
+            && desired_zoom >= GlobeTerrainReliefMinimumZoom;
+        const bool terrain_lod_matches =
+            !terrain_enabled || currentTerrainLodMatches(viewport_size);
+        if (!terrain_lod_matches)
+        {
+            if (this->terrain_lod_rebuild_clock.isValid()
+                && this->terrain_lod_rebuild_clock.elapsed()
+                    < GlobeMinimumTerrainLodRebuildIntervalMs)
+            {
+                // Keep the current terrain mesh on screen until the same
+                // 120 ms LOD debounce used by RHI 3D expires. renderGlobe()
+                // keeps requesting frames while this flag is set, so a drag
+                // that stops inside the debounce window still settles to the
+                // correct LOD without another input event.
+                this->terrain_lod_rebuild_pending = true;
+            }
+            else
+            {
+                rebuildWindow(
+                    this->window_zoom,
+                    this->window_tile_x_min, this->window_tile_x_max,
+                    this->window_tile_y_min, this->window_tile_y_max,
+                    1 << this->window_zoom, viewport_size);
+            }
+        }
+        else
+        {
+            this->terrain_lod_rebuild_pending = false;
+        }
+    }
+
+    if (!applyReadyTerrainMeshes(resource_updates))
+        return false;
+    requestMissingTerrainTiles();
+    scheduleReadyTerrainMeshes();
 
     if (this->window_vertex_upload_pending && !this->window_vertices.isEmpty())
     {
@@ -1126,6 +1897,8 @@ void MapRhiGlobeRenderer::releaseResources()
     this->wireframe_vertex_buffer_size = 0;
     this->wireframe_vertex_upload_pending = true;
     this->window_dirty = true;
+    this->terrain_lod_rebuild_pending = false;
+    this->terrain_lod_rebuild_clock.invalidate();
     this->window_zoom = -1;
     this->window_tile_x_min = 0;
     this->window_tile_x_max = -1;

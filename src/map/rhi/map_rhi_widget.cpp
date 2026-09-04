@@ -359,6 +359,8 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
             markUndergroundGeometryDirty();
             if (this->basemap_renderer)
                 this->basemap_renderer->invalidate();
+            if (this->globe_renderer)
+                this->globe_renderer->invalidateTerrain();
         }
 
         syncViewState();
@@ -1118,6 +1120,8 @@ void MapRhiWidget::setTerrainRepository(MapTerrainRepository *terrain_repository
     this->terrain_repository = terrain_repository;
     if (this->basemap_renderer)
         this->basemap_renderer->setTerrainRepository(this->terrain_repository);
+    if (this->globe_renderer)
+        this->globe_renderer->setTerrainRepository(this->terrain_repository);
 
     if (this->terrain_repository != nullptr)
     {
@@ -1126,6 +1130,8 @@ void MapRhiWidget::setTerrainRepository(MapTerrainRepository *terrain_repository
         {
             if (this->basemap_renderer)
                 this->basemap_renderer->notifyTerrainTileAvailable(key);
+            if (this->globe_renderer)
+                this->globe_renderer->notifyTerrainTileAvailable(key);
             syncViewState();
             markUndergroundGeometryDirty();
             update();
@@ -1853,6 +1859,13 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     this->globe_renderer->draw(command_buffer);
 
     command_buffer->endPass();
+
+    // Terrain mesh generation is asynchronous and independent of network
+    // downloads. Keep requesting frames only while globe terrain work is
+    // actually in flight so completed worker results are picked up promptly
+    // even when the camera is otherwise stationary.
+    if (this->globe_renderer->hasPendingTerrainMeshes())
+        update();
 }
 
 void MapRhiWidget::releaseResources()

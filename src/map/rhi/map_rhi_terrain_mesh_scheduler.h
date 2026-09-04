@@ -16,6 +16,12 @@
 // header has no dependency on map_rhi_basemap_renderer.h (and vice versa,
 // avoiding a circular include); the renderer converts these to its own
 // TileVertex when a result is applied.
+enum class MapRhiTerrainMeshGeometry
+{
+    FlatWorld,
+    GlobeEcef
+};
+
 struct MapRhiTerrainMeshVertex
 {
     float x = 0.0f;
@@ -37,12 +43,13 @@ struct MapRhiTerrainMeshVertex
 // because a write on either side detaches (deep-copies) before mutating
 // rather than touching data the other side might still be reading.
 //
-// The elevation(m)->world-Z conversion is affine and depends on live
-// MapRhiScene/MapModel state (vertical exaggeration, reference latitude,
-// etc.), so instead of shipping a pointer to either object, the two
-// coefficients of that affine function are precomputed on the main thread
-// and shipped as plain floats: world_z = elevation_world_z_offset +
-// elevation_world_z_scale * elevation_m.
+// Flat RHI 3D uses an affine elevation(m)->world-Z conversion that depends
+// on live MapRhiScene/MapModel state (vertical exaggeration, reference
+// latitude, etc.), so instead of shipping a pointer to either object, the two
+// coefficients of that affine function are precomputed on the main thread and
+// shipped as plain floats. Globe requests use the same copied DEM data but
+// generate geodetic WGS84/ECEF vertices directly, again without touching live
+// GUI/render objects from the worker thread.
 struct MapRhiTerrainMeshRequest
 {
     quint64 request_id = 0;
@@ -85,6 +92,11 @@ struct MapRhiTerrainMeshRequest
     float tile_world_size = 0.0f;
     float elevation_world_z_offset = 0.0f;
     float elevation_world_z_scale = 0.0f;
+
+    // Flat RHI 3D keeps the existing world-X/Y + world-Z geometry. Globe
+    // requests instead generate geodetic WGS84 positions directly in ECEF.
+    MapRhiTerrainMeshGeometry geometry = MapRhiTerrainMeshGeometry::FlatWorld;
+    double globe_vertical_exaggeration = 1.0;
 };
 
 struct MapRhiTerrainMeshResult

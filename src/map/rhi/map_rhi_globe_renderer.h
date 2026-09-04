@@ -2,6 +2,7 @@
 #define MAP_RHI_GLOBE_RENDERER_H
 
 #include <QColor>
+#include <QElapsedTimer>
 #include <QMatrix4x4>
 #include <QSize>
 #include <QString>
@@ -11,6 +12,8 @@
 #include <memory>
 
 class MapModel;
+class MapTerrainRepository;
+class MapRhiTerrainMeshScheduler;
 class MapTileRepository;
 class QRhi;
 class QRhiBuffer;
@@ -31,9 +34,12 @@ class QRhiTexture;
 // panning does not immediately fall outside it, and a "does the current
 // window still cover what's needed" dirty check so the mesh/tile requests
 // are only rebuilt when the window actually needs to move or the zoom level
-// changes -- not every frame. There is no terrain relief or network entity
-// rendering on the globe yet, and (unlike the flat renderer) no per-tile
-// view-frustum culling: the retained tile window is derived from samples of
+// changes -- not every frame. Terrain relief reuses the existing normalized
+// DEM repository and background terrain-mesh worker, replacing ellipsoid
+// fallback vertices in-place as terrain becomes available. Network entity
+// rendering on the globe is still separate work. Unlike the flat renderer,
+// there is no per-tile view-frustum culling: the retained tile window is
+// derived from samples of
 // the actual projected ellipsoid boundary, including the visible limb. This
 // keeps the complete on-screen globe footprint covered even where Mercator
 // tile density changes strongly or longitude wraps.
@@ -52,8 +58,12 @@ public:
     ~MapRhiGlobeRenderer();
 
     void setTileRepository(MapTileRepository *tile_repository);
+    void setTerrainRepository(MapTerrainRepository *terrain_repository);
+    void notifyTerrainTileAvailable(const QString &key);
+    void invalidateTerrain();
     void setWireframeVisible(bool visible);
     void setMapVisible(bool visible);
+    bool hasPendingTerrainMeshes() const;
 
     // Called whenever the RHI/render pass may have changed, same contract
     // as MapRhiBasemapRenderer::initialize(). Safe to call every frame; all
@@ -106,6 +116,7 @@ private:
 
     struct GlobeTile
     {
+        int virtual_x = 0;
         int tile_x = 0;
         int tile_y = 0;
         int zoom = 0;
@@ -113,6 +124,15 @@ private:
         int first_vertex = 0;
         int vertex_count = 0;
         QString imagery_key;
+        int terrain_zoom = -1;
+        QString terrain_key;
+        int terrain_cell_count = 1;
+        int terrain_stitch_top_cell_count = 0;
+        int terrain_stitch_right_cell_count = 0;
+        int terrain_stitch_bottom_cell_count = 0;
+        int terrain_stitch_left_cell_count = 0;
+        quint64 terrain_mesh_request_id = 0;
+        bool terrain_mesh_applied = false;
         // Non-owning; points into tile_resources (or at cap_resource for
         // polar caps) and is only valid for the frame it was resolved in.
         TileResource *resource = nullptr;
@@ -120,7 +140,11 @@ private:
 
     void buildCaps();
     void buildPolarCap(bool north);
-    void rebuildWindow(int zoom, int x_min, int x_max, int y_min, int y_max, int tile_span);
+    void rebuildWindow(int zoom, int x_min, int x_max, int y_min, int y_max, int tile_span,
+                       const QSize &viewport_size);
+    int terrainCellCountForTile(const GlobeTile &tile, const QSize &viewport_size) const;
+    void updateTerrainStitchCellCounts(QVector<GlobeTile> *tiles) const;
+    bool currentTerrainLodMatches(const QSize &viewport_size) const;
     void pruneUnusedTileResources();
     void rebuildWireframeVertices();
     void appendWireframeEdges(const QVector<TileVertex> &vertices);
@@ -130,9 +154,13 @@ private:
     bool rebuildTileBindings(TileResource *resource);
     bool ensureTileResource(GlobeTile &tile, QRhiResourceUpdateBatch *resource_updates);
     void requestMissingTiles(QRhiResourceUpdateBatch *resource_updates);
+    void requestMissingTerrainTiles();
+    void scheduleReadyTerrainMeshes();
+    bool applyReadyTerrainMeshes(QRhiResourceUpdateBatch *resource_updates);
 
     MapModel *map_model = nullptr;
     MapTileRepository *tile_repository = nullptr;
+    MapTerrainRepository *terrain_repository = nullptr;
     QRhi *rhi = nullptr;
     QRhiRenderPassDescriptor *render_pass_descriptor = nullptr;
     int sample_count = 1;
@@ -175,6 +203,13 @@ private:
     std::unique_ptr<QRhiGraphicsPipeline> wireframe_pipeline;
     std::map<QString, std::unique_ptr<TileResource>> tile_resources;
     TileResource cap_resource;
+
+    std::unique_ptr<MapRhiTerrainMeshScheduler> terrain_mesh_scheduler;
+    quint64 next_terrain_mesh_request_id = 1;
+    bool reported_orthometric_datum_warning = false;
+    bool reported_unusable_datum_warning = false;
+    QElapsedTimer terrain_lod_rebuild_clock;
+    bool terrain_lod_rebuild_pending = false;
 };
 
 #endif // MAP_RHI_GLOBE_RENDERER_H
