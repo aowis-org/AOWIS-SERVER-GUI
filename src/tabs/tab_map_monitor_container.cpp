@@ -1330,7 +1330,9 @@ void MapMonitorContainer::syncDesktopCameraHudVisibility()
         && (this->map_model->viewMode() == MapViewMode::ThreeD
             || this->map_model->viewMode() == MapViewMode::Globe);
     const bool vertical_controls_visible =
-        rhi_active && this->map_model->viewMode() == MapViewMode::ThreeD;
+        rhi_active
+        && (this->map_model->viewMode() == MapViewMode::ThreeD
+            || this->map_model->viewMode() == MapViewMode::Globe);
     this->desktop_compass_hud->setVisible(compass_hud_visible);
     this->desktop_scale_hud->setVisible(rhi_active);
     this->desktop_vertical_controls_hud->setVisible(vertical_controls_visible);

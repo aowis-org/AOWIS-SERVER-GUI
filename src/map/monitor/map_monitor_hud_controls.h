@@ -100,6 +100,7 @@ private:
     MapModel *map_model = nullptr;
     QSlider *distance_slider = nullptr;
     QLabel *distance_maximum_label = nullptr;
+    QLabel *distance_minimum_label = nullptr;
     QLabel *distance_value_label = nullptr;
 };
 
@@ -113,6 +114,8 @@ public:
 private:
     MapModel *map_model = nullptr;
     QSlider *tilt_slider = nullptr;
+    QLabel *tilt_maximum_label = nullptr;
+    QLabel *tilt_minimum_label = nullptr;
     QLabel *tilt_value_label = nullptr;
 };
 

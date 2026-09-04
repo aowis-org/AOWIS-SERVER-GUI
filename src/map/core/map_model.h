@@ -102,8 +102,8 @@ public:
     // side of it, which reads as "the globe isn't centered". Middle-drag
     // still tilts away from this if a person wants the oblique look.
     static constexpr double DefaultViewGlobePitchDeg = 90.0;
-    static constexpr double ViewGlobeOrbitYawDegreesPerPixel = 0.2;
-    static constexpr double ViewGlobeOrbitPitchDegreesPerPixel = 0.2;
+    static constexpr double ViewGlobeOrbitYawDegreesPerPixel = View3dOrbitYawDegreesPerPixel;
+    static constexpr double ViewGlobeOrbitPitchDegreesPerPixel = View3dOrbitPitchDegreesPerPixel;
 
     int zoom() const;
     double view2dContinuousScale() const;

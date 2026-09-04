@@ -343,7 +343,9 @@ void MapWidget::init()
             this->view_2d_zoom_in_key_pressed = false;
             this->view_2d_zoom_out_key_pressed = false;
         }
-        if (view_mode != MapViewMode::ThreeD)
+        const bool orbit_camera_mode =
+            view_mode == MapViewMode::ThreeD || view_mode == MapViewMode::Globe;
+        if (!orbit_camera_mode)
         {
             this->view_3d_zoom_in_key_pressed = false;
             this->view_3d_zoom_out_key_pressed = false;
@@ -858,7 +860,8 @@ void MapWidget::beginView3dKeyboardZoomInteraction()
 {
     if (this->view_3d_keyboard_zoom_interaction_active
         || this->m_model == nullptr
-        || this->m_model->viewMode() != MapViewMode::ThreeD)
+        || (this->m_model->viewMode() != MapViewMode::ThreeD
+            && this->m_model->viewMode() != MapViewMode::Globe))
     {
         return;
     }
@@ -965,7 +968,8 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
 #ifndef Q_OS_WASM
     if (event->key() == Qt::Key_Control
         && !event->isAutoRepeat()
-        && this->m_model->viewMode() == MapViewMode::ThreeD
+        && (this->m_model->viewMode() == MapViewMode::ThreeD
+            || this->m_model->viewMode() == MapViewMode::Globe)
         && !this->view_3d_orbit_active
         && QApplication::mouseButtons() == Qt::NoButton)
     {
@@ -1556,7 +1560,8 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
     this->updatePointerCoordinates(position);
 
     const bool ctrl_mouse_orbit_requested =
-        this->m_model->viewMode() == MapViewMode::ThreeD
+        (this->m_model->viewMode() == MapViewMode::ThreeD
+            || this->m_model->viewMode() == MapViewMode::Globe)
         && event->modifiers().testFlag(Qt::ControlModifier)
         && event->buttons() == Qt::NoButton;
 
