@@ -147,6 +147,7 @@ private:
     std::unique_ptr<QRhiBuffer> camera_uniform_buffer;
     std::unique_ptr<QRhiSampler> sampler;
     std::unique_ptr<QRhiTexture> dummy_texture;
+    bool dummy_texture_upload_pending = true;
     std::unique_ptr<QRhiShaderResourceBindings> template_bindings;
     std::unique_ptr<QRhiGraphicsPipeline> pipeline;
     std::map<QString, std::unique_ptr<TileResource>> tile_resources;

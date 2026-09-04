@@ -28,6 +28,15 @@ constexpr int GlobeImageryMaxZoom = MapModel::MaxZoom;
 // tiles -- bounds the worst-case request/mesh burden regardless of zoom or
 // viewing angle (see foregroundTileRadius() below).
 constexpr int GlobeForegroundMaxTileRadius = 5;
+// At the globe's whole-planet zoom levels, a Mercator-centred square is not
+// sufficient coverage: near either pole all longitudes converge into the
+// visible disc, and clipping the request window around one arbitrary
+// longitude leaves large wedge-shaped holes. Zoom 4 is the normal fully
+// zoomed-out globe LOD (MapModel::GlobeMinZoomLevel); requesting the complete
+// XYZ world at this LOD is only 16x16 tiles and guarantees that every part of
+// the visible globe has geometry/imagery available, independent of latitude
+// and dateline position.
+constexpr int GlobeFullCoverageMaxZoom = 4;
 // Extra ring of tiles kept beyond the strictly-visible foreground, so an
 // ordinary pan/orbit does not immediately fall outside the built window and
 // force a rebuild on every frame -- the same role
@@ -53,6 +62,10 @@ constexpr int GlobePolarCapSegments = 48;
 // ice/cloud-like color reads reasonably for both poles without pretending
 // to be real imagery.
 const QColor GlobePolarCapColor(235, 240, 245);
+// Missing imagery must never punch transparent/black holes through the planet
+// while requests are still arriving. This low-contrast ocean-like fallback is
+// only visible until the real tile texture is uploaded.
+const QColor GlobeMissingTileColor(18, 58, 72);
 
 constexpr int GlobeCameraUniformBytes = 16 * int(sizeof(float));
 
@@ -116,6 +129,33 @@ int foregroundTileRadius(double distance_m, int zoom)
     const double tiles_per_degree = double(1 << zoom) / 360.0;
     const int radius = int(std::ceil(half_angle_deg * tiles_per_degree));
     return qBound(1, radius, GlobeForegroundMaxTileRadius);
+}
+
+// Request priority measured on the globe, not in raw XYZ x/y space. This is
+// important close to the poles where many different Mercator X tiles are at
+// essentially the same physical distance from the crosshair. Lower values are
+// dispatched first by MapTileRepository, matching the centre-out behaviour of
+// the 2D/3D renderer.
+int globeTileRequestPriority(
+    int tile_x, int tile_y, int zoom, double center_lon_deg, double center_lat_deg)
+{
+    const double tile_lon_deg = GeoWebMercator::tileXToLon(double(tile_x) + 0.5, zoom);
+    const double tile_lat_deg = GeoWebMercator::tileYToLat(double(tile_y) + 0.5, zoom);
+
+    const double center_lat_rad = qDegreesToRadians(center_lat_deg);
+    const double tile_lat_rad = qDegreesToRadians(tile_lat_deg);
+    const double lon_delta_rad = qDegreesToRadians(
+        GeoWebMercator::normalizeLongitude(tile_lon_deg - center_lon_deg));
+    const double cosine_angle = qBound(
+        -1.0,
+        std::sin(center_lat_rad) * std::sin(tile_lat_rad)
+            + std::cos(center_lat_rad) * std::cos(tile_lat_rad) * std::cos(lon_delta_rad),
+        1.0);
+
+    // 1-cos(theta) is monotonic over [0, pi], avoids acos(), and gives enough
+    // integer resolution that the repository does not fall back to insertion
+    // order except for genuinely equidistant tiles.
+    return int(std::lround((1.0 - cosine_angle) * 1000000.0));
 }
 
 QShader loadGlobeShader(const QString &resource_path)
@@ -378,6 +418,14 @@ bool MapRhiGlobeRenderer::ensureTileResource(
 
 void MapRhiGlobeRenderer::requestMissingTiles(QRhiResourceUpdateBatch *resource_updates)
 {
+    if (this->dummy_texture_upload_pending && this->dummy_texture)
+    {
+        QImage image(1, 1, QImage::Format_RGBA8888);
+        image.fill(GlobeMissingTileColor);
+        resource_updates->uploadTexture(this->dummy_texture.get(), image);
+        this->dummy_texture_upload_pending = false;
+    }
+
     if (this->tile_repository != nullptr && !this->window_tiles_requested)
     {
         const quint64 batch = this->tile_repository->beginTileRequestBatch(
@@ -387,9 +435,12 @@ void MapRhiGlobeRenderer::requestMissingTiles(QRhiResourceUpdateBatch *resource_
             if (this->tile_repository->tile(tile.imagery_key) != nullptr)
                 continue;
 
+            const int priority = globeTileRequestPriority(
+                tile.tile_x, tile.tile_y, tile.zoom,
+                this->map_model->centerLon(), this->map_model->centerLat());
             this->tile_repository->requestTile(
                 this->map_model->tileEndpointAtZoom(tile.tile_x, tile.tile_y, tile.zoom),
-                tile.imagery_key, tile.tile_x, tile.tile_y, 0, batch, true);
+                tile.imagery_key, tile.tile_x, tile.tile_y, priority, batch, true);
         }
         this->window_tiles_requested = true;
     }
@@ -427,6 +478,7 @@ bool MapRhiGlobeRenderer::ensureSharedResources()
         this->dummy_texture.reset(this->rhi->newTexture(QRhiTexture::RGBA8, QSize(1, 1)));
         if (!this->dummy_texture || !this->dummy_texture->create())
             return false;
+        this->dummy_texture_upload_pending = true;
     }
 
     if (!this->template_bindings)
@@ -530,29 +582,45 @@ bool MapRhiGlobeRenderer::prepare(
     const int foreground_x_max = center_tile_x + foreground_radius;
     const int foreground_y_min = qMax(0, center_tile_y - foreground_radius);
     const int foreground_y_max = qMin(tile_span - 1, center_tile_y + foreground_radius);
+    const bool full_globe_coverage = desired_zoom <= GlobeFullCoverageMaxZoom;
 
     // Mirrors MapRhiBasemapRenderer's currentLayoutCoversForeground() short
     // circuit: only rebuild the window (new mesh, new tile requests) when
     // the zoom level changed or the foreground has moved outside the
     // already-built (foreground + retention margin) window, not on every
     // frame a pan/orbit is in progress.
+    const bool window_is_complete_globe =
+        this->window_tile_x_min == 0
+        && this->window_tile_x_max == tile_span - 1
+        && this->window_tile_y_min == 0
+        && this->window_tile_y_max == tile_span - 1;
     const bool window_covers_foreground =
         !this->window_dirty
         && this->window_zoom == desired_zoom
-        && foreground_x_min >= this->window_tile_x_min
-        && foreground_x_max <= this->window_tile_x_max
-        && foreground_y_min >= this->window_tile_y_min
-        && foreground_y_max <= this->window_tile_y_max;
+        && ((full_globe_coverage && window_is_complete_globe)
+            || (!full_globe_coverage
+                && foreground_x_min >= this->window_tile_x_min
+                && foreground_x_max <= this->window_tile_x_max
+                && foreground_y_min >= this->window_tile_y_min
+                && foreground_y_max <= this->window_tile_y_max));
 
     if (!window_covers_foreground)
     {
-        rebuildWindow(
-            desired_zoom,
-            foreground_x_min - GlobeWindowRetentionMarginTiles,
-            foreground_x_max + GlobeWindowRetentionMarginTiles,
-            foreground_y_min - GlobeWindowRetentionMarginTiles,
-            foreground_y_max + GlobeWindowRetentionMarginTiles,
-            tile_span);
+        if (full_globe_coverage)
+        {
+            rebuildWindow(
+                desired_zoom, 0, tile_span - 1, 0, tile_span - 1, tile_span);
+        }
+        else
+        {
+            rebuildWindow(
+                desired_zoom,
+                foreground_x_min - GlobeWindowRetentionMarginTiles,
+                foreground_x_max + GlobeWindowRetentionMarginTiles,
+                foreground_y_min - GlobeWindowRetentionMarginTiles,
+                foreground_y_max + GlobeWindowRetentionMarginTiles,
+                tile_span);
+        }
     }
 
     if (this->window_vertex_upload_pending && !this->window_vertices.isEmpty())
@@ -610,10 +678,16 @@ void MapRhiGlobeRenderer::draw(QRhiCommandBuffer *command_buffer)
     {
         for (const GlobeTile &tile : this->window_tiles)
         {
-            if (tile.resource == nullptr || !tile.resource->bindings || tile.vertex_count <= 0)
+            if (tile.vertex_count <= 0)
                 continue;
 
-            command_buffer->setShaderResources(tile.resource->bindings.get());
+            QRhiShaderResourceBindings *bindings = this->template_bindings.get();
+            if (tile.resource != nullptr && tile.resource->bindings)
+                bindings = tile.resource->bindings.get();
+            if (bindings == nullptr)
+                continue;
+
+            command_buffer->setShaderResources(bindings);
             const quint32 byte_offset = quint32(tile.first_vertex * int(sizeof(TileVertex)));
             const QRhiCommandBuffer::VertexInput binding(
                 this->window_vertex_buffer.get(), byte_offset);
@@ -655,6 +729,7 @@ void MapRhiGlobeRenderer::releaseResources()
     this->pipeline.reset();
     this->template_bindings.reset();
     this->dummy_texture.reset();
+    this->dummy_texture_upload_pending = true;
     this->sampler.reset();
     this->camera_uniform_buffer.reset();
     this->window_vertex_buffer.reset();
