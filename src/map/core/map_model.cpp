@@ -314,8 +314,22 @@ void MapModel::setView(double lon, double lat, int zoom_value, const QSize &view
 
     this->m_zoom = std::clamp(zoom_value, MinZoom, MaxZoom);
     this->m_centerLon = GeoWebMercator::normalizeLongitude(lon);
+
+    // Flat 2D/3D views are backed by Web Mercator and therefore cannot
+    // represent the polar caps above +-85.05112878 degrees. Globe view is
+    // different: its target is geodetic WGS84 converted directly to ECEF,
+    // so the full physical latitude range through the true poles is valid.
+    //
+    // clampCenter() already deliberately skips the Web Mercator extent
+    // clamp in Globe mode, but setCenter() comes through setView() first.
+    // Keeping the unconditional Mercator clamp here therefore made the
+    // globe's quaternion/ECEF pan math *look* pole-limited even though the
+    // rotation itself is gimbal-lock safe.
+    const double maximum_center_latitude = this->m_view_mode == MapViewMode::Globe
+        ? 90.0
+        : GeoWebMercator::MaximumLatitude;
     this->m_centerLat = std::clamp(
-        lat, -GeoWebMercator::MaximumLatitude, GeoWebMercator::MaximumLatitude);
+        lat, -maximum_center_latitude, maximum_center_latitude);
 
     if (viewport.isValid())
         clampCenter(viewport);
@@ -716,8 +730,13 @@ void MapModel::panGlobeByPointerDrag(
     if (!GeoWgs84Ellipsoid::rayIntersection(eye, direction, &new_point))
         return;
 
-    const QVector3D target_ecef =
-        GeoWgs84Ellipsoid::geodeticToEcef(this->m_centerLon, this->m_centerLat, 0.0);
+    const GeoWgs84Ellipsoid::OrbitCameraBasis old_camera_basis =
+        GeoWgs84Ellipsoid::orbitCameraBasis(
+            this->m_centerLon, this->m_centerLat,
+            this->m_view_globe_yaw_deg,
+            qBound(MinViewGlobePitchDeg, this->m_view_globe_pitch_deg, MaxViewGlobePitchDeg),
+            qMax(MinViewGlobeDistanceM, this->m_view_globe_distance_m));
+    const QVector3D target_ecef = old_camera_basis.target;
 
     // Rotating the camera's target by the rotation that maps "new_point"
     // back onto "previous_point" is equivalent to rotating the globe itself
@@ -734,7 +753,59 @@ void MapModel::panGlobeByPointerDrag(
     if (!GeoWgs84Ellipsoid::ecefToGeodetic(rotated_target, &lon_deg, &lat_deg))
         return;
 
-    setCenter(lon_deg, lat_deg, viewport);
+    const double next_lon_deg = GeoWebMercator::normalizeLongitude(lon_deg);
+    const double next_lat_deg = std::clamp(lat_deg, -90.0, 90.0);
+
+    // Latitude/longitude itself is still a singular coordinate system at a
+    // pole: at +/-90 degrees every longitude denotes the same physical point.
+    // GeographicLib is therefore free to return a longitude that differs by
+    // 180 degrees (or more generally any angle) when tiny floating-point
+    // noise moves the ECEF target across the pole. If we kept the numeric yaw
+    // unchanged, the new east/north tangent frame would rotate with that
+    // arbitrary longitude and the rendered globe would visibly snap between
+    // equivalent but differently-oriented pole representations. This is not
+    // gimbal lock; it is the unavoidable longitude coordinate singularity.
+    //
+    // Transport the actual ECEF screen-right direction through the same drag
+    // rotation, then re-express that physical direction as yaw in the new
+    // local tangent frame. Thus a longitude jump is exactly cancelled by the
+    // corresponding yaw change and the camera orientation stays continuous
+    // through and across either pole.
+    QVector3D transported_right = rotation.rotatedVector(old_camera_basis.right);
+    const GeoWgs84Ellipsoid::LocalFrame next_frame =
+        GeoWgs84Ellipsoid::localFrameAtGeodetic(next_lon_deg, next_lat_deg, 0.0);
+    transported_right -= next_frame.up
+        * QVector3D::dotProduct(transported_right, next_frame.up);
+    if (transported_right.lengthSquared() <= 1e-12f)
+        return;
+    transported_right.normalize();
+
+    const double right_east =
+        double(QVector3D::dotProduct(transported_right, next_frame.east));
+    const double right_north =
+        double(QVector3D::dotProduct(transported_right, next_frame.north));
+    const double next_yaw_deg = normalizedYawDegrees(
+        qRadiansToDegrees(std::atan2(-right_north, right_east)));
+
+    // Update center and yaw as one state change before emitting either signal.
+    // Emitting centerChanged first and fixing yaw afterwards would still expose
+    // one transient frame in the arbitrary polar tangent basis.
+    const bool center_changed =
+        !coordinatesEqual(next_lon_deg, this->m_centerLon)
+        || !coordinatesEqual(next_lat_deg, this->m_centerLat);
+    const bool yaw_changed =
+        !coordinatesEqual(next_yaw_deg, this->m_view_globe_yaw_deg);
+    if (!center_changed && !yaw_changed)
+        return;
+
+    this->m_centerLon = next_lon_deg;
+    this->m_centerLat = next_lat_deg;
+    this->m_view_globe_yaw_deg = next_yaw_deg;
+
+    if (center_changed)
+        emitCenterChanged();
+    if (yaw_changed)
+        emit viewGlobeCameraChanged();
 }
 
 void MapModel::panByPixelsGlobe(const QPoint &delta, const QSize &viewport)
@@ -807,7 +878,21 @@ void MapModel::setViewMode(MapViewMode view_mode)
     if (this->m_view_mode == view_mode)
         return;
 
+    const double old_latitude = this->m_centerLat;
     this->m_view_mode = view_mode;
+
+    // A Globe center may legitimately sit anywhere up to the true poles.
+    // When returning to a flat Web Mercator view, bring that shared center
+    // back into the projection's representable latitude range immediately
+    // instead of leaving a +-90 degree value in flat-map state.
+    if (this->m_view_mode != MapViewMode::Globe)
+    {
+        this->m_centerLat = std::clamp(
+            this->m_centerLat,
+            -GeoWebMercator::MaximumLatitude,
+            GeoWebMercator::MaximumLatitude);
+    }
+
     if (this->m_view_mode != MapViewMode::ThreeD
         && this->m_view_3d_navigation_state == MapView3dNavigationState::Rotate)
     {
@@ -816,6 +901,8 @@ void MapModel::setViewMode(MapViewMode view_mode)
         emit view3dNavigationStateChanged(this->m_view_3d_navigation_state);
     }
     emit viewModeChanged(this->m_view_mode);
+    if (!coordinatesEqual(this->m_centerLat, old_latitude))
+        emitCenterChanged();
 }
 
 void MapModel::setView3dYawDeg(double yaw_deg)

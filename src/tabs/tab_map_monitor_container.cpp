@@ -1182,6 +1182,7 @@ void MapMonitorContainer::positionDesktopHudWidgets()
         this->desktop_compass_hud->adjustSize();
         const int compass_x = hud_margin_px
             + (this->desktop_vertical_controls_hud != nullptr
+                && this->desktop_vertical_controls_hud->isVisible()
                 ? this->desktop_vertical_controls_hud->width() + 8 : 0);
         const int compass_y = qMax(
             hud_margin_px,
@@ -1325,18 +1326,20 @@ void MapMonitorContainer::syncDesktopCameraHudVisibility()
         && this->desktop_rhi_surface->isVisible()
         && this->desktop_view_mode_hud != nullptr
         && this->desktop_view_mode_hud->isVisible();
-    const bool camera_hud_visible =
+    const bool compass_hud_visible = rhi_active
+        && (this->map_model->viewMode() == MapViewMode::ThreeD
+            || this->map_model->viewMode() == MapViewMode::Globe);
+    const bool vertical_controls_visible =
         rhi_active && this->map_model->viewMode() == MapViewMode::ThreeD;
-    this->desktop_compass_hud->setVisible(camera_hud_visible);
+    this->desktop_compass_hud->setVisible(compass_hud_visible);
     this->desktop_scale_hud->setVisible(rhi_active);
-    this->desktop_vertical_controls_hud->setVisible(camera_hud_visible);
+    this->desktop_vertical_controls_hud->setVisible(vertical_controls_visible);
     if (rhi_active)
     {
-        if (camera_hud_visible)
-        {
+        if (compass_hud_visible)
             this->desktop_compass_hud->raise();
+        if (vertical_controls_visible)
             this->desktop_vertical_controls_hud->raise();
-        }
         this->desktop_scale_hud->raise();
         positionDesktopHudWidgets();
     }

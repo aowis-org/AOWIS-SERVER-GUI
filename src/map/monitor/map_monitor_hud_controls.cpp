@@ -125,6 +125,46 @@ QString compassOrientationText(double yaw_deg)
         .arg(rounded_heading_deg);
 }
 
+double compassYawDeg(const MapModel *map_model)
+{
+    Q_ASSERT(map_model != nullptr);
+    if (map_model->viewMode() == MapViewMode::Globe)
+        return map_model->viewGlobeYawDeg();
+    return map_model->view3dYawDeg();
+}
+
+void beginCompassRotateInteraction(MapModel *map_model)
+{
+    Q_ASSERT(map_model != nullptr);
+    if (map_model->viewMode() == MapViewMode::ThreeD)
+        map_model->beginView3dRotateInteraction();
+}
+
+void endCompassRotateInteraction(MapModel *map_model)
+{
+    Q_ASSERT(map_model != nullptr);
+    if (map_model->viewMode() == MapViewMode::ThreeD)
+        map_model->endView3dRotateInteraction();
+}
+
+void orbitCompass(MapModel *map_model, double yaw_delta_deg)
+{
+    Q_ASSERT(map_model != nullptr);
+    if (map_model->viewMode() == MapViewMode::Globe)
+        map_model->orbitViewGlobe(yaw_delta_deg, 0.0);
+    else if (map_model->viewMode() == MapViewMode::ThreeD)
+        map_model->orbitView3d(yaw_delta_deg, 0.0);
+}
+
+void orbitCompassByPointerDelta(MapModel *map_model, const QPoint &delta_pixels)
+{
+    Q_ASSERT(map_model != nullptr);
+    if (map_model->viewMode() == MapViewMode::Globe)
+        map_model->orbitViewGlobeByPointerDelta(delta_pixels, false);
+    else if (map_model->viewMode() == MapViewMode::ThreeD)
+        map_model->orbitView3dByPointerDelta(delta_pixels, false);
+}
+
 void configureHudFrame(QFrame *frame)
 {
     frame->setFrameShape(QFrame::StyledPanel);
@@ -206,8 +246,9 @@ public:
             const double progress = value.toDouble();
             const double progress_delta = progress - this->north_animation_last_progress;
             this->north_animation_last_progress = progress;
-            this->map_model->orbitView3d(
-                this->north_animation_delta_yaw_deg * progress_delta, 0.0);
+            orbitCompass(
+                this->map_model,
+                this->north_animation_delta_yaw_deg * progress_delta);
         });
 
         connect(this->north_animation, &QVariantAnimation::stateChanged, this,
@@ -216,17 +257,29 @@ public:
             if (old_state == QAbstractAnimation::Stopped
                 && new_state != QAbstractAnimation::Stopped)
             {
-                this->map_model->beginView3dRotateInteraction();
+                beginCompassRotateInteraction(this->map_model);
             }
             else if (old_state != QAbstractAnimation::Stopped
                      && new_state == QAbstractAnimation::Stopped)
             {
-                this->map_model->endView3dRotateInteraction();
+                endCompassRotateInteraction(this->map_model);
             }
         });
 
         connect(this->map_model, &MapModel::view3dCameraChanged, this, [this]
         {
+            update();
+        });
+        connect(this->map_model, &MapModel::viewGlobeCameraChanged, this, [this]
+        {
+            update();
+        });
+        connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode)
+        {
+            stopNorthAnimation();
+            finishWheelRotation();
+            if (this->drag_active)
+                finishDrag();
             update();
         });
     }
@@ -270,7 +323,7 @@ protected:
 
         painter.save();
         painter.translate(center);
-        painter.rotate(this->map_model->view3dYawDeg());
+        painter.rotate(compassYawDeg(this->map_model));
 
         const double tick_outer = ring_rect.width() / 2.0 - 1.5;
         for (int tick = 0; tick < 24; ++tick)
@@ -343,7 +396,7 @@ protected:
 
         stopNorthAnimation();
         finishWheelRotation();
-        this->map_model->beginView3dRotateInteraction();
+        beginCompassRotateInteraction(this->map_model);
         this->drag_active = true;
         this->dragged = false;
         this->drag_distance_px = 0;
@@ -385,7 +438,7 @@ protected:
                 this->dragged = true;
 
             const QPoint yaw_delta(delta.x(), 0);
-            this->map_model->orbitView3dByPointerDelta(yaw_delta, false);
+            orbitCompassByPointerDelta(this->map_model, yaw_delta);
 #ifndef Q_OS_WASM
             QCursor::setPos(this->drag_anchor_global);
 #endif
@@ -421,12 +474,12 @@ protected:
 
         if (!this->wheel_rotate_active)
         {
-            this->map_model->beginView3dRotateInteraction();
+            beginCompassRotateInteraction(this->map_model);
             this->wheel_rotate_active = true;
         }
 
         const double steps = double(angle_delta.y()) / 120.0;
-        this->map_model->orbitView3d(steps * CompassWheelStepDeg, 0.0);
+        orbitCompass(this->map_model, steps * CompassWheelStepDeg);
         this->wheel_rotate_end_timer.start();
         event->accept();
     }
@@ -439,7 +492,7 @@ private:
 
         this->wheel_rotate_end_timer.stop();
         this->wheel_rotate_active = false;
-        this->map_model->endView3dRotateInteraction();
+        endCompassRotateInteraction(this->map_model);
     }
 
     void finishDrag()
@@ -454,7 +507,7 @@ private:
         }
 
         this->drag_active = false;
-        this->map_model->endView3dRotateInteraction();
+        endCompassRotateInteraction(this->map_model);
 #ifndef Q_OS_WASM
         if (this->drag_mouse_grabbed)
         {
@@ -469,7 +522,7 @@ private:
     void animateNorth()
     {
         stopNorthAnimation();
-        this->north_animation_start_yaw_deg = this->map_model->view3dYawDeg();
+        this->north_animation_start_yaw_deg = compassYawDeg(this->map_model);
         this->north_animation_delta_yaw_deg = std::remainder(
             -this->north_animation_start_yaw_deg, 360.0);
         if (std::abs(this->north_animation_delta_yaw_deg) < 0.01)
@@ -792,7 +845,7 @@ MapMonitorCompassHudWidget::MapMonitorCompassHudWidget(
 
     MapCompassWidget *compass_widget = new MapCompassWidget(map_model, this);
     QLabel *orientation_label = new QLabel(
-        compassOrientationText(map_model->view3dYawDeg()), this);
+        compassOrientationText(compassYawDeg(map_model)), this);
     configureHudFrame(orientation_label);
     orientation_label->setAlignment(Qt::AlignCenter);
     orientation_label->setMinimumWidth(CompassDiameterPx);
@@ -802,11 +855,17 @@ MapMonitorCompassHudWidget::MapMonitorCompassHudWidget(
     layout->addWidget(compass_widget, 0, Qt::AlignHCenter);
     layout->addWidget(orientation_label, 0, Qt::AlignHCenter);
 
-    connect(map_model, &MapModel::view3dCameraChanged, this,
-            [map_model, orientation_label]
+    const std::function<void()> update_orientation = [map_model, orientation_label]
     {
         orientation_label->setText(
-            compassOrientationText(map_model->view3dYawDeg()));
+            compassOrientationText(compassYawDeg(map_model)));
+    };
+    connect(map_model, &MapModel::view3dCameraChanged, this, update_orientation);
+    connect(map_model, &MapModel::viewGlobeCameraChanged, this, update_orientation);
+    connect(map_model, &MapModel::viewModeChanged, this,
+            [update_orientation](MapViewMode)
+    {
+        update_orientation();
     });
 }
 
