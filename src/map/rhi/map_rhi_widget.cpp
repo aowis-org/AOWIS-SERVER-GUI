@@ -29,7 +29,6 @@
 #include <array>
 #include <cstddef>
 #include <cmath>
-#include <functional>
 #include <limits>
 
 namespace
@@ -3753,161 +3752,6 @@ bool MapRhiWidget::terrainRayHitAtScreen(
     return true;
 }
 
-bool MapRhiWidget::terrainRayHitOnGlobeAtScreen(
-    const QPointF &screen_position, CoordinateWGS84 *coordinate,
-    double *vertical_offset_m, double *distance_m, bool request_missing_tile)
-{
-    if (coordinate == nullptr || this->map_model == nullptr
-        || this->terrain_repository == nullptr
-        || this->map_model->viewMode() != MapViewMode::Globe
-        || !this->viewport_size.isValid())
-    {
-        return false;
-    }
-
-    // No setSceneOriginWorld() call here unlike terrainRayHitAtScreen()
-    // above: that floating-origin offset only exists to keep the flat
-    // Web-Mercator "world pixel" space (used by ThreeD/TwoD) within float
-    // precision range. The globe ray works directly in real ECEF meters
-    // and never touches scene_origin_world/center_world at all.
-    this->camera.setViewportSize(this->viewport_size);
-    this->camera.syncFromMapModel(*this->map_model);
-
-    QVector3D eye;
-    QVector3D direction;
-    if (!this->camera.screenRayGlobe(screen_position, &eye, &direction))
-        return false;
-
-    // Same front-to-back march + bisect shape as terrainRayHitAtScreen()
-    // above, just directly in ECEF meters instead of flat-Mercator "world
-    // pixel" units: the globe ray is already real-world meters, so there is
-    // no world-units-per-meter conversion step, and "clearance" is height
-    // above the ellipsoid minus the sampled DEM elevation at that lon/lat
-    // (vs. that function's world-space Z minus sampled world-space terrain
-    // height).
-    const int terrain_zoom = qBound(
-        CameraTerrainMinimumZoom, this->map_model->zoom(), CameraTerrainMaximumZoom);
-    const double meters_per_pixel_at_terrain_zoom = GeoWebMercator::metersPerPixel(
-        this->map_model->centerLat(), terrain_zoom);
-    if (!std::isfinite(meters_per_pixel_at_terrain_zoom)
-        || meters_per_pixel_at_terrain_zoom <= 0.0)
-    {
-        return false;
-    }
-    const double terrain_cell_m =
-        meters_per_pixel_at_terrain_zoom * MapModel::TileSize / MapTerrainTileCellCount;
-
-    const double search_distance_m = qMax(
-        this->map_model->viewGlobeDistanceM() * 4.0, terrain_cell_m * 256.0);
-    const double maximum_search_m = qMin(search_distance_m, 500000.0);
-    if (!std::isfinite(maximum_search_m) || maximum_search_m <= 0.0)
-        return false;
-
-    const double surface_tolerance_m = 0.05;
-    const double march_step_m = qMax(0.5, terrain_cell_m * 0.5);
-
-    const std::function<bool(double, CoordinateWGS84 *, double *)> sampleClearanceM =
-        [&](double ray_distance_m, CoordinateWGS84 *sample_coordinate,
-            double *clearance_m) -> bool
-    {
-        const QVector3D point = eye + direction * float(ray_distance_m);
-        double lon_deg = 0.0;
-        double lat_deg = 0.0;
-        double height_m = 0.0;
-        if (!GeoWgs84Ellipsoid::ecefToGeodetic(point, &lon_deg, &lat_deg, &height_m))
-            return false;
-
-        sample_coordinate->longitude_deg = lon_deg;
-        sample_coordinate->latitude_deg = lat_deg;
-
-        double terrain_elevation_m = 0.0;
-        if (!terrainElevationAtCoordinate(
-                *sample_coordinate, &terrain_elevation_m, request_missing_tile))
-        {
-            return false;
-        }
-
-        *clearance_m = height_m - terrain_elevation_m;
-        return true;
-    };
-
-    double previous_distance_m = 0.0;
-    double previous_clearance_m = 0.0;
-    bool previous_sample_available = false;
-    bool bracket_found = false;
-    double bracket_near_m = 0.0;
-    double bracket_far_m = 0.0;
-
-    const int maximum_march_steps = 4000;
-    double ray_distance_m = 0.0;
-    for (int step = 0; step <= maximum_march_steps; ++step)
-    {
-        if (step > 0)
-            ray_distance_m = qMin(maximum_search_m, ray_distance_m + march_step_m);
-
-        CoordinateWGS84 sample_coordinate;
-        double clearance_m = 0.0;
-        if (!sampleClearanceM(ray_distance_m, &sample_coordinate, &clearance_m))
-            return false;
-
-        if (previous_sample_available && previous_clearance_m > 0.0 && clearance_m <= 0.0)
-        {
-            bracket_found = true;
-            bracket_near_m = previous_distance_m;
-            bracket_far_m = ray_distance_m;
-            break;
-        }
-
-        previous_distance_m = ray_distance_m;
-        previous_clearance_m = clearance_m;
-        previous_sample_available = true;
-
-        if (ray_distance_m >= maximum_search_m)
-            break;
-    }
-
-    if (!bracket_found)
-        return false;
-
-    for (int iteration = 0; iteration < 24; ++iteration)
-    {
-        const double midpoint_m = (bracket_near_m + bracket_far_m) * 0.5;
-        CoordinateWGS84 sample_coordinate;
-        double clearance_m = 0.0;
-        if (!sampleClearanceM(midpoint_m, &sample_coordinate, &clearance_m))
-            return false;
-
-        if (clearance_m > 0.0)
-            bracket_near_m = midpoint_m;
-        else
-            bracket_far_m = midpoint_m;
-
-        if (bracket_far_m - bracket_near_m <= surface_tolerance_m)
-            break;
-    }
-
-    const double hit_distance_m = bracket_far_m;
-    CoordinateWGS84 hit_coordinate;
-    double hit_clearance_m = 0.0;
-    if (!sampleClearanceM(hit_distance_m, &hit_coordinate, &hit_clearance_m))
-        return false;
-
-    double hit_terrain_elevation_m = 0.0;
-    if (!terrainElevationAtCoordinate(
-            hit_coordinate, &hit_terrain_elevation_m, request_missing_tile))
-    {
-        return false;
-    }
-
-    *coordinate = hit_coordinate;
-    if (vertical_offset_m != nullptr)
-        *vertical_offset_m = hit_terrain_elevation_m;
-    if (distance_m != nullptr)
-        *distance_m = hit_distance_m;
-
-    return true;
-}
-
 void MapRhiWidget::captureView3dFocusAnchor()
 {
     if (this->map_model == nullptr || !this->viewport_size.isValid())
@@ -3935,26 +3779,54 @@ void MapRhiWidget::captureView3dFocusAnchor()
 
 void MapRhiWidget::captureViewGlobeFocusAnchor()
 {
-    if (this->map_model == nullptr || !this->viewport_size.isValid())
+    if (this->map_model == nullptr || this->terrain_repository == nullptr)
         return;
 
-    CoordinateWGS84 hit_coordinate;
-    double hit_vertical_offset_m = 0.0;
-    double hit_distance_m = 0.0;
-    if (!terrainRayHitOnGlobeAtScreen(
-            QPointF(
-                this->viewport_size.width() / 2.0,
-                this->viewport_size.height() / 2.0),
-            &hit_coordinate, &hit_vertical_offset_m, &hit_distance_m, true))
+    // Unlike captureView3dFocusAnchor() above, this needs no ray march at
+    // all. The globe's orbit target is always exactly the crosshair
+    // (centerLon()/centerLat()) by construction of the look-at camera --
+    // there is no different point to discover, just the real DEM elevation
+    // at the point we already know we are orbiting around. (An earlier
+    // version of this function did march a ray out to "discover" the hit,
+    // mirroring the ThreeD version too literally; at typical Globe camera
+    // distances -- up to ~11.8 million meters, vs. ThreeD's low hundreds of
+    // meters -- that meant several hundred thousand fine steps to reach the
+    // surface, which froze the UI on every rotate/zoom instead.)
+    CoordinateWGS84 target_coordinate;
+    target_coordinate.longitude_deg = this->map_model->centerLon();
+    target_coordinate.latitude_deg = this->map_model->centerLat();
+
+    double terrain_elevation_m = 0.0;
+    if (!terrainElevationAtCoordinate(target_coordinate, &terrain_elevation_m, true))
     {
+        // DEM tile for the crosshair isn't loaded yet -- leave the existing
+        // anchor in place rather than guess; it will be tried again on the
+        // next rotate/zoom interaction once the tile has arrived.
         return;
     }
 
+    // Re-derive eye/distance from the *current* (pre-correction) camera
+    // basis, so a vertical offset left over from a very different previous
+    // location doesn't leave the rig at the wrong distance.
+    const double pitch_deg = qBound(
+        MapModel::MinViewGlobePitchDeg, this->map_model->viewGlobePitchDeg(),
+        MapModel::MaxViewGlobePitchDeg);
+    const double distance_m = qMax(
+        MapModel::MinViewGlobeDistanceM, this->map_model->viewGlobeDistanceM());
+    const GeoWgs84Ellipsoid::OrbitCameraBasis old_basis = GeoWgs84Ellipsoid::orbitCameraBasis(
+        target_coordinate.longitude_deg, target_coordinate.latitude_deg,
+        this->map_model->viewGlobeYawDeg(), pitch_deg, distance_m,
+        this->map_model->viewGlobeVerticalOffsetM());
+
+    const QVector3D corrected_target = GeoWgs84Ellipsoid::geodeticToEcef(
+        target_coordinate.longitude_deg, target_coordinate.latitude_deg, terrain_elevation_m);
+    const double corrected_distance_m = double((corrected_target - old_basis.eye).length());
+
     this->map_model->setViewGlobeFocusAnchor(
-        hit_coordinate.longitude_deg,
-        hit_coordinate.latitude_deg,
-        hit_vertical_offset_m,
-        hit_distance_m,
+        target_coordinate.longitude_deg,
+        target_coordinate.latitude_deg,
+        terrain_elevation_m,
+        corrected_distance_m,
         this->viewport_size);
 }
 

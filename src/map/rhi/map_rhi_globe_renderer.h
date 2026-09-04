@@ -4,6 +4,7 @@
 #include <QColor>
 #include <QElapsedTimer>
 #include <QMatrix4x4>
+#include <QSet>
 #include <QSize>
 #include <QString>
 #include <QVector>
@@ -25,27 +26,46 @@ class QRhiSampler;
 class QRhiShaderResourceBindings;
 class QRhiTexture;
 
+// Zoom/tile-index identity of one leaf produced by the visible-region
+// quadtree walk (selectVisibleGlobeQuadtreeLeaves() in the .cpp). Plain POD
+// so it can cross from the free-function quadtree walk into
+// MapRhiGlobeRenderer's private API without pulling geo/ or RHI headers in
+// here. Replaces the old single-zoom rectangular tile window: every leaf
+// carries its own zoom, so near-camera ground can stay at fine detail while
+// terrain approaching the horizon is covered by a handful of coarse,
+// low-zoom leaves instead of forcing the whole visible footprint to one
+// uniform resolution (see the class comment below for why that mattered).
+struct MapRhiGlobeQuadtreeLeaf
+{
+    int zoom = 0;
+    int tile_x = 0;
+    int tile_y = 0;
+};
+
 // Renders planet Earth as a WGS84 ellipsoid for the "Globe" map view mode.
 //
-// This mirrors MapRhiBasemapRenderer's own architecture rather than
-// reinventing one: a single dynamic imagery zoom level (picked from camera
-// distance, playing the same role MapModel::zoom() plays for 2D/3D), a tile
-// window covering the visible area plus a retention margin so ordinary
-// panning does not immediately fall outside it, and a "does the current
-// window still cover what's needed" dirty check so the mesh/tile requests
-// are only rebuilt when the window actually needs to move or the zoom level
-// changes -- not every frame. Terrain relief reuses the existing normalized
-// DEM repository and background terrain-mesh worker, replacing ellipsoid
-// fallback vertices in-place as terrain becomes available. Network entity
-// rendering on the globe is still separate work. Unlike the flat renderer,
-// there is no per-tile view-frustum culling: the retained tile window is
-// derived from samples of
-// the actual projected ellipsoid boundary, including the visible limb. This
-// keeps the complete on-screen globe footprint covered even where Mercator
-// tile density changes strongly or longitude wraps.
+// The visible-region tile set is a genuine quadtree, not a single-zoom
+// rectangular window: selectVisibleGlobeQuadtreeLeaves() walks the tile
+// hierarchy from the whole-planet root, at each node deciding independently
+// whether that node's own on-screen projected size still calls for more
+// detail (subdivide into 4 children) or is already fine enough to leave as
+// a single leaf, and separately culling any node hidden behind the planet's
+// own curvature (real ellipsoidal horizon occlusion, not just a screen
+// rectangle test) or outside the camera's field of view. This is what a
+// tilted view revealing the horizon needs: near-camera ground stays at
+// fine, many-tile detail while the terrain approaching the horizon is
+// covered by a handful of large, coarse leaves, so total tile count stays
+// bounded regardless of pitch -- a single uniform zoom level cannot do that,
+// since covering a horizon-spanning footprint at near-camera resolution
+// means the tile-index range explodes (potentially to the entire zoom
+// level's tile grid) the moment the limb enters view. Each leaf still goes
+// through the same per-tile pipeline as before it (imagery/terrain request,
+// texture cache, background terrain-mesh generation via
+// MapRhiTerrainMeshScheduler) -- only the question of *which* (zoom, x, y)
+// tiles exist this frame changed.
 //
 // Two independent pieces of geometry:
-//  - "window" tiles: the dynamic, zoom/pan-dependent basemap imagery grid
+//  - "window" tiles: the dynamic quadtree-selected basemap imagery leaves
 //    described above.
 //  - "cap" tiles: a small, fixed pair of flat-colored polar fans covering
 //    the area above/below Web Mercator's +-85.05 degree limit, which no
@@ -140,8 +160,9 @@ private:
 
     void buildCaps();
     void buildPolarCap(bool north);
-    void rebuildWindow(int zoom, int x_min, int x_max, int y_min, int y_max, int tile_span,
-                       const QSize &viewport_size);
+    void rebuildWindow(
+        const QVector<MapRhiGlobeQuadtreeLeaf> &leaves, const QSize &viewport_size);
+    QVector<MapRhiGlobeQuadtreeLeaf> currentWindowLeaves() const;
     int terrainCellCountForTile(const GlobeTile &tile, const QSize &viewport_size) const;
     void updateTerrainStitchCellCounts(QVector<GlobeTile> *tiles) const;
     bool currentTerrainLodMatches(const QSize &viewport_size) const;
@@ -168,12 +189,14 @@ private:
     // Dynamic imagery window (see class comment above).
     QVector<TileVertex> window_vertices;
     QVector<GlobeTile> window_tiles;
-    int window_zoom = -1; // -1 == not yet built
-    int window_tile_x_min = 0;
-    int window_tile_x_max = -1;
-    int window_tile_y_min = 0;
-    int window_tile_y_max = -1;
     bool window_dirty = true;
+    // Which (zoom, tile_x, tile_y) nodes were subdivided into children on
+    // the previous quadtree walk. Consulted by
+    // selectVisibleGlobeQuadtreeLeaves() to apply hysteresis around the
+    // subdivide/merge threshold -- without it, a node whose projected size
+    // sits right at the boundary would flicker between one leaf and four
+    // children every frame as the camera drifts by sub-pixel amounts.
+    QSet<quint64> previously_subdivided_quadtree_nodes;
     bool window_tiles_requested = false;
     bool window_vertex_upload_pending = false;
     std::unique_ptr<QRhiBuffer> window_vertex_buffer;

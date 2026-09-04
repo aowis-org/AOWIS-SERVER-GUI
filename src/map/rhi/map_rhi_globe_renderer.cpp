@@ -40,25 +40,6 @@ constexpr int GlobeTerrainReliefMinimumZoom = 8;
 constexpr int GlobeTerrainMinimumLodCellCount = 1;
 constexpr int GlobeAsyncTerrainMeshMinimumCellCount = 16;
 constexpr qint64 GlobeMinimumTerrainLodRebuildIntervalMs = 120;
-// At the globe's whole-planet zoom levels, a Mercator-centred square is not
-// sufficient coverage: near either pole all longitudes converge into the
-// visible disc, and clipping the request window around one arbitrary
-// longitude leaves large wedge-shaped holes. Zoom 4 is the normal fully
-// zoomed-out globe LOD (MapModel::GlobeMinZoomLevel); requesting the complete
-// XYZ world at this LOD is only 16x16 tiles and guarantees that every part of
-// the visible globe has geometry/imagery available, independent of latitude
-// and dateline position.
-constexpr int GlobeFullCoverageMaxZoom = 4;
-// Extra ring of tiles kept beyond the strictly-visible foreground, so an
-// ordinary pan/orbit does not immediately fall outside the built window and
-// force a rebuild on every frame -- the same role
-// MapRhiBasemapRenderer's own retention margin plays for 2D/3D.
-constexpr int GlobeWindowRetentionMarginTiles = 2;
-// Dead zone (in zoom levels) around the current zoom before
-// computeDesiredZoom() will actually switch -- without this, distance
-// values that hover near an integer boundary would flicker the window
-// between two zoom levels every frame.
-constexpr double GlobeZoomHysteresis = 0.6;
 // Longitude segments used for each polar cap fan. Independent of the
 // imagery tile grid -- a small seam between the imagery tiles' edge at
 // +-85.05 degrees and the cap fan's ring is not visually significant at
@@ -84,10 +65,14 @@ constexpr int GlobeCameraUniformBytes = 16 * int(sizeof(float));
 // polyhedron rather than a sphere. By the time tiles are a few degrees
 // across or smaller, the curvature within a single tile is negligible and
 // a coarse grid is indistinguishable from a fine one while costing far
-// less geometry across a whole tile window. In practice MapModel's own
-// Min/MaxViewGlobeDistanceM keep the picked zoom at 4 or above, so zoom
-// 0-3 should rarely if ever be hit -- these are still handled properly in
-// case that ever changes.
+// less geometry across a whole tile window. Unlike the old single-zoom
+// window, the quadtree walk (selectVisibleGlobeQuadtreeLeaves() below) can
+// keep a zoom 0-3 leaf alive whenever the camera is far enough out that a
+// large fraction of the planet projects to under the subdivide threshold at
+// once (the same "zoomed all the way out" case the old code's
+// full-coverage special case handled), so this remains an occasional rather
+// than a hot-path case, but it is reached through the ordinary walk now
+// instead of a special-cased branch.
 int subdivisionsForZoom(int zoom)
 {
     if (zoom <= 0)
@@ -101,225 +86,375 @@ int subdivisionsForZoom(int zoom)
     return 2;
 }
 
-// Picks the imagery zoom level from camera distance, using the exact same
-// distance<->zoom relationship the footer zoom control and MapModel's own
-// Min/MaxViewGlobeDistanceM are pinned to (see
-// MapModel::viewGlobeZoomLevelForDistanceM()), so the imagery resolution
-// shown always matches what that same zoom level would show in 2D/3D.
-// Hysteresis-gated against the previously chosen zoom to avoid flicker at
-// exact boundaries.
-int computeDesiredZoom(
-    double continuous_zoom_level, int current_zoom)
-{
-    if (current_zoom >= 0
-        && std::abs(continuous_zoom_level - double(current_zoom)) < GlobeZoomHysteresis)
-    {
-        return current_zoom;
-    }
-    return qBound(0, int(std::lround(continuous_zoom_level)), GlobeImageryMaxZoom);
-}
-
-// The globe's visible footprint is not a fixed square in XYZ tile space.
-// Near a visible limb, perspective compression can put many more Mercator
-// rows/columns on screen than the centre tile suggests; near a pole the
-// Mercator Y density grows strongly; and longitude wraps at the dateline.
-// A fixed tile-radius window therefore eventually exposes its own edge and
-// makes tiles appear/disappear in chunks while panning.
+// Replaces the old single-zoom "sample the projected ellipsoid boundary into
+// one rectangular tile window" approach. That approach picked one imagery
+// zoom for the whole screen from camera distance alone, then found the
+// tile-index rectangle covering everything from the near-camera ground out
+// to the visible limb at *that* zoom. The moment a tilt brought the horizon
+// into view, the limb sample landed thousands of kilometres from the
+// near-camera point (Earth's curvature), so covering that whole span at
+// near-camera resolution meant the tile-index rectangle could balloon to
+// the entire zoom level's tile grid -- millions of tiles at typical in-close
+// zooms. A single zoom level simply cannot cover both a near-camera patch
+// and a near-limb region economically at once.
 //
-// Sample the actual projected ellipsoid boundary instead. The projected
-// ellipsoid is convex and the screen centre always looks at the current globe
-// target, so every ray from screen centre to the viewport boundary has one
-// contiguous visible interval. If the viewport edge is outside the globe,
-// binary-search that radial line to the true limb. Converting only the final
-// surface point to geodetic coordinates keeps this cheap enough to do while
-// moving, while describing the real on-screen footprint rather than a rough
-// horizon-radius approximation.
-constexpr int GlobeVisibleBoundarySampleCount = 32;
-constexpr int GlobeVisibleLimbSearchIterations = 10;
-constexpr int GlobeVisibleBoundarySafetyMarginTiles = 1;
+// A quadtree fixes this the way real terrain/globe engines (FlightGear's
+// VirtualPlanetBuilder-based scenery, Cesium, etc.) do: walk the tile
+// hierarchy from the whole-planet root and let each node decide for itself,
+// from its own real-world size and its own real distance to the camera,
+// whether it still needs to subdivide. Near the camera that bottoms out at
+// many small, fine tiles; near the horizon it bottoms out at a handful of
+// large, coarse tiles automatically, because a coarse tile's on-screen size
+// near the limb is small even though its real-world footprint is huge. Total
+// leaf count stays bounded by the walk's own occlusion/frustum culling and a
+// hard visited-node cap, regardless of pitch.
+constexpr int GlobeQuadtreeRootZoom = 0;
+// Subdivide a node once its own on-screen projected size exceeds this many
+// pixels; merge (stop subdividing) once it falls below the lower
+// GlobeQuadtreeMergeScreenPx bound instead of the same value, so a node
+// sitting right at the boundary does not flip between one leaf and four
+// children every frame as the camera drifts by sub-pixel amounts (the same
+// role GlobeZoomHysteresis played for the old single-zoom picker, applied
+// per node instead of once globally).
+constexpr double GlobeQuadtreeSubdivideScreenPx = 320.0;
+constexpr double GlobeQuadtreeMergeScreenPx = 160.0;
+// Hard ceilings so a pathological view (camera exactly edge-on to the
+// ellipsoid, or a bug in the culling above) degrades gracefully instead of
+// pathologically. In normal operation, horizon/frustum culling keeps the
+// walk to at most a few hundred visited nodes.
+constexpr int GlobeQuadtreeMaxVisitedNodes = 20000;
+constexpr int GlobeQuadtreeMaxLeaves = 3000;
+// Extra half-angle of slack added to the camera's field of view when
+// culling a node against the view cone. This is a coarse "is this node even
+// worth walking into" cull, not exact clipping -- the per-tile draw already
+// only ever draws leaves that were kept -- so generous slack is cheap
+// insurance against ever dropping a node that is genuinely partly on
+// screen.
+constexpr double GlobeQuadtreeViewConeMarginRad = 0.2;
 
-struct GlobeVisibleTileBounds
+quint64 globeQuadtreeNodeKey(int zoom, int tile_x, int tile_y)
 {
-    int x_min = 0;
-    int x_max = -1;
-    int y_min = 0;
-    int y_max = -1;
-    bool valid = false;
-};
+    return (quint64(quint32(zoom)) << 48)
+        | (quint64(quint32(tile_x)) << 24)
+        | quint64(quint32(tile_y));
+}
 
-struct GlobeScreenRayContext
+// Cheap bounding sphere for a tile: ECEF positions of its four corners plus
+// centre, centroid as the sphere centre, farthest sample as the radius.
+//
+// This corner-sampling approach breaks down for wide tiles: at zoom 0 the
+// tile spans the full 360 degrees of longitude, so lon0 (-180) and lon1
+// (+180) are the *same* ECEF point, collapsing 4 of the 5 samples into just
+// 2 distinct locations -- both on one side of the planet. The resulting
+// "bounding sphere" ends up skewed off-centre rather than actually bounding
+// the tile, and whether that skewed sphere happens to still overlap the
+// camera's view direction becomes a matter of which way the camera happens
+// to be facing -- exactly the kind of direction-dependent, intermittent
+// failure that showed up during panning. Below zoom 2 a tile still spans a
+// full hemisphere or more, where the same corner-averaging approach is
+// similarly unreliable even without an exact point collapse. For zoom 0-1,
+// skip the sampling and use the planet's own bounding sphere instead: it is
+// trivially correct (everything is inside it) and there are at most four
+// such wide tiles in existence, so tightness does not matter here the way
+// it does for the many small tiles deeper in the tree.
+void globeQuadtreeNodeBoundingSphere(
+    int zoom, int tile_x, int tile_y, QVector3D *center, double *radius_m)
 {
-    GeoWgs84Ellipsoid::OrbitCameraBasis basis;
-    double viewport_width = 1.0;
-    double viewport_height = 1.0;
-    double aspect = 1.0;
-    double tan_half_fov = 1.0;
-};
+    if (zoom <= 1)
+    {
+        *center = QVector3D(0.0f, 0.0f, 0.0f);
+        *radius_m = GeoWgs84Ellipsoid::EquatorialRadiusM;
+        return;
+    }
 
-bool globeSurfacePointAtScreen(
-    const GlobeScreenRayContext &context, double screen_x, double screen_y,
-    QVector3D *surface_point)
+    const double lon0 = GeoWebMercator::tileXToLon(double(tile_x), zoom);
+    const double lon1 = GeoWebMercator::tileXToLon(double(tile_x + 1), zoom);
+    const double lat0 = GeoWebMercator::tileYToLat(double(tile_y), zoom);
+    const double lat1 = GeoWebMercator::tileYToLat(double(tile_y + 1), zoom);
+    const double lon_mid = 0.5 * (lon0 + lon1);
+    const double lat_mid = 0.5 * (lat0 + lat1);
+
+    const QVector3D samples[5] = {
+        GeoWgs84Ellipsoid::geodeticToEcef(lon0, lat0, 0.0),
+        GeoWgs84Ellipsoid::geodeticToEcef(lon1, lat0, 0.0),
+        GeoWgs84Ellipsoid::geodeticToEcef(lon0, lat1, 0.0),
+        GeoWgs84Ellipsoid::geodeticToEcef(lon1, lat1, 0.0),
+        GeoWgs84Ellipsoid::geodeticToEcef(lon_mid, lat_mid, 0.0),
+    };
+
+    constexpr int SampleCount = sizeof(samples) / sizeof(samples[0]);
+    QVector3D centroid(0.0f, 0.0f, 0.0f);
+    for (const QVector3D &sample : samples)
+        centroid += sample;
+    centroid /= float(SampleCount);
+
+    double max_distance = 0.0;
+    for (const QVector3D &sample : samples)
+        max_distance = qMax(max_distance, double((sample - centroid).length()));
+
+    *center = centroid;
+    *radius_m = max_distance;
+}
+
+// True if the straight line from eye to node_center is blocked by the
+// planet itself -- i.e. the node is entirely hidden behind the visible
+// limb/horizon, not merely far away.
+//
+// This deliberately does NOT solve eye.dot(eye) - R^2 = 0 directly: eye and
+// node_center are ECEF meters at ~6.4e6 magnitude stored in QVector3D,
+// which is float32. eye.dot(eye) and R^2 are then both ~4e13, and float32's
+// precision floor at that magnitude is on the order of a few million --
+// comparable to or larger than the actual 2*R*h signal once the camera's
+// height h above the surface drops to a few metres (exactly the case at
+// close-in globe zoom, especially combined with a low pitch looking toward
+// the horizon). The quadratic below would then misfire and could cull the
+// ground directly under the camera, taking the entire quadtree subtree
+// under it with it -- a real, previously-hit failure mode, not a
+// theoretical one.
+//
+// Instead this reuses GeoWgs84Ellipsoid::rayIntersection() -- the same
+// ellipsoid-intersection routine already proven at the horizon/limb by the
+// existing screen-ray picking code -- against the real WGS84 ellipsoid
+// rather than a hand-rolled sphere approximation: cast the ray from eye
+// toward node_center and compare its ellipsoid intersection distance to the
+// distance to node_center itself. If the ellipsoid blocks the ray
+// meaningfully closer than the node, something nearer (the planet's own
+// bulge) is in the way.
+bool globeQuadtreeNodeOccludedByHorizon(
+    const QVector3D &node_center, double node_radius_m, const QVector3D &eye)
 {
-    if (surface_point == nullptr)
+    const QVector3D to_node = node_center - eye;
+    const double distance_to_node = double(to_node.length());
+    // The eye is at or inside the node's own bounding sphere -- nothing to
+    // occlude (also guards the degenerate zero-length direction below).
+    if (distance_to_node <= qMax(1.0, node_radius_m))
         return false;
 
-    const double ndc_x = 2.0 * screen_x / context.viewport_width - 1.0;
-    const double ndc_y = 1.0 - 2.0 * screen_y / context.viewport_height;
-    QVector3D direction = context.basis.forward
-        + context.basis.right * float(ndc_x * context.tan_half_fov * context.aspect)
-        + context.basis.up * float(ndc_y * context.tan_half_fov);
-    if (direction.lengthSquared() <= 1e-12f)
-        return false;
-
+    QVector3D direction = to_node;
     direction.normalize();
-    return GeoWgs84Ellipsoid::rayIntersection(
-        context.basis.eye, direction, surface_point);
+    QVector3D intersection;
+    if (!GeoWgs84Ellipsoid::rayIntersection(eye, direction, &intersection))
+        return false; // ray never touches the ellipsoid -- cannot be occluded by it.
+
+    const double distance_to_surface = double((intersection - eye).length());
+    // The node itself sits at (or essentially at) the ellipsoid surface, so
+    // when it is the visible point in this direction the ray's own
+    // intersection distance should land within about the node's own size
+    // of distance_to_node. Only flag occlusion when the ellipsoid blocks the
+    // ray meaningfully closer than that -- i.e. something nearer than the
+    // node itself, by more than the node's own radius, is in the way.
+    return distance_to_surface < distance_to_node - qMax(1.0, node_radius_m);
 }
 
-void includeGlobeSurfacePointInTileBounds(
-    const QVector3D &surface_point, int zoom, int tile_span,
-    double reference_virtual_x, GlobeVisibleTileBounds *bounds)
+// Coarse "is this node even pointed at" cull: the half-angle from the
+// camera's forward axis to the node, compared against the camera's own
+// half field of view plus the node's own angular radius plus a fixed
+// margin. A node entirely behind the eye is only kept if it is large enough
+// that a child of it might still wrap into view (only matters for the
+// zoom-0/1 root nodes at the very start of the walk).
+bool globeQuadtreeNodeInViewCone(
+    const QVector3D &node_center, double node_radius_m,
+    const GeoWgs84Ellipsoid::OrbitCameraBasis &camera_basis, double half_fov_rad)
 {
-    if (bounds == nullptr)
-        return;
+    const QVector3D to_node = node_center - camera_basis.eye;
+    const double distance = double(to_node.length());
+    if (distance <= 1e-6)
+        return true;
 
-    double lon_deg = 0.0;
-    double lat_deg = 0.0;
-    if (!GeoWgs84Ellipsoid::ecefToGeodetic(surface_point, &lon_deg, &lat_deg))
-        return;
+    const double forward_component = double(
+        QVector3D::dotProduct(to_node, camera_basis.forward));
+    if (forward_component <= 0.0)
+        return node_radius_m > distance;
 
-    const double wrapped_x = GeoWebMercator::lonToTileX(
-        GeoWebMercator::normalizeLongitude(lon_deg), zoom);
-    const double virtual_x = GeoWebMercator::nearestWrappedTileX(
-        wrapped_x, reference_virtual_x, zoom);
-    const int tile_x = int(std::floor(virtual_x));
-    const int tile_y = qBound(
-        0, int(std::floor(GeoWebMercator::latToTileY(lat_deg, zoom))), tile_span - 1);
+    const double angular_radius_rad = std::atan2(node_radius_m, distance);
+    const double view_angle_rad = std::acos(
+        qBound(-1.0, forward_component / distance, 1.0));
+    return view_angle_rad
+        <= half_fov_rad + angular_radius_rad + GlobeQuadtreeViewConeMarginRad;
+}
 
-    if (!bounds->valid)
+// Apparent on-screen size (diameter, in pixels) of a node's bounding sphere
+// -- the same "would this still look coarse on screen" question
+// terrainCellCountForTile() already asks per-tile for mesh density, just
+// asked here of the tile/zoom choice itself.
+double globeQuadtreeNodeProjectedSizePx(
+    const QVector3D &node_center, double node_radius_m,
+    const GeoWgs84Ellipsoid::OrbitCameraBasis &camera_basis,
+    double viewport_height_px, double tan_half_fov)
+{
+    const double distance_m = qMax(
+        1.0, double((node_center - camera_basis.eye).length()) - node_radius_m);
+    const double angular_diameter = 2.0 * node_radius_m / distance_m;
+    return angular_diameter * (viewport_height_px / (2.0 * tan_half_fov));
+}
+
+// Below this zoom, tile bounding spheres are at their widest and least
+// precise (see globeQuadtreeNodeBoundingSphere()), which makes the view-cone
+// test's own "large object, is it behind the eye" fallback unreliable right
+// where it matters least: there are at most 16 nodes total at zoom 0-1, so
+// visiting all of them unconditionally and relying solely on the (ellipsoid
+// ray-intersection based, precision-robust) horizon-occlusion test to prune
+// them is negligible extra cost for meaningfully more robust culling.
+constexpr int GlobeQuadtreeViewConeCullMinZoom = 2;
+
+void collectGlobeQuadtreeLeaves(
+    int zoom, int tile_x, int tile_y,
+    const GeoWgs84Ellipsoid::OrbitCameraBasis &camera_basis,
+    double viewport_height_px, double tan_half_fov, double half_fov_rad,
+    const QSet<quint64> &previously_subdivided_nodes,
+    QSet<quint64> *currently_subdivided_nodes,
+    QVector<MapRhiGlobeQuadtreeLeaf> *leaves, int *visit_budget)
+{
+    if (leaves == nullptr || visit_budget == nullptr
+        || *visit_budget <= 0 || leaves->size() >= GlobeQuadtreeMaxLeaves)
     {
-        bounds->x_min = tile_x;
-        bounds->x_max = tile_x;
-        bounds->y_min = tile_y;
-        bounds->y_max = tile_y;
-        bounds->valid = true;
+        return;
+    }
+    --(*visit_budget);
+
+    QVector3D node_center;
+    double node_radius_m = 0.0;
+    globeQuadtreeNodeBoundingSphere(zoom, tile_x, tile_y, &node_center, &node_radius_m);
+
+    if (globeQuadtreeNodeOccludedByHorizon(node_center, node_radius_m, camera_basis.eye))
+        return;
+    if (zoom >= GlobeQuadtreeViewConeCullMinZoom
+        && !globeQuadtreeNodeInViewCone(node_center, node_radius_m, camera_basis, half_fov_rad))
+    {
         return;
     }
 
-    bounds->x_min = qMin(bounds->x_min, tile_x);
-    bounds->x_max = qMax(bounds->x_max, tile_x);
-    bounds->y_min = qMin(bounds->y_min, tile_y);
-    bounds->y_max = qMax(bounds->y_max, tile_y);
-}
+    const double projected_size_px = globeQuadtreeNodeProjectedSizePx(
+        node_center, node_radius_m, camera_basis, viewport_height_px, tan_half_fov);
+    const bool was_subdivided = previously_subdivided_nodes.contains(
+        globeQuadtreeNodeKey(zoom, tile_x, tile_y));
+    const double subdivide_threshold_px =
+        was_subdivided ? GlobeQuadtreeMergeScreenPx : GlobeQuadtreeSubdivideScreenPx;
+    const bool can_subdivide = zoom < GlobeImageryMaxZoom;
 
-GlobeVisibleTileBounds globeVisibleTileBounds(
-    const MapModel &map_model, const QSize &viewport_size, int zoom,
-    double reference_virtual_x)
-{
-    GlobeVisibleTileBounds bounds;
-    if (!viewport_size.isValid())
-        return bounds;
-
-    const int tile_span = 1 << zoom;
-    const double viewport_width = double(qMax(1, viewport_size.width()));
-    const double viewport_height = double(qMax(1, viewport_size.height()));
-    const double center_x = viewport_width * 0.5;
-    const double center_y = viewport_height * 0.5;
-
-    GlobeScreenRayContext context;
-    context.basis = GeoWgs84Ellipsoid::orbitCameraBasis(
-        map_model.centerLon(), map_model.centerLat(),
-        map_model.viewGlobeYawDeg(),
-        qBound(MapModel::MinViewGlobePitchDeg, map_model.viewGlobePitchDeg(),
-               MapModel::MaxViewGlobePitchDeg),
-        qMax(MapModel::MinViewGlobeDistanceM, map_model.viewGlobeDistanceM()));
-    context.viewport_width = viewport_width;
-    context.viewport_height = viewport_height;
-    context.aspect = viewport_width / viewport_height;
-    context.tan_half_fov = std::tan(
-        qDegreesToRadians(MapModel::GlobeFieldOfViewDeg * 0.5));
-
-    QVector3D center_surface_point;
-    if (!globeSurfacePointAtScreen(context, center_x, center_y, &center_surface_point))
-        return bounds;
-
-    includeGlobeSurfacePointInTileBounds(
-        center_surface_point, zoom, tile_span, reference_virtual_x, &bounds);
-
-    const double half_width = viewport_width * 0.5;
-    const double half_height = viewport_height * 0.5;
-    for (int sample = 0; sample < GlobeVisibleBoundarySampleCount; ++sample)
+    if (!can_subdivide || projected_size_px <= subdivide_threshold_px)
     {
-        const double angle = 2.0 * M_PI * double(sample)
-            / double(GlobeVisibleBoundarySampleCount);
-        const double direction_x = std::cos(angle);
-        const double direction_y = std::sin(angle);
+        leaves->append(MapRhiGlobeQuadtreeLeaf{zoom, tile_x, tile_y});
+        return;
+    }
 
-        double maximum_distance = std::numeric_limits<double>::infinity();
-        if (std::abs(direction_x) > 1e-12)
-            maximum_distance = qMin(maximum_distance, half_width / std::abs(direction_x));
-        if (std::abs(direction_y) > 1e-12)
-            maximum_distance = qMin(maximum_distance, half_height / std::abs(direction_y));
-        if (!std::isfinite(maximum_distance) || maximum_distance <= 0.0)
-            continue;
+    if (currently_subdivided_nodes != nullptr)
+        currently_subdivided_nodes->insert(globeQuadtreeNodeKey(zoom, tile_x, tile_y));
 
-        QVector3D boundary_surface_point;
-        const double edge_x = center_x + direction_x * maximum_distance;
-        const double edge_y = center_y + direction_y * maximum_distance;
-        if (!globeSurfacePointAtScreen(
-                context, edge_x, edge_y, &boundary_surface_point))
+    // Visit the child closest to the camera first. Harmless when the visit
+    // budget never comes under pressure (the normal case), but if it ever
+    // does, whatever gets dropped by running out of budget should be the
+    // least camera-relevant remaining branch, not whichever one happened to
+    // sit first in raster (dx, dy) order.
+    const int child_zoom = zoom + 1;
+    const int child_tile_span = 1 << child_zoom;
+    const int child_x = tile_x * 2;
+    const int child_y = tile_y * 2;
+    struct Child
+    {
+        int x = 0;
+        int y = 0;
+        double distance_sq = 0.0;
+    };
+    Child children[4];
+    int child_count = 0;
+    for (int dx = 0; dx < 2; ++dx)
+    {
+        for (int dy = 0; dy < 2; ++dy)
         {
-            double hit_distance = 0.0;
-            double miss_distance = maximum_distance;
-            QVector3D last_hit = center_surface_point;
-            for (int iteration = 0;
-                 iteration < GlobeVisibleLimbSearchIterations; ++iteration)
-            {
-                const double test_distance = (hit_distance + miss_distance) * 0.5;
-                QVector3D test_surface_point;
-                const bool hit = globeSurfacePointAtScreen(
-                    context,
-                    center_x + direction_x * test_distance,
-                    center_y + direction_y * test_distance,
-                    &test_surface_point);
-                if (hit)
-                {
-                    hit_distance = test_distance;
-                    last_hit = test_surface_point;
-                }
-                else
-                {
-                    miss_distance = test_distance;
-                }
-            }
-            boundary_surface_point = last_hit;
+            const int cy = child_y + dy;
+            if (cy < 0 || cy >= child_tile_span)
+                continue;
+
+            QVector3D child_center;
+            double child_radius_m = 0.0;
+            globeQuadtreeNodeBoundingSphere(
+                child_zoom, child_x + dx, cy, &child_center, &child_radius_m);
+            children[child_count] = Child{
+                child_x + dx, cy,
+                double((child_center - camera_basis.eye).lengthSquared())};
+            ++child_count;
         }
-
-        includeGlobeSurfacePointInTileBounds(
-            boundary_surface_point, zoom, tile_span, reference_virtual_x, &bounds);
     }
-
-    if (!bounds.valid)
-        return bounds;
-
-    bounds.x_min -= GlobeVisibleBoundarySafetyMarginTiles;
-    bounds.x_max += GlobeVisibleBoundarySafetyMarginTiles;
-    bounds.y_min = qMax(0, bounds.y_min - GlobeVisibleBoundarySafetyMarginTiles);
-    bounds.y_max = qMin(
-        tile_span - 1, bounds.y_max + GlobeVisibleBoundarySafetyMarginTiles);
-
-    // Once the sampled visible footprint spans a complete XYZ world in X,
-    // canonicalize it. rebuildWindow() already wraps X, but keeping an
-    // arbitrary >world-width virtual interval would make the coverage test
-    // needlessly sensitive to longitude representation changes at the
-    // dateline/poles.
-    if (bounds.x_max - bounds.x_min + 1 >= tile_span)
+    std::sort(
+        children, children + child_count,
+        [](const Child &first, const Child &second)
     {
-        bounds.x_min = 0;
-        bounds.x_max = tile_span - 1;
+        return first.distance_sq < second.distance_sq;
+    });
+
+    for (int index = 0; index < child_count; ++index)
+    {
+        collectGlobeQuadtreeLeaves(
+            child_zoom, children[index].x, children[index].y, camera_basis,
+            viewport_height_px, tan_half_fov, half_fov_rad, previously_subdivided_nodes,
+            currently_subdivided_nodes, leaves, visit_budget);
+    }
+}
+
+// Top-level entry point: walks the quadtree from the single whole-planet
+// root tile (zoom 0 is the entire world in Web Mercator X and, above/below
+// the +-85.05 degree limit, its polar caps -- see the class comment) and
+// returns the resulting leaves. previously_subdivided_nodes is both read
+// (for hysteresis, see collectGlobeQuadtreeLeaves()) and overwritten with
+// the new set of subdivided nodes for next frame's call.
+QVector<MapRhiGlobeQuadtreeLeaf> selectVisibleGlobeQuadtreeLeaves(
+    const MapModel &map_model, const QSize &viewport_size,
+    QSet<quint64> *previously_subdivided_nodes)
+{
+    QVector<MapRhiGlobeQuadtreeLeaf> leaves;
+    if (!viewport_size.isValid() || previously_subdivided_nodes == nullptr)
+        return leaves;
+
+    const GeoWgs84Ellipsoid::OrbitCameraBasis camera_basis =
+        GeoWgs84Ellipsoid::orbitCameraBasis(
+            map_model.centerLon(), map_model.centerLat(),
+            map_model.viewGlobeYawDeg(),
+            qBound(MapModel::MinViewGlobePitchDeg, map_model.viewGlobePitchDeg(),
+                   MapModel::MaxViewGlobePitchDeg),
+            qMax(MapModel::MinViewGlobeDistanceM, map_model.viewGlobeDistanceM()));
+    const double viewport_height_px = double(qMax(1, viewport_size.height()));
+    const double half_fov_rad = qDegreesToRadians(MapModel::GlobeFieldOfViewDeg * 0.5);
+    const double tan_half_fov = std::tan(half_fov_rad);
+
+    QSet<quint64> currently_subdivided_nodes;
+    int visit_budget = GlobeQuadtreeMaxVisitedNodes;
+    collectGlobeQuadtreeLeaves(
+        GlobeQuadtreeRootZoom, 0, 0, camera_basis, viewport_height_px, tan_half_fov,
+        half_fov_rad, *previously_subdivided_nodes, &currently_subdivided_nodes,
+        &leaves, &visit_budget);
+
+    *previously_subdivided_nodes = std::move(currently_subdivided_nodes);
+
+    // Defense in depth: a working horizon/frustum cull should never leave
+    // this empty while the camera is anywhere near the planet (the root
+    // alone, uncontested, always qualifies as at least one leaf). If a
+    // future bug in the culling above ever does produce zero leaves, fall
+    // back to a single tile under the current target rather than rendering
+    // nothing -- "wrong LOD for one frame" is a far cheaper failure mode
+    // than a fully black globe.
+    if (leaves.isEmpty())
+    {
+        const int fallback_zoom = qBound(
+            0,
+            int(std::lround(MapModel::viewGlobeZoomLevelForDistanceM(
+                qMax(1.0, map_model.viewGlobeDistanceM()), map_model.centerLat(),
+                int(viewport_height_px)))),
+            GlobeImageryMaxZoom);
+        const int fallback_tile_span = 1 << fallback_zoom;
+        const int fallback_x = qBound(
+            0,
+            int(std::floor(GeoWebMercator::lonToTileX(
+                GeoWebMercator::normalizeLongitude(map_model.centerLon()), fallback_zoom))),
+            fallback_tile_span - 1);
+        const int fallback_y = qBound(
+            0,
+            int(std::floor(GeoWebMercator::latToTileY(map_model.centerLat(), fallback_zoom))),
+            fallback_tile_span - 1);
+        leaves.append(MapRhiGlobeQuadtreeLeaf{fallback_zoom, fallback_x, fallback_y});
     }
 
-    return bounds;
+    return leaves;
 }
 
 // Request priority measured on the globe, not in raw XYZ x/y space. This is
@@ -362,11 +497,6 @@ int globeTerrainZoomForImageryZoom(int imagery_zoom)
 QString globeTerrainDatasetId()
 {
     return QStringLiteral("copernicus-glo30");
-}
-
-quint64 globeTilePositionKey(int tile_x, int tile_y)
-{
-    return (quint64(quint32(tile_x)) << 32) | quint64(quint32(tile_y));
 }
 
 bool globeTerrainDatumUsable(MapTerrainVerticalDatum datum)
@@ -672,7 +802,7 @@ void MapRhiGlobeRenderer::updateTerrainStitchCellCounts(
         if (tile.terrain_key.isEmpty() || tile.terrain_cell_count <= 0)
             continue;
         tiles_by_position.insert(
-            globeTilePositionKey(tile.tile_x, tile.tile_y), index);
+            globeQuadtreeNodeKey(tile.zoom, tile.tile_x, tile.tile_y), index);
     }
 
     for (qsizetype index = 0; index < tiles->size(); ++index)
@@ -686,7 +816,7 @@ void MapRhiGlobeRenderer::updateTerrainStitchCellCounts(
 
         const QHash<quint64, qsizetype>::const_iterator top_iterator =
             tiles_by_position.constFind(
-                globeTilePositionKey(tile.tile_x, tile.tile_y - 1));
+                globeQuadtreeNodeKey(tile.zoom, tile.tile_x, tile.tile_y - 1));
         if (top_iterator != tiles_by_position.cend())
         {
             const GlobeTile &neighbor = tiles->at(top_iterator.value());
@@ -701,7 +831,7 @@ void MapRhiGlobeRenderer::updateTerrainStitchCellCounts(
 
         const QHash<quint64, qsizetype>::const_iterator right_iterator =
             tiles_by_position.constFind(
-                globeTilePositionKey(right_x, tile.tile_y));
+                globeQuadtreeNodeKey(tile.zoom, right_x, tile.tile_y));
         if (right_iterator != tiles_by_position.cend())
         {
             const GlobeTile &neighbor = tiles->at(right_iterator.value());
@@ -716,7 +846,7 @@ void MapRhiGlobeRenderer::updateTerrainStitchCellCounts(
 
         const QHash<quint64, qsizetype>::const_iterator bottom_iterator =
             tiles_by_position.constFind(
-                globeTilePositionKey(tile.tile_x, tile.tile_y + 1));
+                globeQuadtreeNodeKey(tile.zoom, tile.tile_x, tile.tile_y + 1));
         if (bottom_iterator != tiles_by_position.cend())
         {
             const GlobeTile &neighbor = tiles->at(bottom_iterator.value());
@@ -731,7 +861,7 @@ void MapRhiGlobeRenderer::updateTerrainStitchCellCounts(
 
         const QHash<quint64, qsizetype>::const_iterator left_iterator =
             tiles_by_position.constFind(
-                globeTilePositionKey(left_x, tile.tile_y));
+                globeQuadtreeNodeKey(tile.zoom, left_x, tile.tile_y));
         if (left_iterator != tiles_by_position.cend())
         {
             const GlobeTile &neighbor = tiles->at(left_iterator.value());
@@ -764,17 +894,8 @@ bool MapRhiGlobeRenderer::currentTerrainLodMatches(
 }
 
 void MapRhiGlobeRenderer::rebuildWindow(
-    int zoom, int x_min, int x_max, int y_min, int y_max, int tile_span,
-    const QSize &viewport_size)
+    const QVector<MapRhiGlobeQuadtreeLeaf> &leaves, const QSize &viewport_size)
 {
-    const int clamped_y_min = qBound(0, y_min, tile_span - 1);
-    const int clamped_y_max = qBound(0, y_max, tile_span - 1);
-    const bool terrain_enabled =
-        this->terrain_repository != nullptr && zoom >= GlobeTerrainReliefMinimumZoom;
-    const int terrain_zoom = terrain_enabled
-        ? globeTerrainZoomForImageryZoom(zoom)
-        : -1;
-
     const bool geometry_reuse_allowed = !this->window_dirty;
     QVector<TileVertex> previous_vertices = std::move(this->window_vertices);
     QVector<GlobeTile> previous_tiles = std::move(this->window_tiles);
@@ -786,56 +907,71 @@ void MapRhiGlobeRenderer::rebuildWindow(
         {
             const GlobeTile &tile = previous_tiles.at(index);
             previous_tiles_by_position.insert(
-                globeTilePositionKey(tile.tile_x, tile.tile_y), index);
+                globeQuadtreeNodeKey(tile.zoom, tile.tile_x, tile.tile_y), index);
         }
     }
 
+    // Leaves come straight out of a quadtree partition, so distinct leaves
+    // can never legitimately share a (zoom, x, y) identity -- the dedup set
+    // here is just defensive bookkeeping against a future bug in the walk,
+    // not something normal operation should ever hit.
     QVector<GlobeTile> next_tiles;
+    next_tiles.reserve(leaves.size());
     QSet<quint64> seen_positions;
-    for (int x = x_min; x <= x_max; ++x)
+    seen_positions.reserve(leaves.size());
+    for (const MapRhiGlobeQuadtreeLeaf &leaf : leaves)
     {
-        const int wrapped_x = GeoWebMercator::wrapTileX(x, zoom);
-        for (int y = clamped_y_min; y <= clamped_y_max; ++y)
+        const quint64 position_key =
+            globeQuadtreeNodeKey(leaf.zoom, leaf.tile_x, leaf.tile_y);
+        if (seen_positions.contains(position_key))
+            continue;
+        seen_positions.insert(position_key);
+
+        const bool terrain_enabled =
+            this->terrain_repository != nullptr
+            && leaf.zoom >= GlobeTerrainReliefMinimumZoom;
+        const int terrain_zoom = terrain_enabled
+            ? globeTerrainZoomForImageryZoom(leaf.zoom)
+            : -1;
+
+        GlobeTile tile;
+        tile.virtual_x = leaf.tile_x;
+        tile.tile_x = leaf.tile_x;
+        tile.tile_y = leaf.tile_y;
+        tile.zoom = leaf.zoom;
+        tile.imagery_key =
+            this->map_model->tileCacheKeyAtZoom(leaf.tile_x, leaf.tile_y, leaf.zoom);
+
+        if (terrain_enabled)
         {
-            const quint64 position_key = globeTilePositionKey(wrapped_x, y);
-            if (seen_positions.contains(position_key))
-                continue;
-            seen_positions.insert(position_key);
-
-            GlobeTile tile;
-            tile.virtual_x = x;
-            tile.tile_x = wrapped_x;
-            tile.tile_y = y;
-            tile.zoom = zoom;
-            tile.imagery_key = this->map_model->tileCacheKeyAtZoom(wrapped_x, y, zoom);
-
-            if (terrain_enabled)
-            {
-                const int zoom_delta = zoom - terrain_zoom;
-                MapTerrainTileAddress terrain_address;
-                terrain_address.zoom = terrain_zoom;
-                terrain_address.x = quint32(wrapped_x) >> zoom_delta;
-                terrain_address.y = quint32(y) >> zoom_delta;
-                tile.terrain_zoom = terrain_zoom;
-                tile.terrain_key =
-                    mapTerrainTileKey(globeTerrainDatasetId(), terrain_address);
-                tile.terrain_cell_count =
-                    terrainCellCountForTile(tile, viewport_size);
-            }
-
-            next_tiles.append(tile);
+            const int zoom_delta = leaf.zoom - terrain_zoom;
+            MapTerrainTileAddress terrain_address;
+            terrain_address.zoom = terrain_zoom;
+            terrain_address.x = quint32(leaf.tile_x) >> zoom_delta;
+            terrain_address.y = quint32(leaf.tile_y) >> zoom_delta;
+            tile.terrain_zoom = terrain_zoom;
+            tile.terrain_key =
+                mapTerrainTileKey(globeTerrainDatasetId(), terrain_address);
+            tile.terrain_cell_count =
+                terrainCellCountForTile(tile, viewport_size);
         }
+
+        next_tiles.append(tile);
     }
 
-    if (terrain_enabled)
-        updateTerrainStitchCellCounts(&next_tiles);
+    // Same-zoom-neighbour terrain mesh density stitching only -- see
+    // updateTerrainStitchCellCounts()'s own scope. A leaf whose neighbour is
+    // at a different quadtree zoom (an actual LOD boundary) is not stitched
+    // by this pass; that seam is a known, purely cosmetic follow-up (see the
+    // class comment) and does not affect correctness or performance here.
+    updateTerrainStitchCellCounts(&next_tiles);
 
     qsizetype estimated_vertex_count = 0;
     for (const GlobeTile &tile : next_tiles)
     {
-        const int subdivisions = terrain_enabled
+        const int subdivisions = !tile.terrain_key.isEmpty()
             ? qMax(1, tile.terrain_cell_count)
-            : subdivisionsForZoom(zoom);
+            : subdivisionsForZoom(tile.zoom);
         estimated_vertex_count +=
             qsizetype(subdivisions) * qsizetype(subdivisions) * 6;
     }
@@ -847,16 +983,17 @@ void MapRhiGlobeRenderer::rebuildWindow(
 
     for (GlobeTile &tile : next_tiles)
     {
+        const bool terrain_enabled = !tile.terrain_key.isEmpty();
         tile.first_vertex = this->window_vertices.size();
         const int subdivisions = terrain_enabled
             ? qMax(1, tile.terrain_cell_count)
-            : subdivisionsForZoom(zoom);
+            : subdivisionsForZoom(tile.zoom);
         const int expected_vertex_count = subdivisions * subdivisions * 6;
 
         bool reused = false;
         const QHash<quint64, qsizetype>::const_iterator previous_iterator =
             previous_tiles_by_position.constFind(
-                globeTilePositionKey(tile.tile_x, tile.tile_y));
+                globeQuadtreeNodeKey(tile.zoom, tile.tile_x, tile.tile_y));
         if (geometry_reuse_allowed
             && previous_iterator != previous_tiles_by_position.cend())
         {
@@ -964,18 +1101,18 @@ void MapRhiGlobeRenderer::rebuildWindow(
                     const double v0 = double(row) / double(subdivisions);
                     const double v1 = double(row + 1) / double(subdivisions);
                     const double lat0 = GeoWebMercator::tileYToLat(
-                        double(tile.tile_y) + v0, zoom);
+                        double(tile.tile_y) + v0, tile.zoom);
                     const double lat1 = GeoWebMercator::tileYToLat(
-                        double(tile.tile_y) + v1, zoom);
+                        double(tile.tile_y) + v1, tile.zoom);
 
                     for (int column = 0; column < subdivisions; ++column)
                     {
                         const double u0 = double(column) / double(subdivisions);
                         const double u1 = double(column + 1) / double(subdivisions);
                         const double lon0 = GeoWebMercator::tileXToLon(
-                            double(tile.virtual_x) + u0, zoom);
+                            double(tile.virtual_x) + u0, tile.zoom);
                         const double lon1 = GeoWebMercator::tileXToLon(
-                            double(tile.virtual_x) + u1, zoom);
+                            double(tile.virtual_x) + u1, tile.zoom);
 
                         const TileVertex p00 = makeTileVertex(
                             lon0, lat0, float(u0), float(v0));
@@ -1001,11 +1138,6 @@ void MapRhiGlobeRenderer::rebuildWindow(
         this->window_tiles.append(tile);
     }
 
-    this->window_zoom = zoom;
-    this->window_tile_x_min = x_min;
-    this->window_tile_x_max = x_max;
-    this->window_tile_y_min = clamped_y_min;
-    this->window_tile_y_max = clamped_y_max;
     this->window_dirty = false;
     this->window_tiles_requested = false;
     this->window_vertex_upload_pending = true;
@@ -1014,6 +1146,15 @@ void MapRhiGlobeRenderer::rebuildWindow(
 
     rebuildWireframeVertices();
     pruneUnusedTileResources();
+}
+
+QVector<MapRhiGlobeQuadtreeLeaf> MapRhiGlobeRenderer::currentWindowLeaves() const
+{
+    QVector<MapRhiGlobeQuadtreeLeaf> leaves;
+    leaves.reserve(this->window_tiles.size());
+    for (const GlobeTile &tile : this->window_tiles)
+        leaves.append(MapRhiGlobeQuadtreeLeaf{tile.zoom, tile.tile_x, tile.tile_y});
+    return leaves;
 }
 
 void MapRhiGlobeRenderer::appendWireframeEdges(const QVector<TileVertex> &vertices)
@@ -1610,116 +1751,42 @@ bool MapRhiGlobeRenderer::prepare(
     if (!ensureSharedResources())
         return false;
 
-    const double distance_m = qMax(1.0, this->map_model->viewGlobeDistanceM());
-    const double continuous_zoom_level = MapModel::viewGlobeZoomLevelForDistanceM(
-        distance_m, this->map_model->centerLat(),
-        viewport_size.isValid()
-            ? viewport_size.height() : MapModel::GlobeZoomReferenceViewportHeightPx);
-    const int desired_zoom = computeDesiredZoom(continuous_zoom_level, this->window_zoom);
-    const int tile_span = 1 << desired_zoom;
-    const bool full_globe_coverage = desired_zoom <= GlobeFullCoverageMaxZoom;
+    // Walk the quadtree fresh every frame -- see the class comment for why
+    // this replaced the old single-zoom rectangular window. The walk itself
+    // is cheap (horizon/frustum culling plus the hard visit cap keep it to
+    // at most a few hundred visited nodes in normal operation); only the
+    // actual geometry rebuild below is comparatively expensive, and that is
+    // gated on the resulting leaf set actually differing from what is
+    // already built.
+    const QVector<MapRhiGlobeQuadtreeLeaf> desired_leaves = selectVisibleGlobeQuadtreeLeaves(
+        *this->map_model, viewport_size, &this->previously_subdivided_quadtree_nodes);
 
-    // Keep X in a continuous virtual tile space, exactly like the flat RHI
-    // renderer does. A wrapped longitude jumps numerically from tile 0 to
-    // tile N-1 at the dateline even though the globe moved continuously;
-    // anchoring the new center to the current retained window prevents that
-    // representation jump from rebuilding the opposite side of the globe.
-    const double wrapped_center_tile_x = GeoWebMercator::lonToTileX(
-        GeoWebMercator::normalizeLongitude(this->map_model->centerLon()), desired_zoom);
-    double reference_virtual_x = wrapped_center_tile_x;
-    if (this->window_zoom == desired_zoom
-        && this->window_tile_x_max >= this->window_tile_x_min)
+    bool leaves_match_window = !this->window_dirty
+        && desired_leaves.size() == this->window_tiles.size();
+    if (leaves_match_window)
     {
-        reference_virtual_x =
-            (double(this->window_tile_x_min) + double(this->window_tile_x_max)) * 0.5;
-    }
-    const double center_virtual_x = GeoWebMercator::nearestWrappedTileX(
-        wrapped_center_tile_x, reference_virtual_x, desired_zoom);
-
-    GlobeVisibleTileBounds foreground_bounds;
-    if (full_globe_coverage)
-    {
-        foreground_bounds.x_min = 0;
-        foreground_bounds.x_max = tile_span - 1;
-        foreground_bounds.y_min = 0;
-        foreground_bounds.y_max = tile_span - 1;
-        foreground_bounds.valid = true;
-    }
-    else
-    {
-        foreground_bounds = globeVisibleTileBounds(
-            *this->map_model, viewport_size, desired_zoom, center_virtual_x);
-    }
-
-    // The screen centre is guaranteed to hit the target ellipsoid, so this is
-    // only a defensive fallback for an invalid viewport/camera state. Keep a
-    // small local window rather than dropping the globe geometry entirely.
-    if (!foreground_bounds.valid)
-    {
-        const int center_tile_x = int(std::floor(center_virtual_x));
-        const int center_tile_y = qBound(
-            0, int(std::floor(GeoWebMercator::latToTileY(
-                   this->map_model->centerLat(), desired_zoom))), tile_span - 1);
-        foreground_bounds.x_min = center_tile_x - 2;
-        foreground_bounds.x_max = center_tile_x + 2;
-        foreground_bounds.y_min = qMax(0, center_tile_y - 2);
-        foreground_bounds.y_max = qMin(tile_span - 1, center_tile_y + 2);
-        foreground_bounds.valid = true;
-    }
-
-    // Mirrors MapRhiBasemapRenderer's currentLayoutCoversForeground() short
-    // circuit: only rebuild the window when the actual projected globe
-    // footprint has moved outside the already-built retention apron. This is
-    // what keeps the high-resolution edge off-screen while a pan is in
-    // progress instead of exposing/replacing whole tile rows at the limb.
-    const int window_x_width = this->window_tile_x_max - this->window_tile_x_min + 1;
-    const bool window_covers_all_x = window_x_width >= tile_span;
-    const bool foreground_needs_all_x =
-        foreground_bounds.x_max - foreground_bounds.x_min + 1 >= tile_span;
-    const bool window_covers_foreground_x =
-        window_covers_all_x
-        || (!foreground_needs_all_x
-            && foreground_bounds.x_min >= this->window_tile_x_min
-            && foreground_bounds.x_max <= this->window_tile_x_max);
-    const bool window_covers_foreground =
-        !this->window_dirty
-        && this->window_zoom == desired_zoom
-        && window_covers_foreground_x
-        && foreground_bounds.y_min >= this->window_tile_y_min
-        && foreground_bounds.y_max <= this->window_tile_y_max;
-
-    if (!window_covers_foreground)
-    {
-        if (full_globe_coverage)
+        QSet<quint64> window_keys;
+        window_keys.reserve(this->window_tiles.size());
+        for (const GlobeTile &tile : this->window_tiles)
+            window_keys.insert(globeQuadtreeNodeKey(tile.zoom, tile.tile_x, tile.tile_y));
+        for (const MapRhiGlobeQuadtreeLeaf &leaf : desired_leaves)
         {
-            rebuildWindow(
-                desired_zoom, 0, tile_span - 1, 0, tile_span - 1, tile_span,
-                viewport_size);
-        }
-        else
-        {
-            int retained_x_min =
-                foreground_bounds.x_min - GlobeWindowRetentionMarginTiles;
-            int retained_x_max =
-                foreground_bounds.x_max + GlobeWindowRetentionMarginTiles;
-            if (retained_x_max - retained_x_min + 1 >= tile_span)
+            if (!window_keys.contains(
+                    globeQuadtreeNodeKey(leaf.zoom, leaf.tile_x, leaf.tile_y)))
             {
-                retained_x_min = 0;
-                retained_x_max = tile_span - 1;
+                leaves_match_window = false;
+                break;
             }
-
-            rebuildWindow(
-                desired_zoom, retained_x_min, retained_x_max,
-                foreground_bounds.y_min - GlobeWindowRetentionMarginTiles,
-                foreground_bounds.y_max + GlobeWindowRetentionMarginTiles,
-                tile_span, viewport_size);
         }
+    }
+
+    if (!leaves_match_window)
+    {
+        rebuildWindow(desired_leaves, viewport_size);
     }
     else
     {
-        const bool terrain_enabled =
-            this->terrain_repository != nullptr
-            && desired_zoom >= GlobeTerrainReliefMinimumZoom;
+        const bool terrain_enabled = this->terrain_repository != nullptr;
         const bool terrain_lod_matches =
             !terrain_enabled || currentTerrainLodMatches(viewport_size);
         if (!terrain_lod_matches)
@@ -1737,11 +1804,7 @@ bool MapRhiGlobeRenderer::prepare(
             }
             else
             {
-                rebuildWindow(
-                    this->window_zoom,
-                    this->window_tile_x_min, this->window_tile_x_max,
-                    this->window_tile_y_min, this->window_tile_y_max,
-                    1 << this->window_zoom, viewport_size);
+                rebuildWindow(currentWindowLeaves(), viewport_size);
             }
         }
         else
@@ -1899,11 +1962,7 @@ void MapRhiGlobeRenderer::releaseResources()
     this->window_dirty = true;
     this->terrain_lod_rebuild_pending = false;
     this->terrain_lod_rebuild_clock.invalidate();
-    this->window_zoom = -1;
-    this->window_tile_x_min = 0;
-    this->window_tile_x_max = -1;
-    this->window_tile_y_min = 0;
-    this->window_tile_y_max = -1;
+    this->previously_subdivided_quadtree_nodes.clear();
     this->cap_vertex_buffer.reset();
     this->cap_vertex_upload_pending = true;
     invalidateImagery();
