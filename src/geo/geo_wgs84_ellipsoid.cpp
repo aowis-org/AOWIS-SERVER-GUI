@@ -66,12 +66,22 @@ GeoWgs84Ellipsoid::OrbitCameraBasis GeoWgs84Ellipsoid::orbitCameraBasis(
     const double distance = qMax(0.0, distance_m);
     const double horizontal_distance = distance * std::cos(pitch_rad);
 
-    // Both are unit vectors: east/north are themselves orthonormal, and
-    // each is a sin/cos combination of the two.
+    // Match the existing RHI ThreeD orbit convention exactly in the local
+    // ENU frame. Web Mercator's +Y points south, so ThreeD yaw 0 places the
+    // eye south of the focus while screen-up points north. Expressed in ENU
+    // that is:
+    //   eye horizontal = +east*sin(yaw) - north*cos(yaw)
+    //   screen right   = +east*cos(yaw) + north*sin(yaw)
+    //
+    // The old globe basis used +north at yaw 0. Numerically its pitch range
+    // looked like ThreeD, but physically the camera orbited from the opposite
+    // side of the focus. Tilting away from nadir therefore made the globe rise
+    // toward / stand on the upper edge of the screen instead of behaving like
+    // the RHI ThreeD terrain camera.
     const QVector3D horizontal_direction =
-        frame.east * float(std::sin(yaw_rad)) + frame.north * float(std::cos(yaw_rad));
+        frame.east * float(std::sin(yaw_rad)) - frame.north * float(std::cos(yaw_rad));
     const QVector3D right =
-        frame.east * float(std::cos(yaw_rad)) - frame.north * float(std::sin(yaw_rad));
+        frame.east * float(std::cos(yaw_rad)) + frame.north * float(std::sin(yaw_rad));
 
     OrbitCameraBasis basis;
     basis.target = frame.position;

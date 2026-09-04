@@ -784,7 +784,7 @@ void MapModel::panGlobeByPointerDrag(
         const double yaw_rad = qDegreesToRadians(next_yaw_deg);
         const QVector3D locked_right =
             next_frame.east * float(std::cos(yaw_rad))
-            - next_frame.north * float(std::sin(yaw_rad));
+            + next_frame.north * float(std::sin(yaw_rad));
         if (QVector3D::dotProduct(locked_right, transported_right) < 0.0f)
             next_yaw_deg = normalizedYawDegrees(next_yaw_deg + 180.0);
     }
@@ -800,7 +800,7 @@ void MapModel::panGlobeByPointerDrag(
         const double right_north =
             double(QVector3D::dotProduct(transported_right, next_frame.north));
         next_yaw_deg = normalizedYawDegrees(
-            qRadiansToDegrees(std::atan2(-right_north, right_east)));
+            qRadiansToDegrees(std::atan2(right_north, right_east)));
     }
 
     // Update center and yaw as one state change before emitting either signal.

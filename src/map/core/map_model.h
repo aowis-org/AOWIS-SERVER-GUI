@@ -89,8 +89,8 @@ public:
     static constexpr double MinViewGlobeDistanceM = 360.42;
     static constexpr double MaxViewGlobeDistanceM = 11810260.0;
     static constexpr double DefaultViewGlobeDistanceM = MaxViewGlobeDistanceM;
-    static constexpr double MinViewGlobePitchDeg = 5.0;
-    static constexpr double MaxViewGlobePitchDeg = 90.0;
+    static constexpr double MinViewGlobePitchDeg = MinView3dPitchDeg;
+    static constexpr double MaxViewGlobePitchDeg = MaxView3dPitchDeg;
     // Straight down (90 degrees) rather than an oblique angle: looking
     // directly along the local "up" axis at the target is the only pitch
     // that geometrically guarantees the ellipsoid renders as a symmetric
