@@ -31,6 +31,13 @@ public:
     bool screenRay(const QPointF &screen_position, QVector3D *eye_world,
                    QVector3D *direction_world) const;
     bool crosshairRay(QVector3D *eye_world, QVector3D *direction_world) const;
+    // Globe counterparts of the two above, used for terrain-aware focus-
+    // anchor capture on the globe (see MapRhiWidget::terrainRayHitOnGlobeAtScreen()).
+    // Both return false unless the most recent syncFromMapModel() saw
+    // MapViewMode::Globe.
+    bool screenRayGlobe(const QPointF &screen_position, QVector3D *eye_world,
+                        QVector3D *direction_world) const;
+    bool crosshairRayGlobe(QVector3D *eye_world, QVector3D *direction_world) const;
 
 private:
     QPointF scene_origin_world;
@@ -55,6 +62,7 @@ private:
     double view_globe_yaw_deg = 0.0;
     double view_globe_pitch_deg = 55.0;
     double view_globe_distance_m = 0.0;
+    double view_globe_vertical_offset_m = 0.0;
 };
 
 #endif // MAP_RHI_CAMERA_H

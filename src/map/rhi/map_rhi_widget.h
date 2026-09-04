@@ -116,6 +116,10 @@ private:
     bool terrainRayHitAtScreen(
         const QPointF &screen_position, CoordinateWGS84 *coordinate,
         double *world_z, double *distance_m, bool request_missing_tile);
+    void captureViewGlobeFocusAnchor();
+    bool terrainRayHitOnGlobeAtScreen(
+        const QPointF &screen_position, CoordinateWGS84 *coordinate,
+        double *vertical_offset_m, double *distance_m, bool request_missing_tile);
     void rebuildHeatmapRenderVertices();
     void syncBasemapHeatmapOverlay();
     void syncBasemapHeatmapStyle();

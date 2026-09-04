@@ -239,15 +239,24 @@ double compassYawDeg(const MapModel *map_model)
 void beginCompassRotateInteraction(MapModel *map_model)
 {
     Q_ASSERT(map_model != nullptr);
-    if (map_model->viewMode() == MapViewMode::ThreeD)
+    // MapModel::beginView3dRotateInteraction() itself now drives the Pan/
+    // Rotate state machine for both ThreeD and Globe (see that function);
+    // gate here just to skip the call entirely in TwoD, same as before.
+    if (map_model->viewMode() == MapViewMode::ThreeD
+        || map_model->viewMode() == MapViewMode::Globe)
+    {
         map_model->beginView3dRotateInteraction();
+    }
 }
 
 void endCompassRotateInteraction(MapModel *map_model)
 {
     Q_ASSERT(map_model != nullptr);
-    if (map_model->viewMode() == MapViewMode::ThreeD)
+    if (map_model->viewMode() == MapViewMode::ThreeD
+        || map_model->viewMode() == MapViewMode::Globe)
+    {
         map_model->endView3dRotateInteraction();
+    }
 }
 
 void orbitCompass(MapModel *map_model, double yaw_delta_deg)

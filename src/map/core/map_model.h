@@ -146,6 +146,11 @@ public:
     double viewGlobeYawDeg() const;
     double viewGlobePitchDeg() const;
     double viewGlobeDistanceM() const;
+    // Height (meters) of the orbit target above the WGS84 ellipsoid -- the
+    // Globe counterpart of view3dVerticalOffsetWorld() above. 0 until the
+    // first Globe rotate/zoom interaction captures the real DEM elevation
+    // under the crosshair via setViewGlobeFocusAnchor().
+    double viewGlobeVerticalOffsetM() const;
     // Continuous, 2D-equivalent zoom level for the globe's current camera
     // distance and center latitude, using the live viewport height --
     // see viewGlobeZoomLevelForDistanceM() for the exact relationship.
@@ -218,6 +223,15 @@ public:
     // and the given (live) viewport height. Used by the footer zoom
     // control's edit path.
     void setViewGlobeZoomLevel(double zoom_level, const QSize &viewport);
+    // Globe counterpart of setView3dFocusAnchor(): re-centers centerLon()/
+    // centerLat() to the given point (the exact terrain-relief-aware hit
+    // under the crosshair), snaps viewGlobeVerticalOffsetM() to its real
+    // DEM elevation there, and snaps viewGlobeDistanceM() to the true
+    // straight-line distance to that point -- so a rotate/zoom interaction
+    // pivots around what is actually on screen instead of the bare
+    // sea-level ellipsoid.
+    void setViewGlobeFocusAnchor(double lon, double lat, double vertical_offset_m,
+                                 double distance_m, const QSize &viewport = QSize());
     void orbitViewGlobe(double yaw_delta_deg, double pitch_delta_deg);
     void orbitViewGlobeByPointerDelta(const QPoint &delta_pixels, bool include_pitch);
     // Marble/Google-Earth style "grab and drag": ray-casts previous_screen_position
@@ -285,6 +299,7 @@ private:
     double m_view_globe_yaw_deg = 0.0;
     double m_view_globe_pitch_deg = DefaultViewGlobePitchDeg;
     double m_view_globe_distance_m = DefaultViewGlobeDistanceM;
+    double m_view_globe_vertical_offset_m = 0.0;
     bool m_view_globe_north_up_locked = true;
 };
 

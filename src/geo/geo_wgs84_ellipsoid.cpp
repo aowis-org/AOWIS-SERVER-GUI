@@ -38,7 +38,8 @@ GeoWgs84Ellipsoid::LocalFrame GeoWgs84Ellipsoid::localFrameAtGeodetic(
     return frame;
 }
 
-bool GeoWgs84Ellipsoid::ecefToGeodetic(const QVector3D &ecef, double *lon_deg, double *lat_deg)
+bool GeoWgs84Ellipsoid::ecefToGeodetic(
+    const QVector3D &ecef, double *lon_deg, double *lat_deg, double *height_m)
 {
     if (lon_deg == nullptr || lat_deg == nullptr)
         return false;
@@ -53,14 +54,18 @@ bool GeoWgs84Ellipsoid::ecefToGeodetic(const QVector3D &ecef, double *lon_deg, d
 
     *lon_deg = lon;
     *lat_deg = lat;
+    if (height_m != nullptr)
+        *height_m = height;
     return true;
 }
 
 GeoWgs84Ellipsoid::OrbitCameraBasis GeoWgs84Ellipsoid::orbitCameraBasis(
     double target_lon_deg, double target_lat_deg,
-    double yaw_deg, double pitch_deg, double distance_m)
+    double yaw_deg, double pitch_deg, double distance_m,
+    double target_height_m)
 {
-    const LocalFrame frame = localFrameAtGeodetic(target_lon_deg, target_lat_deg, 0.0);
+    const LocalFrame frame = localFrameAtGeodetic(
+        target_lon_deg, target_lat_deg, target_height_m);
     const double pitch_rad = qDegreesToRadians(pitch_deg);
     const double yaw_rad = qDegreesToRadians(yaw_deg);
     const double distance = qMax(0.0, distance_m);
@@ -151,5 +156,35 @@ bool GeoWgs84Ellipsoid::rayIntersection(
         return false;
 
     *intersection = origin + direction * float(t);
+    return true;
+}
+
+bool GeoWgs84Ellipsoid::screenRay(
+    const OrbitCameraBasis &basis, const QPointF &screen_position,
+    const QSize &viewport, double vertical_fov_deg,
+    QVector3D *eye, QVector3D *direction)
+{
+    if (eye == nullptr || direction == nullptr || !viewport.isValid()
+        || !std::isfinite(screen_position.x()) || !std::isfinite(screen_position.y()))
+    {
+        return false;
+    }
+
+    const double viewport_width = double(qMax(1, viewport.width()));
+    const double viewport_height = double(qMax(1, viewport.height()));
+    const double aspect = viewport_width / viewport_height;
+    const double tan_half_fov = std::tan(qDegreesToRadians(vertical_fov_deg * 0.5));
+    const double ndc_x = 2.0 * screen_position.x() / viewport_width - 1.0;
+    const double ndc_y = 1.0 - 2.0 * screen_position.y() / viewport_height;
+
+    QVector3D ray_direction = basis.forward
+        + basis.right * float(ndc_x * tan_half_fov * aspect)
+        + basis.up * float(ndc_y * tan_half_fov);
+    if (ray_direction.lengthSquared() <= 1e-12f)
+        return false;
+
+    ray_direction.normalize();
+    *eye = basis.eye;
+    *direction = ray_direction;
     return true;
 }

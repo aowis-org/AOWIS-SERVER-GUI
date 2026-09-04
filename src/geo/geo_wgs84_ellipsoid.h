@@ -1,6 +1,8 @@
 #ifndef GEO_WGS84_ELLIPSOID_H
 #define GEO_WGS84_ELLIPSOID_H
 
+#include <QPointF>
+#include <QSize>
 #include <QVector3D>
 
 // Converts geodetic coordinates (longitude/latitude/height above the WGS84
@@ -78,19 +80,30 @@ public:
     static LocalFrame localFrameAtGeodetic(double lon_deg, double lat_deg, double height_m);
 
     // Inverse of geodeticToEcef(): finds the geodetic longitude/latitude of
-    // the ellipsoid point nearest to an arbitrary ECEF position (height is
-    // discarded -- callers of this only ever want "which lon/lat is this
-    // point over", not its exact height). Always succeeds for any non-zero
+    // the ellipsoid point nearest to an arbitrary ECEF position. height_m is
+    // optional -- most callers only ever want "which lon/lat is this point
+    // over" and pass nullptr, but terrain-aware globe picking (bisecting a
+    // ray against actual DEM relief rather than the bare ellipsoid) needs
+    // the point's true height above the ellipsoid too, so it is available
+    // as a byproduct of the same GeographicLib reverse conversion rather
+    // than a second, separate computation. Always succeeds for any non-zero
     // input; only returns false for the degenerate (0,0,0) case.
-    static bool ecefToGeodetic(const QVector3D &ecef, double *lon_deg, double *lat_deg);
+    static bool ecefToGeodetic(
+        const QVector3D &ecef, double *lon_deg, double *lat_deg, double *height_m = nullptr);
 
     // Builds the orbit camera basis described above. pitch_deg is expected
     // to already be clamped by the caller (this function does not know
     // MapModel's Min/MaxViewGlobePitchDeg bounds, to keep this header free
-    // of a dependency on map/core).
+    // of a dependency on map/core). target_height_m lifts the target (and
+    // therefore the whole eye/target rig) that far above the ellipsoid
+    // along the target's local "up" -- 0 for the bare sea-level ellipsoid
+    // surface, or the real DEM elevation at (target_lon_deg, target_lat_deg)
+    // so the orbit pivot sits on the actual visible terrain instead of
+    // floating above/clipping through it near mountains.
     static OrbitCameraBasis orbitCameraBasis(
         double target_lon_deg, double target_lat_deg,
-        double yaw_deg, double pitch_deg, double distance_m);
+        double yaw_deg, double pitch_deg, double distance_m,
+        double target_height_m = 0.0);
 
     // Nearest intersection of the ray (origin + t*direction, t >= 0) with
     // the WGS84 ellipsoid. direction need not be normalized. Returns false
@@ -99,6 +112,22 @@ public:
     // handle that as "no pick" rather than assuming a hit.
     static bool rayIntersection(
         const QVector3D &origin, const QVector3D &direction, QVector3D *intersection);
+
+    // Maps a screen position to a world-space ray through the given orbit
+    // camera basis (same vertical_fov_deg/viewport convention as the GPU
+    // perspective projection built from that same basis). This is the one
+    // place the NDC -> ray formula lives; MapRhiCamera's GPU-side globe ray
+    // and MapModel's CPU-side globe picking/panning each build their own
+    // OrbitCameraBasis (they know different things: synced camera state vs.
+    // model state) but both route the actual ray math through here instead
+    // of keeping their own copies of the same formula. MapRhiGlobeRenderer's
+    // visible-tile-window sampling still has its own, pre-existing copy of
+    // this same math (kept as-is here to avoid touching that tuned, hot
+    // path); routing it through this function too is a reasonable follow-up.
+    static bool screenRay(
+        const OrbitCameraBasis &basis, const QPointF &screen_position,
+        const QSize &viewport, double vertical_fov_deg,
+        QVector3D *eye, QVector3D *direction);
 };
 
 #endif // GEO_WGS84_ELLIPSOID_H

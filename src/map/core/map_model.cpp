@@ -192,6 +192,11 @@ double MapModel::viewGlobeDistanceM() const
     return this->m_view_globe_distance_m;
 }
 
+double MapModel::viewGlobeVerticalOffsetM() const
+{
+    return this->m_view_globe_vertical_offset_m;
+}
+
 double MapModel::viewGlobeDistanceMForZoomLevel(
     double zoom_level, double latitude_deg, int viewport_height_px)
 {
@@ -651,37 +656,21 @@ bool MapModel::globeScreenRay(
     const QPoint &screen_position, const QSize &viewport,
     QVector3D *eye, QVector3D *direction) const
 {
-    if (eye == nullptr || direction == nullptr || !viewport.isValid())
-        return false;
-
-    const int viewport_width = qMax(1, viewport.width());
-    const int viewport_height = qMax(1, viewport.height());
     const double pitch_deg = qBound(
         MinViewGlobePitchDeg, this->m_view_globe_pitch_deg, MaxViewGlobePitchDeg);
     const double distance_m = qMax(MinViewGlobeDistanceM, this->m_view_globe_distance_m);
     const GeoWgs84Ellipsoid::OrbitCameraBasis basis = GeoWgs84Ellipsoid::orbitCameraBasis(
         this->m_centerLon, this->m_centerLat,
-        this->m_view_globe_yaw_deg, pitch_deg, distance_m);
+        this->m_view_globe_yaw_deg, pitch_deg, distance_m,
+        this->m_view_globe_vertical_offset_m);
 
-    // Same FOV as MapRhiCamera::globeViewProjectionMatrix() -- this has to
-    // stay in lockstep with the GPU projection for the ray to correspond to
-    // the pixel the person is actually looking at.
-    constexpr double FieldOfViewDeg = GlobeFieldOfViewDeg;
-    const double aspect = double(viewport_width) / double(viewport_height);
-    const double tan_half_fov = std::tan(qDegreesToRadians(FieldOfViewDeg / 2.0));
-    const double ndc_x = 2.0 * screen_position.x() / double(viewport_width) - 1.0;
-    const double ndc_y = 1.0 - 2.0 * screen_position.y() / double(viewport_height);
-
-    QVector3D ray_direction = basis.forward
-        + basis.right * float(ndc_x * tan_half_fov * aspect)
-        + basis.up * float(ndc_y * tan_half_fov);
-    if (ray_direction.lengthSquared() <= 1e-12f)
-        return false;
-
-    ray_direction.normalize();
-    *eye = basis.eye;
-    *direction = ray_direction;
-    return true;
+    // Same FOV as MapRhiCamera::globeViewProjectionMatrix(), and the same
+    // shared NDC -> ray formula (GeoWgs84Ellipsoid::screenRay()) that
+    // MapRhiCamera's own globe ray uses -- this has to stay in lockstep
+    // with the GPU projection for the ray to correspond to the pixel the
+    // person is actually looking at.
+    return GeoWgs84Ellipsoid::screenRay(
+        basis, QPointF(screen_position), viewport, GlobeFieldOfViewDeg, eye, direction);
 }
 
 bool MapModel::globeCoordinateAtScreen(
@@ -735,7 +724,8 @@ void MapModel::panGlobeByPointerDrag(
             this->m_centerLon, this->m_centerLat,
             this->m_view_globe_yaw_deg,
             qBound(MinViewGlobePitchDeg, this->m_view_globe_pitch_deg, MaxViewGlobePitchDeg),
-            qMax(MinViewGlobeDistanceM, this->m_view_globe_distance_m));
+            qMax(MinViewGlobeDistanceM, this->m_view_globe_distance_m),
+            this->m_view_globe_vertical_offset_m);
     const QVector3D target_ecef = old_camera_basis.target;
 
     // Rotating the camera's target by the rotation that maps "new_point"
@@ -909,7 +899,7 @@ void MapModel::setViewMode(MapViewMode view_mode)
             GeoWebMercator::MaximumLatitude);
     }
 
-    if (this->m_view_mode != MapViewMode::ThreeD
+    if (this->m_view_mode != MapViewMode::ThreeD && this->m_view_mode != MapViewMode::Globe
         && this->m_view_3d_navigation_state == MapView3dNavigationState::Rotate)
     {
         this->m_view_3d_rotate_interaction_depth = 0;
@@ -1186,7 +1176,12 @@ void MapModel::setView3dFocusAnchor(
 
 void MapModel::beginView3dRotateInteraction()
 {
-    if (this->m_view_mode != MapViewMode::ThreeD)
+    // Despite the "3d" name (kept to avoid rippling a rename through every
+    // existing ThreeD call site), this Pan/Rotate state machine now also
+    // drives Globe: the two view modes share the same orbit-camera
+    // interaction shape (drag to rotate, anchor capture on rotate-start),
+    // just against a flat Web-Mercator target vs. an ellipsoid target.
+    if (this->m_view_mode != MapViewMode::ThreeD && this->m_view_mode != MapViewMode::Globe)
         return;
 
     ++this->m_view_3d_rotate_interaction_depth;
@@ -1307,6 +1302,42 @@ void MapModel::setViewGlobeZoomLevel(double zoom_level, const QSize &viewport)
         zoom_level, this->m_centerLat,
         viewport.isValid() ? viewport.height() : GlobeZoomReferenceViewportHeightPx);
     setViewGlobeDistanceM(distance_m);
+}
+
+void MapModel::setViewGlobeFocusAnchor(
+    double lon, double lat, double vertical_offset_m, double distance_m,
+    const QSize &viewport)
+{
+    if (!std::isfinite(lon) || !std::isfinite(lat) || !std::isfinite(vertical_offset_m)
+        || !std::isfinite(distance_m))
+    {
+        return;
+    }
+
+    const double old_lon = this->m_centerLon;
+    const double old_lat = this->m_centerLat;
+    const double old_vertical_offset_m = this->m_view_globe_vertical_offset_m;
+    const double old_distance_m = this->m_view_globe_distance_m;
+
+    this->m_centerLon = GeoWebMercator::normalizeLongitude(lon);
+    this->m_centerLat = std::clamp(lat, -90.0, 90.0);
+    if (viewport.isValid())
+        clampCenter(viewport);
+
+    this->m_view_globe_vertical_offset_m = vertical_offset_m;
+    this->m_view_globe_distance_m = qBound(
+        MinViewGlobeDistanceM, distance_m, MaxViewGlobeDistanceM);
+
+    const bool center_changed = !coordinatesEqual(this->m_centerLon, old_lon)
+        || !coordinatesEqual(this->m_centerLat, old_lat);
+    const bool camera_changed = !coordinatesEqual(
+        this->m_view_globe_vertical_offset_m, old_vertical_offset_m)
+        || !coordinatesEqual(this->m_view_globe_distance_m, old_distance_m);
+
+    if (center_changed)
+        emitCenterChanged();
+    if (camera_changed)
+        emit viewGlobeCameraChanged();
 }
 
 void MapModel::orbitViewGlobe(double yaw_delta_deg, double pitch_delta_deg)

@@ -7,6 +7,7 @@
 #include "map/render/map_render_cache_math.h"
 #include "map/data/map_tile_repository.h"
 #include "geo/geo_web_mercator.h"
+#include "geo/geo_wgs84_ellipsoid.h"
 #include "network/network_symbology_rendering.h"
 
 #include <QColor>
@@ -28,6 +29,7 @@
 #include <array>
 #include <cstddef>
 #include <cmath>
+#include <functional>
 #include <limits>
 
 namespace
@@ -385,7 +387,18 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     connect(this->map_model, &MapModel::view3dNavigationStateChanged,
             this, [this](MapView3dNavigationState state)
     {
-        if (state == MapView3dNavigationState::Rotate)
+        if (state != MapView3dNavigationState::Rotate || this->map_model == nullptr)
+            return;
+
+        // The Pan/Rotate state machine now drives both ThreeD and Globe
+        // (see MapModel::beginView3dRotateInteraction()); dispatch the
+        // anchor capture to whichever terrain-aware crosshair hit applies
+        // to the active view mode. Each capture function is itself a no-op
+        // if called for the other view mode, so this stays safe even if
+        // that ever changes.
+        if (this->map_model->viewMode() == MapViewMode::Globe)
+            captureViewGlobeFocusAnchor();
+        else
             captureView3dFocusAnchor();
     });
     connect(this->map_model, &MapModel::providerChanged, this, [this](MapProvider)
@@ -3740,6 +3753,161 @@ bool MapRhiWidget::terrainRayHitAtScreen(
     return true;
 }
 
+bool MapRhiWidget::terrainRayHitOnGlobeAtScreen(
+    const QPointF &screen_position, CoordinateWGS84 *coordinate,
+    double *vertical_offset_m, double *distance_m, bool request_missing_tile)
+{
+    if (coordinate == nullptr || this->map_model == nullptr
+        || this->terrain_repository == nullptr
+        || this->map_model->viewMode() != MapViewMode::Globe
+        || !this->viewport_size.isValid())
+    {
+        return false;
+    }
+
+    // No setSceneOriginWorld() call here unlike terrainRayHitAtScreen()
+    // above: that floating-origin offset only exists to keep the flat
+    // Web-Mercator "world pixel" space (used by ThreeD/TwoD) within float
+    // precision range. The globe ray works directly in real ECEF meters
+    // and never touches scene_origin_world/center_world at all.
+    this->camera.setViewportSize(this->viewport_size);
+    this->camera.syncFromMapModel(*this->map_model);
+
+    QVector3D eye;
+    QVector3D direction;
+    if (!this->camera.screenRayGlobe(screen_position, &eye, &direction))
+        return false;
+
+    // Same front-to-back march + bisect shape as terrainRayHitAtScreen()
+    // above, just directly in ECEF meters instead of flat-Mercator "world
+    // pixel" units: the globe ray is already real-world meters, so there is
+    // no world-units-per-meter conversion step, and "clearance" is height
+    // above the ellipsoid minus the sampled DEM elevation at that lon/lat
+    // (vs. that function's world-space Z minus sampled world-space terrain
+    // height).
+    const int terrain_zoom = qBound(
+        CameraTerrainMinimumZoom, this->map_model->zoom(), CameraTerrainMaximumZoom);
+    const double meters_per_pixel_at_terrain_zoom = GeoWebMercator::metersPerPixel(
+        this->map_model->centerLat(), terrain_zoom);
+    if (!std::isfinite(meters_per_pixel_at_terrain_zoom)
+        || meters_per_pixel_at_terrain_zoom <= 0.0)
+    {
+        return false;
+    }
+    const double terrain_cell_m =
+        meters_per_pixel_at_terrain_zoom * MapModel::TileSize / MapTerrainTileCellCount;
+
+    const double search_distance_m = qMax(
+        this->map_model->viewGlobeDistanceM() * 4.0, terrain_cell_m * 256.0);
+    const double maximum_search_m = qMin(search_distance_m, 500000.0);
+    if (!std::isfinite(maximum_search_m) || maximum_search_m <= 0.0)
+        return false;
+
+    const double surface_tolerance_m = 0.05;
+    const double march_step_m = qMax(0.5, terrain_cell_m * 0.5);
+
+    const std::function<bool(double, CoordinateWGS84 *, double *)> sampleClearanceM =
+        [&](double ray_distance_m, CoordinateWGS84 *sample_coordinate,
+            double *clearance_m) -> bool
+    {
+        const QVector3D point = eye + direction * float(ray_distance_m);
+        double lon_deg = 0.0;
+        double lat_deg = 0.0;
+        double height_m = 0.0;
+        if (!GeoWgs84Ellipsoid::ecefToGeodetic(point, &lon_deg, &lat_deg, &height_m))
+            return false;
+
+        sample_coordinate->longitude_deg = lon_deg;
+        sample_coordinate->latitude_deg = lat_deg;
+
+        double terrain_elevation_m = 0.0;
+        if (!terrainElevationAtCoordinate(
+                *sample_coordinate, &terrain_elevation_m, request_missing_tile))
+        {
+            return false;
+        }
+
+        *clearance_m = height_m - terrain_elevation_m;
+        return true;
+    };
+
+    double previous_distance_m = 0.0;
+    double previous_clearance_m = 0.0;
+    bool previous_sample_available = false;
+    bool bracket_found = false;
+    double bracket_near_m = 0.0;
+    double bracket_far_m = 0.0;
+
+    const int maximum_march_steps = 4000;
+    double ray_distance_m = 0.0;
+    for (int step = 0; step <= maximum_march_steps; ++step)
+    {
+        if (step > 0)
+            ray_distance_m = qMin(maximum_search_m, ray_distance_m + march_step_m);
+
+        CoordinateWGS84 sample_coordinate;
+        double clearance_m = 0.0;
+        if (!sampleClearanceM(ray_distance_m, &sample_coordinate, &clearance_m))
+            return false;
+
+        if (previous_sample_available && previous_clearance_m > 0.0 && clearance_m <= 0.0)
+        {
+            bracket_found = true;
+            bracket_near_m = previous_distance_m;
+            bracket_far_m = ray_distance_m;
+            break;
+        }
+
+        previous_distance_m = ray_distance_m;
+        previous_clearance_m = clearance_m;
+        previous_sample_available = true;
+
+        if (ray_distance_m >= maximum_search_m)
+            break;
+    }
+
+    if (!bracket_found)
+        return false;
+
+    for (int iteration = 0; iteration < 24; ++iteration)
+    {
+        const double midpoint_m = (bracket_near_m + bracket_far_m) * 0.5;
+        CoordinateWGS84 sample_coordinate;
+        double clearance_m = 0.0;
+        if (!sampleClearanceM(midpoint_m, &sample_coordinate, &clearance_m))
+            return false;
+
+        if (clearance_m > 0.0)
+            bracket_near_m = midpoint_m;
+        else
+            bracket_far_m = midpoint_m;
+
+        if (bracket_far_m - bracket_near_m <= surface_tolerance_m)
+            break;
+    }
+
+    const double hit_distance_m = bracket_far_m;
+    CoordinateWGS84 hit_coordinate;
+    double hit_clearance_m = 0.0;
+    if (!sampleClearanceM(hit_distance_m, &hit_coordinate, &hit_clearance_m))
+        return false;
+
+    double hit_terrain_elevation_m = 0.0;
+    if (!terrainElevationAtCoordinate(
+            hit_coordinate, &hit_terrain_elevation_m, request_missing_tile))
+    {
+        return false;
+    }
+
+    *coordinate = hit_coordinate;
+    if (vertical_offset_m != nullptr)
+        *vertical_offset_m = hit_terrain_elevation_m;
+    if (distance_m != nullptr)
+        *distance_m = hit_distance_m;
+
+    return true;
+}
+
 void MapRhiWidget::captureView3dFocusAnchor()
 {
     if (this->map_model == nullptr || !this->viewport_size.isValid())
@@ -3762,6 +3930,31 @@ void MapRhiWidget::captureView3dFocusAnchor()
         hit_coordinate.latitude_deg,
         hit_world_z,
         distance_m,
+        this->viewport_size);
+}
+
+void MapRhiWidget::captureViewGlobeFocusAnchor()
+{
+    if (this->map_model == nullptr || !this->viewport_size.isValid())
+        return;
+
+    CoordinateWGS84 hit_coordinate;
+    double hit_vertical_offset_m = 0.0;
+    double hit_distance_m = 0.0;
+    if (!terrainRayHitOnGlobeAtScreen(
+            QPointF(
+                this->viewport_size.width() / 2.0,
+                this->viewport_size.height() / 2.0),
+            &hit_coordinate, &hit_vertical_offset_m, &hit_distance_m, true))
+    {
+        return;
+    }
+
+    this->map_model->setViewGlobeFocusAnchor(
+        hit_coordinate.longitude_deg,
+        hit_coordinate.latitude_deg,
+        hit_vertical_offset_m,
+        hit_distance_m,
         this->viewport_size);
 }
 

@@ -41,6 +41,7 @@ void MapRhiCamera::syncFromMapModel(const MapModel &map_model)
     this->view_globe_yaw_deg = map_model.viewGlobeYawDeg();
     this->view_globe_pitch_deg = map_model.viewGlobePitchDeg();
     this->view_globe_distance_m = map_model.viewGlobeDistanceM();
+    this->view_globe_vertical_offset_m = map_model.viewGlobeVerticalOffsetM();
 
     const QPointF raw_center_world = GeoWebMercator::lonLatToWorldPixel(
         GeoWebMercator::normalizeLongitude(map_model.centerLon()),
@@ -141,7 +142,7 @@ QMatrix4x4 MapRhiCamera::globeViewProjectionMatrix(const QRhi &rhi) const
     const double distance = qMax(MapModel::MinViewGlobeDistanceM, this->view_globe_distance_m);
     const GeoWgs84Ellipsoid::OrbitCameraBasis basis = GeoWgs84Ellipsoid::orbitCameraBasis(
         this->globe_target_lon_deg, this->globe_target_lat_deg,
-        this->view_globe_yaw_deg, pitch_deg, distance);
+        this->view_globe_yaw_deg, pitch_deg, distance, this->view_globe_vertical_offset_m);
 
     constexpr float FieldOfViewDeg = float(MapModel::GlobeFieldOfViewDeg);
     // Keep the near plane proportional to the actual camera distance. A
@@ -344,6 +345,33 @@ bool MapRhiCamera::screenRay(
 bool MapRhiCamera::crosshairRay(QVector3D *eye_world, QVector3D *direction_world) const
 {
     return screenRay(
+        QPointF(this->viewport_size.width() / 2.0, this->viewport_size.height() / 2.0),
+        eye_world, direction_world);
+}
+
+bool MapRhiCamera::screenRayGlobe(
+    const QPointF &screen_position, QVector3D *eye_world, QVector3D *direction_world) const
+{
+    if (this->view_mode != MapViewMode::Globe)
+        return false;
+
+    const double pitch_deg = qBound(
+        MapModel::MinViewGlobePitchDeg, this->view_globe_pitch_deg,
+        MapModel::MaxViewGlobePitchDeg);
+    const double distance_m = qMax(
+        MapModel::MinViewGlobeDistanceM, this->view_globe_distance_m);
+    const GeoWgs84Ellipsoid::OrbitCameraBasis basis = GeoWgs84Ellipsoid::orbitCameraBasis(
+        this->globe_target_lon_deg, this->globe_target_lat_deg,
+        this->view_globe_yaw_deg, pitch_deg, distance_m, this->view_globe_vertical_offset_m);
+
+    return GeoWgs84Ellipsoid::screenRay(
+        basis, screen_position, this->viewport_size, MapModel::GlobeFieldOfViewDeg,
+        eye_world, direction_world);
+}
+
+bool MapRhiCamera::crosshairRayGlobe(QVector3D *eye_world, QVector3D *direction_world) const
+{
+    return screenRayGlobe(
         QPointF(this->viewport_size.width() / 2.0, this->viewport_size.height() / 2.0),
         eye_world, direction_world);
 }
