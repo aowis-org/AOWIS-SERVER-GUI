@@ -899,13 +899,13 @@ MapMonitorViewModeHudWidget::MapMonitorViewModeHudWidget(
     this->wireframe_checkbox->setChecked(false);
     this->wireframe_checkbox->setFocusPolicy(Qt::NoFocus);
     this->wireframe_checkbox->setToolTip(QStringLiteral(
-        "Draw the 3D terrain mesh as a wireframe."));
+        "Draw the 3D terrain or globe surface mesh as a wireframe."));
     layout->addWidget(this->wireframe_checkbox);
 
     this->map_checkbox->setChecked(true);
     this->map_checkbox->setFocusPolicy(Qt::NoFocus);
     this->map_checkbox->setToolTip(QStringLiteral(
-        "Draw map tiles as textures on the 3D terrain."));
+        "Draw map tiles as textures on the 3D terrain or globe surface."));
     layout->addWidget(this->map_checkbox);
 
     const int initial_index = this->view_mode_combo->findData(int(this->map_model->viewMode()));
@@ -944,7 +944,9 @@ MapMonitorViewModeHudWidget::MapMonitorViewModeHudWidget(
 
 void MapMonitorViewModeHudWidget::update3dControlsVisibility()
 {
-    const bool visible = this->map_model->viewMode() == MapViewMode::ThreeD;
+    const MapViewMode view_mode = this->map_model->viewMode();
+    const bool visible =
+        view_mode == MapViewMode::ThreeD || view_mode == MapViewMode::Globe;
     this->wireframe_checkbox->setVisible(visible);
     this->map_checkbox->setVisible(visible);
     adjustSize();

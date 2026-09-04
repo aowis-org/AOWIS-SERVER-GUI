@@ -52,6 +52,8 @@ public:
     ~MapRhiGlobeRenderer();
 
     void setTileRepository(MapTileRepository *tile_repository);
+    void setWireframeVisible(bool visible);
+    void setMapVisible(bool visible);
 
     // Called whenever the RHI/render pass may have changed, same contract
     // as MapRhiBasemapRenderer::initialize(). Safe to call every frame; all
@@ -88,6 +90,13 @@ private:
         float v = 0.0f;
     };
 
+    struct WireframeVertex
+    {
+        float x = 0.0f;
+        float y = 0.0f;
+        float z = 0.0f;
+    };
+
     struct TileResource
     {
         std::unique_ptr<QRhiTexture> texture;
@@ -113,6 +122,9 @@ private:
     void buildPolarCap(bool north);
     void rebuildWindow(int zoom, int x_min, int x_max, int y_min, int y_max, int tile_span);
     void pruneUnusedTileResources();
+    void rebuildWireframeVertices();
+    void appendWireframeEdges(const QVector<TileVertex> &vertices);
+    bool uploadWireframeVertices(QRhiResourceUpdateBatch *resource_updates);
     static TileVertex makeTileVertex(double lon_deg, double lat_deg, float u, float v);
     bool ensureSharedResources();
     bool rebuildTileBindings(TileResource *resource);
@@ -139,6 +151,13 @@ private:
     std::unique_ptr<QRhiBuffer> window_vertex_buffer;
     int window_vertex_buffer_size = 0;
 
+    QVector<WireframeVertex> wireframe_vertices;
+    bool wireframe_vertex_upload_pending = true;
+    std::unique_ptr<QRhiBuffer> wireframe_vertex_buffer;
+    int wireframe_vertex_buffer_size = 0;
+    bool wireframe_visible = false;
+    bool map_visible = true;
+
     // Static polar caps (see class comment above).
     QVector<TileVertex> cap_vertices;
     QVector<GlobeTile> cap_tiles;
@@ -151,7 +170,9 @@ private:
     std::unique_ptr<QRhiTexture> dummy_texture;
     bool dummy_texture_upload_pending = true;
     std::unique_ptr<QRhiShaderResourceBindings> template_bindings;
+    std::unique_ptr<QRhiShaderResourceBindings> wireframe_bindings;
     std::unique_ptr<QRhiGraphicsPipeline> pipeline;
+    std::unique_ptr<QRhiGraphicsPipeline> wireframe_pipeline;
     std::map<QString, std::unique_ptr<TileResource>> tile_resources;
     TileResource cap_resource;
 };

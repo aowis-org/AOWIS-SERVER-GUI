@@ -359,6 +359,26 @@ void MapRhiGlobeRenderer::setTileRepository(MapTileRepository *new_tile_reposito
     invalidateImagery();
 }
 
+void MapRhiGlobeRenderer::setWireframeVisible(bool visible)
+{
+    if (this->wireframe_visible == visible)
+        return;
+
+    this->wireframe_visible = visible;
+    if (visible)
+        this->wireframe_vertex_upload_pending = true;
+}
+
+void MapRhiGlobeRenderer::setMapVisible(bool visible)
+{
+    if (this->map_visible == visible)
+        return;
+
+    this->map_visible = visible;
+    if (visible)
+        this->window_tiles_requested = false;
+}
+
 MapRhiGlobeRenderer::TileVertex MapRhiGlobeRenderer::makeTileVertex(
     double lon_deg, double lat_deg, float u, float v)
 {
@@ -419,6 +439,7 @@ void MapRhiGlobeRenderer::buildCaps()
     buildPolarCap(false);
     this->caps_built = true;
     this->cap_vertex_upload_pending = true;
+    rebuildWireframeVertices();
 }
 
 void MapRhiGlobeRenderer::rebuildWindow(
@@ -496,7 +517,71 @@ void MapRhiGlobeRenderer::rebuildWindow(
     this->window_tiles_requested = false;
     this->window_vertex_upload_pending = true;
 
+    rebuildWireframeVertices();
     pruneUnusedTileResources();
+}
+
+void MapRhiGlobeRenderer::appendWireframeEdges(const QVector<TileVertex> &vertices)
+{
+    for (qsizetype vertex_index = 0; vertex_index + 2 < vertices.size(); vertex_index += 3)
+    {
+        const TileVertex &a = vertices.at(vertex_index);
+        const TileVertex &b = vertices.at(vertex_index + 1);
+        const TileVertex &c = vertices.at(vertex_index + 2);
+        const WireframeVertex wa = {a.x, a.y, a.z};
+        const WireframeVertex wb = {b.x, b.y, b.z};
+        const WireframeVertex wc = {c.x, c.y, c.z};
+
+        this->wireframe_vertices.append(wa);
+        this->wireframe_vertices.append(wb);
+        this->wireframe_vertices.append(wb);
+        this->wireframe_vertices.append(wc);
+        this->wireframe_vertices.append(wc);
+        this->wireframe_vertices.append(wa);
+    }
+}
+
+void MapRhiGlobeRenderer::rebuildWireframeVertices()
+{
+    this->wireframe_vertices.clear();
+    this->wireframe_vertices.reserve(
+        (this->window_vertices.size() + this->cap_vertices.size()) * 2);
+    appendWireframeEdges(this->window_vertices);
+    appendWireframeEdges(this->cap_vertices);
+    this->wireframe_vertex_upload_pending = true;
+}
+
+bool MapRhiGlobeRenderer::uploadWireframeVertices(
+    QRhiResourceUpdateBatch *resource_updates)
+{
+    if (!this->wireframe_visible || !this->wireframe_vertex_upload_pending)
+        return true;
+
+    if (this->wireframe_vertices.isEmpty())
+    {
+        this->wireframe_vertex_buffer.reset();
+        this->wireframe_vertex_buffer_size = 0;
+        this->wireframe_vertex_upload_pending = false;
+        return true;
+    }
+
+    const int required_bytes = int(
+        this->wireframe_vertices.size() * qsizetype(sizeof(WireframeVertex)));
+    if (!this->wireframe_vertex_buffer
+        || this->wireframe_vertex_buffer_size != required_bytes)
+    {
+        this->wireframe_vertex_buffer.reset(this->rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_bytes));
+        if (!this->wireframe_vertex_buffer || !this->wireframe_vertex_buffer->create())
+            return false;
+        this->wireframe_vertex_buffer_size = required_bytes;
+    }
+
+    resource_updates->updateDynamicBuffer(
+        this->wireframe_vertex_buffer.get(), 0, required_bytes,
+        this->wireframe_vertices.constData());
+    this->wireframe_vertex_upload_pending = false;
+    return true;
 }
 
 void MapRhiGlobeRenderer::pruneUnusedTileResources()
@@ -675,6 +760,20 @@ bool MapRhiGlobeRenderer::ensureSharedResources()
             return false;
     }
 
+    if (!this->wireframe_bindings)
+    {
+        this->wireframe_bindings.reset(this->rhi->newShaderResourceBindings());
+        if (!this->wireframe_bindings)
+            return false;
+        this->wireframe_bindings->setBindings({
+            QRhiShaderResourceBinding::uniformBuffer(
+                0, QRhiShaderResourceBinding::VertexStage,
+                this->camera_uniform_buffer.get())
+        });
+        if (!this->wireframe_bindings->create())
+            return false;
+    }
+
     if (!this->pipeline)
     {
         const QShader vertex_shader = loadGlobeShader(
@@ -711,6 +810,45 @@ bool MapRhiGlobeRenderer::ensureSharedResources()
         this->pipeline->setDepthWrite(true);
         this->pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
         if (!this->pipeline->create())
+            return false;
+    }
+
+    if (!this->wireframe_pipeline)
+    {
+        const QShader vertex_shader = loadGlobeShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_globe_wireframe.vert.qsb"));
+        const QShader fragment_shader = loadGlobeShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_globe_wireframe.frag.qsb"));
+        if (!vertex_shader.isValid() || !fragment_shader.isValid())
+            return false;
+
+        QRhiVertexInputLayout input_layout;
+        input_layout.setBindings({
+            {quint32(sizeof(WireframeVertex))}
+        });
+        input_layout.setAttributes({
+            {0, 0, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(WireframeVertex, x))}
+        });
+
+        this->wireframe_pipeline.reset(this->rhi->newGraphicsPipeline());
+        if (!this->wireframe_pipeline)
+            return false;
+        this->wireframe_pipeline->setShaderStages({
+            {QRhiShaderStage::Vertex, vertex_shader},
+            {QRhiShaderStage::Fragment, fragment_shader}
+        });
+        this->wireframe_pipeline->setVertexInputLayout(input_layout);
+        this->wireframe_pipeline->setShaderResourceBindings(
+            this->wireframe_bindings.get());
+        this->wireframe_pipeline->setRenderPassDescriptor(
+            this->render_pass_descriptor);
+        this->wireframe_pipeline->setTopology(QRhiGraphicsPipeline::Lines);
+        this->wireframe_pipeline->setSampleCount(this->sample_count);
+        this->wireframe_pipeline->setDepthTest(true);
+        this->wireframe_pipeline->setDepthWrite(false);
+        this->wireframe_pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
+        if (!this->wireframe_pipeline->create())
             return false;
     }
 
@@ -880,7 +1018,11 @@ bool MapRhiGlobeRenderer::prepare(
         this->cap_vertex_upload_pending = false;
     }
 
-    requestMissingTiles(resource_updates);
+    if (!uploadWireframeVertices(resource_updates))
+        return false;
+
+    if (this->map_visible)
+        requestMissingTiles(resource_updates);
 
     float matrix_data[16];
     std::copy(view_projection.constData(), view_projection.constData() + 16, matrix_data);
@@ -892,47 +1034,67 @@ bool MapRhiGlobeRenderer::prepare(
 
 void MapRhiGlobeRenderer::draw(QRhiCommandBuffer *command_buffer)
 {
-    if (command_buffer == nullptr || !this->pipeline)
+    if (command_buffer == nullptr)
         return;
 
-    command_buffer->setGraphicsPipeline(this->pipeline.get());
-
-    if (this->window_vertex_buffer)
+    if (this->map_visible && this->pipeline)
     {
-        for (const GlobeTile &tile : this->window_tiles)
+        command_buffer->setGraphicsPipeline(this->pipeline.get());
+
+        if (this->window_vertex_buffer)
         {
-            if (tile.vertex_count <= 0)
-                continue;
+            for (const GlobeTile &tile : this->window_tiles)
+            {
+                if (tile.vertex_count <= 0)
+                    continue;
 
-            QRhiShaderResourceBindings *bindings = this->template_bindings.get();
-            if (tile.resource != nullptr && tile.resource->bindings)
-                bindings = tile.resource->bindings.get();
-            if (bindings == nullptr)
-                continue;
+                QRhiShaderResourceBindings *bindings = this->template_bindings.get();
+                if (tile.resource != nullptr && tile.resource->bindings)
+                    bindings = tile.resource->bindings.get();
+                if (bindings == nullptr)
+                    continue;
 
-            command_buffer->setShaderResources(bindings);
-            const quint32 byte_offset = quint32(tile.first_vertex * int(sizeof(TileVertex)));
-            const QRhiCommandBuffer::VertexInput binding(
-                this->window_vertex_buffer.get(), byte_offset);
-            command_buffer->setVertexInput(0, 1, &binding);
-            command_buffer->draw(quint32(tile.vertex_count));
+                command_buffer->setShaderResources(bindings);
+                const quint32 byte_offset = quint32(
+                    tile.first_vertex * int(sizeof(TileVertex)));
+                const QRhiCommandBuffer::VertexInput binding(
+                    this->window_vertex_buffer.get(), byte_offset);
+                command_buffer->setVertexInput(0, 1, &binding);
+                command_buffer->draw(quint32(tile.vertex_count));
+            }
+        }
+
+        if (this->cap_vertex_buffer)
+        {
+            for (const GlobeTile &tile : this->cap_tiles)
+            {
+                if (tile.resource == nullptr || !tile.resource->bindings
+                    || tile.vertex_count <= 0)
+                {
+                    continue;
+                }
+
+                command_buffer->setShaderResources(tile.resource->bindings.get());
+                const quint32 byte_offset = quint32(
+                    tile.first_vertex * int(sizeof(TileVertex)));
+                const QRhiCommandBuffer::VertexInput binding(
+                    this->cap_vertex_buffer.get(), byte_offset);
+                command_buffer->setVertexInput(0, 1, &binding);
+                command_buffer->draw(quint32(tile.vertex_count));
+            }
         }
     }
 
-    if (this->cap_vertex_buffer)
+    if (this->wireframe_visible
+        && this->wireframe_pipeline && this->wireframe_bindings
+        && this->wireframe_vertex_buffer && !this->wireframe_vertices.isEmpty())
     {
-        for (const GlobeTile &tile : this->cap_tiles)
-        {
-            if (tile.resource == nullptr || !tile.resource->bindings || tile.vertex_count <= 0)
-                continue;
-
-            command_buffer->setShaderResources(tile.resource->bindings.get());
-            const quint32 byte_offset = quint32(tile.first_vertex * int(sizeof(TileVertex)));
-            const QRhiCommandBuffer::VertexInput binding(
-                this->cap_vertex_buffer.get(), byte_offset);
-            command_buffer->setVertexInput(0, 1, &binding);
-            command_buffer->draw(quint32(tile.vertex_count));
-        }
+        command_buffer->setGraphicsPipeline(this->wireframe_pipeline.get());
+        command_buffer->setShaderResources(this->wireframe_bindings.get());
+        const QRhiCommandBuffer::VertexInput binding(
+            this->wireframe_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &binding);
+        command_buffer->draw(quint32(this->wireframe_vertices.size()));
     }
 }
 
@@ -950,7 +1112,9 @@ void MapRhiGlobeRenderer::invalidateImagery()
 void MapRhiGlobeRenderer::releaseResources()
 {
     this->pipeline.reset();
+    this->wireframe_pipeline.reset();
     this->template_bindings.reset();
+    this->wireframe_bindings.reset();
     this->dummy_texture.reset();
     this->dummy_texture_upload_pending = true;
     this->sampler.reset();
@@ -958,6 +1122,9 @@ void MapRhiGlobeRenderer::releaseResources()
     this->window_vertex_buffer.reset();
     this->window_vertex_buffer_size = 0;
     this->window_vertex_upload_pending = true;
+    this->wireframe_vertex_buffer.reset();
+    this->wireframe_vertex_buffer_size = 0;
+    this->wireframe_vertex_upload_pending = true;
     this->window_dirty = true;
     this->window_zoom = -1;
     this->window_tile_x_min = 0;

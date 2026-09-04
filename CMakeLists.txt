@@ -390,6 +390,8 @@ if(AOWIS_HAS_QRHI)
                 src/map/rhi/shaders/map_rhi_tank.frag
                 src/map/rhi/shaders/map_rhi_globe.vert
                 src/map/rhi/shaders/map_rhi_globe.frag
+                src/map/rhi/shaders/map_rhi_globe_wireframe.vert
+                src/map/rhi/shaders/map_rhi_globe_wireframe.frag
         )
     else()
         qt_add_shaders(aowis-server-gui "aowis_map_rhi_shaders"
@@ -420,6 +422,8 @@ if(AOWIS_HAS_QRHI)
                 src/map/rhi/shaders/map_rhi_tank.frag
                 src/map/rhi/shaders/map_rhi_globe.vert
                 src/map/rhi/shaders/map_rhi_globe.frag
+                src/map/rhi/shaders/map_rhi_globe_wireframe.vert
+                src/map/rhi/shaders/map_rhi_globe_wireframe.frag
         )
     endif()
 

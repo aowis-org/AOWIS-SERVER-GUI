@@ -1163,6 +1163,8 @@ void MapRhiWidget::setTerrainWireframeVisible(bool visible)
 {
     if (this->basemap_renderer)
         this->basemap_renderer->setWireframeVisible(visible);
+    if (this->globe_renderer)
+        this->globe_renderer->setWireframeVisible(visible);
     update();
 }
 
@@ -1170,6 +1172,8 @@ void MapRhiWidget::setMapTilesVisible(bool visible)
 {
     if (this->basemap_renderer)
         this->basemap_renderer->setMapVisible(visible);
+    if (this->globe_renderer)
+        this->globe_renderer->setMapVisible(visible);
     update();
 }
 
