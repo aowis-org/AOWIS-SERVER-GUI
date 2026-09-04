@@ -144,7 +144,13 @@ QMatrix4x4 MapRhiCamera::globeViewProjectionMatrix(const QRhi &rhi) const
         this->view_globe_yaw_deg, pitch_deg, distance);
 
     constexpr float FieldOfViewDeg = float(MapModel::GlobeFieldOfViewDeg);
-    const double near_plane = qMax(1000.0, distance * 0.001);
+    // Keep the near plane proportional to the actual camera distance. A
+    // fixed 1000 m floor clips the target ellipsoid completely once globe
+    // zoom brings the camera below 1000 m (roughly zoom 17.4 for a typical
+    // viewport), making the whole scene turn black even though the camera
+    // and tile geometry are otherwise valid. The small absolute floor only
+    // protects perspective() from a zero/denormal near value.
+    const double near_plane = qMax(0.1, distance * 0.001);
     const double far_plane = (distance + GeoWgs84Ellipsoid::EquatorialRadiusM) * 3.0;
     QMatrix4x4 projection;
     projection.perspective(
