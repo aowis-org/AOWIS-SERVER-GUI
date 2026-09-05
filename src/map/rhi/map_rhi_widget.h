@@ -3,6 +3,7 @@
 
 #include "map/rhi/map_rhi_basemap_renderer.h"
 #include "map/rhi/map_rhi_camera.h"
+#include "map/rhi/map_rhi_globe_network_scene.h"
 #include "map/rhi/map_rhi_globe_renderer.h"
 #include "map/rhi/map_rhi_scene.h"
 #include "map/rhi/map_rhi_junction_model.h"
@@ -27,6 +28,7 @@ class QRhiCommandBuffer;
 class QRhiGraphicsPipeline;
 class QRhiRenderPassDescriptor;
 class QRhiRenderTarget;
+class QRhiResourceUpdateBatch;
 class QRhiSampler;
 class QRhiShaderResourceBindings;
 class QRhiTexture;
@@ -110,6 +112,9 @@ private:
         const QVector3D &start, const QVector3D &end);
     void resetGpuResources();
     void renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarget *target);
+    bool ensureGlobeNetworkGeometryBuffers();
+    void uploadGlobeNetworkGeometry(QRhiResourceUpdateBatch *resource_updates);
+    void drawGlobeNetwork(QRhiCommandBuffer *command_buffer);
     void syncViewState();
     void syncTerrainAwareCameraDistance();
     void captureView3dFocusAnchor();
@@ -137,6 +142,7 @@ private:
     QPointF fallback_origin_world;
     MapRhiCamera camera;
     MapRhiScene scene;
+    MapRhiGlobeNetworkScene globe_network_scene;
     MapRhiSymbology applied_symbology;
     MapTileRepository *tile_repository = nullptr;
     MapTerrainRepository *terrain_repository = nullptr;
@@ -161,6 +167,21 @@ private:
     std::unique_ptr<QRhiBuffer> junction_instance_buffer;
     std::unique_ptr<QRhiBuffer> underground_link_vertex_buffer;
     std::unique_ptr<QRhiBuffer> underground_junction_instance_buffer;
+    // Globe-view network geometry lives in its own buffers, separate from
+    // the ThreeD/TwoD ones above, even though both draw with the same
+    // link/node/icon pipelines and the same shader_resource_bindings/
+    // icon_shader_resource_bindings (see MapRhiGlobeNetworkScene). Only one
+    // view mode ever renders in a given frame, so there is no per-frame
+    // conflict over the shared uniform_buffer/bindings; keeping the vertex
+    // buffers themselves separate just avoids coupling the two view modes'
+    // upload/resize bookkeeping together.
+    std::unique_ptr<QRhiBuffer> globe_link_vertex_buffer;
+    std::unique_ptr<QRhiBuffer> globe_node_vertex_buffer;
+    std::unique_ptr<QRhiBuffer> globe_selected_link_vertex_buffer;
+    std::unique_ptr<QRhiBuffer> globe_selected_node_vertex_buffer;
+    std::unique_ptr<QRhiBuffer> globe_diagnostic_link_vertex_buffer;
+    std::unique_ptr<QRhiBuffer> globe_diagnostic_node_vertex_buffer;
+    std::unique_ptr<QRhiBuffer> globe_icon_vertex_buffer;
     std::unique_ptr<QRhiTexture> icon_atlas_texture;
     std::unique_ptr<QRhiTexture> tank_texture;
     std::unique_ptr<QRhiTexture> reservoir_texture;
@@ -201,6 +222,13 @@ private:
     int junction_instance_buffer_size = 0;
     int underground_link_vertex_buffer_size = 0;
     int underground_junction_instance_buffer_size = 0;
+    int globe_link_vertex_buffer_size = 0;
+    int globe_node_vertex_buffer_size = 0;
+    int globe_selected_link_vertex_buffer_size = 0;
+    int globe_selected_node_vertex_buffer_size = 0;
+    int globe_diagnostic_link_vertex_buffer_size = 0;
+    int globe_diagnostic_node_vertex_buffer_size = 0;
+    int globe_icon_vertex_buffer_size = 0;
     bool geometry_upload_pending = true;
     bool highlight_upload_pending = true;
     bool flow_direction_upload_pending = true;
@@ -212,6 +240,9 @@ private:
     bool junction_instance_upload_pending = true;
     bool underground_geometry_upload_pending = true;
     bool underground_geometry_dirty = true;
+    bool globe_geometry_upload_pending = true;
+    bool globe_highlight_upload_pending = true;
+    bool globe_icon_upload_pending = true;
     bool icon_atlas_upload_pending = true;
     bool tank_texture_upload_pending = true;
     bool reservoir_texture_upload_pending = true;

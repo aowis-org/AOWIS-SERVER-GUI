@@ -354,6 +354,8 @@ if(AOWIS_HAS_QRHI)
             src/map/rhi/map_rhi_reservoir_model.cpp
             src/map/rhi/map_rhi_globe_renderer.h
             src/map/rhi/map_rhi_globe_renderer.cpp
+            src/map/rhi/map_rhi_globe_network_scene.h
+            src/map/rhi/map_rhi_globe_network_scene.cpp
             src/map/rhi/map_rhi_widget.h
             src/map/rhi/map_rhi_widget.cpp
     )

@@ -300,6 +300,7 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
         this->map_model, this->tile_repository);
     this->scene.setNetworkGroundOffsetM(this->map_model->view3dNetworkGroundOffsetM());
     this->scene.setVerticalExaggeration(this->map_model->view3dVerticalExaggeration());
+    this->globe_network_scene.setGroundOffsetM(this->map_model->view3dNetworkGroundOffsetM());
     syncViewState();
 
     connect(this->map_model, &MapModel::centerChangedWGS84, this, [this]
@@ -370,7 +371,9 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     connect(this->map_model, &MapModel::view3dNetworkGroundOffsetChanged,
             this, [this](double offset_m)
     {
-        if (!this->scene.setNetworkGroundOffsetM(offset_m))
+        const bool flat_changed = this->scene.setNetworkGroundOffsetM(offset_m);
+        const bool globe_changed = this->globe_network_scene.setGroundOffsetM(offset_m);
+        if (!flat_changed && !globe_changed)
             return;
 
         this->geometry_upload_pending = true;
@@ -380,6 +383,9 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
         this->tank_upload_pending = true;
         this->reservoir_upload_pending = true;
         this->junction_instance_upload_pending = true;
+        this->globe_geometry_upload_pending = true;
+        this->globe_highlight_upload_pending = true;
+        this->globe_icon_upload_pending = true;
         markUndergroundGeometryDirty();
         update();
     });
@@ -912,6 +918,7 @@ void MapRhiWidget::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
 
     this->scene.setNetworkSnapshot(snapshot);
     this->scene.setViewZoom(this->map_model->zoom());
+    this->globe_network_scene.setNetworkSnapshot(snapshot);
     syncViewState();
     syncBasemapHeatmapOverlay();
     if (this->basemap_renderer)
@@ -924,6 +931,9 @@ void MapRhiWidget::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
     this->tank_upload_pending = true;
     this->reservoir_upload_pending = true;
     this->junction_instance_upload_pending = true;
+    this->globe_geometry_upload_pending = true;
+    this->globe_highlight_upload_pending = true;
+    this->globe_icon_upload_pending = true;
     markUndergroundGeometryDirty();
     update();
 }
@@ -931,7 +941,9 @@ void MapRhiWidget::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
 
 void MapRhiWidget::setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids)
 {
-    if (!this->scene.setHiddenEntityUuids(hidden_entity_uuids))
+    const bool flat_changed = this->scene.setHiddenEntityUuids(hidden_entity_uuids);
+    const bool globe_changed = this->globe_network_scene.setHiddenEntityUuids(hidden_entity_uuids);
+    if (!flat_changed && !globe_changed)
         return;
 
     syncViewState();
@@ -944,6 +956,9 @@ void MapRhiWidget::setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids)
     this->tank_upload_pending = true;
     this->reservoir_upload_pending = true;
     this->junction_instance_upload_pending = true;
+    this->globe_geometry_upload_pending = true;
+    this->globe_highlight_upload_pending = true;
+    this->globe_icon_upload_pending = true;
     markUndergroundGeometryDirty();
     update();
 }
@@ -1020,6 +1035,7 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
 
     this->scene.setViewZoom(this->map_model->zoom());
     this->scene.setSymbology(themed_symbology);
+    this->globe_network_scene.setSymbology(themed_symbology);
     this->applied_symbology = themed_symbology;
     this->symbology_initialized = true;
 
@@ -1027,6 +1043,8 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
     {
         this->geometry_upload_pending = true;
         this->highlight_upload_pending = true;
+        this->globe_geometry_upload_pending = true;
+        this->globe_highlight_upload_pending = true;
         markUndergroundGeometryDirty();
     }
     if (junction_changed)
@@ -1041,6 +1059,7 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
         this->icon_upload_pending = true;
         this->tank_upload_pending = true;
         this->reservoir_upload_pending = true;
+        this->globe_icon_upload_pending = true;
     }
     if (heatmap_data_changed)
     {
@@ -1208,11 +1227,14 @@ void MapRhiWidget::setBackgroundOpacity(int opacity)
 void MapRhiWidget::setSelectedEntity(InfrastructureEntity entity_type, const QUuid &uuid)
 {
     this->scene.setSelectedEntity(entity_type, uuid);
+    this->globe_network_scene.setSelectedEntity(entity_type, uuid);
     this->highlight_upload_pending = true;
     this->icon_upload_pending = true;
     this->tank_upload_pending = true;
     this->reservoir_upload_pending = true;
     this->junction_instance_upload_pending = true;
+    this->globe_highlight_upload_pending = true;
+    this->globe_icon_upload_pending = true;
     markUndergroundGeometryDirty();
     update();
 }
@@ -1222,7 +1244,9 @@ void MapRhiWidget::setSimulationErrorEntities(
     const QSet<QUuid> &stale_entity_uuids)
 {
     this->scene.setSimulationErrorEntities(error_entities, stale_entity_uuids);
+    this->globe_network_scene.setSimulationErrorEntities(error_entities, stale_entity_uuids);
     this->highlight_upload_pending = true;
+    this->globe_highlight_upload_pending = true;
     update();
 }
 
@@ -1848,9 +1872,57 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     if (this->globe_renderer == nullptr)
         return;
 
+    if (!ensureGlobeNetworkGeometryBuffers())
+        return;
+
     const QMatrix4x4 view_projection = this->camera.globeViewProjectionMatrix(*this->active_rhi);
 
+    // Same CameraBlock layout/indices as the ThreeD/TwoD path above (see
+    // CameraUniformBytes), reused as-is since the link/node/icon vertex
+    // shaders only ever read view_projection, viewport_and_sizes, and
+    // network_translation -- never heatmap_settings or basemap_settings, and
+    // never a screen-space network drag translation on the globe -- so those
+    // are left zeroed here.
+    std::array<float, 32> uniform_data{};
+    const float *matrix_data = view_projection.constData();
+    for (int index = 0; index < 16; ++index)
+        uniform_data[size_t(index)] = matrix_data[index];
+    uniform_data[16] = float(qMax(1, this->viewport_size.width()));
+    uniform_data[17] = float(qMax(1, this->viewport_size.height()));
+    // Unlike the flat scene's "world units" (Web Mercator pixels at a
+    // reference zoom), globe network geometry already sits in true ECEF
+    // meters, so a "meters" size unit needs no extra units-per-meter
+    // conversion factor here.
+    uniform_data[18] = this->globe_network_scene.linkThicknessUnit()
+            == NetworkSymbologySizeUnit::Meters
+        ? -float(this->globe_network_scene.linkThicknessM() * 0.5)
+        : float(this->globe_network_scene.linkThicknessPx()) * 0.5f;
+    uniform_data[19] = this->globe_network_scene.nodeSizeUnit()
+            == NetworkSymbologySizeUnit::Meters
+        ? -float(this->globe_network_scene.nodeSizeM() * 0.5)
+        : float(this->globe_network_scene.nodeSizePx()) * 0.5f;
+    // Indices 20..27 (heatmap_settings/basemap_settings) are unused by the
+    // link/node/icon shaders and stay zeroed for the globe network pass.
+    uniform_data[28] = 0.0f;
+    uniform_data[29] = 0.0f;
+    uniform_data[30] = float(this->camera.globeOrbitDistanceM());
+    uniform_data[31] = this->globe_network_scene.iconSizeUnit()
+            == NetworkSymbologySizeUnit::Meters
+        ? -float(this->globe_network_scene.iconSizeM())
+        : float(this->globe_network_scene.iconSizePx());
+
     QRhiResourceUpdateBatch *resource_updates = this->active_rhi->nextResourceUpdateBatch();
+    resource_updates->updateDynamicBuffer(
+        this->uniform_buffer.get(), 0, CameraUniformBytes, uniform_data.data());
+
+    if (this->icon_atlas_upload_pending)
+    {
+        resource_updates->uploadTexture(this->icon_atlas_texture.get(), mapRhiIconAtlasImage());
+        this->icon_atlas_upload_pending = false;
+    }
+
+    uploadGlobeNetworkGeometry(resource_updates);
+
     if (!this->globe_renderer->prepare(resource_updates, view_projection, this->viewport_size))
     {
         resource_updates->release();
@@ -1869,6 +1941,7 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
         0.0f, 0.0f, float(output_size.width()), float(output_size.height())));
 
     this->globe_renderer->draw(command_buffer);
+    drawGlobeNetwork(command_buffer);
 
     command_buffer->endPass();
 
@@ -1879,6 +1952,329 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     if (this->globe_renderer->hasPendingTerrainMeshes())
         update();
 }
+
+bool MapRhiWidget::ensureGlobeNetworkGeometryBuffers()
+{
+    if (this->active_rhi == nullptr)
+        return false;
+
+    const int required_link_bytes = boundedBufferSize(
+        this->globe_network_scene.linkVertices().size(),
+        qsizetype(sizeof(MapRhiScene::LinkVertex)));
+    const int required_node_bytes = boundedBufferSize(
+        this->globe_network_scene.nodeVertices().size(),
+        qsizetype(sizeof(MapRhiScene::NodeVertex)));
+    const int required_selected_link_bytes = boundedBufferSize(
+        this->globe_network_scene.selectedLinkVertices().size(),
+        qsizetype(sizeof(MapRhiScene::LinkVertex)));
+    const int required_selected_node_bytes = boundedBufferSize(
+        this->globe_network_scene.selectedNodeVertices().size(),
+        qsizetype(sizeof(MapRhiScene::NodeVertex)));
+    const int required_diagnostic_link_bytes = boundedBufferSize(
+        this->globe_network_scene.diagnosticLinkVertices().size(),
+        qsizetype(sizeof(MapRhiScene::LinkVertex)));
+    const int required_diagnostic_node_bytes = boundedBufferSize(
+        this->globe_network_scene.diagnosticNodeVertices().size(),
+        qsizetype(sizeof(MapRhiScene::NodeVertex)));
+    const int required_icon_bytes = boundedBufferSize(
+        this->globe_network_scene.iconVertices().size(),
+        qsizetype(sizeof(MapRhiScene::IconVertex)));
+
+    if (required_link_bytes == 0 || required_node_bytes == 0
+        || required_selected_link_bytes == 0 || required_selected_node_bytes == 0
+        || required_diagnostic_link_bytes == 0 || required_diagnostic_node_bytes == 0
+        || required_icon_bytes == 0)
+    {
+        reportFailure(QStringLiteral("RHI globe network geometry exceeds supported buffer size"));
+        return false;
+    }
+
+    if (!this->globe_link_vertex_buffer
+        || this->globe_link_vertex_buffer_size != required_link_bytes)
+    {
+        this->globe_link_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_link_bytes));
+        if (!this->globe_link_vertex_buffer || !this->globe_link_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI globe link vertex buffer"));
+            return false;
+        }
+        this->globe_link_vertex_buffer_size = required_link_bytes;
+        this->globe_geometry_upload_pending = true;
+    }
+
+    if (!this->globe_node_vertex_buffer
+        || this->globe_node_vertex_buffer_size != required_node_bytes)
+    {
+        this->globe_node_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_node_bytes));
+        if (!this->globe_node_vertex_buffer || !this->globe_node_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI globe node vertex buffer"));
+            return false;
+        }
+        this->globe_node_vertex_buffer_size = required_node_bytes;
+        this->globe_geometry_upload_pending = true;
+    }
+
+    if (!this->globe_selected_link_vertex_buffer
+        || this->globe_selected_link_vertex_buffer_size != required_selected_link_bytes)
+    {
+        this->globe_selected_link_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_selected_link_bytes));
+        if (!this->globe_selected_link_vertex_buffer
+            || !this->globe_selected_link_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral(
+                "Failed to create RHI globe selected-link vertex buffer"));
+            return false;
+        }
+        this->globe_selected_link_vertex_buffer_size = required_selected_link_bytes;
+        this->globe_highlight_upload_pending = true;
+    }
+
+    if (!this->globe_selected_node_vertex_buffer
+        || this->globe_selected_node_vertex_buffer_size != required_selected_node_bytes)
+    {
+        this->globe_selected_node_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_selected_node_bytes));
+        if (!this->globe_selected_node_vertex_buffer
+            || !this->globe_selected_node_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral(
+                "Failed to create RHI globe selected-node vertex buffer"));
+            return false;
+        }
+        this->globe_selected_node_vertex_buffer_size = required_selected_node_bytes;
+        this->globe_highlight_upload_pending = true;
+    }
+
+    if (!this->globe_diagnostic_link_vertex_buffer
+        || this->globe_diagnostic_link_vertex_buffer_size != required_diagnostic_link_bytes)
+    {
+        this->globe_diagnostic_link_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_diagnostic_link_bytes));
+        if (!this->globe_diagnostic_link_vertex_buffer
+            || !this->globe_diagnostic_link_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral(
+                "Failed to create RHI globe diagnostic-link vertex buffer"));
+            return false;
+        }
+        this->globe_diagnostic_link_vertex_buffer_size = required_diagnostic_link_bytes;
+        this->globe_highlight_upload_pending = true;
+    }
+
+    if (!this->globe_diagnostic_node_vertex_buffer
+        || this->globe_diagnostic_node_vertex_buffer_size != required_diagnostic_node_bytes)
+    {
+        this->globe_diagnostic_node_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_diagnostic_node_bytes));
+        if (!this->globe_diagnostic_node_vertex_buffer
+            || !this->globe_diagnostic_node_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral(
+                "Failed to create RHI globe diagnostic-node vertex buffer"));
+            return false;
+        }
+        this->globe_diagnostic_node_vertex_buffer_size = required_diagnostic_node_bytes;
+        this->globe_highlight_upload_pending = true;
+    }
+
+    if (!this->globe_icon_vertex_buffer
+        || this->globe_icon_vertex_buffer_size != required_icon_bytes)
+    {
+        this->globe_icon_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_icon_bytes));
+        if (!this->globe_icon_vertex_buffer || !this->globe_icon_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI globe icon vertex buffer"));
+            return false;
+        }
+        this->globe_icon_vertex_buffer_size = required_icon_bytes;
+        this->globe_icon_upload_pending = true;
+    }
+
+    return true;
+}
+
+void MapRhiWidget::uploadGlobeNetworkGeometry(QRhiResourceUpdateBatch *resource_updates)
+{
+    if (this->globe_geometry_upload_pending)
+    {
+        const QVector<MapRhiScene::LinkVertex> &link_vertices =
+            this->globe_network_scene.linkVertices();
+        const QVector<MapRhiScene::NodeVertex> &node_vertices =
+            this->globe_network_scene.nodeVertices();
+        if (!link_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->globe_link_vertex_buffer.get(), 0,
+                int(link_vertices.size() * qsizetype(sizeof(MapRhiScene::LinkVertex))),
+                link_vertices.constData());
+        }
+        if (!node_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->globe_node_vertex_buffer.get(), 0,
+                int(node_vertices.size() * qsizetype(sizeof(MapRhiScene::NodeVertex))),
+                node_vertices.constData());
+        }
+        this->globe_geometry_upload_pending = false;
+    }
+
+    if (this->globe_highlight_upload_pending)
+    {
+        const QVector<MapRhiScene::LinkVertex> &selected_link_vertices =
+            this->globe_network_scene.selectedLinkVertices();
+        const QVector<MapRhiScene::NodeVertex> &selected_node_vertices =
+            this->globe_network_scene.selectedNodeVertices();
+        const QVector<MapRhiScene::LinkVertex> &diagnostic_link_vertices =
+            this->globe_network_scene.diagnosticLinkVertices();
+        const QVector<MapRhiScene::NodeVertex> &diagnostic_node_vertices =
+            this->globe_network_scene.diagnosticNodeVertices();
+
+        if (!selected_link_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->globe_selected_link_vertex_buffer.get(), 0,
+                int(selected_link_vertices.size() * qsizetype(sizeof(MapRhiScene::LinkVertex))),
+                selected_link_vertices.constData());
+        }
+        if (!selected_node_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->globe_selected_node_vertex_buffer.get(), 0,
+                int(selected_node_vertices.size() * qsizetype(sizeof(MapRhiScene::NodeVertex))),
+                selected_node_vertices.constData());
+        }
+        if (!diagnostic_link_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->globe_diagnostic_link_vertex_buffer.get(), 0,
+                int(diagnostic_link_vertices.size()
+                    * qsizetype(sizeof(MapRhiScene::LinkVertex))),
+                diagnostic_link_vertices.constData());
+        }
+        if (!diagnostic_node_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->globe_diagnostic_node_vertex_buffer.get(), 0,
+                int(diagnostic_node_vertices.size()
+                    * qsizetype(sizeof(MapRhiScene::NodeVertex))),
+                diagnostic_node_vertices.constData());
+        }
+        this->globe_highlight_upload_pending = false;
+    }
+
+    if (this->globe_icon_upload_pending)
+    {
+        const QVector<MapRhiScene::IconVertex> &icon_vertices =
+            this->globe_network_scene.iconVertices();
+        if (!icon_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->globe_icon_vertex_buffer.get(), 0,
+                int(icon_vertices.size() * qsizetype(sizeof(MapRhiScene::IconVertex))),
+                icon_vertices.constData());
+        }
+        this->globe_icon_upload_pending = false;
+    }
+}
+
+void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
+{
+    // Ordering mirrors the ThreeD (is_2d_view == false) branch above: base
+    // links, then base nodes, then selection highlight, then simulation
+    // diagnostics, then icons on top of everything. The heatmap overlay, 3D
+    // tank/reservoir/junction meshes and underground x-ray mode are not yet
+    // implemented for the globe -- see MapRhiGlobeNetworkScene's class
+    // comment -- so this intentionally does not reference those pipelines.
+    const QVector<MapRhiScene::LinkVertex> &link_vertices =
+        this->globe_network_scene.linkVertices();
+    if (!link_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->link_pipeline.get());
+        command_buffer->setShaderResources();
+        const QRhiCommandBuffer::VertexInput link_binding(
+            this->globe_link_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &link_binding);
+        command_buffer->draw(quint32(link_vertices.size()));
+    }
+
+    const QVector<MapRhiScene::NodeVertex> &node_vertices =
+        this->globe_network_scene.nodeVertices();
+    if (!node_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->node_pipeline.get());
+        command_buffer->setShaderResources();
+        const QRhiCommandBuffer::VertexInput node_binding(
+            this->globe_node_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &node_binding);
+        command_buffer->draw(quint32(node_vertices.size()));
+    }
+
+    const QVector<MapRhiScene::LinkVertex> &selected_link_vertices =
+        this->globe_network_scene.selectedLinkVertices();
+    if (!selected_link_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->selected_link_pipeline.get());
+        command_buffer->setShaderResources();
+        const QRhiCommandBuffer::VertexInput binding(
+            this->globe_selected_link_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &binding);
+        command_buffer->draw(quint32(selected_link_vertices.size()));
+    }
+
+    const QVector<MapRhiScene::NodeVertex> &selected_node_vertices =
+        this->globe_network_scene.selectedNodeVertices();
+    if (!selected_node_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->node_pipeline.get());
+        command_buffer->setShaderResources();
+        const QRhiCommandBuffer::VertexInput binding(
+            this->globe_selected_node_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &binding);
+        command_buffer->draw(quint32(selected_node_vertices.size()));
+    }
+
+    const QVector<MapRhiScene::LinkVertex> &diagnostic_link_vertices =
+        this->globe_network_scene.diagnosticLinkVertices();
+    if (!diagnostic_link_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->link_pipeline.get());
+        command_buffer->setShaderResources();
+        const QRhiCommandBuffer::VertexInput binding(
+            this->globe_diagnostic_link_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &binding);
+        command_buffer->draw(quint32(diagnostic_link_vertices.size()));
+    }
+
+    const QVector<MapRhiScene::NodeVertex> &diagnostic_node_vertices =
+        this->globe_network_scene.diagnosticNodeVertices();
+    if (!diagnostic_node_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->node_pipeline.get());
+        command_buffer->setShaderResources();
+        const QRhiCommandBuffer::VertexInput binding(
+            this->globe_diagnostic_node_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &binding);
+        command_buffer->draw(quint32(diagnostic_node_vertices.size()));
+    }
+
+    const QVector<MapRhiScene::IconVertex> &icon_vertices =
+        this->globe_network_scene.iconVertices();
+    if (!icon_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->icon_pipeline.get());
+        command_buffer->setShaderResources(this->icon_shader_resource_bindings.get());
+        const QRhiCommandBuffer::VertexInput icon_binding(
+            this->globe_icon_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &icon_binding);
+        command_buffer->draw(quint32(icon_vertices.size()));
+    }
+}
+
 
 void MapRhiWidget::releaseResources()
 {
@@ -3112,6 +3508,13 @@ void MapRhiWidget::resetGpuResources()
     this->icon_atlas_texture.reset();
     this->underground_junction_instance_buffer.reset();
     this->underground_link_vertex_buffer.reset();
+    this->globe_icon_vertex_buffer.reset();
+    this->globe_diagnostic_node_vertex_buffer.reset();
+    this->globe_diagnostic_link_vertex_buffer.reset();
+    this->globe_selected_node_vertex_buffer.reset();
+    this->globe_selected_link_vertex_buffer.reset();
+    this->globe_node_vertex_buffer.reset();
+    this->globe_link_vertex_buffer.reset();
     this->junction_instance_buffer.reset();
     this->junction_mesh_vertex_buffer.reset();
     this->tank_vertex_buffer.reset();
@@ -3128,6 +3531,13 @@ void MapRhiWidget::resetGpuResources()
     this->uniform_buffer.reset();
     this->underground_junction_instance_buffer_size = 0;
     this->underground_link_vertex_buffer_size = 0;
+    this->globe_icon_vertex_buffer_size = 0;
+    this->globe_diagnostic_node_vertex_buffer_size = 0;
+    this->globe_diagnostic_link_vertex_buffer_size = 0;
+    this->globe_selected_node_vertex_buffer_size = 0;
+    this->globe_selected_link_vertex_buffer_size = 0;
+    this->globe_node_vertex_buffer_size = 0;
+    this->globe_link_vertex_buffer_size = 0;
     this->junction_instance_buffer_size = 0;
     this->junction_mesh_vertex_buffer_size = 0;
     this->tank_vertex_buffer_size = 0;
@@ -3152,6 +3562,9 @@ void MapRhiWidget::resetGpuResources()
     this->junction_instance_upload_pending = true;
     this->underground_geometry_upload_pending = true;
     this->underground_geometry_dirty = true;
+    this->globe_geometry_upload_pending = true;
+    this->globe_highlight_upload_pending = true;
+    this->globe_icon_upload_pending = true;
     this->icon_atlas_upload_pending = true;
     this->tank_texture_upload_pending = true;
     this->reservoir_texture_upload_pending = true;

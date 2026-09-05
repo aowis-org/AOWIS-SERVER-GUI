@@ -248,6 +248,11 @@ double MapRhiCamera::orbitDistanceWorld() const
         : nativeOrbitDistanceWorld();
 }
 
+double MapRhiCamera::globeOrbitDistanceM() const
+{
+    return qMax(MapModel::MinViewGlobeDistanceM, this->view_globe_distance_m);
+}
+
 double MapRhiCamera::perspectiveDepthWorld(const QVector3D &world_position) const
 {
     if (this->view_mode != MapViewMode::ThreeD)

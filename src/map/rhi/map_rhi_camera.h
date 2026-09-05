@@ -27,6 +27,12 @@ public:
     QPointF cameraGroundWorldPixelForDistance(double distance_world) const;
     double nativeOrbitDistanceWorld() const;
     double orbitDistanceWorld() const;
+    // Globe counterpart of orbitDistanceWorld(): the current Globe orbit
+    // distance in meters, clamped the same way globeViewProjectionMatrix()
+    // clamps it. Lets other Globe-mode geometry (e.g. the network renderer's
+    // icon perspective scaling) stay referenced to the same distance the GPU
+    // camera actually used.
+    double globeOrbitDistanceM() const;
     double perspectiveDepthWorld(const QVector3D &world_position) const;
     bool screenRay(const QPointF &screen_position, QVector3D *eye_world,
                    QVector3D *direction_world) const;
