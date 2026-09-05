@@ -14,6 +14,7 @@
 #include <QHash>
 #include <QImage>
 #include <QPixmap>
+#include <QRect>
 #include <QSet>
 #include <QtMath>
 #include <rhi/qshader.h>
@@ -1333,16 +1334,17 @@ bool MapRhiGlobeRenderer::ensureTileResource(
         return true;
 
     const QPixmap *pixmap = this->tile_repository->tile(tile.imagery_key);
-    if (pixmap == nullptr)
-        return true;
 
     std::unique_ptr<TileResource> &slot = this->tile_resources[tile.imagery_key];
     if (!slot)
         slot = std::make_unique<TileResource>();
-
     TileResource *resource = slot.get();
+
+    if (pixmap == nullptr)
+        return ensureProvisionalTileResource(tile, resource, resource_updates);
+
     const qint64 cache_key = pixmap->cacheKey();
-    if (!resource->texture || resource->pixmap_cache_key != cache_key)
+    if (!resource->texture || resource->is_provisional || resource->pixmap_cache_key != cache_key)
     {
         QImage image = pixmap->toImage().convertToFormat(QImage::Format_RGBA8888);
         if (image.isNull())
@@ -1354,12 +1356,86 @@ bool MapRhiGlobeRenderer::ensureTileResource(
             return false;
         resource_updates->uploadTexture(resource->texture.get(), image);
         resource->pixmap_cache_key = cache_key;
+        resource->is_provisional = false;
+        resource->provisional_source_key.clear();
     }
 
     if (!resource->bindings && !rebuildTileBindings(resource))
         return false;
 
     tile.resource = resource;
+    return true;
+}
+
+// Falls back to a cropped, upscaled placeholder from the nearest
+// already-loaded ancestor tile while tile's own imagery is still in
+// flight, instead of the flat GlobeMissingTileColor fill -- the same "keep
+// showing something real instead of a blank/flat placeholder" goal the
+// flat 2D/3D basemap renderer's parent/child LOD handoff serves, adapted to
+// how the globe already addresses tiles (a texture per imagery_key, no
+// texture-array/stale-layer machinery to reuse directly). Cheap even
+// though it can run every frame per still-loading tile: at most
+// tile.zoom hash lookups (bounded by max zoom, in the teens) before either
+// finding an ancestor or giving up for this frame, no network or disk I/O.
+bool MapRhiGlobeRenderer::ensureProvisionalTileResource(
+    GlobeTile &tile, TileResource *resource, QRhiResourceUpdateBatch *resource_updates)
+{
+    for (int levels_up = 1; tile.zoom - levels_up >= 0; ++levels_up)
+    {
+        const int ancestor_zoom = tile.zoom - levels_up;
+        const quint32 ancestor_x = quint32(tile.tile_x) >> levels_up;
+        const quint32 ancestor_y = quint32(tile.tile_y) >> levels_up;
+        const QString ancestor_key = this->map_model->tileCacheKeyAtZoom(
+            int(ancestor_x), int(ancestor_y), ancestor_zoom);
+        const QPixmap *ancestor_pixmap = this->tile_repository->tile(ancestor_key);
+        if (ancestor_pixmap == nullptr || ancestor_pixmap->isNull())
+            continue;
+
+        // Already showing exactly this ancestor from a previous frame --
+        // nothing to re-derive.
+        if (resource->is_provisional && resource->texture
+            && resource->provisional_source_key == ancestor_key)
+        {
+            tile.resource = resource;
+            return true;
+        }
+
+        const int span = 1 << levels_up;
+        const int local_x = tile.tile_x & (span - 1);
+        const int local_y = tile.tile_y & (span - 1);
+        const int source_w = ancestor_pixmap->width();
+        const int source_h = ancestor_pixmap->height();
+        const QRect crop_rect(
+            local_x * source_w / span, local_y * source_h / span,
+            qMax(1, source_w / span), qMax(1, source_h / span));
+        const QImage fallback_image = ancestor_pixmap->copy(crop_rect)
+            .toImage().convertToFormat(QImage::Format_RGBA8888)
+            .scaled(source_w, source_h, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        if (fallback_image.isNull())
+            continue;
+
+        resource->bindings.reset();
+        resource->texture.reset(this->rhi->newTexture(QRhiTexture::RGBA8, fallback_image.size()));
+        if (!resource->texture || !resource->texture->create())
+            return false;
+        resource_updates->uploadTexture(resource->texture.get(), fallback_image);
+        resource->pixmap_cache_key = -1;
+        resource->is_provisional = true;
+        resource->provisional_source_key = ancestor_key;
+
+        if (!resource->bindings && !rebuildTileBindings(resource))
+            return false;
+
+        tile.resource = resource;
+        return true;
+    }
+
+    // No loaded ancestor anywhere in the chain (e.g. the very first tiles
+    // requested right after startup, or a fresh area with nothing cached
+    // yet at any zoom) -- nothing to derive a placeholder from. Leaving
+    // tile.resource untouched here falls through to template_bindings
+    // (the flat GlobeMissingTileColor fill) at draw time, exactly as
+    // before this fallback existed.
     return true;
 }
 

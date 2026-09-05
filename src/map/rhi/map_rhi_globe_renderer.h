@@ -145,6 +145,17 @@ private:
         std::unique_ptr<QRhiTexture> texture;
         std::unique_ptr<QRhiShaderResourceBindings> bindings;
         qint64 pixmap_cache_key = -1;
+        // True while this resource holds a cropped-and-upscaled placeholder
+        // derived from an already-loaded ancestor tile rather than the
+        // tile's own imagery -- see ensureTileResource(). Cleared the
+        // moment the tile's own imagery actually arrives.
+        bool is_provisional = false;
+        // Which ancestor's cache key the current provisional image was
+        // derived from, so a closer ancestor becoming available later is
+        // recognized as an upgrade instead of being silently ignored, and
+        // so an unchanged ancestor is recognized as "nothing to redo" on
+        // the next frame instead of re-deriving the same crop every time.
+        QString provisional_source_key;
     };
 
     struct GlobeTile
@@ -187,6 +198,11 @@ private:
     bool ensureSharedResources();
     bool rebuildTileBindings(TileResource *resource);
     bool ensureTileResource(GlobeTile &tile, QRhiResourceUpdateBatch *resource_updates);
+    // See the definition's own comment: derives a cropped/upscaled
+    // placeholder from the nearest already-loaded ancestor tile when
+    // tile's own imagery isn't cached yet.
+    bool ensureProvisionalTileResource(
+        GlobeTile &tile, TileResource *resource, QRhiResourceUpdateBatch *resource_updates);
     void requestMissingTiles(QRhiResourceUpdateBatch *resource_updates);
     void requestMissingTerrainTiles();
     void scheduleReadyTerrainMeshes();
