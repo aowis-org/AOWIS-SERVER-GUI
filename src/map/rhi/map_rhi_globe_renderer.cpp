@@ -130,7 +130,20 @@ constexpr int GlobeQuadtreeMaxLeaves = 3000;
 // only ever draws leaves that were kept -- so generous slack is cheap
 // insurance against ever dropping a node that is genuinely partly on
 // screen.
-constexpr double GlobeQuadtreeViewConeMarginRad = 0.2;
+//
+// Deliberately generous well beyond that minimum, for a second reason: this
+// is also the *only* lever that gives imagery/terrain a head start on
+// loading before a tile becomes strictly visible (requestMissingTiles()
+// requests every tile in window_tiles, which this cull directly gates). Too
+// tight a margin here means a tile only starts its network fetch once it is
+// already on screen, so panning reveals a visible gap or the flat
+// GlobeMissingTileColor placeholder for as long as that fetch takes --
+// exactly the popping-in this margin is sized to hide. GlobeQuadtreeMaxLeaves
+// (3000) and GlobeQuadtreeMaxVisitedNodes (20000) both have comfortable
+// headroom above what this widened margin adds in ordinary framing; an
+// unusually wide, low-pitch view near the horizon is the case most likely
+// to feel that budget pressure first.
+constexpr double GlobeQuadtreeViewConeMarginRad = 0.5;
 
 quint64 globeQuadtreeNodeKey(int zoom, int tile_x, int tile_y)
 {
@@ -196,6 +209,22 @@ void globeQuadtreeNodeBoundingSphere(
     *radius_m = max_distance;
 }
 
+// A tile's bounding sphere is centered on the tile and sized to its
+// diagonal, but the actual tile geometry is a curved quad following the
+// ellipsoid surface -- for a wide, coarse (low-zoom) tile viewed nearly
+// edge-on at the visible limb, the quad's own corners can reach noticeably
+// farther around the curve toward the camera than a sphere of that radius
+// would suggest. globeQuadtreeNodeOccludedByHorizon() only has the sphere
+// to work with, so undercounting this by using node_radius_m directly (as
+// an earlier version of this function did) culls tiles that are genuinely
+// still partly visible right at the horizon -- worse, and asymmetrically,
+// the more oblique the camera's angle to that part of the limb. This
+// doesn't need to be exact, only generous: the true occlusion case (a tile
+// on the planet's far side) is occluded by many tile-radii, not a
+// borderline amount, so a generous multiplier here only affects tiles
+// genuinely near the grazing edge.
+constexpr double GlobeQuadtreeHorizonOcclusionMarginFactor = 3.0;
+
 // True if the straight line from eye to node_center is blocked by the
 // planet itself -- i.e. the node is entirely hidden behind the visible
 // limb/horizon, not merely far away.
@@ -242,8 +271,11 @@ bool globeQuadtreeNodeOccludedByHorizon(
     // intersection distance should land within about the node's own size
     // of distance_to_node. Only flag occlusion when the ellipsoid blocks the
     // ray meaningfully closer than that -- i.e. something nearer than the
-    // node itself, by more than the node's own radius, is in the way.
-    return distance_to_surface < distance_to_node - qMax(1.0, node_radius_m);
+    // node itself, by more than the node's own radius (times a generous
+    // safety factor -- see GlobeQuadtreeHorizonOcclusionMarginFactor's
+    // comment), is in the way.
+    return distance_to_surface
+        < distance_to_node - qMax(1.0, node_radius_m * GlobeQuadtreeHorizonOcclusionMarginFactor);
 }
 
 // Coarse "is this node even pointed at" cull: the half-angle from the
