@@ -158,6 +158,61 @@ double bilinearTerrainElevation(const MapTerrainTile &terrain_tile, double u, do
         terrain_tile, int(std::lround(sample_y)), int(std::lround(sample_x)));
 }
 
+// Given a terrain tile and a normalized (0..1) position within it, samples
+// elevation using the same z00->z11 triangle split the terrain mesh
+// renderer actually builds (see buildTerrainMeshResult()), rather than a
+// plain bilinear blend across the untriangulated quad -- the two disagree
+// slightly inside each cell, which previously let an otherwise-correct pick
+// ray appear to land inside a steep slope. Shared by
+// MapRhiWidget::terrainElevationAtCoordinate() (flat 2D/3D picking) and
+// MapRhiWidget::globeTerrainElevationAtCoordinate() (Globe underground
+// detection) so both agree with what's on screen and with each other.
+bool sampleTerrainTileElevationAt(
+    const MapTerrainTile &terrain_tile, double local_u, double local_v, double *elevation_m)
+{
+    const double sample_x = qBound(0.0, local_u, 1.0) * MapTerrainTileCellCount;
+    const double sample_y = qBound(0.0, local_v, 1.0) * MapTerrainTileCellCount;
+    const int cell_x = qBound(
+        0, int(std::floor(sample_x)), MapTerrainTileCellCount - 1);
+    const int cell_y = qBound(
+        0, int(std::floor(sample_y)), MapTerrainTileCellCount - 1);
+    const double tx = qBound(0.0, sample_x - cell_x, 1.0);
+    const double ty = qBound(0.0, sample_y - cell_y, 1.0);
+    const double u0 = double(cell_x) / MapTerrainTileCellCount;
+    const double u1 = double(cell_x + 1) / MapTerrainTileCellCount;
+    const double v0 = double(cell_y) / MapTerrainTileCellCount;
+    const double v1 = double(cell_y + 1) / MapTerrainTileCellCount;
+    const double z00 = bilinearTerrainElevation(terrain_tile, u0, v0);
+    const double z10 = bilinearTerrainElevation(terrain_tile, u1, v0);
+    const double z11 = bilinearTerrainElevation(terrain_tile, u1, v1);
+    const double z01 = bilinearTerrainElevation(terrain_tile, u0, v1);
+    if (!std::isfinite(z00) || !std::isfinite(z10)
+        || !std::isfinite(z11) || !std::isfinite(z01))
+    {
+        return false;
+    }
+
+    double sampled_elevation_m = 0.0;
+    if (ty <= tx)
+    {
+        sampled_elevation_m = z00 * (1.0 - tx)
+            + z10 * (tx - ty)
+            + z11 * ty;
+    }
+    else
+    {
+        sampled_elevation_m = z00 * (1.0 - ty)
+            + z11 * tx
+            + z01 * (ty - tx);
+    }
+
+    if (!std::isfinite(sampled_elevation_m))
+        return false;
+
+    *elevation_m = sampled_elevation_m;
+    return true;
+}
+
 QRhiWidget::Api platformGraphicsApi()
 {
 #if defined(Q_OS_MACOS)
@@ -301,6 +356,14 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     this->scene.setNetworkGroundOffsetM(this->map_model->view3dNetworkGroundOffsetM());
     this->scene.setVerticalExaggeration(this->map_model->view3dVerticalExaggeration());
     this->globe_network_scene.setGroundOffsetM(this->map_model->view3dNetworkGroundOffsetM());
+    this->globe_network_scene.setVerticalExaggeration(this->map_model->view3dVerticalExaggeration());
+    this->globe_network_scene.setTerrainElevationResolver(
+        [this](const CoordinateWGS84 &coordinate, double *elevation_m)
+        {
+            return globeTerrainElevationAtCoordinate(coordinate, elevation_m);
+        });
+    this->globe_network_scene.setUndergroundXRayEnabled(
+        this->underground_mode == MapRhiUndergroundMode::XRay);
     syncViewState();
 
     connect(this->map_model, &MapModel::centerChangedWGS84, this, [this]
@@ -348,7 +411,11 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     });
     connect(this->map_model, &MapModel::view3dCameraChanged, this, [this]
     {
-        if (this->scene.setVerticalExaggeration(this->map_model->view3dVerticalExaggeration()))
+        const bool flat_changed = this->scene.setVerticalExaggeration(
+            this->map_model->view3dVerticalExaggeration());
+        const bool globe_changed = this->globe_network_scene.setVerticalExaggeration(
+            this->map_model->view3dVerticalExaggeration());
+        if (flat_changed)
         {
             this->geometry_upload_pending = true;
             this->highlight_upload_pending = true;
@@ -361,6 +428,13 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
             markUndergroundGeometryDirty();
             if (this->basemap_renderer)
                 this->basemap_renderer->invalidate();
+        }
+        if (flat_changed || globe_changed)
+        {
+            this->globe_geometry_upload_pending = true;
+            this->globe_highlight_upload_pending = true;
+            this->globe_icon_upload_pending = true;
+            this->globe_underground_upload_pending = true;
             if (this->globe_renderer)
                 this->globe_renderer->invalidateTerrain();
         }
@@ -386,6 +460,7 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
         this->globe_geometry_upload_pending = true;
         this->globe_highlight_upload_pending = true;
         this->globe_icon_upload_pending = true;
+        this->globe_underground_upload_pending = true;
         markUndergroundGeometryDirty();
         update();
     });
@@ -934,6 +1009,7 @@ void MapRhiWidget::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
     this->globe_geometry_upload_pending = true;
     this->globe_highlight_upload_pending = true;
     this->globe_icon_upload_pending = true;
+    this->globe_underground_upload_pending = true;
     markUndergroundGeometryDirty();
     update();
 }
@@ -959,6 +1035,7 @@ void MapRhiWidget::setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids)
     this->globe_geometry_upload_pending = true;
     this->globe_highlight_upload_pending = true;
     this->globe_icon_upload_pending = true;
+    this->globe_underground_upload_pending = true;
     markUndergroundGeometryDirty();
     update();
 }
@@ -1045,6 +1122,7 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
         this->highlight_upload_pending = true;
         this->globe_geometry_upload_pending = true;
         this->globe_highlight_upload_pending = true;
+        this->globe_underground_upload_pending = true;
         markUndergroundGeometryDirty();
     }
     if (junction_changed)
@@ -1188,6 +1266,10 @@ void MapRhiWidget::setUndergroundMode(MapRhiUndergroundMode mode)
     this->underground_mode = mode;
     if (mode == MapRhiUndergroundMode::XRay)
         markUndergroundGeometryDirty();
+    if (this->globe_network_scene.setUndergroundXRayEnabled(mode == MapRhiUndergroundMode::XRay))
+    {
+        this->globe_underground_upload_pending = true;
+    }
     update();
 }
 
@@ -1872,6 +1954,17 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     if (this->globe_renderer == nullptr)
         return;
 
+    // Reflects last frame's tile-window state (this frame's prepare() call,
+    // below, hasn't run yet) -- a one-frame lag that's immaterial here. See
+    // MapRhiGlobeNetworkScene::setTerrainReady() for why this exists at all.
+    if (this->globe_network_scene.setTerrainReady(this->globe_renderer->isVisibleTerrainReady()))
+    {
+        this->globe_geometry_upload_pending = true;
+        this->globe_highlight_upload_pending = true;
+        this->globe_icon_upload_pending = true;
+        this->globe_underground_upload_pending = true;
+    }
+
     if (!ensureGlobeNetworkGeometryBuffers())
         return;
 
@@ -1979,11 +2072,14 @@ bool MapRhiWidget::ensureGlobeNetworkGeometryBuffers()
     const int required_icon_bytes = boundedBufferSize(
         this->globe_network_scene.iconVertices().size(),
         qsizetype(sizeof(MapRhiScene::IconVertex)));
+    const int required_underground_link_bytes = boundedBufferSize(
+        this->globe_network_scene.undergroundLinkVertices().size(),
+        qsizetype(sizeof(MapRhiScene::LinkVertex)));
 
     if (required_link_bytes == 0 || required_node_bytes == 0
         || required_selected_link_bytes == 0 || required_selected_node_bytes == 0
         || required_diagnostic_link_bytes == 0 || required_diagnostic_node_bytes == 0
-        || required_icon_bytes == 0)
+        || required_icon_bytes == 0 || required_underground_link_bytes == 0)
     {
         reportFailure(QStringLiteral("RHI globe network geometry exceeds supported buffer size"));
         return false;
@@ -2095,6 +2191,22 @@ bool MapRhiWidget::ensureGlobeNetworkGeometryBuffers()
         this->globe_icon_upload_pending = true;
     }
 
+    if (!this->globe_underground_link_vertex_buffer
+        || this->globe_underground_link_vertex_buffer_size != required_underground_link_bytes)
+    {
+        this->globe_underground_link_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_underground_link_bytes));
+        if (!this->globe_underground_link_vertex_buffer
+            || !this->globe_underground_link_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral(
+                "Failed to create RHI globe underground-link vertex buffer"));
+            return false;
+        }
+        this->globe_underground_link_vertex_buffer_size = required_underground_link_bytes;
+        this->globe_underground_upload_pending = true;
+    }
+
     return true;
 }
 
@@ -2180,18 +2292,52 @@ void MapRhiWidget::uploadGlobeNetworkGeometry(QRhiResourceUpdateBatch *resource_
         }
         this->globe_icon_upload_pending = false;
     }
+
+    if (this->globe_underground_upload_pending)
+    {
+        const QVector<MapRhiScene::LinkVertex> &underground_link_vertices =
+            this->globe_network_scene.undergroundLinkVertices();
+        if (!underground_link_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->globe_underground_link_vertex_buffer.get(), 0,
+                int(underground_link_vertices.size()
+                    * qsizetype(sizeof(MapRhiScene::LinkVertex))),
+                underground_link_vertices.constData());
+        }
+        this->globe_underground_upload_pending = false;
+    }
 }
 
 void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
 {
-    // Ordering mirrors the ThreeD (is_2d_view == false) branch above: base
-    // links, then base nodes, then selection highlight, then simulation
-    // diagnostics, then icons on top of everything. The heatmap overlay, 3D
-    // tank/reservoir/junction meshes and underground x-ray mode are not yet
-    // implemented for the globe -- see MapRhiGlobeNetworkScene's class
-    // comment -- so this intentionally does not reference those pipelines.
+    // Ordering mirrors the ThreeD (is_2d_view == false) branch above:
+    // Solid-mode no-depth pass first (see below), then base links, base
+    // nodes, selection highlight, simulation diagnostics, X-Ray underground
+    // links, then icons on top of everything. The heatmap overlay and 3D
+    // tank/reservoir/junction meshes are not yet implemented for the globe
+    // -- see MapRhiGlobeNetworkScene's class comment -- so this
+    // intentionally does not reference those pipelines. Node/junction
+    // X-Ray isn't either, for the same reason link/node/icon rendering
+    // itself doesn't use 3D meshes here yet: ThreeD's is tied to its 3D
+    // junction mesh model.
     const QVector<MapRhiScene::LinkVertex> &link_vertices =
         this->globe_network_scene.linkVertices();
+
+    // Solid mode needs no per-segment underground classification at all: it
+    // just redraws every link a second time, ignoring depth, before normal
+    // rendering -- see MapRhiWidget's own ThreeD Solid-mode block above for
+    // the identical approach (same link_no_depth_pipeline, reused as-is).
+    if (this->underground_mode == MapRhiUndergroundMode::Solid && !link_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->link_no_depth_pipeline.get());
+        command_buffer->setShaderResources();
+        const QRhiCommandBuffer::VertexInput solid_link_binding(
+            this->globe_link_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &solid_link_binding);
+        command_buffer->draw(quint32(link_vertices.size()));
+    }
+
     if (!link_vertices.isEmpty())
     {
         command_buffer->setGraphicsPipeline(this->link_pipeline.get());
@@ -2260,6 +2406,21 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
             this->globe_diagnostic_node_vertex_buffer.get(), 0);
         command_buffer->setVertexInput(0, 1, &binding);
         command_buffer->draw(quint32(diagnostic_node_vertices.size()));
+    }
+
+    if (this->underground_mode == MapRhiUndergroundMode::XRay)
+    {
+        const QVector<MapRhiScene::LinkVertex> &underground_link_vertices =
+            this->globe_network_scene.undergroundLinkVertices();
+        if (!underground_link_vertices.isEmpty())
+        {
+            command_buffer->setGraphicsPipeline(this->link_xray_pipeline.get());
+            command_buffer->setShaderResources();
+            const QRhiCommandBuffer::VertexInput underground_link_binding(
+                this->globe_underground_link_vertex_buffer.get(), 0);
+            command_buffer->setVertexInput(0, 1, &underground_link_binding);
+            command_buffer->draw(quint32(underground_link_vertices.size()));
+        }
     }
 
     const QVector<MapRhiScene::IconVertex> &icon_vertices =
@@ -3508,6 +3669,7 @@ void MapRhiWidget::resetGpuResources()
     this->icon_atlas_texture.reset();
     this->underground_junction_instance_buffer.reset();
     this->underground_link_vertex_buffer.reset();
+    this->globe_underground_link_vertex_buffer.reset();
     this->globe_icon_vertex_buffer.reset();
     this->globe_diagnostic_node_vertex_buffer.reset();
     this->globe_diagnostic_link_vertex_buffer.reset();
@@ -3531,6 +3693,7 @@ void MapRhiWidget::resetGpuResources()
     this->uniform_buffer.reset();
     this->underground_junction_instance_buffer_size = 0;
     this->underground_link_vertex_buffer_size = 0;
+    this->globe_underground_link_vertex_buffer_size = 0;
     this->globe_icon_vertex_buffer_size = 0;
     this->globe_diagnostic_node_vertex_buffer_size = 0;
     this->globe_diagnostic_link_vertex_buffer_size = 0;
@@ -3565,6 +3728,7 @@ void MapRhiWidget::resetGpuResources()
     this->globe_geometry_upload_pending = true;
     this->globe_highlight_upload_pending = true;
     this->globe_icon_upload_pending = true;
+    this->globe_underground_upload_pending = true;
     this->icon_atlas_upload_pending = true;
     this->tank_texture_upload_pending = true;
     this->reservoir_texture_upload_pending = true;
@@ -3878,50 +4042,66 @@ bool MapRhiWidget::terrainElevationAtCoordinate(
 
     const double local_u = terrain_tile_x - std::floor(terrain_tile_x);
     const double local_v = terrain_tile_y - std::floor(terrain_tile_y);
-    const double sample_x = qBound(0.0, local_u, 1.0) * MapTerrainTileCellCount;
-    const double sample_y = qBound(0.0, local_v, 1.0) * MapTerrainTileCellCount;
-    const int cell_x = qBound(
-        0, int(std::floor(sample_x)), MapTerrainTileCellCount - 1);
-    const int cell_y = qBound(
-        0, int(std::floor(sample_y)), MapTerrainTileCellCount - 1);
-    const double tx = qBound(0.0, sample_x - cell_x, 1.0);
-    const double ty = qBound(0.0, sample_y - cell_y, 1.0);
-    const double u0 = double(cell_x) / MapTerrainTileCellCount;
-    const double u1 = double(cell_x + 1) / MapTerrainTileCellCount;
-    const double v0 = double(cell_y) / MapTerrainTileCellCount;
-    const double v1 = double(cell_y + 1) / MapTerrainTileCellCount;
-    const double z00 = bilinearTerrainElevation(*terrain_tile, u0, v0);
-    const double z10 = bilinearTerrainElevation(*terrain_tile, u1, v0);
-    const double z11 = bilinearTerrainElevation(*terrain_tile, u1, v1);
-    const double z01 = bilinearTerrainElevation(*terrain_tile, u0, v1);
-    if (!std::isfinite(z00) || !std::isfinite(z10)
-        || !std::isfinite(z11) || !std::isfinite(z01))
-    {
-        return false;
-    }
-
-    // The renderer splits every terrain cell along z00 -> z11. Interpolate
-    // on those same two triangles rather than across the bilinear quad.
     double sampled_elevation_m = 0.0;
-    if (ty <= tx)
-    {
-        sampled_elevation_m = z00 * (1.0 - tx)
-            + z10 * (tx - ty)
-            + z11 * ty;
-    }
-    else
-    {
-        sampled_elevation_m = z00 * (1.0 - ty)
-            + z11 * tx
-            + z01 * (ty - tx);
-    }
-
-    if (!std::isfinite(sampled_elevation_m))
+    if (!sampleTerrainTileElevationAt(*terrain_tile, local_u, local_v, &sampled_elevation_m))
         return false;
 
     *elevation_m = sampled_elevation_m;
     return true;
 }
+
+bool MapRhiWidget::globeTerrainElevationAtCoordinate(
+    const CoordinateWGS84 &coordinate, double *elevation_m) const
+{
+    if (elevation_m == nullptr || this->terrain_repository == nullptr
+        || !std::isfinite(coordinate.longitude_deg)
+        || !std::isfinite(coordinate.latitude_deg))
+    {
+        return false;
+    }
+
+    // Unlike terrainElevationAtCoordinate(), there is no single "current
+    // zoom" to match here -- the globe's quadtree keeps different visible
+    // tiles at different zooms simultaneously, and this is only ever called
+    // once MapRhiGlobeRenderer::isVisibleTerrainReady() has confirmed
+    // relief has actually loaded, not from a per-frame picking path. So
+    // just try the finest cached zoom first and fall back to coarser ones;
+    // never requests a missing tile (see the class comment on
+    // MapRhiGlobeNetworkScene::setTerrainElevationResolver() -- this is a
+    // read-only comparison, not a placement decision, so there is nothing
+    // to wait on here).
+    const QString dataset = cameraTerrainDatasetId();
+    for (int terrain_zoom = CameraTerrainMaximumZoom;
+         terrain_zoom >= CameraTerrainMinimumZoom; --terrain_zoom)
+    {
+        const double terrain_tile_x = GeoWebMercator::lonToTileX(
+            coordinate.longitude_deg, terrain_zoom);
+        const double terrain_tile_y = GeoWebMercator::latToTileY(
+            coordinate.latitude_deg, terrain_zoom);
+        const int terrain_tile_count = 1 << terrain_zoom;
+        const int tile_x_unwrapped = int(std::floor(terrain_tile_x));
+        const int tile_y = qBound(
+            0, int(std::floor(terrain_tile_y)), terrain_tile_count - 1);
+        const int tile_x = GeoWebMercator::wrapTileX(tile_x_unwrapped, terrain_zoom);
+
+        const MapTerrainTile *terrain_tile = this->terrain_repository->tile(
+            dataset, terrain_zoom, quint32(tile_x), quint32(tile_y));
+        if (terrain_tile == nullptr)
+            continue;
+
+        const double local_u = terrain_tile_x - std::floor(terrain_tile_x);
+        const double local_v = terrain_tile_y - std::floor(terrain_tile_y);
+        double sampled_elevation_m = 0.0;
+        if (!sampleTerrainTileElevationAt(*terrain_tile, local_u, local_v, &sampled_elevation_m))
+            continue;
+
+        *elevation_m = sampled_elevation_m;
+        return true;
+    }
+
+    return false;
+}
+
 
 void MapRhiWidget::rebuildHeatmapRenderVertices()
 {

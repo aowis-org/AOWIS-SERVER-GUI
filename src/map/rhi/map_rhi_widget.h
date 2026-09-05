@@ -130,6 +130,8 @@ private:
     bool terrainElevationAtCoordinate(
         const CoordinateWGS84 &coordinate, double *elevation_m,
         bool request_missing_tile = true);
+    bool globeTerrainElevationAtCoordinate(
+        const CoordinateWGS84 &coordinate, double *elevation_m) const;
     QPointF renderOriginWorld() const;
     float heatmapRadiusPixels() const;
     void reportFailure(const QString &reason);
@@ -182,6 +184,12 @@ private:
     std::unique_ptr<QRhiBuffer> globe_diagnostic_link_vertex_buffer;
     std::unique_ptr<QRhiBuffer> globe_diagnostic_node_vertex_buffer;
     std::unique_ptr<QRhiBuffer> globe_icon_vertex_buffer;
+    // Populated only while X-Ray mode is active (see
+    // MapRhiGlobeNetworkScene::setUndergroundXRayEnabled()); drawn through
+    // the same link_xray_pipeline the ThreeD view already built, since that
+    // pipeline's fragment shader is coordinate-system agnostic like the
+    // rest of the shared link/node/icon shaders.
+    std::unique_ptr<QRhiBuffer> globe_underground_link_vertex_buffer;
     std::unique_ptr<QRhiTexture> icon_atlas_texture;
     std::unique_ptr<QRhiTexture> tank_texture;
     std::unique_ptr<QRhiTexture> reservoir_texture;
@@ -229,6 +237,7 @@ private:
     int globe_diagnostic_link_vertex_buffer_size = 0;
     int globe_diagnostic_node_vertex_buffer_size = 0;
     int globe_icon_vertex_buffer_size = 0;
+    int globe_underground_link_vertex_buffer_size = 0;
     bool geometry_upload_pending = true;
     bool highlight_upload_pending = true;
     bool flow_direction_upload_pending = true;
@@ -243,6 +252,7 @@ private:
     bool globe_geometry_upload_pending = true;
     bool globe_highlight_upload_pending = true;
     bool globe_icon_upload_pending = true;
+    bool globe_underground_upload_pending = true;
     bool icon_atlas_upload_pending = true;
     bool tank_texture_upload_pending = true;
     bool reservoir_texture_upload_pending = true;

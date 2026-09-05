@@ -12,6 +12,8 @@
 #include <QVector>
 #include <QVector3D>
 
+#include <functional>
+
 // Builds EPANET network render geometry (pipes, junctions, tanks,
 // reservoirs, pumps, valves) for the "Globe" map view mode.
 //
@@ -44,12 +46,22 @@
 // Not yet implemented for the globe (all render as their flat pixel-marker
 // fallback, matching what the ThreeD view already does when its 3D-model
 // toggles are off): the heatmap overlay, flow-direction chevrons, 3D
-// tank/reservoir/junction meshes, underground x-ray mode, and coincident-
-// node decluttering (map_node_declutter.h). Follow-ups, not omissions this
-// class silently papers over -- see MapRhiWidget::renderGlobe().
+// tank/reservoir/junction meshes, and coincident-node decluttering
+// (map_node_declutter.h). Underground X-Ray *is* implemented, but for links
+// only -- see setUndergroundXRayEnabled() -- since ThreeD's underground
+// junction indicator is tied to its 3D junction mesh model, which the globe
+// doesn't have yet either. Follow-ups, not omissions this class silently
+// papers over -- see MapRhiWidget::renderGlobe().
 class MapRhiGlobeNetworkScene
 {
 public:
+    // Read-only elevation lookup at an arbitrary coordinate, used solely to
+    // classify link segments as underground for X-Ray mode -- see
+    // setUndergroundXRayEnabled(). Never influences where any geometry is
+    // actually placed.
+    using TerrainElevationResolver =
+        std::function<bool(const CoordinateWGS84 &coordinate, double *elevation_m)>;
+
     void setNetworkSnapshot(const NetworkRenderSnapshot &snapshot);
     bool setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids);
     void setSymbology(const MapRhiSymbology &symbology);
@@ -64,6 +76,50 @@ public:
     // keep network geometry from z-fighting with the terrain mesh beneath
     // it. Returns true if the (bounded) value actually changed.
     bool setGroundOffsetM(double offset_m);
+    // Multiplies each entity's elevation before placement, mirroring how
+    // MapRhiGlobeRenderer's own terrain mesh scales DEM elevation by this
+    // same MapModel::view3dVerticalExaggeration() factor (see
+    // globeTerrainPositionAt() in map_rhi_basemap_renderer.cpp). Terrain and
+    // network must apply the identical factor or they drift apart the
+    // moment exaggeration != 1 -- ThreeD avoids this by literally reusing
+    // MapRhiScene's own affine coefficients to place its terrain mesh, but
+    // the Globe terrain mesh does not share code with this class, so the
+    // factor has to be kept in sync by hand here instead. Returns true if
+    // the (bounded) value actually changed.
+    bool setVerticalExaggeration(double exaggeration);
+    // Holds every entity at the bare ellipsoid surface (elevation treated as
+    // 0) while false, regardless of its real elevation_m. This exists for
+    // exactly one reason: imagery tiles for a newly-visible area arrive
+    // before the DEM/relief mesh for the same tiles does (the latter is
+    // fetched and meshed on a background thread -- see
+    // MapRhiGlobeRenderer::isVisibleTerrainReady()), so anything drawn at
+    // its real elevation during that window appears to float above the
+    // still-flat terrain until relief catches up. The caller (see
+    // MapRhiWidget::renderGlobe()) feeds this from
+    // MapRhiGlobeRenderer::isVisibleTerrainReady() every frame; flipping it
+    // rebuilds geometry with the entities' real elevation once relief has
+    // actually loaded. Returns true if the value actually changed.
+    bool setTerrainReady(bool ready);
+    // Injects the read-only terrain-elevation lookup used by X-Ray
+    // classification (see setUndergroundXRayEnabled()). Safe to leave unset
+    // -- X-Ray will simply never find anything to highlight without it.
+    // Set once by MapRhiWidget's constructor; the resolver closure itself
+    // always queries live repository state, so there's no need to re-set it
+    // as terrain tiles load in.
+    void setTerrainElevationResolver(TerrainElevationResolver resolver);
+    // While true (and only once terrain is ready -- see setTerrainReady()),
+    // rebuildNetworkGeometry() also walks each link in short subdivisions,
+    // compares each subdivision's own implied elevation against the
+    // resolver's terrain sample at the same point, and collects the
+    // contiguous "below terrain" runs into undergroundLinkVertices(), for
+    // the caller to draw through terrain with a no-depth-test pipeline
+    // (mirroring MapRhiWidget's own ThreeD-only underground_link_vertices).
+    // A plain bool rather than MapRhiWidget's MapRhiUndergroundMode enum, to
+    // avoid a widget<->scene header cycle -- the caller maps XRay to true
+    // and Hide/Solid to false ("Solid" needs no per-segment classification
+    // at all; see MapRhiWidget::drawGlobeNetwork()). Returns true if
+    // changed.
+    bool setUndergroundXRayEnabled(bool enabled);
 
     const QVector<MapRhiScene::LinkVertex> &linkVertices() const;
     const QVector<MapRhiScene::NodeVertex> &nodeVertices() const;
@@ -72,6 +128,7 @@ public:
     const QVector<MapRhiScene::LinkVertex> &diagnosticLinkVertices() const;
     const QVector<MapRhiScene::NodeVertex> &diagnosticNodeVertices() const;
     const QVector<MapRhiScene::IconVertex> &iconVertices() const;
+    const QVector<MapRhiScene::LinkVertex> &undergroundLinkVertices() const;
     quint64 geometryRevision() const;
     bool hasGeometry() const;
 
@@ -122,6 +179,21 @@ private:
                                float node_size_adjust_px,
                                QVector<MapRhiScene::LinkVertex> *link_target,
                                QVector<MapRhiScene::NodeVertex> *node_target) const;
+    void appendUndergroundLinkSegment(InfrastructureEntity entity_type, quint32 render_id,
+                                      const QVector3D &start, const QVector3D &end);
+    // Subdivides one already-placed link segment (from consecutive digitized
+    // vertices) into short spans and appends each contiguous "below terrain"
+    // run to underground_link_vertices. Coarser than MapRhiScene's ThreeD
+    // equivalent, which sizes subdivisions to the actual terrain cell size;
+    // this uses a fixed target length instead, since the globe has no single
+    // "current terrain zoom" the way the flat view does (see the class
+    // comment on globeTerrainElevationAtCoordinate() in map_rhi_widget.cpp).
+    void appendUndergroundSubdivisions(
+        InfrastructureEntity entity_type, quint32 render_id,
+        const CoordinateWGS84 &start_coordinate, double start_elevation_m,
+        const QVector3D &start_ecef,
+        const CoordinateWGS84 &end_coordinate, double end_elevation_m,
+        const QVector3D &end_ecef);
 
     NetworkRenderSnapshot network_snapshot;
     QSet<QUuid> hidden_entity_uuids;
@@ -144,6 +216,11 @@ private:
     QHash<quint64, QVector<int>> node_vertex_indices_by_entity;
     quint64 geometry_revision = 0;
     double ground_offset_m = 0.0;
+    double vertical_exaggeration = 1.0;
+    bool terrain_ready = false;
+    TerrainElevationResolver terrain_elevation_resolver;
+    bool underground_xray_enabled = false;
+    QVector<MapRhiScene::LinkVertex> underground_link_vertices;
 };
 
 #endif // MAP_RHI_GLOBE_NETWORK_SCENE_H

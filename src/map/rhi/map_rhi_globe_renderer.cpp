@@ -617,6 +617,24 @@ bool MapRhiGlobeRenderer::hasPendingTerrainMeshes() const
     return false;
 }
 
+bool MapRhiGlobeRenderer::isVisibleTerrainReady() const
+{
+    if (this->terrain_repository == nullptr)
+        return true;
+
+    if (this->window_tiles.isEmpty())
+        return false;
+
+    for (const GlobeTile &tile : this->window_tiles)
+    {
+        if (tile.is_cap || tile.terrain_key.isEmpty())
+            continue;
+        if (!tile.terrain_mesh_applied)
+            return false;
+    }
+    return true;
+}
+
 MapRhiGlobeRenderer::TileVertex MapRhiGlobeRenderer::makeTileVertex(
     double lon_deg, double lat_deg, float u, float v)
 {

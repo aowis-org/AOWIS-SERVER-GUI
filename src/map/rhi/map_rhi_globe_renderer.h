@@ -106,6 +106,19 @@ public:
     // requested are for the old provider.
     void invalidateImagery();
 
+    // True once every currently-visible, terrain-eligible tile (i.e. every
+    // window tile with a non-empty terrain_key -- low-zoom/distant leaves
+    // below GlobeTerrainReliefMinimumZoom are intentionally flat and don't
+    // count) has an applied terrain mesh, or once there is nothing to wait
+    // for at all (no terrain repository configured). False while imagery
+    // has arrived but the DEM/relief mesh for the same area is still being
+    // fetched or meshed on the background scheduler -- the window during
+    // which anything drawn at real elevation (e.g. network geometry laid on
+    // top of this renderer's output) would appear to float above the still-
+    // flat terrain until relief catches up. See
+    // MapRhiWidget::renderGlobe()/MapRhiGlobeNetworkScene::setTerrainReady().
+    bool isVisibleTerrainReady() const;
+
     // Releases all GPU resources; call before the RHI instance itself goes
     // away (mirrors MapRhiBasemapRenderer::releaseResources()).
     void releaseResources();

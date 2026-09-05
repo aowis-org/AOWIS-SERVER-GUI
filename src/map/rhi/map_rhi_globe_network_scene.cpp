@@ -18,6 +18,18 @@ bool finiteCoordinate(const CoordinateWGS84 &coordinate)
 {
     return std::isfinite(coordinate.longitude_deg) && std::isfinite(coordinate.latitude_deg);
 }
+
+constexpr double UndergroundSubdivisionTargetLengthM = 20.0;
+constexpr int UndergroundSubdivisionMaximumCount = 32;
+// How far below the sampled terrain a point has to sit before it counts as
+// "buried" -- small enough to ignore DEM sampling noise/float error for a
+// pipe running essentially at grade, large enough to not flag on that noise.
+constexpr double UndergroundToleranceM = 0.1;
+// See the comment in ecefPosition() -- floor under ground_offset_m so
+// network geometry reliably wins its depth test against the terrain mesh
+// even when the user hasn't (or doesn't need to have) touched the ground
+// offset slider.
+constexpr double MinimumAntiZFightingLiftM = 2.0;
 }
 
 void MapRhiGlobeNetworkScene::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
@@ -60,6 +72,8 @@ void MapRhiGlobeNetworkScene::setSymbology(const MapRhiSymbology &symbology)
     if (link_colors_changed)
     {
         for (MapRhiScene::LinkVertex &vertex : this->link_vertices)
+            applyLinkColor(&vertex);
+        for (MapRhiScene::LinkVertex &vertex : this->underground_link_vertices)
             applyLinkColor(&vertex);
     }
     if (node_colors_changed || icon_visibility_changed)
@@ -111,6 +125,48 @@ bool MapRhiGlobeNetworkScene::setGroundOffsetM(double offset_m)
     return true;
 }
 
+bool MapRhiGlobeNetworkScene::setVerticalExaggeration(double exaggeration)
+{
+    if (!std::isfinite(exaggeration))
+        return false;
+
+    const double bounded_exaggeration = qBound(
+        MapModel::MinView3dVerticalExaggeration,
+        exaggeration,
+        MapModel::MaxView3dVerticalExaggeration);
+    if (qFuzzyCompare(1.0 + this->vertical_exaggeration, 1.0 + bounded_exaggeration))
+        return false;
+
+    this->vertical_exaggeration = bounded_exaggeration;
+    rebuildNetworkGeometry();
+    return true;
+}
+
+bool MapRhiGlobeNetworkScene::setTerrainReady(bool ready)
+{
+    if (this->terrain_ready == ready)
+        return false;
+
+    this->terrain_ready = ready;
+    rebuildNetworkGeometry();
+    return true;
+}
+
+void MapRhiGlobeNetworkScene::setTerrainElevationResolver(TerrainElevationResolver resolver)
+{
+    this->terrain_elevation_resolver = std::move(resolver);
+}
+
+bool MapRhiGlobeNetworkScene::setUndergroundXRayEnabled(bool enabled)
+{
+    if (this->underground_xray_enabled == enabled)
+        return false;
+
+    this->underground_xray_enabled = enabled;
+    rebuildNetworkGeometry();
+    return true;
+}
+
 const QVector<MapRhiScene::LinkVertex> &MapRhiGlobeNetworkScene::linkVertices() const
 {
     return this->link_vertices;
@@ -144,6 +200,11 @@ const QVector<MapRhiScene::NodeVertex> &MapRhiGlobeNetworkScene::diagnosticNodeV
 const QVector<MapRhiScene::IconVertex> &MapRhiGlobeNetworkScene::iconVertices() const
 {
     return this->icon_vertices;
+}
+
+const QVector<MapRhiScene::LinkVertex> &MapRhiGlobeNetworkScene::undergroundLinkVertices() const
+{
+    return this->underground_link_vertices;
 }
 
 quint64 MapRhiGlobeNetworkScene::geometryRevision() const
@@ -204,8 +265,28 @@ double MapRhiGlobeNetworkScene::linkThicknessM() const
 QVector3D MapRhiGlobeNetworkScene::ecefPosition(
     const CoordinateWGS84 &coordinate, double elevation_m) const
 {
-    const double height_m =
-        (std::isfinite(elevation_m) ? elevation_m : 0.0) + this->ground_offset_m;
+    // Pinned to the bare ellipsoid (0) until terrain relief for the visible
+    // area has actually loaded -- see the class comment on
+    // setTerrainReady() for why.
+    const double base_elevation_m = this->terrain_ready && std::isfinite(elevation_m)
+        ? elevation_m
+        : 0.0;
+    // A network entity's elevation and the terrain's live DEM sample at the
+    // same point are two independently-sourced numbers -- close, now that
+    // terrain-readiness gating keeps them both meaningful (see
+    // setTerrainReady()), but not bit-for-bit identical, and float32 ECEF
+    // positions only carry ~0.5-1m of precision at Earth's radius to begin
+    // with. Placed with zero lift, that's enough for the two surfaces to
+    // z-fight (flicker) rather than cleanly resolve one in front of the
+    // other. MinimumAntiZFightingLiftM is a floor under the user-configured
+    // ground_offset_m (see setGroundOffsetM()), not stacked on top of it --
+    // once the user asks for more clearance than that floor, there's
+    // nothing left to fight.
+    const double lift_m = qMax(this->ground_offset_m, MinimumAntiZFightingLiftM);
+    // Order matches globeTerrainPositionAt() exactly (elevation * exaggeration,
+    // ground offset added after): see the class comment on
+    // setVerticalExaggeration() for why the two must stay in lockstep.
+    const double height_m = base_elevation_m * this->vertical_exaggeration + lift_m;
     return GeoWgs84Ellipsoid::geodeticToEcef(
         coordinate.longitude_deg, coordinate.latitude_deg, height_m);
 }
@@ -221,6 +302,7 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
     this->icon_vertices.clear();
     this->icon_markers.clear();
     this->link_paths.clear();
+    this->underground_link_vertices.clear();
     this->entity_keys_by_uuid.clear();
     this->link_vertex_indices_by_entity.clear();
     this->node_vertex_indices_by_entity.clear();
@@ -278,6 +360,14 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
     }
     this->link_vertices.reserve(segment_count * 6);
 
+    // Underground detection only means anything once entities sit at their
+    // real elevation (see setTerrainReady()) and only costs anything when
+    // X-Ray is actually the active mode -- both gates checked once here
+    // rather than per-segment below.
+    const bool should_detect_underground = this->underground_xray_enabled
+        && this->terrain_ready
+        && bool(this->terrain_elevation_resolver);
+
     for (const NetworkRenderLink &link : this->network_snapshot.links)
     {
         if (this->hidden_entity_uuids.contains(link.uuid) || link.vertices_wgs84.size() < 2)
@@ -289,6 +379,8 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
 
         bool have_previous = false;
         QVector3D previous;
+        CoordinateWGS84 previous_coordinate;
+        double previous_elevation_m = 0.0;
         for (qsizetype vertex_index = 0;
              vertex_index < link.vertices_wgs84.size(); ++vertex_index)
         {
@@ -310,9 +402,19 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
             {
                 appendLinkSegment(link.entity_type, link.render_id, previous, current);
                 link_path.segments.append({previous, current});
+
+                if (should_detect_underground)
+                {
+                    appendUndergroundSubdivisions(
+                        link.entity_type, link.render_id,
+                        previous_coordinate, previous_elevation_m, previous,
+                        coordinate, elevation_m, current);
+                }
             }
 
             previous = current;
+            previous_coordinate = coordinate;
+            previous_elevation_m = elevation_m;
             have_previous = true;
         }
 
@@ -396,6 +498,100 @@ void MapRhiGlobeNetworkScene::appendLinkSegment(
         this->link_vertices.append(vertex);
         this->link_vertex_indices_by_entity[entity_key].append(this->link_vertices.size() - 1);
     }
+}
+
+void MapRhiGlobeNetworkScene::appendUndergroundLinkSegment(
+    InfrastructureEntity entity_type, quint32 render_id,
+    const QVector3D &start, const QVector3D &end)
+{
+    const float corners[6][2] = {
+        {0.0f, -1.0f},
+        {1.0f, -1.0f},
+        {1.0f, 1.0f},
+        {0.0f, -1.0f},
+        {1.0f, 1.0f},
+        {0.0f, 1.0f}
+    };
+
+    for (int index = 0; index < 6; ++index)
+    {
+        MapRhiScene::LinkVertex vertex;
+        vertex.start_x = start.x();
+        vertex.start_y = start.y();
+        vertex.start_z = start.z();
+        vertex.end_x = end.x();
+        vertex.end_y = end.y();
+        vertex.end_z = end.z();
+        vertex.along = corners[index][0];
+        vertex.side = corners[index][1];
+        vertex.render_id = render_id;
+        vertex.entity_type = entity_type;
+        // link_xray_pipeline reuses the same map_rhi_link.vert as the normal
+        // link_pipeline, so it still expects a tinted vertex color to blend
+        // its dashed pattern against -- reuse the entity's normal color
+        // rather than inventing an xray-specific one.
+        applyLinkColor(&vertex);
+        this->underground_link_vertices.append(vertex);
+    }
+}
+
+void MapRhiGlobeNetworkScene::appendUndergroundSubdivisions(
+    InfrastructureEntity entity_type, quint32 render_id,
+    const CoordinateWGS84 &start_coordinate, double start_elevation_m,
+    const QVector3D &start_ecef,
+    const CoordinateWGS84 &end_coordinate, double end_elevation_m,
+    const QVector3D &end_ecef)
+{
+    const float segment_length_m = (end_ecef - start_ecef).length();
+    const int subdivision_count = qBound(
+        1,
+        int(std::ceil(double(segment_length_m) / UndergroundSubdivisionTargetLengthM)),
+        UndergroundSubdivisionMaximumCount);
+
+    bool buried_run_active = false;
+    QVector3D buried_run_start = start_ecef;
+    QVector3D previous_point = start_ecef;
+    for (int subdivision = 0; subdivision <= subdivision_count; ++subdivision)
+    {
+        const double ratio = double(subdivision) / double(subdivision_count);
+        // Linear interpolation in lon/lat: fine for subdivisions this
+        // short (a few tens of metres at most), no antimeridian handling
+        // needed at that scale.
+        CoordinateWGS84 sample_coordinate = start_coordinate;
+        sample_coordinate.longitude_deg = start_coordinate.longitude_deg
+            + (end_coordinate.longitude_deg - start_coordinate.longitude_deg) * ratio;
+        sample_coordinate.latitude_deg = start_coordinate.latitude_deg
+            + (end_coordinate.latitude_deg - start_coordinate.latitude_deg) * ratio;
+        const double sample_elevation_m =
+            start_elevation_m + (end_elevation_m - start_elevation_m) * ratio;
+        const QVector3D sample_point = subdivision == 0
+            ? start_ecef
+            : (subdivision == subdivision_count
+                ? end_ecef
+                : start_ecef + (end_ecef - start_ecef) * float(ratio));
+
+        double terrain_elevation_m = 0.0;
+        const bool buried = this->terrain_elevation_resolver
+            && this->terrain_elevation_resolver(sample_coordinate, &terrain_elevation_m)
+            && sample_elevation_m < terrain_elevation_m - UndergroundToleranceM;
+
+        if (buried && !buried_run_active)
+        {
+            buried_run_active = true;
+            buried_run_start = previous_point;
+        }
+        else if (!buried && buried_run_active)
+        {
+            appendUndergroundLinkSegment(
+                entity_type, render_id, buried_run_start, previous_point);
+            buried_run_active = false;
+        }
+
+        previous_point = sample_point;
+    }
+
+    if (buried_run_active)
+        appendUndergroundLinkSegment(entity_type, render_id, buried_run_start, end_ecef);
 }
 
 void MapRhiGlobeNetworkScene::appendNode(
