@@ -16,6 +16,15 @@ QVector3D GeoWgs84Ellipsoid::geodeticToEcef(double lon_deg, double lat_deg, doub
     return QVector3D(float(x), float(y), float(z));
 }
 
+GeoWgs84Ellipsoid::EcefPositionD GeoWgs84Ellipsoid::geodeticToEcefD(
+    double lon_deg, double lat_deg, double height_m)
+{
+    EcefPositionD result;
+    GeographicLib::Geocentric::WGS84().Forward(
+        lat_deg, lon_deg, height_m, result.x, result.y, result.z);
+    return result;
+}
+
 GeoWgs84Ellipsoid::LocalFrame GeoWgs84Ellipsoid::localFrameAtGeodetic(
     double lon_deg, double lat_deg, double height_m)
 {
@@ -107,6 +116,93 @@ GeoWgs84Ellipsoid::OrbitCameraBasis GeoWgs84Ellipsoid::orbitCameraBasis(
     // forward are perpendicular and forward is unit length), which keeps
     // geographic east on screen-right. The other cross order would
     // silently mirror the globe left/right.
+    basis.up = QVector3D::crossProduct(right, basis.forward).normalized();
+    return basis;
+}
+
+GeoWgs84Ellipsoid::OrbitCameraBasisRelative GeoWgs84Ellipsoid::orbitCameraBasisRelativeToOrigin(
+    double target_lon_deg, double target_lat_deg,
+    double yaw_deg, double pitch_deg, double distance_m,
+    double target_height_m, const EcefPositionD &origin_ecef)
+{
+    // Same GeographicLib call localFrameAtGeodetic() makes, but the
+    // target's own ECEF position is kept in double (target_x/y/z) instead
+    // of being narrowed to QVector3D immediately -- see the EcefPositionD
+    // comment in the header for why. east/north/up are unit *directions*,
+    // never large in magnitude, so narrowing those to float here (as
+    // localFrameAtGeodetic() also does) loses nothing.
+    double target_x = 0.0;
+    double target_y = 0.0;
+    double target_z = 0.0;
+    std::vector<double> rotation(9, 0.0);
+    GeographicLib::Geocentric::WGS84().Forward(
+        target_lat_deg, target_lon_deg, target_height_m,
+        target_x, target_y, target_z, rotation);
+
+    // Copy-initialization ("= QVector3D(...)"), not direct-initialization
+    // ("QVector3D east(...)"): with direct-init here, each "float(rotation[N])"
+    // argument is itself grammatically a valid parameter declaration (type
+    // "float", parenthesized declarator "rotation[N]"), so the compiler is
+    // required to parse the whole line as a function *declaration* named
+    // "east" rather than a variable definition -- the classic "most vexing
+    // parse". Copy-init has no such ambiguity.
+    const QVector3D east = QVector3D(float(rotation[0]), float(rotation[3]), float(rotation[6]));
+    const QVector3D north = QVector3D(float(rotation[1]), float(rotation[4]), float(rotation[7]));
+    const QVector3D up_direction =
+        QVector3D(float(rotation[2]), float(rotation[5]), float(rotation[8]));
+
+    const double pitch_rad = qDegreesToRadians(pitch_deg);
+    const double yaw_rad = qDegreesToRadians(yaw_deg);
+    const double distance = qMax(0.0, distance_m);
+    const double horizontal_distance = distance * std::cos(pitch_rad);
+    const double vertical_offset = distance * std::sin(pitch_rad);
+
+    // Same ENU combination orbitCameraBasis() above uses for its eye
+    // offset and "right" axis -- see its comment for the yaw/pitch
+    // convention and the reasoning behind the cross(right, forward) order.
+    // Only difference here: the offset is accumulated against target_x/y/z
+    // in double (eye_x/y/z below) instead of against a float32 QVector3D,
+    // so the offset -- which can be as large as the current orbit
+    // distance, up to ~1.18e7 m at maximum Globe zoom-out -- never has to
+    // round against Earth-radius-scale (~6.378e6 m) values before it needs
+    // to.
+    const QVector3D horizontal_direction =
+        east * float(std::sin(yaw_rad)) - north * float(std::cos(yaw_rad));
+    const QVector3D right =
+        east * float(std::cos(yaw_rad)) + north * float(std::sin(yaw_rad));
+
+    const double eye_x = target_x
+        + double(up_direction.x()) * vertical_offset
+        + double(horizontal_direction.x()) * horizontal_distance;
+    const double eye_y = target_y
+        + double(up_direction.y()) * vertical_offset
+        + double(horizontal_direction.y()) * horizontal_distance;
+    const double eye_z = target_z
+        + double(up_direction.z()) * vertical_offset
+        + double(horizontal_direction.z()) * horizontal_distance;
+
+    // The only precision-critical step: target and eye are subtracted
+    // against origin_ecef here, in double, while both sides of each
+    // subtraction still carry their full ECEF-scale precision. The
+    // *results* are small (bounded by how far the camera actually is from
+    // the render origin -- typically the current orbit distance or less),
+    // so narrowing them to float32 now, for the QVector3D members below,
+    // no longer throws away anything that matters.
+    OrbitCameraBasisRelative basis;
+    basis.target = QVector3D(
+        float(target_x - origin_ecef.x),
+        float(target_y - origin_ecef.y),
+        float(target_z - origin_ecef.z));
+    basis.eye = QVector3D(
+        float(eye_x - origin_ecef.x),
+        float(eye_y - origin_ecef.y),
+        float(eye_z - origin_ecef.z));
+    basis.forward = (basis.target - basis.eye).normalized();
+    basis.right = right;
+    // See orbitCameraBasis()'s comment above -- same triple-product
+    // reasoning applies unchanged, since it only depends on "right" and
+    // "forward" being perpendicular and forward being unit length, neither
+    // of which is affected by eye/target now being origin-relative.
     basis.up = QVector3D::crossProduct(right, basis.forward).normalized();
     return basis;
 }

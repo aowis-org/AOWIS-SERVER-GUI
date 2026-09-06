@@ -4,6 +4,7 @@
 #include "network/network_render_snapshot.h"
 #include "map/rhi/map_rhi_symbology.h"
 #include "map/rhi/map_rhi_scene.h"
+#include "geo/geo_wgs84_ellipsoid.h"
 
 #include <QColor>
 #include <QHash>
@@ -19,11 +20,23 @@
 //
 // This mirrors MapRhiScene (map_rhi_scene.h), which does the equivalent job
 // for the flat TwoD/ThreeD views, but every vertex is placed on the actual
-// WGS84 ellipsoid in ECEF meters (via GeoWgs84Ellipsoid::geodeticToEcef())
-// instead of MapRhiScene's local Web Mercator tangent-plane world units.
-// There is consequently no "origin_world"/wrap-reference bookkeeping here:
-// ECEF coordinates are globally unambiguous, so every node/link vertex is
-// converted independently and there is no antimeridian seam to manage.
+// WGS84 ellipsoid in ECEF meters instead of MapRhiScene's local Web Mercator
+// tangent-plane world units. There is no antimeridian seam to manage here --
+// ECEF coordinates are globally unambiguous -- but there *is* still an
+// origin, for a different reason than MapRhiScene's: MapRhiScene's
+// origin_world exists to give TwoD/ThreeD a manageable coordinate range in
+// the first place (Web Mercator world units span the whole projected
+// planet), whereas ECEF's origin (Earth's center) already gives every
+// vertex a magnitude of ~6.378e6 m regardless of where on the planet it is
+// -- far enough from zero that float32 (which every RHI vertex buffer here
+// ultimately is) only has ~0.5-1m of resolution left once you're at that
+// magnitude, before any camera-relative arithmetic is even done. See
+// setRenderOriginEcef() and ecefPosition() for how this class avoids that:
+// every vertex is placed relative to a caller-supplied ECEF origin (kept in
+// sync with whatever MapRhiCamera's Globe view/projection matrix itself
+// rendered relative to) rather than at its raw ECEF position, so the
+// float32 narrowing happens only after the large-magnitude part of the
+// position has already been subtracted off in double precision.
 //
 // Deliberately reuses MapRhiScene::LinkVertex/NodeVertex/IconVertex
 // byte-for-byte (rather than declaring parallel structs) so MapRhiWidget can
@@ -87,19 +100,6 @@ public:
     // factor has to be kept in sync by hand here instead. Returns true if
     // the (bounded) value actually changed.
     bool setVerticalExaggeration(double exaggeration);
-    // Holds every entity at the bare ellipsoid surface (elevation treated as
-    // 0) while false, regardless of its real elevation_m. This exists for
-    // exactly one reason: imagery tiles for a newly-visible area arrive
-    // before the DEM/relief mesh for the same tiles does (the latter is
-    // fetched and meshed on a background thread -- see
-    // MapRhiGlobeRenderer::isVisibleTerrainReady()), so anything drawn at
-    // its real elevation during that window appears to float above the
-    // still-flat terrain until relief catches up. The caller (see
-    // MapRhiWidget::renderGlobe()) feeds this from
-    // MapRhiGlobeRenderer::isVisibleTerrainReady() every frame; flipping it
-    // rebuilds geometry with the entities' real elevation once relief has
-    // actually loaded. Returns true if the value actually changed.
-    bool setTerrainReady(bool ready);
     // Injects the read-only terrain-elevation lookup used by X-Ray
     // classification (see setUndergroundXRayEnabled()). Safe to leave unset
     // -- X-Ray will simply never find anything to highlight without it.
@@ -107,19 +107,47 @@ public:
     // always queries live repository state, so there's no need to re-set it
     // as terrain tiles load in.
     void setTerrainElevationResolver(TerrainElevationResolver resolver);
-    // While true (and only once terrain is ready -- see setTerrainReady()),
-    // rebuildNetworkGeometry() also walks each link in short subdivisions,
-    // compares each subdivision's own implied elevation against the
-    // resolver's terrain sample at the same point, and collects the
-    // contiguous "below terrain" runs into undergroundLinkVertices(), for
-    // the caller to draw through terrain with a no-depth-test pipeline
-    // (mirroring MapRhiWidget's own ThreeD-only underground_link_vertices).
-    // A plain bool rather than MapRhiWidget's MapRhiUndergroundMode enum, to
-    // avoid a widget<->scene header cycle -- the caller maps XRay to true
-    // and Hide/Solid to false ("Solid" needs no per-segment classification
-    // at all; see MapRhiWidget::drawGlobeNetwork()). Returns true if
-    // changed.
+    // While true, rebuildNetworkGeometry() also walks each link in short
+    // subdivisions, compares each subdivision's own implied elevation
+    // against the resolver's terrain sample at the same point, and
+    // collects the contiguous "below terrain" runs into
+    // undergroundLinkVertices(), for the caller to draw through terrain
+    // with a no-depth-test pipeline (mirroring MapRhiWidget's own
+    // ThreeD-only underground_link_vertices). A plain bool rather than
+    // MapRhiWidget's MapRhiUndergroundMode enum, to avoid a
+    // widget<->scene header cycle -- the caller maps XRay to true and
+    // Hide/Solid to false ("Solid" needs no per-segment classification at
+    // all; see MapRhiWidget::drawGlobeNetwork()). Returns true if changed.
     bool setUndergroundXRayEnabled(bool enabled);
+    // The ECEF point every vertex this class builds is placed *relative
+    // to*, in place of the raw (Earth-center-relative) ECEF position
+    // GeoWgs84Ellipsoid::geodeticToEcef() would otherwise hand back
+    // directly. Must be kept equal to whatever MapRhiCamera::
+    // globeNetworkViewProjectionMatrix() itself rendered relative to for
+    // this frame (see MapRhiCamera::globeRenderOriginEcef()/
+    // updateGlobeRenderOrigin()) -- the caller (MapRhiWidget::
+    // renderGlobe()) is responsible for that, every frame, before drawing.
+    // Note this is deliberately NOT the same matrix/origin Globe *terrain*
+    // is drawn with (MapRhiCamera::globeViewProjectionMatrix(), raw ECEF) --
+    // the two vertex data sets are placed in different coordinate spaces on
+    // purpose (see this class's own top-of-file comment) and must each be
+    // paired with their own matching matrix. A mismatch here would silently
+    // offset all network geometry by however far the two origins disagree,
+    // which is exactly the "raw float32 ECEF" bug this exists to avoid
+    // re-introducing -- see ecefPosition() for the numeric background.
+    // Comparing the previous and new origin for exact equality (rather
+    // than some epsilon) is intentional and correct: globeRenderOriginEcef()
+    // is a sticky value that MapRhiCamera::updateGlobeRenderOrigin() only
+    // ever updates by wholesale replacement (never incrementally nudged),
+    // so as long as the camera hasn't drifted far enough to trigger a
+    // rebase -- the common case, true for the entire duration of ordinary
+    // orbiting/panning around one local area -- every call here sees the
+    // exact same double bit pattern as last time, letting this skip the
+    // (comparatively expensive) full geometry rebuild on every such frame
+    // and only actually rebuild on the rare frame where a rebase just
+    // happened. Returns true if the origin actually changed (and geometry
+    // was rebuilt).
+    bool setRenderOriginEcef(const GeoWgs84Ellipsoid::EcefPositionD &origin_ecef);
 
     const QVector<MapRhiScene::LinkVertex> &linkVertices() const;
     const QVector<MapRhiScene::NodeVertex> &nodeVertices() const;
@@ -215,9 +243,17 @@ private:
     QHash<quint64, QVector<int>> link_vertex_indices_by_entity;
     QHash<quint64, QVector<int>> node_vertex_indices_by_entity;
     quint64 geometry_revision = 0;
+    // Deliberately NOT default-constructed to a plausible ECEF value (e.g.
+    // the equator/prime-meridian point) -- (0,0,0) is Earth's *center*,
+    // nowhere any real network geometry could ever legitimately be placed
+    // relative to, so the very first setRenderOriginEcef() call (made
+    // before the first rebuildNetworkGeometry() -- see
+    // MapRhiWidget::renderGlobe()) is guaranteed to see a change and
+    // rebuild, rather than possibly matching a real starting origin by
+    // coincidence and skipping a rebuild that needs to happen.
+    GeoWgs84Ellipsoid::EcefPositionD render_origin_ecef;
     double ground_offset_m = 0.0;
     double vertical_exaggeration = 1.0;
-    bool terrain_ready = false;
     TerrainElevationResolver terrain_elevation_resolver;
     bool underground_xray_enabled = false;
     QVector<MapRhiScene::LinkVertex> underground_link_vertices;

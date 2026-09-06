@@ -1954,10 +1954,22 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     if (this->globe_renderer == nullptr)
         return;
 
-    // Reflects last frame's tile-window state (this frame's prepare() call,
-    // below, hasn't run yet) -- a one-frame lag that's immaterial here. See
-    // MapRhiGlobeNetworkScene::setTerrainReady() for why this exists at all.
-    if (this->globe_network_scene.setTerrainReady(this->globe_renderer->isVisibleTerrainReady()))
+    // Must happen before globeNetworkViewProjectionMatrix()/
+    // ensureGlobeNetworkGeometryBuffers()/uploadGlobeNetworkGeometry()
+    // below -- everything downstream in this function that cares about the
+    // Globe render origin (the network view/projection matrix and the
+    // network scene's own vertex data) must agree on the exact same,
+    // already-updated origin for this frame. See
+    // MapRhiCamera::updateGlobeRenderOrigin() for why this is a sticky,
+    // rarely-changing value rather than something recomputed fresh (and
+    // handed straight to setRenderOriginEcef()) every frame.
+    this->camera.updateGlobeRenderOrigin();
+
+    // Cheap to call every frame: setRenderOriginEcef() only actually
+    // rebuilds geometry on the (intentionally rare -- see
+    // updateGlobeRenderOrigin()) frames where the render origin itself just
+    // changed.
+    if (this->globe_network_scene.setRenderOriginEcef(this->camera.globeRenderOriginEcef()))
     {
         this->globe_geometry_upload_pending = true;
         this->globe_highlight_upload_pending = true;
@@ -1968,7 +1980,22 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     if (!ensureGlobeNetworkGeometryBuffers())
         return;
 
+    // Two different matrices, deliberately: view_projection (raw ECEF) is
+    // what MapRhiGlobeRenderer's terrain tiles are drawn with -- their own
+    // vertex data is still raw ECEF, so this is the matrix that actually
+    // matches it. network_view_projection is relative to the camera's
+    // sticky Globe render origin (see MapRhiCamera::
+    // updateGlobeRenderOrigin()), matching MapRhiGlobeNetworkScene's own
+    // origin-relative vertex data (see its ecefPosition()). Uploading
+    // network_view_projection's matrix data into the CameraBlock below,
+    // but passing view_projection (not network_view_projection) to
+    // globe_renderer->prepare() a little further down, is the crux of
+    // keeping the two geometry types each correctly matched to their own
+    // vertex data -- swapping which matrix goes where here would silently
+    // misplace one or the other.
     const QMatrix4x4 view_projection = this->camera.globeViewProjectionMatrix(*this->active_rhi);
+    const QMatrix4x4 network_view_projection =
+        this->camera.globeNetworkViewProjectionMatrix(*this->active_rhi);
 
     // Same CameraBlock layout/indices as the ThreeD/TwoD path above (see
     // CameraUniformBytes), reused as-is since the link/node/icon vertex
@@ -1977,7 +2004,7 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     // never a screen-space network drag translation on the globe -- so those
     // are left zeroed here.
     std::array<float, 32> uniform_data{};
-    const float *matrix_data = view_projection.constData();
+    const float *matrix_data = network_view_projection.constData();
     for (int index = 0; index < 16; ++index)
         uniform_data[size_t(index)] = matrix_data[index];
     uniform_data[16] = float(qMax(1, this->viewport_size.width()));
@@ -2323,19 +2350,52 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
     // junction mesh model.
     const QVector<MapRhiScene::LinkVertex> &link_vertices =
         this->globe_network_scene.linkVertices();
+    const QVector<MapRhiScene::NodeVertex> &node_vertices =
+        this->globe_network_scene.nodeVertices();
 
     // Solid mode needs no per-segment underground classification at all: it
-    // just redraws every link a second time, ignoring depth, before normal
-    // rendering -- see MapRhiWidget's own ThreeD Solid-mode block above for
-    // the identical approach (same link_no_depth_pipeline, reused as-is).
-    if (this->underground_mode == MapRhiUndergroundMode::Solid && !link_vertices.isEmpty())
+    // just redraws every link and every node a second time, ignoring
+    // depth, before normal rendering -- see MapRhiWidget's own ThreeD
+    // Solid-mode block above for the identical approach. Links reuse
+    // link_no_depth_pipeline as-is. Nodes reuse node_overlay_pipeline --
+    // built for the flat TwoD view, where there is no depth buffer at
+    // all, but that's exactly the GPU pipeline state (same node
+    // shaders/vertex layout/shader-resource-bindings, depth test and
+    // depth write both off) a "guarantee this stays visible regardless of
+    // depth" node pass needs, so it is reused here rather than standing
+    // up a near-identical node_no_depth_pipeline of its own. It sits idle
+    // for Globe otherwise (is_2d_view is never true there), so there is
+    // no conflict reusing it for this unrelated purpose.
+    //
+    // This is the fix for junctions specifically staying flickery even
+    // after links stopped: links already got this "redraw ignoring depth"
+    // treatment, junctions never did, so junctions alone were still
+    // exposed to ordinary depth testing -- and, see
+    // MapRhiCamera::globeViewProjectionMatrix()'s near/far plane comment,
+    // Globe's depth buffer has far less usable precision than ThreeD's to
+    // begin with, making that exposure much more visible here than the
+    // equivalent gap would be on the flat view.
+    if (this->underground_mode == MapRhiUndergroundMode::Solid)
     {
-        command_buffer->setGraphicsPipeline(this->link_no_depth_pipeline.get());
-        command_buffer->setShaderResources();
-        const QRhiCommandBuffer::VertexInput solid_link_binding(
-            this->globe_link_vertex_buffer.get(), 0);
-        command_buffer->setVertexInput(0, 1, &solid_link_binding);
-        command_buffer->draw(quint32(link_vertices.size()));
+        if (!link_vertices.isEmpty())
+        {
+            command_buffer->setGraphicsPipeline(this->link_no_depth_pipeline.get());
+            command_buffer->setShaderResources();
+            const QRhiCommandBuffer::VertexInput solid_link_binding(
+                this->globe_link_vertex_buffer.get(), 0);
+            command_buffer->setVertexInput(0, 1, &solid_link_binding);
+            command_buffer->draw(quint32(link_vertices.size()));
+        }
+
+        if (!node_vertices.isEmpty())
+        {
+            command_buffer->setGraphicsPipeline(this->node_overlay_pipeline.get());
+            command_buffer->setShaderResources();
+            const QRhiCommandBuffer::VertexInput solid_node_binding(
+                this->globe_node_vertex_buffer.get(), 0);
+            command_buffer->setVertexInput(0, 1, &solid_node_binding);
+            command_buffer->draw(quint32(node_vertices.size()));
+        }
     }
 
     if (!link_vertices.isEmpty())
@@ -2348,8 +2408,6 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
         command_buffer->draw(quint32(link_vertices.size()));
     }
 
-    const QVector<MapRhiScene::NodeVertex> &node_vertices =
-        this->globe_network_scene.nodeVertices();
     if (!node_vertices.isEmpty())
     {
         command_buffer->setGraphicsPipeline(this->node_pipeline.get());
@@ -4062,14 +4120,14 @@ bool MapRhiWidget::globeTerrainElevationAtCoordinate(
 
     // Unlike terrainElevationAtCoordinate(), there is no single "current
     // zoom" to match here -- the globe's quadtree keeps different visible
-    // tiles at different zooms simultaneously, and this is only ever called
-    // once MapRhiGlobeRenderer::isVisibleTerrainReady() has confirmed
-    // relief has actually loaded, not from a per-frame picking path. So
-    // just try the finest cached zoom first and fall back to coarser ones;
-    // never requests a missing tile (see the class comment on
-    // MapRhiGlobeNetworkScene::setTerrainElevationResolver() -- this is a
-    // read-only comparison, not a placement decision, so there is nothing
-    // to wait on here).
+    // tiles at different zooms simultaneously, and this is only ever used
+    // for read-only X-Ray underground classification, not a placement
+    // decision -- so just try the finest cached zoom first and fall back
+    // to coarser ones, and never request a missing tile (see the class
+    // comment on MapRhiGlobeNetworkScene::setTerrainElevationResolver()).
+    // No "is terrain ready" precondition to rely on any more -- this
+    // simply returns false, gracefully, whenever nothing is cached yet at
+    // any zoom for this coordinate.
     const QString dataset = cameraTerrainDatasetId();
     for (int terrain_zoom = CameraTerrainMaximumZoom;
          terrain_zoom >= CameraTerrainMinimumZoom; --terrain_zoom)

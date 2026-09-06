@@ -142,19 +142,24 @@ bool MapRhiGlobeNetworkScene::setVerticalExaggeration(double exaggeration)
     return true;
 }
 
-bool MapRhiGlobeNetworkScene::setTerrainReady(bool ready)
-{
-    if (this->terrain_ready == ready)
-        return false;
-
-    this->terrain_ready = ready;
-    rebuildNetworkGeometry();
-    return true;
-}
-
 void MapRhiGlobeNetworkScene::setTerrainElevationResolver(TerrainElevationResolver resolver)
 {
     this->terrain_elevation_resolver = std::move(resolver);
+}
+
+bool MapRhiGlobeNetworkScene::setRenderOriginEcef(
+    const GeoWgs84Ellipsoid::EcefPositionD &origin_ecef)
+{
+    if (this->render_origin_ecef.x == origin_ecef.x
+        && this->render_origin_ecef.y == origin_ecef.y
+        && this->render_origin_ecef.z == origin_ecef.z)
+    {
+        return false;
+    }
+
+    this->render_origin_ecef = origin_ecef;
+    rebuildNetworkGeometry();
+    return true;
 }
 
 bool MapRhiGlobeNetworkScene::setUndergroundXRayEnabled(bool enabled)
@@ -265,20 +270,34 @@ double MapRhiGlobeNetworkScene::linkThicknessM() const
 QVector3D MapRhiGlobeNetworkScene::ecefPosition(
     const CoordinateWGS84 &coordinate, double elevation_m) const
 {
-    // Pinned to the bare ellipsoid (0) until terrain relief for the visible
-    // area has actually loaded -- see the class comment on
-    // setTerrainReady() for why.
-    const double base_elevation_m = this->terrain_ready && std::isfinite(elevation_m)
-        ? elevation_m
-        : 0.0;
+    // Always uses the entity's own real elevation, exactly like
+    // MapRhiScene (the ThreeD/TwoD counterpart of this class) already
+    // does for its own node/link placement -- no separate "is terrain
+    // ready yet" gate. An earlier version of this function pinned
+    // everything to the bare ellipsoid (elevation 0) until
+    // MapRhiGlobeRenderer::isVisibleTerrainReady() reported the visible
+    // tile window's relief as loaded, to avoid a first-load flash of
+    // network floating above still-flat terrain. In practice that gate
+    // caused far more visible harm than it prevented: the visible tile
+    // window changes continuously during ordinary orbiting/panning (tiles
+    // enter/leave view, LOD subdivides/merges, edge stitching gets
+    // recomputed), each of which could flip "ready" back to false and
+    // snap the *entire* network down to the bare ellipsoid and back --
+    // exactly the "jumps between underground and surface" / "flickers
+    // during camera movement" symptom this class was fighting. Simply not
+    // having the gate, matching ThreeD, is both simpler and correct: any
+    // brief mismatch between network and not-yet-loaded terrain during
+    // the very first frames of a session resolves itself once relief
+    // arrives, the same way ThreeD's own terrain mesh appears without any
+    // equivalent synchronization dance.
+    const double base_elevation_m = std::isfinite(elevation_m) ? elevation_m : 0.0;
     // A network entity's elevation and the terrain's live DEM sample at the
-    // same point are two independently-sourced numbers -- close, now that
-    // terrain-readiness gating keeps them both meaningful (see
-    // setTerrainReady()), but not bit-for-bit identical, and float32 ECEF
-    // positions only carry ~0.5-1m of precision at Earth's radius to begin
-    // with. Placed with zero lift, that's enough for the two surfaces to
-    // z-fight (flicker) rather than cleanly resolve one in front of the
-    // other. MinimumAntiZFightingLiftM is a floor under the user-configured
+    // same point are two independently-sourced numbers -- close, but not
+    // bit-for-bit identical, and (see below) this class's vertex positions
+    // still only carry ~0.5-1m of precision in the worst case. Placed with
+    // zero lift, that's enough for the two surfaces to z-fight (flicker)
+    // rather than cleanly resolve one in front of the other.
+    // MinimumAntiZFightingLiftM is a floor under the user-configured
     // ground_offset_m (see setGroundOffsetM()), not stacked on top of it --
     // once the user asks for more clearance than that floor, there's
     // nothing left to fight.
@@ -287,8 +306,29 @@ QVector3D MapRhiGlobeNetworkScene::ecefPosition(
     // ground offset added after): see the class comment on
     // setVerticalExaggeration() for why the two must stay in lockstep.
     const double height_m = base_elevation_m * this->vertical_exaggeration + lift_m;
-    return GeoWgs84Ellipsoid::geodeticToEcef(
+
+    // Computed in double (geodeticToEcefD(), not geodeticToEcef()) and
+    // subtracted against render_origin_ecef -- also double -- before ever
+    // narrowing to the QVector3D (float32) this function returns. Both
+    // operands of that subtraction carry full ECEF-scale (~6.378e6 m)
+    // precision right up until the subtraction happens, so the result is
+    // accurate to double precision; only *after* subtracting does the
+    // magnitude drop to something small (bounded by how far this vertex
+    // actually is from the render origin, i.e. from the current Globe
+    // orbit target -- see MapRhiCamera::globeRenderOriginEcef()), which is
+    // where narrowing to float32 finally becomes safe. Getting the order of
+    // operations right here is the entire fix: computing raw ECEF in
+    // float32 first (as geodeticToEcef() does) and subtracting afterward,
+    // or subtracting two float32 ECEF positions directly, both reintroduce
+    // the ~0.5-1m-at-best precision floor this is specifically avoiding --
+    // see the class comment above and the EcefPositionD comment in
+    // geo_wgs84_ellipsoid.h for the full reasoning.
+    const GeoWgs84Ellipsoid::EcefPositionD absolute_ecef = GeoWgs84Ellipsoid::geodeticToEcefD(
         coordinate.longitude_deg, coordinate.latitude_deg, height_m);
+    return QVector3D(
+        float(absolute_ecef.x - this->render_origin_ecef.x),
+        float(absolute_ecef.y - this->render_origin_ecef.y),
+        float(absolute_ecef.z - this->render_origin_ecef.z));
 }
 
 void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
@@ -360,12 +400,13 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
     }
     this->link_vertices.reserve(segment_count * 6);
 
-    // Underground detection only means anything once entities sit at their
-    // real elevation (see setTerrainReady()) and only costs anything when
-    // X-Ray is actually the active mode -- both gates checked once here
-    // rather than per-segment below.
+    // Underground detection only costs anything when X-Ray is actually the
+    // active mode and a resolver is available -- both gates checked once
+    // here rather than per-segment below. No "is terrain ready" gate any
+    // more (see ecefPosition()'s comment) -- the resolver itself already
+    // fails gracefully per-call (returns false) when it has no DEM sample
+    // for a given coordinate yet, so there's nothing extra to check here.
     const bool should_detect_underground = this->underground_xray_enabled
-        && this->terrain_ready
         && bool(this->terrain_elevation_resolver);
 
     for (const NetworkRenderLink &link : this->network_snapshot.links)
