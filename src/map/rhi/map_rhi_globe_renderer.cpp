@@ -13,6 +13,7 @@
 #include <QFile>
 #include <QHash>
 #include <QImage>
+#include <QPainter>
 #include <QPixmap>
 #include <QRect>
 #include <QSet>
@@ -1367,19 +1368,113 @@ bool MapRhiGlobeRenderer::ensureTileResource(
     return true;
 }
 
-// Falls back to a cropped, upscaled placeholder from the nearest
-// already-loaded ancestor tile while tile's own imagery is still in
-// flight, instead of the flat GlobeMissingTileColor fill -- the same "keep
-// showing something real instead of a blank/flat placeholder" goal the
-// flat 2D/3D basemap renderer's parent/child LOD handoff serves, adapted to
-// how the globe already addresses tiles (a texture per imagery_key, no
-// texture-array/stale-layer machinery to reuse directly). Cheap even
-// though it can run every frame per still-loading tile: at most
-// tile.zoom hash lookups (bounded by max zoom, in the teens) before either
-// finding an ancestor or giving up for this frame, no network or disk I/O.
+// Falls back to a placeholder derived from already-loaded neighboring tiles
+// while tile's own imagery is still in flight, instead of the flat
+// GlobeMissingTileColor fill -- the same "keep showing something real
+// instead of a blank/flat placeholder" goal the flat 2D/3D basemap
+// renderer's parent/child LOD handoff serves, adapted to how the globe
+// already addresses tiles (a texture per imagery_key, no
+// texture-array/stale-layer machinery to reuse directly).
+//
+// Tries two directions, in this order:
+//
+// 1. Descendants (zooming OUT): the tile being merged into is brand new
+//    and was never itself fetched before -- only its children were, at the
+//    finer zoom the camera is pulling back from. If all four direct
+//    children are already cached, compose them into a 2x2 mosaic. This is
+//    likely *better* detail than the real coarse tile will eventually have
+//    (assembled from 4x the resolution), and it's almost certainly the
+//    exact same imagery that was already on screen a moment ago. Only
+//    checks direct children, not grandchildren -- covers ordinary one-step
+//    zoom-out; a large jump that skips levels falls through to (2).
+// 2. Ancestors (zooming IN): the tile being subdivided into already has a
+//    loaded parent (or grandparent, ...) covering the same area at coarser
+//    detail -- crop it to this tile's footprint and upscale.
+//
+// Cheap even though it can run every frame per still-loading tile: at most
+// a handful of hash lookups plus, on the frame a composite/crop is first
+// produced, one CPU image composite -- no network or disk I/O, and the
+// result is cached on the resource (via is_provisional/provisional_source_key)
+// so it isn't redone every frame while still waiting.
 bool MapRhiGlobeRenderer::ensureProvisionalTileResource(
     GlobeTile &tile, TileResource *resource, QRhiResourceUpdateBatch *resource_updates)
 {
+    const QString children_key = QStringLiteral("children:%1/%2/%3")
+        .arg(tile.zoom).arg(tile.tile_x).arg(tile.tile_y);
+    if (resource->is_provisional && resource->texture
+        && resource->provisional_source_key == children_key)
+    {
+        tile.resource = resource;
+        return true;
+    }
+
+    const int child_zoom = tile.zoom + 1;
+    const int child_x0 = tile.tile_x * 2;
+    const int child_y0 = tile.tile_y * 2;
+    QImage child_images[2][2];
+    int child_w = 0;
+    int child_h = 0;
+    bool all_children_cached = true;
+    for (int dx = 0; dx < 2 && all_children_cached; ++dx)
+    {
+        for (int dy = 0; dy < 2 && all_children_cached; ++dy)
+        {
+            const QString child_key = this->map_model->tileCacheKeyAtZoom(
+                child_x0 + dx, child_y0 + dy, child_zoom);
+            const QPixmap *child_pixmap = this->tile_repository->tile(child_key);
+            if (child_pixmap == nullptr || child_pixmap->isNull())
+            {
+                all_children_cached = false;
+                break;
+            }
+
+            const QImage image = child_pixmap->toImage().convertToFormat(QImage::Format_RGBA8888);
+            if (image.isNull())
+            {
+                all_children_cached = false;
+                break;
+            }
+
+            child_images[dx][dy] = image;
+            child_w = qMax(child_w, image.width());
+            child_h = qMax(child_h, image.height());
+        }
+    }
+
+    if (all_children_cached && child_w > 0 && child_h > 0)
+    {
+        QImage composite(child_w * 2, child_h * 2, QImage::Format_RGBA8888);
+        QPainter painter(&composite);
+        for (int dx = 0; dx < 2; ++dx)
+        {
+            for (int dy = 0; dy < 2; ++dy)
+            {
+                // Tile addressing here is the same XYZ scheme used
+                // throughout (Y increasing southward, matching image row
+                // order), so child (dx, dy) maps directly onto quadrant
+                // (dx, dy) of the composite with no flip.
+                painter.drawImage(
+                    QRect(dx * child_w, dy * child_h, child_w, child_h), child_images[dx][dy]);
+            }
+        }
+        painter.end();
+
+        resource->bindings.reset();
+        resource->texture.reset(this->rhi->newTexture(QRhiTexture::RGBA8, composite.size()));
+        if (!resource->texture || !resource->texture->create())
+            return false;
+        resource_updates->uploadTexture(resource->texture.get(), composite);
+        resource->pixmap_cache_key = -1;
+        resource->is_provisional = true;
+        resource->provisional_source_key = children_key;
+
+        if (!resource->bindings && !rebuildTileBindings(resource))
+            return false;
+
+        tile.resource = resource;
+        return true;
+    }
+
     for (int levels_up = 1; tile.zoom - levels_up >= 0; ++levels_up)
     {
         const int ancestor_zoom = tile.zoom - levels_up;
@@ -1430,12 +1525,12 @@ bool MapRhiGlobeRenderer::ensureProvisionalTileResource(
         return true;
     }
 
-    // No loaded ancestor anywhere in the chain (e.g. the very first tiles
-    // requested right after startup, or a fresh area with nothing cached
-    // yet at any zoom) -- nothing to derive a placeholder from. Leaving
-    // tile.resource untouched here falls through to template_bindings
-    // (the flat GlobeMissingTileColor fill) at draw time, exactly as
-    // before this fallback existed.
+    // Neither direct children nor any ancestor are loaded yet (e.g. the
+    // very first tiles requested right after startup, or a fresh area with
+    // nothing cached at any nearby zoom) -- nothing to derive a placeholder
+    // from. Leaving tile.resource untouched here falls through to
+    // template_bindings (the flat GlobeMissingTileColor fill) at draw
+    // time, exactly as before this fallback existed.
     return true;
 }
 
