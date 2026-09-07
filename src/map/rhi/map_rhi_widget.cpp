@@ -460,6 +460,7 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
         {
             this->globe_geometry_upload_pending = true;
             this->globe_highlight_upload_pending = true;
+            this->globe_flow_direction_upload_pending = true;
             this->globe_icon_upload_pending = true;
             this->globe_underground_upload_pending = true;
             this->globe_junction_instance_upload_pending = true;
@@ -487,6 +488,7 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
         this->junction_instance_upload_pending = true;
         this->globe_geometry_upload_pending = true;
         this->globe_highlight_upload_pending = true;
+        this->globe_flow_direction_upload_pending = true;
         this->globe_icon_upload_pending = true;
         this->globe_underground_upload_pending = true;
         this->globe_junction_instance_upload_pending = true;
@@ -1317,6 +1319,7 @@ void MapRhiWidget::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
     this->junction_instance_upload_pending = true;
     this->globe_geometry_upload_pending = true;
     this->globe_highlight_upload_pending = true;
+    this->globe_flow_direction_upload_pending = true;
     this->globe_icon_upload_pending = true;
     this->globe_underground_upload_pending = true;
     this->globe_junction_instance_upload_pending = true;
@@ -1344,6 +1347,7 @@ void MapRhiWidget::setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids)
     this->junction_instance_upload_pending = true;
     this->globe_geometry_upload_pending = true;
     this->globe_highlight_upload_pending = true;
+    this->globe_flow_direction_upload_pending = true;
     this->globe_icon_upload_pending = true;
     this->globe_underground_upload_pending = true;
     this->globe_junction_instance_upload_pending = true;
@@ -1443,7 +1447,10 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
         markUndergroundGeometryDirty();
     }
     if (flow_direction_changed)
+    {
         this->flow_direction_upload_pending = true;
+        this->globe_flow_direction_upload_pending = true;
+    }
     if (icon_changed)
     {
         this->icon_upload_pending = true;
@@ -2289,9 +2296,27 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     {
         this->globe_geometry_upload_pending = true;
         this->globe_highlight_upload_pending = true;
+        this->globe_flow_direction_upload_pending = true;
         this->globe_icon_upload_pending = true;
         this->globe_underground_upload_pending = true;
         this->globe_junction_instance_upload_pending = true;
+    }
+
+    // Convert the configured pixel chevron size/spacing into ECEF meters at
+    // the orbit focus depth. This is the inverse of the same perspective
+    // relationship globeHeatmapRadiusMeters() uses for pixel-sized heatmap
+    // radii, and only rebuilds arrow geometry when distance or viewport
+    // height actually changes.
+    const double viewport_height = qMax(1, this->viewport_size.height());
+    const double reference_depth_m = qMax(1.0, this->camera.globeOrbitDistanceM());
+    const double tan_half_fov =
+        std::tan(qDegreesToRadians(MapModel::GlobeFieldOfViewDeg / 2.0));
+    const double flow_direction_pixels_per_meter =
+        viewport_height / (2.0 * reference_depth_m * tan_half_fov);
+    if (this->globe_network_scene.setFlowDirectionPixelsPerMeter(
+            flow_direction_pixels_per_meter))
+    {
+        this->globe_flow_direction_upload_pending = true;
     }
 
     if (!ensureGlobeNetworkGeometryBuffers())
@@ -2420,6 +2445,9 @@ bool MapRhiWidget::ensureGlobeNetworkGeometryBuffers()
     const int required_diagnostic_node_bytes = boundedBufferSize(
         this->globe_network_scene.diagnosticNodeVertices().size(),
         qsizetype(sizeof(MapRhiScene::NodeVertex)));
+    const int required_flow_direction_bytes = boundedBufferSize(
+        this->globe_network_scene.flowDirectionVertices().size(),
+        qsizetype(sizeof(MapRhiScene::LinkVertex)));
     const int required_icon_bytes = boundedBufferSize(
         this->globe_network_scene.iconVertices().size(),
         qsizetype(sizeof(MapRhiScene::IconVertex)));
@@ -2442,7 +2470,8 @@ bool MapRhiWidget::ensureGlobeNetworkGeometryBuffers()
     if (required_link_bytes == 0 || required_node_bytes == 0
         || required_selected_link_bytes == 0 || required_selected_node_bytes == 0
         || required_diagnostic_link_bytes == 0 || required_diagnostic_node_bytes == 0
-        || required_icon_bytes == 0 || required_underground_link_bytes == 0
+        || required_flow_direction_bytes == 0 || required_icon_bytes == 0
+        || required_underground_link_bytes == 0
         || required_junction_mesh_bytes == 0 || required_junction_instance_bytes == 0)
     {
         reportFailure(QStringLiteral("RHI globe network geometry exceeds supported buffer size"));
@@ -2570,6 +2599,22 @@ bool MapRhiWidget::ensureGlobeNetworkGeometryBuffers()
         this->globe_highlight_upload_pending = true;
     }
 
+    if (!this->globe_flow_direction_vertex_buffer
+        || this->globe_flow_direction_vertex_buffer_size != required_flow_direction_bytes)
+    {
+        this->globe_flow_direction_vertex_buffer.reset(this->active_rhi->newBuffer(
+            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_flow_direction_bytes));
+        if (!this->globe_flow_direction_vertex_buffer
+            || !this->globe_flow_direction_vertex_buffer->create())
+        {
+            reportFailure(QStringLiteral(
+                "Failed to create RHI globe flow-direction vertex buffer"));
+            return false;
+        }
+        this->globe_flow_direction_vertex_buffer_size = required_flow_direction_bytes;
+        this->globe_flow_direction_upload_pending = true;
+    }
+
     if (!this->globe_icon_vertex_buffer
         || this->globe_icon_vertex_buffer_size != required_icon_bytes)
     {
@@ -2672,6 +2717,21 @@ void MapRhiWidget::uploadGlobeNetworkGeometry(QRhiResourceUpdateBatch *resource_
         this->globe_highlight_upload_pending = false;
     }
 
+    if (this->globe_flow_direction_upload_pending)
+    {
+        const QVector<MapRhiScene::LinkVertex> &flow_direction_vertices =
+            this->globe_network_scene.flowDirectionVertices();
+        if (!flow_direction_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->globe_flow_direction_vertex_buffer.get(), 0,
+                int(flow_direction_vertices.size()
+                    * qsizetype(sizeof(MapRhiScene::LinkVertex))),
+                flow_direction_vertices.constData());
+        }
+        this->globe_flow_direction_upload_pending = false;
+    }
+
     if (this->globe_icon_upload_pending)
     {
         const QVector<MapRhiScene::IconVertex> &icon_vertices =
@@ -2735,9 +2795,9 @@ void MapRhiWidget::uploadGlobeNetworkGeometry(QRhiResourceUpdateBatch *resource_
 void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
 {
     // Ordering mirrors the ThreeD (is_2d_view == false) branch above:
-    // Solid-mode no-depth pass first (see below), then base links, base
-    // nodes/junctions, selection highlight, simulation diagnostics, X-Ray
-    // underground links, then icons on top of everything. The heatmap
+    // Solid-mode no-depth pass first (see below), then base links, flow
+    // chevrons, base nodes/junctions, selection highlight, simulation
+    // diagnostics, X-Ray underground links, then icons on top. The heatmap
     // overlay and 3D tank/reservoir meshes are not yet implemented for the
     // globe -- see MapRhiGlobeNetworkScene's class comment -- so this
     // intentionally does not reference those pipelines. Junctions ARE real
@@ -2764,6 +2824,8 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
         this->globe_network_scene.diagnosticLinkVertices();
     const QVector<MapRhiScene::NodeVertex> &diagnostic_node_vertices =
         this->globe_network_scene.diagnosticNodeVertices();
+    const QVector<MapRhiScene::LinkVertex> &flow_direction_vertices =
+        this->globe_network_scene.flowDirectionVertices();
     // Junctions render as real 3D sphere instances, not flat quads -- see
     // MapRhiGlobeNetworkScene::junctionInstances()'s comment. junction_mesh
     // is the one shared, view-mode-agnostic unit-sphere mesh ThreeD already
@@ -2874,6 +2936,16 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
             this->globe_link_vertex_buffer.get(), 0);
         command_buffer->setVertexInput(0, 1, &link_binding);
         command_buffer->draw(quint32(link_vertices.size()));
+    }
+
+    if (!flow_direction_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->link_pipeline.get());
+        command_buffer->setShaderResources();
+        const QRhiCommandBuffer::VertexInput flow_direction_binding(
+            this->globe_flow_direction_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &flow_direction_binding);
+        command_buffer->draw(quint32(flow_direction_vertices.size()));
     }
 
     if (!node_vertices.isEmpty())
@@ -4282,6 +4354,7 @@ void MapRhiWidget::resetGpuResources()
     this->underground_link_vertex_buffer.reset();
     this->globe_underground_link_vertex_buffer.reset();
     this->globe_icon_vertex_buffer.reset();
+    this->globe_flow_direction_vertex_buffer.reset();
     this->globe_diagnostic_node_vertex_buffer.reset();
     this->globe_diagnostic_link_vertex_buffer.reset();
     this->globe_selected_node_vertex_buffer.reset();
@@ -4307,6 +4380,7 @@ void MapRhiWidget::resetGpuResources()
     this->underground_link_vertex_buffer_size = 0;
     this->globe_underground_link_vertex_buffer_size = 0;
     this->globe_icon_vertex_buffer_size = 0;
+    this->globe_flow_direction_vertex_buffer_size = 0;
     this->globe_diagnostic_node_vertex_buffer_size = 0;
     this->globe_diagnostic_link_vertex_buffer_size = 0;
     this->globe_selected_node_vertex_buffer_size = 0;
@@ -4340,6 +4414,7 @@ void MapRhiWidget::resetGpuResources()
     this->underground_geometry_dirty = true;
     this->globe_geometry_upload_pending = true;
     this->globe_highlight_upload_pending = true;
+    this->globe_flow_direction_upload_pending = true;
     this->globe_icon_upload_pending = true;
     this->globe_underground_upload_pending = true;
     this->globe_junction_instance_upload_pending = true;

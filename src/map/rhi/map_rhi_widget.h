@@ -208,6 +208,7 @@ private:
     std::unique_ptr<QRhiBuffer> globe_selected_node_vertex_buffer;
     std::unique_ptr<QRhiBuffer> globe_diagnostic_link_vertex_buffer;
     std::unique_ptr<QRhiBuffer> globe_diagnostic_node_vertex_buffer;
+    std::unique_ptr<QRhiBuffer> globe_flow_direction_vertex_buffer;
     std::unique_ptr<QRhiBuffer> globe_icon_vertex_buffer;
     // Populated only while X-Ray mode is active (see
     // MapRhiGlobeNetworkScene::setUndergroundXRayEnabled()); drawn through
@@ -272,6 +273,7 @@ private:
     int globe_selected_node_vertex_buffer_size = 0;
     int globe_diagnostic_link_vertex_buffer_size = 0;
     int globe_diagnostic_node_vertex_buffer_size = 0;
+    int globe_flow_direction_vertex_buffer_size = 0;
     int globe_icon_vertex_buffer_size = 0;
     int globe_underground_link_vertex_buffer_size = 0;
     bool geometry_upload_pending = true;
@@ -287,6 +289,7 @@ private:
     bool underground_geometry_dirty = true;
     bool globe_geometry_upload_pending = true;
     bool globe_highlight_upload_pending = true;
+    bool globe_flow_direction_upload_pending = true;
     bool globe_icon_upload_pending = true;
     bool globe_underground_upload_pending = true;
     bool globe_junction_instance_upload_pending = true;

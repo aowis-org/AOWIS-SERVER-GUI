@@ -59,8 +59,8 @@
 //
 // Not yet implemented for the globe (all render as their flat pixel-marker
 // fallback, matching what the ThreeD view already does when its 3D-model
-// toggles are off): the heatmap overlay, flow-direction chevrons, and 3D
-// tank/reservoir meshes, and coincident-node decluttering
+// toggles are off): the heatmap overlay, 3D tank/reservoir meshes, and
+// coincident-node decluttering
 // (map_node_declutter.h). Junctions ARE rendered as real 3D sphere
 // instances -- see junctionInstances() -- reusing MapRhiScene/MapRhiWidget's
 // existing MapRhiJunctionInstance/junction_pipeline machinery unmodified,
@@ -157,6 +157,11 @@ public:
     // happened. Returns true if the origin actually changed (and geometry
     // was rebuilt).
     bool setRenderOriginEcef(const GeoWgs84Ellipsoid::EcefPositionD &origin_ecef);
+    // Screen scale at the Globe orbit target, used to give flow-direction
+    // chevrons the same pixel-based length, spacing, and terrain clearance
+    // as their ThreeD counterparts. Returns true when the scale changed and
+    // flowDirectionVertices() was rebuilt.
+    bool setFlowDirectionPixelsPerMeter(double pixels_per_meter);
 
     const QVector<MapRhiScene::LinkVertex> &linkVertices() const;
     const QVector<MapRhiScene::NodeVertex> &nodeVertices() const;
@@ -164,6 +169,7 @@ public:
     const QVector<MapRhiScene::NodeVertex> &selectedNodeVertices() const;
     const QVector<MapRhiScene::LinkVertex> &diagnosticLinkVertices() const;
     const QVector<MapRhiScene::NodeVertex> &diagnosticNodeVertices() const;
+    const QVector<MapRhiScene::LinkVertex> &flowDirectionVertices() const;
     const QVector<MapRhiScene::IconVertex> &iconVertices() const;
     const QVector<MapRhiScene::LinkVertex> &undergroundLinkVertices() const;
     // Real 3D sphere instances for junction entities -- see the class
@@ -217,6 +223,7 @@ private:
     {
         QVector3D start;
         QVector3D end;
+        float length_m = 0.0f;
     };
 
     struct LinkPath
@@ -224,6 +231,7 @@ private:
         InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
         quint32 render_id = 0;
         QVector<SceneSegment> segments;
+        double total_length_m = 0.0;
     };
 
     void rebuildNetworkGeometry();
@@ -234,6 +242,12 @@ private:
                     const QVector3D &center);
     void applyLinkColor(MapRhiScene::LinkVertex *vertex) const;
     void applyNodeColor(MapRhiScene::NodeVertex *vertex) const;
+    void rebuildFlowDirections();
+    void appendFlowDirectionStroke(
+        const QVector3D &start, const QVector3D &end,
+        QRgb color, float half_width_px);
+    QVector3D ellipsoidNormalAt(const QVector3D &relative_ecef) const;
+    QRgb flowDirectionColor(quint32 render_id) const;
     void rebuildIcons();
     void appendIcon(const IconMarker &marker);
     // Rebuilds junction_instances from junction_markers plus whatever
@@ -276,6 +290,7 @@ private:
     QVector<MapRhiScene::NodeVertex> selected_node_vertices;
     QVector<MapRhiScene::LinkVertex> diagnostic_link_vertices;
     QVector<MapRhiScene::NodeVertex> diagnostic_node_vertices;
+    QVector<MapRhiScene::LinkVertex> flow_direction_vertices;
     QVector<MapRhiScene::IconVertex> icon_vertices;
     QVector<IconMarker> icon_markers;
     QVector<JunctionMarker> junction_markers;
@@ -301,6 +316,7 @@ private:
     GeoWgs84Ellipsoid::EcefPositionD render_origin_ecef;
     double ground_offset_m = 0.0;
     double vertical_exaggeration = 1.0;
+    double flow_direction_pixels_per_meter = 0.0;
     TerrainElevationResolver terrain_elevation_resolver;
     bool underground_xray_enabled = false;
     QVector<MapRhiScene::LinkVertex> underground_link_vertices;

@@ -30,6 +30,12 @@ constexpr double UndergroundToleranceM = 0.1;
 // even when the user hasn't (or doesn't need to have) touched the ground
 // offset slider.
 constexpr double MinimumAntiZFightingLiftM = 2.0;
+constexpr double FlowDirectionMinimumLinkPixels = 18.0;
+constexpr double FlowDirectionSpacingPixels = 100.0;
+constexpr double FlowDirectionChevronHalfWidthRatio = 0.4;
+constexpr double FlowDirectionStrokeWidthRatio = 0.2;
+constexpr double FlowDirectionMinimumElevationPixels = 4.0;
+constexpr int FlowDirectionMaximumMarkersPerLink = 32;
 }
 
 void MapRhiGlobeNetworkScene::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
@@ -73,6 +79,14 @@ void MapRhiGlobeNetworkScene::setSymbology(const MapRhiSymbology &symbology)
         || this->symbology.node_size_px != symbology.node_size_px
         || this->symbology.node_size_m != symbology.node_size_m
         || node_colors_changed;
+    const bool flow_direction_changed =
+        this->symbology.show_flow_direction != symbology.show_flow_direction
+        || this->symbology.flow_direction_size_px != symbology.flow_direction_size_px
+        || this->symbology.flow_directions != symbology.flow_directions
+        || this->symbology.link_thickness_unit != symbology.link_thickness_unit
+        || this->symbology.link_thickness_px != symbology.link_thickness_px
+        || this->symbology.link_thickness_m != symbology.link_thickness_m
+        || link_colors_changed;
 
     this->symbology = symbology;
 
@@ -92,6 +106,8 @@ void MapRhiGlobeNetworkScene::setSymbology(const MapRhiSymbology &symbology)
         rebuildIcons();
     if (junction_changed)
         rebuildJunctionInstances();
+    if (flow_direction_changed)
+        rebuildFlowDirections();
     if (link_thickness_changed)
         rebuildHighlights();
 }
@@ -182,6 +198,24 @@ bool MapRhiGlobeNetworkScene::setUndergroundXRayEnabled(bool enabled)
     return true;
 }
 
+bool MapRhiGlobeNetworkScene::setFlowDirectionPixelsPerMeter(double pixels_per_meter)
+{
+    const double bounded_pixels_per_meter =
+        std::isfinite(pixels_per_meter) && pixels_per_meter > 0.0
+        ? pixels_per_meter
+        : 0.0;
+    if (qFuzzyCompare(
+            1.0 + this->flow_direction_pixels_per_meter,
+            1.0 + bounded_pixels_per_meter))
+    {
+        return false;
+    }
+
+    this->flow_direction_pixels_per_meter = bounded_pixels_per_meter;
+    rebuildFlowDirections();
+    return true;
+}
+
 const QVector<MapRhiScene::LinkVertex> &MapRhiGlobeNetworkScene::linkVertices() const
 {
     return this->link_vertices;
@@ -210,6 +244,11 @@ const QVector<MapRhiScene::LinkVertex> &MapRhiGlobeNetworkScene::diagnosticLinkV
 const QVector<MapRhiScene::NodeVertex> &MapRhiGlobeNetworkScene::diagnosticNodeVertices() const
 {
     return this->diagnostic_node_vertices;
+}
+
+const QVector<MapRhiScene::LinkVertex> &MapRhiGlobeNetworkScene::flowDirectionVertices() const
+{
+    return this->flow_direction_vertices;
 }
 
 const QVector<MapRhiScene::IconVertex> &MapRhiGlobeNetworkScene::iconVertices() const
@@ -354,6 +393,7 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
     this->selected_node_vertices.clear();
     this->diagnostic_link_vertices.clear();
     this->diagnostic_node_vertices.clear();
+    this->flow_direction_vertices.clear();
     this->icon_vertices.clear();
     this->icon_markers.clear();
     this->junction_markers.clear();
@@ -466,7 +506,9 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
             if (have_previous)
             {
                 appendLinkSegment(link.entity_type, link.render_id, previous, current);
-                link_path.segments.append({previous, current});
+                const float segment_length_m = (current - previous).length();
+                link_path.segments.append({previous, current, segment_length_m});
+                link_path.total_length_m += double(segment_length_m);
 
                 if (should_detect_underground)
                 {
@@ -490,9 +532,7 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
         {
             if (mapRhiHasIcon(link.entity_type))
             {
-                float total_length = 0.0f;
-                for (const SceneSegment &segment : link_path.segments)
-                    total_length += (segment.end - segment.start).length();
+                const float total_length = float(link_path.total_length_m);
 
                 if (total_length > 0.0f)
                 {
@@ -525,6 +565,7 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
         }
     }
 
+    rebuildFlowDirections();
     rebuildIcons();
     rebuildJunctionInstances();
     rebuildHighlights();
@@ -727,6 +768,206 @@ void MapRhiGlobeNetworkScene::applyNodeColor(MapRhiScene::NodeVertex *vertex) co
             || (this->symbology.show_icons && mapRhiHasIcon(vertex->entity_type))
         ? 0.0f
         : qAlpha(color) / 255.0f;
+}
+
+void MapRhiGlobeNetworkScene::rebuildFlowDirections()
+{
+    this->flow_direction_vertices.clear();
+
+    if (!this->symbology.show_flow_direction
+        || this->symbology.flow_direction_size_px <= 0
+        || this->symbology.flow_directions.isEmpty()
+        || !std::isfinite(this->flow_direction_pixels_per_meter)
+        || this->flow_direction_pixels_per_meter <= 0.0)
+    {
+        return;
+    }
+
+    qsizetype estimated_marker_count = 0;
+    for (const LinkPath &path : this->link_paths)
+    {
+        const double total_screen_length_px =
+            path.total_length_m * this->flow_direction_pixels_per_meter;
+        if (total_screen_length_px < FlowDirectionMinimumLinkPixels)
+            continue;
+
+        estimated_marker_count += qBound(
+            1, int(std::floor(total_screen_length_px / FlowDirectionSpacingPixels)),
+            FlowDirectionMaximumMarkersPerLink);
+    }
+    this->flow_direction_vertices.reserve(estimated_marker_count * 12);
+
+    const double chevron_length_m = double(this->symbology.flow_direction_size_px)
+        / this->flow_direction_pixels_per_meter;
+    const double chevron_half_width_m =
+        chevron_length_m * FlowDirectionChevronHalfWidthRatio;
+    const double elevation_pixels = qMax(
+        FlowDirectionMinimumElevationPixels,
+        double(this->symbology.link_thickness_px) / 2.0 + 2.0);
+    const float elevation_m = float(
+        elevation_pixels / this->flow_direction_pixels_per_meter);
+    const double stroke_width_px = qMax(
+        1.0,
+        double(this->symbology.flow_direction_size_px)
+            * FlowDirectionStrokeWidthRatio);
+    const float half_stroke_px = float(stroke_width_px / 2.0);
+
+    for (const LinkPath &path : this->link_paths)
+    {
+        const qint8 flow_direction =
+            this->symbology.flow_directions.value(path.render_id, 0);
+        if (flow_direction == 0 || path.segments.isEmpty())
+            continue;
+
+        const double total_screen_length_px =
+            path.total_length_m * this->flow_direction_pixels_per_meter;
+        if (total_screen_length_px < FlowDirectionMinimumLinkPixels
+            || path.total_length_m <= 0.0)
+        {
+            continue;
+        }
+
+        const int marker_count = qBound(
+            1, int(std::floor(total_screen_length_px / FlowDirectionSpacingPixels)),
+            FlowDirectionMaximumMarkersPerLink);
+        const QRgb arrow_color = flowDirectionColor(path.render_id);
+
+        for (int marker_index = 0; marker_index < marker_count; ++marker_index)
+        {
+            double target_world_distance_m = path.total_length_m
+                * double(marker_index + 1) / double(marker_count + 1);
+            if (marker_count == 1 && path.entity_type != InfrastructureEntity::Pipe)
+                target_world_distance_m = path.total_length_m * 0.3;
+
+            double traversed_world_distance_m = 0.0;
+            for (const SceneSegment &segment : path.segments)
+            {
+                const QVector3D segment_vector = segment.end - segment.start;
+                const double segment_world_length_m = double(segment.length_m);
+                if (segment_world_length_m <= 0.0)
+                    continue;
+                if (traversed_world_distance_m + segment_world_length_m
+                    < target_world_distance_m)
+                {
+                    traversed_world_distance_m += segment_world_length_m;
+                    continue;
+                }
+
+                const double ratio = qBound(
+                    0.0,
+                    (target_world_distance_m - traversed_world_distance_m)
+                        / segment_world_length_m,
+                    1.0);
+                QVector3D center = segment.start + segment_vector * float(ratio);
+                const QVector3D surface_normal = ellipsoidNormalAt(center);
+                if (surface_normal.lengthSquared() <= 0.0f)
+                    break;
+
+                QVector3D direction = segment_vector
+                    - surface_normal
+                        * QVector3D::dotProduct(segment_vector, surface_normal);
+                if (direction.lengthSquared() <= 1.0e-12f)
+                    break;
+                direction.normalize();
+                if (flow_direction < 0)
+                    direction *= -1.0f;
+
+                QVector3D normal = QVector3D::crossProduct(surface_normal, direction);
+                if (normal.lengthSquared() <= 1.0e-12f)
+                    break;
+                normal.normalize();
+
+                center += surface_normal * elevation_m;
+                const QVector3D tip = center
+                    + direction * float(chevron_length_m / 2.0);
+                const QVector3D base = center
+                    - direction * float(chevron_length_m / 2.0);
+                const QVector3D tail_first = base
+                    + normal * float(chevron_half_width_m);
+                const QVector3D tail_second = base
+                    - normal * float(chevron_half_width_m);
+
+                appendFlowDirectionStroke(
+                    tail_first, tip, arrow_color, half_stroke_px);
+                appendFlowDirectionStroke(
+                    tail_second, tip, arrow_color, half_stroke_px);
+                break;
+            }
+        }
+    }
+}
+
+void MapRhiGlobeNetworkScene::appendFlowDirectionStroke(
+    const QVector3D &start, const QVector3D &end,
+    QRgb color, float half_width_px)
+{
+    const float corners[6][2] = {
+        {0.0f, -1.0f},
+        {1.0f, -1.0f},
+        {1.0f, 1.0f},
+        {0.0f, -1.0f},
+        {1.0f, 1.0f},
+        {0.0f, 1.0f}
+    };
+    const float base_half_width_px = float(this->symbology.link_thickness_px) / 2.0f;
+
+    for (int index = 0; index < 6; ++index)
+    {
+        MapRhiScene::LinkVertex vertex;
+        vertex.start_x = start.x();
+        vertex.start_y = start.y();
+        vertex.start_z = start.z();
+        vertex.end_x = end.x();
+        vertex.end_y = end.y();
+        vertex.end_z = end.z();
+        vertex.along = corners[index][0];
+        vertex.side = corners[index][1];
+        vertex.red = qRed(color) / 255.0f;
+        vertex.green = qGreen(color) / 255.0f;
+        vertex.blue = qBlue(color) / 255.0f;
+        vertex.alpha = qAlpha(color) / 255.0f;
+        vertex.size_adjust_px = this->symbology.link_thickness_unit
+                == NetworkSymbologySizeUnit::Meters
+            ? -half_width_px
+            : half_width_px - base_half_width_px;
+        this->flow_direction_vertices.append(vertex);
+    }
+}
+
+QVector3D MapRhiGlobeNetworkScene::ellipsoidNormalAt(
+    const QVector3D &relative_ecef) const
+{
+    const double absolute_x = this->render_origin_ecef.x + double(relative_ecef.x());
+    const double absolute_y = this->render_origin_ecef.y + double(relative_ecef.y());
+    const double absolute_z = this->render_origin_ecef.z + double(relative_ecef.z());
+    const double equatorial_radius_squared =
+        GeoWgs84Ellipsoid::EquatorialRadiusM * GeoWgs84Ellipsoid::EquatorialRadiusM;
+    const double polar_radius_squared =
+        GeoWgs84Ellipsoid::PolarRadiusM * GeoWgs84Ellipsoid::PolarRadiusM;
+    const double normal_x = absolute_x / equatorial_radius_squared;
+    const double normal_y = absolute_y / equatorial_radius_squared;
+    const double normal_z = absolute_z / polar_radius_squared;
+    const double normal_length = std::sqrt(
+        normal_x * normal_x + normal_y * normal_y + normal_z * normal_z);
+    if (!std::isfinite(normal_length) || normal_length <= 0.0)
+        return QVector3D();
+
+    return QVector3D(
+        float(normal_x / normal_length),
+        float(normal_y / normal_length),
+        float(normal_z / normal_length));
+}
+
+QRgb MapRhiGlobeNetworkScene::flowDirectionColor(quint32 render_id) const
+{
+    const QRgb link_color = this->symbology.link_colors.value(
+        render_id, networkSymbologyDefaultColor());
+    const int red = qRed(link_color);
+    const int green = qGreen(link_color);
+    const int blue = qBlue(link_color);
+    const double luminance =
+        0.2126 * double(red) + 0.7152 * double(green) + 0.0722 * double(blue);
+    return luminance >= 150.0 ? qRgb(0, 0, 0) : qRgb(255, 255, 255);
 }
 
 void MapRhiGlobeNetworkScene::rebuildIcons()
