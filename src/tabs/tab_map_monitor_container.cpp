@@ -121,6 +121,119 @@ private:
 };
 
 
+class JunctionSizeSlider final : public QSlider
+{
+public:
+    JunctionSizeSlider(int active_minimum, int active_maximum, int value_default,
+                       const QString &description, const QString &unit_suffix,
+                       QWidget *parent = nullptr, double display_scale = 1.0,
+                       int display_decimals = 0)
+        : QSlider(Qt::Horizontal, parent)
+    {
+        setConfiguration(active_minimum, active_maximum, value_default, value_default,
+                         description, unit_suffix, display_scale, display_decimals);
+        connect(this, &QSlider::valueChanged, this, [this]
+        {
+            if (value() > 0 && value() <= this->off_detent_steps)
+            {
+                setValue(0);
+                return;
+            }
+
+            updateToolTip();
+        });
+    }
+
+    void setConfiguration(int active_minimum, int active_maximum, int value_default,
+                          int value, const QString &description, const QString &unit_suffix,
+                          double display_scale = 1.0, int display_decimals = 0)
+    {
+        const QSignalBlocker blocker(this);
+        this->active_minimum = active_minimum;
+        this->active_maximum = active_maximum;
+        this->value_default = qBound(active_minimum, value_default, active_maximum);
+        this->description = description;
+        this->unit_suffix = unit_suffix;
+        this->display_scale = display_scale;
+        this->display_decimals = display_decimals;
+        const int active_position_count = active_maximum - active_minimum + 1;
+        this->off_detent_steps = qMax(1, qRound(active_position_count / 19.0));
+        setRange(0, this->off_detent_steps + active_position_count);
+        setSingleStep(1);
+        setPageStep(1);
+        setValue(positionForSize(value));
+        updateToolTip();
+    }
+
+    int junctionSizeRaw() const
+    {
+        if (value() <= this->off_detent_steps)
+            return 0;
+        return this->active_minimum + value() - this->off_detent_steps - 1;
+    }
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        if (event->button() == Qt::RightButton)
+        {
+            setValue(positionForSize(this->value_default));
+            event->accept();
+            return;
+        }
+
+        QSlider::mousePressEvent(event);
+    }
+
+    void contextMenuEvent(QContextMenuEvent *event) override
+    {
+        setValue(positionForSize(this->value_default));
+        event->accept();
+    }
+
+private:
+    int positionForSize(int raw_size) const
+    {
+        if (raw_size <= 0)
+            return 0;
+        return qBound(this->off_detent_steps + 1,
+                      this->off_detent_steps + raw_size - this->active_minimum + 1,
+                      maximum());
+    }
+
+    QString displayValue(int raw_value) const
+    {
+        return QString::number(raw_value * this->display_scale, 'f', this->display_decimals);
+    }
+
+    void updateToolTip()
+    {
+        const int raw_size = junctionSizeRaw();
+        const QString current = raw_size == 0
+            ? QStringLiteral("Off")
+            : QStringLiteral("%1%2").arg(displayValue(raw_size), this->unit_suffix);
+        setToolTip(QStringLiteral(
+            "%1\nThe far-left detent is Off; crossing it snaps between Off and the minimum useful size.\n"
+            "Current: %2\nActive range: %3%5 to %4%5\nDefault: %6%5\nRight-click to reset.")
+            .arg(this->description)
+            .arg(current)
+            .arg(displayValue(this->active_minimum))
+            .arg(displayValue(this->active_maximum))
+            .arg(this->unit_suffix)
+            .arg(displayValue(this->value_default)));
+    }
+
+    int active_minimum = 1;
+    int active_maximum = 1;
+    int value_default = 1;
+    int off_detent_steps = 1;
+    QString description;
+    QString unit_suffix;
+    double display_scale = 1.0;
+    int display_decimals = 0;
+};
+
+
 class FlowDirectionSizeSlider final : public QSlider
 {
 public:
@@ -939,10 +1052,14 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         [this](NetworkSymbologySizeUnit unit, double size)
     {
         this->symbology_settings.node_size_unit = unit;
-        if (unit == NetworkSymbologySizeUnit::Meters)
-            this->symbology_settings.node_size_m = size;
-        else
-            this->symbology_settings.node_size_px = qRound(size);
+        this->symbology_settings.show_junctions = size > 0.0;
+        if (size > 0.0)
+        {
+            if (unit == NetworkSymbologySizeUnit::Meters)
+                this->symbology_settings.node_size_m = size;
+            else
+                this->symbology_settings.node_size_px = qRound(size);
+        }
         applyVisualControlSymbology();
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalLinkVisualClicked, this,
@@ -1965,13 +2082,20 @@ void MapMonitorMenuWidget::addGroupVisualSettings()
     combo_node_size_unit->setCurrentIndex(1);
     combo_node_size_unit->setToolTip(QStringLiteral(
         "Meters keep a true world-space junction size. Pixels keep a stable visual size while preserving 3D perspective."));
-    SymbologySlider *slider_node_size = new SymbologySlider(4, 64,
+    JunctionSizeSlider *slider_node_size = new JunctionSizeSlider(4, 64,
         NetworkSymbologyDefaultNodeSizePx,
         QStringLiteral("Sets the junction marker/orb diameter in screen pixels."),
         QStringLiteral(" px"), this);
     connect(slider_node_size, &QSlider::valueChanged, this,
-        [this](int raw_value)
+        [this, slider_node_size](int)
     {
+        const int raw_value = slider_node_size->junctionSizeRaw();
+        if (raw_value == 0)
+        {
+            emit signalNodeSizeChanged(this->node_size_unit, 0.0);
+            return;
+        }
+
         if (this->node_size_unit == NetworkSymbologySizeUnit::Meters)
         {
             this->node_size_m = raw_value * 0.1;
@@ -1991,6 +2115,7 @@ void MapMonitorMenuWidget::addGroupVisualSettings()
         if (unit == this->node_size_unit)
             return;
 
+        const bool junctions_visible = slider_node_size->junctionSizeRaw() > 0;
         this->node_size_unit = unit;
         if (unit == NetworkSymbologySizeUnit::Meters)
         {
@@ -1998,14 +2123,15 @@ void MapMonitorMenuWidget::addGroupVisualSettings()
                 qRound(NetworkSymbologyMinimumNodeSizeM * 10.0),
                 qRound(NetworkSymbologyMaximumNodeSizeM * 10.0),
                 qRound(NetworkSymbologyDefaultNodeSizeM * 10.0),
-                qRound(this->node_size_m * 10.0),
+                junctions_visible ? qRound(this->node_size_m * 10.0) : 0,
                 QStringLiteral("Sets the true world-space junction diameter."),
                 QStringLiteral(" m"), 0.1, 1);
         }
         else
         {
             slider_node_size->setConfiguration(4, 64,
-                NetworkSymbologyDefaultNodeSizePx, this->node_size_px,
+                NetworkSymbologyDefaultNodeSizePx,
+                junctions_visible ? this->node_size_px : 0,
                 QStringLiteral("Sets the junction marker/orb diameter in screen pixels."),
                 QStringLiteral(" px"));
         }

@@ -12,6 +12,7 @@ class HydraulicData;
 struct MapRhiSymbology
 {
     NetworkSymbologySizeUnit node_size_unit = NetworkSymbologySizeUnit::Pixels;
+    bool show_junctions = true;
     int node_size_px = NetworkSymbologyDefaultNodeSizePx;
     double node_size_m = NetworkSymbologyDefaultNodeSizeM;
     NetworkSymbologySizeUnit icon_size_unit = NetworkSymbologySizeUnit::Pixels;

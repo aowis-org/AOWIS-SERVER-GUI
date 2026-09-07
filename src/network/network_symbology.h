@@ -58,6 +58,7 @@ struct NetworkSymbologySettings
     NetworkSymbologyPalette node_palette = NetworkSymbologyDefaultNodePalette;
     bool node_palette_flipped = false;
     NetworkSymbologySizeUnit node_size_unit = NetworkSymbologySizeUnit::Pixels;
+    bool show_junctions = true;
     int node_size_px = NetworkSymbologyDefaultNodeSizePx;
     double node_size_m = NetworkSymbologyDefaultNodeSizeM;
     NetworkSymbologySizeUnit icon_size_unit = NetworkSymbologySizeUnit::Pixels;

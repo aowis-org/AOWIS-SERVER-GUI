@@ -74,8 +74,11 @@ void MapRhiGlobeNetworkScene::setSymbology(const MapRhiSymbology &symbology)
         || link_colors_changed || node_colors_changed;
     // Mirrors MapRhiScene::setSymbology()'s "junction_changed" -- anything
     // that changes a junction sphere's radius or color.
+    const bool junction_visibility_changed =
+        this->symbology.show_junctions != symbology.show_junctions;
     const bool junction_changed =
-        this->symbology.node_size_unit != symbology.node_size_unit
+        junction_visibility_changed
+        || this->symbology.node_size_unit != symbology.node_size_unit
         || this->symbology.node_size_px != symbology.node_size_px
         || this->symbology.node_size_m != symbology.node_size_m
         || node_colors_changed;
@@ -97,7 +100,7 @@ void MapRhiGlobeNetworkScene::setSymbology(const MapRhiSymbology &symbology)
         for (MapRhiScene::LinkVertex &vertex : this->underground_link_vertices)
             applyLinkColor(&vertex);
     }
-    if (node_colors_changed || icon_visibility_changed)
+    if (node_colors_changed || icon_visibility_changed || junction_visibility_changed)
     {
         for (MapRhiScene::NodeVertex &vertex : this->node_vertices)
             applyNodeColor(&vertex);
@@ -108,7 +111,7 @@ void MapRhiGlobeNetworkScene::setSymbology(const MapRhiSymbology &symbology)
         rebuildJunctionInstances();
     if (flow_direction_changed)
         rebuildFlowDirections();
-    if (link_thickness_changed)
+    if (junction_visibility_changed || link_thickness_changed)
         rebuildHighlights();
 }
 
@@ -1054,7 +1057,7 @@ void MapRhiGlobeNetworkScene::appendIcon(const IconMarker &marker)
 void MapRhiGlobeNetworkScene::rebuildJunctionInstances()
 {
     this->junction_instances.clear();
-    if (this->junction_markers.isEmpty())
+    if (!this->symbology.show_junctions || this->junction_markers.isEmpty())
         return;
 
     // Globe network geometry is already real ECEF meters (see this class's
@@ -1224,7 +1227,8 @@ void MapRhiGlobeNetworkScene::appendEntityHighlight(
         }
     }
 
-    if (node_target != nullptr)
+    if (node_target != nullptr
+        && (entity_type != InfrastructureEntity::Junction || this->symbology.show_junctions))
     {
         const QVector<int> node_indices = this->node_vertex_indices_by_entity.value(key);
         node_target->reserve(node_target->size() + node_indices.size());

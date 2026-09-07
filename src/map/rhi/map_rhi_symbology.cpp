@@ -79,6 +79,7 @@ MapRhiSymbology resolveMapRhiSymbology(
 
     MapRhiSymbology result;
     result.node_size_unit = bounded_settings.node_size_unit;
+    result.show_junctions = bounded_settings.show_junctions;
     result.node_size_px = bounded_settings.node_size_px;
     result.node_size_m = bounded_settings.node_size_m;
     result.icon_size_unit = bounded_settings.icon_size_unit;

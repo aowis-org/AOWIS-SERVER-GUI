@@ -330,8 +330,11 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
         || this->symbology.flow_directions != symbology.flow_directions
         || link_thickness_changed
         || link_colors_changed;
+    const bool junction_visibility_changed =
+        this->symbology.show_junctions != symbology.show_junctions;
     const bool junction_changed =
-        this->symbology.node_size_unit != symbology.node_size_unit
+        junction_visibility_changed
+        || this->symbology.node_size_unit != symbology.node_size_unit
         || this->symbology.node_size_px != symbology.node_size_px
         || this->symbology.node_size_m != symbology.node_size_m
         || node_colors_changed;
@@ -343,7 +346,7 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
         for (LinkVertex &vertex : this->link_vertices)
             applyLinkColor(&vertex);
     }
-    if (node_colors_changed || icon_visibility_changed)
+    if (node_colors_changed || icon_visibility_changed || junction_visibility_changed)
     {
         for (NodeVertex &vertex : this->node_vertices)
             applyNodeColor(&vertex);
@@ -360,7 +363,7 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
         rebuildJunctionInstances();
     if (flow_direction_changed)
         rebuildFlowDirections();
-    if (link_thickness_changed)
+    if (link_thickness_changed || junction_visibility_changed)
         rebuildHighlights();
 }
 
@@ -799,10 +802,10 @@ void MapRhiScene::applyNodeColor(NodeVertex *vertex) const
     vertex->red = qRed(color) / 255.0f;
     vertex->green = qGreen(color) / 255.0f;
     vertex->blue = qBlue(color) / 255.0f;
-    const bool hidden_by_3d_junction =
-        this->use_3d_junction_models
-        && vertex->entity_type == InfrastructureEntity::Junction;
-    vertex->alpha = hidden_by_3d_junction
+    const bool junction_hidden =
+        vertex->entity_type == InfrastructureEntity::Junction
+        && (!this->symbology.show_junctions || this->use_3d_junction_models);
+    vertex->alpha = junction_hidden
         || (this->symbology.show_icons && mapRhiHasIcon(vertex->entity_type))
         ? 0.0f
         : qAlpha(color) / 255.0f;
@@ -1081,7 +1084,8 @@ void MapRhiScene::rebuildReservoirInstances()
 void MapRhiScene::rebuildJunctionInstances()
 {
     this->junction_instances.clear();
-    if (!this->use_3d_junction_models || this->junction_markers.isEmpty())
+    if (!this->symbology.show_junctions
+        || !this->use_3d_junction_models || this->junction_markers.isEmpty())
         return;
 
     float radius_world = 1.0f;
@@ -1403,7 +1407,8 @@ void MapRhiScene::appendEntityHighlight(
         }
     }
 
-    if (node_target != nullptr)
+    if (node_target != nullptr
+        && (entity_type != InfrastructureEntity::Junction || this->symbology.show_junctions))
     {
         const QVector<int> node_indices = this->node_vertex_indices_by_entity.value(key);
         node_target->reserve(node_target->size() + node_indices.size());

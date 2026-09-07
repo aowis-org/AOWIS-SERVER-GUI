@@ -918,6 +918,8 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
     for (const NetworkRenderNode &node : snapshot.nodes)
     {
         if (this->scene.isEntityHidden(node.uuid)
+            || (!this->applied_symbology.show_junctions
+                && node.entity_type == InfrastructureEntity::Junction)
             || (three_d
                 && (node.entity_type == InfrastructureEntity::Junction
                     || node.entity_type == InfrastructureEntity::Tank
@@ -1378,12 +1380,17 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
     if (is_monitor_surface && is_2d_view && isLightThemeWindowColor(window_color))
         themed_symbology.icon_default_fill_color = MonitorLightThemeIconFillColor;
 
+    const bool junction_visibility_changed =
+        !this->symbology_initialized
+        || this->applied_symbology.show_junctions != themed_symbology.show_junctions;
     const bool base_symbology_changed =
         !this->symbology_initialized
+        || junction_visibility_changed
         || this->applied_symbology.node_colors != themed_symbology.node_colors
         || this->applied_symbology.link_colors != themed_symbology.link_colors;
     const bool junction_changed =
         !this->symbology_initialized
+        || junction_visibility_changed
         || this->applied_symbology.node_size_unit != themed_symbology.node_size_unit
         || this->applied_symbology.node_size_px != themed_symbology.node_size_px
         || this->applied_symbology.node_size_m != themed_symbology.node_size_m
@@ -1480,6 +1487,7 @@ void MapRhiWidget::setVisualControlSettings(
     const NetworkSymbologySettings bounded_settings = settings.bounded();
     MapRhiSymbology symbology = this->applied_symbology;
     symbology.node_size_unit = bounded_settings.node_size_unit;
+    symbology.show_junctions = bounded_settings.show_junctions;
     symbology.node_size_px = bounded_settings.node_size_px;
     symbology.node_size_m = bounded_settings.node_size_m;
     symbology.icon_size_unit = bounded_settings.icon_size_unit;
