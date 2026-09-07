@@ -2360,7 +2360,14 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
 
     uploadGlobeNetworkGeometry(resource_updates);
 
-    if (!this->globe_renderer->prepare(resource_updates, view_projection, this->viewport_size))
+    // Same 0..100 -> 0..1 conversion as uniform_data[21] in the ThreeD/TwoD
+    // render() path above -- see MapRhiGlobeRenderer::prepare()'s comment
+    // for why this is cheap to just always re-pass, rather than only when
+    // it changed.
+    const float globe_heatmap_opacity =
+        qBound(0.0f, this->applied_symbology.heatmap_opacity / 100.0f, 1.0f);
+    if (!this->globe_renderer->prepare(
+            resource_updates, view_projection, this->viewport_size, globe_heatmap_opacity))
     {
         resource_updates->release();
         reportFailure(QStringLiteral("Failed to prepare RHI globe renderer"));
@@ -5200,6 +5207,77 @@ void MapRhiWidget::syncBasemapHeatmapOverlay()
         0.9);
     this->basemap_renderer->setHeatmapOverlay(
         markers, radius_world, solid_fraction);
+
+    syncGlobeHeatmapOverlay(solid_fraction);
+}
+
+void MapRhiWidget::syncGlobeHeatmapOverlay(double solid_fraction)
+{
+    // Globe's own heatmap lives entirely in MapRhiGlobeRenderer -- see its
+    // class comment and MapRhiGlobeNetworkScene's for why it needs a
+    // completely different (per-tile-texture) mechanism from the flat
+    // basemap's above, not just different marker/radius units. Markers are
+    // derived directly from this->scene's network snapshot/symbology here
+    // (coordinate + ramp color) rather than reusing this->scene.
+    // heatmapVertices() the way syncBasemapHeatmapOverlay()'s ThreeD
+    // markers do, since Globe's markers need a raw lon/lat, not an
+    // already-projected flat-world position there would be no sane way to
+    // reverse.
+    //
+    // Called from BOTH syncBasemapHeatmapOverlay() (data changed: visual
+    // mode/fractions/palette) and syncBasemapHeatmapStyle() (style
+    // changed: radius/solid-center) -- unlike the flat basemap renderer,
+    // MapRhiGlobeRenderer has no separate "keep markers, just change the
+    // style" entry point, since setHeatmapOverlay() already does its own
+    // cheap markers-and-style comparison internally (see its comment) and
+    // skips all real work when nothing actually changed. Splitting this
+    // into two paths the way the flat map does would only save
+    // re-deriving this function's own marker list, not any GPU/texture
+    // work, so there is nothing to gain by not sharing one path.
+    if (!this->globe_renderer)
+        return;
+
+    QVector<MapRhiGlobeRenderer::HeatmapMarker> globe_markers;
+    if (this->map_model != nullptr
+        && this->map_model->viewMode() == MapViewMode::Globe
+        && this->applied_symbology.visual_heatmap != VisualHeatmap::None)
+    {
+        const NetworkRenderSnapshot &snapshot = this->scene.networkSnapshot();
+        globe_markers.reserve(snapshot.nodes.size());
+        for (const NetworkRenderNode &node : snapshot.nodes)
+        {
+            if (this->scene.isEntityHidden(node.uuid)
+                || !std::isfinite(node.coordinate_wgs84.longitude_deg)
+                || !std::isfinite(node.coordinate_wgs84.latitude_deg))
+            {
+                continue;
+            }
+
+            const QHash<quint32, double>::const_iterator fraction_iterator =
+                this->applied_symbology.heatmap_fractions.constFind(node.render_id);
+            if (fraction_iterator == this->applied_symbology.heatmap_fractions.cend())
+                continue;
+
+            MapRhiGlobeRenderer::HeatmapMarker marker;
+            marker.longitude_deg = node.coordinate_wgs84.longitude_deg;
+            marker.latitude_deg = node.coordinate_wgs84.latitude_deg;
+            marker.color = networkSymbologyInterpolatedRampColor(
+                fraction_iterator.value(), this->applied_symbology.heatmap_palette,
+                this->applied_symbology.heatmap_palette_flipped);
+            globe_markers.append(marker);
+        }
+    }
+
+    // Only actually evaluated (and therefore only reads the live orbit
+    // distance -- see globeHeatmapRadiusMeters()'s comment on why that's
+    // fine here but would not be if called every frame) when there is at
+    // least one marker to place; an empty list reaching
+    // MapRhiGlobeRenderer::setHeatmapOverlay() with any radius at all is
+    // equivalent to reaching it with radius 0, since renderHeatmapTile()
+    // bails out on empty markers first regardless.
+    const double globe_radius_m =
+        globe_markers.isEmpty() ? 0.0 : globeHeatmapRadiusMeters();
+    this->globe_renderer->setHeatmapOverlay(globe_markers, globe_radius_m, solid_fraction);
 }
 
 void MapRhiWidget::syncBasemapHeatmapStyle()
@@ -5222,6 +5300,8 @@ void MapRhiWidget::syncBasemapHeatmapStyle()
         double(this->applied_symbology.heatmap_solid_center_percent) / 100.0,
         0.9);
     this->basemap_renderer->setHeatmapStyle(radius_world, solid_fraction);
+
+    syncGlobeHeatmapOverlay(solid_fraction);
 }
 
 QPointF MapRhiWidget::renderOriginWorld() const
@@ -5246,6 +5326,40 @@ float MapRhiWidget::heatmapRadiusPixels() const
 
     return float(qMax(1.0,
         this->applied_symbology.heatmap_radius_m / meters_per_pixel));
+}
+
+double MapRhiWidget::globeHeatmapRadiusMeters() const
+{
+    if (this->applied_symbology.visual_heatmap == VisualHeatmap::None)
+        return 0.0;
+
+    if (this->applied_symbology.heatmap_radius_unit != HeatmapRadiusUnit::Pixels)
+    {
+        // Meters-configured radius needs no conversion at all for Globe --
+        // unlike the flat map, which must convert through a zoom-dependent
+        // meters-per-pixel factor just above, Globe's terrain tiles are
+        // already real-world sized, so a meters radius is usable as-is.
+        return qMax(0.0, double(this->applied_symbology.heatmap_radius_m));
+    }
+
+    // Pixel-configured radius: convert to a real-world radius that stays a
+    // stable on-screen size at the camera's current orbit focus depth,
+    // using the exact same formula map_rhi_node.vert/map_rhi_junction.vert
+    // already use on GPU for their own "pixel size held stable at focus
+    // depth" sizing. Done here on the CPU instead, because the heatmap's
+    // world-space radius has to be known up front, at texture-generation
+    // time (see MapRhiGlobeRenderer::renderHeatmapTile()), not re-derived
+    // per-pixel in a shader the way node/junction sizing is. Only called
+    // when there's at least one marker to place (see
+    // syncBasemapHeatmapOverlay()), so reading the live orbit distance
+    // here doesn't cost a tile regeneration on every orbit/zoom frame the
+    // way it would if this ran unconditionally every frame.
+    const double pixel_radius = qMax(1, this->applied_symbology.heatmap_radius_px);
+    const double viewport_height = qMax(1, this->viewport_size.height());
+    const double reference_depth = qMax(1.0, this->camera.globeOrbitDistanceM());
+    const double tan_half_fov =
+        std::tan(qDegreesToRadians(MapModel::GlobeFieldOfViewDeg / 2.0));
+    return 2.0 * pixel_radius * reference_depth * tan_half_fov / viewport_height;
 }
 
 void MapRhiWidget::reportFailure(const QString &reason)

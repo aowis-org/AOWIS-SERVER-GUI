@@ -128,6 +128,10 @@ private:
     void rebuildHeatmapRenderVertices();
     void syncBasemapHeatmapOverlay();
     void syncBasemapHeatmapStyle();
+    // Shared by both of the above -- see its own definition's comment for
+    // why Globe doesn't need (or benefit from) the same data/style split
+    // the flat basemap renderer has.
+    void syncGlobeHeatmapOverlay(double solid_fraction);
     double terrainWorldUnitsPerMeter() const;
     double terrainWorldZ(double elevation_m, double world_units_per_meter) const;
     bool terrainElevationAtCoordinate(
@@ -137,6 +141,13 @@ private:
         const CoordinateWGS84 &coordinate, double *elevation_m) const;
     QPointF renderOriginWorld() const;
     float heatmapRadiusPixels() const;
+    // Globe counterpart of heatmapRadiusPixels() -- returns a real-world
+    // meters radius directly, rather than a screen-pixel one, since
+    // MapRhiGlobeRenderer::renderHeatmapTile() needs meters (it works in
+    // Web Mercator tile-fraction space at whatever zoom a given tile
+    // happens to be, not screen space). See its own definition for how a
+    // pixel-configured radius gets converted.
+    double globeHeatmapRadiusMeters() const;
     void reportFailure(const QString &reason);
 
     MapModel *map_model = nullptr;

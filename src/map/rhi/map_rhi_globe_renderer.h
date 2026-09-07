@@ -25,6 +25,7 @@ class QRhiResourceUpdateBatch;
 class QRhiSampler;
 class QRhiShaderResourceBindings;
 class QRhiTexture;
+class QImage;
 
 // Zoom/tile-index identity of one leaf produced by the visible-region
 // quadtree walk (selectVisibleGlobeQuadtreeLeaves() in the .cpp). Plain POD
@@ -74,6 +75,26 @@ struct MapRhiGlobeQuadtreeLeaf
 class MapRhiGlobeRenderer
 {
 public:
+    // Plain (coordinate, color) pair -- no radius/opacity/solid-fraction
+    // here, those are shared across every marker for a given call (see
+    // setHeatmapOverlay()), matching MapRhiBasemapRenderer::HeatmapMarker's
+    // shape exactly. Lon/lat rather than CoordinateWGS84 for the same
+    // "plain POD, minimal includes" reason MapRhiGlobeQuadtreeLeaf above
+    // gives.
+    struct HeatmapMarker
+    {
+        double longitude_deg = 0.0;
+        double latitude_deg = 0.0;
+        QColor color;
+
+        bool operator==(const HeatmapMarker &other) const
+        {
+            return this->longitude_deg == other.longitude_deg
+                && this->latitude_deg == other.latitude_deg
+                && this->color == other.color;
+        }
+    };
+
     MapRhiGlobeRenderer(MapModel *map_model, MapTileRepository *tile_repository);
     ~MapRhiGlobeRenderer();
 
@@ -84,6 +105,18 @@ public:
     void setWireframeVisible(bool visible);
     void setMapVisible(bool visible);
     bool hasPendingTerrainMeshes() const;
+    // Mirrors MapRhiBasemapRenderer::setHeatmapOverlay() exactly, including
+    // its change-detection (markers vs. radius/solid-fraction tracked
+    // separately, only actually invalidating cached tile textures -- via
+    // the heatmap_revision counter each TileResource compares itself
+    // against -- when something that could visibly change a texture's
+    // pixels changed). radius_m is real-world meters, unlike the flat
+    // renderer's already-projected "world units" radius: see
+    // MapRhiWidget::globeHeatmapRadiusMeters() for why Globe can take a
+    // real distance directly rather than needing a zoom-dependent
+    // conversion first.
+    void setHeatmapOverlay(
+        const QVector<HeatmapMarker> &markers, double radius_m, double solid_fraction);
 
     // Called whenever the RHI/render pass may have changed, same contract
     // as MapRhiBasemapRenderer::initialize(). Safe to call every frame; all
@@ -96,8 +129,15 @@ public:
     // geometry/camera data, and requests any imagery tiles that are not yet
     // cached. Must be called before draw() each frame, inside the same
     // resource-update batch that beginPass() below will consume.
+    // heatmap_opacity is re-uploaded into the (extended) GlobeCameraBlock
+    // uniform every call regardless of whether it changed, exactly like
+    // view_projection already is -- see the class comment on
+    // ensureHeatmapTexture() for why that's fine to do unconditionally
+    // (it's cheap, and unlike the texture itself, doesn't force any tile
+    // to regenerate).
     bool prepare(QRhiResourceUpdateBatch *resource_updates,
-                const QMatrix4x4 &view_projection, const QSize &viewport_size);
+                const QMatrix4x4 &view_projection, const QSize &viewport_size,
+                float heatmap_opacity);
     void draw(QRhiCommandBuffer *command_buffer);
 
     // Drops all cached tile textures/bindings and forces the window to be
@@ -130,8 +170,16 @@ private:
     struct TileResource
     {
         std::unique_ptr<QRhiTexture> texture;
+        std::unique_ptr<QRhiTexture> heatmap_texture;
         std::unique_ptr<QRhiShaderResourceBindings> bindings;
         qint64 pixmap_cache_key = -1;
+        // Compared against the renderer's own heatmap_revision (bumped by
+        // setHeatmapOverlay() whenever markers/radius/solid-fraction
+        // actually change) to decide whether this tile's heatmap_texture
+        // is stale and needs regenerating -- see ensureHeatmapTexture().
+        // Mirrors MapRhiBasemapRenderer::TileResource::heatmap_revision
+        // exactly.
+        quint64 heatmap_revision = 0;
         // True while this resource holds a cropped-and-upscaled placeholder
         // derived from an already-loaded ancestor tile rather than the
         // tile's own imagery -- see ensureTileResource(). Cleared the
@@ -190,6 +238,18 @@ private:
     // tile's own imagery isn't cached yet.
     bool ensureProvisionalTileResource(
         GlobeTile &tile, TileResource *resource, QRhiResourceUpdateBatch *resource_updates);
+    // Mirrors MapRhiBasemapRenderer::ensureHeatmapTexture()/renderHeatmapTile()
+    // exactly, adapted to tile identity being (zoom, virtual_x, tile_y)
+    // geodetic bounds instead of a flat world-pixel rectangle -- see
+    // renderHeatmapTile()'s own comment for the coordinate conversion.
+    // Regenerates resource->heatmap_texture (a CPU-rasterized QImage,
+    // uploaded once) only when resource->heatmap_revision is stale against
+    // this->heatmap_revision, exactly like the tile's own imagery is only
+    // re-fetched when its cache key changes -- most frames, for most
+    // tiles, this is a single integer comparison and nothing else.
+    bool ensureHeatmapTexture(
+        const GlobeTile &tile, TileResource *resource, QRhiResourceUpdateBatch *resource_updates);
+    QImage renderHeatmapTile(const GlobeTile &tile) const;
     void requestMissingTiles(QRhiResourceUpdateBatch *resource_updates);
     void requestMissingTerrainTiles();
     void scheduleReadyTerrainMeshes();
@@ -236,12 +296,28 @@ private:
     std::unique_ptr<QRhiSampler> sampler;
     std::unique_ptr<QRhiTexture> dummy_texture;
     bool dummy_texture_upload_pending = true;
+    // Fallback bound at binding 2 (see rebuildTileBindings()) for any tile
+    // with no heatmap_texture of its own -- fully transparent, unlike
+    // dummy_texture above (GlobeMissingTileColor, opaque), since this one
+    // gets *blended onto* the tile's real imagery rather than replacing it.
+    std::unique_ptr<QRhiTexture> heatmap_dummy_texture;
+    bool heatmap_dummy_texture_upload_pending = true;
     std::unique_ptr<QRhiShaderResourceBindings> template_bindings;
     std::unique_ptr<QRhiShaderResourceBindings> wireframe_bindings;
     std::unique_ptr<QRhiGraphicsPipeline> pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> wireframe_pipeline;
     std::map<QString, std::unique_ptr<TileResource>> tile_resources;
     TileResource cap_resource;
+    // Mirrors MapRhiBasemapRenderer's identically-named members exactly --
+    // see setHeatmapOverlay(). heatmap_revision starts at 1, matching the
+    // basemap renderer, so that a freshly-constructed TileResource's
+    // default heatmap_revision of 0 is always seen as stale on its first
+    // check, forcing (at worst) a single "definitely empty" texture
+    // generation rather than an uninitialized-looking mismatch.
+    QVector<HeatmapMarker> heatmap_markers;
+    double heatmap_radius_m = 0.0;
+    double heatmap_solid_fraction = 0.0;
+    quint64 heatmap_revision = 1;
 
     std::unique_ptr<MapRhiTerrainMeshScheduler> terrain_mesh_scheduler;
     quint64 next_terrain_mesh_request_id = 1;

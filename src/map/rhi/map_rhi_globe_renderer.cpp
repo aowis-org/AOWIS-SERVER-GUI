@@ -15,6 +15,7 @@
 #include <QImage>
 #include <QPainter>
 #include <QPixmap>
+#include <QRadialGradient>
 #include <QRect>
 #include <QSet>
 #include <QtMath>
@@ -57,7 +58,12 @@ const QColor GlobePolarCapColor(235, 240, 245);
 // only visible until the real tile texture is uploaded.
 const QColor GlobeMissingTileColor(18, 58, 72);
 
-constexpr int GlobeCameraUniformBytes = 16 * int(sizeof(float));
+constexpr int GlobeCameraUniformBytes = 20 * int(sizeof(float));
+
+// Matches MapRhiBasemapRenderer's HeatmapTextureSize exactly (one texel per
+// Web Mercator pixel at whatever zoom a given tile is fetched at) -- see
+// MapRhiGlobeRenderer::renderHeatmapTile().
+constexpr int GlobeHeatmapTextureSize = 256;
 
 // Vertex grid subdivisions per tile edge, by zoom level. Low zoom tiles
 // span a huge angular area (a zoom-0 tile is the entire planet, a zoom-1
@@ -636,6 +642,34 @@ void MapRhiGlobeRenderer::setMapVisible(bool visible)
     this->map_visible = visible;
     if (visible)
         this->window_tiles_requested = false;
+}
+
+void MapRhiGlobeRenderer::setHeatmapOverlay(
+    const QVector<HeatmapMarker> &markers, double radius_m, double solid_fraction)
+{
+    const double bounded_radius_m = qMax(0.0, radius_m);
+    const double bounded_solid_fraction = qBound(0.0, solid_fraction, 0.9);
+    const bool markers_changed = this->heatmap_markers != markers;
+    const bool style_changed =
+        !qFuzzyCompare(1.0 + this->heatmap_radius_m, 1.0 + bounded_radius_m)
+        || !qFuzzyCompare(1.0 + this->heatmap_solid_fraction, 1.0 + bounded_solid_fraction);
+    if (!markers_changed && !style_changed)
+        return;
+
+    this->heatmap_markers = markers;
+    this->heatmap_radius_m = bounded_radius_m;
+    this->heatmap_solid_fraction = bounded_solid_fraction;
+    // Every visible tile's heatmap_texture is compared against this value
+    // in ensureHeatmapTexture() and regenerated if stale -- see that
+    // function. Bumping it unconditionally on any actual change (rather
+    // than trying to work out which specific tiles a given marker could
+    // possibly affect) mirrors MapRhiBasemapRenderer::setHeatmapOverlay()
+    // exactly; both accept "regenerate every visible tile once" as the
+    // cost of a real change, in exchange for not needing to maintain any
+    // marker-to-tile spatial index.
+    ++this->heatmap_revision;
+    if (this->heatmap_revision == 0)
+        this->heatmap_revision = 1;
 }
 
 bool MapRhiGlobeRenderer::hasPendingTerrainMeshes() const
@@ -1280,6 +1314,18 @@ bool MapRhiGlobeRenderer::rebuildTileBindings(TileResource *resource)
     if (!resource->bindings)
         return false;
 
+    // heatmap_texture is null for the overwhelming majority of tiles at
+    // any given moment (only tiles within heatmap_radius_m of an actual
+    // marker ever get one -- see renderHeatmapTile()'s bounding check), so
+    // this falls back to heatmap_dummy_texture (fully transparent) far
+    // more often than not. GlobeCameraBlock's heatmap_settings.y (opacity)
+    // being 0 whenever no heatmap is active at all (see prepare()) would
+    // already make map_rhi_globe.frag's blend a no-op even without this,
+    // but binding *something* valid is still required.
+    QRhiTexture *heatmap_texture = resource->heatmap_texture
+        ? resource->heatmap_texture.get()
+        : this->heatmap_dummy_texture.get();
+
     resource->bindings->setBindings({
         QRhiShaderResourceBinding::uniformBuffer(
             0, QRhiShaderResourceBinding::VertexStage
@@ -1287,7 +1333,10 @@ bool MapRhiGlobeRenderer::rebuildTileBindings(TileResource *resource)
             this->camera_uniform_buffer.get()),
         QRhiShaderResourceBinding::sampledTexture(
             1, QRhiShaderResourceBinding::FragmentStage,
-            resource->texture.get(), this->sampler.get())
+            resource->texture.get(), this->sampler.get()),
+        QRhiShaderResourceBinding::sampledTexture(
+            2, QRhiShaderResourceBinding::FragmentStage,
+            heatmap_texture, this->sampler.get())
     });
     return resource->bindings->create();
 }
@@ -1325,7 +1374,22 @@ bool MapRhiGlobeRenderer::ensureTileResource(
     TileResource *resource = slot.get();
 
     if (pixmap == nullptr)
-        return ensureProvisionalTileResource(tile, resource, resource_updates);
+    {
+        if (!ensureProvisionalTileResource(tile, resource, resource_updates))
+            return false;
+        // tile.resource is only actually set on some of
+        // ensureProvisionalTileResource()'s success paths -- see its own
+        // comment on the "nothing to derive a placeholder from yet" case,
+        // which deliberately leaves it untouched so draw() falls back to
+        // template_bindings instead. No heatmap texture to prepare for a
+        // tile that isn't even going to use this resource.
+        if (tile.resource == resource
+            && !ensureHeatmapTexture(tile, resource, resource_updates))
+        {
+            return false;
+        }
+        return true;
+    }
 
     const qint64 cache_key = pixmap->cacheKey();
     if (!resource->texture || resource->is_provisional || resource->pixmap_cache_key != cache_key)
@@ -1345,6 +1409,9 @@ bool MapRhiGlobeRenderer::ensureTileResource(
     }
 
     if (!resource->bindings && !rebuildTileBindings(resource))
+        return false;
+
+    if (!ensureHeatmapTexture(tile, resource, resource_updates))
         return false;
 
     tile.resource = resource;
@@ -1514,6 +1581,158 @@ bool MapRhiGlobeRenderer::ensureProvisionalTileResource(
     // from. Leaving tile.resource untouched here falls through to
     // template_bindings (the flat GlobeMissingTileColor fill) at draw
     // time, exactly as before this fallback existed.
+    return true;
+}
+
+QImage MapRhiGlobeRenderer::renderHeatmapTile(const GlobeTile &tile) const
+{
+    if (this->heatmap_markers.isEmpty() || !(this->heatmap_radius_m > 0.0) || tile.is_cap)
+        return QImage();
+
+    // tile_center_lat_deg only, in degrees -- needed for the
+    // latitude-dependent meters-per-pixel conversion just below. The
+    // marker-vs-tile math further down works entirely in fractional
+    // tile-coordinate space (via GeoWebMercator::lonToTileX()/latToTileY()),
+    // not degrees, so the tile's own lon/lat *bounds* are never needed as
+    // such.
+    const double tile_lat_top_deg = GeoWebMercator::tileYToLat(
+        double(tile.tile_y), tile.zoom);
+    const double tile_lat_bottom_deg = GeoWebMercator::tileYToLat(
+        double(tile.tile_y) + 1.0, tile.zoom);
+    const double tile_center_lat_deg = (tile_lat_top_deg + tile_lat_bottom_deg) * 0.5;
+
+    // Same latitude-dependent Web Mercator distortion approximation
+    // MapRhiWidget::heatmapRadiusPixels() already accepts for the flat
+    // map: exact at this tile's own center row, increasingly approximate
+    // toward its top/bottom edges. Good enough for a soft-edged heatmap
+    // blob; not something worth a more exact per-marker correction for.
+    const double meters_per_pixel = GeoWebMercator::metersPerPixel(
+        tile_center_lat_deg, tile.zoom);
+    if (!std::isfinite(meters_per_pixel) || meters_per_pixel <= 0.0)
+        return QImage();
+
+    const double radius_pixels = this->heatmap_radius_m / meters_per_pixel;
+    if (!std::isfinite(radius_pixels) || radius_pixels <= 0.0)
+        return QImage();
+    // Radius in the same fractional tile-coordinate units used for the
+    // marker bounding check below (1.0 == one full tile edge), so that
+    // check needs no separate unit conversion of its own.
+    const double radius_tile_fraction = radius_pixels / double(GeoWebMercator::TileSize);
+
+    QImage image(
+        GlobeHeatmapTextureSize, GlobeHeatmapTextureSize, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+    painter.setPen(Qt::NoPen);
+
+    const double half_fraction = this->heatmap_solid_fraction
+        + (1.0 - this->heatmap_solid_fraction) * 0.4375;
+    const double pixels_per_fraction = double(GlobeHeatmapTextureSize);
+
+    bool any_marker_in_range = false;
+    for (const HeatmapMarker &marker : this->heatmap_markers)
+    {
+        // Deliberately no spatial-bucket pre-filter here (contrast
+        // MapRhiBasemapRenderer::heatmapMarkerCandidates()): the globe's
+        // visible tile count is small enough (a few hundred at most,
+        // typically far fewer) that a plain O(tiles x markers) scan, run
+        // only on the rare frame a marker/radius/solid-fraction actually
+        // changed, is not worth the added spatial-index bookkeeping. See
+        // setHeatmapOverlay()'s comment.
+        //
+        // nearestWrappedTileX() picks whichever antimeridian-wrapped copy
+        // of this marker's tile-space X sits closest to this tile's own
+        // (already unwrapped) virtual_x -- the same reasoning
+        // terrainCellCountForTile() and every other per-tile geodetic
+        // calculation in this class already applies.
+        const double marker_tile_x = GeoWebMercator::nearestWrappedTileX(
+            GeoWebMercator::lonToTileX(marker.longitude_deg, tile.zoom),
+            double(tile.virtual_x), tile.zoom);
+        const double marker_tile_y =
+            GeoWebMercator::latToTileY(marker.latitude_deg, tile.zoom);
+        const double fraction_x = marker_tile_x - double(tile.virtual_x);
+        const double fraction_y = marker_tile_y - double(tile.tile_y);
+
+        if (fraction_x + radius_tile_fraction < 0.0
+            || fraction_x - radius_tile_fraction > 1.0
+            || fraction_y + radius_tile_fraction < 0.0
+            || fraction_y - radius_tile_fraction > 1.0)
+        {
+            continue;
+        }
+
+        any_marker_in_range = true;
+        const QPointF center_pixels(
+            fraction_x * pixels_per_fraction, fraction_y * pixels_per_fraction);
+
+        QColor full_color = marker.color;
+        full_color.setAlpha(255);
+        QColor half_color = marker.color;
+        half_color.setAlpha(128);
+        QColor edge_color = marker.color;
+        edge_color.setAlpha(0);
+
+        QRadialGradient gradient(center_pixels, radius_pixels);
+        gradient.setColorAt(0.0, full_color);
+        if (this->heatmap_solid_fraction > 0.0)
+            gradient.setColorAt(this->heatmap_solid_fraction, full_color);
+        gradient.setColorAt(half_fraction, half_color);
+        gradient.setColorAt(1.0, edge_color);
+        painter.setBrush(gradient);
+        painter.drawEllipse(center_pixels, radius_pixels, radius_pixels);
+    }
+    painter.end();
+
+    if (!any_marker_in_range)
+        return QImage();
+
+    return image.convertToFormat(QImage::Format_RGBA8888);
+}
+
+bool MapRhiGlobeRenderer::ensureHeatmapTexture(
+    const GlobeTile &tile, TileResource *resource, QRhiResourceUpdateBatch *resource_updates)
+{
+    if (resource == nullptr || resource_updates == nullptr)
+        return false;
+    // Cheap common case: this tile's texture already reflects the current
+    // heatmap_revision, so there's nothing to regenerate -- just make sure
+    // its bindings exist (rebuildTileBindings() is idempotent-ish here in
+    // that it's only actually called when bindings are missing).
+    if (resource->heatmap_revision == this->heatmap_revision)
+        return resource->bindings != nullptr || rebuildTileBindings(resource);
+
+    QImage image = renderHeatmapTile(tile);
+    bool bindings_changed = false;
+    if (!image.isNull())
+    {
+        if (!resource->heatmap_texture)
+        {
+            resource->heatmap_texture.reset(
+                this->rhi->newTexture(QRhiTexture::RGBA8, image.size()));
+            if (!resource->heatmap_texture || !resource->heatmap_texture->create())
+                return false;
+            bindings_changed = true;
+        }
+        resource_updates->uploadTexture(resource->heatmap_texture.get(), image);
+    }
+    else if (resource->heatmap_texture)
+    {
+        // Had a heatmap texture before (e.g. a marker that used to be
+        // nearby moved/was removed) but this tile has nothing to show
+        // now -- clear it to transparent rather than leaving stale
+        // content, mirroring MapRhiBasemapRenderer::ensureHeatmapTexture().
+        QImage empty_image(
+            GlobeHeatmapTextureSize, GlobeHeatmapTextureSize, QImage::Format_RGBA8888);
+        empty_image.fill(Qt::transparent);
+        resource_updates->uploadTexture(resource->heatmap_texture.get(), empty_image);
+    }
+
+    resource->heatmap_revision = this->heatmap_revision;
+    if (bindings_changed || resource->bindings == nullptr)
+        return rebuildTileBindings(resource);
     return true;
 }
 
@@ -1818,6 +2037,15 @@ bool MapRhiGlobeRenderer::ensureSharedResources()
         this->dummy_texture_upload_pending = true;
     }
 
+    if (!this->heatmap_dummy_texture)
+    {
+        this->heatmap_dummy_texture.reset(
+            this->rhi->newTexture(QRhiTexture::RGBA8, QSize(1, 1)));
+        if (!this->heatmap_dummy_texture || !this->heatmap_dummy_texture->create())
+            return false;
+        this->heatmap_dummy_texture_upload_pending = true;
+    }
+
     if (!this->template_bindings)
     {
         this->template_bindings.reset(this->rhi->newShaderResourceBindings());
@@ -1830,7 +2058,10 @@ bool MapRhiGlobeRenderer::ensureSharedResources()
                 this->camera_uniform_buffer.get()),
             QRhiShaderResourceBinding::sampledTexture(
                 1, QRhiShaderResourceBinding::FragmentStage,
-                this->dummy_texture.get(), this->sampler.get())
+                this->dummy_texture.get(), this->sampler.get()),
+            QRhiShaderResourceBinding::sampledTexture(
+                2, QRhiShaderResourceBinding::FragmentStage,
+                this->heatmap_dummy_texture.get(), this->sampler.get())
         });
         if (!this->template_bindings->create())
             return false;
@@ -1948,7 +2179,7 @@ bool MapRhiGlobeRenderer::initialize(
 
 bool MapRhiGlobeRenderer::prepare(
     QRhiResourceUpdateBatch *resource_updates, const QMatrix4x4 &view_projection,
-    const QSize &viewport_size)
+    const QSize &viewport_size, float heatmap_opacity)
 {
     if (this->rhi == nullptr || resource_updates == nullptr || this->map_model == nullptr)
         return false;
@@ -2059,13 +2290,30 @@ bool MapRhiGlobeRenderer::prepare(
     if (!uploadWireframeVertices(resource_updates))
         return false;
 
+    if (this->heatmap_dummy_texture_upload_pending && this->heatmap_dummy_texture)
+    {
+        QImage image(1, 1, QImage::Format_RGBA8888);
+        image.fill(Qt::transparent);
+        resource_updates->uploadTexture(this->heatmap_dummy_texture.get(), image);
+        this->heatmap_dummy_texture_upload_pending = false;
+    }
+
     if (this->map_visible)
         requestMissingTiles(resource_updates);
 
-    float matrix_data[16];
-    std::copy(view_projection.constData(), view_projection.constData() + 16, matrix_data);
+    // 20 floats: the 16-float view_projection matrix (unchanged), plus a
+    // 4-float heatmap_settings vec4 with only .y (opacity) actually
+    // meaningful -- see GlobeCameraBlock's declaration in
+    // map_rhi_globe.vert/.frag for why. Uploaded every call regardless of
+    // whether either half actually changed, matching how view_projection
+    // itself was already handled before heatmap_settings existed: cheap,
+    // and unlike a tile's heatmap_texture, doesn't force anything to
+    // regenerate.
+    float uniform_data[20] = {};
+    std::copy(view_projection.constData(), view_projection.constData() + 16, uniform_data);
+    uniform_data[17] = qBound(0.0f, heatmap_opacity, 1.0f);
     resource_updates->updateDynamicBuffer(
-        this->camera_uniform_buffer.get(), 0, GlobeCameraUniformBytes, matrix_data);
+        this->camera_uniform_buffer.get(), 0, GlobeCameraUniformBytes, uniform_data);
 
     return true;
 }
@@ -2155,6 +2403,8 @@ void MapRhiGlobeRenderer::releaseResources()
     this->wireframe_bindings.reset();
     this->dummy_texture.reset();
     this->dummy_texture_upload_pending = true;
+    this->heatmap_dummy_texture.reset();
+    this->heatmap_dummy_texture_upload_pending = true;
     this->sampler.reset();
     this->camera_uniform_buffer.reset();
     this->window_vertex_buffer.reset();
