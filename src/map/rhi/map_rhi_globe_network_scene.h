@@ -61,12 +61,12 @@
 // fallback, matching what the ThreeD view already does when its 3D-model
 // toggles are off): the heatmap overlay, 3D tank/reservoir meshes, and
 // coincident-node decluttering
-// (map_node_declutter.h). Junctions ARE rendered as real 3D sphere
-// instances -- see junctionInstances() -- reusing MapRhiScene/MapRhiWidget's
+// (map_node_declutter.h). Junctions ARE rendered as analytic sphere
+// impostors -- see junctionInstances() -- reusing MapRhiScene/MapRhiWidget's
 // existing MapRhiJunctionInstance/junction_pipeline machinery unmodified,
 // unlike ThreeD's, this is not gated behind a toggle: Globe has no flat-2D
 // counterpart the way TwoD is to ThreeD, so junctions are unconditionally
-// spheres here, the same way ThreeD's are whenever its own 3D-model toggle
+// impostors here, the same way ThreeD's are whenever its own 3D-model toggle
 // is on. Underground X-Ray *is* implemented, but for links only -- see
 // setUndergroundXRayEnabled() -- since ThreeD's underground junction
 // indicator relies on a per-junction underground/aboveground
@@ -172,18 +172,12 @@ public:
     const QVector<MapRhiScene::LinkVertex> &flowDirectionVertices() const;
     const QVector<MapRhiScene::IconVertex> &iconVertices() const;
     const QVector<MapRhiScene::LinkVertex> &undergroundLinkVertices() const;
-    // Real 3D sphere instances for junction entities -- see the class
+    // Analytic sphere-impostor instances for junction entities -- see the class
     // comment above. Drawn with the exact same MapRhiJunctionInstance
-    // layout and sphere mesh (mapRhiJunctionSphereMeshVertices())
-    // MapRhiWidget already built for ThreeD, but Globe's own
-    // globe_junction_pipeline/globe_junction_no_depth_pipeline rather than
-    // ThreeD's junction_pipeline/junction_no_depth_pipeline -- see where
-    // globe_junction_pipeline is created (MapRhiWidget::createPipelines())
-    // for why the pipeline itself, not just the instance data and camera
-    // matrix (MapRhiCamera::globeNetworkViewProjectionMatrix()), needs a
-    // Globe-specific copy. Junction entities are NOT also present in
+    // layout and impostor quad (mapRhiJunctionImpostorVertices())
+    // MapRhiWidget already built for ThreeD. Junction entities are NOT also present in
     // nodeVertices() with a visible alpha -- see applyNodeColor() -- so
-    // they render exactly once, as a sphere, never as a flat marker
+    // they render exactly once, as an impostor, never as a flat marker
     // underneath it.
     const QVector<MapRhiJunctionInstance> &junctionInstances() const;
     quint64 geometryRevision() const;

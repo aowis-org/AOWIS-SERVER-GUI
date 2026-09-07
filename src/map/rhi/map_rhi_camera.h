@@ -12,6 +12,13 @@
 class MapModel;
 class QRhi;
 
+struct MapRhiImpostorCameraBasis
+{
+    QVector3D right;
+    QVector3D up;
+    QVector3D eye;
+};
+
 class MapRhiCamera
 {
 public:
@@ -44,7 +51,10 @@ public:
     // consistent with each other, not with raw ECEF vertex data (i.e. not
     // with anything drawn using globeViewProjectionMatrix() above, such as
     // Globe terrain tiles).
-    QMatrix4x4 globeNetworkViewProjectionMatrix(const QRhi &rhi) const;
+    QMatrix4x4 globeNetworkViewProjectionMatrix(
+        const QRhi &rhi,
+        MapRhiImpostorCameraBasis *impostor_camera_basis = nullptr) const;
+    MapRhiImpostorCameraBasis junctionImpostorCameraBasis() const;
     QPointF projectWorldToScreen(const QVector3D &world_position) const;
     QPointF cameraGroundWorldPixel() const;
     QPointF cameraGroundWorldPixelForDistance(double distance_world) const;

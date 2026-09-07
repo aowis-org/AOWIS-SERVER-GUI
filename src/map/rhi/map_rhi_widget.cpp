@@ -33,7 +33,8 @@
 
 namespace
 {
-constexpr int CameraUniformBytes = 32 * int(sizeof(float));
+constexpr int CameraUniformFloatCount = 48;
+constexpr int CameraUniformBytes = CameraUniformFloatCount * int(sizeof(float));
 #ifdef Q_OS_WASM
 constexpr int RendererMsaaSamples = 1;
 #else
@@ -49,6 +50,29 @@ constexpr double FallbackOriginRecenterThresholdWorld = MapModel::TileSize * 102
 // VisualLink symbology active) nor selected -- both of those continue to
 // override this via the existing fill color branches in MapRhiScene.
 constexpr QRgb MonitorLightThemeIconFillColor = qRgb(244, 174, 194);
+
+void writeJunctionImpostorCameraUniforms(
+    const MapRhiImpostorCameraBasis &basis, const QRhi &rhi,
+    std::array<float, CameraUniformFloatCount> *uniform_data)
+{
+    if (uniform_data == nullptr)
+        return;
+
+    (*uniform_data)[32] = basis.right.x();
+    (*uniform_data)[33] = basis.right.y();
+    (*uniform_data)[34] = basis.right.z();
+    (*uniform_data)[36] = basis.up.x();
+    (*uniform_data)[37] = basis.up.y();
+    (*uniform_data)[38] = basis.up.z();
+    (*uniform_data)[40] = basis.eye.x();
+    (*uniform_data)[41] = basis.eye.y();
+    (*uniform_data)[42] = basis.eye.z();
+
+    // QRhi's clip-space correction matrix makes NDC depth either [0, 1]
+    // or [-1, 1], depending on the backend. gl_FragDepth is always [0, 1].
+    (*uniform_data)[44] = rhi.isClipDepthZeroToOne() ? 1.0f : 0.5f;
+    (*uniform_data)[45] = rhi.isClipDepthZeroToOne() ? 0.0f : 0.5f;
+}
 
 bool isLightThemeWindowColor(const QColor &window_color)
 {
@@ -1799,7 +1823,7 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     }
 
     const QMatrix4x4 view_projection = this->camera.viewProjectionMatrix(*this->active_rhi);
-    std::array<float, 32> uniform_data{};
+    std::array<float, CameraUniformFloatCount> uniform_data{};
     const float *matrix_data = view_projection.constData();
     for (int index = 0; index < 16; ++index)
         uniform_data[size_t(index)] = matrix_data[index];
@@ -1841,6 +1865,10 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         && horizontal_world_units_per_meter > 0.0
         ? -float(this->scene.iconSizeM() * horizontal_world_units_per_meter)
         : float(this->scene.iconSizePx());
+    const MapRhiImpostorCameraBasis impostor_camera_basis =
+        this->camera.junctionImpostorCameraBasis();
+    writeJunctionImpostorCameraUniforms(
+        impostor_camera_basis, *this->active_rhi, &uniform_data);
 
     QRhiResourceUpdateBatch *resource_updates = this->active_rhi->nextResourceUpdateBatch();
     resource_updates->updateDynamicBuffer(
@@ -1998,11 +2026,11 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
 
     if (this->junction_mesh_upload_pending)
     {
-        const QVector<MapRhiJunctionMeshVertex> &junction_mesh =
-            mapRhiJunctionSphereMeshVertices();
-        if (!junction_mesh.isEmpty())
+        const QVector<MapRhiJunctionImpostorVertex> &junction_impostor =
+            mapRhiJunctionImpostorVertices();
+        if (!junction_impostor.isEmpty())
             resource_updates->uploadStaticBuffer(
-                this->junction_mesh_vertex_buffer.get(), junction_mesh.constData());
+                this->junction_mesh_vertex_buffer.get(), junction_impostor.constData());
         this->junction_mesh_upload_pending = false;
     }
 
@@ -2080,8 +2108,8 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     const QVector<MapRhiScene::LinkVertex> &link_vertices = this->scene.linkVertices();
     const QVector<MapRhiJunctionInstance> &junction_instances =
         this->scene.junctionInstances();
-    const QVector<MapRhiJunctionMeshVertex> &junction_mesh =
-        mapRhiJunctionSphereMeshVertices();
+    const QVector<MapRhiJunctionImpostorVertex> &junction_impostor =
+        mapRhiJunctionImpostorVertices();
 
     // Underground visualization is a terrain-occlusion override only. Draw its
     // no-depth pass before every regular network component so arrows, tanks,
@@ -2098,7 +2126,7 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
             command_buffer->draw(quint32(link_vertices.size()));
         }
 
-        if (!junction_instances.isEmpty() && !junction_mesh.isEmpty())
+        if (!junction_instances.isEmpty() && !junction_impostor.isEmpty())
         {
             command_buffer->setGraphicsPipeline(this->junction_no_depth_pipeline.get());
             command_buffer->setShaderResources();
@@ -2108,7 +2136,7 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
             };
             command_buffer->setVertexInput(0, 2, junction_bindings);
             command_buffer->draw(
-                quint32(junction_mesh.size()), quint32(junction_instances.size()));
+                quint32(junction_impostor.size()), quint32(junction_instances.size()));
         }
     }
     else if (!is_2d_view && this->underground_mode == MapRhiUndergroundMode::XRay)
@@ -2123,7 +2151,7 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
             command_buffer->draw(quint32(this->underground_link_vertices.size()));
         }
 
-        if (!this->underground_junction_instances.isEmpty() && !junction_mesh.isEmpty())
+        if (!this->underground_junction_instances.isEmpty() && !junction_impostor.isEmpty())
         {
             command_buffer->setGraphicsPipeline(this->junction_xray_pipeline.get());
             command_buffer->setShaderResources();
@@ -2133,7 +2161,7 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
             };
             command_buffer->setVertexInput(0, 2, underground_junction_bindings);
             command_buffer->draw(
-                quint32(junction_mesh.size()),
+                quint32(junction_impostor.size()),
                 quint32(this->underground_junction_instances.size()));
         }
     }
@@ -2191,7 +2219,7 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         command_buffer->draw(quint32(node_vertices.size()));
     }
 
-    if (!junction_instances.isEmpty() && !junction_mesh.isEmpty())
+    if (!junction_instances.isEmpty() && !junction_impostor.isEmpty())
     {
         command_buffer->setGraphicsPipeline(this->junction_pipeline.get());
         command_buffer->setShaderResources();
@@ -2201,7 +2229,7 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         };
         command_buffer->setVertexInput(0, 2, junction_bindings);
         command_buffer->draw(
-            quint32(junction_mesh.size()), quint32(junction_instances.size()));
+            quint32(junction_impostor.size()), quint32(junction_instances.size()));
     }
 
     if (!this->tank_model_vertices.isEmpty())
@@ -2344,8 +2372,10 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     // vertex data -- swapping which matrix goes where here would silently
     // misplace one or the other.
     const QMatrix4x4 view_projection = this->camera.globeViewProjectionMatrix(*this->active_rhi);
+    MapRhiImpostorCameraBasis impostor_camera_basis;
     const QMatrix4x4 network_view_projection =
-        this->camera.globeNetworkViewProjectionMatrix(*this->active_rhi);
+        this->camera.globeNetworkViewProjectionMatrix(
+            *this->active_rhi, &impostor_camera_basis);
 
     // Same CameraBlock layout/indices as the ThreeD/TwoD path above (see
     // CameraUniformBytes), reused as-is since the link/node/icon vertex
@@ -2353,7 +2383,7 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     // network_translation -- never heatmap_settings or basemap_settings, and
     // never a screen-space network drag translation on the globe -- so those
     // are left zeroed here.
-    std::array<float, 32> uniform_data{};
+    std::array<float, CameraUniformFloatCount> uniform_data{};
     const float *matrix_data = network_view_projection.constData();
     for (int index = 0; index < 16; ++index)
         uniform_data[size_t(index)] = matrix_data[index];
@@ -2380,6 +2410,8 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
             == NetworkSymbologySizeUnit::Meters
         ? -float(this->globe_network_scene.iconSizeM())
         : float(this->globe_network_scene.iconSizePx());
+    writeJunctionImpostorCameraUniforms(
+        impostor_camera_basis, *this->active_rhi, &uniform_data);
 
     QRhiResourceUpdateBatch *resource_updates = this->active_rhi->nextResourceUpdateBatch();
     resource_updates->updateDynamicBuffer(
@@ -2462,15 +2494,15 @@ bool MapRhiWidget::ensureGlobeNetworkGeometryBuffers()
     const int required_underground_link_bytes = boundedBufferSize(
         this->globe_network_scene.undergroundLinkVertices().size(),
         qsizetype(sizeof(MapRhiScene::LinkVertex)));
-    // Shared, view-mode-agnostic sphere mesh -- see globe_junction_instance_buffer's
+    // Shared, view-mode-agnostic impostor quad -- see globe_junction_instance_buffer's
     // header comment. Computed here too (not only in ensureGeometryBuffers(),
     // the ThreeD/TwoD equivalent) so junction_mesh_vertex_buffer gets
     // created even if Globe is the very first view mode ever rendered in
     // this session, before ensureGeometryBuffers() has had a chance to.
-    const QVector<MapRhiJunctionMeshVertex> &junction_mesh =
-        mapRhiJunctionSphereMeshVertices();
+    const QVector<MapRhiJunctionImpostorVertex> &junction_impostor =
+        mapRhiJunctionImpostorVertices();
     const int required_junction_mesh_bytes = boundedBufferSize(
-        junction_mesh.size(), qsizetype(sizeof(MapRhiJunctionMeshVertex)));
+        junction_impostor.size(), qsizetype(sizeof(MapRhiJunctionImpostorVertex)));
     const int required_junction_instance_bytes = boundedBufferSize(
         this->globe_network_scene.junctionInstances().size(),
         qsizetype(sizeof(MapRhiJunctionInstance)));
@@ -2493,7 +2525,7 @@ bool MapRhiWidget::ensureGlobeNetworkGeometryBuffers()
             QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, required_junction_mesh_bytes));
         if (!this->junction_mesh_vertex_buffer || !this->junction_mesh_vertex_buffer->create())
         {
-            reportFailure(QStringLiteral("Failed to create RHI junction sphere mesh buffer"));
+            reportFailure(QStringLiteral("Failed to create RHI junction impostor buffer"));
             return false;
         }
         this->junction_mesh_vertex_buffer_size = required_junction_mesh_bytes;
@@ -2770,18 +2802,18 @@ void MapRhiWidget::uploadGlobeNetworkGeometry(QRhiResourceUpdateBatch *resource_
     }
 
     // junction_mesh_upload_pending is shared with ThreeD (see
-    // globe_junction_instance_buffer's header comment: the sphere mesh
+    // globe_junction_instance_buffer's header comment: the impostor quad
     // itself is coordinate-system agnostic) -- whichever view mode's
     // upload function runs first for a given frame handles it, using the
     // one shared junction_mesh_vertex_buffer, and clears the flag so the
     // other doesn't redundantly re-upload the same static data.
     if (this->junction_mesh_upload_pending)
     {
-        const QVector<MapRhiJunctionMeshVertex> &junction_mesh =
-            mapRhiJunctionSphereMeshVertices();
-        if (!junction_mesh.isEmpty())
+        const QVector<MapRhiJunctionImpostorVertex> &junction_impostor =
+            mapRhiJunctionImpostorVertices();
+        if (!junction_impostor.isEmpty())
             resource_updates->uploadStaticBuffer(
-                this->junction_mesh_vertex_buffer.get(), junction_mesh.constData());
+                this->junction_mesh_vertex_buffer.get(), junction_impostor.constData());
         this->junction_mesh_upload_pending = false;
     }
 
@@ -2808,13 +2840,9 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
     // diagnostics, X-Ray underground links, then icons on top. The heatmap
     // overlay and 3D tank/reservoir meshes are not yet implemented for the
     // globe -- see MapRhiGlobeNetworkScene's class comment -- so this
-    // intentionally does not reference those pipelines. Junctions ARE real
-    // 3D sphere instances, sharing ThreeD's unit-sphere mesh
-    // (mapRhiJunctionSphereMeshVertices()) but drawn with Globe's own
-    // globe_junction_pipeline/globe_junction_no_depth_pipeline rather than
-    // ThreeD's junction_pipeline/junction_no_depth_pipeline -- see where
-    // globe_junction_pipeline is created, in createPipelines(), for why a
-    // separate pipeline (not just separate instance data) is needed here.
+    // intentionally does not reference those pipelines. Junctions use the
+    // same analytic sphere impostor quad as ThreeD with Globe-owned instance
+    // data and pipeline objects.
     // Underground X-Ray for junctions isn't implemented yet, for a different reason than the other gaps here:
     // it needs a per-junction underground/aboveground classification this
     // class doesn't build (X-Ray only ever classifies link segments -- see
@@ -2834,15 +2862,13 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
         this->globe_network_scene.diagnosticNodeVertices();
     const QVector<MapRhiScene::LinkVertex> &flow_direction_vertices =
         this->globe_network_scene.flowDirectionVertices();
-    // Junctions render as real 3D sphere instances, not flat quads -- see
-    // MapRhiGlobeNetworkScene::junctionInstances()'s comment. junction_mesh
-    // is the one shared, view-mode-agnostic unit-sphere mesh ThreeD already
-    // built (mapRhiJunctionSphereMeshVertices()); junction_instances is
+    // The six-vertex quad is shared and view-mode agnostic; the fragment
+    // shader reconstructs a real sphere surface and depth. junction_instances is
     // Globe's own per-instance data (position/radius/color/selected),
     // already placed relative to the same render origin as every other
     // Globe vertex (see ecefPosition()).
-    const QVector<MapRhiJunctionMeshVertex> &junction_mesh =
-        mapRhiJunctionSphereMeshVertices();
+    const QVector<MapRhiJunctionImpostorVertex> &junction_impostor =
+        mapRhiJunctionImpostorVertices();
     const QVector<MapRhiJunctionInstance> &junction_instances =
         this->globe_network_scene.junctionInstances();
 
@@ -2892,7 +2918,7 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
             command_buffer->draw(quint32(node_vertices.size()));
         }
 
-        if (!junction_instances.isEmpty() && !junction_mesh.isEmpty())
+        if (!junction_instances.isEmpty() && !junction_impostor.isEmpty())
         {
             command_buffer->setGraphicsPipeline(this->globe_junction_no_depth_pipeline.get());
             command_buffer->setShaderResources();
@@ -2902,7 +2928,7 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
             };
             command_buffer->setVertexInput(0, 2, solid_junction_bindings);
             command_buffer->draw(
-                quint32(junction_mesh.size()), quint32(junction_instances.size()));
+                quint32(junction_impostor.size()), quint32(junction_instances.size()));
         }
 
         if (!selected_node_vertices.isEmpty())
@@ -2966,7 +2992,7 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
         command_buffer->draw(quint32(node_vertices.size()));
     }
 
-    if (!junction_instances.isEmpty() && !junction_mesh.isEmpty())
+    if (!junction_instances.isEmpty() && !junction_impostor.isEmpty())
     {
         command_buffer->setGraphicsPipeline(this->globe_junction_pipeline.get());
         command_buffer->setShaderResources();
@@ -2976,7 +3002,7 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
         };
         command_buffer->setVertexInput(0, 2, junction_bindings);
         command_buffer->draw(
-            quint32(junction_mesh.size()), quint32(junction_instances.size()));
+            quint32(junction_impostor.size()), quint32(junction_instances.size()));
     }
 
     if (!selected_link_vertices.isEmpty())
@@ -3103,7 +3129,9 @@ bool MapRhiWidget::createPersistentResources()
         }
         this->shader_resource_bindings->setBindings({
             QRhiShaderResourceBinding::uniformBuffer(
-                0, QRhiShaderResourceBinding::VertexStage, this->uniform_buffer.get())
+                0, QRhiShaderResourceBinding::VertexStage
+                    | QRhiShaderResourceBinding::FragmentStage,
+                this->uniform_buffer.get())
         });
         if (!this->shader_resource_bindings->create())
         {
@@ -3750,27 +3778,25 @@ bool MapRhiWidget::createPipelines()
             QStringLiteral(":/aowis/map/rhi/map_rhi_junction.frag.qsb"));
         if (!vertex_shader.isValid() || !fragment_shader.isValid())
         {
-            reportFailure(QStringLiteral("Failed to load RHI junction sphere shaders"));
+            reportFailure(QStringLiteral("Failed to load RHI junction impostor shaders"));
             return false;
         }
 
         QRhiVertexInputLayout input_layout;
         input_layout.setBindings({
-            {quint32(sizeof(MapRhiJunctionMeshVertex))},
+            {quint32(sizeof(MapRhiJunctionImpostorVertex))},
             {quint32(sizeof(MapRhiJunctionInstance)), QRhiVertexInputBinding::PerInstance}
         });
         input_layout.setAttributes({
-            {0, 0, QRhiVertexInputAttribute::Float3,
-             quint32(offsetof(MapRhiJunctionMeshVertex, position_x))},
-            {0, 1, QRhiVertexInputAttribute::Float3,
-             quint32(offsetof(MapRhiJunctionMeshVertex, normal_x))},
-            {1, 2, QRhiVertexInputAttribute::Float3,
+            {0, 0, QRhiVertexInputAttribute::Float2,
+             quint32(offsetof(MapRhiJunctionImpostorVertex, corner_x))},
+            {1, 1, QRhiVertexInputAttribute::Float3,
              quint32(offsetof(MapRhiJunctionInstance, center_x))},
-            {1, 3, QRhiVertexInputAttribute::Float,
+            {1, 2, QRhiVertexInputAttribute::Float,
              quint32(offsetof(MapRhiJunctionInstance, radius_world))},
-            {1, 4, QRhiVertexInputAttribute::Float4,
+            {1, 3, QRhiVertexInputAttribute::Float4,
              quint32(offsetof(MapRhiJunctionInstance, red))},
-            {1, 5, QRhiVertexInputAttribute::Float,
+            {1, 4, QRhiVertexInputAttribute::Float,
              quint32(offsetof(MapRhiJunctionInstance, selected))}
         });
 
@@ -3786,39 +3812,19 @@ bool MapRhiWidget::createPipelines()
         this->junction_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
         this->junction_pipeline->setDepthTest(true);
         this->junction_pipeline->setDepthWrite(true);
-        this->junction_pipeline->setCullMode(QRhiGraphicsPipeline::Back);
+        this->junction_pipeline->setCullMode(QRhiGraphicsPipeline::None);
         this->junction_pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
+        QRhiGraphicsPipeline::TargetBlend junction_blend;
+        junction_blend.enable = true;
+        this->junction_pipeline->setTargetBlends({junction_blend});
         if (!this->junction_pipeline->create())
         {
-            reportFailure(QStringLiteral("Failed to create RHI junction sphere pipeline"));
+            reportFailure(QStringLiteral("Failed to create RHI junction impostor pipeline"));
             return false;
         }
 
-        // Globe-only variant of the pipeline just above: identical in every
-        // respect except CullMode::None instead of Back. The sphere mesh
-        // (mapRhiJunctionSphereMeshVertices(), built once and shared by
-        // both view modes) has its winding deliberately reversed from the
-        // "natural" convention -- see that function's comment -- to
-        // compensate for a horizontal reflection baked into ThreeD's own
-        // map projection, so that back-face culling keeps the correct
-        // (outward-facing) triangles under ThreeD's mirrored screen space.
-        // Globe's camera has no such reflection (it's a standard
-        // right-handed ECEF scene viewed through an ordinary lookAt()), so
-        // under Globe's *unmirrored* screen space that same
-        // pre-compensated winding is backwards: back-face culling removes
-        // the triangles actually facing the camera and keeps the ones
-        // facing away, leaving the sphere's near-camera surface un-drawn
-        // at every pixel where something else (a pipe passing through the
-        // junction's own position) is behind it in the depth buffer --
-        // which is exactly "pipes render in front of/above the spheres".
-        // Rather than build (and maintain, and keep in sync with any
-        // future mesh tweaks) a second, oppositely-wound copy of the mesh
-        // just for Globe, disabling culling entirely for this
-        // Globe-specific pipeline sidesteps the handedness question
-        // altogether: every triangle draws regardless of which way it
-        // winds, at the cost of the (for a few dozen low-poly spheres,
-        // irrelevant) overdraw of also rasterizing each sphere's back
-        // half.
+        // Keep the Globe-owned pipeline object in this incremental step.
+        // Its state and six-vertex impostor layout now match ThreeD's.
         this->globe_junction_pipeline.reset(this->active_rhi->newGraphicsPipeline());
         this->globe_junction_pipeline->setShaderStages({
             {QRhiShaderStage::Vertex, vertex_shader},
@@ -3834,9 +3840,12 @@ bool MapRhiWidget::createPipelines()
         this->globe_junction_pipeline->setDepthWrite(true);
         this->globe_junction_pipeline->setCullMode(QRhiGraphicsPipeline::None);
         this->globe_junction_pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
+        QRhiGraphicsPipeline::TargetBlend globe_junction_blend;
+        globe_junction_blend.enable = true;
+        this->globe_junction_pipeline->setTargetBlends({globe_junction_blend});
         if (!this->globe_junction_pipeline->create())
         {
-            reportFailure(QStringLiteral("Failed to create RHI globe junction sphere pipeline"));
+            reportFailure(QStringLiteral("Failed to create RHI globe junction impostor pipeline"));
             return false;
         }
     }
@@ -3942,21 +3951,19 @@ bool MapRhiWidget::createPipelines()
 
         QRhiVertexInputLayout input_layout;
         input_layout.setBindings({
-            {quint32(sizeof(MapRhiJunctionMeshVertex))},
+            {quint32(sizeof(MapRhiJunctionImpostorVertex))},
             {quint32(sizeof(MapRhiJunctionInstance)), QRhiVertexInputBinding::PerInstance}
         });
         input_layout.setAttributes({
-            {0, 0, QRhiVertexInputAttribute::Float3,
-             quint32(offsetof(MapRhiJunctionMeshVertex, position_x))},
-            {0, 1, QRhiVertexInputAttribute::Float3,
-             quint32(offsetof(MapRhiJunctionMeshVertex, normal_x))},
-            {1, 2, QRhiVertexInputAttribute::Float3,
+            {0, 0, QRhiVertexInputAttribute::Float2,
+             quint32(offsetof(MapRhiJunctionImpostorVertex, corner_x))},
+            {1, 1, QRhiVertexInputAttribute::Float3,
              quint32(offsetof(MapRhiJunctionInstance, center_x))},
-            {1, 3, QRhiVertexInputAttribute::Float,
+            {1, 2, QRhiVertexInputAttribute::Float,
              quint32(offsetof(MapRhiJunctionInstance, radius_world))},
-            {1, 4, QRhiVertexInputAttribute::Float4,
+            {1, 3, QRhiVertexInputAttribute::Float4,
              quint32(offsetof(MapRhiJunctionInstance, red))},
-            {1, 5, QRhiVertexInputAttribute::Float,
+            {1, 4, QRhiVertexInputAttribute::Float,
              quint32(offsetof(MapRhiJunctionInstance, selected))}
         });
 
@@ -3975,7 +3982,7 @@ bool MapRhiWidget::createPipelines()
             this->junction_xray_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
             this->junction_xray_pipeline->setDepthTest(false);
             this->junction_xray_pipeline->setDepthWrite(false);
-            this->junction_xray_pipeline->setCullMode(QRhiGraphicsPipeline::Back);
+            this->junction_xray_pipeline->setCullMode(QRhiGraphicsPipeline::None);
             QRhiGraphicsPipeline::TargetBlend xray_blend;
             xray_blend.enable = true;
             this->junction_xray_pipeline->setTargetBlends({xray_blend});
@@ -4002,7 +4009,7 @@ bool MapRhiWidget::createPipelines()
             this->junction_no_depth_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
             this->junction_no_depth_pipeline->setDepthTest(false);
             this->junction_no_depth_pipeline->setDepthWrite(false);
-            this->junction_no_depth_pipeline->setCullMode(QRhiGraphicsPipeline::Back);
+            this->junction_no_depth_pipeline->setCullMode(QRhiGraphicsPipeline::None);
             QRhiGraphicsPipeline::TargetBlend solid_blend;
             solid_blend.enable = true;
             this->junction_no_depth_pipeline->setTargetBlends({solid_blend});
@@ -4085,10 +4092,10 @@ bool MapRhiWidget::ensureGeometryBuffers()
         this->tank_model_vertices.size(), qsizetype(sizeof(MapRhiTankModelVertex)));
     const int required_reservoir_bytes = boundedBufferSize(
         this->reservoir_model_vertices.size(), qsizetype(sizeof(MapRhiReservoirModelVertex)));
-    const QVector<MapRhiJunctionMeshVertex> &junction_mesh =
-        mapRhiJunctionSphereMeshVertices();
+    const QVector<MapRhiJunctionImpostorVertex> &junction_impostor =
+        mapRhiJunctionImpostorVertices();
     const int required_junction_mesh_bytes = boundedBufferSize(
-        junction_mesh.size(), qsizetype(sizeof(MapRhiJunctionMeshVertex)));
+        junction_impostor.size(), qsizetype(sizeof(MapRhiJunctionImpostorVertex)));
     const int required_junction_instance_bytes = boundedBufferSize(
         this->scene.junctionInstances().size(), qsizetype(sizeof(MapRhiJunctionInstance)));
     const int required_underground_link_bytes = boundedBufferSize(
@@ -4266,7 +4273,7 @@ bool MapRhiWidget::ensureGeometryBuffers()
             QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, required_junction_mesh_bytes));
         if (!this->junction_mesh_vertex_buffer || !this->junction_mesh_vertex_buffer->create())
         {
-            reportFailure(QStringLiteral("Failed to create RHI junction sphere mesh buffer"));
+            reportFailure(QStringLiteral("Failed to create RHI junction impostor buffer"));
             return false;
         }
         this->junction_mesh_vertex_buffer_size = required_junction_mesh_bytes;
@@ -4280,7 +4287,7 @@ bool MapRhiWidget::ensureGeometryBuffers()
             QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_junction_instance_bytes));
         if (!this->junction_instance_buffer || !this->junction_instance_buffer->create())
         {
-            reportFailure(QStringLiteral("Failed to create RHI junction sphere instance buffer"));
+            reportFailure(QStringLiteral("Failed to create RHI junction impostor instance buffer"));
             return false;
         }
         this->junction_instance_buffer_size = required_junction_instance_bytes;

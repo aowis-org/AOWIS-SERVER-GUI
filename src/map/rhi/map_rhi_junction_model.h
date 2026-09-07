@@ -4,14 +4,10 @@
 #include <QVector>
 #include <QtGlobal>
 
-struct MapRhiJunctionMeshVertex
+struct MapRhiJunctionImpostorVertex
 {
-    float position_x = 0.0f;
-    float position_y = 0.0f;
-    float position_z = 0.0f;
-    float normal_x = 0.0f;
-    float normal_y = 0.0f;
-    float normal_z = 1.0f;
+    float corner_x = 0.0f;
+    float corner_y = 0.0f;
 };
 
 struct MapRhiJunctionInstance
@@ -28,6 +24,6 @@ struct MapRhiJunctionInstance
     float selected = 0.0f;
 };
 
-const QVector<MapRhiJunctionMeshVertex> &mapRhiJunctionSphereMeshVertices();
+const QVector<MapRhiJunctionImpostorVertex> &mapRhiJunctionImpostorVertices();
 
 #endif // MAP_RHI_JUNCTION_MODEL_H

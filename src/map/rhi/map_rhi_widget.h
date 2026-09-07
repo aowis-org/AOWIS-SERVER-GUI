@@ -193,14 +193,9 @@ private:
     // upload/resize bookkeeping together.
     std::unique_ptr<QRhiBuffer> globe_link_vertex_buffer;
     std::unique_ptr<QRhiBuffer> globe_node_vertex_buffer;
-    // Globe-specific per-instance data for junction spheres -- everything
-    // else about rendering them (the shared unit-sphere mesh in
-    // junction_mesh_vertex_buffer, and the junction_pipeline/
-    // junction_no_depth_pipeline pipelines) is reused unmodified from
-    // ThreeD, since both are camera/coordinate-system agnostic (the mesh
-    // is a unit sphere scaled/translated per-instance; the pipelines just
-    // read whichever CameraBlock uniform is currently bound). Only the
-    // instance data itself -- where each sphere actually sits, in
+    // Globe-specific per-instance data for junction sphere impostors.
+    // The shared six-vertex quad is camera/coordinate-system agnostic;
+    // only the instance data -- where each sphere actually sits, in
     // whichever coordinate space the active view uses -- differs, exactly
     // like globe_node_vertex_buffer vs. node_vertex_buffer.
     std::unique_ptr<QRhiBuffer> globe_junction_instance_buffer;
@@ -237,14 +232,8 @@ private:
     std::unique_ptr<QRhiGraphicsPipeline> tank_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> reservoir_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> junction_pipeline;
-    // Globe-only copies of junction_pipeline/junction_no_depth_pipeline --
-    // same shaders, same shared sphere mesh, same instance data layout,
-    // differing only in CullMode (None instead of Back). See the comment
-    // where globe_junction_pipeline is created (in createPipelines()) for
-    // why: the shared sphere mesh's winding is deliberately reversed to
-    // suit ThreeD's mirrored screen space, which makes Back-face culling
-    // remove the wrong (camera-facing) triangles under Globe's unmirrored
-    // one.
+    // Globe-owned copies retained during the phased migration. They use the
+    // same shader, quad, instance layout, and no-culling state as ThreeD.
     std::unique_ptr<QRhiGraphicsPipeline> globe_junction_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> globe_junction_no_depth_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> link_xray_pipeline;

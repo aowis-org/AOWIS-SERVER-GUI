@@ -110,6 +110,50 @@ void globeNearFarPlanesM(
 
 MapRhiCamera::MapRhiCamera() = default;
 
+MapRhiImpostorCameraBasis MapRhiCamera::junctionImpostorCameraBasis() const
+{
+    MapRhiImpostorCameraBasis result;
+
+    if (this->view_mode == MapViewMode::Globe)
+    {
+        const double pitch_deg = qBound(
+            MapModel::MinViewGlobePitchDeg, this->view_globe_pitch_deg,
+            MapModel::MaxViewGlobePitchDeg);
+        const double distance = globeOrbitDistanceM();
+        const GeoWgs84Ellipsoid::OrbitCameraBasisRelative basis =
+            GeoWgs84Ellipsoid::orbitCameraBasisRelativeToOrigin(
+                this->globe_target_lon_deg, this->globe_target_lat_deg,
+                this->view_globe_yaw_deg, pitch_deg, distance,
+                this->view_globe_vertical_offset_m, this->globe_render_origin_ecef);
+        result.right = basis.right;
+        result.up = basis.up;
+        result.eye = basis.eye;
+        return result;
+    }
+
+    const double pitch_rad = qDegreesToRadians(qBound(
+        MapModel::MinView3dPitchDeg,
+        this->view_3d_pitch_deg,
+        MapModel::MaxView3dPitchDeg));
+    const double yaw_rad = qDegreesToRadians(this->view_3d_yaw_deg);
+    const double distance = orbitDistanceWorld();
+    const double horizontal_distance = distance * std::cos(pitch_rad);
+    const QVector3D target(
+        float(this->center_world.x()), float(this->center_world.y()),
+        float(this->view_3d_vertical_offset_world));
+    result.eye = QVector3D(
+        target.x() + float(std::sin(yaw_rad) * horizontal_distance),
+        target.y() + float(std::cos(yaw_rad) * horizontal_distance),
+        float(this->view_3d_vertical_offset_world
+            + distance * std::sin(pitch_rad)
+            + this->view_3d_camera_collision_lift_world));
+    const QVector3D forward = (target - result.eye).normalized();
+    result.right = QVector3D(
+        float(std::cos(yaw_rad)), float(-std::sin(yaw_rad)), 0.0f);
+    result.up = QVector3D::crossProduct(forward, result.right).normalized();
+    return result;
+}
+
 void MapRhiCamera::setSceneOriginWorld(const QPointF &origin_world)
 {
     this->scene_origin_world = origin_world;
@@ -297,7 +341,8 @@ QMatrix4x4 MapRhiCamera::globeViewProjectionMatrix(const QRhi &rhi) const
     return result;
 }
 
-QMatrix4x4 MapRhiCamera::globeNetworkViewProjectionMatrix(const QRhi &rhi) const
+QMatrix4x4 MapRhiCamera::globeNetworkViewProjectionMatrix(
+    const QRhi &rhi, MapRhiImpostorCameraBasis *impostor_camera_basis) const
 {
     const int viewport_width = qMax(1, this->viewport_size.width());
     const int viewport_height = qMax(1, this->viewport_size.height());
@@ -327,6 +372,12 @@ QMatrix4x4 MapRhiCamera::globeNetworkViewProjectionMatrix(const QRhi &rhi) const
             this->globe_target_lon_deg, this->globe_target_lat_deg,
             this->view_globe_yaw_deg, pitch_deg, distance,
             this->view_globe_vertical_offset_m, this->globe_render_origin_ecef);
+    if (impostor_camera_basis != nullptr)
+    {
+        impostor_camera_basis->right = basis.right;
+        impostor_camera_basis->up = basis.up;
+        impostor_camera_basis->eye = basis.eye;
+    }
 
     constexpr float FieldOfViewDeg = float(MapModel::GlobeFieldOfViewDeg);
     double near_plane = 0.0;
