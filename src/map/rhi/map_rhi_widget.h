@@ -115,6 +115,9 @@ private:
     bool ensureGlobeNetworkGeometryBuffers();
     void uploadGlobeNetworkGeometry(QRhiResourceUpdateBatch *resource_updates);
     void drawGlobeNetwork(QRhiCommandBuffer *command_buffer);
+    // Globe-mode counterpart of hitTest() -- see that function's header
+    // comment for why it can't just be folded into the same function body.
+    MapRhiHit globeHitTest(const QPointF &screen_position) const;
     void syncViewState();
     void syncTerrainAwareCameraDistance();
     void captureView3dFocusAnchor();
@@ -179,6 +182,17 @@ private:
     // upload/resize bookkeeping together.
     std::unique_ptr<QRhiBuffer> globe_link_vertex_buffer;
     std::unique_ptr<QRhiBuffer> globe_node_vertex_buffer;
+    // Globe-specific per-instance data for junction spheres -- everything
+    // else about rendering them (the shared unit-sphere mesh in
+    // junction_mesh_vertex_buffer, and the junction_pipeline/
+    // junction_no_depth_pipeline pipelines) is reused unmodified from
+    // ThreeD, since both are camera/coordinate-system agnostic (the mesh
+    // is a unit sphere scaled/translated per-instance; the pipelines just
+    // read whichever CameraBlock uniform is currently bound). Only the
+    // instance data itself -- where each sphere actually sits, in
+    // whichever coordinate space the active view uses -- differs, exactly
+    // like globe_node_vertex_buffer vs. node_vertex_buffer.
+    std::unique_ptr<QRhiBuffer> globe_junction_instance_buffer;
     std::unique_ptr<QRhiBuffer> globe_selected_link_vertex_buffer;
     std::unique_ptr<QRhiBuffer> globe_selected_node_vertex_buffer;
     std::unique_ptr<QRhiBuffer> globe_diagnostic_link_vertex_buffer;
@@ -211,6 +225,16 @@ private:
     std::unique_ptr<QRhiGraphicsPipeline> tank_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> reservoir_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> junction_pipeline;
+    // Globe-only copies of junction_pipeline/junction_no_depth_pipeline --
+    // same shaders, same shared sphere mesh, same instance data layout,
+    // differing only in CullMode (None instead of Back). See the comment
+    // where globe_junction_pipeline is created (in createPipelines()) for
+    // why: the shared sphere mesh's winding is deliberately reversed to
+    // suit ThreeD's mirrored screen space, which makes Back-face culling
+    // remove the wrong (camera-facing) triangles under Globe's unmirrored
+    // one.
+    std::unique_ptr<QRhiGraphicsPipeline> globe_junction_pipeline;
+    std::unique_ptr<QRhiGraphicsPipeline> globe_junction_no_depth_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> link_xray_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> junction_xray_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> link_no_depth_pipeline;
@@ -232,6 +256,7 @@ private:
     int underground_junction_instance_buffer_size = 0;
     int globe_link_vertex_buffer_size = 0;
     int globe_node_vertex_buffer_size = 0;
+    int globe_junction_instance_buffer_size = 0;
     int globe_selected_link_vertex_buffer_size = 0;
     int globe_selected_node_vertex_buffer_size = 0;
     int globe_diagnostic_link_vertex_buffer_size = 0;
@@ -253,6 +278,7 @@ private:
     bool globe_highlight_upload_pending = true;
     bool globe_icon_upload_pending = true;
     bool globe_underground_upload_pending = true;
+    bool globe_junction_instance_upload_pending = true;
     bool icon_atlas_upload_pending = true;
     bool tank_texture_upload_pending = true;
     bool reservoir_texture_upload_pending = true;

@@ -66,6 +66,13 @@ void MapRhiGlobeNetworkScene::setSymbology(const MapRhiSymbology &symbology)
         || this->symbology.visual_node != symbology.visual_node
         || this->symbology.visual_link != symbology.visual_link
         || link_colors_changed || node_colors_changed;
+    // Mirrors MapRhiScene::setSymbology()'s "junction_changed" -- anything
+    // that changes a junction sphere's radius or color.
+    const bool junction_changed =
+        this->symbology.node_size_unit != symbology.node_size_unit
+        || this->symbology.node_size_px != symbology.node_size_px
+        || this->symbology.node_size_m != symbology.node_size_m
+        || node_colors_changed;
 
     this->symbology = symbology;
 
@@ -83,6 +90,8 @@ void MapRhiGlobeNetworkScene::setSymbology(const MapRhiSymbology &symbology)
     }
     if (icon_changed)
         rebuildIcons();
+    if (junction_changed)
+        rebuildJunctionInstances();
     if (link_thickness_changed)
         rebuildHighlights();
 }
@@ -97,6 +106,7 @@ void MapRhiGlobeNetworkScene::setSelectedEntity(
     this->selected_entity_uuid = uuid;
     rebuildHighlights();
     rebuildIcons();
+    rebuildJunctionInstances();
 }
 
 void MapRhiGlobeNetworkScene::setSimulationErrorEntities(
@@ -210,6 +220,11 @@ const QVector<MapRhiScene::IconVertex> &MapRhiGlobeNetworkScene::iconVertices() 
 const QVector<MapRhiScene::LinkVertex> &MapRhiGlobeNetworkScene::undergroundLinkVertices() const
 {
     return this->underground_link_vertices;
+}
+
+const QVector<MapRhiJunctionInstance> &MapRhiGlobeNetworkScene::junctionInstances() const
+{
+    return this->junction_instances;
 }
 
 quint64 MapRhiGlobeNetworkScene::geometryRevision() const
@@ -341,6 +356,7 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
     this->diagnostic_node_vertices.clear();
     this->icon_vertices.clear();
     this->icon_markers.clear();
+    this->junction_markers.clear();
     this->link_paths.clear();
     this->underground_link_vertices.clear();
     this->entity_keys_by_uuid.clear();
@@ -389,6 +405,14 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
             marker.render_id = node.render_id;
             marker.center = center;
             this->icon_markers.append(marker);
+        }
+
+        if (node.entity_type == InfrastructureEntity::Junction)
+        {
+            JunctionMarker marker;
+            marker.render_id = node.render_id;
+            marker.center = center;
+            this->junction_markers.append(marker);
         }
     }
 
@@ -502,6 +526,7 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
     }
 
     rebuildIcons();
+    rebuildJunctionInstances();
     rebuildHighlights();
 }
 
@@ -690,7 +715,16 @@ void MapRhiGlobeNetworkScene::applyNodeColor(MapRhiScene::NodeVertex *vertex) co
     vertex->red = qRed(color) / 255.0f;
     vertex->green = qGreen(color) / 255.0f;
     vertex->blue = qBlue(color) / 255.0f;
-    vertex->alpha = this->symbology.show_icons && mapRhiHasIcon(vertex->entity_type)
+    // Junctions render as real 3D sphere instances (see
+    // rebuildJunctionInstances()/junctionInstances()) -- this flat quad is
+    // still built for every junction (appendNode() doesn't know or care
+    // about entity type), but made fully transparent so it contributes
+    // nothing on screen underneath its sphere, mirroring exactly how
+    // MapRhiScene::applyNodeColor() hides a ThreeD node's flat quad
+    // whenever its 3D junction/tank/reservoir model (or icon) is shown
+    // instead.
+    vertex->alpha = vertex->entity_type == InfrastructureEntity::Junction
+            || (this->symbology.show_icons && mapRhiHasIcon(vertex->entity_type))
         ? 0.0f
         : qAlpha(color) / 255.0f;
 }
@@ -776,6 +810,75 @@ void MapRhiGlobeNetworkScene::appendIcon(const IconMarker &marker)
     }
 }
 
+void MapRhiGlobeNetworkScene::rebuildJunctionInstances()
+{
+    this->junction_instances.clear();
+    if (this->junction_markers.isEmpty())
+        return;
+
+    // Globe network geometry is already real ECEF meters (see this class's
+    // top-of-file comment), so -- unlike MapRhiScene::rebuildJunctionInstances(),
+    // which must convert node_size_m through worldUnitsPerMeter() into its
+    // flat tangent-plane world units -- the configured meters size is
+    // usable directly as the sphere's world-space radius. When the
+    // configured unit is pixels instead, this fallback value is never
+    // actually used for rendering: map_rhi_junction.vert recomputes
+    // radius_world itself from camera.viewport_and_sizes.w whenever that
+    // is non-negative (the "pixel size" convention shared with
+    // map_rhi_node.vert's node-quad sizing -- see MapRhiWidget::
+    // renderGlobe()'s uniform_data[19]), the same as ThreeD's junction
+    // spheres do.
+    float radius_world = 1.0f;
+    if (this->symbology.node_size_unit == NetworkSymbologySizeUnit::Meters)
+        radius_world = float(this->symbology.node_size_m * 0.5);
+
+    // Mirrors MapRhiScene::rebuildJunctionInstances() exactly: the
+    // selected junction (if any) is recolored to the same selection blue
+    // used for the flat-highlight-decal path everywhere else, and flagged
+    // via "selected" -- there is no separate selected-instance buffer the
+    // way links/other nodes have selected_link_vertices/
+    // selected_node_vertices, since a sphere only ever needs recoloring,
+    // not an additional decal drawn on top of itself.
+    quint32 selected_junction_render_id = 0;
+    if (this->selected_entity_type == InfrastructureEntity::Junction
+        && !this->selected_entity_uuid.isNull())
+    {
+        const QHash<QUuid, quint64>::const_iterator selected_iterator =
+            this->entity_keys_by_uuid.constFind(this->selected_entity_uuid);
+        if (selected_iterator != this->entity_keys_by_uuid.cend())
+        {
+            const quint32 render_id = quint32(selected_iterator.value() & 0xffffffffULL);
+            if (entityRenderKey(InfrastructureEntity::Junction, render_id)
+                == selected_iterator.value())
+            {
+                selected_junction_render_id = render_id;
+            }
+        }
+    }
+
+    this->junction_instances.reserve(this->junction_markers.size());
+    for (const JunctionMarker &marker : this->junction_markers)
+    {
+        const QRgb color = marker.render_id == selected_junction_render_id
+            ? QColor(0, 190, 255).rgba()
+            : this->symbology.node_colors.value(
+                  marker.render_id, networkSymbologyDefaultColor());
+
+        MapRhiJunctionInstance instance;
+        instance.render_id = marker.render_id;
+        instance.center_x = marker.center.x();
+        instance.center_y = marker.center.y();
+        instance.center_z = marker.center.z();
+        instance.radius_world = radius_world;
+        instance.red = qRed(color) / 255.0f;
+        instance.green = qGreen(color) / 255.0f;
+        instance.blue = qBlue(color) / 255.0f;
+        instance.alpha = qAlpha(color) / 255.0f;
+        instance.selected = marker.render_id == selected_junction_render_id ? 1.0f : 0.0f;
+        this->junction_instances.append(instance);
+    }
+}
+
 void MapRhiGlobeNetworkScene::rebuildHighlights()
 {
     this->selected_link_vertices.clear();
@@ -802,6 +905,19 @@ void MapRhiGlobeNetworkScene::rebuildHighlights()
                 const float base_link_width = float(this->symbology.link_thickness_px);
                 const float selected_link_width = qMax(
                     3.0f, base_link_width + (selected_has_error ? 6.0f : 2.0f));
+                // A selected junction shows its selection via its own
+                // sphere instance recoloring (rebuildJunctionInstances()),
+                // not a flat highlight decal underneath a sphere that's
+                // already invisible (see applyNodeColor()) -- mirrors
+                // MapRhiScene::rebuildHighlights()'s identical null-out for
+                // whichever entity type currently has a 3D model. Other
+                // selected node types (tanks, reservoirs, pumps, valves --
+                // none of which have a Globe 3D model yet) still get the
+                // ordinary flat decal.
+                QVector<MapRhiScene::NodeVertex> *selected_node_target =
+                    this->selected_entity_type == InfrastructureEntity::Junction
+                    ? nullptr
+                    : &this->selected_node_vertices;
                 appendEntityHighlight(
                     this->selected_entity_type,
                     quint32(selected_iterator.value() & 0xffffffffULL),
@@ -809,7 +925,7 @@ void MapRhiGlobeNetworkScene::rebuildHighlights()
                     (selected_link_width - base_link_width) / 2.0f,
                     selected_has_error ? 5.0f : 2.0f,
                     &this->selected_link_vertices,
-                    &this->selected_node_vertices);
+                    selected_node_target);
             }
         }
     }

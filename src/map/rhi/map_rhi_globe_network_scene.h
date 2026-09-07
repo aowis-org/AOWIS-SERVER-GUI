@@ -4,6 +4,7 @@
 #include "network/network_render_snapshot.h"
 #include "map/rhi/map_rhi_symbology.h"
 #include "map/rhi/map_rhi_scene.h"
+#include "map/rhi/map_rhi_junction_model.h"
 #include "geo/geo_wgs84_ellipsoid.h"
 
 #include <QColor>
@@ -58,13 +59,21 @@
 //
 // Not yet implemented for the globe (all render as their flat pixel-marker
 // fallback, matching what the ThreeD view already does when its 3D-model
-// toggles are off): the heatmap overlay, flow-direction chevrons, 3D
-// tank/reservoir/junction meshes, and coincident-node decluttering
-// (map_node_declutter.h). Underground X-Ray *is* implemented, but for links
-// only -- see setUndergroundXRayEnabled() -- since ThreeD's underground
-// junction indicator is tied to its 3D junction mesh model, which the globe
-// doesn't have yet either. Follow-ups, not omissions this class silently
-// papers over -- see MapRhiWidget::renderGlobe().
+// toggles are off): the heatmap overlay, flow-direction chevrons, and 3D
+// tank/reservoir meshes, and coincident-node decluttering
+// (map_node_declutter.h). Junctions ARE rendered as real 3D sphere
+// instances -- see junctionInstances() -- reusing MapRhiScene/MapRhiWidget's
+// existing MapRhiJunctionInstance/junction_pipeline machinery unmodified,
+// unlike ThreeD's, this is not gated behind a toggle: Globe has no flat-2D
+// counterpart the way TwoD is to ThreeD, so junctions are unconditionally
+// spheres here, the same way ThreeD's are whenever its own 3D-model toggle
+// is on. Underground X-Ray *is* implemented, but for links only -- see
+// setUndergroundXRayEnabled() -- since ThreeD's underground junction
+// indicator relies on a per-junction underground/aboveground
+// classification this class does not yet build (see
+// appendUndergroundSubdivisions(), which only ever classifies link
+// segments). Follow-ups, not omissions this class silently papers over --
+// see MapRhiWidget::renderGlobe().
 class MapRhiGlobeNetworkScene
 {
 public:
@@ -157,6 +166,20 @@ public:
     const QVector<MapRhiScene::NodeVertex> &diagnosticNodeVertices() const;
     const QVector<MapRhiScene::IconVertex> &iconVertices() const;
     const QVector<MapRhiScene::LinkVertex> &undergroundLinkVertices() const;
+    // Real 3D sphere instances for junction entities -- see the class
+    // comment above. Drawn with the exact same MapRhiJunctionInstance
+    // layout and sphere mesh (mapRhiJunctionSphereMeshVertices())
+    // MapRhiWidget already built for ThreeD, but Globe's own
+    // globe_junction_pipeline/globe_junction_no_depth_pipeline rather than
+    // ThreeD's junction_pipeline/junction_no_depth_pipeline -- see where
+    // globe_junction_pipeline is created (MapRhiWidget::createPipelines())
+    // for why the pipeline itself, not just the instance data and camera
+    // matrix (MapRhiCamera::globeNetworkViewProjectionMatrix()), needs a
+    // Globe-specific copy. Junction entities are NOT also present in
+    // nodeVertices() with a visible alpha -- see applyNodeColor() -- so
+    // they render exactly once, as a sphere, never as a flat marker
+    // underneath it.
+    const QVector<MapRhiJunctionInstance> &junctionInstances() const;
     quint64 geometryRevision() const;
     bool hasGeometry() const;
 
@@ -174,6 +197,18 @@ private:
     struct IconMarker
     {
         InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
+        quint32 render_id = 0;
+        QVector3D center;
+    };
+
+    // Mirrors MapRhiScene::JunctionMarker -- a lightweight record of just
+    // what rebuildJunctionInstances() needs (render_id and position),
+    // kept separate from the full MapRhiJunctionInstance (which also
+    // carries color/radius/selected-state derived from symbology and
+    // selection, both of which can change without the junction's
+    // position doing so).
+    struct JunctionMarker
+    {
         quint32 render_id = 0;
         QVector3D center;
     };
@@ -201,6 +236,16 @@ private:
     void applyNodeColor(MapRhiScene::NodeVertex *vertex) const;
     void rebuildIcons();
     void appendIcon(const IconMarker &marker);
+    // Rebuilds junction_instances from junction_markers plus whatever
+    // currently affects a junction sphere's appearance (symbology node
+    // color/size, current selection) -- mirrors MapRhiScene::
+    // rebuildJunctionInstances() exactly, including reusing the selection
+    // blue (QColor(0, 190, 255)) for the selected junction. Called
+    // whenever any of those inputs change (see setSymbology()/
+    // setSelectedEntity()), not only from rebuildNetworkGeometry(), so
+    // selecting a junction recolors its sphere without rebuilding the
+    // entire network's link/node geometry.
+    void rebuildJunctionInstances();
     void rebuildHighlights();
     void appendEntityHighlight(InfrastructureEntity entity_type, quint32 render_id,
                                const QColor &color, float link_size_adjust_px,
@@ -233,6 +278,8 @@ private:
     QVector<MapRhiScene::NodeVertex> diagnostic_node_vertices;
     QVector<MapRhiScene::IconVertex> icon_vertices;
     QVector<IconMarker> icon_markers;
+    QVector<JunctionMarker> junction_markers;
+    QVector<MapRhiJunctionInstance> junction_instances;
     QVector<LinkPath> link_paths;
     MapRhiSymbology symbology;
     InfrastructureEntity selected_entity_type = InfrastructureEntity::Unknown;
