@@ -102,9 +102,15 @@ void main()
     clip_position.xy += translation_ndc * clip_position.w;
 
     gl_Position = clip_position;
-    vertex_color = style_state.r > 0.5
-        ? vec4(0.0, 190.0 / 255.0, 1.0, 1.0)
-        : style_color;
+    // Diagnostics used to be separate node quads drawn after selection.
+    // Preserve that priority directly on the retained sphere impostor.
+    vertex_color = style_color;
+    if (style_state.g > 0.75)
+        vertex_color = vec4(1.0, 0.0, 0.0, 1.0);
+    else if (style_state.g > 0.25)
+        vertex_color = vec4(128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0);
+    else if (style_state.r > 0.5)
+        vertex_color = vec4(0.0, 190.0 / 255.0, 1.0, 1.0);
     sphere_coordinate = impostor_corner;
     billboard_world_position = world_position;
     sphere_center = instance_center;

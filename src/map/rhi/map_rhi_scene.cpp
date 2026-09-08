@@ -143,7 +143,16 @@ void MapRhiScene::rebuildNetworkGeometry()
     const QHash<quint32, QPointF> node_declutter_offsets = computeNodeDeclutterOffsets(
         declutter_inputs, declutter_separation_world);
 
-    this->node_vertices.reserve(prepared_nodes.size() * 6);
+    qsizetype node_quad_count = prepared_nodes.size();
+    if (this->use_3d_junction_models)
+    {
+        for (const PreparedNode &prepared : prepared_nodes)
+        {
+            if (prepared.node->entity_type == InfrastructureEntity::Junction)
+                --node_quad_count;
+        }
+    }
+    this->node_vertices.reserve(node_quad_count * 6);
     for (const PreparedNode &prepared : prepared_nodes)
     {
         const NetworkRenderNode &node = *prepared.node;
@@ -338,12 +347,10 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
         || node_colors_changed
         || junction_visibility_changed
         || this->symbology.flow_directions != symbology.flow_directions;
-    const bool junction_changed =
-        junction_visibility_changed
-        || this->symbology.node_size_unit != symbology.node_size_unit
-        || this->symbology.node_size_px != symbology.node_size_px
-        || this->symbology.node_size_m != symbology.node_size_m
-        || node_colors_changed;
+    const bool junction_instance_changed =
+        this->symbology.node_size_unit != symbology.node_size_unit
+        || (symbology.node_size_unit == NetworkSymbologySizeUnit::Meters
+            && this->symbology.node_size_m != symbology.node_size_m);
 
     this->symbology = symbology;
     if (network_style_changed)
@@ -367,7 +374,7 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
         rebuildTankInstances();
         rebuildReservoirInstances();
     }
-    if (junction_changed)
+    if (junction_instance_changed)
         rebuildJunctionInstances();
     if (flow_direction_changed)
         rebuildFlowDirections();
@@ -387,7 +394,6 @@ void MapRhiScene::setSelectedEntity(InfrastructureEntity entity_type, const QUui
     rebuildIcons();
     rebuildTankInstances();
     rebuildReservoirInstances();
-    rebuildJunctionInstances();
 }
 
 bool MapRhiScene::setViewZoom(int zoom)
@@ -399,7 +405,6 @@ bool MapRhiScene::setViewZoom(int zoom)
     rebuildIcons();
     rebuildTankInstances();
     rebuildReservoirInstances();
-    rebuildJunctionInstances();
     rebuildFlowDirections();
     return true;
 }
@@ -442,9 +447,39 @@ bool MapRhiScene::setUse3dJunctionModels(bool enabled)
         return false;
 
     this->use_3d_junction_models = enabled;
-    for (NodeVertex &vertex : this->node_vertices)
-        applyNodeColor(&vertex);
+    if (enabled)
+    {
+        QVector<NodeVertex> retained_node_vertices;
+        retained_node_vertices.reserve(this->node_vertices.size());
+        for (const NodeVertex &vertex : this->node_vertices)
+        {
+            if (vertex.entity_type != InfrastructureEntity::Junction)
+                retained_node_vertices.append(vertex);
+        }
+        this->node_vertices.swap(retained_node_vertices);
+
+        this->node_vertex_indices_by_entity.clear();
+        for (qsizetype vertex_index = 0;
+             vertex_index < this->node_vertices.size(); ++vertex_index)
+        {
+            const NodeVertex &vertex = this->node_vertices.at(vertex_index);
+            const quint64 entity_key = entityRenderKey(
+                vertex.entity_type, vertex.render_id);
+            this->node_vertex_indices_by_entity[entity_key].append(int(vertex_index));
+        }
+    }
+    else
+    {
+        for (const JunctionMarker &marker : this->junction_markers)
+        {
+            appendNode(
+                InfrastructureEntity::Junction, marker.render_id,
+                marker.center, marker.z);
+        }
+    }
+
     rebuildJunctionInstances();
+    rebuildHighlights();
     return true;
 }
 
@@ -582,7 +617,9 @@ quint64 MapRhiScene::geometryRevision() const
 
 bool MapRhiScene::hasGeometry() const
 {
-    return !this->link_vertices.isEmpty() || !this->node_vertices.isEmpty();
+    return !this->link_vertices.isEmpty()
+        || !this->node_vertices.isEmpty()
+        || !this->junction_instances.isEmpty();
 }
 
 NetworkSymbologySizeUnit MapRhiScene::nodeSizeUnit() const
@@ -765,6 +802,15 @@ void MapRhiScene::appendNode(
     InfrastructureEntity entity_type, quint32 render_id,
     const QPointF &center, float center_z)
 {
+    // TwoD still uses the node quad. ThreeD junctions are represented only
+    // by compact sphere impostor instances, so do not submit a transparent
+    // fallback quad beneath every sphere.
+    if (entity_type == InfrastructureEntity::Junction
+        && this->use_3d_junction_models)
+    {
+        return;
+    }
+
     const quint64 entity_key = entityRenderKey(entity_type, render_id);
     const float corners[6][2] = {
         {-1.0f, -1.0f},
@@ -819,7 +865,7 @@ void MapRhiScene::applyNodeColor(NodeVertex *vertex) const
     vertex->blue = qBlue(color) / 255.0f;
     const bool junction_hidden =
         vertex->entity_type == InfrastructureEntity::Junction
-        && (!this->symbology.show_junctions || this->use_3d_junction_models);
+        && !this->symbology.show_junctions;
     vertex->alpha = junction_hidden
         || (this->symbology.show_icons && mapRhiHasIcon(vertex->entity_type))
         ? 0.0f
@@ -1099,8 +1145,7 @@ void MapRhiScene::rebuildReservoirInstances()
 void MapRhiScene::rebuildJunctionInstances()
 {
     this->junction_instances.clear();
-    if (!this->symbology.show_junctions
-        || !this->use_3d_junction_models || this->junction_markers.isEmpty())
+    if (!this->use_3d_junction_models || this->junction_markers.isEmpty())
         return;
 
     float radius_world = 1.0f;
@@ -1376,11 +1421,17 @@ void MapRhiScene::rebuildHighlights()
         const QColor color = this->simulation_stale_entity_uuids.contains(error_iterator.key())
             ? QColor(128, 128, 128)
             : QColor(255, 0, 0);
+        const bool diagnostic_uses_3d_junction =
+            this->use_3d_junction_models
+            && entity_type == InfrastructureEntity::Junction;
+        QVector<NodeVertex> *diagnostic_node_target = diagnostic_uses_3d_junction
+            ? nullptr
+            : &this->diagnostic_node_vertices;
         appendEntityHighlight(
             entity_type, render_id, color,
             (diagnostic_link_width - base_link_width) / 2.0f, 2.0f,
             &this->diagnostic_link_vertices,
-            &this->diagnostic_node_vertices);
+            diagnostic_node_target);
     }
 }
 

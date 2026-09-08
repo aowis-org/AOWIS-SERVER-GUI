@@ -72,17 +72,10 @@ void MapRhiGlobeNetworkScene::setSymbology(const MapRhiSymbology &symbology)
         || this->symbology.visual_node != symbology.visual_node
         || this->symbology.visual_link != symbology.visual_link
         || link_colors_changed || node_colors_changed;
-    // Keep the existing junction-buffer invalidation boundary in this step.
-    // Color now comes from the shared GPU style table; removing the resulting
-    // redundant instance refresh belongs to the next cleanup step.
-    const bool junction_visibility_changed =
-        this->symbology.show_junctions != symbology.show_junctions;
-    const bool junction_changed =
-        junction_visibility_changed
-        || this->symbology.node_size_unit != symbology.node_size_unit
-        || this->symbology.node_size_px != symbology.node_size_px
-        || this->symbology.node_size_m != symbology.node_size_m
-        || node_colors_changed;
+    const bool junction_instance_changed =
+        this->symbology.node_size_unit != symbology.node_size_unit
+        || (symbology.node_size_unit == NetworkSymbologySizeUnit::Meters
+            && this->symbology.node_size_m != symbology.node_size_m);
     const bool flow_direction_changed =
         this->symbology.show_flow_direction != symbology.show_flow_direction
         || this->symbology.flow_direction_size_px != symbology.flow_direction_size_px
@@ -101,18 +94,18 @@ void MapRhiGlobeNetworkScene::setSymbology(const MapRhiSymbology &symbology)
         for (MapRhiScene::LinkVertex &vertex : this->underground_link_vertices)
             applyLinkColor(&vertex);
     }
-    if (node_colors_changed || icon_visibility_changed || junction_visibility_changed)
+    if (node_colors_changed || icon_visibility_changed)
     {
         for (MapRhiScene::NodeVertex &vertex : this->node_vertices)
             applyNodeColor(&vertex);
     }
     if (icon_changed)
         rebuildIcons();
-    if (junction_changed)
+    if (junction_instance_changed)
         rebuildJunctionInstances();
     if (flow_direction_changed)
         rebuildFlowDirections();
-    if (junction_visibility_changed || link_thickness_changed)
+    if (link_thickness_changed)
         rebuildHighlights();
 }
 
@@ -126,7 +119,6 @@ void MapRhiGlobeNetworkScene::setSelectedEntity(
     this->selected_entity_uuid = uuid;
     rebuildHighlights();
     rebuildIcons();
-    rebuildJunctionInstances();
 }
 
 void MapRhiGlobeNetworkScene::setSimulationErrorEntities(
@@ -277,7 +269,9 @@ quint64 MapRhiGlobeNetworkScene::geometryRevision() const
 
 bool MapRhiGlobeNetworkScene::hasGeometry() const
 {
-    return !this->link_vertices.isEmpty() || !this->node_vertices.isEmpty();
+    return !this->link_vertices.isEmpty()
+        || !this->node_vertices.isEmpty()
+        || !this->junction_instances.isEmpty();
 }
 
 NetworkSymbologySizeUnit MapRhiGlobeNetworkScene::nodeSizeUnit() const
@@ -426,7 +420,13 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
         fallback_elevation_initialized = true;
     }
 
-    this->node_vertices.reserve(this->network_snapshot.nodes.size() * 6);
+    qsizetype node_quad_count = 0;
+    for (const NetworkRenderNode &node : this->network_snapshot.nodes)
+    {
+        if (node.entity_type != InfrastructureEntity::Junction)
+            ++node_quad_count;
+    }
+    this->node_vertices.reserve(node_quad_count * 6);
     for (const NetworkRenderNode &node : this->network_snapshot.nodes)
     {
         if (this->hidden_entity_uuids.contains(node.uuid)
@@ -708,6 +708,12 @@ void MapRhiGlobeNetworkScene::appendUndergroundSubdivisions(
 void MapRhiGlobeNetworkScene::appendNode(
     InfrastructureEntity entity_type, quint32 render_id, const QVector3D &center)
 {
+    // Globe junctions are represented only by compact sphere impostor
+    // instances. A transparent node quad would still consume six vertices
+    // and base-node bandwidth for every junction.
+    if (entity_type == InfrastructureEntity::Junction)
+        return;
+
     const quint64 entity_key = entityRenderKey(entity_type, render_id);
     const float corners[6][2] = {
         {-1.0f, -1.0f},
@@ -760,16 +766,7 @@ void MapRhiGlobeNetworkScene::applyNodeColor(MapRhiScene::NodeVertex *vertex) co
     vertex->red = qRed(color) / 255.0f;
     vertex->green = qGreen(color) / 255.0f;
     vertex->blue = qBlue(color) / 255.0f;
-    // Junctions render as real 3D sphere instances (see
-    // rebuildJunctionInstances()/junctionInstances()) -- this flat quad is
-    // still built for every junction (appendNode() doesn't know or care
-    // about entity type), but made fully transparent so it contributes
-    // nothing on screen underneath its sphere, mirroring exactly how
-    // MapRhiScene::applyNodeColor() hides a ThreeD node's flat quad
-    // whenever its 3D junction/tank/reservoir model (or icon) is shown
-    // instead.
-    vertex->alpha = vertex->entity_type == InfrastructureEntity::Junction
-            || (this->symbology.show_icons && mapRhiHasIcon(vertex->entity_type))
+    vertex->alpha = this->symbology.show_icons && mapRhiHasIcon(vertex->entity_type)
         ? 0.0f
         : qAlpha(color) / 255.0f;
 }
@@ -1058,7 +1055,7 @@ void MapRhiGlobeNetworkScene::appendIcon(const IconMarker &marker)
 void MapRhiGlobeNetworkScene::rebuildJunctionInstances()
 {
     this->junction_instances.clear();
-    if (!this->symbology.show_junctions || this->junction_markers.isEmpty())
+    if (this->junction_markers.isEmpty())
         return;
 
     // Globe network geometry is already real ECEF meters (see this class's
@@ -1119,13 +1116,10 @@ void MapRhiGlobeNetworkScene::rebuildHighlights()
                 const float selected_link_width = qMax(
                     3.0f, base_link_width + (selected_has_error ? 6.0f : 2.0f));
                 // A selected junction shows its selection through the shared
-                // GPU style table, not a flat highlight decal underneath a
-                // sphere that's already invisible (see applyNodeColor()) -- mirrors
-                // MapRhiScene::rebuildHighlights()'s identical null-out for
-                // whichever entity type currently has a 3D model. Other
-                // selected node types (tanks, reservoirs, pumps, valves --
-                // none of which have a Globe 3D model yet) still get the
-                // ordinary flat decal.
+                // GPU style table, so it needs no separate flat highlight
+                // decal. Other selected node types (tanks, reservoirs,
+                // pumps, valves -- none of which have a Globe 3D model yet)
+                // still get the ordinary flat decal.
                 QVector<MapRhiScene::NodeVertex> *selected_node_target =
                     this->selected_entity_type == InfrastructureEntity::Junction
                     ? nullptr
@@ -1161,11 +1155,15 @@ void MapRhiGlobeNetworkScene::rebuildHighlights()
         const QColor color = this->simulation_stale_entity_uuids.contains(error_iterator.key())
             ? QColor(128, 128, 128)
             : QColor(255, 0, 0);
+        QVector<MapRhiScene::NodeVertex> *diagnostic_node_target =
+            entity_type == InfrastructureEntity::Junction
+            ? nullptr
+            : &this->diagnostic_node_vertices;
         appendEntityHighlight(
             entity_type, render_id, color,
             (diagnostic_link_width - base_link_width) / 2.0f, 2.0f,
             &this->diagnostic_link_vertices,
-            &this->diagnostic_node_vertices);
+            diagnostic_node_target);
     }
 }
 

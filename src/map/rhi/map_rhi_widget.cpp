@@ -1415,23 +1415,35 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
     if (is_monitor_surface && is_2d_view && isLightThemeWindowColor(window_color))
         themed_symbology.icon_default_fill_color = MonitorLightThemeIconFillColor;
 
-    const bool junction_visibility_changed =
-        !this->symbology_initialized
-        || this->applied_symbology.show_junctions != themed_symbology.show_junctions;
-    const bool base_symbology_changed =
-        !this->symbology_initialized
-        || junction_visibility_changed
-        || this->applied_symbology.node_colors != themed_symbology.node_colors
-        || this->applied_symbology.link_colors != themed_symbology.link_colors;
-    const bool junction_changed =
-        !this->symbology_initialized
-        || junction_visibility_changed
-        || this->applied_symbology.node_size_unit != themed_symbology.node_size_unit
-        || this->applied_symbology.node_size_px != themed_symbology.node_size_px
-        || this->applied_symbology.node_size_m != themed_symbology.node_size_m
+    const bool first_symbology = !this->symbology_initialized;
+    const bool node_colors_changed =
+        first_symbology
         || this->applied_symbology.node_colors != themed_symbology.node_colors;
+    const bool link_colors_changed =
+        first_symbology
+        || this->applied_symbology.link_colors != themed_symbology.link_colors;
+    const bool junction_visibility_changed =
+        first_symbology
+        || this->applied_symbology.show_junctions != themed_symbology.show_junctions;
+    const bool flat_base_geometry_changed =
+        node_colors_changed || link_colors_changed || junction_visibility_changed;
+    const bool globe_base_geometry_changed =
+        node_colors_changed || link_colors_changed;
+    const bool junction_instance_changed =
+        first_symbology
+        || this->applied_symbology.node_size_unit != themed_symbology.node_size_unit
+        || (themed_symbology.node_size_unit == NetworkSymbologySizeUnit::Meters
+            && this->applied_symbology.node_size_m != themed_symbology.node_size_m);
+    const bool link_thickness_changed =
+        first_symbology
+        || this->applied_symbology.link_thickness_unit
+            != themed_symbology.link_thickness_unit
+        || this->applied_symbology.link_thickness_px
+            != themed_symbology.link_thickness_px
+        || this->applied_symbology.link_thickness_m
+            != themed_symbology.link_thickness_m;
     const bool icon_changed =
-        !this->symbology_initialized
+        first_symbology
         || this->applied_symbology.icon_size_unit != themed_symbology.icon_size_unit
         || this->applied_symbology.icon_size_px != themed_symbology.icon_size_px
         || this->applied_symbology.icon_size_m != themed_symbology.icon_size_m
@@ -1443,31 +1455,31 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
         || this->applied_symbology.node_colors != themed_symbology.node_colors
         || this->applied_symbology.link_colors != themed_symbology.link_colors;
     const bool heatmap_data_changed =
-        !this->symbology_initialized
+        first_symbology
         || this->applied_symbology.visual_heatmap != themed_symbology.visual_heatmap
         || this->applied_symbology.heatmap_fractions != themed_symbology.heatmap_fractions
         || this->applied_symbology.heatmap_palette != themed_symbology.heatmap_palette
         || this->applied_symbology.heatmap_palette_flipped
             != themed_symbology.heatmap_palette_flipped;
     const bool heatmap_style_changed =
-        !this->symbology_initialized
+        first_symbology
         || this->applied_symbology.heatmap_radius_unit != themed_symbology.heatmap_radius_unit
         || this->applied_symbology.heatmap_radius_m != themed_symbology.heatmap_radius_m
         || this->applied_symbology.heatmap_radius_px != themed_symbology.heatmap_radius_px
         || this->applied_symbology.heatmap_solid_center_percent
             != themed_symbology.heatmap_solid_center_percent;
     const bool flow_direction_changed =
-        !this->symbology_initialized
+        first_symbology
         || this->applied_symbology.show_flow_direction != themed_symbology.show_flow_direction
         || this->applied_symbology.flow_direction_size_px
             != themed_symbology.flow_direction_size_px
         || this->applied_symbology.flow_directions != themed_symbology.flow_directions
-        || this->applied_symbology.link_thickness_unit != themed_symbology.link_thickness_unit
-        || this->applied_symbology.link_thickness_px != themed_symbology.link_thickness_px
-        || this->applied_symbology.link_thickness_m != themed_symbology.link_thickness_m
-        || this->applied_symbology.link_colors != themed_symbology.link_colors;
+        || link_thickness_changed
+        || link_colors_changed;
     const bool network_style_changed =
-        base_symbology_changed
+        node_colors_changed
+        || link_colors_changed
+        || junction_visibility_changed
         || this->applied_symbology.flow_directions != themed_symbology.flow_directions;
 
     this->scene.setViewZoom(this->map_model->zoom());
@@ -1476,16 +1488,29 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
     this->applied_symbology = themed_symbology;
     this->symbology_initialized = true;
 
-    if (base_symbology_changed)
+    if (flat_base_geometry_changed)
     {
         this->geometry_upload_pending = true;
-        this->highlight_upload_pending = true;
+    }
+    if (globe_base_geometry_changed)
+    {
         this->globe_geometry_upload_pending = true;
+    }
+    if (junction_visibility_changed)
+    {
+        this->highlight_upload_pending = true;
+    }
+    if (link_thickness_changed)
+    {
+        this->highlight_upload_pending = true;
         this->globe_highlight_upload_pending = true;
+    }
+    if (link_colors_changed)
+    {
         this->globe_underground_upload_pending = true;
         markUndergroundGeometryDirty();
     }
-    if (junction_changed)
+    if (junction_instance_changed)
     {
         this->junction_instance_upload_pending = true;
         this->globe_junction_instance_upload_pending = true;
@@ -1682,12 +1707,9 @@ void MapRhiWidget::setSelectedEntity(InfrastructureEntity entity_type, const QUu
     this->icon_upload_pending = true;
     this->tank_upload_pending = true;
     this->reservoir_upload_pending = true;
-    this->junction_instance_upload_pending = true;
     this->network_style_upload_pending = true;
     this->globe_highlight_upload_pending = true;
     this->globe_icon_upload_pending = true;
-    this->globe_junction_instance_upload_pending = true;
-    markUndergroundGeometryDirty();
     update();
 }
 
@@ -1760,7 +1782,6 @@ void MapRhiWidget::initialize(QRhiCommandBuffer *command_buffer)
         this->icon_upload_pending = true;
         this->tank_upload_pending = true;
         this->reservoir_upload_pending = true;
-        this->junction_instance_upload_pending = true;
         markUndergroundGeometryDirty();
     }
 
@@ -1810,7 +1831,6 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         this->icon_upload_pending = true;
         this->tank_upload_pending = true;
         this->reservoir_upload_pending = true;
-        this->junction_instance_upload_pending = true;
     }
 
     if (this->heatmap_upload_pending)
@@ -2146,7 +2166,8 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
             command_buffer->draw(quint32(link_vertices.size()));
         }
 
-        if (!junction_instances.isEmpty() && !junction_impostor.isEmpty())
+        if (this->applied_symbology.show_junctions
+            && !junction_instances.isEmpty() && !junction_impostor.isEmpty())
         {
             command_buffer->setGraphicsPipeline(this->junction_no_depth_pipeline.get());
             command_buffer->setShaderResources(
@@ -2172,7 +2193,9 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
             command_buffer->draw(quint32(this->underground_link_vertices.size()));
         }
 
-        if (!this->underground_junction_instances.isEmpty() && !junction_impostor.isEmpty())
+        if (this->applied_symbology.show_junctions
+            && !this->underground_junction_instances.isEmpty()
+            && !junction_impostor.isEmpty())
         {
             command_buffer->setGraphicsPipeline(this->junction_xray_pipeline.get());
             command_buffer->setShaderResources(
@@ -2241,7 +2264,8 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         command_buffer->draw(quint32(node_vertices.size()));
     }
 
-    if (!junction_instances.isEmpty() && !junction_impostor.isEmpty())
+    if (this->applied_symbology.show_junctions
+        && !junction_instances.isEmpty() && !junction_impostor.isEmpty())
     {
         command_buffer->setGraphicsPipeline(this->junction_pipeline.get());
         command_buffer->setShaderResources(
@@ -2908,8 +2932,8 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
     // shader reconstructs a real sphere surface and depth. junction_instances is
     // Globe's own per-instance placement/radius/style-index data, already
     // positioned relative to the same render origin as every other Globe
-    // vertex (see ecefPosition()). Color and selection are read from the
-    // one shared GPU style table.
+    // vertex (see ecefPosition()). Color, selection, diagnostics and
+    // visibility are read from the one shared GPU style table.
     const QVector<MapRhiJunctionImpostorVertex> &junction_impostor =
         mapRhiJunctionImpostorVertices();
     const QVector<MapRhiJunctionInstance> &junction_instances =
@@ -2961,7 +2985,8 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
             command_buffer->draw(quint32(node_vertices.size()));
         }
 
-        if (!junction_instances.isEmpty() && !junction_impostor.isEmpty())
+        if (this->applied_symbology.show_junctions
+            && !junction_instances.isEmpty() && !junction_impostor.isEmpty())
         {
             command_buffer->setGraphicsPipeline(this->globe_junction_no_depth_pipeline.get());
             command_buffer->setShaderResources(
@@ -3036,7 +3061,8 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
         command_buffer->draw(quint32(node_vertices.size()));
     }
 
-    if (!junction_instances.isEmpty() && !junction_impostor.isEmpty())
+    if (this->applied_symbology.show_junctions
+        && !junction_instances.isEmpty() && !junction_impostor.isEmpty())
     {
         command_buffer->setGraphicsPipeline(this->globe_junction_pipeline.get());
         command_buffer->setShaderResources(
@@ -4812,6 +4838,7 @@ void MapRhiWidget::syncViewState()
     if (this->scene.setUse3dJunctionModels(use_3d_models))
     {
         this->geometry_upload_pending = true;
+        this->highlight_upload_pending = true;
         this->junction_instance_upload_pending = true;
     }
 }
