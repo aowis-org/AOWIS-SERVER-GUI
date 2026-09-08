@@ -384,8 +384,13 @@ QVector3D globeTerrainPositionAt(
         double(request.virtual_x) + imagery_u, request.imagery_zoom);
     const double lat_deg = GeoWebMercator::tileYToLat(
         double(request.y) + imagery_v, request.imagery_zoom);
-    return GeoWgs84Ellipsoid::geodeticToEcef(
-        lon_deg, lat_deg, elevation_m);
+    const GeoWgs84Ellipsoid::EcefPositionD position =
+        GeoWgs84Ellipsoid::geodeticToEcefD(
+            lon_deg, lat_deg, elevation_m);
+    return QVector3D(
+        float(position.x - request.globe_render_origin_x),
+        float(position.y - request.globe_render_origin_y),
+        float(position.z - request.globe_render_origin_z));
 }
 
 QVector3D stitchedHorizontalGlobeTerrainEdgePosition(
@@ -3454,4 +3459,3 @@ MapRhiTerrainMeshResult buildTerrainMeshResult(const MapRhiTerrainMeshRequest &r
 
     return result;
 }
-

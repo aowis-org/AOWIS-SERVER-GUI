@@ -136,14 +136,10 @@ public:
     // this frame (see MapRhiCamera::globeRenderOriginEcef()/
     // updateGlobeRenderOrigin()) -- the caller (MapRhiWidget::
     // renderGlobe()) is responsible for that, every frame, before drawing.
-    // Note this is deliberately NOT the same matrix/origin Globe *terrain*
-    // is drawn with (MapRhiCamera::globeViewProjectionMatrix(), raw ECEF) --
-    // the two vertex data sets are placed in different coordinate spaces on
-    // purpose (see this class's own top-of-file comment) and must each be
-    // paired with their own matching matrix. A mismatch here would silently
-    // offset all network geometry by however far the two origins disagree,
-    // which is exactly the "raw float32 ECEF" bug this exists to avoid
-    // re-introducing -- see ecefPosition() for the numeric background.
+    // Globe terrain uses this exact origin and matrix too. Keeping both
+    // geometry sets in one coordinate frame is required for stable and
+    // directly comparable depth during pan/orbit; raw float32 ECEF terrain
+    // would reintroduce the precision loss described in ecefPosition().
     // Comparing the previous and new origin for exact equality (rather
     // than some epsilon) is intentional and correct: globeRenderOriginEcef()
     // is a sticky value that MapRhiCamera::updateGlobeRenderOrigin() only

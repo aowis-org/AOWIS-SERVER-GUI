@@ -1,6 +1,8 @@
 #ifndef MAP_RHI_GLOBE_RENDERER_H
 #define MAP_RHI_GLOBE_RENDERER_H
 
+#include "geo/geo_wgs84_ellipsoid.h"
+
 #include <QColor>
 #include <QElapsedTimer>
 #include <QMatrix4x4>
@@ -30,9 +32,9 @@ class QImage;
 // Zoom/tile-index identity of one leaf produced by the visible-region
 // quadtree walk (selectVisibleGlobeQuadtreeLeaves() in the .cpp). Plain POD
 // so it can cross from the free-function quadtree walk into
-// MapRhiGlobeRenderer's private API without pulling geo/ or RHI headers in
-// here. Replaces the old single-zoom rectangular tile window: every leaf
-// carries its own zoom, so near-camera ground can stay at fine detail while
+// MapRhiGlobeRenderer's private API without making the leaf itself depend on
+// geo or RHI types. Replaces the old single-zoom rectangular tile window:
+// every leaf carries its own zoom, so near-camera ground can stay at fine detail while
 // terrain approaching the horizon is covered by a handful of coarse,
 // low-zoom leaves instead of forcing the whole visible footprint to one
 // uniform resolution (see the class comment below for why that mattered).
@@ -70,8 +72,8 @@ struct MapRhiGlobeQuadtreeLeaf
 //    described above.
 //  - "cap" tiles: a small, fixed pair of flat-colored polar fans covering
 //    the area above/below Web Mercator's +-85.05 degree limit, which no
-//    imagery tile at any zoom will ever cover. Built once and never
-//    rebuilt; entirely unrelated to the LOD system above.
+//    imagery tile at any zoom will ever cover. Rebuilt only when the sticky
+//    Globe render origin changes; entirely unrelated to the LOD system above.
 class MapRhiGlobeRenderer
 {
 public:
@@ -100,6 +102,10 @@ public:
 
     void setTileRepository(MapTileRepository *tile_repository);
     void setTerrainRepository(MapTerrainRepository *terrain_repository);
+    // Keeps terrain/caps in the same origin-relative coordinate frame as
+    // Globe network geometry. Returns true only on a real origin change.
+    bool setRenderOriginEcef(
+        const GeoWgs84Ellipsoid::EcefPositionD &origin_ecef);
     void notifyTerrainTileAvailable(const QString &key);
     void invalidateTerrain();
     void setWireframeVisible(bool visible);
@@ -127,8 +133,10 @@ public:
     // Recomputes the visible tile window (rebuilding it only if the zoom
     // level or window actually needs to change), uploads any pending
     // geometry/camera data, and requests any imagery tiles that are not yet
-    // cached. Must be called before draw() each frame, inside the same
-    // resource-update batch that beginPass() below will consume.
+    // cached. view_projection must be relative to the origin most recently
+    // supplied to setRenderOriginEcef(). Must be called before draw() each
+    // frame, inside the same resource-update batch that beginPass() below
+    // will consume.
     // heatmap_opacity is re-uploaded into the (extended) GlobeCameraBlock
     // uniform every call regardless of whether it changed, exactly like
     // view_projection already is -- see the class comment on
@@ -229,7 +237,7 @@ private:
     void rebuildWireframeVertices();
     void appendWireframeEdges(const QVector<TileVertex> &vertices);
     bool uploadWireframeVertices(QRhiResourceUpdateBatch *resource_updates);
-    static TileVertex makeTileVertex(double lon_deg, double lat_deg, float u, float v);
+    TileVertex makeTileVertex(double lon_deg, double lat_deg, float u, float v) const;
     bool ensureSharedResources();
     bool rebuildTileBindings(TileResource *resource);
     bool ensureTileResource(GlobeTile &tile, QRhiResourceUpdateBatch *resource_updates);
@@ -258,6 +266,7 @@ private:
     MapModel *map_model = nullptr;
     MapTileRepository *tile_repository = nullptr;
     MapTerrainRepository *terrain_repository = nullptr;
+    GeoWgs84Ellipsoid::EcefPositionD render_origin_ecef;
     QRhi *rhi = nullptr;
     QRhiRenderPassDescriptor *render_pass_descriptor = nullptr;
     int sample_count = 1;

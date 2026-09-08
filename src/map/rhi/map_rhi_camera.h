@@ -29,28 +29,15 @@ public:
     void syncFromMapModel(const MapModel &map_model);
 
     QMatrix4x4 viewProjectionMatrix(const QRhi &rhi) const;
-    // Standard Globe view/projection matrix, in raw (Earth-center-relative)
-    // ECEF space -- unchanged in meaning from before origin-relative
-    // rendering was introduced for the network renderer. This is what
-    // MapRhiGlobeRenderer's terrain tiles are drawn with, and what tile
-    // LOD/occlusion/picking code (which all still work in raw ECEF, via
-    // GeoWgs84Ellipsoid::orbitCameraBasis()) implicitly assumes. Do NOT
-    // repurpose this for network rendering -- see
-    // globeNetworkViewProjectionMatrix() below for that, and
-    // updateGlobeRenderOrigin()'s comment for why the two must not be
-    // conflated.
+    // Legacy raw (Earth-center-relative) ECEF view/projection matrix. CPU
+    // tile LOD/occlusion/picking math may still use raw ECEF positions, but
+    // GPU terrain and network rendering use the origin-relative matrix below
+    // so their float32 depth remains stable and directly comparable.
     QMatrix4x4 globeViewProjectionMatrix(const QRhi &rhi) const;
-    // Globe-network-only counterpart of globeViewProjectionMatrix(): the
-    // same camera, but expressed relative to globeRenderOriginEcef()
-    // instead of raw ECEF, so it stays numerically well-conditioned at
-    // close-in Globe zoom where eye and target are only meters apart (see
-    // the EcefPositionD/OrbitCameraBasisRelative comments in
-    // geo_wgs84_ellipsoid.h). Must be called with the exact same
-    // MapRhiGlobeNetworkScene that was fed globeRenderOriginEcef() this
-    // frame (see MapRhiWidget::renderGlobe()) -- the two are only
-    // consistent with each other, not with raw ECEF vertex data (i.e. not
-    // with anything drawn using globeViewProjectionMatrix() above, such as
-    // Globe terrain tiles).
+    // Origin-relative Globe GPU view/projection matrix. Terrain and network
+    // vertices must both be built relative to globeRenderOriginEcef() before
+    // using it. That keeps close-in camera arithmetic well-conditioned and
+    // prevents the two passes from drifting against one another in depth.
     QMatrix4x4 globeNetworkViewProjectionMatrix(
         const QRhi &rhi,
         MapRhiImpostorCameraBasis *impostor_camera_basis = nullptr) const;
@@ -132,7 +119,7 @@ private:
     double view_globe_distance_m = 0.0;
     double view_globe_vertical_offset_m = 0.0;
 
-    // Sticky Globe network render origin -- see updateGlobeRenderOrigin()
+    // Sticky Globe GPU render origin -- see updateGlobeRenderOrigin()
     // and globeRenderOriginEcef(). "valid" starts false purely so the very
     // first updateGlobeRenderOrigin() call always adopts the current target
     // unconditionally, rather than needing some plausible-but-arbitrary

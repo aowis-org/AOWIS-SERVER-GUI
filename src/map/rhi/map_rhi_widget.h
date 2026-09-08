@@ -228,6 +228,9 @@ private:
     std::unique_ptr<QRhiShaderResourceBindings> tank_shader_resource_bindings;
     std::unique_ptr<QRhiShaderResourceBindings> reservoir_shader_resource_bindings;
     std::unique_ptr<QRhiGraphicsPipeline> link_pipeline;
+    // Globe chevrons retain their surface-aligned 3D geometry, but use a
+    // depth-stable raster path that is deliberately independent of ThreeD.
+    std::unique_ptr<QRhiGraphicsPipeline> globe_flow_direction_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> selected_link_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> node_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> node_overlay_pipeline;

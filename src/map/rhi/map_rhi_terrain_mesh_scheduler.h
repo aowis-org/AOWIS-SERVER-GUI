@@ -94,9 +94,16 @@ struct MapRhiTerrainMeshRequest
     float elevation_world_z_scale = 0.0f;
 
     // Flat RHI 3D keeps the existing world-X/Y + world-Z geometry. Globe
-    // requests instead generate geodetic WGS84 positions directly in ECEF.
+    // requests instead generate geodetic WGS84 positions relative to the
+    // same sticky ECEF render origin used by the Globe camera/network. The
+    // subtraction must happen in double precision before the result is
+    // narrowed into MapRhiTerrainMeshVertex's floats; storing raw ~6.4 Mm
+    // ECEF coordinates there makes terrain depth jump as the camera moves.
     MapRhiTerrainMeshGeometry geometry = MapRhiTerrainMeshGeometry::FlatWorld;
     double globe_vertical_exaggeration = 1.0;
+    double globe_render_origin_x = 0.0;
+    double globe_render_origin_y = 0.0;
+    double globe_render_origin_z = 0.0;
 };
 
 struct MapRhiTerrainMeshResult

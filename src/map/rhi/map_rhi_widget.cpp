@@ -1756,6 +1756,7 @@ void MapRhiWidget::initialize(QRhiCommandBuffer *command_buffer)
     else if (render_pass_changed)
     {
         this->link_pipeline.reset();
+        this->globe_flow_direction_pipeline.reset();
         this->selected_link_pipeline.reset();
         this->node_pipeline.reset();
         this->node_overlay_pipeline.reset();
@@ -2371,11 +2372,16 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     // handed straight to setRenderOriginEcef()) every frame.
     this->camera.updateGlobeRenderOrigin();
 
-    // Cheap to call every frame: setRenderOriginEcef() only actually
-    // rebuilds geometry on the (intentionally rare -- see
-    // updateGlobeRenderOrigin()) frames where the render origin itself just
-    // changed.
-    if (this->globe_network_scene.setRenderOriginEcef(this->camera.globeRenderOriginEcef()))
+    const GeoWgs84Ellipsoid::EcefPositionD globe_render_origin =
+        this->camera.globeRenderOriginEcef();
+
+    // Terrain and network share one origin-relative coordinate frame. This
+    // removes raw-float ECEF cancellation from terrain depth, which otherwise
+    // makes depth-tested pipes/chevrons and Hide/X-Ray visibility oscillate
+    // during Globe camera motion. Both setters are cheap on ordinary frames;
+    // the sticky origin changes only after a long translation.
+    this->globe_renderer->setRenderOriginEcef(globe_render_origin);
+    if (this->globe_network_scene.setRenderOriginEcef(globe_render_origin))
     {
         this->globe_geometry_upload_pending = true;
         this->globe_highlight_upload_pending = true;
@@ -2405,24 +2411,23 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     if (!ensureGlobeNetworkGeometryBuffers())
         return;
 
-    // Two different matrices, deliberately: view_projection (raw ECEF) is
-    // what MapRhiGlobeRenderer's terrain tiles are drawn with -- their own
-    // vertex data is still raw ECEF, so this is the matrix that actually
-    // matches it. network_view_projection is relative to the camera's
-    // sticky Globe render origin (see MapRhiCamera::
-    // updateGlobeRenderOrigin()), matching MapRhiGlobeNetworkScene's own
-    // origin-relative vertex data (see its ecefPosition()). Uploading
-    // network_view_projection's matrix data into the CameraBlock below,
-    // but passing view_projection (not network_view_projection) to
-    // globe_renderer->prepare() a little further down, is the crux of
-    // keeping the two geometry types each correctly matched to their own
-    // vertex data -- swapping which matrix goes where here would silently
-    // misplace one or the other.
-    const QMatrix4x4 view_projection = this->camera.globeViewProjectionMatrix(*this->active_rhi);
+    // One origin-relative matrix now drives both terrain and network. Their
+    // vertices are also relative to the exact same sticky ECEF origin, so
+    // both write stable, directly comparable depth values.
     MapRhiImpostorCameraBasis impostor_camera_basis;
-    const QMatrix4x4 network_view_projection =
+    const QMatrix4x4 view_projection =
         this->camera.globeNetworkViewProjectionMatrix(
             *this->active_rhi, &impostor_camera_basis);
+
+    const QSize output_size = target->pixelSize();
+    const float output_pixels_per_logical_pixel_x = qMax(
+        1.0f,
+        float(output_size.width())
+            / float(qMax(1, this->viewport_size.width())));
+    const float output_pixels_per_logical_pixel_y = qMax(
+        1.0f,
+        float(output_size.height())
+            / float(qMax(1, this->viewport_size.height())));
 
     // Same CameraBlock layout/indices as the ThreeD/TwoD path above (see
     // CameraUniformBytes), reused as-is since the link/node/icon vertex
@@ -2431,7 +2436,7 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     // never a screen-space network drag translation on the globe -- so those
     // are left zeroed here.
     std::array<float, CameraUniformFloatCount> uniform_data{};
-    const float *matrix_data = network_view_projection.constData();
+    const float *matrix_data = view_projection.constData();
     for (int index = 0; index < 16; ++index)
         uniform_data[size_t(index)] = matrix_data[index];
     uniform_data[16] = float(qMax(1, this->viewport_size.width()));
@@ -2448,8 +2453,12 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
             == NetworkSymbologySizeUnit::Meters
         ? -float(this->globe_network_scene.nodeSizeM() * 0.5)
         : float(this->globe_network_scene.nodeSizePx()) * 0.5f;
-    // Indices 20..27 (heatmap_settings/basemap_settings) are unused by the
-    // link/node/icon shaders and stay zeroed for the globe network pass.
+    // Globe's dedicated flow-direction shader uses heatmap_settings.xy to
+    // convert gl_FragCoord's physical pixels back to the logical pixels used
+    // to expand the chevron strokes. The remaining settings stay unused by
+    // the globe network pass.
+    uniform_data[20] = output_pixels_per_logical_pixel_x;
+    uniform_data[21] = output_pixels_per_logical_pixel_y;
     uniform_data[28] = 0.0f;
     uniform_data[29] = 0.0f;
     uniform_data[30] = float(this->camera.globeOrbitDistanceM());
@@ -2494,7 +2503,6 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     const QColor background_color = QColor::fromRgbF(0.02f, 0.02f, 0.05f);
     command_buffer->beginPass(target, background_color, {1.0f, 0}, resource_updates);
 
-    const QSize output_size = target->pixelSize();
     command_buffer->setViewport(QRhiViewport(
         0.0f, 0.0f, float(output_size.width()), float(output_size.height())));
 
@@ -3043,7 +3051,8 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
 
     if (!flow_direction_vertices.isEmpty())
     {
-        command_buffer->setGraphicsPipeline(this->link_pipeline.get());
+        command_buffer->setGraphicsPipeline(
+            this->globe_flow_direction_pipeline.get());
         command_buffer->setShaderResources();
         const QRhiCommandBuffer::VertexInput flow_direction_binding(
             this->globe_flow_direction_vertex_buffer.get(), 0);
@@ -3519,6 +3528,72 @@ bool MapRhiWidget::createPipelines()
         if (!this->link_pipeline->create())
         {
             reportFailure(QStringLiteral("Failed to create RHI link graphics pipeline"));
+            return false;
+        }
+    }
+
+    if (!this->globe_flow_direction_pipeline)
+    {
+        const QShader vertex_shader = loadShader(QStringLiteral(
+            ":/aowis/map/rhi/map_rhi_globe_flow_direction.vert.qsb"));
+        const QShader fragment_shader = loadShader(QStringLiteral(
+            ":/aowis/map/rhi/map_rhi_globe_flow_direction.frag.qsb"));
+        if (!vertex_shader.isValid() || !fragment_shader.isValid())
+        {
+            reportFailure(QStringLiteral(
+                "Failed to load RHI Globe flow-direction shaders"));
+            return false;
+        }
+
+        QRhiVertexInputLayout input_layout;
+        input_layout.setBindings({
+            {quint32(sizeof(MapRhiScene::LinkVertex))}
+        });
+        input_layout.setAttributes({
+            {0, 0, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiScene::LinkVertex, start_x))},
+            {0, 1, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiScene::LinkVertex, end_x))},
+            {0, 2, QRhiVertexInputAttribute::Float2,
+             quint32(offsetof(MapRhiScene::LinkVertex, along))},
+            {0, 3, QRhiVertexInputAttribute::Float4,
+             quint32(offsetof(MapRhiScene::LinkVertex, red))},
+            {0, 4, QRhiVertexInputAttribute::Float,
+             quint32(offsetof(MapRhiScene::LinkVertex, size_adjust_px))}
+        });
+
+        this->globe_flow_direction_pipeline.reset(
+            this->active_rhi->newGraphicsPipeline());
+        this->globe_flow_direction_pipeline->setShaderStages({
+            {QRhiShaderStage::Vertex, vertex_shader},
+            {QRhiShaderStage::Fragment, fragment_shader}
+        });
+        this->globe_flow_direction_pipeline->setVertexInputLayout(input_layout);
+        this->globe_flow_direction_pipeline->setShaderResourceBindings(
+            this->shader_resource_bindings.get());
+        this->globe_flow_direction_pipeline->setRenderPassDescriptor(
+            this->render_pass_descriptor);
+        this->globe_flow_direction_pipeline->setSampleCount(sampleCount());
+        this->globe_flow_direction_pipeline->setTopology(
+            QRhiGraphicsPipeline::Triangles);
+        this->globe_flow_direction_pipeline->setDepthTest(true);
+        this->globe_flow_direction_pipeline->setDepthWrite(false);
+        this->globe_flow_direction_pipeline->setDepthOp(
+            QRhiGraphicsPipeline::LessOrEqual);
+        // The chevrons are already lifted above their pipes. This small
+        // forward bias removes the remaining grazing-angle depth ambiguity
+        // without disabling terrain and far-side globe occlusion.
+        this->globe_flow_direction_pipeline->setDepthBias(-16);
+        this->globe_flow_direction_pipeline->setSlopeScaledDepthBias(-1.0f);
+        QRhiGraphicsPipeline::TargetBlend flow_direction_blend;
+        flow_direction_blend.enable = true;
+        this->globe_flow_direction_pipeline->setTargetBlends({
+            flow_direction_blend
+        });
+        if (!this->globe_flow_direction_pipeline->create())
+        {
+            reportFailure(QStringLiteral(
+                "Failed to create RHI Globe flow-direction graphics pipeline"));
             return false;
         }
     }
@@ -4490,6 +4565,7 @@ void MapRhiWidget::resetGpuResources()
     this->node_overlay_pipeline.reset();
     this->node_pipeline.reset();
     this->selected_link_pipeline.reset();
+    this->globe_flow_direction_pipeline.reset();
     this->link_pipeline.reset();
     this->tank_shader_resource_bindings.reset();
     this->reservoir_shader_resource_bindings.reset();

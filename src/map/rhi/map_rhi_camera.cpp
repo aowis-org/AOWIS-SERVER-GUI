@@ -351,22 +351,10 @@ QMatrix4x4 MapRhiCamera::globeNetworkViewProjectionMatrix(
         MapModel::MinViewGlobePitchDeg, this->view_globe_pitch_deg,
         MapModel::MaxViewGlobePitchDeg);
     const double distance = qMax(MapModel::MinViewGlobeDistanceM, this->view_globe_distance_m);
-    // Same projection (FOV/near/far) as globeViewProjectionMatrix() above
-    // -- only the view half differs, built relative to
-    // globeRenderOriginEcef() (see updateGlobeRenderOrigin()) instead of
-    // raw ECEF, via orbitCameraBasisRelativeToOrigin() rather than
-    // orbitCameraBasis(). See this function's header comment for exactly
-    // which vertex data this matrix is (and is not) valid for.
-    //
-    // CRITICAL that this computes near/far via the exact same
-    // globeNearFarPlanesM(distance, pitch_deg, view_globe_vertical_offset_m)
-    // call as globeViewProjectionMatrix() above, with the same inputs:
-    // network geometry and terrain share one depth buffer within a single
-    // render pass, so if the two matrices ever disagreed on near/far, a
-    // given real-world distance from the camera would map to two
-    // different depth-buffer values depending on which matrix placed it
-    // there -- not just imprecise, but actively wrong occlusion, not
-    // merely flickery.
+    // Same projection (FOV/near/far) as globeViewProjectionMatrix() above,
+    // with a view built relative to globeRenderOriginEcef() via
+    // orbitCameraBasisRelativeToOrigin(). Both GPU terrain and network use
+    // this matrix and build their vertices relative to the same origin.
     const GeoWgs84Ellipsoid::OrbitCameraBasisRelative basis =
         GeoWgs84Ellipsoid::orbitCameraBasisRelativeToOrigin(
             this->globe_target_lon_deg, this->globe_target_lat_deg,

@@ -596,6 +596,33 @@ void MapRhiGlobeRenderer::setTerrainRepository(MapTerrainRepository *new_terrain
     this->window_dirty = true;
 }
 
+bool MapRhiGlobeRenderer::setRenderOriginEcef(
+    const GeoWgs84Ellipsoid::EcefPositionD &origin_ecef)
+{
+    if (this->render_origin_ecef.x == origin_ecef.x
+        && this->render_origin_ecef.y == origin_ecef.y
+        && this->render_origin_ecef.z == origin_ecef.z)
+    {
+        return false;
+    }
+
+    this->render_origin_ecef = origin_ecef;
+
+    // Globe terrain, polar caps, wireframe, and network must all use this
+    // same coordinate frame. The camera origin is sticky, so this rebuild
+    // happens only after a long translation rather than during ordinary
+    // pan/orbit frames. Clearing request ids makes results produced for the
+    // old origin harmless when the asynchronous worker later returns them.
+    for (GlobeTile &tile : this->window_tiles)
+        tile.terrain_mesh_request_id = 0;
+    this->window_dirty = true;
+    this->caps_built = false;
+    this->cap_vertices.clear();
+    this->cap_tiles.clear();
+    this->cap_vertex_upload_pending = true;
+    return true;
+}
+
 void MapRhiGlobeRenderer::notifyTerrainTileAvailable(const QString &key)
 {
     if (key.isEmpty())
@@ -687,13 +714,14 @@ bool MapRhiGlobeRenderer::hasPendingTerrainMeshes() const
 
 
 MapRhiGlobeRenderer::TileVertex MapRhiGlobeRenderer::makeTileVertex(
-    double lon_deg, double lat_deg, float u, float v)
+    double lon_deg, double lat_deg, float u, float v) const
 {
-    const QVector3D position = GeoWgs84Ellipsoid::geodeticToEcef(lon_deg, lat_deg, 0.0);
+    const GeoWgs84Ellipsoid::EcefPositionD position =
+        GeoWgs84Ellipsoid::geodeticToEcefD(lon_deg, lat_deg, 0.0);
     TileVertex vertex;
-    vertex.x = position.x();
-    vertex.y = position.y();
-    vertex.z = position.z();
+    vertex.x = float(position.x - this->render_origin_ecef.x);
+    vertex.y = float(position.y - this->render_origin_ecef.y);
+    vertex.z = float(position.z - this->render_origin_ecef.z);
     vertex.u = u;
     vertex.v = v;
     return vertex;
@@ -1146,6 +1174,9 @@ void MapRhiGlobeRenderer::rebuildWindow(
                     request.geometry = MapRhiTerrainMeshGeometry::GlobeEcef;
                     request.globe_vertical_exaggeration =
                         this->map_model->view3dVerticalExaggeration();
+                    request.globe_render_origin_x = this->render_origin_ecef.x;
+                    request.globe_render_origin_y = this->render_origin_ecef.y;
+                    request.globe_render_origin_z = this->render_origin_ecef.z;
 
                     const MapRhiTerrainMeshResult result =
                         buildTerrainMeshResult(request);
@@ -1931,6 +1962,9 @@ void MapRhiGlobeRenderer::scheduleReadyTerrainMeshes()
         request.geometry = MapRhiTerrainMeshGeometry::GlobeEcef;
         request.globe_vertical_exaggeration =
             this->map_model->view3dVerticalExaggeration();
+        request.globe_render_origin_x = this->render_origin_ecef.x;
+        request.globe_render_origin_y = this->render_origin_ecef.y;
+        request.globe_render_origin_z = this->render_origin_ecef.z;
 
         tile->terrain_mesh_request_id = request.request_id;
         this->terrain_mesh_scheduler->submit(request);
@@ -2185,6 +2219,7 @@ bool MapRhiGlobeRenderer::prepare(
         return false;
     if (!ensureSharedResources())
         return false;
+    buildCaps();
 
     // Walk the quadtree fresh every frame -- see the class comment for why
     // this replaced the old single-zoom rectangular window. The walk itself
