@@ -72,8 +72,9 @@ void MapRhiGlobeNetworkScene::setSymbology(const MapRhiSymbology &symbology)
         || this->symbology.visual_node != symbology.visual_node
         || this->symbology.visual_link != symbology.visual_link
         || link_colors_changed || node_colors_changed;
-    // Mirrors MapRhiScene::setSymbology()'s "junction_changed" -- anything
-    // that changes a junction sphere's radius or color.
+    // Keep the existing junction-buffer invalidation boundary in this step.
+    // Color now comes from the shared GPU style table; removing the resulting
+    // redundant instance refresh belongs to the next cleanup step.
     const bool junction_visibility_changed =
         this->symbology.show_junctions != symbology.show_junctions;
     const bool junction_changed =
@@ -1076,49 +1077,17 @@ void MapRhiGlobeNetworkScene::rebuildJunctionInstances()
     if (this->symbology.node_size_unit == NetworkSymbologySizeUnit::Meters)
         radius_world = float(this->symbology.node_size_m * 0.5);
 
-    // Mirrors MapRhiScene::rebuildJunctionInstances() exactly: the
-    // selected junction (if any) is recolored to the same selection blue
-    // used for the flat-highlight-decal path everywhere else, and flagged
-    // via "selected" -- there is no separate selected-instance buffer the
-    // way links/other nodes have selected_link_vertices/
-    // selected_node_vertices, since a sphere only ever needs recoloring,
-    // not an additional decal drawn on top of itself.
-    quint32 selected_junction_render_id = 0;
-    if (this->selected_entity_type == InfrastructureEntity::Junction
-        && !this->selected_entity_uuid.isNull())
-    {
-        const QHash<QUuid, quint64>::const_iterator selected_iterator =
-            this->entity_keys_by_uuid.constFind(this->selected_entity_uuid);
-        if (selected_iterator != this->entity_keys_by_uuid.cend())
-        {
-            const quint32 render_id = quint32(selected_iterator.value() & 0xffffffffULL);
-            if (entityRenderKey(InfrastructureEntity::Junction, render_id)
-                == selected_iterator.value())
-            {
-                selected_junction_render_id = render_id;
-            }
-        }
-    }
-
     this->junction_instances.reserve(this->junction_markers.size());
     for (const JunctionMarker &marker : this->junction_markers)
     {
-        const QRgb color = marker.render_id == selected_junction_render_id
-            ? QColor(0, 190, 255).rgba()
-            : this->symbology.node_colors.value(
-                  marker.render_id, networkSymbologyDefaultColor());
-
         MapRhiJunctionInstance instance;
         instance.render_id = marker.render_id;
+        instance.style_index = float(
+            MapRhiNetworkStyleTable::nodeStyleIndex(marker.render_id));
         instance.center_x = marker.center.x();
         instance.center_y = marker.center.y();
         instance.center_z = marker.center.z();
         instance.radius_world = radius_world;
-        instance.red = qRed(color) / 255.0f;
-        instance.green = qGreen(color) / 255.0f;
-        instance.blue = qBlue(color) / 255.0f;
-        instance.alpha = qAlpha(color) / 255.0f;
-        instance.selected = marker.render_id == selected_junction_render_id ? 1.0f : 0.0f;
         this->junction_instances.append(instance);
     }
 }
@@ -1149,10 +1118,9 @@ void MapRhiGlobeNetworkScene::rebuildHighlights()
                 const float base_link_width = float(this->symbology.link_thickness_px);
                 const float selected_link_width = qMax(
                     3.0f, base_link_width + (selected_has_error ? 6.0f : 2.0f));
-                // A selected junction shows its selection via its own
-                // sphere instance recoloring (rebuildJunctionInstances()),
-                // not a flat highlight decal underneath a sphere that's
-                // already invisible (see applyNodeColor()) -- mirrors
+                // A selected junction shows its selection through the shared
+                // GPU style table, not a flat highlight decal underneath a
+                // sphere that's already invisible (see applyNodeColor()) -- mirrors
                 // MapRhiScene::rebuildHighlights()'s identical null-out for
                 // whichever entity type currently has a 3D model. Other
                 // selected node types (tanks, reservoirs, pumps, valves --

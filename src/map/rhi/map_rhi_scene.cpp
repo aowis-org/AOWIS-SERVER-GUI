@@ -78,6 +78,7 @@ void MapRhiScene::rebuildNetworkGeometry()
     this->origin_world = chooseOriginWorld(this->network_snapshot);
     this->origin_valid =
         !this->network_snapshot.nodes.isEmpty() || !this->network_snapshot.links.isEmpty();
+    rebuildNetworkStyles();
 
     if (!this->origin_valid)
         return;
@@ -332,6 +333,11 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
         || link_colors_changed;
     const bool junction_visibility_changed =
         this->symbology.show_junctions != symbology.show_junctions;
+    const bool network_style_changed =
+        link_colors_changed
+        || node_colors_changed
+        || junction_visibility_changed
+        || this->symbology.flow_directions != symbology.flow_directions;
     const bool junction_changed =
         junction_visibility_changed
         || this->symbology.node_size_unit != symbology.node_size_unit
@@ -340,6 +346,8 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
         || node_colors_changed;
 
     this->symbology = symbology;
+    if (network_style_changed)
+        rebuildNetworkStyles();
 
     if (link_colors_changed)
     {
@@ -374,6 +382,7 @@ void MapRhiScene::setSelectedEntity(InfrastructureEntity entity_type, const QUui
 
     this->selected_entity_type = entity_type;
     this->selected_entity_uuid = uuid;
+    rebuildNetworkStyles();
     rebuildHighlights();
     rebuildIcons();
     rebuildTankInstances();
@@ -401,6 +410,7 @@ void MapRhiScene::setSimulationErrorEntities(
 {
     this->simulation_error_entities = error_entities;
     this->simulation_stale_entity_uuids = stale_entity_uuids;
+    rebuildNetworkStyles();
     rebuildHighlights();
 }
 
@@ -530,6 +540,11 @@ const QVector<MapRhiReservoirInstance> &MapRhiScene::reservoirInstances() const
 const QVector<MapRhiJunctionInstance> &MapRhiScene::junctionInstances() const
 {
     return this->junction_instances;
+}
+
+const MapRhiNetworkStyleTable &MapRhiScene::networkStyleTable() const
+{
+    return this->network_style_table;
 }
 
 QPointF MapRhiScene::originWorld() const
@@ -1096,44 +1111,31 @@ void MapRhiScene::rebuildJunctionInstances()
             radius_world = float(this->symbology.node_size_m * units_per_meter * 0.5);
     }
 
-    quint32 selected_junction_render_id = 0;
-    if (this->selected_entity_type == InfrastructureEntity::Junction
-        && !this->selected_entity_uuid.isNull())
-    {
-        const QHash<QUuid, quint64>::const_iterator selected_iterator =
-            this->entity_keys_by_uuid.constFind(this->selected_entity_uuid);
-        if (selected_iterator != this->entity_keys_by_uuid.cend())
-        {
-            const quint32 render_id = quint32(selected_iterator.value() & 0xffffffffULL);
-            if (entityRenderKey(InfrastructureEntity::Junction, render_id)
-                == selected_iterator.value())
-            {
-                selected_junction_render_id = render_id;
-            }
-        }
-    }
-
     this->junction_instances.reserve(this->junction_markers.size());
     for (const JunctionMarker &marker : this->junction_markers)
     {
-        const QRgb color = marker.render_id == selected_junction_render_id
-            ? QColor(0, 190, 255).rgba()
-            : this->symbology.node_colors.value(
-                  marker.render_id, networkSymbologyDefaultColor());
-
         MapRhiJunctionInstance instance;
         instance.render_id = marker.render_id;
+        instance.style_index = float(
+            MapRhiNetworkStyleTable::nodeStyleIndex(marker.render_id));
         instance.center_x = float(marker.center.x());
         instance.center_y = float(marker.center.y());
         instance.center_z = marker.z;
         instance.radius_world = radius_world;
-        instance.red = qRed(color) / 255.0f;
-        instance.green = qGreen(color) / 255.0f;
-        instance.blue = qBlue(color) / 255.0f;
-        instance.alpha = qAlpha(color) / 255.0f;
-        instance.selected = marker.render_id == selected_junction_render_id ? 1.0f : 0.0f;
         this->junction_instances.append(instance);
     }
+}
+
+void MapRhiScene::rebuildNetworkStyles()
+{
+    this->network_style_table.rebuild(
+        this->network_snapshot,
+        this->hidden_entity_uuids,
+        this->symbology,
+        this->selected_entity_type,
+        this->selected_entity_uuid,
+        this->simulation_error_entities,
+        this->simulation_stale_entity_uuids);
 }
 
 

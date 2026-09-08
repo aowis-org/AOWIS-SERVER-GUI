@@ -18,11 +18,14 @@ layout(location = 1) in vec2 sphere_coordinate;
 layout(location = 2) in vec3 billboard_world_position;
 layout(location = 3) flat in vec3 sphere_center;
 layout(location = 4) flat in float sphere_radius;
-layout(location = 5) flat in float vertex_selected;
+layout(location = 5) flat in vec4 vertex_state;
 layout(location = 0) out vec4 fragment_color;
 
 void main()
 {
+    if (vertex_state.b < 0.5)
+        discard;
+
     float radial_distance = length(sphere_coordinate);
     float edge_width = max(fwidth(radial_distance), 0.0001);
     float coverage = 1.0 - smoothstep(

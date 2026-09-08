@@ -346,6 +346,8 @@ if(AOWIS_HAS_QRHI)
             src/map/rhi/map_rhi_icon_atlas.cpp
             src/map/rhi/map_rhi_junction_model.h
             src/map/rhi/map_rhi_junction_model.cpp
+            src/map/rhi/map_rhi_network_style.h
+            src/map/rhi/map_rhi_network_style.cpp
             src/map/rhi/map_rhi_symbology.h
             src/map/rhi/map_rhi_symbology.cpp
             src/map/rhi/map_rhi_tank_model.h

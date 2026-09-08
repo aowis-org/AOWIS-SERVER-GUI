@@ -53,6 +53,7 @@ constexpr QRgb MonitorLightThemeIconFillColor = qRgb(244, 174, 194);
 
 void writeJunctionImpostorCameraUniforms(
     const MapRhiImpostorCameraBasis &basis, const QRhi &rhi,
+    const QSize &network_style_texture_size,
     std::array<float, CameraUniformFloatCount> *uniform_data)
 {
     if (uniform_data == nullptr)
@@ -72,6 +73,12 @@ void writeJunctionImpostorCameraUniforms(
     // or [-1, 1], depending on the backend. gl_FragDepth is always [0, 1].
     (*uniform_data)[44] = rhi.isClipDepthZeroToOne() ? 1.0f : 0.5f;
     (*uniform_data)[45] = rhi.isClipDepthZeroToOne() ? 0.0f : 0.5f;
+
+    // textureSize()/texelFetch() cannot be translated to the ESSL 100
+    // variant baked into the QSB. Supplying the dimensions explicitly lets
+    // the junction shader address exact texel centers with texture().
+    (*uniform_data)[46] = float(qMax(1, network_style_texture_size.width()));
+    (*uniform_data)[47] = float(qMax(1, network_style_texture_size.height()));
 }
 
 bool isLightThemeWindowColor(const QColor &window_color)
@@ -766,7 +773,8 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
             this->scene.junctionInstances();
         for (const MapRhiJunctionInstance &instance : junction_instances)
         {
-            if (!(instance.alpha > 0.0f))
+            if (!this->scene.networkStyleTable().isDrawable(
+                    quint32(instance.style_index)))
                 continue;
 
             const QVector3D junction_world_position(
@@ -1087,7 +1095,8 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
         this->globe_network_scene.junctionInstances();
     for (const MapRhiJunctionInstance &instance : junction_instances)
     {
-        if (!(instance.alpha > 0.0f))
+        if (!this->scene.networkStyleTable().isDrawable(
+                quint32(instance.style_index)))
             continue;
 
         const QVector3D center(instance.center_x, instance.center_y, instance.center_z);
@@ -1343,6 +1352,7 @@ void MapRhiWidget::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
     this->tank_upload_pending = true;
     this->reservoir_upload_pending = true;
     this->junction_instance_upload_pending = true;
+    this->network_style_upload_pending = true;
     this->globe_geometry_upload_pending = true;
     this->globe_highlight_upload_pending = true;
     this->globe_flow_direction_upload_pending = true;
@@ -1371,6 +1381,7 @@ void MapRhiWidget::setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids)
     this->tank_upload_pending = true;
     this->reservoir_upload_pending = true;
     this->junction_instance_upload_pending = true;
+    this->network_style_upload_pending = true;
     this->globe_geometry_upload_pending = true;
     this->globe_highlight_upload_pending = true;
     this->globe_flow_direction_upload_pending = true;
@@ -1455,6 +1466,9 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
         || this->applied_symbology.link_thickness_px != themed_symbology.link_thickness_px
         || this->applied_symbology.link_thickness_m != themed_symbology.link_thickness_m
         || this->applied_symbology.link_colors != themed_symbology.link_colors;
+    const bool network_style_changed =
+        base_symbology_changed
+        || this->applied_symbology.flow_directions != themed_symbology.flow_directions;
 
     this->scene.setViewZoom(this->map_model->zoom());
     this->scene.setSymbology(themed_symbology);
@@ -1477,6 +1491,8 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
         this->globe_junction_instance_upload_pending = true;
         markUndergroundGeometryDirty();
     }
+    if (network_style_changed)
+        this->network_style_upload_pending = true;
     if (flow_direction_changed)
     {
         this->flow_direction_upload_pending = true;
@@ -1667,6 +1683,7 @@ void MapRhiWidget::setSelectedEntity(InfrastructureEntity entity_type, const QUu
     this->tank_upload_pending = true;
     this->reservoir_upload_pending = true;
     this->junction_instance_upload_pending = true;
+    this->network_style_upload_pending = true;
     this->globe_highlight_upload_pending = true;
     this->globe_icon_upload_pending = true;
     this->globe_junction_instance_upload_pending = true;
@@ -1680,6 +1697,7 @@ void MapRhiWidget::setSimulationErrorEntities(
 {
     this->scene.setSimulationErrorEntities(error_entities, stale_entity_uuids);
     this->globe_network_scene.setSimulationErrorEntities(error_entities, stale_entity_uuids);
+    this->network_style_upload_pending = true;
     this->highlight_upload_pending = true;
     this->globe_highlight_upload_pending = true;
     update();
@@ -1868,11 +1886,13 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     const MapRhiImpostorCameraBasis impostor_camera_basis =
         this->camera.junctionImpostorCameraBasis();
     writeJunctionImpostorCameraUniforms(
-        impostor_camera_basis, *this->active_rhi, &uniform_data);
+        impostor_camera_basis, *this->active_rhi,
+        this->network_style_texture_size, &uniform_data);
 
     QRhiResourceUpdateBatch *resource_updates = this->active_rhi->nextResourceUpdateBatch();
     resource_updates->updateDynamicBuffer(
         this->uniform_buffer.get(), 0, CameraUniformBytes, uniform_data.data());
+    uploadNetworkStyleTable(resource_updates);
 
     if (this->icon_atlas_upload_pending)
     {
@@ -2129,7 +2149,8 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         if (!junction_instances.isEmpty() && !junction_impostor.isEmpty())
         {
             command_buffer->setGraphicsPipeline(this->junction_no_depth_pipeline.get());
-            command_buffer->setShaderResources();
+            command_buffer->setShaderResources(
+                this->junction_shader_resource_bindings.get());
             const QRhiCommandBuffer::VertexInput junction_bindings[] = {
                 {this->junction_mesh_vertex_buffer.get(), 0},
                 {this->junction_instance_buffer.get(), 0}
@@ -2154,7 +2175,8 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         if (!this->underground_junction_instances.isEmpty() && !junction_impostor.isEmpty())
         {
             command_buffer->setGraphicsPipeline(this->junction_xray_pipeline.get());
-            command_buffer->setShaderResources();
+            command_buffer->setShaderResources(
+                this->junction_shader_resource_bindings.get());
             const QRhiCommandBuffer::VertexInput underground_junction_bindings[] = {
                 {this->junction_mesh_vertex_buffer.get(), 0},
                 {this->underground_junction_instance_buffer.get(), 0}
@@ -2222,7 +2244,8 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     if (!junction_instances.isEmpty() && !junction_impostor.isEmpty())
     {
         command_buffer->setGraphicsPipeline(this->junction_pipeline.get());
-        command_buffer->setShaderResources();
+        command_buffer->setShaderResources(
+            this->junction_shader_resource_bindings.get());
         const QRhiCommandBuffer::VertexInput junction_bindings[] = {
             {this->junction_mesh_vertex_buffer.get(), 0},
             {this->junction_instance_buffer.get(), 0}
@@ -2411,11 +2434,13 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
         ? -float(this->globe_network_scene.iconSizeM())
         : float(this->globe_network_scene.iconSizePx());
     writeJunctionImpostorCameraUniforms(
-        impostor_camera_basis, *this->active_rhi, &uniform_data);
+        impostor_camera_basis, *this->active_rhi,
+        this->network_style_texture_size, &uniform_data);
 
     QRhiResourceUpdateBatch *resource_updates = this->active_rhi->nextResourceUpdateBatch();
     resource_updates->updateDynamicBuffer(
         this->uniform_buffer.get(), 0, CameraUniformBytes, uniform_data.data());
+    uploadNetworkStyleTable(resource_updates);
 
     if (this->icon_atlas_upload_pending)
     {
@@ -2832,6 +2857,23 @@ void MapRhiWidget::uploadGlobeNetworkGeometry(QRhiResourceUpdateBatch *resource_
     }
 }
 
+void MapRhiWidget::uploadNetworkStyleTable(QRhiResourceUpdateBatch *resource_updates)
+{
+    if (!this->network_style_upload_pending
+        || resource_updates == nullptr
+        || !this->network_style_texture)
+    {
+        return;
+    }
+
+    const QImage &style_image = this->scene.networkStyleTable().image();
+    if (style_image.isNull() || style_image.size() != this->network_style_texture_size)
+        return;
+
+    resource_updates->uploadTexture(this->network_style_texture.get(), style_image);
+    this->network_style_upload_pending = false;
+}
+
 void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
 {
     // Ordering mirrors the ThreeD (is_2d_view == false) branch above:
@@ -2864,9 +2906,10 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
         this->globe_network_scene.flowDirectionVertices();
     // The six-vertex quad is shared and view-mode agnostic; the fragment
     // shader reconstructs a real sphere surface and depth. junction_instances is
-    // Globe's own per-instance data (position/radius/color/selected),
-    // already placed relative to the same render origin as every other
-    // Globe vertex (see ecefPosition()).
+    // Globe's own per-instance placement/radius/style-index data, already
+    // positioned relative to the same render origin as every other Globe
+    // vertex (see ecefPosition()). Color and selection are read from the
+    // one shared GPU style table.
     const QVector<MapRhiJunctionImpostorVertex> &junction_impostor =
         mapRhiJunctionImpostorVertices();
     const QVector<MapRhiJunctionInstance> &junction_instances =
@@ -2921,7 +2964,8 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
         if (!junction_instances.isEmpty() && !junction_impostor.isEmpty())
         {
             command_buffer->setGraphicsPipeline(this->globe_junction_no_depth_pipeline.get());
-            command_buffer->setShaderResources();
+            command_buffer->setShaderResources(
+                this->junction_shader_resource_bindings.get());
             const QRhiCommandBuffer::VertexInput solid_junction_bindings[] = {
                 {this->junction_mesh_vertex_buffer.get(), 0},
                 {this->globe_junction_instance_buffer.get(), 0}
@@ -2995,7 +3039,8 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
     if (!junction_instances.isEmpty() && !junction_impostor.isEmpty())
     {
         command_buffer->setGraphicsPipeline(this->globe_junction_pipeline.get());
-        command_buffer->setShaderResources();
+        command_buffer->setShaderResources(
+            this->junction_shader_resource_bindings.get());
         const QRhiCommandBuffer::VertexInput junction_bindings[] = {
             {this->junction_mesh_vertex_buffer.get(), 0},
             {this->globe_junction_instance_buffer.get(), 0}
@@ -3136,6 +3181,74 @@ bool MapRhiWidget::createPersistentResources()
         if (!this->shader_resource_bindings->create())
         {
             reportFailure(QStringLiteral("Failed to create RHI shader resource bindings"));
+            return false;
+        }
+    }
+
+    const MapRhiNetworkStyleTable &network_style_table = this->scene.networkStyleTable();
+    if (!network_style_table.isValid())
+    {
+        reportFailure(QStringLiteral("Failed to build RHI network style table"));
+        return false;
+    }
+
+    const QSize required_network_style_texture_size = network_style_table.image().size();
+    if (!this->network_style_texture
+        || this->network_style_texture_size != required_network_style_texture_size)
+    {
+        // The SRB refers to the texture object, while each junction pipeline
+        // captures that SRB's layout at creation. A network-size change is
+        // rare, so rebuild this small resource family together.
+        this->junction_pipeline.reset();
+        this->globe_junction_pipeline.reset();
+        this->junction_xray_pipeline.reset();
+        this->junction_no_depth_pipeline.reset();
+        this->globe_junction_no_depth_pipeline.reset();
+        this->junction_shader_resource_bindings.reset();
+        this->network_style_texture.reset(this->active_rhi->newTexture(
+            QRhiTexture::RGBA8, required_network_style_texture_size));
+        if (!this->network_style_texture || !this->network_style_texture->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI network style texture"));
+            return false;
+        }
+        this->network_style_texture_size = required_network_style_texture_size;
+        this->network_style_upload_pending = true;
+    }
+
+    if (!this->network_style_sampler)
+    {
+        this->network_style_sampler.reset(this->active_rhi->newSampler(
+            QRhiSampler::Nearest, QRhiSampler::Nearest, QRhiSampler::None,
+            QRhiSampler::ClampToEdge, QRhiSampler::ClampToEdge));
+        if (!this->network_style_sampler || !this->network_style_sampler->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI network style sampler"));
+            return false;
+        }
+    }
+
+    if (!this->junction_shader_resource_bindings)
+    {
+        this->junction_shader_resource_bindings.reset(
+            this->active_rhi->newShaderResourceBindings());
+        if (!this->junction_shader_resource_bindings)
+        {
+            reportFailure(QStringLiteral("Failed to allocate RHI junction shader bindings"));
+            return false;
+        }
+        this->junction_shader_resource_bindings->setBindings({
+            QRhiShaderResourceBinding::uniformBuffer(
+                0, QRhiShaderResourceBinding::VertexStage
+                    | QRhiShaderResourceBinding::FragmentStage,
+                this->uniform_buffer.get()),
+            QRhiShaderResourceBinding::sampledTexture(
+                1, QRhiShaderResourceBinding::VertexStage,
+                this->network_style_texture.get(), this->network_style_sampler.get())
+        });
+        if (!this->junction_shader_resource_bindings->create())
+        {
+            reportFailure(QStringLiteral("Failed to create RHI junction shader bindings"));
             return false;
         }
     }
@@ -3325,6 +3438,7 @@ bool MapRhiWidget::createPipelines()
 {
     if (this->active_rhi == nullptr || this->render_pass_descriptor == nullptr
         || !this->shader_resource_bindings || !this->heatmap_shader_resource_bindings
+        || !this->junction_shader_resource_bindings
         || !this->icon_shader_resource_bindings || !this->tank_shader_resource_bindings
         || !this->reservoir_shader_resource_bindings)
     {
@@ -3794,10 +3908,8 @@ bool MapRhiWidget::createPipelines()
              quint32(offsetof(MapRhiJunctionInstance, center_x))},
             {1, 2, QRhiVertexInputAttribute::Float,
              quint32(offsetof(MapRhiJunctionInstance, radius_world))},
-            {1, 3, QRhiVertexInputAttribute::Float4,
-             quint32(offsetof(MapRhiJunctionInstance, red))},
-            {1, 4, QRhiVertexInputAttribute::Float,
-             quint32(offsetof(MapRhiJunctionInstance, selected))}
+            {1, 3, QRhiVertexInputAttribute::Float,
+             quint32(offsetof(MapRhiJunctionInstance, style_index))}
         });
 
         this->junction_pipeline.reset(this->active_rhi->newGraphicsPipeline());
@@ -3806,7 +3918,8 @@ bool MapRhiWidget::createPipelines()
             {QRhiShaderStage::Fragment, fragment_shader}
         });
         this->junction_pipeline->setVertexInputLayout(input_layout);
-        this->junction_pipeline->setShaderResourceBindings(this->shader_resource_bindings.get());
+        this->junction_pipeline->setShaderResourceBindings(
+            this->junction_shader_resource_bindings.get());
         this->junction_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
         this->junction_pipeline->setSampleCount(sampleCount());
         this->junction_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
@@ -3832,7 +3945,7 @@ bool MapRhiWidget::createPipelines()
         });
         this->globe_junction_pipeline->setVertexInputLayout(input_layout);
         this->globe_junction_pipeline->setShaderResourceBindings(
-            this->shader_resource_bindings.get());
+            this->junction_shader_resource_bindings.get());
         this->globe_junction_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
         this->globe_junction_pipeline->setSampleCount(sampleCount());
         this->globe_junction_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
@@ -3961,10 +4074,8 @@ bool MapRhiWidget::createPipelines()
              quint32(offsetof(MapRhiJunctionInstance, center_x))},
             {1, 2, QRhiVertexInputAttribute::Float,
              quint32(offsetof(MapRhiJunctionInstance, radius_world))},
-            {1, 3, QRhiVertexInputAttribute::Float4,
-             quint32(offsetof(MapRhiJunctionInstance, red))},
-            {1, 4, QRhiVertexInputAttribute::Float,
-             quint32(offsetof(MapRhiJunctionInstance, selected))}
+            {1, 3, QRhiVertexInputAttribute::Float,
+             quint32(offsetof(MapRhiJunctionInstance, style_index))}
         });
 
         if (!this->junction_xray_pipeline)
@@ -3976,7 +4087,7 @@ bool MapRhiWidget::createPipelines()
             });
             this->junction_xray_pipeline->setVertexInputLayout(input_layout);
             this->junction_xray_pipeline->setShaderResourceBindings(
-                this->shader_resource_bindings.get());
+                this->junction_shader_resource_bindings.get());
             this->junction_xray_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
             this->junction_xray_pipeline->setSampleCount(sampleCount());
             this->junction_xray_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
@@ -4003,7 +4114,7 @@ bool MapRhiWidget::createPipelines()
             });
             this->junction_no_depth_pipeline->setVertexInputLayout(input_layout);
             this->junction_no_depth_pipeline->setShaderResourceBindings(
-                this->shader_resource_bindings.get());
+                this->junction_shader_resource_bindings.get());
             this->junction_no_depth_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
             this->junction_no_depth_pipeline->setSampleCount(sampleCount());
             this->junction_no_depth_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
@@ -4033,7 +4144,7 @@ bool MapRhiWidget::createPipelines()
             });
             this->globe_junction_no_depth_pipeline->setVertexInputLayout(input_layout);
             this->globe_junction_no_depth_pipeline->setShaderResourceBindings(
-                this->shader_resource_bindings.get());
+                this->junction_shader_resource_bindings.get());
             this->globe_junction_no_depth_pipeline->setRenderPassDescriptor(
                 this->render_pass_descriptor);
             this->globe_junction_no_depth_pipeline->setSampleCount(sampleCount());
@@ -4358,12 +4469,15 @@ void MapRhiWidget::resetGpuResources()
     this->reservoir_shader_resource_bindings.reset();
     this->icon_shader_resource_bindings.reset();
     this->heatmap_shader_resource_bindings.reset();
+    this->junction_shader_resource_bindings.reset();
     this->shader_resource_bindings.reset();
+    this->network_style_sampler.reset();
     this->tank_sampler.reset();
     this->reservoir_sampler.reset();
     this->icon_sampler.reset();
     this->tank_texture.reset();
     this->reservoir_texture.reset();
+    this->network_style_texture.reset();
     this->icon_atlas_texture.reset();
     this->underground_junction_instance_buffer.reset();
     this->underground_link_vertex_buffer.reset();
@@ -4416,6 +4530,7 @@ void MapRhiWidget::resetGpuResources()
     this->selected_link_vertex_buffer_size = 0;
     this->node_vertex_buffer_size = 0;
     this->link_vertex_buffer_size = 0;
+    this->network_style_texture_size = QSize();
     this->geometry_upload_pending = true;
     this->highlight_upload_pending = true;
     this->flow_direction_upload_pending = true;
@@ -4433,6 +4548,7 @@ void MapRhiWidget::resetGpuResources()
     this->globe_icon_upload_pending = true;
     this->globe_underground_upload_pending = true;
     this->globe_junction_instance_upload_pending = true;
+    this->network_style_upload_pending = true;
     this->icon_atlas_upload_pending = true;
     this->tank_texture_upload_pending = true;
     this->reservoir_texture_upload_pending = true;

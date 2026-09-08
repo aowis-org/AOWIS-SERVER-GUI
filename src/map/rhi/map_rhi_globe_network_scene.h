@@ -63,8 +63,8 @@
 // coincident-node decluttering
 // (map_node_declutter.h). Junctions ARE rendered as analytic sphere
 // impostors -- see junctionInstances() -- reusing MapRhiScene/MapRhiWidget's
-// existing MapRhiJunctionInstance/junction_pipeline machinery unmodified,
-// unlike ThreeD's, this is not gated behind a toggle: Globe has no flat-2D
+// shared MapRhiJunctionInstance, GPU style table, and junction pipelines.
+// Unlike ThreeD's, this is not gated behind a toggle: Globe has no flat-2D
 // counterpart the way TwoD is to ThreeD, so junctions are unconditionally
 // impostors here, the same way ThreeD's are whenever its own 3D-model toggle
 // is on. Underground X-Ray *is* implemented, but for links only -- see
@@ -203,10 +203,8 @@ private:
 
     // Mirrors MapRhiScene::JunctionMarker -- a lightweight record of just
     // what rebuildJunctionInstances() needs (render_id and position),
-    // kept separate from the full MapRhiJunctionInstance (which also
-    // carries color/radius/selected-state derived from symbology and
-    // selection, both of which can change without the junction's
-    // position doing so).
+    // kept separate from MapRhiJunctionInstance, which additionally carries
+    // the radius and stable GPU style-table index.
     struct JunctionMarker
     {
         quint32 render_id = 0;
@@ -244,15 +242,9 @@ private:
     QRgb flowDirectionColor(quint32 render_id) const;
     void rebuildIcons();
     void appendIcon(const IconMarker &marker);
-    // Rebuilds junction_instances from junction_markers plus whatever
-    // currently affects a junction sphere's appearance (symbology node
-    // color/size, current selection) -- mirrors MapRhiScene::
-    // rebuildJunctionInstances() exactly, including reusing the selection
-    // blue (QColor(0, 190, 255)) for the selected junction. Called
-    // whenever any of those inputs change (see setSymbology()/
-    // setSelectedEntity()), not only from rebuildNetworkGeometry(), so
-    // selecting a junction recolors its sphere without rebuilding the
-    // entire network's link/node geometry.
+    // Rebuilds compact placement/radius/style-index instances from the
+    // junction markers. Color, selection, diagnostics and visibility now
+    // live in MapRhiScene's shared GPU style table.
     void rebuildJunctionInstances();
     void rebuildHighlights();
     void appendEntityHighlight(InfrastructureEntity entity_type, quint32 render_id,

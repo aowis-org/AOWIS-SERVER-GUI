@@ -114,6 +114,7 @@ private:
     void renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarget *target);
     bool ensureGlobeNetworkGeometryBuffers();
     void uploadGlobeNetworkGeometry(QRhiResourceUpdateBatch *resource_updates);
+    void uploadNetworkStyleTable(QRhiResourceUpdateBatch *resource_updates);
     void drawGlobeNetwork(QRhiCommandBuffer *command_buffer);
     // Globe-mode counterpart of hitTest() -- see that function's header
     // comment for why it can't just be folded into the same function body.
@@ -166,6 +167,7 @@ private:
     std::unique_ptr<MapRhiGlobeRenderer> globe_renderer;
     int background_opacity = 0;
     QPointF network_screen_translation;
+    QSize network_style_texture_size;
 
     std::unique_ptr<QRhiBuffer> uniform_buffer;
     std::unique_ptr<QRhiBuffer> link_vertex_buffer;
@@ -214,10 +216,13 @@ private:
     std::unique_ptr<QRhiTexture> icon_atlas_texture;
     std::unique_ptr<QRhiTexture> tank_texture;
     std::unique_ptr<QRhiTexture> reservoir_texture;
+    std::unique_ptr<QRhiTexture> network_style_texture;
     std::unique_ptr<QRhiSampler> icon_sampler;
     std::unique_ptr<QRhiSampler> tank_sampler;
     std::unique_ptr<QRhiSampler> reservoir_sampler;
+    std::unique_ptr<QRhiSampler> network_style_sampler;
     std::unique_ptr<QRhiShaderResourceBindings> shader_resource_bindings;
+    std::unique_ptr<QRhiShaderResourceBindings> junction_shader_resource_bindings;
     std::unique_ptr<QRhiShaderResourceBindings> heatmap_shader_resource_bindings;
     std::unique_ptr<QRhiShaderResourceBindings> icon_shader_resource_bindings;
     std::unique_ptr<QRhiShaderResourceBindings> tank_shader_resource_bindings;
@@ -282,6 +287,7 @@ private:
     bool globe_icon_upload_pending = true;
     bool globe_underground_upload_pending = true;
     bool globe_junction_instance_upload_pending = true;
+    bool network_style_upload_pending = true;
     bool icon_atlas_upload_pending = true;
     bool tank_texture_upload_pending = true;
     bool reservoir_texture_upload_pending = true;

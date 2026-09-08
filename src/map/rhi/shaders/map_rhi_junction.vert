@@ -3,8 +3,7 @@
 layout(location = 0) in vec2 impostor_corner;
 layout(location = 1) in vec3 instance_center;
 layout(location = 2) in float instance_radius;
-layout(location = 3) in vec4 instance_color;
-layout(location = 4) in float instance_selected;
+layout(location = 3) in float instance_style_index;
 
 layout(std140, binding = 0) uniform CameraBlock
 {
@@ -19,16 +18,31 @@ layout(std140, binding = 0) uniform CameraBlock
     vec4 impostor_settings;
 } camera;
 
+layout(binding = 1) uniform sampler2D network_style_table;
+
 layout(location = 0) flat out vec4 vertex_color;
 layout(location = 1) out vec2 sphere_coordinate;
 layout(location = 2) out vec3 billboard_world_position;
 layout(location = 3) flat out vec3 sphere_center;
 layout(location = 4) flat out float sphere_radius;
-layout(location = 5) flat out float vertex_selected;
+layout(location = 5) flat out vec4 vertex_state;
+
+vec4 styleTexel(float style_index, float texel_offset)
+{
+    vec2 table_size = max(camera.impostor_settings.zw, vec2(1.0));
+    float linear_index = style_index * 2.0 + texel_offset;
+    float row = floor(linear_index / table_size.x);
+    float column = linear_index - row * table_size.x;
+    vec2 texture_coordinate =
+        (vec2(column, row) + vec2(0.5)) / table_size;
+    return texture(network_style_table, texture_coordinate);
+}
 
 void main()
 {
     vec2 viewport = max(camera.viewport_and_sizes.xy, vec2(1.0));
+    vec4 style_color = styleTexel(instance_style_index, 0.0);
+    vec4 style_state = styleTexel(instance_style_index, 1.0);
 
     // Positive W means a requested pixel radius at the orbit focus depth.
     // Negative W selects true world-space sizing; the instance then carries
@@ -88,10 +102,12 @@ void main()
     clip_position.xy += translation_ndc * clip_position.w;
 
     gl_Position = clip_position;
-    vertex_color = instance_color;
+    vertex_color = style_state.r > 0.5
+        ? vec4(0.0, 190.0 / 255.0, 1.0, 1.0)
+        : style_color;
     sphere_coordinate = impostor_corner;
     billboard_world_position = world_position;
     sphere_center = instance_center;
     sphere_radius = safe_radius;
-    vertex_selected = instance_selected;
+    vertex_state = style_state;
 }

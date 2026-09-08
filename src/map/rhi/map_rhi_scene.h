@@ -5,6 +5,7 @@
 #include "map/rhi/map_rhi_symbology.h"
 #include "map/rhi/map_rhi_icon_atlas.h"
 #include "map/rhi/map_rhi_junction_model.h"
+#include "map/rhi/map_rhi_network_style.h"
 #include "map/rhi/map_rhi_reservoir_model.h"
 #include "map/rhi/map_rhi_tank_model.h"
 
@@ -110,6 +111,7 @@ public:
     const QVector<MapRhiTankInstance> &tankInstances() const;
     const QVector<MapRhiReservoirInstance> &reservoirInstances() const;
     const QVector<MapRhiJunctionInstance> &junctionInstances() const;
+    const MapRhiNetworkStyleTable &networkStyleTable() const;
     QPointF originWorld() const;
     const NetworkRenderSnapshot &networkSnapshot() const;
     QVector3D worldPosition(const CoordinateWGS84 &coordinate, double elevation_m,
@@ -185,6 +187,7 @@ private:
     void rebuildTankInstances();
     void rebuildReservoirInstances();
     void rebuildJunctionInstances();
+    void rebuildNetworkStyles();
     void appendIcon(const IconMarker &marker);
     void rebuildFlowDirections();
     void appendFlowDirectionStroke(
@@ -212,6 +215,7 @@ private:
     QVector<MapRhiTankInstance> tank_instances;
     QVector<MapRhiReservoirInstance> reservoir_instances;
     QVector<MapRhiJunctionInstance> junction_instances;
+    MapRhiNetworkStyleTable network_style_table;
     QVector<HeatmapMarker> heatmap_markers;
     QVector<IconMarker> icon_markers;
     QVector<JunctionMarker> junction_markers;
