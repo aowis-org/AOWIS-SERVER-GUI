@@ -58,7 +58,7 @@ const QColor GlobePolarCapColor(235, 240, 245);
 // only visible until the real tile texture is uploaded.
 const QColor GlobeMissingTileColor(18, 58, 72);
 
-constexpr int GlobeCameraUniformBytes = 20 * int(sizeof(float));
+constexpr int GlobeCameraUniformBytes = 24 * int(sizeof(float));
 
 // Matches MapRhiBasemapRenderer's HeatmapTextureSize exactly (one texel per
 // Web Mercator pixel at whatever zoom a given tile is fetched at) -- see
@@ -2213,7 +2213,8 @@ bool MapRhiGlobeRenderer::initialize(
 
 bool MapRhiGlobeRenderer::prepare(
     QRhiResourceUpdateBatch *resource_updates, const QMatrix4x4 &view_projection,
-    const QSize &viewport_size, float heatmap_opacity)
+    const QSize &viewport_size, float heatmap_opacity,
+    const QColor &background_color, float background_opacity)
 {
     if (this->rhi == nullptr || resource_updates == nullptr || this->map_model == nullptr)
         return false;
@@ -2336,17 +2337,19 @@ bool MapRhiGlobeRenderer::prepare(
     if (this->map_visible)
         requestMissingTiles(resource_updates);
 
-    // 20 floats: the 16-float view_projection matrix (unchanged), plus a
-    // 4-float heatmap_settings vec4 with only .y (opacity) actually
-    // meaningful -- see GlobeCameraBlock's declaration in
-    // map_rhi_globe.vert/.frag for why. Uploaded every call regardless of
-    // whether either half actually changed, matching how view_projection
-    // itself was already handled before heatmap_settings existed: cheap,
-    // and unlike a tile's heatmap_texture, doesn't force anything to
-    // regenerate.
-    float uniform_data[20] = {};
+    // 24 floats: the 16-float view_projection matrix, heatmap_settings, and
+    // basemap_settings. basemap_settings mirrors the flat RHI renderer: rgb
+    // is the UI window color and .a is the map-background opacity controlled
+    // by the sidebar slider. Keeping this in the per-frame camera block means
+    // globe imagery and the polar caps fade immediately without regenerating
+    // any tile textures.
+    float uniform_data[24] = {};
     std::copy(view_projection.constData(), view_projection.constData() + 16, uniform_data);
     uniform_data[17] = qBound(0.0f, heatmap_opacity, 1.0f);
+    uniform_data[20] = background_color.redF();
+    uniform_data[21] = background_color.greenF();
+    uniform_data[22] = background_color.blueF();
+    uniform_data[23] = qBound(0.0f, background_opacity, 1.0f);
     resource_updates->updateDynamicBuffer(
         this->camera_uniform_buffer.get(), 0, GlobeCameraUniformBytes, uniform_data);
 

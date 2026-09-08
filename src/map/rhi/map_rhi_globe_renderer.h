@@ -137,15 +137,17 @@ public:
     // supplied to setRenderOriginEcef(). Must be called before draw() each
     // frame, inside the same resource-update batch that beginPass() below
     // will consume.
-    // heatmap_opacity is re-uploaded into the (extended) GlobeCameraBlock
-    // uniform every call regardless of whether it changed, exactly like
-    // view_projection already is -- see the class comment on
+    // heatmap_opacity and the basemap background blend are re-uploaded into
+    // the (extended) GlobeCameraBlock uniform every call regardless of
+    // whether they changed, exactly like view_projection already is -- see
+    // the class comment on
     // ensureHeatmapTexture() for why that's fine to do unconditionally
     // (it's cheap, and unlike the texture itself, doesn't force any tile
     // to regenerate).
     bool prepare(QRhiResourceUpdateBatch *resource_updates,
                 const QMatrix4x4 &view_projection, const QSize &viewport_size,
-                float heatmap_opacity);
+                float heatmap_opacity, const QColor &background_color,
+                float background_opacity);
     void draw(QRhiCommandBuffer *command_buffer);
 
     // Drops all cached tile textures/bindings and forces the window to be

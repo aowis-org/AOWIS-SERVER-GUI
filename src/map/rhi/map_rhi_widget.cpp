@@ -2489,8 +2489,13 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     // it changed.
     const float globe_heatmap_opacity =
         qBound(0.0f, this->applied_symbology.heatmap_opacity / 100.0f, 1.0f);
+    const QColor globe_map_background_color = palette().color(QPalette::Window);
+    const float globe_map_background_opacity =
+        qBound(0.0f, this->background_opacity / 100.0f, 1.0f);
     if (!this->globe_renderer->prepare(
-            resource_updates, view_projection, this->viewport_size, globe_heatmap_opacity))
+            resource_updates, view_projection, this->viewport_size,
+            globe_heatmap_opacity, globe_map_background_color,
+            globe_map_background_opacity))
     {
         resource_updates->release();
         reportFailure(QStringLiteral("Failed to prepare RHI globe renderer"));

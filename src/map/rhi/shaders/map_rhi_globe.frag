@@ -7,6 +7,7 @@ layout(std140, binding = 0) uniform GlobeCameraBlock
 {
     mat4 view_projection;
     vec4 heatmap_settings;
+    vec4 basemap_settings;
 } camera;
 
 layout(location = 0) in vec2 vertex_texture_coordinate;
@@ -15,6 +16,10 @@ layout(location = 0) out vec4 fragment_color;
 void main()
 {
     vec3 tile_rgb = texture(globe_tile, vertex_texture_coordinate).rgb;
+    vec3 mixed_rgb = mix(
+        tile_rgb,
+        camera.basemap_settings.rgb,
+        clamp(camera.basemap_settings.a, 0.0, 1.0));
     // heatmap_tile is fully transparent (alpha 0) for every tile with no
     // heatmap texture of its own (see MapRhiGlobeRenderer::
     // rebuildTileBindings()'s heatmap_dummy_texture fallback) and for every
@@ -29,6 +34,6 @@ void main()
     // every frame" (opacity) -- see map_rhi_basemap.frag's matching blend.
     vec4 heatmap_color = texture(heatmap_tile, vertex_texture_coordinate);
     float heatmap_alpha = heatmap_color.a * clamp(camera.heatmap_settings.y, 0.0, 1.0);
-    vec3 mixed_rgb = mix(tile_rgb, heatmap_color.rgb, heatmap_alpha);
+    mixed_rgb = mix(mixed_rgb, heatmap_color.rgb, heatmap_alpha);
     fragment_color = vec4(mixed_rgb, 1.0);
 }

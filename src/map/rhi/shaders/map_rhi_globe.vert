@@ -17,6 +17,7 @@ layout(std140, binding = 0) uniform GlobeCameraBlock
     // network heatmap quads, which compute their radius per-vertex on
     // GPU.
     vec4 heatmap_settings;
+    vec4 basemap_settings;
 } camera;
 
 layout(location = 0) out vec2 vertex_texture_coordinate;

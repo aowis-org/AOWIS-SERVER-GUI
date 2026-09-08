@@ -42,6 +42,15 @@
 
 namespace
 {
+bool shouldCollapseRhiMonitorSymbologyGroups()
+{
+#ifdef Q_OS_WASM
+    return false;
+#else
+    return guiConfiguration().map_desktop_renderer == DesktopMapRenderer::Rhi;
+#endif
+}
+
 class SymbologySlider final : public QSlider
 {
 public:
@@ -2382,6 +2391,7 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
     vbox->addWidget(radio_node_lake);
     
     vbox->addWidget(label_chlorine);
+    group->setCollapsed(shouldCollapseRhiMonitorSymbologyGroups());
 }
 void MapMonitorMenuWidget::addGroupLinkVisuals()
 {
@@ -2451,6 +2461,7 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     vbox->addWidget(radio_link_chlorine);
     vbox->addWidget(radio_link_river);
     vbox->addWidget(radio_link_lake);
+    group->setCollapsed(shouldCollapseRhiMonitorSymbologyGroups());
 }
 
 void MapMonitorMenuWidget::addGroupHeatmapVisuals()
@@ -2528,4 +2539,5 @@ void MapMonitorMenuWidget::addGroupHeatmapVisuals()
     vbox->addWidget(radio_chlorine);
     vbox->addWidget(radio_river);
     vbox->addWidget(radio_lake);
+    group->setCollapsed(shouldCollapseRhiMonitorSymbologyGroups());
 }
