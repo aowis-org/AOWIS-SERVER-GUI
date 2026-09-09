@@ -65,6 +65,13 @@ constexpr int GlobeCameraUniformBytes = 24 * int(sizeof(float));
 // MapRhiGlobeRenderer::renderHeatmapTile().
 constexpr int GlobeHeatmapTextureSize = 256;
 
+// First Globe batching milestone: one 256-layer RGBA8 page. Layer 0 is a
+// permanent sentinel for geometry whose imagery has not reached the array
+// yet, leaving 255 simultaneously batchable tiles. At 256x256 this page is
+// 64 MiB when fully resident. Additional lazy pages belong to roadmap patch
+// 3; oversized windows deliberately keep using the existing per-tile renderer.
+constexpr int GlobeTileArrayLayerCount = 256;
+
 // Vertex grid subdivisions per tile edge, by zoom level. Low zoom tiles
 // span a huge angular area (a zoom-0 tile is the entire planet, a zoom-1
 // tile is a full hemisphere) and need heavy subdivision for the ellipsoid
@@ -92,6 +99,43 @@ int subdivisionsForZoom(int zoom)
     if (zoom <= 6)
         return 4;
     return 2;
+}
+
+// Every regular Globe tile uses the same row-major grid topology. Keep that
+// topology in a retained UInt32 index buffer and let imagery/terrain updates
+// replace only the compact unique-vertex range. The winding exactly matches
+// the former expanded triangles: p00,p01,p10 then p10,p01,p11.
+void appendIndexedGridIndices(
+    QVector<quint32> *indices, qsizetype first_vertex, int cell_count)
+{
+    if (indices == nullptr || first_vertex < 0 || cell_count <= 0)
+        return;
+
+    const qsizetype grid_width_size = qsizetype(cell_count) + 1;
+    const qsizetype last_vertex = first_vertex
+        + grid_width_size * grid_width_size - 1;
+    if (last_vertex > qsizetype(std::numeric_limits<quint32>::max()))
+        return;
+
+    const quint32 first = quint32(first_vertex);
+    const quint32 grid_width = quint32(cell_count + 1);
+    for (int row = 0; row < cell_count; ++row)
+    {
+        for (int column = 0; column < cell_count; ++column)
+        {
+            const quint32 p00 = first
+                + quint32(row) * grid_width + quint32(column);
+            const quint32 p10 = p00 + 1;
+            const quint32 p01 = p00 + grid_width;
+            const quint32 p11 = p01 + 1;
+            indices->append(p00);
+            indices->append(p01);
+            indices->append(p10);
+            indices->append(p10);
+            indices->append(p01);
+            indices->append(p11);
+        }
+    }
 }
 
 // Replaces the old single-zoom "sample the projected ellipsoid boundary into
@@ -618,8 +662,10 @@ bool MapRhiGlobeRenderer::setRenderOriginEcef(
     this->window_dirty = true;
     this->caps_built = false;
     this->cap_vertices.clear();
+    this->cap_indices.clear();
     this->cap_tiles.clear();
     this->cap_vertex_upload_pending = true;
+    this->cap_index_upload_pending = true;
     return true;
 }
 
@@ -737,29 +783,38 @@ void MapRhiGlobeRenderer::buildPolarCap(bool north)
     GlobeTile cap;
     cap.is_cap = true;
     cap.first_vertex = this->cap_vertices.size();
+    cap.first_index = this->cap_indices.size();
 
     const TileVertex pole_vertex = makeTileVertex(0.0, pole_lat, 0.5f, 0.5f);
+    this->cap_vertices.append(pole_vertex);
+    for (int segment = 0; segment <= GlobePolarCapSegments; ++segment)
+    {
+        const double longitude_deg = -180.0
+            + 360.0 * double(segment) / double(GlobePolarCapSegments);
+        this->cap_vertices.append(
+            makeTileVertex(longitude_deg, ring_lat, 0.5f, 0.5f));
+    }
+
+    const quint32 pole_index = quint32(cap.first_vertex);
     for (int segment = 0; segment < GlobePolarCapSegments; ++segment)
     {
-        const double lon0 = -180.0 + 360.0 * double(segment) / double(GlobePolarCapSegments);
-        const double lon1 = -180.0 + 360.0 * double(segment + 1) / double(GlobePolarCapSegments);
-        const TileVertex ring0 = makeTileVertex(lon0, ring_lat, 0.5f, 0.5f);
-        const TileVertex ring1 = makeTileVertex(lon1, ring_lat, 0.5f, 0.5f);
-
-        this->cap_vertices.append(pole_vertex);
+        const quint32 ring0 = pole_index + 1 + quint32(segment);
+        const quint32 ring1 = ring0 + 1;
+        this->cap_indices.append(pole_index);
         if (north)
         {
-            this->cap_vertices.append(ring0);
-            this->cap_vertices.append(ring1);
+            this->cap_indices.append(ring0);
+            this->cap_indices.append(ring1);
         }
         else
         {
-            this->cap_vertices.append(ring1);
-            this->cap_vertices.append(ring0);
+            this->cap_indices.append(ring1);
+            this->cap_indices.append(ring0);
         }
     }
 
     cap.vertex_count = this->cap_vertices.size() - cap.first_vertex;
+    cap.index_count = this->cap_indices.size() - cap.first_index;
     this->cap_tiles.append(cap);
 }
 
@@ -769,12 +824,15 @@ void MapRhiGlobeRenderer::buildCaps()
         return;
 
     this->cap_vertices.clear();
+    this->cap_indices.clear();
     this->cap_tiles.clear();
     buildPolarCap(true);
     buildPolarCap(false);
     this->caps_built = true;
     this->cap_vertex_upload_pending = true;
-    rebuildWireframeVertices();
+    this->cap_index_upload_pending = true;
+    if (this->wireframe_visible)
+        rebuildWireframeVertices();
 }
 
 int MapRhiGlobeRenderer::terrainCellCountForTile(
@@ -1064,17 +1122,22 @@ void MapRhiGlobeRenderer::rebuildWindow(
     updateTerrainStitchCellCounts(&next_tiles);
 
     qsizetype estimated_vertex_count = 0;
+    qsizetype estimated_index_count = 0;
     for (const GlobeTile &tile : next_tiles)
     {
         const int subdivisions = !tile.terrain_key.isEmpty()
             ? qMax(1, tile.terrain_cell_count)
             : subdivisionsForZoom(tile.zoom);
-        estimated_vertex_count +=
+        const qsizetype grid_width = qsizetype(subdivisions) + 1;
+        estimated_vertex_count += grid_width * grid_width;
+        estimated_index_count +=
             qsizetype(subdivisions) * qsizetype(subdivisions) * 6;
     }
 
     this->window_vertices.clear();
     this->window_vertices.reserve(estimated_vertex_count);
+    this->window_indices.clear();
+    this->window_indices.reserve(estimated_index_count);
     this->window_tiles.clear();
     this->window_tiles.reserve(next_tiles.size());
 
@@ -1082,10 +1145,13 @@ void MapRhiGlobeRenderer::rebuildWindow(
     {
         const bool terrain_enabled = !tile.terrain_key.isEmpty();
         tile.first_vertex = this->window_vertices.size();
+        tile.first_index = this->window_indices.size();
         const int subdivisions = terrain_enabled
             ? qMax(1, tile.terrain_cell_count)
             : subdivisionsForZoom(tile.zoom);
-        const int expected_vertex_count = subdivisions * subdivisions * 6;
+        const int grid_width = subdivisions + 1;
+        const int expected_vertex_count = grid_width * grid_width;
+        const int expected_index_count = subdivisions * subdivisions * 6;
 
         bool reused = false;
         const QHash<quint64, qsizetype>::const_iterator previous_iterator =
@@ -1110,6 +1176,7 @@ void MapRhiGlobeRenderer::rebuildWindow(
                 && previous_tile.terrain_stitch_left_cell_count
                     == tile.terrain_stitch_left_cell_count
                 && previous_tile.vertex_count == expected_vertex_count
+                && previous_tile.index_count == expected_index_count
                 && previous_tile.first_vertex >= 0
                 && previous_tile.first_vertex + previous_tile.vertex_count
                     <= previous_vertices.size();
@@ -1196,44 +1263,28 @@ void MapRhiGlobeRenderer::rebuildWindow(
 
             if (!terrain_built)
             {
-                for (int row = 0; row < subdivisions; ++row)
+                for (int row = 0; row <= subdivisions; ++row)
                 {
-                    const double v0 = double(row) / double(subdivisions);
-                    const double v1 = double(row + 1) / double(subdivisions);
-                    const double lat0 = GeoWebMercator::tileYToLat(
-                        double(tile.tile_y) + v0, tile.zoom);
-                    const double lat1 = GeoWebMercator::tileYToLat(
-                        double(tile.tile_y) + v1, tile.zoom);
+                    const double v = double(row) / double(subdivisions);
+                    const double latitude_deg = GeoWebMercator::tileYToLat(
+                        double(tile.tile_y) + v, tile.zoom);
 
-                    for (int column = 0; column < subdivisions; ++column)
+                    for (int column = 0; column <= subdivisions; ++column)
                     {
-                        const double u0 = double(column) / double(subdivisions);
-                        const double u1 = double(column + 1) / double(subdivisions);
-                        const double lon0 = GeoWebMercator::tileXToLon(
-                            double(tile.virtual_x) + u0, tile.zoom);
-                        const double lon1 = GeoWebMercator::tileXToLon(
-                            double(tile.virtual_x) + u1, tile.zoom);
-
-                        const TileVertex p00 = makeTileVertex(
-                            lon0, lat0, float(u0), float(v0));
-                        const TileVertex p10 = makeTileVertex(
-                            lon1, lat0, float(u1), float(v0));
-                        const TileVertex p01 = makeTileVertex(
-                            lon0, lat1, float(u0), float(v1));
-                        const TileVertex p11 = makeTileVertex(
-                            lon1, lat1, float(u1), float(v1));
-
-                        this->window_vertices.append(p00);
-                        this->window_vertices.append(p01);
-                        this->window_vertices.append(p10);
-                        this->window_vertices.append(p10);
-                        this->window_vertices.append(p01);
-                        this->window_vertices.append(p11);
+                        const double u = double(column) / double(subdivisions);
+                        const double longitude_deg = GeoWebMercator::tileXToLon(
+                            double(tile.virtual_x) + u, tile.zoom);
+                        this->window_vertices.append(makeTileVertex(
+                            longitude_deg, latitude_deg, float(u), float(v)));
                     }
                 }
                 tile.vertex_count = expected_vertex_count;
             }
         }
+
+        appendIndexedGridIndices(
+            &this->window_indices, tile.first_vertex, subdivisions);
+        tile.index_count = this->window_indices.size() - tile.first_index;
 
         this->window_tiles.append(tile);
     }
@@ -1241,10 +1292,12 @@ void MapRhiGlobeRenderer::rebuildWindow(
     this->window_dirty = false;
     this->window_tiles_requested = false;
     this->window_vertex_upload_pending = true;
+    this->window_index_upload_pending = true;
     this->terrain_lod_rebuild_pending = false;
     this->terrain_lod_rebuild_clock.restart();
 
-    rebuildWireframeVertices();
+    if (this->wireframe_visible)
+        rebuildWireframeVertices();
     pruneUnusedTileResources();
 }
 
@@ -1257,13 +1310,24 @@ QVector<MapRhiGlobeQuadtreeLeaf> MapRhiGlobeRenderer::currentWindowLeaves() cons
     return leaves;
 }
 
-void MapRhiGlobeRenderer::appendWireframeEdges(const QVector<TileVertex> &vertices)
+void MapRhiGlobeRenderer::appendWireframeEdges(
+    const QVector<TileVertex> &vertices, const QVector<quint32> &indices)
 {
-    for (qsizetype vertex_index = 0; vertex_index + 2 < vertices.size(); vertex_index += 3)
+    for (qsizetype index = 0; index + 2 < indices.size(); index += 3)
     {
-        const TileVertex &a = vertices.at(vertex_index);
-        const TileVertex &b = vertices.at(vertex_index + 1);
-        const TileVertex &c = vertices.at(vertex_index + 2);
+        const quint32 a_index = indices.at(index);
+        const quint32 b_index = indices.at(index + 1);
+        const quint32 c_index = indices.at(index + 2);
+        if (qsizetype(a_index) >= vertices.size()
+            || qsizetype(b_index) >= vertices.size()
+            || qsizetype(c_index) >= vertices.size())
+        {
+            continue;
+        }
+
+        const TileVertex &a = vertices.at(a_index);
+        const TileVertex &b = vertices.at(b_index);
+        const TileVertex &c = vertices.at(c_index);
         const WireframeVertex wa = {a.x, a.y, a.z};
         const WireframeVertex wb = {b.x, b.y, b.z};
         const WireframeVertex wc = {c.x, c.y, c.z};
@@ -1281,9 +1345,9 @@ void MapRhiGlobeRenderer::rebuildWireframeVertices()
 {
     this->wireframe_vertices.clear();
     this->wireframe_vertices.reserve(
-        (this->window_vertices.size() + this->cap_vertices.size()) * 2);
-    appendWireframeEdges(this->window_vertices);
-    appendWireframeEdges(this->cap_vertices);
+        (this->window_indices.size() + this->cap_indices.size()) * 2);
+    appendWireframeEdges(this->window_vertices, this->window_indices);
+    appendWireframeEdges(this->cap_vertices, this->cap_indices);
     this->wireframe_vertex_upload_pending = true;
 }
 
@@ -1330,13 +1394,263 @@ void MapRhiGlobeRenderer::pruneUnusedTileResources()
             keys_in_use.insert(tile.imagery_key);
     }
 
-    for (auto it = this->tile_resources.begin(); it != this->tile_resources.end();)
+    std::map<QString, std::unique_ptr<TileResource>>::iterator iterator =
+        this->tile_resources.begin();
+    while (iterator != this->tile_resources.end())
     {
-        if (keys_in_use.contains(it->first))
-            ++it;
+        if (keys_in_use.contains(iterator->first))
+        {
+            ++iterator;
+        }
         else
-            it = this->tile_resources.erase(it);
+        {
+            releaseTileArrayLayer(iterator->second.get());
+            iterator = this->tile_resources.erase(iterator);
+        }
     }
+}
+
+bool MapRhiGlobeRenderer::arrayBatchingActive() const
+{
+    // The first array shader intentionally handles imagery only. Until the
+    // dedicated batched heatmap pass lands, any active heatmap keeps using
+    // the exact existing two-texture per-tile path. The setting is shared
+    // with flat RHI batching and remains a pure performance switch.
+    return guiConfiguration().map_performance.array_batching_enabled
+        && this->heatmap_markers.isEmpty()
+        && this->window_tiles.size() <= GlobeTileArrayLayerCount - 1
+        && this->tile_array_texture
+        && this->array_bindings
+        && this->array_pipeline;
+}
+
+void MapRhiGlobeRenderer::releaseTileArrayLayer(TileResource *resource)
+{
+    if (resource == nullptr || resource->array_layer < 0)
+        return;
+
+    if (this->tile_array_texture
+        && !this->free_array_layers.contains(resource->array_layer))
+    {
+        this->free_array_layers.append(resource->array_layer);
+    }
+    resource->array_layer = -1;
+    resource->array_content_revision = 0;
+}
+
+void MapRhiGlobeRenderer::resetWindowArrayLayers()
+{
+    bool vertices_changed = false;
+    for (GlobeTile &tile : this->window_tiles)
+        tile.array_ready = false;
+    for (TileVertex &vertex : this->window_vertices)
+    {
+        if (vertex.layer == 0.0f)
+            continue;
+        vertex.layer = 0.0f;
+        vertices_changed = true;
+    }
+    if (vertices_changed)
+        this->window_vertex_upload_pending = true;
+}
+
+QImage MapRhiGlobeRenderer::currentTileArrayImage(
+    const GlobeTile &tile, const TileResource &resource) const
+{
+    if (this->tile_repository == nullptr || tile.imagery_key.isEmpty())
+        return QImage();
+
+    if (!resource.is_provisional)
+    {
+        const QPixmap *pixmap = this->tile_repository->tile(tile.imagery_key);
+        if (pixmap == nullptr || pixmap->isNull()
+            || pixmap->cacheKey() != resource.pixmap_cache_key)
+        {
+            return QImage();
+        }
+        return pixmap->toImage().convertToFormat(QImage::Format_RGBA8888);
+    }
+
+    const QString children_key = QStringLiteral("children:%1/%2/%3")
+        .arg(tile.zoom).arg(tile.tile_x).arg(tile.tile_y);
+    if (resource.provisional_source_key == children_key)
+    {
+        const int child_zoom = tile.zoom + 1;
+        const int child_x0 = tile.tile_x * 2;
+        const int child_y0 = tile.tile_y * 2;
+        QImage child_images[2][2];
+        int child_w = 0;
+        int child_h = 0;
+        for (int dx = 0; dx < 2; ++dx)
+        {
+            for (int dy = 0; dy < 2; ++dy)
+            {
+                const QString child_key = this->map_model->tileCacheKeyAtZoom(
+                    child_x0 + dx, child_y0 + dy, child_zoom);
+                const QPixmap *child_pixmap = this->tile_repository->tile(child_key);
+                if (child_pixmap == nullptr || child_pixmap->isNull())
+                    return QImage();
+
+                child_images[dx][dy] = child_pixmap->toImage().convertToFormat(
+                    QImage::Format_RGBA8888);
+                if (child_images[dx][dy].isNull())
+                    return QImage();
+                child_w = qMax(child_w, child_images[dx][dy].width());
+                child_h = qMax(child_h, child_images[dx][dy].height());
+            }
+        }
+
+        if (child_w <= 0 || child_h <= 0)
+            return QImage();
+
+        QImage composite(child_w * 2, child_h * 2, QImage::Format_RGBA8888);
+        QPainter painter(&composite);
+        for (int dx = 0; dx < 2; ++dx)
+        {
+            for (int dy = 0; dy < 2; ++dy)
+            {
+                painter.drawImage(
+                    QRect(dx * child_w, dy * child_h, child_w, child_h),
+                    child_images[dx][dy]);
+            }
+        }
+        painter.end();
+        return composite;
+    }
+
+    for (int levels_up = 1; tile.zoom - levels_up >= 0; ++levels_up)
+    {
+        const int ancestor_zoom = tile.zoom - levels_up;
+        const quint32 ancestor_x = quint32(tile.tile_x) >> levels_up;
+        const quint32 ancestor_y = quint32(tile.tile_y) >> levels_up;
+        const QString ancestor_key = this->map_model->tileCacheKeyAtZoom(
+            int(ancestor_x), int(ancestor_y), ancestor_zoom);
+        if (ancestor_key != resource.provisional_source_key)
+            continue;
+
+        const QPixmap *ancestor_pixmap = this->tile_repository->tile(ancestor_key);
+        if (ancestor_pixmap == nullptr || ancestor_pixmap->isNull())
+            return QImage();
+
+        const int span = 1 << levels_up;
+        const int local_x = tile.tile_x & (span - 1);
+        const int local_y = tile.tile_y & (span - 1);
+        const int source_w = ancestor_pixmap->width();
+        const int source_h = ancestor_pixmap->height();
+        const QRect crop_rect(
+            local_x * source_w / span, local_y * source_h / span,
+            qMax(1, source_w / span), qMax(1, source_h / span));
+        return ancestor_pixmap->copy(crop_rect)
+            .toImage().convertToFormat(QImage::Format_RGBA8888)
+            .scaled(source_w, source_h, Qt::IgnoreAspectRatio,
+                    Qt::SmoothTransformation);
+    }
+
+    return QImage();
+}
+
+bool MapRhiGlobeRenderer::stampTileArrayLayer(
+    GlobeTile &tile, const TileResource &resource,
+    QRhiResourceUpdateBatch *resource_updates)
+{
+    if (resource.array_layer < 0 || tile.first_vertex < 0
+        || tile.vertex_count <= 0
+        || qsizetype(tile.first_vertex) + tile.vertex_count
+            > this->window_vertices.size())
+    {
+        return false;
+    }
+
+    const float expected_layer = float(resource.array_layer);
+    if (this->window_vertices.at(tile.first_vertex).layer == expected_layer)
+        return true;
+
+    for (int index = 0; index < tile.vertex_count; ++index)
+        this->window_vertices[tile.first_vertex + index].layer = expected_layer;
+
+    // Geometry rebuilds are followed by a full upload later in prepare().
+    // Once a stable buffer exists, only patch this tile's contiguous range
+    // when its imagery first acquires an array layer.
+    if (resource_updates != nullptr && this->window_vertex_buffer
+        && !this->window_vertex_upload_pending)
+    {
+        const int byte_offset = int(
+            qsizetype(tile.first_vertex) * qsizetype(sizeof(TileVertex)));
+        const int byte_count = int(
+            qsizetype(tile.vertex_count) * qsizetype(sizeof(TileVertex)));
+        resource_updates->updateDynamicBuffer(
+            this->window_vertex_buffer.get(), byte_offset, byte_count,
+            this->window_vertices.constData() + tile.first_vertex);
+    }
+    return true;
+}
+
+bool MapRhiGlobeRenderer::ensureTileArrayLayer(
+    GlobeTile &tile, const QImage &updated_image,
+    QRhiResourceUpdateBatch *resource_updates)
+{
+    tile.array_ready = false;
+    if (!arrayBatchingActive() || tile.is_cap || tile.resource == nullptr
+        || !tile.resource->texture || resource_updates == nullptr)
+    {
+        return true;
+    }
+
+    TileResource *resource = tile.resource;
+    bool assigned_now = false;
+    if (resource->array_layer < 0)
+    {
+        if (this->free_array_layers.isEmpty())
+            return true;
+        resource->array_layer = this->free_array_layers.takeLast();
+        resource->array_content_revision = 0;
+        assigned_now = true;
+    }
+
+    if (resource->content_revision == 0)
+    {
+        if (assigned_now)
+            releaseTileArrayLayer(resource);
+        return true;
+    }
+
+    if (resource->array_content_revision != resource->content_revision)
+    {
+        QImage image = updated_image;
+        if (image.isNull())
+            image = currentTileArrayImage(tile, *resource);
+        if (image.isNull())
+        {
+            if (assigned_now)
+                releaseTileArrayLayer(resource);
+            return true;
+        }
+
+        const QSize layer_size(MapModel::TileSize, MapModel::TileSize);
+        if (image.size() != layer_size)
+        {
+            image = image.scaled(
+                layer_size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        }
+        if (image.isNull())
+        {
+            if (assigned_now)
+                releaseTileArrayLayer(resource);
+            return true;
+        }
+
+        const QRhiTextureSubresourceUploadDescription subresource(image);
+        const QRhiTextureUploadEntry entry(
+            resource->array_layer, 0, subresource);
+        resource_updates->uploadTexture(
+            this->tile_array_texture.get(), QRhiTextureUploadDescription(entry));
+        resource->array_content_revision = resource->content_revision;
+    }
+
+    if (!stampTileArrayLayer(tile, *resource, resource_updates))
+        return true;
+    tile.array_ready = true;
+    return true;
 }
 
 bool MapRhiGlobeRenderer::rebuildTileBindings(TileResource *resource)
@@ -1373,8 +1687,12 @@ bool MapRhiGlobeRenderer::rebuildTileBindings(TileResource *resource)
 }
 
 bool MapRhiGlobeRenderer::ensureTileResource(
-    GlobeTile &tile, QRhiResourceUpdateBatch *resource_updates)
+    GlobeTile &tile, QRhiResourceUpdateBatch *resource_updates,
+    QImage *updated_image)
 {
+    if (updated_image != nullptr)
+        *updated_image = QImage();
+
     if (tile.is_cap)
     {
         if (!this->cap_resource.texture)
@@ -1406,7 +1724,8 @@ bool MapRhiGlobeRenderer::ensureTileResource(
 
     if (pixmap == nullptr)
     {
-        if (!ensureProvisionalTileResource(tile, resource, resource_updates))
+        if (!ensureProvisionalTileResource(
+                tile, resource, resource_updates, updated_image))
             return false;
         // tile.resource is only actually set on some of
         // ensureProvisionalTileResource()'s success paths -- see its own
@@ -1437,6 +1756,11 @@ bool MapRhiGlobeRenderer::ensureTileResource(
         resource->pixmap_cache_key = cache_key;
         resource->is_provisional = false;
         resource->provisional_source_key.clear();
+        ++resource->content_revision;
+        if (resource->content_revision == 0)
+            resource->content_revision = 1;
+        if (updated_image != nullptr)
+            *updated_image = image;
     }
 
     if (!resource->bindings && !rebuildTileBindings(resource))
@@ -1453,9 +1777,9 @@ bool MapRhiGlobeRenderer::ensureTileResource(
 // while tile's own imagery is still in flight, instead of the flat
 // GlobeMissingTileColor fill -- the same "keep showing something real
 // instead of a blank/flat placeholder" goal the flat 2D/3D basemap
-// renderer's parent/child LOD handoff serves, adapted to how the globe
-// already addresses tiles (a texture per imagery_key, no
-// texture-array/stale-layer machinery to reuse directly).
+// renderer's parent/child LOD handoff serves. The resulting image is kept
+// in the ordinary per-tile texture and, when a layer is available, uploaded
+// into the shared Globe array as well.
 //
 // Tries two directions, in this order:
 //
@@ -1478,7 +1802,8 @@ bool MapRhiGlobeRenderer::ensureTileResource(
 // result is cached on the resource (via is_provisional/provisional_source_key)
 // so it isn't redone every frame while still waiting.
 bool MapRhiGlobeRenderer::ensureProvisionalTileResource(
-    GlobeTile &tile, TileResource *resource, QRhiResourceUpdateBatch *resource_updates)
+    GlobeTile &tile, TileResource *resource,
+    QRhiResourceUpdateBatch *resource_updates, QImage *updated_image)
 {
     const QString children_key = QStringLiteral("children:%1/%2/%3")
         .arg(tile.zoom).arg(tile.tile_x).arg(tile.tile_y);
@@ -1548,6 +1873,11 @@ bool MapRhiGlobeRenderer::ensureProvisionalTileResource(
         resource->pixmap_cache_key = -1;
         resource->is_provisional = true;
         resource->provisional_source_key = children_key;
+        ++resource->content_revision;
+        if (resource->content_revision == 0)
+            resource->content_revision = 1;
+        if (updated_image != nullptr)
+            *updated_image = composite;
 
         if (!resource->bindings && !rebuildTileBindings(resource))
             return false;
@@ -1598,6 +1928,11 @@ bool MapRhiGlobeRenderer::ensureProvisionalTileResource(
         resource->pixmap_cache_key = -1;
         resource->is_provisional = true;
         resource->provisional_source_key = ancestor_key;
+        ++resource->content_revision;
+        if (resource->content_revision == 0)
+            resource->content_revision = 1;
+        if (updated_image != nullptr)
+            *updated_image = fallback_image;
 
         if (!resource->bindings && !rebuildTileBindings(resource))
             return false;
@@ -1767,7 +2102,7 @@ bool MapRhiGlobeRenderer::ensureHeatmapTexture(
     return true;
 }
 
-void MapRhiGlobeRenderer::requestMissingTiles(QRhiResourceUpdateBatch *resource_updates)
+bool MapRhiGlobeRenderer::requestMissingTiles(QRhiResourceUpdateBatch *resource_updates)
 {
     if (this->dummy_texture_upload_pending && this->dummy_texture)
     {
@@ -1797,9 +2132,19 @@ void MapRhiGlobeRenderer::requestMissingTiles(QRhiResourceUpdateBatch *resource_
     }
 
     for (GlobeTile &tile : this->window_tiles)
-        ensureTileResource(tile, resource_updates);
+    {
+        QImage updated_image;
+        if (!ensureTileResource(tile, resource_updates, &updated_image))
+            return false;
+        if (!ensureTileArrayLayer(tile, updated_image, resource_updates))
+            return false;
+    }
     for (GlobeTile &tile : this->cap_tiles)
-        ensureTileResource(tile, resource_updates);
+    {
+        if (!ensureTileResource(tile, resource_updates))
+            return false;
+    }
+    return true;
 }
 
 
@@ -2010,8 +2355,12 @@ bool MapRhiGlobeRenderer::applyReadyTerrainMeshes(
             for (qsizetype index = 0; index < result.vertices.size(); ++index)
             {
                 const MapRhiTerrainMeshVertex &vertex = result.vertices.at(index);
-                this->window_vertices[first_vertex + index] =
-                    TileVertex{vertex.x, vertex.y, vertex.z, vertex.u, vertex.v};
+                TileVertex &target = this->window_vertices[first_vertex + index];
+                target.x = vertex.x;
+                target.y = vertex.y;
+                target.z = vertex.z;
+                target.u = vertex.u;
+                target.v = vertex.v;
             }
 
             tile.terrain_mesh_applied = true;
@@ -2038,6 +2387,112 @@ bool MapRhiGlobeRenderer::applyReadyTerrainMeshes(
 
     if (wireframe_changed && this->wireframe_visible)
         rebuildWireframeVertices();
+    return true;
+}
+
+bool MapRhiGlobeRenderer::createTileArrayResources()
+{
+    // MapRhiWidget owns both planar and Globe renderers at once and calls
+    // initialize() on both. Avoid reserving this 64 MiB page until Globe is
+    // actually selected, and honor the shared batching switch before any
+    // optional resource allocation occurs.
+    if (this->map_model == nullptr
+        || this->map_model->viewMode() != MapViewMode::Globe
+        || !guiConfiguration().map_performance.array_batching_enabled)
+    {
+        return false;
+    }
+    if (this->rhi == nullptr || this->render_pass_descriptor == nullptr
+        || !this->camera_uniform_buffer || !this->sampler)
+    {
+        return false;
+    }
+
+    if (!this->tile_array_texture)
+    {
+        if (!this->rhi->isFeatureSupported(QRhi::TextureArrays))
+            return false;
+
+        this->tile_array_texture.reset(this->rhi->newTextureArray(
+            QRhiTexture::RGBA8, GlobeTileArrayLayerCount,
+            QSize(MapModel::TileSize, MapModel::TileSize)));
+        if (!this->tile_array_texture || !this->tile_array_texture->create())
+        {
+            this->tile_array_texture.reset();
+            return false;
+        }
+
+        this->free_array_layers.clear();
+        this->free_array_layers.reserve(GlobeTileArrayLayerCount - 1);
+        for (int layer = GlobeTileArrayLayerCount - 1; layer >= 1; --layer)
+            this->free_array_layers.append(layer);
+    }
+
+    if (!this->array_bindings)
+    {
+        this->array_bindings.reset(this->rhi->newShaderResourceBindings());
+        if (!this->array_bindings)
+            return false;
+        this->array_bindings->setBindings({
+            QRhiShaderResourceBinding::uniformBuffer(
+                0, QRhiShaderResourceBinding::VertexStage
+                    | QRhiShaderResourceBinding::FragmentStage,
+                this->camera_uniform_buffer.get()),
+            QRhiShaderResourceBinding::sampledTexture(
+                1, QRhiShaderResourceBinding::FragmentStage,
+                this->tile_array_texture.get(), this->sampler.get())
+        });
+        if (!this->array_bindings->create())
+        {
+            this->array_bindings.reset();
+            return false;
+        }
+    }
+
+    if (!this->array_pipeline)
+    {
+        const QShader vertex_shader = loadGlobeShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_globe_array.vert.qsb"));
+        const QShader fragment_shader = loadGlobeShader(
+            QStringLiteral(":/aowis/map/rhi/map_rhi_globe_array.frag.qsb"));
+        if (!vertex_shader.isValid() || !fragment_shader.isValid())
+            return false;
+
+        QRhiVertexInputLayout input_layout;
+        input_layout.setBindings({
+            {quint32(sizeof(TileVertex))}
+        });
+        input_layout.setAttributes({
+            {0, 0, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(TileVertex, x))},
+            {0, 1, QRhiVertexInputAttribute::Float2,
+             quint32(offsetof(TileVertex, u))},
+            {0, 2, QRhiVertexInputAttribute::Float,
+             quint32(offsetof(TileVertex, layer))}
+        });
+
+        this->array_pipeline.reset(this->rhi->newGraphicsPipeline());
+        if (!this->array_pipeline)
+            return false;
+        this->array_pipeline->setShaderStages({
+            {QRhiShaderStage::Vertex, vertex_shader},
+            {QRhiShaderStage::Fragment, fragment_shader}
+        });
+        this->array_pipeline->setVertexInputLayout(input_layout);
+        this->array_pipeline->setShaderResourceBindings(this->array_bindings.get());
+        this->array_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
+        this->array_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+        this->array_pipeline->setSampleCount(this->sample_count);
+        this->array_pipeline->setDepthTest(true);
+        this->array_pipeline->setDepthWrite(true);
+        this->array_pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
+        if (!this->array_pipeline->create())
+        {
+            this->array_pipeline.reset();
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -2193,6 +2648,10 @@ bool MapRhiGlobeRenderer::ensureSharedResources()
             return false;
     }
 
+    // Texture arrays are optional. Unsupported backends and allocation or
+    // shader failures retain the already-created per-tile pipeline above.
+    createTileArrayResources();
+
     return true;
 }
 
@@ -2289,6 +2748,12 @@ bool MapRhiGlobeRenderer::prepare(
     requestMissingTerrainTiles();
     scheduleReadyTerrainMeshes();
 
+    // Resolve imagery and stamp array layers before a pending full geometry
+    // upload. A rebuilt window then carries every already-ready layer in its
+    // single upload instead of issuing one follow-up buffer patch per tile.
+    if (this->map_visible && !requestMissingTiles(resource_updates))
+        return false;
+
     if (this->window_vertex_upload_pending && !this->window_vertices.isEmpty())
     {
         const int required_bytes =
@@ -2307,6 +2772,24 @@ bool MapRhiGlobeRenderer::prepare(
         this->window_vertex_upload_pending = false;
     }
 
+    if (this->window_index_upload_pending && !this->window_indices.isEmpty())
+    {
+        const int required_bytes =
+            int(this->window_indices.size() * qsizetype(sizeof(quint32)));
+        if (!this->window_index_buffer || this->window_index_buffer_size != required_bytes)
+        {
+            this->window_index_buffer.reset(this->rhi->newBuffer(
+                QRhiBuffer::Dynamic, QRhiBuffer::IndexBuffer, required_bytes));
+            if (!this->window_index_buffer || !this->window_index_buffer->create())
+                return false;
+            this->window_index_buffer_size = required_bytes;
+        }
+        resource_updates->updateDynamicBuffer(
+            this->window_index_buffer.get(), 0, required_bytes,
+            this->window_indices.constData());
+        this->window_index_upload_pending = false;
+    }
+
     if (this->cap_vertex_upload_pending && !this->cap_vertices.isEmpty())
     {
         const int required_bytes =
@@ -2323,6 +2806,23 @@ bool MapRhiGlobeRenderer::prepare(
         this->cap_vertex_upload_pending = false;
     }
 
+    if (this->cap_index_upload_pending && !this->cap_indices.isEmpty())
+    {
+        const int required_bytes =
+            int(this->cap_indices.size() * qsizetype(sizeof(quint32)));
+        if (!this->cap_index_buffer)
+        {
+            this->cap_index_buffer.reset(this->rhi->newBuffer(
+                QRhiBuffer::Dynamic, QRhiBuffer::IndexBuffer, required_bytes));
+            if (!this->cap_index_buffer || !this->cap_index_buffer->create())
+                return false;
+        }
+        resource_updates->updateDynamicBuffer(
+            this->cap_index_buffer.get(), 0, required_bytes,
+            this->cap_indices.constData());
+        this->cap_index_upload_pending = false;
+    }
+
     if (!uploadWireframeVertices(resource_updates))
         return false;
 
@@ -2333,9 +2833,6 @@ bool MapRhiGlobeRenderer::prepare(
         resource_updates->uploadTexture(this->heatmap_dummy_texture.get(), image);
         this->heatmap_dummy_texture_upload_pending = false;
     }
-
-    if (this->map_visible)
-        requestMissingTiles(resource_updates);
 
     // 24 floats: the 16-float view_projection matrix, heatmap_settings, and
     // basemap_settings. basemap_settings mirrors the flat RHI renderer: rgb
@@ -2363,13 +2860,43 @@ void MapRhiGlobeRenderer::draw(QRhiCommandBuffer *command_buffer)
 
     if (this->map_visible && this->pipeline)
     {
-        command_buffer->setGraphicsPipeline(this->pipeline.get());
-
-        if (this->window_vertex_buffer)
+        if (this->window_vertex_buffer && this->window_index_buffer)
         {
+            bool use_array = arrayBatchingActive();
+            if (use_array)
+            {
+                use_array = !this->window_tiles.isEmpty();
+                for (const GlobeTile &tile : this->window_tiles)
+                {
+                    if (tile.vertex_count > 0 && !tile.array_ready)
+                    {
+                        use_array = false;
+                        break;
+                    }
+                }
+            }
+            if (use_array)
+            {
+                // Every drawable leaf now has current imagery in this first
+                // page. Submit the whole Globe window once; until that is
+                // true, use_array stays false and the unchanged per-tile path
+                // renders the complete window without duplicate vertex work.
+                command_buffer->setGraphicsPipeline(this->array_pipeline.get());
+                command_buffer->setShaderResources(this->array_bindings.get());
+                const QRhiCommandBuffer::VertexInput array_binding(
+                    this->window_vertex_buffer.get(), 0);
+                command_buffer->setVertexInput(
+                    0, 1, &array_binding, this->window_index_buffer.get(), 0,
+                    QRhiCommandBuffer::IndexUInt32);
+                command_buffer->drawIndexed(quint32(this->window_indices.size()));
+            }
+
+            command_buffer->setGraphicsPipeline(this->pipeline.get());
             for (const GlobeTile &tile : this->window_tiles)
             {
-                if (tile.vertex_count <= 0)
+                if (tile.vertex_count <= 0 || tile.index_count <= 0)
+                    continue;
+                if (use_array && tile.array_ready)
                     continue;
 
                 QRhiShaderResourceBindings *bindings = this->template_bindings.get();
@@ -2379,32 +2906,37 @@ void MapRhiGlobeRenderer::draw(QRhiCommandBuffer *command_buffer)
                     continue;
 
                 command_buffer->setShaderResources(bindings);
-                const quint32 byte_offset = quint32(
-                    tile.first_vertex * int(sizeof(TileVertex)));
                 const QRhiCommandBuffer::VertexInput binding(
-                    this->window_vertex_buffer.get(), byte_offset);
-                command_buffer->setVertexInput(0, 1, &binding);
-                command_buffer->draw(quint32(tile.vertex_count));
+                    this->window_vertex_buffer.get(), 0);
+                const quint32 index_byte_offset = quint32(
+                    tile.first_index * int(sizeof(quint32)));
+                command_buffer->setVertexInput(
+                    0, 1, &binding, this->window_index_buffer.get(),
+                    index_byte_offset, QRhiCommandBuffer::IndexUInt32);
+                command_buffer->drawIndexed(quint32(tile.index_count));
             }
         }
 
-        if (this->cap_vertex_buffer)
+        if (this->cap_vertex_buffer && this->cap_index_buffer)
         {
+            command_buffer->setGraphicsPipeline(this->pipeline.get());
             for (const GlobeTile &tile : this->cap_tiles)
             {
                 if (tile.resource == nullptr || !tile.resource->bindings
-                    || tile.vertex_count <= 0)
+                    || tile.vertex_count <= 0 || tile.index_count <= 0)
                 {
                     continue;
                 }
 
                 command_buffer->setShaderResources(tile.resource->bindings.get());
-                const quint32 byte_offset = quint32(
-                    tile.first_vertex * int(sizeof(TileVertex)));
                 const QRhiCommandBuffer::VertexInput binding(
-                    this->cap_vertex_buffer.get(), byte_offset);
-                command_buffer->setVertexInput(0, 1, &binding);
-                command_buffer->draw(quint32(tile.vertex_count));
+                    this->cap_vertex_buffer.get(), 0);
+                const quint32 index_byte_offset = quint32(
+                    tile.first_index * int(sizeof(quint32)));
+                command_buffer->setVertexInput(
+                    0, 1, &binding, this->cap_index_buffer.get(),
+                    index_byte_offset, QRhiCommandBuffer::IndexUInt32);
+                command_buffer->drawIndexed(quint32(tile.index_count));
             }
         }
     }
@@ -2424,8 +2956,16 @@ void MapRhiGlobeRenderer::draw(QRhiCommandBuffer *command_buffer)
 
 void MapRhiGlobeRenderer::invalidateImagery()
 {
+    resetWindowArrayLayers();
     this->tile_resources.clear();
     this->cap_resource = TileResource();
+    this->free_array_layers.clear();
+    if (this->tile_array_texture)
+    {
+        this->free_array_layers.reserve(GlobeTileArrayLayerCount - 1);
+        for (int layer = GlobeTileArrayLayerCount - 1; layer >= 1; --layer)
+            this->free_array_layers.append(layer);
+    }
     for (GlobeTile &tile : this->window_tiles)
         tile.resource = nullptr;
     for (GlobeTile &tile : this->cap_tiles)
@@ -2435,6 +2975,10 @@ void MapRhiGlobeRenderer::invalidateImagery()
 
 void MapRhiGlobeRenderer::releaseResources()
 {
+    this->array_pipeline.reset();
+    this->array_bindings.reset();
+    this->tile_array_texture.reset();
+    this->free_array_layers.clear();
     this->pipeline.reset();
     this->wireframe_pipeline.reset();
     this->template_bindings.reset();
@@ -2446,8 +2990,11 @@ void MapRhiGlobeRenderer::releaseResources()
     this->sampler.reset();
     this->camera_uniform_buffer.reset();
     this->window_vertex_buffer.reset();
+    this->window_index_buffer.reset();
     this->window_vertex_buffer_size = 0;
+    this->window_index_buffer_size = 0;
     this->window_vertex_upload_pending = true;
+    this->window_index_upload_pending = true;
     this->wireframe_vertex_buffer.reset();
     this->wireframe_vertex_buffer_size = 0;
     this->wireframe_vertex_upload_pending = true;
@@ -2456,6 +3003,8 @@ void MapRhiGlobeRenderer::releaseResources()
     this->terrain_lod_rebuild_clock.invalidate();
     this->previously_subdivided_quadtree_nodes.clear();
     this->cap_vertex_buffer.reset();
+    this->cap_index_buffer.reset();
     this->cap_vertex_upload_pending = true;
+    this->cap_index_upload_pending = true;
     invalidateImagery();
 }

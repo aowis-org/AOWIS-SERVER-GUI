@@ -168,6 +168,11 @@ private:
         float z = 0.0f;
         float u = 0.0f;
         float v = 0.0f;
+        // Shared imagery-array layer for the batched Globe pass. Layer 0
+        // is reserved as the "not array-ready" sentinel and is discarded
+        // by the array fragment shader. The ordinary per-tile pipeline
+        // ignores this attribute.
+        float layer = 0.0f;
     };
 
     struct WireframeVertex
@@ -183,6 +188,12 @@ private:
         std::unique_ptr<QRhiTexture> heatmap_texture;
         std::unique_ptr<QRhiShaderResourceBindings> bindings;
         qint64 pixmap_cache_key = -1;
+        // Monotonic identity of the pixels currently held by texture.
+        // array_content_revision only catches up after those exact pixels
+        // have also been uploaded into array_layer.
+        quint64 content_revision = 0;
+        quint64 array_content_revision = 0;
+        int array_layer = -1;
         // Compared against the renderer's own heatmap_revision (bumped by
         // setHeatmapOverlay() whenever markers/radius/solid-fraction
         // actually change) to decide whether this tile's heatmap_texture
@@ -212,6 +223,8 @@ private:
         bool is_cap = false;
         int first_vertex = 0;
         int vertex_count = 0;
+        int first_index = 0;
+        int index_count = 0;
         QString imagery_key;
         int terrain_zoom = -1;
         QString terrain_key;
@@ -225,6 +238,10 @@ private:
         // Non-owning; points into tile_resources (or at cap_resource for
         // polar caps) and is only valid for the frame it was resolved in.
         TileResource *resource = nullptr;
+        // Transient per-frame state: true only when this tile's current
+        // pixels occupy its assigned texture-array layer. Once every leaf
+        // is ready, draw() can skip the ordinary per-tile window entirely.
+        bool array_ready = false;
     };
 
     void buildCaps();
@@ -237,17 +254,34 @@ private:
     bool currentTerrainLodMatches(const QSize &viewport_size) const;
     void pruneUnusedTileResources();
     void rebuildWireframeVertices();
-    void appendWireframeEdges(const QVector<TileVertex> &vertices);
+    void appendWireframeEdges(
+        const QVector<TileVertex> &vertices,
+        const QVector<quint32> &indices);
     bool uploadWireframeVertices(QRhiResourceUpdateBatch *resource_updates);
     TileVertex makeTileVertex(double lon_deg, double lat_deg, float u, float v) const;
     bool ensureSharedResources();
+    bool createTileArrayResources();
+    bool arrayBatchingActive() const;
     bool rebuildTileBindings(TileResource *resource);
-    bool ensureTileResource(GlobeTile &tile, QRhiResourceUpdateBatch *resource_updates);
+    bool ensureTileResource(
+        GlobeTile &tile, QRhiResourceUpdateBatch *resource_updates,
+        QImage *updated_image = nullptr);
+    bool ensureTileArrayLayer(
+        GlobeTile &tile, const QImage &updated_image,
+        QRhiResourceUpdateBatch *resource_updates);
+    QImage currentTileArrayImage(
+        const GlobeTile &tile, const TileResource &resource) const;
+    bool stampTileArrayLayer(
+        GlobeTile &tile, const TileResource &resource,
+        QRhiResourceUpdateBatch *resource_updates);
+    void releaseTileArrayLayer(TileResource *resource);
+    void resetWindowArrayLayers();
     // See the definition's own comment: derives a cropped/upscaled
     // placeholder from the nearest already-loaded ancestor tile when
     // tile's own imagery isn't cached yet.
     bool ensureProvisionalTileResource(
-        GlobeTile &tile, TileResource *resource, QRhiResourceUpdateBatch *resource_updates);
+        GlobeTile &tile, TileResource *resource,
+        QRhiResourceUpdateBatch *resource_updates, QImage *updated_image);
     // Mirrors MapRhiBasemapRenderer::ensureHeatmapTexture()/renderHeatmapTile()
     // exactly, adapted to tile identity being (zoom, virtual_x, tile_y)
     // geodetic bounds instead of a flat world-pixel rectangle -- see
@@ -260,7 +294,7 @@ private:
     bool ensureHeatmapTexture(
         const GlobeTile &tile, TileResource *resource, QRhiResourceUpdateBatch *resource_updates);
     QImage renderHeatmapTile(const GlobeTile &tile) const;
-    void requestMissingTiles(QRhiResourceUpdateBatch *resource_updates);
+    bool requestMissingTiles(QRhiResourceUpdateBatch *resource_updates);
     void requestMissingTerrainTiles();
     void scheduleReadyTerrainMeshes();
     bool applyReadyTerrainMeshes(QRhiResourceUpdateBatch *resource_updates);
@@ -275,6 +309,7 @@ private:
 
     // Dynamic imagery window (see class comment above).
     QVector<TileVertex> window_vertices;
+    QVector<quint32> window_indices;
     QVector<GlobeTile> window_tiles;
     bool window_dirty = true;
     // Which (zoom, tile_x, tile_y) nodes were subdivided into children on
@@ -286,8 +321,11 @@ private:
     QSet<quint64> previously_subdivided_quadtree_nodes;
     bool window_tiles_requested = false;
     bool window_vertex_upload_pending = false;
+    bool window_index_upload_pending = false;
     std::unique_ptr<QRhiBuffer> window_vertex_buffer;
+    std::unique_ptr<QRhiBuffer> window_index_buffer;
     int window_vertex_buffer_size = 0;
+    int window_index_buffer_size = 0;
 
     QVector<WireframeVertex> wireframe_vertices;
     bool wireframe_vertex_upload_pending = true;
@@ -298,10 +336,13 @@ private:
 
     // Static polar caps (see class comment above).
     QVector<TileVertex> cap_vertices;
+    QVector<quint32> cap_indices;
     QVector<GlobeTile> cap_tiles;
     bool caps_built = false;
     bool cap_vertex_upload_pending = true;
+    bool cap_index_upload_pending = true;
     std::unique_ptr<QRhiBuffer> cap_vertex_buffer;
+    std::unique_ptr<QRhiBuffer> cap_index_buffer;
 
     std::unique_ptr<QRhiBuffer> camera_uniform_buffer;
     std::unique_ptr<QRhiSampler> sampler;
@@ -317,6 +358,13 @@ private:
     std::unique_ptr<QRhiShaderResourceBindings> wireframe_bindings;
     std::unique_ptr<QRhiGraphicsPipeline> pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> wireframe_pipeline;
+    // Patch 1 of the Globe batching roadmap intentionally contains one
+    // fixed-size page. Windows beyond its 255 usable layers continue wholly
+    // through the per-tile fallback; lazy multi-page allocation is later.
+    std::unique_ptr<QRhiTexture> tile_array_texture;
+    std::unique_ptr<QRhiShaderResourceBindings> array_bindings;
+    std::unique_ptr<QRhiGraphicsPipeline> array_pipeline;
+    QVector<int> free_array_layers;
     std::map<QString, std::unique_ptr<TileResource>> tile_resources;
     TileResource cap_resource;
     // Mirrors MapRhiBasemapRenderer's identically-named members exactly --

@@ -152,10 +152,10 @@ private:
 #ifndef Q_OS_WASM
     QPoint view_3d_orbit_last_global_position;
     QPoint view_3d_orbit_restore_global;
-    QPoint view_3d_orbit_warp_source_global;
-    QPoint view_3d_orbit_warp_target_global;
-    bool view_3d_orbit_warp_pending = false;
+    QPoint view_3d_orbit_anchor_global;
+    bool view_3d_orbit_pointer_warp_enabled = false;
     bool view_3d_orbit_mouse_grabbed = false;
+    bool view_3d_orbit_cursor_hidden = false;
 #endif
     QPointF mouse_pan_velocity;
     QElapsedTimer mouse_pan_move_elapsed_timer;

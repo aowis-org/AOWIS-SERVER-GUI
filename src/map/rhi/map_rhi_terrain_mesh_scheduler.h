@@ -15,7 +15,11 @@
 // MapRhiBasemapRenderer::TileVertex. Kept as an independent type so this
 // header has no dependency on map_rhi_basemap_renderer.h (and vice versa,
 // avoiding a circular include); the renderer converts these to its own
-// TileVertex when a result is applied.
+// TileVertex when a result is applied. FlatWorld results retain the flat
+// renderer's expanded triangle-list layout. GlobeEcef results contain one
+// row-major (cell_count + 1)^2 vertex grid; the Globe renderer owns the
+// shared deterministic index topology, so terrain updates only have to
+// transfer the positions/UVs that can actually change.
 enum class MapRhiTerrainMeshGeometry
 {
     FlatWorld,

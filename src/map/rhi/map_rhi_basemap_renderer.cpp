@@ -3333,20 +3333,18 @@ MapRhiTerrainMeshResult buildTerrainMeshResult(const MapRhiTerrainMeshRequest &r
         request.stitch_bottom_cell_count, cell_count);
     result.stitch_left_cell_count = normalizedTerrainStitchCellCount(
         request.stitch_left_cell_count, cell_count);
-    result.vertices.reserve(qsizetype(cell_count) * qsizetype(cell_count) * 6);
 
     if (request.geometry == MapRhiTerrainMeshGeometry::GlobeEcef)
     {
-        for (int row = 0; row < cell_count; ++row)
+        const qsizetype grid_width = qsizetype(cell_count) + 1;
+        result.vertices.reserve(grid_width * grid_width);
+        for (int row = 0; row <= cell_count; ++row)
         {
-            for (int column = 0; column < cell_count; ++column)
+            const double v = double(row) / double(cell_count);
+            for (int column = 0; column <= cell_count; ++column)
             {
-                const double u0 = double(column) / double(cell_count);
-                const double u1 = double(column + 1) / double(cell_count);
-                const double v0 = double(row) / double(cell_count);
-                const double v1 = double(row + 1) / double(cell_count);
-
-                const QVector3D p00 = globeTerrainMeshVertexPosition(
+                const double u = double(column) / double(cell_count);
+                const QVector3D position = globeTerrainMeshVertexPosition(
                     request, column, row, cell_count,
                     result.stitch_top_cell_count,
                     result.stitch_right_cell_count,
@@ -3354,47 +3352,16 @@ MapRhiTerrainMeshResult buildTerrainMeshResult(const MapRhiTerrainMeshRequest &r
                     result.stitch_left_cell_count,
                     terrain_u_min, terrain_v_min,
                     terrain_u_span, terrain_v_span);
-                const QVector3D p10 = globeTerrainMeshVertexPosition(
-                    request, column + 1, row, cell_count,
-                    result.stitch_top_cell_count,
-                    result.stitch_right_cell_count,
-                    result.stitch_bottom_cell_count,
-                    result.stitch_left_cell_count,
-                    terrain_u_min, terrain_v_min,
-                    terrain_u_span, terrain_v_span);
-                const QVector3D p01 = globeTerrainMeshVertexPosition(
-                    request, column, row + 1, cell_count,
-                    result.stitch_top_cell_count,
-                    result.stitch_right_cell_count,
-                    result.stitch_bottom_cell_count,
-                    result.stitch_left_cell_count,
-                    terrain_u_min, terrain_v_min,
-                    terrain_u_span, terrain_v_span);
-                const QVector3D p11 = globeTerrainMeshVertexPosition(
-                    request, column + 1, row + 1, cell_count,
-                    result.stitch_top_cell_count,
-                    result.stitch_right_cell_count,
-                    result.stitch_bottom_cell_count,
-                    result.stitch_left_cell_count,
-                    terrain_u_min, terrain_v_min,
-                    terrain_u_span, terrain_v_span);
-
-                const MapRhiTerrainMeshVertex cell_vertices[6] = {
-                    {p00.x(), p00.y(), p00.z(), float(u0), float(v0)},
-                    {p01.x(), p01.y(), p01.z(), float(u0), float(v1)},
-                    {p10.x(), p10.y(), p10.z(), float(u1), float(v0)},
-                    {p10.x(), p10.y(), p10.z(), float(u1), float(v0)},
-                    {p01.x(), p01.y(), p01.z(), float(u0), float(v1)},
-                    {p11.x(), p11.y(), p11.z(), float(u1), float(v1)}
-                };
-                for (const MapRhiTerrainMeshVertex &vertex : cell_vertices)
-                    result.vertices.append(vertex);
+                result.vertices.append(MapRhiTerrainMeshVertex{
+                    position.x(), position.y(), position.z(),
+                    float(u), float(v)});
             }
         }
 
         return result;
     }
 
+    result.vertices.reserve(qsizetype(cell_count) * qsizetype(cell_count) * 6);
     for (int row = 0; row < cell_count; ++row)
     {
         for (int column = 0; column < cell_count; ++column)
