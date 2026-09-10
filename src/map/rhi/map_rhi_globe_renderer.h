@@ -6,6 +6,7 @@
 #include <QColor>
 #include <QElapsedTimer>
 #include <QHash>
+#include <QImage>
 #include <QMatrix4x4>
 #include <QSet>
 #include <QSize>
@@ -29,7 +30,7 @@ class QRhiResourceUpdateBatch;
 class QRhiSampler;
 class QRhiShaderResourceBindings;
 class QRhiTexture;
-class QImage;
+class QRhiTextureRenderTarget;
 
 // Zoom/tile-index identity of one leaf produced by the visible-region
 // quadtree walk (selectVisibleGlobeQuadtreeLeaves() in the .cpp). Plain POD
@@ -150,6 +151,17 @@ public:
                 const QMatrix4x4 &view_projection, const QSize &viewport_size,
                 float heatmap_opacity, const QColor &background_color,
                 float background_opacity);
+    // Records all visible heatmap bakes queued by prepare(), copying each
+    // atlas slot either into an ordinary fallback texture or directly into
+    // a texture-array layer. Returns false only when the GPU path failed and
+    // was disabled; the next frame regenerates through the retained CPU path.
+    bool runPendingHeatmapGpuBakes(QRhiCommandBuffer *command_buffer);
+    // Records one opt-in, diagnostic render-to-texture bake per heatmap
+    // revision. A fixed asymmetric stamp pattern makes the check independent
+    // of camera position and visible content. The generated texture is not
+    // displayed: an asynchronous readback compares it against the established
+    // CPU raster for orientation and premultiplied source-over compatibility.
+    void runDiagnosticHeatmapGpuBake(QRhiCommandBuffer *command_buffer);
     void draw(QRhiCommandBuffer *command_buffer);
 
     // Drops all cached tile textures/bindings and forces the window to be
@@ -185,6 +197,18 @@ private:
         float z = 0.0f;
     };
 
+    // Tile-local description of one radial heatmap stamp. marker_index is
+    // retained so the expensive geographic projection/layout can survive
+    // simulation frames that change only marker colors.
+    struct HeatmapStamp
+    {
+        double center_x_pixels = 0.0;
+        double center_y_pixels = 0.0;
+        double radius_pixels = 0.0;
+        int marker_index = -1;
+        QColor color;
+    };
+
     struct TileResource
     {
         std::unique_ptr<QRhiTexture> texture;
@@ -216,6 +240,14 @@ private:
         int heatmap_array_page = -1;
         int heatmap_array_layer = -1;
         bool heatmap_has_content = false;
+        // Marker positions and radius determine this layout; marker colors
+        // do not. Dynamic simulation updates therefore recolor these cached
+        // entries instead of repeating every marker/tile projection test.
+        QVector<HeatmapStamp> heatmap_stamp_layout;
+        quint64 heatmap_stamp_layout_revision = 0;
+        int heatmap_stamp_layout_zoom = -1;
+        int heatmap_stamp_layout_virtual_x = 0;
+        int heatmap_stamp_layout_tile_y = 0;
         // True while this resource holds a cropped-and-upscaled placeholder
         // derived from an already-loaded ancestor tile rather than the
         // tile's own imagery -- see ensureTileResource(). Cleared the
@@ -285,22 +317,52 @@ private:
         int draw_index_count = 0;
     };
 
-    // Tile-local description of one radial heatmap stamp. Projection and
-    // visibility filtering produce these independently from the rasterizer,
-    // allowing the current QPainter path and the upcoming GPU baker to
-    // consume exactly the same ordered input.
-    struct HeatmapStamp
+    struct HeatmapBakeVertex
     {
-        double center_x_pixels = 0.0;
-        double center_y_pixels = 0.0;
-        double radius_pixels = 0.0;
-        QColor color;
+        float corner_x = 0.0f;
+        float corner_y = 0.0f;
+    };
+
+    struct HeatmapBakeInstance
+    {
+        float center_x_pixels = 0.0f;
+        float center_y_pixels = 0.0f;
+        float radius_pixels = 0.0f;
+        float solid_fraction = 0.0f;
+        float red = 0.0f;
+        float green = 0.0f;
+        float blue = 0.0f;
+        // Maps this tile-local 0..256 X coordinate into one slot of the
+        // horizontal visible-bake atlas. Diagnostic bakes retain 1/0 and
+        // therefore continue targeting their standalone 256x256 texture.
+        float target_scale_x = 1.0f;
+        float target_offset_x = 0.0f;
+    };
+
+    struct HeatmapGpuBakeJob
+    {
+        TileResource *resource = nullptr;
+        QRhiTexture *destination_texture = nullptr;
+        // Zero targets an ordinary 2D fallback texture. Positive values
+        // target the corresponding layer of a heatmap texture array.
+        int destination_layer = 0;
+        quint64 revision = 0;
+        QVector<HeatmapBakeInstance> instances;
+    };
+
+    struct HeatmapGpuBakeAtlas
+    {
+        int slot_count = 0;
+        std::unique_ptr<QRhiTexture> texture;
+        std::unique_ptr<QRhiRenderPassDescriptor> render_pass_descriptor;
+        std::unique_ptr<QRhiTextureRenderTarget> target;
     };
 
     struct HeatmapRasterStats
     {
         int candidate_markers = 0;
         int marker_tile_pairs = 0;
+        bool stamp_layout_cache_hit = false;
     };
 
     // Per-request counters for the opt-in Globe heatmap performance log.
@@ -315,10 +377,20 @@ private:
         int raster_tiles_with_content = 0;
         int candidate_markers = 0;
         int marker_tile_pairs = 0;
+        int stamp_layout_cache_hits = 0;
+        int stamp_layout_cache_misses = 0;
         int fallback_uploads = 0;
         int array_uploads = 0;
+        int gpu_visible_bake_passes = 0;
+        int gpu_visible_bake_stamps = 0;
+        int gpu_visible_copies = 0;
+        int gpu_visible_copy_batches = 0;
+        int gpu_visible_array_copies = 0;
         int gpu_bake_passes = 0;
+        int gpu_bake_stamps = 0;
+        int gpu_validation_readbacks = 0;
         quint64 upload_bytes = 0;
+        qint64 stamp_ns = 0;
         qint64 raster_ns = 0;
         qint64 cpu_ns = 0;
     };
@@ -360,7 +432,8 @@ private:
     bool ensureTileResource(
         GlobeTile &tile, QRhiResourceUpdateBatch *resource_updates,
         QImage *updated_image = nullptr,
-        QImage *updated_heatmap_image = nullptr);
+        QImage *updated_heatmap_image = nullptr,
+        QVector<HeatmapStamp> *updated_heatmap_stamps = nullptr);
     bool ensureTileArrayLayer(
         GlobeTile &tile, const QImage &updated_image,
         QRhiResourceUpdateBatch *resource_updates);
@@ -372,6 +445,7 @@ private:
     void releaseTileArrayLayer(TileResource *resource);
     bool ensureTileHeatmapArray(
         GlobeTile &tile, const QImage &updated_image,
+        const QVector<HeatmapStamp> &updated_stamps,
         QRhiResourceUpdateBatch *resource_updates);
     bool stampTileHeatmapArrayLayer(
         GlobeTile &tile, int layer,
@@ -388,25 +462,50 @@ private:
     // exactly, adapted to tile identity being (zoom, virtual_x, tile_y)
     // geodetic bounds instead of a flat world-pixel rectangle -- see
     // renderHeatmapTile()'s own comment for the coordinate conversion.
-    // Regenerates the CPU heatmap raster only when heatmap_revision is
-    // stale. The normal fused path uploads that raster directly to its
-    // array layer; the ordinary texture is uploaded only when a tile must
-    // use the per-tile fallback, so successful array tiles do not receive
-    // the same pixels twice. Most frames still do one integer comparison.
+    // Regenerates heatmap content only when heatmap_revision is stale. The
+    // per-tile and fused-array destinations are baked on the GPU when
+    // supported. Only failed GPU setup retains the established QPainter
+    // route. Most frames still do one integer comparison.
     bool ensureHeatmapTexture(
         const GlobeTile &tile, TileResource *resource,
         QRhiResourceUpdateBatch *resource_updates,
         QImage *updated_image = nullptr,
+        QVector<HeatmapStamp> *updated_stamps = nullptr,
         bool upload_fallback_texture = true);
     bool ensureHeatmapFallbackTexture(
         const GlobeTile &tile, TileResource *resource,
         const QImage &updated_image,
+        const QVector<HeatmapStamp> &updated_stamps,
         QRhiResourceUpdateBatch *resource_updates);
-    QImage renderHeatmapTileProfiled(const GlobeTile &tile);
+    QImage renderHeatmapTileProfiled(
+        const GlobeTile &tile, TileResource *resource);
     QImage renderHeatmapTile(
-        const GlobeTile &tile, HeatmapRasterStats *stats) const;
+        const GlobeTile &tile, TileResource *resource,
+        HeatmapRasterStats *stats,
+        QVector<HeatmapStamp> *rendered_stamps = nullptr,
+        QImage *premultiplied_image = nullptr) const;
+    QImage renderHeatmapStamps(
+        const QVector<HeatmapStamp> &stamps) const;
+    QVector<HeatmapStamp> heatmapStampsForTileProfiled(
+        const GlobeTile &tile, TileResource *resource);
     QVector<HeatmapStamp> heatmapStampsForTile(
-        const GlobeTile &tile, HeatmapRasterStats *stats) const;
+        const GlobeTile &tile, TileResource *resource,
+        HeatmapRasterStats *stats) const;
+    bool queueHeatmapGpuBake(
+        TileResource *resource, QRhiTexture *destination_texture,
+        const QVector<HeatmapStamp> &stamps,
+        int destination_layer = 0);
+    void disableHeatmapGpuBaking();
+    void scheduleDiagnosticHeatmapGpuSelfTest();
+    void scheduleDiagnosticHeatmapGpuBake(
+        const GlobeTile &tile, const QVector<HeatmapStamp> &stamps,
+        const QImage &premultiplied_image);
+    bool ensureDiagnosticHeatmapGpuBakeResources();
+    void releaseDiagnosticHeatmapGpuBakeResources();
+    HeatmapGpuBakeAtlas *ensureVisibleHeatmapGpuBakeAtlasResources(
+        int slot_count);
+    int maximumVisibleHeatmapGpuBakeAtlasSlots();
+    void releaseVisibleHeatmapGpuBakeAtlasResources();
     void reportHeatmapProfile() const;
     void rebuildHeatmapMarkerBuckets();
     QVector<int> heatmapMarkerCandidates(
@@ -520,7 +619,47 @@ private:
     double heatmap_solid_fraction = 0.0;
     float heatmap_opacity = 0.0f;
     quint64 heatmap_revision = 1;
+    // Changes only when stamp geometry can change (positions or radius),
+    // unlike heatmap_revision which also changes for new simulation colors.
+    quint64 heatmap_stamp_layout_revision = 1;
     HeatmapProfileCounters heatmap_profile;
+    bool heatmap_profile_report_pending = false;
+
+    // Standalone 256x256 target retained for opt-in validation. The visible
+    // atlas below shares its pipeline and geometry but never its texture, so
+    // diagnostic readback dimensions and orientation remain unchanged.
+    std::unique_ptr<QRhiTexture> diagnostic_heatmap_bake_texture;
+    std::unique_ptr<QRhiRenderPassDescriptor>
+        diagnostic_heatmap_bake_render_pass_descriptor;
+    std::unique_ptr<QRhiTextureRenderTarget>
+        diagnostic_heatmap_bake_target;
+    std::unique_ptr<QRhiShaderResourceBindings>
+        diagnostic_heatmap_bake_bindings;
+    std::unique_ptr<QRhiGraphicsPipeline>
+        diagnostic_heatmap_bake_pipeline;
+    std::unique_ptr<QRhiBuffer> diagnostic_heatmap_bake_vertex_buffer;
+    std::unique_ptr<QRhiBuffer> diagnostic_heatmap_bake_instance_buffer;
+    int diagnostic_heatmap_bake_instance_buffer_size = 0;
+    bool diagnostic_heatmap_bake_vertex_upload_pending = true;
+    QVector<HeatmapBakeInstance> diagnostic_heatmap_bake_instances;
+    bool diagnostic_heatmap_bake_pending = false;
+    quint64 diagnostic_heatmap_bake_revision = 0;
+    // Validation is deliberately once per QRhi lifetime. Repeating a GPU
+    // readback on every simulation revision distorts the profile it measures.
+    bool diagnostic_heatmap_gpu_validation_attempted = false;
+    int diagnostic_heatmap_bake_zoom = 0;
+    int diagnostic_heatmap_bake_tile_x = 0;
+    int diagnostic_heatmap_bake_tile_y = 0;
+    QImage diagnostic_heatmap_bake_cpu_reference;
+    QVector<HeatmapGpuBakeJob> heatmap_gpu_bake_jobs;
+    // Lazily-created power-of-two horizontal atlases avoid clearing a full
+    // 64-slot strip when only a handful of new tiles need baking. Their Y
+    // extent stays exactly one tile, preserving the validated orientation.
+    std::map<int, HeatmapGpuBakeAtlas> heatmap_gpu_bake_atlases;
+    int heatmap_gpu_bake_maximum_atlas_slots = 0;
+    std::unique_ptr<QRhiBuffer> heatmap_gpu_bake_instance_buffer;
+    int heatmap_gpu_bake_instance_buffer_size = 0;
+    bool heatmap_gpu_baking_disabled = false;
 
     std::unique_ptr<MapRhiTerrainMeshScheduler> terrain_mesh_scheduler;
     quint64 next_terrain_mesh_request_id = 1;

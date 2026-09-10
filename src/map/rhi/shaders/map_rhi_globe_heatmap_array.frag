@@ -31,12 +31,16 @@ void main()
     if (vertex_heatmap_texture_layer >= 0.5
         && camera.heatmap_settings.y > 0.0)
     {
+        // Heatmap array layers use the same premultiplied representation as
+        // the per-tile fallback textures.
         vec4 heatmap_color = texture(
             globe_heatmap_tiles,
             vec3(vertex_texture_coordinate, vertex_heatmap_texture_layer));
-        float heatmap_alpha = heatmap_color.a
-            * clamp(camera.heatmap_settings.y, 0.0, 1.0);
-        mixed_rgb = mix(mixed_rgb, heatmap_color.rgb, heatmap_alpha);
+        float heatmap_opacity = clamp(
+            camera.heatmap_settings.y, 0.0, 1.0);
+        float heatmap_alpha = heatmap_color.a * heatmap_opacity;
+        mixed_rgb = mixed_rgb * (1.0 - heatmap_alpha)
+            + heatmap_color.rgb * heatmap_opacity;
     }
     fragment_color = vec4(mixed_rgb, 1.0);
 }

@@ -9,6 +9,7 @@
 #include "geo/geo_web_mercator.h"
 #include "geo/geo_wgs84_ellipsoid.h"
 
+#include <QByteArray>
 #include <QDebug>
 #include <QFile>
 #include <QHash>
@@ -97,6 +98,200 @@ constexpr int GlobeHeatmapTextureSize = 256;
 constexpr int GlobeHeatmapMarkerBucketZoom = 18;
 constexpr qint64 GlobeHeatmapMarkerBucketCount =
     qint64(1) << GlobeHeatmapMarkerBucketZoom;
+constexpr int GlobeHeatmapValidationTolerance = 8;
+
+struct GlobeHeatmapValidationMetrics
+{
+    quint64 absolute_error_sum = 0;
+    quint64 alpha_error_sum = 0;
+    int maximum_channel_error = 0;
+    int pixels_over_tolerance = 0;
+    int premultiplied_violations = 0;
+    int active_pixels = 0;
+    int cpu_covered_pixels = 0;
+    int gpu_covered_pixels = 0;
+};
+
+QString globeHeatmapTextureFormatName(QRhiTexture::Format format)
+{
+    switch (format)
+    {
+    case QRhiTexture::RGBA8:
+        return QStringLiteral("RGBA8");
+    case QRhiTexture::BGRA8:
+        return QStringLiteral("BGRA8");
+    default:
+        return QStringLiteral("unsupported_%1").arg(int(format));
+    }
+}
+
+GlobeHeatmapValidationMetrics compareGlobeHeatmapPixels(
+    const QImage &cpu_image, const QByteArray &gpu_data,
+    QRhiTexture::Format gpu_format, bool flip_y)
+{
+    GlobeHeatmapValidationMetrics metrics;
+    const int width = cpu_image.width();
+    const int height = cpu_image.height();
+    const int gpu_red = gpu_format == QRhiTexture::BGRA8 ? 2 : 0;
+    const int gpu_blue = gpu_format == QRhiTexture::BGRA8 ? 0 : 2;
+    const uchar *gpu_bytes = reinterpret_cast<const uchar *>(
+        gpu_data.constData());
+
+    for (int y = 0; y < height; ++y)
+    {
+        const uchar *cpu_row = cpu_image.constScanLine(y);
+        const int gpu_y = flip_y ? height - 1 - y : y;
+        const uchar *gpu_row = gpu_bytes
+            + qsizetype(gpu_y) * qsizetype(width) * 4;
+        for (int x = 0; x < width; ++x)
+        {
+            const uchar *cpu_pixel = cpu_row + x * 4;
+            const uchar *gpu_pixel = gpu_row + x * 4;
+            const int gpu_channels[] = {
+                gpu_pixel[gpu_red], gpu_pixel[1],
+                gpu_pixel[gpu_blue], gpu_pixel[3]
+            };
+            if (cpu_pixel[3] > 1)
+                ++metrics.cpu_covered_pixels;
+            if (gpu_channels[3] > 1)
+                ++metrics.gpu_covered_pixels;
+            if (cpu_pixel[3] > 1 || gpu_channels[3] > 1)
+                ++metrics.active_pixels;
+            int pixel_maximum_error = 0;
+            for (int channel = 0; channel < 4; ++channel)
+            {
+                const int error = std::abs(
+                    int(cpu_pixel[channel]) - gpu_channels[channel]);
+                metrics.absolute_error_sum += quint64(error);
+                metrics.maximum_channel_error = qMax(
+                    metrics.maximum_channel_error, error);
+                pixel_maximum_error = qMax(pixel_maximum_error, error);
+                if (channel == 3)
+                    metrics.alpha_error_sum += quint64(error);
+            }
+            if (pixel_maximum_error > GlobeHeatmapValidationTolerance)
+                ++metrics.pixels_over_tolerance;
+
+            const int alpha = gpu_channels[3];
+            if (gpu_channels[0] > alpha + 1
+                || gpu_channels[1] > alpha + 1
+                || gpu_channels[2] > alpha + 1)
+            {
+                ++metrics.premultiplied_violations;
+            }
+        }
+    }
+    return metrics;
+}
+
+void reportGlobeHeatmapGpuValidation(
+    const QRhiReadbackResult &result, const QImage &cpu_reference,
+    quint64 revision, int zoom, int tile_x, int tile_y, int stamp_count)
+{
+    const QImage cpu_image = cpu_reference.convertToFormat(
+        QImage::Format_RGBA8888_Premultiplied);
+    const QString format_name = globeHeatmapTextureFormatName(result.format);
+    QString invalid_reason;
+    if (cpu_image.isNull())
+        invalid_reason = QStringLiteral("missing_cpu_reference");
+    else if (result.format != QRhiTexture::RGBA8
+             && result.format != QRhiTexture::BGRA8)
+        invalid_reason = QStringLiteral("unsupported_format");
+    else if (result.pixelSize != cpu_image.size())
+        invalid_reason = QStringLiteral("pixel_size_mismatch");
+    else
+    {
+        const qsizetype expected_bytes = qsizetype(cpu_image.width())
+            * qsizetype(cpu_image.height()) * 4;
+        if (result.data.size() < expected_bytes)
+            invalid_reason = QStringLiteral("short_readback");
+    }
+
+    if (!invalid_reason.isEmpty())
+    {
+        qCDebug(globeHeatmapPerformanceLog).noquote().nospace()
+            << "diagnostic_gpu_validation revision=" << revision
+            << " tile=" << zoom << "/" << tile_x << "/" << tile_y
+            << " stamps=" << stamp_count
+            << " format=" << format_name
+            << " size=" << result.pixelSize.width() << "x"
+            << result.pixelSize.height()
+            << " bytes=" << result.data.size()
+            << " status=invalid reason=" << invalid_reason;
+        return;
+    }
+
+    const GlobeHeatmapValidationMetrics direct =
+        compareGlobeHeatmapPixels(
+            cpu_image, result.data, result.format, false);
+    const GlobeHeatmapValidationMetrics flipped =
+        compareGlobeHeatmapPixels(
+            cpu_image, result.data, result.format, true);
+    const quint64 direct_channel_count =
+        quint64(direct.active_pixels) * 4;
+    const quint64 flipped_channel_count =
+        quint64(flipped.active_pixels) * 4;
+    const double direct_mean_error = direct_channel_count > 0
+        ? double(direct.absolute_error_sum) / double(direct_channel_count)
+        : 0.0;
+    const double flipped_mean_error = flipped_channel_count > 0
+        ? double(flipped.absolute_error_sum) / double(flipped_channel_count)
+        : 0.0;
+    const bool use_flipped =
+        flipped.absolute_error_sum < direct.absolute_error_sum;
+    const GlobeHeatmapValidationMetrics &selected = use_flipped
+        ? flipped : direct;
+    const quint64 selected_channel_count =
+        quint64(selected.active_pixels) * 4;
+    const double selected_mean_error = selected_channel_count > 0
+        ? double(selected.absolute_error_sum) / double(selected_channel_count)
+        : 0.0;
+    const double selected_alpha_error = selected.active_pixels > 0
+        ? double(selected.alpha_error_sum) / double(selected.active_pixels)
+        : 0.0;
+    const double pixels_over_tolerance_percent = selected.active_pixels > 0
+        ? 100.0 * double(selected.pixels_over_tolerance)
+            / double(selected.active_pixels)
+        : 0.0;
+    const double coverage_delta_percent =
+        selected.cpu_covered_pixels > 0
+        ? 100.0 * double(std::abs(
+              selected.cpu_covered_pixels - selected.gpu_covered_pixels))
+            / double(selected.cpu_covered_pixels)
+        : (selected.gpu_covered_pixels > 0 ? 100.0 : 0.0);
+    const bool compatible = selected.active_pixels > 0
+        && selected_mean_error <= 3.0
+        && selected_alpha_error <= 3.0
+        && pixels_over_tolerance_percent <= 5.0
+        && coverage_delta_percent <= 5.0
+        && selected.premultiplied_violations == 0;
+
+    qCDebug(globeHeatmapPerformanceLog).noquote().nospace()
+        << "diagnostic_gpu_validation revision=" << revision
+        << " tile=" << zoom << "/" << tile_x << "/" << tile_y
+        << " stamps=" << stamp_count
+        << " format=" << format_name
+        << " selected_orientation="
+        << (use_flipped ? "flip_y" : "direct")
+        << " direct_mean_abs_error="
+        << QString::number(direct_mean_error, 'f', 3)
+        << " flip_y_mean_abs_error="
+        << QString::number(flipped_mean_error, 'f', 3)
+        << " mean_abs_error="
+        << QString::number(selected_mean_error, 'f', 3)
+        << " mean_alpha_error="
+        << QString::number(selected_alpha_error, 'f', 3)
+        << " max_abs_error=" << selected.maximum_channel_error
+        << " active_pixels=" << selected.active_pixels
+        << " cpu_covered_pixels=" << selected.cpu_covered_pixels
+        << " gpu_covered_pixels=" << selected.gpu_covered_pixels
+        << " coverage_delta_pct="
+        << QString::number(coverage_delta_percent, 'f', 3)
+        << " pixels_over_" << GlobeHeatmapValidationTolerance << "_pct="
+        << QString::number(pixels_over_tolerance_percent, 'f', 3)
+        << " premul_violations=" << selected.premultiplied_violations
+        << " status=" << (compatible ? "compatible" : "mismatch");
+}
 
 quint64 globeHeatmapMarkerBucketKey(int bucket_x, int bucket_y)
 {
@@ -119,6 +314,10 @@ int wrappedGlobeHeatmapBucketX(qint64 bucket_x)
 // imagery-page layout.
 constexpr int GlobeTileArrayLayerCount = 256;
 constexpr int GlobeTileArrayUsableLayerCount = GlobeTileArrayLayerCount - 1;
+// Visible fallback heatmaps are baked into a single horizontal strip. Keep
+// the strip to 16 MiB at RGBA8 on backends supporting a 16384-wide texture;
+// lower texture-size limits automatically reduce the number of slots.
+constexpr int GlobeHeatmapGpuBakeAtlasMaximumSlots = 64;
 
 // Vertex grid subdivisions per tile edge, by zoom level. Low zoom tiles
 // span a huge angular area (a zoom-0 tile is the entire planet, a zoom-1
@@ -774,16 +973,46 @@ void MapRhiGlobeRenderer::setHeatmapOverlay(
     const double bounded_radius_m = qMax(0.0, radius_m);
     const double bounded_solid_fraction = qBound(0.0, solid_fraction, 0.9);
     const bool markers_changed = this->heatmap_markers != markers;
-    const bool style_changed =
-        !qFuzzyCompare(1.0 + this->heatmap_radius_m, 1.0 + bounded_radius_m)
-        || !qFuzzyCompare(1.0 + this->heatmap_solid_fraction, 1.0 + bounded_solid_fraction);
+    bool marker_layout_changed =
+        this->heatmap_markers.size() != markers.size();
+    if (!marker_layout_changed)
+    {
+        for (int marker_index = 0;
+             marker_index < markers.size(); ++marker_index)
+        {
+            const HeatmapMarker &old_marker =
+                this->heatmap_markers.at(marker_index);
+            const HeatmapMarker &new_marker = markers.at(marker_index);
+            if (old_marker.longitude_deg != new_marker.longitude_deg
+                || old_marker.latitude_deg != new_marker.latitude_deg)
+            {
+                marker_layout_changed = true;
+                break;
+            }
+        }
+    }
+    const bool radius_changed = !qFuzzyCompare(
+        1.0 + this->heatmap_radius_m, 1.0 + bounded_radius_m);
+    const bool solid_fraction_changed = !qFuzzyCompare(
+        1.0 + this->heatmap_solid_fraction,
+        1.0 + bounded_solid_fraction);
+    const bool style_changed = radius_changed || solid_fraction_changed;
     if (!markers_changed && !style_changed)
         return;
 
     if (markers_changed)
-    {
         this->heatmap_markers = markers;
+
+    // Buckets and projected stamp layouts depend on marker coordinates, not
+    // their colors. Simulation playback normally changes only color, so keep
+    // both retained across those high-frequency revisions.
+    if (marker_layout_changed)
         rebuildHeatmapMarkerBuckets();
+    if (marker_layout_changed || radius_changed)
+    {
+        ++this->heatmap_stamp_layout_revision;
+        if (this->heatmap_stamp_layout_revision == 0)
+            this->heatmap_stamp_layout_revision = 1;
     }
     this->heatmap_radius_m = bounded_radius_m;
     this->heatmap_solid_fraction = bounded_solid_fraction;
@@ -795,6 +1024,18 @@ void MapRhiGlobeRenderer::setHeatmapOverlay(
     ++this->heatmap_revision;
     if (this->heatmap_revision == 0)
         this->heatmap_revision = 1;
+    this->heatmap_gpu_bake_jobs.clear();
+    // Before the once-per-QRhi diagnostic has been scheduled there is
+    // nothing useful to retain. Once scheduled, its fixed stamps and CPU
+    // reference remain self-contained and must not be cancelled merely
+    // because the simulation advances to the next color revision.
+    if (!this->diagnostic_heatmap_gpu_validation_attempted)
+    {
+        this->diagnostic_heatmap_bake_instances.clear();
+        this->diagnostic_heatmap_bake_cpu_reference = QImage();
+        this->diagnostic_heatmap_bake_pending = false;
+        this->diagnostic_heatmap_bake_revision = 0;
+    }
     this->heatmap_array_draw_indices_dirty = true;
 }
 
@@ -2305,6 +2546,7 @@ bool MapRhiGlobeRenderer::stampTileHeatmapArrayLayer(
 
 bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
     GlobeTile &tile, const QImage &updated_image,
+    const QVector<HeatmapStamp> &updated_stamps,
     QRhiResourceUpdateBatch *resource_updates)
 {
     ScopedHeatmapProfileTimer profile_timer(
@@ -2392,13 +2634,74 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
         assigned_now = true;
     }
 
+    if (!stampTileHeatmapArrayLayer(
+            tile, resource->heatmap_array_layer, resource_updates))
+    {
+        setTileHeatmapArrayReady(tile, false);
+        setTileArrayReady(tile, false);
+        return true;
+    }
+
     if (resource->heatmap_array_revision != this->heatmap_revision)
     {
+        if (!this->heatmap_gpu_baking_disabled)
+        {
+            QVector<HeatmapStamp> regenerated_stamps;
+            const QVector<HeatmapStamp> *stamps = &updated_stamps;
+            if (stamps->isEmpty())
+            {
+                regenerated_stamps = heatmapStampsForTileProfiled(
+                    tile, resource);
+                stamps = &regenerated_stamps;
+            }
+
+            if (stamps->isEmpty())
+            {
+                if (!this->window_heatmap_array_layers.isEmpty()
+                    && !stampTileHeatmapArrayLayer(
+                        tile, 0, resource_updates))
+                {
+                    return false;
+                }
+                resource->heatmap_has_content = false;
+                resource->heatmap_revision = this->heatmap_revision;
+                releaseHeatmapArrayLayer(resource);
+                setTileHeatmapArrayReady(tile, false);
+                return true;
+            }
+
+            HeatmapArrayPage &page = this->heatmap_array_pages[
+                resource->heatmap_array_page];
+            if (ensureDiagnosticHeatmapGpuBakeResources()
+                && queueHeatmapGpuBake(
+                    resource, page.texture.get(), *stamps,
+                    resource->heatmap_array_layer))
+            {
+                // Reserve both revisions so the fused draw list built later
+                // in prepare() can include this tile. A discarded frame or
+                // failed bake rolls them back from the retained job queue;
+                // runPendingHeatmapGpuBakes() confirms them after recording
+                // the atlas-to-layer copy.
+                resource->heatmap_array_revision = this->heatmap_revision;
+                resource->heatmap_revision = this->heatmap_revision;
+                setTileHeatmapArrayReady(tile, true);
+                return true;
+            }
+
+            disableHeatmapGpuBaking();
+        }
+
+        // Automatic failure path only: preserve the established CPU raster
+        // and host upload if offscreen baking or texture copies are not
+        // available on this backend.
         QImage image = updated_image;
         if (image.isNull())
-            image = renderHeatmapTileProfiled(tile);
+            image = renderHeatmapTileProfiled(tile, resource);
         if (!image.isNull())
-            image = image.convertToFormat(QImage::Format_RGBA8888);
+        {
+            image = image.convertToFormat(
+                QImage::Format_RGBA8888_Premultiplied);
+        }
         const QSize layer_size(
             GlobeHeatmapTextureSize, GlobeHeatmapTextureSize);
         if (!image.isNull() && image.size() != layer_size)
@@ -2429,15 +2732,9 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
             this->heatmap_profile.upload_bytes += quint64(image.sizeInBytes());
         }
         resource->heatmap_array_revision = this->heatmap_revision;
+        resource->heatmap_revision = this->heatmap_revision;
     }
 
-    if (!stampTileHeatmapArrayLayer(
-            tile, resource->heatmap_array_layer, resource_updates))
-    {
-        setTileHeatmapArrayReady(tile, false);
-        setTileArrayReady(tile, false);
-        return true;
-    }
     setTileHeatmapArrayReady(tile, true);
     return true;
 }
@@ -2477,12 +2774,15 @@ bool MapRhiGlobeRenderer::rebuildTileBindings(TileResource *resource)
 
 bool MapRhiGlobeRenderer::ensureTileResource(
     GlobeTile &tile, QRhiResourceUpdateBatch *resource_updates,
-    QImage *updated_image, QImage *updated_heatmap_image)
+    QImage *updated_image, QImage *updated_heatmap_image,
+    QVector<HeatmapStamp> *updated_heatmap_stamps)
 {
     if (updated_image != nullptr)
         *updated_image = QImage();
     if (updated_heatmap_image != nullptr)
         *updated_heatmap_image = QImage();
+    if (updated_heatmap_stamps != nullptr)
+        updated_heatmap_stamps->clear();
 
     if (tile.is_cap)
     {
@@ -2527,7 +2827,8 @@ bool MapRhiGlobeRenderer::ensureTileResource(
         if (tile.resource == resource
             && !ensureHeatmapTexture(
                 tile, resource, resource_updates,
-                updated_heatmap_image, !arrayBatchingActive()))
+                updated_heatmap_image, updated_heatmap_stamps,
+                !arrayBatchingActive()))
         {
             return false;
         }
@@ -2561,6 +2862,7 @@ bool MapRhiGlobeRenderer::ensureTileResource(
 
     if (!ensureHeatmapTexture(
             tile, resource, resource_updates, updated_heatmap_image,
+            updated_heatmap_stamps,
             !arrayBatchingActive()))
         return false;
 
@@ -2889,28 +3191,69 @@ QVector<int> MapRhiGlobeRenderer::heatmapMarkerCandidates(
     return result;
 }
 
-QImage MapRhiGlobeRenderer::renderHeatmapTileProfiled(const GlobeTile &tile)
+QImage MapRhiGlobeRenderer::renderHeatmapTileProfiled(
+    const GlobeTile &tile, TileResource *resource)
 {
     if (!this->heatmap_profile.enabled)
-        return renderHeatmapTile(tile, nullptr);
+        return renderHeatmapTile(tile, resource, nullptr);
 
     QElapsedTimer timer;
     timer.start();
     HeatmapRasterStats stats;
-    QImage image = renderHeatmapTile(tile, &stats);
+    QVector<HeatmapStamp> diagnostic_stamps;
+    QImage diagnostic_cpu_reference;
+    QVector<HeatmapStamp> *rendered_stamps = nullptr;
+    QImage *premultiplied_image = nullptr;
+    if (!this->diagnostic_heatmap_gpu_validation_attempted)
+    {
+        rendered_stamps = &diagnostic_stamps;
+        premultiplied_image = &diagnostic_cpu_reference;
+    }
+    QImage image = renderHeatmapTile(
+        tile, resource, &stats, rendered_stamps, premultiplied_image);
     ++this->heatmap_profile.raster_calls;
     if (!image.isNull())
         ++this->heatmap_profile.raster_tiles_with_content;
     this->heatmap_profile.candidate_markers += stats.candidate_markers;
     this->heatmap_profile.marker_tile_pairs += stats.marker_tile_pairs;
+    if (stats.stamp_layout_cache_hit)
+        ++this->heatmap_profile.stamp_layout_cache_hits;
+    else
+        ++this->heatmap_profile.stamp_layout_cache_misses;
     this->heatmap_profile.raster_ns += timer.nsecsElapsed();
+    if (!diagnostic_stamps.isEmpty())
+    {
+        scheduleDiagnosticHeatmapGpuBake(
+            tile, diagnostic_stamps, diagnostic_cpu_reference);
+    }
     return image;
 }
 
 QImage MapRhiGlobeRenderer::renderHeatmapTile(
-    const GlobeTile &tile, HeatmapRasterStats *stats) const
+    const GlobeTile &tile, TileResource *resource,
+    HeatmapRasterStats *stats,
+    QVector<HeatmapStamp> *rendered_stamps,
+    QImage *premultiplied_image) const
 {
-    const QVector<HeatmapStamp> stamps = heatmapStampsForTile(tile, stats);
+    if (premultiplied_image != nullptr)
+        *premultiplied_image = QImage();
+    const QVector<HeatmapStamp> stamps = heatmapStampsForTile(
+        tile, resource, stats);
+    if (rendered_stamps != nullptr)
+        *rendered_stamps = stamps;
+    if (stamps.isEmpty())
+        return QImage();
+
+    const QImage image = renderHeatmapStamps(stamps);
+    if (premultiplied_image != nullptr)
+        *premultiplied_image = image;
+
+    return image.convertToFormat(QImage::Format_RGBA8888_Premultiplied);
+}
+
+QImage MapRhiGlobeRenderer::renderHeatmapStamps(
+    const QVector<HeatmapStamp> &stamps) const
+{
     if (stamps.isEmpty())
         return QImage();
 
@@ -2948,18 +3291,87 @@ QImage MapRhiGlobeRenderer::renderHeatmapTile(
             center_pixels, stamp.radius_pixels, stamp.radius_pixels);
     }
     painter.end();
+    return image;
+}
 
-    return image.convertToFormat(QImage::Format_RGBA8888);
+QVector<MapRhiGlobeRenderer::HeatmapStamp>
+MapRhiGlobeRenderer::heatmapStampsForTileProfiled(
+    const GlobeTile &tile, TileResource *resource)
+{
+    QElapsedTimer timer;
+    timer.start();
+    HeatmapRasterStats stats;
+    QVector<HeatmapStamp> stamps = heatmapStampsForTile(
+        tile, resource, &stats);
+    this->heatmap_profile.candidate_markers += stats.candidate_markers;
+    this->heatmap_profile.marker_tile_pairs += stats.marker_tile_pairs;
+    if (stats.stamp_layout_cache_hit)
+        ++this->heatmap_profile.stamp_layout_cache_hits;
+    else
+        ++this->heatmap_profile.stamp_layout_cache_misses;
+    this->heatmap_profile.stamp_ns += timer.nsecsElapsed();
+    if (!stamps.isEmpty())
+        ++this->heatmap_profile.raster_tiles_with_content;
+    return stamps;
 }
 
 QVector<MapRhiGlobeRenderer::HeatmapStamp>
 MapRhiGlobeRenderer::heatmapStampsForTile(
-    const GlobeTile &tile, HeatmapRasterStats *stats) const
+    const GlobeTile &tile, TileResource *resource,
+    HeatmapRasterStats *stats) const
 {
     if (stats != nullptr)
         *stats = HeatmapRasterStats();
+
+    const bool layout_matches = resource != nullptr
+        && resource->heatmap_stamp_layout_revision
+            == this->heatmap_stamp_layout_revision
+        && resource->heatmap_stamp_layout_zoom == tile.zoom
+        && resource->heatmap_stamp_layout_virtual_x == tile.virtual_x
+        && resource->heatmap_stamp_layout_tile_y == tile.tile_y;
+    if (layout_matches)
+    {
+        bool valid_indices = true;
+        for (HeatmapStamp &stamp : resource->heatmap_stamp_layout)
+        {
+            if (stamp.marker_index < 0
+                || stamp.marker_index >= this->heatmap_markers.size())
+            {
+                valid_indices = false;
+                break;
+            }
+            stamp.color = this->heatmap_markers.at(
+                stamp.marker_index).color;
+        }
+        if (valid_indices)
+        {
+            if (stats != nullptr)
+            {
+                stats->marker_tile_pairs =
+                    resource->heatmap_stamp_layout.size();
+                stats->stamp_layout_cache_hit = true;
+            }
+            return resource->heatmap_stamp_layout;
+        }
+    }
+
+    const auto retain_layout = [this, &tile, resource](
+        QVector<HeatmapStamp> stamps)
+    {
+        if (resource != nullptr)
+        {
+            resource->heatmap_stamp_layout = stamps;
+            resource->heatmap_stamp_layout_revision =
+                this->heatmap_stamp_layout_revision;
+            resource->heatmap_stamp_layout_zoom = tile.zoom;
+            resource->heatmap_stamp_layout_virtual_x = tile.virtual_x;
+            resource->heatmap_stamp_layout_tile_y = tile.tile_y;
+        }
+        return stamps;
+    };
+
     if (this->heatmap_markers.isEmpty() || !(this->heatmap_radius_m > 0.0) || tile.is_cap)
-        return {};
+        return retain_layout({});
 
     // tile_center_lat_deg only, in degrees -- needed for the
     // latitude-dependent meters-per-pixel conversion just below. The
@@ -2981,11 +3393,11 @@ MapRhiGlobeRenderer::heatmapStampsForTile(
     const double meters_per_pixel = GeoWebMercator::metersPerPixel(
         tile_center_lat_deg, tile.zoom);
     if (!std::isfinite(meters_per_pixel) || meters_per_pixel <= 0.0)
-        return {};
+        return retain_layout({});
 
     const double radius_pixels = this->heatmap_radius_m / meters_per_pixel;
     if (!std::isfinite(radius_pixels) || radius_pixels <= 0.0)
-        return {};
+        return retain_layout({});
     // Radius in the same fractional tile-coordinate units used for the
     // marker bounding check below (1.0 == one full tile edge), so that
     // check needs no separate unit conversion of its own.
@@ -2996,7 +3408,7 @@ MapRhiGlobeRenderer::heatmapStampsForTile(
     if (stats != nullptr)
         stats->candidate_markers = candidate_indices.size();
     if (candidate_indices.isEmpty())
-        return {};
+        return retain_layout({});
 
     QVector<HeatmapStamp> stamps;
     stamps.reserve(candidate_indices.size());
@@ -3043,24 +3455,924 @@ MapRhiGlobeRenderer::heatmapStampsForTile(
         stamp.center_x_pixels = fraction_x * pixels_per_fraction;
         stamp.center_y_pixels = fraction_y * pixels_per_fraction;
         stamp.radius_pixels = radius_pixels;
+        stamp.marker_index = marker_index;
         stamp.color = marker.color;
         stamps.append(stamp);
     }
 
     if (stats != nullptr)
         stats->marker_tile_pairs = stamps.size();
-    return stamps;
+    return retain_layout(std::move(stamps));
+}
+
+bool MapRhiGlobeRenderer::queueHeatmapGpuBake(
+    TileResource *resource, QRhiTexture *destination_texture,
+    const QVector<HeatmapStamp> &stamps, int destination_layer)
+{
+    if (this->heatmap_gpu_baking_disabled || this->rhi == nullptr
+        || resource == nullptr || destination_texture == nullptr
+        || destination_layer < 0
+        || destination_layer >= GlobeTileArrayLayerCount
+        || stamps.isEmpty())
+    {
+        return false;
+    }
+
+    HeatmapGpuBakeJob job;
+    job.resource = resource;
+    job.destination_texture = destination_texture;
+    job.destination_layer = destination_layer;
+    job.revision = this->heatmap_revision;
+    job.instances.reserve(stamps.size());
+    const bool flip_for_texture_storage = this->rhi->isYUpInFramebuffer();
+    for (const HeatmapStamp &stamp : stamps)
+    {
+        HeatmapBakeInstance instance;
+        instance.center_x_pixels = float(stamp.center_x_pixels);
+        instance.center_y_pixels = float(
+            flip_for_texture_storage
+                ? double(GlobeHeatmapTextureSize) - stamp.center_y_pixels
+                : stamp.center_y_pixels);
+        instance.radius_pixels = float(stamp.radius_pixels);
+        instance.solid_fraction = float(this->heatmap_solid_fraction);
+        instance.red = stamp.color.redF();
+        instance.green = stamp.color.greenF();
+        instance.blue = stamp.color.blueF();
+        job.instances.append(instance);
+    }
+    this->heatmap_gpu_bake_jobs.append(std::move(job));
+    return true;
+}
+
+void MapRhiGlobeRenderer::disableHeatmapGpuBaking()
+{
+    for (const HeatmapGpuBakeJob &job : this->heatmap_gpu_bake_jobs)
+    {
+        if (job.resource == nullptr)
+            continue;
+        job.resource->heatmap_revision = 0;
+        if (job.destination_layer > 0)
+            job.resource->heatmap_array_revision = 0;
+        else
+            job.resource->heatmap_texture_revision = 0;
+    }
+    this->heatmap_gpu_bake_jobs.clear();
+    if (!this->heatmap_gpu_baking_disabled)
+    {
+        qCWarning(globeHeatmapPerformanceLog)
+            << "Visible Globe heatmap GPU baking failed; falling back to CPU rasterization.";
+    }
+    this->heatmap_gpu_baking_disabled = true;
+}
+
+void MapRhiGlobeRenderer::scheduleDiagnosticHeatmapGpuBake(
+    const GlobeTile &tile, const QVector<HeatmapStamp> &stamps,
+    const QImage &premultiplied_image)
+{
+    if (!this->heatmap_profile.enabled || stamps.isEmpty()
+        || premultiplied_image.isNull()
+        || this->diagnostic_heatmap_gpu_validation_attempted)
+    {
+        return;
+    }
+
+    this->diagnostic_heatmap_bake_instances.clear();
+    this->diagnostic_heatmap_bake_instances.reserve(stamps.size());
+    for (const HeatmapStamp &stamp : stamps)
+    {
+        HeatmapBakeInstance instance;
+        instance.center_x_pixels = float(stamp.center_x_pixels);
+        instance.center_y_pixels = float(stamp.center_y_pixels);
+        instance.radius_pixels = float(stamp.radius_pixels);
+        instance.solid_fraction = float(this->heatmap_solid_fraction);
+        instance.red = stamp.color.redF();
+        instance.green = stamp.color.greenF();
+        instance.blue = stamp.color.blueF();
+        this->diagnostic_heatmap_bake_instances.append(instance);
+    }
+
+    this->diagnostic_heatmap_bake_revision = this->heatmap_revision;
+    this->diagnostic_heatmap_gpu_validation_attempted = true;
+    this->diagnostic_heatmap_bake_zoom = tile.zoom;
+    this->diagnostic_heatmap_bake_tile_x = tile.virtual_x;
+    this->diagnostic_heatmap_bake_tile_y = tile.tile_y;
+    this->diagnostic_heatmap_bake_cpu_reference = premultiplied_image;
+    this->diagnostic_heatmap_bake_pending = true;
+}
+
+void MapRhiGlobeRenderer::scheduleDiagnosticHeatmapGpuSelfTest()
+{
+    if (!this->heatmap_profile.enabled
+        || this->diagnostic_heatmap_gpu_validation_attempted)
+    {
+        return;
+    }
+
+    // This deliberately asymmetric pattern validates Y orientation, clipped
+    // stamp quads, radial falloff, color channels, and ordered source-over
+    // overlap without depending on the current camera or visible markers.
+    QVector<HeatmapStamp> stamps;
+    stamps.reserve(4);
+
+    HeatmapStamp stamp;
+    stamp.center_x_pixels = 48.25;
+    stamp.center_y_pixels = 57.5;
+    stamp.radius_pixels = 40.75;
+    stamp.color = QColor(239, 74, 62);
+    stamps.append(stamp);
+
+    stamp.center_x_pixels = 122.5;
+    stamp.center_y_pixels = 91.25;
+    stamp.radius_pixels = 63.5;
+    stamp.color = QColor(54, 198, 121);
+    stamps.append(stamp);
+
+    stamp.center_x_pixels = 182.25;
+    stamp.center_y_pixels = 169.75;
+    stamp.radius_pixels = 51.25;
+    stamp.color = QColor(68, 112, 242);
+    stamps.append(stamp);
+
+    stamp.center_x_pixels = 251.0;
+    stamp.center_y_pixels = 224.5;
+    stamp.radius_pixels = 49.0;
+    stamp.color = QColor(231, 174, 48);
+    stamps.append(stamp);
+
+    GlobeTile self_test_tile;
+    self_test_tile.zoom = -1;
+    scheduleDiagnosticHeatmapGpuBake(
+        self_test_tile, stamps, renderHeatmapStamps(stamps));
+}
+
+void MapRhiGlobeRenderer::releaseDiagnosticHeatmapGpuBakeResources()
+{
+    this->diagnostic_heatmap_bake_pipeline.reset();
+    this->diagnostic_heatmap_bake_bindings.reset();
+    this->diagnostic_heatmap_bake_target.reset();
+    this->diagnostic_heatmap_bake_render_pass_descriptor.reset();
+    this->diagnostic_heatmap_bake_texture.reset();
+    this->diagnostic_heatmap_bake_vertex_buffer.reset();
+    this->diagnostic_heatmap_bake_instance_buffer.reset();
+    this->diagnostic_heatmap_bake_instance_buffer_size = 0;
+    this->diagnostic_heatmap_bake_vertex_upload_pending = true;
+}
+
+void MapRhiGlobeRenderer::releaseVisibleHeatmapGpuBakeAtlasResources()
+{
+    this->heatmap_gpu_bake_atlases.clear();
+    this->heatmap_gpu_bake_maximum_atlas_slots = 0;
+}
+
+MapRhiGlobeRenderer::HeatmapGpuBakeAtlas *
+MapRhiGlobeRenderer::ensureVisibleHeatmapGpuBakeAtlasResources(
+    int slot_count)
+{
+    if (slot_count <= 0 || this->rhi == nullptr)
+        return nullptr;
+
+    const std::map<int, HeatmapGpuBakeAtlas>::iterator existing =
+        this->heatmap_gpu_bake_atlases.find(slot_count);
+    if (existing != this->heatmap_gpu_bake_atlases.end())
+    {
+        HeatmapGpuBakeAtlas &atlas = existing->second;
+        if (atlas.texture && atlas.render_pass_descriptor && atlas.target)
+            return &atlas;
+        this->heatmap_gpu_bake_atlases.erase(existing);
+    }
+
+    HeatmapGpuBakeAtlas atlas;
+    atlas.slot_count = slot_count;
+    const QSize atlas_size(
+        slot_count * GlobeHeatmapTextureSize,
+        GlobeHeatmapTextureSize);
+    atlas.texture.reset(this->rhi->newTexture(
+        QRhiTexture::RGBA8, atlas_size, 1,
+        QRhiTexture::RenderTarget
+            | QRhiTexture::UsedAsTransferSource));
+    if (!atlas.texture || !atlas.texture->create())
+        return nullptr;
+
+    const QRhiTextureRenderTargetDescription target_description(
+        QRhiColorAttachment(atlas.texture.get()));
+    atlas.target.reset(
+        this->rhi->newTextureRenderTarget(target_description));
+    if (!atlas.target)
+        return nullptr;
+    atlas.render_pass_descriptor.reset(
+        atlas.target->newCompatibleRenderPassDescriptor());
+    if (!atlas.render_pass_descriptor)
+        return nullptr;
+    atlas.target->setRenderPassDescriptor(
+        atlas.render_pass_descriptor.get());
+    if (!atlas.target->create())
+        return nullptr;
+
+    this->heatmap_gpu_bake_atlases[slot_count] = std::move(atlas);
+    return &this->heatmap_gpu_bake_atlases.at(slot_count);
+}
+
+int MapRhiGlobeRenderer::maximumVisibleHeatmapGpuBakeAtlasSlots()
+{
+    if (this->heatmap_gpu_bake_maximum_atlas_slots > 0)
+        return this->heatmap_gpu_bake_maximum_atlas_slots;
+    if (this->rhi == nullptr)
+        return 0;
+
+    const int maximum_texture_size = qMax(
+        GlobeHeatmapTextureSize,
+        this->rhi->resourceLimit(QRhi::TextureSizeMax));
+    const int maximum_candidate = qBound(
+        1, maximum_texture_size / GlobeHeatmapTextureSize,
+        GlobeHeatmapGpuBakeAtlasMaximumSlots);
+    int slot_count = 1;
+    while (slot_count <= maximum_candidate / 2)
+        slot_count *= 2;
+
+    while (slot_count > 0)
+    {
+        if (ensureVisibleHeatmapGpuBakeAtlasResources(slot_count) != nullptr)
+        {
+            this->heatmap_gpu_bake_maximum_atlas_slots = slot_count;
+            return slot_count;
+        }
+        slot_count /= 2;
+    }
+    return 0;
+}
+
+bool MapRhiGlobeRenderer::ensureDiagnosticHeatmapGpuBakeResources()
+{
+    static_assert(
+        sizeof(HeatmapBakeVertex) == 2 * sizeof(float),
+        "Heatmap bake vertex layout must stay tightly packed");
+    static_assert(
+        sizeof(HeatmapBakeInstance) == 9 * sizeof(float),
+        "Heatmap bake instance layout must stay tightly packed");
+
+    if (this->rhi == nullptr)
+        return false;
+
+    if (!this->diagnostic_heatmap_bake_texture)
+    {
+        this->diagnostic_heatmap_bake_texture.reset(this->rhi->newTexture(
+            QRhiTexture::RGBA8,
+            QSize(GlobeHeatmapTextureSize, GlobeHeatmapTextureSize), 1,
+            QRhiTexture::RenderTarget
+                | QRhiTexture::UsedAsTransferSource));
+        if (!this->diagnostic_heatmap_bake_texture
+            || !this->diagnostic_heatmap_bake_texture->create())
+        {
+            releaseDiagnosticHeatmapGpuBakeResources();
+            return false;
+        }
+    }
+
+    if (!this->diagnostic_heatmap_bake_target)
+    {
+        const QRhiTextureRenderTargetDescription target_description(
+            QRhiColorAttachment(
+                this->diagnostic_heatmap_bake_texture.get()));
+        this->diagnostic_heatmap_bake_target.reset(
+            this->rhi->newTextureRenderTarget(target_description));
+        if (!this->diagnostic_heatmap_bake_target)
+        {
+            releaseDiagnosticHeatmapGpuBakeResources();
+            return false;
+        }
+        this->diagnostic_heatmap_bake_render_pass_descriptor.reset(
+            this->diagnostic_heatmap_bake_target
+                ->newCompatibleRenderPassDescriptor());
+        if (!this->diagnostic_heatmap_bake_render_pass_descriptor)
+        {
+            releaseDiagnosticHeatmapGpuBakeResources();
+            return false;
+        }
+        this->diagnostic_heatmap_bake_target->setRenderPassDescriptor(
+            this->diagnostic_heatmap_bake_render_pass_descriptor.get());
+        if (!this->diagnostic_heatmap_bake_target->create())
+        {
+            releaseDiagnosticHeatmapGpuBakeResources();
+            return false;
+        }
+    }
+
+    if (!this->diagnostic_heatmap_bake_bindings)
+    {
+        this->diagnostic_heatmap_bake_bindings.reset(
+            this->rhi->newShaderResourceBindings());
+        if (!this->diagnostic_heatmap_bake_bindings)
+        {
+            releaseDiagnosticHeatmapGpuBakeResources();
+            return false;
+        }
+        this->diagnostic_heatmap_bake_bindings->setBindings({});
+        if (!this->diagnostic_heatmap_bake_bindings->create())
+        {
+            releaseDiagnosticHeatmapGpuBakeResources();
+            return false;
+        }
+    }
+
+    if (!this->diagnostic_heatmap_bake_vertex_buffer)
+    {
+        constexpr int VertexCount = 6;
+        const int vertex_bytes =
+            VertexCount * int(sizeof(HeatmapBakeVertex));
+        this->diagnostic_heatmap_bake_vertex_buffer.reset(
+            this->rhi->newBuffer(
+                QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer,
+                vertex_bytes));
+        if (!this->diagnostic_heatmap_bake_vertex_buffer
+            || !this->diagnostic_heatmap_bake_vertex_buffer->create())
+        {
+            releaseDiagnosticHeatmapGpuBakeResources();
+            return false;
+        }
+        this->diagnostic_heatmap_bake_vertex_upload_pending = true;
+    }
+
+    if (!this->diagnostic_heatmap_bake_pipeline)
+    {
+        const QShader vertex_shader = loadGlobeShader(QStringLiteral(
+            ":/aowis/map/rhi/map_rhi_globe_heatmap_bake.vert.qsb"));
+        const QShader fragment_shader = loadGlobeShader(QStringLiteral(
+            ":/aowis/map/rhi/map_rhi_globe_heatmap_bake.frag.qsb"));
+        if (!vertex_shader.isValid() || !fragment_shader.isValid())
+        {
+            releaseDiagnosticHeatmapGpuBakeResources();
+            return false;
+        }
+
+        QRhiVertexInputLayout input_layout;
+        input_layout.setBindings({
+            {quint32(sizeof(HeatmapBakeVertex))},
+            {quint32(sizeof(HeatmapBakeInstance)),
+             QRhiVertexInputBinding::PerInstance}
+        });
+        input_layout.setAttributes({
+            {0, 0, QRhiVertexInputAttribute::Float2,
+             quint32(offsetof(HeatmapBakeVertex, corner_x))},
+            {1, 1, QRhiVertexInputAttribute::Float2,
+             quint32(offsetof(HeatmapBakeInstance, center_x_pixels))},
+            {1, 2, QRhiVertexInputAttribute::Float2,
+             quint32(offsetof(HeatmapBakeInstance, radius_pixels))},
+            {1, 3, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(HeatmapBakeInstance, red))},
+            {1, 4, QRhiVertexInputAttribute::Float2,
+             quint32(offsetof(HeatmapBakeInstance, target_scale_x))}
+        });
+
+        this->diagnostic_heatmap_bake_pipeline.reset(
+            this->rhi->newGraphicsPipeline());
+        if (!this->diagnostic_heatmap_bake_pipeline)
+        {
+            releaseDiagnosticHeatmapGpuBakeResources();
+            return false;
+        }
+        this->diagnostic_heatmap_bake_pipeline->setShaderStages({
+            {QRhiShaderStage::Vertex, vertex_shader},
+            {QRhiShaderStage::Fragment, fragment_shader}
+        });
+        this->diagnostic_heatmap_bake_pipeline->setVertexInputLayout(
+            input_layout);
+        this->diagnostic_heatmap_bake_pipeline->setShaderResourceBindings(
+            this->diagnostic_heatmap_bake_bindings.get());
+        this->diagnostic_heatmap_bake_pipeline->setRenderPassDescriptor(
+            this->diagnostic_heatmap_bake_render_pass_descriptor.get());
+        this->diagnostic_heatmap_bake_pipeline->setTopology(
+            QRhiGraphicsPipeline::Triangles);
+        this->diagnostic_heatmap_bake_pipeline->setSampleCount(1);
+        this->diagnostic_heatmap_bake_pipeline->setCullMode(
+            QRhiGraphicsPipeline::None);
+        this->diagnostic_heatmap_bake_pipeline->setDepthTest(false);
+        this->diagnostic_heatmap_bake_pipeline->setDepthWrite(false);
+        QRhiGraphicsPipeline::TargetBlend heatmap_blend;
+        heatmap_blend.enable = true;
+        this->diagnostic_heatmap_bake_pipeline->setTargetBlends({
+            heatmap_blend
+        });
+        if (!this->diagnostic_heatmap_bake_pipeline->create())
+        {
+            releaseDiagnosticHeatmapGpuBakeResources();
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool MapRhiGlobeRenderer::runPendingHeatmapGpuBakes(
+    QRhiCommandBuffer *command_buffer)
+{
+    if (this->heatmap_gpu_bake_jobs.isEmpty())
+        return true;
+
+    qsizetype total_instance_count = 0;
+    for (const HeatmapGpuBakeJob &job : this->heatmap_gpu_bake_jobs)
+    {
+        if (job.resource == nullptr || job.destination_texture == nullptr
+            || job.destination_layer < 0
+            || job.destination_layer >= GlobeTileArrayLayerCount
+            || job.revision != this->heatmap_revision
+            || job.instances.isEmpty()
+            || total_instance_count
+                > std::numeric_limits<qsizetype>::max()
+                    - job.instances.size())
+        {
+            disableHeatmapGpuBaking();
+            return false;
+        }
+        total_instance_count += job.instances.size();
+    }
+    if (total_instance_count
+        > qsizetype(std::numeric_limits<int>::max())
+            / qsizetype(sizeof(HeatmapBakeInstance)))
+    {
+        disableHeatmapGpuBaking();
+        return false;
+    }
+    const qsizetype required_bytes_qsize = total_instance_count
+        * qsizetype(sizeof(HeatmapBakeInstance));
+    if (command_buffer == nullptr || required_bytes_qsize <= 0
+        || !ensureDiagnosticHeatmapGpuBakeResources())
+    {
+        disableHeatmapGpuBaking();
+        return false;
+    }
+    const int maximum_atlas_slots =
+        maximumVisibleHeatmapGpuBakeAtlasSlots();
+    if (maximum_atlas_slots <= 0)
+    {
+        disableHeatmapGpuBaking();
+        return false;
+    }
+
+    const int required_bytes = int(required_bytes_qsize);
+    if (!this->heatmap_gpu_bake_instance_buffer
+        || this->heatmap_gpu_bake_instance_buffer_size < required_bytes)
+    {
+        this->heatmap_gpu_bake_instance_buffer.reset(
+            this->rhi->newBuffer(
+                QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer,
+                required_bytes));
+        if (!this->heatmap_gpu_bake_instance_buffer
+            || !this->heatmap_gpu_bake_instance_buffer->create())
+        {
+            this->heatmap_gpu_bake_instance_buffer.reset();
+            this->heatmap_gpu_bake_instance_buffer_size = 0;
+            disableHeatmapGpuBaking();
+            return false;
+        }
+        this->heatmap_gpu_bake_instance_buffer_size = required_bytes;
+    }
+
+    struct HeatmapGpuBakePage
+    {
+        int first_job = 0;
+        int last_job = 0;
+        HeatmapGpuBakeAtlas *atlas = nullptr;
+        qsizetype first_instance = 0;
+        qsizetype instance_count = 0;
+    };
+
+    const int job_count = int(this->heatmap_gpu_bake_jobs.size());
+    QVector<HeatmapGpuBakePage> pages;
+    pages.reserve(
+        (job_count + maximum_atlas_slots - 1) / maximum_atlas_slots);
+    QVector<HeatmapBakeInstance> all_instances;
+    all_instances.reserve(int(total_instance_count));
+    for (int first_job = 0; first_job < job_count;)
+    {
+        HeatmapGpuBakePage page;
+        page.first_job = first_job;
+        page.last_job = qMin(
+            first_job + maximum_atlas_slots, job_count);
+
+        const int page_tile_count = page.last_job - page.first_job;
+        int requested_slots = 1;
+        while (requested_slots < page_tile_count)
+            requested_slots *= 2;
+        page.atlas = ensureVisibleHeatmapGpuBakeAtlasResources(
+            requested_slots);
+        if (page.atlas == nullptr)
+        {
+            page.atlas = ensureVisibleHeatmapGpuBakeAtlasResources(
+                maximum_atlas_slots);
+        }
+        if (page.atlas == nullptr
+            || page.atlas->slot_count < page_tile_count)
+        {
+            disableHeatmapGpuBaking();
+            return false;
+        }
+
+        page.first_instance = all_instances.size();
+        const float atlas_slot_scale =
+            1.0f / float(page.atlas->slot_count);
+        for (int job_index = page.first_job;
+             job_index < page.last_job; ++job_index)
+        {
+            const HeatmapGpuBakeJob &job =
+                this->heatmap_gpu_bake_jobs.at(job_index);
+            const int slot = job_index - page.first_job;
+            for (const HeatmapBakeInstance &source_instance : job.instances)
+            {
+                HeatmapBakeInstance instance = source_instance;
+                instance.target_scale_x = atlas_slot_scale;
+                instance.target_offset_x =
+                    float(slot) * atlas_slot_scale;
+                all_instances.append(instance);
+            }
+        }
+        page.instance_count =
+            all_instances.size() - page.first_instance;
+        pages.append(page);
+        first_job = page.last_job;
+    }
+
+    // QRhi dynamic-buffer writes may accumulate within a frame, so later
+    // writes to an overlapping range are not guaranteed to stay invisible
+    // to earlier passes. Upload every tile's instances once into disjoint
+    // ranges and select those ranges with vertex-buffer offsets below.
+    QRhiResourceUpdateBatch *bake_updates =
+        this->rhi->nextResourceUpdateBatch();
+    if (bake_updates == nullptr)
+    {
+        disableHeatmapGpuBaking();
+        return false;
+    }
+    const bool upload_bake_vertices =
+        this->diagnostic_heatmap_bake_vertex_upload_pending;
+    if (upload_bake_vertices)
+    {
+        const HeatmapBakeVertex vertices[] = {
+            {-1.0f, -1.0f}, {1.0f, -1.0f},
+            {-1.0f, 1.0f}, {-1.0f, 1.0f},
+            {1.0f, -1.0f}, {1.0f, 1.0f}
+        };
+        bake_updates->uploadStaticBuffer(
+            this->diagnostic_heatmap_bake_vertex_buffer.get(), vertices);
+    }
+    bake_updates->updateDynamicBuffer(
+        this->heatmap_gpu_bake_instance_buffer.get(), 0,
+        required_bytes, all_instances.constData());
+
+    QVector<QRhiResourceUpdateBatch *> page_copy_updates;
+    page_copy_updates.reserve(pages.size());
+    for (const HeatmapGpuBakePage &page : pages)
+    {
+        QRhiResourceUpdateBatch *copy_updates =
+            this->rhi->nextResourceUpdateBatch();
+        if (copy_updates == nullptr)
+        {
+            for (QRhiResourceUpdateBatch *allocated_updates
+                 : page_copy_updates)
+            {
+                allocated_updates->release();
+            }
+            bake_updates->release();
+            if (upload_bake_vertices)
+                this->diagnostic_heatmap_bake_vertex_upload_pending = true;
+            disableHeatmapGpuBaking();
+            return false;
+        }
+
+        for (int job_index = page.first_job;
+             job_index < page.last_job; ++job_index)
+        {
+            const HeatmapGpuBakeJob &job =
+                this->heatmap_gpu_bake_jobs.at(job_index);
+            const int slot = job_index - page.first_job;
+            QRhiTextureCopyDescription copy_description;
+            copy_description.setSourceTopLeft(QPoint(
+                slot * GlobeHeatmapTextureSize, 0));
+            copy_description.setDestinationLayer(job.destination_layer);
+            copy_description.setPixelSize(QSize(
+                GlobeHeatmapTextureSize, GlobeHeatmapTextureSize));
+            copy_updates->copyTexture(
+                job.destination_texture, page.atlas->texture.get(),
+                copy_description);
+        }
+        page_copy_updates.append(copy_updates);
+    }
+    if (upload_bake_vertices)
+        this->diagnostic_heatmap_bake_vertex_upload_pending = false;
+
+    int recorded_tiles = 0;
+    int recorded_stamps = 0;
+    int recorded_passes = 0;
+    int recorded_copy_batches = 0;
+    int recorded_array_copies = 0;
+    for (int page_index = 0; page_index < pages.size(); ++page_index)
+    {
+        const HeatmapGpuBakePage &page = pages.at(page_index);
+        const QSize atlas_size(
+            page.atlas->slot_count * GlobeHeatmapTextureSize,
+            GlobeHeatmapTextureSize);
+
+        command_buffer->beginPass(
+            page.atlas->target.get(),
+            Qt::transparent, {1.0f, 0},
+            page_index == 0 ? bake_updates : nullptr);
+        command_buffer->setViewport(QRhiViewport(
+            0.0f, 0.0f, float(atlas_size.width()),
+            float(atlas_size.height())));
+        command_buffer->setGraphicsPipeline(
+            this->diagnostic_heatmap_bake_pipeline.get());
+        command_buffer->setShaderResources(
+            this->diagnostic_heatmap_bake_bindings.get());
+        const QRhiCommandBuffer::VertexInput bindings[] = {
+            {this->diagnostic_heatmap_bake_vertex_buffer.get(), 0},
+            {this->heatmap_gpu_bake_instance_buffer.get(),
+             quint32(page.first_instance
+                 * qsizetype(sizeof(HeatmapBakeInstance)))}
+        };
+        command_buffer->setVertexInput(0, 2, bindings);
+        command_buffer->draw(6, quint32(page.instance_count));
+        command_buffer->endPass(page_copy_updates.at(page_index));
+
+        for (int job_index = page.first_job;
+             job_index < page.last_job; ++job_index)
+        {
+            const HeatmapGpuBakeJob &job =
+                this->heatmap_gpu_bake_jobs.at(job_index);
+            if (job.destination_layer > 0)
+            {
+                job.resource->heatmap_array_revision = job.revision;
+                ++recorded_array_copies;
+            }
+            else
+            {
+                job.resource->heatmap_texture_revision = job.revision;
+            }
+            job.resource->heatmap_revision = job.revision;
+        }
+
+        const int page_tile_count = page.last_job - page.first_job;
+        recorded_tiles += page_tile_count;
+        recorded_stamps += int(page.instance_count);
+        ++recorded_passes;
+        ++recorded_copy_batches;
+    }
+
+    this->heatmap_profile.gpu_visible_bake_passes += recorded_passes;
+    this->heatmap_profile.gpu_visible_bake_stamps += recorded_stamps;
+    this->heatmap_profile.gpu_visible_copies += recorded_tiles;
+    this->heatmap_profile.gpu_visible_copy_batches +=
+        recorded_copy_batches;
+    this->heatmap_profile.gpu_visible_array_copies +=
+        recorded_array_copies;
+
+    qCDebug(globeHeatmapPerformanceLog).noquote().nospace()
+        << "visible_gpu_bakes revision=" << this->heatmap_revision
+        << " tiles=" << recorded_tiles
+        << " passes=" << recorded_passes
+        << " stamps=" << recorded_stamps
+        << " copies=" << recorded_tiles
+        << " array_copies=" << recorded_array_copies
+        << " copy_batches=" << recorded_copy_batches
+        << " atlas_slots_max=" << maximum_atlas_slots
+        << " array_config="
+        << (guiConfiguration().map_performance.array_batching_enabled ? 1 : 0)
+        << " texture_arrays="
+        << (this->rhi != nullptr
+                && this->rhi->isFeatureSupported(QRhi::TextureArrays)
+            ? 1 : 0)
+        << " imagery_array_pipeline="
+        << (this->array_pipeline ? 1 : 0)
+        << " imagery_array_pages=" << this->tile_array_pages.size()
+        << " imagery_array_active=" << (arrayBatchingActive() ? 1 : 0)
+        << " status=recorded";
+    this->heatmap_gpu_bake_jobs.clear();
+    return true;
+}
+
+void MapRhiGlobeRenderer::runDiagnosticHeatmapGpuBake(
+    QRhiCommandBuffer *command_buffer)
+{
+    if (!this->diagnostic_heatmap_bake_pending
+        && !this->heatmap_profile_report_pending)
+    {
+        return;
+    }
+
+    QString failure;
+    if (this->diagnostic_heatmap_bake_pending
+        && this->heatmap_profile.enabled)
+    {
+        const qsizetype required_bytes_qsize =
+            this->diagnostic_heatmap_bake_instances.size()
+            * qsizetype(sizeof(HeatmapBakeInstance));
+        if (command_buffer == nullptr)
+        {
+            failure = QStringLiteral("missing_command_buffer");
+        }
+        else if (required_bytes_qsize <= 0
+                 || required_bytes_qsize
+                    > qsizetype(std::numeric_limits<int>::max()))
+        {
+            failure = QStringLiteral("invalid_instance_buffer_size");
+        }
+        else if (!ensureDiagnosticHeatmapGpuBakeResources())
+        {
+            failure = QStringLiteral("resource_creation_failed");
+        }
+        else
+        {
+            const int required_bytes = int(required_bytes_qsize);
+            if (!this->diagnostic_heatmap_bake_instance_buffer
+                || this->diagnostic_heatmap_bake_instance_buffer_size
+                    < required_bytes)
+            {
+                this->diagnostic_heatmap_bake_instance_buffer.reset(
+                    this->rhi->newBuffer(
+                        QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer,
+                        required_bytes));
+                if (!this->diagnostic_heatmap_bake_instance_buffer
+                    || !this->diagnostic_heatmap_bake_instance_buffer
+                        ->create())
+                {
+                    this->diagnostic_heatmap_bake_instance_buffer.reset();
+                    this->diagnostic_heatmap_bake_instance_buffer_size = 0;
+                    failure = QStringLiteral(
+                        "instance_buffer_creation_failed");
+                }
+                else
+                {
+                    this->diagnostic_heatmap_bake_instance_buffer_size =
+                        required_bytes;
+                }
+            }
+
+            if (failure.isEmpty())
+            {
+                QRhiResourceUpdateBatch *resource_updates =
+                    this->rhi->nextResourceUpdateBatch();
+                if (resource_updates == nullptr)
+                {
+                    failure = QStringLiteral("update_batch_unavailable");
+                }
+                else
+                {
+                    if (this->diagnostic_heatmap_bake_vertex_upload_pending)
+                    {
+                        const HeatmapBakeVertex vertices[] = {
+                            {-1.0f, -1.0f}, {1.0f, -1.0f},
+                            {-1.0f, 1.0f}, {-1.0f, 1.0f},
+                            {1.0f, -1.0f}, {1.0f, 1.0f}
+                        };
+                        resource_updates->uploadStaticBuffer(
+                            this->diagnostic_heatmap_bake_vertex_buffer.get(),
+                            vertices);
+                        this->diagnostic_heatmap_bake_vertex_upload_pending =
+                            false;
+                    }
+                    resource_updates->updateDynamicBuffer(
+                        this->diagnostic_heatmap_bake_instance_buffer.get(),
+                        0, required_bytes,
+                        this->diagnostic_heatmap_bake_instances.constData());
+
+                    command_buffer->beginPass(
+                        this->diagnostic_heatmap_bake_target.get(),
+                        Qt::transparent, {1.0f, 0}, resource_updates);
+                    command_buffer->setViewport(QRhiViewport(
+                        0.0f, 0.0f, float(GlobeHeatmapTextureSize),
+                        float(GlobeHeatmapTextureSize)));
+                    command_buffer->setGraphicsPipeline(
+                        this->diagnostic_heatmap_bake_pipeline.get());
+                    command_buffer->setShaderResources(
+                        this->diagnostic_heatmap_bake_bindings.get());
+                    const QRhiCommandBuffer::VertexInput bindings[] = {
+                        {this->diagnostic_heatmap_bake_vertex_buffer.get(), 0},
+                        {this->diagnostic_heatmap_bake_instance_buffer.get(), 0}
+                    };
+                    command_buffer->setVertexInput(0, 2, bindings);
+                    command_buffer->draw(
+                        6,
+                        quint32(
+                            this->diagnostic_heatmap_bake_instances.size()));
+                    command_buffer->endPass();
+
+                    if (this->diagnostic_heatmap_bake_cpu_reference.isNull())
+                    {
+                        qCDebug(globeHeatmapPerformanceLog)
+                            .noquote().nospace()
+                            << "diagnostic_gpu_validation revision="
+                            << this->diagnostic_heatmap_bake_revision
+                            << " tile="
+                            << this->diagnostic_heatmap_bake_zoom << "/"
+                            << this->diagnostic_heatmap_bake_tile_x << "/"
+                            << this->diagnostic_heatmap_bake_tile_y
+                            << " status=skipped reason="
+                               "missing_cpu_reference";
+                    }
+                    else
+                    {
+                        QRhiResourceUpdateBatch *readback_updates =
+                            this->rhi->nextResourceUpdateBatch();
+                        if (readback_updates == nullptr)
+                        {
+                            qCDebug(globeHeatmapPerformanceLog)
+                                .noquote().nospace()
+                                << "diagnostic_gpu_validation revision="
+                                << this->diagnostic_heatmap_bake_revision
+                                << " tile="
+                                << this->diagnostic_heatmap_bake_zoom << "/"
+                                << this->diagnostic_heatmap_bake_tile_x << "/"
+                                << this->diagnostic_heatmap_bake_tile_y
+                                << " status=skipped reason="
+                                   "update_batch_unavailable";
+                        }
+                        else
+                        {
+                            QRhiReadbackResult *readback_result =
+                                new QRhiReadbackResult{};
+                            const QImage cpu_reference =
+                                this->diagnostic_heatmap_bake_cpu_reference;
+                            const quint64 revision =
+                                this->diagnostic_heatmap_bake_revision;
+                            const int zoom =
+                                this->diagnostic_heatmap_bake_zoom;
+                            const int tile_x =
+                                this->diagnostic_heatmap_bake_tile_x;
+                            const int tile_y =
+                                this->diagnostic_heatmap_bake_tile_y;
+                            const int stamp_count = int(
+                                this->diagnostic_heatmap_bake_instances.size());
+                            readback_result->completed = [
+                                readback_result, cpu_reference, revision, zoom,
+                                tile_x, tile_y, stamp_count]()
+                            {
+                                reportGlobeHeatmapGpuValidation(
+                                    *readback_result, cpu_reference, revision,
+                                    zoom, tile_x, tile_y, stamp_count);
+                                delete readback_result;
+                            };
+                            readback_updates->readBackTexture(
+                                QRhiReadbackDescription(
+                                    this->diagnostic_heatmap_bake_texture.get()),
+                                readback_result);
+                            command_buffer->resourceUpdate(readback_updates);
+                            ++this->heatmap_profile.gpu_validation_readbacks;
+                        }
+                    }
+
+                    ++this->heatmap_profile.gpu_bake_passes;
+                    this->heatmap_profile.gpu_bake_stamps +=
+                        int(this->diagnostic_heatmap_bake_instances.size());
+                    qCDebug(globeHeatmapPerformanceLog).noquote().nospace()
+                        << "diagnostic_gpu_bake revision="
+                        << this->diagnostic_heatmap_bake_revision
+                        << " tile=" << this->diagnostic_heatmap_bake_zoom
+                        << "/" << this->diagnostic_heatmap_bake_tile_x
+                        << "/" << this->diagnostic_heatmap_bake_tile_y
+                        << " stamps="
+                        << this->diagnostic_heatmap_bake_instances.size()
+                        << " target=" << GlobeHeatmapTextureSize << "x"
+                        << GlobeHeatmapTextureSize
+                        << " status=recorded";
+                }
+            }
+        }
+
+        if (!failure.isEmpty())
+        {
+            qCDebug(globeHeatmapPerformanceLog).noquote().nospace()
+                << "diagnostic_gpu_bake revision="
+                << this->diagnostic_heatmap_bake_revision
+                << " tile=" << this->diagnostic_heatmap_bake_zoom
+                << "/" << this->diagnostic_heatmap_bake_tile_x
+                << "/" << this->diagnostic_heatmap_bake_tile_y
+                << " stamps="
+                << this->diagnostic_heatmap_bake_instances.size()
+                << " status=" << failure;
+        }
+    }
+
+    this->diagnostic_heatmap_bake_instances.clear();
+    this->diagnostic_heatmap_bake_cpu_reference = QImage();
+    this->diagnostic_heatmap_bake_pending = false;
+    this->diagnostic_heatmap_bake_revision = 0;
+    if (this->heatmap_profile_report_pending)
+    {
+        reportHeatmapProfile();
+        this->heatmap_profile_report_pending = false;
+    }
 }
 
 bool MapRhiGlobeRenderer::ensureHeatmapTexture(
     const GlobeTile &tile, TileResource *resource,
     QRhiResourceUpdateBatch *resource_updates, QImage *updated_image,
+    QVector<HeatmapStamp> *updated_stamps,
     bool upload_fallback_texture)
 {
     ScopedHeatmapProfileTimer profile_timer(
         &this->heatmap_profile.cpu_ns, this->heatmap_profile.enabled);
     if (updated_image != nullptr)
         *updated_image = QImage();
+    if (updated_stamps != nullptr)
+        updated_stamps->clear();
     if (resource == nullptr || resource_updates == nullptr)
         return false;
     // Cheap common case: this tile's heatmap state already reflects the
@@ -3070,7 +4382,81 @@ bool MapRhiGlobeRenderer::ensureHeatmapTexture(
 
     if (this->heatmap_profile.enabled)
         ++this->heatmap_profile.dirty_tiles;
-    QImage image = renderHeatmapTileProfiled(tile);
+
+    // Both visible destinations consume the same small ordered stamp list:
+    // the ordinary fallback texture can be queued immediately, while the
+    // array destination is assigned by ensureTileHeatmapArray() later in
+    // this prepare(). No pixels are rasterized or uploaded by the CPU on
+    // either successful GPU path.
+    if (!this->heatmap_gpu_baking_disabled)
+    {
+        QVector<HeatmapStamp> local_stamps;
+        QVector<HeatmapStamp> *stamps = updated_stamps != nullptr
+            ? updated_stamps : &local_stamps;
+        *stamps = heatmapStampsForTileProfiled(tile, resource);
+        resource->heatmap_has_content = !stamps->isEmpty();
+        bool bindings_changed = false;
+        if (stamps->isEmpty())
+        {
+            if (resource->heatmap_texture)
+            {
+                resource->bindings.reset();
+                resource->heatmap_texture.reset();
+                bindings_changed = true;
+            }
+            resource->heatmap_texture_revision = this->heatmap_revision;
+            resource->heatmap_revision = this->heatmap_revision;
+            if (bindings_changed || resource->bindings == nullptr)
+                return rebuildTileBindings(resource);
+            return true;
+        }
+
+        if (!upload_fallback_texture)
+            return resource->bindings != nullptr
+                || rebuildTileBindings(resource);
+
+        if (!ensureDiagnosticHeatmapGpuBakeResources())
+        {
+            disableHeatmapGpuBaking();
+        }
+        else
+        {
+            if (!resource->heatmap_texture)
+            {
+                resource->bindings.reset();
+                resource->heatmap_texture.reset(this->rhi->newTexture(
+                    QRhiTexture::RGBA8,
+                    QSize(GlobeHeatmapTextureSize,
+                          GlobeHeatmapTextureSize)));
+                if (!resource->heatmap_texture
+                    || !resource->heatmap_texture->create())
+                {
+                    resource->heatmap_texture.reset();
+                    disableHeatmapGpuBaking();
+                }
+                else
+                {
+                    bindings_changed = true;
+                }
+            }
+
+            if (!this->heatmap_gpu_baking_disabled
+                && queueHeatmapGpuBake(
+                    resource, resource->heatmap_texture.get(), *stamps))
+            {
+                // Treat the sampled texture as current for the fallback
+                // check later in this prepare(), but do not commit the
+                // tile's logical revision until the copy is recorded.
+                resource->heatmap_texture_revision =
+                    this->heatmap_revision;
+                if (bindings_changed || resource->bindings == nullptr)
+                    return rebuildTileBindings(resource);
+                return true;
+            }
+        }
+    }
+
+    QImage image = renderHeatmapTileProfiled(tile, resource);
     resource->heatmap_has_content = !image.isNull();
     bool bindings_changed = false;
     if (!image.isNull() && upload_fallback_texture)
@@ -3112,7 +4498,9 @@ bool MapRhiGlobeRenderer::ensureHeatmapTexture(
 
 bool MapRhiGlobeRenderer::ensureHeatmapFallbackTexture(
     const GlobeTile &tile, TileResource *resource,
-    const QImage &updated_image, QRhiResourceUpdateBatch *resource_updates)
+    const QImage &updated_image,
+    const QVector<HeatmapStamp> &updated_stamps,
+    QRhiResourceUpdateBatch *resource_updates)
 {
     ScopedHeatmapProfileTimer profile_timer(
         &this->heatmap_profile.cpu_ns, this->heatmap_profile.enabled);
@@ -3127,9 +4515,75 @@ bool MapRhiGlobeRenderer::ensureHeatmapFallbackTexture(
         return resource->bindings != nullptr || rebuildTileBindings(resource);
     }
 
+    if (!this->heatmap_gpu_baking_disabled)
+    {
+        QVector<HeatmapStamp> regenerated_stamps;
+        const QVector<HeatmapStamp> *stamps = &updated_stamps;
+        if (stamps->isEmpty())
+        {
+            regenerated_stamps = heatmapStampsForTileProfiled(
+                tile, resource);
+            stamps = &regenerated_stamps;
+        }
+
+        if (stamps->isEmpty())
+        {
+            const bool bindings_changed =
+                resource->heatmap_texture != nullptr;
+            if (bindings_changed)
+            {
+                resource->bindings.reset();
+                resource->heatmap_texture.reset();
+            }
+            resource->heatmap_has_content = false;
+            resource->heatmap_texture_revision = this->heatmap_revision;
+            resource->heatmap_revision = this->heatmap_revision;
+            if (bindings_changed || resource->bindings == nullptr)
+                return rebuildTileBindings(resource);
+            return true;
+        }
+
+        if (ensureDiagnosticHeatmapGpuBakeResources())
+        {
+            bool bindings_changed = false;
+            if (!resource->heatmap_texture)
+            {
+                resource->bindings.reset();
+                resource->heatmap_texture.reset(this->rhi->newTexture(
+                    QRhiTexture::RGBA8,
+                    QSize(GlobeHeatmapTextureSize,
+                          GlobeHeatmapTextureSize)));
+                if (resource->heatmap_texture
+                    && resource->heatmap_texture->create())
+                {
+                    bindings_changed = true;
+                }
+                else
+                {
+                    resource->heatmap_texture.reset();
+                }
+            }
+
+            if (resource->heatmap_texture
+                && queueHeatmapGpuBake(
+                    resource, resource->heatmap_texture.get(), *stamps))
+            {
+                resource->heatmap_texture_revision =
+                    this->heatmap_revision;
+                if (bindings_changed || resource->bindings == nullptr)
+                    return rebuildTileBindings(resource);
+                return true;
+            }
+        }
+
+        disableHeatmapGpuBaking();
+    }
+
+    // Automatic backend/resource failure fallback. This is the only
+    // remaining visible path that rasterizes heatmap pixels on the CPU.
     QImage image = updated_image;
     if (image.isNull())
-        image = renderHeatmapTileProfiled(tile);
+        image = renderHeatmapTileProfiled(tile, resource);
     if (image.isNull())
         return false;
 
@@ -3152,6 +4606,7 @@ bool MapRhiGlobeRenderer::ensureHeatmapFallbackTexture(
         this->heatmap_profile.upload_bytes += quint64(image.sizeInBytes());
     }
     resource->heatmap_texture_revision = this->heatmap_revision;
+    resource->heatmap_revision = this->heatmap_revision;
     if (bindings_changed || resource->bindings == nullptr)
         return rebuildTileBindings(resource);
     return true;
@@ -3159,10 +4614,28 @@ bool MapRhiGlobeRenderer::ensureHeatmapFallbackTexture(
 
 bool MapRhiGlobeRenderer::requestMissingTiles(QRhiResourceUpdateBatch *resource_updates)
 {
+    // A normal frame consumes this queue before the next prepare(). If a
+    // preceding frame aborted later in preparation, invalidate its queued
+    // texture revisions so the same tiles are queued again instead of
+    // sampling data that was never recorded.
+    for (const HeatmapGpuBakeJob &job : this->heatmap_gpu_bake_jobs)
+    {
+        if (job.resource == nullptr)
+            continue;
+        job.resource->heatmap_revision = 0;
+        if (job.destination_layer > 0)
+            job.resource->heatmap_array_revision = 0;
+        else
+            job.resource->heatmap_texture_revision = 0;
+    }
+    this->heatmap_gpu_bake_jobs.clear();
+
     this->heatmap_profile = HeatmapProfileCounters();
     this->heatmap_profile.enabled =
         globeHeatmapPerformanceLog().isDebugEnabled();
     this->heatmap_profile.visible_tiles = this->window_tiles.size();
+    this->heatmap_profile_report_pending = this->heatmap_profile.enabled;
+    scheduleDiagnosticHeatmapGpuSelfTest();
 
     if (this->dummy_texture_upload_pending && this->dummy_texture)
     {
@@ -3195,20 +4668,23 @@ bool MapRhiGlobeRenderer::requestMissingTiles(QRhiResourceUpdateBatch *resource_
     {
         QImage updated_image;
         QImage updated_heatmap_image;
+        QVector<HeatmapStamp> updated_heatmap_stamps;
         if (!ensureTileResource(
                 tile, resource_updates, &updated_image,
-                &updated_heatmap_image))
+                &updated_heatmap_image, &updated_heatmap_stamps))
             return false;
         if (!ensureTileArrayLayer(tile, updated_image, resource_updates))
             return false;
         if (!ensureTileHeatmapArray(
-                tile, updated_heatmap_image, resource_updates))
+                tile, updated_heatmap_image, updated_heatmap_stamps,
+                resource_updates))
         {
             return false;
         }
         if (!tile.array_ready && tile.resource != nullptr
             && !ensureHeatmapFallbackTexture(
                 tile, tile.resource, updated_heatmap_image,
+                updated_heatmap_stamps,
                 resource_updates))
         {
             return false;
@@ -3220,7 +4696,6 @@ bool MapRhiGlobeRenderer::requestMissingTiles(QRhiResourceUpdateBatch *resource_
             return false;
     }
     trimUnusedHeatmapArrayPages();
-    reportHeatmapProfile();
     return true;
 }
 
@@ -3232,7 +4707,9 @@ void MapRhiGlobeRenderer::reportHeatmapProfile() const
         && this->heatmap_profile.raster_calls <= 0
         && this->heatmap_profile.fallback_uploads <= 0
         && this->heatmap_profile.array_uploads <= 0
-        && this->heatmap_profile.gpu_bake_passes <= 0)
+        && this->heatmap_profile.gpu_visible_bake_passes <= 0
+        && this->heatmap_profile.gpu_bake_passes <= 0
+        && this->heatmap_profile.gpu_validation_readbacks <= 0)
     {
         return;
     }
@@ -3250,6 +4727,15 @@ void MapRhiGlobeRenderer::reportHeatmapProfile() const
         << this->heatmap_profile.candidate_markers
         << " marker_tile_pairs="
         << this->heatmap_profile.marker_tile_pairs
+        << " stamp_layout_cache_hits="
+        << this->heatmap_profile.stamp_layout_cache_hits
+        << " stamp_layout_cache_misses="
+        << this->heatmap_profile.stamp_layout_cache_misses
+        << " stamp_ms="
+        << QString::number(
+               double(this->heatmap_profile.stamp_ns)
+                   / NsecsPerMillisecond,
+               'f', 3)
         << " raster_ms="
         << QString::number(
                double(this->heatmap_profile.raster_ns)
@@ -3268,8 +4754,35 @@ void MapRhiGlobeRenderer::reportHeatmapProfile() const
                double(this->heatmap_profile.upload_bytes)
                    / BytesPerMebibyte,
                'f', 3)
+        << " gpu_visible_bake_passes="
+        << this->heatmap_profile.gpu_visible_bake_passes
+        << " gpu_visible_bake_stamps="
+        << this->heatmap_profile.gpu_visible_bake_stamps
+        << " gpu_visible_copies="
+        << this->heatmap_profile.gpu_visible_copies
+        << " gpu_visible_copy_batches="
+        << this->heatmap_profile.gpu_visible_copy_batches
+        << " gpu_visible_array_copies="
+        << this->heatmap_profile.gpu_visible_array_copies
         << " gpu_bake_passes="
-        << this->heatmap_profile.gpu_bake_passes;
+        << this->heatmap_profile.gpu_bake_passes
+        << " gpu_bake_stamps="
+        << this->heatmap_profile.gpu_bake_stamps
+        << " gpu_validation_readbacks="
+        << this->heatmap_profile.gpu_validation_readbacks
+        << " array_config="
+        << (guiConfiguration().map_performance.array_batching_enabled ? 1 : 0)
+        << " texture_arrays="
+        << (this->rhi != nullptr
+                && this->rhi->isFeatureSupported(QRhi::TextureArrays)
+            ? 1 : 0)
+        << " imagery_array_pipeline="
+        << (this->array_pipeline ? 1 : 0)
+        << " imagery_array_pages=" << this->tile_array_pages.size()
+        << " imagery_array_active=" << (arrayBatchingActive() ? 1 : 0)
+        << " heatmap_array_pipeline="
+        << (this->heatmap_array_pipeline ? 1 : 0)
+        << " heatmap_array_pages=" << this->heatmap_array_pages.size();
 }
 
 
@@ -4268,6 +5781,7 @@ void MapRhiGlobeRenderer::draw(QRhiCommandBuffer *command_buffer)
 
 void MapRhiGlobeRenderer::invalidateImagery()
 {
+    this->heatmap_gpu_bake_jobs.clear();
     resetWindowArrayLayers();
     this->tile_resources.clear();
     this->cap_resource = TileResource();
@@ -4305,6 +5819,18 @@ void MapRhiGlobeRenderer::invalidateImagery()
 
 void MapRhiGlobeRenderer::releaseResources()
 {
+    releaseVisibleHeatmapGpuBakeAtlasResources();
+    releaseDiagnosticHeatmapGpuBakeResources();
+    this->heatmap_gpu_bake_jobs.clear();
+    this->heatmap_gpu_bake_instance_buffer.reset();
+    this->heatmap_gpu_bake_instance_buffer_size = 0;
+    this->heatmap_gpu_baking_disabled = false;
+    this->diagnostic_heatmap_bake_instances.clear();
+    this->diagnostic_heatmap_bake_cpu_reference = QImage();
+    this->diagnostic_heatmap_bake_pending = false;
+    this->diagnostic_heatmap_bake_revision = 0;
+    this->diagnostic_heatmap_gpu_validation_attempted = false;
+    this->heatmap_profile_report_pending = false;
     this->heatmap_array_draw_batches.clear();
     this->heatmap_array_template_bindings.reset();
     this->heatmap_array_pipeline.reset();
