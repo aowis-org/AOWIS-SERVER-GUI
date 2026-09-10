@@ -13,6 +13,7 @@
 #include <QFile>
 #include <QHash>
 #include <QImage>
+#include <QLoggingCategory>
 #include <QPainter>
 #include <QPixmap>
 #include <QRadialGradient>
@@ -28,8 +29,34 @@
 #include <limits>
 #include <utility>
 
+Q_LOGGING_CATEGORY(
+    globeHeatmapPerformanceLog,
+    "aowis.map.rhi.globe.heatmap.performance",
+    QtInfoMsg)
+
 namespace
 {
+class ScopedHeatmapProfileTimer
+{
+public:
+    ScopedHeatmapProfileTimer(qint64 *target, bool enabled)
+        : target(enabled ? target : nullptr)
+    {
+        if (this->target != nullptr)
+            this->timer.start();
+    }
+
+    ~ScopedHeatmapProfileTimer()
+    {
+        if (this->target != nullptr)
+            *this->target += this->timer.nsecsElapsed();
+    }
+
+private:
+    qint64 *target = nullptr;
+    QElapsedTimer timer;
+};
+
 // Highest imagery zoom the globe will ever request. Matches MapModel::MaxZoom
 // (19) exactly, since MapModel::MinViewGlobeDistanceM is itself pinned to
 // zoom 19 via viewGlobeDistanceMForZoomLevel() -- the globe's maximum zoom-in
@@ -2280,6 +2307,8 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
     GlobeTile &tile, const QImage &updated_image,
     QRhiResourceUpdateBatch *resource_updates)
 {
+    ScopedHeatmapProfileTimer profile_timer(
+        &this->heatmap_profile.cpu_ns, this->heatmap_profile.enabled);
     if (tile.resource == nullptr)
     {
         setTileHeatmapArrayReady(tile, false);
@@ -2367,7 +2396,7 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
     {
         QImage image = updated_image;
         if (image.isNull())
-            image = renderHeatmapTile(tile);
+            image = renderHeatmapTileProfiled(tile);
         if (!image.isNull())
             image = image.convertToFormat(QImage::Format_RGBA8888);
         const QSize layer_size(
@@ -2394,6 +2423,11 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
             this->heatmap_array_pages[resource->heatmap_array_page];
         resource_updates->uploadTexture(
             page.texture.get(), QRhiTextureUploadDescription(entry));
+        if (this->heatmap_profile.enabled)
+        {
+            ++this->heatmap_profile.array_uploads;
+            this->heatmap_profile.upload_bytes += quint64(image.sizeInBytes());
+        }
         resource->heatmap_array_revision = this->heatmap_revision;
     }
 
@@ -2855,10 +2889,77 @@ QVector<int> MapRhiGlobeRenderer::heatmapMarkerCandidates(
     return result;
 }
 
-QImage MapRhiGlobeRenderer::renderHeatmapTile(const GlobeTile &tile) const
+QImage MapRhiGlobeRenderer::renderHeatmapTileProfiled(const GlobeTile &tile)
 {
-    if (this->heatmap_markers.isEmpty() || !(this->heatmap_radius_m > 0.0) || tile.is_cap)
+    if (!this->heatmap_profile.enabled)
+        return renderHeatmapTile(tile, nullptr);
+
+    QElapsedTimer timer;
+    timer.start();
+    HeatmapRasterStats stats;
+    QImage image = renderHeatmapTile(tile, &stats);
+    ++this->heatmap_profile.raster_calls;
+    if (!image.isNull())
+        ++this->heatmap_profile.raster_tiles_with_content;
+    this->heatmap_profile.candidate_markers += stats.candidate_markers;
+    this->heatmap_profile.marker_tile_pairs += stats.marker_tile_pairs;
+    this->heatmap_profile.raster_ns += timer.nsecsElapsed();
+    return image;
+}
+
+QImage MapRhiGlobeRenderer::renderHeatmapTile(
+    const GlobeTile &tile, HeatmapRasterStats *stats) const
+{
+    const QVector<HeatmapStamp> stamps = heatmapStampsForTile(tile, stats);
+    if (stamps.isEmpty())
         return QImage();
+
+    QImage image(
+        GlobeHeatmapTextureSize, GlobeHeatmapTextureSize,
+        QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+    painter.setPen(Qt::NoPen);
+
+    const double half_fraction = this->heatmap_solid_fraction
+        + (1.0 - this->heatmap_solid_fraction) * 0.4375;
+    for (const HeatmapStamp &stamp : stamps)
+    {
+        const QPointF center_pixels(
+            stamp.center_x_pixels, stamp.center_y_pixels);
+        QColor full_color = stamp.color;
+        full_color.setAlpha(255);
+        QColor half_color = stamp.color;
+        half_color.setAlpha(128);
+        QColor edge_color = stamp.color;
+        edge_color.setAlpha(0);
+
+        QRadialGradient gradient(center_pixels, stamp.radius_pixels);
+        gradient.setColorAt(0.0, full_color);
+        if (this->heatmap_solid_fraction > 0.0)
+            gradient.setColorAt(this->heatmap_solid_fraction, full_color);
+        gradient.setColorAt(half_fraction, half_color);
+        gradient.setColorAt(1.0, edge_color);
+        painter.setBrush(gradient);
+        painter.drawEllipse(
+            center_pixels, stamp.radius_pixels, stamp.radius_pixels);
+    }
+    painter.end();
+
+    return image.convertToFormat(QImage::Format_RGBA8888);
+}
+
+QVector<MapRhiGlobeRenderer::HeatmapStamp>
+MapRhiGlobeRenderer::heatmapStampsForTile(
+    const GlobeTile &tile, HeatmapRasterStats *stats) const
+{
+    if (stats != nullptr)
+        *stats = HeatmapRasterStats();
+    if (this->heatmap_markers.isEmpty() || !(this->heatmap_radius_m > 0.0) || tile.is_cap)
+        return {};
 
     // tile_center_lat_deg only, in degrees -- needed for the
     // latitude-dependent meters-per-pixel conversion just below. The
@@ -2880,11 +2981,11 @@ QImage MapRhiGlobeRenderer::renderHeatmapTile(const GlobeTile &tile) const
     const double meters_per_pixel = GeoWebMercator::metersPerPixel(
         tile_center_lat_deg, tile.zoom);
     if (!std::isfinite(meters_per_pixel) || meters_per_pixel <= 0.0)
-        return QImage();
+        return {};
 
     const double radius_pixels = this->heatmap_radius_m / meters_per_pixel;
     if (!std::isfinite(radius_pixels) || radius_pixels <= 0.0)
-        return QImage();
+        return {};
     // Radius in the same fractional tile-coordinate units used for the
     // marker bounding check below (1.0 == one full tile edge), so that
     // check needs no separate unit conversion of its own.
@@ -2892,23 +2993,14 @@ QImage MapRhiGlobeRenderer::renderHeatmapTile(const GlobeTile &tile) const
 
     const QVector<int> candidate_indices = heatmapMarkerCandidates(
         tile, radius_tile_fraction);
+    if (stats != nullptr)
+        stats->candidate_markers = candidate_indices.size();
     if (candidate_indices.isEmpty())
-        return QImage();
+        return {};
 
-    QImage image(
-        GlobeHeatmapTextureSize, GlobeHeatmapTextureSize, QImage::Format_ARGB32_Premultiplied);
-    image.fill(Qt::transparent);
-
-    QPainter painter(&image);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
-    painter.setPen(Qt::NoPen);
-
-    const double half_fraction = this->heatmap_solid_fraction
-        + (1.0 - this->heatmap_solid_fraction) * 0.4375;
+    QVector<HeatmapStamp> stamps;
+    stamps.reserve(candidate_indices.size());
     const double pixels_per_fraction = double(GlobeHeatmapTextureSize);
-
-    bool any_marker_in_range = false;
     for (int marker_index : candidate_indices)
     {
         // nearestWrappedTileX() picks whichever antimeridian-wrapped copy
@@ -2947,32 +3039,17 @@ QImage MapRhiGlobeRenderer::renderHeatmapTile(const GlobeTile &tile) const
             continue;
         }
 
-        any_marker_in_range = true;
-        const QPointF center_pixels(
-            fraction_x * pixels_per_fraction, fraction_y * pixels_per_fraction);
-
-        QColor full_color = marker.color;
-        full_color.setAlpha(255);
-        QColor half_color = marker.color;
-        half_color.setAlpha(128);
-        QColor edge_color = marker.color;
-        edge_color.setAlpha(0);
-
-        QRadialGradient gradient(center_pixels, radius_pixels);
-        gradient.setColorAt(0.0, full_color);
-        if (this->heatmap_solid_fraction > 0.0)
-            gradient.setColorAt(this->heatmap_solid_fraction, full_color);
-        gradient.setColorAt(half_fraction, half_color);
-        gradient.setColorAt(1.0, edge_color);
-        painter.setBrush(gradient);
-        painter.drawEllipse(center_pixels, radius_pixels, radius_pixels);
+        HeatmapStamp stamp;
+        stamp.center_x_pixels = fraction_x * pixels_per_fraction;
+        stamp.center_y_pixels = fraction_y * pixels_per_fraction;
+        stamp.radius_pixels = radius_pixels;
+        stamp.color = marker.color;
+        stamps.append(stamp);
     }
-    painter.end();
 
-    if (!any_marker_in_range)
-        return QImage();
-
-    return image.convertToFormat(QImage::Format_RGBA8888);
+    if (stats != nullptr)
+        stats->marker_tile_pairs = stamps.size();
+    return stamps;
 }
 
 bool MapRhiGlobeRenderer::ensureHeatmapTexture(
@@ -2980,6 +3057,8 @@ bool MapRhiGlobeRenderer::ensureHeatmapTexture(
     QRhiResourceUpdateBatch *resource_updates, QImage *updated_image,
     bool upload_fallback_texture)
 {
+    ScopedHeatmapProfileTimer profile_timer(
+        &this->heatmap_profile.cpu_ns, this->heatmap_profile.enabled);
     if (updated_image != nullptr)
         *updated_image = QImage();
     if (resource == nullptr || resource_updates == nullptr)
@@ -2989,7 +3068,9 @@ bool MapRhiGlobeRenderer::ensureHeatmapTexture(
     if (resource->heatmap_revision == this->heatmap_revision)
         return resource->bindings != nullptr || rebuildTileBindings(resource);
 
-    QImage image = renderHeatmapTile(tile);
+    if (this->heatmap_profile.enabled)
+        ++this->heatmap_profile.dirty_tiles;
+    QImage image = renderHeatmapTileProfiled(tile);
     resource->heatmap_has_content = !image.isNull();
     bool bindings_changed = false;
     if (!image.isNull() && upload_fallback_texture)
@@ -3003,6 +3084,11 @@ bool MapRhiGlobeRenderer::ensureHeatmapTexture(
             bindings_changed = true;
         }
         resource_updates->uploadTexture(resource->heatmap_texture.get(), image);
+        if (this->heatmap_profile.enabled)
+        {
+            ++this->heatmap_profile.fallback_uploads;
+            this->heatmap_profile.upload_bytes += quint64(image.sizeInBytes());
+        }
         resource->heatmap_texture_revision = this->heatmap_revision;
     }
     else if (image.isNull() && resource->heatmap_texture)
@@ -3028,6 +3114,8 @@ bool MapRhiGlobeRenderer::ensureHeatmapFallbackTexture(
     const GlobeTile &tile, TileResource *resource,
     const QImage &updated_image, QRhiResourceUpdateBatch *resource_updates)
 {
+    ScopedHeatmapProfileTimer profile_timer(
+        &this->heatmap_profile.cpu_ns, this->heatmap_profile.enabled);
     if (resource == nullptr || resource_updates == nullptr
         || !resource->heatmap_has_content)
     {
@@ -3041,7 +3129,7 @@ bool MapRhiGlobeRenderer::ensureHeatmapFallbackTexture(
 
     QImage image = updated_image;
     if (image.isNull())
-        image = renderHeatmapTile(tile);
+        image = renderHeatmapTileProfiled(tile);
     if (image.isNull())
         return false;
 
@@ -3058,6 +3146,11 @@ bool MapRhiGlobeRenderer::ensureHeatmapFallbackTexture(
         bindings_changed = true;
     }
     resource_updates->uploadTexture(resource->heatmap_texture.get(), image);
+    if (this->heatmap_profile.enabled)
+    {
+        ++this->heatmap_profile.fallback_uploads;
+        this->heatmap_profile.upload_bytes += quint64(image.sizeInBytes());
+    }
     resource->heatmap_texture_revision = this->heatmap_revision;
     if (bindings_changed || resource->bindings == nullptr)
         return rebuildTileBindings(resource);
@@ -3066,6 +3159,11 @@ bool MapRhiGlobeRenderer::ensureHeatmapFallbackTexture(
 
 bool MapRhiGlobeRenderer::requestMissingTiles(QRhiResourceUpdateBatch *resource_updates)
 {
+    this->heatmap_profile = HeatmapProfileCounters();
+    this->heatmap_profile.enabled =
+        globeHeatmapPerformanceLog().isDebugEnabled();
+    this->heatmap_profile.visible_tiles = this->window_tiles.size();
+
     if (this->dummy_texture_upload_pending && this->dummy_texture)
     {
         QImage image(1, 1, QImage::Format_RGBA8888);
@@ -3122,7 +3220,56 @@ bool MapRhiGlobeRenderer::requestMissingTiles(QRhiResourceUpdateBatch *resource_
             return false;
     }
     trimUnusedHeatmapArrayPages();
+    reportHeatmapProfile();
     return true;
+}
+
+void MapRhiGlobeRenderer::reportHeatmapProfile() const
+{
+    if (!this->heatmap_profile.enabled)
+        return;
+    if (this->heatmap_profile.dirty_tiles <= 0
+        && this->heatmap_profile.raster_calls <= 0
+        && this->heatmap_profile.fallback_uploads <= 0
+        && this->heatmap_profile.array_uploads <= 0
+        && this->heatmap_profile.gpu_bake_passes <= 0)
+    {
+        return;
+    }
+
+    constexpr double NsecsPerMillisecond = 1000000.0;
+    constexpr double BytesPerMebibyte = 1024.0 * 1024.0;
+    qCDebug(globeHeatmapPerformanceLog).noquote().nospace()
+        << "revision=" << this->heatmap_revision
+        << " visible_tiles=" << this->heatmap_profile.visible_tiles
+        << " dirty_tiles=" << this->heatmap_profile.dirty_tiles
+        << " raster_calls=" << this->heatmap_profile.raster_calls
+        << " content_tiles="
+        << this->heatmap_profile.raster_tiles_with_content
+        << " candidate_markers="
+        << this->heatmap_profile.candidate_markers
+        << " marker_tile_pairs="
+        << this->heatmap_profile.marker_tile_pairs
+        << " raster_ms="
+        << QString::number(
+               double(this->heatmap_profile.raster_ns)
+                   / NsecsPerMillisecond,
+               'f', 3)
+        << " cpu_ms="
+        << QString::number(
+               double(this->heatmap_profile.cpu_ns)
+                   / NsecsPerMillisecond,
+               'f', 3)
+        << " fallback_uploads="
+        << this->heatmap_profile.fallback_uploads
+        << " array_uploads=" << this->heatmap_profile.array_uploads
+        << " upload_mib="
+        << QString::number(
+               double(this->heatmap_profile.upload_bytes)
+                   / BytesPerMebibyte,
+               'f', 3)
+        << " gpu_bake_passes="
+        << this->heatmap_profile.gpu_bake_passes;
 }
 
 

@@ -285,6 +285,44 @@ private:
         int draw_index_count = 0;
     };
 
+    // Tile-local description of one radial heatmap stamp. Projection and
+    // visibility filtering produce these independently from the rasterizer,
+    // allowing the current QPainter path and the upcoming GPU baker to
+    // consume exactly the same ordered input.
+    struct HeatmapStamp
+    {
+        double center_x_pixels = 0.0;
+        double center_y_pixels = 0.0;
+        double radius_pixels = 0.0;
+        QColor color;
+    };
+
+    struct HeatmapRasterStats
+    {
+        int candidate_markers = 0;
+        int marker_tile_pairs = 0;
+    };
+
+    // Per-request counters for the opt-in Globe heatmap performance log.
+    // Kept entirely outside rendering state so enabling diagnostics cannot
+    // change which tiles, pixels, textures, or draw paths are selected.
+    struct HeatmapProfileCounters
+    {
+        bool enabled = false;
+        int visible_tiles = 0;
+        int dirty_tiles = 0;
+        int raster_calls = 0;
+        int raster_tiles_with_content = 0;
+        int candidate_markers = 0;
+        int marker_tile_pairs = 0;
+        int fallback_uploads = 0;
+        int array_uploads = 0;
+        int gpu_bake_passes = 0;
+        quint64 upload_bytes = 0;
+        qint64 raster_ns = 0;
+        qint64 cpu_ns = 0;
+    };
+
     void buildCaps();
     void buildPolarCap(bool north);
     void rebuildWindow(
@@ -364,7 +402,12 @@ private:
         const GlobeTile &tile, TileResource *resource,
         const QImage &updated_image,
         QRhiResourceUpdateBatch *resource_updates);
-    QImage renderHeatmapTile(const GlobeTile &tile) const;
+    QImage renderHeatmapTileProfiled(const GlobeTile &tile);
+    QImage renderHeatmapTile(
+        const GlobeTile &tile, HeatmapRasterStats *stats) const;
+    QVector<HeatmapStamp> heatmapStampsForTile(
+        const GlobeTile &tile, HeatmapRasterStats *stats) const;
+    void reportHeatmapProfile() const;
     void rebuildHeatmapMarkerBuckets();
     QVector<int> heatmapMarkerCandidates(
         const GlobeTile &tile, double radius_tile_fraction) const;
@@ -477,6 +520,7 @@ private:
     double heatmap_solid_fraction = 0.0;
     float heatmap_opacity = 0.0f;
     quint64 heatmap_revision = 1;
+    HeatmapProfileCounters heatmap_profile;
 
     std::unique_ptr<MapRhiTerrainMeshScheduler> terrain_mesh_scheduler;
     quint64 next_terrain_mesh_request_id = 1;
