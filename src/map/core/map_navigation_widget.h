@@ -49,6 +49,7 @@ private:
     QRadioButton* map_osmcyclo = nullptr;
     
     QCheckBox* check_map_sync = nullptr;
+    QCheckBox *check_3d_icons = nullptr;
     QSlider *slider_icon_size = nullptr;
     QComboBox *combo_icon_size_unit = nullptr;
     int icon_size_2d_percent = 100;
@@ -61,6 +62,7 @@ private:
     double icon_size_3d_m = NetworkSymbologyDefaultIconSizeM;
 
     void activateMapProvider(MapProvider provider);
+    void sync3dIconsForViewMode(MapViewMode view_mode);
     void syncIconSizeSliderForViewMode(MapViewMode view_mode);
     void refreshShortcutPresentation();
     
@@ -69,6 +71,7 @@ signals:
     void signalIconSizeChanged(int size_percent);
     void signalMonitorIconSizeUnitChanged(NetworkSymbologySizeUnit unit);
     void signalMonitorIconSizeChanged(NetworkSymbologySizeUnit unit, double size);
+    void signal3dIconsChanged(bool enabled);
     void signalSyncMapMovementStateChanged(bool sync);
     
 public slots:

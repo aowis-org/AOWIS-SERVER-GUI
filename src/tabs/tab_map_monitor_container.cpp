@@ -517,6 +517,9 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     {
         MapRhiWidget *rhi_surface =
             new MapRhiWidget(this->map_model, QStringLiteral("monitor"), this->map_stack);
+        connect(this->map_menu->mapNavigationWidget(),
+                &MapNavigationWidget::signal3dIconsChanged,
+                rhi_surface, &MapRhiWidget::setGlobe3dIconsEnabled);
         MapRhiHudWidget *rhi_hud =
             new MapRhiHudWidget(this->map_model, this->gps, this->map_stack);
         MapMonitorDownloadActivityHudWidget *download_activity_hud =

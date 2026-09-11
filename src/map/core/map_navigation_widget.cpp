@@ -102,8 +102,22 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     const MapViewMode initial_view_mode = this->map->model()->viewMode();
     connect(this->map->model(), &MapModel::viewModeChanged, this, [this](MapViewMode view_mode)
     {
+        sync3dIconsForViewMode(view_mode);
         syncIconSizeSliderForViewMode(view_mode);
     });
+
+    if (this->mode == CanvasMode::Monitor)
+    {
+        this->check_3d_icons = new QCheckBox(QStringLiteral("3D Icons"), this);
+        this->check_3d_icons->setChecked(false);
+        this->check_3d_icons->setToolTip(QStringLiteral(
+            "Use the 3D tank and reservoir models instead of their billboard icons."));
+        connect(this->check_3d_icons, &QCheckBox::toggled, this, [this](bool enabled)
+        {
+            emit signal3dIconsChanged(enabled);
+        });
+        sync3dIconsForViewMode(initial_view_mode);
+    }
 
     QLabel *label_slider_map_visibility = new QLabel("Opacity");
     QSlider *slider_map_visibility = new QSlider(Qt::Horizontal);
@@ -130,7 +144,9 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
             QStringLiteral(" px"), this);
         connect(this->slider_icon_size, &QSlider::valueChanged, this, [this](int raw_value)
         {
-            const bool is_3d = this->map->model()->viewMode() == MapViewMode::ThreeD;
+            const MapViewMode view_mode = this->map->model()->viewMode();
+            const bool is_3d = view_mode == MapViewMode::ThreeD
+                || view_mode == MapViewMode::Globe;
             const NetworkSymbologySizeUnit unit = is_3d
                 ? this->icon_size_3d_unit : this->icon_size_2d_unit;
             if (unit == NetworkSymbologySizeUnit::Meters)
@@ -155,7 +171,9 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
         {
             const NetworkSymbologySizeUnit unit = static_cast<NetworkSymbologySizeUnit>(
                 this->combo_icon_size_unit->itemData(index).toInt());
-            const bool is_3d = this->map->model()->viewMode() == MapViewMode::ThreeD;
+            const MapViewMode view_mode = this->map->model()->viewMode();
+            const bool is_3d = view_mode == MapViewMode::ThreeD
+                || view_mode == MapViewMode::Globe;
             NetworkSymbologySizeUnit &current_unit = is_3d
                 ? this->icon_size_3d_unit : this->icon_size_2d_unit;
             if (current_unit == unit)
@@ -203,12 +221,17 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     this->grid->addWidget(map_osmcyclo, 5, 0, 1, 3);
     this->grid->addWidget(label_slider_map_visibility, 6, 0, 1, 3);
     this->grid->addWidget(slider_map_visibility, 7, 0, 1, 3);
-    this->grid->addWidget(label_slider_icon_size, 8, 0, 1,
+    const int icon_label_row = this->check_3d_icons != nullptr ? 9 : 8;
+    const int icon_slider_row = icon_label_row + 1;
+    const int map_sync_row = icon_slider_row + 1;
+    if (this->check_3d_icons != nullptr)
+        this->grid->addWidget(this->check_3d_icons, 8, 0, 1, 3);
+    this->grid->addWidget(label_slider_icon_size, icon_label_row, 0, 1,
         this->mode == CanvasMode::Monitor ? 2 : 3);
     if (this->combo_icon_size_unit != nullptr)
-        this->grid->addWidget(this->combo_icon_size_unit, 8, 2);
-    this->grid->addWidget(this->slider_icon_size, 9, 0, 1, 3);
-    this->grid->addWidget(check_map_sync, 10, 0, 1, 3);
+        this->grid->addWidget(this->combo_icon_size_unit, icon_label_row, 2);
+    this->grid->addWidget(this->slider_icon_size, icon_slider_row, 0, 1, 3);
+    this->grid->addWidget(check_map_sync, map_sync_row, 0, 1, 3);
     
     this->button_group_map_select = new QButtonGroup(this);
     this->button_group_map_select->addButton(this->map_arcgissat, 1);
@@ -229,12 +252,20 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     
 }
 
+void MapNavigationWidget::sync3dIconsForViewMode(MapViewMode view_mode)
+{
+    if (this->check_3d_icons == nullptr)
+        return;
+
+    this->check_3d_icons->setVisible(view_mode == MapViewMode::Globe);
+}
+
 void MapNavigationWidget::syncIconSizeSliderForViewMode(MapViewMode view_mode)
 {
     if (this->slider_icon_size == nullptr)
         return;
 
-    const bool is_3d = view_mode == MapViewMode::ThreeD;
+    const bool is_3d = view_mode == MapViewMode::ThreeD || view_mode == MapViewMode::Globe;
     if (this->mode == CanvasMode::Monitor)
     {
         const NetworkSymbologySizeUnit unit = is_3d

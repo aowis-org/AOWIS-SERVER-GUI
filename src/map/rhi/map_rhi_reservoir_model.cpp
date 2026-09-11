@@ -386,11 +386,31 @@ QVector<MapRhiReservoirModelVertex> mapRhiBuildReservoirModelVertices(
     vertices.reserve(instances.size() * 9000);
     for (const MapRhiReservoirInstance &instance : instances)
     {
+        MapRhiReservoirInstance local_instance = instance;
+        local_instance.base_center = QVector3D();
         const qsizetype first_vertex = vertices.size();
-        appendReservoir(&vertices, instance);
+        appendReservoir(&vertices, local_instance);
         for (qsizetype vertex_index = first_vertex; vertex_index < vertices.size(); ++vertex_index)
         {
             MapRhiReservoirModelVertex &vertex = vertices[vertex_index];
+            const QVector3D local_position(
+                vertex.position_x, vertex.position_y, vertex.position_z);
+            const QVector3D local_normal(
+                vertex.normal_x, vertex.normal_y, vertex.normal_z);
+            const QVector3D world_position = instance.base_center
+                + instance.basis_x * local_position.x()
+                + instance.basis_y * local_position.y()
+                + instance.basis_z * local_position.z();
+            const QVector3D world_normal = (
+                instance.basis_x * local_normal.x()
+                + instance.basis_y * local_normal.y()
+                + instance.basis_z * local_normal.z()).normalized();
+            vertex.position_x = world_position.x();
+            vertex.position_y = world_position.y();
+            vertex.position_z = world_position.z();
+            vertex.normal_x = world_normal.x();
+            vertex.normal_y = world_normal.y();
+            vertex.normal_z = world_normal.z();
             vertex.selected = instance.selected;
             vertex.render_id = instance.render_id;
         }

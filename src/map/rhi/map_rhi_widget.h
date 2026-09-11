@@ -80,6 +80,7 @@ public:
     void setSimulationErrorEntities(
         const QHash<QUuid, InfrastructureEntity> &error_entities,
         const QSet<QUuid> &stale_entity_uuids);
+    void setGlobe3dIconsEnabled(bool enabled);
     void setUndergroundMode(MapRhiUndergroundMode mode);
     MapRhiUndergroundMode undergroundMode() const;
     void setTerrainWireframeVisible(bool visible);

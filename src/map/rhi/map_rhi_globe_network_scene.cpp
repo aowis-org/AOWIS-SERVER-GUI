@@ -100,7 +100,11 @@ void MapRhiGlobeNetworkScene::setSymbology(const MapRhiSymbology &symbology)
             applyNodeColor(&vertex);
     }
     if (icon_changed)
+    {
         rebuildIcons();
+        rebuildTankInstances();
+        rebuildReservoirInstances();
+    }
     if (junction_instance_changed)
         rebuildJunctionInstances();
     if (flow_direction_changed)
@@ -119,6 +123,8 @@ void MapRhiGlobeNetworkScene::setSelectedEntity(
     this->selected_entity_uuid = uuid;
     rebuildHighlights();
     rebuildIcons();
+    rebuildTankInstances();
+    rebuildReservoirInstances();
 }
 
 void MapRhiGlobeNetworkScene::setSimulationErrorEntities(
@@ -128,6 +134,18 @@ void MapRhiGlobeNetworkScene::setSimulationErrorEntities(
     this->simulation_error_entities = error_entities;
     this->simulation_stale_entity_uuids = stale_entity_uuids;
     rebuildHighlights();
+}
+
+bool MapRhiGlobeNetworkScene::setUse3dIconModels(bool enabled)
+{
+    if (this->use_3d_icon_models == enabled)
+        return false;
+
+    this->use_3d_icon_models = enabled;
+    rebuildIcons();
+    rebuildTankInstances();
+    rebuildReservoirInstances();
+    return true;
 }
 
 bool MapRhiGlobeNetworkScene::setGroundOffsetM(double offset_m)
@@ -209,6 +227,12 @@ bool MapRhiGlobeNetworkScene::setFlowDirectionPixelsPerMeter(double pixels_per_m
 
     this->flow_direction_pixels_per_meter = bounded_pixels_per_meter;
     rebuildFlowDirections();
+    if (this->use_3d_icon_models
+        && this->symbology.icon_size_unit == NetworkSymbologySizeUnit::Pixels)
+    {
+        rebuildTankInstances();
+        rebuildReservoirInstances();
+    }
     return true;
 }
 
@@ -250,6 +274,16 @@ const QVector<MapRhiScene::LinkVertex> &MapRhiGlobeNetworkScene::flowDirectionVe
 const QVector<MapRhiScene::IconVertex> &MapRhiGlobeNetworkScene::iconVertices() const
 {
     return this->icon_vertices;
+}
+
+const QVector<MapRhiTankInstance> &MapRhiGlobeNetworkScene::tankInstances() const
+{
+    return this->tank_instances;
+}
+
+const QVector<MapRhiReservoirInstance> &MapRhiGlobeNetworkScene::reservoirInstances() const
+{
+    return this->reservoir_instances;
 }
 
 const QVector<MapRhiScene::LinkVertex> &MapRhiGlobeNetworkScene::undergroundLinkVertices() const
@@ -571,6 +605,8 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
 
     rebuildFlowDirections();
     rebuildIcons();
+    rebuildTankInstances();
+    rebuildReservoirInstances();
     rebuildJunctionInstances();
     rebuildHighlights();
 }
@@ -984,6 +1020,13 @@ void MapRhiGlobeNetworkScene::rebuildIcons()
 
 void MapRhiGlobeNetworkScene::appendIcon(const IconMarker &marker)
 {
+    if (this->use_3d_icon_models
+        && (marker.entity_type == InfrastructureEntity::Tank
+            || marker.entity_type == InfrastructureEntity::Reservoir))
+    {
+        return;
+    }
+
     const MapRhiIconAtlasEntry atlas_entry = mapRhiIconAtlasEntry(marker.entity_type);
     if (!atlas_entry.valid)
         return;
@@ -1049,6 +1092,167 @@ void MapRhiGlobeNetworkScene::appendIcon(const IconMarker &marker)
         vertex.render_id = marker.render_id;
         vertex.entity_type = marker.entity_type;
         this->icon_vertices.append(vertex);
+    }
+}
+
+bool MapRhiGlobeNetworkScene::modelBasisAt(
+    const QVector3D &center,
+    QVector3D *basis_x,
+    QVector3D *basis_y,
+    QVector3D *basis_z) const
+{
+    if (basis_x == nullptr || basis_y == nullptr || basis_z == nullptr)
+        return false;
+
+    const QVector3D up = ellipsoidNormalAt(center);
+    if (up.lengthSquared() <= 1e-8f)
+        return false;
+
+    QVector3D horizontal = QVector3D::crossProduct(up, QVector3D(0.0f, 0.0f, 1.0f));
+    if (horizontal.lengthSquared() <= 1e-8f)
+        horizontal = QVector3D::crossProduct(up, QVector3D(0.0f, 1.0f, 0.0f));
+    if (horizontal.lengthSquared() <= 1e-8f)
+        return false;
+
+    horizontal.normalize();
+    QVector3D tangent_y = QVector3D::crossProduct(horizontal, up);
+    if (tangent_y.lengthSquared() <= 1e-8f)
+        return false;
+    tangent_y.normalize();
+
+    // The legacy tank/reservoir mesh winding intentionally includes the
+    // flat-map projection's horizontal reflection. Keep a left-handed local
+    // tangent basis here so that reflection is cancelled on the globe and
+    // the existing back-face-culling pipeline remains valid.
+    *basis_x = horizontal;
+    *basis_y = tangent_y;
+    *basis_z = up;
+    return true;
+}
+
+void MapRhiGlobeNetworkScene::rebuildTankInstances()
+{
+    this->tank_instances.clear();
+    if (!this->use_3d_icon_models || !this->symbology.show_icons)
+        return;
+
+    double marker_size_m = 0.0;
+    if (this->symbology.icon_size_unit == NetworkSymbologySizeUnit::Meters)
+    {
+        marker_size_m = this->symbology.icon_size_m;
+    }
+    else
+    {
+        if (!(this->flow_direction_pixels_per_meter > 0.0))
+            return;
+        marker_size_m = this->symbology.icon_size_px / this->flow_direction_pixels_per_meter;
+    }
+    if (!std::isfinite(marker_size_m) || marker_size_m <= 0.0)
+        return;
+
+    quint32 selected_render_id = 0;
+    if (this->selected_entity_type == InfrastructureEntity::Tank
+        && !this->selected_entity_uuid.isNull())
+    {
+        const QHash<QUuid, quint64>::const_iterator selected_iterator =
+            this->entity_keys_by_uuid.constFind(this->selected_entity_uuid);
+        if (selected_iterator != this->entity_keys_by_uuid.cend())
+        {
+            const quint32 render_id = quint32(selected_iterator.value() & 0xffffffffULL);
+            if (entityRenderKey(InfrastructureEntity::Tank, render_id)
+                == selected_iterator.value())
+            {
+                selected_render_id = render_id;
+            }
+        }
+    }
+
+    const float world_marker_size = float(marker_size_m);
+    for (const IconMarker &marker : this->icon_markers)
+    {
+        if (marker.entity_type != InfrastructureEntity::Tank)
+            continue;
+
+        QVector3D basis_x;
+        QVector3D basis_y;
+        QVector3D basis_z;
+        if (!modelBasisAt(marker.center, &basis_x, &basis_y, &basis_z))
+            continue;
+
+        MapRhiTankInstance instance;
+        instance.render_id = marker.render_id;
+        instance.base_center = marker.center + basis_z * 0.02f;
+        instance.basis_x = basis_x;
+        instance.basis_y = basis_y;
+        instance.basis_z = basis_z;
+        instance.radius_world = world_marker_size * 0.44f;
+        instance.base_height_world = world_marker_size * 0.20f;
+        instance.body_height_world = world_marker_size * 0.78f;
+        instance.roof_height_world = world_marker_size * 0.26f;
+        instance.selected = marker.render_id == selected_render_id ? 1.0f : 0.0f;
+        this->tank_instances.append(instance);
+    }
+}
+
+void MapRhiGlobeNetworkScene::rebuildReservoirInstances()
+{
+    this->reservoir_instances.clear();
+    if (!this->use_3d_icon_models || !this->symbology.show_icons)
+        return;
+
+    double marker_size_m = 0.0;
+    if (this->symbology.icon_size_unit == NetworkSymbologySizeUnit::Meters)
+    {
+        marker_size_m = this->symbology.icon_size_m;
+    }
+    else
+    {
+        if (!(this->flow_direction_pixels_per_meter > 0.0))
+            return;
+        marker_size_m = this->symbology.icon_size_px / this->flow_direction_pixels_per_meter;
+    }
+    if (!std::isfinite(marker_size_m) || marker_size_m <= 0.0)
+        return;
+
+    quint32 selected_render_id = 0;
+    if (this->selected_entity_type == InfrastructureEntity::Reservoir
+        && !this->selected_entity_uuid.isNull())
+    {
+        const QHash<QUuid, quint64>::const_iterator selected_iterator =
+            this->entity_keys_by_uuid.constFind(this->selected_entity_uuid);
+        if (selected_iterator != this->entity_keys_by_uuid.cend())
+        {
+            const quint32 render_id = quint32(selected_iterator.value() & 0xffffffffULL);
+            if (entityRenderKey(InfrastructureEntity::Reservoir, render_id)
+                == selected_iterator.value())
+            {
+                selected_render_id = render_id;
+            }
+        }
+    }
+
+    const float world_marker_size = float(marker_size_m);
+    for (const IconMarker &marker : this->icon_markers)
+    {
+        if (marker.entity_type != InfrastructureEntity::Reservoir)
+            continue;
+
+        QVector3D basis_x;
+        QVector3D basis_y;
+        QVector3D basis_z;
+        if (!modelBasisAt(marker.center, &basis_x, &basis_y, &basis_z))
+            continue;
+
+        MapRhiReservoirInstance instance;
+        instance.render_id = marker.render_id;
+        instance.base_center = marker.center + basis_z * 0.02f;
+        instance.basis_x = basis_x;
+        instance.basis_y = basis_y;
+        instance.basis_z = basis_z;
+        instance.radius_world = world_marker_size * 0.48f;
+        instance.wall_height_world = world_marker_size * 0.34f;
+        instance.selected = marker.render_id == selected_render_id ? 1.0f : 0.0f;
+        this->reservoir_instances.append(instance);
     }
 }
 

@@ -391,6 +391,68 @@ QPointF projectGlobeToScreen(
         (ndc_x + 1.0) * viewport_width / 2.0,
         (1.0 - ndc_y) * viewport_height / 2.0);
 }
+
+bool globeProjectedTriangleHit(
+    const QMatrix4x4 &globe_network_view_projection,
+    const QVector3D &a, const QVector3D &b, const QVector3D &c,
+    const QPointF &screen_position, int viewport_width, int viewport_height,
+    double *view_depth)
+{
+    if (view_depth == nullptr)
+        return false;
+
+    const QVector4D clip_a = globe_network_view_projection * QVector4D(a, 1.0f);
+    const QVector4D clip_b = globe_network_view_projection * QVector4D(b, 1.0f);
+    const QVector4D clip_c = globe_network_view_projection * QVector4D(c, 1.0f);
+    if (!(clip_a.w() > 1e-6f) || !(clip_b.w() > 1e-6f) || !(clip_c.w() > 1e-6f))
+        return false;
+
+    const QPointF screen_a(
+        (double(clip_a.x() / clip_a.w()) + 1.0) * viewport_width / 2.0,
+        (1.0 - double(clip_a.y() / clip_a.w())) * viewport_height / 2.0);
+    const QPointF screen_b(
+        (double(clip_b.x() / clip_b.w()) + 1.0) * viewport_width / 2.0,
+        (1.0 - double(clip_b.y() / clip_b.w())) * viewport_height / 2.0);
+    const QPointF screen_c(
+        (double(clip_c.x() / clip_c.w()) + 1.0) * viewport_width / 2.0,
+        (1.0 - double(clip_c.y() / clip_c.w())) * viewport_height / 2.0);
+
+    const double denominator =
+        (screen_b.y() - screen_c.y()) * (screen_a.x() - screen_c.x())
+        + (screen_c.x() - screen_b.x()) * (screen_a.y() - screen_c.y());
+    if (std::abs(denominator) <= 1e-10)
+        return false;
+
+    const double weight_a = (
+        (screen_b.y() - screen_c.y()) * (screen_position.x() - screen_c.x())
+        + (screen_c.x() - screen_b.x()) * (screen_position.y() - screen_c.y()))
+        / denominator;
+    const double weight_b = (
+        (screen_c.y() - screen_a.y()) * (screen_position.x() - screen_c.x())
+        + (screen_a.x() - screen_c.x()) * (screen_position.y() - screen_c.y()))
+        / denominator;
+    const double weight_c = 1.0 - weight_a - weight_b;
+    constexpr double BarycentricTolerance = 1e-6;
+    if (weight_a < -BarycentricTolerance
+        || weight_b < -BarycentricTolerance
+        || weight_c < -BarycentricTolerance)
+    {
+        return false;
+    }
+
+    // clip.w is positive camera-space depth for this perspective matrix.
+    // Perspective-correct reciprocal-depth interpolation lets overlapping
+    // models select the nearest visible surface at the clicked pixel.
+    const double reciprocal_depth =
+        weight_a / double(clip_a.w())
+        + weight_b / double(clip_b.w())
+        + weight_c / double(clip_c.w());
+    if (!(reciprocal_depth > 0.0) || !std::isfinite(reciprocal_depth))
+        return false;
+
+    *view_depth = 1.0 / reciprocal_depth;
+    return std::isfinite(*view_depth);
+}
 }
 
 MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWidget *parent)
@@ -468,6 +530,8 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
         if (view_mode == MapViewMode::Globe)
             syncGlobeTerrainFocusElevation(true);
         syncViewState();
+        this->tank_upload_pending = true;
+        this->reservoir_upload_pending = true;
         markUndergroundGeometryDirty();
         this->heatmap_upload_pending = true;
         syncBasemapHeatmapOverlay();
@@ -1103,6 +1167,213 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
     // view_projection itself expects -- see projectGlobeToScreen()'s
     // comment.
     const NetworkRenderSnapshot &snapshot = this->scene.networkSnapshot();
+
+    // With 3D Icons enabled, tank/reservoir billboard quads are intentionally
+    // removed from iconVertices(). Their rendered meshes therefore need their
+    // own hit path. Project the exact CPU-side mesh triangles through the same
+    // Globe matrix the GPU uses, and select the nearest triangle under the
+    // cursor before falling back to icon/node/link picking.
+    quint32 best_tank_render_id = 0;
+    double best_tank_depth = std::numeric_limits<double>::infinity();
+    QSet<quint32> tank_hit_candidates;
+    const QVector<MapRhiTankInstance> &tank_instances =
+        this->globe_network_scene.tankInstances();
+    for (const MapRhiTankInstance &instance : tank_instances)
+    {
+        const float total_height = instance.base_height_world
+            + instance.body_height_world + instance.roof_height_world;
+        const QVector3D center = instance.base_center
+            + instance.basis_z * (total_height * 0.5f);
+        const QPointF center_screen = projectGlobeToScreen(
+            view_projection, center, viewport_width, viewport_height);
+        const QPointF radius_x_screen = projectGlobeToScreen(
+            view_projection, center + instance.basis_x * (instance.radius_world * 1.08f),
+            viewport_width, viewport_height);
+        const QPointF radius_y_screen = projectGlobeToScreen(
+            view_projection, center + instance.basis_y * (instance.radius_world * 1.08f),
+            viewport_width, viewport_height);
+        const QPointF height_screen = projectGlobeToScreen(
+            view_projection, center + instance.basis_z * (total_height * 0.5f),
+            viewport_width, viewport_height);
+        if (!finiteScreenPoint(center_screen)
+            || !finiteScreenPoint(radius_x_screen)
+            || !finiteScreenPoint(radius_y_screen)
+            || !finiteScreenPoint(height_screen))
+        {
+            continue;
+        }
+
+        const double projected_radius = qMax(
+            qMax(
+                QLineF(center_screen, radius_x_screen).length(),
+                QLineF(center_screen, radius_y_screen).length()),
+            QLineF(center_screen, height_screen).length());
+        if (QLineF(screen_position, center_screen).length()
+            <= projected_radius + Rhi3dIconHitPaddingPx)
+        {
+            tank_hit_candidates.insert(instance.render_id);
+        }
+    }
+
+    if (!tank_hit_candidates.isEmpty() && !this->tank_model_vertices.isEmpty())
+    {
+        for (qsizetype vertex_index = 0;
+             vertex_index + 2 < this->tank_model_vertices.size();
+             vertex_index += 3)
+        {
+            const MapRhiTankModelVertex &vertex_a =
+                this->tank_model_vertices.at(vertex_index);
+            const MapRhiTankModelVertex &vertex_b =
+                this->tank_model_vertices.at(vertex_index + 1);
+            const MapRhiTankModelVertex &vertex_c =
+                this->tank_model_vertices.at(vertex_index + 2);
+            if (vertex_a.render_id == 0
+                || vertex_a.render_id != vertex_b.render_id
+                || vertex_a.render_id != vertex_c.render_id
+                || !tank_hit_candidates.contains(vertex_a.render_id))
+            {
+                continue;
+            }
+
+            const QVector3D a(
+                vertex_a.position_x, vertex_a.position_y, vertex_a.position_z);
+            const QVector3D b(
+                vertex_b.position_x, vertex_b.position_y, vertex_b.position_z);
+            const QVector3D c(
+                vertex_c.position_x, vertex_c.position_y, vertex_c.position_z);
+            double hit_depth = 0.0;
+            if (!globeProjectedTriangleHit(
+                    view_projection, a, b, c, screen_position,
+                    viewport_width, viewport_height, &hit_depth)
+                || hit_depth >= best_tank_depth)
+            {
+                continue;
+            }
+
+            best_tank_depth = hit_depth;
+            best_tank_render_id = vertex_a.render_id;
+        }
+    }
+
+    if (best_tank_render_id != 0)
+    {
+        for (const NetworkRenderNode &node : snapshot.nodes)
+        {
+            if (node.entity_type != InfrastructureEntity::Tank
+                || node.render_id != best_tank_render_id
+                || this->scene.isEntityHidden(node.uuid))
+            {
+                continue;
+            }
+
+            MapRhiHit tank_hit;
+            tank_hit.render_id = node.render_id;
+            tank_hit.entity_type = node.entity_type;
+            tank_hit.uuid = node.uuid;
+            return tank_hit;
+        }
+    }
+
+    quint32 best_reservoir_render_id = 0;
+    double best_reservoir_depth = std::numeric_limits<double>::infinity();
+    QSet<quint32> reservoir_hit_candidates;
+    const QVector<MapRhiReservoirInstance> &reservoir_instances =
+        this->globe_network_scene.reservoirInstances();
+    for (const MapRhiReservoirInstance &instance : reservoir_instances)
+    {
+        const QVector3D center = instance.base_center
+            + instance.basis_z * (instance.wall_height_world * 0.5f);
+        const QPointF center_screen = projectGlobeToScreen(
+            view_projection, center, viewport_width, viewport_height);
+        const QPointF radius_x_screen = projectGlobeToScreen(
+            view_projection, center + instance.basis_x * (instance.radius_world * 1.05f),
+            viewport_width, viewport_height);
+        const QPointF radius_y_screen = projectGlobeToScreen(
+            view_projection, center + instance.basis_y * (instance.radius_world * 1.05f),
+            viewport_width, viewport_height);
+        const QPointF height_screen = projectGlobeToScreen(
+            view_projection, center
+                + instance.basis_z * (instance.wall_height_world * 0.5f),
+            viewport_width, viewport_height);
+        if (!finiteScreenPoint(center_screen)
+            || !finiteScreenPoint(radius_x_screen)
+            || !finiteScreenPoint(radius_y_screen)
+            || !finiteScreenPoint(height_screen))
+        {
+            continue;
+        }
+
+        const double projected_radius = qMax(
+            qMax(
+                QLineF(center_screen, radius_x_screen).length(),
+                QLineF(center_screen, radius_y_screen).length()),
+            QLineF(center_screen, height_screen).length());
+        if (QLineF(screen_position, center_screen).length()
+            <= projected_radius + Rhi3dIconHitPaddingPx)
+        {
+            reservoir_hit_candidates.insert(instance.render_id);
+        }
+    }
+
+    if (!reservoir_hit_candidates.isEmpty()
+        && !this->reservoir_model_vertices.isEmpty())
+    {
+        for (qsizetype vertex_index = 0;
+             vertex_index + 2 < this->reservoir_model_vertices.size();
+             vertex_index += 3)
+        {
+            const MapRhiReservoirModelVertex &vertex_a =
+                this->reservoir_model_vertices.at(vertex_index);
+            const MapRhiReservoirModelVertex &vertex_b =
+                this->reservoir_model_vertices.at(vertex_index + 1);
+            const MapRhiReservoirModelVertex &vertex_c =
+                this->reservoir_model_vertices.at(vertex_index + 2);
+            if (vertex_a.render_id == 0
+                || vertex_a.render_id != vertex_b.render_id
+                || vertex_a.render_id != vertex_c.render_id
+                || !reservoir_hit_candidates.contains(vertex_a.render_id))
+            {
+                continue;
+            }
+
+            const QVector3D a(
+                vertex_a.position_x, vertex_a.position_y, vertex_a.position_z);
+            const QVector3D b(
+                vertex_b.position_x, vertex_b.position_y, vertex_b.position_z);
+            const QVector3D c(
+                vertex_c.position_x, vertex_c.position_y, vertex_c.position_z);
+            double hit_depth = 0.0;
+            if (!globeProjectedTriangleHit(
+                    view_projection, a, b, c, screen_position,
+                    viewport_width, viewport_height, &hit_depth)
+                || hit_depth >= best_reservoir_depth)
+            {
+                continue;
+            }
+
+            best_reservoir_depth = hit_depth;
+            best_reservoir_render_id = vertex_a.render_id;
+        }
+    }
+
+    if (best_reservoir_render_id != 0)
+    {
+        for (const NetworkRenderNode &node : snapshot.nodes)
+        {
+            if (node.entity_type != InfrastructureEntity::Reservoir
+                || node.render_id != best_reservoir_render_id
+                || this->scene.isEntityHidden(node.uuid))
+            {
+                continue;
+            }
+
+            MapRhiHit reservoir_hit;
+            reservoir_hit.render_id = node.render_id;
+            reservoir_hit.entity_type = node.entity_type;
+            reservoir_hit.uuid = node.uuid;
+            return reservoir_hit;
+        }
+    }
 
     // Junctions first, via their real sphere instances -- mirrors ThreeD's
     // own junction-instance block in hitTest() above, including reusing
@@ -1771,6 +2042,17 @@ void MapRhiWidget::setSimulationErrorEntities(
     update();
 }
 
+void MapRhiWidget::setGlobe3dIconsEnabled(bool enabled)
+{
+    if (!this->globe_network_scene.setUse3dIconModels(enabled))
+        return;
+
+    this->globe_icon_upload_pending = true;
+    this->tank_upload_pending = true;
+    this->reservoir_upload_pending = true;
+    update();
+}
+
 void MapRhiWidget::initialize(QRhiCommandBuffer *command_buffer)
 {
     Q_UNUSED(command_buffer);
@@ -2435,6 +2717,8 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
         this->globe_icon_upload_pending = true;
         this->globe_underground_upload_pending = true;
         this->globe_junction_instance_upload_pending = true;
+        this->tank_upload_pending = true;
+        this->reservoir_upload_pending = true;
     }
 
     // Convert the configured pixel chevron size/spacing into ECEF meters at
@@ -2452,9 +2736,11 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
             flow_direction_pixels_per_meter))
     {
         this->globe_flow_direction_upload_pending = true;
+        this->tank_upload_pending = true;
+        this->reservoir_upload_pending = true;
     }
 
-    if (!ensureGlobeNetworkGeometryBuffers())
+    if (!ensureGeometryBuffers() || !ensureGlobeNetworkGeometryBuffers())
         return;
 
     // One origin-relative matrix now drives both terrain and network. Their
@@ -2525,6 +2811,21 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     {
         resource_updates->uploadTexture(this->icon_atlas_texture.get(), mapRhiIconAtlasImage());
         this->icon_atlas_upload_pending = false;
+    }
+
+    if (this->tank_texture_upload_pending)
+    {
+        resource_updates->uploadTexture(this->tank_texture.get(), mapRhiTankAlbedoImage());
+        resource_updates->generateMips(this->tank_texture.get());
+        this->tank_texture_upload_pending = false;
+    }
+
+    if (this->reservoir_texture_upload_pending)
+    {
+        resource_updates->uploadTexture(
+            this->reservoir_texture.get(), mapRhiReservoirAlbedoImage());
+        resource_updates->generateMips(this->reservoir_texture.get());
+        this->reservoir_texture_upload_pending = false;
     }
 
     uploadGlobeNetworkGeometry(resource_updates);
@@ -2907,6 +3208,32 @@ void MapRhiWidget::uploadGlobeNetworkGeometry(QRhiResourceUpdateBatch *resource_
         this->globe_icon_upload_pending = false;
     }
 
+    if (this->tank_upload_pending)
+    {
+        if (!this->tank_model_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->tank_vertex_buffer.get(), 0,
+                int(this->tank_model_vertices.size()
+                    * qsizetype(sizeof(MapRhiTankModelVertex))),
+                this->tank_model_vertices.constData());
+        }
+        this->tank_upload_pending = false;
+    }
+
+    if (this->reservoir_upload_pending)
+    {
+        if (!this->reservoir_model_vertices.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->reservoir_vertex_buffer.get(), 0,
+                int(this->reservoir_model_vertices.size()
+                    * qsizetype(sizeof(MapRhiReservoirModelVertex))),
+                this->reservoir_model_vertices.constData());
+        }
+        this->reservoir_upload_pending = false;
+    }
+
     if (this->globe_underground_upload_pending)
     {
         const QVector<MapRhiScene::LinkVertex> &underground_link_vertices =
@@ -3147,6 +3474,27 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
         command_buffer->setVertexInput(0, 2, junction_bindings);
         command_buffer->draw(
             quint32(junction_impostor.size()), quint32(junction_instances.size()));
+    }
+
+    if (!this->tank_model_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->tank_pipeline.get());
+        command_buffer->setShaderResources(this->tank_shader_resource_bindings.get());
+        const QRhiCommandBuffer::VertexInput tank_binding(
+            this->tank_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &tank_binding);
+        command_buffer->draw(quint32(this->tank_model_vertices.size()));
+    }
+
+    if (!this->reservoir_model_vertices.isEmpty())
+    {
+        command_buffer->setGraphicsPipeline(this->reservoir_pipeline.get());
+        command_buffer->setShaderResources(
+            this->reservoir_shader_resource_bindings.get());
+        const QRhiCommandBuffer::VertexInput reservoir_binding(
+            this->reservoir_vertex_buffer.get(), 0);
+        command_buffer->setVertexInput(0, 1, &reservoir_binding);
+        command_buffer->draw(quint32(this->reservoir_model_vertices.size()));
     }
 
     if (!selected_link_vertices.isEmpty())
@@ -4727,11 +5075,25 @@ void MapRhiWidget::resetGpuResources()
 
 void MapRhiWidget::rebuildTankModelGeometry()
 {
+    if (this->map_model != nullptr && this->map_model->viewMode() == MapViewMode::Globe)
+    {
+        this->tank_model_vertices =
+            mapRhiBuildTankModelVertices(this->globe_network_scene.tankInstances());
+        return;
+    }
+
     this->tank_model_vertices = mapRhiBuildTankModelVertices(this->scene.tankInstances());
 }
 
 void MapRhiWidget::rebuildReservoirModelGeometry()
 {
+    if (this->map_model != nullptr && this->map_model->viewMode() == MapViewMode::Globe)
+    {
+        this->reservoir_model_vertices = mapRhiBuildReservoirModelVertices(
+            this->globe_network_scene.reservoirInstances());
+        return;
+    }
+
     this->reservoir_model_vertices =
         mapRhiBuildReservoirModelVertices(this->scene.reservoirInstances());
 }

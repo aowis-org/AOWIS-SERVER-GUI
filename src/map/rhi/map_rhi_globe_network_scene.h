@@ -5,6 +5,8 @@
 #include "map/rhi/map_rhi_symbology.h"
 #include "map/rhi/map_rhi_scene.h"
 #include "map/rhi/map_rhi_junction_model.h"
+#include "map/rhi/map_rhi_reservoir_model.h"
+#include "map/rhi/map_rhi_tank_model.h"
 #include "geo/geo_wgs84_ellipsoid.h"
 
 #include <QColor>
@@ -57,10 +59,7 @@
 // planet-scale view the resulting error is visually negligible outside
 // extreme grazing angles.
 //
-// Not yet implemented for the globe (all render as their flat pixel-marker
-// fallback, matching what the ThreeD view already does when its 3D-model
-// toggles are off): the heatmap overlay, 3D tank/reservoir meshes, and
-// coincident-node decluttering
+// Not yet implemented for the globe: coincident-node decluttering
 // (map_node_declutter.h). Junctions ARE rendered as analytic sphere
 // impostors -- see junctionInstances() -- reusing MapRhiScene/MapRhiWidget's
 // shared MapRhiJunctionInstance, GPU style table, and junction pipelines.
@@ -91,6 +90,7 @@ public:
     void setSimulationErrorEntities(
         const QHash<QUuid, InfrastructureEntity> &error_entities,
         const QSet<QUuid> &stale_entity_uuids);
+    bool setUse3dIconModels(bool enabled);
     // Height, in meters, added above each entity's own elevation before it is
     // placed on the ellipsoid -- the Globe counterpart of
     // MapRhiScene::setNetworkGroundOffsetM(), sharing the same
@@ -167,6 +167,8 @@ public:
     const QVector<MapRhiScene::NodeVertex> &diagnosticNodeVertices() const;
     const QVector<MapRhiScene::LinkVertex> &flowDirectionVertices() const;
     const QVector<MapRhiScene::IconVertex> &iconVertices() const;
+    const QVector<MapRhiTankInstance> &tankInstances() const;
+    const QVector<MapRhiReservoirInstance> &reservoirInstances() const;
     const QVector<MapRhiScene::LinkVertex> &undergroundLinkVertices() const;
     // Analytic sphere-impostor instances for junction entities -- see the class
     // comment above. Drawn with the exact same MapRhiJunctionInstance
@@ -238,6 +240,13 @@ private:
     QRgb flowDirectionColor(quint32 render_id) const;
     void rebuildIcons();
     void appendIcon(const IconMarker &marker);
+    void rebuildTankInstances();
+    void rebuildReservoirInstances();
+    bool modelBasisAt(
+        const QVector3D &center,
+        QVector3D *basis_x,
+        QVector3D *basis_y,
+        QVector3D *basis_z) const;
     // Rebuilds compact placement/radius/style-index instances from the
     // junction markers. Color, selection, diagnostics and visibility now
     // live in MapRhiScene's shared GPU style table.
@@ -275,6 +284,8 @@ private:
     QVector<MapRhiScene::LinkVertex> flow_direction_vertices;
     QVector<MapRhiScene::IconVertex> icon_vertices;
     QVector<IconMarker> icon_markers;
+    QVector<MapRhiTankInstance> tank_instances;
+    QVector<MapRhiReservoirInstance> reservoir_instances;
     QVector<JunctionMarker> junction_markers;
     QVector<MapRhiJunctionInstance> junction_instances;
     QVector<LinkPath> link_paths;
@@ -301,6 +312,7 @@ private:
     double flow_direction_pixels_per_meter = 0.0;
     TerrainElevationResolver terrain_elevation_resolver;
     bool underground_xray_enabled = false;
+    bool use_3d_icon_models = false;
     QVector<MapRhiScene::LinkVertex> underground_link_vertices;
 };
 
