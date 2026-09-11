@@ -177,7 +177,9 @@ private:
 #ifndef Q_OS_WASM
     bool desktop_network_hovered = false;
 
-    void updateDesktopNetworkHover(const QPointF &position, Qt::MouseButtons buttons);
+    void updateDesktopNetworkHover(
+        const QPointF &position, Qt::MouseButtons buttons,
+        Qt::KeyboardModifiers modifiers);
     void setDesktopNetworkHovered(bool hovered);
 #endif
 #if AOWIS_HAS_QRHI

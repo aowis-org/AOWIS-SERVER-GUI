@@ -1566,7 +1566,8 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
         else if (event->type() == QEvent::MouseMove)
         {
             QMouseEvent *mouse_event = static_cast<QMouseEvent *>(event);
-            updateDesktopNetworkHover(mouse_event->position(), mouse_event->buttons());
+            updateDesktopNetworkHover(
+                mouse_event->position(), mouse_event->buttons(), mouse_event->modifiers());
         }
         else if (event->type() == QEvent::Leave || event->type() == QEvent::Hide)
         {
@@ -1644,9 +1645,28 @@ bool MapMonitorContainer::selectNetworkEntity(quint32 render_id, InfrastructureE
 }
 
 #ifndef Q_OS_WASM
-void MapMonitorContainer::updateDesktopNetworkHover(const QPointF &position, Qt::MouseButtons buttons)
+void MapMonitorContainer::updateDesktopNetworkHover(
+    const QPointF &position, Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers)
 {
-    if (buttons != Qt::NoButton)
+    // Ctrl-without-a-button is the desktop orbit gesture. MouseMove reaches
+    // this container's event filter before MapWidget starts/updates that
+    // gesture, so checking buttons alone used to run MapRhiWidget::hitTest()
+    // first. Globe hit-testing projects every junction, icon, node and pipe
+    // segment on the CPU; doing that for every KY4 orbit event is pure work
+    // whose result is immediately hidden with the cursor. The navigation
+    // state covers all subsequent Ctrl-orbit events (and keyboard zoom),
+    // while the modifier covers the first event before that state changes.
+    const bool orbit_view = this->map_model != nullptr
+        && (this->map_model->viewMode() == MapViewMode::ThreeD
+            || this->map_model->viewMode() == MapViewMode::Globe);
+    const bool ctrl_orbit_requested = orbit_view
+        && modifiers.testFlag(Qt::ControlModifier);
+    const bool camera_navigation_active = orbit_view
+        && this->map_model->view3dNavigationState()
+            == MapView3dNavigationState::Rotate;
+    if (buttons != Qt::NoButton
+        || ctrl_orbit_requested
+        || camera_navigation_active)
     {
         setDesktopNetworkHovered(false);
         return;

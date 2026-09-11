@@ -69,12 +69,13 @@ public:
     // hypothetical one. Precision does not actually demand a fresh origin
     // every frame either: float32 comfortably holds sub-centimeter
     // precision out to tens of kilometers from the origin (see
-    // GlobeRenderOriginRebaseThresholdM's definition), so the origin only
+    // GlobeRenderOriginMinimumRebaseThresholdM's definition), so the origin only
     // needs to be "reasonably close" to the camera, not exactly on top of
     // it. This function keeps the origin fixed until the camera has
-    // actually drifted past that generous margin, so ordinary
-    // orbiting/panning around one local area triggers zero rebases (and
-    // zero geometry rebuilds) after the first frame.
+    // actually drifted past a screen-precision-derived margin, so distant
+    // Globe rotation does not rebuild a large network merely because one
+    // mouse step represents many kilometres. The margin contracts again
+    // while zooming in, before origin drift can become visible.
     void updateGlobeRenderOrigin();
     // The ECEF point globeNetworkViewProjectionMatrix() currently renders
     // *relative to*, and the point every CPU-built Globe-mode vertex buffer

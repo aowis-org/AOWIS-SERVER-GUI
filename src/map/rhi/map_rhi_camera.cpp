@@ -14,21 +14,22 @@
 
 namespace
 {
-// How far (in meters) the camera's orbit target may drift from the
-// currently-adopted Globe render origin before updateGlobeRenderOrigin()
-// rebases (and MapRhiGlobeNetworkScene rebuilds its geometry to match).
-// Sized generously against float32's actual precision floor, not against
-// how far it's "safe" to push things: at this distance, float32's ~7
-// significant decimal digits still resolve sub-centimeter detail (a
-// 50000 m value has an ULP of roughly 50000 * 2^-23 ≈ 0.006 m), which is
-// far tighter than water-network geometry needs. The real constraint this
-// threshold is tuned against is the opposite one -- keeping it large
-// enough that ordinary orbiting/panning around one local area of interest
-// never crosses it, since every rebase forces a full network geometry
-// rebuild (see MapRhiGlobeNetworkScene::setRenderOriginEcef()). A
-// network's full extent (a town's water system, say) sitting comfortably
-// within a 2x this threshold bounding box is the expected common case.
-constexpr double GlobeRenderOriginRebaseThresholdM = 50000.0;
+// A rebase rebuilds Globe terrain and every CPU-built network vertex. The
+// minimum keeps close-range coordinates comfortably sub-centimetre, while
+// updateGlobeRenderOrigin() expands it at distant zooms according to the
+// current meters-per-pixel. A fixed 50 km threshold was needlessly strict
+// when viewing whole regions: a small drag could move the target hundreds
+// of kilometres and force several full KY4-sized network rebuilds during a
+// single gesture even though a metre of float error would still be far
+// below one screen pixel there.
+constexpr double GlobeRenderOriginMinimumRebaseThresholdM = 50000.0;
+// Maximum tolerated float32 coordinate quantisation attributable to origin
+// drift, expressed in logical screen pixels. With float32's 23 explicit
+// fraction bits, multiplying meters-per-pixel by this budget and 2^23 gives
+// the largest origin-relative magnitude whose ULP remains below the budget.
+// 0.05 px is deliberately conservative and visually unresolvable.
+constexpr double GlobeRenderOriginPrecisionBudgetPx = 0.05;
+constexpr double Float32FractionScale = 8388608.0; // 2^23
 
 // How far past the geometric horizon (see globeNearFarPlanesM() below) the
 // far clip plane should reach. Generous on purpose: it exists only to keep
@@ -297,8 +298,27 @@ void MapRhiCamera::updateGlobeRenderOrigin()
     const double delta_y = candidate.y - this->globe_render_origin_ecef.y;
     const double delta_z = candidate.z - this->globe_render_origin_ecef.z;
     const double drift_squared_m = delta_x * delta_x + delta_y * delta_y + delta_z * delta_z;
+
+    // Precision requirements are screen-relative. At close zoom the 50 km
+    // floor still applies; farther out, one logical pixel covers many metres
+    // and the origin may remain fixed across correspondingly larger globe
+    // rotations without losing even 0.05 px of vertex precision. As the user
+    // zooms back in this threshold contracts automatically, causing one rebase
+    // before the old origin could become visible as jitter.
+    const double distance_m = qMax(
+        MapModel::MinViewGlobeDistanceM, this->view_globe_distance_m);
+    const double viewport_height_px = double(qMax(1, this->viewport_size.height()));
+    const double meters_per_pixel =
+        2.0 * distance_m
+        * std::tan(qDegreesToRadians(MapModel::GlobeFieldOfViewDeg * 0.5))
+        / viewport_height_px;
+    const double precision_scaled_threshold_m =
+        meters_per_pixel * GlobeRenderOriginPrecisionBudgetPx * Float32FractionScale;
+    const double rebase_threshold_m = qMax(
+        GlobeRenderOriginMinimumRebaseThresholdM,
+        precision_scaled_threshold_m);
     const double threshold_squared_m =
-        GlobeRenderOriginRebaseThresholdM * GlobeRenderOriginRebaseThresholdM;
+        rebase_threshold_m * rebase_threshold_m;
     if (drift_squared_m > threshold_squared_m)
         this->globe_render_origin_ecef = candidate;
 }
