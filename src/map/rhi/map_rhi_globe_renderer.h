@@ -80,22 +80,27 @@ struct MapRhiGlobeQuadtreeLeaf
 class MapRhiGlobeRenderer
 {
 public:
-    // Plain (coordinate, color) pair -- no radius/opacity/solid-fraction
-    // here, those are shared across every marker for a given call (see
-    // setHeatmapOverlay()), matching MapRhiBasemapRenderer::HeatmapMarker's
-    // shape exactly. Lon/lat rather than CoordinateWGS84 for the same
-    // "plain POD, minimal includes" reason MapRhiGlobeQuadtreeLeaf above
-    // gives.
+    // Stable node identity plus its coordinate and current heatmap state.
+    // Inactive markers deliberately remain in the vector: simulation
+    // timesteps are allowed to add/remove values without changing the
+    // geographic stamp layout. No radius/opacity/solid-fraction lives here;
+    // those values are shared across every marker for a given call (see
+    // setHeatmapOverlay()). Lon/lat rather than CoordinateWGS84 keeps this a
+    // plain POD with minimal includes.
     struct HeatmapMarker
     {
+        quint32 render_id = 0;
         double longitude_deg = 0.0;
         double latitude_deg = 0.0;
+        bool active = false;
         QColor color;
 
         bool operator==(const HeatmapMarker &other) const
         {
-            return this->longitude_deg == other.longitude_deg
+            return this->render_id == other.render_id
+                && this->longitude_deg == other.longitude_deg
                 && this->latitude_deg == other.latitude_deg
+                && this->active == other.active
                 && this->color == other.color;
         }
     };
@@ -114,13 +119,11 @@ public:
     void setWireframeVisible(bool visible);
     void setMapVisible(bool visible);
     bool hasPendingTerrainMeshes() const;
-    // Mirrors MapRhiBasemapRenderer::setHeatmapOverlay() exactly, including
-    // its change-detection (markers vs. radius/solid-fraction tracked
-    // separately, only actually invalidating cached tile textures -- via
-    // the heatmap_revision counter each TileResource compares itself
-    // against -- when something that could visibly change a texture's
-    // pixels changed). radius_m is real-world meters, unlike the flat
-    // renderer's already-projected "world units" radius: see
+    // Tracks visible heatmap changes separately from geographic layout
+    // changes. Colors and active flags invalidate tile pixels, while stable
+    // render ids, coordinates and radius govern the retained stamp layout.
+    // radius_m is real-world meters, unlike the flat renderer's
+    // already-projected "world units" radius: see
     // MapRhiWidget::globeHeatmapRadiusMeters() for why Globe can take a
     // real distance directly rather than needing a zoom-dependent
     // conversion first.
@@ -197,16 +200,28 @@ private:
         float z = 0.0f;
     };
 
-    // Tile-local description of one radial heatmap stamp. marker_index is
-    // retained so the expensive geographic projection/layout can survive
-    // simulation frames that change only marker colors.
+    // Tile-local description of one radial heatmap stamp. marker_index and
+    // marker_render_id together validate the stable-node lookup, allowing
+    // the expensive geographic projection/layout to survive simulation
+    // frames that change marker colors or value availability.
     struct HeatmapStamp
     {
         double center_x_pixels = 0.0;
         double center_y_pixels = 0.0;
         double radius_pixels = 0.0;
         int marker_index = -1;
+        quint32 marker_render_id = 0;
         QColor color;
+    };
+
+    // Web Mercator tile coordinates at zoom 0. Every higher-zoom tile
+    // coordinate is this value multiplied by 2^zoom, so radius-only changes
+    // never repeat longitude normalization or the latitude tan/log transform.
+    struct HeatmapMarkerProjection
+    {
+        double tile_x_zoom0 = 0.0;
+        double tile_y_zoom0 = 0.0;
+        bool valid = false;
     };
 
     struct TileResource
@@ -240,9 +255,10 @@ private:
         int heatmap_array_page = -1;
         int heatmap_array_layer = -1;
         bool heatmap_has_content = false;
-        // Marker positions and radius determine this layout; marker colors
-        // do not. Dynamic simulation updates therefore recolor these cached
-        // entries instead of repeating every marker/tile projection test.
+        // Marker identities, positions and radius determine this layout;
+        // marker colors and active flags do not. Dynamic simulation updates
+        // therefore filter/recolor these cached entries instead of repeating
+        // every marker/tile projection test.
         QVector<HeatmapStamp> heatmap_stamp_layout;
         quint64 heatmap_stamp_layout_revision = 0;
         int heatmap_stamp_layout_zoom = -1;
@@ -361,6 +377,7 @@ private:
     struct HeatmapRasterStats
     {
         int candidate_markers = 0;
+        int candidate_bucket_cells = 0;
         int marker_tile_pairs = 0;
         bool stamp_layout_cache_hit = false;
     };
@@ -376,6 +393,7 @@ private:
         int raster_calls = 0;
         int raster_tiles_with_content = 0;
         int candidate_markers = 0;
+        int candidate_bucket_cells = 0;
         int marker_tile_pairs = 0;
         int stamp_layout_cache_hits = 0;
         int stamp_layout_cache_misses = 0;
@@ -509,7 +527,8 @@ private:
     void reportHeatmapProfile() const;
     void rebuildHeatmapMarkerBuckets();
     QVector<int> heatmapMarkerCandidates(
-        const GlobeTile &tile, double radius_tile_fraction) const;
+        const GlobeTile &tile, double radius_tile_fraction,
+        int *visited_bucket_cells) const;
     bool requestMissingTiles(QRhiResourceUpdateBatch *resource_updates);
     void requestMissingTerrainTiles();
     void scheduleReadyTerrainMeshes();
@@ -614,13 +633,16 @@ private:
     // check, forcing (at worst) a single "definitely empty" texture
     // generation rather than an uninitialized-looking mismatch.
     QVector<HeatmapMarker> heatmap_markers;
-    QHash<quint64, QVector<int>> heatmap_marker_buckets;
+    QVector<HeatmapMarkerProjection> heatmap_marker_projections;
+    QVector<QHash<quint64, QVector<int>>> heatmap_marker_buckets_by_zoom;
     double heatmap_radius_m = 0.0;
     double heatmap_solid_fraction = 0.0;
     float heatmap_opacity = 0.0f;
     quint64 heatmap_revision = 1;
+    int heatmap_active_marker_count = 0;
     // Changes only when stamp geometry can change (positions or radius),
-    // unlike heatmap_revision which also changes for new simulation colors.
+    // unlike heatmap_revision which also changes for new simulation colors
+    // or marker value availability.
     quint64 heatmap_stamp_layout_revision = 1;
     HeatmapProfileCounters heatmap_profile;
     bool heatmap_profile_report_pending = false;

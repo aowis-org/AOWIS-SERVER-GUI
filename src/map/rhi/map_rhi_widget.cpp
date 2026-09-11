@@ -26,6 +26,7 @@
 
 #include <rhi/qrhi.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cmath>
@@ -5545,7 +5546,8 @@ void MapRhiWidget::syncGlobeHeatmapOverlay(double solid_fraction)
     // completely different (per-tile-texture) mechanism from the flat
     // basemap's above, not just different marker/radius units. Markers are
     // derived directly from this->scene's network snapshot/symbology here
-    // (coordinate + ramp color) rather than reusing this->scene.
+    // (stable node identity + coordinate + current ramp color) rather than
+    // reusing this->scene.
     // heatmapVertices() the way syncBasemapHeatmapOverlay()'s ThreeD
     // markers do, since Globe's markers need a raw lon/lat, not an
     // already-projected flat-world position there would be no sane way to
@@ -5580,19 +5582,39 @@ void MapRhiWidget::syncGlobeHeatmapOverlay(double solid_fraction)
                 continue;
             }
 
-            const QHash<quint32, double>::const_iterator fraction_iterator =
-                this->applied_symbology.heatmap_fractions.constFind(node.render_id);
-            if (fraction_iterator == this->applied_symbology.heatmap_fractions.cend())
-                continue;
-
             MapRhiGlobeRenderer::HeatmapMarker marker;
+            marker.render_id = node.render_id;
             marker.longitude_deg = node.coordinate_wgs84.longitude_deg;
             marker.latitude_deg = node.coordinate_wgs84.latitude_deg;
-            marker.color = networkSymbologyInterpolatedRampColor(
-                fraction_iterator.value(), this->applied_symbology.heatmap_palette,
-                this->applied_symbology.heatmap_palette_flipped);
+            const QHash<quint32, double>::const_iterator fraction_iterator =
+                this->applied_symbology.heatmap_fractions.constFind(node.render_id);
+            marker.active = fraction_iterator
+                != this->applied_symbology.heatmap_fractions.cend();
+            if (marker.active)
+            {
+                marker.color = networkSymbologyInterpolatedRampColor(
+                    fraction_iterator.value(),
+                    this->applied_symbology.heatmap_palette,
+                    this->applied_symbology.heatmap_palette_flipped);
+            }
             globe_markers.append(marker);
         }
+
+        // Network snapshots normally retain their order, but the heatmap
+        // cache must not depend on that incidental property. Canonicalizing
+        // by stable render id keeps marker indices unchanged across result
+        // timesteps even when value availability or snapshot order changes.
+        std::sort(
+            globe_markers.begin(), globe_markers.end(),
+            [](const MapRhiGlobeRenderer::HeatmapMarker &first,
+               const MapRhiGlobeRenderer::HeatmapMarker &second)
+        {
+            if (first.render_id != second.render_id)
+                return first.render_id < second.render_id;
+            if (first.longitude_deg != second.longitude_deg)
+                return first.longitude_deg < second.longitude_deg;
+            return first.latitude_deg < second.latitude_deg;
+        });
     }
 
     // Only actually evaluated (and therefore only reads the live orbit

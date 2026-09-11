@@ -92,12 +92,11 @@ constexpr int GlobeCameraUniformBytes = 24 * int(sizeof(float));
 // Web Mercator pixel at whatever zoom a given tile is fetched at) -- see
 // MapRhiGlobeRenderer::renderHeatmapTile().
 constexpr int GlobeHeatmapTextureSize = 256;
-// Markers are indexed once at a fixed Web Mercator zoom. A high fixed zoom
-// keeps candidate lists tight in dense networks, while the sparse QHash
-// allocates storage only for cells that actually contain a marker.
-constexpr int GlobeHeatmapMarkerBucketZoom = 18;
-constexpr qint64 GlobeHeatmapMarkerBucketCount =
-    qint64(1) << GlobeHeatmapMarkerBucketZoom;
+// A marker is retained once at every Web Mercator index level. Candidate
+// queries choose a level whose expanded tile footprint is only a few cells
+// wide, avoiding both the old zoom-18 empty-cell walks and full-network scans.
+constexpr int GlobeHeatmapMarkerMaximumBucketZoom = GlobeImageryMaxZoom;
+constexpr double GlobeHeatmapMarkerTargetBucketSpan = 4.0;
 constexpr int GlobeHeatmapValidationTolerance = 8;
 
 struct GlobeHeatmapValidationMetrics
@@ -299,11 +298,13 @@ quint64 globeHeatmapMarkerBucketKey(int bucket_x, int bucket_y)
         | quint64(quint32(bucket_y));
 }
 
-int wrappedGlobeHeatmapBucketX(qint64 bucket_x)
+int wrappedGlobeHeatmapBucketX(qint64 bucket_x, qint64 bucket_count)
 {
-    qint64 wrapped = bucket_x % GlobeHeatmapMarkerBucketCount;
+    if (bucket_count <= 0)
+        return 0;
+    qint64 wrapped = bucket_x % bucket_count;
     if (wrapped < 0)
-        wrapped += GlobeHeatmapMarkerBucketCount;
+        wrapped += bucket_count;
     return int(wrapped);
 }
 
@@ -983,7 +984,8 @@ void MapRhiGlobeRenderer::setHeatmapOverlay(
             const HeatmapMarker &old_marker =
                 this->heatmap_markers.at(marker_index);
             const HeatmapMarker &new_marker = markers.at(marker_index);
-            if (old_marker.longitude_deg != new_marker.longitude_deg
+            if (old_marker.render_id != new_marker.render_id
+                || old_marker.longitude_deg != new_marker.longitude_deg
                 || old_marker.latitude_deg != new_marker.latitude_deg)
             {
                 marker_layout_changed = true;
@@ -1001,11 +1003,21 @@ void MapRhiGlobeRenderer::setHeatmapOverlay(
         return;
 
     if (markers_changed)
+    {
         this->heatmap_markers = markers;
+        this->heatmap_active_marker_count = int(std::count_if(
+            this->heatmap_markers.cbegin(),
+            this->heatmap_markers.cend(),
+            [](const HeatmapMarker &marker)
+        {
+            return marker.active;
+        }));
+    }
 
     // Buckets and projected stamp layouts depend on marker coordinates, not
-    // their colors. Simulation playback normally changes only color, so keep
-    // both retained across those high-frequency revisions.
+    // their colors or whether a result exists for the current timestep.
+    // Simulation playback normally changes only those two properties, so
+    // keep both retained across its high-frequency revisions.
     if (marker_layout_changed)
         rebuildHeatmapMarkerBuckets();
     if (marker_layout_changed || radius_changed)
@@ -3049,8 +3061,17 @@ bool MapRhiGlobeRenderer::ensureProvisionalTileResource(
 
 void MapRhiGlobeRenderer::rebuildHeatmapMarkerBuckets()
 {
-    this->heatmap_marker_buckets.clear();
-    this->heatmap_marker_buckets.reserve(this->heatmap_markers.size());
+    this->heatmap_marker_projections.clear();
+    this->heatmap_marker_projections.resize(this->heatmap_markers.size());
+    this->heatmap_marker_buckets_by_zoom.clear();
+    this->heatmap_marker_buckets_by_zoom.resize(
+        GlobeHeatmapMarkerMaximumBucketZoom + 1);
+    for (QHash<quint64, QVector<int>> &buckets
+         : this->heatmap_marker_buckets_by_zoom)
+    {
+        buckets.reserve(this->heatmap_markers.size());
+    }
+
     for (int marker_index = 0;
          marker_index < this->heatmap_markers.size(); ++marker_index)
     {
@@ -3062,32 +3083,54 @@ void MapRhiGlobeRenderer::rebuildHeatmapMarkerBuckets()
             continue;
         }
 
-        const double marker_tile_x = GeoWebMercator::lonToTileX(
+        const double marker_tile_x_zoom0 = GeoWebMercator::lonToTileX(
             GeoWebMercator::normalizeLongitude(marker.longitude_deg),
-            GlobeHeatmapMarkerBucketZoom);
-        const double marker_tile_y = GeoWebMercator::latToTileY(
-            marker.latitude_deg, GlobeHeatmapMarkerBucketZoom);
-        if (!std::isfinite(marker_tile_x)
-            || !std::isfinite(marker_tile_y))
+            0);
+        const double marker_tile_y_zoom0 = GeoWebMercator::latToTileY(
+            marker.latitude_deg, 0);
+        if (!std::isfinite(marker_tile_x_zoom0)
+            || !std::isfinite(marker_tile_y_zoom0))
         {
             continue;
         }
 
-        const int bucket_x = wrappedGlobeHeatmapBucketX(
-            qint64(std::floor(marker_tile_x)));
-        const int bucket_y = int(qBound(
-            qint64(0), qint64(std::floor(marker_tile_y)),
-            GlobeHeatmapMarkerBucketCount - 1));
-        this->heatmap_marker_buckets[globeHeatmapMarkerBucketKey(
-            bucket_x, bucket_y)].append(marker_index);
+        HeatmapMarkerProjection &projection =
+            this->heatmap_marker_projections[marker_index];
+        projection.tile_x_zoom0 = marker_tile_x_zoom0;
+        projection.tile_y_zoom0 = marker_tile_y_zoom0;
+        projection.valid = true;
+
+        for (int bucket_zoom = 0;
+             bucket_zoom <= GlobeHeatmapMarkerMaximumBucketZoom;
+             ++bucket_zoom)
+        {
+            const qint64 bucket_count = qint64(1) << bucket_zoom;
+            const double bucket_scale = double(bucket_count);
+            const int bucket_x = wrappedGlobeHeatmapBucketX(
+                qint64(std::floor(marker_tile_x_zoom0 * bucket_scale)),
+                bucket_count);
+            const int bucket_y = int(qBound(
+                qint64(0),
+                qint64(std::floor(
+                    marker_tile_y_zoom0 * bucket_scale)),
+                bucket_count - 1));
+            this->heatmap_marker_buckets_by_zoom[bucket_zoom]
+                [globeHeatmapMarkerBucketKey(bucket_x, bucket_y)]
+                    .append(marker_index);
+        }
     }
 }
 
 QVector<int> MapRhiGlobeRenderer::heatmapMarkerCandidates(
-    const GlobeTile &tile, double radius_tile_fraction) const
+    const GlobeTile &tile, double radius_tile_fraction,
+    int *visited_bucket_cells) const
 {
+    if (visited_bucket_cells != nullptr)
+        *visited_bucket_cells = 0;
+
     QVector<int> result;
-    if (this->heatmap_marker_buckets.isEmpty()
+    if (this->heatmap_marker_projections.isEmpty()
+        || this->heatmap_marker_buckets_by_zoom.isEmpty()
         || !std::isfinite(radius_tile_fraction)
         || radius_tile_fraction < 0.0)
     {
@@ -3099,23 +3142,45 @@ QVector<int> MapRhiGlobeRenderer::heatmapMarkerCandidates(
         QVector<int> indices;
         indices.reserve(this->heatmap_markers.size());
         for (int marker_index = 0;
-             marker_index < this->heatmap_markers.size(); ++marker_index)
+             marker_index < this->heatmap_marker_projections.size();
+             ++marker_index)
         {
-            indices.append(marker_index);
+            if (this->heatmap_marker_projections.at(marker_index).valid)
+                indices.append(marker_index);
         }
         return indices;
     };
 
-    const double bucket_scale = std::ldexp(
-        1.0, GlobeHeatmapMarkerBucketZoom - tile.zoom);
-    const double horizontal_span =
+    int bucket_zoom = qBound(
+        0, tile.zoom, GlobeHeatmapMarkerMaximumBucketZoom);
+    double bucket_scale = std::ldexp(1.0, bucket_zoom - tile.zoom);
+    double horizontal_span =
         (1.0 + 2.0 * radius_tile_fraction) * bucket_scale;
     if (!std::isfinite(bucket_scale) || bucket_scale <= 0.0
-        || !std::isfinite(horizontal_span)
-        || horizontal_span >= double(GlobeHeatmapMarkerBucketCount))
+        || !std::isfinite(horizontal_span))
     {
         return all_marker_indices();
     }
+
+    // Drop to a coarser index level until this radius-expanded tile covers
+    // only a small rectangle of buckets. Every marker exists at every level,
+    // so this never changes the candidate set's correctness -- only how many
+    // empty QHash cells and coarse false positives are inspected.
+    while (bucket_zoom > 0
+           && horizontal_span > GlobeHeatmapMarkerTargetBucketSpan)
+    {
+        --bucket_zoom;
+        bucket_scale *= 0.5;
+        horizontal_span *= 0.5;
+    }
+
+    const qint64 bucket_count = qint64(1) << bucket_zoom;
+    if (horizontal_span >= double(bucket_count))
+        return all_marker_indices();
+    const QHash<quint64, QVector<int>> &buckets =
+        this->heatmap_marker_buckets_by_zoom.at(bucket_zoom);
+    if (buckets.isEmpty())
+        return result;
 
     const double minimum_bucket_x_value =
         (double(tile.virtual_x) - radius_tile_fraction) * bucket_scale;
@@ -3142,7 +3207,7 @@ QVector<int> MapRhiGlobeRenderer::heatmapMarkerCandidates(
     const qint64 unclamped_maximum_bucket_y =
         qint64(std::floor(maximum_bucket_y_value));
     if (unclamped_maximum_bucket_y < 0
-        || unclamped_minimum_bucket_y >= GlobeHeatmapMarkerBucketCount)
+        || unclamped_minimum_bucket_y >= bucket_count)
     {
         return result;
     }
@@ -3150,7 +3215,7 @@ QVector<int> MapRhiGlobeRenderer::heatmapMarkerCandidates(
     const qint64 minimum_bucket_y = qMax(
         qint64(0), unclamped_minimum_bucket_y);
     const qint64 maximum_bucket_y = qMin(
-        GlobeHeatmapMarkerBucketCount - 1,
+        bucket_count - 1,
         unclamped_maximum_bucket_y);
     const qint64 horizontal_bucket_count =
         maximum_bucket_x - minimum_bucket_x + 1;
@@ -3158,20 +3223,8 @@ QVector<int> MapRhiGlobeRenderer::heatmapMarkerCandidates(
         maximum_bucket_y - minimum_bucket_y + 1;
     if (horizontal_bucket_count <= 0 || vertical_bucket_count <= 0)
         return result;
-    if (horizontal_bucket_count >= GlobeHeatmapMarkerBucketCount)
+    if (horizontal_bucket_count >= bucket_count)
         return all_marker_indices();
-
-    // At low Globe zooms the tile can cover millions of empty zoom-18
-    // cells. Scanning the marker vector once is cheaper there; nearby views
-    // take the sparse-cell path and avoid almost the entire network.
-    const qint64 sparse_scan_limit = qMax(
-        qint64(64), qint64(this->heatmap_marker_buckets.size()) * 2);
-    if (vertical_bucket_count > sparse_scan_limit
-        || horizontal_bucket_count
-            > sparse_scan_limit / vertical_bucket_count)
-    {
-        return all_marker_indices();
-    }
 
     for (qint64 bucket_y = minimum_bucket_y;
          bucket_y <= maximum_bucket_y; ++bucket_y)
@@ -3179,11 +3232,14 @@ QVector<int> MapRhiGlobeRenderer::heatmapMarkerCandidates(
         for (qint64 bucket_x = minimum_bucket_x;
              bucket_x <= maximum_bucket_x; ++bucket_x)
         {
+            if (visited_bucket_cells != nullptr)
+                ++*visited_bucket_cells;
             const quint64 key = globeHeatmapMarkerBucketKey(
-                wrappedGlobeHeatmapBucketX(bucket_x), int(bucket_y));
+                wrappedGlobeHeatmapBucketX(bucket_x, bucket_count),
+                int(bucket_y));
             const QHash<quint64, QVector<int>>::const_iterator iterator =
-                this->heatmap_marker_buckets.constFind(key);
-            if (iterator == this->heatmap_marker_buckets.cend())
+                buckets.constFind(key);
+            if (iterator == buckets.cend())
                 continue;
             result.append(iterator.value());
         }
@@ -3215,6 +3271,8 @@ QImage MapRhiGlobeRenderer::renderHeatmapTileProfiled(
     if (!image.isNull())
         ++this->heatmap_profile.raster_tiles_with_content;
     this->heatmap_profile.candidate_markers += stats.candidate_markers;
+    this->heatmap_profile.candidate_bucket_cells +=
+        stats.candidate_bucket_cells;
     this->heatmap_profile.marker_tile_pairs += stats.marker_tile_pairs;
     if (stats.stamp_layout_cache_hit)
         ++this->heatmap_profile.stamp_layout_cache_hits;
@@ -3304,6 +3362,8 @@ MapRhiGlobeRenderer::heatmapStampsForTileProfiled(
     QVector<HeatmapStamp> stamps = heatmapStampsForTile(
         tile, resource, &stats);
     this->heatmap_profile.candidate_markers += stats.candidate_markers;
+    this->heatmap_profile.candidate_bucket_cells +=
+        stats.candidate_bucket_cells;
     this->heatmap_profile.marker_tile_pairs += stats.marker_tile_pairs;
     if (stats.stamp_layout_cache_hit)
         ++this->heatmap_profile.stamp_layout_cache_hits;
@@ -3323,6 +3383,46 @@ MapRhiGlobeRenderer::heatmapStampsForTile(
     if (stats != nullptr)
         *stats = HeatmapRasterStats();
 
+    // The retained layout deliberately includes inactive markers. Converting
+    // it to the currently renderable list is linear only in the few stamps
+    // that actually overlap this tile, rather than in every marker candidate
+    // tested while constructing the layout.
+    const auto activeStampsFromLayout = [this, stats](
+        const QVector<HeatmapStamp> &layout, bool *valid_indices)
+    {
+        QVector<HeatmapStamp> active_stamps;
+        active_stamps.reserve(layout.size());
+        *valid_indices = true;
+        for (const HeatmapStamp &layout_stamp : layout)
+        {
+            if (layout_stamp.marker_index < 0
+                || layout_stamp.marker_index >= this->heatmap_markers.size())
+            {
+                *valid_indices = false;
+                active_stamps.clear();
+                break;
+            }
+
+            const HeatmapMarker &marker = this->heatmap_markers.at(
+                layout_stamp.marker_index);
+            if (marker.render_id != layout_stamp.marker_render_id)
+            {
+                *valid_indices = false;
+                active_stamps.clear();
+                break;
+            }
+            if (!marker.active)
+                continue;
+
+            HeatmapStamp active_stamp = layout_stamp;
+            active_stamp.color = marker.color;
+            active_stamps.append(std::move(active_stamp));
+        }
+        if (*valid_indices && stats != nullptr)
+            stats->marker_tile_pairs = active_stamps.size();
+        return active_stamps;
+    };
+
     const bool layout_matches = resource != nullptr
         && resource->heatmap_stamp_layout_revision
             == this->heatmap_stamp_layout_revision
@@ -3331,43 +3431,35 @@ MapRhiGlobeRenderer::heatmapStampsForTile(
         && resource->heatmap_stamp_layout_tile_y == tile.tile_y;
     if (layout_matches)
     {
-        bool valid_indices = true;
-        for (HeatmapStamp &stamp : resource->heatmap_stamp_layout)
-        {
-            if (stamp.marker_index < 0
-                || stamp.marker_index >= this->heatmap_markers.size())
-            {
-                valid_indices = false;
-                break;
-            }
-            stamp.color = this->heatmap_markers.at(
-                stamp.marker_index).color;
-        }
+        bool valid_indices = false;
+        QVector<HeatmapStamp> active_stamps = activeStampsFromLayout(
+            resource->heatmap_stamp_layout, &valid_indices);
         if (valid_indices)
         {
             if (stats != nullptr)
-            {
-                stats->marker_tile_pairs =
-                    resource->heatmap_stamp_layout.size();
                 stats->stamp_layout_cache_hit = true;
-            }
-            return resource->heatmap_stamp_layout;
+            return active_stamps;
         }
     }
 
-    const auto retain_layout = [this, &tile, resource](
+    const auto retain_layout = [this, &tile, resource,
+                                &activeStampsFromLayout](
         QVector<HeatmapStamp> stamps)
     {
         if (resource != nullptr)
         {
-            resource->heatmap_stamp_layout = stamps;
+            resource->heatmap_stamp_layout = std::move(stamps);
             resource->heatmap_stamp_layout_revision =
                 this->heatmap_stamp_layout_revision;
             resource->heatmap_stamp_layout_zoom = tile.zoom;
             resource->heatmap_stamp_layout_virtual_x = tile.virtual_x;
             resource->heatmap_stamp_layout_tile_y = tile.tile_y;
+            bool valid_indices = false;
+            return activeStampsFromLayout(
+                resource->heatmap_stamp_layout, &valid_indices);
         }
-        return stamps;
+        bool valid_indices = false;
+        return activeStampsFromLayout(stamps, &valid_indices);
     };
 
     if (this->heatmap_markers.isEmpty() || !(this->heatmap_radius_m > 0.0) || tile.is_cap)
@@ -3375,10 +3467,9 @@ MapRhiGlobeRenderer::heatmapStampsForTile(
 
     // tile_center_lat_deg only, in degrees -- needed for the
     // latitude-dependent meters-per-pixel conversion just below. The
-    // marker-vs-tile math further down works entirely in fractional
-    // tile-coordinate space (via GeoWebMercator::lonToTileX()/latToTileY()),
-    // not degrees, so the tile's own lon/lat *bounds* are never needed as
-    // such.
+    // marker-vs-tile math further down works entirely in cached fractional
+    // Web Mercator tile coordinates, not degrees, so the tile's own lon/lat
+    // *bounds* are never needed as such.
     const double tile_lat_top_deg = GeoWebMercator::tileYToLat(
         double(tile.tile_y), tile.zoom);
     const double tile_lat_bottom_deg = GeoWebMercator::tileYToLat(
@@ -3403,16 +3494,23 @@ MapRhiGlobeRenderer::heatmapStampsForTile(
     // check needs no separate unit conversion of its own.
     const double radius_tile_fraction = radius_pixels / double(GeoWebMercator::TileSize);
 
+    int visited_bucket_cells = 0;
     const QVector<int> candidate_indices = heatmapMarkerCandidates(
-        tile, radius_tile_fraction);
+        tile, radius_tile_fraction, &visited_bucket_cells);
     if (stats != nullptr)
+    {
         stats->candidate_markers = candidate_indices.size();
+        stats->candidate_bucket_cells = visited_bucket_cells;
+    }
     if (candidate_indices.isEmpty())
         return retain_layout({});
 
     QVector<HeatmapStamp> stamps;
     stamps.reserve(candidate_indices.size());
     const double pixels_per_fraction = double(GlobeHeatmapTextureSize);
+    const double tile_scale = std::ldexp(1.0, tile.zoom);
+    if (!std::isfinite(tile_scale))
+        return retain_layout({});
     for (int marker_index : candidate_indices)
     {
         // nearestWrappedTileX() picks whichever antimeridian-wrapped copy
@@ -3420,21 +3518,19 @@ MapRhiGlobeRenderer::heatmapStampsForTile(
         // (already unwrapped) virtual_x -- the same reasoning
         // terrainCellCountForTile() and every other per-tile geodetic
         // calculation in this class already applies.
-        if (marker_index < 0 || marker_index >= this->heatmap_markers.size())
+        if (marker_index < 0
+            || marker_index >= this->heatmap_markers.size()
+            || marker_index >= this->heatmap_marker_projections.size())
             continue;
         const HeatmapMarker &marker = this->heatmap_markers.at(marker_index);
-        if (!std::isfinite(marker.longitude_deg)
-            || !std::isfinite(marker.latitude_deg))
-        {
+        const HeatmapMarkerProjection &projection =
+            this->heatmap_marker_projections.at(marker_index);
+        if (!projection.valid)
             continue;
-        }
         const double marker_tile_x = GeoWebMercator::nearestWrappedTileX(
-            GeoWebMercator::lonToTileX(
-                GeoWebMercator::normalizeLongitude(marker.longitude_deg),
-                tile.zoom),
+            projection.tile_x_zoom0 * tile_scale,
             double(tile.virtual_x), tile.zoom);
-        const double marker_tile_y =
-            GeoWebMercator::latToTileY(marker.latitude_deg, tile.zoom);
+        const double marker_tile_y = projection.tile_y_zoom0 * tile_scale;
         if (!std::isfinite(marker_tile_x)
             || !std::isfinite(marker_tile_y))
         {
@@ -3456,12 +3552,11 @@ MapRhiGlobeRenderer::heatmapStampsForTile(
         stamp.center_y_pixels = fraction_y * pixels_per_fraction;
         stamp.radius_pixels = radius_pixels;
         stamp.marker_index = marker_index;
+        stamp.marker_render_id = marker.render_id;
         stamp.color = marker.color;
         stamps.append(stamp);
     }
 
-    if (stats != nullptr)
-        stats->marker_tile_pairs = stamps.size();
     return retain_layout(std::move(stamps));
 }
 
@@ -4718,6 +4813,10 @@ void MapRhiGlobeRenderer::reportHeatmapProfile() const
     constexpr double BytesPerMebibyte = 1024.0 * 1024.0;
     qCDebug(globeHeatmapPerformanceLog).noquote().nospace()
         << "revision=" << this->heatmap_revision
+        << " markers=" << this->heatmap_markers.size()
+        << " active_markers=" << this->heatmap_active_marker_count
+        << " stamp_layout_revision="
+        << this->heatmap_stamp_layout_revision
         << " visible_tiles=" << this->heatmap_profile.visible_tiles
         << " dirty_tiles=" << this->heatmap_profile.dirty_tiles
         << " raster_calls=" << this->heatmap_profile.raster_calls
@@ -4725,8 +4824,14 @@ void MapRhiGlobeRenderer::reportHeatmapProfile() const
         << this->heatmap_profile.raster_tiles_with_content
         << " candidate_markers="
         << this->heatmap_profile.candidate_markers
+        << " candidate_bucket_cells="
+        << this->heatmap_profile.candidate_bucket_cells
         << " marker_tile_pairs="
         << this->heatmap_profile.marker_tile_pairs
+        << " radius_m="
+        << QString::number(this->heatmap_radius_m, 'f', 3)
+        << " marker_index_levels="
+        << this->heatmap_marker_buckets_by_zoom.size()
         << " stamp_layout_cache_hits="
         << this->heatmap_profile.stamp_layout_cache_hits
         << " stamp_layout_cache_misses="
