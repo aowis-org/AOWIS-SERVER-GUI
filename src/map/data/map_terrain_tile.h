@@ -38,6 +38,8 @@ struct MapTerrainTile
     QString dataset;
     double nominal_resolution_m = 0.0;
     MapTerrainVerticalDatum vertical_datum = MapTerrainVerticalDatum::Unknown;
+    double minimum_elevation_m = 0.0;
+    double maximum_elevation_m = 0.0;
 
     // Row-major, north-to-south then west-to-east. NaN represents no-data.
     QVector<float> elevations_m;

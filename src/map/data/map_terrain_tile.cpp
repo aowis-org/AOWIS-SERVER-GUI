@@ -251,6 +251,8 @@ std::optional<MapTerrainTile> decodeMapTerrainTile(const QByteArray &data, QStri
 
     tile.elevations_m.resize(MapTerrainTileSampleCount);
     bool has_finite_sample = false;
+    double decoded_minimum_elevation_m = std::numeric_limits<double>::infinity();
+    double decoded_maximum_elevation_m = -std::numeric_limits<double>::infinity();
     for (int index = 0; index < MapTerrainTileSampleCount; ++index)
     {
         const quint16 code = readUInt16(payload, qsizetype(index) * qsizetype(sizeof(quint16)));
@@ -260,7 +262,12 @@ std::optional<MapTerrainTile> decodeMapTerrainTile(const QByteArray &data, QStri
             continue;
         }
 
-        tile.elevations_m[index] = minimum_elevation_m + float(code) * elevation_scale_m;
+        const float elevation_m = minimum_elevation_m + float(code) * elevation_scale_m;
+        tile.elevations_m[index] = elevation_m;
+        decoded_minimum_elevation_m = qMin(
+            decoded_minimum_elevation_m, double(elevation_m));
+        decoded_maximum_elevation_m = qMax(
+            decoded_maximum_elevation_m, double(elevation_m));
         has_finite_sample = true;
     }
 
@@ -269,6 +276,9 @@ std::optional<MapTerrainTile> decodeMapTerrainTile(const QByteArray &data, QStri
         setError(error_message, QStringLiteral("Terrain tile payload contains only no-data samples"));
         return std::nullopt;
     }
+
+    tile.minimum_elevation_m = decoded_minimum_elevation_m;
+    tile.maximum_elevation_m = decoded_maximum_elevation_m;
 
     return tile;
 }

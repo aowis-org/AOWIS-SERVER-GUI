@@ -474,6 +474,10 @@ quint64 globeQuadtreeNodeKey(int zoom, int tile_x, int tile_y)
         | quint64(quint32(tile_y));
 }
 
+int globeTerrainZoomForImageryZoom(int imagery_zoom);
+QString globeTerrainDatasetId();
+bool globeTerrainDatumUsable(MapTerrainVerticalDatum datum);
+
 // Cheap bounding sphere for a tile: ECEF positions of its four corners plus
 // centre, centroid as the sphere centre, farthest sample as the radius.
 // reference_elevation_m selects the radial shell being bounded. Visibility
@@ -539,6 +543,58 @@ void globeQuadtreeNodeBoundingSphere(
 
     *center = centroid;
     *radius_m = max_distance;
+}
+
+// Visibility must bound the geometry that can actually be drawn, not just a
+// single shell at the focus elevation. This matters most with vertical
+// exaggeration: a nearby mountain can stand several kilometres above the
+// orbit target while a not-yet-built terrain tile is still temporarily drawn
+// on the zero-height fallback shell. Include both states in one conservative
+// sphere so neither the horizon test nor the view-cone test can cut away a
+// tile whose relief is visibly in front of the camera.
+void globeQuadtreeNodeVisibilityBoundingSphere(
+    int zoom, int tile_x, int tile_y,
+    const MapTerrainRepository *terrain_repository,
+    double vertical_exaggeration,
+    QVector3D *center, double *radius_m)
+{
+    double minimum_elevation_m = 0.0;
+    double maximum_elevation_m = 0.0;
+
+    if (terrain_repository != nullptr
+        && zoom >= GlobeTerrainReliefMinimumZoom)
+    {
+        const int terrain_zoom = globeTerrainZoomForImageryZoom(zoom);
+        const int zoom_delta = zoom - terrain_zoom;
+        const quint32 terrain_x = quint32(tile_x) >> zoom_delta;
+        const quint32 terrain_y = quint32(tile_y) >> zoom_delta;
+        const MapTerrainTile *terrain_tile = terrain_repository->tile(
+            globeTerrainDatasetId(), terrain_zoom, terrain_x, terrain_y);
+        if (terrain_tile != nullptr
+            && globeTerrainDatumUsable(terrain_tile->vertical_datum)
+            && std::isfinite(terrain_tile->minimum_elevation_m)
+            && std::isfinite(terrain_tile->maximum_elevation_m))
+        {
+            const double first_elevation_m =
+                terrain_tile->minimum_elevation_m * vertical_exaggeration;
+            const double second_elevation_m =
+                terrain_tile->maximum_elevation_m * vertical_exaggeration;
+            minimum_elevation_m = qMin(
+                0.0, qMin(first_elevation_m, second_elevation_m));
+            maximum_elevation_m = qMax(
+                0.0, qMax(first_elevation_m, second_elevation_m));
+        }
+    }
+
+    const double reference_elevation_m =
+        0.5 * (minimum_elevation_m + maximum_elevation_m);
+    globeQuadtreeNodeBoundingSphere(
+        zoom, tile_x, tile_y, reference_elevation_m, center, radius_m);
+
+    // A sphere that encloses the tile on the middle shell, enlarged by half
+    // the elevation span, encloses every corresponding point between the
+    // minimum and maximum shells by the triangle inequality.
+    *radius_m += 0.5 * (maximum_elevation_m - minimum_elevation_m);
 }
 
 // A tile's bounding sphere is centered on the tile and sized to its
@@ -676,7 +732,8 @@ void collectGlobeQuadtreeLeaves(
     int zoom, int tile_x, int tile_y,
     const GeoWgs84Ellipsoid::OrbitCameraBasis &visibility_camera_basis,
     const GeoWgs84Ellipsoid::OrbitCameraBasis &lod_camera_basis,
-    double visibility_reference_elevation_m, double viewport_height_px,
+    const MapTerrainRepository *terrain_repository,
+    double vertical_exaggeration, double viewport_height_px,
     double tan_half_fov, double half_fov_rad,
     const QSet<quint64> &previously_subdivided_nodes,
     QSet<quint64> *currently_subdivided_nodes,
@@ -691,8 +748,8 @@ void collectGlobeQuadtreeLeaves(
 
     QVector3D visibility_node_center;
     double visibility_node_radius_m = 0.0;
-    globeQuadtreeNodeBoundingSphere(
-        zoom, tile_x, tile_y, visibility_reference_elevation_m,
+    globeQuadtreeNodeVisibilityBoundingSphere(
+        zoom, tile_x, tile_y, terrain_repository, vertical_exaggeration,
         &visibility_node_center, &visibility_node_radius_m);
 
     if (globeQuadtreeNodeOccludedByHorizon(
@@ -758,9 +815,9 @@ void collectGlobeQuadtreeLeaves(
 
             QVector3D child_center;
             double child_radius_m = 0.0;
-            globeQuadtreeNodeBoundingSphere(
+            globeQuadtreeNodeVisibilityBoundingSphere(
                 child_zoom, child_x + dx, cy,
-                visibility_reference_elevation_m,
+                terrain_repository, vertical_exaggeration,
                 &child_center, &child_radius_m);
             children[child_count] = Child{
                 child_x + dx, cy,
@@ -780,7 +837,7 @@ void collectGlobeQuadtreeLeaves(
         collectGlobeQuadtreeLeaves(
             child_zoom, children[index].x, children[index].y,
             visibility_camera_basis, lod_camera_basis,
-            visibility_reference_elevation_m, viewport_height_px,
+            terrain_repository, vertical_exaggeration, viewport_height_px,
             tan_half_fov, half_fov_rad, previously_subdivided_nodes,
             currently_subdivided_nodes, leaves, visit_budget);
     }
@@ -794,6 +851,7 @@ void collectGlobeQuadtreeLeaves(
 // the new set of subdivided nodes for next frame's call.
 QVector<MapRhiGlobeQuadtreeLeaf> selectVisibleGlobeQuadtreeLeaves(
     const MapModel &map_model, const QSize &viewport_size,
+    const MapTerrainRepository *terrain_repository,
     QSet<quint64> *previously_subdivided_nodes)
 {
     QVector<MapRhiGlobeQuadtreeLeaf> leaves;
@@ -806,14 +864,9 @@ QVector<MapRhiGlobeQuadtreeLeaf> selectVisibleGlobeQuadtreeLeaves(
     const double distance_m = qMax(
         MapModel::MinViewGlobeDistanceM, map_model.viewGlobeDistanceM());
 
-    // Visibility must use the same terrain-height-aware reference shell as
-    // the renderer. Once the focus DEM is loaded, Globe raises both target
-    // and eye by viewGlobeVerticalOffsetM(); the culling tile bounds below are
-    // raised by that same amount. Raising only the eye while leaving bounds on
-    // the zero-height ellipsoid fixes the distant horizon but makes close-range
-    // terrain look artificially buried below the camera's reference surface,
-    // which can cull the near face of a mountain. GPU face culling is disabled;
-    // these holes are CPU quadtree omissions.
+    // The camera must use the same terrain-height-aware target as rendering.
+    // Individual tile bounds are handled separately from their loaded DEM
+    // ranges by globeQuadtreeNodeVisibilityBoundingSphere().
     const GeoWgs84Ellipsoid::OrbitCameraBasis visibility_camera_basis =
         GeoWgs84Ellipsoid::orbitCameraBasis(
             map_model.centerLon(), map_model.centerLat(),
@@ -838,7 +891,7 @@ QVector<MapRhiGlobeQuadtreeLeaf> selectVisibleGlobeQuadtreeLeaves(
     int visit_budget = GlobeQuadtreeMaxVisitedNodes;
     collectGlobeQuadtreeLeaves(
         GlobeQuadtreeRootZoom, 0, 0, visibility_camera_basis, lod_camera_basis,
-        map_model.viewGlobeVerticalOffsetM(), viewport_height_px,
+        terrain_repository, map_model.view3dVerticalExaggeration(), viewport_height_px,
         tan_half_fov, half_fov_rad,
         *previously_subdivided_nodes, &currently_subdivided_nodes, &leaves,
         &visit_budget);
@@ -6109,7 +6162,8 @@ bool MapRhiGlobeRenderer::prepare(
     // gated on the resulting leaf set actually differing from what is
     // already built.
     const QVector<MapRhiGlobeQuadtreeLeaf> desired_leaves = selectVisibleGlobeQuadtreeLeaves(
-        *this->map_model, viewport_size, &this->previously_subdivided_quadtree_nodes);
+        *this->map_model, viewport_size, this->terrain_repository,
+        &this->previously_subdivided_quadtree_nodes);
 
     bool leaves_match_window = !this->window_dirty
         && desired_leaves.size() == this->window_tiles.size();
