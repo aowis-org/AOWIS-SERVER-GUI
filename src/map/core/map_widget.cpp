@@ -1386,10 +1386,20 @@ void MapWidget::beginView3dOrbit(
     if (this->view_3d_orbit_active || input == View3dOrbitInput::None)
         return;
 
+#ifndef Q_OS_WASM
+    // A native Wayland pointer lock is attached to the top-level wl_surface,
+    // not to this QWidget. Once locked, Qt is therefore no longer guaranteed
+    // to route the matching mouse-button release back through MapWidget. Watch
+    // application input while orbit is active so the gesture that started the
+    // lock also always terminates it. This is especially important because we
+    // intentionally do not call grabMouse() when the Wayland lock succeeds; a
+    // second Qt pointer grab can conflict with the compositor pointer lock.
+    if (qApp != nullptr)
+        qApp->installEventFilter(this);
+#endif
+
 #ifdef Q_OS_WASM
     Q_UNUSED(global_position);
-#else
-    Q_UNUSED(position);
 #endif
 
     this->view_3d_orbit_active = true;
@@ -1401,19 +1411,60 @@ void MapWidget::beginView3dOrbit(
     this->view_3d_orbit_restore_global = global_position;
     this->view_3d_orbit_anchor_global = global_position;
     this->view_3d_orbit_last_global_position = global_position;
-    this->view_3d_orbit_pointer_warp_enabled =
-        !QApplication::platformName().contains(
-            QStringLiteral("wayland"), Qt::CaseInsensitive);
+    this->view_3d_orbit_relative_fractional_delta = QPointF();
 
-    // Keep orbit input self-contained: the pointer is invisible for the
-    // complete interaction, and normal Qt mouse grabbing keeps motion events
-    // routed to the map even if the physical pointer would otherwise leave it.
-    // On platforms that allow cursor warping, mouseMoveEvent() additionally
-    // pins the hidden pointer to this activation point so it cannot wander.
+    const bool wayland_platform = this->view_3d_orbit_wayland_pointer_lock.isWaylandPlatform();
+    bool wayland_pointer_locked = false;
+    if (wayland_platform)
+    {
+        QWidget *top_level_widget = window();
+        QWindow *top_level_window = top_level_widget != nullptr
+            ? top_level_widget->windowHandle()
+            : nullptr;
+        QPoint restore_surface_position = position;
+        if (top_level_widget != nullptr)
+            restore_surface_position = mapTo(top_level_widget, position);
+
+        wayland_pointer_locked = this->view_3d_orbit_wayland_pointer_lock.lock(
+            top_level_window,
+            QPointF(restore_surface_position),
+            [this](const QPointF &delta)
+            {
+                if (!this->view_3d_orbit_active
+                    || !this->view_3d_orbit_wayland_pointer_lock.isLocked())
+                {
+                    return;
+                }
+
+                this->view_3d_orbit_relative_fractional_delta += delta;
+                const int delta_x = int(std::trunc(
+                    this->view_3d_orbit_relative_fractional_delta.x()));
+                const int delta_y = int(std::trunc(
+                    this->view_3d_orbit_relative_fractional_delta.y()));
+                const QPoint whole_delta(delta_x, delta_y);
+                if (whole_delta.isNull())
+                    return;
+
+                this->view_3d_orbit_relative_fractional_delta -= QPointF(whole_delta);
+                applyView3dOrbitPointerDelta(whole_delta);
+            });
+    }
+
+    this->view_3d_orbit_pointer_warp_enabled = !wayland_platform;
+
+    // X11/Windows/macOS can keep the hidden cursor pinned to the orbit start.
+    // Wayland deliberately forbids client-side cursor warping, so use the
+    // pointer-constraints + relative-pointer protocols there. That gives us
+    // unbounded relative motion even when the physical pointer would otherwise
+    // reach a monitor edge.
     QApplication::setOverrideCursor(Qt::BlankCursor);
     this->view_3d_orbit_cursor_hidden = true;
-    grabMouse();
-    this->view_3d_orbit_mouse_grabbed = true;
+    this->view_3d_orbit_mouse_grabbed = false;
+    if (!wayland_pointer_locked)
+    {
+        grabMouse();
+        this->view_3d_orbit_mouse_grabbed = true;
+    }
 #endif
 }
 
@@ -1422,6 +1473,7 @@ void MapWidget::endView3dOrbit(bool restore_cursor_position)
     if (!this->view_3d_orbit_active
 #ifndef Q_OS_WASM
         && !this->view_3d_orbit_mouse_grabbed
+        && !this->view_3d_orbit_wayland_pointer_lock.isLocked()
 #endif
     )
     {
@@ -1432,6 +1484,12 @@ void MapWidget::endView3dOrbit(bool restore_cursor_position)
     this->view_3d_orbit_input = View3dOrbitInput::None;
     this->m_model->endView3dRotateInteraction();
 #ifndef Q_OS_WASM
+    if (qApp != nullptr)
+        qApp->removeEventFilter(this);
+
+    if (this->view_3d_orbit_wayland_pointer_lock.isLocked())
+        this->view_3d_orbit_wayland_pointer_lock.unlock(restore_cursor_position);
+
     if (this->view_3d_orbit_mouse_grabbed)
     {
         releaseMouse();
@@ -1445,7 +1503,47 @@ void MapWidget::endView3dOrbit(bool restore_cursor_position)
     if (restore_cursor_position && this->view_3d_orbit_pointer_warp_enabled)
         QCursor::setPos(this->view_3d_orbit_restore_global);
     this->view_3d_orbit_pointer_warp_enabled = false;
+    this->view_3d_orbit_relative_fractional_delta = QPointF();
 #endif
+}
+
+void MapWidget::applyView3dOrbitPointerDelta(const QPoint &delta)
+{
+    if (delta.isNull())
+        return;
+
+    if (this->m_model->viewMode() == MapViewMode::Globe)
+        this->m_model->orbitViewGlobeByPointerDelta(delta, true);
+    else
+        this->m_model->orbitView3dByPointerDelta(delta, true);
+}
+
+bool MapWidget::eventFilter(QObject *watched, QEvent *event)
+{
+#ifndef Q_OS_WASM
+    if (this->view_3d_orbit_active && event != nullptr)
+    {
+        if (this->view_3d_orbit_input == View3dOrbitInput::MiddleMouse
+            && event->type() == QEvent::MouseButtonRelease)
+        {
+            QMouseEvent *mouse_event = static_cast<QMouseEvent *>(event);
+            if (mouse_event->button() == Qt::MiddleButton)
+                endView3dOrbit();
+        }
+        else if (this->view_3d_orbit_input == View3dOrbitInput::CtrlMouse
+                 && event->type() == QEvent::KeyRelease)
+        {
+            QKeyEvent *key_event = static_cast<QKeyEvent *>(event);
+            if (key_event->key() == Qt::Key_Control && !key_event->isAutoRepeat())
+                endView3dOrbit();
+        }
+    }
+#else
+    Q_UNUSED(watched)
+    Q_UNUSED(event)
+#endif
+
+    return QWidget::eventFilter(watched, event);
 }
 
 void MapWidget::mousePressEvent(QMouseEvent *event)
@@ -1609,6 +1707,15 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
         }
 
 #ifndef Q_OS_WASM
+        if (this->view_3d_orbit_wayland_pointer_lock.isLocked())
+        {
+            // Relative motion is delivered directly by the Wayland protocol.
+            // Absolute QMouseEvent positions intentionally stay fixed while the
+            // compositor lock is active, so there is nothing to consume here.
+            event->accept();
+            return true;
+        }
+
         const QPoint global_position = event->globalPosition().toPoint();
         QPoint delta;
 
@@ -1621,33 +1728,20 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
         }
         else
         {
-            // Wayland compositors normally forbid client-side pointer warping.
-            // Keep the cursor hidden and grabbed, but use the delivered motion
-            // deltas directly instead of pulling in Wayland-specific protocols.
+            // Fallback for a Wayland compositor/build without relative-pointer
+            // support. This remains finite at the monitor edge, but preserves
+            // the previous behavior rather than disabling orbit entirely.
             delta = global_position - this->view_3d_orbit_last_global_position;
             this->view_3d_orbit_last_global_position = global_position;
         }
 
-        if (!delta.isNull())
-        {
-            if (this->m_model->viewMode() == MapViewMode::Globe)
-                this->m_model->orbitViewGlobeByPointerDelta(delta, true);
-            else
-                this->m_model->orbitView3dByPointerDelta(delta, true);
-
-            if (this->view_3d_orbit_pointer_warp_enabled)
-                QCursor::setPos(this->view_3d_orbit_anchor_global);
-        }
+        applyView3dOrbitPointerDelta(delta);
+        if (!delta.isNull() && this->view_3d_orbit_pointer_warp_enabled)
+            QCursor::setPos(this->view_3d_orbit_anchor_global);
 #else
         const QPoint delta = position - this->view_3d_orbit_last_position;
         this->view_3d_orbit_last_position = position;
-        if (!delta.isNull())
-        {
-            if (this->m_model->viewMode() == MapViewMode::Globe)
-                this->m_model->orbitViewGlobeByPointerDelta(delta, true);
-            else
-                this->m_model->orbitView3dByPointerDelta(delta, true);
-        }
+        applyView3dOrbitPointerDelta(delta);
 #endif
         event->accept();
         return true;

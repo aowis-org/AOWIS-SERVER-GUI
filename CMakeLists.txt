@@ -24,6 +24,17 @@ if(Qt6_VERSION VERSION_GREATER_EQUAL 6.7
     set(AOWIS_HAS_QRHI 1)
 endif()
 
+set(AOWIS_HAS_WAYLAND_POINTER_LOCK 0)
+if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN
+   AND Qt6_VERSION VERSION_GREATER_EQUAL 6.5
+   AND TARGET Qt6::GuiPrivate)
+    # The RHI desktop build already has Qt GuiPrivate. Use Qt's public
+    # Wayland application native interface plus the Wayland client runtime
+    # directly; do not require the separately packaged Qt WaylandClient
+    # development module or system wayland-protocols XML files.
+    set(AOWIS_HAS_WAYLAND_POINTER_LOCK 1)
+endif()
+
 if(EMSCRIPTEN)
     include(CheckCXXSourceCompiles)
 
@@ -200,6 +211,8 @@ qt_add_executable(aowis-server-gui
     src/map/core/map_navigation_widget.cpp
     src/map/core/map_navigation_widget.h
     src/map/core/map_scale_renderer.h
+    src/map/core/map_wayland_pointer_lock.cpp
+    src/map/core/map_wayland_pointer_lock.h
     src/map/core/map_widget.cpp
     src/map/core/map_widget.h
 
@@ -307,7 +320,14 @@ endif()
 target_compile_definitions(aowis-server-gui
     PRIVATE
         AOWIS_HAS_QRHI=${AOWIS_HAS_QRHI}
+        AOWIS_HAS_WAYLAND_POINTER_LOCK=${AOWIS_HAS_WAYLAND_POINTER_LOCK}
 )
+
+if(AOWIS_HAS_WAYLAND_POINTER_LOCK)
+    message(STATUS "AOWIS Wayland relative-pointer orbit support: enabled (runtime protocol binding)")
+elseif(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
+    message(STATUS "AOWIS Wayland relative-pointer orbit support: unavailable (Qt 6.5+ GuiPrivate required)")
+endif()
 
 target_include_directories(aowis-server-gui
     PRIVATE

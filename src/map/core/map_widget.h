@@ -25,6 +25,7 @@
 #include "gps/gps_provider_dummy.h"
 #else
 #include "gps/gps_provider.h"
+#include "map/core/map_wayland_pointer_lock.h"
 #endif
 
 #include "common/_enums_structs.h"
@@ -75,6 +76,7 @@ public slots:
     void changeMapProvider(MapProvider provider);
 
 protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
@@ -131,6 +133,7 @@ private:
     void beginView3dOrbit(
         const QPoint &position, const QPoint &global_position, View3dOrbitInput input);
     void endView3dOrbit(bool restore_cursor_position = true);
+    void applyView3dOrbitPointerDelta(const QPoint &delta);
 
     void updatePointerCoordinates(const QPoint &position);
     void emitPointerCoordinate(const CoordinateWGS84 &wgs);
@@ -153,6 +156,8 @@ private:
     QPoint view_3d_orbit_last_global_position;
     QPoint view_3d_orbit_restore_global;
     QPoint view_3d_orbit_anchor_global;
+    QPointF view_3d_orbit_relative_fractional_delta;
+    MapWaylandPointerLock view_3d_orbit_wayland_pointer_lock;
     bool view_3d_orbit_pointer_warp_enabled = false;
     bool view_3d_orbit_mouse_grabbed = false;
     bool view_3d_orbit_cursor_hidden = false;
