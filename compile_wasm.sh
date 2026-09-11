@@ -2,13 +2,7 @@
 set -euo pipefail
 
 PROJECT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-HASH_STATE_FILE="${PROJECT_DIR}/.aowis-build-state/content-hashes.json"
-
 cd "${PROJECT_DIR}"
-
-python3 tools/build/content_hash_guard.py \
-    --source-dir "${PROJECT_DIR}" \
-    --state-file "${HASH_STATE_FILE}"
 
 source tools/qt-emscripten/toolchain_versions.sh
 
