@@ -1,5 +1,6 @@
 #include "map/rhi/map_rhi_widget.h"
 
+#include "config/gui_configuration.h"
 #include "map/data/map_terrain_repository.h"
 #include "map/data/map_terrain_tile.h"
 
@@ -427,6 +428,10 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
 
     connect(this->map_model, &MapModel::centerChangedWGS84, this, [this]
     {
+        // A Globe pan changes which DEM sample is under the orbit target.
+        // Match the target to that rendered surface immediately when it is
+        // cached, or to the zero-height ellipsoid while it is still pending.
+        syncGlobeTerrainFocusElevation(false);
         if (!this->scene.hasGeometry())
         {
             const QPointF center_world = GeoWebMercator::lonLatToWorldPixel(
@@ -458,8 +463,10 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
         syncViewState();
         update();
     });
-    connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode)
+    connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode view_mode)
     {
+        if (view_mode == MapViewMode::Globe)
+            syncGlobeTerrainFocusElevation(true);
         syncViewState();
         markUndergroundGeometryDirty();
         this->heatmap_upload_pending = true;
@@ -499,6 +506,12 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
             if (this->globe_renderer)
                 this->globe_renderer->invalidateTerrain();
         }
+
+        // Globe terrain vertices use this same exaggeration. Keep the orbit
+        // target on their displayed (not raw DEM) elevation so changing the
+        // exaggeration cannot leave the camera inside the surface.
+        if (globe_changed)
+            syncGlobeTerrainFocusElevation(false);
 
         syncViewState();
         update();
@@ -554,6 +567,11 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     });
     connect(this->map_model, &MapModel::viewGlobeCameraChanged, this, [this]
     {
+        // Covers distance changes made directly by the footer/API as well as
+        // wheel and keyboard zoom. This is a cheap cached DEM lookup; if the
+        // exact current tile is pending, the renderer remains matched to its
+        // zero-height fallback until signalTerrainTileAvailable arrives.
+        syncGlobeTerrainFocusElevation(false);
         update();
     });
     connect(this, &QRhiWidget::renderFailed, this, [this]
@@ -1634,6 +1652,7 @@ void MapRhiWidget::setTerrainRepository(MapTerrainRepository *terrain_repository
                 this->basemap_renderer->notifyTerrainTileAvailable(key);
             if (this->globe_renderer)
                 this->globe_renderer->notifyTerrainTileAvailable(key);
+            syncGlobeTerrainFocusElevation(false);
             syncViewState();
             markUndergroundGeometryDirty();
             update();
@@ -1644,6 +1663,12 @@ void MapRhiWidget::setTerrainRepository(MapTerrainRepository *terrain_repository
             update();
         });
     }
+
+    // setTerrainRepository() can happen after the widget has already entered
+    // Globe mode. Initialise the focus height now and give its exact current
+    // DEM tile centre-first request priority instead of waiting for another
+    // camera gesture.
+    syncGlobeTerrainFocusElevation(true);
 
     markUndergroundGeometryDirty();
     this->heatmap_upload_pending = true;
@@ -5044,6 +5069,65 @@ bool MapRhiWidget::globeTerrainElevationAtCoordinate(
     return false;
 }
 
+bool MapRhiWidget::globeFocusTerrainElevationAtCoordinate(
+    const CoordinateWGS84 &coordinate, double *elevation_m,
+    bool request_missing_tile) const
+{
+    if (elevation_m == nullptr || this->terrain_repository == nullptr
+        || this->map_model == nullptr || !this->viewport_size.isValid()
+        || !std::isfinite(coordinate.longitude_deg)
+        || !std::isfinite(coordinate.latitude_deg))
+    {
+        return false;
+    }
+
+    // The target leaf now changes at the midpoint between continuous zoom
+    // levels (the 512 px projected-diagonal threshold in the Globe
+    // quadtree), so qRound() selects the terrain zoom belonging to the tile
+    // that should actually be under the crosshair. This deliberately does
+    // not reuse MapModel::zoom(), which belongs to the planar views and can
+    // be completely unrelated to the Globe camera distance.
+    const int imagery_zoom = qBound(
+        0,
+        qRound(this->map_model->viewGlobeZoomLevel(this->viewport_size)),
+        MapModel::MaxZoom);
+    if (imagery_zoom < CameraTerrainMinimumZoom)
+        return false;
+
+    const int configured_maximum_zoom = qMax(
+        CameraTerrainMinimumZoom,
+        guiConfiguration().map_performance.terrain_max_detail_zoom);
+    const int terrain_zoom = qBound(
+        CameraTerrainMinimumZoom, imagery_zoom, configured_maximum_zoom);
+    const double terrain_tile_x = GeoWebMercator::lonToTileX(
+        coordinate.longitude_deg, terrain_zoom);
+    const double terrain_tile_y = GeoWebMercator::latToTileY(
+        coordinate.latitude_deg, terrain_zoom);
+    const int terrain_tile_count = 1 << terrain_zoom;
+    const int tile_x = GeoWebMercator::wrapTileX(
+        int(std::floor(terrain_tile_x)), terrain_zoom);
+    const int tile_y = qBound(
+        0, int(std::floor(terrain_tile_y)), terrain_tile_count - 1);
+    const QString dataset = cameraTerrainDatasetId();
+
+    const MapTerrainTile *terrain_tile = this->terrain_repository->tile(
+        dataset, terrain_zoom, quint32(tile_x), quint32(tile_y));
+    if (terrain_tile == nullptr)
+    {
+        if (request_missing_tile)
+        {
+            this->terrain_repository->requestTile(
+                dataset, terrain_zoom, quint32(tile_x), quint32(tile_y));
+        }
+        return false;
+    }
+
+    const double local_u = terrain_tile_x - std::floor(terrain_tile_x);
+    const double local_v = terrain_tile_y - std::floor(terrain_tile_y);
+    return sampleTerrainTileElevationAt(
+        *terrain_tile, local_u, local_v, elevation_m);
+}
+
 
 void MapRhiWidget::rebuildHeatmapRenderVertices()
 {
@@ -5314,54 +5398,53 @@ void MapRhiWidget::captureView3dFocusAnchor()
 
 void MapRhiWidget::captureViewGlobeFocusAnchor()
 {
-    if (this->map_model == nullptr || this->terrain_repository == nullptr)
-        return;
+    syncGlobeTerrainFocusElevation(true);
+}
 
-    // Unlike captureView3dFocusAnchor() above, this needs no ray march at
-    // all. The globe's orbit target is always exactly the crosshair
-    // (centerLon()/centerLat()) by construction of the look-at camera --
-    // there is no different point to discover, just the real DEM elevation
-    // at the point we already know we are orbiting around. (An earlier
-    // version of this function did march a ray out to "discover" the hit,
-    // mirroring the ThreeD version too literally; at typical Globe camera
-    // distances -- up to ~11.8 million meters, vs. ThreeD's low hundreds of
-    // meters -- that meant several hundred thousand fine steps to reach the
-    // surface, which froze the UI on every rotate/zoom instead.)
+void MapRhiWidget::syncGlobeTerrainFocusElevation(bool request_missing_tile)
+{
+    if (this->map_model == nullptr
+        || this->map_model->viewMode() != MapViewMode::Globe)
+    {
+        return;
+    }
+
+    // The Globe fallback surface is the zero-height ellipsoid. Until the
+    // exact DEM tile used at the current camera LOD is present, keep the
+    // orbit target on that same surface; retaining a height from an earlier
+    // location can otherwise put the close-range camera below the fallback
+    // floor. Once the tile arrives, the terrain-available connection calls
+    // this again before its mesh is scheduled for display.
     CoordinateWGS84 target_coordinate;
     target_coordinate.longitude_deg = this->map_model->centerLon();
     target_coordinate.latitude_deg = this->map_model->centerLat();
 
     double terrain_elevation_m = 0.0;
-    if (!terrainElevationAtCoordinate(target_coordinate, &terrain_elevation_m, true))
+    const bool terrain_available = globeFocusTerrainElevationAtCoordinate(
+        target_coordinate, &terrain_elevation_m, request_missing_tile);
+    const double rendered_elevation_m = terrain_available
+        ? terrain_elevation_m
+            * this->map_model->view3dVerticalExaggeration()
+        : 0.0;
+    if (std::abs(
+            rendered_elevation_m
+            - this->map_model->viewGlobeVerticalOffsetM()) <= 1e-6)
     {
-        // DEM tile for the crosshair isn't loaded yet -- leave the existing
-        // anchor in place rather than guess; it will be tried again on the
-        // next rotate/zoom interaction once the tile has arrived.
         return;
     }
 
-    // Re-derive eye/distance from the *current* (pre-correction) camera
-    // basis, so a vertical offset left over from a very different previous
-    // location doesn't leave the rig at the wrong distance.
-    const double pitch_deg = qBound(
-        MapModel::MinViewGlobePitchDeg, this->map_model->viewGlobePitchDeg(),
-        MapModel::MaxViewGlobePitchDeg);
+    // Keep the straight-line orbit distance untouched. Distance is what the
+    // continuous Globe zoom represents, so changing it when DEM data appears
+    // causes both a visible zoom jump and disagreement with the quadtree LOD.
+    // Moving target and eye together instead makes the loaded terrain replace
+    // the zero-height fallback at exactly the same screen scale.
     const double distance_m = qMax(
         MapModel::MinViewGlobeDistanceM, this->map_model->viewGlobeDistanceM());
-    const GeoWgs84Ellipsoid::OrbitCameraBasis old_basis = GeoWgs84Ellipsoid::orbitCameraBasis(
-        target_coordinate.longitude_deg, target_coordinate.latitude_deg,
-        this->map_model->viewGlobeYawDeg(), pitch_deg, distance_m,
-        this->map_model->viewGlobeVerticalOffsetM());
-
-    const QVector3D corrected_target = GeoWgs84Ellipsoid::geodeticToEcef(
-        target_coordinate.longitude_deg, target_coordinate.latitude_deg, terrain_elevation_m);
-    const double corrected_distance_m = double((corrected_target - old_basis.eye).length());
-
     this->map_model->setViewGlobeFocusAnchor(
         target_coordinate.longitude_deg,
         target_coordinate.latitude_deg,
-        terrain_elevation_m,
-        corrected_distance_m,
+        rendered_elevation_m,
+        distance_m,
         this->viewport_size);
 }
 

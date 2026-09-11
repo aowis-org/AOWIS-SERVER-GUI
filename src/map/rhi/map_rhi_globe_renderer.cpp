@@ -34,6 +34,10 @@ Q_LOGGING_CATEGORY(
     globeHeatmapPerformanceLog,
     "aowis.map.rhi.globe.heatmap.performance",
     QtInfoMsg)
+Q_LOGGING_CATEGORY(
+    globeTerrainHeightCachePerformanceLog,
+    "aowis.map.rhi.globe.terrain.height_cache.performance",
+    QtInfoMsg)
 
 namespace
 {
@@ -315,6 +319,17 @@ int wrappedGlobeHeatmapBucketX(qint64 bucket_x, qint64 bucket_count)
 // imagery-page layout.
 constexpr int GlobeTileArrayLayerCount = 256;
 constexpr int GlobeTileArrayUsableLayerCount = GlobeTileArrayLayerCount - 1;
+// A single R32F page is roughly 4.13 MiB (256 * 65 * 65 * 4 bytes). Eight
+// lazy pages cap this preparatory cache at roughly 33 MiB while retaining
+// 2048 unique DEM tiles -- normally far more than one quadtree window needs.
+// When full, only least-recently-used, currently invisible entries can be
+// recycled. The CPU terrain renderer remains authoritative in this patch.
+constexpr int GlobeTerrainHeightArrayLayerCount = 256;
+constexpr int GlobeTerrainHeightArrayMaximumPageCount = 8;
+constexpr int GlobeTerrainHeightUploadBudgetPerFrame = 32;
+static_assert(sizeof(float) == 4, "R32F terrain uploads require 32-bit float");
+constexpr quint64 GlobeTerrainHeightTileBytes =
+    quint64(MapTerrainTileSampleCount) * quint64(sizeof(float));
 // Visible fallback heatmaps are baked into a single horizontal strip. Keep
 // the strip to 16 MiB at RGBA8 on backends supporting a 16384-wide texture;
 // lower texture-size limits automatically reduce the number of slots.
@@ -409,15 +424,19 @@ void appendIndexedGridIndices(
 // leaf count stays bounded by the walk's own occlusion/frustum culling and a
 // hard visited-node cap, regardless of pitch.
 constexpr int GlobeQuadtreeRootZoom = 0;
-// Subdivide a node once its own on-screen projected size exceeds this many
-// pixels; merge (stop subdividing) once it falls below the lower
+// Subdivide a node once its own on-screen projected *diagonal* exceeds this
+// many pixels. A 256-pixel imagery tile has a roughly 362-pixel diagonal at
+// native scale, so 512 waits until the current tile has been enlarged by
+// about 1.4x before requesting/rendering its children instead of switching
+// slightly before native scale as the old 320-pixel threshold did. Merge
+// (stop subdividing) once it falls below the lower
 // GlobeQuadtreeMergeScreenPx bound instead of the same value, so a node
 // sitting right at the boundary does not flip between one leaf and four
 // children every frame as the camera drifts by sub-pixel amounts (the same
 // role GlobeZoomHysteresis played for the old single-zoom picker, applied
 // per node instead of once globally).
-constexpr double GlobeQuadtreeSubdivideScreenPx = 320.0;
-constexpr double GlobeQuadtreeMergeScreenPx = 160.0;
+constexpr double GlobeQuadtreeSubdivideScreenPx = 512.0;
+constexpr double GlobeQuadtreeMergeScreenPx = 256.0;
 // Hard ceilings so a pathological view (camera exactly edge-on to the
 // ellipsoid, or a bug in the culling above) degrades gracefully instead of
 // pathologically. In normal operation, horizon/frustum culling keeps the
@@ -617,10 +636,24 @@ double globeQuadtreeNodeProjectedSizePx(
     const GeoWgs84Ellipsoid::OrbitCameraBasis &camera_basis,
     double viewport_height_px, double tan_half_fov)
 {
-    const double distance_m = qMax(
-        1.0, double((node_center - camera_basis.eye).length()) - node_radius_m);
-    const double angular_diameter = 2.0 * node_radius_m / distance_m;
-    return angular_diameter * (viewport_height_px / (2.0 * tan_half_fov));
+    const double center_distance_m =
+        double((node_center - camera_basis.eye).length());
+    if (center_distance_m <= node_radius_m + 1e-6)
+        return std::numeric_limits<double>::infinity();
+
+    // Project the silhouette of the sphere, not its diameter divided by the
+    // distance to its nearest point. The latter was only a conservative
+    // bound and systematically magnified every tile: at native scale a
+    // centred high-zoom tile measured about 425 px instead of its real
+    // ~362-px diagonal, making its children load before the current tile had
+    // even reached native resolution. For a perspective-projected sphere,
+    // tan(angular_radius) = r / sqrt(d^2-r^2); multiplying by two and by the
+    // vertical focal length gives its actual projected diameter.
+    const double tangent_distance_m = std::sqrt(qMax(
+        1e-12,
+        center_distance_m * center_distance_m - node_radius_m * node_radius_m));
+    const double projected_diameter = 2.0 * node_radius_m / tangent_distance_m;
+    return projected_diameter * (viewport_height_px / (2.0 * tan_half_fov));
 }
 
 // Below this zoom, tile bounding spheres are at their widest and least
@@ -741,6 +774,12 @@ QVector<MapRhiGlobeQuadtreeLeaf> selectVisibleGlobeQuadtreeLeaves(
     if (!viewport_size.isValid() || previously_subdivided_nodes == nullptr)
         return leaves;
 
+    // Deliberately height-normalized: loaded terrain and the real camera
+    // target move upward together while viewGlobeDistanceM() stays fixed.
+    // The quadtree bounds are also defined on the zero-height ellipsoid, so
+    // applying the absolute focus elevation here would count that common
+    // translation as extra camera distance and choose a coarser LOD than the
+    // identical fallback-surface view.
     const GeoWgs84Ellipsoid::OrbitCameraBasis camera_basis =
         GeoWgs84Ellipsoid::orbitCameraBasis(
             map_model.centerLon(), map_model.centerLat(),
@@ -879,6 +918,7 @@ void MapRhiGlobeRenderer::setTerrainRepository(MapTerrainRepository *new_terrain
     if (this->terrain_repository == new_terrain_repository)
         return;
 
+    resetTerrainHeightCache();
     this->terrain_repository = new_terrain_repository;
     this->reported_orthometric_datum_warning = false;
     this->reported_unusable_datum_warning = false;
@@ -924,6 +964,14 @@ void MapRhiGlobeRenderer::notifyTerrainTileAvailable(const QString &key)
 {
     if (key.isEmpty())
         return;
+
+    // A retry or provider refresh may replace the CPU tile behind an
+    // existing key. Preserve its stable layer assignment but require the
+    // new bytes to reach that layer before advertising it as ready again.
+    QHash<QString, TerrainHeightCacheEntry>::iterator cache_iterator =
+        this->terrain_height_cache.find(key);
+    if (cache_iterator != this->terrain_height_cache.end())
+        cache_iterator.value().uploaded = false;
 
     for (GlobeTile &tile : this->window_tiles)
     {
@@ -1181,6 +1229,10 @@ int MapRhiGlobeRenderer::terrainCellCountForTile(
         * std::abs(qDegreesToRadians(tile_lat_top_deg - tile_lat_bottom_deg));
     const double tile_reference_size_m = qMax(tile_width_m, tile_height_m);
 
+    // Use the same height-normalized camera as imagery LOD selection. Terrain
+    // arrival translates camera and surface together; mesh density must still
+    // depend on their preserved relative orbit distance, not absolute ECEF
+    // elevation above the ellipsoid.
     const GeoWgs84Ellipsoid::OrbitCameraBasis camera_basis =
         GeoWgs84Ellipsoid::orbitCameraBasis(
             this->map_model->centerLon(), this->map_model->centerLat(),
@@ -1352,6 +1404,420 @@ bool MapRhiGlobeRenderer::currentTerrainLodMatches(
         }
     }
     return true;
+}
+
+void MapRhiGlobeRenderer::resetTerrainHeightCache()
+{
+    this->terrain_height_array_pages.clear();
+    this->terrain_height_cache.clear();
+    this->terrain_height_cache_frame = 0;
+    this->terrain_height_cache_disabled = false;
+    this->terrain_height_cache_page_growth_disabled = false;
+    this->terrain_height_cache_profile =
+        TerrainHeightCacheProfileCounters();
+    for (GlobeTile &tile : this->window_tiles)
+    {
+        tile.terrain_height_array_page = -1;
+        tile.terrain_height_array_layer = -1;
+        tile.terrain_height_array_ready = false;
+    }
+}
+
+bool MapRhiGlobeRenderer::createTerrainHeightArrayPage()
+{
+    if (this->rhi == nullptr
+        || int(this->terrain_height_array_pages.size())
+            >= GlobeTerrainHeightArrayMaximumPageCount
+        || !this->rhi->isFeatureSupported(QRhi::TextureArrays)
+        || !this->rhi->isTextureFormatSupported(QRhiTexture::R32F))
+    {
+        return false;
+    }
+
+    TerrainHeightArrayPage page;
+    page.texture.reset(this->rhi->newTextureArray(
+        QRhiTexture::R32F, GlobeTerrainHeightArrayLayerCount,
+        QSize(MapTerrainTileGridSize, MapTerrainTileGridSize)));
+    if (!page.texture || !page.texture->create())
+        return false;
+
+    page.free_layers.reserve(GlobeTerrainHeightArrayLayerCount);
+    for (int layer = GlobeTerrainHeightArrayLayerCount - 1;
+         layer >= 0; --layer)
+    {
+        page.free_layers.append(layer);
+    }
+    this->terrain_height_array_pages.push_back(std::move(page));
+    return true;
+}
+
+void MapRhiGlobeRenderer::releaseTerrainHeightCacheEntry(
+    const QString &terrain_key)
+{
+    const QHash<QString, TerrainHeightCacheEntry>::iterator iterator =
+        this->terrain_height_cache.find(terrain_key);
+    if (iterator == this->terrain_height_cache.end())
+        return;
+
+    const TerrainHeightCacheEntry entry = iterator.value();
+    if (entry.array_page >= 0
+        && entry.array_page < int(this->terrain_height_array_pages.size())
+        && entry.array_layer >= 0
+        && entry.array_layer < GlobeTerrainHeightArrayLayerCount)
+    {
+        TerrainHeightArrayPage &page =
+            this->terrain_height_array_pages[entry.array_page];
+        if (!page.free_layers.contains(entry.array_layer))
+            page.free_layers.append(entry.array_layer);
+    }
+    this->terrain_height_cache.erase(iterator);
+}
+
+MapRhiGlobeRenderer::TerrainHeightCacheEntry *
+MapRhiGlobeRenderer::ensureTerrainHeightCacheEntry(
+    const QString &terrain_key,
+    const QSet<QString> &protected_terrain_keys)
+{
+    QHash<QString, TerrainHeightCacheEntry>::iterator existing =
+        this->terrain_height_cache.find(terrain_key);
+    if (existing != this->terrain_height_cache.end())
+    {
+        existing.value().last_used_frame = this->terrain_height_cache_frame;
+        return &existing.value();
+    }
+
+    const auto free_page_index = [this]()
+    {
+        for (int page_index = 0;
+             page_index < int(this->terrain_height_array_pages.size());
+             ++page_index)
+        {
+            if (!this->terrain_height_array_pages[page_index]
+                     .free_layers.isEmpty())
+            {
+                return page_index;
+            }
+        }
+        return -1;
+    };
+
+    int page_index = free_page_index();
+    if (page_index < 0
+        && !this->terrain_height_cache_page_growth_disabled
+        && int(this->terrain_height_array_pages.size())
+            < GlobeTerrainHeightArrayMaximumPageCount)
+    {
+        if (createTerrainHeightArrayPage())
+        {
+            page_index = int(this->terrain_height_array_pages.size()) - 1;
+        }
+        else
+        {
+            // A backend allocation failure should not be retried once per
+            // remaining visible key. Existing pages remain useful and can
+            // continue recycling invisible entries.
+            this->terrain_height_cache_page_growth_disabled = true;
+        }
+    }
+
+    if (page_index < 0)
+    {
+        QHash<QString, TerrainHeightCacheEntry>::const_iterator oldest =
+            this->terrain_height_cache.cend();
+        for (QHash<QString, TerrainHeightCacheEntry>::const_iterator iterator =
+                 this->terrain_height_cache.cbegin();
+             iterator != this->terrain_height_cache.cend(); ++iterator)
+        {
+            if (protected_terrain_keys.contains(iterator.key()))
+                continue;
+            if (oldest == this->terrain_height_cache.cend()
+                || iterator.value().last_used_frame
+                    < oldest.value().last_used_frame)
+            {
+                oldest = iterator;
+            }
+        }
+
+        if (oldest != this->terrain_height_cache.cend())
+        {
+            const QString oldest_key = oldest.key();
+            releaseTerrainHeightCacheEntry(oldest_key);
+            ++this->terrain_height_cache_profile.evictions;
+            page_index = free_page_index();
+        }
+    }
+
+    if (page_index < 0)
+    {
+        ++this->terrain_height_cache_profile.capacity_misses;
+        return nullptr;
+    }
+
+    TerrainHeightArrayPage &page =
+        this->terrain_height_array_pages[page_index];
+    if (!page.texture || page.free_layers.isEmpty())
+    {
+        ++this->terrain_height_cache_profile.capacity_misses;
+        return nullptr;
+    }
+
+    TerrainHeightCacheEntry entry;
+    entry.array_page = page_index;
+    entry.array_layer = page.free_layers.takeLast();
+    entry.last_used_frame = this->terrain_height_cache_frame;
+    const QHash<QString, TerrainHeightCacheEntry>::iterator inserted =
+        this->terrain_height_cache.insert(terrain_key, entry);
+    return &inserted.value();
+}
+
+void MapRhiGlobeRenderer::prepareTerrainHeightCache(
+    QRhiResourceUpdateBatch *resource_updates)
+{
+    for (GlobeTile &tile : this->window_tiles)
+    {
+        tile.terrain_height_array_page = -1;
+        tile.terrain_height_array_layer = -1;
+        tile.terrain_height_array_ready = false;
+    }
+
+    if (this->terrain_repository == nullptr || this->rhi == nullptr
+        || resource_updates == nullptr || !this->map_visible
+        || this->window_tiles.isEmpty()
+        || this->terrain_height_cache_disabled)
+    {
+        return;
+    }
+
+    this->terrain_height_cache_profile =
+        TerrainHeightCacheProfileCounters();
+    this->terrain_height_cache_profile.enabled =
+        globeTerrainHeightCachePerformanceLog().isDebugEnabled();
+    QElapsedTimer profile_timer;
+    if (this->terrain_height_cache_profile.enabled)
+        profile_timer.start();
+
+    QVector<QString> visible_terrain_keys;
+    visible_terrain_keys.reserve(this->window_tiles.size());
+    QSet<QString> protected_terrain_keys;
+    protected_terrain_keys.reserve(this->window_tiles.size());
+    for (const GlobeTile &tile : this->window_tiles)
+    {
+        if (tile.terrain_key.isEmpty())
+            continue;
+        ++this->terrain_height_cache_profile.visible_terrain_tiles;
+        if (protected_terrain_keys.contains(tile.terrain_key))
+            continue;
+        protected_terrain_keys.insert(tile.terrain_key);
+        visible_terrain_keys.append(tile.terrain_key);
+    }
+    this->terrain_height_cache_profile.unique_visible_dem_tiles =
+        visible_terrain_keys.size();
+    if (visible_terrain_keys.isEmpty())
+        return;
+
+    if (!this->rhi->isFeatureSupported(QRhi::TextureArrays)
+        || !this->rhi->isTextureFormatSupported(QRhiTexture::R32F))
+    {
+        this->terrain_height_cache_disabled = true;
+        if (this->terrain_height_cache_profile.enabled)
+        {
+            qCDebug(globeTerrainHeightCachePerformanceLog).nospace()
+                << "status=unsupported texture_arrays="
+                << (this->rhi->isFeatureSupported(QRhi::TextureArrays)
+                    ? 1 : 0)
+                << " r32f="
+                << (this->rhi->isTextureFormatSupported(QRhiTexture::R32F)
+                    ? 1 : 0);
+        }
+        return;
+    }
+
+    ++this->terrain_height_cache_frame;
+    if (this->terrain_height_cache_frame == 0)
+        this->terrain_height_cache_frame = 1;
+
+    for (const QString &terrain_key : visible_terrain_keys)
+    {
+        QHash<QString, TerrainHeightCacheEntry>::iterator cache_iterator =
+            this->terrain_height_cache.find(terrain_key);
+        const bool valid_assignment = cache_iterator
+                != this->terrain_height_cache.end()
+            && cache_iterator.value().array_page >= 0
+            && cache_iterator.value().array_page
+                < int(this->terrain_height_array_pages.size())
+            && cache_iterator.value().array_layer >= 0
+            && cache_iterator.value().array_layer
+                < GlobeTerrainHeightArrayLayerCount
+            && this->terrain_height_array_pages[
+                   cache_iterator.value().array_page].texture != nullptr;
+        if (cache_iterator != this->terrain_height_cache.end()
+            && !valid_assignment)
+        {
+            releaseTerrainHeightCacheEntry(terrain_key);
+            cache_iterator = this->terrain_height_cache.end();
+        }
+
+        if (cache_iterator != this->terrain_height_cache.end())
+        {
+            cache_iterator.value().last_used_frame =
+                this->terrain_height_cache_frame;
+            if (cache_iterator.value().uploaded)
+            {
+                ++this->terrain_height_cache_profile.available_dem_tiles;
+                ++this->terrain_height_cache_profile.cache_hits;
+                continue;
+            }
+        }
+
+        const MapTerrainTile *terrain_tile =
+            this->terrain_repository->tile(terrain_key);
+        if (terrain_tile == nullptr
+            || terrain_tile->elevations_m.size()
+                != MapTerrainTileSampleCount
+            || !globeTerrainDatumUsable(terrain_tile->vertical_datum))
+        {
+            continue;
+        }
+        ++this->terrain_height_cache_profile.available_dem_tiles;
+
+        if (this->terrain_height_cache_profile.uploads
+            >= GlobeTerrainHeightUploadBudgetPerFrame)
+        {
+            if (cache_iterator == this->terrain_height_cache.end())
+                ++this->terrain_height_cache_profile.cache_misses;
+            ++this->terrain_height_cache_profile.pending_uploads;
+            continue;
+        }
+
+        TerrainHeightCacheEntry *entry = nullptr;
+        if (cache_iterator == this->terrain_height_cache.end())
+        {
+            ++this->terrain_height_cache_profile.cache_misses;
+            entry = ensureTerrainHeightCacheEntry(
+                terrain_key, protected_terrain_keys);
+        }
+        else
+        {
+            entry = &cache_iterator.value();
+        }
+
+        if (entry == nullptr)
+        {
+            if (this->terrain_height_array_pages.empty())
+            {
+                this->terrain_height_cache_disabled = true;
+                break;
+            }
+            continue;
+        }
+
+        const qsizetype byte_count = terrain_tile->elevations_m.size()
+            * qsizetype(sizeof(float));
+        const QByteArray raw_heights(
+            reinterpret_cast<const char *>(
+                terrain_tile->elevations_m.constData()),
+            int(byte_count));
+        const QRhiTextureSubresourceUploadDescription subresource(
+            raw_heights);
+        const QRhiTextureUploadEntry upload_entry(
+            entry->array_layer, 0, subresource);
+        TerrainHeightArrayPage &page =
+            this->terrain_height_array_pages[entry->array_page];
+        resource_updates->uploadTexture(
+            page.texture.get(), QRhiTextureUploadDescription(upload_entry));
+        entry->uploaded = true;
+        ++this->terrain_height_cache_profile.uploads;
+        this->terrain_height_cache_profile.upload_bytes +=
+            quint64(byte_count);
+    }
+
+    for (GlobeTile &tile : this->window_tiles)
+    {
+        if (tile.terrain_key.isEmpty())
+            continue;
+        const QHash<QString, TerrainHeightCacheEntry>::const_iterator iterator =
+            this->terrain_height_cache.constFind(tile.terrain_key);
+        if (iterator == this->terrain_height_cache.cend()
+            || !iterator.value().uploaded)
+        {
+            continue;
+        }
+        tile.terrain_height_array_page = iterator.value().array_page;
+        tile.terrain_height_array_layer = iterator.value().array_layer;
+        tile.terrain_height_array_ready = true;
+        ++this->terrain_height_cache_profile.ready_terrain_tiles;
+    }
+
+    if (this->terrain_height_cache_profile.enabled)
+    {
+        this->terrain_height_cache_profile.cpu_ns =
+            profile_timer.nsecsElapsed();
+        reportTerrainHeightCacheProfile();
+    }
+}
+
+void MapRhiGlobeRenderer::reportTerrainHeightCacheProfile() const
+{
+    if (!this->terrain_height_cache_profile.enabled)
+        return;
+    if (this->terrain_height_cache_profile.cache_misses <= 0
+        && this->terrain_height_cache_profile.uploads <= 0
+        && this->terrain_height_cache_profile.pending_uploads <= 0
+        && this->terrain_height_cache_profile.evictions <= 0
+        && this->terrain_height_cache_profile.capacity_misses <= 0)
+    {
+        return;
+    }
+
+    constexpr double NsecsPerMillisecond = 1000000.0;
+    constexpr double BytesPerMebibyte = 1024.0 * 1024.0;
+    const quint64 allocated_bytes =
+        quint64(this->terrain_height_array_pages.size())
+        * quint64(GlobeTerrainHeightArrayLayerCount)
+        * GlobeTerrainHeightTileBytes;
+    const char *status = this->terrain_height_cache_disabled
+        ? "disabled"
+        : (this->terrain_height_cache_profile.capacity_misses > 0
+            ? "capacity_limited"
+            : (this->terrain_height_cache_profile.pending_uploads > 0
+                ? "warming" : "ready"));
+    qCDebug(globeTerrainHeightCachePerformanceLog).noquote().nospace()
+        << "frame=" << this->terrain_height_cache_frame
+        << " visible_terrain_tiles="
+        << this->terrain_height_cache_profile.visible_terrain_tiles
+        << " unique_visible_dem_tiles="
+        << this->terrain_height_cache_profile.unique_visible_dem_tiles
+        << " available_dem_tiles="
+        << this->terrain_height_cache_profile.available_dem_tiles
+        << " ready_terrain_tiles="
+        << this->terrain_height_cache_profile.ready_terrain_tiles
+        << " cache_hits="
+        << this->terrain_height_cache_profile.cache_hits
+        << " cache_misses="
+        << this->terrain_height_cache_profile.cache_misses
+        << " uploads=" << this->terrain_height_cache_profile.uploads
+        << " pending_uploads="
+        << this->terrain_height_cache_profile.pending_uploads
+        << " evictions=" << this->terrain_height_cache_profile.evictions
+        << " capacity_misses="
+        << this->terrain_height_cache_profile.capacity_misses
+        << " resident_layers=" << this->terrain_height_cache.size()
+        << " pages=" << this->terrain_height_array_pages.size()
+        << " allocated_mib="
+        << QString::number(
+               double(allocated_bytes) / BytesPerMebibyte, 'f', 3)
+        << " upload_mib="
+        << QString::number(
+               double(this->terrain_height_cache_profile.upload_bytes)
+                   / BytesPerMebibyte,
+               'f', 3)
+        << " cpu_ms="
+        << QString::number(
+               double(this->terrain_height_cache_profile.cpu_ns)
+                   / NsecsPerMillisecond,
+               'f', 3)
+        << " max_pages=" << GlobeTerrainHeightArrayMaximumPageCount
+        << " status=" << status;
 }
 
 void MapRhiGlobeRenderer::rebuildWindow(
@@ -5624,6 +6090,11 @@ bool MapRhiGlobeRenderer::prepare(
         return false;
     requestMissingTerrainTiles();
     scheduleReadyTerrainMeshes();
+    // Populate the optional shared R32F DEM cache alongside the established
+    // CPU mesh path. Nothing samples these pages until the following terrain
+    // patch enables vertex-shader displacement. Allocation or format failure
+    // therefore leaves the established rendered path selected.
+    prepareTerrainHeightCache(resource_updates);
 
     // Resolve imagery and stamp array layers before a pending full geometry
     // upload. A rebuilt window then carries every already-ready layer in its
@@ -5924,6 +6395,7 @@ void MapRhiGlobeRenderer::invalidateImagery()
 
 void MapRhiGlobeRenderer::releaseResources()
 {
+    resetTerrainHeightCache();
     releaseVisibleHeatmapGpuBakeAtlasResources();
     releaseDiagnosticHeatmapGpuBakeResources();
     this->heatmap_gpu_bake_jobs.clear();

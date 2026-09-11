@@ -146,10 +146,11 @@ public:
     double viewGlobeYawDeg() const;
     double viewGlobePitchDeg() const;
     double viewGlobeDistanceM() const;
-    // Height (meters) of the orbit target above the WGS84 ellipsoid -- the
-    // Globe counterpart of view3dVerticalOffsetWorld() above. 0 until the
-    // first Globe rotate/zoom interaction captures the real DEM elevation
-    // under the crosshair via setViewGlobeFocusAnchor().
+    // Displayed height (meters, including vertical exaggeration) of the orbit
+    // target above the WGS84 ellipsoid -- the Globe counterpart of
+    // view3dVerticalOffsetWorld() above. It follows the exact DEM tile under
+    // the crosshair when available and remains 0 while the renderer is using
+    // its zero-height fallback surface.
     double viewGlobeVerticalOffsetM() const;
     // Continuous, 2D-equivalent zoom level for the globe's current camera
     // distance and center latitude, using the live viewport height --
@@ -225,11 +226,11 @@ public:
     void setViewGlobeZoomLevel(double zoom_level, const QSize &viewport);
     // Globe counterpart of setView3dFocusAnchor(): re-centers centerLon()/
     // centerLat() to the given point (the exact terrain-relief-aware hit
-    // under the crosshair), snaps viewGlobeVerticalOffsetM() to its real
-    // DEM elevation there, and snaps viewGlobeDistanceM() to the true
-    // straight-line distance to that point -- so a rotate/zoom interaction
-    // pivots around what is actually on screen instead of the bare
-    // sea-level ellipsoid.
+    // under the crosshair), sets viewGlobeVerticalOffsetM() to its displayed
+    // terrain elevation there, and sets viewGlobeDistanceM() to the requested
+    // straight-line orbit distance. The RHI widget preserves that distance
+    // when a pending DEM tile arrives, keeping continuous zoom and imagery
+    // LOD stable while target and eye move together onto the terrain.
     void setViewGlobeFocusAnchor(double lon, double lat, double vertical_offset_m,
                                  double distance_m, const QSize &viewport = QSize());
     void orbitViewGlobe(double yaw_delta_deg, double pitch_delta_deg);

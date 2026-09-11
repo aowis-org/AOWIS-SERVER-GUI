@@ -121,6 +121,7 @@ private:
     MapRhiHit globeHitTest(const QPointF &screen_position) const;
     void syncViewState();
     void syncTerrainAwareCameraDistance();
+    void syncGlobeTerrainFocusElevation(bool request_missing_tile);
     void captureView3dFocusAnchor();
     bool terrainRayHitAtScreen(
         const QPointF &screen_position, CoordinateWGS84 *coordinate,
@@ -140,6 +141,9 @@ private:
         bool request_missing_tile = true);
     bool globeTerrainElevationAtCoordinate(
         const CoordinateWGS84 &coordinate, double *elevation_m) const;
+    bool globeFocusTerrainElevationAtCoordinate(
+        const CoordinateWGS84 &coordinate, double *elevation_m,
+        bool request_missing_tile) const;
     QPointF renderOriginWorld() const;
     float heatmapRadiusPixels() const;
     // Globe counterpart of heatmapRadiusPixels() -- returns a real-world

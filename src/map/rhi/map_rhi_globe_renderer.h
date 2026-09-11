@@ -298,6 +298,14 @@ private:
         int terrain_stitch_left_cell_count = 0;
         quint64 terrain_mesh_request_id = 0;
         bool terrain_mesh_applied = false;
+        // Future GPU-displaced terrain consumes one shared 65x65 height
+        // layer per terrain_key. Multiple finer imagery leaves can therefore
+        // point at the same page/layer without duplicating the DEM upload.
+        // This foundation patch only populates the metadata/cache; the
+        // established CPU mesh remains the rendered path.
+        int terrain_height_array_page = -1;
+        int terrain_height_array_layer = -1;
+        bool terrain_height_array_ready = false;
         // Non-owning; points into tile_resources (or at cap_resource for
         // polar caps) and is only valid for the frame it was resolved in.
         TileResource *resource = nullptr;
@@ -324,6 +332,37 @@ private:
     {
         std::unique_ptr<QRhiTexture> texture;
         QVector<int> free_layers;
+    };
+
+    struct TerrainHeightArrayPage
+    {
+        std::unique_ptr<QRhiTexture> texture;
+        QVector<int> free_layers;
+    };
+
+    struct TerrainHeightCacheEntry
+    {
+        int array_page = -1;
+        int array_layer = -1;
+        quint64 last_used_frame = 0;
+        bool uploaded = false;
+    };
+
+    struct TerrainHeightCacheProfileCounters
+    {
+        bool enabled = false;
+        int visible_terrain_tiles = 0;
+        int unique_visible_dem_tiles = 0;
+        int available_dem_tiles = 0;
+        int ready_terrain_tiles = 0;
+        int cache_hits = 0;
+        int cache_misses = 0;
+        int uploads = 0;
+        int pending_uploads = 0;
+        int evictions = 0;
+        int capacity_misses = 0;
+        quint64 upload_bytes = 0;
+        qint64 cpu_ns = 0;
     };
 
     struct HeatmapArrayDrawBatch
@@ -421,6 +460,15 @@ private:
     int terrainCellCountForTile(const GlobeTile &tile, const QSize &viewport_size) const;
     void updateTerrainStitchCellCounts(QVector<GlobeTile> *tiles) const;
     bool currentTerrainLodMatches(const QSize &viewport_size) const;
+    void resetTerrainHeightCache();
+    bool createTerrainHeightArrayPage();
+    TerrainHeightCacheEntry *ensureTerrainHeightCacheEntry(
+        const QString &terrain_key,
+        const QSet<QString> &protected_terrain_keys);
+    void releaseTerrainHeightCacheEntry(const QString &terrain_key);
+    void prepareTerrainHeightCache(
+        QRhiResourceUpdateBatch *resource_updates);
+    void reportTerrainHeightCacheProfile() const;
     void pruneUnusedTileResources();
     void rebuildWireframeVertices();
     void appendWireframeEdges(
@@ -646,6 +694,17 @@ private:
     quint64 heatmap_stamp_layout_revision = 1;
     HeatmapProfileCounters heatmap_profile;
     bool heatmap_profile_report_pending = false;
+
+    // Height pages are independent from imagery/heatmap pages because DEMs
+    // have a different size, format and geographic reuse lifetime. The LRU
+    // remains useful even before shader displacement lands: once uploaded,
+    // a DEM can survive eviction from MapTerrainRepository's CPU QCache.
+    std::vector<TerrainHeightArrayPage> terrain_height_array_pages;
+    QHash<QString, TerrainHeightCacheEntry> terrain_height_cache;
+    quint64 terrain_height_cache_frame = 0;
+    bool terrain_height_cache_disabled = false;
+    bool terrain_height_cache_page_growth_disabled = false;
+    TerrainHeightCacheProfileCounters terrain_height_cache_profile;
 
     // Standalone 256x256 target retained for opt-in validation. The visible
     // atlas below shares its pipeline and geometry but never its texture, so
