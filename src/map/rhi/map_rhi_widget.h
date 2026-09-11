@@ -84,6 +84,7 @@ public:
     MapRhiUndergroundMode undergroundMode() const;
     void setTerrainWireframeVisible(bool visible);
     void setMapTilesVisible(bool visible);
+    void globeTerrainMeshProgress(int *completed, int *total, bool *active) const;
 
 signals:
     void signalRendererReady();

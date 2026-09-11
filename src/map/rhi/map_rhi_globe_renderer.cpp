@@ -1157,6 +1157,38 @@ bool MapRhiGlobeRenderer::hasPendingTerrainMeshes() const
     return false;
 }
 
+void MapRhiGlobeRenderer::terrainMeshProgress(
+    int *completed, int *total, bool *active) const
+{
+    int completed_count = 0;
+    int total_count = 0;
+    bool build_active = this->terrain_lod_rebuild_pending;
+
+    for (const GlobeTile &tile : this->window_tiles)
+    {
+        if (tile.terrain_key.isEmpty())
+            continue;
+
+        if (tile.terrain_mesh_applied)
+        {
+            ++completed_count;
+            ++total_count;
+        }
+        else if (tile.terrain_mesh_request_id != 0)
+        {
+            ++total_count;
+            build_active = true;
+        }
+    }
+
+    if (completed != nullptr)
+        *completed = completed_count;
+    if (total != nullptr)
+        *total = total_count;
+    if (active != nullptr)
+        *active = build_active;
+}
+
 
 MapRhiGlobeRenderer::TileVertex MapRhiGlobeRenderer::makeTileVertex(
     double lon_deg, double lat_deg, float u, float v) const

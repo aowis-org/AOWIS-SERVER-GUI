@@ -687,20 +687,26 @@ private:
 }
 
 MapMonitorDownloadActivityHudWidget::MapMonitorDownloadActivityHudWidget(
-    MapTileRepository *tile_repository, MapTerrainRepository *terrain_repository, QWidget *parent)
+    MapTileRepository *tile_repository, MapTerrainRepository *terrain_repository,
+    MapRhiWidget *rhi_widget, QWidget *parent)
     : QWidget(parent),
       tile_repository(tile_repository),
       terrain_repository(terrain_repository),
+      rhi_widget(rhi_widget),
       map_tiles_panel(new QFrame(this)),
       map_tiles_label(new QLabel(this->map_tiles_panel)),
       map_tiles_cancel(new QPushButton(QStringLiteral("Cancel"), this->map_tiles_panel)),
       terrain_panel(new QFrame(this)),
       terrain_label(new QLabel(this->terrain_panel)),
       terrain_cancel(new QPushButton(QStringLiteral("Cancel"), this->terrain_panel)),
+      terrain_mesh_panel(new QFrame(this)),
+      terrain_mesh_progress(new QProgressBar(this->terrain_mesh_panel)),
+      terrain_mesh_label(new QLabel(this->terrain_mesh_panel)),
       poll_timer(new QTimer(this))
 {
     Q_ASSERT(this->tile_repository != nullptr);
     Q_ASSERT(this->terrain_repository != nullptr);
+    Q_ASSERT(this->rhi_widget != nullptr);
 
     setAttribute(Qt::WA_TranslucentBackground, true);
     setFocusPolicy(Qt::NoFocus);
@@ -751,10 +757,31 @@ MapMonitorDownloadActivityHudWidget::MapMonitorDownloadActivityHudWidget(
     terrain_layout->addWidget(this->terrain_label);
     terrain_layout->addWidget(this->terrain_cancel);
 
+    configureHudFrame(this->terrain_mesh_panel);
+    QHBoxLayout *terrain_mesh_layout = new QHBoxLayout(this->terrain_mesh_panel);
+    terrain_mesh_layout->setContentsMargins(8, 5, 8, 5);
+    terrain_mesh_layout->setSpacing(7);
+    QLabel *terrain_mesh_title =
+        new QLabel(QStringLiteral("Terrain mesh"), this->terrain_mesh_panel);
+    QFont terrain_mesh_title_font = terrain_mesh_title->font();
+    terrain_mesh_title_font.setBold(true);
+    terrain_mesh_title->setFont(terrain_mesh_title_font);
+    this->terrain_mesh_progress->setTextVisible(false);
+    this->terrain_mesh_progress->setFixedSize(72, 10);
+    this->terrain_mesh_label->setMinimumWidth(52);
+    this->terrain_mesh_panel->setToolTip(QStringLiteral(
+        "Building the visible 3D terrain mesh in the background. "
+        "Progress is approximate because the visible tile set can change while the view settles."));
+    terrain_mesh_layout->addWidget(terrain_mesh_title);
+    terrain_mesh_layout->addWidget(this->terrain_mesh_progress);
+    terrain_mesh_layout->addWidget(this->terrain_mesh_label);
+
     root_layout->addWidget(this->map_tiles_panel);
     root_layout->addWidget(this->terrain_panel);
+    root_layout->addWidget(this->terrain_mesh_panel);
     this->map_tiles_panel->hide();
     this->terrain_panel->hide();
+    this->terrain_mesh_panel->hide();
     hide();
 
     connect(this->tile_repository, &MapTileRepository::signalUpstreamActivityChanged,
@@ -806,20 +833,7 @@ void MapMonitorDownloadActivityHudWidget::setHudActive(bool active)
     if (!this->poll_timer->isActive())
         this->poll_timer->start();
     refreshActivity();
-
-    const bool any_busy = !this->map_tiles_panel->isHidden() || !this->terrain_panel->isHidden();
-    setVisible(any_busy);
-    if (!isVisible())
-        return;
-
-    adjustSize();
-    QWidget *container = parentWidget();
-    if (container != nullptr)
-    {
-        const int x = qMax(HudMarginPx, (container->width() - width()) / 2);
-        move(x, HudMarginPx);
-    }
-    raise();
+    updateHudVisibility();
 }
 
 void MapMonitorDownloadActivityHudWidget::setMapTileActivity(int active, int queued)
@@ -832,6 +846,29 @@ void MapMonitorDownloadActivityHudWidget::setTerrainActivity(int active, int que
 {
     updatePanel(this->terrain_panel, this->terrain_label, this->terrain_cancel,
                 QStringLiteral("Terrain"), active, queued);
+}
+
+void MapMonitorDownloadActivityHudWidget::setTerrainMeshActivity(
+    int completed, int total, bool active)
+{
+    const int bounded_completed = qMax(0, completed);
+    const int bounded_total = qMax(bounded_completed, total);
+    this->terrain_mesh_panel->setVisible(active);
+
+    if (active && bounded_total > 0)
+    {
+        this->terrain_mesh_progress->setRange(0, bounded_total);
+        this->terrain_mesh_progress->setValue(bounded_completed);
+        this->terrain_mesh_label->setText(
+            QStringLiteral("%1 / %2").arg(bounded_completed).arg(bounded_total));
+    }
+    else
+    {
+        this->terrain_mesh_progress->setRange(0, 0);
+        this->terrain_mesh_label->setText(QStringLiteral("building…"));
+    }
+
+    updateHudVisibility();
 }
 
 void MapMonitorDownloadActivityHudWidget::updatePanel(
@@ -858,7 +895,14 @@ void MapMonitorDownloadActivityHudWidget::updatePanel(
         "%1 internet → map server activity. Cached/local transfers are not counted.")
                           .arg(name));
 
-    const bool any_busy = !this->map_tiles_panel->isHidden() || !this->terrain_panel->isHidden();
+    updateHudVisibility();
+}
+
+void MapMonitorDownloadActivityHudWidget::updateHudVisibility()
+{
+    const bool any_busy = !this->map_tiles_panel->isHidden()
+        || !this->terrain_panel->isHidden()
+        || !this->terrain_mesh_panel->isHidden();
     setVisible(this->hud_active && any_busy);
     if (this->hud_active && any_busy)
     {
@@ -877,6 +921,12 @@ void MapMonitorDownloadActivityHudWidget::refreshActivity()
 {
     this->tile_repository->requestUpstreamActivity();
     this->terrain_repository->requestUpstreamActivity();
+
+    int completed = 0;
+    int total = 0;
+    bool active = false;
+    this->rhi_widget->globeTerrainMeshProgress(&completed, &total, &active);
+    setTerrainMeshActivity(completed, total, active);
 }
 
 MapMonitorViewModeHudWidget::MapMonitorViewModeHudWidget(
@@ -897,12 +947,12 @@ MapMonitorViewModeHudWidget::MapMonitorViewModeHudWidget(
     layout->setSpacing(8);
 
     this->view_mode_combo->addItem(QStringLiteral("2D"), int(MapViewMode::TwoD));
-    this->view_mode_combo->addItem(QStringLiteral("3D"), int(MapViewMode::ThreeD));
-    this->view_mode_combo->addItem(QStringLiteral("Globe"), int(MapViewMode::Globe));
+    this->view_mode_combo->addItem(QStringLiteral("3D"), int(MapViewMode::Globe));
+    this->view_mode_combo->addItem(QStringLiteral("Legacy"), int(MapViewMode::ThreeD));
     this->view_mode_combo->setMinimumWidth(72);
     this->view_mode_combo->setToolTip(QStringLiteral(
-        "Switch between the top-down 2D map, the 3D map view, and the "
-        "whole-planet WGS84 globe view."));
+        "Switch between the top-down 2D map, the WGS84 globe-based 3D view, and "
+        "the legacy planar 3D view."));
     layout->addWidget(this->view_mode_combo);
 
     this->wireframe_checkbox->setChecked(false);

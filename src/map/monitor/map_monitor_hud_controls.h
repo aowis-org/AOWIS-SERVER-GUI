@@ -27,24 +27,31 @@ class MapMonitorDownloadActivityHudWidget final : public QWidget
 public:
     explicit MapMonitorDownloadActivityHudWidget(
         MapTileRepository *tile_repository, MapTerrainRepository *terrain_repository,
+        MapRhiWidget *rhi_widget,
         QWidget *parent = nullptr);
     void setHudActive(bool active);
 
 private:
     void setMapTileActivity(int active, int queued);
     void setTerrainActivity(int active, int queued);
+    void setTerrainMeshActivity(int completed, int total, bool active);
     void updatePanel(QFrame *panel, QLabel *label, QPushButton *cancel_button,
                      const QString &name, int active, int queued);
+    void updateHudVisibility();
     void refreshActivity();
 
     MapTileRepository *tile_repository = nullptr;
     MapTerrainRepository *terrain_repository = nullptr;
+    MapRhiWidget *rhi_widget = nullptr;
     QFrame *map_tiles_panel = nullptr;
     QLabel *map_tiles_label = nullptr;
     QPushButton *map_tiles_cancel = nullptr;
     QFrame *terrain_panel = nullptr;
     QLabel *terrain_label = nullptr;
     QPushButton *terrain_cancel = nullptr;
+    QFrame *terrain_mesh_panel = nullptr;
+    QProgressBar *terrain_mesh_progress = nullptr;
+    QLabel *terrain_mesh_label = nullptr;
     QTimer *poll_timer = nullptr;
     bool hud_active = false;
 };

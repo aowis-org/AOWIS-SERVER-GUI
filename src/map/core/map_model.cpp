@@ -412,6 +412,49 @@ void MapModel::fitViewToBounds(
     else
         resetView2dContinuousZoom(safe_viewport);
 
+    if (this->m_view_mode == MapViewMode::Globe)
+    {
+        const double meters_per_world_pixel = GeoWebMercator::metersPerPixel(
+            center.latitude_deg, MapRenderCacheMath::ReferenceZoom);
+        if (!std::isfinite(meters_per_world_pixel) || meters_per_world_pixel <= 0.0)
+            return;
+
+        // Fit the same network bounds used by the 2D/legacy views into the
+        // Globe perspective camera. A bounding sphere keeps the complete
+        // network visible at any current yaw/pitch instead of only matching
+        // the top-down Mercator zoom.
+        const double horizontal_radius_m = 0.5 * meters_per_world_pixel * std::hypot(
+            qMax(MinimumWorldExtent, width_world),
+            qMax(MinimumWorldExtent, height_world));
+        const double elevation_span_m =
+            std::isfinite(elevation_minimum_m) && std::isfinite(elevation_maximum_m)
+                ? std::abs(elevation_maximum_m - elevation_minimum_m)
+                : 0.0;
+        const double vertical_radius_m =
+            elevation_span_m * this->m_view_3d_vertical_exaggeration;
+        const double bounding_radius_m = qMax(
+            meters_per_world_pixel * MinimumWorldExtent,
+            std::hypot(horizontal_radius_m, vertical_radius_m));
+
+        const double half_vertical_fov_rad =
+            qDegreesToRadians(GlobeFieldOfViewDeg / 2.0);
+        const double aspect = qMax(
+            1e-6, double(safe_viewport.width()) / double(qMax(1, safe_viewport.height())));
+        const double usable_vertical_tangent = std::tan(half_vertical_fov_rad)
+            * available_height / double(qMax(1, safe_viewport.height()));
+        const double usable_horizontal_tangent = std::tan(half_vertical_fov_rad)
+            * aspect * available_width / double(qMax(1, safe_viewport.width()));
+        const double limiting_half_angle = qMin(
+            std::atan(usable_vertical_tangent),
+            std::atan(usable_horizontal_tangent));
+        const double safe_half_angle = qMax(qDegreesToRadians(1.0), limiting_half_angle);
+        const double desired_distance_m =
+            bounding_radius_m / std::sin(safe_half_angle);
+
+        setViewGlobeDistanceM(desired_distance_m);
+        return;
+    }
+
     if (this->m_view_mode != MapViewMode::ThreeD)
         return;
 

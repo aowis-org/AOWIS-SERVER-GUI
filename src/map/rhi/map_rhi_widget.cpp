@@ -1715,6 +1715,26 @@ void MapRhiWidget::setMapTilesVisible(bool visible)
     update();
 }
 
+void MapRhiWidget::globeTerrainMeshProgress(
+    int *completed, int *total, bool *active) const
+{
+    if (completed != nullptr)
+        *completed = 0;
+    if (total != nullptr)
+        *total = 0;
+    if (active != nullptr)
+        *active = false;
+
+    if (this->map_model == nullptr
+        || this->map_model->viewMode() != MapViewMode::Globe
+        || this->globe_renderer == nullptr)
+    {
+        return;
+    }
+
+    this->globe_renderer->terrainMeshProgress(completed, total, active);
+}
+
 void MapRhiWidget::setBackgroundOpacity(int opacity)
 {
     const int bounded_opacity = qBound(0, opacity, 100);

@@ -119,6 +119,7 @@ public:
     void setWireframeVisible(bool visible);
     void setMapVisible(bool visible);
     bool hasPendingTerrainMeshes() const;
+    void terrainMeshProgress(int *completed, int *total, bool *active) const;
     // Tracks visible heatmap changes separately from geographic layout
     // changes. Colors and active flags invalidate tile pixels, while stable
     // render ids, coordinates and radius govern the retained stamp layout.

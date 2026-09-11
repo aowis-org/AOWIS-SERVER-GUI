@@ -521,7 +521,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             new MapRhiHudWidget(this->map_model, this->gps, this->map_stack);
         MapMonitorDownloadActivityHudWidget *download_activity_hud =
             new MapMonitorDownloadActivityHudWidget(
-                this->tile_repository, this->terrain_repository, this->map_stack);
+                this->tile_repository, this->terrain_repository, rhi_surface,
+                this->map_stack);
         MapMonitorViewModeHudWidget *view_mode_hud =
             new MapMonitorViewModeHudWidget(
                 this->map_model, rhi_surface, this->map_stack);
