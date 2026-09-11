@@ -3556,7 +3556,12 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
         this->globe_network_scene.iconVertices();
     if (!icon_vertices.isEmpty())
     {
-        command_buffer->setGraphicsPipeline(this->icon_pipeline.get());
+        // Globe's flat SVG icons are screen-space overlays. They are drawn
+        // after every other network component and deliberately ignore depth
+        // so pipes, junctions, highlights, diagnostics and 3D icon models can
+        // never cover them. Horizon/visibility culling still happens while
+        // building the Globe icon vertex list.
+        command_buffer->setGraphicsPipeline(this->icon_overlay_pipeline.get());
         command_buffer->setShaderResources(this->icon_shader_resource_bindings.get());
         const QRhiCommandBuffer::VertexInput icon_binding(
             this->globe_icon_vertex_buffer.get(), 0);
