@@ -110,6 +110,12 @@ public:
 
     void setTileRepository(MapTileRepository *tile_repository);
     void setTerrainRepository(MapTerrainRepository *terrain_repository);
+    // Immediately rebuild the visible Globe tile window from the current
+    // camera and dispatch missing DEM requests. This is used after a network
+    // fit so terrain loading starts at the fitted view without requiring any
+    // subsequent zoom/pan input.
+    void requestTerrainForCurrentView(const QSize &viewport_size);
+    void invalidateTerrainView();
     // Keeps terrain/caps in the same origin-relative coordinate frame as
     // Globe network geometry. Returns true only on a real origin change.
     bool setRenderOriginEcef(

@@ -308,16 +308,36 @@ MainWindow::MainWindow(QWidget *parent)
     });
     connect(this->map_model_monitor, &MapModel::zoomChanged, this, [this](int)
     {
-        this->syncMapMovement(this->map_mon, this->map_edit);
+        if (this->map_model_monitor->viewMode() != MapViewMode::Globe)
+            this->syncMapMovement(this->map_mon, this->map_edit);
+        if (this->map_model_monitor->viewMode() == MapViewMode::TwoD)
+            this->syncMonitorViewModesFromActive();
     });
     connect(this->map_model_monitor, &MapModel::view2dContinuousScaleChanged,
             this, [this](double)
     {
+        if (this->map_model_monitor->viewMode() != MapViewMode::Globe)
+            this->syncMapMovement(this->map_mon, this->map_edit);
+        if (this->map_model_monitor->viewMode() == MapViewMode::TwoD)
+            this->syncMonitorViewModesFromActive();
+    });
+    connect(this->map_model_monitor, &MapModel::viewGlobeCameraChanged, this, [this]
+    {
+        if (this->map_model_monitor->viewMode() != MapViewMode::Globe)
+            return;
+
+        this->syncMonitorViewModesFromActive();
         this->syncMapMovement(this->map_mon, this->map_edit);
     });
     connect(this->map_model_monitor, &MapModel::centerChangedWGS84, this, [this](CoordinateWGS84)
     {
+        this->captureMonitorCenter();
         this->syncMapMovement(this->map_mon, this->map_edit);
+    });
+    connect(this->map_model_monitor, &MapModel::viewModeChanged, this,
+            [this](MapViewMode view_mode)
+    {
+        this->handleMonitorViewModeChanged(view_mode);
     });
 
     connect(map_edit_nav, &MapNavigationWidget::signalSyncMapMovementStateChanged, this, [this, map_mon_nav](bool state)
@@ -326,7 +346,10 @@ MainWindow::MainWindow(QWidget *parent)
         map_mon_nav->mapMovementSyncStateChange(state);
 
         if (state)
+        {
+            this->syncMonitorViewModesFromActive();
             this->syncMapMovement(this->map_edit, this->map_mon);
+        }
     });
     connect(map_mon_nav, &MapNavigationWidget::signalSyncMapMovementStateChanged, this, [this, map_edit_nav](bool state)
     {
@@ -334,8 +357,18 @@ MainWindow::MainWindow(QWidget *parent)
         map_edit_nav->mapMovementSyncStateChange(state);
 
         if (state)
+        {
+            this->syncMonitorViewModesFromActive();
             this->syncMapMovement(this->map_mon, this->map_edit);
+        }
     });
+
+    this->monitor_last_view_mode = this->map_model_monitor->viewMode();
+    this->monitor_2d_center_lon = this->map_model_monitor->centerLon();
+    this->monitor_2d_center_lat = this->map_model_monitor->centerLat();
+    this->monitor_globe_center_lon = this->map_model_monitor->centerLon();
+    this->monitor_globe_center_lat = this->map_model_monitor->centerLat();
+    this->syncMonitorViewModesFromActive();
     
     connect(this->top_control_bar, &TopControlBar::signalHeadlossFormulaChanged, this->dock_entity_inspector, &EntityInspectorDock::onHeadlossFormulaChanged);
     connect(this->top_control_bar, &TopControlBar::signalHeadlossFormulaChanged, this, [this](HeadlossFormulas)
@@ -487,12 +520,142 @@ void MainWindow::syncMapMovement(MapWidget *source, MapWidget *target)
     if (!source_model || !target_model)
         return;
 
-    this->syncing_map_movement = true;
-    target_model->setView(
-        source_model->centerLon(), source_model->centerLat(), source_model->zoom(), target->size());
+    double source_zoom = double(source_model->zoom());
     if (source_model->viewMode() == MapViewMode::TwoD)
-        target_model->setView2dContinuousZoom(source_model->view2dContinuousZoom(), target->size());
+        source_zoom = source_model->view2dContinuousZoom();
+    else if (source_model->viewMode() == MapViewMode::Globe)
+        source_zoom = source_model->viewGlobeZoomLevel(source->size());
+
+    this->syncing_map_movement = true;
+    target_model->setCenter(
+        source_model->centerLon(), source_model->centerLat(), target->size());
+    if (target_model->viewMode() == MapViewMode::Globe)
+        target_model->setViewGlobeZoomLevel(source_zoom, target->size());
+    else if (target_model->viewMode() == MapViewMode::TwoD)
+        target_model->setView2dContinuousZoom(source_zoom, target->size());
+    else
+        target_model->setZoom(qRound(source_zoom), target->size());
     this->syncing_map_movement = false;
+}
+
+void MainWindow::syncMonitorViewModesFromActive()
+{
+    if (!this->sync_map_movement || this->syncing_monitor_view_modes
+        || this->map_model_monitor == nullptr || this->map_mon == nullptr)
+    {
+        return;
+    }
+
+    const MapViewMode view_mode = this->map_model_monitor->viewMode();
+    if (view_mode != MapViewMode::TwoD && view_mode != MapViewMode::Globe)
+        return;
+
+    this->syncing_monitor_view_modes = true;
+
+    const double center_lon = this->map_model_monitor->centerLon();
+    const double center_lat = this->map_model_monitor->centerLat();
+    this->monitor_2d_center_lon = center_lon;
+    this->monitor_2d_center_lat = center_lat;
+    this->monitor_globe_center_lon = center_lon;
+    this->monitor_globe_center_lat = center_lat;
+
+    if (view_mode == MapViewMode::TwoD)
+    {
+        this->map_model_monitor->setViewGlobeZoomLevel(
+            this->map_model_monitor->view2dContinuousZoom(), this->map_mon->size());
+    }
+    else
+    {
+        this->map_model_monitor->setView2dContinuousZoom(
+            this->map_model_monitor->viewGlobeZoomLevel(this->map_mon->size()),
+            this->map_mon->size());
+    }
+
+    this->syncing_monitor_view_modes = false;
+}
+
+void MainWindow::captureMonitorCenter()
+{
+    if (this->syncing_monitor_view_modes || this->map_model_monitor == nullptr)
+        return;
+
+    const double center_lon = this->map_model_monitor->centerLon();
+    const double center_lat = this->map_model_monitor->centerLat();
+
+    if (this->sync_map_movement)
+    {
+        this->monitor_2d_center_lon = center_lon;
+        this->monitor_2d_center_lat = center_lat;
+        this->monitor_globe_center_lon = center_lon;
+        this->monitor_globe_center_lat = center_lat;
+        return;
+    }
+
+    if (this->map_model_monitor->viewMode() == MapViewMode::TwoD)
+    {
+        this->monitor_2d_center_lon = center_lon;
+        this->monitor_2d_center_lat = center_lat;
+    }
+    else if (this->map_model_monitor->viewMode() == MapViewMode::Globe)
+    {
+        this->monitor_globe_center_lon = center_lon;
+        this->monitor_globe_center_lat = center_lat;
+    }
+}
+
+void MainWindow::handleMonitorViewModeChanged(MapViewMode view_mode)
+{
+    if (this->map_model_monitor == nullptr || this->map_mon == nullptr)
+        return;
+
+    if (view_mode != MapViewMode::TwoD && view_mode != MapViewMode::Globe)
+    {
+        this->monitor_last_view_mode = view_mode;
+        return;
+    }
+
+    if (this->sync_map_movement)
+    {
+        this->syncing_monitor_view_modes = true;
+        if (this->monitor_last_view_mode == MapViewMode::TwoD
+            && view_mode == MapViewMode::Globe)
+        {
+            this->map_model_monitor->setViewGlobeZoomLevel(
+                this->map_model_monitor->view2dContinuousZoom(),
+                this->map_mon->size());
+        }
+        else if (this->monitor_last_view_mode == MapViewMode::Globe
+                 && view_mode == MapViewMode::TwoD)
+        {
+            this->map_model_monitor->setView2dContinuousZoom(
+                this->map_model_monitor->viewGlobeZoomLevel(this->map_mon->size()),
+                this->map_mon->size());
+        }
+        this->syncing_monitor_view_modes = false;
+
+        this->monitor_2d_center_lon = this->map_model_monitor->centerLon();
+        this->monitor_2d_center_lat = this->map_model_monitor->centerLat();
+        this->monitor_globe_center_lon = this->map_model_monitor->centerLon();
+        this->monitor_globe_center_lat = this->map_model_monitor->centerLat();
+        this->monitor_last_view_mode = view_mode;
+        return;
+    }
+
+    this->syncing_monitor_view_modes = true;
+    if (view_mode == MapViewMode::TwoD)
+    {
+        this->map_model_monitor->setCenter(
+            this->monitor_2d_center_lon, this->monitor_2d_center_lat,
+            this->map_mon->size());
+    }
+    else
+    {
+        this->map_model_monitor->setCenter(
+            this->monitor_globe_center_lon, this->monitor_globe_center_lat,
+            this->map_mon->size());
+    }
+    this->syncing_monitor_view_modes = false;
+    this->monitor_last_view_mode = view_mode;
 }
 
 void MainWindow::checkServerMapInit()

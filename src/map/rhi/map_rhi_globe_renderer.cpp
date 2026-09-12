@@ -1029,6 +1029,38 @@ void MapRhiGlobeRenderer::setTerrainRepository(MapTerrainRepository *new_terrain
     this->window_dirty = true;
 }
 
+void MapRhiGlobeRenderer::requestTerrainForCurrentView(const QSize &viewport_size)
+{
+    if (this->map_model == nullptr || this->terrain_repository == nullptr
+        || !viewport_size.isValid())
+    {
+        return;
+    }
+
+    // Do the same visible-quadtree selection prepare() would do, but do it
+    // synchronously at the moment the network fit lands. That gives every
+    // visible leaf its terrain key now and dispatches the DEM requests now;
+    // no camera nudge or LOD transition is needed to wake terrain loading.
+    const QVector<MapRhiGlobeQuadtreeLeaf> desired_leaves =
+        selectVisibleGlobeQuadtreeLeaves(
+            *this->map_model, viewport_size, this->terrain_repository,
+            &this->previously_subdivided_quadtree_nodes);
+    rebuildWindow(desired_leaves, viewport_size);
+    requestMissingTerrainTiles();
+}
+
+void MapRhiGlobeRenderer::invalidateTerrainView()
+{
+    // Force the next Globe frame to rebuild its visible quadtree window from
+    // the current camera before requesting DEM tiles. This is intentionally
+    // stronger than invalidateTerrain(), which only rebuilds already-known
+    // meshes and therefore cannot repair a stale pre-fit/pre-network window.
+    this->window_dirty = true;
+    this->terrain_lod_rebuild_pending = false;
+    this->terrain_lod_rebuild_clock.invalidate();
+    this->previously_subdivided_quadtree_nodes.clear();
+}
+
 bool MapRhiGlobeRenderer::setRenderOriginEcef(
     const GeoWgs84Ellipsoid::EcefPositionD &origin_ecef)
 {

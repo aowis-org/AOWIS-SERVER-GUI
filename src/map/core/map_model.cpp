@@ -922,12 +922,42 @@ void MapModel::setProvider(MapProvider provider)
     emit providerChanged(this->m_provider);
 }
 
-void MapModel::setViewMode(MapViewMode view_mode)
+void MapModel::setViewMode(MapViewMode view_mode, const QSize &viewport)
 {
     if (this->m_view_mode == view_mode)
         return;
 
+    const MapViewMode previous_view_mode = this->m_view_mode;
     const double old_latitude = this->m_centerLat;
+    const int viewport_height_px = viewport.isValid()
+        ? qMax(1, viewport.height())
+        : GlobeZoomReferenceViewportHeightPx;
+
+    bool globe_distance_changed = false;
+    double transferred_2d_zoom = std::numeric_limits<double>::quiet_NaN();
+
+    // 2D and Globe use different native camera representations, but a view
+    // mode switch must not look like an arbitrary zoom jump. Transfer the
+    // current screen scale before changing mode so the first Globe frame is
+    // already at the same 2D-equivalent zoom level.
+    if (previous_view_mode == MapViewMode::TwoD && view_mode == MapViewMode::Globe)
+    {
+        const double next_distance_m = qBound(
+            MinViewGlobeDistanceM,
+            viewGlobeDistanceMForZoomLevel(
+                view2dContinuousZoom(), this->m_centerLat, viewport_height_px),
+            MaxViewGlobeDistanceM);
+        globe_distance_changed = !coordinatesEqual(
+            next_distance_m, this->m_view_globe_distance_m);
+        this->m_view_globe_distance_m = next_distance_m;
+    }
+    else if (previous_view_mode == MapViewMode::Globe
+             && view_mode == MapViewMode::TwoD)
+    {
+        transferred_2d_zoom = viewGlobeZoomLevelForDistanceM(
+            this->m_view_globe_distance_m, this->m_centerLat, viewport_height_px);
+    }
+
     this->m_view_mode = view_mode;
 
     // A Globe center may legitimately sit anywhere up to the true poles.
@@ -949,7 +979,15 @@ void MapModel::setViewMode(MapViewMode view_mode)
         this->m_view_3d_navigation_state = MapView3dNavigationState::Pan;
         emit view3dNavigationStateChanged(this->m_view_3d_navigation_state);
     }
+
     emit viewModeChanged(this->m_view_mode);
+
+    if (std::isfinite(transferred_2d_zoom))
+        setView2dContinuousZoom(transferred_2d_zoom, viewport);
+
+    if (globe_distance_changed)
+        emit viewGlobeCameraChanged();
+
     if (!coordinatesEqual(this->m_centerLat, old_latitude))
         emitCenterChanged();
 }

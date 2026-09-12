@@ -23,6 +23,7 @@
 #include <QResizeEvent>
 #include <QScopedValueRollback>
 #include <QRectF>
+#include <QTimer>
 #include <rhi/qshader.h>
 
 #include <rhi/qrhi.h>
@@ -490,10 +491,16 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
 
     connect(this->map_model, &MapModel::centerChangedWGS84, this, [this]
     {
-        // A Globe pan changes which DEM sample is under the orbit target.
-        // Match the target to that rendered surface immediately when it is
-        // cached, or to the zero-height ellipsoid while it is still pending.
-        syncGlobeTerrainFocusElevation(false);
+        // A network fit can move the Globe centre before it sets the final
+        // camera distance. While that one-shot prime is pending, request the
+        // DEM for this fitted centre immediately instead of doing a cached-
+        // only lookup and waiting for later user input. The distance-change
+        // signal below performs the final visible-window request.
+        const bool prime_network_terrain =
+            this->globe_terrain_prime_after_network_pending
+            && this->map_model->viewMode() == MapViewMode::Globe
+            && this->terrain_repository != nullptr;
+        syncGlobeTerrainFocusElevation(prime_network_terrain);
         if (!this->scene.hasGeometry())
         {
             const QPointF center_world = GeoWebMercator::lonLatToWorldPixel(
@@ -509,6 +516,8 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
             }
         }
         syncViewState();
+        if (prime_network_terrain && this->globe_renderer)
+            this->globe_renderer->requestTerrainForCurrentView(this->viewport_size);
         update();
     });
     connect(this->map_model, &MapModel::zoomChanged, this, [this]
@@ -528,7 +537,11 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode view_mode)
     {
         if (view_mode == MapViewMode::Globe)
+        {
+            if (this->globe_renderer)
+                this->globe_renderer->invalidateTerrainView();
             syncGlobeTerrainFocusElevation(true);
+        }
         syncViewState();
         this->tank_upload_pending = true;
         this->reservoir_upload_pending = true;
@@ -631,11 +644,21 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     });
     connect(this->map_model, &MapModel::viewGlobeCameraChanged, this, [this]
     {
-        // Covers distance changes made directly by the footer/API as well as
-        // wheel and keyboard zoom. This is a cheap cached DEM lookup; if the
-        // exact current tile is pending, the renderer remains matched to its
-        // zero-height fallback until signalTerrainTileAvailable arrives.
-        syncGlobeTerrainFocusElevation(false);
+        // A freshly loaded network is fitted *after* setNetworkSnapshot().
+        // Consume that one-shot here, at the final fitted Globe camera, and
+        // explicitly dispatch the visible terrain requests. This is a load,
+        // not an invalidation: terrain starts fetching on network open even
+        // if the user never touches the wheel.
+        const bool prime_network_terrain =
+            this->globe_terrain_prime_after_network_pending
+            && this->map_model->viewMode() == MapViewMode::Globe
+            && this->terrain_repository != nullptr;
+        if (prime_network_terrain)
+            this->globe_terrain_prime_after_network_pending = false;
+
+        syncGlobeTerrainFocusElevation(prime_network_terrain);
+        if (prime_network_terrain && this->globe_renderer)
+            this->globe_renderer->requestTerrainForCurrentView(this->viewport_size);
         update();
     });
     connect(this, &QRhiWidget::renderFailed, this, [this]
@@ -1650,6 +1673,25 @@ void MapRhiWidget::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
     this->globe_underground_upload_pending = true;
     this->globe_junction_instance_upload_pending = true;
     markUndergroundGeometryDirty();
+
+    // The import path fits the loaded network after signalNetworkLoaded, so
+    // setNetworkSnapshot() is deliberately not the place to guess the final
+    // camera or invalidate anything. Arm a one-shot instead; the actual
+    // Globe centre/distance change consumes it and directly requests the DEM
+    // tiles for that fitted view.
+    if (this->map_model->viewMode() == MapViewMode::Globe
+        && this->terrain_repository != nullptr)
+    {
+        // Start fetching terrain immediately for the camera that exists at
+        // network-load time. Keep the one-shot armed as well, because the
+        // import path normally fits the network immediately afterwards and
+        // that fitted camera may require a different visible DEM set.
+        this->globe_terrain_prime_after_network_pending = true;
+        syncGlobeTerrainFocusElevation(true);
+        if (this->globe_renderer)
+            this->globe_renderer->requestTerrainForCurrentView(this->viewport_size);
+    }
+
     update();
 }
 
@@ -3556,12 +3598,7 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
         this->globe_network_scene.iconVertices();
     if (!icon_vertices.isEmpty())
     {
-        // Globe's flat SVG icons are screen-space overlays. They are drawn
-        // after every other network component and deliberately ignore depth
-        // so pipes, junctions, highlights, diagnostics and 3D icon models can
-        // never cover them. Horizon/visibility culling still happens while
-        // building the Globe icon vertex list.
-        command_buffer->setGraphicsPipeline(this->icon_overlay_pipeline.get());
+        command_buffer->setGraphicsPipeline(this->icon_pipeline.get());
         command_buffer->setShaderResources(this->icon_shader_resource_bindings.get());
         const QRhiCommandBuffer::VertexInput icon_binding(
             this->globe_icon_vertex_buffer.get(), 0);

@@ -310,6 +310,7 @@ private:
     bool ready_reported = false;
     bool failure_reported = false;
     bool terrain_camera_distance_sync_active = false;
+    bool globe_terrain_prime_after_network_pending = false;
     QElapsedTimer terrain_pan_smoothing_clock;
 };
 

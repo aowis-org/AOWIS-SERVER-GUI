@@ -975,7 +975,10 @@ MapMonitorViewModeHudWidget::MapMonitorViewModeHudWidget(
     {
         const QVariant data = this->view_mode_combo->itemData(index);
         if (data.isValid())
-            this->map_model->setViewMode(static_cast<MapViewMode>(data.toInt()));
+        {
+            this->map_model->setViewMode(
+                static_cast<MapViewMode>(data.toInt()), this->rhi_widget->size());
+        }
     });
     connect(this->wireframe_checkbox, &QCheckBox::toggled, this, [this](bool checked)
     {

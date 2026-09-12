@@ -124,7 +124,16 @@ private:
 
     bool sync_map_movement = true;
     bool syncing_map_movement = false;
+    bool syncing_monitor_view_modes = false;
+    MapViewMode monitor_last_view_mode = MapViewMode::TwoD;
+    double monitor_2d_center_lon = 0.0;
+    double monitor_2d_center_lat = 0.0;
+    double monitor_globe_center_lon = 0.0;
+    double monitor_globe_center_lat = 0.0;
     void syncMapMovement(MapWidget *source, MapWidget *target);
+    void syncMonitorViewModesFromActive();
+    void captureMonitorCenter();
+    void handleMonitorViewModeChanged(MapViewMode view_mode);
     
     MainNavigationWidget *main_navigation = nullptr;
     SettingsWidget *settings;

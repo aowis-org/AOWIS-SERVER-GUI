@@ -201,7 +201,9 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     syncIconSizeSliderForViewMode(initial_view_mode);
     
     this->check_map_sync = new QCheckBox("Sync Map Movement");
-    this->check_map_sync->setToolTip("Synchronize Map movement between Editor and Monitor");
+    this->check_map_sync->setToolTip(
+        "Synchronize map center and scale between Editor and Monitor, and between "
+        "Monitor 2D and 3D views.");
     this->check_map_sync->setChecked(true);
     connect(this->check_map_sync, &QCheckBox::checkStateChanged, this, [this]
     {
