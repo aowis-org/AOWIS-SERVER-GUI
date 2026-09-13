@@ -3830,11 +3830,17 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
         }
     }
 
+    // Globe billboard icons are semantic overlays, just like the 2D map
+    // icons. Draw them last without depth testing so tank/reservoir node
+    // icons cannot be buried by junction geometry and pump/valve icons
+    // cannot disappear into the link they represent. The 3D tank and
+    // reservoir meshes are not part of this buffer, so they keep normal
+    // depth-tested 3D behavior when the "3D Icons" option is enabled.
     const QVector<MapRhiScene::IconVertex> &icon_vertices =
         this->globe_network_scene.iconVertices();
     if (!icon_vertices.isEmpty())
     {
-        command_buffer->setGraphicsPipeline(this->icon_pipeline.get());
+        command_buffer->setGraphicsPipeline(this->icon_overlay_pipeline.get());
         command_buffer->setShaderResources(this->icon_shader_resource_bindings.get());
         const QRhiCommandBuffer::VertexInput icon_binding(
             this->globe_icon_vertex_buffer.get(), 0);
