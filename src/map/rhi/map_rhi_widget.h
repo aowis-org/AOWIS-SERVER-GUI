@@ -126,6 +126,7 @@ private:
     void syncViewState();
     void syncTerrainAwareCameraDistance();
     void syncGlobeTerrainAwareCameraHeight(bool request_missing_tile);
+    void scheduleGlobeUndergroundXRayRefresh();
     void captureView3dFocusAnchor();
     bool terrainRayHitAtScreen(
         const QPointF &screen_position, CoordinateWGS84 *coordinate,
@@ -313,6 +314,8 @@ private:
     bool terrain_camera_distance_sync_active = false;
     bool globe_terrain_camera_sync_active = false;
     bool globe_terrain_prime_after_network_pending = false;
+    bool globe_underground_refresh_requested = false;
+    quint64 globe_underground_refresh_generation = 0;
     QElapsedTimer terrain_pan_smoothing_clock;
     QElapsedTimer globe_terrain_follow_clock;
     QTimer *globe_terrain_follow_timer = nullptr;

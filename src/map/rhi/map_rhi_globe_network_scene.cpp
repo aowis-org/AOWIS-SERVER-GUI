@@ -238,7 +238,23 @@ bool MapRhiGlobeNetworkScene::setUndergroundXRayEnabled(bool enabled)
         return false;
 
     this->underground_xray_enabled = enabled;
-    rebuildNetworkGeometry();
+    if (enabled)
+        rebuildUndergroundXRayGeometry();
+    else
+        this->underground_link_vertices.clear();
+    return true;
+}
+
+bool MapRhiGlobeNetworkScene::refreshUndergroundXRayGeometry()
+{
+    if (!this->underground_xray_enabled
+        || !this->terrain_elevation_resolver
+        || this->network_snapshot.links.isEmpty())
+    {
+        return false;
+    }
+
+    rebuildUndergroundXRayGeometry();
     return true;
 }
 
@@ -472,14 +488,14 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
     // a network sitting at real elevation, could be far enough below the
     // globe's DEM-displaced terrain to look buried).
     bool fallback_elevation_initialized = false;
-    double fallback_elevation_m = 0.0;
+    this->fallback_elevation_m = 0.0;
     for (const NetworkRenderNode &node : this->network_snapshot.nodes)
     {
         if (!finiteCoordinate(node.coordinate_wgs84) || !std::isfinite(node.elevation_m))
             continue;
 
-        fallback_elevation_m = fallback_elevation_initialized
-            ? qMin(fallback_elevation_m, node.elevation_m)
+        this->fallback_elevation_m = fallback_elevation_initialized
+            ? qMin(this->fallback_elevation_m, node.elevation_m)
             : node.elevation_m;
         fallback_elevation_initialized = true;
     }
@@ -501,11 +517,11 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
         }
 
         const double elevation_m = std::isfinite(node.elevation_m)
-            ? node.elevation_m : fallback_elevation_m;
+            ? node.elevation_m : this->fallback_elevation_m;
         prepared_nodes.append({&node, elevation_m});
     }
 
-    QHash<quint32, QPointF> node_declutter_offsets_m;
+    this->node_declutter_offsets_m.clear();
     if (this->node_decluttering_enabled && prepared_nodes.size() > 1)
     {
         const CoordinateWGS84 &reference_coordinate =
@@ -540,7 +556,7 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
             declutter_inputs.append({prepared.node->render_id, tangent_center});
         }
 
-        node_declutter_offsets_m = computeNodeDeclutterOffsets(
+        this->node_declutter_offsets_m = computeNodeDeclutterOffsets(
             declutter_inputs, MapNodeDeclutterMinimumSeparationMeters);
     }
 
@@ -556,7 +572,7 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
     {
         const NetworkRenderNode &node = *prepared.node;
         const CoordinateWGS84 render_coordinate = coordinateWithDeclutterOffset(
-            node.coordinate_wgs84, node_declutter_offsets_m.value(node.render_id));
+            node.coordinate_wgs84, this->node_declutter_offsets_m.value(node.render_id));
         const QVector3D center = ecefPosition(render_coordinate, prepared.elevation_m);
         this->entity_keys_by_uuid.insert(
             node.uuid, entityRenderKey(node.entity_type, node.render_id));
@@ -588,15 +604,6 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
     }
     this->link_vertices.reserve(segment_count * 6);
 
-    // Underground detection only costs anything when X-Ray is actually the
-    // active mode and a resolver is available -- both gates checked once
-    // here rather than per-segment below. No "is terrain ready" gate any
-    // more (see ecefPosition()'s comment) -- the resolver itself already
-    // fails gracefully per-call (returns false) when it has no DEM sample
-    // for a given coordinate yet, so there's nothing extra to check here.
-    const bool should_detect_underground = this->underground_xray_enabled
-        && bool(this->terrain_elevation_resolver);
-
     for (const NetworkRenderLink &link : this->network_snapshot.links)
     {
         if (this->hidden_entity_uuids.contains(link.uuid) || link.vertices_wgs84.size() < 2)
@@ -608,8 +615,6 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
 
         bool have_previous = false;
         QVector3D previous;
-        CoordinateWGS84 previous_coordinate;
-        double previous_elevation_m = 0.0;
         for (qsizetype vertex_index = 0;
              vertex_index < link.vertices_wgs84.size(); ++vertex_index)
         {
@@ -625,20 +630,21 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
             {
                 coordinate = coordinateWithDeclutterOffset(
                     raw_coordinate,
-                    node_declutter_offsets_m.value(link.start_node_render_id));
+                    this->node_declutter_offsets_m.value(link.start_node_render_id));
             }
             else if (vertex_index == link.vertices_wgs84.size() - 1)
             {
                 coordinate = coordinateWithDeclutterOffset(
                     raw_coordinate,
-                    node_declutter_offsets_m.value(link.end_node_render_id));
+                    this->node_declutter_offsets_m.value(link.end_node_render_id));
             }
 
             const double raw_elevation_m = vertex_index < link.elevations_m.size()
                 ? link.elevations_m.at(vertex_index)
-                : fallback_elevation_m;
+                : this->fallback_elevation_m;
             const double elevation_m =
-                std::isfinite(raw_elevation_m) ? raw_elevation_m : fallback_elevation_m;
+                std::isfinite(raw_elevation_m)
+                ? raw_elevation_m : this->fallback_elevation_m;
             const QVector3D current = ecefPosition(coordinate, elevation_m);
 
             if (have_previous)
@@ -648,18 +654,9 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
                 link_path.segments.append({previous, current, segment_length_m});
                 link_path.total_length_m += double(segment_length_m);
 
-                if (should_detect_underground)
-                {
-                    appendUndergroundSubdivisions(
-                        link.entity_type, link.render_id,
-                        previous_coordinate, previous_elevation_m, previous,
-                        coordinate, elevation_m, current);
-                }
             }
 
             previous = current;
-            previous_coordinate = coordinate;
-            previous_elevation_m = elevation_m;
             have_previous = true;
         }
 
@@ -703,12 +700,78 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
         }
     }
 
+    rebuildUndergroundXRayGeometry();
     rebuildFlowDirections();
     rebuildIcons();
     rebuildTankInstances();
     rebuildReservoirInstances();
     rebuildJunctionInstances();
     rebuildHighlights();
+}
+
+void MapRhiGlobeNetworkScene::rebuildUndergroundXRayGeometry()
+{
+    this->underground_link_vertices.clear();
+    if (!this->underground_xray_enabled || !this->terrain_elevation_resolver)
+        return;
+
+    for (const NetworkRenderLink &link : this->network_snapshot.links)
+    {
+        if (this->hidden_entity_uuids.contains(link.uuid)
+            || link.vertices_wgs84.size() < 2)
+        {
+            continue;
+        }
+
+        bool have_previous = false;
+        QVector3D previous;
+        CoordinateWGS84 previous_coordinate;
+        double previous_elevation_m = 0.0;
+        for (qsizetype vertex_index = 0;
+             vertex_index < link.vertices_wgs84.size(); ++vertex_index)
+        {
+            const CoordinateWGS84 &raw_coordinate = link.vertices_wgs84.at(vertex_index);
+            if (!finiteCoordinate(raw_coordinate))
+            {
+                have_previous = false;
+                continue;
+            }
+
+            CoordinateWGS84 coordinate = raw_coordinate;
+            if (vertex_index == 0)
+            {
+                coordinate = coordinateWithDeclutterOffset(
+                    raw_coordinate,
+                    this->node_declutter_offsets_m.value(link.start_node_render_id));
+            }
+            else if (vertex_index == link.vertices_wgs84.size() - 1)
+            {
+                coordinate = coordinateWithDeclutterOffset(
+                    raw_coordinate,
+                    this->node_declutter_offsets_m.value(link.end_node_render_id));
+            }
+
+            const double raw_elevation_m = vertex_index < link.elevations_m.size()
+                ? link.elevations_m.at(vertex_index)
+                : this->fallback_elevation_m;
+            const double elevation_m = std::isfinite(raw_elevation_m)
+                ? raw_elevation_m : this->fallback_elevation_m;
+            const QVector3D current = ecefPosition(coordinate, elevation_m);
+
+            if (have_previous)
+            {
+                appendUndergroundSubdivisions(
+                    link.entity_type, link.render_id,
+                    previous_coordinate, previous_elevation_m, previous,
+                    coordinate, elevation_m, current);
+            }
+
+            previous = current;
+            previous_coordinate = coordinate;
+            previous_elevation_m = elevation_m;
+            have_previous = true;
+        }
+    }
 }
 
 void MapRhiGlobeNetworkScene::appendLinkSegment(

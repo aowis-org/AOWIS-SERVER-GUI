@@ -24,6 +24,7 @@
 #include <QScopedValueRollback>
 #include <QRectF>
 #include <QTimer>
+#include <QVector4D>
 #include <rhi/qshader.h>
 
 #include <rhi/qrhi.h>
@@ -395,6 +396,7 @@ constexpr double Rhi2dMinimumIconHitRadiusPx = 12.0;
 constexpr double Rhi3dMinimumIconHitRadiusPx = 18.0;
 constexpr double Rhi2dIconHitPaddingPx = 6.0;
 constexpr double Rhi3dIconHitPaddingPx = 10.0;
+constexpr int GlobeUndergroundXRayRefreshQuietMs = 500;
 
 // CPU-side screen projection for Globe hit-testing, using the exact same
 // matrix (MapRhiCamera::globeNetworkViewProjectionMatrix()) the GPU
@@ -575,6 +577,11 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     });
     connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode view_mode)
     {
+        if (view_mode != MapViewMode::Globe)
+        {
+            this->globe_underground_refresh_requested = false;
+            ++this->globe_underground_refresh_generation;
+        }
         if (view_mode == MapViewMode::Globe)
         {
             if (this->globe_renderer)
@@ -712,6 +719,8 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
         syncGlobeTerrainAwareCameraHeight(true);
         if (prime_network_terrain && this->globe_renderer)
             this->globe_renderer->requestTerrainForCurrentView(this->viewport_size);
+        if (this->globe_underground_refresh_requested)
+            scheduleGlobeUndergroundXRayRefresh();
         update();
     });
     connect(this->map_model, &MapModel::viewGlobeTerrainHeightChanged, this, [this]
@@ -1537,15 +1546,30 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
         if (!finiteScreenPoint(projected))
             continue;
 
-        // Unlike ThreeD's version of this loop, this doesn't attempt
-        // perspective-correct pixel sizing for meters-unit icons -- a
-        // reasonable, deliberately simpler stand-in for now (a slightly
-        // over/under-sized hit circle) rather than the much larger
-        // problem this function replaces (picking the wrong entity, or
-        // nothing, at all).
+        double icon_size_px = double(this->globe_network_scene.iconSizePx());
+        const QVector3D icon_center(icon.center_x, icon.center_y, icon.center_z);
+        const QVector4D icon_clip = view_projection * QVector4D(icon_center, 1.0f);
+        const double icon_depth_m = std::abs(double(icon_clip.w()));
+        constexpr double tan_half_fov = 0.4142135623730950;
+        if (std::isfinite(icon_depth_m) && icon_depth_m > 0.000001)
+        {
+            if (this->globe_network_scene.iconSizeUnit()
+                == NetworkSymbologySizeUnit::Meters)
+            {
+                icon_size_px = this->globe_network_scene.iconSizeM()
+                    * double(viewport_height)
+                    / (2.0 * icon_depth_m * tan_half_fov);
+            }
+            else
+            {
+                const double reference_depth_m = qMax(
+                    1.0, this->camera.globeOrbitDistanceM());
+                icon_size_px *= reference_depth_m / icon_depth_m;
+            }
+        }
         const double icon_hit_radius = qMax(
             Rhi3dMinimumIconHitRadiusPx,
-            double(this->applied_symbology.icon_size_px) / 2.0 + Rhi3dIconHitPaddingPx);
+            icon_size_px * 0.5 + Rhi3dIconHitPaddingPx);
         const double distance = QLineF(screen_position, projected).length();
         if (distance > icon_hit_radius || distance >= best_icon_distance)
             continue;
@@ -1589,15 +1613,19 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
         }
     }
 
-    // Generic nodes -- every non-Junction node type (tanks, reservoirs,
-    // pumps, valves, ...). Junctions are skipped here even though they're
-    // still present (invisibly) in nodeVertices() -- see applyNodeColor()
-    // -- because they were already handled, correctly, via their sphere
-    // instances above.
-    const double node_hit_radius = qMax(
-        Rhi3dMinimumNodeHitRadiusPx,
-        this->globe_network_scene.nodeSizePx() * 0.5 + Rhi3dNodeHitPaddingPx);
-    double best_node_distance = node_hit_radius;
+    // Generic nodes -- every non-Junction node type. Junctions are skipped
+    // because their real sphere instances were handled above. Tanks and
+    // reservoirs with active 3D models are also skipped: accepting their
+    // invisible center-point quads here would create a hit target outside
+    // the visible model after the triangle pick has correctly missed it.
+    QSet<quint32> modeled_tank_render_ids;
+    for (const MapRhiTankInstance &instance : tank_instances)
+        modeled_tank_render_ids.insert(instance.render_id);
+    QSet<quint32> modeled_reservoir_render_ids;
+    for (const MapRhiReservoirInstance &instance : reservoir_instances)
+        modeled_reservoir_render_ids.insert(instance.render_id);
+
+    double best_node_distance = std::numeric_limits<double>::infinity();
     quint32 best_node_render_id = 0;
     InfrastructureEntity best_node_entity_type = InfrastructureEntity::Unknown;
     const QVector<MapRhiScene::NodeVertex> &node_vertices =
@@ -1606,18 +1634,41 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
          vertex_index += 6)
     {
         const MapRhiScene::NodeVertex &node_vertex = node_vertices.at(vertex_index);
-        if (node_vertex.entity_type == InfrastructureEntity::Junction)
+        if (node_vertex.entity_type == InfrastructureEntity::Junction
+            || (node_vertex.entity_type == InfrastructureEntity::Tank
+                && modeled_tank_render_ids.contains(node_vertex.render_id))
+            || (node_vertex.entity_type == InfrastructureEntity::Reservoir
+                && modeled_reservoir_render_ids.contains(node_vertex.render_id)))
+        {
             continue;
+        }
 
+        const QVector3D node_center(
+            node_vertex.center_x, node_vertex.center_y, node_vertex.center_z);
         const QPointF projected = projectGlobeToScreen(
-            view_projection,
-            QVector3D(node_vertex.center_x, node_vertex.center_y, node_vertex.center_z),
-            viewport_width, viewport_height);
+            view_projection, node_center, viewport_width, viewport_height);
         if (!finiteScreenPoint(projected))
             continue;
 
+        double visual_radius_px = this->globe_network_scene.nodeSizePx() * 0.5;
+        if (this->globe_network_scene.nodeSizeUnit()
+            == NetworkSymbologySizeUnit::Meters)
+        {
+            const QPointF projected_edge = projectGlobeToScreen(
+                view_projection,
+                node_center + QVector3D(
+                    float(this->globe_network_scene.nodeSizeM() * 0.5), 0.0f, 0.0f),
+                viewport_width, viewport_height);
+            if (finiteScreenPoint(projected_edge))
+                visual_radius_px = QLineF(projected, projected_edge).length();
+        }
+        visual_radius_px = qMax(
+            0.0, visual_radius_px + double(node_vertex.size_adjust_px));
+        const double node_hit_radius = qMax(
+            Rhi3dMinimumNodeHitRadiusPx,
+            visual_radius_px + Rhi3dNodeHitPaddingPx);
         const double distance = QLineF(screen_position, projected).length();
-        if (distance > best_node_distance)
+        if (distance > node_hit_radius || distance >= best_node_distance)
             continue;
 
         best_node_distance = distance;
@@ -1651,8 +1702,6 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
     // MapRhiScene's own link geometry is laid out.
     const double fixed_link_half_width_px =
         this->globe_network_scene.linkThicknessPx() * 0.5;
-    const double link_hit_radius = qMax(
-        Rhi3dMinimumLinkHitRadiusPx, fixed_link_half_width_px + Rhi3dLinkHitPaddingPx);
     double best_link_screen_distance = std::numeric_limits<double>::infinity();
     quint32 best_globe_link_render_id = 0;
     InfrastructureEntity best_globe_link_entity_type = InfrastructureEntity::Unknown;
@@ -1671,7 +1720,36 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
         if (!finiteScreenPoint(start_screen) || !finiteScreenPoint(end_screen))
             continue;
 
-        const double distance = pointSegmentDistance(screen_position, start_screen, end_screen);
+        double visual_half_width_px = fixed_link_half_width_px;
+        if (this->globe_network_scene.linkThicknessUnit()
+            == NetworkSymbologySizeUnit::Meters)
+        {
+            const QVector3D segment_direction = end - start;
+            QVector3D width_direction(
+                -segment_direction.y(), segment_direction.x(), 0.0f);
+            if (width_direction.lengthSquared() > 0.000001f)
+                width_direction.normalize();
+            else
+                width_direction = QVector3D(1.0f, 0.0f, 0.0f);
+
+            const QVector3D midpoint = (start + end) * 0.5f;
+            const QPointF midpoint_screen = projectGlobeToScreen(
+                view_projection, midpoint, viewport_width, viewport_height);
+            const QPointF edge_screen = projectGlobeToScreen(
+                view_projection,
+                midpoint + width_direction
+                    * float(this->globe_network_scene.linkThicknessM() * 0.5),
+                viewport_width, viewport_height);
+            if (finiteScreenPoint(midpoint_screen) && finiteScreenPoint(edge_screen))
+                visual_half_width_px = QLineF(midpoint_screen, edge_screen).length();
+        }
+        visual_half_width_px = qMax(
+            0.0, visual_half_width_px + double(link_vertex.size_adjust_px));
+        const double link_hit_radius = qMax(
+            Rhi3dMinimumLinkHitRadiusPx,
+            visual_half_width_px + Rhi3dLinkHitPaddingPx);
+        const double distance = pointSegmentDistance(
+            screen_position, start_screen, end_screen);
         if (distance > link_hit_radius || distance >= best_link_screen_distance)
             continue;
 
@@ -2061,6 +2139,13 @@ void MapRhiWidget::setTerrainRepository(MapTerrainRepository *terrain_repository
             syncGlobeTerrainAwareCameraHeight(false);
             syncViewState();
             markUndergroundGeometryDirty();
+            if (this->underground_mode == MapRhiUndergroundMode::XRay
+                && this->map_model != nullptr
+                && this->map_model->viewMode() == MapViewMode::Globe)
+            {
+                this->globe_underground_refresh_requested = true;
+                scheduleGlobeUndergroundXRayRefresh();
+            }
             update();
         });
         connect(this->terrain_repository, &MapTerrainRepository::signalTerrainTileRetryReady,
@@ -2078,9 +2163,58 @@ void MapRhiWidget::setTerrainRepository(MapTerrainRepository *terrain_repository
     syncGlobeTerrainAwareCameraHeight(true);
 
     markUndergroundGeometryDirty();
+    if (this->underground_mode == MapRhiUndergroundMode::XRay
+        && this->map_model != nullptr
+        && this->map_model->viewMode() == MapViewMode::Globe
+        && this->terrain_repository != nullptr)
+    {
+        this->globe_underground_refresh_requested = true;
+        scheduleGlobeUndergroundXRayRefresh();
+    }
     this->heatmap_upload_pending = true;
     syncBasemapHeatmapOverlay();
     update();
+}
+
+void MapRhiWidget::scheduleGlobeUndergroundXRayRefresh()
+{
+    if (!this->globe_underground_refresh_requested
+        || this->underground_mode != MapRhiUndergroundMode::XRay
+        || this->map_model == nullptr
+        || this->map_model->viewMode() != MapViewMode::Globe)
+    {
+        return;
+    }
+
+    const quint64 generation = ++this->globe_underground_refresh_generation;
+    QTimer::singleShot(GlobeUndergroundXRayRefreshQuietMs, this, [this, generation]
+    {
+        if (generation != this->globe_underground_refresh_generation
+            || !this->globe_underground_refresh_requested
+            || this->underground_mode != MapRhiUndergroundMode::XRay
+            || this->map_model == nullptr
+            || this->map_model->viewMode() != MapViewMode::Globe)
+        {
+            return;
+        }
+
+        // Never run terrain-wide link classification while the Globe is still
+        // building DEM meshes. Terrain completions and camera changes both
+        // restart this quiet timer, so ordinary pan/zoom stays on the render
+        // hot path only. This branch is a final guard for asynchronous mesh
+        // jobs that outlive the last repository signal.
+        if (this->globe_renderer != nullptr
+            && this->globe_renderer->hasPendingTerrainMeshes())
+        {
+            scheduleGlobeUndergroundXRayRefresh();
+            return;
+        }
+
+        this->globe_underground_refresh_requested = false;
+        if (this->globe_network_scene.refreshUndergroundXRayGeometry())
+            this->globe_underground_upload_pending = true;
+        update();
+    });
 }
 
 void MapRhiWidget::setUndergroundMode(MapRhiUndergroundMode mode)
@@ -2091,6 +2225,11 @@ void MapRhiWidget::setUndergroundMode(MapRhiUndergroundMode mode)
     this->underground_mode = mode;
     if (mode == MapRhiUndergroundMode::XRay)
         markUndergroundGeometryDirty();
+    else
+    {
+        this->globe_underground_refresh_requested = false;
+        ++this->globe_underground_refresh_generation;
+    }
     if (this->globe_network_scene.setUndergroundXRayEnabled(mode == MapRhiUndergroundMode::XRay))
     {
         this->globe_underground_upload_pending = true;

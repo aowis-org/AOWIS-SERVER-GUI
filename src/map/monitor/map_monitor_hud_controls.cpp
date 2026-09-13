@@ -1602,7 +1602,7 @@ MapMonitorUndergroundHudWidget::MapMonitorUndergroundHudWidget(
     this->underground_combo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     this->underground_combo->setToolTip(QStringLiteral(
         "Underground network display\n"
-        "X-Ray: show actual underground pipe sections and junctions with a distinct pattern.\n"
+        "X-Ray: show actual underground pipe sections with a distinct pattern.\n"
         "Hide: let terrain hide the network normally.\n"
         "Solid: show the network through terrain without an underground pattern."));
 

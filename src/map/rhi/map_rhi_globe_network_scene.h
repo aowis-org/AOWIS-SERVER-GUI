@@ -11,6 +11,7 @@
 
 #include <QColor>
 #include <QHash>
+#include <QPointF>
 #include <QSet>
 #include <QUuid>
 #include <QVector>
@@ -131,6 +132,11 @@ public:
     // Hide/Solid to false ("Solid" needs no per-segment classification at
     // all; see MapRhiWidget::drawGlobeNetwork()). Returns true if changed.
     bool setUndergroundXRayEnabled(bool enabled);
+    // Re-runs only the underground-link classification against the terrain
+    // resolver's current cache. Normal Globe network geometry is left
+    // untouched, so terrain streaming cannot force a full network rebuild.
+    // Returns true when classification was performed.
+    bool refreshUndergroundXRayGeometry();
     // The ECEF point every vertex this class builds is placed *relative
     // to*, in place of the raw (Earth-center-relative) ECEF position
     // GeoWgs84Ellipsoid::geodeticToEcef() would otherwise hand back
@@ -228,6 +234,7 @@ private:
     };
 
     void rebuildNetworkGeometry();
+    void rebuildUndergroundXRayGeometry();
     QVector3D ecefPosition(const CoordinateWGS84 &coordinate, double elevation_m) const;
     void appendLinkSegment(InfrastructureEntity entity_type, quint32 render_id,
                            const QVector3D &start, const QVector3D &end);
@@ -317,6 +324,8 @@ private:
     bool underground_xray_enabled = false;
     bool use_3d_icon_models = false;
     bool node_decluttering_enabled = true;
+    QHash<quint32, QPointF> node_declutter_offsets_m;
+    double fallback_elevation_m = 0.0;
     QVector<MapRhiScene::LinkVertex> underground_link_vertices;
 };
 
