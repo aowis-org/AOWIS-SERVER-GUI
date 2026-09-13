@@ -96,6 +96,7 @@ public:
     bool setUse3dTankModels(bool enabled);
     bool setUse3dReservoirModels(bool enabled);
     bool setUse3dJunctionModels(bool enabled);
+    bool setNodeDeclutteringEnabled(bool enabled);
     bool setNetworkGroundOffsetM(double offset_m);
     bool setVerticalExaggeration(double exaggeration);
 
@@ -239,6 +240,7 @@ private:
     bool use_3d_tank_models = false;
     bool use_3d_reservoir_models = false;
     bool use_3d_junction_models = false;
+    bool node_decluttering_enabled = true;
 };
 
 #endif // MAP_RHI_SCENE_H

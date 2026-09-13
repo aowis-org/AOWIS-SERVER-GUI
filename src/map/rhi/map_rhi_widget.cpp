@@ -1784,6 +1784,33 @@ void MapRhiWidget::setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids)
     update();
 }
 
+void MapRhiWidget::setNodeDeclutteringEnabled(bool enabled)
+{
+    const bool flat_changed = this->scene.setNodeDeclutteringEnabled(enabled);
+    const bool globe_changed =
+        this->globe_network_scene.setNodeDeclutteringEnabled(enabled);
+    if (!flat_changed && !globe_changed)
+        return;
+
+    syncBasemapHeatmapOverlay();
+    this->geometry_upload_pending = true;
+    this->highlight_upload_pending = true;
+    this->flow_direction_upload_pending = true;
+    this->icon_upload_pending = true;
+    this->heatmap_upload_pending = true;
+    this->tank_upload_pending = true;
+    this->reservoir_upload_pending = true;
+    this->junction_instance_upload_pending = true;
+    this->globe_geometry_upload_pending = true;
+    this->globe_highlight_upload_pending = true;
+    this->globe_flow_direction_upload_pending = true;
+    this->globe_icon_upload_pending = true;
+    this->globe_underground_upload_pending = true;
+    this->globe_junction_instance_upload_pending = true;
+    markUndergroundGeometryDirty();
+    update();
+}
+
 
 void MapRhiWidget::setNetworkScreenTranslation(const QPointF &translation_pixels)
 {

@@ -71,6 +71,7 @@ public:
         bool request_missing_tile = true);
     void setNetworkSnapshot(const NetworkRenderSnapshot &snapshot);
     void setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids);
+    void setNodeDeclutteringEnabled(bool enabled);
     void setNetworkScreenTranslation(const QPointF &translation_pixels);
     void setSymbology(const MapRhiSymbology &symbology);
     void setVisualControlSettings(const NetworkSymbologySettings &settings);

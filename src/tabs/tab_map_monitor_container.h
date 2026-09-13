@@ -21,6 +21,7 @@
 #include <QButtonGroup>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QSlider>
 #include <QLabel>
@@ -99,6 +100,7 @@ signals:
     void signalNodeVisualClicked(VisualNode visual_node);
     void signalNodeSizeUnitChanged(NetworkSymbologySizeUnit unit);
     void signalNodeSizeChanged(NetworkSymbologySizeUnit unit, double size);
+    void signalNodeDeclutteringChanged(bool enabled);
     void signalLinkVisualClicked(VisualLink visual_link);
     void signalLinkThicknessUnitChanged(NetworkSymbologySizeUnit unit);
     void signalLinkThicknessChanged(NetworkSymbologySizeUnit unit, double thickness);

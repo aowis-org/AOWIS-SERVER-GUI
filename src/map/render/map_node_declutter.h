@@ -12,6 +12,12 @@ struct MapNodeDeclutterInput
     QPointF world_center;
 };
 
+// Shared real-world separation used by both the flat RHI scene and the
+// Globe scene. Keep this deliberately small: decluttering exists to split
+// exact/near-exact modeling coincidences, not to spread ordinary dense
+// network geometry apart.
+constexpr double MapNodeDeclutterMinimumSeparationMeters = 1.0;
+
 // Nodes whose world_center values fall within minimum_separation_world of one
 // another - directly, or transitively through a shared neighbour, e.g. three
 // coincident nodes at one point - are spread evenly apart on a small circle

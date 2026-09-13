@@ -27,16 +27,6 @@ constexpr qreal FlowDirectionChevronHalfWidthRatio = 0.4;
 constexpr qreal FlowDirectionStrokeWidthRatio = 0.2;
 constexpr qreal FlowDirectionMinimumElevationPixels = 4.0;
 constexpr int FlowDirectionMaximumMarkersPerLink = 32;
-
-// Nodes whose real-world positions are closer together than this are spread
-// apart just enough to stay individually visible and clickable. Deliberately
-// small: it exists to break exact/near-exact coincidences that come from
-// modeling conventions (a pump or valve has no physical length, so its
-// inlet/outlet junctions are conventionally digitized at one point) or
-// duplicate digitizing, not to "clean up" genuinely dense, correctly
-// surveyed clusters of distinct junctions that happen to sit a few metres
-// apart.
-constexpr double NodeDeclutterMinimumSeparationMeters = 1.0;
 }
 
 void MapRhiScene::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
@@ -132,16 +122,20 @@ void MapRhiScene::rebuildNetworkGeometry()
 
     // Nodes that share (or nearly share) a coordinate are spread apart just
     // enough to stay individually visible and clickable - see
-    // map_node_declutter.h and NodeDeclutterMinimumSeparationMeters above.
-    QVector<MapNodeDeclutterInput> declutter_inputs;
-    declutter_inputs.reserve(prepared_nodes.size());
-    for (const PreparedNode &prepared : prepared_nodes)
-        declutter_inputs.append({prepared.node->render_id, prepared.raw_center});
+    // map_node_declutter.h and MapNodeDeclutterMinimumSeparationMeters.
+    QHash<quint32, QPointF> node_declutter_offsets;
+    if (this->node_decluttering_enabled)
+    {
+        QVector<MapNodeDeclutterInput> declutter_inputs;
+        declutter_inputs.reserve(prepared_nodes.size());
+        for (const PreparedNode &prepared : prepared_nodes)
+            declutter_inputs.append({prepared.node->render_id, prepared.raw_center});
 
-    const double declutter_separation_world =
-        NodeDeclutterMinimumSeparationMeters * worldUnitsPerMeter();
-    const QHash<quint32, QPointF> node_declutter_offsets = computeNodeDeclutterOffsets(
-        declutter_inputs, declutter_separation_world);
+        const double declutter_separation_world =
+            MapNodeDeclutterMinimumSeparationMeters * worldUnitsPerMeter();
+        node_declutter_offsets = computeNodeDeclutterOffsets(
+            declutter_inputs, declutter_separation_world);
+    }
 
     qsizetype node_quad_count = prepared_nodes.size();
     if (this->use_3d_junction_models)
@@ -480,6 +474,16 @@ bool MapRhiScene::setUse3dJunctionModels(bool enabled)
 
     rebuildJunctionInstances();
     rebuildHighlights();
+    return true;
+}
+
+bool MapRhiScene::setNodeDeclutteringEnabled(bool enabled)
+{
+    if (this->node_decluttering_enabled == enabled)
+        return false;
+
+    this->node_decluttering_enabled = enabled;
+    rebuildNetworkGeometry();
     return true;
 }
 

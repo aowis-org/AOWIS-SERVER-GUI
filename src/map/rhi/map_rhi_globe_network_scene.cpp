@@ -1,6 +1,7 @@
 #include "map/rhi/map_rhi_globe_network_scene.h"
 
 #include "map/core/map_model.h"
+#include "map/render/map_node_declutter.h"
 #include "geo/geo_wgs84_ellipsoid.h"
 #include "network/infrastructure_entity_traits.h"
 #include "network/network_symbology_rendering.h"
@@ -36,6 +37,25 @@ constexpr double FlowDirectionChevronHalfWidthRatio = 0.4;
 constexpr double FlowDirectionStrokeWidthRatio = 0.2;
 constexpr double FlowDirectionMinimumElevationPixels = 4.0;
 constexpr int FlowDirectionMaximumMarkersPerLink = 32;
+
+CoordinateWGS84 coordinateWithDeclutterOffset(
+    const CoordinateWGS84 &coordinate, const QPointF &offset_m)
+{
+    if (qFuzzyIsNull(offset_m.x()) && qFuzzyIsNull(offset_m.y()))
+        return coordinate;
+
+    CoordinateWGS84 result = coordinate;
+    double longitude_deg = coordinate.longitude_deg;
+    double latitude_deg = coordinate.latitude_deg;
+    if (GeoWgs84Ellipsoid::offsetGeodetic(
+            coordinate.longitude_deg, coordinate.latitude_deg,
+            offset_m.x(), offset_m.y(), &longitude_deg, &latitude_deg))
+    {
+        result.longitude_deg = longitude_deg;
+        result.latitude_deg = latitude_deg;
+    }
+    return result;
+}
 }
 
 void MapRhiGlobeNetworkScene::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
@@ -145,6 +165,16 @@ bool MapRhiGlobeNetworkScene::setUse3dIconModels(bool enabled)
     rebuildIcons();
     rebuildTankInstances();
     rebuildReservoirInstances();
+    return true;
+}
+
+bool MapRhiGlobeNetworkScene::setNodeDeclutteringEnabled(bool enabled)
+{
+    if (this->node_decluttering_enabled == enabled)
+        return false;
+
+    this->node_decluttering_enabled = enabled;
+    rebuildNetworkGeometry();
     return true;
 }
 
@@ -454,13 +484,14 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
         fallback_elevation_initialized = true;
     }
 
-    qsizetype node_quad_count = 0;
-    for (const NetworkRenderNode &node : this->network_snapshot.nodes)
+    struct PreparedNode
     {
-        if (node.entity_type != InfrastructureEntity::Junction)
-            ++node_quad_count;
-    }
-    this->node_vertices.reserve(node_quad_count * 6);
+        const NetworkRenderNode *node = nullptr;
+        double elevation_m = 0.0;
+    };
+
+    QVector<PreparedNode> prepared_nodes;
+    prepared_nodes.reserve(this->network_snapshot.nodes.size());
     for (const NetworkRenderNode &node : this->network_snapshot.nodes)
     {
         if (this->hidden_entity_uuids.contains(node.uuid)
@@ -469,9 +500,64 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
             continue;
         }
 
-        const double elevation_m =
-            std::isfinite(node.elevation_m) ? node.elevation_m : fallback_elevation_m;
-        const QVector3D center = ecefPosition(node.coordinate_wgs84, elevation_m);
+        const double elevation_m = std::isfinite(node.elevation_m)
+            ? node.elevation_m : fallback_elevation_m;
+        prepared_nodes.append({&node, elevation_m});
+    }
+
+    QHash<quint32, QPointF> node_declutter_offsets_m;
+    if (this->node_decluttering_enabled && prepared_nodes.size() > 1)
+    {
+        const CoordinateWGS84 &reference_coordinate =
+            prepared_nodes.first().node->coordinate_wgs84;
+        const GeoWgs84Ellipsoid::EcefPositionD reference_ecef =
+            GeoWgs84Ellipsoid::geodeticToEcefD(
+                reference_coordinate.longitude_deg,
+                reference_coordinate.latitude_deg, 0.0);
+        const GeoWgs84Ellipsoid::LocalFrame reference_frame =
+            GeoWgs84Ellipsoid::localFrameAtGeodetic(
+                reference_coordinate.longitude_deg,
+                reference_coordinate.latitude_deg, 0.0);
+
+        QVector<MapNodeDeclutterInput> declutter_inputs;
+        declutter_inputs.reserve(prepared_nodes.size());
+        for (const PreparedNode &prepared : prepared_nodes)
+        {
+            const CoordinateWGS84 &coordinate = prepared.node->coordinate_wgs84;
+            const GeoWgs84Ellipsoid::EcefPositionD node_ecef =
+                GeoWgs84Ellipsoid::geodeticToEcefD(
+                    coordinate.longitude_deg, coordinate.latitude_deg, 0.0);
+            const double delta_x = node_ecef.x - reference_ecef.x;
+            const double delta_y = node_ecef.y - reference_ecef.y;
+            const double delta_z = node_ecef.z - reference_ecef.z;
+            const QPointF tangent_center(
+                delta_x * double(reference_frame.east.x())
+                    + delta_y * double(reference_frame.east.y())
+                    + delta_z * double(reference_frame.east.z()),
+                delta_x * double(reference_frame.north.x())
+                    + delta_y * double(reference_frame.north.y())
+                    + delta_z * double(reference_frame.north.z()));
+            declutter_inputs.append({prepared.node->render_id, tangent_center});
+        }
+
+        node_declutter_offsets_m = computeNodeDeclutterOffsets(
+            declutter_inputs, MapNodeDeclutterMinimumSeparationMeters);
+    }
+
+    qsizetype node_quad_count = 0;
+    for (const PreparedNode &prepared : prepared_nodes)
+    {
+        const NetworkRenderNode &node = *prepared.node;
+        if (node.entity_type != InfrastructureEntity::Junction)
+            ++node_quad_count;
+    }
+    this->node_vertices.reserve(node_quad_count * 6);
+    for (const PreparedNode &prepared : prepared_nodes)
+    {
+        const NetworkRenderNode &node = *prepared.node;
+        const CoordinateWGS84 render_coordinate = coordinateWithDeclutterOffset(
+            node.coordinate_wgs84, node_declutter_offsets_m.value(node.render_id));
+        const QVector3D center = ecefPosition(render_coordinate, prepared.elevation_m);
         this->entity_keys_by_uuid.insert(
             node.uuid, entityRenderKey(node.entity_type, node.render_id));
         appendNode(node.entity_type, node.render_id, center);
@@ -527,11 +613,25 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
         for (qsizetype vertex_index = 0;
              vertex_index < link.vertices_wgs84.size(); ++vertex_index)
         {
-            const CoordinateWGS84 &coordinate = link.vertices_wgs84.at(vertex_index);
-            if (!finiteCoordinate(coordinate))
+            const CoordinateWGS84 &raw_coordinate = link.vertices_wgs84.at(vertex_index);
+            if (!finiteCoordinate(raw_coordinate))
             {
                 have_previous = false;
                 continue;
+            }
+
+            CoordinateWGS84 coordinate = raw_coordinate;
+            if (vertex_index == 0)
+            {
+                coordinate = coordinateWithDeclutterOffset(
+                    raw_coordinate,
+                    node_declutter_offsets_m.value(link.start_node_render_id));
+            }
+            else if (vertex_index == link.vertices_wgs84.size() - 1)
+            {
+                coordinate = coordinateWithDeclutterOffset(
+                    raw_coordinate,
+                    node_declutter_offsets_m.value(link.end_node_render_id));
             }
 
             const double raw_elevation_m = vertex_index < link.elevations_m.size()

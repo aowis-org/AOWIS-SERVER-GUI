@@ -59,9 +59,11 @@
 // planet-scale view the resulting error is visually negligible outside
 // extreme grazing angles.
 //
-// Not yet implemented for the globe: coincident-node decluttering
-// (map_node_declutter.h). Junctions ARE rendered as analytic sphere
-// impostors -- see junctionInstances() -- reusing MapRhiScene/MapRhiWidget's
+// Coincident-node decluttering uses the same one-metre policy as the flat
+// RHI scene, but clusters nodes in a local east/north tangent plane and
+// applies the resulting metre offsets back on WGS84 before ECEF conversion.
+// Junctions ARE rendered as analytic sphere impostors -- see
+// junctionInstances() -- reusing MapRhiScene/MapRhiWidget's
 // shared MapRhiJunctionInstance, GPU style table, and junction pipelines.
 // Unlike ThreeD's, this is not gated behind a toggle: Globe has no flat-2D
 // counterpart the way TwoD is to ThreeD, so junctions are unconditionally
@@ -91,6 +93,7 @@ public:
         const QHash<QUuid, InfrastructureEntity> &error_entities,
         const QSet<QUuid> &stale_entity_uuids);
     bool setUse3dIconModels(bool enabled);
+    bool setNodeDeclutteringEnabled(bool enabled);
     // Height, in meters, added above each entity's own elevation before it is
     // placed on the ellipsoid -- the Globe counterpart of
     // MapRhiScene::setNetworkGroundOffsetM(), sharing the same
@@ -313,6 +316,7 @@ private:
     TerrainElevationResolver terrain_elevation_resolver;
     bool underground_xray_enabled = false;
     bool use_3d_icon_models = false;
+    bool node_decluttering_enabled = true;
     QVector<MapRhiScene::LinkVertex> underground_link_vertices;
 };
 

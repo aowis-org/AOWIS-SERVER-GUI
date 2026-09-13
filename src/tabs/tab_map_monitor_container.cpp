@@ -42,12 +42,21 @@
 
 namespace
 {
+bool rhiMonitorRendererConfigured()
+{
+#ifdef Q_OS_WASM
+    return wasmMapRenderer() == WasmMapRenderer::Rhi;
+#else
+    return desktopMapRenderer() == DesktopMapRenderer::Rhi;
+#endif
+}
+
 bool shouldCollapseRhiMonitorSymbologyGroups()
 {
 #ifdef Q_OS_WASM
     return false;
 #else
-    return guiConfiguration().map_desktop_renderer == DesktopMapRenderer::Rhi;
+    return rhiMonitorRendererConfigured();
 #endif
 }
 
@@ -1074,6 +1083,16 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                 this->symbology_settings.node_size_px = qRound(size);
         }
         applyVisualControlSymbology();
+    });
+    connect(this->map_menu, &MapMonitorMenuWidget::signalNodeDeclutteringChanged, this,
+        [this](bool enabled)
+    {
+#if AOWIS_HAS_QRHI
+        if (this->desktop_rhi_surface != nullptr)
+            this->desktop_rhi_surface->setNodeDeclutteringEnabled(enabled);
+#else
+        Q_UNUSED(enabled);
+#endif
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalLinkVisualClicked, this,
         [this](VisualLink visual_link)
@@ -2119,6 +2138,15 @@ void MapMonitorMenuWidget::addGroupVisualSettings()
         NetworkSymbologyDefaultNodeSizePx,
         QStringLiteral("Sets the junction marker/orb diameter in screen pixels."),
         QStringLiteral(" px"), this);
+    QCheckBox *check_node_decluttering = new QCheckBox(
+        QStringLiteral("Declutter Overlapping Nodes"), this);
+    check_node_decluttering->setChecked(true);
+    check_node_decluttering->setVisible(rhiMonitorRendererConfigured());
+    check_node_decluttering->setToolTip(QStringLiteral(
+        "Separates exact or near-exact node coordinates by at least 1 m for rendering and picking. "
+        "Disable this to render nodes at their exact geographic positions."));
+    connect(check_node_decluttering, &QCheckBox::toggled, this,
+        &MapMonitorMenuWidget::signalNodeDeclutteringChanged);
     connect(slider_node_size, &QSlider::valueChanged, this,
         [this, slider_node_size](int)
     {
@@ -2300,6 +2328,7 @@ void MapMonitorMenuWidget::addGroupVisualSettings()
     node_size_header->addWidget(combo_node_size_unit);
     vbox->addLayout(node_size_header);
     vbox->addWidget(slider_node_size);
+    vbox->addWidget(check_node_decluttering);
     vbox->addSpacing(4);
     vbox->addWidget(label_link_section);
     QHBoxLayout *link_thickness_header = new QHBoxLayout();
