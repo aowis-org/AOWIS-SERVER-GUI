@@ -34,6 +34,7 @@ class QRhiShaderResourceBindings;
 class QRhiTexture;
 class QResizeEvent;
 class QEvent;
+class QTimer;
 
 enum class MapRhiUndergroundMode
 {
@@ -123,12 +124,11 @@ private:
     MapRhiHit globeHitTest(const QPointF &screen_position) const;
     void syncViewState();
     void syncTerrainAwareCameraDistance();
-    void syncGlobeTerrainFocusElevation(bool request_missing_tile);
+    void syncGlobeTerrainAwareCameraHeight(bool request_missing_tile);
     void captureView3dFocusAnchor();
     bool terrainRayHitAtScreen(
         const QPointF &screen_position, CoordinateWGS84 *coordinate,
         double *world_z, double *distance_m, bool request_missing_tile);
-    void captureViewGlobeFocusAnchor();
     void rebuildHeatmapRenderVertices();
     void syncBasemapHeatmapOverlay();
     void syncBasemapHeatmapStyle();
@@ -143,7 +143,7 @@ private:
         bool request_missing_tile = true);
     bool globeTerrainElevationAtCoordinate(
         const CoordinateWGS84 &coordinate, double *elevation_m) const;
-    bool globeFocusTerrainElevationAtCoordinate(
+    bool globeCameraTerrainElevationAtCoordinate(
         const CoordinateWGS84 &coordinate, double *elevation_m,
         bool request_missing_tile) const;
     QPointF renderOriginWorld() const;
@@ -310,8 +310,11 @@ private:
     bool ready_reported = false;
     bool failure_reported = false;
     bool terrain_camera_distance_sync_active = false;
+    bool globe_terrain_camera_sync_active = false;
     bool globe_terrain_prime_after_network_pending = false;
     QElapsedTimer terrain_pan_smoothing_clock;
+    QElapsedTimer globe_terrain_follow_clock;
+    QTimer *globe_terrain_follow_timer = nullptr;
 };
 
 #endif // MAP_RHI_WIDGET_H

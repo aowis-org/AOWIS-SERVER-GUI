@@ -197,6 +197,11 @@ double MapModel::viewGlobeVerticalOffsetM() const
     return this->m_view_globe_vertical_offset_m;
 }
 
+double MapModel::viewGlobeCameraCollisionLiftM() const
+{
+    return this->m_view_globe_camera_collision_lift_m;
+}
+
 double MapModel::viewGlobeDistanceMForZoomLevel(
     double zoom_level, double latitude_deg, int viewport_height_px)
 {
@@ -705,7 +710,8 @@ bool MapModel::globeScreenRay(
     const GeoWgs84Ellipsoid::OrbitCameraBasis basis = GeoWgs84Ellipsoid::orbitCameraBasis(
         this->m_centerLon, this->m_centerLat,
         this->m_view_globe_yaw_deg, pitch_deg, distance_m,
-        this->m_view_globe_vertical_offset_m);
+        this->m_view_globe_vertical_offset_m,
+        this->m_view_globe_camera_collision_lift_m);
 
     // Same FOV as MapRhiCamera::globeViewProjectionMatrix(), and the same
     // shared NDC -> ray formula (GeoWgs84Ellipsoid::screenRay()) that
@@ -768,7 +774,8 @@ void MapModel::panGlobeByPointerDrag(
             this->m_view_globe_yaw_deg,
             qBound(MinViewGlobePitchDeg, this->m_view_globe_pitch_deg, MaxViewGlobePitchDeg),
             qMax(MinViewGlobeDistanceM, this->m_view_globe_distance_m),
-            this->m_view_globe_vertical_offset_m);
+            this->m_view_globe_vertical_offset_m,
+            this->m_view_globe_camera_collision_lift_m);
     const QVector3D target_ecef = old_camera_basis.target;
 
     // Rotating the camera's target by the rotation that maps "new_point"
@@ -1372,6 +1379,31 @@ void MapModel::setViewGlobeDistanceM(double distance_m)
 
     this->m_view_globe_distance_m = next_distance;
     emit viewGlobeCameraChanged();
+}
+
+void MapModel::setViewGlobeVerticalOffsetM(double vertical_offset_m)
+{
+    if (!std::isfinite(vertical_offset_m)
+        || coordinatesEqual(vertical_offset_m, this->m_view_globe_vertical_offset_m))
+    {
+        return;
+    }
+
+    this->m_view_globe_vertical_offset_m = vertical_offset_m;
+    emit viewGlobeTerrainHeightChanged();
+}
+
+void MapModel::setViewGlobeCameraCollisionLiftM(double lift_m)
+{
+    if (!std::isfinite(lift_m))
+        return;
+
+    const double next_lift_m = qMax(0.0, lift_m);
+    if (coordinatesEqual(next_lift_m, this->m_view_globe_camera_collision_lift_m))
+        return;
+
+    this->m_view_globe_camera_collision_lift_m = next_lift_m;
+    emit viewGlobeTerrainHeightChanged();
 }
 
 void MapModel::setViewGlobeZoomLevel(double zoom_level, const QSize &viewport)

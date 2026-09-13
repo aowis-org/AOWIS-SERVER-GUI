@@ -77,11 +77,13 @@ constexpr double GlobeHorizonMarginM = 50000.0;
 // way out to viewing the whole planet from space.
 void globeNearFarPlanesM(
     double distance_m, double pitch_deg, double target_height_m,
+    double camera_collision_lift_m,
     double *near_plane_m, double *far_plane_m)
 {
     const double pitch_rad = qDegreesToRadians(pitch_deg);
     const double eye_altitude_m = qMax(
-        1.0, target_height_m + distance_m * std::sin(pitch_rad));
+        1.0, target_height_m + distance_m * std::sin(pitch_rad)
+            + qMax(0.0, camera_collision_lift_m));
     const double horizon_distance_m = std::sqrt(
         eye_altitude_m * (2.0 * GeoWgs84Ellipsoid::EquatorialRadiusM + eye_altitude_m));
 
@@ -125,7 +127,8 @@ MapRhiImpostorCameraBasis MapRhiCamera::junctionImpostorCameraBasis() const
             GeoWgs84Ellipsoid::orbitCameraBasisRelativeToOrigin(
                 this->globe_target_lon_deg, this->globe_target_lat_deg,
                 this->view_globe_yaw_deg, pitch_deg, distance,
-                this->view_globe_vertical_offset_m, this->globe_render_origin_ecef);
+                this->view_globe_vertical_offset_m, this->globe_render_origin_ecef,
+                this->view_globe_camera_collision_lift_m);
         result.right = basis.right;
         result.up = basis.up;
         result.eye = basis.eye;
@@ -183,6 +186,8 @@ void MapRhiCamera::syncFromMapModel(const MapModel &map_model)
     this->view_globe_pitch_deg = map_model.viewGlobePitchDeg();
     this->view_globe_distance_m = map_model.viewGlobeDistanceM();
     this->view_globe_vertical_offset_m = map_model.viewGlobeVerticalOffsetM();
+    this->view_globe_camera_collision_lift_m =
+        map_model.viewGlobeCameraCollisionLiftM();
 
     const QPointF raw_center_world = GeoWebMercator::lonLatToWorldPixel(
         GeoWebMercator::normalizeLongitude(map_model.centerLon()),
@@ -334,7 +339,9 @@ QMatrix4x4 MapRhiCamera::globeViewProjectionMatrix(const QRhi &rhi) const
     const double distance = qMax(MapModel::MinViewGlobeDistanceM, this->view_globe_distance_m);
     const GeoWgs84Ellipsoid::OrbitCameraBasis basis = GeoWgs84Ellipsoid::orbitCameraBasis(
         this->globe_target_lon_deg, this->globe_target_lat_deg,
-        this->view_globe_yaw_deg, pitch_deg, distance, this->view_globe_vertical_offset_m);
+        this->view_globe_yaw_deg, pitch_deg, distance,
+        this->view_globe_vertical_offset_m,
+        this->view_globe_camera_collision_lift_m);
 
     constexpr float FieldOfViewDeg = float(MapModel::GlobeFieldOfViewDeg);
     // See globeNearFarPlanesM()'s comment for why this is not simply
@@ -346,6 +353,7 @@ QMatrix4x4 MapRhiCamera::globeViewProjectionMatrix(const QRhi &rhi) const
     double far_plane = 0.0;
     globeNearFarPlanesM(
         distance, pitch_deg, this->view_globe_vertical_offset_m,
+        this->view_globe_camera_collision_lift_m,
         &near_plane, &far_plane);
     QMatrix4x4 projection;
     projection.perspective(
@@ -379,7 +387,8 @@ QMatrix4x4 MapRhiCamera::globeNetworkViewProjectionMatrix(
         GeoWgs84Ellipsoid::orbitCameraBasisRelativeToOrigin(
             this->globe_target_lon_deg, this->globe_target_lat_deg,
             this->view_globe_yaw_deg, pitch_deg, distance,
-            this->view_globe_vertical_offset_m, this->globe_render_origin_ecef);
+            this->view_globe_vertical_offset_m, this->globe_render_origin_ecef,
+            this->view_globe_camera_collision_lift_m);
     if (impostor_camera_basis != nullptr)
     {
         impostor_camera_basis->right = basis.right;
@@ -392,6 +401,7 @@ QMatrix4x4 MapRhiCamera::globeNetworkViewProjectionMatrix(
     double far_plane = 0.0;
     globeNearFarPlanesM(
         distance, pitch_deg, this->view_globe_vertical_offset_m,
+        this->view_globe_camera_collision_lift_m,
         &near_plane, &far_plane);
     QMatrix4x4 projection;
     projection.perspective(

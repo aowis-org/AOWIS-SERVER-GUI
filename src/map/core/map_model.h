@@ -88,6 +88,7 @@ public:
     static constexpr double GlobeZoomFormulaMaxLatitudeDeg = 75.0;
     static constexpr double MinViewGlobeDistanceM = 360.42;
     static constexpr double MaxViewGlobeDistanceM = 11810260.0;
+    static constexpr double MinViewGlobeCameraGroundClearanceM = 2.0;
     static constexpr double DefaultViewGlobeDistanceM = MaxViewGlobeDistanceM;
     static constexpr double MinViewGlobePitchDeg = MinView3dPitchDeg;
     static constexpr double MaxViewGlobePitchDeg = MaxView3dPitchDeg;
@@ -146,12 +147,14 @@ public:
     double viewGlobeYawDeg() const;
     double viewGlobePitchDeg() const;
     double viewGlobeDistanceM() const;
-    // Displayed height (meters, including vertical exaggeration) of the orbit
-    // target above the WGS84 ellipsoid -- the Globe counterpart of
-    // view3dVerticalOffsetWorld() above. It follows the exact DEM tile under
-    // the crosshair when available and remains 0 while the renderer is using
-    // its zero-height fallback surface.
+    // Smoothed displayed terrain height (meters, including vertical
+    // exaggeration) beneath the camera. It translates the complete Globe
+    // orbit rig without changing its straight-line distance/zoom.
     double viewGlobeVerticalOffsetM() const;
+    // Eye-only safety lift above the smoothed rig while orbiting around a
+    // frozen target. Both its attack and release are damped; on return to Pan
+    // it is transferred into the whole-rig offset without moving the eye.
+    double viewGlobeCameraCollisionLiftM() const;
     // Continuous, 2D-equivalent zoom level for the globe's current camera
     // distance and center latitude, using the live viewport height --
     // see viewGlobeZoomLevelForDistanceM() for the exact relationship.
@@ -219,18 +222,17 @@ public:
     void setViewGlobeYawDeg(double yaw_deg);
     void setViewGlobePitchDeg(double pitch_deg);
     void setViewGlobeDistanceM(double distance_m);
+    void setViewGlobeVerticalOffsetM(double vertical_offset_m);
+    void setViewGlobeCameraCollisionLiftM(double lift_m);
     // Sets distance from a 2D-equivalent zoom level via
     // viewGlobeDistanceMForZoomLevel(), using the current center latitude
     // and the given (live) viewport height. Used by the footer zoom
     // control's edit path.
     void setViewGlobeZoomLevel(double zoom_level, const QSize &viewport);
-    // Globe counterpart of setView3dFocusAnchor(): re-centers centerLon()/
-    // centerLat() to the given point (the exact terrain-relief-aware hit
-    // under the crosshair), sets viewGlobeVerticalOffsetM() to its displayed
-    // terrain elevation there, and sets viewGlobeDistanceM() to the requested
-    // straight-line orbit distance. The RHI widget preserves that distance
-    // when a pending DEM tile arrives, keeping continuous zoom and imagery
-    // LOD stable while target and eye move together onto the terrain.
+    // Explicit Globe re-anchor utility: re-centers centerLon()/centerLat(),
+    // applies a whole-rig vertical offset, and preserves the requested
+    // straight-line orbit distance. Normal terrain following updates only
+    // the vertical offset and leaves the geographic target untouched.
     void setViewGlobeFocusAnchor(double lon, double lat, double vertical_offset_m,
                                  double distance_m, const QSize &viewport = QSize());
     void orbitViewGlobe(double yaw_delta_deg, double pitch_delta_deg);
@@ -260,6 +262,10 @@ signals:
     void view3dNavigationStateChanged(MapView3dNavigationState state);
     void view3dNetworkGroundOffsetChanged(double offset_m);
     void viewGlobeCameraChanged();
+    // Internal terrain-follow animation only. Keeping this separate prevents
+    // height settling from being mistaken for user camera/zoom movement by
+    // the editor/monitor synchronization layer.
+    void viewGlobeTerrainHeightChanged();
 
 private:
     void clampCenter(const QSize &viewport);
@@ -301,6 +307,7 @@ private:
     double m_view_globe_pitch_deg = DefaultViewGlobePitchDeg;
     double m_view_globe_distance_m = DefaultViewGlobeDistanceM;
     double m_view_globe_vertical_offset_m = 0.0;
+    double m_view_globe_camera_collision_lift_m = 0.0;
     bool m_view_globe_north_up_locked = true;
 };
 

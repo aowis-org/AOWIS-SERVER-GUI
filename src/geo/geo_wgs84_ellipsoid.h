@@ -153,19 +153,44 @@ public:
     static bool ecefToGeodetic(
         const QVector3D &ecef, double *lon_deg, double *lat_deg, double *height_m = nullptr);
 
+    // Double-precision counterpart used when the input is a camera position:
+    // narrowing an Earth-radius-scale ECEF point to QVector3D before the
+    // reverse conversion would quantize the sub-camera point by roughly a
+    // meter. This overload preserves the precision carried by EcefPositionD.
+    static bool ecefToGeodetic(
+        const EcefPositionD &ecef, double *lon_deg, double *lat_deg,
+        double *height_m = nullptr);
+
+    // Moves a geodetic point by a local east/north offset along WGS84. This
+    // remains well behaved at high latitude and across the antimeridian,
+    // unlike adding meter-derived deltas directly to longitude/latitude.
+    static bool offsetGeodetic(
+        double lon_deg, double lat_deg, double east_m, double north_m,
+        double *offset_lon_deg, double *offset_lat_deg);
+
+    // Returns the orbit eye without narrowing its Earth-scale ECEF position
+    // to float. camera_collision_lift_m moves only the eye along the target's
+    // local up direction; target_height_m still translates the whole rig.
+    static EcefPositionD orbitCameraEyeEcefD(
+        double target_lon_deg, double target_lat_deg,
+        double yaw_deg, double pitch_deg, double distance_m,
+        double target_height_m = 0.0,
+        double camera_collision_lift_m = 0.0);
+
     // Builds the orbit camera basis described above. pitch_deg is expected
     // to already be clamped by the caller (this function does not know
     // MapModel's Min/MaxViewGlobePitchDeg bounds, to keep this header free
     // of a dependency on map/core). target_height_m lifts the target (and
     // therefore the whole eye/target rig) that far above the ellipsoid
     // along the target's local "up" -- 0 for the bare sea-level ellipsoid
-    // surface, or the real DEM elevation at (target_lon_deg, target_lat_deg)
-    // so the orbit pivot sits on the actual visible terrain instead of
-    // floating above/clipping through it near mountains.
+    // surface, or a terrain-follow offset for the complete rig.
+    // camera_collision_lift_m moves only the eye upward, preserving the
+    // target while adding terrain clearance.
     static OrbitCameraBasis orbitCameraBasis(
         double target_lon_deg, double target_lat_deg,
         double yaw_deg, double pitch_deg, double distance_m,
-        double target_height_m = 0.0);
+        double target_height_m = 0.0,
+        double camera_collision_lift_m = 0.0);
 
     // Same orbit camera rig as orbitCameraBasis() above -- identical
     // yaw/pitch/distance/target_height_m conventions, and the resulting
@@ -184,7 +209,8 @@ public:
     static OrbitCameraBasisRelative orbitCameraBasisRelativeToOrigin(
         double target_lon_deg, double target_lat_deg,
         double yaw_deg, double pitch_deg, double distance_m,
-        double target_height_m, const EcefPositionD &origin_ecef);
+        double target_height_m, const EcefPositionD &origin_ecef,
+        double camera_collision_lift_m = 0.0);
 
     // Nearest intersection of the ray (origin + t*direction, t >= 0) with
     // the WGS84 ellipsoid. direction need not be normalized. Returns false

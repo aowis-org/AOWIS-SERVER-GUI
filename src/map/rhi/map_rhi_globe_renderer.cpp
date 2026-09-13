@@ -871,7 +871,8 @@ QVector<MapRhiGlobeQuadtreeLeaf> selectVisibleGlobeQuadtreeLeaves(
         GeoWgs84Ellipsoid::orbitCameraBasis(
             map_model.centerLon(), map_model.centerLat(),
             map_model.viewGlobeYawDeg(), pitch_deg, distance_m,
-            map_model.viewGlobeVerticalOffsetM());
+            map_model.viewGlobeVerticalOffsetM(),
+            map_model.viewGlobeCameraCollisionLiftM());
 
     // LOD itself stays deliberately height-normalized. Loaded terrain and
     // the real camera target move upward together while distance_m remains

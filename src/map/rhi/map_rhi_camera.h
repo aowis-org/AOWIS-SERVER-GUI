@@ -119,6 +119,7 @@ private:
     double view_globe_pitch_deg = 55.0;
     double view_globe_distance_m = 0.0;
     double view_globe_vertical_offset_m = 0.0;
+    double view_globe_camera_collision_lift_m = 0.0;
 
     // Sticky Globe GPU render origin -- see updateGlobeRenderOrigin()
     // and globeRenderOriginEcef(). "valid" starts false purely so the very
