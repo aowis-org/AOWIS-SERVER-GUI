@@ -5784,14 +5784,43 @@ bool MapRhiGlobeRenderer::applyReadyTerrainMeshes(
             tile.terrain_mesh_applied = true;
             wireframe_changed = true;
 
-            if (this->window_vertex_buffer)
+            const qsizetype byte_offset_qsize =
+                first_vertex * qsizetype(sizeof(TileVertex));
+            const qsizetype byte_count_qsize =
+                result.vertices.size() * qsizetype(sizeof(TileVertex));
+            const qsizetype byte_end_qsize =
+                byte_offset_qsize + byte_count_qsize;
+
+            // A window rebuild may deliberately carry an outstanding terrain
+            // request over to the replacement window when its geometry is
+            // unchanged. In that case the CPU-side vertex range above is
+            // already the *new* window, while window_vertex_buffer can still
+            // be the old GPU allocation until the full upload later in this
+            // prepare() call. Patching that old allocation is out of bounds
+            // whenever the rebuilt window grew; D3D11 can terminate the
+            // process on such an invalid update instead of merely ignoring it.
+            //
+            // If a full upload is pending, just merge the terrain result into
+            // window_vertices and let that upload carry it. Otherwise a
+            // partial update is safe only when the byte range is proven to fit
+            // the currently allocated GPU buffer.
+            const bool partial_update_fits =
+                !this->window_vertex_upload_pending
+                && this->window_vertex_buffer
+                && byte_offset_qsize >= 0
+                && byte_count_qsize > 0
+                && byte_end_qsize >= byte_offset_qsize
+                && byte_end_qsize <= qsizetype(this->window_vertex_buffer_size)
+                && byte_offset_qsize
+                    <= qsizetype(std::numeric_limits<int>::max())
+                && byte_count_qsize
+                    <= qsizetype(std::numeric_limits<int>::max());
+
+            if (partial_update_fits)
             {
-                const int byte_offset =
-                    int(first_vertex * qsizetype(sizeof(TileVertex)));
-                const int byte_count =
-                    int(result.vertices.size() * qsizetype(sizeof(TileVertex)));
                 resource_updates->updateDynamicBuffer(
-                    this->window_vertex_buffer.get(), byte_offset, byte_count,
+                    this->window_vertex_buffer.get(),
+                    int(byte_offset_qsize), int(byte_count_qsize),
                     this->window_vertices.constData() + first_vertex);
             }
             else
