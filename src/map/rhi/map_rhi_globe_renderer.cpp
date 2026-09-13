@@ -1002,7 +1002,16 @@ QShader loadGlobeShader(const QString &resource_path)
 MapRhiGlobeRenderer::MapRhiGlobeRenderer(MapModel *map_model, MapTileRepository *tile_repository)
     : map_model(map_model),
       tile_repository(tile_repository),
+#ifdef Q_OS_WIN
+      // The Windows/D3D11 terrain path deliberately avoids the background
+      // terrain-mesh worker for now. Terrain tiles are rebuilt inline when
+      // they arrive, then uploaded through the normal full-window buffer
+      // path. Linux and the other established backends retain the async
+      // worker unchanged.
+      terrain_mesh_scheduler(nullptr)
+#else
       terrain_mesh_scheduler(std::make_unique<MapRhiTerrainMeshScheduler>())
+#endif
 {
 }
 
@@ -1135,6 +1144,15 @@ void MapRhiGlobeRenderer::notifyTerrainTileAvailable(const QString &key)
         tile.terrain_mesh_request_id = 0;
         tile.terrain_mesh_applied = false;
     }
+
+#ifdef Q_OS_WIN
+    // Rebuild the affected window on Windows instead of handing the new DEM
+    // to the asynchronous mesh worker. rebuildWindow() generates the terrain
+    // vertices inline and the ordinary full-buffer upload then carries them
+    // to D3D11. This avoids both the worker/result handoff and the partial
+    // QRhi dynamic-buffer update that followed it.
+    this->window_dirty = true;
+#endif
 }
 
 void MapRhiGlobeRenderer::invalidateTerrain()
@@ -1150,6 +1168,9 @@ void MapRhiGlobeRenderer::invalidateTerrain()
         tile.terrain_mesh_request_id = 0;
         tile.terrain_mesh_applied = false;
     }
+#ifdef Q_OS_WIN
+    this->window_dirty = true;
+#endif
 }
 
 void MapRhiGlobeRenderer::setWireframeVisible(bool visible)
@@ -2161,10 +2182,18 @@ void MapRhiGlobeRenderer::rebuildWindow(
         if (!reused)
         {
             bool terrain_built = false;
-            if (terrain_enabled
+            const bool build_terrain_inline =
+#ifdef Q_OS_WIN
+                terrain_enabled
+                && this->terrain_repository != nullptr
+                && !tile.terrain_key.isEmpty();
+#else
+                terrain_enabled
                 && this->terrain_repository != nullptr
                 && !tile.terrain_key.isEmpty()
-                && tile.terrain_cell_count < GlobeAsyncTerrainMeshMinimumCellCount)
+                && tile.terrain_cell_count < GlobeAsyncTerrainMeshMinimumCellCount;
+#endif
+            if (build_terrain_inline)
             {
                 const MapTerrainTile *terrain_tile =
                     this->terrain_repository->tile(tile.terrain_key);
@@ -2208,8 +2237,22 @@ void MapRhiGlobeRenderer::rebuildWindow(
                     request.globe_render_origin_y = this->render_origin_ecef.y;
                     request.globe_render_origin_z = this->render_origin_ecef.z;
 
+#ifdef Q_OS_WIN
+                    qInfo().noquote()
+                        << QStringLiteral(
+                               "Windows globe terrain mesh build begin: %1 cells=%2")
+                               .arg(tile.terrain_key)
+                               .arg(tile.terrain_cell_count);
+#endif
                     const MapRhiTerrainMeshResult result =
                         buildTerrainMeshResult(request);
+#ifdef Q_OS_WIN
+                    qInfo().noquote()
+                        << QStringLiteral(
+                               "Windows globe terrain mesh build complete: %1 vertices=%2")
+                               .arg(tile.terrain_key)
+                               .arg(result.vertices.size());
+#endif
                     if (result.vertices.size() == expected_vertex_count)
                     {
                         for (const MapRhiTerrainMeshVertex &vertex : result.vertices)
@@ -6421,13 +6464,14 @@ bool MapRhiGlobeRenderer::prepare(
         return false;
     requestMissingTerrainTiles();
     scheduleReadyTerrainMeshes();
-    // Do not pre-upload the experimental R32F terrain-height texture cache.
-    // The current globe path does not sample those pages; visible relief is
-    // still produced by the established CPU terrain mesh path below. Besides
-    // wasting upload bandwidth, creating/uploading the unused float texture
-    // arrays has proven unsafe on the Windows D3D11 backend during the first
-    // terrain fill. Re-enable this only together with the shader displacement
-    // path that actually consumes the cache.
+#ifdef Q_OS_WIN
+    // Do not pre-upload the experimental R32F terrain-height texture cache
+    // on Windows/D3D11. The current globe shaders do not consume these pages.
+    // Keep Linux and the other established backends on their existing path so
+    // this Windows crash isolation does not change their performance behavior.
+#else
+    prepareTerrainHeightCache(resource_updates);
+#endif
 
     // Resolve imagery and stamp array layers before a pending full geometry
     // upload. A rebuilt window then carries every already-ready layer in its
