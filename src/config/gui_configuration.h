@@ -62,6 +62,14 @@ struct GuiSymbologyPaletteConfiguration
     bool heatmap_palette_flipped = false;
 };
 
+struct GuiMapNavigationConfiguration
+{
+    // Multipliers applied to the built-in map navigation response.
+    double scroll_zoom_sensitivity = 0.5;
+    double mouse_3d_pan_sensitivity = 0.8;
+    double orbit_3d_sensitivity = 0.8;
+};
+
 struct GuiMapPerformanceConfiguration
 {
     // Absolute maximum distance, in meters, the 3D camera can be pulled
@@ -100,6 +108,7 @@ struct GuiConfiguration
     WasmMapRenderer map_wasm_renderer = WasmMapRenderer::Rhi;
     GuiSymbologyPaletteConfiguration symbology_palettes;
     GuiShortcutConfiguration shortcuts;
+    GuiMapNavigationConfiguration map_navigation;
     GuiMapPerformanceConfiguration map_performance;
 };
 
@@ -117,6 +126,8 @@ const char *wasmMapRendererName(WasmMapRenderer renderer);
 bool saveGuiNodeSymbologyPalette(NetworkSymbologyPalette palette, bool flipped);
 bool saveGuiLinkSymbologyPalette(NetworkSymbologyPalette palette, bool flipped);
 bool saveGuiHeatmapSymbologyPalette(NetworkSymbologyPalette palette, bool flipped);
+void applyGuiMapNavigationConfiguration(const GuiMapNavigationConfiguration &configuration);
+bool saveGuiMapNavigationConfiguration(const GuiMapNavigationConfiguration &configuration);
 bool saveGuiMapPerformanceConfiguration(const GuiMapPerformanceConfiguration &configuration);
 
 #endif // GUI_CONFIGURATION_H

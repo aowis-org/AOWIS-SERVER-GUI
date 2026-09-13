@@ -10,9 +10,8 @@ class QPushButton;
 class QTimer;
 class SliderNumberControl;
 
-// Settings > Map Settings: performance knobs for the RHI 3D renderer
-// (view distance, terrain level-of-detail, draw-call batching), and the
-// map server connection details normally only found in the config file.
+// Settings > Map Settings: navigation sensitivity, performance knobs for
+// the RHI 3D renderer, and map server connection details.
 class MapSettingsWidget : public QWidget
 {
     Q_OBJECT
@@ -21,6 +20,13 @@ public:
     explicit MapSettingsWidget(QWidget *parent = nullptr);
 
 private:
+    // Navigation section.
+    SliderNumberControl *scroll_zoom_sensitivity_control = nullptr;
+    SliderNumberControl *mouse_3d_pan_sensitivity_control = nullptr;
+    SliderNumberControl *orbit_3d_sensitivity_control = nullptr;
+    QLabel *navigation_status = nullptr;
+    QTimer *navigation_save_debounce = nullptr;
+
     // Performance section.
     SliderNumberControl *view_distance_control = nullptr;
     SliderNumberControl *terrain_lod_target_control = nullptr;
@@ -37,11 +43,15 @@ private:
     QPushButton *server_save_button = nullptr;
     QLabel *server_status = nullptr;
 
+    void buildNavigationSection(QWidget *parent_widget);
     void buildPerformanceSection(QWidget *parent_widget);
     void buildServerSection(QWidget *parent_widget);
+    void scheduleNavigationSave();
+    void saveNavigationSettingsNow();
     void schedulePerformanceSave();
     void savePerformanceSettingsNow();
     void saveServerSettings();
+    void showNavigationStatus(const QString &message, bool error);
     void showPerformanceStatus(const QString &message, bool error);
     void showServerStatus(const QString &message, bool error);
 };

@@ -580,21 +580,27 @@ void MapModel::resetView2dContinuousZoom(const QSize &viewport)
     }
 }
 
-void MapModel::zoomByAt(int steps, const QPoint &anchorPos, const QSize &viewport)
+void MapModel::zoomByAt(double steps, const QPoint &anchorPos, const QSize &viewport)
 {
-    if (!viewport.isValid() || steps == 0)
+    if (!viewport.isValid() || !std::isfinite(steps) || coordinatesEqual(steps, 0.0))
         return;
 
     const int old_zoom = this->m_zoom;
-    const int new_zoom = std::clamp(old_zoom + steps, MinZoom, MaxZoom);
-
-    if (new_zoom == old_zoom)
+    const double old_scale = qMax(1e-9, this->m_view_2d_continuous_scale);
+    const double old_continuous_zoom =
+        double(old_zoom) + std::log2(old_scale);
+    const double new_continuous_zoom = qBound(
+        double(MinZoom), old_continuous_zoom + steps, double(MaxZoom));
+    if (coordinatesEqual(new_continuous_zoom, old_continuous_zoom))
         return;
+
+    const int new_zoom = qBound(
+        MinZoom, qRound(new_continuous_zoom), MaxZoom);
+    const double new_scale = std::exp2(new_continuous_zoom - double(new_zoom));
 
     const double old_lon = this->m_centerLon;
     const double old_lat = this->m_centerLat;
     const QPointF old_center = centerTile();
-    const double old_scale = qMax(1e-9, this->m_view_2d_continuous_scale);
     const double screen_offset_x_tiles =
         (anchorPos.x() - viewport.width() / 2.0) / TileSize;
     const double screen_offset_y_tiles =
@@ -607,23 +613,25 @@ void MapModel::zoomByAt(int steps, const QPoint &anchorPos, const QSize &viewpor
         (old_center.x() + anchor_offset_x_old) * zoom_scale;
     const double anchor_tile_y_new =
         (old_center.y() + anchor_offset_y_old) * zoom_scale;
-    const double center_tile_x_new = anchor_tile_x_new - screen_offset_x_tiles;
-    const double center_tile_y_new = anchor_tile_y_new - screen_offset_y_tiles;
+    const double center_tile_x_new =
+        anchor_tile_x_new - screen_offset_x_tiles / new_scale;
+    const double center_tile_y_new =
+        anchor_tile_y_new - screen_offset_y_tiles / new_scale;
 
     this->m_zoom = new_zoom;
-    const bool scale_changed = !coordinatesEqual(this->m_view_2d_continuous_scale, 1.0);
-    this->m_view_2d_continuous_scale = 1.0;
+    this->m_view_2d_continuous_scale = new_scale;
     this->m_centerLon = GeoWebMercator::normalizeLongitude(
         GeoWebMercator::tileXToLon(center_tile_x_new, this->m_zoom));
     this->m_centerLat = GeoWebMercator::tileYToLat(center_tile_y_new, this->m_zoom);
     clampCenter(viewport);
 
-    emit zoomChanged(this->m_zoom);
-    if (scale_changed)
+    if (this->m_zoom != old_zoom)
+        emit zoomChanged(this->m_zoom);
+    if (!coordinatesEqual(this->m_view_2d_continuous_scale, old_scale))
         emit view2dContinuousScaleChanged(this->m_view_2d_continuous_scale);
 
-    if (!coordinatesEqual(this->m_centerLon, old_lon) ||
-        !coordinatesEqual(this->m_centerLat, old_lat))
+    if (!coordinatesEqual(this->m_centerLon, old_lon)
+        || !coordinatesEqual(this->m_centerLat, old_lat))
     {
         emitCenterChanged();
     }
@@ -1316,10 +1324,11 @@ void MapModel::orbitView3d(double yaw_delta_deg, double pitch_delta_deg)
 
 void MapModel::orbitView3dByPointerDelta(const QPoint &delta_pixels, bool include_pitch)
 {
+    const double sensitivity = guiConfiguration().map_navigation.orbit_3d_sensitivity;
     const double yaw_delta_deg =
-        double(delta_pixels.x()) * View3dOrbitYawDegreesPerPixel;
+        double(delta_pixels.x()) * View3dOrbitYawDegreesPerPixel * sensitivity;
     const double pitch_delta_deg = include_pitch
-        ? double(-delta_pixels.y()) * View3dOrbitPitchDegreesPerPixel
+        ? double(-delta_pixels.y()) * View3dOrbitPitchDegreesPerPixel * sensitivity
         : 0.0;
     orbitView3d(yaw_delta_deg, pitch_delta_deg);
 }
@@ -1491,10 +1500,11 @@ void MapModel::orbitViewGlobe(double yaw_delta_deg, double pitch_delta_deg)
 
 void MapModel::orbitViewGlobeByPointerDelta(const QPoint &delta_pixels, bool include_pitch)
 {
+    const double sensitivity = guiConfiguration().map_navigation.orbit_3d_sensitivity;
     const double yaw_delta_deg =
-        double(delta_pixels.x()) * ViewGlobeOrbitYawDegreesPerPixel;
+        double(delta_pixels.x()) * ViewGlobeOrbitYawDegreesPerPixel * sensitivity;
     const double pitch_delta_deg = include_pitch
-        ? double(-delta_pixels.y()) * ViewGlobeOrbitPitchDegreesPerPixel
+        ? double(-delta_pixels.y()) * ViewGlobeOrbitPitchDegreesPerPixel * sensitivity
         : 0.0;
     orbitViewGlobe(yaw_delta_deg, pitch_delta_deg);
 }

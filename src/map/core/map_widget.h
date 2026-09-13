@@ -149,6 +149,7 @@ private:
 
     bool mouse_pan_active = false;
     QPoint mouse_pan_last_position;
+    QPointF mouse_pan_sensitivity_fractional_delta;
     bool view_3d_orbit_active = false;
     View3dOrbitInput view_3d_orbit_input = View3dOrbitInput::None;
     QPoint view_3d_orbit_last_position;

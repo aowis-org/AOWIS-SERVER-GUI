@@ -25,6 +25,13 @@
 
 namespace
 {
+double validatedNavigationSensitivity(double value, double fallback)
+{
+    if (!std::isfinite(value) || value < 0.1 || value > 1.5)
+        return fallback;
+    return value;
+}
+
 bool isValidSymbologyPaletteValue(int value)
 {
     switch (static_cast<NetworkSymbologyPalette>(value))
@@ -279,6 +286,34 @@ EM_JS(int, aowisSaveMapPerformancePreference,
     }
 });
 
+EM_JS(int, aowisSaveMapNavigationPreference,
+      (double scroll_zoom_sensitivity, double mouse_3d_pan_sensitivity,
+       double orbit_3d_sensitivity),
+{
+    try
+    {
+        if (!globalThis.localStorage)
+            return 0;
+        globalThis.localStorage.setItem(
+            "aowis.map_navigation.scroll_zoom_sensitivity",
+            String(scroll_zoom_sensitivity));
+        globalThis.localStorage.setItem(
+            "aowis.map_navigation.mouse_3d_pan_sensitivity",
+            String(mouse_3d_pan_sensitivity));
+        globalThis.localStorage.setItem(
+            "aowis.map_navigation.orbit_3d_sensitivity",
+            String(orbit_3d_sensitivity));
+        globalThis.localStorage.removeItem("aowis.map_navigation.mouse_3d_sensitivity");
+        globalThis.localStorage.removeItem("aowis.map_navigation.scroll_zoom_2d_sensitivity");
+        globalThis.localStorage.removeItem("aowis.map_navigation.scroll_zoom_3d_sensitivity");
+        return 1;
+    }
+    catch (error)
+    {
+        return 0;
+    }
+});
+
 GuiConfiguration loadConfiguration()
 {
     GuiConfiguration configuration;
@@ -313,6 +348,22 @@ GuiConfiguration loadConfiguration()
     configuration.symbology_palettes.heatmap_palette_flipped =
         aowisSymbologyPaletteFlippedPreference(
             "aowis.symbology.heatmap_palette_flipped", 0) != 0;
+    const GuiMapNavigationConfiguration default_map_navigation;
+    configuration.map_navigation.scroll_zoom_sensitivity = validatedNavigationSensitivity(
+        aowisMapPerformanceDoublePreference(
+            "aowis.map_navigation.scroll_zoom_sensitivity",
+            default_map_navigation.scroll_zoom_sensitivity),
+        default_map_navigation.scroll_zoom_sensitivity);
+    configuration.map_navigation.mouse_3d_pan_sensitivity = validatedNavigationSensitivity(
+        aowisMapPerformanceDoublePreference(
+            "aowis.map_navigation.mouse_3d_pan_sensitivity",
+            default_map_navigation.mouse_3d_pan_sensitivity),
+        default_map_navigation.mouse_3d_pan_sensitivity);
+    configuration.map_navigation.orbit_3d_sensitivity = validatedNavigationSensitivity(
+        aowisMapPerformanceDoublePreference(
+            "aowis.map_navigation.orbit_3d_sensitivity",
+            default_map_navigation.orbit_3d_sensitivity),
+        default_map_navigation.orbit_3d_sensitivity);
     const GuiMapPerformanceConfiguration default_map_performance;
     configuration.map_performance.max_view_distance_m =
         aowisMapPerformanceDoublePreference(
@@ -422,6 +473,11 @@ bool createDefaultConfiguration(const QString &path)
         "map_editor_add_reservoir=8\n"
         "map_editor_add_note=9\n"
         "\n"
+        "[map_navigation]\n"
+        "scroll_zoom_sensitivity=0.5\n"
+        "mouse_3d_pan_sensitivity=0.8\n"
+        "orbit_3d_sensitivity=0.8\n"
+        "\n"
         "[map_performance]\n"
         "max_view_distance_m=10000\n"
         "terrain_lod_target_cell_size_px=32\n"
@@ -527,6 +583,13 @@ GuiConfiguration loadConfiguration()
     ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_power_source"), advertised_shortcuts.map_editor_add_power_source);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_reservoir"), advertised_shortcuts.map_editor_add_reservoir);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_note"), advertised_shortcuts.map_editor_add_note);
+    const GuiMapNavigationConfiguration advertised_map_navigation;
+    ensureSettingDefault(settings, QStringLiteral("map_navigation/scroll_zoom_sensitivity"),
+                         QString::number(advertised_map_navigation.scroll_zoom_sensitivity));
+    ensureSettingDefault(settings, QStringLiteral("map_navigation/mouse_3d_pan_sensitivity"),
+                         QString::number(advertised_map_navigation.mouse_3d_pan_sensitivity));
+    ensureSettingDefault(settings, QStringLiteral("map_navigation/orbit_3d_sensitivity"),
+                         QString::number(advertised_map_navigation.orbit_3d_sensitivity));
     const GuiMapPerformanceConfiguration advertised_map_performance;
     ensureSettingDefault(settings, QStringLiteral("map_performance/max_view_distance_m"),
                          QString::number(advertised_map_performance.max_view_distance_m));
@@ -600,6 +663,37 @@ GuiConfiguration loadConfiguration()
     configuration.shortcuts.map_editor_add_power_source = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_power_source"), advertised_shortcuts.map_editor_add_power_source);
     configuration.shortcuts.map_editor_add_reservoir = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_reservoir"), advertised_shortcuts.map_editor_add_reservoir);
     configuration.shortcuts.map_editor_add_note = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_note"), advertised_shortcuts.map_editor_add_note);
+
+    const GuiMapNavigationConfiguration default_map_navigation;
+    bool scroll_zoom_sensitivity_valid = false;
+    const double loaded_scroll_zoom_sensitivity = settings.value(
+        QStringLiteral("map_navigation/scroll_zoom_sensitivity")).toDouble(
+            &scroll_zoom_sensitivity_valid);
+    configuration.map_navigation.scroll_zoom_sensitivity =
+        (scroll_zoom_sensitivity_valid && std::isfinite(loaded_scroll_zoom_sensitivity)
+         && loaded_scroll_zoom_sensitivity >= 0.1 && loaded_scroll_zoom_sensitivity <= 1.5)
+            ? loaded_scroll_zoom_sensitivity
+            : default_map_navigation.scroll_zoom_sensitivity;
+
+    bool mouse_3d_pan_sensitivity_valid = false;
+    const double loaded_mouse_3d_pan_sensitivity = settings.value(
+        QStringLiteral("map_navigation/mouse_3d_pan_sensitivity")).toDouble(
+            &mouse_3d_pan_sensitivity_valid);
+    configuration.map_navigation.mouse_3d_pan_sensitivity =
+        (mouse_3d_pan_sensitivity_valid && std::isfinite(loaded_mouse_3d_pan_sensitivity)
+         && loaded_mouse_3d_pan_sensitivity >= 0.1 && loaded_mouse_3d_pan_sensitivity <= 1.5)
+            ? loaded_mouse_3d_pan_sensitivity
+            : default_map_navigation.mouse_3d_pan_sensitivity;
+
+    bool orbit_3d_sensitivity_valid = false;
+    const double loaded_orbit_3d_sensitivity = settings.value(
+        QStringLiteral("map_navigation/orbit_3d_sensitivity")).toDouble(
+            &orbit_3d_sensitivity_valid);
+    configuration.map_navigation.orbit_3d_sensitivity =
+        (orbit_3d_sensitivity_valid && std::isfinite(loaded_orbit_3d_sensitivity)
+         && loaded_orbit_3d_sensitivity >= 0.1 && loaded_orbit_3d_sensitivity <= 1.5)
+            ? loaded_orbit_3d_sensitivity
+            : default_map_navigation.orbit_3d_sensitivity;
 
     const GuiMapPerformanceConfiguration default_map_performance;
     bool view_distance_valid = false;
@@ -845,6 +939,37 @@ bool saveGuiHeatmapSymbologyPalette(NetworkSymbologyPalette palette, bool flippe
         mutableGuiConfiguration().symbology_palettes.heatmap_palette = palette;
         mutableGuiConfiguration().symbology_palettes.heatmap_palette_flipped = flipped;
     }
+    return saved;
+}
+
+void applyGuiMapNavigationConfiguration(const GuiMapNavigationConfiguration &configuration)
+{
+    mutableGuiConfiguration().map_navigation = configuration;
+}
+
+bool saveGuiMapNavigationConfiguration(const GuiMapNavigationConfiguration &configuration)
+{
+#ifdef __EMSCRIPTEN__
+    const bool saved = aowisSaveMapNavigationPreference(
+        configuration.scroll_zoom_sensitivity,
+        configuration.mouse_3d_pan_sensitivity,
+        configuration.orbit_3d_sensitivity) != 0;
+#else
+    QSettings settings(guiConfigurationFilePath(), QSettings::IniFormat);
+    settings.setValue(QStringLiteral("map_navigation/scroll_zoom_sensitivity"),
+                      configuration.scroll_zoom_sensitivity);
+    settings.setValue(QStringLiteral("map_navigation/mouse_3d_pan_sensitivity"),
+                      configuration.mouse_3d_pan_sensitivity);
+    settings.setValue(QStringLiteral("map_navigation/orbit_3d_sensitivity"),
+                      configuration.orbit_3d_sensitivity);
+    settings.remove(QStringLiteral("map_navigation/mouse_3d_sensitivity"));
+    settings.remove(QStringLiteral("map_navigation/scroll_zoom_2d_sensitivity"));
+    settings.remove(QStringLiteral("map_navigation/scroll_zoom_3d_sensitivity"));
+    settings.sync();
+    const bool saved = settings.status() == QSettings::NoError;
+#endif
+    if (saved)
+        applyGuiMapNavigationConfiguration(configuration);
     return saved;
 }
 

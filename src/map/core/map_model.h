@@ -192,7 +192,7 @@ public:
     void setView2dContinuousZoom(double continuous_zoom, const QSize &viewport = QSize());
     void resetView2dContinuousZoom(const QSize &viewport = QSize());
 
-    void zoomByAt(int steps, const QPoint &anchorPos, const QSize &viewport);
+    void zoomByAt(double steps, const QPoint &anchorPos, const QSize &viewport);
     void panByPixels(const QPoint &delta, const QSize &viewport);
     void panByPixels3d(const QPoint &delta, const QSize &viewport);
     void panByPixels3dKeyboard(const QPoint &delta, const QSize &viewport);

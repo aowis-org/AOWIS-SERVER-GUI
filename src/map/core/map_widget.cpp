@@ -286,6 +286,22 @@ void MapWidget::init()
             emit signalZoomLevelChanged(this->m_model->viewGlobeZoomLevel(size()));
     });
 
+    connect(this->m_model, &MapModel::view2dContinuousScaleChanged, this, [this](double)
+    {
+        if (this->m_model->viewMode() != MapViewMode::TwoD)
+            return;
+
+        emit signalZoomLevelChanged(this->m_model->view2dContinuousZoom());
+#ifdef Q_OS_WASM
+        if (this->browser_map_layer_enabled)
+        {
+            this->syncBrowserMapView();
+            return;
+        }
+#endif
+        update();
+    });
+
     connect(this->m_model, &MapModel::centerChangedWGS84, this, [this](CoordinateWGS84 wgs)
     {
         if (this->m_model->viewMode() == MapViewMode::Globe)
@@ -497,6 +513,7 @@ void MapWidget::stopAllPanMovement()
     this->view_3d_zoom_out_key_pressed = false;
     this->keyboard_pan_motion_active = false;
     this->mouse_pan_active = false;
+    this->mouse_pan_sensitivity_fractional_delta = QPointF();
     this->pan_velocity = QPointF();
     this->pan_fractional_delta = QPointF();
     this->mouse_pan_velocity = QPointF();
@@ -1353,30 +1370,45 @@ void MapWidget::wheelEvent(QWheelEvent *event)
 
 void MapWidget::handleWheelEvent(QWheelEvent *event)
 {
-    this->wheel_delta_accumulated += event->angleDelta().y();
+    const int angle_delta_y = event->angleDelta().y();
+    if (this->m_model->viewMode() == MapViewMode::ThreeD)
+    {
+        // Keep the legacy planar-3D wheel behavior intact. The user-facing
+        // 3D mode is Globe; this branch remains only for the internal legacy mode.
+        this->wheel_delta_accumulated += angle_delta_y;
+        const int threshold = 120;
+        if (std::abs(this->wheel_delta_accumulated) >= threshold)
+        {
+            const int steps = this->wheel_delta_accumulated / threshold;
+            this->wheel_delta_accumulated %= threshold;
+            this->m_model->setZoom(this->m_model->zoom() + steps, size());
+        }
+        event->accept();
+        return;
+    }
 
-    const int threshold = 120;
-    if (std::abs(this->wheel_delta_accumulated) < threshold)
+    const double wheel_steps = double(angle_delta_y) / 120.0;
+    if (std::abs(wheel_steps) <= 1e-9)
     {
         event->accept();
         return;
     }
 
-    const int steps = this->wheel_delta_accumulated / threshold;
-    this->wheel_delta_accumulated %= threshold;
-
+    const GuiMapNavigationConfiguration &navigation = guiConfiguration().map_navigation;
     if (this->m_model->viewMode() == MapViewMode::Globe)
     {
-        // Multiplicative zoom (rather than the additive tile-zoom step used
-        // by ThreeD) since globe distance is a continuous meters value with
-        // no discrete zoom levels to snap to.
+        // Keep the historical globe response at 1.00x while allowing
+        // fractional sensitivity values for high-resolution wheels/trackpads.
         this->m_model->setViewGlobeDistanceM(
-            this->m_model->viewGlobeDistanceM() * std::pow(0.85, steps));
+            this->m_model->viewGlobeDistanceM()
+            * std::pow(0.85, wheel_steps * navigation.scroll_zoom_sensitivity));
     }
-    else if (this->m_model->viewMode() == MapViewMode::ThreeD)
-        this->m_model->setZoom(this->m_model->zoom() + steps, size());
     else
-        this->m_model->zoomByAt(steps, event->position().toPoint(), size());
+    {
+        this->m_model->zoomByAt(
+            wheel_steps * navigation.scroll_zoom_sensitivity,
+            event->position().toPoint(), size());
+    }
     event->accept();
 }
 
@@ -1579,6 +1611,7 @@ bool MapWidget::handleMousePressEvent(QMouseEvent *event)
 
     this->mouse_pan_active = true;
     this->mouse_pan_last_position = event->position().toPoint();
+    this->mouse_pan_sensitivity_fractional_delta = QPointF();
     this->pan_velocity = QPointF();
     this->pan_fractional_delta = QPointF();
     this->mouse_pan_velocity = QPointF();
@@ -1615,6 +1648,7 @@ bool MapWidget::handleMouseReleaseEvent(QMouseEvent *event)
         return false;
 
     this->mouse_pan_active = false;
+    this->mouse_pan_sensitivity_fractional_delta = QPointF();
 
     if (browserMapHandlesMouseInertia())
     {
@@ -1756,6 +1790,7 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
     {
         this->mouse_pan_active = true;
         this->mouse_pan_last_position = position;
+        this->mouse_pan_sensitivity_fractional_delta = QPointF();
         this->pan_velocity = QPointF();
         this->pan_fractional_delta = QPointF();
         this->mouse_pan_velocity = QPointF();
@@ -1775,6 +1810,7 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
     if (!(event->buttons() & Qt::LeftButton))
     {
         this->mouse_pan_active = false;
+        this->mouse_pan_sensitivity_fractional_delta = QPointF();
         this->mouse_pan_velocity = QPointF();
         this->mouse_pan_inertia_active = false;
         this->mouse_pan_drag_distance = 0;
@@ -1784,6 +1820,28 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
 
     const QPoint delta = position - this->mouse_pan_last_position;
     this->mouse_pan_last_position = position;
+
+    const bool view_3d_mouse_pan =
+        this->m_model->viewMode() == MapViewMode::ThreeD
+        || this->m_model->viewMode() == MapViewMode::Globe;
+    const double mouse_pan_sensitivity = view_3d_mouse_pan
+        ? guiConfiguration().map_navigation.mouse_3d_pan_sensitivity
+        : 1.0;
+
+    QPoint pan_delta = delta;
+    if (view_3d_mouse_pan && !delta.isNull())
+    {
+        const QPointF precise_pan_delta =
+            QPointF(delta) * mouse_pan_sensitivity
+            + this->mouse_pan_sensitivity_fractional_delta;
+        pan_delta = QPoint(qRound(precise_pan_delta.x()), qRound(precise_pan_delta.y()));
+        this->mouse_pan_sensitivity_fractional_delta =
+            precise_pan_delta - QPointF(pan_delta);
+    }
+    else if (!view_3d_mouse_pan)
+    {
+        this->mouse_pan_sensitivity_fractional_delta = QPointF();
+    }
 
     const qint64 elapsed_ms = this->mouse_pan_move_elapsed_timer.restart();
     if (browserMapHandlesMouseInertia())
@@ -1801,6 +1859,7 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
             const qreal measured_speed = vectorLength(measured_velocity);
             if (measured_speed > MousePanMaximumSpeedPixelsPerSecond)
                 measured_velocity = normalized(measured_velocity) * MousePanMaximumSpeedPixelsPerSecond;
+            measured_velocity *= mouse_pan_sensitivity;
 
             if (this->mouse_pan_velocity.isNull())
             {
@@ -1815,10 +1874,10 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
         }
     }
 
-    if (!delta.isNull())
+    if (!pan_delta.isNull())
     {
         this->keyboard_pan_motion_active = false;
-        panMapByPixels(delta);
+        panMapByPixels(pan_delta);
     }
 
     event->accept();
@@ -1953,11 +2012,15 @@ void MapWidget::drawTiles(QPainter &painter)
     const QPointF center = this->m_model->centerTile();
     const double center_x = center.x();
     const double center_y = center.y();
+    const double view_scale = this->m_model->viewMode() == MapViewMode::TwoD
+        ? qMax(1e-9, this->m_model->view2dContinuousScale())
+        : 1.0;
+    const double rendered_tile_size = double(MapModel::TileSize) * view_scale;
 
     const int viewport_width = this->width();
     const int viewport_height = this->height();
-    const int tiles_x = viewport_width / MapModel::TileSize + 4;
-    const int tiles_y = viewport_height / MapModel::TileSize + 4;
+    const int tiles_x = int(std::ceil(double(viewport_width) / rendered_tile_size)) + 4;
+    const int tiles_y = int(std::ceil(double(viewport_height) / rendered_tile_size)) + 4;
     const int center_tile_x = int(std::floor(center_x));
     const int center_tile_y = int(std::floor(center_y));
     const int start_x = center_tile_x - tiles_x / 2;
@@ -1996,9 +2059,13 @@ void MapWidget::drawTiles(QPainter &painter)
                 continue;
             }
 
-            const int pixel_x = int(std::floor((virtual_x - center_x) * MapModel::TileSize + viewport_width / 2.0));
-            const int pixel_y = int(std::floor((y - center_y) * MapModel::TileSize + viewport_height / 2.0));
-            painter.drawPixmap(pixel_x, pixel_y, *pixmap);
+            const double pixel_x =
+                (virtual_x - center_x) * rendered_tile_size + viewport_width / 2.0;
+            const double pixel_y =
+                (y - center_y) * rendered_tile_size + viewport_height / 2.0;
+            painter.drawPixmap(
+                QRectF(pixel_x, pixel_y, rendered_tile_size, rendered_tile_size),
+                *pixmap, QRectF(pixmap->rect()));
         }
     }
 }

@@ -20,12 +20,11 @@
 
 namespace
 {
-// Debounce disk writes while a slider is actively being dragged: the value
-// is applied to the live renderer immediately either way (see
-// savePerformanceSettingsNow(), called both on this timeout and, via
-// schedulePerformanceSave(), on every change), only the persisted-to-disk
-// copy is coalesced.
-constexpr int PerformanceSaveDebounceMs = 400;
+// Debounce persistent writes while a slider is actively being dragged.
+constexpr int SettingsSaveDebounceMs = 400;
+constexpr double NavigationSensitivityMinimum = 0.1;
+constexpr double NavigationSensitivityMaximum = 1.5;
+constexpr double NavigationSensitivityStep = 0.05;
 
 // Mirrors the bounds map_rhi_basemap_renderer.cpp enforces on this value
 // (TerrainReliefMinimumZoom) and MapModel::MaxZoom.
@@ -68,6 +67,7 @@ MapSettingsWidget::MapSettingsWidget(QWidget *parent)
     QLabel *title = sectionTitle(QStringLiteral("Map Settings"), content);
     content_layout->addWidget(title);
 
+    buildNavigationSection(content);
     buildPerformanceSection(content);
     buildServerSection(content);
     content_layout->addStretch(1);
@@ -77,6 +77,86 @@ MapSettingsWidget::MapSettingsWidget(QWidget *parent)
     QVBoxLayout *outer_layout = new QVBoxLayout(this);
     outer_layout->setContentsMargins(0, 0, 0, 0);
     outer_layout->addWidget(scroll_area);
+}
+
+void MapSettingsWidget::buildNavigationSection(QWidget *parent_widget)
+{
+    QGroupBox *group = new QGroupBox(QStringLiteral("Map Controls"), parent_widget);
+    QVBoxLayout *group_layout = new QVBoxLayout(group);
+
+    group_layout->addWidget(helpLabel(
+        QStringLiteral("Adjust map mouse controls. Mouse wheel zoom applies to both 2D and 3D (globe). "
+                       "Defaults: wheel zoom 0.50x, 3D pan 0.80x, 3D orbit 0.80x."),
+        group));
+
+    QFormLayout *form = new QFormLayout();
+    form->setLabelAlignment(Qt::AlignLeft);
+    form->setFormAlignment(Qt::AlignLeft | Qt::AlignTop);
+
+    const GuiMapNavigationConfiguration &current = guiConfiguration().map_navigation;
+
+    this->scroll_zoom_sensitivity_control = new SliderNumberControl(group);
+    this->scroll_zoom_sensitivity_control->setRange(
+        NavigationSensitivityMinimum, NavigationSensitivityMaximum);
+    this->scroll_zoom_sensitivity_control->setSingleStep(NavigationSensitivityStep);
+    this->scroll_zoom_sensitivity_control->setDecimals(2);
+    this->scroll_zoom_sensitivity_control->setSuffix(QStringLiteral("x"));
+    this->scroll_zoom_sensitivity_control->setValue(current.scroll_zoom_sensitivity);
+    form->addRow(QStringLiteral("Mouse wheel zoom speed"),
+                 this->scroll_zoom_sensitivity_control);
+
+    this->mouse_3d_pan_sensitivity_control = new SliderNumberControl(group);
+    this->mouse_3d_pan_sensitivity_control->setRange(
+        NavigationSensitivityMinimum, NavigationSensitivityMaximum);
+    this->mouse_3d_pan_sensitivity_control->setSingleStep(NavigationSensitivityStep);
+    this->mouse_3d_pan_sensitivity_control->setDecimals(2);
+    this->mouse_3d_pan_sensitivity_control->setSuffix(QStringLiteral("x"));
+    this->mouse_3d_pan_sensitivity_control->setValue(current.mouse_3d_pan_sensitivity);
+    form->addRow(QStringLiteral("3D mouse pan speed"),
+                 this->mouse_3d_pan_sensitivity_control);
+
+    this->orbit_3d_sensitivity_control = new SliderNumberControl(group);
+    this->orbit_3d_sensitivity_control->setRange(
+        NavigationSensitivityMinimum, NavigationSensitivityMaximum);
+    this->orbit_3d_sensitivity_control->setSingleStep(NavigationSensitivityStep);
+    this->orbit_3d_sensitivity_control->setDecimals(2);
+    this->orbit_3d_sensitivity_control->setSuffix(QStringLiteral("x"));
+    this->orbit_3d_sensitivity_control->setValue(current.orbit_3d_sensitivity);
+    form->addRow(QStringLiteral("3D orbit speed"),
+                 this->orbit_3d_sensitivity_control);
+
+    group_layout->addLayout(form);
+
+    this->navigation_status = new QLabel(group);
+    this->navigation_status->setWordWrap(true);
+    group_layout->addWidget(this->navigation_status);
+
+    QPushButton *restore_defaults = new QPushButton(QStringLiteral("Restore Defaults"), group);
+    group_layout->addWidget(restore_defaults, 0, Qt::AlignLeft);
+
+    this->navigation_save_debounce = new QTimer(this);
+    this->navigation_save_debounce->setSingleShot(true);
+    this->navigation_save_debounce->setInterval(SettingsSaveDebounceMs);
+    connect(this->navigation_save_debounce, &QTimer::timeout,
+            this, &MapSettingsWidget::saveNavigationSettingsNow);
+
+    connect(this->scroll_zoom_sensitivity_control, &SliderNumberControl::valueChanged,
+            this, [this](double) { scheduleNavigationSave(); });
+    connect(this->mouse_3d_pan_sensitivity_control, &SliderNumberControl::valueChanged,
+            this, [this](double) { scheduleNavigationSave(); });
+    connect(this->orbit_3d_sensitivity_control, &SliderNumberControl::valueChanged,
+            this, [this](double) { scheduleNavigationSave(); });
+
+    connect(restore_defaults, &QPushButton::clicked, this, [this]
+    {
+        const GuiMapNavigationConfiguration defaults;
+        this->scroll_zoom_sensitivity_control->setValue(defaults.scroll_zoom_sensitivity);
+        this->mouse_3d_pan_sensitivity_control->setValue(defaults.mouse_3d_pan_sensitivity);
+        this->orbit_3d_sensitivity_control->setValue(defaults.orbit_3d_sensitivity);
+        saveNavigationSettingsNow();
+    });
+
+    static_cast<QVBoxLayout *>(parent_widget->layout())->addWidget(group);
 }
 
 void MapSettingsWidget::buildPerformanceSection(QWidget *parent_widget)
@@ -170,7 +250,7 @@ void MapSettingsWidget::buildPerformanceSection(QWidget *parent_widget)
 
     this->performance_save_debounce = new QTimer(this);
     this->performance_save_debounce->setSingleShot(true);
-    this->performance_save_debounce->setInterval(PerformanceSaveDebounceMs);
+    this->performance_save_debounce->setInterval(SettingsSaveDebounceMs);
     connect(this->performance_save_debounce, &QTimer::timeout,
             this, &MapSettingsWidget::savePerformanceSettingsNow);
 
@@ -257,6 +337,29 @@ void MapSettingsWidget::buildServerSection(QWidget *parent_widget)
     static_cast<QVBoxLayout *>(parent_widget->layout())->addWidget(group);
 }
 
+void MapSettingsWidget::scheduleNavigationSave()
+{
+    GuiMapNavigationConfiguration configuration;
+    configuration.scroll_zoom_sensitivity = this->scroll_zoom_sensitivity_control->value();
+    configuration.mouse_3d_pan_sensitivity = this->mouse_3d_pan_sensitivity_control->value();
+    configuration.orbit_3d_sensitivity = this->orbit_3d_sensitivity_control->value();
+    applyGuiMapNavigationConfiguration(configuration);
+    this->navigation_save_debounce->start();
+}
+
+void MapSettingsWidget::saveNavigationSettingsNow()
+{
+    GuiMapNavigationConfiguration configuration;
+    configuration.scroll_zoom_sensitivity = this->scroll_zoom_sensitivity_control->value();
+    configuration.mouse_3d_pan_sensitivity = this->mouse_3d_pan_sensitivity_control->value();
+    configuration.orbit_3d_sensitivity = this->orbit_3d_sensitivity_control->value();
+
+    if (saveGuiMapNavigationConfiguration(configuration))
+        showNavigationStatus(QStringLiteral("Saved."), false);
+    else
+        showNavigationStatus(QStringLiteral("Failed to save map control settings."), true);
+}
+
 void MapSettingsWidget::schedulePerformanceSave()
 {
     this->performance_save_debounce->start();
@@ -295,6 +398,23 @@ void MapSettingsWidget::saveServerSettings()
     {
         showServerStatus(QStringLiteral("Failed to save map server settings."), true);
     }
+}
+
+void MapSettingsWidget::showNavigationStatus(const QString &message, bool error)
+{
+    this->navigation_status->setText(message);
+    QPalette palette = this->navigation_status->palette();
+    if (error)
+    {
+        QColor color = this->palette().color(QPalette::Text);
+        color = color.lightness() > 128 ? QColor(255, 120, 120) : QColor(180, 20, 20);
+        palette.setColor(QPalette::WindowText, color);
+    }
+    else
+    {
+        palette.setColor(QPalette::WindowText, this->palette().color(QPalette::Text));
+    }
+    this->navigation_status->setPalette(palette);
 }
 
 void MapSettingsWidget::showPerformanceStatus(const QString &message, bool error)
