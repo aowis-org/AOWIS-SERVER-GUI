@@ -6,6 +6,7 @@
 #include <QMetaObject>
 #ifdef Q_OS_WIN
 #include <QPointer>
+#include <QStandardPaths>
 #endif
 #include <QRunnable>
 #include <QThread>
@@ -119,15 +120,31 @@ InterfaceServerMapStandalone::InterfaceServerMapStandalone(QObject *parent)
         emit signalTileFailed(key);
     });
 
+#ifdef Q_OS_WIN
+    // The Windows standalone build performs terrain source download, GeoTIFF
+    // decoding and normalized-cache writes in the same worker path. Keep the
+    // first-fill path serialized on Windows: parallel cached terrain decoding
+    // still happens later in MapTerrainRepository, while this avoids concurrent
+    // filesystem/provider activity during the initial terrain population.
+    const int terrain_thread_count = 1;
+#else
     const int ideal_thread_count = qMax(1, QThread::idealThreadCount());
     const int terrain_thread_count =
         qMax(1, qMin(TerrainRequestThreadCountMaximum, ideal_thread_count / 2));
+#endif
     this->terrain_request_pool.setMaxThreadCount(terrain_thread_count);
     this->terrain_request_pool.setExpiryTimeout(30000);
 
     Aowis::Map::TerrainData::Config terrain_config;
     terrain_config.enabled = true;
     terrain_config.remote_fetch_enabled = true;
+#ifdef Q_OS_WIN
+    // Terrain is disposable cache data. Do not put large Copernicus source and
+    // normalized tile caches into Windows Roaming AppData. Qt's CacheLocation
+    // resolves below AppData/Local and is the correct per-user storage class.
+    terrain_config.cache_base_directory =
+        QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+#endif
     this->terrain_data = new Aowis::Map::TerrainData(terrain_config, this);
     this->terrain_data_initialized =
         this->terrain_data->initialize(&this->terrain_initialization_error);

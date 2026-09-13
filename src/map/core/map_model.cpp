@@ -1383,26 +1383,38 @@ void MapModel::setViewGlobeDistanceM(double distance_m)
 
 void MapModel::setViewGlobeVerticalOffsetM(double vertical_offset_m)
 {
-    if (!std::isfinite(vertical_offset_m)
-        || coordinatesEqual(vertical_offset_m, this->m_view_globe_vertical_offset_m))
-    {
-        return;
-    }
-
-    this->m_view_globe_vertical_offset_m = vertical_offset_m;
-    emit viewGlobeTerrainHeightChanged();
+    setViewGlobeTerrainHeightOffsetsM(
+        vertical_offset_m, this->m_view_globe_camera_collision_lift_m);
 }
 
 void MapModel::setViewGlobeCameraCollisionLiftM(double lift_m)
 {
-    if (!std::isfinite(lift_m))
+    setViewGlobeTerrainHeightOffsetsM(
+        this->m_view_globe_vertical_offset_m, lift_m);
+}
+
+void MapModel::setViewGlobeTerrainHeightOffsetsM(
+    double vertical_offset_m, double camera_collision_lift_m)
+{
+    if (!std::isfinite(vertical_offset_m)
+        || !std::isfinite(camera_collision_lift_m))
+    {
+        return;
+    }
+
+    const double next_collision_lift_m = qMax(
+        0.0, camera_collision_lift_m);
+    const bool vertical_offset_changed = !coordinatesEqual(
+        vertical_offset_m, this->m_view_globe_vertical_offset_m);
+    const bool collision_lift_changed = !coordinatesEqual(
+        next_collision_lift_m,
+        this->m_view_globe_camera_collision_lift_m);
+    if (!vertical_offset_changed && !collision_lift_changed)
         return;
 
-    const double next_lift_m = qMax(0.0, lift_m);
-    if (coordinatesEqual(next_lift_m, this->m_view_globe_camera_collision_lift_m))
-        return;
-
-    this->m_view_globe_camera_collision_lift_m = next_lift_m;
+    this->m_view_globe_vertical_offset_m = vertical_offset_m;
+    this->m_view_globe_camera_collision_lift_m =
+        next_collision_lift_m;
     emit viewGlobeTerrainHeightChanged();
 }
 

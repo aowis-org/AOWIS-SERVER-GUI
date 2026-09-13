@@ -443,6 +443,11 @@ constexpr double GlobeQuadtreeMergeScreenPx = 256.0;
 // walk to at most a few hundred visited nodes.
 constexpr int GlobeQuadtreeMaxVisitedNodes = 20000;
 constexpr int GlobeQuadtreeMaxLeaves = 3000;
+// Even a pure height animation periodically refreshes visibility/resource
+// state. This bounds any horizon change caused by a large climb and also
+// provides a safety net for a missed external dirty notification, while
+// still removing roughly five out of six full preparations at 60 Hz.
+constexpr int GlobeCameraOnlyMaximumReuseMs = 100;
 constexpr int GlobeTileArrayMaximumPageCount =
     (GlobeQuadtreeMaxLeaves + GlobeTileArrayUsableLayerCount - 1)
     / GlobeTileArrayUsableLayerCount;
@@ -1027,7 +1032,21 @@ void MapRhiGlobeRenderer::setTerrainRepository(MapTerrainRepository *new_terrain
     // Terrain availability changes the fallback mesh density as well as the
     // data source, so rebuild the window from the ellipsoid. Old background
     // results are harmless: their request ids no longer match new tiles.
+    this->preparation_dirty = true;
     this->window_dirty = true;
+}
+
+void MapRhiGlobeRenderer::notifyTileRepositoryChanged()
+{
+    // The changed key can also be an ancestor/child used by a provisional
+    // texture, so conservatively let the normal resource scan decide which
+    // visible tiles actually need work.
+    this->preparation_dirty = true;
+}
+
+void MapRhiGlobeRenderer::notifyTerrainRepositoryChanged()
+{
+    this->preparation_dirty = true;
 }
 
 void MapRhiGlobeRenderer::requestTerrainForCurrentView(const QSize &viewport_size)
@@ -1048,6 +1067,7 @@ void MapRhiGlobeRenderer::requestTerrainForCurrentView(const QSize &viewport_siz
             &this->previously_subdivided_quadtree_nodes);
     rebuildWindow(desired_leaves, viewport_size);
     requestMissingTerrainTiles();
+    this->preparation_dirty = true;
 }
 
 void MapRhiGlobeRenderer::invalidateTerrainView()
@@ -1056,6 +1076,7 @@ void MapRhiGlobeRenderer::invalidateTerrainView()
     // the current camera before requesting DEM tiles. This is intentionally
     // stronger than invalidateTerrain(), which only rebuilds already-known
     // meshes and therefore cannot repair a stale pre-fit/pre-network window.
+    this->preparation_dirty = true;
     this->window_dirty = true;
     this->terrain_lod_rebuild_pending = false;
     this->terrain_lod_rebuild_clock.invalidate();
@@ -1073,6 +1094,7 @@ bool MapRhiGlobeRenderer::setRenderOriginEcef(
     }
 
     this->render_origin_ecef = origin_ecef;
+    this->preparation_dirty = true;
 
     // Globe terrain, polar caps, wireframe, and network must all use this
     // same coordinate frame. The camera origin is sticky, so this rebuild
@@ -1096,6 +1118,8 @@ void MapRhiGlobeRenderer::notifyTerrainTileAvailable(const QString &key)
     if (key.isEmpty())
         return;
 
+    this->preparation_dirty = true;
+
     // A retry or provider refresh may replace the CPU tile behind an
     // existing key. Preserve its stable layer assignment but require the
     // new bytes to reach that layer before advertising it as ready again.
@@ -1118,6 +1142,7 @@ void MapRhiGlobeRenderer::invalidateTerrain()
     // Do not flatten the currently displayed relief while a replacement is
     // built (for example after vertical exaggeration changed). Mark it stale
     // and let the async worker replace it in-place when ready.
+    this->preparation_dirty = true;
     for (GlobeTile &tile : this->window_tiles)
     {
         if (tile.terrain_key.isEmpty())
@@ -1133,6 +1158,7 @@ void MapRhiGlobeRenderer::setWireframeVisible(bool visible)
         return;
 
     this->wireframe_visible = visible;
+    this->preparation_dirty = true;
     if (visible)
         rebuildWireframeVertices();
 }
@@ -1143,6 +1169,7 @@ void MapRhiGlobeRenderer::setMapVisible(bool visible)
         return;
 
     this->map_visible = visible;
+    this->preparation_dirty = true;
     if (visible)
         this->window_tiles_requested = false;
 }
@@ -1181,6 +1208,7 @@ void MapRhiGlobeRenderer::setHeatmapOverlay(
     if (!markers_changed && !style_changed)
         return;
 
+    this->preparation_dirty = true;
     if (markers_changed)
     {
         this->heatmap_markers = markers;
@@ -4230,6 +4258,7 @@ bool MapRhiGlobeRenderer::queueHeatmapGpuBake(
 
 void MapRhiGlobeRenderer::disableHeatmapGpuBaking()
 {
+    this->preparation_dirty = true;
     for (const HeatmapGpuBakeJob &job : this->heatmap_gpu_bake_jobs)
     {
         if (job.resource == nullptr)
@@ -6167,6 +6196,14 @@ bool MapRhiGlobeRenderer::initialize(
     if (rhi_instance == nullptr || render_pass_descriptor_instance == nullptr)
         return false;
 
+    if (this->rhi != rhi_instance
+        || this->render_pass_descriptor != render_pass_descriptor_instance
+        || this->sample_count != sample_count_value)
+    {
+        this->preparation_dirty = true;
+        this->prepared_view_state_valid = false;
+        this->full_prepare_clock.invalidate();
+    }
     this->rhi = rhi_instance;
     this->render_pass_descriptor = render_pass_descriptor_instance;
     this->sample_count = sample_count_value;
@@ -6175,10 +6212,111 @@ bool MapRhiGlobeRenderer::initialize(
     return ensureSharedResources();
 }
 
+bool MapRhiGlobeRenderer::canUseCameraOnlyPrepare(
+    const QSize &viewport_size) const
+{
+    if (this->preparation_dirty || !this->prepared_view_state_valid
+        || this->map_model == nullptr || this->window_dirty
+        || !this->full_prepare_clock.isValid()
+        || this->full_prepare_clock.elapsed()
+            >= GlobeCameraOnlyMaximumReuseMs
+        || this->terrain_lod_rebuild_pending
+        || !this->heatmap_gpu_bake_jobs.isEmpty()
+        || hasPendingTerrainMeshes())
+    {
+        return false;
+    }
+
+    // Height following deliberately omits vertical_offset and collision_lift
+    // from this key. Every input that can alter tile selection, LOD, or the
+    // geographic resource window must still match exactly.
+    if (viewport_size != this->prepared_viewport_size
+        || this->map_model->centerLon() != this->prepared_center_lon_deg
+        || this->map_model->centerLat() != this->prepared_center_lat_deg
+        || this->map_model->viewGlobeYawDeg() != this->prepared_yaw_deg
+        || this->map_model->viewGlobePitchDeg() != this->prepared_pitch_deg
+        || this->map_model->viewGlobeDistanceM()
+            != this->prepared_distance_m)
+    {
+        return false;
+    }
+
+    // These flags should all be consumed by a successful full prepare. Keep
+    // them as defensive guards so a partially initialized/recovered QRhi
+    // resource can never enter the transform-only path.
+    if ((this->window_vertex_upload_pending
+            && !this->window_vertices.isEmpty())
+        || (this->window_index_upload_pending
+            && !this->window_indices.isEmpty())
+        || (this->cap_vertex_upload_pending
+            && !this->cap_vertices.isEmpty())
+        || (this->cap_index_upload_pending
+            && !this->cap_indices.isEmpty())
+        || (this->wireframe_visible
+            && this->wireframe_vertex_upload_pending)
+        || this->dummy_texture_upload_pending
+        || this->heatmap_dummy_texture_upload_pending
+        || this->tile_array_draw_indices_dirty
+        || this->tile_array_draw_index_upload_pending
+        || this->heatmap_array_draw_indices_dirty
+        || this->heatmap_array_draw_index_upload_pending
+        || (!this->heatmap_array_draw_indices.isEmpty()
+            && this->heatmap_array_layer_upload_pending)
+        || (this->map_visible && this->tile_repository != nullptr
+            && !this->window_tiles_requested))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+void MapRhiGlobeRenderer::rememberPreparedViewState(
+    const QSize &viewport_size)
+{
+    this->prepared_viewport_size = viewport_size;
+    this->prepared_center_lon_deg = this->map_model->centerLon();
+    this->prepared_center_lat_deg = this->map_model->centerLat();
+    this->prepared_yaw_deg = this->map_model->viewGlobeYawDeg();
+    this->prepared_pitch_deg = this->map_model->viewGlobePitchDeg();
+    this->prepared_distance_m = this->map_model->viewGlobeDistanceM();
+    this->prepared_view_state_valid = true;
+    this->full_prepare_clock.restart();
+}
+
+bool MapRhiGlobeRenderer::uploadCameraUniform(
+    QRhiResourceUpdateBatch *resource_updates,
+    const QMatrix4x4 &view_projection,
+    const QColor &background_color, float background_opacity)
+{
+    if (resource_updates == nullptr || !this->camera_uniform_buffer)
+        return false;
+
+    // 24 floats: the 16-float view_projection matrix, heatmap_settings, and
+    // basemap_settings. basemap_settings mirrors the flat RHI renderer: rgb
+    // is the UI window color and .a is the map-background opacity controlled
+    // by the sidebar slider.
+    float uniform_data[24] = {};
+    std::copy(
+        view_projection.constData(),
+        view_projection.constData() + 16,
+        uniform_data);
+    uniform_data[17] = this->heatmap_opacity;
+    uniform_data[20] = background_color.redF();
+    uniform_data[21] = background_color.greenF();
+    uniform_data[22] = background_color.blueF();
+    uniform_data[23] = qBound(0.0f, background_opacity, 1.0f);
+    resource_updates->updateDynamicBuffer(
+        this->camera_uniform_buffer.get(), 0,
+        GlobeCameraUniformBytes, uniform_data);
+    return true;
+}
+
 bool MapRhiGlobeRenderer::prepare(
     QRhiResourceUpdateBatch *resource_updates, const QMatrix4x4 &view_projection,
     const QSize &viewport_size, float heatmap_opacity,
-    const QColor &background_color, float background_opacity)
+    const QColor &background_color, float background_opacity,
+    bool allow_camera_only_prepare)
 {
     if (this->rhi == nullptr || resource_updates == nullptr || this->map_model == nullptr)
         return false;
@@ -6186,6 +6324,18 @@ bool MapRhiGlobeRenderer::prepare(
         return false;
     this->heatmap_opacity = qBound(0.0f, heatmap_opacity, 1.0f);
     buildCaps();
+
+    // Terrain-follow animation changes only the camera matrix. Reuse the
+    // retained window/resources when all selection inputs and dirty guards
+    // still match; the visible pass below will draw the exact same buffers
+    // with this frame's smoothly updated matrix.
+    if (allow_camera_only_prepare
+        && canUseCameraOnlyPrepare(viewport_size))
+    {
+        return uploadCameraUniform(
+            resource_updates, view_projection,
+            background_color, background_opacity);
+    }
 
     // Walk the quadtree fresh every frame -- see the class comment for why
     // this replaced the old single-zoom rectangular window. The walk itself
@@ -6363,22 +6513,15 @@ bool MapRhiGlobeRenderer::prepare(
         this->heatmap_dummy_texture_upload_pending = false;
     }
 
-    // 24 floats: the 16-float view_projection matrix, heatmap_settings, and
-    // basemap_settings. basemap_settings mirrors the flat RHI renderer: rgb
-    // is the UI window color and .a is the map-background opacity controlled
-    // by the sidebar slider. Keeping this in the per-frame camera block means
-    // globe imagery and the polar caps fade immediately without regenerating
-    // any tile textures.
-    float uniform_data[24] = {};
-    std::copy(view_projection.constData(), view_projection.constData() + 16, uniform_data);
-    uniform_data[17] = this->heatmap_opacity;
-    uniform_data[20] = background_color.redF();
-    uniform_data[21] = background_color.greenF();
-    uniform_data[22] = background_color.blueF();
-    uniform_data[23] = qBound(0.0f, background_opacity, 1.0f);
-    resource_updates->updateDynamicBuffer(
-        this->camera_uniform_buffer.get(), 0, GlobeCameraUniformBytes, uniform_data);
+    if (!uploadCameraUniform(
+            resource_updates, view_projection,
+            background_color, background_opacity))
+    {
+        return false;
+    }
 
+    rememberPreparedViewState(viewport_size);
+    this->preparation_dirty = false;
     return true;
 }
 
@@ -6521,6 +6664,7 @@ void MapRhiGlobeRenderer::draw(QRhiCommandBuffer *command_buffer)
 
 void MapRhiGlobeRenderer::invalidateImagery()
 {
+    this->preparation_dirty = true;
     this->heatmap_gpu_bake_jobs.clear();
     resetWindowArrayLayers();
     this->tile_resources.clear();
@@ -6559,6 +6703,9 @@ void MapRhiGlobeRenderer::invalidateImagery()
 
 void MapRhiGlobeRenderer::releaseResources()
 {
+    this->preparation_dirty = true;
+    this->prepared_view_state_valid = false;
+    this->full_prepare_clock.invalidate();
     resetTerrainHeightCache();
     releaseVisibleHeatmapGpuBakeAtlasResources();
     releaseDiagnosticHeatmapGpuBakeResources();

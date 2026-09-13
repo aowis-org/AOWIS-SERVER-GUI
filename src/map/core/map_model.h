@@ -224,6 +224,11 @@ public:
     void setViewGlobeDistanceM(double distance_m);
     void setViewGlobeVerticalOffsetM(double vertical_offset_m);
     void setViewGlobeCameraCollisionLiftM(double lift_m);
+    // Atomically updates both terrain-follow components and emits one repaint
+    // notification. The animation controller uses this instead of invoking
+    // the two individual setters on every timer tick.
+    void setViewGlobeTerrainHeightOffsetsM(
+        double vertical_offset_m, double camera_collision_lift_m);
     // Sets distance from a 2D-equivalent zoom level via
     // viewGlobeDistanceMForZoomLevel(), using the current center latitude
     // and the given (live) viewport height. Used by the footer zoom

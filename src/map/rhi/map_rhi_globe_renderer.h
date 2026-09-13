@@ -110,6 +110,11 @@ public:
 
     void setTileRepository(MapTileRepository *tile_repository);
     void setTerrainRepository(MapTerrainRepository *terrain_repository);
+    // Repository signals can arrive while a terrain-height animation is
+    // otherwise eligible for the camera-only path. Mark their content work
+    // explicitly so that frame performs normal tile preparation instead.
+    void notifyTileRepositoryChanged();
+    void notifyTerrainRepositoryChanged();
     // Immediately rebuild the visible Globe tile window from the current
     // camera and dispatch missing DEM requests. This is used after a network
     // fit so terrain loading starts at the fitted view without requiring any
@@ -156,11 +161,14 @@ public:
     // the class comment on
     // ensureHeatmapTexture() for why that's fine to do unconditionally
     // (it's cheap, and unlike the texture itself, doesn't force any tile
-    // to regenerate).
+    // to regenerate). allow_camera_only_prepare is only a hint: the renderer
+    // honors it when the non-height view key and every resource/terrain dirty
+    // guard still match the last successful full preparation.
     bool prepare(QRhiResourceUpdateBatch *resource_updates,
                 const QMatrix4x4 &view_projection, const QSize &viewport_size,
                 float heatmap_opacity, const QColor &background_color,
-                float background_opacity);
+                float background_opacity,
+                bool allow_camera_only_prepare = false);
     // Records all visible heatmap bakes queued by prepare(), copying each
     // atlas slot either into an ordinary fallback texture or directly into
     // a texture-array layer. Returns false only when the GPU path failed and
@@ -484,6 +492,12 @@ private:
     bool uploadWireframeVertices(QRhiResourceUpdateBatch *resource_updates);
     TileVertex makeTileVertex(double lon_deg, double lat_deg, float u, float v) const;
     bool ensureSharedResources();
+    bool canUseCameraOnlyPrepare(const QSize &viewport_size) const;
+    void rememberPreparedViewState(const QSize &viewport_size);
+    bool uploadCameraUniform(
+        QRhiResourceUpdateBatch *resource_updates,
+        const QMatrix4x4 &view_projection,
+        const QColor &background_color, float background_opacity);
     bool createTileArrayResources();
     bool createTileArrayPage();
     void trimUnusedTileArrayPages();
@@ -596,6 +610,18 @@ private:
     QRhi *rhi = nullptr;
     QRhiRenderPassDescriptor *render_pass_descriptor = nullptr;
     int sample_count = 1;
+    // A terrain-follow tick changes only the two omitted height values. When
+    // the remaining view-selection inputs still match this last successful
+    // full prepare, the current tile window and GPU resources can be reused.
+    bool preparation_dirty = true;
+    bool prepared_view_state_valid = false;
+    QSize prepared_viewport_size;
+    double prepared_center_lon_deg = 0.0;
+    double prepared_center_lat_deg = 0.0;
+    double prepared_yaw_deg = 0.0;
+    double prepared_pitch_deg = 0.0;
+    double prepared_distance_m = 0.0;
+    QElapsedTimer full_prepare_clock;
 
     // Dynamic imagery window (see class comment above).
     QVector<TileVertex> window_vertices;

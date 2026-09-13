@@ -57,7 +57,12 @@ constexpr int GlobeTerrainFollowTimerIntervalMs = 16;
 // Globe value deliberately treats both directions alike.
 constexpr double GlobeTerrainFollowTimeConstantSeconds = 0.22;
 constexpr double GlobeCollisionFollowTimeConstantSeconds = 0.16;
-constexpr double GlobeTerrainFollowSettleDistanceM = 0.01;
+// Stop once the remaining motion is below a quarter of a logical screen
+// pixel. A fixed one-centimetre threshold kept the complete Globe renderer
+// awake for dozens of visually indistinguishable tail frames when zoomed
+// out. Retain a small metric floor for very close views.
+constexpr double GlobeTerrainFollowSettlePixels = 0.25;
+constexpr double GlobeTerrainFollowMinimumSettleDistanceM = 0.01;
 constexpr double GlobeTerrainMaximumTimeStepSeconds = 1.0 / 30.0;
 
 double approachExponentially(
@@ -1978,11 +1983,15 @@ void MapRhiWidget::setTileRepository(MapTileRepository *tile_repository)
         connect(this->tile_repository, &MapTileRepository::signalTileAvailable,
                 this, [this](const QString &)
         {
+            if (this->globe_renderer)
+                this->globe_renderer->notifyTileRepositoryChanged();
             update();
         });
         connect(this->tile_repository, &MapTileRepository::signalTileRetryReady,
                 this, [this](const QString &)
         {
+            if (this->globe_renderer)
+                this->globe_renderer->notifyTileRepositoryChanged();
             update();
         });
         connect(this->tile_repository, &MapTileRepository::signalTilesDeleted,
@@ -1990,6 +1999,8 @@ void MapRhiWidget::setTileRepository(MapTileRepository *tile_repository)
         {
             if (this->basemap_renderer)
                 this->basemap_renderer->invalidate();
+            if (this->globe_renderer)
+                this->globe_renderer->notifyTileRepositoryChanged();
             update();
         });
     }
@@ -2028,6 +2039,8 @@ void MapRhiWidget::setTerrainRepository(MapTerrainRepository *terrain_repository
         connect(this->terrain_repository, &MapTerrainRepository::signalTerrainTileRetryReady,
                 this, [this](const QString &)
         {
+            if (this->globe_renderer)
+                this->globe_renderer->notifyTerrainRepositoryChanged();
             update();
         });
     }
@@ -2935,10 +2948,13 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     const QColor globe_map_background_color = palette().color(QPalette::Window);
     const float globe_map_background_opacity =
         qBound(0.0f, this->background_opacity / 100.0f, 1.0f);
+    const bool allow_camera_only_prepare =
+        this->globe_terrain_follow_timer != nullptr
+        && this->globe_terrain_follow_timer->isActive();
     if (!this->globe_renderer->prepare(
             resource_updates, view_projection, this->viewport_size,
             globe_heatmap_opacity, globe_map_background_color,
-            globe_map_background_opacity))
+            globe_map_background_opacity, allow_camera_only_prepare))
     {
         resource_updates->release();
         reportFailure(QStringLiteral("Failed to prepare RHI globe renderer"));
@@ -5931,6 +5947,16 @@ void MapRhiWidget::syncGlobeTerrainAwareCameraHeight(bool request_missing_tile)
     const bool orbit_target_frozen =
         this->map_model->view3dNavigationState()
         == MapView3dNavigationState::Rotate;
+    const double viewport_height_px = double(qMax(
+        1, this->viewport_size.height()));
+    const double meters_per_pixel =
+        2.0 * distance_m
+        * std::tan(qDegreesToRadians(
+            MapModel::GlobeFieldOfViewDeg * 0.5))
+        / viewport_height_px;
+    const double settle_distance_m = qMax(
+        GlobeTerrainFollowMinimumSettleDistanceM,
+        GlobeTerrainFollowSettlePixels * meters_per_pixel);
 
     // GeographicLib's ECEF reverse conversion returns the point reached by
     // dropping the WGS84-normal from the actual eye. That is the terrain
@@ -6046,7 +6072,7 @@ void MapRhiWidget::syncGlobeTerrainAwareCameraHeight(bool request_missing_tile)
         next_collision_lift_m, required_collision_lift_m,
         GlobeCollisionFollowTimeConstantSeconds, elapsed_seconds);
     if (std::abs(required_collision_lift_m - next_collision_lift_m)
-        <= GlobeTerrainFollowSettleDistanceM)
+        <= settle_distance_m)
     {
         next_collision_lift_m = required_collision_lift_m;
     }
@@ -6057,21 +6083,21 @@ void MapRhiWidget::syncGlobeTerrainAwareCameraHeight(bool request_missing_tile)
             next_offset_m, target_offset_m,
             GlobeTerrainFollowTimeConstantSeconds, elapsed_seconds);
         if (std::abs(target_offset_m - next_offset_m)
-            <= GlobeTerrainFollowSettleDistanceM)
+            <= settle_distance_m)
         {
             next_offset_m = target_offset_m;
         }
     }
 
-    this->map_model->setViewGlobeVerticalOffsetM(next_offset_m);
-    this->map_model->setViewGlobeCameraCollisionLiftM(next_collision_lift_m);
+    this->map_model->setViewGlobeTerrainHeightOffsetsM(
+        next_offset_m, next_collision_lift_m);
 
     const bool follow_animating = !orbit_target_frozen
         && std::abs(target_offset_m - next_offset_m)
-            > GlobeTerrainFollowSettleDistanceM;
+            > settle_distance_m;
     const bool collision_animating =
         std::abs(required_collision_lift_m - next_collision_lift_m)
-            > GlobeTerrainFollowSettleDistanceM;
+            > settle_distance_m;
     if (follow_animating || collision_animating)
     {
         if (this->globe_terrain_follow_timer != nullptr
