@@ -1381,7 +1381,8 @@ void MapRhiGlobeRenderer::buildCaps()
 }
 
 int MapRhiGlobeRenderer::terrainCellCountForTile(
-    const GlobeTile &tile, const QSize &viewport_size) const
+    const GlobeTile &tile, const QSize &viewport_size,
+    const GeoWgs84Ellipsoid::OrbitCameraBasis *camera_basis_override) const
 {
     if (this->map_model == nullptr
         || tile.terrain_zoom < GlobeTerrainReliefMinimumZoom
@@ -1424,8 +1425,12 @@ int MapRhiGlobeRenderer::terrainCellCountForTile(
     // arrival translates camera and surface together; mesh density must still
     // depend on their preserved relative orbit distance, not absolute ECEF
     // elevation above the ellipsoid.
-    const GeoWgs84Ellipsoid::OrbitCameraBasis camera_basis =
-        GeoWgs84Ellipsoid::orbitCameraBasis(
+    GeoWgs84Ellipsoid::OrbitCameraBasis local_camera_basis;
+    const GeoWgs84Ellipsoid::OrbitCameraBasis *camera_basis =
+        camera_basis_override;
+    if (camera_basis == nullptr)
+    {
+        local_camera_basis = GeoWgs84Ellipsoid::orbitCameraBasis(
             this->map_model->centerLon(), this->map_model->centerLat(),
             this->map_model->viewGlobeYawDeg(),
             qBound(
@@ -1434,9 +1439,11 @@ int MapRhiGlobeRenderer::terrainCellCountForTile(
                 MapModel::MaxViewGlobePitchDeg),
             qMax(MapModel::MinViewGlobeDistanceM,
                  this->map_model->viewGlobeDistanceM()));
+        camera_basis = &local_camera_basis;
+    }
 
     const double ground_distance_from_focus_m =
-        double((tile_center - camera_basis.target).length());
+        double((tile_center - camera_basis->target).length());
 
     // Exactly the same "full detail down to zoom" rule as flat RHI 3D:
     // only the focus tile is forced to the DEM-native density. The rest of
@@ -1451,9 +1458,9 @@ int MapRhiGlobeRenderer::terrainCellCountForTile(
         double(tile.zoom), this->map_model->centerLat(),
         qMax(1, viewport_size.height()));
     const double camera_to_tile_distance_m =
-        double((tile_center - camera_basis.eye).length());
+        double((tile_center - camera_basis->eye).length());
     const double camera_to_focus_distance_m =
-        double((camera_basis.target - camera_basis.eye).length());
+        double((camera_basis->target - camera_basis->eye).length());
     const double focus_falloff_distance_m = std::hypot(
         camera_to_focus_distance_m, ground_distance_from_focus_m);
 
@@ -1584,12 +1591,27 @@ void MapRhiGlobeRenderer::updateTerrainStitchCellCounts(
 bool MapRhiGlobeRenderer::currentTerrainLodMatches(
     const QSize &viewport_size) const
 {
+    if (this->map_model == nullptr)
+        return true;
+
+    const GeoWgs84Ellipsoid::OrbitCameraBasis camera_basis =
+        GeoWgs84Ellipsoid::orbitCameraBasis(
+            this->map_model->centerLon(), this->map_model->centerLat(),
+            this->map_model->viewGlobeYawDeg(),
+            qBound(
+                MapModel::MinViewGlobePitchDeg,
+                this->map_model->viewGlobePitchDeg(),
+                MapModel::MaxViewGlobePitchDeg),
+            qMax(MapModel::MinViewGlobeDistanceM,
+                 this->map_model->viewGlobeDistanceM()));
+
     for (const GlobeTile &tile : this->window_tiles)
     {
         if (tile.terrain_key.isEmpty())
             continue;
         if (tile.terrain_cell_count
-            != terrainCellCountForTile(tile, viewport_size))
+            != terrainCellCountForTile(
+                tile, viewport_size, &camera_basis))
         {
             return false;
         }
@@ -2037,6 +2059,24 @@ void MapRhiGlobeRenderer::rebuildWindow(
     next_tiles.reserve(leaves.size());
     QSet<quint64> seen_positions;
     seen_positions.reserve(leaves.size());
+
+    GeoWgs84Ellipsoid::OrbitCameraBasis terrain_camera_basis;
+    const GeoWgs84Ellipsoid::OrbitCameraBasis *terrain_camera_basis_ptr = nullptr;
+    if (this->map_model != nullptr && this->terrain_repository != nullptr
+        && viewport_size.isValid())
+    {
+        terrain_camera_basis = GeoWgs84Ellipsoid::orbitCameraBasis(
+            this->map_model->centerLon(), this->map_model->centerLat(),
+            this->map_model->viewGlobeYawDeg(),
+            qBound(
+                MapModel::MinViewGlobePitchDeg,
+                this->map_model->viewGlobePitchDeg(),
+                MapModel::MaxViewGlobePitchDeg),
+            qMax(MapModel::MinViewGlobeDistanceM,
+                 this->map_model->viewGlobeDistanceM()));
+        terrain_camera_basis_ptr = &terrain_camera_basis;
+    }
+
     for (const MapRhiGlobeQuadtreeLeaf &leaf : leaves)
     {
         const quint64 position_key =
@@ -2070,12 +2110,17 @@ void MapRhiGlobeRenderer::rebuildWindow(
             tile.terrain_zoom = terrain_zoom;
             tile.terrain_key =
                 mapTerrainTileKey(globeTerrainDatasetId(), terrain_address);
-            tile.terrain_cell_count =
-                terrainCellCountForTile(tile, viewport_size);
+            tile.terrain_cell_count = terrainCellCountForTile(
+                tile, viewport_size, terrain_camera_basis_ptr);
         }
 
         next_tiles.append(tile);
     }
+
+    // Retain the already-computed leaf identity set. prepare() runs every
+    // rendered frame during ordinary camera interaction; rebuilding this same
+    // hash set from window_tiles there was avoidable allocator/hash traffic.
+    this->window_position_keys = std::move(seen_positions);
 
     // Same-zoom-neighbour terrain mesh density stitching only -- see
     // updateTerrainStitchCellCounts()'s own scope. A leaf whose neighbour is
@@ -6258,6 +6303,20 @@ bool MapRhiGlobeRenderer::initialize(
     return ensureSharedResources();
 }
 
+bool MapRhiGlobeRenderer::preparedViewSelectionMatches(
+    const QSize &viewport_size) const
+{
+    if (!this->prepared_view_state_valid || this->map_model == nullptr)
+        return false;
+
+    return viewport_size == this->prepared_viewport_size
+        && this->map_model->centerLon() == this->prepared_center_lon_deg
+        && this->map_model->centerLat() == this->prepared_center_lat_deg
+        && this->map_model->viewGlobeYawDeg() == this->prepared_yaw_deg
+        && this->map_model->viewGlobePitchDeg() == this->prepared_pitch_deg
+        && this->map_model->viewGlobeDistanceM() == this->prepared_distance_m;
+}
+
 bool MapRhiGlobeRenderer::canUseCameraOnlyPrepare(
     const QSize &viewport_size) const
 {
@@ -6276,16 +6335,8 @@ bool MapRhiGlobeRenderer::canUseCameraOnlyPrepare(
     // Height following deliberately omits vertical_offset and collision_lift
     // from this key. Every input that can alter tile selection, LOD, or the
     // geographic resource window must still match exactly.
-    if (viewport_size != this->prepared_viewport_size
-        || this->map_model->centerLon() != this->prepared_center_lon_deg
-        || this->map_model->centerLat() != this->prepared_center_lat_deg
-        || this->map_model->viewGlobeYawDeg() != this->prepared_yaw_deg
-        || this->map_model->viewGlobePitchDeg() != this->prepared_pitch_deg
-        || this->map_model->viewGlobeDistanceM()
-            != this->prepared_distance_m)
-    {
+    if (!preparedViewSelectionMatches(viewport_size))
         return false;
-    }
 
     // These flags should all be consumed by a successful full prepare. Keep
     // them as defensive guards so a partially initialized/recovered QRhi
@@ -6395,16 +6446,13 @@ bool MapRhiGlobeRenderer::prepare(
         &this->previously_subdivided_quadtree_nodes);
 
     bool leaves_match_window = !this->window_dirty
-        && desired_leaves.size() == this->window_tiles.size();
+        && desired_leaves.size() == this->window_tiles.size()
+        && this->window_position_keys.size() == this->window_tiles.size();
     if (leaves_match_window)
     {
-        QSet<quint64> window_keys;
-        window_keys.reserve(this->window_tiles.size());
-        for (const GlobeTile &tile : this->window_tiles)
-            window_keys.insert(globeQuadtreeNodeKey(tile.zoom, tile.tile_x, tile.tile_y));
         for (const MapRhiGlobeQuadtreeLeaf &leaf : desired_leaves)
         {
-            if (!window_keys.contains(
+            if (!this->window_position_keys.contains(
                     globeQuadtreeNodeKey(leaf.zoom, leaf.tile_x, leaf.tile_y)))
             {
                 leaves_match_window = false;
@@ -6420,29 +6468,34 @@ bool MapRhiGlobeRenderer::prepare(
     else
     {
         const bool terrain_enabled = this->terrain_repository != nullptr;
-        const bool terrain_lod_matches =
-            !terrain_enabled || currentTerrainLodMatches(viewport_size);
-        if (!terrain_lod_matches)
-        {
-            if (this->terrain_lod_rebuild_clock.isValid()
-                && this->terrain_lod_rebuild_clock.elapsed()
-                    < GlobeMinimumTerrainLodRebuildIntervalMs)
-            {
-                // Keep the current terrain mesh on screen until the same
-                // 120 ms LOD debounce used by RHI 3D expires. renderGlobe()
-                // keeps requesting frames while this flag is set, so a drag
-                // that stops inside the debounce window still settles to the
-                // correct LOD without another input event.
-                this->terrain_lod_rebuild_pending = true;
-            }
-            else
-            {
-                rebuildWindow(currentWindowLeaves(), viewport_size);
-            }
-        }
-        else
+        const bool terrain_view_changed =
+            !preparedViewSelectionMatches(viewport_size);
+        const bool terrain_lod_check_needed = terrain_enabled
+            && (terrain_view_changed || this->terrain_lod_rebuild_pending);
+
+        if (!terrain_enabled)
         {
             this->terrain_lod_rebuild_pending = false;
+        }
+        else if (terrain_lod_check_needed
+                 && this->terrain_lod_rebuild_clock.isValid()
+                 && this->terrain_lod_rebuild_clock.elapsed()
+                     < GlobeMinimumTerrainLodRebuildIntervalMs)
+        {
+            // Do not recompute the per-tile terrain LOD merely to discover
+            // that the 120 ms rebuild debounce has not expired yet. The old
+            // path still ran terrainCellCountForTile() for every visible tile
+            // on every full preparation during camera motion, including an
+            // orbitCameraBasis() construction per tile. Keep drawing the
+            // retained geometry and evaluate the LOD once the debounce opens.
+            this->terrain_lod_rebuild_pending = true;
+        }
+        else if (terrain_lod_check_needed)
+        {
+            if (!currentTerrainLodMatches(viewport_size))
+                rebuildWindow(currentWindowLeaves(), viewport_size);
+            else
+                this->terrain_lod_rebuild_pending = false;
         }
     }
 
@@ -6450,13 +6503,13 @@ bool MapRhiGlobeRenderer::prepare(
         return false;
     requestMissingTerrainTiles();
     scheduleReadyTerrainMeshes();
-#ifdef Q_OS_WIN
-    // The current globe shaders do not sample the experimental R32F terrain
-    // height cache. Keep it out of the Windows/D3D11 path while the Windows
-    // crash is being isolated, without changing the established Linux path.
-#else
-    prepareTerrainHeightCache(resource_updates);
-#endif
+
+    // The current Globe shaders do not sample the experimental R32F terrain
+    // height-array cache. Running prepareTerrainHeightCache() therefore only
+    // scans visible DEM state, allocates VRAM and uploads height textures that
+    // cannot affect the rendered frame. Leave the retained implementation in
+    // place for the later GPU-displacement work, but keep it off the active
+    // path on every backend until a shader actually consumes it.
 
     // Resolve imagery and stamp array layers before a pending full geometry
     // upload. A rebuilt window then carries every already-ready layer in its

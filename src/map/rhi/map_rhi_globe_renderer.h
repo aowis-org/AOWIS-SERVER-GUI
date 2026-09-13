@@ -472,7 +472,9 @@ private:
     void rebuildWindow(
         const QVector<MapRhiGlobeQuadtreeLeaf> &leaves, const QSize &viewport_size);
     QVector<MapRhiGlobeQuadtreeLeaf> currentWindowLeaves() const;
-    int terrainCellCountForTile(const GlobeTile &tile, const QSize &viewport_size) const;
+    int terrainCellCountForTile(
+        const GlobeTile &tile, const QSize &viewport_size,
+        const GeoWgs84Ellipsoid::OrbitCameraBasis *camera_basis_override = nullptr) const;
     void updateTerrainStitchCellCounts(QVector<GlobeTile> *tiles) const;
     bool currentTerrainLodMatches(const QSize &viewport_size) const;
     void resetTerrainHeightCache();
@@ -492,6 +494,7 @@ private:
     bool uploadWireframeVertices(QRhiResourceUpdateBatch *resource_updates);
     TileVertex makeTileVertex(double lon_deg, double lat_deg, float u, float v) const;
     bool ensureSharedResources();
+    bool preparedViewSelectionMatches(const QSize &viewport_size) const;
     bool canUseCameraOnlyPrepare(const QSize &viewport_size) const;
     void rememberPreparedViewState(const QSize &viewport_size);
     bool uploadCameraUniform(
@@ -627,6 +630,7 @@ private:
     QVector<TileVertex> window_vertices;
     QVector<quint32> window_indices;
     QVector<GlobeTile> window_tiles;
+    QSet<quint64> window_position_keys;
     bool window_dirty = true;
     // Which (zoom, tile_x, tile_y) nodes were subdivided into children on
     // the previous quadtree walk. Consulted by
