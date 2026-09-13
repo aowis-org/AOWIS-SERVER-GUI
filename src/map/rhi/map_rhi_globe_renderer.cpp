@@ -5753,6 +5753,23 @@ bool MapRhiGlobeRenderer::applyReadyTerrainMeshes(
             }
 
             const qsizetype first_vertex = tile.first_vertex;
+            if (first_vertex < 0
+                || first_vertex > this->window_vertices.size()
+                || result.vertices.size()
+                    > this->window_vertices.size() - first_vertex)
+            {
+                qWarning().noquote()
+                    << QStringLiteral(
+                           "Ignoring stale globe terrain mesh result outside "
+                           "the current vertex window: request=%1 first=%2 "
+                           "count=%3 window=%4")
+                           .arg(result.request_id)
+                           .arg(first_vertex)
+                           .arg(result.vertices.size())
+                           .arg(this->window_vertices.size());
+                break;
+            }
+
             for (qsizetype index = 0; index < result.vertices.size(); ++index)
             {
                 const MapRhiTerrainMeshVertex &vertex = result.vertices.at(index);
@@ -6404,11 +6421,13 @@ bool MapRhiGlobeRenderer::prepare(
         return false;
     requestMissingTerrainTiles();
     scheduleReadyTerrainMeshes();
-    // Populate the optional shared R32F DEM cache alongside the established
-    // CPU mesh path. Nothing samples these pages until the following terrain
-    // patch enables vertex-shader displacement. Allocation or format failure
-    // therefore leaves the established rendered path selected.
-    prepareTerrainHeightCache(resource_updates);
+    // Do not pre-upload the experimental R32F terrain-height texture cache.
+    // The current globe path does not sample those pages; visible relief is
+    // still produced by the established CPU terrain mesh path below. Besides
+    // wasting upload bandwidth, creating/uploading the unused float texture
+    // arrays has proven unsafe on the Windows D3D11 backend during the first
+    // terrain fill. Re-enable this only together with the shader displacement
+    // path that actually consumes the cache.
 
     // Resolve imagery and stamp array layers before a pending full geometry
     // upload. A rebuilt window then carries every already-ready layer in its
