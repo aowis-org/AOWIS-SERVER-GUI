@@ -4,6 +4,7 @@ layout(location = 0) in vec3 center_position;
 layout(location = 1) in vec2 corner;
 layout(location = 2) in vec4 color;
 layout(location = 3) in float size_adjust_px;
+layout(location = 4) in float metric_billboard;
 
 layout(std140, binding = 0) uniform CameraBlock
 {
@@ -12,6 +13,7 @@ layout(std140, binding = 0) uniform CameraBlock
     vec4 heatmap_settings;
     vec4 basemap_settings;
     vec4 network_translation;
+    vec4 camera_right;
 } camera;
 
 layout(location = 0) out vec4 vertex_color;
@@ -29,8 +31,11 @@ void main()
     if (configured_radius < 0.0)
     {
         float radius_world = -configured_radius;
+        vec3 radius_direction = metric_billboard > 0.5
+            ? camera.camera_right.xyz
+            : vec3(1.0, 0.0, 0.0);
         vec4 edge_clip = camera.view_projection
-            * vec4(center_position + vec3(radius_world, 0.0, 0.0), 1.0);
+            * vec4(center_position + radius_direction * radius_world, 1.0);
         edge_clip.xy += translation_ndc * edge_clip.w;
         vec2 center_ndc = clip_position.xy / clip_position.w;
         vec2 edge_ndc = edge_clip.xy / edge_clip.w;

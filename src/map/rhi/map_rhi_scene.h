@@ -88,6 +88,11 @@ public:
         float blue = 0.0f;
         float alpha = 1.0f;
         float size_adjust_px = 0.0f;
+        // Globe generic-node quads are screen-facing billboards. When this
+        // flag is set, metre sizing is measured along the camera-right world
+        // axis instead of the flat renderer's global X axis, preserving true
+        // perspective size without introducing an ECEF-axis dependency.
+        float metric_billboard = 0.0f;
         quint32 render_id = 0;
         InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
     };

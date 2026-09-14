@@ -975,6 +975,7 @@ void MapRhiGlobeNetworkScene::appendNode(
         vertex.red = 0.02f;
         vertex.green = 0.02f;
         vertex.blue = 0.02f;
+        vertex.metric_billboard = 1.0f;
         vertex.render_id = render_id;
         vertex.entity_type = entity_type;
         applyNodeColor(&vertex);

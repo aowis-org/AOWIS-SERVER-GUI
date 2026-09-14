@@ -1288,8 +1288,10 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
 
     const int viewport_width = qMax(1, this->viewport_size.width());
     const int viewport_height = qMax(1, this->viewport_size.height());
+    MapRhiImpostorCameraBasis impostor_camera_basis;
     const QMatrix4x4 view_projection =
-        this->camera.globeNetworkViewProjectionMatrix(*this->active_rhi);
+        this->camera.globeNetworkViewProjectionMatrix(
+            *this->active_rhi, &impostor_camera_basis);
 
     // this->scene and this->globe_network_scene are always fed the same
     // NetworkRenderSnapshot (see setNetworkSnapshot()) and the same hidden-
@@ -1534,7 +1536,8 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
         if (instance.radius_world > 0.0f)
         {
             const QPointF projected_edge = projectGlobeToScreen(
-                view_projection, center + QVector3D(instance.radius_world, 0.0f, 0.0f),
+                view_projection,
+                center + impostor_camera_basis.right * instance.radius_world,
                 viewport_width, viewport_height);
             if (finiteScreenPoint(projected_edge))
                 visual_radius_px = QLineF(projected, projected_edge).length();
@@ -1699,8 +1702,8 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
         {
             const QPointF projected_edge = projectGlobeToScreen(
                 view_projection,
-                node_center + QVector3D(
-                    float(this->globe_network_scene.nodeSizeM() * 0.5), 0.0f, 0.0f),
+                node_center + impostor_camera_basis.right
+                    * float(this->globe_network_scene.nodeSizeM() * 0.5),
                 viewport_width, viewport_height);
             if (finiteScreenPoint(projected_edge))
                 visual_radius_px = QLineF(projected, projected_edge).length();
@@ -4421,7 +4424,9 @@ bool MapRhiWidget::createPipelines()
             {0, 2, QRhiVertexInputAttribute::Float4,
              quint32(offsetof(MapRhiScene::NodeVertex, red))},
             {0, 3, QRhiVertexInputAttribute::Float,
-             quint32(offsetof(MapRhiScene::NodeVertex, size_adjust_px))}
+             quint32(offsetof(MapRhiScene::NodeVertex, size_adjust_px))},
+            {0, 4, QRhiVertexInputAttribute::Float,
+             quint32(offsetof(MapRhiScene::NodeVertex, metric_billboard))}
         });
 
         this->node_pipeline.reset(this->active_rhi->newGraphicsPipeline());
@@ -4471,7 +4476,9 @@ bool MapRhiWidget::createPipelines()
             {0, 2, QRhiVertexInputAttribute::Float4,
              quint32(offsetof(MapRhiScene::NodeVertex, red))},
             {0, 3, QRhiVertexInputAttribute::Float,
-             quint32(offsetof(MapRhiScene::NodeVertex, size_adjust_px))}
+             quint32(offsetof(MapRhiScene::NodeVertex, size_adjust_px))},
+            {0, 4, QRhiVertexInputAttribute::Float,
+             quint32(offsetof(MapRhiScene::NodeVertex, metric_billboard))}
         });
 
         this->node_overlay_pipeline.reset(this->active_rhi->newGraphicsPipeline());
