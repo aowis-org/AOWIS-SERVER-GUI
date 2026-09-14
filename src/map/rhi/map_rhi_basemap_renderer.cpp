@@ -721,8 +721,14 @@ bool MapRhiBasemapRenderer::initialize(
         releaseResources();
     else if (render_pass_changed)
     {
+        // Graphics pipelines are render-pass/sample-count specific on Vulkan.
+        // The OpenGL backend is permissive enough that retaining the optional
+        // texture-array pipeline happened to work, but Vulkan requires every
+        // pipeline targeting the QRhiWidget pass to be recreated when Qt
+        // replaces that pass (for example after widget resize/reinitialization).
         this->pipeline.reset();
         this->wireframe_pipeline.reset();
+        this->array_pipeline.reset();
     }
 
     this->rhi = rhi;

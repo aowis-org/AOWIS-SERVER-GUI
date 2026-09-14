@@ -5174,11 +5174,11 @@ bool MapRhiGlobeRenderer::runPendingHeatmapGpuBakes(
             page.atlas->target.get(),
             Qt::transparent, {1.0f, 0},
             page_index == 0 ? bake_updates : nullptr);
+        command_buffer->setGraphicsPipeline(
+            this->diagnostic_heatmap_bake_pipeline.get());
         command_buffer->setViewport(QRhiViewport(
             0.0f, 0.0f, float(atlas_size.width()),
             float(atlas_size.height())));
-        command_buffer->setGraphicsPipeline(
-            this->diagnostic_heatmap_bake_pipeline.get());
         command_buffer->setShaderResources(
             this->diagnostic_heatmap_bake_bindings.get());
         const QRhiCommandBuffer::VertexInput bindings[] = {
@@ -5335,11 +5335,11 @@ void MapRhiGlobeRenderer::runDiagnosticHeatmapGpuBake(
                     command_buffer->beginPass(
                         this->diagnostic_heatmap_bake_target.get(),
                         Qt::transparent, {1.0f, 0}, resource_updates);
+                    command_buffer->setGraphicsPipeline(
+                        this->diagnostic_heatmap_bake_pipeline.get());
                     command_buffer->setViewport(QRhiViewport(
                         0.0f, 0.0f, float(GlobeHeatmapTextureSize),
                         float(GlobeHeatmapTextureSize)));
-                    command_buffer->setGraphicsPipeline(
-                        this->diagnostic_heatmap_bake_pipeline.get());
                     command_buffer->setShaderResources(
                         this->diagnostic_heatmap_bake_bindings.get());
                     const QRhiCommandBuffer::VertexInput bindings[] = {
@@ -6590,14 +6590,38 @@ bool MapRhiGlobeRenderer::initialize(
     if (rhi_instance == nullptr || render_pass_descriptor_instance == nullptr)
         return false;
 
-    if (this->rhi != rhi_instance
-        || this->render_pass_descriptor != render_pass_descriptor_instance
-        || this->sample_count != sample_count_value)
+    const bool context_changed = this->rhi != rhi_instance;
+    const bool render_pass_changed =
+        this->render_pass_descriptor != render_pass_descriptor_instance
+        || this->sample_count != sample_count_value;
+
+    if (context_changed)
+    {
+        // All QRhi resources belong to the QRhi that created them. This is
+        // normally already handled by MapRhiWidget, but keeping the renderer
+        // self-contained makes device/context recreation safe as well.
+        releaseResources();
+    }
+    else if (render_pass_changed)
+    {
+        // Vulkan graphics pipelines are compatible with the render pass they
+        // were created for. QRhiWidget may replace its render-pass descriptor
+        // after resize/reinitialization, so every pipeline that draws into the
+        // visible widget pass has to be recreated. Resource bindings, textures,
+        // and buffers do not depend on that render pass and can be retained.
+        this->pipeline.reset();
+        this->wireframe_pipeline.reset();
+        this->array_pipeline.reset();
+        this->heatmap_array_pipeline.reset();
+    }
+
+    if (context_changed || render_pass_changed)
     {
         this->preparation_dirty = true;
         this->prepared_view_state_valid = false;
         this->full_prepare_clock.invalidate();
     }
+
     this->rhi = rhi_instance;
     this->render_pass_descriptor = render_pass_descriptor_instance;
     this->sample_count = sample_count_value;

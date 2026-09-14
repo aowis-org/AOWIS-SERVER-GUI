@@ -5,9 +5,9 @@
 #include <QPointF>
 #include <QWidget>
 
+#include <QEvent>
 #ifdef Q_OS_WASM
 #include <QByteArray>
-#include <QEvent>
 #include <QSet>
 #include <QTimer>
 #endif
@@ -111,10 +111,8 @@ public:
 public slots:
     void setMapEditorGuideChecked(bool checked);
 
-#ifdef Q_OS_WASM
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
-#endif
 
 private:
     HydraulicData *hydraulic_data = nullptr;

@@ -359,12 +359,14 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
         syncDesktopRhiNetworkSnapshot();
         syncDesktopRhiEditorState();
 
-        // Start as a tiny probe behind the working CPU editor. Once the first
-        // QRhi frame succeeds, the full RHI map is promoted and MapCanvasWidget
-        // becomes a lightweight transparent interaction/HUD layer above it.
-        this->desktop_rhi_surface->setGeometry(0, 0, 1, 1);
-        this->desktop_rhi_surface->lower();
+        // Probe QRhi at the real map-stack size behind the working CPU editor.
+        // Do not promote from a 1x1 probe: Vulkan QRhiWidget backing resources
+        // can be recreated when the widget grows, so readiness has to mean that
+        // an actual full-size frame was submitted. The StackAll layout keeps the
+        // RHI surface sized correctly while MapCanvasWidget remains on top.
+        this->map_stack_layout->addWidget(this->desktop_rhi_surface);
         this->desktop_rhi_surface->show();
+        this->map_stack_layout->setCurrentWidget(this->map_canvas);
         this->map_canvas->raise();
 
         connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
@@ -395,14 +397,24 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
         connect(rhi_surface, &MapRhiWidget::signalRendererReady, this,
                 [this, rhi_surface]
         {
-            this->map_stack_layout->addWidget(rhi_surface);
             this->map->setRhiViewActive(true);
             rhi_surface->show();
+            this->map_stack_layout->setCurrentWidget(rhi_surface);
             rhi_surface->raise();
 
             this->map_canvas->setRhiOverlayMode(true);
+            if (rhi_surface->api() == QRhiWidget::Api::Vulkan)
+            {
+                this->map_stack_layout->removeWidget(this->map_canvas);
+                this->map_canvas->setParent(rhi_surface);
+                this->map_canvas->setGeometry(rhi_surface->rect());
+                rhi_surface->installEventFilter(this);
+            }
+            else
+            {
+                this->map_stack_layout->setCurrentWidget(this->map_canvas);
+            }
             this->map_canvas->show();
-            this->map_stack_layout->setCurrentWidget(this->map_canvas);
             this->map_canvas->raise();
             this->map_canvas->setFocus(Qt::OtherFocusReason);
 
@@ -419,9 +431,17 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
             if (this->map_model->viewMode() != MapViewMode::TwoD)
                 this->map_model->setViewMode(MapViewMode::TwoD);
             this->map->setRhiViewActive(false);
+            if (this->desktop_rhi_surface != nullptr
+                && this->map_canvas->parentWidget() == this->desktop_rhi_surface)
+            {
+                this->desktop_rhi_surface->removeEventFilter(this);
+                this->map_canvas->setParent(this->map_stack);
+                this->map_stack_layout->addWidget(this->map_canvas);
+            }
             this->map_canvas->setRhiOverlayMode(false);
             this->map_canvas->show();
             this->map_stack_layout->setCurrentWidget(this->map_canvas);
+            this->map_canvas->raise();
             if (this->desktop_rhi_surface != nullptr)
                 this->desktop_rhi_surface->hide();
         });
@@ -681,9 +701,18 @@ void MapEditorContainer::setDesktopRhiBackgroundOpacity(int opacity)
 }
 #endif
 
-#ifdef Q_OS_WASM
 bool MapEditorContainer::eventFilter(QObject *watched, QEvent *event)
 {
+#if !defined(Q_OS_WASM) && AOWIS_HAS_QRHI
+    if (watched == this->desktop_rhi_surface
+        && event->type() == QEvent::Resize
+        && this->map_canvas != nullptr
+        && this->map_canvas->parentWidget() == this->desktop_rhi_surface)
+    {
+        this->map_canvas->setGeometry(this->desktop_rhi_surface->rect());
+    }
+#endif
+#ifdef Q_OS_WASM
     if (watched == this || watched == this->map || watched == this->map_stack ||
         watched == this->map_canvas || watched == this->window())
     {
@@ -708,10 +737,11 @@ bool MapEditorContainer::eventFilter(QObject *watched, QEvent *event)
             break;
         }
     }
-
+#endif
     return QWidget::eventFilter(watched, event);
 }
 
+#ifdef Q_OS_WASM
 void MapEditorContainer::scheduleWasmMapLayerSync()
 {
     if (!this->wasm_map_layer_sync_timer->isActive())

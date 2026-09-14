@@ -25,6 +25,9 @@
 #include <QRectF>
 #include <QTimer>
 #include <QVector4D>
+#if defined(Q_OS_LINUX) && QT_CONFIG(vulkan)
+#include <QVulkanInstance>
+#endif
 #include <rhi/qshader.h>
 
 #include <rhi/qrhi.h>
@@ -322,6 +325,46 @@ QRhiWidget::Api platformGraphicsApi()
     return QRhiWidget::Api::Metal;
 #elif defined(Q_OS_WIN)
     return QRhiWidget::Api::Direct3D11;
+#elif defined(Q_OS_LINUX)
+    static const QRhiWidget::Api LinuxGraphicsApi = []()
+    {
+#if QT_CONFIG(vulkan)
+        QVulkanInstance vulkan_instance;
+        vulkan_instance.setExtensions(
+            QRhiVulkanInitParams::preferredInstanceExtensions());
+        if (vulkan_instance.create())
+        {
+            QRhiVulkanInitParams vulkan_params;
+            vulkan_params.inst = &vulkan_instance;
+            if (QRhi::probe(QRhi::Vulkan, &vulkan_params))
+            {
+                qInfo().noquote()
+                    << QStringLiteral(
+                           "AOWIS RHI Linux backend: Vulkan");
+                return QRhiWidget::Api::Vulkan;
+            }
+
+            qWarning().noquote()
+                << QStringLiteral(
+                       "AOWIS RHI Linux backend: Vulkan probe failed; "
+                       "falling back to OpenGL");
+        }
+        else
+        {
+            qWarning().noquote()
+                << QStringLiteral(
+                       "AOWIS RHI Linux backend: Vulkan instance creation "
+                       "failed; falling back to OpenGL");
+        }
+#else
+        qInfo().noquote()
+            << QStringLiteral(
+                   "AOWIS RHI Linux backend: Qt Vulkan support unavailable; "
+                   "using OpenGL");
+#endif
+        return QRhiWidget::Api::OpenGL;
+    }();
+    return LinuxGraphicsApi;
 #else
     return QRhiWidget::Api::OpenGL;
 #endif
@@ -779,17 +822,30 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     });
     connect(this, &QRhiWidget::frameSubmitted, this, [this]
     {
-        if (this->ready_reported || this->failure_reported)
-            return;
+        if (!this->ready_reported && !this->failure_reported)
+        {
+            // Renderer promotion must be based on a real map-sized frame, not the
+            // tiny startup probe that used to be rendered at 1x1. A Vulkan-backed
+            // QRhiWidget can recreate its backing resources when resized; treating
+            // the pre-resize frame as proof that the final surface works hides the
+            // CPU fallback before the frame the user will actually see has ever
+            // been submitted.
+            const QSize submitted_size = size();
+            if (submitted_size.width() > 1 && submitted_size.height() > 1)
+            {
+                this->ready_reported = true;
+                qInfo().noquote()
+                    << QStringLiteral("Desktop map RHI surface '%1' submitted its first map-sized frame "
+                                      "using %2 at %3x%4 (%5 link vertices, %6 node vertices).")
+                           .arg(this->surface_name, graphicsApiName())
+                           .arg(submitted_size.width())
+                           .arg(submitted_size.height())
+                           .arg(this->scene.linkVertices().size())
+                           .arg(this->scene.nodeVertices().size());
+                emit signalRendererReady();
+            }
+        }
 
-        this->ready_reported = true;
-        qInfo().noquote()
-            << QStringLiteral("Desktop map RHI surface '%1' submitted its first frame using %2 "
-                              "(%3 link vertices, %4 node vertices).")
-                   .arg(this->surface_name, graphicsApiName())
-                   .arg(this->scene.linkVertices().size())
-                   .arg(this->scene.nodeVertices().size());
-        emit signalRendererReady();
     });
 }
 
@@ -2772,6 +2828,11 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     command_buffer->beginPass(target, background_color, {1.0f, 0}, resource_updates);
 
     const QSize output_size = target->pixelSize();
+    // QRhi requires a graphics pipeline to be active before viewport state is
+    // recorded. Vulkan also derives its always-active scissor from this
+    // viewport when UsesScissor is not enabled on the pipeline. OpenGL used
+    // to tolerate the old viewport-before-pipeline ordering; Vulkan does not.
+    command_buffer->setGraphicsPipeline(this->link_pipeline.get());
     command_buffer->setViewport(QRhiViewport(
         0.0f, 0.0f, float(output_size.width()), float(output_size.height())));
 
@@ -3193,6 +3254,9 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     const QColor background_color = QColor::fromRgbF(0.02f, 0.02f, 0.05f);
     command_buffer->beginPass(target, background_color, {1.0f, 0}, resource_updates);
 
+    // Establish valid dynamic viewport/scissor state before any Globe draw.
+    // See the flat pass above for why the pipeline must be bound first.
+    command_buffer->setGraphicsPipeline(this->link_pipeline.get());
     command_buffer->setViewport(QRhiViewport(
         0.0f, 0.0f, float(output_size.width()), float(output_size.height())));
 

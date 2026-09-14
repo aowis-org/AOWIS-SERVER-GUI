@@ -529,8 +529,11 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         connect(this->map_menu->mapNavigationWidget(),
                 &MapNavigationWidget::signal3dIconsChanged,
                 rhi_surface, &MapRhiWidget::setGlobe3dIconsEnabled);
+        QWidget *rhi_hud_parent = this->map_stack;
+        if (rhi_surface->api() == QRhiWidget::Api::Vulkan)
+            rhi_hud_parent = rhi_surface;
         MapRhiHudWidget *rhi_hud =
-            new MapRhiHudWidget(this->map_model, this->gps, this->map_stack);
+            new MapRhiHudWidget(this->map_model, this->gps, rhi_hud_parent);
         MapMonitorDownloadActivityHudWidget *download_activity_hud =
             new MapMonitorDownloadActivityHudWidget(
                 this->tile_repository, this->terrain_repository, rhi_surface,
@@ -702,14 +705,20 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         applyDesktopRhiSymbology();
         applyDesktopRhiHighlights();
 
-        // Probe QRhi behind the working fallback renderer. The RHI surface is only
-        // promoted after its first GPU frame succeeds.
-        this->desktop_rhi_surface->setGeometry(0, 0, 1, 1);
-        this->desktop_rhi_surface->lower();
+        // Probe QRhi at the real map-stack size behind the working fallback
+        // renderer. Vulkan QRhiWidget backing resources are backend-sensitive
+        // across resize/reinitialization, so a successful 1x1 frame must not be
+        // used to promote a surface that has never rendered at its real size.
+        // Keeping the surface in the StackAll layout from the beginning lets the
+        // layout maintain its full geometry while the CPU/browser renderer stays
+        // visually on top until signalRendererReady().
+        this->map_stack_layout->addWidget(this->desktop_rhi_surface);
         this->desktop_rhi_surface->show();
 #ifndef Q_OS_WASM
+        this->map_stack_layout->setCurrentWidget(this->desktop_network_overlay);
         this->desktop_network_overlay->raise();
 #else
+        this->map_stack_layout->setCurrentWidget(this->map);
         this->map->raise();
 #endif
 
@@ -823,7 +832,6 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                 [this, rhi_surface, rhi_hud, download_activity_hud, view_mode_hud]
         {
             this->rhi_renderer_active = true;
-            this->map_stack_layout->addWidget(rhi_surface);
             this->map_stack_layout->setCurrentWidget(rhi_surface);
             this->map->setRhiViewActive(true);
 #ifndef Q_OS_WASM
@@ -834,6 +842,9 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             this->map->setBrowserMapLayerEnabled(false);
 #endif
             rhi_surface->show();
+            // Keep the actual RHI map explicitly above the CPU fallback; HUD
+            // widgets are raised afterwards as usual.
+            rhi_surface->raise();
 
             rhi_hud->show();
             download_activity_hud->setHudActive(true);
@@ -1296,7 +1307,16 @@ void MapMonitorContainer::positionDesktopHudWidgets()
 
     if (this->desktop_rhi_hud != nullptr)
     {
-        this->desktop_rhi_hud->setGeometry(this->map_stack->rect());
+        QWidget *hud_parent = this->desktop_rhi_hud->parentWidget();
+        if (hud_parent == this->desktop_rhi_surface
+            && this->desktop_rhi_surface != nullptr)
+        {
+            this->desktop_rhi_hud->setGeometry(this->desktop_rhi_surface->rect());
+        }
+        else
+        {
+            this->desktop_rhi_hud->setGeometry(this->map_stack->rect());
+        }
         if (this->desktop_rhi_hud->isVisible())
             this->desktop_rhi_hud->raise();
     }
