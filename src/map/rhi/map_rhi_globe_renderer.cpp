@@ -92,6 +92,86 @@ const QColor GlobeMissingTileColor(18, 58, 72);
 
 constexpr int GlobeCameraUniformBytes = 24 * int(sizeof(float));
 
+bool rayTriangleIntersectionDistance(
+    const QVector3D &ray_origin, const QVector3D &ray_direction,
+    const QVector3D &a, const QVector3D &b, const QVector3D &c,
+    double *distance_m)
+{
+    if (distance_m == nullptr)
+        return false;
+
+    const QVector3D edge1 = b - a;
+    const QVector3D edge2 = c - a;
+    const QVector3D p = QVector3D::crossProduct(ray_direction, edge2);
+    const double determinant = double(QVector3D::dotProduct(edge1, p));
+    if (std::abs(determinant) <= 1e-10)
+        return false;
+
+    const double inverse_determinant = 1.0 / determinant;
+    const QVector3D t = ray_origin - a;
+    const double u = double(QVector3D::dotProduct(t, p)) * inverse_determinant;
+    if (u < 0.0 || u > 1.0)
+        return false;
+
+    const QVector3D q = QVector3D::crossProduct(t, edge1);
+    const double v = double(QVector3D::dotProduct(ray_direction, q))
+        * inverse_determinant;
+    if (v < 0.0 || u + v > 1.0)
+        return false;
+
+    const double distance = double(QVector3D::dotProduct(edge2, q))
+        * inverse_determinant;
+    if (!(distance > 0.0) || !std::isfinite(distance))
+        return false;
+
+    *distance_m = distance;
+    return true;
+}
+
+bool rayAabbIntersectionDistanceRange(
+    const QVector3D &ray_origin, const QVector3D &ray_direction,
+    const QVector3D &bounds_min, const QVector3D &bounds_max,
+    double *entry_distance_m, double *exit_distance_m)
+{
+    if (entry_distance_m == nullptr || exit_distance_m == nullptr)
+        return false;
+
+    double entry = 0.0;
+    double exit = std::numeric_limits<double>::infinity();
+
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        const double origin = double(ray_origin[axis]);
+        const double direction = double(ray_direction[axis]);
+        const double minimum = double(bounds_min[axis]);
+        const double maximum = double(bounds_max[axis]);
+
+        if (std::abs(direction) <= 1e-12)
+        {
+            if (origin < minimum || origin > maximum)
+                return false;
+            continue;
+        }
+
+        double near_distance = (minimum - origin) / direction;
+        double far_distance = (maximum - origin) / direction;
+        if (near_distance > far_distance)
+            std::swap(near_distance, far_distance);
+
+        entry = qMax(entry, near_distance);
+        exit = qMin(exit, far_distance);
+        if (exit < entry)
+            return false;
+    }
+
+    if (!(exit > 0.0) || !std::isfinite(entry))
+        return false;
+
+    *entry_distance_m = entry;
+    *exit_distance_m = exit;
+    return true;
+}
+
 // Matches MapRhiBasemapRenderer's HeatmapTextureSize exactly (one texel per
 // Web Mercator pixel at whatever zoom a given tile is fetched at) -- see
 // MapRhiGlobeRenderer::renderHeatmapTile().
@@ -1303,6 +1383,144 @@ void MapRhiGlobeRenderer::terrainMeshProgress(
         *active = build_active;
 }
 
+void MapRhiGlobeRenderer::updateTerrainRayBounds(GlobeTile *tile)
+{
+    if (tile == nullptr)
+        return;
+
+    tile->terrain_ray_bounds_valid = false;
+    if (!tile->terrain_mesh_has_relief
+        || tile->first_vertex < 0 || tile->vertex_count <= 0)
+    {
+        return;
+    }
+
+    const qsizetype vertex_begin = qsizetype(tile->first_vertex);
+    const qsizetype vertex_end = vertex_begin + qsizetype(tile->vertex_count);
+    if (vertex_begin < 0 || vertex_end > this->window_vertices.size())
+        return;
+
+    const TileVertex &first_vertex = this->window_vertices.at(vertex_begin);
+    QVector3D bounds_min(first_vertex.x, first_vertex.y, first_vertex.z);
+    QVector3D bounds_max = bounds_min;
+
+    for (qsizetype index = vertex_begin + 1; index < vertex_end; ++index)
+    {
+        const TileVertex &vertex = this->window_vertices.at(index);
+        bounds_min.setX(qMin(bounds_min.x(), vertex.x));
+        bounds_min.setY(qMin(bounds_min.y(), vertex.y));
+        bounds_min.setZ(qMin(bounds_min.z(), vertex.z));
+        bounds_max.setX(qMax(bounds_max.x(), vertex.x));
+        bounds_max.setY(qMax(bounds_max.y(), vertex.y));
+        bounds_max.setZ(qMax(bounds_max.z(), vertex.z));
+    }
+
+    tile->terrain_ray_bounds_min = bounds_min;
+    tile->terrain_ray_bounds_max = bounds_max;
+    tile->terrain_ray_bounds_valid = true;
+}
+
+bool MapRhiGlobeRenderer::visibleTerrainRayIntersection(
+    const GeoWgs84Ellipsoid::EcefPositionD &ray_origin_ecef,
+    const QVector3D &ray_direction_ecef,
+    GeoWgs84Ellipsoid::EcefPositionD *intersection_ecef,
+    double *distance_m) const
+{
+    if (intersection_ecef == nullptr || distance_m == nullptr)
+        return false;
+
+    QVector3D direction = ray_direction_ecef;
+    if (direction.lengthSquared() <= 1e-12f)
+        return false;
+    direction.normalize();
+
+    // window_vertices are the exact origin-relative float32 positions the
+    // GPU draws. Keep the ray in that same coordinate frame so this routine
+    // is a reference intersection against the visible terrain itself rather
+    // than a second, subtly different reconstruction of the DEM surface.
+    const QVector3D relative_origin(
+        float(ray_origin_ecef.x - this->render_origin_ecef.x),
+        float(ray_origin_ecef.y - this->render_origin_ecef.y),
+        float(ray_origin_ecef.z - this->render_origin_ecef.z));
+
+    bool found = false;
+    double nearest_distance_m = std::numeric_limits<double>::infinity();
+
+    for (const GlobeTile &tile : this->window_tiles)
+    {
+        // Only actual DEM relief participates. Initial placeholders and
+        // ordinary zero-height imagery geometry intentionally fall through
+        // to the caller's ellipsoid fallback. Stale-but-still-visible relief
+        // remains eligible while a replacement mesh is being built.
+        if (!tile.terrain_mesh_has_relief
+            || !tile.terrain_ray_bounds_valid
+            || tile.first_index < 0 || tile.index_count < 3)
+        {
+            continue;
+        }
+
+        double bounds_entry_distance_m = 0.0;
+        double bounds_exit_distance_m = 0.0;
+        if (!rayAabbIntersectionDistanceRange(
+                relative_origin, direction,
+                tile.terrain_ray_bounds_min, tile.terrain_ray_bounds_max,
+                &bounds_entry_distance_m, &bounds_exit_distance_m)
+            || bounds_entry_distance_m >= nearest_distance_m)
+        {
+            continue;
+        }
+
+        const qsizetype index_begin = qsizetype(tile.first_index);
+        const qsizetype index_end = index_begin + qsizetype(tile.index_count);
+        if (index_begin < 0 || index_end > this->window_indices.size())
+            continue;
+
+        for (qsizetype index = index_begin; index + 2 < index_end; index += 3)
+        {
+            const quint32 a_index = this->window_indices.at(index);
+            const quint32 b_index = this->window_indices.at(index + 1);
+            const quint32 c_index = this->window_indices.at(index + 2);
+            if (qsizetype(a_index) >= this->window_vertices.size()
+                || qsizetype(b_index) >= this->window_vertices.size()
+                || qsizetype(c_index) >= this->window_vertices.size())
+            {
+                continue;
+            }
+
+            const TileVertex &a_vertex = this->window_vertices.at(a_index);
+            const TileVertex &b_vertex = this->window_vertices.at(b_index);
+            const TileVertex &c_vertex = this->window_vertices.at(c_index);
+            const QVector3D a(a_vertex.x, a_vertex.y, a_vertex.z);
+            const QVector3D b(b_vertex.x, b_vertex.y, b_vertex.z);
+            const QVector3D c(c_vertex.x, c_vertex.y, c_vertex.z);
+
+            double candidate_distance_m = 0.0;
+            if (!rayTriangleIntersectionDistance(
+                    relative_origin, direction, a, b, c,
+                    &candidate_distance_m)
+                || candidate_distance_m >= nearest_distance_m)
+            {
+                continue;
+            }
+
+            nearest_distance_m = candidate_distance_m;
+            found = true;
+        }
+    }
+
+    if (!found)
+        return false;
+
+    intersection_ecef->x = ray_origin_ecef.x
+        + double(direction.x()) * nearest_distance_m;
+    intersection_ecef->y = ray_origin_ecef.y
+        + double(direction.y()) * nearest_distance_m;
+    intersection_ecef->z = ray_origin_ecef.z
+        + double(direction.z()) * nearest_distance_m;
+    *distance_m = nearest_distance_m;
+    return true;
+}
+
 
 MapRhiGlobeRenderer::TileVertex MapRhiGlobeRenderer::makeTileVertex(
     double lon_deg, double lat_deg, float u, float v) const
@@ -2199,6 +2417,8 @@ void MapRhiGlobeRenderer::rebuildWindow(
                     previous_tile.terrain_mesh_request_id;
                 tile.terrain_mesh_applied =
                     previous_tile.terrain_mesh_applied;
+                tile.terrain_mesh_has_relief =
+                    previous_tile.terrain_mesh_has_relief;
                 reused = true;
             }
         }
@@ -2264,6 +2484,7 @@ void MapRhiGlobeRenderer::rebuildWindow(
                         }
                         tile.vertex_count = expected_vertex_count;
                         tile.terrain_mesh_applied = true;
+                        tile.terrain_mesh_has_relief = true;
                         terrain_built = true;
                     }
                 }
@@ -2293,6 +2514,7 @@ void MapRhiGlobeRenderer::rebuildWindow(
         appendIndexedGridIndices(
             &this->window_indices, tile.first_vertex, subdivisions);
         tile.index_count = this->window_indices.size() - tile.first_index;
+        updateTerrainRayBounds(&tile);
 
         this->window_tiles.append(tile);
     }
@@ -5827,6 +6049,8 @@ bool MapRhiGlobeRenderer::applyReadyTerrainMeshes(
             }
 
             tile.terrain_mesh_applied = true;
+            tile.terrain_mesh_has_relief = true;
+            updateTerrainRayBounds(&tile);
             wireframe_changed = true;
 
             const qsizetype byte_offset_qsize =

@@ -55,6 +55,22 @@ struct MapRhiHit
     }
 };
 
+enum class MapRhiGlobeSurfaceHitSource
+{
+    TerrainMesh,
+    EllipsoidFallback
+};
+
+struct MapRhiGlobeSurfaceHit
+{
+    CoordinateWGS84 coordinate;
+    GeoWgs84Ellipsoid::EcefPositionD ecef_position;
+    double surface_height_m = 0.0;
+    double distance_m = 0.0;
+    MapRhiGlobeSurfaceHitSource source =
+        MapRhiGlobeSurfaceHitSource::EllipsoidFallback;
+};
+
 class MapRhiWidget final : public QRhiWidget
 {
     Q_OBJECT
@@ -69,6 +85,13 @@ public:
     bool terrainCoordinateAtScreen(
         const QPointF &screen_position, CoordinateWGS84 *coordinate,
         bool request_missing_tile = true);
+    // Globe terrain picking against the exact DEM triangles currently
+    // retained by MapRhiGlobeRenderer, with a WGS84 ellipsoid fallback when
+    // no rendered DEM triangle is hit. Cursor-coordinate lookup and orbit
+    // focus capture use this; pan/drag intentionally remains on its existing
+    // ellipsoid behavior until its dedicated roadmap step.
+    bool globeTerrainRayHitAtScreen(
+        const QPointF &screen_position, MapRhiGlobeSurfaceHit *hit) const;
     void setNetworkSnapshot(const NetworkRenderSnapshot &snapshot);
     void setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids);
     void setNodeDeclutteringEnabled(bool enabled);
@@ -128,6 +151,7 @@ private:
     void syncGlobeTerrainAwareCameraHeight(bool request_missing_tile);
     void scheduleGlobeUndergroundXRayRefresh();
     void captureView3dFocusAnchor();
+    void captureViewGlobeFocusAnchor();
     bool terrainRayHitAtScreen(
         const QPointF &screen_position, CoordinateWGS84 *coordinate,
         double *world_z, double *distance_m, bool request_missing_tile);

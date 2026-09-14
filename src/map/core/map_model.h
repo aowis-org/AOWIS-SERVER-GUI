@@ -234,12 +234,17 @@ public:
     // and the given (live) viewport height. Used by the footer zoom
     // control's edit path.
     void setViewGlobeZoomLevel(double zoom_level, const QSize &viewport);
-    // Explicit Globe re-anchor utility: re-centers centerLon()/centerLat(),
-    // applies a whole-rig vertical offset, and preserves the requested
-    // straight-line orbit distance. Normal terrain following updates only
-    // the vertical offset and leaves the geographic target untouched.
-    void setViewGlobeFocusAnchor(double lon, double lat, double vertical_offset_m,
-                                 double distance_m, const QSize &viewport = QSize());
+    // Explicit Globe re-anchor utility used when an orbit interaction captures
+    // the visible terrain under the crosshair. The complete orbit rig is
+    // updated atomically so the newly captured geographic/height target,
+    // yaw/pitch and distance describe one coherent camera before any repaint.
+    // camera_collision_lift_m is normally zero for a freshly captured pivot;
+    // terrain-clearance handling may add a new eye-only lift afterwards while
+    // the pivot itself remains frozen for the duration of the orbit.
+    void setViewGlobeFocusAnchor(
+        double lon, double lat, double vertical_offset_m,
+        double yaw_deg, double pitch_deg, double distance_m,
+        double camera_collision_lift_m, const QSize &viewport = QSize());
     void orbitViewGlobe(double yaw_delta_deg, double pitch_delta_deg);
     void orbitViewGlobeByPointerDelta(const QPoint &delta_pixels, bool include_pitch);
     // Marble/Google-Earth style "grab and drag": ray-casts previous_screen_position
@@ -251,8 +256,9 @@ public:
     // horizon).
     void panGlobeByPointerDrag(const QPoint &previous_screen_position,
                                const QPoint &new_screen_position, const QSize &viewport);
-    // Returns the geodetic coordinate under screen_position, or false if that
-    // screen ray does not hit the ellipsoid.
+    // Model-only ellipsoid fallback for the geodetic coordinate under
+    // screen_position. The RHI Globe path resolves against its rendered DEM
+    // first because MapModel intentionally has no renderer/terrain-mesh access.
     bool globeCoordinateAtScreen(const QPoint &screen_position, const QSize &viewport,
                                  CoordinateWGS84 *coordinate) const;
 

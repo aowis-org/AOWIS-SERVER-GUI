@@ -78,6 +78,58 @@ double approachExponentially(
     return current + (target - current) * blend;
 }
 
+bool rayWgs84EllipsoidIntersectionDistance(
+    const GeoWgs84Ellipsoid::EcefPositionD &origin,
+    const QVector3D &direction, double *distance_m)
+{
+    if (distance_m == nullptr || direction.lengthSquared() <= 1e-12f)
+        return false;
+
+    QVector3D normalized_direction = direction;
+    normalized_direction.normalize();
+
+    const double inverse_a = 1.0 / GeoWgs84Ellipsoid::EquatorialRadiusM;
+    const double inverse_b = 1.0 / GeoWgs84Ellipsoid::PolarRadiusM;
+    const double scaled_origin_x = origin.x * inverse_a;
+    const double scaled_origin_y = origin.y * inverse_a;
+    const double scaled_origin_z = origin.z * inverse_b;
+    const double scaled_direction_x = double(normalized_direction.x()) * inverse_a;
+    const double scaled_direction_y = double(normalized_direction.y()) * inverse_a;
+    const double scaled_direction_z = double(normalized_direction.z()) * inverse_b;
+
+    const double a_coefficient =
+        scaled_direction_x * scaled_direction_x
+        + scaled_direction_y * scaled_direction_y
+        + scaled_direction_z * scaled_direction_z;
+    if (a_coefficient <= 1e-30)
+        return false;
+
+    const double b_coefficient = 2.0 * (
+        scaled_origin_x * scaled_direction_x
+        + scaled_origin_y * scaled_direction_y
+        + scaled_origin_z * scaled_direction_z);
+    const double c_coefficient =
+        scaled_origin_x * scaled_origin_x
+        + scaled_origin_y * scaled_origin_y
+        + scaled_origin_z * scaled_origin_z - 1.0;
+    const double discriminant = b_coefficient * b_coefficient
+        - 4.0 * a_coefficient * c_coefficient;
+    if (discriminant < 0.0)
+        return false;
+
+    const double sqrt_discriminant = std::sqrt(discriminant);
+    const double t_near = (-b_coefficient - sqrt_discriminant)
+        / (2.0 * a_coefficient);
+    const double t_far = (-b_coefficient + sqrt_discriminant)
+        / (2.0 * a_coefficient);
+    const double distance = t_near >= 0.0 ? t_near : t_far;
+    if (!(distance >= 0.0) || !std::isfinite(distance))
+        return false;
+
+    *distance_m = distance;
+    return true;
+}
+
 // Soft pink default fill for the SVG-derived reservoir/tank/pump/valve icons
 // on the 2D map monitor in light mode, for better visibility against the
 // basemap. Only applies when the icon is neither colorized (VisualNode /
@@ -681,12 +733,17 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
 
         if (this->map_model->viewMode() == MapViewMode::Globe)
         {
-            // Orbit keeps the terrain-follow rig height fixed, just like
-            // legacy ThreeD keeps its captured pivot fixed. The eye-only
-            // clearance response remains independent, but is damped too.
+            // Freeze the visible DEM point under the crosshair exactly once
+            // when orbit starts. Subsequent terrain LOD/refinement must not
+            // move the pivot underneath an active interaction.
             if (this->globe_terrain_follow_timer != nullptr)
                 this->globe_terrain_follow_timer->stop();
             this->globe_terrain_follow_clock.invalidate();
+            if (state == MapView3dNavigationState::Rotate)
+                captureViewGlobeFocusAnchor();
+
+            // Orbit keeps the captured terrain target fixed. The eye-only
+            // clearance response remains independent, but is damped too.
             syncGlobeTerrainAwareCameraHeight(true);
         }
         else if (state == MapView3dNavigationState::Rotate)
@@ -5870,10 +5927,127 @@ double MapRhiWidget::terrainWorldZ(
     return elevation_m * world_units_per_meter;
 }
 
+bool MapRhiWidget::globeTerrainRayHitAtScreen(
+    const QPointF &screen_position, MapRhiGlobeSurfaceHit *hit) const
+{
+    if (hit == nullptr || this->map_model == nullptr
+        || this->map_model->viewMode() != MapViewMode::Globe
+        || !this->viewport_size.isValid()
+        || !std::isfinite(screen_position.x())
+        || !std::isfinite(screen_position.y()))
+    {
+        return false;
+    }
+
+    const double pitch_deg = qBound(
+        MapModel::MinViewGlobePitchDeg,
+        this->map_model->viewGlobePitchDeg(),
+        MapModel::MaxViewGlobePitchDeg);
+    const double distance_m = qMax(
+        MapModel::MinViewGlobeDistanceM,
+        this->map_model->viewGlobeDistanceM());
+    const double target_height_m =
+        this->map_model->viewGlobeVerticalOffsetM();
+    const double collision_lift_m =
+        this->map_model->viewGlobeCameraCollisionLiftM();
+
+    // Build the screen-ray direction in a local, target-relative frame so
+    // no Earth-radius-scale position is narrowed to float while deriving the
+    // view direction. This is the same orbit basis and FOV convention used
+    // by MapRhiCamera's Globe GPU projection.
+    const GeoWgs84Ellipsoid::EcefPositionD local_origin =
+        GeoWgs84Ellipsoid::geodeticToEcefD(
+            this->map_model->centerLon(), this->map_model->centerLat(),
+            target_height_m);
+    const GeoWgs84Ellipsoid::OrbitCameraBasisRelative basis =
+        GeoWgs84Ellipsoid::orbitCameraBasisRelativeToOrigin(
+            this->map_model->centerLon(), this->map_model->centerLat(),
+            this->map_model->viewGlobeYawDeg(), pitch_deg, distance_m,
+            target_height_m, local_origin, collision_lift_m);
+
+    const double viewport_width = double(qMax(1, this->viewport_size.width()));
+    const double viewport_height = double(qMax(1, this->viewport_size.height()));
+    const double aspect = viewport_width / viewport_height;
+    const double tan_half_fov = std::tan(
+        qDegreesToRadians(MapModel::GlobeFieldOfViewDeg * 0.5));
+    const double ndc_x = 2.0 * screen_position.x() / viewport_width - 1.0;
+    const double ndc_y = 1.0 - 2.0 * screen_position.y() / viewport_height;
+
+    QVector3D ray_direction = basis.forward
+        + basis.right * float(ndc_x * tan_half_fov * aspect)
+        + basis.up * float(ndc_y * tan_half_fov);
+    if (ray_direction.lengthSquared() <= 1e-12f)
+        return false;
+    ray_direction.normalize();
+
+    const GeoWgs84Ellipsoid::EcefPositionD ray_origin =
+        GeoWgs84Ellipsoid::orbitCameraEyeEcefD(
+            this->map_model->centerLon(), this->map_model->centerLat(),
+            this->map_model->viewGlobeYawDeg(), pitch_deg, distance_m,
+            target_height_m, collision_lift_m);
+
+    GeoWgs84Ellipsoid::EcefPositionD intersection;
+    double hit_distance_m = 0.0;
+    MapRhiGlobeSurfaceHitSource source =
+        MapRhiGlobeSurfaceHitSource::EllipsoidFallback;
+
+    if (this->globe_renderer != nullptr
+        && this->globe_renderer->visibleTerrainRayIntersection(
+            ray_origin, ray_direction, &intersection, &hit_distance_m))
+    {
+        source = MapRhiGlobeSurfaceHitSource::TerrainMesh;
+    }
+    else
+    {
+        if (!rayWgs84EllipsoidIntersectionDistance(
+                ray_origin, ray_direction, &hit_distance_m))
+        {
+            return false;
+        }
+
+        intersection.x = ray_origin.x
+            + double(ray_direction.x()) * hit_distance_m;
+        intersection.y = ray_origin.y
+            + double(ray_direction.y()) * hit_distance_m;
+        intersection.z = ray_origin.z
+            + double(ray_direction.z()) * hit_distance_m;
+    }
+
+    double lon_deg = 0.0;
+    double lat_deg = 0.0;
+    double surface_height_m = 0.0;
+    if (!GeoWgs84Ellipsoid::ecefToGeodetic(
+            intersection, &lon_deg, &lat_deg, &surface_height_m))
+    {
+        return false;
+    }
+
+    hit->coordinate.longitude_deg = lon_deg;
+    hit->coordinate.latitude_deg = lat_deg;
+    hit->ecef_position = intersection;
+    hit->surface_height_m = surface_height_m;
+    hit->distance_m = hit_distance_m;
+    hit->source = source;
+    return true;
+}
+
 bool MapRhiWidget::terrainCoordinateAtScreen(
     const QPointF &screen_position, CoordinateWGS84 *coordinate,
     bool request_missing_tile)
 {
+    if (coordinate == nullptr || this->map_model == nullptr)
+        return false;
+
+    if (this->map_model->viewMode() == MapViewMode::Globe)
+    {
+        MapRhiGlobeSurfaceHit hit;
+        if (!globeTerrainRayHitAtScreen(screen_position, &hit))
+            return false;
+
+        *coordinate = hit.coordinate;
+        return true;
+    }
+
     return terrainRayHitAtScreen(
         screen_position, coordinate, nullptr, nullptr, request_missing_tile);
 }
@@ -6084,6 +6258,93 @@ void MapRhiWidget::captureView3dFocusAnchor()
         hit_coordinate.latitude_deg,
         hit_world_z,
         distance_m,
+        this->viewport_size);
+}
+
+void MapRhiWidget::captureViewGlobeFocusAnchor()
+{
+    if (this->map_model == nullptr
+        || this->map_model->viewMode() != MapViewMode::Globe
+        || !this->viewport_size.isValid())
+    {
+        return;
+    }
+
+    MapRhiGlobeSurfaceHit hit;
+    if (!globeTerrainRayHitAtScreen(
+            QPointF(
+                this->viewport_size.width() / 2.0,
+                this->viewport_size.height() / 2.0),
+            &hit)
+        || hit.source != MapRhiGlobeSurfaceHitSource::TerrainMesh)
+    {
+        // No loaded rendered DEM underneath the crosshair: retain the current
+        // Globe target rather than replacing it with the ellipsoid fallback.
+        return;
+    }
+
+    const double pitch_deg = qBound(
+        MapModel::MinViewGlobePitchDeg,
+        this->map_model->viewGlobePitchDeg(),
+        MapModel::MaxViewGlobePitchDeg);
+    const double distance_m = qMax(
+        MapModel::MinViewGlobeDistanceM,
+        this->map_model->viewGlobeDistanceM());
+    const GeoWgs84Ellipsoid::EcefPositionD eye =
+        GeoWgs84Ellipsoid::orbitCameraEyeEcefD(
+            this->map_model->centerLon(), this->map_model->centerLat(),
+            this->map_model->viewGlobeYawDeg(), pitch_deg, distance_m,
+            this->map_model->viewGlobeVerticalOffsetM(),
+            this->map_model->viewGlobeCameraCollisionLiftM());
+
+    const GeoWgs84Ellipsoid::LocalFrame hit_frame =
+        GeoWgs84Ellipsoid::localFrameAtGeodetic(
+            hit.coordinate.longitude_deg,
+            hit.coordinate.latitude_deg,
+            hit.surface_height_m);
+    const double relative_x = eye.x - hit.ecef_position.x;
+    const double relative_y = eye.y - hit.ecef_position.y;
+    const double relative_z = eye.z - hit.ecef_position.z;
+    const double east_m = relative_x * double(hit_frame.east.x())
+        + relative_y * double(hit_frame.east.y())
+        + relative_z * double(hit_frame.east.z());
+    const double north_m = relative_x * double(hit_frame.north.x())
+        + relative_y * double(hit_frame.north.y())
+        + relative_z * double(hit_frame.north.z());
+    const double up_m = relative_x * double(hit_frame.up.x())
+        + relative_y * double(hit_frame.up.y())
+        + relative_z * double(hit_frame.up.z());
+
+    const double captured_distance_m = std::sqrt(
+        east_m * east_m + north_m * north_m + up_m * up_m);
+    if (!std::isfinite(captured_distance_m)
+        || captured_distance_m <= 1e-6)
+    {
+        return;
+    }
+
+    const double horizontal_distance_m = std::hypot(east_m, north_m);
+    double captured_yaw_deg = this->map_model->viewGlobeYawDeg();
+    if (horizontal_distance_m > 1e-6)
+    {
+        captured_yaw_deg = qRadiansToDegrees(
+            std::atan2(east_m, -north_m));
+    }
+    const double captured_pitch_deg = qRadiansToDegrees(std::asin(qBound(
+        -1.0, up_m / captured_distance_m, 1.0)));
+
+    // Re-express the unchanged eye position around the visible DEM hit. The
+    // previous eye-only collision lift is folded into this new yaw/pitch/
+    // distance rig, then reset to zero; collision handling may add a fresh
+    // eye-only lift afterwards without ever moving the captured pivot.
+    this->map_model->setViewGlobeFocusAnchor(
+        hit.coordinate.longitude_deg,
+        hit.coordinate.latitude_deg,
+        hit.surface_height_m,
+        captured_yaw_deg,
+        captured_pitch_deg,
+        captured_distance_m,
+        0.0,
         this->viewport_size);
 }
 

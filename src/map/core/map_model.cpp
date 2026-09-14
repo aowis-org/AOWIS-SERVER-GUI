@@ -1439,11 +1439,14 @@ void MapModel::setViewGlobeZoomLevel(double zoom_level, const QSize &viewport)
 }
 
 void MapModel::setViewGlobeFocusAnchor(
-    double lon, double lat, double vertical_offset_m, double distance_m,
-    const QSize &viewport)
+    double lon, double lat, double vertical_offset_m,
+    double yaw_deg, double pitch_deg, double distance_m,
+    double camera_collision_lift_m, const QSize &viewport)
 {
-    if (!std::isfinite(lon) || !std::isfinite(lat) || !std::isfinite(vertical_offset_m)
-        || !std::isfinite(distance_m))
+    if (!std::isfinite(lon) || !std::isfinite(lat)
+        || !std::isfinite(vertical_offset_m) || !std::isfinite(yaw_deg)
+        || !std::isfinite(pitch_deg) || !std::isfinite(distance_m)
+        || !std::isfinite(camera_collision_lift_m))
     {
         return;
     }
@@ -1451,7 +1454,11 @@ void MapModel::setViewGlobeFocusAnchor(
     const double old_lon = this->m_centerLon;
     const double old_lat = this->m_centerLat;
     const double old_vertical_offset_m = this->m_view_globe_vertical_offset_m;
+    const double old_yaw_deg = this->m_view_globe_yaw_deg;
+    const double old_pitch_deg = this->m_view_globe_pitch_deg;
     const double old_distance_m = this->m_view_globe_distance_m;
+    const double old_collision_lift_m =
+        this->m_view_globe_camera_collision_lift_m;
 
     this->m_centerLon = GeoWebMercator::normalizeLongitude(lon);
     this->m_centerLat = std::clamp(lat, -90.0, 90.0);
@@ -1459,14 +1466,24 @@ void MapModel::setViewGlobeFocusAnchor(
         clampCenter(viewport);
 
     this->m_view_globe_vertical_offset_m = vertical_offset_m;
+    this->m_view_globe_yaw_deg = normalizedYawDegrees(yaw_deg);
+    this->m_view_globe_pitch_deg = qBound(
+        MinViewGlobePitchDeg, pitch_deg, MaxViewGlobePitchDeg);
     this->m_view_globe_distance_m = qBound(
         MinViewGlobeDistanceM, distance_m, MaxViewGlobeDistanceM);
+    this->m_view_globe_camera_collision_lift_m = qMax(
+        0.0, camera_collision_lift_m);
 
     const bool center_changed = !coordinatesEqual(this->m_centerLon, old_lon)
         || !coordinatesEqual(this->m_centerLat, old_lat);
     const bool camera_changed = !coordinatesEqual(
         this->m_view_globe_vertical_offset_m, old_vertical_offset_m)
-        || !coordinatesEqual(this->m_view_globe_distance_m, old_distance_m);
+        || !coordinatesEqual(this->m_view_globe_yaw_deg, old_yaw_deg)
+        || !coordinatesEqual(this->m_view_globe_pitch_deg, old_pitch_deg)
+        || !coordinatesEqual(this->m_view_globe_distance_m, old_distance_m)
+        || !coordinatesEqual(
+            this->m_view_globe_camera_collision_lift_m,
+            old_collision_lift_m);
 
     if (center_changed)
         emitCenterChanged();

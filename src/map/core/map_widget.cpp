@@ -307,7 +307,8 @@ void MapWidget::init()
         if (this->m_model->viewMode() == MapViewMode::Globe)
             emit signalZoomLevelChanged(this->m_model->viewGlobeZoomLevel(size()));
         if (this->rhi_view_active
-            && this->m_model->viewMode() == MapViewMode::ThreeD
+            && (this->m_model->viewMode() == MapViewMode::ThreeD
+                || this->m_model->viewMode() == MapViewMode::Globe)
             && this->rhi_screen_coordinate_resolver)
         {
             updatePointerCoordinates(
@@ -333,7 +334,8 @@ void MapWidget::init()
             [this](CoordinateUTM utm)
     {
         if (this->rhi_view_active
-            && this->m_model->viewMode() == MapViewMode::ThreeD
+            && (this->m_model->viewMode() == MapViewMode::ThreeD
+                || this->m_model->viewMode() == MapViewMode::Globe)
             && this->rhi_screen_coordinate_resolver)
         {
             return;
@@ -1889,7 +1891,19 @@ void MapWidget::updatePointerCoordinates(const QPoint &position)
     if (this->m_model->viewMode() == MapViewMode::Globe)
     {
         CoordinateWGS84 globe_coordinate;
-        if (!this->m_model->globeCoordinateAtScreen(position, this->size(), &globe_coordinate))
+        bool coordinate_available = false;
+        if (this->rhi_view_active && this->rhi_screen_coordinate_resolver)
+        {
+            coordinate_available = this->rhi_screen_coordinate_resolver(
+                QPointF(position), &globe_coordinate);
+        }
+        else
+        {
+            coordinate_available = this->m_model->globeCoordinateAtScreen(
+                position, this->size(), &globe_coordinate);
+        }
+
+        if (!coordinate_available)
         {
             emit signalCoordsUnavailable();
             return;

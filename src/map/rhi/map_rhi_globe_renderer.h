@@ -131,6 +131,18 @@ public:
     void setMapVisible(bool visible);
     bool hasPendingTerrainMeshes() const;
     void terrainMeshProgress(int *completed, int *total, bool *active) const;
+    // Intersects an ECEF ray against the exact Globe DEM triangles currently
+    // retained for rendering. Only tiles whose retained vertex range really
+    // contains DEM relief participate, including still-visible old relief
+    // while a replacement is built; a cached DEM that has not reached the
+    // visible mesh is never invented here. Returns the nearest forward hit
+    // in ECEF meters. There is deliberately no ellipsoid fallback here: the
+    // caller can distinguish "real rendered DEM" from its own fallback.
+    bool visibleTerrainRayIntersection(
+        const GeoWgs84Ellipsoid::EcefPositionD &ray_origin_ecef,
+        const QVector3D &ray_direction_ecef,
+        GeoWgs84Ellipsoid::EcefPositionD *intersection_ecef,
+        double *distance_m) const;
     // Tracks visible heatmap changes separately from geographic layout
     // changes. Colors and active flags invalidate tile pixels, while stable
     // render ids, coordinates and radius govern the retained stamp layout.
@@ -313,6 +325,19 @@ private:
         int terrain_stitch_left_cell_count = 0;
         quint64 terrain_mesh_request_id = 0;
         bool terrain_mesh_applied = false;
+        // True when the currently retained vertex range contains DEM relief,
+        // independently of whether that relief is still the newest requested
+        // revision. invalidateTerrain() deliberately keeps old relief visible
+        // while its replacement is built, so ray picking must distinguish
+        // that still-rendered surface from an initial zero-height placeholder.
+        bool terrain_mesh_has_relief = false;
+        // Cached bounds of the exact retained DEM vertex range, in the same
+        // render-origin-relative ECEF frame as window_vertices. Cursor ray
+        // picking uses these to reject almost every visible tile before any
+        // triangle tests are attempted.
+        QVector3D terrain_ray_bounds_min;
+        QVector3D terrain_ray_bounds_max;
+        bool terrain_ray_bounds_valid = false;
         // Future GPU-displaced terrain consumes one shared 65x65 height
         // layer per terrain_key. Multiple finer imagery leaves can therefore
         // point at the same page/layer without duplicating the DEM upload.
@@ -476,6 +501,7 @@ private:
         const GlobeTile &tile, const QSize &viewport_size,
         const GeoWgs84Ellipsoid::OrbitCameraBasis *camera_basis_override = nullptr) const;
     void updateTerrainStitchCellCounts(QVector<GlobeTile> *tiles) const;
+    void updateTerrainRayBounds(GlobeTile *tile);
     bool currentTerrainLodMatches(const QSize &viewport_size) const;
     void resetTerrainHeightCache();
     bool createTerrainHeightArrayPage();
