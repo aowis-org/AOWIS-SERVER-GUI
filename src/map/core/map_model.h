@@ -199,6 +199,7 @@ public:
     void panByPixels3d(const QPoint &delta, const QSize &viewport);
     void panByPixels3dKeyboard(const QPoint &delta, const QSize &viewport);
     void panByPixelsGlobe(const QPoint &delta, const QSize &viewport);
+    void panByPixelsGlobeKeyboard(const QPoint &delta, const QSize &viewport);
 
     void setProvider(MapProvider provider);
     void setViewMode(MapViewMode view_mode, const QSize &viewport = QSize());

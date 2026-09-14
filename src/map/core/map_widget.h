@@ -124,7 +124,7 @@ private:
     void endView3dKeyboardZoomInteraction();
     QPointF keyboardPanDirection() const;
     QPointF edgePanDirection() const;
-    void panMapByPixels(const QPoint &delta, bool angle_independent_3d = false);
+    void panMapByPixels(const QPoint &delta, bool keyboard_pan = false);
     void panByStep(const QPoint &delta);
     enum class View3dOrbitInput
     {

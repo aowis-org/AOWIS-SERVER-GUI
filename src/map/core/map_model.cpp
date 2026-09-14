@@ -999,6 +999,52 @@ void MapModel::panByPixelsGlobe(const QPoint &delta, const QSize &viewport)
     panGlobeByPointerDrag(viewport_center - delta, viewport_center, viewport);
 }
 
+void MapModel::panByPixelsGlobeKeyboard(
+    const QPoint &delta, const QSize &viewport)
+{
+    if (delta.isNull() || !viewport.isValid())
+        return;
+
+    // Keyboard movement must not inherit the grazing-angle amplification of
+    // a ground/terrain ray cast. Derive a pitch-independent physical scale
+    // from the orbit distance and vertical FOV instead, then rotate the
+    // requested screen movement by yaw into the local east/north tangent
+    // plane. This is the Globe equivalent of panByPixels3dKeyboard().
+    const double safe_height = qMax(1, viewport.height());
+    const double half_fov_rad = qDegreesToRadians(GlobeFieldOfViewDeg * 0.5);
+    const double distance_m = qMax(
+        MinViewGlobeDistanceM, this->m_view_globe_distance_m);
+    const double meters_per_pixel =
+        2.0 * distance_m * std::tan(half_fov_rad) / safe_height;
+    if (!std::isfinite(meters_per_pixel) || meters_per_pixel <= 0.0)
+        return;
+
+    const double yaw_rad = qDegreesToRadians(
+        normalizedYawDegrees(this->m_view_globe_yaw_deg));
+    const double screen_right_east = std::cos(yaw_rad);
+    const double screen_right_north = std::sin(yaw_rad);
+    const double screen_up_east = -std::sin(yaw_rad);
+    const double screen_up_north = std::cos(yaw_rad);
+
+    const double east_m = meters_per_pixel * (
+        -screen_right_east * double(delta.x())
+        + screen_up_east * double(delta.y()));
+    const double north_m = meters_per_pixel * (
+        -screen_right_north * double(delta.x())
+        + screen_up_north * double(delta.y()));
+
+    double next_lon_deg = 0.0;
+    double next_lat_deg = 0.0;
+    if (!GeoWgs84Ellipsoid::offsetGeodetic(
+            this->m_centerLon, this->m_centerLat,
+            east_m, north_m, &next_lon_deg, &next_lat_deg))
+    {
+        return;
+    }
+
+    setCenter(next_lon_deg, next_lat_deg, viewport);
+}
+
 void MapModel::clampCenter(const QSize &viewport)
 {
     if (!viewport.isValid())

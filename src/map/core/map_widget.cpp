@@ -1301,7 +1301,7 @@ void MapWidget::panByStep(const QPoint &delta)
     panMapByPixels(delta);
 }
 
-void MapWidget::panMapByPixels(const QPoint &delta, bool angle_independent_3d)
+void MapWidget::panMapByPixels(const QPoint &delta, bool keyboard_pan)
 {
     if (delta.isNull())
         return;
@@ -1311,18 +1311,25 @@ void MapWidget::panMapByPixels(const QPoint &delta, bool angle_independent_3d)
     this->backing_store_pan_active = true;
     if (this->m_model->viewMode() == MapViewMode::ThreeD)
     {
-        if (angle_independent_3d)
+        if (keyboard_pan)
             this->m_model->panByPixels3dKeyboard(delta, size());
         else
             this->m_model->panByPixels3d(delta, size());
     }
     else if (this->m_model->viewMode() == MapViewMode::Globe)
     {
-        const bool terrain_pan_handled = this->rhi_view_active
-            && this->rhi_globe_terrain_pan_resolver
-            && this->rhi_globe_terrain_pan_resolver(delta);
-        if (!terrain_pan_handled)
-            this->m_model->panByPixelsGlobe(delta, size());
+        if (keyboard_pan)
+        {
+            this->m_model->panByPixelsGlobeKeyboard(delta, size());
+        }
+        else
+        {
+            const bool terrain_pan_handled = this->rhi_view_active
+                && this->rhi_globe_terrain_pan_resolver
+                && this->rhi_globe_terrain_pan_resolver(delta);
+            if (!terrain_pan_handled)
+                this->m_model->panByPixelsGlobe(delta, size());
+        }
     }
     else
     {
