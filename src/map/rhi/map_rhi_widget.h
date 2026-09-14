@@ -57,6 +57,7 @@ struct MapRhiHit
 
 enum class MapRhiGlobeSurfaceHitSource
 {
+    Invalid,
     TerrainMesh,
     EllipsoidFallback
 };
@@ -68,7 +69,17 @@ struct MapRhiGlobeSurfaceHit
     double surface_height_m = 0.0;
     double distance_m = 0.0;
     MapRhiGlobeSurfaceHitSource source =
-        MapRhiGlobeSurfaceHitSource::EllipsoidFallback;
+        MapRhiGlobeSurfaceHitSource::Invalid;
+
+    bool isValid() const
+    {
+        return this->source != MapRhiGlobeSurfaceHitSource::Invalid;
+    }
+
+    bool isTerrainMesh() const
+    {
+        return this->source == MapRhiGlobeSurfaceHitSource::TerrainMesh;
+    }
 };
 
 class MapRhiWidget final : public QRhiWidget
@@ -85,13 +96,13 @@ public:
     bool terrainCoordinateAtScreen(
         const QPointF &screen_position, CoordinateWGS84 *coordinate,
         bool request_missing_tile = true);
-    // Globe terrain picking against the exact DEM triangles currently
+    // Globe surface picking against the exact DEM triangles currently
     // retained by MapRhiGlobeRenderer, with a WGS84 ellipsoid fallback when
-    // no rendered DEM triangle is hit. Cursor-coordinate lookup and orbit
-    // focus capture use this; pan/drag intentionally remains on its existing
-    // ellipsoid behavior until its dedicated roadmap step.
-    bool globeTerrainRayHitAtScreen(
+    // no rendered DEM triangle is hit. Cursor-coordinate lookup, orbit
+    // focus capture and the guarded terrain-aware pan path use this.
+    bool globeSurfaceRayHitAtScreen(
         const QPointF &screen_position, MapRhiGlobeSurfaceHit *hit) const;
+    bool panGlobeByTerrainPixels(const QPoint &delta_pixels);
     void setNetworkSnapshot(const NetworkRenderSnapshot &snapshot);
     void setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids);
     void setNodeDeclutteringEnabled(bool enabled);

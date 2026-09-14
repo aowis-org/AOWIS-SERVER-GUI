@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QPoint>
 #include <QPointF>
+#include <QQuaternion>
 #include <QSize>
 #include <QString>
 #include <QVector3D>
@@ -11,6 +12,7 @@
 #include "common/_enums_structs.h"
 #include "geo/geo_metric_projection.h"
 #include "geo/geo_web_mercator.h"
+#include "geo/geo_wgs84_ellipsoid.h"
 
 enum class MapView3dNavigationState
 {
@@ -256,6 +258,18 @@ public:
     // horizon).
     void panGlobeByPointerDrag(const QPoint &previous_screen_position,
                                const QPoint &new_screen_position, const QSize &viewport);
+    // Hybrid terrain-aware counterpart used by the RHI Globe path. The
+    // ellipsoid drag remains the stable baseline; terrain_weight blends in
+    // the exact rendered-DEM drag and is expected to approach zero for
+    // shallow/grazing view rays. The terrain rotation is additionally capped
+    // relative to the ellipsoid rotation so terrain relief can never turn a
+    // small requested pixel pan into a large camera jump.
+    bool panGlobeByTerrainPointerDrag(
+        const QPoint &previous_screen_position, const QPoint &new_screen_position,
+        const QSize &viewport,
+        const GeoWgs84Ellipsoid::EcefPositionD &previous_terrain_ecef,
+        const GeoWgs84Ellipsoid::EcefPositionD &new_terrain_ecef,
+        double terrain_weight);
     // Model-only ellipsoid fallback for the geodetic coordinate under
     // screen_position. The RHI Globe path resolves against its rendered DEM
     // first because MapModel intentionally has no renderer/terrain-mesh access.
@@ -285,6 +299,7 @@ private:
     QPointF screenFromTileOffset3d(const QPointF &offset_pixels, const QSize &viewport) const;
     bool globeScreenRay(const QPoint &screen_position, const QSize &viewport,
                         QVector3D *eye, QVector3D *direction) const;
+    void applyGlobePanRotation(const QQuaternion &rotation);
     QString providerPath() const;
 
     int m_zoom = 18;

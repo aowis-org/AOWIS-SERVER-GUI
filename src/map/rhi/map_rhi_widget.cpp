@@ -65,6 +65,44 @@ constexpr double GlobeCollisionFollowTimeConstantSeconds = 0.16;
 constexpr double GlobeTerrainFollowSettlePixels = 0.25;
 constexpr double GlobeTerrainFollowMinimumSettleDistanceM = 0.01;
 constexpr double GlobeTerrainMaximumTimeStepSeconds = 1.0 / 30.0;
+// DEM-derived panning is useful when the ray meets the ground decisively, but
+// becomes ill-conditioned near the horizon. Blend it in between roughly 12
+// and 30 degrees above the local tangent plane; below the lower threshold the
+// existing ellipsoid drag is used unchanged.
+constexpr double GlobeTerrainPanMinimumIncidence = 0.20791169081775931;
+constexpr double GlobeTerrainPanFullIncidence = 0.5;
+
+double smoothStep(double edge0, double edge1, double value)
+{
+    if (!(edge1 > edge0))
+        return value >= edge1 ? 1.0 : 0.0;
+
+    const double t = qBound(0.0, (value - edge0) / (edge1 - edge0), 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+double globeTerrainRayIncidence(
+    const GeoWgs84Ellipsoid::EcefPositionD &eye,
+    const MapRhiGlobeSurfaceHit &hit)
+{
+    const double ray_x = hit.ecef_position.x - eye.x;
+    const double ray_y = hit.ecef_position.y - eye.y;
+    const double ray_z = hit.ecef_position.z - eye.z;
+    const double ray_length = std::sqrt(
+        ray_x * ray_x + ray_y * ray_y + ray_z * ray_z);
+    if (!std::isfinite(ray_length) || ray_length <= 1e-9)
+        return 0.0;
+
+    const GeoWgs84Ellipsoid::LocalFrame frame =
+        GeoWgs84Ellipsoid::localFrameAtGeodetic(
+            hit.coordinate.longitude_deg, hit.coordinate.latitude_deg,
+            hit.surface_height_m);
+    const double dot = (
+        ray_x * double(frame.up.x())
+        + ray_y * double(frame.up.y())
+        + ray_z * double(frame.up.z())) / ray_length;
+    return qBound(0.0, std::abs(dot), 1.0);
+}
 
 double approachExponentially(
     double current, double target, double time_constant_seconds,
@@ -76,58 +114,6 @@ double approachExponentially(
     const double blend = 1.0 - std::exp(
         -elapsed_seconds / time_constant_seconds);
     return current + (target - current) * blend;
-}
-
-bool rayWgs84EllipsoidIntersectionDistance(
-    const GeoWgs84Ellipsoid::EcefPositionD &origin,
-    const QVector3D &direction, double *distance_m)
-{
-    if (distance_m == nullptr || direction.lengthSquared() <= 1e-12f)
-        return false;
-
-    QVector3D normalized_direction = direction;
-    normalized_direction.normalize();
-
-    const double inverse_a = 1.0 / GeoWgs84Ellipsoid::EquatorialRadiusM;
-    const double inverse_b = 1.0 / GeoWgs84Ellipsoid::PolarRadiusM;
-    const double scaled_origin_x = origin.x * inverse_a;
-    const double scaled_origin_y = origin.y * inverse_a;
-    const double scaled_origin_z = origin.z * inverse_b;
-    const double scaled_direction_x = double(normalized_direction.x()) * inverse_a;
-    const double scaled_direction_y = double(normalized_direction.y()) * inverse_a;
-    const double scaled_direction_z = double(normalized_direction.z()) * inverse_b;
-
-    const double a_coefficient =
-        scaled_direction_x * scaled_direction_x
-        + scaled_direction_y * scaled_direction_y
-        + scaled_direction_z * scaled_direction_z;
-    if (a_coefficient <= 1e-30)
-        return false;
-
-    const double b_coefficient = 2.0 * (
-        scaled_origin_x * scaled_direction_x
-        + scaled_origin_y * scaled_direction_y
-        + scaled_origin_z * scaled_direction_z);
-    const double c_coefficient =
-        scaled_origin_x * scaled_origin_x
-        + scaled_origin_y * scaled_origin_y
-        + scaled_origin_z * scaled_origin_z - 1.0;
-    const double discriminant = b_coefficient * b_coefficient
-        - 4.0 * a_coefficient * c_coefficient;
-    if (discriminant < 0.0)
-        return false;
-
-    const double sqrt_discriminant = std::sqrt(discriminant);
-    const double t_near = (-b_coefficient - sqrt_discriminant)
-        / (2.0 * a_coefficient);
-    const double t_far = (-b_coefficient + sqrt_discriminant)
-        / (2.0 * a_coefficient);
-    const double distance = t_near >= 0.0 ? t_near : t_far;
-    if (!(distance >= 0.0) || !std::isfinite(distance))
-        return false;
-
-    *distance_m = distance;
-    return true;
 }
 
 // Soft pink default fill for the SVG-derived reservoir/tank/pump/valve icons
@@ -5927,10 +5913,14 @@ double MapRhiWidget::terrainWorldZ(
     return elevation_m * world_units_per_meter;
 }
 
-bool MapRhiWidget::globeTerrainRayHitAtScreen(
+bool MapRhiWidget::globeSurfaceRayHitAtScreen(
     const QPointF &screen_position, MapRhiGlobeSurfaceHit *hit) const
 {
-    if (hit == nullptr || this->map_model == nullptr
+    if (hit == nullptr)
+        return false;
+
+    *hit = MapRhiGlobeSurfaceHit{};
+    if (this->map_model == nullptr
         || this->map_model->viewMode() != MapViewMode::Globe
         || !this->viewport_size.isValid()
         || !std::isfinite(screen_position.x())
@@ -5999,18 +5989,11 @@ bool MapRhiWidget::globeTerrainRayHitAtScreen(
     }
     else
     {
-        if (!rayWgs84EllipsoidIntersectionDistance(
-                ray_origin, ray_direction, &hit_distance_m))
+        if (!GeoWgs84Ellipsoid::rayIntersection(
+                ray_origin, ray_direction, &intersection, &hit_distance_m))
         {
             return false;
         }
-
-        intersection.x = ray_origin.x
-            + double(ray_direction.x()) * hit_distance_m;
-        intersection.y = ray_origin.y
-            + double(ray_direction.y()) * hit_distance_m;
-        intersection.z = ray_origin.z
-            + double(ray_direction.z()) * hit_distance_m;
     }
 
     double lon_deg = 0.0;
@@ -6028,7 +6011,65 @@ bool MapRhiWidget::globeTerrainRayHitAtScreen(
     hit->surface_height_m = surface_height_m;
     hit->distance_m = hit_distance_m;
     hit->source = source;
-    return true;
+    return hit->isValid();
+}
+
+bool MapRhiWidget::panGlobeByTerrainPixels(const QPoint &delta_pixels)
+{
+    if (delta_pixels.isNull()
+        || this->map_model == nullptr
+        || this->map_model->viewMode() != MapViewMode::Globe
+        || !this->viewport_size.isValid())
+    {
+        return false;
+    }
+
+    // Preserve the existing pan semantics exactly: panByPixelsGlobe() treats
+    // a delta as "grab the viewport center minus delta and move it to the
+    // viewport center". Only the surface supplying those two points changes.
+    const QPoint viewport_center(
+        this->viewport_size.width() / 2,
+        this->viewport_size.height() / 2);
+    const QPoint previous_position = viewport_center - delta_pixels;
+
+    MapRhiGlobeSurfaceHit previous_hit;
+    MapRhiGlobeSurfaceHit new_hit;
+    if (!globeSurfaceRayHitAtScreen(QPointF(previous_position), &previous_hit)
+        || !globeSurfaceRayHitAtScreen(QPointF(viewport_center), &new_hit)
+        || !previous_hit.isTerrainMesh()
+        || !new_hit.isTerrainMesh())
+    {
+        return false;
+    }
+
+    const double pitch_deg = qBound(
+        MapModel::MinViewGlobePitchDeg,
+        this->map_model->viewGlobePitchDeg(),
+        MapModel::MaxViewGlobePitchDeg);
+    const double distance_m = qMax(
+        MapModel::MinViewGlobeDistanceM,
+        this->map_model->viewGlobeDistanceM());
+    const GeoWgs84Ellipsoid::EcefPositionD eye =
+        GeoWgs84Ellipsoid::orbitCameraEyeEcefD(
+            this->map_model->centerLon(), this->map_model->centerLat(),
+            this->map_model->viewGlobeYawDeg(), pitch_deg, distance_m,
+            this->map_model->viewGlobeVerticalOffsetM(),
+            this->map_model->viewGlobeCameraCollisionLiftM());
+
+    const double incidence = qMin(
+        globeTerrainRayIncidence(eye, previous_hit),
+        globeTerrainRayIncidence(eye, new_hit));
+    const double terrain_weight = smoothStep(
+        GlobeTerrainPanMinimumIncidence,
+        GlobeTerrainPanFullIncidence,
+        incidence);
+    if (terrain_weight <= 0.0)
+        return false;
+
+    return this->map_model->panGlobeByTerrainPointerDrag(
+        previous_position, viewport_center, this->viewport_size,
+        previous_hit.ecef_position, new_hit.ecef_position,
+        terrain_weight);
 }
 
 bool MapRhiWidget::terrainCoordinateAtScreen(
@@ -6041,7 +6082,7 @@ bool MapRhiWidget::terrainCoordinateAtScreen(
     if (this->map_model->viewMode() == MapViewMode::Globe)
     {
         MapRhiGlobeSurfaceHit hit;
-        if (!globeTerrainRayHitAtScreen(screen_position, &hit))
+        if (!globeSurfaceRayHitAtScreen(screen_position, &hit))
             return false;
 
         *coordinate = hit.coordinate;
@@ -6271,12 +6312,12 @@ void MapRhiWidget::captureViewGlobeFocusAnchor()
     }
 
     MapRhiGlobeSurfaceHit hit;
-    if (!globeTerrainRayHitAtScreen(
+    if (!globeSurfaceRayHitAtScreen(
             QPointF(
                 this->viewport_size.width() / 2.0,
                 this->viewport_size.height() / 2.0),
             &hit)
-        || hit.source != MapRhiGlobeSurfaceHitSource::TerrainMesh)
+        || !hit.isTerrainMesh())
     {
         // No loaded rendered DEM underneath the crosshair: retain the current
         // Globe target rather than replacing it with the ellipsoid fallback.

@@ -349,6 +349,70 @@ bool GeoWgs84Ellipsoid::rayIntersection(
     return true;
 }
 
+bool GeoWgs84Ellipsoid::rayIntersection(
+    const EcefPositionD &origin, const QVector3D &direction,
+    EcefPositionD *intersection, double *distance_m)
+{
+    if (intersection == nullptr || distance_m == nullptr
+        || direction.lengthSquared() <= 1e-12f)
+    {
+        return false;
+    }
+
+    QVector3D normalized_direction = direction;
+    normalized_direction.normalize();
+
+    const double inverse_a = 1.0 / EquatorialRadiusM;
+    const double inverse_b = 1.0 / PolarRadiusM;
+    const double scaled_origin_x = origin.x * inverse_a;
+    const double scaled_origin_y = origin.y * inverse_a;
+    const double scaled_origin_z = origin.z * inverse_b;
+    const double scaled_direction_x =
+        double(normalized_direction.x()) * inverse_a;
+    const double scaled_direction_y =
+        double(normalized_direction.y()) * inverse_a;
+    const double scaled_direction_z =
+        double(normalized_direction.z()) * inverse_b;
+
+    const double a_coefficient =
+        scaled_direction_x * scaled_direction_x
+        + scaled_direction_y * scaled_direction_y
+        + scaled_direction_z * scaled_direction_z;
+    if (a_coefficient <= 1e-30)
+        return false;
+
+    const double b_coefficient = 2.0 * (
+        scaled_origin_x * scaled_direction_x
+        + scaled_origin_y * scaled_direction_y
+        + scaled_origin_z * scaled_direction_z);
+    const double c_coefficient =
+        scaled_origin_x * scaled_origin_x
+        + scaled_origin_y * scaled_origin_y
+        + scaled_origin_z * scaled_origin_z - 1.0;
+    const double discriminant = b_coefficient * b_coefficient
+        - 4.0 * a_coefficient * c_coefficient;
+    if (discriminant < 0.0)
+        return false;
+
+    const double sqrt_discriminant = std::sqrt(discriminant);
+    const double t_near = (-b_coefficient - sqrt_discriminant)
+        / (2.0 * a_coefficient);
+    const double t_far = (-b_coefficient + sqrt_discriminant)
+        / (2.0 * a_coefficient);
+    const double distance = t_near >= 0.0 ? t_near : t_far;
+    if (!(distance >= 0.0) || !std::isfinite(distance))
+        return false;
+
+    intersection->x = origin.x
+        + double(normalized_direction.x()) * distance;
+    intersection->y = origin.y
+        + double(normalized_direction.y()) * distance;
+    intersection->z = origin.z
+        + double(normalized_direction.z()) * distance;
+    *distance_m = distance;
+    return true;
+}
+
 bool GeoWgs84Ellipsoid::screenRay(
     const OrbitCameraBasis &basis, const QPointF &screen_position,
     const QSize &viewport, double vertical_fov_deg,

@@ -1310,7 +1310,11 @@ void MapWidget::panMapByPixels(const QPoint &delta, bool angle_independent_3d)
     }
     else if (this->m_model->viewMode() == MapViewMode::Globe)
     {
-        this->m_model->panByPixelsGlobe(delta, size());
+        const bool terrain_pan_handled = this->rhi_view_active
+            && this->rhi_globe_terrain_pan_resolver
+            && this->rhi_globe_terrain_pan_resolver(delta);
+        if (!terrain_pan_handled)
+            this->m_model->panByPixelsGlobe(delta, size());
     }
     else
     {
@@ -1945,6 +1949,11 @@ void MapWidget::emitPointerCoordinate(const CoordinateWGS84 &wgs)
 void MapWidget::setRhiScreenCoordinateResolver(ScreenCoordinateResolver resolver)
 {
     this->rhi_screen_coordinate_resolver = std::move(resolver);
+}
+
+void MapWidget::setRhiGlobeTerrainPanResolver(GlobeTerrainPanResolver resolver)
+{
+    this->rhi_globe_terrain_pan_resolver = std::move(resolver);
 }
 
 void MapWidget::scheduleTileUpdate(const QString &)

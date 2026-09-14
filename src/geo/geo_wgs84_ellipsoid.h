@@ -220,6 +220,14 @@ public:
     static bool rayIntersection(
         const QVector3D &origin, const QVector3D &direction, QVector3D *intersection);
 
+    // Double-precision ECEF counterpart used by Globe surface picking. The
+    // direction need not be normalized. distance_m is the physical distance
+    // from origin to the nearest forward hit and is therefore expressed in
+    // meters regardless of the input direction's magnitude.
+    static bool rayIntersection(
+        const EcefPositionD &origin, const QVector3D &direction,
+        EcefPositionD *intersection, double *distance_m);
+
     // Maps a screen position to a world-space ray through the given orbit
     // camera basis (same vertical_fov_deg/viewport convention as the GPU
     // perspective projection built from that same basis). This is the one

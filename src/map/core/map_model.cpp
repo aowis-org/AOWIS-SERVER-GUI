@@ -33,6 +33,42 @@ double normalizedYawDegrees(double yaw_deg)
     return normalized;
 }
 
+QVector3D normalizedEcefDirection(const GeoWgs84Ellipsoid::EcefPositionD &position)
+{
+    const double length = std::sqrt(
+        position.x * position.x
+        + position.y * position.y
+        + position.z * position.z);
+    if (!std::isfinite(length) || length <= 1e-9)
+        return QVector3D();
+
+    return QVector3D(
+        float(position.x / length),
+        float(position.y / length),
+        float(position.z / length));
+}
+
+double quaternionRotationAngleRadians(const QQuaternion &rotation)
+{
+    const QQuaternion normalized_rotation = rotation.normalized();
+    const double scalar = qBound(
+        -1.0, std::abs(double(normalized_rotation.scalar())), 1.0);
+    return 2.0 * std::acos(scalar);
+}
+
+QQuaternion limitedRotation(
+    const QQuaternion &rotation, double maximum_angle_rad)
+{
+    const double angle_rad = quaternionRotationAngleRadians(rotation);
+    if (!(angle_rad > maximum_angle_rad) || angle_rad <= 1e-12)
+        return rotation.normalized();
+
+    const double fraction = qBound(0.0, maximum_angle_rad / angle_rad, 1.0);
+    return QQuaternion::slerp(
+        QQuaternion(1.0f, 0.0f, 0.0f, 0.0f),
+        rotation.normalized(), float(fraction));
+}
+
 View3dCameraBasis view3dCameraBasis(double yaw_deg, double pitch_deg,
                                     double vertical_offset_pixels,
                                     double camera_distance_pixels,
@@ -776,6 +812,87 @@ void MapModel::panGlobeByPointerDrag(
     if (!GeoWgs84Ellipsoid::rayIntersection(eye, direction, &new_point))
         return;
 
+    const QQuaternion rotation = QQuaternion::rotationTo(
+        new_point.normalized(), previous_point.normalized());
+    applyGlobePanRotation(rotation);
+}
+
+bool MapModel::panGlobeByTerrainPointerDrag(
+    const QPoint &previous_screen_position, const QPoint &new_screen_position,
+    const QSize &viewport,
+    const GeoWgs84Ellipsoid::EcefPositionD &previous_terrain_ecef,
+    const GeoWgs84Ellipsoid::EcefPositionD &new_terrain_ecef,
+    double terrain_weight)
+{
+    if (previous_screen_position == new_screen_position
+        || !viewport.isValid())
+    {
+        return false;
+    }
+
+    QVector3D eye;
+    QVector3D direction;
+    if (!globeScreenRay(previous_screen_position, viewport, &eye, &direction))
+        return false;
+    QVector3D previous_ellipsoid_point;
+    if (!GeoWgs84Ellipsoid::rayIntersection(
+            eye, direction, &previous_ellipsoid_point))
+    {
+        return false;
+    }
+
+    if (!globeScreenRay(new_screen_position, viewport, &eye, &direction))
+        return false;
+    QVector3D new_ellipsoid_point;
+    if (!GeoWgs84Ellipsoid::rayIntersection(
+            eye, direction, &new_ellipsoid_point))
+    {
+        return false;
+    }
+
+    const QQuaternion ellipsoid_rotation = QQuaternion::rotationTo(
+        new_ellipsoid_point.normalized(), previous_ellipsoid_point.normalized());
+
+    const QVector3D previous_terrain_direction =
+        normalizedEcefDirection(previous_terrain_ecef);
+    const QVector3D new_terrain_direction =
+        normalizedEcefDirection(new_terrain_ecef);
+    if (previous_terrain_direction.lengthSquared() <= 1e-12f
+        || new_terrain_direction.lengthSquared() <= 1e-12f)
+    {
+        return false;
+    }
+
+    QQuaternion terrain_rotation = QQuaternion::rotationTo(
+        new_terrain_direction, previous_terrain_direction);
+
+    // Relief viewed almost tangentially can make two adjacent screen rays hit
+    // terrain points that are very far apart. Keep the existing ellipsoid pan
+    // as the hard speed reference: even with terrain_weight == 1, the DEM
+    // rotation may be at most slightly larger than the baseline requested by
+    // the same pixel delta. This prevents cliffs/ridges from creating a sudden
+    // high-speed pan while still allowing nearby relief to influence the drag.
+    const double ellipsoid_angle_rad =
+        quaternionRotationAngleRadians(ellipsoid_rotation);
+    const double maximum_terrain_angle_rad = qMax(
+        ellipsoid_angle_rad * 1.35,
+        qDegreesToRadians(0.002));
+    terrain_rotation = limitedRotation(
+        terrain_rotation, maximum_terrain_angle_rad);
+
+    const double blend = qBound(0.0, terrain_weight, 1.0);
+    const QQuaternion blended_rotation = QQuaternion::slerp(
+        ellipsoid_rotation.normalized(), terrain_rotation.normalized(),
+        float(blend));
+    applyGlobePanRotation(blended_rotation);
+    return true;
+}
+
+void MapModel::applyGlobePanRotation(const QQuaternion &rotation)
+{
+    if (rotation.isNull())
+        return;
+
     const GeoWgs84Ellipsoid::OrbitCameraBasis old_camera_basis =
         GeoWgs84Ellipsoid::orbitCameraBasis(
             this->m_centerLon, this->m_centerLat,
@@ -786,14 +903,9 @@ void MapModel::panGlobeByPointerDrag(
             this->m_view_globe_camera_collision_lift_m);
     const QVector3D target_ecef = old_camera_basis.target;
 
-    // Rotating the camera's target by the rotation that maps "new_point"
-    // back onto "previous_point" is equivalent to rotating the globe itself
-    // by the rotation that maps "previous_point" onto "new_point" -- i.e.
-    // the ground point the user grabbed follows the cursor, the classic
-    // Marble/Google Earth "drag to pan" feel. QQuaternion::rotationTo()
-    // finds that rotation directly from the two (unit) directions.
-    const QQuaternion rotation = QQuaternion::rotationTo(
-        new_point.normalized(), previous_point.normalized());
+    // Rotating the camera's target by the rotation that maps the new surface
+    // point back onto the previous one is equivalent to rotating the globe
+    // itself so the grabbed ground point follows the requested pixel motion.
     const QVector3D rotated_target = rotation.rotatedVector(target_ecef);
 
     double lon_deg = 0.0;

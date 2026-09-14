@@ -692,6 +692,11 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             return rhi_surface->terrainCoordinateAtScreen(
                 screen_position, coordinate, true);
         });
+        this->map->setRhiGlobeTerrainPanResolver(
+            [rhi_surface](const QPoint &delta_pixels)
+        {
+            return rhi_surface->panGlobeByTerrainPixels(delta_pixels);
+        });
         rhi_surface->setBackgroundOpacity(this->network_background_opacity);
         rhi_surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
         applyDesktopRhiSymbology();
@@ -1164,6 +1169,7 @@ MapMonitorContainer::~MapMonitorContainer()
 {
 #if AOWIS_HAS_QRHI
     this->map->setRhiScreenCoordinateResolver(MapWidget::ScreenCoordinateResolver());
+    this->map->setRhiGlobeTerrainPanResolver(MapWidget::GlobeTerrainPanResolver());
     if (this->desktop_scene_fullscreen_active)
         setDesktopRhiSceneFullscreen(false);
 #endif
