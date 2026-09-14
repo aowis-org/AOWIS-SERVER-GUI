@@ -6,6 +6,8 @@
 #include "network/infrastructure_entity_traits.h"
 #include "network/network_symbology_rendering.h"
 
+#include <GeographicLib/Geodesic.hpp>
+
 #include <cmath>
 
 namespace
@@ -22,6 +24,15 @@ bool finiteCoordinate(const CoordinateWGS84 &coordinate)
 
 constexpr double UndergroundSubdivisionTargetLengthM = 20.0;
 constexpr int UndergroundSubdivisionMaximumCount = 32;
+// Subdivide long digitized Globe spans so their rendered centerline follows
+// WGS84 curvature instead of cutting through the ellipsoid as one long ECEF
+// chord. 0.5 m is deliberately far below any normal water-network visual
+// tolerance while still leaving ordinary local pipes (roughly <= 5 km per
+// digitized span) as a single segment with zero extra vertices. The 4096
+// safety cap still covers even an almost-antipodal span at approximately
+// this error bound, while preventing malformed inputs from exploding memory.
+constexpr double LongLinkMaximumChordSagittaM = 0.5;
+constexpr int LongLinkMaximumSubdivisionCount = 4096;
 // How far below the sampled terrain a point has to sit before it counts as
 // "buried" -- small enough to ignore DEM sampling noise/float error for a
 // pipe running essentially at grade, large enough to not flag on that noise.
@@ -37,6 +48,75 @@ constexpr double FlowDirectionChevronHalfWidthRatio = 0.4;
 constexpr double FlowDirectionStrokeWidthRatio = 0.2;
 constexpr double FlowDirectionMinimumElevationPixels = 4.0;
 constexpr int FlowDirectionMaximumMarkersPerLink = 32;
+
+struct GeodesicSpan
+{
+    double distance_m = 0.0;
+    double initial_azimuth_deg = 0.0;
+};
+
+bool geodesicSpanBetween(
+    const CoordinateWGS84 &start, const CoordinateWGS84 &end,
+    GeodesicSpan *span)
+{
+    if (span == nullptr || !finiteCoordinate(start) || !finiteCoordinate(end))
+        return false;
+
+    double final_azimuth_deg = 0.0;
+    GeographicLib::Geodesic::WGS84().Inverse(
+        start.latitude_deg, start.longitude_deg,
+        end.latitude_deg, end.longitude_deg,
+        span->distance_m, span->initial_azimuth_deg, final_azimuth_deg);
+    return std::isfinite(span->distance_m)
+        && std::isfinite(span->initial_azimuth_deg)
+        && span->distance_m >= 0.0;
+}
+
+int longLinkSubdivisionCount(const GeodesicSpan &span)
+{
+    if (!std::isfinite(span.distance_m) || span.distance_m <= 0.0)
+        return 1;
+
+    // Conservative use of the polar radius: it is the smaller WGS84 radius,
+    // so the same chord length bends at least as much here as anywhere else
+    // on the ellipsoid. For a circle, sagitta s and chord length c satisfy
+    // c = 2*sqrt(2*R*s - s^2).
+    const double radius_m = GeoWgs84Ellipsoid::PolarRadiusM;
+    const double maximum_chord_length_m = 2.0 * std::sqrt(qMax(
+        0.0,
+        2.0 * radius_m * LongLinkMaximumChordSagittaM
+            - LongLinkMaximumChordSagittaM * LongLinkMaximumChordSagittaM));
+    if (!std::isfinite(maximum_chord_length_m) || maximum_chord_length_m <= 0.0)
+        return 1;
+
+    return qBound(
+        1,
+        int(std::ceil(span.distance_m / maximum_chord_length_m)),
+        LongLinkMaximumSubdivisionCount);
+}
+
+bool geodesicCoordinateAtDistance(
+    const CoordinateWGS84 &start, double initial_azimuth_deg, double distance_m,
+    CoordinateWGS84 *coordinate)
+{
+    if (coordinate == nullptr || !finiteCoordinate(start)
+        || !std::isfinite(initial_azimuth_deg) || !std::isfinite(distance_m))
+    {
+        return false;
+    }
+
+    double latitude_deg = 0.0;
+    double longitude_deg = 0.0;
+    GeographicLib::Geodesic::WGS84().Direct(
+        start.latitude_deg, start.longitude_deg, initial_azimuth_deg, distance_m,
+        latitude_deg, longitude_deg);
+    if (!std::isfinite(longitude_deg) || !std::isfinite(latitude_deg))
+        return false;
+
+    coordinate->longitude_deg = longitude_deg;
+    coordinate->latitude_deg = latitude_deg;
+    return true;
+}
 
 CoordinateWGS84 coordinateWithDeclutterOffset(
     const CoordinateWGS84 &coordinate, const QPointF &offset_m)
@@ -615,6 +695,8 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
 
         bool have_previous = false;
         QVector3D previous;
+        CoordinateWGS84 previous_coordinate;
+        double previous_elevation_m = 0.0;
         for (qsizetype vertex_index = 0;
              vertex_index < link.vertices_wgs84.size(); ++vertex_index)
         {
@@ -649,14 +731,52 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
 
             if (have_previous)
             {
-                appendLinkSegment(link.entity_type, link.render_id, previous, current);
-                const float segment_length_m = (current - previous).length();
-                link_path.segments.append({previous, current, segment_length_m});
-                link_path.total_length_m += double(segment_length_m);
+                GeodesicSpan geodesic_span;
+                const bool have_geodesic_span = geodesicSpanBetween(
+                    previous_coordinate, coordinate, &geodesic_span);
+                const int subdivision_count = have_geodesic_span
+                    ? longLinkSubdivisionCount(geodesic_span)
+                    : 1;
 
+                QVector3D segment_start = previous;
+                for (int subdivision = 1; subdivision <= subdivision_count; ++subdivision)
+                {
+                    const double ratio =
+                        double(subdivision) / double(subdivision_count);
+                    QVector3D segment_end = current;
+                    if (subdivision < subdivision_count && have_geodesic_span)
+                    {
+                        CoordinateWGS84 sample_coordinate;
+                        if (geodesicCoordinateAtDistance(
+                                previous_coordinate, geodesic_span.initial_azimuth_deg,
+                                geodesic_span.distance_m * ratio, &sample_coordinate))
+                        {
+                            const double sample_elevation_m = previous_elevation_m
+                                + (elevation_m - previous_elevation_m) * ratio;
+                            segment_end = ecefPosition(
+                                sample_coordinate, sample_elevation_m);
+                        }
+                        else
+                        {
+                            segment_end = previous
+                                + (current - previous) * float(ratio);
+                        }
+                    }
+
+                    appendLinkSegment(
+                        link.entity_type, link.render_id, segment_start, segment_end);
+                    const float segment_length_m =
+                        (segment_end - segment_start).length();
+                    link_path.segments.append(
+                        {segment_start, segment_end, segment_length_m});
+                    link_path.total_length_m += double(segment_length_m);
+                    segment_start = segment_end;
+                }
             }
 
             previous = current;
+            previous_coordinate = coordinate;
+            previous_elevation_m = elevation_m;
             have_previous = true;
         }
 
@@ -893,56 +1013,74 @@ void MapRhiGlobeNetworkScene::appendUndergroundSubdivisions(
     const CoordinateWGS84 &end_coordinate, double end_elevation_m,
     const QVector3D &end_ecef)
 {
-    const float segment_length_m = (end_ecef - start_ecef).length();
-    const int subdivision_count = qBound(
+    GeodesicSpan geodesic_span;
+    const bool have_geodesic_span = geodesicSpanBetween(
+        start_coordinate, end_coordinate, &geodesic_span);
+    const double span_length_m = have_geodesic_span
+        ? geodesic_span.distance_m
+        : double((end_ecef - start_ecef).length());
+    const int classification_subdivision_count = qBound(
         1,
-        int(std::ceil(double(segment_length_m) / UndergroundSubdivisionTargetLengthM)),
+        int(std::ceil(span_length_m / UndergroundSubdivisionTargetLengthM)),
         UndergroundSubdivisionMaximumCount);
+    // X-Ray geometry has to follow the same curved Earth as the visible
+    // link. For ordinary spans the existing underground-classification
+    // sampling remains the stricter requirement; for very long spans, keep
+    // at least the adaptive curvature subdivision count even though the
+    // classification sampler itself is intentionally capped.
+    const int curvature_subdivision_count = have_geodesic_span
+        ? longLinkSubdivisionCount(geodesic_span)
+        : 1;
+    const int subdivision_count = qMax(
+        classification_subdivision_count, curvature_subdivision_count);
 
-    bool buried_run_active = false;
-    QVector3D buried_run_start = start_ecef;
     QVector3D previous_point = start_ecef;
     for (int subdivision = 0; subdivision <= subdivision_count; ++subdivision)
     {
         const double ratio = double(subdivision) / double(subdivision_count);
-        // Linear interpolation in lon/lat: fine for subdivisions this
-        // short (a few tens of metres at most), no antimeridian handling
-        // needed at that scale.
         CoordinateWGS84 sample_coordinate = start_coordinate;
-        sample_coordinate.longitude_deg = start_coordinate.longitude_deg
-            + (end_coordinate.longitude_deg - start_coordinate.longitude_deg) * ratio;
-        sample_coordinate.latitude_deg = start_coordinate.latitude_deg
-            + (end_coordinate.latitude_deg - start_coordinate.latitude_deg) * ratio;
+        if (subdivision == subdivision_count)
+        {
+            sample_coordinate = end_coordinate;
+        }
+        else if (subdivision > 0 && have_geodesic_span)
+        {
+            geodesicCoordinateAtDistance(
+                start_coordinate, geodesic_span.initial_azimuth_deg,
+                geodesic_span.distance_m * ratio, &sample_coordinate);
+        }
+        else if (subdivision > 0)
+        {
+            // Defensive fallback only: valid WGS84 endpoints should always
+            // produce a GeographicLib geodesic. Keep the old linear path if
+            // they do not, rather than dropping X-Ray classification.
+            sample_coordinate.longitude_deg = start_coordinate.longitude_deg
+                + (end_coordinate.longitude_deg - start_coordinate.longitude_deg) * ratio;
+            sample_coordinate.latitude_deg = start_coordinate.latitude_deg
+                + (end_coordinate.latitude_deg - start_coordinate.latitude_deg) * ratio;
+        }
+
         const double sample_elevation_m =
             start_elevation_m + (end_elevation_m - start_elevation_m) * ratio;
         const QVector3D sample_point = subdivision == 0
             ? start_ecef
             : (subdivision == subdivision_count
                 ? end_ecef
-                : start_ecef + (end_ecef - start_ecef) * float(ratio));
+                : ecefPosition(sample_coordinate, sample_elevation_m));
 
         double terrain_elevation_m = 0.0;
         const bool buried = this->terrain_elevation_resolver
             && this->terrain_elevation_resolver(sample_coordinate, &terrain_elevation_m)
             && sample_elevation_m < terrain_elevation_m - UndergroundToleranceM;
 
-        if (buried && !buried_run_active)
-        {
-            buried_run_active = true;
-            buried_run_start = previous_point;
-        }
-        else if (!buried && buried_run_active)
+        if (subdivision > 0 && buried)
         {
             appendUndergroundLinkSegment(
-                entity_type, render_id, buried_run_start, previous_point);
-            buried_run_active = false;
+                entity_type, render_id, previous_point, sample_point);
         }
 
         previous_point = sample_point;
     }
-
-    if (buried_run_active)
-        appendUndergroundLinkSegment(entity_type, render_id, buried_run_start, end_ecef);
 }
 
 void MapRhiGlobeNetworkScene::appendNode(

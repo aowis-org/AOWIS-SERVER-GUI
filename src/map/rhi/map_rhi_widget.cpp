@@ -1770,13 +1770,14 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
         if (this->globe_network_scene.linkThicknessUnit()
             == NetworkSymbologySizeUnit::Meters)
         {
-            const QVector3D segment_direction = end - start;
             QVector3D width_direction(
-                -segment_direction.y(), segment_direction.x(), 0.0f);
+                link_vertex.width_direction_x,
+                link_vertex.width_direction_y,
+                link_vertex.width_direction_z);
             if (width_direction.lengthSquared() > 0.000001f)
                 width_direction.normalize();
             else
-                width_direction = QVector3D(1.0f, 0.0f, 0.0f);
+                width_direction = impostor_camera_basis.right;
 
             const QVector3D midpoint = (start + end) * 0.5f;
             const QPointF midpoint_screen = projectGlobeToScreen(

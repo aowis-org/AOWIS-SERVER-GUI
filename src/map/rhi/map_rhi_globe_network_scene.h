@@ -54,8 +54,11 @@
 // Globe link vertices provide that shader with a per-segment local tangent
 // width direction derived from the WGS84 east/north/up frame, so a metre of
 // pipe width means a metre sideways along the local Earth surface rather
-// than along the raw global ECEF XY plane. Flat TwoD/ThreeD vertices leave
-// that optional direction zero and retain their legacy XY-plane behavior.
+// than along the raw global ECEF XY plane. Long digitized spans are also
+// adaptively subdivided along the WGS84 geodesic before those vertices are
+// built, preventing one long ECEF chord from cutting through the curved
+// Earth. Flat TwoD/ThreeD vertices leave the optional tangent direction zero
+// and retain their legacy XY-plane behavior.
 //
 // Coincident-node decluttering uses the same one-metre policy as the flat
 // RHI scene, but clusters nodes in a local east/north tangent plane and
