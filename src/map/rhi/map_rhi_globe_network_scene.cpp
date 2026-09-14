@@ -1006,6 +1006,49 @@ void MapRhiGlobeNetworkScene::appendUndergroundLinkSegment(
     }
 }
 
+void MapRhiGlobeNetworkScene::appendUndergroundCurvedRun(
+    InfrastructureEntity entity_type, quint32 render_id,
+    const CoordinateWGS84 &start_coordinate, double start_elevation_m,
+    const QVector3D &start_ecef,
+    const CoordinateWGS84 &end_coordinate, double end_elevation_m,
+    const QVector3D &end_ecef)
+{
+    GeodesicSpan geodesic_span;
+    const bool have_geodesic_span = geodesicSpanBetween(
+        start_coordinate, end_coordinate, &geodesic_span);
+    const int subdivision_count = have_geodesic_span
+        ? longLinkSubdivisionCount(geodesic_span)
+        : 1;
+
+    QVector3D segment_start = start_ecef;
+    for (int subdivision = 1; subdivision <= subdivision_count; ++subdivision)
+    {
+        const double ratio = double(subdivision) / double(subdivision_count);
+        QVector3D segment_end = end_ecef;
+        if (subdivision < subdivision_count && have_geodesic_span)
+        {
+            CoordinateWGS84 sample_coordinate;
+            if (geodesicCoordinateAtDistance(
+                    start_coordinate, geodesic_span.initial_azimuth_deg,
+                    geodesic_span.distance_m * ratio, &sample_coordinate))
+            {
+                const double sample_elevation_m = start_elevation_m
+                    + (end_elevation_m - start_elevation_m) * ratio;
+                segment_end = ecefPosition(sample_coordinate, sample_elevation_m);
+            }
+            else
+            {
+                segment_end = start_ecef
+                    + (end_ecef - start_ecef) * float(ratio);
+            }
+        }
+
+        appendUndergroundLinkSegment(
+            entity_type, render_id, segment_start, segment_end);
+        segment_start = segment_end;
+    }
+}
+
 void MapRhiGlobeNetworkScene::appendUndergroundSubdivisions(
     InfrastructureEntity entity_type, quint32 render_id,
     const CoordinateWGS84 &start_coordinate, double start_elevation_m,
@@ -1019,22 +1062,27 @@ void MapRhiGlobeNetworkScene::appendUndergroundSubdivisions(
     const double span_length_m = have_geodesic_span
         ? geodesic_span.distance_m
         : double((end_ecef - start_ecef).length());
-    const int classification_subdivision_count = qBound(
+    const int subdivision_count = qBound(
         1,
         int(std::ceil(span_length_m / UndergroundSubdivisionTargetLengthM)),
         UndergroundSubdivisionMaximumCount);
-    // X-Ray geometry has to follow the same curved Earth as the visible
-    // link. For ordinary spans the existing underground-classification
-    // sampling remains the stricter requirement; for very long spans, keep
-    // at least the adaptive curvature subdivision count even though the
-    // classification sampler itself is intentionally capped.
-    const int curvature_subdivision_count = have_geodesic_span
-        ? longLinkSubdivisionCount(geodesic_span)
-        : 1;
-    const int subdivision_count = qMax(
-        classification_subdivision_count, curvature_subdivision_count);
 
+    // Classification samples must not become render-segment boundaries.
+    // The X-Ray shader restarts its screen-space broken-stroke phase at each
+    // render segment, so emitting every ~20 m classification interval as its
+    // own segment makes the pattern look solid until the camera is very close.
+    // Coalesce consecutive buried samples into one run, as before the curved
+    // link work, then subdivide only that run as much as WGS84 curvature
+    // actually requires.
+    bool buried_run_active = false;
+    CoordinateWGS84 buried_run_start_coordinate = start_coordinate;
+    double buried_run_start_elevation_m = start_elevation_m;
+    QVector3D buried_run_start = start_ecef;
+
+    CoordinateWGS84 previous_sample_coordinate = start_coordinate;
+    double previous_sample_elevation_m = start_elevation_m;
     QVector3D previous_point = start_ecef;
+
     for (int subdivision = 0; subdivision <= subdivision_count; ++subdivision)
     {
         const double ratio = double(subdivision) / double(subdivision_count);
@@ -1073,13 +1121,37 @@ void MapRhiGlobeNetworkScene::appendUndergroundSubdivisions(
             && this->terrain_elevation_resolver(sample_coordinate, &terrain_elevation_m)
             && sample_elevation_m < terrain_elevation_m - UndergroundToleranceM;
 
-        if (subdivision > 0 && buried)
+        if (buried && !buried_run_active)
         {
-            appendUndergroundLinkSegment(
-                entity_type, render_id, previous_point, sample_point);
+            buried_run_active = true;
+            buried_run_start_coordinate = previous_sample_coordinate;
+            buried_run_start_elevation_m = previous_sample_elevation_m;
+            buried_run_start = previous_point;
+        }
+        else if (!buried && buried_run_active)
+        {
+            appendUndergroundCurvedRun(
+                entity_type, render_id,
+                buried_run_start_coordinate, buried_run_start_elevation_m,
+                buried_run_start,
+                previous_sample_coordinate, previous_sample_elevation_m,
+                previous_point);
+            buried_run_active = false;
         }
 
+        previous_sample_coordinate = sample_coordinate;
+        previous_sample_elevation_m = sample_elevation_m;
         previous_point = sample_point;
+    }
+
+    if (buried_run_active)
+    {
+        appendUndergroundCurvedRun(
+            entity_type, render_id,
+            buried_run_start_coordinate, buried_run_start_elevation_m,
+            buried_run_start,
+            previous_sample_coordinate, previous_sample_elevation_m,
+            previous_point);
     }
 }
 
@@ -1662,15 +1734,18 @@ void MapRhiGlobeNetworkScene::rebuildHighlights()
                 const float base_link_width = float(this->symbology.link_thickness_px);
                 const float selected_link_width = qMax(
                     3.0f, base_link_width + (selected_has_error ? 6.0f : 2.0f));
-                // A selected junction shows its selection through the shared
-                // GPU style table, so it needs no separate flat highlight
-                // decal. Other selected node types (tanks, reservoirs,
-                // pumps, valves -- none of which have a Globe 3D model yet)
-                // still get the ordinary flat decal.
-                QVector<MapRhiScene::NodeVertex> *selected_node_target =
+                // Selected 3D node models carry their own selection state,
+                // so adding the flat node highlight decal as well would draw
+                // a second, unrelated marker through the model. Keep the
+                // decal only for node types that are actually rendered as
+                // flat markers in the current Globe configuration.
+                const bool selected_is_3d_model =
                     this->selected_entity_type == InfrastructureEntity::Junction
-                    ? nullptr
-                    : &this->selected_node_vertices;
+                    || (this->use_3d_icon_models
+                        && (this->selected_entity_type == InfrastructureEntity::Tank
+                            || this->selected_entity_type == InfrastructureEntity::Reservoir));
+                QVector<MapRhiScene::NodeVertex> *selected_node_target =
+                    selected_is_3d_model ? nullptr : &this->selected_node_vertices;
                 appendEntityHighlight(
                     this->selected_entity_type,
                     quint32(selected_iterator.value() & 0xffffffffULL),

@@ -3624,20 +3624,14 @@ void MapRhiWidget::uploadNetworkStyleTable(QRhiResourceUpdateBatch *resource_upd
 
 void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
 {
-    // Ordering mirrors the ThreeD (is_2d_view == false) branch above:
-    // Solid-mode no-depth pass first (see below), then base links, flow
-    // chevrons, base nodes/junctions, selection highlight, simulation
-    // diagnostics, X-Ray underground links, then icons on top. The heatmap
-    // overlay and 3D tank/reservoir meshes are not yet implemented for the
-    // globe -- see MapRhiGlobeNetworkScene's class comment -- so this
-    // intentionally does not reference those pipelines. Junctions use the
-    // same analytic sphere impostor quad as ThreeD with Globe-owned instance
-    // data and pipeline objects.
-    // Underground X-Ray for junctions isn't implemented yet, for a different reason than the other gaps here:
-    // it needs a per-junction underground/aboveground classification this
-    // class doesn't build (X-Ray only ever classifies link segments -- see
-    // MapRhiGlobeNetworkScene::appendUndergroundSubdivisions()), not a
-    // missing 3D model.
+    // Ordering mirrors the ThreeD (is_2d_view == false) network pass: the
+    // optional Solid no-depth pass comes first, followed by base links, flow
+    // chevrons, nodes/junctions, 3D tank/reservoir models, selection and
+    // diagnostics, X-Ray underground links, and finally semantic billboard
+    // icons on top. Globe heatmap rendering is handled separately by
+    // MapRhiGlobeRenderer before this network pass. Underground X-Ray
+    // intentionally classifies link segments only; junctions are not part
+    // of that mode.
     const QVector<MapRhiScene::LinkVertex> &link_vertices =
         this->globe_network_scene.linkVertices();
     const QVector<MapRhiScene::NodeVertex> &node_vertices =

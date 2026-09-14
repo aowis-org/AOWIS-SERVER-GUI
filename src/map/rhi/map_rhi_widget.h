@@ -283,8 +283,9 @@ private:
     std::unique_ptr<QRhiGraphicsPipeline> tank_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> reservoir_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> junction_pipeline;
-    // Globe-owned copies retained during the phased migration. They use the
-    // same shader, quad, instance layout, and no-culling state as ThreeD.
+    // Globe-owned junction pipelines use the same shader, quad, instance
+    // layout, and no-culling state as ThreeD, but keep their own pipeline
+    // objects so Globe-specific render-state changes stay isolated.
     std::unique_ptr<QRhiGraphicsPipeline> globe_junction_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> globe_junction_no_depth_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> link_xray_pipeline;

@@ -63,19 +63,10 @@
 // Coincident-node decluttering uses the same one-metre policy as the flat
 // RHI scene, but clusters nodes in a local east/north tangent plane and
 // applies the resulting metre offsets back on WGS84 before ECEF conversion.
-// Junctions ARE rendered as analytic sphere impostors -- see
-// junctionInstances() -- reusing MapRhiScene/MapRhiWidget's
-// shared MapRhiJunctionInstance, GPU style table, and junction pipelines.
-// Unlike ThreeD's, this is not gated behind a toggle: Globe has no flat-2D
-// counterpart the way TwoD is to ThreeD, so junctions are unconditionally
-// impostors here, the same way ThreeD's are whenever its own 3D-model toggle
-// is on. Underground X-Ray *is* implemented, but for links only -- see
-// setUndergroundXRayEnabled() -- since ThreeD's underground junction
-// indicator relies on a per-junction underground/aboveground
-// classification this class does not yet build (see
-// appendUndergroundSubdivisions(), which only ever classifies link
-// segments). Follow-ups, not omissions this class silently papers over --
-// see MapRhiWidget::renderGlobe().
+// Junctions are analytic sphere impostors -- see junctionInstances() -- and
+// tanks/reservoirs can be represented by their Globe-oriented 3D models.
+// Underground X-Ray intentionally classifies and renders link segments only;
+// Solid mode remains the mode for seeing the complete network through terrain.
 class MapRhiGlobeNetworkScene
 {
 public:
@@ -271,6 +262,12 @@ private:
                                QVector<MapRhiScene::NodeVertex> *node_target) const;
     void appendUndergroundLinkSegment(InfrastructureEntity entity_type, quint32 render_id,
                                       const QVector3D &start, const QVector3D &end);
+    void appendUndergroundCurvedRun(
+        InfrastructureEntity entity_type, quint32 render_id,
+        const CoordinateWGS84 &start_coordinate, double start_elevation_m,
+        const QVector3D &start_ecef,
+        const CoordinateWGS84 &end_coordinate, double end_elevation_m,
+        const QVector3D &end_ecef);
     // Subdivides one already-placed link segment (from consecutive digitized
     // vertices) into short spans and appends each contiguous "below terrain"
     // run to underground_link_vertices. Coarser than MapRhiScene's ThreeD
