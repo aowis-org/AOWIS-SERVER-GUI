@@ -774,11 +774,45 @@ void MapRhiGlobeNetworkScene::rebuildUndergroundXRayGeometry()
     }
 }
 
+QVector3D MapRhiGlobeNetworkScene::linkWidthDirection(
+    const QVector3D &start, const QVector3D &end) const
+{
+    const QVector3D segment_direction = end - start;
+    if (segment_direction.lengthSquared() <= 1e-12f)
+        return QVector3D();
+
+    const QVector3D midpoint_relative = (start + end) * 0.5f;
+    GeoWgs84Ellipsoid::EcefPositionD midpoint_ecef;
+    midpoint_ecef.x = this->render_origin_ecef.x + double(midpoint_relative.x());
+    midpoint_ecef.y = this->render_origin_ecef.y + double(midpoint_relative.y());
+    midpoint_ecef.z = this->render_origin_ecef.z + double(midpoint_relative.z());
+
+    double longitude_deg = 0.0;
+    double latitude_deg = 0.0;
+    if (!GeoWgs84Ellipsoid::ecefToGeodetic(
+            midpoint_ecef, &longitude_deg, &latitude_deg))
+    {
+        return QVector3D();
+    }
+
+    const GeoWgs84Ellipsoid::LocalFrame local_frame =
+        GeoWgs84Ellipsoid::localFrameAtGeodetic(
+            longitude_deg, latitude_deg, 0.0);
+    QVector3D width_direction = QVector3D::crossProduct(
+        local_frame.up, segment_direction);
+    if (width_direction.lengthSquared() <= 1e-12f)
+        return QVector3D();
+
+    width_direction.normalize();
+    return width_direction;
+}
+
 void MapRhiGlobeNetworkScene::appendLinkSegment(
     InfrastructureEntity entity_type, quint32 render_id,
     const QVector3D &start, const QVector3D &end)
 {
     const quint64 entity_key = entityRenderKey(entity_type, render_id);
+    const QVector3D width_direction = linkWidthDirection(start, end);
     const float corners[6][2] = {
         {0.0f, -1.0f},
         {1.0f, -1.0f},
@@ -802,6 +836,9 @@ void MapRhiGlobeNetworkScene::appendLinkSegment(
         vertex.red = 0.05f;
         vertex.green = 0.05f;
         vertex.blue = 0.05f;
+        vertex.width_direction_x = width_direction.x();
+        vertex.width_direction_y = width_direction.y();
+        vertex.width_direction_z = width_direction.z();
         vertex.render_id = render_id;
         vertex.entity_type = entity_type;
         applyLinkColor(&vertex);
@@ -814,6 +851,7 @@ void MapRhiGlobeNetworkScene::appendUndergroundLinkSegment(
     InfrastructureEntity entity_type, quint32 render_id,
     const QVector3D &start, const QVector3D &end)
 {
+    const QVector3D width_direction = linkWidthDirection(start, end);
     const float corners[6][2] = {
         {0.0f, -1.0f},
         {1.0f, -1.0f},
@@ -835,6 +873,9 @@ void MapRhiGlobeNetworkScene::appendUndergroundLinkSegment(
         vertex.along = corners[index][0];
         vertex.side = corners[index][1];
         vertex.render_id = render_id;
+        vertex.width_direction_x = width_direction.x();
+        vertex.width_direction_y = width_direction.y();
+        vertex.width_direction_z = width_direction.z();
         vertex.entity_type = entity_type;
         // link_xray_pipeline reuses the same map_rhi_link.vert as the normal
         // link_pipeline, so it still expects a tinted vertex color to blend

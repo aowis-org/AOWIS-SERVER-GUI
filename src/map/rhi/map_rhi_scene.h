@@ -36,6 +36,13 @@ public:
         float blue = 0.0f;
         float alpha = 1.0f;
         float size_adjust_px = 0.0f;
+        // Optional world-space unit direction used to measure metre-sized
+        // link half-width. Flat TwoD/ThreeD geometry leaves this zero so the
+        // shared shader retains its legacy XY-plane perpendicular; Globe
+        // geometry fills it with the local WGS84 tangent direction.
+        float width_direction_x = 0.0f;
+        float width_direction_y = 0.0f;
+        float width_direction_z = 0.0f;
         quint32 render_id = 0;
         InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
     };

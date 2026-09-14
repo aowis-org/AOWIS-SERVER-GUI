@@ -5,6 +5,7 @@ layout(location = 1) in vec3 end_position;
 layout(location = 2) in vec2 corner;
 layout(location = 3) in vec4 color;
 layout(location = 4) in float size_adjust_px;
+layout(location = 5) in vec3 world_width_direction;
 
 layout(std140, binding = 0) uniform CameraBlock
 {
@@ -42,19 +43,37 @@ void main()
     if (configured_half_width < 0.0)
     {
         float half_width_world = -configured_half_width;
-        vec3 world_direction = end_position - start_position;
-        vec2 world_direction_xy = world_direction.xy;
-        float world_direction_length = length(world_direction_xy);
-        vec2 world_normal = world_direction_length > 0.000001
-            ? vec2(-world_direction_xy.y, world_direction_xy.x) / world_direction_length
-            : vec2(1.0, 0.0);
+        vec3 width_direction = world_width_direction;
+        float width_direction_length = length(width_direction);
+        bool has_world_width_direction = width_direction_length > 0.000001;
+        if (!has_world_width_direction)
+        {
+            // Flat TwoD/ThreeD compatibility: their ground plane is global
+            // XY, so retain the historical perpendicular and width
+            // measurement exactly as before.
+            vec3 world_direction = end_position - start_position;
+            vec2 world_direction_xy = world_direction.xy;
+            float world_direction_xy_length = length(world_direction_xy);
+            vec2 world_normal = world_direction_xy_length > 0.000001
+                ? vec2(-world_direction_xy.y, world_direction_xy.x)
+                    / world_direction_xy_length
+                : vec2(1.0, 0.0);
+            width_direction = vec3(world_normal, 0.0);
+        }
+        else
+        {
+            width_direction /= width_direction_length;
+        }
         vec3 midpoint = mix(start_position, end_position, 0.5);
         vec4 midpoint_clip = camera.view_projection * vec4(midpoint, 1.0);
         vec4 width_clip = camera.view_projection
-            * vec4(midpoint + vec3(world_normal * half_width_world, 0.0), 1.0);
+            * vec4(midpoint + width_direction * half_width_world, 1.0);
         vec2 midpoint_ndc = midpoint_clip.xy / midpoint_clip.w;
         vec2 width_ndc = width_clip.xy / width_clip.w;
-        half_width = length((width_ndc - midpoint_ndc) * viewport * 0.5);
+        vec2 width_pixels = (width_ndc - midpoint_ndc) * viewport * 0.5;
+        half_width = has_world_width_direction
+            ? abs(dot(width_pixels, normal))
+            : length(width_pixels);
     }
     if (configured_half_width < 0.0 && size_adjust_px < 0.0)
         half_width = -size_adjust_px;

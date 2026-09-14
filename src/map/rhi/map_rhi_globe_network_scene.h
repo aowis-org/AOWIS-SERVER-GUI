@@ -46,19 +46,16 @@
 // byte-for-byte (rather than declaring parallel structs) so MapRhiWidget can
 // draw this geometry with the exact same RHI pipelines/shaders
 // (map_rhi_link/node/icon.vert+.frag) it already built for the ThreeD view.
-// Those vertex shaders compute stroke thickness/node radius/icon size in
-// screen-space pixels purely from the projected clip-space positions of the
-// vertices they are given -- they do not know or care whether the world
-// positions they were handed came from a flat tangent plane or an
-// ellipsoid -- so no shader changes are needed to reuse them here. The one
-// exception is the optional "size in meters" path in map_rhi_link.vert,
-// which derives a world-space perpendicular offset from the raw XY
-// components of the link direction; that shortcut assumes a horizontal
-// ground plane (true for the flat ThreeD view) and is only an approximation
-// on the curved globe. Meters-unit link/node/icon sizing is still passed
-// through unmodified for consistency with MapRhiScene, since on a
-// planet-scale view the resulting error is visually negligible outside
-// extreme grazing angles.
+// Most of those shader paths compute stroke thickness/node radius/icon size
+// in screen-space pixels purely from the projected clip-space positions of
+// the vertices they are given, so flat and Globe geometry can share them
+// unchanged. The one path that needs Globe-specific geometric input is the
+// optional "size in meters" path in map_rhi_link.vert.
+// Globe link vertices provide that shader with a per-segment local tangent
+// width direction derived from the WGS84 east/north/up frame, so a metre of
+// pipe width means a metre sideways along the local Earth surface rather
+// than along the raw global ECEF XY plane. Flat TwoD/ThreeD vertices leave
+// that optional direction zero and retain their legacy XY-plane behavior.
 //
 // Coincident-node decluttering uses the same one-metre policy as the flat
 // RHI scene, but clusters nodes in a local east/north tangent plane and
@@ -238,6 +235,8 @@ private:
     QVector3D ecefPosition(const CoordinateWGS84 &coordinate, double elevation_m) const;
     void appendLinkSegment(InfrastructureEntity entity_type, quint32 render_id,
                            const QVector3D &start, const QVector3D &end);
+    QVector3D linkWidthDirection(
+        const QVector3D &start, const QVector3D &end) const;
     void appendNode(InfrastructureEntity entity_type, quint32 render_id,
                     const QVector3D &center);
     void applyLinkColor(MapRhiScene::LinkVertex *vertex) const;

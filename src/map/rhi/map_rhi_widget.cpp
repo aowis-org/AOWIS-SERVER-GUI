@@ -4245,7 +4245,9 @@ bool MapRhiWidget::createPipelines()
             {0, 3, QRhiVertexInputAttribute::Float4,
              quint32(offsetof(MapRhiScene::LinkVertex, red))},
             {0, 4, QRhiVertexInputAttribute::Float,
-             quint32(offsetof(MapRhiScene::LinkVertex, size_adjust_px))}
+             quint32(offsetof(MapRhiScene::LinkVertex, size_adjust_px))},
+            {0, 5, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiScene::LinkVertex, width_direction_x))}
         });
 
         this->link_pipeline.reset(this->active_rhi->newGraphicsPipeline());
@@ -4363,7 +4365,9 @@ bool MapRhiWidget::createPipelines()
             {0, 3, QRhiVertexInputAttribute::Float4,
              quint32(offsetof(MapRhiScene::LinkVertex, red))},
             {0, 4, QRhiVertexInputAttribute::Float,
-             quint32(offsetof(MapRhiScene::LinkVertex, size_adjust_px))}
+             quint32(offsetof(MapRhiScene::LinkVertex, size_adjust_px))},
+            {0, 5, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiScene::LinkVertex, width_direction_x))}
         });
 
         this->selected_link_pipeline.reset(this->active_rhi->newGraphicsPipeline());
@@ -4833,7 +4837,9 @@ bool MapRhiWidget::createPipelines()
             {0, 3, QRhiVertexInputAttribute::Float4,
              quint32(offsetof(MapRhiScene::LinkVertex, red))},
             {0, 4, QRhiVertexInputAttribute::Float,
-             quint32(offsetof(MapRhiScene::LinkVertex, size_adjust_px))}
+             quint32(offsetof(MapRhiScene::LinkVertex, size_adjust_px))},
+            {0, 5, QRhiVertexInputAttribute::Float3,
+             quint32(offsetof(MapRhiScene::LinkVertex, width_direction_x))}
         });
 
         if (!this->link_xray_pipeline)

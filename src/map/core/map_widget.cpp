@@ -1042,7 +1042,15 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
                     this->view_3d_zoom_in_key_pressed = true;
                 else
                     this->view_3d_zoom_out_key_pressed = true;
-                beginView3dKeyboardZoomInteraction();
+
+                // Globe keyboard zoom must behave like Globe wheel zoom: it
+                // changes camera distance only. Entering the shared Rotate
+                // state would capture a new DEM orbit anchor and re-express
+                // yaw/pitch, which makes Q/E zoom visibly wobble the compass.
+                // Legacy planar ThreeD still relies on the rotate interaction
+                // while its continuous camera distance changes.
+                if (this->m_model->viewMode() == MapViewMode::ThreeD)
+                    beginView3dKeyboardZoomInteraction();
             }
             this->pan_fast_modifier_pressed = event->modifiers().testFlag(Qt::ShiftModifier);
             ensurePanAnimationRunning();
