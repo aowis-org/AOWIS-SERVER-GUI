@@ -306,6 +306,12 @@ private:
 
     struct GlobeTile
     {
+        struct TerrainRayRowBounds
+        {
+            QVector3D minimum;
+            QVector3D maximum;
+        };
+
         int virtual_x = 0;
         int tile_x = 0;
         int tile_y = 0;
@@ -338,6 +344,12 @@ private:
         QVector3D terrain_ray_bounds_min;
         QVector3D terrain_ray_bounds_max;
         bool terrain_ray_bounds_valid = false;
+        // Second-stage acceleration for exact DEM picking. Each entry bounds
+        // one regular terrain cell row (the two adjacent vertex rows). A
+        // screen ray that reaches a tile therefore only tests triangles in
+        // the few rows whose bounds it actually crosses, instead of scanning
+        // every triangle in that tile on every pointer move/pan sample.
+        QVector<TerrainRayRowBounds> terrain_ray_row_bounds;
         // Future GPU-displaced terrain consumes one shared 65x65 height
         // layer per terrain_key. Multiple finer imagery leaves can therefore
         // point at the same page/layer without duplicating the DEM upload.

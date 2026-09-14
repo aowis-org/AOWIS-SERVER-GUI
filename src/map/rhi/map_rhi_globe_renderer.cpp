@@ -1389,6 +1389,7 @@ void MapRhiGlobeRenderer::updateTerrainRayBounds(GlobeTile *tile)
         return;
 
     tile->terrain_ray_bounds_valid = false;
+    tile->terrain_ray_row_bounds.clear();
     if (!tile->terrain_mesh_has_relief
         || tile->first_vertex < 0 || tile->vertex_count <= 0)
     {
@@ -1418,6 +1419,44 @@ void MapRhiGlobeRenderer::updateTerrainRayBounds(GlobeTile *tile)
     tile->terrain_ray_bounds_min = bounds_min;
     tile->terrain_ray_bounds_max = bounds_max;
     tile->terrain_ray_bounds_valid = true;
+
+    const int cell_count = qMax(1, tile->terrain_cell_count);
+    const qsizetype grid_width = qsizetype(cell_count) + 1;
+    const qsizetype expected_vertex_count = grid_width * grid_width;
+    if (qsizetype(tile->vertex_count) != expected_vertex_count)
+        return;
+
+    tile->terrain_ray_row_bounds.reserve(cell_count);
+    for (int row = 0; row < cell_count; ++row)
+    {
+        const qsizetype row_begin = vertex_begin
+            + qsizetype(row) * grid_width;
+        const qsizetype row_end = row_begin + grid_width * 2;
+        if (row_begin < vertex_begin || row_end > vertex_end)
+        {
+            tile->terrain_ray_row_bounds.clear();
+            return;
+        }
+
+        const TileVertex &row_first = this->window_vertices.at(row_begin);
+        QVector3D row_min(row_first.x, row_first.y, row_first.z);
+        QVector3D row_max = row_min;
+        for (qsizetype index = row_begin + 1; index < row_end; ++index)
+        {
+            const TileVertex &vertex = this->window_vertices.at(index);
+            row_min.setX(qMin(row_min.x(), vertex.x));
+            row_min.setY(qMin(row_min.y(), vertex.y));
+            row_min.setZ(qMin(row_min.z(), vertex.z));
+            row_max.setX(qMax(row_max.x(), vertex.x));
+            row_max.setY(qMax(row_max.y(), vertex.y));
+            row_max.setZ(qMax(row_max.z(), vertex.z));
+        }
+
+        GlobeTile::TerrainRayRowBounds row_bounds;
+        row_bounds.minimum = row_min;
+        row_bounds.maximum = row_max;
+        tile->terrain_ray_row_bounds.append(row_bounds);
+    }
 }
 
 bool MapRhiGlobeRenderer::visibleTerrainRayIntersection(
@@ -1475,36 +1514,76 @@ bool MapRhiGlobeRenderer::visibleTerrainRayIntersection(
         if (index_begin < 0 || index_end > this->window_indices.size())
             continue;
 
-        for (qsizetype index = index_begin; index + 2 < index_end; index += 3)
+        const auto test_index_range =
+            [this, &relative_origin, &direction, &nearest_distance_m, &found]
+            (qsizetype range_begin, qsizetype range_end)
         {
-            const quint32 a_index = this->window_indices.at(index);
-            const quint32 b_index = this->window_indices.at(index + 1);
-            const quint32 c_index = this->window_indices.at(index + 2);
-            if (qsizetype(a_index) >= this->window_vertices.size()
-                || qsizetype(b_index) >= this->window_vertices.size()
-                || qsizetype(c_index) >= this->window_vertices.size())
+            for (qsizetype index = range_begin;
+                 index + 2 < range_end; index += 3)
+            {
+                const quint32 a_index = this->window_indices.at(index);
+                const quint32 b_index = this->window_indices.at(index + 1);
+                const quint32 c_index = this->window_indices.at(index + 2);
+                if (qsizetype(a_index) >= this->window_vertices.size()
+                    || qsizetype(b_index) >= this->window_vertices.size()
+                    || qsizetype(c_index) >= this->window_vertices.size())
+                {
+                    continue;
+                }
+
+                const TileVertex &a_vertex = this->window_vertices.at(a_index);
+                const TileVertex &b_vertex = this->window_vertices.at(b_index);
+                const TileVertex &c_vertex = this->window_vertices.at(c_index);
+                const QVector3D a(a_vertex.x, a_vertex.y, a_vertex.z);
+                const QVector3D b(b_vertex.x, b_vertex.y, b_vertex.z);
+                const QVector3D c(c_vertex.x, c_vertex.y, c_vertex.z);
+
+                double candidate_distance_m = 0.0;
+                if (!rayTriangleIntersectionDistance(
+                        relative_origin, direction, a, b, c,
+                        &candidate_distance_m)
+                    || candidate_distance_m >= nearest_distance_m)
+                {
+                    continue;
+                }
+
+                nearest_distance_m = candidate_distance_m;
+                found = true;
+            }
+        };
+
+        const int cell_count = qMax(1, tile.terrain_cell_count);
+        const qsizetype row_index_count = qsizetype(cell_count) * 6;
+        const bool have_row_bounds =
+            tile.terrain_ray_row_bounds.size() == cell_count
+            && qsizetype(tile.index_count)
+                == qsizetype(cell_count) * qsizetype(cell_count) * 6;
+        if (!have_row_bounds)
+        {
+            test_index_range(index_begin, index_end);
+            continue;
+        }
+
+        for (int row = 0; row < cell_count; ++row)
+        {
+            const GlobeTile::TerrainRayRowBounds &row_bounds =
+                tile.terrain_ray_row_bounds.at(row);
+            double row_entry_distance_m = 0.0;
+            double row_exit_distance_m = 0.0;
+            if (!rayAabbIntersectionDistanceRange(
+                    relative_origin, direction,
+                    row_bounds.minimum, row_bounds.maximum,
+                    &row_entry_distance_m, &row_exit_distance_m)
+                || row_entry_distance_m >= nearest_distance_m)
             {
                 continue;
             }
 
-            const TileVertex &a_vertex = this->window_vertices.at(a_index);
-            const TileVertex &b_vertex = this->window_vertices.at(b_index);
-            const TileVertex &c_vertex = this->window_vertices.at(c_index);
-            const QVector3D a(a_vertex.x, a_vertex.y, a_vertex.z);
-            const QVector3D b(b_vertex.x, b_vertex.y, b_vertex.z);
-            const QVector3D c(c_vertex.x, c_vertex.y, c_vertex.z);
-
-            double candidate_distance_m = 0.0;
-            if (!rayTriangleIntersectionDistance(
-                    relative_origin, direction, a, b, c,
-                    &candidate_distance_m)
-                || candidate_distance_m >= nearest_distance_m)
-            {
-                continue;
-            }
-
-            nearest_distance_m = candidate_distance_m;
-            found = true;
+            const qsizetype row_begin = index_begin
+                + qsizetype(row) * row_index_count;
+            const qsizetype row_end = qMin(
+                row_begin + row_index_count, index_end);
+            test_index_range(row_begin, row_end);
         }
     }
 
