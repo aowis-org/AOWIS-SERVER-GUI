@@ -405,6 +405,12 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
             this->map_canvas->setRhiOverlayMode(true);
             if (rhi_surface->api() == QRhiWidget::Api::Vulkan)
             {
+                // MapRhiWidget is normally transparent for mouse input so monitor/map
+                // interaction can be handled by the separate MapWidget. On Vulkan the
+                // editor overlay has to be a child of the QRhiWidget for reliable
+                // composition. WA_TransparentForMouseEvents also makes child widgets
+                // transparent, so leaving it enabled here disables the complete editor.
+                rhi_surface->setAttribute(Qt::WA_TransparentForMouseEvents, false);
                 this->map_stack_layout->removeWidget(this->map_canvas);
                 this->map_canvas->setParent(rhi_surface);
                 this->map_canvas->setGeometry(rhi_surface->rect());
@@ -437,6 +443,8 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
                 this->desktop_rhi_surface->removeEventFilter(this);
                 this->map_canvas->setParent(this->map_stack);
                 this->map_stack_layout->addWidget(this->map_canvas);
+                this->desktop_rhi_surface->setAttribute(
+                    Qt::WA_TransparentForMouseEvents, true);
             }
             this->map_canvas->setRhiOverlayMode(false);
             this->map_canvas->show();
