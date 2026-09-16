@@ -9,6 +9,7 @@
 #include <GeographicLib/Geodesic.hpp>
 
 #include <cmath>
+#include <limits>
 
 namespace
 {
@@ -22,8 +23,10 @@ bool finiteCoordinate(const CoordinateWGS84 &coordinate)
     return std::isfinite(coordinate.longitude_deg) && std::isfinite(coordinate.latitude_deg);
 }
 
-constexpr double UndergroundSubdivisionTargetLengthM = 20.0;
-constexpr int UndergroundSubdivisionMaximumCount = 32;
+constexpr double UndergroundSubdivisionFallbackTargetLengthM = 20.0;
+constexpr double UndergroundSubdivisionMinimumTargetLengthM = 0.25;
+constexpr double UndergroundSubdivisionTerrainCellFraction = 0.5;
+constexpr int UndergroundSubdivisionMaximumCount = 128;
 // Subdivide long digitized Globe spans so their rendered centerline follows
 // WGS84 curvature instead of cutting through the ellipsoid as one long ECEF
 // chord. 0.5 m is deliberately far below any normal water-network visual
@@ -1062,15 +1065,60 @@ void MapRhiGlobeNetworkScene::appendUndergroundSubdivisions(
     const double span_length_m = have_geodesic_span
         ? geodesic_span.distance_m
         : double((end_ecef - start_ecef).length());
+
+    double target_length_m = UndergroundSubdivisionFallbackTargetLengthM;
+    double minimum_cell_size_m = std::numeric_limits<double>::infinity();
+    const double probe_ratios[3] = {0.0, 0.5, 1.0};
+    for (double probe_ratio : probe_ratios)
+    {
+        CoordinateWGS84 probe_coordinate = start_coordinate;
+        if (probe_ratio >= 1.0)
+        {
+            probe_coordinate = end_coordinate;
+        }
+        else if (probe_ratio > 0.0 && have_geodesic_span)
+        {
+            geodesicCoordinateAtDistance(
+                start_coordinate, geodesic_span.initial_azimuth_deg,
+                geodesic_span.distance_m * probe_ratio, &probe_coordinate);
+        }
+        else if (probe_ratio > 0.0)
+        {
+            probe_coordinate.longitude_deg = start_coordinate.longitude_deg
+                + (end_coordinate.longitude_deg - start_coordinate.longitude_deg)
+                    * probe_ratio;
+            probe_coordinate.latitude_deg = start_coordinate.latitude_deg
+                + (end_coordinate.latitude_deg - start_coordinate.latitude_deg)
+                    * probe_ratio;
+        }
+
+        double ignored_elevation_m = 0.0;
+        double terrain_cell_size_m = 0.0;
+        if (this->terrain_elevation_resolver
+            && this->terrain_elevation_resolver(
+                probe_coordinate, &ignored_elevation_m, &terrain_cell_size_m)
+            && std::isfinite(terrain_cell_size_m) && terrain_cell_size_m > 0.0)
+        {
+            minimum_cell_size_m = qMin(minimum_cell_size_m, terrain_cell_size_m);
+        }
+    }
+
+    if (std::isfinite(minimum_cell_size_m))
+    {
+        target_length_m = qMax(
+            UndergroundSubdivisionMinimumTargetLengthM,
+            minimum_cell_size_m * UndergroundSubdivisionTerrainCellFraction);
+    }
+
     const int subdivision_count = qBound(
         1,
-        int(std::ceil(span_length_m / UndergroundSubdivisionTargetLengthM)),
+        int(std::ceil(span_length_m / target_length_m)),
         UndergroundSubdivisionMaximumCount);
 
     // Classification samples must not become render-segment boundaries.
     // The X-Ray shader restarts its screen-space broken-stroke phase at each
-    // render segment, so emitting every ~20 m classification interval as its
-    // own segment makes the pattern look solid until the camera is very close.
+    // render segment, so emitting every classification interval as its own render segment would
+    // make the pattern look solid until the camera is very close.
     // Coalesce consecutive buried samples into one run, as before the curved
     // link work, then subdivide only that run as much as WGS84 curvature
     // actually requires.
@@ -1117,8 +1165,10 @@ void MapRhiGlobeNetworkScene::appendUndergroundSubdivisions(
                 : ecefPosition(sample_coordinate, sample_elevation_m));
 
         double terrain_elevation_m = 0.0;
+        double terrain_cell_size_m = 0.0;
         const bool buried = this->terrain_elevation_resolver
-            && this->terrain_elevation_resolver(sample_coordinate, &terrain_elevation_m)
+            && this->terrain_elevation_resolver(
+                sample_coordinate, &terrain_elevation_m, &terrain_cell_size_m)
             && sample_elevation_m < terrain_elevation_m - UndergroundToleranceM;
 
         if (buried && !buried_run_active)

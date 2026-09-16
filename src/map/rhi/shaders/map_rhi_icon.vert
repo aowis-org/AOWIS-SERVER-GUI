@@ -12,6 +12,7 @@ layout(std140, binding = 0) uniform CameraBlock
     vec4 heatmap_settings;
     vec4 basemap_settings;
     vec4 network_translation;
+    vec4 camera_right;
 } camera;
 
 layout(location = 0) out vec2 vertex_texture_coordinate;
@@ -54,6 +55,7 @@ void main()
     }
 
     vec2 offset_ndc = offset_ratio * icon_size_px * 2.0 / viewport;
+    offset_ndc.y *= camera.camera_right.w;
     clip_position.xy += offset_ndc * clip_position.w;
 
     gl_Position = clip_position;

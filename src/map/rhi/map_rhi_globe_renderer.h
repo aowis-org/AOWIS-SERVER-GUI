@@ -3,6 +3,8 @@
 
 #include "geo/geo_wgs84_ellipsoid.h"
 
+#include <aowis/model/gis.h>
+
 #include <QColor>
 #include <QElapsedTimer>
 #include <QHash>
@@ -143,6 +145,14 @@ public:
         const QVector3D &ray_direction_ecef,
         GeoWgs84Ellipsoid::EcefPositionD *intersection_ecef,
         double *distance_m) const;
+    // Resolves the terrain LOD that is actually retained for rendering at
+    // coordinate and reports its physical mesh-cell size. X-Ray
+    // classification uses this instead of a fixed metre interval so its
+    // sampling density follows the same terrain detail the user sees.
+    bool visibleTerrainSamplingAtCoordinate(
+        const CoordinateWGS84 &coordinate,
+        int *terrain_zoom,
+        double *cell_size_m) const;
     // Tracks visible heatmap changes separately from geographic layout
     // changes. Colors and active flags invalidate tile pixels, while stable
     // render ids, coordinates and radius govern the retained stamp layout.
@@ -669,6 +679,7 @@ private:
     QVector<quint32> window_indices;
     QVector<GlobeTile> window_tiles;
     QSet<quint64> window_position_keys;
+    QHash<quint64, qsizetype> window_tile_indices_by_position;
     bool window_dirty = true;
     // Which (zoom, tile_x, tile_y) nodes were subdivided into children on
     // the previous quadtree walk. Consulted by

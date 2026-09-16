@@ -179,7 +179,8 @@ private:
         const CoordinateWGS84 &coordinate, double *elevation_m,
         bool request_missing_tile = true);
     bool globeTerrainElevationAtCoordinate(
-        const CoordinateWGS84 &coordinate, double *elevation_m) const;
+        const CoordinateWGS84 &coordinate, double *elevation_m,
+        double *cell_size_m) const;
     bool globeCameraTerrainElevationAtCoordinate(
         const CoordinateWGS84 &coordinate, double *elevation_m,
         bool request_missing_tile) const;

@@ -1600,6 +1600,78 @@ bool MapRhiGlobeRenderer::visibleTerrainRayIntersection(
     return true;
 }
 
+bool MapRhiGlobeRenderer::visibleTerrainSamplingAtCoordinate(
+    const CoordinateWGS84 &coordinate,
+    int *terrain_zoom,
+    double *cell_size_m) const
+{
+    if (terrain_zoom == nullptr || cell_size_m == nullptr
+        || !std::isfinite(coordinate.longitude_deg)
+        || !std::isfinite(coordinate.latitude_deg))
+    {
+        return false;
+    }
+
+    *terrain_zoom = -1;
+    *cell_size_m = 0.0;
+
+    const GlobeTile *resolved_tile = nullptr;
+    for (int zoom = GlobeImageryMaxZoom; zoom >= 0; --zoom)
+    {
+        const double coordinate_tile_x = GeoWebMercator::lonToTileX(
+            coordinate.longitude_deg, zoom);
+        const double coordinate_tile_y = GeoWebMercator::latToTileY(
+            coordinate.latitude_deg, zoom);
+        const int tile_count = 1 << zoom;
+        const int coordinate_x = GeoWebMercator::wrapTileX(
+            int(std::floor(coordinate_tile_x)), zoom);
+        const int coordinate_y = qBound(
+            0, int(std::floor(coordinate_tile_y)), tile_count - 1);
+        const quint64 position_key = globeQuadtreeNodeKey(
+            zoom, coordinate_x, coordinate_y);
+        const QHash<quint64, qsizetype>::const_iterator tile_iterator =
+            this->window_tile_indices_by_position.constFind(position_key);
+        if (tile_iterator == this->window_tile_indices_by_position.constEnd())
+            continue;
+
+        const qsizetype tile_index = tile_iterator.value();
+        if (tile_index < 0 || tile_index >= this->window_tiles.size())
+            return false;
+        resolved_tile = &this->window_tiles.at(tile_index);
+        break;
+    }
+
+    if (resolved_tile == nullptr || resolved_tile->is_cap
+        || resolved_tile->terrain_key.isEmpty()
+        || resolved_tile->terrain_zoom < GlobeTerrainReliefMinimumZoom
+        || resolved_tile->terrain_cell_count <= 0
+        || !resolved_tile->terrain_mesh_has_relief)
+    {
+        return false;
+    }
+
+    const int tile_count = 1 << resolved_tile->zoom;
+    const double latitude_top_deg = GeoWebMercator::tileYToLat(
+        double(resolved_tile->tile_y), resolved_tile->zoom);
+    const double latitude_bottom_deg = GeoWebMercator::tileYToLat(
+        double(resolved_tile->tile_y) + 1.0, resolved_tile->zoom);
+    const double tile_width_m =
+        (2.0 * M_PI * GeoWgs84Ellipsoid::EquatorialRadiusM
+         * qMax(0.0, std::cos(qDegreesToRadians(coordinate.latitude_deg))))
+        / double(tile_count);
+    const double tile_height_m = GeoWgs84Ellipsoid::EquatorialRadiusM
+        * std::abs(qDegreesToRadians(latitude_top_deg - latitude_bottom_deg));
+    const double reference_size_m = qMax(tile_width_m, tile_height_m);
+    const double resolved_cell_size_m =
+        reference_size_m / double(resolved_tile->terrain_cell_count);
+    if (!std::isfinite(resolved_cell_size_m) || resolved_cell_size_m <= 0.0)
+        return false;
+
+    *terrain_zoom = resolved_tile->terrain_zoom;
+    *cell_size_m = resolved_cell_size_m;
+    return true;
+}
+
 
 MapRhiGlobeRenderer::TileVertex MapRhiGlobeRenderer::makeTileVertex(
     double lon_deg, double lat_deg, float u, float v) const
@@ -2445,6 +2517,8 @@ void MapRhiGlobeRenderer::rebuildWindow(
     this->window_indices.reserve(estimated_index_count);
     this->window_tiles.clear();
     this->window_tiles.reserve(next_tiles.size());
+    this->window_tile_indices_by_position.clear();
+    this->window_tile_indices_by_position.reserve(next_tiles.size());
 
     for (GlobeTile &tile : next_tiles)
     {
@@ -2596,6 +2670,9 @@ void MapRhiGlobeRenderer::rebuildWindow(
         updateTerrainRayBounds(&tile);
 
         this->window_tiles.append(tile);
+        this->window_tile_indices_by_position.insert(
+            globeQuadtreeNodeKey(tile.zoom, tile.tile_x, tile.tile_y),
+            this->window_tiles.size() - 1);
     }
 
     this->window_dirty = false;

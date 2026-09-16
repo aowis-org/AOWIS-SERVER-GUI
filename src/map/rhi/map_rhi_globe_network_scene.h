@@ -70,12 +70,15 @@
 class MapRhiGlobeNetworkScene
 {
 public:
-    // Read-only elevation lookup at an arbitrary coordinate, used solely to
-    // classify link segments as underground for X-Ray mode -- see
-    // setUndergroundXRayEnabled(). Never influences where any geometry is
-    // actually placed.
-    using TerrainElevationResolver =
-        std::function<bool(const CoordinateWGS84 &coordinate, double *elevation_m)>;
+    // Read-only terrain lookup at an arbitrary coordinate, used solely to
+    // classify link segments as underground for X-Ray mode. In addition to
+    // elevation it reports the effective terrain cell size at that point so
+    // classification density follows terrain LOD. Never influences where
+    // any geometry is actually placed.
+    using TerrainElevationResolver = std::function<bool(
+        const CoordinateWGS84 &coordinate,
+        double *elevation_m,
+        double *cell_size_m)>;
 
     void setNetworkSnapshot(const NetworkRenderSnapshot &snapshot);
     bool setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids);
@@ -270,11 +273,9 @@ private:
         const QVector3D &end_ecef);
     // Subdivides one already-placed link segment (from consecutive digitized
     // vertices) into short spans and appends each contiguous "below terrain"
-    // run to underground_link_vertices. Coarser than MapRhiScene's ThreeD
-    // equivalent, which sizes subdivisions to the actual terrain cell size;
-    // this uses a fixed target length instead, since the globe has no single
-    // "current terrain zoom" the way the flat view does (see the class
-    // comment on globeTerrainElevationAtCoordinate() in map_rhi_widget.cpp).
+    // run to underground_link_vertices. The classification interval follows
+    // the terrain cell size resolved for the currently rendered Globe LOD,
+    // mirroring the adaptive policy used by the legacy planar ThreeD path.
     void appendUndergroundSubdivisions(
         InfrastructureEntity entity_type, quint32 render_id,
         const CoordinateWGS84 &start_coordinate, double start_elevation_m,

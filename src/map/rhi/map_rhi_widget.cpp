@@ -137,6 +137,10 @@ void writeJunctionImpostorCameraUniforms(
     (*uniform_data)[32] = basis.right.x();
     (*uniform_data)[33] = basis.right.y();
     (*uniform_data)[34] = basis.right.z();
+    // Reserved for screen-aligned billboard Y orientation. Keep all existing
+    // 2D/planar rendering unchanged; Globe overrides this below when the
+    // backend's native NDC Y axis requires it.
+    (*uniform_data)[35] = 1.0f;
     (*uniform_data)[36] = basis.up.x();
     (*uniform_data)[37] = basis.up.y();
     (*uniform_data)[38] = basis.up.z();
@@ -491,9 +495,16 @@ constexpr int GlobeUndergroundXRayRefreshQuietMs = 500;
 // directly from MapRhiGlobeNetworkScene's own vertex/instance data (which
 // is already in that space -- see its ecefPosition()), not a raw ECEF or
 // geodetic coordinate.
+double globeNdcYToScreenY(
+    double ndc_y, int viewport_height, bool ndc_y_up)
+{
+    const double normalized_y = ndc_y_up ? (1.0 - ndc_y) : (ndc_y + 1.0);
+    return normalized_y * double(viewport_height) / 2.0;
+}
+
 QPointF projectGlobeToScreen(
     const QMatrix4x4 &globe_network_view_projection, const QVector3D &position,
-    int viewport_width, int viewport_height)
+    int viewport_width, int viewport_height, bool ndc_y_up)
 {
     const QVector4D clip = globe_network_view_projection * QVector4D(position, 1.0f);
     if (!(clip.w() > 1e-6f))
@@ -503,14 +514,14 @@ QPointF projectGlobeToScreen(
     const double ndc_y = double(clip.y() / clip.w());
     return QPointF(
         (ndc_x + 1.0) * viewport_width / 2.0,
-        (1.0 - ndc_y) * viewport_height / 2.0);
+        globeNdcYToScreenY(ndc_y, viewport_height, ndc_y_up));
 }
 
 bool globeProjectedTriangleHit(
     const QMatrix4x4 &globe_network_view_projection,
     const QVector3D &a, const QVector3D &b, const QVector3D &c,
     const QPointF &screen_position, int viewport_width, int viewport_height,
-    double *view_depth)
+    bool ndc_y_up, double *view_depth)
 {
     if (view_depth == nullptr)
         return false;
@@ -523,13 +534,16 @@ bool globeProjectedTriangleHit(
 
     const QPointF screen_a(
         (double(clip_a.x() / clip_a.w()) + 1.0) * viewport_width / 2.0,
-        (1.0 - double(clip_a.y() / clip_a.w())) * viewport_height / 2.0);
+        globeNdcYToScreenY(
+            double(clip_a.y() / clip_a.w()), viewport_height, ndc_y_up));
     const QPointF screen_b(
         (double(clip_b.x() / clip_b.w()) + 1.0) * viewport_width / 2.0,
-        (1.0 - double(clip_b.y() / clip_b.w())) * viewport_height / 2.0);
+        globeNdcYToScreenY(
+            double(clip_b.y() / clip_b.w()), viewport_height, ndc_y_up));
     const QPointF screen_c(
         (double(clip_c.x() / clip_c.w()) + 1.0) * viewport_width / 2.0,
-        (1.0 - double(clip_c.y() / clip_c.w())) * viewport_height / 2.0);
+        globeNdcYToScreenY(
+            double(clip_c.y() / clip_c.w()), viewport_height, ndc_y_up));
 
     const double denominator =
         (screen_b.y() - screen_c.y()) * (screen_a.x() - screen_c.x())
@@ -594,9 +608,11 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     this->globe_network_scene.setGroundOffsetM(this->map_model->view3dNetworkGroundOffsetM());
     this->globe_network_scene.setVerticalExaggeration(this->map_model->view3dVerticalExaggeration());
     this->globe_network_scene.setTerrainElevationResolver(
-        [this](const CoordinateWGS84 &coordinate, double *elevation_m)
+        [this](const CoordinateWGS84 &coordinate, double *elevation_m,
+               double *cell_size_m)
         {
-            return globeTerrainElevationAtCoordinate(coordinate, elevation_m);
+            return globeTerrainElevationAtCoordinate(
+                coordinate, elevation_m, cell_size_m);
         });
     this->globe_network_scene.setUndergroundXRayEnabled(
         this->underground_mode == MapRhiUndergroundMode::XRay);
@@ -805,8 +821,12 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
         syncGlobeTerrainAwareCameraHeight(true);
         if (prime_network_terrain && this->globe_renderer)
             this->globe_renderer->requestTerrainForCurrentView(this->viewport_size);
-        if (this->globe_underground_refresh_requested)
+        if (this->underground_mode == MapRhiUndergroundMode::XRay
+            && this->map_model->viewMode() == MapViewMode::Globe)
+        {
+            this->globe_underground_refresh_requested = true;
             scheduleGlobeUndergroundXRayRefresh();
+        }
         update();
     });
     connect(this->map_model, &MapModel::viewGlobeTerrainHeightChanged, this, [this]
@@ -1344,6 +1364,7 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
 
     const int viewport_width = qMax(1, this->viewport_size.width());
     const int viewport_height = qMax(1, this->viewport_size.height());
+    const bool ndc_y_up = this->active_rhi->isYUpInNDC();
     MapRhiImpostorCameraBasis impostor_camera_basis;
     const QMatrix4x4 view_projection =
         this->camera.globeNetworkViewProjectionMatrix(
@@ -1378,16 +1399,16 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
         const QVector3D center = instance.base_center
             + instance.basis_z * (total_height * 0.5f);
         const QPointF center_screen = projectGlobeToScreen(
-            view_projection, center, viewport_width, viewport_height);
+            view_projection, center, viewport_width, viewport_height, ndc_y_up);
         const QPointF radius_x_screen = projectGlobeToScreen(
             view_projection, center + instance.basis_x * (instance.radius_world * 1.08f),
-            viewport_width, viewport_height);
+            viewport_width, viewport_height, ndc_y_up);
         const QPointF radius_y_screen = projectGlobeToScreen(
             view_projection, center + instance.basis_y * (instance.radius_world * 1.08f),
-            viewport_width, viewport_height);
+            viewport_width, viewport_height, ndc_y_up);
         const QPointF height_screen = projectGlobeToScreen(
             view_projection, center + instance.basis_z * (total_height * 0.5f),
-            viewport_width, viewport_height);
+            viewport_width, viewport_height, ndc_y_up);
         if (!finiteScreenPoint(center_screen)
             || !finiteScreenPoint(radius_x_screen)
             || !finiteScreenPoint(radius_y_screen)
@@ -1437,7 +1458,7 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
             double hit_depth = 0.0;
             if (!globeProjectedTriangleHit(
                     view_projection, a, b, c, screen_position,
-                    viewport_width, viewport_height, &hit_depth)
+                    viewport_width, viewport_height, ndc_y_up, &hit_depth)
                 || hit_depth >= best_tank_depth)
             {
                 continue;
@@ -1477,17 +1498,17 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
         const QVector3D center = instance.base_center
             + instance.basis_z * (instance.wall_height_world * 0.5f);
         const QPointF center_screen = projectGlobeToScreen(
-            view_projection, center, viewport_width, viewport_height);
+            view_projection, center, viewport_width, viewport_height, ndc_y_up);
         const QPointF radius_x_screen = projectGlobeToScreen(
             view_projection, center + instance.basis_x * (instance.radius_world * 1.05f),
-            viewport_width, viewport_height);
+            viewport_width, viewport_height, ndc_y_up);
         const QPointF radius_y_screen = projectGlobeToScreen(
             view_projection, center + instance.basis_y * (instance.radius_world * 1.05f),
-            viewport_width, viewport_height);
+            viewport_width, viewport_height, ndc_y_up);
         const QPointF height_screen = projectGlobeToScreen(
             view_projection, center
                 + instance.basis_z * (instance.wall_height_world * 0.5f),
-            viewport_width, viewport_height);
+            viewport_width, viewport_height, ndc_y_up);
         if (!finiteScreenPoint(center_screen)
             || !finiteScreenPoint(radius_x_screen)
             || !finiteScreenPoint(radius_y_screen)
@@ -1538,7 +1559,7 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
             double hit_depth = 0.0;
             if (!globeProjectedTriangleHit(
                     view_projection, a, b, c, screen_position,
-                    viewport_width, viewport_height, &hit_depth)
+                    viewport_width, viewport_height, ndc_y_up, &hit_depth)
                 || hit_depth >= best_reservoir_depth)
             {
                 continue;
@@ -1584,7 +1605,7 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
 
         const QVector3D center(instance.center_x, instance.center_y, instance.center_z);
         const QPointF projected = projectGlobeToScreen(
-            view_projection, center, viewport_width, viewport_height);
+            view_projection, center, viewport_width, viewport_height, ndc_y_up);
         if (!finiteScreenPoint(projected))
             continue;
 
@@ -1594,7 +1615,7 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
             const QPointF projected_edge = projectGlobeToScreen(
                 view_projection,
                 center + impostor_camera_basis.right * instance.radius_world,
-                viewport_width, viewport_height);
+                viewport_width, viewport_height, ndc_y_up);
             if (finiteScreenPoint(projected_edge))
                 visual_radius_px = QLineF(projected, projected_edge).length();
         }
@@ -1632,7 +1653,11 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
 
     // Icons next -- same priority ThreeD gives them, over generic nodes/
     // links, since an icon can visually extend well past its underlying
-    // point geometry.
+    // point geometry. Globe icon vertices do not contain six different world
+    // positions: all six share one projected ECEF center and the vertex
+    // shader expands offset_x/y_ratio in screen space. Hit-test that exact
+    // projected billboard rectangle, including the atlas aspect ratio and the
+    // same depth-dependent size formula used by map_rhi_icon.vert.
     double best_icon_distance = std::numeric_limits<double>::infinity();
     quint32 best_icon_render_id = 0;
     InfrastructureEntity best_icon_entity_type = InfrastructureEntity::Unknown;
@@ -1642,38 +1667,49 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
          vertex_index += 6)
     {
         const MapRhiScene::IconVertex &icon = icon_vertices.at(vertex_index);
+        const QVector3D icon_center(icon.center_x, icon.center_y, icon.center_z);
         const QPointF projected = projectGlobeToScreen(
-            view_projection, QVector3D(icon.center_x, icon.center_y, icon.center_z),
-            viewport_width, viewport_height);
+            view_projection, icon_center, viewport_width, viewport_height, ndc_y_up);
         if (!finiteScreenPoint(projected))
             continue;
 
-        double icon_size_px = double(this->globe_network_scene.iconSizePx());
-        const QVector3D icon_center(icon.center_x, icon.center_y, icon.center_z);
         const QVector4D icon_clip = view_projection * QVector4D(icon_center, 1.0f);
         const double icon_depth_m = std::abs(double(icon_clip.w()));
+        if (!std::isfinite(icon_depth_m) || icon_depth_m <= 0.000001)
+            continue;
+
+        double icon_size_px = double(this->globe_network_scene.iconSizePx());
         constexpr double tan_half_fov = 0.4142135623730950;
-        if (std::isfinite(icon_depth_m) && icon_depth_m > 0.000001)
+        if (this->globe_network_scene.iconSizeUnit()
+            == NetworkSymbologySizeUnit::Meters)
         {
-            if (this->globe_network_scene.iconSizeUnit()
-                == NetworkSymbologySizeUnit::Meters)
-            {
-                icon_size_px = this->globe_network_scene.iconSizeM()
-                    * double(viewport_height)
-                    / (2.0 * icon_depth_m * tan_half_fov);
-            }
-            else
-            {
-                const double reference_depth_m = qMax(
-                    1.0, this->camera.globeOrbitDistanceM());
-                icon_size_px *= reference_depth_m / icon_depth_m;
-            }
+            icon_size_px = this->globe_network_scene.iconSizeM()
+                * double(viewport_height)
+                / (2.0 * icon_depth_m * tan_half_fov);
         }
-        const double icon_hit_radius = qMax(
+        else
+        {
+            const double reference_depth_m = qMax(
+                1.0, this->camera.globeOrbitDistanceM());
+            icon_size_px *= reference_depth_m / icon_depth_m;
+        }
+
+        const double half_width_px = qMax(
             Rhi3dMinimumIconHitRadiusPx,
-            icon_size_px * 0.5 + Rhi3dIconHitPaddingPx);
+            std::abs(double(icon.offset_x_ratio)) * icon_size_px
+                + Rhi3dIconHitPaddingPx);
+        const double half_height_px = qMax(
+            Rhi3dMinimumIconHitRadiusPx,
+            std::abs(double(icon.offset_y_ratio)) * icon_size_px
+                + Rhi3dIconHitPaddingPx);
+        const QRectF hit_rectangle(
+            projected.x() - half_width_px, projected.y() - half_height_px,
+            half_width_px * 2.0, half_height_px * 2.0);
+        if (!hit_rectangle.contains(screen_position))
+            continue;
+
         const double distance = QLineF(screen_position, projected).length();
-        if (distance > icon_hit_radius || distance >= best_icon_distance)
+        if (distance >= best_icon_distance)
             continue;
 
         best_icon_distance = distance;
@@ -1748,7 +1784,7 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
         const QVector3D node_center(
             node_vertex.center_x, node_vertex.center_y, node_vertex.center_z);
         const QPointF projected = projectGlobeToScreen(
-            view_projection, node_center, viewport_width, viewport_height);
+            view_projection, node_center, viewport_width, viewport_height, ndc_y_up);
         if (!finiteScreenPoint(projected))
             continue;
 
@@ -1760,7 +1796,7 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
                 view_projection,
                 node_center + impostor_camera_basis.right
                     * float(this->globe_network_scene.nodeSizeM() * 0.5),
-                viewport_width, viewport_height);
+                viewport_width, viewport_height, ndc_y_up);
             if (finiteScreenPoint(projected_edge))
                 visual_radius_px = QLineF(projected, projected_edge).length();
         }
@@ -1816,9 +1852,9 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
         const QVector3D start(link_vertex.start_x, link_vertex.start_y, link_vertex.start_z);
         const QVector3D end(link_vertex.end_x, link_vertex.end_y, link_vertex.end_z);
         const QPointF start_screen = projectGlobeToScreen(
-            view_projection, start, viewport_width, viewport_height);
+            view_projection, start, viewport_width, viewport_height, ndc_y_up);
         const QPointF end_screen = projectGlobeToScreen(
-            view_projection, end, viewport_width, viewport_height);
+            view_projection, end, viewport_width, viewport_height, ndc_y_up);
         if (!finiteScreenPoint(start_screen) || !finiteScreenPoint(end_screen))
             continue;
 
@@ -1837,12 +1873,12 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
 
             const QVector3D midpoint = (start + end) * 0.5f;
             const QPointF midpoint_screen = projectGlobeToScreen(
-                view_projection, midpoint, viewport_width, viewport_height);
+                view_projection, midpoint, viewport_width, viewport_height, ndc_y_up);
             const QPointF edge_screen = projectGlobeToScreen(
                 view_projection,
                 midpoint + width_direction
                     * float(this->globe_network_scene.linkThicknessM() * 0.5),
-                viewport_width, viewport_height);
+                viewport_width, viewport_height, ndc_y_up);
             if (finiteScreenPoint(midpoint_screen) && finiteScreenPoint(edge_screen))
                 visual_half_width_px = QLineF(midpoint_screen, edge_screen).length();
         }
@@ -3184,6 +3220,13 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     writeJunctionImpostorCameraUniforms(
         impostor_camera_basis, *this->active_rhi,
         this->network_style_texture_size, &uniform_data);
+    // Globe icon vertices are expanded in screen space after
+    // clipSpaceCorrMatrix() has already converted the projection to the
+    // backend's native NDC convention. Vulkan is the QRhi backend whose NDC
+    // Y axis points down, so compensate only the Globe billboard expansion.
+    // The value lives in camera_right.w, which the junction shader does not
+    // otherwise use.
+    uniform_data[35] = this->active_rhi->isYUpInNDC() ? 1.0f : -1.0f;
 
     QRhiResourceUpdateBatch *resource_updates = this->active_rhi->nextResourceUpdateBatch();
     resource_updates->updateDynamicBuffer(
@@ -5799,52 +5842,108 @@ bool MapRhiWidget::terrainElevationAtCoordinate(
 }
 
 bool MapRhiWidget::globeTerrainElevationAtCoordinate(
-    const CoordinateWGS84 &coordinate, double *elevation_m) const
+    const CoordinateWGS84 &coordinate, double *elevation_m,
+    double *cell_size_m) const
 {
-    if (elevation_m == nullptr || this->terrain_repository == nullptr
+    if (elevation_m == nullptr || cell_size_m == nullptr
+        || this->terrain_repository == nullptr
         || !std::isfinite(coordinate.longitude_deg)
         || !std::isfinite(coordinate.latitude_deg))
     {
         return false;
     }
 
-    // Unlike terrainElevationAtCoordinate(), there is no single "current
-    // zoom" to match here -- the globe's quadtree keeps different visible
-    // tiles at different zooms simultaneously, and this is only ever used
-    // for read-only X-Ray underground classification, not a placement
-    // decision -- so just try the finest cached zoom first and fall back
-    // to coarser ones, and never request a missing tile (see the class
-    // comment on MapRhiGlobeNetworkScene::setTerrainElevationResolver()).
-    // No "is terrain ready" precondition to rely on any more -- this
-    // simply returns false, gracefully, whenever nothing is cached yet at
-    // any zoom for this coordinate.
-    const QString dataset = cameraTerrainDatasetId();
-    for (int terrain_zoom = CameraTerrainMaximumZoom;
-         terrain_zoom >= CameraTerrainMinimumZoom; --terrain_zoom)
+    *cell_size_m = 0.0;
+
+    // Prefer the terrain mesh LOD that is actually retained under this
+    // coordinate. This keeps X-Ray classification density tied to the same
+    // surface detail the user sees, instead of a fixed metre interval.
+    int visible_terrain_zoom = -1;
+    double visible_cell_size_m = 0.0;
+    if (this->globe_renderer != nullptr)
     {
-        const double terrain_tile_x = GeoWebMercator::lonToTileX(
-            coordinate.longitude_deg, terrain_zoom);
-        const double terrain_tile_y = GeoWebMercator::latToTileY(
-            coordinate.latitude_deg, terrain_zoom);
-        const int terrain_tile_count = 1 << terrain_zoom;
-        const int tile_x_unwrapped = int(std::floor(terrain_tile_x));
-        const int tile_y = qBound(
-            0, int(std::floor(terrain_tile_y)), terrain_tile_count - 1);
-        const int tile_x = GeoWebMercator::wrapTileX(tile_x_unwrapped, terrain_zoom);
+        this->globe_renderer->visibleTerrainSamplingAtCoordinate(
+            coordinate, &visible_terrain_zoom, &visible_cell_size_m);
+    }
 
-        const MapTerrainTile *terrain_tile = this->terrain_repository->tile(
-            dataset, terrain_zoom, quint32(tile_x), quint32(tile_y));
-        if (terrain_tile == nullptr)
-            continue;
+    const QString dataset = cameraTerrainDatasetId();
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        const int first_zoom = pass == 0 && visible_terrain_zoom >= CameraTerrainMinimumZoom
+            ? visible_terrain_zoom
+            : CameraTerrainMaximumZoom;
+        const int last_zoom = pass == 0 && visible_terrain_zoom >= CameraTerrainMinimumZoom
+            ? visible_terrain_zoom
+            : CameraTerrainMinimumZoom;
 
-        const double local_u = terrain_tile_x - std::floor(terrain_tile_x);
-        const double local_v = terrain_tile_y - std::floor(terrain_tile_y);
-        double sampled_elevation_m = 0.0;
-        if (!sampleTerrainTileElevationAt(*terrain_tile, local_u, local_v, &sampled_elevation_m))
-            continue;
+        for (int terrain_zoom = first_zoom; terrain_zoom >= last_zoom; --terrain_zoom)
+        {
+            if (pass == 1 && terrain_zoom == visible_terrain_zoom)
+                continue;
 
-        *elevation_m = sampled_elevation_m;
-        return true;
+            const double terrain_tile_x = GeoWebMercator::lonToTileX(
+                coordinate.longitude_deg, terrain_zoom);
+            const double terrain_tile_y = GeoWebMercator::latToTileY(
+                coordinate.latitude_deg, terrain_zoom);
+            const int terrain_tile_count = 1 << terrain_zoom;
+            const int tile_x_unwrapped = int(std::floor(terrain_tile_x));
+            const int tile_y = qBound(
+                0, int(std::floor(terrain_tile_y)), terrain_tile_count - 1);
+            const int tile_x = GeoWebMercator::wrapTileX(
+                tile_x_unwrapped, terrain_zoom);
+
+            const MapTerrainTile *terrain_tile = this->terrain_repository->tile(
+                dataset, terrain_zoom, quint32(tile_x), quint32(tile_y));
+            if (terrain_tile == nullptr)
+                continue;
+
+            const double local_u = terrain_tile_x - std::floor(terrain_tile_x);
+            const double local_v = terrain_tile_y - std::floor(terrain_tile_y);
+            double sampled_elevation_m = 0.0;
+            if (!sampleTerrainTileElevationAt(
+                    *terrain_tile, local_u, local_v, &sampled_elevation_m))
+            {
+                continue;
+            }
+
+            double resolved_cell_size_m = 0.0;
+            if (terrain_zoom == visible_terrain_zoom
+                && std::isfinite(visible_cell_size_m)
+                && visible_cell_size_m > 0.0)
+            {
+                resolved_cell_size_m = visible_cell_size_m;
+            }
+            else
+            {
+                const double latitude_top_deg = GeoWebMercator::tileYToLat(
+                    double(tile_y), terrain_zoom);
+                const double latitude_bottom_deg = GeoWebMercator::tileYToLat(
+                    double(tile_y) + 1.0, terrain_zoom);
+                const double tile_width_m =
+                    (2.0 * M_PI * GeoWgs84Ellipsoid::EquatorialRadiusM
+                     * qMax(0.0, std::cos(qDegreesToRadians(coordinate.latitude_deg))))
+                    / double(terrain_tile_count);
+                const double tile_height_m = GeoWgs84Ellipsoid::EquatorialRadiusM
+                    * std::abs(qDegreesToRadians(
+                        latitude_top_deg - latitude_bottom_deg));
+                resolved_cell_size_m = qMax(tile_width_m, tile_height_m)
+                    / double(MapTerrainTileCellCount);
+            }
+
+            if (std::isfinite(terrain_tile->nominal_resolution_m)
+                && terrain_tile->nominal_resolution_m > 0.0)
+            {
+                resolved_cell_size_m = qMax(
+                    resolved_cell_size_m, terrain_tile->nominal_resolution_m);
+            }
+
+            *elevation_m = sampled_elevation_m;
+            *cell_size_m = resolved_cell_size_m;
+            return true;
+        }
+
+        if (visible_terrain_zoom < CameraTerrainMinimumZoom)
+            break;
     }
 
     return false;
