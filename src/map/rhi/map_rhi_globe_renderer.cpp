@@ -1,5 +1,7 @@
 #include "map/rhi/map_rhi_globe_renderer.h"
 
+#include "map/render/map_globe_vertical_transform.h"
+
 #include "map/core/map_model.h"
 #include "map/data/map_tile_repository.h"
 #include "map/data/map_terrain_repository.h"
@@ -643,6 +645,7 @@ void globeQuadtreeNodeVisibilityBoundingSphere(
     double vertical_exaggeration,
     QVector3D *center, double *radius_m)
 {
+    const MapGlobeVerticalTransform vertical_transform(vertical_exaggeration);
     double minimum_elevation_m = 0.0;
     double maximum_elevation_m = 0.0;
 
@@ -660,10 +663,10 @@ void globeQuadtreeNodeVisibilityBoundingSphere(
             && std::isfinite(terrain_tile->minimum_elevation_m)
             && std::isfinite(terrain_tile->maximum_elevation_m))
         {
-            const double first_elevation_m =
-                terrain_tile->minimum_elevation_m * vertical_exaggeration;
-            const double second_elevation_m =
-                terrain_tile->maximum_elevation_m * vertical_exaggeration;
+            const double first_elevation_m = vertical_transform.terrainHeightM(
+                terrain_tile->minimum_elevation_m);
+            const double second_elevation_m = vertical_transform.terrainHeightM(
+                terrain_tile->maximum_elevation_m);
             minimum_elevation_m = qMin(
                 0.0, qMin(first_elevation_m, second_elevation_m));
             maximum_elevation_m = qMax(

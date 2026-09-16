@@ -6,6 +6,7 @@
 
 #include "map/core/map_model.h"
 #include "map/render/map_render_cache_math.h"
+#include "map/render/map_globe_vertical_transform.h"
 #include "map/data/map_tile_repository.h"
 #include "geo/geo_web_mercator.h"
 #include "geo/geo_wgs84_ellipsoid.h"
@@ -517,70 +518,7 @@ QPointF projectGlobeToScreen(
         globeNdcYToScreenY(ndc_y, viewport_height, ndc_y_up));
 }
 
-bool globeProjectedTriangleHit(
-    const QMatrix4x4 &globe_network_view_projection,
-    const QVector3D &a, const QVector3D &b, const QVector3D &c,
-    const QPointF &screen_position, int viewport_width, int viewport_height,
-    bool ndc_y_up, double *view_depth)
-{
-    if (view_depth == nullptr)
-        return false;
 
-    const QVector4D clip_a = globe_network_view_projection * QVector4D(a, 1.0f);
-    const QVector4D clip_b = globe_network_view_projection * QVector4D(b, 1.0f);
-    const QVector4D clip_c = globe_network_view_projection * QVector4D(c, 1.0f);
-    if (!(clip_a.w() > 1e-6f) || !(clip_b.w() > 1e-6f) || !(clip_c.w() > 1e-6f))
-        return false;
-
-    const QPointF screen_a(
-        (double(clip_a.x() / clip_a.w()) + 1.0) * viewport_width / 2.0,
-        globeNdcYToScreenY(
-            double(clip_a.y() / clip_a.w()), viewport_height, ndc_y_up));
-    const QPointF screen_b(
-        (double(clip_b.x() / clip_b.w()) + 1.0) * viewport_width / 2.0,
-        globeNdcYToScreenY(
-            double(clip_b.y() / clip_b.w()), viewport_height, ndc_y_up));
-    const QPointF screen_c(
-        (double(clip_c.x() / clip_c.w()) + 1.0) * viewport_width / 2.0,
-        globeNdcYToScreenY(
-            double(clip_c.y() / clip_c.w()), viewport_height, ndc_y_up));
-
-    const double denominator =
-        (screen_b.y() - screen_c.y()) * (screen_a.x() - screen_c.x())
-        + (screen_c.x() - screen_b.x()) * (screen_a.y() - screen_c.y());
-    if (std::abs(denominator) <= 1e-10)
-        return false;
-
-    const double weight_a = (
-        (screen_b.y() - screen_c.y()) * (screen_position.x() - screen_c.x())
-        + (screen_c.x() - screen_b.x()) * (screen_position.y() - screen_c.y()))
-        / denominator;
-    const double weight_b = (
-        (screen_c.y() - screen_a.y()) * (screen_position.x() - screen_c.x())
-        + (screen_a.x() - screen_c.x()) * (screen_position.y() - screen_c.y()))
-        / denominator;
-    const double weight_c = 1.0 - weight_a - weight_b;
-    constexpr double BarycentricTolerance = 1e-6;
-    if (weight_a < -BarycentricTolerance
-        || weight_b < -BarycentricTolerance
-        || weight_c < -BarycentricTolerance)
-    {
-        return false;
-    }
-
-    // clip.w is positive camera-space depth for this perspective matrix.
-    // Perspective-correct reciprocal-depth interpolation lets overlapping
-    // models select the nearest visible surface at the clicked pixel.
-    const double reciprocal_depth =
-        weight_a / double(clip_a.w())
-        + weight_b / double(clip_b.w())
-        + weight_c / double(clip_c.w());
-    if (!(reciprocal_depth > 0.0) || !std::isfinite(reciprocal_depth))
-        return false;
-
-    *view_depth = 1.0 / reciprocal_depth;
-    return std::isfinite(*view_depth);
-}
 }
 
 MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWidget *parent)
@@ -1384,52 +1322,28 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
 
     // With 3D Icons enabled, tank/reservoir billboard quads are intentionally
     // removed from iconVertices(). Their rendered meshes therefore need their
-    // own hit path. Project the exact CPU-side mesh triangles through the same
-    // Globe matrix the GPU uses, and select the nearest triangle under the
-    // cursor before falling back to icon/node/link picking.
-    quint32 best_tank_render_id = 0;
-    double best_tank_depth = std::numeric_limits<double>::infinity();
-    QSet<quint32> tank_hit_candidates;
-    const QVector<MapRhiTankInstance> &tank_instances =
-        this->globe_network_scene.tankInstances();
-    for (const MapRhiTankInstance &instance : tank_instances)
+    // own hit path. Use the same backend-independent Globe screen ray as DEM
+    // picking and intersect it with the exact CPU-side triangles uploaded for
+    // the rendered models. Model vertices are relative to globeRenderOriginEcef(),
+    // so translate the absolute ECEF camera origin into that same local frame.
+    GeoWgs84Ellipsoid::EcefPositionD globe_ray_origin_ecef;
+    QVector3D globe_ray_direction;
+    const bool have_globe_mesh_ray = this->globeScreenRay(
+        screen_position, &globe_ray_origin_ecef, &globe_ray_direction);
+    QVector3D globe_mesh_ray_origin;
+    if (have_globe_mesh_ray)
     {
-        const float total_height = instance.base_height_world
-            + instance.body_height_world + instance.roof_height_world;
-        const QVector3D center = instance.base_center
-            + instance.basis_z * (total_height * 0.5f);
-        const QPointF center_screen = projectGlobeToScreen(
-            view_projection, center, viewport_width, viewport_height, ndc_y_up);
-        const QPointF radius_x_screen = projectGlobeToScreen(
-            view_projection, center + instance.basis_x * (instance.radius_world * 1.08f),
-            viewport_width, viewport_height, ndc_y_up);
-        const QPointF radius_y_screen = projectGlobeToScreen(
-            view_projection, center + instance.basis_y * (instance.radius_world * 1.08f),
-            viewport_width, viewport_height, ndc_y_up);
-        const QPointF height_screen = projectGlobeToScreen(
-            view_projection, center + instance.basis_z * (total_height * 0.5f),
-            viewport_width, viewport_height, ndc_y_up);
-        if (!finiteScreenPoint(center_screen)
-            || !finiteScreenPoint(radius_x_screen)
-            || !finiteScreenPoint(radius_y_screen)
-            || !finiteScreenPoint(height_screen))
-        {
-            continue;
-        }
-
-        const double projected_radius = qMax(
-            qMax(
-                QLineF(center_screen, radius_x_screen).length(),
-                QLineF(center_screen, radius_y_screen).length()),
-            QLineF(center_screen, height_screen).length());
-        if (QLineF(screen_position, center_screen).length()
-            <= projected_radius + Rhi3dIconHitPaddingPx)
-        {
-            tank_hit_candidates.insert(instance.render_id);
-        }
+        const GeoWgs84Ellipsoid::EcefPositionD render_origin_ecef =
+            this->camera.globeRenderOriginEcef();
+        globe_mesh_ray_origin = QVector3D(
+            float(globe_ray_origin_ecef.x - render_origin_ecef.x),
+            float(globe_ray_origin_ecef.y - render_origin_ecef.y),
+            float(globe_ray_origin_ecef.z - render_origin_ecef.z));
     }
 
-    if (!tank_hit_candidates.isEmpty() && !this->tank_model_vertices.isEmpty())
+    quint32 best_tank_render_id = 0;
+    double best_tank_distance = std::numeric_limits<double>::infinity();
+    if (have_globe_mesh_ray && !this->tank_model_vertices.isEmpty())
     {
         for (qsizetype vertex_index = 0;
              vertex_index + 2 < this->tank_model_vertices.size();
@@ -1443,8 +1357,7 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
                 this->tank_model_vertices.at(vertex_index + 2);
             if (vertex_a.render_id == 0
                 || vertex_a.render_id != vertex_b.render_id
-                || vertex_a.render_id != vertex_c.render_id
-                || !tank_hit_candidates.contains(vertex_a.render_id))
+                || vertex_a.render_id != vertex_c.render_id)
             {
                 continue;
             }
@@ -1455,16 +1368,16 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
                 vertex_b.position_x, vertex_b.position_y, vertex_b.position_z);
             const QVector3D c(
                 vertex_c.position_x, vertex_c.position_y, vertex_c.position_z);
-            double hit_depth = 0.0;
-            if (!globeProjectedTriangleHit(
-                    view_projection, a, b, c, screen_position,
-                    viewport_width, viewport_height, ndc_y_up, &hit_depth)
-                || hit_depth >= best_tank_depth)
+            double hit_distance = 0.0;
+            if (!rayTriangleIntersectionDistance(
+                    globe_mesh_ray_origin, globe_ray_direction,
+                    a, b, c, &hit_distance)
+                || hit_distance >= best_tank_distance)
             {
                 continue;
             }
 
-            best_tank_depth = hit_depth;
+            best_tank_distance = hit_distance;
             best_tank_render_id = vertex_a.render_id;
         }
     }
@@ -1489,48 +1402,8 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
     }
 
     quint32 best_reservoir_render_id = 0;
-    double best_reservoir_depth = std::numeric_limits<double>::infinity();
-    QSet<quint32> reservoir_hit_candidates;
-    const QVector<MapRhiReservoirInstance> &reservoir_instances =
-        this->globe_network_scene.reservoirInstances();
-    for (const MapRhiReservoirInstance &instance : reservoir_instances)
-    {
-        const QVector3D center = instance.base_center
-            + instance.basis_z * (instance.wall_height_world * 0.5f);
-        const QPointF center_screen = projectGlobeToScreen(
-            view_projection, center, viewport_width, viewport_height, ndc_y_up);
-        const QPointF radius_x_screen = projectGlobeToScreen(
-            view_projection, center + instance.basis_x * (instance.radius_world * 1.05f),
-            viewport_width, viewport_height, ndc_y_up);
-        const QPointF radius_y_screen = projectGlobeToScreen(
-            view_projection, center + instance.basis_y * (instance.radius_world * 1.05f),
-            viewport_width, viewport_height, ndc_y_up);
-        const QPointF height_screen = projectGlobeToScreen(
-            view_projection, center
-                + instance.basis_z * (instance.wall_height_world * 0.5f),
-            viewport_width, viewport_height, ndc_y_up);
-        if (!finiteScreenPoint(center_screen)
-            || !finiteScreenPoint(radius_x_screen)
-            || !finiteScreenPoint(radius_y_screen)
-            || !finiteScreenPoint(height_screen))
-        {
-            continue;
-        }
-
-        const double projected_radius = qMax(
-            qMax(
-                QLineF(center_screen, radius_x_screen).length(),
-                QLineF(center_screen, radius_y_screen).length()),
-            QLineF(center_screen, height_screen).length());
-        if (QLineF(screen_position, center_screen).length()
-            <= projected_radius + Rhi3dIconHitPaddingPx)
-        {
-            reservoir_hit_candidates.insert(instance.render_id);
-        }
-    }
-
-    if (!reservoir_hit_candidates.isEmpty()
-        && !this->reservoir_model_vertices.isEmpty())
+    double best_reservoir_distance = std::numeric_limits<double>::infinity();
+    if (have_globe_mesh_ray && !this->reservoir_model_vertices.isEmpty())
     {
         for (qsizetype vertex_index = 0;
              vertex_index + 2 < this->reservoir_model_vertices.size();
@@ -1544,8 +1417,7 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
                 this->reservoir_model_vertices.at(vertex_index + 2);
             if (vertex_a.render_id == 0
                 || vertex_a.render_id != vertex_b.render_id
-                || vertex_a.render_id != vertex_c.render_id
-                || !reservoir_hit_candidates.contains(vertex_a.render_id))
+                || vertex_a.render_id != vertex_c.render_id)
             {
                 continue;
             }
@@ -1556,16 +1428,16 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
                 vertex_b.position_x, vertex_b.position_y, vertex_b.position_z);
             const QVector3D c(
                 vertex_c.position_x, vertex_c.position_y, vertex_c.position_z);
-            double hit_depth = 0.0;
-            if (!globeProjectedTriangleHit(
-                    view_projection, a, b, c, screen_position,
-                    viewport_width, viewport_height, ndc_y_up, &hit_depth)
-                || hit_depth >= best_reservoir_depth)
+            double hit_distance = 0.0;
+            if (!rayTriangleIntersectionDistance(
+                    globe_mesh_ray_origin, globe_ray_direction,
+                    a, b, c, &hit_distance)
+                || hit_distance >= best_reservoir_distance)
             {
                 continue;
             }
 
-            best_reservoir_depth = hit_depth;
+            best_reservoir_distance = hit_distance;
             best_reservoir_render_id = vertex_a.render_id;
         }
     }
@@ -1757,11 +1629,17 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
     // invisible center-point quads here would create a hit target outside
     // the visible model after the triangle pick has correctly missed it.
     QSet<quint32> modeled_tank_render_ids;
-    for (const MapRhiTankInstance &instance : tank_instances)
+    for (const MapRhiTankInstance &instance :
+         this->globe_network_scene.tankInstances())
+    {
         modeled_tank_render_ids.insert(instance.render_id);
+    }
     QSet<quint32> modeled_reservoir_render_ids;
-    for (const MapRhiReservoirInstance &instance : reservoir_instances)
+    for (const MapRhiReservoirInstance &instance :
+         this->globe_network_scene.reservoirInstances())
+    {
         modeled_reservoir_render_ids.insert(instance.render_id);
+    }
 
     double best_node_distance = std::numeric_limits<double>::infinity();
     quint32 best_node_render_id = 0;
@@ -2150,6 +2028,7 @@ void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
     {
         this->junction_instance_upload_pending = true;
         this->globe_junction_instance_upload_pending = true;
+        this->globe_underground_upload_pending = true;
         markUndergroundGeometryDirty();
     }
     if (network_style_changed)
@@ -3348,6 +3227,9 @@ bool MapRhiWidget::ensureGlobeNetworkGeometryBuffers()
     const int required_underground_link_bytes = boundedBufferSize(
         this->globe_network_scene.undergroundLinkVertices().size(),
         qsizetype(sizeof(MapRhiScene::LinkVertex)));
+    const int required_underground_junction_instance_bytes = boundedBufferSize(
+        this->globe_network_scene.undergroundJunctionInstances().size(),
+        qsizetype(sizeof(MapRhiJunctionInstance)));
     // Shared, view-mode-agnostic impostor quad -- see globe_junction_instance_buffer's
     // header comment. Computed here too (not only in ensureGeometryBuffers(),
     // the ThreeD/TwoD equivalent) so junction_mesh_vertex_buffer gets
@@ -3366,6 +3248,7 @@ bool MapRhiWidget::ensureGlobeNetworkGeometryBuffers()
         || required_diagnostic_link_bytes == 0 || required_diagnostic_node_bytes == 0
         || required_flow_direction_bytes == 0 || required_icon_bytes == 0
         || required_underground_link_bytes == 0
+        || required_underground_junction_instance_bytes == 0
         || required_junction_mesh_bytes == 0 || required_junction_instance_bytes == 0)
     {
         reportFailure(QStringLiteral("RHI globe network geometry exceeds supported buffer size"));
@@ -3539,6 +3422,26 @@ bool MapRhiWidget::ensureGlobeNetworkGeometryBuffers()
         this->globe_underground_upload_pending = true;
     }
 
+    if (!this->globe_underground_junction_instance_buffer
+        || this->globe_underground_junction_instance_buffer_size
+            != required_underground_junction_instance_bytes)
+    {
+        this->globe_underground_junction_instance_buffer.reset(
+            this->active_rhi->newBuffer(
+                QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer,
+                required_underground_junction_instance_bytes));
+        if (!this->globe_underground_junction_instance_buffer
+            || !this->globe_underground_junction_instance_buffer->create())
+        {
+            reportFailure(QStringLiteral(
+                "Failed to create RHI globe underground-junction instance buffer"));
+            return false;
+        }
+        this->globe_underground_junction_instance_buffer_size =
+            required_underground_junction_instance_bytes;
+        this->globe_underground_upload_pending = true;
+    }
+
     return true;
 }
 
@@ -3670,6 +3573,8 @@ void MapRhiWidget::uploadGlobeNetworkGeometry(QRhiResourceUpdateBatch *resource_
     {
         const QVector<MapRhiScene::LinkVertex> &underground_link_vertices =
             this->globe_network_scene.undergroundLinkVertices();
+        const QVector<MapRhiJunctionInstance> &underground_junction_instances =
+            this->globe_network_scene.undergroundJunctionInstances();
         if (!underground_link_vertices.isEmpty())
         {
             resource_updates->updateDynamicBuffer(
@@ -3677,6 +3582,14 @@ void MapRhiWidget::uploadGlobeNetworkGeometry(QRhiResourceUpdateBatch *resource_
                 int(underground_link_vertices.size()
                     * qsizetype(sizeof(MapRhiScene::LinkVertex))),
                 underground_link_vertices.constData());
+        }
+        if (!underground_junction_instances.isEmpty())
+        {
+            resource_updates->updateDynamicBuffer(
+                this->globe_underground_junction_instance_buffer.get(), 0,
+                int(underground_junction_instances.size()
+                    * qsizetype(sizeof(MapRhiJunctionInstance))),
+                underground_junction_instances.constData());
         }
         this->globe_underground_upload_pending = false;
     }
@@ -3967,6 +3880,8 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
     {
         const QVector<MapRhiScene::LinkVertex> &underground_link_vertices =
             this->globe_network_scene.undergroundLinkVertices();
+        const QVector<MapRhiJunctionInstance> &underground_junction_instances =
+            this->globe_network_scene.undergroundJunctionInstances();
         if (!underground_link_vertices.isEmpty())
         {
             command_buffer->setGraphicsPipeline(this->link_xray_pipeline.get());
@@ -3975,6 +3890,23 @@ void MapRhiWidget::drawGlobeNetwork(QRhiCommandBuffer *command_buffer)
                 this->globe_underground_link_vertex_buffer.get(), 0);
             command_buffer->setVertexInput(0, 1, &underground_link_binding);
             command_buffer->draw(quint32(underground_link_vertices.size()));
+        }
+
+        if (this->applied_symbology.show_junctions
+            && !underground_junction_instances.isEmpty()
+            && !junction_impostor.isEmpty())
+        {
+            command_buffer->setGraphicsPipeline(this->junction_xray_pipeline.get());
+            command_buffer->setShaderResources(
+                this->junction_shader_resource_bindings.get());
+            const QRhiCommandBuffer::VertexInput underground_junction_bindings[] = {
+                {this->junction_mesh_vertex_buffer.get(), 0},
+                {this->globe_underground_junction_instance_buffer.get(), 0}
+            };
+            command_buffer->setVertexInput(0, 2, underground_junction_bindings);
+            command_buffer->draw(
+                quint32(junction_impostor.size()),
+                quint32(underground_junction_instances.size()));
         }
     }
 
@@ -5437,6 +5369,7 @@ void MapRhiWidget::resetGpuResources()
     this->icon_atlas_texture.reset();
     this->underground_junction_instance_buffer.reset();
     this->underground_link_vertex_buffer.reset();
+    this->globe_underground_junction_instance_buffer.reset();
     this->globe_underground_link_vertex_buffer.reset();
     this->globe_icon_vertex_buffer.reset();
     this->globe_flow_direction_vertex_buffer.reset();
@@ -5463,6 +5396,7 @@ void MapRhiWidget::resetGpuResources()
     this->uniform_buffer.reset();
     this->underground_junction_instance_buffer_size = 0;
     this->underground_link_vertex_buffer_size = 0;
+    this->globe_underground_junction_instance_buffer_size = 0;
     this->globe_underground_link_vertex_buffer_size = 0;
     this->globe_icon_vertex_buffer_size = 0;
     this->globe_flow_direction_vertex_buffer_size = 0;
@@ -6084,14 +6018,13 @@ double MapRhiWidget::terrainWorldZ(
     return elevation_m * world_units_per_meter;
 }
 
-bool MapRhiWidget::globeSurfaceRayHitAtScreen(
-    const QPointF &screen_position, MapRhiGlobeSurfaceHit *hit) const
+bool MapRhiWidget::globeScreenRay(
+    const QPointF &screen_position,
+    GeoWgs84Ellipsoid::EcefPositionD *ray_origin,
+    QVector3D *ray_direction) const
 {
-    if (hit == nullptr)
-        return false;
-
-    *hit = MapRhiGlobeSurfaceHit{};
-    if (this->map_model == nullptr
+    if (ray_origin == nullptr || ray_direction == nullptr
+        || this->map_model == nullptr
         || this->map_model->viewMode() != MapViewMode::Globe
         || !this->viewport_size.isValid()
         || !std::isfinite(screen_position.x())
@@ -6112,10 +6045,10 @@ bool MapRhiWidget::globeSurfaceRayHitAtScreen(
     const double collision_lift_m =
         this->map_model->viewGlobeCameraCollisionLiftM();
 
-    // Build the screen-ray direction in a local, target-relative frame so
-    // no Earth-radius-scale position is narrowed to float while deriving the
-    // view direction. This is the same orbit basis and FOV convention used
-    // by MapRhiCamera's Globe GPU projection.
+    // Build the screen ray in the same canonical top-left screen convention
+    // used by Qt input. This deliberately bypasses QRhi clip-space correction
+    // and backend NDC orientation entirely, so DEM and model picking share one
+    // Vulkan/OpenGL/Metal-independent ray definition.
     const GeoWgs84Ellipsoid::EcefPositionD local_origin =
         GeoWgs84Ellipsoid::geodeticToEcefD(
             this->map_model->centerLon(), this->map_model->centerLat(),
@@ -6134,18 +6067,36 @@ bool MapRhiWidget::globeSurfaceRayHitAtScreen(
     const double ndc_x = 2.0 * screen_position.x() / viewport_width - 1.0;
     const double ndc_y = 1.0 - 2.0 * screen_position.y() / viewport_height;
 
-    QVector3D ray_direction = basis.forward
+    QVector3D direction = basis.forward
         + basis.right * float(ndc_x * tan_half_fov * aspect)
         + basis.up * float(ndc_y * tan_half_fov);
-    if (ray_direction.lengthSquared() <= 1e-12f)
+    if (direction.lengthSquared() <= 1e-12f)
         return false;
-    ray_direction.normalize();
+    direction.normalize();
 
-    const GeoWgs84Ellipsoid::EcefPositionD ray_origin =
-        GeoWgs84Ellipsoid::orbitCameraEyeEcefD(
-            this->map_model->centerLon(), this->map_model->centerLat(),
-            this->map_model->viewGlobeYawDeg(), pitch_deg, distance_m,
-            target_height_m, collision_lift_m);
+    *ray_origin = GeoWgs84Ellipsoid::orbitCameraEyeEcefD(
+        this->map_model->centerLon(), this->map_model->centerLat(),
+        this->map_model->viewGlobeYawDeg(), pitch_deg, distance_m,
+        target_height_m, collision_lift_m);
+    *ray_direction = direction;
+    return true;
+}
+
+bool MapRhiWidget::globeSurfaceRayHitAtScreen(
+    const QPointF &screen_position, MapRhiGlobeSurfaceHit *hit) const
+{
+    if (hit == nullptr)
+        return false;
+
+    *hit = MapRhiGlobeSurfaceHit{};
+
+    GeoWgs84Ellipsoid::EcefPositionD ray_origin;
+    QVector3D ray_direction;
+    if (!this->globeScreenRay(
+            screen_position, &ray_origin, &ray_direction))
+    {
+        return false;
+    }
 
     GeoWgs84Ellipsoid::EcefPositionD intersection;
     double hit_distance_m = 0.0;
@@ -6633,10 +6584,11 @@ void MapRhiWidget::syncGlobeTerrainAwareCameraHeight(bool request_missing_tile)
         camera_terrain_elevation_m = 0.0;
     }
 
-    const double vertical_exaggeration =
-        this->map_model->view3dVerticalExaggeration();
+    const MapGlobeVerticalTransform vertical_transform(
+        this->map_model->view3dVerticalExaggeration(),
+        this->map_model->view3dNetworkGroundOffsetM());
     const double rendered_camera_terrain_elevation_m =
-        camera_terrain_elevation_m * vertical_exaggeration;
+        vertical_transform.terrainHeightM(camera_terrain_elevation_m);
 
     // Compute the height naturally provided by yaw/pitch/distance over the
     // bare ellipsoid. Usually it is far above the minimum; retaining this

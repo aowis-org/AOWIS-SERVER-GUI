@@ -2,6 +2,7 @@
 
 #include "map/core/map_model.h"
 #include "map/render/map_render_cache_math.h"
+#include "map/render/map_globe_vertical_transform.h"
 #include "map/rhi/map_rhi_camera.h"
 #include "map/rhi/map_rhi_scene.h"
 #include "map/rhi/map_rhi_terrain_mesh_scheduler.h"
@@ -365,9 +366,10 @@ QVector3D globeTerrainPositionAt(
     double imagery_u, double imagery_v,
     double terrain_u, double terrain_v)
 {
-    double elevation_m = double(
-        terrainElevationMetersAt(request, terrain_u, terrain_v))
-        * request.globe_vertical_exaggeration;
+    const MapGlobeVerticalTransform vertical_transform(
+        request.globe_vertical_exaggeration);
+    double elevation_m = vertical_transform.terrainHeightM(
+        double(terrainElevationMetersAt(request, terrain_u, terrain_v)));
 
     // Web Mercator imagery/DEM coverage ends at +-85.051 degrees, while the
     // globe renderer closes the last few degrees with its static polar fans.

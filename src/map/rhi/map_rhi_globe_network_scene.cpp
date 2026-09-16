@@ -40,11 +40,6 @@ constexpr int LongLinkMaximumSubdivisionCount = 4096;
 // "buried" -- small enough to ignore DEM sampling noise/float error for a
 // pipe running essentially at grade, large enough to not flag on that noise.
 constexpr double UndergroundToleranceM = 0.1;
-// See the comment in ecefPosition() -- floor under ground_offset_m so
-// network geometry reliably wins its depth test against the terrain mesh
-// even when the user hasn't (or doesn't need to have) touched the ground
-// offset slider.
-constexpr double MinimumAntiZFightingLiftM = 2.0;
 constexpr double FlowDirectionMinimumLinkPixels = 18.0;
 constexpr double FlowDirectionSpacingPixels = 100.0;
 constexpr double FlowDirectionChevronHalfWidthRatio = 0.4;
@@ -209,7 +204,11 @@ void MapRhiGlobeNetworkScene::setSymbology(const MapRhiSymbology &symbology)
         rebuildReservoirInstances();
     }
     if (junction_instance_changed)
+    {
         rebuildJunctionInstances();
+        if (this->underground_xray_enabled)
+            rebuildUndergroundXRayGeometry();
+    }
     if (flow_direction_changed)
         rebuildFlowDirections();
     if (link_thickness_changed)
@@ -270,10 +269,12 @@ bool MapRhiGlobeNetworkScene::setGroundOffsetM(double offset_m)
         MapModel::MinView3dNetworkGroundOffsetM,
         offset_m,
         MapModel::MaxView3dNetworkGroundOffsetM);
-    if (qFuzzyCompare(1.0 + this->ground_offset_m, 1.0 + bounded_offset_m))
+    if (qFuzzyCompare(
+            1.0 + this->vertical_transform.networkGroundOffsetM(),
+            1.0 + bounded_offset_m))
         return false;
 
-    this->ground_offset_m = bounded_offset_m;
+    this->vertical_transform.setNetworkGroundOffsetM(bounded_offset_m);
     rebuildNetworkGeometry();
     return true;
 }
@@ -287,10 +288,12 @@ bool MapRhiGlobeNetworkScene::setVerticalExaggeration(double exaggeration)
         MapModel::MinView3dVerticalExaggeration,
         exaggeration,
         MapModel::MaxView3dVerticalExaggeration);
-    if (qFuzzyCompare(1.0 + this->vertical_exaggeration, 1.0 + bounded_exaggeration))
+    if (qFuzzyCompare(
+            1.0 + this->vertical_transform.verticalExaggeration(),
+            1.0 + bounded_exaggeration))
         return false;
 
-    this->vertical_exaggeration = bounded_exaggeration;
+    this->vertical_transform.setVerticalExaggeration(bounded_exaggeration);
     rebuildNetworkGeometry();
     return true;
 }
@@ -324,7 +327,10 @@ bool MapRhiGlobeNetworkScene::setUndergroundXRayEnabled(bool enabled)
     if (enabled)
         rebuildUndergroundXRayGeometry();
     else
+    {
         this->underground_link_vertices.clear();
+        this->underground_junction_instances.clear();
+    }
     return true;
 }
 
@@ -332,7 +338,8 @@ bool MapRhiGlobeNetworkScene::refreshUndergroundXRayGeometry()
 {
     if (!this->underground_xray_enabled
         || !this->terrain_elevation_resolver
-        || this->network_snapshot.links.isEmpty())
+        || (this->network_snapshot.links.isEmpty()
+            && this->network_snapshot.nodes.isEmpty()))
     {
         return false;
     }
@@ -420,6 +427,12 @@ const QVector<MapRhiScene::LinkVertex> &MapRhiGlobeNetworkScene::undergroundLink
     return this->underground_link_vertices;
 }
 
+const QVector<MapRhiJunctionInstance> &
+MapRhiGlobeNetworkScene::undergroundJunctionInstances() const
+{
+    return this->underground_junction_instances;
+}
+
 const QVector<MapRhiJunctionInstance> &MapRhiGlobeNetworkScene::junctionInstances() const
 {
     return this->junction_instances;
@@ -505,22 +518,7 @@ QVector3D MapRhiGlobeNetworkScene::ecefPosition(
     // the very first frames of a session resolves itself once relief
     // arrives, the same way ThreeD's own terrain mesh appears without any
     // equivalent synchronization dance.
-    const double base_elevation_m = std::isfinite(elevation_m) ? elevation_m : 0.0;
-    // A network entity's elevation and the terrain's live DEM sample at the
-    // same point are two independently-sourced numbers -- close, but not
-    // bit-for-bit identical, and (see below) this class's vertex positions
-    // still only carry ~0.5-1m of precision in the worst case. Placed with
-    // zero lift, that's enough for the two surfaces to z-fight (flicker)
-    // rather than cleanly resolve one in front of the other.
-    // MinimumAntiZFightingLiftM is a floor under the user-configured
-    // ground_offset_m (see setGroundOffsetM()), not stacked on top of it --
-    // once the user asks for more clearance than that floor, there's
-    // nothing left to fight.
-    const double lift_m = qMax(this->ground_offset_m, MinimumAntiZFightingLiftM);
-    // Order matches globeTerrainPositionAt() exactly (elevation * exaggeration,
-    // ground offset added after): see the class comment on
-    // setVerticalExaggeration() for why the two must stay in lockstep.
-    const double height_m = base_elevation_m * this->vertical_exaggeration + lift_m;
+    const double height_m = this->vertical_transform.networkHeightM(elevation_m);
 
     // Computed in double (geodeticToEcefD(), not geodeticToEcef()) and
     // subtracted against render_origin_ecef -- also double -- before ever
@@ -823,18 +821,19 @@ void MapRhiGlobeNetworkScene::rebuildNetworkGeometry()
         }
     }
 
+    rebuildJunctionInstances();
     rebuildUndergroundXRayGeometry();
     rebuildFlowDirections();
     rebuildIcons();
     rebuildTankInstances();
     rebuildReservoirInstances();
-    rebuildJunctionInstances();
     rebuildHighlights();
 }
 
 void MapRhiGlobeNetworkScene::rebuildUndergroundXRayGeometry()
 {
     this->underground_link_vertices.clear();
+    this->underground_junction_instances.clear();
     if (!this->underground_xray_enabled || !this->terrain_elevation_resolver)
         return;
 
@@ -894,6 +893,49 @@ void MapRhiGlobeNetworkScene::rebuildUndergroundXRayGeometry()
             previous_elevation_m = elevation_m;
             have_previous = true;
         }
+    }
+
+    if (this->junction_instances.isEmpty())
+        return;
+
+    QHash<quint32, MapRhiJunctionInstance> junction_instances_by_render_id;
+    junction_instances_by_render_id.reserve(this->junction_instances.size());
+    for (const MapRhiJunctionInstance &instance : this->junction_instances)
+        junction_instances_by_render_id.insert(instance.render_id, instance);
+
+    const double rendered_underground_tolerance_m =
+        this->vertical_transform.renderedVerticalDistanceM(UndergroundToleranceM);
+    this->underground_junction_instances.reserve(this->junction_instances.size());
+    for (const NetworkRenderNode &node : this->network_snapshot.nodes)
+    {
+        if (node.entity_type != InfrastructureEntity::Junction
+            || this->hidden_entity_uuids.contains(node.uuid)
+            || !finiteCoordinate(node.coordinate_wgs84))
+        {
+            continue;
+        }
+
+        const double elevation_m = std::isfinite(node.elevation_m)
+            ? node.elevation_m : this->fallback_elevation_m;
+        const CoordinateWGS84 render_coordinate = coordinateWithDeclutterOffset(
+            node.coordinate_wgs84,
+            this->node_declutter_offsets_m.value(node.render_id));
+
+        double terrain_elevation_m = 0.0;
+        double terrain_cell_size_m = 0.0;
+        if (!this->terrain_elevation_resolver(
+                render_coordinate, &terrain_elevation_m, &terrain_cell_size_m)
+            || this->vertical_transform.networkDepthBelowTerrainM(
+                    elevation_m, terrain_elevation_m)
+                <= rendered_underground_tolerance_m)
+        {
+            continue;
+        }
+
+        const QHash<quint32, MapRhiJunctionInstance>::const_iterator instance_iterator =
+            junction_instances_by_render_id.constFind(node.render_id);
+        if (instance_iterator != junction_instances_by_render_id.cend())
+            this->underground_junction_instances.append(instance_iterator.value());
     }
 }
 
@@ -1166,10 +1208,16 @@ void MapRhiGlobeNetworkScene::appendUndergroundSubdivisions(
 
         double terrain_elevation_m = 0.0;
         double terrain_cell_size_m = 0.0;
-        const bool buried = this->terrain_elevation_resolver
+        const bool terrain_resolved = this->terrain_elevation_resolver
             && this->terrain_elevation_resolver(
-                sample_coordinate, &terrain_elevation_m, &terrain_cell_size_m)
-            && sample_elevation_m < terrain_elevation_m - UndergroundToleranceM;
+                sample_coordinate, &terrain_elevation_m, &terrain_cell_size_m);
+        const double rendered_underground_tolerance_m =
+            this->vertical_transform.renderedVerticalDistanceM(
+                UndergroundToleranceM);
+        const bool buried = terrain_resolved
+            && this->vertical_transform.networkDepthBelowTerrainM(
+                sample_elevation_m, terrain_elevation_m)
+                > rendered_underground_tolerance_m;
 
         if (buried && !buried_run_active)
         {

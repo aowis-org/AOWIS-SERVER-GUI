@@ -154,6 +154,10 @@ private:
     void uploadGlobeNetworkGeometry(QRhiResourceUpdateBatch *resource_updates);
     void uploadNetworkStyleTable(QRhiResourceUpdateBatch *resource_updates);
     void drawGlobeNetwork(QRhiCommandBuffer *command_buffer);
+    bool globeScreenRay(
+        const QPointF &screen_position,
+        GeoWgs84Ellipsoid::EcefPositionD *ray_origin,
+        QVector3D *ray_direction) const;
     // Globe-mode counterpart of hitTest() -- see that function's header
     // comment for why it can't just be folded into the same function body.
     MapRhiHit globeHitTest(const QPointF &screen_position) const;
@@ -257,6 +261,7 @@ private:
     // pipeline's fragment shader is coordinate-system agnostic like the
     // rest of the shared link/node/icon shaders.
     std::unique_ptr<QRhiBuffer> globe_underground_link_vertex_buffer;
+    std::unique_ptr<QRhiBuffer> globe_underground_junction_instance_buffer;
     std::unique_ptr<QRhiTexture> icon_atlas_texture;
     std::unique_ptr<QRhiTexture> tank_texture;
     std::unique_ptr<QRhiTexture> reservoir_texture;
@@ -318,6 +323,7 @@ private:
     int globe_flow_direction_vertex_buffer_size = 0;
     int globe_icon_vertex_buffer_size = 0;
     int globe_underground_link_vertex_buffer_size = 0;
+    int globe_underground_junction_instance_buffer_size = 0;
     bool geometry_upload_pending = true;
     bool highlight_upload_pending = true;
     bool flow_direction_upload_pending = true;

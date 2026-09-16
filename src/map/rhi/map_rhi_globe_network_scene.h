@@ -7,6 +7,7 @@
 #include "map/rhi/map_rhi_junction_model.h"
 #include "map/rhi/map_rhi_reservoir_model.h"
 #include "map/rhi/map_rhi_tank_model.h"
+#include "map/render/map_globe_vertical_transform.h"
 #include "geo/geo_wgs84_ellipsoid.h"
 
 #include <QColor>
@@ -65,13 +66,14 @@
 // applies the resulting metre offsets back on WGS84 before ECEF conversion.
 // Junctions are analytic sphere impostors -- see junctionInstances() -- and
 // tanks/reservoirs can be represented by their Globe-oriented 3D models.
-// Underground X-Ray intentionally classifies and renders link segments only;
+// Underground X-Ray classifies both link segments and junctions against the
+// visible terrain surface, matching the retained planar ThreeD behavior.
 // Solid mode remains the mode for seeing the complete network through terrain.
 class MapRhiGlobeNetworkScene
 {
 public:
     // Read-only terrain lookup at an arbitrary coordinate, used solely to
-    // classify link segments as underground for X-Ray mode. In addition to
+    // classify link segments and junctions as underground for X-Ray mode. In addition to
     // elevation it reports the effective terrain cell size at that point so
     // classification density follows terrain LOD. Never influences where
     // any geometry is actually placed.
@@ -96,16 +98,8 @@ public:
     // keep network geometry from z-fighting with the terrain mesh beneath
     // it. Returns true if the (bounded) value actually changed.
     bool setGroundOffsetM(double offset_m);
-    // Multiplies each entity's elevation before placement, mirroring how
-    // MapRhiGlobeRenderer's own terrain mesh scales DEM elevation by this
-    // same MapModel::view3dVerticalExaggeration() factor (see
-    // globeTerrainPositionAt() in map_rhi_basemap_renderer.cpp). Terrain and
-    // network must apply the identical factor or they drift apart the
-    // moment exaggeration != 1 -- ThreeD avoids this by literally reusing
-    // MapRhiScene's own affine coefficients to place its terrain mesh, but
-    // the Globe terrain mesh does not share code with this class, so the
-    // factor has to be kept in sync by hand here instead. Returns true if
-    // the (bounded) value actually changed.
+    // Updates the shared Globe vertical transform used by terrain and network
+    // placement. Returns true if the (bounded) value actually changed.
     bool setVerticalExaggeration(double exaggeration);
     // Injects the read-only terrain-elevation lookup used by X-Ray
     // classification (see setUndergroundXRayEnabled()). Safe to leave unset
@@ -118,15 +112,15 @@ public:
     // subdivisions, compares each subdivision's own implied elevation
     // against the resolver's terrain sample at the same point, and
     // collects the contiguous "below terrain" runs into
-    // undergroundLinkVertices(), for the caller to draw through terrain
-    // with a no-depth-test pipeline (mirroring MapRhiWidget's own
-    // ThreeD-only underground_link_vertices). A plain bool rather than
+    // undergroundLinkVertices()/undergroundJunctionInstances(), for the
+    // caller to draw through terrain with no-depth-test X-Ray pipelines
+    // (mirroring MapRhiWidget's own ThreeD underground geometry). A plain bool rather than
     // MapRhiWidget's MapRhiUndergroundMode enum, to avoid a
     // widget<->scene header cycle -- the caller maps XRay to true and
     // Hide/Solid to false ("Solid" needs no per-segment classification at
     // all; see MapRhiWidget::drawGlobeNetwork()). Returns true if changed.
     bool setUndergroundXRayEnabled(bool enabled);
-    // Re-runs only the underground-link classification against the terrain
+    // Re-runs only the underground classification against the terrain
     // resolver's current cache. Normal Globe network geometry is left
     // untouched, so terrain streaming cannot force a full network rebuild.
     // Returns true when classification was performed.
@@ -173,6 +167,7 @@ public:
     const QVector<MapRhiTankInstance> &tankInstances() const;
     const QVector<MapRhiReservoirInstance> &reservoirInstances() const;
     const QVector<MapRhiScene::LinkVertex> &undergroundLinkVertices() const;
+    const QVector<MapRhiJunctionInstance> &undergroundJunctionInstances() const;
     // Analytic sphere-impostor instances for junction entities -- see the class
     // comment above. Drawn with the exact same MapRhiJunctionInstance
     // layout and impostor quad (mapRhiJunctionImpostorVertices())
@@ -317,8 +312,7 @@ private:
     // rebuild, rather than possibly matching a real starting origin by
     // coincidence and skipping a rebuild that needs to happen.
     GeoWgs84Ellipsoid::EcefPositionD render_origin_ecef;
-    double ground_offset_m = 0.0;
-    double vertical_exaggeration = 1.0;
+    MapGlobeVerticalTransform vertical_transform;
     double flow_direction_pixels_per_meter = 0.0;
     TerrainElevationResolver terrain_elevation_resolver;
     bool underground_xray_enabled = false;
@@ -327,6 +321,7 @@ private:
     QHash<quint32, QPointF> node_declutter_offsets_m;
     double fallback_elevation_m = 0.0;
     QVector<MapRhiScene::LinkVertex> underground_link_vertices;
+    QVector<MapRhiJunctionInstance> underground_junction_instances;
 };
 
 #endif // MAP_RHI_GLOBE_NETWORK_SCENE_H
