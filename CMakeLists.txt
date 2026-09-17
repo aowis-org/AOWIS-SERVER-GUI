@@ -360,6 +360,8 @@ if(AOWIS_HAS_QRHI)
             src/map/monitor/map_monitor_hud_controls.cpp
             src/map/rhi/map_rhi_scene.h
             src/map/rhi/map_rhi_scene.cpp
+            src/map/render/map_terrain_mesh_scheduler.h
+            src/map/render/map_terrain_mesh_scheduler.cpp
             src/map/rhi/map_rhi_terrain_mesh_scheduler.h
             src/map/rhi/map_rhi_terrain_mesh_scheduler.cpp
             src/map/render/map_globe_vertical_transform.h

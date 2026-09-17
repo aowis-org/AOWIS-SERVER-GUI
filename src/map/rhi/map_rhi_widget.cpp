@@ -636,24 +636,30 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
     connect(this->map_model, &MapModel::view3dNavigationStateChanged,
             this, [this](MapView3dNavigationState state)
     {
-        if (this->map_model == nullptr)
-            return;
-
-        if (this->map_model->viewMode() == MapViewMode::Globe)
+        if (this->map_model == nullptr
+            || this->map_model->viewMode() != MapViewMode::Globe)
         {
-            // Freeze the visible DEM point under the crosshair exactly once
-            // when orbit starts. Subsequent terrain LOD/refinement must not
-            // move the pivot underneath an active interaction.
-            if (this->globe_terrain_follow_timer != nullptr)
-                this->globe_terrain_follow_timer->stop();
-            this->globe_terrain_follow_clock.invalidate();
-            if (state == MapView3dNavigationState::Rotate)
-                captureViewGlobeFocusAnchor();
-
-            // Orbit keeps the captured terrain target fixed. The eye-only
-            // clearance response remains independent, but is damped too.
-            syncGlobeTerrainAwareCameraHeight(true);
+            return;
         }
+
+        if (this->globe_terrain_follow_timer != nullptr)
+            this->globe_terrain_follow_timer->stop();
+        this->globe_terrain_follow_clock.invalidate();
+
+        if (state == MapView3dNavigationState::Rotate)
+        {
+            // Entering orbit must be a pure interaction-state transition.
+            // Re-anchoring the camera to the rendered DEM here changes the
+            // model before the user has supplied any orbit delta, which is
+            // visible as a one-time map jump. Keep the current camera target
+            // untouched; actual orbit movement will drive camera/clearance
+            // updates through viewGlobeCameraChanged.
+            return;
+        }
+
+        // Once rotation ends, resume ordinary terrain-follow settling from
+        // the camera position produced by the interaction.
+        syncGlobeTerrainAwareCameraHeight(true);
     });
     connect(this->map_model, &MapModel::providerChanged, this, [this](MapProvider)
     {

@@ -21,7 +21,7 @@
 
 class MapModel;
 class MapTerrainRepository;
-class MapRhiTerrainMeshScheduler;
+class MapTerrainMeshScheduler;
 class MapTileRepository;
 class QRhi;
 class QRhiBuffer;
@@ -69,7 +69,7 @@ struct MapRhiGlobeQuadtreeLeaf
 // level's tile grid) the moment the limb enters view. Each leaf still goes
 // through the same per-tile pipeline as before it (imagery/terrain request,
 // texture cache, background terrain-mesh generation via
-// MapRhiTerrainMeshScheduler) -- only the question of *which* (zoom, x, y)
+// MapTerrainMeshScheduler) -- only the question of *which* (zoom, x, y)
 // tiles exist this frame changed.
 //
 // Two independent pieces of geometry:
@@ -828,7 +828,7 @@ private:
     int heatmap_gpu_bake_instance_buffer_size = 0;
     bool heatmap_gpu_baking_disabled = false;
 
-    std::unique_ptr<MapRhiTerrainMeshScheduler> terrain_mesh_scheduler;
+    std::unique_ptr<MapTerrainMeshScheduler> terrain_mesh_scheduler;
     quint64 next_terrain_mesh_request_id = 1;
     bool reported_orthometric_datum_warning = false;
     bool reported_unusable_datum_warning = false;
