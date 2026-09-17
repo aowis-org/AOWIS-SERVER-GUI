@@ -20,7 +20,6 @@
 #include <QLoggingCategory>
 #include <QPainter>
 #include <QPixmap>
-#include <QRadialGradient>
 #include <QRect>
 #include <QSet>
 #include <QtMath>
@@ -70,12 +69,12 @@ private:
 // zoom 19 via viewGlobeDistanceMForZoomLevel() -- the globe's maximum zoom-in
 // should reach exactly as much detail as 2D does, no more, no less.
 constexpr int GlobeImageryMaxZoom = MapModel::MaxZoom;
-constexpr int GlobeTerrainReliefMinimumZoom = 8;
+constexpr int GlobeTerrainReliefMinimumZoom =
+    MapGlobeSurfaceScene::TerrainReliefMinimumZoom;
 // Terrain LOD uses powers of two from one cell up to the DEM-native density,
 // with camera-driven rebuilds
 // rate-limited so continuous orbit/zoom never resamples the retained apron at
 // vsync frequency.
-constexpr int GlobeTerrainMinimumLodCellCount = 1;
 constexpr int GlobeAsyncTerrainMeshMinimumCellCount = 16;
 constexpr qint64 GlobeMinimumTerrainLodRebuildIntervalMs = 120;
 // Longitude segments used for each polar cap fan. Independent of the
@@ -142,12 +141,10 @@ bool rayAabbIntersectionDistanceRange(
 // Matches MapRhiBasemapRenderer's HeatmapTextureSize exactly (one texel per
 // Web Mercator pixel at whatever zoom a given tile is fetched at) -- see
 // MapRhiGlobeRenderer::renderHeatmapTile().
-constexpr int GlobeHeatmapTextureSize = 256;
+constexpr int GlobeHeatmapTextureSize = MapGlobeHeatmapScene::TextureSize;
 // A marker is retained once at every Web Mercator index level. Candidate
 // queries choose a level whose expanded tile footprint is only a few cells
 // wide, avoiding both the old zoom-18 empty-cell walks and full-network scans.
-constexpr int GlobeHeatmapMarkerMaximumBucketZoom = GlobeImageryMaxZoom;
-constexpr double GlobeHeatmapMarkerTargetBucketSpan = 4.0;
 constexpr int GlobeHeatmapValidationTolerance = 8;
 
 struct GlobeHeatmapValidationMetrics
@@ -343,22 +340,6 @@ void reportGlobeHeatmapGpuValidation(
         << " status=" << (compatible ? "compatible" : "mismatch");
 }
 
-quint64 globeHeatmapMarkerBucketKey(int bucket_x, int bucket_y)
-{
-    return (quint64(quint32(bucket_x)) << 32)
-        | quint64(quint32(bucket_y));
-}
-
-int wrappedGlobeHeatmapBucketX(qint64 bucket_x, qint64 bucket_count)
-{
-    if (bucket_count <= 0)
-        return 0;
-    qint64 wrapped = bucket_x % bucket_count;
-    if (wrapped < 0)
-        wrapped += bucket_count;
-    return int(wrapped);
-}
-
 // Each lazily-created Globe imagery or heatmap page has 256 RGBA8 layers.
 // Layer 0 is a permanent sentinel, leaving 255 batchable tiles per page. At
 // 256x256, each allocated page is 64 MiB when fully resident. Heatmap pages
@@ -391,7 +372,7 @@ constexpr int GlobeHeatmapGpuBakeAtlasMaximumSlots = 64;
 // across or smaller, the curvature within a single tile is negligible and
 // a coarse grid is indistinguishable from a fine one while costing far
 // less geometry across a whole tile window. Unlike the old single-zoom
-// window, the quadtree walk (selectVisibleGlobeQuadtreeLeaves() below) can
+// window, the neutral surface-scene quadtree walk can
 // keep a zoom 0-3 leaf alive whenever the camera is far enough out that a
 // large fraction of the planet projects to under the subdivide threshold at
 // once (the same "zoomed all the way out" case the old code's
@@ -448,540 +429,14 @@ void appendIndexedGridIndices(
     }
 }
 
-// Replaces the old single-zoom "sample the projected ellipsoid boundary into
-// one rectangular tile window" approach. That approach picked one imagery
-// zoom for the whole screen from camera distance alone, then found the
-// tile-index rectangle covering everything from the near-camera ground out
-// to the visible limb at *that* zoom. The moment a tilt brought the horizon
-// into view, the limb sample landed thousands of kilometres from the
-// near-camera point (Earth's curvature), so covering that whole span at
-// near-camera resolution meant the tile-index rectangle could balloon to
-// the entire zoom level's tile grid -- millions of tiles at typical in-close
-// zooms. A single zoom level simply cannot cover both a near-camera patch
-// and a near-limb region economically at once.
-//
-// A quadtree fixes this the way real terrain/globe engines (FlightGear's
-// VirtualPlanetBuilder-based scenery, Cesium, etc.) do: walk the tile
-// hierarchy from the whole-planet root and let each node decide for itself,
-// from its own real-world size and its own real distance to the camera,
-// whether it still needs to subdivide. Near the camera that bottoms out at
-// many small, fine tiles; near the horizon it bottoms out at a handful of
-// large, coarse tiles automatically, because a coarse tile's on-screen size
-// near the limb is small even though its real-world footprint is huge. Total
-// leaf count stays bounded by the walk's own occlusion/frustum culling and a
-// hard visited-node cap, regardless of pitch.
-constexpr int GlobeQuadtreeRootZoom = 0;
-// Subdivide a node once its own on-screen projected *diagonal* exceeds this
-// many pixels. A 256-pixel imagery tile has a roughly 362-pixel diagonal at
-// native scale, so 512 waits until the current tile has been enlarged by
-// about 1.4x before requesting/rendering its children instead of switching
-// slightly before native scale as the old 320-pixel threshold did. Merge
-// (stop subdividing) once it falls below the lower
-// GlobeQuadtreeMergeScreenPx bound instead of the same value, so a node
-// sitting right at the boundary does not flip between one leaf and four
-// children every frame as the camera drifts by sub-pixel amounts (the same
-// role GlobeZoomHysteresis played for the old single-zoom picker, applied
-// per node instead of once globally).
-constexpr double GlobeQuadtreeSubdivideScreenPx = 512.0;
-constexpr double GlobeQuadtreeMergeScreenPx = 256.0;
-// Hard ceilings so a pathological view (camera exactly edge-on to the
-// ellipsoid, or a bug in the culling above) degrades gracefully instead of
-// pathologically. In normal operation, horizon/frustum culling keeps the
-// walk to at most a few hundred visited nodes.
-constexpr int GlobeQuadtreeMaxVisitedNodes = 20000;
-constexpr int GlobeQuadtreeMaxLeaves = 3000;
 // Even a pure height animation periodically refreshes visibility/resource
 // state. This bounds any horizon change caused by a large climb and also
 // provides a safety net for a missed external dirty notification, while
 // still removing roughly five out of six full preparations at 60 Hz.
 constexpr int GlobeCameraOnlyMaximumReuseMs = 100;
 constexpr int GlobeTileArrayMaximumPageCount =
-    (GlobeQuadtreeMaxLeaves + GlobeTileArrayUsableLayerCount - 1)
+    (MapGlobeSurfaceScene::MaximumLeafCount + GlobeTileArrayUsableLayerCount - 1)
     / GlobeTileArrayUsableLayerCount;
-// Extra half-angle of slack added to the camera's field of view when
-// culling a node against the view cone. This is a coarse "is this node even
-// worth walking into" cull, not exact clipping -- the per-tile draw already
-// only ever draws leaves that were kept -- so generous slack is cheap
-// insurance against ever dropping a node that is genuinely partly on
-// screen.
-//
-// Deliberately generous well beyond that minimum, for a second reason: this
-// is also the *only* lever that gives imagery/terrain a head start on
-// loading before a tile becomes strictly visible (requestMissingTiles()
-// requests every tile in window_tiles, which this cull directly gates). Too
-// tight a margin here means a tile only starts its network fetch once it is
-// already on screen, so panning reveals a visible gap or the flat
-// GlobeMissingTileColor placeholder for as long as that fetch takes --
-// exactly the popping-in this margin is sized to hide. GlobeQuadtreeMaxLeaves
-// (3000) and GlobeQuadtreeMaxVisitedNodes (20000) both have comfortable
-// headroom above what this widened margin adds in ordinary framing; an
-// unusually wide, low-pitch view near the horizon is the case most likely
-// to feel that budget pressure first.
-constexpr double GlobeQuadtreeViewConeMarginRad = 0.5;
-
-quint64 globeQuadtreeNodeKey(int zoom, int tile_x, int tile_y)
-{
-    return (quint64(quint32(zoom)) << 48)
-        | (quint64(quint32(tile_x)) << 24)
-        | quint64(quint32(tile_y));
-}
-
-int globeTerrainZoomForImageryZoom(int imagery_zoom);
-QString globeTerrainDatasetId();
-bool globeTerrainDatumUsable(MapTerrainVerticalDatum datum);
-
-// Cheap bounding sphere for a tile: ECEF positions of its four corners plus
-// centre, centroid as the sphere centre, farthest sample as the radius.
-// reference_elevation_m selects the radial shell being bounded. Visibility
-// culling uses the same displayed terrain elevation as the orbit target; LOD
-// keeps using the zero-height shell so loading a DEM cannot change tile detail.
-//
-// This corner-sampling approach breaks down for wide tiles: at zoom 0 the
-// tile spans the full 360 degrees of longitude, so lon0 (-180) and lon1
-// (+180) are the *same* ECEF point, collapsing 4 of the 5 samples into just
-// 2 distinct locations -- both on one side of the planet. The resulting
-// "bounding sphere" ends up skewed off-centre rather than actually bounding
-// the tile, and whether that skewed sphere happens to still overlap the
-// camera's view direction becomes a matter of which way the camera happens
-// to be facing -- exactly the kind of direction-dependent, intermittent
-// failure that showed up during panning. Below zoom 2 a tile still spans a
-// full hemisphere or more, where the same corner-averaging approach is
-// similarly unreliable even without an exact point collapse. For zoom 0-1,
-// skip the sampling and use the planet's own bounding sphere instead: it is
-// trivially correct (everything is inside it) and there are at most four
-// such wide tiles in existence, so tightness does not matter here the way
-// it does for the many small tiles deeper in the tree.
-void globeQuadtreeNodeBoundingSphere(
-    int zoom, int tile_x, int tile_y, double reference_elevation_m,
-    QVector3D *center, double *radius_m)
-{
-    if (zoom <= 1)
-    {
-        *center = QVector3D(0.0f, 0.0f, 0.0f);
-        *radius_m = GeoWgs84Ellipsoid::EquatorialRadiusM
-            + qMax(0.0, reference_elevation_m);
-        return;
-    }
-
-    const double lon0 = GeoWebMercator::tileXToLon(double(tile_x), zoom);
-    const double lon1 = GeoWebMercator::tileXToLon(double(tile_x + 1), zoom);
-    const double lat0 = GeoWebMercator::tileYToLat(double(tile_y), zoom);
-    const double lat1 = GeoWebMercator::tileYToLat(double(tile_y + 1), zoom);
-    const double lon_mid = 0.5 * (lon0 + lon1);
-    const double lat_mid = 0.5 * (lat0 + lat1);
-
-    const QVector3D samples[5] = {
-        GeoWgs84Ellipsoid::geodeticToEcef(
-            lon0, lat0, reference_elevation_m),
-        GeoWgs84Ellipsoid::geodeticToEcef(
-            lon1, lat0, reference_elevation_m),
-        GeoWgs84Ellipsoid::geodeticToEcef(
-            lon0, lat1, reference_elevation_m),
-        GeoWgs84Ellipsoid::geodeticToEcef(
-            lon1, lat1, reference_elevation_m),
-        GeoWgs84Ellipsoid::geodeticToEcef(
-            lon_mid, lat_mid, reference_elevation_m),
-    };
-
-    constexpr int SampleCount = sizeof(samples) / sizeof(samples[0]);
-    QVector3D centroid(0.0f, 0.0f, 0.0f);
-    for (const QVector3D &sample : samples)
-        centroid += sample;
-    centroid /= float(SampleCount);
-
-    double max_distance = 0.0;
-    for (const QVector3D &sample : samples)
-        max_distance = qMax(max_distance, double((sample - centroid).length()));
-
-    *center = centroid;
-    *radius_m = max_distance;
-}
-
-// Visibility must bound the geometry that can actually be drawn, not just a
-// single shell at the focus elevation. This matters most with vertical
-// exaggeration: a nearby mountain can stand several kilometres above the
-// orbit target while a not-yet-built terrain tile is still temporarily drawn
-// on the zero-height fallback shell. Include both states in one conservative
-// sphere so neither the horizon test nor the view-cone test can cut away a
-// tile whose relief is visibly in front of the camera.
-void globeQuadtreeNodeVisibilityBoundingSphere(
-    int zoom, int tile_x, int tile_y,
-    const MapTerrainRepository *terrain_repository,
-    double vertical_exaggeration,
-    QVector3D *center, double *radius_m)
-{
-    const MapGlobeVerticalTransform vertical_transform(vertical_exaggeration);
-    double minimum_elevation_m = 0.0;
-    double maximum_elevation_m = 0.0;
-
-    if (terrain_repository != nullptr
-        && zoom >= GlobeTerrainReliefMinimumZoom)
-    {
-        const int terrain_zoom = globeTerrainZoomForImageryZoom(zoom);
-        const int zoom_delta = zoom - terrain_zoom;
-        const quint32 terrain_x = quint32(tile_x) >> zoom_delta;
-        const quint32 terrain_y = quint32(tile_y) >> zoom_delta;
-        const MapTerrainTile *terrain_tile = terrain_repository->tile(
-            globeTerrainDatasetId(), terrain_zoom, terrain_x, terrain_y);
-        if (terrain_tile != nullptr
-            && globeTerrainDatumUsable(terrain_tile->vertical_datum)
-            && std::isfinite(terrain_tile->minimum_elevation_m)
-            && std::isfinite(terrain_tile->maximum_elevation_m))
-        {
-            const double first_elevation_m = vertical_transform.terrainHeightM(
-                terrain_tile->minimum_elevation_m);
-            const double second_elevation_m = vertical_transform.terrainHeightM(
-                terrain_tile->maximum_elevation_m);
-            minimum_elevation_m = qMin(
-                0.0, qMin(first_elevation_m, second_elevation_m));
-            maximum_elevation_m = qMax(
-                0.0, qMax(first_elevation_m, second_elevation_m));
-        }
-    }
-
-    const double reference_elevation_m =
-        0.5 * (minimum_elevation_m + maximum_elevation_m);
-    globeQuadtreeNodeBoundingSphere(
-        zoom, tile_x, tile_y, reference_elevation_m, center, radius_m);
-
-    // A sphere that encloses the tile on the middle shell, enlarged by half
-    // the elevation span, encloses every corresponding point between the
-    // minimum and maximum shells by the triangle inequality.
-    *radius_m += 0.5 * (maximum_elevation_m - minimum_elevation_m);
-}
-
-// A tile's bounding sphere is centered on the tile and sized to its
-// diagonal, but the actual tile geometry is a curved quad following the
-// ellipsoid surface -- for a wide, coarse (low-zoom) tile viewed nearly
-// edge-on at the visible limb, the quad's own corners can reach noticeably
-// farther around the curve toward the camera than a sphere of that radius
-// would suggest. globeQuadtreeNodeOccludedByHorizon() only has the sphere
-// to work with, so undercounting this by using node_radius_m directly (as
-// an earlier version of this function did) culls tiles that are genuinely
-// still partly visible right at the horizon -- worse, and asymmetrically,
-// the more oblique the camera's angle to that part of the limb. This
-// doesn't need to be exact, only generous: the true occlusion case (a tile
-// on the planet's far side) is occluded by many tile-radii, not a
-// borderline amount, so a generous multiplier here only affects tiles
-// genuinely near the grazing edge.
-constexpr double GlobeQuadtreeHorizonOcclusionMarginFactor = 3.0;
-
-// True if the straight line from eye to node_center is blocked by the
-// planet itself -- i.e. the node is entirely hidden behind the visible
-// limb/horizon, not merely far away.
-//
-// This deliberately does NOT solve eye.dot(eye) - R^2 = 0 directly: eye and
-// node_center are ECEF meters at ~6.4e6 magnitude stored in QVector3D,
-// which is float32. eye.dot(eye) and R^2 are then both ~4e13, and float32's
-// precision floor at that magnitude is on the order of a few million --
-// comparable to or larger than the actual 2*R*h signal once the camera's
-// height h above the surface drops to a few metres (exactly the case at
-// close-in globe zoom, especially combined with a low pitch looking toward
-// the horizon). The quadratic below would then misfire and could cull the
-// ground directly under the camera, taking the entire quadtree subtree
-// under it with it -- a real, previously-hit failure mode, not a
-// theoretical one.
-//
-// Instead this reuses GeoWgs84Ellipsoid::rayIntersection() -- the same
-// ellipsoid-intersection routine already proven at the horizon/limb by the
-// existing screen-ray picking code -- against the real WGS84 ellipsoid
-// rather than a hand-rolled sphere approximation: cast the ray from eye
-// toward node_center and compare its ellipsoid intersection distance to the
-// distance to node_center itself. If the ellipsoid blocks the ray
-// meaningfully closer than the node, something nearer (the planet's own
-// bulge) is in the way.
-bool globeQuadtreeNodeOccludedByHorizon(
-    const QVector3D &node_center, double node_radius_m, const QVector3D &eye)
-{
-    const QVector3D to_node = node_center - eye;
-    const double distance_to_node = double(to_node.length());
-    // The eye is at or inside the node's own bounding sphere -- nothing to
-    // occlude (also guards the degenerate zero-length direction below).
-    if (distance_to_node <= qMax(1.0, node_radius_m))
-        return false;
-
-    QVector3D direction = to_node;
-    direction.normalize();
-    QVector3D intersection;
-    if (!GeoWgs84Ellipsoid::rayIntersection(eye, direction, &intersection))
-        return false; // ray never touches the ellipsoid -- cannot be occluded by it.
-
-    const double distance_to_surface = double((intersection - eye).length());
-    // The node is represented by a conservative sphere around the terrain
-    // reference shell. Only flag occlusion when the ellipsoid blocks the ray
-    // meaningfully before that sphere can begin -- i.e. something nearer than
-    // the node by more than the node's own radius (times a generous safety
-    // factor -- see GlobeQuadtreeHorizonOcclusionMarginFactor's comment).
-    return distance_to_surface
-        < distance_to_node - qMax(1.0, node_radius_m * GlobeQuadtreeHorizonOcclusionMarginFactor);
-}
-
-// Coarse "is this node even pointed at" cull: the half-angle from the
-// camera's forward axis to the node, compared against the camera's own
-// half field of view plus the node's own angular radius plus a fixed
-// margin. A node entirely behind the eye is only kept if it is large enough
-// that a child of it might still wrap into view (only matters for the
-// zoom-0/1 root nodes at the very start of the walk).
-bool globeQuadtreeNodeInViewCone(
-    const QVector3D &node_center, double node_radius_m,
-    const GeoWgs84Ellipsoid::OrbitCameraBasis &camera_basis, double half_fov_rad)
-{
-    const QVector3D to_node = node_center - camera_basis.eye;
-    const double distance = double(to_node.length());
-    if (distance <= 1e-6)
-        return true;
-
-    const double forward_component = double(
-        QVector3D::dotProduct(to_node, camera_basis.forward));
-    if (forward_component <= 0.0)
-        return node_radius_m > distance;
-
-    const double angular_radius_rad = std::atan2(node_radius_m, distance);
-    const double view_angle_rad = std::acos(
-        qBound(-1.0, forward_component / distance, 1.0));
-    return view_angle_rad
-        <= half_fov_rad + angular_radius_rad + GlobeQuadtreeViewConeMarginRad;
-}
-
-// Apparent on-screen size (diameter, in pixels) of a node's bounding sphere
-// -- the same "would this still look coarse on screen" question
-// terrainCellCountForTile() already asks per-tile for mesh density, just
-// asked here of the tile/zoom choice itself.
-double globeQuadtreeNodeProjectedSizePx(
-    const QVector3D &node_center, double node_radius_m,
-    const GeoWgs84Ellipsoid::OrbitCameraBasis &camera_basis,
-    double viewport_height_px, double tan_half_fov)
-{
-    const double center_distance_m =
-        double((node_center - camera_basis.eye).length());
-    if (center_distance_m <= node_radius_m + 1e-6)
-        return std::numeric_limits<double>::infinity();
-
-    // Project the silhouette of the sphere, not its diameter divided by the
-    // distance to its nearest point. The latter was only a conservative
-    // bound and systematically magnified every tile: at native scale a
-    // centred high-zoom tile measured about 425 px instead of its real
-    // ~362-px diagonal, making its children load before the current tile had
-    // even reached native resolution. For a perspective-projected sphere,
-    // tan(angular_radius) = r / sqrt(d^2-r^2); multiplying by two and by the
-    // vertical focal length gives its actual projected diameter.
-    const double tangent_distance_m = std::sqrt(qMax(
-        1e-12,
-        center_distance_m * center_distance_m - node_radius_m * node_radius_m));
-    const double projected_diameter = 2.0 * node_radius_m / tangent_distance_m;
-    return projected_diameter * (viewport_height_px / (2.0 * tan_half_fov));
-}
-
-// Below this zoom, tile bounding spheres are at their widest and least
-// precise (see globeQuadtreeNodeBoundingSphere()), which makes the view-cone
-// test's own "large object, is it behind the eye" fallback unreliable right
-// where it matters least: there are at most 16 nodes total at zoom 0-1, so
-// visiting all of them unconditionally and relying solely on the (ellipsoid
-// ray-intersection based, precision-robust) horizon-occlusion test to prune
-// them is negligible extra cost for meaningfully more robust culling.
-constexpr int GlobeQuadtreeViewConeCullMinZoom = 2;
-
-void collectGlobeQuadtreeLeaves(
-    int zoom, int tile_x, int tile_y,
-    const GeoWgs84Ellipsoid::OrbitCameraBasis &visibility_camera_basis,
-    const GeoWgs84Ellipsoid::OrbitCameraBasis &lod_camera_basis,
-    const MapTerrainRepository *terrain_repository,
-    double vertical_exaggeration, double viewport_height_px,
-    double tan_half_fov, double half_fov_rad,
-    const QSet<quint64> &previously_subdivided_nodes,
-    QSet<quint64> *currently_subdivided_nodes,
-    QVector<MapRhiGlobeQuadtreeLeaf> *leaves, int *visit_budget)
-{
-    if (leaves == nullptr || visit_budget == nullptr
-        || *visit_budget <= 0 || leaves->size() >= GlobeQuadtreeMaxLeaves)
-    {
-        return;
-    }
-    --(*visit_budget);
-
-    QVector3D visibility_node_center;
-    double visibility_node_radius_m = 0.0;
-    globeQuadtreeNodeVisibilityBoundingSphere(
-        zoom, tile_x, tile_y, terrain_repository, vertical_exaggeration,
-        &visibility_node_center, &visibility_node_radius_m);
-
-    if (globeQuadtreeNodeOccludedByHorizon(
-            visibility_node_center, visibility_node_radius_m,
-            visibility_camera_basis.eye))
-    {
-        return;
-    }
-    if (zoom >= GlobeQuadtreeViewConeCullMinZoom
-        && !globeQuadtreeNodeInViewCone(
-            visibility_node_center, visibility_node_radius_m,
-            visibility_camera_basis, half_fov_rad))
-    {
-        return;
-    }
-
-    QVector3D lod_node_center;
-    double lod_node_radius_m = 0.0;
-    globeQuadtreeNodeBoundingSphere(
-        zoom, tile_x, tile_y, 0.0, &lod_node_center, &lod_node_radius_m);
-    const double projected_size_px = globeQuadtreeNodeProjectedSizePx(
-        lod_node_center, lod_node_radius_m, lod_camera_basis,
-        viewport_height_px, tan_half_fov);
-    const bool was_subdivided = previously_subdivided_nodes.contains(
-        globeQuadtreeNodeKey(zoom, tile_x, tile_y));
-    const double subdivide_threshold_px =
-        was_subdivided ? GlobeQuadtreeMergeScreenPx : GlobeQuadtreeSubdivideScreenPx;
-    const bool can_subdivide = zoom < GlobeImageryMaxZoom;
-
-    if (!can_subdivide || projected_size_px <= subdivide_threshold_px)
-    {
-        leaves->append(MapRhiGlobeQuadtreeLeaf{zoom, tile_x, tile_y});
-        return;
-    }
-
-    if (currently_subdivided_nodes != nullptr)
-        currently_subdivided_nodes->insert(globeQuadtreeNodeKey(zoom, tile_x, tile_y));
-
-    // Visit the child closest to the camera first. Harmless when the visit
-    // budget never comes under pressure (the normal case), but if it ever
-    // does, whatever gets dropped by running out of budget should be the
-    // least camera-relevant remaining branch, not whichever one happened to
-    // sit first in raster (dx, dy) order.
-    const int child_zoom = zoom + 1;
-    const int child_tile_span = 1 << child_zoom;
-    const int child_x = tile_x * 2;
-    const int child_y = tile_y * 2;
-    struct Child
-    {
-        int x = 0;
-        int y = 0;
-        double distance_sq = 0.0;
-    };
-    Child children[4];
-    int child_count = 0;
-    for (int dx = 0; dx < 2; ++dx)
-    {
-        for (int dy = 0; dy < 2; ++dy)
-        {
-            const int cy = child_y + dy;
-            if (cy < 0 || cy >= child_tile_span)
-                continue;
-
-            QVector3D child_center;
-            double child_radius_m = 0.0;
-            globeQuadtreeNodeVisibilityBoundingSphere(
-                child_zoom, child_x + dx, cy,
-                terrain_repository, vertical_exaggeration,
-                &child_center, &child_radius_m);
-            children[child_count] = Child{
-                child_x + dx, cy,
-                double((child_center - visibility_camera_basis.eye).lengthSquared())};
-            ++child_count;
-        }
-    }
-    std::sort(
-        children, children + child_count,
-        [](const Child &first, const Child &second)
-    {
-        return first.distance_sq < second.distance_sq;
-    });
-
-    for (int index = 0; index < child_count; ++index)
-    {
-        collectGlobeQuadtreeLeaves(
-            child_zoom, children[index].x, children[index].y,
-            visibility_camera_basis, lod_camera_basis,
-            terrain_repository, vertical_exaggeration, viewport_height_px,
-            tan_half_fov, half_fov_rad, previously_subdivided_nodes,
-            currently_subdivided_nodes, leaves, visit_budget);
-    }
-}
-
-// Top-level entry point: walks the quadtree from the single whole-planet
-// root tile (zoom 0 is the entire world in Web Mercator X and, above/below
-// the +-85.05 degree limit, its polar caps -- see the class comment) and
-// returns the resulting leaves. previously_subdivided_nodes is both read
-// (for hysteresis, see collectGlobeQuadtreeLeaves()) and overwritten with
-// the new set of subdivided nodes for next frame's call.
-QVector<MapRhiGlobeQuadtreeLeaf> selectVisibleGlobeQuadtreeLeaves(
-    const MapModel &map_model, const QSize &viewport_size,
-    const MapTerrainRepository *terrain_repository,
-    QSet<quint64> *previously_subdivided_nodes)
-{
-    QVector<MapRhiGlobeQuadtreeLeaf> leaves;
-    if (!viewport_size.isValid() || previously_subdivided_nodes == nullptr)
-        return leaves;
-
-    const double pitch_deg = qBound(
-        MapModel::MinViewGlobePitchDeg, map_model.viewGlobePitchDeg(),
-        MapModel::MaxViewGlobePitchDeg);
-    const double distance_m = qMax(
-        MapModel::MinViewGlobeDistanceM, map_model.viewGlobeDistanceM());
-
-    // The camera must use the same terrain-height-aware target as rendering.
-    // Individual tile bounds are handled separately from their loaded DEM
-    // ranges by globeQuadtreeNodeVisibilityBoundingSphere().
-    const GeoWgs84Ellipsoid::OrbitCameraBasis visibility_camera_basis =
-        GeoWgs84Ellipsoid::orbitCameraBasis(
-            map_model.centerLon(), map_model.centerLat(),
-            map_model.viewGlobeYawDeg(), pitch_deg, distance_m,
-            map_model.viewGlobeVerticalOffsetM(),
-            map_model.viewGlobeCameraCollisionLiftM());
-
-    // LOD itself stays deliberately height-normalized. Loaded terrain and
-    // the real camera target move upward together while distance_m remains
-    // fixed, so counting that common translation as extra camera distance
-    // would make the same view choose a different imagery/terrain LOD merely
-    // because its DEM arrived. Keep the zero-height basis only for projected
-    // node size; do not use it for visibility/occlusion.
-    const GeoWgs84Ellipsoid::OrbitCameraBasis lod_camera_basis =
-        GeoWgs84Ellipsoid::orbitCameraBasis(
-            map_model.centerLon(), map_model.centerLat(),
-            map_model.viewGlobeYawDeg(), pitch_deg, distance_m);
-    const double viewport_height_px = double(qMax(1, viewport_size.height()));
-    const double half_fov_rad = qDegreesToRadians(MapModel::GlobeFieldOfViewDeg * 0.5);
-    const double tan_half_fov = std::tan(half_fov_rad);
-
-    QSet<quint64> currently_subdivided_nodes;
-    int visit_budget = GlobeQuadtreeMaxVisitedNodes;
-    collectGlobeQuadtreeLeaves(
-        GlobeQuadtreeRootZoom, 0, 0, visibility_camera_basis, lod_camera_basis,
-        terrain_repository, map_model.view3dVerticalExaggeration(), viewport_height_px,
-        tan_half_fov, half_fov_rad,
-        *previously_subdivided_nodes, &currently_subdivided_nodes, &leaves,
-        &visit_budget);
-
-    *previously_subdivided_nodes = std::move(currently_subdivided_nodes);
-
-    // Defense in depth: a working horizon/frustum cull should never leave
-    // this empty while the camera is anywhere near the planet (the root
-    // alone, uncontested, always qualifies as at least one leaf). If a
-    // future bug in the culling above ever does produce zero leaves, fall
-    // back to a single tile under the current target rather than rendering
-    // nothing -- "wrong LOD for one frame" is a far cheaper failure mode
-    // than a fully black globe.
-    if (leaves.isEmpty())
-    {
-        const int fallback_zoom = qBound(
-            0,
-            int(std::lround(MapModel::viewGlobeZoomLevelForDistanceM(
-                qMax(1.0, map_model.viewGlobeDistanceM()), map_model.centerLat(),
-                int(viewport_height_px)))),
-            GlobeImageryMaxZoom);
-        const int fallback_tile_span = 1 << fallback_zoom;
-        const int fallback_x = qBound(
-            0,
-            int(std::floor(GeoWebMercator::lonToTileX(
-                GeoWebMercator::normalizeLongitude(map_model.centerLon()), fallback_zoom))),
-            fallback_tile_span - 1);
-        const int fallback_y = qBound(
-            0,
-            int(std::floor(GeoWebMercator::latToTileY(map_model.centerLat(), fallback_zoom))),
-            fallback_tile_span - 1);
-        leaves.append(MapRhiGlobeQuadtreeLeaf{fallback_zoom, fallback_x, fallback_y});
-    }
-
-    return leaves;
-}
 
 // Request priority measured on the globe, not in raw XYZ x/y space. This is
 // important close to the poles where many different Mercator X tiles are at
@@ -1050,6 +505,7 @@ QShader loadGlobeShader(const QString &resource_path)
 MapRhiGlobeRenderer::MapRhiGlobeRenderer(MapModel *map_model, MapTileRepository *tile_repository)
     : map_model(map_model),
       tile_repository(tile_repository),
+      heatmap_scene(MapModel::MaxZoom),
       terrain_mesh_scheduler(std::make_unique<MapRhiTerrainMeshScheduler>())
 {
 }
@@ -1109,10 +565,9 @@ void MapRhiGlobeRenderer::requestTerrainForCurrentView(const QSize &viewport_siz
     // synchronously at the moment the network fit lands. That gives every
     // visible leaf its terrain key now and dispatches the DEM requests now;
     // no camera nudge or LOD transition is needed to wake terrain loading.
-    const QVector<MapRhiGlobeQuadtreeLeaf> desired_leaves =
-        selectVisibleGlobeQuadtreeLeaves(
-            *this->map_model, viewport_size, this->terrain_repository,
-            &this->previously_subdivided_quadtree_nodes);
+    const QVector<MapGlobeQuadtreeLeaf> desired_leaves =
+        this->surface_scene.selectVisibleLeaves(
+            *this->map_model, viewport_size, this->terrain_repository);
     rebuildWindow(desired_leaves, viewport_size);
     requestMissingTerrainTiles();
     this->preparation_dirty = true;
@@ -1128,7 +583,7 @@ void MapRhiGlobeRenderer::invalidateTerrainView()
     this->window_dirty = true;
     this->terrain_lod_rebuild_pending = false;
     this->terrain_lod_rebuild_clock.invalidate();
-    this->previously_subdivided_quadtree_nodes.clear();
+    this->surface_scene.clearVisibilityHistory();
 }
 
 bool MapRhiGlobeRenderer::setRenderOriginEcef(
@@ -1225,72 +680,10 @@ void MapRhiGlobeRenderer::setMapVisible(bool visible)
 void MapRhiGlobeRenderer::setHeatmapOverlay(
     const QVector<HeatmapMarker> &markers, double radius_m, double solid_fraction)
 {
-    const double bounded_radius_m = qMax(0.0, radius_m);
-    const double bounded_solid_fraction = qBound(0.0, solid_fraction, 0.9);
-    const bool markers_changed = this->heatmap_markers != markers;
-    bool marker_layout_changed =
-        this->heatmap_markers.size() != markers.size();
-    if (!marker_layout_changed)
-    {
-        for (int marker_index = 0;
-             marker_index < markers.size(); ++marker_index)
-        {
-            const HeatmapMarker &old_marker =
-                this->heatmap_markers.at(marker_index);
-            const HeatmapMarker &new_marker = markers.at(marker_index);
-            if (old_marker.render_id != new_marker.render_id
-                || old_marker.longitude_deg != new_marker.longitude_deg
-                || old_marker.latitude_deg != new_marker.latitude_deg)
-            {
-                marker_layout_changed = true;
-                break;
-            }
-        }
-    }
-    const bool radius_changed = !qFuzzyCompare(
-        1.0 + this->heatmap_radius_m, 1.0 + bounded_radius_m);
-    const bool solid_fraction_changed = !qFuzzyCompare(
-        1.0 + this->heatmap_solid_fraction,
-        1.0 + bounded_solid_fraction);
-    const bool style_changed = radius_changed || solid_fraction_changed;
-    if (!markers_changed && !style_changed)
+    if (!this->heatmap_scene.setOverlay(markers, radius_m, solid_fraction))
         return;
 
     this->preparation_dirty = true;
-    if (markers_changed)
-    {
-        this->heatmap_markers = markers;
-        this->heatmap_active_marker_count = int(std::count_if(
-            this->heatmap_markers.cbegin(),
-            this->heatmap_markers.cend(),
-            [](const HeatmapMarker &marker)
-        {
-            return marker.active;
-        }));
-    }
-
-    // Buckets and projected stamp layouts depend on marker coordinates, not
-    // their colors or whether a result exists for the current timestep.
-    // Simulation playback normally changes only those two properties, so
-    // keep both retained across its high-frequency revisions.
-    if (marker_layout_changed)
-        rebuildHeatmapMarkerBuckets();
-    if (marker_layout_changed || radius_changed)
-    {
-        ++this->heatmap_stamp_layout_revision;
-        if (this->heatmap_stamp_layout_revision == 0)
-            this->heatmap_stamp_layout_revision = 1;
-    }
-    this->heatmap_radius_m = bounded_radius_m;
-    this->heatmap_solid_fraction = bounded_solid_fraction;
-    // Every visible tile's heatmap_texture is compared against this value
-    // in ensureHeatmapTexture() and regenerated if stale -- see that
-    // function. A real change still invalidates visible tiles once, but
-    // renderHeatmapTile() now consults the retained marker index instead of
-    // scanning the complete network separately for every tile.
-    ++this->heatmap_revision;
-    if (this->heatmap_revision == 0)
-        this->heatmap_revision = 1;
     this->heatmap_gpu_bake_jobs.clear();
     // Before the once-per-QRhi diagnostic has been scheduled there is
     // nothing useful to retain. Once scheduled, its fixed stamps and CPU
@@ -1596,7 +989,7 @@ bool MapRhiGlobeRenderer::visibleTerrainSamplingAtCoordinate(
             int(std::floor(coordinate_tile_x)), zoom);
         const int coordinate_y = qBound(
             0, int(std::floor(coordinate_tile_y)), tile_count - 1);
-        const quint64 position_key = globeQuadtreeNodeKey(
+        const quint64 position_key = MapGlobeSurfaceScene::positionKey(
             zoom, coordinate_x, coordinate_y);
         const QHash<quint64, qsizetype>::const_iterator tile_iterator =
             this->window_tile_indices_by_position.constFind(position_key);
@@ -1722,114 +1115,19 @@ int MapRhiGlobeRenderer::terrainCellCountForTile(
     const GlobeTile &tile, const QSize &viewport_size,
     const GeoWgs84Ellipsoid::OrbitCameraBasis *camera_basis_override) const
 {
-    if (this->map_model == nullptr
-        || tile.terrain_zoom < GlobeTerrainReliefMinimumZoom
-        || tile.zoom < tile.terrain_zoom
-        || !viewport_size.isValid())
-    {
+    if (this->map_model == nullptr)
         return 1;
-    }
 
-    const int zoom_delta = tile.zoom - tile.terrain_zoom;
-    const int cell_divisor = 1 << qMin(zoom_delta, 6);
-    const int native_cell_count = qMax(
-        1, MapTerrainTileCellCount / cell_divisor);
-    const int maximum_cell_count = native_cell_count;
-    const int minimum_cell_count = qMin(
-        maximum_cell_count, GlobeTerrainMinimumLodCellCount);
-    if (maximum_cell_count <= minimum_cell_count)
-        return maximum_cell_count;
-
-    const double tile_center_lon_deg = GeoWebMercator::tileXToLon(
-        double(tile.virtual_x) + 0.5, tile.zoom);
-    const double tile_center_lat_deg = GeoWebMercator::tileYToLat(
-        double(tile.tile_y) + 0.5, tile.zoom);
-    const QVector3D tile_center = GeoWgs84Ellipsoid::geodeticToEcef(
-        tile_center_lon_deg, tile_center_lat_deg, 0.0);
-
-    const double tile_lat_top_deg = GeoWebMercator::tileYToLat(
-        double(tile.tile_y), tile.zoom);
-    const double tile_lat_bottom_deg = GeoWebMercator::tileYToLat(
-        double(tile.tile_y) + 1.0, tile.zoom);
-    const double tile_width_m =
-        (2.0 * M_PI * GeoWgs84Ellipsoid::EquatorialRadiusM
-         * qMax(0.0, std::cos(qDegreesToRadians(tile_center_lat_deg))))
-        / double(1 << tile.zoom);
-    const double tile_height_m = GeoWgs84Ellipsoid::EquatorialRadiusM
-        * std::abs(qDegreesToRadians(tile_lat_top_deg - tile_lat_bottom_deg));
-    const double tile_reference_size_m = qMax(tile_width_m, tile_height_m);
-
-    // Use the same height-normalized camera as imagery LOD selection. Terrain
-    // arrival translates camera and surface together; mesh density must still
-    // depend on their preserved relative orbit distance, not absolute ECEF
-    // elevation above the ellipsoid.
-    GeoWgs84Ellipsoid::OrbitCameraBasis local_camera_basis;
-    const GeoWgs84Ellipsoid::OrbitCameraBasis *camera_basis =
-        camera_basis_override;
-    if (camera_basis == nullptr)
-    {
-        local_camera_basis = GeoWgs84Ellipsoid::orbitCameraBasis(
-            this->map_model->centerLon(), this->map_model->centerLat(),
-            this->map_model->viewGlobeYawDeg(),
-            qBound(
-                MapModel::MinViewGlobePitchDeg,
-                this->map_model->viewGlobePitchDeg(),
-                MapModel::MaxViewGlobePitchDeg),
-            qMax(MapModel::MinViewGlobeDistanceM,
-                 this->map_model->viewGlobeDistanceM()));
-        camera_basis = &local_camera_basis;
-    }
-
-    const double ground_distance_from_focus_m =
-        double((tile_center - camera_basis->target).length());
-
-    // The "full detail down to zoom" rule forces only the focus tile to the
-    // DEM-native density. The rest of
-    // the retained globe still follows screen-space falloff.
-    if (tile.zoom >= guiConfiguration().map_performance.terrain_full_detail_zoom
-        && ground_distance_from_focus_m < tile_reference_size_m * 0.75)
-    {
-        return maximum_cell_count;
-    }
-
-    const double native_camera_distance_m = MapModel::viewGlobeDistanceMForZoomLevel(
-        double(tile.zoom), this->map_model->centerLat(),
-        qMax(1, viewport_size.height()));
-    const double camera_to_tile_distance_m =
-        double((tile_center - camera_basis->eye).length());
-    const double camera_to_focus_distance_m =
-        double((camera_basis->target - camera_basis->eye).length());
-    const double focus_falloff_distance_m = std::hypot(
-        camera_to_focus_distance_m, ground_distance_from_focus_m);
-
-    // Matching the RHI 3D policy, a tile beneath an oblique camera must not
-    // become more detailed than the crosshair/focus merely because the eye is
-    // physically closer to it. The focus remains the highest-detail location.
-    const double lod_distance_m = qMax(
-        camera_to_tile_distance_m, focus_falloff_distance_m);
-    const double projected_tile_scale = qBound(
-        0.0,
-        native_camera_distance_m / qMax(1e-9, lod_distance_m),
-        4.0);
-    const double target_cell_size_px = qMax(
-        1.0, guiConfiguration().map_performance.terrain_lod_target_cell_size_px);
-    const double desired_cell_count =
-        (double(MapModel::TileSize) / target_cell_size_px)
-        * projected_tile_scale;
-
-    int cell_count = minimum_cell_count;
-    while (cell_count < maximum_cell_count)
-    {
-        const int next_cell_count = qMin(
-            maximum_cell_count, cell_count * 2);
-        const double threshold = std::sqrt(
-            double(cell_count) * double(next_cell_count));
-        if (desired_cell_count < threshold)
-            break;
-        cell_count = next_cell_count;
-    }
-
-    return cell_count;
+    MapGlobeTerrainLodTile surface_tile;
+    surface_tile.virtual_x = tile.virtual_x;
+    surface_tile.tile_x = tile.tile_x;
+    surface_tile.tile_y = tile.tile_y;
+    surface_tile.zoom = tile.zoom;
+    surface_tile.terrain_zoom = tile.terrain_zoom;
+    surface_tile.terrain_available = !tile.terrain_key.isEmpty();
+    surface_tile.terrain_cell_count = tile.terrain_cell_count;
+    return this->surface_scene.terrainCellCountForTile(
+        *this->map_model, surface_tile, viewport_size, camera_basis_override);
 }
 
 void MapRhiGlobeRenderer::updateTerrainStitchCellCounts(
@@ -1838,91 +1136,34 @@ void MapRhiGlobeRenderer::updateTerrainStitchCellCounts(
     if (tiles == nullptr)
         return;
 
-    QHash<quint64, qsizetype> tiles_by_position;
-    tiles_by_position.reserve(tiles->size());
-    for (qsizetype index = 0; index < tiles->size(); ++index)
+    QVector<MapGlobeTerrainLodTile> surface_tiles;
+    surface_tiles.reserve(tiles->size());
+    for (const GlobeTile &tile : *tiles)
     {
-        GlobeTile &tile = (*tiles)[index];
-        tile.terrain_stitch_top_cell_count = 0;
-        tile.terrain_stitch_right_cell_count = 0;
-        tile.terrain_stitch_bottom_cell_count = 0;
-        tile.terrain_stitch_left_cell_count = 0;
-
-        if (tile.terrain_key.isEmpty() || tile.terrain_cell_count <= 0)
-            continue;
-        tiles_by_position.insert(
-            globeQuadtreeNodeKey(tile.zoom, tile.tile_x, tile.tile_y), index);
+        MapGlobeTerrainLodTile surface_tile;
+        surface_tile.virtual_x = tile.virtual_x;
+        surface_tile.tile_x = tile.tile_x;
+        surface_tile.tile_y = tile.tile_y;
+        surface_tile.zoom = tile.zoom;
+        surface_tile.terrain_zoom = tile.terrain_zoom;
+        surface_tile.terrain_available = !tile.terrain_key.isEmpty();
+        surface_tile.terrain_cell_count = tile.terrain_cell_count;
+        surface_tiles.append(surface_tile);
     }
 
+    MapGlobeSurfaceScene::updateTerrainStitchCellCounts(&surface_tiles);
     for (qsizetype index = 0; index < tiles->size(); ++index)
     {
         GlobeTile &tile = (*tiles)[index];
-        if (tile.terrain_key.isEmpty() || tile.terrain_cell_count <= 1)
-            continue;
-
-        const int left_x = GeoWebMercator::wrapTileX(tile.tile_x - 1, tile.zoom);
-        const int right_x = GeoWebMercator::wrapTileX(tile.tile_x + 1, tile.zoom);
-
-        const QHash<quint64, qsizetype>::const_iterator top_iterator =
-            tiles_by_position.constFind(
-                globeQuadtreeNodeKey(tile.zoom, tile.tile_x, tile.tile_y - 1));
-        if (top_iterator != tiles_by_position.cend())
-        {
-            const GlobeTile &neighbor = tiles->at(top_iterator.value());
-            if (neighbor.terrain_cell_count > 0
-                && neighbor.terrain_cell_count < tile.terrain_cell_count
-                && tile.terrain_cell_count % neighbor.terrain_cell_count == 0)
-            {
-                tile.terrain_stitch_top_cell_count =
-                    neighbor.terrain_cell_count;
-            }
-        }
-
-        const QHash<quint64, qsizetype>::const_iterator right_iterator =
-            tiles_by_position.constFind(
-                globeQuadtreeNodeKey(tile.zoom, right_x, tile.tile_y));
-        if (right_iterator != tiles_by_position.cend())
-        {
-            const GlobeTile &neighbor = tiles->at(right_iterator.value());
-            if (neighbor.terrain_cell_count > 0
-                && neighbor.terrain_cell_count < tile.terrain_cell_count
-                && tile.terrain_cell_count % neighbor.terrain_cell_count == 0)
-            {
-                tile.terrain_stitch_right_cell_count =
-                    neighbor.terrain_cell_count;
-            }
-        }
-
-        const QHash<quint64, qsizetype>::const_iterator bottom_iterator =
-            tiles_by_position.constFind(
-                globeQuadtreeNodeKey(tile.zoom, tile.tile_x, tile.tile_y + 1));
-        if (bottom_iterator != tiles_by_position.cend())
-        {
-            const GlobeTile &neighbor = tiles->at(bottom_iterator.value());
-            if (neighbor.terrain_cell_count > 0
-                && neighbor.terrain_cell_count < tile.terrain_cell_count
-                && tile.terrain_cell_count % neighbor.terrain_cell_count == 0)
-            {
-                tile.terrain_stitch_bottom_cell_count =
-                    neighbor.terrain_cell_count;
-            }
-        }
-
-        const QHash<quint64, qsizetype>::const_iterator left_iterator =
-            tiles_by_position.constFind(
-                globeQuadtreeNodeKey(tile.zoom, left_x, tile.tile_y));
-        if (left_iterator != tiles_by_position.cend())
-        {
-            const GlobeTile &neighbor = tiles->at(left_iterator.value());
-            if (neighbor.terrain_cell_count > 0
-                && neighbor.terrain_cell_count < tile.terrain_cell_count
-                && tile.terrain_cell_count % neighbor.terrain_cell_count == 0)
-            {
-                tile.terrain_stitch_left_cell_count =
-                    neighbor.terrain_cell_count;
-            }
-        }
-
+        const MapGlobeTerrainLodTile &surface_tile = surface_tiles.at(index);
+        tile.terrain_stitch_top_cell_count =
+            surface_tile.terrain_stitch_top_cell_count;
+        tile.terrain_stitch_right_cell_count =
+            surface_tile.terrain_stitch_right_cell_count;
+        tile.terrain_stitch_bottom_cell_count =
+            surface_tile.terrain_stitch_bottom_cell_count;
+        tile.terrain_stitch_left_cell_count =
+            surface_tile.terrain_stitch_left_cell_count;
     }
 }
 
@@ -1932,29 +1173,23 @@ bool MapRhiGlobeRenderer::currentTerrainLodMatches(
     if (this->map_model == nullptr)
         return true;
 
-    const GeoWgs84Ellipsoid::OrbitCameraBasis camera_basis =
-        GeoWgs84Ellipsoid::orbitCameraBasis(
-            this->map_model->centerLon(), this->map_model->centerLat(),
-            this->map_model->viewGlobeYawDeg(),
-            qBound(
-                MapModel::MinViewGlobePitchDeg,
-                this->map_model->viewGlobePitchDeg(),
-                MapModel::MaxViewGlobePitchDeg),
-            qMax(MapModel::MinViewGlobeDistanceM,
-                 this->map_model->viewGlobeDistanceM()));
-
+    QVector<MapGlobeTerrainLodTile> surface_tiles;
+    surface_tiles.reserve(this->window_tiles.size());
     for (const GlobeTile &tile : this->window_tiles)
     {
-        if (tile.terrain_key.isEmpty())
-            continue;
-        if (tile.terrain_cell_count
-            != terrainCellCountForTile(
-                tile, viewport_size, &camera_basis))
-        {
-            return false;
-        }
+        MapGlobeTerrainLodTile surface_tile;
+        surface_tile.virtual_x = tile.virtual_x;
+        surface_tile.tile_x = tile.tile_x;
+        surface_tile.tile_y = tile.tile_y;
+        surface_tile.zoom = tile.zoom;
+        surface_tile.terrain_zoom = tile.terrain_zoom;
+        surface_tile.terrain_available = !tile.terrain_key.isEmpty();
+        surface_tile.terrain_cell_count = tile.terrain_cell_count;
+        surface_tiles.append(surface_tile);
     }
-    return true;
+
+    return this->surface_scene.terrainLodMatches(
+        *this->map_model, surface_tiles, viewport_size);
 }
 
 void MapRhiGlobeRenderer::resetTerrainHeightCache()
@@ -2372,7 +1607,7 @@ void MapRhiGlobeRenderer::reportTerrainHeightCacheProfile() const
 }
 
 void MapRhiGlobeRenderer::rebuildWindow(
-    const QVector<MapRhiGlobeQuadtreeLeaf> &leaves, const QSize &viewport_size)
+    const QVector<MapGlobeQuadtreeLeaf> &leaves, const QSize &viewport_size)
 {
     const bool geometry_reuse_allowed = !this->window_dirty;
     QVector<TileVertex> previous_vertices = std::move(this->window_vertices);
@@ -2385,7 +1620,7 @@ void MapRhiGlobeRenderer::rebuildWindow(
         {
             const GlobeTile &tile = previous_tiles.at(index);
             previous_tiles_by_position.insert(
-                globeQuadtreeNodeKey(tile.zoom, tile.tile_x, tile.tile_y), index);
+                MapGlobeSurfaceScene::positionKey(tile.zoom, tile.tile_x, tile.tile_y), index);
         }
     }
 
@@ -2415,10 +1650,10 @@ void MapRhiGlobeRenderer::rebuildWindow(
         terrain_camera_basis_ptr = &terrain_camera_basis;
     }
 
-    for (const MapRhiGlobeQuadtreeLeaf &leaf : leaves)
+    for (const MapGlobeQuadtreeLeaf &leaf : leaves)
     {
         const quint64 position_key =
-            globeQuadtreeNodeKey(leaf.zoom, leaf.tile_x, leaf.tile_y);
+            MapGlobeSurfaceScene::positionKey(leaf.zoom, leaf.tile_x, leaf.tile_y);
         if (seen_positions.contains(position_key))
             continue;
         seen_positions.insert(position_key);
@@ -2504,7 +1739,7 @@ void MapRhiGlobeRenderer::rebuildWindow(
         bool reused = false;
         const QHash<quint64, qsizetype>::const_iterator previous_iterator =
             previous_tiles_by_position.constFind(
-                globeQuadtreeNodeKey(tile.zoom, tile.tile_x, tile.tile_y));
+                MapGlobeSurfaceScene::positionKey(tile.zoom, tile.tile_x, tile.tile_y));
         if (geometry_reuse_allowed
             && previous_iterator != previous_tiles_by_position.cend())
         {
@@ -2639,7 +1874,7 @@ void MapRhiGlobeRenderer::rebuildWindow(
 
         this->window_tiles.append(tile);
         this->window_tile_indices_by_position.insert(
-            globeQuadtreeNodeKey(tile.zoom, tile.tile_x, tile.tile_y),
+            MapGlobeSurfaceScene::positionKey(tile.zoom, tile.tile_x, tile.tile_y),
             this->window_tiles.size() - 1);
     }
 
@@ -2662,12 +1897,12 @@ void MapRhiGlobeRenderer::rebuildWindow(
     pruneUnusedTileResources();
 }
 
-QVector<MapRhiGlobeQuadtreeLeaf> MapRhiGlobeRenderer::currentWindowLeaves() const
+QVector<MapGlobeQuadtreeLeaf> MapRhiGlobeRenderer::currentWindowLeaves() const
 {
-    QVector<MapRhiGlobeQuadtreeLeaf> leaves;
+    QVector<MapGlobeQuadtreeLeaf> leaves;
     leaves.reserve(this->window_tiles.size());
     for (const GlobeTile &tile : this->window_tiles)
-        leaves.append(MapRhiGlobeQuadtreeLeaf{tile.zoom, tile.tile_x, tile.tile_y});
+        leaves.append(MapGlobeQuadtreeLeaf{tile.zoom, tile.tile_x, tile.tile_y});
     return leaves;
 }
 
@@ -3048,7 +2283,7 @@ bool MapRhiGlobeRenderer::uploadTileArrayDrawIndices(
 bool MapRhiGlobeRenderer::heatmapArrayBatchingActive() const
 {
     if (!arrayBatchingActive()
-        || this->heatmap_markers.isEmpty()
+        || this->heatmap_scene.isEmpty()
         || !this->heatmap_array_pipeline
         || !this->heatmap_array_template_bindings
         || this->heatmap_array_pages.empty())
@@ -3109,9 +2344,9 @@ bool MapRhiGlobeRenderer::rebuildHeatmapArrayDrawIndices()
             && (!has_heatmap
                 || (tile.heatmap_array_ready
                     && tile.resource->heatmap_revision
-                        == this->heatmap_revision
+                        == this->heatmap_scene.revision()
                     && tile.resource->heatmap_array_revision
-                        == this->heatmap_revision
+                        == this->heatmap_scene.revision()
                     && tile.resource->heatmap_array_layer > 0
                     && tile.resource->heatmap_array_layer
                         < GlobeTileArrayLayerCount));
@@ -3631,7 +2866,7 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
     }
 
     if (!tile.array_ready || resource_updates == nullptr
-        || !createHeatmapArrayResources())
+        || !createHeatmapArrayResources(resource_updates))
     {
         // An affected tile must retain the ordinary combined
         // imagery/heatmap draw when the heatmap array path is unavailable.
@@ -3676,7 +2911,7 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
         if (page_index < 0
             && int(this->heatmap_array_pages.size())
                 < GlobeTileArrayMaximumPageCount
-            && createHeatmapArrayPage())
+            && createHeatmapArrayPage(resource_updates))
         {
             page_index = int(this->heatmap_array_pages.size()) - 1;
         }
@@ -3702,7 +2937,7 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
         return true;
     }
 
-    if (resource->heatmap_array_revision != this->heatmap_revision)
+    if (resource->heatmap_array_revision != this->heatmap_scene.revision())
     {
         if (!this->heatmap_gpu_baking_disabled)
         {
@@ -3724,7 +2959,7 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
                     return false;
                 }
                 resource->heatmap_has_content = false;
-                resource->heatmap_revision = this->heatmap_revision;
+                resource->heatmap_revision = this->heatmap_scene.revision();
                 releaseHeatmapArrayLayer(resource);
                 setTileHeatmapArrayReady(tile, false);
                 return true;
@@ -3742,8 +2977,8 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
                 // failed bake rolls them back from the retained job queue;
                 // runPendingHeatmapGpuBakes() confirms them after recording
                 // the atlas-to-layer copy.
-                resource->heatmap_array_revision = this->heatmap_revision;
-                resource->heatmap_revision = this->heatmap_revision;
+                resource->heatmap_array_revision = this->heatmap_scene.revision();
+                resource->heatmap_revision = this->heatmap_scene.revision();
                 setTileHeatmapArrayReady(tile, true);
                 return true;
             }
@@ -3791,8 +3026,8 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
             ++this->heatmap_profile.array_uploads;
             this->heatmap_profile.upload_bytes += quint64(image.sizeInBytes());
         }
-        resource->heatmap_array_revision = this->heatmap_revision;
-        resource->heatmap_revision = this->heatmap_revision;
+        resource->heatmap_array_revision = this->heatmap_scene.revision();
+        resource->heatmap_revision = this->heatmap_scene.revision();
     }
 
     setTileHeatmapArrayReady(tile, true);
@@ -4107,194 +3342,6 @@ bool MapRhiGlobeRenderer::ensureProvisionalTileResource(
     return true;
 }
 
-void MapRhiGlobeRenderer::rebuildHeatmapMarkerBuckets()
-{
-    this->heatmap_marker_projections.clear();
-    this->heatmap_marker_projections.resize(this->heatmap_markers.size());
-    this->heatmap_marker_buckets_by_zoom.clear();
-    this->heatmap_marker_buckets_by_zoom.resize(
-        GlobeHeatmapMarkerMaximumBucketZoom + 1);
-    for (QHash<quint64, QVector<int>> &buckets
-         : this->heatmap_marker_buckets_by_zoom)
-    {
-        buckets.reserve(this->heatmap_markers.size());
-    }
-
-    for (int marker_index = 0;
-         marker_index < this->heatmap_markers.size(); ++marker_index)
-    {
-        const HeatmapMarker &marker =
-            this->heatmap_markers.at(marker_index);
-        if (!std::isfinite(marker.longitude_deg)
-            || !std::isfinite(marker.latitude_deg))
-        {
-            continue;
-        }
-
-        const double marker_tile_x_zoom0 = GeoWebMercator::lonToTileX(
-            GeoWebMercator::normalizeLongitude(marker.longitude_deg),
-            0);
-        const double marker_tile_y_zoom0 = GeoWebMercator::latToTileY(
-            marker.latitude_deg, 0);
-        if (!std::isfinite(marker_tile_x_zoom0)
-            || !std::isfinite(marker_tile_y_zoom0))
-        {
-            continue;
-        }
-
-        HeatmapMarkerProjection &projection =
-            this->heatmap_marker_projections[marker_index];
-        projection.tile_x_zoom0 = marker_tile_x_zoom0;
-        projection.tile_y_zoom0 = marker_tile_y_zoom0;
-        projection.valid = true;
-
-        for (int bucket_zoom = 0;
-             bucket_zoom <= GlobeHeatmapMarkerMaximumBucketZoom;
-             ++bucket_zoom)
-        {
-            const qint64 bucket_count = qint64(1) << bucket_zoom;
-            const double bucket_scale = double(bucket_count);
-            const int bucket_x = wrappedGlobeHeatmapBucketX(
-                qint64(std::floor(marker_tile_x_zoom0 * bucket_scale)),
-                bucket_count);
-            const int bucket_y = int(qBound(
-                qint64(0),
-                qint64(std::floor(
-                    marker_tile_y_zoom0 * bucket_scale)),
-                bucket_count - 1));
-            this->heatmap_marker_buckets_by_zoom[bucket_zoom]
-                [globeHeatmapMarkerBucketKey(bucket_x, bucket_y)]
-                    .append(marker_index);
-        }
-    }
-}
-
-QVector<int> MapRhiGlobeRenderer::heatmapMarkerCandidates(
-    const GlobeTile &tile, double radius_tile_fraction,
-    int *visited_bucket_cells) const
-{
-    if (visited_bucket_cells != nullptr)
-        *visited_bucket_cells = 0;
-
-    QVector<int> result;
-    if (this->heatmap_marker_projections.isEmpty()
-        || this->heatmap_marker_buckets_by_zoom.isEmpty()
-        || !std::isfinite(radius_tile_fraction)
-        || radius_tile_fraction < 0.0)
-    {
-        return result;
-    }
-
-    const auto all_marker_indices = [this]()
-    {
-        QVector<int> indices;
-        indices.reserve(this->heatmap_markers.size());
-        for (int marker_index = 0;
-             marker_index < this->heatmap_marker_projections.size();
-             ++marker_index)
-        {
-            if (this->heatmap_marker_projections.at(marker_index).valid)
-                indices.append(marker_index);
-        }
-        return indices;
-    };
-
-    int bucket_zoom = qBound(
-        0, tile.zoom, GlobeHeatmapMarkerMaximumBucketZoom);
-    double bucket_scale = std::ldexp(1.0, bucket_zoom - tile.zoom);
-    double horizontal_span =
-        (1.0 + 2.0 * radius_tile_fraction) * bucket_scale;
-    if (!std::isfinite(bucket_scale) || bucket_scale <= 0.0
-        || !std::isfinite(horizontal_span))
-    {
-        return all_marker_indices();
-    }
-
-    // Drop to a coarser index level until this radius-expanded tile covers
-    // only a small rectangle of buckets. Every marker exists at every level,
-    // so this never changes the candidate set's correctness -- only how many
-    // empty QHash cells and coarse false positives are inspected.
-    while (bucket_zoom > 0
-           && horizontal_span > GlobeHeatmapMarkerTargetBucketSpan)
-    {
-        --bucket_zoom;
-        bucket_scale *= 0.5;
-        horizontal_span *= 0.5;
-    }
-
-    const qint64 bucket_count = qint64(1) << bucket_zoom;
-    if (horizontal_span >= double(bucket_count))
-        return all_marker_indices();
-    const QHash<quint64, QVector<int>> &buckets =
-        this->heatmap_marker_buckets_by_zoom.at(bucket_zoom);
-    if (buckets.isEmpty())
-        return result;
-
-    const double minimum_bucket_x_value =
-        (double(tile.virtual_x) - radius_tile_fraction) * bucket_scale;
-    const double maximum_bucket_x_value =
-        (double(tile.virtual_x) + 1.0 + radius_tile_fraction) * bucket_scale;
-    const double minimum_bucket_y_value =
-        (double(tile.tile_y) - radius_tile_fraction) * bucket_scale;
-    const double maximum_bucket_y_value =
-        (double(tile.tile_y) + 1.0 + radius_tile_fraction) * bucket_scale;
-    if (!std::isfinite(minimum_bucket_x_value)
-        || !std::isfinite(maximum_bucket_x_value)
-        || !std::isfinite(minimum_bucket_y_value)
-        || !std::isfinite(maximum_bucket_y_value))
-    {
-        return all_marker_indices();
-    }
-
-    const qint64 minimum_bucket_x =
-        qint64(std::floor(minimum_bucket_x_value));
-    const qint64 maximum_bucket_x =
-        qint64(std::floor(maximum_bucket_x_value));
-    const qint64 unclamped_minimum_bucket_y =
-        qint64(std::floor(minimum_bucket_y_value));
-    const qint64 unclamped_maximum_bucket_y =
-        qint64(std::floor(maximum_bucket_y_value));
-    if (unclamped_maximum_bucket_y < 0
-        || unclamped_minimum_bucket_y >= bucket_count)
-    {
-        return result;
-    }
-
-    const qint64 minimum_bucket_y = qMax(
-        qint64(0), unclamped_minimum_bucket_y);
-    const qint64 maximum_bucket_y = qMin(
-        bucket_count - 1,
-        unclamped_maximum_bucket_y);
-    const qint64 horizontal_bucket_count =
-        maximum_bucket_x - minimum_bucket_x + 1;
-    const qint64 vertical_bucket_count =
-        maximum_bucket_y - minimum_bucket_y + 1;
-    if (horizontal_bucket_count <= 0 || vertical_bucket_count <= 0)
-        return result;
-    if (horizontal_bucket_count >= bucket_count)
-        return all_marker_indices();
-
-    for (qint64 bucket_y = minimum_bucket_y;
-         bucket_y <= maximum_bucket_y; ++bucket_y)
-    {
-        for (qint64 bucket_x = minimum_bucket_x;
-             bucket_x <= maximum_bucket_x; ++bucket_x)
-        {
-            if (visited_bucket_cells != nullptr)
-                ++*visited_bucket_cells;
-            const quint64 key = globeHeatmapMarkerBucketKey(
-                wrappedGlobeHeatmapBucketX(bucket_x, bucket_count),
-                int(bucket_y));
-            const QHash<quint64, QVector<int>>::const_iterator iterator =
-                buckets.constFind(key);
-            if (iterator == buckets.cend())
-                continue;
-            result.append(iterator.value());
-        }
-    }
-    return result;
-}
-
 QImage MapRhiGlobeRenderer::renderHeatmapTileProfiled(
     const GlobeTile &tile, TileResource *resource)
 {
@@ -4360,44 +3407,7 @@ QImage MapRhiGlobeRenderer::renderHeatmapTile(
 QImage MapRhiGlobeRenderer::renderHeatmapStamps(
     const QVector<HeatmapStamp> &stamps) const
 {
-    if (stamps.isEmpty())
-        return QImage();
-
-    QImage image(
-        GlobeHeatmapTextureSize, GlobeHeatmapTextureSize,
-        QImage::Format_ARGB32_Premultiplied);
-    image.fill(Qt::transparent);
-
-    QPainter painter(&image);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
-    painter.setPen(Qt::NoPen);
-
-    const double half_fraction = this->heatmap_solid_fraction
-        + (1.0 - this->heatmap_solid_fraction) * 0.4375;
-    for (const HeatmapStamp &stamp : stamps)
-    {
-        const QPointF center_pixels(
-            stamp.center_x_pixels, stamp.center_y_pixels);
-        QColor full_color = stamp.color;
-        full_color.setAlpha(255);
-        QColor half_color = stamp.color;
-        half_color.setAlpha(128);
-        QColor edge_color = stamp.color;
-        edge_color.setAlpha(0);
-
-        QRadialGradient gradient(center_pixels, stamp.radius_pixels);
-        gradient.setColorAt(0.0, full_color);
-        if (this->heatmap_solid_fraction > 0.0)
-            gradient.setColorAt(this->heatmap_solid_fraction, full_color);
-        gradient.setColorAt(half_fraction, half_color);
-        gradient.setColorAt(1.0, edge_color);
-        painter.setBrush(gradient);
-        painter.drawEllipse(
-            center_pixels, stamp.radius_pixels, stamp.radius_pixels);
-    }
-    painter.end();
-    return image;
+    return this->heatmap_scene.renderStamps(stamps);
 }
 
 QVector<MapRhiGlobeRenderer::HeatmapStamp>
@@ -4428,184 +3438,15 @@ MapRhiGlobeRenderer::heatmapStampsForTile(
     const GlobeTile &tile, TileResource *resource,
     HeatmapRasterStats *stats) const
 {
-    if (stats != nullptr)
-        *stats = HeatmapRasterStats();
-
-    // The retained layout deliberately includes inactive markers. Converting
-    // it to the currently renderable list is linear only in the few stamps
-    // that actually overlap this tile, rather than in every marker candidate
-    // tested while constructing the layout.
-    const auto activeStampsFromLayout = [this, stats](
-        const QVector<HeatmapStamp> &layout, bool *valid_indices)
-    {
-        QVector<HeatmapStamp> active_stamps;
-        active_stamps.reserve(layout.size());
-        *valid_indices = true;
-        for (const HeatmapStamp &layout_stamp : layout)
-        {
-            if (layout_stamp.marker_index < 0
-                || layout_stamp.marker_index >= this->heatmap_markers.size())
-            {
-                *valid_indices = false;
-                active_stamps.clear();
-                break;
-            }
-
-            const HeatmapMarker &marker = this->heatmap_markers.at(
-                layout_stamp.marker_index);
-            if (marker.render_id != layout_stamp.marker_render_id)
-            {
-                *valid_indices = false;
-                active_stamps.clear();
-                break;
-            }
-            if (!marker.active)
-                continue;
-
-            HeatmapStamp active_stamp = layout_stamp;
-            active_stamp.color = marker.color;
-            active_stamps.append(std::move(active_stamp));
-        }
-        if (*valid_indices && stats != nullptr)
-            stats->marker_tile_pairs = active_stamps.size();
-        return active_stamps;
-    };
-
-    const bool layout_matches = resource != nullptr
-        && resource->heatmap_stamp_layout_revision
-            == this->heatmap_stamp_layout_revision
-        && resource->heatmap_stamp_layout_zoom == tile.zoom
-        && resource->heatmap_stamp_layout_virtual_x == tile.virtual_x
-        && resource->heatmap_stamp_layout_tile_y == tile.tile_y;
-    if (layout_matches)
-    {
-        bool valid_indices = false;
-        QVector<HeatmapStamp> active_stamps = activeStampsFromLayout(
-            resource->heatmap_stamp_layout, &valid_indices);
-        if (valid_indices)
-        {
-            if (stats != nullptr)
-                stats->stamp_layout_cache_hit = true;
-            return active_stamps;
-        }
-    }
-
-    const auto retain_layout = [this, &tile, resource,
-                                &activeStampsFromLayout](
-        QVector<HeatmapStamp> stamps)
-    {
-        if (resource != nullptr)
-        {
-            resource->heatmap_stamp_layout = std::move(stamps);
-            resource->heatmap_stamp_layout_revision =
-                this->heatmap_stamp_layout_revision;
-            resource->heatmap_stamp_layout_zoom = tile.zoom;
-            resource->heatmap_stamp_layout_virtual_x = tile.virtual_x;
-            resource->heatmap_stamp_layout_tile_y = tile.tile_y;
-            bool valid_indices = false;
-            return activeStampsFromLayout(
-                resource->heatmap_stamp_layout, &valid_indices);
-        }
-        bool valid_indices = false;
-        return activeStampsFromLayout(stamps, &valid_indices);
-    };
-
-    if (this->heatmap_markers.isEmpty() || !(this->heatmap_radius_m > 0.0) || tile.is_cap)
-        return retain_layout({});
-
-    // tile_center_lat_deg only, in degrees -- needed for the
-    // latitude-dependent meters-per-pixel conversion just below. The
-    // marker-vs-tile math further down works entirely in cached fractional
-    // Web Mercator tile coordinates, not degrees, so the tile's own lon/lat
-    // *bounds* are never needed as such.
-    const double tile_lat_top_deg = GeoWebMercator::tileYToLat(
-        double(tile.tile_y), tile.zoom);
-    const double tile_lat_bottom_deg = GeoWebMercator::tileYToLat(
-        double(tile.tile_y) + 1.0, tile.zoom);
-    const double tile_center_lat_deg = (tile_lat_top_deg + tile_lat_bottom_deg) * 0.5;
-
-    // Same latitude-dependent Web Mercator distortion approximation
-    // MapRhiWidget::heatmapRadiusPixels() already accepts for the flat
-    // map: exact at this tile's own center row, increasingly approximate
-    // toward its top/bottom edges. Good enough for a soft-edged heatmap
-    // blob; not something worth a more exact per-marker correction for.
-    const double meters_per_pixel = GeoWebMercator::metersPerPixel(
-        tile_center_lat_deg, tile.zoom);
-    if (!std::isfinite(meters_per_pixel) || meters_per_pixel <= 0.0)
-        return retain_layout({});
-
-    const double radius_pixels = this->heatmap_radius_m / meters_per_pixel;
-    if (!std::isfinite(radius_pixels) || radius_pixels <= 0.0)
-        return retain_layout({});
-    // Radius in the same fractional tile-coordinate units used for the
-    // marker bounding check below (1.0 == one full tile edge), so that
-    // check needs no separate unit conversion of its own.
-    const double radius_tile_fraction = radius_pixels / double(GeoWebMercator::TileSize);
-
-    int visited_bucket_cells = 0;
-    const QVector<int> candidate_indices = heatmapMarkerCandidates(
-        tile, radius_tile_fraction, &visited_bucket_cells);
-    if (stats != nullptr)
-    {
-        stats->candidate_markers = candidate_indices.size();
-        stats->candidate_bucket_cells = visited_bucket_cells;
-    }
-    if (candidate_indices.isEmpty())
-        return retain_layout({});
-
-    QVector<HeatmapStamp> stamps;
-    stamps.reserve(candidate_indices.size());
-    const double pixels_per_fraction = double(GlobeHeatmapTextureSize);
-    const double tile_scale = std::ldexp(1.0, tile.zoom);
-    if (!std::isfinite(tile_scale))
-        return retain_layout({});
-    for (int marker_index : candidate_indices)
-    {
-        // nearestWrappedTileX() picks whichever antimeridian-wrapped copy
-        // of this marker's tile-space X sits closest to this tile's own
-        // (already unwrapped) virtual_x -- the same reasoning
-        // terrainCellCountForTile() and every other per-tile geodetic
-        // calculation in this class already applies.
-        if (marker_index < 0
-            || marker_index >= this->heatmap_markers.size()
-            || marker_index >= this->heatmap_marker_projections.size())
-            continue;
-        const HeatmapMarker &marker = this->heatmap_markers.at(marker_index);
-        const HeatmapMarkerProjection &projection =
-            this->heatmap_marker_projections.at(marker_index);
-        if (!projection.valid)
-            continue;
-        const double marker_tile_x = GeoWebMercator::nearestWrappedTileX(
-            projection.tile_x_zoom0 * tile_scale,
-            double(tile.virtual_x), tile.zoom);
-        const double marker_tile_y = projection.tile_y_zoom0 * tile_scale;
-        if (!std::isfinite(marker_tile_x)
-            || !std::isfinite(marker_tile_y))
-        {
-            continue;
-        }
-        const double fraction_x = marker_tile_x - double(tile.virtual_x);
-        const double fraction_y = marker_tile_y - double(tile.tile_y);
-
-        if (fraction_x + radius_tile_fraction < 0.0
-            || fraction_x - radius_tile_fraction > 1.0
-            || fraction_y + radius_tile_fraction < 0.0
-            || fraction_y - radius_tile_fraction > 1.0)
-        {
-            continue;
-        }
-
-        HeatmapStamp stamp;
-        stamp.center_x_pixels = fraction_x * pixels_per_fraction;
-        stamp.center_y_pixels = fraction_y * pixels_per_fraction;
-        stamp.radius_pixels = radius_pixels;
-        stamp.marker_index = marker_index;
-        stamp.marker_render_id = marker.render_id;
-        stamp.color = marker.color;
-        stamps.append(stamp);
-    }
-
-    return retain_layout(std::move(stamps));
+    MapGlobeHeatmapTile heatmap_tile;
+    heatmap_tile.zoom = tile.zoom;
+    heatmap_tile.virtual_x = tile.virtual_x;
+    heatmap_tile.tile_y = tile.tile_y;
+    heatmap_tile.is_cap = tile.is_cap;
+    MapGlobeHeatmapTileLayoutCache *layout_cache = resource != nullptr
+        ? &resource->heatmap_layout_cache : nullptr;
+    return this->heatmap_scene.stampsForTile(
+        heatmap_tile, layout_cache, stats);
 }
 
 bool MapRhiGlobeRenderer::queueHeatmapGpuBake(
@@ -4625,19 +3466,26 @@ bool MapRhiGlobeRenderer::queueHeatmapGpuBake(
     job.resource = resource;
     job.destination_texture = destination_texture;
     job.destination_layer = destination_layer;
-    job.revision = this->heatmap_revision;
+    job.revision = this->heatmap_scene.revision();
     job.instances.reserve(stamps.size());
-    const bool flip_for_texture_storage = this->rhi->isYUpInFramebuffer();
+    // The bake shader writes raw clip-space positions and deliberately does
+    // not use QRhi::clipSpaceCorrMatrix(). Therefore the input Y correction
+    // must follow the backend's NDC convention, not its framebuffer-origin
+    // convention. Using isYUpInFramebuffer() here vertically mirrored every
+    // baked heatmap tile on Y-down-NDC backends (notably Vulkan), so stamps
+    // crossing tile boundaries no longer lined up and appeared as clipped
+    // rectangular bands/detached blobs.
+    const bool flip_for_ndc = !this->rhi->isYUpInNDC();
     for (const HeatmapStamp &stamp : stamps)
     {
         HeatmapBakeInstance instance;
         instance.center_x_pixels = float(stamp.center_x_pixels);
         instance.center_y_pixels = float(
-            flip_for_texture_storage
+            flip_for_ndc
                 ? double(GlobeHeatmapTextureSize) - stamp.center_y_pixels
                 : stamp.center_y_pixels);
         instance.radius_pixels = float(stamp.radius_pixels);
-        instance.solid_fraction = float(this->heatmap_solid_fraction);
+        instance.solid_fraction = float(this->heatmap_scene.solidFraction());
         instance.red = stamp.color.redF();
         instance.green = stamp.color.greenF();
         instance.blue = stamp.color.blueF();
@@ -4682,20 +3530,25 @@ void MapRhiGlobeRenderer::scheduleDiagnosticHeatmapGpuBake(
 
     this->diagnostic_heatmap_bake_instances.clear();
     this->diagnostic_heatmap_bake_instances.reserve(stamps.size());
+    const bool flip_for_ndc = this->rhi != nullptr
+        && !this->rhi->isYUpInNDC();
     for (const HeatmapStamp &stamp : stamps)
     {
         HeatmapBakeInstance instance;
         instance.center_x_pixels = float(stamp.center_x_pixels);
-        instance.center_y_pixels = float(stamp.center_y_pixels);
+        instance.center_y_pixels = float(
+            flip_for_ndc
+                ? double(GlobeHeatmapTextureSize) - stamp.center_y_pixels
+                : stamp.center_y_pixels);
         instance.radius_pixels = float(stamp.radius_pixels);
-        instance.solid_fraction = float(this->heatmap_solid_fraction);
+        instance.solid_fraction = float(this->heatmap_scene.solidFraction());
         instance.red = stamp.color.redF();
         instance.green = stamp.color.greenF();
         instance.blue = stamp.color.blueF();
         this->diagnostic_heatmap_bake_instances.append(instance);
     }
 
-    this->diagnostic_heatmap_bake_revision = this->heatmap_revision;
+    this->diagnostic_heatmap_bake_revision = this->heatmap_scene.revision();
     this->diagnostic_heatmap_gpu_validation_attempted = true;
     this->diagnostic_heatmap_bake_zoom = tile.zoom;
     this->diagnostic_heatmap_bake_tile_x = tile.virtual_x;
@@ -5018,7 +3871,7 @@ bool MapRhiGlobeRenderer::runPendingHeatmapGpuBakes(
         if (job.resource == nullptr || job.destination_texture == nullptr
             || job.destination_layer < 0
             || job.destination_layer >= GlobeTileArrayLayerCount
-            || job.revision != this->heatmap_revision
+            || job.revision != this->heatmap_scene.revision()
             || job.instances.isEmpty()
             || total_instance_count
                 > std::numeric_limits<qsizetype>::max()
@@ -5269,7 +4122,7 @@ bool MapRhiGlobeRenderer::runPendingHeatmapGpuBakes(
         recorded_array_copies;
 
     qCDebug(globeHeatmapPerformanceLog).noquote().nospace()
-        << "visible_gpu_bakes revision=" << this->heatmap_revision
+        << "visible_gpu_bakes revision=" << this->heatmap_scene.revision()
         << " tiles=" << recorded_tiles
         << " passes=" << recorded_passes
         << " stamps=" << recorded_stamps
@@ -5521,7 +4374,7 @@ bool MapRhiGlobeRenderer::ensureHeatmapTexture(
         return false;
     // Cheap common case: this tile's heatmap state already reflects the
     // current revision, so there is no CPU raster to regenerate.
-    if (resource->heatmap_revision == this->heatmap_revision)
+    if (resource->heatmap_revision == this->heatmap_scene.revision())
         return resource->bindings != nullptr || rebuildTileBindings(resource);
 
     if (this->heatmap_profile.enabled)
@@ -5548,8 +4401,8 @@ bool MapRhiGlobeRenderer::ensureHeatmapTexture(
                 resource->heatmap_texture.reset();
                 bindings_changed = true;
             }
-            resource->heatmap_texture_revision = this->heatmap_revision;
-            resource->heatmap_revision = this->heatmap_revision;
+            resource->heatmap_texture_revision = this->heatmap_scene.revision();
+            resource->heatmap_revision = this->heatmap_scene.revision();
             if (bindings_changed || resource->bindings == nullptr)
                 return rebuildTileBindings(resource);
             return true;
@@ -5592,7 +4445,7 @@ bool MapRhiGlobeRenderer::ensureHeatmapTexture(
                 // check later in this prepare(), but do not commit the
                 // tile's logical revision until the copy is recorded.
                 resource->heatmap_texture_revision =
-                    this->heatmap_revision;
+                    this->heatmap_scene.revision();
                 if (bindings_changed || resource->bindings == nullptr)
                     return rebuildTileBindings(resource);
                 return true;
@@ -5619,7 +4472,7 @@ bool MapRhiGlobeRenderer::ensureHeatmapTexture(
             ++this->heatmap_profile.fallback_uploads;
             this->heatmap_profile.upload_bytes += quint64(image.sizeInBytes());
         }
-        resource->heatmap_texture_revision = this->heatmap_revision;
+        resource->heatmap_texture_revision = this->heatmap_scene.revision();
     }
     else if (image.isNull() && resource->heatmap_texture)
     {
@@ -5627,14 +4480,14 @@ bool MapRhiGlobeRenderer::ensureHeatmapTexture(
         // its old private texture avoids a clear upload and releases memory.
         resource->bindings.reset();
         resource->heatmap_texture.reset();
-        resource->heatmap_texture_revision = this->heatmap_revision;
+        resource->heatmap_texture_revision = this->heatmap_scene.revision();
         bindings_changed = true;
     }
 
     if (updated_image != nullptr)
         *updated_image = image;
 
-    resource->heatmap_revision = this->heatmap_revision;
+    resource->heatmap_revision = this->heatmap_scene.revision();
     if (bindings_changed || resource->bindings == nullptr)
         return rebuildTileBindings(resource);
     return true;
@@ -5654,7 +4507,7 @@ bool MapRhiGlobeRenderer::ensureHeatmapFallbackTexture(
         return true;
     }
     if (resource->heatmap_texture
-        && resource->heatmap_texture_revision == this->heatmap_revision)
+        && resource->heatmap_texture_revision == this->heatmap_scene.revision())
     {
         return resource->bindings != nullptr || rebuildTileBindings(resource);
     }
@@ -5680,8 +4533,8 @@ bool MapRhiGlobeRenderer::ensureHeatmapFallbackTexture(
                 resource->heatmap_texture.reset();
             }
             resource->heatmap_has_content = false;
-            resource->heatmap_texture_revision = this->heatmap_revision;
-            resource->heatmap_revision = this->heatmap_revision;
+            resource->heatmap_texture_revision = this->heatmap_scene.revision();
+            resource->heatmap_revision = this->heatmap_scene.revision();
             if (bindings_changed || resource->bindings == nullptr)
                 return rebuildTileBindings(resource);
             return true;
@@ -5713,7 +4566,7 @@ bool MapRhiGlobeRenderer::ensureHeatmapFallbackTexture(
                     resource, resource->heatmap_texture.get(), *stamps))
             {
                 resource->heatmap_texture_revision =
-                    this->heatmap_revision;
+                    this->heatmap_scene.revision();
                 if (bindings_changed || resource->bindings == nullptr)
                     return rebuildTileBindings(resource);
                 return true;
@@ -5749,8 +4602,8 @@ bool MapRhiGlobeRenderer::ensureHeatmapFallbackTexture(
         ++this->heatmap_profile.fallback_uploads;
         this->heatmap_profile.upload_bytes += quint64(image.sizeInBytes());
     }
-    resource->heatmap_texture_revision = this->heatmap_revision;
-    resource->heatmap_revision = this->heatmap_revision;
+    resource->heatmap_texture_revision = this->heatmap_scene.revision();
+    resource->heatmap_revision = this->heatmap_scene.revision();
     if (bindings_changed || resource->bindings == nullptr)
         return rebuildTileBindings(resource);
     return true;
@@ -5861,11 +4714,11 @@ void MapRhiGlobeRenderer::reportHeatmapProfile() const
     constexpr double NsecsPerMillisecond = 1000000.0;
     constexpr double BytesPerMebibyte = 1024.0 * 1024.0;
     qCDebug(globeHeatmapPerformanceLog).noquote().nospace()
-        << "revision=" << this->heatmap_revision
-        << " markers=" << this->heatmap_markers.size()
-        << " active_markers=" << this->heatmap_active_marker_count
+        << "revision=" << this->heatmap_scene.revision()
+        << " markers=" << this->heatmap_scene.markerCount()
+        << " active_markers=" << this->heatmap_scene.activeMarkerCount()
         << " stamp_layout_revision="
-        << this->heatmap_stamp_layout_revision
+        << this->heatmap_scene.layoutRevision()
         << " visible_tiles=" << this->heatmap_profile.visible_tiles
         << " dirty_tiles=" << this->heatmap_profile.dirty_tiles
         << " raster_calls=" << this->heatmap_profile.raster_calls
@@ -5878,9 +4731,9 @@ void MapRhiGlobeRenderer::reportHeatmapProfile() const
         << " marker_tile_pairs="
         << this->heatmap_profile.marker_tile_pairs
         << " radius_m="
-        << QString::number(this->heatmap_radius_m, 'f', 3)
+        << QString::number(this->heatmap_scene.radiusM(), 'f', 3)
         << " marker_index_levels="
-        << this->heatmap_marker_buckets_by_zoom.size()
+        << this->heatmap_scene.bucketLevelCount()
         << " stamp_layout_cache_hits="
         << this->heatmap_profile.stamp_layout_cache_hits
         << " stamp_layout_cache_misses="
@@ -6344,9 +5197,11 @@ bool MapRhiGlobeRenderer::createTileArrayResources()
     return true;
 }
 
-bool MapRhiGlobeRenderer::createHeatmapArrayPage()
+bool MapRhiGlobeRenderer::createHeatmapArrayPage(
+    QRhiResourceUpdateBatch *resource_updates)
 {
-    if (this->rhi == nullptr || !this->camera_uniform_buffer || !this->sampler
+    if (this->rhi == nullptr || resource_updates == nullptr
+        || !this->camera_uniform_buffer || !this->sampler
         || int(this->heatmap_array_pages.size())
             >= GlobeTileArrayMaximumPageCount)
     {
@@ -6360,6 +5215,23 @@ bool MapRhiGlobeRenderer::createHeatmapArrayPage()
     if (!page.texture || !page.texture->create())
         return false;
 
+    // Layer 0 is the explicit "no heatmap" sentinel used by unaffected
+    // tiles in the fused imagery+heatmap array pass. QRhi texture contents
+    // are undefined after creation, so leaving this layer untouched makes
+    // those tiles sample arbitrary GPU memory and appear as tile-shaped
+    // colored rectangles. Initialize the sentinel layer to transparent on
+    // every page before that page can participate in drawing.
+    QImage transparent_layer(
+        GlobeHeatmapTextureSize, GlobeHeatmapTextureSize,
+        QImage::Format_RGBA8888_Premultiplied);
+    transparent_layer.fill(Qt::transparent);
+    const QRhiTextureSubresourceUploadDescription transparent_subresource(
+        transparent_layer);
+    const QRhiTextureUploadEntry transparent_entry(
+        0, 0, transparent_subresource);
+    resource_updates->uploadTexture(
+        page.texture.get(), QRhiTextureUploadDescription(transparent_entry));
+
     page.free_layers.reserve(GlobeTileArrayUsableLayerCount);
     for (int layer = GlobeTileArrayLayerCount - 1; layer >= 1; --layer)
         page.free_layers.append(layer);
@@ -6369,9 +5241,10 @@ bool MapRhiGlobeRenderer::createHeatmapArrayPage()
     return true;
 }
 
-bool MapRhiGlobeRenderer::createHeatmapArrayResources()
+bool MapRhiGlobeRenderer::createHeatmapArrayResources(
+    QRhiResourceUpdateBatch *resource_updates)
 {
-    if (!arrayBatchingActive() || this->heatmap_markers.isEmpty()
+    if (!arrayBatchingActive() || this->heatmap_scene.isEmpty()
         || this->rhi == nullptr || this->render_pass_descriptor == nullptr
         || !this->camera_uniform_buffer || !this->sampler)
     {
@@ -6379,7 +5252,7 @@ bool MapRhiGlobeRenderer::createHeatmapArrayResources()
     }
 
     if (this->heatmap_array_pages.empty()
-        && !createHeatmapArrayPage())
+        && !createHeatmapArrayPage(resource_updates))
     {
         return false;
     }
@@ -6811,19 +5684,18 @@ bool MapRhiGlobeRenderer::prepare(
     // actual geometry rebuild below is comparatively expensive, and that is
     // gated on the resulting leaf set actually differing from what is
     // already built.
-    const QVector<MapRhiGlobeQuadtreeLeaf> desired_leaves = selectVisibleGlobeQuadtreeLeaves(
-        *this->map_model, viewport_size, this->terrain_repository,
-        &this->previously_subdivided_quadtree_nodes);
+    const QVector<MapGlobeQuadtreeLeaf> desired_leaves = this->surface_scene.selectVisibleLeaves(
+        *this->map_model, viewport_size, this->terrain_repository);
 
     bool leaves_match_window = !this->window_dirty
         && desired_leaves.size() == this->window_tiles.size()
         && this->window_position_keys.size() == this->window_tiles.size();
     if (leaves_match_window)
     {
-        for (const MapRhiGlobeQuadtreeLeaf &leaf : desired_leaves)
+        for (const MapGlobeQuadtreeLeaf &leaf : desired_leaves)
         {
             if (!this->window_position_keys.contains(
-                    globeQuadtreeNodeKey(leaf.zoom, leaf.tile_x, leaf.tile_y)))
+                    MapGlobeSurfaceScene::positionKey(leaf.zoom, leaf.tile_x, leaf.tile_y)))
             {
                 leaves_match_window = false;
                 break;
@@ -7231,7 +6103,7 @@ void MapRhiGlobeRenderer::releaseResources()
     this->window_dirty = true;
     this->terrain_lod_rebuild_pending = false;
     this->terrain_lod_rebuild_clock.invalidate();
-    this->previously_subdivided_quadtree_nodes.clear();
+    this->surface_scene.clearVisibilityHistory();
     this->cap_vertex_buffer.reset();
     this->cap_index_buffer.reset();
     this->cap_vertex_upload_pending = true;

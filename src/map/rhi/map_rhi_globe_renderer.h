@@ -2,6 +2,8 @@
 #define MAP_RHI_GLOBE_RENDERER_H
 
 #include "geo/geo_wgs84_ellipsoid.h"
+#include "map/render/map_globe_surface_scene.h"
+#include "map/render/map_globe_heatmap_scene.h"
 
 #include <aowis/model/gis.h>
 
@@ -34,26 +36,10 @@ class QRhiShaderResourceBindings;
 class QRhiTexture;
 class QRhiTextureRenderTarget;
 
-// Zoom/tile-index identity of one leaf produced by the visible-region
-// quadtree walk (selectVisibleGlobeQuadtreeLeaves() in the .cpp). Plain POD
-// so it can cross from the free-function quadtree walk into
-// MapRhiGlobeRenderer's private API without making the leaf itself depend on
-// geo or RHI types. Replaces the old single-zoom rectangular tile window:
-// every leaf carries its own zoom, so near-camera ground can stay at fine detail while
-// terrain approaching the horizon is covered by a handful of coarse,
-// low-zoom leaves instead of forcing the whole visible footprint to one
-// uniform resolution (see the class comment below for why that mattered).
-struct MapRhiGlobeQuadtreeLeaf
-{
-    int zoom = 0;
-    int tile_x = 0;
-    int tile_y = 0;
-};
-
 // Renders planet Earth as a WGS84 ellipsoid for the "Globe" map view mode.
 //
 // The visible-region tile set is a genuine quadtree, not a single-zoom
-// rectangular window: selectVisibleGlobeQuadtreeLeaves() walks the tile
+// rectangular window: MapGlobeSurfaceScene::selectVisibleLeaves() walks the tile
 // hierarchy from the whole-planet root, at each node deciding independently
 // whether that node's own on-screen projected size still calls for more
 // detail (subdivide into 4 children) or is already fine enough to leave as
@@ -82,30 +68,9 @@ struct MapRhiGlobeQuadtreeLeaf
 class MapRhiGlobeRenderer
 {
 public:
-    // Stable node identity plus its coordinate and current heatmap state.
-    // Inactive markers deliberately remain in the vector: simulation
-    // timesteps are allowed to add/remove values without changing the
-    // geographic stamp layout. No radius/opacity/solid-fraction lives here;
-    // those values are shared across every marker for a given call (see
-    // setHeatmapOverlay()). Lon/lat rather than CoordinateWGS84 keeps this a
-    // plain POD with minimal includes.
-    struct HeatmapMarker
-    {
-        quint32 render_id = 0;
-        double longitude_deg = 0.0;
-        double latitude_deg = 0.0;
-        bool active = false;
-        QColor color;
-
-        bool operator==(const HeatmapMarker &other) const
-        {
-            return this->render_id == other.render_id
-                && this->longitude_deg == other.longitude_deg
-                && this->latitude_deg == other.latitude_deg
-                && this->active == other.active
-                && this->color == other.color;
-        }
-    };
+    // Compatibility name for current callers. Heatmap marker/state/layout
+    // preparation is backend-neutral and owned by MapGlobeHeatmapScene.
+    using HeatmapMarker = MapGlobeHeatmapMarker;
 
     MapRhiGlobeRenderer(MapModel *map_model, MapTileRepository *tile_repository);
     ~MapRhiGlobeRenderer();
@@ -237,29 +202,8 @@ private:
         float z = 0.0f;
     };
 
-    // Tile-local description of one radial heatmap stamp. marker_index and
-    // marker_render_id together validate the stable-node lookup, allowing
-    // the expensive geographic projection/layout to survive simulation
-    // frames that change marker colors or value availability.
-    struct HeatmapStamp
-    {
-        double center_x_pixels = 0.0;
-        double center_y_pixels = 0.0;
-        double radius_pixels = 0.0;
-        int marker_index = -1;
-        quint32 marker_render_id = 0;
-        QColor color;
-    };
-
-    // Web Mercator tile coordinates at zoom 0. Every higher-zoom tile
-    // coordinate is this value multiplied by 2^zoom, so radius-only changes
-    // never repeat longitude normalization or the latitude tan/log transform.
-    struct HeatmapMarkerProjection
-    {
-        double tile_x_zoom0 = 0.0;
-        double tile_y_zoom0 = 0.0;
-        bool valid = false;
-    };
+    using HeatmapStamp = MapGlobeHeatmapStamp;
+    using HeatmapRasterStats = MapGlobeHeatmapRasterStats;
 
     struct TileResource
     {
@@ -292,15 +236,10 @@ private:
         int heatmap_array_page = -1;
         int heatmap_array_layer = -1;
         bool heatmap_has_content = false;
-        // Marker identities, positions and radius determine this layout;
-        // marker colors and active flags do not. Dynamic simulation updates
-        // therefore filter/recolor these cached entries instead of repeating
-        // every marker/tile projection test.
-        QVector<HeatmapStamp> heatmap_stamp_layout;
-        quint64 heatmap_stamp_layout_revision = 0;
-        int heatmap_stamp_layout_zoom = -1;
-        int heatmap_stamp_layout_virtual_x = 0;
-        int heatmap_stamp_layout_tile_y = 0;
+        // Backend-neutral retained stamp layout. Marker colors/active flags
+        // are resolved by MapGlobeHeatmapScene without repeating geographic
+        // projection work.
+        MapGlobeHeatmapTileLayoutCache heatmap_layout_cache;
         // True while this resource holds a cropped-and-upscaled placeholder
         // derived from an already-loaded ancestor tile rather than the
         // tile's own imagery -- see ensureTileResource(). Cleared the
@@ -475,13 +414,6 @@ private:
         std::unique_ptr<QRhiTextureRenderTarget> target;
     };
 
-    struct HeatmapRasterStats
-    {
-        int candidate_markers = 0;
-        int candidate_bucket_cells = 0;
-        int marker_tile_pairs = 0;
-        bool stamp_layout_cache_hit = false;
-    };
 
     // Per-request counters for the opt-in Globe heatmap performance log.
     // Kept entirely outside rendering state so enabling diagnostics cannot
@@ -517,8 +449,8 @@ private:
     void buildCaps();
     void buildPolarCap(bool north);
     void rebuildWindow(
-        const QVector<MapRhiGlobeQuadtreeLeaf> &leaves, const QSize &viewport_size);
-    QVector<MapRhiGlobeQuadtreeLeaf> currentWindowLeaves() const;
+        const QVector<MapGlobeQuadtreeLeaf> &leaves, const QSize &viewport_size);
+    QVector<MapGlobeQuadtreeLeaf> currentWindowLeaves() const;
     int terrainCellCountForTile(
         const GlobeTile &tile, const QSize &viewport_size,
         const GeoWgs84Ellipsoid::OrbitCameraBasis *camera_basis_override = nullptr) const;
@@ -556,8 +488,10 @@ private:
     void setTileArrayReady(GlobeTile &tile, bool ready);
     void rebuildTileArrayDrawIndices();
     bool uploadTileArrayDrawIndices(QRhiResourceUpdateBatch *resource_updates);
-    bool createHeatmapArrayResources();
-    bool createHeatmapArrayPage();
+    bool createHeatmapArrayResources(
+        QRhiResourceUpdateBatch *resource_updates);
+    bool createHeatmapArrayPage(
+        QRhiResourceUpdateBatch *resource_updates);
     void trimUnusedHeatmapArrayPages();
     bool heatmapArrayBatchingActive() const;
     void setTileHeatmapArrayReady(GlobeTile &tile, bool ready);
@@ -645,10 +579,6 @@ private:
     int maximumVisibleHeatmapGpuBakeAtlasSlots();
     void releaseVisibleHeatmapGpuBakeAtlasResources();
     void reportHeatmapProfile() const;
-    void rebuildHeatmapMarkerBuckets();
-    QVector<int> heatmapMarkerCandidates(
-        const GlobeTile &tile, double radius_tile_fraction,
-        int *visited_bucket_cells) const;
     bool requestMissingTiles(QRhiResourceUpdateBatch *resource_updates);
     void requestMissingTerrainTiles();
     void scheduleReadyTerrainMeshes();
@@ -681,13 +611,13 @@ private:
     QSet<quint64> window_position_keys;
     QHash<quint64, qsizetype> window_tile_indices_by_position;
     bool window_dirty = true;
-    // Which (zoom, tile_x, tile_y) nodes were subdivided into children on
-    // the previous quadtree walk. Consulted by
-    // selectVisibleGlobeQuadtreeLeaves() to apply hysteresis around the
-    // subdivide/merge threshold -- without it, a node whose projected size
+    // Backend-neutral visible-surface scene. It retains which quadtree nodes
+    // were subdivided on the previous frame so selectVisibleLeaves() can apply
+    // hysteresis around the subdivide/merge threshold -- without it, a node
+    // whose projected size
     // sits right at the boundary would flicker between one leaf and four
     // children every frame as the camera drifts by sub-pixel amounts.
-    QSet<quint64> previously_subdivided_quadtree_nodes;
+    MapGlobeSurfaceScene surface_scene;
     bool window_tiles_requested = false;
     bool window_vertex_upload_pending = false;
     bool window_index_upload_pending = false;
@@ -766,18 +696,8 @@ private:
     // default heatmap_revision of 0 is always seen as stale on its first
     // check, forcing (at worst) a single "definitely empty" texture
     // generation rather than an uninitialized-looking mismatch.
-    QVector<HeatmapMarker> heatmap_markers;
-    QVector<HeatmapMarkerProjection> heatmap_marker_projections;
-    QVector<QHash<quint64, QVector<int>>> heatmap_marker_buckets_by_zoom;
-    double heatmap_radius_m = 0.0;
-    double heatmap_solid_fraction = 0.0;
+    MapGlobeHeatmapScene heatmap_scene;
     float heatmap_opacity = 0.0f;
-    quint64 heatmap_revision = 1;
-    int heatmap_active_marker_count = 0;
-    // Changes only when stamp geometry can change (positions or radius),
-    // unlike heatmap_revision which also changes for new simulation colors
-    // or marker value availability.
-    quint64 heatmap_stamp_layout_revision = 1;
     HeatmapProfileCounters heatmap_profile;
     bool heatmap_profile_report_pending = false;
 

@@ -371,6 +371,10 @@ if(AOWIS_HAS_QRHI)
             src/map/render/map_globe_network_scene.cpp
             src/map/render/map_globe_render_frame.h
             src/map/render/map_globe_render_frame.cpp
+            src/map/render/map_globe_surface_scene.h
+            src/map/render/map_globe_surface_scene.cpp
+            src/map/render/map_globe_heatmap_scene.h
+            src/map/render/map_globe_heatmap_scene.cpp
             src/map/render/map_network_render_symbology.h
             src/map/render/map_network_render_data.h
             src/map/render/map_globe_render_instances.h
