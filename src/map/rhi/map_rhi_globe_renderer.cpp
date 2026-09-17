@@ -1,6 +1,7 @@
 #include "map/rhi/map_rhi_globe_renderer.h"
 
 #include "map/render/map_globe_vertical_transform.h"
+#include "map/render/map_globe_picking.h"
 
 #include "map/core/map_model.h"
 #include "map/data/map_tile_repository.h"
@@ -93,42 +94,6 @@ const QColor GlobePolarCapColor(235, 240, 245);
 const QColor GlobeMissingTileColor(18, 58, 72);
 
 constexpr int GlobeCameraUniformBytes = 24 * int(sizeof(float));
-
-bool rayTriangleIntersectionDistance(
-    const QVector3D &ray_origin, const QVector3D &ray_direction,
-    const QVector3D &a, const QVector3D &b, const QVector3D &c,
-    double *distance_m)
-{
-    if (distance_m == nullptr)
-        return false;
-
-    const QVector3D edge1 = b - a;
-    const QVector3D edge2 = c - a;
-    const QVector3D p = QVector3D::crossProduct(ray_direction, edge2);
-    const double determinant = double(QVector3D::dotProduct(edge1, p));
-    if (std::abs(determinant) <= 1e-10)
-        return false;
-
-    const double inverse_determinant = 1.0 / determinant;
-    const QVector3D t = ray_origin - a;
-    const double u = double(QVector3D::dotProduct(t, p)) * inverse_determinant;
-    if (u < 0.0 || u > 1.0)
-        return false;
-
-    const QVector3D q = QVector3D::crossProduct(t, edge1);
-    const double v = double(QVector3D::dotProduct(ray_direction, q))
-        * inverse_determinant;
-    if (v < 0.0 || u + v > 1.0)
-        return false;
-
-    const double distance = double(QVector3D::dotProduct(edge2, q))
-        * inverse_determinant;
-    if (!(distance > 0.0) || !std::isfinite(distance))
-        return false;
-
-    *distance_m = distance;
-    return true;
-}
 
 bool rayAabbIntersectionDistanceRange(
     const QVector3D &ray_origin, const QVector3D &ray_direction,
@@ -1542,15 +1507,16 @@ bool MapRhiGlobeRenderer::visibleTerrainRayIntersection(
                 const QVector3D c(c_vertex.x, c_vertex.y, c_vertex.z);
 
                 double candidate_distance_m = 0.0;
-                if (!rayTriangleIntersectionDistance(
+                if (!mapGlobeRayTriangleIntersectionDistance(
                         relative_origin, direction, a, b, c,
                         &candidate_distance_m)
-                    || candidate_distance_m >= nearest_distance_m)
+                    || !(candidate_distance_m > 0.0)
+                    || !mapGlobeUpdateNearestHitDistance(
+                        candidate_distance_m, &nearest_distance_m))
                 {
                     continue;
                 }
 
-                nearest_distance_m = candidate_distance_m;
                 found = true;
             }
         };

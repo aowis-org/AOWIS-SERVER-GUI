@@ -3,7 +3,9 @@
 
 #include "map/rhi/map_rhi_basemap_renderer.h"
 #include "map/rhi/map_rhi_camera.h"
-#include "map/rhi/map_rhi_globe_network_scene.h"
+#include "map/rhi/map_rhi_globe_network_backend.h"
+#include "map/render/map_globe_network_scene.h"
+#include "map/render/map_globe_render_frame.h"
 #include "map/rhi/map_rhi_globe_renderer.h"
 #include "map/rhi/map_rhi_scene.h"
 #include "map/rhi/map_rhi_junction_model.h"
@@ -142,14 +144,7 @@ private:
     void rebuildReservoirModelGeometry();
     void resetGpuResources();
     void renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarget *target);
-    bool ensureGlobeNetworkGeometryBuffers();
-    void uploadGlobeNetworkGeometry(QRhiResourceUpdateBatch *resource_updates);
     void uploadNetworkStyleTable(QRhiResourceUpdateBatch *resource_updates);
-    void drawGlobeNetwork(QRhiCommandBuffer *command_buffer);
-    bool globeScreenRay(
-        const QPointF &screen_position,
-        GeoWgs84Ellipsoid::EcefPositionD *ray_origin,
-        QVector3D *ray_direction) const;
     // Globe-mode counterpart of hitTest() -- see that function's header
     // comment for why it can't just be folded into the same function body.
     MapRhiHit globeHitTest(const QPointF &screen_position) const;
@@ -189,7 +184,7 @@ private:
     QPointF fallback_origin_world;
     MapRhiCamera camera;
     MapRhiScene scene;
-    MapRhiGlobeNetworkScene globe_network_scene;
+    MapGlobeNetworkScene globe_network_scene;
     MapRhiSymbology applied_symbology;
     MapTileRepository *tile_repository = nullptr;
     MapTerrainRepository *terrain_repository = nullptr;
@@ -212,35 +207,7 @@ private:
     std::unique_ptr<QRhiBuffer> tank_vertex_buffer;
     std::unique_ptr<QRhiBuffer> reservoir_vertex_buffer;
     std::unique_ptr<QRhiBuffer> junction_mesh_vertex_buffer;
-    // Globe-view network geometry lives in its own buffers, separate from
-    // the flat 2D ones above, even though both draw with the same
-    // link/node/icon pipelines and the same shader_resource_bindings/
-    // icon_shader_resource_bindings (see MapRhiGlobeNetworkScene). Only one
-    // view mode ever renders in a given frame, so there is no per-frame
-    // conflict over the shared uniform_buffer/bindings; keeping the vertex
-    // buffers themselves separate just avoids coupling the two view modes'
-    // upload/resize bookkeeping together.
-    std::unique_ptr<QRhiBuffer> globe_link_vertex_buffer;
-    std::unique_ptr<QRhiBuffer> globe_node_vertex_buffer;
-    // Globe-specific per-instance data for junction sphere impostors.
-    // The shared six-vertex quad is camera/coordinate-system agnostic;
-    // only the instance data -- where each sphere actually sits, in
-    // whichever coordinate space the active view uses -- differs, exactly
-    // like globe_node_vertex_buffer vs. node_vertex_buffer.
-    std::unique_ptr<QRhiBuffer> globe_junction_instance_buffer;
-    std::unique_ptr<QRhiBuffer> globe_selected_link_vertex_buffer;
-    std::unique_ptr<QRhiBuffer> globe_selected_node_vertex_buffer;
-    std::unique_ptr<QRhiBuffer> globe_diagnostic_link_vertex_buffer;
-    std::unique_ptr<QRhiBuffer> globe_diagnostic_node_vertex_buffer;
-    std::unique_ptr<QRhiBuffer> globe_flow_direction_vertex_buffer;
-    std::unique_ptr<QRhiBuffer> globe_icon_vertex_buffer;
-    // Populated only while X-Ray mode is active (see
-    // MapRhiGlobeNetworkScene::setUndergroundXRayEnabled()); drawn through
-    // the shared link_xray_pipeline, since that
-    // pipeline's fragment shader is coordinate-system agnostic like the
-    // rest of the shared link/node/icon shaders.
-    std::unique_ptr<QRhiBuffer> globe_underground_link_vertex_buffer;
-    std::unique_ptr<QRhiBuffer> globe_underground_junction_instance_buffer;
+    MapRhiGlobeNetworkBackend globe_network_backend;
     std::unique_ptr<QRhiTexture> icon_atlas_texture;
     std::unique_ptr<QRhiTexture> tank_texture;
     std::unique_ptr<QRhiTexture> reservoir_texture;
@@ -288,17 +255,6 @@ private:
     int tank_vertex_buffer_size = 0;
     int reservoir_vertex_buffer_size = 0;
     int junction_mesh_vertex_buffer_size = 0;
-    int globe_link_vertex_buffer_size = 0;
-    int globe_node_vertex_buffer_size = 0;
-    int globe_junction_instance_buffer_size = 0;
-    int globe_selected_link_vertex_buffer_size = 0;
-    int globe_selected_node_vertex_buffer_size = 0;
-    int globe_diagnostic_link_vertex_buffer_size = 0;
-    int globe_diagnostic_node_vertex_buffer_size = 0;
-    int globe_flow_direction_vertex_buffer_size = 0;
-    int globe_icon_vertex_buffer_size = 0;
-    int globe_underground_link_vertex_buffer_size = 0;
-    int globe_underground_junction_instance_buffer_size = 0;
     bool geometry_upload_pending = true;
     bool highlight_upload_pending = true;
     bool flow_direction_upload_pending = true;
@@ -307,12 +263,6 @@ private:
     bool tank_upload_pending = true;
     bool reservoir_upload_pending = true;
     bool junction_mesh_upload_pending = true;
-    bool globe_geometry_upload_pending = true;
-    bool globe_highlight_upload_pending = true;
-    bool globe_flow_direction_upload_pending = true;
-    bool globe_icon_upload_pending = true;
-    bool globe_underground_upload_pending = true;
-    bool globe_junction_instance_upload_pending = true;
     bool network_style_upload_pending = true;
     bool icon_atlas_upload_pending = true;
     bool tank_texture_upload_pending = true;

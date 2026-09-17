@@ -352,6 +352,8 @@ if(AOWIS_HAS_QRHI)
             src/map/rhi/map_rhi_basemap_renderer.cpp
             src/map/rhi/map_rhi_camera.h
             src/map/rhi/map_rhi_camera.cpp
+            src/map/rhi/map_rhi_globe_network_backend.h
+            src/map/rhi/map_rhi_globe_network_backend.cpp
             src/map/rhi/map_rhi_hud_widget.h
             src/map/rhi/map_rhi_hud_widget.cpp
             src/map/monitor/map_monitor_hud_controls.h
@@ -361,8 +363,19 @@ if(AOWIS_HAS_QRHI)
             src/map/rhi/map_rhi_terrain_mesh_scheduler.h
             src/map/rhi/map_rhi_terrain_mesh_scheduler.cpp
             src/map/render/map_globe_vertical_transform.h
+            src/map/render/map_globe_camera.h
+            src/map/render/map_globe_camera.cpp
+            src/map/render/map_globe_network_scene.h
+            src/map/render/map_globe_network_scene.cpp
+            src/map/render/map_globe_render_frame.h
+            src/map/render/map_globe_render_frame.cpp
+            src/map/render/map_network_render_symbology.h
             src/map/render/map_network_render_data.h
             src/map/render/map_globe_render_instances.h
+            src/map/render/map_globe_picking.h
+            src/map/render/map_globe_picking.cpp
+            src/map/render/map_icon_atlas.h
+            src/map/render/map_icon_atlas.cpp
             src/map/render/map_node_declutter.h
             src/map/render/map_node_declutter.cpp
             src/map/rhi/map_rhi_icon_atlas.h

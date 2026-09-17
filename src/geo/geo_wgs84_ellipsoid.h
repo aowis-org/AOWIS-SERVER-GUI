@@ -97,7 +97,7 @@ public:
     // being narrowed is small (bounded by how far apart the two positions
     // actually are, not by Earth's radius), so the narrowing itself no
     // longer loses meaningful precision. See orbitCameraBasisRelativeToOrigin()
-    // below and MapRhiGlobeNetworkScene::ecefPosition(), which is the other
+    // below and MapGlobeNetworkScene::ecefPosition(), which is the other
     // half of this fix.
     struct EcefPositionD
     {
