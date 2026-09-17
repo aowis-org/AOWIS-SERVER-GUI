@@ -72,12 +72,6 @@ struct GuiMapNavigationConfiguration
 
 struct GuiMapPerformanceConfiguration
 {
-    // Absolute maximum distance, in meters, the 3D camera can be pulled
-    // back to -- independent of the current zoom level (previously this
-    // was added on top of a zoom-dependent "native" distance, which made
-    // the effective maximum silently shift as the zoom level changed; see
-    // MapModel::view3dMaximumCameraDistanceM()).
-    double max_view_distance_m = 10000.0;
     // Target on-screen size, in pixels, of one terrain relief mesh cell.
     // Smaller values keep a denser (higher quality) mesh out to a greater
     // distance; larger values let quality fall off sooner. Mirrors

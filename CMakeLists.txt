@@ -361,6 +361,8 @@ if(AOWIS_HAS_QRHI)
             src/map/rhi/map_rhi_terrain_mesh_scheduler.h
             src/map/rhi/map_rhi_terrain_mesh_scheduler.cpp
             src/map/render/map_globe_vertical_transform.h
+            src/map/render/map_network_render_data.h
+            src/map/render/map_globe_render_instances.h
             src/map/render/map_node_declutter.h
             src/map/render/map_node_declutter.cpp
             src/map/rhi/map_rhi_icon_atlas.h
@@ -406,8 +408,6 @@ if(AOWIS_HAS_QRHI)
                 src/map/rhi/shaders/map_rhi_basemap.frag
                 src/map/rhi/shaders/map_rhi_basemap_array.vert
                 src/map/rhi/shaders/map_rhi_basemap_array.frag
-                src/map/rhi/shaders/map_rhi_wireframe.vert
-                src/map/rhi/shaders/map_rhi_wireframe.frag
                 src/map/rhi/shaders/map_rhi_heatmap.vert
                 src/map/rhi/shaders/map_rhi_heatmap.frag
                 src/map/rhi/shaders/map_rhi_junction.vert
@@ -446,8 +446,6 @@ if(AOWIS_HAS_QRHI)
                 src/map/rhi/shaders/map_rhi_basemap.frag
                 src/map/rhi/shaders/map_rhi_basemap_array.vert
                 src/map/rhi/shaders/map_rhi_basemap_array.frag
-                src/map/rhi/shaders/map_rhi_wireframe.vert
-                src/map/rhi/shaders/map_rhi_wireframe.frag
                 src/map/rhi/shaders/map_rhi_heatmap.vert
                 src/map/rhi/shaders/map_rhi_heatmap.frag
                 src/map/rhi/shaders/map_rhi_junction.vert

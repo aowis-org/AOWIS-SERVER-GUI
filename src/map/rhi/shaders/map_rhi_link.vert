@@ -48,7 +48,7 @@ void main()
         bool has_world_width_direction = width_direction_length > 0.000001;
         if (!has_world_width_direction)
         {
-            // Flat TwoD/ThreeD compatibility: their ground plane is global
+            // Flat TwoD compatibility: its ground plane is global
             // XY, so retain the historical perpendicular and width
             // measurement exactly as before.
             vec3 world_direction = end_position - start_position;

@@ -71,7 +71,7 @@ void main()
 
     // Reorient the camera axes onto the plane perpendicular to this sphere's
     // center ray. The common case is already orthonormal; Gram-Schmidt keeps
-    // off-axis junctions conservative and stable in both flat 3D and Globe.
+    // off-axis junctions conservative and stable across the Globe view.
     vec3 billboard_right = camera.camera_right.xyz
         - view_direction * dot(camera.camera_right.xyz, view_direction);
     float right_length = length(billboard_right);

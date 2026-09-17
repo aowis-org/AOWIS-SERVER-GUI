@@ -499,7 +499,7 @@ QVector3D MapRhiGlobeNetworkScene::ecefPosition(
     const CoordinateWGS84 &coordinate, double elevation_m) const
 {
     // Always uses the entity's own real elevation, exactly like
-    // MapRhiScene (the ThreeD/TwoD counterpart of this class) already
+    // MapRhiScene (the flat TwoD counterpart of this class) already
     // does for its own node/link placement -- no separate "is terrain
     // ready yet" gate. An earlier version of this function pinned
     // everything to the bare ellipsoid (elevation 0) until
@@ -513,10 +513,10 @@ QVector3D MapRhiGlobeNetworkScene::ecefPosition(
     // snap the *entire* network down to the bare ellipsoid and back --
     // exactly the "jumps between underground and surface" / "flickers
     // during camera movement" symptom this class was fighting. Simply not
-    // having the gate, matching ThreeD, is both simpler and correct: any
+    // having the gate is both simpler and correct: any
     // brief mismatch between network and not-yet-loaded terrain during
     // the very first frames of a session resolves itself once relief
-    // arrives, the same way ThreeD's own terrain mesh appears without any
+    // arrives without any
     // equivalent synchronization dance.
     const double height_m = this->vertical_transform.networkHeightM(elevation_m);
 
@@ -1633,7 +1633,7 @@ bool MapRhiGlobeNetworkScene::modelBasisAt(
         return false;
     tangent_y.normalize();
 
-    // The legacy tank/reservoir mesh winding intentionally includes the
+    // The tank/reservoir mesh winding intentionally includes the
     // flat-map projection's horizontal reflection. Keep a left-handed local
     // tangent basis here so that reflection is cancelled on the globe and
     // the existing back-face-culling pipeline remains valid.
@@ -1785,7 +1785,7 @@ void MapRhiGlobeNetworkScene::rebuildJunctionInstances()
     // radius_world itself from camera.viewport_and_sizes.w whenever that
     // is non-negative (the "pixel size" convention shared with
     // map_rhi_node.vert's node-quad sizing -- see MapRhiWidget::
-    // renderGlobe()'s uniform_data[19]), the same as ThreeD's junction
+    // renderGlobe()'s uniform_data[19]), matching the shared junction
     // spheres do.
     float radius_world = 1.0f;
     if (this->symbology.node_size_unit == NetworkSymbologySizeUnit::Meters)

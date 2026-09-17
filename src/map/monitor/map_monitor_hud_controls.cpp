@@ -50,135 +50,90 @@ constexpr int ScaleHudWidthPx = 116;
 constexpr int ScaleHudHeightPx = 42;
 constexpr int ScaleHudPaddingPx = 6;
 constexpr int ScaleHudTickHeightPx = 6;
-constexpr double View3dFieldOfViewDeg = 45.0;
 constexpr int NetworkGroundOffsetSliderSteps =
     static_cast<int>(MapModel::MaxView3dNetworkGroundOffsetM * 10.0);
 constexpr int VerticalExaggerationSliderScale = 10;
 
-bool globeCameraActive(const MapModel *map_model)
+double cameraMinimumDistanceM()
 {
-    return map_model != nullptr && map_model->viewMode() == MapViewMode::Globe;
+    return MapModel::MinViewGlobeDistanceM;
 }
 
-double cameraMinimumDistanceM(const MapModel *map_model)
+double cameraMaximumDistanceM()
 {
-    return globeCameraActive(map_model)
-        ? MapModel::MinViewGlobeDistanceM
-        : MapModel::MinView3dCameraDistanceM;
-}
-
-double cameraMaximumDistanceM(const MapModel *map_model)
-{
-    if (globeCameraActive(map_model))
-        return MapModel::MaxViewGlobeDistanceM;
-    return map_model != nullptr
-        ? map_model->view3dMaximumCameraDistanceM()
-        : MapModel::MinView3dCameraDistanceM;
+    return MapModel::MaxViewGlobeDistanceM;
 }
 
 double cameraDistanceM(const MapModel *map_model)
 {
     if (map_model == nullptr)
-        return MapModel::MinView3dCameraDistanceM;
-    return globeCameraActive(map_model)
-        ? map_model->viewGlobeDistanceM()
-        : map_model->view3dCameraDistanceM();
+        return MapModel::MinViewGlobeDistanceM;
+    return map_model->viewGlobeDistanceM();
 }
 
-int cameraDistanceSliderValue(const MapModel *map_model, double distance_m)
+int cameraDistanceSliderValue(double distance_m)
 {
-    const double minimum_distance_m = cameraMinimumDistanceM(map_model);
+    const double minimum_distance_m = cameraMinimumDistanceM();
     const double maximum_distance_m = qMax(
-        minimum_distance_m, cameraMaximumDistanceM(map_model));
+        minimum_distance_m, cameraMaximumDistanceM());
     const double bounded_distance_m = qBound(
         minimum_distance_m, distance_m, maximum_distance_m);
     if (maximum_distance_m <= minimum_distance_m)
         return 0;
 
-    double ratio = 0.0;
-    if (globeCameraActive(map_model))
-    {
-        const double logarithmic_minimum = std::log(minimum_distance_m);
-        const double logarithmic_maximum = std::log(maximum_distance_m);
-        ratio = (std::log(bounded_distance_m) - logarithmic_minimum)
-            / (logarithmic_maximum - logarithmic_minimum);
-    }
-    else
-    {
-        ratio = (bounded_distance_m - minimum_distance_m)
-            / (maximum_distance_m - minimum_distance_m);
-    }
-
+    const double logarithmic_minimum = std::log(minimum_distance_m);
+    const double logarithmic_maximum = std::log(maximum_distance_m);
+    const double ratio = (std::log(bounded_distance_m) - logarithmic_minimum)
+        / (logarithmic_maximum - logarithmic_minimum);
     return qRound(qBound(0.0, ratio, 1.0) * CameraDistanceSliderSteps);
 }
 
-double cameraDistanceMeters(const MapModel *map_model, int slider_value)
+double cameraDistanceMeters(int slider_value)
 {
-    const double minimum_distance_m = cameraMinimumDistanceM(map_model);
+    const double minimum_distance_m = cameraMinimumDistanceM();
     const double maximum_distance_m = qMax(
-        minimum_distance_m, cameraMaximumDistanceM(map_model));
+        minimum_distance_m, cameraMaximumDistanceM());
     const double ratio = qBound(0, slider_value, CameraDistanceSliderSteps)
         / double(CameraDistanceSliderSteps);
 
-    if (globeCameraActive(map_model))
-    {
-        const double logarithmic_minimum = std::log(minimum_distance_m);
-        const double logarithmic_maximum = std::log(maximum_distance_m);
-        return std::exp(
-            logarithmic_minimum + ratio * (logarithmic_maximum - logarithmic_minimum));
-    }
-
-    return minimum_distance_m + ratio * (maximum_distance_m - minimum_distance_m);
+    const double logarithmic_minimum = std::log(minimum_distance_m);
+    const double logarithmic_maximum = std::log(maximum_distance_m);
+    return std::exp(
+        logarithmic_minimum + ratio * (logarithmic_maximum - logarithmic_minimum));
 }
 
 double cameraPitchDeg(const MapModel *map_model)
 {
     if (map_model == nullptr)
-        return MapModel::DefaultView3dPitchDeg;
-    return globeCameraActive(map_model)
-        ? map_model->viewGlobePitchDeg()
-        : map_model->view3dPitchDeg();
+        return MapModel::DefaultViewGlobePitchDeg;
+    return map_model->viewGlobePitchDeg();
 }
 
-double cameraMinimumPitchDeg(const MapModel *map_model)
+double cameraMinimumPitchDeg()
 {
-    return globeCameraActive(map_model)
-        ? MapModel::MinViewGlobePitchDeg
-        : MapModel::MinView3dPitchDeg;
+    return MapModel::MinViewGlobePitchDeg;
 }
 
-double cameraMaximumPitchDeg(const MapModel *map_model)
+double cameraMaximumPitchDeg()
 {
-    return globeCameraActive(map_model)
-        ? MapModel::MaxViewGlobePitchDeg
-        : MapModel::MaxView3dPitchDeg;
+    return MapModel::MaxViewGlobePitchDeg;
 }
 
-double cameraDefaultPitchDeg(const MapModel *map_model)
+double cameraDefaultPitchDeg()
 {
-    return globeCameraActive(map_model)
-        ? MapModel::DefaultViewGlobePitchDeg
-        : MapModel::DefaultView3dPitchDeg;
+    return MapModel::DefaultViewGlobePitchDeg;
 }
 
 void setCameraDistanceM(MapModel *map_model, double distance_m)
 {
-    if (map_model == nullptr)
-        return;
-    if (globeCameraActive(map_model))
+    if (map_model != nullptr)
         map_model->setViewGlobeDistanceM(distance_m);
-    else
-        map_model->setView3dCameraDistanceM(distance_m);
 }
 
 void setCameraPitchDeg(MapModel *map_model, double pitch_deg)
 {
-    if (map_model == nullptr)
-        return;
-    if (globeCameraActive(map_model))
+    if (map_model != nullptr)
         map_model->setViewGlobePitchDeg(pitch_deg);
-    else
-        map_model->setView3dPitchDeg(pitch_deg);
 }
 
 QString cameraDistanceText(double distance_m)
@@ -231,32 +186,21 @@ QString compassOrientationText(double yaw_deg)
 double compassYawDeg(const MapModel *map_model)
 {
     Q_ASSERT(map_model != nullptr);
-    if (map_model->viewMode() == MapViewMode::Globe)
-        return map_model->viewGlobeYawDeg();
-    return map_model->view3dYawDeg();
+    return map_model->viewGlobeYawDeg();
 }
 
 void beginCompassRotateInteraction(MapModel *map_model)
 {
     Q_ASSERT(map_model != nullptr);
-    // MapModel::beginView3dRotateInteraction() itself now drives the Pan/
-    // Rotate state machine for both ThreeD and Globe (see that function);
-    // gate here just to skip the call entirely in TwoD, same as before.
-    if (map_model->viewMode() == MapViewMode::ThreeD
-        || map_model->viewMode() == MapViewMode::Globe)
-    {
+    if (map_model->viewMode() == MapViewMode::Globe)
         map_model->beginView3dRotateInteraction();
-    }
 }
 
 void endCompassRotateInteraction(MapModel *map_model)
 {
     Q_ASSERT(map_model != nullptr);
-    if (map_model->viewMode() == MapViewMode::ThreeD
-        || map_model->viewMode() == MapViewMode::Globe)
-    {
+    if (map_model->viewMode() == MapViewMode::Globe)
         map_model->endView3dRotateInteraction();
-    }
 }
 
 void orbitCompass(MapModel *map_model, double yaw_delta_deg)
@@ -264,8 +208,6 @@ void orbitCompass(MapModel *map_model, double yaw_delta_deg)
     Q_ASSERT(map_model != nullptr);
     if (map_model->viewMode() == MapViewMode::Globe)
         map_model->orbitViewGlobe(yaw_delta_deg, 0.0);
-    else if (map_model->viewMode() == MapViewMode::ThreeD)
-        map_model->orbitView3d(yaw_delta_deg, 0.0);
 }
 
 void orbitCompassByPointerDelta(MapModel *map_model, const QPoint &delta_pixels)
@@ -273,8 +215,6 @@ void orbitCompassByPointerDelta(MapModel *map_model, const QPoint &delta_pixels)
     Q_ASSERT(map_model != nullptr);
     if (map_model->viewMode() == MapViewMode::Globe)
         map_model->orbitViewGlobeByPointerDelta(delta_pixels, false);
-    else if (map_model->viewMode() == MapViewMode::ThreeD)
-        map_model->orbitView3dByPointerDelta(delta_pixels, false);
 }
 
 void snapCompassNorth(MapModel *map_model)
@@ -282,8 +222,6 @@ void snapCompassNorth(MapModel *map_model)
     Q_ASSERT(map_model != nullptr);
     if (map_model->viewMode() == MapViewMode::Globe)
         map_model->setViewGlobeYawDeg(0.0);
-    else if (map_model->viewMode() == MapViewMode::ThreeD)
-        map_model->setView3dYawDeg(0.0);
 }
 
 void configureHudFrame(QFrame *frame)
@@ -391,10 +329,6 @@ public:
             snapCompassNorth(this->map_model);
         });
 
-        connect(this->map_model, &MapModel::view3dCameraChanged, this, [this]
-        {
-            update();
-        });
         connect(this->map_model, &MapModel::viewGlobeCameraChanged, this, [this]
         {
             update();
@@ -948,23 +882,21 @@ MapMonitorViewModeHudWidget::MapMonitorViewModeHudWidget(
 
     this->view_mode_combo->addItem(QStringLiteral("2D"), int(MapViewMode::TwoD));
     this->view_mode_combo->addItem(QStringLiteral("3D"), int(MapViewMode::Globe));
-    this->view_mode_combo->addItem(QStringLiteral("Legacy"), int(MapViewMode::ThreeD));
     this->view_mode_combo->setMinimumWidth(72);
     this->view_mode_combo->setToolTip(QStringLiteral(
-        "Switch between the top-down 2D map, the WGS84 globe-based 3D view, and "
-        "the legacy planar 3D view."));
+        "Switch between the top-down 2D map and the WGS84 globe-based 3D view."));
     layout->addWidget(this->view_mode_combo);
 
     this->wireframe_checkbox->setChecked(false);
     this->wireframe_checkbox->setFocusPolicy(Qt::NoFocus);
     this->wireframe_checkbox->setToolTip(QStringLiteral(
-        "Draw the 3D terrain or globe surface mesh as a wireframe."));
+        "Draw the 3D globe terrain mesh as a wireframe."));
     layout->addWidget(this->wireframe_checkbox);
 
     this->map_checkbox->setChecked(true);
     this->map_checkbox->setFocusPolicy(Qt::NoFocus);
     this->map_checkbox->setToolTip(QStringLiteral(
-        "Draw map tiles as textures on the 3D terrain or globe surface."));
+        "Draw map tiles as textures on the 3D globe surface."));
     layout->addWidget(this->map_checkbox);
 
     const int initial_index = this->view_mode_combo->findData(int(this->map_model->viewMode()));
@@ -1007,8 +939,7 @@ MapMonitorViewModeHudWidget::MapMonitorViewModeHudWidget(
 void MapMonitorViewModeHudWidget::update3dControlsVisibility()
 {
     const MapViewMode view_mode = this->map_model->viewMode();
-    const bool visible =
-        view_mode == MapViewMode::ThreeD || view_mode == MapViewMode::Globe;
+    const bool visible = view_mode == MapViewMode::Globe;
     this->wireframe_checkbox->setVisible(visible);
     this->map_checkbox->setVisible(visible);
     adjustSize();
@@ -1043,7 +974,6 @@ MapMonitorCompassHudWidget::MapMonitorCompassHudWidget(
         orientation_label->setText(
             compassOrientationText(compassYawDeg(map_model)));
     };
-    connect(map_model, &MapModel::view3dCameraChanged, this, update_orientation);
     connect(map_model, &MapModel::viewGlobeCameraChanged, this, update_orientation);
     connect(map_model, &MapModel::viewModeChanged, this,
             [update_orientation](MapViewMode)
@@ -1063,7 +993,11 @@ MapMonitorScaleHudWidget::MapMonitorScaleHudWidget(
     setFixedSize(ScaleHudWidthPx, ScaleHudHeightPx);
     setToolTip(QStringLiteral("Horizontal map scale."));
 
-    connect(this->map_model, &MapModel::view3dCameraChanged, this, [this]
+    connect(this->map_model, &MapModel::viewGlobeCameraChanged, this, [this]
+    {
+        update();
+    });
+    connect(this->map_model, &MapModel::viewGlobeTerrainHeightChanged, this, [this]
     {
         update();
     });
@@ -1109,26 +1043,21 @@ void MapMonitorScaleHudWidget::paintEvent(QPaintEvent *event)
     else
     {
         const double orbit_distance_m = qMax(
-            MapModel::MinView3dCameraDistanceM,
-            this->map_model->view3dCameraDistanceM());
-        const double orbit_distance_world = this->map_model->view3dCameraDistanceWorld();
-        const double world_units_per_meter = orbit_distance_world > 0.0
-            ? orbit_distance_world / orbit_distance_m
-            : 0.0;
-        const double collision_lift_m = world_units_per_meter > 0.0
-            ? this->map_model->view3dCameraCollisionLiftWorld() / world_units_per_meter
-            : 0.0;
+            MapModel::MinViewGlobeDistanceM,
+            this->map_model->viewGlobeDistanceM());
+        const double collision_lift_m =
+            this->map_model->viewGlobeCameraCollisionLiftM();
         const double pitch_rad = qDegreesToRadians(qBound(
-            MapModel::MinView3dPitchDeg,
-            this->map_model->view3dPitchDeg(),
-            MapModel::MaxView3dPitchDeg));
+            MapModel::MinViewGlobePitchDeg,
+            this->map_model->viewGlobePitchDeg(),
+            MapModel::MaxViewGlobePitchDeg));
         const double horizontal_distance_m = orbit_distance_m * std::cos(pitch_rad);
         const double vertical_distance_m =
             orbit_distance_m * std::sin(pitch_rad) + collision_lift_m;
         const double focus_distance_m = std::hypot(
             horizontal_distance_m, vertical_distance_m);
         const double meters_per_pixel = 2.0 * focus_distance_m
-            * std::tan(qDegreesToRadians(View3dFieldOfViewDeg / 2.0))
+            * std::tan(qDegreesToRadians(MapModel::GlobeFieldOfViewDeg / 2.0))
             / double(viewport_height);
         maximum_distance_m = meters_per_pixel * maximum_bar_width;
     }
@@ -1224,10 +1153,10 @@ MapMonitorCameraDistanceHudWidget::MapMonitorCameraDistanceHudWidget(
 
     const std::function<void()> sync_distance = [this]
     {
-        const double minimum_distance_m = cameraMinimumDistanceM(this->map_model);
-        const double maximum_distance_m = cameraMaximumDistanceM(this->map_model);
+        const double minimum_distance_m = cameraMinimumDistanceM();
+        const double maximum_distance_m = cameraMaximumDistanceM();
         const double distance_m = cameraDistanceM(this->map_model);
-        const int slider_value = cameraDistanceSliderValue(this->map_model, distance_m);
+        const int slider_value = cameraDistanceSliderValue(distance_m);
 
         if (this->distance_slider->value() != slider_value)
         {
@@ -1238,22 +1167,11 @@ MapMonitorCameraDistanceHudWidget::MapMonitorCameraDistanceHudWidget(
         this->distance_minimum_label->setText(cameraDistanceText(minimum_distance_m));
         this->distance_value_label->setText(cameraDistanceText(distance_m));
 
-        if (globeCameraActive(this->map_model))
-        {
-            this->distance_slider->setToolTip(QStringLiteral(
-                "Distance to focus\n"
-                "Straight-line orbit radius to the globe point under the crosshair\n"
-                "The logarithmic slider spans the full Globe zoom range\n"
-                "Right-click: animate back to the full-globe default distance"));
-        }
-        else
-        {
-            this->distance_slider->setToolTip(QStringLiteral(
-                "Distance to focus\n"
-                "Straight-line orbit radius to the terrain point under the crosshair\n"
-                "Terrain collision keeps at least 2 m ground clearance without moving the focus point\n"
-                "Right-click: animate back to the native camera distance"));
-        }
+        this->distance_slider->setToolTip(QStringLiteral(
+            "Distance to focus\n"
+            "Straight-line orbit radius to the globe point under the crosshair\n"
+            "The logarithmic slider spans the full Globe zoom range\n"
+            "Right-click: animate back to the full-globe default distance"));
     };
 
     ResettableVerticalSlider *resettable_distance_slider =
@@ -1262,10 +1180,7 @@ MapMonitorCameraDistanceHudWidget::MapMonitorCameraDistanceHudWidget(
     {
         distance_reset_animation->stop();
         distance_reset_animation->setStartValue(cameraDistanceM(this->map_model));
-        const double reset_distance_m = globeCameraActive(this->map_model)
-            ? MapModel::DefaultViewGlobeDistanceM
-            : this->map_model->view3dNativeCameraDistanceM();
-        distance_reset_animation->setEndValue(reset_distance_m);
+        distance_reset_animation->setEndValue(MapModel::DefaultViewGlobeDistanceM);
         distance_reset_animation->start();
     });
     connect(this->distance_slider, &QSlider::sliderPressed, distance_reset_animation,
@@ -1283,9 +1198,8 @@ MapMonitorCameraDistanceHudWidget::MapMonitorCameraDistanceHudWidget(
     connect(this->distance_slider, &QSlider::valueChanged, this, [this](int slider_value)
     {
         setCameraDistanceM(
-            this->map_model, cameraDistanceMeters(this->map_model, slider_value));
+            this->map_model, cameraDistanceMeters(slider_value));
     });
-    connect(this->map_model, &MapModel::view3dCameraChanged, this, sync_distance);
     connect(this->map_model, &MapModel::viewGlobeCameraChanged, this, sync_distance);
     connect(this->map_model, &MapModel::viewModeChanged, this,
             [distance_reset_animation, sync_distance](MapViewMode)
@@ -1348,8 +1262,8 @@ MapMonitorTiltHudWidget::MapMonitorTiltHudWidget(MapModel *map_model, QWidget *p
 
     const std::function<void()> sync_tilt = [this]
     {
-        const int minimum_pitch_deg = qRound(cameraMinimumPitchDeg(this->map_model));
-        const int maximum_pitch_deg = qRound(cameraMaximumPitchDeg(this->map_model));
+        const int minimum_pitch_deg = qRound(cameraMinimumPitchDeg());
+        const int maximum_pitch_deg = qRound(cameraMaximumPitchDeg());
         const int pitch_deg = qRound(cameraPitchDeg(this->map_model));
 
         if (this->tilt_slider->minimum() != minimum_pitch_deg
@@ -1380,7 +1294,7 @@ MapMonitorTiltHudWidget::MapMonitorTiltHudWidget(MapModel *map_model, QWidget *p
     {
         tilt_reset_animation->stop();
         tilt_reset_animation->setStartValue(cameraPitchDeg(this->map_model));
-        tilt_reset_animation->setEndValue(cameraDefaultPitchDeg(this->map_model));
+        tilt_reset_animation->setEndValue(cameraDefaultPitchDeg());
         tilt_reset_animation->start();
     });
     connect(this->tilt_slider, &QSlider::sliderPressed, tilt_reset_animation,
@@ -1399,7 +1313,6 @@ MapMonitorTiltHudWidget::MapMonitorTiltHudWidget(MapModel *map_model, QWidget *p
     {
         setCameraPitchDeg(this->map_model, double(pitch_deg));
     });
-    connect(this->map_model, &MapModel::view3dCameraChanged, this, sync_tilt);
     connect(this->map_model, &MapModel::viewGlobeCameraChanged, this, sync_tilt);
     connect(this->map_model, &MapModel::viewModeChanged, this,
             [tilt_reset_animation, sync_tilt](MapViewMode)
@@ -1566,9 +1479,9 @@ MapMonitorVerticalExaggerationHudWidget::MapMonitorVerticalExaggerationHudWidget
         this->map_model->setView3dVerticalExaggeration(
             double(value) / VerticalExaggerationSliderScale);
     });
-    connect(this->map_model, &MapModel::view3dCameraChanged, this, [this]
+    connect(this->map_model, &MapModel::view3dVerticalExaggerationChanged,
+            this, [this](double exaggeration)
     {
-        const double exaggeration = this->map_model->view3dVerticalExaggeration();
         const int slider_value = qRound(exaggeration * VerticalExaggerationSliderScale);
         if (this->exaggeration_slider->value() != slider_value)
         {

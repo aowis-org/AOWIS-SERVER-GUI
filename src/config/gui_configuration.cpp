@@ -256,16 +256,13 @@ EM_JS(int, aowisMapPerformanceBoolPreference, (const char *key, int default_valu
 });
 
 EM_JS(int, aowisSaveMapPerformancePreference,
-      (double max_view_distance_m, double terrain_lod_target_cell_size_px,
+      (double terrain_lod_target_cell_size_px,
        int terrain_max_detail_zoom, int terrain_full_detail_zoom, int array_batching_enabled),
 {
     try
     {
         if (!globalThis.localStorage)
             return 0;
-        globalThis.localStorage.setItem(
-            "aowis.map_performance.max_view_distance_m",
-            String(max_view_distance_m));
         globalThis.localStorage.setItem(
             "aowis.map_performance.terrain_lod_target_cell_size_px",
             String(terrain_lod_target_cell_size_px));
@@ -365,10 +362,6 @@ GuiConfiguration loadConfiguration()
             default_map_navigation.orbit_3d_sensitivity),
         default_map_navigation.orbit_3d_sensitivity);
     const GuiMapPerformanceConfiguration default_map_performance;
-    configuration.map_performance.max_view_distance_m =
-        aowisMapPerformanceDoublePreference(
-            "aowis.map_performance.max_view_distance_m",
-            default_map_performance.max_view_distance_m);
     configuration.map_performance.terrain_lod_target_cell_size_px =
         aowisMapPerformanceDoublePreference(
             "aowis.map_performance.terrain_lod_target_cell_size_px",
@@ -479,7 +472,6 @@ bool createDefaultConfiguration(const QString &path)
         "orbit_3d_sensitivity=0.8\n"
         "\n"
         "[map_performance]\n"
-        "max_view_distance_m=10000\n"
         "terrain_lod_target_cell_size_px=32\n"
         "terrain_max_detail_zoom=14\n"
         "terrain_full_detail_zoom=19\n"
@@ -591,8 +583,6 @@ GuiConfiguration loadConfiguration()
     ensureSettingDefault(settings, QStringLiteral("map_navigation/orbit_3d_sensitivity"),
                          QString::number(advertised_map_navigation.orbit_3d_sensitivity));
     const GuiMapPerformanceConfiguration advertised_map_performance;
-    ensureSettingDefault(settings, QStringLiteral("map_performance/max_view_distance_m"),
-                         QString::number(advertised_map_performance.max_view_distance_m));
     ensureSettingDefault(settings, QStringLiteral("map_performance/terrain_lod_target_cell_size_px"),
                          QString::number(advertised_map_performance.terrain_lod_target_cell_size_px));
     ensureSettingDefault(settings, QStringLiteral("map_performance/terrain_max_detail_zoom"),
@@ -696,14 +686,6 @@ GuiConfiguration loadConfiguration()
             : default_map_navigation.orbit_3d_sensitivity;
 
     const GuiMapPerformanceConfiguration default_map_performance;
-    bool view_distance_valid = false;
-    const double loaded_view_distance = settings.value(
-        QStringLiteral("map_performance/max_view_distance_m")).toDouble(&view_distance_valid);
-    configuration.map_performance.max_view_distance_m =
-        (view_distance_valid && std::isfinite(loaded_view_distance) && loaded_view_distance > 0.0)
-            ? loaded_view_distance
-            : default_map_performance.max_view_distance_m;
-
     bool lod_target_valid = false;
     const double loaded_lod_target = settings.value(
         QStringLiteral("map_performance/terrain_lod_target_cell_size_px")).toDouble(&lod_target_valid);
@@ -977,15 +959,12 @@ bool saveGuiMapPerformanceConfiguration(const GuiMapPerformanceConfiguration &co
 {
 #ifdef __EMSCRIPTEN__
     const bool saved = aowisSaveMapPerformancePreference(
-        configuration.max_view_distance_m,
         configuration.terrain_lod_target_cell_size_px,
         configuration.terrain_max_detail_zoom,
         configuration.terrain_full_detail_zoom,
         configuration.array_batching_enabled ? 1 : 0) != 0;
 #else
     QSettings settings(guiConfigurationFilePath(), QSettings::IniFormat);
-    settings.setValue(QStringLiteral("map_performance/max_view_distance_m"),
-                      configuration.max_view_distance_m);
     settings.setValue(QStringLiteral("map_performance/terrain_lod_target_cell_size_px"),
                       configuration.terrain_lod_target_cell_size_px);
     settings.setValue(QStringLiteral("map_performance/terrain_max_detail_zoom"),

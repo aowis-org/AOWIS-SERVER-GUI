@@ -1502,12 +1502,10 @@ void MapMonitorContainer::syncDesktopCameraHudVisibility()
         && this->desktop_view_mode_hud != nullptr
         && this->desktop_view_mode_hud->isVisible();
     const bool compass_hud_visible = rhi_active
-        && (this->map_model->viewMode() == MapViewMode::ThreeD
-            || this->map_model->viewMode() == MapViewMode::Globe);
+        && this->map_model->viewMode() == MapViewMode::Globe;
     const bool vertical_controls_visible =
         rhi_active
-        && (this->map_model->viewMode() == MapViewMode::ThreeD
-            || this->map_model->viewMode() == MapViewMode::Globe);
+        && this->map_model->viewMode() == MapViewMode::Globe;
     this->desktop_compass_hud->setVisible(compass_hud_visible);
     this->desktop_scale_hud->setVisible(rhi_active);
     this->desktop_vertical_controls_hud->setVisible(vertical_controls_visible);
@@ -1706,8 +1704,7 @@ void MapMonitorContainer::updateDesktopNetworkHover(
     // state covers all subsequent Ctrl-orbit events (and keyboard zoom),
     // while the modifier covers the first event before that state changes.
     const bool orbit_view = this->map_model != nullptr
-        && (this->map_model->viewMode() == MapViewMode::ThreeD
-            || this->map_model->viewMode() == MapViewMode::Globe);
+        && this->map_model->viewMode() == MapViewMode::Globe;
     const bool ctrl_orbit_requested = orbit_view
         && modifiers.testFlag(Qt::ControlModifier);
     const bool camera_navigation_active = orbit_view

@@ -174,17 +174,6 @@ void MapSettingsWidget::buildPerformanceSection(QWidget *parent_widget)
 
     const GuiMapPerformanceConfiguration &current = guiConfiguration().map_performance;
 
-    this->view_distance_control = new SliderNumberControl(group);
-    this->view_distance_control->setRange(150.0, 50000.0);
-    this->view_distance_control->setSingleStep(100.0);
-    this->view_distance_control->setDecimals(0);
-    this->view_distance_control->setSuffix(QStringLiteral(" m"));
-    this->view_distance_control->setValue(current.max_view_distance_m);
-    form->addRow(QStringLiteral("View distance"), this->view_distance_control);
-    form->addRow(QString(), helpLabel(
-        QStringLiteral("Absolute maximum distance the 3D camera can be pulled back to, "
-                       "independent of the current zoom level."), group));
-
     this->terrain_lod_target_control = new SliderNumberControl(group);
     this->terrain_lod_target_control->setRange(8.0, 128.0);
     this->terrain_lod_target_control->setSingleStep(1.0);
@@ -254,8 +243,6 @@ void MapSettingsWidget::buildPerformanceSection(QWidget *parent_widget)
     connect(this->performance_save_debounce, &QTimer::timeout,
             this, &MapSettingsWidget::savePerformanceSettingsNow);
 
-    connect(this->view_distance_control, &SliderNumberControl::valueChanged,
-            this, [this](double) { schedulePerformanceSave(); });
     connect(this->terrain_lod_target_control, &SliderNumberControl::valueChanged,
             this, [this](double) { schedulePerformanceSave(); });
     connect(this->terrain_max_detail_zoom_control, &SliderNumberControl::valueChanged,
@@ -268,7 +255,6 @@ void MapSettingsWidget::buildPerformanceSection(QWidget *parent_widget)
     connect(restore_defaults, &QPushButton::clicked, this, [this]
     {
         const GuiMapPerformanceConfiguration defaults;
-        this->view_distance_control->setValue(defaults.max_view_distance_m);
         this->terrain_lod_target_control->setValue(defaults.terrain_lod_target_cell_size_px);
         this->terrain_max_detail_zoom_control->setValue(double(defaults.terrain_max_detail_zoom));
         this->terrain_full_detail_zoom_control->setValue(double(defaults.terrain_full_detail_zoom));
@@ -368,7 +354,6 @@ void MapSettingsWidget::schedulePerformanceSave()
 void MapSettingsWidget::savePerformanceSettingsNow()
 {
     GuiMapPerformanceConfiguration configuration;
-    configuration.max_view_distance_m = this->view_distance_control->value();
     configuration.terrain_lod_target_cell_size_px = this->terrain_lod_target_control->value();
     configuration.terrain_max_detail_zoom = int(this->terrain_max_detail_zoom_control->value());
     configuration.terrain_full_detail_zoom = int(this->terrain_full_detail_zoom_control->value());

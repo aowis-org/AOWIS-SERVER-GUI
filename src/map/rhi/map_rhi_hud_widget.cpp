@@ -69,7 +69,8 @@ MapRhiHudWidget::MapRhiHudWidget(MapModel *map_model, GpsProvider *gps, QWidget 
     {
         update();
     });
-    connect(this->map_model, &MapModel::view3dCameraChanged, this, [this]
+    connect(this->map_model, &MapModel::view3dVerticalExaggerationChanged,
+            this, [this](double)
     {
         update();
     });

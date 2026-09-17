@@ -38,7 +38,6 @@ enum CanvasMode
 enum class MapViewMode
 {
     TwoD,
-    ThreeD,
     Globe
 };
 

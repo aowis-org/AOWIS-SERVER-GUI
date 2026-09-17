@@ -28,7 +28,6 @@ private:
     QTimer *navigation_save_debounce = nullptr;
 
     // Performance section.
-    SliderNumberControl *view_distance_control = nullptr;
     SliderNumberControl *terrain_lod_target_control = nullptr;
     SliderNumberControl *terrain_max_detail_zoom_control = nullptr;
     SliderNumberControl *terrain_full_detail_zoom_control = nullptr;

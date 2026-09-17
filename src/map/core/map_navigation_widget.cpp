@@ -145,8 +145,7 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
         connect(this->slider_icon_size, &QSlider::valueChanged, this, [this](int raw_value)
         {
             const MapViewMode view_mode = this->map->model()->viewMode();
-            const bool is_3d = view_mode == MapViewMode::ThreeD
-                || view_mode == MapViewMode::Globe;
+            const bool is_3d = view_mode == MapViewMode::Globe;
             const NetworkSymbologySizeUnit unit = is_3d
                 ? this->icon_size_3d_unit : this->icon_size_2d_unit;
             if (unit == NetworkSymbologySizeUnit::Meters)
@@ -172,8 +171,7 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
             const NetworkSymbologySizeUnit unit = static_cast<NetworkSymbologySizeUnit>(
                 this->combo_icon_size_unit->itemData(index).toInt());
             const MapViewMode view_mode = this->map->model()->viewMode();
-            const bool is_3d = view_mode == MapViewMode::ThreeD
-                || view_mode == MapViewMode::Globe;
+            const bool is_3d = view_mode == MapViewMode::Globe;
             NetworkSymbologySizeUnit &current_unit = is_3d
                 ? this->icon_size_3d_unit : this->icon_size_2d_unit;
             if (current_unit == unit)
@@ -190,7 +188,7 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
         this->slider_icon_size->setToolTip("Scales entity icons and 3D entity models.");
         connect(this->slider_icon_size, &QSlider::valueChanged, this, [this](int size_percent)
         {
-            if (this->map->model()->viewMode() == MapViewMode::ThreeD)
+            if (this->map->model()->viewMode() == MapViewMode::Globe)
                 this->icon_size_3d_percent = size_percent;
             else
                 this->icon_size_2d_percent = size_percent;
@@ -267,7 +265,7 @@ void MapNavigationWidget::syncIconSizeSliderForViewMode(MapViewMode view_mode)
     if (this->slider_icon_size == nullptr)
         return;
 
-    const bool is_3d = view_mode == MapViewMode::ThreeD || view_mode == MapViewMode::Globe;
+    const bool is_3d = view_mode == MapViewMode::Globe;
     if (this->mode == CanvasMode::Monitor)
     {
         const NetworkSymbologySizeUnit unit = is_3d
@@ -310,8 +308,8 @@ void MapNavigationWidget::syncIconSizeSliderForViewMode(MapViewMode view_mode)
         return;
     }
 
-    const int maximum = view_mode == MapViewMode::ThreeD ? 200 : 250;
-    const int remembered_value = view_mode == MapViewMode::ThreeD
+    const int maximum = view_mode == MapViewMode::Globe ? 200 : 250;
+    const int remembered_value = view_mode == MapViewMode::Globe
         ? this->icon_size_3d_percent
         : this->icon_size_2d_percent;
     const int bounded_value = qBound(50, remembered_value, maximum);
@@ -322,7 +320,7 @@ void MapNavigationWidget::syncIconSizeSliderForViewMode(MapViewMode view_mode)
         this->slider_icon_size->setValue(bounded_value);
     }
 
-    if (view_mode == MapViewMode::ThreeD)
+    if (view_mode == MapViewMode::Globe)
         this->icon_size_3d_percent = bounded_value;
     else
         this->icon_size_2d_percent = bounded_value;

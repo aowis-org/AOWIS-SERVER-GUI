@@ -24,12 +24,12 @@
 // reservoirs, pumps, valves) for the "Globe" map view mode.
 //
 // This mirrors MapRhiScene (map_rhi_scene.h), which does the equivalent job
-// for the flat TwoD/ThreeD views, but every vertex is placed on the actual
+// for the flat TwoD view, but every vertex is placed on the actual
 // WGS84 ellipsoid in ECEF meters instead of MapRhiScene's local Web Mercator
 // tangent-plane world units. There is no antimeridian seam to manage here --
 // ECEF coordinates are globally unambiguous -- but there *is* still an
 // origin, for a different reason than MapRhiScene's: MapRhiScene's
-// origin_world exists to give TwoD/ThreeD a manageable coordinate range in
+// origin_world exists to give TwoD a manageable coordinate range in
 // the first place (Web Mercator world units span the whole projected
 // planet), whereas ECEF's origin (Earth's center) already gives every
 // vertex a magnitude of ~6.378e6 m regardless of where on the planet it is
@@ -46,7 +46,7 @@
 // Deliberately reuses MapRhiScene::LinkVertex/NodeVertex/IconVertex
 // byte-for-byte (rather than declaring parallel structs) so MapRhiWidget can
 // draw this geometry with the exact same RHI pipelines/shaders
-// (map_rhi_link/node/icon.vert+.frag) it already built for the ThreeD view.
+// (map_rhi_link/node/icon.vert+.frag) already used by the flat RHI view.
 // Most of those shader paths compute stroke thickness/node radius/icon size
 // in screen-space pixels purely from the projected clip-space positions of
 // the vertices they are given, so flat and Globe geometry can share them
@@ -58,8 +58,8 @@
 // than along the raw global ECEF XY plane. Long digitized spans are also
 // adaptively subdivided along the WGS84 geodesic before those vertices are
 // built, preventing one long ECEF chord from cutting through the curved
-// Earth. Flat TwoD/ThreeD vertices leave the optional tangent direction zero
-// and retain their legacy XY-plane behavior.
+// Earth. Flat TwoD vertices leave the optional tangent direction zero
+// and retain their flat XY-plane behavior.
 //
 // Coincident-node decluttering uses the same one-metre policy as the flat
 // RHI scene, but clusters nodes in a local east/north tangent plane and
@@ -67,7 +67,7 @@
 // Junctions are analytic sphere impostors -- see junctionInstances() -- and
 // tanks/reservoirs can be represented by their Globe-oriented 3D models.
 // Underground X-Ray classifies both link segments and junctions against the
-// visible terrain surface, matching the retained planar ThreeD behavior.
+// visible terrain surface.
 // Solid mode remains the mode for seeing the complete network through terrain.
 class MapRhiGlobeNetworkScene
 {
@@ -114,7 +114,7 @@ public:
     // collects the contiguous "below terrain" runs into
     // undergroundLinkVertices()/undergroundJunctionInstances(), for the
     // caller to draw through terrain with no-depth-test X-Ray pipelines
-    // (mirroring MapRhiWidget's own ThreeD underground geometry). A plain bool rather than
+    // (using the same X-Ray rendering policy as the rest of the RHI path). A plain bool rather than
     // MapRhiWidget's MapRhiUndergroundMode enum, to avoid a
     // widget<->scene header cycle -- the caller maps XRay to true and
     // Hide/Solid to false ("Solid" needs no per-segment classification at
@@ -152,7 +152,7 @@ public:
     bool setRenderOriginEcef(const GeoWgs84Ellipsoid::EcefPositionD &origin_ecef);
     // Screen scale at the Globe orbit target, used to give flow-direction
     // chevrons the same pixel-based length, spacing, and terrain clearance
-    // as their ThreeD counterparts. Returns true when the scale changed and
+    // with the same scale semantics as the network models. Returns true when the scale changed and
     // flowDirectionVertices() was rebuilt.
     bool setFlowDirectionPixelsPerMeter(double pixels_per_meter);
 
@@ -171,7 +171,7 @@ public:
     // Analytic sphere-impostor instances for junction entities -- see the class
     // comment above. Drawn with the exact same MapRhiJunctionInstance
     // layout and impostor quad (mapRhiJunctionImpostorVertices())
-    // MapRhiWidget already built for ThreeD. Junction entities are NOT also present in
+    // MapRhiWidget already uses for analytic junction rendering. Junction entities are NOT also present in
     // nodeVertices() with a visible alpha -- see applyNodeColor() -- so
     // they render exactly once, as an impostor, never as a flat marker
     // underneath it.
@@ -270,7 +270,7 @@ private:
     // vertices) into short spans and appends each contiguous "below terrain"
     // run to underground_link_vertices. The classification interval follows
     // the terrain cell size resolved for the currently rendered Globe LOD,
-    // mirroring the adaptive policy used by the legacy planar ThreeD path.
+    // using the same terrain-LOD-aware adaptive policy as link subdivision.
     void appendUndergroundSubdivisions(
         InfrastructureEntity entity_type, quint32 render_id,
         const CoordinateWGS84 &start_coordinate, double start_elevation_m,

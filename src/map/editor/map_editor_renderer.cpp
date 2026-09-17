@@ -177,12 +177,6 @@ void MapEditorRenderer::paintRhiOverlay(
 
     syncStaticGeometry(network_snapshot);
 
-    // 3D editor mode is navigation/inspection only. QRhi owns the complete static
-    // scene, including device icons. Geometry editing remains available in 2D,
-    // where the precise existing editor interaction layer is retained.
-    if (this->map_model->viewMode() == MapViewMode::ThreeD)
-        return;
-
     // These are editor interaction/HUD overlays. The basemap and static hydraulic
     // geometry remain in QRhi; only transient editor chrome is painted here.
     paintTileSelection(painter, viewport_state);
@@ -258,12 +252,6 @@ QPointF MapEditorRenderer::screenFromWgs84(const CoordinateWGS84 &coordinate,
     if (!this->projection_ready)
         return QPointF();
 
-    if (this->map_model->viewMode() == MapViewMode::ThreeD)
-    {
-        return this->map_model->screenFromWgs84(
-            coordinate, this->projection_viewport_size, wrap_reference_longitude);
-    }
-
     const double wrapped_longitude = GeoWebMercator::normalizeLongitude(
         coordinate.longitude_deg);
     const double base_tile_x = GeoWebMercator::lonToTileX(
@@ -332,9 +320,6 @@ qreal MapEditorRenderer::referenceScaleForCurrentZoom() const
         return 0.0;
     const qreal base_scale = GeoWebMercator::zoomScale(
         this->map_model->zoom(), MapRenderCacheMath::ReferenceZoom);
-    if (this->map_model->viewMode() != MapViewMode::TwoD)
-        return base_scale;
-
     return base_scale * qMax<qreal>(1e-9, this->map_model->view2dContinuousScale());
 }
 
@@ -1296,9 +1281,7 @@ void MapEditorRenderer::paintTileSelection(
     const int current_zoom = this->map_model->zoom();
     const int world_tile_count = 1 << current_zoom;
     const QPointF center_tile = this->map_model->centerTile();
-    const double view_scale = this->map_model->viewMode() == MapViewMode::TwoD
-        ? qMax(1e-9, this->map_model->view2dContinuousScale())
-        : 1.0;
+    const double view_scale = qMax(1e-9, this->map_model->view2dContinuousScale());
     const double rendered_tile_size = MapModel::TileSize * view_scale;
     double west_tile = viewport_state.tile_x_min;
     double east_tile = viewport_state.tile_x_max + 1.0;

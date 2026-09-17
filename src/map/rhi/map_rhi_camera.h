@@ -6,7 +6,6 @@
 #include <QSize>
 #include <QVector3D>
 
-#include "common/_enums_structs.h"
 #include "geo/geo_wgs84_ellipsoid.h"
 
 class MapModel;
@@ -29,11 +28,6 @@ public:
     void syncFromMapModel(const MapModel &map_model);
 
     QMatrix4x4 viewProjectionMatrix(const QRhi &rhi) const;
-    // Legacy raw (Earth-center-relative) ECEF view/projection matrix. CPU
-    // tile LOD/occlusion/picking math may still use raw ECEF positions, but
-    // GPU terrain and network rendering use the origin-relative matrix below
-    // so their float32 depth remains stable and directly comparable.
-    QMatrix4x4 globeViewProjectionMatrix(const QRhi &rhi) const;
     // Origin-relative Globe GPU view/projection matrix. Terrain and network
     // vertices must both be built relative to globeRenderOriginEcef() before
     // using it. That keeps close-in camera arithmetic well-conditioned and
@@ -41,17 +35,9 @@ public:
     QMatrix4x4 globeNetworkViewProjectionMatrix(
         const QRhi &rhi,
         MapRhiImpostorCameraBasis *impostor_camera_basis = nullptr) const;
-    MapRhiImpostorCameraBasis junctionImpostorCameraBasis() const;
     QPointF projectWorldToScreen(const QVector3D &world_position) const;
-    QPointF cameraGroundWorldPixel() const;
-    QPointF cameraGroundWorldPixelForDistance(double distance_world) const;
-    double nativeOrbitDistanceWorld() const;
-    double orbitDistanceWorld() const;
-    // Globe counterpart of orbitDistanceWorld(): the current Globe orbit
-    // distance in meters, clamped the same way globeViewProjectionMatrix()
-    // clamps it. Lets other Globe-mode geometry (e.g. the network renderer's
-    // icon perspective scaling) stay referenced to the same distance the GPU
-    // camera actually used.
+    // Current Globe orbit distance in meters, clamped the same way the
+    // Globe view/projection matrices clamp it.
     double globeOrbitDistanceM() const;
     // Recomputes the sticky Globe render origin (see globeRenderOriginEcef()
     // below) from the current orbit target, *if* the target has drifted far
@@ -90,10 +76,6 @@ public:
     // setRenderOriginEcef() already does this) rather than assuming it
     // changes every frame.
     GeoWgs84Ellipsoid::EcefPositionD globeRenderOriginEcef() const;
-    double perspectiveDepthWorld(const QVector3D &world_position) const;
-    bool screenRay(const QPointF &screen_position, QVector3D *eye_world,
-                   QVector3D *direction_world) const;
-    bool crosshairRay(QVector3D *eye_world, QVector3D *direction_world) const;
 
 private:
     QPointF scene_origin_world;
@@ -101,18 +83,7 @@ private:
     QSize viewport_size;
     int zoom = 0;
     double view_2d_continuous_scale = 1.0;
-    MapViewMode view_mode = MapViewMode::TwoD;
-    double view_3d_yaw_deg = 0.0;
-    double view_3d_pitch_deg = 55.0;
-    double view_3d_camera_distance_world = 0.0;
-    double view_3d_camera_collision_lift_world = 0.0;
-    double view_3d_vertical_offset_world = 0.0;
-
-    // Globe view mode camera state, synced from MapModel like the ThreeD
-    // fields above. Kept separate rather than reusing the ThreeD fields
-    // because the two cameras operate in different spaces (flat Web
-    // Mercator "world pixel" units above vs. WGS84 ECEF meters here) and
-    // are never active at the same time.
+    // Globe camera state in WGS84/ECEF meters.
     double globe_target_lon_deg = 0.0;
     double globe_target_lat_deg = 0.0;
     double view_globe_yaw_deg = 0.0;

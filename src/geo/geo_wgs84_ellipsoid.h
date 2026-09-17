@@ -8,11 +8,11 @@
 // Converts geodetic coordinates (longitude/latitude/height above the WGS84
 // ellipsoid) into earth-centered, earth-fixed (ECEF) coordinates, for the
 // "Globe" map view mode, which renders planet Earth as its actual WGS84
-// ellipsoid shape rather than the flat Web Mercator plane used by the 2D/3D
+// ellipsoid shape rather than the flat Web Mercator plane used by the 2D
 // view modes. Also provides the shared orbit-camera basis, screen-ray/
 // ellipsoid intersection, and ECEF -> geodetic conversion used by both the
 // GPU camera (MapRhiCamera) and the CPU-side picking/panning math (MapModel)
-// -- mirroring how the 2D/3D view already keeps its own screen<->geo
+// -- mirroring how the 2D view already keeps its own screen<->geo
 // conversions in MapModel independent of the GPU camera (see
 // MapModel::wgs84FromScreen()/screenFromWgs84()).
 //
@@ -56,7 +56,7 @@ public:
     // geodetic (target_lon_deg, target_lat_deg) point, offset by yaw_deg
     // (heading around that point's local up axis) and pitch_deg (tilt up
     // from the local horizon), matching the same yaw/pitch/distance orbit
-    // shape as the existing ThreeD camera, just anchored to the ellipsoid's
+    // shape as the map orbit camera, anchored to the ellipsoid's
     // local frame instead of the flat Web Mercator plane. Shared by
     // MapRhiCamera (GPU view/projection matrix) and MapModel (CPU-side
     // screen-ray picking for click-drag panning), so the two stay in sync
@@ -74,8 +74,7 @@ public:
     // An ECEF position kept in double precision throughout, rather than the
     // QVector3D (float) used everywhere else in this class. QVector3D is
     // fine for *directions* (unit-length, so always near magnitude 1) and
-    // for positions that stay near some local origin (as ThreeD's flat
-    // tangent-plane world units do), but a raw ECEF position is ~6.378e6 m
+    // for positions that stay near some local origin, but a raw ECEF position is ~6.378e6 m
     // from the coordinate origin (Earth's center) regardless of where on
     // the planet it is, and float32 only carries ~7 significant decimal
     // digits -- meaning ~0.5-1m of resolution *at best* once you're at that

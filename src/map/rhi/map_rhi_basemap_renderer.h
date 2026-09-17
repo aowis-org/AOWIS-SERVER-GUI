@@ -2,7 +2,6 @@
 #define MAP_RHI_BASEMAP_RENDERER_H
 
 #include <QColor>
-#include <QElapsedTimer>
 #include <QHash>
 #include <QPointF>
 #include <QSet>
@@ -14,11 +13,6 @@
 #include <memory>
 
 class MapModel;
-class MapRhiCamera;
-class MapRhiScene;
-class MapRhiTerrainMeshScheduler;
-class MapTerrainRepository;
-struct MapTerrainTile;
 class MapTileRepository;
 class QRhi;
 class QRhiBuffer;
@@ -62,27 +56,14 @@ public:
         float layer = 0.0f;
     };
 
-    struct WireframeVertex
-    {
-        float x = 0.0f;
-        float y = 0.0f;
-        float z = 0.0f;
-    };
-
-    MapRhiBasemapRenderer(MapModel *map_model, MapRhiScene *scene,
-                          MapTileRepository *tile_repository,
-                          MapTerrainRepository *terrain_repository = nullptr);
+    MapRhiBasemapRenderer(MapModel *map_model,
+                          MapTileRepository *tile_repository);
     ~MapRhiBasemapRenderer();
 
     void setTileRepository(MapTileRepository *tile_repository);
-    void setTerrainRepository(MapTerrainRepository *terrain_repository);
-    void setCamera(const MapRhiCamera *camera);
-    void notifyTerrainTileAvailable(const QString &key);
     void setHeatmapOverlay(const QVector<HeatmapMarker> &markers,
                            double radius_world, double solid_fraction);
     void setHeatmapStyle(double radius_world, double solid_fraction);
-    void setWireframeVisible(bool visible);
-    void setMapVisible(bool visible);
     void invalidate();
     void releaseResources();
 
@@ -109,20 +90,13 @@ private:
     struct VisibleTile
     {
         QString imagery_key;
-        QString terrain_key;
         int virtual_x = 0;
         int tile_x = 0;
         int y = 0;
         int imagery_zoom = 0;
-        int terrain_zoom = 0;
         int first_vertex = 0;
         int vertex_count = 0;
         bool foreground = false;
-        int terrain_cell_count = 0;
-        int terrain_stitch_top_cell_count = 0;
-        int terrain_stitch_right_cell_count = 0;
-        int terrain_stitch_bottom_cell_count = 0;
-        int terrain_stitch_left_cell_count = 0;
         TileResource *resource = nullptr;
         // Per-tile, per-frame: true when this tile currently has a valid,
         // up-to-date array layer, so draw() knows to skip it in the
@@ -134,22 +108,11 @@ private:
         bool operator==(const VisibleTile &other) const
         {
             return this->imagery_key == other.imagery_key
-                && this->terrain_key == other.terrain_key
                 && this->virtual_x == other.virtual_x
                 && this->tile_x == other.tile_x
                 && this->y == other.y
                 && this->imagery_zoom == other.imagery_zoom
-                && this->terrain_zoom == other.terrain_zoom
-                && this->foreground == other.foreground
-                && this->terrain_cell_count == other.terrain_cell_count
-                && this->terrain_stitch_top_cell_count
-                    == other.terrain_stitch_top_cell_count
-                && this->terrain_stitch_right_cell_count
-                    == other.terrain_stitch_right_cell_count
-                && this->terrain_stitch_bottom_cell_count
-                    == other.terrain_stitch_bottom_cell_count
-                && this->terrain_stitch_left_cell_count
-                    == other.terrain_stitch_left_cell_count;
+                && this->foreground == other.foreground;
         }
     };
 
@@ -161,31 +124,21 @@ private:
 
     bool createSharedResources();
     bool rebuildVisibleTiles(const QPointF &origin_world, const QSize &viewport_size);
-    bool updateDirtyTerrainTiles(QRhiResourceUpdateBatch *resource_updates);
     bool currentLayoutCoversForeground(int imagery_zoom, int foreground_start_x,
                                        int foreground_start_y, int foreground_tiles_x,
                                        int foreground_tiles_y, int tile_count,
                                        const QString &imagery_key_prefix) const;
-    int terrainCellCountForTile(const VisibleTile &tile,
-                                const QSize &viewport_size) const;
-    void updateTerrainStitchCellCounts(QVector<VisibleTile> *tiles) const;
-    bool currentTerrainLodMatches(const QSize &viewport_size) const;
-    bool tileReadyForZoomHandoff(const VisibleTile &tile, bool relief_enabled) const;
+    bool tileReadyForZoomHandoff(const VisibleTile &tile) const;
     QVector<VisibleTile> progressiveProviderLayout(
         const QVector<VisibleTile> &target_tiles, int target_zoom,
-        const QString &imagery_key_prefix, bool relief_enabled) const;
+        const QString &imagery_key_prefix) const;
     QVector<VisibleTile> progressiveZoomLayout(
-        const QVector<VisibleTile> &target_tiles, int target_zoom,
-        bool relief_enabled) const;
+        const QVector<VisibleTile> &target_tiles, int target_zoom) const;
     bool ensureTileResource(const VisibleTile &tile, TileResource **resource,
                             QRhiResourceUpdateBatch *resource_updates);
     bool ensureHeatmapTexture(const VisibleTile &tile, TileResource *resource,
                               QRhiResourceUpdateBatch *resource_updates);
     bool rebuildTileBindings(TileResource *resource);
-    bool isTileInViewFrustum(const VisibleTile &tile, const QSize &viewport_size,
-                             const QPointF &origin_world) const;
-    void terrainElevationWorldZCoefficients(float *offset, float *scale) const;
-    void applyReadyTerrainMeshResultsToMemory();
     void uploadPendingVertexPatchRanges(QRhiResourceUpdateBatch *resource_updates);
     bool arrayBatchingActive() const;
     bool createTileArrayResources();
@@ -199,34 +152,21 @@ private:
                                          double radius_world) const;
     void pruneTextureCache();
     void resetVertexArrayLayerForKey(const QString &imagery_key, int stale_layer);
-    void rebuildWireframeVertices();
-    bool uploadWireframeVertices(QRhiResourceUpdateBatch *resource_updates);
     void appendFlatTileVertices(QVector<TileVertex> *target, VisibleTile *tile,
                                 float left, float top, float right, float bottom);
-    bool appendReliefTileVertices(QVector<TileVertex> *target, VisibleTile *tile,
-                                  const MapTerrainTile *terrain_tile,
-                                  float tile_left, float tile_top,
-                                  float tile_right, float tile_bottom,
-                                  float tile_world_size);
 
     MapModel *map_model = nullptr;
-    MapRhiScene *scene = nullptr;
     MapTileRepository *tile_repository = nullptr;
-    MapTerrainRepository *terrain_repository = nullptr;
-    const MapRhiCamera *camera = nullptr;
     QRhi *rhi = nullptr;
     QRhiRenderPassDescriptor *render_pass_descriptor = nullptr;
     QRhiBuffer *camera_uniform_buffer = nullptr;
     int sample_count = 1;
 
     std::unique_ptr<QRhiBuffer> vertex_buffer;
-    std::unique_ptr<QRhiBuffer> wireframe_vertex_buffer;
     std::unique_ptr<QRhiSampler> sampler;
     std::unique_ptr<QRhiTexture> dummy_texture;
     std::unique_ptr<QRhiShaderResourceBindings> template_bindings;
-    std::unique_ptr<QRhiShaderResourceBindings> wireframe_bindings;
     std::unique_ptr<QRhiGraphicsPipeline> pipeline;
-    std::unique_ptr<QRhiGraphicsPipeline> wireframe_pipeline;
 
     // Texture-array batching (used when arrayBatchingActive() is true, i.e.
     // no basemap heatmap overlay is active -- see arrayBatchingActive()):
@@ -242,20 +182,13 @@ private:
     QVector<int> free_array_layers;
 
     int vertex_buffer_size = 0;
-    int wireframe_vertex_buffer_size = 0;
     bool vertex_upload_pending = true;
-    bool wireframe_vertex_upload_pending = true;
     bool dummy_texture_upload_pending = true;
     bool layout_dirty = true;
-    QElapsedTimer terrain_lod_rebuild_clock;
     quint64 usage_serial = 0;
-    bool wireframe_visible = false;
-    bool map_visible = true;
 
     QVector<TileVertex> vertices;
-    QVector<WireframeVertex> wireframe_vertices;
     QVector<VisibleTile> visible_tiles;
-    QSet<QString> dirty_terrain_keys;
     QPointF layout_origin_world;
     QVector<HeatmapMarker> heatmap_markers;
     QHash<quint64, QVector<int>> heatmap_marker_buckets;
@@ -264,11 +197,6 @@ private:
     quint64 heatmap_revision = 1;
     std::map<QString, std::unique_ptr<TileResource>> tile_resources;
 
-    // Background terrain-mesh generation: see map_rhi_terrain_mesh_scheduler.h.
-    // Owned for the lifetime of this renderer and independent of RHI/GPU
-    // state, so it is not touched by releaseResources()/RHI context resets.
-    std::unique_ptr<MapRhiTerrainMeshScheduler> mesh_scheduler;
-    quint64 next_mesh_request_id = 1;
     QVector<PendingVertexPatchRange> pending_vertex_patch_ranges;
 };
 

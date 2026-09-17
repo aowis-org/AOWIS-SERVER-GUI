@@ -2,7 +2,6 @@
 
 #include "map/render/map_node_declutter.h"
 #include "map/render/map_render_cache_math.h"
-#include "map/core/map_model.h"
 #include "geo/geo_web_mercator.h"
 #include "network/infrastructure_entity_traits.h"
 #include "network/network_symbology_rendering.h"
@@ -25,8 +24,13 @@ constexpr qreal FlowDirectionMinimumLinkPixels = 18.0;
 constexpr qreal FlowDirectionSpacingPixels = 100.0;
 constexpr qreal FlowDirectionChevronHalfWidthRatio = 0.4;
 constexpr qreal FlowDirectionStrokeWidthRatio = 0.2;
-constexpr qreal FlowDirectionMinimumElevationPixels = 4.0;
 constexpr int FlowDirectionMaximumMarkersPerLink = 32;
+// Flat 2D uses Z only as an explicit draw-order layer. Physical network
+// elevation never changes 2D depth or picking.
+constexpr float TwoDHeatmapLayerZ = 0.05f;
+constexpr float TwoDNetworkLayerZ = 1.0f;
+constexpr float TwoDFlowDirectionLayerZ = 1.1f;
+constexpr float TwoDIconLayerZ = 1.2f;
 }
 
 void MapRhiScene::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
@@ -56,10 +60,8 @@ void MapRhiScene::rebuildNetworkGeometry()
     this->flow_direction_vertices.clear();
     this->icon_vertices.clear();
     this->heatmap_vertices.clear();
-    this->junction_instances.clear();
     this->heatmap_markers.clear();
     this->icon_markers.clear();
-    this->junction_markers.clear();
     this->link_paths.clear();
     this->entity_keys_by_uuid.clear();
     this->link_vertex_indices_by_entity.clear();
@@ -73,34 +75,40 @@ void MapRhiScene::rebuildNetworkGeometry()
     if (!this->origin_valid)
         return;
 
-    bool elevation_reference_initialized = false;
+    bool reference_latitude_initialized = false;
     for (const NetworkRenderNode &node : this->network_snapshot.nodes)
     {
-        if (!finiteCoordinate(node.coordinate_wgs84) || !std::isfinite(node.elevation_m))
+        if (!finiteCoordinate(node.coordinate_wgs84))
             continue;
 
-        if (!elevation_reference_initialized)
-        {
-            this->reference_latitude_deg = node.coordinate_wgs84.latitude_deg;
-            this->elevation_reference_m = node.elevation_m;
-            elevation_reference_initialized = true;
-        }
-        else
-        {
-            this->elevation_reference_m = qMin(this->elevation_reference_m, node.elevation_m);
-        }
+        this->reference_latitude_deg = node.coordinate_wgs84.latitude_deg;
+        reference_latitude_initialized = true;
+        break;
     }
-    if (!elevation_reference_initialized)
+    if (!reference_latitude_initialized)
     {
-        this->reference_latitude_deg = 0.0;
-        this->elevation_reference_m = 0.0;
+        for (const NetworkRenderLink &link : this->network_snapshot.links)
+        {
+            for (const CoordinateWGS84 &coordinate : link.vertices_wgs84)
+            {
+                if (!finiteCoordinate(coordinate))
+                    continue;
+
+                this->reference_latitude_deg = coordinate.latitude_deg;
+                reference_latitude_initialized = true;
+                break;
+            }
+            if (reference_latitude_initialized)
+                break;
+        }
     }
+    if (!reference_latitude_initialized)
+        this->reference_latitude_deg = 0.0;
 
     struct PreparedNode
     {
         const NetworkRenderNode *node = nullptr;
         QPointF raw_center;
-        float center_z = 0.0f;
     };
 
     QVector<PreparedNode> prepared_nodes;
@@ -116,8 +124,7 @@ void MapRhiScene::rebuildNetworkGeometry()
         double resolved_x = this->origin_world.x();
         const QPointF raw_center = localWorldPosition(
             node.coordinate_wgs84, this->origin_world.x(), &resolved_x);
-        const float center_z = localElevationWorld(node.elevation_m);
-        prepared_nodes.append({&node, raw_center, center_z});
+        prepared_nodes.append({&node, raw_center});
     }
 
     // Nodes that share (or nearly share) a coordinate are spread apart just
@@ -137,25 +144,15 @@ void MapRhiScene::rebuildNetworkGeometry()
             declutter_inputs, declutter_separation_world);
     }
 
-    qsizetype node_quad_count = prepared_nodes.size();
-    if (this->use_3d_junction_models)
-    {
-        for (const PreparedNode &prepared : prepared_nodes)
-        {
-            if (prepared.node->entity_type == InfrastructureEntity::Junction)
-                --node_quad_count;
-        }
-    }
-    this->node_vertices.reserve(node_quad_count * 6);
+    this->node_vertices.reserve(prepared_nodes.size() * 6);
     for (const PreparedNode &prepared : prepared_nodes)
     {
         const NetworkRenderNode &node = *prepared.node;
         const QPointF center = prepared.raw_center
             + node_declutter_offsets.value(node.render_id);
-        const float center_z = prepared.center_z;
         this->entity_keys_by_uuid.insert(
             node.uuid, entityRenderKey(node.entity_type, node.render_id));
-        appendNode(node.entity_type, node.render_id, center, center_z);
+        appendNode(node.entity_type, node.render_id, center);
         HeatmapMarker heatmap_marker;
         heatmap_marker.render_id = node.render_id;
         heatmap_marker.center = center;
@@ -166,16 +163,7 @@ void MapRhiScene::rebuildNetworkGeometry()
             marker.entity_type = node.entity_type;
             marker.render_id = node.render_id;
             marker.center = center;
-            marker.z = center_z;
             this->icon_markers.append(marker);
-        }
-        if (node.entity_type == InfrastructureEntity::Junction)
-        {
-            JunctionMarker marker;
-            marker.render_id = node.render_id;
-            marker.center = center;
-            marker.z = center_z;
-            this->junction_markers.append(marker);
         }
     }
 
@@ -201,7 +189,6 @@ void MapRhiScene::rebuildNetworkGeometry()
 
         bool have_previous = false;
         QPointF previous;
-        float previous_z = 0.0f;
         double wrap_reference_x = this->origin_world.x();
         for (qsizetype vertex_index = 0;
              vertex_index < link.vertices_wgs84.size(); ++vertex_index)
@@ -229,26 +216,18 @@ void MapRhiScene::rebuildNetworkGeometry()
             else if (vertex_index == link.vertices_wgs84.size() - 1)
                 current += node_declutter_offsets.value(link.end_node_render_id);
 
-            const double elevation_m = vertex_index < link.elevations_m.size()
-                ? link.elevations_m.at(vertex_index)
-                : this->elevation_reference_m;
-            const float current_z = localElevationWorld(elevation_m);
-
             if (have_previous)
             {
                 appendLinkSegment(
                     link.entity_type, link.render_id,
-                    previous, previous_z, current, current_z);
+                    previous, current);
                 SceneSegment segment;
                 segment.start = previous;
                 segment.end = current;
-                segment.start_z = previous_z;
-                segment.end_z = current_z;
                 link_path.segments.append(segment);
             }
 
             previous = current;
-            previous_z = current_z;
             have_previous = true;
         }
 
@@ -286,7 +265,6 @@ void MapRhiScene::rebuildNetworkGeometry()
                         marker.center = QPointF(
                             segment.start.x() + (segment.end.x() - segment.start.x()) * ratio,
                             segment.start.y() + (segment.end.y() - segment.start.y()) * ratio);
-                        marker.z = segment.start_z + (segment.end_z - segment.start_z) * float(ratio);
                         this->icon_markers.append(marker);
                         break;
                     }
@@ -298,9 +276,6 @@ void MapRhiScene::rebuildNetworkGeometry()
 
     rebuildHeatmap();
     rebuildIcons();
-    rebuildTankInstances();
-    rebuildReservoirInstances();
-    rebuildJunctionInstances();
     rebuildFlowDirections();
     rebuildHighlights();
 }
@@ -341,10 +316,6 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
         || node_colors_changed
         || junction_visibility_changed
         || this->symbology.flow_directions != symbology.flow_directions;
-    const bool junction_instance_changed =
-        this->symbology.node_size_unit != symbology.node_size_unit
-        || (symbology.node_size_unit == NetworkSymbologySizeUnit::Meters
-            && this->symbology.node_size_m != symbology.node_size_m);
 
     this->symbology = symbology;
     if (network_style_changed)
@@ -363,13 +334,7 @@ void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
     if (heatmap_changed)
         rebuildHeatmap();
     if (icon_changed)
-    {
         rebuildIcons();
-        rebuildTankInstances();
-        rebuildReservoirInstances();
-    }
-    if (junction_instance_changed)
-        rebuildJunctionInstances();
     if (flow_direction_changed)
         rebuildFlowDirections();
     if (link_thickness_changed || junction_visibility_changed)
@@ -386,8 +351,6 @@ void MapRhiScene::setSelectedEntity(InfrastructureEntity entity_type, const QUui
     rebuildNetworkStyles();
     rebuildHighlights();
     rebuildIcons();
-    rebuildTankInstances();
-    rebuildReservoirInstances();
 }
 
 bool MapRhiScene::setViewZoom(int zoom)
@@ -397,8 +360,6 @@ bool MapRhiScene::setViewZoom(int zoom)
 
     this->view_zoom = zoom;
     rebuildIcons();
-    rebuildTankInstances();
-    rebuildReservoirInstances();
     rebuildFlowDirections();
     return true;
 }
@@ -413,110 +374,12 @@ void MapRhiScene::setSimulationErrorEntities(
     rebuildHighlights();
 }
 
-bool MapRhiScene::setUse3dTankModels(bool enabled)
-{
-    if (this->use_3d_tank_models == enabled)
-        return false;
-
-    this->use_3d_tank_models = enabled;
-    rebuildIcons();
-    rebuildTankInstances();
-    return true;
-}
-
-bool MapRhiScene::setUse3dReservoirModels(bool enabled)
-{
-    if (this->use_3d_reservoir_models == enabled)
-        return false;
-
-    this->use_3d_reservoir_models = enabled;
-    rebuildIcons();
-    rebuildReservoirInstances();
-    return true;
-}
-
-bool MapRhiScene::setUse3dJunctionModels(bool enabled)
-{
-    if (this->use_3d_junction_models == enabled)
-        return false;
-
-    this->use_3d_junction_models = enabled;
-    if (enabled)
-    {
-        QVector<NodeVertex> retained_node_vertices;
-        retained_node_vertices.reserve(this->node_vertices.size());
-        for (const NodeVertex &vertex : this->node_vertices)
-        {
-            if (vertex.entity_type != InfrastructureEntity::Junction)
-                retained_node_vertices.append(vertex);
-        }
-        this->node_vertices.swap(retained_node_vertices);
-
-        this->node_vertex_indices_by_entity.clear();
-        for (qsizetype vertex_index = 0;
-             vertex_index < this->node_vertices.size(); ++vertex_index)
-        {
-            const NodeVertex &vertex = this->node_vertices.at(vertex_index);
-            const quint64 entity_key = entityRenderKey(
-                vertex.entity_type, vertex.render_id);
-            this->node_vertex_indices_by_entity[entity_key].append(int(vertex_index));
-        }
-    }
-    else
-    {
-        for (const JunctionMarker &marker : this->junction_markers)
-        {
-            appendNode(
-                InfrastructureEntity::Junction, marker.render_id,
-                marker.center, marker.z);
-        }
-    }
-
-    rebuildJunctionInstances();
-    rebuildHighlights();
-    return true;
-}
-
 bool MapRhiScene::setNodeDeclutteringEnabled(bool enabled)
 {
     if (this->node_decluttering_enabled == enabled)
         return false;
 
     this->node_decluttering_enabled = enabled;
-    rebuildNetworkGeometry();
-    return true;
-}
-
-bool MapRhiScene::setNetworkGroundOffsetM(double offset_m)
-{
-    if (!std::isfinite(offset_m))
-        return false;
-
-    const double bounded_offset_m = qBound(
-        MapModel::MinView3dNetworkGroundOffsetM,
-        offset_m,
-        MapModel::MaxView3dNetworkGroundOffsetM);
-    if (qFuzzyCompare(1.0 + this->network_ground_offset_m, 1.0 + bounded_offset_m))
-        return false;
-
-    this->network_ground_offset_m = bounded_offset_m;
-    rebuildNetworkGeometry();
-    return true;
-}
-
-bool MapRhiScene::setVerticalExaggeration(double exaggeration)
-{
-    if (!std::isfinite(exaggeration))
-        return false;
-
-    const double bounded_exaggeration = qBound(
-        MapModel::MinView3dVerticalExaggeration,
-        exaggeration,
-        MapModel::MaxView3dVerticalExaggeration);
-    if (qFuzzyCompare(1.0 + this->vertical_exaggeration, 1.0 + bounded_exaggeration))
-        return false;
-
-    this->vertical_exaggeration = bounded_exaggeration;
     rebuildNetworkGeometry();
     return true;
 }
@@ -566,21 +429,6 @@ const QVector<MapRhiScene::HeatmapVertex> &MapRhiScene::heatmapVertices() const
     return this->heatmap_vertices;
 }
 
-const QVector<MapRhiTankInstance> &MapRhiScene::tankInstances() const
-{
-    return this->tank_instances;
-}
-
-const QVector<MapRhiReservoirInstance> &MapRhiScene::reservoirInstances() const
-{
-    return this->reservoir_instances;
-}
-
-const QVector<MapRhiJunctionInstance> &MapRhiScene::junctionInstances() const
-{
-    return this->junction_instances;
-}
-
 const MapRhiNetworkStyleTable &MapRhiScene::networkStyleTable() const
 {
     return this->network_style_table;
@@ -597,7 +445,7 @@ const NetworkRenderSnapshot &MapRhiScene::networkSnapshot() const
 }
 
 QVector3D MapRhiScene::worldPosition(
-    const CoordinateWGS84 &coordinate, double elevation_m,
+    const CoordinateWGS84 &coordinate,
     double wrap_reference_x, double *resolved_world_x) const
 {
     double resolved_x = wrap_reference_x;
@@ -606,7 +454,7 @@ QVector3D MapRhiScene::worldPosition(
     if (resolved_world_x != nullptr)
         *resolved_world_x = resolved_x;
     return QVector3D(
-        float(position.x()), float(position.y()), localElevationWorld(elevation_m));
+        float(position.x()), float(position.y()), TwoDNetworkLayerZ);
 }
 
 bool MapRhiScene::isEntityHidden(const QUuid &uuid) const
@@ -622,8 +470,7 @@ quint64 MapRhiScene::geometryRevision() const
 bool MapRhiScene::hasGeometry() const
 {
     return !this->link_vertices.isEmpty()
-        || !this->node_vertices.isEmpty()
-        || !this->junction_instances.isEmpty();
+        || !this->node_vertices.isEmpty();
 }
 
 NetworkSymbologySizeUnit MapRhiScene::nodeSizeUnit() const
@@ -681,26 +528,6 @@ double MapRhiScene::worldUnitsPerMeter() const
     return 1.0 / meters_per_world_pixel;
 }
 
-float MapRhiScene::elevationToWorldZ(double elevation_m) const
-{
-    return localElevationWorld(elevation_m);
-}
-
-float MapRhiScene::terrainElevationToWorldZ(double elevation_m) const
-{
-    if (!std::isfinite(elevation_m))
-        return 1.0f;
-
-    const double meters_per_world_pixel = GeoWebMercator::metersPerPixel(
-        this->reference_latitude_deg, MapRenderCacheMath::ReferenceZoom);
-    if (!std::isfinite(meters_per_world_pixel) || meters_per_world_pixel <= 0.0)
-        return 1.0f;
-
-    return float(1.0
-        + (elevation_m - this->elevation_reference_m)
-            * this->vertical_exaggeration / meters_per_world_pixel);
-}
-
 QPointF MapRhiScene::chooseOriginWorld(const NetworkRenderSnapshot &snapshot) const
 {
     for (const NetworkRenderNode &node : snapshot.nodes)
@@ -750,25 +577,9 @@ QPointF MapRhiScene::localWorldPosition(const CoordinateWGS84 &coordinate,
         raw_world.y() - this->origin_world.y());
 }
 
-float MapRhiScene::localElevationWorld(double elevation_m) const
-{
-    if (!std::isfinite(elevation_m))
-        return 1.0f;
-
-    const double meters_per_world_pixel = GeoWebMercator::metersPerPixel(
-        this->reference_latitude_deg, MapRenderCacheMath::ReferenceZoom);
-    if (!std::isfinite(meters_per_world_pixel) || meters_per_world_pixel <= 0.0)
-        return 1.0f;
-
-    return float(1.0
-        + ((elevation_m - this->elevation_reference_m) * this->vertical_exaggeration
-            + this->network_ground_offset_m) / meters_per_world_pixel);
-}
-
 void MapRhiScene::appendLinkSegment(
     InfrastructureEntity entity_type, quint32 render_id,
-    const QPointF &start, float start_z,
-    const QPointF &end, float end_z)
+    const QPointF &start, const QPointF &end)
 {
     const quint64 entity_key = entityRenderKey(entity_type, render_id);
     const float corners[6][2] = {
@@ -785,10 +596,10 @@ void MapRhiScene::appendLinkSegment(
         LinkVertex vertex;
         vertex.start_x = float(start.x());
         vertex.start_y = float(start.y());
-        vertex.start_z = start_z;
+        vertex.start_z = TwoDNetworkLayerZ;
         vertex.end_x = float(end.x());
         vertex.end_y = float(end.y());
-        vertex.end_z = end_z;
+        vertex.end_z = TwoDNetworkLayerZ;
         vertex.along = corners[index][0];
         vertex.side = corners[index][1];
         vertex.red = 0.05f;
@@ -804,17 +615,8 @@ void MapRhiScene::appendLinkSegment(
 
 void MapRhiScene::appendNode(
     InfrastructureEntity entity_type, quint32 render_id,
-    const QPointF &center, float center_z)
+    const QPointF &center)
 {
-    // TwoD still uses the node quad. ThreeD junctions are represented only
-    // by compact sphere impostor instances, so do not submit a transparent
-    // fallback quad beneath every sphere.
-    if (entity_type == InfrastructureEntity::Junction
-        && this->use_3d_junction_models)
-    {
-        return;
-    }
-
     const quint64 entity_key = entityRenderKey(entity_type, render_id);
     const float corners[6][2] = {
         {-1.0f, -1.0f},
@@ -830,7 +632,7 @@ void MapRhiScene::appendNode(
         NodeVertex vertex;
         vertex.center_x = float(center.x());
         vertex.center_y = float(center.y());
-        vertex.center_z = center_z;
+        vertex.center_z = TwoDNetworkLayerZ;
         vertex.corner_x = corners[index][0];
         vertex.corner_y = corners[index][1];
         vertex.red = 0.02f;
@@ -917,9 +719,7 @@ void MapRhiScene::appendHeatmap(const HeatmapMarker &marker)
         vertex.center_x = float(marker.center.x());
         vertex.center_y = float(marker.center.y());
         // Keep the heatmap just above the basemap to avoid coplanar depth fighting.
-        // The heatmap shader expands this center in the XY world plane, so in 3D it
-        // lies flat on the ground instead of facing the camera.
-        vertex.center_z = 0.05f;
+        vertex.center_z = TwoDHeatmapLayerZ;
         vertex.corner_x = corners[index][0];
         vertex.corner_y = corners[index][1];
         vertex.red = color.redF();
@@ -942,11 +742,6 @@ void MapRhiScene::rebuildIcons()
 
 void MapRhiScene::appendIcon(const IconMarker &marker)
 {
-    if (this->use_3d_tank_models && marker.entity_type == InfrastructureEntity::Tank)
-        return;
-    if (this->use_3d_reservoir_models && marker.entity_type == InfrastructureEntity::Reservoir)
-        return;
-
     const MapRhiIconAtlasEntry atlas_entry = mapRhiIconAtlasEntry(marker.entity_type);
     if (!atlas_entry.valid)
         return;
@@ -1000,7 +795,7 @@ void MapRhiScene::appendIcon(const IconMarker &marker)
         IconVertex vertex;
         vertex.center_x = float(marker.center.x());
         vertex.center_y = float(marker.center.y());
-        vertex.center_z = marker.z;
+        vertex.center_z = TwoDIconLayerZ;
         vertex.offset_x_ratio = corners[index][0] * half_width_ratio;
         vertex.offset_y_ratio = corners[index][1] * half_height_ratio;
         vertex.u = corners[index][0] < 0.0f ? u_left : u_right;
@@ -1012,166 +807,6 @@ void MapRhiScene::appendIcon(const IconMarker &marker)
         vertex.render_id = marker.render_id;
         vertex.entity_type = marker.entity_type;
         this->icon_vertices.append(vertex);
-    }
-}
-
-void MapRhiScene::rebuildTankInstances()
-{
-    this->tank_instances.clear();
-    if (!this->symbology.show_icons || !this->use_3d_tank_models)
-        return;
-
-    const qreal scale = GeoWebMercator::zoomScale(
-        this->view_zoom, MapRenderCacheMath::ReferenceZoom);
-    if (!std::isfinite(scale) || scale <= 0.0)
-        return;
-
-    float world_marker_size = 0.0f;
-    if (this->symbology.icon_size_unit == NetworkSymbologySizeUnit::Meters)
-    {
-        const double units_per_meter = worldUnitsPerMeter();
-        if (!std::isfinite(units_per_meter) || units_per_meter <= 0.0)
-            return;
-        world_marker_size = float(this->symbology.icon_size_m * units_per_meter);
-    }
-    else
-    {
-        world_marker_size = float(this->symbology.icon_size_px / scale);
-    }
-    const float radius_world = world_marker_size * 0.44f;
-    const float base_height_world = world_marker_size * 0.20f;
-    const float body_height_world = world_marker_size * 0.78f;
-    const float roof_height_world = world_marker_size * 0.26f;
-
-    quint32 selected_tank_render_id = 0;
-    if (this->selected_entity_type == InfrastructureEntity::Tank
-        && !this->selected_entity_uuid.isNull())
-    {
-        const QHash<QUuid, quint64>::const_iterator selected_iterator =
-            this->entity_keys_by_uuid.constFind(this->selected_entity_uuid);
-        if (selected_iterator != this->entity_keys_by_uuid.cend())
-        {
-            const quint32 render_id = quint32(selected_iterator.value() & 0xffffffffULL);
-            if (entityRenderKey(InfrastructureEntity::Tank, render_id)
-                == selected_iterator.value())
-            {
-                selected_tank_render_id = render_id;
-            }
-        }
-    }
-
-    for (const IconMarker &marker : this->icon_markers)
-    {
-        if (marker.entity_type != InfrastructureEntity::Tank)
-            continue;
-
-        MapRhiTankInstance instance;
-        instance.render_id = marker.render_id;
-        instance.base_center = QVector3D(
-            float(marker.center.x()),
-            float(marker.center.y()),
-            marker.z + 0.02f);
-        instance.radius_world = radius_world;
-        instance.base_height_world = base_height_world;
-        instance.body_height_world = body_height_world;
-        instance.roof_height_world = roof_height_world;
-        instance.selected = marker.render_id == selected_tank_render_id ? 1.0f : 0.0f;
-        this->tank_instances.append(instance);
-    }
-}
-
-
-void MapRhiScene::rebuildReservoirInstances()
-{
-    this->reservoir_instances.clear();
-    if (!this->symbology.show_icons || !this->use_3d_reservoir_models)
-        return;
-
-    const qreal scale = GeoWebMercator::zoomScale(
-        this->view_zoom, MapRenderCacheMath::ReferenceZoom);
-    if (!std::isfinite(scale) || scale <= 0.0)
-        return;
-
-    float world_marker_size = 0.0f;
-    if (this->symbology.icon_size_unit == NetworkSymbologySizeUnit::Meters)
-    {
-        const double units_per_meter = worldUnitsPerMeter();
-        if (!std::isfinite(units_per_meter) || units_per_meter <= 0.0)
-            return;
-        world_marker_size = float(this->symbology.icon_size_m * units_per_meter);
-    }
-    else
-    {
-        world_marker_size = float(this->symbology.icon_size_px / scale);
-    }
-    // Reservoirs have no diameter/level data in the hydraulic model (unlike
-    // tanks), so - same as the junction sphere - the footprint is derived
-    // entirely from the configured icon/marker size rather than network data.
-    const float radius_world = world_marker_size * 0.48f;
-    const float wall_height_world = world_marker_size * 0.34f;
-
-    quint32 selected_reservoir_render_id = 0;
-    if (this->selected_entity_type == InfrastructureEntity::Reservoir
-        && !this->selected_entity_uuid.isNull())
-    {
-        const QHash<QUuid, quint64>::const_iterator selected_iterator =
-            this->entity_keys_by_uuid.constFind(this->selected_entity_uuid);
-        if (selected_iterator != this->entity_keys_by_uuid.cend())
-        {
-            const quint32 render_id = quint32(selected_iterator.value() & 0xffffffffULL);
-            if (entityRenderKey(InfrastructureEntity::Reservoir, render_id)
-                == selected_iterator.value())
-            {
-                selected_reservoir_render_id = render_id;
-            }
-        }
-    }
-
-    for (const IconMarker &marker : this->icon_markers)
-    {
-        if (marker.entity_type != InfrastructureEntity::Reservoir)
-            continue;
-
-        MapRhiReservoirInstance instance;
-        instance.render_id = marker.render_id;
-        instance.base_center = QVector3D(
-            float(marker.center.x()),
-            float(marker.center.y()),
-            marker.z + 0.02f);
-        instance.radius_world = radius_world;
-        instance.wall_height_world = wall_height_world;
-        instance.selected = marker.render_id == selected_reservoir_render_id ? 1.0f : 0.0f;
-        this->reservoir_instances.append(instance);
-    }
-}
-
-
-void MapRhiScene::rebuildJunctionInstances()
-{
-    this->junction_instances.clear();
-    if (!this->use_3d_junction_models || this->junction_markers.isEmpty())
-        return;
-
-    float radius_world = 1.0f;
-    if (this->symbology.node_size_unit == NetworkSymbologySizeUnit::Meters)
-    {
-        const double units_per_meter = worldUnitsPerMeter();
-        if (std::isfinite(units_per_meter) && units_per_meter > 0.0)
-            radius_world = float(this->symbology.node_size_m * units_per_meter * 0.5);
-    }
-
-    this->junction_instances.reserve(this->junction_markers.size());
-    for (const JunctionMarker &marker : this->junction_markers)
-    {
-        MapRhiJunctionInstance instance;
-        instance.render_id = marker.render_id;
-        instance.style_index = float(
-            MapRhiNetworkStyleTable::nodeStyleIndex(marker.render_id));
-        instance.center_x = float(marker.center.x());
-        instance.center_y = float(marker.center.y());
-        instance.center_z = marker.z;
-        instance.radius_world = radius_world;
-        this->junction_instances.append(instance);
     }
 }
 
@@ -1283,13 +918,6 @@ void MapRhiScene::rebuildFlowDirections()
                 const QPointF center(
                     segment.start.x() + (segment.end.x() - segment.start.x()) * ratio,
                     segment.start.y() + (segment.end.y() - segment.start.y()) * ratio);
-                const qreal elevation_pixels = qMax<qreal>(
-                    FlowDirectionMinimumElevationPixels,
-                    qreal(this->symbology.link_thickness_px) / 2.0 + 2.0);
-                const float elevation_world = float(elevation_pixels / scale);
-                const float center_z = segment.start_z
-                    + (segment.end_z - segment.start_z) * float(ratio)
-                    + elevation_world;
                 const QPointF normal(-direction.y(), direction.x());
                 const QPointF tip =
                     center + direction * (chevron_length_world / 2.0);
@@ -1301,9 +929,11 @@ void MapRhiScene::rebuildFlowDirections()
                     base - normal * chevron_half_width_world;
 
                 appendFlowDirectionStroke(
-                    tail_first, tip, center_z, arrow_color, half_stroke_px);
+                    tail_first, tip, TwoDFlowDirectionLayerZ,
+                    arrow_color, half_stroke_px);
                 appendFlowDirectionStroke(
-                    tail_second, tip, center_z, arrow_color, half_stroke_px);
+                    tail_second, tip, TwoDFlowDirectionLayerZ,
+                    arrow_color, half_stroke_px);
                 break;
             }
         }
@@ -1384,16 +1014,7 @@ void MapRhiScene::rebuildHighlights()
                 const float base_link_width = float(this->symbology.link_thickness_px);
                 const float selected_link_width = qMax(
                     3.0f, base_link_width + (selected_has_error ? 6.0f : 2.0f));
-                const bool selected_is_3d_model =
-                    (this->use_3d_junction_models
-                        && this->selected_entity_type == InfrastructureEntity::Junction)
-                    || (this->use_3d_tank_models
-                        && this->selected_entity_type == InfrastructureEntity::Tank)
-                    || (this->use_3d_reservoir_models
-                        && this->selected_entity_type == InfrastructureEntity::Reservoir);
-                QVector<NodeVertex> *selected_node_target = selected_is_3d_model
-                    ? nullptr
-                    : &this->selected_node_vertices;
+                QVector<NodeVertex> *selected_node_target = &this->selected_node_vertices;
                 appendEntityHighlight(
                     this->selected_entity_type,
                     quint32(selected_iterator.value() & 0xffffffffULL),
@@ -1425,12 +1046,7 @@ void MapRhiScene::rebuildHighlights()
         const QColor color = this->simulation_stale_entity_uuids.contains(error_iterator.key())
             ? QColor(128, 128, 128)
             : QColor(255, 0, 0);
-        const bool diagnostic_uses_3d_junction =
-            this->use_3d_junction_models
-            && entity_type == InfrastructureEntity::Junction;
-        QVector<NodeVertex> *diagnostic_node_target = diagnostic_uses_3d_junction
-            ? nullptr
-            : &this->diagnostic_node_vertices;
+        QVector<NodeVertex> *diagnostic_node_target = &this->diagnostic_node_vertices;
         appendEntityHighlight(
             entity_type, render_id, color,
             (diagnostic_link_width - base_link_width) / 2.0f, 2.0f,

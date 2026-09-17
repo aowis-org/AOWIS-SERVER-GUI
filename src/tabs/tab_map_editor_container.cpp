@@ -527,18 +527,6 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     {
         applyDesktopRhiEditorSymbology();
     });
-    connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode view_mode)
-    {
-        if (view_mode == MapViewMode::ThreeD && this->editor_controller != nullptr)
-        {
-            this->editor_controller->keyPress(Qt::Key_Escape);
-            if (this->editor_controller->rectangleSelectionActive())
-                this->editor_controller->cancelRectangleSelection();
-            this->editor_controller->stopEntityPositioning();
-        }
-        applyDesktopRhiEditorSymbology();
-        this->map_canvas->requestRenderUpdate();
-    });
 #endif
 #ifdef Q_OS_WASM
     connect(this->map_menu, &MapEditorMenuWidget::signalSlideOpacityChanged,
@@ -679,7 +667,7 @@ void MapEditorContainer::applyDesktopRhiEditorSymbology()
         this->map_model->zoom(),
         this->map_canvas->mapCanvasEntities()->iconSizePercent()));
     symbology.icon_size_m = NetworkSymbologyDefaultIconSizeM;
-    symbology.show_icons = this->map_model->viewMode() == MapViewMode::ThreeD;
+    symbology.show_icons = false;
     symbology.link_thickness_unit = NetworkSymbologySizeUnit::Pixels;
     symbology.link_thickness_px = NetworkSymbologyDefaultLinkThicknessPx;
     symbology.link_thickness_m = NetworkSymbologyDefaultLinkThicknessM;

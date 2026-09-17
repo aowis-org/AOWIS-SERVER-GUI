@@ -140,14 +140,6 @@ private:
     bool ensureGeometryBuffers();
     void rebuildTankModelGeometry();
     void rebuildReservoirModelGeometry();
-    void rebuildUndergroundGeometry();
-    void markUndergroundGeometryDirty();
-    bool isUndergroundAtCoordinate(
-        const CoordinateWGS84 &coordinate, double elevation_m);
-    double terrainCellWorldSize() const;
-    void appendUndergroundLinkSegment(
-        InfrastructureEntity entity_type, quint32 render_id,
-        const QVector3D &start, const QVector3D &end);
     void resetGpuResources();
     void renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarget *target);
     bool ensureGlobeNetworkGeometryBuffers();
@@ -162,14 +154,9 @@ private:
     // comment for why it can't just be folded into the same function body.
     MapRhiHit globeHitTest(const QPointF &screen_position) const;
     void syncViewState();
-    void syncTerrainAwareCameraDistance();
     void syncGlobeTerrainAwareCameraHeight(bool request_missing_tile);
     void scheduleGlobeUndergroundXRayRefresh();
-    void captureView3dFocusAnchor();
     void captureViewGlobeFocusAnchor();
-    bool terrainRayHitAtScreen(
-        const QPointF &screen_position, CoordinateWGS84 *coordinate,
-        double *world_z, double *distance_m, bool request_missing_tile);
     void rebuildHeatmapRenderVertices();
     void syncBasemapHeatmapOverlay();
     void syncBasemapHeatmapStyle();
@@ -177,11 +164,6 @@ private:
     // why Globe doesn't need (or benefit from) the same data/style split
     // the flat basemap renderer has.
     void syncGlobeHeatmapOverlay(double solid_fraction);
-    double terrainWorldUnitsPerMeter() const;
-    double terrainWorldZ(double elevation_m, double world_units_per_meter) const;
-    bool terrainElevationAtCoordinate(
-        const CoordinateWGS84 &coordinate, double *elevation_m,
-        bool request_missing_tile = true);
     bool globeTerrainElevationAtCoordinate(
         const CoordinateWGS84 &coordinate, double *elevation_m,
         double *cell_size_m) const;
@@ -230,11 +212,8 @@ private:
     std::unique_ptr<QRhiBuffer> tank_vertex_buffer;
     std::unique_ptr<QRhiBuffer> reservoir_vertex_buffer;
     std::unique_ptr<QRhiBuffer> junction_mesh_vertex_buffer;
-    std::unique_ptr<QRhiBuffer> junction_instance_buffer;
-    std::unique_ptr<QRhiBuffer> underground_link_vertex_buffer;
-    std::unique_ptr<QRhiBuffer> underground_junction_instance_buffer;
     // Globe-view network geometry lives in its own buffers, separate from
-    // the ThreeD/TwoD ones above, even though both draw with the same
+    // the flat 2D ones above, even though both draw with the same
     // link/node/icon pipelines and the same shader_resource_bindings/
     // icon_shader_resource_bindings (see MapRhiGlobeNetworkScene). Only one
     // view mode ever renders in a given frame, so there is no per-frame
@@ -257,7 +236,7 @@ private:
     std::unique_ptr<QRhiBuffer> globe_icon_vertex_buffer;
     // Populated only while X-Ray mode is active (see
     // MapRhiGlobeNetworkScene::setUndergroundXRayEnabled()); drawn through
-    // the same link_xray_pipeline the ThreeD view already built, since that
+    // the shared link_xray_pipeline, since that
     // pipeline's fragment shader is coordinate-system agnostic like the
     // rest of the shared link/node/icon shaders.
     std::unique_ptr<QRhiBuffer> globe_underground_link_vertex_buffer;
@@ -278,7 +257,8 @@ private:
     std::unique_ptr<QRhiShaderResourceBindings> reservoir_shader_resource_bindings;
     std::unique_ptr<QRhiGraphicsPipeline> link_pipeline;
     // Globe chevrons retain their surface-aligned 3D geometry, but use a
-    // depth-stable raster path that is deliberately independent of ThreeD.
+    // depth-stable raster path independent of the ordinary depth-tested
+    // network pass.
     std::unique_ptr<QRhiGraphicsPipeline> globe_flow_direction_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> selected_link_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> node_pipeline;
@@ -288,16 +268,14 @@ private:
     std::unique_ptr<QRhiGraphicsPipeline> heatmap_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> tank_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> reservoir_pipeline;
-    std::unique_ptr<QRhiGraphicsPipeline> junction_pipeline;
     // Globe-owned junction pipelines use the same shader, quad, instance
-    // layout, and no-culling state as ThreeD, but keep their own pipeline
+    // layout and no-culling state used by the Globe, but keep their own pipeline
     // objects so Globe-specific render-state changes stay isolated.
     std::unique_ptr<QRhiGraphicsPipeline> globe_junction_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> globe_junction_no_depth_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> link_xray_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> junction_xray_pipeline;
     std::unique_ptr<QRhiGraphicsPipeline> link_no_depth_pipeline;
-    std::unique_ptr<QRhiGraphicsPipeline> junction_no_depth_pipeline;
     int link_vertex_buffer_size = 0;
     int node_vertex_buffer_size = 0;
     int selected_link_vertex_buffer_size = 0;
@@ -310,9 +288,6 @@ private:
     int tank_vertex_buffer_size = 0;
     int reservoir_vertex_buffer_size = 0;
     int junction_mesh_vertex_buffer_size = 0;
-    int junction_instance_buffer_size = 0;
-    int underground_link_vertex_buffer_size = 0;
-    int underground_junction_instance_buffer_size = 0;
     int globe_link_vertex_buffer_size = 0;
     int globe_node_vertex_buffer_size = 0;
     int globe_junction_instance_buffer_size = 0;
@@ -332,9 +307,6 @@ private:
     bool tank_upload_pending = true;
     bool reservoir_upload_pending = true;
     bool junction_mesh_upload_pending = true;
-    bool junction_instance_upload_pending = true;
-    bool underground_geometry_upload_pending = true;
-    bool underground_geometry_dirty = true;
     bool globe_geometry_upload_pending = true;
     bool globe_highlight_upload_pending = true;
     bool globe_flow_direction_upload_pending = true;
@@ -348,18 +320,14 @@ private:
     QVector<MapRhiScene::HeatmapVertex> heatmap_render_vertices;
     QVector<MapRhiTankModelVertex> tank_model_vertices;
     QVector<MapRhiReservoirModelVertex> reservoir_model_vertices;
-    QVector<MapRhiScene::LinkVertex> underground_link_vertices;
-    QVector<MapRhiJunctionInstance> underground_junction_instances;
     MapRhiUndergroundMode underground_mode = MapRhiUndergroundMode::XRay;
     bool symbology_initialized = false;
     bool ready_reported = false;
     bool failure_reported = false;
-    bool terrain_camera_distance_sync_active = false;
     bool globe_terrain_camera_sync_active = false;
     bool globe_terrain_prime_after_network_pending = false;
     bool globe_underground_refresh_requested = false;
     quint64 globe_underground_refresh_generation = 0;
-    QElapsedTimer terrain_pan_smoothing_clock;
     QElapsedTimer globe_terrain_follow_clock;
     QTimer *globe_terrain_follow_timer = nullptr;
 };

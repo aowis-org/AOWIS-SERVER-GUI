@@ -67,11 +67,11 @@ private:
 // Highest imagery zoom the globe will ever request. Matches MapModel::MaxZoom
 // (19) exactly, since MapModel::MinViewGlobeDistanceM is itself pinned to
 // zoom 19 via viewGlobeDistanceMForZoomLevel() -- the globe's maximum zoom-in
-// should reach exactly as much detail as 2D/3D ever do, no more, no less.
+// should reach exactly as much detail as 2D does, no more, no less.
 constexpr int GlobeImageryMaxZoom = MapModel::MaxZoom;
 constexpr int GlobeTerrainReliefMinimumZoom = 8;
-// Keep the same terrain LOD policy as the flat RHI 3D renderer: powers of
-// two from one cell up to the DEM-native density, with camera-driven rebuilds
+// Terrain LOD uses powers of two from one cell up to the DEM-native density,
+// with camera-driven rebuilds
 // rate-limited so continuous orbit/zoom never resamples the retained apron at
 // vsync frequency.
 constexpr int GlobeTerrainMinimumLodCellCount = 1;
@@ -1022,7 +1022,7 @@ QVector<MapRhiGlobeQuadtreeLeaf> selectVisibleGlobeQuadtreeLeaves(
 // important close to the poles where many different Mercator X tiles are at
 // essentially the same physical distance from the crosshair. Lower values are
 // dispatched first by MapTileRepository, matching the centre-out behaviour of
-// the 2D/3D renderer.
+// the flat 2D renderer.
 int globeTileRequestPriority(
     int tile_x, int tile_y, int zoom, double center_lon_deg, double center_lat_deg)
 {
@@ -1817,8 +1817,8 @@ int MapRhiGlobeRenderer::terrainCellCountForTile(
     const double ground_distance_from_focus_m =
         double((tile_center - camera_basis->target).length());
 
-    // Exactly the same "full detail down to zoom" rule as flat RHI 3D:
-    // only the focus tile is forced to the DEM-native density. The rest of
+    // The "full detail down to zoom" rule forces only the focus tile to the
+    // DEM-native density. The rest of
     // the retained globe still follows screen-space falloff.
     if (tile.zoom >= guiConfiguration().map_performance.terrain_full_detail_zoom
         && ground_distance_from_focus_m < tile_reference_size_m * 0.75)
@@ -2622,7 +2622,6 @@ void MapRhiGlobeRenderer::rebuildWindow(
                         tile.terrain_stitch_bottom_cell_count;
                     request.stitch_left_cell_count =
                         tile.terrain_stitch_left_cell_count;
-                    request.geometry = MapRhiTerrainMeshGeometry::GlobeEcef;
                     request.globe_vertical_exaggeration =
                         this->map_model->view3dVerticalExaggeration();
                     request.globe_render_origin_x = this->render_origin_ecef.x;
@@ -3968,7 +3967,7 @@ bool MapRhiGlobeRenderer::ensureTileResource(
 // Falls back to a placeholder derived from already-loaded neighboring tiles
 // while tile's own imagery is still in flight, instead of the flat
 // GlobeMissingTileColor fill -- the same "keep showing something real
-// instead of a blank/flat placeholder" goal the flat 2D/3D basemap
+// instead of a blank/flat placeholder" goal the flat 2D basemap
 // renderer's parent/child LOD handoff serves. The resulting image is kept
 // in the ordinary per-tile texture and, when a layer is available, uploaded
 // into the shared Globe array as well.
@@ -6131,7 +6130,6 @@ void MapRhiGlobeRenderer::scheduleReadyTerrainMeshes()
             tile->terrain_stitch_bottom_cell_count;
         request.stitch_left_cell_count =
             tile->terrain_stitch_left_cell_count;
-        request.geometry = MapRhiTerrainMeshGeometry::GlobeEcef;
         request.globe_vertical_exaggeration =
             this->map_model->view3dVerticalExaggeration();
         request.globe_render_origin_x = this->render_origin_ecef.x;
@@ -6308,9 +6306,8 @@ bool MapRhiGlobeRenderer::createTileArrayPage()
 
 bool MapRhiGlobeRenderer::createTileArrayResources()
 {
-    // MapRhiWidget owns both planar and Globe renderers at once and calls
-    // initialize() on both. Avoid reserving even the first 64 MiB page until
-    // Globe is actually selected, and honor the shared batching switch before
+    // Avoid reserving even the first 64 MiB page until Globe is actually
+    // selected, and honor the shared batching switch before
     // any optional resource allocation occurs. Further pages are created only
     // by ensureTileArrayLayer() after every existing page is full.
     if (this->map_model == nullptr

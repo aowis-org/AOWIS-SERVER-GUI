@@ -120,8 +120,6 @@ private:
     bool hasView3dKeyboardZoomInput() const;
     void updateView2dKeyboardZoom(qreal elapsed_seconds);
     void updateView3dKeyboardZoom(qreal elapsed_seconds);
-    void beginView3dKeyboardZoomInteraction();
-    void endView3dKeyboardZoomInteraction();
     QPointF keyboardPanDirection() const;
     QPointF edgePanDirection() const;
     void panMapByPixels(const QPoint &delta, bool keyboard_pan = false);
@@ -183,7 +181,6 @@ private:
     bool view_2d_zoom_out_key_pressed = false;
     bool view_3d_zoom_in_key_pressed = false;
     bool view_3d_zoom_out_key_pressed = false;
-    bool view_3d_keyboard_zoom_interaction_active = false;
     bool keyboard_pan_motion_active = false;
 
     bool edge_panning_enabled = false;
@@ -203,12 +200,11 @@ private:
 #endif
     bool backing_store_pan_active = false;
 
-    int wheel_delta_accumulated = 0;
 
 signals:
     void signalZoomChanged(int zoom);
     // Continuous zoom-level counterpart to signalZoomChanged() above,
-    // purely additive: fires the discrete 2D/3D zoom as a double in those
+    // purely additive: fires the discrete 2D zoom as a double there
     // modes, and the 2D-equivalent continuous zoom level (see
     // MapModel::viewGlobeZoomLevel()) while in Globe mode, where there is
     // no discrete zoom to report. Used by the footer's live zoom control.

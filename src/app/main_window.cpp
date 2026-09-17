@@ -282,7 +282,7 @@ MainWindow::MainWindow(QWidget *parent)
         if (active_model->viewMode() == MapViewMode::Globe)
             active_model->setViewGlobeZoomLevel(zoom, active_widget->size());
         else
-            active_model->setZoom(qRound(zoom), active_widget->size());
+            active_model->setView2dContinuousZoom(zoom, active_widget->size());
     });
     
     MapNavigationWidget *map_edit_nav = this->map_editor->mapNavigationWidget();
@@ -520,21 +520,17 @@ void MainWindow::syncMapMovement(MapWidget *source, MapWidget *target)
     if (!source_model || !target_model)
         return;
 
-    double source_zoom = double(source_model->zoom());
-    if (source_model->viewMode() == MapViewMode::TwoD)
-        source_zoom = source_model->view2dContinuousZoom();
-    else if (source_model->viewMode() == MapViewMode::Globe)
-        source_zoom = source_model->viewGlobeZoomLevel(source->size());
+    const double source_zoom = source_model->viewMode() == MapViewMode::Globe
+        ? source_model->viewGlobeZoomLevel(source->size())
+        : source_model->view2dContinuousZoom();
 
     this->syncing_map_movement = true;
     target_model->setCenter(
         source_model->centerLon(), source_model->centerLat(), target->size());
     if (target_model->viewMode() == MapViewMode::Globe)
         target_model->setViewGlobeZoomLevel(source_zoom, target->size());
-    else if (target_model->viewMode() == MapViewMode::TwoD)
-        target_model->setView2dContinuousZoom(source_zoom, target->size());
     else
-        target_model->setZoom(qRound(source_zoom), target->size());
+        target_model->setView2dContinuousZoom(source_zoom, target->size());
     this->syncing_map_movement = false;
 }
 
@@ -547,9 +543,6 @@ void MainWindow::syncMonitorViewModesFromActive()
     }
 
     const MapViewMode view_mode = this->map_model_monitor->viewMode();
-    if (view_mode != MapViewMode::TwoD && view_mode != MapViewMode::Globe)
-        return;
-
     this->syncing_monitor_view_modes = true;
 
     const double center_lon = this->map_model_monitor->centerLon();
@@ -596,7 +589,7 @@ void MainWindow::captureMonitorCenter()
         this->monitor_2d_center_lon = center_lon;
         this->monitor_2d_center_lat = center_lat;
     }
-    else if (this->map_model_monitor->viewMode() == MapViewMode::Globe)
+    else
     {
         this->monitor_globe_center_lon = center_lon;
         this->monitor_globe_center_lat = center_lat;
@@ -607,12 +600,6 @@ void MainWindow::handleMonitorViewModeChanged(MapViewMode view_mode)
 {
     if (this->map_model_monitor == nullptr || this->map_mon == nullptr)
         return;
-
-    if (view_mode != MapViewMode::TwoD && view_mode != MapViewMode::Globe)
-    {
-        this->monitor_last_view_mode = view_mode;
-        return;
-    }
 
     if (this->sync_map_movement)
     {
