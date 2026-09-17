@@ -14,7 +14,6 @@
 
 #include <QByteArray>
 #include <QDebug>
-#include <QFile>
 #include <QHash>
 #include <QImage>
 #include <QLoggingCategory>
@@ -23,12 +22,12 @@
 #include <QRect>
 #include <QSet>
 #include <QtMath>
-#include <rhi/qshader.h>
 #include <rhi/qrhi.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <functional>
 #include <limits>
 #include <utility>
 
@@ -91,8 +90,6 @@ const QColor GlobePolarCapColor(235, 240, 245);
 // while requests are still arriving. This low-contrast ocean-like fallback is
 // only visible until the real tile texture is uploaded.
 const QColor GlobeMissingTileColor(18, 58, 72);
-
-constexpr int GlobeCameraUniformBytes = 24 * int(sizeof(float));
 
 bool rayAabbIntersectionDistanceRange(
     const QVector3D &ray_origin, const QVector3D &ray_direction,
@@ -493,13 +490,6 @@ bool globeTerrainDatumIsOrthometric(MapTerrainVerticalDatum datum)
         || datum == MapTerrainVerticalDatum::Egm2008;
 }
 
-QShader loadGlobeShader(const QString &resource_path)
-{
-    QFile file(resource_path);
-    if (!file.open(QIODevice::ReadOnly))
-        return QShader();
-    return QShader::fromSerialized(file.readAll());
-}
 }
 
 MapRhiGlobeRenderer::MapRhiGlobeRenderer(MapModel *map_model, MapTileRepository *tile_repository)
@@ -611,8 +601,7 @@ bool MapRhiGlobeRenderer::setRenderOriginEcef(
     this->cap_vertices.clear();
     this->cap_indices.clear();
     this->cap_tiles.clear();
-    this->cap_vertex_upload_pending = true;
-    this->cap_index_upload_pending = true;
+    this->surface_backend.invalidateCaps();
     return true;
 }
 
@@ -661,6 +650,7 @@ void MapRhiGlobeRenderer::setWireframeVisible(bool visible)
         return;
 
     this->wireframe_visible = visible;
+    this->prepared_surface_render_frame.wireframe_visible = visible;
     this->preparation_dirty = true;
     if (visible)
         rebuildWireframeVertices();
@@ -672,6 +662,7 @@ void MapRhiGlobeRenderer::setMapVisible(bool visible)
         return;
 
     this->map_visible = visible;
+    this->prepared_surface_render_frame.map_visible = visible;
     this->preparation_dirty = true;
     if (visible)
         this->window_tiles_requested = false;
@@ -875,7 +866,7 @@ bool MapRhiGlobeRenderer::visibleTerrainRayIntersection(
         if (index_begin < 0 || index_end > this->window_indices.size())
             continue;
 
-        const auto test_index_range =
+        const std::function<void(qsizetype, qsizetype)> test_index_range =
             [this, &relative_origin, &direction, &nearest_distance_m, &found]
             (qsizetype range_begin, qsizetype range_end)
         {
@@ -1105,8 +1096,7 @@ void MapRhiGlobeRenderer::buildCaps()
     buildPolarCap(true);
     buildPolarCap(false);
     this->caps_built = true;
-    this->cap_vertex_upload_pending = true;
-    this->cap_index_upload_pending = true;
+    this->surface_backend.invalidateCaps();
     if (this->wireframe_visible)
         rebuildWireframeVertices();
 }
@@ -1194,7 +1184,7 @@ bool MapRhiGlobeRenderer::currentTerrainLodMatches(
 
 void MapRhiGlobeRenderer::resetTerrainHeightCache()
 {
-    this->terrain_height_array_pages.clear();
+    this->surface_backend.terrainHeightArrayPages().clear();
     this->terrain_height_cache.clear();
     this->terrain_height_cache_frame = 0;
     this->terrain_height_cache_disabled = false;
@@ -1211,30 +1201,10 @@ void MapRhiGlobeRenderer::resetTerrainHeightCache()
 
 bool MapRhiGlobeRenderer::createTerrainHeightArrayPage()
 {
-    if (this->rhi == nullptr
-        || int(this->terrain_height_array_pages.size())
-            >= GlobeTerrainHeightArrayMaximumPageCount
-        || !this->rhi->isFeatureSupported(QRhi::TextureArrays)
-        || !this->rhi->isTextureFormatSupported(QRhiTexture::R32F))
-    {
-        return false;
-    }
-
-    TerrainHeightArrayPage page;
-    page.texture.reset(this->rhi->newTextureArray(
-        QRhiTexture::R32F, GlobeTerrainHeightArrayLayerCount,
-        QSize(MapTerrainTileGridSize, MapTerrainTileGridSize)));
-    if (!page.texture || !page.texture->create())
-        return false;
-
-    page.free_layers.reserve(GlobeTerrainHeightArrayLayerCount);
-    for (int layer = GlobeTerrainHeightArrayLayerCount - 1;
-         layer >= 0; --layer)
-    {
-        page.free_layers.append(layer);
-    }
-    this->terrain_height_array_pages.push_back(std::move(page));
-    return true;
+    return this->surface_backend.createTerrainHeightArrayPage(
+        this->rhi, QSize(MapTerrainTileGridSize, MapTerrainTileGridSize),
+        GlobeTerrainHeightArrayLayerCount,
+        GlobeTerrainHeightArrayMaximumPageCount);
 }
 
 void MapRhiGlobeRenderer::releaseTerrainHeightCacheEntry(
@@ -1247,12 +1217,12 @@ void MapRhiGlobeRenderer::releaseTerrainHeightCacheEntry(
 
     const TerrainHeightCacheEntry entry = iterator.value();
     if (entry.array_page >= 0
-        && entry.array_page < int(this->terrain_height_array_pages.size())
+        && entry.array_page < int(this->surface_backend.terrainHeightArrayPages().size())
         && entry.array_layer >= 0
         && entry.array_layer < GlobeTerrainHeightArrayLayerCount)
     {
         TerrainHeightArrayPage &page =
-            this->terrain_height_array_pages[entry.array_page];
+            this->surface_backend.terrainHeightArrayPages()[entry.array_page];
         if (!page.free_layers.contains(entry.array_layer))
             page.free_layers.append(entry.array_layer);
     }
@@ -1272,13 +1242,13 @@ MapRhiGlobeRenderer::ensureTerrainHeightCacheEntry(
         return &existing.value();
     }
 
-    const auto free_page_index = [this]()
+    const std::function<int()> free_page_index = [this]()
     {
         for (int page_index = 0;
-             page_index < int(this->terrain_height_array_pages.size());
+             page_index < int(this->surface_backend.terrainHeightArrayPages().size());
              ++page_index)
         {
-            if (!this->terrain_height_array_pages[page_index]
+            if (!this->surface_backend.terrainHeightArrayPages()[page_index]
                      .free_layers.isEmpty())
             {
                 return page_index;
@@ -1290,12 +1260,12 @@ MapRhiGlobeRenderer::ensureTerrainHeightCacheEntry(
     int page_index = free_page_index();
     if (page_index < 0
         && !this->terrain_height_cache_page_growth_disabled
-        && int(this->terrain_height_array_pages.size())
+        && int(this->surface_backend.terrainHeightArrayPages().size())
             < GlobeTerrainHeightArrayMaximumPageCount)
     {
         if (createTerrainHeightArrayPage())
         {
-            page_index = int(this->terrain_height_array_pages.size()) - 1;
+            page_index = int(this->surface_backend.terrainHeightArrayPages().size()) - 1;
         }
         else
         {
@@ -1340,7 +1310,7 @@ MapRhiGlobeRenderer::ensureTerrainHeightCacheEntry(
     }
 
     TerrainHeightArrayPage &page =
-        this->terrain_height_array_pages[page_index];
+        this->surface_backend.terrainHeightArrayPages()[page_index];
     if (!page.texture || page.free_layers.isEmpty())
     {
         ++this->terrain_height_cache_profile.capacity_misses;
@@ -1401,18 +1371,18 @@ void MapRhiGlobeRenderer::prepareTerrainHeightCache(
     if (visible_terrain_keys.isEmpty())
         return;
 
-    if (!this->rhi->isFeatureSupported(QRhi::TextureArrays)
-        || !this->rhi->isTextureFormatSupported(QRhiTexture::R32F))
+    if (!this->surface_backend.supportsTextureArrays(this->rhi)
+        || !this->surface_backend.supportsR32fTextures(this->rhi))
     {
         this->terrain_height_cache_disabled = true;
         if (this->terrain_height_cache_profile.enabled)
         {
             qCDebug(globeTerrainHeightCachePerformanceLog).nospace()
                 << "status=unsupported texture_arrays="
-                << (this->rhi->isFeatureSupported(QRhi::TextureArrays)
+                << (this->surface_backend.supportsTextureArrays(this->rhi)
                     ? 1 : 0)
                 << " r32f="
-                << (this->rhi->isTextureFormatSupported(QRhiTexture::R32F)
+                << (this->surface_backend.supportsR32fTextures(this->rhi)
                     ? 1 : 0);
         }
         return;
@@ -1430,11 +1400,11 @@ void MapRhiGlobeRenderer::prepareTerrainHeightCache(
                 != this->terrain_height_cache.end()
             && cache_iterator.value().array_page >= 0
             && cache_iterator.value().array_page
-                < int(this->terrain_height_array_pages.size())
+                < int(this->surface_backend.terrainHeightArrayPages().size())
             && cache_iterator.value().array_layer >= 0
             && cache_iterator.value().array_layer
                 < GlobeTerrainHeightArrayLayerCount
-            && this->terrain_height_array_pages[
+            && this->surface_backend.terrainHeightArrayPages()[
                    cache_iterator.value().array_page].texture != nullptr;
         if (cache_iterator != this->terrain_height_cache.end()
             && !valid_assignment)
@@ -1489,7 +1459,7 @@ void MapRhiGlobeRenderer::prepareTerrainHeightCache(
 
         if (entry == nullptr)
         {
-            if (this->terrain_height_array_pages.empty())
+            if (this->surface_backend.terrainHeightArrayPages().empty())
             {
                 this->terrain_height_cache_disabled = true;
                 break;
@@ -1503,14 +1473,11 @@ void MapRhiGlobeRenderer::prepareTerrainHeightCache(
             reinterpret_cast<const char *>(
                 terrain_tile->elevations_m.constData()),
             int(byte_count));
-        const QRhiTextureSubresourceUploadDescription subresource(
-            raw_heights);
-        const QRhiTextureUploadEntry upload_entry(
-            entry->array_layer, 0, subresource);
         TerrainHeightArrayPage &page =
-            this->terrain_height_array_pages[entry->array_page];
-        resource_updates->uploadTexture(
-            page.texture.get(), QRhiTextureUploadDescription(upload_entry));
+            this->surface_backend.terrainHeightArrayPages()[entry->array_page];
+        this->surface_backend.uploadTextureArrayLayerRaw(
+            resource_updates, page.texture.get(), entry->array_layer,
+            raw_heights);
         entry->uploaded = true;
         ++this->terrain_height_cache_profile.uploads;
         this->terrain_height_cache_profile.upload_bytes +=
@@ -1558,7 +1525,7 @@ void MapRhiGlobeRenderer::reportTerrainHeightCacheProfile() const
     constexpr double NsecsPerMillisecond = 1000000.0;
     constexpr double BytesPerMebibyte = 1024.0 * 1024.0;
     const quint64 allocated_bytes =
-        quint64(this->terrain_height_array_pages.size())
+        quint64(this->surface_backend.terrainHeightArrayPages().size())
         * quint64(GlobeTerrainHeightArrayLayerCount)
         * GlobeTerrainHeightTileBytes;
     const char *status = this->terrain_height_cache_disabled
@@ -1588,7 +1555,7 @@ void MapRhiGlobeRenderer::reportTerrainHeightCacheProfile() const
         << " capacity_misses="
         << this->terrain_height_cache_profile.capacity_misses
         << " resident_layers=" << this->terrain_height_cache.size()
-        << " pages=" << this->terrain_height_array_pages.size()
+        << " pages=" << this->surface_backend.terrainHeightArrayPages().size()
         << " allocated_mib="
         << QString::number(
                double(allocated_bytes) / BytesPerMebibyte, 'f', 3)
@@ -1880,8 +1847,7 @@ void MapRhiGlobeRenderer::rebuildWindow(
 
     this->window_dirty = false;
     this->window_tiles_requested = false;
-    this->window_vertex_upload_pending = true;
-    this->window_index_upload_pending = true;
+    this->surface_backend.invalidateWindowGeometry();
     // Keep the second layer stream lazy: most sessions never enable a
     // heatmap, so they should not allocate or clear one float per terrain
     // vertex merely because the Globe window changed.
@@ -1944,40 +1910,7 @@ void MapRhiGlobeRenderer::rebuildWireframeVertices()
         (this->window_indices.size() + this->cap_indices.size()) * 2);
     appendWireframeEdges(this->window_vertices, this->window_indices);
     appendWireframeEdges(this->cap_vertices, this->cap_indices);
-    this->wireframe_vertex_upload_pending = true;
-}
-
-bool MapRhiGlobeRenderer::uploadWireframeVertices(
-    QRhiResourceUpdateBatch *resource_updates)
-{
-    if (!this->wireframe_visible || !this->wireframe_vertex_upload_pending)
-        return true;
-
-    if (this->wireframe_vertices.isEmpty())
-    {
-        this->wireframe_vertex_buffer.reset();
-        this->wireframe_vertex_buffer_size = 0;
-        this->wireframe_vertex_upload_pending = false;
-        return true;
-    }
-
-    const int required_bytes = int(
-        this->wireframe_vertices.size() * qsizetype(sizeof(WireframeVertex)));
-    if (!this->wireframe_vertex_buffer
-        || this->wireframe_vertex_buffer_size != required_bytes)
-    {
-        this->wireframe_vertex_buffer.reset(this->rhi->newBuffer(
-            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_bytes));
-        if (!this->wireframe_vertex_buffer || !this->wireframe_vertex_buffer->create())
-            return false;
-        this->wireframe_vertex_buffer_size = required_bytes;
-    }
-
-    resource_updates->updateDynamicBuffer(
-        this->wireframe_vertex_buffer.get(), 0, required_bytes,
-        this->wireframe_vertices.constData());
-    this->wireframe_vertex_upload_pending = false;
-    return true;
+    this->surface_backend.invalidateWireframe();
 }
 
 void MapRhiGlobeRenderer::pruneUnusedTileResources()
@@ -2002,6 +1935,8 @@ void MapRhiGlobeRenderer::pruneUnusedTileResources()
         {
             releaseHeatmapArrayLayer(iterator->second.get());
             releaseTileArrayLayer(iterator->second.get());
+            this->surface_backend.releaseTileGpuResource(
+                iterator->second->gpu_resource_id);
             iterator = this->tile_resources.erase(iterator);
         }
     }
@@ -2016,13 +1951,13 @@ bool MapRhiGlobeRenderer::arrayBatchingActive() const
     // their activation does not disable imagery batching. The setting is
     // shared with flat RHI batching and remains a pure performance switch.
     if (!guiConfiguration().map_performance.array_batching_enabled
-        || !this->array_pipeline
-        || this->tile_array_pages.empty())
+        || !this->surface_backend.imageryArrayPipelineReady()
+        || this->surface_backend.imageryArrayPages().empty())
     {
         return false;
     }
 
-    const TileArrayPage &first_page = this->tile_array_pages.front();
+    const TileArrayPage &first_page = this->surface_backend.imageryArrayPages().front();
     return first_page.texture && first_page.bindings;
 }
 
@@ -2056,11 +1991,11 @@ void MapRhiGlobeRenderer::releaseTileArrayLayer(TileResource *resource)
         return;
 
     if (resource->array_page >= 0
-        && resource->array_page < int(this->tile_array_pages.size())
+        && resource->array_page < int(this->surface_backend.imageryArrayPages().size())
         && resource->array_layer > 0
         && resource->array_layer < GlobeTileArrayLayerCount)
     {
-        TileArrayPage &page = this->tile_array_pages[resource->array_page];
+        TileArrayPage &page = this->surface_backend.imageryArrayPages()[resource->array_page];
         if (!page.free_layers.contains(resource->array_layer))
             page.free_layers.append(resource->array_layer);
     }
@@ -2082,12 +2017,12 @@ void MapRhiGlobeRenderer::releaseHeatmapArrayLayer(TileResource *resource)
 
     if (resource->heatmap_array_page >= 0
         && resource->heatmap_array_page
-            < int(this->heatmap_array_pages.size())
+            < int(this->surface_backend.heatmapArrayPages().size())
         && resource->heatmap_array_layer > 0
         && resource->heatmap_array_layer < GlobeTileArrayLayerCount)
     {
         HeatmapArrayPage &page =
-            this->heatmap_array_pages[resource->heatmap_array_page];
+            this->surface_backend.heatmapArrayPages()[resource->heatmap_array_page];
         if (!page.free_layers.contains(resource->heatmap_array_layer))
             page.free_layers.append(resource->heatmap_array_layer);
     }
@@ -2104,13 +2039,13 @@ void MapRhiGlobeRenderer::releaseHeatmapArrayLayer(TileResource *resource)
 
 void MapRhiGlobeRenderer::trimUnusedTileArrayPages()
 {
-    while (this->tile_array_pages.size() > 1)
+    while (this->surface_backend.imageryArrayPages().size() > 1)
     {
-        const TileArrayPage &page = this->tile_array_pages.back();
+        const TileArrayPage &page = this->surface_backend.imageryArrayPages().back();
         if (page.free_layers.size() != GlobeTileArrayUsableLayerCount)
             break;
         this->heatmap_array_draw_batches.clear();
-        this->tile_array_pages.pop_back();
+        this->surface_backend.imageryArrayPages().pop_back();
         this->tile_array_draw_indices_dirty = true;
         this->heatmap_array_draw_indices_dirty = true;
     }
@@ -2118,13 +2053,13 @@ void MapRhiGlobeRenderer::trimUnusedTileArrayPages()
 
 void MapRhiGlobeRenderer::trimUnusedHeatmapArrayPages()
 {
-    while (this->heatmap_array_pages.size() > 1)
+    while (this->surface_backend.heatmapArrayPages().size() > 1)
     {
-        const HeatmapArrayPage &page = this->heatmap_array_pages.back();
+        const HeatmapArrayPage &page = this->surface_backend.heatmapArrayPages().back();
         if (page.free_layers.size() != GlobeTileArrayUsableLayerCount)
             break;
         this->heatmap_array_draw_batches.clear();
-        this->heatmap_array_pages.pop_back();
+        this->surface_backend.heatmapArrayPages().pop_back();
         this->heatmap_array_draw_indices_dirty = true;
     }
 }
@@ -2146,7 +2081,7 @@ void MapRhiGlobeRenderer::resetWindowArrayLayers()
         }
     }
     if (vertices_changed)
-        this->window_vertex_upload_pending = true;
+        this->surface_backend.invalidateWindowVertices();
 
     if (!this->window_heatmap_array_layers.isEmpty())
     {
@@ -2162,7 +2097,7 @@ void MapRhiGlobeRenderer::resetWindowArrayLayers()
 void MapRhiGlobeRenderer::rebuildTileArrayDrawIndices()
 {
     this->tile_array_draw_indices.clear();
-    for (TileArrayPage &page : this->tile_array_pages)
+    for (TileArrayPage &page : this->surface_backend.imageryArrayPages())
     {
         page.first_draw_index = 0;
         page.draw_index_count = 0;
@@ -2185,12 +2120,12 @@ void MapRhiGlobeRenderer::rebuildTileArrayDrawIndices()
 
         const bool valid_page_index = tile.resource != nullptr
             && tile.resource->array_page >= 0
-            && tile.resource->array_page < int(this->tile_array_pages.size());
+            && tile.resource->array_page < int(this->surface_backend.imageryArrayPages().size());
         bool valid_page = false;
         if (valid_page_index)
         {
             const TileArrayPage &page =
-                this->tile_array_pages[tile.resource->array_page];
+                this->surface_backend.imageryArrayPages()[tile.resource->array_page];
             valid_page = page.texture && page.bindings;
         }
         const bool valid_resource = valid_page
@@ -2206,9 +2141,9 @@ void MapRhiGlobeRenderer::rebuildTileArrayDrawIndices()
 
     this->tile_array_draw_indices.reserve(this->window_indices.size());
     for (int page_index = 0;
-         page_index < int(this->tile_array_pages.size()); ++page_index)
+         page_index < int(this->surface_backend.imageryArrayPages().size()); ++page_index)
     {
-        TileArrayPage &page = this->tile_array_pages[page_index];
+        TileArrayPage &page = this->surface_backend.imageryArrayPages()[page_index];
         page.first_draw_index = this->tile_array_draw_indices.size();
         for (const GlobeTile &tile : this->window_tiles)
         {
@@ -2252,30 +2187,13 @@ bool MapRhiGlobeRenderer::uploadTileArrayDrawIndices(
         return true;
     }
 
-    const int required_bytes = int(
-        this->tile_array_draw_indices.size() * qsizetype(sizeof(quint32)));
-    if (!this->tile_array_draw_index_buffer
-        || this->tile_array_draw_index_buffer_size < required_bytes)
+    if (!this->surface_backend.uploadImageryArrayDrawIndices(
+            this->rhi, resource_updates, this->tile_array_draw_indices,
+            this->window_indices.size()))
     {
-        // Membership grows incrementally while imagery streams in. Reserve
-        // enough room for the entire current window so each arriving tile
-        // updates this buffer instead of destroying and recreating it.
-        const int allocation_bytes = qMax(
-            required_bytes,
-            int(this->window_indices.size() * qsizetype(sizeof(quint32))));
-        this->tile_array_draw_index_buffer.reset(this->rhi->newBuffer(
-            QRhiBuffer::Dynamic, QRhiBuffer::IndexBuffer, allocation_bytes));
-        if (!this->tile_array_draw_index_buffer
-            || !this->tile_array_draw_index_buffer->create())
-        {
-            return false;
-        }
-        this->tile_array_draw_index_buffer_size = allocation_bytes;
+        return false;
     }
 
-    resource_updates->updateDynamicBuffer(
-        this->tile_array_draw_index_buffer.get(), 0, required_bytes,
-        this->tile_array_draw_indices.constData());
     this->tile_array_draw_index_upload_pending = false;
     return true;
 }
@@ -2284,15 +2202,14 @@ bool MapRhiGlobeRenderer::heatmapArrayBatchingActive() const
 {
     if (!arrayBatchingActive()
         || this->heatmap_scene.isEmpty()
-        || !this->heatmap_array_pipeline
-        || !this->heatmap_array_template_bindings
-        || this->heatmap_array_pages.empty())
+        || !this->surface_backend.heatmapArrayPipelineReady()
+        || this->surface_backend.heatmapArrayPages().empty())
     {
         return false;
     }
 
     const HeatmapArrayPage &first_page =
-        this->heatmap_array_pages.front();
+        this->surface_backend.heatmapArrayPages().front();
     return first_page.texture != nullptr;
 }
 
@@ -2317,12 +2234,12 @@ bool MapRhiGlobeRenderer::rebuildHeatmapArrayDrawIndices()
         const bool valid_imagery_page_index = tile.resource != nullptr
             && tile.resource->array_page >= 0
             && tile.resource->array_page
-                < int(this->tile_array_pages.size());
+                < int(this->surface_backend.imageryArrayPages().size());
         bool valid_imagery_page = false;
         if (valid_imagery_page_index)
         {
             const TileArrayPage &page =
-                this->tile_array_pages[tile.resource->array_page];
+                this->surface_backend.imageryArrayPages()[tile.resource->array_page];
             valid_imagery_page = page.texture && page.bindings;
         }
 
@@ -2331,12 +2248,12 @@ bool MapRhiGlobeRenderer::rebuildHeatmapArrayDrawIndices()
         const bool valid_heatmap_page_index = has_heatmap
             && tile.resource->heatmap_array_page >= 0
             && tile.resource->heatmap_array_page
-                < int(this->heatmap_array_pages.size());
+                < int(this->surface_backend.heatmapArrayPages().size());
         bool valid_heatmap_page = !has_heatmap;
         if (valid_heatmap_page_index)
         {
             const HeatmapArrayPage &page =
-                this->heatmap_array_pages[
+                this->surface_backend.heatmapArrayPages()[
                     tile.resource->heatmap_array_page];
             valid_heatmap_page = page.texture != nullptr;
         }
@@ -2376,11 +2293,11 @@ bool MapRhiGlobeRenderer::rebuildHeatmapArrayDrawIndices()
 
     this->heatmap_array_draw_indices.reserve(this->window_indices.size());
     for (int imagery_page_index = 0;
-         imagery_page_index < int(this->tile_array_pages.size());
+         imagery_page_index < int(this->surface_backend.imageryArrayPages().size());
          ++imagery_page_index)
     {
         for (int heatmap_page_index = 0;
-             heatmap_page_index < int(this->heatmap_array_pages.size());
+             heatmap_page_index < int(this->surface_backend.heatmapArrayPages().size());
              ++heatmap_page_index)
         {
             const int first_draw_index =
@@ -2418,28 +2335,11 @@ bool MapRhiGlobeRenderer::rebuildHeatmapArrayDrawIndices()
             HeatmapArrayDrawBatch batch;
             batch.first_draw_index = first_draw_index;
             batch.draw_index_count = draw_index_count;
-            batch.bindings.reset(this->rhi->newShaderResourceBindings());
-            if (!batch.bindings)
-            {
-                this->heatmap_array_draw_indices.clear();
-                this->heatmap_array_draw_batches.clear();
-                return false;
-            }
-            batch.bindings->setBindings({
-                QRhiShaderResourceBinding::uniformBuffer(
-                    0, QRhiShaderResourceBinding::VertexStage
-                        | QRhiShaderResourceBinding::FragmentStage,
-                    this->camera_uniform_buffer.get()),
-                QRhiShaderResourceBinding::sampledTexture(
-                    1, QRhiShaderResourceBinding::FragmentStage,
-                    this->tile_array_pages[imagery_page_index].texture.get(),
-                    this->sampler.get()),
-                QRhiShaderResourceBinding::sampledTexture(
-                    2, QRhiShaderResourceBinding::FragmentStage,
-                    this->heatmap_array_pages[heatmap_page_index].texture.get(),
-                    this->sampler.get())
-            });
-            if (!batch.bindings->create())
+            if (!this->surface_backend.rebuildHeatmapArrayBindings(
+                    this->rhi,
+                    this->surface_backend.imageryArrayPages()[imagery_page_index].texture.get(),
+                    this->surface_backend.heatmapArrayPages()[heatmap_page_index].texture.get(),
+                    &batch.bindings))
             {
                 this->heatmap_array_draw_indices.clear();
                 this->heatmap_array_draw_batches.clear();
@@ -2474,34 +2374,13 @@ bool MapRhiGlobeRenderer::uploadHeatmapArrayDrawIndices(
         return true;
     }
 
-    const int required_bytes = int(
-        this->heatmap_array_draw_indices.size()
-        * qsizetype(sizeof(quint32)));
-    if (!this->heatmap_array_draw_index_buffer
-        || this->heatmap_array_draw_index_buffer_size < required_bytes)
+    if (!this->surface_backend.uploadHeatmapArrayDrawIndices(
+            this->rhi, resource_updates,
+            this->heatmap_array_draw_indices, this->window_indices.size()))
     {
-        // The fused pass eventually contains every array-ready tile. Grow
-        // geometrically while imagery arrives, capped at one full-window
-        // index copy.
-        const int growth_bytes = this->heatmap_array_draw_index_buffer_size
-            + qMax(this->heatmap_array_draw_index_buffer_size / 2, 65536);
-        const int maximum_bytes = int(
-            this->window_indices.size() * qsizetype(sizeof(quint32)));
-        const int allocation_bytes = qMin(
-            maximum_bytes, qMax(required_bytes, growth_bytes));
-        this->heatmap_array_draw_index_buffer.reset(this->rhi->newBuffer(
-            QRhiBuffer::Dynamic, QRhiBuffer::IndexBuffer, allocation_bytes));
-        if (!this->heatmap_array_draw_index_buffer
-            || !this->heatmap_array_draw_index_buffer->create())
-        {
-            return false;
-        }
-        this->heatmap_array_draw_index_buffer_size = allocation_bytes;
+        return false;
     }
 
-    resource_updates->updateDynamicBuffer(
-        this->heatmap_array_draw_index_buffer.get(), 0, required_bytes,
-        this->heatmap_array_draw_indices.constData());
     this->heatmap_array_draw_index_upload_pending = false;
     return true;
 }
@@ -2521,26 +2400,13 @@ bool MapRhiGlobeRenderer::uploadHeatmapArrayLayers(
         return false;
     }
 
-    const int required_bytes = int(
-        this->window_heatmap_array_layers.size()
-        * qsizetype(sizeof(float)));
-    if (!this->heatmap_array_layer_buffer
-        || this->heatmap_array_layer_buffer_size != required_bytes)
+    if (!this->surface_backend.uploadHeatmapArrayLayers(
+            this->rhi, resource_updates,
+            this->window_heatmap_array_layers))
     {
-        this->heatmap_array_layer_buffer.reset(this->rhi->newBuffer(
-            QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer,
-            required_bytes));
-        if (!this->heatmap_array_layer_buffer
-            || !this->heatmap_array_layer_buffer->create())
-        {
-            return false;
-        }
-        this->heatmap_array_layer_buffer_size = required_bytes;
+        return false;
     }
 
-    resource_updates->updateDynamicBuffer(
-        this->heatmap_array_layer_buffer.get(), 0, required_bytes,
-        this->window_heatmap_array_layers.constData());
     this->heatmap_array_layer_upload_pending = false;
     return true;
 }
@@ -2660,18 +2526,13 @@ bool MapRhiGlobeRenderer::stampTileArrayLayer(
         this->window_vertices[tile.first_vertex + index].layer = expected_layer;
 
     // Geometry rebuilds are followed by a full upload later in prepare().
-    // Once a stable buffer exists, only patch this tile's contiguous range
-    // when its imagery first acquires an array layer.
-    if (resource_updates != nullptr && this->window_vertex_buffer
-        && !this->window_vertex_upload_pending)
+    // Once the backend owns a current buffer, patch only this tile's
+    // contiguous range when its imagery first acquires an array layer.
+    if (!this->surface_backend.patchWindowVertices(
+            resource_updates, tile.first_vertex, tile.vertex_count,
+            this->window_vertices))
     {
-        const int byte_offset = int(
-            qsizetype(tile.first_vertex) * qsizetype(sizeof(TileVertex)));
-        const int byte_count = int(
-            qsizetype(tile.vertex_count) * qsizetype(sizeof(TileVertex)));
-        resource_updates->updateDynamicBuffer(
-            this->window_vertex_buffer.get(), byte_offset, byte_count,
-            this->window_vertices.constData() + tile.first_vertex);
+        this->surface_backend.invalidateWindowVertices();
     }
     return true;
 }
@@ -2681,7 +2542,7 @@ bool MapRhiGlobeRenderer::ensureTileArrayLayer(
     QRhiResourceUpdateBatch *resource_updates)
 {
     if (!arrayBatchingActive() || tile.is_cap || tile.resource == nullptr
-        || !tile.resource->texture || resource_updates == nullptr)
+        || !tileTextureReady(tile.resource) || resource_updates == nullptr)
     {
         setTileArrayReady(tile, false);
         return true;
@@ -2689,13 +2550,13 @@ bool MapRhiGlobeRenderer::ensureTileArrayLayer(
 
     TileResource *resource = tile.resource;
     bool valid_assignment = resource->array_page >= 0
-        && resource->array_page < int(this->tile_array_pages.size())
+        && resource->array_page < int(this->surface_backend.imageryArrayPages().size())
         && resource->array_layer > 0
         && resource->array_layer < GlobeTileArrayLayerCount;
     if (valid_assignment)
     {
         const TileArrayPage &page =
-            this->tile_array_pages[resource->array_page];
+            this->surface_backend.imageryArrayPages()[resource->array_page];
         valid_assignment = page.texture && page.bindings;
     }
     if (!valid_assignment
@@ -2709,9 +2570,9 @@ bool MapRhiGlobeRenderer::ensureTileArrayLayer(
     {
         int page_index = -1;
         for (int index = 0;
-             index < int(this->tile_array_pages.size()); ++index)
+             index < int(this->surface_backend.imageryArrayPages().size()); ++index)
         {
-            if (!this->tile_array_pages[index].free_layers.isEmpty())
+            if (!this->surface_backend.imageryArrayPages()[index].free_layers.isEmpty())
             {
                 page_index = index;
                 break;
@@ -2719,11 +2580,11 @@ bool MapRhiGlobeRenderer::ensureTileArrayLayer(
         }
 
         if (page_index < 0
-            && int(this->tile_array_pages.size())
+            && int(this->surface_backend.imageryArrayPages().size())
                 < GlobeTileArrayMaximumPageCount
             && createTileArrayPage())
         {
-            page_index = int(this->tile_array_pages.size()) - 1;
+            page_index = int(this->surface_backend.imageryArrayPages().size()) - 1;
         }
         if (page_index < 0)
         {
@@ -2731,7 +2592,7 @@ bool MapRhiGlobeRenderer::ensureTileArrayLayer(
             return true;
         }
 
-        TileArrayPage &page = this->tile_array_pages[page_index];
+        TileArrayPage &page = this->surface_backend.imageryArrayPages()[page_index];
         resource->array_page = page_index;
         resource->array_layer = page.free_layers.takeLast();
         resource->array_content_revision = 0;
@@ -2773,12 +2634,10 @@ bool MapRhiGlobeRenderer::ensureTileArrayLayer(
             return true;
         }
 
-        const QRhiTextureSubresourceUploadDescription subresource(image);
-        const QRhiTextureUploadEntry entry(
-            resource->array_layer, 0, subresource);
-        TileArrayPage &page = this->tile_array_pages[resource->array_page];
-        resource_updates->uploadTexture(
-            page.texture.get(), QRhiTextureUploadDescription(entry));
+        TileArrayPage &page =
+            this->surface_backend.imageryArrayPages()[resource->array_page];
+        this->surface_backend.uploadTextureArrayLayer(
+            resource_updates, page.texture.get(), resource->array_layer, image);
         resource->array_content_revision = resource->content_revision;
     }
 
@@ -2824,17 +2683,12 @@ bool MapRhiGlobeRenderer::stampTileHeatmapArrayLayer(
             expected_layer;
     }
 
-    if (resource_updates != nullptr && this->heatmap_array_layer_buffer
-        && !this->heatmap_array_layer_upload_pending)
+    if (!this->heatmap_array_layer_upload_pending
+        && !this->surface_backend.patchHeatmapArrayLayers(
+            resource_updates, tile.first_vertex, tile.vertex_count,
+            this->window_heatmap_array_layers))
     {
-        const int byte_offset = int(
-            qsizetype(tile.first_vertex) * qsizetype(sizeof(float)));
-        const int byte_count = int(
-            qsizetype(tile.vertex_count) * qsizetype(sizeof(float)));
-        resource_updates->updateDynamicBuffer(
-            this->heatmap_array_layer_buffer.get(), byte_offset, byte_count,
-            this->window_heatmap_array_layers.constData()
-                + tile.first_vertex);
+        this->heatmap_array_layer_upload_pending = true;
     }
     return true;
 }
@@ -2878,13 +2732,13 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
 
     bool valid_assignment = resource->heatmap_array_page >= 0
         && resource->heatmap_array_page
-            < int(this->heatmap_array_pages.size())
+            < int(this->surface_backend.heatmapArrayPages().size())
         && resource->heatmap_array_layer > 0
         && resource->heatmap_array_layer < GlobeTileArrayLayerCount;
     if (valid_assignment)
     {
         const HeatmapArrayPage &page =
-            this->heatmap_array_pages[resource->heatmap_array_page];
+            this->surface_backend.heatmapArrayPages()[resource->heatmap_array_page];
         valid_assignment = page.texture != nullptr;
     }
     if (!valid_assignment
@@ -2899,9 +2753,9 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
     {
         int page_index = -1;
         for (int index = 0;
-             index < int(this->heatmap_array_pages.size()); ++index)
+             index < int(this->surface_backend.heatmapArrayPages().size()); ++index)
         {
-            if (!this->heatmap_array_pages[index].free_layers.isEmpty())
+            if (!this->surface_backend.heatmapArrayPages()[index].free_layers.isEmpty())
             {
                 page_index = index;
                 break;
@@ -2909,11 +2763,11 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
         }
 
         if (page_index < 0
-            && int(this->heatmap_array_pages.size())
+            && int(this->surface_backend.heatmapArrayPages().size())
                 < GlobeTileArrayMaximumPageCount
             && createHeatmapArrayPage(resource_updates))
         {
-            page_index = int(this->heatmap_array_pages.size()) - 1;
+            page_index = int(this->surface_backend.heatmapArrayPages().size()) - 1;
         }
         if (page_index < 0)
         {
@@ -2922,7 +2776,7 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
             return true;
         }
 
-        HeatmapArrayPage &page = this->heatmap_array_pages[page_index];
+        HeatmapArrayPage &page = this->surface_backend.heatmapArrayPages()[page_index];
         resource->heatmap_array_page = page_index;
         resource->heatmap_array_layer = page.free_layers.takeLast();
         resource->heatmap_array_revision = 0;
@@ -2965,7 +2819,7 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
                 return true;
             }
 
-            HeatmapArrayPage &page = this->heatmap_array_pages[
+            HeatmapArrayPage &page = this->surface_backend.heatmapArrayPages()[
                 resource->heatmap_array_page];
             if (ensureDiagnosticHeatmapGpuBakeResources()
                 && queueHeatmapGpuBake(
@@ -3014,13 +2868,11 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
             return true;
         }
 
-        const QRhiTextureSubresourceUploadDescription subresource(image);
-        const QRhiTextureUploadEntry entry(
-            resource->heatmap_array_layer, 0, subresource);
         HeatmapArrayPage &page =
-            this->heatmap_array_pages[resource->heatmap_array_page];
-        resource_updates->uploadTexture(
-            page.texture.get(), QRhiTextureUploadDescription(entry));
+            this->surface_backend.heatmapArrayPages()[resource->heatmap_array_page];
+        this->surface_backend.uploadTextureArrayLayer(
+            resource_updates, page.texture.get(),
+            resource->heatmap_array_layer, image);
         if (this->heatmap_profile.enabled)
         {
             ++this->heatmap_profile.array_uploads;
@@ -3034,37 +2886,92 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
     return true;
 }
 
+bool MapRhiGlobeRenderer::ensureTileGpuResource(TileResource *resource)
+{
+    if (resource == nullptr)
+        return false;
+    if (resource->gpu_resource_id != 0)
+        return true;
+    resource->gpu_resource_id = this->surface_backend.createTileGpuResource();
+    return resource->gpu_resource_id != 0;
+}
+
+bool MapRhiGlobeRenderer::tileTextureReady(const TileResource *resource) const
+{
+    return resource != nullptr
+        && this->surface_backend.hasTileTexture(resource->gpu_resource_id);
+}
+
+bool MapRhiGlobeRenderer::tileHeatmapTextureReady(
+    const TileResource *resource) const
+{
+    return resource != nullptr
+        && this->surface_backend.hasTileHeatmapTexture(resource->gpu_resource_id);
+}
+
+bool MapRhiGlobeRenderer::tileBindingsReady(const TileResource *resource) const
+{
+    return resource != nullptr
+        && this->surface_backend.hasTileBindings(resource->gpu_resource_id);
+}
+
+QRhiTexture *MapRhiGlobeRenderer::tileTexture(const TileResource *resource) const
+{
+    return resource != nullptr
+        ? this->surface_backend.tileTexture(resource->gpu_resource_id)
+        : nullptr;
+}
+
+QRhiTexture *MapRhiGlobeRenderer::tileHeatmapTexture(
+    const TileResource *resource) const
+{
+    return resource != nullptr
+        ? this->surface_backend.tileHeatmapTexture(resource->gpu_resource_id)
+        : nullptr;
+}
+
+QRhiShaderResourceBindings *MapRhiGlobeRenderer::tileBindings(
+    const TileResource *resource) const
+{
+    return resource != nullptr
+        ? this->surface_backend.tileBindings(resource->gpu_resource_id)
+        : nullptr;
+}
+
+void MapRhiGlobeRenderer::invalidateTileBindings(TileResource *resource)
+{
+    if (resource != nullptr)
+        this->surface_backend.invalidateTileBindings(resource->gpu_resource_id);
+}
+
+void MapRhiGlobeRenderer::clearTileHeatmapTexture(TileResource *resource)
+{
+    if (resource != nullptr)
+        this->surface_backend.clearTileHeatmapTexture(resource->gpu_resource_id);
+}
+
+bool MapRhiGlobeRenderer::recreateTileTexture(
+    TileResource *resource, const QSize &size)
+{
+    return ensureTileGpuResource(resource)
+        && this->surface_backend.recreateTileTexture(
+            this->rhi, resource->gpu_resource_id, size);
+}
+
+bool MapRhiGlobeRenderer::recreateTileHeatmapTexture(
+    TileResource *resource, const QSize &size)
+{
+    return ensureTileGpuResource(resource)
+        && this->surface_backend.recreateTileHeatmapTexture(
+            this->rhi, resource->gpu_resource_id, size);
+}
+
 bool MapRhiGlobeRenderer::rebuildTileBindings(TileResource *resource)
 {
-    resource->bindings.reset(this->rhi->newShaderResourceBindings());
-    if (!resource->bindings)
+    if (!ensureTileGpuResource(resource) || !tileTextureReady(resource))
         return false;
-
-    // heatmap_texture is null for the overwhelming majority of tiles at
-    // any given moment (only tiles within heatmap_radius_m of an actual
-    // marker ever get one -- see renderHeatmapTile()'s bounding check), so
-    // this falls back to heatmap_dummy_texture (fully transparent) far
-    // more often than not. GlobeCameraBlock's heatmap_settings.y (opacity)
-    // being 0 whenever no heatmap is active at all (see prepare()) would
-    // already make map_rhi_globe.frag's blend a no-op even without this,
-    // but binding *something* valid is still required.
-    QRhiTexture *heatmap_texture = resource->heatmap_texture
-        ? resource->heatmap_texture.get()
-        : this->heatmap_dummy_texture.get();
-
-    resource->bindings->setBindings({
-        QRhiShaderResourceBinding::uniformBuffer(
-            0, QRhiShaderResourceBinding::VertexStage
-                | QRhiShaderResourceBinding::FragmentStage,
-            this->camera_uniform_buffer.get()),
-        QRhiShaderResourceBinding::sampledTexture(
-            1, QRhiShaderResourceBinding::FragmentStage,
-            resource->texture.get(), this->sampler.get()),
-        QRhiShaderResourceBinding::sampledTexture(
-            2, QRhiShaderResourceBinding::FragmentStage,
-            heatmap_texture, this->sampler.get())
-    });
-    return resource->bindings->create();
+    return this->surface_backend.rebuildTileBindings(
+        this->rhi, resource->gpu_resource_id);
 }
 
 bool MapRhiGlobeRenderer::ensureTileResource(
@@ -3081,18 +2988,22 @@ bool MapRhiGlobeRenderer::ensureTileResource(
 
     if (tile.is_cap)
     {
-        if (!this->cap_resource.texture)
+        if (!ensureTileGpuResource(&this->cap_resource))
+            return false;
+        if (!tileTextureReady(&this->cap_resource))
         {
             QImage image(1, 1, QImage::Format_RGBA8888);
             image.fill(GlobePolarCapColor);
-            this->cap_resource.texture.reset(
-                this->rhi->newTexture(QRhiTexture::RGBA8, image.size()));
-            if (!this->cap_resource.texture || !this->cap_resource.texture->create())
+            if (!recreateTileTexture(&this->cap_resource, image.size()))
                 return false;
-            resource_updates->uploadTexture(this->cap_resource.texture.get(), image);
+            this->surface_backend.uploadTextureImage(
+                resource_updates, tileTexture(&this->cap_resource), image);
         }
-        if (!this->cap_resource.bindings && !rebuildTileBindings(&this->cap_resource))
+        if (!tileBindingsReady(&this->cap_resource)
+            && !rebuildTileBindings(&this->cap_resource))
+        {
             return false;
+        }
 
         tile.resource = &this->cap_resource;
         return true;
@@ -3107,6 +3018,8 @@ bool MapRhiGlobeRenderer::ensureTileResource(
     if (!slot)
         slot = std::make_unique<TileResource>();
     TileResource *resource = slot.get();
+    if (!ensureTileGpuResource(resource))
+        return false;
 
     if (pixmap == nullptr)
     {
@@ -3131,17 +3044,19 @@ bool MapRhiGlobeRenderer::ensureTileResource(
     }
 
     const qint64 cache_key = pixmap->cacheKey();
-    if (!resource->texture || resource->is_provisional || resource->pixmap_cache_key != cache_key)
+    if (!tileTextureReady(resource) || resource->is_provisional || resource->pixmap_cache_key != cache_key)
     {
         QImage image = pixmap->toImage().convertToFormat(QImage::Format_RGBA8888);
         if (image.isNull())
             return true;
 
-        resource->bindings.reset();
-        resource->texture.reset(this->rhi->newTexture(QRhiTexture::RGBA8, image.size()));
-        if (!resource->texture || !resource->texture->create())
+        invalidateTileBindings(resource);
+        if (!recreateTileTexture(resource, image.size()))
+        {
             return false;
-        resource_updates->uploadTexture(resource->texture.get(), image);
+        }
+        this->surface_backend.uploadTextureImage(
+            resource_updates, tileTexture(resource), image);
         resource->pixmap_cache_key = cache_key;
         resource->is_provisional = false;
         resource->provisional_source_key.clear();
@@ -3152,7 +3067,7 @@ bool MapRhiGlobeRenderer::ensureTileResource(
             *updated_image = image;
     }
 
-    if (!resource->bindings && !rebuildTileBindings(resource))
+    if (!tileBindingsReady(resource) && !rebuildTileBindings(resource))
         return false;
 
     if (!ensureHeatmapTexture(
@@ -3199,7 +3114,7 @@ bool MapRhiGlobeRenderer::ensureProvisionalTileResource(
 {
     const QString children_key = QStringLiteral("children:%1/%2/%3")
         .arg(tile.zoom).arg(tile.tile_x).arg(tile.tile_y);
-    if (resource->is_provisional && resource->texture
+    if (resource->is_provisional && tileTextureReady(resource)
         && resource->provisional_source_key == children_key)
     {
         tile.resource = resource;
@@ -3257,11 +3172,13 @@ bool MapRhiGlobeRenderer::ensureProvisionalTileResource(
         }
         painter.end();
 
-        resource->bindings.reset();
-        resource->texture.reset(this->rhi->newTexture(QRhiTexture::RGBA8, composite.size()));
-        if (!resource->texture || !resource->texture->create())
+        invalidateTileBindings(resource);
+        if (!recreateTileTexture(resource, composite.size()))
+        {
             return false;
-        resource_updates->uploadTexture(resource->texture.get(), composite);
+        }
+        this->surface_backend.uploadTextureImage(
+            resource_updates, tileTexture(resource), composite);
         resource->pixmap_cache_key = -1;
         resource->is_provisional = true;
         resource->provisional_source_key = children_key;
@@ -3271,7 +3188,7 @@ bool MapRhiGlobeRenderer::ensureProvisionalTileResource(
         if (updated_image != nullptr)
             *updated_image = composite;
 
-        if (!resource->bindings && !rebuildTileBindings(resource))
+        if (!tileBindingsReady(resource) && !rebuildTileBindings(resource))
             return false;
 
         tile.resource = resource;
@@ -3291,7 +3208,7 @@ bool MapRhiGlobeRenderer::ensureProvisionalTileResource(
 
         // Already showing exactly this ancestor from a previous frame --
         // nothing to re-derive.
-        if (resource->is_provisional && resource->texture
+        if (resource->is_provisional && tileTextureReady(resource)
             && resource->provisional_source_key == ancestor_key)
         {
             tile.resource = resource;
@@ -3312,11 +3229,13 @@ bool MapRhiGlobeRenderer::ensureProvisionalTileResource(
         if (fallback_image.isNull())
             continue;
 
-        resource->bindings.reset();
-        resource->texture.reset(this->rhi->newTexture(QRhiTexture::RGBA8, fallback_image.size()));
-        if (!resource->texture || !resource->texture->create())
+        invalidateTileBindings(resource);
+        if (!recreateTileTexture(resource, fallback_image.size()))
+        {
             return false;
-        resource_updates->uploadTexture(resource->texture.get(), fallback_image);
+        }
+        this->surface_backend.uploadTextureImage(
+            resource_updates, tileTexture(resource), fallback_image);
         resource->pixmap_cache_key = -1;
         resource->is_provisional = true;
         resource->provisional_source_key = ancestor_key;
@@ -3326,7 +3245,7 @@ bool MapRhiGlobeRenderer::ensureProvisionalTileResource(
         if (updated_image != nullptr)
             *updated_image = fallback_image;
 
-        if (!resource->bindings && !rebuildTileBindings(resource))
+        if (!tileBindingsReady(resource) && !rebuildTileBindings(resource))
             return false;
 
         tile.resource = resource;
@@ -3475,7 +3394,7 @@ bool MapRhiGlobeRenderer::queueHeatmapGpuBake(
     // baked heatmap tile on Y-down-NDC backends (notably Vulkan), so stamps
     // crossing tile boundaries no longer lined up and appeared as clipped
     // rectangular bands/detached blobs.
-    const bool flip_for_ndc = !this->rhi->isYUpInNDC();
+    const bool flip_for_ndc = !this->surface_backend.isYUpInNdc(this->rhi);
     for (const HeatmapStamp &stamp : stamps)
     {
         HeatmapBakeInstance instance;
@@ -3531,7 +3450,7 @@ void MapRhiGlobeRenderer::scheduleDiagnosticHeatmapGpuBake(
     this->diagnostic_heatmap_bake_instances.clear();
     this->diagnostic_heatmap_bake_instances.reserve(stamps.size());
     const bool flip_for_ndc = this->rhi != nullptr
-        && !this->rhi->isYUpInNDC();
+        && !this->surface_backend.isYUpInNdc(this->rhi);
     for (const HeatmapStamp &stamp : stamps)
     {
         HeatmapBakeInstance instance;
@@ -3604,259 +3523,18 @@ void MapRhiGlobeRenderer::scheduleDiagnosticHeatmapGpuSelfTest()
 
 void MapRhiGlobeRenderer::releaseDiagnosticHeatmapGpuBakeResources()
 {
-    this->diagnostic_heatmap_bake_pipeline.reset();
-    this->diagnostic_heatmap_bake_bindings.reset();
-    this->diagnostic_heatmap_bake_target.reset();
-    this->diagnostic_heatmap_bake_render_pass_descriptor.reset();
-    this->diagnostic_heatmap_bake_texture.reset();
-    this->diagnostic_heatmap_bake_vertex_buffer.reset();
-    this->diagnostic_heatmap_bake_instance_buffer.reset();
-    this->diagnostic_heatmap_bake_instance_buffer_size = 0;
-    this->diagnostic_heatmap_bake_vertex_upload_pending = true;
+    this->surface_backend.releaseDiagnosticHeatmapBakeResources();
 }
 
 void MapRhiGlobeRenderer::releaseVisibleHeatmapGpuBakeAtlasResources()
 {
-    this->heatmap_gpu_bake_atlases.clear();
-    this->heatmap_gpu_bake_maximum_atlas_slots = 0;
-}
-
-MapRhiGlobeRenderer::HeatmapGpuBakeAtlas *
-MapRhiGlobeRenderer::ensureVisibleHeatmapGpuBakeAtlasResources(
-    int slot_count)
-{
-    if (slot_count <= 0 || this->rhi == nullptr)
-        return nullptr;
-
-    const std::map<int, HeatmapGpuBakeAtlas>::iterator existing =
-        this->heatmap_gpu_bake_atlases.find(slot_count);
-    if (existing != this->heatmap_gpu_bake_atlases.end())
-    {
-        HeatmapGpuBakeAtlas &atlas = existing->second;
-        if (atlas.texture && atlas.render_pass_descriptor && atlas.target)
-            return &atlas;
-        this->heatmap_gpu_bake_atlases.erase(existing);
-    }
-
-    HeatmapGpuBakeAtlas atlas;
-    atlas.slot_count = slot_count;
-    const QSize atlas_size(
-        slot_count * GlobeHeatmapTextureSize,
-        GlobeHeatmapTextureSize);
-    atlas.texture.reset(this->rhi->newTexture(
-        QRhiTexture::RGBA8, atlas_size, 1,
-        QRhiTexture::RenderTarget
-            | QRhiTexture::UsedAsTransferSource));
-    if (!atlas.texture || !atlas.texture->create())
-        return nullptr;
-
-    const QRhiTextureRenderTargetDescription target_description(
-        QRhiColorAttachment(atlas.texture.get()));
-    atlas.target.reset(
-        this->rhi->newTextureRenderTarget(target_description));
-    if (!atlas.target)
-        return nullptr;
-    atlas.render_pass_descriptor.reset(
-        atlas.target->newCompatibleRenderPassDescriptor());
-    if (!atlas.render_pass_descriptor)
-        return nullptr;
-    atlas.target->setRenderPassDescriptor(
-        atlas.render_pass_descriptor.get());
-    if (!atlas.target->create())
-        return nullptr;
-
-    this->heatmap_gpu_bake_atlases[slot_count] = std::move(atlas);
-    return &this->heatmap_gpu_bake_atlases.at(slot_count);
-}
-
-int MapRhiGlobeRenderer::maximumVisibleHeatmapGpuBakeAtlasSlots()
-{
-    if (this->heatmap_gpu_bake_maximum_atlas_slots > 0)
-        return this->heatmap_gpu_bake_maximum_atlas_slots;
-    if (this->rhi == nullptr)
-        return 0;
-
-    const int maximum_texture_size = qMax(
-        GlobeHeatmapTextureSize,
-        this->rhi->resourceLimit(QRhi::TextureSizeMax));
-    const int maximum_candidate = qBound(
-        1, maximum_texture_size / GlobeHeatmapTextureSize,
-        GlobeHeatmapGpuBakeAtlasMaximumSlots);
-    int slot_count = 1;
-    while (slot_count <= maximum_candidate / 2)
-        slot_count *= 2;
-
-    while (slot_count > 0)
-    {
-        if (ensureVisibleHeatmapGpuBakeAtlasResources(slot_count) != nullptr)
-        {
-            this->heatmap_gpu_bake_maximum_atlas_slots = slot_count;
-            return slot_count;
-        }
-        slot_count /= 2;
-    }
-    return 0;
+    this->surface_backend.releaseVisibleHeatmapBakeAtlasResources();
 }
 
 bool MapRhiGlobeRenderer::ensureDiagnosticHeatmapGpuBakeResources()
 {
-    static_assert(
-        sizeof(HeatmapBakeVertex) == 2 * sizeof(float),
-        "Heatmap bake vertex layout must stay tightly packed");
-    static_assert(
-        sizeof(HeatmapBakeInstance) == 9 * sizeof(float),
-        "Heatmap bake instance layout must stay tightly packed");
-
-    if (this->rhi == nullptr)
-        return false;
-
-    if (!this->diagnostic_heatmap_bake_texture)
-    {
-        this->diagnostic_heatmap_bake_texture.reset(this->rhi->newTexture(
-            QRhiTexture::RGBA8,
-            QSize(GlobeHeatmapTextureSize, GlobeHeatmapTextureSize), 1,
-            QRhiTexture::RenderTarget
-                | QRhiTexture::UsedAsTransferSource));
-        if (!this->diagnostic_heatmap_bake_texture
-            || !this->diagnostic_heatmap_bake_texture->create())
-        {
-            releaseDiagnosticHeatmapGpuBakeResources();
-            return false;
-        }
-    }
-
-    if (!this->diagnostic_heatmap_bake_target)
-    {
-        const QRhiTextureRenderTargetDescription target_description(
-            QRhiColorAttachment(
-                this->diagnostic_heatmap_bake_texture.get()));
-        this->diagnostic_heatmap_bake_target.reset(
-            this->rhi->newTextureRenderTarget(target_description));
-        if (!this->diagnostic_heatmap_bake_target)
-        {
-            releaseDiagnosticHeatmapGpuBakeResources();
-            return false;
-        }
-        this->diagnostic_heatmap_bake_render_pass_descriptor.reset(
-            this->diagnostic_heatmap_bake_target
-                ->newCompatibleRenderPassDescriptor());
-        if (!this->diagnostic_heatmap_bake_render_pass_descriptor)
-        {
-            releaseDiagnosticHeatmapGpuBakeResources();
-            return false;
-        }
-        this->diagnostic_heatmap_bake_target->setRenderPassDescriptor(
-            this->diagnostic_heatmap_bake_render_pass_descriptor.get());
-        if (!this->diagnostic_heatmap_bake_target->create())
-        {
-            releaseDiagnosticHeatmapGpuBakeResources();
-            return false;
-        }
-    }
-
-    if (!this->diagnostic_heatmap_bake_bindings)
-    {
-        this->diagnostic_heatmap_bake_bindings.reset(
-            this->rhi->newShaderResourceBindings());
-        if (!this->diagnostic_heatmap_bake_bindings)
-        {
-            releaseDiagnosticHeatmapGpuBakeResources();
-            return false;
-        }
-        this->diagnostic_heatmap_bake_bindings->setBindings({});
-        if (!this->diagnostic_heatmap_bake_bindings->create())
-        {
-            releaseDiagnosticHeatmapGpuBakeResources();
-            return false;
-        }
-    }
-
-    if (!this->diagnostic_heatmap_bake_vertex_buffer)
-    {
-        constexpr int VertexCount = 6;
-        const int vertex_bytes =
-            VertexCount * int(sizeof(HeatmapBakeVertex));
-        this->diagnostic_heatmap_bake_vertex_buffer.reset(
-            this->rhi->newBuffer(
-                QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer,
-                vertex_bytes));
-        if (!this->diagnostic_heatmap_bake_vertex_buffer
-            || !this->diagnostic_heatmap_bake_vertex_buffer->create())
-        {
-            releaseDiagnosticHeatmapGpuBakeResources();
-            return false;
-        }
-        this->diagnostic_heatmap_bake_vertex_upload_pending = true;
-    }
-
-    if (!this->diagnostic_heatmap_bake_pipeline)
-    {
-        const QShader vertex_shader = loadGlobeShader(QStringLiteral(
-            ":/aowis/map/rhi/map_rhi_globe_heatmap_bake.vert.qsb"));
-        const QShader fragment_shader = loadGlobeShader(QStringLiteral(
-            ":/aowis/map/rhi/map_rhi_globe_heatmap_bake.frag.qsb"));
-        if (!vertex_shader.isValid() || !fragment_shader.isValid())
-        {
-            releaseDiagnosticHeatmapGpuBakeResources();
-            return false;
-        }
-
-        QRhiVertexInputLayout input_layout;
-        input_layout.setBindings({
-            {quint32(sizeof(HeatmapBakeVertex))},
-            {quint32(sizeof(HeatmapBakeInstance)),
-             QRhiVertexInputBinding::PerInstance}
-        });
-        input_layout.setAttributes({
-            {0, 0, QRhiVertexInputAttribute::Float2,
-             quint32(offsetof(HeatmapBakeVertex, corner_x))},
-            {1, 1, QRhiVertexInputAttribute::Float2,
-             quint32(offsetof(HeatmapBakeInstance, center_x_pixels))},
-            {1, 2, QRhiVertexInputAttribute::Float2,
-             quint32(offsetof(HeatmapBakeInstance, radius_pixels))},
-            {1, 3, QRhiVertexInputAttribute::Float3,
-             quint32(offsetof(HeatmapBakeInstance, red))},
-            {1, 4, QRhiVertexInputAttribute::Float2,
-             quint32(offsetof(HeatmapBakeInstance, target_scale_x))}
-        });
-
-        this->diagnostic_heatmap_bake_pipeline.reset(
-            this->rhi->newGraphicsPipeline());
-        if (!this->diagnostic_heatmap_bake_pipeline)
-        {
-            releaseDiagnosticHeatmapGpuBakeResources();
-            return false;
-        }
-        this->diagnostic_heatmap_bake_pipeline->setShaderStages({
-            {QRhiShaderStage::Vertex, vertex_shader},
-            {QRhiShaderStage::Fragment, fragment_shader}
-        });
-        this->diagnostic_heatmap_bake_pipeline->setVertexInputLayout(
-            input_layout);
-        this->diagnostic_heatmap_bake_pipeline->setShaderResourceBindings(
-            this->diagnostic_heatmap_bake_bindings.get());
-        this->diagnostic_heatmap_bake_pipeline->setRenderPassDescriptor(
-            this->diagnostic_heatmap_bake_render_pass_descriptor.get());
-        this->diagnostic_heatmap_bake_pipeline->setTopology(
-            QRhiGraphicsPipeline::Triangles);
-        this->diagnostic_heatmap_bake_pipeline->setSampleCount(1);
-        this->diagnostic_heatmap_bake_pipeline->setCullMode(
-            QRhiGraphicsPipeline::None);
-        this->diagnostic_heatmap_bake_pipeline->setDepthTest(false);
-        this->diagnostic_heatmap_bake_pipeline->setDepthWrite(false);
-        QRhiGraphicsPipeline::TargetBlend heatmap_blend;
-        heatmap_blend.enable = true;
-        this->diagnostic_heatmap_bake_pipeline->setTargetBlends({
-            heatmap_blend
-        });
-        if (!this->diagnostic_heatmap_bake_pipeline->create())
-        {
-            releaseDiagnosticHeatmapGpuBakeResources();
-            return false;
-        }
-    }
-
-    return true;
+    return this->surface_backend.ensureHeatmapBakeResources(
+        this->rhi, GlobeHeatmapTextureSize);
 }
 
 bool MapRhiGlobeRenderer::runPendingHeatmapGpuBakes(
@@ -3865,280 +3543,76 @@ bool MapRhiGlobeRenderer::runPendingHeatmapGpuBakes(
     if (this->heatmap_gpu_bake_jobs.isEmpty())
         return true;
 
-    qsizetype total_instance_count = 0;
+    QVector<MapRhiGlobeHeatmapBakeJob> backend_jobs;
+    backend_jobs.reserve(this->heatmap_gpu_bake_jobs.size());
     for (const HeatmapGpuBakeJob &job : this->heatmap_gpu_bake_jobs)
     {
         if (job.resource == nullptr || job.destination_texture == nullptr
             || job.destination_layer < 0
             || job.destination_layer >= GlobeTileArrayLayerCount
             || job.revision != this->heatmap_scene.revision()
-            || job.instances.isEmpty()
-            || total_instance_count
-                > std::numeric_limits<qsizetype>::max()
-                    - job.instances.size())
-        {
-            disableHeatmapGpuBaking();
-            return false;
-        }
-        total_instance_count += job.instances.size();
-    }
-    if (total_instance_count
-        > qsizetype(std::numeric_limits<int>::max())
-            / qsizetype(sizeof(HeatmapBakeInstance)))
-    {
-        disableHeatmapGpuBaking();
-        return false;
-    }
-    const qsizetype required_bytes_qsize = total_instance_count
-        * qsizetype(sizeof(HeatmapBakeInstance));
-    if (command_buffer == nullptr || required_bytes_qsize <= 0
-        || !ensureDiagnosticHeatmapGpuBakeResources())
-    {
-        disableHeatmapGpuBaking();
-        return false;
-    }
-    const int maximum_atlas_slots =
-        maximumVisibleHeatmapGpuBakeAtlasSlots();
-    if (maximum_atlas_slots <= 0)
-    {
-        disableHeatmapGpuBaking();
-        return false;
-    }
-
-    const int required_bytes = int(required_bytes_qsize);
-    if (!this->heatmap_gpu_bake_instance_buffer
-        || this->heatmap_gpu_bake_instance_buffer_size < required_bytes)
-    {
-        this->heatmap_gpu_bake_instance_buffer.reset(
-            this->rhi->newBuffer(
-                QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer,
-                required_bytes));
-        if (!this->heatmap_gpu_bake_instance_buffer
-            || !this->heatmap_gpu_bake_instance_buffer->create())
-        {
-            this->heatmap_gpu_bake_instance_buffer.reset();
-            this->heatmap_gpu_bake_instance_buffer_size = 0;
-            disableHeatmapGpuBaking();
-            return false;
-        }
-        this->heatmap_gpu_bake_instance_buffer_size = required_bytes;
-    }
-
-    struct HeatmapGpuBakePage
-    {
-        int first_job = 0;
-        int last_job = 0;
-        HeatmapGpuBakeAtlas *atlas = nullptr;
-        qsizetype first_instance = 0;
-        qsizetype instance_count = 0;
-    };
-
-    const int job_count = int(this->heatmap_gpu_bake_jobs.size());
-    QVector<HeatmapGpuBakePage> pages;
-    pages.reserve(
-        (job_count + maximum_atlas_slots - 1) / maximum_atlas_slots);
-    QVector<HeatmapBakeInstance> all_instances;
-    all_instances.reserve(int(total_instance_count));
-    for (int first_job = 0; first_job < job_count;)
-    {
-        HeatmapGpuBakePage page;
-        page.first_job = first_job;
-        page.last_job = qMin(
-            first_job + maximum_atlas_slots, job_count);
-
-        const int page_tile_count = page.last_job - page.first_job;
-        int requested_slots = 1;
-        while (requested_slots < page_tile_count)
-            requested_slots *= 2;
-        page.atlas = ensureVisibleHeatmapGpuBakeAtlasResources(
-            requested_slots);
-        if (page.atlas == nullptr)
-        {
-            page.atlas = ensureVisibleHeatmapGpuBakeAtlasResources(
-                maximum_atlas_slots);
-        }
-        if (page.atlas == nullptr
-            || page.atlas->slot_count < page_tile_count)
+            || job.instances.isEmpty())
         {
             disableHeatmapGpuBaking();
             return false;
         }
 
-        page.first_instance = all_instances.size();
-        const float atlas_slot_scale =
-            1.0f / float(page.atlas->slot_count);
-        for (int job_index = page.first_job;
-             job_index < page.last_job; ++job_index)
-        {
-            const HeatmapGpuBakeJob &job =
-                this->heatmap_gpu_bake_jobs.at(job_index);
-            const int slot = job_index - page.first_job;
-            for (const HeatmapBakeInstance &source_instance : job.instances)
-            {
-                HeatmapBakeInstance instance = source_instance;
-                instance.target_scale_x = atlas_slot_scale;
-                instance.target_offset_x =
-                    float(slot) * atlas_slot_scale;
-                all_instances.append(instance);
-            }
-        }
-        page.instance_count =
-            all_instances.size() - page.first_instance;
-        pages.append(page);
-        first_job = page.last_job;
+        MapRhiGlobeHeatmapBakeJob backend_job;
+        backend_job.destination_texture = job.destination_texture;
+        backend_job.destination_layer = job.destination_layer;
+        backend_job.instances = &job.instances;
+        backend_jobs.append(backend_job);
     }
 
-    // QRhi dynamic-buffer writes may accumulate within a frame, so later
-    // writes to an overlapping range are not guaranteed to stay invisible
-    // to earlier passes. Upload every tile's instances once into disjoint
-    // ranges and select those ranges with vertex-buffer offsets below.
-    QRhiResourceUpdateBatch *bake_updates =
-        this->rhi->nextResourceUpdateBatch();
-    if (bake_updates == nullptr)
+    MapRhiGlobeHeatmapBakeExecutionStats execution_stats;
+    if (!this->surface_backend.recordVisibleHeatmapBakes(
+            this->rhi, command_buffer, backend_jobs,
+            GlobeHeatmapTextureSize, GlobeTileArrayLayerCount,
+            GlobeHeatmapGpuBakeAtlasMaximumSlots, &execution_stats))
     {
         disableHeatmapGpuBaking();
         return false;
     }
-    const bool upload_bake_vertices =
-        this->diagnostic_heatmap_bake_vertex_upload_pending;
-    if (upload_bake_vertices)
+
+    for (const HeatmapGpuBakeJob &job : this->heatmap_gpu_bake_jobs)
     {
-        const HeatmapBakeVertex vertices[] = {
-            {-1.0f, -1.0f}, {1.0f, -1.0f},
-            {-1.0f, 1.0f}, {-1.0f, 1.0f},
-            {1.0f, -1.0f}, {1.0f, 1.0f}
-        };
-        bake_updates->uploadStaticBuffer(
-            this->diagnostic_heatmap_bake_vertex_buffer.get(), vertices);
-    }
-    bake_updates->updateDynamicBuffer(
-        this->heatmap_gpu_bake_instance_buffer.get(), 0,
-        required_bytes, all_instances.constData());
-
-    QVector<QRhiResourceUpdateBatch *> page_copy_updates;
-    page_copy_updates.reserve(pages.size());
-    for (const HeatmapGpuBakePage &page : pages)
-    {
-        QRhiResourceUpdateBatch *copy_updates =
-            this->rhi->nextResourceUpdateBatch();
-        if (copy_updates == nullptr)
-        {
-            for (QRhiResourceUpdateBatch *allocated_updates
-                 : page_copy_updates)
-            {
-                allocated_updates->release();
-            }
-            bake_updates->release();
-            if (upload_bake_vertices)
-                this->diagnostic_heatmap_bake_vertex_upload_pending = true;
-            disableHeatmapGpuBaking();
-            return false;
-        }
-
-        for (int job_index = page.first_job;
-             job_index < page.last_job; ++job_index)
-        {
-            const HeatmapGpuBakeJob &job =
-                this->heatmap_gpu_bake_jobs.at(job_index);
-            const int slot = job_index - page.first_job;
-            QRhiTextureCopyDescription copy_description;
-            copy_description.setSourceTopLeft(QPoint(
-                slot * GlobeHeatmapTextureSize, 0));
-            copy_description.setDestinationLayer(job.destination_layer);
-            copy_description.setPixelSize(QSize(
-                GlobeHeatmapTextureSize, GlobeHeatmapTextureSize));
-            copy_updates->copyTexture(
-                job.destination_texture, page.atlas->texture.get(),
-                copy_description);
-        }
-        page_copy_updates.append(copy_updates);
-    }
-    if (upload_bake_vertices)
-        this->diagnostic_heatmap_bake_vertex_upload_pending = false;
-
-    int recorded_tiles = 0;
-    int recorded_stamps = 0;
-    int recorded_passes = 0;
-    int recorded_copy_batches = 0;
-    int recorded_array_copies = 0;
-    for (int page_index = 0; page_index < pages.size(); ++page_index)
-    {
-        const HeatmapGpuBakePage &page = pages.at(page_index);
-        const QSize atlas_size(
-            page.atlas->slot_count * GlobeHeatmapTextureSize,
-            GlobeHeatmapTextureSize);
-
-        command_buffer->beginPass(
-            page.atlas->target.get(),
-            Qt::transparent, {1.0f, 0},
-            page_index == 0 ? bake_updates : nullptr);
-        command_buffer->setGraphicsPipeline(
-            this->diagnostic_heatmap_bake_pipeline.get());
-        command_buffer->setViewport(QRhiViewport(
-            0.0f, 0.0f, float(atlas_size.width()),
-            float(atlas_size.height())));
-        command_buffer->setShaderResources(
-            this->diagnostic_heatmap_bake_bindings.get());
-        const QRhiCommandBuffer::VertexInput bindings[] = {
-            {this->diagnostic_heatmap_bake_vertex_buffer.get(), 0},
-            {this->heatmap_gpu_bake_instance_buffer.get(),
-             quint32(page.first_instance
-                 * qsizetype(sizeof(HeatmapBakeInstance)))}
-        };
-        command_buffer->setVertexInput(0, 2, bindings);
-        command_buffer->draw(6, quint32(page.instance_count));
-        command_buffer->endPass(page_copy_updates.at(page_index));
-
-        for (int job_index = page.first_job;
-             job_index < page.last_job; ++job_index)
-        {
-            const HeatmapGpuBakeJob &job =
-                this->heatmap_gpu_bake_jobs.at(job_index);
-            if (job.destination_layer > 0)
-            {
-                job.resource->heatmap_array_revision = job.revision;
-                ++recorded_array_copies;
-            }
-            else
-            {
-                job.resource->heatmap_texture_revision = job.revision;
-            }
-            job.resource->heatmap_revision = job.revision;
-        }
-
-        const int page_tile_count = page.last_job - page.first_job;
-        recorded_tiles += page_tile_count;
-        recorded_stamps += int(page.instance_count);
-        ++recorded_passes;
-        ++recorded_copy_batches;
+        if (job.destination_layer > 0)
+            job.resource->heatmap_array_revision = job.revision;
+        else
+            job.resource->heatmap_texture_revision = job.revision;
+        job.resource->heatmap_revision = job.revision;
     }
 
-    this->heatmap_profile.gpu_visible_bake_passes += recorded_passes;
-    this->heatmap_profile.gpu_visible_bake_stamps += recorded_stamps;
-    this->heatmap_profile.gpu_visible_copies += recorded_tiles;
+    this->heatmap_profile.gpu_visible_bake_passes +=
+        execution_stats.recorded_passes;
+    this->heatmap_profile.gpu_visible_bake_stamps +=
+        execution_stats.recorded_stamps;
+    this->heatmap_profile.gpu_visible_copies +=
+        execution_stats.recorded_tiles;
     this->heatmap_profile.gpu_visible_copy_batches +=
-        recorded_copy_batches;
+        execution_stats.recorded_copy_batches;
     this->heatmap_profile.gpu_visible_array_copies +=
-        recorded_array_copies;
+        execution_stats.recorded_array_copies;
 
     qCDebug(globeHeatmapPerformanceLog).noquote().nospace()
         << "visible_gpu_bakes revision=" << this->heatmap_scene.revision()
-        << " tiles=" << recorded_tiles
-        << " passes=" << recorded_passes
-        << " stamps=" << recorded_stamps
-        << " copies=" << recorded_tiles
-        << " array_copies=" << recorded_array_copies
-        << " copy_batches=" << recorded_copy_batches
-        << " atlas_slots_max=" << maximum_atlas_slots
+        << " tiles=" << execution_stats.recorded_tiles
+        << " passes=" << execution_stats.recorded_passes
+        << " stamps=" << execution_stats.recorded_stamps
+        << " copies=" << execution_stats.recorded_tiles
+        << " array_copies=" << execution_stats.recorded_array_copies
+        << " copy_batches=" << execution_stats.recorded_copy_batches
+        << " atlas_slots_max=" << execution_stats.maximum_atlas_slots
         << " array_config="
         << (guiConfiguration().map_performance.array_batching_enabled ? 1 : 0)
         << " texture_arrays="
         << (this->rhi != nullptr
-                && this->rhi->isFeatureSupported(QRhi::TextureArrays)
+                && this->surface_backend.supportsTextureArrays(this->rhi)
             ? 1 : 0)
         << " imagery_array_pipeline="
-        << (this->array_pipeline ? 1 : 0)
-        << " imagery_array_pages=" << this->tile_array_pages.size()
+        << (this->surface_backend.imageryArrayPipelineReady() ? 1 : 0)
+        << " imagery_array_pages="
+        << this->surface_backend.imageryArrayPages().size()
         << " imagery_array_active=" << (arrayBatchingActive() ? 1 : 0)
         << " status=recorded";
     this->heatmap_gpu_bake_jobs.clear();
@@ -4158,179 +3632,84 @@ void MapRhiGlobeRenderer::runDiagnosticHeatmapGpuBake(
     if (this->diagnostic_heatmap_bake_pending
         && this->heatmap_profile.enabled)
     {
-        const qsizetype required_bytes_qsize =
-            this->diagnostic_heatmap_bake_instances.size()
-            * qsizetype(sizeof(HeatmapBakeInstance));
-        if (command_buffer == nullptr)
+        const bool bake_recorded =
+            this->surface_backend.recordDiagnosticHeatmapBake(
+                this->rhi, command_buffer,
+                this->diagnostic_heatmap_bake_instances,
+                GlobeHeatmapTextureSize, &failure);
+        if (bake_recorded)
         {
-            failure = QStringLiteral("missing_command_buffer");
-        }
-        else if (required_bytes_qsize <= 0
-                 || required_bytes_qsize
-                    > qsizetype(std::numeric_limits<int>::max()))
-        {
-            failure = QStringLiteral("invalid_instance_buffer_size");
-        }
-        else if (!ensureDiagnosticHeatmapGpuBakeResources())
-        {
-            failure = QStringLiteral("resource_creation_failed");
-        }
-        else
-        {
-            const int required_bytes = int(required_bytes_qsize);
-            if (!this->diagnostic_heatmap_bake_instance_buffer
-                || this->diagnostic_heatmap_bake_instance_buffer_size
-                    < required_bytes)
+            if (this->diagnostic_heatmap_bake_cpu_reference.isNull())
             {
-                this->diagnostic_heatmap_bake_instance_buffer.reset(
-                    this->rhi->newBuffer(
-                        QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer,
-                        required_bytes));
-                if (!this->diagnostic_heatmap_bake_instance_buffer
-                    || !this->diagnostic_heatmap_bake_instance_buffer
-                        ->create())
-                {
-                    this->diagnostic_heatmap_bake_instance_buffer.reset();
-                    this->diagnostic_heatmap_bake_instance_buffer_size = 0;
-                    failure = QStringLiteral(
-                        "instance_buffer_creation_failed");
-                }
-                else
-                {
-                    this->diagnostic_heatmap_bake_instance_buffer_size =
-                        required_bytes;
-                }
+                qCDebug(globeHeatmapPerformanceLog)
+                    .noquote().nospace()
+                    << "diagnostic_gpu_validation revision="
+                    << this->diagnostic_heatmap_bake_revision
+                    << " tile="
+                    << this->diagnostic_heatmap_bake_zoom << "/"
+                    << this->diagnostic_heatmap_bake_tile_x << "/"
+                    << this->diagnostic_heatmap_bake_tile_y
+                    << " status=skipped reason="
+                       "missing_cpu_reference";
             }
-
-            if (failure.isEmpty())
+            else
             {
-                QRhiResourceUpdateBatch *resource_updates =
-                    this->rhi->nextResourceUpdateBatch();
-                if (resource_updates == nullptr)
+                QRhiReadbackResult *readback_result =
+                    new QRhiReadbackResult{};
+                const QImage cpu_reference =
+                    this->diagnostic_heatmap_bake_cpu_reference;
+                const quint64 revision =
+                    this->diagnostic_heatmap_bake_revision;
+                const int zoom = this->diagnostic_heatmap_bake_zoom;
+                const int tile_x = this->diagnostic_heatmap_bake_tile_x;
+                const int tile_y = this->diagnostic_heatmap_bake_tile_y;
+                const int stamp_count = int(
+                    this->diagnostic_heatmap_bake_instances.size());
+                readback_result->completed = [
+                    readback_result, cpu_reference, revision, zoom,
+                    tile_x, tile_y, stamp_count]()
                 {
-                    failure = QStringLiteral("update_batch_unavailable");
+                    reportGlobeHeatmapGpuValidation(
+                        *readback_result, cpu_reference, revision,
+                        zoom, tile_x, tile_y, stamp_count);
+                    delete readback_result;
+                };
+
+                if (this->surface_backend.queueDiagnosticHeatmapReadback(
+                        this->rhi, command_buffer, readback_result))
+                {
+                    ++this->heatmap_profile.gpu_validation_readbacks;
                 }
                 else
                 {
-                    if (this->diagnostic_heatmap_bake_vertex_upload_pending)
-                    {
-                        const HeatmapBakeVertex vertices[] = {
-                            {-1.0f, -1.0f}, {1.0f, -1.0f},
-                            {-1.0f, 1.0f}, {-1.0f, 1.0f},
-                            {1.0f, -1.0f}, {1.0f, 1.0f}
-                        };
-                        resource_updates->uploadStaticBuffer(
-                            this->diagnostic_heatmap_bake_vertex_buffer.get(),
-                            vertices);
-                        this->diagnostic_heatmap_bake_vertex_upload_pending =
-                            false;
-                    }
-                    resource_updates->updateDynamicBuffer(
-                        this->diagnostic_heatmap_bake_instance_buffer.get(),
-                        0, required_bytes,
-                        this->diagnostic_heatmap_bake_instances.constData());
-
-                    command_buffer->beginPass(
-                        this->diagnostic_heatmap_bake_target.get(),
-                        Qt::transparent, {1.0f, 0}, resource_updates);
-                    command_buffer->setGraphicsPipeline(
-                        this->diagnostic_heatmap_bake_pipeline.get());
-                    command_buffer->setViewport(QRhiViewport(
-                        0.0f, 0.0f, float(GlobeHeatmapTextureSize),
-                        float(GlobeHeatmapTextureSize)));
-                    command_buffer->setShaderResources(
-                        this->diagnostic_heatmap_bake_bindings.get());
-                    const QRhiCommandBuffer::VertexInput bindings[] = {
-                        {this->diagnostic_heatmap_bake_vertex_buffer.get(), 0},
-                        {this->diagnostic_heatmap_bake_instance_buffer.get(), 0}
-                    };
-                    command_buffer->setVertexInput(0, 2, bindings);
-                    command_buffer->draw(
-                        6,
-                        quint32(
-                            this->diagnostic_heatmap_bake_instances.size()));
-                    command_buffer->endPass();
-
-                    if (this->diagnostic_heatmap_bake_cpu_reference.isNull())
-                    {
-                        qCDebug(globeHeatmapPerformanceLog)
-                            .noquote().nospace()
-                            << "diagnostic_gpu_validation revision="
-                            << this->diagnostic_heatmap_bake_revision
-                            << " tile="
-                            << this->diagnostic_heatmap_bake_zoom << "/"
-                            << this->diagnostic_heatmap_bake_tile_x << "/"
-                            << this->diagnostic_heatmap_bake_tile_y
-                            << " status=skipped reason="
-                               "missing_cpu_reference";
-                    }
-                    else
-                    {
-                        QRhiResourceUpdateBatch *readback_updates =
-                            this->rhi->nextResourceUpdateBatch();
-                        if (readback_updates == nullptr)
-                        {
-                            qCDebug(globeHeatmapPerformanceLog)
-                                .noquote().nospace()
-                                << "diagnostic_gpu_validation revision="
-                                << this->diagnostic_heatmap_bake_revision
-                                << " tile="
-                                << this->diagnostic_heatmap_bake_zoom << "/"
-                                << this->diagnostic_heatmap_bake_tile_x << "/"
-                                << this->diagnostic_heatmap_bake_tile_y
-                                << " status=skipped reason="
-                                   "update_batch_unavailable";
-                        }
-                        else
-                        {
-                            QRhiReadbackResult *readback_result =
-                                new QRhiReadbackResult{};
-                            const QImage cpu_reference =
-                                this->diagnostic_heatmap_bake_cpu_reference;
-                            const quint64 revision =
-                                this->diagnostic_heatmap_bake_revision;
-                            const int zoom =
-                                this->diagnostic_heatmap_bake_zoom;
-                            const int tile_x =
-                                this->diagnostic_heatmap_bake_tile_x;
-                            const int tile_y =
-                                this->diagnostic_heatmap_bake_tile_y;
-                            const int stamp_count = int(
-                                this->diagnostic_heatmap_bake_instances.size());
-                            readback_result->completed = [
-                                readback_result, cpu_reference, revision, zoom,
-                                tile_x, tile_y, stamp_count]()
-                            {
-                                reportGlobeHeatmapGpuValidation(
-                                    *readback_result, cpu_reference, revision,
-                                    zoom, tile_x, tile_y, stamp_count);
-                                delete readback_result;
-                            };
-                            readback_updates->readBackTexture(
-                                QRhiReadbackDescription(
-                                    this->diagnostic_heatmap_bake_texture.get()),
-                                readback_result);
-                            command_buffer->resourceUpdate(readback_updates);
-                            ++this->heatmap_profile.gpu_validation_readbacks;
-                        }
-                    }
-
-                    ++this->heatmap_profile.gpu_bake_passes;
-                    this->heatmap_profile.gpu_bake_stamps +=
-                        int(this->diagnostic_heatmap_bake_instances.size());
-                    qCDebug(globeHeatmapPerformanceLog).noquote().nospace()
-                        << "diagnostic_gpu_bake revision="
+                    delete readback_result;
+                    qCDebug(globeHeatmapPerformanceLog)
+                        .noquote().nospace()
+                        << "diagnostic_gpu_validation revision="
                         << this->diagnostic_heatmap_bake_revision
-                        << " tile=" << this->diagnostic_heatmap_bake_zoom
-                        << "/" << this->diagnostic_heatmap_bake_tile_x
-                        << "/" << this->diagnostic_heatmap_bake_tile_y
-                        << " stamps="
-                        << this->diagnostic_heatmap_bake_instances.size()
-                        << " target=" << GlobeHeatmapTextureSize << "x"
-                        << GlobeHeatmapTextureSize
-                        << " status=recorded";
+                        << " tile="
+                        << this->diagnostic_heatmap_bake_zoom << "/"
+                        << this->diagnostic_heatmap_bake_tile_x << "/"
+                        << this->diagnostic_heatmap_bake_tile_y
+                        << " status=skipped reason="
+                           "update_batch_unavailable";
                 }
             }
+
+            ++this->heatmap_profile.gpu_bake_passes;
+            this->heatmap_profile.gpu_bake_stamps +=
+                int(this->diagnostic_heatmap_bake_instances.size());
+            qCDebug(globeHeatmapPerformanceLog).noquote().nospace()
+                << "diagnostic_gpu_bake revision="
+                << this->diagnostic_heatmap_bake_revision
+                << " tile=" << this->diagnostic_heatmap_bake_zoom
+                << "/" << this->diagnostic_heatmap_bake_tile_x
+                << "/" << this->diagnostic_heatmap_bake_tile_y
+                << " stamps="
+                << this->diagnostic_heatmap_bake_instances.size()
+                << " target=" << GlobeHeatmapTextureSize << "x"
+                << GlobeHeatmapTextureSize
+                << " status=recorded";
         }
 
         if (!failure.isEmpty())
@@ -4375,7 +3754,7 @@ bool MapRhiGlobeRenderer::ensureHeatmapTexture(
     // Cheap common case: this tile's heatmap state already reflects the
     // current revision, so there is no CPU raster to regenerate.
     if (resource->heatmap_revision == this->heatmap_scene.revision())
-        return resource->bindings != nullptr || rebuildTileBindings(resource);
+        return tileBindingsReady(resource) || rebuildTileBindings(resource);
 
     if (this->heatmap_profile.enabled)
         ++this->heatmap_profile.dirty_tiles;
@@ -4395,21 +3774,21 @@ bool MapRhiGlobeRenderer::ensureHeatmapTexture(
         bool bindings_changed = false;
         if (stamps->isEmpty())
         {
-            if (resource->heatmap_texture)
+            if (tileHeatmapTextureReady(resource))
             {
-                resource->bindings.reset();
-                resource->heatmap_texture.reset();
+                invalidateTileBindings(resource);
+                clearTileHeatmapTexture(resource);
                 bindings_changed = true;
             }
             resource->heatmap_texture_revision = this->heatmap_scene.revision();
             resource->heatmap_revision = this->heatmap_scene.revision();
-            if (bindings_changed || resource->bindings == nullptr)
+            if (bindings_changed || !tileBindingsReady(resource))
                 return rebuildTileBindings(resource);
             return true;
         }
 
         if (!upload_fallback_texture)
-            return resource->bindings != nullptr
+            return tileBindingsReady(resource)
                 || rebuildTileBindings(resource);
 
         if (!ensureDiagnosticHeatmapGpuBakeResources())
@@ -4418,17 +3797,12 @@ bool MapRhiGlobeRenderer::ensureHeatmapTexture(
         }
         else
         {
-            if (!resource->heatmap_texture)
+            if (!tileHeatmapTextureReady(resource))
             {
-                resource->bindings.reset();
-                resource->heatmap_texture.reset(this->rhi->newTexture(
-                    QRhiTexture::RGBA8,
-                    QSize(GlobeHeatmapTextureSize,
-                          GlobeHeatmapTextureSize)));
-                if (!resource->heatmap_texture
-                    || !resource->heatmap_texture->create())
+                invalidateTileBindings(resource);
+                if (!recreateTileHeatmapTexture(resource, QSize(GlobeHeatmapTextureSize,
+                              GlobeHeatmapTextureSize)))
                 {
-                    resource->heatmap_texture.reset();
                     disableHeatmapGpuBaking();
                 }
                 else
@@ -4439,14 +3813,14 @@ bool MapRhiGlobeRenderer::ensureHeatmapTexture(
 
             if (!this->heatmap_gpu_baking_disabled
                 && queueHeatmapGpuBake(
-                    resource, resource->heatmap_texture.get(), *stamps))
+                    resource, tileHeatmapTexture(resource), *stamps))
             {
                 // Treat the sampled texture as current for the fallback
                 // check later in this prepare(), but do not commit the
                 // tile's logical revision until the copy is recorded.
                 resource->heatmap_texture_revision =
                     this->heatmap_scene.revision();
-                if (bindings_changed || resource->bindings == nullptr)
+                if (bindings_changed || !tileBindingsReady(resource))
                     return rebuildTileBindings(resource);
                 return true;
             }
@@ -4458,15 +3832,16 @@ bool MapRhiGlobeRenderer::ensureHeatmapTexture(
     bool bindings_changed = false;
     if (!image.isNull() && upload_fallback_texture)
     {
-        if (!resource->heatmap_texture)
+        if (!tileHeatmapTextureReady(resource))
         {
-            resource->heatmap_texture.reset(
-                this->rhi->newTexture(QRhiTexture::RGBA8, image.size()));
-            if (!resource->heatmap_texture || !resource->heatmap_texture->create())
+            if (!recreateTileHeatmapTexture(resource, image.size()))
+            {
                 return false;
+            }
             bindings_changed = true;
         }
-        resource_updates->uploadTexture(resource->heatmap_texture.get(), image);
+        this->surface_backend.uploadTextureImage(
+            resource_updates, tileHeatmapTexture(resource), image);
         if (this->heatmap_profile.enabled)
         {
             ++this->heatmap_profile.fallback_uploads;
@@ -4474,12 +3849,12 @@ bool MapRhiGlobeRenderer::ensureHeatmapTexture(
         }
         resource->heatmap_texture_revision = this->heatmap_scene.revision();
     }
-    else if (image.isNull() && resource->heatmap_texture)
+    else if (image.isNull() && tileHeatmapTextureReady(resource))
     {
         // A now-empty tile can bind the shared transparent dummy. Destroying
         // its old private texture avoids a clear upload and releases memory.
-        resource->bindings.reset();
-        resource->heatmap_texture.reset();
+        invalidateTileBindings(resource);
+        clearTileHeatmapTexture(resource);
         resource->heatmap_texture_revision = this->heatmap_scene.revision();
         bindings_changed = true;
     }
@@ -4488,7 +3863,7 @@ bool MapRhiGlobeRenderer::ensureHeatmapTexture(
         *updated_image = image;
 
     resource->heatmap_revision = this->heatmap_scene.revision();
-    if (bindings_changed || resource->bindings == nullptr)
+    if (bindings_changed || !tileBindingsReady(resource))
         return rebuildTileBindings(resource);
     return true;
 }
@@ -4506,10 +3881,10 @@ bool MapRhiGlobeRenderer::ensureHeatmapFallbackTexture(
     {
         return true;
     }
-    if (resource->heatmap_texture
+    if (tileHeatmapTextureReady(resource)
         && resource->heatmap_texture_revision == this->heatmap_scene.revision())
     {
-        return resource->bindings != nullptr || rebuildTileBindings(resource);
+        return tileBindingsReady(resource) || rebuildTileBindings(resource);
     }
 
     if (!this->heatmap_gpu_baking_disabled)
@@ -4526,16 +3901,16 @@ bool MapRhiGlobeRenderer::ensureHeatmapFallbackTexture(
         if (stamps->isEmpty())
         {
             const bool bindings_changed =
-                resource->heatmap_texture != nullptr;
+                tileHeatmapTextureReady(resource);
             if (bindings_changed)
             {
-                resource->bindings.reset();
-                resource->heatmap_texture.reset();
+                invalidateTileBindings(resource);
+                clearTileHeatmapTexture(resource);
             }
             resource->heatmap_has_content = false;
             resource->heatmap_texture_revision = this->heatmap_scene.revision();
             resource->heatmap_revision = this->heatmap_scene.revision();
-            if (bindings_changed || resource->bindings == nullptr)
+            if (bindings_changed || !tileBindingsReady(resource))
                 return rebuildTileBindings(resource);
             return true;
         }
@@ -4543,31 +3918,23 @@ bool MapRhiGlobeRenderer::ensureHeatmapFallbackTexture(
         if (ensureDiagnosticHeatmapGpuBakeResources())
         {
             bool bindings_changed = false;
-            if (!resource->heatmap_texture)
+            if (!tileHeatmapTextureReady(resource))
             {
-                resource->bindings.reset();
-                resource->heatmap_texture.reset(this->rhi->newTexture(
-                    QRhiTexture::RGBA8,
-                    QSize(GlobeHeatmapTextureSize,
-                          GlobeHeatmapTextureSize)));
-                if (resource->heatmap_texture
-                    && resource->heatmap_texture->create())
+                invalidateTileBindings(resource);
+                if (recreateTileHeatmapTexture(resource, QSize(GlobeHeatmapTextureSize,
+                              GlobeHeatmapTextureSize)))
                 {
                     bindings_changed = true;
                 }
-                else
-                {
-                    resource->heatmap_texture.reset();
-                }
             }
 
-            if (resource->heatmap_texture
+            if (tileHeatmapTextureReady(resource)
                 && queueHeatmapGpuBake(
-                    resource, resource->heatmap_texture.get(), *stamps))
+                    resource, tileHeatmapTexture(resource), *stamps))
             {
                 resource->heatmap_texture_revision =
                     this->heatmap_scene.revision();
-                if (bindings_changed || resource->bindings == nullptr)
+                if (bindings_changed || !tileBindingsReady(resource))
                     return rebuildTileBindings(resource);
                 return true;
             }
@@ -4585,18 +3952,16 @@ bool MapRhiGlobeRenderer::ensureHeatmapFallbackTexture(
         return false;
 
     bool bindings_changed = false;
-    if (!resource->heatmap_texture)
+    if (!tileHeatmapTextureReady(resource))
     {
-        resource->heatmap_texture.reset(
-            this->rhi->newTexture(QRhiTexture::RGBA8, image.size()));
-        if (!resource->heatmap_texture
-            || !resource->heatmap_texture->create())
+        if (!recreateTileHeatmapTexture(resource, image.size()))
         {
             return false;
         }
         bindings_changed = true;
     }
-    resource_updates->uploadTexture(resource->heatmap_texture.get(), image);
+    this->surface_backend.uploadTextureImage(
+            resource_updates, tileHeatmapTexture(resource), image);
     if (this->heatmap_profile.enabled)
     {
         ++this->heatmap_profile.fallback_uploads;
@@ -4604,7 +3969,7 @@ bool MapRhiGlobeRenderer::ensureHeatmapFallbackTexture(
     }
     resource->heatmap_texture_revision = this->heatmap_scene.revision();
     resource->heatmap_revision = this->heatmap_scene.revision();
-    if (bindings_changed || resource->bindings == nullptr)
+    if (bindings_changed || !tileBindingsReady(resource))
         return rebuildTileBindings(resource);
     return true;
 }
@@ -4634,12 +3999,10 @@ bool MapRhiGlobeRenderer::requestMissingTiles(QRhiResourceUpdateBatch *resource_
     this->heatmap_profile_report_pending = this->heatmap_profile.enabled;
     scheduleDiagnosticHeatmapGpuSelfTest();
 
-    if (this->dummy_texture_upload_pending && this->dummy_texture)
+    if (!this->surface_backend.uploadPendingMissingTileTexture(
+            resource_updates, GlobeMissingTileColor))
     {
-        QImage image(1, 1, QImage::Format_RGBA8888);
-        image.fill(GlobeMissingTileColor);
-        resource_updates->uploadTexture(this->dummy_texture.get(), image);
-        this->dummy_texture_upload_pending = false;
+        return false;
     }
 
     if (this->tile_repository != nullptr && !this->window_tiles_requested)
@@ -4781,15 +4144,15 @@ void MapRhiGlobeRenderer::reportHeatmapProfile() const
         << (guiConfiguration().map_performance.array_batching_enabled ? 1 : 0)
         << " texture_arrays="
         << (this->rhi != nullptr
-                && this->rhi->isFeatureSupported(QRhi::TextureArrays)
+                && this->surface_backend.supportsTextureArrays(this->rhi)
             ? 1 : 0)
         << " imagery_array_pipeline="
-        << (this->array_pipeline ? 1 : 0)
-        << " imagery_array_pages=" << this->tile_array_pages.size()
+        << (this->surface_backend.imageryArrayPipelineReady() ? 1 : 0)
+        << " imagery_array_pages=" << this->surface_backend.imageryArrayPages().size()
         << " imagery_array_active=" << (arrayBatchingActive() ? 1 : 0)
         << " heatmap_array_pipeline="
-        << (this->heatmap_array_pipeline ? 1 : 0)
-        << " heatmap_array_pages=" << this->heatmap_array_pages.size();
+        << (this->surface_backend.heatmapArrayPipelineReady() ? 1 : 0)
+        << " heatmap_array_pages=" << this->surface_backend.heatmapArrayPages().size();
 }
 
 
@@ -5029,48 +4392,11 @@ bool MapRhiGlobeRenderer::applyReadyTerrainMeshes(
             updateTerrainRayBounds(&tile);
             wireframe_changed = true;
 
-            const qsizetype byte_offset_qsize =
-                first_vertex * qsizetype(sizeof(TileVertex));
-            const qsizetype byte_count_qsize =
-                result.vertices.size() * qsizetype(sizeof(TileVertex));
-            const qsizetype byte_end_qsize =
-                byte_offset_qsize + byte_count_qsize;
-
-            // A window rebuild may deliberately carry an outstanding terrain
-            // request over to the replacement window when its geometry is
-            // unchanged. In that case the CPU-side vertex range above is
-            // already the *new* window, while window_vertex_buffer can still
-            // be the old GPU allocation until the full upload later in this
-            // prepare() call. Patching that old allocation is out of bounds
-            // whenever the rebuilt window grew; D3D11 can terminate the
-            // process on such an invalid update instead of merely ignoring it.
-            //
-            // If a full upload is pending, just merge the terrain result into
-            // window_vertices and let that upload carry it. Otherwise a
-            // partial update is safe only when the byte range is proven to fit
-            // the currently allocated GPU buffer.
-            const bool partial_update_fits =
-                !this->window_vertex_upload_pending
-                && this->window_vertex_buffer
-                && byte_offset_qsize >= 0
-                && byte_count_qsize > 0
-                && byte_end_qsize >= byte_offset_qsize
-                && byte_end_qsize <= qsizetype(this->window_vertex_buffer_size)
-                && byte_offset_qsize
-                    <= qsizetype(std::numeric_limits<int>::max())
-                && byte_count_qsize
-                    <= qsizetype(std::numeric_limits<int>::max());
-
-            if (partial_update_fits)
+            if (!this->surface_backend.patchWindowVertices(
+                    resource_updates, first_vertex, result.vertices.size(),
+                    this->window_vertices))
             {
-                resource_updates->updateDynamicBuffer(
-                    this->window_vertex_buffer.get(),
-                    int(byte_offset_qsize), int(byte_count_qsize),
-                    this->window_vertices.constData() + first_vertex);
-            }
-            else
-            {
-                this->window_vertex_upload_pending = true;
+                this->surface_backend.invalidateWindowVertices();
             }
 
             break;
@@ -5084,260 +4410,75 @@ bool MapRhiGlobeRenderer::applyReadyTerrainMeshes(
 
 bool MapRhiGlobeRenderer::createTileArrayPage()
 {
-    if (this->rhi == nullptr || !this->camera_uniform_buffer || !this->sampler
-        || int(this->tile_array_pages.size())
-            >= GlobeTileArrayMaximumPageCount)
+    const bool created = this->surface_backend.createImageryArrayPage(
+        this->rhi, QSize(MapModel::TileSize, MapModel::TileSize),
+        GlobeTileArrayLayerCount, GlobeTileArrayMaximumPageCount);
+    if (created)
     {
-        return false;
+        this->tile_array_draw_indices_dirty = true;
+        this->heatmap_array_draw_indices_dirty = true;
     }
-
-    TileArrayPage page;
-    page.texture.reset(this->rhi->newTextureArray(
-        QRhiTexture::RGBA8, GlobeTileArrayLayerCount,
-        QSize(MapModel::TileSize, MapModel::TileSize)));
-    if (!page.texture || !page.texture->create())
-        return false;
-
-    page.bindings.reset(this->rhi->newShaderResourceBindings());
-    if (!page.bindings)
-        return false;
-    page.bindings->setBindings({
-        QRhiShaderResourceBinding::uniformBuffer(
-            0, QRhiShaderResourceBinding::VertexStage
-                | QRhiShaderResourceBinding::FragmentStage,
-            this->camera_uniform_buffer.get()),
-        QRhiShaderResourceBinding::sampledTexture(
-            1, QRhiShaderResourceBinding::FragmentStage,
-            page.texture.get(), this->sampler.get())
-    });
-    if (!page.bindings->create())
-        return false;
-
-    page.free_layers.reserve(GlobeTileArrayUsableLayerCount);
-    for (int layer = GlobeTileArrayLayerCount - 1; layer >= 1; --layer)
-        page.free_layers.append(layer);
-
-    this->tile_array_pages.push_back(std::move(page));
-    this->tile_array_draw_indices_dirty = true;
-    this->heatmap_array_draw_indices_dirty = true;
-    return true;
+    return created;
 }
 
 bool MapRhiGlobeRenderer::createTileArrayResources()
 {
-    // Avoid reserving even the first 64 MiB page until Globe is actually
-    // selected, and honor the shared batching switch before
-    // any optional resource allocation occurs. Further pages are created only
-    // by ensureTileArrayLayer() after every existing page is full.
     if (this->map_model == nullptr
         || this->map_model->viewMode() != MapViewMode::Globe
-        || !guiConfiguration().map_performance.array_batching_enabled)
-    {
-        return false;
-    }
-    if (this->rhi == nullptr || this->render_pass_descriptor == nullptr
-        || !this->camera_uniform_buffer || !this->sampler)
+        || !guiConfiguration().map_performance.array_batching_enabled
+        || this->rhi == nullptr
+        || this->render_pass_descriptor == nullptr)
     {
         return false;
     }
 
-    if (this->tile_array_pages.empty())
+    if (this->surface_backend.imageryArrayPages().empty())
     {
-        if (!this->rhi->isFeatureSupported(QRhi::TextureArrays))
+        if (!this->surface_backend.supportsTextureArrays(this->rhi))
             return false;
         if (!createTileArrayPage())
             return false;
     }
 
-    if (!this->array_pipeline)
-    {
-        const QShader vertex_shader = loadGlobeShader(
-            QStringLiteral(":/aowis/map/rhi/map_rhi_globe_array.vert.qsb"));
-        const QShader fragment_shader = loadGlobeShader(
-            QStringLiteral(":/aowis/map/rhi/map_rhi_globe_array.frag.qsb"));
-        if (!vertex_shader.isValid() || !fragment_shader.isValid())
-            return false;
-
-        QRhiVertexInputLayout input_layout;
-        input_layout.setBindings({
-            {quint32(sizeof(TileVertex))}
-        });
-        input_layout.setAttributes({
-            {0, 0, QRhiVertexInputAttribute::Float3,
-             quint32(offsetof(TileVertex, x))},
-            {0, 1, QRhiVertexInputAttribute::Float2,
-             quint32(offsetof(TileVertex, u))},
-            {0, 2, QRhiVertexInputAttribute::Float,
-             quint32(offsetof(TileVertex, layer))}
-        });
-
-        this->array_pipeline.reset(this->rhi->newGraphicsPipeline());
-        if (!this->array_pipeline)
-            return false;
-        this->array_pipeline->setShaderStages({
-            {QRhiShaderStage::Vertex, vertex_shader},
-            {QRhiShaderStage::Fragment, fragment_shader}
-        });
-        this->array_pipeline->setVertexInputLayout(input_layout);
-        this->array_pipeline->setShaderResourceBindings(
-            this->tile_array_pages.front().bindings.get());
-        this->array_pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
-        this->array_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
-        this->array_pipeline->setSampleCount(this->sample_count);
-        this->array_pipeline->setDepthTest(true);
-        this->array_pipeline->setDepthWrite(true);
-        this->array_pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
-        if (!this->array_pipeline->create())
-        {
-            this->array_pipeline.reset();
-            return false;
-        }
-    }
-
-    return true;
+    return this->surface_backend.ensureImageryArrayPipeline(
+        this->rhi, this->render_pass_descriptor, this->sample_count);
 }
 
 bool MapRhiGlobeRenderer::createHeatmapArrayPage(
     QRhiResourceUpdateBatch *resource_updates)
 {
-    if (this->rhi == nullptr || resource_updates == nullptr
-        || !this->camera_uniform_buffer || !this->sampler
-        || int(this->heatmap_array_pages.size())
-            >= GlobeTileArrayMaximumPageCount)
-    {
-        return false;
-    }
-
-    HeatmapArrayPage page;
-    page.texture.reset(this->rhi->newTextureArray(
-        QRhiTexture::RGBA8, GlobeTileArrayLayerCount,
-        QSize(GlobeHeatmapTextureSize, GlobeHeatmapTextureSize)));
-    if (!page.texture || !page.texture->create())
-        return false;
-
-    // Layer 0 is the explicit "no heatmap" sentinel used by unaffected
-    // tiles in the fused imagery+heatmap array pass. QRhi texture contents
-    // are undefined after creation, so leaving this layer untouched makes
-    // those tiles sample arbitrary GPU memory and appear as tile-shaped
-    // colored rectangles. Initialize the sentinel layer to transparent on
-    // every page before that page can participate in drawing.
-    QImage transparent_layer(
-        GlobeHeatmapTextureSize, GlobeHeatmapTextureSize,
-        QImage::Format_RGBA8888_Premultiplied);
-    transparent_layer.fill(Qt::transparent);
-    const QRhiTextureSubresourceUploadDescription transparent_subresource(
-        transparent_layer);
-    const QRhiTextureUploadEntry transparent_entry(
-        0, 0, transparent_subresource);
-    resource_updates->uploadTexture(
-        page.texture.get(), QRhiTextureUploadDescription(transparent_entry));
-
-    page.free_layers.reserve(GlobeTileArrayUsableLayerCount);
-    for (int layer = GlobeTileArrayLayerCount - 1; layer >= 1; --layer)
-        page.free_layers.append(layer);
-
-    this->heatmap_array_pages.push_back(std::move(page));
-    this->heatmap_array_draw_indices_dirty = true;
-    return true;
+    const bool created = this->surface_backend.createHeatmapArrayPage(
+        this->rhi, resource_updates,
+        QSize(GlobeHeatmapTextureSize, GlobeHeatmapTextureSize),
+        GlobeTileArrayLayerCount, GlobeTileArrayMaximumPageCount);
+    if (created)
+        this->heatmap_array_draw_indices_dirty = true;
+    return created;
 }
 
 bool MapRhiGlobeRenderer::createHeatmapArrayResources(
     QRhiResourceUpdateBatch *resource_updates)
 {
-    if (!arrayBatchingActive() || this->heatmap_scene.isEmpty()
-        || this->rhi == nullptr || this->render_pass_descriptor == nullptr
-        || !this->camera_uniform_buffer || !this->sampler)
+    if (this->map_model == nullptr
+        || this->map_model->viewMode() != MapViewMode::Globe
+        || !guiConfiguration().map_performance.array_batching_enabled
+        || this->rhi == nullptr
+        || this->render_pass_descriptor == nullptr
+        || resource_updates == nullptr)
     {
         return false;
     }
 
-    if (this->heatmap_array_pages.empty()
-        && !createHeatmapArrayPage(resource_updates))
+    if (this->surface_backend.heatmapArrayPages().empty())
     {
-        return false;
+        if (!this->surface_backend.supportsTextureArrays(this->rhi))
+            return false;
+        if (!createHeatmapArrayPage(resource_updates))
+            return false;
     }
 
-    if (!this->heatmap_array_template_bindings)
-    {
-        this->heatmap_array_template_bindings.reset(
-            this->rhi->newShaderResourceBindings());
-        if (!this->heatmap_array_template_bindings)
-            return false;
-        this->heatmap_array_template_bindings->setBindings({
-            QRhiShaderResourceBinding::uniformBuffer(
-                0, QRhiShaderResourceBinding::VertexStage
-                    | QRhiShaderResourceBinding::FragmentStage,
-                this->camera_uniform_buffer.get()),
-            QRhiShaderResourceBinding::sampledTexture(
-                1, QRhiShaderResourceBinding::FragmentStage,
-                this->tile_array_pages.front().texture.get(),
-                this->sampler.get()),
-            QRhiShaderResourceBinding::sampledTexture(
-                2, QRhiShaderResourceBinding::FragmentStage,
-                this->heatmap_array_pages.front().texture.get(),
-                this->sampler.get())
-        });
-        if (!this->heatmap_array_template_bindings->create())
-        {
-            this->heatmap_array_template_bindings.reset();
-            return false;
-        }
-    }
-
-    if (!this->heatmap_array_pipeline)
-    {
-        const QShader vertex_shader = loadGlobeShader(
-            QStringLiteral(
-                ":/aowis/map/rhi/map_rhi_globe_heatmap_array.vert.qsb"));
-        const QShader fragment_shader = loadGlobeShader(
-            QStringLiteral(
-                ":/aowis/map/rhi/map_rhi_globe_heatmap_array.frag.qsb"));
-        if (!vertex_shader.isValid() || !fragment_shader.isValid())
-            return false;
-
-        QRhiVertexInputLayout input_layout;
-        input_layout.setBindings({
-            {quint32(sizeof(TileVertex))},
-            {quint32(sizeof(float))}
-        });
-        input_layout.setAttributes({
-            {0, 0, QRhiVertexInputAttribute::Float3,
-             quint32(offsetof(TileVertex, x))},
-            {0, 1, QRhiVertexInputAttribute::Float2,
-             quint32(offsetof(TileVertex, u))},
-            {0, 2, QRhiVertexInputAttribute::Float,
-             quint32(offsetof(TileVertex, layer))},
-            {1, 3, QRhiVertexInputAttribute::Float, 0}
-        });
-
-        this->heatmap_array_pipeline.reset(
-            this->rhi->newGraphicsPipeline());
-        if (!this->heatmap_array_pipeline)
-            return false;
-        this->heatmap_array_pipeline->setShaderStages({
-            {QRhiShaderStage::Vertex, vertex_shader},
-            {QRhiShaderStage::Fragment, fragment_shader}
-        });
-        this->heatmap_array_pipeline->setVertexInputLayout(input_layout);
-        this->heatmap_array_pipeline->setShaderResourceBindings(
-            this->heatmap_array_template_bindings.get());
-        this->heatmap_array_pipeline->setRenderPassDescriptor(
-            this->render_pass_descriptor);
-        this->heatmap_array_pipeline->setTopology(
-            QRhiGraphicsPipeline::Triangles);
-        this->heatmap_array_pipeline->setSampleCount(this->sample_count);
-        this->heatmap_array_pipeline->setDepthTest(true);
-        this->heatmap_array_pipeline->setDepthWrite(true);
-        this->heatmap_array_pipeline->setDepthOp(
-            QRhiGraphicsPipeline::LessOrEqual);
-        if (!this->heatmap_array_pipeline->create())
-        {
-            this->heatmap_array_pipeline.reset();
-            return false;
-        }
-    }
-
-    return true;
+    return this->surface_backend.ensureHeatmapArrayPipeline(
+        this->rhi, this->render_pass_descriptor, this->sample_count);
 }
 
 bool MapRhiGlobeRenderer::ensureSharedResources()
@@ -5345,157 +4486,16 @@ bool MapRhiGlobeRenderer::ensureSharedResources()
     if (this->rhi == nullptr || this->render_pass_descriptor == nullptr)
         return false;
 
-    if (!this->camera_uniform_buffer)
+    if (!this->surface_backend.ensureSharedResources(
+            this->rhi, this->render_pass_descriptor,
+            this->sample_count))
     {
-        this->camera_uniform_buffer.reset(this->rhi->newBuffer(
-            QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, GlobeCameraUniformBytes));
-        if (!this->camera_uniform_buffer || !this->camera_uniform_buffer->create())
-            return false;
-    }
-
-    if (!this->sampler)
-    {
-        this->sampler.reset(this->rhi->newSampler(
-            QRhiSampler::Linear, QRhiSampler::Linear, QRhiSampler::None,
-            QRhiSampler::ClampToEdge, QRhiSampler::ClampToEdge));
-        if (!this->sampler || !this->sampler->create())
-            return false;
-    }
-
-    if (!this->dummy_texture)
-    {
-        this->dummy_texture.reset(this->rhi->newTexture(QRhiTexture::RGBA8, QSize(1, 1)));
-        if (!this->dummy_texture || !this->dummy_texture->create())
-            return false;
-        this->dummy_texture_upload_pending = true;
-    }
-
-    if (!this->heatmap_dummy_texture)
-    {
-        this->heatmap_dummy_texture.reset(
-            this->rhi->newTexture(QRhiTexture::RGBA8, QSize(1, 1)));
-        if (!this->heatmap_dummy_texture || !this->heatmap_dummy_texture->create())
-            return false;
-        this->heatmap_dummy_texture_upload_pending = true;
-    }
-
-    if (!this->template_bindings)
-    {
-        this->template_bindings.reset(this->rhi->newShaderResourceBindings());
-        if (!this->template_bindings)
-            return false;
-        this->template_bindings->setBindings({
-            QRhiShaderResourceBinding::uniformBuffer(
-                0, QRhiShaderResourceBinding::VertexStage
-                    | QRhiShaderResourceBinding::FragmentStage,
-                this->camera_uniform_buffer.get()),
-            QRhiShaderResourceBinding::sampledTexture(
-                1, QRhiShaderResourceBinding::FragmentStage,
-                this->dummy_texture.get(), this->sampler.get()),
-            QRhiShaderResourceBinding::sampledTexture(
-                2, QRhiShaderResourceBinding::FragmentStage,
-                this->heatmap_dummy_texture.get(), this->sampler.get())
-        });
-        if (!this->template_bindings->create())
-            return false;
-    }
-
-    if (!this->wireframe_bindings)
-    {
-        this->wireframe_bindings.reset(this->rhi->newShaderResourceBindings());
-        if (!this->wireframe_bindings)
-            return false;
-        this->wireframe_bindings->setBindings({
-            QRhiShaderResourceBinding::uniformBuffer(
-                0, QRhiShaderResourceBinding::VertexStage,
-                this->camera_uniform_buffer.get())
-        });
-        if (!this->wireframe_bindings->create())
-            return false;
-    }
-
-    if (!this->pipeline)
-    {
-        const QShader vertex_shader = loadGlobeShader(
-            QStringLiteral(":/aowis/map/rhi/map_rhi_globe.vert.qsb"));
-        const QShader fragment_shader = loadGlobeShader(
-            QStringLiteral(":/aowis/map/rhi/map_rhi_globe.frag.qsb"));
-        if (!vertex_shader.isValid() || !fragment_shader.isValid())
-            return false;
-
-        QRhiVertexInputLayout input_layout;
-        input_layout.setBindings({
-            {quint32(sizeof(TileVertex))}
-        });
-        input_layout.setAttributes({
-            {0, 0, QRhiVertexInputAttribute::Float3,
-             quint32(offsetof(TileVertex, x))},
-            {0, 1, QRhiVertexInputAttribute::Float2,
-             quint32(offsetof(TileVertex, u))}
-        });
-
-        this->pipeline.reset(this->rhi->newGraphicsPipeline());
-        if (!this->pipeline)
-            return false;
-        this->pipeline->setShaderStages({
-            {QRhiShaderStage::Vertex, vertex_shader},
-            {QRhiShaderStage::Fragment, fragment_shader}
-        });
-        this->pipeline->setVertexInputLayout(input_layout);
-        this->pipeline->setShaderResourceBindings(this->template_bindings.get());
-        this->pipeline->setRenderPassDescriptor(this->render_pass_descriptor);
-        this->pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
-        this->pipeline->setSampleCount(this->sample_count);
-        this->pipeline->setDepthTest(true);
-        this->pipeline->setDepthWrite(true);
-        this->pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
-        if (!this->pipeline->create())
-            return false;
-    }
-
-    if (!this->wireframe_pipeline)
-    {
-        const QShader vertex_shader = loadGlobeShader(
-            QStringLiteral(":/aowis/map/rhi/map_rhi_globe_wireframe.vert.qsb"));
-        const QShader fragment_shader = loadGlobeShader(
-            QStringLiteral(":/aowis/map/rhi/map_rhi_globe_wireframe.frag.qsb"));
-        if (!vertex_shader.isValid() || !fragment_shader.isValid())
-            return false;
-
-        QRhiVertexInputLayout input_layout;
-        input_layout.setBindings({
-            {quint32(sizeof(WireframeVertex))}
-        });
-        input_layout.setAttributes({
-            {0, 0, QRhiVertexInputAttribute::Float3,
-             quint32(offsetof(WireframeVertex, x))}
-        });
-
-        this->wireframe_pipeline.reset(this->rhi->newGraphicsPipeline());
-        if (!this->wireframe_pipeline)
-            return false;
-        this->wireframe_pipeline->setShaderStages({
-            {QRhiShaderStage::Vertex, vertex_shader},
-            {QRhiShaderStage::Fragment, fragment_shader}
-        });
-        this->wireframe_pipeline->setVertexInputLayout(input_layout);
-        this->wireframe_pipeline->setShaderResourceBindings(
-            this->wireframe_bindings.get());
-        this->wireframe_pipeline->setRenderPassDescriptor(
-            this->render_pass_descriptor);
-        this->wireframe_pipeline->setTopology(QRhiGraphicsPipeline::Lines);
-        this->wireframe_pipeline->setSampleCount(this->sample_count);
-        this->wireframe_pipeline->setDepthTest(true);
-        this->wireframe_pipeline->setDepthWrite(false);
-        this->wireframe_pipeline->setDepthOp(QRhiGraphicsPipeline::LessOrEqual);
-        if (!this->wireframe_pipeline->create())
-            return false;
+        return false;
     }
 
     // Texture arrays are optional. Unsupported backends and allocation or
-    // shader failures retain the already-created per-tile pipeline above.
+    // shader failures retain the already-created per-tile pipeline.
     createTileArrayResources();
-
     return true;
 }
 
@@ -5525,10 +4525,7 @@ bool MapRhiGlobeRenderer::initialize(
         // after resize/reinitialization, so every pipeline that draws into the
         // visible widget pass has to be recreated. Resource bindings, textures,
         // and buffers do not depend on that render pass and can be retained.
-        this->pipeline.reset();
-        this->wireframe_pipeline.reset();
-        this->array_pipeline.reset();
-        this->heatmap_array_pipeline.reset();
+        this->surface_backend.invalidateRenderPassPipelines();
     }
 
     if (context_changed || render_pass_changed)
@@ -5584,18 +4581,9 @@ bool MapRhiGlobeRenderer::canUseCameraOnlyPrepare(
     // These flags should all be consumed by a successful full prepare. Keep
     // them as defensive guards so a partially initialized/recovered QRhi
     // resource can never enter the transform-only path.
-    if ((this->window_vertex_upload_pending
-            && !this->window_vertices.isEmpty())
-        || (this->window_index_upload_pending
-            && !this->window_indices.isEmpty())
-        || (this->cap_vertex_upload_pending
-            && !this->cap_vertices.isEmpty())
-        || (this->cap_index_upload_pending
-            && !this->cap_indices.isEmpty())
-        || (this->wireframe_visible
-            && this->wireframe_vertex_upload_pending)
-        || this->dummy_texture_upload_pending
-        || this->heatmap_dummy_texture_upload_pending
+    if (this->surface_backend.hasPendingGeometryUploads(
+            this->prepared_surface_render_frame)
+        || this->surface_backend.fallbackTextureUploadsPending()
         || this->tile_array_draw_indices_dirty
         || this->tile_array_draw_index_upload_pending
         || this->heatmap_array_draw_indices_dirty
@@ -5624,32 +4612,122 @@ void MapRhiGlobeRenderer::rememberPreparedViewState(
     this->full_prepare_clock.restart();
 }
 
+void MapRhiGlobeRenderer::refreshPreparedSurfaceRenderFrameState(
+    const QSize &viewport_size)
+{
+    this->prepared_surface_render_frame.viewport_size = viewport_size;
+    this->prepared_surface_render_frame.render_origin_ecef =
+        this->render_origin_ecef;
+    this->prepared_surface_render_frame.map_visible = this->map_visible;
+    this->prepared_surface_render_frame.wireframe_visible =
+        this->wireframe_visible;
+    this->prepared_surface_render_frame.heatmap_opacity =
+        this->heatmap_opacity;
+    this->prepared_surface_render_frame.heatmap_revision =
+        this->heatmap_scene.revision();
+    this->prepared_surface_render_frame.heatmap_layout_revision =
+        this->heatmap_scene.layoutRevision();
+    this->prepared_surface_render_frame.active_heatmap_marker_count =
+        this->heatmap_scene.activeMarkerCount();
+
+    MapGlobeSurfaceRenderResources &resources =
+        this->prepared_surface_render_frame.resources;
+    resources.window_vertices = &this->window_vertices;
+    resources.window_indices = &this->window_indices;
+    resources.cap_vertices = &this->cap_vertices;
+    resources.cap_indices = &this->cap_indices;
+    resources.wireframe_vertices = &this->wireframe_vertices;
+}
+
+void MapRhiGlobeRenderer::rebuildPreparedSurfaceRenderFrame(
+    const QSize &viewport_size)
+{
+    refreshPreparedSurfaceRenderFrameState(viewport_size);
+
+    MapGlobeSurfaceRenderResources &resources =
+        this->prepared_surface_render_frame.resources;
+    resources.window_tiles.clear();
+    resources.window_tiles.reserve(this->window_tiles.size());
+    for (qsizetype index = 0; index < this->window_tiles.size(); ++index)
+    {
+        const GlobeTile &tile = this->window_tiles.at(index);
+        MapGlobeSurfaceTileRenderState state;
+        state.surface_tile_index = int(index);
+        state.position_key = MapGlobeSurfaceScene::positionKey(
+            tile.zoom, tile.tile_x, tile.tile_y);
+        state.virtual_x = tile.virtual_x;
+        state.tile_x = tile.tile_x;
+        state.tile_y = tile.tile_y;
+        state.zoom = tile.zoom;
+        state.is_cap = tile.is_cap;
+        state.imagery_key = tile.imagery_key;
+        state.first_vertex = tile.first_vertex;
+        state.vertex_count = tile.vertex_count;
+        state.first_index = tile.first_index;
+        state.index_count = tile.index_count;
+        state.terrain_zoom = tile.terrain_zoom;
+        state.terrain_key = tile.terrain_key;
+        state.terrain_cell_count = tile.terrain_cell_count;
+        state.terrain_stitch_top_cell_count =
+            tile.terrain_stitch_top_cell_count;
+        state.terrain_stitch_right_cell_count =
+            tile.terrain_stitch_right_cell_count;
+        state.terrain_stitch_bottom_cell_count =
+            tile.terrain_stitch_bottom_cell_count;
+        state.terrain_stitch_left_cell_count =
+            tile.terrain_stitch_left_cell_count;
+        state.terrain_mesh_applied = tile.terrain_mesh_applied;
+        state.terrain_mesh_has_relief = tile.terrain_mesh_has_relief;
+        if (tile.resource != nullptr)
+        {
+            state.imagery_ready = tileTextureReady(tile.resource);
+            state.imagery_provisional = tile.resource->is_provisional;
+            state.heatmap_has_content = tile.resource->heatmap_has_content;
+        }
+        resources.window_tiles.append(state);
+    }
+
+    resources.cap_tiles.clear();
+    resources.cap_tiles.reserve(this->cap_tiles.size());
+    for (qsizetype index = 0; index < this->cap_tiles.size(); ++index)
+    {
+        const GlobeTile &tile = this->cap_tiles.at(index);
+        MapGlobeSurfaceTileRenderState state;
+        state.surface_tile_index = int(index);
+        state.position_key = (quint64(1) << 63) | quint64(index);
+        state.virtual_x = tile.virtual_x;
+        state.tile_x = tile.tile_x;
+        state.tile_y = tile.tile_y;
+        state.zoom = tile.zoom;
+        state.is_cap = true;
+        state.imagery_key = tile.imagery_key;
+        state.first_vertex = tile.first_vertex;
+        state.vertex_count = tile.vertex_count;
+        state.first_index = tile.first_index;
+        state.index_count = tile.index_count;
+        if (tile.resource != nullptr)
+        {
+            state.imagery_ready = tileTextureReady(tile.resource);
+            state.imagery_provisional = tile.resource->is_provisional;
+            state.heatmap_has_content = tile.resource->heatmap_has_content;
+        }
+        resources.cap_tiles.append(state);
+    }
+}
+
+const MapGlobeSurfaceRenderFrame &MapRhiGlobeRenderer::surfaceRenderFrame() const
+{
+    return this->prepared_surface_render_frame;
+}
+
 bool MapRhiGlobeRenderer::uploadCameraUniform(
     QRhiResourceUpdateBatch *resource_updates,
     const QMatrix4x4 &view_projection,
     const QColor &background_color, float background_opacity)
 {
-    if (resource_updates == nullptr || !this->camera_uniform_buffer)
-        return false;
-
-    // 24 floats: the 16-float view_projection matrix, heatmap_settings, and
-    // basemap_settings. basemap_settings mirrors the flat RHI renderer: rgb
-    // is the UI window color and .a is the map-background opacity controlled
-    // by the sidebar slider.
-    float uniform_data[24] = {};
-    std::copy(
-        view_projection.constData(),
-        view_projection.constData() + 16,
-        uniform_data);
-    uniform_data[17] = this->heatmap_opacity;
-    uniform_data[20] = background_color.redF();
-    uniform_data[21] = background_color.greenF();
-    uniform_data[22] = background_color.blueF();
-    uniform_data[23] = qBound(0.0f, background_opacity, 1.0f);
-    resource_updates->updateDynamicBuffer(
-        this->camera_uniform_buffer.get(), 0,
-        GlobeCameraUniformBytes, uniform_data);
-    return true;
+    return this->surface_backend.uploadCameraUniform(
+        resource_updates, view_projection, this->heatmap_opacity,
+        background_color, background_opacity);
 }
 
 bool MapRhiGlobeRenderer::prepare(
@@ -5672,6 +4750,7 @@ bool MapRhiGlobeRenderer::prepare(
     if (allow_camera_only_prepare
         && canUseCameraOnlyPrepare(viewport_size))
     {
+        refreshPreparedSurfaceRenderFrameState(viewport_size);
         return uploadCameraUniform(
             resource_updates, view_projection,
             background_color, background_opacity);
@@ -5759,40 +4838,16 @@ bool MapRhiGlobeRenderer::prepare(
     if (this->map_visible && !requestMissingTiles(resource_updates))
         return false;
 
-    if (this->window_vertex_upload_pending && !this->window_vertices.isEmpty())
-    {
-        const int required_bytes =
-            int(this->window_vertices.size() * qsizetype(sizeof(TileVertex)));
-        if (!this->window_vertex_buffer || this->window_vertex_buffer_size != required_bytes)
-        {
-            this->window_vertex_buffer.reset(this->rhi->newBuffer(
-                QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_bytes));
-            if (!this->window_vertex_buffer || !this->window_vertex_buffer->create())
-                return false;
-            this->window_vertex_buffer_size = required_bytes;
-        }
-        resource_updates->updateDynamicBuffer(
-            this->window_vertex_buffer.get(), 0, required_bytes,
-            this->window_vertices.constData());
-        this->window_vertex_upload_pending = false;
-    }
+    // From here on the GPU path consumes a backend-neutral description of
+    // the retained Globe surface. QRhi resource ownership lives behind the
+    // concrete surface backend and is deliberately absent from the packet.
+    rebuildPreparedSurfaceRenderFrame(viewport_size);
 
-    if (this->window_index_upload_pending && !this->window_indices.isEmpty())
+    if (!this->surface_backend.uploadGeometry(
+            this->rhi, resource_updates,
+            this->prepared_surface_render_frame))
     {
-        const int required_bytes =
-            int(this->window_indices.size() * qsizetype(sizeof(quint32)));
-        if (!this->window_index_buffer || this->window_index_buffer_size != required_bytes)
-        {
-            this->window_index_buffer.reset(this->rhi->newBuffer(
-                QRhiBuffer::Dynamic, QRhiBuffer::IndexBuffer, required_bytes));
-            if (!this->window_index_buffer || !this->window_index_buffer->create())
-                return false;
-            this->window_index_buffer_size = required_bytes;
-        }
-        resource_updates->updateDynamicBuffer(
-            this->window_index_buffer.get(), 0, required_bytes,
-            this->window_indices.constData());
-        this->window_index_upload_pending = false;
+        return false;
     }
 
     if (this->map_visible
@@ -5812,48 +4867,10 @@ bool MapRhiGlobeRenderer::prepare(
         return false;
     }
 
-    if (this->cap_vertex_upload_pending && !this->cap_vertices.isEmpty())
+    if (!this->surface_backend.uploadPendingHeatmapDummyTexture(
+            resource_updates))
     {
-        const int required_bytes =
-            int(this->cap_vertices.size() * qsizetype(sizeof(TileVertex)));
-        if (!this->cap_vertex_buffer)
-        {
-            this->cap_vertex_buffer.reset(this->rhi->newBuffer(
-                QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, required_bytes));
-            if (!this->cap_vertex_buffer || !this->cap_vertex_buffer->create())
-                return false;
-        }
-        resource_updates->updateDynamicBuffer(
-            this->cap_vertex_buffer.get(), 0, required_bytes, this->cap_vertices.constData());
-        this->cap_vertex_upload_pending = false;
-    }
-
-    if (this->cap_index_upload_pending && !this->cap_indices.isEmpty())
-    {
-        const int required_bytes =
-            int(this->cap_indices.size() * qsizetype(sizeof(quint32)));
-        if (!this->cap_index_buffer)
-        {
-            this->cap_index_buffer.reset(this->rhi->newBuffer(
-                QRhiBuffer::Dynamic, QRhiBuffer::IndexBuffer, required_bytes));
-            if (!this->cap_index_buffer || !this->cap_index_buffer->create())
-                return false;
-        }
-        resource_updates->updateDynamicBuffer(
-            this->cap_index_buffer.get(), 0, required_bytes,
-            this->cap_indices.constData());
-        this->cap_index_upload_pending = false;
-    }
-
-    if (!uploadWireframeVertices(resource_updates))
         return false;
-
-    if (this->heatmap_dummy_texture_upload_pending && this->heatmap_dummy_texture)
-    {
-        QImage image(1, 1, QImage::Format_RGBA8888);
-        image.fill(Qt::transparent);
-        resource_updates->uploadTexture(this->heatmap_dummy_texture.get(), image);
-        this->heatmap_dummy_texture_upload_pending = false;
     }
 
     if (!uploadCameraUniform(
@@ -5870,139 +4887,76 @@ bool MapRhiGlobeRenderer::prepare(
 
 void MapRhiGlobeRenderer::draw(QRhiCommandBuffer *command_buffer)
 {
-    if (command_buffer == nullptr)
+    if (command_buffer == nullptr
+        || !this->prepared_surface_render_frame.isValid())
+    {
         return;
-
-    if (this->map_visible && this->pipeline)
-    {
-        bool use_array = false;
-        bool use_heatmap_array = false;
-        if (this->window_vertex_buffer && this->window_index_buffer)
-        {
-            use_array = arrayBatchingActive()
-                && this->tile_array_draw_index_buffer
-                && !this->tile_array_draw_indices.isEmpty();
-            use_heatmap_array = use_array
-                && heatmapArrayBatchingActive()
-                && this->heatmap_opacity > 0.0f
-                && this->heatmap_array_layer_buffer
-                && this->heatmap_array_draw_index_buffer
-                && !this->heatmap_array_draw_indices.isEmpty()
-                && !this->heatmap_array_draw_batches.empty();
-            if (use_heatmap_array)
-            {
-                // Imagery and heatmap are sampled in the same terrain pass.
-                // Batches are grouped by (imagery page, heatmap page), while
-                // a zero heatmap layer keeps unaffected tiles in that same
-                // pass without sampling the heatmap array.
-                command_buffer->setGraphicsPipeline(
-                    this->heatmap_array_pipeline.get());
-                const QRhiCommandBuffer::VertexInput heatmap_bindings[] = {
-                    {this->window_vertex_buffer.get(), 0},
-                    {this->heatmap_array_layer_buffer.get(), 0}
-                };
-                command_buffer->setVertexInput(
-                    0, 2, heatmap_bindings,
-                    this->heatmap_array_draw_index_buffer.get(), 0,
-                    QRhiCommandBuffer::IndexUInt32);
-                for (const HeatmapArrayDrawBatch &batch :
-                     this->heatmap_array_draw_batches)
-                {
-                    if (!batch.bindings || batch.draw_index_count <= 0)
-                        continue;
-                    command_buffer->setShaderResources(batch.bindings.get());
-                    command_buffer->drawIndexed(
-                        quint32(batch.draw_index_count), 1,
-                        quint32(batch.first_draw_index));
-                }
-            }
-            else if (use_array)
-            {
-                // The compact index buffer groups every array-ready leaf by
-                // stable page ownership. Bind the shared geometry once, then
-                // submit one range per non-empty page. Still-loading leaves
-                // are absent from these ranges and continue below through
-                // the ordinary per-tile fallback.
-                command_buffer->setGraphicsPipeline(this->array_pipeline.get());
-                const QRhiCommandBuffer::VertexInput array_binding(
-                    this->window_vertex_buffer.get(), 0);
-                command_buffer->setVertexInput(
-                    0, 1, &array_binding,
-                    this->tile_array_draw_index_buffer.get(), 0,
-                    QRhiCommandBuffer::IndexUInt32);
-                for (const TileArrayPage &page : this->tile_array_pages)
-                {
-                    if (!page.bindings || page.draw_index_count <= 0)
-                        continue;
-                    command_buffer->setShaderResources(page.bindings.get());
-                    command_buffer->drawIndexed(
-                        quint32(page.draw_index_count), 1,
-                        quint32(page.first_draw_index));
-                }
-            }
-
-            command_buffer->setGraphicsPipeline(this->pipeline.get());
-            for (const GlobeTile &tile : this->window_tiles)
-            {
-                if (tile.vertex_count <= 0 || tile.index_count <= 0)
-                    continue;
-                if (use_array && tile.array_ready)
-                    continue;
-
-                QRhiShaderResourceBindings *bindings = this->template_bindings.get();
-                if (tile.resource != nullptr && tile.resource->bindings)
-                    bindings = tile.resource->bindings.get();
-                if (bindings == nullptr)
-                    continue;
-
-                command_buffer->setShaderResources(bindings);
-                const QRhiCommandBuffer::VertexInput binding(
-                    this->window_vertex_buffer.get(), 0);
-                const quint32 index_byte_offset = quint32(
-                    tile.first_index * int(sizeof(quint32)));
-                command_buffer->setVertexInput(
-                    0, 1, &binding, this->window_index_buffer.get(),
-                    index_byte_offset, QRhiCommandBuffer::IndexUInt32);
-                command_buffer->drawIndexed(quint32(tile.index_count));
-            }
-        }
-
-        if (this->cap_vertex_buffer && this->cap_index_buffer)
-        {
-            command_buffer->setGraphicsPipeline(this->pipeline.get());
-            for (const GlobeTile &tile : this->cap_tiles)
-            {
-                if (tile.resource == nullptr || !tile.resource->bindings
-                    || tile.vertex_count <= 0 || tile.index_count <= 0)
-                {
-                    continue;
-                }
-
-                command_buffer->setShaderResources(tile.resource->bindings.get());
-                const QRhiCommandBuffer::VertexInput binding(
-                    this->cap_vertex_buffer.get(), 0);
-                const quint32 index_byte_offset = quint32(
-                    tile.first_index * int(sizeof(quint32)));
-                command_buffer->setVertexInput(
-                    0, 1, &binding, this->cap_index_buffer.get(),
-                    index_byte_offset, QRhiCommandBuffer::IndexUInt32);
-                command_buffer->drawIndexed(quint32(tile.index_count));
-            }
-        }
-
     }
 
-    if (this->wireframe_visible
-        && this->wireframe_pipeline && this->wireframe_bindings
-        && this->wireframe_vertex_buffer && !this->wireframe_vertices.isEmpty())
+    MapRhiGlobeSurfaceDrawResources &draw_resources =
+        this->surface_draw_resources;
+    draw_resources.window_tiles.clear();
+    draw_resources.cap_tiles.clear();
+    draw_resources.imagery_array_batches.clear();
+    draw_resources.heatmap_array_batches.clear();
+
+    this->surface_backend.populateSharedDrawResources(&draw_resources);
+
+    draw_resources.imagery_array_active = arrayBatchingActive()
+        && !this->tile_array_draw_indices.isEmpty();
+    draw_resources.heatmap_array_active = heatmapArrayBatchingActive()
+        && !this->heatmap_array_draw_indices.isEmpty()
+        && !this->heatmap_array_draw_batches.empty();
+
+    draw_resources.window_tiles.reserve(this->window_tiles.size());
+    for (const GlobeTile &tile : this->window_tiles)
     {
-        command_buffer->setGraphicsPipeline(this->wireframe_pipeline.get());
-        command_buffer->setShaderResources(this->wireframe_bindings.get());
-        const QRhiCommandBuffer::VertexInput binding(
-            this->wireframe_vertex_buffer.get(), 0);
-        command_buffer->setVertexInput(0, 1, &binding);
-        command_buffer->draw(quint32(this->wireframe_vertices.size()));
+        MapRhiGlobeSurfaceTileDrawState state;
+        state.array_ready = tile.array_ready;
+        if (tile.resource != nullptr && tileBindingsReady(tile.resource))
+            state.bindings = tileBindings(tile.resource);
+        draw_resources.window_tiles.append(state);
     }
+
+    draw_resources.cap_tiles.reserve(this->cap_tiles.size());
+    for (const GlobeTile &tile : this->cap_tiles)
+    {
+        MapRhiGlobeSurfaceTileDrawState state;
+        if (tile.resource != nullptr && tileBindingsReady(tile.resource))
+            state.bindings = tileBindings(tile.resource);
+        draw_resources.cap_tiles.append(state);
+    }
+
+    draw_resources.imagery_array_batches.reserve(
+        this->surface_backend.imageryArrayPages().size());
+    for (const TileArrayPage &page : this->surface_backend.imageryArrayPages())
+    {
+        if (!page.bindings || page.draw_index_count <= 0)
+            continue;
+        MapRhiGlobeSurfaceBatch batch;
+        batch.bindings = page.bindings.get();
+        batch.first_draw_index = page.first_draw_index;
+        batch.draw_index_count = page.draw_index_count;
+        draw_resources.imagery_array_batches.push_back(batch);
+    }
+
+    draw_resources.heatmap_array_batches.reserve(
+        this->heatmap_array_draw_batches.size());
+    for (const HeatmapArrayDrawBatch &page_batch :
+         this->heatmap_array_draw_batches)
+    {
+        if (!page_batch.bindings || page_batch.draw_index_count <= 0)
+            continue;
+        MapRhiGlobeSurfaceBatch batch;
+        batch.bindings = page_batch.bindings.get();
+        batch.first_draw_index = page_batch.first_draw_index;
+        batch.draw_index_count = page_batch.draw_index_count;
+        draw_resources.heatmap_array_batches.push_back(batch);
+    }
+
+    this->surface_backend.draw(
+        command_buffer, this->prepared_surface_render_frame,
+        draw_resources);
 }
 
 void MapRhiGlobeRenderer::invalidateImagery()
@@ -6010,9 +4964,10 @@ void MapRhiGlobeRenderer::invalidateImagery()
     this->preparation_dirty = true;
     this->heatmap_gpu_bake_jobs.clear();
     resetWindowArrayLayers();
+    this->surface_backend.clearTileGpuResources();
     this->tile_resources.clear();
     this->cap_resource = TileResource();
-    for (TileArrayPage &page : this->tile_array_pages)
+    for (TileArrayPage &page : this->surface_backend.imageryArrayPages())
     {
         page.free_layers.clear();
         page.free_layers.reserve(GlobeTileArrayUsableLayerCount);
@@ -6025,7 +4980,7 @@ void MapRhiGlobeRenderer::invalidateImagery()
     this->tile_array_draw_indices.clear();
     this->tile_array_draw_indices_dirty = true;
     this->tile_array_draw_index_upload_pending = false;
-    for (HeatmapArrayPage &page : this->heatmap_array_pages)
+    for (HeatmapArrayPage &page : this->surface_backend.heatmapArrayPages())
     {
         page.free_layers.clear();
         page.free_layers.reserve(GlobeTileArrayUsableLayerCount);
@@ -6046,6 +5001,8 @@ void MapRhiGlobeRenderer::invalidateImagery()
 
 void MapRhiGlobeRenderer::releaseResources()
 {
+    this->prepared_surface_render_frame = MapGlobeSurfaceRenderFrame();
+    this->surface_draw_resources = MapRhiGlobeSurfaceDrawResources();
     this->preparation_dirty = true;
     this->prepared_view_state_valid = false;
     this->full_prepare_clock.invalidate();
@@ -6053,8 +5010,6 @@ void MapRhiGlobeRenderer::releaseResources()
     releaseVisibleHeatmapGpuBakeAtlasResources();
     releaseDiagnosticHeatmapGpuBakeResources();
     this->heatmap_gpu_bake_jobs.clear();
-    this->heatmap_gpu_bake_instance_buffer.reset();
-    this->heatmap_gpu_bake_instance_buffer_size = 0;
     this->heatmap_gpu_baking_disabled = false;
     this->diagnostic_heatmap_bake_instances.clear();
     this->diagnostic_heatmap_bake_cpu_reference = QImage();
@@ -6063,50 +5018,17 @@ void MapRhiGlobeRenderer::releaseResources()
     this->diagnostic_heatmap_gpu_validation_attempted = false;
     this->heatmap_profile_report_pending = false;
     this->heatmap_array_draw_batches.clear();
-    this->heatmap_array_template_bindings.reset();
-    this->heatmap_array_pipeline.reset();
-    this->heatmap_array_pages.clear();
     this->heatmap_array_draw_indices.clear();
-    this->heatmap_array_draw_index_buffer.reset();
-    this->heatmap_array_draw_index_buffer_size = 0;
     this->heatmap_array_draw_indices_dirty = true;
     this->heatmap_array_draw_index_upload_pending = false;
-    this->heatmap_array_layer_buffer.reset();
-    this->heatmap_array_layer_buffer_size = 0;
     this->heatmap_array_layer_upload_pending = true;
-    this->array_pipeline.reset();
-    this->tile_array_pages.clear();
     this->tile_array_draw_indices.clear();
-    this->tile_array_draw_index_buffer.reset();
-    this->tile_array_draw_index_buffer_size = 0;
     this->tile_array_draw_indices_dirty = true;
     this->tile_array_draw_index_upload_pending = false;
-    this->pipeline.reset();
-    this->wireframe_pipeline.reset();
-    this->template_bindings.reset();
-    this->wireframe_bindings.reset();
-    this->dummy_texture.reset();
-    this->dummy_texture_upload_pending = true;
-    this->heatmap_dummy_texture.reset();
-    this->heatmap_dummy_texture_upload_pending = true;
-    this->sampler.reset();
-    this->camera_uniform_buffer.reset();
-    this->window_vertex_buffer.reset();
-    this->window_index_buffer.reset();
-    this->window_vertex_buffer_size = 0;
-    this->window_index_buffer_size = 0;
-    this->window_vertex_upload_pending = true;
-    this->window_index_upload_pending = true;
-    this->wireframe_vertex_buffer.reset();
-    this->wireframe_vertex_buffer_size = 0;
-    this->wireframe_vertex_upload_pending = true;
+    this->surface_backend.reset();
     this->window_dirty = true;
     this->terrain_lod_rebuild_pending = false;
     this->terrain_lod_rebuild_clock.invalidate();
     this->surface_scene.clearVisibilityHistory();
-    this->cap_vertex_buffer.reset();
-    this->cap_index_buffer.reset();
-    this->cap_vertex_upload_pending = true;
-    this->cap_index_upload_pending = true;
     invalidateImagery();
 }

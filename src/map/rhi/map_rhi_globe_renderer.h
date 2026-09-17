@@ -2,8 +2,10 @@
 #define MAP_RHI_GLOBE_RENDERER_H
 
 #include "geo/geo_wgs84_ellipsoid.h"
+#include "map/render/map_globe_surface_render_frame.h"
 #include "map/render/map_globe_surface_scene.h"
 #include "map/render/map_globe_heatmap_scene.h"
+#include "map/rhi/map_rhi_globe_surface_backend.h"
 
 #include <aowis/model/gis.h>
 
@@ -28,10 +30,8 @@ class MapTileRepository;
 class QRhi;
 class QRhiBuffer;
 class QRhiCommandBuffer;
-class QRhiGraphicsPipeline;
 class QRhiRenderPassDescriptor;
 class QRhiResourceUpdateBatch;
-class QRhiSampler;
 class QRhiShaderResourceBindings;
 class QRhiTexture;
 class QRhiTextureRenderTarget;
@@ -169,6 +169,8 @@ public:
     void runDiagnosticHeatmapGpuBake(QRhiCommandBuffer *command_buffer);
     void draw(QRhiCommandBuffer *command_buffer);
 
+    const MapGlobeSurfaceRenderFrame &surfaceRenderFrame() const;
+
     // Drops all cached tile textures/bindings and forces the window to be
     // rebuilt from scratch on the next prepare() call. Used when the
     // imagery provider changes, since the tile keys/endpoints already
@@ -180,36 +182,15 @@ public:
     void releaseResources();
 
 private:
-    struct TileVertex
-    {
-        float x = 0.0f;
-        float y = 0.0f;
-        float z = 0.0f;
-        float u = 0.0f;
-        float v = 0.0f;
-        // Page-local imagery-array layer for the batched Globe pass. Layer
-        // 0 is reserved as the "not array-ready" sentinel and is discarded
-        // by the array fragment shader. Page selection happens by binding a
-        // different array texture for each compact page draw; the ordinary
-        // per-tile pipeline ignores this attribute.
-        float layer = 0.0f;
-    };
-
-    struct WireframeVertex
-    {
-        float x = 0.0f;
-        float y = 0.0f;
-        float z = 0.0f;
-    };
+    using TileVertex = MapGlobeSurfaceVertex;
+    using WireframeVertex = MapGlobeSurfaceWireframeVertex;
 
     using HeatmapStamp = MapGlobeHeatmapStamp;
     using HeatmapRasterStats = MapGlobeHeatmapRasterStats;
 
     struct TileResource
     {
-        std::unique_ptr<QRhiTexture> texture;
-        std::unique_ptr<QRhiTexture> heatmap_texture;
-        std::unique_ptr<QRhiShaderResourceBindings> bindings;
+        quint64 gpu_resource_id = 0;
         qint64 pixmap_cache_key = -1;
         // Monotonic identity of the pixels currently held by texture.
         // array_content_revision only catches up after those exact pixels
@@ -320,26 +301,9 @@ private:
         bool heatmap_array_ready = false;
     };
 
-    struct TileArrayPage
-    {
-        std::unique_ptr<QRhiTexture> texture;
-        std::unique_ptr<QRhiShaderResourceBindings> bindings;
-        QVector<int> free_layers;
-        int first_draw_index = 0;
-        int draw_index_count = 0;
-    };
-
-    struct HeatmapArrayPage
-    {
-        std::unique_ptr<QRhiTexture> texture;
-        QVector<int> free_layers;
-    };
-
-    struct TerrainHeightArrayPage
-    {
-        std::unique_ptr<QRhiTexture> texture;
-        QVector<int> free_layers;
-    };
+    using TileArrayPage = MapRhiGlobeImageryArrayPage;
+    using HeatmapArrayPage = MapRhiGlobeHeatmapArrayPage;
+    using TerrainHeightArrayPage = MapRhiGlobeTerrainHeightArrayPage;
 
     struct TerrainHeightCacheEntry
     {
@@ -373,27 +337,7 @@ private:
         int draw_index_count = 0;
     };
 
-    struct HeatmapBakeVertex
-    {
-        float corner_x = 0.0f;
-        float corner_y = 0.0f;
-    };
-
-    struct HeatmapBakeInstance
-    {
-        float center_x_pixels = 0.0f;
-        float center_y_pixels = 0.0f;
-        float radius_pixels = 0.0f;
-        float solid_fraction = 0.0f;
-        float red = 0.0f;
-        float green = 0.0f;
-        float blue = 0.0f;
-        // Maps this tile-local 0..256 X coordinate into one slot of the
-        // horizontal visible-bake atlas. Diagnostic bakes retain 1/0 and
-        // therefore continue targeting their standalone 256x256 texture.
-        float target_scale_x = 1.0f;
-        float target_offset_x = 0.0f;
-    };
+    using HeatmapBakeInstance = MapRhiGlobeHeatmapBakeInstance;
 
     struct HeatmapGpuBakeJob
     {
@@ -405,15 +349,6 @@ private:
         quint64 revision = 0;
         QVector<HeatmapBakeInstance> instances;
     };
-
-    struct HeatmapGpuBakeAtlas
-    {
-        int slot_count = 0;
-        std::unique_ptr<QRhiTexture> texture;
-        std::unique_ptr<QRhiRenderPassDescriptor> render_pass_descriptor;
-        std::unique_ptr<QRhiTextureRenderTarget> target;
-    };
-
 
     // Per-request counters for the opt-in Globe heatmap performance log.
     // Kept entirely outside rendering state so enabling diagnostics cannot
@@ -471,12 +406,13 @@ private:
     void appendWireframeEdges(
         const QVector<TileVertex> &vertices,
         const QVector<quint32> &indices);
-    bool uploadWireframeVertices(QRhiResourceUpdateBatch *resource_updates);
     TileVertex makeTileVertex(double lon_deg, double lat_deg, float u, float v) const;
     bool ensureSharedResources();
     bool preparedViewSelectionMatches(const QSize &viewport_size) const;
     bool canUseCameraOnlyPrepare(const QSize &viewport_size) const;
     void rememberPreparedViewState(const QSize &viewport_size);
+    void refreshPreparedSurfaceRenderFrameState(const QSize &viewport_size);
+    void rebuildPreparedSurfaceRenderFrame(const QSize &viewport_size);
     bool uploadCameraUniform(
         QRhiResourceUpdateBatch *resource_updates,
         const QMatrix4x4 &view_projection,
@@ -500,6 +436,17 @@ private:
         QRhiResourceUpdateBatch *resource_updates);
     bool uploadHeatmapArrayLayers(
         QRhiResourceUpdateBatch *resource_updates);
+    bool ensureTileGpuResource(TileResource *resource);
+    bool tileTextureReady(const TileResource *resource) const;
+    bool tileHeatmapTextureReady(const TileResource *resource) const;
+    bool tileBindingsReady(const TileResource *resource) const;
+    QRhiTexture *tileTexture(const TileResource *resource) const;
+    QRhiTexture *tileHeatmapTexture(const TileResource *resource) const;
+    QRhiShaderResourceBindings *tileBindings(const TileResource *resource) const;
+    void invalidateTileBindings(TileResource *resource);
+    void clearTileHeatmapTexture(TileResource *resource);
+    bool recreateTileTexture(TileResource *resource, const QSize &size);
+    bool recreateTileHeatmapTexture(TileResource *resource, const QSize &size);
     bool rebuildTileBindings(TileResource *resource);
     bool ensureTileResource(
         GlobeTile &tile, QRhiResourceUpdateBatch *resource_updates,
@@ -574,9 +521,6 @@ private:
         const QImage &premultiplied_image);
     bool ensureDiagnosticHeatmapGpuBakeResources();
     void releaseDiagnosticHeatmapGpuBakeResources();
-    HeatmapGpuBakeAtlas *ensureVisibleHeatmapGpuBakeAtlasResources(
-        int slot_count);
-    int maximumVisibleHeatmapGpuBakeAtlasSlots();
     void releaseVisibleHeatmapGpuBakeAtlasResources();
     void reportHeatmapProfile() const;
     bool requestMissingTiles(QRhiResourceUpdateBatch *resource_updates);
@@ -618,18 +562,10 @@ private:
     // sits right at the boundary would flicker between one leaf and four
     // children every frame as the camera drifts by sub-pixel amounts.
     MapGlobeSurfaceScene surface_scene;
+    MapGlobeSurfaceRenderFrame prepared_surface_render_frame;
     bool window_tiles_requested = false;
-    bool window_vertex_upload_pending = false;
-    bool window_index_upload_pending = false;
-    std::unique_ptr<QRhiBuffer> window_vertex_buffer;
-    std::unique_ptr<QRhiBuffer> window_index_buffer;
-    int window_vertex_buffer_size = 0;
-    int window_index_buffer_size = 0;
 
     QVector<WireframeVertex> wireframe_vertices;
-    bool wireframe_vertex_upload_pending = true;
-    std::unique_ptr<QRhiBuffer> wireframe_vertex_buffer;
-    int wireframe_vertex_buffer_size = 0;
     bool wireframe_visible = false;
     bool map_visible = true;
 
@@ -638,56 +574,31 @@ private:
     QVector<quint32> cap_indices;
     QVector<GlobeTile> cap_tiles;
     bool caps_built = false;
-    bool cap_vertex_upload_pending = true;
-    bool cap_index_upload_pending = true;
-    std::unique_ptr<QRhiBuffer> cap_vertex_buffer;
-    std::unique_ptr<QRhiBuffer> cap_index_buffer;
 
-    std::unique_ptr<QRhiBuffer> camera_uniform_buffer;
-    std::unique_ptr<QRhiSampler> sampler;
-    std::unique_ptr<QRhiTexture> dummy_texture;
-    bool dummy_texture_upload_pending = true;
-    // Fallback bound at binding 2 (see rebuildTileBindings()) for any tile
-    // with no heatmap_texture of its own -- fully transparent, unlike
-    // dummy_texture above (GlobeMissingTileColor, opaque), since this one
-    // gets *blended onto* the tile's real imagery rather than replacing it.
-    std::unique_ptr<QRhiTexture> heatmap_dummy_texture;
-    bool heatmap_dummy_texture_upload_pending = true;
-    std::unique_ptr<QRhiShaderResourceBindings> template_bindings;
-    std::unique_ptr<QRhiShaderResourceBindings> wireframe_bindings;
-    std::unique_ptr<QRhiGraphicsPipeline> pipeline;
-    std::unique_ptr<QRhiGraphicsPipeline> wireframe_pipeline;
+    MapRhiGlobeSurfaceBackend surface_backend;
+    MapRhiGlobeSurfaceDrawResources surface_draw_resources;
+
+    // Shared surface QRhi state (camera uniform, sampler, fallback textures,
+    // bindings and visible-pass pipelines) is owned by surface_backend.
     // Each page owns 255 usable imagery layers and is allocated only when
     // every existing page is full. TileResource keeps stable page/layer
     // ownership; a compact index stream groups otherwise non-contiguous
     // window tiles into one indexed draw range per page.
-    std::vector<TileArrayPage> tile_array_pages;
-    std::unique_ptr<QRhiGraphicsPipeline> array_pipeline;
     QVector<quint32> tile_array_draw_indices;
     bool tile_array_draw_indices_dirty = true;
     bool tile_array_draw_index_upload_pending = false;
-    std::unique_ptr<QRhiBuffer> tile_array_draw_index_buffer;
-    int tile_array_draw_index_buffer_size = 0;
     // Heatmap tiles remain sparsely packed into independent pages. When an
     // overlay is visible, the compact index stream groups every imagery
     // tile by its (imagery page, heatmap page) pair so imagery and heatmap
     // are sampled in one terrain pass rather than drawing terrain twice.
-    std::vector<HeatmapArrayPage> heatmap_array_pages;
-    std::unique_ptr<QRhiGraphicsPipeline> heatmap_array_pipeline;
-    std::unique_ptr<QRhiShaderResourceBindings>
-        heatmap_array_template_bindings;
     std::vector<HeatmapArrayDrawBatch> heatmap_array_draw_batches;
     QVector<quint32> heatmap_array_draw_indices;
     bool heatmap_array_draw_indices_dirty = true;
     bool heatmap_array_draw_index_upload_pending = false;
-    std::unique_ptr<QRhiBuffer> heatmap_array_draw_index_buffer;
-    int heatmap_array_draw_index_buffer_size = 0;
     // A separate float stream preserves TileVertex's compact imagery-path
     // stride; only the fused imagery/heatmap pipeline fetches this value.
     QVector<float> window_heatmap_array_layers;
     bool heatmap_array_layer_upload_pending = true;
-    std::unique_ptr<QRhiBuffer> heatmap_array_layer_buffer;
-    int heatmap_array_layer_buffer_size = 0;
     std::map<QString, std::unique_ptr<TileResource>> tile_resources;
     TileResource cap_resource;
     // Mirrors MapRhiBasemapRenderer's identically-named members exactly --
@@ -705,7 +616,6 @@ private:
     // have a different size, format and geographic reuse lifetime. The LRU
     // remains useful even before shader displacement lands: once uploaded,
     // a DEM can survive eviction from MapTerrainRepository's CPU QCache.
-    std::vector<TerrainHeightArrayPage> terrain_height_array_pages;
     QHash<QString, TerrainHeightCacheEntry> terrain_height_cache;
     quint64 terrain_height_cache_frame = 0;
     bool terrain_height_cache_disabled = false;
@@ -715,19 +625,6 @@ private:
     // Standalone 256x256 target retained for opt-in validation. The visible
     // atlas below shares its pipeline and geometry but never its texture, so
     // diagnostic readback dimensions and orientation remain unchanged.
-    std::unique_ptr<QRhiTexture> diagnostic_heatmap_bake_texture;
-    std::unique_ptr<QRhiRenderPassDescriptor>
-        diagnostic_heatmap_bake_render_pass_descriptor;
-    std::unique_ptr<QRhiTextureRenderTarget>
-        diagnostic_heatmap_bake_target;
-    std::unique_ptr<QRhiShaderResourceBindings>
-        diagnostic_heatmap_bake_bindings;
-    std::unique_ptr<QRhiGraphicsPipeline>
-        diagnostic_heatmap_bake_pipeline;
-    std::unique_ptr<QRhiBuffer> diagnostic_heatmap_bake_vertex_buffer;
-    std::unique_ptr<QRhiBuffer> diagnostic_heatmap_bake_instance_buffer;
-    int diagnostic_heatmap_bake_instance_buffer_size = 0;
-    bool diagnostic_heatmap_bake_vertex_upload_pending = true;
     QVector<HeatmapBakeInstance> diagnostic_heatmap_bake_instances;
     bool diagnostic_heatmap_bake_pending = false;
     quint64 diagnostic_heatmap_bake_revision = 0;
@@ -742,10 +639,6 @@ private:
     // Lazily-created power-of-two horizontal atlases avoid clearing a full
     // 64-slot strip when only a handful of new tiles need baking. Their Y
     // extent stays exactly one tile, preserving the validated orientation.
-    std::map<int, HeatmapGpuBakeAtlas> heatmap_gpu_bake_atlases;
-    int heatmap_gpu_bake_maximum_atlas_slots = 0;
-    std::unique_ptr<QRhiBuffer> heatmap_gpu_bake_instance_buffer;
-    int heatmap_gpu_bake_instance_buffer_size = 0;
     bool heatmap_gpu_baking_disabled = false;
 
     std::unique_ptr<MapTerrainMeshScheduler> terrain_mesh_scheduler;
