@@ -88,7 +88,7 @@ double smoothStep(double edge0, double edge1, double value)
 
 double globeTerrainRayIncidence(
     const GeoWgs84Ellipsoid::EcefPositionD &eye,
-    const MapRhiGlobeSurfaceHit &hit)
+    const MapGlobeSurfaceHit &hit)
 {
     const double ray_x = hit.ecef_position.x - eye.x;
     const double ray_y = hit.ecef_position.y - eye.y;
@@ -513,7 +513,7 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
                 coordinate, elevation_m, cell_size_m);
         });
     this->globe_network_scene.setUndergroundXRayEnabled(
-        this->underground_mode == MapRhiUndergroundMode::XRay);
+        this->underground_mode == MapUndergroundMode::XRay);
     syncViewState();
 
     this->globe_terrain_follow_timer = new QTimer(this);
@@ -691,7 +691,7 @@ MapRhiWidget::MapRhiWidget(MapModel *map_model, const QString &surface_name, QWi
         syncGlobeTerrainAwareCameraHeight(true);
         if (prime_network_terrain && this->globe_renderer)
             this->globe_renderer->requestTerrainForCurrentView(this->viewport_size);
-        if (this->underground_mode == MapRhiUndergroundMode::XRay
+        if (this->underground_mode == MapUndergroundMode::XRay
             && this->map_model->viewMode() == MapViewMode::Globe)
         {
             this->globe_underground_refresh_requested = true;
@@ -751,9 +751,9 @@ QString MapRhiWidget::graphicsApiName() const
     return graphicsApiDisplayName(api());
 }
 
-MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
+MapRenderHit MapRhiWidget::hitTest(const QPointF &screen_position) const
 {
-    MapRhiHit no_hit;
+    MapRenderHit no_hit;
     if (this->map_model == nullptr
         || !finiteScreenPoint(screen_position)
         || screen_position.x() < 0.0 || screen_position.y() < 0.0
@@ -812,7 +812,7 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
                 continue;
             }
 
-            MapRhiHit icon_hit;
+            MapRenderHit icon_hit;
             icon_hit.render_id = node.render_id;
             icon_hit.entity_type = node.entity_type;
             icon_hit.uuid = node.uuid;
@@ -827,7 +827,7 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
                 continue;
             }
 
-            MapRhiHit icon_hit;
+            MapRenderHit icon_hit;
             icon_hit.render_id = link.render_id;
             icon_hit.entity_type = link.entity_type;
             icon_hit.uuid = link.uuid;
@@ -845,7 +845,7 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
         Rhi2dMinimumNodeHitRadiusPx,
         node_radius_px + Rhi2dNodeHitPaddingPx);
     double best_node_distance = node_hit_radius;
-    MapRhiHit best_node_hit;
+    MapRenderHit best_node_hit;
     for (const NetworkRenderNode &node : snapshot.nodes)
     {
         if (this->scene.isEntityHidden(node.uuid)
@@ -884,7 +884,7 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
         Rhi2dMinimumLinkHitRadiusPx,
         fixed_link_half_width_px + Rhi2dLinkHitPaddingPx);
     double best_link_distance = std::numeric_limits<double>::infinity();
-    MapRhiHit best_link_hit;
+    MapRenderHit best_link_hit;
     for (const NetworkRenderLink &link : snapshot.links)
     {
         if (this->scene.isEntityHidden(link.uuid)
@@ -934,9 +934,9 @@ MapRhiHit MapRhiWidget::hitTest(const QPointF &screen_position) const
     return best_link_hit;
 }
 
-MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
+MapRenderHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
 {
-    MapRhiHit no_hit;
+    MapRenderHit no_hit;
     if (this->active_rhi == nullptr)
         return no_hit;
 
@@ -1032,7 +1032,7 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
                 continue;
             }
 
-            MapRhiHit tank_hit;
+            MapRenderHit tank_hit;
             tank_hit.render_id = node.render_id;
             tank_hit.entity_type = node.entity_type;
             tank_hit.uuid = node.uuid;
@@ -1092,7 +1092,7 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
                 continue;
             }
 
-            MapRhiHit reservoir_hit;
+            MapRenderHit reservoir_hit;
             reservoir_hit.render_id = node.render_id;
             reservoir_hit.entity_type = node.entity_type;
             reservoir_hit.uuid = node.uuid;
@@ -1152,7 +1152,7 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
                 continue;
             }
 
-            MapRhiHit junction_hit;
+            MapRenderHit junction_hit;
             junction_hit.render_id = node.render_id;
             junction_hit.entity_type = node.entity_type;
             junction_hit.uuid = node.uuid;
@@ -1237,7 +1237,7 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
                 continue;
             }
 
-            MapRhiHit icon_hit;
+            MapRenderHit icon_hit;
             icon_hit.render_id = node.render_id;
             icon_hit.entity_type = node.entity_type;
             icon_hit.uuid = node.uuid;
@@ -1252,7 +1252,7 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
                 continue;
             }
 
-            MapRhiHit icon_hit;
+            MapRenderHit icon_hit;
             icon_hit.render_id = link.render_id;
             icon_hit.entity_type = link.entity_type;
             icon_hit.uuid = link.uuid;
@@ -1340,7 +1340,7 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
                 continue;
             }
 
-            MapRhiHit node_hit;
+            MapRenderHit node_hit;
             node_hit.render_id = node.render_id;
             node_hit.entity_type = node.entity_type;
             node_hit.uuid = node.uuid;
@@ -1423,7 +1423,7 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
                 continue;
             }
 
-            MapRhiHit link_hit;
+            MapRenderHit link_hit;
             link_hit.render_id = link.render_id;
             link_hit.entity_type = link.entity_type;
             link_hit.uuid = link.uuid;
@@ -1533,7 +1533,7 @@ void MapRhiWidget::setNetworkScreenTranslation(const QPointF &translation_pixels
 }
 
 
-void MapRhiWidget::setSymbology(const MapRhiSymbology &symbology)
+void MapRhiWidget::setSymbology(const MapNetworkRenderSymbology &symbology)
 {
     MapRhiSymbology themed_symbology = symbology;
     const QColor window_color = palette().color(QPalette::Window);
@@ -1765,7 +1765,7 @@ void MapRhiWidget::setTerrainRepository(MapTerrainRepository *terrain_repository
                 this->globe_renderer->notifyTerrainTileAvailable(key);
             syncGlobeTerrainAwareCameraHeight(false);
             syncViewState();
-                if (this->underground_mode == MapRhiUndergroundMode::XRay
+                if (this->underground_mode == MapUndergroundMode::XRay
                 && this->map_model != nullptr
                 && this->map_model->viewMode() == MapViewMode::Globe)
             {
@@ -1788,7 +1788,7 @@ void MapRhiWidget::setTerrainRepository(MapTerrainRepository *terrain_repository
     // DEM tile request priority instead of waiting for another gesture.
     syncGlobeTerrainAwareCameraHeight(true);
 
-    if (this->underground_mode == MapRhiUndergroundMode::XRay
+    if (this->underground_mode == MapUndergroundMode::XRay
         && this->map_model != nullptr
         && this->map_model->viewMode() == MapViewMode::Globe
         && this->terrain_repository != nullptr)
@@ -1804,7 +1804,7 @@ void MapRhiWidget::setTerrainRepository(MapTerrainRepository *terrain_repository
 void MapRhiWidget::scheduleGlobeUndergroundXRayRefresh()
 {
     if (!this->globe_underground_refresh_requested
-        || this->underground_mode != MapRhiUndergroundMode::XRay
+        || this->underground_mode != MapUndergroundMode::XRay
         || this->map_model == nullptr
         || this->map_model->viewMode() != MapViewMode::Globe)
     {
@@ -1816,7 +1816,7 @@ void MapRhiWidget::scheduleGlobeUndergroundXRayRefresh()
     {
         if (generation != this->globe_underground_refresh_generation
             || !this->globe_underground_refresh_requested
-            || this->underground_mode != MapRhiUndergroundMode::XRay
+            || this->underground_mode != MapUndergroundMode::XRay
             || this->map_model == nullptr
             || this->map_model->viewMode() != MapViewMode::Globe)
         {
@@ -1842,13 +1842,13 @@ void MapRhiWidget::scheduleGlobeUndergroundXRayRefresh()
     });
 }
 
-void MapRhiWidget::setUndergroundMode(MapRhiUndergroundMode mode)
+void MapRhiWidget::setUndergroundMode(MapUndergroundMode mode)
 {
     if (this->underground_mode == mode)
         return;
 
     this->underground_mode = mode;
-    if (mode == MapRhiUndergroundMode::XRay)
+    if (mode == MapUndergroundMode::XRay)
     {
         this->globe_underground_refresh_requested = true;
         scheduleGlobeUndergroundXRayRefresh();
@@ -1858,7 +1858,7 @@ void MapRhiWidget::setUndergroundMode(MapRhiUndergroundMode mode)
         this->globe_underground_refresh_requested = false;
         ++this->globe_underground_refresh_generation;
     }
-    if (this->globe_network_scene.setUndergroundXRayEnabled(mode == MapRhiUndergroundMode::XRay))
+    if (this->globe_network_scene.setUndergroundXRayEnabled(mode == MapUndergroundMode::XRay))
     {
         this->globe_network_backend.invalidateUnderground();
         this->globe_network_backend.invalidateJunctionInstances();
@@ -1866,7 +1866,7 @@ void MapRhiWidget::setUndergroundMode(MapRhiUndergroundMode mode)
     update();
 }
 
-MapRhiUndergroundMode MapRhiWidget::undergroundMode() const
+MapUndergroundMode MapRhiWidget::undergroundMode() const
 {
     return this->underground_mode;
 }
@@ -2656,9 +2656,9 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     globe_draw_resources.reservoir_vertex_count = quint32(
         this->reservoir_model_vertices.size());
     globe_draw_resources.underground_solid =
-        this->underground_mode == MapRhiUndergroundMode::Solid;
+        this->underground_mode == MapUndergroundMode::Solid;
     globe_draw_resources.underground_xray =
-        this->underground_mode == MapRhiUndergroundMode::XRay;
+        this->underground_mode == MapUndergroundMode::XRay;
     this->globe_network_backend.draw(
         command_buffer, globe_frame.resources, globe_draw_resources);
 
@@ -4284,12 +4284,12 @@ void MapRhiWidget::rebuildHeatmapRenderVertices()
 }
 
 bool MapRhiWidget::globeSurfaceRayHitAtScreen(
-    const QPointF &screen_position, MapRhiGlobeSurfaceHit *hit) const
+    const QPointF &screen_position, MapGlobeSurfaceHit *hit) const
 {
     if (hit == nullptr)
         return false;
 
-    *hit = MapRhiGlobeSurfaceHit{};
+    *hit = MapGlobeSurfaceHit{};
 
     MapGlobeScreenRay ray;
     if (!this->camera.globeScreenRay(screen_position, &ray))
@@ -4297,15 +4297,15 @@ bool MapRhiWidget::globeSurfaceRayHitAtScreen(
 
     GeoWgs84Ellipsoid::EcefPositionD intersection;
     double hit_distance_m = 0.0;
-    MapRhiGlobeSurfaceHitSource source =
-        MapRhiGlobeSurfaceHitSource::EllipsoidFallback;
+    MapGlobeSurfaceHitSource source =
+        MapGlobeSurfaceHitSource::EllipsoidFallback;
 
     if (this->globe_renderer != nullptr
         && this->globe_renderer->visibleTerrainRayIntersection(
             ray.origin_ecef, ray.direction,
             &intersection, &hit_distance_m))
     {
-        source = MapRhiGlobeSurfaceHitSource::TerrainMesh;
+        source = MapGlobeSurfaceHitSource::TerrainMesh;
     }
     else
     {
@@ -4353,8 +4353,8 @@ bool MapRhiWidget::panGlobeByTerrainPixels(const QPoint &delta_pixels)
         this->viewport_size.height() / 2);
     const QPoint previous_position = viewport_center - delta_pixels;
 
-    MapRhiGlobeSurfaceHit previous_hit;
-    MapRhiGlobeSurfaceHit new_hit;
+    MapGlobeSurfaceHit previous_hit;
+    MapGlobeSurfaceHit new_hit;
     if (!globeSurfaceRayHitAtScreen(QPointF(previous_position), &previous_hit)
         || !globeSurfaceRayHitAtScreen(QPointF(viewport_center), &new_hit)
         || !previous_hit.isTerrainMesh()
@@ -4402,7 +4402,7 @@ bool MapRhiWidget::terrainCoordinateAtScreen(
 
     if (this->map_model->viewMode() == MapViewMode::Globe)
     {
-        MapRhiGlobeSurfaceHit hit;
+        MapGlobeSurfaceHit hit;
         if (!globeSurfaceRayHitAtScreen(screen_position, &hit))
             return false;
 
@@ -4429,7 +4429,7 @@ void MapRhiWidget::captureViewGlobeFocusAnchor()
         return;
     }
 
-    MapRhiGlobeSurfaceHit hit;
+    MapGlobeSurfaceHit hit;
     if (!globeSurfaceRayHitAtScreen(
             QPointF(
                 this->viewport_size.width() / 2.0,

@@ -6,6 +6,7 @@
 #include "map/rhi/map_rhi_globe_network_backend.h"
 #include "map/render/map_globe_network_scene.h"
 #include "map/render/map_globe_render_frame.h"
+#include "map/render/map_render_surface.h"
 #include "map/rhi/map_rhi_globe_renderer.h"
 #include "map/rhi/map_rhi_scene.h"
 #include "map/render/map_globe_junction_model.h"
@@ -38,53 +39,15 @@ class QResizeEvent;
 class QEvent;
 class QTimer;
 
-enum class MapRhiUndergroundMode
-{
-    XRay,
-    Hide,
-    Solid
-};
+// Transitional compatibility names for existing RHI-specific call sites.
+// The semantic types themselves now live at the backend-neutral surface seam;
+// 6.8.2 can move Editor/Monitor callers to the neutral names independently.
+using MapRhiUndergroundMode = MapUndergroundMode;
+using MapRhiHit = MapRenderHit;
+using MapRhiGlobeSurfaceHitSource = MapGlobeSurfaceHitSource;
+using MapRhiGlobeSurfaceHit = MapGlobeSurfaceHit;
 
-struct MapRhiHit
-{
-    quint32 render_id = 0;
-    InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
-    QUuid uuid;
-
-    bool isValid() const
-    {
-        return this->render_id != 0 && this->entity_type != InfrastructureEntity::Unknown;
-    }
-};
-
-enum class MapRhiGlobeSurfaceHitSource
-{
-    Invalid,
-    TerrainMesh,
-    EllipsoidFallback
-};
-
-struct MapRhiGlobeSurfaceHit
-{
-    CoordinateWGS84 coordinate;
-    GeoWgs84Ellipsoid::EcefPositionD ecef_position;
-    double surface_height_m = 0.0;
-    double distance_m = 0.0;
-    MapRhiGlobeSurfaceHitSource source =
-        MapRhiGlobeSurfaceHitSource::Invalid;
-
-    bool isValid() const
-    {
-        return this->source != MapRhiGlobeSurfaceHitSource::Invalid;
-    }
-
-    bool isTerrainMesh() const
-    {
-        return this->source == MapRhiGlobeSurfaceHitSource::TerrainMesh;
-    }
-};
-
-class MapRhiWidget final : public QRhiWidget
+class MapRhiWidget final : public QRhiWidget, public MapRenderSurface
 {
     Q_OBJECT
 
@@ -93,37 +56,37 @@ public:
                           QWidget *parent = nullptr);
     ~MapRhiWidget() override;
 
-    QString graphicsApiName() const;
-    MapRhiHit hitTest(const QPointF &screen_position) const;
+    QString graphicsApiName() const override;
+    MapRenderHit hitTest(const QPointF &screen_position) const override;
     bool terrainCoordinateAtScreen(
         const QPointF &screen_position, CoordinateWGS84 *coordinate,
-        bool request_missing_tile = true);
+        bool request_missing_tile = true) override;
     // Globe surface picking against the exact DEM triangles currently
     // retained by MapRhiGlobeRenderer, with a WGS84 ellipsoid fallback when
     // no rendered DEM triangle is hit. Cursor-coordinate lookup, orbit
     // focus capture and the guarded terrain-aware pan path use this.
     bool globeSurfaceRayHitAtScreen(
-        const QPointF &screen_position, MapRhiGlobeSurfaceHit *hit) const;
-    bool panGlobeByTerrainPixels(const QPoint &delta_pixels);
-    void setNetworkSnapshot(const NetworkRenderSnapshot &snapshot);
-    void setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids);
-    void setNodeDeclutteringEnabled(bool enabled);
-    void setNetworkScreenTranslation(const QPointF &translation_pixels);
-    void setSymbology(const MapRhiSymbology &symbology);
-    void setVisualControlSettings(const NetworkSymbologySettings &settings);
-    void setTileRepository(MapTileRepository *tile_repository);
-    void setTerrainRepository(MapTerrainRepository *terrain_repository);
-    void setBackgroundOpacity(int opacity);
-    void setSelectedEntity(InfrastructureEntity entity_type, const QUuid &uuid);
+        const QPointF &screen_position, MapGlobeSurfaceHit *hit) const override;
+    bool panGlobeByTerrainPixels(const QPoint &delta_pixels) override;
+    void setNetworkSnapshot(const NetworkRenderSnapshot &snapshot) override;
+    void setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids) override;
+    void setNodeDeclutteringEnabled(bool enabled) override;
+    void setNetworkScreenTranslation(const QPointF &translation_pixels) override;
+    void setSymbology(const MapNetworkRenderSymbology &symbology) override;
+    void setVisualControlSettings(const NetworkSymbologySettings &settings) override;
+    void setTileRepository(MapTileRepository *tile_repository) override;
+    void setTerrainRepository(MapTerrainRepository *terrain_repository) override;
+    void setBackgroundOpacity(int opacity) override;
+    void setSelectedEntity(InfrastructureEntity entity_type, const QUuid &uuid) override;
     void setSimulationErrorEntities(
         const QHash<QUuid, InfrastructureEntity> &error_entities,
-        const QSet<QUuid> &stale_entity_uuids);
-    void setGlobe3dIconsEnabled(bool enabled);
-    void setUndergroundMode(MapRhiUndergroundMode mode);
-    MapRhiUndergroundMode undergroundMode() const;
-    void setTerrainWireframeVisible(bool visible);
-    void setMapTilesVisible(bool visible);
-    void globeTerrainMeshProgress(int *completed, int *total, bool *active) const;
+        const QSet<QUuid> &stale_entity_uuids) override;
+    void setGlobe3dIconsEnabled(bool enabled) override;
+    void setUndergroundMode(MapUndergroundMode mode) override;
+    MapUndergroundMode undergroundMode() const override;
+    void setTerrainWireframeVisible(bool visible) override;
+    void setMapTilesVisible(bool visible) override;
+    void globeTerrainMeshProgress(int *completed, int *total, bool *active) const override;
 
 signals:
     void signalRendererReady();
@@ -147,7 +110,7 @@ private:
     void uploadNetworkStyleTable(QRhiResourceUpdateBatch *resource_updates);
     // Globe-mode counterpart of hitTest() -- see that function's header
     // comment for why it can't just be folded into the same function body.
-    MapRhiHit globeHitTest(const QPointF &screen_position) const;
+    MapRenderHit globeHitTest(const QPointF &screen_position) const;
     void syncViewState();
     void syncGlobeTerrainAwareCameraHeight(bool request_missing_tile);
     void scheduleGlobeUndergroundXRayRefresh();
@@ -270,7 +233,7 @@ private:
     QVector<MapRhiScene::HeatmapVertex> heatmap_render_vertices;
     QVector<MapGlobeTankModelVertex> tank_model_vertices;
     QVector<MapGlobeReservoirModelVertex> reservoir_model_vertices;
-    MapRhiUndergroundMode underground_mode = MapRhiUndergroundMode::XRay;
+    MapUndergroundMode underground_mode = MapUndergroundMode::XRay;
     bool symbology_initialized = false;
     bool ready_reported = false;
     bool failure_reported = false;
