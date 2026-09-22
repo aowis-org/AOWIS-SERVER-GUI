@@ -47,6 +47,7 @@
 
 #include <QDebug>
 
+class MapRenderSurface;
 class MapRhiWidget;
 
 class MapEditorMenuWidget : public QWidget
@@ -127,7 +128,8 @@ private:
     MapWidget *map;
     MapCanvasWidget *map_canvas;
 #ifndef Q_OS_WASM
-    MapRhiWidget *desktop_rhi_surface = nullptr;
+    MapRenderSurface *desktop_render_surface = nullptr;
+    MapRhiWidget *desktop_rhi_widget = nullptr;
 #endif
     MapEditorController *editor_controller;
     MapEditorMenuWidget *map_menu;
@@ -135,13 +137,13 @@ private:
     QHBoxLayout *layout;
 
 #if !defined(Q_OS_WASM) && AOWIS_HAS_QRHI
-    void syncDesktopRhiEditorState();
-    void syncDesktopRhiNetworkSnapshot();
-    void applyDesktopRhiEditorSymbology();
-    void setDesktopRhiBackgroundOpacity(int opacity);
-    quint64 desktop_rhi_move_session_id = 0;
-    QPointF desktop_rhi_move_start_mouse_position;
-    bool desktop_rhi_full_network_move = false;
+    void syncDesktopRenderSurfaceEditorState();
+    void syncDesktopRenderSurfaceNetworkSnapshot();
+    void applyDesktopRenderSurfaceEditorSymbology();
+    void setDesktopRenderSurfaceBackgroundOpacity(int opacity);
+    quint64 desktop_render_move_session_id = 0;
+    QPointF desktop_render_move_start_mouse_position;
+    bool desktop_render_full_network_move = false;
 #endif
 
 #ifdef Q_OS_WASM

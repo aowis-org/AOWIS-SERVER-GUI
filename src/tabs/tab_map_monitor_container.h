@@ -39,6 +39,7 @@
 class HydraulicData;
 class MapNetworkOverlayWidget;
 class MapTerrainRepository;
+class MapRenderSurface;
 class MapRhiWidget;
 class MapRhiHudWidget;
 class MapMonitorDownloadActivityHudWidget;
@@ -152,7 +153,8 @@ private:
     MapNetworkOverlayWidget *desktop_network_overlay = nullptr;
 #endif
 #if AOWIS_HAS_QRHI
-    MapRhiWidget *desktop_rhi_surface = nullptr;
+    MapRenderSurface *desktop_render_surface = nullptr;
+    MapRhiWidget *desktop_rhi_widget = nullptr;
     MapRhiHudWidget *desktop_rhi_hud = nullptr;
     MapMonitorDownloadActivityHudWidget *desktop_download_activity_hud = nullptr;
     MapMonitorViewModeHudWidget *desktop_view_mode_hud = nullptr;
@@ -185,8 +187,8 @@ private:
     void setDesktopNetworkHovered(bool hovered);
 #endif
 #if AOWIS_HAS_QRHI
-    void applyDesktopRhiSymbology();
-    void applyDesktopRhiHighlights();
+    void applyDesktopRenderSurfaceSymbology();
+    void applyDesktopRenderSurfaceHighlights();
     void positionDesktopHudWidgets();
     void syncDesktopCameraHudVisibility();
     void setDesktopRhiSceneFullscreen(bool fullscreen);

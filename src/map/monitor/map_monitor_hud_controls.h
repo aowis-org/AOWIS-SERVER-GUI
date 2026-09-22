@@ -16,7 +16,7 @@ class QPushButton;
 class QTimer;
 class MapTileRepository;
 class MapTerrainRepository;
-class MapRhiWidget;
+class MapRenderSurface;
 class QSlider;
 
 
@@ -27,7 +27,7 @@ class MapMonitorDownloadActivityHudWidget final : public QWidget
 public:
     explicit MapMonitorDownloadActivityHudWidget(
         MapTileRepository *tile_repository, MapTerrainRepository *terrain_repository,
-        MapRhiWidget *rhi_widget,
+        MapRenderSurface *render_surface,
         QWidget *parent = nullptr);
     void setHudActive(bool active);
 
@@ -42,7 +42,7 @@ private:
 
     MapTileRepository *tile_repository = nullptr;
     MapTerrainRepository *terrain_repository = nullptr;
-    MapRhiWidget *rhi_widget = nullptr;
+    MapRenderSurface *render_surface = nullptr;
     QFrame *map_tiles_panel = nullptr;
     QLabel *map_tiles_label = nullptr;
     QPushButton *map_tiles_cancel = nullptr;
@@ -62,13 +62,15 @@ class MapMonitorViewModeHudWidget final : public QFrame
 
 public:
     explicit MapMonitorViewModeHudWidget(
-        MapModel *map_model, MapRhiWidget *rhi_widget, QWidget *parent = nullptr);
+        MapModel *map_model, MapRenderSurface *render_surface,
+        QWidget *render_widget, QWidget *parent = nullptr);
 
 private:
     void update3dControlsVisibility();
 
     MapModel *map_model = nullptr;
-    MapRhiWidget *rhi_widget = nullptr;
+    MapRenderSurface *render_surface = nullptr;
+    QWidget *render_widget = nullptr;
     QComboBox *view_mode_combo = nullptr;
     QCheckBox *wireframe_checkbox = nullptr;
     QCheckBox *map_checkbox = nullptr;
@@ -162,10 +164,10 @@ class MapMonitorUndergroundHudWidget final : public QFrame
 
 public:
     explicit MapMonitorUndergroundHudWidget(
-        MapRhiWidget *rhi_widget, QWidget *parent = nullptr);
+        MapRenderSurface *render_surface, QWidget *parent = nullptr);
 
 private:
-    MapRhiWidget *rhi_widget = nullptr;
+    MapRenderSurface *render_surface = nullptr;
     QComboBox *underground_combo = nullptr;
 };
 
@@ -175,7 +177,8 @@ class MapMonitorVerticalControlsHudWidget final : public QFrame
 
 public:
     explicit MapMonitorVerticalControlsHudWidget(
-        MapModel *map_model, MapRhiWidget *rhi_widget, QWidget *parent = nullptr);
+        MapModel *map_model, MapRenderSurface *render_surface,
+        QWidget *parent = nullptr);
 };
 
 #endif // MAP_MONITOR_HUD_CONTROLS_H

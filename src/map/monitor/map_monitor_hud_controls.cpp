@@ -1,7 +1,7 @@
 #include "map/monitor/map_monitor_hud_controls.h"
 
 #include "map/core/map_model.h"
-#include "map/rhi/map_rhi_widget.h"
+#include "map/render/map_render_surface.h"
 #include "map/core/map_scale_renderer.h"
 #include "map/data/map_tile_repository.h"
 #include "map/data/map_terrain_repository.h"
@@ -622,11 +622,11 @@ private:
 
 MapMonitorDownloadActivityHudWidget::MapMonitorDownloadActivityHudWidget(
     MapTileRepository *tile_repository, MapTerrainRepository *terrain_repository,
-    MapRhiWidget *rhi_widget, QWidget *parent)
+    MapRenderSurface *render_surface, QWidget *parent)
     : QWidget(parent),
       tile_repository(tile_repository),
       terrain_repository(terrain_repository),
-      rhi_widget(rhi_widget),
+      render_surface(render_surface),
       map_tiles_panel(new QFrame(this)),
       map_tiles_label(new QLabel(this->map_tiles_panel)),
       map_tiles_cancel(new QPushButton(QStringLiteral("Cancel"), this->map_tiles_panel)),
@@ -640,7 +640,7 @@ MapMonitorDownloadActivityHudWidget::MapMonitorDownloadActivityHudWidget(
 {
     Q_ASSERT(this->tile_repository != nullptr);
     Q_ASSERT(this->terrain_repository != nullptr);
-    Q_ASSERT(this->rhi_widget != nullptr);
+    Q_ASSERT(this->render_surface != nullptr);
 
     setAttribute(Qt::WA_TranslucentBackground, true);
     setFocusPolicy(Qt::NoFocus);
@@ -859,21 +859,24 @@ void MapMonitorDownloadActivityHudWidget::refreshActivity()
     int completed = 0;
     int total = 0;
     bool active = false;
-    this->rhi_widget->globeTerrainMeshProgress(&completed, &total, &active);
+    this->render_surface->globeTerrainMeshProgress(&completed, &total, &active);
     setTerrainMeshActivity(completed, total, active);
 }
 
 MapMonitorViewModeHudWidget::MapMonitorViewModeHudWidget(
-    MapModel *map_model, MapRhiWidget *rhi_widget, QWidget *parent)
+    MapModel *map_model, MapRenderSurface *render_surface,
+    QWidget *render_widget, QWidget *parent)
     : QFrame(parent),
       map_model(map_model),
-      rhi_widget(rhi_widget),
+      render_surface(render_surface),
+      render_widget(render_widget),
       view_mode_combo(new QComboBox(this)),
       wireframe_checkbox(new QCheckBox(QStringLiteral("wireframe"), this)),
       map_checkbox(new QCheckBox(QStringLiteral("map"), this))
 {
     Q_ASSERT(this->map_model != nullptr);
-    Q_ASSERT(this->rhi_widget != nullptr);
+    Q_ASSERT(this->render_surface != nullptr);
+    Q_ASSERT(this->render_widget != nullptr);
     configureHudFrame(this);
 
     QHBoxLayout *layout = new QHBoxLayout(this);
@@ -909,16 +912,16 @@ MapMonitorViewModeHudWidget::MapMonitorViewModeHudWidget(
         if (data.isValid())
         {
             this->map_model->setViewMode(
-                static_cast<MapViewMode>(data.toInt()), this->rhi_widget->size());
+                static_cast<MapViewMode>(data.toInt()), this->render_widget->size());
         }
     });
     connect(this->wireframe_checkbox, &QCheckBox::toggled, this, [this](bool checked)
     {
-        this->rhi_widget->setTerrainWireframeVisible(checked);
+        this->render_surface->setTerrainWireframeVisible(checked);
     });
     connect(this->map_checkbox, &QCheckBox::toggled, this, [this](bool checked)
     {
-        this->rhi_widget->setMapTilesVisible(checked);
+        this->render_surface->setMapTilesVisible(checked);
     });
     connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode view_mode)
     {
@@ -931,8 +934,8 @@ MapMonitorViewModeHudWidget::MapMonitorViewModeHudWidget(
         update3dControlsVisibility();
     });
 
-    this->rhi_widget->setTerrainWireframeVisible(this->wireframe_checkbox->isChecked());
-    this->rhi_widget->setMapTilesVisible(this->map_checkbox->isChecked());
+    this->render_surface->setTerrainWireframeVisible(this->wireframe_checkbox->isChecked());
+    this->render_surface->setMapTilesVisible(this->map_checkbox->isChecked());
     update3dControlsVisibility();
 }
 
@@ -1494,12 +1497,12 @@ MapMonitorVerticalExaggerationHudWidget::MapMonitorVerticalExaggerationHudWidget
 }
 
 MapMonitorUndergroundHudWidget::MapMonitorUndergroundHudWidget(
-    MapRhiWidget *rhi_widget, QWidget *parent)
+    MapRenderSurface *render_surface, QWidget *parent)
     : QFrame(parent),
-      rhi_widget(rhi_widget),
+      render_surface(render_surface),
       underground_combo(new QComboBox(this))
 {
-    Q_ASSERT(this->rhi_widget != nullptr);
+    Q_ASSERT(this->render_surface != nullptr);
     configureHudFrame(this);
 
     QHBoxLayout *layout = new QHBoxLayout(this);
@@ -1507,11 +1510,11 @@ MapMonitorUndergroundHudWidget::MapMonitorUndergroundHudWidget(
     layout->setSpacing(0);
 
     this->underground_combo->addItem(QStringLiteral("X-Ray"),
-        int(MapRhiUndergroundMode::XRay));
+        int(MapUndergroundMode::XRay));
     this->underground_combo->addItem(QStringLiteral("Hide"),
-        int(MapRhiUndergroundMode::Hide));
+        int(MapUndergroundMode::Hide));
     this->underground_combo->addItem(QStringLiteral("Solid"),
-        int(MapRhiUndergroundMode::Solid));
+        int(MapUndergroundMode::Solid));
     this->underground_combo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     this->underground_combo->setToolTip(QStringLiteral(
         "Underground network display\n"
@@ -1520,7 +1523,7 @@ MapMonitorUndergroundHudWidget::MapMonitorUndergroundHudWidget(
         "Solid: show the network through terrain without an underground pattern."));
 
     const int current_index = this->underground_combo->findData(
-        int(this->rhi_widget->undergroundMode()));
+        int(this->render_surface->undergroundMode()));
     if (current_index >= 0)
         this->underground_combo->setCurrentIndex(current_index);
 
@@ -1529,9 +1532,9 @@ MapMonitorUndergroundHudWidget::MapMonitorUndergroundHudWidget(
     {
         if (index < 0)
             return;
-        const MapRhiUndergroundMode mode = static_cast<MapRhiUndergroundMode>(
+        const MapUndergroundMode mode = static_cast<MapUndergroundMode>(
             this->underground_combo->itemData(index).toInt());
-        this->rhi_widget->setUndergroundMode(mode);
+        this->render_surface->setUndergroundMode(mode);
     });
 
     layout->addWidget(this->underground_combo);
@@ -1539,11 +1542,11 @@ MapMonitorUndergroundHudWidget::MapMonitorUndergroundHudWidget(
 }
 
 MapMonitorVerticalControlsHudWidget::MapMonitorVerticalControlsHudWidget(
-    MapModel *map_model, MapRhiWidget *rhi_widget, QWidget *parent)
+    MapModel *map_model, MapRenderSurface *render_surface, QWidget *parent)
     : QFrame(parent)
 {
     Q_ASSERT(map_model != nullptr);
-    Q_ASSERT(rhi_widget != nullptr);
+    Q_ASSERT(render_surface != nullptr);
 
     setFrameShape(QFrame::NoFrame);
     setFrameShadow(QFrame::Plain);
@@ -1585,7 +1588,7 @@ MapMonitorVerticalControlsHudWidget::MapMonitorVerticalControlsHudWidget(
     }
 
     MapMonitorUndergroundHudWidget *underground =
-        new MapMonitorUndergroundHudWidget(rhi_widget, this);
+        new MapMonitorUndergroundHudWidget(render_surface, this);
 
     layout->addWidget(slider_panel, 0, Qt::AlignBottom);
     layout->addWidget(underground, 0, Qt::AlignBottom);

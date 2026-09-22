@@ -6,6 +6,7 @@
 #include "wasm/browser_network_snapshot_serializer.h"
 #else
 #include "network/network_symbology_rendering.h"
+#include "map/render/map_render_surface.h"
 #if AOWIS_HAS_QRHI
 #include "map/rhi/map_rhi_widget.h"
 #endif
@@ -350,71 +351,72 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
 #if !defined(Q_OS_WASM) && AOWIS_HAS_QRHI
     if (desktopMapRenderer() == DesktopMapRenderer::Rhi)
     {
-        MapRhiWidget *rhi_surface =
+        MapRhiWidget *rhi_widget =
             new MapRhiWidget(this->map_model, QStringLiteral("editor"), this->map_stack);
-        this->desktop_rhi_surface = rhi_surface;
-        this->desktop_rhi_surface->setTileRepository(this->tile_repository);
-        this->desktop_rhi_surface->setBackgroundOpacity(
+        this->desktop_render_surface = rhi_widget;
+        this->desktop_rhi_widget = rhi_widget;
+        this->desktop_render_surface->setTileRepository(this->tile_repository);
+        this->desktop_render_surface->setBackgroundOpacity(
             this->map_canvas->backgroundOpacity());
-        syncDesktopRhiNetworkSnapshot();
-        syncDesktopRhiEditorState();
+        syncDesktopRenderSurfaceNetworkSnapshot();
+        syncDesktopRenderSurfaceEditorState();
 
         // Probe QRhi at the real map-stack size behind the working CPU editor.
         // Do not promote from a 1x1 probe: Vulkan QRhiWidget backing resources
         // can be recreated when the widget grows, so readiness has to mean that
         // an actual full-size frame was submitted. The StackAll layout keeps the
         // RHI surface sized correctly while MapCanvasWidget remains on top.
-        this->map_stack_layout->addWidget(this->desktop_rhi_surface);
-        this->desktop_rhi_surface->show();
+        this->map_stack_layout->addWidget(this->desktop_rhi_widget);
+        this->desktop_rhi_widget->show();
         this->map_stack_layout->setCurrentWidget(this->map_canvas);
         this->map_canvas->raise();
 
         connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
-                this, &MapEditorContainer::syncDesktopRhiNetworkSnapshot);
+                this, &MapEditorContainer::syncDesktopRenderSurfaceNetworkSnapshot);
         connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged,
                 this, [this](quint64)
         {
-            syncDesktopRhiNetworkSnapshot();
+            syncDesktopRenderSurfaceNetworkSnapshot();
         });
         connect(this->map_canvas->mapCanvasEntities(),
                 &MapCanvasEntities::signalVisualStateChanged,
                 this, [this](quint64)
         {
-            syncDesktopRhiEditorState();
+            syncDesktopRenderSurfaceEditorState();
         });
         connect(this->editor_controller, &MapEditorController::signalStateChanged,
                 this, [this]
         {
-            syncDesktopRhiEditorState();
+            syncDesktopRenderSurfaceEditorState();
             this->map_canvas->requestRenderUpdate();
         });
         connect(this->map_model, &MapModel::zoomChanged, this, [this]
         {
-            applyDesktopRhiEditorSymbology();
+            applyDesktopRenderSurfaceEditorSymbology();
             this->map_canvas->requestRenderUpdate();
         });
 
-        connect(rhi_surface, &MapRhiWidget::signalRendererReady, this,
-                [this, rhi_surface]
+        connect(rhi_widget, &MapRhiWidget::signalRendererReady, this,
+                [this, rhi_widget]
         {
             this->map->setRhiViewActive(true);
-            rhi_surface->show();
-            this->map_stack_layout->setCurrentWidget(rhi_surface);
-            rhi_surface->raise();
+            rhi_widget->show();
+            this->map_stack_layout->setCurrentWidget(rhi_widget);
+            rhi_widget->raise();
 
             this->map_canvas->setRhiOverlayMode(true);
-            if (rhi_surface->api() == QRhiWidget::Api::Vulkan)
+            if (rhi_widget->api() == QRhiWidget::Api::Vulkan)
             {
                 // MapRhiWidget is normally transparent for mouse input so monitor/map
                 // interaction can be handled by the separate MapWidget. On Vulkan the
                 // editor overlay has to be a child of the QRhiWidget for reliable
                 // composition. WA_TransparentForMouseEvents also makes child widgets
                 // transparent, so leaving it enabled here disables the complete editor.
-                rhi_surface->setAttribute(Qt::WA_TransparentForMouseEvents, false);
+                rhi_widget->setAttribute(Qt::WA_TransparentForMouseEvents, false);
                 this->map_stack_layout->removeWidget(this->map_canvas);
-                this->map_canvas->setParent(rhi_surface);
-                this->map_canvas->setGeometry(rhi_surface->rect());
-                rhi_surface->installEventFilter(this);
+                this->map_canvas->setParent(rhi_widget);
+                this->map_canvas->setGeometry(rhi_widget->rect());
+                rhi_widget->installEventFilter(this);
             }
             else
             {
@@ -427,7 +429,7 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
             qInfo() << "Editor map renderer: RHI map active with GPU basemap/static network "
                        "and lightweight QWidget interaction overlay; CPU renderer retained as fallback.";
         });
-        connect(rhi_surface, &MapRhiWidget::signalRendererFailed, this,
+        connect(rhi_widget, &MapRhiWidget::signalRendererFailed, this,
                 [this](const QString &reason)
         {
             qWarning().noquote()
@@ -437,21 +439,21 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
             if (this->map_model->viewMode() != MapViewMode::TwoD)
                 this->map_model->setViewMode(MapViewMode::TwoD);
             this->map->setRhiViewActive(false);
-            if (this->desktop_rhi_surface != nullptr
-                && this->map_canvas->parentWidget() == this->desktop_rhi_surface)
+            if (this->desktop_rhi_widget != nullptr
+                && this->map_canvas->parentWidget() == this->desktop_rhi_widget)
             {
-                this->desktop_rhi_surface->removeEventFilter(this);
+                this->desktop_rhi_widget->removeEventFilter(this);
                 this->map_canvas->setParent(this->map_stack);
                 this->map_stack_layout->addWidget(this->map_canvas);
-                this->desktop_rhi_surface->setAttribute(
+                this->desktop_rhi_widget->setAttribute(
                     Qt::WA_TransparentForMouseEvents, true);
             }
             this->map_canvas->setRhiOverlayMode(false);
             this->map_canvas->show();
             this->map_stack_layout->setCurrentWidget(this->map_canvas);
             this->map_canvas->raise();
-            if (this->desktop_rhi_surface != nullptr)
-                this->desktop_rhi_surface->hide();
+            if (this->desktop_rhi_widget != nullptr)
+                this->desktop_rhi_widget->hide();
         });
     }
 #endif
@@ -521,11 +523,11 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
             this->map_canvas, &MapCanvasWidget::setIconSizePercent);
 #if !defined(Q_OS_WASM) && AOWIS_HAS_QRHI
     connect(this->map_menu, &MapEditorMenuWidget::signalSlideOpacityChanged,
-            this, &MapEditorContainer::setDesktopRhiBackgroundOpacity);
+            this, &MapEditorContainer::setDesktopRenderSurfaceBackgroundOpacity);
     connect(this->map_menu->mapNavigationWidget(), &MapNavigationWidget::signalIconSizeChanged,
             this, [this](int)
     {
-        applyDesktopRhiEditorSymbology();
+        applyDesktopRenderSurfaceEditorSymbology();
     });
 #endif
 #ifdef Q_OS_WASM
@@ -551,20 +553,20 @@ MapEditorContainer::~MapEditorContainer()
 }
 
 #if !defined(Q_OS_WASM) && AOWIS_HAS_QRHI
-void MapEditorContainer::syncDesktopRhiNetworkSnapshot()
+void MapEditorContainer::syncDesktopRenderSurfaceNetworkSnapshot()
 {
-    if (this->desktop_rhi_surface == nullptr || this->hydraulic_data == nullptr)
+    if (this->desktop_render_surface == nullptr || this->hydraulic_data == nullptr)
         return;
 
-    this->desktop_rhi_surface->setNetworkSnapshot(
+    this->desktop_render_surface->setNetworkSnapshot(
         this->hydraulic_data->networkRenderSnapshot());
-    applyDesktopRhiEditorSymbology();
-    syncDesktopRhiEditorState();
+    applyDesktopRenderSurfaceEditorSymbology();
+    syncDesktopRenderSurfaceEditorState();
 }
 
-void MapEditorContainer::syncDesktopRhiEditorState()
+void MapEditorContainer::syncDesktopRenderSurfaceEditorState()
 {
-    if (this->desktop_rhi_surface == nullptr ||
+    if (this->desktop_render_surface == nullptr ||
         this->map_canvas == nullptr ||
         this->hydraulic_data == nullptr)
     {
@@ -576,25 +578,25 @@ void MapEditorContainer::syncDesktopRhiEditorState()
 
     if (!state.move.active)
     {
-        if (this->desktop_rhi_move_session_id != 0 ||
-            this->desktop_rhi_full_network_move)
+        if (this->desktop_render_move_session_id != 0 ||
+            this->desktop_render_full_network_move)
         {
-            this->desktop_rhi_move_session_id = 0;
-            this->desktop_rhi_full_network_move = false;
-            this->desktop_rhi_move_start_mouse_position = QPointF();
-            this->desktop_rhi_surface->setNetworkScreenTranslation(QPointF());
-            this->desktop_rhi_surface->setHiddenEntityUuids(QSet<QUuid>());
+            this->desktop_render_move_session_id = 0;
+            this->desktop_render_full_network_move = false;
+            this->desktop_render_move_start_mouse_position = QPointF();
+            this->desktop_render_surface->setNetworkScreenTranslation(QPointF());
+            this->desktop_render_surface->setHiddenEntityUuids(QSet<QUuid>());
             this->map_canvas->setRhiFullNetworkMoveState(false, QPointF());
         }
         return;
     }
 
     const bool new_move_session =
-        this->desktop_rhi_move_session_id != state.move.session_id;
+        this->desktop_render_move_session_id != state.move.session_id;
     if (new_move_session)
     {
-        this->desktop_rhi_move_session_id = state.move.session_id;
-        this->desktop_rhi_move_start_mouse_position = state.placement.mouse_position;
+        this->desktop_render_move_session_id = state.move.session_id;
+        this->desktop_render_move_start_mouse_position = state.placement.mouse_position;
 
         QSet<QUuid> hidden_entity_uuids;
         hidden_entity_uuids.reserve(state.move.markers.size() + state.move.links.size());
@@ -603,52 +605,52 @@ void MapEditorContainer::syncDesktopRhiEditorState()
         for (const MapEditorDynamicLinkVisualState &link : state.move.links)
             hidden_entity_uuids.insert(link.uuid);
 
-        this->desktop_rhi_full_network_move = !hidden_entity_uuids.isEmpty();
-        if (this->desktop_rhi_full_network_move)
+        this->desktop_render_full_network_move = !hidden_entity_uuids.isEmpty();
+        if (this->desktop_render_full_network_move)
         {
             for (const NetworkRenderNode &node : snapshot.nodes)
             {
                 if (!hidden_entity_uuids.contains(node.uuid))
                 {
-                    this->desktop_rhi_full_network_move = false;
+                    this->desktop_render_full_network_move = false;
                     break;
                 }
             }
         }
-        if (this->desktop_rhi_full_network_move)
+        if (this->desktop_render_full_network_move)
         {
             for (const NetworkRenderLink &link : snapshot.links)
             {
                 if (!hidden_entity_uuids.contains(link.uuid))
                 {
-                    this->desktop_rhi_full_network_move = false;
+                    this->desktop_render_full_network_move = false;
                     break;
                 }
             }
         }
 
-        if (this->desktop_rhi_full_network_move)
-            this->desktop_rhi_surface->setHiddenEntityUuids(QSet<QUuid>());
+        if (this->desktop_render_full_network_move)
+            this->desktop_render_surface->setHiddenEntityUuids(QSet<QUuid>());
         else
-            this->desktop_rhi_surface->setHiddenEntityUuids(hidden_entity_uuids);
+            this->desktop_render_surface->setHiddenEntityUuids(hidden_entity_uuids);
     }
 
-    if (this->desktop_rhi_full_network_move)
+    if (this->desktop_render_full_network_move)
     {
         const QPointF translation_pixels =
-            state.placement.mouse_position - this->desktop_rhi_move_start_mouse_position;
-        this->desktop_rhi_surface->setNetworkScreenTranslation(translation_pixels);
+            state.placement.mouse_position - this->desktop_render_move_start_mouse_position;
+        this->desktop_render_surface->setNetworkScreenTranslation(translation_pixels);
         this->map_canvas->setRhiFullNetworkMoveState(true, translation_pixels);
         return;
     }
 
-    this->desktop_rhi_surface->setNetworkScreenTranslation(QPointF());
+    this->desktop_render_surface->setNetworkScreenTranslation(QPointF());
     this->map_canvas->setRhiFullNetworkMoveState(false, QPointF());
 }
 
-void MapEditorContainer::applyDesktopRhiEditorSymbology()
+void MapEditorContainer::applyDesktopRenderSurfaceEditorSymbology()
 {
-    if (this->desktop_rhi_surface == nullptr ||
+    if (this->desktop_render_surface == nullptr ||
         this->hydraulic_data == nullptr ||
         this->map_canvas == nullptr)
     {
@@ -658,7 +660,7 @@ void MapEditorContainer::applyDesktopRhiEditorSymbology()
     const NetworkRenderSnapshot &snapshot =
         this->hydraulic_data->networkRenderSnapshot();
 
-    MapRhiSymbology symbology;
+    MapNetworkRenderSymbology symbology;
     symbology.node_size_unit = NetworkSymbologySizeUnit::Pixels;
     symbology.node_size_px = 10;
     symbology.node_size_m = NetworkSymbologyDefaultNodeSizeM;
@@ -687,25 +689,25 @@ void MapEditorContainer::applyDesktopRhiEditorSymbology()
         symbology.link_colors.insert(link.render_id, color);
     }
 
-    this->desktop_rhi_surface->setSymbology(symbology);
+    this->desktop_render_surface->setSymbology(symbology);
 }
 
-void MapEditorContainer::setDesktopRhiBackgroundOpacity(int opacity)
+void MapEditorContainer::setDesktopRenderSurfaceBackgroundOpacity(int opacity)
 {
-    if (this->desktop_rhi_surface != nullptr)
-        this->desktop_rhi_surface->setBackgroundOpacity(opacity);
+    if (this->desktop_render_surface != nullptr)
+        this->desktop_render_surface->setBackgroundOpacity(opacity);
 }
 #endif
 
 bool MapEditorContainer::eventFilter(QObject *watched, QEvent *event)
 {
 #if !defined(Q_OS_WASM) && AOWIS_HAS_QRHI
-    if (watched == this->desktop_rhi_surface
+    if (watched == this->desktop_rhi_widget
         && event->type() == QEvent::Resize
         && this->map_canvas != nullptr
-        && this->map_canvas->parentWidget() == this->desktop_rhi_surface)
+        && this->map_canvas->parentWidget() == this->desktop_rhi_widget)
     {
-        this->map_canvas->setGeometry(this->desktop_rhi_surface->rect());
+        this->map_canvas->setGeometry(this->desktop_rhi_widget->rect());
     }
 #endif
 #ifdef Q_OS_WASM
