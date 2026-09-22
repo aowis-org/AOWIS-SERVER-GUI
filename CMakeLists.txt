@@ -545,15 +545,31 @@ endif()
 if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_executable(aowis-map-render-neutral-tests
         tests/map_render_neutral_tests.cpp
+        src/geo/geo_web_mercator.cpp
+        src/geo/geo_web_mercator.h
         src/geo/geo_wgs84_ellipsoid.cpp
         src/geo/geo_wgs84_ellipsoid.h
+        src/map/data/map_terrain_tile.h
+        src/map/render/map_globe_heatmap_scene.cpp
+        src/map/render/map_globe_heatmap_scene.h
+        src/map/render/map_globe_junction_model.cpp
+        src/map/render/map_globe_junction_model.h
         src/map/render/map_globe_picking.cpp
         src/map/render/map_globe_picking.h
+        src/map/render/map_globe_render_instances.h
+        src/map/render/map_globe_reservoir_model.cpp
+        src/map/render/map_globe_reservoir_model.h
+        src/map/render/map_globe_surface_render_frame.cpp
+        src/map/render/map_globe_surface_render_frame.h
+        src/map/render/map_globe_tank_model.cpp
+        src/map/render/map_globe_tank_model.h
         src/map/render/map_globe_vertical_transform.h
         src/map/render/map_node_declutter.cpp
         src/map/render/map_node_declutter.h
         src/map/render/map_render_cache_math.cpp
         src/map/render/map_render_cache_math.h
+        src/map/render/map_terrain_mesh_scheduler.cpp
+        src/map/render/map_terrain_mesh_scheduler.h
     )
     target_include_directories(aowis-map-render-neutral-tests
         PRIVATE
@@ -563,6 +579,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         PRIVATE
             Qt6::Core
             Qt6::Gui
+            AOWIS::ServerModel
             GeographicLib_STATIC
     )
     add_test(
