@@ -125,25 +125,25 @@ void MapCanvasWidget::applyControllerState()
     requestRenderUpdate();
 }
 
-void MapCanvasWidget::setRhiOverlayMode(bool enabled)
+void MapCanvasWidget::setRenderSurfaceOverlayMode(bool enabled)
 {
-    if (this->rhi_overlay_mode == enabled)
+    if (this->render_surface_overlay_mode == enabled)
         return;
 
-    this->rhi_overlay_mode = enabled;
-    this->map_editor_renderer.setRhiOverlayMode(enabled);
+    this->render_surface_overlay_mode = enabled;
+    this->map_editor_renderer.setRenderSurfaceOverlayMode(enabled);
     requestRenderUpdate();
 }
 
-void MapCanvasWidget::setRhiFullNetworkMoveState(
+void MapCanvasWidget::setRenderSurfaceFullNetworkMoveState(
     bool active, const QPointF &translation_pixels)
 {
-    this->map_editor_renderer.setRhiFullNetworkMoveState(active, translation_pixels);
+    this->map_editor_renderer.setRenderSurfaceFullNetworkMoveState(active, translation_pixels);
 }
 
-bool MapCanvasWidget::rhiOverlayMode() const
+bool MapCanvasWidget::renderSurfaceOverlayMode() const
 {
-    return this->rhi_overlay_mode;
+    return this->render_surface_overlay_mode;
 }
 
 void MapCanvasWidget::requestRenderUpdate()
@@ -165,13 +165,13 @@ void MapCanvasWidget::paintEvent(QPaintEvent *event)
         : empty_network_snapshot;
 
     QPainter painter(this);
-    if (this->rhi_overlay_mode)
+    if (this->render_surface_overlay_mode)
     {
         painter.save();
         painter.setCompositionMode(QPainter::CompositionMode_Source);
         painter.fillRect(event->rect(), Qt::transparent);
         painter.restore();
-        this->map_editor_renderer.paintRhiOverlay(
+        this->map_editor_renderer.paintRenderSurfaceOverlay(
             painter, network_snapshot, this->map_canvas_entities->visualState(),
             viewportRenderState());
     }

@@ -215,6 +215,13 @@ bool MapRhiGlobeSurfaceBackend::uploadHeatmapArrayDrawIndices(
         this->rhi, resource_updates, indices, maximum_index_count);
 }
 
+bool MapRhiGlobeSurfaceBackend::uploadImageryArrayLayers(
+    QRhiResourceUpdateBatch *resource_updates,
+    const QVector<float> &layers)
+{
+    return uploadImageryArrayLayers(this->rhi, resource_updates, layers);
+}
+
 bool MapRhiGlobeSurfaceBackend::uploadHeatmapArrayLayers(
     QRhiResourceUpdateBatch *resource_updates,
     const QVector<float> &layers)
@@ -450,15 +457,15 @@ bool MapRhiGlobeSurfaceBackend::ensureImageryArrayPipeline(
 
     QRhiVertexInputLayout input_layout;
     input_layout.setBindings({
-        {quint32(sizeof(MapGlobeSurfaceVertex))}
+        {quint32(sizeof(MapGlobeSurfaceVertex))},
+        {quint32(sizeof(float))}
     });
     input_layout.setAttributes({
         {0, 0, QRhiVertexInputAttribute::Float3,
          quint32(offsetof(MapGlobeSurfaceVertex, x))},
         {0, 1, QRhiVertexInputAttribute::Float2,
          quint32(offsetof(MapGlobeSurfaceVertex, u))},
-        {0, 2, QRhiVertexInputAttribute::Float,
-         quint32(offsetof(MapGlobeSurfaceVertex, layer))}
+        {1, 2, QRhiVertexInputAttribute::Float, 0}
     });
 
     this->imagery_array_pipeline.reset(rhi->newGraphicsPipeline());
@@ -543,6 +550,7 @@ bool MapRhiGlobeSurfaceBackend::ensureHeatmapArrayPipeline(
     QRhiVertexInputLayout input_layout;
     input_layout.setBindings({
         {quint32(sizeof(MapGlobeSurfaceVertex))},
+        {quint32(sizeof(float))},
         {quint32(sizeof(float))}
     });
     input_layout.setAttributes({
@@ -550,9 +558,8 @@ bool MapRhiGlobeSurfaceBackend::ensureHeatmapArrayPipeline(
          quint32(offsetof(MapGlobeSurfaceVertex, x))},
         {0, 1, QRhiVertexInputAttribute::Float2,
          quint32(offsetof(MapGlobeSurfaceVertex, u))},
-        {0, 2, QRhiVertexInputAttribute::Float,
-         quint32(offsetof(MapGlobeSurfaceVertex, layer))},
-        {1, 3, QRhiVertexInputAttribute::Float, 0}
+        {1, 2, QRhiVertexInputAttribute::Float, 0},
+        {2, 3, QRhiVertexInputAttribute::Float, 0}
     });
 
     this->heatmap_array_pipeline.reset(rhi->newGraphicsPipeline());
@@ -789,6 +796,7 @@ void MapRhiGlobeSurfaceBackend::reset()
     this->imagery_array_pages.clear();
 
     this->heatmap_array_layer_buffer.reset();
+    this->imagery_array_layer_buffer.reset();
     this->heatmap_array_draw_index_buffer.reset();
     this->tile_array_draw_index_buffer.reset();
     this->wireframe_vertex_buffer.reset();
@@ -798,6 +806,7 @@ void MapRhiGlobeSurfaceBackend::reset()
     this->window_vertex_buffer.reset();
 
     this->heatmap_array_layer_buffer_size = 0;
+    this->imagery_array_layer_buffer_size = 0;
     this->heatmap_array_draw_index_buffer_size = 0;
     this->tile_array_draw_index_buffer_size = 0;
     this->wireframe_vertex_buffer_size = 0;
@@ -2088,6 +2097,31 @@ bool MapRhiGlobeSurfaceBackend::uploadHeatmapArrayDrawIndices(
     return true;
 }
 
+bool MapRhiGlobeSurfaceBackend::uploadImageryArrayLayers(
+    QRhi *rhi,
+    QRhiResourceUpdateBatch *resource_updates,
+    const QVector<float> &layers)
+{
+    if (rhi == nullptr || resource_updates == nullptr || layers.isEmpty())
+        return false;
+
+    int required_bytes = 0;
+    if (!byteCountFitsInt(
+            layers.size(), qsizetype(sizeof(float)), &required_bytes)
+        || !ensureDynamicBuffer(
+            rhi, &this->imagery_array_layer_buffer,
+            &this->imagery_array_layer_buffer_size,
+            QRhiBuffer::VertexBuffer, required_bytes))
+    {
+        return false;
+    }
+
+    resource_updates->updateDynamicBuffer(
+        this->imagery_array_layer_buffer.get(), 0, required_bytes,
+        layers.constData());
+    return true;
+}
+
 bool MapRhiGlobeSurfaceBackend::uploadHeatmapArrayLayers(
     QRhi *rhi,
     QRhiResourceUpdateBatch *resource_updates,
@@ -2296,6 +2330,39 @@ bool MapRhiGlobeSurfaceBackend::patchWindowVertices(
     return true;
 }
 
+bool MapRhiGlobeSurfaceBackend::patchImageryArrayLayers(
+    QRhiResourceUpdateBatch *resource_updates,
+    int first_vertex,
+    qsizetype vertex_count,
+    const QVector<float> &layers)
+{
+    if (resource_updates == nullptr || first_vertex < 0 || vertex_count <= 0
+        || !this->imagery_array_layer_buffer
+        || qsizetype(first_vertex) + vertex_count > layers.size())
+    {
+        return false;
+    }
+
+    const qsizetype byte_offset_qsize =
+        qsizetype(first_vertex) * qsizetype(sizeof(float));
+    const qsizetype byte_count_qsize =
+        vertex_count * qsizetype(sizeof(float));
+    const qsizetype byte_end_qsize = byte_offset_qsize + byte_count_qsize;
+    if (byte_offset_qsize < 0 || byte_count_qsize <= 0
+        || byte_end_qsize < byte_offset_qsize
+        || byte_end_qsize > qsizetype(this->imagery_array_layer_buffer_size)
+        || byte_offset_qsize > qsizetype(std::numeric_limits<int>::max())
+        || byte_count_qsize > qsizetype(std::numeric_limits<int>::max()))
+    {
+        return false;
+    }
+
+    resource_updates->updateDynamicBuffer(
+        this->imagery_array_layer_buffer.get(), int(byte_offset_qsize),
+        int(byte_count_qsize), layers.constData() + first_vertex);
+    return true;
+}
+
 bool MapRhiGlobeSurfaceBackend::patchHeatmapArrayLayers(
     QRhiResourceUpdateBatch *resource_updates,
     int first_vertex,
@@ -2343,6 +2410,7 @@ void MapRhiGlobeSurfaceBackend::draw(
         const bool use_array = draw_resources.imagery_array_active
             && this->window_vertex_buffer
             && this->window_index_buffer
+            && this->imagery_array_layer_buffer != nullptr
             && this->tile_array_draw_index_buffer != nullptr;
         const bool use_heatmap_array = use_array
             && draw_resources.heatmap_array_active
@@ -2359,10 +2427,11 @@ void MapRhiGlobeSurfaceBackend::draw(
                     this->heatmap_array_pipeline.get());
                 const QRhiCommandBuffer::VertexInput bindings[] = {
                     {this->window_vertex_buffer.get(), 0},
+                    {this->imagery_array_layer_buffer.get(), 0},
                     {this->heatmap_array_layer_buffer.get(), 0}
                 };
                 command_buffer->setVertexInput(
-                    0, 2, bindings,
+                    0, 3, bindings,
                     this->heatmap_array_draw_index_buffer.get(), 0,
                     QRhiCommandBuffer::IndexUInt32);
                 for (const MapRhiGlobeSurfaceBatch &batch :
@@ -2387,10 +2456,12 @@ void MapRhiGlobeSurfaceBackend::draw(
             {
                 command_buffer->setGraphicsPipeline(
                     this->imagery_array_pipeline.get());
-                const QRhiCommandBuffer::VertexInput binding(
-                    this->window_vertex_buffer.get(), 0);
+                const QRhiCommandBuffer::VertexInput bindings[] = {
+                    {this->window_vertex_buffer.get(), 0},
+                    {this->imagery_array_layer_buffer.get(), 0}
+                };
                 command_buffer->setVertexInput(
-                    0, 1, &binding,
+                    0, 2, bindings,
                     this->tile_array_draw_index_buffer.get(), 0,
                     QRhiCommandBuffer::IndexUInt32);
                 for (const MapRhiGlobeSurfaceBatch &batch :

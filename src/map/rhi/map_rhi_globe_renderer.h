@@ -6,6 +6,7 @@
 #include "map/render/map_globe_surface_preparation.h"
 #include "map/render/map_globe_heatmap_scene.h"
 #include "map/rhi/map_rhi_globe_surface_backend.h"
+#include "map/rhi/map_rhi_globe_terrain_height_cache.h"
 
 #include <aowis/model/gis.h>
 
@@ -173,8 +174,6 @@ public:
     void releaseResources();
 
 private:
-    using TileVertex = MapGlobeSurfaceVertex;
-
     using HeatmapStamp = MapGlobeHeatmapStamp;
     using HeatmapRasterStats = MapGlobeHeatmapRasterStats;
 
@@ -238,32 +237,6 @@ private:
 
     using TileArrayPage = MapRhiGlobeImageryArrayPage;
     using HeatmapArrayPage = MapRhiGlobeHeatmapArrayPage;
-    using TerrainHeightArrayPage = MapRhiGlobeTerrainHeightArrayPage;
-
-    struct TerrainHeightCacheEntry
-    {
-        int array_page = -1;
-        int array_layer = -1;
-        quint64 last_used_frame = 0;
-        bool uploaded = false;
-    };
-
-    struct TerrainHeightCacheProfileCounters
-    {
-        bool enabled = false;
-        int visible_terrain_tiles = 0;
-        int unique_visible_dem_tiles = 0;
-        int available_dem_tiles = 0;
-        int ready_terrain_tiles = 0;
-        int cache_hits = 0;
-        int cache_misses = 0;
-        int uploads = 0;
-        int pending_uploads = 0;
-        int evictions = 0;
-        int capacity_misses = 0;
-        quint64 upload_bytes = 0;
-        qint64 cpu_ns = 0;
-    };
 
     struct HeatmapArrayDrawBatch
     {
@@ -320,15 +293,6 @@ private:
         qint64 cpu_ns = 0;
     };
 
-    void resetTerrainHeightCache();
-    bool createTerrainHeightArrayPage();
-    TerrainHeightCacheEntry *ensureTerrainHeightCacheEntry(
-        const QString &terrain_key,
-        const QSet<QString> &protected_terrain_keys);
-    void releaseTerrainHeightCacheEntry(const QString &terrain_key);
-    void prepareTerrainHeightCache(
-        QRhiResourceUpdateBatch *resource_updates);
-    void reportTerrainHeightCacheProfile() const;
     void pruneUnusedTileResources();
     TileGpuState *tileGpuState(GlobeTile &tile);
     const TileGpuState *tileGpuState(const GlobeTile &tile) const;
@@ -343,8 +307,6 @@ private:
     bool preparedViewSelectionMatches(const QSize &viewport_size) const;
     bool canUseCameraOnlyPrepare(const QSize &viewport_size) const;
     void rememberPreparedViewState(const QSize &viewport_size);
-    void refreshPreparedSurfaceRenderFrameState(const QSize &viewport_size);
-    void rebuildPreparedSurfaceRenderFrame(const QSize &viewport_size);
     bool uploadCameraUniform(
         QRhiResourceUpdateBatch *resource_updates,
         const QMatrix4x4 &view_projection,
@@ -356,6 +318,8 @@ private:
     void setTileArrayReady(GlobeTile &tile, bool ready);
     void rebuildTileArrayDrawIndices();
     bool uploadTileArrayDrawIndices(QRhiResourceUpdateBatch *resource_updates);
+    bool uploadImageryArrayLayers(
+        QRhiResourceUpdateBatch *resource_updates);
     bool createHeatmapArrayResources(
         QRhiResourceUpdateBatch *resource_updates);
     bool createHeatmapArrayPage(
@@ -492,6 +456,10 @@ private:
     QVector<quint32> tile_array_draw_indices;
     bool tile_array_draw_indices_dirty = true;
     bool tile_array_draw_index_upload_pending = false;
+    // Texture-array layer selection is backend state and must not be stored
+    // in MapGlobeSurfaceVertex. Keep it in a parallel QRhi vertex stream.
+    QVector<float> window_imagery_array_layers;
+    bool imagery_array_layer_upload_pending = true;
     // Heatmap tiles remain sparsely packed into independent pages. When an
     // overlay is visible, the compact index stream groups every imagery
     // tile by its (imagery page, heatmap page) pair so imagery and heatmap
@@ -500,8 +468,8 @@ private:
     QVector<quint32> heatmap_array_draw_indices;
     bool heatmap_array_draw_indices_dirty = true;
     bool heatmap_array_draw_index_upload_pending = false;
-    // A separate float stream preserves TileVertex's compact imagery-path
-    // stride; only the fused imagery/heatmap pipeline fetches this value.
+    // Heatmap array layers are a second QRhi-owned float stream used only
+    // by the fused imagery/heatmap pipeline.
     QVector<float> window_heatmap_array_layers;
     bool heatmap_array_layer_upload_pending = true;
     std::map<QString, std::unique_ptr<TileResource>> tile_resources;
@@ -521,11 +489,8 @@ private:
     // have a different size, format and geographic reuse lifetime. The LRU
     // remains useful even before shader displacement lands: once uploaded,
     // a DEM can survive eviction from MapTerrainRepository's CPU QCache.
-    QHash<QString, TerrainHeightCacheEntry> terrain_height_cache;
-    quint64 terrain_height_cache_frame = 0;
-    bool terrain_height_cache_disabled = false;
-    bool terrain_height_cache_page_growth_disabled = false;
-    TerrainHeightCacheProfileCounters terrain_height_cache_profile;
+    // Owns its own cache/profile state; see MapRhiGlobeTerrainHeightCache.
+    MapRhiGlobeTerrainHeightCache terrain_height_cache;
 
     // Standalone 256x256 target retained for opt-in validation. The visible
     // atlas below shares its pipeline and geometry but never its texture, so

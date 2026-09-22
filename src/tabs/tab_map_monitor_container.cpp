@@ -17,7 +17,7 @@
 #if AOWIS_HAS_QRHI
 #include "map/rhi/map_rhi_widget.h"
 #include "map/render/map_render_surface.h"
-#include "map/rhi/map_rhi_hud_widget.h"
+#include "map/render/map_render_hud_widget.h"
 #include "map/monitor/map_monitor_hud_controls.h"
 #include "map/render/map_network_render_symbology.h"
 #include "entity_inspector/entity_map_legend_dock.h"
@@ -534,11 +534,11 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         {
             render_surface->setGlobe3dIconsEnabled(enabled);
         });
-        QWidget *rhi_hud_parent = this->map_stack;
+        QWidget *render_hud_parent = this->map_stack;
         if (rhi_widget->api() == QRhiWidget::Api::Vulkan)
-            rhi_hud_parent = rhi_widget;
-        MapRhiHudWidget *rhi_hud =
-            new MapRhiHudWidget(this->map_model, this->gps, rhi_hud_parent);
+            render_hud_parent = rhi_widget;
+        MapRenderHudWidget *render_hud =
+            new MapRenderHudWidget(this->map_model, this->gps, render_hud_parent);
         MapMonitorDownloadActivityHudWidget *download_activity_hud =
             new MapMonitorDownloadActivityHudWidget(
                 this->tile_repository, this->terrain_repository, render_surface,
@@ -592,8 +592,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         scene_fullscreen_shortcut->setAutoRepeat(false);
 #endif
         this->desktop_render_surface = render_surface;
-        this->desktop_rhi_widget = rhi_widget;
-        this->desktop_rhi_hud = rhi_hud;
+        this->desktop_render_widget = rhi_widget;
+        this->desktop_render_hud = render_hud;
         this->desktop_download_activity_hud = download_activity_hud;
         this->desktop_view_mode_hud = view_mode_hud;
         this->desktop_compass_hud = compass_hud;
@@ -603,7 +603,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         this->desktop_scene_fullscreen_hud = scene_fullscreen_hud;
         this->desktop_scene_fullscreen_button = scene_fullscreen_button;
         this->desktop_scene_fullscreen_shortcut = scene_fullscreen_shortcut;
-        this->desktop_rhi_hud->hide();
+        this->desktop_render_hud->hide();
         this->desktop_download_activity_hud->setHudActive(false);
         this->desktop_view_mode_hud->hide();
         this->desktop_compass_hud->hide();
@@ -617,18 +617,18 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             if (this->desktop_scene_fullscreen_hud != nullptr)
                 this->desktop_scene_fullscreen_hud->hide();
             this->desktop_scene_fullscreen_shortcut->setEnabled(false);
-            updateDesktopRhiSceneFullscreenControl();
+            updateDesktopRenderSurfaceFullscreenControl();
             connect(this->desktop_scene_fullscreen_button, &QToolButton::clicked, this, [this]
             {
-                setDesktopRhiSceneFullscreen(!this->desktop_scene_fullscreen_active);
+                setDesktopRenderSurfaceFullscreen(!this->desktop_scene_fullscreen_active);
             });
             connect(this->desktop_scene_fullscreen_shortcut, &QShortcut::activated, this, [this]
             {
-                if (!this->rhi_renderer_active)
+                if (!this->desktop_render_surface_active)
                     return;
                 if (!this->desktop_scene_fullscreen_active && !isVisible())
                     return;
-                setDesktopRhiSceneFullscreen(!this->desktop_scene_fullscreen_active);
+                setDesktopRenderSurfaceFullscreen(!this->desktop_scene_fullscreen_active);
             });
             connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutChanged, this,
                     [this](GuiShortcutId id)
@@ -640,7 +640,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                 }
                 this->desktop_scene_fullscreen_shortcut->setKey(
                     guiShortcutRegistry().keySequence(GuiShortcutId::MapMonitorFullscreen));
-                updateDesktopRhiSceneFullscreenControl();
+                updateDesktopRenderSurfaceFullscreenControl();
             });
             connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutCaptureActiveChanged,
                     this, [this](bool active)
@@ -648,7 +648,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                 if (this->desktop_scene_fullscreen_shortcut != nullptr)
                 {
                     this->desktop_scene_fullscreen_shortcut->setEnabled(
-                        this->rhi_renderer_active && !active);
+                        this->desktop_render_surface_active && !active);
                 }
             });
             installShortcutEditContextMenu(
@@ -695,13 +695,13 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             this->symbology_settings.heatmap_palette_flipped);
         render_surface->setTileRepository(this->tile_repository);
         render_surface->setTerrainRepository(this->terrain_repository);
-        this->map->setRhiScreenCoordinateResolver(
+        this->map->setRenderSurfaceScreenCoordinateResolver(
             [render_surface](const QPointF &screen_position, CoordinateWGS84 *coordinate)
         {
             return render_surface->terrainCoordinateAtScreen(
                 screen_position, coordinate, true);
         });
-        this->map->setRhiGlobeTerrainPanResolver(
+        this->map->setRenderSurfaceGlobeTerrainPanResolver(
             [render_surface](const QPoint &delta_pixels)
         {
             return render_surface->panGlobeByTerrainPixels(delta_pixels);
@@ -718,8 +718,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         // Keeping the surface in the StackAll layout from the beginning lets the
         // layout maintain its full geometry while the CPU/browser renderer stays
         // visually on top until signalRendererReady().
-        this->map_stack_layout->addWidget(this->desktop_rhi_widget);
-        this->desktop_rhi_widget->show();
+        this->map_stack_layout->addWidget(this->desktop_render_widget);
+        this->desktop_render_widget->show();
 #ifndef Q_OS_WASM
         this->map_stack_layout->setCurrentWidget(this->desktop_network_overlay);
         this->desktop_network_overlay->raise();
@@ -835,11 +835,11 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             render_surface->setSelectedEntity(InfrastructureEntity::Valve, valve.uuid);
         });
         connect(rhi_widget, &MapRhiWidget::signalRendererReady, this,
-                [this, rhi_widget, rhi_hud, download_activity_hud, view_mode_hud]
+                [this, rhi_widget, render_hud, download_activity_hud, view_mode_hud]
         {
-            this->rhi_renderer_active = true;
+            this->desktop_render_surface_active = true;
             this->map_stack_layout->setCurrentWidget(rhi_widget);
-            this->map->setRhiViewActive(true);
+            this->map->setRenderSurfaceActive(true);
 #ifndef Q_OS_WASM
             this->desktop_network_overlay->hide();
 #else
@@ -852,7 +852,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             // widgets are raised afterwards as usual.
             rhi_widget->raise();
 
-            rhi_hud->show();
+            render_hud->show();
             download_activity_hud->setHudActive(true);
             view_mode_hud->show();
             if (this->desktop_scene_fullscreen_hud != nullptr)
@@ -865,7 +865,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                 this->desktop_scene_fullscreen_shortcut->setEnabled(
                     !guiShortcutRegistry().shortcutCaptureActive());
             }
-            updateDesktopRhiSceneFullscreenControl();
+            updateDesktopRenderSurfaceFullscreenControl();
             if (this->desktop_legend_hud != nullptr)
             {
                 this->desktop_legend_hud->setNodeVisual(
@@ -892,8 +892,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                 [this](const QString &reason)
         {
             if (this->desktop_scene_fullscreen_active)
-                setDesktopRhiSceneFullscreen(false);
-            this->rhi_renderer_active = false;
+                setDesktopRenderSurfaceFullscreen(false);
+            this->desktop_render_surface_active = false;
 #ifdef Q_OS_WASM
             qWarning().noquote()
                 << QStringLiteral("Monitor RHI surface failed (%1). "
@@ -907,7 +907,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
 #endif
             if (this->map_model->viewMode() != MapViewMode::TwoD)
                 this->map_model->setViewMode(MapViewMode::TwoD);
-            this->map->setRhiViewActive(false);
+            this->map->setRenderSurfaceActive(false);
 #ifndef Q_OS_WASM
             this->symbology_settings = this->symbology_settings.bounded();
             const NetworkSymbologyRanges fallback_ranges =
@@ -928,8 +928,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             scheduleWasmMapLayerSync();
             scheduleWasmNetworkSymbologySync();
 #endif
-            if (this->desktop_rhi_hud != nullptr)
-                this->desktop_rhi_hud->hide();
+            if (this->desktop_render_hud != nullptr)
+                this->desktop_render_hud->hide();
             if (this->desktop_download_activity_hud != nullptr)
                 this->desktop_download_activity_hud->setHudActive(false);
             if (this->desktop_view_mode_hud != nullptr)
@@ -946,8 +946,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                 this->desktop_scene_fullscreen_hud->hide();
             if (this->desktop_scene_fullscreen_shortcut != nullptr)
                 this->desktop_scene_fullscreen_shortcut->setEnabled(false);
-            if (this->desktop_rhi_widget != nullptr)
-                this->desktop_rhi_widget->hide();
+            if (this->desktop_render_widget != nullptr)
+                this->desktop_render_widget->hide();
             emit signalShowMapLegendNode(this->symbology_settings.visual_node);
             emit signalShowMapLegendLink(this->symbology_settings.visual_link);
             emit signalShowMapLegendHeatmap(this->symbology_settings.visual_heatmap);
@@ -1185,10 +1185,10 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
 MapMonitorContainer::~MapMonitorContainer()
 {
 #if AOWIS_HAS_QRHI
-    this->map->setRhiScreenCoordinateResolver(MapWidget::ScreenCoordinateResolver());
-    this->map->setRhiGlobeTerrainPanResolver(MapWidget::GlobeTerrainPanResolver());
+    this->map->setRenderSurfaceScreenCoordinateResolver(MapWidget::ScreenCoordinateResolver());
+    this->map->setRenderSurfaceGlobeTerrainPanResolver(MapWidget::GlobeTerrainPanResolver());
     if (this->desktop_scene_fullscreen_active)
-        setDesktopRhiSceneFullscreen(false);
+        setDesktopRenderSurfaceFullscreen(false);
 #endif
 #ifdef Q_OS_WASM
     this->map->setBrowserMapLayerGeometry(QRect(), false);
@@ -1267,7 +1267,7 @@ void MapMonitorContainer::setHeatmapPalette(NetworkSymbologyPalette palette, boo
 void MapMonitorContainer::showMapLegendNode(VisualNode visual_node)
 {
 #if AOWIS_HAS_QRHI
-    if (this->rhi_renderer_active && this->desktop_legend_hud != nullptr)
+    if (this->desktop_render_surface_active && this->desktop_legend_hud != nullptr)
     {
         this->desktop_legend_hud->setNodeVisual(visual_node);
         positionDesktopHudWidgets();
@@ -1281,7 +1281,7 @@ void MapMonitorContainer::showMapLegendNode(VisualNode visual_node)
 void MapMonitorContainer::showMapLegendLink(VisualLink visual_link)
 {
 #if AOWIS_HAS_QRHI
-    if (this->rhi_renderer_active && this->desktop_legend_hud != nullptr)
+    if (this->desktop_render_surface_active && this->desktop_legend_hud != nullptr)
     {
         this->desktop_legend_hud->setLinkVisual(visual_link);
         positionDesktopHudWidgets();
@@ -1295,7 +1295,7 @@ void MapMonitorContainer::showMapLegendLink(VisualLink visual_link)
 void MapMonitorContainer::showMapLegendHeatmap(VisualHeatmap visual_heatmap)
 {
 #if AOWIS_HAS_QRHI
-    if (this->rhi_renderer_active && this->desktop_legend_hud != nullptr)
+    if (this->desktop_render_surface_active && this->desktop_legend_hud != nullptr)
     {
         this->desktop_legend_hud->setHeatmapVisual(visual_heatmap);
         positionDesktopHudWidgets();
@@ -1311,20 +1311,20 @@ void MapMonitorContainer::positionDesktopHudWidgets()
 {
     constexpr int hud_margin_px = 12;
 
-    if (this->desktop_rhi_hud != nullptr)
+    if (this->desktop_render_hud != nullptr)
     {
-        QWidget *hud_parent = this->desktop_rhi_hud->parentWidget();
-        if (hud_parent == this->desktop_rhi_widget
-            && this->desktop_rhi_widget != nullptr)
+        QWidget *hud_parent = this->desktop_render_hud->parentWidget();
+        if (hud_parent == this->desktop_render_widget
+            && this->desktop_render_widget != nullptr)
         {
-            this->desktop_rhi_hud->setGeometry(this->desktop_rhi_widget->rect());
+            this->desktop_render_hud->setGeometry(this->desktop_render_widget->rect());
         }
         else
         {
-            this->desktop_rhi_hud->setGeometry(this->map_stack->rect());
+            this->desktop_render_hud->setGeometry(this->map_stack->rect());
         }
-        if (this->desktop_rhi_hud->isVisible())
-            this->desktop_rhi_hud->raise();
+        if (this->desktop_render_hud->isVisible())
+            this->desktop_render_hud->raise();
     }
 
     if (this->desktop_download_activity_hud != nullptr)
@@ -1439,11 +1439,11 @@ void MapMonitorContainer::positionDesktopHudWidgets()
     }
 }
 
-void MapMonitorContainer::setDesktopRhiSceneFullscreen(bool fullscreen)
+void MapMonitorContainer::setDesktopRenderSurfaceFullscreen(bool fullscreen)
 {
     if (fullscreen == this->desktop_scene_fullscreen_active)
         return;
-    if (fullscreen && (!this->rhi_renderer_active || this->desktop_rhi_widget == nullptr))
+    if (fullscreen && (!this->desktop_render_surface_active || this->desktop_render_widget == nullptr))
         return;
 
     if (fullscreen)
@@ -1453,7 +1453,7 @@ void MapMonitorContainer::setDesktopRhiSceneFullscreen(bool fullscreen)
         this->map_stack->setParent(nullptr, Qt::Window);
         this->map_stack->move(previous_global_position);
         this->desktop_scene_fullscreen_active = true;
-        updateDesktopRhiSceneFullscreenControl();
+        updateDesktopRenderSurfaceFullscreenControl();
         this->map_stack->showFullScreen();
     }
     else
@@ -1464,18 +1464,18 @@ void MapMonitorContainer::setDesktopRhiSceneFullscreen(bool fullscreen)
         this->map_stack->setParent(this, Qt::Widget);
         this->layout->addWidget(this->map_stack);
         this->map_stack->show();
-        updateDesktopRhiSceneFullscreenControl();
+        updateDesktopRenderSurfaceFullscreenControl();
     }
 
     positionDesktopHudWidgets();
-    if (this->desktop_rhi_widget != nullptr)
+    if (this->desktop_render_widget != nullptr)
     {
-        this->desktop_rhi_widget->update();
-        this->desktop_rhi_widget->setFocus(Qt::ShortcutFocusReason);
+        this->desktop_render_widget->update();
+        this->desktop_render_widget->setFocus(Qt::ShortcutFocusReason);
     }
 }
 
-void MapMonitorContainer::updateDesktopRhiSceneFullscreenControl()
+void MapMonitorContainer::updateDesktopRenderSurfaceFullscreenControl()
 {
     if (this->desktop_scene_fullscreen_button == nullptr)
         return;
@@ -1503,19 +1503,19 @@ void MapMonitorContainer::syncDesktopCameraHudVisibility()
         return;
     }
 
-    const bool rhi_active = this->desktop_rhi_widget != nullptr
-        && this->desktop_rhi_widget->isVisible()
+    const bool render_surface_active = this->desktop_render_widget != nullptr
+        && this->desktop_render_widget->isVisible()
         && this->desktop_view_mode_hud != nullptr
         && this->desktop_view_mode_hud->isVisible();
-    const bool compass_hud_visible = rhi_active
+    const bool compass_hud_visible = render_surface_active
         && this->map_model->viewMode() == MapViewMode::Globe;
     const bool vertical_controls_visible =
-        rhi_active
+        render_surface_active
         && this->map_model->viewMode() == MapViewMode::Globe;
     this->desktop_compass_hud->setVisible(compass_hud_visible);
-    this->desktop_scale_hud->setVisible(rhi_active);
+    this->desktop_scale_hud->setVisible(render_surface_active);
     this->desktop_vertical_controls_hud->setVisible(vertical_controls_visible);
-    if (rhi_active)
+    if (render_surface_active)
     {
         if (compass_hud_visible)
             this->desktop_compass_hud->raise();
@@ -1533,12 +1533,12 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
     if (watched == this->map_stack && event->type() == QEvent::Close
         && this->desktop_scene_fullscreen_active)
     {
-        setDesktopRhiSceneFullscreen(false);
+        setDesktopRenderSurfaceFullscreen(false);
         event->ignore();
         return true;
     }
     if (watched == this->map_stack && event->type() == QEvent::Resize
-        && this->desktop_rhi_hud != nullptr)
+        && this->desktop_render_hud != nullptr)
     {
         positionDesktopHudWidgets();
     }
@@ -1553,7 +1553,7 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
             {
 #ifdef Q_OS_WASM
 #if AOWIS_HAS_QRHI
-                if (this->rhi_renderer_active && this->desktop_rhi_widget != nullptr
+                if (this->desktop_render_surface_active && this->desktop_render_widget != nullptr
                     && this->desktop_render_surface != nullptr)
                 {
                     const MapRenderHit hit = this->desktop_render_surface->hitTest(
@@ -1578,9 +1578,9 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
                 }
 #else
 #if AOWIS_HAS_QRHI
-                if (this->desktop_rhi_widget != nullptr
+                if (this->desktop_render_widget != nullptr
                     && this->desktop_render_surface != nullptr
-                    && this->desktop_rhi_widget->isVisible())
+                    && this->desktop_render_widget->isVisible())
                 {
                     const MapRenderHit hit = this->desktop_render_surface->hitTest(
                         mouse_event->position());
@@ -1727,9 +1727,9 @@ void MapMonitorContainer::updateDesktopNetworkHover(
     }
 
 #if AOWIS_HAS_QRHI
-    if (this->desktop_rhi_widget != nullptr
+    if (this->desktop_render_widget != nullptr
         && this->desktop_render_surface != nullptr
-        && this->desktop_rhi_widget->isVisible())
+        && this->desktop_render_widget->isVisible())
     {
         setDesktopNetworkHovered(this->desktop_render_surface->hitTest(position).isValid());
         return;
@@ -1810,7 +1810,7 @@ void MapMonitorContainer::applyVisualControlSymbology()
         this->symbology_settings = this->symbology_settings.bounded();
 
 #if AOWIS_HAS_QRHI
-        if (this->rhi_renderer_active && this->desktop_render_surface != nullptr)
+        if (this->desktop_render_surface_active && this->desktop_render_surface != nullptr)
         {
             this->desktop_render_surface->setVisualControlSettings(
                 this->symbology_settings);

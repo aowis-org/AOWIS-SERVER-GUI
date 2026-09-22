@@ -354,7 +354,7 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
         MapRhiWidget *rhi_widget =
             new MapRhiWidget(this->map_model, QStringLiteral("editor"), this->map_stack);
         this->desktop_render_surface = rhi_widget;
-        this->desktop_rhi_widget = rhi_widget;
+        this->desktop_render_widget = rhi_widget;
         this->desktop_render_surface->setTileRepository(this->tile_repository);
         this->desktop_render_surface->setBackgroundOpacity(
             this->map_canvas->backgroundOpacity());
@@ -366,8 +366,8 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
         // can be recreated when the widget grows, so readiness has to mean that
         // an actual full-size frame was submitted. The StackAll layout keeps the
         // RHI surface sized correctly while MapCanvasWidget remains on top.
-        this->map_stack_layout->addWidget(this->desktop_rhi_widget);
-        this->desktop_rhi_widget->show();
+        this->map_stack_layout->addWidget(this->desktop_render_widget);
+        this->desktop_render_widget->show();
         this->map_stack_layout->setCurrentWidget(this->map_canvas);
         this->map_canvas->raise();
 
@@ -399,12 +399,12 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
         connect(rhi_widget, &MapRhiWidget::signalRendererReady, this,
                 [this, rhi_widget]
         {
-            this->map->setRhiViewActive(true);
+            this->map->setRenderSurfaceActive(true);
             rhi_widget->show();
             this->map_stack_layout->setCurrentWidget(rhi_widget);
             rhi_widget->raise();
 
-            this->map_canvas->setRhiOverlayMode(true);
+            this->map_canvas->setRenderSurfaceOverlayMode(true);
             if (rhi_widget->api() == QRhiWidget::Api::Vulkan)
             {
                 // MapRhiWidget is normally transparent for mouse input so monitor/map
@@ -438,22 +438,22 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
                        .arg(reason);
             if (this->map_model->viewMode() != MapViewMode::TwoD)
                 this->map_model->setViewMode(MapViewMode::TwoD);
-            this->map->setRhiViewActive(false);
-            if (this->desktop_rhi_widget != nullptr
-                && this->map_canvas->parentWidget() == this->desktop_rhi_widget)
+            this->map->setRenderSurfaceActive(false);
+            if (this->desktop_render_widget != nullptr
+                && this->map_canvas->parentWidget() == this->desktop_render_widget)
             {
-                this->desktop_rhi_widget->removeEventFilter(this);
+                this->desktop_render_widget->removeEventFilter(this);
                 this->map_canvas->setParent(this->map_stack);
                 this->map_stack_layout->addWidget(this->map_canvas);
-                this->desktop_rhi_widget->setAttribute(
+                this->desktop_render_widget->setAttribute(
                     Qt::WA_TransparentForMouseEvents, true);
             }
-            this->map_canvas->setRhiOverlayMode(false);
+            this->map_canvas->setRenderSurfaceOverlayMode(false);
             this->map_canvas->show();
             this->map_stack_layout->setCurrentWidget(this->map_canvas);
             this->map_canvas->raise();
-            if (this->desktop_rhi_widget != nullptr)
-                this->desktop_rhi_widget->hide();
+            if (this->desktop_render_widget != nullptr)
+                this->desktop_render_widget->hide();
         });
     }
 #endif
@@ -586,7 +586,7 @@ void MapEditorContainer::syncDesktopRenderSurfaceEditorState()
             this->desktop_render_move_start_mouse_position = QPointF();
             this->desktop_render_surface->setNetworkScreenTranslation(QPointF());
             this->desktop_render_surface->setHiddenEntityUuids(QSet<QUuid>());
-            this->map_canvas->setRhiFullNetworkMoveState(false, QPointF());
+            this->map_canvas->setRenderSurfaceFullNetworkMoveState(false, QPointF());
         }
         return;
     }
@@ -640,12 +640,12 @@ void MapEditorContainer::syncDesktopRenderSurfaceEditorState()
         const QPointF translation_pixels =
             state.placement.mouse_position - this->desktop_render_move_start_mouse_position;
         this->desktop_render_surface->setNetworkScreenTranslation(translation_pixels);
-        this->map_canvas->setRhiFullNetworkMoveState(true, translation_pixels);
+        this->map_canvas->setRenderSurfaceFullNetworkMoveState(true, translation_pixels);
         return;
     }
 
     this->desktop_render_surface->setNetworkScreenTranslation(QPointF());
-    this->map_canvas->setRhiFullNetworkMoveState(false, QPointF());
+    this->map_canvas->setRenderSurfaceFullNetworkMoveState(false, QPointF());
 }
 
 void MapEditorContainer::applyDesktopRenderSurfaceEditorSymbology()
@@ -702,12 +702,12 @@ void MapEditorContainer::setDesktopRenderSurfaceBackgroundOpacity(int opacity)
 bool MapEditorContainer::eventFilter(QObject *watched, QEvent *event)
 {
 #if !defined(Q_OS_WASM) && AOWIS_HAS_QRHI
-    if (watched == this->desktop_rhi_widget
+    if (watched == this->desktop_render_widget
         && event->type() == QEvent::Resize
         && this->map_canvas != nullptr
-        && this->map_canvas->parentWidget() == this->desktop_rhi_widget)
+        && this->map_canvas->parentWidget() == this->desktop_render_widget)
     {
-        this->map_canvas->setGeometry(this->desktop_rhi_widget->rect());
+        this->map_canvas->setGeometry(this->desktop_render_widget->rect());
     }
 #endif
 #ifdef Q_OS_WASM

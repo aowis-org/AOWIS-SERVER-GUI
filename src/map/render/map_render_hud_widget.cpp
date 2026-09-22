@@ -1,4 +1,4 @@
-#include "map/rhi/map_rhi_hud_widget.h"
+#include "map/render/map_render_hud_widget.h"
 
 #ifdef Q_OS_WASM
 #include "gps/gps_provider_dummy.h"
@@ -13,7 +13,7 @@
 #include <QPixmap>
 #include <QRect>
 
-MapRhiHudWidget::MapRhiHudWidget(MapModel *map_model, GpsProvider *gps, QWidget *parent)
+MapRenderHudWidget::MapRenderHudWidget(MapModel *map_model, GpsProvider *gps, QWidget *parent)
     : QWidget(parent),
       map_model(map_model),
       gps(gps)
@@ -79,7 +79,7 @@ MapRhiHudWidget::MapRhiHudWidget(MapModel *map_model, GpsProvider *gps, QWidget 
     if (this->gps != nullptr)
     {
         connect(this->gps, &GpsProvider::positionChanged,
-                this, &MapRhiHudWidget::updateGpsPosition);
+                this, &MapRenderHudWidget::updateGpsPosition);
         connect(this->gps, &GpsProvider::gpsDisconnected, this, [this]
         {
             this->has_gps_coordinate = false;
@@ -91,7 +91,7 @@ MapRhiHudWidget::MapRhiHudWidget(MapModel *map_model, GpsProvider *gps, QWidget 
 #endif
 }
 
-void MapRhiHudWidget::paintEvent(QPaintEvent *event)
+void MapRenderHudWidget::paintEvent(QPaintEvent *event)
 {
     QPainter painter(this);
     painter.setClipRegion(event->region());
@@ -123,7 +123,7 @@ void MapRhiHudWidget::paintEvent(QPaintEvent *event)
 }
 
 #ifndef Q_OS_WASM
-void MapRhiHudWidget::updateGpsPosition(const QGeoPositionInfo &info)
+void MapRenderHudWidget::updateGpsPosition(const QGeoPositionInfo &info)
 {
     const QGeoCoordinate coordinate = info.coordinate();
     if (!info.isValid() || !coordinate.isValid())

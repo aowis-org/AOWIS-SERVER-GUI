@@ -40,8 +40,7 @@ class HydraulicData;
 class MapNetworkOverlayWidget;
 class MapTerrainRepository;
 class MapRenderSurface;
-class MapRhiWidget;
-class MapRhiHudWidget;
+class MapRenderHudWidget;
 class MapMonitorDownloadActivityHudWidget;
 class MapMonitorViewModeHudWidget;
 class MapMonitorCompassHudWidget;
@@ -154,8 +153,8 @@ private:
 #endif
 #if AOWIS_HAS_QRHI
     MapRenderSurface *desktop_render_surface = nullptr;
-    MapRhiWidget *desktop_rhi_widget = nullptr;
-    MapRhiHudWidget *desktop_rhi_hud = nullptr;
+    QWidget *desktop_render_widget = nullptr;
+    MapRenderHudWidget *desktop_render_hud = nullptr;
     MapMonitorDownloadActivityHudWidget *desktop_download_activity_hud = nullptr;
     MapMonitorViewModeHudWidget *desktop_view_mode_hud = nullptr;
     MapMonitorCompassHudWidget *desktop_compass_hud = nullptr;
@@ -166,7 +165,7 @@ private:
     QToolButton *desktop_scene_fullscreen_button = nullptr;
     QShortcut *desktop_scene_fullscreen_shortcut = nullptr;
     bool desktop_scene_fullscreen_active = false;
-    bool rhi_renderer_active = false;
+    bool desktop_render_surface_active = false;
 #endif
     MapMonitorMenuWidget *map_menu = nullptr;
     int network_background_opacity = 0;
@@ -191,8 +190,8 @@ private:
     void applyDesktopRenderSurfaceHighlights();
     void positionDesktopHudWidgets();
     void syncDesktopCameraHudVisibility();
-    void setDesktopRhiSceneFullscreen(bool fullscreen);
-    void updateDesktopRhiSceneFullscreenControl();
+    void setDesktopRenderSurfaceFullscreen(bool fullscreen);
+    void updateDesktopRenderSurfaceFullscreenControl();
 #endif
     void showMapLegendNode(VisualNode visual_node);
     void showMapLegendLink(VisualLink visual_link);

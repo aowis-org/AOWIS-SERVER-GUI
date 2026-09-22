@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
 project(AOWIS-SERVER-GUI LANGUAGES CXX)
 
+include(CTest)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -257,6 +259,44 @@ qt_add_executable(aowis-server-gui
     src/map/render/map_vector_document.cpp
     src/map/render/map_vector_document.h
 
+    # Backend-neutral Globe rendering
+    src/map/render/map_terrain_mesh_scheduler.h
+    src/map/render/map_terrain_mesh_scheduler.cpp
+    src/map/render/map_globe_vertical_transform.h
+    src/map/render/map_globe_camera.h
+    src/map/render/map_globe_camera.cpp
+    src/map/render/map_globe_network_scene.h
+    src/map/render/map_globe_network_scene.cpp
+    src/map/render/map_globe_render_frame.h
+    src/map/render/map_globe_render_frame.cpp
+    src/map/render/map_globe_surface_scene.h
+    src/map/render/map_globe_surface_scene.cpp
+    src/map/render/map_globe_surface_preparation.h
+    src/map/render/map_globe_surface_preparation.cpp
+    src/map/render/map_globe_surface_render_frame.h
+    src/map/render/map_globe_surface_render_frame.cpp
+    src/map/render/map_globe_heatmap_scene.h
+    src/map/render/map_globe_heatmap_scene.cpp
+    src/map/render/map_render_surface.h
+    src/map/render/map_render_hud_widget.h
+    src/map/render/map_render_hud_widget.cpp
+    src/map/render/map_network_render_symbology.h
+    src/map/render/map_network_render_symbology.cpp
+    src/map/render/map_network_render_data.h
+    src/map/render/map_globe_render_instances.h
+    src/map/render/map_globe_junction_model.h
+    src/map/render/map_globe_junction_model.cpp
+    src/map/render/map_globe_tank_model.h
+    src/map/render/map_globe_tank_model.cpp
+    src/map/render/map_globe_reservoir_model.h
+    src/map/render/map_globe_reservoir_model.cpp
+    src/map/render/map_globe_picking.h
+    src/map/render/map_globe_picking.cpp
+    src/map/render/map_icon_atlas.h
+    src/map/render/map_icon_atlas.cpp
+    src/map/render/map_node_declutter.h
+    src/map/render/map_node_declutter.cpp
+
     # Entity inspectors
     src/entity_inspector/entity_inspector_customer_point.cpp
     src/entity_inspector/entity_inspector_customer_point.h
@@ -356,50 +396,16 @@ if(AOWIS_HAS_QRHI)
             src/map/rhi/map_rhi_globe_network_backend.cpp
             src/map/rhi/map_rhi_globe_surface_backend.h
             src/map/rhi/map_rhi_globe_surface_backend.cpp
-            src/map/rhi/map_rhi_hud_widget.h
-            src/map/rhi/map_rhi_hud_widget.cpp
             src/map/monitor/map_monitor_hud_controls.h
             src/map/monitor/map_monitor_hud_controls.cpp
             src/map/rhi/map_rhi_scene.h
             src/map/rhi/map_rhi_scene.cpp
-            src/map/render/map_terrain_mesh_scheduler.h
-            src/map/render/map_terrain_mesh_scheduler.cpp
-            src/map/render/map_globe_vertical_transform.h
-            src/map/render/map_globe_camera.h
-            src/map/render/map_globe_camera.cpp
-            src/map/render/map_globe_network_scene.h
-            src/map/render/map_globe_network_scene.cpp
-            src/map/render/map_globe_render_frame.h
-            src/map/render/map_globe_render_frame.cpp
-            src/map/render/map_globe_surface_scene.h
-            src/map/render/map_globe_surface_scene.cpp
-            src/map/render/map_globe_surface_preparation.h
-            src/map/render/map_globe_surface_preparation.cpp
-            src/map/render/map_globe_surface_render_frame.h
-            src/map/render/map_globe_surface_render_frame.cpp
-            src/map/render/map_globe_heatmap_scene.h
-            src/map/render/map_globe_heatmap_scene.cpp
-            src/map/render/map_render_surface.h
-            src/map/render/map_network_render_symbology.h
-            src/map/render/map_network_render_symbology.cpp
-            src/map/render/map_network_render_data.h
-            src/map/render/map_globe_render_instances.h
-            src/map/render/map_globe_junction_model.h
-            src/map/render/map_globe_junction_model.cpp
-            src/map/render/map_globe_tank_model.h
-            src/map/render/map_globe_tank_model.cpp
-            src/map/render/map_globe_reservoir_model.h
-            src/map/render/map_globe_reservoir_model.cpp
-            src/map/render/map_globe_picking.h
-            src/map/render/map_globe_picking.cpp
-            src/map/render/map_icon_atlas.h
-            src/map/render/map_icon_atlas.cpp
-            src/map/render/map_node_declutter.h
-            src/map/render/map_node_declutter.cpp
             src/map/rhi/map_rhi_network_style.h
             src/map/rhi/map_rhi_network_style.cpp
             src/map/rhi/map_rhi_globe_renderer.h
             src/map/rhi/map_rhi_globe_renderer.cpp
+            src/map/rhi/map_rhi_globe_terrain_height_cache.h
+            src/map/rhi/map_rhi_globe_terrain_height_cache.cpp
             src/map/rhi/map_rhi_widget.h
             src/map/rhi/map_rhi_widget.cpp
     )
@@ -533,6 +539,44 @@ else()
     target_compile_definitions(aowis-server-gui
         PRIVATE
             AOWIS_HAS_SERIAL_GPS=0
+    )
+endif()
+
+if(BUILD_TESTING AND NOT EMSCRIPTEN)
+    add_executable(aowis-map-render-neutral-tests
+        tests/map_render_neutral_tests.cpp
+        src/geo/geo_wgs84_ellipsoid.cpp
+        src/geo/geo_wgs84_ellipsoid.h
+        src/map/render/map_globe_picking.cpp
+        src/map/render/map_globe_picking.h
+        src/map/render/map_globe_vertical_transform.h
+        src/map/render/map_node_declutter.cpp
+        src/map/render/map_node_declutter.h
+        src/map/render/map_render_cache_math.cpp
+        src/map/render/map_render_cache_math.h
+    )
+    target_include_directories(aowis-map-render-neutral-tests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(aowis-map-render-neutral-tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Gui
+            GeographicLib_STATIC
+    )
+    add_test(
+        NAME aowis-map-render-neutral
+        COMMAND aowis-map-render-neutral-tests
+    )
+    set_tests_properties(aowis-map-render-neutral
+        PROPERTIES
+            LABELS "aowis"
+    )
+
+    add_custom_target(aowis-tests
+        DEPENDS
+            aowis-map-render-neutral-tests
     )
 endif()
 

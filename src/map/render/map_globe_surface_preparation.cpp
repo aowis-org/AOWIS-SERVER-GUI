@@ -132,6 +132,106 @@ bool rayAabbIntersectionDistanceRange(
 }
 }
 
+void MapGlobeSurfacePreparation::refreshRenderFrame(
+    MapGlobeSurfaceRenderFrame *frame,
+    const QSize &viewport_size, bool map_visible,
+    float heatmap_opacity, quint64 heatmap_revision,
+    quint64 heatmap_layout_revision,
+    int active_heatmap_marker_count) const
+{
+    if (frame == nullptr)
+        return;
+
+    frame->viewport_size = viewport_size;
+    frame->render_origin_ecef = this->render_origin_ecef;
+    frame->map_visible = map_visible;
+    frame->wireframe_visible = this->wireframe_visible;
+    frame->heatmap_opacity = heatmap_opacity;
+    frame->heatmap_revision = heatmap_revision;
+    frame->heatmap_layout_revision = heatmap_layout_revision;
+    frame->active_heatmap_marker_count = active_heatmap_marker_count;
+
+    MapGlobeSurfaceRenderResources &resources = frame->resources;
+    resources.window_vertices = &this->window_vertices;
+    resources.window_indices = &this->window_indices;
+    resources.cap_vertices = &this->cap_vertices;
+    resources.cap_indices = &this->cap_indices;
+    resources.wireframe_vertices = &this->wireframe_vertices;
+}
+
+void MapGlobeSurfacePreparation::rebuildRenderFrame(
+    MapGlobeSurfaceRenderFrame *frame,
+    const QSize &viewport_size, bool map_visible,
+    float heatmap_opacity, quint64 heatmap_revision,
+    quint64 heatmap_layout_revision,
+    int active_heatmap_marker_count) const
+{
+    if (frame == nullptr)
+        return;
+
+    refreshRenderFrame(
+        frame, viewport_size, map_visible, heatmap_opacity,
+        heatmap_revision, heatmap_layout_revision,
+        active_heatmap_marker_count);
+
+    MapGlobeSurfaceRenderResources &resources = frame->resources;
+    resources.window_tiles.clear();
+    resources.window_tiles.reserve(this->window_tiles.size());
+    for (qsizetype index = 0; index < this->window_tiles.size(); ++index)
+    {
+        const MapGlobeSurfaceTile &tile = this->window_tiles.at(index);
+        MapGlobeSurfaceTileRenderState state;
+        state.surface_tile_index = int(index);
+        state.position_key = MapGlobeSurfaceScene::positionKey(
+            tile.zoom, tile.tile_x, tile.tile_y);
+        state.virtual_x = tile.virtual_x;
+        state.tile_x = tile.tile_x;
+        state.tile_y = tile.tile_y;
+        state.zoom = tile.zoom;
+        state.is_cap = tile.is_cap;
+        state.imagery_key = tile.imagery_key;
+        state.first_vertex = tile.first_vertex;
+        state.vertex_count = tile.vertex_count;
+        state.first_index = tile.first_index;
+        state.index_count = tile.index_count;
+        state.terrain_zoom = tile.terrain_zoom;
+        state.terrain_key = tile.terrain_key;
+        state.terrain_cell_count = tile.terrain_cell_count;
+        state.terrain_stitch_top_cell_count =
+            tile.terrain_stitch_top_cell_count;
+        state.terrain_stitch_right_cell_count =
+            tile.terrain_stitch_right_cell_count;
+        state.terrain_stitch_bottom_cell_count =
+            tile.terrain_stitch_bottom_cell_count;
+        state.terrain_stitch_left_cell_count =
+            tile.terrain_stitch_left_cell_count;
+        state.terrain_mesh_applied = tile.terrain_mesh_applied;
+        state.terrain_mesh_has_relief = tile.terrain_mesh_has_relief;
+        resources.window_tiles.append(state);
+    }
+
+    resources.cap_tiles.clear();
+    resources.cap_tiles.reserve(this->cap_tiles.size());
+    for (qsizetype index = 0; index < this->cap_tiles.size(); ++index)
+    {
+        const MapGlobeSurfaceTile &tile = this->cap_tiles.at(index);
+        MapGlobeSurfaceTileRenderState state;
+        state.surface_tile_index = int(index);
+        state.position_key = (quint64(1) << 63) | quint64(index);
+        state.virtual_x = tile.virtual_x;
+        state.tile_x = tile.tile_x;
+        state.tile_y = tile.tile_y;
+        state.zoom = tile.zoom;
+        state.is_cap = true;
+        state.imagery_key = tile.imagery_key;
+        state.first_vertex = tile.first_vertex;
+        state.vertex_count = tile.vertex_count;
+        state.first_index = tile.first_index;
+        state.index_count = tile.index_count;
+        resources.cap_tiles.append(state);
+    }
+}
+
 int mapGlobeSurfaceTileRequestPriority(
     int tile_x, int tile_y, int zoom,
     double center_lon_deg, double center_lat_deg)
@@ -1493,11 +1593,6 @@ MapGlobeSurfacePreparation::renderOriginEcef() const
 
 const QVector<MapGlobeSurfaceVertex> &
 MapGlobeSurfacePreparation::windowVertices() const
-{
-    return this->window_vertices;
-}
-
-QVector<MapGlobeSurfaceVertex> &MapGlobeSurfacePreparation::windowVertices()
 {
     return this->window_vertices;
 }

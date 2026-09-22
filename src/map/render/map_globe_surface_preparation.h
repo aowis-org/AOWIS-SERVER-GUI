@@ -116,7 +116,6 @@ public:
 
     const GeoWgs84Ellipsoid::EcefPositionD &renderOriginEcef() const;
     const QVector<MapGlobeSurfaceVertex> &windowVertices() const;
-    QVector<MapGlobeSurfaceVertex> &windowVertices();
     const QVector<quint32> &windowIndices() const;
     const QVector<MapGlobeSurfaceTile> &windowTiles() const;
     QVector<MapGlobeSurfaceTile> &windowTiles();
@@ -129,6 +128,19 @@ public:
     QVector<MapGlobeSurfaceTile> &capTiles();
 
     const QVector<MapGlobeSurfaceWireframeVertex> &wireframeVertices() const;
+
+    void refreshRenderFrame(
+        MapGlobeSurfaceRenderFrame *frame,
+        const QSize &viewport_size, bool map_visible,
+        float heatmap_opacity, quint64 heatmap_revision,
+        quint64 heatmap_layout_revision,
+        int active_heatmap_marker_count) const;
+    void rebuildRenderFrame(
+        MapGlobeSurfaceRenderFrame *frame,
+        const QSize &viewport_size, bool map_visible,
+        float heatmap_opacity, quint64 heatmap_revision,
+        quint64 heatmap_layout_revision,
+        int active_heatmap_marker_count) const;
 
 private:
     MapGlobeSurfaceVertex makeTileVertex(

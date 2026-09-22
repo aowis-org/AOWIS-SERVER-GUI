@@ -31,10 +31,6 @@ Q_LOGGING_CATEGORY(
     globeHeatmapPerformanceLog,
     "aowis.map.rhi.globe.heatmap.performance",
     QtInfoMsg)
-Q_LOGGING_CATEGORY(
-    globeTerrainHeightCachePerformanceLog,
-    "aowis.map.rhi.globe.terrain.height_cache.performance",
-    QtInfoMsg)
 
 namespace
 {
@@ -277,17 +273,6 @@ void reportGlobeHeatmapGpuValidation(
 // imagery-page layout.
 constexpr int GlobeTileArrayLayerCount = 256;
 constexpr int GlobeTileArrayUsableLayerCount = GlobeTileArrayLayerCount - 1;
-// A single R32F page is roughly 4.13 MiB (256 * 65 * 65 * 4 bytes). Eight
-// lazy pages cap this preparatory cache at roughly 33 MiB while retaining
-// 2048 unique DEM tiles -- normally far more than one quadtree window needs.
-// When full, only least-recently-used, currently invisible entries can be
-// recycled. The CPU terrain renderer remains authoritative in this patch.
-constexpr int GlobeTerrainHeightArrayLayerCount = 256;
-constexpr int GlobeTerrainHeightArrayMaximumPageCount = 8;
-constexpr int GlobeTerrainHeightUploadBudgetPerFrame = 32;
-static_assert(sizeof(float) == 4, "R32F terrain uploads require 32-bit float");
-constexpr quint64 GlobeTerrainHeightTileBytes =
-    quint64(MapTerrainTileSampleCount) * quint64(sizeof(float));
 // Visible fallback heatmaps are baked into a single horizontal strip. Keep
 // the strip to 16 MiB at RGBA8 on backends supporting a 16384-wide texture;
 // lower texture-size limits automatically reduce the number of slots.
@@ -330,7 +315,7 @@ void MapRhiGlobeRenderer::setTerrainRepository(
     if (this->terrain_repository == new_terrain_repository)
         return;
 
-    this->resetTerrainHeightCache();
+    this->terrain_height_cache.reset(this->surface_backend);
     this->terrain_repository = new_terrain_repository;
     this->surface_preparation.setTerrainRepository(new_terrain_repository);
     this->preparation_dirty = true;
@@ -384,10 +369,7 @@ void MapRhiGlobeRenderer::notifyTerrainTileAvailable(const QString &key)
         return;
 
     this->preparation_dirty = true;
-    QHash<QString, TerrainHeightCacheEntry>::iterator cache_iterator =
-        this->terrain_height_cache.find(key);
-    if (cache_iterator != this->terrain_height_cache.end())
-        cache_iterator.value().uploaded = false;
+    this->terrain_height_cache.invalidate(key);
 
     this->surface_preparation.notifyTerrainTileAvailable(key);
 }
@@ -524,6 +506,8 @@ void MapRhiGlobeRenderer::handleWindowGeometryRebuilt()
     this->window_tiles_requested = false;
     this->surface_backend.invalidateWindowGeometry();
     this->surface_backend.invalidateWireframe();
+    this->window_imagery_array_layers.clear();
+    this->imagery_array_layer_upload_pending = true;
     this->window_heatmap_array_layers.clear();
     this->heatmap_array_layer_upload_pending = true;
     this->tile_array_draw_indices_dirty = true;
@@ -548,402 +532,6 @@ bool MapRhiGlobeRenderer::visibleTerrainSamplingAtCoordinate(
 {
     return this->surface_preparation.visibleTerrainSamplingAtCoordinate(
         coordinate, terrain_zoom, cell_size_m);
-}
-
-void MapRhiGlobeRenderer::resetTerrainHeightCache()
-{
-    this->surface_backend.clearTerrainHeightArrayPages();
-    this->terrain_height_cache.clear();
-    this->terrain_height_cache_frame = 0;
-    this->terrain_height_cache_disabled = false;
-    this->terrain_height_cache_page_growth_disabled = false;
-    this->terrain_height_cache_profile =
-        TerrainHeightCacheProfileCounters();
-    for (TileGpuState &state : this->window_tile_gpu_states)
-    {
-        state.terrain_height_array_page = -1;
-        state.terrain_height_array_layer = -1;
-        state.terrain_height_array_ready = false;
-    }
-}
-
-bool MapRhiGlobeRenderer::createTerrainHeightArrayPage()
-{
-    return this->surface_backend.createTerrainHeightArrayPage(
-        QSize(MapTerrainTileGridSize, MapTerrainTileGridSize),
-        GlobeTerrainHeightArrayLayerCount,
-        GlobeTerrainHeightArrayMaximumPageCount);
-}
-
-void MapRhiGlobeRenderer::releaseTerrainHeightCacheEntry(
-    const QString &terrain_key)
-{
-    const QHash<QString, TerrainHeightCacheEntry>::iterator iterator =
-        this->terrain_height_cache.find(terrain_key);
-    if (iterator == this->terrain_height_cache.end())
-        return;
-
-    const TerrainHeightCacheEntry entry = iterator.value();
-    if (entry.array_page >= 0
-        && entry.array_page < int(this->surface_backend.terrainHeightArrayPages().size())
-        && entry.array_layer >= 0
-        && entry.array_layer < GlobeTerrainHeightArrayLayerCount)
-    {
-        TerrainHeightArrayPage &page =
-            this->surface_backend.terrainHeightArrayPages()[entry.array_page];
-        if (!page.free_layers.contains(entry.array_layer))
-            page.free_layers.append(entry.array_layer);
-    }
-    this->terrain_height_cache.erase(iterator);
-}
-
-MapRhiGlobeRenderer::TerrainHeightCacheEntry *
-MapRhiGlobeRenderer::ensureTerrainHeightCacheEntry(
-    const QString &terrain_key,
-    const QSet<QString> &protected_terrain_keys)
-{
-    QHash<QString, TerrainHeightCacheEntry>::iterator existing =
-        this->terrain_height_cache.find(terrain_key);
-    if (existing != this->terrain_height_cache.end())
-    {
-        existing.value().last_used_frame = this->terrain_height_cache_frame;
-        return &existing.value();
-    }
-
-    const std::function<int()> free_page_index = [this]()
-    {
-        for (int page_index = 0;
-             page_index < int(this->surface_backend.terrainHeightArrayPages().size());
-             ++page_index)
-        {
-            if (!this->surface_backend.terrainHeightArrayPages()[page_index]
-                     .free_layers.isEmpty())
-            {
-                return page_index;
-            }
-        }
-        return -1;
-    };
-
-    int page_index = free_page_index();
-    if (page_index < 0
-        && !this->terrain_height_cache_page_growth_disabled
-        && int(this->surface_backend.terrainHeightArrayPages().size())
-            < GlobeTerrainHeightArrayMaximumPageCount)
-    {
-        if (createTerrainHeightArrayPage())
-        {
-            page_index = int(this->surface_backend.terrainHeightArrayPages().size()) - 1;
-        }
-        else
-        {
-            // A backend allocation failure should not be retried once per
-            // remaining visible key. Existing pages remain useful and can
-            // continue recycling invisible entries.
-            this->terrain_height_cache_page_growth_disabled = true;
-        }
-    }
-
-    if (page_index < 0)
-    {
-        QHash<QString, TerrainHeightCacheEntry>::const_iterator oldest =
-            this->terrain_height_cache.cend();
-        for (QHash<QString, TerrainHeightCacheEntry>::const_iterator iterator =
-                 this->terrain_height_cache.cbegin();
-             iterator != this->terrain_height_cache.cend(); ++iterator)
-        {
-            if (protected_terrain_keys.contains(iterator.key()))
-                continue;
-            if (oldest == this->terrain_height_cache.cend()
-                || iterator.value().last_used_frame
-                    < oldest.value().last_used_frame)
-            {
-                oldest = iterator;
-            }
-        }
-
-        if (oldest != this->terrain_height_cache.cend())
-        {
-            const QString oldest_key = oldest.key();
-            releaseTerrainHeightCacheEntry(oldest_key);
-            ++this->terrain_height_cache_profile.evictions;
-            page_index = free_page_index();
-        }
-    }
-
-    if (page_index < 0)
-    {
-        ++this->terrain_height_cache_profile.capacity_misses;
-        return nullptr;
-    }
-
-    TerrainHeightArrayPage &page =
-        this->surface_backend.terrainHeightArrayPages()[page_index];
-    if (!this->surface_backend.terrainHeightArrayPageReady(page_index)
-        || page.free_layers.isEmpty())
-    {
-        ++this->terrain_height_cache_profile.capacity_misses;
-        return nullptr;
-    }
-
-    TerrainHeightCacheEntry entry;
-    entry.array_page = page_index;
-    entry.array_layer = page.free_layers.takeLast();
-    entry.last_used_frame = this->terrain_height_cache_frame;
-    const QHash<QString, TerrainHeightCacheEntry>::iterator inserted =
-        this->terrain_height_cache.insert(terrain_key, entry);
-    return &inserted.value();
-}
-
-void MapRhiGlobeRenderer::prepareTerrainHeightCache(
-    QRhiResourceUpdateBatch *resource_updates)
-{
-    for (TileGpuState &state : this->window_tile_gpu_states)
-    {
-        state.terrain_height_array_page = -1;
-        state.terrain_height_array_layer = -1;
-        state.terrain_height_array_ready = false;
-    }
-
-    if (this->terrain_repository == nullptr || !this->surface_backend.hasContext()
-        || resource_updates == nullptr || !this->map_visible
-        || this->surface_preparation.windowTiles().isEmpty()
-        || this->terrain_height_cache_disabled)
-    {
-        return;
-    }
-
-    this->terrain_height_cache_profile =
-        TerrainHeightCacheProfileCounters();
-    this->terrain_height_cache_profile.enabled =
-        globeTerrainHeightCachePerformanceLog().isDebugEnabled();
-    QElapsedTimer profile_timer;
-    if (this->terrain_height_cache_profile.enabled)
-        profile_timer.start();
-
-    QVector<QString> visible_terrain_keys;
-    visible_terrain_keys.reserve(this->surface_preparation.windowTiles().size());
-    QSet<QString> protected_terrain_keys;
-    protected_terrain_keys.reserve(this->surface_preparation.windowTiles().size());
-    for (const GlobeTile &tile : this->surface_preparation.windowTiles())
-    {
-        if (tile.terrain_key.isEmpty())
-            continue;
-        ++this->terrain_height_cache_profile.visible_terrain_tiles;
-        if (protected_terrain_keys.contains(tile.terrain_key))
-            continue;
-        protected_terrain_keys.insert(tile.terrain_key);
-        visible_terrain_keys.append(tile.terrain_key);
-    }
-    this->terrain_height_cache_profile.unique_visible_dem_tiles =
-        visible_terrain_keys.size();
-    if (visible_terrain_keys.isEmpty())
-        return;
-
-    if (!this->surface_backend.supportsTextureArrays()
-        || !this->surface_backend.supportsR32fTextures())
-    {
-        this->terrain_height_cache_disabled = true;
-        if (this->terrain_height_cache_profile.enabled)
-        {
-            qCDebug(globeTerrainHeightCachePerformanceLog).nospace()
-                << "status=unsupported texture_arrays="
-                << (this->surface_backend.supportsTextureArrays()
-                    ? 1 : 0)
-                << " r32f="
-                << (this->surface_backend.supportsR32fTextures()
-                    ? 1 : 0);
-        }
-        return;
-    }
-
-    ++this->terrain_height_cache_frame;
-    if (this->terrain_height_cache_frame == 0)
-        this->terrain_height_cache_frame = 1;
-
-    for (const QString &terrain_key : visible_terrain_keys)
-    {
-        QHash<QString, TerrainHeightCacheEntry>::iterator cache_iterator =
-            this->terrain_height_cache.find(terrain_key);
-        const bool valid_assignment = cache_iterator
-                != this->terrain_height_cache.end()
-            && cache_iterator.value().array_page >= 0
-            && cache_iterator.value().array_page
-                < int(this->surface_backend.terrainHeightArrayPages().size())
-            && cache_iterator.value().array_layer >= 0
-            && cache_iterator.value().array_layer
-                < GlobeTerrainHeightArrayLayerCount
-            && this->surface_backend.terrainHeightArrayPageReady(
-                cache_iterator.value().array_page);
-        if (cache_iterator != this->terrain_height_cache.end()
-            && !valid_assignment)
-        {
-            releaseTerrainHeightCacheEntry(terrain_key);
-            cache_iterator = this->terrain_height_cache.end();
-        }
-
-        if (cache_iterator != this->terrain_height_cache.end())
-        {
-            cache_iterator.value().last_used_frame =
-                this->terrain_height_cache_frame;
-            if (cache_iterator.value().uploaded)
-            {
-                ++this->terrain_height_cache_profile.available_dem_tiles;
-                ++this->terrain_height_cache_profile.cache_hits;
-                continue;
-            }
-        }
-
-        const MapTerrainTile *terrain_tile =
-            this->terrain_repository->tile(terrain_key);
-        if (terrain_tile == nullptr
-            || terrain_tile->elevations_m.size()
-                != MapTerrainTileSampleCount
-            || !mapGlobeTerrainDatumUsable(terrain_tile->vertical_datum))
-        {
-            continue;
-        }
-        ++this->terrain_height_cache_profile.available_dem_tiles;
-
-        if (this->terrain_height_cache_profile.uploads
-            >= GlobeTerrainHeightUploadBudgetPerFrame)
-        {
-            if (cache_iterator == this->terrain_height_cache.end())
-                ++this->terrain_height_cache_profile.cache_misses;
-            ++this->terrain_height_cache_profile.pending_uploads;
-            continue;
-        }
-
-        TerrainHeightCacheEntry *entry = nullptr;
-        if (cache_iterator == this->terrain_height_cache.end())
-        {
-            ++this->terrain_height_cache_profile.cache_misses;
-            entry = ensureTerrainHeightCacheEntry(
-                terrain_key, protected_terrain_keys);
-        }
-        else
-        {
-            entry = &cache_iterator.value();
-        }
-
-        if (entry == nullptr)
-        {
-            if (this->surface_backend.terrainHeightArrayPages().empty())
-            {
-                this->terrain_height_cache_disabled = true;
-                break;
-            }
-            continue;
-        }
-
-        const qsizetype byte_count = terrain_tile->elevations_m.size()
-            * qsizetype(sizeof(float));
-        const QByteArray raw_heights(
-            reinterpret_cast<const char *>(
-                terrain_tile->elevations_m.constData()),
-            int(byte_count));
-        if (!this->surface_backend.uploadTerrainHeightArrayPageLayerRaw(
-                resource_updates, entry->array_page, entry->array_layer,
-                raw_heights))
-        {
-            continue;
-        }
-        entry->uploaded = true;
-        ++this->terrain_height_cache_profile.uploads;
-        this->terrain_height_cache_profile.upload_bytes +=
-            quint64(byte_count);
-    }
-
-    for (GlobeTile &tile : this->surface_preparation.windowTiles())
-    {
-        if (tile.terrain_key.isEmpty())
-            continue;
-        const QHash<QString, TerrainHeightCacheEntry>::const_iterator iterator =
-            this->terrain_height_cache.constFind(tile.terrain_key);
-        if (iterator == this->terrain_height_cache.cend()
-            || !iterator.value().uploaded)
-        {
-            continue;
-        }
-        TileGpuState *gpu_state = this->tileGpuState(tile);
-        if (gpu_state == nullptr)
-            continue;
-        gpu_state->terrain_height_array_page = iterator.value().array_page;
-        gpu_state->terrain_height_array_layer = iterator.value().array_layer;
-        gpu_state->terrain_height_array_ready = true;
-        ++this->terrain_height_cache_profile.ready_terrain_tiles;
-    }
-
-    if (this->terrain_height_cache_profile.enabled)
-    {
-        this->terrain_height_cache_profile.cpu_ns =
-            profile_timer.nsecsElapsed();
-        reportTerrainHeightCacheProfile();
-    }
-}
-
-void MapRhiGlobeRenderer::reportTerrainHeightCacheProfile() const
-{
-    if (!this->terrain_height_cache_profile.enabled)
-        return;
-    if (this->terrain_height_cache_profile.cache_misses <= 0
-        && this->terrain_height_cache_profile.uploads <= 0
-        && this->terrain_height_cache_profile.pending_uploads <= 0
-        && this->terrain_height_cache_profile.evictions <= 0
-        && this->terrain_height_cache_profile.capacity_misses <= 0)
-    {
-        return;
-    }
-
-    constexpr double NsecsPerMillisecond = 1000000.0;
-    constexpr double BytesPerMebibyte = 1024.0 * 1024.0;
-    const quint64 allocated_bytes =
-        quint64(this->surface_backend.terrainHeightArrayPages().size())
-        * quint64(GlobeTerrainHeightArrayLayerCount)
-        * GlobeTerrainHeightTileBytes;
-    const char *status = this->terrain_height_cache_disabled
-        ? "disabled"
-        : (this->terrain_height_cache_profile.capacity_misses > 0
-            ? "capacity_limited"
-            : (this->terrain_height_cache_profile.pending_uploads > 0
-                ? "warming" : "ready"));
-    qCDebug(globeTerrainHeightCachePerformanceLog).noquote().nospace()
-        << "frame=" << this->terrain_height_cache_frame
-        << " visible_terrain_tiles="
-        << this->terrain_height_cache_profile.visible_terrain_tiles
-        << " unique_visible_dem_tiles="
-        << this->terrain_height_cache_profile.unique_visible_dem_tiles
-        << " available_dem_tiles="
-        << this->terrain_height_cache_profile.available_dem_tiles
-        << " ready_terrain_tiles="
-        << this->terrain_height_cache_profile.ready_terrain_tiles
-        << " cache_hits="
-        << this->terrain_height_cache_profile.cache_hits
-        << " cache_misses="
-        << this->terrain_height_cache_profile.cache_misses
-        << " uploads=" << this->terrain_height_cache_profile.uploads
-        << " pending_uploads="
-        << this->terrain_height_cache_profile.pending_uploads
-        << " evictions=" << this->terrain_height_cache_profile.evictions
-        << " capacity_misses="
-        << this->terrain_height_cache_profile.capacity_misses
-        << " resident_layers=" << this->terrain_height_cache.size()
-        << " pages=" << this->surface_backend.terrainHeightArrayPages().size()
-        << " allocated_mib="
-        << QString::number(
-               double(allocated_bytes) / BytesPerMebibyte, 'f', 3)
-        << " upload_mib="
-        << QString::number(
-               double(this->terrain_height_cache_profile.upload_bytes)
-                   / BytesPerMebibyte,
-               'f', 3)
-        << " cpu_ms="
-        << QString::number(
-               double(this->terrain_height_cache_profile.cpu_ns)
-                   / NsecsPerMillisecond,
-               'f', 3)
-        << " max_pages=" << GlobeTerrainHeightArrayMaximumPageCount
-        << " status=" << status;
 }
 
 
@@ -1104,27 +692,19 @@ void MapRhiGlobeRenderer::trimUnusedHeatmapArrayPages()
 
 void MapRhiGlobeRenderer::resetWindowArrayLayers()
 {
-    bool vertices_changed = false;
     for (GlobeTile &tile : this->surface_preparation.windowTiles())
     {
         setTileArrayReady(tile, false);
         setTileHeatmapArrayReady(tile, false);
     }
-    for (TileVertex &vertex : this->surface_preparation.windowVertices())
-    {
-        if (vertex.layer != 0.0f)
-        {
-            vertex.layer = 0.0f;
-            vertices_changed = true;
-        }
-    }
-    if (vertices_changed)
-        this->surface_backend.invalidateWindowVertices();
 
+    if (!this->window_imagery_array_layers.isEmpty())
+    {
+        this->window_imagery_array_layers.clear();
+        this->imagery_array_layer_upload_pending = true;
+    }
     if (!this->window_heatmap_array_layers.isEmpty())
     {
-        // A future heatmap assignment lazily restores the correctly sized
-        // zero-filled stream before stamping its first page-local layer.
         this->window_heatmap_array_layers.clear();
         this->heatmap_array_layer_upload_pending = true;
     }
@@ -1232,6 +812,29 @@ bool MapRhiGlobeRenderer::uploadTileArrayDrawIndices(
     }
 
     this->tile_array_draw_index_upload_pending = false;
+    return true;
+}
+
+bool MapRhiGlobeRenderer::uploadImageryArrayLayers(
+    QRhiResourceUpdateBatch *resource_updates)
+{
+    if (resource_updates == nullptr)
+        return false;
+    if (!this->imagery_array_layer_upload_pending)
+        return true;
+    if (this->window_imagery_array_layers.isEmpty())
+    {
+        this->imagery_array_layer_upload_pending = false;
+        return true;
+    }
+
+    if (!this->surface_backend.uploadImageryArrayLayers(
+            resource_updates, this->window_imagery_array_layers))
+    {
+        return false;
+    }
+
+    this->imagery_array_layer_upload_pending = false;
     return true;
 }
 
@@ -1549,21 +1152,33 @@ bool MapRhiGlobeRenderer::stampTileArrayLayer(
         return false;
     }
 
+    if (this->window_imagery_array_layers.size()
+        != this->surface_preparation.windowVertices().size())
+    {
+        this->window_imagery_array_layers.fill(
+            0.0f, this->surface_preparation.windowVertices().size());
+        this->imagery_array_layer_upload_pending = true;
+    }
+
     const float expected_layer = float(resource.array_layer);
-    if (this->surface_preparation.windowVertices().at(tile.first_vertex).layer == expected_layer)
+    if (this->window_imagery_array_layers.at(tile.first_vertex)
+        == expected_layer)
+    {
         return true;
+    }
 
     for (int index = 0; index < tile.vertex_count; ++index)
-        this->surface_preparation.windowVertices()[tile.first_vertex + index].layer = expected_layer;
-
-    // Geometry rebuilds are followed by a full upload later in prepare().
-    // Once the backend owns a current buffer, patch only this tile's
-    // contiguous range when its imagery first acquires an array layer.
-    if (!this->surface_backend.patchWindowVertices(
-            resource_updates, tile.first_vertex, tile.vertex_count,
-            this->surface_preparation.windowVertices()))
     {
-        this->surface_backend.invalidateWindowVertices();
+        this->window_imagery_array_layers[tile.first_vertex + index] =
+            expected_layer;
+    }
+
+    if (!this->imagery_array_layer_upload_pending
+        && !this->surface_backend.patchImageryArrayLayers(
+            resource_updates, tile.first_vertex, tile.vertex_count,
+            this->window_imagery_array_layers))
+    {
+        this->imagery_array_layer_upload_pending = true;
     }
     return true;
 }
@@ -3381,6 +2996,8 @@ bool MapRhiGlobeRenderer::canUseCameraOnlyPrepare(
         || this->surface_backend.fallbackTextureUploadsPending()
         || this->tile_array_draw_indices_dirty
         || this->tile_array_draw_index_upload_pending
+        || (!this->tile_array_draw_indices.isEmpty()
+            && this->imagery_array_layer_upload_pending)
         || this->heatmap_array_draw_indices_dirty
         || this->heatmap_array_draw_index_upload_pending
         || (!this->heatmap_array_draw_indices.isEmpty()
@@ -3407,108 +3024,6 @@ void MapRhiGlobeRenderer::rememberPreparedViewState(
     this->full_prepare_clock.restart();
 }
 
-void MapRhiGlobeRenderer::refreshPreparedSurfaceRenderFrameState(
-    const QSize &viewport_size)
-{
-    this->prepared_surface_render_frame.viewport_size = viewport_size;
-    this->prepared_surface_render_frame.render_origin_ecef =
-        this->surface_preparation.renderOriginEcef();
-    this->prepared_surface_render_frame.map_visible = this->map_visible;
-    this->prepared_surface_render_frame.wireframe_visible =
-        this->surface_preparation.wireframeVisible();
-    this->prepared_surface_render_frame.heatmap_opacity =
-        this->heatmap_opacity;
-    this->prepared_surface_render_frame.heatmap_revision =
-        this->heatmap_scene.revision();
-    this->prepared_surface_render_frame.heatmap_layout_revision =
-        this->heatmap_scene.layoutRevision();
-    this->prepared_surface_render_frame.active_heatmap_marker_count =
-        this->heatmap_scene.activeMarkerCount();
-
-    MapGlobeSurfaceRenderResources &resources =
-        this->prepared_surface_render_frame.resources;
-    resources.window_vertices = &this->surface_preparation.windowVertices();
-    resources.window_indices = &this->surface_preparation.windowIndices();
-    resources.cap_vertices = &this->surface_preparation.capVertices();
-    resources.cap_indices = &this->surface_preparation.capIndices();
-    resources.wireframe_vertices = &this->surface_preparation.wireframeVertices();
-}
-
-void MapRhiGlobeRenderer::rebuildPreparedSurfaceRenderFrame(
-    const QSize &viewport_size)
-{
-    refreshPreparedSurfaceRenderFrameState(viewport_size);
-
-    MapGlobeSurfaceRenderResources &resources =
-        this->prepared_surface_render_frame.resources;
-    resources.window_tiles.clear();
-    resources.window_tiles.reserve(this->surface_preparation.windowTiles().size());
-    for (qsizetype index = 0; index < this->surface_preparation.windowTiles().size(); ++index)
-    {
-        const GlobeTile &tile = this->surface_preparation.windowTiles().at(index);
-        MapGlobeSurfaceTileRenderState state;
-        state.surface_tile_index = int(index);
-        state.position_key = MapGlobeSurfaceScene::positionKey(
-            tile.zoom, tile.tile_x, tile.tile_y);
-        state.virtual_x = tile.virtual_x;
-        state.tile_x = tile.tile_x;
-        state.tile_y = tile.tile_y;
-        state.zoom = tile.zoom;
-        state.is_cap = tile.is_cap;
-        state.imagery_key = tile.imagery_key;
-        state.first_vertex = tile.first_vertex;
-        state.vertex_count = tile.vertex_count;
-        state.first_index = tile.first_index;
-        state.index_count = tile.index_count;
-        state.terrain_zoom = tile.terrain_zoom;
-        state.terrain_key = tile.terrain_key;
-        state.terrain_cell_count = tile.terrain_cell_count;
-        state.terrain_stitch_top_cell_count =
-            tile.terrain_stitch_top_cell_count;
-        state.terrain_stitch_right_cell_count =
-            tile.terrain_stitch_right_cell_count;
-        state.terrain_stitch_bottom_cell_count =
-            tile.terrain_stitch_bottom_cell_count;
-        state.terrain_stitch_left_cell_count =
-            tile.terrain_stitch_left_cell_count;
-        state.terrain_mesh_applied = tile.terrain_mesh_applied;
-        state.terrain_mesh_has_relief = tile.terrain_mesh_has_relief;
-        if (this->tileResource(tile) != nullptr)
-        {
-            state.imagery_ready = tileTextureReady(this->tileResource(tile));
-            state.imagery_provisional = this->tileResource(tile)->is_provisional;
-            state.heatmap_has_content = this->tileResource(tile)->heatmap_has_content;
-        }
-        resources.window_tiles.append(state);
-    }
-
-    resources.cap_tiles.clear();
-    resources.cap_tiles.reserve(this->surface_preparation.capTiles().size());
-    for (qsizetype index = 0; index < this->surface_preparation.capTiles().size(); ++index)
-    {
-        const GlobeTile &tile = this->surface_preparation.capTiles().at(index);
-        MapGlobeSurfaceTileRenderState state;
-        state.surface_tile_index = int(index);
-        state.position_key = (quint64(1) << 63) | quint64(index);
-        state.virtual_x = tile.virtual_x;
-        state.tile_x = tile.tile_x;
-        state.tile_y = tile.tile_y;
-        state.zoom = tile.zoom;
-        state.is_cap = true;
-        state.imagery_key = tile.imagery_key;
-        state.first_vertex = tile.first_vertex;
-        state.vertex_count = tile.vertex_count;
-        state.first_index = tile.first_index;
-        state.index_count = tile.index_count;
-        if (this->tileResource(tile) != nullptr)
-        {
-            state.imagery_ready = tileTextureReady(this->tileResource(tile));
-            state.imagery_provisional = this->tileResource(tile)->is_provisional;
-            state.heatmap_has_content = this->tileResource(tile)->heatmap_has_content;
-        }
-        resources.cap_tiles.append(state);
-    }
-}
 
 const MapGlobeSurfaceRenderFrame &MapRhiGlobeRenderer::surfaceRenderFrame() const
 {
@@ -3555,7 +3070,12 @@ bool MapRhiGlobeRenderer::prepare(
     if (allow_camera_only_prepare
         && this->canUseCameraOnlyPrepare(viewport_size))
     {
-        this->refreshPreparedSurfaceRenderFrameState(viewport_size);
+        this->surface_preparation.refreshRenderFrame(
+            &this->prepared_surface_render_frame, viewport_size,
+            this->map_visible, this->heatmap_opacity,
+            this->heatmap_scene.revision(),
+            this->heatmap_scene.layoutRevision(),
+            this->heatmap_scene.activeMarkerCount());
         return this->uploadCameraUniform(
             resource_updates, view_projection,
             background_color, background_opacity);
@@ -3591,13 +3111,18 @@ bool MapRhiGlobeRenderer::prepare(
     // height-array cache. The retained implementation remains QRhi-owned, but
     // stays off the active path until a shader consumes it.
 
-    // Resolve imagery and heatmap array layers before a pending full geometry
-    // upload. A rebuilt window then carries every already-ready layer in its
-    // single upload instead of issuing a follow-up buffer patch per tile.
+    // Resolve QRhi-owned imagery and heatmap array-layer streams before the
+    // retained surface is drawn. Neutral Globe geometry contains only
+    // position/UV data; array assignments are uploaded separately below.
     if (this->map_visible && !this->requestMissingTiles(resource_updates))
         return false;
 
-    this->rebuildPreparedSurfaceRenderFrame(viewport_size);
+    this->surface_preparation.rebuildRenderFrame(
+        &this->prepared_surface_render_frame, viewport_size,
+        this->map_visible, this->heatmap_opacity,
+        this->heatmap_scene.revision(),
+        this->heatmap_scene.layoutRevision(),
+        this->heatmap_scene.activeMarkerCount());
     if (!this->surface_backend.uploadGeometry(
             resource_updates, this->prepared_surface_render_frame))
     {
@@ -3611,6 +3136,12 @@ bool MapRhiGlobeRenderer::prepare(
     }
     if (this->map_visible
         && !this->uploadTileArrayDrawIndices(resource_updates))
+    {
+        return false;
+    }
+    if (this->map_visible
+        && !this->tile_array_draw_indices.isEmpty()
+        && !uploadImageryArrayLayers(resource_updates))
     {
         return false;
     }
@@ -3774,7 +3305,7 @@ void MapRhiGlobeRenderer::releaseResources()
     this->preparation_dirty = true;
     this->prepared_view_state_valid = false;
     this->full_prepare_clock.invalidate();
-    resetTerrainHeightCache();
+    this->terrain_height_cache.reset(this->surface_backend);
     releaseVisibleHeatmapGpuBakeAtlasResources();
     releaseDiagnosticHeatmapGpuBakeResources();
     this->heatmap_gpu_bake_jobs.clear();

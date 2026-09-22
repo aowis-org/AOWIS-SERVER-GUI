@@ -238,7 +238,7 @@ void MapWidget::fitViewToBounds(
 
     this->m_model->fitViewToBounds(
         minimum, maximum, size(), elevation_minimum_m, elevation_maximum_m,
-        this->rhi_view_active);
+        this->render_surface_active);
 }
 
 void MapWidget::deleteCachedTiles(int zoom, int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max)
@@ -307,9 +307,9 @@ void MapWidget::init()
     {
         if (this->m_model->viewMode() == MapViewMode::Globe)
             emit signalZoomLevelChanged(this->m_model->viewGlobeZoomLevel(size()));
-        if (this->rhi_view_active
+        if (this->render_surface_active
             && this->m_model->viewMode() == MapViewMode::Globe
-            && this->rhi_screen_coordinate_resolver)
+            && this->render_surface_screen_coordinate_resolver)
         {
             updatePointerCoordinates(
                 QPoint(width() / 2, height() / 2));
@@ -333,9 +333,9 @@ void MapWidget::init()
     connect(this->m_model, &MapModel::centerChangedUTM, this,
             [this](CoordinateUTM utm)
     {
-        if (this->rhi_view_active
+        if (this->render_surface_active
             && this->m_model->viewMode() == MapViewMode::Globe
-            && this->rhi_screen_coordinate_resolver)
+            && this->render_surface_screen_coordinate_resolver)
         {
             return;
         }
@@ -370,7 +370,7 @@ void MapWidget::init()
             stopPanAnimationIfIdle();
         }
 
-        if (this->rhi_view_active && this->rhi_screen_coordinate_resolver)
+        if (this->render_surface_active && this->render_surface_screen_coordinate_resolver)
         {
             updatePointerCoordinates(
                 QPoint(width() / 2, height() / 2));
@@ -785,7 +785,7 @@ bool MapWidget::hasFastKeyboardPanInput() const
 
 bool MapWidget::hasView2dKeyboardZoomInput() const
 {
-    return this->rhi_view_active
+    return this->render_surface_active
         && this->m_model != nullptr
         && this->m_model->viewMode() == MapViewMode::TwoD
         && (this->view_2d_zoom_in_key_pressed || this->view_2d_zoom_out_key_pressed);
@@ -988,7 +988,7 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
             this->pan_fast_modifier_pressed = event->modifiers().testFlag(Qt::ShiftModifier);
             ensurePanAnimationRunning();
         }
-        else if (this->rhi_view_active
+        else if (this->render_surface_active
                  && !event->modifiers().testFlag(Qt::ShiftModifier))
         {
             if (zoom_in)
@@ -1247,9 +1247,9 @@ void MapWidget::panMapByPixels(const QPoint &delta, bool keyboard_pan)
         }
         else
         {
-            const bool terrain_pan_handled = this->rhi_view_active
-                && this->rhi_globe_terrain_pan_resolver
-                && this->rhi_globe_terrain_pan_resolver(delta);
+            const bool terrain_pan_handled = this->render_surface_active
+                && this->render_surface_globe_terrain_pan_resolver
+                && this->render_surface_globe_terrain_pan_resolver(delta);
             if (!terrain_pan_handled)
                 this->m_model->panByPixelsGlobe(delta, size());
         }
@@ -1813,9 +1813,9 @@ void MapWidget::updatePointerCoordinates(const QPoint &position)
     {
         CoordinateWGS84 globe_coordinate;
         bool coordinate_available = false;
-        if (this->rhi_view_active && this->rhi_screen_coordinate_resolver)
+        if (this->render_surface_active && this->render_surface_screen_coordinate_resolver)
         {
-            coordinate_available = this->rhi_screen_coordinate_resolver(
+            coordinate_available = this->render_surface_screen_coordinate_resolver(
                 QPointF(position), &globe_coordinate);
         }
         else
@@ -1847,19 +1847,19 @@ void MapWidget::emitPointerCoordinate(const CoordinateWGS84 &wgs)
     emit signalCoordsChangedUTM(utm);
 }
 
-void MapWidget::setRhiScreenCoordinateResolver(ScreenCoordinateResolver resolver)
+void MapWidget::setRenderSurfaceScreenCoordinateResolver(ScreenCoordinateResolver resolver)
 {
-    this->rhi_screen_coordinate_resolver = std::move(resolver);
+    this->render_surface_screen_coordinate_resolver = std::move(resolver);
 }
 
-void MapWidget::setRhiGlobeTerrainPanResolver(GlobeTerrainPanResolver resolver)
+void MapWidget::setRenderSurfaceGlobeTerrainPanResolver(GlobeTerrainPanResolver resolver)
 {
-    this->rhi_globe_terrain_pan_resolver = std::move(resolver);
+    this->render_surface_globe_terrain_pan_resolver = std::move(resolver);
 }
 
 void MapWidget::scheduleTileUpdate(const QString &)
 {
-    if (this->rhi_view_active)
+    if (this->render_surface_active)
         return;
 #ifdef Q_OS_WASM
     if (this->browser_map_layer_enabled)
@@ -1880,12 +1880,12 @@ void MapWidget::zoomOut()
     this->m_model->zoomOut(this->size());
 }
 
-void MapWidget::setRhiViewActive(bool active)
+void MapWidget::setRenderSurfaceActive(bool active)
 {
-    if (this->rhi_view_active == active)
+    if (this->render_surface_active == active)
         return;
 
-    this->rhi_view_active = active;
+    this->render_surface_active = active;
     if (active)
         return;
 
@@ -1903,7 +1903,7 @@ void MapWidget::changeMapProvider(MapProvider provider)
 
 void MapWidget::paintEvent(QPaintEvent *event)
 {
-    if (this->rhi_view_active)
+    if (this->render_surface_active)
     {
         Q_UNUSED(event)
         return;

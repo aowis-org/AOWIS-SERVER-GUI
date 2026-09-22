@@ -112,27 +112,27 @@ void MapEditorRenderer::setRenderingActive(bool active)
         return;
     }
 
-    if (!this->rhi_overlay_mode)
+    if (!this->render_surface_overlay_mode)
         requestStaticCache(this->current_entity_width);
 }
 
-void MapEditorRenderer::setRhiOverlayMode(bool enabled)
+void MapEditorRenderer::setRenderSurfaceOverlayMode(bool enabled)
 {
-    if (this->rhi_overlay_mode == enabled)
+    if (this->render_surface_overlay_mode == enabled)
         return;
 
-    this->rhi_overlay_mode = enabled;
+    this->render_surface_overlay_mode = enabled;
     if (enabled)
         clearStaticRenderedCache();
     else if (this->rendering_active)
         requestStaticCache(this->current_entity_width, true);
 }
 
-void MapEditorRenderer::setRhiFullNetworkMoveState(
+void MapEditorRenderer::setRenderSurfaceFullNetworkMoveState(
     bool active, const QPointF &translation_pixels)
 {
-    this->rhi_full_network_move_active = active;
-    this->rhi_full_network_move_translation =
+    this->render_surface_full_network_move_active = active;
+    this->render_surface_full_network_move_translation =
         active ? translation_pixels : QPointF();
 }
 
@@ -164,7 +164,7 @@ void MapEditorRenderer::paint(QPainter &painter, const QPaintEvent &event,
 }
 
 
-void MapEditorRenderer::paintRhiOverlay(
+void MapEditorRenderer::paintRenderSurfaceOverlay(
     QPainter &painter,
     const NetworkRenderSnapshot &network_snapshot,
     const MapEditorVisualState &visual_state,
@@ -178,24 +178,26 @@ void MapEditorRenderer::paintRhiOverlay(
     syncStaticGeometry(network_snapshot);
 
     // These are editor interaction/HUD overlays. The basemap and static hydraulic
-    // geometry remain in QRhi; only transient editor chrome is painted here.
+    // geometry remain in the GPU render surface; only transient editor chrome is
+    // painted here.
     paintTileSelection(painter, viewport_state);
     paintRectangleSelection(painter, viewport_state);
 
-    if (visual_state.move.active && this->rhi_full_network_move_active)
+    if (visual_state.move.active && this->render_surface_full_network_move_active)
     {
-        // The entire hydraulic scene is already translated by QRhi. Paint only the
+        // The entire hydraulic scene is already translated by the render surface.
+        // Paint only the
         // editor-specific pixmaps/pipe vertices once at the same screen translation.
         // Do not scan the moving lists per static entity and do not repaint the
         // complete link/node network on the CPU.
         painter.save();
-        painter.translate(this->rhi_full_network_move_translation);
-        paintRhiStaticDetails(painter, network_snapshot, visual_state, true);
+        painter.translate(this->render_surface_full_network_move_translation);
+        paintRenderSurfaceStaticDetails(painter, network_snapshot, visual_state, true);
         painter.restore();
         return;
     }
 
-    paintRhiStaticDetails(painter, network_snapshot, visual_state);
+    paintRenderSurfaceStaticDetails(painter, network_snapshot, visual_state);
 
     if (visual_state.move.active)
     {
@@ -584,7 +586,7 @@ void MapEditorRenderer::applyStaticGeometryBuild(
     {
         this->static_geometry = std::move(geometry);
         clearStaticRenderedCache();
-        if (!this->rhi_overlay_mode)
+        if (!this->render_surface_overlay_mode)
             requestStaticCache(this->current_entity_width, true);
         if (this->canvas)
             this->canvas->update();
@@ -1503,7 +1505,7 @@ void MapEditorRenderer::paintNetwork(
 }
 
 
-void MapEditorRenderer::paintRhiStaticDetails(
+void MapEditorRenderer::paintRenderSurfaceStaticDetails(
     QPainter &painter,
     const NetworkRenderSnapshot &network_snapshot,
     const MapEditorVisualState &visual_state,

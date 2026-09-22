@@ -337,6 +337,13 @@ public:
         QRhiResourceUpdateBatch *resource_updates,
         const QVector<quint32> &indices,
         qsizetype maximum_index_count);
+    bool uploadImageryArrayLayers(
+        QRhi *rhi,
+        QRhiResourceUpdateBatch *resource_updates,
+        const QVector<float> &layers);
+    bool uploadImageryArrayLayers(
+        QRhiResourceUpdateBatch *resource_updates,
+        const QVector<float> &layers);
     bool uploadHeatmapArrayLayers(
         QRhi *rhi,
         QRhiResourceUpdateBatch *resource_updates,
@@ -386,6 +393,12 @@ public:
         int first_vertex,
         qsizetype vertex_count,
         const QVector<MapGlobeSurfaceVertex> &vertices);
+
+    bool patchImageryArrayLayers(
+        QRhiResourceUpdateBatch *resource_updates,
+        int first_vertex,
+        qsizetype vertex_count,
+        const QVector<float> &layers);
 
     bool patchHeatmapArrayLayers(
         QRhiResourceUpdateBatch *resource_updates,
@@ -490,6 +503,8 @@ private:
 
     std::unique_ptr<QRhiBuffer> tile_array_draw_index_buffer;
     int tile_array_draw_index_buffer_size = 0;
+    std::unique_ptr<QRhiBuffer> imagery_array_layer_buffer;
+    int imagery_array_layer_buffer_size = 0;
     std::unique_ptr<QRhiBuffer> heatmap_array_draw_index_buffer;
     int heatmap_array_draw_index_buffer_size = 0;
     std::unique_ptr<QRhiBuffer> heatmap_array_layer_buffer;

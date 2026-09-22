@@ -15,10 +15,6 @@ struct MapGlobeSurfaceVertex
     float z = 0.0f;
     float u = 0.0f;
     float v = 0.0f;
-    // Optional renderer-assigned texture-array layer. Zero is the neutral
-    // sentinel for geometry that is not currently assigned to an array
-    // layer. Backends that do not use texture arrays may ignore it.
-    float layer = 0.0f;
 };
 
 struct MapGlobeSurfaceWireframeVertex
@@ -55,10 +51,6 @@ struct MapGlobeSurfaceTileRenderState
     int terrain_stitch_left_cell_count = 0;
     bool terrain_mesh_applied = false;
     bool terrain_mesh_has_relief = false;
-
-    bool imagery_ready = false;
-    bool imagery_provisional = false;
-    bool heatmap_has_content = false;
 };
 
 struct MapGlobeSurfaceRenderResources

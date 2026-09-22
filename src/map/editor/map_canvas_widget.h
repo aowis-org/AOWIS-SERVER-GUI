@@ -35,9 +35,9 @@ public:
     int backgroundOpacity() const;
     MapEditorVisualState visualState() const;
     MapEditorViewportRenderState viewportRenderState() const;
-    void setRhiOverlayMode(bool enabled);
-    void setRhiFullNetworkMoveState(bool active, const QPointF &translation_pixels);
-    bool rhiOverlayMode() const;
+    void setRenderSurfaceOverlayMode(bool enabled);
+    void setRenderSurfaceFullNetworkMoveState(bool active, const QPointF &translation_pixels);
+    bool renderSurfaceOverlayMode() const;
     void requestRenderUpdate();
 
 public slots:
@@ -71,7 +71,7 @@ private:
 
     // 0 = transparent, 100 = fully system background
     int map_background_opacity = 0;
-    bool rhi_overlay_mode = false;
+    bool render_surface_overlay_mode = false;
 };
 
 #endif // MAP_CANVAS_WIDGET_H

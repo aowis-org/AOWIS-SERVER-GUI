@@ -1,5 +1,5 @@
-#ifndef MAP_RHI_HUD_WIDGET_H
-#define MAP_RHI_HUD_WIDGET_H
+#ifndef MAP_RENDER_HUD_WIDGET_H
+#define MAP_RENDER_HUD_WIDGET_H
 
 #include "map/core/map_model.h"
 
@@ -11,12 +11,12 @@ class QGeoPositionInfo;
 #endif
 class QPaintEvent;
 
-class MapRhiHudWidget final : public QWidget
+class MapRenderHudWidget final : public QWidget
 {
     Q_OBJECT
 
 public:
-    explicit MapRhiHudWidget(MapModel *map_model, GpsProvider *gps, QWidget *parent = nullptr);
+    explicit MapRenderHudWidget(MapModel *map_model, GpsProvider *gps, QWidget *parent = nullptr);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -34,4 +34,4 @@ private:
 #endif
 };
 
-#endif // MAP_RHI_HUD_WIDGET_H
+#endif // MAP_RENDER_HUD_WIDGET_H

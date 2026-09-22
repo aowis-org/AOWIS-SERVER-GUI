@@ -32,13 +32,13 @@ public:
                const NetworkRenderSnapshot &network_snapshot,
                const MapEditorVisualState &visual_state,
                const MapEditorViewportRenderState &viewport_state);
-    void paintRhiOverlay(QPainter &painter,
+    void paintRenderSurfaceOverlay(QPainter &painter,
                          const NetworkRenderSnapshot &network_snapshot,
                          const MapEditorVisualState &visual_state,
                          const MapEditorViewportRenderState &viewport_state);
     void setRenderingActive(bool active);
-    void setRhiOverlayMode(bool enabled);
-    void setRhiFullNetworkMoveState(bool active, const QPointF &translation_pixels);
+    void setRenderSurfaceOverlayMode(bool enabled);
+    void setRenderSurfaceFullNetworkMoveState(bool active, const QPointF &translation_pixels);
 
 private:
     struct StaticNode
@@ -133,7 +133,7 @@ private:
     void paintNetwork(QPainter &painter,
                       const NetworkRenderSnapshot &network_snapshot,
                       const MapEditorVisualState &visual_state);
-    void paintRhiStaticDetails(QPainter &painter,
+    void paintRenderSurfaceStaticDetails(QPainter &painter,
                                const NetworkRenderSnapshot &network_snapshot,
                                const MapEditorVisualState &visual_state,
                                bool include_moving_entities = false);
@@ -185,9 +185,9 @@ private:
     bool projection_ready = false;
 
     bool rendering_active = true;
-    bool rhi_overlay_mode = false;
-    bool rhi_full_network_move_active = false;
-    QPointF rhi_full_network_move_translation;
+    bool render_surface_overlay_mode = false;
+    bool render_surface_full_network_move_active = false;
+    QPointF render_surface_full_network_move_translation;
     quint64 current_geometry_revision = 0;
     int current_entity_width = 10;
     std::shared_ptr<const NetworkRenderSnapshot> pending_geometry_snapshot;

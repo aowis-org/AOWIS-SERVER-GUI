@@ -1,6 +1,6 @@
 #include "map/render/map_globe_surface_render_frame.h"
 
-static_assert(sizeof(MapGlobeSurfaceVertex) == 24);
+static_assert(sizeof(MapGlobeSurfaceVertex) == 20);
 static_assert(sizeof(MapGlobeSurfaceWireframeVertex) == 12);
 
 bool MapGlobeSurfaceRenderResources::isValid() const

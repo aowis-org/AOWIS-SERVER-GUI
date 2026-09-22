@@ -48,7 +48,6 @@
 #include <QDebug>
 
 class MapRenderSurface;
-class MapRhiWidget;
 
 class MapEditorMenuWidget : public QWidget
 {
@@ -129,7 +128,7 @@ private:
     MapCanvasWidget *map_canvas;
 #ifndef Q_OS_WASM
     MapRenderSurface *desktop_render_surface = nullptr;
-    MapRhiWidget *desktop_rhi_widget = nullptr;
+    QWidget *desktop_render_widget = nullptr;
 #endif
     MapEditorController *editor_controller;
     MapEditorMenuWidget *map_menu;

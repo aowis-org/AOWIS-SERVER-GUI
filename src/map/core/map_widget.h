@@ -57,8 +57,8 @@ public:
 
     void clearKeyboardPanInput();
     void setEdgePanningEnabled(bool enabled);
-    void setRhiScreenCoordinateResolver(ScreenCoordinateResolver resolver);
-    void setRhiGlobeTerrainPanResolver(GlobeTerrainPanResolver resolver);
+    void setRenderSurfaceScreenCoordinateResolver(ScreenCoordinateResolver resolver);
+    void setRenderSurfaceGlobeTerrainPanResolver(GlobeTerrainPanResolver resolver);
 
 #ifdef Q_OS_WASM
     void setBrowserMapLayerEnabled(bool enabled);
@@ -70,7 +70,7 @@ public:
 public slots:
     void zoomIn();
     void zoomOut();
-    void setRhiViewActive(bool active);
+    void setRenderSurfaceActive(bool active);
     void panUp();
     void panDown();
     void panLeft();
@@ -174,9 +174,9 @@ private:
     bool pan_key_up_pressed = false;
     bool pan_key_down_pressed = false;
     bool pan_fast_modifier_pressed = false;
-    bool rhi_view_active = false;
-    ScreenCoordinateResolver rhi_screen_coordinate_resolver;
-    GlobeTerrainPanResolver rhi_globe_terrain_pan_resolver;
+    bool render_surface_active = false;
+    ScreenCoordinateResolver render_surface_screen_coordinate_resolver;
+    GlobeTerrainPanResolver render_surface_globe_terrain_pan_resolver;
     bool view_2d_zoom_in_key_pressed = false;
     bool view_2d_zoom_out_key_pressed = false;
     bool view_3d_zoom_in_key_pressed = false;
