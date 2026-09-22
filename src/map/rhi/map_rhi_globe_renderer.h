@@ -3,7 +3,7 @@
 
 #include "geo/geo_wgs84_ellipsoid.h"
 #include "map/render/map_globe_surface_render_frame.h"
-#include "map/render/map_globe_surface_scene.h"
+#include "map/render/map_globe_surface_preparation.h"
 #include "map/render/map_globe_heatmap_scene.h"
 #include "map/rhi/map_rhi_globe_surface_backend.h"
 
@@ -25,7 +25,6 @@
 
 class MapModel;
 class MapTerrainRepository;
-class MapTerrainMeshScheduler;
 class MapTileRepository;
 class QRhi;
 class QRhiCommandBuffer;
@@ -179,7 +178,6 @@ public:
 
 private:
     using TileVertex = MapGlobeSurfaceVertex;
-    using WireframeVertex = MapGlobeSurfaceWireframeVertex;
 
     using HeatmapStamp = MapGlobeHeatmapStamp;
     using HeatmapRasterStats = MapGlobeHeatmapRasterStats;
@@ -230,70 +228,15 @@ private:
         QString provisional_source_key;
     };
 
-    struct GlobeTile
-    {
-        struct TerrainRayRowBounds
-        {
-            QVector3D minimum;
-            QVector3D maximum;
-        };
+    using GlobeTile = MapGlobeSurfaceTile;
 
-        int virtual_x = 0;
-        int tile_x = 0;
-        int tile_y = 0;
-        int zoom = 0;
-        bool is_cap = false;
-        int first_vertex = 0;
-        int vertex_count = 0;
-        int first_index = 0;
-        int index_count = 0;
-        QString imagery_key;
-        int terrain_zoom = -1;
-        QString terrain_key;
-        int terrain_cell_count = 1;
-        int terrain_stitch_top_cell_count = 0;
-        int terrain_stitch_right_cell_count = 0;
-        int terrain_stitch_bottom_cell_count = 0;
-        int terrain_stitch_left_cell_count = 0;
-        quint64 terrain_mesh_request_id = 0;
-        bool terrain_mesh_applied = false;
-        // True when the currently retained vertex range contains DEM relief,
-        // independently of whether that relief is still the newest requested
-        // revision. invalidateTerrain() deliberately keeps old relief visible
-        // while its replacement is built, so ray picking must distinguish
-        // that still-rendered surface from an initial zero-height placeholder.
-        bool terrain_mesh_has_relief = false;
-        // Cached bounds of the exact retained DEM vertex range, in the same
-        // render-origin-relative ECEF frame as window_vertices. Cursor ray
-        // picking uses these to reject almost every visible tile before any
-        // triangle tests are attempted.
-        QVector3D terrain_ray_bounds_min;
-        QVector3D terrain_ray_bounds_max;
-        bool terrain_ray_bounds_valid = false;
-        // Second-stage acceleration for exact DEM picking. Each entry bounds
-        // one regular terrain cell row (the two adjacent vertex rows). A
-        // screen ray that reaches a tile therefore only tests triangles in
-        // the few rows whose bounds it actually crosses, instead of scanning
-        // every triangle in that tile on every pointer move/pan sample.
-        QVector<TerrainRayRowBounds> terrain_ray_row_bounds;
-        // Future GPU-displaced terrain consumes one shared 65x65 height
-        // layer per terrain_key. Multiple finer imagery leaves can therefore
-        // point at the same page/layer without duplicating the DEM upload.
-        // This foundation patch only populates the metadata/cache; the
-        // established CPU mesh remains the rendered path.
+    struct TileGpuState
+    {
+        TileResource *resource = nullptr;
         int terrain_height_array_page = -1;
         int terrain_height_array_layer = -1;
         bool terrain_height_array_ready = false;
-        // Non-owning; points into tile_resources (or at cap_resource for
-        // polar caps) and is only valid for the frame it was resolved in.
-        TileResource *resource = nullptr;
-        // Transient per-frame state: true only when this tile's current
-        // pixels occupy its assigned texture-array page/layer. Ready leaves
-        // are included in that page's compact draw-index range; leaves still
-        // loading continue through the ordinary per-tile fallback.
         bool array_ready = false;
-        // True only when this array-ready tile also has current heatmap
-        // pixels in its independently packed heatmap page/layer.
         bool heatmap_array_ready = false;
     };
 
@@ -381,17 +324,6 @@ private:
         qint64 cpu_ns = 0;
     };
 
-    void buildCaps();
-    void buildPolarCap(bool north);
-    void rebuildWindow(
-        const QVector<MapGlobeQuadtreeLeaf> &leaves, const QSize &viewport_size);
-    QVector<MapGlobeQuadtreeLeaf> currentWindowLeaves() const;
-    int terrainCellCountForTile(
-        const GlobeTile &tile, const QSize &viewport_size,
-        const GeoWgs84Ellipsoid::OrbitCameraBasis *camera_basis_override = nullptr) const;
-    void updateTerrainStitchCellCounts(QVector<GlobeTile> *tiles) const;
-    void updateTerrainRayBounds(GlobeTile *tile);
-    bool currentTerrainLodMatches(const QSize &viewport_size) const;
     void resetTerrainHeightCache();
     bool createTerrainHeightArrayPage();
     TerrainHeightCacheEntry *ensureTerrainHeightCacheEntry(
@@ -402,11 +334,15 @@ private:
         QRhiResourceUpdateBatch *resource_updates);
     void reportTerrainHeightCacheProfile() const;
     void pruneUnusedTileResources();
-    void rebuildWireframeVertices();
-    void appendWireframeEdges(
-        const QVector<TileVertex> &vertices,
-        const QVector<quint32> &indices);
-    TileVertex makeTileVertex(double lon_deg, double lat_deg, float u, float v) const;
+    TileGpuState *tileGpuState(GlobeTile &tile);
+    const TileGpuState *tileGpuState(const GlobeTile &tile) const;
+    TileResource *tileResource(GlobeTile &tile);
+    const TileResource *tileResource(const GlobeTile &tile) const;
+    void setTileResource(GlobeTile &tile, TileResource *resource);
+    bool tileArrayReady(const GlobeTile &tile) const;
+    bool tileHeatmapArrayReady(const GlobeTile &tile) const;
+    void handleWindowGeometryRebuilt();
+
     bool ensureSharedResources();
     bool preparedViewSelectionMatches(const QSize &viewport_size) const;
     bool canUseCameraOnlyPrepare(const QSize &viewport_size) const;
@@ -523,14 +459,11 @@ private:
     void releaseVisibleHeatmapGpuBakeAtlasResources();
     void reportHeatmapProfile() const;
     bool requestMissingTiles(QRhiResourceUpdateBatch *resource_updates);
-    void requestMissingTerrainTiles();
-    void scheduleReadyTerrainMeshes();
-    bool applyReadyTerrainMeshes(QRhiResourceUpdateBatch *resource_updates);
 
     MapModel *map_model = nullptr;
     MapTileRepository *tile_repository = nullptr;
     MapTerrainRepository *terrain_repository = nullptr;
-    GeoWgs84Ellipsoid::EcefPositionD render_origin_ecef;
+    MapGlobeSurfacePreparation surface_preparation;
     // A terrain-follow tick changes only the two omitted height values. When
     // the remaining view-selection inputs still match this last successful
     // full prepare, the current tile window and GPU resources can be reused.
@@ -544,32 +477,12 @@ private:
     double prepared_distance_m = 0.0;
     QElapsedTimer full_prepare_clock;
 
-    // Dynamic imagery window (see class comment above).
-    QVector<TileVertex> window_vertices;
-    QVector<quint32> window_indices;
-    QVector<GlobeTile> window_tiles;
-    QSet<quint64> window_position_keys;
-    QHash<quint64, qsizetype> window_tile_indices_by_position;
-    bool window_dirty = true;
-    // Backend-neutral visible-surface scene. It retains which quadtree nodes
-    // were subdivided on the previous frame so selectVisibleLeaves() can apply
-    // hysteresis around the subdivide/merge threshold -- without it, a node
-    // whose projected size
-    // sits right at the boundary would flicker between one leaf and four
-    // children every frame as the camera drifts by sub-pixel amounts.
-    MapGlobeSurfaceScene surface_scene;
     MapGlobeSurfaceRenderFrame prepared_surface_render_frame;
     bool window_tiles_requested = false;
-
-    QVector<WireframeVertex> wireframe_vertices;
-    bool wireframe_visible = false;
     bool map_visible = true;
 
-    // Static polar caps (see class comment above).
-    QVector<TileVertex> cap_vertices;
-    QVector<quint32> cap_indices;
-    QVector<GlobeTile> cap_tiles;
-    bool caps_built = false;
+    QVector<TileGpuState> window_tile_gpu_states;
+    QVector<TileGpuState> cap_tile_gpu_states;
 
     MapRhiGlobeSurfaceBackend surface_backend;
     MapRhiGlobeSurfaceDrawResources surface_draw_resources;
@@ -637,12 +550,6 @@ private:
     // extent stays exactly one tile, preserving the validated orientation.
     bool heatmap_gpu_baking_disabled = false;
 
-    std::unique_ptr<MapTerrainMeshScheduler> terrain_mesh_scheduler;
-    quint64 next_terrain_mesh_request_id = 1;
-    bool reported_orthometric_datum_warning = false;
-    bool reported_unusable_datum_warning = false;
-    QElapsedTimer terrain_lod_rebuild_clock;
-    bool terrain_lod_rebuild_pending = false;
 };
 
 #endif // MAP_RHI_GLOBE_RENDERER_H
