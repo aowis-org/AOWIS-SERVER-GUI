@@ -43,7 +43,7 @@ MapRhiNetworkStyleTable::MapRhiNetworkStyleTable()
 void MapRhiNetworkStyleTable::rebuild(
     const NetworkRenderSnapshot &snapshot,
     const QSet<QUuid> &hidden_entity_uuids,
-    const MapRhiSymbology &symbology,
+    const MapNetworkRenderSymbology &symbology,
     InfrastructureEntity selected_entity_type,
     const QUuid &selected_entity_uuid,
     const QHash<QUuid, InfrastructureEntity> &simulation_error_entities,

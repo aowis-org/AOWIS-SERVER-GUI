@@ -7,6 +7,8 @@
 #include <QHash>
 #include <QtGlobal>
 
+class HydraulicData;
+
 // Backend-neutral resolved network symbology. This is scene input data only;
 // GPU resource creation and style-table texture packing belong to individual
 // renderer backends.
@@ -41,5 +43,10 @@ struct MapNetworkRenderSymbology
     QHash<quint32, QRgb> link_colors;
     QHash<quint32, qint8> flow_directions;
 };
+
+MapNetworkRenderSymbology resolveMapNetworkRenderSymbology(
+    const HydraulicData &hydraulic_data,
+    const NetworkSymbologySettings &settings,
+    const NetworkSymbologyRanges &ranges);
 
 #endif // MAP_NETWORK_RENDER_SYMBOLOGY_H

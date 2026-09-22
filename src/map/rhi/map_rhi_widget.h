@@ -39,14 +39,6 @@ class QResizeEvent;
 class QEvent;
 class QTimer;
 
-// Transitional compatibility names for existing RHI-specific call sites.
-// The semantic types themselves now live at the backend-neutral surface seam;
-// 6.8.2 can move Editor/Monitor callers to the neutral names independently.
-using MapRhiUndergroundMode = MapUndergroundMode;
-using MapRhiHit = MapRenderHit;
-using MapRhiGlobeSurfaceHitSource = MapGlobeSurfaceHitSource;
-using MapRhiGlobeSurfaceHit = MapGlobeSurfaceHit;
-
 class MapRhiWidget final : public QRhiWidget, public MapRenderSurface
 {
     Q_OBJECT
@@ -148,7 +140,7 @@ private:
     MapRhiCamera camera;
     MapRhiScene scene;
     MapGlobeNetworkScene globe_network_scene;
-    MapRhiSymbology applied_symbology;
+    MapNetworkRenderSymbology applied_symbology;
     MapTileRepository *tile_repository = nullptr;
     MapTerrainRepository *terrain_repository = nullptr;
     std::unique_ptr<MapRhiBasemapRenderer> basemap_renderer;

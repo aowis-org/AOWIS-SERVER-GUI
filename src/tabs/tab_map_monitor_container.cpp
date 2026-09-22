@@ -19,7 +19,7 @@
 #include "map/render/map_render_surface.h"
 #include "map/rhi/map_rhi_hud_widget.h"
 #include "map/monitor/map_monitor_hud_controls.h"
-#include "map/rhi/map_rhi_symbology.h"
+#include "map/render/map_network_render_symbology.h"
 #include "entity_inspector/entity_map_legend_dock.h"
 #endif
 
@@ -1761,7 +1761,7 @@ void MapMonitorContainer::applyDesktopRenderSurfaceSymbology()
     this->symbology_settings = this->symbology_settings.bounded();
     const NetworkSymbologyRanges ranges =
         this->hydraulic_data->symbologyRanges(this->symbology_settings);
-    this->desktop_render_surface->setSymbology(resolveMapRhiSymbology(
+    this->desktop_render_surface->setSymbology(resolveMapNetworkRenderSymbology(
         *this->hydraulic_data, this->symbology_settings, ranges));
 }
 
@@ -1785,7 +1785,7 @@ void MapMonitorContainer::applySymbology()
 #if AOWIS_HAS_QRHI
     if (this->desktop_render_surface != nullptr)
     {
-        this->desktop_render_surface->setSymbology(resolveMapRhiSymbology(
+        this->desktop_render_surface->setSymbology(resolveMapNetworkRenderSymbology(
             *this->hydraulic_data, this->symbology_settings, ranges));
     }
 #endif

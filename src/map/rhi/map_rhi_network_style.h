@@ -1,7 +1,7 @@
 #ifndef MAP_RHI_NETWORK_STYLE_H
 #define MAP_RHI_NETWORK_STYLE_H
 
-#include "map/rhi/map_rhi_symbology.h"
+#include "map/render/map_network_render_symbology.h"
 #include "network/network_render_snapshot.h"
 
 #include <QHash>
@@ -26,7 +26,7 @@ public:
     void rebuild(
         const NetworkRenderSnapshot &snapshot,
         const QSet<QUuid> &hidden_entity_uuids,
-        const MapRhiSymbology &symbology,
+        const MapNetworkRenderSymbology &symbology,
         InfrastructureEntity selected_entity_type,
         const QUuid &selected_entity_uuid,
         const QHash<QUuid, InfrastructureEntity> &simulation_error_entities,

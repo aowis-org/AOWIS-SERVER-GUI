@@ -157,7 +157,7 @@ void MapRhiScene::rebuildNetworkGeometry()
         heatmap_marker.render_id = node.render_id;
         heatmap_marker.center = center;
         this->heatmap_markers.append(heatmap_marker);
-        if (mapRhiHasIcon(node.entity_type))
+        if (mapHasIcon(node.entity_type))
         {
             IconMarker marker;
             marker.entity_type = node.entity_type;
@@ -235,7 +235,7 @@ void MapRhiScene::rebuildNetworkGeometry()
             link.uuid, entityRenderKey(link.entity_type, link.render_id));
         if (!link_path.segments.isEmpty())
         {
-            if (mapRhiHasIcon(link.entity_type))
+            if (mapHasIcon(link.entity_type))
             {
                 qreal total_length = 0.0;
                 for (const SceneSegment &segment : link_path.segments)
@@ -280,7 +280,7 @@ void MapRhiScene::rebuildNetworkGeometry()
     rebuildHighlights();
 }
 
-void MapRhiScene::setSymbology(const MapRhiSymbology &symbology)
+void MapRhiScene::setSymbology(const MapNetworkRenderSymbology &symbology)
 {
     const bool link_colors_changed = this->symbology.link_colors != symbology.link_colors;
     const bool node_colors_changed = this->symbology.node_colors != symbology.node_colors;
@@ -673,7 +673,7 @@ void MapRhiScene::applyNodeColor(NodeVertex *vertex) const
         vertex->entity_type == InfrastructureEntity::Junction
         && !this->symbology.show_junctions;
     vertex->alpha = junction_hidden
-        || (this->symbology.show_icons && mapRhiHasIcon(vertex->entity_type))
+        || (this->symbology.show_icons && mapHasIcon(vertex->entity_type))
         ? 0.0f
         : qAlpha(color) / 255.0f;
 }
@@ -742,7 +742,7 @@ void MapRhiScene::rebuildIcons()
 
 void MapRhiScene::appendIcon(const IconMarker &marker)
 {
-    const MapRhiIconAtlasEntry atlas_entry = mapRhiIconAtlasEntry(marker.entity_type);
+    const MapIconAtlasEntry atlas_entry = mapIconAtlasEntry(marker.entity_type);
     if (!atlas_entry.valid)
         return;
 

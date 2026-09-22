@@ -1,4 +1,4 @@
-#include "map/rhi/map_rhi_symbology.h"
+#include "map/render/map_network_render_symbology.h"
 
 #include "network/hydraulic_data.h"
 #include "network/network_render_snapshot.h"
@@ -7,7 +7,7 @@
 
 #include <cmath>
 
-MapRhiSymbology resolveMapRhiSymbology(
+MapNetworkRenderSymbology resolveMapNetworkRenderSymbology(
     const HydraulicData &hydraulic_data,
     const NetworkSymbologySettings &settings,
     const NetworkSymbologyRanges &ranges)
@@ -77,7 +77,7 @@ MapRhiSymbology resolveMapRhiSymbology(
                 : networkHeatmapSymbologyValues(
                     network_hydraulic, bounded_settings.visual_heatmap);
 
-    MapRhiSymbology result;
+    MapNetworkRenderSymbology result;
     result.node_size_unit = bounded_settings.node_size_unit;
     result.show_junctions = bounded_settings.show_junctions;
     result.node_size_px = bounded_settings.node_size_px;

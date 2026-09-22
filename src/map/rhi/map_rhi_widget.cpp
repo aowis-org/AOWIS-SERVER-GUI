@@ -6,8 +6,10 @@
 
 #include "map/core/map_model.h"
 #include "map/render/map_render_cache_math.h"
+#include "map/render/map_icon_atlas.h"
 #include "map/render/map_globe_vertical_transform.h"
 #include "map/render/map_globe_picking.h"
+#include "map/render/map_globe_heatmap_scene.h"
 #include "map/data/map_tile_repository.h"
 #include "geo/geo_web_mercator.h"
 #include "geo/geo_wgs84_ellipsoid.h"
@@ -1535,7 +1537,7 @@ void MapRhiWidget::setNetworkScreenTranslation(const QPointF &translation_pixels
 
 void MapRhiWidget::setSymbology(const MapNetworkRenderSymbology &symbology)
 {
-    MapRhiSymbology themed_symbology = symbology;
+    MapNetworkRenderSymbology themed_symbology = symbology;
     const QColor window_color = palette().color(QPalette::Window);
     themed_symbology.icon_default_fill_color =
         networkSymbologyIconDefaultFillColor(window_color);
@@ -1678,7 +1680,7 @@ void MapRhiWidget::setVisualControlSettings(
         return;
 
     const NetworkSymbologySettings bounded_settings = settings.bounded();
-    MapRhiSymbology symbology = this->applied_symbology;
+    MapNetworkRenderSymbology symbology = this->applied_symbology;
     symbology.node_size_unit = bounded_settings.node_size_unit;
     symbology.show_junctions = bounded_settings.show_junctions;
     symbology.node_size_px = bounded_settings.node_size_px;
@@ -2137,7 +2139,7 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     if (this->icon_atlas_upload_pending)
     {
         resource_updates->uploadTexture(
-            this->icon_atlas_texture.get(), mapRhiIconAtlasImage());
+            this->icon_atlas_texture.get(), mapIconAtlasImage());
         this->icon_atlas_upload_pending = false;
     }
 
@@ -2513,7 +2515,7 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
 
     if (this->icon_atlas_upload_pending)
     {
-        resource_updates->uploadTexture(this->icon_atlas_texture.get(), mapRhiIconAtlasImage());
+        resource_updates->uploadTexture(this->icon_atlas_texture.get(), mapIconAtlasImage());
         this->icon_atlas_upload_pending = false;
     }
 
@@ -2845,7 +2847,7 @@ bool MapRhiWidget::createPersistentResources()
 
     if (!this->icon_atlas_texture)
     {
-        const QImage atlas_image = mapRhiIconAtlasImage();
+        const QImage atlas_image = mapIconAtlasImage();
         this->icon_atlas_texture.reset(this->active_rhi->newTexture(
             QRhiTexture::RGBA8, atlas_image.size()));
         if (!this->icon_atlas_texture || !this->icon_atlas_texture->create())
@@ -4752,7 +4754,7 @@ void MapRhiWidget::syncGlobeHeatmapOverlay(double solid_fraction)
     if (!this->globe_renderer)
         return;
 
-    QVector<MapRhiGlobeRenderer::HeatmapMarker> globe_markers;
+    QVector<MapGlobeHeatmapMarker> globe_markers;
     if (this->map_model != nullptr
         && this->map_model->viewMode() == MapViewMode::Globe
         && this->applied_symbology.visual_heatmap != VisualHeatmap::None)
@@ -4768,7 +4770,7 @@ void MapRhiWidget::syncGlobeHeatmapOverlay(double solid_fraction)
                 continue;
             }
 
-            MapRhiGlobeRenderer::HeatmapMarker marker;
+            MapGlobeHeatmapMarker marker;
             marker.render_id = node.render_id;
             marker.longitude_deg = node.coordinate_wgs84.longitude_deg;
             marker.latitude_deg = node.coordinate_wgs84.latitude_deg;
@@ -4792,8 +4794,8 @@ void MapRhiWidget::syncGlobeHeatmapOverlay(double solid_fraction)
         // timesteps even when value availability or snapshot order changes.
         std::sort(
             globe_markers.begin(), globe_markers.end(),
-            [](const MapRhiGlobeRenderer::HeatmapMarker &first,
-               const MapRhiGlobeRenderer::HeatmapMarker &second)
+            [](const MapGlobeHeatmapMarker &first,
+               const MapGlobeHeatmapMarker &second)
         {
             if (first.render_id != second.render_id)
                 return first.render_id < second.render_id;

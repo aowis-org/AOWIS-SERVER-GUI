@@ -421,7 +421,7 @@ void MapRhiGlobeRenderer::setMapVisible(bool visible)
 }
 
 void MapRhiGlobeRenderer::setHeatmapOverlay(
-    const QVector<HeatmapMarker> &markers, double radius_m, double solid_fraction)
+    const QVector<MapGlobeHeatmapMarker> &markers, double radius_m, double solid_fraction)
 {
     if (!this->heatmap_scene.setOverlay(markers, radius_m, solid_fraction))
         return;

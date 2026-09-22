@@ -63,10 +63,6 @@ class QRhiResourceUpdateBatch;
 class MapRhiGlobeRenderer
 {
 public:
-    // Compatibility name for current callers. Heatmap marker/state/layout
-    // preparation is backend-neutral and owned by MapGlobeHeatmapScene.
-    using HeatmapMarker = MapGlobeHeatmapMarker;
-
     MapRhiGlobeRenderer(MapModel *map_model, MapTileRepository *tile_repository);
     ~MapRhiGlobeRenderer();
 
@@ -122,7 +118,7 @@ public:
     // real distance directly rather than needing a zoom-dependent
     // conversion first.
     void setHeatmapOverlay(
-        const QVector<HeatmapMarker> &markers, double radius_m, double solid_fraction);
+        const QVector<MapGlobeHeatmapMarker> &markers, double radius_m, double solid_fraction);
 
     // Called whenever the RHI/render pass may have changed, same contract
     // as MapRhiBasemapRenderer::initialize(). Safe to call every frame; all

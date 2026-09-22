@@ -2,8 +2,8 @@
 #define MAP_RHI_SCENE_H
 
 #include "network/network_render_snapshot.h"
-#include "map/rhi/map_rhi_symbology.h"
-#include "map/rhi/map_rhi_icon_atlas.h"
+#include "map/render/map_network_render_symbology.h"
+#include "map/render/map_icon_atlas.h"
 #include "map/rhi/map_rhi_network_style.h"
 #include "map/render/map_network_render_data.h"
 
@@ -19,9 +19,7 @@
 class MapRhiScene
 {
 public:
-    // Compatibility aliases: the retained byte layouts are backend-neutral
-    // and live under map/render. Existing QRhi scene code keeps its current
-    // type names while Step 6 proceeds incrementally.
+    // Local shorthand for the backend-neutral retained vertex layouts.
     using LinkVertex = MapNetworkLinkVertex;
     using IconVertex = MapNetworkIconVertex;
     using HeatmapVertex = MapNetworkHeatmapVertex;
@@ -29,7 +27,7 @@ public:
 
     void setNetworkSnapshot(const NetworkRenderSnapshot &snapshot);
     bool setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids);
-    void setSymbology(const MapRhiSymbology &symbology);
+    void setSymbology(const MapNetworkRenderSymbology &symbology);
     void setSelectedEntity(InfrastructureEntity entity_type, const QUuid &uuid);
     bool setViewZoom(int zoom);
     void setSimulationErrorEntities(
@@ -136,7 +134,7 @@ private:
     QVector<IconMarker> icon_markers;
     QVector<LinkPath> link_paths;
     QPointF origin_world;
-    MapRhiSymbology symbology;
+    MapNetworkRenderSymbology symbology;
     InfrastructureEntity selected_entity_type = InfrastructureEntity::Unknown;
     QUuid selected_entity_uuid;
     QHash<QUuid, InfrastructureEntity> simulation_error_entities;
