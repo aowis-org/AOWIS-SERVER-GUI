@@ -988,11 +988,11 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
              vertex_index + 2 < this->tank_model_vertices.size();
              vertex_index += 3)
         {
-            const MapRhiTankModelVertex &vertex_a =
+            const MapGlobeTankModelVertex &vertex_a =
                 this->tank_model_vertices.at(vertex_index);
-            const MapRhiTankModelVertex &vertex_b =
+            const MapGlobeTankModelVertex &vertex_b =
                 this->tank_model_vertices.at(vertex_index + 1);
-            const MapRhiTankModelVertex &vertex_c =
+            const MapGlobeTankModelVertex &vertex_c =
                 this->tank_model_vertices.at(vertex_index + 2);
             if (vertex_a.render_id == 0
                 || vertex_a.render_id != vertex_b.render_id
@@ -1048,11 +1048,11 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
              vertex_index + 2 < this->reservoir_model_vertices.size();
              vertex_index += 3)
         {
-            const MapRhiReservoirModelVertex &vertex_a =
+            const MapGlobeReservoirModelVertex &vertex_a =
                 this->reservoir_model_vertices.at(vertex_index);
-            const MapRhiReservoirModelVertex &vertex_b =
+            const MapGlobeReservoirModelVertex &vertex_b =
                 this->reservoir_model_vertices.at(vertex_index + 1);
-            const MapRhiReservoirModelVertex &vertex_c =
+            const MapGlobeReservoirModelVertex &vertex_c =
                 this->reservoir_model_vertices.at(vertex_index + 2);
             if (vertex_a.render_id == 0
                 || vertex_a.render_id != vertex_b.render_id
@@ -1104,9 +1104,9 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
     // perspective-view hit budgets than the flat 2D path.
     double best_junction_screen_distance = std::numeric_limits<double>::infinity();
     quint32 best_junction_render_id = 0;
-    const QVector<MapRhiJunctionInstance> &junction_instances =
+    const QVector<MapGlobeJunctionInstance> &junction_instances =
         this->globe_network_scene.junctionInstances();
-    for (const MapRhiJunctionInstance &instance : junction_instances)
+    for (const MapGlobeJunctionInstance &instance : junction_instances)
     {
         if (!this->scene.networkStyleTable().isDrawable(
                 quint32(instance.style_index)))
@@ -1266,13 +1266,13 @@ MapRhiHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
     // invisible center-point quads here would create a hit target outside
     // the visible model after the triangle pick has correctly missed it.
     QSet<quint32> modeled_tank_render_ids;
-    for (const MapRhiTankInstance &instance :
+    for (const MapGlobeTankInstance &instance :
          this->globe_network_scene.tankInstances())
     {
         modeled_tank_render_ids.insert(instance.render_id);
     }
     QSet<quint32> modeled_reservoir_render_ids;
-    for (const MapRhiReservoirInstance &instance :
+    for (const MapGlobeReservoirInstance &instance :
          this->globe_network_scene.reservoirInstances())
     {
         modeled_reservoir_render_ids.insert(instance.render_id);
@@ -2144,7 +2144,7 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     if (this->tank_texture_upload_pending)
     {
         resource_updates->uploadTexture(
-            this->tank_texture.get(), mapRhiTankAlbedoImage());
+            this->tank_texture.get(), mapGlobeTankAlbedoImage());
         resource_updates->generateMips(this->tank_texture.get());
         this->tank_texture_upload_pending = false;
     }
@@ -2152,7 +2152,7 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     if (this->reservoir_texture_upload_pending)
     {
         resource_updates->uploadTexture(
-            this->reservoir_texture.get(), mapRhiReservoirAlbedoImage());
+            this->reservoir_texture.get(), mapGlobeReservoirAlbedoImage());
         resource_updates->generateMips(this->reservoir_texture.get());
         this->reservoir_texture_upload_pending = false;
     }
@@ -2266,7 +2266,7 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         {
             resource_updates->updateDynamicBuffer(
                 this->tank_vertex_buffer.get(), 0,
-                int(this->tank_model_vertices.size() * qsizetype(sizeof(MapRhiTankModelVertex))),
+                int(this->tank_model_vertices.size() * qsizetype(sizeof(MapGlobeTankModelVertex))),
                 this->tank_model_vertices.constData());
         }
         this->tank_upload_pending = false;
@@ -2278,7 +2278,7 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         {
             resource_updates->updateDynamicBuffer(
                 this->reservoir_vertex_buffer.get(), 0,
-                int(this->reservoir_model_vertices.size() * qsizetype(sizeof(MapRhiReservoirModelVertex))),
+                int(this->reservoir_model_vertices.size() * qsizetype(sizeof(MapGlobeReservoirModelVertex))),
                 this->reservoir_model_vertices.constData());
         }
         this->reservoir_upload_pending = false;
@@ -2286,8 +2286,8 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
 
     if (this->junction_mesh_upload_pending)
     {
-        const QVector<MapRhiJunctionImpostorVertex> &junction_impostor =
-            mapRhiJunctionImpostorVertices();
+        const QVector<MapGlobeJunctionImpostorVertex> &junction_impostor =
+            mapGlobeJunctionImpostorVertices();
         if (!junction_impostor.isEmpty())
             resource_updates->uploadStaticBuffer(
                 this->junction_mesh_vertex_buffer.get(), junction_impostor.constData());
@@ -2519,7 +2519,7 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
 
     if (this->tank_texture_upload_pending)
     {
-        resource_updates->uploadTexture(this->tank_texture.get(), mapRhiTankAlbedoImage());
+        resource_updates->uploadTexture(this->tank_texture.get(), mapGlobeTankAlbedoImage());
         resource_updates->generateMips(this->tank_texture.get());
         this->tank_texture_upload_pending = false;
     }
@@ -2527,7 +2527,7 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     if (this->reservoir_texture_upload_pending)
     {
         resource_updates->uploadTexture(
-            this->reservoir_texture.get(), mapRhiReservoirAlbedoImage());
+            this->reservoir_texture.get(), mapGlobeReservoirAlbedoImage());
         resource_updates->generateMips(this->reservoir_texture.get());
         this->reservoir_texture_upload_pending = false;
     }
@@ -2539,7 +2539,7 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
             resource_updates->updateDynamicBuffer(
                 this->tank_vertex_buffer.get(), 0,
                 int(this->tank_model_vertices.size()
-                    * qsizetype(sizeof(MapRhiTankModelVertex))),
+                    * qsizetype(sizeof(MapGlobeTankModelVertex))),
                 this->tank_model_vertices.constData());
         }
         this->tank_upload_pending = false;
@@ -2552,7 +2552,7 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
             resource_updates->updateDynamicBuffer(
                 this->reservoir_vertex_buffer.get(), 0,
                 int(this->reservoir_model_vertices.size()
-                    * qsizetype(sizeof(MapRhiReservoirModelVertex))),
+                    * qsizetype(sizeof(MapGlobeReservoirModelVertex))),
                 this->reservoir_model_vertices.constData());
         }
         this->reservoir_upload_pending = false;
@@ -2560,8 +2560,8 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
 
     if (this->junction_mesh_upload_pending)
     {
-        const QVector<MapRhiJunctionImpostorVertex> &junction_impostor =
-            mapRhiJunctionImpostorVertices();
+        const QVector<MapGlobeJunctionImpostorVertex> &junction_impostor =
+            mapGlobeJunctionImpostorVertices();
         if (!junction_impostor.isEmpty())
         {
             resource_updates->uploadStaticBuffer(
@@ -2651,7 +2651,7 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     globe_draw_resources.junction_xray_pipeline = this->junction_xray_pipeline.get();
     globe_draw_resources.link_no_depth_pipeline = this->link_no_depth_pipeline.get();
     globe_draw_resources.junction_impostor_vertex_count = quint32(
-        mapRhiJunctionImpostorVertices().size());
+        mapGlobeJunctionImpostorVertices().size());
     globe_draw_resources.tank_vertex_count = quint32(this->tank_model_vertices.size());
     globe_draw_resources.reservoir_vertex_count = quint32(
         this->reservoir_model_vertices.size());
@@ -2893,7 +2893,7 @@ bool MapRhiWidget::createPersistentResources()
 
     if (!this->tank_texture)
     {
-        const QImage tank_image = mapRhiTankAlbedoImage();
+        const QImage tank_image = mapGlobeTankAlbedoImage();
         if (tank_image.isNull())
         {
             reportFailure(QStringLiteral("Failed to load RHI tank model texture"));
@@ -2947,7 +2947,7 @@ bool MapRhiWidget::createPersistentResources()
 
     if (!this->reservoir_texture)
     {
-        const QImage reservoir_image = mapRhiReservoirAlbedoImage();
+        const QImage reservoir_image = mapGlobeReservoirAlbedoImage();
         if (reservoir_image.isNull())
         {
             reportFailure(QStringLiteral("Failed to load RHI reservoir model texture"));
@@ -3430,17 +3430,17 @@ bool MapRhiWidget::createPipelines()
 
         QRhiVertexInputLayout input_layout;
         input_layout.setBindings({
-            {quint32(sizeof(MapRhiTankModelVertex))}
+            {quint32(sizeof(MapGlobeTankModelVertex))}
         });
         input_layout.setAttributes({
             {0, 0, QRhiVertexInputAttribute::Float3,
-             quint32(offsetof(MapRhiTankModelVertex, position_x))},
+             quint32(offsetof(MapGlobeTankModelVertex, position_x))},
             {0, 1, QRhiVertexInputAttribute::Float3,
-             quint32(offsetof(MapRhiTankModelVertex, normal_x))},
+             quint32(offsetof(MapGlobeTankModelVertex, normal_x))},
             {0, 2, QRhiVertexInputAttribute::Float2,
-             quint32(offsetof(MapRhiTankModelVertex, u))},
+             quint32(offsetof(MapGlobeTankModelVertex, u))},
             {0, 3, QRhiVertexInputAttribute::Float,
-             quint32(offsetof(MapRhiTankModelVertex, selected))}
+             quint32(offsetof(MapGlobeTankModelVertex, selected))}
         });
 
         this->tank_pipeline.reset(this->active_rhi->newGraphicsPipeline());
@@ -3470,7 +3470,7 @@ bool MapRhiWidget::createPipelines()
 
     if (!this->reservoir_pipeline)
     {
-        // MapRhiReservoirModelVertex mirrors MapRhiTankModelVertex field for
+        // MapGlobeReservoirModelVertex mirrors MapGlobeTankModelVertex field for
         // field (position/normal/uv/selected), and the lighting model in the
         // tank shader is generic (not tank-specific), so the reservoir
         // pipeline reuses the same compiled shader rather than needing its
@@ -3487,17 +3487,17 @@ bool MapRhiWidget::createPipelines()
 
         QRhiVertexInputLayout input_layout;
         input_layout.setBindings({
-            {quint32(sizeof(MapRhiReservoirModelVertex))}
+            {quint32(sizeof(MapGlobeReservoirModelVertex))}
         });
         input_layout.setAttributes({
             {0, 0, QRhiVertexInputAttribute::Float3,
-             quint32(offsetof(MapRhiReservoirModelVertex, position_x))},
+             quint32(offsetof(MapGlobeReservoirModelVertex, position_x))},
             {0, 1, QRhiVertexInputAttribute::Float3,
-             quint32(offsetof(MapRhiReservoirModelVertex, normal_x))},
+             quint32(offsetof(MapGlobeReservoirModelVertex, normal_x))},
             {0, 2, QRhiVertexInputAttribute::Float2,
-             quint32(offsetof(MapRhiReservoirModelVertex, u))},
+             quint32(offsetof(MapGlobeReservoirModelVertex, u))},
             {0, 3, QRhiVertexInputAttribute::Float,
-             quint32(offsetof(MapRhiReservoirModelVertex, selected))}
+             quint32(offsetof(MapGlobeReservoirModelVertex, selected))}
         });
 
         this->reservoir_pipeline.reset(this->active_rhi->newGraphicsPipeline());
@@ -3540,18 +3540,18 @@ bool MapRhiWidget::createPipelines()
 
         QRhiVertexInputLayout input_layout;
         input_layout.setBindings({
-            {quint32(sizeof(MapRhiJunctionImpostorVertex))},
-            {quint32(sizeof(MapRhiJunctionInstance)), QRhiVertexInputBinding::PerInstance}
+            {quint32(sizeof(MapGlobeJunctionImpostorVertex))},
+            {quint32(sizeof(MapGlobeJunctionInstance)), QRhiVertexInputBinding::PerInstance}
         });
         input_layout.setAttributes({
             {0, 0, QRhiVertexInputAttribute::Float2,
-             quint32(offsetof(MapRhiJunctionImpostorVertex, corner_x))},
+             quint32(offsetof(MapGlobeJunctionImpostorVertex, corner_x))},
             {1, 1, QRhiVertexInputAttribute::Float3,
-             quint32(offsetof(MapRhiJunctionInstance, center_x))},
+             quint32(offsetof(MapGlobeJunctionInstance, center_x))},
             {1, 2, QRhiVertexInputAttribute::Float,
-             quint32(offsetof(MapRhiJunctionInstance, radius_world))},
+             quint32(offsetof(MapGlobeJunctionInstance, radius_world))},
             {1, 3, QRhiVertexInputAttribute::Float,
-             quint32(offsetof(MapRhiJunctionInstance, style_index))}
+             quint32(offsetof(MapGlobeJunctionInstance, style_index))}
         });
 
         this->globe_junction_pipeline.reset(this->active_rhi->newGraphicsPipeline());
@@ -3682,18 +3682,18 @@ bool MapRhiWidget::createPipelines()
 
         QRhiVertexInputLayout input_layout;
         input_layout.setBindings({
-            {quint32(sizeof(MapRhiJunctionImpostorVertex))},
-            {quint32(sizeof(MapRhiJunctionInstance)), QRhiVertexInputBinding::PerInstance}
+            {quint32(sizeof(MapGlobeJunctionImpostorVertex))},
+            {quint32(sizeof(MapGlobeJunctionInstance)), QRhiVertexInputBinding::PerInstance}
         });
         input_layout.setAttributes({
             {0, 0, QRhiVertexInputAttribute::Float2,
-             quint32(offsetof(MapRhiJunctionImpostorVertex, corner_x))},
+             quint32(offsetof(MapGlobeJunctionImpostorVertex, corner_x))},
             {1, 1, QRhiVertexInputAttribute::Float3,
-             quint32(offsetof(MapRhiJunctionInstance, center_x))},
+             quint32(offsetof(MapGlobeJunctionInstance, center_x))},
             {1, 2, QRhiVertexInputAttribute::Float,
-             quint32(offsetof(MapRhiJunctionInstance, radius_world))},
+             quint32(offsetof(MapGlobeJunctionInstance, radius_world))},
             {1, 3, QRhiVertexInputAttribute::Float,
-             quint32(offsetof(MapRhiJunctionInstance, style_index))}
+             quint32(offsetof(MapGlobeJunctionInstance, style_index))}
         });
 
         if (!this->junction_xray_pipeline)
@@ -3787,13 +3787,13 @@ bool MapRhiWidget::ensureGeometryBuffers()
     const int required_heatmap_bytes = boundedBufferSize(
         this->heatmap_render_vertices.size(), qsizetype(sizeof(MapRhiScene::HeatmapVertex)));
     const int required_tank_bytes = boundedBufferSize(
-        this->tank_model_vertices.size(), qsizetype(sizeof(MapRhiTankModelVertex)));
+        this->tank_model_vertices.size(), qsizetype(sizeof(MapGlobeTankModelVertex)));
     const int required_reservoir_bytes = boundedBufferSize(
-        this->reservoir_model_vertices.size(), qsizetype(sizeof(MapRhiReservoirModelVertex)));
-    const QVector<MapRhiJunctionImpostorVertex> &junction_impostor =
-        mapRhiJunctionImpostorVertices();
+        this->reservoir_model_vertices.size(), qsizetype(sizeof(MapGlobeReservoirModelVertex)));
+    const QVector<MapGlobeJunctionImpostorVertex> &junction_impostor =
+        mapGlobeJunctionImpostorVertices();
     const int required_junction_mesh_bytes = boundedBufferSize(
-        junction_impostor.size(), qsizetype(sizeof(MapRhiJunctionImpostorVertex)));
+        junction_impostor.size(), qsizetype(sizeof(MapGlobeJunctionImpostorVertex)));
     if (required_link_bytes == 0 || required_node_bytes == 0
         || required_selected_link_bytes == 0 || required_selected_node_bytes == 0
         || required_diagnostic_link_bytes == 0 || required_diagnostic_node_bytes == 0
@@ -4058,7 +4058,7 @@ void MapRhiWidget::rebuildTankModelGeometry()
     if (this->map_model != nullptr && this->map_model->viewMode() == MapViewMode::Globe)
     {
         this->tank_model_vertices =
-            mapRhiBuildTankModelVertices(this->globe_network_scene.tankInstances());
+            mapGlobeBuildTankModelVertices(this->globe_network_scene.tankInstances());
     }
 }
 
@@ -4067,7 +4067,7 @@ void MapRhiWidget::rebuildReservoirModelGeometry()
     this->reservoir_model_vertices.clear();
     if (this->map_model != nullptr && this->map_model->viewMode() == MapViewMode::Globe)
     {
-        this->reservoir_model_vertices = mapRhiBuildReservoirModelVertices(
+        this->reservoir_model_vertices = mapGlobeBuildReservoirModelVertices(
             this->globe_network_scene.reservoirInstances());
     }
 }

@@ -29,8 +29,6 @@ class QImage;
 
 struct MapRhiGlobeImageryArrayPage
 {
-    std::unique_ptr<QRhiTexture> texture;
-    std::unique_ptr<QRhiShaderResourceBindings> bindings;
     QVector<int> free_layers;
     int first_draw_index = 0;
     int draw_index_count = 0;
@@ -38,13 +36,11 @@ struct MapRhiGlobeImageryArrayPage
 
 struct MapRhiGlobeHeatmapArrayPage
 {
-    std::unique_ptr<QRhiTexture> texture;
     QVector<int> free_layers;
 };
 
 struct MapRhiGlobeTerrainHeightArrayPage
 {
-    std::unique_ptr<QRhiTexture> texture;
     QVector<int> free_layers;
 };
 
@@ -97,9 +93,18 @@ struct MapRhiGlobeHeatmapBakeResources
     int visible_instance_buffer_size = 0;
 };
 
+enum class MapRhiGlobeHeatmapBakeDestination
+{
+    TileHeatmapTexture,
+    HeatmapArrayLayer
+};
+
 struct MapRhiGlobeHeatmapBakeJob
 {
-    QRhiTexture *destination_texture = nullptr;
+    MapRhiGlobeHeatmapBakeDestination destination =
+        MapRhiGlobeHeatmapBakeDestination::TileHeatmapTexture;
+    quint64 tile_gpu_resource_id = 0;
+    int heatmap_array_page = -1;
     int destination_layer = 0;
     const QVector<MapRhiGlobeHeatmapBakeInstance> *instances = nullptr;
 };
@@ -116,27 +121,20 @@ struct MapRhiGlobeHeatmapBakeExecutionStats
 
 struct MapRhiGlobeSurfaceBatch
 {
-    QRhiShaderResourceBindings *bindings = nullptr;
+    int imagery_page_index = -1;
+    int heatmap_page_index = -1;
     int first_draw_index = 0;
     int draw_index_count = 0;
 };
 
 struct MapRhiGlobeSurfaceTileDrawState
 {
-    QRhiShaderResourceBindings *bindings = nullptr;
+    quint64 gpu_resource_id = 0;
     bool array_ready = false;
 };
 
 struct MapRhiGlobeSurfaceDrawResources
 {
-    QRhiGraphicsPipeline *tile_pipeline = nullptr;
-    QRhiGraphicsPipeline *array_pipeline = nullptr;
-    QRhiGraphicsPipeline *heatmap_array_pipeline = nullptr;
-    QRhiGraphicsPipeline *wireframe_pipeline = nullptr;
-
-    QRhiShaderResourceBindings *template_bindings = nullptr;
-    QRhiShaderResourceBindings *wireframe_bindings = nullptr;
-
     QVector<MapRhiGlobeSurfaceTileDrawState> window_tiles;
     QVector<MapRhiGlobeSurfaceTileDrawState> cap_tiles;
     std::vector<MapRhiGlobeSurfaceBatch> imagery_array_batches;
@@ -154,6 +152,16 @@ public:
 
     void reset();
 
+    bool hasContext() const;
+    bool contextMatches(QRhi *rhi) const;
+    bool renderPassMatches(
+        QRhiRenderPassDescriptor *render_pass_descriptor,
+        int sample_count) const;
+    void setContext(
+        QRhi *rhi,
+        QRhiRenderPassDescriptor *render_pass_descriptor,
+        int sample_count);
+
     void invalidateWindowGeometry();
     void invalidateWindowVertices();
     void invalidateCaps();
@@ -163,14 +171,17 @@ public:
         QRhi *rhi,
         QRhiRenderPassDescriptor *render_pass_descriptor,
         int sample_count);
+    bool ensureSharedResources();
     bool ensureImageryArrayPipeline(
         QRhi *rhi,
         QRhiRenderPassDescriptor *render_pass_descriptor,
         int sample_count);
+    bool ensureImageryArrayPipeline();
     bool ensureHeatmapArrayPipeline(
         QRhi *rhi,
         QRhiRenderPassDescriptor *render_pass_descriptor,
         int sample_count);
+    bool ensureHeatmapArrayPipeline();
     void invalidateRenderPassPipelines();
 
     bool uploadPendingMissingTileTexture(
@@ -185,40 +196,39 @@ public:
         const QColor &background_color,
         float background_opacity);
 
-    bool rebuildTileBindings(
-        QRhi *rhi,
-        QRhiTexture *imagery_texture,
-        QRhiTexture *heatmap_texture,
-        std::unique_ptr<QRhiShaderResourceBindings> *bindings);
-    bool rebuildHeatmapArrayBindings(
-        QRhi *rhi,
-        QRhiTexture *imagery_texture,
-        QRhiTexture *heatmap_texture,
-        std::unique_ptr<QRhiShaderResourceBindings> *bindings);
-
-    bool recreateRgba8Texture(
-        QRhi *rhi,
-        const QSize &size,
-        std::unique_ptr<QRhiTexture> *texture);
+    bool ensureHeatmapArrayBatchBinding(
+        QRhi *rhi, int imagery_page_index, int heatmap_page_index);
+    bool ensureHeatmapArrayBatchBinding(
+        int imagery_page_index, int heatmap_page_index);
+    void clearHeatmapArrayBatchBindings();
 
     bool supportsTextureArrays(QRhi *rhi) const;
     bool supportsR32fTextures(QRhi *rhi) const;
     bool isYUpInNdc(QRhi *rhi) const;
+    bool supportsTextureArrays() const;
+    bool supportsR32fTextures() const;
+    bool isYUpInNdc() const;
 
-    void uploadTextureImage(
+    bool uploadTileTextureImage(
         QRhiResourceUpdateBatch *resource_updates,
-        QRhiTexture *texture,
+        quint64 resource_id,
         const QImage &image) const;
-    void uploadTextureArrayLayer(
+    bool uploadTileHeatmapTextureImage(
         QRhiResourceUpdateBatch *resource_updates,
-        QRhiTexture *texture,
-        int layer,
+        quint64 resource_id,
         const QImage &image) const;
-    void uploadTextureArrayLayerRaw(
+    bool imageryArrayPageReady(int page_index) const;
+    bool heatmapArrayPageReady(int page_index) const;
+    bool terrainHeightArrayPageReady(int page_index) const;
+    bool uploadImageryArrayPageLayer(
         QRhiResourceUpdateBatch *resource_updates,
-        QRhiTexture *texture,
-        int layer,
-        const QByteArray &data) const;
+        int page_index, int layer, const QImage &image) const;
+    bool uploadHeatmapArrayPageLayer(
+        QRhiResourceUpdateBatch *resource_updates,
+        int page_index, int layer, const QImage &image) const;
+    bool uploadTerrainHeightArrayPageLayerRaw(
+        QRhiResourceUpdateBatch *resource_updates,
+        int page_index, int layer, const QByteArray &data) const;
 
     quint64 createTileGpuResource();
     void releaseTileGpuResource(quint64 resource_id);
@@ -226,9 +236,6 @@ public:
     bool hasTileTexture(quint64 resource_id) const;
     bool hasTileHeatmapTexture(quint64 resource_id) const;
     bool hasTileBindings(quint64 resource_id) const;
-    QRhiTexture *tileTexture(quint64 resource_id) const;
-    QRhiTexture *tileHeatmapTexture(quint64 resource_id) const;
-    QRhiShaderResourceBindings *tileBindings(quint64 resource_id) const;
     void invalidateTileBindings(quint64 resource_id);
     void clearTileHeatmapTexture(quint64 resource_id);
     bool recreateTileTexture(
@@ -237,12 +244,18 @@ public:
         QRhi *rhi, quint64 resource_id, const QSize &size);
     bool rebuildTileBindings(
         QRhi *rhi, quint64 resource_id);
+    bool recreateTileTexture(
+        quint64 resource_id, const QSize &size);
+    bool recreateTileHeatmapTexture(
+        quint64 resource_id, const QSize &size);
+    bool rebuildTileBindings(quint64 resource_id);
 
     void releaseDiagnosticHeatmapBakeResources();
     void releaseVisibleHeatmapBakeAtlasResources();
     bool ensureHeatmapBakeResources(
         QRhi *rhi,
         int texture_size);
+    bool ensureHeatmapBakeResources(int texture_size);
     MapRhiGlobeHeatmapBakeAtlas *ensureVisibleHeatmapBakeAtlasResources(
         QRhi *rhi,
         int slot_count,
@@ -265,8 +278,20 @@ public:
         int array_layer_count,
         int maximum_atlas_slots,
         MapRhiGlobeHeatmapBakeExecutionStats *stats);
+    bool recordVisibleHeatmapBakes(
+        QRhiCommandBuffer *command_buffer,
+        const QVector<MapRhiGlobeHeatmapBakeJob> &jobs,
+        int texture_size,
+        int array_layer_count,
+        int maximum_atlas_slots,
+        MapRhiGlobeHeatmapBakeExecutionStats *stats);
     bool recordDiagnosticHeatmapBake(
         QRhi *rhi,
+        QRhiCommandBuffer *command_buffer,
+        const QVector<MapRhiGlobeHeatmapBakeInstance> &instances,
+        int texture_size,
+        QString *failure_reason);
+    bool recordDiagnosticHeatmapBake(
         QRhiCommandBuffer *command_buffer,
         const QVector<MapRhiGlobeHeatmapBakeInstance> &instances,
         int texture_size,
@@ -275,12 +300,13 @@ public:
         QRhi *rhi,
         QRhiCommandBuffer *command_buffer,
         QRhiReadbackResult *readback_result) const;
+    bool queueDiagnosticHeatmapReadback(
+        QRhiCommandBuffer *command_buffer,
+        QRhiReadbackResult *readback_result) const;
 
     bool fallbackTextureUploadsPending() const;
     bool imageryArrayPipelineReady() const;
     bool heatmapArrayPipelineReady() const;
-    void populateSharedDrawResources(
-        MapRhiGlobeSurfaceDrawResources *draw_resources) const;
 
     bool hasPendingGeometryUploads(
         const MapGlobeSurfaceRenderFrame &frame) const;
@@ -289,9 +315,16 @@ public:
         QRhi *rhi,
         QRhiResourceUpdateBatch *resource_updates,
         const MapGlobeSurfaceRenderFrame &frame);
+    bool uploadGeometry(
+        QRhiResourceUpdateBatch *resource_updates,
+        const MapGlobeSurfaceRenderFrame &frame);
 
     bool uploadImageryArrayDrawIndices(
         QRhi *rhi,
+        QRhiResourceUpdateBatch *resource_updates,
+        const QVector<quint32> &indices,
+        qsizetype maximum_index_count);
+    bool uploadImageryArrayDrawIndices(
         QRhiResourceUpdateBatch *resource_updates,
         const QVector<quint32> &indices,
         qsizetype maximum_index_count);
@@ -300,13 +333,24 @@ public:
         QRhiResourceUpdateBatch *resource_updates,
         const QVector<quint32> &indices,
         qsizetype maximum_index_count);
+    bool uploadHeatmapArrayDrawIndices(
+        QRhiResourceUpdateBatch *resource_updates,
+        const QVector<quint32> &indices,
+        qsizetype maximum_index_count);
     bool uploadHeatmapArrayLayers(
         QRhi *rhi,
+        QRhiResourceUpdateBatch *resource_updates,
+        const QVector<float> &layers);
+    bool uploadHeatmapArrayLayers(
         QRhiResourceUpdateBatch *resource_updates,
         const QVector<float> &layers);
 
     bool createImageryArrayPage(
         QRhi *rhi,
+        const QSize &layer_size,
+        int layer_count,
+        int maximum_page_count);
+    bool createImageryArrayPage(
         const QSize &layer_size,
         int layer_count,
         int maximum_page_count);
@@ -316,11 +360,23 @@ public:
         const QSize &layer_size,
         int layer_count,
         int maximum_page_count);
+    bool createHeatmapArrayPage(
+        QRhiResourceUpdateBatch *resource_updates,
+        const QSize &layer_size,
+        int layer_count,
+        int maximum_page_count);
     bool createTerrainHeightArrayPage(
         QRhi *rhi,
         const QSize &layer_size,
         int layer_count,
         int maximum_page_count);
+    bool createTerrainHeightArrayPage(
+        const QSize &layer_size,
+        int layer_count,
+        int maximum_page_count);
+    void popImageryArrayPage();
+    void popHeatmapArrayPage();
+    void clearTerrainHeightArrayPages();
 
     // Applies a small CPU-side window-vertex change directly to the retained
     // GPU allocation when that allocation is current and large enough.
@@ -350,6 +406,32 @@ public:
     const std::vector<MapRhiGlobeTerrainHeightArrayPage> &terrainHeightArrayPages() const;
 
 private:
+    bool rebuildTileBindings(
+        QRhi *rhi,
+        QRhiTexture *imagery_texture,
+        QRhiTexture *heatmap_texture,
+        std::unique_ptr<QRhiShaderResourceBindings> *bindings);
+    bool recreateRgba8Texture(
+        QRhi *rhi,
+        const QSize &size,
+        std::unique_ptr<QRhiTexture> *texture);
+
+    struct ImageryArrayPageGpuResource
+    {
+        std::unique_ptr<QRhiTexture> texture;
+        std::unique_ptr<QRhiShaderResourceBindings> bindings;
+    };
+
+    struct HeatmapArrayPageGpuResource
+    {
+        std::unique_ptr<QRhiTexture> texture;
+    };
+
+    struct TerrainHeightArrayPageGpuResource
+    {
+        std::unique_ptr<QRhiTexture> texture;
+    };
+
     struct TileGpuResource
     {
         std::unique_ptr<QRhiTexture> texture;
@@ -359,6 +441,17 @@ private:
 
     TileGpuResource *tileGpuResource(quint64 resource_id);
     const TileGpuResource *tileGpuResource(quint64 resource_id) const;
+
+    QRhi *rhi = nullptr;
+    QRhiRenderPassDescriptor *render_pass_descriptor = nullptr;
+    int sample_count = 1;
+    QRhiShaderResourceBindings *tileBindings(quint64 resource_id) const;
+    QRhiTexture *heatmapBakeDestinationTexture(
+        const MapRhiGlobeHeatmapBakeJob &job) const;
+    QRhiShaderResourceBindings *heatmapArrayBatchBinding(
+        int imagery_page_index, int heatmap_page_index) const;
+    static quint64 heatmapArrayBatchBindingKey(
+        int imagery_page_index, int heatmap_page_index);
 
     std::map<quint64, TileGpuResource> tile_gpu_resources;
     quint64 next_tile_gpu_resource_id = 1;
@@ -403,8 +496,14 @@ private:
     int heatmap_array_layer_buffer_size = 0;
 
     std::vector<MapRhiGlobeImageryArrayPage> imagery_array_pages;
+    std::vector<ImageryArrayPageGpuResource> imagery_array_page_gpu_resources;
     std::vector<MapRhiGlobeHeatmapArrayPage> heatmap_array_pages;
+    std::vector<HeatmapArrayPageGpuResource> heatmap_array_page_gpu_resources;
     std::vector<MapRhiGlobeTerrainHeightArrayPage> terrain_height_array_pages;
+    std::vector<TerrainHeightArrayPageGpuResource>
+        terrain_height_array_page_gpu_resources;
+    std::map<quint64, std::unique_ptr<QRhiShaderResourceBindings>>
+        heatmap_array_batch_bindings;
     MapRhiGlobeHeatmapBakeResources heatmap_bake_resources;
 };
 

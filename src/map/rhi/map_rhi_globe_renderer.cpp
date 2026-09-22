@@ -1184,7 +1184,7 @@ bool MapRhiGlobeRenderer::currentTerrainLodMatches(
 
 void MapRhiGlobeRenderer::resetTerrainHeightCache()
 {
-    this->surface_backend.terrainHeightArrayPages().clear();
+    this->surface_backend.clearTerrainHeightArrayPages();
     this->terrain_height_cache.clear();
     this->terrain_height_cache_frame = 0;
     this->terrain_height_cache_disabled = false;
@@ -1202,7 +1202,7 @@ void MapRhiGlobeRenderer::resetTerrainHeightCache()
 bool MapRhiGlobeRenderer::createTerrainHeightArrayPage()
 {
     return this->surface_backend.createTerrainHeightArrayPage(
-        this->rhi, QSize(MapTerrainTileGridSize, MapTerrainTileGridSize),
+        QSize(MapTerrainTileGridSize, MapTerrainTileGridSize),
         GlobeTerrainHeightArrayLayerCount,
         GlobeTerrainHeightArrayMaximumPageCount);
 }
@@ -1311,7 +1311,8 @@ MapRhiGlobeRenderer::ensureTerrainHeightCacheEntry(
 
     TerrainHeightArrayPage &page =
         this->surface_backend.terrainHeightArrayPages()[page_index];
-    if (!page.texture || page.free_layers.isEmpty())
+    if (!this->surface_backend.terrainHeightArrayPageReady(page_index)
+        || page.free_layers.isEmpty())
     {
         ++this->terrain_height_cache_profile.capacity_misses;
         return nullptr;
@@ -1336,7 +1337,7 @@ void MapRhiGlobeRenderer::prepareTerrainHeightCache(
         tile.terrain_height_array_ready = false;
     }
 
-    if (this->terrain_repository == nullptr || this->rhi == nullptr
+    if (this->terrain_repository == nullptr || !this->surface_backend.hasContext()
         || resource_updates == nullptr || !this->map_visible
         || this->window_tiles.isEmpty()
         || this->terrain_height_cache_disabled)
@@ -1371,18 +1372,18 @@ void MapRhiGlobeRenderer::prepareTerrainHeightCache(
     if (visible_terrain_keys.isEmpty())
         return;
 
-    if (!this->surface_backend.supportsTextureArrays(this->rhi)
-        || !this->surface_backend.supportsR32fTextures(this->rhi))
+    if (!this->surface_backend.supportsTextureArrays()
+        || !this->surface_backend.supportsR32fTextures())
     {
         this->terrain_height_cache_disabled = true;
         if (this->terrain_height_cache_profile.enabled)
         {
             qCDebug(globeTerrainHeightCachePerformanceLog).nospace()
                 << "status=unsupported texture_arrays="
-                << (this->surface_backend.supportsTextureArrays(this->rhi)
+                << (this->surface_backend.supportsTextureArrays()
                     ? 1 : 0)
                 << " r32f="
-                << (this->surface_backend.supportsR32fTextures(this->rhi)
+                << (this->surface_backend.supportsR32fTextures()
                     ? 1 : 0);
         }
         return;
@@ -1404,8 +1405,8 @@ void MapRhiGlobeRenderer::prepareTerrainHeightCache(
             && cache_iterator.value().array_layer >= 0
             && cache_iterator.value().array_layer
                 < GlobeTerrainHeightArrayLayerCount
-            && this->surface_backend.terrainHeightArrayPages()[
-                   cache_iterator.value().array_page].texture != nullptr;
+            && this->surface_backend.terrainHeightArrayPageReady(
+                cache_iterator.value().array_page);
         if (cache_iterator != this->terrain_height_cache.end()
             && !valid_assignment)
         {
@@ -1473,11 +1474,12 @@ void MapRhiGlobeRenderer::prepareTerrainHeightCache(
             reinterpret_cast<const char *>(
                 terrain_tile->elevations_m.constData()),
             int(byte_count));
-        TerrainHeightArrayPage &page =
-            this->surface_backend.terrainHeightArrayPages()[entry->array_page];
-        this->surface_backend.uploadTextureArrayLayerRaw(
-            resource_updates, page.texture.get(), entry->array_layer,
-            raw_heights);
+        if (!this->surface_backend.uploadTerrainHeightArrayPageLayerRaw(
+                resource_updates, entry->array_page, entry->array_layer,
+                raw_heights))
+        {
+            continue;
+        }
         entry->uploaded = true;
         ++this->terrain_height_cache_profile.uploads;
         this->terrain_height_cache_profile.upload_bytes +=
@@ -1957,8 +1959,7 @@ bool MapRhiGlobeRenderer::arrayBatchingActive() const
         return false;
     }
 
-    const TileArrayPage &first_page = this->surface_backend.imageryArrayPages().front();
-    return first_page.texture && first_page.bindings;
+    return this->surface_backend.imageryArrayPageReady(0);
 }
 
 void MapRhiGlobeRenderer::setTileArrayReady(GlobeTile &tile, bool ready)
@@ -2045,7 +2046,8 @@ void MapRhiGlobeRenderer::trimUnusedTileArrayPages()
         if (page.free_layers.size() != GlobeTileArrayUsableLayerCount)
             break;
         this->heatmap_array_draw_batches.clear();
-        this->surface_backend.imageryArrayPages().pop_back();
+        this->surface_backend.clearHeatmapArrayBatchBindings();
+        this->surface_backend.popImageryArrayPage();
         this->tile_array_draw_indices_dirty = true;
         this->heatmap_array_draw_indices_dirty = true;
     }
@@ -2059,7 +2061,8 @@ void MapRhiGlobeRenderer::trimUnusedHeatmapArrayPages()
         if (page.free_layers.size() != GlobeTileArrayUsableLayerCount)
             break;
         this->heatmap_array_draw_batches.clear();
-        this->surface_backend.heatmapArrayPages().pop_back();
+        this->surface_backend.clearHeatmapArrayBatchBindings();
+        this->surface_backend.popHeatmapArrayPage();
         this->heatmap_array_draw_indices_dirty = true;
     }
 }
@@ -2124,9 +2127,8 @@ void MapRhiGlobeRenderer::rebuildTileArrayDrawIndices()
         bool valid_page = false;
         if (valid_page_index)
         {
-            const TileArrayPage &page =
-                this->surface_backend.imageryArrayPages()[tile.resource->array_page];
-            valid_page = page.texture && page.bindings;
+            valid_page = this->surface_backend.imageryArrayPageReady(
+                tile.resource->array_page);
         }
         const bool valid_resource = valid_page
             && tile.resource->array_layer > 0
@@ -2188,7 +2190,7 @@ bool MapRhiGlobeRenderer::uploadTileArrayDrawIndices(
     }
 
     if (!this->surface_backend.uploadImageryArrayDrawIndices(
-            this->rhi, resource_updates, this->tile_array_draw_indices,
+            resource_updates, this->tile_array_draw_indices,
             this->window_indices.size()))
     {
         return false;
@@ -2208,9 +2210,7 @@ bool MapRhiGlobeRenderer::heatmapArrayBatchingActive() const
         return false;
     }
 
-    const HeatmapArrayPage &first_page =
-        this->surface_backend.heatmapArrayPages().front();
-    return first_page.texture != nullptr;
+    return this->surface_backend.heatmapArrayPageReady(0);
 }
 
 bool MapRhiGlobeRenderer::rebuildHeatmapArrayDrawIndices()
@@ -2238,9 +2238,8 @@ bool MapRhiGlobeRenderer::rebuildHeatmapArrayDrawIndices()
         bool valid_imagery_page = false;
         if (valid_imagery_page_index)
         {
-            const TileArrayPage &page =
-                this->surface_backend.imageryArrayPages()[tile.resource->array_page];
-            valid_imagery_page = page.texture && page.bindings;
+            valid_imagery_page = this->surface_backend.imageryArrayPageReady(
+                tile.resource->array_page);
         }
 
         const bool has_heatmap = tile.resource != nullptr
@@ -2252,10 +2251,8 @@ bool MapRhiGlobeRenderer::rebuildHeatmapArrayDrawIndices()
         bool valid_heatmap_page = !has_heatmap;
         if (valid_heatmap_page_index)
         {
-            const HeatmapArrayPage &page =
-                this->surface_backend.heatmapArrayPages()[
-                    tile.resource->heatmap_array_page];
-            valid_heatmap_page = page.texture != nullptr;
+            valid_heatmap_page = this->surface_backend.heatmapArrayPageReady(
+                tile.resource->heatmap_array_page);
         }
         const bool valid_heatmap = valid_heatmap_page
             && (!has_heatmap
@@ -2333,19 +2330,18 @@ bool MapRhiGlobeRenderer::rebuildHeatmapArrayDrawIndices()
                 continue;
 
             HeatmapArrayDrawBatch batch;
+            batch.imagery_page_index = imagery_page_index;
+            batch.heatmap_page_index = heatmap_page_index;
             batch.first_draw_index = first_draw_index;
             batch.draw_index_count = draw_index_count;
-            if (!this->surface_backend.rebuildHeatmapArrayBindings(
-                    this->rhi,
-                    this->surface_backend.imageryArrayPages()[imagery_page_index].texture.get(),
-                    this->surface_backend.heatmapArrayPages()[heatmap_page_index].texture.get(),
-                    &batch.bindings))
+            if (!this->surface_backend.ensureHeatmapArrayBatchBinding(
+                    imagery_page_index, heatmap_page_index))
             {
                 this->heatmap_array_draw_indices.clear();
                 this->heatmap_array_draw_batches.clear();
                 return false;
             }
-            this->heatmap_array_draw_batches.push_back(std::move(batch));
+            this->heatmap_array_draw_batches.push_back(batch);
         }
     }
 
@@ -2375,7 +2371,7 @@ bool MapRhiGlobeRenderer::uploadHeatmapArrayDrawIndices(
     }
 
     if (!this->surface_backend.uploadHeatmapArrayDrawIndices(
-            this->rhi, resource_updates,
+            resource_updates,
             this->heatmap_array_draw_indices, this->window_indices.size()))
     {
         return false;
@@ -2401,7 +2397,7 @@ bool MapRhiGlobeRenderer::uploadHeatmapArrayLayers(
     }
 
     if (!this->surface_backend.uploadHeatmapArrayLayers(
-            this->rhi, resource_updates,
+            resource_updates,
             this->window_heatmap_array_layers))
     {
         return false;
@@ -2555,9 +2551,8 @@ bool MapRhiGlobeRenderer::ensureTileArrayLayer(
         && resource->array_layer < GlobeTileArrayLayerCount;
     if (valid_assignment)
     {
-        const TileArrayPage &page =
-            this->surface_backend.imageryArrayPages()[resource->array_page];
-        valid_assignment = page.texture && page.bindings;
+        valid_assignment = this->surface_backend.imageryArrayPageReady(
+            resource->array_page);
     }
     if (!valid_assignment
         && (resource->array_page >= 0 || resource->array_layer >= 0))
@@ -2634,10 +2629,12 @@ bool MapRhiGlobeRenderer::ensureTileArrayLayer(
             return true;
         }
 
-        TileArrayPage &page =
-            this->surface_backend.imageryArrayPages()[resource->array_page];
-        this->surface_backend.uploadTextureArrayLayer(
-            resource_updates, page.texture.get(), resource->array_layer, image);
+        if (!this->surface_backend.uploadImageryArrayPageLayer(
+                resource_updates, resource->array_page,
+                resource->array_layer, image))
+        {
+            return false;
+        }
         resource->array_content_revision = resource->content_revision;
     }
 
@@ -2737,9 +2734,8 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
         && resource->heatmap_array_layer < GlobeTileArrayLayerCount;
     if (valid_assignment)
     {
-        const HeatmapArrayPage &page =
-            this->surface_backend.heatmapArrayPages()[resource->heatmap_array_page];
-        valid_assignment = page.texture != nullptr;
+        valid_assignment = this->surface_backend.heatmapArrayPageReady(
+            resource->heatmap_array_page);
     }
     if (!valid_assignment
         && (resource->heatmap_array_page >= 0
@@ -2819,11 +2815,11 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
                 return true;
             }
 
-            HeatmapArrayPage &page = this->surface_backend.heatmapArrayPages()[
-                resource->heatmap_array_page];
             if (ensureDiagnosticHeatmapGpuBakeResources()
                 && queueHeatmapGpuBake(
-                    resource, page.texture.get(), *stamps,
+                    resource,
+                    MapRhiGlobeHeatmapBakeDestination::HeatmapArrayLayer,
+                    *stamps, resource->heatmap_array_page,
                     resource->heatmap_array_layer))
             {
                 // Reserve both revisions so the fused draw list built later
@@ -2868,11 +2864,12 @@ bool MapRhiGlobeRenderer::ensureTileHeatmapArray(
             return true;
         }
 
-        HeatmapArrayPage &page =
-            this->surface_backend.heatmapArrayPages()[resource->heatmap_array_page];
-        this->surface_backend.uploadTextureArrayLayer(
-            resource_updates, page.texture.get(),
-            resource->heatmap_array_layer, image);
+        if (!this->surface_backend.uploadHeatmapArrayPageLayer(
+                resource_updates, resource->heatmap_array_page,
+                resource->heatmap_array_layer, image))
+        {
+            return false;
+        }
         if (this->heatmap_profile.enabled)
         {
             ++this->heatmap_profile.array_uploads;
@@ -2915,29 +2912,6 @@ bool MapRhiGlobeRenderer::tileBindingsReady(const TileResource *resource) const
         && this->surface_backend.hasTileBindings(resource->gpu_resource_id);
 }
 
-QRhiTexture *MapRhiGlobeRenderer::tileTexture(const TileResource *resource) const
-{
-    return resource != nullptr
-        ? this->surface_backend.tileTexture(resource->gpu_resource_id)
-        : nullptr;
-}
-
-QRhiTexture *MapRhiGlobeRenderer::tileHeatmapTexture(
-    const TileResource *resource) const
-{
-    return resource != nullptr
-        ? this->surface_backend.tileHeatmapTexture(resource->gpu_resource_id)
-        : nullptr;
-}
-
-QRhiShaderResourceBindings *MapRhiGlobeRenderer::tileBindings(
-    const TileResource *resource) const
-{
-    return resource != nullptr
-        ? this->surface_backend.tileBindings(resource->gpu_resource_id)
-        : nullptr;
-}
-
 void MapRhiGlobeRenderer::invalidateTileBindings(TileResource *resource)
 {
     if (resource != nullptr)
@@ -2955,7 +2929,7 @@ bool MapRhiGlobeRenderer::recreateTileTexture(
 {
     return ensureTileGpuResource(resource)
         && this->surface_backend.recreateTileTexture(
-            this->rhi, resource->gpu_resource_id, size);
+            resource->gpu_resource_id, size);
 }
 
 bool MapRhiGlobeRenderer::recreateTileHeatmapTexture(
@@ -2963,7 +2937,7 @@ bool MapRhiGlobeRenderer::recreateTileHeatmapTexture(
 {
     return ensureTileGpuResource(resource)
         && this->surface_backend.recreateTileHeatmapTexture(
-            this->rhi, resource->gpu_resource_id, size);
+            resource->gpu_resource_id, size);
 }
 
 bool MapRhiGlobeRenderer::rebuildTileBindings(TileResource *resource)
@@ -2971,7 +2945,7 @@ bool MapRhiGlobeRenderer::rebuildTileBindings(TileResource *resource)
     if (!ensureTileGpuResource(resource) || !tileTextureReady(resource))
         return false;
     return this->surface_backend.rebuildTileBindings(
-        this->rhi, resource->gpu_resource_id);
+        resource->gpu_resource_id);
 }
 
 bool MapRhiGlobeRenderer::ensureTileResource(
@@ -2996,8 +2970,11 @@ bool MapRhiGlobeRenderer::ensureTileResource(
             image.fill(GlobePolarCapColor);
             if (!recreateTileTexture(&this->cap_resource, image.size()))
                 return false;
-            this->surface_backend.uploadTextureImage(
-                resource_updates, tileTexture(&this->cap_resource), image);
+            if (!this->surface_backend.uploadTileTextureImage(
+                    resource_updates, this->cap_resource.gpu_resource_id, image))
+            {
+                return false;
+            }
         }
         if (!tileBindingsReady(&this->cap_resource)
             && !rebuildTileBindings(&this->cap_resource))
@@ -3055,8 +3032,11 @@ bool MapRhiGlobeRenderer::ensureTileResource(
         {
             return false;
         }
-        this->surface_backend.uploadTextureImage(
-            resource_updates, tileTexture(resource), image);
+        if (!this->surface_backend.uploadTileTextureImage(
+                resource_updates, resource->gpu_resource_id, image))
+        {
+            return false;
+        }
         resource->pixmap_cache_key = cache_key;
         resource->is_provisional = false;
         resource->provisional_source_key.clear();
@@ -3177,8 +3157,11 @@ bool MapRhiGlobeRenderer::ensureProvisionalTileResource(
         {
             return false;
         }
-        this->surface_backend.uploadTextureImage(
-            resource_updates, tileTexture(resource), composite);
+        if (!this->surface_backend.uploadTileTextureImage(
+                resource_updates, resource->gpu_resource_id, composite))
+        {
+            return false;
+        }
         resource->pixmap_cache_key = -1;
         resource->is_provisional = true;
         resource->provisional_source_key = children_key;
@@ -3234,8 +3217,11 @@ bool MapRhiGlobeRenderer::ensureProvisionalTileResource(
         {
             return false;
         }
-        this->surface_backend.uploadTextureImage(
-            resource_updates, tileTexture(resource), fallback_image);
+        if (!this->surface_backend.uploadTileTextureImage(
+                resource_updates, resource->gpu_resource_id, fallback_image))
+        {
+            return false;
+        }
         resource->pixmap_cache_key = -1;
         resource->is_provisional = true;
         resource->provisional_source_key = ancestor_key;
@@ -3369,11 +3355,13 @@ MapRhiGlobeRenderer::heatmapStampsForTile(
 }
 
 bool MapRhiGlobeRenderer::queueHeatmapGpuBake(
-    TileResource *resource, QRhiTexture *destination_texture,
-    const QVector<HeatmapStamp> &stamps, int destination_layer)
+    TileResource *resource,
+    MapRhiGlobeHeatmapBakeDestination destination,
+    const QVector<HeatmapStamp> &stamps,
+    int heatmap_array_page, int destination_layer)
 {
-    if (this->heatmap_gpu_baking_disabled || this->rhi == nullptr
-        || resource == nullptr || destination_texture == nullptr
+    if (this->heatmap_gpu_baking_disabled || !this->surface_backend.hasContext()
+        || resource == nullptr
         || destination_layer < 0
         || destination_layer >= GlobeTileArrayLayerCount
         || stamps.isEmpty())
@@ -3381,20 +3369,31 @@ bool MapRhiGlobeRenderer::queueHeatmapGpuBake(
         return false;
     }
 
+    if (destination == MapRhiGlobeHeatmapBakeDestination::TileHeatmapTexture)
+    {
+        if (!tileHeatmapTextureReady(resource))
+            return false;
+    }
+    else if (heatmap_array_page < 0
+             || !this->surface_backend.heatmapArrayPageReady(
+                 heatmap_array_page))
+    {
+        return false;
+    }
+
     HeatmapGpuBakeJob job;
     job.resource = resource;
-    job.destination_texture = destination_texture;
+    job.destination = destination;
+    job.tile_gpu_resource_id = resource->gpu_resource_id;
+    job.heatmap_array_page = heatmap_array_page;
     job.destination_layer = destination_layer;
     job.revision = this->heatmap_scene.revision();
     job.instances.reserve(stamps.size());
     // The bake shader writes raw clip-space positions and deliberately does
     // not use QRhi::clipSpaceCorrMatrix(). Therefore the input Y correction
     // must follow the backend's NDC convention, not its framebuffer-origin
-    // convention. Using isYUpInFramebuffer() here vertically mirrored every
-    // baked heatmap tile on Y-down-NDC backends (notably Vulkan), so stamps
-    // crossing tile boundaries no longer lined up and appeared as clipped
-    // rectangular bands/detached blobs.
-    const bool flip_for_ndc = !this->surface_backend.isYUpInNdc(this->rhi);
+    // convention.
+    const bool flip_for_ndc = !this->surface_backend.isYUpInNdc();
     for (const HeatmapStamp &stamp : stamps)
     {
         HeatmapBakeInstance instance;
@@ -3449,8 +3448,8 @@ void MapRhiGlobeRenderer::scheduleDiagnosticHeatmapGpuBake(
 
     this->diagnostic_heatmap_bake_instances.clear();
     this->diagnostic_heatmap_bake_instances.reserve(stamps.size());
-    const bool flip_for_ndc = this->rhi != nullptr
-        && !this->surface_backend.isYUpInNdc(this->rhi);
+    const bool flip_for_ndc = this->surface_backend.hasContext()
+        && !this->surface_backend.isYUpInNdc();
     for (const HeatmapStamp &stamp : stamps)
     {
         HeatmapBakeInstance instance;
@@ -3534,7 +3533,7 @@ void MapRhiGlobeRenderer::releaseVisibleHeatmapGpuBakeAtlasResources()
 bool MapRhiGlobeRenderer::ensureDiagnosticHeatmapGpuBakeResources()
 {
     return this->surface_backend.ensureHeatmapBakeResources(
-        this->rhi, GlobeHeatmapTextureSize);
+        GlobeHeatmapTextureSize);
 }
 
 bool MapRhiGlobeRenderer::runPendingHeatmapGpuBakes(
@@ -3547,7 +3546,7 @@ bool MapRhiGlobeRenderer::runPendingHeatmapGpuBakes(
     backend_jobs.reserve(this->heatmap_gpu_bake_jobs.size());
     for (const HeatmapGpuBakeJob &job : this->heatmap_gpu_bake_jobs)
     {
-        if (job.resource == nullptr || job.destination_texture == nullptr
+        if (job.resource == nullptr
             || job.destination_layer < 0
             || job.destination_layer >= GlobeTileArrayLayerCount
             || job.revision != this->heatmap_scene.revision()
@@ -3558,7 +3557,9 @@ bool MapRhiGlobeRenderer::runPendingHeatmapGpuBakes(
         }
 
         MapRhiGlobeHeatmapBakeJob backend_job;
-        backend_job.destination_texture = job.destination_texture;
+        backend_job.destination = job.destination;
+        backend_job.tile_gpu_resource_id = job.tile_gpu_resource_id;
+        backend_job.heatmap_array_page = job.heatmap_array_page;
         backend_job.destination_layer = job.destination_layer;
         backend_job.instances = &job.instances;
         backend_jobs.append(backend_job);
@@ -3566,7 +3567,7 @@ bool MapRhiGlobeRenderer::runPendingHeatmapGpuBakes(
 
     MapRhiGlobeHeatmapBakeExecutionStats execution_stats;
     if (!this->surface_backend.recordVisibleHeatmapBakes(
-            this->rhi, command_buffer, backend_jobs,
+            command_buffer, backend_jobs,
             GlobeHeatmapTextureSize, GlobeTileArrayLayerCount,
             GlobeHeatmapGpuBakeAtlasMaximumSlots, &execution_stats))
     {
@@ -3606,8 +3607,8 @@ bool MapRhiGlobeRenderer::runPendingHeatmapGpuBakes(
         << " array_config="
         << (guiConfiguration().map_performance.array_batching_enabled ? 1 : 0)
         << " texture_arrays="
-        << (this->rhi != nullptr
-                && this->surface_backend.supportsTextureArrays(this->rhi)
+        << (this->surface_backend.hasContext()
+                && this->surface_backend.supportsTextureArrays()
             ? 1 : 0)
         << " imagery_array_pipeline="
         << (this->surface_backend.imageryArrayPipelineReady() ? 1 : 0)
@@ -3634,7 +3635,7 @@ void MapRhiGlobeRenderer::runDiagnosticHeatmapGpuBake(
     {
         const bool bake_recorded =
             this->surface_backend.recordDiagnosticHeatmapBake(
-                this->rhi, command_buffer,
+                command_buffer,
                 this->diagnostic_heatmap_bake_instances,
                 GlobeHeatmapTextureSize, &failure);
         if (bake_recorded)
@@ -3676,7 +3677,7 @@ void MapRhiGlobeRenderer::runDiagnosticHeatmapGpuBake(
                 };
 
                 if (this->surface_backend.queueDiagnosticHeatmapReadback(
-                        this->rhi, command_buffer, readback_result))
+                        command_buffer, readback_result))
                 {
                     ++this->heatmap_profile.gpu_validation_readbacks;
                 }
@@ -3813,7 +3814,9 @@ bool MapRhiGlobeRenderer::ensureHeatmapTexture(
 
             if (!this->heatmap_gpu_baking_disabled
                 && queueHeatmapGpuBake(
-                    resource, tileHeatmapTexture(resource), *stamps))
+                    resource,
+                    MapRhiGlobeHeatmapBakeDestination::TileHeatmapTexture,
+                    *stamps))
             {
                 // Treat the sampled texture as current for the fallback
                 // check later in this prepare(), but do not commit the
@@ -3840,8 +3843,11 @@ bool MapRhiGlobeRenderer::ensureHeatmapTexture(
             }
             bindings_changed = true;
         }
-        this->surface_backend.uploadTextureImage(
-            resource_updates, tileHeatmapTexture(resource), image);
+        if (!this->surface_backend.uploadTileHeatmapTextureImage(
+                resource_updates, resource->gpu_resource_id, image))
+        {
+            return false;
+        }
         if (this->heatmap_profile.enabled)
         {
             ++this->heatmap_profile.fallback_uploads;
@@ -3930,7 +3936,9 @@ bool MapRhiGlobeRenderer::ensureHeatmapFallbackTexture(
 
             if (tileHeatmapTextureReady(resource)
                 && queueHeatmapGpuBake(
-                    resource, tileHeatmapTexture(resource), *stamps))
+                    resource,
+                    MapRhiGlobeHeatmapBakeDestination::TileHeatmapTexture,
+                    *stamps))
             {
                 resource->heatmap_texture_revision =
                     this->heatmap_scene.revision();
@@ -3960,8 +3968,11 @@ bool MapRhiGlobeRenderer::ensureHeatmapFallbackTexture(
         }
         bindings_changed = true;
     }
-    this->surface_backend.uploadTextureImage(
-            resource_updates, tileHeatmapTexture(resource), image);
+    if (!this->surface_backend.uploadTileHeatmapTextureImage(
+            resource_updates, resource->gpu_resource_id, image))
+    {
+        return false;
+    }
     if (this->heatmap_profile.enabled)
     {
         ++this->heatmap_profile.fallback_uploads;
@@ -4143,8 +4154,8 @@ void MapRhiGlobeRenderer::reportHeatmapProfile() const
         << " array_config="
         << (guiConfiguration().map_performance.array_batching_enabled ? 1 : 0)
         << " texture_arrays="
-        << (this->rhi != nullptr
-                && this->surface_backend.supportsTextureArrays(this->rhi)
+        << (this->surface_backend.hasContext()
+                && this->surface_backend.supportsTextureArrays()
             ? 1 : 0)
         << " imagery_array_pipeline="
         << (this->surface_backend.imageryArrayPipelineReady() ? 1 : 0)
@@ -4411,7 +4422,7 @@ bool MapRhiGlobeRenderer::applyReadyTerrainMeshes(
 bool MapRhiGlobeRenderer::createTileArrayPage()
 {
     const bool created = this->surface_backend.createImageryArrayPage(
-        this->rhi, QSize(MapModel::TileSize, MapModel::TileSize),
+        QSize(MapModel::TileSize, MapModel::TileSize),
         GlobeTileArrayLayerCount, GlobeTileArrayMaximumPageCount);
     if (created)
     {
@@ -4426,29 +4437,27 @@ bool MapRhiGlobeRenderer::createTileArrayResources()
     if (this->map_model == nullptr
         || this->map_model->viewMode() != MapViewMode::Globe
         || !guiConfiguration().map_performance.array_batching_enabled
-        || this->rhi == nullptr
-        || this->render_pass_descriptor == nullptr)
+        || !this->surface_backend.hasContext())
     {
         return false;
     }
 
     if (this->surface_backend.imageryArrayPages().empty())
     {
-        if (!this->surface_backend.supportsTextureArrays(this->rhi))
+        if (!this->surface_backend.supportsTextureArrays())
             return false;
         if (!createTileArrayPage())
             return false;
     }
 
-    return this->surface_backend.ensureImageryArrayPipeline(
-        this->rhi, this->render_pass_descriptor, this->sample_count);
+    return this->surface_backend.ensureImageryArrayPipeline();
 }
 
 bool MapRhiGlobeRenderer::createHeatmapArrayPage(
     QRhiResourceUpdateBatch *resource_updates)
 {
     const bool created = this->surface_backend.createHeatmapArrayPage(
-        this->rhi, resource_updates,
+        resource_updates,
         QSize(GlobeHeatmapTextureSize, GlobeHeatmapTextureSize),
         GlobeTileArrayLayerCount, GlobeTileArrayMaximumPageCount);
     if (created)
@@ -4462,8 +4471,7 @@ bool MapRhiGlobeRenderer::createHeatmapArrayResources(
     if (this->map_model == nullptr
         || this->map_model->viewMode() != MapViewMode::Globe
         || !guiConfiguration().map_performance.array_batching_enabled
-        || this->rhi == nullptr
-        || this->render_pass_descriptor == nullptr
+        || !this->surface_backend.hasContext()
         || resource_updates == nullptr)
     {
         return false;
@@ -4471,24 +4479,21 @@ bool MapRhiGlobeRenderer::createHeatmapArrayResources(
 
     if (this->surface_backend.heatmapArrayPages().empty())
     {
-        if (!this->surface_backend.supportsTextureArrays(this->rhi))
+        if (!this->surface_backend.supportsTextureArrays())
             return false;
         if (!createHeatmapArrayPage(resource_updates))
             return false;
     }
 
-    return this->surface_backend.ensureHeatmapArrayPipeline(
-        this->rhi, this->render_pass_descriptor, this->sample_count);
+    return this->surface_backend.ensureHeatmapArrayPipeline();
 }
 
 bool MapRhiGlobeRenderer::ensureSharedResources()
 {
-    if (this->rhi == nullptr || this->render_pass_descriptor == nullptr)
+    if (!this->surface_backend.hasContext())
         return false;
 
-    if (!this->surface_backend.ensureSharedResources(
-            this->rhi, this->render_pass_descriptor,
-            this->sample_count))
+    if (!this->surface_backend.ensureSharedResources())
     {
         return false;
     }
@@ -4506,10 +4511,11 @@ bool MapRhiGlobeRenderer::initialize(
     if (rhi_instance == nullptr || render_pass_descriptor_instance == nullptr)
         return false;
 
-    const bool context_changed = this->rhi != rhi_instance;
+    const bool context_changed =
+        !this->surface_backend.contextMatches(rhi_instance);
     const bool render_pass_changed =
-        this->render_pass_descriptor != render_pass_descriptor_instance
-        || this->sample_count != sample_count_value;
+        !this->surface_backend.renderPassMatches(
+            render_pass_descriptor_instance, sample_count_value);
 
     if (context_changed)
     {
@@ -4535,9 +4541,8 @@ bool MapRhiGlobeRenderer::initialize(
         this->full_prepare_clock.invalidate();
     }
 
-    this->rhi = rhi_instance;
-    this->render_pass_descriptor = render_pass_descriptor_instance;
-    this->sample_count = sample_count_value;
+    this->surface_backend.setContext(
+        rhi_instance, render_pass_descriptor_instance, sample_count_value);
 
     buildCaps();
     return ensureSharedResources();
@@ -4736,7 +4741,8 @@ bool MapRhiGlobeRenderer::prepare(
     const QColor &background_color, float background_opacity,
     bool allow_camera_only_prepare)
 {
-    if (this->rhi == nullptr || resource_updates == nullptr || this->map_model == nullptr)
+    if (!this->surface_backend.hasContext()
+        || resource_updates == nullptr || this->map_model == nullptr)
         return false;
     if (!ensureSharedResources())
         return false;
@@ -4844,7 +4850,7 @@ bool MapRhiGlobeRenderer::prepare(
     rebuildPreparedSurfaceRenderFrame(viewport_size);
 
     if (!this->surface_backend.uploadGeometry(
-            this->rhi, resource_updates,
+            resource_updates,
             this->prepared_surface_render_frame))
     {
         return false;
@@ -4900,8 +4906,6 @@ void MapRhiGlobeRenderer::draw(QRhiCommandBuffer *command_buffer)
     draw_resources.imagery_array_batches.clear();
     draw_resources.heatmap_array_batches.clear();
 
-    this->surface_backend.populateSharedDrawResources(&draw_resources);
-
     draw_resources.imagery_array_active = arrayBatchingActive()
         && !this->tile_array_draw_indices.isEmpty();
     draw_resources.heatmap_array_active = heatmapArrayBatchingActive()
@@ -4914,7 +4918,7 @@ void MapRhiGlobeRenderer::draw(QRhiCommandBuffer *command_buffer)
         MapRhiGlobeSurfaceTileDrawState state;
         state.array_ready = tile.array_ready;
         if (tile.resource != nullptr && tileBindingsReady(tile.resource))
-            state.bindings = tileBindings(tile.resource);
+            state.gpu_resource_id = tile.resource->gpu_resource_id;
         draw_resources.window_tiles.append(state);
     }
 
@@ -4923,18 +4927,25 @@ void MapRhiGlobeRenderer::draw(QRhiCommandBuffer *command_buffer)
     {
         MapRhiGlobeSurfaceTileDrawState state;
         if (tile.resource != nullptr && tileBindingsReady(tile.resource))
-            state.bindings = tileBindings(tile.resource);
+            state.gpu_resource_id = tile.resource->gpu_resource_id;
         draw_resources.cap_tiles.append(state);
     }
 
     draw_resources.imagery_array_batches.reserve(
         this->surface_backend.imageryArrayPages().size());
-    for (const TileArrayPage &page : this->surface_backend.imageryArrayPages())
+    for (int page_index = 0;
+         page_index < int(this->surface_backend.imageryArrayPages().size());
+         ++page_index)
     {
-        if (!page.bindings || page.draw_index_count <= 0)
+        const TileArrayPage &page =
+            this->surface_backend.imageryArrayPages()[page_index];
+        if (!this->surface_backend.imageryArrayPageReady(page_index)
+            || page.draw_index_count <= 0)
+        {
             continue;
+        }
         MapRhiGlobeSurfaceBatch batch;
-        batch.bindings = page.bindings.get();
+        batch.imagery_page_index = page_index;
         batch.first_draw_index = page.first_draw_index;
         batch.draw_index_count = page.draw_index_count;
         draw_resources.imagery_array_batches.push_back(batch);
@@ -4945,10 +4956,11 @@ void MapRhiGlobeRenderer::draw(QRhiCommandBuffer *command_buffer)
     for (const HeatmapArrayDrawBatch &page_batch :
          this->heatmap_array_draw_batches)
     {
-        if (!page_batch.bindings || page_batch.draw_index_count <= 0)
+        if (page_batch.draw_index_count <= 0)
             continue;
         MapRhiGlobeSurfaceBatch batch;
-        batch.bindings = page_batch.bindings.get();
+        batch.imagery_page_index = page_batch.imagery_page_index;
+        batch.heatmap_page_index = page_batch.heatmap_page_index;
         batch.first_draw_index = page_batch.first_draw_index;
         batch.draw_index_count = page_batch.draw_index_count;
         draw_resources.heatmap_array_batches.push_back(batch);

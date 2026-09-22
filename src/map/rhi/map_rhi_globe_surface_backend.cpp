@@ -69,6 +69,188 @@ bool ensureDynamicBuffer(
 MapRhiGlobeSurfaceBackend::MapRhiGlobeSurfaceBackend() = default;
 MapRhiGlobeSurfaceBackend::~MapRhiGlobeSurfaceBackend() = default;
 
+bool MapRhiGlobeSurfaceBackend::hasContext() const
+{
+    return this->rhi != nullptr && this->render_pass_descriptor != nullptr;
+}
+
+bool MapRhiGlobeSurfaceBackend::contextMatches(QRhi *rhi) const
+{
+    return this->rhi == rhi;
+}
+
+bool MapRhiGlobeSurfaceBackend::renderPassMatches(
+    QRhiRenderPassDescriptor *render_pass_descriptor,
+    int sample_count) const
+{
+    return this->render_pass_descriptor == render_pass_descriptor
+        && this->sample_count == sample_count;
+}
+
+void MapRhiGlobeSurfaceBackend::setContext(
+    QRhi *rhi,
+    QRhiRenderPassDescriptor *render_pass_descriptor,
+    int sample_count)
+{
+    this->rhi = rhi;
+    this->render_pass_descriptor = render_pass_descriptor;
+    this->sample_count = sample_count;
+}
+
+bool MapRhiGlobeSurfaceBackend::ensureSharedResources()
+{
+    return ensureSharedResources(
+        this->rhi, this->render_pass_descriptor, this->sample_count);
+}
+
+bool MapRhiGlobeSurfaceBackend::ensureImageryArrayPipeline()
+{
+    return ensureImageryArrayPipeline(
+        this->rhi, this->render_pass_descriptor, this->sample_count);
+}
+
+bool MapRhiGlobeSurfaceBackend::ensureHeatmapArrayPipeline()
+{
+    return ensureHeatmapArrayPipeline(
+        this->rhi, this->render_pass_descriptor, this->sample_count);
+}
+
+bool MapRhiGlobeSurfaceBackend::ensureHeatmapArrayBatchBinding(
+    int imagery_page_index, int heatmap_page_index)
+{
+    return ensureHeatmapArrayBatchBinding(
+        this->rhi, imagery_page_index, heatmap_page_index);
+}
+
+bool MapRhiGlobeSurfaceBackend::supportsTextureArrays() const
+{
+    return supportsTextureArrays(this->rhi);
+}
+
+bool MapRhiGlobeSurfaceBackend::supportsR32fTextures() const
+{
+    return supportsR32fTextures(this->rhi);
+}
+
+bool MapRhiGlobeSurfaceBackend::isYUpInNdc() const
+{
+    return isYUpInNdc(this->rhi);
+}
+
+bool MapRhiGlobeSurfaceBackend::recreateTileTexture(
+    quint64 resource_id, const QSize &size)
+{
+    return recreateTileTexture(this->rhi, resource_id, size);
+}
+
+bool MapRhiGlobeSurfaceBackend::recreateTileHeatmapTexture(
+    quint64 resource_id, const QSize &size)
+{
+    return recreateTileHeatmapTexture(this->rhi, resource_id, size);
+}
+
+bool MapRhiGlobeSurfaceBackend::rebuildTileBindings(quint64 resource_id)
+{
+    return rebuildTileBindings(this->rhi, resource_id);
+}
+
+bool MapRhiGlobeSurfaceBackend::ensureHeatmapBakeResources(int texture_size)
+{
+    return ensureHeatmapBakeResources(this->rhi, texture_size);
+}
+
+bool MapRhiGlobeSurfaceBackend::recordVisibleHeatmapBakes(
+    QRhiCommandBuffer *command_buffer,
+    const QVector<MapRhiGlobeHeatmapBakeJob> &jobs,
+    int texture_size,
+    int array_layer_count,
+    int maximum_atlas_slots,
+    MapRhiGlobeHeatmapBakeExecutionStats *stats)
+{
+    return recordVisibleHeatmapBakes(
+        this->rhi, command_buffer, jobs, texture_size,
+        array_layer_count, maximum_atlas_slots, stats);
+}
+
+bool MapRhiGlobeSurfaceBackend::recordDiagnosticHeatmapBake(
+    QRhiCommandBuffer *command_buffer,
+    const QVector<MapRhiGlobeHeatmapBakeInstance> &instances,
+    int texture_size,
+    QString *failure_reason)
+{
+    return recordDiagnosticHeatmapBake(
+        this->rhi, command_buffer, instances, texture_size, failure_reason);
+}
+
+bool MapRhiGlobeSurfaceBackend::queueDiagnosticHeatmapReadback(
+    QRhiCommandBuffer *command_buffer,
+    QRhiReadbackResult *readback_result) const
+{
+    return queueDiagnosticHeatmapReadback(
+        this->rhi, command_buffer, readback_result);
+}
+
+bool MapRhiGlobeSurfaceBackend::uploadGeometry(
+    QRhiResourceUpdateBatch *resource_updates,
+    const MapGlobeSurfaceRenderFrame &frame)
+{
+    return uploadGeometry(this->rhi, resource_updates, frame);
+}
+
+bool MapRhiGlobeSurfaceBackend::uploadImageryArrayDrawIndices(
+    QRhiResourceUpdateBatch *resource_updates,
+    const QVector<quint32> &indices,
+    qsizetype maximum_index_count)
+{
+    return uploadImageryArrayDrawIndices(
+        this->rhi, resource_updates, indices, maximum_index_count);
+}
+
+bool MapRhiGlobeSurfaceBackend::uploadHeatmapArrayDrawIndices(
+    QRhiResourceUpdateBatch *resource_updates,
+    const QVector<quint32> &indices,
+    qsizetype maximum_index_count)
+{
+    return uploadHeatmapArrayDrawIndices(
+        this->rhi, resource_updates, indices, maximum_index_count);
+}
+
+bool MapRhiGlobeSurfaceBackend::uploadHeatmapArrayLayers(
+    QRhiResourceUpdateBatch *resource_updates,
+    const QVector<float> &layers)
+{
+    return uploadHeatmapArrayLayers(this->rhi, resource_updates, layers);
+}
+
+bool MapRhiGlobeSurfaceBackend::createImageryArrayPage(
+    const QSize &layer_size,
+    int layer_count,
+    int maximum_page_count)
+{
+    return createImageryArrayPage(
+        this->rhi, layer_size, layer_count, maximum_page_count);
+}
+
+bool MapRhiGlobeSurfaceBackend::createHeatmapArrayPage(
+    QRhiResourceUpdateBatch *resource_updates,
+    const QSize &layer_size,
+    int layer_count,
+    int maximum_page_count)
+{
+    return createHeatmapArrayPage(
+        this->rhi, resource_updates, layer_size, layer_count,
+        maximum_page_count);
+}
+
+bool MapRhiGlobeSurfaceBackend::createTerrainHeightArrayPage(
+    const QSize &layer_size,
+    int layer_count,
+    int maximum_page_count)
+{
+    return createTerrainHeightArrayPage(
+        this->rhi, layer_size, layer_count, maximum_page_count);
+}
+
 bool MapRhiGlobeSurfaceBackend::ensureSharedResources(
     QRhi *rhi,
     QRhiRenderPassDescriptor *render_pass_descriptor,
@@ -251,7 +433,8 @@ bool MapRhiGlobeSurfaceBackend::ensureImageryArrayPipeline(
     int sample_count)
 {
     if (rhi == nullptr || render_pass_descriptor == nullptr
-        || this->imagery_array_pages.empty())
+        || this->imagery_array_pages.empty()
+        || this->imagery_array_page_gpu_resources.empty())
     {
         return false;
     }
@@ -287,7 +470,7 @@ bool MapRhiGlobeSurfaceBackend::ensureImageryArrayPipeline(
     });
     this->imagery_array_pipeline->setVertexInputLayout(input_layout);
     this->imagery_array_pipeline->setShaderResourceBindings(
-        this->imagery_array_pages.front().bindings.get());
+        this->imagery_array_page_gpu_resources.front().bindings.get());
     this->imagery_array_pipeline->setRenderPassDescriptor(
         render_pass_descriptor);
     this->imagery_array_pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
@@ -312,6 +495,8 @@ bool MapRhiGlobeSurfaceBackend::ensureHeatmapArrayPipeline(
     if (rhi == nullptr || render_pass_descriptor == nullptr
         || this->imagery_array_pages.empty()
         || this->heatmap_array_pages.empty()
+        || this->imagery_array_page_gpu_resources.empty()
+        || this->heatmap_array_page_gpu_resources.empty()
         || this->camera_uniform_buffer == nullptr
         || this->sampler_resource == nullptr)
     {
@@ -331,11 +516,11 @@ bool MapRhiGlobeSurfaceBackend::ensureHeatmapArrayPipeline(
                 this->camera_uniform_buffer.get()),
             QRhiShaderResourceBinding::sampledTexture(
                 1, QRhiShaderResourceBinding::FragmentStage,
-                this->imagery_array_pages.front().texture.get(),
+                this->imagery_array_page_gpu_resources.front().texture.get(),
                 this->sampler_resource.get()),
             QRhiShaderResourceBinding::sampledTexture(
                 2, QRhiShaderResourceBinding::FragmentStage,
-                this->heatmap_array_pages.front().texture.get(),
+                this->heatmap_array_page_gpu_resources.front().texture.get(),
                 this->sampler_resource.get())
         });
         if (!this->heatmap_array_template_bindings->create())
@@ -500,24 +685,42 @@ bool MapRhiGlobeSurfaceBackend::rebuildTileBindings(
     return (*bindings)->create();
 }
 
-bool MapRhiGlobeSurfaceBackend::rebuildHeatmapArrayBindings(
-    QRhi *rhi,
-    QRhiTexture *imagery_texture,
-    QRhiTexture *heatmap_texture,
-    std::unique_ptr<QRhiShaderResourceBindings> *bindings)
+bool MapRhiGlobeSurfaceBackend::ensureHeatmapArrayBatchBinding(
+    QRhi *rhi, int imagery_page_index, int heatmap_page_index)
 {
-    if (rhi == nullptr || imagery_texture == nullptr
-        || heatmap_texture == nullptr || bindings == nullptr
+    if (rhi == nullptr || imagery_page_index < 0 || heatmap_page_index < 0
+        || imagery_page_index
+            >= int(this->imagery_array_page_gpu_resources.size())
+        || heatmap_page_index
+            >= int(this->heatmap_array_page_gpu_resources.size())
         || this->camera_uniform_buffer == nullptr
         || this->sampler_resource == nullptr)
     {
         return false;
     }
 
-    bindings->reset(rhi->newShaderResourceBindings());
-    if (!*bindings)
+    const quint64 key = heatmapArrayBatchBindingKey(
+        imagery_page_index, heatmap_page_index);
+    if (this->heatmap_array_batch_bindings.find(key)
+        != this->heatmap_array_batch_bindings.end())
+    {
+        return true;
+    }
+
+    QRhiTexture *imagery_texture =
+        this->imagery_array_page_gpu_resources[size_t(imagery_page_index)]
+            .texture.get();
+    QRhiTexture *heatmap_texture =
+        this->heatmap_array_page_gpu_resources[size_t(heatmap_page_index)]
+            .texture.get();
+    if (imagery_texture == nullptr || heatmap_texture == nullptr)
         return false;
-    (*bindings)->setBindings({
+
+    std::unique_ptr<QRhiShaderResourceBindings> bindings(
+        rhi->newShaderResourceBindings());
+    if (!bindings)
+        return false;
+    bindings->setBindings({
         QRhiShaderResourceBinding::uniformBuffer(
             0, QRhiShaderResourceBinding::VertexStage
                 | QRhiShaderResourceBinding::FragmentStage,
@@ -529,7 +732,16 @@ bool MapRhiGlobeSurfaceBackend::rebuildHeatmapArrayBindings(
             2, QRhiShaderResourceBinding::FragmentStage,
             heatmap_texture, this->sampler_resource.get())
     });
-    return (*bindings)->create();
+    if (!bindings->create())
+        return false;
+
+    this->heatmap_array_batch_bindings.emplace(key, std::move(bindings));
+    return true;
+}
+
+void MapRhiGlobeSurfaceBackend::clearHeatmapArrayBatchBindings()
+{
+    this->heatmap_array_batch_bindings.clear();
 }
 
 bool MapRhiGlobeSurfaceBackend::fallbackTextureUploadsPending() const
@@ -547,19 +759,6 @@ bool MapRhiGlobeSurfaceBackend::heatmapArrayPipelineReady() const
 {
     return this->heatmap_array_pipeline != nullptr
         && this->heatmap_array_template_bindings != nullptr;
-}
-
-void MapRhiGlobeSurfaceBackend::populateSharedDrawResources(
-    MapRhiGlobeSurfaceDrawResources *draw_resources) const
-{
-    if (draw_resources == nullptr)
-        return;
-    draw_resources->tile_pipeline = this->tile_pipeline.get();
-    draw_resources->array_pipeline = this->imagery_array_pipeline.get();
-    draw_resources->heatmap_array_pipeline = this->heatmap_array_pipeline.get();
-    draw_resources->wireframe_pipeline = this->wireframe_pipeline.get();
-    draw_resources->template_bindings = this->template_bindings.get();
-    draw_resources->wireframe_bindings = this->wireframe_bindings.get();
 }
 
 void MapRhiGlobeSurfaceBackend::reset()
@@ -581,8 +780,12 @@ void MapRhiGlobeSurfaceBackend::reset()
     this->heatmap_dummy_texture_upload_pending = true;
 
     this->heatmap_bake_resources = MapRhiGlobeHeatmapBakeResources();
+    this->heatmap_array_batch_bindings.clear();
+    this->terrain_height_array_page_gpu_resources.clear();
     this->terrain_height_array_pages.clear();
+    this->heatmap_array_page_gpu_resources.clear();
     this->heatmap_array_pages.clear();
+    this->imagery_array_page_gpu_resources.clear();
     this->imagery_array_pages.clear();
 
     this->heatmap_array_layer_buffer.reset();
@@ -608,6 +811,10 @@ void MapRhiGlobeSurfaceBackend::reset()
     this->cap_vertex_upload_pending = true;
     this->cap_index_upload_pending = true;
     this->wireframe_vertex_upload_pending = true;
+
+    this->rhi = nullptr;
+    this->render_pass_descriptor = nullptr;
+    this->sample_count = 1;
 }
 
 std::vector<MapRhiGlobeImageryArrayPage> &
@@ -872,51 +1079,113 @@ bool MapRhiGlobeSurfaceBackend::isYUpInNdc(QRhi *rhi) const
     return rhi != nullptr && rhi->isYUpInNDC();
 }
 
-void MapRhiGlobeSurfaceBackend::uploadTextureImage(
+bool MapRhiGlobeSurfaceBackend::uploadTileTextureImage(
     QRhiResourceUpdateBatch *resource_updates,
-    QRhiTexture *texture,
+    quint64 resource_id,
     const QImage &image) const
 {
-    if (resource_updates == nullptr || texture == nullptr || image.isNull())
-        return;
-
-    resource_updates->uploadTexture(texture, image);
+    const TileGpuResource *resource = tileGpuResource(resource_id);
+    if (resource_updates == nullptr || resource == nullptr
+        || resource->texture == nullptr || image.isNull())
+    {
+        return false;
+    }
+    resource_updates->uploadTexture(resource->texture.get(), image);
+    return true;
 }
 
-void MapRhiGlobeSurfaceBackend::uploadTextureArrayLayer(
+bool MapRhiGlobeSurfaceBackend::uploadTileHeatmapTextureImage(
     QRhiResourceUpdateBatch *resource_updates,
-    QRhiTexture *texture,
-    int layer,
+    quint64 resource_id,
     const QImage &image) const
 {
-    if (resource_updates == nullptr || texture == nullptr || layer < 0
-        || image.isNull())
+    const TileGpuResource *resource = tileGpuResource(resource_id);
+    if (resource_updates == nullptr || resource == nullptr
+        || resource->heatmap_texture == nullptr || image.isNull())
     {
-        return;
+        return false;
     }
+    resource_updates->uploadTexture(resource->heatmap_texture.get(), image);
+    return true;
+}
 
+bool MapRhiGlobeSurfaceBackend::imageryArrayPageReady(int page_index) const
+{
+    return page_index >= 0
+        && page_index < int(this->imagery_array_page_gpu_resources.size())
+        && this->imagery_array_page_gpu_resources[size_t(page_index)].texture
+            != nullptr
+        && this->imagery_array_page_gpu_resources[size_t(page_index)].bindings
+            != nullptr;
+}
+
+bool MapRhiGlobeSurfaceBackend::heatmapArrayPageReady(int page_index) const
+{
+    return page_index >= 0
+        && page_index < int(this->heatmap_array_page_gpu_resources.size())
+        && this->heatmap_array_page_gpu_resources[size_t(page_index)].texture
+            != nullptr;
+}
+
+bool MapRhiGlobeSurfaceBackend::terrainHeightArrayPageReady(
+    int page_index) const
+{
+    return page_index >= 0
+        && page_index < int(this->terrain_height_array_page_gpu_resources.size())
+        && this->terrain_height_array_page_gpu_resources[size_t(page_index)]
+            .texture != nullptr;
+}
+
+bool MapRhiGlobeSurfaceBackend::uploadImageryArrayPageLayer(
+    QRhiResourceUpdateBatch *resource_updates,
+    int page_index, int layer, const QImage &image) const
+{
+    if (!imageryArrayPageReady(page_index) || resource_updates == nullptr
+        || layer < 0 || image.isNull())
+    {
+        return false;
+    }
     const QRhiTextureSubresourceUploadDescription subresource(image);
     const QRhiTextureUploadEntry entry(layer, 0, subresource);
     resource_updates->uploadTexture(
-        texture, QRhiTextureUploadDescription(entry));
+        this->imagery_array_page_gpu_resources[size_t(page_index)].texture.get(),
+        QRhiTextureUploadDescription(entry));
+    return true;
 }
 
-void MapRhiGlobeSurfaceBackend::uploadTextureArrayLayerRaw(
+bool MapRhiGlobeSurfaceBackend::uploadHeatmapArrayPageLayer(
     QRhiResourceUpdateBatch *resource_updates,
-    QRhiTexture *texture,
-    int layer,
-    const QByteArray &data) const
+    int page_index, int layer, const QImage &image) const
 {
-    if (resource_updates == nullptr || texture == nullptr || layer < 0
-        || data.isEmpty())
+    if (!heatmapArrayPageReady(page_index) || resource_updates == nullptr
+        || layer < 0 || image.isNull())
     {
-        return;
+        return false;
     }
+    const QRhiTextureSubresourceUploadDescription subresource(image);
+    const QRhiTextureUploadEntry entry(layer, 0, subresource);
+    resource_updates->uploadTexture(
+        this->heatmap_array_page_gpu_resources[size_t(page_index)].texture.get(),
+        QRhiTextureUploadDescription(entry));
+    return true;
+}
 
+bool MapRhiGlobeSurfaceBackend::uploadTerrainHeightArrayPageLayerRaw(
+    QRhiResourceUpdateBatch *resource_updates,
+    int page_index, int layer, const QByteArray &data) const
+{
+    if (!terrainHeightArrayPageReady(page_index)
+        || resource_updates == nullptr || layer < 0 || data.isEmpty())
+    {
+        return false;
+    }
     const QRhiTextureSubresourceUploadDescription subresource(data);
     const QRhiTextureUploadEntry entry(layer, 0, subresource);
     resource_updates->uploadTexture(
-        texture, QRhiTextureUploadDescription(entry));
+        this->terrain_height_array_page_gpu_resources[size_t(page_index)]
+            .texture.get(),
+        QRhiTextureUploadDescription(entry));
+    return true;
 }
 
 
@@ -980,24 +1249,48 @@ bool MapRhiGlobeSurfaceBackend::hasTileBindings(quint64 resource_id) const
     return resource != nullptr && resource->bindings != nullptr;
 }
 
-QRhiTexture *MapRhiGlobeSurfaceBackend::tileTexture(quint64 resource_id) const
-{
-    const TileGpuResource *resource = tileGpuResource(resource_id);
-    return resource != nullptr ? resource->texture.get() : nullptr;
-}
-
-QRhiTexture *MapRhiGlobeSurfaceBackend::tileHeatmapTexture(
-    quint64 resource_id) const
-{
-    const TileGpuResource *resource = tileGpuResource(resource_id);
-    return resource != nullptr ? resource->heatmap_texture.get() : nullptr;
-}
-
 QRhiShaderResourceBindings *MapRhiGlobeSurfaceBackend::tileBindings(
     quint64 resource_id) const
 {
     const TileGpuResource *resource = tileGpuResource(resource_id);
     return resource != nullptr ? resource->bindings.get() : nullptr;
+}
+
+quint64 MapRhiGlobeSurfaceBackend::heatmapArrayBatchBindingKey(
+    int imagery_page_index, int heatmap_page_index)
+{
+    return (quint64(quint32(imagery_page_index)) << 32)
+        | quint64(quint32(heatmap_page_index));
+}
+
+QRhiShaderResourceBindings *
+MapRhiGlobeSurfaceBackend::heatmapArrayBatchBinding(
+    int imagery_page_index, int heatmap_page_index) const
+{
+    const quint64 key = heatmapArrayBatchBindingKey(
+        imagery_page_index, heatmap_page_index);
+    std::map<quint64, std::unique_ptr<QRhiShaderResourceBindings>>::const_iterator
+        iterator = this->heatmap_array_batch_bindings.find(key);
+    return iterator != this->heatmap_array_batch_bindings.end()
+        ? iterator->second.get() : nullptr;
+}
+
+QRhiTexture *MapRhiGlobeSurfaceBackend::heatmapBakeDestinationTexture(
+    const MapRhiGlobeHeatmapBakeJob &job) const
+{
+    if (job.destination == MapRhiGlobeHeatmapBakeDestination::TileHeatmapTexture)
+    {
+        const TileGpuResource *resource = tileGpuResource(
+            job.tile_gpu_resource_id);
+        return resource != nullptr ? resource->heatmap_texture.get() : nullptr;
+    }
+    if (job.destination == MapRhiGlobeHeatmapBakeDestination::HeatmapArrayLayer
+        && heatmapArrayPageReady(job.heatmap_array_page))
+    {
+        return this->heatmap_array_page_gpu_resources[
+            size_t(job.heatmap_array_page)].texture.get();
+    }
+    return nullptr;
 }
 
 void MapRhiGlobeSurfaceBackend::invalidateTileBindings(quint64 resource_id)
@@ -1386,7 +1679,7 @@ bool MapRhiGlobeSurfaceBackend::recordVisibleHeatmapBakes(
     qsizetype total_instance_count = 0;
     for (const MapRhiGlobeHeatmapBakeJob &job : jobs)
     {
-        if (job.destination_texture == nullptr
+        if (heatmapBakeDestinationTexture(job) == nullptr
             || job.destination_layer < 0
             || job.destination_layer >= array_layer_count
             || job.instances == nullptr || job.instances->isEmpty()
@@ -1526,8 +1819,26 @@ bool MapRhiGlobeSurfaceBackend::recordVisibleHeatmapBakes(
             copy_description.setSourceTopLeft(QPoint(slot * texture_size, 0));
             copy_description.setDestinationLayer(job.destination_layer);
             copy_description.setPixelSize(QSize(texture_size, texture_size));
+            QRhiTexture *destination_texture =
+                heatmapBakeDestinationTexture(job);
+            if (destination_texture == nullptr)
+            {
+                copy_updates->release();
+                for (QRhiResourceUpdateBatch *allocated_updates
+                     : page_copy_updates)
+                {
+                    allocated_updates->release();
+                }
+                bake_updates->release();
+                if (upload_bake_vertices)
+                {
+                    this->heatmap_bake_resources
+                        .diagnostic_vertex_upload_pending = true;
+                }
+                return false;
+            }
             copy_updates->copyTexture(
-                job.destination_texture, page.atlas->texture.get(),
+                destination_texture, page.atlas->texture.get(),
                 copy_description);
         }
         page_copy_updates.append(copy_updates);
@@ -1812,37 +2123,42 @@ bool MapRhiGlobeSurfaceBackend::createImageryArrayPage(
         || this->sampler_resource == nullptr
         || !layer_size.isValid() || layer_count <= 1
         || maximum_page_count <= 0
-        || int(this->imagery_array_pages.size()) >= maximum_page_count)
+        || int(this->imagery_array_pages.size()) >= maximum_page_count
+        || this->imagery_array_pages.size()
+            != this->imagery_array_page_gpu_resources.size())
     {
         return false;
     }
 
-    MapRhiGlobeImageryArrayPage page;
-    page.texture.reset(rhi->newTextureArray(
+    ImageryArrayPageGpuResource gpu_page;
+    gpu_page.texture.reset(rhi->newTextureArray(
         QRhiTexture::RGBA8, layer_count, layer_size));
-    if (!page.texture || !page.texture->create())
+    if (!gpu_page.texture || !gpu_page.texture->create())
         return false;
 
-    page.bindings.reset(rhi->newShaderResourceBindings());
-    if (!page.bindings)
+    gpu_page.bindings.reset(rhi->newShaderResourceBindings());
+    if (!gpu_page.bindings)
         return false;
-    page.bindings->setBindings({
+    gpu_page.bindings->setBindings({
         QRhiShaderResourceBinding::uniformBuffer(
             0, QRhiShaderResourceBinding::VertexStage
                 | QRhiShaderResourceBinding::FragmentStage,
             this->camera_uniform_buffer.get()),
         QRhiShaderResourceBinding::sampledTexture(
             1, QRhiShaderResourceBinding::FragmentStage,
-            page.texture.get(), this->sampler_resource.get())
+            gpu_page.texture.get(), this->sampler_resource.get())
     });
-    if (!page.bindings->create())
+    if (!gpu_page.bindings->create())
         return false;
 
+    MapRhiGlobeImageryArrayPage page;
     page.free_layers.reserve(layer_count - 1);
     for (int layer = layer_count - 1; layer >= 1; --layer)
         page.free_layers.append(layer);
 
     this->imagery_array_pages.push_back(std::move(page));
+    this->imagery_array_page_gpu_resources.push_back(std::move(gpu_page));
+    clearHeatmapArrayBatchBindings();
     return true;
 }
 
@@ -1856,15 +2172,17 @@ bool MapRhiGlobeSurfaceBackend::createHeatmapArrayPage(
     if (rhi == nullptr || resource_updates == nullptr
         || !layer_size.isValid() || layer_count <= 1
         || maximum_page_count <= 0
-        || int(this->heatmap_array_pages.size()) >= maximum_page_count)
+        || int(this->heatmap_array_pages.size()) >= maximum_page_count
+        || this->heatmap_array_pages.size()
+            != this->heatmap_array_page_gpu_resources.size())
     {
         return false;
     }
 
-    MapRhiGlobeHeatmapArrayPage page;
-    page.texture.reset(rhi->newTextureArray(
+    HeatmapArrayPageGpuResource gpu_page;
+    gpu_page.texture.reset(rhi->newTextureArray(
         QRhiTexture::RGBA8, layer_count, layer_size));
-    if (!page.texture || !page.texture->create())
+    if (!gpu_page.texture || !gpu_page.texture->create())
         return false;
 
     QImage transparent_layer(
@@ -1875,13 +2193,16 @@ bool MapRhiGlobeSurfaceBackend::createHeatmapArrayPage(
     const QRhiTextureUploadEntry transparent_entry(
         0, 0, transparent_subresource);
     resource_updates->uploadTexture(
-        page.texture.get(), QRhiTextureUploadDescription(transparent_entry));
+        gpu_page.texture.get(), QRhiTextureUploadDescription(transparent_entry));
 
+    MapRhiGlobeHeatmapArrayPage page;
     page.free_layers.reserve(layer_count - 1);
     for (int layer = layer_count - 1; layer >= 1; --layer)
         page.free_layers.append(layer);
 
     this->heatmap_array_pages.push_back(std::move(page));
+    this->heatmap_array_page_gpu_resources.push_back(std::move(gpu_page));
+    clearHeatmapArrayBatchBindings();
     return true;
 }
 
@@ -1894,24 +2215,52 @@ bool MapRhiGlobeSurfaceBackend::createTerrainHeightArrayPage(
     if (rhi == nullptr || !layer_size.isValid() || layer_count <= 0
         || maximum_page_count <= 0
         || int(this->terrain_height_array_pages.size()) >= maximum_page_count
+        || this->terrain_height_array_pages.size()
+            != this->terrain_height_array_page_gpu_resources.size()
         || !rhi->isFeatureSupported(QRhi::TextureArrays)
         || !rhi->isTextureFormatSupported(QRhiTexture::R32F))
     {
         return false;
     }
 
-    MapRhiGlobeTerrainHeightArrayPage page;
-    page.texture.reset(rhi->newTextureArray(
+    TerrainHeightArrayPageGpuResource gpu_page;
+    gpu_page.texture.reset(rhi->newTextureArray(
         QRhiTexture::R32F, layer_count, layer_size));
-    if (!page.texture || !page.texture->create())
+    if (!gpu_page.texture || !gpu_page.texture->create())
         return false;
 
+    MapRhiGlobeTerrainHeightArrayPage page;
     page.free_layers.reserve(layer_count);
     for (int layer = layer_count - 1; layer >= 0; --layer)
         page.free_layers.append(layer);
 
     this->terrain_height_array_pages.push_back(std::move(page));
+    this->terrain_height_array_page_gpu_resources.push_back(std::move(gpu_page));
     return true;
+}
+
+void MapRhiGlobeSurfaceBackend::popImageryArrayPage()
+{
+    if (!this->imagery_array_pages.empty())
+        this->imagery_array_pages.pop_back();
+    if (!this->imagery_array_page_gpu_resources.empty())
+        this->imagery_array_page_gpu_resources.pop_back();
+    clearHeatmapArrayBatchBindings();
+}
+
+void MapRhiGlobeSurfaceBackend::popHeatmapArrayPage()
+{
+    if (!this->heatmap_array_pages.empty())
+        this->heatmap_array_pages.pop_back();
+    if (!this->heatmap_array_page_gpu_resources.empty())
+        this->heatmap_array_page_gpu_resources.pop_back();
+    clearHeatmapArrayBatchBindings();
+}
+
+void MapRhiGlobeSurfaceBackend::clearTerrainHeightArrayPages()
+{
+    this->terrain_height_array_pages.clear();
+    this->terrain_height_array_page_gpu_resources.clear();
 }
 
 bool MapRhiGlobeSurfaceBackend::patchWindowVertices(
@@ -1989,7 +2338,7 @@ void MapRhiGlobeSurfaceBackend::draw(
         return;
 
     const MapGlobeSurfaceRenderResources &resources = frame.resources;
-    if (frame.map_visible && draw_resources.tile_pipeline != nullptr)
+    if (frame.map_visible && this->tile_pipeline != nullptr)
     {
         const bool use_array = draw_resources.imagery_array_active
             && this->window_vertex_buffer
@@ -2007,7 +2356,7 @@ void MapRhiGlobeSurfaceBackend::draw(
             if (use_heatmap_array)
             {
                 command_buffer->setGraphicsPipeline(
-                    draw_resources.heatmap_array_pipeline);
+                    this->heatmap_array_pipeline.get());
                 const QRhiCommandBuffer::VertexInput bindings[] = {
                     {this->window_vertex_buffer.get(), 0},
                     {this->heatmap_array_layer_buffer.get(), 0}
@@ -2019,9 +2368,16 @@ void MapRhiGlobeSurfaceBackend::draw(
                 for (const MapRhiGlobeSurfaceBatch &batch :
                      draw_resources.heatmap_array_batches)
                 {
-                    if (batch.bindings == nullptr || batch.draw_index_count <= 0)
+                    QRhiShaderResourceBindings *batch_bindings =
+                        heatmapArrayBatchBinding(
+                            batch.imagery_page_index,
+                            batch.heatmap_page_index);
+                    if (batch_bindings == nullptr
+                        || batch.draw_index_count <= 0)
+                    {
                         continue;
-                    command_buffer->setShaderResources(batch.bindings);
+                    }
+                    command_buffer->setShaderResources(batch_bindings);
                     command_buffer->drawIndexed(
                         quint32(batch.draw_index_count), 1,
                         quint32(batch.first_draw_index));
@@ -2029,7 +2385,8 @@ void MapRhiGlobeSurfaceBackend::draw(
             }
             else if (use_array)
             {
-                command_buffer->setGraphicsPipeline(draw_resources.array_pipeline);
+                command_buffer->setGraphicsPipeline(
+                    this->imagery_array_pipeline.get());
                 const QRhiCommandBuffer::VertexInput binding(
                     this->window_vertex_buffer.get(), 0);
                 command_buffer->setVertexInput(
@@ -2039,16 +2396,26 @@ void MapRhiGlobeSurfaceBackend::draw(
                 for (const MapRhiGlobeSurfaceBatch &batch :
                      draw_resources.imagery_array_batches)
                 {
-                    if (batch.bindings == nullptr || batch.draw_index_count <= 0)
+                    if (batch.imagery_page_index < 0
+                        || batch.imagery_page_index
+                            >= int(this->imagery_array_page_gpu_resources.size())
+                        || batch.draw_index_count <= 0)
+                    {
                         continue;
-                    command_buffer->setShaderResources(batch.bindings);
+                    }
+                    QRhiShaderResourceBindings *batch_bindings =
+                        this->imagery_array_page_gpu_resources[
+                            size_t(batch.imagery_page_index)].bindings.get();
+                    if (batch_bindings == nullptr)
+                        continue;
+                    command_buffer->setShaderResources(batch_bindings);
                     command_buffer->drawIndexed(
                         quint32(batch.draw_index_count), 1,
                         quint32(batch.first_draw_index));
                 }
             }
 
-            command_buffer->setGraphicsPipeline(draw_resources.tile_pipeline);
+            command_buffer->setGraphicsPipeline(this->tile_pipeline.get());
             for (const MapGlobeSurfaceTileRenderState &surface_tile :
                  resources.window_tiles)
             {
@@ -2070,9 +2437,10 @@ void MapRhiGlobeSurfaceBackend::draw(
                 if (use_array && tile_state.array_ready)
                     continue;
 
-                QRhiShaderResourceBindings *bindings = tile_state.bindings;
+                QRhiShaderResourceBindings *bindings =
+                    tileBindings(tile_state.gpu_resource_id);
                 if (bindings == nullptr)
-                    bindings = draw_resources.template_bindings;
+                    bindings = this->template_bindings.get();
                 if (bindings == nullptr)
                     continue;
 
@@ -2090,7 +2458,7 @@ void MapRhiGlobeSurfaceBackend::draw(
 
         if (this->cap_vertex_buffer && this->cap_index_buffer)
         {
-            command_buffer->setGraphicsPipeline(draw_resources.tile_pipeline);
+            command_buffer->setGraphicsPipeline(this->tile_pipeline.get());
             for (const MapGlobeSurfaceTileRenderState &surface_tile :
                  resources.cap_tiles)
             {
@@ -2103,14 +2471,16 @@ void MapRhiGlobeSurfaceBackend::draw(
 
                 const MapRhiGlobeSurfaceTileDrawState &tile_state =
                     draw_resources.cap_tiles.at(surface_tile.surface_tile_index);
-                if (tile_state.bindings == nullptr
+                QRhiShaderResourceBindings *tile_bindings =
+                    tileBindings(tile_state.gpu_resource_id);
+                if (tile_bindings == nullptr
                     || surface_tile.vertex_count <= 0
                     || surface_tile.index_count <= 0)
                 {
                     continue;
                 }
 
-                command_buffer->setShaderResources(tile_state.bindings);
+                command_buffer->setShaderResources(tile_bindings);
                 const QRhiCommandBuffer::VertexInput binding(
                     this->cap_vertex_buffer.get(), 0);
                 const quint32 index_byte_offset = quint32(
@@ -2124,13 +2494,13 @@ void MapRhiGlobeSurfaceBackend::draw(
     }
 
     if (frame.wireframe_visible
-        && draw_resources.wireframe_pipeline != nullptr
-        && draw_resources.wireframe_bindings != nullptr
+        && this->wireframe_pipeline != nullptr
+        && this->wireframe_bindings != nullptr
         && this->wireframe_vertex_buffer
         && !resources.wireframe_vertices->isEmpty())
     {
-        command_buffer->setGraphicsPipeline(draw_resources.wireframe_pipeline);
-        command_buffer->setShaderResources(draw_resources.wireframe_bindings);
+        command_buffer->setGraphicsPipeline(this->wireframe_pipeline.get());
+        command_buffer->setShaderResources(this->wireframe_bindings.get());
         const QRhiCommandBuffer::VertexInput binding(
             this->wireframe_vertex_buffer.get(), 0);
         command_buffer->setVertexInput(0, 1, &binding);

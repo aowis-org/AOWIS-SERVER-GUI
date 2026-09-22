@@ -382,6 +382,12 @@ if(AOWIS_HAS_QRHI)
             src/map/render/map_network_render_symbology.h
             src/map/render/map_network_render_data.h
             src/map/render/map_globe_render_instances.h
+            src/map/render/map_globe_junction_model.h
+            src/map/render/map_globe_junction_model.cpp
+            src/map/render/map_globe_tank_model.h
+            src/map/render/map_globe_tank_model.cpp
+            src/map/render/map_globe_reservoir_model.h
+            src/map/render/map_globe_reservoir_model.cpp
             src/map/render/map_globe_picking.h
             src/map/render/map_globe_picking.cpp
             src/map/render/map_icon_atlas.h
@@ -390,16 +396,10 @@ if(AOWIS_HAS_QRHI)
             src/map/render/map_node_declutter.cpp
             src/map/rhi/map_rhi_icon_atlas.h
             src/map/rhi/map_rhi_icon_atlas.cpp
-            src/map/rhi/map_rhi_junction_model.h
-            src/map/rhi/map_rhi_junction_model.cpp
             src/map/rhi/map_rhi_network_style.h
             src/map/rhi/map_rhi_network_style.cpp
             src/map/rhi/map_rhi_symbology.h
             src/map/rhi/map_rhi_symbology.cpp
-            src/map/rhi/map_rhi_tank_model.h
-            src/map/rhi/map_rhi_tank_model.cpp
-            src/map/rhi/map_rhi_reservoir_model.h
-            src/map/rhi/map_rhi_reservoir_model.cpp
             src/map/rhi/map_rhi_globe_renderer.h
             src/map/rhi/map_rhi_globe_renderer.cpp
             src/map/rhi/map_rhi_globe_network_scene.h

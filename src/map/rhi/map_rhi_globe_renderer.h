@@ -28,13 +28,9 @@ class MapTerrainRepository;
 class MapTerrainMeshScheduler;
 class MapTileRepository;
 class QRhi;
-class QRhiBuffer;
 class QRhiCommandBuffer;
 class QRhiRenderPassDescriptor;
 class QRhiResourceUpdateBatch;
-class QRhiShaderResourceBindings;
-class QRhiTexture;
-class QRhiTextureRenderTarget;
 
 // Renders planet Earth as a WGS84 ellipsoid for the "Globe" map view mode.
 //
@@ -332,7 +328,8 @@ private:
 
     struct HeatmapArrayDrawBatch
     {
-        std::unique_ptr<QRhiShaderResourceBindings> bindings;
+        int imagery_page_index = -1;
+        int heatmap_page_index = -1;
         int first_draw_index = 0;
         int draw_index_count = 0;
     };
@@ -342,8 +339,11 @@ private:
     struct HeatmapGpuBakeJob
     {
         TileResource *resource = nullptr;
-        QRhiTexture *destination_texture = nullptr;
-        // Zero targets an ordinary 2D fallback texture. Positive values
+        MapRhiGlobeHeatmapBakeDestination destination =
+            MapRhiGlobeHeatmapBakeDestination::TileHeatmapTexture;
+        quint64 tile_gpu_resource_id = 0;
+        int heatmap_array_page = -1;
+        // Zero targets an ordinary per-tile heatmap texture. Positive values
         // target the corresponding layer of a heatmap texture array.
         int destination_layer = 0;
         quint64 revision = 0;
@@ -440,9 +440,6 @@ private:
     bool tileTextureReady(const TileResource *resource) const;
     bool tileHeatmapTextureReady(const TileResource *resource) const;
     bool tileBindingsReady(const TileResource *resource) const;
-    QRhiTexture *tileTexture(const TileResource *resource) const;
-    QRhiTexture *tileHeatmapTexture(const TileResource *resource) const;
-    QRhiShaderResourceBindings *tileBindings(const TileResource *resource) const;
     void invalidateTileBindings(TileResource *resource);
     void clearTileHeatmapTexture(TileResource *resource);
     bool recreateTileTexture(TileResource *resource, const QSize &size);
@@ -511,8 +508,10 @@ private:
         const GlobeTile &tile, TileResource *resource,
         HeatmapRasterStats *stats) const;
     bool queueHeatmapGpuBake(
-        TileResource *resource, QRhiTexture *destination_texture,
+        TileResource *resource,
+        MapRhiGlobeHeatmapBakeDestination destination,
         const QVector<HeatmapStamp> &stamps,
+        int heatmap_array_page = -1,
         int destination_layer = 0);
     void disableHeatmapGpuBaking();
     void scheduleDiagnosticHeatmapGpuSelfTest();
@@ -532,9 +531,6 @@ private:
     MapTileRepository *tile_repository = nullptr;
     MapTerrainRepository *terrain_repository = nullptr;
     GeoWgs84Ellipsoid::EcefPositionD render_origin_ecef;
-    QRhi *rhi = nullptr;
-    QRhiRenderPassDescriptor *render_pass_descriptor = nullptr;
-    int sample_count = 1;
     // A terrain-follow tick changes only the two omitted height values. When
     // the remaining view-selection inputs still match this last successful
     // full prepare, the current tile window and GPU resources can be reused.

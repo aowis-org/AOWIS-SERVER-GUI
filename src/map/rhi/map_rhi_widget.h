@@ -8,9 +8,9 @@
 #include "map/render/map_globe_render_frame.h"
 #include "map/rhi/map_rhi_globe_renderer.h"
 #include "map/rhi/map_rhi_scene.h"
-#include "map/rhi/map_rhi_junction_model.h"
-#include "map/rhi/map_rhi_reservoir_model.h"
-#include "map/rhi/map_rhi_tank_model.h"
+#include "map/render/map_globe_junction_model.h"
+#include "map/render/map_globe_reservoir_model.h"
+#include "map/render/map_globe_tank_model.h"
 
 #include <QRhiWidget>
 #include <QElapsedTimer>
@@ -268,8 +268,8 @@ private:
     bool tank_texture_upload_pending = true;
     bool reservoir_texture_upload_pending = true;
     QVector<MapRhiScene::HeatmapVertex> heatmap_render_vertices;
-    QVector<MapRhiTankModelVertex> tank_model_vertices;
-    QVector<MapRhiReservoirModelVertex> reservoir_model_vertices;
+    QVector<MapGlobeTankModelVertex> tank_model_vertices;
+    QVector<MapGlobeReservoirModelVertex> reservoir_model_vertices;
     MapRhiUndergroundMode underground_mode = MapRhiUndergroundMode::XRay;
     bool symbology_initialized = false;
     bool ready_reported = false;
