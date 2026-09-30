@@ -6,6 +6,7 @@
 #include <utility>
 
 #include <QHash>
+#include <QTimer>
 
 namespace
 {
@@ -72,92 +73,14 @@ void updateWaterAgeLinkMinimumMaximum(const WaterQualitySimulationResult &result
 
 HydraulicData::HydraulicData(QObject *parent)
     : QObject{parent},
-      database_gui(new DatabaseGui(this)),
       network_editor(this->network_hydraulic)
 {
-    connect(this->database_gui, &DatabaseGui::signalReady, this, &HydraulicData::onDatabaseReady);
-    
-    connect(this->database_gui, &DatabaseGui::signalError, this, [](const QString &message)
+    QTimer::singleShot(0, this, [this]()
     {
-        qCritical() << "Could not initialize database:" << message;
+        rebuildBoundingBoxWgs84();
+        markNetworkChanged(NetworkChange::Geometry);
+        emit signalNetworkLoaded();
     });
-    
-    DatabaseConfiguration configuration;
-    this->database_gui->open(configuration);
-}
-
-void HydraulicData::onDatabaseReady()
-{
-    loadProject();
-    
-    //this->network_hydraulic = DummyNetworks::networkSimple();
-    //this->network_hydraulic = DummyNetworks::networkTanks();
-    //this->network_hydraulic = DummyMarburgNetworkGenerator::generate();
-    //this->network_hydraulic = RandomHydraulicNetworkGenerator::generateFractal();
-    rebuildBoundingBoxWgs84();
-    markNetworkChanged(NetworkChange::Geometry);
-    //this->network_hydraulic = DummyNetworks::networkOnMap();
-    //this->network_hydraulic = DummyNetworks::networkTanksTimeline();
-    
-    emit signalNetworkLoaded();
-}
-
-void HydraulicData::loadProject()
-{
-    DatabaseShared *sharedDatabase = this->database_gui->sharedDatabase();
-    
-    if (sharedDatabase == nullptr)
-    {
-        qCritical() << "Shared database is not initialized";
-        return;
-    }
-    
-    const QString configKey = QStringLiteral("development_test_project_id");
-    
-    const std::optional<QString> configuredProjectId =
-        sharedDatabase->configValue(configKey);
-    
-    if (configuredProjectId.has_value())
-    {
-        const QUuid projectId(configuredProjectId.value());
-        
-        if (!projectId.isNull())
-            this->project = sharedDatabase->projectById(projectId);
-    }
-    
-    if (!this->project.has_value())
-    {
-        const QUuid projectId = sharedDatabase->createProject(
-            QStringLiteral("Test"),
-            QStringLiteral("Test DB for Dev")
-            );
-        
-        if (projectId.isNull())
-        {
-            qCritical() << "Could not create test project";
-            return;
-        }
-        
-        if (!sharedDatabase->setConfigValue(
-                configKey,
-                projectId.toString(QUuid::WithoutBraces)))
-        {
-            qCritical() << "Could not store test project ID";
-            return;
-        }
-        
-        this->project = sharedDatabase->projectById(projectId);
-    }
-    
-    if (!this->project.has_value())
-    {
-        qCritical() << "Could not retrieve test project";
-        return;
-    }
-    
-    qDebug() << "Test project:"
-             << this->project->uuid
-             << this->project->name;
 }
 
 const NetworkHydraulic &HydraulicData::networkHydraulic() const

@@ -128,18 +128,18 @@ RUN source "${EMSDK}/emsdk_env.sh" \
 
 # Compile and link a threaded QRhiWidget application and bake a GLSL ES 3 shader.
 # This makes image creation fail immediately unless all pieces AOWIS needs are usable:
-# Widgets, Network, Sql, GuiPrivate/QRhi headers, target ShaderTools, and host qsb.
+# Widgets, Network, GuiPrivate/QRhi headers, target ShaderTools, and host qsb.
 RUN source "${EMSDK}/emsdk_env.sh" \
     && mkdir -p /tmp/aowis-wasm-rhi-smoke \
     && printf '%s\n' \
         'cmake_minimum_required(VERSION 3.22)' \
         'project(aowis_wasm_rhi_smoke LANGUAGES CXX)' \
-        'find_package(Qt6 REQUIRED COMPONENTS Widgets Network Sql ShaderTools GuiPrivate)' \
+        'find_package(Qt6 REQUIRED COMPONENTS Widgets Network ShaderTools GuiPrivate)' \
         'if(NOT TARGET Qt6::GuiPrivate)' \
         '    message(FATAL_ERROR "Qt6::GuiPrivate is unavailable; QRhi headers cannot be used")' \
         'endif()' \
         'qt_add_executable(aowis_wasm_rhi_smoke main.cpp)' \
-        'target_link_libraries(aowis_wasm_rhi_smoke PRIVATE Qt6::Widgets Qt6::Network Qt6::Sql Qt6::GuiPrivate)' \
+        'target_link_libraries(aowis_wasm_rhi_smoke PRIVATE Qt6::Widgets Qt6::Network Qt6::GuiPrivate)' \
         'target_link_options(aowis_wasm_rhi_smoke PRIVATE "-sMIN_WEBGL_VERSION=2" "-sMAX_WEBGL_VERSION=2")' \
         'qt_add_shaders(aowis_wasm_rhi_smoke "aowis_wasm_rhi_smoke_shaders"' \
         '    PREFIX "/aowis/smoke"' \

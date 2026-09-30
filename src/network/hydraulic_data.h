@@ -14,14 +14,12 @@
 
 #include <QDebug>
 
-#include <aowis/model/project.h>
 #include <aowis/model/entity.h>
 #include <aowis/model/gis.h>
 #include <aowis/model/hydraulic/network_hydraulic.h>
 #include <aowis/model/hydraulic/hydraulic_simulation_results.h>
 #include <aowis/model/hydraulic/water_quality_simulation_results.h>
 
-#include <aowis/db/database_gui.h>
 
 #include <aowis/epanet/dummy/dummy_networks.h>
 #include <aowis/epanet/dummy/dummy_marburg_network_generator.h>
@@ -51,8 +49,6 @@ class HydraulicData : public QObject
     Q_OBJECT
 public:
     explicit HydraulicData(QObject *parent = nullptr);
-
-    void loadProject();
 
     const NetworkHydraulic &networkHydraulic() const;
     void replaceNetworkHydraulic(
@@ -440,9 +436,6 @@ private:
     void rebuildSymbologyMinMaxValues();
     void rebuildNetworkRenderSnapshot() const;
 
-    DatabaseGui *database_gui = nullptr;
-
-    std::optional<Project> project;
     NetworkHydraulic network_hydraulic;
     QList<WaterQualitySolverOptions> simulation_quality_run_options;
     QUuid source_trace_origin_node_uuid;
@@ -529,9 +522,6 @@ private:
     double heatmap_lake_water_percent_maximum = 0.0;
 
     mutable NetworkRenderSnapshot network_render_snapshot;
-
-private slots:
-    void onDatabaseReady();
 
 signals:
     void signalNetworkLoaded();
