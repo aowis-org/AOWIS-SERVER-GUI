@@ -52,6 +52,17 @@ QJsonArray linkToJson(const NetworkRenderLink &link)
     return result;
 }
 
+QJsonArray demandPointAttachmentToJson(
+    const NetworkRenderDemandPointAttachment &attachment)
+{
+    QJsonArray result;
+    result.append(static_cast<double>(attachment.demand_point_render_id));
+    result.append(attachment.demand_point_uuid.toString(QUuid::WithoutBraces));
+    result.append(coordinateToJson(attachment.demand_point_coordinate_wgs84));
+    result.append(coordinateToJson(attachment.attachment_coordinate_wgs84));
+    return result;
+}
+
 QByteArray serializeRoot(const NetworkRenderSnapshot &snapshot,
                          const QJsonArray &nodes, const QJsonArray &links)
 {
@@ -60,6 +71,10 @@ QByteArray serializeRoot(const NetworkRenderSnapshot &snapshot,
     root.insert(QStringLiteral("visualRevision"), QString::number(snapshot.visual_revision));
     root.insert(QStringLiteral("nodes"), nodes);
     root.insert(QStringLiteral("links"), links);
+    QJsonArray attachments;
+    for (const NetworkRenderDemandPointAttachment &attachment : snapshot.demand_point_attachments)
+        attachments.append(demandPointAttachmentToJson(attachment));
+    root.insert(QStringLiteral("demandPointAttachments"), attachments);
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
 
@@ -81,13 +96,21 @@ QHash<QUuid, double> nodeValues(const NetworkHydraulic &network_hydraulic, Visua
             values.insert(tank.uuid, resolvedSymbologyElevationM(tank));
         break;
     case VisualNode::BaseDemand:
-        values.reserve(network_hydraulic.nodes_junctions.size());
+        values.reserve(network_hydraulic.nodes_junctions.size()
+                       + network_hydraulic.demand_points.size());
         for (const HydraulicNodeJunction &junction : network_hydraulic.nodes_junctions)
         {
             double base_demand_m3_per_h = 0.0;
             for (const HydraulicDemand &demand : junction.demands)
                 base_demand_m3_per_h += demand.base_demand_m3_per_h;
             values.insert(junction.uuid, base_demand_m3_per_h);
+        }
+        for (const HydraulicDemandPoint &demand_point : network_hydraulic.demand_points)
+        {
+            double base_demand_m3_per_h = 0.0;
+            for (const HydraulicDemand &demand : demand_point.demands)
+                base_demand_m3_per_h += demand.base_demand_m3_per_h;
+            values.insert(demand_point.uuid, base_demand_m3_per_h);
         }
         break;
     case VisualNode::None:

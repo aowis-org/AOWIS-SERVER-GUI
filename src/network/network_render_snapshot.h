@@ -37,12 +37,21 @@ struct NetworkRenderLink
     QList<double> elevations_m;
 };
 
+struct NetworkRenderDemandPointAttachment
+{
+    quint32 demand_point_render_id = 0;
+    QUuid demand_point_uuid;
+    CoordinateWGS84 demand_point_coordinate_wgs84;
+    CoordinateWGS84 attachment_coordinate_wgs84;
+};
+
 struct NetworkRenderSnapshot
 {
     quint64 geometry_revision = 0;
     quint64 visual_revision = 0;
     QList<NetworkRenderNode> nodes;
     QList<NetworkRenderLink> links;
+    QList<NetworkRenderDemandPointAttachment> demand_point_attachments;
 };
 
 #endif // NETWORK_RENDER_SNAPSHOT_H

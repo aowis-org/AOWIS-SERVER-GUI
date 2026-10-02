@@ -73,13 +73,21 @@ inline QHash<QUuid, double> networkNodeSymbologyValues(
             values.insert(tank.uuid, resolvedSymbologyElevationM(tank));
         break;
     case VisualNode::BaseDemand:
-        values.reserve(network_hydraulic.nodes_junctions.size());
+        values.reserve(network_hydraulic.nodes_junctions.size()
+                       + network_hydraulic.demand_points.size());
         for (const HydraulicNodeJunction &junction : network_hydraulic.nodes_junctions)
         {
             double base_demand_m3_per_h = 0.0;
             for (const HydraulicDemand &demand : junction.demands)
                 base_demand_m3_per_h += demand.base_demand_m3_per_h;
             values.insert(junction.uuid, base_demand_m3_per_h);
+        }
+        for (const HydraulicDemandPoint &demand_point : network_hydraulic.demand_points)
+        {
+            double base_demand_m3_per_h = 0.0;
+            for (const HydraulicDemand &demand : demand_point.demands)
+                base_demand_m3_per_h += demand.base_demand_m3_per_h;
+            values.insert(demand_point.uuid, base_demand_m3_per_h);
         }
         break;
     case VisualNode::None:

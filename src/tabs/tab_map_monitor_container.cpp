@@ -1671,7 +1671,7 @@ bool MapMonitorContainer::selectNetworkEntity(quint32 render_id, InfrastructureE
     }
 
     const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
-    if (InfrastructureEntityTraits::isHydraulicConnectionNode(entity_type))
+    if (InfrastructureEntityTraits::isHydraulicPointEntity(entity_type))
     {
         for (const NetworkRenderNode &node : snapshot.nodes)
         {
@@ -1883,7 +1883,7 @@ void MapMonitorContainer::syncWasmSelectedEntity(InfrastructureEntity entity_typ
     }
 
     const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
-    if (InfrastructureEntityTraits::isHydraulicConnectionNode(entity_type))
+    if (InfrastructureEntityTraits::isHydraulicPointEntity(entity_type))
     {
         for (const NetworkRenderNode &node : snapshot.nodes)
         {
@@ -1925,7 +1925,7 @@ void MapMonitorContainer::syncWasmSimulationErrorEntities()
             const QUuid &uuid = error_iterator.key();
             const InfrastructureEntity entity_type = error_iterator.value();
             quint32 render_id = 0;
-            if (InfrastructureEntityTraits::isHydraulicConnectionNode(entity_type))
+            if (InfrastructureEntityTraits::isHydraulicPointEntity(entity_type))
             {
                 for (const NetworkRenderNode &node : snapshot.nodes)
                 {

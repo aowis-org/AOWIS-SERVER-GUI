@@ -8,6 +8,7 @@
     const ENTITY_PIPE = 4;
     const ENTITY_PUMP = 5;
     const ENTITY_VALVE = 6;
+    const ENTITY_DEMAND_POINT = 7;
 
     function createCanvas(zIndex) {
         const canvas = document.createElement("canvas");
@@ -187,6 +188,7 @@
         ENTITY_PIPE: ENTITY_PIPE,
         ENTITY_PUMP: ENTITY_PUMP,
         ENTITY_VALVE: ENTITY_VALVE,
+        ENTITY_DEMAND_POINT: ENTITY_DEMAND_POINT,
         createCanvas: createCanvas,
         normalizeUuid: normalizeUuid,
         projectNetworkSnapshot: projectNetworkSnapshot,

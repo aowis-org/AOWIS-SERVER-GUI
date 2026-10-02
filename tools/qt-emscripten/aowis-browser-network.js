@@ -55,6 +55,7 @@
     const ENTITY_PIPE = SHARED_RENDERER.ENTITY_PIPE;
     const ENTITY_PUMP = SHARED_RENDERER.ENTITY_PUMP;
     const ENTITY_VALVE = SHARED_RENDERER.ENTITY_VALVE;
+    const ENTITY_DEMAND_POINT = SHARED_RENDERER.ENTITY_DEMAND_POINT || 7;
     const ICON_DEFINITIONS = new Map([
         [ENTITY_RESERVOIR, {
             file: "svg/reservoir.svg",
@@ -79,6 +80,12 @@
             viewWidth: 138,
             viewHeight: 138,
             hitShape: "ellipse"
+        }],
+        [ENTITY_DEMAND_POINT, {
+            file: "svg/demand-point.svg",
+            viewWidth: 140,
+            viewHeight: 140,
+            hitShape: "rectangle"
         }]
     ]);
     const ICON_ATLAS_SLOTS = new Map(
@@ -426,7 +433,8 @@
             return nodeColor(marker.renderId);
 
         const nodeIcon = marker.entityType === ENTITY_RESERVOIR
-            || marker.entityType === ENTITY_TANK;
+            || marker.entityType === ENTITY_TANK
+            || marker.entityType === ENTITY_DEMAND_POINT;
         if (nodeIcon) {
             if (state.nodeVisual === 0)
                 return iconDefaultFillColor();
@@ -543,8 +551,9 @@
         const segmentColors = new Float32Array(segmentCount * 4);
         let segmentOffset = 0;
         const appendSegmentColor = (segment) => {
-            writeWebGlColor(
-                segmentColors, segmentOffset, linkColor(segment.renderId));
+            const color = segment.entityType === ENTITY_DEMAND_POINT
+                ? nodeColor(segment.renderId) : linkColor(segment.renderId);
+            writeWebGlColor(segmentColors, segmentOffset, color);
             segmentOffset += 4;
         };
         for (const segment of state.pipeSegments)
@@ -1145,7 +1154,7 @@
 
     function isNodeEntityType(entityType) {
         return entityType === ENTITY_JUNCTION || entityType === ENTITY_RESERVOIR
-            || entityType === ENTITY_TANK;
+            || entityType === ENTITY_TANK || entityType === ENTITY_DEMAND_POINT;
     }
 
     function shouldDisplayHeatmap(mapView) {
@@ -2034,6 +2043,44 @@
                 state.markers.push(deviceMarker);
                 state.entityMarkers.set(
                     `${projectedLink.entityType}:${projectedLink.renderId}`, deviceMarker);
+            }
+        }
+
+        if (Array.isArray(snapshot.demandPointAttachments)) {
+            for (const rawAttachment of snapshot.demandPointAttachments) {
+                if (!Array.isArray(rawAttachment) || rawAttachment.length < 4
+                    || !validCoordinate(rawAttachment[2])
+                    || !validCoordinate(rawAttachment[3])) {
+                    continue;
+                }
+
+                const startLongitude = Number(rawAttachment[2][0]);
+                const startLatitude = Number(rawAttachment[2][1]);
+                const endLongitude = Number(rawAttachment[3][0]);
+                const endLatitude = Number(rawAttachment[3][1]);
+                const rawStartX = longitudeToWorldPixel(startLongitude);
+                if (anchorX === null)
+                    anchorX = rawStartX;
+                const startX = nearestWrappedWorldPixel(rawStartX, anchorX);
+                const startY = latitudeToWorldPixel(startLatitude);
+                const rawEndX = longitudeToWorldPixel(endLongitude);
+                const endX = nearestWrappedWorldPixel(rawEndX, startX);
+                const endY = latitudeToWorldPixel(endLatitude);
+                const segment = {
+                    renderId: Number(rawAttachment[0]),
+                    entityType: ENTITY_DEMAND_POINT,
+                    x1: startX,
+                    y1: startY,
+                    x2: endX,
+                    y2: endY
+                };
+                state.deviceSegments.push(segment);
+                const entityKey = `${ENTITY_DEMAND_POINT}:${segment.renderId}`;
+                const entitySegments = state.entitySegments.get(entityKey) || [];
+                entitySegments.push(segment);
+                state.entitySegments.set(entityKey, entitySegments);
+                includePoint(startX, startY);
+                includePoint(endX, endY);
             }
         }
 

@@ -15,7 +15,7 @@ namespace
 // geometry remains the same size on screen; linear filtering therefore has
 // substantially more source coverage information at icon edges.
 constexpr int AtlasHeight = 264;
-constexpr int AtlasWidth = 1024;
+constexpr int AtlasWidth = 1280;
 constexpr int CellMaximumDimension = 256;
 constexpr int CellGap = 4;
 
@@ -125,9 +125,24 @@ QPainterPath valveStrokePath()
     return path;
 }
 
-std::array<IconAsset, 4> buildAssets()
+QPainterPath demandPointStarPath()
 {
-    std::array<IconAsset, 4> result;
+    QPainterPath path;
+    path.moveTo(70.0, 4.0);
+    path.lineTo(86.0, 54.0);
+    path.lineTo(136.0, 70.0);
+    path.lineTo(86.0, 86.0);
+    path.lineTo(70.0, 136.0);
+    path.lineTo(54.0, 86.0);
+    path.lineTo(4.0, 70.0);
+    path.lineTo(54.0, 54.0);
+    path.closeSubpath();
+    return path;
+}
+
+std::array<IconAsset, 5> buildAssets()
+{
+    std::array<IconAsset, 5> result;
 
     result[0].entity_type = InfrastructureEntity::Reservoir;
     result[0].view_width = 186.0;
@@ -149,6 +164,13 @@ std::array<IconAsset, 4> buildAssets()
     result[3].stroke_path = valveStrokePath();
     result[3].fill_path.addEllipse(QRectF(8.0, 8.0, 122.0, 122.0));
 
+    result[4].entity_type = InfrastructureEntity::DemandPoint;
+    result[4].view_width = 140.0;
+    result[4].view_height = 140.0;
+    result[4].stroke_width = 10.0;
+    result[4].stroke_path = demandPointStarPath();
+    result[4].fill_path = demandPointStarPath();
+
     int x = CellGap;
     for (IconAsset &asset : result)
     {
@@ -164,15 +186,15 @@ std::array<IconAsset, 4> buildAssets()
     return result;
 }
 
-const std::array<IconAsset, 4> &assets()
+const std::array<IconAsset, 5> &assets()
 {
-    static const std::array<IconAsset, 4> result = buildAssets();
+    static const std::array<IconAsset, 5> result = buildAssets();
     return result;
 }
 
 const IconAsset *assetForEntity(InfrastructureEntity entity_type)
 {
-    const std::array<IconAsset, 4> &all_assets = assets();
+    const std::array<IconAsset, 5> &all_assets = assets();
     for (const IconAsset &asset : all_assets)
     {
         if (asset.entity_type == entity_type)
@@ -191,7 +213,7 @@ QImage mapIconAtlasImage()
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::TextAntialiasing, true);
 
-    const std::array<IconAsset, 4> &all_assets = assets();
+    const std::array<IconAsset, 5> &all_assets = assets();
     for (const IconAsset &asset : all_assets)
     {
         const qreal scale_x = asset.pixel_rect.width() / asset.view_width;

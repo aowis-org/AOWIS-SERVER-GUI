@@ -631,6 +631,18 @@ void HydraulicData::rebuildSymbologyMinMaxValues()
                              node_base_demand_m3_per_h_initialized);
     }
 
+    for (const HydraulicDemandPoint &demand_point : this->network_hydraulic.demand_points)
+    {
+        double base_demand_m3_per_h = 0.0;
+        for (const HydraulicDemand &demand : demand_point.demands)
+            base_demand_m3_per_h += demand.base_demand_m3_per_h;
+
+        updateMinimumMaximum(base_demand_m3_per_h,
+                             this->node_base_demand_m3_per_h_minimum,
+                             this->node_base_demand_m3_per_h_maximum,
+                             node_base_demand_m3_per_h_initialized);
+    }
+
     for (const HydraulicNodeReservoir &reservoir : this->network_hydraulic.nodes_reservoirs)
     {
         updateMinimumMaximum(resolvedSymbologyElevationM(reservoir),

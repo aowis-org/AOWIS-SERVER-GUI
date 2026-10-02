@@ -247,11 +247,26 @@ QPainterPath valveStrokePath()
     return path;
 }
 
-const std::array<NetworkIconAsset, 4> &networkIconAssets()
+QPainterPath demandPointStarPath()
 {
-    static const std::array<NetworkIconAsset, 4> assets = []
+    QPainterPath path;
+    path.moveTo(70.0, 4.0);
+    path.lineTo(86.0, 54.0);
+    path.lineTo(136.0, 70.0);
+    path.lineTo(86.0, 86.0);
+    path.lineTo(70.0, 136.0);
+    path.lineTo(54.0, 86.0);
+    path.lineTo(4.0, 70.0);
+    path.lineTo(54.0, 54.0);
+    path.closeSubpath();
+    return path;
+}
+
+const std::array<NetworkIconAsset, 5> &networkIconAssets()
+{
+    static const std::array<NetworkIconAsset, 5> assets = []
     {
-        std::array<NetworkIconAsset, 4> result;
+        std::array<NetworkIconAsset, 5> result;
 
         result[0].entity_type = InfrastructureEntity::Reservoir;
         result[0].view_width = 186.0;
@@ -273,6 +288,13 @@ const std::array<NetworkIconAsset, 4> &networkIconAssets()
         result[3].view_height = 138.0;
         result[3].stroke_path = valveStrokePath();
         result[3].fill_path.addEllipse(QRectF(8.0, 8.0, 122.0, 122.0));
+
+        result[4].entity_type = InfrastructureEntity::DemandPoint;
+        result[4].view_width = 140.0;
+        result[4].view_height = 140.0;
+        result[4].stroke_width = 10.0;
+        result[4].stroke_path = demandPointStarPath();
+        result[4].fill_path = demandPointStarPath();
         return result;
     }();
     return assets;
@@ -280,7 +302,7 @@ const std::array<NetworkIconAsset, 4> &networkIconAssets()
 
 const NetworkIconAsset *iconAssetForEntity(InfrastructureEntity entity_type)
 {
-    const std::array<NetworkIconAsset, 4> &assets = networkIconAssets();
+    const std::array<NetworkIconAsset, 5> &assets = networkIconAssets();
     for (const NetworkIconAsset &asset : assets)
     {
         if (asset.entity_type == entity_type)
@@ -359,13 +381,21 @@ QHash<QUuid, double> nodeValues(const NetworkHydraulic &network_hydraulic, Visua
             values.insert(tank.uuid, resolvedSymbologyElevationM(tank));
         break;
     case VisualNode::BaseDemand:
-        values.reserve(network_hydraulic.nodes_junctions.size());
+        values.reserve(network_hydraulic.nodes_junctions.size()
+                       + network_hydraulic.demand_points.size());
         for (const HydraulicNodeJunction &junction : network_hydraulic.nodes_junctions)
         {
             double base_demand_m3_per_h = 0.0;
             for (const HydraulicDemand &demand : junction.demands)
                 base_demand_m3_per_h += demand.base_demand_m3_per_h;
             values.insert(junction.uuid, base_demand_m3_per_h);
+        }
+        for (const HydraulicDemandPoint &demand_point : network_hydraulic.demand_points)
+        {
+            double base_demand_m3_per_h = 0.0;
+            for (const HydraulicDemand &demand : demand_point.demands)
+                base_demand_m3_per_h += demand.base_demand_m3_per_h;
+            values.insert(demand_point.uuid, base_demand_m3_per_h);
         }
         break;
     case VisualNode::None:
@@ -791,7 +821,7 @@ void MapNetworkOverlayWidget::setSelectedEntity(
     }
 
     const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
-    if (InfrastructureEntityTraits::isHydraulicConnectionNode(entity_type))
+    if (InfrastructureEntityTraits::isHydraulicPointEntity(entity_type))
     {
         for (const NetworkRenderNode &node : snapshot.nodes)
         {
@@ -1256,6 +1286,53 @@ MapNetworkOverlayWidget::PreparedGeometry MapNetworkOverlayWidget::prepareGeomet
             marker.world_position = center;
             result.hit_markers.append(marker);
         }
+    }
+
+    for (const NetworkRenderDemandPointAttachment &attachment :
+         snapshot.demand_point_attachments)
+    {
+        if (!isFiniteCoordinate(attachment.demand_point_coordinate_wgs84)
+            || !isFiniteCoordinate(attachment.attachment_coordinate_wgs84))
+        {
+            continue;
+        }
+
+        const QPointF raw_start = GeoWebMercator::lonLatToWorldPixel(
+            GeoWebMercator::normalizeLongitude(
+                attachment.demand_point_coordinate_wgs84.longitude_deg),
+            attachment.demand_point_coordinate_wgs84.latitude_deg,
+            MapRenderCacheMath::ReferenceZoom);
+        if (!std::isfinite(anchor_x))
+            anchor_x = raw_start.x();
+        const QPointF start(
+            GeoWebMercator::nearestWrappedWorldPixelX(
+                raw_start.x(), anchor_x, MapRenderCacheMath::ReferenceZoom),
+            raw_start.y());
+
+        const QPointF raw_end = GeoWebMercator::lonLatToWorldPixel(
+            GeoWebMercator::normalizeLongitude(
+                attachment.attachment_coordinate_wgs84.longitude_deg),
+            attachment.attachment_coordinate_wgs84.latitude_deg,
+            MapRenderCacheMath::ReferenceZoom);
+        const QPointF end(
+            GeoWebMercator::nearestWrappedWorldPixelX(
+                raw_end.x(), start.x(), MapRenderCacheMath::ReferenceZoom),
+            raw_end.y());
+
+        RenderGeometry::Segment segment;
+        segment.render_id = attachment.demand_point_render_id;
+        segment.entity_type = InfrastructureEntity::DemandPoint;
+        segment.line = QLineF(start, end);
+        geometry->link_segments.append(segment);
+        geometry->segment_indices_by_entity[
+            entityRenderKey(InfrastructureEntity::DemandPoint,
+                            attachment.demand_point_render_id)].append(
+            geometry->link_segments.size() - 1);
+
+        minimum_x = std::min(minimum_x, std::min(start.x(), end.x()));
+        minimum_y = std::min(minimum_y, std::min(start.y(), end.y()));
+        maximum_x = std::max(maximum_x, std::max(start.x(), end.x()));
+        maximum_y = std::max(maximum_y, std::max(start.y(), end.y()));
     }
 
     if ((geometry->markers.isEmpty() && geometry->link_segments.isEmpty()) ||
@@ -1826,7 +1903,7 @@ QImage MapNetworkOverlayWidget::renderHeatmap(const RenderRequest &request, qrea
             return QImage();
         }
 
-        if (!InfrastructureEntityTraits::isHydraulicConnectionNode(marker.entity_type))
+        if (!InfrastructureEntityTraits::isHydraulicPointEntity(marker.entity_type))
         {
             continue;
         }
@@ -2233,6 +2310,7 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
 
             const BandContent &content = band_contents.at(band_index);
             QHash<QRgb, QPainterPath> link_paths;
+            QHash<QRgb, QPainterPath> attachment_paths;
             QHash<QRgb, QPainterPath> flow_direction_paths;
             QHash<QRgb, QPainterPath> junction_paths;
             QHash<quint32, QPainterPath> icon_stroke_paths;
@@ -2252,9 +2330,15 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
 
                 const RenderGeometry::Segment &render_segment = request.geometry->link_segments.at(segment_index);
                 const QLineF &segment = render_segment.line;
-                const QRgb color = request.symbology->link_colors.value(
-                    render_segment.render_id, NetworkColor.rgb());
-                QPainterPath &link_path = link_paths[color];
+                const bool demand_point_attachment =
+                    render_segment.entity_type == InfrastructureEntity::DemandPoint;
+                const QRgb color = demand_point_attachment
+                    ? request.symbology->node_colors.value(
+                        render_segment.render_id, NetworkColor.rgb())
+                    : request.symbology->link_colors.value(
+                        render_segment.render_id, NetworkColor.rgb());
+                QPainterPath &link_path = demand_point_attachment
+                    ? attachment_paths[color] : link_paths[color];
                 link_path.moveTo(QPointF(
                     (segment.x1() - image_left) * scale,
                     (segment.y1() - image_top) * scale - band.logical_top));
@@ -2299,7 +2383,7 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
                 const RenderGeometry::Marker &marker = request.geometry->markers.at(marker_index);
                 const QPointF &world_position = marker.world_position;
                 const bool node_entity =
-                    InfrastructureEntityTraits::isHydraulicConnectionNode(marker.entity_type);
+                    InfrastructureEntityTraits::isHydraulicPointEntity(marker.entity_type);
                 const QRgb color = node_entity
                     ? request.symbology->node_colors.value(marker.render_id, NetworkColor.rgb())
                     : request.symbology->link_colors.value(marker.render_id, NetworkColor.rgb());
@@ -2351,6 +2435,15 @@ MapNetworkOverlayWidget::RenderResult MapNetworkOverlayWidget::renderRequest(con
             {
                 QPen pen(QColor::fromRgb(iterator.key()));
                 pen.setWidthF(link_width_px);
+                pen.setCapStyle(Qt::RoundCap);
+                pen.setJoinStyle(Qt::RoundJoin);
+                document.addStroke(std::move(iterator.value()), pen);
+            }
+            for (QHash<QRgb, QPainterPath>::iterator iterator = attachment_paths.begin();
+                 iterator != attachment_paths.end(); ++iterator)
+            {
+                QPen pen(QColor::fromRgb(iterator.key()));
+                pen.setWidthF(1.5);
                 pen.setCapStyle(Qt::RoundCap);
                 pen.setJoinStyle(Qt::RoundJoin);
                 document.addStroke(std::move(iterator.value()), pen);
@@ -2705,7 +2798,7 @@ QList<NetworkOverlayHit> MapNetworkOverlayWidget::simulationErrorEntityHits() co
         const QUuid &uuid = error_iterator.key();
         const InfrastructureEntity entity_type = error_iterator.value();
         NetworkOverlayHit hit;
-        if (InfrastructureEntityTraits::isHydraulicConnectionNode(entity_type))
+        if (InfrastructureEntityTraits::isHydraulicPointEntity(entity_type))
         {
             for (const NetworkRenderNode &node : current_snapshot.nodes)
             {

@@ -293,6 +293,26 @@ void testDemandPointLifecycle()
     expectTrue(!editor.attachDemandPointToPipe(second_uuid, pipe_uuid, 1.1),
                "pipe attachment position above one is rejected");
 
+    const NetworkRenderSnapshot pipe_attachment_snapshot =
+        buildNetworkRenderSnapshot(network, 2, 2);
+    expectTrue(pipe_attachment_snapshot.demand_point_attachments.size() == 1,
+               "pipe-attached demand point is present in the render snapshot");
+    if (pipe_attachment_snapshot.demand_point_attachments.size() == 1)
+    {
+        const NetworkRenderDemandPointAttachment &render_attachment =
+            pipe_attachment_snapshot.demand_point_attachments.first();
+        expectTrue(render_attachment.demand_point_uuid == second_uuid,
+                   "render attachment retains demand-point UUID");
+        expectTrue(render_attachment.demand_point_render_id != 0,
+                   "render attachment uses the demand-point render ID");
+        expectNear(render_attachment.attachment_coordinate_wgs84.latitude_deg,
+                   junction_a_coordinate.latitude_deg, 1e-9,
+                   "pipe attachment render coordinate follows pipe latitude");
+        expectNear(render_attachment.attachment_coordinate_wgs84.longitude_deg,
+                   18.225, 1e-9,
+                   "pipe attachment render coordinate follows normalized pipe position");
+    }
+
     expectTrue(editor.attachDemandPointToJunction(second_uuid, junction_a_uuid),
                "demand point can attach directly to a junction");
     attached = editor.demandPoint(second_uuid);
@@ -305,6 +325,22 @@ void testDemandPointLifecycle()
                    "junction attachment records supplying junction UUID");
         expectTrue(attached->attachment.pipe_uuid.isNull(),
                    "junction attachment does not retain a stale pipe UUID");
+    }
+
+    const NetworkRenderSnapshot junction_attachment_snapshot =
+        buildNetworkRenderSnapshot(network, 3, 3);
+    expectTrue(junction_attachment_snapshot.demand_point_attachments.size() == 1,
+               "junction-attached demand point is present in the render snapshot");
+    if (junction_attachment_snapshot.demand_point_attachments.size() == 1)
+    {
+        const NetworkRenderDemandPointAttachment &render_attachment =
+            junction_attachment_snapshot.demand_point_attachments.first();
+        expectNear(render_attachment.attachment_coordinate_wgs84.latitude_deg,
+                   junction_a_coordinate.latitude_deg, 1e-12,
+                   "junction attachment render coordinate follows junction latitude");
+        expectNear(render_attachment.attachment_coordinate_wgs84.longitude_deg,
+                   junction_a_coordinate.longitude_deg, 1e-12,
+                   "junction attachment render coordinate follows junction longitude");
     }
 
     expectTrue(editor.deleteJunction(junction_a_uuid),

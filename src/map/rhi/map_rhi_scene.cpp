@@ -173,6 +173,7 @@ void MapRhiScene::rebuildNetworkGeometry()
         if (!this->hidden_entity_uuids.contains(link.uuid))
             segment_count += qMax<qsizetype>(0, link.vertices_wgs84.size() - 1);
     }
+    segment_count += this->network_snapshot.demand_point_attachments.size();
     this->link_vertices.reserve(segment_count * 6);
 
     for (const NetworkRenderLink &link : this->network_snapshot.links)
@@ -274,6 +275,39 @@ void MapRhiScene::rebuildNetworkGeometry()
         }
     }
 
+    for (const NetworkRenderDemandPointAttachment &attachment :
+         this->network_snapshot.demand_point_attachments)
+    {
+        if (this->hidden_entity_uuids.contains(attachment.demand_point_uuid)
+            || !finiteCoordinate(attachment.demand_point_coordinate_wgs84)
+            || !finiteCoordinate(attachment.attachment_coordinate_wgs84))
+        {
+            continue;
+        }
+
+        double start_resolved_x = this->origin_world.x();
+        QPointF start = localWorldPosition(
+            attachment.demand_point_coordinate_wgs84, this->origin_world.x(),
+            &start_resolved_x);
+        start += node_declutter_offsets.value(attachment.demand_point_render_id);
+        double end_resolved_x = start_resolved_x;
+        const QPointF end = localWorldPosition(
+            attachment.attachment_coordinate_wgs84, start_resolved_x,
+            &end_resolved_x);
+        const qsizetype first_vertex = this->link_vertices.size();
+        appendLinkSegment(
+            InfrastructureEntity::DemandPoint, attachment.demand_point_render_id,
+            start, end);
+        const float attachment_half_width_px = 0.75f;
+        const float base_half_width_px = float(this->symbology.link_thickness_px) / 2.0f;
+        const float attachment_size_adjust_px = this->symbology.link_thickness_unit
+                == NetworkSymbologySizeUnit::Meters
+            ? -attachment_half_width_px
+            : attachment_half_width_px - base_half_width_px;
+        for (qsizetype index = first_vertex; index < this->link_vertices.size(); ++index)
+            this->link_vertices[index].size_adjust_px = attachment_size_adjust_px;
+    }
+
     rebuildHeatmap();
     rebuildIcons();
     rebuildFlowDirections();
@@ -318,10 +352,15 @@ void MapRhiScene::setSymbology(const MapNetworkRenderSymbology &symbology)
         || this->symbology.flow_directions != symbology.flow_directions;
 
     this->symbology = symbology;
+    if (link_thickness_changed && !this->network_snapshot.demand_point_attachments.isEmpty())
+    {
+        rebuildNetworkGeometry();
+        return;
+    }
     if (network_style_changed)
         rebuildNetworkStyles();
 
-    if (link_colors_changed)
+    if (link_colors_changed || node_colors_changed)
     {
         for (LinkVertex &vertex : this->link_vertices)
             applyLinkColor(&vertex);
@@ -651,8 +690,11 @@ void MapRhiScene::applyLinkColor(LinkVertex *vertex) const
     if (vertex == nullptr)
         return;
 
-    const QRgb color = this->symbology.link_colors.value(
-        vertex->render_id, networkSymbologyDefaultColor());
+    const QRgb color = vertex->entity_type == InfrastructureEntity::DemandPoint
+        ? this->symbology.node_colors.value(
+            vertex->render_id, networkSymbologyDefaultColor())
+        : this->symbology.link_colors.value(
+            vertex->render_id, networkSymbologyDefaultColor());
     vertex->red = qRed(color) / 255.0f;
     vertex->green = qGreen(color) / 255.0f;
     vertex->blue = qBlue(color) / 255.0f;
@@ -749,7 +791,7 @@ void MapRhiScene::appendIcon(const IconMarker &marker)
     const float half_width_ratio = float(atlas_entry.width_ratio / 2.0);
     const float half_height_ratio = float(atlas_entry.height_ratio / 2.0);
     const bool node_entity =
-        InfrastructureEntityTraits::isHydraulicConnectionNode(marker.entity_type);
+        InfrastructureEntityTraits::isHydraulicPointEntity(marker.entity_type);
     const bool colorization_active = node_entity
         ? this->symbology.visual_node != VisualNode::None
         : this->symbology.visual_link != VisualLink::None;
