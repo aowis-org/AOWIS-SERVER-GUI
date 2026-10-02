@@ -2428,6 +2428,28 @@ bool HydraulicData::attachDemandPointToPipe(
     return true;
 }
 
+bool HydraulicData::setDemandPointPipeAllocationMode(
+    const QUuid &uuid, HydraulicDemandPointPipeAllocationMode allocation_mode)
+{
+    if (!this->network_editor.setDemandPointPipeAllocationMode(uuid, allocation_mode))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::setDemandPointPipeAssignedJunction(
+    const QUuid &uuid, const QUuid &junction_uuid)
+{
+    if (!this->network_editor.setDemandPointPipeAssignedJunction(uuid, junction_uuid))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
 bool HydraulicData::attachDemandPointToJunction(
     const QUuid &uuid, const QUuid &junction_uuid)
 {

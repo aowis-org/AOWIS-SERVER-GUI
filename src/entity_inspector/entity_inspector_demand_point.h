@@ -36,6 +36,10 @@ private:
     QLabel *label_attachment_type_value = nullptr;
     QLabel *label_attachment_target_value = nullptr;
     QLabel *label_attachment_position_value = nullptr;
+    QLabel *label_pipe_allocation_mode = nullptr;
+    QComboBox *combo_pipe_allocation_mode = nullptr;
+    QLabel *label_pipe_assigned_junction = nullptr;
+    QComboBox *combo_pipe_assigned_junction = nullptr;
     QPushButton *button_attachment_select = nullptr;
     QPushButton *button_attachment_locate = nullptr;
     QPushButton *button_attachment_detach = nullptr;

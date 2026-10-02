@@ -98,6 +98,9 @@ public:
     bool removeDemandPointMeter(const QUuid &uuid);
     bool attachDemandPointToPipe(const QUuid &uuid, const QUuid &pipe_uuid,
                                  double pipe_position);
+    bool setDemandPointPipeAllocationMode(
+        const QUuid &uuid, HydraulicDemandPointPipeAllocationMode allocation_mode);
+    bool setDemandPointPipeAssignedJunction(const QUuid &uuid, const QUuid &junction_uuid);
     bool attachDemandPointToJunction(const QUuid &uuid, const QUuid &junction_uuid);
     bool clearDemandPointAttachment(const QUuid &uuid);
 
@@ -230,6 +233,8 @@ public:
     bool deleteValve(const QUuid &uuid);
 
 private:
+    bool assignDemandPointToNearestPipeJunction(
+        HydraulicDemandPoint &demand_point, const HydraulicLinkPipe &pipe);
     void clearDemandPointAttachmentsToPipe(const QUuid &pipe_uuid);
     void clearDemandPointAttachmentsToJunction(const QUuid &junction_uuid);
     void deleteConnectedLinks(const QUuid &node_uuid);

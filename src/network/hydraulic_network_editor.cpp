@@ -691,10 +691,95 @@ bool HydraulicNetworkEditor::attachDemandPointToPipe(
     if (demand_point == nullptr || pipe == nullptr)
         return false;
 
+    HydraulicDemandPointPipeAllocationMode allocation_mode =
+        HydraulicDemandPointPipeAllocationMode::InterpolateByPosition;
+    if (demand_point->attachment.type == HydraulicDemandPointAttachmentType::Pipe)
+        allocation_mode = demand_point->attachment.pipe_allocation_mode;
+
+    const QUuid previous_assigned_junction_uuid =
+        demand_point->attachment.pipe_assigned_junction_uuid;
+
     demand_point->attachment = HydraulicDemandPointAttachment();
     demand_point->attachment.type = HydraulicDemandPointAttachmentType::Pipe;
     demand_point->attachment.pipe_uuid = pipe_uuid;
     demand_point->attachment.pipe_position = pipe_position;
+    demand_point->attachment.pipe_allocation_mode = allocation_mode;
+
+    if (allocation_mode != HydraulicDemandPointPipeAllocationMode::AssignedJunction)
+        return true;
+
+    const bool previous_assignment_is_valid =
+        previous_assigned_junction_uuid == pipe->node_uuid_from
+        || previous_assigned_junction_uuid == pipe->node_uuid_to;
+    if (previous_assignment_is_valid
+        && entityByUuid(this->network.nodes_junctions, previous_assigned_junction_uuid) != nullptr)
+    {
+        demand_point->attachment.pipe_assigned_junction_uuid =
+            previous_assigned_junction_uuid;
+        return true;
+    }
+
+    return assignDemandPointToNearestPipeJunction(*demand_point, *pipe);
+}
+
+bool HydraulicNetworkEditor::setDemandPointPipeAllocationMode(
+    const QUuid &uuid, HydraulicDemandPointPipeAllocationMode allocation_mode)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr
+        || demand_point->attachment.type != HydraulicDemandPointAttachmentType::Pipe)
+    {
+        return false;
+    }
+
+    if (allocation_mode == HydraulicDemandPointPipeAllocationMode::InterpolateByPosition)
+    {
+        demand_point->attachment.pipe_allocation_mode = allocation_mode;
+        demand_point->attachment.pipe_assigned_junction_uuid = QUuid();
+        return true;
+    }
+
+    const HydraulicLinkPipe *pipe =
+        entityByUuid(this->network.links_pipes, demand_point->attachment.pipe_uuid);
+    if (pipe == nullptr)
+        return false;
+
+    const QUuid assigned_junction_uuid =
+        demand_point->attachment.pipe_assigned_junction_uuid;
+    const bool assigned_junction_is_valid =
+        (assigned_junction_uuid == pipe->node_uuid_from
+         || assigned_junction_uuid == pipe->node_uuid_to)
+        && entityByUuid(this->network.nodes_junctions, assigned_junction_uuid) != nullptr;
+
+    demand_point->attachment.pipe_allocation_mode = allocation_mode;
+    if (assigned_junction_is_valid)
+        return true;
+
+    return assignDemandPointToNearestPipeJunction(*demand_point, *pipe);
+}
+
+bool HydraulicNetworkEditor::setDemandPointPipeAssignedJunction(
+    const QUuid &uuid, const QUuid &junction_uuid)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr
+        || demand_point->attachment.type != HydraulicDemandPointAttachmentType::Pipe
+        || demand_point->attachment.pipe_allocation_mode
+            != HydraulicDemandPointPipeAllocationMode::AssignedJunction)
+    {
+        return false;
+    }
+
+    const HydraulicLinkPipe *pipe =
+        entityByUuid(this->network.links_pipes, demand_point->attachment.pipe_uuid);
+    const HydraulicNodeJunction *junction =
+        entityByUuid(this->network.nodes_junctions, junction_uuid);
+    if (pipe == nullptr || junction == nullptr)
+        return false;
+    if (junction_uuid != pipe->node_uuid_from && junction_uuid != pipe->node_uuid_to)
+        return false;
+
+    demand_point->attachment.pipe_assigned_junction_uuid = junction_uuid;
     return true;
 }
 
@@ -1845,21 +1930,37 @@ QUuid HydraulicNetworkEditor::splitPipeAtVertex(const QUuid &pipe_uuid, int vert
             }
 
             const double old_position = demand_point.attachment.pipe_position;
+            const bool assigned_junction_mode =
+                demand_point.attachment.pipe_allocation_mode
+                == HydraulicDemandPointPipeAllocationMode::AssignedJunction;
+
             if (std::abs(old_position - split) <= attachment_tolerance)
             {
-                demand_point.attachment = HydraulicDemandPointAttachment();
-                demand_point.attachment.type = HydraulicDemandPointAttachmentType::Junction;
-                demand_point.attachment.junction_uuid = junction_uuid;
+                if (!assigned_junction_mode)
+                {
+                    demand_point.attachment = HydraulicDemandPointAttachment();
+                    demand_point.attachment.type = HydraulicDemandPointAttachmentType::Junction;
+                    demand_point.attachment.junction_uuid = junction_uuid;
+                    continue;
+                }
+
+                demand_point.attachment.pipe_uuid = first_pipe.uuid;
+                demand_point.attachment.pipe_position = 1.0;
+                assignDemandPointToNearestPipeJunction(demand_point, first_pipe);
             }
             else if (old_position < split && split > 0.0)
             {
                 demand_point.attachment.pipe_position = old_position / split;
+                if (assigned_junction_mode)
+                    assignDemandPointToNearestPipeJunction(demand_point, first_pipe);
             }
             else if (old_position > split && split < 1.0)
             {
                 demand_point.attachment.pipe_uuid = second_pipe.uuid;
                 demand_point.attachment.pipe_position =
                     (old_position - split) / (1.0 - split);
+                if (assigned_junction_mode)
+                    assignDemandPointToNearestPipeJunction(demand_point, second_pipe);
             }
         }
 
@@ -1951,6 +2052,11 @@ bool HydraulicNetworkEditor::undoPipeSplit(const QUuid &first_pipe_uuid, const Q
             if (demand_point.attachment.pipe_uuid == first_pipe_uuid)
             {
                 demand_point.attachment.pipe_position *= split_position;
+                if (demand_point.attachment.pipe_allocation_mode
+                    == HydraulicDemandPointPipeAllocationMode::AssignedJunction)
+                {
+                    assignDemandPointToNearestPipeJunction(demand_point, restored_pipe);
+                }
             }
             else if (demand_point.attachment.pipe_uuid == second_pipe_uuid)
             {
@@ -1958,6 +2064,11 @@ bool HydraulicNetworkEditor::undoPipeSplit(const QUuid &first_pipe_uuid, const Q
                 demand_point.attachment.pipe_position =
                     split_position
                     + demand_point.attachment.pipe_position * (1.0 - split_position);
+                if (demand_point.attachment.pipe_allocation_mode
+                    == HydraulicDemandPointPipeAllocationMode::AssignedJunction)
+                {
+                    assignDemandPointToNearestPipeJunction(demand_point, restored_pipe);
+                }
             }
         }
 
@@ -2019,6 +2130,45 @@ bool HydraulicNetworkEditor::deleteValve(const QUuid &uuid)
     return removeEntityByUuid(this->network.links_valves, uuid);
 }
 
+bool HydraulicNetworkEditor::assignDemandPointToNearestPipeJunction(
+    HydraulicDemandPoint &demand_point, const HydraulicLinkPipe &pipe)
+{
+    if (demand_point.attachment.type != HydraulicDemandPointAttachmentType::Pipe
+        || demand_point.attachment.pipe_allocation_mode
+            != HydraulicDemandPointPipeAllocationMode::AssignedJunction)
+    {
+        return false;
+    }
+
+    const bool from_is_junction =
+        entityByUuid(this->network.nodes_junctions, pipe.node_uuid_from) != nullptr;
+    const bool to_is_junction =
+        entityByUuid(this->network.nodes_junctions, pipe.node_uuid_to) != nullptr;
+    if (!from_is_junction && !to_is_junction)
+    {
+        demand_point.attachment.pipe_assigned_junction_uuid = QUuid();
+        return false;
+    }
+
+    if (from_is_junction && to_is_junction)
+    {
+        demand_point.attachment.pipe_assigned_junction_uuid =
+            demand_point.attachment.pipe_position <= 0.5
+                ? pipe.node_uuid_from
+                : pipe.node_uuid_to;
+    }
+    else if (from_is_junction)
+    {
+        demand_point.attachment.pipe_assigned_junction_uuid = pipe.node_uuid_from;
+    }
+    else
+    {
+        demand_point.attachment.pipe_assigned_junction_uuid = pipe.node_uuid_to;
+    }
+
+    return true;
+}
+
 void HydraulicNetworkEditor::clearDemandPointAttachmentsToPipe(const QUuid &pipe_uuid)
 {
     for (HydraulicDemandPoint &demand_point : this->network.demand_points)
@@ -2037,11 +2187,16 @@ void HydraulicNetworkEditor::clearDemandPointAttachmentsToJunction(const QUuid &
 {
     for (HydraulicDemandPoint &demand_point : this->network.demand_points)
     {
-        if (demand_point.attachment.type != HydraulicDemandPointAttachmentType::Junction
-            || demand_point.attachment.junction_uuid != junction_uuid)
-        {
+        const bool direct_junction_attachment =
+            demand_point.attachment.type == HydraulicDemandPointAttachmentType::Junction
+            && demand_point.attachment.junction_uuid == junction_uuid;
+        const bool assigned_pipe_junction =
+            demand_point.attachment.type == HydraulicDemandPointAttachmentType::Pipe
+            && demand_point.attachment.pipe_allocation_mode
+                == HydraulicDemandPointPipeAllocationMode::AssignedJunction
+            && demand_point.attachment.pipe_assigned_junction_uuid == junction_uuid;
+        if (!direct_junction_attachment && !assigned_pipe_junction)
             continue;
-        }
 
         demand_point.attachment = HydraulicDemandPointAttachment();
     }

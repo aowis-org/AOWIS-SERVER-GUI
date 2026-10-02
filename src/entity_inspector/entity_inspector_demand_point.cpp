@@ -178,6 +178,25 @@ void EntityInspectorDemandPoint::addGroupAttachment()
     this->label_attachment_position_value = new QLabel();
     this->label_attachment_position_value->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
+    this->label_pipe_allocation_mode = new QLabel("Demand<br>Allocation");
+    this->combo_pipe_allocation_mode = new QComboBox();
+    this->combo_pipe_allocation_mode->addItem(
+        "Split by pipe position",
+        static_cast<int>(HydraulicDemandPointPipeAllocationMode::InterpolateByPosition));
+    this->combo_pipe_allocation_mode->addItem(
+        "Assigned junction",
+        static_cast<int>(HydraulicDemandPointPipeAllocationMode::AssignedJunction));
+    this->combo_pipe_allocation_mode->setToolTip(
+        "'Split by pipe position' mode distributes demand between both pipe endpoint junctions according "
+        "to the demand-point position. <br>"
+        "'Assigned junction' mode keeps the visual pipe attachment "
+        "but applies all demand to one selected endpoint junction.");
+
+    this->label_pipe_assigned_junction = new QLabel("Assigned<br>Junction");
+    this->combo_pipe_assigned_junction = new QComboBox();
+    this->combo_pipe_assigned_junction->setToolTip(
+        "The pipe endpoint junction that receives 100% of this demand point's demand.");
+
     this->button_attachment_select = new QPushButton("Attach / Reattach on Map");
     this->button_attachment_locate = new QPushButton("Find Attachment on Map");
     this->button_attachment_detach = new QPushButton("Detach");
@@ -188,10 +207,46 @@ void EntityInspectorDemandPoint::addGroupAttachment()
     grid->addWidget(this->label_attachment_target_value, 1, 1);
     grid->addWidget(label_position, 2, 0);
     grid->addWidget(this->label_attachment_position_value, 2, 1);
-    grid->addWidget(this->button_attachment_select, 3, 0, 1, 2);
-    grid->addWidget(this->button_attachment_locate, 4, 0, 1, 2);
-    grid->addWidget(this->button_attachment_detach, 5, 0, 1, 2);
+    grid->addWidget(this->label_pipe_allocation_mode, 3, 0);
+    grid->addWidget(this->combo_pipe_allocation_mode, 3, 1);
+    grid->addWidget(this->label_pipe_assigned_junction, 4, 0);
+    grid->addWidget(this->combo_pipe_assigned_junction, 4, 1);
+    grid->addWidget(this->button_attachment_select, 5, 0, 1, 2);
+    grid->addWidget(this->button_attachment_locate, 6, 0, 1, 2);
+    grid->addWidget(this->button_attachment_detach, 7, 0, 1, 2);
+    grid->setColumnStretch(1, 1);
 
+    connect(this->combo_pipe_allocation_mode, &QComboBox::currentIndexChanged,
+            this, [this](int index)
+    {
+        if (index < 0)
+            return;
+
+        const HydraulicDemandPointPipeAllocationMode allocation_mode =
+            static_cast<HydraulicDemandPointPipeAllocationMode>(
+                this->combo_pipe_allocation_mode->itemData(index).toInt());
+        if (!hydraulicData()->setDemandPointPipeAllocationMode(
+                this->demand_point_uuid, allocation_mode))
+        {
+            refreshAttachment();
+        }
+    });
+    connect(this->combo_pipe_assigned_junction, &QComboBox::currentIndexChanged,
+            this, [this](int index)
+    {
+        if (index < 0)
+            return;
+
+        const QUuid junction_uuid =
+            this->combo_pipe_assigned_junction->itemData(index).toUuid();
+        if (junction_uuid.isNull())
+            return;
+        if (!hydraulicData()->setDemandPointPipeAssignedJunction(
+                this->demand_point_uuid, junction_uuid))
+        {
+            refreshAttachment();
+        }
+    });
     connect(this->button_attachment_select, &QPushButton::clicked, this, [this]()
     {
         hydraulicData()->requestDemandPointAttachmentSelection(this->demand_point_uuid);
@@ -233,11 +288,18 @@ void EntityInspectorDemandPoint::refreshAttachment()
     QString target_text = QStringLiteral("—");
     QString position_text = QStringLiteral("—");
     bool attached = false;
+    bool pipe_attached = false;
+    bool assigned_junction_mode = false;
+
+    const QSignalBlocker allocation_mode_blocker(this->combo_pipe_allocation_mode);
+    const QSignalBlocker assigned_junction_blocker(this->combo_pipe_assigned_junction);
+    this->combo_pipe_assigned_junction->clear();
 
     if (demand_point->attachment.type == HydraulicDemandPointAttachmentType::Pipe)
     {
         type_text = QStringLiteral("Pipe");
         attached = true;
+        pipe_attached = true;
         const std::optional<HydraulicLinkPipe> pipe =
             hydraulicData()->pipe(demand_point->attachment.pipe_uuid);
         target_text = pipe.has_value() && !pipe->id.isEmpty()
@@ -245,7 +307,50 @@ void EntityInspectorDemandPoint::refreshAttachment()
             : demand_point->attachment.pipe_uuid.toString(QUuid::WithoutBraces);
         position_text = QStringLiteral("%1 %")
             .arg(demand_point->attachment.pipe_position * 100.0, 0, 'f', 2);
+
+        const int mode_index = this->combo_pipe_allocation_mode->findData(
+            static_cast<int>(demand_point->attachment.pipe_allocation_mode));
+        if (mode_index >= 0)
+            this->combo_pipe_allocation_mode->setCurrentIndex(mode_index);
+
+        assigned_junction_mode =
+            demand_point->attachment.pipe_allocation_mode
+            == HydraulicDemandPointPipeAllocationMode::AssignedJunction;
+
+        if (pipe.has_value())
+        {
+            const std::optional<HydraulicNodeJunction> from_junction =
+                hydraulicData()->junction(pipe->node_uuid_from);
+            if (from_junction.has_value())
+            {
+                const QString text = from_junction->id.isEmpty()
+                    ? from_junction->uuid.toString(QUuid::WithoutBraces)
+                    : from_junction->id;
+                this->combo_pipe_assigned_junction->addItem(text, from_junction->uuid);
+            }
+
+            if (pipe->node_uuid_to != pipe->node_uuid_from)
+            {
+                const std::optional<HydraulicNodeJunction> to_junction =
+                    hydraulicData()->junction(pipe->node_uuid_to);
+                if (to_junction.has_value())
+                {
+                    const QString text = to_junction->id.isEmpty()
+                        ? to_junction->uuid.toString(QUuid::WithoutBraces)
+                        : to_junction->id;
+                    this->combo_pipe_assigned_junction->addItem(text, to_junction->uuid);
+                }
+            }
+        }
+
+        const int assigned_index = this->combo_pipe_assigned_junction->findData(
+            demand_point->attachment.pipe_assigned_junction_uuid);
+        if (assigned_index >= 0)
+            this->combo_pipe_assigned_junction->setCurrentIndex(assigned_index);
+        else
+            this->combo_pipe_assigned_junction->setCurrentIndex(-1);
     }
+
     else if (demand_point->attachment.type == HydraulicDemandPointAttachmentType::Junction)
     {
         type_text = QStringLiteral("Junction");
@@ -260,6 +365,13 @@ void EntityInspectorDemandPoint::refreshAttachment()
     this->label_attachment_type_value->setText(type_text);
     this->label_attachment_target_value->setText(target_text);
     this->label_attachment_position_value->setText(position_text);
+    this->label_pipe_allocation_mode->setVisible(pipe_attached);
+    this->combo_pipe_allocation_mode->setVisible(pipe_attached);
+    this->label_pipe_assigned_junction->setVisible(pipe_attached && assigned_junction_mode);
+    this->combo_pipe_assigned_junction->setVisible(pipe_attached && assigned_junction_mode);
+    this->combo_pipe_assigned_junction->setEnabled(
+        pipe_attached && assigned_junction_mode
+        && this->combo_pipe_assigned_junction->count() > 0);
     this->button_attachment_locate->setEnabled(attached);
     this->button_attachment_detach->setEnabled(attached);
 }

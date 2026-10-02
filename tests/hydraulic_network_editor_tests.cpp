@@ -30,6 +30,40 @@ void expectNear(double actual, double expected, double tolerance, const char *me
     ++failure_count;
 }
 
+
+void testDemandPointPipeAllocationModel()
+{
+    HydraulicDemandPointAttachment attachment;
+    expectTrue(
+        attachment.pipe_allocation_mode
+            == HydraulicDemandPointPipeAllocationMode::InterpolateByPosition,
+        "new demand-point pipe attachments default to native AOWIS positional allocation");
+    expectTrue(attachment.pipe_assigned_junction_uuid.isNull(),
+               "new demand-point pipe attachments have no assigned junction by default");
+
+    const QUuid pipe_uuid = QUuid::createUuid();
+    const QUuid assigned_junction_uuid = QUuid::createUuid();
+    attachment.type = HydraulicDemandPointAttachmentType::Pipe;
+    attachment.pipe_uuid = pipe_uuid;
+    attachment.pipe_position = 0.73;
+    attachment.pipe_allocation_mode = HydraulicDemandPointPipeAllocationMode::AssignedJunction;
+    attachment.pipe_assigned_junction_uuid = assigned_junction_uuid;
+
+    const HydraulicDemandPointAttachment copied_attachment = attachment;
+    expectTrue(copied_attachment.type == HydraulicDemandPointAttachmentType::Pipe,
+               "pipe attachment type survives value copying");
+    expectTrue(copied_attachment.pipe_uuid == pipe_uuid,
+               "pipe attachment UUID survives value copying");
+    expectNear(copied_attachment.pipe_position, 0.73, 1e-12,
+               "pipe attachment position survives value copying");
+    expectTrue(
+        copied_attachment.pipe_allocation_mode
+            == HydraulicDemandPointPipeAllocationMode::AssignedJunction,
+        "assigned-junction allocation mode survives value copying");
+    expectTrue(copied_attachment.pipe_assigned_junction_uuid == assigned_junction_uuid,
+               "assigned junction UUID survives value copying");
+}
+
 void testDemandPointLifecycle()
 {
     NetworkHydraulic network;
@@ -284,8 +318,80 @@ void testDemandPointLifecycle()
                    "pipe attachment records supplying pipe UUID");
         expectNear(attached->attachment.pipe_position, 0.25, 1e-12,
                    "pipe attachment records normalized pipe position");
+        expectTrue(
+            attached->attachment.pipe_allocation_mode
+                == HydraulicDemandPointPipeAllocationMode::InterpolateByPosition,
+            "existing attach-to-pipe workflow retains native AOWIS positional allocation");
+        expectTrue(attached->attachment.pipe_assigned_junction_uuid.isNull(),
+                   "native AOWIS pipe attachment does not assign a junction");
         expectTrue(attached->attachment.junction_uuid.isNull(),
                    "pipe attachment does not retain a stale junction UUID");
+    }
+
+    expectTrue(
+        editor.setDemandPointPipeAllocationMode(
+            second_uuid, HydraulicDemandPointPipeAllocationMode::AssignedJunction),
+        "pipe-attached demand point can switch to assigned-junction allocation");
+    attached = editor.demandPoint(second_uuid);
+    expectTrue(attached.has_value(),
+               "assigned-junction pipe demand point remains available");
+    if (attached.has_value())
+    {
+        expectTrue(
+            attached->attachment.pipe_allocation_mode
+                == HydraulicDemandPointPipeAllocationMode::AssignedJunction,
+            "assigned-junction allocation mode is stored");
+        expectTrue(attached->attachment.pipe_assigned_junction_uuid == junction_a_uuid,
+                   "switching to assigned-junction mode selects the nearer pipe endpoint");
+    }
+
+    expectTrue(editor.setDemandPointPipeAssignedJunction(second_uuid, junction_b_uuid),
+               "assigned-junction mode can select the other pipe endpoint junction");
+    attached = editor.demandPoint(second_uuid);
+    if (attached.has_value())
+    {
+        expectTrue(attached->attachment.pipe_assigned_junction_uuid == junction_b_uuid,
+                   "explicit assigned endpoint junction is stored");
+    }
+
+    CoordinateWGS84 unrelated_junction_coordinate;
+    unrelated_junction_coordinate.latitude_deg = 12.1;
+    unrelated_junction_coordinate.longitude_deg = 18.4;
+    const QUuid unrelated_junction_uuid = editor.addJunction(unrelated_junction_coordinate);
+    expectTrue(!unrelated_junction_uuid.isNull(),
+               "unrelated junction for attachment validation receives a UUID");
+    expectTrue(
+        !editor.setDemandPointPipeAssignedJunction(second_uuid, unrelated_junction_uuid),
+        "assigned-junction mode rejects a junction that is not a pipe endpoint");
+
+    expectTrue(editor.attachDemandPointToPipe(second_uuid, pipe_uuid, 0.2),
+               "reattaching a pipe-attached demand point preserves its allocation mode");
+    attached = editor.demandPoint(second_uuid);
+    if (attached.has_value())
+    {
+        expectNear(attached->attachment.pipe_position, 0.2, 1e-12,
+                   "map reattachment stores the updated normalized pipe position");
+        expectTrue(
+            attached->attachment.pipe_allocation_mode
+                == HydraulicDemandPointPipeAllocationMode::AssignedJunction,
+            "map reattachment preserves assigned-junction allocation mode");
+        expectTrue(attached->attachment.pipe_assigned_junction_uuid == junction_b_uuid,
+                   "map reattachment preserves an explicit assigned endpoint when it remains valid");
+    }
+
+    expectTrue(
+        editor.setDemandPointPipeAllocationMode(
+            second_uuid, HydraulicDemandPointPipeAllocationMode::InterpolateByPosition),
+        "pipe-attached demand point can switch back to native AOWIS allocation");
+    attached = editor.demandPoint(second_uuid);
+    if (attached.has_value())
+    {
+        expectTrue(
+            attached->attachment.pipe_allocation_mode
+                == HydraulicDemandPointPipeAllocationMode::InterpolateByPosition,
+            "native AOWIS allocation mode is restored");
+        expectTrue(attached->attachment.pipe_assigned_junction_uuid.isNull(),
+                   "switching back to AOWIS allocation clears the assigned junction");
     }
 
     expectTrue(!editor.attachDemandPointToPipe(second_uuid, pipe_uuid, -0.1),
@@ -309,8 +415,8 @@ void testDemandPointLifecycle()
                    junction_a_coordinate.latitude_deg, 1e-9,
                    "pipe attachment render coordinate follows pipe latitude");
         expectNear(render_attachment.attachment_coordinate_wgs84.longitude_deg,
-                   18.225, 1e-9,
-                   "pipe attachment render coordinate follows normalized pipe position");
+                   18.220, 1e-9,
+                   "pipe attachment render coordinate follows normalized 0.20 pipe position after reattachment");
     }
 
     expectTrue(editor.attachDemandPointToJunction(second_uuid, junction_a_uuid),
@@ -475,12 +581,206 @@ void testDemandPointAttachmentRemappingOnPipeSplit()
     }
 }
 
+void testAssignedDemandPointAttachmentTopologyEdits()
+{
+    NetworkHydraulic network;
+    HydraulicNetworkEditor editor(network);
+
+    CoordinateWGS84 from_coordinate;
+    from_coordinate.latitude_deg = 0.0;
+    from_coordinate.longitude_deg = 0.0;
+    const QUuid from_uuid = editor.addJunction(from_coordinate);
+
+    CoordinateWGS84 to_coordinate;
+    to_coordinate.latitude_deg = 0.0;
+    to_coordinate.longitude_deg = 2.0;
+    const QUuid to_uuid = editor.addJunction(to_coordinate);
+
+    CoordinateWGS84 midpoint_coordinate;
+    midpoint_coordinate.latitude_deg = 0.0;
+    midpoint_coordinate.longitude_deg = 1.0;
+    const QUuid pipe_uuid = editor.addPipe(from_uuid, to_uuid, {midpoint_coordinate});
+    expectTrue(!pipe_uuid.isNull(), "assigned-mode split test pipe receives a UUID");
+
+    CoordinateWGS84 demand_coordinate;
+    demand_coordinate.latitude_deg = 0.2;
+    demand_coordinate.longitude_deg = 1.0;
+    const QUuid before_uuid = editor.addDemandPoint(demand_coordinate);
+    const QUuid at_uuid = editor.addDemandPoint(demand_coordinate);
+    const QUuid after_uuid = editor.addDemandPoint(demand_coordinate);
+
+    expectTrue(editor.attachDemandPointToPipe(before_uuid, pipe_uuid, 0.40),
+               "assigned-mode point before split attaches to pipe");
+    expectTrue(editor.attachDemandPointToPipe(at_uuid, pipe_uuid, 0.50),
+               "assigned-mode point at split attaches to pipe");
+    expectTrue(editor.attachDemandPointToPipe(after_uuid, pipe_uuid, 0.60),
+               "assigned-mode point after split attaches to pipe");
+    expectTrue(editor.setDemandPointPipeAllocationMode(
+                   before_uuid, HydraulicDemandPointPipeAllocationMode::AssignedJunction),
+               "before-split point enables assigned-junction mode");
+    expectTrue(editor.setDemandPointPipeAllocationMode(
+                   at_uuid, HydraulicDemandPointPipeAllocationMode::AssignedJunction),
+               "at-split point enables assigned-junction mode");
+    expectTrue(editor.setDemandPointPipeAllocationMode(
+                   after_uuid, HydraulicDemandPointPipeAllocationMode::AssignedJunction),
+               "after-split point enables assigned-junction mode");
+
+    std::optional<HydraulicDemandPoint> before = editor.demandPoint(before_uuid);
+    std::optional<HydraulicDemandPoint> at = editor.demandPoint(at_uuid);
+    std::optional<HydraulicDemandPoint> after = editor.demandPoint(after_uuid);
+    if (before.has_value())
+    {
+        expectTrue(before->attachment.pipe_assigned_junction_uuid == from_uuid,
+                   "assigned point before split initially uses nearer from junction");
+    }
+    if (at.has_value())
+    {
+        expectTrue(at->attachment.pipe_assigned_junction_uuid == from_uuid,
+                   "assigned point at midpoint uses deterministic from-junction tie break");
+    }
+    if (after.has_value())
+    {
+        expectTrue(after->attachment.pipe_assigned_junction_uuid == to_uuid,
+                   "assigned point after split initially uses nearer to junction");
+    }
+
+    const QUuid split_junction_uuid = editor.addJunction(midpoint_coordinate);
+    const QUuid second_pipe_uuid = editor.splitPipeAtVertex(pipe_uuid, 0, split_junction_uuid);
+    expectTrue(!second_pipe_uuid.isNull(),
+               "assigned-junction pipe can be split while customer points are attached");
+
+    before = editor.demandPoint(before_uuid);
+    at = editor.demandPoint(at_uuid);
+    after = editor.demandPoint(after_uuid);
+    if (before.has_value())
+    {
+        expectTrue(before->attachment.type == HydraulicDemandPointAttachmentType::Pipe,
+                   "assigned point before split remains pipe-attached");
+        expectTrue(before->attachment.pipe_uuid == pipe_uuid,
+                   "assigned point before split remains on first half");
+        expectNear(before->attachment.pipe_position, 0.80, 1e-9,
+                   "assigned point before split is renormalized on first half");
+        expectTrue(before->attachment.pipe_assigned_junction_uuid == split_junction_uuid,
+                   "assigned point before split reallocates to nearer junction of first half");
+    }
+    if (at.has_value())
+    {
+        expectTrue(at->attachment.type == HydraulicDemandPointAttachmentType::Pipe,
+                   "assigned point exactly at split stays pipe-attached");
+        expectTrue(at->attachment.pipe_uuid == pipe_uuid,
+                   "assigned point exactly at split deterministically stays on first half");
+        expectNear(at->attachment.pipe_position, 1.0, 1e-9,
+                   "assigned point exactly at split maps to end of first half");
+        expectTrue(at->attachment.pipe_assigned_junction_uuid == split_junction_uuid,
+                   "assigned point exactly at split reallocates to split junction");
+    }
+    if (after.has_value())
+    {
+        expectTrue(after->attachment.type == HydraulicDemandPointAttachmentType::Pipe,
+                   "assigned point after split remains pipe-attached");
+        expectTrue(after->attachment.pipe_uuid == second_pipe_uuid,
+                   "assigned point after split moves to second half");
+        expectNear(after->attachment.pipe_position, 0.20, 1e-9,
+                   "assigned point after split is renormalized on second half");
+        expectTrue(after->attachment.pipe_assigned_junction_uuid == split_junction_uuid,
+                   "assigned point after split reallocates to nearer junction of second half");
+    }
+
+    expectTrue(editor.undoPipeSplit(pipe_uuid, second_pipe_uuid, split_junction_uuid),
+               "assigned-junction pipe split can be undone");
+    before = editor.demandPoint(before_uuid);
+    at = editor.demandPoint(at_uuid);
+    after = editor.demandPoint(after_uuid);
+    if (before.has_value())
+    {
+        expectTrue(before->attachment.pipe_uuid == pipe_uuid,
+                   "undo restores assigned point before split to original pipe");
+        expectNear(before->attachment.pipe_position, 0.40, 1e-9,
+                   "undo restores assigned point before split position");
+        expectTrue(before->attachment.pipe_assigned_junction_uuid == from_uuid,
+                   "undo reallocates assigned point before split to nearer original endpoint");
+    }
+    if (at.has_value())
+    {
+        expectTrue(at->attachment.type == HydraulicDemandPointAttachmentType::Pipe,
+                   "undo keeps assigned midpoint point pipe-attached");
+        expectTrue(at->attachment.pipe_uuid == pipe_uuid,
+                   "undo restores assigned midpoint point to original pipe");
+        expectNear(at->attachment.pipe_position, 0.50, 1e-9,
+                   "undo restores assigned midpoint position");
+        expectTrue(at->attachment.pipe_assigned_junction_uuid == from_uuid,
+                   "undo uses deterministic from-junction tie break at midpoint");
+    }
+    if (after.has_value())
+    {
+        expectTrue(after->attachment.pipe_uuid == pipe_uuid,
+                   "undo restores assigned point after split to original pipe");
+        expectNear(after->attachment.pipe_position, 0.60, 1e-9,
+                   "undo restores assigned point after split position");
+        expectTrue(after->attachment.pipe_assigned_junction_uuid == to_uuid,
+                   "undo reallocates assigned point after split to nearer original endpoint");
+    }
+
+    expectTrue(editor.deleteJunction(to_uuid),
+               "endpoint junction with assigned-junction customer points can be deleted");
+    before = editor.demandPoint(before_uuid);
+    at = editor.demandPoint(at_uuid);
+    after = editor.demandPoint(after_uuid);
+    expectTrue(before.has_value() && at.has_value() && after.has_value(),
+               "assigned-junction demand points survive deletion of a connected junction");
+    if (before.has_value())
+    {
+        expectTrue(before->attachment.type == HydraulicDemandPointAttachmentType::None,
+                   "deleting connected junction detaches assigned point from deleted pipe");
+    }
+    if (at.has_value())
+    {
+        expectTrue(at->attachment.type == HydraulicDemandPointAttachmentType::None,
+                   "deleting connected junction detaches midpoint assigned point");
+    }
+    if (after.has_value())
+    {
+        expectTrue(after->attachment.type == HydraulicDemandPointAttachmentType::None,
+                   "deleting assigned junction detaches its pipe-attached demand point");
+        expectTrue(after->attachment.pipe_assigned_junction_uuid.isNull(),
+                   "deleting assigned junction clears stale assigned-junction UUID");
+    }
+
+    CoordinateWGS84 replacement_from_coordinate;
+    replacement_from_coordinate.latitude_deg = 1.0;
+    replacement_from_coordinate.longitude_deg = 0.0;
+    const QUuid replacement_from_uuid = editor.addJunction(replacement_from_coordinate);
+    CoordinateWGS84 replacement_to_coordinate;
+    replacement_to_coordinate.latitude_deg = 1.0;
+    replacement_to_coordinate.longitude_deg = 1.0;
+    const QUuid replacement_to_uuid = editor.addJunction(replacement_to_coordinate);
+    const QUuid replacement_pipe_uuid =
+        editor.addPipe(replacement_from_uuid, replacement_to_uuid, {});
+    expectTrue(editor.attachDemandPointToPipe(before_uuid, replacement_pipe_uuid, 0.75),
+               "assigned point can be reattached before pipe-deletion check");
+    expectTrue(editor.setDemandPointPipeAllocationMode(
+                   before_uuid, HydraulicDemandPointPipeAllocationMode::AssignedJunction),
+               "reattached point can restore assigned-junction mode");
+    expectTrue(editor.deletePipe(replacement_pipe_uuid),
+               "pipe carrying an assigned-junction demand point can be deleted");
+    before = editor.demandPoint(before_uuid);
+    if (before.has_value())
+    {
+        expectTrue(before->attachment.type == HydraulicDemandPointAttachmentType::None,
+                   "deleting pipe detaches assigned-junction demand point");
+        expectTrue(before->attachment.pipe_assigned_junction_uuid.isNull(),
+                   "deleting pipe clears assigned-junction UUID");
+    }
+}
+
 }
 
 int main()
 {
+    testDemandPointPipeAllocationModel();
     testDemandPointLifecycle();
     testDemandPointAttachmentRemappingOnPipeSplit();
+    testAssignedDemandPointAttachmentTopologyEdits();
 
     if (failure_count != 0)
     {
