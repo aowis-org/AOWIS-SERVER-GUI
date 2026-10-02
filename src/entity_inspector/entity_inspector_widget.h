@@ -207,8 +207,8 @@ private:
     void scheduleJunctionDemandsRefresh();
     void refreshJunctionDemands();
     void rebuildJunctionDemandRows(const HydraulicNodeJunction &junction);
-    void addJunctionDemandRow(int demand_index, const HydraulicNodeJunctionDemand &demand);
-    void updateJunctionDemandRow(int demand_index, const HydraulicNodeJunctionDemand &demand);
+    void addJunctionDemandRow(int demand_index, const HydraulicDemand &demand);
+    void updateJunctionDemandRow(int demand_index, const HydraulicDemand &demand);
     void populateTimePatternCombo(QComboBox *combo_pattern, HydraulicTimePatternMode pattern_mode, const QUuid &pattern_uuid);
     void updateElevationModeUi();
     void updateCalculatedElevation();

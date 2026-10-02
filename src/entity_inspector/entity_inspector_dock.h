@@ -52,7 +52,7 @@ public slots:
     void showEntityPump(HydraulicLinkPump pump);
     void showEntityValve(HydraulicLinkValve valve);
     void showEntityReservoir(const HydraulicNodeReservoir &reservoir);
-    void showEntityCustomerPoint(NetworkHydraulicCustomerPoint customer_point);
+    void showEntityCustomerPoint(HydraulicDemandPoint customer_point);
     
 };
 

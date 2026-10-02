@@ -478,7 +478,7 @@ bool HydraulicNetworkEditor::setJunctionElevationOffsetM(const QUuid &uuid,
 }
 
 bool HydraulicNetworkEditor::addJunctionDemand(const QUuid &uuid,
-                                               const HydraulicNodeJunctionDemand &demand)
+                                               const HydraulicDemand &demand)
 {
     HydraulicNodeJunction *junction = entityByUuid(this->network.nodes_junctions, uuid);
     if (junction == nullptr)
@@ -543,7 +543,7 @@ bool HydraulicNetworkEditor::setJunctionDemandPatternUuid(const QUuid &uuid, int
 }
 
 bool HydraulicNetworkEditor::setJunctionDemandSourceMethod(
-    const QUuid &uuid, int demand_index, HydraulicNodeJunctionDemandSourceMethod source_method)
+    const QUuid &uuid, int demand_index, HydraulicDemandSourceMethod source_method)
 {
     HydraulicNodeJunction *junction = entityByUuid(this->network.nodes_junctions, uuid);
     if (junction == nullptr || demand_index < 0 || demand_index >= junction->demands.size())

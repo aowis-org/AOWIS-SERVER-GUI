@@ -79,7 +79,7 @@ public:
     bool setJunctionElevationM(const QUuid &uuid, double elevation_m);
     bool setJunctionTerrainElevationM(const QUuid &uuid, double terrain_elevation_m);
     bool setJunctionElevationOffsetM(const QUuid &uuid, double elevation_offset_m);
-    bool addJunctionDemand(const QUuid &uuid, const HydraulicNodeJunctionDemand &demand);
+    bool addJunctionDemand(const QUuid &uuid, const HydraulicDemand &demand);
     bool removeJunctionDemand(const QUuid &uuid, int demand_index);
     bool setJunctionDemandCategoryName(const QUuid &uuid, int demand_index,
                                        const QString &category_name);
@@ -90,7 +90,7 @@ public:
     bool setJunctionDemandPatternUuid(const QUuid &uuid, int demand_index,
                                       const QUuid &pattern_uuid);
     bool setJunctionDemandSourceMethod(const QUuid &uuid, int demand_index,
-                                       HydraulicNodeJunctionDemandSourceMethod source_method);
+                                       HydraulicDemandSourceMethod source_method);
     bool setJunctionDemandNote(const QUuid &uuid, int demand_index, const QString &note);
     bool setJunctionEmitterCoefficient(const QUuid &uuid, double coefficient);
     bool setJunctionEmitterPressureExponent(const QUuid &uuid, double pressure_exponent);

@@ -221,7 +221,7 @@ MainWindow::MainWindow(QWidget *parent)
                                   "Pipes");
     this->main_navigation->addPage(this->customerPoints,
                                   QIcon(":/icon/customer.png"),
-                                  "Customer Points");
+                                  "Demand Points");
     this->main_navigation->addPage(this->customers,
                                   QIcon(":/icon/users.png"),
                                   "Customers");

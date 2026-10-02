@@ -2466,7 +2466,7 @@ void EntityInspectorWidget::refreshJunctionDemands()
     if (this->label_demands_summary)
     {
         double total_base_demand_m3_per_h = 0.0;
-        for (const HydraulicNodeJunctionDemand &demand : junction->demands)
+        for (const HydraulicDemand &demand : junction->demands)
             total_base_demand_m3_per_h += demand.base_demand_m3_per_h;
 
         const int demand_count = junction->demands.size();
@@ -2519,7 +2519,7 @@ void EntityInspectorWidget::rebuildJunctionDemandRows(const HydraulicNodeJunctio
 }
 
 void EntityInspectorWidget::addJunctionDemandRow(
-    int demand_index, const HydraulicNodeJunctionDemand &demand)
+    int demand_index, const HydraulicDemand &demand)
 {
     if (!this->table_demands)
         return;
@@ -2537,13 +2537,13 @@ void EntityInspectorWidget::addJunctionDemandRow(
     QComboBox *combo_source = new QComboBox(this->table_demands);
     combo_source->addItem(
         "Manual Estimation",
-        static_cast<int>(HydraulicNodeJunctionDemandSourceMethod::ManualEstimation));
+        static_cast<int>(HydraulicDemandSourceMethod::ManualEstimation));
     combo_source->addItem(
         "Meter Data",
-        static_cast<int>(HydraulicNodeJunctionDemandSourceMethod::MeterData));
+        static_cast<int>(HydraulicDemandSourceMethod::MeterData));
     combo_source->addItem(
         "Scenario",
-        static_cast<int>(HydraulicNodeJunctionDemandSourceMethod::Scenario));
+        static_cast<int>(HydraulicDemandSourceMethod::Scenario));
 
     QLineEdit *line_note = new QLineEdit(this->table_demands);
     QPushButton *button_delete = new QPushButton(QIcon(":/icon/remove.png"), "", this->table_demands);
@@ -2583,8 +2583,8 @@ void EntityInspectorWidget::addJunctionDemandRow(
     });
     connect(combo_source, &QComboBox::currentIndexChanged, this, [this, demand_index, combo_source](int)
     {
-        const HydraulicNodeJunctionDemandSourceMethod source_method =
-            static_cast<HydraulicNodeJunctionDemandSourceMethod>(
+        const HydraulicDemandSourceMethod source_method =
+            static_cast<HydraulicDemandSourceMethod>(
                 combo_source->currentData().toInt());
         this->hydraulic_data->setJunctionDemandSourceMethod(
             this->entity_uuid, demand_index, source_method);
@@ -2600,7 +2600,7 @@ void EntityInspectorWidget::addJunctionDemandRow(
 }
 
 void EntityInspectorWidget::updateJunctionDemandRow(
-    int demand_index, const HydraulicNodeJunctionDemand &demand)
+    int demand_index, const HydraulicDemand &demand)
 {
     if (!this->table_demands || demand_index < 0 || demand_index >= this->table_demands->rowCount())
         return;
@@ -2789,7 +2789,7 @@ void EntityInspectorWidget::openDemandsEditor()
     QPushButton *button_demand = new QPushButton("Add Demand");
     connect(button_demand, &QPushButton::clicked, this, [this]()
     {
-        HydraulicNodeJunctionDemand demand;
+        HydraulicDemand demand;
         this->hydraulic_data->addJunctionDemand(this->entity_uuid, demand);
     });
 

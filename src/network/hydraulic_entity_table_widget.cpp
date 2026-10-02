@@ -333,15 +333,15 @@ QString patternModeText(HydraulicTimePatternMode pattern_mode)
         ? QStringLiteral("Time Pattern") : QStringLiteral("Constant");
 }
 
-QString demandSourceMethodText(HydraulicNodeJunctionDemandSourceMethod source_method)
+QString demandSourceMethodText(HydraulicDemandSourceMethod source_method)
 {
     switch (source_method)
     {
-    case HydraulicNodeJunctionDemandSourceMethod::ManualEstimation:
+    case HydraulicDemandSourceMethod::ManualEstimation:
         return QStringLiteral("Manual Estimation");
-    case HydraulicNodeJunctionDemandSourceMethod::MeterData:
+    case HydraulicDemandSourceMethod::MeterData:
         return QStringLiteral("Meter Data");
-    case HydraulicNodeJunctionDemandSourceMethod::Scenario:
+    case HydraulicDemandSourceMethod::Scenario:
         return QStringLiteral("Scenario");
     }
 
@@ -663,10 +663,10 @@ QString valveSettingCurveId(const NetworkHydraulic &network, const HydraulicLink
 }
 
 QString junctionDemandSummary(const NetworkHydraulic &network,
-                              const QList<HydraulicNodeJunctionDemand> &demands)
+                              const QList<HydraulicDemand> &demands)
 {
     QStringList parts;
-    for (const HydraulicNodeJunctionDemand &demand : demands)
+    for (const HydraulicDemand &demand : demands)
     {
         QString part;
         if (!demand.category_name.isEmpty())
@@ -691,10 +691,10 @@ QString junctionDemandSummary(const NetworkHydraulic &network,
     return parts.join(QStringLiteral(" | "));
 }
 
-double junctionBaseDemand(const QList<HydraulicNodeJunctionDemand> &demands)
+double junctionBaseDemand(const QList<HydraulicDemand> &demands)
 {
     double total = 0.0;
-    for (const HydraulicNodeJunctionDemand &demand : demands)
+    for (const HydraulicDemand &demand : demands)
         total += demand.base_demand_m3_per_h;
     return total;
 }
@@ -869,7 +869,8 @@ void appendCommonColumns(QList<TableColumn> &columns)
     columns.append({QStringLiteral("Model Role"), false});
     columns.append({QStringLiteral("Date Added"), false});
     columns.append({QStringLiteral("Date Installed"), false});
-    columns.append({QStringLiteral("Tag"), false});
+    columns.append({QStringLiteral("Description"), false});
+    columns.append({QStringLiteral("Tags"), false});
     columns.append({QStringLiteral("Comment"), false});
 }
 
@@ -881,7 +882,8 @@ void appendCommonCells(QList<TableCell> &cells, const QString &id,
     cells.append(textCell(entityModelRoleText(metadata.model_role)));
     cells.append(dateCell(metadata.date_added));
     cells.append(dateCell(metadata.date_installed));
-    cells.append(textCell(metadata.tag));
+    cells.append(textCell(metadata.description));
+    cells.append(textCell(metadata.tags.join(QStringLiteral(", "))));
     cells.append(textCell(metadata.comment));
 }
 

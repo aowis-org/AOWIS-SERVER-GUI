@@ -1124,7 +1124,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     
     QRadioButton *button_radio_customer = new QRadioButton(wgt);
     bindEditorShortcut(button_radio_customer, GuiShortcutId::MapEditorAddCustomerPoint,
-                       QStringLiteral("Customer Point"), this);
+                       QStringLiteral("Demand Point"), this);
     lay->addWidget(button_radio_customer);
     this->button_group_tools->addButton(button_radio_customer, 4);
     button_radio_customer->setEnabled(false);

@@ -190,7 +190,7 @@ QVector<GuiShortcutDefinition> createDefinitions()
                         QStringLiteral("Add valve / switch"), QStringLiteral("Map Editor"),
                         QStringLiteral("Map Editor"), defaults.map_editor_add_valve});
     definitions.append({GuiShortcutId::MapEditorAddCustomerPoint, QStringLiteral("map_editor_add_customer_point"),
-                        QStringLiteral("Add customer point"), QStringLiteral("Map Editor"),
+                        QStringLiteral("Add demand point"), QStringLiteral("Map Editor"),
                         QStringLiteral("Map Editor"), defaults.map_editor_add_customer_point});
     definitions.append({GuiShortcutId::MapEditorAddPump, QStringLiteral("map_editor_add_pump"),
                         QStringLiteral("Add pump"), QStringLiteral("Map Editor"),

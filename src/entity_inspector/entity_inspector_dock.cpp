@@ -112,7 +112,7 @@ void EntityInspectorDock::showEntityReservoir(const HydraulicNodeReservoir &rese
     EntityInspectorReservoir *inspector = new EntityInspectorReservoir(this->hydraulic_data, reservoir.uuid);
     setInspector(inspector);
 }
-void EntityInspectorDock::showEntityCustomerPoint(NetworkHydraulicCustomerPoint customer_point)
+void EntityInspectorDock::showEntityCustomerPoint(HydraulicDemandPoint customer_point)
 {
     EntityInspectorCustomerPoint *inspector = new EntityInspectorCustomerPoint(this->hydraulic_data, customer_point);
     setInspector(inspector);

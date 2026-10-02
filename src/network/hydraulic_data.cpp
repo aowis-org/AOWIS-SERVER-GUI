@@ -622,7 +622,7 @@ void HydraulicData::rebuildSymbologyMinMaxValues()
                              node_elevation_m_initialized);
 
         double base_demand_m3_per_h = 0.0;
-        for (const HydraulicNodeJunctionDemand &demand : junction.demands)
+        for (const HydraulicDemand &demand : junction.demands)
             base_demand_m3_per_h += demand.base_demand_m3_per_h;
 
         updateMinimumMaximum(base_demand_m3_per_h,
@@ -1975,7 +1975,7 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
         break;
     
     case InfrastructureEntity::CustomerPoint:
-        for (const NetworkHydraulicCustomerPoint &customer_point : this->network_hydraulic.customer_points)
+        for (const HydraulicDemandPoint &customer_point : this->network_hydraulic.demand_points)
         {
             if (customer_point.uuid == uuid)
             {
@@ -2189,7 +2189,7 @@ bool HydraulicData::setJunctionElevationOffsetM(const QUuid &uuid, double elevat
 }
 
 bool HydraulicData::addJunctionDemand(const QUuid &uuid,
-                                      const HydraulicNodeJunctionDemand &demand)
+                                      const HydraulicDemand &demand)
 {
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.addJunctionDemand(uuid, demand));
@@ -2234,7 +2234,7 @@ bool HydraulicData::setJunctionDemandPatternUuid(const QUuid &uuid, int demand_i
 }
 
 bool HydraulicData::setJunctionDemandSourceMethod(
-    const QUuid &uuid, int demand_index, HydraulicNodeJunctionDemandSourceMethod source_method)
+    const QUuid &uuid, int demand_index, HydraulicDemandSourceMethod source_method)
 {
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setJunctionDemandSourceMethod(

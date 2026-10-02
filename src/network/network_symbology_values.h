@@ -71,7 +71,7 @@ inline QHash<QUuid, double> networkNodeSymbologyValues(
         for (const HydraulicNodeJunction &junction : network_hydraulic.nodes_junctions)
         {
             double base_demand_m3_per_h = 0.0;
-            for (const HydraulicNodeJunctionDemand &demand : junction.demands)
+            for (const HydraulicDemand &demand : junction.demands)
                 base_demand_m3_per_h += demand.base_demand_m3_per_h;
             values.insert(junction.uuid, base_demand_m3_per_h);
         }

@@ -1,10 +1,10 @@
 #include "entity_inspector/entity_inspector_customer_point.h"
 
-EntityInspectorCustomerPoint::EntityInspectorCustomerPoint(HydraulicData *hydraulic_data, NetworkHydraulicCustomerPoint customer_point, QWidget *parent)
+EntityInspectorCustomerPoint::EntityInspectorCustomerPoint(HydraulicData *hydraulic_data, HydraulicDemandPoint customer_point, QWidget *parent)
     : EntityInspectorWidget(hydraulic_data, parent),
     customer_point(customer_point)
 {
-    setTitle("Customer Point C1");
+    setTitle("Demand Point DP1");
     
     addGroupOverviewImage(":/icon/customer.png", "C1");
     

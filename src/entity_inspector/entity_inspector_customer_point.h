@@ -29,10 +29,10 @@ class EntityInspectorCustomerPoint : public EntityInspectorWidget
 {
     Q_OBJECT
 public:
-    explicit EntityInspectorCustomerPoint(HydraulicData *hydraulic_data, NetworkHydraulicCustomerPoint customer_point, QWidget *parent = nullptr);
+    explicit EntityInspectorCustomerPoint(HydraulicData *hydraulic_data, HydraulicDemandPoint customer_point, QWidget *parent = nullptr);
     
 private:
-    NetworkHydraulicCustomerPoint customer_point;
+    HydraulicDemandPoint customer_point;
     QLabel *picture = nullptr;
     
     void addGroupConnections();
