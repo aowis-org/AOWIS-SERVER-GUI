@@ -12,7 +12,7 @@
 #include "entity_inspector/entity_inspector_pump.h"
 #include "entity_inspector/entity_inspector_valve.h"
 #include "entity_inspector/entity_inspector_reservoir.h"
-#include "entity_inspector/entity_inspector_customer_point.h"
+#include "entity_inspector/entity_inspector_demand_point.h"
 
 #include "widgets/group_box_collapsible.h"
 #include "network/hydraulic_data.h"
@@ -52,7 +52,7 @@ public slots:
     void showEntityPump(HydraulicLinkPump pump);
     void showEntityValve(HydraulicLinkValve valve);
     void showEntityReservoir(const HydraulicNodeReservoir &reservoir);
-    void showEntityCustomerPoint(HydraulicDemandPoint customer_point);
+    void showEntityDemandPoint(HydraulicDemandPoint demand_point);
     
 };
 

@@ -374,6 +374,11 @@ EntityInspectorWidget::EntityInspectorWidget(HydraulicData *hydraulic_data, QWid
     this->layout_main->addWidget(this->tabs);
 }
 
+HydraulicData *EntityInspectorWidget::hydraulicData() const
+{
+    return this->hydraulic_data;
+}
+
 void EntityInspectorWidget::setCurrentTabIndex(int index)
 {
     if (index < 0 || index >= this->tabs->count())
@@ -1531,13 +1536,13 @@ void EntityInspectorWidget::bindHydraulicNode(InfrastructureEntity entity_type, 
         if (entity_type_changed == this->entity_type && uuid_changed == this->entity_uuid)
         {
             refreshHydraulicNode();
-            scheduleJunctionDemandsRefresh();
+            scheduleDemandsRefresh();
         }
     });
     connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, [this]()
     {
         refreshHydraulicNode();
-        scheduleJunctionDemandsRefresh();
+        scheduleDemandsRefresh();
     });
 }
 
@@ -1597,6 +1602,84 @@ void EntityInspectorWidget::bindHydraulicLink(InfrastructureEntity entity_type, 
     });
 }
 
+void EntityInspectorWidget::bindDemandPoint(const QUuid &uuid, const QString &title_prefix)
+{
+    this->entity_type = InfrastructureEntity::DemandPoint;
+    this->entity_uuid = uuid;
+    this->entity_title_prefix = title_prefix;
+
+    addGroupSimulationErrors();
+    addGroupSimulationWarnings();
+
+    refreshDemandPoint();
+
+    connect(this->line_name, &QLineEdit::textEdited, this, [this](const QString &id)
+    {
+        this->hydraulic_data->setDemandPointId(this->entity_uuid, id);
+    });
+    connect(this->combo_model_role, &QComboBox::currentIndexChanged, this, [this](int)
+    {
+        const EntityModelRole model_role = static_cast<EntityModelRole>(
+            this->combo_model_role->currentData().toInt());
+        this->hydraulic_data->setDemandPointModelRole(this->entity_uuid, model_role);
+    });
+    connect(this->date_added, &QDateEdit::dateChanged, this, [this](const QDate &)
+    {
+        this->hydraulic_data->setDemandPointDateAdded(
+            this->entity_uuid, optionalDate(this->date_added));
+    });
+    connect(this->date_installed, &QDateEdit::dateChanged, this, [this](const QDate &)
+    {
+        this->hydraulic_data->setDemandPointDateInstalled(
+            this->entity_uuid, optionalDate(this->date_installed));
+    });
+    connect(this->check_enabled, &QCheckBox::toggled, this, [this](bool enabled)
+    {
+        this->hydraulic_data->setDemandPointEnabled(this->entity_uuid, enabled);
+    });
+    connect(this->spin_latitude, &QDoubleSpinBox::valueChanged, this, [this](double)
+    {
+        CoordinateWGS84 coordinate;
+        coordinate.latitude_deg = this->spin_latitude->value();
+        coordinate.longitude_deg = this->spin_longitude->value();
+        this->hydraulic_data->setDemandPointCoordinate(this->entity_uuid, coordinate);
+    });
+    connect(this->spin_longitude, &QDoubleSpinBox::valueChanged, this, [this](double)
+    {
+        CoordinateWGS84 coordinate;
+        coordinate.latitude_deg = this->spin_latitude->value();
+        coordinate.longitude_deg = this->spin_longitude->value();
+        this->hydraulic_data->setDemandPointCoordinate(this->entity_uuid, coordinate);
+    });
+    connect(this->button_find_on_map, &QPushButton::clicked, this, [this]()
+    {
+        this->hydraulic_data->requestEntityLocate(this->entity_type, this->entity_uuid);
+    });
+    if (this->button_overview_find_on_map != nullptr)
+    {
+        this->button_overview_find_on_map->setEnabled(true);
+        this->button_overview_find_on_map->show();
+        connect(this->button_overview_find_on_map, &QPushButton::clicked, this, [this]()
+        {
+            this->hydraulic_data->requestEntityLocate(this->entity_type, this->entity_uuid);
+        });
+    }
+    connect(this->hydraulic_data, &HydraulicData::signalDemandPointChanged,
+            this, [this](const QUuid &uuid_changed)
+    {
+        if (uuid_changed != this->entity_uuid)
+            return;
+
+        refreshDemandPoint();
+        scheduleDemandsRefresh();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, [this]()
+    {
+        refreshDemandPoint();
+        scheduleDemandsRefresh();
+    });
+}
+
 void EntityInspectorWidget::refreshHydraulicGeneral(
     const QString &id, const HydraulicEntityMetadata &metadata)
 {
@@ -1648,6 +1731,24 @@ void EntityInspectorWidget::refreshHydraulicLink()
 
     refreshHydraulicGeneral(link->id, link->metadata);
     refreshHydraulicEndpoints();
+}
+
+void EntityInspectorWidget::refreshDemandPoint()
+{
+    if (!this->hydraulic_data || this->entity_uuid.isNull())
+        return;
+
+    const std::optional<HydraulicDemandPoint> demand_point =
+        this->hydraulic_data->demandPoint(this->entity_uuid);
+    if (!demand_point.has_value())
+        return;
+
+    refreshHydraulicGeneral(demand_point->id, demand_point->metadata);
+
+    const QSignalBlocker latitude_blocker(this->spin_latitude);
+    const QSignalBlocker longitude_blocker(this->spin_longitude);
+    this->spin_latitude->setValue(demand_point->coordinate_wgs84.latitude_deg);
+    this->spin_longitude->setValue(demand_point->coordinate_wgs84.longitude_deg);
 }
 
 void EntityInspectorWidget::refreshHydraulicEndpoints()
@@ -2382,94 +2483,234 @@ void EntityInspectorWidget::onHeadlossFormulaChanged(HeadlossFormulas formulas)
     Q_UNUSED(formulas)
 }
 
-void EntityInspectorWidget::addGroupDemands()
+void EntityInspectorWidget::addGroupDemands(bool include_emitter)
 {
-    GroupBoxCollapsible *group = new GroupBoxCollapsible("Demands / Emitter");
+    GroupBoxCollapsible *group = new GroupBoxCollapsible(
+        include_emitter ? "Demands / Emitter" : "Demands");
     QGridLayout *grid = new QGridLayout(group);
 
     this->label_demands_summary = new QLabel();
     this->label_demands_summary->setWordWrap(true);
-
-    QLabel *label_emitter_coefficient = new QLabel("Emitter<br>Coefficient");
-    this->spin_emitter_coefficient = new QDoubleSpinBox();
-    this->spin_emitter_coefficient->setRange(0.0, 1000000000.0);
-    this->spin_emitter_coefficient->setDecimals(6);
-    this->spin_emitter_coefficient->setSingleStep(0.001);
-    this->spin_emitter_coefficient->setAlignment(Qt::AlignRight);
-    this->spin_emitter_coefficient->setToolTip(
-        "Coefficient C in Q = C · pⁿ. Flow Q is stored in m³/h and pressure head p in m. "
-        "The coefficient has no fixed standalone unit because its dimension depends on n."
-    );
-
-    QLabel *label_emitter_pressure_exponent = new QLabel("Emitter<br>Exponent");
-    this->spin_emitter_pressure_exponent = new QDoubleSpinBox();
-    this->spin_emitter_pressure_exponent->setRange(0.000001, 1000000.0);
-    this->spin_emitter_pressure_exponent->setDecimals(6);
-    this->spin_emitter_pressure_exponent->setSingleStep(0.01);
-    this->spin_emitter_pressure_exponent->setAlignment(Qt::AlignRight);
-    this->spin_emitter_pressure_exponent->setToolTip(
-        "Pressure exponent n in Q = C · pⁿ. EPANET supports one emitter exponent for the network, "
-        "so all enabled junctions with a non-zero emitter coefficient must use the same value."
-    );
 
     QPushButton *button_editor = new QPushButton("Open Editor");
     connect(button_editor, &QPushButton::clicked, this, [this]()
     {
         openDemandsEditor();
     });
-    connect(this->spin_emitter_coefficient, &QDoubleSpinBox::valueChanged, this, [this](double value)
-    {
-        this->hydraulic_data->setJunctionEmitterCoefficient(this->entity_uuid, value);
-    });
 
-    connect(this->spin_emitter_pressure_exponent, &QDoubleSpinBox::valueChanged, this, [this](double value)
-    {
-        this->hydraulic_data->setJunctionEmitterPressureExponent(this->entity_uuid, value);
-    });
+    int row = 0;
+    grid->addWidget(this->label_demands_summary, row++, 0, 1, 2);
 
-    grid->addWidget(this->label_demands_summary, 0, 0, 1, 2);
-    grid->addWidget(label_emitter_coefficient, 1, 0);
-    grid->addWidget(this->spin_emitter_coefficient, 1, 1);
-    grid->addWidget(label_emitter_pressure_exponent, 2, 0);
-    grid->addWidget(this->spin_emitter_pressure_exponent, 2, 1);
-    grid->addWidget(button_editor, 3, 0, 1, 2);
+    if (include_emitter)
+    {
+        QLabel *label_emitter_coefficient = new QLabel("Emitter<br>Coefficient");
+        this->spin_emitter_coefficient = new QDoubleSpinBox();
+        this->spin_emitter_coefficient->setRange(0.0, 1000000000.0);
+        this->spin_emitter_coefficient->setDecimals(6);
+        this->spin_emitter_coefficient->setSingleStep(0.001);
+        this->spin_emitter_coefficient->setAlignment(Qt::AlignRight);
+        this->spin_emitter_coefficient->setToolTip(
+            "Coefficient C in Q = C · pⁿ. Flow Q is stored in m³/h and pressure head p in m. "
+            "The coefficient has no fixed standalone unit because its dimension depends on n."
+        );
+
+        QLabel *label_emitter_pressure_exponent = new QLabel("Emitter<br>Exponent");
+        this->spin_emitter_pressure_exponent = new QDoubleSpinBox();
+        this->spin_emitter_pressure_exponent->setRange(0.000001, 1000000.0);
+        this->spin_emitter_pressure_exponent->setDecimals(6);
+        this->spin_emitter_pressure_exponent->setSingleStep(0.01);
+        this->spin_emitter_pressure_exponent->setAlignment(Qt::AlignRight);
+        this->spin_emitter_pressure_exponent->setToolTip(
+            "Pressure exponent n in Q = C · pⁿ. EPANET supports one emitter exponent for the network, "
+            "so all enabled junctions with a non-zero emitter coefficient must use the same value."
+        );
+
+        connect(this->spin_emitter_coefficient, &QDoubleSpinBox::valueChanged,
+                this, [this](double value)
+        {
+            this->hydraulic_data->setJunctionEmitterCoefficient(this->entity_uuid, value);
+        });
+        connect(this->spin_emitter_pressure_exponent, &QDoubleSpinBox::valueChanged,
+                this, [this](double value)
+        {
+            this->hydraulic_data->setJunctionEmitterPressureExponent(this->entity_uuid, value);
+        });
+
+        grid->addWidget(label_emitter_coefficient, row, 0);
+        grid->addWidget(this->spin_emitter_coefficient, row++, 1);
+        grid->addWidget(label_emitter_pressure_exponent, row, 0);
+        grid->addWidget(this->spin_emitter_pressure_exponent, row++, 1);
+    }
+
+    grid->addWidget(button_editor, row, 0, 1, 2);
 
     this->layoutConfiguration()->addWidget(group);
-    refreshJunctionDemands();
+    refreshDemands();
 }
 
-void EntityInspectorWidget::scheduleJunctionDemandsRefresh()
+std::optional<QList<HydraulicDemand>> EntityInspectorWidget::currentDemands() const
 {
-    if (this->entity_type != InfrastructureEntity::Junction ||
-        this->junction_demands_refresh_pending)
+    if (!this->hydraulic_data || this->entity_uuid.isNull())
+        return std::nullopt;
+
+    if (this->entity_type == InfrastructureEntity::Junction)
+    {
+        const std::optional<HydraulicNodeJunction> junction =
+            this->hydraulic_data->junction(this->entity_uuid);
+        if (!junction.has_value())
+            return std::nullopt;
+        return junction->demands;
+    }
+
+    if (this->entity_type == InfrastructureEntity::DemandPoint)
+    {
+        const std::optional<HydraulicDemandPoint> demand_point =
+            this->hydraulic_data->demandPoint(this->entity_uuid);
+        if (!demand_point.has_value())
+            return std::nullopt;
+        return demand_point->demands;
+    }
+
+    return std::nullopt;
+}
+
+bool EntityInspectorWidget::addCurrentDemand(const HydraulicDemand &demand)
+{
+    if (this->entity_type == InfrastructureEntity::Junction)
+        return this->hydraulic_data->addJunctionDemand(this->entity_uuid, demand);
+    if (this->entity_type == InfrastructureEntity::DemandPoint)
+        return this->hydraulic_data->addDemandPointDemand(this->entity_uuid, demand);
+    return false;
+}
+
+bool EntityInspectorWidget::removeCurrentDemand(int demand_index)
+{
+    if (this->entity_type == InfrastructureEntity::Junction)
+        return this->hydraulic_data->removeJunctionDemand(this->entity_uuid, demand_index);
+    if (this->entity_type == InfrastructureEntity::DemandPoint)
+        return this->hydraulic_data->removeDemandPointDemand(this->entity_uuid, demand_index);
+    return false;
+}
+
+bool EntityInspectorWidget::setCurrentDemandCategoryName(
+    int demand_index, const QString &category_name)
+{
+    if (this->entity_type == InfrastructureEntity::Junction)
+    {
+        return this->hydraulic_data->setJunctionDemandCategoryName(
+            this->entity_uuid, demand_index, category_name);
+    }
+    if (this->entity_type == InfrastructureEntity::DemandPoint)
+    {
+        return this->hydraulic_data->setDemandPointDemandCategoryName(
+            this->entity_uuid, demand_index, category_name);
+    }
+    return false;
+}
+
+bool EntityInspectorWidget::setCurrentDemandBaseDemandM3PerH(
+    int demand_index, double base_demand_m3_per_h)
+{
+    if (this->entity_type == InfrastructureEntity::Junction)
+    {
+        return this->hydraulic_data->setJunctionDemandBaseDemandM3PerH(
+            this->entity_uuid, demand_index, base_demand_m3_per_h);
+    }
+    if (this->entity_type == InfrastructureEntity::DemandPoint)
+    {
+        return this->hydraulic_data->setDemandPointDemandBaseDemandM3PerH(
+            this->entity_uuid, demand_index, base_demand_m3_per_h);
+    }
+    return false;
+}
+
+bool EntityInspectorWidget::setCurrentDemandPatternMode(
+    int demand_index, HydraulicTimePatternMode pattern_mode)
+{
+    if (this->entity_type == InfrastructureEntity::Junction)
+    {
+        return this->hydraulic_data->setJunctionDemandPatternMode(
+            this->entity_uuid, demand_index, pattern_mode);
+    }
+    if (this->entity_type == InfrastructureEntity::DemandPoint)
+    {
+        return this->hydraulic_data->setDemandPointDemandPatternMode(
+            this->entity_uuid, demand_index, pattern_mode);
+    }
+    return false;
+}
+
+bool EntityInspectorWidget::setCurrentDemandPatternUuid(
+    int demand_index, const QUuid &pattern_uuid)
+{
+    if (this->entity_type == InfrastructureEntity::Junction)
+    {
+        return this->hydraulic_data->setJunctionDemandPatternUuid(
+            this->entity_uuid, demand_index, pattern_uuid);
+    }
+    if (this->entity_type == InfrastructureEntity::DemandPoint)
+    {
+        return this->hydraulic_data->setDemandPointDemandPatternUuid(
+            this->entity_uuid, demand_index, pattern_uuid);
+    }
+    return false;
+}
+
+bool EntityInspectorWidget::setCurrentDemandSourceMethod(
+    int demand_index, HydraulicDemandSourceMethod source_method)
+{
+    if (this->entity_type == InfrastructureEntity::Junction)
+    {
+        return this->hydraulic_data->setJunctionDemandSourceMethod(
+            this->entity_uuid, demand_index, source_method);
+    }
+    if (this->entity_type == InfrastructureEntity::DemandPoint)
+    {
+        return this->hydraulic_data->setDemandPointDemandSourceMethod(
+            this->entity_uuid, demand_index, source_method);
+    }
+    return false;
+}
+
+bool EntityInspectorWidget::setCurrentDemandNote(int demand_index, const QString &note)
+{
+    if (this->entity_type == InfrastructureEntity::Junction)
+        return this->hydraulic_data->setJunctionDemandNote(this->entity_uuid, demand_index, note);
+    if (this->entity_type == InfrastructureEntity::DemandPoint)
+        return this->hydraulic_data->setDemandPointDemandNote(this->entity_uuid, demand_index, note);
+    return false;
+}
+
+void EntityInspectorWidget::scheduleDemandsRefresh()
+{
+    const bool supported = this->entity_type == InfrastructureEntity::Junction ||
+        this->entity_type == InfrastructureEntity::DemandPoint;
+    if (!supported || this->demands_refresh_pending)
         return;
 
-    this->junction_demands_refresh_pending = true;
+    this->demands_refresh_pending = true;
     QTimer::singleShot(0, this, [this]()
     {
-        this->junction_demands_refresh_pending = false;
-        refreshJunctionDemands();
+        this->demands_refresh_pending = false;
+        refreshDemands();
     });
 }
 
-void EntityInspectorWidget::refreshJunctionDemands()
+void EntityInspectorWidget::refreshDemands()
 {
-    if (!this->hydraulic_data || this->entity_type != InfrastructureEntity::Junction ||
-        this->entity_uuid.isNull())
+    const std::optional<QList<HydraulicDemand>> demands_optional = currentDemands();
+    if (!demands_optional.has_value())
         return;
 
-    const std::optional<HydraulicNodeJunction> junction =
-        this->hydraulic_data->junction(this->entity_uuid);
-    if (!junction.has_value())
-        return;
+    const QList<HydraulicDemand> &demands = demands_optional.value();
 
     if (this->label_demands_summary)
     {
         double total_base_demand_m3_per_h = 0.0;
-        for (const HydraulicDemand &demand : junction->demands)
+        for (const HydraulicDemand &demand : demands)
             total_base_demand_m3_per_h += demand.base_demand_m3_per_h;
 
-        const int demand_count = junction->demands.size();
+        const int demand_count = demands.size();
         this->label_demands_summary->setText(
             QStringLiteral("%1 demand categor%2\nTotal base demand: %3 m³/h")
                 .arg(demand_count)
@@ -2478,47 +2719,56 @@ void EntityInspectorWidget::refreshJunctionDemands()
         );
     }
 
-    if (this->spin_emitter_coefficient)
+    if (this->entity_type == InfrastructureEntity::Junction)
     {
-        const QSignalBlocker emitter_blocker(this->spin_emitter_coefficient);
-        this->spin_emitter_coefficient->setValue(junction->emitter.coefficient);
-    }
-
-    if (this->spin_emitter_pressure_exponent)
-    {
-        const QSignalBlocker emitter_exponent_blocker(this->spin_emitter_pressure_exponent);
-        this->spin_emitter_pressure_exponent->setValue(junction->emitter.pressure_exponent);
+        const std::optional<HydraulicNodeJunction> junction =
+            this->hydraulic_data->junction(this->entity_uuid);
+        if (junction.has_value())
+        {
+            if (this->spin_emitter_coefficient)
+            {
+                const QSignalBlocker emitter_blocker(this->spin_emitter_coefficient);
+                this->spin_emitter_coefficient->setValue(junction->emitter.coefficient);
+            }
+            if (this->spin_emitter_pressure_exponent)
+            {
+                const QSignalBlocker emitter_exponent_blocker(
+                    this->spin_emitter_pressure_exponent);
+                this->spin_emitter_pressure_exponent->setValue(
+                    junction->emitter.pressure_exponent);
+            }
+        }
     }
 
     if (!this->table_demands)
         return;
 
-    if (this->table_demands->rowCount() != junction->demands.size())
+    if (this->table_demands->rowCount() != demands.size())
     {
-        rebuildJunctionDemandRows(junction.value());
+        rebuildDemandRows(demands);
         return;
     }
 
-    for (int demand_index = 0; demand_index < junction->demands.size(); demand_index++)
-        updateJunctionDemandRow(demand_index, junction->demands.at(demand_index));
+    for (int demand_index = 0; demand_index < demands.size(); demand_index++)
+        updateDemandRow(demand_index, demands.at(demand_index));
 }
 
-void EntityInspectorWidget::rebuildJunctionDemandRows(const HydraulicNodeJunction &junction)
+void EntityInspectorWidget::rebuildDemandRows(const QList<HydraulicDemand> &demands)
 {
     if (!this->table_demands)
         return;
 
     this->table_demands->setUpdatesEnabled(false);
     this->table_demands->clearContents();
-    this->table_demands->setRowCount(junction.demands.size());
+    this->table_demands->setRowCount(demands.size());
 
-    for (int demand_index = 0; demand_index < junction.demands.size(); demand_index++)
-        addJunctionDemandRow(demand_index, junction.demands.at(demand_index));
+    for (int demand_index = 0; demand_index < demands.size(); demand_index++)
+        addDemandRow(demand_index, demands.at(demand_index));
 
     this->table_demands->setUpdatesEnabled(true);
 }
 
-void EntityInspectorWidget::addJunctionDemandRow(
+void EntityInspectorWidget::addDemandRow(
     int demand_index, const HydraulicDemand &demand)
 {
     if (!this->table_demands)
@@ -2557,49 +2807,48 @@ void EntityInspectorWidget::addJunctionDemandRow(
     this->table_demands->setCellWidget(demand_index, 4, line_note);
     this->table_demands->setCellWidget(demand_index, 5, button_delete);
 
-    updateJunctionDemandRow(demand_index, demand);
+    updateDemandRow(demand_index, demand);
 
-    connect(line_category, &QLineEdit::textEdited, this, [this, demand_index](const QString &category_name)
+    connect(line_category, &QLineEdit::textEdited, this,
+            [this, demand_index](const QString &category_name)
     {
-        this->hydraulic_data->setJunctionDemandCategoryName(
-            this->entity_uuid, demand_index, category_name);
+        setCurrentDemandCategoryName(demand_index, category_name);
     });
-    connect(spin_base_demand, &QDoubleSpinBox::valueChanged, this, [this, demand_index](double base_demand_m3_per_h)
+    connect(spin_base_demand, &QDoubleSpinBox::valueChanged, this,
+            [this, demand_index](double base_demand_m3_per_h)
     {
-        this->hydraulic_data->setJunctionDemandBaseDemandM3PerH(
-            this->entity_uuid, demand_index, base_demand_m3_per_h);
+        setCurrentDemandBaseDemandM3PerH(demand_index, base_demand_m3_per_h);
     });
-    connect(combo_pattern, &QComboBox::currentIndexChanged, this, [this, demand_index, combo_pattern](int)
+    connect(combo_pattern, &QComboBox::currentIndexChanged, this,
+            [this, demand_index, combo_pattern](int)
     {
         const HydraulicTimePatternMode pattern_mode =
             static_cast<HydraulicTimePatternMode>(
                 combo_pattern->currentData(pattern_mode_role).toInt());
         const QUuid pattern_uuid = combo_pattern->currentData(pattern_uuid_role).toUuid();
 
-        this->hydraulic_data->setJunctionDemandPatternMode(
-            this->entity_uuid, demand_index, pattern_mode);
-        this->hydraulic_data->setJunctionDemandPatternUuid(
-            this->entity_uuid, demand_index, pattern_uuid);
+        setCurrentDemandPatternMode(demand_index, pattern_mode);
+        setCurrentDemandPatternUuid(demand_index, pattern_uuid);
     });
-    connect(combo_source, &QComboBox::currentIndexChanged, this, [this, demand_index, combo_source](int)
+    connect(combo_source, &QComboBox::currentIndexChanged, this,
+            [this, demand_index, combo_source](int)
     {
         const HydraulicDemandSourceMethod source_method =
-            static_cast<HydraulicDemandSourceMethod>(
-                combo_source->currentData().toInt());
-        this->hydraulic_data->setJunctionDemandSourceMethod(
-            this->entity_uuid, demand_index, source_method);
+            static_cast<HydraulicDemandSourceMethod>(combo_source->currentData().toInt());
+        setCurrentDemandSourceMethod(demand_index, source_method);
     });
-    connect(line_note, &QLineEdit::textEdited, this, [this, demand_index](const QString &note)
+    connect(line_note, &QLineEdit::textEdited, this,
+            [this, demand_index](const QString &note)
     {
-        this->hydraulic_data->setJunctionDemandNote(this->entity_uuid, demand_index, note);
+        setCurrentDemandNote(demand_index, note);
     });
     connect(button_delete, &QPushButton::clicked, this, [this, demand_index]()
     {
-        this->hydraulic_data->removeJunctionDemand(this->entity_uuid, demand_index);
+        removeCurrentDemand(demand_index);
     });
 }
 
-void EntityInspectorWidget::updateJunctionDemandRow(
+void EntityInspectorWidget::updateDemandRow(
     int demand_index, const HydraulicDemand &demand)
 {
     if (!this->table_demands || demand_index < 0 || demand_index >= this->table_demands->rowCount())
@@ -2629,10 +2878,7 @@ void EntityInspectorWidget::updateJunctionDemandRow(
     }
 
     if (combo_pattern)
-    {
-        populateTimePatternCombo(
-            combo_pattern, demand.pattern_mode, demand.pattern_uuid);
-    }
+        populateTimePatternCombo(combo_pattern, demand.pattern_mode, demand.pattern_uuid);
 
     if (combo_source)
     {
@@ -2763,7 +3009,10 @@ void EntityInspectorWidget::openDemandsEditor()
     }
 
     this->dialog_demands = new QDialog(this);
-    this->dialog_demands->setWindowTitle("Junction Demands");
+    this->dialog_demands->setWindowTitle(
+        this->entity_type == InfrastructureEntity::DemandPoint
+            ? QStringLiteral("Demand Point Demands")
+            : QStringLiteral("Junction Demands"));
     this->dialog_demands->resize(950, 420);
     this->dialog_demands->setAttribute(Qt::WA_DeleteOnClose);
 
@@ -2790,7 +3039,7 @@ void EntityInspectorWidget::openDemandsEditor()
     connect(button_demand, &QPushButton::clicked, this, [this]()
     {
         HydraulicDemand demand;
-        this->hydraulic_data->addJunctionDemand(this->entity_uuid, demand);
+        addCurrentDemand(demand);
     });
 
     QPushButton *button_patterns = new QPushButton("Manage Patterns");
@@ -2805,7 +3054,7 @@ void EntityInspectorWidget::openDemandsEditor()
         this->table_demands = nullptr;
     });
 
-    refreshJunctionDemands();
+    refreshDemands();
     this->dialog_demands->show();
 }
 

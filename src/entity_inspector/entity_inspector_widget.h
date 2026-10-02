@@ -46,6 +46,8 @@ signals:
     void signalCurrentTabChanged(int index);
     
 protected:
+    HydraulicData *hydraulicData() const;
+
     //QVBoxLayout *mainLayout() const;
     QVBoxLayout *layoutOverview();
     QVBoxLayout *layoutConfiguration();
@@ -96,6 +98,7 @@ protected:
                            const QString &title_prefix);
     void bindHydraulicLink(InfrastructureEntity entity_type, const QUuid &uuid,
                            const QString &title_prefix);
+    void bindDemandPoint(const QUuid &uuid, const QString &title_prefix);
     
     void addGroupElevation();
     GroupBoxCollapsible *group_elevation = nullptr;
@@ -111,7 +114,7 @@ protected:
     QDoubleSpinBox *spin_elevation_value = nullptr;
     QComboBox *combo_head_pattern = nullptr;
     
-    void addGroupDemands();
+    void addGroupDemands(bool include_emitter = true);
     QLabel *label_demands_summary = nullptr;
     QDoubleSpinBox *spin_emitter_coefficient = nullptr;
     QDoubleSpinBox *spin_emitter_pressure_exponent = nullptr;
@@ -198,17 +201,27 @@ private:
     void refreshHydraulicGeneral(const QString &id, const HydraulicEntityMetadata &metadata);
     void refreshHydraulicNode();
     void refreshHydraulicLink();
+    void refreshDemandPoint();
     void refreshHydraulicEndpoints();
     void refreshHydraulicEndpoint(const QUuid &node_uuid, QLabel *label_node_id,
                                   QPushButton *button_locate, QPushButton *button_inspect);
     void locateHydraulicEndpoint(const QUuid &node_uuid);
     void inspectHydraulicEndpoint(const QUuid &node_uuid);
     void refreshHydraulicNodeElevation();
-    void scheduleJunctionDemandsRefresh();
-    void refreshJunctionDemands();
-    void rebuildJunctionDemandRows(const HydraulicNodeJunction &junction);
-    void addJunctionDemandRow(int demand_index, const HydraulicDemand &demand);
-    void updateJunctionDemandRow(int demand_index, const HydraulicDemand &demand);
+    void scheduleDemandsRefresh();
+    void refreshDemands();
+    void rebuildDemandRows(const QList<HydraulicDemand> &demands);
+    void addDemandRow(int demand_index, const HydraulicDemand &demand);
+    void updateDemandRow(int demand_index, const HydraulicDemand &demand);
+    std::optional<QList<HydraulicDemand>> currentDemands() const;
+    bool addCurrentDemand(const HydraulicDemand &demand);
+    bool removeCurrentDemand(int demand_index);
+    bool setCurrentDemandCategoryName(int demand_index, const QString &category_name);
+    bool setCurrentDemandBaseDemandM3PerH(int demand_index, double base_demand_m3_per_h);
+    bool setCurrentDemandPatternMode(int demand_index, HydraulicTimePatternMode pattern_mode);
+    bool setCurrentDemandPatternUuid(int demand_index, const QUuid &pattern_uuid);
+    bool setCurrentDemandSourceMethod(int demand_index, HydraulicDemandSourceMethod source_method);
+    bool setCurrentDemandNote(int demand_index, const QString &note);
     void populateTimePatternCombo(QComboBox *combo_pattern, HydraulicTimePatternMode pattern_mode, const QUuid &pattern_uuid);
     void updateElevationModeUi();
     void updateCalculatedElevation();
@@ -230,7 +243,7 @@ private:
     QUuid node_uuid_1;
     QUuid node_uuid_2;
     QString entity_title_prefix;
-    bool junction_demands_refresh_pending = false;
+    bool demands_refresh_pending = false;
     InterfaceServerMap *terrain_elevation_client = nullptr;
     QPointer<QMessageBox> terrain_elevation_message_box = nullptr;
     QPointer<QMessageBox> source_trace_origin_message_box = nullptr;

@@ -44,7 +44,7 @@ EntityInspectorDock::EntityInspectorDock(HydraulicData *hydraulic_data, QWidget 
     
     connect(this->hydraulic_data, &HydraulicData::signalSelectedReservoir, this, &EntityInspectorDock::showEntityReservoir);
     
-    connect(this->hydraulic_data, &HydraulicData::signalSelectedCustomerPoint, this, &EntityInspectorDock::showEntityCustomerPoint);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedDemandPoint, this, &EntityInspectorDock::showEntityDemandPoint);
     
     setVisible(false);
     
@@ -54,7 +54,7 @@ EntityInspectorDock::EntityInspectorDock(HydraulicData *hydraulic_data, QWidget 
     //showEntityPump();
     //showEntityValve();
     //showEntityReservoir();
-    //showEntityCustomerPoint();
+    //showEntityDemandPoint();
 }
 
 void EntityInspectorDock::clearEntity()
@@ -112,9 +112,10 @@ void EntityInspectorDock::showEntityReservoir(const HydraulicNodeReservoir &rese
     EntityInspectorReservoir *inspector = new EntityInspectorReservoir(this->hydraulic_data, reservoir.uuid);
     setInspector(inspector);
 }
-void EntityInspectorDock::showEntityCustomerPoint(HydraulicDemandPoint customer_point)
+void EntityInspectorDock::showEntityDemandPoint(HydraulicDemandPoint demand_point)
 {
-    EntityInspectorCustomerPoint *inspector = new EntityInspectorCustomerPoint(this->hydraulic_data, customer_point);
+    EntityInspectorDemandPoint *inspector =
+        new EntityInspectorDemandPoint(this->hydraulic_data, demand_point.uuid);
     setInspector(inspector);
 }
 

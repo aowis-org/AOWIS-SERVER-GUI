@@ -12,6 +12,12 @@ constexpr bool isHydraulicConnectionNode(InfrastructureEntity entity) noexcept
            entity == InfrastructureEntity::Tank;
 }
 
+constexpr bool isHydraulicPointEntity(InfrastructureEntity entity) noexcept
+{
+    return isHydraulicConnectionNode(entity) ||
+           entity == InfrastructureEntity::DemandPoint;
+}
+
 constexpr bool isHydraulicDeviceLink(InfrastructureEntity entity) noexcept
 {
     return entity == InfrastructureEntity::Pump || entity == InfrastructureEntity::Valve;

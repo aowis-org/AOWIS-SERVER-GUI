@@ -154,8 +154,8 @@ qt_add_executable(aowis-server-gui
     # Tabs
     src/tabs/tab_alarms_widget.cpp
     src/tabs/tab_alarms_widget.h
-    src/tabs/tab_customer_points_widget.cpp
-    src/tabs/tab_customer_points_widget.h
+    src/tabs/tab_demand_points_widget.cpp
+    src/tabs/tab_demand_points_widget.h
     src/tabs/tab_customers_widget.cpp
     src/tabs/tab_customers_widget.h
     src/tabs/tab_energy_widget.cpp
@@ -288,8 +288,8 @@ qt_add_executable(aowis-server-gui
     src/map/render/map_node_declutter.cpp
 
     # Entity inspectors
-    src/entity_inspector/entity_inspector_customer_point.cpp
-    src/entity_inspector/entity_inspector_customer_point.h
+    src/entity_inspector/entity_inspector_demand_point.cpp
+    src/entity_inspector/entity_inspector_demand_point.h
     src/entity_inspector/entity_inspector_dock.cpp
     src/entity_inspector/entity_inspector_dock.h
     src/entity_inspector/entity_inspector_junction.cpp
@@ -579,9 +579,38 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
             LABELS "aowis"
     )
 
+    add_executable(aowis-hydraulic-network-editor-tests
+        tests/hydraulic_network_editor_tests.cpp
+        src/geo/geo_metric_projection.cpp
+        src/geo/geo_metric_projection.h
+        src/network/hydraulic_network_editor.cpp
+        src/network/hydraulic_network_editor.h
+        src/network/network_render_snapshot_builder.cpp
+        src/network/network_render_snapshot_builder.h
+    )
+    target_include_directories(aowis-hydraulic-network-editor-tests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(aowis-hydraulic-network-editor-tests
+        PRIVATE
+            Qt6::Core
+            AOWIS::ServerModel
+            GeographicLib_STATIC
+    )
+    add_test(
+        NAME aowis-hydraulic-network-editor
+        COMMAND aowis-hydraulic-network-editor-tests
+    )
+    set_tests_properties(aowis-hydraulic-network-editor
+        PROPERTIES
+            LABELS "aowis"
+    )
+
     add_custom_target(aowis-tests
         DEPENDS
             aowis-map-render-neutral-tests
+            aowis-hydraulic-network-editor-tests
     )
 endif()
 

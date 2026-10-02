@@ -57,6 +57,8 @@ public:
     bool selectMarkerAt(const QPointF &position);
     bool isMarkerAt(const QPointF &position) const;
     bool showMarkerContextMenuAt(const QPointF &position, const QPoint &global_position);
+    bool handleDemandPointAttachmentRightClick(const QPointF &position,
+                                               const QPoint &global_position);
     bool selectDeviceLinkAt(const QPointF &position);
     bool isDeviceLinkAt(const QPointF &position) const;
     bool selectPipeAt(const QPointF &position);
@@ -69,7 +71,7 @@ private:
     bool anchorDeviceLink(const QPointF &position);
     bool anchorPipe(const QPointF &position);
     bool anchorPipeVertexMove(const QPointF &position);
-    QUuid createHydraulicNode(InfrastructureEntity entity,
+    QUuid createHydraulicPointEntity(InfrastructureEntity entity,
                               const CoordinateWGS84 &coordinate);
     QUuid createHydraulicDeviceLink(InfrastructureEntity entity,
                                     const DeviceLinkGeometry &geometry);
@@ -97,6 +99,17 @@ private:
     void startSelectedMarkerMove(const QUuid &uuid);
     void startPipeVertexMove(const QUuid &pipe_uuid, int vertex_index);
     void convertPipeVertexToJunction(const QUuid &pipe_uuid, int vertex_index);
+    QUuid convertPipeVertexToJunctionInternal(const QUuid &pipe_uuid, int vertex_index);
+    void startDemandPointAttachmentSelection(const QUuid &demand_point_uuid);
+    void startDemandPointAttachmentMove(const QUuid &demand_point_uuid);
+    void cancelDemandPointAttachmentInteraction();
+    void showDemandPointAttachmentContextMenu(const QUuid &demand_point_uuid,
+                                              const QPoint &global_position);
+    void convertDemandPointAttachmentToJunction(const QUuid &demand_point_uuid);
+    std::optional<QUuid> selectedDemandPointUuid() const;
+    std::optional<CoordinateWGS84> demandPointAttachmentCoordinate(
+        const HydraulicDemandPoint &demand_point) const;
+    bool demandPointAttachmentHandleAt(const QPointF &position, QUuid *demand_point_uuid) const;
     void showMarkerContextMenu(const QUuid &uuid, const QPoint &global_position);
     void repaintCanvas();
     void updateCanvas();
@@ -119,9 +132,15 @@ private:
     double wrap_reference_longitude = 0.0;
     quint64 visual_state_revision = 0;
     bool synchronizing_geometry = false;
+    QUuid demand_point_attachment_interaction_uuid;
+    bool demand_point_attachment_selecting = false;
+    bool demand_point_attachment_moving = false;
+    bool demand_point_attachment_preview_valid = false;
+    CoordinateWGS84 demand_point_attachment_preview_coordinate;
 
 private slots:
     void onNodeChanged(InfrastructureEntity entity_type, const QUuid &uuid);
+    void onDemandPointChanged(const QUuid &uuid);
     void onLinkChanged(InfrastructureEntity entity_type, const QUuid &uuid);
     void onEntityLocateRequested(InfrastructureEntity entity_type, const QUuid &uuid);
 

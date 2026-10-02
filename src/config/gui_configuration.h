@@ -44,7 +44,7 @@ struct GuiShortcutConfiguration
     QString map_editor_add_pipe = QStringLiteral("1");
     QString map_editor_add_junction = QStringLiteral("2");
     QString map_editor_add_valve = QStringLiteral("3");
-    QString map_editor_add_customer_point = QStringLiteral("4");
+    QString map_editor_add_demand_point = QStringLiteral("4");
     QString map_editor_add_pump = QStringLiteral("5");
     QString map_editor_add_tank = QStringLiteral("6");
     QString map_editor_add_power_source = QStringLiteral("7");

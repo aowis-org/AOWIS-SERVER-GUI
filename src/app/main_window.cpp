@@ -32,7 +32,7 @@ MainWindow::MainWindow(QWidget *parent)
     valves( new ValvesWidget(this->hydraulic_data, this) ),
     junctions( new JunctionsWidget(this->hydraulic_data, this) ),
     pipes( new PipesWidget(this->hydraulic_data, this) ),
-    customerPoints( new CustomerPointsWidget(this) ),
+    demand_points( new DemandPointsWidget(this->hydraulic_data, this) ),
     customers( new CustomersWidget(this) ),
     logs( new LogsWidget(this) ),
     alarms( new AlarmsWidget(this) ),
@@ -219,8 +219,8 @@ MainWindow::MainWindow(QWidget *parent)
     this->main_navigation->addPage(this->pipes,
                                   QIcon(":/icon/pipe.png"),
                                   "Pipes");
-    this->main_navigation->addPage(this->customerPoints,
-                                  QIcon(":/icon/customer.png"),
+    this->main_navigation->addPage(this->demand_points,
+                                  QIcon(":/icon/demand_point.png"),
                                   "Demand Points");
     this->main_navigation->addPage(this->customers,
                                   QIcon(":/icon/users.png"),
@@ -488,7 +488,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->hydraulic_data, &HydraulicData::signalSelectedPipe, this, &MainWindow::showEntityInspectorForSelection);
     connect(this->hydraulic_data, &HydraulicData::signalSelectedPump, this, &MainWindow::showEntityInspectorForSelection);
     connect(this->hydraulic_data, &HydraulicData::signalSelectedValve, this, &MainWindow::showEntityInspectorForSelection);
-    connect(this->hydraulic_data, &HydraulicData::signalSelectedCustomerPoint, this, &MainWindow::showEntityInspectorForSelection);
+    connect(this->hydraulic_data, &HydraulicData::signalSelectedDemandPoint, this, &MainWindow::showEntityInspectorForSelection);
 
 #ifdef Q_OS_WASM
     emscripten_set_fullscreenchange_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, this, EM_TRUE, &MainWindow::fullScreenChangeCallback);

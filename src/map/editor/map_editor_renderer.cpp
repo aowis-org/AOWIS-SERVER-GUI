@@ -1231,7 +1231,7 @@ QPainterPath MapEditorRenderer::moveStaticVisibleClipPath(
 
     for (const MapEditorDynamicMarkerVisualState &dynamic_marker : visual_state.move.markers)
     {
-        if (!InfrastructureEntityTraits::isHydraulicConnectionNode(dynamic_marker.entity))
+        if (!InfrastructureEntityTraits::isHydraulicPointEntity(dynamic_marker.entity))
             continue;
         const auto node_iterator =
             this->static_geometry->node_indices_by_uuid.constFind(dynamic_marker.uuid);
@@ -1580,6 +1580,7 @@ void MapEditorRenderer::paintRenderSurfaceStaticDetails(
                 : MapEntityPixmapRenderer::Highlight::None);
     }
 
+    paintDemandPointAttachment(painter, visual_state);
     painter.restore();
 }
 
@@ -1602,6 +1603,7 @@ void MapEditorRenderer::paintDirectNetwork(
     paintDeviceLinks(painter, network_snapshot, visual_state, nodes_by_uuid);
     paintMarkers(painter, network_snapshot, visual_state);
     paintPlacement(painter, visual_state, nodes_by_uuid);
+    paintDemandPointAttachment(painter, visual_state);
 }
 
 void MapEditorRenderer::paintInteractiveNetwork(
@@ -1631,6 +1633,7 @@ void MapEditorRenderer::paintInteractiveNetwork(
     paintSelectedMarkersAndDeviceLinks(painter, visual_state);
     paintSimulationError(painter, visual_state);
     paintPlacement(painter, visual_state, nodes_by_uuid);
+    paintDemandPointAttachment(painter, visual_state);
 }
 
 void MapEditorRenderer::paintMovingNetwork(
@@ -1703,7 +1706,7 @@ void MapEditorRenderer::paintMovingNetwork(
     painter.setPen(Qt::NoPen);
     for (const MapEditorDynamicMarkerVisualState &marker : visual_state.move.markers)
     {
-        if (!InfrastructureEntityTraits::isHydraulicConnectionNode(marker.entity))
+        if (!InfrastructureEntityTraits::isHydraulicPointEntity(marker.entity))
             continue;
         const QPointF point = screenFromWgs84(
             marker.coordinate_wgs84, visual_state.wrap_reference_longitude);
@@ -2331,6 +2334,79 @@ void MapEditorRenderer::paintMarkers(
             : MapEntityPixmapRenderer::Highlight::None;
         this->pixmap_renderer.paint(
             painter, path, visual_state.entity_width, target_rect, highlight);
+    }
+
+    painter.restore();
+}
+
+void MapEditorRenderer::paintDemandPointAttachment(
+    QPainter &painter, const MapEditorVisualState &visual_state)
+{
+    if (visual_state.demand_point_attachments.isEmpty())
+        return;
+
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    for (const MapEditorDemandPointAttachmentVisualState &attachment :
+         visual_state.demand_point_attachments)
+    {
+        if (!attachment.visible)
+            continue;
+
+        const QPointF demand_point = screenFromWgs84(
+            attachment.demand_point_coordinate_wgs84,
+            visual_state.wrap_reference_longitude);
+
+        if (!attachment.attachment_coordinate_valid)
+        {
+            if (attachment.selecting_target)
+            {
+                QPen select_pen(QColor(0, 120, 190));
+                select_pen.setWidthF(1.5);
+                select_pen.setStyle(Qt::DashLine);
+                painter.setPen(select_pen);
+                painter.setBrush(Qt::NoBrush);
+                painter.drawEllipse(demand_point, 11.0, 11.0);
+            }
+            continue;
+        }
+
+        const QPointF network_point = screenFromWgs84(
+            attachment.attachment_coordinate_wgs84,
+            visual_state.wrap_reference_longitude);
+
+        const bool emphasized =
+            attachment.selected || attachment.selecting_target || attachment.moving;
+        const QColor line_color = emphasized
+            ? QColor(0, 120, 190)
+            : QColor(70, 105, 125, 190);
+
+        QPen line_pen(line_color);
+        line_pen.setWidthF(emphasized ? 1.5 : 1.0);
+        line_pen.setStyle(Qt::DashLine);
+        painter.setPen(line_pen);
+        painter.setBrush(Qt::NoBrush);
+        painter.drawLine(demand_point, network_point);
+
+        QPen handle_pen(line_color);
+        handle_pen.setWidthF(emphasized ? 2.0 : 1.5);
+        painter.setPen(handle_pen);
+        painter.setBrush(QColor(255, 255, 255, emphasized ? 230 : 190));
+        const qreal radius = attachment.moving ? 7.0
+                            : attachment.selected ? 6.0
+                                                  : 4.5;
+        painter.drawEllipse(network_point, radius, radius);
+
+        if (attachment.selecting_target)
+        {
+            QPen point_pen(QColor(0, 120, 190));
+            point_pen.setWidthF(1.0);
+            point_pen.setStyle(Qt::DotLine);
+            painter.setPen(point_pen);
+            painter.setBrush(Qt::NoBrush);
+            painter.drawEllipse(demand_point, 10.0, 10.0);
+        }
     }
 
     painter.restore();

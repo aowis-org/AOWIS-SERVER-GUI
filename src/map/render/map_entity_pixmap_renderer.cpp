@@ -43,8 +43,8 @@ QString MapEntityPixmapRenderer::pixmapPathForEntity(InfrastructureEntity entity
         return QStringLiteral(":/icon/pump.png");
     case InfrastructureEntity::Valve:
         return QStringLiteral(":/icon/valve.png");
-    case InfrastructureEntity::CustomerPoint:
-        return QStringLiteral(":/icon/customer.png");
+    case InfrastructureEntity::DemandPoint:
+        return QStringLiteral(":/icon/demand_point.png");
     case InfrastructureEntity::ElectricJunction:
     case InfrastructureEntity::Cable:
     case InfrastructureEntity::Switch:

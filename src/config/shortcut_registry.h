@@ -29,7 +29,7 @@ enum class GuiShortcutId
     MapEditorAddPipe,
     MapEditorAddJunction,
     MapEditorAddValve,
-    MapEditorAddCustomerPoint,
+    MapEditorAddDemandPoint,
     MapEditorAddPump,
     MapEditorAddTank,
     MapEditorAddPowerSource,

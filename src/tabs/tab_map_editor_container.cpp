@@ -1122,12 +1122,15 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
         this->editor_controller->startEntityPositioning(InfrastructureEntity::Valve);
     });
     
-    QRadioButton *button_radio_customer = new QRadioButton(wgt);
-    bindEditorShortcut(button_radio_customer, GuiShortcutId::MapEditorAddCustomerPoint,
+    QRadioButton *button_radio_demand_point = new QRadioButton(wgt);
+    bindEditorShortcut(button_radio_demand_point, GuiShortcutId::MapEditorAddDemandPoint,
                        QStringLiteral("Demand Point"), this);
-    lay->addWidget(button_radio_customer);
-    this->button_group_tools->addButton(button_radio_customer, 4);
-    button_radio_customer->setEnabled(false);
+    lay->addWidget(button_radio_demand_point);
+    this->button_group_tools->addButton(button_radio_demand_point, 4);
+    connect(button_radio_demand_point, &QRadioButton::clicked, this, [this]
+    {
+        this->editor_controller->startEntityPositioning(InfrastructureEntity::DemandPoint);
+    });
     
     QRadioButton *button_radio_pump = new QRadioButton(wgt);
     bindEditorShortcut(button_radio_pump, GuiShortcutId::MapEditorAddPump,

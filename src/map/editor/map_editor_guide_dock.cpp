@@ -46,6 +46,7 @@ MapEditorGuideDock::MapEditorGuideDock(QWidget *parent)
             <li><b>Nodes:</b> choose a node tool, then right-click the map.</li>
             <li><b>Pipes:</b> right-click the start node, optional bend points, then the end node.</li>
             <li><b>Pumps and valves:</b> right-click the two nodes to connect.</li>
+            <li><b>Demand points:</b> place the point, then right-click it and choose <i>Attach to network</i>; right-click a junction or any position on a pipe.</li>
         </ul>
 
         <h3>Edit elements</h3>
@@ -53,8 +54,9 @@ MapEditorGuideDock::MapEditorGuideDock(QWidget *parent)
             <li><b>Right-click an element:</b> open its editing menu.</li>
             <li><b>Right-click a pipe segment:</b> add a vertex.</li>
             <li><b>Right-click a pipe vertex:</b> move, delete, or convert it to a junction.</li>
+            <li><b>Demand-point attachment:</b> attachment lines and handles stay visible; right-click a handle to move, reattach, detach, or convert a pipe attachment to a junction.</li>
             <li>After choosing a move action, <b>right-click to confirm</b>.</li>
-            <li>During an entity or pipe-vertex move, press <b>Esc</b> to cancel and restore the original position.</li>
+            <li>During an entity, pipe-vertex, or demand-point attachment move, press <b>Esc</b> to cancel.</li>
         </ul>
 
         <p><b>Esc:</b> cancel the active action; otherwise return to selection mode.</p>

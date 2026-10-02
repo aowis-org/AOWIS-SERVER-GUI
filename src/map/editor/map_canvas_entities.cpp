@@ -6,6 +6,7 @@
 #include "map/editor/map_canvas_selection.h"
 #include "map/editor/map_canvas_widget.h"
 
+#include "geo/geo_metric_projection.h"
 #include "geo/geo_web_mercator.h"
 #include "network/infrastructure_entity_traits.h"
 #ifdef Q_OS_WASM
@@ -88,6 +89,15 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
         });
         connect(this->hydraulic_data, &HydraulicData::signalNodeChanged,
                 this, &MapCanvasEntities::onNodeChanged);
+        connect(this->hydraulic_data, &HydraulicData::signalDemandPointChanged,
+                this, &MapCanvasEntities::onDemandPointChanged);
+        connect(this->hydraulic_data,
+                &HydraulicData::signalDemandPointAttachmentSelectionRequested,
+                this, [this](const QUuid &uuid)
+        {
+            applyExternalSelection(InfrastructureEntity::DemandPoint, uuid);
+            startDemandPointAttachmentSelection(uuid);
+        });
         connect(this->hydraulic_data, &HydraulicData::signalLinkChanged,
                 this, &MapCanvasEntities::onLinkChanged);
         connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged,
@@ -127,6 +137,11 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
         {
             applyExternalSelection(InfrastructureEntity::Valve, valve.uuid);
         });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedDemandPoint, this,
+            [this](const HydraulicDemandPoint &demand_point)
+        {
+            applyExternalSelection(InfrastructureEntity::DemandPoint, demand_point.uuid);
+        });
         loadNetwork(this->hydraulic_data->networkHydraulic());
     }
 }
@@ -141,6 +156,20 @@ void MapCanvasEntities::onNodeChanged(InfrastructureEntity entity_type, const QU
     if (!node.has_value() || !this->point_markers->setCoordinate(uuid, node->coordinate_wgs84))
         return;
 
+    recalculateWrapReferenceLongitude();
+    updateCanvas();
+}
+
+void MapCanvasEntities::onDemandPointChanged(const QUuid &uuid)
+{
+    if (this->synchronizing_geometry || !this->hydraulic_data)
+        return;
+
+    const std::optional<HydraulicDemandPoint> demand_point = this->hydraulic_data->demandPoint(uuid);
+    if (!demand_point.has_value())
+        return;
+
+    this->point_markers->setCoordinate(uuid, demand_point->coordinate_wgs84);
     recalculateWrapReferenceLongitude();
     updateCanvas();
 }
@@ -212,6 +241,19 @@ void MapCanvasEntities::onEntityLocateRequested(InfrastructureEntity entity_type
     if (!this->hydraulic_data || !this->map_canvas)
         return;
 
+    if (entity_type == InfrastructureEntity::DemandPoint)
+    {
+        const std::optional<HydraulicDemandPoint> demand_point =
+            this->hydraulic_data->demandPoint(uuid);
+        if (!demand_point.has_value())
+            return;
+
+        this->map_model->setCenter(demand_point->coordinate_wgs84.longitude_deg,
+                                   demand_point->coordinate_wgs84.latitude_deg,
+                                   this->map_canvas->size());
+        return;
+    }
+
     if (InfrastructureEntityTraits::isHydraulicConnectionNode(entity_type))
     {
         const std::optional<HydraulicNodeCommonData> node =
@@ -270,6 +312,7 @@ void MapCanvasEntities::onEntityLocateRequested(InfrastructureEntity entity_type
 
 void MapCanvasEntities::loadNetwork(const NetworkHydraulic &network)
 {
+    cancelDemandPointAttachmentInteraction();
     setWrapReferenceLongitude(this->map_model->centerLon());
     this->device_links->clearPlacement();
     this->pipes->clearPlacement();
@@ -307,6 +350,23 @@ void MapCanvasEntities::loadNetwork(const NetworkHydraulic &network)
         add_node(InfrastructureEntity::Reservoir, reservoir.uuid, reservoir.coordinate_wgs84);
     for (const HydraulicNodeTank &tank : network.nodes_tanks)
         add_node(InfrastructureEntity::Tank, tank.uuid, tank.coordinate_wgs84);
+    for (const HydraulicDemandPoint &demand_point : network.demand_points)
+    {
+        if (demand_point.uuid.isNull() || markerByUuid(demand_point.uuid).has_value())
+        {
+            qWarning() << "Cannot load demand point with invalid or duplicate UUID:"
+                       << demand_point.uuid;
+            continue;
+        }
+
+        InfrastructureEntityReference reference;
+        reference.type = InfrastructureEntity::DemandPoint;
+        reference.uuid = demand_point.uuid;
+        this->point_markers->addMarker(
+            reference, demand_point.coordinate_wgs84,
+            this->point_markers->pixmapPathForEntity(reference.type),
+            this->point_markers->entityWidth());
+    }
 
     recalculateWrapReferenceLongitude();
 
@@ -403,6 +463,7 @@ void MapCanvasEntities::startEntityPositioning(InfrastructureEntity entity)
 
 void MapCanvasEntities::stopEntityPositioning()
 {
+    cancelDemandPointAttachmentInteraction();
     restoreMoveSnapshot();
     this->device_links->clearPlacement();
     this->pipes->clearPlacement();
@@ -414,6 +475,12 @@ void MapCanvasEntities::stopEntityPositioning()
 
 bool MapCanvasEntities::cancelActiveMove()
 {
+    if (this->demand_point_attachment_selecting || this->demand_point_attachment_moving)
+    {
+        cancelDemandPointAttachmentInteraction();
+        updateCanvas();
+        return true;
+    }
     if (!this->placement->isMoving())
         return false;
     stopEntityPositioning();
@@ -422,11 +489,80 @@ bool MapCanvasEntities::cancelActiveMove()
 
 bool MapCanvasEntities::positioningActive() const
 {
-    return !this->placement->isIdle();
+    return !this->placement->isIdle() || this->demand_point_attachment_selecting ||
+           this->demand_point_attachment_moving;
 }
 
 bool MapCanvasEntities::floatEntity(const QPointF &position)
 {
+    if (this->demand_point_attachment_moving)
+    {
+        std::optional<HydraulicDemandPoint> demand_point;
+        if (this->hydraulic_data)
+            demand_point = this->hydraulic_data->demandPoint(
+                this->demand_point_attachment_interaction_uuid);
+        if (!demand_point.has_value() ||
+            demand_point->attachment.type != HydraulicDemandPointAttachmentType::Pipe)
+        {
+            cancelDemandPointAttachmentInteraction();
+            updateCanvas();
+            return true;
+        }
+
+        const MapCanvasPipes::PipePositionHit hit = this->pipes->nearestPositionOnPipe(
+            demand_point->attachment.pipe_uuid, position, this->point_markers->markers());
+        this->demand_point_attachment_preview_valid = hit.isValid();
+        if (hit.isValid())
+        {
+            this->demand_point_attachment_preview_coordinate = hit.coordinate_wgs84;
+        }
+        updateCanvas();
+        return true;
+    }
+
+    if (this->demand_point_attachment_selecting)
+    {
+        this->demand_point_attachment_preview_valid = false;
+
+        const std::optional<InfrastructureEntityReference> marker =
+            this->point_markers->markerAt(position);
+        if (marker.has_value() && marker->type == InfrastructureEntity::Junction)
+        {
+            const std::optional<MapEntityMarker> junction_marker =
+                this->point_markers->markerByUuid(marker->uuid);
+            if (junction_marker.has_value())
+            {
+                this->demand_point_attachment_preview_coordinate =
+                    junction_marker->coord_wgs84;
+                this->demand_point_attachment_preview_valid = true;
+            }
+        }
+
+        if (!this->demand_point_attachment_preview_valid)
+        {
+            const MapCanvasPipes::PipePositionHit pipe_hit =
+                this->pipes->pipePositionAt(position, this->point_markers->markers());
+            if (pipe_hit.isValid())
+            {
+                this->demand_point_attachment_preview_coordinate =
+                    pipe_hit.coordinate_wgs84;
+                this->demand_point_attachment_preview_valid = true;
+            }
+        }
+
+        if (!this->demand_point_attachment_preview_valid &&
+            this->map_model && this->map_canvas && !this->map_canvas->size().isEmpty())
+        {
+            this->demand_point_attachment_preview_coordinate =
+                this->map_model->wgs84FromScreen(
+                    position.toPoint(), this->map_canvas->size());
+            this->demand_point_attachment_preview_valid = true;
+        }
+
+        updateCanvas();
+        return true;
+    }
+
     if (this->placement->isMoving())
         this->placement->setMoveCursor(true);
 
@@ -539,7 +675,7 @@ bool MapCanvasEntities::anchorMarker(const QPointF &position)
 
     InfrastructureEntityReference reference;
     reference.type = this->placement->entity();
-    reference.uuid = createHydraulicNode(reference.type, coordinate);
+    reference.uuid = createHydraulicPointEntity(reference.type, coordinate);
     if (reference.uuid.isNull())
     {
         this->placement->stop();
@@ -559,7 +695,7 @@ bool MapCanvasEntities::anchorMarker(const QPointF &position)
     return true;
 }
 
-QUuid MapCanvasEntities::createHydraulicNode(InfrastructureEntity entity,
+QUuid MapCanvasEntities::createHydraulicPointEntity(InfrastructureEntity entity,
                                              const CoordinateWGS84 &coordinate)
 {
     if (!this->hydraulic_data)
@@ -573,6 +709,8 @@ QUuid MapCanvasEntities::createHydraulicNode(InfrastructureEntity entity,
         return this->hydraulic_data->addReservoir(coordinate);
     case InfrastructureEntity::Tank:
         return this->hydraulic_data->addTank(coordinate);
+    case InfrastructureEntity::DemandPoint:
+        return this->hydraulic_data->addDemandPoint(coordinate);
     default:
         return QUuid();
     }
@@ -663,6 +801,9 @@ bool MapCanvasEntities::synchronizeMarkerCoordinate(const QUuid &uuid)
     case InfrastructureEntity::Tank:
         batch.node_coordinates.insert(marker->entity.uuid, marker->coord_wgs84);
         break;
+    case InfrastructureEntity::DemandPoint:
+        batch.demand_point_coordinates.insert(marker->entity.uuid, marker->coord_wgs84);
+        break;
     case InfrastructureEntity::Pump:
         batch.pump_center_coordinates.insert(marker->entity.uuid, marker->coord_wgs84);
         break;
@@ -695,6 +836,8 @@ bool MapCanvasEntities::synchronizeSelectedGeometry()
 
         if (InfrastructureEntityTraits::isHydraulicConnectionNode(marker->entity.type))
             batch.node_coordinates.insert(marker->entity.uuid, marker->coord_wgs84);
+        else if (marker->entity.type == InfrastructureEntity::DemandPoint)
+            batch.demand_point_coordinates.insert(marker->entity.uuid, marker->coord_wgs84);
         else if (marker->entity.type == InfrastructureEntity::Pump)
             batch.pump_center_coordinates.insert(marker->entity.uuid, marker->coord_wgs84);
         else if (marker->entity.type == InfrastructureEntity::Valve)
@@ -788,7 +931,8 @@ void MapCanvasEntities::restoreMoveSnapshot()
 {
     for (const MapEntityMarker &marker : this->move_marker_snapshot)
     {
-        if (InfrastructureEntityTraits::isHydraulicConnectionNode(marker.entity.type))
+        if (InfrastructureEntityTraits::isHydraulicConnectionNode(marker.entity.type) ||
+            marker.entity.type == InfrastructureEntity::DemandPoint)
             this->point_markers->setCoordinate(marker.entity.uuid, marker.coord_wgs84);
         else if (InfrastructureEntityTraits::isHydraulicDeviceLink(marker.entity.type))
             this->device_links->setCenterCoordinate(marker.entity.uuid, marker.coord_wgs84);
@@ -1147,12 +1291,67 @@ MapEditorVisualState MapCanvasEntities::visualState() const
         }
     }
 
+    if (this->hydraulic_data)
+    {
+        const NetworkHydraulic &network = this->hydraulic_data->networkHydraulic();
+        state.demand_point_attachments.reserve(network.demand_points.size());
+        for (const HydraulicDemandPoint &demand_point : network.demand_points)
+        {
+            const std::optional<MapEntityMarker> marker = markerByUuid(demand_point.uuid);
+            if (!marker.has_value())
+                continue;
+
+            const bool interacting =
+                this->demand_point_attachment_interaction_uuid == demand_point.uuid &&
+                (this->demand_point_attachment_selecting ||
+                 this->demand_point_attachment_moving);
+            const bool has_attachment =
+                demand_point.attachment.type != HydraulicDemandPointAttachmentType::None;
+            if (!has_attachment && !interacting)
+                continue;
+
+            MapEditorDemandPointAttachmentVisualState attachment_state;
+            attachment_state.visible = true;
+            attachment_state.selected =
+                state.selected_marker_uuids.contains(demand_point.uuid);
+            attachment_state.demand_point_uuid = demand_point.uuid;
+            attachment_state.demand_point_coordinate_wgs84 = marker->coord_wgs84;
+            attachment_state.selecting_target =
+                interacting && this->demand_point_attachment_selecting;
+            attachment_state.moving =
+                interacting && this->demand_point_attachment_moving;
+            attachment_state.attachment_is_pipe =
+                demand_point.attachment.type == HydraulicDemandPointAttachmentType::Pipe;
+
+            if (interacting && this->demand_point_attachment_preview_valid)
+            {
+                attachment_state.attachment_coordinate_wgs84 =
+                    this->demand_point_attachment_preview_coordinate;
+                attachment_state.attachment_coordinate_valid = true;
+            }
+            else
+            {
+                const std::optional<CoordinateWGS84> attachment_coordinate =
+                    demandPointAttachmentCoordinate(demand_point);
+                if (attachment_coordinate.has_value())
+                {
+                    attachment_state.attachment_coordinate_wgs84 =
+                        attachment_coordinate.value();
+                    attachment_state.attachment_coordinate_valid = true;
+                }
+            }
+
+            state.demand_point_attachments.append(attachment_state);
+        }
+    }
+
     return state;
 }
 
 bool MapCanvasEntities::selectMarkerAt(const QPointF &position)
 {
-    if (!this->placement->isIdle())
+    if (!this->placement->isIdle() || this->demand_point_attachment_selecting ||
+        this->demand_point_attachment_moving)
         return false;
 
     std::optional<InfrastructureEntityReference> entity = this->point_markers->markerAt(position);
@@ -1167,7 +1366,8 @@ bool MapCanvasEntities::selectMarkerAt(const QPointF &position)
 
 bool MapCanvasEntities::isMarkerAt(const QPointF &position) const
 {
-    if (!this->placement->isIdle())
+    if (!this->placement->isIdle() || this->demand_point_attachment_selecting ||
+        this->demand_point_attachment_moving)
         return false;
     return this->point_markers->isMarkerAt(position) ||
            this->device_links->markerAt(position).has_value();
@@ -1176,7 +1376,8 @@ bool MapCanvasEntities::isMarkerAt(const QPointF &position) const
 bool MapCanvasEntities::showMarkerContextMenuAt(const QPointF &position,
                                                 const QPoint &global_position)
 {
-    if (!this->placement->isIdle())
+    if (!this->placement->isIdle() || this->demand_point_attachment_selecting ||
+        this->demand_point_attachment_moving)
         return false;
 
     std::optional<InfrastructureEntityReference> entity = this->point_markers->markerAt(position);
@@ -1191,7 +1392,8 @@ bool MapCanvasEntities::showMarkerContextMenuAt(const QPointF &position,
 
 bool MapCanvasEntities::selectDeviceLinkAt(const QPointF &position)
 {
-    if (!this->placement->isIdle())
+    if (!this->placement->isIdle() || this->demand_point_attachment_selecting ||
+        this->demand_point_attachment_moving)
         return false;
 
     const std::optional<InfrastructureEntityReference> device_link =
@@ -1205,14 +1407,16 @@ bool MapCanvasEntities::selectDeviceLinkAt(const QPointF &position)
 
 bool MapCanvasEntities::isDeviceLinkAt(const QPointF &position) const
 {
-    return this->placement->isIdle() &&
+    return this->placement->isIdle() && !this->demand_point_attachment_selecting &&
+           !this->demand_point_attachment_moving &&
            this->device_links->linkAt(position, this->point_markers->markers()).has_value();
 }
 
 bool MapCanvasEntities::showPipeContextMenuAt(const QPointF &position,
                                               const QPoint &global_position)
 {
-    return this->placement->isIdle() &&
+    return this->placement->isIdle() && !this->demand_point_attachment_selecting &&
+           !this->demand_point_attachment_moving &&
            this->pipes->showContextMenuAt(
                position, global_position, this->point_markers->markers());
 }
@@ -1335,6 +1539,13 @@ void MapCanvasEntities::deleteMarker(const QUuid &uuid)
     if (this->placement->floatingUuid() == uuid)
         stopEntityPositioning();
 
+    if (marker->entity.type == InfrastructureEntity::DemandPoint)
+    {
+        if (this->demand_point_attachment_interaction_uuid == marker->entity.uuid)
+            cancelDemandPointAttachmentInteraction();
+        if (!this->hydraulic_data || !this->hydraulic_data->deleteDemandPoint(marker->entity.uuid))
+            return;
+    }
     if (InfrastructureEntityTraits::isHydraulicConnectionNode(marker->entity.type) &&
         !deleteHydraulicNode(marker->entity))
         return;
@@ -1357,11 +1568,441 @@ void MapCanvasEntities::deleteMarker(const QUuid &uuid)
         recalculateWrapReferenceLongitude();
 }
 
+std::optional<QUuid> MapCanvasEntities::selectedDemandPointUuid() const
+{
+    const QList<QUuid> &selected_uuids = this->selection->selectedMarkerUuids();
+    if (selected_uuids.size() != 1)
+        return std::nullopt;
+
+    const std::optional<MapEntityMarker> marker = markerByUuid(selected_uuids.first());
+    if (!marker.has_value() || marker->entity.type != InfrastructureEntity::DemandPoint)
+        return std::nullopt;
+    return marker->entity.uuid;
+}
+
+std::optional<CoordinateWGS84> MapCanvasEntities::demandPointAttachmentCoordinate(
+    const HydraulicDemandPoint &demand_point) const
+{
+    if (demand_point.attachment.type == HydraulicDemandPointAttachmentType::Junction)
+    {
+        const std::optional<MapEntityMarker> junction_marker =
+            markerByUuid(demand_point.attachment.junction_uuid);
+        if (!junction_marker.has_value() ||
+            junction_marker->entity.type != InfrastructureEntity::Junction)
+        {
+            return std::nullopt;
+        }
+        return junction_marker->coord_wgs84;
+    }
+
+    if (demand_point.attachment.type == HydraulicDemandPointAttachmentType::Pipe)
+    {
+        return this->pipes->coordinateAtPosition(
+            demand_point.attachment.pipe_uuid, demand_point.attachment.pipe_position,
+            this->point_markers->markers());
+    }
+
+    return std::nullopt;
+}
+
+bool MapCanvasEntities::demandPointAttachmentHandleAt(
+    const QPointF &position, QUuid *demand_point_uuid) const
+{
+    if (!this->hydraulic_data || !this->map_model || !this->map_canvas ||
+        this->map_canvas->size().isEmpty())
+    {
+        return false;
+    }
+
+    constexpr double handle_hit_radius = 12.0;
+    const double handle_hit_radius_squared = handle_hit_radius * handle_hit_radius;
+
+    const auto hit_distance_squared = [this, &position](
+        const HydraulicDemandPoint &demand_point) -> std::optional<double>
+    {
+        const std::optional<CoordinateWGS84> coordinate =
+            demandPointAttachmentCoordinate(demand_point);
+        if (!coordinate.has_value())
+            return std::nullopt;
+
+        const QPointF handle_position = this->map_model->screenFromWgs84(
+            coordinate.value(), this->map_canvas->size(), this->wrap_reference_longitude);
+        const double delta_x = position.x() - handle_position.x();
+        const double delta_y = position.y() - handle_position.y();
+        return delta_x * delta_x + delta_y * delta_y;
+    };
+
+    const NetworkHydraulic &network = this->hydraulic_data->networkHydraulic();
+    const std::optional<QUuid> selected_uuid = selectedDemandPointUuid();
+    if (selected_uuid.has_value())
+    {
+        for (const HydraulicDemandPoint &demand_point : network.demand_points)
+        {
+            if (demand_point.uuid != selected_uuid.value())
+                continue;
+            const std::optional<double> distance_squared =
+                hit_distance_squared(demand_point);
+            if (distance_squared.has_value() &&
+                distance_squared.value() <= handle_hit_radius_squared)
+            {
+                if (demand_point_uuid)
+                    *demand_point_uuid = demand_point.uuid;
+                return true;
+            }
+            break;
+        }
+    }
+
+    double best_distance_squared = handle_hit_radius_squared;
+    QUuid best_uuid;
+    for (const HydraulicDemandPoint &demand_point : network.demand_points)
+    {
+        if (selected_uuid.has_value() && demand_point.uuid == selected_uuid.value())
+            continue;
+
+        const std::optional<double> distance_squared =
+            hit_distance_squared(demand_point);
+        if (!distance_squared.has_value() ||
+            distance_squared.value() > best_distance_squared)
+        {
+            continue;
+        }
+
+        best_distance_squared = distance_squared.value();
+        best_uuid = demand_point.uuid;
+    }
+
+    if (best_uuid.isNull())
+        return false;
+
+    if (demand_point_uuid)
+        *demand_point_uuid = best_uuid;
+    return true;
+}
+
+void MapCanvasEntities::cancelDemandPointAttachmentInteraction()
+{
+    this->demand_point_attachment_interaction_uuid = QUuid();
+    this->demand_point_attachment_selecting = false;
+    this->demand_point_attachment_moving = false;
+    this->demand_point_attachment_preview_valid = false;
+    this->demand_point_attachment_preview_coordinate = CoordinateWGS84();
+}
+
+void MapCanvasEntities::startDemandPointAttachmentSelection(const QUuid &demand_point_uuid)
+{
+    if (!this->hydraulic_data || !this->hydraulic_data->demandPoint(demand_point_uuid).has_value())
+        return;
+
+    stopEntityPositioning();
+    this->demand_point_attachment_interaction_uuid = demand_point_uuid;
+    this->demand_point_attachment_selecting = true;
+    this->demand_point_attachment_moving = false;
+    this->demand_point_attachment_preview_valid = false;
+    selectMarker(demand_point_uuid);
+    updateCanvas();
+}
+
+void MapCanvasEntities::startDemandPointAttachmentMove(const QUuid &demand_point_uuid)
+{
+    if (!this->hydraulic_data)
+        return;
+    const std::optional<HydraulicDemandPoint> demand_point =
+        this->hydraulic_data->demandPoint(demand_point_uuid);
+    if (!demand_point.has_value() ||
+        demand_point->attachment.type != HydraulicDemandPointAttachmentType::Pipe)
+    {
+        return;
+    }
+
+    stopEntityPositioning();
+    this->demand_point_attachment_interaction_uuid = demand_point_uuid;
+    this->demand_point_attachment_selecting = false;
+    this->demand_point_attachment_moving = true;
+    const std::optional<CoordinateWGS84> coordinate =
+        demandPointAttachmentCoordinate(demand_point.value());
+    this->demand_point_attachment_preview_valid = coordinate.has_value();
+    if (coordinate.has_value())
+        this->demand_point_attachment_preview_coordinate = coordinate.value();
+    selectMarker(demand_point_uuid);
+    updateCanvas();
+}
+
+bool MapCanvasEntities::handleDemandPointAttachmentRightClick(
+    const QPointF &position, const QPoint &global_position)
+{
+    if (!this->hydraulic_data)
+        return false;
+
+    if (this->demand_point_attachment_moving)
+    {
+        const std::optional<HydraulicDemandPoint> demand_point =
+            this->hydraulic_data->demandPoint(this->demand_point_attachment_interaction_uuid);
+        if (!demand_point.has_value() ||
+            demand_point->attachment.type != HydraulicDemandPointAttachmentType::Pipe)
+        {
+            cancelDemandPointAttachmentInteraction();
+            updateCanvas();
+            return true;
+        }
+
+        const MapCanvasPipes::PipePositionHit hit = this->pipes->nearestPositionOnPipe(
+            demand_point->attachment.pipe_uuid, position, this->point_markers->markers());
+        if (hit.isValid())
+        {
+            this->hydraulic_data->attachDemandPointToPipe(
+                demand_point->uuid, hit.pipe_uuid, hit.pipe_position);
+        }
+        cancelDemandPointAttachmentInteraction();
+        updateCanvas();
+        return true;
+    }
+
+    if (this->demand_point_attachment_selecting)
+    {
+        const QUuid demand_point_uuid = this->demand_point_attachment_interaction_uuid;
+        const std::optional<InfrastructureEntityReference> marker =
+            this->point_markers->markerAt(position);
+        if (marker.has_value() && marker->type == InfrastructureEntity::Junction)
+        {
+            this->hydraulic_data->attachDemandPointToJunction(
+                demand_point_uuid, marker->uuid);
+            cancelDemandPointAttachmentInteraction();
+            selectMarker(demand_point_uuid);
+            updateCanvas();
+            return true;
+        }
+
+        const MapCanvasPipes::PipePositionHit pipe_hit = this->pipes->pipePositionAt(
+            position, this->point_markers->markers());
+        if (pipe_hit.isValid())
+        {
+            this->hydraulic_data->attachDemandPointToPipe(
+                demand_point_uuid, pipe_hit.pipe_uuid, pipe_hit.pipe_position);
+            cancelDemandPointAttachmentInteraction();
+            selectMarker(demand_point_uuid);
+            updateCanvas();
+            return true;
+        }
+
+        cancelDemandPointAttachmentInteraction();
+        updateCanvas();
+        return true;
+    }
+
+    QUuid demand_point_uuid;
+    if (!demandPointAttachmentHandleAt(position, &demand_point_uuid))
+        return false;
+
+    selectMarker(demand_point_uuid);
+    updateCanvas();
+    showDemandPointAttachmentContextMenu(demand_point_uuid, global_position);
+    return true;
+}
+
+void MapCanvasEntities::showDemandPointAttachmentContextMenu(
+    const QUuid &demand_point_uuid, const QPoint &global_position)
+{
+    if (!this->hydraulic_data)
+        return;
+    const std::optional<HydraulicDemandPoint> demand_point =
+        this->hydraulic_data->demandPoint(demand_point_uuid);
+    if (!demand_point.has_value() ||
+        demand_point->attachment.type == HydraulicDemandPointAttachmentType::None)
+    {
+        return;
+    }
+
+#ifdef Q_OS_WASM
+    WasmPopupMenu *menu = new WasmPopupMenu(this->map_canvas);
+    menu->setDeleteOnClose(true);
+    if (demand_point->attachment.type == HydraulicDemandPointAttachmentType::Pipe)
+    {
+        menu->addAction(QStringLiteral("Move attachment"), [this, demand_point_uuid]
+        {
+            startDemandPointAttachmentMove(demand_point_uuid);
+        });
+        menu->addAction(QStringLiteral("Convert to junction"), [this, demand_point_uuid]
+        {
+            QMessageBox *message_box = new QMessageBox(
+                QMessageBox::Question, QStringLiteral("Convert demand-point attachment"),
+                QStringLiteral("Do you really want to convert this attachment to a junction?"),
+                QMessageBox::Yes | QMessageBox::No, this->map_canvas);
+            message_box->setDefaultButton(QMessageBox::No);
+            connect(message_box, &QMessageBox::finished, this,
+                    [this, demand_point_uuid](int result)
+            {
+                if (result == QMessageBox::Yes)
+                    convertDemandPointAttachmentToJunction(demand_point_uuid);
+            });
+            connect(message_box, &QMessageBox::finished,
+                    message_box, &QObject::deleteLater);
+            message_box->open();
+        });
+    }
+    menu->addAction(QStringLiteral("Reattach"), [this, demand_point_uuid]
+    {
+        startDemandPointAttachmentSelection(demand_point_uuid);
+    });
+    menu->addAction(QStringLiteral("Detach"), [this, demand_point_uuid]
+    {
+        if (this->hydraulic_data)
+            this->hydraulic_data->clearDemandPointAttachment(demand_point_uuid);
+        updateCanvas();
+    });
+    menu->popup(global_position);
+#else
+    QMenu *menu = new QMenu(this->map_canvas);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    if (demand_point->attachment.type == HydraulicDemandPointAttachmentType::Pipe)
+    {
+        QAction *action_move = menu->addAction("Move attachment");
+        QAction *action_convert = menu->addAction("Convert to junction");
+        connect(action_move, &QAction::triggered, this, [this, demand_point_uuid]()
+        {
+            startDemandPointAttachmentMove(demand_point_uuid);
+        });
+        connect(action_convert, &QAction::triggered, this, [this, demand_point_uuid]()
+        {
+            QMessageBox *message_box = new QMessageBox(
+                QMessageBox::Question, "Convert demand-point attachment",
+                "Do you really want to convert this attachment to a junction?",
+                QMessageBox::Yes | QMessageBox::No, this->map_canvas);
+            message_box->setDefaultButton(QMessageBox::No);
+            connect(message_box, &QMessageBox::finished, this,
+                    [this, demand_point_uuid](int result)
+            {
+                if (result == QMessageBox::Yes)
+                    convertDemandPointAttachmentToJunction(demand_point_uuid);
+            });
+            connect(message_box, &QMessageBox::finished,
+                    message_box, &QObject::deleteLater);
+            message_box->open();
+        });
+    }
+    QAction *action_reattach = menu->addAction("Reattach");
+    QAction *action_detach = menu->addAction("Detach");
+    connect(action_reattach, &QAction::triggered, this, [this, demand_point_uuid]()
+    {
+        startDemandPointAttachmentSelection(demand_point_uuid);
+    });
+    connect(action_detach, &QAction::triggered, this, [this, demand_point_uuid]()
+    {
+        if (this->hydraulic_data)
+            this->hydraulic_data->clearDemandPointAttachment(demand_point_uuid);
+        updateCanvas();
+    });
+    menu->popup(global_position);
+#endif
+}
+
+void MapCanvasEntities::convertDemandPointAttachmentToJunction(const QUuid &demand_point_uuid)
+{
+    if (!this->hydraulic_data)
+        return;
+    const std::optional<HydraulicDemandPoint> demand_point =
+        this->hydraulic_data->demandPoint(demand_point_uuid);
+    if (!demand_point.has_value() ||
+        demand_point->attachment.type != HydraulicDemandPointAttachmentType::Pipe)
+    {
+        return;
+    }
+
+    const std::optional<PipeGeometry> geometry =
+        this->pipes->geometryByUuid(demand_point->attachment.pipe_uuid);
+    const std::optional<CoordinateWGS84> attachment_coordinate =
+        demandPointAttachmentCoordinate(demand_point.value());
+    if (!geometry.has_value() || !attachment_coordinate.has_value())
+        return;
+
+    constexpr double endpoint_tolerance = 1.0e-12;
+    if (demand_point->attachment.pipe_position <= endpoint_tolerance)
+    {
+        const std::optional<MapEntityMarker> marker = markerByUuid(geometry->start_node.uuid);
+        if (marker.has_value() && marker->entity.type == InfrastructureEntity::Junction)
+            this->hydraulic_data->attachDemandPointToJunction(demand_point_uuid, marker->entity.uuid);
+        updateCanvas();
+        return;
+    }
+    if (demand_point->attachment.pipe_position >= 1.0 - endpoint_tolerance)
+    {
+        const std::optional<MapEntityMarker> marker = markerByUuid(geometry->end_node.uuid);
+        if (marker.has_value() && marker->entity.type == InfrastructureEntity::Junction)
+            this->hydraulic_data->attachDemandPointToJunction(demand_point_uuid, marker->entity.uuid);
+        updateCanvas();
+        return;
+    }
+
+    const QPointF attachment_screen = this->map_model->screenFromWgs84(
+        attachment_coordinate.value(), this->map_canvas->size(), this->wrap_reference_longitude);
+    const MapCanvasPipes::PipePositionHit position_hit = this->pipes->nearestPositionOnPipe(
+        demand_point->attachment.pipe_uuid, attachment_screen, this->point_markers->markers());
+    if (!position_hit.isValid())
+        return;
+
+    int vertex_index = -1;
+    const MapCanvasPipes::PipeVertexHit existing_vertex = this->pipes->pipeVertexAt(attachment_screen);
+    if (existing_vertex.isValid() && existing_vertex.pipe_uuid == demand_point->attachment.pipe_uuid)
+    {
+        const std::optional<CoordinateWGS84> existing_coordinate =
+            this->pipes->pipeVertexCoordinate(existing_vertex.pipe_uuid, existing_vertex.vertex_index);
+        if (existing_coordinate.has_value() &&
+            GeoMetricProjection::distanceMeters(existing_coordinate.value(),
+                                                attachment_coordinate.value()) < 0.001)
+        {
+            vertex_index = existing_vertex.vertex_index;
+        }
+    }
+
+    bool inserted_vertex = false;
+    if (vertex_index < 0)
+    {
+        vertex_index = position_hit.insert_index;
+        const QList<CoordinateWGS84> previous_vertices =
+            this->pipes->intermediateVertices(demand_point->attachment.pipe_uuid);
+        if (!this->pipes->addPipeVertex(
+                demand_point->attachment.pipe_uuid, vertex_index, attachment_coordinate.value()))
+        {
+            return;
+        }
+        if (!this->hydraulic_data->setPipeVertices(
+                demand_point->attachment.pipe_uuid,
+                this->pipes->intermediateVertices(demand_point->attachment.pipe_uuid)))
+        {
+            this->pipes->setIntermediateVertices(
+                demand_point->attachment.pipe_uuid, previous_vertices);
+            return;
+        }
+        inserted_vertex = true;
+    }
+
+    const QUuid junction_uuid = convertPipeVertexToJunctionInternal(
+        demand_point->attachment.pipe_uuid, vertex_index);
+    if (junction_uuid.isNull())
+    {
+        if (inserted_vertex)
+            deletePipeVertex(demand_point->attachment.pipe_uuid, vertex_index);
+        return;
+    }
+
+    this->hydraulic_data->attachDemandPointToJunction(demand_point_uuid, junction_uuid);
+    selectMarker(demand_point_uuid);
+    updateCanvas();
+}
+
 void MapCanvasEntities::showMarkerContextMenu(const QUuid &uuid,
                                               const QPoint &global_position)
 {
-    if (!markerByUuid(uuid).has_value())
+    const std::optional<MapEntityMarker> context_marker = markerByUuid(uuid);
+    if (!context_marker.has_value())
         return;
+
+    const bool is_demand_point = context_marker->entity.type == InfrastructureEntity::DemandPoint;
+    std::optional<HydraulicDemandPoint> demand_point;
+    if (is_demand_point && this->hydraulic_data)
+        demand_point = this->hydraulic_data->demandPoint(uuid);
+    const bool demand_point_attached = demand_point.has_value() &&
+        demand_point->attachment.type != HydraulicDemandPointAttachmentType::None;
 
     const bool multiple_entities_selected = this->selection->isMarkerSelected(uuid) &&
                                             this->selection->selectedMarkerCount() > 1;
@@ -1386,6 +2027,50 @@ void MapCanvasEntities::showMarkerContextMenu(const QUuid &uuid,
         {
             startMarkerMove(uuid);
         });
+    }
+
+    if (is_demand_point && !multiple_entities_selected)
+    {
+        menu->addSeparator();
+        menu->addAction(
+            demand_point_attached ? QStringLiteral("Reattach to network")
+                                  : QStringLiteral("Attach to network"),
+            [this, uuid]
+        {
+            startDemandPointAttachmentSelection(uuid);
+        });
+        if (demand_point_attached)
+        {
+            if (demand_point->attachment.type == HydraulicDemandPointAttachmentType::Pipe)
+            {
+                menu->addAction(QStringLiteral("Move attachment"), [this, uuid]
+                {
+                    startDemandPointAttachmentMove(uuid);
+                });
+                menu->addAction(QStringLiteral("Convert attachment to junction"), [this, uuid]
+                {
+                    QMessageBox *message_box = new QMessageBox(
+                        QMessageBox::Question, QStringLiteral("Convert demand-point attachment"),
+                        QStringLiteral("Do you really want to convert this attachment to a junction?"),
+                        QMessageBox::Yes | QMessageBox::No, this->map_canvas);
+                    message_box->setDefaultButton(QMessageBox::No);
+                    connect(message_box, &QMessageBox::finished, this, [this, uuid](int result)
+                    {
+                        if (result == QMessageBox::Yes)
+                            convertDemandPointAttachmentToJunction(uuid);
+                    });
+                    connect(message_box, &QMessageBox::finished,
+                            message_box, &QObject::deleteLater);
+                    message_box->open();
+                });
+            }
+            menu->addAction(QStringLiteral("Detach from network"), [this, uuid]
+            {
+                if (this->hydraulic_data)
+                    this->hydraulic_data->clearDemandPointAttachment(uuid);
+                updateCanvas();
+            });
+        }
     }
 
     menu->addSeparator();
@@ -1460,6 +2145,53 @@ void MapCanvasEntities::showMarkerContextMenu(const QUuid &uuid,
         {
             startMarkerMove(uuid);
         });
+    }
+
+    if (is_demand_point && !multiple_entities_selected)
+    {
+        menu->addSeparator();
+        QAction *action_attach = menu->addAction(
+            demand_point_attached ? "Reattach to network" : "Attach to network");
+        connect(action_attach, &QAction::triggered, this, [this, uuid]()
+        {
+            startDemandPointAttachmentSelection(uuid);
+        });
+        if (demand_point_attached)
+        {
+            if (demand_point->attachment.type == HydraulicDemandPointAttachmentType::Pipe)
+            {
+                QAction *action_move_attachment = menu->addAction("Move attachment");
+                QAction *action_convert_attachment =
+                    menu->addAction("Convert attachment to junction");
+                connect(action_move_attachment, &QAction::triggered, this, [this, uuid]()
+                {
+                    startDemandPointAttachmentMove(uuid);
+                });
+                connect(action_convert_attachment, &QAction::triggered, this, [this, uuid]()
+                {
+                    QMessageBox *message_box = new QMessageBox(
+                        QMessageBox::Question, "Convert demand-point attachment",
+                        "Do you really want to convert this attachment to a junction?",
+                        QMessageBox::Yes | QMessageBox::No, this->map_canvas);
+                    message_box->setDefaultButton(QMessageBox::No);
+                    connect(message_box, &QMessageBox::finished, this, [this, uuid](int result)
+                    {
+                        if (result == QMessageBox::Yes)
+                            convertDemandPointAttachmentToJunction(uuid);
+                    });
+                    connect(message_box, &QMessageBox::finished,
+                            message_box, &QObject::deleteLater);
+                    message_box->open();
+                });
+            }
+            QAction *action_detach = menu->addAction("Detach from network");
+            connect(action_detach, &QAction::triggered, this, [this, uuid]()
+            {
+                if (this->hydraulic_data)
+                    this->hydraulic_data->clearDemandPointAttachment(uuid);
+                updateCanvas();
+            });
+        }
     }
 
     menu->addSeparator();
@@ -1585,17 +2317,23 @@ void MapCanvasEntities::startPipeVertexMove(const QUuid &pipe_uuid, int vertex_i
 void MapCanvasEntities::convertPipeVertexToJunction(const QUuid &pipe_uuid,
                                                     int vertex_index)
 {
+    convertPipeVertexToJunctionInternal(pipe_uuid, vertex_index);
+}
+
+QUuid MapCanvasEntities::convertPipeVertexToJunctionInternal(const QUuid &pipe_uuid,
+                                                             int vertex_index)
+{
     const std::optional<CoordinateWGS84> vertex_coordinate =
         this->pipes->pipeVertexCoordinate(pipe_uuid, vertex_index);
     if (!vertex_coordinate.has_value())
-        return;
+        return QUuid();
 
     InfrastructureEntityReference junction_reference;
     junction_reference.type = InfrastructureEntity::Junction;
-    junction_reference.uuid = createHydraulicNode(
+    junction_reference.uuid = createHydraulicPointEntity(
         InfrastructureEntity::Junction, vertex_coordinate.value());
     if (junction_reference.uuid.isNull())
-        return;
+        return QUuid();
 
     const MapEntityMarker junction_marker = this->point_markers->addMarker(
         junction_reference, vertex_coordinate.value(),
@@ -1610,7 +2348,7 @@ void MapCanvasEntities::convertPipeVertexToJunction(const QUuid &pipe_uuid,
     {
         this->point_markers->removeMarker(junction_marker.entity.uuid);
         this->hydraulic_data->deleteJunction(junction_reference.uuid);
-        return;
+        return QUuid();
     }
 
     if (!this->pipes->splitPipeAtVertex(
@@ -1620,18 +2358,20 @@ void MapCanvasEntities::convertPipeVertexToJunction(const QUuid &pipe_uuid,
             pipe_uuid, second_pipe_reference.uuid, junction_reference.uuid);
         this->point_markers->removeMarker(junction_marker.entity.uuid);
         this->hydraulic_data->deleteJunction(junction_reference.uuid);
-        return;
+        return QUuid();
     }
 
     this->selection->replaceWithMarker(junction_marker);
     emit signalEntityMarkerSelected(true);
     recalculateWrapReferenceLongitude();
     updateCanvas();
+    return junction_reference.uuid;
 }
 
 bool MapCanvasEntities::selectPipeAt(const QPointF &position)
 {
-    if (!this->placement->isIdle())
+    if (!this->placement->isIdle() || this->demand_point_attachment_selecting ||
+        this->demand_point_attachment_moving)
         return false;
 
     const std::optional<InfrastructureEntityReference> pipe =
@@ -1653,7 +2393,8 @@ bool MapCanvasEntities::selectPipeAt(const QPointF &position)
 
 bool MapCanvasEntities::isPipeAt(const QPointF &position) const
 {
-    return this->placement->isIdle() &&
+    return this->placement->isIdle() && !this->demand_point_attachment_selecting &&
+           !this->demand_point_attachment_moving &&
            this->pipes->pipeAt(position, this->point_markers->markers()).has_value();
 }
 

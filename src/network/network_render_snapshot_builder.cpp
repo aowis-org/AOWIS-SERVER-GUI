@@ -92,7 +92,8 @@ NetworkRenderSnapshot buildNetworkRenderSnapshot(const NetworkHydraulic &network
 
     const qsizetype node_count = network.nodes_junctions.size() +
                                  network.nodes_reservoirs.size() +
-                                 network.nodes_tanks.size();
+                                 network.nodes_tanks.size() +
+                                 network.demand_points.size();
     const qsizetype link_count = network.links_pipes.size() +
                                  network.links_pumps.size() +
                                  network.links_valves.size();
@@ -123,6 +124,17 @@ NetworkRenderSnapshot buildNetworkRenderSnapshot(const NetworkHydraulic &network
         add_node(source, InfrastructureEntity::Reservoir);
     for (const HydraulicNodeTank &source : network.nodes_tanks)
         add_node(source, InfrastructureEntity::Tank);
+    for (const HydraulicDemandPoint &source : network.demand_points)
+    {
+        NetworkRenderNode node;
+        node.render_id = next_node_render_id++;
+        node.id = source.id;
+        node.uuid = source.uuid;
+        node.entity_type = InfrastructureEntity::DemandPoint;
+        node.coordinate_wgs84 = source.coordinate_wgs84;
+        node.elevation_m = resolvedSymbologyElevationM(source);
+        snapshot.nodes.append(node);
+    }
 
     quint32 next_link_render_id = 1;
     for (const HydraulicLinkPipe &source : network.links_pipes)

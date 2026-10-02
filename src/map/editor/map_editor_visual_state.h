@@ -51,6 +51,20 @@ struct MapEditorMoveVisualState
     QList<MapEditorDynamicLinkVisualState> links;
 };
 
+
+struct MapEditorDemandPointAttachmentVisualState
+{
+    bool visible = false;
+    bool selected = false;
+    bool selecting_target = false;
+    bool moving = false;
+    bool attachment_is_pipe = false;
+    QUuid demand_point_uuid;
+    CoordinateWGS84 demand_point_coordinate_wgs84;
+    CoordinateWGS84 attachment_coordinate_wgs84;
+    bool attachment_coordinate_valid = false;
+};
+
 struct MapEditorVisualState
 {
     quint64 revision = 0;
@@ -60,6 +74,7 @@ struct MapEditorVisualState
     QSet<QUuid> simulation_stale_diagnostic_entity_uuids;
     MapEditorPlacementVisualState placement;
     MapEditorMoveVisualState move;
+    QList<MapEditorDemandPointAttachmentVisualState> demand_point_attachments;
     double wrap_reference_longitude = 0.0;
     int entity_width = 10;
 };

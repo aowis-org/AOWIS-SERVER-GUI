@@ -1549,6 +1549,11 @@ std::optional<HydraulicNodeTank> HydraulicData::tank(const QUuid &uuid) const
     return this->network_editor.tank(uuid);
 }
 
+std::optional<HydraulicDemandPoint> HydraulicData::demandPoint(const QUuid &uuid) const
+{
+    return this->network_editor.demandPoint(uuid);
+}
+
 std::optional<HydraulicLinkPipe> HydraulicData::pipe(const QUuid &uuid) const
 {
     return this->network_editor.pipe(uuid);
@@ -1872,6 +1877,8 @@ void HydraulicData::rebuildBoundingBoxWgs84()
         extendBoundingBoxWgs84(reservoir.coordinate_wgs84);
     for (const HydraulicNodeTank &tank : this->network_hydraulic.nodes_tanks)
         extendBoundingBoxWgs84(tank.coordinate_wgs84);
+    for (const HydraulicDemandPoint &demand_point : this->network_hydraulic.demand_points)
+        extendBoundingBoxWgs84(demand_point.coordinate_wgs84);
 
     for (const HydraulicLinkPipe &pipe : this->network_hydraulic.links_pipes)
     {
@@ -1974,12 +1981,12 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
         
         break;
     
-    case InfrastructureEntity::CustomerPoint:
-        for (const HydraulicDemandPoint &customer_point : this->network_hydraulic.demand_points)
+    case InfrastructureEntity::DemandPoint:
+        for (const HydraulicDemandPoint &demand_point : this->network_hydraulic.demand_points)
         {
-            if (customer_point.uuid == uuid)
+            if (demand_point.uuid == uuid)
             {
-                emit signalSelectedCustomerPoint(customer_point);
+                emit signalSelectedDemandPoint(demand_point);
                 return;
             }
         }
@@ -1989,9 +1996,20 @@ void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUui
     }
 }
 
+void HydraulicData::requestDemandPointAttachmentSelection(const QUuid &uuid)
+{
+    if (!demandPoint(uuid).has_value())
+        return;
+
+    emit signalDemandPointAttachmentSelectionRequested(uuid);
+}
+
 void HydraulicData::requestEntityLocate(InfrastructureEntity entity_type, const QUuid &uuid)
 {
-    if (!nodeCommonData(entity_type, uuid).has_value() &&
+    const bool demand_point_exists =
+        entity_type == InfrastructureEntity::DemandPoint && demandPoint(uuid).has_value();
+    if (!demand_point_exists &&
+        !nodeCommonData(entity_type, uuid).has_value() &&
         !linkCommonData(entity_type, uuid).has_value())
     {
         return;
@@ -2032,6 +2050,19 @@ QUuid HydraulicData::addTank(const CoordinateWGS84 &coordinate)
         if (extendBoundingBoxWgs84(coordinate))
             emit signalBoundingBoxWgs84Changed();
         markNetworkChanged(NetworkChange::Geometry, uuid);
+    }
+    return uuid;
+}
+
+QUuid HydraulicData::addDemandPoint(const CoordinateWGS84 &coordinate)
+{
+    const QUuid uuid = this->network_editor.addDemandPoint(coordinate);
+    if (!uuid.isNull())
+    {
+        if (extendBoundingBoxWgs84(coordinate))
+            emit signalBoundingBoxWgs84Changed();
+        markNetworkChanged(NetworkChange::Geometry, uuid);
+        emit signalDemandPointChanged(uuid);
     }
     return uuid;
 }
@@ -2157,6 +2188,253 @@ bool HydraulicData::setLinkDateInstalled(const QUuid &uuid,
 bool HydraulicData::setLinkEnabled(const QUuid &uuid, bool enabled)
 {
     return emitLinkChangedIfSuccessful(uuid, this->network_editor.setLinkEnabled(uuid, enabled));
+}
+
+bool HydraulicData::setDemandPointId(const QUuid &uuid, const QString &id)
+{
+    if (!this->network_editor.setDemandPointId(uuid, id))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::setDemandPointModelRole(const QUuid &uuid, EntityModelRole model_role)
+{
+    if (!this->network_editor.setDemandPointModelRole(uuid, model_role))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::setDemandPointDateAdded(
+    const QUuid &uuid, const std::optional<QDate> &date_added)
+{
+    if (!this->network_editor.setDemandPointDateAdded(uuid, date_added))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::setDemandPointDateInstalled(
+    const QUuid &uuid, const std::optional<QDate> &date_installed)
+{
+    if (!this->network_editor.setDemandPointDateInstalled(uuid, date_installed))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::setDemandPointEnabled(const QUuid &uuid, bool enabled)
+{
+    if (!this->network_editor.setDemandPointEnabled(uuid, enabled))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::setDemandPointDescription(const QUuid &uuid, const QString &description)
+{
+    if (!this->network_editor.setDemandPointDescription(uuid, description))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::setDemandPointComment(const QUuid &uuid, const QString &comment)
+{
+    if (!this->network_editor.setDemandPointComment(uuid, comment))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::setDemandPointTags(const QUuid &uuid, const QStringList &tags)
+{
+    if (!this->network_editor.setDemandPointTags(uuid, tags))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::setDemandPointCoordinate(
+    const QUuid &uuid, const CoordinateWGS84 &coordinate)
+{
+    const std::optional<HydraulicDemandPoint> demand_point = this->network_editor.demandPoint(uuid);
+    if (!demand_point.has_value())
+        return false;
+
+    if (!this->network_editor.setDemandPointCoordinate(uuid, coordinate))
+        return false;
+
+    updateBoundingBoxWgs84(demand_point->coordinate_wgs84, coordinate);
+    markNetworkChanged(NetworkChange::Geometry, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::addDemandPointDemand(const QUuid &uuid, const HydraulicDemand &demand)
+{
+    if (!this->network_editor.addDemandPointDemand(uuid, demand))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::removeDemandPointDemand(const QUuid &uuid, int demand_index)
+{
+    if (!this->network_editor.removeDemandPointDemand(uuid, demand_index))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::setDemandPointDemandCategoryName(
+    const QUuid &uuid, int demand_index, const QString &category_name)
+{
+    if (!this->network_editor.setDemandPointDemandCategoryName(uuid, demand_index, category_name))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::setDemandPointDemandBaseDemandM3PerH(
+    const QUuid &uuid, int demand_index, double base_demand_m3_per_h)
+{
+    if (!this->network_editor.setDemandPointDemandBaseDemandM3PerH(
+            uuid, demand_index, base_demand_m3_per_h))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::setDemandPointDemandPatternMode(
+    const QUuid &uuid, int demand_index, HydraulicTimePatternMode pattern_mode)
+{
+    if (!this->network_editor.setDemandPointDemandPatternMode(uuid, demand_index, pattern_mode))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::setDemandPointDemandPatternUuid(
+    const QUuid &uuid, int demand_index, const QUuid &pattern_uuid)
+{
+    if (!this->network_editor.setDemandPointDemandPatternUuid(uuid, demand_index, pattern_uuid))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::setDemandPointDemandSourceMethod(
+    const QUuid &uuid, int demand_index, HydraulicDemandSourceMethod source_method)
+{
+    if (!this->network_editor.setDemandPointDemandSourceMethod(uuid, demand_index, source_method))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::setDemandPointDemandNote(
+    const QUuid &uuid, int demand_index, const QString &note)
+{
+    if (!this->network_editor.setDemandPointDemandNote(uuid, demand_index, note))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::addDemandPointMeter(const QUuid &uuid)
+{
+    if (!this->network_editor.addDemandPointMeter(uuid))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::setDemandPointMeter(const QUuid &uuid, const WaterMeter &meter)
+{
+    if (!this->network_editor.setDemandPointMeter(uuid, meter))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::removeDemandPointMeter(const QUuid &uuid)
+{
+    if (!this->network_editor.removeDemandPointMeter(uuid))
+        return false;
+
+    markNetworkChanged(NetworkChange::Visual, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::attachDemandPointToPipe(
+    const QUuid &uuid, const QUuid &pipe_uuid, double pipe_position)
+{
+    if (!this->network_editor.attachDemandPointToPipe(uuid, pipe_uuid, pipe_position))
+        return false;
+
+    markNetworkChanged(NetworkChange::Geometry, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::attachDemandPointToJunction(
+    const QUuid &uuid, const QUuid &junction_uuid)
+{
+    if (!this->network_editor.attachDemandPointToJunction(uuid, junction_uuid))
+        return false;
+
+    markNetworkChanged(NetworkChange::Geometry, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
+}
+
+bool HydraulicData::clearDemandPointAttachment(const QUuid &uuid)
+{
+    if (!this->network_editor.clearDemandPointAttachment(uuid))
+        return false;
+
+    markNetworkChanged(NetworkChange::Geometry, uuid);
+    emit signalDemandPointChanged(uuid);
+    return true;
 }
 
 bool HydraulicData::setJunctionElevationInputType(
@@ -2757,6 +3035,12 @@ bool HydraulicData::applyGeometryBatch(const HydraulicGeometryBatch &batch)
     {
         markSimulationDiagnosticEntityStale(iterator.key());
     }
+    for (QHash<QUuid, CoordinateWGS84>::const_iterator iterator =
+             batch.demand_point_coordinates.cbegin();
+         iterator != batch.demand_point_coordinates.cend(); ++iterator)
+    {
+        markSimulationDiagnosticEntityStale(iterator.key());
+    }
     for (QHash<QUuid, QList<CoordinateWGS84>>::const_iterator iterator = batch.pipe_vertices.cbegin();
          iterator != batch.pipe_vertices.cend(); ++iterator)
     {
@@ -2889,6 +3173,10 @@ bool HydraulicData::applyGeometryBatch(const HydraulicGeometryBatch &batch)
         if (entity_type.has_value())
             emit signalNodeChanged(entity_type.value(), iterator.key());
     }
+    for (QHash<QUuid, CoordinateWGS84>::const_iterator iterator =
+             batch.demand_point_coordinates.cbegin();
+         iterator != batch.demand_point_coordinates.cend(); ++iterator)
+        emit signalDemandPointChanged(iterator.key());
     for (QHash<QUuid, CoordinateWGS84>::const_iterator iterator = batch.pump_center_coordinates.cbegin();
          iterator != batch.pump_center_coordinates.cend(); ++iterator)
         emit signalLinkChanged(InfrastructureEntity::Pump, iterator.key());
@@ -2975,6 +3263,18 @@ bool HydraulicData::deleteTank(const QUuid &uuid)
 
         rebuildBoundingBoxWgs84();
         markNetworkChanged(NetworkChange::Geometry, uuid);
+    }
+    return successful;
+}
+
+bool HydraulicData::deleteDemandPoint(const QUuid &uuid)
+{
+    const bool successful = this->network_editor.deleteDemandPoint(uuid);
+    if (successful)
+    {
+        rebuildBoundingBoxWgs84();
+        markNetworkChanged(NetworkChange::Geometry, uuid);
+        markSimulationDiagnosticEntityStale(uuid);
     }
     return successful;
 }

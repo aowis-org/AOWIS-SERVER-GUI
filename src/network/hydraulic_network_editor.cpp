@@ -2,6 +2,8 @@
 #include "geo/geo_metric_projection.h"
 #include <aowis/model/uuid.h>
 
+#include <cmath>
+
 namespace
 {
 template<typename Entity>
@@ -181,6 +183,18 @@ std::optional<HydraulicNodeTank> HydraulicNetworkEditor::tank(const QUuid &uuid)
     return *tank;
 }
 
+std::optional<HydraulicDemandPoint> HydraulicNetworkEditor::demandPoint(const QUuid &uuid) const
+{
+    if (uuid.isNull())
+        return std::nullopt;
+
+    const HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr)
+        return std::nullopt;
+
+    return *demand_point;
+}
+
 std::optional<HydraulicLinkPipe> HydraulicNetworkEditor::pipe(const QUuid &uuid) const
 {
     if (uuid.isNull())
@@ -248,6 +262,17 @@ QUuid HydraulicNetworkEditor::addTank(const CoordinateWGS84 &coordinate)
     tank.metadata.date_added = QDate::currentDate();
     this->network.nodes_tanks.append(tank);
     return tank.uuid;
+}
+
+QUuid HydraulicNetworkEditor::addDemandPoint(const CoordinateWGS84 &coordinate)
+{
+    HydraulicDemandPoint demand_point;
+    demand_point.uuid = createUuidV7();
+    demand_point.id = nextDemandPointId();
+    demand_point.coordinate_wgs84 = coordinate;
+    demand_point.metadata.date_added = QDate::currentDate();
+    this->network.demand_points.append(demand_point);
+    return demand_point.uuid;
 }
 
 QUuid HydraulicNetworkEditor::addPipe(const QUuid &node_uuid_from, const QUuid &node_uuid_to,
@@ -432,6 +457,269 @@ bool HydraulicNetworkEditor::setNodeCoordinate(const QUuid &uuid, const Coordina
     }
 
     return false;
+}
+
+bool HydraulicNetworkEditor::setDemandPointId(const QUuid &uuid, const QString &id)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr)
+        return false;
+
+    demand_point->id = id;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setDemandPointModelRole(
+    const QUuid &uuid, EntityModelRole model_role)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr)
+        return false;
+
+    demand_point->metadata.model_role = model_role;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setDemandPointDateAdded(
+    const QUuid &uuid, const std::optional<QDate> &date_added)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr)
+        return false;
+
+    demand_point->metadata.date_added = date_added;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setDemandPointDateInstalled(
+    const QUuid &uuid, const std::optional<QDate> &date_installed)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr)
+        return false;
+
+    demand_point->metadata.date_installed = date_installed;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setDemandPointEnabled(const QUuid &uuid, bool enabled)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr)
+        return false;
+
+    demand_point->metadata.enabled = enabled;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setDemandPointDescription(
+    const QUuid &uuid, const QString &description)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr)
+        return false;
+
+    demand_point->metadata.description = description;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setDemandPointComment(
+    const QUuid &uuid, const QString &comment)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr)
+        return false;
+
+    demand_point->metadata.comment = comment;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setDemandPointTags(
+    const QUuid &uuid, const QStringList &tags)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr)
+        return false;
+
+    demand_point->metadata.tags = tags;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setDemandPointCoordinate(
+    const QUuid &uuid, const CoordinateWGS84 &coordinate)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr)
+        return false;
+
+    demand_point->coordinate_wgs84 = coordinate;
+    return true;
+}
+
+bool HydraulicNetworkEditor::addDemandPointDemand(
+    const QUuid &uuid, const HydraulicDemand &demand)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr)
+        return false;
+
+    demand_point->demands.append(demand);
+    return true;
+}
+
+bool HydraulicNetworkEditor::removeDemandPointDemand(const QUuid &uuid, int demand_index)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr || demand_index < 0 || demand_index >= demand_point->demands.size())
+        return false;
+
+    demand_point->demands.removeAt(demand_index);
+    return true;
+}
+
+bool HydraulicNetworkEditor::setDemandPointDemandCategoryName(
+    const QUuid &uuid, int demand_index, const QString &category_name)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr || demand_index < 0 || demand_index >= demand_point->demands.size())
+        return false;
+
+    demand_point->demands[demand_index].category_name = category_name;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setDemandPointDemandBaseDemandM3PerH(
+    const QUuid &uuid, int demand_index, double base_demand_m3_per_h)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr || demand_index < 0 || demand_index >= demand_point->demands.size())
+        return false;
+
+    demand_point->demands[demand_index].base_demand_m3_per_h = base_demand_m3_per_h;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setDemandPointDemandPatternMode(
+    const QUuid &uuid, int demand_index, HydraulicTimePatternMode pattern_mode)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr || demand_index < 0 || demand_index >= demand_point->demands.size())
+        return false;
+
+    demand_point->demands[demand_index].pattern_mode = pattern_mode;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setDemandPointDemandPatternUuid(
+    const QUuid &uuid, int demand_index, const QUuid &pattern_uuid)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr || demand_index < 0 || demand_index >= demand_point->demands.size())
+        return false;
+
+    demand_point->demands[demand_index].pattern_uuid = pattern_uuid;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setDemandPointDemandSourceMethod(
+    const QUuid &uuid, int demand_index, HydraulicDemandSourceMethod source_method)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr || demand_index < 0 || demand_index >= demand_point->demands.size())
+        return false;
+
+    demand_point->demands[demand_index].source_method = source_method;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setDemandPointDemandNote(
+    const QUuid &uuid, int demand_index, const QString &note)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr || demand_index < 0 || demand_index >= demand_point->demands.size())
+        return false;
+
+    demand_point->demands[demand_index].note = note;
+    return true;
+}
+
+bool HydraulicNetworkEditor::addDemandPointMeter(const QUuid &uuid)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr || demand_point->meter.has_value())
+        return false;
+
+    WaterMeter meter;
+    meter.uuid = createUuidV7();
+    meter.id = nextWaterMeterId();
+    meter.metadata.date_added = QDate::currentDate();
+    demand_point->meter = meter;
+    return true;
+}
+
+bool HydraulicNetworkEditor::setDemandPointMeter(
+    const QUuid &uuid, const WaterMeter &meter)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr || !demand_point->meter.has_value())
+        return false;
+    if (meter.uuid.isNull() || meter.uuid != demand_point->meter->uuid)
+        return false;
+
+    demand_point->meter = meter;
+    return true;
+}
+
+bool HydraulicNetworkEditor::removeDemandPointMeter(const QUuid &uuid)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr || !demand_point->meter.has_value())
+        return false;
+
+    demand_point->meter.reset();
+    return true;
+}
+
+bool HydraulicNetworkEditor::attachDemandPointToPipe(
+    const QUuid &uuid, const QUuid &pipe_uuid, double pipe_position)
+{
+    if (!std::isfinite(pipe_position) || pipe_position < 0.0 || pipe_position > 1.0)
+        return false;
+
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    const HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, pipe_uuid);
+    if (demand_point == nullptr || pipe == nullptr)
+        return false;
+
+    demand_point->attachment = HydraulicDemandPointAttachment();
+    demand_point->attachment.type = HydraulicDemandPointAttachmentType::Pipe;
+    demand_point->attachment.pipe_uuid = pipe_uuid;
+    demand_point->attachment.pipe_position = pipe_position;
+    return true;
+}
+
+bool HydraulicNetworkEditor::attachDemandPointToJunction(
+    const QUuid &uuid, const QUuid &junction_uuid)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    const HydraulicNodeJunction *junction = entityByUuid(this->network.nodes_junctions, junction_uuid);
+    if (demand_point == nullptr || junction == nullptr)
+        return false;
+
+    demand_point->attachment = HydraulicDemandPointAttachment();
+    demand_point->attachment.type = HydraulicDemandPointAttachmentType::Junction;
+    demand_point->attachment.junction_uuid = junction_uuid;
+    return true;
+}
+
+bool HydraulicNetworkEditor::clearDemandPointAttachment(const QUuid &uuid)
+{
+    HydraulicDemandPoint *demand_point = entityByUuid(this->network.demand_points, uuid);
+    if (demand_point == nullptr)
+        return false;
+
+    demand_point->attachment = HydraulicDemandPointAttachment();
+    return true;
 }
 
 bool HydraulicNetworkEditor::setJunctionElevationInputType(
@@ -1363,6 +1651,11 @@ HydraulicGeometryBatchResult HydraulicNetworkEditor::applyGeometryBatch(
     for (const HydraulicNodeTank &node : this->network.nodes_tanks)
         available_node_uuids.insert(node.uuid);
 
+    QSet<QUuid> available_demand_point_uuids;
+    available_demand_point_uuids.reserve(this->network.demand_points.size());
+    for (const HydraulicDemandPoint &demand_point : this->network.demand_points)
+        available_demand_point_uuids.insert(demand_point.uuid);
+
     QSet<QUuid> available_pipe_uuids;
     available_pipe_uuids.reserve(this->network.links_pipes.size());
     for (const HydraulicLinkPipe &pipe : this->network.links_pipes)
@@ -1383,7 +1676,16 @@ HydraulicGeometryBatchResult HydraulicNetworkEditor::applyGeometryBatch(
         if (!available_node_uuids.contains(iterator.key()))
             return result;
     }
-    for (auto iterator = batch.pipe_vertices.cbegin(); iterator != batch.pipe_vertices.cend(); ++iterator)
+    for (QHash<QUuid, CoordinateWGS84>::const_iterator iterator =
+             batch.demand_point_coordinates.cbegin();
+         iterator != batch.demand_point_coordinates.cend(); ++iterator)
+    {
+        if (!available_demand_point_uuids.contains(iterator.key()))
+            return result;
+    }
+    for (QHash<QUuid, QList<CoordinateWGS84>>::const_iterator iterator =
+             batch.pipe_vertices.cbegin();
+         iterator != batch.pipe_vertices.cend(); ++iterator)
     {
         if (!available_pipe_uuids.contains(iterator.key()))
             return result;
@@ -1416,6 +1718,14 @@ HydraulicGeometryBatchResult HydraulicNetworkEditor::applyGeometryBatch(
         const auto iterator = batch.node_coordinates.constFind(node.uuid);
         if (iterator != batch.node_coordinates.cend())
             node.coordinate_wgs84 = iterator.value();
+    }
+
+    for (HydraulicDemandPoint &demand_point : this->network.demand_points)
+    {
+        const QHash<QUuid, CoordinateWGS84>::const_iterator iterator =
+            batch.demand_point_coordinates.constFind(demand_point.uuid);
+        if (iterator != batch.demand_point_coordinates.cend())
+            demand_point.coordinate_wgs84 = iterator.value();
     }
 
     for (HydraulicLinkPump &pump : this->network.links_pumps)
@@ -1485,6 +1795,11 @@ QUuid HydraulicNetworkEditor::splitPipeAtVertex(const QUuid &pipe_uuid, int vert
         if (vertex_index < 0 || vertex_index >= original_pipe.vertices.size())
             return QUuid();
 
+        const std::optional<double> split_position =
+            pipeVertexPosition(original_pipe, vertex_index);
+        if (!split_position.has_value())
+            return QUuid();
+
         HydraulicLinkPipe first_pipe = original_pipe;
         first_pipe.node_uuid_to = junction_uuid;
         first_pipe.vertices = original_pipe.vertices.mid(0, vertex_index);
@@ -1518,6 +1833,36 @@ QUuid HydraulicNetworkEditor::splitPipeAtVertex(const QUuid &pipe_uuid, int vert
 
         this->network.links_pipes[i] = first_pipe;
         this->network.links_pipes.insert(i + 1, second_pipe);
+
+        const double split = split_position.value();
+        constexpr double attachment_tolerance = 1.0e-12;
+        for (HydraulicDemandPoint &demand_point : this->network.demand_points)
+        {
+            if (demand_point.attachment.type != HydraulicDemandPointAttachmentType::Pipe
+                || demand_point.attachment.pipe_uuid != original_pipe.uuid)
+            {
+                continue;
+            }
+
+            const double old_position = demand_point.attachment.pipe_position;
+            if (std::abs(old_position - split) <= attachment_tolerance)
+            {
+                demand_point.attachment = HydraulicDemandPointAttachment();
+                demand_point.attachment.type = HydraulicDemandPointAttachmentType::Junction;
+                demand_point.attachment.junction_uuid = junction_uuid;
+            }
+            else if (old_position < split && split > 0.0)
+            {
+                demand_point.attachment.pipe_position = old_position / split;
+            }
+            else if (old_position > split && split < 1.0)
+            {
+                demand_point.attachment.pipe_uuid = second_pipe.uuid;
+                demand_point.attachment.pipe_position =
+                    (old_position - split) / (1.0 - split);
+            }
+        }
+
         return second_pipe.uuid;
     }
 
@@ -1551,6 +1896,12 @@ bool HydraulicNetworkEditor::undoPipeSplit(const QUuid &first_pipe_uuid, const Q
     if (first_pipe.node_uuid_to != junction_uuid || second_pipe.node_uuid_from != junction_uuid)
         return false;
 
+    const double total_calculated_length_m =
+        first_pipe.length_calculated_m + second_pipe.length_calculated_m;
+    if (!std::isfinite(total_calculated_length_m) || total_calculated_length_m <= 0.0)
+        return false;
+    const double split_position = first_pipe.length_calculated_m / total_calculated_length_m;
+
     HydraulicLinkPipe restored_pipe = first_pipe;
     restored_pipe.node_uuid_to = second_pipe.node_uuid_to;
 
@@ -1581,6 +1932,35 @@ bool HydraulicNetworkEditor::undoPipeSplit(const QUuid &first_pipe_uuid, const Q
             continue;
 
         this->network.links_pipes[i] = restored_pipe;
+
+        for (HydraulicDemandPoint &demand_point : this->network.demand_points)
+        {
+            if (demand_point.attachment.type == HydraulicDemandPointAttachmentType::Junction
+                && demand_point.attachment.junction_uuid == junction_uuid)
+            {
+                demand_point.attachment = HydraulicDemandPointAttachment();
+                demand_point.attachment.type = HydraulicDemandPointAttachmentType::Pipe;
+                demand_point.attachment.pipe_uuid = first_pipe_uuid;
+                demand_point.attachment.pipe_position = split_position;
+                continue;
+            }
+
+            if (demand_point.attachment.type != HydraulicDemandPointAttachmentType::Pipe)
+                continue;
+
+            if (demand_point.attachment.pipe_uuid == first_pipe_uuid)
+            {
+                demand_point.attachment.pipe_position *= split_position;
+            }
+            else if (demand_point.attachment.pipe_uuid == second_pipe_uuid)
+            {
+                demand_point.attachment.pipe_uuid = first_pipe_uuid;
+                demand_point.attachment.pipe_position =
+                    split_position
+                    + demand_point.attachment.pipe_position * (1.0 - split_position);
+            }
+        }
+
         return true;
     }
 
@@ -1592,6 +1972,7 @@ bool HydraulicNetworkEditor::deleteJunction(const QUuid &uuid)
     if (!removeEntityByUuid(this->network.nodes_junctions, uuid))
         return false;
 
+    clearDemandPointAttachmentsToJunction(uuid);
     deleteConnectedLinks(uuid);
     return true;
 }
@@ -1614,9 +1995,18 @@ bool HydraulicNetworkEditor::deleteTank(const QUuid &uuid)
     return true;
 }
 
+bool HydraulicNetworkEditor::deleteDemandPoint(const QUuid &uuid)
+{
+    return removeEntityByUuid(this->network.demand_points, uuid);
+}
+
 bool HydraulicNetworkEditor::deletePipe(const QUuid &uuid)
 {
-    return removeEntityByUuid(this->network.links_pipes, uuid);
+    if (!removeEntityByUuid(this->network.links_pipes, uuid))
+        return false;
+
+    clearDemandPointAttachmentsToPipe(uuid);
+    return true;
 }
 
 bool HydraulicNetworkEditor::deletePump(const QUuid &uuid)
@@ -1629,13 +2019,45 @@ bool HydraulicNetworkEditor::deleteValve(const QUuid &uuid)
     return removeEntityByUuid(this->network.links_valves, uuid);
 }
 
+void HydraulicNetworkEditor::clearDemandPointAttachmentsToPipe(const QUuid &pipe_uuid)
+{
+    for (HydraulicDemandPoint &demand_point : this->network.demand_points)
+    {
+        if (demand_point.attachment.type != HydraulicDemandPointAttachmentType::Pipe
+            || demand_point.attachment.pipe_uuid != pipe_uuid)
+        {
+            continue;
+        }
+
+        demand_point.attachment = HydraulicDemandPointAttachment();
+    }
+}
+
+void HydraulicNetworkEditor::clearDemandPointAttachmentsToJunction(const QUuid &junction_uuid)
+{
+    for (HydraulicDemandPoint &demand_point : this->network.demand_points)
+    {
+        if (demand_point.attachment.type != HydraulicDemandPointAttachmentType::Junction
+            || demand_point.attachment.junction_uuid != junction_uuid)
+        {
+            continue;
+        }
+
+        demand_point.attachment = HydraulicDemandPointAttachment();
+    }
+}
+
 void HydraulicNetworkEditor::deleteConnectedLinks(const QUuid &node_uuid)
 {
     for (int i = this->network.links_pipes.size() - 1; i >= 0; i--)
     {
         const HydraulicLinkPipe &pipe = this->network.links_pipes[i];
-        if (pipe.node_uuid_from == node_uuid || pipe.node_uuid_to == node_uuid)
-            this->network.links_pipes.removeAt(i);
+        if (pipe.node_uuid_from != node_uuid && pipe.node_uuid_to != node_uuid)
+            continue;
+
+        const QUuid pipe_uuid = pipe.uuid;
+        this->network.links_pipes.removeAt(i);
+        clearDemandPointAttachmentsToPipe(pipe_uuid);
     }
 
     for (int i = this->network.links_pumps.size() - 1; i >= 0; i--)
@@ -1691,6 +2113,37 @@ QString HydraulicNetworkEditor::nextLinkId(const QString &prefix) const
     }
 }
 
+QString HydraulicNetworkEditor::nextDemandPointId() const
+{
+    for (int number = 1; ; number++)
+    {
+        const QString candidate = QStringLiteral("DP") + QString::number(number);
+        bool used = false;
+        for (const HydraulicDemandPoint &demand_point : this->network.demand_points)
+            used = used || demand_point.id == candidate;
+
+        if (!used)
+            return candidate;
+    }
+}
+
+QString HydraulicNetworkEditor::nextWaterMeterId() const
+{
+    for (int number = 1; ; number++)
+    {
+        const QString candidate = QStringLiteral("M") + QString::number(number);
+        bool used = false;
+        for (const HydraulicDemandPoint &demand_point : this->network.demand_points)
+        {
+            if (demand_point.meter.has_value())
+                used = used || demand_point.meter->id == candidate;
+        }
+
+        if (!used)
+            return candidate;
+    }
+}
+
 QString HydraulicNetworkEditor::nextSimpleControlId() const
 {
     for (int number = 1; ; number++)
@@ -1724,6 +2177,44 @@ double HydraulicNetworkEditor::pipeLengthMeters(const QUuid &node_uuid_from, con
 
     length_m += GeoMetricProjection::distanceMeters(previous_coordinate, end_coordinate.value());
     return length_m;
+}
+
+std::optional<double> HydraulicNetworkEditor::pipeVertexPosition(
+    const HydraulicLinkPipe &pipe, int vertex_index) const
+{
+    if (vertex_index < 0 || vertex_index >= pipe.vertices.size())
+        return std::nullopt;
+
+    const std::optional<CoordinateWGS84> start_coordinate = nodeCoordinate(pipe.node_uuid_from);
+    const std::optional<CoordinateWGS84> end_coordinate = nodeCoordinate(pipe.node_uuid_to);
+    if (!start_coordinate.has_value() || !end_coordinate.has_value())
+        return std::nullopt;
+
+    double total_length_m = 0.0;
+    double length_to_vertex_m = 0.0;
+    CoordinateWGS84 previous_coordinate = start_coordinate.value();
+
+    for (int index = 0; index < pipe.vertices.size(); index++)
+    {
+        const CoordinateWGS84 coordinate = pipe.vertices.at(index).coordinate_wgs84;
+        const double segment_length_m =
+            GeoMetricProjection::distanceMeters(previous_coordinate, coordinate);
+        total_length_m += segment_length_m;
+        if (index <= vertex_index)
+            length_to_vertex_m += segment_length_m;
+        previous_coordinate = coordinate;
+    }
+
+    total_length_m +=
+        GeoMetricProjection::distanceMeters(previous_coordinate, end_coordinate.value());
+    if (!std::isfinite(total_length_m) || total_length_m <= 0.0)
+        return std::nullopt;
+
+    const double position = length_to_vertex_m / total_length_m;
+    if (!std::isfinite(position) || position < 0.0 || position > 1.0)
+        return std::nullopt;
+
+    return position;
 }
 
 void HydraulicNetworkEditor::recalculateConnectedPipeLengths(const QUuid &node_uuid)

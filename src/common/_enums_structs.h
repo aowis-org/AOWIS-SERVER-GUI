@@ -105,7 +105,7 @@ enum class MapEditTool
     Pipe            = 1,
     Junction        = 2,
     Valve           = 3,
-    Customer_Point  = 4,
+    Demand_Point    = 4,
     Pump            = 5,
     Tank            = 6,
     Power           = 7,
@@ -136,7 +136,7 @@ enum class InfrastructureEntity : std::uint8_t
     Valve,
     
     // AOWIS hydraulic extensions
-    CustomerPoint,
+    DemandPoint,
     
     // Electric node/storage/generation entities
     ElectricJunction,

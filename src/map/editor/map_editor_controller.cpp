@@ -204,6 +204,13 @@ bool MapEditorController::mousePress(const QPointF &position, const QPoint &glob
         return true;
     }
 
+    if (this->map_canvas_entities->handleDemandPointAttachmentRightClick(
+            position, global_position))
+    {
+        emit signalStateChanged();
+        return true;
+    }
+
     if (this->map_canvas_entities->anchorMarker(position))
     {
         emit signalStateChanged();

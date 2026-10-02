@@ -1,6 +1,7 @@
 #include "map/editor/map_canvas_pipes.h"
 #include "map/editor/map_canvas_widget.h"
 
+#include "geo/geo_metric_projection.h"
 #include "geo/geo_web_mercator.h"
 #include "network/infrastructure_entity_traits.h"
 #ifdef Q_OS_WASM
@@ -13,6 +14,8 @@
 #include <QMessageBox>
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 
 namespace
 {
@@ -46,6 +49,13 @@ bool MapCanvasPipes::PipeVertexHit::isValid() const
 bool MapCanvasPipes::PipeSegmentHit::isValid() const
 {
     return !this->pipe_uuid.isNull() && this->insert_index >= 0;
+}
+
+bool MapCanvasPipes::PipePositionHit::isValid() const
+{
+    return !this->pipe_uuid.isNull() && this->insert_index >= 0 &&
+           std::isfinite(this->pipe_position) && this->pipe_position >= 0.0 &&
+           this->pipe_position <= 1.0;
 }
 
 MapCanvasPipes::MapCanvasPipes(MapModel *map_model, MapCanvasWidget *map_canvas,
@@ -398,6 +408,194 @@ MapCanvasPipes::PipeSegmentHit MapCanvasPipes::pipeSegmentAt(
     }
 
     return hit;
+}
+
+
+QList<CoordinateWGS84> MapCanvasPipes::pipeCoordinates(
+    const PipeCanvasItem &pipe, const QList<MapEntityMarker> &markers) const
+{
+    QHash<QUuid, CoordinateWGS84> coordinates_by_uuid;
+    coordinates_by_uuid.reserve(markers.size());
+    for (const MapEntityMarker &marker : markers)
+        coordinates_by_uuid.insert(marker.entity.uuid, marker.coord_wgs84);
+
+    if (!coordinates_by_uuid.contains(pipe.geometry.start_node.uuid) ||
+        !coordinates_by_uuid.contains(pipe.geometry.end_node.uuid))
+    {
+        return QList<CoordinateWGS84>();
+    }
+
+    QList<CoordinateWGS84> coordinates;
+    coordinates.reserve(pipe.geometry.intermediate_vertices.size() + 2);
+    coordinates.append(coordinates_by_uuid.value(pipe.geometry.start_node.uuid));
+    coordinates.append(pipe.geometry.intermediate_vertices);
+    coordinates.append(coordinates_by_uuid.value(pipe.geometry.end_node.uuid));
+    return coordinates;
+}
+
+MapCanvasPipes::PipePositionHit MapCanvasPipes::nearestPositionOnPipeInternal(
+    const PipeCanvasItem &pipe, const QPointF &position,
+    const QList<MapEntityMarker> &markers, double max_distance) const
+{
+    PipePositionHit hit;
+    const QList<CoordinateWGS84> coordinates = pipeCoordinates(pipe, markers);
+    if (coordinates.size() < 2)
+        return hit;
+
+    QList<double> segment_lengths_m;
+    segment_lengths_m.reserve(coordinates.size() - 1);
+    double total_length_m = 0.0;
+    for (int i = 0; i + 1 < coordinates.size(); ++i)
+    {
+        const double length_m = GeoMetricProjection::distanceMeters(
+            coordinates.at(i), coordinates.at(i + 1));
+        segment_lengths_m.append(length_m);
+        total_length_m += length_m;
+    }
+    if (!std::isfinite(total_length_m) || total_length_m <= 0.0)
+        return hit;
+
+    double nearest_distance_squared = max_distance * max_distance;
+    double accumulated_length_m = 0.0;
+    for (int i = 0; i + 1 < coordinates.size(); ++i)
+    {
+        const QPointF segment_start = screenFromWgs84(coordinates.at(i));
+        const QPointF segment_end = screenFromWgs84(coordinates.at(i + 1));
+        const QPointF nearest_point = nearestPointOnSegment(position, segment_start, segment_end);
+        const double distance_x = position.x() - nearest_point.x();
+        const double distance_y = position.y() - nearest_point.y();
+        const double distance_squared = distance_x * distance_x + distance_y * distance_y;
+        if (distance_squared <= nearest_distance_squared)
+        {
+            const double segment_x = segment_end.x() - segment_start.x();
+            const double segment_y = segment_end.y() - segment_start.y();
+            const double segment_length_squared = segment_x * segment_x + segment_y * segment_y;
+            double segment_fraction = 0.0;
+            if (segment_length_squared > 0.0)
+            {
+                segment_fraction = ((nearest_point.x() - segment_start.x()) * segment_x +
+                                    (nearest_point.y() - segment_start.y()) * segment_y) /
+                                   segment_length_squared;
+                segment_fraction = qBound(0.0, segment_fraction, 1.0);
+            }
+
+            const CoordinateWGS84 &from = coordinates.at(i);
+            const CoordinateWGS84 &to = coordinates.at(i + 1);
+            CoordinateWGS84 coordinate;
+            coordinate.latitude_deg = from.latitude_deg +
+                                      (to.latitude_deg - from.latitude_deg) * segment_fraction;
+            const double longitude_delta = GeoWebMercator::normalizeLongitude(
+                to.longitude_deg - from.longitude_deg);
+            coordinate.longitude_deg = GeoWebMercator::normalizeLongitude(
+                from.longitude_deg + longitude_delta * segment_fraction);
+
+            nearest_distance_squared = distance_squared;
+            hit.pipe_uuid = pipe.entity.uuid;
+            hit.insert_index = i;
+            hit.pipe_position = qBound(
+                0.0,
+                (accumulated_length_m + segment_lengths_m.at(i) * segment_fraction) /
+                    total_length_m,
+                1.0);
+            hit.nearest_point = nearest_point;
+            hit.coordinate_wgs84 = coordinate;
+        }
+        accumulated_length_m += segment_lengths_m.at(i);
+    }
+
+    return hit;
+}
+
+MapCanvasPipes::PipePositionHit MapCanvasPipes::pipePositionAt(
+    const QPointF &position, const QList<MapEntityMarker> &markers) const
+{
+    PipePositionHit best_hit;
+    double best_distance_squared = link_hit_distance * link_hit_distance;
+    for (const PipeCanvasItem &pipe : this->list_pipes)
+    {
+        const PipePositionHit candidate = nearestPositionOnPipeInternal(
+            pipe, position, markers, link_hit_distance);
+        if (!candidate.isValid())
+            continue;
+
+        const double distance_x = position.x() - candidate.nearest_point.x();
+        const double distance_y = position.y() - candidate.nearest_point.y();
+        const double distance_squared = distance_x * distance_x + distance_y * distance_y;
+        if (distance_squared > best_distance_squared)
+            continue;
+
+        best_distance_squared = distance_squared;
+        best_hit = candidate;
+    }
+    return best_hit;
+}
+
+MapCanvasPipes::PipePositionHit MapCanvasPipes::nearestPositionOnPipe(
+    const QUuid &pipe_uuid, const QPointF &position,
+    const QList<MapEntityMarker> &markers) const
+{
+    const PipeCanvasItem *pipe = pipeByUuid(pipe_uuid);
+    if (!pipe)
+        return PipePositionHit();
+    return nearestPositionOnPipeInternal(
+        *pipe, position, markers, std::numeric_limits<double>::max() / 4.0);
+}
+
+std::optional<CoordinateWGS84> MapCanvasPipes::coordinateAtPosition(
+    const QUuid &pipe_uuid, double pipe_position,
+    const QList<MapEntityMarker> &markers) const
+{
+    if (!std::isfinite(pipe_position) || pipe_position < 0.0 || pipe_position > 1.0)
+        return std::nullopt;
+
+    const PipeCanvasItem *pipe = pipeByUuid(pipe_uuid);
+    if (!pipe)
+        return std::nullopt;
+    const QList<CoordinateWGS84> coordinates = pipeCoordinates(*pipe, markers);
+    if (coordinates.size() < 2)
+        return std::nullopt;
+
+    QList<double> segment_lengths_m;
+    segment_lengths_m.reserve(coordinates.size() - 1);
+    double total_length_m = 0.0;
+    for (int i = 0; i + 1 < coordinates.size(); ++i)
+    {
+        const double length_m = GeoMetricProjection::distanceMeters(
+            coordinates.at(i), coordinates.at(i + 1));
+        segment_lengths_m.append(length_m);
+        total_length_m += length_m;
+    }
+    if (!std::isfinite(total_length_m) || total_length_m <= 0.0)
+        return std::nullopt;
+
+    const double target_length_m = pipe_position * total_length_m;
+    double accumulated_length_m = 0.0;
+    for (int i = 0; i + 1 < coordinates.size(); ++i)
+    {
+        const double segment_length_m = segment_lengths_m.at(i);
+        if (target_length_m > accumulated_length_m + segment_length_m &&
+            i + 2 < coordinates.size())
+        {
+            accumulated_length_m += segment_length_m;
+            continue;
+        }
+
+        const double fraction = segment_length_m > 0.0
+            ? qBound(0.0, (target_length_m - accumulated_length_m) / segment_length_m, 1.0)
+            : 0.0;
+        const CoordinateWGS84 &from = coordinates.at(i);
+        const CoordinateWGS84 &to = coordinates.at(i + 1);
+        CoordinateWGS84 coordinate;
+        coordinate.latitude_deg = from.latitude_deg +
+                                  (to.latitude_deg - from.latitude_deg) * fraction;
+        const double longitude_delta = GeoWebMercator::normalizeLongitude(
+            to.longitude_deg - from.longitude_deg);
+        coordinate.longitude_deg = GeoWebMercator::normalizeLongitude(
+            from.longitude_deg + longitude_delta * fraction);
+        return coordinate;
+    }
+
+    return coordinates.last();
 }
 
 bool MapCanvasPipes::showContextMenuAt(const QPointF &position,

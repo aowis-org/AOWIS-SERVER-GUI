@@ -2,6 +2,7 @@
 #define NETWORK_SYMBOLOGY_VALUES_H
 
 #include <cmath>
+#include <limits>
 
 #include <QHash>
 #include <QtGlobal>
@@ -44,6 +45,11 @@ inline double resolvedSymbologyElevationM(const HydraulicNodeTank &tank)
     }
 
     return tank.bottom_elevation_m;
+}
+
+inline double resolvedSymbologyElevationM(const HydraulicDemandPoint &)
+{
+    return std::numeric_limits<double>::quiet_NaN();
 }
 
 

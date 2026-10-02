@@ -258,6 +258,7 @@ public:
     std::optional<HydraulicNodeJunction> junction(const QUuid &uuid) const;
     std::optional<HydraulicNodeReservoir> reservoir(const QUuid &uuid) const;
     std::optional<HydraulicNodeTank> tank(const QUuid &uuid) const;
+    std::optional<HydraulicDemandPoint> demandPoint(const QUuid &uuid) const;
     std::optional<HydraulicLinkPipe> pipe(const QUuid &uuid) const;
     std::optional<HydraulicLinkPump> pump(const QUuid &uuid) const;
     std::optional<HydraulicLinkValve> valve(const QUuid &uuid) const;
@@ -269,10 +270,12 @@ public:
 
     void setSelectedUuid(InfrastructureEntity entity_type, const QUuid &uuid);
     void requestEntityLocate(InfrastructureEntity entity_type, const QUuid &uuid);
+    void requestDemandPointAttachmentSelection(const QUuid &uuid);
 
     QUuid addJunction(const CoordinateWGS84 &coordinate);
     QUuid addReservoir(const CoordinateWGS84 &coordinate);
     QUuid addTank(const CoordinateWGS84 &coordinate);
+    QUuid addDemandPoint(const CoordinateWGS84 &coordinate);
 
     QUuid addPipe(const QUuid &node_uuid_from, const QUuid &node_uuid_to,
                   const QList<CoordinateWGS84> &intermediate_vertices);
@@ -287,6 +290,35 @@ public:
     bool setNodeDateInstalled(const QUuid &uuid, const std::optional<QDate> &date_installed);
     bool setNodeEnabled(const QUuid &uuid, bool enabled);
     bool setNodeCoordinate(const QUuid &uuid, const CoordinateWGS84 &coordinate);
+    bool setDemandPointId(const QUuid &uuid, const QString &id);
+    bool setDemandPointModelRole(const QUuid &uuid, EntityModelRole model_role);
+    bool setDemandPointDateAdded(const QUuid &uuid, const std::optional<QDate> &date_added);
+    bool setDemandPointDateInstalled(const QUuid &uuid, const std::optional<QDate> &date_installed);
+    bool setDemandPointEnabled(const QUuid &uuid, bool enabled);
+    bool setDemandPointDescription(const QUuid &uuid, const QString &description);
+    bool setDemandPointComment(const QUuid &uuid, const QString &comment);
+    bool setDemandPointTags(const QUuid &uuid, const QStringList &tags);
+    bool setDemandPointCoordinate(const QUuid &uuid, const CoordinateWGS84 &coordinate);
+    bool addDemandPointDemand(const QUuid &uuid, const HydraulicDemand &demand);
+    bool removeDemandPointDemand(const QUuid &uuid, int demand_index);
+    bool setDemandPointDemandCategoryName(const QUuid &uuid, int demand_index,
+                                          const QString &category_name);
+    bool setDemandPointDemandBaseDemandM3PerH(const QUuid &uuid, int demand_index,
+                                              double base_demand_m3_per_h);
+    bool setDemandPointDemandPatternMode(const QUuid &uuid, int demand_index,
+                                         HydraulicTimePatternMode pattern_mode);
+    bool setDemandPointDemandPatternUuid(const QUuid &uuid, int demand_index,
+                                         const QUuid &pattern_uuid);
+    bool setDemandPointDemandSourceMethod(const QUuid &uuid, int demand_index,
+                                          HydraulicDemandSourceMethod source_method);
+    bool setDemandPointDemandNote(const QUuid &uuid, int demand_index, const QString &note);
+    bool addDemandPointMeter(const QUuid &uuid);
+    bool setDemandPointMeter(const QUuid &uuid, const WaterMeter &meter);
+    bool removeDemandPointMeter(const QUuid &uuid);
+    bool attachDemandPointToPipe(const QUuid &uuid, const QUuid &pipe_uuid,
+                                 double pipe_position);
+    bool attachDemandPointToJunction(const QUuid &uuid, const QUuid &junction_uuid);
+    bool clearDemandPointAttachment(const QUuid &uuid);
 
     bool setLinkId(const QUuid &uuid, const QString &id);
     bool setLinkModelRole(const QUuid &uuid, EntityModelRole model_role);
@@ -411,6 +443,7 @@ public:
     bool deleteJunction(const QUuid &uuid);
     bool deleteReservoir(const QUuid &uuid);
     bool deleteTank(const QUuid &uuid);
+    bool deleteDemandPoint(const QUuid &uuid);
     bool deletePipe(const QUuid &uuid);
     bool deletePump(const QUuid &uuid);
     bool deleteValve(const QUuid &uuid);
@@ -533,6 +566,8 @@ signals:
     void signalNetworkGeometryChanged(quint64 geometry_revision);
     void signalBoundingBoxWgs84Changed();
     void signalNodeChanged(InfrastructureEntity entity_type, const QUuid &uuid);
+    void signalDemandPointChanged(const QUuid &uuid);
+    void signalDemandPointAttachmentSelectionRequested(const QUuid &uuid);
     void signalLinkChanged(InfrastructureEntity entity_type, const QUuid &uuid);
     void signalEntityLocateRequested(InfrastructureEntity entity_type, const QUuid &uuid);
     void signalSelectedTank(const HydraulicNodeTank &tank);
@@ -541,7 +576,7 @@ signals:
     void signalSelectedPipe(const HydraulicLinkPipe &pipe);
     void signalSelectedPump(const HydraulicLinkPump &pump);
     void signalSelectedValve(const HydraulicLinkValve &valve);
-    void signalSelectedCustomerPoint(const HydraulicDemandPoint &customer_point);
+    void signalSelectedDemandPoint(const HydraulicDemandPoint &demand_point);
 };
 
 #endif // HYDRAULIC_DATA_H

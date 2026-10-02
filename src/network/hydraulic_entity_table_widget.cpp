@@ -782,11 +782,14 @@ ColumnFilterKind columnFilterKind(const QString &title)
 {
     static const QSet<QString> text_columns = {
         QStringLiteral("ID"),
-        QStringLiteral("Tag"),
+        QStringLiteral("Description"),
+        QStringLiteral("Tags"),
         QStringLiteral("Comment"),
         QStringLiteral("Node 1"),
         QStringLiteral("Node 2"),
         QStringLiteral("Demand Details"),
+        QStringLiteral("Attachment Target"),
+        QStringLiteral("Meter ID"),
         QStringLiteral("Material"),
         QStringLiteral("Head Pattern"),
         QStringLiteral("Volume Curve"),
@@ -815,6 +818,8 @@ ColumnFilterKind columnFilterKind(const QString &title)
         QStringLiteral("State Operating"),
         QStringLiteral("Regulating"),
         QStringLiteral("Referenced by Control"),
+        QStringLiteral("Attachment Type"),
+        QStringLiteral("Metered"),
         QStringLiteral("Quality Source Type"),
         QStringLiteral("Quality Mixing Model"),
         QStringLiteral("Quality Override Bulk Reaction"),
@@ -923,6 +928,8 @@ InfrastructureEntity diagnosticEntityType(const HydraulicData *hydraulic_data,
         return InfrastructureEntity::Pump;
     case HydraulicSimulationStatusEntityType::Valve:
         return InfrastructureEntity::Valve;
+    case HydraulicSimulationStatusEntityType::DemandPoint:
+        return InfrastructureEntity::DemandPoint;
     case HydraulicSimulationStatusEntityType::Node:
         if (hydraulic_data->junction(uuid).has_value())
             return InfrastructureEntity::Junction;
@@ -1251,6 +1258,9 @@ public:
 
         switch (this->entity_type)
         {
+        case InfrastructureEntity::DemandPoint:
+            buildDemandPoints(network, error_entities, error_tooltips);
+            break;
         case InfrastructureEntity::Junction:
             buildJunctions(network, simulation_result, error_entities, error_tooltips);
             break;
@@ -1290,6 +1300,63 @@ private:
         row.simulation_error_tooltip = error_tooltips.value(row.uuid);
         row.simulation_warning_tooltip = this->warning_tooltips.value(row.uuid);
         this->rows.append(row);
+    }
+
+    void buildDemandPoints(
+        const NetworkHydraulic &network,
+        const QHash<QUuid, InfrastructureEntity> &error_entities,
+        const QHash<QUuid, QString> &error_tooltips)
+    {
+        appendCommonColumns(this->columns);
+        appendNodePositionColumns(this->columns);
+        this->columns.append({QStringLiteral("Demand Count"), false});
+        this->columns.append({QStringLiteral("Demand Base [m³/h]"), false});
+        this->columns.append({QStringLiteral("Demand Details"), false});
+        this->columns.append({QStringLiteral("Attachment Type"), false});
+        this->columns.append({QStringLiteral("Attachment Target"), false});
+        this->columns.append({QStringLiteral("Pipe Position [%]"), false});
+        this->columns.append({QStringLiteral("Metered"), false});
+        this->columns.append({QStringLiteral("Meter ID"), false});
+
+        for (const HydraulicDemandPoint &demand_point : network.demand_points)
+        {
+            TableRow row;
+            row.uuid = demand_point.uuid;
+            appendCommonCells(row.cells, demand_point.id, demand_point.metadata);
+            appendNodePositionCells(row.cells, demand_point.coordinate_wgs84);
+            row.cells.append(integerCell(demand_point.demands.size()));
+            row.cells.append(numberCell(junctionBaseDemand(demand_point.demands), 3,
+                                        QStringLiteral(" m³/h")));
+            row.cells.append(textCell(junctionDemandSummary(network, demand_point.demands)));
+
+            QString attachment_type = QStringLiteral("Unattached");
+            QString attachment_target;
+            TableCell pipe_position = emptyCell();
+            if (demand_point.attachment.type == HydraulicDemandPointAttachmentType::Pipe)
+            {
+                attachment_type = QStringLiteral("Pipe");
+                attachment_target = referencedEntityId(
+                    network.links_pipes, demand_point.attachment.pipe_uuid);
+                pipe_position = numberCell(demand_point.attachment.pipe_position * 100.0, 2,
+                                           QStringLiteral(" %"));
+            }
+            else if (demand_point.attachment.type ==
+                     HydraulicDemandPointAttachmentType::Junction)
+            {
+                attachment_type = QStringLiteral("Junction");
+                attachment_target = referencedEntityId(
+                    network.nodes_junctions, demand_point.attachment.junction_uuid);
+            }
+
+            row.cells.append(textCell(attachment_type));
+            row.cells.append(textCell(attachment_target));
+            row.cells.append(pipe_position);
+            row.cells.append(boolCell(demand_point.meter.has_value()));
+            row.cells.append(demand_point.meter.has_value()
+                                 ? textCell(demand_point.meter->id)
+                                 : emptyCell());
+            finishRow(row, error_entities, error_tooltips);
+        }
     }
 
     void buildJunctions(const NetworkHydraulic &network,
@@ -2664,14 +2731,29 @@ HydraulicEntityTableWidget::HydraulicEntityTableWidget(HydraulicData *hydraulic_
         const bool table_is_link = this->entity_type == InfrastructureEntity::Pipe
             || this->entity_type == InfrastructureEntity::Pump
             || this->entity_type == InfrastructureEntity::Valve;
+        const bool table_is_demand_point =
+            this->entity_type == InfrastructureEntity::DemandPoint;
 
-        if ((table_is_node && changed_type == this->entity_type) || table_is_link)
+        if ((table_is_node && changed_type == this->entity_type) || table_is_link
+            || (table_is_demand_point && changed_type == InfrastructureEntity::Junction))
+        {
             requestRebuild();
+        }
     });
     connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
             [this](InfrastructureEntity changed_type, const QUuid &)
     {
-        if (changed_type == this->entity_type)
+        if (changed_type == this->entity_type
+            || (this->entity_type == InfrastructureEntity::DemandPoint
+                && changed_type == InfrastructureEntity::Pipe))
+        {
+            requestRebuild();
+        }
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalDemandPointChanged, this,
+            [this](const QUuid &)
+    {
+        if (this->entity_type == InfrastructureEntity::DemandPoint)
             requestRebuild();
     });
     connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged, this,

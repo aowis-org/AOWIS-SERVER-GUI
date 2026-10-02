@@ -173,6 +173,8 @@ private:
         QPainter &painter,
         const MapEditorVisualState &visual_state,
         const QHash<QUuid, const NetworkRenderNode *> &nodes_by_uuid);
+    void paintDemandPointAttachment(QPainter &painter,
+                                    const MapEditorVisualState &visual_state);
 
     MapModel *map_model = nullptr;
     QWidget *canvas = nullptr;

@@ -121,7 +121,7 @@ bool createDefaultConfiguration(const QString &path)
         "map_editor_add_pipe=1\n"
         "map_editor_add_junction=2\n"
         "map_editor_add_valve=3\n"
-        "map_editor_add_customer_point=4\n"
+        "map_editor_add_demand_point=4\n"
         "map_editor_add_pump=5\n"
         "map_editor_add_tank=6\n"
         "map_editor_add_power_source=7\n"

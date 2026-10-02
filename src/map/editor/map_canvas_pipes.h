@@ -36,6 +36,16 @@ public:
         bool isValid() const;
     };
 
+    struct PipePositionHit
+    {
+        QUuid pipe_uuid;
+        int insert_index = -1;
+        double pipe_position = 0.0;
+        QPointF nearest_point;
+        CoordinateWGS84 coordinate_wgs84;
+        bool isValid() const;
+    };
+
     explicit MapCanvasPipes(MapModel *map_model, MapCanvasWidget *map_canvas,
                             QObject *parent = nullptr);
 
@@ -74,6 +84,13 @@ public:
     PipeVertexHit pipeVertexAt(const QPointF &position) const;
     PipeSegmentHit pipeSegmentAt(const QPointF &position,
                                  const QList<MapEntityMarker> &markers) const;
+    PipePositionHit pipePositionAt(const QPointF &position,
+                                   const QList<MapEntityMarker> &markers) const;
+    PipePositionHit nearestPositionOnPipe(const QUuid &pipe_uuid, const QPointF &position,
+                                          const QList<MapEntityMarker> &markers) const;
+    std::optional<CoordinateWGS84> coordinateAtPosition(
+        const QUuid &pipe_uuid, double pipe_position,
+        const QList<MapEntityMarker> &markers) const;
     bool showContextMenuAt(const QPointF &position, const QPoint &global_position,
                            const QList<MapEntityMarker> &markers);
 
@@ -119,6 +136,11 @@ private:
     PipeCanvasItem *pipeByUuid(const QUuid &pipe_uuid);
     const PipeCanvasItem *pipeByUuid(const QUuid &pipe_uuid) const;
     int pipeIndexByUuid(const QUuid &pipe_uuid) const;
+    PipePositionHit nearestPositionOnPipeInternal(
+        const PipeCanvasItem &pipe, const QPointF &position,
+        const QList<MapEntityMarker> &markers, double max_distance) const;
+    QList<CoordinateWGS84> pipeCoordinates(
+        const PipeCanvasItem &pipe, const QList<MapEntityMarker> &markers) const;
     void rebuildUuidIndex();
     void updateCanvas();
 

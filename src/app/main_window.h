@@ -48,7 +48,7 @@
 #include "tabs/tab_valves_widget.h"
 #include "tabs/tab_junctions_widget.h"
 #include "tabs/tab_pipes_widget.h"
-#include "tabs/tab_customer_points_widget.h"
+#include "tabs/tab_demand_points_widget.h"
 #include "tabs/tab_customers_widget.h"
 #include "tabs/tab_logs_widget.h"
 #include "tabs/tab_alarms_widget.h"
@@ -148,7 +148,7 @@ private:
     ValvesWidget *valves;
     JunctionsWidget *junctions;
     PipesWidget* pipes;
-    CustomerPointsWidget *customerPoints;
+    DemandPointsWidget *demand_points;
     CustomersWidget *customers;
     LogsWidget *logs;
     AlarmsWidget *alarms;

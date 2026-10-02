@@ -120,6 +120,13 @@ void ensureSettingDefault(QSettings &settings, const QString &key, const QString
         settings.setValue(key, value);
 }
 
+void migrateSetting(QSettings &settings, const QString &legacy_key, const QString &current_key)
+{
+    if (!settings.contains(current_key) && settings.contains(legacy_key))
+        settings.setValue(current_key, settings.value(legacy_key));
+    settings.remove(legacy_key);
+}
+
 QString loadShortcutSetting(QSettings &settings, const QString &key, const QString &default_value)
 {
     const QString value = settings.value(key, default_value).toString().trimmed();
@@ -459,7 +466,7 @@ bool createDefaultConfiguration(const QString &path)
         "map_editor_add_pipe=1\n"
         "map_editor_add_junction=2\n"
         "map_editor_add_valve=3\n"
-        "map_editor_add_customer_point=4\n"
+        "map_editor_add_demand_point=4\n"
         "map_editor_add_pump=5\n"
         "map_editor_add_tank=6\n"
         "map_editor_add_power_source=7\n"
@@ -548,6 +555,8 @@ GuiConfiguration loadConfiguration()
     QSettings settings(path, QSettings::IniFormat);
 
     const GuiShortcutConfiguration advertised_shortcuts;
+    migrateSetting(settings, QStringLiteral("shortcuts/map_editor_add_customer_point"),
+                   QStringLiteral("shortcuts/map_editor_add_demand_point"));
     ensureSettingDefault(settings, QStringLiteral("gui/map_desktop_renderer"), QStringLiteral("rhi"));
     ensureSettingDefault(settings, QStringLiteral("shortcuts/sidebar_toggle"), advertised_shortcuts.sidebar_toggle);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/fullscreen"), advertised_shortcuts.fullscreen);
@@ -569,7 +578,7 @@ GuiConfiguration loadConfiguration()
     ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_pipe"), advertised_shortcuts.map_editor_add_pipe);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_junction"), advertised_shortcuts.map_editor_add_junction);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_valve"), advertised_shortcuts.map_editor_add_valve);
-    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_customer_point"), advertised_shortcuts.map_editor_add_customer_point);
+    ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_demand_point"), advertised_shortcuts.map_editor_add_demand_point);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_pump"), advertised_shortcuts.map_editor_add_pump);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_tank"), advertised_shortcuts.map_editor_add_tank);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/map_editor_add_power_source"), advertised_shortcuts.map_editor_add_power_source);
@@ -647,7 +656,7 @@ GuiConfiguration loadConfiguration()
     configuration.shortcuts.map_editor_add_pipe = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_pipe"), advertised_shortcuts.map_editor_add_pipe);
     configuration.shortcuts.map_editor_add_junction = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_junction"), advertised_shortcuts.map_editor_add_junction);
     configuration.shortcuts.map_editor_add_valve = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_valve"), advertised_shortcuts.map_editor_add_valve);
-    configuration.shortcuts.map_editor_add_customer_point = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_customer_point"), advertised_shortcuts.map_editor_add_customer_point);
+    configuration.shortcuts.map_editor_add_demand_point = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_demand_point"), advertised_shortcuts.map_editor_add_demand_point);
     configuration.shortcuts.map_editor_add_pump = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_pump"), advertised_shortcuts.map_editor_add_pump);
     configuration.shortcuts.map_editor_add_tank = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_tank"), advertised_shortcuts.map_editor_add_tank);
     configuration.shortcuts.map_editor_add_power_source = loadShortcutSetting(settings, QStringLiteral("shortcuts/map_editor_add_power_source"), advertised_shortcuts.map_editor_add_power_source);

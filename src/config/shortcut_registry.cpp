@@ -56,8 +56,8 @@ QString configuredShortcut(const GuiShortcutConfiguration &configuration, GuiSho
             return configuration.map_editor_add_junction;
         case GuiShortcutId::MapEditorAddValve:
             return configuration.map_editor_add_valve;
-        case GuiShortcutId::MapEditorAddCustomerPoint:
-            return configuration.map_editor_add_customer_point;
+        case GuiShortcutId::MapEditorAddDemandPoint:
+            return configuration.map_editor_add_demand_point;
         case GuiShortcutId::MapEditorAddPump:
             return configuration.map_editor_add_pump;
         case GuiShortcutId::MapEditorAddTank:
@@ -189,9 +189,9 @@ QVector<GuiShortcutDefinition> createDefinitions()
     definitions.append({GuiShortcutId::MapEditorAddValve, QStringLiteral("map_editor_add_valve"),
                         QStringLiteral("Add valve / switch"), QStringLiteral("Map Editor"),
                         QStringLiteral("Map Editor"), defaults.map_editor_add_valve});
-    definitions.append({GuiShortcutId::MapEditorAddCustomerPoint, QStringLiteral("map_editor_add_customer_point"),
+    definitions.append({GuiShortcutId::MapEditorAddDemandPoint, QStringLiteral("map_editor_add_demand_point"),
                         QStringLiteral("Add demand point"), QStringLiteral("Map Editor"),
-                        QStringLiteral("Map Editor"), defaults.map_editor_add_customer_point});
+                        QStringLiteral("Map Editor"), defaults.map_editor_add_demand_point});
     definitions.append({GuiShortcutId::MapEditorAddPump, QStringLiteral("map_editor_add_pump"),
                         QStringLiteral("Add pump"), QStringLiteral("Map Editor"),
                         QStringLiteral("Map Editor"), defaults.map_editor_add_pump});
