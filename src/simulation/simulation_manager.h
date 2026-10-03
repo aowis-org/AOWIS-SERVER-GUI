@@ -38,12 +38,12 @@ public:
     void showSimulationStatistics();
     void showSimulationDiagnostics();
     void showEpanetLog();
-    void importEpanetNetwork();
-    void importEpanetNetworkResource(const QString &resource_path, const QString &file_name);
+    void importNetworkProject();
+    void importNetworkProjectResource(const QString &resource_path, const QString &file_name);
     void exportEpanetNetwork();
 
 private slots:
-    void importEpanetNetworkContent(const QString &file_name, const QByteArray &file_content);
+    void importNetworkProjectContent(const QString &file_name, const QByteArray &file_content);
 
 private:
     HydraulicData *hydraulic_data = nullptr;

@@ -2,6 +2,7 @@
 
 #include <optional>
 
+#include <QDate>
 #include <QSignalBlocker>
 
 EntityInspectorPipe::EntityInspectorPipe(HydraulicData *hydraulic_data, const HydraulicLinkPipe &pipe, QWidget *parent)
@@ -124,10 +125,20 @@ void EntityInspectorPipe::addGroupRoughness()
 
     QLabel *label_material = new QLabel("Material");
     this->combo_material = new QComboBox();
-    this->combo_material->setEditable(true);
-    this->combo_material->setInsertPolicy(QComboBox::NoInsert);
+    this->combo_material->setEditable(false);
+    this->combo_material->setToolTip(
+        "Pipe materials are defined by the network material library.");
 
-    QPushButton *button_material_edit = new QPushButton("Edit Materials");
+    QLabel *label_roughness_mode = new QLabel("Roughness Source");
+    this->combo_roughness_mode = new QComboBox();
+    this->combo_roughness_mode->addItem(
+        "Explicit", static_cast<int>(HydraulicPipeRoughnessMode::Explicit));
+    this->combo_roughness_mode->addItem(
+        "Material + installation age",
+        static_cast<int>(HydraulicPipeRoughnessMode::MaterialLibrary));
+    this->combo_roughness_mode->setToolTip(
+        "Explicit uses the pipe roughness values below. Material + installation age "
+        "uses the newest applicable age row in the selected material library entry.");
 
     QLabel *label_roughness_hw = new QLabel("Roughness<br>Hazen-Williams");
     label_roughness_hw->setWordWrap(true);
@@ -164,7 +175,8 @@ void EntityInspectorPipe::addGroupRoughness()
 
     grid->addWidget(label_material, 0, 0);
     grid->addWidget(this->combo_material, 0, 1);
-    grid->addWidget(button_material_edit, 1, 1);
+    grid->addWidget(label_roughness_mode, 1, 0);
+    grid->addWidget(this->combo_roughness_mode, 1, 1);
     grid->addWidget(label_roughness_hw, 2, 0);
     grid->addWidget(this->spin_roughness_hw, 2, 1);
     grid->addWidget(label_roughness_dw, 3, 0);
@@ -174,9 +186,24 @@ void EntityInspectorPipe::addGroupRoughness()
     grid->addWidget(label_loss_coefficient, 5, 0);
     grid->addWidget(this->spin_loss_coefficient, 5, 1);
 
-    connect(this->combo_material, &QComboBox::editTextChanged, this, [this](const QString &material_id)
+    connect(this->combo_material, &QComboBox::currentIndexChanged, this, [this](int index)
     {
-        this->hydraulic_data->setPipeMaterialId(this->pipe_uuid, material_id);
+        if (index < 0)
+            return;
+        this->hydraulic_data->setPipeMaterialUuid(
+            this->pipe_uuid, this->combo_material->currentData().toUuid());
+    });
+    connect(this->combo_roughness_mode, &QComboBox::currentIndexChanged, this, [this](int index)
+    {
+        if (index < 0)
+            return;
+        if (!this->hydraulic_data->setPipeRoughnessMode(
+                this->pipe_uuid,
+                static_cast<HydraulicPipeRoughnessMode>(
+                    this->combo_roughness_mode->currentData().toInt())))
+        {
+            refreshPipe();
+        }
     });
     connect(this->spin_roughness_hw, &QDoubleSpinBox::valueChanged, this, [this](double roughness_hazen_williams)
     {
@@ -213,6 +240,7 @@ void EntityInspectorPipe::refreshPipe()
     const QSignalBlocker measured_length_enabled_blocker(this->check_length_measured);
     const QSignalBlocker measured_length_blocker(this->spin_length_measured);
     const QSignalBlocker material_blocker(this->combo_material);
+    const QSignalBlocker roughness_mode_blocker(this->combo_roughness_mode);
     const QSignalBlocker roughness_hw_blocker(this->spin_roughness_hw);
     const QSignalBlocker roughness_dw_blocker(this->spin_roughness_dw);
     const QSignalBlocker roughness_cm_blocker(this->spin_roughness_cm);
@@ -232,13 +260,23 @@ void EntityInspectorPipe::refreshPipe()
     this->spin_length_measured->setEnabled(has_measured_length);
     this->spin_length_measured->setValue(pipe->length_measured_m.value_or(pipe->length_calculated_m));
 
-    if (this->combo_material->findText(pipe->material_id) < 0)
-        this->combo_material->addItem(pipe->material_id);
-    this->combo_material->setCurrentText(pipe->material_id);
+    this->combo_material->clear();
+    this->combo_material->addItem(QStringLiteral("[Not set]"), QUuid());
+    for (const HydraulicPipeMaterial &material : this->hydraulic_data->networkHydraulic().pipe_materials)
+        this->combo_material->addItem(material.id, material.uuid);
+
+    const int material_index = this->combo_material->findData(pipe->material_uuid);
+    this->combo_material->setCurrentIndex(material_index >= 0 ? material_index : 0);
+
+    const int roughness_mode_index = this->combo_roughness_mode->findData(
+        static_cast<int>(pipe->roughness_mode));
+    this->combo_roughness_mode->setCurrentIndex(
+        roughness_mode_index >= 0 ? roughness_mode_index : 0);
 
     this->spin_roughness_hw->setValue(pipe->roughness_hazen_williams);
     this->spin_roughness_dw->setValue(pipe->roughness_darcy_weisbach_mm);
     this->spin_roughness_cm->setValue(pipe->roughness_chezy_manning);
+    updateRoughnessUi(pipe.value());
     this->spin_loss_coefficient->setValue(pipe->minor_loss_coefficient);
     this->check_override_bulk->setChecked(pipe->override_bulk_reaction);
     this->check_override_wall->setChecked(pipe->override_wall_reaction);
@@ -315,31 +353,83 @@ void EntityInspectorPipe::updateQualityUi()
     this->spin_wall_reaction->setEnabled(this->check_override_wall->isChecked());
 }
 
+void EntityInspectorPipe::updateRoughnessUi(const HydraulicLinkPipe &pipe)
+{
+    const bool explicit_mode = pipe.roughness_mode == HydraulicPipeRoughnessMode::Explicit;
+
+    if (!explicit_mode && !pipe.material_uuid.isNull() && pipe.metadata.date_installed.has_value())
+    {
+        const std::optional<int> age_years = hydraulicPipeAgeYears(
+            pipe.metadata.date_installed.value(), QDate::currentDate());
+        if (age_years.has_value())
+        {
+            const HydraulicPipeMaterial *material = nullptr;
+            for (const HydraulicPipeMaterial &candidate : this->hydraulic_data->networkHydraulic().pipe_materials)
+            {
+                if (candidate.uuid == pipe.material_uuid)
+                {
+                    material = &candidate;
+                    break;
+                }
+            }
+
+            if (material != nullptr)
+            {
+                const std::optional<double> hw = resolveHydraulicPipeMaterialRoughness(
+                    *material, HydraulicHeadlossFormula::HazenWilliams, age_years.value());
+                const std::optional<double> dw = resolveHydraulicPipeMaterialRoughness(
+                    *material, HydraulicHeadlossFormula::DarcyWeisbach, age_years.value());
+                const std::optional<double> cm = resolveHydraulicPipeMaterialRoughness(
+                    *material, HydraulicHeadlossFormula::ChezyManning, age_years.value());
+                if (hw.has_value())
+                    this->spin_roughness_hw->setValue(hw.value());
+                if (dw.has_value())
+                    this->spin_roughness_dw->setValue(dw.value());
+                if (cm.has_value())
+                    this->spin_roughness_cm->setValue(cm.value());
+            }
+        }
+    }
+
+    const HydraulicHeadlossFormula formula =
+        this->hydraulic_data->networkHydraulic().options_hydraulic.headloss_formula;
+    this->spin_roughness_hw->setEnabled(
+        explicit_mode && formula == HydraulicHeadlossFormula::HazenWilliams);
+    this->spin_roughness_dw->setEnabled(
+        explicit_mode && formula == HydraulicHeadlossFormula::DarcyWeisbach);
+    this->spin_roughness_cm->setEnabled(
+        explicit_mode && formula == HydraulicHeadlossFormula::ChezyManning);
+}
+
 void EntityInspectorPipe::onHeadlossFormulaChanged(HeadlossFormulas formulas)
 {
+    const std::optional<HydraulicLinkPipe> pipe = this->hydraulic_data->pipe(this->pipe_uuid);
+    const bool explicit_mode = !pipe.has_value()
+        || pipe->roughness_mode == HydraulicPipeRoughnessMode::Explicit;
     const bool use_hw = formulas.testFlag(HeadlossFormula::HazenWilliams);
     const bool use_dw = formulas.testFlag(HeadlossFormula::DarcyWeisbach);
     const bool use_cm = formulas.testFlag(HeadlossFormula::ChezyManning);
-    
-    this->spin_roughness_hw->setDisabled(!use_hw);
-    this->spin_roughness_dw->setDisabled(!use_dw);
-    this->spin_roughness_cm->setDisabled(!use_cm);
-    
+
+    this->spin_roughness_hw->setDisabled(!use_hw || !explicit_mode);
+    this->spin_roughness_dw->setDisabled(!use_dw || !explicit_mode);
+    this->spin_roughness_cm->setDisabled(!use_cm || !explicit_mode);
+
+    const QString derived_suffix = explicit_mode
+        ? QString()
+        : QStringLiteral("<br><br>Currently derived from the selected material and installation age.");
     this->spin_roughness_hw->setToolTip(
-        use_hw
+        (use_hw
             ? QStringLiteral("Pipe roughness coefficient C<br>Used by the <b>Hazen-Williams</b> formula.")
-            : QStringLiteral("Select <b>Hazen-Williams</b> in the simulation toolbar dropdown<br>to edit the pipe roughness coefficient C.")
-        );
-    
+            : QStringLiteral("Select <b>Hazen-Williams</b> in the simulation toolbar dropdown<br>to edit the pipe roughness coefficient C."))
+        + derived_suffix);
     this->spin_roughness_dw->setToolTip(
-        use_dw
+        (use_dw
             ? QStringLiteral("Absolute pipe roughness ε in mm<br>Used by the <b>Darcy-Weisbach</b> formula.")
-            : QStringLiteral("Select <b>Darcy-Weisbach</b> in the simulation toolbar dropdown<br>to edit the absolute pipe roughness ε.")
-        );
-    
+            : QStringLiteral("Select <b>Darcy-Weisbach</b> in the simulation toolbar dropdown<br>to edit the absolute pipe roughness ε."))
+        + derived_suffix);
     this->spin_roughness_cm->setToolTip(
-        use_cm
+        (use_cm
             ? QStringLiteral("Manning roughness coefficient n<br>Used by the <b>Chezy-Manning</b> formula.")
-            : QStringLiteral("Select <b>Chezy-Manning</b> in the simulation toolbar dropdown<br>to edit the Manning roughness coefficient n.")
-        );
+            : QStringLiteral("Select <b>Chezy-Manning</b> in the simulation toolbar dropdown<br>to edit the Manning roughness coefficient n."))
+        + derived_suffix);
 }

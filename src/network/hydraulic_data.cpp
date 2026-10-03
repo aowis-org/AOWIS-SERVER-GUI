@@ -2777,10 +2777,17 @@ bool HydraulicData::setPipeMeasuredLengthM(
         uuid, this->network_editor.setPipeMeasuredLengthM(uuid, length_measured_m));
 }
 
-bool HydraulicData::setPipeMaterialId(const QUuid &uuid, const QString &material_id)
+bool HydraulicData::setPipeMaterialUuid(const QUuid &uuid, const QUuid &material_uuid)
 {
     return emitLinkChangedIfSuccessful(
-        uuid, this->network_editor.setPipeMaterialId(uuid, material_id));
+        uuid, this->network_editor.setPipeMaterialUuid(uuid, material_uuid));
+}
+
+bool HydraulicData::setPipeRoughnessMode(
+    const QUuid &uuid, HydraulicPipeRoughnessMode roughness_mode)
+{
+    return emitLinkChangedIfSuccessful(
+        uuid, this->network_editor.setPipeRoughnessMode(uuid, roughness_mode));
 }
 
 bool HydraulicData::setPipeRoughnessHw(const QUuid &uuid, double roughness_hazen_williams)

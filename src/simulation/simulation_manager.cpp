@@ -1,6 +1,8 @@
 #include "simulation/simulation_manager.h"
 
 #include "simulation/simulation_statistics_dialog.h"
+#include "import/epanet_js_project_converter.h"
+#include "import/epanet_js_project_reader.h"
 
 #include <aowis/epanet/epanet_runner.h>
 #include <aowis/epanet/epanet_result_import.h>
@@ -23,11 +25,11 @@
 #else
 #include <emscripten.h>
 
-EM_JS(void, aowisOpenEpanetInpFile, (),
+EM_JS(void, aowisOpenNetworkProjectFile, (),
 {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".inp";
+    input.accept = ".inp,.ejsdb";
     input.style.display = "none";
 
     const cleanup = () => {
@@ -49,7 +51,7 @@ EM_JS(void, aowisOpenEpanetInpFile, (),
             const contents = _malloc(bytes.length);
             if (bytes.length > 0)
                 HEAPU8.set(bytes, contents);
-            _aowisReceiveEpanetInpFile(file_name_utf8, contents, bytes.length);
+            _aowisReceiveNetworkProjectFile(file_name_utf8, contents, bytes.length);
 
             _free(contents);
             _free(file_name_utf8);
@@ -87,22 +89,22 @@ EM_JS(void, aowisDownloadTextFile, (const char *filename_utf8, const char *conte
 #ifdef Q_OS_WASM
 namespace
 {
-QPointer<SimulationManager> pending_epanet_import_manager;
+QPointer<SimulationManager> pending_project_import_manager;
 }
 
-extern "C" EMSCRIPTEN_KEEPALIVE void aowisReceiveEpanetInpFile(
+extern "C" EMSCRIPTEN_KEEPALIVE void aowisReceiveNetworkProjectFile(
     const char *file_name_utf8,
     const char *contents,
     int size)
 {
-    if (!pending_epanet_import_manager || file_name_utf8 == nullptr || size < 0)
+    if (!pending_project_import_manager || file_name_utf8 == nullptr || size < 0)
         return;
 
     const QString file_name = QString::fromUtf8(file_name_utf8);
     const QByteArray file_content(contents, size);
     QMetaObject::invokeMethod(
-        pending_epanet_import_manager,
-        "importEpanetNetworkContent",
+        pending_project_import_manager,
+        "importNetworkProjectContent",
         Qt::DirectConnection,
         Q_ARG(QString, file_name),
         Q_ARG(QByteArray, file_content));
@@ -146,6 +148,47 @@ QString diagnosticDetails(const HydraulicSimulationDiagnostic &diagnostic)
         details.append(diagnostic.message_backend);
     details.append(diagnostic.details);
     return details.join('\n');
+}
+
+QString epanetJsConversionDiagnosticDetails(
+    const EpanetJsProjectReadResult &read_result,
+    const EpanetJsProjectConversionResult &conversion_result)
+{
+    QStringList details;
+
+    for (const QString &diagnostic : read_result.diagnostics)
+    {
+        if (!diagnostic.trimmed().isEmpty())
+            details.append(diagnostic);
+    }
+
+    for (const EpanetJsConversionDiagnostic &diagnostic : conversion_result.diagnostics)
+    {
+        QString prefix = diagnostic.severity == EpanetJsConversionDiagnosticSeverity::Error
+            ? QStringLiteral("Error")
+            : QStringLiteral("Warning");
+        if (!diagnostic.code.isEmpty())
+            prefix += QStringLiteral(" [%1]").arg(diagnostic.code);
+
+        QString location;
+        if (!diagnostic.table_name.isEmpty())
+            location = diagnostic.table_name;
+        if (diagnostic.source_id.has_value())
+        {
+            if (!location.isEmpty())
+                location += QLatin1Char(' ');
+            location += QStringLiteral("id=%1").arg(diagnostic.source_id.value());
+        }
+
+        QString text = prefix;
+        if (!location.isEmpty())
+            text += QStringLiteral(" (%1)").arg(location);
+        if (!diagnostic.message.isEmpty())
+            text += QStringLiteral(": %1").arg(diagnostic.message);
+        details.append(text);
+    }
+
+    return details.join(QStringLiteral("\n\n"));
 }
 
 QString importFailureDetails(const EpanetResultImport &result)
@@ -497,17 +540,17 @@ void SimulationManager::showEpanetLog()
         statistics_dialog->showEpanetLogTab();
 }
 
-void SimulationManager::importEpanetNetwork()
+void SimulationManager::importNetworkProject()
 {
 #ifdef Q_OS_WASM
-    pending_epanet_import_manager = this;
-    aowisOpenEpanetInpFile();
+    pending_project_import_manager = this;
+    aowisOpenNetworkProjectFile();
 #else
     QWidget *main_window = QApplication::activeWindow();
     QPointer<SimulationManager> manager(this);
 
     QFileDialog::getOpenFileContent(
-        tr("EPANET input files (*.inp)"),
+        tr("Water network projects (*.inp *.ejsdb)"),
         [manager](const QString &file_name, const QByteArray &file_content)
         {
             if (!manager || file_name.isEmpty())
@@ -515,7 +558,7 @@ void SimulationManager::importEpanetNetwork()
 
             QMetaObject::invokeMethod(
                 manager,
-                "importEpanetNetworkContent",
+                "importNetworkProjectContent",
                 Qt::DirectConnection,
                 Q_ARG(QString, file_name),
                 Q_ARG(QByteArray, file_content));
@@ -524,7 +567,7 @@ void SimulationManager::importEpanetNetwork()
 #endif
 }
 
-void SimulationManager::importEpanetNetworkResource(
+void SimulationManager::importNetworkProjectResource(
     const QString &resource_path,
     const QString &file_name)
 {
@@ -547,10 +590,10 @@ void SimulationManager::importEpanetNetworkResource(
 
     const QByteArray file_content = resource_file.readAll();
     resource_file.close();
-    importEpanetNetworkContent(file_name, file_content);
+    importNetworkProjectContent(file_name, file_content);
 }
 
-void SimulationManager::importEpanetNetworkContent(
+void SimulationManager::importNetworkProjectContent(
     const QString &file_name,
     const QByteArray &file_content)
 {
@@ -559,6 +602,72 @@ void SimulationManager::importEpanetNetworkContent(
 
     QWidget *main_window = QApplication::activeWindow();
     QPointer<QWidget> parent_widget(main_window);
+
+    static const QByteArray sqlite_header("SQLite format 3\0", 16);
+    const bool sqlite_content = file_content.size() >= sqlite_header.size()
+        && file_content.left(sqlite_header.size()) == sqlite_header;
+    const bool epanet_js_extension =
+        QFileInfo(file_name).suffix().compare(QStringLiteral("ejsdb"), Qt::CaseInsensitive) == 0;
+    if (sqlite_content || epanet_js_extension)
+    {
+        const EpanetJsProjectReadResult read_result =
+            EpanetJsProjectReader::readBytes(file_content);
+        if (!read_result.success)
+        {
+            showDetailedMessageBox(
+                parent_widget,
+                QMessageBox::Critical,
+                tr("epanet-js import failed"),
+                tr("The selected SQLite project could not be recognized as an epanet-js project."),
+                read_result.error);
+            return;
+        }
+
+        EpanetJsProjectConversionResult conversion_result =
+            EpanetJsProjectConverter::convert(read_result.project);
+        if (!conversion_result.success)
+        {
+            QString details = epanetJsConversionDiagnosticDetails(
+                read_result, conversion_result);
+            if (details.isEmpty())
+                details = conversion_result.errorSummary();
+
+            showDetailedMessageBox(
+                parent_widget,
+                QMessageBox::Critical,
+                tr("epanet-js import failed"),
+                tr("The epanet-js project was recognized, but it could not be translated "
+                   "into the AOWIS hydraulic model."),
+                details);
+            return;
+        }
+
+        const QString diagnostic_text = epanetJsConversionDiagnosticDetails(
+            read_result, conversion_result);
+        int warning_count = read_result.diagnostics.size();
+        for (const EpanetJsConversionDiagnostic &diagnostic : conversion_result.diagnostics)
+        {
+            if (diagnostic.severity == EpanetJsConversionDiagnosticSeverity::Warning)
+                ++warning_count;
+        }
+
+        this->hydraulic_data->replaceNetworkHydraulic(
+            std::move(conversion_result.network),
+            QList<WaterQualitySolverOptions>());
+        emit signalEpanetNetworkImported();
+
+        if (warning_count > 0)
+        {
+            showDetailedMessageBox(
+                parent_widget,
+                QMessageBox::Warning,
+                tr("Project imported with warnings"),
+                tr("The epanet-js project was imported, but %1 warning(s) were reported.")
+                    .arg(warning_count),
+                diagnostic_text);
+        }
+        return;
+    }
 
     QTemporaryDir temporary_directory;
     if (!temporary_directory.isValid())
@@ -638,7 +747,7 @@ void SimulationManager::exportEpanetNetwork()
     QFileDialog dialog(main_window, tr("Export EPANET network"));
     dialog.setAcceptMode(QFileDialog::AcceptSave);
     dialog.setFileMode(QFileDialog::AnyFile);
-    dialog.setNameFilters(QStringList{tr("EPANET input files (*.inp)"), tr("All files (*)")});
+    dialog.setNameFilters(QStringList{tr("Water network projects (*.inp *.ejsdb)"), tr("All files (*)")});
     dialog.setDefaultSuffix(QStringLiteral("inp"));
     dialog.selectFile(QStringLiteral("network.inp"));
 

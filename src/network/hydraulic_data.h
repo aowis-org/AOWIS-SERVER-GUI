@@ -390,7 +390,8 @@ public:
     bool setPipeInitialStatus(const QUuid &uuid, HydraulicLinkPipeInitialStatus initial_status);
     bool setPipeDiameterMm(const QUuid &uuid, double diameter_mm);
     bool setPipeMeasuredLengthM(const QUuid &uuid, const std::optional<double> &length_measured_m);
-    bool setPipeMaterialId(const QUuid &uuid, const QString &material_id);
+    bool setPipeMaterialUuid(const QUuid &uuid, const QUuid &material_uuid);
+    bool setPipeRoughnessMode(const QUuid &uuid, HydraulicPipeRoughnessMode roughness_mode);
     bool setPipeRoughnessHw(const QUuid &uuid, double roughness_hazen_williams);
     bool setPipeRoughnessDwMm(const QUuid &uuid, double roughness_darcy_weisbach_mm);
     bool setPipeRoughnessCm(const QUuid &uuid, double roughness_chezy_manning);

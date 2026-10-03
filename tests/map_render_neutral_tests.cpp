@@ -9,6 +9,7 @@
 #include "map/render/map_node_declutter.h"
 #include "map/render/map_render_cache_math.h"
 #include "map/render/map_terrain_mesh_scheduler.h"
+#include "test_harness.h"
 
 #include <QColor>
 #include <QHash>
@@ -21,35 +22,20 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <limits>
 
 namespace
 {
-int failure_count = 0;
+AowisTestHarness test_harness;
 
 void expectTrue(bool condition, const char *message)
 {
-    if (condition)
-        return;
-
-    std::fprintf(stderr, "FAIL: %s\n", message);
-    ++failure_count;
+    test_harness.expectTrue(condition, message);
 }
 
 void expectNear(double actual, double expected, double tolerance, const char *message)
 {
-    if (std::isfinite(actual) && std::abs(actual - expected) <= tolerance)
-        return;
-
-    std::fprintf(
-        stderr,
-        "FAIL: %s (actual=%.12f expected=%.12f tolerance=%.12f)\n",
-        message,
-        actual,
-        expected,
-        tolerance);
-    ++failure_count;
+    test_harness.expectNear(actual, expected, tolerance, message);
 }
 
 template<typename Vertex>
@@ -599,22 +585,14 @@ void testTerrainMeshGenerationAndStitching()
 
 int main()
 {
-    testVerticalTransform();
-    testRenderCacheMath();
-    testNodeDeclutter();
-    testRayIntersections();
-    testCanonicalScreenRay();
-    testHeatmapScene();
-    testGlobeModelGeometry();
-    testSurfaceRenderFrameInvariants();
-    testTerrainMeshGenerationAndStitching();
-
-    if (failure_count != 0)
-    {
-        std::fprintf(stderr, "%d neutral rendering test(s) failed.\n", failure_count);
-        return 1;
-    }
-
-    std::printf("All neutral rendering tests passed.\n");
-    return 0;
+    test_harness.runCase("vertical transform", testVerticalTransform);
+    test_harness.runCase("render cache math", testRenderCacheMath);
+    test_harness.runCase("node declutter", testNodeDeclutter);
+    test_harness.runCase("ray intersections", testRayIntersections);
+    test_harness.runCase("canonical screen ray", testCanonicalScreenRay);
+    test_harness.runCase("heatmap scene", testHeatmapScene);
+    test_harness.runCase("globe model geometry", testGlobeModelGeometry);
+    test_harness.runCase("surface render frame invariants", testSurfaceRenderFrameInvariants);
+    test_harness.runCase("terrain mesh generation and stitching", testTerrainMeshGenerationAndStitching);
+    return test_harness.finish();
 }

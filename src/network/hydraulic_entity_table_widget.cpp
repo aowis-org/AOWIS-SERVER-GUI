@@ -310,6 +310,19 @@ void appendNodeQualityInputColumns(QList<TableColumn> &columns)
     columns.append({QStringLiteral("Quality Source Pattern"), false});
 }
 
+QString pipeMaterialId(const NetworkHydraulic &network, const QUuid &uuid)
+{
+    if (uuid.isNull())
+        return QString();
+
+    for (const HydraulicPipeMaterial &material : network.pipe_materials)
+    {
+        if (material.uuid == uuid)
+            return material.id;
+    }
+    return QString();
+}
+
 QString patternId(const NetworkHydraulic &network, const QUuid &uuid);
 
 template<typename NodeType>
@@ -1729,7 +1742,7 @@ private:
                                         QStringLiteral(" m")));
             row.cells.append(textCell(pipeInitialStatusText(pipe.initial_status)));
             row.cells.append(numberCell(pipe.diameter_mm, 3, QStringLiteral(" mm")));
-            row.cells.append(textCell(pipe.material_id));
+            row.cells.append(textCell(pipeMaterialId(network, pipe.material_uuid)));
             row.cells.append(numberCell(pipe.roughness_hazen_williams, 3));
             row.cells.append(numberCell(pipe.roughness_darcy_weisbach_mm, 6, QStringLiteral(" mm")));
             row.cells.append(numberCell(pipe.roughness_chezy_manning, 6));

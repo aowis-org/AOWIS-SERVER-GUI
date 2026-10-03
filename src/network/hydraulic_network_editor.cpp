@@ -1311,13 +1311,43 @@ bool HydraulicNetworkEditor::setPipeMeasuredLengthM(
     return true;
 }
 
-bool HydraulicNetworkEditor::setPipeMaterialId(const QUuid &uuid, const QString &material_id)
+bool HydraulicNetworkEditor::setPipeMaterialUuid(const QUuid &uuid, const QUuid &material_uuid)
 {
     HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, uuid);
     if (pipe == nullptr)
         return false;
 
-    pipe->material_id = material_id;
+    if (!material_uuid.isNull())
+    {
+        const HydraulicPipeMaterial *material =
+            entityByUuid(this->network.pipe_materials, material_uuid);
+        if (material == nullptr)
+            return false;
+    }
+
+    pipe->material_uuid = material_uuid;
+    if (material_uuid.isNull()
+        && pipe->roughness_mode == HydraulicPipeRoughnessMode::MaterialLibrary)
+    {
+        pipe->roughness_mode = HydraulicPipeRoughnessMode::Explicit;
+    }
+    return true;
+}
+
+bool HydraulicNetworkEditor::setPipeRoughnessMode(
+    const QUuid &uuid, HydraulicPipeRoughnessMode roughness_mode)
+{
+    HydraulicLinkPipe *pipe = entityByUuid(this->network.links_pipes, uuid);
+    if (pipe == nullptr)
+        return false;
+
+    if (roughness_mode == HydraulicPipeRoughnessMode::MaterialLibrary
+        && pipe->material_uuid.isNull())
+    {
+        return false;
+    }
+
+    pipe->roughness_mode = roughness_mode;
     return true;
 }
 

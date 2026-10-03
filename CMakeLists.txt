@@ -13,6 +13,7 @@ set(CMAKE_AUTORCC ON)
 find_package(Qt6 REQUIRED COMPONENTS
     Widgets
     Network
+    Sql
     OPTIONAL_COMPONENTS
     GuiPrivate
     ShaderTools
@@ -122,6 +123,12 @@ qt_add_executable(aowis-server-gui
     src/config/map_server_client_configuration.h
     src/config/shortcut_registry.cpp
     src/config/shortcut_registry.h
+
+    # Import
+    src/import/epanet_js_project_converter.cpp
+    src/import/epanet_js_project_converter.h
+    src/import/epanet_js_project_reader.cpp
+    src/import/epanet_js_project_reader.h
 
     # Network
     src/network/hydraulic_data.cpp
@@ -368,6 +375,7 @@ target_link_libraries(aowis-server-gui
     PRIVATE
         Qt6::Widgets
         Qt6::Network
+        Qt6::Sql
         AOWIS::ServerModel
         AOWIS::ServerEpanet
         GeographicLib_STATIC
@@ -533,6 +541,7 @@ endif()
 if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_executable(aowis-map-render-neutral-tests
         tests/map_render_neutral_tests.cpp
+        tests/test_harness.h
         src/geo/geo_web_mercator.cpp
         src/geo/geo_web_mercator.h
         src/geo/geo_wgs84_ellipsoid.cpp
@@ -562,6 +571,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     target_include_directories(aowis-map-render-neutral-tests
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests
     )
     target_link_libraries(aowis-map-render-neutral-tests
         PRIVATE
@@ -579,8 +589,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
             LABELS "aowis"
     )
 
-    add_executable(aowis-hydraulic-network-editor-tests
-        tests/hydraulic_network_editor_tests.cpp
+    add_library(aowis-hydraulic-test-support STATIC
         src/geo/geo_metric_projection.cpp
         src/geo/geo_metric_projection.h
         src/network/hydraulic_network_editor.cpp
@@ -588,21 +597,133 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         src/network/network_render_snapshot_builder.cpp
         src/network/network_render_snapshot_builder.h
     )
-    target_include_directories(aowis-hydraulic-network-editor-tests
-        PRIVATE
+    target_include_directories(aowis-hydraulic-test-support
+        PUBLIC
             ${CMAKE_CURRENT_SOURCE_DIR}/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests
     )
-    target_link_libraries(aowis-hydraulic-network-editor-tests
-        PRIVATE
+    target_link_libraries(aowis-hydraulic-test-support
+        PUBLIC
             Qt6::Core
             AOWIS::ServerModel
             GeographicLib_STATIC
     )
-    add_test(
-        NAME aowis-hydraulic-network-editor
-        COMMAND aowis-hydraulic-network-editor-tests
+
+    function(aowis_add_hydraulic_test target_name test_name source_file)
+        add_executable(${target_name}
+            ${source_file}
+            tests/test_harness.h
+        )
+        target_link_libraries(${target_name}
+            PRIVATE
+                aowis-hydraulic-test-support
+        )
+        add_test(
+            NAME ${test_name}
+            COMMAND ${target_name}
+        )
+        set_tests_properties(${test_name}
+            PROPERTIES
+                LABELS "aowis"
+        )
+    endfunction()
+
+    aowis_add_hydraulic_test(
+        aowis-hydraulic-network-editor-tests
+        aowis-hydraulic-network-editor
+        tests/hydraulic_network_editor_tests.cpp
     )
-    set_tests_properties(aowis-hydraulic-network-editor
+    aowis_add_hydraulic_test(
+        aowis-demand-point-tests
+        aowis-demand-points
+        tests/demand_point_tests.cpp
+    )
+    aowis_add_hydraulic_test(
+        aowis-pipe-material-tests
+        aowis-pipe-materials
+        tests/pipe_material_tests.cpp
+    )
+
+    add_executable(aowis-epanet-js-reader-tests
+        tests/epanet_js_project_reader_tests.cpp
+        tests/test_harness.h
+        src/import/epanet_js_project_reader.cpp
+        src/import/epanet_js_project_reader.h
+    )
+    target_include_directories(aowis-epanet-js-reader-tests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
+    target_link_libraries(aowis-epanet-js-reader-tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Sql
+    )
+    add_test(
+        NAME aowis-epanet-js-reader
+        COMMAND aowis-epanet-js-reader-tests
+    )
+    set_tests_properties(aowis-epanet-js-reader
+        PROPERTIES
+            LABELS "aowis"
+    )
+
+    add_executable(aowis-epanet-js-converter-tests
+        tests/epanet_js_project_converter_tests.cpp
+        tests/test_harness.h
+        src/import/epanet_js_project_converter.cpp
+        src/import/epanet_js_project_converter.h
+        src/import/epanet_js_project_reader.h
+    )
+    target_include_directories(aowis-epanet-js-converter-tests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
+    target_link_libraries(aowis-epanet-js-converter-tests
+        PRIVATE
+            Qt6::Core
+            AOWIS::ServerModel
+    )
+    add_test(
+        NAME aowis-epanet-js-converter
+        COMMAND aowis-epanet-js-converter-tests
+    )
+    set_tests_properties(aowis-epanet-js-converter
+        PROPERTIES
+            LABELS "aowis"
+    )
+
+    add_executable(aowis-epanet-js-integration-tests
+        tests/epanet_js_project_integration_tests.cpp
+        tests/test_harness.h
+        src/import/epanet_js_project_reader.cpp
+        src/import/epanet_js_project_reader.h
+        src/import/epanet_js_project_converter.cpp
+        src/import/epanet_js_project_converter.h
+    )
+    target_include_directories(aowis-epanet-js-integration-tests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
+    target_compile_definitions(aowis-epanet-js-integration-tests
+        PRIVATE
+            AOWIS_EPANET_JS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/epanet-js"
+    )
+    target_link_libraries(aowis-epanet-js-integration-tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Sql
+            AOWIS::ServerModel
+            AOWIS::ServerEpanet
+    )
+    add_test(
+        NAME aowis-epanet-js-integration
+        COMMAND aowis-epanet-js-integration-tests
+    )
+    set_tests_properties(aowis-epanet-js-integration
         PROPERTIES
             LABELS "aowis"
     )
@@ -611,9 +732,20 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         DEPENDS
             aowis-map-render-neutral-tests
             aowis-hydraulic-network-editor-tests
+            aowis-demand-point-tests
+            aowis-pipe-material-tests
+            aowis-epanet-js-reader-tests
+            aowis-epanet-js-converter-tests
+            aowis-epanet-js-integration-tests
     )
 endif()
 
 qt_import_plugins(aowis-server-gui
     INCLUDE_BY_TYPE imageformats
 )
+
+if(TARGET Qt6::QSQLiteDriverPlugin)
+    qt_import_plugins(aowis-server-gui
+        INCLUDE Qt6::QSQLiteDriverPlugin
+    )
+endif()

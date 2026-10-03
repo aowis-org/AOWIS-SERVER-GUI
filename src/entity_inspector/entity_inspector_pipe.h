@@ -7,7 +7,6 @@
 #include <QGridLayout>
 
 #include <QPixmap>
-#include <QPushButton>
 #include <QLabel>
 #include <QLineEdit>
 #include <QSpinBox>
@@ -45,6 +44,7 @@ private:
 
     void addGroupRoughness();
     QComboBox *combo_material = nullptr;
+    QComboBox *combo_roughness_mode = nullptr;
     QDoubleSpinBox *spin_roughness_hw = nullptr;
     QDoubleSpinBox *spin_roughness_dw = nullptr;
     QDoubleSpinBox *spin_roughness_cm = nullptr;
@@ -58,6 +58,7 @@ private:
     void updateQualityUi();
 
     void refreshPipe();
+    void updateRoughnessUi(const HydraulicLinkPipe &pipe);
 
 signals:
 

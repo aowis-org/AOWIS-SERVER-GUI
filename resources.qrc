@@ -85,8 +85,6 @@
         <file alias="reservoir_albedo.png">assets/map3d/reservoir_albedo.png</file>
     </qresource>
     <qresource prefix="/examples/epanet/">
-        <file alias="01-uk-style.inp">assets/examples/epanet/01-uk-style.inp</file>
-        <file alias="02-us-style.inp">assets/examples/epanet/02-us-style.inp</file>
         <file alias="NET3.INP">assets/examples/epanet/NET3.INP</file>
         <file alias="NET3.ini">assets/examples/epanet/NET3.ini</file>
         <file alias="net3-cl2.msx">assets/examples/epanet/net3-cl2.msx</file>

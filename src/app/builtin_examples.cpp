@@ -3,8 +3,6 @@
 const QList<BuiltinExampleRevision> &builtinExampleRevisions()
 {
     static const QList<BuiltinExampleRevision> revisions = {
-        {QStringLiteral("UK style"), QStringLiteral("01-uk-style.inp"), QStringLiteral(":/examples/epanet/01-uk-style.inp")},
-        {QStringLiteral("US style"), QStringLiteral("02-us-style.inp"), QStringLiteral(":/examples/epanet/02-us-style.inp")},
         {QStringLiteral("NET3"), QStringLiteral("NET3.INP"), QStringLiteral(":/examples/epanet/NET3.INP")},
         {QStringLiteral("EXNET-3"), QStringLiteral("exnet-3.inp"), QStringLiteral(":/examples/epanet/exnet-3.inp")},
         {QStringLiteral("KY4"), QStringLiteral("ky4.inp"), QStringLiteral(":/examples/epanet/ky4.inp")},

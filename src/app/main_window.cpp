@@ -400,16 +400,16 @@ MainWindow::MainWindow(QWidget *parent)
         this->top_control_bar,
         &TopControlBar::signalImportProject,
         this->simulation_manager,
-        &SimulationManager::importEpanetNetwork,
+        &SimulationManager::importNetworkProject,
         Qt::DirectConnection);
 #else
-    connect(this->top_control_bar, &TopControlBar::signalImportProject, this->simulation_manager, &SimulationManager::importEpanetNetwork);
+    connect(this->top_control_bar, &TopControlBar::signalImportProject, this->simulation_manager, &SimulationManager::importNetworkProject);
 #endif
     connect(
         this->top_control_bar,
         &TopControlBar::signalBuiltinRevisionActivationRequested,
         this->simulation_manager,
-        &SimulationManager::importEpanetNetworkResource);
+        &SimulationManager::importNetworkProjectResource);
     connect(this->top_control_bar, &TopControlBar::signalExportEpanetNetwork, this->simulation_manager, &SimulationManager::exportEpanetNetwork);
     connect(this->simulation_manager, &SimulationManager::signalEpanetNetworkImported, this, [this]
     {

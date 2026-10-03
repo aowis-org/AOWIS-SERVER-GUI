@@ -16,5 +16,6 @@ cmake --build "${BUILD_DIR}" --target aowis-tests --parallel
 
 ctest \
     --test-dir "${BUILD_DIR}" \
+    --verbose \
     --output-on-failure \
     -L '^aowis$'
