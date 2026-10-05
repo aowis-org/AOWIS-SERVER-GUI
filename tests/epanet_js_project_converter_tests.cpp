@@ -195,6 +195,69 @@ void testUsesSourceProjectIdentityAndStableEntityUuids()
                "generic link references resolve through the registered link domain");
 }
 
+void testAcceptsNamedProjectedProjectWithStoredWgs84Coordinates()
+{
+    const QString unique_id = QStringLiteral("fc4ca0a0-da46-42eb-bc97-ad1963817ded");
+    EpanetJsProjectSnapshot project = makeProjectWithUniqueId(unique_id);
+
+    QJsonObject projection;
+    projection.insert(QStringLiteral("type"), QStringLiteral("epsg"));
+    projection.insert(QStringLiteral("id"), QStringLiteral("EPSG:3089"));
+    projection.insert(
+        QStringLiteral("name"),
+        QStringLiteral("NAD83 / Kentucky Single Zone (ftUS)"));
+
+    QJsonObject settings;
+    settings.insert(QStringLiteral("name"), QStringLiteral("projected-project-test"));
+    settings.insert(QStringLiteral("uniqueId"), unique_id);
+    settings.insert(QStringLiteral("projection"), projection);
+    setProjectSettings(project, settings);
+
+    const EpanetJsProjectConversionResult result = EpanetJsProjectConverter::convert(project);
+
+    expectTrue(result.success,
+               "named projected epanet-js project imports because .ejsdb stores map-based coordinates as longitude/latitude");
+    expectTrue(!hasDiagnosticCode(result, QStringLiteral("unsupported-coordinate-projection")),
+               "named projected epanet-js project is not rejected merely because its export CRS is not WGS84");
+    expectTrue(result.network.nodes_junctions.size() == 2,
+               "named projected epanet-js project preserves its junctions");
+    if (result.network.nodes_junctions.size() == 2)
+    {
+        expectNear(result.network.nodes_junctions.at(0).coordinate_wgs84.longitude_deg, 18.0, 1e-12,
+                   "named projected project keeps stored longitude without a second projection transform");
+        expectNear(result.network.nodes_junctions.at(0).coordinate_wgs84.latitude_deg, 11.0, 1e-12,
+                   "named projected project keeps stored latitude without a second projection transform");
+        expectNear(result.network.nodes_junctions.at(1).coordinate_wgs84.longitude_deg, 18.1, 1e-12,
+                   "named projected project keeps second stored longitude without a second projection transform");
+        expectNear(result.network.nodes_junctions.at(1).coordinate_wgs84.latitude_deg, 11.1, 1e-12,
+                   "named projected project keeps second stored latitude without a second projection transform");
+    }
+}
+
+void testRejectsNonGeoreferencedLocalGridProject()
+{
+    const QString unique_id = QStringLiteral("fc4ca0a0-da46-42eb-bc97-ad1963817ded");
+    EpanetJsProjectSnapshot project = makeProjectWithUniqueId(unique_id);
+
+    QJsonObject projection;
+    projection.insert(QStringLiteral("type"), QStringLiteral("xy-grid"));
+    projection.insert(QStringLiteral("id"), QStringLiteral("local-grid"));
+    projection.insert(QStringLiteral("name"), QStringLiteral("Simple X-Y Grid"));
+
+    QJsonObject settings;
+    settings.insert(QStringLiteral("name"), QStringLiteral("local-grid-test"));
+    settings.insert(QStringLiteral("uniqueId"), unique_id);
+    settings.insert(QStringLiteral("projection"), projection);
+    setProjectSettings(project, settings);
+
+    const EpanetJsProjectConversionResult result = EpanetJsProjectConverter::convert(project);
+
+    expectTrue(!result.success,
+               "non-georeferenced epanet-js X-Y grid does not silently become geographic WGS84 geometry");
+    expectTrue(hasDiagnosticCode(result, QStringLiteral("unsupported-local-grid-projection")),
+               "non-georeferenced X-Y grid reports its dedicated unsupported projection diagnostic");
+}
+
 void testGeneratesStableFallbackProjectIdentity()
 {
     EpanetJsProjectSnapshot project = makeProjectWithUniqueId(QString());
@@ -342,6 +405,12 @@ void testImportsProjectSettingsAndPatterns()
     simulation.insert(QStringLiteral("viscosity"), 1.1);
     simulation.insert(QStringLiteral("unbalancedMode"), QStringLiteral("CONTINUE"));
     simulation.insert(QStringLiteral("unbalancedExtraTrials"), 7);
+    simulation.insert(QStringLiteral("maximumTrials"), 123);
+    simulation.insert(QStringLiteral("checkFrequency"), 3);
+    simulation.insert(QStringLiteral("maximumCheck"), 8);
+    simulation.insert(QStringLiteral("dampingLimit"), 0.42);
+    simulation.insert(QStringLiteral("maximumHeadError"), 2.5);
+    simulation.insert(QStringLiteral("maximumFlowChange"), 10.0);
     simulation.insert(QStringLiteral("reactionBulkOrder"), 1.2);
     simulation.insert(QStringLiteral("reactionWallOrder"), 0.8);
     simulation.insert(QStringLiteral("reactionTankOrder"), 1.1);
@@ -394,6 +463,18 @@ void testImportsProjectSettingsAndPatterns()
                "unbalanced continue mode is imported");
     expectTrue(result.network.options_hydraulic.unbalanced_extra_trials == 7,
                "unbalanced extra trials are imported");
+    expectTrue(result.network.options_hydraulic.maximum_trials == 123,
+               "maximum hydraulic trials are imported");
+    expectTrue(result.network.options_hydraulic.check_frequency == 3,
+               "hydraulic status check frequency is imported");
+    expectTrue(result.network.options_hydraulic.maximum_check == 8,
+               "maximum hydraulic status checks are imported");
+    expectNear(result.network.options_hydraulic.damping_limit, 0.42, 1e-12,
+               "hydraulic damping limit is imported");
+    expectNear(result.network.options_hydraulic.maximum_head_error_m, 0.762, 1e-12,
+               "maximum head error feet are converted to metres");
+    expectNear(result.network.options_hydraulic.maximum_flow_change_m3_per_h, 2.2712470704, 1e-12,
+               "maximum flow change gpm is converted to m3/h");
     expectNear(result.network.options_reaction.global_pipe_bulk_reaction.order, 1.2, 1e-12,
                "global pipe bulk order is imported");
     expectNear(result.network.options_reaction.global_pipe_wall_reaction.order, 0.8, 1e-12,
@@ -809,6 +890,7 @@ void testConvertsUsNodeAndDemandUnits()
     units.insert(QStringLiteral("volume"), QStringLiteral("ft^3"));
     units.insert(QStringLiteral("baseDemand"), QStringLiteral("gpm"));
     units.insert(QStringLiteral("flow"), QStringLiteral("gpm"));
+    units.insert(QStringLiteral("pressure"), QStringLiteral("psi"));
 
     QJsonObject settings;
     settings.insert(QStringLiteral("name"), QStringLiteral("us-node-test"));
@@ -818,9 +900,16 @@ void testConvertsUsNodeAndDemandUnits()
     settings.insert(QStringLiteral("units"), units);
     setProjectSettings(project, settings);
 
+    QJsonObject simulation;
+    simulation.insert(QStringLiteral("specificGravity"), 1.2);
+    simulation.insert(QStringLiteral("emitterExponent"), 0.6);
+    setSimulationSettings(project, simulation);
+
     EpanetJsTableSnapshot junctions = project.tables.value(QStringLiteral("junctions"));
     junctions.columns.append(QStringLiteral("elevation"));
+    junctions.columns.append(QStringLiteral("emitter_coefficient"));
     junctions.rows[0].insert(QStringLiteral("elevation"), 100.0);
+    junctions.rows[0].insert(QStringLiteral("emitter_coefficient"), 2.0);
     junctions.rows[1].insert(QStringLiteral("elevation"), 125.0);
     project.tables.insert(QStringLiteral("junctions"), junctions);
 
@@ -884,6 +973,10 @@ void testConvertsUsNodeAndDemandUnits()
         const HydraulicNodeJunction &junction = result.network.nodes_junctions.first();
         expectNear(junction.elevation_m, 30.48, 1e-12,
                    "junction elevation feet are converted to metres");
+        expectNear(junction.emitter.pressure_exponent, 0.6, 1e-12,
+                   "epanet-js emitter exponent is imported");
+        expectNear(junction.emitter.coefficient, 0.6258458247654275, 1e-12,
+                   "US emitter coefficient is converted from gpm/psi^n to canonical m3/h/m^n");
         expectTrue(junction.demands.size() == 1, "US junction demand is imported");
         if (junction.demands.size() == 1)
             expectNear(junction.demands.first().base_demand_m3_per_h, 2.2712470704, 1e-12,
@@ -906,6 +999,115 @@ void testConvertsUsNodeAndDemandUnits()
         expectNear(imported.diameter_m, 6.096, 1e-12,
                    "tank diameter feet are converted to metres");
     }
+}
+
+void testImportsWaterQualitySimulationSettings()
+{
+    EpanetJsProjectSnapshot chemical_project = makeProjectWithUniqueId(
+        QStringLiteral("fc4ca0a0-da46-42eb-bc97-ad1963817ded"));
+
+    QJsonObject chemical_units;
+    chemical_units.insert(QStringLiteral("chemicalConcentration"), QStringLiteral("ug/L"));
+    QJsonObject chemical_project_settings;
+    chemical_project_settings.insert(QStringLiteral("name"), QStringLiteral("quality-chemical-test"));
+    chemical_project_settings.insert(
+        QStringLiteral("uniqueId"),
+        QStringLiteral("fc4ca0a0-da46-42eb-bc97-ad1963817ded"));
+    chemical_project_settings.insert(QStringLiteral("units"), chemical_units);
+    setProjectSettings(chemical_project, chemical_project_settings);
+
+    QJsonObject chemical_settings;
+    chemical_settings.insert(QStringLiteral("qualitySimulationType"), QStringLiteral("chemical"));
+    chemical_settings.insert(QStringLiteral("qualityChemicalName"), QStringLiteral("Chlorine"));
+    chemical_settings.insert(QStringLiteral("tolerance"), 25.0);
+    chemical_settings.insert(QStringLiteral("diffusivity"), 1.3);
+    setSimulationSettings(chemical_project, chemical_settings);
+
+    const EpanetJsProjectConversionResult chemical_result =
+        EpanetJsProjectConverter::convert(chemical_project);
+    expectTrue(chemical_result.success,
+               "converter accepts epanet-js chemical quality run settings");
+    expectTrue(chemical_result.quality_runs.size() == 1,
+               "chemical quality configuration creates one AOWIS quality run");
+    if (chemical_result.quality_runs.size() == 1)
+    {
+        const WaterQualitySolverOptions &quality = chemical_result.quality_runs.first();
+        expectTrue(quality.analysis == WaterQualityAnalysisType::Chemical,
+                   "chemical quality analysis mode is imported");
+        expectTrue(quality.chemical_name == QStringLiteral("Chlorine"),
+                   "chemical quality name is imported");
+        expectNear(quality.chemical_tolerance_mg_per_l, 0.025, 1e-12,
+                   "chemical tolerance ug/L is converted to canonical mg/L");
+        expectNear(quality.relative_diffusivity, 1.3, 1e-12,
+                   "relative diffusivity is imported");
+    }
+
+    EpanetJsProjectSnapshot age_project = makeProjectWithUniqueId(
+        QStringLiteral("4cd1e05a-cbba-4d2d-919a-a0d287074d1f"));
+    QJsonObject age_settings;
+    age_settings.insert(QStringLiteral("qualitySimulationType"), QStringLiteral("age"));
+    age_settings.insert(QStringLiteral("tolerance"), 0.25);
+    setSimulationSettings(age_project, age_settings);
+
+    const EpanetJsProjectConversionResult age_result =
+        EpanetJsProjectConverter::convert(age_project);
+    expectTrue(age_result.success,
+               "converter accepts epanet-js water-age run settings");
+    expectTrue(age_result.quality_runs.size() == 1,
+               "water-age configuration creates one AOWIS quality run");
+    if (age_result.quality_runs.size() == 1)
+    {
+        const WaterQualitySolverOptions &quality = age_result.quality_runs.first();
+        expectTrue(quality.analysis == WaterQualityAnalysisType::WaterAge,
+                   "water-age analysis mode is imported");
+        expectNear(quality.water_age_tolerance_h, 0.25, 1e-12,
+                   "water-age tolerance is imported in hours");
+    }
+
+    EpanetJsProjectSnapshot trace_project = makeProjectWithUniqueId(
+        QStringLiteral("a6c92c9e-6cfb-424b-9804-664b6c70d6a1"));
+    QJsonObject trace_settings;
+    trace_settings.insert(QStringLiteral("qualitySimulationType"), QStringLiteral("trace"));
+    trace_settings.insert(QStringLiteral("qualityTraceNodeId"), 1);
+    trace_settings.insert(QStringLiteral("tolerance"), 0.2);
+    setSimulationSettings(trace_project, trace_settings);
+
+    const EpanetJsProjectConversionResult trace_result =
+        EpanetJsProjectConverter::convert(trace_project);
+    expectTrue(trace_result.success,
+               "converter accepts epanet-js source-trace run settings");
+    expectTrue(trace_result.quality_runs.size() == 1,
+               "source-trace configuration creates one AOWIS quality run");
+    if (trace_result.quality_runs.size() == 1)
+    {
+        const WaterQualitySolverOptions &quality = trace_result.quality_runs.first();
+        expectTrue(quality.analysis == WaterQualityAnalysisType::SourceTrace,
+                   "source-trace analysis mode is imported");
+        expectTrue(
+            quality.trace_node_uuid == trace_result.id_map.nodeUuid(1),
+            "source-trace node id resolves through the epanet-js id map");
+        expectNear(quality.source_trace_tolerance_percent, 0.2, 1e-12,
+                   "source-trace tolerance is imported in percent");
+    }
+}
+
+void testRejectsInvalidWaterQualityTraceNode()
+{
+    EpanetJsProjectSnapshot project = makeProjectWithUniqueId(
+        QStringLiteral("609d4967-c634-4739-9449-fd13e3a6613a"));
+
+    QJsonObject simulation;
+    simulation.insert(QStringLiteral("qualitySimulationType"), QStringLiteral("trace"));
+    simulation.insert(QStringLiteral("qualityTraceNodeId"), 9999);
+    setSimulationSettings(project, simulation);
+
+    const EpanetJsProjectConversionResult result = EpanetJsProjectConverter::convert(project);
+    expectTrue(!result.success,
+               "converter rejects source-trace settings that reference a missing node");
+    expectTrue(hasDiagnosticCode(result, QStringLiteral("invalid-quality-trace-node")),
+               "missing source-trace node receives a dedicated diagnostic");
+    expectTrue(result.quality_runs.isEmpty(),
+               "invalid source-trace configuration does not create a partial quality run");
 }
 
 void testRejectsBrokenNodeReferences()
@@ -2363,13 +2565,174 @@ void testImportsRawSimpleLevelControls()
         "raw simple-control UUIDs are deterministic across repeated imports");
 }
 
-void testBlocksRawRulesUntilTranslated()
+void testImportsRawRules()
 {
     EpanetJsProjectSnapshot project = makeProjectWithUniqueId(
         QStringLiteral("fc4ca0a0-da46-42eb-bc97-ad1963817ded"));
 
+    QJsonObject units;
+    units.insert(QStringLiteral("pressure"), QStringLiteral("mwc"));
+    units.insert(QStringLiteral("flow"), QStringLiteral("l/s"));
+    QJsonObject settings;
+    settings.insert(QStringLiteral("name"), QStringLiteral("raw-rule-test"));
+    settings.insert(
+        QStringLiteral("uniqueId"),
+        QStringLiteral("fc4ca0a0-da46-42eb-bc97-ad1963817ded"));
+    settings.insert(QStringLiteral("units"), units);
+    setProjectSettings(project, settings);
+
+    QJsonArray references;
+    QJsonObject pressure_node;
+    pressure_node.insert(QStringLiteral("assetId"), 1);
+    pressure_node.insert(QStringLiteral("isActionTarget"), false);
+    references.append(pressure_node);
+    QJsonObject status_link;
+    status_link.insert(QStringLiteral("assetId"), 10);
+    status_link.insert(QStringLiteral("isActionTarget"), false);
+    references.append(status_link);
+    QJsonObject action_link;
+    action_link.insert(QStringLiteral("assetId"), 10);
+    action_link.insert(QStringLiteral("isActionTarget"), true);
+    references.append(action_link);
+
     QJsonObject raw_rule;
-    raw_rule.insert(QStringLiteral("template"), QStringLiteral("RULE R1"));
+    raw_rule.insert(
+        QStringLiteral("template"),
+        QStringLiteral(
+            "RULE R_RAW\n"
+            "IF NODE {{0}} PRESSURE BELOW 20\n"
+            "AND SYSTEM TIME >= 1:00\n"
+            "OR LINK {{1}} STATUS IS CLOSED\n"
+            "THEN LINK {{2}} STATUS = CLOSED\n"
+            "ELSE LINK {{2}} STATUS = OPEN\n"
+            "PRIORITY 2.5"));
+    raw_rule.insert(QStringLiteral("assetReferences"), references);
+    QJsonArray raw_rules;
+    raw_rules.append(raw_rule);
+    QJsonObject raw;
+    raw.insert(QStringLiteral("simple"), QJsonArray());
+    raw.insert(QStringLiteral("rules"), raw_rules);
+    const QVariantMap raw_row = {
+        {QStringLiteral("id"), 1},
+        {QStringLiteral("data"), QString::fromUtf8(
+            QJsonDocument(raw).toJson(QJsonDocument::Compact))}
+    };
+    project.tables.insert(
+        QStringLiteral("raw_controls"),
+        makeTable(
+            QStringLiteral("raw_controls"),
+            {QStringLiteral("id"), QStringLiteral("data")},
+            {raw_row}));
+
+    const EpanetJsProjectConversionResult first = EpanetJsProjectConverter::convert(project);
+    const EpanetJsProjectConversionResult second = EpanetJsProjectConverter::convert(project);
+
+    expectTrue(first.success,
+               "converter imports epanet-js raw EPANET rules");
+    expectTrue(first.network.controls_rules.size() == 1,
+               "one epanet-js raw rule becomes one AOWIS rule");
+    if (first.network.controls_rules.size() != 1)
+        return;
+
+    const HydraulicControlRule &rule = first.network.controls_rules.first();
+    expectTrue(rule.id == QStringLiteral("R_RAW"),
+               "raw rule id is preserved");
+    expectNear(rule.priority, 2.5, 1e-12,
+               "raw rule priority is preserved");
+    expectTrue(rule.premises.size() == 3,
+               "raw IF/AND/OR clauses become three structured premises");
+    expectTrue(rule.actions_then.size() == 1,
+               "raw THEN clause becomes one structured action");
+    expectTrue(rule.actions_else.size() == 1,
+               "raw ELSE clause becomes one structured action");
+
+    if (rule.premises.size() == 3)
+    {
+        const HydraulicControlRulePremise &pressure = rule.premises.at(0);
+        const HydraulicControlRulePremise &time = rule.premises.at(1);
+        const HydraulicControlRulePremise &status = rule.premises.at(2);
+        expectTrue(pressure.logical_operator == HydraulicControlRuleLogicalOperator::If,
+                   "first raw rule premise retains IF");
+        expectTrue(pressure.object == HydraulicControlRuleObject::Node,
+                   "raw node-pressure premise targets a node");
+        expectTrue(pressure.variable == HydraulicControlRuleVariable::Pressure,
+                   "raw node-pressure premise retains PRESSURE variable");
+        expectTrue(pressure.comparison == HydraulicControlRuleOperator::Less,
+                   "raw BELOW comparison canonicalizes to less-than");
+        expectTrue(pressure.pressure_head_m.has_value(),
+                   "raw pressure threshold is stored canonically");
+        if (pressure.pressure_head_m.has_value())
+            expectNear(pressure.pressure_head_m.value(), 20.0, 1e-12,
+                       "mwc raw pressure threshold stays in metres of head");
+
+        expectTrue(time.logical_operator == HydraulicControlRuleLogicalOperator::And,
+                   "second raw rule premise retains AND");
+        expectTrue(time.object == HydraulicControlRuleObject::System,
+                   "raw SYSTEM TIME premise targets system");
+        expectTrue(time.variable == HydraulicControlRuleVariable::Time,
+                   "raw SYSTEM TIME premise retains TIME variable");
+        expectTrue(time.elapsed_time_s.has_value(),
+                   "raw SYSTEM TIME threshold is stored in seconds");
+        if (time.elapsed_time_s.has_value())
+            expectTrue(time.elapsed_time_s.value() == 3600,
+                       "raw 1:00 system time becomes 3600 seconds");
+
+        expectTrue(status.logical_operator == HydraulicControlRuleLogicalOperator::Or,
+                   "third raw rule premise retains OR");
+        expectTrue(status.object == HydraulicControlRuleObject::Link,
+                   "raw link-status premise targets a link");
+        expectTrue(status.variable == HydraulicControlRuleVariable::Status,
+                   "raw link-status premise retains STATUS variable");
+        expectTrue(status.comparison == HydraulicControlRuleOperator::Equal,
+                   "raw IS comparison canonicalizes to equality");
+        expectTrue(status.status.has_value()
+                       && status.status.value() == HydraulicControlRuleStatus::Closed,
+                   "raw CLOSED status premise is preserved");
+    }
+
+    if (!rule.actions_then.isEmpty())
+    {
+        expectTrue(rule.actions_then.first().status.has_value()
+                       && rule.actions_then.first().status.value()
+                           == HydraulicControlRuleStatus::Closed,
+                   "raw THEN status action is preserved");
+    }
+    if (!rule.actions_else.isEmpty())
+    {
+        expectTrue(rule.actions_else.first().status.has_value()
+                       && rule.actions_else.first().status.value()
+                           == HydraulicControlRuleStatus::Open,
+                   "raw ELSE status action is preserved");
+    }
+    expectTrue(
+        second.network.controls_rules.size() == 1
+            && rule.uuid == second.network.controls_rules.first().uuid,
+        "raw rule UUIDs are deterministic across repeated imports");
+}
+
+void testRejectsUnsupportedRawRulePowerPremise()
+{
+    EpanetJsProjectSnapshot project = makeProjectWithUniqueId(
+        QStringLiteral("fc4ca0a0-da46-42eb-bc97-ad1963817ded"));
+
+    QJsonObject reference;
+    reference.insert(QStringLiteral("assetId"), 10);
+    reference.insert(QStringLiteral("isActionTarget"), false);
+    QJsonArray references;
+    references.append(reference);
+    QJsonObject action_reference;
+    action_reference.insert(QStringLiteral("assetId"), 10);
+    action_reference.insert(QStringLiteral("isActionTarget"), true);
+    references.append(action_reference);
+
+    QJsonObject raw_rule;
+    raw_rule.insert(
+        QStringLiteral("template"),
+        QStringLiteral(
+            "RULE R_POWER\n"
+            "IF LINK {{0}} POWER > 1\n"
+            "THEN LINK {{1}} STATUS = CLOSED"));
+    raw_rule.insert(QStringLiteral("assetReferences"), references);
     QJsonArray raw_rules;
     raw_rules.append(raw_rule);
     QJsonObject raw;
@@ -2390,9 +2753,9 @@ void testBlocksRawRulesUntilTranslated()
     const EpanetJsProjectConversionResult result = EpanetJsProjectConverter::convert(project);
 
     expectTrue(!result.success,
-               "converter does not silently drop epanet-js raw rules");
-    expectTrue(hasDiagnosticCode(result, QStringLiteral("unsupported-raw-rules")),
-               "non-empty raw rules produce a dedicated blocking diagnostic");
+               "converter blocks raw POWER premises that the current EPANET builder cannot execute");
+    expectTrue(hasDiagnosticCode(result, QStringLiteral("unsupported-raw-rule-power-premise")),
+               "unsupported POWER premise produces a dedicated diagnostic");
 }
 
 void testRejectsBrokenPumpAndValveReferences()
@@ -2557,6 +2920,12 @@ int main()
         "stable epanet-js id mapping",
         testUsesSourceProjectIdentityAndStableEntityUuids);
     test_harness.runCase(
+        "epanet-js named projected project internal coordinates",
+        testAcceptsNamedProjectedProjectWithStoredWgs84Coordinates);
+    test_harness.runCase(
+        "epanet-js local X-Y grid rejection",
+        testRejectsNonGeoreferencedLocalGridProject);
+    test_harness.runCase(
         "fallback epanet-js project identity",
         testGeneratesStableFallbackProjectIdentity);
     test_harness.runCase(
@@ -2580,6 +2949,12 @@ int main()
     test_harness.runCase(
         "epanet-js US node and demand units",
         testConvertsUsNodeAndDemandUnits);
+    test_harness.runCase(
+        "epanet-js water-quality simulation settings",
+        testImportsWaterQualitySimulationSettings);
+    test_harness.runCase(
+        "epanet-js invalid source-trace node",
+        testRejectsInvalidWaterQualityTraceNode);
     test_harness.runCase(
         "broken epanet-js node references",
         testRejectsBrokenNodeReferences);
@@ -2629,8 +3004,11 @@ int main()
         "epanet-js raw simple level controls",
         testImportsRawSimpleLevelControls);
     test_harness.runCase(
-        "untranslated epanet-js raw rules",
-        testBlocksRawRulesUntilTranslated);
+        "epanet-js raw EPANET rules",
+        testImportsRawRules);
+    test_harness.runCase(
+        "unsupported epanet-js raw POWER premise",
+        testRejectsUnsupportedRawRulePowerPremise);
     test_harness.runCase(
         "broken epanet-js pump and valve references",
         testRejectsBrokenPumpAndValveReferences);

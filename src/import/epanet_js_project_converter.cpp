@@ -377,6 +377,32 @@ std::optional<double> pressureToHeadM(
     return std::nullopt;
 }
 
+std::optional<double> emitterCoefficientToCanonical(
+    double source_coefficient,
+    double pressure_exponent,
+    const QString &flow_unit,
+    const QString &pressure_unit,
+    double specific_gravity)
+{
+    if (!std::isfinite(source_coefficient) || source_coefficient < 0.0
+        || !std::isfinite(pressure_exponent) || pressure_exponent <= 0.0)
+        return std::nullopt;
+    if (source_coefficient == 0.0)
+        return 0.0;
+
+    const std::optional<double> flow_scale = flowToM3PerH(1.0, flow_unit);
+    const std::optional<double> pressure_scale = pressureToHeadM(
+        1.0, pressure_unit, specific_gravity);
+    if (!flow_scale.has_value() || !pressure_scale.has_value()
+        || !std::isfinite(*pressure_scale) || *pressure_scale <= 0.0)
+        return std::nullopt;
+
+    const double denominator = std::pow(*pressure_scale, pressure_exponent);
+    if (!std::isfinite(denominator) || denominator <= 0.0)
+        return std::nullopt;
+    return source_coefficient * *flow_scale / denominator;
+}
+
 QJsonObject simulationSettingsObject(
     const EpanetJsProjectSnapshot &project,
     EpanetJsProjectConversionResult &result)
@@ -695,11 +721,10 @@ void setUnsignedSecondsIfPresent(
 }
 
 void mapSimulationSettings(
-    const EpanetJsProjectSnapshot &project,
+    const QJsonObject &settings,
     const QJsonObject &project_settings,
     EpanetJsProjectConversionResult &result)
 {
-    const QJsonObject settings = simulationSettingsObject(project, result);
     if (settings.isEmpty())
         return;
 
@@ -934,6 +959,151 @@ void mapSimulationSettings(
         result.network.report_statistic = HydraulicSimulationReportStatistic::Range;
     else if (statistic == QStringLiteral("SERIES") || statistic == QStringLiteral("NONE"))
         result.network.report_statistic = HydraulicSimulationReportStatistic::Series;
+}
+
+QString normalizedSettingToken(QString value)
+{
+    value = value.trimmed().toLower();
+    value.remove(QLatin1Char(' '));
+    value.remove(QLatin1Char('_'));
+    value.remove(QLatin1Char('-'));
+    return value;
+}
+
+void mapQualitySimulationSettings(
+    const QJsonObject &settings,
+    const QJsonObject &project_settings,
+    EpanetJsProjectConversionResult &result)
+{
+    if (settings.isEmpty())
+        return;
+
+    const QString mode = normalizedSettingToken(
+        settings.value(QStringLiteral("qualitySimulationType")).toString());
+    if (mode.isEmpty() || mode == QStringLiteral("none"))
+        return;
+
+    WaterQualitySolverOptions options;
+    if (mode == QStringLiteral("chemical") || mode == QStringLiteral("chem"))
+    {
+        options.analysis = WaterQualityAnalysisType::Chemical;
+        options.chemical_name = settings.value(QStringLiteral("qualityChemicalName"))
+            .toString().trimmed();
+        if (options.chemical_name.isEmpty())
+        {
+            options.chemical_name = QStringLiteral("Chemical");
+            appendDiagnostic(
+                result,
+                EpanetJsConversionDiagnosticSeverity::Warning,
+                QStringLiteral("missing-quality-chemical-name"),
+                QStringLiteral("epanet-js chemical quality analysis has no chemical name; AOWIS uses 'Chemical'."),
+                QStringLiteral("simulation_settings"));
+        }
+    }
+    else if (mode == QStringLiteral("age") || mode == QStringLiteral("waterage"))
+    {
+        options.analysis = WaterQualityAnalysisType::WaterAge;
+    }
+    else if (mode == QStringLiteral("trace") || mode == QStringLiteral("sourcetrace"))
+    {
+        options.analysis = WaterQualityAnalysisType::SourceTrace;
+        const std::optional<qint64> source_node_id = integerValue(
+            settings.value(QStringLiteral("qualityTraceNodeId")).toVariant());
+        const QUuid trace_node_uuid = source_node_id.has_value()
+            ? result.id_map.nodeUuid(*source_node_id)
+            : QUuid();
+        if (!source_node_id.has_value() || trace_node_uuid.isNull())
+        {
+            appendDiagnostic(
+                result,
+                EpanetJsConversionDiagnosticSeverity::Error,
+                QStringLiteral("invalid-quality-trace-node"),
+                QStringLiteral("epanet-js source-trace quality analysis does not reference an existing unambiguous node."),
+                QStringLiteral("simulation_settings"));
+            return;
+        }
+        options.trace_node_uuid = trace_node_uuid;
+    }
+    else
+    {
+        appendDiagnostic(
+            result,
+            EpanetJsConversionDiagnosticSeverity::Error,
+            QStringLiteral("unknown-quality-simulation-type"),
+            QStringLiteral("epanet-js quality simulation type '%1' is unknown; AOWIS cannot preserve the configured water-quality run.")
+                .arg(settings.value(QStringLiteral("qualitySimulationType")).toString()),
+            QStringLiteral("simulation_settings"));
+        return;
+    }
+
+    if (settings.contains(QStringLiteral("diffusivity")))
+    {
+        const std::optional<double> diffusivity = finiteDouble(
+            settings.value(QStringLiteral("diffusivity")));
+        if (!diffusivity.has_value() || *diffusivity < 0.0)
+        {
+            appendDiagnostic(
+                result,
+                EpanetJsConversionDiagnosticSeverity::Error,
+                QStringLiteral("invalid-quality-diffusivity"),
+                QStringLiteral("epanet-js quality diffusivity must be a finite non-negative value."),
+                QStringLiteral("simulation_settings"));
+            return;
+        }
+        options.relative_diffusivity = *diffusivity;
+    }
+
+    if (settings.contains(QStringLiteral("tolerance")))
+    {
+        const std::optional<double> tolerance = finiteDouble(
+            settings.value(QStringLiteral("tolerance")));
+        if (!tolerance.has_value() || *tolerance < 0.0)
+        {
+            appendDiagnostic(
+                result,
+                EpanetJsConversionDiagnosticSeverity::Error,
+                QStringLiteral("invalid-quality-tolerance"),
+                QStringLiteral("epanet-js quality tolerance must be a finite non-negative value."),
+                QStringLiteral("simulation_settings"));
+            return;
+        }
+
+        switch (options.analysis)
+        {
+        case WaterQualityAnalysisType::Chemical:
+        {
+            const QJsonObject units = projectUnitsObject(project_settings);
+            QString chemical_unit = units.value(QStringLiteral("chemicalConcentration")).toString();
+            if (chemical_unit.isEmpty())
+                chemical_unit = settings.value(QStringLiteral("qualityMassUnit")).toString();
+            const std::optional<double> chemical_scale =
+                chemicalConcentrationScaleToMgPerL(chemical_unit);
+            if (!chemical_scale.has_value())
+            {
+                appendDiagnostic(
+                    result,
+                    EpanetJsConversionDiagnosticSeverity::Error,
+                    QStringLiteral("unsupported-quality-chemical-unit"),
+                    QStringLiteral("AOWIS cannot convert epanet-js chemical quality tolerance unit '%1'.")
+                        .arg(chemical_unit),
+                    QStringLiteral("simulation_settings"));
+                return;
+            }
+            options.chemical_tolerance_mg_per_l = *tolerance * *chemical_scale;
+            break;
+        }
+        case WaterQualityAnalysisType::WaterAge:
+            options.water_age_tolerance_h = *tolerance;
+            break;
+        case WaterQualityAnalysisType::SourceTrace:
+            options.source_trace_tolerance_percent = *tolerance;
+            break;
+        case WaterQualityAnalysisType::None:
+            break;
+        }
+    }
+
+    result.quality_runs.append(options);
 }
 
 std::optional<QList<QPair<double, double>>> curvePoints(const QString &text)
@@ -1268,6 +1438,84 @@ QString firstUnit(const QJsonObject &units, const QStringList &keys)
     return {};
 }
 
+bool localGridProjectionToken(QString token)
+{
+    token = token.trimmed().toLower();
+    token.remove(QLatin1Char(' '));
+    token.remove(QLatin1Char('_'));
+    token.remove(QLatin1Char('-'));
+
+    return token == QStringLiteral("xy")
+        || token == QStringLiteral("xygrid")
+        || token == QStringLiteral("grid")
+        || token == QStringLiteral("localgrid")
+        || token == QStringLiteral("local")
+        || token == QStringLiteral("cartesian")
+        || token == QStringLiteral("none");
+}
+
+bool validateProjectCoordinateStorage(
+    const QJsonObject &project_settings,
+    EpanetJsProjectConversionResult &result)
+{
+    const QJsonValue projection_value = project_settings.value(QStringLiteral("projection"));
+    if (projection_value.isUndefined() || projection_value.isNull())
+    {
+        appendDiagnostic(
+            result,
+            EpanetJsConversionDiagnosticSeverity::Warning,
+            QStringLiteral("missing-project-projection"),
+            QStringLiteral(
+                "The epanet-js project has no projection metadata; AOWIS assumes its stored coordinates are WGS84 longitude/latitude for compatibility with older save files."));
+        return true;
+    }
+
+    QString projection_type;
+    QString projection_id;
+    if (projection_value.isObject())
+    {
+        const QJsonObject projection = projection_value.toObject();
+        projection_type = projection.value(QStringLiteral("type")).toString();
+        projection_id = projection.value(QStringLiteral("id")).toString();
+        if (projection.isEmpty())
+        {
+            appendDiagnostic(
+                result,
+                EpanetJsConversionDiagnosticSeverity::Warning,
+                QStringLiteral("empty-project-projection"),
+                QStringLiteral(
+                    "The epanet-js project has empty projection metadata; AOWIS assumes its stored coordinates are WGS84 longitude/latitude."));
+            return true;
+        }
+    }
+    else if (projection_value.isString())
+    {
+        projection_id = projection_value.toString();
+    }
+    else
+    {
+        appendDiagnostic(
+            result,
+            EpanetJsConversionDiagnosticSeverity::Error,
+            QStringLiteral("invalid-project-projection"),
+            QStringLiteral("The epanet-js project projection metadata has an unsupported data type."));
+        return false;
+    }
+
+    if (localGridProjectionToken(projection_type) || localGridProjectionToken(projection_id))
+    {
+        appendDiagnostic(
+            result,
+            EpanetJsConversionDiagnosticSeverity::Error,
+            QStringLiteral("unsupported-local-grid-projection"),
+            QStringLiteral(
+                "The epanet-js project uses a non-georeferenced X-Y grid. AOWIS does not yet import local-grid .ejsdb geometry because mapping those coordinates into WGS84 would require inventing a geographic location."));
+        return false;
+    }
+
+    return true;
+}
+
 QString importedEntityId(
     const QVariantMap &row,
     const QString &table_name,
@@ -1292,40 +1540,13 @@ QString importedEntityId(
     return generated;
 }
 
-bool importWgs84Coordinate(
+bool importStoredWgs84Coordinate(
     const QVariantMap &row,
-    const QJsonObject &project_settings,
     const QString &table_name,
     qint64 source_id,
     CoordinateWGS84 &coordinate,
     EpanetJsProjectConversionResult &result)
 {
-    const QJsonObject projection = project_settings.value(QStringLiteral("projection")).toObject();
-    const QString projection_type = projection.value(QStringLiteral("type")).toString().trimmed().toLower();
-    const QString projection_id = projection.value(QStringLiteral("id")).toString().trimmed().toLower();
-    const bool projection_unspecified = projection_type.isEmpty() && projection_id.isEmpty();
-    const bool wgs84 = projection_unspecified
-        || projection_type == QStringLiteral("wgs84")
-        || projection_type == QStringLiteral("epsg:4326")
-        || projection_type == QStringLiteral("4326")
-        || projection_id == QStringLiteral("wgs84")
-        || projection_id == QStringLiteral("epsg:4326")
-        || projection_id == QStringLiteral("4326");
-    if (!wgs84)
-    {
-        appendDiagnostic(
-            result,
-            EpanetJsConversionDiagnosticSeverity::Error,
-            QStringLiteral("unsupported-coordinate-projection"),
-            QStringLiteral("epanet-js %1 id %2 uses projection '%3'; AOWIS currently only converts WGS84 coordinates from epanet-js projects safely.")
-                .arg(table_name)
-                .arg(source_id)
-                .arg(projection_id.isEmpty() ? projection_type : projection_id),
-            table_name,
-            source_id);
-        return false;
-    }
-
     const std::optional<double> longitude = finiteVariantDouble(row.value(QStringLiteral("coord_x")));
     const std::optional<double> latitude = finiteVariantDouble(row.value(QStringLiteral("coord_y")));
     if (!longitude.has_value() || !latitude.has_value()
@@ -1336,7 +1557,8 @@ bool importWgs84Coordinate(
             result,
             EpanetJsConversionDiagnosticSeverity::Error,
             QStringLiteral("invalid-node-coordinate"),
-            QStringLiteral("epanet-js %1 id %2 has an invalid WGS84 coordinate.")
+            QStringLiteral(
+                "epanet-js %1 id %2 has an invalid stored longitude/latitude coordinate.")
                 .arg(table_name)
                 .arg(source_id),
             table_name,
@@ -1460,6 +1682,95 @@ HydraulicNodeJunction *junctionByUuid(NetworkHydraulic &network, const QUuid &uu
             return &junction;
     }
     return nullptr;
+}
+
+void applyEmitterSettings(
+    const EpanetJsProjectSnapshot &project,
+    const QJsonObject &project_settings,
+    const QJsonObject &simulation_settings,
+    EpanetJsProjectConversionResult &result)
+{
+    double pressure_exponent = 0.5;
+    if (simulation_settings.contains(QStringLiteral("emitterExponent")))
+    {
+        const std::optional<double> value = finiteDouble(
+            simulation_settings.value(QStringLiteral("emitterExponent")));
+        if (!value.has_value() || *value <= 0.0)
+        {
+            appendDiagnostic(
+                result,
+                EpanetJsConversionDiagnosticSeverity::Error,
+                QStringLiteral("invalid-emitter-exponent"),
+                QStringLiteral("epanet-js emitter exponent must be a finite positive value."),
+                QStringLiteral("simulation_settings"));
+            return;
+        }
+        pressure_exponent = *value;
+    }
+
+    for (HydraulicNodeJunction &junction : result.network.nodes_junctions)
+        junction.emitter.pressure_exponent = pressure_exponent;
+
+    const EpanetJsTableSnapshot *table = tableByName(project, QStringLiteral("junctions"));
+    if (table == nullptr)
+        return;
+
+    const QJsonObject units = projectUnitsObject(project_settings);
+    const QString flow_unit = firstUnit(
+        units, QStringList{QStringLiteral("flow"), QStringLiteral("baseDemand")});
+    const QString pressure_unit = firstUnit(
+        units, QStringList{QStringLiteral("pressure"), QStringLiteral("head")});
+
+    for (const QVariantMap &row : table->rows)
+    {
+        if (!row.contains(QStringLiteral("emitter_coefficient"))
+            || row.value(QStringLiteral("emitter_coefficient")).isNull())
+            continue;
+
+        const std::optional<qint64> source_id = integerValue(row.value(QStringLiteral("id")));
+        const std::optional<double> source_coefficient = finiteVariantDouble(
+            row.value(QStringLiteral("emitter_coefficient")));
+        if (!source_id.has_value() || !source_coefficient.has_value())
+        {
+            appendDiagnostic(
+                result,
+                EpanetJsConversionDiagnosticSeverity::Error,
+                QStringLiteral("invalid-emitter-coefficient"),
+                QStringLiteral("epanet-js junction emitter coefficient is not a finite number."),
+                QStringLiteral("junctions"),
+                source_id);
+            continue;
+        }
+
+        HydraulicNodeJunction *junction = junctionByUuid(
+            result.network,
+            result.id_map.uuidFor(QStringLiteral("junctions"), *source_id));
+        if (junction == nullptr)
+            continue;
+
+        const std::optional<double> canonical = emitterCoefficientToCanonical(
+            *source_coefficient,
+            pressure_exponent,
+            flow_unit,
+            pressure_unit,
+            result.network.options_hydraulic.specific_gravity);
+        if (!canonical.has_value())
+        {
+            appendDiagnostic(
+                result,
+                EpanetJsConversionDiagnosticSeverity::Error,
+                QStringLiteral("unsupported-emitter-coefficient-unit"),
+                QStringLiteral("AOWIS cannot convert epanet-js junction %1 emitter coefficient using flow unit '%2', pressure unit '%3', and emitter exponent %4.")
+                    .arg(*source_id)
+                    .arg(flow_unit, pressure_unit)
+                    .arg(pressure_exponent),
+                QStringLiteral("junctions"),
+                *source_id);
+            continue;
+        }
+
+        junction->emitter.coefficient = *canonical;
+    }
 }
 
 double approximateDistanceMeters(
@@ -1605,8 +1916,8 @@ void importJunctions(
             || row.value(QStringLiteral("is_active")).toInt() != 0;
         junction.elevation_input_type = HydraulicNodeElevationInputType::TotalElevation;
 
-        importWgs84Coordinate(
-            row, project_settings, QStringLiteral("junctions"), *source_id,
+        importStoredWgs84Coordinate(
+            row, QStringLiteral("junctions"), *source_id,
             junction.coordinate_wgs84, result);
         importLengthValue(
             row, QStringLiteral("elevation"), elevation_unit, junction.elevation_m,
@@ -1642,8 +1953,8 @@ void importReservoirs(
             || row.value(QStringLiteral("is_active")).toInt() != 0;
         reservoir.head_input_type = HydraulicNodeElevationInputType::TotalHead;
 
-        importWgs84Coordinate(
-            row, project_settings, QStringLiteral("reservoirs"), *source_id,
+        importStoredWgs84Coordinate(
+            row, QStringLiteral("reservoirs"), *source_id,
             reservoir.coordinate_wgs84, result);
         importLengthValue(
             row, QStringLiteral("head"), head_unit, reservoir.hydraulic_head_m,
@@ -1723,8 +2034,8 @@ void importTanks(
         tank.elevation_input_type = HydraulicNodeTankElevationInputType::BottomElevation;
         tank.geometry_input_type = HydraulicNodeTankGeometryInputType::Cylindrical;
 
-        importWgs84Coordinate(
-            row, project_settings, QStringLiteral("tanks"), *source_id,
+        importStoredWgs84Coordinate(
+            row, QStringLiteral("tanks"), *source_id,
             tank.coordinate_wgs84, result);
         importLengthValue(
             row, QStringLiteral("elevation"), elevation_unit, tank.bottom_elevation_m,
@@ -2612,8 +2923,8 @@ void importCustomerPoints(
             row, QStringLiteral("customer_points"), *source_id, result);
         demand_point.uuid = result.id_map.uuidFor(
             QStringLiteral("customer_points"), *source_id);
-        importWgs84Coordinate(
-            row, project_settings, QStringLiteral("customer_points"), *source_id,
+        importStoredWgs84Coordinate(
+            row, QStringLiteral("customer_points"), *source_id,
             demand_point.coordinate_wgs84, result);
         demand_point.demands = demands_by_customer_point.value(*source_id);
 
@@ -4198,6 +4509,805 @@ bool importRawSimpleLevelControl(
     return true;
 }
 
+struct RawRuleStatement
+{
+    QString keyword;
+    QString body;
+};
+
+QList<RawRuleStatement> rawRuleStatements(const QString &rule_template)
+{
+    QString without_comments;
+    const QStringList lines = rule_template.split(QRegularExpression(QStringLiteral("[\\r\\n]+")));
+    for (const QString &line : lines)
+    {
+        const QString content = line.section(QLatin1Char(';'), 0, 0).trimmed();
+        if (!content.isEmpty())
+        {
+            if (!without_comments.isEmpty())
+                without_comments.append(QLatin1Char(' '));
+            without_comments.append(content);
+        }
+    }
+
+    QList<RawRuleStatement> statements;
+    const QRegularExpression expression(
+        QStringLiteral("\\b(RULE|IF|THEN|ELSE|AND|OR|PRIORITY|DISABLED|ENABLED)\\b(?:\\s+(.+?))?(?=\\b(?:RULE|IF|THEN|ELSE|AND|OR|PRIORITY|DISABLED|ENABLED)\\b|$)"),
+        QRegularExpression::CaseInsensitiveOption);
+    QRegularExpressionMatchIterator iterator = expression.globalMatch(without_comments);
+    while (iterator.hasNext())
+    {
+        const QRegularExpressionMatch match = iterator.next();
+        RawRuleStatement statement;
+        statement.keyword = match.captured(1).trimmed().toUpper();
+        statement.body = match.captured(2).trimmed();
+        statements.append(statement);
+    }
+    return statements;
+}
+
+std::optional<HydraulicControlRuleOperator> rawRuleComparison(const QString &text)
+{
+    QString normalized = text.trimmed().toUpper();
+    normalized.replace(QRegularExpression(QStringLiteral("\\s+")), QStringLiteral(" "));
+    if (normalized == QStringLiteral("=") || normalized == QStringLiteral("IS"))
+        return HydraulicControlRuleOperator::Equal;
+    if (normalized == QStringLiteral("<>") || normalized == QStringLiteral("!=")
+        || normalized == QStringLiteral("IS NOT"))
+        return HydraulicControlRuleOperator::NotEqual;
+    if (normalized == QStringLiteral("<="))
+        return HydraulicControlRuleOperator::LessOrEqual;
+    if (normalized == QStringLiteral(">="))
+        return HydraulicControlRuleOperator::GreaterOrEqual;
+    if (normalized == QStringLiteral("<") || normalized == QStringLiteral("BELOW"))
+        return HydraulicControlRuleOperator::Less;
+    if (normalized == QStringLiteral(">") || normalized == QStringLiteral("ABOVE"))
+        return HydraulicControlRuleOperator::Greater;
+    return std::nullopt;
+}
+
+std::optional<HydraulicControlRuleStatus> rawRuleStatus(const QString &text)
+{
+    const QString normalized = text.trimmed().toUpper();
+    if (normalized == QStringLiteral("OPEN"))
+        return HydraulicControlRuleStatus::Open;
+    if (normalized == QStringLiteral("CLOSED") || normalized == QStringLiteral("CLOSE"))
+        return HydraulicControlRuleStatus::Closed;
+    if (normalized == QStringLiteral("ACTIVE"))
+        return HydraulicControlRuleStatus::Active;
+    return std::nullopt;
+}
+
+std::optional<quint64> rawRuleTimeSeconds(const QString &text, bool clock_time)
+{
+    QString normalized = text.trimmed().toUpper();
+    bool is_am = false;
+    bool is_pm = false;
+    if (normalized.endsWith(QStringLiteral(" AM")))
+    {
+        is_am = true;
+        normalized.chop(3);
+        normalized = normalized.trimmed();
+    }
+    else if (normalized.endsWith(QStringLiteral(" PM")))
+    {
+        is_pm = true;
+        normalized.chop(3);
+        normalized = normalized.trimmed();
+    }
+
+    double seconds = 0.0;
+    if (normalized.contains(QLatin1Char(':')))
+    {
+        const QStringList pieces = normalized.split(QLatin1Char(':'));
+        if (pieces.size() < 2 || pieces.size() > 3)
+            return std::nullopt;
+
+        bool hours_ok = false;
+        bool minutes_ok = false;
+        bool seconds_ok = true;
+        double hours = pieces.at(0).toDouble(&hours_ok);
+        const double minutes = pieces.at(1).toDouble(&minutes_ok);
+        const double seconds_component = pieces.size() == 3
+            ? pieces.at(2).toDouble(&seconds_ok)
+            : 0.0;
+        if (!hours_ok || !minutes_ok || !seconds_ok
+            || !std::isfinite(hours) || !std::isfinite(minutes)
+            || !std::isfinite(seconds_component)
+            || hours < 0.0 || minutes < 0.0 || minutes >= 60.0
+            || seconds_component < 0.0 || seconds_component >= 60.0)
+        {
+            return std::nullopt;
+        }
+
+        if (is_am || is_pm)
+        {
+            if (hours < 1.0 || hours > 12.0 || std::floor(hours) != hours)
+                return std::nullopt;
+            if (is_am && hours == 12.0)
+                hours = 0.0;
+            else if (is_pm && hours != 12.0)
+                hours += 12.0;
+        }
+
+        seconds = hours * 3600.0 + minutes * 60.0 + seconds_component;
+    }
+    else
+    {
+        bool hours_ok = false;
+        double hours = normalized.toDouble(&hours_ok);
+        if (!hours_ok || !std::isfinite(hours) || hours < 0.0)
+            return std::nullopt;
+        if (is_am || is_pm)
+        {
+            if (hours < 1.0 || hours > 12.0 || std::floor(hours) != hours)
+                return std::nullopt;
+            if (is_am && hours == 12.0)
+                hours = 0.0;
+            else if (is_pm && hours != 12.0)
+                hours += 12.0;
+        }
+        seconds = hours * 3600.0;
+    }
+
+    if (!std::isfinite(seconds) || seconds < 0.0
+        || seconds > static_cast<double>(std::numeric_limits<quint64>::max()))
+    {
+        return std::nullopt;
+    }
+    if (clock_time && seconds >= 24.0 * 3600.0)
+        return std::nullopt;
+    return static_cast<quint64>(std::llround(seconds));
+}
+
+std::optional<qint64> rawRuleAssetId(
+    const QJsonArray &asset_references,
+    int placeholder_index,
+    bool expected_action_target,
+    const QString &source_rule_id,
+    EpanetJsProjectConversionResult &result)
+{
+    if (placeholder_index < 0 || placeholder_index >= asset_references.size()
+        || !asset_references.at(placeholder_index).isObject())
+    {
+        appendDiagnostic(
+            result,
+            EpanetJsConversionDiagnosticSeverity::Error,
+            QStringLiteral("invalid-raw-rule-asset-reference"),
+            QStringLiteral("epanet-js raw rule '%1' references missing asset placeholder %2.")
+                .arg(source_rule_id)
+                .arg(placeholder_index),
+            QStringLiteral("raw_controls"));
+        return std::nullopt;
+    }
+
+    const QJsonObject reference = asset_references.at(placeholder_index).toObject();
+    const std::optional<qint64> asset_id = integerValue(
+        reference.value(QStringLiteral("assetId")).toVariant());
+    if (!asset_id.has_value() || *asset_id <= 0)
+    {
+        appendDiagnostic(
+            result,
+            EpanetJsConversionDiagnosticSeverity::Error,
+            QStringLiteral("invalid-raw-rule-asset-reference"),
+            QStringLiteral("epanet-js raw rule '%1' has an invalid asset id at placeholder %2.")
+                .arg(source_rule_id)
+                .arg(placeholder_index),
+            QStringLiteral("raw_controls"));
+        return std::nullopt;
+    }
+
+    const bool is_action_target = reference.value(QStringLiteral("isActionTarget")).toBool(false);
+    if (is_action_target != expected_action_target)
+    {
+        appendDiagnostic(
+            result,
+            EpanetJsConversionDiagnosticSeverity::Error,
+            QStringLiteral("invalid-raw-rule-asset-role"),
+            QStringLiteral("epanet-js raw rule '%1' has an unexpected asset role at placeholder %2.")
+                .arg(source_rule_id)
+                .arg(placeholder_index),
+            QStringLiteral("raw_controls"));
+        return std::nullopt;
+    }
+    return asset_id;
+}
+
+bool rawRuleObjectMatchesTable(
+    const QString &object_text,
+    const QString &table_name)
+{
+    const QString object = object_text.trimmed().toUpper();
+    if (object == QStringLiteral("NODE"))
+        return table_name == QStringLiteral("junctions")
+            || table_name == QStringLiteral("reservoirs")
+            || table_name == QStringLiteral("tanks");
+    if (object == QStringLiteral("JUNCTION"))
+        return table_name == QStringLiteral("junctions");
+    if (object == QStringLiteral("RESERVOIR"))
+        return table_name == QStringLiteral("reservoirs");
+    if (object == QStringLiteral("TANK"))
+        return table_name == QStringLiteral("tanks");
+    if (object == QStringLiteral("LINK"))
+        return table_name == QStringLiteral("pipes")
+            || table_name == QStringLiteral("pumps")
+            || table_name == QStringLiteral("valves");
+    if (object == QStringLiteral("PIPE"))
+        return table_name == QStringLiteral("pipes");
+    if (object == QStringLiteral("PUMP"))
+        return table_name == QStringLiteral("pumps");
+    if (object == QStringLiteral("VALVE"))
+        return table_name == QStringLiteral("valves");
+    return false;
+}
+
+std::optional<QUuid> rawRuleResolveObjectUuid(
+    const QString &object_text,
+    int placeholder_index,
+    bool action_target,
+    const QJsonArray &asset_references,
+    const QString &source_rule_id,
+    EpanetJsProjectConversionResult &result)
+{
+    const std::optional<qint64> asset_id = rawRuleAssetId(
+        asset_references, placeholder_index, action_target, source_rule_id, result);
+    if (!asset_id.has_value())
+        return std::nullopt;
+
+    const QString object = object_text.trimmed().toUpper();
+    const QList<QString> tables = object == QStringLiteral("NODE")
+        || object == QStringLiteral("JUNCTION")
+        || object == QStringLiteral("RESERVOIR")
+        || object == QStringLiteral("TANK")
+        ? result.id_map.nodeTablesForId(*asset_id)
+        : result.id_map.linkTablesForId(*asset_id);
+
+    QString matching_table;
+    for (const QString &table_name : tables)
+    {
+        if (rawRuleObjectMatchesTable(object, table_name))
+        {
+            if (!matching_table.isEmpty())
+            {
+                appendDiagnostic(
+                    result,
+                    EpanetJsConversionDiagnosticSeverity::Error,
+                    QStringLiteral("ambiguous-raw-rule-asset-reference"),
+                    QStringLiteral("epanet-js raw rule '%1' cannot unambiguously resolve %2 id %3.")
+                        .arg(source_rule_id, object_text)
+                        .arg(*asset_id),
+                    QStringLiteral("raw_controls"));
+                return std::nullopt;
+            }
+            matching_table = table_name;
+        }
+    }
+
+    if (matching_table.isEmpty())
+    {
+        appendDiagnostic(
+            result,
+            EpanetJsConversionDiagnosticSeverity::Error,
+            QStringLiteral("missing-raw-rule-asset-reference"),
+            QStringLiteral("epanet-js raw rule '%1' references missing %2 id %3.")
+                .arg(source_rule_id, object_text)
+                .arg(*asset_id),
+            QStringLiteral("raw_controls"));
+        return std::nullopt;
+    }
+
+    return result.id_map.uuidFor(matching_table, *asset_id);
+}
+
+bool assignRawRuleLinkSetting(
+    const QUuid &link_uuid,
+    double source_setting,
+    const QJsonObject &project_settings,
+    const QString &source_rule_id,
+    HydraulicControlLinkSetting &setting,
+    EpanetJsProjectConversionResult &result)
+{
+    if (!std::isfinite(source_setting) || source_setting < 0.0)
+        return false;
+
+    if (networkHasPump(result.network, link_uuid))
+    {
+        setting.pump_speed_ratio = source_setting;
+        return true;
+    }
+
+    const HydraulicLinkValve *valve = networkValveByUuid(result.network, link_uuid);
+    if (valve == nullptr)
+        return false;
+
+    const QJsonObject units = projectUnitsObject(project_settings);
+    switch (valve->type)
+    {
+    case HydraulicLinkValveType::PRV:
+    case HydraulicLinkValveType::PSV:
+    case HydraulicLinkValveType::PBV:
+    {
+        const QString pressure_unit = firstUnit(units, QStringList{QStringLiteral("pressure")});
+        const std::optional<double> converted = pressureToHeadM(
+            source_setting, pressure_unit, result.network.options_hydraulic.specific_gravity);
+        if (!converted.has_value())
+        {
+            appendDiagnostic(
+                result,
+                EpanetJsConversionDiagnosticSeverity::Error,
+                QStringLiteral("unsupported-raw-rule-valve-pressure-unit"),
+                QStringLiteral("AOWIS cannot convert the valve pressure setting in epanet-js raw rule '%1' with unit '%2'.")
+                    .arg(source_rule_id, pressure_unit),
+                QStringLiteral("raw_controls"));
+            return false;
+        }
+        setting.valve_pressure_head_m = *converted;
+        return true;
+    }
+    case HydraulicLinkValveType::FCV:
+    {
+        const QString flow_unit = firstUnit(units, QStringList{QStringLiteral("flow")});
+        const std::optional<double> converted = flowToM3PerH(source_setting, flow_unit);
+        if (!converted.has_value())
+        {
+            appendDiagnostic(
+                result,
+                EpanetJsConversionDiagnosticSeverity::Error,
+                QStringLiteral("unsupported-raw-rule-valve-flow-unit"),
+                QStringLiteral("AOWIS cannot convert the valve flow setting in epanet-js raw rule '%1' with unit '%2'.")
+                    .arg(source_rule_id, flow_unit),
+                QStringLiteral("raw_controls"));
+            return false;
+        }
+        setting.valve_flow_m3_per_h = *converted;
+        return true;
+    }
+    case HydraulicLinkValveType::TCV:
+        setting.valve_loss_coefficient = source_setting;
+        return true;
+    case HydraulicLinkValveType::PCV:
+        setting.valve_position_percent = source_setting;
+        return true;
+    case HydraulicLinkValveType::GPV:
+        return false;
+    }
+    return false;
+}
+
+bool assignRawRulePremiseValue(
+    HydraulicControlRulePremise &premise,
+    const QString &value_text,
+    const QJsonObject &project_settings,
+    const QString &source_rule_id,
+    EpanetJsProjectConversionResult &result)
+{
+    if (premise.variable == HydraulicControlRuleVariable::Status)
+    {
+        const std::optional<HydraulicControlRuleStatus> status = rawRuleStatus(value_text);
+        if (!status.has_value())
+            return false;
+        premise.status = *status;
+        return true;
+    }
+
+    if (premise.variable == HydraulicControlRuleVariable::Time
+        || premise.variable == HydraulicControlRuleVariable::ClockTime
+        || premise.variable == HydraulicControlRuleVariable::FillTime
+        || premise.variable == HydraulicControlRuleVariable::DrainTime)
+    {
+        const bool clock_time = premise.variable == HydraulicControlRuleVariable::ClockTime;
+        const std::optional<quint64> seconds = rawRuleTimeSeconds(value_text, clock_time);
+        if (!seconds.has_value())
+            return false;
+        if (premise.variable == HydraulicControlRuleVariable::Time)
+            premise.elapsed_time_s = *seconds;
+        else if (premise.variable == HydraulicControlRuleVariable::ClockTime)
+            premise.time_of_day_s = *seconds;
+        else if (premise.variable == HydraulicControlRuleVariable::FillTime)
+            premise.fill_time_s = *seconds;
+        else
+            premise.drain_time_s = *seconds;
+        return true;
+    }
+
+    bool value_ok = false;
+    const double source_value = value_text.toDouble(&value_ok);
+    if (!value_ok || !std::isfinite(source_value))
+        return false;
+
+    const QJsonObject units = projectUnitsObject(project_settings);
+    if (premise.variable == HydraulicControlRuleVariable::Demand
+        || premise.variable == HydraulicControlRuleVariable::Flow)
+    {
+        const QString flow_unit = firstUnit(units, QStringList{QStringLiteral("flow")});
+        const std::optional<double> converted = flowToM3PerH(source_value, flow_unit);
+        if (!converted.has_value())
+            return false;
+        if (premise.variable == HydraulicControlRuleVariable::Demand)
+            premise.demand_m3_per_h = *converted;
+        else
+            premise.flow_m3_per_h = *converted;
+        return true;
+    }
+
+    if (premise.variable == HydraulicControlRuleVariable::Head
+        || premise.variable == HydraulicControlRuleVariable::Grade
+        || premise.variable == HydraulicControlRuleVariable::Level)
+    {
+        const QString length_unit = premise.variable == HydraulicControlRuleVariable::Level
+            ? firstUnit(units, QStringList{QStringLiteral("level"), QStringLiteral("initialLevel"),
+                                          QStringLiteral("head"), QStringLiteral("elevation"),
+                                          QStringLiteral("length")})
+            : firstUnit(units, QStringList{QStringLiteral("head"), QStringLiteral("elevation"),
+                                          QStringLiteral("length")});
+        const std::optional<double> converted = lengthToM(source_value, length_unit);
+        if (!converted.has_value())
+            return false;
+        if (premise.variable == HydraulicControlRuleVariable::Level)
+            premise.water_level_m = *converted;
+        else
+            premise.hydraulic_head_m = *converted;
+        return true;
+    }
+
+    if (premise.variable == HydraulicControlRuleVariable::Pressure)
+    {
+        const QString pressure_unit = firstUnit(units, QStringList{QStringLiteral("pressure")});
+        const std::optional<double> converted = pressureToHeadM(
+            source_value, pressure_unit, result.network.options_hydraulic.specific_gravity);
+        if (!converted.has_value())
+            return false;
+        premise.pressure_head_m = *converted;
+        return true;
+    }
+
+    if (premise.variable == HydraulicControlRuleVariable::Setting)
+    {
+        return assignRawRuleLinkSetting(
+            premise.object_uuid, source_value, project_settings, source_rule_id,
+            premise.link_setting, result);
+    }
+
+    if (premise.variable == HydraulicControlRuleVariable::Power)
+    {
+        appendDiagnostic(
+            result,
+            EpanetJsConversionDiagnosticSeverity::Error,
+            QStringLiteral("unsupported-raw-rule-power-premise"),
+            QStringLiteral("epanet-js raw rule '%1' uses a POWER premise that the current AOWIS EPANET rule builder cannot execute.")
+                .arg(source_rule_id),
+            QStringLiteral("raw_controls"));
+        return false;
+    }
+    return false;
+}
+
+std::optional<HydraulicControlRuleVariable> rawRuleVariable(const QString &text)
+{
+    const QString normalized = text.trimmed().toUpper();
+    if (normalized == QStringLiteral("DEMAND")) return HydraulicControlRuleVariable::Demand;
+    if (normalized == QStringLiteral("HEAD")) return HydraulicControlRuleVariable::Head;
+    if (normalized == QStringLiteral("GRADE")) return HydraulicControlRuleVariable::Grade;
+    if (normalized == QStringLiteral("LEVEL")) return HydraulicControlRuleVariable::Level;
+    if (normalized == QStringLiteral("PRESSURE")) return HydraulicControlRuleVariable::Pressure;
+    if (normalized == QStringLiteral("FLOW")) return HydraulicControlRuleVariable::Flow;
+    if (normalized == QStringLiteral("STATUS")) return HydraulicControlRuleVariable::Status;
+    if (normalized == QStringLiteral("SETTING")) return HydraulicControlRuleVariable::Setting;
+    if (normalized == QStringLiteral("POWER")) return HydraulicControlRuleVariable::Power;
+    if (normalized == QStringLiteral("TIME")) return HydraulicControlRuleVariable::Time;
+    if (normalized == QStringLiteral("CLOCKTIME")) return HydraulicControlRuleVariable::ClockTime;
+    if (normalized == QStringLiteral("FILLTIME")) return HydraulicControlRuleVariable::FillTime;
+    if (normalized == QStringLiteral("DRAINTIME")) return HydraulicControlRuleVariable::DrainTime;
+    return std::nullopt;
+}
+
+bool rawRuleVariableAllowedForObject(
+    HydraulicControlRuleObject object,
+    HydraulicControlRuleVariable variable,
+    const QUuid &object_uuid,
+    const NetworkHydraulic &network)
+{
+    if (object == HydraulicControlRuleObject::System)
+    {
+        return variable == HydraulicControlRuleVariable::Demand
+            || variable == HydraulicControlRuleVariable::Time
+            || variable == HydraulicControlRuleVariable::ClockTime;
+    }
+    if (object == HydraulicControlRuleObject::Link)
+    {
+        return variable == HydraulicControlRuleVariable::Flow
+            || variable == HydraulicControlRuleVariable::Status
+            || variable == HydraulicControlRuleVariable::Setting
+            || variable == HydraulicControlRuleVariable::Power;
+    }
+
+    if (variable == HydraulicControlRuleVariable::FillTime
+        || variable == HydraulicControlRuleVariable::DrainTime)
+    {
+        return networkHasTank(network, object_uuid);
+    }
+    return variable == HydraulicControlRuleVariable::Demand
+        || variable == HydraulicControlRuleVariable::Head
+        || variable == HydraulicControlRuleVariable::Grade
+        || variable == HydraulicControlRuleVariable::Level
+        || variable == HydraulicControlRuleVariable::Pressure;
+}
+
+bool importRawRulePremise(
+    const RawRuleStatement &statement,
+    const QJsonArray &asset_references,
+    const QJsonObject &project_settings,
+    const QString &source_rule_id,
+    HydraulicControlRule &rule,
+    EpanetJsProjectConversionResult &result)
+{
+    HydraulicControlRulePremise premise;
+    if (statement.keyword == QStringLiteral("IF"))
+        premise.logical_operator = HydraulicControlRuleLogicalOperator::If;
+    else if (statement.keyword == QStringLiteral("AND"))
+        premise.logical_operator = HydraulicControlRuleLogicalOperator::And;
+    else if (statement.keyword == QStringLiteral("OR"))
+        premise.logical_operator = HydraulicControlRuleLogicalOperator::Or;
+    else
+        return false;
+
+    const QString comparison_pattern = QStringLiteral("(IS\\s+NOT|<=|>=|<>|!=|=|<|>|IS|BELOW|ABOVE)");
+    const QRegularExpression system_expression(
+        QStringLiteral("^SYSTEM\\s+(DEMAND|TIME|CLOCKTIME)\\s+%1\\s+(.+?)\\s*$")
+            .arg(comparison_pattern),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch system_match = system_expression.match(statement.body);
+    if (system_match.hasMatch())
+    {
+        const std::optional<HydraulicControlRuleVariable> variable = rawRuleVariable(system_match.captured(1));
+        const std::optional<HydraulicControlRuleOperator> comparison = rawRuleComparison(system_match.captured(2));
+        if (!variable.has_value() || !comparison.has_value())
+            return false;
+        premise.object = HydraulicControlRuleObject::System;
+        premise.variable = *variable;
+        premise.comparison = *comparison;
+        if (!rawRuleVariableAllowedForObject(
+                premise.object, premise.variable, premise.object_uuid, result.network))
+        {
+            return false;
+        }
+        if (!assignRawRulePremiseValue(
+                premise, system_match.captured(3), project_settings,
+                source_rule_id, result))
+        {
+            return false;
+        }
+        rule.premises.append(premise);
+        return true;
+    }
+
+    const QRegularExpression object_expression(
+        QStringLiteral("^(NODE|JUNCTION|RESERVOIR|TANK|LINK|PIPE|PUMP|VALVE)\\s+\\{\\{(\\d+)\\}\\}\\s+"
+                       "(DEMAND|HEAD|GRADE|LEVEL|PRESSURE|FLOW|STATUS|SETTING|POWER|FILLTIME|DRAINTIME)\\s+%1\\s+(.+?)\\s*$")
+            .arg(comparison_pattern),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch object_match = object_expression.match(statement.body);
+    if (!object_match.hasMatch())
+        return false;
+
+    bool placeholder_ok = false;
+    const int placeholder_index = object_match.captured(2).toInt(&placeholder_ok);
+    if (!placeholder_ok)
+        return false;
+    const QString object_text = object_match.captured(1);
+    const std::optional<QUuid> object_uuid = rawRuleResolveObjectUuid(
+        object_text, placeholder_index, false, asset_references,
+        source_rule_id, result);
+    if (!object_uuid.has_value())
+        return false;
+
+    const QString normalized_object = object_text.trimmed().toUpper();
+    premise.object = normalized_object == QStringLiteral("NODE")
+            || normalized_object == QStringLiteral("JUNCTION")
+            || normalized_object == QStringLiteral("RESERVOIR")
+            || normalized_object == QStringLiteral("TANK")
+        ? HydraulicControlRuleObject::Node
+        : HydraulicControlRuleObject::Link;
+    premise.object_uuid = *object_uuid;
+
+    const std::optional<HydraulicControlRuleVariable> variable = rawRuleVariable(object_match.captured(3));
+    const std::optional<HydraulicControlRuleOperator> comparison = rawRuleComparison(object_match.captured(4));
+    if (!variable.has_value() || !comparison.has_value())
+        return false;
+    premise.variable = *variable;
+    premise.comparison = *comparison;
+    if (!rawRuleVariableAllowedForObject(
+            premise.object, premise.variable, premise.object_uuid, result.network))
+    {
+        return false;
+    }
+
+    if (!assignRawRulePremiseValue(
+            premise, object_match.captured(5), project_settings,
+            source_rule_id, result))
+    {
+        return false;
+    }
+
+    rule.premises.append(premise);
+    return true;
+}
+
+bool importRawRuleAction(
+    const RawRuleStatement &statement,
+    const QJsonArray &asset_references,
+    const QJsonObject &project_settings,
+    const QString &source_rule_id,
+    QList<HydraulicControlRuleAction> &actions,
+    EpanetJsProjectConversionResult &result)
+{
+    const QRegularExpression expression(
+        QStringLiteral("^(LINK|PIPE|PUMP|VALVE)\\s+\\{\\{(\\d+)\\}\\}\\s+"
+                       "(?:(STATUS|SETTING)\\s*=\\s*)?(OPEN|CLOSED|CLOSE|ACTIVE|[-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][-+]?\\d+)?)\\s*$"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch match = expression.match(statement.body);
+    if (!match.hasMatch())
+        return false;
+
+    bool placeholder_ok = false;
+    const int placeholder_index = match.captured(2).toInt(&placeholder_ok);
+    if (!placeholder_ok)
+        return false;
+    const std::optional<QUuid> link_uuid = rawRuleResolveObjectUuid(
+        match.captured(1), placeholder_index, true, asset_references,
+        source_rule_id, result);
+    if (!link_uuid.has_value())
+        return false;
+
+    HydraulicControlRuleAction action;
+    action.link_uuid = *link_uuid;
+    const QString field = match.captured(3).trimmed().toUpper();
+    const QString value = match.captured(4).trimmed();
+    const std::optional<HydraulicControlRuleStatus> status = rawRuleStatus(value);
+    if (field == QStringLiteral("STATUS") || (field.isEmpty() && status.has_value()))
+    {
+        if (!status.has_value())
+            return false;
+        action.status = *status;
+        actions.append(action);
+        return true;
+    }
+
+    bool setting_ok = false;
+    const double setting_value = value.toDouble(&setting_ok);
+    if (!setting_ok || !std::isfinite(setting_value)
+        || !assignRawRuleLinkSetting(
+            *link_uuid, setting_value, project_settings, source_rule_id,
+            action.setting, result))
+    {
+        return false;
+    }
+    actions.append(action);
+    return true;
+}
+
+bool importRawRule(
+    const QJsonObject &raw_rule,
+    qsizetype index,
+    const QJsonObject &project_settings,
+    EpanetJsProjectConversionResult &result)
+{
+    const QString fallback_id = QStringLiteral("RAW_RULE_%1").arg(index + 1);
+    const QString rule_template = raw_rule.value(QStringLiteral("template")).toString().trimmed();
+    const QList<RawRuleStatement> statements = rawRuleStatements(rule_template);
+    if (statements.isEmpty())
+        return false;
+
+    QString rule_id;
+    for (const RawRuleStatement &statement : statements)
+    {
+        if (statement.keyword == QStringLiteral("RULE"))
+        {
+            if (!rule_id.isEmpty())
+                return false;
+            rule_id = statement.body.section(QRegularExpression(QStringLiteral("\\s+")), 0, 0).trimmed();
+        }
+    }
+    if (rule_id.isEmpty())
+        rule_id = fallback_id;
+
+    HydraulicControlRule rule;
+    rule.id = rule_id;
+    rule.uuid = uuidV5(
+        result.network.uuid,
+        QStringLiteral("epanet-js/raw-controls/rules/%1").arg(index).toUtf8());
+    if (raw_rule.contains(QStringLiteral("enabled")))
+        rule.enabled = raw_rule.value(QStringLiteral("enabled")).toBool(true);
+
+    const QJsonArray asset_references = raw_rule.value(QStringLiteral("assetReferences")).toArray();
+    enum class RuleSection
+    {
+        Premises,
+        ThenActions,
+        ElseActions
+    };
+    RuleSection section = RuleSection::Premises;
+    bool saw_then = false;
+
+    for (const RawRuleStatement &statement : statements)
+    {
+        if (statement.keyword == QStringLiteral("RULE"))
+            continue;
+        if (statement.keyword == QStringLiteral("DISABLED"))
+        {
+            rule.enabled = false;
+            continue;
+        }
+        if (statement.keyword == QStringLiteral("ENABLED"))
+        {
+            rule.enabled = true;
+            continue;
+        }
+        if (statement.keyword == QStringLiteral("PRIORITY"))
+        {
+            bool priority_ok = false;
+            const double priority = statement.body.toDouble(&priority_ok);
+            if (!priority_ok || !std::isfinite(priority))
+                return false;
+            rule.priority = priority;
+            continue;
+        }
+        if (statement.keyword == QStringLiteral("THEN"))
+        {
+            section = RuleSection::ThenActions;
+            saw_then = true;
+            if (!importRawRuleAction(
+                    statement, asset_references, project_settings,
+                    rule_id, rule.actions_then, result))
+            {
+                return false;
+            }
+            continue;
+        }
+        if (statement.keyword == QStringLiteral("ELSE"))
+        {
+            if (!saw_then)
+                return false;
+            section = RuleSection::ElseActions;
+            if (!importRawRuleAction(
+                    statement, asset_references, project_settings,
+                    rule_id, rule.actions_else, result))
+            {
+                return false;
+            }
+            continue;
+        }
+        if (statement.keyword == QStringLiteral("AND") && section != RuleSection::Premises)
+        {
+            QList<HydraulicControlRuleAction> &actions = section == RuleSection::ThenActions
+                ? rule.actions_then
+                : rule.actions_else;
+            if (!importRawRuleAction(
+                    statement, asset_references, project_settings,
+                    rule_id, actions, result))
+            {
+                return false;
+            }
+            continue;
+        }
+        if (section != RuleSection::Premises
+            || !importRawRulePremise(
+                statement, asset_references, project_settings,
+                rule_id, rule, result))
+        {
+            return false;
+        }
+    }
+
+    if (rule.premises.isEmpty() || rule.actions_then.isEmpty())
+        return false;
+    if (rule.premises.first().logical_operator != HydraulicControlRuleLogicalOperator::If)
+        return false;
+
+    result.network.controls_rules.append(rule);
+    return true;
+}
+
 void importRawControls(
     const EpanetJsProjectSnapshot &project,
     const QJsonObject &project_settings,
@@ -4256,15 +5366,31 @@ void importRawControls(
     }
 
     const QJsonArray rules = object.value(QStringLiteral("rules")).toArray();
-    if (!rules.isEmpty())
+    for (qsizetype index = 0; index < rules.size(); ++index)
     {
-        appendDiagnostic(
-            result,
-            EpanetJsConversionDiagnosticSeverity::Error,
-            QStringLiteral("unsupported-raw-rules"),
-            QStringLiteral("epanet-js project contains %1 raw rule(s); rule-based control translation is not implemented yet.")
-                .arg(rules.size()),
-            QStringLiteral("raw_controls"));
+        if (!rules.at(index).isObject())
+        {
+            appendDiagnostic(
+                result,
+                EpanetJsConversionDiagnosticSeverity::Error,
+                QStringLiteral("invalid-raw-rule"),
+                QStringLiteral("epanet-js raw rule %1 is not an object.").arg(index + 1),
+                QStringLiteral("raw_controls"));
+            continue;
+        }
+
+        const QJsonObject raw_rule = rules.at(index).toObject();
+        if (!importRawRule(raw_rule, index, project_settings, result))
+        {
+            appendDiagnostic(
+                result,
+                EpanetJsConversionDiagnosticSeverity::Error,
+                QStringLiteral("unsupported-raw-rule"),
+                QStringLiteral("epanet-js raw rule %1 uses syntax or semantics that AOWIS cannot translate faithfully: %2")
+                    .arg(index + 1)
+                    .arg(raw_rule.value(QStringLiteral("template")).toString()),
+                QStringLiteral("raw_controls"));
+        }
     }
 }
 
@@ -4637,13 +5763,18 @@ EpanetJsProjectConversionResult EpanetJsProjectConverter::convert(
     registerEntityIds(project, result);
     validateReferenceDomains(project, result);
     validateLinkEndpointReferences(project, result);
+    validateProjectCoordinateStorage(settings, result);
+
+    const QJsonObject simulation_settings = simulationSettingsObject(project, result);
 
     mapHeadlossFormula(settings, result);
     importPipeMaterials(project, settings, result);
     importPatterns(project, result);
     importCurves(project, settings, result);
-    mapSimulationSettings(project, settings, result);
+    mapSimulationSettings(simulation_settings, settings, result);
     importNodes(project, settings, result);
+    applyEmitterSettings(project, settings, simulation_settings, result);
+    mapQualitySimulationSettings(simulation_settings, settings, result);
     importPipes(project, settings, result);
     importCustomerPoints(project, settings, result);
     importPumpsAndValves(project, settings, result);

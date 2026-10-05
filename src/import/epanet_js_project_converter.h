@@ -4,6 +4,7 @@
 #include "import/epanet_js_project_reader.h"
 
 #include <aowis/model/hydraulic/network_hydraulic.h>
+#include <aowis/model/hydraulic/hydraulic_simulation_options.h>
 
 #include <QList>
 #include <QMap>
@@ -54,6 +55,7 @@ struct EpanetJsProjectConversionResult
 {
     bool success = false;
     NetworkHydraulic network;
+    QList<WaterQualitySolverOptions> quality_runs;
     EpanetJsProjectIdMap id_map;
     QList<EpanetJsConversionDiagnostic> diagnostics;
 

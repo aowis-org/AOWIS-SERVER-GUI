@@ -653,7 +653,7 @@ void SimulationManager::importNetworkProjectContent(
 
         this->hydraulic_data->replaceNetworkHydraulic(
             std::move(conversion_result.network),
-            QList<WaterQualitySolverOptions>());
+            std::move(conversion_result.quality_runs));
         emit signalEpanetNetworkImported();
 
         if (warning_count > 0)
