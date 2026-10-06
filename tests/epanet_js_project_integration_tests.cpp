@@ -10,6 +10,7 @@
 #include <QDir>
 #include <QString>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <optional>
@@ -109,10 +110,13 @@ void printRunFailureStatus(const char *label, const EpanetResultRun &run)
         timeline_status.constData());
 }
 
-EpanetResultRun runConvertedNetwork(const NetworkHydraulic &network)
+EpanetResultRun runConvertedNetwork(
+    const NetworkHydraulic &network,
+    const QList<WaterQualitySolverOptions> &quality_runs)
 {
     EpanetRunRequest request;
     request.network = network;
+    request.quality_runs = quality_runs;
     const EpanetResultRun run = EpanetRunner().run(request);
     printRunFailureStatus("converted synthetic epanet-js network", run);
     expectTrue(run.status.success, "converted synthetic epanet-js network runs through EPANET");
@@ -584,6 +588,439 @@ void expectUsRuleFires(const EpanetResultRun &run)
                "US-customary raw rule changes V1 to 4 GPM from 12 hours onward");
 }
 
+const HydraulicNodeJunction *modelJunctionById(const NetworkHydraulic &network, const QString &id)
+{
+    for (const HydraulicNodeJunction &junction : network.nodes_junctions)
+    {
+        if (junction.id == id)
+            return &junction;
+    }
+    return nullptr;
+}
+
+const HydraulicNodeReservoir *modelReservoirById(const NetworkHydraulic &network, const QString &id)
+{
+    for (const HydraulicNodeReservoir &reservoir : network.nodes_reservoirs)
+    {
+        if (reservoir.id == id)
+            return &reservoir;
+    }
+    return nullptr;
+}
+
+const HydraulicNodeTank *modelTankById(const NetworkHydraulic &network, const QString &id)
+{
+    for (const HydraulicNodeTank &tank : network.nodes_tanks)
+    {
+        if (tank.id == id)
+            return &tank;
+    }
+    return nullptr;
+}
+
+const HydraulicLinkPipe *modelPipeById(const NetworkHydraulic &network, const QString &id)
+{
+    for (const HydraulicLinkPipe &pipe : network.links_pipes)
+    {
+        if (pipe.id == id)
+            return &pipe;
+    }
+    return nullptr;
+}
+
+const WaterQualitySimulationResultNodeJunction *qualityJunctionById(
+    const WaterQualitySimulationResult &result,
+    const QString &id)
+{
+    for (const WaterQualitySimulationResultNodeJunction &junction : result.nodes_junctions)
+    {
+        if (junction.id == id)
+            return &junction;
+    }
+    return nullptr;
+}
+
+const WaterQualitySimulationResultNodeReservoir *qualityReservoirById(
+    const WaterQualitySimulationResult &result,
+    const QString &id)
+{
+    for (const WaterQualitySimulationResultNodeReservoir &reservoir : result.nodes_reservoirs)
+    {
+        if (reservoir.id == id)
+            return &reservoir;
+    }
+    return nullptr;
+}
+
+const WaterQualitySimulationResultNodeTank *qualityTankById(
+    const WaterQualitySimulationResult &result,
+    const QString &id)
+{
+    for (const WaterQualitySimulationResultNodeTank &tank : result.nodes_tanks)
+    {
+        if (tank.id == id)
+            return &tank;
+    }
+    return nullptr;
+}
+
+const WaterQualitySimulationResultLinkPipe *qualityPipeById(
+    const WaterQualitySimulationResult &result,
+    const QString &id)
+{
+    for (const WaterQualitySimulationResultLinkPipe &pipe : result.links_pipes)
+    {
+        if (pipe.id == id)
+            return &pipe;
+    }
+    return nullptr;
+}
+
+const WaterQualitySimulationResultLinkPump *qualityPumpById(
+    const WaterQualitySimulationResult &result,
+    const QString &id)
+{
+    for (const WaterQualitySimulationResultLinkPump &pump : result.links_pumps)
+    {
+        if (pump.id == id)
+            return &pump;
+    }
+    return nullptr;
+}
+
+const WaterQualitySimulationResultLinkValve *qualityValveById(
+    const WaterQualitySimulationResult &result,
+    const QString &id)
+{
+    for (const WaterQualitySimulationResultLinkValve &valve : result.links_valves)
+    {
+        if (valve.id == id)
+            return &valve;
+    }
+    return nullptr;
+}
+
+void compareChemicalQualityStep(
+    const WaterQualitySimulationResult &ejsdb_step,
+    const WaterQualitySimulationResult &inp_step)
+{
+    constexpr double concentration_tolerance = 1.0e-8;
+    constexpr double mass_flow_tolerance = 1.0e-8;
+    const QString time_prefix = QStringLiteral("quality t=%1s ").arg(ejsdb_step.time_elapsed_s);
+
+    expectTrue(ejsdb_step.time_elapsed_s == inp_step.time_elapsed_s,
+               "paired quality timelines use the same elapsed time");
+    expectTrue(ejsdb_step.nodes_junctions.size() == inp_step.nodes_junctions.size(),
+               "paired quality steps contain the same junction count");
+    expectTrue(ejsdb_step.nodes_reservoirs.size() == inp_step.nodes_reservoirs.size(),
+               "paired quality steps contain the same reservoir count");
+    expectTrue(ejsdb_step.nodes_tanks.size() == inp_step.nodes_tanks.size(),
+               "paired quality steps contain the same tank count");
+    expectTrue(ejsdb_step.links_pipes.size() == inp_step.links_pipes.size(),
+               "paired quality steps contain the same pipe count");
+    expectTrue(ejsdb_step.links_pumps.size() == inp_step.links_pumps.size(),
+               "paired quality steps contain the same pump count");
+    expectTrue(ejsdb_step.links_valves.size() == inp_step.links_valves.size(),
+               "paired quality steps contain the same valve count");
+
+    for (const WaterQualitySimulationResultNodeJunction &inp_junction : inp_step.nodes_junctions)
+    {
+        const WaterQualitySimulationResultNodeJunction *ejsdb_junction = qualityJunctionById(
+            ejsdb_step, inp_junction.id);
+        expectTrueMessage(
+            ejsdb_junction != nullptr,
+            time_prefix + QStringLiteral("junction %1 exists in both quality runs").arg(inp_junction.id));
+        if (ejsdb_junction == nullptr)
+            continue;
+        const QString prefix = time_prefix + QStringLiteral("junction %1 ").arg(inp_junction.id);
+        expectNearMessage(
+            ejsdb_junction->chemical_concentration_mg_per_l,
+            inp_junction.chemical_concentration_mg_per_l,
+            concentration_tolerance,
+            prefix + QStringLiteral("chemical concentration matches"));
+        expectNearMessage(
+            ejsdb_junction->source_mass_flow_mg_per_min,
+            inp_junction.source_mass_flow_mg_per_min,
+            mass_flow_tolerance,
+            prefix + QStringLiteral("source mass flow matches"));
+    }
+
+    for (const WaterQualitySimulationResultNodeReservoir &inp_reservoir : inp_step.nodes_reservoirs)
+    {
+        const WaterQualitySimulationResultNodeReservoir *ejsdb_reservoir = qualityReservoirById(
+            ejsdb_step, inp_reservoir.id);
+        expectTrueMessage(
+            ejsdb_reservoir != nullptr,
+            time_prefix + QStringLiteral("reservoir %1 exists in both quality runs").arg(inp_reservoir.id));
+        if (ejsdb_reservoir == nullptr)
+            continue;
+        const QString prefix = time_prefix + QStringLiteral("reservoir %1 ").arg(inp_reservoir.id);
+        expectNearMessage(
+            ejsdb_reservoir->chemical_concentration_mg_per_l,
+            inp_reservoir.chemical_concentration_mg_per_l,
+            concentration_tolerance,
+            prefix + QStringLiteral("chemical concentration matches"));
+        expectNearMessage(
+            ejsdb_reservoir->source_mass_flow_mg_per_min,
+            inp_reservoir.source_mass_flow_mg_per_min,
+            mass_flow_tolerance,
+            prefix + QStringLiteral("source mass flow matches"));
+    }
+
+    for (const WaterQualitySimulationResultNodeTank &inp_tank : inp_step.nodes_tanks)
+    {
+        const WaterQualitySimulationResultNodeTank *ejsdb_tank = qualityTankById(
+            ejsdb_step, inp_tank.id);
+        expectTrueMessage(
+            ejsdb_tank != nullptr,
+            time_prefix + QStringLiteral("tank %1 exists in both quality runs").arg(inp_tank.id));
+        if (ejsdb_tank == nullptr)
+            continue;
+        const QString prefix = time_prefix + QStringLiteral("tank %1 ").arg(inp_tank.id);
+        expectNearMessage(
+            ejsdb_tank->chemical_concentration_mg_per_l,
+            inp_tank.chemical_concentration_mg_per_l,
+            concentration_tolerance,
+            prefix + QStringLiteral("chemical concentration matches"));
+        expectNearMessage(
+            ejsdb_tank->source_mass_flow_mg_per_min,
+            inp_tank.source_mass_flow_mg_per_min,
+            mass_flow_tolerance,
+            prefix + QStringLiteral("source mass flow matches"));
+    }
+
+    for (const WaterQualitySimulationResultLinkPipe &inp_pipe : inp_step.links_pipes)
+    {
+        const WaterQualitySimulationResultLinkPipe *ejsdb_pipe = qualityPipeById(
+            ejsdb_step, inp_pipe.id);
+        expectTrueMessage(
+            ejsdb_pipe != nullptr,
+            time_prefix + QStringLiteral("pipe %1 exists in both quality runs").arg(inp_pipe.id));
+        if (ejsdb_pipe != nullptr)
+        {
+            expectNearMessage(
+                ejsdb_pipe->chemical_concentration_mg_per_l,
+                inp_pipe.chemical_concentration_mg_per_l,
+                concentration_tolerance,
+                time_prefix + QStringLiteral("pipe %1 chemical concentration matches").arg(inp_pipe.id));
+        }
+    }
+
+    for (const WaterQualitySimulationResultLinkPump &inp_pump : inp_step.links_pumps)
+    {
+        const WaterQualitySimulationResultLinkPump *ejsdb_pump = qualityPumpById(
+            ejsdb_step, inp_pump.id);
+        expectTrueMessage(
+            ejsdb_pump != nullptr,
+            time_prefix + QStringLiteral("pump %1 exists in both quality runs").arg(inp_pump.id));
+        if (ejsdb_pump != nullptr)
+        {
+            expectNearMessage(
+                ejsdb_pump->chemical_concentration_mg_per_l,
+                inp_pump.chemical_concentration_mg_per_l,
+                concentration_tolerance,
+                time_prefix + QStringLiteral("pump %1 chemical concentration matches").arg(inp_pump.id));
+        }
+    }
+
+    for (const WaterQualitySimulationResultLinkValve &inp_valve : inp_step.links_valves)
+    {
+        const WaterQualitySimulationResultLinkValve *ejsdb_valve = qualityValveById(
+            ejsdb_step, inp_valve.id);
+        expectTrueMessage(
+            ejsdb_valve != nullptr,
+            time_prefix + QStringLiteral("valve %1 exists in both quality runs").arg(inp_valve.id));
+        if (ejsdb_valve != nullptr)
+        {
+            expectNearMessage(
+                ejsdb_valve->chemical_concentration_mg_per_l,
+                inp_valve.chemical_concentration_mg_per_l,
+                concentration_tolerance,
+                time_prefix + QStringLiteral("valve %1 chemical concentration matches").arg(inp_valve.id));
+        }
+    }
+}
+
+void compareChemicalQualityRuns(
+    const EpanetResultRun &ejsdb_run,
+    const EpanetResultRun &inp_run)
+{
+    expectTrue(ejsdb_run.quality_results.size() == 1,
+               "converted metric epanet-js network produces one chemical quality result");
+    expectTrue(inp_run.quality_results.size() == 1,
+               "paired metric INP produces one chemical quality result");
+    if (ejsdb_run.quality_results.size() != 1 || inp_run.quality_results.size() != 1)
+        return;
+
+    const EpanetQualityResult &ejsdb_quality = ejsdb_run.quality_results.first();
+    const EpanetQualityResult &inp_quality = inp_run.quality_results.first();
+    expectTrue(ejsdb_quality.options.analysis == WaterQualityAnalysisType::Chemical,
+               "converted metric epanet-js run executes chemical analysis");
+    expectTrue(inp_quality.options.analysis == WaterQualityAnalysisType::Chemical,
+               "paired metric INP executes chemical analysis");
+    expectTrue(ejsdb_quality.options.chemical_name == QStringLiteral("CL2"),
+               "converted metric epanet-js chemical name is CL2");
+    expectTrue(inp_quality.options.chemical_name == QStringLiteral("CL2"),
+               "paired metric INP chemical name is CL2");
+    expectNear(ejsdb_quality.options.chemical_tolerance_mg_per_l, 0.01, 1.0e-12,
+               "converted metric epanet-js chemical tolerance is preserved");
+    expectNear(inp_quality.options.chemical_tolerance_mg_per_l, 0.01, 1.0e-12,
+               "paired metric INP chemical tolerance is preserved");
+    expectNear(ejsdb_quality.options.relative_diffusivity, 1.0, 1.0e-12,
+               "converted metric epanet-js relative diffusivity is preserved");
+    expectNear(inp_quality.options.relative_diffusivity, 1.0, 1.0e-12,
+               "paired metric INP relative diffusivity is preserved");
+
+    expectTrue(
+        ejsdb_quality.result_timeline.results.size() == inp_quality.result_timeline.results.size(),
+        "paired chemical quality timelines contain the same number of result steps");
+    const qsizetype step_count = std::min(
+        ejsdb_quality.result_timeline.results.size(),
+        inp_quality.result_timeline.results.size());
+    for (qsizetype index = 0; index < step_count; ++index)
+    {
+        compareChemicalQualityStep(
+            ejsdb_quality.result_timeline.results.at(index),
+            inp_quality.result_timeline.results.at(index));
+    }
+}
+
+void expectMetricQualityModelData(
+    const EpanetJsProjectConversionResult &ejsdb_result,
+    const EpanetResultImport &inp_result)
+{
+    const NetworkHydraulic &ejsdb_network = ejsdb_result.network;
+    const NetworkHydraulic &inp_network = inp_result.request.network;
+
+    expectTrue(ejsdb_result.quality_runs.size() == 1,
+               "metric epanet-js fixture imports one chemical quality run");
+    expectTrue(inp_result.request.quality_runs.size() == 1,
+               "paired metric INP imports one chemical quality run");
+
+    const HydraulicNodeJunction *ejsdb_j1 = modelJunctionById(ejsdb_network, QStringLiteral("J1"));
+    const HydraulicNodeJunction *inp_j1 = modelJunctionById(inp_network, QStringLiteral("J1"));
+    expectTrue(ejsdb_j1 != nullptr && inp_j1 != nullptr,
+               "metric quality fixtures both contain junction J1");
+    if (ejsdb_j1 != nullptr && inp_j1 != nullptr)
+    {
+        expectNear(ejsdb_j1->initial_chemical_concentration_mg_per_l, 0.2, 1.0e-12,
+                   "metric epanet-js J1 initial chemical quality is imported");
+        expectNear(inp_j1->initial_chemical_concentration_mg_per_l, 0.2, 1.0e-12,
+                   "paired metric INP J1 initial chemical quality matches");
+    }
+
+    const HydraulicNodeJunction *ejsdb_j3 = modelJunctionById(ejsdb_network, QStringLiteral("J3"));
+    const HydraulicNodeJunction *inp_j3 = modelJunctionById(inp_network, QStringLiteral("J3"));
+    expectTrue(ejsdb_j3 != nullptr && inp_j3 != nullptr,
+               "metric quality fixtures both contain junction J3");
+    if (ejsdb_j3 != nullptr && inp_j3 != nullptr)
+    {
+        expectTrue(ejsdb_j3->quality_source.type == HydraulicNodeQualitySourceType::MassBooster,
+                   "metric epanet-js J3 imports MASS quality source");
+        expectTrue(inp_j3->quality_source.type == HydraulicNodeQualitySourceType::MassBooster,
+                   "paired metric INP J3 imports MASS quality source");
+        expectNear(ejsdb_j3->quality_source.chemical_mass_flow_mg_per_min, 5.0, 1.0e-12,
+                   "metric epanet-js J3 MASS source strength is preserved");
+        expectNear(inp_j3->quality_source.chemical_mass_flow_mg_per_min, 5.0, 1.0e-12,
+                   "paired metric INP J3 MASS source strength matches");
+    }
+
+    const HydraulicNodeReservoir *ejsdb_r1 = modelReservoirById(
+        ejsdb_network, QStringLiteral("R1"));
+    const HydraulicNodeReservoir *inp_r1 = modelReservoirById(
+        inp_network, QStringLiteral("R1"));
+    expectTrue(ejsdb_r1 != nullptr && inp_r1 != nullptr,
+               "metric quality fixtures both contain reservoir R1");
+    if (ejsdb_r1 != nullptr && inp_r1 != nullptr)
+    {
+        expectNear(ejsdb_r1->initial_chemical_concentration_mg_per_l, 1.0, 1.0e-12,
+                   "metric epanet-js reservoir initial chemical quality is imported");
+        expectNear(inp_r1->initial_chemical_concentration_mg_per_l, 1.0, 1.0e-12,
+                   "paired metric INP reservoir initial chemical quality matches");
+        expectTrue(ejsdb_r1->quality_source.type == HydraulicNodeQualitySourceType::Concentration,
+                   "metric epanet-js reservoir imports CONCEN source");
+        expectTrue(inp_r1->quality_source.type == HydraulicNodeQualitySourceType::Concentration,
+                   "paired metric INP reservoir imports CONCEN source");
+        expectNear(ejsdb_r1->quality_source.chemical_concentration_mg_per_l, 1.0, 1.0e-12,
+                   "metric epanet-js reservoir source concentration is preserved");
+        expectNear(inp_r1->quality_source.chemical_concentration_mg_per_l, 1.0, 1.0e-12,
+                   "paired metric INP reservoir source concentration matches");
+        expectTrue(!ejsdb_r1->quality_source.pattern_uuid.isNull(),
+                   "metric epanet-js reservoir source pattern reference is imported");
+        expectTrue(!inp_r1->quality_source.pattern_uuid.isNull(),
+                   "paired metric INP reservoir source pattern reference is imported");
+    }
+
+    const HydraulicNodeTank *ejsdb_t1 = modelTankById(ejsdb_network, QStringLiteral("T1"));
+    const HydraulicNodeTank *inp_t1 = modelTankById(inp_network, QStringLiteral("T1"));
+    expectTrue(ejsdb_t1 != nullptr && inp_t1 != nullptr,
+               "metric quality fixtures both contain tank T1");
+    if (ejsdb_t1 != nullptr && inp_t1 != nullptr)
+    {
+        expectNear(ejsdb_t1->initial_chemical_concentration_mg_per_l, 0.4, 1.0e-12,
+                   "metric epanet-js tank initial quality is imported");
+        expectNear(inp_t1->initial_chemical_concentration_mg_per_l, 0.4, 1.0e-12,
+                   "paired metric INP tank initial quality matches");
+        expectTrue(ejsdb_t1->mixing_model == HydraulicNodeTankMixingModel::TwoCompartment,
+                   "metric epanet-js tank imports two-compartment mixing");
+        expectTrue(inp_t1->mixing_model == HydraulicNodeTankMixingModel::TwoCompartment,
+                   "paired metric INP tank imports two-compartment mixing");
+        expectNear(ejsdb_t1->mixing_fraction, 0.3, 1.0e-12,
+                   "metric epanet-js tank mixing fraction is imported");
+        expectNear(inp_t1->mixing_fraction, 0.3, 1.0e-12,
+                   "paired metric INP tank mixing fraction matches");
+        expectTrue(ejsdb_t1->override_bulk_reaction,
+                   "metric epanet-js tank imports explicit bulk reaction override");
+        expectTrue(inp_t1->override_bulk_reaction,
+                   "paired metric INP tank imports explicit bulk reaction override");
+        expectNear(ejsdb_t1->bulk_reaction.coefficient, -0.15, 1.0e-12,
+                   "metric epanet-js tank bulk reaction coefficient is imported");
+        expectNear(inp_t1->bulk_reaction.coefficient, -0.15, 1.0e-12,
+                   "paired metric INP tank bulk reaction coefficient matches");
+    }
+
+    const HydraulicLinkPipe *ejsdb_p1 = modelPipeById(ejsdb_network, QStringLiteral("P1"));
+    const HydraulicLinkPipe *inp_p1 = modelPipeById(inp_network, QStringLiteral("P1"));
+    expectTrue(ejsdb_p1 != nullptr && inp_p1 != nullptr,
+               "metric quality fixtures both contain pipe P1");
+    if (ejsdb_p1 != nullptr && inp_p1 != nullptr)
+    {
+        expectTrue(ejsdb_p1->override_bulk_reaction && ejsdb_p1->override_wall_reaction,
+                   "metric epanet-js pipe imports explicit bulk and wall reactions");
+        expectTrue(inp_p1->override_bulk_reaction && inp_p1->override_wall_reaction,
+                   "paired metric INP pipe imports explicit bulk and wall reactions");
+        expectNear(ejsdb_p1->bulk_reaction.coefficient, -0.2, 1.0e-12,
+                   "metric epanet-js pipe bulk reaction coefficient is imported");
+        expectNear(inp_p1->bulk_reaction.coefficient, -0.2, 1.0e-12,
+                   "paired metric INP pipe bulk reaction coefficient matches");
+        expectNear(ejsdb_p1->wall_reaction.coefficient, -0.03, 1.0e-12,
+                   "metric epanet-js pipe wall reaction coefficient is imported");
+        expectNear(inp_p1->wall_reaction.coefficient, -0.03, 1.0e-12,
+                   "paired metric INP pipe wall reaction coefficient matches");
+    }
+
+    expectNear(
+        ejsdb_network.options_reaction.global_pipe_bulk_reaction.coefficient,
+        -0.1,
+        1.0e-12,
+        "metric epanet-js global bulk reaction coefficient is imported");
+    expectNear(
+        inp_network.options_reaction.global_pipe_bulk_reaction.coefficient,
+        -0.1,
+        1.0e-12,
+        "paired metric INP global bulk reaction coefficient matches");
+    expectNear(
+        ejsdb_network.options_reaction.global_pipe_wall_reaction.coefficient,
+        -0.02,
+        1.0e-12,
+        "metric epanet-js global wall reaction coefficient is imported");
+    expectNear(
+        inp_network.options_reaction.global_pipe_wall_reaction.coefficient,
+        -0.02,
+        1.0e-12,
+        "paired metric INP global wall reaction coefficient matches");
+}
+
 const HydraulicPipeMaterial *materialById(const NetworkHydraulic &network, const QString &id)
 {
     for (const HydraulicPipeMaterial &material : network.pipe_materials)
@@ -717,13 +1154,15 @@ void testSyntheticMetricProject()
     expectNear(network.controls_simple.at(1).trigger_water_level_m, 4.0, 1e-12,
                "metric high-level control retains its four-metre threshold");
 
+    expectMetricQualityModelData(result, inp_result);
     expectPhysicalTopologyMatches(network, inp_result.request.network);
 
-    const EpanetResultRun ejsdb_run = runConvertedNetwork(network);
+    const EpanetResultRun ejsdb_run = runConvertedNetwork(network, result.quality_runs);
     const EpanetResultRun inp_run = runImportedInp(inp_result);
     if (ejsdb_run.status.success && inp_run.status.success)
     {
         compareHydraulicTimelines(ejsdb_run, inp_run);
+        compareChemicalQualityRuns(ejsdb_run, inp_run);
         expectMetricPumpControlFires(ejsdb_run);
     }
 }
@@ -839,7 +1278,7 @@ void testSyntheticUsCustomaryProject()
 
     expectPhysicalTopologyMatches(network, inp_result.request.network);
 
-    const EpanetResultRun ejsdb_run = runConvertedNetwork(network);
+    const EpanetResultRun ejsdb_run = runConvertedNetwork(network, result.quality_runs);
     const EpanetResultRun inp_run = runImportedInp(inp_result);
     if (ejsdb_run.status.success && inp_run.status.success)
     {
