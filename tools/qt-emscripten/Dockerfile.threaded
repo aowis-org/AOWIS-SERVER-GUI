@@ -11,7 +11,7 @@ ENV AOWIS_QT_WASM_PATH=/opt/qt-wasm
 ENV EMSDK=/opt/emsdk
 
 LABEL org.opencontainers.image.title="AOWIS Qt WebAssembly toolchain"
-LABEL org.opencontainers.image.description="Threaded Qt WebAssembly build environment with QRhi and ShaderTools/qsb support"
+LABEL org.opencontainers.image.description="Threaded Qt WebAssembly build environment with QRhi, ShaderTools/qsb, Qt SQL and bundled SQLite support"
 LABEL org.opencontainers.image.version="Qt ${QT_VERSION} / Emscripten ${EMSCRIPTEN_VERSION}"
 
 RUN apt-get update \
@@ -104,10 +104,16 @@ RUN source "${EMSDK}/emsdk_env.sh" \
         -platform wasm-emscripten \
         -prefix "${AOWIS_QT_WASM_PATH}" \
         -feature-thread \
+        -- \
+        -DFEATURE_sql=ON \
+        -DFEATURE_sql_sqlite=ON \
+        -DFEATURE_system_sqlite=OFF \
     && cmake --build . --parallel "$(nproc)" \
     && cmake --install . \
     && grep -q '^#define QT_FEATURE_thread 1$' "${AOWIS_QT_WASM_PATH}/include/QtCore/qconfig.h" \
-    && test -x "${AOWIS_QT_WASM_PATH}/bin/qt-configure-module"
+    && test -x "${AOWIS_QT_WASM_PATH}/bin/qt-configure-module" \
+    && test -f "${AOWIS_QT_WASM_PATH}/lib/cmake/Qt6Sql/Qt6SqlConfig.cmake" \
+    && find "${AOWIS_QT_WASM_PATH}" -path '*/sqldrivers/*sqlite*' -print -quit | grep -q .
 
 # Cross-build/install the target ShaderTools module. The target CMake package is needed
 # by qt_add_shaders(), while qsb itself is deliberately taken from the host Qt above.
@@ -128,18 +134,22 @@ RUN source "${EMSDK}/emsdk_env.sh" \
 
 # Compile and link a threaded QRhiWidget application and bake a GLSL ES 3 shader.
 # This makes image creation fail immediately unless all pieces AOWIS needs are usable:
-# Widgets, Network, GuiPrivate/QRhi headers, target ShaderTools, and host qsb.
+# Widgets, Network, Sql/QSQLITE, GuiPrivate/QRhi headers, target ShaderTools, and host qsb.
 RUN source "${EMSDK}/emsdk_env.sh" \
     && mkdir -p /tmp/aowis-wasm-rhi-smoke \
     && printf '%s\n' \
         'cmake_minimum_required(VERSION 3.22)' \
         'project(aowis_wasm_rhi_smoke LANGUAGES CXX)' \
-        'find_package(Qt6 REQUIRED COMPONENTS Widgets Network ShaderTools GuiPrivate)' \
+        'find_package(Qt6 REQUIRED COMPONENTS Widgets Network Sql ShaderTools GuiPrivate)' \
+        'if(NOT TARGET Qt6::QSQLiteDriverPlugin)' \
+        '    message(FATAL_ERROR "Qt6::QSQLiteDriverPlugin is unavailable")' \
+        'endif()' \
         'if(NOT TARGET Qt6::GuiPrivate)' \
         '    message(FATAL_ERROR "Qt6::GuiPrivate is unavailable; QRhi headers cannot be used")' \
         'endif()' \
         'qt_add_executable(aowis_wasm_rhi_smoke main.cpp)' \
-        'target_link_libraries(aowis_wasm_rhi_smoke PRIVATE Qt6::Widgets Qt6::Network Qt6::GuiPrivate)' \
+        'target_link_libraries(aowis_wasm_rhi_smoke PRIVATE Qt6::Widgets Qt6::Network Qt6::Sql Qt6::GuiPrivate)' \
+        'qt_import_plugins(aowis_wasm_rhi_smoke INCLUDE Qt6::QSQLiteDriverPlugin)' \
         'target_link_options(aowis_wasm_rhi_smoke PRIVATE "-sMIN_WEBGL_VERSION=2" "-sMAX_WEBGL_VERSION=2")' \
         'qt_add_shaders(aowis_wasm_rhi_smoke "aowis_wasm_rhi_smoke_shaders"' \
         '    PREFIX "/aowis/smoke"' \
@@ -153,6 +163,7 @@ RUN source "${EMSDK}/emsdk_env.sh" \
         '#include <QApplication>' \
         '#include <QRhiWidget>' \
         '#include <QThread>' \
+        '#include <QSqlDatabase>' \
         '#include <rhi/qrhi.h>' \
         'class SmokeRhiWidget final : public QRhiWidget' \
         '{' \
@@ -172,7 +183,8 @@ RUN source "${EMSDK}/emsdk_env.sh" \
         '    SmokeRhiWidget widget;' \
         '    widget.setApi(QRhiWidget::Api::OpenGL);' \
         '    QThread thread;' \
-        '    return thread.isRunning() ? 1 : 0;' \
+        '    const bool sqlite_registered = QSqlDatabase::drivers().contains(QStringLiteral("QSQLITE"));' \
+        '    return thread.isRunning() || !sqlite_registered ? 1 : 0;' \
         '}' \
         > /tmp/aowis-wasm-rhi-smoke/main.cpp \
     && printf '%s\n' \

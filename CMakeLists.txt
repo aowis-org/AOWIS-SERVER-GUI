@@ -744,6 +744,13 @@ qt_import_plugins(aowis-server-gui
     INCLUDE_BY_TYPE imageformats
 )
 
+if(EMSCRIPTEN AND NOT TARGET Qt6::QSQLiteDriverPlugin)
+    message(FATAL_ERROR
+        "The WebAssembly build requires Qt6::QSQLiteDriverPlugin so epanet-js "
+        ".ejsdb projects can be imported. Rebuild the AOWIS WASM toolchain image."
+    )
+endif()
+
 if(TARGET Qt6::QSQLiteDriverPlugin)
     qt_import_plugins(aowis-server-gui
         INCLUDE Qt6::QSQLiteDriverPlugin
