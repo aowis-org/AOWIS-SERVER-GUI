@@ -217,6 +217,26 @@ void testRejectsUnrelatedSqliteDatabase()
     expectTrue(!result.error.isEmpty(), "unrelated SQLite rejection includes a diagnostic");
 }
 
+void testRejectsCorruptedSqliteContentWithValidHeader()
+{
+    const QByteArray complete_database = createDatabase(24, true, true, false);
+    expectTrue(!complete_database.isEmpty(),
+               "complete SQLite fixture exists before corruption");
+
+    const qsizetype truncated_size = qMin<qsizetype>(complete_database.size(), 128);
+    const QByteArray corrupted_database = complete_database.left(truncated_size);
+    expectTrue(corrupted_database.startsWith(QByteArray("SQLite format 3\0", 16)),
+               "corrupted fixture retains a valid SQLite header");
+    expectTrue(corrupted_database.size() < complete_database.size(),
+               "corrupted fixture is actually truncated");
+
+    const EpanetJsProjectReadResult result = EpanetJsProjectReader::readBytes(corrupted_database);
+    expectTrue(!result.success,
+               "reader rejects a corrupted SQLite database even when its header is valid");
+    expectTrue(!result.error.isEmpty(),
+               "corrupted SQLite rejection includes a diagnostic");
+}
+
 void testRejectsNonSqliteContent()
 {
     const EpanetJsProjectReadResult result = EpanetJsProjectReader::readBytes(
@@ -234,6 +254,7 @@ int main(int argc, char **argv)
     test_harness.runCase("future epanet-js schema", testAcceptsFutureSchemaAndPreservesUnknownData);
     test_harness.runCase("minimal epanet-js schema", testAcceptsMinimalNetworkSignatureWithoutProjectTable);
     test_harness.runCase("unrelated SQLite", testRejectsUnrelatedSqliteDatabase);
+    test_harness.runCase("corrupted SQLite", testRejectsCorruptedSqliteContentWithValidHeader);
     test_harness.runCase("non-SQLite input", testRejectsNonSqliteContent);
     return test_harness.finish();
 }
