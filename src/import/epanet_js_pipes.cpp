@@ -13,35 +13,6 @@ using namespace EpanetJsGeometry;
 using namespace EpanetJsConversionCommon;
 using namespace EpanetJsSchema;
 using namespace EpanetJsUnits;
-QString inferredPipeLengthUnit(const QJsonObject &units)
-{
-    const QString explicit_unit = firstUnit(
-        units, QStringList{QStringLiteral("length"), QStringLiteral("elevation")});
-    if (!explicit_unit.isEmpty())
-        return explicit_unit;
-
-    const QString flow_unit = units.value(QStringLiteral("flow")).toString();
-    if (flowUnitUsesMetricLength(flow_unit))
-        return QStringLiteral("m");
-    if (flowUnitUsesFootLength(flow_unit))
-        return QStringLiteral("ft");
-    return {};
-}
-
-QString inferredPipeDiameterUnit(const QJsonObject &units)
-{
-    const QString explicit_unit = units.value(QStringLiteral("diameter")).toString().trimmed();
-    if (!explicit_unit.isEmpty())
-        return explicit_unit;
-
-    const QString flow_unit = units.value(QStringLiteral("flow")).toString();
-    if (flowUnitUsesMetricLength(flow_unit))
-        return QStringLiteral("mm");
-    if (flowUnitUsesFootLength(flow_unit))
-        return QStringLiteral("in");
-    return {};
-}
-
 bool importPipeStatus(
     const QVariantMap &row,
     qint64 source_id,
@@ -94,8 +65,8 @@ void importPipes(
         return;
 
     const QJsonObject units = projectUnitsObject(project_settings);
-    const QString length_unit = inferredPipeLengthUnit(units);
-    const QString diameter_unit = inferredPipeDiameterUnit(units);
+    const QString length_unit = firstUnit(units, QStringList{QStringLiteral("length")});
+    const QString diameter_unit = firstUnit(units, QStringList{QStringLiteral("diameter")});
     const QString roughness_unit = units.value(QStringLiteral("roughness")).toString().trimmed();
     const QString flow_unit = units.value(QStringLiteral("flow")).toString().trimmed();
 

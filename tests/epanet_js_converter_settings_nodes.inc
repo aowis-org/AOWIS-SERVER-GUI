@@ -68,7 +68,7 @@ void testImportsProjectSettingsAndPatterns()
     simulation.insert(QStringLiteral("maximumHeadError"), 2.5);
     simulation.insert(QStringLiteral("maximumFlowChange"), 10.0);
     simulation.insert(QStringLiteral("reactionBulkOrder"), 1.2);
-    simulation.insert(QStringLiteral("reactionWallOrder"), 0.8);
+    simulation.insert(QStringLiteral("reactionWallOrder"), 1.0);
     simulation.insert(QStringLiteral("reactionTankOrder"), 1.1);
     simulation.insert(QStringLiteral("reactionGlobalBulk"), -0.2);
     simulation.insert(QStringLiteral("reactionGlobalWall"), -0.1);
@@ -133,7 +133,7 @@ void testImportsProjectSettingsAndPatterns()
                "maximum flow change gpm is converted to m3/h");
     expectNear(result.network.options_reaction.global_pipe_bulk_reaction.order, 1.2, 1e-12,
                "global pipe bulk order is imported");
-    expectNear(result.network.options_reaction.global_pipe_wall_reaction.order, 0.8, 1e-12,
+    expectNear(result.network.options_reaction.global_pipe_wall_reaction.order, 1.0, 1e-12,
                "global pipe wall order is imported");
     expectNear(result.network.options_reaction.global_tank_bulk_reaction.order, 1.1, 1e-12,
                "global tank reaction order is imported");

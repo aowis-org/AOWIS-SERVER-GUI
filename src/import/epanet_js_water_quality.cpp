@@ -41,33 +41,6 @@ WaterQualityAnalysisType epanetJsQualityAnalysis(const QJsonObject &simulation_s
     return WaterQualityAnalysisType::None;
 }
 
-std::optional<double> waterAgeToHours(double value, const QString &unit)
-{
-    const QString normalized = normalizedUnit(unit);
-    if (normalized.isEmpty() || normalized == QStringLiteral("h")
-        || normalized == QStringLiteral("hr") || normalized == QStringLiteral("hrs")
-        || normalized == QStringLiteral("hour") || normalized == QStringLiteral("hours"))
-    {
-        return value;
-    }
-    if (normalized == QStringLiteral("min") || normalized == QStringLiteral("minute")
-        || normalized == QStringLiteral("minutes"))
-    {
-        return value / 60.0;
-    }
-    if (normalized == QStringLiteral("s") || normalized == QStringLiteral("sec")
-        || normalized == QStringLiteral("second") || normalized == QStringLiteral("seconds"))
-    {
-        return value / 3600.0;
-    }
-    if (normalized == QStringLiteral("d") || normalized == QStringLiteral("day")
-        || normalized == QStringLiteral("days"))
-    {
-        return value * 24.0;
-    }
-    return std::nullopt;
-}
-
 double reactionCoefficientScaleToCanonicalMg(
     double chemical_scale_to_canonical_mg,
     double reaction_order)
@@ -173,9 +146,7 @@ void importNodeQualityRows(
         return;
 
     const QJsonObject units = projectUnitsObject(project_settings);
-    QString chemical_unit = units.value(QStringLiteral("chemicalConcentration")).toString();
-    if (chemical_unit.isEmpty())
-        chemical_unit = simulation_settings.value(QStringLiteral("qualityMassUnit")).toString();
+    const QString chemical_unit = units.value(QStringLiteral("chemicalConcentration")).toString();
     const std::optional<double> chemical_scale =
         chemicalConcentrationScaleToMgPerL(chemical_unit);
     const QString water_age_unit = units.value(QStringLiteral("waterAge")).toString();
@@ -398,11 +369,8 @@ void importWaterQualityEntityData(
         project_settings, simulation_settings, pattern_uuids, result);
 
     const QJsonObject units = projectUnitsObject(project_settings);
-    const QString flow_unit = firstUnit(
-        units, QStringList{QStringLiteral("flow"), QStringLiteral("baseDemand")});
-    QString chemical_unit = units.value(QStringLiteral("chemicalConcentration")).toString();
-    if (chemical_unit.isEmpty())
-        chemical_unit = simulation_settings.value(QStringLiteral("qualityMassUnit")).toString();
+    const QString flow_unit = firstUnit(units, QStringList{QStringLiteral("flow")});
+    const QString chemical_unit = units.value(QStringLiteral("chemicalConcentration")).toString();
     const std::optional<double> chemical_scale =
         chemicalConcentrationScaleToMgPerL(chemical_unit);
 

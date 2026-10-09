@@ -62,12 +62,7 @@ void importCustomerPoints(
     const QSet<QUuid> pattern_uuids = uuidMembershipIndex(result.network.patterns_time);
 
     const QJsonObject units = projectUnitsObject(project_settings);
-    const QString demand_unit = firstUnit(
-        units,
-        QStringList{
-            QStringLiteral("customerDemand"),
-            QStringLiteral("baseDemand"),
-            QStringLiteral("flow")});
+    const QString demand_unit = firstUnit(units, QStringList{QStringLiteral("customerDemand")});
 
     struct SourceDemand
     {

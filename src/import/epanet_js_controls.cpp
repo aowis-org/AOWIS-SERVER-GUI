@@ -144,13 +144,7 @@ void importStructuredControls(
     }
 
     const QJsonObject units = projectUnitsObject(project_settings);
-    const QString level_unit = firstUnit(
-        units,
-        QStringList{
-            QStringLiteral("level"),
-            QStringLiteral("initialLevel"),
-            QStringLiteral("length"),
-            QStringLiteral("elevation")});
+    const QString level_unit = firstUnit(units, QStringList{QStringLiteral("level")});
 
     const QJsonArray controls = document.array();
     for (qsizetype index = 0; index < controls.size(); ++index)
@@ -576,10 +570,7 @@ bool importRawSimpleLevelControl(
     }
     else
     {
-        const QString level_unit = firstUnit(
-            units,
-            QStringList{QStringLiteral("level"), QStringLiteral("initialLevel"),
-                        QStringLiteral("length"), QStringLiteral("elevation")});
+        const QString level_unit = firstUnit(units, QStringList{QStringLiteral("level")});
         const std::optional<double> threshold = lengthToM(source_threshold, level_unit);
         if (!threshold.has_value())
         {
@@ -1031,11 +1022,8 @@ bool assignRawRulePremiseValue(
         || premise.variable == HydraulicControlRuleVariable::Level)
     {
         const QString length_unit = premise.variable == HydraulicControlRuleVariable::Level
-            ? firstUnit(units, QStringList{QStringLiteral("level"), QStringLiteral("initialLevel"),
-                                          QStringLiteral("head"), QStringLiteral("elevation"),
-                                          QStringLiteral("length")})
-            : firstUnit(units, QStringList{QStringLiteral("head"), QStringLiteral("elevation"),
-                                          QStringLiteral("length")});
+            ? firstUnit(units, QStringList{QStringLiteral("level")})
+            : firstUnit(units, QStringList{QStringLiteral("head")});
         const std::optional<double> converted = lengthToM(source_value, length_unit);
         if (!converted.has_value())
             return false;

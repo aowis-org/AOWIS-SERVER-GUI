@@ -4,7 +4,6 @@
 #include "import/epanet_js_conversion_common.h"
 #include "import/epanet_js_schema.h"
 #include "import/epanet_js_units.h"
-#include "import/epanet_js_pipes.h"
 #include "import/epanet_js_geometry.h"
 
 #include <QJsonArray>
@@ -22,7 +21,6 @@ namespace EpanetJsPumpsValves
 using namespace EpanetJsConversionCommon;
 using namespace EpanetJsSchema;
 using namespace EpanetJsUnits;
-using namespace EpanetJsPipes;
 using namespace EpanetJsGeometry;
 
 std::optional<double> powerToKw(double value, const QString &unit)
@@ -34,20 +32,6 @@ std::optional<double> powerToKw(double value, const QString &unit)
     if (normalized == QStringLiteral("hp") || normalized == QStringLiteral("horsepower"))
         return aowis::units::mechanicalHorsepowerToKilowatts(value);
     return std::nullopt;
-}
-
-QString inferredPowerUnit(const QJsonObject &units)
-{
-    const QString explicit_unit = units.value(QStringLiteral("power")).toString().trimmed();
-    if (!explicit_unit.isEmpty())
-        return explicit_unit;
-
-    const QString flow_unit = units.value(QStringLiteral("flow")).toString();
-    if (flowUnitUsesMetricLength(flow_unit))
-        return QStringLiteral("kW");
-    if (flowUnitUsesFootLength(flow_unit))
-        return QStringLiteral("hp");
-    return {};
 }
 
 void importLinkVertices(
@@ -194,9 +178,8 @@ void importPumps(
 
     const QJsonObject units = projectUnitsObject(project_settings);
     const QString flow_unit = units.value(QStringLiteral("flow")).toString().trimmed();
-    const QString power_unit = inferredPowerUnit(units);
-    const QString head_unit = firstUnit(
-        units, QStringList{QStringLiteral("head"), QStringLiteral("elevation")});
+    const QString power_unit = firstUnit(units, QStringList{QStringLiteral("power")});
+    const QString head_unit = firstUnit(units, QStringList{QStringLiteral("head")});
 
     QHash<QUuid, int> head_curve_points;
     for (const HydraulicCurvePumpHead &curve : result.network.curves_pump_head)
@@ -621,7 +604,7 @@ void importValves(
         return;
 
     const QJsonObject units = projectUnitsObject(project_settings);
-    const QString diameter_unit = inferredPipeDiameterUnit(units);
+    const QString diameter_unit = firstUnit(units, QStringList{QStringLiteral("diameter")});
     const QString pressure_unit = units.value(QStringLiteral("pressure")).toString().trimmed();
     const QString flow_unit = units.value(QStringLiteral("flow")).toString().trimmed();
 

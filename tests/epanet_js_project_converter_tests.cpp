@@ -221,6 +221,18 @@ int main()
         "epanet-js global reactions with Greek-mu concentration unit",
         testGlobalReactionsWithGreekMuConcentrationUnit);
     test_harness.runCase(
+        "epanet-js missing volume unit inferred for tanks",
+        testInfersMissingVolumeUnitForTanks);
+    test_harness.runCase(
+        "epanet-js wall reaction order restricted to 0 or 1",
+        testRejectsUnsupportedWallReactionOrder);
+    test_harness.runCase(
+        "epanet-js unconvertible solver tolerances keep defaults",
+        testUnconvertibleSolverTolerancesKeepDefaults);
+    test_harness.runCase(
+        "epanet-js water-age tolerance shared conversion",
+        testWaterAgeToleranceUsesSharedConversion);
+    test_harness.runCase(
         "epanet-js water-quality simulation settings",
         testImportsWaterQualitySimulationSettings);
     test_harness.runCase(
@@ -298,5 +310,17 @@ int main()
     test_harness.runCase(
         "epanet-js independent SI unit reference values",
         testIndependentUnitReferenceValues);
+    test_harness.runCase(
+        "epanet-js flow-unit preset spellings",
+        testEpanetJsFlowUnitSpellings);
+    test_harness.runCase(
+        "epanet-js EPANET 2.3 pressure and emitter semantics",
+        testEpanetJsPressureAndEmitterSemantics);
+    test_harness.runCase(
+        "epanet-js US flow presets import",
+        testImportsImperialAndAcreFootFlowPresets);
+    test_harness.runCase(
+        "epanet-js quality mass unit precedence",
+        testQualityMassUnitTakesPrecedenceOverStaleConcentrationUnit);
     return test_harness.finish();
 }

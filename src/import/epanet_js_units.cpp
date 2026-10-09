@@ -7,6 +7,11 @@ namespace EpanetJsUnits
 {
 namespace units = aowis::units;
 
+// epanet-js unit spellings (libs/quantity FlowUnit / PressureUnit / VolumeUnit,
+// libs/ejsdb project-settings unitSchema). The ten EPANET flow presets are
+// written as: l/s, l/min, Ml/d, m^3/h, m^3/d (SI) and gal/min, ft^3/s, Mgal/d,
+// IMgal/d, acft/d (US). Pressure is one of mwc, fwc, psi, kPa, bar. EPANET INP
+// tokens (LPS, GPM, CFS, ...) are accepted as aliases.
 QString normalizedUnit(QString unit)
 {
     unit = unit.trimmed();
@@ -48,9 +53,10 @@ std::optional<double> flowToM3PerH(double value, const QString &unit)
         return units::usGallonsPerMinuteToCubicMetresPerHour(value);
     if (normalized == QStringLiteral("mgd"))
         return units::millionUsGallonsPerDayToCubicMetresPerHour(value);
-    if (normalized == QStringLiteral("imgd"))
+    if (normalized == QStringLiteral("imgd") || normalized == QStringLiteral("imgal/d"))
         return units::millionImperialGallonsPerDayToCubicMetresPerHour(value);
-    if (normalized == QStringLiteral("acre-ft/d") || normalized == QStringLiteral("afd"))
+    if (normalized == QStringLiteral("acft/d") || normalized == QStringLiteral("acre-ft/d")
+        || normalized == QStringLiteral("afd"))
         return units::acreFeetPerDayToCubicMetresPerHour(value);
     return std::nullopt;
 }
@@ -120,6 +126,7 @@ bool flowUnitUsesFootLength(const QString &unit)
         normalized == QStringLiteral("cfs") || normalized == QStringLiteral("gpm") ||
         normalized == QStringLiteral("gal/min") || normalized == QStringLiteral("usgal/min") ||
         normalized == QStringLiteral("mgd") || normalized == QStringLiteral("imgd") ||
+        normalized == QStringLiteral("imgal/d") || normalized == QStringLiteral("acft/d") ||
         normalized == QStringLiteral("acre-ft/d") || normalized == QStringLiteral("afd");
 }
 
@@ -158,22 +165,47 @@ std::optional<double> chemicalConcentrationScaleToMgPerL(const QString &unit)
     return std::nullopt;
 }
 
-// Physical pressure head with reference water density 1000 kg/m^3 and
-// standard gravity. EPANET-specific legacy pressure conventions remain
-// the responsibility of their respective format adapters.
+std::optional<double> waterAgeToHours(double value, const QString &unit)
+{
+    const QString normalized = normalizedUnit(unit);
+    if (normalized.isEmpty() || normalized == QStringLiteral("h")
+        || normalized == QStringLiteral("hr") || normalized == QStringLiteral("hrs")
+        || normalized == QStringLiteral("hour") || normalized == QStringLiteral("hours"))
+        return value;
+    if (normalized == QStringLiteral("min") || normalized == QStringLiteral("minute")
+        || normalized == QStringLiteral("minutes"))
+        return value / units::minutes_per_hour;
+    if (normalized == QStringLiteral("s") || normalized == QStringLiteral("sec")
+        || normalized == QStringLiteral("second") || normalized == QStringLiteral("seconds"))
+        return value / units::seconds_per_hour;
+    if (normalized == QStringLiteral("d") || normalized == QStringLiteral("day")
+        || normalized == QStringLiteral("days"))
+        return value * units::hours_per_day;
+    return std::nullopt;
+}
+
+// Converts an epanet-js pressure value to canonical pressure head of the
+// simulated fluid, following EPANET 2.3, which epanet-js runs:
+//  - mwc / fwc map to EPANET PRESSURE METERS / FEET, which EPANET 2.3 treats as
+//    head of the fluid itself (input1.c: pcf = MperFT, pcf = 1.0). Specific
+//    gravity does not apply. (EPANET 2.2 still scaled METERS by SpGrav.)
+//  - psi / kPa / bar are true pressures (pcf = PSIperFT * SpGrav, ...); head is
+//    obtained with reference water density 1000 kg/m^3, standard gravity and
+//    the project's specific gravity.
 std::optional<double> pressureToHeadM(
     double value,
     const QString &unit,
     double specific_gravity)
 {
     const QString normalized = normalizedUnit(unit);
+    if (normalized == QStringLiteral("mwc") || normalized == QStringLiteral("m")
+        || normalized == QStringLiteral("mh2o"))
+        return value;
+    if (normalized == QStringLiteral("fwc") || normalized == QStringLiteral("ft")
+        || normalized == QStringLiteral("feet"))
+        return units::feetToMetres(value);
     if (!std::isfinite(specific_gravity) || specific_gravity <= 0.0)
         return std::nullopt;
-    if (normalized == QStringLiteral("m") || normalized == QStringLiteral("mwc") ||
-        normalized == QStringLiteral("mh2o"))
-        return value / specific_gravity;
-    if (normalized == QStringLiteral("ft") || normalized == QStringLiteral("feet"))
-        return units::feetToMetres(value) / specific_gravity;
     if (normalized == QStringLiteral("psi"))
         return units::pascalsToMetresHead(units::psiToPascals(value),
                                            units::reference_water_density_kg_per_m3 * specific_gravity,
@@ -189,11 +221,15 @@ std::optional<double> pressureToHeadM(
     return std::nullopt;
 }
 
+// EPANET 2.3 defines emitter coefficients independently of the PRESSURE
+// option (input1.c convertunits: ecf = US ? PSIperFT * SpGrav : MperFT):
+// flow units per psi^n for US flow units and per metre of head^n for SI flow
+// units. epanet-js stores the coefficient unconverted (units.emitterCoefficient
+// is null), so the project's pressure display unit must not be used here.
 std::optional<double> emitterCoefficientToCanonical(
     double source_coefficient,
     double pressure_exponent,
     const QString &flow_unit,
-    const QString &pressure_unit,
     double specific_gravity)
 {
     if (!std::isfinite(source_coefficient) || source_coefficient < 0.0
@@ -202,9 +238,17 @@ std::optional<double> emitterCoefficientToCanonical(
     if (source_coefficient == 0.0)
         return 0.0;
 
+    QString emitter_pressure_unit;
+    if (flowUnitUsesFootLength(flow_unit))
+        emitter_pressure_unit = QStringLiteral("psi");
+    else if (flowUnitUsesMetricLength(flow_unit))
+        emitter_pressure_unit = QStringLiteral("m");
+    else
+        return std::nullopt;
+
     const std::optional<double> flow_scale = flowToM3PerH(1.0, flow_unit);
     const std::optional<double> pressure_scale = pressureToHeadM(
-        1.0, pressure_unit, specific_gravity);
+        1.0, emitter_pressure_unit, specific_gravity);
     if (!flow_scale.has_value() || !pressure_scale.has_value()
         || !std::isfinite(*pressure_scale) || *pressure_scale <= 0.0)
         return std::nullopt;

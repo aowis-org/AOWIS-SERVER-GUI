@@ -113,8 +113,7 @@ void importJunctions(
         return;
 
     const QJsonObject units = projectUnitsObject(project_settings);
-    const QString elevation_unit = firstUnit(
-        units, QStringList{QStringLiteral("elevation"), QStringLiteral("head"), QStringLiteral("level")});
+    const QString elevation_unit = firstUnit(units, QStringList{QStringLiteral("elevation")});
 
     for (const QVariantMap &row : table->rows)
     {
@@ -150,8 +149,7 @@ void importReservoirs(
         return;
 
     const QJsonObject units = projectUnitsObject(project_settings);
-    const QString head_unit = firstUnit(
-        units, QStringList{QStringLiteral("head"), QStringLiteral("elevation"), QStringLiteral("level")});
+    const QString head_unit = firstUnit(units, QStringList{QStringLiteral("head")});
 
     const QSet<QUuid> pattern_uuids = uuidMembershipIndex(result.network.patterns_time);
 
@@ -220,18 +218,12 @@ void importTanks(
         return;
 
     const QJsonObject units = projectUnitsObject(project_settings);
-    const QString elevation_unit = firstUnit(
-        units, QStringList{QStringLiteral("elevation"), QStringLiteral("head"), QStringLiteral("level")});
-    const QString initial_level_unit = firstUnit(
-        units, QStringList{QStringLiteral("initialLevel"), QStringLiteral("level"), QStringLiteral("elevation")});
-    const QString minimum_level_unit = firstUnit(
-        units, QStringList{QStringLiteral("minLevel"), QStringLiteral("level"), QStringLiteral("elevation")});
-    const QString maximum_level_unit = firstUnit(
-        units, QStringList{QStringLiteral("maxLevel"), QStringLiteral("level"), QStringLiteral("elevation")});
-    const QString diameter_unit = firstUnit(
-        units, QStringList{QStringLiteral("tankDiameter"), QStringLiteral("length"), QStringLiteral("elevation")});
-    const QString volume_unit = firstUnit(
-        units, QStringList{QStringLiteral("minVolume"), QStringLiteral("volume")});
+    const QString elevation_unit = firstUnit(units, QStringList{QStringLiteral("elevation")});
+    const QString initial_level_unit = firstUnit(units, QStringList{QStringLiteral("initialLevel")});
+    const QString minimum_level_unit = firstUnit(units, QStringList{QStringLiteral("minLevel")});
+    const QString maximum_level_unit = firstUnit(units, QStringList{QStringLiteral("maxLevel")});
+    const QString diameter_unit = firstUnit(units, QStringList{QStringLiteral("tankDiameter")});
+    const QString volume_unit = firstUnit(units, QStringList{QStringLiteral("minVolume")});
 
     constexpr double pi = 3.141592653589793238462643383279502884;
 
@@ -345,8 +337,7 @@ void importJunctionDemands(
         return;
 
     const QJsonObject units = projectUnitsObject(project_settings);
-    const QString demand_unit = firstUnit(
-        units, QStringList{QStringLiteral("baseDemand"), QStringLiteral("flow")});
+    const QString demand_unit = firstUnit(units, QStringList{QStringLiteral("baseDemand")});
 
     struct SourceDemand
     {
@@ -501,10 +492,7 @@ void applyEmitterSettings(
         return;
 
     const QJsonObject units = projectUnitsObject(project_settings);
-    const QString flow_unit = firstUnit(
-        units, QStringList{QStringLiteral("flow"), QStringLiteral("baseDemand")});
-    const QString pressure_unit = firstUnit(
-        units, QStringList{QStringLiteral("pressure"), QStringLiteral("head")});
+    const QString flow_unit = firstUnit(units, QStringList{QStringLiteral("flow")});
 
     const QHash<QUuid, qsizetype> junction_positions = uuidPositionIndex(result.network.nodes_junctions);
 
@@ -539,7 +527,6 @@ void applyEmitterSettings(
             *source_coefficient,
             pressure_exponent,
             flow_unit,
-            pressure_unit,
             result.network.options_hydraulic.specific_gravity);
         if (!canonical.has_value())
         {
@@ -547,9 +534,9 @@ void applyEmitterSettings(
                 result,
                 EpanetJsConversionDiagnosticSeverity::Error,
                 QStringLiteral("unsupported-emitter-coefficient-unit"),
-                QStringLiteral("AOWIS cannot convert epanet-js junction %1 emitter coefficient using flow unit '%2', pressure unit '%3', and emitter exponent %4.")
+                QStringLiteral("AOWIS cannot convert epanet-js junction %1 emitter coefficient using flow unit '%2' and emitter exponent %3.")
                     .arg(*source_id)
-                    .arg(flow_unit, pressure_unit)
+                    .arg(flow_unit)
                     .arg(pressure_exponent),
                 QStringLiteral("junctions"),
                 *source_id);

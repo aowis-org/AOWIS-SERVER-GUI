@@ -166,12 +166,9 @@ void importCurves(
 
     const QJsonObject units = projectUnitsObject(project_settings);
     const QString flow_unit = units.value(QStringLiteral("flow")).toString();
-    QString head_unit = units.value(QStringLiteral("head")).toString();
-    if (head_unit.isEmpty())
-        head_unit = units.value(QStringLiteral("elevation")).toString();
-    QString level_unit = units.value(QStringLiteral("level")).toString();
-    if (level_unit.isEmpty())
-        level_unit = head_unit;
+    const QString head_unit = units.value(QStringLiteral("head")).toString();
+    const QString headloss_unit = units.value(QStringLiteral("headloss")).toString();
+    const QString level_unit = units.value(QStringLiteral("level")).toString();
     const QString volume_unit = units.value(QStringLiteral("volume")).toString();
 
     for (const QVariantMap &row : table->rows)
@@ -285,9 +282,6 @@ void importCurves(
         }
         else if (type == QStringLiteral("headloss"))
         {
-            QString headloss_unit = units.value(QStringLiteral("headloss")).toString();
-            if (headloss_unit.isEmpty())
-                headloss_unit = head_unit;
             HydraulicCurveValveHeadloss curve;
             curve.id = id;
             curve.uuid = uuid;
