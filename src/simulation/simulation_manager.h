@@ -52,6 +52,7 @@ private:
     QPointer<QThread> simulation_thread = nullptr;
     std::shared_ptr<std::atomic_bool> simulation_cancellation_flag;
     bool simulation_running = false;
+    bool epanet_js_import_in_progress = false;
 
     void finishSimulation(const EpanetResultRun &run_result);
     void finishEpanetNetworkImport(EpanetResultImport import_result, QWidget *parent_widget);

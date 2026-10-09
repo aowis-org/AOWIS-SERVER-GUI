@@ -14,6 +14,8 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMessageBox>
+#include <QProgressDialog>
+#include <QTimer>
 #include <QTemporaryDir>
 
 #include <memory>
@@ -597,59 +599,87 @@ void SimulationManager::importNetworkProjectContent(
 
     if (EpanetJsProjectImporter::accepts(file_name, file_content))
     {
-        EpanetJsProjectImportResult import_result =
-            EpanetJsProjectImporter::importBytes(file_content);
-        if (!import_result.recognized)
-        {
-            showDetailedMessageBox(
-                parent_widget,
-                QMessageBox::Critical,
-                tr("epanet-js import failed"),
-                tr("The selected SQLite project could not be recognized as an epanet-js project."),
-                import_result.read_error);
+        if (this->epanet_js_import_in_progress)
             return;
-        }
 
-        EpanetJsProjectConversionResult &conversion_result = import_result.conversion;
-        if (!conversion_result.success)
-        {
-            QString details = epanetJsConversionDiagnosticDetails(conversion_result);
-            if (details.isEmpty())
-                details = conversion_result.errorSummary();
+        this->epanet_js_import_in_progress = true;
+        QProgressDialog *progress = new QProgressDialog(
+            tr("Importing epanet-js project…"), QString(), 0, 0, parent_widget);
+        progress->setWindowTitle(tr("Importing project"));
+        progress->setCancelButton(nullptr);
+        progress->setMinimumDuration(0);
+        progress->setWindowModality(Qt::WindowModal);
+        progress->setAttribute(Qt::WA_DeleteOnClose);
+        progress->show();
 
-            showDetailedMessageBox(
-                parent_widget,
-                QMessageBox::Critical,
-                tr("epanet-js import failed"),
-                tr("The epanet-js project was recognized, but it could not be translated "
-                   "into the AOWIS hydraulic model."),
-                details);
-            return;
-        }
+        // Return to the event loop before starting the synchronous import.
+        // This is important for the browser to paint the indicator on WASM.
+        QPointer<SimulationManager> manager(this);
+        QPointer<QProgressDialog> progress_guard(progress);
+        QTimer::singleShot(50, this,
+            [manager, progress_guard, parent_widget, file_content]()
+            {
+                if (!manager)
+                    return;
 
-        const QString diagnostic_text = epanetJsConversionDiagnosticDetails(conversion_result);
-        int warning_count = 0;
-        for (const EpanetJsConversionDiagnostic &diagnostic : conversion_result.diagnostics)
-        {
-            if (diagnostic.severity == EpanetJsConversionDiagnosticSeverity::Warning)
-                ++warning_count;
-        }
+                EpanetJsProjectImportResult import_result =
+                    EpanetJsProjectImporter::importBytes(file_content);
+                manager->epanet_js_import_in_progress = false;
+                if (progress_guard)
+                    progress_guard->close();
 
-        this->hydraulic_data->replaceNetworkHydraulic(
-            std::move(conversion_result.network),
-            std::move(conversion_result.quality_runs));
-        emit signalEpanetNetworkImported();
+                if (!import_result.recognized)
+                {
+                    showDetailedMessageBox(
+                        parent_widget,
+                        QMessageBox::Critical,
+                        tr("epanet-js import failed"),
+                        tr("The selected SQLite project could not be recognized as an epanet-js project."),
+                        import_result.read_error);
+                    return;
+                }
 
-        if (warning_count > 0)
-        {
-            showDetailedMessageBox(
-                parent_widget,
-                QMessageBox::Warning,
-                tr("Project imported with warnings"),
-                tr("The epanet-js project was imported, but %1 warning(s) were reported.")
-                    .arg(warning_count),
-                diagnostic_text);
-        }
+                EpanetJsProjectConversionResult &conversion_result = import_result.conversion;
+                if (!conversion_result.success)
+                {
+                    QString details = epanetJsConversionDiagnosticDetails(conversion_result);
+                    if (details.isEmpty())
+                        details = conversion_result.errorSummary();
+
+                    showDetailedMessageBox(
+                        parent_widget,
+                        QMessageBox::Critical,
+                        tr("epanet-js import failed"),
+                        tr("The epanet-js project was recognized, but it could not be translated "
+                           "into the AOWIS hydraulic model."),
+                        details);
+                    return;
+                }
+
+                const QString diagnostic_text = epanetJsConversionDiagnosticDetails(conversion_result);
+                int warning_count = 0;
+                for (const EpanetJsConversionDiagnostic &diagnostic : conversion_result.diagnostics)
+                {
+                    if (diagnostic.severity == EpanetJsConversionDiagnosticSeverity::Warning)
+                        ++warning_count;
+                }
+
+                manager->hydraulic_data->replaceNetworkHydraulic(
+                    std::move(conversion_result.network),
+                    std::move(conversion_result.quality_runs));
+                emit manager->signalEpanetNetworkImported();
+
+                if (warning_count > 0)
+                {
+                    showDetailedMessageBox(
+                        parent_widget,
+                        QMessageBox::Warning,
+                        tr("Project imported with warnings"),
+                        tr("The epanet-js project was imported, but %1 warning(s) were reported.")
+                            .arg(warning_count),
+                        diagnostic_text);
+                }
+            });
         return;
     }
 
