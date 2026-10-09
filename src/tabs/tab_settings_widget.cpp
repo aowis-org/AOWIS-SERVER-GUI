@@ -2,6 +2,7 @@
 
 #include "settings/keyboard_shortcuts_settings_widget.h"
 #include "settings/map_settings_widget.h"
+#include "settings/units_settings_widget.h"
 
 #include <QFrame>
 #include <QHBoxLayout>
@@ -35,6 +36,10 @@ SettingsWidget::SettingsWidget(QWidget *parent)
     this->map_settings_page = new MapSettingsWidget(this->pages);
     this->table_of_contents->addItem(QStringLiteral("Map Settings"));
     this->pages->addWidget(this->map_settings_page);
+
+    this->units_settings_page = new UnitsSettingsWidget(this->pages);
+    this->table_of_contents->addItem(QStringLiteral("Units"));
+    this->pages->addWidget(this->units_settings_page);
 
     connect(this->table_of_contents, &QListWidget::currentRowChanged,
             this, [this](int row)

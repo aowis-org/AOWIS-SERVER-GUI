@@ -7,6 +7,7 @@
 
 class KeyboardShortcutsSettingsWidget;
 class MapSettingsWidget;
+class UnitsSettingsWidget;
 class QListWidget;
 class QStackedWidget;
 
@@ -27,6 +28,7 @@ private:
     QStackedWidget *pages = nullptr;
     KeyboardShortcutsSettingsWidget *keyboard_shortcuts_page = nullptr;
     MapSettingsWidget *map_settings_page = nullptr;
+    UnitsSettingsWidget *units_settings_page = nullptr;
 };
 
 #endif // TAB_SETTINGS_WIDGET_H

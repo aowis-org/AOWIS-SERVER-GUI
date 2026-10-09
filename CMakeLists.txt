@@ -201,6 +201,8 @@ qt_add_executable(aowis-server-gui
     src/settings/keyboard_shortcuts_settings_widget.h
     src/settings/map_settings_widget.cpp
     src/settings/map_settings_widget.h
+    src/settings/units_settings_widget.cpp
+    src/settings/units_settings_widget.h
 
     # Tabs
     src/tabs/tab_alarms_widget.cpp
