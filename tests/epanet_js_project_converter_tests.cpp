@@ -1,10 +1,12 @@
 #include "import/epanet_js_project_converter.h"
+#include "import/epanet_js_units.h"
 #include "test_harness.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QVariantMap>
+#include <cmath>
 
 namespace
 {
@@ -169,6 +171,7 @@ bool hasDiagnosticCode(
 #include "epanet_js_converter_demand_materials_pipes.inc"
 #include "epanet_js_converter_pumps_valves.inc"
 #include "epanet_js_converter_controls.inc"
+#include "epanet_js_converter_unit_reference.inc"
 
 }
 
@@ -282,5 +285,8 @@ int main()
     test_harness.runCase(
         "malformed optional epanet-js operational data",
         testSkipsMalformedOptionalOperationalData);
+    test_harness.runCase(
+        "epanet-js independent SI unit reference values",
+        testIndependentUnitReferenceValues);
     return test_harness.finish();
 }

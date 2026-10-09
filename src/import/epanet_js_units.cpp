@@ -1,9 +1,12 @@
 #include "import/epanet_js_units.h"
 
 #include <cmath>
+#include <aowis/model/units/conversion.h>
 
 namespace EpanetJsUnits
 {
+namespace units = aowis::units;
+
 QString normalizedUnit(QString unit)
 {
     unit = unit.trimmed().toLower();
@@ -20,28 +23,28 @@ std::optional<double> flowToM3PerH(double value, const QString &unit)
         return value;
     if (normalized == QStringLiteral("m^3/s") || normalized == QStringLiteral("m3/s") ||
         normalized == QStringLiteral("cms"))
-        return value * 3600.0;
+        return units::cubicMetresPerSecondToCubicMetresPerHour(value);
     if (normalized == QStringLiteral("l/s") || normalized == QStringLiteral("lps"))
-        return value * 3.6;
+        return units::litresPerSecondToCubicMetresPerHour(value);
     if (normalized == QStringLiteral("l/min") || normalized == QStringLiteral("lpm"))
-        return value * 0.06;
+        return units::litresPerMinuteToCubicMetresPerHour(value);
     if (normalized == QStringLiteral("m^3/d") || normalized == QStringLiteral("m3/d") ||
         normalized == QStringLiteral("cmd"))
-        return value / 24.0;
+        return units::cubicMetresPerDayToCubicMetresPerHour(value);
     if (normalized == QStringLiteral("mld"))
-        return value * (1000.0 / 24.0);
+        return units::millionLitresPerDayToCubicMetresPerHour(value);
     if (normalized == QStringLiteral("ft^3/s") || normalized == QStringLiteral("ft3/s") ||
         normalized == QStringLiteral("cfs"))
-        return value * 101.9406477312;
+        return units::cubicFeetPerSecondToCubicMetresPerHour(value);
     if (normalized == QStringLiteral("gpm") || normalized == QStringLiteral("gal/min")
         || normalized == QStringLiteral("usgal/min"))
-        return value * 0.22712470704;
+        return units::usGallonsPerMinuteToCubicMetresPerHour(value);
     if (normalized == QStringLiteral("mgd"))
-        return value * 157.725491;
+        return units::millionUsGallonsPerDayToCubicMetresPerHour(value);
     if (normalized == QStringLiteral("imgd"))
-        return value * 189.42041666666667;
+        return units::millionImperialGallonsPerDayToCubicMetresPerHour(value);
     if (normalized == QStringLiteral("acre-ft/d") || normalized == QStringLiteral("afd"))
-        return value * 51.39507656448;
+        return units::acreFeetPerDayToCubicMetresPerHour(value);
     return std::nullopt;
 }
 
@@ -53,7 +56,7 @@ std::optional<double> lengthToM(double value, const QString &unit)
         return value;
     if (normalized == QStringLiteral("ft") || normalized == QStringLiteral("foot") ||
         normalized == QStringLiteral("feet"))
-        return value * 0.3048;
+        return units::feetToMetres(value);
     return std::nullopt;
 }
 
@@ -63,9 +66,9 @@ std::optional<double> volumeToM3(double value, const QString &unit)
     if (normalized == QStringLiteral("m^3") || normalized == QStringLiteral("m3"))
         return value;
     if (normalized == QStringLiteral("ft^3") || normalized == QStringLiteral("ft3"))
-        return value * 0.028316846592;
+        return units::cubicFeetToCubicMetres(value);
     if (normalized == QStringLiteral("gal") || normalized == QStringLiteral("usgal"))
-        return value * 0.003785411784;
+        return units::usGallonsToCubicMetres(value);
     return std::nullopt;
 }
 
@@ -83,10 +86,10 @@ std::optional<double> diameterToMm(double value, const QString &unit)
         return value * 1000.0;
     if (normalized == QStringLiteral("in") || normalized == QStringLiteral("inch")
         || normalized == QStringLiteral("inches"))
-        return value * 25.4;
+        return units::inchesToMillimetres(value);
     if (normalized == QStringLiteral("ft") || normalized == QStringLiteral("foot")
         || normalized == QStringLiteral("feet"))
-        return value * 304.8;
+        return units::feetToMillimetres(value);
     return std::nullopt;
 }
 
@@ -124,16 +127,16 @@ std::optional<double> darcyRoughnessToMm(
         return value;
     if (normalized == QStringLiteral("millift") || normalized == QStringLiteral("millifeet")
         || normalized == QStringLiteral("milli-ft") || normalized == QStringLiteral("0.001ft"))
-        return value * 0.3048;
+        return units::feetToMetres(value);
     if (normalized == QStringLiteral("ft") || normalized == QStringLiteral("foot")
         || normalized == QStringLiteral("feet"))
-        return value * 304.8;
+        return units::feetToMillimetres(value);
     if (normalized.isEmpty())
     {
         if (flowUnitUsesMetricLength(flow_unit))
             return value;
         if (flowUnitUsesFootLength(flow_unit))
-            return value * 0.3048;
+            return units::feetToMetres(value);
     }
     return std::nullopt;
 }
@@ -148,6 +151,9 @@ std::optional<double> chemicalConcentrationScaleToMgPerL(const QString &unit)
     return std::nullopt;
 }
 
+// Physical pressure head with reference water density 1000 kg/m^3 and
+// standard gravity. EPANET-specific legacy pressure conventions remain
+// the responsibility of their respective format adapters.
 std::optional<double> pressureToHeadM(
     double value,
     const QString &unit,
@@ -158,15 +164,18 @@ std::optional<double> pressureToHeadM(
         normalized == QStringLiteral("mh2o"))
         return value;
     if (normalized == QStringLiteral("ft") || normalized == QStringLiteral("feet"))
-        return value * 0.3048;
+        return units::feetToMetres(value);
     if (!std::isfinite(specific_gravity) || specific_gravity <= 0.0)
         return std::nullopt;
     if (normalized == QStringLiteral("psi"))
-        return value / (0.4333 * specific_gravity) * 0.3048;
+        return units::pascalsToMetresHead(units::psiToPascals(value),
+                                           1000.0 * specific_gravity, 9.80665);
     if (normalized == QStringLiteral("kpa"))
-        return value / (6.895 * 0.4333 * specific_gravity) * 0.3048;
+        return units::pascalsToMetresHead(units::kilopascalsToPascals(value),
+                                           1000.0 * specific_gravity, 9.80665);
     if (normalized == QStringLiteral("bar"))
-        return value / (0.068948 * 0.4333 * specific_gravity) * 0.3048;
+        return units::pascalsToMetresHead(units::barToPascals(value),
+                                           1000.0 * specific_gravity, 9.80665);
     return std::nullopt;
 }
 

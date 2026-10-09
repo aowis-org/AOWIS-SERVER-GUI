@@ -2,6 +2,7 @@
 #include "import/epanet_js_conversion_common.h"
 #include "import/epanet_js_schema.h"
 #include "import/epanet_js_units.h"
+#include <aowis/model/units/conversion.h>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
@@ -452,7 +453,7 @@ void mapSimulationSettings(
     double source_length_to_m = 1.0;
     bool source_length_known = true;
     if (flowUnitUsesFootLength(flow_unit))
-        source_length_to_m = 0.3048;
+        source_length_to_m = aowis::units::metres_per_international_foot;
     else if (!flowUnitUsesMetricLength(flow_unit))
         source_length_known = false;
 

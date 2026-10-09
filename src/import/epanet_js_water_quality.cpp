@@ -2,6 +2,7 @@
 #include "import/epanet_js_conversion_common.h"
 #include "import/epanet_js_schema.h"
 #include "import/epanet_js_units.h"
+#include <aowis/model/units/conversion.h>
 
 #include <QHash>
 #include <QJsonObject>
@@ -84,7 +85,7 @@ std::optional<double> wallReactionCoefficientScaleToCanonical(
     if (flowUnitUsesMetricLength(flow_unit))
         source_length_to_m = 1.0;
     else if (flowUnitUsesFootLength(flow_unit))
-        source_length_to_m = 0.3048;
+        source_length_to_m = aowis::units::metres_per_international_foot;
     else
         return std::nullopt;
 

@@ -101,9 +101,9 @@ void testImportsProjectSettingsAndPatterns()
                "global demand multiplier is imported");
     expectTrue(result.network.options_hydraulic.demand_model == HydraulicDemandModel::PressureDriven,
                "PDA demand model is imported");
-    expectNear(result.network.options_hydraulic.minimum_pressure_head_m, 5.861989383798753, 1e-9,
+    expectNear(result.network.options_hydraulic.minimum_pressure_head_m, 5.858913163660, 1e-9,
                "minimum psi pressure is converted to metres of head using specific gravity");
-    expectNear(result.network.options_hydraulic.required_pressure_head_m, 17.585968151396262, 1e-9,
+    expectNear(result.network.options_hydraulic.required_pressure_head_m, 17.576739490979, 1e-9,
                "required psi pressure is converted to metres of head using specific gravity");
     expectNear(result.network.options_hydraulic.pressure_exponent, 0.6, 1e-12,
                "pressure exponent is imported");
@@ -631,7 +631,7 @@ void testConvertsUsNodeAndDemandUnits()
                    "junction elevation feet are converted to metres");
         expectNear(junction.emitter.pressure_exponent, 0.6, 1e-12,
                    "epanet-js emitter exponent is imported");
-        expectNear(junction.emitter.coefficient, 0.6258458247654275, 1e-12,
+        expectNear(junction.emitter.coefficient, 0.626042964135, 1e-12,
                    "US emitter coefficient is converted from gpm/psi^n to canonical m3/h/m^n");
         expectTrue(junction.demands.size() == 1, "US junction demand is imported");
         if (junction.demands.size() == 1)
