@@ -168,6 +168,7 @@ bool hasDiagnosticCode(
 #include "epanet_js_converter_identity.inc"
 #include "epanet_js_converter_settings_nodes.inc"
 #include "epanet_js_converter_quality.inc"
+#include "epanet_js_converter_correctness_regression.inc"
 #include "epanet_js_converter_demand_materials_pipes.inc"
 #include "epanet_js_converter_pumps_valves.inc"
 #include "epanet_js_converter_controls.inc"
@@ -210,6 +211,15 @@ int main()
     test_harness.runCase(
         "epanet-js US node and demand units",
         testConvertsUsNodeAndDemandUnits);
+    test_harness.runCase(
+        "epanet-js tank zero minimum volume",
+        testTankZeroMinimumVolumeIncludesBottomWaterColumn);
+    test_harness.runCase(
+        "epanet-js global first-order reactions with unknown concentration unit",
+        testGlobalFirstOrderReactionsSurviveUnrecognizedChemicalUnit);
+    test_harness.runCase(
+        "epanet-js global reactions with Greek-mu concentration unit",
+        testGlobalReactionsWithGreekMuConcentrationUnit);
     test_harness.runCase(
         "epanet-js water-quality simulation settings",
         testImportsWaterQualitySimulationSettings);

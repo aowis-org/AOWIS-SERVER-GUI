@@ -1,4 +1,5 @@
 #include "import/epanet_js_pumps_valves.h"
+#include <aowis/model/units/conversion.h>
 #include "import/epanet_js_patterns_curves.h"
 #include "import/epanet_js_conversion_common.h"
 #include "import/epanet_js_schema.h"
@@ -31,7 +32,7 @@ std::optional<double> powerToKw(double value, const QString &unit)
         || normalized == QStringLiteral("kilowatts"))
         return value;
     if (normalized == QStringLiteral("hp") || normalized == QStringLiteral("horsepower"))
-        return value * 0.7456998715822702;
+        return aowis::units::mechanicalHorsepowerToKilowatts(value);
     return std::nullopt;
 }
 

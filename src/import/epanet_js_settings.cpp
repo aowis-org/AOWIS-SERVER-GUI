@@ -372,8 +372,19 @@ void mapSimulationSettings(
     if (head_unit.isEmpty())
         head_unit = units.value(QStringLiteral("elevation")).toString();
 
-    if (const std::optional<double> value = finiteDouble(settings.value(QStringLiteral("specificGravity"))); value.has_value())
+    if (settings.contains(QStringLiteral("specificGravity")))
+    {
+        const std::optional<double> value = finiteDouble(settings.value(QStringLiteral("specificGravity")));
+        if (!value.has_value() || *value <= 0.0)
+        {
+            appendDiagnostic(result, EpanetJsConversionDiagnosticSeverity::Error,
+                QStringLiteral("invalid-specific-gravity"),
+                QStringLiteral("epanet-js specific gravity must be finite and greater than zero."),
+                QStringLiteral("simulation_settings"));
+            return;
+        }
         result.network.options_hydraulic.specific_gravity = *value;
+    }
     if (const std::optional<double> value = finiteDouble(settings.value(QStringLiteral("viscosity"))); value.has_value())
         result.network.options_hydraulic.relative_viscosity = *value;
 
@@ -431,12 +442,22 @@ void mapSimulationSettings(
         const std::optional<double> converted = lengthToM(*value, head_unit);
         if (converted.has_value())
             result.network.options_hydraulic.maximum_head_error_m = *converted;
+        else
+            appendDiagnostic(result, EpanetJsConversionDiagnosticSeverity::Error,
+                QStringLiteral("unsupported-head-error-unit"),
+                QStringLiteral("Cannot convert maximumHeadError using head unit '%1'.").arg(head_unit),
+                QStringLiteral("simulation_settings"));
     }
     if (const std::optional<double> value = finiteDouble(settings.value(QStringLiteral("maximumFlowChange"))); value.has_value())
     {
         const std::optional<double> converted = flowToM3PerH(*value, flow_unit);
         if (converted.has_value())
             result.network.options_hydraulic.maximum_flow_change_m3_per_h = *converted;
+        else
+            appendDiagnostic(result, EpanetJsConversionDiagnosticSeverity::Error,
+                QStringLiteral("unsupported-flow-change-unit"),
+                QStringLiteral("Cannot convert maximumFlowChange using flow unit '%1'.").arg(flow_unit),
+                QStringLiteral("simulation_settings"));
     }
 
     if (const std::optional<double> value = finiteDouble(settings.value(QStringLiteral("reactionBulkOrder"))); value.has_value())
@@ -457,52 +478,61 @@ void mapSimulationSettings(
     else if (!flowUnitUsesMetricLength(flow_unit))
         source_length_known = false;
 
-    if (chemical_scale.has_value())
+    // First-order bulk and nonzero-order wall coefficients do not depend on
+    // concentration units. Preserve them even when the concentration label
+    // is unknown; only concentration-dependent quantities require a scale.
+    const double pipe_bulk_order = result.network.options_reaction.global_pipe_bulk_reaction.order;
+    const double tank_bulk_order = result.network.options_reaction.global_tank_bulk_reaction.order;
+    const bool pipe_bulk_known = chemical_scale.has_value() || std::abs(pipe_bulk_order - 1.0) <= 1e-12;
+    const bool tank_bulk_known = chemical_scale.has_value() || std::abs(tank_bulk_order - 1.0) <= 1e-12;
+    if (const std::optional<double> value = finiteDouble(settings.value(QStringLiteral("reactionGlobalBulk"))); value.has_value())
     {
-        const double pipe_bulk_order = result.network.options_reaction.global_pipe_bulk_reaction.order;
-        const double tank_bulk_order = result.network.options_reaction.global_tank_bulk_reaction.order;
-        const double pipe_bulk_scale = std::pow(*chemical_scale, 1.0 - std::max(pipe_bulk_order, 0.0));
-        const double tank_bulk_scale = std::pow(*chemical_scale, 1.0 - std::max(tank_bulk_order, 0.0));
-
-        if (const std::optional<double> value = finiteDouble(settings.value(QStringLiteral("reactionGlobalBulk"))); value.has_value())
-        {
-            result.network.options_reaction.global_pipe_bulk_reaction.coefficient = *value * pipe_bulk_scale;
-            result.network.options_reaction.global_tank_bulk_reaction.coefficient = *value * tank_bulk_scale;
-        }
-        if (const std::optional<double> value = finiteDouble(settings.value(QStringLiteral("reactionLimitingPotential"))); value.has_value())
+        if (pipe_bulk_known)
+            result.network.options_reaction.global_pipe_bulk_reaction.coefficient = *value *
+                (chemical_scale.has_value() ? std::pow(*chemical_scale, 1.0 - std::max(pipe_bulk_order, 0.0)) : 1.0);
+        if (tank_bulk_known)
+            result.network.options_reaction.global_tank_bulk_reaction.coefficient = *value *
+                (chemical_scale.has_value() ? std::pow(*chemical_scale, 1.0 - std::max(tank_bulk_order, 0.0)) : 1.0);
+        if (!pipe_bulk_known || !tank_bulk_known)
+            appendDiagnostic(result, EpanetJsConversionDiagnosticSeverity::Warning,
+                QStringLiteral("unsupported-chemical-unit"),
+                QStringLiteral("Cannot convert concentration-dependent global bulk reaction coefficient for chemical unit '%1'.").arg(chemical_unit),
+                QStringLiteral("simulation_settings"));
+    }
+    if (const std::optional<double> value = finiteDouble(settings.value(QStringLiteral("reactionLimitingPotential"))); value.has_value())
+    {
+        if (chemical_scale.has_value())
             result.network.options_reaction.limiting_concentration_mg_per_l = *value * *chemical_scale;
+        else
+            appendDiagnostic(result, EpanetJsConversionDiagnosticSeverity::Warning,
+                QStringLiteral("unsupported-chemical-unit"),
+                QStringLiteral("Cannot convert reaction limiting concentration with chemical unit '%1'.").arg(chemical_unit),
+                QStringLiteral("simulation_settings"));
     }
-    else if (settings.contains(QStringLiteral("reactionGlobalBulk")) ||
-             settings.contains(QStringLiteral("reactionLimitingPotential")))
+    const double wall_order = result.network.options_reaction.global_pipe_wall_reaction.order;
+    const bool wall_scale_known = source_length_known && (chemical_scale.has_value() || wall_order != 0.0);
+    const double wall_scale = wall_order == 0.0
+        ? (chemical_scale.has_value() && source_length_known ? *chemical_scale / (source_length_to_m * source_length_to_m) : 1.0)
+        : source_length_to_m;
+    if (const std::optional<double> value = finiteDouble(settings.value(QStringLiteral("reactionGlobalWall"))); value.has_value())
     {
-        appendDiagnostic(
-            result,
-            EpanetJsConversionDiagnosticSeverity::Warning,
-            QStringLiteral("unsupported-chemical-unit"),
-            QStringLiteral("AOWIS cannot convert epanet-js chemical concentration unit '%1'; concentration-dependent reaction settings kept their defaults.").arg(chemical_unit),
-            QStringLiteral("simulation_settings"));
-    }
-
-    if (chemical_scale.has_value() && source_length_known)
-    {
-        const double wall_order = result.network.options_reaction.global_pipe_wall_reaction.order;
-        const double wall_scale = wall_order == 0.0
-            ? *chemical_scale / (source_length_to_m * source_length_to_m)
-            : source_length_to_m;
-        if (const std::optional<double> value = finiteDouble(settings.value(QStringLiteral("reactionGlobalWall"))); value.has_value())
+        if (wall_scale_known)
             result.network.options_reaction.global_pipe_wall_reaction.coefficient = *value * wall_scale;
-        if (const std::optional<double> value = finiteDouble(settings.value(QStringLiteral("reactionRoughnessCorrelation"))); value.has_value())
-            result.network.options_reaction.roughness_reaction_factor = *value * wall_scale;
+        else
+            appendDiagnostic(result, EpanetJsConversionDiagnosticSeverity::Warning,
+                QStringLiteral("unsupported-reaction-unit-system"),
+                QStringLiteral("Cannot convert global wall reaction coefficient with the provided units."),
+                QStringLiteral("simulation_settings"));
     }
-    else if (settings.contains(QStringLiteral("reactionGlobalWall")) ||
-             settings.contains(QStringLiteral("reactionRoughnessCorrelation")))
+    if (const std::optional<double> value = finiteDouble(settings.value(QStringLiteral("reactionRoughnessCorrelation"))); value.has_value())
     {
-        appendDiagnostic(
-            result,
-            EpanetJsConversionDiagnosticSeverity::Warning,
-            QStringLiteral("unsupported-reaction-unit-system"),
-            QStringLiteral("AOWIS cannot determine the epanet-js reaction unit system from flow unit '%1'; wall reaction settings kept their defaults.").arg(flow_unit),
-            QStringLiteral("simulation_settings"));
+        if (wall_scale_known)
+            result.network.options_reaction.roughness_reaction_factor = *value * wall_scale;
+        else
+            appendDiagnostic(result, EpanetJsConversionDiagnosticSeverity::Warning,
+                QStringLiteral("unsupported-reaction-unit-system"),
+                QStringLiteral("Cannot convert reaction roughness correlation with the provided units."),
+                QStringLiteral("simulation_settings"));
     }
 
     if (const std::optional<double> value = finiteDouble(settings.value(QStringLiteral("energyGlobalEfficiency"))); value.has_value())
@@ -701,8 +731,33 @@ void mapQualitySimulationSettings(
             break;
         }
         case WaterQualityAnalysisType::WaterAge:
-            options.water_age_tolerance_h = *tolerance;
+        {
+            const QJsonObject units = projectUnitsObject(project_settings);
+            const QString age_unit = units.value(QStringLiteral("waterAge")).toString();
+            const QString normalized_age_unit = normalizedUnit(age_unit);
+            double hours = *tolerance;
+            if (normalized_age_unit == QStringLiteral("min") || normalized_age_unit == QStringLiteral("minute")
+                || normalized_age_unit == QStringLiteral("minutes"))
+                hours /= 60.0;
+            else if (normalized_age_unit == QStringLiteral("s") || normalized_age_unit == QStringLiteral("sec")
+                || normalized_age_unit == QStringLiteral("second") || normalized_age_unit == QStringLiteral("seconds"))
+                hours /= 3600.0;
+            else if (normalized_age_unit == QStringLiteral("d") || normalized_age_unit == QStringLiteral("day")
+                || normalized_age_unit == QStringLiteral("days"))
+                hours *= 24.0;
+            else if (!normalized_age_unit.isEmpty() && normalized_age_unit != QStringLiteral("h")
+                && normalized_age_unit != QStringLiteral("hr") && normalized_age_unit != QStringLiteral("hrs")
+                && normalized_age_unit != QStringLiteral("hour") && normalized_age_unit != QStringLiteral("hours"))
+            {
+                appendDiagnostic(result, EpanetJsConversionDiagnosticSeverity::Error,
+                    QStringLiteral("unsupported-water-age-unit"),
+                    QStringLiteral("Cannot convert water-age tolerance using unit '%1'.").arg(age_unit),
+                    QStringLiteral("simulation_settings"));
+                return;
+            }
+            options.water_age_tolerance_h = hours;
             break;
+        }
         case WaterQualityAnalysisType::SourceTrace:
             options.source_trace_tolerance_percent = *tolerance;
             break;

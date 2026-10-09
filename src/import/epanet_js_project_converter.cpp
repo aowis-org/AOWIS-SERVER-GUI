@@ -10,6 +10,7 @@
 #include "import/epanet_js_pumps_valves.h"
 #include "import/epanet_js_controls.h"
 #include "import/epanet_js_validation.h"
+#include "import/epanet_js_units.h"
 
 #include <QJsonObject>
 #include <QStringList>
@@ -38,7 +39,7 @@ QString EpanetJsProjectConversionResult::errorSummary() const
 EpanetJsProjectConversionResult EpanetJsProjectConverter::convert(
     const EpanetJsProjectSnapshot &project)
 {
-    const QJsonObject settings = EpanetJsProjectIdentity::projectSettingsObject(project);
+    QJsonObject settings = EpanetJsProjectIdentity::projectSettingsObject(project);
     EpanetJsProjectConversionResult result;
     const QString unique_id_text = settings.value(QStringLiteral("uniqueId")).toString();
     const QUuid source_project_uuid(unique_id_text);
@@ -67,6 +68,51 @@ EpanetJsProjectConversionResult EpanetJsProjectConverter::convert(
     EpanetJsValidation::validateReferenceDomains(project, result);
     EpanetJsValidation::validateLinkEndpointReferences(project, result);
     EpanetJsValidation::validateProjectCoordinateStorage(settings, result);
+
+    // Resolve shared unit defaults once, before any conversion stage runs.
+    // Explicit source units always take precedence over inferred values.
+    QJsonObject units = EpanetJsConversionCommon::projectUnitsObject(settings);
+    const QString flow_unit = EpanetJsConversionCommon::firstUnit(
+        units, QStringList{QStringLiteral("flow")});
+    const bool metric = EpanetJsUnits::flowUnitUsesMetricLength(flow_unit);
+    const bool customary = EpanetJsUnits::flowUnitUsesFootLength(flow_unit);
+    const QString distance_unit = metric ? QStringLiteral("m")
+        : customary ? QStringLiteral("ft") : QString();
+    const QString diameter_unit = metric ? QStringLiteral("mm")
+        : customary ? QStringLiteral("in") : QString();
+    const auto resolve = [&units](const QString &key, const QStringList &alternates,
+                                  const QString &fallback) {
+        if (!units.value(key).toString().trimmed().isEmpty())
+            return;
+        const QString candidate = EpanetJsConversionCommon::firstUnit(units, alternates);
+        const QString resolved = candidate.isEmpty() ? fallback : candidate;
+        if (!resolved.isEmpty())
+            units.insert(key, resolved);
+    };
+    resolve(QStringLiteral("elevation"), {QStringLiteral("head"), QStringLiteral("level")}, distance_unit);
+    resolve(QStringLiteral("head"), {QStringLiteral("elevation"), QStringLiteral("level")}, distance_unit);
+    resolve(QStringLiteral("level"), {QStringLiteral("elevation"), QStringLiteral("head")}, distance_unit);
+    resolve(QStringLiteral("length"), {QStringLiteral("elevation")}, distance_unit);
+    resolve(QStringLiteral("diameter"), {}, diameter_unit);
+    resolve(QStringLiteral("pressure"), {}, metric ? QStringLiteral("m")
+        : customary ? QStringLiteral("psi") : QString());
+    if (!distance_unit.isEmpty())
+    {
+        // Source metadata was incomplete; defaults follow the declared EPANET flow family.
+        const QJsonObject original_units = EpanetJsConversionCommon::projectUnitsObject(settings);
+        for (const QString &key : {QStringLiteral("elevation"), QStringLiteral("head"),
+                                   QStringLiteral("length"), QStringLiteral("diameter"),
+                                   QStringLiteral("pressure")})
+        {
+            if (original_units.value(key).toString().trimmed().isEmpty())
+                EpanetJsConversionCommon::appendDiagnostic(
+                    result, EpanetJsConversionDiagnosticSeverity::Warning,
+                    QStringLiteral("inferred-unit"),
+                    QStringLiteral("Missing epanet-js unit '%1'; using '%2'.")
+                        .arg(key, units.value(key).toString()));
+        }
+    }
+    settings.insert(QStringLiteral("units"), units);
 
     const QJsonObject simulation_settings = EpanetJsSettings::simulationSettingsObject(project, result);
 

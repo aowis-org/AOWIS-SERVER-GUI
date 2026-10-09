@@ -9,7 +9,14 @@ namespace units = aowis::units;
 
 QString normalizedUnit(QString unit)
 {
-    unit = unit.trimmed().toLower();
+    unit = unit.trimmed();
+    // Preserve the case of metric prefixes: M (mega) is not m (milli).
+    // Normalize recognized flow-unit spellings before generic case folding.
+    if (unit == QStringLiteral("Ml/d") || unit == QStringLiteral("ML/d")
+        || unit == QStringLiteral("Mgal/d") || unit == QStringLiteral("MGal/d"))
+        return unit == QStringLiteral("Ml/d") || unit == QStringLiteral("ML/d")
+            ? QStringLiteral("mld") : QStringLiteral("mgd");
+    unit = unit.toLower();
     unit.remove(QLatin1Char(' '));
     unit.replace(QStringLiteral("³"), QStringLiteral("^3"));
     return unit;
@@ -127,7 +134,7 @@ std::optional<double> darcyRoughnessToMm(
         return value;
     if (normalized == QStringLiteral("millift") || normalized == QStringLiteral("millifeet")
         || normalized == QStringLiteral("milli-ft") || normalized == QStringLiteral("0.001ft"))
-        return units::feetToMetres(value);
+        return units::millifeetToMillimetres(value);
     if (normalized == QStringLiteral("ft") || normalized == QStringLiteral("foot")
         || normalized == QStringLiteral("feet"))
         return units::feetToMillimetres(value);
@@ -136,7 +143,7 @@ std::optional<double> darcyRoughnessToMm(
         if (flowUnitUsesMetricLength(flow_unit))
             return value;
         if (flowUnitUsesFootLength(flow_unit))
-            return units::feetToMetres(value);
+            return units::millifeetToMillimetres(value);
     }
     return std::nullopt;
 }
@@ -146,7 +153,7 @@ std::optional<double> chemicalConcentrationScaleToMgPerL(const QString &unit)
     const QString normalized = normalizedUnit(unit);
     if (normalized == QStringLiteral("mg/l"))
         return 1.0;
-    if (normalized == QStringLiteral("ug/l") || normalized == QStringLiteral("µg/l"))
+    if (normalized == QStringLiteral("ug/l") || normalized == QStringLiteral("µg/l") || normalized == QStringLiteral("μg/l"))
         return 0.001;
     return std::nullopt;
 }
@@ -160,22 +167,25 @@ std::optional<double> pressureToHeadM(
     double specific_gravity)
 {
     const QString normalized = normalizedUnit(unit);
-    if (normalized == QStringLiteral("m") || normalized == QStringLiteral("mwc") ||
-        normalized == QStringLiteral("mh2o"))
-        return value;
-    if (normalized == QStringLiteral("ft") || normalized == QStringLiteral("feet"))
-        return units::feetToMetres(value);
     if (!std::isfinite(specific_gravity) || specific_gravity <= 0.0)
         return std::nullopt;
+    if (normalized == QStringLiteral("m") || normalized == QStringLiteral("mwc") ||
+        normalized == QStringLiteral("mh2o"))
+        return value / specific_gravity;
+    if (normalized == QStringLiteral("ft") || normalized == QStringLiteral("feet"))
+        return units::feetToMetres(value) / specific_gravity;
     if (normalized == QStringLiteral("psi"))
         return units::pascalsToMetresHead(units::psiToPascals(value),
-                                           1000.0 * specific_gravity, 9.80665);
+                                           units::reference_water_density_kg_per_m3 * specific_gravity,
+                                           units::standard_gravity_m_per_s2);
     if (normalized == QStringLiteral("kpa"))
         return units::pascalsToMetresHead(units::kilopascalsToPascals(value),
-                                           1000.0 * specific_gravity, 9.80665);
+                                           units::reference_water_density_kg_per_m3 * specific_gravity,
+                                           units::standard_gravity_m_per_s2);
     if (normalized == QStringLiteral("bar"))
         return units::pascalsToMetresHead(units::barToPascals(value),
-                                           1000.0 * specific_gravity, 9.80665);
+                                           units::reference_water_density_kg_per_m3 * specific_gravity,
+                                           units::standard_gravity_m_per_s2);
     return std::nullopt;
 }
 

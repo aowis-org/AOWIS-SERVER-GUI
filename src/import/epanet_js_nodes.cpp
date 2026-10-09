@@ -276,7 +276,9 @@ void importTanks(
         if (tank.diameter_m > 0.0)
         {
             tank.cross_section_area_m2 = pi * tank.diameter_m * tank.diameter_m / 4.0;
-            tank.volume_at_maximum_level_m3 = tank.minimum_volume_m3
+            tank.volume_at_maximum_level_m3 = (tank.minimum_volume_m3 > 0.0
+                    ? tank.minimum_volume_m3
+                    : tank.cross_section_area_m2 * tank.water_level_minimum_m)
                 + tank.cross_section_area_m2
                     * (tank.water_level_maximum_m - tank.water_level_minimum_m);
         }

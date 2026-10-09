@@ -47,6 +47,12 @@ void testIndependentUnitReferenceValues()
               1.0, 0.5, QStringLiteral("gpm"), QStringLiteral("psi"), 1.2),
           us_gallon_m3 * 60.0 / std::sqrt(psi_head_m), 1e-12,
           "US emitter coefficient to canonical flow/head units");
+    check(EpanetJsUnits::pressureToHeadM(1.0, QStringLiteral("mwc"), 1.2),
+          1.0 / 1.2, 1e-12, "water-column pressure accounts for specific gravity");
+    check(EpanetJsUnits::pressureToHeadM(1.0, QStringLiteral("ft"), 1.2),
+          foot_m / 1.2, 1e-12, "feet of pressure accounts for specific gravity");
+    expectNear(EpanetJsUnits::chemicalConcentrationScaleToMgPerL(QStringLiteral("μg/L")).value_or(-1.0),
+               0.001, 1e-15, "Greek mu concentration unit");
     expectTrue(!EpanetJsUnits::pressureToHeadM(1.0, QStringLiteral("psi"), 0.0).has_value(),
                "zero specific gravity is rejected");
 }

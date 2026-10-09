@@ -285,6 +285,9 @@ void importCurves(
         }
         else if (type == QStringLiteral("headloss"))
         {
+            QString headloss_unit = units.value(QStringLiteral("headloss")).toString();
+            if (headloss_unit.isEmpty())
+                headloss_unit = head_unit;
             HydraulicCurveValveHeadloss curve;
             curve.id = id;
             curve.uuid = uuid;
@@ -292,7 +295,7 @@ void importCurves(
             for (const QPair<double, double> &point : *source_points)
             {
                 const std::optional<double> flow = flowToM3PerH(point.first, flow_unit);
-                const std::optional<double> head = lengthToM(point.second, head_unit);
+                const std::optional<double> head = lengthToM(point.second, headloss_unit);
                 if (!flow.has_value() || !head.has_value())
                 {
                     valid = false;

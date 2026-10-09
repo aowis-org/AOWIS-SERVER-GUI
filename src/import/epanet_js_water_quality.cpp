@@ -181,6 +181,7 @@ void importNodeQualityRows(
     const QString water_age_unit = units.value(QStringLiteral("waterAge")).toString();
     const WaterQualityAnalysisType analysis = epanetJsQualityAnalysis(simulation_settings);
 
+    const QHash<QUuid, qsizetype> node_positions = uuidPositionIndex(nodes);
     for (const QVariantMap &row : table->rows)
     {
         const std::optional<qint64> source_id = integerValue(row.value(QStringLiteral("id")));
@@ -188,17 +189,10 @@ void importNodeQualityRows(
             continue;
 
         const QUuid uuid = result.id_map.uuidFor(table_name, *source_id);
-        NodeType *node = nullptr;
-        for (NodeType &candidate : nodes)
-        {
-            if (candidate.uuid == uuid)
-            {
-                node = &candidate;
-                break;
-            }
-        }
-        if (node == nullptr)
+        const QHash<QUuid, qsizetype>::const_iterator position = node_positions.constFind(uuid);
+        if (position == node_positions.cend())
             continue;
+        NodeType *node = &nodes[position.value()];
 
         if (row.contains(QStringLiteral("initial_quality"))
             && !row.value(QStringLiteral("initial_quality")).isNull())
