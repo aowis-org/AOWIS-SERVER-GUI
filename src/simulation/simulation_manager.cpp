@@ -1,8 +1,7 @@
 #include "simulation/simulation_manager.h"
 
 #include "simulation/simulation_statistics_dialog.h"
-#include "import/epanet_js_project_converter.h"
-#include "import/epanet_js_project_reader.h"
+#include "import/epanet_js_project_importer.h"
 
 #include <aowis/epanet/epanet_runner.h>
 #include <aowis/epanet/epanet_result_import.h>
@@ -151,16 +150,9 @@ QString diagnosticDetails(const HydraulicSimulationDiagnostic &diagnostic)
 }
 
 QString epanetJsConversionDiagnosticDetails(
-    const EpanetJsProjectReadResult &read_result,
     const EpanetJsProjectConversionResult &conversion_result)
 {
     QStringList details;
-
-    for (const QString &diagnostic : read_result.diagnostics)
-    {
-        if (!diagnostic.trimmed().isEmpty())
-            details.append(diagnostic);
-    }
 
     for (const EpanetJsConversionDiagnostic &diagnostic : conversion_result.diagnostics)
     {
@@ -603,32 +595,25 @@ void SimulationManager::importNetworkProjectContent(
     QWidget *main_window = QApplication::activeWindow();
     QPointer<QWidget> parent_widget(main_window);
 
-    static const QByteArray sqlite_header("SQLite format 3\0", 16);
-    const bool sqlite_content = file_content.size() >= sqlite_header.size()
-        && file_content.left(sqlite_header.size()) == sqlite_header;
-    const bool epanet_js_extension =
-        QFileInfo(file_name).suffix().compare(QStringLiteral("ejsdb"), Qt::CaseInsensitive) == 0;
-    if (sqlite_content || epanet_js_extension)
+    if (EpanetJsProjectImporter::accepts(file_name, file_content))
     {
-        const EpanetJsProjectReadResult read_result =
-            EpanetJsProjectReader::readBytes(file_content);
-        if (!read_result.success)
+        EpanetJsProjectImportResult import_result =
+            EpanetJsProjectImporter::importBytes(file_content);
+        if (!import_result.recognized)
         {
             showDetailedMessageBox(
                 parent_widget,
                 QMessageBox::Critical,
                 tr("epanet-js import failed"),
                 tr("The selected SQLite project could not be recognized as an epanet-js project."),
-                read_result.error);
+                import_result.read_error);
             return;
         }
 
-        EpanetJsProjectConversionResult conversion_result =
-            EpanetJsProjectConverter::convert(read_result.project);
+        EpanetJsProjectConversionResult &conversion_result = import_result.conversion;
         if (!conversion_result.success)
         {
-            QString details = epanetJsConversionDiagnosticDetails(
-                read_result, conversion_result);
+            QString details = epanetJsConversionDiagnosticDetails(conversion_result);
             if (details.isEmpty())
                 details = conversion_result.errorSummary();
 
@@ -642,9 +627,8 @@ void SimulationManager::importNetworkProjectContent(
             return;
         }
 
-        const QString diagnostic_text = epanetJsConversionDiagnosticDetails(
-            read_result, conversion_result);
-        int warning_count = read_result.diagnostics.size();
+        const QString diagnostic_text = epanetJsConversionDiagnosticDetails(conversion_result);
+        int warning_count = 0;
         for (const EpanetJsConversionDiagnostic &diagnostic : conversion_result.diagnostics)
         {
             if (diagnostic.severity == EpanetJsConversionDiagnosticSeverity::Warning)

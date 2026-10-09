@@ -176,6 +176,54 @@ void testReadsCurrentStyleProject()
     }
 }
 
+void testReadsDatabaseFileDirectly()
+{
+    const QByteArray database = createDatabase(24, true, true, false);
+    QTemporaryDir directory;
+    expectTrue(directory.isValid(), "direct file test temporary directory is created");
+    if (!directory.isValid() || database.isEmpty())
+        return;
+
+    const QString file_path = directory.filePath(QStringLiteral("direct.ejsdb"));
+    QFile file(file_path);
+    expectTrue(file.open(QIODevice::WriteOnly), "direct file test project file is created");
+    if (!file.isOpen())
+        return;
+    const bool written = file.write(database) == database.size();
+    file.close();
+    expectTrue(written, "direct file test writes the complete SQLite database");
+    if (!written)
+        return;
+
+    const EpanetJsProjectReadResult result = EpanetJsProjectReader::readFile(file_path);
+    expectTrue(result.success, "reader imports SQLite project directly from file path");
+    expectTrue(result.project.user_version == 24, "direct file import preserves user_version");
+    expectTrue(result.project.hasTable(QStringLiteral("pipes")), "direct file import preserves tables");
+}
+
+void testRejectsNonSqliteFile()
+{
+    QTemporaryDir directory;
+    expectTrue(directory.isValid(), "invalid file test temporary directory is created");
+    if (!directory.isValid())
+        return;
+
+    const QString file_path = directory.filePath(QStringLiteral("invalid.ejsdb"));
+    QFile file(file_path);
+    if (!file.open(QIODevice::WriteOnly))
+    {
+        expectTrue(false, "invalid file test project file is created");
+        return;
+    }
+    file.write("not sqlite");
+    file.close();
+
+    const EpanetJsProjectReadResult result = EpanetJsProjectReader::readFile(file_path);
+    expectTrue(!result.success, "reader rejects a non-SQLite file path");
+    expectTrue(result.error.contains(QStringLiteral("not a SQLite")),
+               "non-SQLite file path reports the format mismatch");
+}
+
 void testAcceptsFutureSchemaAndPreservesUnknownData()
 {
     const QByteArray database = createDatabase(999, true, true, true);
@@ -251,6 +299,8 @@ int main(int argc, char **argv)
 {
     QCoreApplication application(argc, argv);
     test_harness.runCase("current epanet-js schema", testReadsCurrentStyleProject);
+    test_harness.runCase("direct SQLite file reading", testReadsDatabaseFileDirectly);
+    test_harness.runCase("non-SQLite file reading", testRejectsNonSqliteFile);
     test_harness.runCase("future epanet-js schema", testAcceptsFutureSchemaAndPreservesUnknownData);
     test_harness.runCase("minimal epanet-js schema", testAcceptsMinimalNetworkSignatureWithoutProjectTable);
     test_harness.runCase("unrelated SQLite", testRejectsUnrelatedSqliteDatabase);

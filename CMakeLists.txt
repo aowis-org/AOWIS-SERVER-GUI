@@ -96,6 +96,55 @@ set(AOWIS_SERVER_EPANET_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 set(AOWIS_SERVER_EPANET_BUILD_SHARED_EPANET OFF CACHE BOOL "" FORCE)
 add_subdirectory(external/AOWIS-SERVER-EPANET EXCLUDE_FROM_ALL)
 
+# epanet-js is a SQLite source-file format. Keep its reader and converter in one
+# internal target so the GUI and every test use the same implementation.
+add_library(aowis-epanet-js-import STATIC
+    src/import/epanet_js_project_reader.cpp
+    src/import/epanet_js_project_reader.h
+    src/import/epanet_js_project_converter.cpp
+    src/import/epanet_js_project_converter.h
+    src/import/epanet_js_validation.cpp
+    src/import/epanet_js_validation.h
+    src/import/epanet_js_conversion_common.h
+    src/import/epanet_js_patterns_curves.cpp
+    src/import/epanet_js_patterns_curves.h
+    src/import/epanet_js_settings.cpp
+    src/import/epanet_js_project_identity.cpp
+    src/import/epanet_js_project_identity.h
+    src/import/epanet_js_geometry.cpp
+    src/import/epanet_js_geometry.h
+    src/import/epanet_js_pipes.cpp
+    src/import/epanet_js_pipes.h
+    src/import/epanet_js_demand_points.cpp
+    src/import/epanet_js_demand_points.h
+    src/import/epanet_js_water_quality.cpp
+    src/import/epanet_js_water_quality.h
+    src/import/epanet_js_pumps_valves.cpp
+    src/import/epanet_js_pumps_valves.h
+    src/import/epanet_js_controls.cpp
+    src/import/epanet_js_controls.h
+    src/import/epanet_js_nodes.cpp
+    src/import/epanet_js_nodes.h
+    src/import/epanet_js_settings.h
+    src/import/epanet_js_schema.cpp
+    src/import/epanet_js_schema.h
+    src/import/epanet_js_units.cpp
+    src/import/epanet_js_units.h
+    src/import/epanet_js_project_importer.cpp
+    src/import/epanet_js_project_importer.h
+)
+target_include_directories(aowis-epanet-js-import
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(aowis-epanet-js-import
+    PUBLIC
+        Qt6::Core
+        AOWIS::ServerModel
+    PRIVATE
+        Qt6::Sql
+)
+
 qt_add_executable(aowis-server-gui
     resources.qrc
 
@@ -124,11 +173,6 @@ qt_add_executable(aowis-server-gui
     src/config/shortcut_registry.cpp
     src/config/shortcut_registry.h
 
-    # Import
-    src/import/epanet_js_project_converter.cpp
-    src/import/epanet_js_project_converter.h
-    src/import/epanet_js_project_reader.cpp
-    src/import/epanet_js_project_reader.h
 
     # Network
     src/network/hydraulic_data.cpp
@@ -376,6 +420,7 @@ target_link_libraries(aowis-server-gui
         Qt6::Widgets
         Qt6::Network
         Qt6::Sql
+        aowis-epanet-js-import
         AOWIS::ServerModel
         AOWIS::ServerEpanet
         GeographicLib_STATIC
@@ -647,8 +692,6 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_executable(aowis-epanet-js-reader-tests
         tests/epanet_js_project_reader_tests.cpp
         tests/test_harness.h
-        src/import/epanet_js_project_reader.cpp
-        src/import/epanet_js_project_reader.h
     )
     target_include_directories(aowis-epanet-js-reader-tests
         PRIVATE
@@ -657,6 +700,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     )
     target_link_libraries(aowis-epanet-js-reader-tests
         PRIVATE
+            aowis-epanet-js-import
             Qt6::Core
             Qt6::Sql
     )
@@ -672,9 +716,6 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_executable(aowis-epanet-js-converter-tests
         tests/epanet_js_project_converter_tests.cpp
         tests/test_harness.h
-        src/import/epanet_js_project_converter.cpp
-        src/import/epanet_js_project_converter.h
-        src/import/epanet_js_project_reader.h
     )
     target_include_directories(aowis-epanet-js-converter-tests
         PRIVATE
@@ -683,6 +724,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     )
     target_link_libraries(aowis-epanet-js-converter-tests
         PRIVATE
+            aowis-epanet-js-import
             Qt6::Core
             AOWIS::ServerModel
     )
@@ -698,10 +740,6 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_executable(aowis-epanet-js-integration-tests
         tests/epanet_js_project_integration_tests.cpp
         tests/test_harness.h
-        src/import/epanet_js_project_reader.cpp
-        src/import/epanet_js_project_reader.h
-        src/import/epanet_js_project_converter.cpp
-        src/import/epanet_js_project_converter.h
     )
     target_include_directories(aowis-epanet-js-integration-tests
         PRIVATE
@@ -714,6 +752,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     )
     target_link_libraries(aowis-epanet-js-integration-tests
         PRIVATE
+            aowis-epanet-js-import
             Qt6::Core
             Qt6::Sql
             AOWIS::ServerModel

@@ -133,9 +133,17 @@ EpanetJsProjectReadResult readDatabasePath(const QString &file_path)
                 while (table_query.next())
                     table_names.append(table_query.value(0).toString());
 
-                bool table_read_failed = false;
+                if (table_query.lastError().isValid())
+                {
+                    result.error = QStringLiteral("Could not enumerate SQLite tables: %1")
+                        .arg(table_query.lastError().text());
+                }
+
+                bool table_read_failed = !result.error.isEmpty();
                 for (const QString &table_name : table_names)
                 {
+                    if (table_read_failed)
+                        break;
                     QSqlQuery row_query(database);
                     const QString statement = QStringLiteral("SELECT * FROM %1")
                         .arg(quotedIdentifier(table_name));
@@ -163,6 +171,14 @@ EpanetJsProjectReadResult readDatabasePath(const QString &file_path)
                                 row_query.value(column_index));
                         }
                         table.rows.append(row);
+                    }
+
+                    if (row_query.lastError().isValid())
+                    {
+                        result.error = QStringLiteral("Could not read table '%1': %2")
+                            .arg(table_name, row_query.lastError().text());
+                        table_read_failed = true;
+                        break;
                     }
 
                     result.project.tables.insert(table_name, table);
@@ -215,6 +231,13 @@ qsizetype EpanetJsProjectSnapshot::totalRowCount() const
     return count;
 }
 
+bool EpanetJsProjectReader::hasSqliteHeader(const QByteArray &file_content)
+{
+    static const QByteArray sqlite_header("SQLite format 3\0", 16);
+    return file_content.size() >= sqlite_header.size()
+        && file_content.startsWith(sqlite_header);
+}
+
 EpanetJsProjectReadResult EpanetJsProjectReader::readFile(const QString &file_path)
 {
     QFile file(file_path);
@@ -225,17 +248,22 @@ EpanetJsProjectReadResult EpanetJsProjectReader::readFile(const QString &file_pa
         return result;
     }
 
-    const QByteArray file_content = file.readAll();
+    const QByteArray header = file.read(16);
     file.close();
-    return readBytes(file_content);
+    if (!hasSqliteHeader(header))
+    {
+        EpanetJsProjectReadResult result;
+        result.error = QStringLiteral("The selected file is not a SQLite database.");
+        return result;
+    }
+
+    return readDatabasePath(file_path);
 }
 
 EpanetJsProjectReadResult EpanetJsProjectReader::readBytes(const QByteArray &file_content)
 {
     EpanetJsProjectReadResult result;
-    static const QByteArray sqlite_header("SQLite format 3\0", 16);
-    if (file_content.size() < sqlite_header.size()
-        || file_content.left(sqlite_header.size()) != sqlite_header)
+    if (!hasSqliteHeader(file_content))
     {
         result.error = QStringLiteral("The selected file is not a SQLite database.");
         return result;

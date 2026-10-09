@@ -31,13 +31,13 @@ struct EpanetJsProjectReadResult
 {
     bool success = false;
     QString error;
-    QStringList diagnostics;
     EpanetJsProjectSnapshot project;
 };
 
 class EpanetJsProjectReader
 {
 public:
+    static bool hasSqliteHeader(const QByteArray &file_content);
     static EpanetJsProjectReadResult readFile(const QString &file_path);
     static EpanetJsProjectReadResult readBytes(const QByteArray &file_content);
 };
