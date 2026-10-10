@@ -6,6 +6,7 @@
 #include <aowis/model/hydraulic/network_hydraulic.h>
 #include <aowis/model/hydraulic/hydraulic_simulation_options.h>
 
+#include <QJsonObject>
 #include <QList>
 #include <QMap>
 #include <QString>
@@ -56,6 +57,7 @@ struct EpanetJsProjectConversionResult
     bool success = false;
     NetworkHydraulic network;
     QList<WaterQualitySolverOptions> quality_runs;
+    QJsonObject source_display_units; // Resolved epanet-js quantities; not canonical data.
     EpanetJsProjectIdMap id_map;
     QList<EpanetJsConversionDiagnostic> diagnostics;
 

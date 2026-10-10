@@ -2,6 +2,8 @@
 
 #include "simulation/simulation_statistics_dialog.h"
 #include "import/epanet_js_project_importer.h"
+#include "import/epanet_js_unit_profile.h"
+#include "config/unit_profile_manager.h"
 
 #include <aowis/epanet/epanet_runner.h>
 #include <aowis/epanet/epanet_result_import.h>
@@ -9,6 +11,10 @@
 #include <aowis/epanet/epanet_run_request.h>
 
 #include <QApplication>
+#include <QCheckBox>
+#include <QDialogButtonBox>
+#include <QLabel>
+#include <QLineEdit>
 #include <QByteArray>
 #include <QFile>
 #include <QFileDialog>
@@ -664,10 +670,86 @@ void SimulationManager::importNetworkProjectContent(
                         ++warning_count;
                 }
 
+                // Unit-profile creation is optional and never affects import conversion.
+                // Capture the source selections before moving the converted network.
+                QStringList unrepresented_units;
+                const QJsonObject imported_units = EpanetJsUnitProfile::selections(
+                    conversion_result.source_display_units, &unrepresented_units);
+                const QString imported_project_name = conversion_result.network.id;
+
                 manager->hydraulic_data->replaceNetworkHydraulic(
                     std::move(conversion_result.network),
                     std::move(conversion_result.quality_runs));
                 emit manager->signalEpanetNetworkImported();
+
+                if (!imported_units.isEmpty())
+                {
+                    UnitProfileManager &profiles = UnitProfileManager::instance();
+                    const QString base_name = imported_project_name.trimmed().isEmpty()
+                        ? tr("Imported EPANET-JS units")
+                        : tr("%1 (EPANET-JS units)").arg(imported_project_name);
+                    QString profile_name = base_name;
+                    int suffix = 2;
+                    const auto exists = [&profiles](const QString &name) {
+                        for (const UnitProfileManager::Profile &profile : profiles.profiles())
+                            if (profile.name.compare(name, Qt::CaseInsensitive) == 0) return true;
+                        return false;
+                    };
+                    while (exists(profile_name))
+                        profile_name = base_name + QStringLiteral(" (%1)").arg(suffix++);
+
+                    QDialog *confirmation = new QDialog(parent_widget);
+                    confirmation->setWindowTitle(tr("Import EPANET-JS unit profile"));
+                    confirmation->setMinimumWidth(460);
+                    confirmation->setAttribute(Qt::WA_DeleteOnClose);
+                    QVBoxLayout *layout = new QVBoxLayout(confirmation);
+                    QLabel *prompt = new QLabel(
+                        tr("Create a custom unit profile from this EPANET-JS project's unit settings?"),
+                        confirmation);
+                    prompt->setWordWrap(true);
+                    layout->addWidget(prompt);
+                    QLabel *name_label = new QLabel(tr("Profile name:"), confirmation);
+                    layout->addWidget(name_label);
+                    QLineEdit *name_edit = new QLineEdit(profile_name, confirmation);
+                    name_label->setBuddy(name_edit);
+                    layout->addWidget(name_edit);
+                    if (!unrepresented_units.isEmpty()) {
+                        QLabel *warning = new QLabel(
+                            tr("The following source unit settings could not be mapped to the AOWIS "
+                               "presentation registry: %1\nThose preferences will not be reproduced "
+                               "in the custom profile. The imported numerical data remains canonical.")
+                                .arg(unrepresented_units.join(QStringLiteral(", "))),
+                            confirmation);
+                        warning->setWordWrap(true);
+                        layout->addWidget(warning);
+                    }
+                    QCheckBox *activate_profile = new QCheckBox(
+                        tr("Activate this custom unit system"), confirmation);
+                    activate_profile->setChecked(true);
+                    layout->addWidget(activate_profile);
+                    QDialogButtonBox *buttons = new QDialogButtonBox(
+                        QDialogButtonBox::Yes | QDialogButtonBox::No, confirmation);
+                    layout->addWidget(buttons);
+                    QObject::connect(buttons, &QDialogButtonBox::rejected,
+                                     confirmation, &QDialog::reject);
+                    QObject::connect(buttons, &QDialogButtonBox::accepted,
+                                     confirmation, [confirmation, name_edit, activate_profile, imported_units] {
+                        const QString name = name_edit->text().trimmed();
+                        if (!UnitProfileManager::instance().createFromUnits(
+                                name, imported_units, activate_profile->isChecked())) {
+                            QMessageBox *warning = new QMessageBox(
+                                QMessageBox::Warning, QObject::tr("Invalid unit profile name"),
+                                QObject::tr("The profile name must be nonempty and unique. "
+                                            "Choose a different name."),
+                                QMessageBox::Ok, confirmation);
+                            warning->setAttribute(Qt::WA_DeleteOnClose);
+                            warning->open();
+                            return;
+                        }
+                        confirmation->accept();
+                    });
+                    confirmation->open(); // Nonblocking, including under Qt WebAssembly.
+                }
 
                 if (warning_count > 0)
                 {

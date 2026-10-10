@@ -173,6 +173,8 @@ EpanetJsProjectConversionResult EpanetJsProjectConverter::convert(
         resolveProjectUnits(
             EpanetJsConversionCommon::projectUnitsObject(settings), simulation_settings, result));
 
+    result.source_display_units = settings.value(QStringLiteral("units")).toObject();
+
     EpanetJsSettings::mapHeadlossFormula(settings, result);
     EpanetJsSettings::importPipeMaterials(project, settings, result);
     EpanetJsPatternsCurves::importPatterns(project, result);

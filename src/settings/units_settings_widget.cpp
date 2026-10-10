@@ -223,32 +223,40 @@ void UnitsSettingsWidget::refreshFields()
 #endif
     QString last_group;
     QTreeWidgetItem *category_item = nullptr;
-    for (const UnitField &field : fields) {
-        const QString group = asQString(field.group);
-        if (group != last_group) {
-            category_item = new QTreeWidgetItem(this->fields_tree);
-            category_item->setText(0, group);
-            QFont category_font = category_item->font(0);
-            category_font.setBold(true);
-            category_item->setFont(0, category_font);
-            category_item->setFirstColumnSpanned(true);
-            last_group = group;
+    // Keep dimensionless quantities and percentages at the bottom of the view.
+    // This changes presentation order only; the Model registry remains authoritative.
+    for (int pass = 0; pass < 2; ++pass) {
+        last_group.clear();
+        category_item = nullptr;
+        for (const UnitField &field : fields) {
+            const bool bottom_group = field.group == "Dimensionless" || field.group == "Percentages";
+            if (bottom_group != (pass == 1)) continue;
+            const QString group = asQString(field.group);
+            if (group != last_group) {
+                category_item = new QTreeWidgetItem(this->fields_tree);
+                category_item->setText(0, group);
+                QFont category_font = category_item->font(0);
+                category_font.setBold(true);
+                category_item->setFont(0, category_font);
+                category_item->setFirstColumnSpanned(true);
+                last_group = group;
+            }
+            const QString key = asQString(field.key);
+            QTreeWidgetItem *item = new QTreeWidgetItem(category_item);
+            item->setText(0, key);
+            item->setText(2, asQString(aowis::units::canonicalUnit(field.key)));
+            QComboBox *selector = new QComboBox(this->fields_tree);
+            selector->addItems(asQString(field.choices).split(';'));
+            const QString unit = UnitProfileManager::instance().profiles().at(index).units.value(key).toString();
+            selector->setCurrentIndex(qMax(0, selector->findText(unit)));
+            selector->setEnabled(!builtin && selector->count() > 1);
+            selector->setToolTip(QStringLiteral("Canonical: %1").arg(asQString(aowis::units::canonicalUnit(field.key))));
+            this->fields_tree->setItemWidget(item, 1, selector);
+            connect(selector, &QComboBox::currentTextChanged, this, [this, index, key](const QString &text) {
+                if (!aowis::units::isAllowedUnit(key.toStdString(), text.toStdString())) return;
+                (void)UnitProfileManager::instance().setUnit(index, key, text, this);
+            });
         }
-        const QString key = asQString(field.key);
-        QTreeWidgetItem *item = new QTreeWidgetItem(category_item);
-        item->setText(0, key);
-        item->setText(2, asQString(aowis::units::canonicalUnit(field.key)));
-        QComboBox *selector = new QComboBox(this->fields_tree);
-        selector->addItems(asQString(field.choices).split(';'));
-        const QString unit = UnitProfileManager::instance().profiles().at(index).units.value(key).toString();
-        selector->setCurrentIndex(qMax(0, selector->findText(unit)));
-        selector->setEnabled(!builtin && selector->count() > 1);
-        selector->setToolTip(QStringLiteral("Canonical: %1").arg(asQString(aowis::units::canonicalUnit(field.key))));
-        this->fields_tree->setItemWidget(item, 1, selector);
-        connect(selector, &QComboBox::currentTextChanged, this, [this, index, key](const QString &text) {
-            if (!aowis::units::isAllowedUnit(key.toStdString(), text.toStdString())) return;
-            (void)UnitProfileManager::instance().setUnit(index, key, text, this);
-        });
     }
     this->fields_tree->expandAll();
     this->filterFields();

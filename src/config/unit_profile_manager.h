@@ -48,6 +48,26 @@ public:
         this->select(this->views_.size()-1, origin);
         return true;
     }
+    // Creates and activates an imported profile atomically, notifying the UI once.
+    bool createFromUnits(const QString &name, const QJsonObject &units, bool activate = true, QObject *origin = nullptr) {
+        if (!this->validName(name)) return false;
+        aowis::units::UnitProfile profile;
+        profile.id = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
+        profile.name = name.trimmed().toStdString();
+        for (auto it = units.constBegin(); it != units.constEnd(); ++it) {
+            if (!it.value().isString()) return false;
+            const std::string key = it.key().toStdString();
+            const std::string unit = it.value().toString().toStdString();
+            if (!aowis::units::setProfileUnit(profile, key, unit)) return false;
+        }
+        const std::string id = profile.id;
+        if (!this->collection_.add(std::move(profile))) return false;
+        if (activate) (void)this->collection_.select(id);
+        this->rebuild();
+        this->persist();
+        UnitProfileNotifications::instance().publish(origin);
+        return true;
+    }
     bool rename(int index, const QString &name, QObject *origin = nullptr) {
         if (!this->valid(index) || this->views_.at(index).builtin || !this->validName(name, index)) return false;
         if (!this->collection_.rename(this->views_.at(index).id.toStdString(), name.trimmed().toStdString())) return false;
