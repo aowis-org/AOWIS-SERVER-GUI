@@ -1,0 +1,119 @@
+#pragma once
+
+#include "config/unit_profile_storage.h"
+#include "config/gui_configuration.h"
+#include "config/unit_profile_notifications.h"
+#include <aowis/model/units/unit_profile.h>
+#include <QJsonObject>
+#include <QString>
+#include <QVector>
+#include <QUuid>
+
+// Qt adapter: a single Model-owned collection shared by Settings and the toolbar.
+// QSettings/JSON are exclusively an interim storage format here.
+class UnitProfileManager {
+public:
+    struct Profile {
+        QString id;
+        QString name;
+        QJsonObject units;
+        bool builtin = false;
+    };
+    static UnitProfileManager &instance() {
+        static UnitProfileManager manager;
+        return manager;
+    }
+    [[nodiscard]] const QVector<Profile> &profiles() const { return this->views_; }
+    [[nodiscard]] int activeIndex() const {
+        const QString id = QString::fromStdString(this->collection_.activeId());
+        for (int i = 0; i < this->views_.size(); ++i)
+            if (this->views_.at(i).id == id) return i;
+        return 0;
+    }
+    bool select(int index, QObject *source = nullptr) {
+        if (!this->valid(index)) return false;
+        if (!this->collection_.select(this->views_.at(index).id.toStdString())) return false;
+        this->persist();
+        UnitProfileNotifications::instance().publish(source);
+        return true;
+    }
+    bool create(int source, const QString &name, QObject *origin = nullptr) {
+        if (!this->valid(source) || !this->validName(name)) return false;
+        aowis::units::UnitProfile profile = *this->collection_.find(this->views_.at(source).id.toStdString());
+        profile.id = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
+        profile.name = name.trimmed().toStdString();
+        profile.builtin = false;
+        if (!this->collection_.add(std::move(profile))) return false;
+        this->rebuild();
+        this->select(this->views_.size()-1, origin);
+        return true;
+    }
+    bool rename(int index, const QString &name, QObject *origin = nullptr) {
+        if (!this->valid(index) || this->views_.at(index).builtin || !this->validName(name, index)) return false;
+        if (!this->collection_.rename(this->views_.at(index).id.toStdString(), name.trimmed().toStdString())) return false;
+        this->rebuild(); this->persist();
+        UnitProfileNotifications::instance().publish(origin);
+        return true;
+    }
+    bool remove(int index, QObject *origin = nullptr) {
+        if (!this->valid(index) || this->views_.at(index).builtin) return false;
+        if (!this->collection_.remove(this->views_.at(index).id.toStdString())) return false;
+        this->rebuild(); this->persist();
+        UnitProfileNotifications::instance().publish(origin);
+        return true;
+    }
+    bool setUnit(int index, const QString &quantity, const QString &unit, QObject *origin = nullptr) {
+        if (!this->valid(index)) return false;
+        if (!this->collection_.setUnit(this->views_.at(index).id.toStdString(), quantity.toStdString(), unit.toStdString())) return false;
+        this->rebuild(); this->persist();
+        UnitProfileNotifications::instance().publish(origin);
+        return true;
+    }
+private:
+    UnitProfileManager() : storage_(guiConfigurationFilePath()) {
+        const UnitProfileSnapshot stored = this->storage_.load();
+        for (const aowis::units::UnitProfile &profile : stored.custom_profiles)
+            (void)this->collection_.add(profile);
+        this->rebuild();
+        for (const Profile &profile : this->views_) {
+            if ((!stored.active_id.isEmpty() && profile.id == stored.active_id) ||
+                (stored.active_id.isEmpty() && profile.name == stored.legacy_active_name)) {
+                (void)this->collection_.select(profile.id.toStdString());
+                break;
+            }
+        }
+    }
+    [[nodiscard]] bool valid(int index) const { return index >= 0 && index < this->views_.size(); }
+    [[nodiscard]] bool validName(const QString &name, int except = -1) const {
+        if (name.trimmed().isEmpty()) return false;
+        for (int i = 0; i < this->views_.size(); ++i)
+            if (i != except && this->views_.at(i).name.compare(name.trimmed(), Qt::CaseInsensitive) == 0) return false;
+        return true;
+    }
+    void rebuild() {
+        this->views_.clear();
+        for (const aowis::units::UnitProfile &profile : this->collection_.profiles()) {
+            Profile view;
+            view.id = QString::fromStdString(profile.id);
+            view.name = QString::fromStdString(profile.name);
+            view.builtin = profile.builtin;
+            for (const aowis::units::UnitField &field : aowis::units::unit_fields) {
+                const std::string_view unit = aowis::units::resolvedUnit(profile, field.key);
+                view.units.insert(QString::fromLatin1(field.key.data(), field.key.size()),
+                                  QString::fromLatin1(unit.data(), unit.size()));
+            }
+            this->views_.append(std::move(view));
+        }
+    }
+    void persist() const {
+        UnitProfileSnapshot snapshot;
+        for (const aowis::units::UnitProfile &profile : this->collection_.profiles())
+            if (!profile.builtin) snapshot.custom_profiles.push_back(profile);
+        snapshot.active_id = QString::fromStdString(this->collection_.activeId());
+        snapshot.legacy_active_name = this->views_.at(this->activeIndex()).name;
+        (void)this->storage_.save(snapshot);
+    }
+    QSettingsUnitProfileStorage storage_;
+    aowis::units::UnitProfileCollection collection_;
+    QVector<Profile> views_;
+};

@@ -54,6 +54,7 @@ signals:
         const QString &file_name);
     void signalShowNetworkOnMap();
     void signalFullScreenToggle();
+    void signalManageUnitsRequested();
 
 private:
     QWidget *content = nullptr;

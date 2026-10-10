@@ -3,6 +3,8 @@
 #include "common/_sizes.h"
 #include "app/builtin_examples.h"
 #include "config/gui_configuration.h"
+#include "config/unit_profile_notifications.h"
+#include "config/unit_profile_manager.h"
 #include "config/shortcut_registry.h"
 #include "widgets/combo_checkboxes.h"
 #ifdef Q_OS_WASM
@@ -31,6 +33,10 @@
 #include <QPalette>
 #include <QPushButton>
 #include <QResizeEvent>
+#include <QSettings>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QPointer>
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QStringList>
@@ -871,154 +877,89 @@ void TopControlBar::addFlowUnitCombo()
     TopControlBarContent *bar_content = barContent(this->content);
     bar_content->centerLayout()->addWidget(createSeparator(this->content));
 
-    QToolButton *button_flow_units = new QToolButton(this->content);
-    button_flow_units->setText(QStringLiteral("CMH"));
-    button_flow_units->setFixedSize(82, 30);
-    button_flow_units->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    QToolButton *button = new QToolButton(this->content);
+    button->setMinimumHeight(30);
+    button->setMinimumWidth(82);
+    button->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    button->setToolButtonStyle(Qt::ToolButtonTextOnly);
 
 #ifdef Q_OS_WASM
-    // Qt/WASM transient QMenu windows are unreliable, especially for nested
-    // menus. Keep the desktop hierarchy and interaction model, but render the
-    // menu as ordinary child widgets inside the main window instead.
-    button_flow_units->setText(QStringLiteral("CMH  ▾"));
-
-    WasmPopupMenu *menu_flow_units = new WasmPopupMenu(button_flow_units);
-    const std::function<void(EN_FlowUnits, const QString &)> select_unit =
-        [this, button_flow_units](EN_FlowUnits units, const QString &label)
-    {
-        this->selected_flow_units = units;
-        button_flow_units->setText(label + QStringLiteral("  ▾"));
-    };
-
-    menu_flow_units->addAction(
-        QStringLiteral("CMH — cubic meters per hour"),
-        [select_unit] { select_unit(EN_CMH, QStringLiteral("CMH")); });
-    menu_flow_units->addAction(
-        QStringLiteral("LPS — liters per second"),
-        [select_unit] { select_unit(EN_LPS, QStringLiteral("LPS")); });
-    menu_flow_units->addSeparator();
-
-    WasmPopupMenu *menu_other_metric = menu_flow_units->addSubMenu(
-        QStringLiteral("Other metric"));
-    WasmPopupMenu *menu_imperial = menu_flow_units->addSubMenu(
-        QStringLiteral("Imperial / US"));
-
-    menu_other_metric->addAction(
-        QStringLiteral("LPM — liters per minute"),
-        [select_unit] { select_unit(EN_LPM, QStringLiteral("LPM")); });
-    menu_other_metric->addAction(
-        QStringLiteral("MLD — million liters per day"),
-        [select_unit] { select_unit(EN_MLD, QStringLiteral("MLD")); });
-    menu_other_metric->addAction(
-        QStringLiteral("CMD — cubic meters per day"),
-        [select_unit] { select_unit(EN_CMD, QStringLiteral("CMD")); });
-    menu_other_metric->addAction(
-        QStringLiteral("CMS — cubic meters per second"),
-        [select_unit] { select_unit(EN_CMS, QStringLiteral("CMS")); });
-
-    menu_imperial->addAction(
-        QStringLiteral("CFS — cubic feet per second"),
-        [select_unit] { select_unit(EN_CFS, QStringLiteral("CFS")); });
-    menu_imperial->addAction(
-        QStringLiteral("GPM — gallons per minute"),
-        [select_unit] { select_unit(EN_GPM, QStringLiteral("GPM")); });
-    menu_imperial->addAction(
-        QStringLiteral("MGD — million gallons per day"),
-        [select_unit] { select_unit(EN_MGD, QStringLiteral("MGD")); });
-    menu_imperial->addAction(
-        QStringLiteral("IMGD — imperial million gallons per day"),
-        [select_unit] { select_unit(EN_IMGD, QStringLiteral("IMGD")); });
-    menu_imperial->addAction(
-        QStringLiteral("AFD — acre-feet per day"),
-        [select_unit] { select_unit(EN_AFD, QStringLiteral("AFD")); });
-
-    connect(button_flow_units, &QToolButton::clicked, this,
-            [button_flow_units, menu_flow_units]
-    {
-        if (menu_flow_units->isPopupVisible())
-            menu_flow_units->closeAll();
-        else
-            menu_flow_units->popupBelow(button_flow_units);
+    WasmPopupMenu *menu = new WasmPopupMenu(button);
+    connect(button, &QToolButton::clicked, this, [button, menu] {
+        if (menu->isPopupVisible()) menu->closeAll();
+        else menu->popupBelow(button);
     });
 #else
-    button_flow_units->setPopupMode(QToolButton::InstantPopup);
-
-    QMenu *menu_flow_units = new QMenu(button_flow_units);
-    button_flow_units->setMenu(menu_flow_units);
-
-    QAction *action_cmh =
-        menu_flow_units->addAction(QStringLiteral("CMH — cubic meters per hour"));
-    action_cmh->setData(static_cast<int>(EN_CMH));
-
-    QAction *action_lps =
-        menu_flow_units->addAction(QStringLiteral("LPS — liters per second"));
-    action_lps->setData(static_cast<int>(EN_LPS));
-
-    menu_flow_units->addSeparator();
-
-    QMenu *menu_other_metric =
-        menu_flow_units->addMenu(QStringLiteral("Other metric"));
-    QAction *action_lpm =
-        menu_other_metric->addAction(QStringLiteral("LPM — liters per minute"));
-    action_lpm->setData(static_cast<int>(EN_LPM));
-
-    QAction *action_mld =
-        menu_other_metric->addAction(QStringLiteral("MLD — million liters per day"));
-    action_mld->setData(static_cast<int>(EN_MLD));
-
-    QAction *action_cmd =
-        menu_other_metric->addAction(QStringLiteral("CMD — cubic meters per day"));
-    action_cmd->setData(static_cast<int>(EN_CMD));
-
-    QAction *action_cms =
-        menu_other_metric->addAction(QStringLiteral("CMS — cubic meters per second"));
-    action_cms->setData(static_cast<int>(EN_CMS));
-
-    QMenu *menu_imperial =
-        menu_flow_units->addMenu(QStringLiteral("Imperial / US"));
-
-    QAction *action_cfs =
-        menu_imperial->addAction(QStringLiteral("CFS — cubic feet per second"));
-    action_cfs->setData(static_cast<int>(EN_CFS));
-
-    QAction *action_gpm =
-        menu_imperial->addAction(QStringLiteral("GPM — gallons per minute"));
-    action_gpm->setData(static_cast<int>(EN_GPM));
-
-    QAction *action_mgd =
-        menu_imperial->addAction(QStringLiteral("MGD — million gallons per day"));
-    action_mgd->setData(static_cast<int>(EN_MGD));
-
-    QAction *action_imgd =
-        menu_imperial->addAction(QStringLiteral("IMGD — imperial million gallons per day"));
-    action_imgd->setData(static_cast<int>(EN_IMGD));
-
-    QAction *action_afd =
-        menu_imperial->addAction(QStringLiteral("AFD — acre-feet per day"));
-    action_afd->setData(static_cast<int>(EN_AFD));
-
-    connect(menu_flow_units, &QMenu::triggered, this,
-            [this, button_flow_units](QAction *action)
-    {
-        if (action == nullptr || action->menu() != nullptr)
-            return;
-
-        bool ok = false;
-        const int value = action->data().toInt(&ok);
-        if (!ok)
-            return;
-
-        this->selected_flow_units = static_cast<EN_FlowUnits>(value);
-        button_flow_units->setText(action->text().section(' ', 0, 0));
-    });
+    button->setPopupMode(QToolButton::InstantPopup);
+    QMenu *menu = new QMenu(button);
+    button->setMenu(menu);
 #endif
 
-    this->selected_flow_units = EN_CMH;
+    const auto refresh = [this, button, menu] {
+        UnitProfileManager &manager = UnitProfileManager::instance();
+        const auto &profiles = manager.profiles();
+        QStringList names;
+        for (const auto &profile : profiles) names.append(profile.name);
+        const int active = manager.activeIndex();
+        const QString effective = profiles.at(active).name;
+        button->setText(effective + QStringLiteral("  ▾"));
+        const auto choose = [](const QString &name) {
+            UnitProfileManager &manager = UnitProfileManager::instance();
+            const auto &profiles = manager.profiles();
+            for (int i = 0; i < profiles.size(); ++i) {
+                if (profiles.at(i).name == name) {
+                    (void)manager.select(i);
+                    break;
+                }
+            }
+        };
+
+        menu->clear();
+#ifdef Q_OS_WASM
+        const auto add = [&choose](WasmPopupMenu *parent, const QString &name, const QString &label) {
+            parent->addAction(label, [choose, name] { choose(name); });
+        };
+        add(menu, names.at(0), names.at(0));
+        menu->addSeparator();
+        add(menu, names.at(1), QStringLiteral("CMH — cubic meters per hour"));
+        add(menu, names.at(2), QStringLiteral("LPS — liters per second"));
+        WasmPopupMenu *metric = menu->addSubMenu(QStringLiteral("Other metric"));
+        for (int i = 3; i <= 6; ++i) add(metric, names.at(i), names.at(i));
+        WasmPopupMenu *imperial = menu->addSubMenu(QStringLiteral("Imperial / US"));
+        for (int i = 7; i <= 11; ++i) add(imperial, names.at(i), names.at(i));
+        WasmPopupMenu *custom = menu->addSubMenu(QStringLiteral("Custom"));
+        for (int i = 12; i < names.size(); ++i) add(custom, names.at(i), names.at(i));
+        custom->addSeparator();
+        custom->addAction(QStringLiteral("Manage Units…"), [this] { emit signalManageUnitsRequested(); });
+#else
+        const auto add = [&choose, &effective](QMenu *parent, const QString &name, const QString &label) {
+            QAction *action = parent->addAction(label);
+            action->setCheckable(true);
+            action->setChecked(name == effective);
+            QObject::connect(action, &QAction::triggered, parent, [choose, name] { choose(name); });
+        };
+        add(menu, names.at(0), names.at(0));
+        menu->addSeparator();
+        add(menu, names.at(1), QStringLiteral("CMH — cubic meters per hour"));
+        add(menu, names.at(2), QStringLiteral("LPS — liters per second"));
+        QMenu *metric = menu->addMenu(QStringLiteral("Other metric"));
+        for (int i = 3; i <= 6; ++i) add(metric, names.at(i), names.at(i));
+        QMenu *imperial = menu->addMenu(QStringLiteral("Imperial / US"));
+        for (int i = 7; i <= 11; ++i) add(imperial, names.at(i), names.at(i));
+        menu->addSeparator();
+        QMenu *custom = menu->addMenu(QStringLiteral("Custom"));
+        for (int i = 12; i < names.size(); ++i) add(custom, names.at(i), names.at(i));
+        custom->addSeparator();
+        QAction *manage_units = custom->addAction(QStringLiteral("Manage Units…"));
+        connect(manage_units, &QAction::triggered, this, [this] { emit signalManageUnitsRequested(); });
+#endif
+    };
+    UnitProfileNotifications::instance().subscribe(this, [this, refresh] {
+        QTimer::singleShot(0, this, refresh);
+    });
+    refresh();
     bar_content->centerLayout()->addWidget(
-        createLabeledControl(
-            QStringLiteral("Flow units"),
-            button_flow_units,
-            this->content));
+        createLabeledControl(QStringLiteral("Units"), button, this->content));
 }
 
 void TopControlBar::addQualityHeadlossControls()

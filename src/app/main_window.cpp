@@ -250,6 +250,14 @@ MainWindow::MainWindow(QWidget *parent)
         this->settings->focusShortcut(id);
     });
 
+    connect(this->top_control_bar, &TopControlBar::signalManageUnitsRequested, this, [this]
+    {
+        if (this->settings_page_index < 0)
+            return;
+        this->main_navigation->setCurrentIndex(this->settings_page_index);
+        this->settings->focusUnits();
+    });
+
     this->main_navigation->setCurrentIndex(2);
 
     connect(this->main_navigation, &MainNavigationWidget::currentChanged, this, [this](int)

@@ -1,6 +1,7 @@
 #include "settings/units_settings_widget.h"
-#include "config/gui_configuration.h"
-#include <aowis/model/units/canonical_registry.h>
+#include "config/unit_profile_manager.h"
+#include "config/unit_profile_notifications.h"
+#include <aowis/model/units/unit_profile.h>
 #include <QComboBox>
 #include <QToolButton>
 #include <QSizePolicy>
@@ -32,117 +33,23 @@
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
+#include <QTimer>
 
 namespace {
-struct UnitField { const char *group; const char *key; const char *choices; };
-const UnitField fields[] = {
-    {"Lengths and geometry", "length", "m;ft;km;mi"},
-    {"Lengths and geometry", "elevation", "m;ft"},
-    {"Lengths and geometry", "altitude", "m;ft"},
-    {"Lengths and geometry", "distance", "m;ft;km;mi"},
-    {"Lengths and geometry", "vertical_offset", "m;ft"},
-    {"Lengths and geometry", "link_diameter", "mm;in;cm;m"},
-    {"Lengths and geometry", "tank_diameter", "m;ft"},
-    {"Lengths and geometry", "darcy_weisbach_roughness_height", "mm;in;millift"},
-    {"Coordinates", "latitude", "deg"},
-    {"Coordinates", "longitude", "deg"},
-    {"Coordinates", "projected_easting", "m;ft"},
-    {"Coordinates", "projected_northing", "m;ft"},
-    {"Coordinates", "local_x", "m;ft"},
-    {"Coordinates", "local_y", "m;ft"},
-    {"Area and volume", "area", "m2;ft2;ha;acre"},
-    {"Area and volume", "volume", "m3;L;ft3;US gal;Imp gal"},
-    {"Flow and transport", "volumetric_flow_rate", "m3/h;L/s;L/min;ML/d;m3/d;m3/s;ft3/s;US gal/min;MUSgal/d;MImpgal/d;acre.ft/d"},
-    {"Flow and transport", "velocity", "m/s;ft/s"},
-    {"Flow and transport", "molecular_diffusivity", "m2/s;cm2/s"},
-    {"Flow and transport", "longitudinal_dispersion_coefficient", "m2/s;cm2/s"},
-    {"Hydraulics and pressure", "hydraulic_head", "m;ft"},
-    {"Hydraulics and pressure", "pressure_head", "m;ft"},
-    {"Hydraulics and pressure", "water_level", "m;ft"},
-    {"Hydraulics and pressure", "head_gain", "m;ft"},
-    {"Hydraulics and pressure", "head_loss", "m;ft"},
-    {"Hydraulics and pressure", "head_loss_gradient", "m/km;ft/1000ft"},
-    {"Hydraulics and pressure", "pressure", "kPa;Pa;bar;psi"},
-    {"Hydraulics and pressure", "stress", "MPa;kPa;psi"},
-    {"Time", "elapsed_time", "s;min;h;d"},
-    {"Time", "duration", "s;min;h;d"},
-    {"Time", "time_of_day", "s;min;h"},
-    {"Dimensionless", "hazen_williams_roughness_coefficient", "1"},
-    {"Dimensionless", "chezy_manning_roughness_coefficient", "1"},
-    {"Dimensionless", "minor_loss_coefficient", "1"},
-    {"Dimensionless", "darcy_weisbach_friction_factor", "1"},
-    {"Dimensionless", "pump_speed_ratio", "1"},
-    {"Dimensionless", "pattern_multiplier", "1"},
-    {"Dimensionless", "demand_multiplier", "1"},
-    {"Dimensionless", "pressure_exponent", "1"},
-    {"Dimensionless", "emitter_exponent", "1"},
-    {"Dimensionless", "reaction_order", "1"},
-    {"Dimensionless", "specific_gravity", "1"},
-    {"Dimensionless", "relative_viscosity", "1"},
-    {"Dimensionless", "relative_diffusivity", "1"},
-    {"Dimensionless", "peclet_number", "1"},
-    {"Dimensionless", "mixing_fraction", "1"},
-    {"Dimensionless", "hydraulic_accuracy", "1"},
-    {"Dimensionless", "hydraulic_damping_limit", "1"},
-    {"Dimensionless", "relative_error", "1"},
-    {"Dimensionless", "flow_balance_ratio", "1"},
-    {"Dimensionless", "quality_mass_balance_ratio", "1"},
-    {"Percentages", "efficiency", "%;1"},
-    {"Percentages", "relative_flow", "%;1"},
-    {"Percentages", "valve_position", "%;1"},
-    {"Percentages", "source_trace_percentage", "%;1"},
-    {"Percentages", "operating_time_percentage", "%;1"},
-    {"Percentages", "demand_reduction_percentage", "%;1"},
-    {"Percentages", "leakage_loss_percentage", "%;1"},
-    {"Reactions and leakage", "first_order_bulk_reaction_coefficient", "/d;/h;/s"},
-    {"Reactions and leakage", "first_order_wall_reaction_coefficient", "m/d;ft/d"},
-    {"Reactions and leakage", "leak_area_per_100m_pipe_length", "mm2/(100.m);in2/(100.ft)"},
-    {"Reactions and leakage", "leak_area_expansion_per_pressure_head", "mm2/m;in2/ft"},
-    {"Water quality", "chemical_mass_concentration", "mg/L;g/m3;ug/L"},
-    {"Water quality", "chemical_amount_concentration", "mmol/L;mol/m3"},
-    {"Water quality", "chemical_surface_mass_density", "mg/m2;g/m2"},
-    {"Water quality", "chemical_surface_amount_density", "mmol/m2;mol/m2"},
-    {"Water quality", "chemical_mass_flow_rate", "mg/min;g/min;g/h"},
-    {"Water quality", "chemical_amount_flow_rate", "mmol/min;mol/min"},
-    {"Water quality", "water_age", "h;d;min"},
-    {"Power and electrical", "power", "kW;W;hp"},
-    {"Power and electrical", "energy", "kW.h;J;MJ"},
-    {"Power and electrical", "energy_intensity", "kW.h/m3;kW.h/ft3"},
-    {"Power and electrical", "electric_current", "A;mA"},
-    {"Power and electrical", "voltage", "V;mV;kV"},
-    {"Power and electrical", "electrical_resistance", "Ohm;kOhm"},
-    {"Power and electrical", "capacitance", "F;uF"},
-};
-const QStringList flowTemplates = {"CMH", "LPS", "LPM", "MLD", "CMD", "CMS", "CFS", "GPM", "MGD", "IMGD", "AFD"};
-const QStringList flowUnits = {"m3/h", "L/s", "L/min", "ML/d", "m3/d", "m3/s", "ft3/s", "US gal/min", "MUSgal/d", "MImpgal/d", "acre.ft/d"};
-QJsonObject canonicalUnits()
+using UnitField = aowis::units::UnitField;
+using Profile = UnitProfileManager::Profile;
+QString asQString(std::string_view value);
+constexpr const auto &fields = aowis::units::unit_fields;
+const QStringList flowTemplates = [] {
+    QStringList names;
+    for (const std::string_view value : aowis::units::flow_template_names) names.append(asQString(value));
+    return names;
+}();
+QString asQString(std::string_view value)
 {
-    QJsonObject units;
-    for (const UnitField &field : fields) {
-        const std::string_view unit = aowis::units::canonicalUnit(field.key);
-        if (!unit.empty())
-            units.insert(QString::fromLatin1(field.key), QString::fromLatin1(unit.data(), static_cast<qsizetype>(unit.size())));
-    }
-    return units;
+    return QString::fromLatin1(value.data(), static_cast<qsizetype>(value.size()));
 }
-QJsonObject templateUnits(int index)
-{
-    QJsonObject units = canonicalUnits();
-    if (index >= 0 && index < flowUnits.size())
-        units.insert(QStringLiteral("volumetric_flow_rate"), flowUnits.at(index));
-    // EPANET US flow choices imply feet for geometric and hydraulic lengths.
-    if (index >= 6) {
-        for (const UnitField &field : fields) {
-            const QString key = QString::fromLatin1(field.key);
-            const QStringList choices = QString::fromLatin1(field.choices).split(';');
-            if (choices.contains(QStringLiteral("ft"))) units.insert(key, QStringLiteral("ft"));
-        }
-        units.insert(QStringLiteral("link_diameter"), QStringLiteral("in"));
-        units.insert(QStringLiteral("pressure"), QStringLiteral("psi"));
-        units.insert(QStringLiteral("power"), QStringLiteral("hp"));
-    }
-    return units;
-}
+
 }
 
 UnitsSettingsWidget::UnitsSettingsWidget(QWidget *parent) : QWidget(parent)
@@ -208,9 +115,10 @@ UnitsSettingsWidget::UnitsSettingsWidget(QWidget *parent) : QWidget(parent)
     connect(this->rename_button, &QPushButton::clicked, this, [this] { this->renameProfile(); });
     connect(this->delete_button, &QPushButton::clicked, this, [this] {
         const int index = this->profile_selector->currentIndex();
-        if (index < 0 || index >= this->profiles.size() || this->profiles.at(index).builtin) return;
+        if (index < 0 || index >= UnitProfileManager::instance().profiles().size() || UnitProfileManager::instance().profiles().at(index).builtin) return;
 
-        const QString profile_name = this->profiles.at(index).name;
+        const QString profile_name = UnitProfileManager::instance().profiles().at(index).name;
+        const QString profile_id = UnitProfileManager::instance().profiles().at(index).id;
         QMessageBox *confirmation = new QMessageBox(
             QMessageBox::Question,
             QStringLiteral("Delete unit profile"),
@@ -220,16 +128,14 @@ UnitsSettingsWidget::UnitsSettingsWidget(QWidget *parent) : QWidget(parent)
         confirmation->setAttribute(Qt::WA_DeleteOnClose);
         confirmation->setDefaultButton(QMessageBox::No);
         confirmation->setEscapeButton(QMessageBox::No);
-        connect(confirmation, &QMessageBox::finished, this, [this, profile_name](int result) {
+        connect(confirmation, &QMessageBox::finished, this, [this, profile_id](int result) {
             if (result != QMessageBox::Yes) return;
             // Resolve the profile again: the selection or profile list may have changed
             // while this nonblocking dialog was open.
-            for (int i = 0; i < this->profiles.size(); ++i) {
-                if (this->profiles.at(i).builtin || this->profiles.at(i).name != profile_name) continue;
-                const int selected = this->profile_selector->currentIndex();
-                this->profiles.removeAt(i);
-                this->refreshSelector(selected == i ? 0 : (selected > i ? selected - 1 : selected));
-                this->save();
+            for (int i = 0; i < UnitProfileManager::instance().profiles().size(); ++i) {
+                if (UnitProfileManager::instance().profiles().at(i).builtin || UnitProfileManager::instance().profiles().at(i).id != profile_id) continue;
+                (void)UnitProfileManager::instance().remove(i, this);
+                this->refreshSelector(UnitProfileManager::instance().activeIndex());
                 break;
             }
         });
@@ -239,71 +145,40 @@ UnitsSettingsWidget::UnitsSettingsWidget(QWidget *parent) : QWidget(parent)
 
 void UnitsSettingsWidget::load()
 {
-    this->profiles.append({QStringLiteral("AOWIS Canonical"), canonicalUnits(), true});
-    for (int i = 0; i < flowTemplates.size(); ++i)
-        this->profiles.append({flowTemplates.at(i), templateUnits(i), true});
-    QSettings settings(guiConfigurationFilePath(), QSettings::IniFormat);
-    const QJsonDocument document = QJsonDocument::fromJson(settings.value(QStringLiteral("units/custom_profiles")).toByteArray());
-    if (document.isArray()) {
-        for (const QJsonValue &value : document.array()) {
-            const QJsonObject object = value.toObject();
-            const QString name = object.value(QStringLiteral("name")).toString().trimmed();
-            if (name.isEmpty()) continue;
-            bool duplicate = false;
-            for (const Profile &profile : this->profiles)
-                if (profile.name.compare(name, Qt::CaseInsensitive) == 0) duplicate = true;
-            if (duplicate) continue;
-            QJsonObject units = canonicalUnits();
-            const QJsonObject saved_units = object.value(QStringLiteral("units")).toObject();
-            for (const UnitField &field : fields) {
-                const QString key = QString::fromLatin1(field.key);
-                const QString unit = saved_units.value(key).toString();
-                if (QString::fromLatin1(field.choices).split(';').contains(unit)) units.insert(key, unit);
-            }
-            this->profiles.append({name, units, false});
-        }
-    }
-    const QString selected = settings.value(QStringLiteral("units/selected_profile"), QStringLiteral("AOWIS Canonical")).toString();
-    int selected_index = 0;
-    for (int i = 0; i < this->profiles.size(); ++i)
-        if (this->profiles.at(i).name == selected) selected_index = i;
-    this->refreshSelector(selected_index);
+    this->refreshSelector(UnitProfileManager::instance().activeIndex());
+    UnitProfileNotifications::instance().subscribe(this, [this] {
+        QTimer::singleShot(0, this, [this] {
+            this->refreshSelector(UnitProfileManager::instance().activeIndex());
+        });
+    });
 }
 void UnitsSettingsWidget::save() const
 {
-    QSettings settings(guiConfigurationFilePath(), QSettings::IniFormat);
-    QJsonArray array;
-    for (const Profile &profile : this->profiles)
-        if (!profile.builtin) array.append(QJsonObject{{QStringLiteral("name"), profile.name}, {QStringLiteral("units"), profile.units}});
-    settings.setValue(QStringLiteral("units/custom_profiles"), QJsonDocument(array).toJson(QJsonDocument::Compact));
-    const int index = this->profile_selector->currentIndex();
-    if (index >= 0 && index < this->profiles.size())
-        settings.setValue(QStringLiteral("units/selected_profile"), this->profiles.at(index).name);
-    settings.sync();
+    (void)UnitProfileManager::instance().select(this->profile_selector->currentIndex(), const_cast<UnitsSettingsWidget *>(this));
 }
 void UnitsSettingsWidget::refreshSelector(int selected)
 {
     QSignalBlocker blocker(this->profile_selector);
     this->profile_selector->clear();
-    for (const Profile &profile : this->profiles)
+    for (const Profile &profile : UnitProfileManager::instance().profiles())
         this->profile_selector->addItem(profile.name);
     this->profile_selector->setCurrentIndex(selected);
-    this->profile_button->setText(this->profiles.at(selected).name + QStringLiteral("  ▾"));
+    this->profile_button->setText(UnitProfileManager::instance().profiles().at(selected).name + QStringLiteral("  ▾"));
 #ifdef Q_OS_WASM
     this->profile_menu->clear();
     const auto add_action = [this](WasmPopupMenu *menu, int index, const QString &text) {
         menu->addAction(text, [this, index] { this->profile_selector->setCurrentIndex(index); });
     };
-    add_action(this->profile_menu, 0, this->profiles.at(0).name);
+    add_action(this->profile_menu, 0, UnitProfileManager::instance().profiles().at(0).name);
     this->profile_menu->addSeparator();
     add_action(this->profile_menu, 1, QStringLiteral("CMH — cubic meters per hour"));
     add_action(this->profile_menu, 2, QStringLiteral("LPS — liters per second"));
     WasmPopupMenu *other = this->profile_menu->addSubMenu(QStringLiteral("Other metric"));
-    for (int i = 3; i <= 6; ++i) add_action(other, i, this->profiles.at(i).name);
+    for (int i = 3; i <= 6; ++i) add_action(other, i, UnitProfileManager::instance().profiles().at(i).name);
     WasmPopupMenu *imperial = this->profile_menu->addSubMenu(QStringLiteral("Imperial / US"));
-    for (int i = 7; i <= 11; ++i) add_action(imperial, i, this->profiles.at(i).name);
+    for (int i = 7; i <= 11; ++i) add_action(imperial, i, UnitProfileManager::instance().profiles().at(i).name);
     WasmPopupMenu *custom = this->profile_menu->addSubMenu(QStringLiteral("Custom"));
-    for (int i = 12; i < this->profiles.size(); ++i) add_action(custom, i, this->profiles.at(i).name);
+    for (int i = 12; i < UnitProfileManager::instance().profiles().size(); ++i) add_action(custom, i, UnitProfileManager::instance().profiles().at(i).name);
 #else
     this->profile_menu->clear();
     const auto add_action = [this](QMenu *menu, int index, const QString &text) {
@@ -313,17 +188,17 @@ void UnitsSettingsWidget::refreshSelector(int selected)
         action->setChecked(index == this->profile_selector->currentIndex());
         connect(action, &QAction::triggered, this, [this, index] { this->profile_selector->setCurrentIndex(index); });
     };
-    add_action(this->profile_menu, 0, this->profiles.at(0).name);
+    add_action(this->profile_menu, 0, UnitProfileManager::instance().profiles().at(0).name);
     this->profile_menu->addSeparator();
     add_action(this->profile_menu, 1, QStringLiteral("CMH — cubic meters per hour"));
     add_action(this->profile_menu, 2, QStringLiteral("LPS — liters per second"));
     QMenu *other = this->profile_menu->addMenu(QStringLiteral("Other metric"));
-    for (int i = 3; i <= 6; ++i) add_action(other, i, this->profiles.at(i).name);
+    for (int i = 3; i <= 6; ++i) add_action(other, i, UnitProfileManager::instance().profiles().at(i).name);
     QMenu *imperial = this->profile_menu->addMenu(QStringLiteral("Imperial / US"));
-    for (int i = 7; i <= 11; ++i) add_action(imperial, i, this->profiles.at(i).name);
+    for (int i = 7; i <= 11; ++i) add_action(imperial, i, UnitProfileManager::instance().profiles().at(i).name);
     this->profile_menu->addSeparator();
     QMenu *custom = this->profile_menu->addMenu(QStringLiteral("Custom"));
-    for (int i = 12; i < this->profiles.size(); ++i) add_action(custom, i, this->profiles.at(i).name);
+    for (int i = 12; i < UnitProfileManager::instance().profiles().size(); ++i) add_action(custom, i, UnitProfileManager::instance().profiles().at(i).name);
 #endif
     this->refreshFields();
 }
@@ -331,11 +206,11 @@ void UnitsSettingsWidget::refreshFields()
 {
     this->fields_tree->clear();
     const int index = this->profile_selector->currentIndex();
-    if (index < 0 || index >= this->profiles.size()) return;
-    const bool builtin = this->profiles.at(index).builtin;
+    if (index < 0 || index >= UnitProfileManager::instance().profiles().size()) return;
+    const bool builtin = UnitProfileManager::instance().profiles().at(index).builtin;
     this->delete_button->setEnabled(!builtin);
     this->rename_button->setEnabled(!builtin);
-    this->profile_button->setText(this->profiles.at(index).name + QStringLiteral("  ▾"));
+    this->profile_button->setText(UnitProfileManager::instance().profiles().at(index).name + QStringLiteral("  ▾"));
     // Refresh checked menu entries without rebuilding menus while a selection is in progress.
 #ifndef Q_OS_WASM
     const auto update_checks = [index](QMenu *menu, const auto &self) -> void {
@@ -349,7 +224,7 @@ void UnitsSettingsWidget::refreshFields()
     QString last_group;
     QTreeWidgetItem *category_item = nullptr;
     for (const UnitField &field : fields) {
-        const QString group = QString::fromLatin1(field.group);
+        const QString group = asQString(field.group);
         if (group != last_group) {
             category_item = new QTreeWidgetItem(this->fields_tree);
             category_item->setText(0, group);
@@ -359,20 +234,20 @@ void UnitsSettingsWidget::refreshFields()
             category_item->setFirstColumnSpanned(true);
             last_group = group;
         }
-        const QString key = QString::fromLatin1(field.key);
+        const QString key = asQString(field.key);
         QTreeWidgetItem *item = new QTreeWidgetItem(category_item);
         item->setText(0, key);
-        item->setText(2, QString::fromLatin1(aowis::units::canonicalUnit(field.key).data(), static_cast<qsizetype>(aowis::units::canonicalUnit(field.key).size())));
+        item->setText(2, asQString(aowis::units::canonicalUnit(field.key)));
         QComboBox *selector = new QComboBox(this->fields_tree);
-        selector->addItems(QString::fromLatin1(field.choices).split(';'));
-        const QString unit = this->profiles.at(index).units.value(key).toString();
+        selector->addItems(asQString(field.choices).split(';'));
+        const QString unit = UnitProfileManager::instance().profiles().at(index).units.value(key).toString();
         selector->setCurrentIndex(qMax(0, selector->findText(unit)));
         selector->setEnabled(!builtin && selector->count() > 1);
-        selector->setToolTip(QStringLiteral("Canonical: %1").arg(QString::fromLatin1(aowis::units::canonicalUnit(field.key).data(), static_cast<qsizetype>(aowis::units::canonicalUnit(field.key).size()))));
+        selector->setToolTip(QStringLiteral("Canonical: %1").arg(asQString(aowis::units::canonicalUnit(field.key))));
         this->fields_tree->setItemWidget(item, 1, selector);
         connect(selector, &QComboBox::currentTextChanged, this, [this, index, key](const QString &text) {
-            this->profiles[index].units.insert(key, text);
-            this->save();
+            if (!aowis::units::isAllowedUnit(key.toStdString(), text.toStdString())) return;
+            (void)UnitProfileManager::instance().setUnit(index, key, text, this);
         });
     }
     this->fields_tree->expandAll();
@@ -417,17 +292,17 @@ void UnitsSettingsWidget::createProfile()
     layout->addWidget(base_button);
     dialog->setProperty("sourceIndex", qMax(0, this->profile_selector->currentIndex()));
     const int source = dialog->property("sourceIndex").toInt();
-    base_button->setText(this->profiles.at(source).name + QStringLiteral("  ▾"));
+    base_button->setText(UnitProfileManager::instance().profiles().at(source).name + QStringLiteral("  ▾"));
     QLineEdit *name_edit = new QLineEdit(dialog);
     const auto suggestedName = [this](int index) {
-        return this->profiles.at(index).name + QStringLiteral(" (custom)");
+        return UnitProfileManager::instance().profiles().at(index).name + QStringLiteral(" (custom)");
     };
     name_edit->setText(suggestedName(source));
     const auto selectBase = [this, dialog, base_button, name_edit, suggestedName](int index) {
         const QString previousSuggestion = suggestedName(dialog->property("sourceIndex").toInt());
         const bool useSuggestion = name_edit->text() == previousSuggestion;
         dialog->setProperty("sourceIndex", index);
-        base_button->setText(this->profiles.at(index).name + QStringLiteral("  ▾"));
+        base_button->setText(UnitProfileManager::instance().profiles().at(index).name + QStringLiteral("  ▾"));
         if (useSuggestion) name_edit->setText(suggestedName(index));
     };
 #ifdef Q_OS_WASM
@@ -452,27 +327,27 @@ void UnitsSettingsWidget::createProfile()
         });
     };
 #endif
-    add_action(base_menu, 0, this->profiles.at(0).name);
+    add_action(base_menu, 0, UnitProfileManager::instance().profiles().at(0).name);
     base_menu->addSeparator();
     add_action(base_menu, 1, QStringLiteral("CMH — cubic meters per hour"));
     add_action(base_menu, 2, QStringLiteral("LPS — liters per second"));
 #ifdef Q_OS_WASM
     WasmPopupMenu *other = base_menu->addSubMenu(QStringLiteral("Other metric"));
-    for (int i = 3; i <= 6; ++i) add_action(other, i, this->profiles.at(i).name);
+    for (int i = 3; i <= 6; ++i) add_action(other, i, UnitProfileManager::instance().profiles().at(i).name);
     WasmPopupMenu *imperial = base_menu->addSubMenu(QStringLiteral("Imperial / US"));
-    for (int i = 7; i <= 11; ++i) add_action(imperial, i, this->profiles.at(i).name);
+    for (int i = 7; i <= 11; ++i) add_action(imperial, i, UnitProfileManager::instance().profiles().at(i).name);
     base_menu->addSeparator();
     WasmPopupMenu *custom = base_menu->addSubMenu(QStringLiteral("Custom"));
 #else
     QMenu *other = base_menu->addMenu(QStringLiteral("Other metric"));
-    for (int i = 3; i <= 6; ++i) add_action(other, i, this->profiles.at(i).name);
+    for (int i = 3; i <= 6; ++i) add_action(other, i, UnitProfileManager::instance().profiles().at(i).name);
     QMenu *imperial = base_menu->addMenu(QStringLiteral("Imperial / US"));
-    for (int i = 7; i <= 11; ++i) add_action(imperial, i, this->profiles.at(i).name);
+    for (int i = 7; i <= 11; ++i) add_action(imperial, i, UnitProfileManager::instance().profiles().at(i).name);
     base_menu->addSeparator();
     QMenu *custom = base_menu->addMenu(QStringLiteral("Custom"));
 #endif
-    for (int i = 12; i < this->profiles.size(); ++i)
-        add_action(custom, i, this->profiles.at(i).name);
+    for (int i = 12; i < UnitProfileManager::instance().profiles().size(); ++i)
+        add_action(custom, i, UnitProfileManager::instance().profiles().at(i).name);
     layout->addWidget(new QLabel(QStringLiteral("Profile name:"), dialog));
     layout->addWidget(name_edit);
     QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
@@ -481,10 +356,10 @@ void UnitsSettingsWidget::createProfile()
     connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
     connect(dialog, &QDialog::accepted, this, [this, dialog, name_edit] {
     const int source = dialog->property("sourceIndex").toInt();
-    if (source < 0 || source >= this->profiles.size()) return;
+    if (source < 0 || source >= UnitProfileManager::instance().profiles().size()) return;
     const QString name = name_edit->text().trimmed();
     if (name.isEmpty()) return;
-    for (const Profile &profile : this->profiles) {
+    for (const Profile &profile : UnitProfileManager::instance().profiles()) {
         if (profile.name.compare(name, Qt::CaseInsensitive) == 0) {
             QMessageBox *message = new QMessageBox(QMessageBox::Warning, QStringLiteral("Unit profiles"),
                 QStringLiteral("A profile with this name already exists."), QMessageBox::Ok, this);
@@ -493,9 +368,8 @@ void UnitsSettingsWidget::createProfile()
             return;
         }
     }
-    this->profiles.append({name, this->profiles.at(source).units, false});
-    this->refreshSelector(this->profiles.size() - 1);
-    this->save();
+    if (UnitProfileManager::instance().create(source, name, this))
+        this->refreshSelector(UnitProfileManager::instance().activeIndex());
     });
     dialog->open();
 }
@@ -503,19 +377,19 @@ void UnitsSettingsWidget::createProfile()
 void UnitsSettingsWidget::renameProfile()
 {
     const int index = this->profile_selector->currentIndex();
-    if (index < 0 || index >= this->profiles.size() || this->profiles.at(index).builtin) return;
+    if (index < 0 || index >= UnitProfileManager::instance().profiles().size() || UnitProfileManager::instance().profiles().at(index).builtin) return;
     QInputDialog *dialog = new QInputDialog(this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->setWindowTitle(QStringLiteral("Rename unit profile"));
     dialog->setLabelText(QStringLiteral("Profile name:"));
     dialog->setInputMode(QInputDialog::TextInput);
-    dialog->setTextValue(this->profiles.at(index).name);
+    dialog->setTextValue(UnitProfileManager::instance().profiles().at(index).name);
     connect(dialog, &QDialog::accepted, this, [this, dialog, index] {
-        if (index >= this->profiles.size() || this->profiles.at(index).builtin) return;
+        if (index >= UnitProfileManager::instance().profiles().size() || UnitProfileManager::instance().profiles().at(index).builtin) return;
         const QString name = dialog->textValue().trimmed();
-        if (name.isEmpty() || name == this->profiles.at(index).name) return;
-        for (int i = 0; i < this->profiles.size(); ++i) {
-            if (i != index && this->profiles.at(i).name.compare(name, Qt::CaseInsensitive) == 0) {
+        if (name.isEmpty() || name == UnitProfileManager::instance().profiles().at(index).name) return;
+        for (int i = 0; i < UnitProfileManager::instance().profiles().size(); ++i) {
+            if (i != index && UnitProfileManager::instance().profiles().at(i).name.compare(name, Qt::CaseInsensitive) == 0) {
                 QMessageBox *message = new QMessageBox(QMessageBox::Warning, QStringLiteral("Unit profiles"),
                     QStringLiteral("A profile with this name already exists."), QMessageBox::Ok, this);
                 message->setAttribute(Qt::WA_DeleteOnClose);
@@ -523,9 +397,8 @@ void UnitsSettingsWidget::renameProfile()
                 return;
             }
         }
-        this->profiles[index].name = name;
-        this->refreshSelector(index);
-        this->save();
+        if (UnitProfileManager::instance().rename(index, name, this))
+            this->refreshSelector(index);
     });
     dialog->open();
 }

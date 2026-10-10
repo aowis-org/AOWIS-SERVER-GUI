@@ -22,6 +22,7 @@ public:
     explicit SettingsWidget(QWidget *parent = nullptr);
 
     void focusShortcut(GuiShortcutId id);
+    void focusUnits();
 
 private:
     QListWidget *table_of_contents = nullptr;

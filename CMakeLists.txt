@@ -167,6 +167,7 @@ qt_add_executable(aowis-server-gui
 
     # Configuration
     src/config/gui_configuration.cpp
+    src/config/unit_profile_storage.cpp
     src/config/gui_configuration.h
     src/config/map_server_client_configuration.cpp
     src/config/map_server_client_configuration.h
@@ -586,6 +587,17 @@ else()
 endif()
 
 if(BUILD_TESTING AND NOT EMSCRIPTEN)
+    add_executable(aowis-unit-profile-storage-tests
+        tests/unit_profile_storage_test.cpp
+        src/config/unit_profile_storage.cpp
+    )
+    target_include_directories(aowis-unit-profile-storage-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include
+    )
+    target_link_libraries(aowis-unit-profile-storage-tests PRIVATE Qt6::Core)
+    add_test(NAME aowis-unit-profile-storage COMMAND aowis-unit-profile-storage-tests)
+    set_tests_properties(aowis-unit-profile-storage PROPERTIES LABELS "aowis")
     add_executable(aowis-map-render-neutral-tests
         tests/map_render_neutral_tests.cpp
         tests/test_harness.h

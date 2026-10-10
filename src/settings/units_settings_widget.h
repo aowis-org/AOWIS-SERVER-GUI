@@ -16,8 +16,6 @@ class UnitsSettingsWidget : public QWidget
 public:
     explicit UnitsSettingsWidget(QWidget *parent = nullptr);
 private:
-    struct Profile { QString name; QJsonObject units; bool builtin = false; };
-    QVector<Profile> profiles;
     QComboBox *profile_selector = nullptr;
     QToolButton *profile_button = nullptr;
 #ifdef Q_OS_WASM

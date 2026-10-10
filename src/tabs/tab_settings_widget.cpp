@@ -56,3 +56,8 @@ void SettingsWidget::focusShortcut(GuiShortcutId id)
     this->table_of_contents->setCurrentRow(0);
     this->keyboard_shortcuts_page->focusShortcut(id);
 }
+
+void SettingsWidget::focusUnits()
+{
+    this->table_of_contents->setCurrentRow(this->pages->indexOf(this->units_settings_page));
+}
