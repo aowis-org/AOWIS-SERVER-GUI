@@ -20,7 +20,8 @@ inline QString format(const UnitPresentationContext &context, bool head_error, d
         context, head_error ? "hydraulic_head" : "volumetric_flow_rate", canonical);
     if (!displayed)
         return QStringLiteral("—");
-    return UnitTablePresentation::formatNumber(*displayed, 6);
+    return UnitTablePresentation::formatNumber(
+        context, *displayed, 6, QString(), head_error ? "hydraulic_head" : "volumetric_flow_rate");
 }
 
 inline QString formatWithUnit(const UnitPresentationContext &context, bool head_error,

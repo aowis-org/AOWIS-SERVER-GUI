@@ -1000,7 +1000,7 @@ void TopControlBar::addQualityHeadlossControls()
         static_cast<int>(HeadlossFormula::DarcyWeisbach));
     this->combo_headloss_formula->setItemData(
         this->combo_headloss_formula->count() - 1,
-        QStringLiteral("Run simulation with the Darcy-Weisbach headloss formula.<br><br>Requires absolute pipe roughness ε in mm."),
+        QStringLiteral("Run simulation with the Darcy-Weisbach headloss formula.<br><br>Requires an absolute pipe roughness ε value."),
         Qt::ToolTipRole);
     this->combo_headloss_formula->addItem(
         QStringLiteral("Chezy-Manning"),

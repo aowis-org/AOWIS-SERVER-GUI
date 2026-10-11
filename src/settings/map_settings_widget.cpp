@@ -100,6 +100,7 @@ void MapSettingsWidget::buildNavigationSection(QWidget *parent_widget)
         NavigationSensitivityMinimum, NavigationSensitivityMaximum);
     this->scroll_zoom_sensitivity_control->setSingleStep(NavigationSensitivityStep);
     this->scroll_zoom_sensitivity_control->setDecimals(2);
+    this->scroll_zoom_sensitivity_control->setSliderStep(0.01);
     this->scroll_zoom_sensitivity_control->setSuffix(QStringLiteral("x"));
     this->scroll_zoom_sensitivity_control->setValue(current.scroll_zoom_sensitivity);
     form->addRow(QStringLiteral("Mouse wheel zoom speed"),
@@ -110,6 +111,7 @@ void MapSettingsWidget::buildNavigationSection(QWidget *parent_widget)
         NavigationSensitivityMinimum, NavigationSensitivityMaximum);
     this->mouse_3d_pan_sensitivity_control->setSingleStep(NavigationSensitivityStep);
     this->mouse_3d_pan_sensitivity_control->setDecimals(2);
+    this->mouse_3d_pan_sensitivity_control->setSliderStep(0.01);
     this->mouse_3d_pan_sensitivity_control->setSuffix(QStringLiteral("x"));
     this->mouse_3d_pan_sensitivity_control->setValue(current.mouse_3d_pan_sensitivity);
     form->addRow(QStringLiteral("3D mouse pan speed"),
@@ -120,6 +122,7 @@ void MapSettingsWidget::buildNavigationSection(QWidget *parent_widget)
         NavigationSensitivityMinimum, NavigationSensitivityMaximum);
     this->orbit_3d_sensitivity_control->setSingleStep(NavigationSensitivityStep);
     this->orbit_3d_sensitivity_control->setDecimals(2);
+    this->orbit_3d_sensitivity_control->setSliderStep(0.01);
     this->orbit_3d_sensitivity_control->setSuffix(QStringLiteral("x"));
     this->orbit_3d_sensitivity_control->setValue(current.orbit_3d_sensitivity);
     form->addRow(QStringLiteral("3D orbit speed"),
@@ -178,6 +181,7 @@ void MapSettingsWidget::buildPerformanceSection(QWidget *parent_widget)
     this->terrain_lod_target_control->setRange(8.0, 128.0);
     this->terrain_lod_target_control->setSingleStep(1.0);
     this->terrain_lod_target_control->setDecimals(0);
+    this->terrain_lod_target_control->setSliderStep(1.0);
     this->terrain_lod_target_control->setSuffix(QStringLiteral(" px"));
     this->terrain_lod_target_control->setValue(current.terrain_lod_target_cell_size_px);
     form->addRow(QStringLiteral("Terrain detail target size"), this->terrain_lod_target_control);
@@ -191,6 +195,7 @@ void MapSettingsWidget::buildPerformanceSection(QWidget *parent_widget)
         double(TerrainMinDetailZoomBound), double(TerrainMaxDetailZoomBound));
     this->terrain_max_detail_zoom_control->setSingleStep(1.0);
     this->terrain_max_detail_zoom_control->setDecimals(0);
+    this->terrain_max_detail_zoom_control->setSliderStep(1.0);
     this->terrain_max_detail_zoom_control->setValue(double(current.terrain_max_detail_zoom));
     form->addRow(QStringLiteral("Max terrain detail down to zoom"), this->terrain_max_detail_zoom_control);
     form->addRow(QString(), helpLabel(
@@ -204,6 +209,7 @@ void MapSettingsWidget::buildPerformanceSection(QWidget *parent_widget)
         double(TerrainMinDetailZoomBound), double(TerrainMaxDetailZoomBound));
     this->terrain_full_detail_zoom_control->setSingleStep(1.0);
     this->terrain_full_detail_zoom_control->setDecimals(0);
+    this->terrain_full_detail_zoom_control->setSliderStep(1.0);
     this->terrain_full_detail_zoom_control->setValue(double(current.terrain_full_detail_zoom));
     form->addRow(QStringLiteral("Full detail at center down to zoom"),
                  this->terrain_full_detail_zoom_control);

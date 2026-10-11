@@ -1,5 +1,8 @@
 # Unit conversion inventory (step 1)
 
+> Historical EPANET-JS/source-conversion inventory. For the current GUI-wide measurement display/edit coverage matrix (snapshot `gui(20261011-162011).zip`), see [unit-gui-coverage-matrix.md](unit-gui-coverage-matrix.md).
+
+
 Scope: supplied snapshots `gui(5).zip`, `model.zip`, and `epanet(20261009-154953).zip`. This is an inventory only; no runtime conversion behavior is changed. Locations are relative to their respective repository roots.
 
 ## GUI: EPANET-JS boundary

@@ -23,8 +23,11 @@ static NumericPropertyBinding bindingFor(double &value, int &writes) {
         [](double candidate, const std::string &unit) { return std::optional<double>(candidate * (unit == "scaled" ? 10.0 : 1.0)); },
         [](double candidate, const std::string &unit) { return std::optional<double>(candidate / (unit == "scaled" ? 10.0 : 1.0)); });
 }
+void runSliderNumberControlTests();
+
 int main(int argc, char **argv) {
     QApplication application(argc, argv);
+    runSliderNumberControlTests();
     double value = 4.057389123;
     const double original = value;
     int writes = 0;

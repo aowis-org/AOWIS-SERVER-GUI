@@ -1,6 +1,7 @@
 #include "import/epanet_js_project_converter.h"
 #include "import/epanet_js_units.h"
 #include "import/epanet_js_unit_profile.h"
+#include "config/unit_presentation_context.h"
 #include <aowis/model/units/conversion.h>
 #include "simulation/epanet_network_file_format.h"
 #include "test_harness.h"

@@ -13,41 +13,13 @@
 namespace
 {
 constexpr int volume_curve_uuid_role = Qt::UserRole;
-// Kept well below the extreme ranges used elsewhere (e.g. configureLengthSpin) so the
-// QDoubleSpinBox's formatted min/max text — which drives its non-shrinkable sizeHint,
-// independent of whatever value is actually displayed — stays reasonably narrow.
-// No real tank needs a 1,000,000 m² cross-section or a 1,000,000 m³ volume; this is
-// already about three orders of magnitude larger than any plausible network asset.
+// The bindings own all unit-dependent editor state (range, decimals, step and
+// suffix). Presentation-only styling must not overwrite the active profile.
 constexpr double geometry_spin_minimum = -1000000.0;
 constexpr double geometry_spin_maximum = 1000000.0;
 
-void configureLengthSpin(QDoubleSpinBox *spin)
+void configureTankSpinAppearance(QDoubleSpinBox *spin)
 {
-    spin->setRange(-1000000.0, 1000000.0);
-    spin->setDecimals(3);
-    spin->setSingleStep(0.10);
-    spin->setSuffix(" m");
-    spin->setGroupSeparatorShown(true);
-    spin->setAlignment(Qt::AlignRight);
-}
-
-void configureAreaSpin(QDoubleSpinBox *spin)
-{
-    spin->setRange(geometry_spin_minimum, geometry_spin_maximum);
-    spin->setDecimals(3);
-    spin->setSingleStep(1.0);
-    spin->setSuffix(" m²");
-    spin->setGroupSeparatorShown(true);
-    spin->setAlignment(Qt::AlignRight);
-}
-
-void configureVolumeSpin(QDoubleSpinBox *spin)
-{
-    spin->setRange(geometry_spin_minimum, geometry_spin_maximum);
-    spin->setDecimals(3);
-    spin->setSingleStep(1.0);
-    spin->setSuffix(" m³");
-    spin->setGroupSeparatorShown(true);
     spin->setAlignment(Qt::AlignRight);
 }
 
@@ -118,15 +90,15 @@ void EntityInspectorTank::addGroupGeometry()
 
     QLabel *label_level_initial = new QLabel("Initial Level");
     this->spin_level_initial = level_editor(0);
-    configureLengthSpin(this->spin_level_initial);
+    configureTankSpinAppearance(this->spin_level_initial);
 
     QLabel *label_level_minimum = new QLabel("Minimum Level");
     this->spin_level_minimum = level_editor(1);
-    configureLengthSpin(this->spin_level_minimum);
+    configureTankSpinAppearance(this->spin_level_minimum);
 
     QLabel *label_level_maximum = new QLabel("Maximum Level");
     this->spin_level_maximum = level_editor(2);
-    configureLengthSpin(this->spin_level_maximum);
+    configureTankSpinAppearance(this->spin_level_maximum);
 
     this->check_overflow = new QCheckBox("Overflow Allowed");
 
@@ -181,22 +153,22 @@ void EntityInspectorTank::addGroupGeometry()
 
     this->label_diameter = new QLabel("Diameter");
     this->spin_diameter = geometry_editor(0);
-    configureLengthSpin(this->spin_diameter);
+    configureTankSpinAppearance(this->spin_diameter);
 
     this->label_area = new QLabel("Cross-Section Area");
     this->label_area->setWordWrap(true);
     this->spin_area = geometry_editor(1);
-    configureAreaSpin(this->spin_area);
+    configureTankSpinAppearance(this->spin_area);
 
     this->label_volume_minimum = new QLabel("Minimum Volume");
     this->label_volume_minimum->setWordWrap(true);
     this->spin_volume_minimum = geometry_editor(2);
-    configureVolumeSpin(this->spin_volume_minimum);
+    configureTankSpinAppearance(this->spin_volume_minimum);
 
     this->label_volume_maximum = new QLabel("Maximum Volume");
     this->label_volume_maximum->setWordWrap(true);
     this->spin_volume_maximum = geometry_editor(3);
-    configureVolumeSpin(this->spin_volume_maximum);
+    configureTankSpinAppearance(this->spin_volume_maximum);
 
     this->label_volume_curve = new QLabel("Volume Curve");
     this->combo_volume_curve = new QComboBox();

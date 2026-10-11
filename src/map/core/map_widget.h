@@ -111,6 +111,7 @@ private:
     static EM_BOOL browserMouseMoveCallback(int event_type, const EmscriptenMouseEvent *event, void *user_data);
     static EM_BOOL browserMouseLeaveCallback(int event_type, const EmscriptenMouseEvent *event, void *user_data);
     void syncBrowserMapView();
+    void syncBrowserMapScaleUnits();
 #endif
 
     bool setKeyboardPanKey(QKeyEvent *event, bool pressed);

@@ -587,6 +587,37 @@ else()
 endif()
 
 if(BUILD_TESTING AND NOT EMSCRIPTEN)
+    # Dimension-aware ordering for the mixed-unit valve-setting table columns.
+    add_executable(aowis-valve-setting-sort-policy-tests
+        tests/valve_setting_sort_policy_test.cpp)
+    target_include_directories(aowis-valve-setting-sort-policy-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    add_test(NAME aowis-valve-setting-sort-policy COMMAND aowis-valve-setting-sort-policy-tests)
+    set_tests_properties(aowis-valve-setting-sort-policy PROPERTIES LABELS "aowis")
+
+    # Intentionally put the old GUI include root first: even that path must
+    # resolve to the Model's authoritative unit conversion registry.
+    add_executable(aowis-unit-model-header-authority-tests tests/unit_model_header_authority_test.cpp)
+    target_include_directories(aowis-unit-model-header-authority-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    add_test(NAME aowis-unit-model-header-authority COMMAND aowis-unit-model-header-authority-tests)
+    set_tests_properties(aowis-unit-model-header-authority PROPERTIES LABELS "aowis")
+
+    add_executable(aowis-browser-map-scale-units-tests tests/browser_map_scale_units_test.cpp)
+    target_include_directories(aowis-browser-map-scale-units-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    target_link_libraries(aowis-browser-map-scale-units-tests PRIVATE Qt6::Core)
+    add_test(NAME aowis-browser-map-scale-units COMMAND aowis-browser-map-scale-units-tests)
+    set_tests_properties(aowis-browser-map-scale-units PROPERTIES LABELS "aowis")
+    find_program(AOWIS_NODE_EXECUTABLE NAMES node nodejs)
+    if(AOWIS_NODE_EXECUTABLE)
+        add_test(NAME aowis-browser-map-scale
+            COMMAND ${AOWIS_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/browser_map_scale_test.js)
+        set_tests_properties(aowis-browser-map-scale PROPERTIES LABELS "aowis")
+    endif()
     add_executable(aowis-emitter-coefficient-binding-tests tests/emitter_coefficient_binding_test.cpp)
     target_include_directories(aowis-emitter-coefficient-binding-tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -642,7 +673,12 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_test(NAME aowis-numeric-text COMMAND aowis-numeric-text-tests)
     set_tests_properties(aowis-numeric-text PROPERTIES LABELS "aowis")
 
-    add_executable(aowis-numeric-editor-adapters-tests tests/numeric_editor_adapters_test.cpp)
+    add_executable(aowis-numeric-editor-adapters-tests
+        tests/numeric_editor_adapters_test.cpp
+        tests/slider_number_control_test.cpp
+        src/widgets/slider_number_control.cpp
+        src/widgets/slider_number_control.h
+    )
     target_include_directories(aowis-numeric-editor-adapters-tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
@@ -665,6 +701,40 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     target_link_libraries(aowis-unit-profile-storage-tests PRIVATE Qt6::Core)
     add_test(NAME aowis-unit-profile-storage COMMAND aowis-unit-profile-storage-tests)
     set_tests_properties(aowis-unit-profile-storage PROPERTIES LABELS "aowis")
+    # Regular CTest regression: assert structural performance invariants without
+    # imposing machine-dependent timing limits. Print measured timings as JSON.
+    add_executable(aowis-unit-presentation-benchmark
+        tests/unit_presentation_performance_benchmark.cpp)
+    target_include_directories(aowis-unit-presentation-benchmark PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    target_link_libraries(aowis-unit-presentation-benchmark PRIVATE Qt6::Widgets)
+    add_test(NAME aowis-unit-presentation-benchmark
+        COMMAND aowis-unit-presentation-benchmark)
+    set_tests_properties(aowis-unit-presentation-benchmark PROPERTIES
+        LABELS "aowis;performance"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    # Group benchmark executables independently of the full regression suite.
+    # Add future performance targets here and label their CTest tests "performance".
+    add_custom_target(aowis-benchmarks
+        DEPENDS aowis-unit-presentation-benchmark)
+
+    # End-to-end Qt presentation binding across an editor, a virtualized table,
+    # map HUD/legend formatters and simulation readouts. This is headless
+    # cross-surface coverage, not a GPU/solver production renderer benchmark.
+    add_executable(aowis-unit-cross-surface-acceptance-tests
+        tests/unit_cross_surface_acceptance_test.cpp)
+    target_include_directories(aowis-unit-cross-surface-acceptance-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    target_link_libraries(aowis-unit-cross-surface-acceptance-tests PRIVATE Qt6::Widgets)
+    add_test(NAME aowis-unit-cross-surface-acceptance
+        COMMAND aowis-unit-cross-surface-acceptance-tests)
+    set_tests_properties(aowis-unit-cross-surface-acceptance PROPERTIES
+        LABELS "aowis;acceptance" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     add_executable(aowis-unit-aware-view-tests
         tests/unit_aware_view_test.cpp
     )
@@ -863,6 +933,11 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
 
     add_custom_target(aowis-tests
         DEPENDS
+            aowis-unit-cross-surface-acceptance-tests
+            aowis-valve-setting-sort-policy-tests
+            aowis-unit-presentation-benchmark
+            aowis-unit-model-header-authority-tests
+            aowis-browser-map-scale-units-tests
             aowis-emitter-coefficient-binding-tests
             aowis-emitter-numeric-spin-box-tests
             aowis-coordinate-property-binding-tests

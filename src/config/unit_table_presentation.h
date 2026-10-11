@@ -18,57 +18,16 @@
 // values remain canonical; conversion happens only when a cell is requested.
 namespace UnitTablePresentation
 {
-inline std::string_view quantityForTitle(const QString &title)
+// Metadata names the Model quantity; headings never select conversion behavior.
+// Currency is an opaque label. Energy prices retain their stored per-kWh basis.
+enum class ColumnKind { Value, EnergyPrice, DemandDetails, BulkReaction, WallReaction, RowQuantity };
+
+struct ColumnUnits
 {
-    if (title.endsWith(QStringLiteral("[m³/h]"))) {
-        if (title.startsWith(QStringLiteral("Customer Demand Base")))
-            return "customer_demand_flow_rate";
-        if (title.startsWith(QStringLiteral("Demand Base")))
-            return "base_demand_flow_rate";
-        return "volumetric_flow_rate";
-    }
-    if (title.endsWith(QStringLiteral("[m³]"))) {
-        if (title.startsWith(QStringLiteral("Volume Minimum")))
-            return "tank_minimum_volume";
-        return "volume";
-    }
-    if (title.endsWith(QStringLiteral("[m²]"))) return "area";
-    if (title.endsWith(QStringLiteral("[mm²/100m]"))) return "leak_area_per_100m_pipe_length";
-    if (title.endsWith(QStringLiteral("[mm²/m head]"))) return "leak_area_expansion_per_pressure_head";
-    if (title.endsWith(QStringLiteral("[m/km]"))) return "head_loss_gradient";
-    if (title.endsWith(QStringLiteral("[m/s]"))) return "velocity";
-    if (title.endsWith(QStringLiteral("[kW]"))) return "power";
-    if (title.endsWith(QStringLiteral("[kWh/m³]"))) return "energy_intensity";
-    if (title.endsWith(QStringLiteral("[mg/L]"))) return "chemical_mass_concentration";
-    if (title.endsWith(QStringLiteral("[mg/min]"))) return "chemical_mass_flow_rate";
-    if (title.endsWith(QStringLiteral("[h]"))) return "water_age";
-    if (title.endsWith(QStringLiteral("[mm]"))) {
-        if (title.contains(QStringLiteral("Roughness DW")))
-            return "darcy_weisbach_roughness_height";
-        return "link_diameter";
-    }
-    if (title.endsWith(QStringLiteral("[m]"))) {
-        if (title.contains(QStringLiteral("Offset"))) return "vertical_offset";
-        if (title.contains(QStringLiteral("Diameter"))) return "tank_diameter";
-        if (title.startsWith(QStringLiteral("Level Initial"))) return "tank_initial_level";
-        if (title.startsWith(QStringLiteral("Level Minimum"))) return "tank_minimum_level";
-        if (title.startsWith(QStringLiteral("Level Maximum"))) return "tank_maximum_level";
-        if (title.startsWith(QStringLiteral("Level"))) return "water_level";
-        if (title.contains(QStringLiteral("Pressure"))) return "pressure_head";
-        if (title.contains(QStringLiteral("Head Loss"))) return "head_loss";
-        if (title.contains(QStringLiteral("Head Gain"))) return "head_gain";
-        if (title.contains(QStringLiteral("Head"))) return "hydraulic_head";
-        if (title.contains(QStringLiteral("Elevation"))) return "elevation";
-        return "length";
-    }
-    if (title.endsWith(QStringLiteral("[%]"))) {
-        if (title.contains(QStringLiteral("Trace"))) return "source_trace_percentage";
-        if (title.contains(QStringLiteral("Time Online"))) return "operating_time_percentage";
-        if (title.contains(QStringLiteral("Efficiency"))) return "efficiency";
-        // Pipe attachment position is a geometry fraction, not a valve position.
-    }
-    return {};
-}
+    std::string_view quantity;
+    ColumnKind kind = ColumnKind::Value;
+    QString currency;
+};
 
 inline QString unitSymbol(QString identifier)
 {
@@ -109,30 +68,22 @@ inline std::optional<double> toCanonical(const UnitPresentationContext &context,
     return aowis::units::convert(quantity, displayed, source, canonical_unit);
 }
 
-// Pump prices are inverse-energy quantities, not energies. Keep the currency
-// literal and replace only the energy denominator in the header.
-inline bool isEnergyPriceTitle(const QString &title)
+inline std::optional<double> toDisplayForColumn(const UnitPresentationContext &context,
+                                                const ColumnUnits &column, double canonical)
 {
-    return title.startsWith(QStringLiteral("Energy Price ["))
-        && title.endsWith(QStringLiteral("/kWh]"));
-}
-
-inline std::optional<double> toDisplayForTitle(const UnitPresentationContext &context,
-                                                const QString &title, double canonical)
-{
-    if (isEnergyPriceTitle(title))
+    if (column.kind == ColumnKind::EnergyPrice)
         return UnitEnergyPriceConversion::fromStored(
             canonical, selectedUnit(context, "energy").toStdString());
-    return toDisplay(context, quantityForTitle(title), canonical);
+    return toDisplay(context, column.quantity, canonical);
 }
 
-inline std::optional<double> toCanonicalForTitle(const UnitPresentationContext &context,
-                                                  const QString &title, double displayed)
+inline std::optional<double> toCanonicalForColumn(const UnitPresentationContext &context,
+                                                  const ColumnUnits &column, double displayed)
 {
-    if (isEnergyPriceTitle(title))
+    if (column.kind == ColumnKind::EnergyPrice)
         return UnitEnergyPriceConversion::toStored(
             displayed, selectedUnit(context, "energy").toStdString());
-    return toCanonical(context, quantityForTitle(title), displayed);
+    return toCanonical(context, column.quantity, displayed);
 }
 
 // Reaction coefficients cannot be assigned a fixed table-column unit:
@@ -194,31 +145,107 @@ inline QString reactionCellTooltip(const UnitPresentationContext &context,
         + QStringLiteral("\nDisplay unit: ") + reactionUnit(context, kind, order);
 }
 
-// Format only a presentation value; stored doubles are never rounded here.
-inline QString formatNumber(double value, int decimals, const QString &suffix = QString())
+// A table cell's existing decimal count remains the default. An explicit
+// per-quantity policy, or a changed global notation/precision, takes priority.
+// Locale and grouping are always supplied by the presentation context.
+inline bool usesColumnPrecision(const UnitPresentationContext &context,
+                                std::string_view quantity = {})
 {
-    if (!std::isfinite(value))
-        return QStringLiteral("—");
-    QString text = QString::number(value, 'f', decimals);
-    while (text.contains(QLatin1Char('.')) && text.endsWith(QLatin1Char('0')))
-        text.chop(1);
-    if (text.endsWith(QLatin1Char('.')))
-        text.chop(1);
-    // Rounding is presentation-only, but a nonzero measurement must not be
-    // displayed as an exact zero. Use significant digits when fixed precision
-    // would hide the entire magnitude (including small negative values).
-    if (value != 0.0 && (text == QStringLiteral("0") || text == QStringLiteral("-0")))
-        return QString::number(value, 'g', 12) + suffix;
-    if (text == QStringLiteral("-0"))
-        text = QStringLiteral("0");
+    const QString key = QString::fromUtf8(quantity.data(), static_cast<qsizetype>(quantity.size()));
+    const NumericFormatPolicy policy = context.formatPolicy(key);
+    const NumericFormatPolicy defaults;
+    return !context.hasFormatPolicyOverride(key)
+        && policy.notation == defaults.notation && policy.precision == defaults.precision;
+}
+
+inline NumericFormatPolicy tableFormatPolicy(const UnitPresentationContext &context,
+                                            int decimals, std::string_view quantity = {})
+{
+    NumericFormatPolicy policy = context.formatPolicy(
+        QString::fromUtf8(quantity.data(), static_cast<qsizetype>(quantity.size())));
+    if (usesColumnPrecision(context, quantity))
+    {
+        policy.notation = NumericFormatPolicy::Notation::Fixed;
+        policy.precision = std::clamp(decimals, 0, 18);
+    }
+    return policy;
+}
+
+// Read-only formatting, not an editing or canonical serialization path.
+// All numeric table formatting goes through NumericText, including the legacy
+// canonical fallback used when constructing table rows.
+inline QString formatWithPolicy(double value, const QString &suffix,
+                                const QLocale &locale, const NumericFormatPolicy &policy,
+                                bool compact_fixed)
+{
+    if (!std::isfinite(value)) return QStringLiteral("—");
+    const std::optional<QString> number = NumericText::format(value, locale, policy);
+    if (!number) return QStringLiteral("—");
+    QString text = *number;
+    const QLocale display_locale = NumericText::localeFor(locale, policy.grouping);
+    // Only small fixed-decimal values could round to zero. Avoid reparsing
+    // every ordinary table cell, especially when constructing large tables.
+    bool rounded_to_zero = false;
+    if (value != 0.0 && policy.notation == NumericFormatPolicy::Notation::Fixed
+        && std::abs(value) <= std::pow(10.0, -policy.precision))
+    {
+        const NumericText::ParseResult represented = NumericText::parse(
+            text, display_locale, policy.grouping);
+        rounded_to_zero = represented.value && *represented.value == 0.0;
+    }
+    // A displayed zero must never conceal a finite nonzero measurement.
+    if (rounded_to_zero)
+    {
+        NumericFormatPolicy fallback = policy;
+        fallback.notation = NumericFormatPolicy::Notation::Significant;
+        fallback.precision = 12;
+        text = NumericText::format(value, locale, fallback).value_or(QStringLiteral("—"));
+    }
+    else if (compact_fixed && policy.notation == NumericFormatPolicy::Notation::Fixed)
+    {
+        // Keep compact fixed-decimal table presentation with locale-aware
+        // trailing-zero trimming (the separator may not be a period).
+        const QString separator = QString(display_locale.decimalPoint());
+        if (text.contains(separator))
+        {
+            while (text.endsWith(QLatin1Char('0'))) text.chop(1);
+            if (text.endsWith(separator)) text.chop(separator.size());
+        }
+    }
     return text + suffix;
 }
 
-inline bool isUnitDependentTextColumn(const QString &title)
+inline QString formatNumber(const UnitPresentationContext &context,
+                            double value, int decimals, const QString &suffix = QString(),
+                            std::string_view quantity = {})
 {
-    // Category-flow text is recomputed from canonical quantities on demand.
-    // Text filters for this column must be reevaluated when units change.
-    return title == QStringLiteral("Demand Details");
+    return formatWithPolicy(value, suffix, context.locale(),
+                            tableFormatPolicy(context, decimals, quantity),
+                            usesColumnPrecision(context, quantity));
+}
+
+// Compatibility for precomputed canonical fallback strings. The live table
+// DisplayRole uses the overload above with the current presentation context.
+inline QString formatNumber(double value, int decimals, const QString &suffix = QString())
+{
+    const NumericFormatPolicy policy{NumericFormatPolicy::Notation::Fixed,
+                                     std::clamp(decimals, 0, 18), false, true};
+    return formatWithPolicy(value, suffix, QLocale::c(), policy, true);
+}
+
+// Integer counts retain integral notation regardless of an engineering
+// quantity's significant-digit policy; locale/grouping still apply.
+inline QString formatCount(const UnitPresentationContext &context, int count)
+{
+    const NumericFormatPolicy policy{NumericFormatPolicy::Notation::Fixed, 0,
+                                     context.formatPolicy().grouping, true};
+    return NumericText::format(static_cast<double>(count), context.locale(), policy)
+        .value_or(QStringLiteral("—"));
+}
+
+inline bool isUnitDependentTextColumn(const ColumnUnits &column)
+{
+    return column.kind == ColumnKind::DemandDetails;
 }
 
 inline QString formatReactionCoefficient(const UnitPresentationContext &context,
@@ -233,11 +260,11 @@ inline QString formatReactionCoefficient(const UnitPresentationContext &context,
     {
         const int needed = std::max(decimals,
             static_cast<int>(std::ceil(-std::log10(magnitude))) + 3);
-        if (needed > 18)
-            return QString::number(*displayed, 'g', 12) + suffix;
-        return formatNumber(*displayed, needed, suffix);
+        return formatNumber(context, *displayed, std::min(needed, 18), suffix,
+                            reactionQuantity(kind, order));
     }
-    return formatNumber(*displayed, decimals, suffix);
+    return formatNumber(context, *displayed, decimals, suffix,
+                        reactionQuantity(kind, order));
 }
 
 inline QString formatDemandRate(const UnitPresentationContext &context, double canonical,
@@ -247,36 +274,36 @@ inline QString formatDemandRate(const UnitPresentationContext &context, double c
     const std::optional<double> displayed = toDisplay(context, quantity, canonical);
     if (!displayed)
         return QStringLiteral("—");
-    return formatNumber(*displayed, decimals,
-                        QStringLiteral(" ") + unitSymbol(selectedUnit(context, quantity)));
+    return formatNumber(context, *displayed, decimals,
+                        QStringLiteral(" ") + unitSymbol(selectedUnit(context, quantity)), quantity);
 }
 
 inline QString formatEnergyPrice(const UnitPresentationContext &context, double canonical,
                                   int minimum_decimals = 6)
 {
-    const std::optional<double> displayed = toDisplayForTitle(
-        context, QStringLiteral("Energy Price [/kWh]"), canonical);
+    const std::optional<double> displayed = toDisplayForColumn(
+        context, {{}, ColumnKind::EnergyPrice}, canonical);
     if (!displayed)
         return QStringLiteral("—");
     int decimals = minimum_decimals;
     if (*displayed > 0.0 && *displayed < 1.0)
         decimals = std::max(decimals, static_cast<int>(std::ceil(-std::log10(*displayed))) + 3);
-    if (decimals > 18)
-        return QString::number(*displayed, 'g', 12);
-    return formatNumber(*displayed, decimals);
+    return formatNumber(context, *displayed, std::min(decimals, 18), QString(),
+                        "energy_price");
 }
 
-inline QString formattedTitle(const QString &title, const UnitPresentationContext &context)
+inline QString formattedTitle(const QString &title, const UnitPresentationContext &context,
+                              const ColumnUnits &column)
 {
-    if (isEnergyPriceTitle(title))
-        return title.left(title.size() - 5)
-            + QStringLiteral("/") + unitSymbol(selectedUnit(context, "energy"))
-            + QStringLiteral("]");
-    const std::string_view quantity = quantityForTitle(title);
-    if (quantity.empty()) return title;
+    if (column.quantity.empty() && column.kind != ColumnKind::EnergyPrice)
+        return title;
+    // Remove an existing presentation suffix only; its contents have no semantics.
     const int start = title.lastIndexOf(QStringLiteral(" ["));
-    if (start < 0) return title;
-    return title.left(start) + QStringLiteral(" [")
-        + unitSymbol(selectedUnit(context, quantity)) + QStringLiteral("]");
+    const QString base = start >= 0 && title.endsWith(QLatin1Char(']'))
+        ? title.left(start) : title;
+    const QString unit = column.kind == ColumnKind::EnergyPrice
+        ? column.currency + QStringLiteral("/") + unitSymbol(selectedUnit(context, "energy"))
+        : unitSymbol(selectedUnit(context, column.quantity));
+    return base + QStringLiteral(" [") + unit + QStringLiteral("]");
 }
 } // namespace UnitTablePresentation

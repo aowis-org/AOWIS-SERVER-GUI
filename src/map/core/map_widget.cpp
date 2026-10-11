@@ -14,6 +14,9 @@
 #include <QWindow>
 #else
 #include <emscripten.h>
+#include "config/unit_profile_manager.h"
+#include "map/core/browser_map_scale_units.h"
+#include <QJsonDocument>
 #endif
 
 #include <cmath>
@@ -39,6 +42,12 @@ EM_JS(void, aowisBrowserMapSetGeometry, (int owner_id, int x, int y, int width, 
 {
     if (window.aowisBrowserMap)
         window.aowisBrowserMap.setGeometry(owner_id, x, y, width, height, visible !== 0, topmost !== 0);
+});
+
+EM_JS(void, aowisBrowserMapSetScaleChoices, (int owner_id, const char *choices),
+{
+    if (window.aowisBrowserMap)
+        window.aowisBrowserMap.setScaleChoices(owner_id, UTF8ToString(choices));
 });
 
 EM_JS(void, aowisBrowserMapSetView, (int owner_id, double longitude, double latitude, int zoom, int provider),
@@ -205,6 +214,10 @@ MapWidget::MapWidget(MapModel *model, MapTileRepository *tile_repository, GpsPro
 
 #ifdef Q_OS_WASM
     this->browser_map_layer_owner_id = nextBrowserMapLayerOwnerId();
+    UnitProfileManager::instance().presentation().subscribe(
+        this, [this](UnitPresentationContext::Generation) {
+            syncBrowserMapScaleUnits();
+        });
 #endif
 
     this->init();
@@ -1142,11 +1155,28 @@ void MapWidget::setBrowserMapLayerGeometry(const QRect &geometry, bool visible)
         this->syncBrowserMapView();
 }
 
+void MapWidget::syncBrowserMapScaleUnits()
+{
+    if (!this->browser_map_layer_enabled)
+        return;
+
+    const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
+    static UnitPresentationContext::Generation cached_generation = 0;
+    static QByteArray choices;
+    if (cached_generation != context.generation())
+    {
+        choices = QJsonDocument(BrowserMapScaleUnits::choices(context)).toJson(QJsonDocument::Compact);
+        cached_generation = context.generation();
+    }
+    aowisBrowserMapSetScaleChoices(this->browser_map_layer_owner_id, choices.constData());
+}
+
 void MapWidget::syncBrowserMapView()
 {
     if (!this->browser_map_layer_enabled)
         return;
 
+    syncBrowserMapScaleUnits();
     aowisBrowserMapSetView(
         this->browser_map_layer_owner_id,
         this->m_model->centerLon(),

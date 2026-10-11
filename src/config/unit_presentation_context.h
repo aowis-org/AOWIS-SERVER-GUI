@@ -4,22 +4,23 @@
 #include <aowis/model/units/unit_profile.h>
 #include <QHash>
 #include <QJsonObject>
+#include <QMap>
 #include <QObject>
 #include <QPointer>
 #include <QString>
-#include <QVector>
 #include <QtGlobal>
 #include <functional>
 #include <utility>
 
 // Effective GUI display units, deliberately independent of project/model revisions.
 // This context never converts or writes model measurements.
-class UnitPresentationContext
+class UnitPresentationContext : public QObject
 {
 public:
     using Generation = quint64;
 
     [[nodiscard]] Generation generation() const { return this->generation_; }
+    [[nodiscard]] qsizetype subscriberCount() const { return this->listeners_.size(); }
     [[nodiscard]] QString unit(const QString &quantity) const {
         const QString selected = this->effective_units_.value(quantity).toString();
         if (!selected.isEmpty()) return selected;
@@ -34,6 +35,9 @@ public:
 
     [[nodiscard]] NumericFormatPolicy formatPolicy(const QString &quantity = {}) const {
         return this->format_overrides_.value(quantity, this->default_format_);
+    }
+    [[nodiscard]] bool hasFormatPolicyOverride(const QString &quantity) const {
+        return this->format_overrides_.contains(quantity);
     }
     [[nodiscard]] QLocale locale() const { return this->locale_; }
     bool setLocale(const QLocale &locale) {
@@ -76,23 +80,28 @@ public:
         return true;
     }
 
-    // Subscribers should mark themselves stale. Phase 3 adds visibility-aware
-    // refresh at the view boundary rather than subscribing every numeric field.
+    // Subscribers should mark themselves stale. An owner's destruction removes
+    // its listener immediately, even if there are no further profile changes.
+    // QObject's receiver context disconnects the cleanup when this context dies.
     void subscribe(QObject *owner, std::function<void(Generation)> refresh) {
-        if (!owner || !refresh) return;
-        this->listeners_.append({owner, std::move(refresh)});
+        if (!owner || owner == this || !refresh) return;
+        const quint64 id = ++this->next_subscription_id_;
+        this->listeners_.insert(id, Listener{owner, std::move(refresh)});
+        QObject::connect(owner, &QObject::destroyed, this, [this, id] {
+            this->listeners_.remove(id);
+        });
     }
 
 private:
     void notifyPresentationChanged() {
-        ++this->generation_;
-        const QVector<Listener> snapshot = this->listeners_;
-        for (const Listener &listener : snapshot) {
-            if (listener.owner) listener.refresh(this->generation_);
-        }
-        for (qsizetype i = this->listeners_.size(); i > 0; --i) {
-            if (!this->listeners_.at(i - 1).owner)
-                this->listeners_.removeAt(i - 1);
+        const Generation target = ++this->generation_;
+        // QMap copies are implicitly shared. Add/remove/destroy during a callback
+        // cannot invalidate iteration or call a subsequently destroyed owner.
+        const QMap<quint64, Listener> snapshot = this->listeners_;
+        for (QMap<quint64, Listener>::const_iterator it = snapshot.cbegin();
+             it != snapshot.cend(); ++it) {
+            const Listener &listener = it.value();
+            if (listener.owner) listener.refresh(target);
         }
     }
     struct Listener {
@@ -104,5 +113,6 @@ private:
     QLocale locale_;
     Generation generation_ = 1;
     QJsonObject effective_units_;
-    QVector<Listener> listeners_;
+    quint64 next_subscription_id_ = 0;
+    QMap<quint64, Listener> listeners_;
 };

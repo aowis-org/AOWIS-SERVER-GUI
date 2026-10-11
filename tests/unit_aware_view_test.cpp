@@ -46,6 +46,55 @@ int main(int argc, char **argv)
     visible_binding.forceRefresh();
     CHECK(visible_refreshes == 5);
 
+    // A child of an inactive/hidden page must not refresh just because it
+    // received a show() request while its parent was still hidden.
+    QWidget stacked_page;
+    QWidget nested_view(&stacked_page);
+    int nested_refreshes = 0;
+    UnitAwareView nested_binding(&nested_view, context, [&] { ++nested_refreshes; });
+    nested_view.show();
+    CHECK(nested_refreshes == 0);
+    CHECK(context.update(QJsonObject{{QStringLiteral("pressure"), QStringLiteral("psi")}}));
+    CHECK(nested_refreshes == 0);
+    stacked_page.show();
+    CHECK(nested_refreshes == 1);
+    stacked_page.hide();
+
+    // Hundreds of profile switches should coalesce into one update per
+    // visible presentation region when the hidden page is shown again.
+    const int previous_nested = nested_refreshes;
+    for (int i = 0; i < 500; ++i) {
+        CHECK(context.update(QJsonObject{{QStringLiteral("pressure"),
+            (i % 2 == 0 ? QStringLiteral("bar") : QStringLiteral("psi"))}}));
+    }
+    CHECK(nested_refreshes == previous_nested);
+    stacked_page.show();
+    CHECK(nested_refreshes == previous_nested + 1);
+    nested_binding.refreshIfNeeded();
+    CHECK(nested_refreshes == previous_nested + 1);
+
+    // A detached/destroyed view must not receive notification callbacks.
+    int destroyed_refreshes = 0;
+    {
+        QWidget temporary_view;
+        UnitAwareView temporary_binding(&temporary_view, context,
+            [&] { ++destroyed_refreshes; });
+        temporary_view.show();
+        CHECK(destroyed_refreshes == 1);
+    }
+    CHECK(context.update(QJsonObject{{QStringLiteral("pressure"), QStringLiteral("kPa")}}));
+    CHECK(destroyed_refreshes == 1);
+
+    // Repeated transient dialog/page creation must not accumulate expired
+    // listeners or retain their refresh closures between profile changes.
+    const qsizetype live_views = context.subscriberCount();
+    for (int i = 0; i < 500; ++i) {
+        QWidget transient_page;
+        UnitAwareView transient_binding(&transient_page, context, [] {});
+        CHECK(context.subscriberCount() == live_views + 1);
+    }
+    CHECK(context.subscriberCount() == live_views);
+
     // Unit changes are presentation-only; a world-space icon-size slider
     // must retain its integer-metre position and emit no valueChanged signal.
     MapSymbologySlider icon_size(25, 450, 150, QStringLiteral("Icon size"),

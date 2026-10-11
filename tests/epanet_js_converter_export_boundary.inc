@@ -48,6 +48,23 @@ void testImportedUnitProfileIsOnlyPresentation()
     junctions.rows[0].insert(QStringLiteral("elevation"), 100.0);
     project.tables.insert(QStringLiteral("junctions"), junctions);
 
+    // Give the same source project three independent measured properties.
+    // Unit-profile creation must never change any of these canonical values.
+    EpanetJsTableSnapshot pipes = project.tables.value(QStringLiteral("pipes"));
+    pipes.columns.append(QStringLiteral("diameter"));
+    pipes.rows[0].insert(QStringLiteral("diameter"), 8.0);
+    project.tables.insert(QStringLiteral("pipes"), pipes);
+    const QVariantMap demand = {
+        {QStringLiteral("junction_id"), 1},
+        {QStringLiteral("ordinal"), 0},
+        {QStringLiteral("base_demand"), 22.0}
+    };
+    project.tables.insert(
+        QStringLiteral("junction_demands"),
+        makeTable(QStringLiteral("junction_demands"),
+                  {QStringLiteral("junction_id"), QStringLiteral("ordinal"),
+                   QStringLiteral("base_demand")}, {demand}));
+
     const EpanetJsProjectConversionResult before = EpanetJsProjectConverter::convert(project);
     expectTrue(before.success, "epanet-js source units are independently importable");
     if (!before.success || before.network.nodes_junctions.isEmpty())
@@ -55,6 +72,19 @@ void testImportedUnitProfileIsOnlyPresentation()
     const double canonical_elevation = before.network.nodes_junctions.first().elevation_m;
     expectNear(canonical_elevation, 30.48, 1e-12,
                "source elevation is converted from feet, regardless of GUI units");
+    expectTrue(!before.network.links_pipes.isEmpty(), "source pipe imports");
+    expectTrue(!before.network.nodes_junctions.first().demands.isEmpty(),
+               "source junction demand imports");
+    if (before.network.links_pipes.isEmpty()
+        || before.network.nodes_junctions.first().demands.isEmpty())
+        return;
+    const double canonical_diameter = before.network.links_pipes.first().diameter_mm;
+    const double canonical_demand =
+        before.network.nodes_junctions.first().demands.first().base_demand_m3_per_h;
+    expectNear(canonical_diameter, 203.2, 1e-12,
+               "source pipe diameter inches convert to canonical millimetres");
+    expectNear(canonical_demand, 22.0 * 0.22712470704, 1e-12,
+               "source junction flow GPM converts to canonical m3/h");
 
     QStringList unmapped;
     const QJsonObject imported_profile = EpanetJsUnitProfile::selections(
@@ -67,6 +97,34 @@ void testImportedUnitProfileIsOnlyPresentation()
                "importer proposes the actual source flow unit for its GUI profile");
     expectTrue(unmapped.isEmpty(), "all supported source units map to AOWIS units");
 
+    UnitPresentationContext presentation;
+    presentation.initialize(imported_profile);
+    expectTrue(presentation.unit(QStringLiteral("elevation")) == QStringLiteral("ft"),
+               "source-derived display preference uses feet");
+    expectTrue(presentation.unit(QStringLiteral("link_diameter")) == QStringLiteral("in"),
+               "source-derived display preference uses inches");
+    const QJsonObject metric_display{
+        {QStringLiteral("elevation"), QStringLiteral("m")},
+        {QStringLiteral("link_diameter"), QStringLiteral("mm")},
+        {QStringLiteral("volumetric_flow_rate"), QStringLiteral("m3/h")}
+    };
+    expectTrue(presentation.update(metric_display),
+               "switching to metric presentation changes presentation state");
+    const EpanetJsProjectConversionResult metric = EpanetJsProjectConverter::convert(project);
+    expectTrue(metric.success, "source project reimports under metric presentation");
+    if (!metric.success || metric.network.nodes_junctions.isEmpty()
+        || metric.network.links_pipes.isEmpty()
+        || metric.network.nodes_junctions.first().demands.isEmpty())
+        return;
+    expectNear(metric.network.nodes_junctions.first().elevation_m,
+               canonical_elevation, 0.0, "metric GUI profile leaves canonical elevation unchanged");
+    expectNear(metric.network.links_pipes.first().diameter_mm,
+               canonical_diameter, 0.0, "metric GUI profile leaves canonical diameter unchanged");
+    expectNear(metric.network.nodes_junctions.first().demands.first().base_demand_m3_per_h,
+               canonical_demand, 0.0, "metric GUI profile leaves canonical demand unchanged");
+
+    expectTrue(presentation.update(imported_profile),
+               "switching back to source display units changes presentation state");
     const EpanetJsProjectConversionResult after = EpanetJsProjectConverter::convert(project);
     expectTrue(after.success, "profile extraction does not invalidate source import");
     if (!after.success || after.network.nodes_junctions.isEmpty())
@@ -74,6 +132,19 @@ void testImportedUnitProfileIsOnlyPresentation()
     expectNear(after.network.nodes_junctions.first().elevation_m,
                canonical_elevation, 0.0,
                "creating a presentation profile cannot alter canonical elevation");
+    expectTrue(!after.network.links_pipes.isEmpty()
+                   && !after.network.nodes_junctions.first().demands.isEmpty(),
+               "source-derived profile retains the complete canonical network");
+    if (!after.network.links_pipes.isEmpty()
+        && !after.network.nodes_junctions.first().demands.isEmpty())
+    {
+        expectNear(after.network.links_pipes.first().diameter_mm,
+                   canonical_diameter, 0.0,
+                   "source-derived profile cannot alter canonical pipe diameter");
+        expectNear(after.network.nodes_junctions.first().demands.first().base_demand_m3_per_h,
+                   canonical_demand, 0.0,
+                   "source-derived profile cannot alter canonical junction demand");
+    }
     expectTrue(before.source_display_units == after.source_display_units,
                "presentation mapping does not mutate source unit metadata");
 }

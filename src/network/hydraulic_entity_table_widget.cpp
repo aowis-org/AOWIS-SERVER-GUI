@@ -43,6 +43,7 @@
 
 #include "network/hydraulic_data.h"
 #include "network/network_symbology_values.h"
+#include "network/valve_setting_sort_policy.h"
 #include "config/unit_table_presentation.h"
 #include "config/unit_profile_manager.h"
 #include "config/unit_aware_view.h"
@@ -53,6 +54,7 @@ constexpr int SortRole = Qt::UserRole;
 constexpr int EntityUuidRole = Qt::UserRole + 1;
 constexpr int SimulationStatusRole = Qt::UserRole + 2;
 constexpr int ReactionOrderRole = Qt::UserRole + 3;
+constexpr int ValveSettingGroupRole = Qt::UserRole + 4;
 
 enum class SimulationRowStatus
 {
@@ -82,6 +84,7 @@ struct TableColumn
 {
     QString title;
     bool simulation_result = false;
+    UnitTablePresentation::ColumnUnits units;
     ColumnFilterKind filter_kind = ColumnFilterKind::None;
 };
 
@@ -99,6 +102,7 @@ struct TableCell
     Qt::Alignment alignment = Qt::AlignLeft | Qt::AlignVCenter;
     QString tooltip;
     int decimals = 6;
+    QString canonical_suffix; // for raw numeric cells without registered quantity
     std::string_view quantity; // used for heterogeneous valve-setting columns
     std::optional<UnitTablePresentation::ReactionKind> reaction_kind;
     double reaction_order = 1.0;
@@ -107,6 +111,7 @@ struct TableCell
 struct TableRow
 {
     QUuid uuid;
+    std::optional<HydraulicLinkValveType> valve_type;
     QList<TableCell> cells;
     QList<DemandDetail> demand_details; // only populated for junction/demand-point rows
     bool simulation_warning = false;
@@ -143,6 +148,7 @@ TableCell numberCell(double value, int decimals, const QString &unit = QString()
         cell.display = formatNumber(value, decimals, unit);
         cell.sort_value = value;
         cell.decimals = decimals;
+        cell.canonical_suffix = unit;
     }
     else
     {
@@ -289,20 +295,23 @@ QString tankMixingModelText(HydraulicNodeTankMixingModel mixing_model)
     return QStringLiteral("Unknown");
 }
 
-QString qualityResultColumnTitle(WaterQualityAnalysisType analysis)
+TableColumn qualityResultColumn(WaterQualityAnalysisType analysis)
 {
     switch (analysis)
     {
     case WaterQualityAnalysisType::Chemical:
-        return QStringLiteral("Chemical Concentration [mg/L]");
+        return {QStringLiteral("Chemical Concentration [mg/L]"), true,
+                {"chemical_mass_concentration"}, ColumnFilterKind::Number};
     case WaterQualityAnalysisType::WaterAge:
-        return QStringLiteral("Water Age [h]");
+        return {QStringLiteral("Water Age [h]"), true,
+                {"water_age"}, ColumnFilterKind::Number};
     case WaterQualityAnalysisType::SourceTrace:
-        return QStringLiteral("Source Trace [%]");
+        return {QStringLiteral("Source Trace [%]"), true,
+                {"source_trace_percentage"}, ColumnFilterKind::Number};
     case WaterQualityAnalysisType::None:
-        return QStringLiteral("Water Quality Result");
+        return {QStringLiteral("Water Quality Result"), true, {}, ColumnFilterKind::None};
     }
-    return QStringLiteral("Water Quality Result");
+    return {QStringLiteral("Water Quality Result"), true, {}, ColumnFilterKind::None};
 }
 
 template<typename ResultType>
@@ -327,12 +336,15 @@ TableCell qualityResultCell(const ResultType *result, WaterQualityAnalysisType a
 
 void appendNodeQualityInputColumns(QList<TableColumn> &columns)
 {
-    columns.append({QStringLiteral("Initial Chemical [mg/L]"), false});
-    columns.append({QStringLiteral("Initial Water Age [h]"), false});
-    columns.append({QStringLiteral("Quality Source Type"), false});
-    columns.append({QStringLiteral("Quality Source Concentration [mg/L]"), false});
-    columns.append({QStringLiteral("Quality Source Mass Flow [mg/min]"), false});
-    columns.append({QStringLiteral("Quality Source Pattern"), false});
+    columns.append({QStringLiteral("Initial Chemical [mg/L]"), false,
+        {"chemical_mass_concentration"}, ColumnFilterKind::Number});
+    columns.append({QStringLiteral("Initial Water Age [h]"), false, {"water_age"}, ColumnFilterKind::Number});
+    columns.append({QStringLiteral("Quality Source Type"), false, {}, ColumnFilterKind::Choice});
+    columns.append({QStringLiteral("Quality Source Concentration [mg/L]"), false,
+        {"chemical_mass_concentration"}, ColumnFilterKind::Number});
+    columns.append({QStringLiteral("Quality Source Mass Flow [mg/min]"), false,
+        {"chemical_mass_flow_rate"}, ColumnFilterKind::Number});
+    columns.append({QStringLiteral("Quality Source Pattern"), false, {}, ColumnFilterKind::Text});
 }
 
 QString pipeMaterialId(const NetworkHydraulic &network, const QUuid &uuid)
@@ -828,103 +840,16 @@ QString compactHeaderText(const QString &title)
     return text;
 }
 
-ColumnFilterKind columnFilterKind(const QString &title)
-{
-    static const QSet<QString> text_columns = {
-        QStringLiteral("ID"),
-        QStringLiteral("Description"),
-        QStringLiteral("Tags"),
-        QStringLiteral("Comment"),
-        QStringLiteral("Node 1"),
-        QStringLiteral("Node 2"),
-        QStringLiteral("Demand Details"),
-        QStringLiteral("Attachment Target"),
-        QStringLiteral("Meter ID"),
-        QStringLiteral("Material"),
-        QStringLiteral("Head Pattern"),
-        QStringLiteral("Volume Curve"),
-        QStringLiteral("Head Curve"),
-        QStringLiteral("Speed Pattern"),
-        QStringLiteral("Efficiency Curve"),
-        QStringLiteral("Price Pattern"),
-        QStringLiteral("Setting Curve"),
-        QStringLiteral("Quality Source Pattern")
-    };
-
-    static const QSet<QString> choice_columns = {
-        QStringLiteral("Enabled"),
-        QStringLiteral("Model Role"),
-        QStringLiteral("Elevation Input"),
-        QStringLiteral("Head Input"),
-        QStringLiteral("Head Pattern Mode"),
-        QStringLiteral("Geometry Input"),
-        QStringLiteral("Can Overflow"),
-        QStringLiteral("Status Initial"),
-        QStringLiteral("Definition"),
-        QStringLiteral("Efficiency Input"),
-        QStringLiteral("Energy Price Input"),
-        QStringLiteral("Valve Type"),
-        QStringLiteral("Status"),
-        QStringLiteral("State Operating"),
-        QStringLiteral("Regulating"),
-        QStringLiteral("Referenced by Control"),
-        QStringLiteral("Attachment Type"),
-        QStringLiteral("Metered"),
-        QStringLiteral("Quality Source Type"),
-        QStringLiteral("Quality Mixing Model"),
-        QStringLiteral("Quality Override Bulk Reaction"),
-        QStringLiteral("Quality Override Wall Reaction")
-    };
-
-    static const QSet<QString> integer_columns = {
-        QStringLiteral("Demand Count"),
-        QStringLiteral("Vertices")
-    };
-
-    static const QSet<QString> number_columns_without_units = {
-        QStringLiteral("Emitter Coefficient"),
-        QStringLiteral("Emitter Exponent"),
-        QStringLiteral("Roughness HW"),
-        QStringLiteral("Roughness CM"),
-        QStringLiteral("Minor Loss"),
-        QStringLiteral("Friction Factor"),
-        QStringLiteral("Roughness HW Effective"),
-        QStringLiteral("Roughness CM Effective"),
-        QStringLiteral("Speed Initial"),
-        QStringLiteral("Setting"),
-        QStringLiteral("Speed"),
-        QStringLiteral("Energy Intensity Average [kWh/m³]"),
-        QStringLiteral("Cost Average / Day"),
-        QStringLiteral("Quality Mixing Fraction")
-    };
-
-    if (text_columns.contains(title))
-        return ColumnFilterKind::Text;
-    if (choice_columns.contains(title))
-        return ColumnFilterKind::Choice;
-    if (integer_columns.contains(title))
-        return ColumnFilterKind::Integer;
-    if (title.contains(QStringLiteral(" [")) || number_columns_without_units.contains(title))
-        return ColumnFilterKind::Number;
-    return ColumnFilterKind::None;
-}
-
-void configureColumnFilters(QList<TableColumn> &columns)
-{
-    for (TableColumn &column : columns)
-        column.filter_kind = columnFilterKind(column.title);
-}
-
 void appendCommonColumns(QList<TableColumn> &columns)
 {
-    columns.append({QStringLiteral("ID"), false});
-    columns.append({QStringLiteral("Enabled"), false});
-    columns.append({QStringLiteral("Model Role"), false});
-    columns.append({QStringLiteral("Date Added"), false});
-    columns.append({QStringLiteral("Date Installed"), false});
-    columns.append({QStringLiteral("Description"), false});
-    columns.append({QStringLiteral("Tags"), false});
-    columns.append({QStringLiteral("Comment"), false});
+    columns.append({QStringLiteral("ID"), false, {}, ColumnFilterKind::Text});
+    columns.append({QStringLiteral("Enabled"), false, {}, ColumnFilterKind::Choice});
+    columns.append({QStringLiteral("Model Role"), false, {}, ColumnFilterKind::Choice});
+    columns.append({QStringLiteral("Date Added"), false, {}, ColumnFilterKind::None});
+    columns.append({QStringLiteral("Date Installed"), false, {}, ColumnFilterKind::None});
+    columns.append({QStringLiteral("Description"), false, {}, ColumnFilterKind::Text});
+    columns.append({QStringLiteral("Tags"), false, {}, ColumnFilterKind::Text});
+    columns.append({QStringLiteral("Comment"), false, {}, ColumnFilterKind::Text});
 }
 
 void appendCommonCells(QList<TableCell> &cells, const QString &id,
@@ -942,8 +867,8 @@ void appendCommonCells(QList<TableCell> &cells, const QString &id,
 
 void appendNodePositionColumns(QList<TableColumn> &columns)
 {
-    columns.append({QStringLiteral("Latitude [°]"), false});
-    columns.append({QStringLiteral("Longitude [°]"), false});
+    columns.append({QStringLiteral("Latitude [°]"), false, {}, ColumnFilterKind::Number});
+    columns.append({QStringLiteral("Longitude [°]"), false, {}, ColumnFilterKind::Number});
 }
 
 void appendNodePositionCells(QList<TableCell> &cells, const CoordinateWGS84 &coordinate)
@@ -1161,8 +1086,8 @@ public:
         case Qt::DisplayRole:
         {
             const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
-            const QString &column_title = this->columns.at(index.column()).title;
-            if (column_title == QStringLiteral("Demand Details") && !row.demand_details.isEmpty())
+            const UnitTablePresentation::ColumnUnits &column_units = this->columns.at(index.column()).units;
+            if (column_units.kind == UnitTablePresentation::ColumnKind::DemandDetails && !row.demand_details.isEmpty())
                 return demandDetailsText(
                     row.demand_details, &context,
                     this->entity_type == InfrastructureEntity::DemandPoint
@@ -1171,11 +1096,11 @@ public:
                 return UnitTablePresentation::formatReactionCoefficient(
                     context, *cell.reaction_kind, cell.reaction_order,
                     cell.sort_value.toDouble(), cell.decimals);
-            if (UnitTablePresentation::isEnergyPriceTitle(column_title)
+            if (column_units.kind == UnitTablePresentation::ColumnKind::EnergyPrice
                 && cell.sort_value.isValid())
                 return UnitTablePresentation::formatEnergyPrice(context, cell.sort_value.toDouble());
             const std::string_view quantity = cell.quantity.empty()
-                ? UnitTablePresentation::quantityForTitle(this->columns.at(index.column()).title)
+                ? column_units.quantity
                 : cell.quantity;
             if (!quantity.empty() && cell.sort_value.isValid()
                 && cell.sort_value.userType() == QMetaType::Double)
@@ -1187,13 +1112,31 @@ public:
                     const QString unit = UnitTablePresentation::unitSymbol(
                         UnitTablePresentation::selectedUnit(
                             context, quantity));
-                    return formatNumber(*displayed, cell.decimals, QStringLiteral(" ") + unit);
+                    return UnitTablePresentation::formatNumber(
+                        context, *displayed, cell.decimals, QStringLiteral(" ") + unit,
+                        quantity);
                 }
+            }
+            if (cell.sort_value.isValid())
+            {
+                if (cell.sort_value.userType() == QMetaType::Double && quantity.empty())
+                    return UnitTablePresentation::formatNumber(
+                        context, cell.sort_value.toDouble(), cell.decimals, cell.canonical_suffix);
+                if (cell.sort_value.userType() == QMetaType::Int)
+                    return UnitTablePresentation::formatCount(context, cell.sort_value.toInt());
             }
             return cell.display;
         }
         case ReactionOrderRole:
             return cell.reaction_kind.has_value() ? QVariant(cell.reaction_order) : QVariant();
+        case ValveSettingGroupRole:
+            if (this->columns.at(index.column()).units.kind
+                    == UnitTablePresentation::ColumnKind::RowQuantity
+                && row.valve_type.has_value())
+            {
+                return static_cast<int>(ValveSettingSortPolicy::groupForType(*row.valve_type));
+            }
+            return QVariant();
         case SortRole:
             return cell.sort_value;
         case EntityUuidRole:
@@ -1257,19 +1200,29 @@ public:
         const TableColumn &column = this->columns.at(section);
         if (role == Qt::DisplayRole)
             return compactHeaderText(UnitTablePresentation::formattedTitle(
-                column.title, UnitProfileManager::instance().presentation()));
+                column.title, UnitProfileManager::instance().presentation(), column.units));
         if (role == Qt::ToolTipRole)
         {
             const QString title = UnitTablePresentation::formattedTitle(
-                column.title, UnitProfileManager::instance().presentation());
-            if (column.title == QStringLiteral("Quality Bulk Reaction Coefficient"))
+                column.title, UnitProfileManager::instance().presentation(), column.units);
+            if (column.units.kind == UnitTablePresentation::ColumnKind::BulkReaction)
                 return UnitTablePresentation::reactionColumnTooltip(
                     UnitProfileManager::instance().presentation(),
                     UnitTablePresentation::ReactionKind::Bulk);
-            if (column.title == QStringLiteral("Quality Wall Reaction Coefficient"))
+            if (column.units.kind == UnitTablePresentation::ColumnKind::WallReaction)
                 return UnitTablePresentation::reactionColumnTooltip(
                     UnitProfileManager::instance().presentation(),
                     UnitTablePresentation::ReactionKind::Wall);
+            if (column.units.kind == UnitTablePresentation::ColumnKind::RowQuantity)
+            {
+                return title + QStringLiteral(
+                    "\nValve settings have different physical units. Sorting groups "
+                    "compatible quantities and orders their canonical values within "
+                    "each group. Use Valve Type to filter by type; a single numeric "
+                    "range would mix incompatible units.")
+                    + (column.simulation_result ? QStringLiteral("\nSimulation result.")
+                                                : QString());
+            }
             if (column.simulation_result)
                 return title + QStringLiteral("\nSimulation result.");
             return title;
@@ -1305,6 +1258,13 @@ public:
         if (column < 0 || column >= this->columns.size())
             return QString();
         return this->columns.at(column).title;
+    }
+
+    UnitTablePresentation::ColumnUnits columnUnits(int column) const
+    {
+        if (column < 0 || column >= this->columns.size())
+            return {};
+        return this->columns.at(column).units;
     }
 
     bool columnNumericRange(int column, double &minimum, double &maximum) const
@@ -1388,7 +1348,6 @@ public:
             break;
         }
 
-        configureColumnFilters(this->columns);
         endResetModel();
     }
 
@@ -1414,14 +1373,16 @@ private:
     {
         appendCommonColumns(this->columns);
         appendNodePositionColumns(this->columns);
-        this->columns.append({QStringLiteral("Demand Count"), false});
-        this->columns.append({QStringLiteral("Customer Demand Base [m³/h]"), false});
-        this->columns.append({QStringLiteral("Demand Details"), false});
-        this->columns.append({QStringLiteral("Attachment Type"), false});
-        this->columns.append({QStringLiteral("Attachment Target"), false});
-        this->columns.append({QStringLiteral("Pipe Position [%]"), false});
-        this->columns.append({QStringLiteral("Metered"), false});
-        this->columns.append({QStringLiteral("Meter ID"), false});
+        this->columns.append({QStringLiteral("Demand Count"), false, {}, ColumnFilterKind::Integer});
+        this->columns.append({QStringLiteral("Customer Demand Base [m³/h]"), false,
+            {"customer_demand_flow_rate"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Demand Details"), false,
+            {{}, UnitTablePresentation::ColumnKind::DemandDetails}, ColumnFilterKind::Text});
+        this->columns.append({QStringLiteral("Attachment Type"), false, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Attachment Target"), false, {}, ColumnFilterKind::Text});
+        this->columns.append({QStringLiteral("Pipe Position [%]"), false, {}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Metered"), false, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Meter ID"), false, {}, ColumnFilterKind::Text});
 
         for (const HydraulicDemandPoint &demand_point : network.demand_points)
         {
@@ -1488,29 +1449,40 @@ private:
 
         appendCommonColumns(this->columns);
         appendNodePositionColumns(this->columns);
-        this->columns.append({QStringLiteral("Elevation Input"), false});
-        this->columns.append({QStringLiteral("Elevation Direct [m]"), false});
-        this->columns.append({QStringLiteral("Elevation Terrain [m]"), false});
-        this->columns.append({QStringLiteral("Elevation Offset [m]"), false});
-        this->columns.append({QStringLiteral("Elevation Resolved [m]"), false});
-        this->columns.append({QStringLiteral("Demand Count"), false});
-        this->columns.append({QStringLiteral("Demand Base [m³/h]"), false});
-        this->columns.append({QStringLiteral("Demand Details"), false});
-        this->columns.append({QStringLiteral("Emitter Coefficient"), false});
-        this->columns.append({QStringLiteral("Emitter Exponent"), false});
-        this->columns.append({QStringLiteral("Demand Requested [m³/h]"), true});
-        this->columns.append({QStringLiteral("Demand Delivered [m³/h]"), true});
-        this->columns.append({QStringLiteral("Demand Deficit [m³/h]"), true});
-        this->columns.append({QStringLiteral("Demand Total [m³/h]"), true});
-        this->columns.append({QStringLiteral("Flow Emitter [m³/h]"), true});
-        this->columns.append({QStringLiteral("Flow Leakage [m³/h]"), true});
-        this->columns.append({QStringLiteral("Head [m]"), true});
-        this->columns.append({QStringLiteral("Head Pressure [m]"), true});
-        this->columns.append({QStringLiteral("Referenced by Control"), true});
+        this->columns.append({QStringLiteral("Elevation Input"), false, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Elevation Direct [m]"), false, {"elevation"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Elevation Terrain [m]"), false, {"elevation"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Elevation Offset [m]"), false,
+            {"vertical_offset"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Elevation Resolved [m]"), false,
+            {"elevation"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Demand Count"), false, {}, ColumnFilterKind::Integer});
+        this->columns.append({QStringLiteral("Demand Base [m³/h]"), false,
+            {"base_demand_flow_rate"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Demand Details"), false,
+            {{}, UnitTablePresentation::ColumnKind::DemandDetails}, ColumnFilterKind::Text});
+        this->columns.append({QStringLiteral("Emitter Coefficient"), false, {}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Emitter Exponent"), false, {}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Demand Requested [m³/h]"), true,
+            {"volumetric_flow_rate"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Demand Delivered [m³/h]"), true,
+            {"volumetric_flow_rate"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Demand Deficit [m³/h]"), true,
+            {"volumetric_flow_rate"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Demand Total [m³/h]"), true,
+            {"volumetric_flow_rate"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Flow Emitter [m³/h]"), true,
+            {"volumetric_flow_rate"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Flow Leakage [m³/h]"), true,
+            {"volumetric_flow_rate"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head [m]"), true, {"hydraulic_head"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head Pressure [m]"), true, {"pressure_head"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Referenced by Control"), true, {}, ColumnFilterKind::Choice});
         appendNodeQualityInputColumns(this->columns);
-        this->columns.append({qualityResultColumnTitle(quality_analysis), true});
+        this->columns.append(qualityResultColumn(quality_analysis));
         if (quality_analysis == WaterQualityAnalysisType::Chemical)
-            this->columns.append({QStringLiteral("Quality Source Mass Flow [mg/min]"), true});
+            this->columns.append({QStringLiteral("Quality Source Mass Flow [mg/min]"), true,
+                {"chemical_mass_flow_rate"}, ColumnFilterKind::Number});
 
         for (const HydraulicNodeJunction &junction : network.nodes_junctions)
         {
@@ -1592,21 +1564,24 @@ private:
 
         appendCommonColumns(this->columns);
         appendNodePositionColumns(this->columns);
-        this->columns.append({QStringLiteral("Head Input"), false});
-        this->columns.append({QStringLiteral("Head Direct [m]"), false});
-        this->columns.append({QStringLiteral("Elevation Terrain [m]"), false});
-        this->columns.append({QStringLiteral("Head Offset [m]"), false});
-        this->columns.append({QStringLiteral("Head Resolved [m]"), false});
-        this->columns.append({QStringLiteral("Head Pattern Mode"), false});
-        this->columns.append({QStringLiteral("Head Pattern"), false});
-        this->columns.append({QStringLiteral("Demand Net [m³/h]"), true});
-        this->columns.append({QStringLiteral("Head [m]"), true});
-        this->columns.append({QStringLiteral("Head Pressure [m]"), true});
-        this->columns.append({QStringLiteral("Referenced by Control"), true});
+        this->columns.append({QStringLiteral("Head Input"), false, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Head Direct [m]"), false, {"hydraulic_head"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Elevation Terrain [m]"), false, {"elevation"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head Offset [m]"), false, {"vertical_offset"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head Resolved [m]"), false,
+            {"hydraulic_head"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head Pattern Mode"), false, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Head Pattern"), false, {}, ColumnFilterKind::Text});
+        this->columns.append({QStringLiteral("Demand Net [m³/h]"), true,
+            {"volumetric_flow_rate"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head [m]"), true, {"hydraulic_head"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head Pressure [m]"), true, {"pressure_head"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Referenced by Control"), true, {}, ColumnFilterKind::Choice});
         appendNodeQualityInputColumns(this->columns);
-        this->columns.append({qualityResultColumnTitle(quality_analysis), true});
+        this->columns.append(qualityResultColumn(quality_analysis));
         if (quality_analysis == WaterQualityAnalysisType::Chemical)
-            this->columns.append({QStringLiteral("Quality Source Mass Flow [mg/min]"), true});
+            this->columns.append({QStringLiteral("Quality Source Mass Flow [mg/min]"), true,
+                {"chemical_mass_flow_rate"}, ColumnFilterKind::Number});
 
         for (const HydraulicNodeReservoir &reservoir : network.nodes_reservoirs)
         {
@@ -1676,36 +1651,45 @@ private:
 
         appendCommonColumns(this->columns);
         appendNodePositionColumns(this->columns);
-        this->columns.append({QStringLiteral("Elevation Input"), false});
-        this->columns.append({QStringLiteral("Elevation Bottom [m]"), false});
-        this->columns.append({QStringLiteral("Elevation Terrain [m]"), false});
-        this->columns.append({QStringLiteral("Bottom Offset [m]"), false});
-        this->columns.append({QStringLiteral("Elevation Bottom Resolved [m]"), false});
-        this->columns.append({QStringLiteral("Level Initial [m]"), false});
-        this->columns.append({QStringLiteral("Level Minimum [m]"), false});
-        this->columns.append({QStringLiteral("Level Maximum [m]"), false});
-        this->columns.append({QStringLiteral("Geometry Input"), false});
-        this->columns.append({QStringLiteral("Diameter [m]"), false});
-        this->columns.append({QStringLiteral("Area Cross-Section [m²]"), false});
-        this->columns.append({QStringLiteral("Volume Maximum [m³]"), false});
-        this->columns.append({QStringLiteral("Volume Minimum [m³]"), false});
-        this->columns.append({QStringLiteral("Volume Curve"), false});
-        this->columns.append({QStringLiteral("Can Overflow"), false});
-        this->columns.append({QStringLiteral("Demand Net [m³/h]"), true});
-        this->columns.append({QStringLiteral("Head [m]"), true});
-        this->columns.append({QStringLiteral("Head Pressure [m]"), true});
-        this->columns.append({QStringLiteral("Level Water [m]"), true});
-        this->columns.append({QStringLiteral("Volume [m³]"), true});
-        this->columns.append({QStringLiteral("Volume Mixing-Zone [m³]"), true});
-        this->columns.append({QStringLiteral("Referenced by Control"), true});
+        this->columns.append({QStringLiteral("Elevation Input"), false, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Elevation Bottom [m]"), false, {"elevation"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Elevation Terrain [m]"), false, {"elevation"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Bottom Offset [m]"), false,
+            {"vertical_offset"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Elevation Bottom Resolved [m]"), false,
+            {"elevation"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Level Initial [m]"), false,
+            {"tank_initial_level"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Level Minimum [m]"), false,
+            {"tank_minimum_level"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Level Maximum [m]"), false,
+            {"tank_maximum_level"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Geometry Input"), false, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Diameter [m]"), false, {"tank_diameter"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Area Cross-Section [m²]"), false, {"area"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Volume Maximum [m³]"), false, {"volume"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Volume Minimum [m³]"), false,
+            {"tank_minimum_volume"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Volume Curve"), false, {}, ColumnFilterKind::Text});
+        this->columns.append({QStringLiteral("Can Overflow"), false, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Demand Net [m³/h]"), true,
+            {"volumetric_flow_rate"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head [m]"), true, {"hydraulic_head"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head Pressure [m]"), true, {"pressure_head"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Level Water [m]"), true, {"water_level"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Volume [m³]"), true, {"volume"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Volume Mixing-Zone [m³]"), true, {"volume"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Referenced by Control"), true, {}, ColumnFilterKind::Choice});
         appendNodeQualityInputColumns(this->columns);
-        this->columns.append({QStringLiteral("Quality Mixing Model"), false});
-        this->columns.append({QStringLiteral("Quality Mixing Fraction"), false});
-        this->columns.append({QStringLiteral("Quality Override Bulk Reaction"), false});
-        this->columns.append({QStringLiteral("Quality Bulk Reaction Coefficient"), false});
-        this->columns.append({qualityResultColumnTitle(quality_analysis), true});
+        this->columns.append({QStringLiteral("Quality Mixing Model"), false, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Quality Mixing Fraction"), false, {}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Quality Override Bulk Reaction"), false, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Quality Bulk Reaction Coefficient"), false,
+            {{}, UnitTablePresentation::ColumnKind::BulkReaction}, ColumnFilterKind::None});
+        this->columns.append(qualityResultColumn(quality_analysis));
         if (quality_analysis == WaterQualityAnalysisType::Chemical)
-            this->columns.append({QStringLiteral("Quality Source Mass Flow [mg/min]"), true});
+            this->columns.append({QStringLiteral("Quality Source Mass Flow [mg/min]"), true,
+                {"chemical_mass_flow_rate"}, ColumnFilterKind::Number});
 
         for (const HydraulicNodeTank &tank : network.nodes_tanks)
         {
@@ -1792,37 +1776,45 @@ private:
                 : simulationResultLookup(quality_result->links_pipes);
 
         appendCommonColumns(this->columns);
-        this->columns.append({QStringLiteral("Node 1"), false});
-        this->columns.append({QStringLiteral("Node 2"), false});
-        this->columns.append({QStringLiteral("Vertices"), false});
-        this->columns.append({QStringLiteral("Length Calculated [m]"), false});
-        this->columns.append({QStringLiteral("Length Measured [m]"), false});
-        this->columns.append({QStringLiteral("Length Effective [m]"), false});
-        this->columns.append({QStringLiteral("Status Initial"), false});
-        this->columns.append({QStringLiteral("Diameter [mm]"), false});
-        this->columns.append({QStringLiteral("Material"), false});
-        this->columns.append({QStringLiteral("Roughness HW"), false});
-        this->columns.append({QStringLiteral("Roughness DW [mm]"), false});
-        this->columns.append({QStringLiteral("Roughness CM"), false});
-        this->columns.append({QStringLiteral("Minor Loss"), false});
-        this->columns.append({QStringLiteral("Leak Area [mm²/100m]"), false});
-        this->columns.append({QStringLiteral("Leak Expansion [mm²/m head]"), false});
-        this->columns.append({QStringLiteral("Flow [m³/h]"), true});
-        this->columns.append({QStringLiteral("Flow Leakage [m³/h]"), true});
-        this->columns.append({QStringLiteral("Velocity [m/s]"), true});
-        this->columns.append({QStringLiteral("Head Loss [m]"), true});
-        this->columns.append({QStringLiteral("Head Loss Unit [m/km]"), true});
-        this->columns.append({QStringLiteral("Friction Factor"), true});
-        this->columns.append({QStringLiteral("Status"), true});
-        this->columns.append({QStringLiteral("Roughness HW Effective"), true});
-        this->columns.append({QStringLiteral("Roughness DW Effective [mm]"), true});
-        this->columns.append({QStringLiteral("Roughness CM Effective"), true});
-        this->columns.append({QStringLiteral("Referenced by Control"), true});
-        this->columns.append({QStringLiteral("Quality Override Bulk Reaction"), false});
-        this->columns.append({QStringLiteral("Quality Bulk Reaction Coefficient"), false});
-        this->columns.append({QStringLiteral("Quality Override Wall Reaction"), false});
-        this->columns.append({QStringLiteral("Quality Wall Reaction Coefficient"), false});
-        this->columns.append({qualityResultColumnTitle(quality_analysis), true});
+        this->columns.append({QStringLiteral("Node 1"), false, {}, ColumnFilterKind::Text});
+        this->columns.append({QStringLiteral("Node 2"), false, {}, ColumnFilterKind::Text});
+        this->columns.append({QStringLiteral("Vertices"), false, {}, ColumnFilterKind::Integer});
+        this->columns.append({QStringLiteral("Length Calculated [m]"), false, {"length"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Length Measured [m]"), false, {"length"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Length Effective [m]"), false, {"length"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Status Initial"), false, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Diameter [mm]"), false, {"link_diameter"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Material"), false, {}, ColumnFilterKind::Text});
+        this->columns.append({QStringLiteral("Roughness HW"), false, {}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Roughness DW [mm]"), false,
+            {"darcy_weisbach_roughness_height"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Roughness CM"), false, {}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Minor Loss"), false, {}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Leak Area [mm²/100m]"), false,
+            {"leak_area_per_100m_pipe_length"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Leak Expansion [mm²/m head]"), false,
+            {"leak_area_expansion_per_pressure_head"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Flow [m³/h]"), true, {"volumetric_flow_rate"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Flow Leakage [m³/h]"), true,
+            {"volumetric_flow_rate"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Velocity [m/s]"), true, {"velocity"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head Loss [m]"), true, {"head_loss"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head Loss Unit [m/km]"), true,
+            {"head_loss_gradient"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Friction Factor"), true, {}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Status"), true, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Roughness HW Effective"), true, {}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Roughness DW Effective [mm]"), true,
+            {"darcy_weisbach_roughness_height"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Roughness CM Effective"), true, {}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Referenced by Control"), true, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Quality Override Bulk Reaction"), false, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Quality Bulk Reaction Coefficient"), false,
+            {{}, UnitTablePresentation::ColumnKind::BulkReaction}, ColumnFilterKind::None});
+        this->columns.append({QStringLiteral("Quality Override Wall Reaction"), false, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Quality Wall Reaction Coefficient"), false,
+            {{}, UnitTablePresentation::ColumnKind::WallReaction}, ColumnFilterKind::None});
+        this->columns.append(qualityResultColumn(quality_analysis));
 
         for (const HydraulicLinkPipe &pipe : network.links_pipes)
         {
@@ -1908,20 +1900,21 @@ private:
                 : simulationResultLookup(quality_result->links_pumps);
 
         appendCommonColumns(this->columns);
-        this->columns.append({QStringLiteral("Node 1"), false});
-        this->columns.append({QStringLiteral("Node 2"), false});
-        this->columns.append({QStringLiteral("Vertices"), false});
-        this->columns.append({QStringLiteral("Definition"), false});
-        this->columns.append({QStringLiteral("Power Constant [kW]"), false});
-        this->columns.append({QStringLiteral("Head Curve"), false});
-        this->columns.append({QStringLiteral("Speed Initial"), false});
-        this->columns.append({QStringLiteral("Status Initial"), false});
-        this->columns.append({QStringLiteral("Speed Pattern"), false});
-        this->columns.append({QStringLiteral("Controls"), false});
-        this->columns.append({QStringLiteral("Efficiency Input"), false});
-        this->columns.append({QStringLiteral("Efficiency Constant [%]"), false});
-        this->columns.append({QStringLiteral("Efficiency Curve"), false});
-        this->columns.append({QStringLiteral("Energy Price Input"), false});
+        this->columns.append({QStringLiteral("Node 1"), false, {}, ColumnFilterKind::Text});
+        this->columns.append({QStringLiteral("Node 2"), false, {}, ColumnFilterKind::Text});
+        this->columns.append({QStringLiteral("Vertices"), false, {}, ColumnFilterKind::Integer});
+        this->columns.append({QStringLiteral("Definition"), false, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Power Constant [kW]"), false, {"power"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head Curve"), false, {}, ColumnFilterKind::Text});
+        this->columns.append({QStringLiteral("Speed Initial"), false, {}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Status Initial"), false, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Speed Pattern"), false, {}, ColumnFilterKind::Text});
+        this->columns.append({QStringLiteral("Controls"), false, {}, ColumnFilterKind::None});
+        this->columns.append({QStringLiteral("Efficiency Input"), false, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Efficiency Constant [%]"), false,
+            {"efficiency"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Efficiency Curve"), false, {}, ColumnFilterKind::Text});
+        this->columns.append({QStringLiteral("Energy Price Input"), false, {}, ColumnFilterKind::Choice});
         const QString energy_currency = network.options_energy.currency_iso4217;
         const QString energy_price_header = energy_currency.isEmpty()
             ? QStringLiteral("Energy Price [/kWh]")
@@ -1929,24 +1922,27 @@ private:
         const QString energy_cost_header = energy_currency.isEmpty()
             ? QStringLiteral("Cost Average / Day")
             : QStringLiteral("Cost Average [%1/day]").arg(energy_currency);
-        this->columns.append({energy_price_header, false});
-        this->columns.append({QStringLiteral("Price Pattern"), false});
-        this->columns.append({QStringLiteral("Flow [m³/h]"), true});
-        this->columns.append({QStringLiteral("Velocity [m/s]"), true});
-        this->columns.append({QStringLiteral("Head Gain [m]"), true});
-        this->columns.append({QStringLiteral("Status"), true});
-        this->columns.append({QStringLiteral("State Operating"), true});
-        this->columns.append({QStringLiteral("Speed"), true});
-        this->columns.append({QStringLiteral("Efficiency [%]"), true});
-        this->columns.append({QStringLiteral("Power [kW]"), true});
-        this->columns.append({QStringLiteral("Referenced by Control"), true});
-        this->columns.append({QStringLiteral("Time Online [%]"), true});
-        this->columns.append({QStringLiteral("Efficiency Average [%]"), true});
-        this->columns.append({QStringLiteral("Energy Intensity Average [kWh/m³]"), true});
-        this->columns.append({QStringLiteral("Power Average [kW]"), true});
-        this->columns.append({QStringLiteral("Power Peak [kW]"), true});
-        this->columns.append({energy_cost_header, true});
-        this->columns.append({qualityResultColumnTitle(quality_analysis), true});
+        this->columns.append({energy_price_header, false, {{}, UnitTablePresentation::ColumnKind::EnergyPrice, energy_currency}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Price Pattern"), false, {}, ColumnFilterKind::Text});
+        this->columns.append({QStringLiteral("Flow [m³/h]"), true, {"volumetric_flow_rate"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Velocity [m/s]"), true, {"velocity"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head Gain [m]"), true, {"head_gain"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Status"), true, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("State Operating"), true, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Speed"), true, {}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Efficiency [%]"), true, {"efficiency"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Power [kW]"), true, {"power"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Referenced by Control"), true, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Time Online [%]"), true,
+            {"operating_time_percentage"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Efficiency Average [%]"), true,
+            {"efficiency"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Energy Intensity Average [kWh/m³]"), true,
+            {"energy_intensity"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Power Average [kW]"), true, {"power"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Power Peak [kW]"), true, {"power"}, ColumnFilterKind::Number});
+        this->columns.append({energy_cost_header, true, {}, ColumnFilterKind::Number});
+        this->columns.append(qualityResultColumn(quality_analysis));
 
         const HydraulicSimulationResult *final_result = nullptr;
         const std::optional<HydraulicSimulationResultTimeline> &timeline =
@@ -2052,28 +2048,33 @@ private:
                 : simulationResultLookup(quality_result->links_valves);
 
         appendCommonColumns(this->columns);
-        this->columns.append({QStringLiteral("Node 1"), false});
-        this->columns.append({QStringLiteral("Node 2"), false});
-        this->columns.append({QStringLiteral("Vertices"), false});
-        this->columns.append({QStringLiteral("Valve Type"), false});
-        this->columns.append({QStringLiteral("Setting"), false});
-        this->columns.append({QStringLiteral("Setting Curve"), false});
-        this->columns.append({QStringLiteral("Status Initial"), false});
-        this->columns.append({QStringLiteral("Diameter [mm]"), false});
-        this->columns.append({QStringLiteral("Minor Loss"), false});
-        this->columns.append({QStringLiteral("Flow [m³/h]"), true});
-        this->columns.append({QStringLiteral("Velocity [m/s]"), true});
-        this->columns.append({QStringLiteral("Head Loss [m]"), true});
-        this->columns.append({QStringLiteral("Status"), true});
-        this->columns.append({QStringLiteral("Regulating"), true});
-        this->columns.append({QStringLiteral("Setting"), true});
-        this->columns.append({QStringLiteral("Referenced by Control"), true});
-        this->columns.append({qualityResultColumnTitle(quality_analysis), true});
+        this->columns.append({QStringLiteral("Node 1"), false, {}, ColumnFilterKind::Text});
+        this->columns.append({QStringLiteral("Node 2"), false, {}, ColumnFilterKind::Text});
+        this->columns.append({QStringLiteral("Vertices"), false, {}, ColumnFilterKind::Integer});
+        this->columns.append({QStringLiteral("Valve Type"), false, {}, ColumnFilterKind::Choice});
+        // A pressure, flow, loss coefficient and position cannot share one
+        // numeric range filter. The Valve Type filter remains available.
+        this->columns.append({QStringLiteral("Setting"), false,
+            {{}, UnitTablePresentation::ColumnKind::RowQuantity}, ColumnFilterKind::None});
+        this->columns.append({QStringLiteral("Setting Curve"), false, {}, ColumnFilterKind::Text});
+        this->columns.append({QStringLiteral("Status Initial"), false, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Diameter [mm]"), false, {"link_diameter"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Minor Loss"), false, {}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Flow [m³/h]"), true, {"volumetric_flow_rate"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Velocity [m/s]"), true, {"velocity"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head Loss [m]"), true, {"head_loss"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Status"), true, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Regulating"), true, {}, ColumnFilterKind::Choice});
+        this->columns.append({QStringLiteral("Setting"), true,
+            {{}, UnitTablePresentation::ColumnKind::RowQuantity}, ColumnFilterKind::None});
+        this->columns.append({QStringLiteral("Referenced by Control"), true, {}, ColumnFilterKind::Choice});
+        this->columns.append(qualityResultColumn(quality_analysis));
 
         for (const HydraulicLinkValve &valve : network.links_valves)
         {
             TableRow row;
             row.uuid = valve.uuid;
+            row.valve_type = valve.type;
             appendCommonCells(row.cells, valve.id, valve.metadata);
             row.cells.append(textCell(nodeId(node_ids, valve.node_uuid_from)));
             row.cells.append(textCell(nodeId(node_ids, valve.node_uuid_to)));
@@ -2220,7 +2221,7 @@ public:
         {
             if (iterator.value().first == ColumnFilterKind::Text
                 && UnitTablePresentation::isUnitDependentTextColumn(
-                    entity_model->columnTitle(iterator.key())))
+                    entity_model->columnUnits(iterator.key())))
             {
                 notifyFilterChanged();
                 return;
@@ -2232,6 +2233,37 @@ public:
 protected:
     bool lessThan(const QModelIndex &left, const QModelIndex &right) const override
     {
+        const QVariant left_group = sourceModel()->data(left, ValveSettingGroupRole);
+        const QVariant right_group = sourceModel()->data(right, ValveSettingGroupRole);
+        if (left_group.isValid() && right_group.isValid())
+        {
+            const QVariant left_value = sourceModel()->data(left, SortRole);
+            const QVariant right_value = sourceModel()->data(right, SortRole);
+            bool left_ok = false;
+            bool right_ok = false;
+            const double left_number = left_value.toDouble(&left_ok);
+            const double right_number = right_value.toDouble(&right_ok);
+            const ValveSettingSortPolicy::Key first{
+                static_cast<ValveSettingSortPolicy::Group>(left_group.toInt()),
+                left_ok && std::isfinite(left_number) ? std::optional<double>(left_number)
+                                                    : std::nullopt};
+            const ValveSettingSortPolicy::Key second{
+                static_cast<ValveSettingSortPolicy::Group>(right_group.toInt()),
+                right_ok && std::isfinite(right_number) ? std::optional<double>(right_number)
+                                                     : std::nullopt};
+            const int order = ValveSettingSortPolicy::compare(first, second);
+            if (order != 0)
+                return order < 0;
+
+            // GPVs have curve references, not numerical settings. Make
+            // equal/missing settings deterministic without comparing units.
+            const QModelIndex left_id = sourceModel()->index(left.row(), 0);
+            const QModelIndex right_id = sourceModel()->index(right.row(), 0);
+            return QString::compare(sourceModel()->data(left_id, SortRole).toString(),
+                                    sourceModel()->data(right_id, SortRole).toString(),
+                                    Qt::CaseInsensitive) < 0;
+        }
+
         const QVariant left_order = sourceModel()->data(left, ReactionOrderRole);
         const QVariant right_order = sourceModel()->data(right, ReactionOrderRole);
         if (left_order.isValid() && right_order.isValid())
@@ -2382,7 +2414,7 @@ public:
             NumericRangeControl &control = this->numeric_controls[column];
             const QString title = UnitTablePresentation::formattedTitle(
                 this->model->columnTitle(column),
-                UnitProfileManager::instance().presentation());
+                UnitProfileManager::instance().presentation(), this->model->columnUnits(column));
             control.minimum->setToolTip(QStringLiteral("Minimum filter for ") + title);
             control.maximum->setToolTip(QStringLiteral("Maximum filter for ") + title);
         }
@@ -2410,12 +2442,12 @@ public:
             NumericRangeControl &control = this->numeric_controls[column];
             const QSignalBlocker minimum_blocker(control.minimum);
             const QSignalBlocker maximum_blocker(control.maximum);
-            const QString title = this->model->columnTitle(column);
+            const UnitTablePresentation::ColumnUnits units = this->model->columnUnits(column);
             const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
-            control.minimum->setValue(UnitTablePresentation::toDisplayForTitle(
-                context, title, control.global_minimum).value_or(control.global_minimum));
-            control.maximum->setValue(UnitTablePresentation::toDisplayForTitle(
-                context, title, control.global_maximum).value_or(control.global_maximum));
+            control.minimum->setValue(UnitTablePresentation::toDisplayForColumn(
+                context, units, control.global_minimum).value_or(control.global_minimum));
+            control.maximum->setValue(UnitTablePresentation::toDisplayForColumn(
+                context, units, control.global_maximum).value_or(control.global_maximum));
             control.selected_minimum = control.global_minimum;
             control.selected_maximum = control.global_maximum;
         }
@@ -2551,7 +2583,7 @@ private:
                                       : QStringLiteral("Maximum filter for "))
                              + UnitTablePresentation::formattedTitle(
                                  this->model->columnTitle(column),
-                                 UnitProfileManager::instance().presentation()));
+                                 UnitProfileManager::instance().presentation(), this->model->columnUnits(column)));
         spin_box->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     }
 
@@ -2679,19 +2711,19 @@ private:
             selected_minimum = selected_maximum;
 
         {
-            const QString title = this->model->columnTitle(column);
+            const UnitTablePresentation::ColumnUnits units = this->model->columnUnits(column);
             const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
-            const double display_minimum = UnitTablePresentation::toDisplayForTitle(
-                context, title, global_minimum).value_or(global_minimum);
-            const double display_maximum = UnitTablePresentation::toDisplayForTitle(
-                context, title, global_maximum).value_or(global_maximum);
-            const double display_selected_minimum = UnitTablePresentation::toDisplayForTitle(
-                context, title, selected_minimum).value_or(selected_minimum);
-            const double display_selected_maximum = UnitTablePresentation::toDisplayForTitle(
-                context, title, selected_maximum).value_or(selected_maximum);
+            const double display_minimum = UnitTablePresentation::toDisplayForColumn(
+                context, units, global_minimum).value_or(global_minimum);
+            const double display_maximum = UnitTablePresentation::toDisplayForColumn(
+                context, units, global_maximum).value_or(global_maximum);
+            const double display_selected_minimum = UnitTablePresentation::toDisplayForColumn(
+                context, units, selected_minimum).value_or(selected_minimum);
+            const double display_selected_maximum = UnitTablePresentation::toDisplayForColumn(
+                context, units, selected_maximum).value_or(selected_maximum);
             const QSignalBlocker minimum_blocker(control.minimum);
             const QSignalBlocker maximum_blocker(control.maximum);
-            if (UnitTablePresentation::isEnergyPriceTitle(title))
+            if (units.kind == UnitTablePresentation::ColumnKind::EnergyPrice)
             {
                 // A normal 6-decimal spin box would quantize per-joule prices
                 // to zero. Increase decimals only as far as the visible range
@@ -2740,11 +2772,11 @@ private:
             return;
 
         NumericRangeControl &control = this->numeric_controls[column];
-        const QString title = this->model->columnTitle(column);
+        const UnitTablePresentation::ColumnUnits units = this->model->columnUnits(column);
         const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
         const QDoubleSpinBox *changed = minimum_changed ? control.minimum : control.maximum;
-        const std::optional<double> canonical = UnitTablePresentation::toCanonicalForTitle(
-            context, title, changed->value());
+        const std::optional<double> canonical = UnitTablePresentation::toCanonicalForColumn(
+            context, units, changed->value());
         if (!canonical.has_value())
             return;
         double minimum = minimum_changed ? *canonical : control.selected_minimum;

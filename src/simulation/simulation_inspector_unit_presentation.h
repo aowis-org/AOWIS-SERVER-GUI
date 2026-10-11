@@ -19,7 +19,7 @@ inline QString format(const UnitPresentationContext &context, std::string_view q
     const QString symbol = UnitTablePresentation::unitSymbol(
         UnitTablePresentation::selectedUnit(context, quantity));
     return UnitTablePresentation::formatNumber(
-        *converted, decimals, (symbol.isEmpty() || symbol == QStringLiteral("1"))
-            ? QString() : QStringLiteral(" ") + symbol);
+        context, *converted, decimals, (symbol.isEmpty() || symbol == QStringLiteral("1"))
+            ? QString() : QStringLiteral(" ") + symbol, quantity);
 }
 }

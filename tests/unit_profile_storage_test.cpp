@@ -1,5 +1,6 @@
 #include "config/unit_profile_storage.h"
 #include "config/unit_presentation_context.h"
+#include "config/unit_profile_notifications.h"
 #include "import/epanet_js_unit_profile.h"
 #include <aowis/model/units/conversion.h>
 #include <QCoreApplication>
@@ -11,6 +12,7 @@
 #include "unit_test_check.h"
 #include <cmath>
 #include <optional>
+#include <memory>
 
 int main(int argc, char **argv)
 {
@@ -265,5 +267,116 @@ int main(int argc, char **argv)
     }
     CHECK(presentation.update(QJsonObject{{QStringLiteral("pressure"), QStringLiteral("bar")}}));
     CHECK(callbacks == 2);
+    CHECK(presentation.subscriberCount() == 1);
+
+    // Owner destruction must remove the subscription and release captured
+    // resources immediately, without requiring another profile switch.
+    const qsizetype persistent_listeners = presentation.subscriberCount();
+    for (int i = 0; i < 500; ++i) {
+        std::weak_ptr<int> captured;
+        {
+            QObject temporary;
+            const std::shared_ptr<int> payload = std::make_shared<int>(i);
+            captured = payload;
+            presentation.subscribe(&temporary, [payload](UnitPresentationContext::Generation) {});
+            CHECK(presentation.subscriberCount() == persistent_listeners + 1);
+            CHECK(!captured.expired());
+        }
+        CHECK(presentation.subscriberCount() == persistent_listeners);
+        CHECK(captured.expired());
+    }
+    CHECK(callbacks == 2);
+
+    // A notification can destroy another subscribed owner; its callback must
+    // not run from the notification snapshot, and iteration stays valid.
+    {
+        QObject first;
+        std::unique_ptr<QObject> second = std::make_unique<QObject>();
+        int first_calls = 0;
+        int destroyed_calls = 0;
+        presentation.subscribe(&first, [&](UnitPresentationContext::Generation) {
+            ++first_calls;
+            second.reset();
+        });
+        presentation.subscribe(second.get(), [&](UnitPresentationContext::Generation) {
+            ++destroyed_calls;
+        });
+        CHECK(presentation.subscriberCount() == persistent_listeners + 2);
+        CHECK(presentation.update(QJsonObject{{QStringLiteral("pressure"), QStringLiteral("psi")}}));
+        CHECK(first_calls == 1);
+        CHECK(destroyed_calls == 0);
+        CHECK(presentation.subscriberCount() == persistent_listeners + 1);
+    }
+    CHECK(presentation.subscriberCount() == persistent_listeners);
+
+    // A listener registered inside a notification joins only the next
+    // notification, never the snapshot already being traversed.
+    {
+        QObject registering_owner;
+        QObject new_owner;
+        bool registered = false;
+        int new_owner_calls = 0;
+        presentation.subscribe(&registering_owner, [&](UnitPresentationContext::Generation) {
+            if (!registered) {
+                registered = true;
+                presentation.subscribe(&new_owner,
+                    [&](UnitPresentationContext::Generation) { ++new_owner_calls; });
+            }
+        });
+        CHECK(presentation.update(QJsonObject{{QStringLiteral("pressure"), QStringLiteral("bar")}}));
+        CHECK(new_owner_calls == 0);
+        CHECK(presentation.update(QJsonObject{{QStringLiteral("pressure"), QStringLiteral("psi")}}));
+        CHECK(new_owner_calls == 1);
+    }
+    CHECK(presentation.subscriberCount() == persistent_listeners);
+
+    // A short-lived context must not leave connections to an owner that
+    // outlives it; QObject receiver destruction disconnects them.
+    QObject long_lived_owner;
+    {
+        UnitPresentationContext short_lived_context;
+        short_lived_context.subscribe(&long_lived_owner,
+            [](UnitPresentationContext::Generation) {});
+        CHECK(short_lived_context.subscriberCount() == 1);
+    }
+
+    // Metadata notifications need the same lifecycle guarantees as numerical
+    // presentation notifications, including source suppression.
+    UnitProfileNotifications &notifications = UnitProfileNotifications::instance();
+    const qsizetype metadata_baseline = notifications.subscriberCount();
+    {
+        QObject source;
+        int calls = 0;
+        notifications.subscribe(&source, [&] { ++calls; });
+        CHECK(notifications.subscriberCount() == metadata_baseline + 1);
+        notifications.publish(&source);
+        CHECK(calls == 0);
+        notifications.publish(nullptr);
+        CHECK(calls == 1);
+    }
+    CHECK(notifications.subscriberCount() == metadata_baseline);
+    for (int i = 0; i < 500; ++i) {
+        std::weak_ptr<int> captured;
+        {
+            QObject temporary;
+            const std::shared_ptr<int> payload = std::make_shared<int>(i);
+            captured = payload;
+            notifications.subscribe(&temporary, [payload] {});
+            CHECK(notifications.subscriberCount() == metadata_baseline + 1);
+        }
+        CHECK(notifications.subscriberCount() == metadata_baseline);
+        CHECK(captured.expired());
+    }
+    {
+        QObject first;
+        std::unique_ptr<QObject> second = std::make_unique<QObject>();
+        int destroyed_calls = 0;
+        notifications.subscribe(&first, [&] { second.reset(); });
+        notifications.subscribe(second.get(), [&] { ++destroyed_calls; });
+        notifications.publish(nullptr);
+        CHECK(destroyed_calls == 0);
+        CHECK(notifications.subscriberCount() == metadata_baseline + 1);
+    }
+    CHECK(notifications.subscriberCount() == metadata_baseline);
     return 0;
 }

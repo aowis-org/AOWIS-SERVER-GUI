@@ -68,6 +68,8 @@
         layer: null,
         tilePane: null,
         attribution: null,
+        scaleChoices: [],
+        scaleChoicesJson: null,
         scaleControl: null,
         scaleLabel: null,
         scaleBar: null,
@@ -354,25 +356,29 @@
             / worldSize(zoom);
     }
 
-    function roundedScaleDistance(maximumDistanceMeters) {
-        if (!Number.isFinite(maximumDistanceMeters) || maximumDistanceMeters <= 0)
-            return 0;
-
-        const exponent = Math.floor(Math.log10(maximumDistanceMeters));
-        const magnitude = Math.pow(10, exponent);
-        const normalized = maximumDistanceMeters / magnitude;
-        let factor = 1;
-        if (normalized >= 5)
-            factor = 5;
-        else if (normalized >= 2)
-            factor = 2;
-        return factor * magnitude;
+    // Choices contain canonical metres and localized labels supplied by C++.
+    // No unit definitions or physical conversion constants belong in this layer.
+    function setScaleChoices(ownerId, choicesJson) {
+        if (state.activeOwner !== (ownerId | 0) || choicesJson === state.scaleChoicesJson)
+            return;
+        const choices = JSON.parse(choicesJson);
+        if (!Array.isArray(choices) || choices.some(choice =>
+            !Number.isFinite(choice.meters) || choice.meters <= 0 ||
+            typeof choice.label !== "string"))
+            throw new TypeError("Invalid AOWIS scale choices");
+        state.scaleChoices = choices.slice().sort((a, b) => a.meters - b.meters);
+        state.scaleChoicesJson = choicesJson;
+        updateScaleControl();
     }
 
-    function formattedScaleDistance(distanceMeters) {
-        if (distanceMeters >= 1000)
-            return `${distanceMeters / 1000} km`;
-        return `${distanceMeters} m`;
+    function scaleChoice(maximumMeters) {
+        let selected = null;
+        for (const choice of state.scaleChoices) {
+            if (choice.meters > maximumMeters)
+                break;
+            selected = choice;
+        }
+        return selected;
     }
 
     function updateScaleControl() {
@@ -387,14 +393,14 @@
         const maximumWidth = Math.max(60, Math.min(
             SCALE_MAXIMUM_WIDTH, Math.floor(state.width * 0.25)));
         const resolution = metersPerPixel(state.latitude, state.zoom);
-        const distance = roundedScaleDistance(resolution * maximumWidth);
-        if (!(distance > 0) || !(resolution > 0)) {
+        const choice = scaleChoice(resolution * maximumWidth);
+        if (!choice || !(resolution > 0)) {
             state.scaleControl.style.display = "none";
             return;
         }
 
-        const width = snapToPhysicalPixel(distance / resolution);
-        state.scaleLabel.textContent = formattedScaleDistance(distance);
+        const width = snapToPhysicalPixel(choice.meters / resolution);
+        state.scaleLabel.textContent = choice.label;
         state.scaleBar.style.width = `${width}px`;
         state.scaleControl.style.display = "flex";
     }
@@ -1056,6 +1062,7 @@
     window.aowisBrowserMap = {
         setGeometry: setGeometry,
         setView: setView,
+        setScaleChoices: setScaleChoices,
         mousePanBegin: mousePanBegin,
         mousePanMove: mousePanMove,
         mousePanRelease: mousePanRelease,

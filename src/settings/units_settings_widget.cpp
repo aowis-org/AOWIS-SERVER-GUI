@@ -60,7 +60,7 @@ UnitsSettingsWidget::UnitsSettingsWidget(QWidget *parent) : QWidget(parent)
     QFont font = title->font(); font.setPointSize(font.pointSize() + 2); font.setBold(true);
     title->setFont(font);
     outer->addWidget(title);
-    QLabel *info = new QLabel(QStringLiteral("Display-unit preferences only. Canonical model values are never changed. The toolbar unit selector and existing editors are not connected to these profiles yet."), this);
+    QLabel *info = new QLabel(QStringLiteral("Display-unit preferences only. Changes update unit-aware views and editors; canonical Model values remain unchanged."), this);
     info->setWordWrap(true);
     outer->addWidget(info);
     QHBoxLayout *controls = new QHBoxLayout;

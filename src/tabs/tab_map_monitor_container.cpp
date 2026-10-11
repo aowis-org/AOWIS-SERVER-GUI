@@ -9,6 +9,9 @@
 #endif
 
 #include "config/gui_configuration.h"
+#include "config/unit_aware_view.h"
+#include "config/unit_profile_manager.h"
+#include "config/unit_table_presentation.h"
 #include "config/shortcut_registry.h"
 #include "map/data/map_terrain_repository.h"
 #ifndef Q_OS_WASM
@@ -2109,7 +2112,41 @@ MapMonitorMenuWidget::MapMonitorMenuWidget(MapWidget *map, QWidget *parent)
     addGroupNodeVisuals();
     addGroupLinkVisuals();
     addGroupHeatmapVisuals();
-    
+
+    // The legend already uses the active unit profile; keep the symbology
+    // choices consistent without touching canonical symbology values.
+    new UnitAwareView(this, UnitProfileManager::instance().presentation(), [this] {
+        const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
+        const auto label = [&context](const QString &name, std::string_view quantity) {
+            const QString unit = UnitTablePresentation::unitSymbol(
+                UnitTablePresentation::selectedUnit(context, quantity));
+            return QStringLiteral("%1 [%2]").arg(name, unit);
+        };
+        const auto update_group = [&label](QButtonGroup *group,
+                                           int water_age, int chlorine,
+                                           int river_water, int lake_water) {
+            if (group == nullptr) return;
+            const auto set_label = [group, &label](int id, const QString &name,
+                                                   std::string_view quantity) {
+                QAbstractButton *button = group->button(id);
+                if (button != nullptr) button->setText(label(name, quantity));
+            };
+            set_label(water_age, QStringLiteral("Water Age"), "water_age");
+            set_label(chlorine, QStringLiteral("Cl₂"), "chemical_mass_concentration");
+            set_label(river_water, QStringLiteral("River Water"), "source_trace_percentage");
+            set_label(lake_water, QStringLiteral("Lake Water"), "source_trace_percentage");
+        };
+        update_group(this->node_visual_group,
+                     static_cast<int>(VisualNode::WaterAge), static_cast<int>(VisualNode::Chlorine),
+                     static_cast<int>(VisualNode::RiverWater), static_cast<int>(VisualNode::LakeWater));
+        update_group(this->link_visual_group,
+                     static_cast<int>(VisualLink::WaterAge), static_cast<int>(VisualLink::Chlorine),
+                     static_cast<int>(VisualLink::RiverWater), static_cast<int>(VisualLink::LakeWater));
+        update_group(this->heatmap_visual_group,
+                     static_cast<int>(VisualHeatmap::WaterAge), static_cast<int>(VisualHeatmap::Chlorine),
+                     static_cast<int>(VisualHeatmap::RiverWater), static_cast<int>(VisualHeatmap::LakeWater));
+    });
+
     this->layout->addStretch();
 }
 
@@ -2402,7 +2439,7 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
     QRadioButton *radio_node_leakage = new QRadioButton("Leakage");
     QRadioButton *radio_node_head = new QRadioButton("Head");
     QRadioButton *radio_node_pressure = new QRadioButton("Pressure");
-    QRadioButton *radio_node_water_age = new QRadioButton("Water Age [h]");
+    QRadioButton *radio_node_water_age = new QRadioButton("Water Age");
     
     QLabel *label_multispecies = new QLabel(
         "EPANET Network 3 has<br>"
@@ -2411,9 +2448,9 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
         "Modeled variables are:"
     );
     
-    QRadioButton *radio_node_chlorine = new QRadioButton("Cl₂ [mg/L]");
-    QRadioButton *radio_node_river = new QRadioButton("River Water [%]");
-    QRadioButton *radio_node_lake = new QRadioButton("Lake Water [%]");
+    QRadioButton *radio_node_chlorine = new QRadioButton("Cl₂");
+    QRadioButton *radio_node_river = new QRadioButton("River Water");
+    QRadioButton *radio_node_lake = new QRadioButton("Lake Water");
 
     this->node_visual_group = new QButtonGroup(this);
     this->node_visual_group->addButton(radio_node_none, static_cast<int>(VisualNode::None));
@@ -2494,10 +2531,10 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     QRadioButton *radio_link_velocity = new QRadioButton("Velocity");
     QRadioButton *radio_link_headloss = new QRadioButton("Head Loss");
     QRadioButton *radio_link_leakage = new QRadioButton("Leakage");
-    QRadioButton *radio_link_water_age = new QRadioButton("Water Age [h]");
-    QRadioButton *radio_link_chlorine = new QRadioButton("Cl₂ [mg/L]");
-    QRadioButton *radio_link_river = new QRadioButton("River Water [%]");
-    QRadioButton *radio_link_lake = new QRadioButton("Lake Water [%]");
+    QRadioButton *radio_link_water_age = new QRadioButton("Water Age");
+    QRadioButton *radio_link_chlorine = new QRadioButton("Cl₂");
+    QRadioButton *radio_link_river = new QRadioButton("River Water");
+    QRadioButton *radio_link_lake = new QRadioButton("Lake Water");
 
     this->link_visual_group = new QButtonGroup(this);
     this->link_visual_group->addButton(radio_link_none, static_cast<int>(VisualLink::None));
@@ -2568,10 +2605,10 @@ void MapMonitorMenuWidget::addGroupHeatmapVisuals()
     QRadioButton *radio_leakage = new QRadioButton("Leakage");
     QRadioButton *radio_head = new QRadioButton("Head");
     QRadioButton *radio_pressure = new QRadioButton("Pressure");
-    QRadioButton *radio_water_age = new QRadioButton("Water Age [h]");
-    QRadioButton *radio_chlorine = new QRadioButton("Cl₂ [mg/L]");
-    QRadioButton *radio_river = new QRadioButton("River Water [%]");
-    QRadioButton *radio_lake = new QRadioButton("Lake Water [%]");
+    QRadioButton *radio_water_age = new QRadioButton("Water Age");
+    QRadioButton *radio_chlorine = new QRadioButton("Cl₂");
+    QRadioButton *radio_river = new QRadioButton("River Water");
+    QRadioButton *radio_lake = new QRadioButton("Lake Water");
 
     this->heatmap_visual_group = new QButtonGroup(this);
     this->heatmap_visual_group->addButton(radio_none, static_cast<int>(VisualHeatmap::None));

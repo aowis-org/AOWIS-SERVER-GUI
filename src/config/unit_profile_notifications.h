@@ -2,11 +2,12 @@
 
 #include <QObject>
 #include <QPointer>
-#include <QVector>
+#include <QMap>
 #include <functional>
+#include <utility>
 
 // GUI-only notification: profile data and the active selection remain in QSettings.
-class UnitProfileNotifications
+class UnitProfileNotifications : public QObject
 {
 public:
     static UnitProfileNotifications &instance()
@@ -15,22 +16,27 @@ public:
         return notifications;
     }
 
+    [[nodiscard]] qsizetype subscriberCount() const { return this->listeners.size(); }
+
     void subscribe(QObject *owner, std::function<void()> refresh)
     {
-        this->listeners.append({owner, std::move(refresh)});
+        if (!owner || owner == this || !refresh) return;
+        const quint64 id = ++this->next_subscription_id;
+        this->listeners.insert(id, Listener{owner, std::move(refresh)});
+        QObject::connect(owner, &QObject::destroyed, this, [this, id] {
+            this->listeners.remove(id);
+        });
     }
 
     void publish(QObject *source)
     {
-        // Use a snapshot because listeners may be changed during callbacks.
-        const QVector<Listener> snapshot = this->listeners;
-        for (const Listener &listener : snapshot) {
+        // Snapshot iteration stays valid if callbacks destroy or add owners.
+        const QMap<quint64, Listener> snapshot = this->listeners;
+        for (QMap<quint64, Listener>::const_iterator it = snapshot.cbegin();
+             it != snapshot.cend(); ++it) {
+            const Listener &listener = it.value();
             if (listener.owner && listener.owner != source)
                 listener.refresh();
-        }
-        for (qsizetype i = this->listeners.size(); i > 0; --i) {
-            if (!this->listeners.at(i - 1).owner)
-                this->listeners.removeAt(i - 1);
         }
     }
 
@@ -39,5 +45,6 @@ private:
         QPointer<QObject> owner;
         std::function<void()> refresh;
     };
-    QVector<Listener> listeners;
+    quint64 next_subscription_id = 0;
+    QMap<quint64, Listener> listeners;
 };

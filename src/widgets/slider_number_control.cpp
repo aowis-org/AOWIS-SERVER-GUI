@@ -1,103 +1,152 @@
 #include "widgets/slider_number_control.h"
 
-#include <QDoubleSpinBox>
 #include <QHBoxLayout>
 #include <QSignalBlocker>
-#include <QSlider>
 
+#include <algorithm>
 #include <cmath>
 
 namespace
 {
-// QSlider only moves in integer steps; this many slider positions span
-// [minimum, maximum] regardless of the spin box's own decimals or range, so
-// dragging stays reasonably fine-grained for both a 0-1 fraction and a
-// 100-5000 distance.
-constexpr int SliderSteps = 1000;
+std::optional<double> identity(double value, const std::string &)
+{
+    return value;
+}
 }
 
 SliderNumberControl::SliderNumberControl(QWidget *parent)
-    : QWidget(parent)
+    : QWidget(parent),
+      spin_binding([this] { return std::optional<double>(this->precise_value); },
+                   [this](double value) { return commitValue(value, false); }, identity, identity),
+      slider_binding([this] { return std::optional<double>(this->precise_value); },
+                     [this](double value) { return commitValue(value, true); }, identity, identity)
 {
+    this->presentation.maximum = 1.0;
+    this->presentation.step = 1.0;
     QHBoxLayout *layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(8);
 
-    this->slider = new QSlider(Qt::Horizontal, this);
-    this->slider->setRange(0, SliderSteps);
+    this->slider = new NumericSlider(this->slider_binding, this);
     layout->addWidget(this->slider, 1);
-
-    this->spin_box = new QDoubleSpinBox(this);
-    this->spin_box->setKeyboardTracking(false);
+    this->spin_box = new NumericDoubleSpinBox(this->spin_binding, this);
     this->spin_box->setMinimumWidth(96);
     layout->addWidget(this->spin_box);
+    refreshControls();
+}
 
-    connect(this->slider, &QSlider::valueChanged, this, [this](int position)
-    {
-        const double new_value = valueFromSliderPosition(position);
-        if (!qFuzzyCompare(new_value + 1.0, this->spin_box->value() + 1.0))
-        {
-            const QSignalBlocker blocker(this->spin_box);
-            this->spin_box->setValue(new_value);
-        }
-        emit valueChanged(this->spin_box->value());
-    });
-
-    connect(this->spin_box, &QDoubleSpinBox::valueChanged, this, [this](double new_value)
-    {
-        updateSliderFromValue(new_value);
-        emit valueChanged(new_value);
-    });
+SliderNumberControl::~SliderNumberControl()
+{
+    // Adapters hold references to bindings, so destroy them before the members.
+    delete this->slider;
+    delete this->spin_box;
 }
 
 void SliderNumberControl::setRange(double minimum, double maximum)
 {
-    this->minimum_value = minimum;
-    this->maximum_value = qMax(minimum, maximum);
-
-    const QSignalBlocker spin_blocker(this->spin_box);
-    this->spin_box->setRange(this->minimum_value, this->maximum_value);
-    updateSliderFromValue(this->spin_box->value());
+    if (!std::isfinite(minimum) || !std::isfinite(maximum))
+        return;
+    maximum = std::max(minimum, maximum);
+    if (!std::isfinite(maximum - minimum))
+        return;
+    this->presentation.minimum = minimum;
+    this->presentation.maximum = maximum;
+    refreshControls();
 }
 
 void SliderNumberControl::setDecimals(int decimals)
 {
-    const QSignalBlocker blocker(this->spin_box);
-    this->spin_box->setDecimals(decimals);
+    this->presentation.decimals = std::clamp(decimals, 0, 323);
+    refreshControls();
 }
 
 void SliderNumberControl::setSingleStep(double step)
 {
-    this->spin_box->setSingleStep(step);
+    if (!std::isfinite(step) || step <= 0.0)
+        return;
+    this->presentation.step = step;
+    refreshControls();
+}
+
+void SliderNumberControl::setSliderStep(double step)
+{
+    if (std::isfinite(step) && step >= 0.0)
+    {
+        this->slider_step = step;
+        refreshControls();
+    }
 }
 
 void SliderNumberControl::setSuffix(const QString &suffix)
 {
-    this->spin_box->setSuffix(suffix);
+    this->presentation.suffix = suffix;
+    refreshControls();
 }
 
 void SliderNumberControl::setValue(double value)
 {
-    const QSignalBlocker spin_blocker(this->spin_box);
-    this->spin_box->setValue(value);
-    updateSliderFromValue(this->spin_box->value());
+    if (!std::isfinite(value))
+        return;
+    this->precise_value = value;
+    // An explicit owner update supersedes a pending draft. Display-only setters
+    // above instead preserve the draft through the shared adapter lifecycle.
+    this->spin_box->cancelEdit();
+    this->slider_binding.cancel();
+    refreshControls();
 }
 
 double SliderNumberControl::value() const
 {
-    return this->spin_box->value();
+    return this->precise_value;
 }
 
-void SliderNumberControl::updateSliderFromValue(double value)
+void SliderNumberControl::refreshControls()
 {
-    const double span = qMax(1e-9, this->maximum_value - this->minimum_value);
-    const double fraction = qBound(0.0, (value - this->minimum_value) / span, 1.0);
-    const QSignalBlocker blocker(this->slider);
-    this->slider->setValue(int(std::lround(fraction * double(SliderSteps))));
+    this->spin_box->refresh(this->presentation);
+    if (this->presentation.minimum == this->presentation.maximum)
+    {
+        const QSignalBlocker blocker(this->slider);
+        this->slider->setRange(0, 0);
+        this->slider->setEnabled(false);
+    }
+    else
+    {
+        this->slider->refresh(this->presentation);
+        // Keyboard/page actions must cross at least one explicit edit quantum;
+        // otherwise snapping back to the stored value could trap arrow keys.
+        const double span = this->presentation.maximum - this->presentation.minimum;
+        const double positions = std::ceil((this->slider_step / span) * 1000.0);
+        const int step = static_cast<int>(std::clamp(positions, 1.0, 1000.0));
+        this->slider->setSingleStep(step);
+        this->slider->setPageStep(std::max(10, step));
+    }
 }
 
-double SliderNumberControl::valueFromSliderPosition(int position) const
+bool SliderNumberControl::commitValue(double value, bool from_slider)
 {
-    const double fraction = double(position) / double(SliderSteps);
-    return this->minimum_value + fraction * (this->maximum_value - this->minimum_value);
+    if (!std::isfinite(value) || value < this->presentation.minimum
+        || value > this->presentation.maximum)
+        return false;
+    if (from_slider && this->slider_step > 0.0)
+    {
+        const double steps = (value - this->presentation.minimum) / this->slider_step;
+        if (!std::isfinite(steps))
+            return false;
+        value = std::clamp(this->presentation.minimum + std::round(steps) * this->slider_step,
+                           this->presentation.minimum, this->presentation.maximum);
+    }
+    if (value == this->precise_value)
+        return true;
+    this->precise_value = value;
+    // Refresh only the peer here. The initiating adapter completes its own
+    // transaction and refresh after the writer returns.
+    if (from_slider)
+        this->spin_box->cancelEdit();
+    else
+    {
+        this->slider_binding.cancel();
+        refreshControls();
+    }
+    emit valueChanged(this->precise_value);
+    return true;
 }
