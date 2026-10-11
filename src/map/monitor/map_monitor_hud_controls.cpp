@@ -3,6 +3,9 @@
 #include "map/core/map_model.h"
 #include "map/render/map_render_surface.h"
 #include "map/core/map_scale_renderer.h"
+#include "map/monitor/map_hud_length_units.h"
+#include "config/unit_aware_view.h"
+#include "config/unit_profile_manager.h"
 #include "map/data/map_tile_repository.h"
 #include "map/data/map_terrain_repository.h"
 
@@ -134,19 +137,6 @@ void setCameraPitchDeg(MapModel *map_model, double pitch_deg)
 {
     if (map_model != nullptr)
         map_model->setViewGlobePitchDeg(pitch_deg);
-}
-
-QString cameraDistanceText(double distance_m)
-{
-    if (distance_m >= 10000.0)
-        return QStringLiteral("%1 km").arg(QString::number(distance_m / 1000.0, 'f', 1));
-
-    return QStringLiteral("%1 m").arg(qRound(distance_m));
-}
-
-QString cameraDistanceMaximumText(double distance_m)
-{
-    return cameraDistanceText(distance_m);
 }
 
 double normalizedHeadingDegrees(double yaw_deg)
@@ -996,6 +986,9 @@ MapMonitorScaleHudWidget::MapMonitorScaleHudWidget(
     setFixedSize(ScaleHudWidthPx, ScaleHudHeightPx);
     setToolTip(QStringLiteral("Horizontal map scale."));
 
+    new UnitAwareView(this, UnitProfileManager::instance().presentation(),
+        [this] { update(); });
+
     connect(this->map_model, &MapModel::viewGlobeCameraChanged, this, [this]
     {
         update();
@@ -1064,9 +1057,9 @@ void MapMonitorScaleHudWidget::paintEvent(QPaintEvent *event)
             / double(viewport_height);
         maximum_distance_m = meters_per_pixel * maximum_bar_width;
     }
-    const double scale_distance_m =
-        MapScaleRenderer::Detail::roundedDistanceMeters(maximum_distance_m);
-    if (!(maximum_distance_m > 0.0) || !(scale_distance_m > 0.0)
+    const MapScaleDistance::Scale scale = MapScaleDistance::forMaximumDistance(
+        maximum_distance_m, UnitProfileManager::instance().presentation());
+    if (!(maximum_distance_m > 0.0) || !(scale.distance_m > 0.0)
         || !std::isfinite(maximum_distance_m))
     {
         return;
@@ -1074,9 +1067,9 @@ void MapMonitorScaleHudWidget::paintEvent(QPaintEvent *event)
 
     const int scale_width = qBound(
         1,
-        qRound(maximum_bar_width * scale_distance_m / maximum_distance_m),
+        qRound(maximum_bar_width * scale.distance_m / maximum_distance_m),
         maximum_bar_width);
-    const QString label = MapScaleRenderer::Detail::distanceLabel(scale_distance_m);
+    const QString label = scale.label;
     const int scale_left = (width() - scale_width) / 2;
     const int scale_right = scale_left + scale_width;
     const int scale_bottom = height() - ScaleHudPaddingPx;
@@ -1166,9 +1159,14 @@ MapMonitorCameraDistanceHudWidget::MapMonitorCameraDistanceHudWidget(
             const QSignalBlocker blocker(this->distance_slider);
             this->distance_slider->setValue(slider_value);
         }
-        this->distance_maximum_label->setText(cameraDistanceMaximumText(maximum_distance_m));
-        this->distance_minimum_label->setText(cameraDistanceText(minimum_distance_m));
-        this->distance_value_label->setText(cameraDistanceText(distance_m));
+        const UnitPresentationContext &units =
+            UnitProfileManager::instance().presentation();
+        this->distance_maximum_label->setText(
+            MapHudLengthUnits::cameraDistance(maximum_distance_m, units));
+        this->distance_minimum_label->setText(
+            MapHudLengthUnits::cameraDistance(minimum_distance_m, units));
+        this->distance_value_label->setText(
+            MapHudLengthUnits::cameraDistance(distance_m, units));
 
         this->distance_slider->setToolTip(QStringLiteral(
             "Distance to focus\n"
@@ -1211,6 +1209,10 @@ MapMonitorCameraDistanceHudWidget::MapMonitorCameraDistanceHudWidget(
         sync_distance();
     });
 
+    // Unit changes update visible readouts immediately, hidden HUDs on show.
+    // sync_distance blocks slider signals and never changes camera state.
+    new UnitAwareView(this, UnitProfileManager::instance().presentation(),
+        [sync_distance] { sync_distance(); });
     sync_distance();
 }
 
@@ -1342,11 +1344,9 @@ MapMonitorNetworkGroundOffsetHudWidget::MapMonitorNetworkGroundOffsetHudWidget(
     layout->setContentsMargins(2, 3, 2, 3);
     layout->setSpacing(1);
 
-    QLabel *maximum_label = new QLabel(
-        QStringLiteral("%1 m").arg(
-            MapModel::MaxView3dNetworkGroundOffsetM, 0, 'f', 0), this);
+    QLabel *maximum_label = new QLabel(this);
     maximum_label->setAlignment(Qt::AlignHCenter);
-    QLabel *minimum_label = new QLabel(QStringLiteral("0 m"), this);
+    QLabel *minimum_label = new QLabel(this);
     minimum_label->setAlignment(Qt::AlignHCenter);
     this->offset_value_label->setAlignment(Qt::AlignHCenter);
 
@@ -1356,14 +1356,28 @@ MapMonitorNetworkGroundOffsetHudWidget::MapMonitorNetworkGroundOffsetHudWidget(
     this->offset_slider->setFixedHeight(CameraControlSliderHeightPx);
     this->offset_slider->setValue(qRound(
         this->map_model->view3dNetworkGroundOffsetM() * 10.0));
-    this->offset_slider->setToolTip(QStringLiteral(
-        "Water network height above its real model elevation\n"
-        "0 m = true elevation\n"
-        "Up to %1 m render-only lift to avoid terrain z-fighting\n"
-        "Right-click: animate back to 0 m")
-        .arg(MapModel::MaxView3dNetworkGroundOffsetM, 0, 'f', 0));
-    this->offset_value_label->setText(QStringLiteral("%1 m").arg(
-        this->map_model->view3dNetworkGroundOffsetM(), 0, 'f', 1));
+
+    const std::function<void(double)> update_offset_labels =
+        [this, maximum_label, minimum_label](double offset_m)
+    {
+        const UnitPresentationContext &units =
+            UnitProfileManager::instance().presentation();
+        const QString max_value = MapHudLengthUnits::networkOffset(
+            MapModel::MaxView3dNetworkGroundOffsetM, units);
+        const QString zero_value = MapHudLengthUnits::networkOffset(
+            MapModel::MinView3dNetworkGroundOffsetM, units);
+        maximum_label->setText(max_value);
+        minimum_label->setText(zero_value);
+        this->offset_value_label->setText(
+            MapHudLengthUnits::networkOffset(offset_m, units));
+        this->offset_slider->setToolTip(QStringLiteral(
+            "Water network height above its real model elevation\n"
+            "%1 = true elevation\n"
+            "Up to %2 render-only lift to avoid terrain z-fighting\n"
+            "Right-click: animate back to %1")
+            .arg(zero_value, max_value));
+    };
+    update_offset_labels(this->map_model->view3dNetworkGroundOffsetM());
 
     layout->addWidget(maximum_label);
     layout->addWidget(this->offset_slider, 1, Qt::AlignHCenter);
@@ -1396,7 +1410,7 @@ MapMonitorNetworkGroundOffsetHudWidget::MapMonitorNetworkGroundOffsetHudWidget(
         this->map_model->setView3dNetworkGroundOffsetM(double(value) / 10.0);
     });
     connect(this->map_model, &MapModel::view3dNetworkGroundOffsetChanged, this,
-            [this](double offset_m)
+            [this, update_offset_labels](double offset_m)
     {
         const int slider_value = qRound(offset_m * 10.0);
         if (this->offset_slider->value() != slider_value)
@@ -1404,8 +1418,13 @@ MapMonitorNetworkGroundOffsetHudWidget::MapMonitorNetworkGroundOffsetHudWidget(
             const QSignalBlocker blocker(this->offset_slider);
             this->offset_slider->setValue(slider_value);
         }
-        this->offset_value_label->setText(
-            QStringLiteral("%1 m").arg(offset_m, 0, 'f', 1));
+        update_offset_labels(offset_m);
+    });
+
+    new UnitAwareView(this, UnitProfileManager::instance().presentation(),
+        [this, update_offset_labels]
+    {
+        update_offset_labels(this->map_model->view3dNetworkGroundOffsetM());
     });
 }
 
@@ -1446,7 +1465,7 @@ MapMonitorVerticalExaggerationHudWidget::MapMonitorVerticalExaggerationHudWidget
         "Vertical exaggeration\n"
         "Scales terrain relief and water-network elevation differences together\n"
         "1.0× = true vertical scale\n"
-        "The separate network-height control remains a render-only lift in metres\n"
+        "The separate network-height control remains a render-only lift\n"
         "Right-click: animate back to 1.0×"));
     this->exaggeration_value_label->setText(QStringLiteral("%1×").arg(
         this->map_model->view3dVerticalExaggeration(), 0, 'f', 1));

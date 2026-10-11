@@ -1,6 +1,9 @@
 #include "simulation/simulation_statistics_dialog.h"
 
 #include "network/hydraulic_data.h"
+#include "config/unit_aware_view.h"
+#include "config/unit_profile_manager.h"
+#include "simulation/simulation_statistics_unit_presentation.h"
 #include "simulation/simulation_diagnostics_widget.h"
 
 #include <cmath>
@@ -10,6 +13,8 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QSignalBlocker>
+#include <QStyledItemDelegate>
+#include <QVariant>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -132,13 +137,14 @@ QTreeWidgetItem *addSummaryGroup(QTreeWidget *tree, const QString &title)
     return group;
 }
 
-void addSummaryValue(QTreeWidgetItem *group, const QString &name, const QString &value, const QString &time = QString())
+QTreeWidgetItem *addSummaryValue(QTreeWidgetItem *group, const QString &name, const QString &value, const QString &time = QString())
 {
     QTreeWidgetItem *item = new QTreeWidgetItem(group);
     item->setText(0, name);
     item->setText(1, value);
     item->setText(2, time);
     item->setTextAlignment(1, Qt::AlignRight | Qt::AlignVCenter);
+    return item;
 }
 
 QTableWidgetItem *numericTableItem(const QString &text)
@@ -147,6 +153,33 @@ QTableWidgetItem *numericTableItem(const QString &text)
     item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
     return item;
 }
+
+// Keep the source double in the item. Only rows painted by Qt request the
+// selected-unit representation; the Model and table do not store rounded text.
+QTableWidgetItem *measurementTableItem(double canonical)
+{
+    QTableWidgetItem *item = new QTableWidgetItem();
+    item->setData(Qt::DisplayRole, canonical);
+    item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    return item;
+}
+
+class StatisticMeasurementDelegate final : public QStyledItemDelegate
+{
+public:
+    StatisticMeasurementDelegate(bool head_error, QWidget *parent)
+        : QStyledItemDelegate(parent), head_error_(head_error) {}
+
+    QString displayText(const QVariant &value, const QLocale &locale) const override
+    {
+        Q_UNUSED(locale);
+        return SimulationStatisticsUnits::format(
+            UnitProfileManager::instance().presentation(), this->head_error_, value.toDouble());
+    }
+
+private:
+    bool head_error_ = false;
+};
 }
 
 SimulationStatisticsDialog::SimulationStatisticsDialog(HydraulicData *hydraulic_data, QWidget *parent)
@@ -191,6 +224,10 @@ SimulationStatisticsDialog::SimulationStatisticsDialog(HydraulicData *hydraulic_
     this->table_timeline->horizontalHeader()->setMinimumHeight(
         this->table_timeline->horizontalHeader()->fontMetrics().height() * 2 + 10);
     this->table_timeline->horizontalHeader()->setStretchLastSection(true);
+    this->table_timeline->setItemDelegateForColumn(3,
+        new StatisticMeasurementDelegate(true, this->table_timeline));
+    this->table_timeline->setItemDelegateForColumn(4,
+        new StatisticMeasurementDelegate(false, this->table_timeline));
 
     const QFont fixed_font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     this->text_epanet_log->setFont(fixed_font);
@@ -219,6 +256,10 @@ SimulationStatisticsDialog::SimulationStatisticsDialog(HydraulicData *hydraulic_
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->addWidget(this->tabs);
+
+    UnitPresentationContext &units = UnitProfileManager::instance().presentation();
+    new UnitAwareView(this->tree_summary, units, [this] { refreshSummaryUnits(); });
+    new UnitAwareView(this->table_timeline, units, [this] { refreshTimelineUnits(); });
 
     connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged, this, [this](bool)
     {
@@ -265,8 +306,32 @@ void SimulationStatisticsDialog::refresh()
     syncCurrentResultSelection(this->hydraulic_data->currentSimulationResultIndex());
 }
 
+void SimulationStatisticsDialog::refreshSummaryUnits()
+{
+    const UnitPresentationContext &units = UnitProfileManager::instance().presentation();
+    if (this->summary_head_error_item)
+        this->summary_head_error_item->setText(1, SimulationStatisticsUnits::formatWithUnit(
+            units, true, this->summary_head_error_item->data(1, Qt::UserRole).toDouble()));
+    if (this->summary_flow_change_item)
+        this->summary_flow_change_item->setText(1, SimulationStatisticsUnits::formatWithUnit(
+            units, false, this->summary_flow_change_item->data(1, Qt::UserRole).toDouble()));
+}
+
+void SimulationStatisticsDialog::refreshTimelineUnits()
+{
+    const UnitPresentationContext &units = UnitProfileManager::instance().presentation();
+    this->table_timeline->setHorizontalHeaderItem(3, new QTableWidgetItem(
+        tr("Max head\nerror [%1]").arg(SimulationStatisticsUnits::selectedUnit(units, true))));
+    this->table_timeline->setHorizontalHeaderItem(4, new QTableWidgetItem(
+        tr("Max flow\nchange [%1]").arg(SimulationStatisticsUnits::selectedUnit(units, false))));
+    // Delegates convert the existing canonical doubles at paint time.
+    this->table_timeline->viewport()->update();
+}
+
 void SimulationStatisticsDialog::refreshSummary()
 {
+    this->summary_head_error_item = nullptr;
+    this->summary_flow_change_item = nullptr;
     this->tree_summary->clear();
     const std::optional<HydraulicSimulationResultTimeline> &timeline_optional = this->hydraulic_data->simulationResultTimeline();
     if (!this->hydraulic_data->hasSimulationResults() || !timeline_optional.has_value())
@@ -299,12 +364,13 @@ void SimulationStatisticsDialog::refreshSummary()
     addSummaryValue(hydraulics_group, tr("Maximum relative error"),
                     formatDouble(aggregate.relative_error.value),
                     statisticTime(results, aggregate.relative_error.result_index));
-    addSummaryValue(hydraulics_group, tr("Maximum head error"),
-                    tr("%1 m").arg(formatDouble(aggregate.maximum_head_error_m.value)),
-                    statisticTime(results, aggregate.maximum_head_error_m.result_index));
-    addSummaryValue(hydraulics_group, tr("Maximum flow change"),
-                    tr("%1 m³/h").arg(formatDouble(aggregate.maximum_flow_change_m3_per_h.value)),
-                    statisticTime(results, aggregate.maximum_flow_change_m3_per_h.result_index));
+    this->summary_head_error_item = addSummaryValue(hydraulics_group, tr("Maximum head error"),
+                    QString(), statisticTime(results, aggregate.maximum_head_error_m.result_index));
+    this->summary_head_error_item->setData(1, Qt::UserRole, aggregate.maximum_head_error_m.value);
+    this->summary_flow_change_item = addSummaryValue(hydraulics_group, tr("Maximum flow change"),
+                    QString(), statisticTime(results, aggregate.maximum_flow_change_m3_per_h.result_index));
+    this->summary_flow_change_item->setData(1, Qt::UserRole, aggregate.maximum_flow_change_m3_per_h.value);
+    refreshSummaryUnits();
 
     QTreeWidgetItem *demand_group = addSummaryGroup(this->tree_summary, tr("Pressure-dependent demand"));
     addSummaryValue(demand_group, tr("Maximum deficient nodes"),
@@ -326,6 +392,7 @@ void SimulationStatisticsDialog::refreshSummary()
 void SimulationStatisticsDialog::refreshTimeline()
 {
     const QSignalBlocker blocker(this->table_timeline);
+    refreshTimelineUnits();
     this->table_timeline->setRowCount(0);
     const std::optional<HydraulicSimulationResultTimeline> &timeline_optional = this->hydraulic_data->simulationResultTimeline();
     if (!this->hydraulic_data->hasSimulationResults() || !timeline_optional.has_value())
@@ -340,8 +407,8 @@ void SimulationStatisticsDialog::refreshTimeline()
         this->table_timeline->setItem(result_index, 0, new QTableWidgetItem(formatElapsedTime(result.time_elapsed_s)));
         this->table_timeline->setItem(result_index, 1, numericTableItem(QString::number(statistics.hydraulic_iterations)));
         this->table_timeline->setItem(result_index, 2, numericTableItem(formatDouble(statistics.relative_error)));
-        this->table_timeline->setItem(result_index, 3, numericTableItem(formatDouble(statistics.maximum_head_error_m)));
-        this->table_timeline->setItem(result_index, 4, numericTableItem(formatDouble(statistics.maximum_flow_change_m3_per_h)));
+        this->table_timeline->setItem(result_index, 3, measurementTableItem(statistics.maximum_head_error_m));
+        this->table_timeline->setItem(result_index, 4, measurementTableItem(statistics.maximum_flow_change_m3_per_h));
         this->table_timeline->setItem(result_index, 5, numericTableItem(QString::number(statistics.deficient_nodes)));
         this->table_timeline->setItem(result_index, 6, numericTableItem(formatDouble(statistics.demand_reduction_percent)));
         this->table_timeline->setItem(result_index, 7, numericTableItem(formatDouble(statistics.leakage_loss_percent)));

@@ -9,6 +9,7 @@ class QTableWidget;
 class QTabWidget;
 class QTextBrowser;
 class QTreeWidget;
+class QTreeWidgetItem;
 class SimulationDiagnosticsWidget;
 
 class SimulationStatisticsDialog : public QDialog
@@ -28,10 +29,14 @@ private:
     QTableWidget *table_timeline = nullptr;
     QTabWidget *tabs = nullptr;
     QTextBrowser *text_epanet_log = nullptr;
+    QTreeWidgetItem *summary_head_error_item = nullptr;
+    QTreeWidgetItem *summary_flow_change_item = nullptr;
 
     void refresh();
     void refreshSummary();
     void refreshTimeline();
+    void refreshSummaryUnits();
+    void refreshTimelineUnits();
     void syncCurrentResultSelection(int result_index);
 };
 #endif // SIMULATION_STATISTICS_DIALOG_H

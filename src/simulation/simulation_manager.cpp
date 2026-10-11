@@ -1,6 +1,7 @@
 #include "simulation/simulation_manager.h"
 
 #include "simulation/simulation_statistics_dialog.h"
+#include "simulation/epanet_network_file_format.h"
 #include "import/epanet_js_project_importer.h"
 #include "import/epanet_js_unit_profile.h"
 #include "config/unit_profile_manager.h"
@@ -843,7 +844,7 @@ void SimulationManager::exportEpanetNetwork()
     QFileDialog dialog(main_window, tr("Export EPANET network"));
     dialog.setAcceptMode(QFileDialog::AcceptSave);
     dialog.setFileMode(QFileDialog::AnyFile);
-    dialog.setNameFilters(QStringList{tr("Water network projects (*.inp *.ejsdb)"), tr("All files (*)")});
+    dialog.setNameFilters(QStringList{tr("EPANET INP files (*.inp)")});
     dialog.setDefaultSuffix(QStringLiteral("inp"));
     dialog.selectFile(QStringLiteral("network.inp"));
 
@@ -855,6 +856,17 @@ void SimulationManager::exportEpanetNetwork()
         return;
 
     const QString file_path = selected_files.constFirst();
+    if (!EpanetNetworkFileFormat::acceptsInpExportPath(file_path))
+    {
+        showMessageBox(
+            main_window,
+            QMessageBox::Warning,
+            tr("Unsupported EPANET export format"),
+            tr("AOWIS currently exports EPANET .inp files only. "
+               "The .ejsdb format is supported for import, not export. "
+               "Choose a filename ending in .inp."));
+        return;
+    }
 #endif
 
     const NetworkHydraulic &network_hydraulic = this->hydraulic_data->networkHydraulic();

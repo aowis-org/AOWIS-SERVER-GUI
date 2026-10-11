@@ -1,7 +1,10 @@
 #include "network/hydraulic_entity_table_widget.h"
 
+#include <algorithm>
 #include <cmath>
+#include <initializer_list>
 #include <optional>
+#include <utility>
 
 #include <QAbstractItemView>
 #include <QAbstractSpinBox>
@@ -40,12 +43,16 @@
 
 #include "network/hydraulic_data.h"
 #include "network/network_symbology_values.h"
+#include "config/unit_table_presentation.h"
+#include "config/unit_profile_manager.h"
+#include "config/unit_aware_view.h"
 
 namespace
 {
 constexpr int SortRole = Qt::UserRole;
 constexpr int EntityUuidRole = Qt::UserRole + 1;
 constexpr int SimulationStatusRole = Qt::UserRole + 2;
+constexpr int ReactionOrderRole = Qt::UserRole + 3;
 
 enum class SimulationRowStatus
 {
@@ -78,18 +85,30 @@ struct TableColumn
     ColumnFilterKind filter_kind = ColumnFilterKind::None;
 };
 
+struct DemandDetail
+{
+    QString prefix;
+    double canonical_rate = 0.0;
+    QString suffix;
+};
+
 struct TableCell
 {
     QString display;
     QVariant sort_value;
     Qt::Alignment alignment = Qt::AlignLeft | Qt::AlignVCenter;
     QString tooltip;
+    int decimals = 6;
+    std::string_view quantity; // used for heterogeneous valve-setting columns
+    std::optional<UnitTablePresentation::ReactionKind> reaction_kind;
+    double reaction_order = 1.0;
 };
 
 struct TableRow
 {
     QUuid uuid;
     QList<TableCell> cells;
+    QList<DemandDetail> demand_details; // only populated for junction/demand-point rows
     bool simulation_warning = false;
     bool simulation_error = false;
     QString simulation_warning_tooltip;
@@ -98,18 +117,7 @@ struct TableRow
 
 QString formatNumber(double value, int decimals, const QString &unit = QString())
 {
-    if (!std::isfinite(value))
-        return QStringLiteral("—");
-
-    QString text = QString::number(value, 'f', decimals);
-    while (text.contains(QLatin1Char('.')) && text.endsWith(QLatin1Char('0')))
-        text.chop(1);
-    if (text.endsWith(QLatin1Char('.')))
-        text.chop(1);
-    if (text == QStringLiteral("-0"))
-        text = QStringLiteral("0");
-
-    return text + unit;
+    return UnitTablePresentation::formatNumber(value, decimals, unit);
 }
 
 TableCell emptyCell()
@@ -134,12 +142,20 @@ TableCell numberCell(double value, int decimals, const QString &unit = QString()
     {
         cell.display = formatNumber(value, decimals, unit);
         cell.sort_value = value;
+        cell.decimals = decimals;
     }
     else
     {
         cell.display = QStringLiteral("—");
     }
     cell.alignment = Qt::AlignRight | Qt::AlignVCenter;
+    return cell;
+}
+
+TableCell quantityCell(double value, int decimals, std::string_view quantity, const QString &canonical_suffix)
+{
+    TableCell cell = numberCell(value, decimals, canonical_suffix);
+    cell.quantity = quantity;
     return cell;
 }
 
@@ -150,6 +166,15 @@ TableCell optionalNumberCell(const std::optional<double> &value, int decimals,
         return emptyCell();
 
     return numberCell(value.value(), decimals, unit);
+}
+
+TableCell reactionCell(double coefficient, double order,
+                       UnitTablePresentation::ReactionKind kind)
+{
+    TableCell cell = numberCell(coefficient, 8);
+    cell.reaction_kind = kind;
+    cell.reaction_order = order;
+    return cell;
 }
 
 TableCell boolCell(bool value, const QString &true_text = QStringLiteral("Yes"),
@@ -630,13 +655,13 @@ TableCell valveSettingCell(const HydraulicLinkValve &valve)
     case HydraulicLinkValveType::PRV:
     case HydraulicLinkValveType::PSV:
     case HydraulicLinkValveType::PBV:
-        return numberCell(valve.setting_pressure_head_m, 3, QStringLiteral(" m"));
+        return quantityCell(valve.setting_pressure_head_m, 3, "pressure_head", QStringLiteral(" m"));
     case HydraulicLinkValveType::FCV:
-        return numberCell(valve.setting_flow_m3_per_h, 3, QStringLiteral(" m³/h"));
+        return quantityCell(valve.setting_flow_m3_per_h, 3, "volumetric_flow_rate", QStringLiteral(" m³/h"));
     case HydraulicLinkValveType::TCV:
         return numberCell(valve.setting_loss_coefficient, 6);
     case HydraulicLinkValveType::PCV:
-        return numberCell(valve.setting_position_percent, 2, QStringLiteral(" %"));
+        return quantityCell(valve.setting_position_percent, 2, "valve_position", QStringLiteral(" %"));
     case HydraulicLinkValveType::GPV:
         return emptyCell();
     }
@@ -651,13 +676,13 @@ TableCell valveResultSettingCell(const HydraulicSimulationResultLinkValve &valve
     case HydraulicLinkValveType::PRV:
     case HydraulicLinkValveType::PSV:
     case HydraulicLinkValveType::PBV:
-        return numberCell(valve.setting_pressure_head_m, 3, QStringLiteral(" m"));
+        return quantityCell(valve.setting_pressure_head_m, 3, "pressure_head", QStringLiteral(" m"));
     case HydraulicLinkValveType::FCV:
-        return numberCell(valve.setting_flow_m3_per_h, 3, QStringLiteral(" m³/h"));
+        return quantityCell(valve.setting_flow_m3_per_h, 3, "volumetric_flow_rate", QStringLiteral(" m³/h"));
     case HydraulicLinkValveType::TCV:
         return numberCell(valve.setting_loss_coefficient, 6);
     case HydraulicLinkValveType::PCV:
-        return numberCell(valve.setting_position_percent, 2, QStringLiteral(" %"));
+        return quantityCell(valve.setting_position_percent, 2, "valve_position", QStringLiteral(" %"));
     case HydraulicLinkValveType::GPV:
         return emptyCell();
     }
@@ -675,32 +700,44 @@ QString valveSettingCurveId(const NetworkHydraulic &network, const HydraulicLink
     return QString();
 }
 
-QString junctionDemandSummary(const NetworkHydraulic &network,
-                              const QList<HydraulicDemand> &demands)
+QList<DemandDetail> junctionDemandDetails(const NetworkHydraulic &network,
+                                         const QList<HydraulicDemand> &demands)
 {
-    QStringList parts;
+    QList<DemandDetail> details;
+    details.reserve(demands.size());
     for (const HydraulicDemand &demand : demands)
     {
-        QString part;
+        DemandDetail detail;
         if (!demand.category_name.isEmpty())
-            part += demand.category_name + QStringLiteral(": ");
-
-        part += formatNumber(demand.base_demand_m3_per_h, 3, QStringLiteral(" m³/h"));
-        part += QStringLiteral(", ") + patternModeText(demand.pattern_mode);
+            detail.prefix = demand.category_name + QStringLiteral(": ");
+        detail.canonical_rate = demand.base_demand_m3_per_h;
+        detail.suffix = QStringLiteral(", ") + patternModeText(demand.pattern_mode);
         if (demand.pattern_mode == HydraulicTimePatternMode::TimePattern)
         {
             const QString id = patternId(network, demand.pattern_uuid);
             if (!id.isEmpty())
-                part += QStringLiteral(" ") + id;
+                detail.suffix += QStringLiteral(" ") + id;
         }
-
-        part += QStringLiteral(", ") + demandSourceMethodText(demand.source_method);
+        detail.suffix += QStringLiteral(", ") + demandSourceMethodText(demand.source_method);
         if (!demand.note.isEmpty())
-            part += QStringLiteral(", ") + demand.note;
-
-        parts.append(part);
+            detail.suffix += QStringLiteral(", ") + demand.note;
+        details.append(std::move(detail));
     }
+    return details;
+}
 
+QString demandDetailsText(const QList<DemandDetail> &details,
+                          const UnitPresentationContext *context = nullptr,
+                          std::string_view quantity = "base_demand_flow_rate")
+{
+    QStringList parts;
+    for (const DemandDetail &detail : details)
+    {
+        const QString rate = context == nullptr
+            ? formatNumber(detail.canonical_rate, 3, QStringLiteral(" m³/h"))
+            : UnitTablePresentation::formatDemandRate(*context, detail.canonical_rate, 3, quantity);
+        parts.append(detail.prefix + rate + detail.suffix);
+    }
     return parts.join(QStringLiteral(" | "));
 }
 
@@ -858,9 +895,7 @@ ColumnFilterKind columnFilterKind(const QString &title)
         QStringLiteral("Speed"),
         QStringLiteral("Energy Intensity Average [kWh/m³]"),
         QStringLiteral("Cost Average / Day"),
-        QStringLiteral("Quality Mixing Fraction"),
-        QStringLiteral("Quality Bulk Reaction Coefficient"),
-        QStringLiteral("Quality Wall Reaction Coefficient")
+        QStringLiteral("Quality Mixing Fraction")
     };
 
     if (text_columns.contains(title))
@@ -1088,6 +1123,14 @@ public:
         rebuild();
     }
 
+    void refreshPresentation()
+    {
+        if (!this->columns.isEmpty())
+            emit headerDataChanged(Qt::Horizontal, 0, this->columns.size() - 1);
+        // No dataChanged() or reset: the table viewport repaints its visible cells.
+        // SortRole and numeric filter values stay in canonical units.
+    }
+
     int rowCount(const QModelIndex &parent = QModelIndex()) const override
     {
         if (parent.isValid())
@@ -1116,7 +1159,41 @@ public:
         switch (role)
         {
         case Qt::DisplayRole:
+        {
+            const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
+            const QString &column_title = this->columns.at(index.column()).title;
+            if (column_title == QStringLiteral("Demand Details") && !row.demand_details.isEmpty())
+                return demandDetailsText(
+                    row.demand_details, &context,
+                    this->entity_type == InfrastructureEntity::DemandPoint
+                        ? "customer_demand_flow_rate" : "base_demand_flow_rate");
+            if (cell.reaction_kind.has_value() && cell.sort_value.isValid())
+                return UnitTablePresentation::formatReactionCoefficient(
+                    context, *cell.reaction_kind, cell.reaction_order,
+                    cell.sort_value.toDouble(), cell.decimals);
+            if (UnitTablePresentation::isEnergyPriceTitle(column_title)
+                && cell.sort_value.isValid())
+                return UnitTablePresentation::formatEnergyPrice(context, cell.sort_value.toDouble());
+            const std::string_view quantity = cell.quantity.empty()
+                ? UnitTablePresentation::quantityForTitle(this->columns.at(index.column()).title)
+                : cell.quantity;
+            if (!quantity.empty() && cell.sort_value.isValid()
+                && cell.sort_value.userType() == QMetaType::Double)
+            {
+                const double canonical = cell.sort_value.toDouble();
+                if (const std::optional<double> displayed = UnitTablePresentation::toDisplay(
+                        context, quantity, canonical))
+                {
+                    const QString unit = UnitTablePresentation::unitSymbol(
+                        UnitTablePresentation::selectedUnit(
+                            context, quantity));
+                    return formatNumber(*displayed, cell.decimals, QStringLiteral(" ") + unit);
+                }
+            }
             return cell.display;
+        }
+        case ReactionOrderRole:
+            return cell.reaction_kind.has_value() ? QVariant(cell.reaction_order) : QVariant();
         case SortRole:
             return cell.sort_value;
         case EntityUuidRole:
@@ -1143,6 +1220,10 @@ public:
                 return row.simulation_error_tooltip;
             if (row.simulation_warning && !row.simulation_warning_tooltip.isEmpty())
                 return row.simulation_warning_tooltip;
+            if (cell.reaction_kind.has_value())
+                return UnitTablePresentation::reactionCellTooltip(
+                    UnitProfileManager::instance().presentation(),
+                    *cell.reaction_kind, cell.reaction_order);
             return cell.tooltip;
         case Qt::BackgroundRole:
             if (row.simulation_error)
@@ -1175,12 +1256,23 @@ public:
 
         const TableColumn &column = this->columns.at(section);
         if (role == Qt::DisplayRole)
-            return compactHeaderText(column.title);
+            return compactHeaderText(UnitTablePresentation::formattedTitle(
+                column.title, UnitProfileManager::instance().presentation()));
         if (role == Qt::ToolTipRole)
         {
+            const QString title = UnitTablePresentation::formattedTitle(
+                column.title, UnitProfileManager::instance().presentation());
+            if (column.title == QStringLiteral("Quality Bulk Reaction Coefficient"))
+                return UnitTablePresentation::reactionColumnTooltip(
+                    UnitProfileManager::instance().presentation(),
+                    UnitTablePresentation::ReactionKind::Bulk);
+            if (column.title == QStringLiteral("Quality Wall Reaction Coefficient"))
+                return UnitTablePresentation::reactionColumnTooltip(
+                    UnitProfileManager::instance().presentation(),
+                    UnitTablePresentation::ReactionKind::Wall);
             if (column.simulation_result)
-                return column.title + QStringLiteral("\nSimulation result.");
-            return column.title;
+                return title + QStringLiteral("\nSimulation result.");
+            return title;
         }
         if (role == Qt::BackgroundRole && column.simulation_result)
             return QBrush(QColor(70, 135, 210, 55));
@@ -1323,7 +1415,7 @@ private:
         appendCommonColumns(this->columns);
         appendNodePositionColumns(this->columns);
         this->columns.append({QStringLiteral("Demand Count"), false});
-        this->columns.append({QStringLiteral("Demand Base [m³/h]"), false});
+        this->columns.append({QStringLiteral("Customer Demand Base [m³/h]"), false});
         this->columns.append({QStringLiteral("Demand Details"), false});
         this->columns.append({QStringLiteral("Attachment Type"), false});
         this->columns.append({QStringLiteral("Attachment Target"), false});
@@ -1340,7 +1432,8 @@ private:
             row.cells.append(integerCell(demand_point.demands.size()));
             row.cells.append(numberCell(junctionBaseDemand(demand_point.demands), 3,
                                         QStringLiteral(" m³/h")));
-            row.cells.append(textCell(junctionDemandSummary(network, demand_point.demands)));
+            row.demand_details = junctionDemandDetails(network, demand_point.demands);
+            row.cells.append(textCell(demandDetailsText(row.demand_details)));
 
             QString attachment_type = QStringLiteral("Unattached");
             QString attachment_target;
@@ -1432,7 +1525,8 @@ private:
             row.cells.append(numberCell(resolvedSymbologyElevationM(junction), 3, QStringLiteral(" m")));
             row.cells.append(integerCell(junction.demands.size()));
             row.cells.append(numberCell(junctionBaseDemand(junction.demands), 3, QStringLiteral(" m³/h")));
-            row.cells.append(textCell(junctionDemandSummary(network, junction.demands)));
+            row.demand_details = junctionDemandDetails(network, junction.demands);
+            row.cells.append(textCell(demandDetailsText(row.demand_details)));
             row.cells.append(numberCell(junction.emitter.coefficient, 6));
             row.cells.append(numberCell(junction.emitter.pressure_exponent, 6));
 
@@ -1657,7 +1751,9 @@ private:
             row.cells.append(textCell(tankMixingModelText(tank.mixing_model)));
             row.cells.append(numberCell(tank.mixing_fraction, 4));
             row.cells.append(boolCell(tank.override_bulk_reaction));
-            row.cells.append(numberCell(tank.bulk_reaction.coefficient, 8));
+            row.cells.append(reactionCell(tank.bulk_reaction.coefficient,
+                                          tank.bulk_reaction.order,
+                                          UnitTablePresentation::ReactionKind::Bulk));
             const WaterQualitySimulationResultNodeTank *quality_entity_result =
                 quality_lookup.value(tank.uuid, nullptr);
             row.cells.append(qualityResultCell(quality_entity_result, quality_analysis));
@@ -1774,9 +1870,13 @@ private:
             }
 
             row.cells.append(boolCell(pipe.override_bulk_reaction));
-            row.cells.append(numberCell(pipe.bulk_reaction.coefficient, 8));
+            row.cells.append(reactionCell(pipe.bulk_reaction.coefficient,
+                                          pipe.bulk_reaction.order,
+                                          UnitTablePresentation::ReactionKind::Bulk));
             row.cells.append(boolCell(pipe.override_wall_reaction));
-            row.cells.append(numberCell(pipe.wall_reaction.coefficient, 8));
+            row.cells.append(reactionCell(pipe.wall_reaction.coefficient,
+                                          pipe.wall_reaction.order,
+                                          UnitTablePresentation::ReactionKind::Wall));
             const WaterQualitySimulationResultLinkPipe *quality_entity_result =
                 quality_lookup.value(pipe.uuid, nullptr);
             row.cells.append(qualityResultCell(quality_entity_result, quality_analysis));
@@ -2105,7 +2205,45 @@ public:
         notifyFilterChanged();
     }
 
+    void refreshUnitDependentTextFilters()
+    {
+        // Normal unit changes only repaint visible cells. Refilter the full
+        // source model exclusively when a text filter actually depends on a
+        // unit-formatted value, such as the compound demand-category summary.
+        const HydraulicEntityTableModel *entity_model =
+            static_cast<const HydraulicEntityTableModel *>(sourceModel());
+        if (entity_model == nullptr)
+            return;
+        QHash<int, QPair<ColumnFilterKind, QString>>::const_iterator iterator =
+            this->filters.constBegin();
+        while (iterator != this->filters.constEnd())
+        {
+            if (iterator.value().first == ColumnFilterKind::Text
+                && UnitTablePresentation::isUnitDependentTextColumn(
+                    entity_model->columnTitle(iterator.key())))
+            {
+                notifyFilterChanged();
+                return;
+            }
+            ++iterator;
+        }
+    }
+
 protected:
+    bool lessThan(const QModelIndex &left, const QModelIndex &right) const override
+    {
+        const QVariant left_order = sourceModel()->data(left, ReactionOrderRole);
+        const QVariant right_order = sourceModel()->data(right, ReactionOrderRole);
+        if (left_order.isValid() && right_order.isValid())
+        {
+            const double first = left_order.toDouble();
+            const double second = right_order.toDouble();
+            if (std::isfinite(first) && std::isfinite(second) && first != second)
+                return first < second;
+        }
+        return QSortFilterProxyModel::lessThan(left, right);
+    }
+
     bool filterAcceptsRow(int source_row, const QModelIndex &source_parent) const override
     {
         QHash<int, QPair<ColumnFilterKind, QString>>::const_iterator iterator =
@@ -2198,8 +2336,10 @@ struct NumericRangeControl
     QWidget *container = nullptr;
     QDoubleSpinBox *minimum = nullptr;
     QDoubleSpinBox *maximum = nullptr;
-    double global_minimum = 0.0;
-    double global_maximum = 0.0;
+    double global_minimum = 0.0; // canonical
+    double global_maximum = 0.0; // canonical
+    double selected_minimum = 0.0; // canonical, not the rounded spin-box value
+    double selected_maximum = 0.0;
 };
 
 class HydraulicEntityFilterBar : public QWidget
@@ -2234,6 +2374,20 @@ public:
         });
     }
 
+    void refreshUnitControls()
+    {
+        refreshNumericControls();
+        for (int column : this->numeric_controls.keys())
+        {
+            NumericRangeControl &control = this->numeric_controls[column];
+            const QString title = UnitTablePresentation::formattedTitle(
+                this->model->columnTitle(column),
+                UnitProfileManager::instance().presentation());
+            control.minimum->setToolTip(QStringLiteral("Minimum filter for ") + title);
+            control.maximum->setToolTip(QStringLiteral("Maximum filter for ") + title);
+        }
+    }
+
     void resetFilters()
     {
         for (QWidget *control : this->controls)
@@ -2256,8 +2410,14 @@ public:
             NumericRangeControl &control = this->numeric_controls[column];
             const QSignalBlocker minimum_blocker(control.minimum);
             const QSignalBlocker maximum_blocker(control.maximum);
-            control.minimum->setValue(control.global_minimum);
-            control.maximum->setValue(control.global_maximum);
+            const QString title = this->model->columnTitle(column);
+            const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
+            control.minimum->setValue(UnitTablePresentation::toDisplayForTitle(
+                context, title, control.global_minimum).value_or(control.global_minimum));
+            control.maximum->setValue(UnitTablePresentation::toDisplayForTitle(
+                context, title, control.global_maximum).value_or(control.global_maximum));
+            control.selected_minimum = control.global_minimum;
+            control.selected_maximum = control.global_maximum;
         }
 
         this->proxy_model->clearAllFilters();
@@ -2389,7 +2549,9 @@ private:
             spin_box->setStepType(QAbstractSpinBox::AdaptiveDecimalStepType);
         spin_box->setToolTip((minimum ? QStringLiteral("Minimum filter for ")
                                       : QStringLiteral("Maximum filter for "))
-                             + this->model->columnTitle(column));
+                             + UnitTablePresentation::formattedTitle(
+                                 this->model->columnTitle(column),
+                                 UnitProfileManager::instance().presentation()));
         spin_box->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     }
 
@@ -2417,12 +2579,17 @@ private:
             return;
 
         NumericRangeControl &control = this->numeric_controls[column];
-        QDoubleSpinBox *spin_box = minimum ? control.minimum : control.maximum;
-        {
-            const QSignalBlocker blocker(spin_box);
-            spin_box->setValue(minimum ? control.global_minimum : control.global_maximum);
-        }
-        numericControlChanged(column, minimum);
+        if (minimum)
+            control.selected_minimum = control.global_minimum;
+        else
+            control.selected_maximum = control.global_maximum;
+        if (sameNumber(control.selected_minimum, control.global_minimum)
+            && sameNumber(control.selected_maximum, control.global_maximum))
+            this->proxy_model->clearNumericColumnFilter(column);
+        else
+            this->proxy_model->setNumericColumnFilter(column,
+                control.selected_minimum, control.selected_maximum);
+        refreshNumericControl(column);
     }
 
     void populateChoiceControl(QComboBox *combo_box, int column,
@@ -2489,6 +2656,8 @@ private:
             const QSignalBlocker maximum_blocker(control.maximum);
             control.global_minimum = 0.0;
             control.global_maximum = 0.0;
+            control.selected_minimum = 0.0;
+            control.selected_maximum = 0.0;
             control.minimum->setSpecialValueText(QStringLiteral("—"));
             control.maximum->setSpecialValueText(QStringLiteral("—"));
             control.minimum->setRange(0.0, 0.0);
@@ -2510,32 +2679,52 @@ private:
             selected_minimum = selected_maximum;
 
         {
+            const QString title = this->model->columnTitle(column);
+            const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
+            const double display_minimum = UnitTablePresentation::toDisplayForTitle(
+                context, title, global_minimum).value_or(global_minimum);
+            const double display_maximum = UnitTablePresentation::toDisplayForTitle(
+                context, title, global_maximum).value_or(global_maximum);
+            const double display_selected_minimum = UnitTablePresentation::toDisplayForTitle(
+                context, title, selected_minimum).value_or(selected_minimum);
+            const double display_selected_maximum = UnitTablePresentation::toDisplayForTitle(
+                context, title, selected_maximum).value_or(selected_maximum);
             const QSignalBlocker minimum_blocker(control.minimum);
             const QSignalBlocker maximum_blocker(control.maximum);
+            if (UnitTablePresentation::isEnergyPriceTitle(title))
+            {
+                // A normal 6-decimal spin box would quantize per-joule prices
+                // to zero. Increase decimals only as far as the visible range
+                // requires; keep the stored filter bounds canonical.
+                double smallest_positive = 0.0;
+                for (double value : {display_minimum, display_maximum,
+                                     display_selected_minimum, display_selected_maximum})
+                {
+                    if (value > 0.0 && (smallest_positive == 0.0 || value < smallest_positive))
+                        smallest_positive = value;
+                }
+                int decimals = 6;
+                if (smallest_positive > 0.0 && smallest_positive < 1.0)
+                    decimals = std::clamp(
+                        static_cast<int>(std::ceil(-std::log10(smallest_positive))) + 3,
+                        6, 18);
+                control.minimum->setDecimals(decimals);
+                control.maximum->setDecimals(decimals);
+            }
             control.global_minimum = global_minimum;
             control.global_maximum = global_maximum;
+            control.selected_minimum = selected_minimum;
+            control.selected_maximum = selected_maximum;
             control.minimum->setSpecialValueText(QString());
             control.maximum->setSpecialValueText(QString());
-            control.minimum->setRange(global_minimum, global_maximum);
-            control.maximum->setRange(global_minimum, global_maximum);
-            control.minimum->setValue(selected_minimum);
-            control.maximum->setValue(selected_maximum);
+            control.minimum->setRange(display_minimum, display_maximum);
+            control.maximum->setRange(display_minimum, display_maximum);
+            control.minimum->setValue(display_selected_minimum);
+            control.maximum->setValue(display_selected_maximum);
             control.container->setEnabled(true);
         }
 
-        if (!has_active_filter)
-            return;
-
-        if (sameNumber(selected_minimum, global_minimum)
-            && sameNumber(selected_maximum, global_maximum))
-        {
-            this->proxy_model->clearNumericColumnFilter(column);
-        }
-        else
-        {
-            this->proxy_model->setNumericColumnFilter(column, selected_minimum,
-                                                       selected_maximum);
-        }
+        Q_UNUSED(has_active_filter);
     }
 
     void refreshNumericControls()
@@ -2551,32 +2740,33 @@ private:
             return;
 
         NumericRangeControl &control = this->numeric_controls[column];
-        double minimum = control.minimum->value();
-        double maximum = control.maximum->value();
+        const QString title = this->model->columnTitle(column);
+        const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
+        const QDoubleSpinBox *changed = minimum_changed ? control.minimum : control.maximum;
+        const std::optional<double> canonical = UnitTablePresentation::toCanonicalForTitle(
+            context, title, changed->value());
+        if (!canonical.has_value())
+            return;
+        double minimum = minimum_changed ? *canonical : control.selected_minimum;
+        double maximum = minimum_changed ? control.selected_maximum : *canonical;
         if (minimum > maximum)
         {
-            if (minimum_changed)
-            {
-                const QSignalBlocker blocker(control.maximum);
-                control.maximum->setValue(minimum);
-                maximum = minimum;
-            }
-            else
-            {
-                const QSignalBlocker blocker(control.minimum);
-                control.minimum->setValue(maximum);
-                minimum = maximum;
-            }
+            if (minimum_changed) maximum = minimum;
+            else minimum = maximum;
         }
+        control.selected_minimum = minimum;
+        control.selected_maximum = maximum;
 
         if (sameNumber(minimum, control.global_minimum)
             && sameNumber(maximum, control.global_maximum))
         {
             this->proxy_model->clearNumericColumnFilter(column);
+            refreshNumericControl(column);
             return;
         }
 
         this->proxy_model->setNumericColumnFilter(column, minimum, maximum);
+        refreshNumericControl(column);
     }
 
     void updateControlGeometries()
@@ -2783,6 +2973,16 @@ HydraulicEntityTableWidget::HydraulicEntityTableWidget(HydraulicData *hydraulic_
             [this](int)
     {
         requestRebuild();
+    });
+
+    new UnitAwareView(this, UnitProfileManager::instance().presentation(),
+        [this, filter_bar]()
+    {
+        this->model->refreshPresentation();
+        filter_bar->refreshUnitControls();
+        static_cast<HydraulicEntityFilterProxyModel *>(this->proxy_model)
+            ->refreshUnitDependentTextFilters();
+        this->table->viewport()->update();
     });
 }
 

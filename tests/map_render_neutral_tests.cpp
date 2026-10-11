@@ -6,6 +6,8 @@
 #include "map/render/map_globe_surface_render_frame.h"
 #include "map/render/map_globe_tank_model.h"
 #include "map/render/map_globe_vertical_transform.h"
+#include "map/core/map_scale_distance.h"
+#include "map/monitor/map_hud_length_units.h"
 #include "map/render/map_node_declutter.h"
 #include "map/render/map_render_cache_math.h"
 #include "map/render/map_terrain_mesh_scheduler.h"
@@ -131,6 +133,97 @@ void testVerticalTransform()
         "invalid vertical exaggeration falls back to one");
     expectNear(sanitized_transform.networkGroundOffsetM(), 0.0, 1e-12,
         "negative network offset clamps to zero");
+}
+
+void testMapHudLengthUnits()
+{
+    UnitPresentationContext context;
+    QJsonObject units;
+    units.insert(QStringLiteral("length"), QStringLiteral("m"));
+    context.initialize(units);
+    expectTrue(MapHudLengthUnits::cameraDistance(500.0, context)
+                   .endsWith(QStringLiteral(" m")),
+               "metric camera HUD displays metres");
+    expectTrue(MapHudLengthUnits::cameraDistance(10000.0, context)
+                   .endsWith(QStringLiteral(" km")),
+               "far camera HUD displays kilometres");
+    expectTrue(MapHudLengthUnits::networkOffset(0.1, context)
+                   .endsWith(QStringLiteral(" m")),
+               "network offset displays metres");
+
+    units.insert(QStringLiteral("length"), QStringLiteral("ft"));
+    context.update(units);
+    expectTrue(MapHudLengthUnits::cameraDistance(500.0, context)
+                   .endsWith(QStringLiteral(" ft")),
+               "unit change updates near camera display to feet");
+    expectTrue(MapHudLengthUnits::cameraDistance(10000.0, context)
+                   .endsWith(QStringLiteral(" mi")),
+               "unit change updates far camera display to miles");
+    expectTrue(MapHudLengthUnits::networkOffset(50.0, context)
+                   .endsWith(QStringLiteral(" ft")),
+               "network offset uses selected length unit");
+
+    units.insert(QStringLiteral("length"), QStringLiteral("km"));
+    context.update(units);
+    expectTrue(MapHudLengthUnits::networkOffset(0.1, context)
+                   .endsWith(QStringLiteral(" km")),
+               "explicit compact length unit is respected for small offsets");
+    expectTrue(!MapHudLengthUnits::networkOffset(0.1, context)
+                    .startsWith(QStringLiteral("0.0000 ")),
+               "small nonzero offset does not disappear through rounding");
+}
+
+void testMapScaleUnits()
+{
+    UnitPresentationContext context;
+    QJsonObject effective_units;
+    effective_units.insert(QStringLiteral("length"), QStringLiteral("m"));
+    context.initialize(effective_units);
+
+    const MapScaleDistance::Scale metric =
+        MapScaleDistance::forMaximumDistance(900.0, context);
+    expectNear(metric.distance_m, 500.0, 1e-9,
+        "metric scale uses a nice real-world distance");
+    expectTrue(metric.label.endsWith(QStringLiteral(" m")),
+        "metric scale displays metres");
+
+    const MapScaleDistance::Scale kilometre =
+        MapScaleDistance::forMaximumDistance(4000.0, context);
+    expectNear(kilometre.distance_m, 3000.0, 1e-9,
+        "large metric scale uses a nice kilometre distance");
+    expectTrue(kilometre.label.endsWith(QStringLiteral(" km")),
+        "large metric scale displays kilometres");
+
+    effective_units.insert(QStringLiteral("length"), QStringLiteral("ft"));
+    expectTrue(context.update(effective_units),
+        "changing length units increments the display generation");
+    const MapScaleDistance::Scale feet =
+        MapScaleDistance::forMaximumDistance(900.0, context);
+    expectTrue(feet.label.endsWith(QStringLiteral(" ft")),
+        "imperial scale displays feet");
+    expectTrue(feet.distance_m > 0.0 && feet.distance_m <= 900.0,
+        "imperial scale fits its physical viewport distance");
+
+    const MapScaleDistance::Scale mile =
+        MapScaleDistance::forMaximumDistance(4000.0, context);
+    expectTrue(mile.label.endsWith(QStringLiteral(" mi")),
+        "large imperial scale displays miles");
+    expectTrue(mile.distance_m > 0.0 && mile.distance_m <= 4000.0,
+        "mile scale fits its physical viewport distance");
+
+    effective_units.insert(QStringLiteral("length"), QStringLiteral("mi"));
+    context.update(effective_units);
+    const MapScaleDistance::Scale small_miles =
+        MapScaleDistance::forMaximumDistance(90.0, context);
+    expectTrue(small_miles.label.endsWith(QStringLiteral(" mi")),
+        "an explicit mile profile remains in miles at short distances");
+    expectTrue(small_miles.distance_m > 0.0 && small_miles.distance_m <= 90.0,
+        "explicit mile scale remains physically correct");
+
+    const MapScaleDistance::Scale invalid =
+        MapScaleDistance::forMaximumDistance(-1.0, context);
+    expectTrue(invalid.distance_m == 0.0 && invalid.label.isEmpty(),
+        "invalid scale distances produce no label");
 }
 
 void testRenderCacheMath()
@@ -586,6 +679,8 @@ void testTerrainMeshGenerationAndStitching()
 int main()
 {
     test_harness.runCase("vertical transform", testVerticalTransform);
+    test_harness.runCase("map scale unit presentation", testMapScaleUnits);
+    test_harness.runCase("map HUD length presentation", testMapHudLengthUnits);
     test_harness.runCase("render cache math", testRenderCacheMath);
     test_harness.runCase("node declutter", testNodeDeclutter);
     test_harness.runCase("ray intersections", testRayIntersections);

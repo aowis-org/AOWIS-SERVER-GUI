@@ -1,5 +1,9 @@
 #include "entity_inspector/entity_inspector_valve.h"
 
+#include "config/unit_aware_view.h"
+#include "config/unit_numeric_spin_box.h"
+#include "config/unit_profile_manager.h"
+
 #include <optional>
 
 #include <QSignalBlocker>
@@ -76,11 +80,73 @@ void EntityInspectorValve::addGroupValveConfiguration()
     constrainComboWidth(this->combo_valve_type);
     
     this->label_setting = new QLabel("Setting");
-    this->spin_setting = new QDoubleSpinBox();
-    this->spin_setting->setDecimals(2);
-    this->spin_setting->setRange(0.0, 1000000.0);
-    this->spin_setting->setSingleStep(1.0);
-    this->spin_setting->setValue(0.0);
+    this->stack_setting = new QStackedWidget(group);
+    // Each setting has its own binding and physical dimension. Changing the
+    // valve type swaps editors; it never reinterprets a previous editor value.
+    this->spin_setting_pressure = new UnitNumericSpinBox(
+        [this]() -> std::optional<double> {
+            if (!this->hydraulic_data) return std::nullopt;
+            const std::optional<HydraulicLinkValve> valve = this->hydraulic_data->valve(this->valve_uuid);
+            if (!valve || (valve->type != HydraulicLinkValveType::PRV &&
+                           valve->type != HydraulicLinkValveType::PSV &&
+                           valve->type != HydraulicLinkValveType::PBV)) return std::nullopt;
+            return valve->setting_pressure_head_m;
+        },
+        [this](double value) {
+            if (!this->hydraulic_data) return false;
+            const std::optional<HydraulicLinkValve> valve = this->hydraulic_data->valve(this->valve_uuid);
+            if (!valve || (valve->type != HydraulicLinkValveType::PRV &&
+                           valve->type != HydraulicLinkValveType::PSV &&
+                           valve->type != HydraulicLinkValveType::PBV)) return false;
+            return this->hydraulic_data->setValveSettingPressureHeadM(this->valve_uuid, value);
+        }, "pressure_head", "m", 0.0, 1000000.0, 1.0, 2, this->stack_setting);
+    this->spin_setting_flow = new UnitNumericSpinBox(
+        [this]() -> std::optional<double> {
+            if (!this->hydraulic_data) return std::nullopt;
+            const std::optional<HydraulicLinkValve> valve = this->hydraulic_data->valve(this->valve_uuid);
+            if (!valve || valve->type != HydraulicLinkValveType::FCV) return std::nullopt;
+            return valve->setting_flow_m3_per_h;
+        },
+        [this](double value) {
+            if (!this->hydraulic_data) return false;
+            const std::optional<HydraulicLinkValve> valve = this->hydraulic_data->valve(this->valve_uuid);
+            if (!valve || valve->type != HydraulicLinkValveType::FCV) return false;
+            return this->hydraulic_data->setValveSettingFlowM3PerH(this->valve_uuid, value);
+        }, "volumetric_flow_rate", "m3/h", 0.0, 1000000.0, 1.0, 3, this->stack_setting);
+    this->spin_setting_loss = new UnitNumericSpinBox(
+        [this]() -> std::optional<double> {
+            if (!this->hydraulic_data) return std::nullopt;
+            const std::optional<HydraulicLinkValve> valve = this->hydraulic_data->valve(this->valve_uuid);
+            if (!valve || valve->type != HydraulicLinkValveType::TCV) return std::nullopt;
+            return valve->setting_loss_coefficient;
+        },
+        [this](double value) {
+            if (!this->hydraulic_data) return false;
+            const std::optional<HydraulicLinkValve> valve = this->hydraulic_data->valve(this->valve_uuid);
+            if (!valve || valve->type != HydraulicLinkValveType::TCV) return false;
+            return this->hydraulic_data->setValveSettingLossCoefficient(this->valve_uuid, value);
+        }, "minor_loss_coefficient", "1", 0.0, 1000000.0, 0.1, 3, this->stack_setting,
+        [](const QString &) { return QString(); });
+    this->spin_setting_position = new UnitNumericSpinBox(
+        [this]() -> std::optional<double> {
+            if (!this->hydraulic_data) return std::nullopt;
+            const std::optional<HydraulicLinkValve> valve = this->hydraulic_data->valve(this->valve_uuid);
+            if (!valve || valve->type != HydraulicLinkValveType::PCV) return std::nullopt;
+            return valve->setting_position_percent;
+        },
+        [this](double value) {
+            if (!this->hydraulic_data) return false;
+            const std::optional<HydraulicLinkValve> valve = this->hydraulic_data->valve(this->valve_uuid);
+            if (!valve || valve->type != HydraulicLinkValveType::PCV) return false;
+            return this->hydraulic_data->setValveSettingPositionPercent(this->valve_uuid, value);
+        }, "valve_position", "%", 0.0, 100.0, 1.0, 2, this->stack_setting,
+        [](const QString &unit) {
+            return unit == QStringLiteral("1") ? QString() : NumericText::suffix(unit);
+        });
+    this->stack_setting->addWidget(this->spin_setting_pressure);
+    this->stack_setting->addWidget(this->spin_setting_flow);
+    this->stack_setting->addWidget(this->spin_setting_loss);
+    this->stack_setting->addWidget(this->spin_setting_position);
     
     this->label_setting_curve = new QLabel("Curve");
     this->combo_setting_curve = new QComboBox();
@@ -98,27 +164,38 @@ void EntityInspectorValve::addGroupValveConfiguration()
     this->combo_status_initial->addItem(
         "Closed", static_cast<int>(HydraulicLinkValveInitialStatus::Closed));
     
+    // Model values remain authoritative; the display spin boxes never own the
+    // rounded diameter or loss coefficient. Both read the live valve record.
     QLabel *label_diameter = new QLabel("Diameter");
-    this->spin_diameter = new QDoubleSpinBox();
-    this->spin_diameter->setDecimals(2);
-    this->spin_diameter->setRange(0.0, 1000000.0);
-    this->spin_diameter->setSingleStep(10.0);
-    this->spin_diameter->setValue(0.0);
-    this->spin_diameter->setSuffix(" mm");
-    
+    this->spin_diameter = new UnitNumericSpinBox(
+        [this]() -> std::optional<double> {
+            if (!this->hydraulic_data) return std::nullopt;
+            const std::optional<HydraulicLinkValve> valve = this->hydraulic_data->valve(this->valve_uuid);
+            return valve ? std::optional<double>(valve->diameter_mm) : std::nullopt;
+        },
+        [this](double diameter_mm) {
+            if (!this->hydraulic_data || !this->hydraulic_data->valve(this->valve_uuid)) return false;
+            return this->hydraulic_data->setValveDiameterMm(this->valve_uuid, diameter_mm);
+        }, "link_diameter", "mm", 0.0, 1000000.0, 10.0, 2, group);
+
     QLabel *label_loss_coeff = new QLabel("Loss Coefficient");
     label_loss_coeff->setWordWrap(true);
-    this->spin_loss_coeff = new QDoubleSpinBox();
-    this->spin_loss_coeff->setDecimals(4);
-    this->spin_loss_coeff->setRange(0.0, 1000000.0);
-    this->spin_loss_coeff->setSingleStep(0.1);
-    this->spin_loss_coeff->setValue(0.0);
+    this->spin_loss_coeff = new UnitNumericSpinBox(
+        [this]() -> std::optional<double> {
+            if (!this->hydraulic_data) return std::nullopt;
+            const std::optional<HydraulicLinkValve> valve = this->hydraulic_data->valve(this->valve_uuid);
+            return valve ? std::optional<double>(valve->minor_loss_coefficient) : std::nullopt;
+        },
+        [this](double coefficient) {
+            if (!this->hydraulic_data || !this->hydraulic_data->valve(this->valve_uuid)) return false;
+            return this->hydraulic_data->setValveMinorLoss(this->valve_uuid, coefficient);
+        }, "minor_loss_coefficient", "1", 0.0, 1000000.0, 0.1, 4, group);
     
     grid->addWidget(label_valve_type, 0, 0, 1, 2);
     grid->addWidget(this->combo_valve_type, 1, 0, 1, 2);
     
     grid->addWidget(this->label_setting, 2, 0);
-    grid->addWidget(this->spin_setting, 2, 1);
+    grid->addWidget(this->stack_setting, 2, 1);
 
     grid->addWidget(this->label_setting_curve, 3, 0);
     grid->addWidget(this->combo_setting_curve, 3, 1);
@@ -133,6 +210,20 @@ void EntityInspectorValve::addGroupValveConfiguration()
     grid->addWidget(this->spin_loss_coeff, 6, 1);
     
     layoutConfiguration()->addWidget(group);
+    // The diameter is hidden when the configuration group is collapsed. One
+    // subscription refreshes all active valve measurements when shown.
+    new UnitAwareView(this->spin_diameter, UnitProfileManager::instance().presentation(),
+        [this] { refreshValveMeasurements(); });
+}
+
+void EntityInspectorValve::refreshValveMeasurements()
+{
+    const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
+    static_cast<UnitNumericSpinBox *>(this->spin_diameter)->refreshUnits(context);
+    static_cast<UnitNumericSpinBox *>(this->spin_loss_coeff)->refreshUnits(context);
+    if (this->displayed_setting_type_ &&
+        *this->displayed_setting_type_ != HydraulicLinkValveType::GPV)
+        static_cast<UnitNumericSpinBox *>(this->stack_setting->currentWidget())->refreshUnits(context);
 }
 
 void EntityInspectorValve::bindValve()
@@ -141,32 +232,8 @@ void EntityInspectorValve::bindValve()
     {
         const HydraulicLinkValveType type = static_cast<HydraulicLinkValveType>(
             this->combo_valve_type->currentData().toInt());
-        onValveTypeChanged(type);
-        this->hydraulic_data->setValveType(this->valve_uuid, type);
-    });
-    connect(this->spin_setting, &QDoubleSpinBox::valueChanged, this, [this](double setting)
-    {
-        const HydraulicLinkValveType type = static_cast<HydraulicLinkValveType>(
-            this->combo_valve_type->currentData().toInt());
-        switch (type)
-        {
-        case HydraulicLinkValveType::PRV:
-        case HydraulicLinkValveType::PSV:
-        case HydraulicLinkValveType::PBV:
-            this->hydraulic_data->setValveSettingPressureHeadM(this->valve_uuid, setting);
-            break;
-        case HydraulicLinkValveType::FCV:
-            this->hydraulic_data->setValveSettingFlowM3PerH(this->valve_uuid, setting);
-            break;
-        case HydraulicLinkValveType::TCV:
-            this->hydraulic_data->setValveSettingLossCoefficient(this->valve_uuid, setting);
-            break;
-        case HydraulicLinkValveType::PCV:
-            this->hydraulic_data->setValveSettingPositionPercent(this->valve_uuid, setting);
-            break;
-        case HydraulicLinkValveType::GPV:
-            break;
-        }
+        if (!this->hydraulic_data->setValveType(this->valve_uuid, type))
+            refreshValve();
     });
     connect(this->combo_setting_curve, &QComboBox::currentIndexChanged, this, [this](int)
     {
@@ -185,15 +252,6 @@ void EntityInspectorValve::bindValve()
                 this->combo_status_initial->currentData().toInt());
         this->hydraulic_data->setValveInitialStatus(this->valve_uuid, initial_status);
     });
-    connect(this->spin_diameter, &QDoubleSpinBox::valueChanged, this, [this](double diameter_mm)
-    {
-        this->hydraulic_data->setValveDiameterMm(this->valve_uuid, diameter_mm);
-    });
-    connect(this->spin_loss_coeff, &QDoubleSpinBox::valueChanged, this, [this](double minor_loss_coefficient)
-    {
-        this->hydraulic_data->setValveMinorLoss(this->valve_uuid, minor_loss_coefficient);
-    });
-
     connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
             [this](InfrastructureEntity entity_type, const QUuid &uuid)
     {
@@ -217,44 +275,23 @@ void EntityInspectorValve::refreshValve()
         return;
 
     const QSignalBlocker type_blocker(this->combo_valve_type);
-    const QSignalBlocker setting_blocker(this->spin_setting);
     const QSignalBlocker curve_blocker(this->combo_setting_curve);
     const QSignalBlocker status_blocker(this->combo_status_initial);
-    const QSignalBlocker diameter_blocker(this->spin_diameter);
-    const QSignalBlocker loss_blocker(this->spin_loss_coeff);
 
     const int type_index = this->combo_valve_type->findData(static_cast<int>(valve->type));
     this->combo_valve_type->setCurrentIndex(type_index >= 0 ? type_index : 0);
     onValveTypeChanged(valve->type);
     QUuid curve_uuid;
-    switch (valve->type)
-    {
-    case HydraulicLinkValveType::PRV:
-    case HydraulicLinkValveType::PSV:
-    case HydraulicLinkValveType::PBV:
-        this->spin_setting->setValue(valve->setting_pressure_head_m);
-        break;
-    case HydraulicLinkValveType::FCV:
-        this->spin_setting->setValue(valve->setting_flow_m3_per_h);
-        break;
-    case HydraulicLinkValveType::TCV:
-        this->spin_setting->setValue(valve->setting_loss_coefficient);
-        break;
-    case HydraulicLinkValveType::PCV:
-        this->spin_setting->setValue(valve->setting_position_percent);
-        curve_uuid = valve->characteristic_curve_uuid;
-        break;
-    case HydraulicLinkValveType::GPV:
+    if (valve->type == HydraulicLinkValveType::GPV)
         curve_uuid = valve->head_loss_curve_uuid;
-        break;
-    }
+    else if (valve->type == HydraulicLinkValveType::PCV)
+        curve_uuid = valve->characteristic_curve_uuid;
     populateSettingCurveCombo(valve->type, curve_uuid);
 
     const int status_index =
         this->combo_status_initial->findData(static_cast<int>(valve->initial_status));
     this->combo_status_initial->setCurrentIndex(status_index >= 0 ? status_index : 0);
-    this->spin_diameter->setValue(valve->diameter_mm);
-    this->spin_loss_coeff->setValue(valve->minor_loss_coefficient);
+    refreshValveMeasurements();
 }
 
 void EntityInspectorValve::populateSettingCurveCombo(
@@ -315,93 +352,71 @@ void EntityInspectorValve::populateSettingCurveCombo(
 
 void EntityInspectorValve::onValveTypeChanged(HydraulicLinkValveType type)
 {
+    if (this->displayed_setting_type_ && *this->displayed_setting_type_ != type) {
+        // A previously active field may contain uncommitted text. A different
+        // physical setting must never inherit or commit that pending input.
+        this->spin_setting_pressure->cancelEdit();
+        this->spin_setting_flow->cancelEdit();
+        this->spin_setting_loss->cancelEdit();
+        this->spin_setting_position->cancelEdit();
+    }
+    this->displayed_setting_type_ = type;
     this->label_setting->show();
-    this->spin_setting->show();
+    this->stack_setting->show();
     this->label_setting_curve->hide();
     this->combo_setting_curve->hide();
-    
+
     switch (type) {
     case HydraulicLinkValveType::PRV:
         this->label_setting->setText("Pressure Setting");
-        this->spin_setting->setSuffix(" m");
-        this->spin_setting->setDecimals(2);
-        this->spin_setting->setRange(0.0, 1000000.0);
-        this->spin_setting->setSingleStep(1.0);
-        this->spin_setting->setToolTip(
-            "Target downstream pressure head for the pressure reducing valve."
-            );
+        this->stack_setting->setCurrentWidget(this->spin_setting_pressure);
+        this->spin_setting_pressure->setToolTip(
+            "Target downstream pressure head for the pressure reducing valve.");
         break;
-        
     case HydraulicLinkValveType::PSV:
         this->label_setting->setText("Pressure Setting");
-        this->spin_setting->setSuffix(" m");
-        this->spin_setting->setDecimals(2);
-        this->spin_setting->setRange(0.0, 1000000.0);
-        this->spin_setting->setSingleStep(1.0);
-        this->spin_setting->setToolTip(
-            "Target upstream pressure head for the pressure sustaining valve."
-            );
+        this->stack_setting->setCurrentWidget(this->spin_setting_pressure);
+        this->spin_setting_pressure->setToolTip(
+            "Target upstream pressure head for the pressure sustaining valve.");
         break;
-        
     case HydraulicLinkValveType::PBV:
         this->label_setting->setText("Pressure Drop");
-        this->spin_setting->setSuffix(" m");
-        this->spin_setting->setDecimals(2);
-        this->spin_setting->setRange(0.0, 1000000.0);
-        this->spin_setting->setSingleStep(1.0);
-        this->spin_setting->setToolTip(
-            "Fixed pressure drop across the pressure breaker valve."
-            );
+        this->stack_setting->setCurrentWidget(this->spin_setting_pressure);
+        this->spin_setting_pressure->setToolTip(
+            "Fixed pressure drop across the pressure breaker valve.");
         break;
-        
     case HydraulicLinkValveType::FCV:
         this->label_setting->setText("Flow Setting");
-        this->spin_setting->setSuffix(" m³/h");
-        this->spin_setting->setDecimals(3);
-        this->spin_setting->setRange(0.0, 1000000.0);
-        this->spin_setting->setSingleStep(1.0);
-        this->spin_setting->setToolTip(
-            "Target flow through the flow control valve in the AOWIS canonical flow unit."
-            );
+        this->stack_setting->setCurrentWidget(this->spin_setting_flow);
+        this->spin_setting_flow->setToolTip(
+            "Target flow through the flow control valve.");
         break;
-        
     case HydraulicLinkValveType::TCV:
         this->label_setting->setText("Loss Coefficient");
-        this->spin_setting->setSuffix("");
-        this->spin_setting->setDecimals(3);
-        this->spin_setting->setRange(0.0, 1000000.0);
-        this->spin_setting->setSingleStep(0.1);
-        this->spin_setting->setToolTip(
-            "Throttle setting expressed as a dimensionless loss coefficient."
-            );
+        this->stack_setting->setCurrentWidget(this->spin_setting_loss);
+        this->spin_setting_loss->setToolTip(
+            "Throttle setting expressed as a dimensionless loss coefficient.");
         break;
-        
     case HydraulicLinkValveType::GPV:
         this->label_setting->hide();
-        this->spin_setting->hide();
+        this->stack_setting->hide();
         this->label_setting_curve->setText("Head Loss Curve");
         this->label_setting_curve->show();
         this->combo_setting_curve->show();
         this->combo_setting_curve->setToolTip(
-            "Head-loss curve used by the general purpose valve."
-            );
+            "Head-loss curve used by the general purpose valve.");
         break;
-        
     case HydraulicLinkValveType::PCV:
         this->label_setting->setText("Position Setting");
-        this->spin_setting->setSuffix(" %");
-        this->spin_setting->setDecimals(2);
-        this->spin_setting->setRange(0.0, 100.0);
-        this->spin_setting->setSingleStep(1.0);
-        this->spin_setting->setToolTip(
-            "Valve opening position as a percentage.<br>PCV support requires EPANET 2.3 or newer."
-            );
+        this->stack_setting->setCurrentWidget(this->spin_setting_position);
+        this->spin_setting_position->setToolTip(
+            "Valve opening position as a percentage or fraction."
+            "<br>PCV support requires EPANET 2.3 or newer.");
         this->label_setting_curve->setText("Characteristic Curve");
         this->label_setting_curve->show();
         this->combo_setting_curve->show();
         this->combo_setting_curve->setToolTip(
-            "Optional valve-characteristic curve used by the positional control valve."
-            );
+            "Optional valve-characteristic curve used by the positional control valve.");
         break;
     }
 }

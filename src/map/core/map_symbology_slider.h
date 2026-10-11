@@ -30,6 +30,15 @@ public:
         updateToolTip();
     }
 
+    // Update tooltip units without changing any slider value or firing signals.
+    void setDisplayPresentation(const QString &suffix, double scale, int decimals)
+    {
+        this->unit_suffix = suffix;
+        this->display_scale = scale;
+        this->display_decimals = decimals;
+        updateToolTip();
+    }
+
     void setConfiguration(int value_minimum, int value_maximum, int value_default,
                           int value, const QString &description, const QString &unit_suffix,
                           double display_scale = 1.0, int display_decimals = 0)

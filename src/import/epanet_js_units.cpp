@@ -130,12 +130,23 @@ bool flowUnitUsesFootLength(const QString &unit)
         normalized == QStringLiteral("acre-ft/d") || normalized == QStringLiteral("afd");
 }
 
+QString inferredDarcyRoughnessUnit(const QString &flow_unit)
+{
+    if (flowUnitUsesMetricLength(flow_unit))
+        return QStringLiteral("mm");
+    if (flowUnitUsesFootLength(flow_unit))
+        return QStringLiteral("millift");
+    return QString();
+}
+
 std::optional<double> darcyRoughnessToMm(
     double value,
     const QString &roughness_unit,
     const QString &flow_unit)
 {
-    const QString normalized = normalizedUnit(roughness_unit);
+    const QString source_unit = roughness_unit.trimmed().isEmpty()
+        ? inferredDarcyRoughnessUnit(flow_unit) : roughness_unit;
+    const QString normalized = normalizedUnit(source_unit);
     if (normalized == QStringLiteral("mm") || normalized == QStringLiteral("millimeter")
         || normalized == QStringLiteral("millimetre"))
         return value;
@@ -145,13 +156,6 @@ std::optional<double> darcyRoughnessToMm(
     if (normalized == QStringLiteral("ft") || normalized == QStringLiteral("foot")
         || normalized == QStringLiteral("feet"))
         return units::feetToMillimetres(value);
-    if (normalized.isEmpty())
-    {
-        if (flowUnitUsesMetricLength(flow_unit))
-            return value;
-        if (flowUnitUsesFootLength(flow_unit))
-            return units::millifeetToMillimetres(value);
-    }
     return std::nullopt;
 }
 
@@ -201,8 +205,8 @@ std::optional<double> pressureToHeadM(
     if (normalized == QStringLiteral("mwc") || normalized == QStringLiteral("m")
         || normalized == QStringLiteral("mh2o"))
         return value;
-    if (normalized == QStringLiteral("fwc") || normalized == QStringLiteral("ft")
-        || normalized == QStringLiteral("feet"))
+    if (normalized == QStringLiteral("fwc") || normalized == QStringLiteral("ftwc")
+        || normalized == QStringLiteral("ft") || normalized == QStringLiteral("feet"))
         return units::feetToMetres(value);
     if (!std::isfinite(specific_gravity) || specific_gravity <= 0.0)
         return std::nullopt;

@@ -16,6 +16,9 @@
 #include "widgets/group_box_collapsible.h"
 
 #include <aowis/model/hydraulic/network_hydraulic.h>
+class UnitNumericSpinBox;
+class UnitEnergyPriceSpinBox;
+
 class EntityInspectorPump : public EntityInspectorWidget
 {
     Q_OBJECT
@@ -30,7 +33,10 @@ private:
     void addGroupEnergy();
     void bindPump();
     void refreshPump();
+    void refreshPumpMeasurements();
+    void refreshPumpEnergyPrice();
     void refreshPumpControls();
+    void refreshPumpControlUnits();
     QUuid firstPumpControlTriggerNodeUuid() const;
     bool updatePumpSimpleControl(
         const QUuid &control_uuid,
@@ -44,8 +50,8 @@ private:
 
     QComboBox *combo_type = nullptr;
     QLabel *label_constant_power = nullptr;
-    QDoubleSpinBox *spin_constant_power = nullptr;
-    QDoubleSpinBox *spin_speed_initial = nullptr;
+    UnitNumericSpinBox *spin_constant_power = nullptr;
+    UnitNumericSpinBox *spin_speed_initial = nullptr;
     QComboBox *combo_status_initial = nullptr;
     QComboBox *combo_speed_pattern = nullptr;
 
@@ -55,7 +61,7 @@ private:
     QLabel *label_rule_controls = nullptr;
 
     QComboBox *combo_efficiency_curve = nullptr;
-    QDoubleSpinBox *spin_energy_price = nullptr;
+    UnitEnergyPriceSpinBox *spin_energy_price = nullptr;
     QComboBox *combo_price_pattern = nullptr;
 };
 

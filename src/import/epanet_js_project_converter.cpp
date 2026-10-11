@@ -24,6 +24,7 @@ namespace
 QJsonObject resolveProjectUnits(
     const QJsonObject &source_units,
     const QJsonObject &simulation_settings,
+    HydraulicHeadlossFormula headloss_formula,
     EpanetJsProjectConversionResult &result)
 {
     QJsonObject units = source_units;
@@ -79,6 +80,26 @@ QJsonObject resolveProjectUnits(
             by_system(QStringLiteral("m^3"), QStringLiteral("ft^3")));
     resolve(QStringLiteral("power"), {},
             by_system(QStringLiteral("kW"), QStringLiteral("hp")));
+
+    // Darcy-Weisbach roughness defaults are implied by the EPANET flow
+    // family even when the source project omits the roughness unit. Record
+    // the same resolved preference used by the numerical importer so an
+    // optional custom profile reproduces the source measurement units.
+    // Hazen-Williams and Manning roughness are dimensionless coefficients.
+    if (headloss_formula == HydraulicHeadlossFormula::DarcyWeisbach
+        && units.value(QStringLiteral("roughness")).toString().trimmed().isEmpty())
+    {
+        const QString inferred = EpanetJsUnits::inferredDarcyRoughnessUnit(flow_unit);
+        if (!inferred.isEmpty())
+        {
+            units.insert(QStringLiteral("roughness"), inferred);
+            EpanetJsConversionCommon::appendDiagnostic(
+                result, EpanetJsConversionDiagnosticSeverity::Warning,
+                QStringLiteral("inferred-unit"),
+                QStringLiteral("Missing epanet-js Darcy-Weisbach roughness unit; using '%1' "
+                               "based on flow unit '%2'.").arg(inferred, flow_unit));
+        }
+    }
 
     if (metric || customary)
     {
@@ -166,16 +187,19 @@ EpanetJsProjectConversionResult EpanetJsProjectConverter::convert(
 
     const QJsonObject simulation_settings = EpanetJsSettings::simulationSettingsObject(project, result);
 
+    // Resolve the headloss formula before unit inference: Darcy-Weisbach
+    // roughness has length units, unlike Hazen-Williams and Manning.
+    EpanetJsSettings::mapHeadlossFormula(settings, result);
+
     // Resolve every unit key once, before any conversion stage runs. Stages
     // read exactly one key each and never apply fallbacks of their own.
     settings.insert(
         QStringLiteral("units"),
         resolveProjectUnits(
-            EpanetJsConversionCommon::projectUnitsObject(settings), simulation_settings, result));
+            EpanetJsConversionCommon::projectUnitsObject(settings), simulation_settings,
+            result.network.options_hydraulic.headloss_formula, result));
 
     result.source_display_units = settings.value(QStringLiteral("units")).toObject();
-
-    EpanetJsSettings::mapHeadlossFormula(settings, result);
     EpanetJsSettings::importPipeMaterials(project, settings, result);
     EpanetJsPatternsCurves::importPatterns(project, result);
     EpanetJsPatternsCurves::importCurves(project, settings, result);

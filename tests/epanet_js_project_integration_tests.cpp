@@ -1,5 +1,6 @@
 #include "import/epanet_js_project_converter.h"
 #include "import/epanet_js_project_reader.h"
+#include "config/unit_presentation_context.h"
 #include "test_harness.h"
 
 #include <aowis/epanet/epanet_runner.h>
@@ -8,6 +9,9 @@
 #include <QByteArray>
 #include <QCoreApplication>
 #include <QDir>
+#include <QFile>
+#include <QJsonObject>
+#include <QTemporaryDir>
 #include <QString>
 
 #include <algorithm>
@@ -1287,6 +1291,7 @@ void testSyntheticUsCustomaryProject()
         expectUsRuleFires(ejsdb_run);
     }
 }
+#include "epanet_inp_unit_roundtrip.inc"
 }
 
 int main(int argc, char **argv)
@@ -1298,5 +1303,11 @@ int main(int argc, char **argv)
     test_harness.runCase(
         "synthetic US-customary epanet-js and INP interoperability",
         testSyntheticUsCustomaryProject);
+    test_harness.runCase(
+        "metric EPANET INP import/export canonical round trip",
+        testMetricInpUnitRoundTrip);
+    test_harness.runCase(
+        "US EPANET INP import/export canonical round trip",
+        testUsInpUnitRoundTrip);
     return test_harness.finish();
 }

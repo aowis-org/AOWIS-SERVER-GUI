@@ -13,6 +13,8 @@ std::optional<double> volumeToM3(double value, const QString &unit);
 std::optional<double> diameterToMm(double value, const QString &unit);
 bool flowUnitUsesMetricLength(const QString &unit);
 bool flowUnitUsesFootLength(const QString &unit);
+// EPANET Darcy-Weisbach roughness defaults are determined by the flow unit family.
+QString inferredDarcyRoughnessUnit(const QString &flow_unit);
 std::optional<double> darcyRoughnessToMm(
     double value,
     const QString &roughness_unit,

@@ -3,6 +3,9 @@
 #include "config/gui_configuration.h"
 #include "config/shortcut_registry.h"
 #include "map/core/map_symbology_slider.h"
+#include "map/core/map_symbology_length_units.h"
+#include "config/unit_aware_view.h"
+#include "config/unit_profile_manager.h"
 
 #include <QSignalBlocker>
 #include <QtMath>
@@ -239,6 +242,13 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     this->button_group_map_select->addButton(this->map_opentopomap, 3);
     this->button_group_map_select->addButton(this->map_osmcyclo, 4);
     
+    if (this->mode == CanvasMode::Monitor)
+    {
+        new UnitAwareView(this, UnitProfileManager::instance().presentation(),
+            [this] { refreshIconSizeUnitPresentation(); });
+        refreshIconSizeUnitPresentation();
+    }
+
     // setting canvas opacity to 50 on init
     if (this->mode == CanvasMode::Edit || this->mode == CanvasMode::Monitor)
     {
@@ -250,6 +260,33 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     }
     
     
+}
+
+void MapNavigationWidget::refreshIconSizeUnitPresentation()
+{
+    if (this->mode != CanvasMode::Monitor || this->combo_icon_size_unit == nullptr
+        || this->slider_icon_size == nullptr)
+        return;
+
+    const MapSymbologyLengthUnits::Presentation display =
+        MapSymbologyLengthUnits::forContext(
+            UnitProfileManager::instance().presentation());
+    // The enum remains Meters: the selected profile changes only the label.
+    this->combo_icon_size_unit->setItemText(0, display.unit);
+    this->combo_icon_size_unit->setToolTip(QStringLiteral(
+        "World-space icon sizes are stored in metres and displayed in %1. "
+        "Pixels retain their independent screen-space sizing.").arg(display.unit));
+
+    const bool is_3d = this->map->model()->viewMode() == MapViewMode::Globe;
+    const NetworkSymbologySizeUnit active_unit = is_3d
+        ? this->icon_size_3d_unit : this->icon_size_2d_unit;
+    if (active_unit == NetworkSymbologySizeUnit::Meters)
+    {
+        MapSymbologySlider *slider = static_cast<MapSymbologySlider *>(this->slider_icon_size);
+        slider->setDisplayPresentation(QStringLiteral(" ") + display.unit,
+                                       display.metres_to_display, display.decimals);
+    }
+    // No slider value change, model write, or symbology change signal.
 }
 
 void MapNavigationWidget::sync3dIconsForViewMode(MapViewMode view_mode)
@@ -277,13 +314,17 @@ void MapNavigationWidget::syncIconSizeSliderForViewMode(MapViewMode view_mode)
             static_cast<MapSymbologySlider *>(this->slider_icon_size);
         if (unit == NetworkSymbologySizeUnit::Meters)
         {
+            const MapSymbologyLengthUnits::Presentation display =
+                MapSymbologyLengthUnits::forContext(
+                    UnitProfileManager::instance().presentation());
             symbology_slider->setConfiguration(
                 qRound(NetworkSymbologyMinimumIconSizeM),
                 qRound(NetworkSymbologyMaximumIconSizeM),
                 qRound(NetworkSymbologyDefaultIconSizeM),
                 remembered_value,
                 QStringLiteral("Sets the true world-space reservoir, tank, pump and valve icon size."),
-                QStringLiteral(" m"));
+                QStringLiteral(" ") + display.unit,
+                display.metres_to_display, display.decimals);
         }
         else
         {

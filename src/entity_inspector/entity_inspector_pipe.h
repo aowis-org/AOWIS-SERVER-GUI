@@ -11,6 +11,7 @@
 #include <QLineEdit>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
+#include <QStackedWidget>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QUuid>
@@ -55,9 +56,13 @@ private:
     QCheckBox *check_override_wall = nullptr;
     QDoubleSpinBox *spin_bulk_reaction = nullptr;
     QDoubleSpinBox *spin_wall_reaction = nullptr;
+    QDoubleSpinBox *spin_wall_reaction_zero = nullptr;
+    QStackedWidget *stack_wall_reaction = nullptr;
+    void refreshPipeQuality();
     void updateQualityUi();
 
     void refreshPipe();
+    void refreshPipeGeometry();
     void updateRoughnessUi(const HydraulicLinkPipe &pipe);
 
 signals:

@@ -1,5 +1,10 @@
 #include "entity_inspector/entity_inspector_pump.h"
 
+#include "config/unit_aware_view.h"
+#include "config/unit_energy_price_spin_box.h"
+#include "config/unit_numeric_spin_box.h"
+#include "config/unit_profile_manager.h"
+
 #include <cmath>
 #include <optional>
 
@@ -126,19 +131,36 @@ void EntityInspectorPump::addGroupPumpInput()
         "From Library", static_cast<int>(HydraulicLinkPumpDefinitionType::Library));
 
     this->label_constant_power = new QLabel("Power");
-    this->spin_constant_power = new QDoubleSpinBox();
-    this->spin_constant_power->setDecimals(3);
-    this->spin_constant_power->setSingleStep(1.0);
-    this->spin_constant_power->setRange(0.0, 1000000.0);
-    this->spin_constant_power->setSuffix(" kW");
+    this->spin_constant_power = new UnitNumericSpinBox(
+        [this]() -> std::optional<double> {
+            if (!this->hydraulic_data) return std::nullopt;
+            const std::optional<HydraulicLinkPump> pump = this->hydraulic_data->pump(this->pump_uuid);
+            if (!pump || pump->definition_type != HydraulicLinkPumpDefinitionType::ConstantPower)
+                return std::nullopt;
+            return pump->constant_power_kw;
+        },
+        [this](double kilowatts) {
+            if (!this->hydraulic_data) return false;
+            const std::optional<HydraulicLinkPump> pump = this->hydraulic_data->pump(this->pump_uuid);
+            if (!pump || pump->definition_type != HydraulicLinkPumpDefinitionType::ConstantPower)
+                return false;
+            return this->hydraulic_data->setPumpConstantPowerKw(this->pump_uuid, kilowatts);
+        }, "power", "kW", 0.0, 1000000.0, 1.0, 3, group);
     this->spin_constant_power->setSpecialValueText("Not configured");
 
     QLabel *label_speed_initial = new QLabel("Initial Speed");
-    this->spin_speed_initial = new QDoubleSpinBox();
-    this->spin_speed_initial->setDecimals(2);
-    this->spin_speed_initial->setSingleStep(0.05);
-    this->spin_speed_initial->setRange(0.0, 10.0);
-    this->spin_speed_initial->setSuffix(" ×");
+    this->spin_speed_initial = new UnitNumericSpinBox(
+        [this]() -> std::optional<double> {
+            if (!this->hydraulic_data) return std::nullopt;
+            const std::optional<HydraulicLinkPump> pump = this->hydraulic_data->pump(this->pump_uuid);
+            return pump ? std::optional<double>(pump->initial_speed_ratio) : std::nullopt;
+        },
+        [this](double speed_ratio) {
+            if (!this->hydraulic_data || !this->hydraulic_data->pump(this->pump_uuid))
+                return false;
+            return this->hydraulic_data->setPumpInitialSpeed(this->pump_uuid, speed_ratio);
+        }, "pump_speed_ratio", "1", 0.0, 10.0, 0.05, 2, group,
+        [](const QString &) { return QStringLiteral(" ×"); });
     this->spin_speed_initial->setSpecialValueText("0.00 × (off)");
 
     QLabel *label_status_initial = new QLabel("Initial Status");
@@ -164,6 +186,10 @@ void EntityInspectorPump::addGroupPumpInput()
     grid->addWidget(this->combo_speed_pattern, 4, 1);
 
     layoutConfiguration()->addWidget(group);
+    // Subscribe once for this small editor region. The view generation updates
+    // its controls only while the pump input is visible.
+    new UnitAwareView(this->spin_speed_initial, UnitProfileManager::instance().presentation(),
+        [this] { refreshPumpMeasurements(); });
 }
 
 void EntityInspectorPump::addGroupControls()
@@ -227,6 +253,10 @@ void EntityInspectorPump::addGroupControls()
     layout->addWidget(this->label_rule_controls);
 
     layoutConfiguration()->addWidget(group);
+    // One subscription for the control table, not one for each cell. Rows are
+    // bound to canonical control properties and are only reformatted when shown.
+    new UnitAwareView(this->table_controls, UnitProfileManager::instance().presentation(),
+        [this] { refreshPumpControlUnits(); });
 }
 
 void EntityInspectorPump::addGroupEnergyCostInput()
@@ -239,12 +269,19 @@ void EntityInspectorPump::addGroupEnergyCostInput()
     constrainComboWidth(this->combo_efficiency_curve);
 
     QLabel *label_energy_price = new QLabel("Energy Price");
-    this->spin_energy_price = new QDoubleSpinBox();
-    this->spin_energy_price->setDecimals(4);
-    this->spin_energy_price->setSingleStep(0.01);
-    this->spin_energy_price->setRange(0.0, 1000.0);
-    this->spin_energy_price->setSuffix(" /kWh");
-    this->spin_energy_price->setSpecialValueText("Not priced");
+    this->spin_energy_price = new UnitEnergyPriceSpinBox(
+        [this]() -> std::optional<double> {
+            if (!this->hydraulic_data) return std::nullopt;
+            const std::optional<HydraulicLinkPump> pump = this->hydraulic_data->pump(this->pump_uuid);
+            return pump ? std::optional<double>(pump->energy_price_per_kw_h) : std::nullopt;
+        },
+        [this](double price_per_kwh) {
+            if (!this->hydraulic_data) return false;
+            const std::optional<HydraulicLinkPump> pump = this->hydraulic_data->pump(this->pump_uuid);
+            if (!pump || pump->energy_price_input_type != HydraulicLinkPumpEnergyPriceInputType::Constant)
+                return false;
+            return this->hydraulic_data->setPumpEnergyPricePerKwh(this->pump_uuid, price_per_kwh);
+        }, group);
 
     QLabel *label_price_pattern = new QLabel("Price Pattern");
     this->combo_price_pattern = new QComboBox();
@@ -258,6 +295,8 @@ void EntityInspectorPump::addGroupEnergyCostInput()
     grid->addWidget(this->combo_price_pattern, 2, 1);
 
     layoutConfiguration()->addWidget(group);
+    new UnitAwareView(this->spin_energy_price, UnitProfileManager::instance().presentation(),
+        [this] { refreshPumpEnergyPrice(); });
 }
 
 void EntityInspectorPump::addGroupEnergy()
@@ -275,14 +314,6 @@ void EntityInspectorPump::bindPump()
             static_cast<HydraulicLinkPumpDefinitionType>(
                 this->combo_type->currentData(value_role).toInt());
         this->hydraulic_data->setPumpDefinitionType(this->pump_uuid, definition_type);
-    });
-    connect(this->spin_constant_power, &QDoubleSpinBox::valueChanged, this, [this](double power_kw)
-    {
-        this->hydraulic_data->setPumpConstantPowerKw(this->pump_uuid, power_kw);
-    });
-    connect(this->spin_speed_initial, &QDoubleSpinBox::valueChanged, this, [this](double speed)
-    {
-        this->hydraulic_data->setPumpInitialSpeed(this->pump_uuid, speed);
     });
     connect(this->combo_status_initial, &QComboBox::currentIndexChanged, this, [this](int)
     {
@@ -312,10 +343,6 @@ void EntityInspectorPump::bindPump()
         this->hydraulic_data->setPumpEfficiencyInput(
             this->pump_uuid, input_type,
             this->combo_efficiency_curve->currentData(uuid_role).toUuid());
-    });
-    connect(this->spin_energy_price, &QDoubleSpinBox::valueChanged, this, [this](double price)
-    {
-        this->hydraulic_data->setPumpEnergyPricePerKwh(this->pump_uuid, price);
     });
     connect(this->combo_price_pattern, &QComboBox::currentIndexChanged, this, [this](int)
     {
@@ -349,22 +376,21 @@ void EntityInspectorPump::refreshPump()
         return;
 
     const QSignalBlocker type_blocker(this->combo_type);
-    const QSignalBlocker constant_power_blocker(this->spin_constant_power);
-    const QSignalBlocker speed_blocker(this->spin_speed_initial);
     const QSignalBlocker status_blocker(this->combo_status_initial);
     const QSignalBlocker speed_pattern_blocker(this->combo_speed_pattern);
     const QSignalBlocker efficiency_blocker(this->combo_efficiency_curve);
-    const QSignalBlocker energy_price_blocker(this->spin_energy_price);
     const QSignalBlocker price_pattern_blocker(this->combo_price_pattern);
 
     const int type_index = this->combo_type->findData(
         static_cast<int>(pump->definition_type), value_role);
     this->combo_type->setCurrentIndex(type_index >= 0 ? type_index : 0);
     const bool constant_power = pump->definition_type == HydraulicLinkPumpDefinitionType::ConstantPower;
+    // A pending constant-power edit must not survive switching to a curve or
+    // library-defined pump. Display refreshes never write the rounded values.
+    if (!constant_power) this->spin_constant_power->cancelEdit();
     this->label_constant_power->setVisible(constant_power);
     this->spin_constant_power->setVisible(constant_power);
-    this->spin_constant_power->setValue(pump->constant_power_kw);
-    this->spin_speed_initial->setValue(pump->initial_speed_ratio);
+    refreshPumpMeasurements();
 
     const int status_index = this->combo_status_initial->findData(
         static_cast<int>(pump->initial_status), value_role);
@@ -373,15 +399,30 @@ void EntityInspectorPump::refreshPump()
     populateSpeedPatternCombo(pump->speed_pattern_uuid);
 
     populateEfficiencyInputCombo(pump.value());
-    const QString energy_currency = this->hydraulic_data->networkHydraulic().options_energy.currency_iso4217;
-    this->spin_energy_price->setSuffix(energy_currency.isEmpty()
-        ? QStringLiteral(" /kWh")
-        : QStringLiteral(" %1/kWh").arg(energy_currency));
-    this->spin_energy_price->setValue(pump->energy_price_per_kw_h);
-    this->spin_energy_price->setEnabled(
-        pump->energy_price_input_type == HydraulicLinkPumpEnergyPriceInputType::Constant);
+    if (pump->energy_price_input_type != HydraulicLinkPumpEnergyPriceInputType::Constant)
+        this->spin_energy_price->cancelEdit();
+    refreshPumpEnergyPrice();
     populatePricePatternCombo(pump.value());
     refreshPumpControls();
+}
+
+void EntityInspectorPump::refreshPumpEnergyPrice()
+{
+    if (!this->hydraulic_data)
+        return;
+    const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
+    const QString currency = this->hydraulic_data->networkHydraulic().options_energy.currency_iso4217;
+    const bool refreshed = this->spin_energy_price->refreshUnits(context, currency);
+    const std::optional<HydraulicLinkPump> pump = this->hydraulic_data->pump(this->pump_uuid);
+    this->spin_energy_price->setEnabled(refreshed && pump &&
+        pump->energy_price_input_type == HydraulicLinkPumpEnergyPriceInputType::Constant);
+}
+
+void EntityInspectorPump::refreshPumpMeasurements()
+{
+    const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
+    this->spin_constant_power->refreshUnits(context);
+    this->spin_speed_initial->refreshUnits(context);
 }
 
 QUuid EntityInspectorPump::firstPumpControlTriggerNodeUuid() const
@@ -428,6 +469,21 @@ bool EntityInspectorPump::updatePumpSimpleControl(
     }
 
     return false;
+}
+
+void EntityInspectorPump::refreshPumpControlUnits()
+{
+    if (!this->table_controls) return;
+    const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
+    for (int row = 0; row < this->table_controls->rowCount(); ++row)
+    {
+        if (UnitNumericSpinBox *threshold =
+                dynamic_cast<UnitNumericSpinBox *>(this->table_controls->cellWidget(row, 3)))
+            threshold->refreshUnits(context);
+        if (UnitNumericSpinBox *speed =
+                dynamic_cast<UnitNumericSpinBox *>(this->table_controls->cellWidget(row, 5)))
+            speed->refreshUnits(context);
+    }
 }
 
 void EntityInspectorPump::refreshPumpControls()
@@ -568,31 +624,61 @@ void EntityInspectorPump::refreshPumpControls()
             });
 
             const bool trigger_is_junction = isJunction(network, control.trigger_node_uuid);
-            QDoubleSpinBox *threshold = new QDoubleSpinBox(this->table_controls);
-            threshold->setDecimals(3);
-            threshold->setSingleStep(0.1);
-            // Matches the range already used for elevation/head fields elsewhere in the
-            // inspector (see addGroupElevation) rather than +/-1,000,000, which forced this
-            // spin box's non-shrinkable sizeHint to accommodate an implausible 1,000,000 m
-            // pressure/level reading.
-            threshold->setRange(-10000.0, 10000.0);
-            threshold->setSuffix(trigger_is_junction
-                ? QStringLiteral(" m pressure") : QStringLiteral(" m level"));
-            threshold->setValue(trigger_is_junction
-                ? control.trigger_pressure_head_m : control.trigger_water_level_m);
-            this->table_controls->setCellWidget(row, 3, threshold);
-            connect(threshold, &QDoubleSpinBox::valueChanged, this,
-                    [this, control_uuid = control.uuid, trigger_is_junction](double value)
-            {
-                updatePumpSimpleControl(control_uuid,
-                    [trigger_is_junction, value](HydraulicControlSimple &updated)
+            const QUuid trigger_node_uuid = control.trigger_node_uuid;
+            const HydraulicControlSimpleType trigger_control_type = control.type;
+            // A control's threshold changes physical quantity when its trigger
+            // node changes between a junction and a tank/reservoir. Pin the
+            // binding to the original node and control type to reject stale edits.
+            const auto read_threshold = [this, control_uuid = control.uuid,
+                                         trigger_node_uuid, trigger_control_type,
+                                         trigger_is_junction]() -> std::optional<double> {
+                if (!this->hydraulic_data) return std::nullopt;
+                const NetworkHydraulic &current = this->hydraulic_data->networkHydraulic();
+                if (trigger_is_junction != isJunction(current, trigger_node_uuid) ||
+                    (!trigger_is_junction && !isTank(current, trigger_node_uuid) &&
+                     !isReservoir(current, trigger_node_uuid))) return std::nullopt;
+                for (const HydraulicControlSimple &candidate : current.controls_simple)
                 {
-                    if (trigger_is_junction)
-                        updated.trigger_pressure_head_m = value;
-                    else
-                        updated.trigger_water_level_m = value;
+                    if (candidate.uuid == control_uuid && candidate.link_uuid == this->pump_uuid &&
+                        candidate.type == trigger_control_type &&
+                        candidate.trigger_node_uuid == trigger_node_uuid)
+                        return trigger_is_junction ? candidate.trigger_pressure_head_m
+                                                   : candidate.trigger_water_level_m;
+                }
+                return std::nullopt;
+            };
+            UnitNumericSpinBox *threshold = new UnitNumericSpinBox(
+                read_threshold,
+                [this, control_uuid = control.uuid, trigger_node_uuid,
+                 trigger_control_type, trigger_is_junction](double value) {
+                    if (!this->hydraulic_data) return false;
+                    const NetworkHydraulic &current = this->hydraulic_data->networkHydraulic();
+                    if (trigger_is_junction != isJunction(current, trigger_node_uuid) ||
+                        (!trigger_is_junction && !isTank(current, trigger_node_uuid) &&
+                         !isReservoir(current, trigger_node_uuid))) return false;
+                    const QList<HydraulicControlSimple> &controls = current.controls_simple;
+                    for (const HydraulicControlSimple &candidate : controls)
+                    {
+                        if (candidate.uuid != control_uuid || candidate.link_uuid != this->pump_uuid)
+                            continue;
+                        if (candidate.type != trigger_control_type ||
+                            candidate.trigger_node_uuid != trigger_node_uuid) return false;
+                        return updatePumpSimpleControl(control_uuid,
+                            [trigger_is_junction, value](HydraulicControlSimple &updated) {
+                                if (trigger_is_junction) updated.trigger_pressure_head_m = value;
+                                else updated.trigger_water_level_m = value;
+                            });
+                    }
+                    return false;
+                },
+                trigger_is_junction ? "pressure_head" : "water_level", "m",
+                -10000.0, 10000.0, 0.1, 3, this->table_controls,
+                [trigger_is_junction](const QString &unit) {
+                    return NumericText::suffix(unit) +
+                        (trigger_is_junction ? QStringLiteral(" pressure") : QStringLiteral(" level"));
                 });
-            });
+            threshold->refreshUnits(UnitProfileManager::instance().presentation());
+            this->table_controls->setCellWidget(row, 3, threshold);
         }
         else
         {
@@ -601,22 +687,43 @@ void EntityInspectorPump::refreshPumpControls()
 
             if (control.type == HydraulicControlSimpleType::Timer)
             {
-                QDoubleSpinBox *elapsed_time = new QDoubleSpinBox(this->table_controls);
-                elapsed_time->setDecimals(3);
-                elapsed_time->setSingleStep(0.25);
-                elapsed_time->setRange(0.0, 596523.0);
-                elapsed_time->setSuffix(QStringLiteral(" h elapsed"));
-                elapsed_time->setValue(static_cast<double>(control.trigger_elapsed_time_s) / 3600.0);
+                // Timer stores an integral number of seconds. The editor may
+                // present hours/minutes/days, but commits only an explicit edit
+                // converted back into integral seconds.
+                UnitNumericSpinBox *elapsed_time = new UnitNumericSpinBox(
+                    [this, control_uuid = control.uuid]() -> std::optional<double> {
+                        if (!this->hydraulic_data) return std::nullopt;
+                        for (const HydraulicControlSimple &candidate :
+                             this->hydraulic_data->networkHydraulic().controls_simple)
+                        {
+                            if (candidate.uuid == control_uuid && candidate.link_uuid == this->pump_uuid &&
+                                candidate.type == HydraulicControlSimpleType::Timer)
+                                return static_cast<double>(candidate.trigger_elapsed_time_s);
+                        }
+                        return std::nullopt;
+                    },
+                    [this, control_uuid = control.uuid](double seconds) {
+                        if (!this->hydraulic_data || !std::isfinite(seconds) ||
+                            seconds < 0.0 || seconds > 596523.0 * 3600.0) return false;
+                        for (const HydraulicControlSimple &candidate :
+                             this->hydraulic_data->networkHydraulic().controls_simple)
+                        {
+                            if (candidate.uuid != control_uuid || candidate.link_uuid != this->pump_uuid)
+                                continue;
+                            if (candidate.type != HydraulicControlSimpleType::Timer) return false;
+                            const quint64 integral_seconds = static_cast<quint64>(std::llround(seconds));
+                            return updatePumpSimpleControl(control_uuid,
+                                [integral_seconds](HydraulicControlSimple &updated) {
+                                    updated.trigger_elapsed_time_s = integral_seconds;
+                                });
+                        }
+                        return false;
+                    },
+                    "elapsed_time", "s", 0.0, 596523.0 * 3600.0, 900.0, 3,
+                    this->table_controls,
+                    [](const QString &unit) { return NumericText::suffix(unit) + QStringLiteral(" elapsed"); });
+                elapsed_time->refreshUnits(UnitProfileManager::instance().presentation());
                 this->table_controls->setCellWidget(row, 3, elapsed_time);
-                connect(elapsed_time, &QDoubleSpinBox::valueChanged, this,
-                        [this, control_uuid = control.uuid](double hours)
-                {
-                    const quint64 seconds = static_cast<quint64>(std::llround(hours * 3600.0));
-                    updatePumpSimpleControl(control_uuid, [seconds](HydraulicControlSimple &updated)
-                    {
-                        updated.trigger_elapsed_time_s = seconds;
-                    });
-                });
             }
             else
             {
@@ -658,25 +765,39 @@ void EntityInspectorPump::refreshPumpControls()
             });
         });
 
-        QDoubleSpinBox *speed = new QDoubleSpinBox(this->table_controls);
-        speed->setDecimals(3);
-        speed->setSingleStep(0.05);
-        speed->setRange(0.0, 1000.0);
-        speed->setSuffix(QStringLiteral(" ×"));
-        speed->setValue(control.setting.pump_speed_ratio.value_or(1.0));
-        speed->setEnabled(control.action == HydraulicControlActionType::Setting);
+        UnitNumericSpinBox *speed = new UnitNumericSpinBox(
+            [this, control_uuid = control.uuid]() -> std::optional<double> {
+                if (!this->hydraulic_data) return std::nullopt;
+                for (const HydraulicControlSimple &candidate :
+                     this->hydraulic_data->networkHydraulic().controls_simple)
+                {
+                    if (candidate.uuid == control_uuid && candidate.link_uuid == this->pump_uuid &&
+                        candidate.action == HydraulicControlActionType::Setting)
+                        return candidate.setting.pump_speed_ratio.value_or(1.0);
+                }
+                return std::nullopt;
+            },
+            [this, control_uuid = control.uuid](double speed_ratio) {
+                if (!this->hydraulic_data) return false;
+                for (const HydraulicControlSimple &candidate :
+                     this->hydraulic_data->networkHydraulic().controls_simple)
+                {
+                    if (candidate.uuid != control_uuid || candidate.link_uuid != this->pump_uuid)
+                        continue;
+                    if (candidate.action != HydraulicControlActionType::Setting) return false;
+                    return updatePumpSimpleControl(control_uuid,
+                        [speed_ratio](HydraulicControlSimple &updated) {
+                            updated.setting = HydraulicControlLinkSetting();
+                            updated.setting.pump_speed_ratio = speed_ratio;
+                            updated.action = HydraulicControlActionType::Setting;
+                        });
+                }
+                return false;
+            },
+            "pump_speed_ratio", "1", 0.0, 1000.0, 0.05, 3, this->table_controls,
+            [](const QString &) { return QStringLiteral(" ×"); });
+        speed->refreshUnits(UnitProfileManager::instance().presentation());
         this->table_controls->setCellWidget(row, 5, speed);
-        connect(speed, &QDoubleSpinBox::valueChanged, this,
-                [this, control_uuid = control.uuid](double speed_ratio)
-        {
-            updatePumpSimpleControl(control_uuid, [speed_ratio](HydraulicControlSimple &updated)
-            {
-                updated.setting = HydraulicControlLinkSetting();
-                updated.setting.pump_speed_ratio = speed_ratio;
-                updated.action = HydraulicControlActionType::Setting;
-            });
-        });
-
         QPushButton *remove = new QPushButton(QStringLiteral("Remove"), this->table_controls);
         this->table_controls->setCellWidget(row, 6, remove);
         connect(remove, &QPushButton::clicked, this, [this, control_uuid = control.uuid]()

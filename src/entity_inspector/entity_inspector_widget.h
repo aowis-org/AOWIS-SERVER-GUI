@@ -118,6 +118,7 @@ protected:
     QLabel *label_demands_summary = nullptr;
     QDoubleSpinBox *spin_emitter_coefficient = nullptr;
     QDoubleSpinBox *spin_emitter_pressure_exponent = nullptr;
+    QLabel *label_emitter_coefficient_unit = nullptr;
 
     void addGroupSimulation();
     void addGroupWaterQualitySimulation();
@@ -209,7 +210,7 @@ private:
     void inspectHydraulicEndpoint(const QUuid &node_uuid);
     void refreshHydraulicNodeElevation();
     void scheduleDemandsRefresh();
-    void refreshDemands();
+    void refreshDemands(bool presentation_only = false);
     void rebuildDemandRows(const QList<HydraulicDemand> &demands);
     void addDemandRow(int demand_index, const HydraulicDemand &demand);
     void updateDemandRow(int demand_index, const HydraulicDemand &demand);
@@ -244,6 +245,7 @@ private:
     QUuid node_uuid_2;
     QString entity_title_prefix;
     bool demands_refresh_pending = false;
+    bool demands_structure_stale = false;
     InterfaceServerMap *terrain_elevation_client = nullptr;
     QPointer<QMessageBox> terrain_elevation_message_box = nullptr;
     QPointer<QMessageBox> source_trace_origin_message_box = nullptr;
@@ -302,9 +304,6 @@ private slots:
     void onGroupExpand(GroupBoxCollapsible *group);
     
     void onElevationInputTypeChanged(int index);
-    void onElevationValueChanged(double value_m);
-    void onTerrainElevationChanged(double terrain_elevation_m);
-    void onElevationOffsetChanged(double offset_m);
     
 public slots:
     virtual void onHeadlossFormulaChanged(HeadlossFormulas formulas);

@@ -1,4 +1,10 @@
+#include "config/unit_numeric_spin_box.h"
+#include "config/unit_profile_manager.h"
+#include "config/unit_aware_view.h"
+#include "simulation/simulation_inspector_unit_presentation.h"
 #include "entity_inspector/entity_inspector_widget.h"
+#include "entity_inspector/coordinate_numeric_spin_box.h"
+#include "entity_inspector/emitter_numeric_spin_box.h"
 
 #include "services/interface_server_map_rest.h"
 #ifdef AOWIS_STANDALONE
@@ -38,6 +44,84 @@ QString terrainDatumDisplayName(const QString &datum_id)
     return datum_id;
 }
 
+// Node-quality properties have the same physical meaning for Junctions,
+// Reservoirs, and Tanks. Read each property from the authoritative node,
+// never from an editor's rounded presentation value.
+enum class NodeQualityNumber { InitialChemical, InitialWaterAge, SourceConcentration, SourceMassFlow };
+
+template<typename Node>
+double nodeQualityNumber(const Node &node, NodeQualityNumber field)
+{
+    switch (field) {
+    case NodeQualityNumber::InitialChemical:
+        return node.initial_chemical_concentration_mg_per_l;
+    case NodeQualityNumber::InitialWaterAge:
+        return node.initial_water_age_h;
+    case NodeQualityNumber::SourceConcentration:
+        return node.quality_source.chemical_concentration_mg_per_l;
+    case NodeQualityNumber::SourceMassFlow:
+        return node.quality_source.chemical_mass_flow_mg_per_min;
+    }
+    return 0.0;
+}
+
+std::optional<double> readNodeQualityNumber(HydraulicData *data,
+    InfrastructureEntity entity_type, const QUuid &uuid, NodeQualityNumber field)
+{
+    if (!data || uuid.isNull()) return std::nullopt;
+    switch (entity_type) {
+    case InfrastructureEntity::Junction: {
+        const std::optional<HydraulicNodeJunction> node = data->junction(uuid);
+        return node ? std::optional<double>(nodeQualityNumber(*node, field)) : std::nullopt;
+    }
+    case InfrastructureEntity::Reservoir: {
+        const std::optional<HydraulicNodeReservoir> node = data->reservoir(uuid);
+        return node ? std::optional<double>(nodeQualityNumber(*node, field)) : std::nullopt;
+    }
+    case InfrastructureEntity::Tank: {
+        const std::optional<HydraulicNodeTank> node = data->tank(uuid);
+        return node ? std::optional<double>(nodeQualityNumber(*node, field)) : std::nullopt;
+    }
+    default:
+        return std::nullopt;
+    }
+}
+
+template<typename Node>
+HydraulicNodeQualitySourceType nodeQualitySourceType(const Node &node)
+{
+    return node.quality_source.type;
+}
+
+std::optional<HydraulicNodeQualitySourceType> readNodeQualitySourceType(
+    HydraulicData *data, InfrastructureEntity entity_type, const QUuid &uuid)
+{
+    if (!data || uuid.isNull()) return std::nullopt;
+    switch (entity_type) {
+    case InfrastructureEntity::Junction: {
+        const std::optional<HydraulicNodeJunction> node = data->junction(uuid);
+        return node ? std::optional<HydraulicNodeQualitySourceType>(nodeQualitySourceType(*node)) : std::nullopt;
+    }
+    case InfrastructureEntity::Reservoir: {
+        const std::optional<HydraulicNodeReservoir> node = data->reservoir(uuid);
+        return node ? std::optional<HydraulicNodeQualitySourceType>(nodeQualitySourceType(*node)) : std::nullopt;
+    }
+    case InfrastructureEntity::Tank: {
+        const std::optional<HydraulicNodeTank> node = data->tank(uuid);
+        return node ? std::optional<HydraulicNodeQualitySourceType>(nodeQualitySourceType(*node)) : std::nullopt;
+    }
+    default:
+        return std::nullopt;
+    }
+}
+
+bool usesNodeQualityConcentration(HydraulicNodeQualitySourceType source_type)
+{
+    return source_type == HydraulicNodeQualitySourceType::Concentration
+        || source_type == HydraulicNodeQualitySourceType::FlowPacedBooster
+        || source_type == HydraulicNodeQualitySourceType::SetpointBooster;
+}
+
 QString hydraulicNodeTypeName(InfrastructureEntity entity_type)
 {
     switch (entity_type)
@@ -74,18 +158,7 @@ QString formatSimulationElapsedTime(quint64 time_elapsed_s)
 
 QString formatSimulationNumber(double value, int decimals, const QString &unit)
 {
-    if (!std::isfinite(value))
-        return QStringLiteral("—");
-
-    QString text = QString::number(value, 'f', decimals);
-    while (text.contains(QLatin1Char('.')) && text.endsWith(QLatin1Char('0')))
-        text.chop(1);
-    if (text.endsWith(QLatin1Char('.')))
-        text.chop(1);
-    if (text == QStringLiteral("-0"))
-        text = QStringLiteral("0");
-
-    return text + unit;
+    return UnitTablePresentation::formatNumber(value, decimals, unit);
 }
 
 template<typename ResultType>
@@ -117,7 +190,8 @@ QString pumpStateText(HydraulicSimulationPumpState state)
     return QStringLiteral("Unknown");
 }
 
-QString pipeRoughnessText(const HydraulicSimulationResultLinkPipe &result)
+QString pipeRoughnessText(const HydraulicSimulationResultLinkPipe &result,
+                          const UnitPresentationContext &presentation)
 {
     if (result.roughness_hazen_williams.has_value())
     {
@@ -126,7 +200,9 @@ QString pipeRoughnessText(const HydraulicSimulationResultLinkPipe &result)
     }
     if (result.roughness_darcy_weisbach_mm.has_value())
     {
-        return formatSimulationNumber(result.roughness_darcy_weisbach_mm.value(), 6, QStringLiteral(" mm"))
+        return SimulationInspectorUnitPresentation::format(
+            presentation, "darcy_weisbach_roughness_height",
+            result.roughness_darcy_weisbach_mm.value(), 6)
             + QStringLiteral(" (Darcy-Weisbach)");
     }
     if (result.roughness_chezy_manning.has_value())
@@ -579,6 +655,8 @@ void EntityInspectorWidget::addGroupSimulation()
     connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
             this, &EntityInspectorWidget::refreshSimulation);
 
+    new UnitAwareView(this->scroll_sim_meas, UnitProfileManager::instance().presentation(),
+                      [this] { refreshSimulation(); });
     refreshSimulation();
 }
 
@@ -605,6 +683,71 @@ void EntityInspectorWidget::setSimulationText(SimulationField field, const QStri
 void EntityInspectorWidget::setSimulationValue(SimulationField field, double value,
                                                 int decimals, const QString &unit)
 {
+    // Field identities determine physical dimensions; valve settings use
+    // an explicit quantity below because their dimensions depend on type.
+    std::string_view quantity;
+    switch (field)
+    {
+    case SimulationField::DemandRequested:
+    case SimulationField::DemandDelivered:
+    case SimulationField::DemandDeficit:
+    case SimulationField::TotalDemand:
+    case SimulationField::NetDemand:
+    case SimulationField::EmitterFlow:
+    case SimulationField::LeakageFlow:
+    case SimulationField::Flow:
+        quantity = "volumetric_flow_rate";
+        break;
+    case SimulationField::Head:
+        quantity = this->entity_type == InfrastructureEntity::Pump
+            ? "head_gain" : "hydraulic_head";
+        break;
+    case SimulationField::PressureHead:
+        quantity = "pressure_head";
+        break;
+    case SimulationField::WaterLevel:
+        quantity = "water_level";
+        break;
+    case SimulationField::Volume:
+    case SimulationField::MixingZoneVolume:
+        quantity = "volume";
+        break;
+    case SimulationField::Velocity:
+        quantity = "velocity";
+        break;
+    case SimulationField::HeadLoss:
+        quantity = "head_loss";
+        break;
+    case SimulationField::UnitHeadLoss:
+        quantity = "head_loss_gradient";
+        break;
+    case SimulationField::Efficiency:
+    case SimulationField::AverageEfficiency:
+        quantity = "efficiency";
+        break;
+    case SimulationField::TimeOnline:
+        quantity = "operating_time_percentage";
+        break;
+    case SimulationField::Power:
+    case SimulationField::AveragePower:
+    case SimulationField::PeakPower:
+        quantity = "power";
+        break;
+    case SimulationField::AverageEnergyIntensity:
+        quantity = "energy_intensity";
+        break;
+    default:
+        break;
+    }
+
+    if (!quantity.empty())
+    {
+        setSimulationText(field, SimulationInspectorUnitPresentation::format(
+            UnitProfileManager::instance().presentation(), quantity, value, decimals));
+        return;
+    }
+    // Dimensionless values, pump speed (×), and currency/day do not inherit
+    // arbitrary measurement units.
     setSimulationText(field, formatSimulationNumber(value, decimals, unit));
 }
 
@@ -787,7 +930,7 @@ void EntityInspectorWidget::refreshSimulation()
         setSimulationValue(SimulationField::FrictionFactor, pipe->friction_factor, 6);
         setSimulationText(SimulationField::Status,
                           pipe->open ? QStringLiteral("Open") : QStringLiteral("Closed"));
-        setSimulationText(SimulationField::Roughness, pipeRoughnessText(*pipe));
+        setSimulationText(SimulationField::Roughness, pipeRoughnessText(*pipe, UnitProfileManager::instance().presentation()));
         setSimulationText(SimulationField::ReferencedByControl,
                           pipe->appears_in_control ? QStringLiteral("Yes") : QStringLiteral("No"));
         break;
@@ -842,19 +985,25 @@ void EntityInspectorWidget::refreshSimulation()
         case HydraulicLinkValveType::PRV:
         case HydraulicLinkValveType::PSV:
         case HydraulicLinkValveType::PBV:
-            setSimulationValue(SimulationField::Setting, valve_result->setting_pressure_head_m,
-                               3, QStringLiteral(" m"));
+            setSimulationText(SimulationField::Setting,
+                SimulationInspectorUnitPresentation::format(
+                    UnitProfileManager::instance().presentation(),
+                    "pressure_head", valve_result->setting_pressure_head_m, 3));
             break;
         case HydraulicLinkValveType::FCV:
-            setSimulationValue(SimulationField::Setting, valve_result->setting_flow_m3_per_h,
-                               3, QStringLiteral(" m³/h"));
+            setSimulationText(SimulationField::Setting,
+                SimulationInspectorUnitPresentation::format(
+                    UnitProfileManager::instance().presentation(),
+                    "volumetric_flow_rate", valve_result->setting_flow_m3_per_h, 3));
             break;
         case HydraulicLinkValveType::TCV:
             setSimulationValue(SimulationField::Setting, valve_result->setting_loss_coefficient, 6);
             break;
         case HydraulicLinkValveType::PCV:
-            setSimulationValue(SimulationField::Setting, valve_result->setting_position_percent,
-                               2, QStringLiteral(" %"));
+            setSimulationText(SimulationField::Setting,
+                SimulationInspectorUnitPresentation::format(
+                    UnitProfileManager::instance().presentation(),
+                    "valve_position", valve_result->setting_position_percent, 2));
             break;
         case HydraulicLinkValveType::GPV:
             setSimulationText(SimulationField::Setting, QStringLiteral("Curve-defined"));
@@ -920,6 +1069,8 @@ void EntityInspectorWidget::addGroupWaterQualitySimulation()
     connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
             this, &EntityInspectorWidget::refreshWaterQualitySimulation);
 
+    new UnitAwareView(this->scroll_quality_sim_meas, UnitProfileManager::instance().presentation(),
+                      [this] { refreshWaterQualitySimulation(); });
     refreshWaterQualitySimulation();
 }
 
@@ -1081,27 +1232,33 @@ void EntityInspectorWidget::refreshWaterQualitySimulation()
     {
         this->label_quality_simulation_value_name->setText("Chemical Concentration");
         this->label_quality_simulation_value->setText(
-            formatSimulationNumber(value, 6, QStringLiteral(" mg/L")));
+            SimulationInspectorUnitPresentation::format(
+                UnitProfileManager::instance().presentation(),
+                "chemical_mass_concentration", value, 6));
         if (node_entity)
         {
             this->label_quality_simulation_source_mass_name->setVisible(true);
             this->label_quality_simulation_source_mass->setVisible(true);
             this->label_quality_simulation_source_mass->setText(
-                formatSimulationNumber(source_mass_flow_mg_per_min, 6,
-                                       QStringLiteral(" mg/min")));
+                SimulationInspectorUnitPresentation::format(
+                    UnitProfileManager::instance().presentation(),
+                    "chemical_mass_flow_rate", source_mass_flow_mg_per_min, 6));
         }
     }
     else if (timeline->analysis == WaterQualityAnalysisType::WaterAge)
     {
         this->label_quality_simulation_value_name->setText("Water Age");
         this->label_quality_simulation_value->setText(
-            formatSimulationNumber(value, 6, QStringLiteral(" h")));
+            SimulationInspectorUnitPresentation::format(
+                UnitProfileManager::instance().presentation(), "water_age", value, 6));
     }
     else
     {
         this->label_quality_simulation_value_name->setText("Source Trace");
         this->label_quality_simulation_value->setText(
-            formatSimulationNumber(value, 6, QStringLiteral(" %")));
+            SimulationInspectorUnitPresentation::format(
+                UnitProfileManager::instance().presentation(),
+                "source_trace_percentage", value, 6));
     }
 }
 
@@ -1442,22 +1599,43 @@ void EntityInspectorWidget::addGroupPosition()
     GroupBoxCollapsible *group = new GroupBoxCollapsible("Position");
     QGridLayout *grid = new QGridLayout(group);
     
+    // Resolve the selected entity for every read/write, not just when the
+    // inspector is created. No raw model pointer or rounded companion field.
+    const CoordinatePropertyBinding::CoordinateReader read_coordinate = [this]()
+        -> std::optional<CoordinateWGS84>
+    {
+        if (!this->hydraulic_data || this->entity_uuid.isNull())
+            return std::nullopt;
+        if (this->entity_type == InfrastructureEntity::DemandPoint)
+        {
+            const std::optional<HydraulicDemandPoint> point =
+                this->hydraulic_data->demandPoint(this->entity_uuid);
+            return point ? std::optional<CoordinateWGS84>(point->coordinate_wgs84)
+                         : std::nullopt;
+        }
+        const std::optional<HydraulicNodeCommonData> node =
+            this->hydraulic_data->nodeCommonData(this->entity_type, this->entity_uuid);
+        return node ? std::optional<CoordinateWGS84>(node->coordinate_wgs84)
+                    : std::nullopt;
+    };
+    const CoordinatePropertyBinding::CoordinateWriter write_coordinate = [this](
+        const CoordinateWGS84 &coordinate) -> bool
+    {
+        if (!this->hydraulic_data || this->entity_uuid.isNull())
+            return false;
+        if (this->entity_type == InfrastructureEntity::DemandPoint)
+            return this->hydraulic_data->setDemandPointCoordinate(this->entity_uuid, coordinate);
+        return this->hydraulic_data->setNodeCoordinate(this->entity_uuid, coordinate);
+    };
+
     QLabel *label_latitude = new QLabel("Latitude");
-    this->spin_latitude = new QDoubleSpinBox;
-    this->spin_latitude->setRange(-90.0, 90.0);
-    this->spin_latitude->setDecimals(6);
-    this->spin_latitude->setSingleStep(0.000001);
-    this->spin_latitude->setSuffix(" °");
-    this->spin_latitude->setAccelerated(true);
-    
+    this->spin_latitude = new CoordinateNumericSpinBox(
+        read_coordinate, write_coordinate, CoordinatePropertyBinding::Component::Latitude);
+
     QLabel *label_longitude = new QLabel("Longitude");
-    this->spin_longitude = new QDoubleSpinBox;
-    this->spin_longitude->setRange(-180.0, 180.0);
-    this->spin_longitude->setDecimals(6);
-    this->spin_longitude->setSingleStep(0.000001);
-    this->spin_longitude->setSuffix(" °");
-    this->spin_longitude->setAccelerated(true);
-    
+    this->spin_longitude = new CoordinateNumericSpinBox(
+        read_coordinate, write_coordinate, CoordinatePropertyBinding::Component::Longitude);
+
     this->button_find_on_map = new QPushButton("Find on Map");
     
     grid->addWidget(label_latitude, 0, 0);
@@ -1504,20 +1682,6 @@ void EntityInspectorWidget::bindHydraulicNode(InfrastructureEntity entity_type, 
     {
         this->hydraulic_data->setNodeEnabled(this->entity_uuid, enabled);
     });
-    connect(this->spin_latitude, &QDoubleSpinBox::valueChanged, this, [this](double)
-    {
-        CoordinateWGS84 coordinate;
-        coordinate.latitude_deg = this->spin_latitude->value();
-        coordinate.longitude_deg = this->spin_longitude->value();
-        this->hydraulic_data->setNodeCoordinate(this->entity_uuid, coordinate);
-    });
-    connect(this->spin_longitude, &QDoubleSpinBox::valueChanged, this, [this](double)
-    {
-        CoordinateWGS84 coordinate;
-        coordinate.latitude_deg = this->spin_latitude->value();
-        coordinate.longitude_deg = this->spin_longitude->value();
-        this->hydraulic_data->setNodeCoordinate(this->entity_uuid, coordinate);
-    });
     connect(this->button_find_on_map, &QPushButton::clicked, this, [this]()
     {
         this->hydraulic_data->requestEntityLocate(this->entity_type, this->entity_uuid);
@@ -1541,6 +1705,7 @@ void EntityInspectorWidget::bindHydraulicNode(InfrastructureEntity entity_type, 
     });
     connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, [this]()
     {
+        this->demands_structure_stale = true;
         refreshHydraulicNode();
         scheduleDemandsRefresh();
     });
@@ -1637,20 +1802,6 @@ void EntityInspectorWidget::bindDemandPoint(const QUuid &uuid, const QString &ti
     {
         this->hydraulic_data->setDemandPointEnabled(this->entity_uuid, enabled);
     });
-    connect(this->spin_latitude, &QDoubleSpinBox::valueChanged, this, [this](double)
-    {
-        CoordinateWGS84 coordinate;
-        coordinate.latitude_deg = this->spin_latitude->value();
-        coordinate.longitude_deg = this->spin_longitude->value();
-        this->hydraulic_data->setDemandPointCoordinate(this->entity_uuid, coordinate);
-    });
-    connect(this->spin_longitude, &QDoubleSpinBox::valueChanged, this, [this](double)
-    {
-        CoordinateWGS84 coordinate;
-        coordinate.latitude_deg = this->spin_latitude->value();
-        coordinate.longitude_deg = this->spin_longitude->value();
-        this->hydraulic_data->setDemandPointCoordinate(this->entity_uuid, coordinate);
-    });
     connect(this->button_find_on_map, &QPushButton::clicked, this, [this]()
     {
         this->hydraulic_data->requestEntityLocate(this->entity_type, this->entity_uuid);
@@ -1711,10 +1862,10 @@ void EntityInspectorWidget::refreshHydraulicNode()
 
     refreshHydraulicGeneral(node->id, node->metadata);
 
-    const QSignalBlocker latitude_blocker(this->spin_latitude);
-    const QSignalBlocker longitude_blocker(this->spin_longitude);
-    this->spin_latitude->setValue(node->coordinate_wgs84.latitude_deg);
-    this->spin_longitude->setValue(node->coordinate_wgs84.longitude_deg);
+    // Presentation only: an active edit stays pending; six displayed decimals
+    // must never be written back as a side effect of refreshing the inspector.
+    static_cast<CoordinateNumericSpinBox *>(this->spin_latitude)->refreshCoordinate();
+    static_cast<CoordinateNumericSpinBox *>(this->spin_longitude)->refreshCoordinate();
 
     refreshHydraulicNodeElevation();
 }
@@ -1745,10 +1896,8 @@ void EntityInspectorWidget::refreshDemandPoint()
 
     refreshHydraulicGeneral(demand_point->id, demand_point->metadata);
 
-    const QSignalBlocker latitude_blocker(this->spin_latitude);
-    const QSignalBlocker longitude_blocker(this->spin_longitude);
-    this->spin_latitude->setValue(demand_point->coordinate_wgs84.latitude_deg);
-    this->spin_longitude->setValue(demand_point->coordinate_wgs84.longitude_deg);
+    static_cast<CoordinateNumericSpinBox *>(this->spin_latitude)->refreshCoordinate();
+    static_cast<CoordinateNumericSpinBox *>(this->spin_longitude)->refreshCoordinate();
 }
 
 void EntityInspectorWidget::refreshHydraulicEndpoints()
@@ -1959,29 +2108,70 @@ void EntityInspectorWidget::addGroupElevation()
                 &EntityInspectorWidget::handleTerrainElevationError);
     }
     
+    // All three node types use canonical metre values. Editors only present a
+    // selected unit and must never write back a rounded display value.
+    const auto node_editor = [this](int field) -> QDoubleSpinBox * {
+        const std::string quantity = field == 1 ? "vertical_offset" :
+            this->entity_type == InfrastructureEntity::Reservoir && field == 2
+                ? "hydraulic_head" : "elevation";
+        return new UnitNumericSpinBox(
+            [this, field]() -> std::optional<double> {
+                if (!this->hydraulic_data) return std::nullopt;
+                switch (this->entity_type) {
+                case InfrastructureEntity::Junction: {
+                    const auto node = this->hydraulic_data->junction(this->entity_uuid);
+                    if (!node) return std::nullopt;
+                    if (field == 0) return node->terrain_elevation_m;
+                    if (field == 1) return node->elevation_offset_m;
+                    return node->elevation_input_type == HydraulicNodeElevationInputType::TerrainElevationAndOffset
+                        ? node->terrain_elevation_m + node->elevation_offset_m : node->elevation_m;
+                }
+                case InfrastructureEntity::Reservoir: {
+                    const auto node = this->hydraulic_data->reservoir(this->entity_uuid);
+                    if (!node) return std::nullopt;
+                    if (field == 0) return node->terrain_elevation_m;
+                    if (field == 1) return node->hydraulic_head_offset_m;
+                    return node->head_input_type == HydraulicNodeElevationInputType::TerrainElevationAndOffset
+                        ? node->terrain_elevation_m + node->hydraulic_head_offset_m : node->hydraulic_head_m;
+                }
+                case InfrastructureEntity::Tank: {
+                    const auto node = this->hydraulic_data->tank(this->entity_uuid);
+                    if (!node) return std::nullopt;
+                    if (field == 0) return node->terrain_elevation_m;
+                    if (field == 1) return node->bottom_offset_m;
+                    return node->elevation_input_type == HydraulicNodeElevationInputType::TerrainElevationAndOffset
+                        ? node->terrain_elevation_m + node->bottom_offset_m : node->bottom_elevation_m;
+                }
+                default:
+                    return std::nullopt;
+                }
+            },
+            [this, field](double value) {
+                if (!this->hydraulic_data) return false;
+                if (field == 0) return setTerrainElevation(value);
+                if (field == 1) return setElevationOffset(value);
+                // The total is calculated from the two canonical properties in
+                // terrain-relative mode, and must not be independently edited.
+                if (!this->combo_elevation_input_type ||
+                    static_cast<HydraulicNodeElevationInputType>(
+                        this->combo_elevation_input_type->currentData().toInt())
+                        != HydraulicNodeElevationInputType::AbsoluteElevation)
+                    return false;
+                return setElevationValue(value);
+            }, quantity, "m", -10000.0, 10000.0, 0.1, 3, this);
+    };
+
     this->label_terrain_elevation = new QLabel("Terrain Elevation");
-    this->spin_terrain_elevation = new QDoubleSpinBox;
-    this->spin_terrain_elevation->setRange(-10000.0, 10000.0);
-    this->spin_terrain_elevation->setDecimals(3);
-    this->spin_terrain_elevation->setSingleStep(0.10);
-    this->spin_terrain_elevation->setSuffix(" m");
-    
+    this->spin_terrain_elevation = node_editor(0);
+
     this->label_elevation_offset = new QLabel(offset_label_text);
     this->label_elevation_offset->setWordWrap(true);
-    this->spin_elevation_offset = new QDoubleSpinBox;
-    this->spin_elevation_offset->setRange(-10000.0, 10000.0);
-    this->spin_elevation_offset->setDecimals(3);
-    this->spin_elevation_offset->setSingleStep(0.10);
-    this->spin_elevation_offset->setSuffix(" m");
+    this->spin_elevation_offset = node_editor(1);
     this->spin_elevation_offset->setToolTip(offset_tooltip);
 
     this->label_elevation_value = new QLabel(value_label_text);
     this->label_elevation_value->setWordWrap(true);
-    this->spin_elevation_value = new QDoubleSpinBox;
-    this->spin_elevation_value->setRange(-10000.0, 10000.0);
-    this->spin_elevation_value->setDecimals(3);
-    this->spin_elevation_value->setSingleStep(0.10);
-    this->spin_elevation_value->setSuffix(" m");
+    this->spin_elevation_value = node_editor(2);
 
     grid->addWidget(this->combo_elevation_input_type, 0, 0, 1, 2);
     grid->addWidget(this->button_terrain_elevation, 1, 0, 1, 2);
@@ -2015,15 +2205,13 @@ void EntityInspectorWidget::addGroupElevation()
     connect(this->button_terrain_elevation, &QPushButton::clicked, this,
             &EntityInspectorWidget::requestTerrainElevation);
     connect(this->combo_elevation_input_type, &QComboBox::currentIndexChanged, this, &EntityInspectorWidget::onElevationInputTypeChanged);
-    connect(this->spin_elevation_value, &QDoubleSpinBox::valueChanged, this, &EntityInspectorWidget::onElevationValueChanged);
-    connect(this->spin_terrain_elevation, &QDoubleSpinBox::valueChanged, this, &EntityInspectorWidget::onTerrainElevationChanged);
-    connect(this->spin_elevation_offset, &QDoubleSpinBox::valueChanged, this, &EntityInspectorWidget::onElevationOffsetChanged);
-    
     connect(this->group_elevation, &GroupBoxCollapsible::signalExpanded, this, &EntityInspectorWidget::onGroupExpand);
     
     this->layoutConfiguration()->addWidget(this->group_elevation);
 
     refreshHydraulicNodeElevation();
+    new UnitAwareView(this->group_elevation, UnitProfileManager::instance().presentation(),
+        [this] { refreshHydraulicNodeElevation(); });
 }
 
 void EntityInspectorWidget::onGroupExpand(GroupBoxCollapsible *group)
@@ -2040,9 +2228,6 @@ void EntityInspectorWidget::refreshHydraulicNodeElevation()
         return;
 
     HydraulicNodeElevationInputType input_type = HydraulicNodeElevationInputType::AbsoluteElevation;
-    double value_m = 0.0;
-    double terrain_elevation_m = 0.0;
-    double offset_m = 0.0;
     HydraulicTimePatternMode head_pattern_mode = HydraulicTimePatternMode::Constant;
     QUuid head_pattern_uuid;
 
@@ -2056,9 +2241,6 @@ void EntityInspectorWidget::refreshHydraulicNodeElevation()
             return;
 
         input_type = junction->elevation_input_type;
-        value_m = junction->elevation_m;
-        terrain_elevation_m = junction->terrain_elevation_m;
-        offset_m = junction->elevation_offset_m;
         break;
     }
     case InfrastructureEntity::Reservoir:
@@ -2069,9 +2251,6 @@ void EntityInspectorWidget::refreshHydraulicNodeElevation()
             return;
 
         input_type = reservoir->head_input_type;
-        value_m = reservoir->hydraulic_head_m;
-        terrain_elevation_m = reservoir->terrain_elevation_m;
-        offset_m = reservoir->hydraulic_head_offset_m;
         head_pattern_mode = reservoir->head_pattern_mode;
         head_pattern_uuid = reservoir->head_pattern_uuid;
         break;
@@ -2084,9 +2263,6 @@ void EntityInspectorWidget::refreshHydraulicNodeElevation()
             return;
 
         input_type = tank->elevation_input_type;
-        value_m = tank->bottom_elevation_m;
-        terrain_elevation_m = tank->terrain_elevation_m;
-        offset_m = tank->bottom_offset_m;
         break;
     }
     default:
@@ -2101,12 +2277,10 @@ void EntityInspectorWidget::refreshHydraulicNodeElevation()
     const int input_type_index = this->combo_elevation_input_type->findData(
         static_cast<int>(input_type));
     this->combo_elevation_input_type->setCurrentIndex(input_type_index >= 0 ? input_type_index : 0);
-    this->spin_terrain_elevation->setValue(terrain_elevation_m);
-    this->spin_elevation_offset->setValue(offset_m);
-    this->spin_elevation_value->setValue(
-        input_type == HydraulicNodeElevationInputType::TerrainElevationAndOffset
-            ? terrain_elevation_m + offset_m
-            : value_m);
+    const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
+    static_cast<UnitNumericSpinBox *>(this->spin_terrain_elevation)->refreshUnits(context);
+    static_cast<UnitNumericSpinBox *>(this->spin_elevation_offset)->refreshUnits(context);
+    static_cast<UnitNumericSpinBox *>(this->spin_elevation_value)->refreshUnits(context);
 
     if (this->combo_head_pattern)
         populateTimePatternCombo(this->combo_head_pattern, head_pattern_mode, head_pattern_uuid);
@@ -2160,9 +2334,10 @@ void EntityInspectorWidget::updateCalculatedElevation()
     if (input_type != HydraulicNodeElevationInputType::TerrainElevationAndOffset)
         return;
 
-    const QSignalBlocker value_blocker(this->spin_elevation_value);
-    this->spin_elevation_value->setValue(
-        this->spin_terrain_elevation->value() + this->spin_elevation_offset->value());
+    // The calculated total is read from canonical model fields, never from
+    // rounded or differently unit-scaled editor values.
+    static_cast<UnitNumericSpinBox *>(this->spin_elevation_value)->refreshUnits(
+        UnitProfileManager::instance().presentation());
 }
 
 void EntityInspectorWidget::requestTerrainElevation()
@@ -2390,29 +2565,10 @@ void EntityInspectorWidget::onElevationInputTypeChanged(int index)
     const HydraulicNodeElevationInputType input_type =
         static_cast<HydraulicNodeElevationInputType>(
             this->combo_elevation_input_type->currentData().toInt());
-    updateElevationModeUi();
+    // Update the model first: the displayed calculated value must be read from
+    // its new canonical input mode, never derived from rounded spin-box values.
     setElevationInputType(input_type);
-}
-
-void EntityInspectorWidget::onElevationValueChanged(double value_m)
-{
-    const HydraulicNodeElevationInputType input_type =
-        static_cast<HydraulicNodeElevationInputType>(
-            this->combo_elevation_input_type->currentData().toInt());
-    if (input_type == HydraulicNodeElevationInputType::AbsoluteElevation)
-        setElevationValue(value_m);
-}
-
-void EntityInspectorWidget::onTerrainElevationChanged(double terrain_elevation_m)
-{
-    setTerrainElevation(terrain_elevation_m);
-    updateCalculatedElevation();
-}
-
-void EntityInspectorWidget::onElevationOffsetChanged(double offset_m)
-{
-    setElevationOffset(offset_m);
-    updateCalculatedElevation();
+    refreshHydraulicNodeElevation();
 }
 
 bool EntityInspectorWidget::setElevationInputType(HydraulicNodeElevationInputType input_type)
@@ -2504,48 +2660,66 @@ void EntityInspectorWidget::addGroupDemands(bool include_emitter)
     if (include_emitter)
     {
         QLabel *label_emitter_coefficient = new QLabel("Emitter<br>Coefficient");
-        this->spin_emitter_coefficient = new QDoubleSpinBox();
-        this->spin_emitter_coefficient->setRange(0.0, 1000000000.0);
-        this->spin_emitter_coefficient->setDecimals(6);
-        this->spin_emitter_coefficient->setSingleStep(0.001);
-        this->spin_emitter_coefficient->setAlignment(Qt::AlignRight);
-        this->spin_emitter_coefficient->setToolTip(
-            "Coefficient C in Q = C · pⁿ. Flow Q is stored in m³/h and pressure head p in m. "
-            "The coefficient has no fixed standalone unit because its dimension depends on n."
-        );
+        const QUuid junction_uuid = this->entity_uuid;
+        HydraulicData *data = this->hydraulic_data;
+        const auto read_junction = [data, junction_uuid]() -> std::optional<HydraulicNodeJunction> {
+            if (!data || junction_uuid.isNull()) return std::nullopt;
+            return data->junction(junction_uuid);
+        };
+        const auto read_exponent = [read_junction]() -> std::optional<double> {
+            const std::optional<HydraulicNodeJunction> junction = read_junction();
+            return junction ? std::optional<double>(junction->emitter.pressure_exponent)
+                            : std::nullopt;
+        };
+
+        EmitterCoefficientNumericSpinBox *coefficient = new EmitterCoefficientNumericSpinBox(
+            [read_junction]() -> std::optional<double> {
+                const std::optional<HydraulicNodeJunction> junction = read_junction();
+                return junction ? std::optional<double>(junction->emitter.coefficient)
+                                : std::nullopt;
+            },
+            [data, junction_uuid](double value) {
+                return data && data->setJunctionEmitterCoefficient(junction_uuid, value);
+            }, read_exponent);
+        this->spin_emitter_coefficient = coefficient;
+        coefficient->setAlignment(Qt::AlignRight);
+        coefficient->setToolTip(
+            "Coefficient C in Q = C · hⁿ. Q and h use the selected flow and pressure-head "
+            "units. The coefficient dimension changes with the exponent n.");
+        constrainSpinWidth(coefficient);
 
         QLabel *label_emitter_pressure_exponent = new QLabel("Emitter<br>Exponent");
-        this->spin_emitter_pressure_exponent = new QDoubleSpinBox();
-        this->spin_emitter_pressure_exponent->setRange(0.000001, 1000000.0);
-        this->spin_emitter_pressure_exponent->setDecimals(6);
-        this->spin_emitter_pressure_exponent->setSingleStep(0.01);
-        this->spin_emitter_pressure_exponent->setAlignment(Qt::AlignRight);
-        this->spin_emitter_pressure_exponent->setToolTip(
-            "Pressure exponent n in Q = C · pⁿ. EPANET supports one emitter exponent for the network, "
-            "so all enabled junctions with a non-zero emitter coefficient must use the same value."
-        );
-
-        connect(this->spin_emitter_coefficient, &QDoubleSpinBox::valueChanged,
-                this, [this](double value)
-        {
-            this->hydraulic_data->setJunctionEmitterCoefficient(this->entity_uuid, value);
-        });
-        connect(this->spin_emitter_pressure_exponent, &QDoubleSpinBox::valueChanged,
-                this, [this](double value)
-        {
-            this->hydraulic_data->setJunctionEmitterPressureExponent(this->entity_uuid, value);
-        });
+        UnitNumericSpinBox *exponent = new UnitNumericSpinBox(
+            read_exponent,
+            [data, junction_uuid](double value) {
+                return data && data->setJunctionEmitterPressureExponent(junction_uuid, value);
+            }, "emitter_exponent", "1", 0.000001, 1000000.0, 0.01, 10,
+            nullptr, [](const QString &) { return QString(); });
+        this->spin_emitter_pressure_exponent = exponent;
+        exponent->setAlignment(Qt::AlignRight);
+        exponent->setToolTip(
+            "Dimensionless exponent n in Q = C · hⁿ. EPANET supports one exponent "
+            "for the network, so all enabled junctions with a non-zero emitter "
+            "coefficient must use the same value.");
+        constrainSpinWidth(exponent);
 
         grid->addWidget(label_emitter_coefficient, row, 0);
-        grid->addWidget(this->spin_emitter_coefficient, row++, 1);
+        grid->addWidget(coefficient, row++, 1);
+        this->label_emitter_coefficient_unit = new QLabel();
+        this->label_emitter_coefficient_unit->setWordWrap(true);
+        grid->addWidget(this->label_emitter_coefficient_unit, row++, 0, 1, 2);
         grid->addWidget(label_emitter_pressure_exponent, row, 0);
-        grid->addWidget(this->spin_emitter_pressure_exponent, row++, 1);
+        grid->addWidget(exponent, row++, 1);
     }
 
     grid->addWidget(button_editor, row, 0, 1, 2);
 
     this->layoutConfiguration()->addWidget(group);
     refreshDemands();
+    // One lazy presentation region updates the demand summary and its emitter
+    // editors together, rather than subscribing each numeric input.
+    new UnitAwareView(group, UnitProfileManager::instance().presentation(),
+        [this] { refreshDemands(true); });
 }
 
 std::optional<QList<HydraulicDemand>> EntityInspectorWidget::currentDemands() const
@@ -2683,6 +2857,9 @@ bool EntityInspectorWidget::setCurrentDemandNote(int demand_index, const QString
 
 void EntityInspectorWidget::scheduleDemandsRefresh()
 {
+    const auto demands = currentDemands();
+    if (this->table_demands && (!demands || demands->size() != this->table_demands->rowCount()))
+        this->demands_structure_stale = true;
     const bool supported = this->entity_type == InfrastructureEntity::Junction ||
         this->entity_type == InfrastructureEntity::DemandPoint;
     if (!supported || this->demands_refresh_pending)
@@ -2696,7 +2873,7 @@ void EntityInspectorWidget::scheduleDemandsRefresh()
     });
 }
 
-void EntityInspectorWidget::refreshDemands()
+void EntityInspectorWidget::refreshDemands(bool presentation_only)
 {
     const std::optional<QList<HydraulicDemand>> demands_optional = currentDemands();
     if (!demands_optional.has_value())
@@ -2711,12 +2888,20 @@ void EntityInspectorWidget::refreshDemands()
             total_base_demand_m3_per_h += demand.base_demand_m3_per_h;
 
         const int demand_count = demands.size();
+        const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
+        const QString quantity = this->entity_type == InfrastructureEntity::DemandPoint
+            ? QStringLiteral("customer_demand_flow_rate")
+            : QStringLiteral("base_demand_flow_rate");
+        const QString unit = context.unit(quantity);
+        const std::optional<double> total = aowis::units::convert(
+            quantity.toStdString(), total_base_demand_m3_per_h, "m3/h", unit.toStdString());
+        const std::optional<QString> text = NumericText::measurement(
+            total, unit, context.locale(), context.formatPolicy(quantity));
         this->label_demands_summary->setText(
-            QStringLiteral("%1 demand categor%2\nTotal base demand: %3 m³/h")
+            QStringLiteral("%1 demand categor%2\nTotal base demand: %3")
                 .arg(demand_count)
                 .arg(demand_count == 1 ? QStringLiteral("y") : QStringLiteral("ies"))
-                .arg(total_base_demand_m3_per_h, 0, 'f', 3)
-        );
+                .arg(text.value_or(QStringLiteral("—"))));
     }
 
     if (this->entity_type == InfrastructureEntity::Junction)
@@ -2725,25 +2910,29 @@ void EntityInspectorWidget::refreshDemands()
             this->hydraulic_data->junction(this->entity_uuid);
         if (junction.has_value())
         {
+            const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
             if (this->spin_emitter_coefficient)
             {
-                const QSignalBlocker emitter_blocker(this->spin_emitter_coefficient);
-                this->spin_emitter_coefficient->setValue(junction->emitter.coefficient);
+                EmitterCoefficientNumericSpinBox *coefficient =
+                    static_cast<EmitterCoefficientNumericSpinBox *>(this->spin_emitter_coefficient);
+                coefficient->refreshUnits(context);
+                if (this->label_emitter_coefficient_unit)
+                    this->label_emitter_coefficient_unit->setText(
+                        QStringLiteral("Unit: %1").arg(coefficient->displayedUnitLabel()));
             }
             if (this->spin_emitter_pressure_exponent)
             {
-                const QSignalBlocker emitter_exponent_blocker(
-                    this->spin_emitter_pressure_exponent);
-                this->spin_emitter_pressure_exponent->setValue(
-                    junction->emitter.pressure_exponent);
+                UnitNumericSpinBox *exponent =
+                    static_cast<UnitNumericSpinBox *>(this->spin_emitter_pressure_exponent);
+                exponent->refreshUnits(context);
             }
         }
     }
 
-    if (!this->table_demands)
+    if (!this->table_demands || (presentation_only && !this->table_demands->isVisible()))
         return;
 
-    if (this->table_demands->rowCount() != demands.size())
+    if (this->demands_structure_stale || this->table_demands->rowCount() != demands.size())
     {
         rebuildDemandRows(demands);
         return;
@@ -2758,6 +2947,18 @@ void EntityInspectorWidget::rebuildDemandRows(const QList<HydraulicDemand> &dema
     if (!this->table_demands)
         return;
 
+    // Row indices are part of the binding identity. Invalidate existing
+    // editors before rows are removed/reordered for either entity type.
+    for (int row = 0; row < this->table_demands->rowCount(); ++row)
+    {
+        QWidget *widget = this->table_demands->cellWidget(row, 1);
+        if (!widget)
+            continue;
+        UnitNumericSpinBox *editor = static_cast<UnitNumericSpinBox *>(widget);
+        editor->cancelEdit();
+        editor->setEnabled(false);
+    }
+    this->demands_structure_stale = false;
     this->table_demands->setUpdatesEnabled(false);
     this->table_demands->clearContents();
     this->table_demands->setRowCount(demands.size());
@@ -2775,11 +2976,21 @@ void EntityInspectorWidget::addDemandRow(
         return;
 
     QLineEdit *line_category = new QLineEdit(this->table_demands);
-    QDoubleSpinBox *spin_base_demand = new QDoubleSpinBox(this->table_demands);
-    spin_base_demand->setRange(-1000000000.0, 1000000000.0);
-    spin_base_demand->setDecimals(6);
-    spin_base_demand->setSingleStep(0.1);
-    spin_base_demand->setSuffix(QStringLiteral(" m³/h"));
+    UnitNumericSpinBox *spin_base_demand = new UnitNumericSpinBox(
+        [this, demand_index]() -> std::optional<double> {
+            const std::optional<QList<HydraulicDemand>> demands = currentDemands();
+            if (this->demands_structure_stale || !demands ||
+                demand_index < 0 || demand_index >= demands->size())
+                return std::nullopt;
+            return demands->at(demand_index).base_demand_m3_per_h;
+        },
+        [this, demand_index](double value) {
+            return !this->demands_structure_stale &&
+                setCurrentDemandBaseDemandM3PerH(demand_index, value);
+        }, this->entity_type == InfrastructureEntity::DemandPoint
+               ? "customer_demand_flow_rate" : "base_demand_flow_rate",
+        "m3/h", -1000000000.0, 1000000000.0,
+        0.1, 6, this->table_demands);
     spin_base_demand->setAlignment(Qt::AlignRight);
 
     QComboBox *combo_pattern = new QComboBox(this->table_demands);
@@ -2813,11 +3024,6 @@ void EntityInspectorWidget::addDemandRow(
             [this, demand_index](const QString &category_name)
     {
         setCurrentDemandCategoryName(demand_index, category_name);
-    });
-    connect(spin_base_demand, &QDoubleSpinBox::valueChanged, this,
-            [this, demand_index](double base_demand_m3_per_h)
-    {
-        setCurrentDemandBaseDemandM3PerH(demand_index, base_demand_m3_per_h);
     });
     connect(combo_pattern, &QComboBox::currentIndexChanged, this,
             [this, demand_index, combo_pattern](int)
@@ -2856,7 +3062,7 @@ void EntityInspectorWidget::updateDemandRow(
 
     QLineEdit *line_category = qobject_cast<QLineEdit *>(
         this->table_demands->cellWidget(demand_index, 0));
-    QDoubleSpinBox *spin_base_demand = qobject_cast<QDoubleSpinBox *>(
+    UnitNumericSpinBox *spin_base_demand = static_cast<UnitNumericSpinBox *>(
         this->table_demands->cellWidget(demand_index, 1));
     QComboBox *combo_pattern = qobject_cast<QComboBox *>(
         this->table_demands->cellWidget(demand_index, 2));
@@ -2874,7 +3080,7 @@ void EntityInspectorWidget::updateDemandRow(
     if (spin_base_demand)
     {
         const QSignalBlocker base_demand_blocker(spin_base_demand);
-        spin_base_demand->setValue(demand.base_demand_m3_per_h);
+        spin_base_demand->refreshUnits(UnitProfileManager::instance().presentation());
     }
 
     if (combo_pattern)
@@ -3054,6 +3260,8 @@ void EntityInspectorWidget::openDemandsEditor()
         this->table_demands = nullptr;
     });
 
+    new UnitAwareView(this->dialog_demands, UnitProfileManager::instance().presentation(),
+        [this] { refreshDemands(true); });
     refreshDemands();
     this->dialog_demands->show();
 }
@@ -3066,10 +3274,41 @@ void EntityInspectorWidget::addGroupNodeQualityInputs()
 
     QLabel *label_initial_chemical = new QLabel("Initial Chemical Concentration");
     label_initial_chemical->setWordWrap(true);
-    this->spin_quality_initial_chemical = new QDoubleSpinBox();
-    this->spin_quality_initial_chemical->setRange(0.0, 1000000000.0);
-    this->spin_quality_initial_chemical->setDecimals(6);
-    this->spin_quality_initial_chemical->setSuffix(" mg/L");
+    // All node types share these canonical-backed editors. Only accepted user
+    // edits invoke the HydraulicData setters; unit changes are read-only.
+    const auto quality_editor = [this](NodeQualityNumber field) -> QDoubleSpinBox * {
+        const std::string quantity = field == NodeQualityNumber::InitialWaterAge ? "water_age"
+            : field == NodeQualityNumber::SourceMassFlow ? "chemical_mass_flow_rate"
+            : "chemical_mass_concentration";
+        const std::string storage_unit = field == NodeQualityNumber::InitialWaterAge ? "h"
+            : field == NodeQualityNumber::SourceMassFlow ? "mg/min" : "mg/L";
+        const double maximum = field == NodeQualityNumber::SourceMassFlow ? 1e12 : 1e9;
+        return new UnitNumericSpinBox(
+            [this, field]() -> std::optional<double> {
+                return readNodeQualityNumber(this->hydraulic_data, this->entity_type,
+                                             this->entity_uuid, field);
+            },
+            [this, field](double value) {
+                if (!this->hydraulic_data ||
+                    !readNodeQualityNumber(this->hydraulic_data, this->entity_type,
+                                           this->entity_uuid, field)) return false;
+                if (field == NodeQualityNumber::InitialChemical)
+                    return this->hydraulic_data->setNodeInitialChemicalConcentrationMgPerL(this->entity_uuid, value);
+                if (field == NodeQualityNumber::InitialWaterAge)
+                    return this->hydraulic_data->setNodeInitialWaterAgeH(this->entity_uuid, value);
+                const std::optional<HydraulicNodeQualitySourceType> source_type =
+                    readNodeQualitySourceType(this->hydraulic_data, this->entity_type, this->entity_uuid);
+                if (!source_type) return false;
+                if (field == NodeQualityNumber::SourceConcentration && usesNodeQualityConcentration(*source_type))
+                    return this->hydraulic_data->setNodeQualitySourceChemicalConcentrationMgPerL(this->entity_uuid, value);
+                if (field == NodeQualityNumber::SourceMassFlow &&
+                    *source_type == HydraulicNodeQualitySourceType::MassBooster)
+                    return this->hydraulic_data->setNodeQualitySourceMassFlowMgPerMin(this->entity_uuid, value);
+                return false;
+            }, quantity, storage_unit, 0.0, maximum, 0.1, 6, this);
+    };
+
+    this->spin_quality_initial_chemical = quality_editor(NodeQualityNumber::InitialChemical);
     constrainSpinWidth(this->spin_quality_initial_chemical);
 
     QLabel *label_source_type = new QLabel("Source Type");
@@ -3081,17 +3320,11 @@ void EntityInspectorWidget::addGroupNodeQualityInputs()
     this->combo_quality_source_type->addItem("Setpoint Booster", static_cast<int>(HydraulicNodeQualitySourceType::SetpointBooster));
 
     QLabel *label_source_concentration = new QLabel("Source<br>Concentration");
-    this->spin_quality_source_concentration = new QDoubleSpinBox();
-    this->spin_quality_source_concentration->setRange(0.0, 1000000000.0);
-    this->spin_quality_source_concentration->setDecimals(6);
-    this->spin_quality_source_concentration->setSuffix(" mg/L");
+    this->spin_quality_source_concentration = quality_editor(NodeQualityNumber::SourceConcentration);
     constrainSpinWidth(this->spin_quality_source_concentration);
 
     QLabel *label_source_mass_flow = new QLabel("Source<br>Mass Flow");
-    this->spin_quality_source_mass_flow = new QDoubleSpinBox();
-    this->spin_quality_source_mass_flow->setRange(0.0, 1000000000000.0);
-    this->spin_quality_source_mass_flow->setDecimals(6);
-    this->spin_quality_source_mass_flow->setSuffix(" mg/min");
+    this->spin_quality_source_mass_flow = quality_editor(NodeQualityNumber::SourceMassFlow);
     constrainSpinWidth(this->spin_quality_source_mass_flow);
 
     QLabel *label_source_pattern = new QLabel("Source Pattern");
@@ -3113,10 +3346,8 @@ void EntityInspectorWidget::addGroupNodeQualityInputs()
     QGridLayout *grid_water_age = new QGridLayout(group_water_age);
 
     QLabel *label_initial_water_age = new QLabel("Initial Water Age");
-    this->spin_quality_initial_water_age = new QDoubleSpinBox();
-    this->spin_quality_initial_water_age->setRange(0.0, 1000000000.0);
-    this->spin_quality_initial_water_age->setDecimals(6);
-    this->spin_quality_initial_water_age->setSuffix(" h");
+    this->spin_quality_initial_water_age = quality_editor(NodeQualityNumber::InitialWaterAge);
+    constrainSpinWidth(this->spin_quality_initial_water_age);
 
     grid_water_age->addWidget(label_initial_water_age, 0, 0);
     grid_water_age->addWidget(this->spin_quality_initial_water_age, 0, 1);
@@ -3141,33 +3372,15 @@ void EntityInspectorWidget::addGroupNodeQualityInputs()
     grid_source_trace->addWidget(this->check_source_trace_origin_current_node, 1, 0, 1, 3);
     grid_source_trace->setColumnStretch(1, 1);
 
-    connect(this->spin_quality_initial_chemical, &QDoubleSpinBox::valueChanged,
-            this, [this](double value)
-    {
-        this->hydraulic_data->setNodeInitialChemicalConcentrationMgPerL(this->entity_uuid, value);
-    });
-    connect(this->spin_quality_initial_water_age, &QDoubleSpinBox::valueChanged,
-            this, [this](double value)
-    {
-        this->hydraulic_data->setNodeInitialWaterAgeH(this->entity_uuid, value);
-    });
     connect(this->combo_quality_source_type, &QComboBox::currentIndexChanged,
             this, [this](int)
     {
         const HydraulicNodeQualitySourceType source_type = static_cast<HydraulicNodeQualitySourceType>(
             this->combo_quality_source_type->currentData().toInt());
+        static_cast<UnitNumericSpinBox *>(this->spin_quality_source_concentration)->cancelEdit();
+        static_cast<UnitNumericSpinBox *>(this->spin_quality_source_mass_flow)->cancelEdit();
         this->hydraulic_data->setNodeQualitySourceType(this->entity_uuid, source_type);
         updateQualitySourceInputUi();
-    });
-    connect(this->spin_quality_source_concentration, &QDoubleSpinBox::valueChanged,
-            this, [this](double value)
-    {
-        this->hydraulic_data->setNodeQualitySourceChemicalConcentrationMgPerL(this->entity_uuid, value);
-    });
-    connect(this->spin_quality_source_mass_flow, &QDoubleSpinBox::valueChanged,
-            this, [this](double value)
-    {
-        this->hydraulic_data->setNodeQualitySourceMassFlowMgPerMin(this->entity_uuid, value);
     });
     connect(this->combo_quality_source_pattern, &QComboBox::currentIndexChanged,
             this, [this](int)
@@ -3213,6 +3426,19 @@ void EntityInspectorWidget::addGroupNodeQualityInputs()
 
     layoutQuality()->addWidget(group_chemical);
     layoutQuality()->addWidget(group_water_age);
+    UnitPresentationContext &presentation = UnitProfileManager::instance().presentation();
+    // A collapsed/hidden quality group does no conversion work until shown.
+    new UnitAwareView(this->spin_quality_initial_chemical, presentation, [this] {
+        const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
+        static_cast<UnitNumericSpinBox *>(this->spin_quality_initial_chemical)->refreshUnits(context);
+        static_cast<UnitNumericSpinBox *>(this->spin_quality_source_concentration)->refreshUnits(context);
+        static_cast<UnitNumericSpinBox *>(this->spin_quality_source_mass_flow)->refreshUnits(context);
+        updateQualitySourceInputUi();
+    });
+    new UnitAwareView(this->spin_quality_initial_water_age, presentation, [this] {
+        static_cast<UnitNumericSpinBox *>(this->spin_quality_initial_water_age)->refreshUnits(
+            UnitProfileManager::instance().presentation());
+    });
     layoutQuality()->addWidget(group_source_trace);
     refreshNodeQualityInputs();
     refreshSourceTraceInputs();
@@ -3390,9 +3616,7 @@ void EntityInspectorWidget::updateQualitySourceInputUi()
 
     const HydraulicNodeQualitySourceType source_type = static_cast<HydraulicNodeQualitySourceType>(
         this->combo_quality_source_type->currentData().toInt());
-    const bool uses_concentration = source_type == HydraulicNodeQualitySourceType::Concentration
-        || source_type == HydraulicNodeQualitySourceType::FlowPacedBooster
-        || source_type == HydraulicNodeQualitySourceType::SetpointBooster;
+    const bool uses_concentration = usesNodeQualityConcentration(source_type);
     const bool uses_mass_flow = source_type == HydraulicNodeQualitySourceType::MassBooster;
     const bool has_source = source_type != HydraulicNodeQualitySourceType::None;
 
@@ -3406,8 +3630,6 @@ void EntityInspectorWidget::refreshNodeQualityInputs()
     if (this->combo_quality_source_type == nullptr)
         return;
 
-    double initial_chemical = 0.0;
-    double initial_water_age = 0.0;
     HydraulicNodeQualitySource quality_source;
     bool found = false;
 
@@ -3416,8 +3638,6 @@ void EntityInspectorWidget::refreshNodeQualityInputs()
         const std::optional<HydraulicNodeJunction> node = this->hydraulic_data->junction(this->entity_uuid);
         if (node.has_value())
         {
-            initial_chemical = node->initial_chemical_concentration_mg_per_l;
-            initial_water_age = node->initial_water_age_h;
             quality_source = node->quality_source;
             found = true;
         }
@@ -3427,8 +3647,6 @@ void EntityInspectorWidget::refreshNodeQualityInputs()
         const std::optional<HydraulicNodeReservoir> node = this->hydraulic_data->reservoir(this->entity_uuid);
         if (node.has_value())
         {
-            initial_chemical = node->initial_chemical_concentration_mg_per_l;
-            initial_water_age = node->initial_water_age_h;
             quality_source = node->quality_source;
             found = true;
         }
@@ -3438,8 +3656,6 @@ void EntityInspectorWidget::refreshNodeQualityInputs()
         const std::optional<HydraulicNodeTank> node = this->hydraulic_data->tank(this->entity_uuid);
         if (node.has_value())
         {
-            initial_chemical = node->initial_chemical_concentration_mg_per_l;
-            initial_water_age = node->initial_water_age_h;
             quality_source = node->quality_source;
             found = true;
         }
@@ -3448,18 +3664,14 @@ void EntityInspectorWidget::refreshNodeQualityInputs()
     if (!found)
         return;
 
-    const QSignalBlocker chemical_blocker(this->spin_quality_initial_chemical);
-    const QSignalBlocker age_blocker(this->spin_quality_initial_water_age);
+    const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
+    static_cast<UnitNumericSpinBox *>(this->spin_quality_initial_chemical)->refreshUnits(context);
+    static_cast<UnitNumericSpinBox *>(this->spin_quality_initial_water_age)->refreshUnits(context);
     const QSignalBlocker source_type_blocker(this->combo_quality_source_type);
-    const QSignalBlocker concentration_blocker(this->spin_quality_source_concentration);
-    const QSignalBlocker mass_blocker(this->spin_quality_source_mass_flow);
-
-    this->spin_quality_initial_chemical->setValue(initial_chemical);
-    this->spin_quality_initial_water_age->setValue(initial_water_age);
     const int source_index = this->combo_quality_source_type->findData(static_cast<int>(quality_source.type));
     this->combo_quality_source_type->setCurrentIndex(source_index >= 0 ? source_index : 0);
-    this->spin_quality_source_concentration->setValue(quality_source.chemical_concentration_mg_per_l);
-    this->spin_quality_source_mass_flow->setValue(quality_source.chemical_mass_flow_mg_per_min);
+    static_cast<UnitNumericSpinBox *>(this->spin_quality_source_concentration)->refreshUnits(context);
+    static_cast<UnitNumericSpinBox *>(this->spin_quality_source_mass_flow)->refreshUnits(context);
     populateQualitySourcePatternCombo(quality_source.pattern_uuid);
     updateQualitySourceInputUi();
 }

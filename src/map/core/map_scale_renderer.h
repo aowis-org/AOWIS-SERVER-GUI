@@ -2,6 +2,7 @@
 #define MAP_SCALE_RENDERER_H
 
 #include "map/core/map_model.h"
+#include "map/core/map_scale_distance.h"
 
 #include <QColor>
 #include <QFont>
@@ -50,46 +51,11 @@ inline double distanceMeters(const CoordinateWGS84 &first, const CoordinateWGS84
     return 2.0 * EarthRadiusMeters * std::asin(std::sqrt(bounded_haversine));
 }
 
-inline double roundedDistanceMeters(double maximum_distance_m)
-{
-    if (!(maximum_distance_m > 0.0) || !std::isfinite(maximum_distance_m))
-        return 0.0;
 
-    const double magnitude = std::pow(10.0, std::floor(std::log10(maximum_distance_m)));
-    const double normalized = maximum_distance_m / magnitude;
-
-    double multiplier = 1.0;
-    if (normalized >= 5.0)
-        multiplier = 5.0;
-    else if (normalized >= 3.0)
-        multiplier = 3.0;
-    else if (normalized >= 2.0)
-        multiplier = 2.0;
-
-    return multiplier * magnitude;
 }
 
-inline QString distanceLabel(double distance_m)
-{
-    if (distance_m >= 1000.0)
-    {
-        const double distance_km = distance_m / 1000.0;
-        const double rounded_km = std::round(distance_km);
-        if (std::abs(distance_km - rounded_km) < 1e-9)
-            return QStringLiteral("%1 km").arg(qRound64(rounded_km));
-
-        return QStringLiteral("%1 km").arg(QString::number(distance_km, 'g', 3));
-    }
-
-    const double rounded_m = std::round(distance_m);
-    if (std::abs(distance_m - rounded_m) < 1e-9)
-        return QStringLiteral("%1 m").arg(qRound64(rounded_m));
-
-    return QStringLiteral("%1 m").arg(QString::number(distance_m, 'g', 3));
-}
-}
-
-inline void draw(QPainter &painter, const MapModel &map_model, const QSize &viewport)
+inline void draw(QPainter &painter, const MapModel &map_model, const QSize &viewport,
+                 const UnitPresentationContext &context)
 {
     if (viewport.width() <= Detail::MarginPixels * 2
         || viewport.height() <= Detail::MarginPixels * 2)
@@ -109,15 +75,16 @@ inline void draw(QPainter &painter, const MapModel &map_model, const QSize &view
     const CoordinateWGS84 sample_end = map_model.wgs84FromScreen(
         QPoint(Detail::MarginPixels + maximum_scale_width, sample_y), viewport);
     const double maximum_distance_m = Detail::distanceMeters(sample_start, sample_end);
-    const double scale_distance_m = Detail::roundedDistanceMeters(maximum_distance_m);
-    if (!(scale_distance_m > 0.0) || !(maximum_distance_m > 0.0))
+    const MapScaleDistance::Scale scale = MapScaleDistance::forMaximumDistance(
+        maximum_distance_m, context);
+    if (!(scale.distance_m > 0.0) || !(maximum_distance_m > 0.0))
         return;
 
     const int scale_width = qBound(
         1,
-        qRound(maximum_scale_width * scale_distance_m / maximum_distance_m),
+        qRound(maximum_scale_width * scale.distance_m / maximum_distance_m),
         maximum_scale_width);
-    const QString label = Detail::distanceLabel(scale_distance_m);
+    const QString label = scale.label;
 
     QFont font = painter.font();
     font.setPixelSize(11);

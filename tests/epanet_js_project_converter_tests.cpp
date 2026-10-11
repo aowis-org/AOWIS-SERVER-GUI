@@ -1,5 +1,8 @@
 #include "import/epanet_js_project_converter.h"
 #include "import/epanet_js_units.h"
+#include "import/epanet_js_unit_profile.h"
+#include <aowis/model/units/conversion.h>
+#include "simulation/epanet_network_file_format.h"
 #include "test_harness.h"
 
 #include <QJsonArray>
@@ -173,11 +176,21 @@ bool hasDiagnosticCode(
 #include "epanet_js_converter_pumps_valves.inc"
 #include "epanet_js_converter_controls.inc"
 #include "epanet_js_converter_unit_reference.inc"
+#include "epanet_js_converter_export_boundary.inc"
 
 }
 
 int main()
 {
+    test_harness.runCase(
+        "EPANET INP-only export filename contract",
+        testOnlyInpExportPathsAreAccepted);
+    test_harness.runCase(
+        "epanet-js source units independent of GUI presentation",
+        testImportedUnitProfileIsOnlyPresentation);
+    test_harness.runCase(
+        "epanet-js source flow and pressure profiles",
+        testEpanetJsProfileSupportsSourceUnitPresets);
     test_harness.runCase(
         "stable epanet-js id mapping",
         testUsesSourceProjectIdentityAndStableEntityUuids);
@@ -313,6 +326,15 @@ int main()
     test_harness.runCase(
         "epanet-js flow-unit preset spellings",
         testEpanetJsFlowUnitSpellings);
+    test_harness.runCase(
+        "epanet-js Darcy roughness source/display units",
+        testEpanetJsProfileRetainsDarcyRoughnessUnits);
+    test_harness.runCase(
+        "epanet-js inferred Darcy roughness unit profile",
+        testInferredDarcyRoughnessMatchesImportedProfile);
+    test_harness.runCase(
+        "epanet-js water-age and pressure-head profile aliases",
+        testEpanetJsProfileRetainsWaterAgeSecondsAndPressureHeadAliases);
     test_harness.runCase(
         "epanet-js EPANET 2.3 pressure and emitter semantics",
         testEpanetJsPressureAndEmitterSemantics);

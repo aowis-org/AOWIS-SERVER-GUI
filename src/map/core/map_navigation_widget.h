@@ -64,6 +64,7 @@ private:
     void activateMapProvider(MapProvider provider);
     void sync3dIconsForViewMode(MapViewMode view_mode);
     void syncIconSizeSliderForViewMode(MapViewMode view_mode);
+    void refreshIconSizeUnitPresentation();
     void refreshShortcutPresentation();
     
 signals:

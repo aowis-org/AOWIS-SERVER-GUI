@@ -587,6 +587,73 @@ else()
 endif()
 
 if(BUILD_TESTING AND NOT EMSCRIPTEN)
+    add_executable(aowis-emitter-coefficient-binding-tests tests/emitter_coefficient_binding_test.cpp)
+    target_include_directories(aowis-emitter-coefficient-binding-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    add_test(NAME aowis-emitter-coefficient-binding COMMAND aowis-emitter-coefficient-binding-tests)
+    set_tests_properties(aowis-emitter-coefficient-binding PROPERTIES LABELS "aowis")
+
+    add_executable(aowis-emitter-numeric-spin-box-tests tests/emitter_numeric_spin_box_test.cpp)
+    target_include_directories(aowis-emitter-numeric-spin-box-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    target_link_libraries(aowis-emitter-numeric-spin-box-tests PRIVATE Qt6::Widgets)
+    add_test(NAME aowis-emitter-numeric-spin-box COMMAND aowis-emitter-numeric-spin-box-tests)
+    set_tests_properties(aowis-emitter-numeric-spin-box PROPERTIES
+        LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    add_executable(aowis-coordinate-property-binding-tests tests/coordinate_property_binding_test.cpp)
+    target_include_directories(aowis-coordinate-property-binding-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    add_test(NAME aowis-coordinate-property-binding COMMAND aowis-coordinate-property-binding-tests)
+    set_tests_properties(aowis-coordinate-property-binding PROPERTIES LABELS "aowis")
+
+    add_executable(aowis-coordinate-numeric-spin-box-tests tests/coordinate_numeric_spin_box_test.cpp)
+    target_include_directories(aowis-coordinate-numeric-spin-box-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    target_link_libraries(aowis-coordinate-numeric-spin-box-tests PRIVATE Qt6::Widgets)
+    add_test(NAME aowis-coordinate-numeric-spin-box COMMAND aowis-coordinate-numeric-spin-box-tests)
+    set_tests_properties(aowis-coordinate-numeric-spin-box PROPERTIES
+        LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    add_executable(aowis-unit-numeric-spin-box-tests tests/unit_numeric_spin_box_test.cpp)
+    target_include_directories(aowis-unit-numeric-spin-box-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    target_link_libraries(aowis-unit-numeric-spin-box-tests PRIVATE Qt6::Widgets)
+    add_test(NAME aowis-unit-numeric-spin-box COMMAND aowis-unit-numeric-spin-box-tests)
+    set_tests_properties(aowis-unit-numeric-spin-box PROPERTIES LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(aowis-unit-table-presentation-tests tests/unit_table_presentation_test.cpp)
+    target_include_directories(aowis-unit-table-presentation-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    target_link_libraries(aowis-unit-table-presentation-tests PRIVATE Qt6::Core)
+    add_test(NAME aowis-unit-table-presentation COMMAND aowis-unit-table-presentation-tests)
+    set_tests_properties(aowis-unit-table-presentation PROPERTIES LABELS "aowis")
+
+    add_executable(aowis-numeric-text-tests tests/numeric_text_test.cpp)
+    target_include_directories(aowis-numeric-text-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    target_link_libraries(aowis-numeric-text-tests PRIVATE Qt6::Core)
+    add_test(NAME aowis-numeric-text COMMAND aowis-numeric-text-tests)
+    set_tests_properties(aowis-numeric-text PROPERTIES LABELS "aowis")
+
+    add_executable(aowis-numeric-editor-adapters-tests tests/numeric_editor_adapters_test.cpp)
+    target_include_directories(aowis-numeric-editor-adapters-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    target_link_libraries(aowis-numeric-editor-adapters-tests PRIVATE Qt6::Widgets)
+    add_test(NAME aowis-numeric-editor-adapters COMMAND aowis-numeric-editor-adapters-tests)
+    set_tests_properties(aowis-numeric-editor-adapters PROPERTIES LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    add_executable(aowis-numeric-property-binding-tests tests/numeric_property_binding_test.cpp)
+    target_include_directories(aowis-numeric-property-binding-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME aowis-numeric-property-binding COMMAND aowis-numeric-property-binding-tests)
+    set_tests_properties(aowis-numeric-property-binding PROPERTIES LABELS "aowis")
     add_executable(aowis-unit-profile-storage-tests
         tests/unit_profile_storage_test.cpp
         src/config/unit_profile_storage.cpp
@@ -598,6 +665,19 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     target_link_libraries(aowis-unit-profile-storage-tests PRIVATE Qt6::Core)
     add_test(NAME aowis-unit-profile-storage COMMAND aowis-unit-profile-storage-tests)
     set_tests_properties(aowis-unit-profile-storage PROPERTIES LABELS "aowis")
+    add_executable(aowis-unit-aware-view-tests
+        tests/unit_aware_view_test.cpp
+    )
+    target_include_directories(aowis-unit-aware-view-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include
+    )
+    target_link_libraries(aowis-unit-aware-view-tests PRIVATE Qt6::Widgets)
+    add_test(NAME aowis-unit-aware-view COMMAND aowis-unit-aware-view-tests)
+    set_tests_properties(aowis-unit-aware-view PROPERTIES
+        LABELS "aowis"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
     add_executable(aowis-map-render-neutral-tests
         tests/map_render_neutral_tests.cpp
         tests/test_harness.h
@@ -783,6 +863,17 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
 
     add_custom_target(aowis-tests
         DEPENDS
+            aowis-emitter-coefficient-binding-tests
+            aowis-emitter-numeric-spin-box-tests
+            aowis-coordinate-property-binding-tests
+            aowis-coordinate-numeric-spin-box-tests
+            aowis-unit-profile-storage-tests
+            aowis-unit-aware-view-tests
+            aowis-numeric-property-binding-tests
+            aowis-numeric-editor-adapters-tests
+            aowis-numeric-text-tests
+            aowis-unit-numeric-spin-box-tests
+            aowis-unit-table-presentation-tests
             aowis-map-render-neutral-tests
             aowis-hydraulic-network-editor-tests
             aowis-demand-point-tests

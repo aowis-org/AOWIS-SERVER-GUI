@@ -2,6 +2,8 @@
 
 #include "map/editor/map_editor_controller.h"
 #include "map/core/map_scale_renderer.h"
+#include "config/unit_aware_view.h"
+#include "config/unit_profile_manager.h"
 
 #include <QFocusEvent>
 #include <QHideEvent>
@@ -23,6 +25,10 @@ MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map,
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_NoSystemBackground);
     setMouseTracking(true);
+
+    // A unit switch redraws the scale label; it does not invalidate map geometry.
+    new UnitAwareView(this, UnitProfileManager::instance().presentation(),
+        [this] { update(); });
 
     connect(this->map_model, &MapModel::zoomChanged, this, [this]
     {
@@ -193,7 +199,8 @@ void MapCanvasWidget::paintEvent(QPaintEvent *event)
         painter.drawPixmap(crosshair_position, crosshair_pixmap);
     }
 
-    MapScaleRenderer::draw(painter, *this->map_model, size());
+    MapScaleRenderer::draw(painter, *this->map_model, size(),
+        UnitProfileManager::instance().presentation());
 #endif
 }
 

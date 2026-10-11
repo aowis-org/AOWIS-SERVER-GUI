@@ -8,6 +8,8 @@
 #include "network/network_symbology_values.h"
 #include "map/render/map_render_cache_math.h"
 #include "map/core/map_scale_renderer.h"
+#include "config/unit_aware_view.h"
+#include "config/unit_profile_manager.h"
 #include "map/render/map_retained_vector_renderer.h"
 #include "map/render/map_vector_document.h"
 
@@ -644,6 +646,10 @@ MapNetworkOverlayWidget::MapNetworkOverlayWidget(MapModel *map_model, HydraulicD
     setAttribute(Qt::WA_NoSystemBackground);
     setFocusPolicy(Qt::NoFocus);
 
+    // A unit switch redraws the scale label; it does not invalidate map geometry.
+    new UnitAwareView(this, UnitProfileManager::instance().presentation(),
+        [this] { update(); });
+
     connect(this->map_model, &MapModel::centerChangedWGS84, this, [this]
     {
         update();
@@ -1057,7 +1063,8 @@ void MapNetworkOverlayWidget::paintEvent(QPaintEvent *event)
         painter.drawPixmap(crosshair_position, crosshair_pixmap);
     }
 
-    MapScaleRenderer::draw(painter, *this->map_model, size());
+    MapScaleRenderer::draw(painter, *this->map_model, size(),
+        UnitProfileManager::instance().presentation());
 }
 
 void MapNetworkOverlayWidget::showEvent(QShowEvent *event)

@@ -3,6 +3,7 @@
 #include "config/unit_profile_storage.h"
 #include "config/gui_configuration.h"
 #include "config/unit_profile_notifications.h"
+#include "config/unit_presentation_context.h"
 #include <aowis/model/units/unit_profile.h>
 #include <QJsonObject>
 #include <QString>
@@ -24,6 +25,8 @@ public:
         return manager;
     }
     [[nodiscard]] const QVector<Profile> &profiles() const { return this->views_; }
+    [[nodiscard]] UnitPresentationContext &presentation() { return this->presentation_; }
+    [[nodiscard]] const UnitPresentationContext &presentation() const { return this->presentation_; }
     [[nodiscard]] int activeIndex() const {
         const QString id = QString::fromStdString(this->collection_.activeId());
         for (int i = 0; i < this->views_.size(); ++i)
@@ -34,7 +37,7 @@ public:
         if (!this->valid(index)) return false;
         if (!this->collection_.select(this->views_.at(index).id.toStdString())) return false;
         this->persist();
-        UnitProfileNotifications::instance().publish(source);
+        this->notify(source);
         return true;
     }
     bool create(int source, const QString &name, QObject *origin = nullptr) {
@@ -65,28 +68,28 @@ public:
         if (activate) (void)this->collection_.select(id);
         this->rebuild();
         this->persist();
-        UnitProfileNotifications::instance().publish(origin);
+        this->notify(origin);
         return true;
     }
     bool rename(int index, const QString &name, QObject *origin = nullptr) {
         if (!this->valid(index) || this->views_.at(index).builtin || !this->validName(name, index)) return false;
         if (!this->collection_.rename(this->views_.at(index).id.toStdString(), name.trimmed().toStdString())) return false;
         this->rebuild(); this->persist();
-        UnitProfileNotifications::instance().publish(origin);
+        this->notify(origin);
         return true;
     }
     bool remove(int index, QObject *origin = nullptr) {
         if (!this->valid(index) || this->views_.at(index).builtin) return false;
         if (!this->collection_.remove(this->views_.at(index).id.toStdString())) return false;
         this->rebuild(); this->persist();
-        UnitProfileNotifications::instance().publish(origin);
+        this->notify(origin);
         return true;
     }
     bool setUnit(int index, const QString &quantity, const QString &unit, QObject *origin = nullptr) {
         if (!this->valid(index)) return false;
         if (!this->collection_.setUnit(this->views_.at(index).id.toStdString(), quantity.toStdString(), unit.toStdString())) return false;
         this->rebuild(); this->persist();
-        UnitProfileNotifications::instance().publish(origin);
+        this->notify(origin);
         return true;
     }
 private:
@@ -102,6 +105,12 @@ private:
                 break;
             }
         }
+        this->presentation_.initialize(this->views_.at(this->activeIndex()).units);
+    }
+    void notify(QObject *origin) {
+        // Refresh active unit mappings before legacy profile-list notifications.
+        this->presentation_.update(this->views_.at(this->activeIndex()).units);
+        UnitProfileNotifications::instance().publish(origin);
     }
     [[nodiscard]] bool valid(int index) const { return index >= 0 && index < this->views_.size(); }
     [[nodiscard]] bool validName(const QString &name, int except = -1) const {
@@ -136,4 +145,5 @@ private:
     QSettingsUnitProfileStorage storage_;
     aowis::units::UnitProfileCollection collection_;
     QVector<Profile> views_;
+    UnitPresentationContext presentation_;
 };

@@ -1,6 +1,9 @@
 #include "entity_inspector/entity_map_legend_dock.h"
 
 #include "config/gui_configuration.h"
+#include "config/unit_aware_view.h"
+#include "config/unit_profile_manager.h"
+#include "entity_inspector/map_legend_unit_presentation.h"
 #include "network/network_symbology_rendering.h"
 #ifdef Q_OS_WASM
 #include "widgets/wasm_popup_menu.h"
@@ -970,6 +973,11 @@ EntityMapLegendHud::EntityMapLegendHud(HydraulicData *hydraulic_data, QWidget *p
     setLinkVisual(VisualLink::None);
     setHeatmapVisual(VisualHeatmap::None);
     updateVisibility();
+    new UnitAwareView(this, UnitProfileManager::instance().presentation(), [this] {
+        updateNodeLegend();
+        updateLinkLegend();
+        updateHeatmapLegend();
+    });
 }
 
 void EntityMapLegendHud::setMapMonitorActive(bool active)
@@ -1039,17 +1047,25 @@ void EntityMapLegendHud::updateNodeLegend()
 {
     this->legend_node->setPaletteSelection(
         this->node_palette, this->node_palette_flipped);
-    const LegendDescriptor descriptor = nodeLegendDescriptor(this->visual_node);
-    const int index = this->combo_node->findData(static_cast<int>(this->visual_node));
-    if (index >= 0)
-        this->combo_node->setItemText(index, hudComboText(QStringLiteral("Node"), descriptor));
+    const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
+    const QSignalBlocker blocker(this->combo_node);
+    for (int index = 0; index < this->combo_node->count(); ++index)
+    {
+        const VisualNode visual = static_cast<VisualNode>(this->combo_node->itemData(index).toInt());
+        LegendDescriptor option = nodeLegendDescriptor(visual);
+        option.unit = MapLegendUnitPresentation::unit(context, option.metric);
+        this->combo_node->setItemText(index, hudComboText(QStringLiteral("Node"), option));
+    }
 
     if (this->visual_node != VisualNode::None)
     {
+        const LegendDescriptor descriptor = nodeLegendDescriptor(this->visual_node);
         NetworkSymbologySettings settings;
         settings.visual_node = this->visual_node;
         const NetworkSymbologyRanges ranges = this->hydraulic_data->symbologyRanges(settings);
-        this->legend_node->setRange(ranges.node_minimum, ranges.node_maximum, descriptor.unit);
+        const MapLegendUnitPresentation::Range displayed = MapLegendUnitPresentation::range(
+            context, descriptor.metric, ranges.node_minimum, ranges.node_maximum);
+        this->legend_node->setRange(displayed.minimum, displayed.maximum, displayed.unit);
     }
 
     updateVisibility();
@@ -1068,18 +1084,7 @@ void EntityMapLegendHud::updateLinkLegend()
         settings.visual_link = this->visual_link;
         ranges = this->hydraulic_data->symbologyRanges(settings);
 
-        if (this->visual_link == VisualLink::Length)
-        {
-            const double maximum_absolute = qMax(
-                std::abs(ranges.link_minimum), std::abs(ranges.link_maximum));
-            if (maximum_absolute >= 1000.0)
-            {
-                descriptor.unit = QStringLiteral("km");
-                ranges.link_minimum /= 1000.0;
-                ranges.link_maximum /= 1000.0;
-            }
-        }
-        else if (this->visual_link == VisualLink::Roughness)
+        if (this->visual_link == VisualLink::Roughness)
         {
             switch (this->hydraulic_data->networkHydraulic().options_hydraulic.headloss_formula)
             {
@@ -1099,12 +1104,44 @@ void EntityMapLegendHud::updateLinkLegend()
         }
     }
 
-    const int index = this->combo_link->findData(static_cast<int>(this->visual_link));
-    if (index >= 0)
-        this->combo_link->setItemText(index, hudComboText(QStringLiteral("Link"), descriptor));
+    const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
+    const QSignalBlocker blocker(this->combo_link);
+    for (int index = 0; index < this->combo_link->count(); ++index)
+    {
+        const VisualLink visual = static_cast<VisualLink>(this->combo_link->itemData(index).toInt());
+        LegendDescriptor option = visual == this->visual_link
+            ? descriptor : linkLegendDescriptor(visual);
+        if (visual == VisualLink::Roughness && visual != this->visual_link)
+        {
+            switch (this->hydraulic_data->networkHydraulic().options_hydraulic.headloss_formula)
+            {
+            case HydraulicHeadlossFormula::HazenWilliams:
+                option.metric = QStringLiteral("Hazen-Williams C");
+                break;
+            case HydraulicHeadlossFormula::DarcyWeisbach:
+                option.metric = QStringLiteral("Absolute Roughness ε");
+                break;
+            case HydraulicHeadlossFormula::ChezyManning:
+                option.metric = QStringLiteral("Manning Roughness n");
+                break;
+            }
+        }
+        option.unit = MapLegendUnitPresentation::unit(context, option.metric);
+        this->combo_link->setItemText(index, hudComboText(QStringLiteral("Link"), option));
+    }
 
     if (this->visual_link != VisualLink::None)
-        this->legend_link->setRange(ranges.link_minimum, ranges.link_maximum, descriptor.unit);
+    {
+        const MapLegendUnitPresentation::Range displayed = MapLegendUnitPresentation::range(
+            context, descriptor.metric, ranges.link_minimum, ranges.link_maximum);
+        this->legend_link->setRange(displayed.minimum, displayed.maximum, displayed.unit);
+        // The active selection may use km/mi for readability even when the
+        // profile uses metres/feet; the combo must match the ramp label.
+        const int selected_index = this->combo_link->findData(static_cast<int>(this->visual_link));
+        if (selected_index >= 0)
+            this->combo_link->setItemText(selected_index,
+                legendGroupTitle(QStringLiteral("Link"), descriptor.metric, displayed.unit));
+    }
 
     updateVisibility();
 }
@@ -1113,18 +1150,26 @@ void EntityMapLegendHud::updateHeatmapLegend()
 {
     this->legend_heatmap->setPaletteSelection(
         this->heatmap_palette, this->heatmap_palette_flipped);
-    const LegendDescriptor descriptor = heatmapLegendDescriptor(this->visual_heatmap);
-    const int index = this->combo_heatmap->findData(static_cast<int>(this->visual_heatmap));
-    if (index >= 0)
-        this->combo_heatmap->setItemText(index, hudComboText(QStringLiteral("Heatmap"), descriptor));
+    const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
+    const QSignalBlocker blocker(this->combo_heatmap);
+    for (int index = 0; index < this->combo_heatmap->count(); ++index)
+    {
+        const VisualHeatmap visual = static_cast<VisualHeatmap>(
+            this->combo_heatmap->itemData(index).toInt());
+        LegendDescriptor option = heatmapLegendDescriptor(visual);
+        option.unit = MapLegendUnitPresentation::unit(context, option.metric);
+        this->combo_heatmap->setItemText(index, hudComboText(QStringLiteral("Heatmap"), option));
+    }
 
     if (this->visual_heatmap != VisualHeatmap::None)
     {
+        const LegendDescriptor descriptor = heatmapLegendDescriptor(this->visual_heatmap);
         NetworkSymbologySettings settings;
         settings.visual_heatmap = this->visual_heatmap;
         const NetworkSymbologyRanges ranges = this->hydraulic_data->symbologyRanges(settings);
-        this->legend_heatmap->setRange(
-            ranges.heatmap_minimum, ranges.heatmap_maximum, descriptor.unit);
+        const MapLegendUnitPresentation::Range displayed = MapLegendUnitPresentation::range(
+            context, descriptor.metric, ranges.heatmap_minimum, ranges.heatmap_maximum);
+        this->legend_heatmap->setRange(displayed.minimum, displayed.maximum, displayed.unit);
     }
 
     updateVisibility();
@@ -1264,6 +1309,11 @@ EntityMapLegendDock::EntityMapLegendDock(HydraulicData *hydraulic_data, QWidget 
     });
 
     scheduleDockHeightUpdate();
+    new UnitAwareView(this, UnitProfileManager::instance().presentation(), [this] {
+        updateNodeLegend();
+        updateLinkLegend();
+        updateHeatmapLegend();
+    });
 }
 
 int EntityMapLegendDock::dockHeightPreferred() const
@@ -1467,7 +1517,6 @@ void EntityMapLegendDock::updateNodeLegend()
     this->legend_node->setPaletteSelection(
         this->node_palette, this->node_palette_flipped);
     QString metric;
-    QString unit;
     NetworkSymbologySettings settings;
     settings.visual_node = this->visual_node;
     const NetworkSymbologyRanges ranges = this->hydraulic_data->symbologyRanges(settings);
@@ -1478,58 +1527,48 @@ void EntityMapLegendDock::updateNodeLegend()
     {
     case VisualNode::Elevation:
         metric = QStringLiteral("Elevation");
-        unit = QStringLiteral("m");
         break;
     case VisualNode::BaseDemand:
         metric = QStringLiteral("Base Demand");
-        unit = QStringLiteral("m³/h");
         break;
     case VisualNode::TotalDemand:
         metric = QStringLiteral("Total Demand");
-        unit = QStringLiteral("m³/h");
         break;
     case VisualNode::DemandDeficit:
         metric = QStringLiteral("Demand Deficit");
-        unit = QStringLiteral("m³/h");
         break;
     case VisualNode::EmitterFlow:
         metric = QStringLiteral("Emitter Flow");
-        unit = QStringLiteral("m³/h");
         break;
     case VisualNode::Leakage:
         metric = QStringLiteral("Leakage");
-        unit = QStringLiteral("m³/h");
         break;
     case VisualNode::Head:
         metric = QStringLiteral("Head");
-        unit = QStringLiteral("m");
         break;
     case VisualNode::Pressure:
         metric = QStringLiteral("Pressure Head");
-        unit = QStringLiteral("m");
         break;
     case VisualNode::Chlorine:
         metric = QStringLiteral("Chlorine");
-        unit = QStringLiteral("mg/L");
         break;
     case VisualNode::RiverWater:
         metric = QStringLiteral("River Water");
-        unit = QStringLiteral("%");
         break;
     case VisualNode::LakeWater:
         metric = QStringLiteral("Lake Water");
-        unit = QStringLiteral("%");
         break;
     case VisualNode::WaterAge:
         metric = QStringLiteral("Water Age");
-        unit = QStringLiteral("h");
         break;
     case VisualNode::None:
         return;
     }
 
-    this->group_node->setTitle(legendGroupTitle(QStringLiteral("Node"), metric, unit));
-    this->legend_node->setRange(minimum, maximum, unit);
+    const MapLegendUnitPresentation::Range displayed = MapLegendUnitPresentation::range(
+        UnitProfileManager::instance().presentation(), metric, minimum, maximum);
+    this->group_node->setTitle(legendGroupTitle(QStringLiteral("Node"), metric, displayed.unit));
+    this->legend_node->setRange(displayed.minimum, displayed.maximum, displayed.unit);
 }
 
 void EntityMapLegendDock::updateLinkLegend()
@@ -1537,7 +1576,6 @@ void EntityMapLegendDock::updateLinkLegend()
     this->legend_link->setPaletteSelection(
         this->link_palette, this->link_palette_flipped);
     QString metric;
-    QString unit;
     NetworkSymbologySettings settings;
     settings.visual_link = this->visual_link;
     const NetworkSymbologyRanges ranges = this->hydraulic_data->symbologyRanges(settings);
@@ -1548,65 +1586,56 @@ void EntityMapLegendDock::updateLinkLegend()
     {
     case VisualLink::Diameter:
         metric = QStringLiteral("Diameter");
-        unit = QStringLiteral("mm");
         break;
     case VisualLink::Length:
-    {
         metric = QStringLiteral("Length");
-        const double maximum_absolute = qMax(std::abs(minimum), std::abs(maximum));
-        if (maximum_absolute >= 1000.0)
-        {
-            unit = QStringLiteral("km");
-            minimum /= 1000.0;
-            maximum /= 1000.0;
-        }
-        else
-        {
-            unit = QStringLiteral("m");
-        }
         break;
-    }
     case VisualLink::Roughness:
-        metric = QStringLiteral("Hazen-Williams C");
+        switch (this->hydraulic_data->networkHydraulic().options_hydraulic.headloss_formula)
+        {
+        case HydraulicHeadlossFormula::HazenWilliams:
+            metric = QStringLiteral("Hazen-Williams C");
+            break;
+        case HydraulicHeadlossFormula::DarcyWeisbach:
+            metric = QStringLiteral("Absolute Roughness ε");
+            break;
+        case HydraulicHeadlossFormula::ChezyManning:
+            metric = QStringLiteral("Manning Roughness n");
+            break;
+        }
         break;
     case VisualLink::FlowRate:
         metric = QStringLiteral("Flow Rate");
-        unit = QStringLiteral("m³/h");
         break;
     case VisualLink::Velocity:
         metric = QStringLiteral("Velocity");
-        unit = QStringLiteral("m/s");
         break;
     case VisualLink::HeadLoss:
         metric = QStringLiteral("Head Loss");
-        unit = QStringLiteral("m");
         break;
     case VisualLink::Leakage:
         metric = QStringLiteral("Leakage");
-        unit = QStringLiteral("m³/h");
         break;
     case VisualLink::Chlorine:
         metric = QStringLiteral("Chlorine");
-        unit = QStringLiteral("mg/L");
         break;
     case VisualLink::RiverWater:
         metric = QStringLiteral("River Water");
-        unit = QStringLiteral("%");
         break;
     case VisualLink::LakeWater:
         metric = QStringLiteral("Lake Water");
-        unit = QStringLiteral("%");
         break;
     case VisualLink::WaterAge:
         metric = QStringLiteral("Water Age");
-        unit = QStringLiteral("h");
         break;
     case VisualLink::None:
         return;
     }
 
-    this->group_link->setTitle(legendGroupTitle(QStringLiteral("Link"), metric, unit));
-    this->legend_link->setRange(minimum, maximum, unit);
+    const MapLegendUnitPresentation::Range displayed = MapLegendUnitPresentation::range(
+        UnitProfileManager::instance().presentation(), metric, minimum, maximum);
+    this->group_link->setTitle(legendGroupTitle(QStringLiteral("Link"), metric, displayed.unit));
+    this->legend_link->setRange(displayed.minimum, displayed.maximum, displayed.unit);
 }
 
 void EntityMapLegendDock::updateHeatmapLegend()
@@ -1614,7 +1643,6 @@ void EntityMapLegendDock::updateHeatmapLegend()
     this->legend_heat->setPaletteSelection(
         this->heatmap_palette, this->heatmap_palette_flipped);
     QString metric;
-    QString unit;
     NetworkSymbologySettings settings;
     settings.visual_heatmap = this->visual_heatmap;
     const NetworkSymbologyRanges ranges = this->hydraulic_data->symbologyRanges(settings);
@@ -1625,56 +1653,46 @@ void EntityMapLegendDock::updateHeatmapLegend()
     {
     case VisualHeatmap::Elevation:
         metric = QStringLiteral("Elevation");
-        unit = QStringLiteral("m");
         break;
     case VisualHeatmap::BaseDemand:
         metric = QStringLiteral("Base Demand");
-        unit = QStringLiteral("m³/h");
         break;
     case VisualHeatmap::TotalDemand:
         metric = QStringLiteral("Total Demand");
-        unit = QStringLiteral("m³/h");
         break;
     case VisualHeatmap::DemandDeficit:
         metric = QStringLiteral("Demand Deficit");
-        unit = QStringLiteral("m³/h");
         break;
     case VisualHeatmap::EmitterFlow:
         metric = QStringLiteral("Emitter Flow");
-        unit = QStringLiteral("m³/h");
         break;
     case VisualHeatmap::Leakage:
         metric = QStringLiteral("Leakage");
-        unit = QStringLiteral("m³/h");
         break;
     case VisualHeatmap::Head:
         metric = QStringLiteral("Head");
-        unit = QStringLiteral("m");
         break;
     case VisualHeatmap::Pressure:
         metric = QStringLiteral("Pressure Head");
-        unit = QStringLiteral("m");
         break;
     case VisualHeatmap::Chlorine:
         metric = QStringLiteral("Chlorine");
-        unit = QStringLiteral("mg/L");
         break;
     case VisualHeatmap::RiverWater:
         metric = QStringLiteral("River Water");
-        unit = QStringLiteral("%");
         break;
     case VisualHeatmap::LakeWater:
         metric = QStringLiteral("Lake Water");
-        unit = QStringLiteral("%");
         break;
     case VisualHeatmap::WaterAge:
         metric = QStringLiteral("Water Age");
-        unit = QStringLiteral("h");
         break;
     case VisualHeatmap::None:
         return;
     }
 
-    this->group_heat->setTitle(legendGroupTitle(QStringLiteral("Heatmap"), metric, unit));
-    this->legend_heat->setRange(minimum, maximum, unit);
+    const MapLegendUnitPresentation::Range displayed = MapLegendUnitPresentation::range(
+        UnitProfileManager::instance().presentation(), metric, minimum, maximum);
+    this->group_heat->setTitle(legendGroupTitle(QStringLiteral("Heatmap"), metric, displayed.unit));
+    this->legend_heat->setRange(displayed.minimum, displayed.maximum, displayed.unit);
 }

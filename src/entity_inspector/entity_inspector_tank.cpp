@@ -1,5 +1,10 @@
 #include "entity_inspector/entity_inspector_tank.h"
 
+#include "config/unit_aware_view.h"
+#include "config/unit_bulk_reaction_display.h"
+#include "config/unit_numeric_spin_box.h"
+#include "config/unit_profile_manager.h"
+
 #include <QAbstractSpinBox>
 #include <QGridLayout>
 #include <QSignalBlocker>
@@ -67,6 +72,11 @@ EntityInspectorTank::EntityInspectorTank(HydraulicData *hydraulic_data, const QU
     addGroupElevation();
     addGroupGeometry();
     bindGeometry();
+    // Treat the always-present initial-level editor as the geometry panel's
+    // visibility boundary. Collapsed panels do not receive unit refresh work;
+    // on expansion all three level editors catch up in a single pass.
+    new UnitAwareView(this->spin_level_initial, UnitProfileManager::instance().presentation(),
+        [this] { refreshGeometry(); });
     addGroupSimulation();
     addGroupWaterQualitySimulation();
     addGroupQuality();
@@ -82,16 +92,40 @@ void EntityInspectorTank::addGroupGeometry()
 
     connect(this->group_geometry, &GroupBoxCollapsible::signalExpanded, this, &EntityInspectorTank::onGroupExpand);
 
+    // The numerical widgets are disposable presentations of the precise
+    // canonical metre values. Construction and unit refresh never write them
+    // back to the hydraulic Model.
+    const auto level_editor = [this](int field) -> QDoubleSpinBox * {
+        return new UnitNumericSpinBox(
+            [this, field]() -> std::optional<double> {
+                if (!this->hydraulic_data) return std::nullopt;
+                const std::optional<HydraulicNodeTank> tank = this->hydraulic_data->tank(this->tank_uuid);
+                if (!tank) return std::nullopt;
+                if (field == 0) return tank->water_level_initial_m;
+                if (field == 1) return tank->water_level_minimum_m;
+                return tank->water_level_maximum_m;
+            },
+            [this, field](double metres) {
+                if (!this->hydraulic_data || !this->hydraulic_data->tank(this->tank_uuid))
+                    return false;
+                if (field == 0) return this->hydraulic_data->setTankWaterLevelInitialM(this->tank_uuid, metres);
+                if (field == 1) return this->hydraulic_data->setTankWaterLevelMinimumM(this->tank_uuid, metres);
+                return this->hydraulic_data->setTankWaterLevelMaximumM(this->tank_uuid, metres);
+            }, field == 0 ? "tank_initial_level"
+                : field == 1 ? "tank_minimum_level" : "tank_maximum_level",
+            "m", -1000000.0, 1000000.0, 0.1, 3, this->group_geometry);
+    };
+
     QLabel *label_level_initial = new QLabel("Initial Level");
-    this->spin_level_initial = new QDoubleSpinBox();
+    this->spin_level_initial = level_editor(0);
     configureLengthSpin(this->spin_level_initial);
 
     QLabel *label_level_minimum = new QLabel("Minimum Level");
-    this->spin_level_minimum = new QDoubleSpinBox();
+    this->spin_level_minimum = level_editor(1);
     configureLengthSpin(this->spin_level_minimum);
 
     QLabel *label_level_maximum = new QLabel("Maximum Level");
-    this->spin_level_maximum = new QDoubleSpinBox();
+    this->spin_level_maximum = level_editor(2);
     configureLengthSpin(this->spin_level_maximum);
 
     this->check_overflow = new QCheckBox("Overflow Allowed");
@@ -108,23 +142,60 @@ void EntityInspectorTank::addGroupGeometry()
     this->combo_geometry_type->addItem(
         "Volume Curve", static_cast<int>(HydraulicNodeTankGeometryInputType::VolumeCurve));
 
+    // The same four controls can be input editors or calculated read-only
+    // results, depending on the geometry mode. In either case the Model values
+    // remain canonical and no control refresh may write rounded values back.
+    const auto geometry_editor = [this](int field) -> QDoubleSpinBox * {
+        const std::string quantity = field == 0 ? "tank_diameter"
+            : field == 1 ? "area" : field == 2 ? "tank_minimum_volume" : "volume";
+        const std::string storage_unit = field == 0 ? "m" : field == 1 ? "m2" : "m3";
+        const double step = field == 0 ? 0.1 : 1.0;
+        return new UnitNumericSpinBox(
+            [this, field]() -> std::optional<double> {
+                if (!this->hydraulic_data) return std::nullopt;
+                const std::optional<HydraulicNodeTank> tank = this->hydraulic_data->tank(this->tank_uuid);
+                if (!tank) return std::nullopt;
+                if (field == 0) return tank->diameter_m;
+                if (field == 1) return tank->cross_section_area_m2;
+                if (field == 2) return tank->minimum_volume_m3;
+                return tank->volume_at_maximum_level_m3;
+            },
+            [this, field](double canonical_value) {
+                if (!this->hydraulic_data) return false;
+                const std::optional<HydraulicNodeTank> tank = this->hydraulic_data->tank(this->tank_uuid);
+                if (!tank) return false;
+                const HydraulicNodeTankGeometryInputType mode = tank->geometry_input_type;
+                // A stale callback cannot overwrite a derived property after
+                // another action changes the geometry input mode.
+                if (field == 0 && mode != HydraulicNodeTankGeometryInputType::Cylindrical) return false;
+                if (field == 1 && mode != HydraulicNodeTankGeometryInputType::UniformArea) return false;
+                if (field == 2 && mode == HydraulicNodeTankGeometryInputType::VolumeCurve) return false;
+                if (field == 3 && mode != HydraulicNodeTankGeometryInputType::VolumeAtMaximumLevel) return false;
+                if (field == 0) return this->hydraulic_data->setTankDiameterM(this->tank_uuid, canonical_value);
+                if (field == 1) return this->hydraulic_data->setTankCrossSectionAreaM2(this->tank_uuid, canonical_value);
+                if (field == 2) return this->hydraulic_data->setTankMinimumVolumeM3(this->tank_uuid, canonical_value);
+                return this->hydraulic_data->setTankVolumeAtMaximumLevelM3(this->tank_uuid, canonical_value);
+            }, quantity, storage_unit, geometry_spin_minimum, geometry_spin_maximum,
+            step, 3, this->group_geometry);
+    };
+
     this->label_diameter = new QLabel("Diameter");
-    this->spin_diameter = new QDoubleSpinBox();
+    this->spin_diameter = geometry_editor(0);
     configureLengthSpin(this->spin_diameter);
 
     this->label_area = new QLabel("Cross-Section Area");
     this->label_area->setWordWrap(true);
-    this->spin_area = new QDoubleSpinBox();
+    this->spin_area = geometry_editor(1);
     configureAreaSpin(this->spin_area);
 
     this->label_volume_minimum = new QLabel("Minimum Volume");
     this->label_volume_minimum->setWordWrap(true);
-    this->spin_volume_minimum = new QDoubleSpinBox();
+    this->spin_volume_minimum = geometry_editor(2);
     configureVolumeSpin(this->spin_volume_minimum);
 
     this->label_volume_maximum = new QLabel("Maximum Volume");
     this->label_volume_maximum->setWordWrap(true);
-    this->spin_volume_maximum = new QDoubleSpinBox();
+    this->spin_volume_maximum = geometry_editor(3);
     configureVolumeSpin(this->spin_volume_maximum);
 
     this->label_volume_curve = new QLabel("Volume Curve");
@@ -156,39 +227,11 @@ void EntityInspectorTank::addGroupGeometry()
 
 void EntityInspectorTank::bindGeometry()
 {
-    connect(this->spin_level_initial, &QDoubleSpinBox::valueChanged, this, [this](double value_m)
-    {
-        this->hydraulic_data->setTankWaterLevelInitialM(this->tank_uuid, value_m);
-    });
-    connect(this->spin_level_minimum, &QDoubleSpinBox::valueChanged, this, [this](double value_m)
-    {
-        this->hydraulic_data->setTankWaterLevelMinimumM(this->tank_uuid, value_m);
-    });
-    connect(this->spin_level_maximum, &QDoubleSpinBox::valueChanged, this, [this](double value_m)
-    {
-        this->hydraulic_data->setTankWaterLevelMaximumM(this->tank_uuid, value_m);
-    });
     connect(this->check_overflow, &QCheckBox::toggled, this, [this](bool can_overflow)
     {
         this->hydraulic_data->setTankCanOverflow(this->tank_uuid, can_overflow);
     });
     connect(this->combo_geometry_type, &QComboBox::currentIndexChanged, this, &EntityInspectorTank::onGeometryTypeChanged);
-    connect(this->spin_diameter, &QDoubleSpinBox::valueChanged, this, [this](double diameter_m)
-    {
-        this->hydraulic_data->setTankDiameterM(this->tank_uuid, diameter_m);
-    });
-    connect(this->spin_area, &QDoubleSpinBox::valueChanged, this, [this](double area_m2)
-    {
-        this->hydraulic_data->setTankCrossSectionAreaM2(this->tank_uuid, area_m2);
-    });
-    connect(this->spin_volume_minimum, &QDoubleSpinBox::valueChanged, this, [this](double volume_m3)
-    {
-        this->hydraulic_data->setTankMinimumVolumeM3(this->tank_uuid, volume_m3);
-    });
-    connect(this->spin_volume_maximum, &QDoubleSpinBox::valueChanged, this, [this](double volume_m3)
-    {
-        this->hydraulic_data->setTankVolumeAtMaximumLevelM3(this->tank_uuid, volume_m3);
-    });
     connect(this->combo_volume_curve, &QComboBox::currentIndexChanged, this, [this](int)
     {
         const QUuid curve_uuid = this->combo_volume_curve->currentData(volume_curve_uuid_role).toUuid();
@@ -223,19 +266,20 @@ void EntityInspectorTank::refreshGeometry()
     const QSignalBlocker minimum_volume_blocker(this->spin_volume_minimum);
     const QSignalBlocker maximum_volume_blocker(this->spin_volume_maximum);
 
-    this->spin_level_initial->setValue(tank->water_level_initial_m);
-    this->spin_level_minimum->setValue(tank->water_level_minimum_m);
-    this->spin_level_maximum->setValue(tank->water_level_maximum_m);
+    const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
+    static_cast<UnitNumericSpinBox *>(this->spin_level_initial)->refreshUnits(context);
+    static_cast<UnitNumericSpinBox *>(this->spin_level_minimum)->refreshUnits(context);
+    static_cast<UnitNumericSpinBox *>(this->spin_level_maximum)->refreshUnits(context);
     this->check_overflow->setChecked(tank->can_overflow);
 
     const int geometry_index = this->combo_geometry_type->findData(
         static_cast<int>(tank->geometry_input_type));
     this->combo_geometry_type->setCurrentIndex(geometry_index >= 0 ? geometry_index : 0);
 
-    this->spin_diameter->setValue(tank->diameter_m);
-    this->spin_area->setValue(tank->cross_section_area_m2);
-    this->spin_volume_minimum->setValue(tank->minimum_volume_m3);
-    this->spin_volume_maximum->setValue(tank->volume_at_maximum_level_m3);
+    static_cast<UnitNumericSpinBox *>(this->spin_diameter)->refreshUnits(context);
+    static_cast<UnitNumericSpinBox *>(this->spin_area)->refreshUnits(context);
+    static_cast<UnitNumericSpinBox *>(this->spin_volume_minimum)->refreshUnits(context);
+    static_cast<UnitNumericSpinBox *>(this->spin_volume_maximum)->refreshUnits(context);
 
     populateVolumeCurveCombo(tank->volume_curve_uuid);
     updateGeometryModeUi(tank->geometry_input_type);
@@ -526,25 +570,18 @@ void EntityInspectorTank::setSpinEditable(QDoubleSpinBox *spin, const QString &t
     spin->setButtonSymbols(QAbstractSpinBox::UpDownArrows);
     spin->setSpecialValueText(QString());
     spin->setToolTip(tooltip);
+    static_cast<UnitNumericSpinBox *>(spin)->refreshUnits(
+        UnitProfileManager::instance().presentation());
 }
 
 void EntityInspectorTank::setSpinDerived(
     QDoubleSpinBox *spin, const std::optional<double> &value, const QString &tooltip)
 {
-    const QSignalBlocker blocker(spin);
     spin->setReadOnly(true);
     spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
     spin->setToolTip(tooltip);
-
-    if (value.has_value() && qIsFinite(value.value()))
-    {
-        spin->setSpecialValueText(QString());
-        spin->setValue(value.value());
-        return;
-    }
-
-    spin->setSpecialValueText("[Not available]");
-    spin->setValue(spin->minimum());
+    static_cast<UnitNumericSpinBox *>(spin)->refreshDerived(
+        UnitProfileManager::instance().presentation(), value);
 }
 
 HydraulicNodeTankGeometryInputType EntityInspectorTank::tankGeometryInputType() const
@@ -570,10 +607,20 @@ void EntityInspectorTank::addGroupQuality()
     constrainComboWidth(this->combo_quality_mixing);
 
     QLabel *label_mixing_fraction = new QLabel("Mixing Fraction");
-    this->spin_quality_mixing_fraction = new QDoubleSpinBox();
-    this->spin_quality_mixing_fraction->setRange(0.0, 1.0);
-    this->spin_quality_mixing_fraction->setDecimals(4);
-    this->spin_quality_mixing_fraction->setSingleStep(0.05);
+    this->spin_quality_mixing_fraction = new UnitNumericSpinBox(
+        [this]() -> std::optional<double> {
+            if (!this->hydraulic_data) return std::nullopt;
+            const std::optional<HydraulicNodeTank> tank = this->hydraulic_data->tank(this->tank_uuid);
+            return tank ? std::optional<double>(tank->mixing_fraction) : std::nullopt;
+        },
+        [this](double fraction) {
+            if (!this->hydraulic_data || !this->hydraulic_data->tank(this->tank_uuid)) return false;
+            const std::optional<HydraulicNodeTank> tank = this->hydraulic_data->tank(this->tank_uuid);
+            if (tank->mixing_model != HydraulicNodeTankMixingModel::TwoCompartment) return false;
+            if (fraction < 0.0 || fraction > 1.0) return false;
+            return this->hydraulic_data->setTankQualityMixingFraction(this->tank_uuid, fraction);
+        }, "mixing_fraction", "1", 0.0, 1.0, 0.05, 4, group_mixing,
+        [](const QString &) { return QString(); });
     this->spin_quality_mixing_fraction->setToolTip(
         "Fraction of tank volume assigned to the inlet/outlet compartment for the two-compartment model.");
 
@@ -590,11 +637,29 @@ void EntityInspectorTank::addGroupQuality()
 
     QLabel *label_bulk_coefficient = new QLabel("Bulk Reaction Coefficient");
     label_bulk_coefficient->setWordWrap(true);
-    this->spin_quality_bulk_reaction_coefficient = new QDoubleSpinBox();
-    this->spin_quality_bulk_reaction_coefficient->setRange(-1000000.0, 1000000.0);
-    this->spin_quality_bulk_reaction_coefficient->setDecimals(8);
+    this->spin_quality_bulk_reaction_coefficient = new UnitNumericSpinBox(
+        [this]() -> std::optional<double> {
+            if (!this->hydraulic_data) return std::nullopt;
+            const std::optional<HydraulicNodeTank> tank = this->hydraulic_data->tank(this->tank_uuid);
+            return tank ? std::optional<double>(tank->bulk_reaction.coefficient) : std::nullopt;
+        },
+        [this](double coefficient) {
+            if (!this->hydraulic_data) return false;
+            const std::optional<HydraulicNodeTank> tank = this->hydraulic_data->tank(this->tank_uuid);
+            if (!tank || !tank->override_bulk_reaction ||
+                !std::isfinite(tank->bulk_reaction.order)) return false;
+            return this->hydraulic_data->setTankBulkReactionCoefficient(this->tank_uuid, coefficient);
+        }, "first_order_bulk_reaction_coefficient", "/d", -1000000.0, 1000000.0,
+        0.001, 12, group_reactions,
+        [this](const QString &inverse_time) {
+            if (!this->hydraulic_data) return QString();
+            const std::optional<HydraulicNodeTank> tank = this->hydraulic_data->tank(this->tank_uuid);
+            return tank ? UnitBulkReactionDisplay::suffix(tank->bulk_reaction.order, inverse_time)
+                        : QString();
+        });
     this->spin_quality_bulk_reaction_coefficient->setToolTip(
-        "Coefficient dimensions depend on the network-wide tank bulk reaction order.");
+        "Coefficient units depend on reaction order; concentration remains in canonical mg/L. "
+        "The unit profile changes only the time basis.");
 
     grid_reactions->addWidget(this->check_quality_override_bulk_reaction, reaction_row++, 0, 1, 2);
     grid_reactions->addWidget(label_bulk_coefficient, reaction_row, 0);
@@ -607,21 +672,11 @@ void EntityInspectorTank::addGroupQuality()
         this->hydraulic_data->setTankQualityMixingModel(this->tank_uuid, mixing_model);
         updateQualityUi();
     });
-    connect(this->spin_quality_mixing_fraction, &QDoubleSpinBox::valueChanged,
-            this, [this](double mixing_fraction)
-    {
-        this->hydraulic_data->setTankQualityMixingFraction(this->tank_uuid, mixing_fraction);
-    });
     connect(this->check_quality_override_bulk_reaction, &QCheckBox::toggled,
             this, [this](bool enabled)
     {
         this->hydraulic_data->setTankOverrideBulkReaction(this->tank_uuid, enabled);
         updateQualityUi();
-    });
-    connect(this->spin_quality_bulk_reaction_coefficient, &QDoubleSpinBox::valueChanged,
-            this, [this](double coefficient)
-    {
-        this->hydraulic_data->setTankBulkReactionCoefficient(this->tank_uuid, coefficient);
     });
 
     connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
@@ -635,6 +690,17 @@ void EntityInspectorTank::addGroupQuality()
 
     layoutQuality()->addWidget(group_mixing);
     layoutQuality()->addWidget(group_reactions);
+    UnitPresentationContext &presentation = UnitProfileManager::instance().presentation();
+    new UnitAwareView(this->spin_quality_mixing_fraction, presentation, [this] {
+        static_cast<UnitNumericSpinBox *>(this->spin_quality_mixing_fraction)->refreshUnits(
+            UnitProfileManager::instance().presentation());
+        updateQualityUi();
+    });
+    new UnitAwareView(this->spin_quality_bulk_reaction_coefficient, presentation, [this] {
+        static_cast<UnitNumericSpinBox *>(this->spin_quality_bulk_reaction_coefficient)->refreshUnits(
+            UnitProfileManager::instance().presentation());
+        updateQualityUi();
+    });
     refreshQuality();
 }
 
@@ -651,9 +717,10 @@ void EntityInspectorTank::refreshQuality()
 
     const int mixing_index = this->combo_quality_mixing->findData(static_cast<int>(tank->mixing_model));
     this->combo_quality_mixing->setCurrentIndex(mixing_index >= 0 ? mixing_index : 0);
-    this->spin_quality_mixing_fraction->setValue(tank->mixing_fraction);
     this->check_quality_override_bulk_reaction->setChecked(tank->override_bulk_reaction);
-    this->spin_quality_bulk_reaction_coefficient->setValue(tank->bulk_reaction.coefficient);
+    const UnitPresentationContext &presentation = UnitProfileManager::instance().presentation();
+    static_cast<UnitNumericSpinBox *>(this->spin_quality_mixing_fraction)->refreshUnits(presentation);
+    static_cast<UnitNumericSpinBox *>(this->spin_quality_bulk_reaction_coefficient)->refreshUnits(presentation);
     updateQualityUi();
 }
 

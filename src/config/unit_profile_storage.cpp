@@ -36,7 +36,8 @@ UnitProfileSnapshot QSettingsUnitProfileStorage::load() const
             const QString key = QString::fromLatin1(field.key.data(), static_cast<qsizetype>(field.key.size()));
             const QString unit = units.value(key).toString();
             if (aowis::units::isAllowedUnit(field.key, unit.toStdString()) &&
-                unit.toStdString() != aowis::units::canonicalUnit(field.key))
+                (unit.toStdString() != aowis::units::canonicalUnit(field.key) ||
+                 !aowis::units::inheritedUnitQuantity(field.key).empty()))
                 profile.overrides.emplace(key.toStdString(), unit.toStdString());
         }
         names.insert(name.toCaseFolded());
@@ -54,6 +55,11 @@ bool QSettingsUnitProfileStorage::save(const UnitProfileSnapshot &snapshot) cons
         QJsonObject units;
         // Preserve the legacy full-unit JSON representation for backward compatibility.
         for (const aowis::units::UnitField &field : aowis::units::unit_fields) {
+            // Omit inherited choices until explicitly selected, so older profiles
+            // continue following their general flow/level/volume preferences.
+            if (!aowis::units::inheritedUnitQuantity(field.key).empty()
+                && profile.overrides.find(field.key) == profile.overrides.end())
+                continue;
             const std::string_view unit = aowis::units::resolvedUnit(profile, field.key);
             units.insert(QString::fromLatin1(field.key.data(), static_cast<qsizetype>(field.key.size())),
                          QString::fromLatin1(unit.data(), static_cast<qsizetype>(unit.size())));
