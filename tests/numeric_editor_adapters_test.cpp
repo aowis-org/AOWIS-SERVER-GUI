@@ -173,5 +173,22 @@ int main(int argc, char **argv) {
     require(line.text() == QStringLiteral("1234.5"));
     line.refresh("native", grouped);
     require(writes == before_format_commit + 1);
+    // A clean double editor must step from the precise stored value, not
+    // from Qt's rounded 2-decimal value. Integer controls still step normally.
+    double hidden_fraction_value = 4.057389123;
+    int hidden_fraction_writes = 0;
+    NumericPropertyBinding hidden_fraction_binding = bindingFor(
+        hidden_fraction_value, hidden_fraction_writes);
+    NumericDoubleSpinBox hidden_fraction_editor(hidden_fraction_binding);
+    NumericEditorPresentation hidden_fraction_settings{
+        "native", {}, 0.0, 100.0, 0.1, 2};
+    require(hidden_fraction_editor.refresh(hidden_fraction_settings));
+    require(hidden_fraction_editor.value() == 4.06);
+    hidden_fraction_editor.stepUp();
+    require(hidden_fraction_editor.lastResult() == NumericPropertyBinding::Result::Committed);
+    require(std::abs(hidden_fraction_value - 4.157389123) < 1e-12);
+    hidden_fraction_editor.stepDown();
+    require(std::abs(hidden_fraction_value - 4.057389123) < 1e-12);
+    require(hidden_fraction_writes == 2);
     return 0;
 }

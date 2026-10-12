@@ -3,6 +3,7 @@
 #include "entity_inspector/emitter_coefficient_binding.h"
 #include "config/numeric_editor_adapters.h"
 #include "config/unit_presentation_context.h"
+#include "config/unit_display_text.h"
 
 // Do not subscribe each editor to profile notifications: the parent demand
 // presentation region owns lazy unit invalidation.
@@ -22,7 +23,8 @@ public:
         if (!exponent) { setEnabled(false); return false; }
         const EmitterCoefficientUnits::Unit unit{
             context.unit(QStringLiteral("volumetric_flow_rate")).toStdString(),
-            context.unit(QStringLiteral("pressure_head")).toStdString(), *exponent};
+            context.unit(QStringLiteral("pressure_head")).toStdString(), *exponent,
+            context.specificGravity()};
         const std::optional<std::string> token = EmitterCoefficientUnits::encode(unit);
         const std::optional<double> maximum = EmitterCoefficientUnits::toDisplay(1e9, unit);
         const std::optional<double> step = EmitterCoefficientUnits::toDisplay(0.001, unit);
@@ -42,8 +44,9 @@ public:
         const std::optional<EmitterCoefficientUnits::Unit> unit =
             EmitterCoefficientUnits::decode(displayUnit());
         if (!unit) return QStringLiteral("—");
-        return QStringLiteral("%1 / (%2)^%3")
-            .arg(QString::fromStdString(unit->flow), QString::fromStdString(unit->head),
-                 QLocale::c().toString(unit->exponent, 'g', 17));
+        return UnitDisplayText::symbol(QStringLiteral("%1 / (%2)^%3")
+            .arg(UnitDisplayText::symbol(QString::fromStdString(unit->flow)),
+                 UnitDisplayText::symbol(QString::fromStdString(unit->head)),
+                 QLocale::c().toString(unit->exponent, 'g', 17)));
     }
 };

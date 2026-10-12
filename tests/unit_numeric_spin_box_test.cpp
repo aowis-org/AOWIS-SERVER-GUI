@@ -8,6 +8,7 @@
 #include <memory>
 #include <stdexcept>
 #include <vector>
+#include <functional>
 
 #define CHECK(condition) do { if (!(condition)) throw std::runtime_error("line " + std::to_string(__LINE__) + ": " #condition); } while (false)
 
@@ -48,6 +49,115 @@ int main(int argc, char **argv) {
     CHECK(editor.displayUnit() == "m");
     available = false;
     CHECK(!editor.refreshUnits(context) && !editor.isEnabled() && writes == 1);
+
+    // Decimal precision is specified in stored units. Displaying the same
+    // 0.1-mm pipe-diameter resolution in m/ft must add fractional digits,
+    // including when a fixed formatting policy asks for fewer digits.
+    double precise_diameter_mm = 150.037;
+    int precise_diameter_writes = 0;
+    UnitPresentationContext precision_context;
+    precision_context.initialize(QJsonObject{{QStringLiteral("link_diameter"), QStringLiteral("mm")},
+                                             {QStringLiteral("length"), QStringLiteral("m")}});
+    UnitNumericSpinBox precise_diameter(
+        [&] { return std::optional<double>(precise_diameter_mm); },
+        [&](double millimetres) {
+            precise_diameter_mm = millimetres;
+            ++precise_diameter_writes;
+            return true;
+        }, "link_diameter", "mm", 0.0, 5000.0, 10.0, 1);
+    CHECK(precise_diameter.refreshUnits(precision_context));
+    CHECK(precise_diameter.decimals() == 1);
+    CHECK(precision_context.update(QJsonObject{{QStringLiteral("link_diameter"), QStringLiteral("m")},
+                                               {QStringLiteral("length"), QStringLiteral("m")}}));
+    CHECK(precise_diameter.refreshUnits(precision_context));
+    CHECK(precise_diameter.decimals() == 4);
+    CHECK(std::abs(precise_diameter.value() - 0.15) < 1e-12);
+    CHECK(precise_diameter.singleStep() == 0.01);
+    CHECK(precise_diameter_writes == 0 && precise_diameter_mm == 150.037);
+    precise_diameter.stepUp();
+    CHECK(precise_diameter.lastResult() == NumericPropertyBinding::Result::Committed);
+    CHECK(std::abs(precise_diameter_mm - 160.037) < 1e-10);
+    CHECK(std::abs(precise_diameter.value() - 0.16) < 1e-12);
+    precise_diameter.stepDown();
+    CHECK(std::abs(precise_diameter_mm - 150.037) < 1e-10);
+    for (int index = 0; index < 10; ++index) precise_diameter.stepUp();
+    for (int index = 0; index < 10; ++index) precise_diameter.stepDown();
+    CHECK(std::abs(precise_diameter_mm - 150.037) < 1e-9);
+    const int before_fixed = precise_diameter_writes;
+    CHECK(precision_context.setFormatPolicy(
+        {NumericFormatPolicy::Notation::Fixed, 1, false, true},
+        QStringLiteral("link_diameter")));
+    CHECK(precise_diameter.refreshUnits(precision_context));
+    CHECK(precise_diameter.decimals() == 4);
+    CHECK(precise_diameter_writes == before_fixed);
+    QLineEdit *precision_text = precise_diameter.findChild<QLineEdit *>();
+    CHECK(precision_text != nullptr);
+    // An edit equal to the rounded visible value must not silently discard
+    // finer stored precision: 0.15 m is already represented as 0.1500 m.
+    precision_text->selectAll();
+    QKeyEvent same_value_input(QEvent::KeyPress, Qt::Key_unknown, Qt::NoModifier,
+                               QStringLiteral("0.15"));
+    QApplication::sendEvent(precision_text, &same_value_input);
+    CHECK(precise_diameter.commitEdit() == NumericPropertyBinding::Result::Unchanged);
+    CHECK(std::abs(precise_diameter_mm - 150.037) < 1e-10);
+    CHECK(precise_diameter_writes == before_fixed);
+    // A genuinely different typed value must commit exactly in the selected
+    // display unit, after which the physical arrow step is preserved.
+    precision_text->selectAll();
+    QKeyEvent changed_value_input(QEvent::KeyPress, Qt::Key_unknown, Qt::NoModifier,
+                                  QStringLiteral("0.17"));
+    QApplication::sendEvent(precision_text, &changed_value_input);
+    CHECK(precise_diameter.commitEdit() == NumericPropertyBinding::Result::Committed);
+    CHECK(std::abs(precise_diameter_mm - 170.0) < 1e-10);
+    precise_diameter.stepUp();
+    CHECK(std::abs(precise_diameter_mm - 180.0) < 1e-10);
+    CHECK(precision_context.update(QJsonObject{{QStringLiteral("link_diameter"), QStringLiteral("ft")},
+                                               {QStringLiteral("length"), QStringLiteral("m")}}));
+    CHECK(precise_diameter.refreshUnits(precision_context));
+    CHECK(precise_diameter.decimals() == 4);
+    CHECK(precise_diameter_writes == before_fixed + 2);
+
+    double precise_length_m = 123.456789012345;
+    int precise_length_writes = 0;
+    UnitNumericSpinBox precise_length(
+        [&] { return std::optional<double>(precise_length_m); },
+        [&](double metres) {
+            precise_length_m = metres;
+            ++precise_length_writes;
+            return true;
+        }, "length", "m", 0.0, 1000000.0, 1.0, 2);
+    CHECK(precise_length.refreshUnits(precision_context));
+    CHECK(precise_length.decimals() == 2);
+    CHECK(precision_context.update(QJsonObject{{QStringLiteral("link_diameter"), QStringLiteral("ft")},
+                                               {QStringLiteral("length"), QStringLiteral("km")}}));
+    CHECK(precise_length.refreshUnits(precision_context));
+    CHECK(precise_length.decimals() == 5);
+    CHECK(precision_context.update(QJsonObject{{QStringLiteral("link_diameter"), QStringLiteral("ft")},
+                                               {QStringLiteral("length"), QStringLiteral("mi")}}));
+    CHECK(precise_length.refreshUnits(precision_context));
+    CHECK(precise_length.decimals() == 6);
+    CHECK(precise_length_m == 123.456789012345 && precise_length_writes == 0);
+    precise_length.stepUp();
+    CHECK(std::abs(precise_length_m - 124.456789012345) < 1e-10);
+
+    // A pressure editor presents the same metre-head storage as psi without
+    // rewriting on refresh; physical pressure depends on project gravity.
+    double pressure_head_m = 10.0;
+    int pressure_writes = 0;
+    UnitPresentationContext pressure_context;
+    pressure_context.initialize(QJsonObject{{QStringLiteral("pressure_head"), QStringLiteral("psi")}});
+    CHECK(pressure_context.setSpecificGravity(1.2));
+    UnitNumericSpinBox pressure_editor(
+        [&] { return std::optional<double>(pressure_head_m); },
+        [&](double canonical) { pressure_head_m = canonical; ++pressure_writes; return true; },
+        "pressure_head", "m", 0.0, 100.0, 1.0, 2);
+    CHECK(pressure_editor.refreshUnits(pressure_context));
+    const double psi_per_m = 1.2 * 1000.0 * aowis::units::standard_gravity_m_per_s2 /
+        aowis::units::pascals_per_psi;
+    CHECK(std::abs(pressure_editor.value() - 10.0 * psi_per_m) < 0.01);
+    CHECK(pressure_head_m == 10.0 && pressure_writes == 0);
+    pressure_editor.stepUp();
+    CHECK(std::abs(pressure_head_m - 11.0) < 1e-9 && pressure_writes == 1);
 
     double demand = 3.6;
     UnitNumericSpinBox flow([&] { return std::optional<double>(demand); },
@@ -279,7 +389,9 @@ int main(int argc, char **argv) {
                                              tank_geometry[2], tank_geometry[3]};
     int geometry_mode = 0; // cylindrical / uniform area / maximum volume / curve
     int geometry_writes = 0;
-    const auto geometry_editor = [&](int field, const std::string &quantity,
+    const std::function<std::unique_ptr<UnitNumericSpinBox>(
+        int, const std::string &, const std::string &)> geometry_editor =
+        [&](int field, const std::string &quantity,
                                      const std::string &storage) {
         return std::make_unique<UnitNumericSpinBox>(
             [&, field] { return std::optional<double>(tank_geometry[field]); },
@@ -308,14 +420,14 @@ int main(int argc, char **argv) {
     CHECK(tank_area->suffix() == NumericText::suffix(QStringLiteral("ft2")));
     CHECK(tank_min_volume->suffix() == NumericText::suffix(QStringLiteral("ft3")));
     CHECK(tank_max_volume->suffix() == NumericText::suffix(QStringLiteral("ft3")));
-    // Explicit canonical minimum volume must not follow the generic ft3
-    // display selection; this is only a view refresh, never a model write.
+    // Even if an old profile still supplies a separate minimum-volume unit,
+    // both tank volume controls must follow the general volume choice.
     QJsonObject independent_volume = context.effectiveUnits();
     independent_volume.insert(QStringLiteral("tank_minimum_volume"), QStringLiteral("m3"));
     CHECK(context.update(independent_volume));
     CHECK(tank_min_volume->refreshUnits(context));
     CHECK(tank_max_volume->refreshUnits(context));
-    CHECK(tank_min_volume->suffix() == NumericText::suffix(QStringLiteral("m3")));
+    CHECK(tank_min_volume->suffix() == NumericText::suffix(QStringLiteral("ft3")));
     CHECK(tank_max_volume->suffix() == NumericText::suffix(QStringLiteral("ft3")));
     CHECK(tank_geometry[2] == original_tank_geometry[2]);
     CHECK(geometry_writes == 0);
@@ -602,7 +714,9 @@ int main(int argc, char **argv) {
     int roughness_writes = 0;
     bool material_mode = false;
     int active_roughness_formula = 1; // 0 H-W, 1 D-W, 2 C-M
-    const auto roughness_editor = [&](int field, const std::string &quantity,
+    const std::function<std::unique_ptr<UnitNumericSpinBox>(
+        int, const std::string &, const std::string &, double, double, int)> roughness_editor =
+        [&](int field, const std::string &quantity,
                                       const std::string &storage, double minimum,
                                       double maximum, int decimals) {
         return std::make_unique<UnitNumericSpinBox>(
@@ -939,7 +1053,7 @@ int main(int argc, char **argv) {
     const double original_throttle = setting_throttle;
     const double original_position = setting_position_percent;
     int setting_writes = 0;
-    const auto is_pressure_type = [&] {
+    const std::function<bool()> is_pressure_type = [&] {
         return setting_type == HydraulicLinkValveType::PRV ||
                setting_type == HydraulicLinkValveType::PSV ||
                setting_type == HydraulicLinkValveType::PBV;

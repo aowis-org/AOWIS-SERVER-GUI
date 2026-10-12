@@ -21,6 +21,7 @@ int main()
     using EmitterCoefficientUnits::Unit;
     const Unit canonical{"m3/h", "m", 0.5};
     const Unit imperial{"US gal/min", "ft", 0.5};
+    const Unit pressure_imperial{"US gal/min", "psi", 0.5, 1.2};
     const std::optional<std::string> key = EmitterCoefficientUnits::encode(imperial);
     CHECK(key.has_value());
     const std::optional<Unit> decoded = EmitterCoefficientUnits::decode(*key);
@@ -29,6 +30,25 @@ int main()
     CHECK(!EmitterCoefficientUnits::decode("US gal/min|ft|garbage"));
     CHECK(!EmitterCoefficientUnits::decode("US gal/min|ft|0"));
     CHECK(!EmitterCoefficientUnits::decode("US gal/min|ft|0.5|other"));
+    const std::optional<std::string> pressure_key = EmitterCoefficientUnits::encode(pressure_imperial);
+    CHECK(pressure_key);
+    const std::optional<Unit> pressure_decoded = EmitterCoefficientUnits::decode(*pressure_key);
+    CHECK(pressure_decoded && pressure_decoded->specific_gravity == 1.2 &&
+          pressure_decoded->head == "psi" && pressure_decoded->exponent == 0.5);
+    const std::optional<double> pressure_display = EmitterCoefficientUnits::toDisplay(1.0, pressure_imperial);
+    CHECK(pressure_display);
+    const std::optional<double> pressure_head_scale = aowis::units::convert(
+        "pressure_head", 1.0, "m", "psi", 1.2);
+    const std::optional<double> pressure_flow_scale = aowis::units::convert(
+        "volumetric_flow_rate", 1.0, "m3/h", "US gal/min");
+    CHECK(pressure_head_scale && pressure_flow_scale);
+    expectNear(*pressure_display, *pressure_flow_scale / std::sqrt(*pressure_head_scale));
+    const std::optional<double> pressure_restored = EmitterCoefficientUnits::toCanonical(
+        *pressure_display, pressure_imperial);
+    CHECK(pressure_restored);
+    expectNear(*pressure_restored, 1.0);
+    CHECK(!EmitterCoefficientUnits::encode({"US gal/min", "psi", 0.5, 0.0}));
+
     CHECK(!EmitterCoefficientUnits::toDisplay(1.0, {"bad unit", "m", 0.5}));
     CHECK(!EmitterCoefficientUnits::toCanonical(1.0, {"m3/h", "bad", 0.5}));
     CHECK(!EmitterCoefficientUnits::toDisplay(1.0, {"m3/h", "ft", 1000000.0}));

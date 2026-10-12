@@ -119,16 +119,9 @@ inline QJsonObject selections(const QJsonObject &source, QStringList *unmapped =
                         {"darcy_weisbach_roughness_height"});
     assignSelection(source, result, unmapped, "tankDiameter", {"tank_diameter"});
     assignSelection(source, result, unmapped, "velocity", {"velocity"});
-    // Physical pressure (psi, kPa, bar) and fluid pressure head (m, ft)
-    // are different dimensions. Both are supported by the Model registry;
-    // choose the matching display quantity without changing canonical head.
-    const QString pressure_unit = normalizeUnit(
-        source.value(QStringLiteral("pressure")).toString());
-    if (pressure_unit == QStringLiteral("psi") || pressure_unit == QStringLiteral("kPa")
-        || pressure_unit == QStringLiteral("bar"))
-        assignSelection(source, result, unmapped, "pressure", {"pressure"});
-    else
-        assignSelection(source, result, unmapped, "pressure", {"pressure_head"});
+    // Pressure-valued EPANET inputs are normalized to metres of hydraulic
+    // head by the importer; choose their original unit for GUI presentation.
+    assignSelection(source, result, unmapped, "pressure", {"pressure_head"});
     assignSelection(source, result, unmapped, "volume", {"volume"});
     assignSelection(source, result, unmapped, "minVolume", {"tank_minimum_volume"});
     assignSelection(source, result, unmapped, "power", {"power"});

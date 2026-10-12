@@ -213,9 +213,9 @@ void testEpanetJsProfileSupportsSourceUnitPresets()
         const char *display;
     };
     const PressureCase pressure_cases[] = {
-        {"psi", "pressure", "psi"},
-        {"kPa", "pressure", "kPa"},
-        {"bar", "pressure", "bar"},
+        {"psi", "pressure_head", "psi"},
+        {"kPa", "pressure_head", "kPa"},
+        {"bar", "pressure_head", "bar"},
         {"mwc", "pressure_head", "m"},
         {"fwc", "pressure_head", "ft"},
         {"ft", "pressure_head", "ft"},

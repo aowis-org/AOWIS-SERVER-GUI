@@ -57,7 +57,7 @@ public:
         aowis::units::UnitProfile profile;
         profile.id = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
         profile.name = name.trimmed().toStdString();
-        for (auto it = units.constBegin(); it != units.constEnd(); ++it) {
+        for (QJsonObject::const_iterator it = units.constBegin(); it != units.constEnd(); ++it) {
             if (!it.value().isString()) return false;
             const std::string key = it.key().toStdString();
             const std::string unit = it.value().toString().toStdString();
@@ -114,9 +114,10 @@ private:
     }
     [[nodiscard]] bool valid(int index) const { return index >= 0 && index < this->views_.size(); }
     [[nodiscard]] bool validName(const QString &name, int except = -1) const {
-        if (name.trimmed().isEmpty()) return false;
+        const QString trimmed_name = name.trimmed();
+        if (trimmed_name.isEmpty()) return false;
         for (int i = 0; i < this->views_.size(); ++i)
-            if (i != except && this->views_.at(i).name.compare(name.trimmed(), Qt::CaseInsensitive) == 0) return false;
+            if (i != except && this->views_.at(i).name == trimmed_name) return false;
         return true;
     }
     void rebuild() {

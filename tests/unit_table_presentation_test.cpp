@@ -29,6 +29,16 @@ namespace
 // may neither change the source nor mistake two physically different units.
 void testSimulationResultColumnUnits()
 {
+    // The presentation API prints unit symbols; the Model IDs remain ASCII.
+    CHECK(UnitTablePresentation::unitSymbol(QStringLiteral("m3/h")) == QStringLiteral("m³/h"));
+    CHECK(UnitTablePresentation::unitSymbol(QStringLiteral("ft2")) == QStringLiteral("ft²"));
+    CHECK(UnitTablePresentation::unitSymbol(QStringLiteral("ft3")) == QStringLiteral("ft³"));
+    CHECK(UnitTablePresentation::unitSymbol(QStringLiteral("in2")) == QStringLiteral("in²"));
+    CHECK(UnitTablePresentation::unitSymbol(QStringLiteral("kW.h")) == QStringLiteral("kWh"));
+    CHECK(UnitTablePresentation::unitSymbol(QStringLiteral("(mg/L)^-1/h"))
+          == QStringLiteral("(mg/L)⁻¹/h"));
+    CHECK(UnitTablePresentation::formatNumber(1.5, 1, QStringLiteral(" ft3"))
+          == QStringLiteral("1.5 ft³"));
     UnitPresentationContext context;
     QJsonObject profile;
     profile.insert(QStringLiteral("elevation"), QStringLiteral("ft"));
@@ -109,6 +119,20 @@ void testSimulationResultColumnUnits()
     // Their quantities must remain row-specific rather than being inferred
     // from the column title (which deliberately has no physical unit).
     near(*UnitTablePresentation::toDisplay(context, "pressure_head", 0.3048), 1.0);
+    QJsonObject pressure_units = profile;
+    pressure_units.insert(QStringLiteral("pressure_head"), QStringLiteral("psi"));
+    context.update(pressure_units);
+    const double pressure_psi = 1000.0 * aowis::units::standard_gravity_m_per_s2
+        / aowis::units::pascals_per_psi;
+    near(*UnitTablePresentation::toDisplay(context, "pressure_head", 1.0), pressure_psi);
+    near(*UnitTablePresentation::toCanonical(context, "pressure_head", pressure_psi), 1.0);
+    CHECK(context.setSpecificGravity(1.2));
+    near(*UnitTablePresentation::toDisplay(context, "pressure_head", 1.0), pressure_psi * 1.2);
+    near(*UnitTablePresentation::toCanonical(context, "pressure_head", pressure_psi * 1.2), 1.0);
+    CHECK(!context.setSpecificGravity(0.0));
+    CHECK(context.setSpecificGravity(1.0));
+    CHECK(context.update(profile));
+
     near(*UnitTablePresentation::toDisplay(context, "volumetric_flow_rate", 3.6), 1.0);
     near(*UnitTablePresentation::toDisplay(context, "valve_position", 50.0), 0.5);
     CHECK(UnitTablePresentation::toDisplayForColumn(
@@ -214,6 +238,16 @@ void testTableNumericFormattingPolicy()
           != QStringLiteral("0 m"));
     CHECK(UnitTablePresentation::formatDemandRate(context, 3.6)
           == QStringLiteral("1 L/s"));
+    CHECK(UnitTablePresentation::formatEnergyPrice(context, 0.18)
+          == QStringLiteral("0,05"));
+    // Energy prices share the energy quantity's formatting policy with the
+    // pump tariff editor. They must not use an unregistered "energy_price" key.
+    const NumericFormatPolicy energy_price_format{
+        NumericFormatPolicy::Notation::Fixed, 4, false, true};
+    CHECK(context.setFormatPolicy(energy_price_format, QStringLiteral("energy")));
+    CHECK(UnitTablePresentation::formatEnergyPrice(context, 0.18)
+          == QStringLiteral("0,0500"));
+    CHECK(context.clearFormatPolicy(QStringLiteral("energy")));
     CHECK(UnitTablePresentation::formatEnergyPrice(context, 0.18)
           == QStringLiteral("0,05"));
     CHECK(UnitTablePresentation::formatReactionCoefficient(
@@ -408,6 +442,15 @@ int main(int argc, char **argv)
     const MapRange head_legend = MapLegendUnitPresentation::range(
         presentation, QStringLiteral("Pressure Head"), 0.0, 1.0);
     near(head_legend.maximum, 3.280839895013123);
+    map_units.insert(QStringLiteral("pressure_head"), QStringLiteral("psi"));
+    CHECK(presentation.update(map_units));
+    CHECK(presentation.setSpecificGravity(1.2));
+    const MapRange pressure_legend = MapLegendUnitPresentation::range(
+        presentation, QStringLiteral("Pressure Head"), 0.0, 1.0);
+    near(pressure_legend.maximum,
+         1.2 * 1000.0 * aowis::units::standard_gravity_m_per_s2
+         / aowis::units::pascals_per_psi);
+    CHECK(pressure_legend.unit == QStringLiteral("psi"));
     const MapRange age_legend = MapLegendUnitPresentation::range(
         presentation, QStringLiteral("Water Age"), 0.0, 1.0);
     near(age_legend.maximum, 60.0);
@@ -433,10 +476,10 @@ int main(int argc, char **argv)
             == QStringLiteral("Valve Type"));
 
     const double canonical_flow = 1.234567890123;
-    const auto flow = UnitTablePresentation::toDisplay(presentation, "volumetric_flow_rate", canonical_flow);
+    const std::optional<double> flow = UnitTablePresentation::toDisplay(presentation, "volumetric_flow_rate", canonical_flow);
     CHECK(flow.has_value());
     near(*flow, canonical_flow * 1000.0 / 3600.0);
-    const auto restored = UnitTablePresentation::toCanonical(presentation, "volumetric_flow_rate", *flow);
+    const std::optional<double> restored = UnitTablePresentation::toCanonical(presentation, "volumetric_flow_rate", *flow);
     CHECK(restored.has_value());
     near(*restored, canonical_flow);
     // Formatting never writes to, rounds, or mutates the canonical number.
@@ -493,7 +536,7 @@ int main(int argc, char **argv)
     CHECK(UnitTablePresentation::reactionUnit(presentation, ReactionKind::Bulk, 0.0)
             == QStringLiteral("(mg/L)/h"));
     CHECK(UnitTablePresentation::reactionUnit(presentation, ReactionKind::Bulk, 2.0)
-            == QStringLiteral("(mg/L)^-1/h"));
+            == QStringLiteral("(mg/L)⁻¹/h"));
     near(*UnitTablePresentation::reactionValue(presentation, ReactionKind::Wall, 1.0, 0.3048), 1.0);
     near(*UnitTablePresentation::reactionValue(presentation, ReactionKind::Wall, 0.0, 24.0), 1.0);
     CHECK(UnitTablePresentation::reactionUnit(presentation, ReactionKind::Wall, 0.0)
@@ -519,7 +562,7 @@ int main(int argc, char **argv)
     CHECK(!tiny_reaction.startsWith(QStringLiteral("0 ")));
     CHECK(!tiny_reaction.startsWith(QStringLiteral("0.00000000 ")));
 
-    const auto generation = presentation.generation();
+    const UnitPresentationContext::Generation generation = presentation.generation();
     CHECK(!presentation.update(units));
     CHECK(presentation.generation() == generation);
     units.insert(QStringLiteral("volumetric_flow_rate"), QStringLiteral("m3/h"));
@@ -534,7 +577,10 @@ int main(int argc, char **argv)
     units.insert(QStringLiteral("tank_initial_level"), QStringLiteral("ft"));
     units.insert(QStringLiteral("tank_minimum_level"), QStringLiteral("m"));
     units.insert(QStringLiteral("tank_maximum_level"), QStringLiteral("ft"));
-    units.insert(QStringLiteral("tank_minimum_volume"), QStringLiteral("ft3"));
+    // Minimum tank volume follows the volume selection, even when an older
+    // profile contains a conflicting per-field override.
+    units.insert(QStringLiteral("volume"), QStringLiteral("ft3"));
+    units.insert(QStringLiteral("tank_minimum_volume"), QStringLiteral("m3"));
     CHECK(presentation.update(units));
     CHECK(UnitTablePresentation::formattedTitle(QStringLiteral("Demand Base [m³/h]"), presentation, {"base_demand_flow_rate"})
             == QStringLiteral("Demand Base [m³/h]"));
@@ -558,7 +604,7 @@ int main(int argc, char **argv)
     CHECK(UnitTablePresentation::formattedTitle(QStringLiteral("Level Minimum [m]"), presentation, {"tank_minimum_level"})
             == QStringLiteral("Level Minimum [m]"));
     CHECK(UnitTablePresentation::formattedTitle(QStringLiteral("Volume Minimum [m³]"), presentation, {"tank_minimum_volume"})
-            == QStringLiteral("Volume Minimum [ft3]"));
+            == QStringLiteral("Volume Minimum [ft³]"));
     near(*UnitTablePresentation::toDisplayForColumn(
              presentation, {"tank_minimum_volume"}, 1.0),
          1.0 / aowis::units::cubic_metres_per_cubic_foot);

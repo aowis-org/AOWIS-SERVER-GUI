@@ -1,17 +1,19 @@
-// Independent dimensional reference checks. The constants below are defined from
-// international unit definitions, not from aowis::units or the importer implementation.
-// These verify physical conversions, NOT EPANET's historical internal factors.
+// Independent unit reference checks. Ordinary length/flow conversions use exact
+// international definitions; EPANET pressure/head import deliberately uses its
+// historical rounded solver constants.
 void testIndependentUnitReferenceValues()
 {
     const double us_gallon_m3 = 231.0 * 0.0254 * 0.0254 * 0.0254;
     const double imperial_gallon_m3 = 0.00454609;
     const double foot_m = 0.3048;
-    const double psi_pa = 6894.757293168361;
-    const double standard_gravity = 9.80665;
-    const double density = 1200.0; // specific gravity 1.2
+    const double epanet_psi_per_ft = 0.4333;
+    const double epanet_kpa_per_psi = 6.895;
+    const double epanet_bar_per_psi = 0.068948;
+    const double specific_gravity = 1.2;
 
-    const auto check = [](const std::optional<double> &actual, double expected,
-                          double tolerance, const char *message) {
+    void (*const check)(const std::optional<double> &, double, double, const char *) =
+        [](const std::optional<double> &actual, double expected,
+           double tolerance, const char *message) {
         expectTrue(actual.has_value(), message);
         if (actual.has_value())
             expectNear(*actual, expected, tolerance, message);
@@ -36,13 +38,21 @@ void testIndependentUnitReferenceValues()
     check(EpanetJsUnits::darcyRoughnessToMm(1.0, QString(), QStringLiteral("lps")),
           1.0, 1e-14, "metric Darcy roughness in millimetres");
 
-    const double psi_head_m = psi_pa / (density * standard_gravity);
+    const double psi_head_m = foot_m / (epanet_psi_per_ft * specific_gravity);
     check(EpanetJsUnits::pressureToHeadM(1.0, QStringLiteral("psi"), 1.2),
-          psi_head_m, 1e-12, "psi to head with specific gravity");
+          psi_head_m, 1e-12, "EPANET psi to head with specific gravity");
+    check(EpanetJsUnits::pressureToHeadM(1.0, QStringLiteral("psi"), 1.0),
+          0.7034387260558504, 1e-14, "EPANET 2.3 psi reference at SG=1");
+    check(EpanetJsUnits::pressureToHeadM(1.0, QStringLiteral("kPa"), 1.0),
+          0.10202157013137787, 1e-14, "EPANET 2.3 kPa reference at SG=1");
+    check(EpanetJsUnits::pressureToHeadM(1.0, QStringLiteral("bar"), 1.0),
+          10.202452950859351, 1e-12, "EPANET 2.3 bar reference at SG=1");
     check(EpanetJsUnits::pressureToHeadM(100.0, QStringLiteral("kpa"), 1.2),
-          100000.0 / (density * standard_gravity), 1e-12, "kPa to head");
+          100.0 * foot_m / (epanet_psi_per_ft * epanet_kpa_per_psi * specific_gravity),
+          1e-12, "EPANET kPa to head");
     check(EpanetJsUnits::pressureToHeadM(1.0, QStringLiteral("bar"), 1.2),
-          100000.0 / (density * standard_gravity), 1e-12, "bar to head");
+          foot_m / (epanet_psi_per_ft * epanet_bar_per_psi * specific_gravity),
+          1e-12, "EPANET bar to head");
     // EPANET 2.3 emitters use psi (US) or metres of head (SI), independent of
     // the PRESSURE option and, for SI, of specific gravity.
     check(EpanetJsUnits::emitterCoefficientToCanonical(

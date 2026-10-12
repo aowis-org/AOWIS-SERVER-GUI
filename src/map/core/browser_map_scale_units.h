@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <cmath>
 #include <limits>
+#include <functional>
 
 namespace BrowserMapScaleUnits
 {
@@ -13,7 +14,7 @@ namespace BrowserMapScaleUnits
 // readable 1/2/5 distance fitting its viewport, without calling back on pan.
 inline QJsonArray choices(const UnitPresentationContext &context)
 {
-    QString unit = context.unit(QStringLiteral("length"));
+    QString unit = context.unit(QStringLiteral("distance"));
     if (unit.isEmpty())
         unit = QStringLiteral("m");
     QString compact;
@@ -26,20 +27,21 @@ inline QJsonArray choices(const UnitPresentationContext &context)
     if (!compact.isEmpty())
     {
         const std::optional<double> threshold = aowis::units::convert(
-            "length", 1.0, compact.toStdString(), "m");
+            "distance", 1.0, compact.toStdString(), "m");
         if (threshold)
             compact_threshold = *threshold;
     }
 
     QJsonArray result;
-    const auto append = [&context, &result](const QString &symbol, double minimum, double maximum) {
+    const std::function<void(const QString &, double, double)> append =
+        [&context, &result](const QString &symbol, double minimum, double maximum) {
         for (int exponent = -12; exponent <= 12; ++exponent)
         {
             for (const double factor : {1.0, 2.0, 5.0})
             {
                 const double value = factor * std::pow(10.0, exponent);
                 const std::optional<double> meters = aowis::units::convert(
-                    "length", value, symbol.toStdString(), "m");
+                    "distance", value, symbol.toStdString(), "m");
                 if (!meters || !std::isfinite(*meters) || *meters <= 0.0
                     || *meters < minimum || *meters >= maximum)
                     continue;

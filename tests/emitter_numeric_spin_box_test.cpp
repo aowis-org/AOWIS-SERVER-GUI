@@ -6,6 +6,7 @@
 #include <QLineEdit>
 #include <QKeyEvent>
 #include <cmath>
+#include <functional>
 #include <cstdio>
 #include <cstdlib>
 
@@ -20,8 +21,8 @@ int main(int argc, char **argv)
     double exponent = 0.5678901234567;
     int coefficient_writes = 0;
     int exponent_writes = 0;
-    const auto read_coefficient = [&]() -> std::optional<double> { return canonical_coefficient; };
-    const auto read_exponent = [&]() -> std::optional<double> { return exponent; };
+    const std::function<std::optional<double>()> read_coefficient = [&]() -> std::optional<double> { return canonical_coefficient; };
+    const std::function<std::optional<double>()> read_exponent = [&]() -> std::optional<double> { return exponent; };
     EmitterCoefficientNumericSpinBox coefficient(
         read_coefficient,
         [&](double value) { canonical_coefficient = value; ++coefficient_writes; return true; },
@@ -48,6 +49,12 @@ int main(int argc, char **argv)
     CHECK(coefficient.displayedUnitLabel().contains(QStringLiteral("ft")));
     CHECK(canonical_coefficient == 1.23456789012345 && exponent == 0.5678901234567);
     CHECK(coefficient_writes == 0 && exponent_writes == 0);
+    CHECK(context.update(QJsonObject{{"volumetric_flow_rate", "US gal/min"},
+                                     {"pressure_head", "psi"}, {"emitter_exponent", "1"}}));
+    CHECK(context.setSpecificGravity(1.2));
+    CHECK(coefficient.refreshUnits(context));
+    CHECK(coefficient.displayedUnitLabel().contains(QStringLiteral("psi")));
+    CHECK(coefficient_writes == 0 && exponent_writes == 0);
     // Merely selecting/focusing and leaving a rounded editor unchanged is read-only.
     coefficient.show();
     coefficient.setFocus();
@@ -66,7 +73,7 @@ int main(int argc, char **argv)
     QApplication::sendEvent(line, &input);
     CHECK(coefficient.commitEdit() == NumericPropertyBinding::Result::Committed);
     const std::optional<double> expected = EmitterCoefficientUnits::toCanonical(
-        24.25, {"US gal/min", "ft", exponent});
+        24.25, {"US gal/min", "psi", exponent, 1.2});
     CHECK(expected);
     CHECK(std::abs(canonical_coefficient - *expected) < 1e-12);
     CHECK(coefficient_writes == 1);

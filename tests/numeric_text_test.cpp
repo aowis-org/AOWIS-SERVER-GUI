@@ -33,6 +33,25 @@ int main(int argc, char **argv) {
     CHECK(NumericText::format(std::numeric_limits<double>::quiet_NaN(), english) == QStringLiteral("NaN"));
     CHECK(NumericText::format(std::numeric_limits<double>::infinity(), english) == QString(QChar(0x221e)));
     CHECK(NumericText::measurement(1.25, QStringLiteral("m"), english, fixed) == QStringLiteral("1.25") + QChar(0x00a0) + QStringLiteral("m"));
+    CHECK(NumericText::suffix(QStringLiteral("m3/h")) == QString(QChar(0x00a0)) + QStringLiteral("m³/h"));
+    CHECK(NumericText::suffix(QStringLiteral("kW.h")) == QString(QChar(0x00a0)) + QStringLiteral("kWh"));
+    CHECK(NumericText::suffix(QStringLiteral("ft2")) == QString(QChar(0x00a0)) + QStringLiteral("ft²"));
+    CHECK(NumericText::suffix(QStringLiteral("ft3")) == QString(QChar(0x00a0)) + QStringLiteral("ft³"));
+    CHECK(NumericText::suffix(QStringLiteral("in2")) == QString(QChar(0x00a0)) + QStringLiteral("in²"));
+    CHECK(NumericText::heading(QStringLiteral("Area"), QStringLiteral("mm2")) == QStringLiteral("Area (mm²)"));
+    CHECK(UnitDisplayText::symbol(QStringLiteral("kW.h/m3")) == QStringLiteral("kWh/m³"));
+    CHECK(UnitDisplayText::symbol(QStringLiteral("in2/(100.ft)")) == QStringLiteral("in²/(100 ft)"));
+    CHECK(UnitDisplayText::symbol(QStringLiteral("mg/m2/d")) == QStringLiteral("mg/m²/d"));
+    CHECK(UnitDisplayText::symbol(QStringLiteral("ug/L")) == QStringLiteral("µg/L"));
+    CHECK(UnitDisplayText::symbol(QStringLiteral("kOhm")) == QStringLiteral("kΩ"));
+    CHECK(UnitDisplayText::symbol(QStringLiteral("uF")) == QStringLiteral("µF"));
+    CHECK(UnitDisplayText::symbol(QStringLiteral("(mg/L)^-1/h")) == QStringLiteral("(mg/L)⁻¹/h"));
+    CHECK(UnitDisplayText::symbol(QStringLiteral("(mg/L)^2.5/h")) == QStringLiteral("(mg/L)^2.5/h"));
+    CHECK(UnitDisplayText::symbol(QStringLiteral("m³/h")) == QStringLiteral("m³/h"));
+    CHECK(UnitDisplayText::quantity("darcy_weisbach_roughness_height")
+          == QStringLiteral("Darcy–Weisbach roughness height"));
+    CHECK(UnitDisplayText::quantity("volumetric_flow_rate")
+          == QStringLiteral("Volumetric flow rate"));
     CHECK(NumericText::suffix({}).isEmpty());
     CHECK(NumericText::heading(QStringLiteral("Flow"), QStringLiteral("L/s")) == QStringLiteral("Flow (L/s)"));
     NumericFormatPolicy exact;
@@ -50,7 +69,7 @@ int main(int argc, char **argv) {
     QObject owner;
     int refreshes = 0;
     context.subscribe(&owner, [&](UnitPresentationContext::Generation) { ++refreshes; });
-    const auto initial_generation = context.generation();
+    const UnitPresentationContext::Generation initial_generation = context.generation();
     CHECK(context.setFormatPolicy(fixed, QStringLiteral("pressure")));
     CHECK(context.generation() == initial_generation + 1 && refreshes == 1);
     CHECK(!context.setFormatPolicy(fixed, QStringLiteral("pressure")));

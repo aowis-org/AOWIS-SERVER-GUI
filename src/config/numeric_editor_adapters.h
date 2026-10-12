@@ -174,10 +174,30 @@ protected:
     }
 
     void stepBy(int steps) override {
-        if (SpinBox::isReadOnly()) return;
+        if (SpinBox::isReadOnly() || steps == 0) return;
         // An arrow must not silently replace incomplete input with Qt's fixup.
         if (this->binding_.state() == NumericPropertyBinding::State::Dirty &&
             !this->binding_.pendingCanonical()) return;
+        if constexpr (std::is_same_v<SpinBox, QDoubleSpinBox>) {
+            if (this->binding_.state() == NumericPropertyBinding::State::Clean) {
+                // Qt's value() is rounded to decimals(). Start instead from
+                // the precise stored value to avoid losing hidden fractions
+                // each time an arrow is pressed.
+                const std::optional<double> precise = this->binding_.presentation(this->display_unit_);
+                if (!precise || !std::isfinite(*precise)) return;
+                if (!this->binding_.beginEdit(this->display_unit_, *precise)) return;
+                const double stepped = *precise + static_cast<double>(steps) * this->latest_.step;
+                if (!std::isfinite(stepped)) {
+                    this->binding_.cancel();
+                    return;
+                }
+                this->binding_.userEdited(std::clamp(stepped, this->latest_.minimum, this->latest_.maximum));
+                commitEdit();
+                return;
+            }
+        }
+        // Pending typed edits and integer controls retain Qt's ordinary
+        // stepping behavior; only clean double editors need the precise base.
         if (!begin()) return;
         SpinBox::stepBy(steps);
         this->binding_.userEdited(SpinBox::value());

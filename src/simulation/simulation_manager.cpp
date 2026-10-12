@@ -22,6 +22,7 @@
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QProgressDialog>
+#include <QSet>
 #include <QTimer>
 #include <QTemporaryDir>
 
@@ -691,12 +692,10 @@ void SimulationManager::importNetworkProjectContent(
                         : tr("%1 (EPANET-JS units)").arg(imported_project_name);
                     QString profile_name = base_name;
                     int suffix = 2;
-                    const auto exists = [&profiles](const QString &name) {
-                        for (const UnitProfileManager::Profile &profile : profiles.profiles())
-                            if (profile.name.compare(name, Qt::CaseInsensitive) == 0) return true;
-                        return false;
-                    };
-                    while (exists(profile_name))
+                    QSet<QString> existing_names;
+                    for (const UnitProfileManager::Profile &profile : profiles.profiles())
+                        existing_names.insert(profile.name);
+                    while (existing_names.contains(profile_name))
                         profile_name = base_name + QStringLiteral(" (%1)").arg(suffix++);
 
                     QDialog *confirmation = new QDialog(parent_widget);

@@ -10,6 +10,7 @@
 #include <QString>
 #include <QtGlobal>
 #include <functional>
+#include <cmath>
 #include <utility>
 
 // Effective GUI display units, deliberately independent of project/model revisions.
@@ -20,10 +21,28 @@ public:
     using Generation = quint64;
 
     [[nodiscard]] Generation generation() const { return this->generation_; }
+    [[nodiscard]] double specificGravity() const { return this->specific_gravity_; }
+    bool setSpecificGravity(double value) {
+        if (!std::isfinite(value) || value <= 0.0 || value == this->specific_gravity_)
+            return false;
+        this->specific_gravity_ = value;
+        notifyPresentationChanged();
+        return true;
+    }
     [[nodiscard]] qsizetype subscriberCount() const { return this->listeners_.size(); }
     [[nodiscard]] QString unit(const QString &quantity) const {
+        // The legacy minimum-volume key never has an independent display unit,
+        // even when older profile JSON still contains its own selection.
+        if (quantity == QStringLiteral("tank_minimum_volume"))
+            return unit(QStringLiteral("volume"));
         const QString selected = this->effective_units_.value(quantity).toString();
         if (!selected.isEmpty()) return selected;
+        if (quantity == QStringLiteral("pressure_head")) {
+            const QString legacy = this->effective_units_.value(QStringLiteral("pressure")).toString();
+            if (legacy == QStringLiteral("psi") || legacy == QStringLiteral("kPa") ||
+                legacy == QStringLiteral("Pa") || legacy == QStringLiteral("bar"))
+                return legacy;
+        }
         // Partial/legacy profiles inherit new semantic display quantities.
         const std::string_view parent = aowis::units::inheritedUnitQuantity(
             quantity.toStdString());
@@ -112,6 +131,7 @@ private:
     QHash<QString, NumericFormatPolicy> format_overrides_;
     QLocale locale_;
     Generation generation_ = 1;
+    double specific_gravity_ = 1.0;
     QJsonObject effective_units_;
     quint64 next_subscription_id_ = 0;
     QMap<quint64, Listener> listeners_;

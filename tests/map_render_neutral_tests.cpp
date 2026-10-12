@@ -139,45 +139,57 @@ void testMapHudLengthUnits()
 {
     UnitPresentationContext context;
     QJsonObject units;
-    units.insert(QStringLiteral("length"), QStringLiteral("m"));
+    units.insert(QStringLiteral("length"), QStringLiteral("km"));
+    units.insert(QStringLiteral("distance"), QStringLiteral("m"));
+    units.insert(QStringLiteral("vertical_offset"), QStringLiteral("m"));
     context.initialize(units);
     expectTrue(MapHudLengthUnits::cameraDistance(500.0, context)
                    .endsWith(QStringLiteral(" m")),
-               "metric camera HUD displays metres");
+               "pipe length does not affect metric camera distance");
     expectTrue(MapHudLengthUnits::cameraDistance(10000.0, context)
                    .endsWith(QStringLiteral(" km")),
                "far camera HUD displays kilometres");
     expectTrue(MapHudLengthUnits::networkOffset(0.1, context)
                    .endsWith(QStringLiteral(" m")),
-               "network offset displays metres");
+               "pipe length does not affect the network offset");
 
-    units.insert(QStringLiteral("length"), QStringLiteral("ft"));
+    units.insert(QStringLiteral("distance"), QStringLiteral("ft"));
     context.update(units);
     expectTrue(MapHudLengthUnits::cameraDistance(500.0, context)
                    .endsWith(QStringLiteral(" ft")),
-               "unit change updates near camera display to feet");
+               "distance setting updates near camera display to feet");
     expectTrue(MapHudLengthUnits::cameraDistance(10000.0, context)
                    .endsWith(QStringLiteral(" mi")),
-               "unit change updates far camera display to miles");
+               "distance setting updates far camera display to miles");
+    expectTrue(MapHudLengthUnits::networkOffset(50.0, context)
+                   .endsWith(QStringLiteral(" m")),
+               "camera distance setting does not affect network offset");
+
+    units.insert(QStringLiteral("vertical_offset"), QStringLiteral("ft"));
+    context.update(units);
     expectTrue(MapHudLengthUnits::networkOffset(50.0, context)
                    .endsWith(QStringLiteral(" ft")),
-               "network offset uses selected length unit");
+               "network offset uses selected vertical offset unit");
+    expectTrue(MapHudLengthUnits::cameraDistance(500.0, context)
+                   .endsWith(QStringLiteral(" ft")),
+               "vertical offset unit does not change camera distance");
 
-    units.insert(QStringLiteral("length"), QStringLiteral("km"));
+    units.insert(QStringLiteral("distance"), QStringLiteral("km"));
     context.update(units);
-    expectTrue(MapHudLengthUnits::networkOffset(0.1, context)
+    expectTrue(MapHudLengthUnits::cameraDistance(0.1, context)
                    .endsWith(QStringLiteral(" km")),
-               "explicit compact length unit is respected for small offsets");
+               "explicit compact distance unit is respected");
     expectTrue(!MapHudLengthUnits::networkOffset(0.1, context)
                     .startsWith(QStringLiteral("0.0000 ")),
-               "small nonzero offset does not disappear through rounding");
+               "small nonzero offset remains visible with its independent unit");
 }
 
 void testMapScaleUnits()
 {
     UnitPresentationContext context;
     QJsonObject effective_units;
-    effective_units.insert(QStringLiteral("length"), QStringLiteral("m"));
+    effective_units.insert(QStringLiteral("length"), QStringLiteral("km"));
+    effective_units.insert(QStringLiteral("distance"), QStringLiteral("m"));
     context.initialize(effective_units);
 
     const MapScaleDistance::Scale metric =
@@ -185,7 +197,7 @@ void testMapScaleUnits()
     expectNear(metric.distance_m, 500.0, 1e-9,
         "metric scale uses a nice real-world distance");
     expectTrue(metric.label.endsWith(QStringLiteral(" m")),
-        "metric scale displays metres");
+        "metric scale follows distance, not pipe length");
 
     const MapScaleDistance::Scale kilometre =
         MapScaleDistance::forMaximumDistance(4000.0, context);
@@ -194,13 +206,13 @@ void testMapScaleUnits()
     expectTrue(kilometre.label.endsWith(QStringLiteral(" km")),
         "large metric scale displays kilometres");
 
-    effective_units.insert(QStringLiteral("length"), QStringLiteral("ft"));
+    effective_units.insert(QStringLiteral("distance"), QStringLiteral("ft"));
     expectTrue(context.update(effective_units),
-        "changing length units increments the display generation");
+        "changing distance units increments the display generation");
     const MapScaleDistance::Scale feet =
         MapScaleDistance::forMaximumDistance(900.0, context);
     expectTrue(feet.label.endsWith(QStringLiteral(" ft")),
-        "imperial scale displays feet");
+        "imperial scale follows distance setting");
     expectTrue(feet.distance_m > 0.0 && feet.distance_m <= 900.0,
         "imperial scale fits its physical viewport distance");
 
@@ -211,14 +223,23 @@ void testMapScaleUnits()
     expectTrue(mile.distance_m > 0.0 && mile.distance_m <= 4000.0,
         "mile scale fits its physical viewport distance");
 
-    effective_units.insert(QStringLiteral("length"), QStringLiteral("mi"));
+    effective_units.insert(QStringLiteral("distance"), QStringLiteral("mi"));
     context.update(effective_units);
     const MapScaleDistance::Scale small_miles =
         MapScaleDistance::forMaximumDistance(90.0, context);
     expectTrue(small_miles.label.endsWith(QStringLiteral(" mi")),
-        "an explicit mile profile remains in miles at short distances");
+        "an explicit mile distance profile remains in miles at short distances");
     expectTrue(small_miles.distance_m > 0.0 && small_miles.distance_m <= 90.0,
         "explicit mile scale remains physically correct");
+
+    // Changing pipe length alone must not affect either map scale units or geometry.
+    effective_units.insert(QStringLiteral("length"), QStringLiteral("ft"));
+    context.update(effective_units);
+    const MapScaleDistance::Scale unchanged =
+        MapScaleDistance::forMaximumDistance(90.0, context);
+    expectTrue(unchanged.label == small_miles.label
+               && unchanged.distance_m == small_miles.distance_m,
+        "pipe length setting is independent from map distance");
 
     const MapScaleDistance::Scale invalid =
         MapScaleDistance::forMaximumDistance(-1.0, context);

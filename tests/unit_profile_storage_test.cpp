@@ -31,7 +31,42 @@ int main(int argc, char **argv)
     CHECK(restored.legacy_active_name == first.legacy_active_name);
     CHECK(restored.custom_profiles.size() == 1);
     CHECK(restored.custom_profiles[0].id == "profile-one");
+    // Legacy pressure preferences remain fallbacks, not new explicit head
+    // overrides introduced by the INI writer's full-unit representation.
     CHECK(restored.custom_profiles[0].overrides == first.custom_profiles[0].overrides);
+    CHECK(restored.custom_profiles[0].overrides.find("pressure_head")
+          == restored.custom_profiles[0].overrides.end());
+    CHECK(aowis::units::resolvedUnit(restored.custom_profiles[0], "pressure_head") == "psi");
+    // An explicit metre choice must override that fallback even after a
+    // storage round trip (its value is canonical, but its intent is not).
+    UnitProfileSnapshot explicit_head_snapshot;
+    explicit_head_snapshot.active_id = QStringLiteral("explicit-pressure-head");
+    aowis::units::UnitProfile explicit_head{"explicit-pressure-head", "Explicit pressure head", {}, false};
+    CHECK(aowis::units::setProfileUnit(explicit_head, "pressure", "psi"));
+    CHECK(aowis::units::setProfileUnit(explicit_head, "pressure_head", "m"));
+    CHECK(aowis::units::resolvedUnit(explicit_head, "pressure_head") == "m");
+    explicit_head_snapshot.custom_profiles.push_back(explicit_head);
+    CHECK(storage.save(explicit_head_snapshot));
+    const UnitProfileSnapshot explicit_head_restored = storage.load();
+    CHECK(explicit_head_restored.custom_profiles.size() == 1);
+    CHECK(explicit_head_restored.custom_profiles.front().overrides == explicit_head.overrides);
+    CHECK(aowis::units::resolvedUnit(explicit_head_restored.custom_profiles.front(),
+                                      "pressure_head") == "m");
+    // Profile names are case-sensitive in both the Model and persisted settings:
+    // exact duplicates are rejected, but differently cased names are distinct.
+    UnitProfileSnapshot case_snapshot;
+    case_snapshot.active_id = QStringLiteral("case-upper");
+    case_snapshot.custom_profiles.push_back({"case-upper", "Field", {}, false});
+    case_snapshot.custom_profiles.push_back({"case-lower", "field", {}, false});
+    case_snapshot.custom_profiles.push_back({"case-duplicate", "Field", {}, false});
+    case_snapshot.custom_profiles.push_back({"builtin-different-case", "cmh", {}, false});
+    case_snapshot.custom_profiles.push_back({"builtin-exact", "CMH", {}, false});
+    CHECK(storage.save(case_snapshot));
+    const UnitProfileSnapshot case_restored = storage.load();
+    CHECK(case_restored.custom_profiles.size() == 3);
+    CHECK(case_restored.custom_profiles.at(0).id == "case-upper");
+    CHECK(case_restored.custom_profiles.at(1).id == "case-lower");
+    CHECK(case_restored.custom_profiles.at(2).id == "builtin-different-case");
     // Legacy JSON profiles have no IDs. The adapter assigns one during import.
     {
         QSettings settings(path, QSettings::IniFormat);
@@ -74,6 +109,11 @@ int main(int argc, char **argv)
                                       "tank_initial_level") == "ft");
     CHECK(aowis::units::resolvedUnit(semantic_reloaded.custom_profiles.front(),
                                       "tank_minimum_level") == "m");
+    // Legacy minimum-volume overrides survive profile import/storage, but the
+    // effective unit follows the general volume preference.
+    CHECK(semantic_reloaded.custom_profiles.front().overrides.at("tank_minimum_volume") == "m3");
+    CHECK(aowis::units::resolvedUnit(semantic_reloaded.custom_profiles.front(),
+                                     "tank_minimum_volume") == "ft3");
     // Profiles saved before Step 12d lack the new keys and inherit dynamically.
     const QString legacy_json_path = directory.filePath(QStringLiteral("unit-profiles-legacy.ini"));
     {
@@ -224,7 +264,9 @@ int main(int argc, char **argv)
             "tank_minimum_volume", canonical_tank_volume_m3, "m3",
             imported_presentation.unit(QStringLiteral("tank_minimum_volume")).toStdString());
         CHECK(minimum_volume_display.has_value());
-        CHECK(*minimum_volume_display == canonical_tank_volume_m3);
+        CHECK(imported_presentation.unit(QStringLiteral("tank_minimum_volume"))
+              == imported_presentation.unit(QStringLiteral("volume")));
+        CHECK(std::fabs(*minimum_volume_display - *display_volume) < 1e-10);
         CHECK(canonical_flow_m3h == 12.345678901234);
         CHECK(canonical_roughness_mm == 0.09123456789);
         CHECK(canonical_tank_volume_m3 == 123.456789);
@@ -251,7 +293,7 @@ int main(int argc, char **argv)
         ++callbacks;
         observed_generation = generation;
     });
-    const auto original_generation = presentation.generation();
+    const UnitPresentationContext::Generation original_generation = presentation.generation();
     CHECK(!presentation.update(QJsonObject{{QStringLiteral("pressure"), QStringLiteral("kPa")}}));
     CHECK(presentation.generation() == original_generation);
     CHECK(callbacks == 0);

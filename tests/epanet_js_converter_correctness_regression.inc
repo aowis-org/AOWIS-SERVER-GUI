@@ -355,9 +355,8 @@ EpanetJsProjectSnapshot makePressureSemanticsProject(
 void testEpanetJsPressureAndEmitterSemantics()
 {
     const double us_gallon_m3 = 231.0 * 0.0254 * 0.0254 * 0.0254;
-    const double fluid_density = 1200.0; // specific gravity 1.2
-    const double standard_gravity = 9.80665;
-    const double psi_head_m = 6894.757293168361 / (fluid_density * standard_gravity);
+    const double specific_gravity = 1.2;
+    const double psi_head_m = 0.3048 / (0.4333 * specific_gravity);
 
     // SI with kPa display pressure: PDA pressure follows kPa and specific
     // gravity, but the emitter coefficient stays per metre of head.
@@ -368,7 +367,7 @@ void testEpanetJsPressureAndEmitterSemantics()
                 QStringLiteral("l/s"), QStringLiteral("kPa"), 100.0));
         expectTrue(result.success, "SI project with kPa pressure imports");
         expectNear(result.network.options_hydraulic.required_pressure_head_m,
-                   100000.0 / (fluid_density * standard_gravity), 1e-12,
+                   100.0 * 0.3048 / (0.4333 * 6.895 * specific_gravity), 1e-12,
                    "kPa required pressure uses specific gravity");
         expectTrue(!result.network.nodes_junctions.isEmpty(), "SI emitter junction imported");
         if (!result.network.nodes_junctions.isEmpty())

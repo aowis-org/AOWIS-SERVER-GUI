@@ -1,5 +1,6 @@
 #pragma once
 
+#include "config/unit_display_text.h"
 #include "config/unit_presentation_context.h"
 #include "config/unit_energy_price_conversion.h"
 #include "config/unit_bulk_reaction_display.h"
@@ -31,12 +32,7 @@ struct ColumnUnits
 
 inline QString unitSymbol(QString identifier)
 {
-    identifier.replace(QStringLiteral("mm2"), QStringLiteral("mm²"));
-    identifier.replace(QStringLiteral("m3"), QStringLiteral("m³"));
-    identifier.replace(QStringLiteral("m2"), QStringLiteral("m²"));
-    identifier.replace(QStringLiteral("ug"), QStringLiteral("µg"));
-    identifier.replace(QStringLiteral("kW.h"), QStringLiteral("kWh"));
-    return identifier;
+    return UnitDisplayText::symbol(identifier);
 }
 
 inline QString selectedUnit(const UnitPresentationContext &context,
@@ -56,7 +52,8 @@ inline std::optional<double> toDisplay(const UnitPresentationContext &context,
     if (quantity.empty()) return canonical;
     const std::string_view canonical_unit = aowis::units::canonicalUnit(quantity);
     const std::string target = selectedUnit(context, quantity).toStdString();
-    return aowis::units::convert(quantity, canonical, canonical_unit, target);
+    return aowis::units::convert(quantity, canonical, canonical_unit, target,
+                                 context.specificGravity());
 }
 
 inline std::optional<double> toCanonical(const UnitPresentationContext &context,
@@ -65,7 +62,8 @@ inline std::optional<double> toCanonical(const UnitPresentationContext &context,
     if (quantity.empty()) return displayed;
     const std::string_view canonical_unit = aowis::units::canonicalUnit(quantity);
     const std::string source = selectedUnit(context, quantity).toStdString();
-    return aowis::units::convert(quantity, displayed, source, canonical_unit);
+    return aowis::units::convert(quantity, displayed, source, canonical_unit,
+                                 context.specificGravity());
 }
 
 inline std::optional<double> toDisplayForColumn(const UnitPresentationContext &context,
@@ -212,7 +210,7 @@ inline QString formatWithPolicy(double value, const QString &suffix,
             if (text.endsWith(separator)) text.chop(separator.size());
         }
     }
-    return text + suffix;
+    return text + UnitDisplayText::symbol(suffix);
 }
 
 inline QString formatNumber(const UnitPresentationContext &context,
@@ -289,7 +287,7 @@ inline QString formatEnergyPrice(const UnitPresentationContext &context, double 
     if (*displayed > 0.0 && *displayed < 1.0)
         decimals = std::max(decimals, static_cast<int>(std::ceil(-std::log10(*displayed))) + 3);
     return formatNumber(context, *displayed, std::min(decimals, 18), QString(),
-                        "energy_price");
+                        "energy");
 }
 
 inline QString formattedTitle(const QString &title, const UnitPresentationContext &context,

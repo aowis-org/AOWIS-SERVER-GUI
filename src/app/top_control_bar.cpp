@@ -5,6 +5,7 @@
 #include "config/gui_configuration.h"
 #include "config/unit_profile_notifications.h"
 #include "config/unit_profile_manager.h"
+#include "config/unit_profile_menu.h"
 #include "config/shortcut_registry.h"
 #include "widgets/combo_checkboxes.h"
 #ifdef Q_OS_WASM
@@ -895,64 +896,14 @@ void TopControlBar::addFlowUnitCombo()
     button->setMenu(menu);
 #endif
 
-    const auto refresh = [this, button, menu] {
+    const std::function<void()> refresh = [this, button, menu] {
         UnitProfileManager &manager = UnitProfileManager::instance();
-        const auto &profiles = manager.profiles();
-        QStringList names;
-        for (const auto &profile : profiles) names.append(profile.name);
+        const QVector<UnitProfileManager::Profile> &profiles = manager.profiles();
         const int active = manager.activeIndex();
-        const QString effective = profiles.at(active).name;
-        button->setText(effective + QStringLiteral("  ▾"));
-        const auto choose = [](const QString &name) {
-            UnitProfileManager &manager = UnitProfileManager::instance();
-            const auto &profiles = manager.profiles();
-            for (int i = 0; i < profiles.size(); ++i) {
-                if (profiles.at(i).name == name) {
-                    (void)manager.select(i);
-                    break;
-                }
-            }
-        };
-
-        menu->clear();
-#ifdef Q_OS_WASM
-        const auto add = [&choose](WasmPopupMenu *parent, const QString &name, const QString &label) {
-            parent->addAction(label, [choose, name] { choose(name); });
-        };
-        add(menu, names.at(0), names.at(0));
-        menu->addSeparator();
-        add(menu, names.at(1), QStringLiteral("CMH — cubic meters per hour"));
-        add(menu, names.at(2), QStringLiteral("LPS — liters per second"));
-        WasmPopupMenu *metric = menu->addSubMenu(QStringLiteral("Other metric"));
-        for (int i = 3; i <= 6; ++i) add(metric, names.at(i), names.at(i));
-        WasmPopupMenu *imperial = menu->addSubMenu(QStringLiteral("Imperial / US"));
-        for (int i = 7; i <= 11; ++i) add(imperial, names.at(i), names.at(i));
-        WasmPopupMenu *custom = menu->addSubMenu(QStringLiteral("Custom"));
-        for (int i = 12; i < names.size(); ++i) add(custom, names.at(i), names.at(i));
-        custom->addSeparator();
-        custom->addAction(QStringLiteral("Manage Units…"), [this] { emit signalManageUnitsRequested(); });
-#else
-        const auto add = [&choose, &effective](QMenu *parent, const QString &name, const QString &label) {
-            QAction *action = parent->addAction(label);
-            action->setCheckable(true);
-            action->setChecked(name == effective);
-            QObject::connect(action, &QAction::triggered, parent, [choose, name] { choose(name); });
-        };
-        add(menu, names.at(0), names.at(0));
-        menu->addSeparator();
-        add(menu, names.at(1), QStringLiteral("CMH — cubic meters per hour"));
-        add(menu, names.at(2), QStringLiteral("LPS — liters per second"));
-        QMenu *metric = menu->addMenu(QStringLiteral("Other metric"));
-        for (int i = 3; i <= 6; ++i) add(metric, names.at(i), names.at(i));
-        QMenu *imperial = menu->addMenu(QStringLiteral("Imperial / US"));
-        for (int i = 7; i <= 11; ++i) add(imperial, names.at(i), names.at(i));
-        menu->addSeparator();
-        QMenu *custom = menu->addMenu(QStringLiteral("Custom"));
-        for (int i = 12; i < names.size(); ++i) add(custom, names.at(i), names.at(i));
-        custom->addSeparator();
-        QAction *manage_units = custom->addAction(QStringLiteral("Manage Units…"));
-        connect(manage_units, &QAction::triggered, this, [this] { emit signalManageUnitsRequested(); });
-#endif
+        button->setText(profiles.at(active).name + QStringLiteral("  ▾"));
+        UnitProfileMenu::populate(menu, this, profiles, active,
+                                  [](int index) { (void)UnitProfileManager::instance().select(index); },
+                                  [this] { emit signalManageUnitsRequested(); });
     };
     UnitProfileNotifications::instance().subscribe(this, [this, refresh] {
         QTimer::singleShot(0, this, refresh);

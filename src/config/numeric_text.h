@@ -1,5 +1,7 @@
 #pragma once
 
+#include "config/unit_display_text.h"
+
 #include <QLocale>
 #include <QString>
 #include <cmath>
@@ -92,10 +94,10 @@ inline std::optional<QString> format(std::optional<double> value, const QLocale 
 // Symbols come from the central unit registry, not an independent GUI map.
 // An empty symbol intentionally represents dimensionless values.
 inline QString suffix(const QString &symbol) {
-    return symbol.isEmpty() ? QString() : QString(QChar(0x00a0)) + symbol;
+    return symbol.isEmpty() ? QString() : QString(QChar(0x00a0)) + UnitDisplayText::symbol(symbol);
 }
 inline QString heading(const QString &label, const QString &symbol) {
-    return symbol.isEmpty() ? label : label + QStringLiteral(" (") + symbol + QChar(')');
+    return symbol.isEmpty() ? label : label + QStringLiteral(" (") + UnitDisplayText::symbol(symbol) + QChar(')');
 }
 inline std::optional<QString> measurement(std::optional<double> value, const QString &symbol,
                                          const QLocale &locale, const NumericFormatPolicy &policy = {}) {

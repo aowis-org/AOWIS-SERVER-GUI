@@ -75,9 +75,9 @@ inline Range range(const UnitPresentationContext &context, const QString &metric
     }
     const std::string target = chosen.toStdString();
     const std::optional<double> lower = aowis::units::convert(
-        quantity, minimum, source, target);
+        quantity, minimum, source, target, context.specificGravity());
     const std::optional<double> upper = aowis::units::convert(
-        quantity, maximum, source, target);
+        quantity, maximum, source, target, context.specificGravity());
     if (!lower || !upper) return result; // Never attach a wrong unit to raw data.
 
     result.minimum = *lower;

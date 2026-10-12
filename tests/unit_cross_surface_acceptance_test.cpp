@@ -1,8 +1,10 @@
 #include "config/unit_aware_view.h"
+#include "config/unit_profile_menu.h"
 #include "config/unit_numeric_spin_box.h"
 #include "config/unit_table_presentation.h"
 #include "entity_inspector/map_legend_unit_presentation.h"
 #include "map/monitor/map_hud_length_units.h"
+#include "settings/unit_settings_field_visibility.h"
 #include "simulation/simulation_inspector_unit_presentation.h"
 #include "simulation/simulation_statistics_unit_presentation.h"
 #include "unit_test_check.h"
@@ -12,6 +14,9 @@
 #include <QHeaderView>
 #include <QJsonObject>
 #include <QLabel>
+#ifndef Q_OS_WASM
+#include <QMenu>
+#endif
 #include <QTabWidget>
 #include <QTableView>
 #include <QVBoxLayout>
@@ -95,20 +100,124 @@ private:
     int invalidations_ = 0;
 };
 
+// Menus are driven by stable profile identity and builtin metadata, not by
+// assumptions about the number or ordering of predefined profiles.
+static void verifyProfileMenus()
+{
+    QVector<UnitProfileManager::Profile> profiles;
+    profiles.append({QStringLiteral("custom-a"), QStringLiteral("Field"), {}, false});
+    for (const aowis::units::UnitProfile &preset : aowis::units::predefinedProfiles()) {
+        profiles.append({QString::fromStdString(preset.id),
+                         QString::fromStdString(preset.name), {}, true});
+    }
+    profiles.append({QStringLiteral("custom-b"), QStringLiteral("field"), {}, false});
+
+    CHECK(UnitProfileMenu::group(profiles.at(0)) == UnitProfileMenu::Group::Custom);
+    CHECK(UnitProfileMenu::group(profiles.last()) == UnitProfileMenu::Group::Custom);
+    for (const UnitProfileManager::Profile &profile : profiles) {
+        if (profile.id == QStringLiteral("canonical"))
+            CHECK(UnitProfileMenu::group(profile) == UnitProfileMenu::Group::Canonical);
+        if (profile.id == QStringLiteral("CMH") || profile.id == QStringLiteral("LPS"))
+            CHECK(UnitProfileMenu::group(profile) == UnitProfileMenu::Group::FeaturedMetric);
+        if (profile.id == QStringLiteral("LPM"))
+            CHECK(UnitProfileMenu::group(profile) == UnitProfileMenu::Group::OtherMetric);
+        if (profile.id == QStringLiteral("CFS"))
+            CHECK(UnitProfileMenu::group(profile) == UnitProfileMenu::Group::Imperial);
+    }
+
+#ifndef Q_OS_WASM
+    QMenu menu;
+    int chosen = -1;
+    int managed = 0;
+    UnitProfileMenu::populate(&menu, &menu, profiles, 0,
+        [&chosen](int index) { chosen = index; },
+        [&managed] { ++managed; });
+    CHECK(menu.actions().at(0)->text() == QStringLiteral("AOWIS Canonical"));
+    CHECK(menu.actions().at(0)->data().toInt() == 1);
+    CHECK(menu.actions().at(2)->text() == QStringLiteral("CMH — cubic meters per hour"));
+    CHECK(menu.actions().at(3)->text() == QStringLiteral("LPS — liters per second"));
+    QMenu *metric_menu = menu.actions().at(4)->menu();
+    QMenu *imperial_menu = menu.actions().at(5)->menu();
+    QMenu *custom_menu = menu.actions().at(7)->menu();
+    CHECK(metric_menu != nullptr && metric_menu->actions().size() == 4);
+    CHECK(imperial_menu != nullptr && imperial_menu->actions().size() == 5);
+    CHECK(custom_menu != nullptr && custom_menu->actions().size() == 4);
+    CHECK(custom_menu->actions().at(0)->text() == QStringLiteral("Field"));
+    CHECK(custom_menu->actions().at(1)->text() == QStringLiteral("field"));
+    CHECK(custom_menu->actions().at(0)->isChecked());
+    CHECK(custom_menu->actions().at(0)->data().toInt() == 0);
+    CHECK(custom_menu->actions().at(1)->data().toInt() == profiles.size() - 1);
+    custom_menu->actions().at(1)->trigger();
+    CHECK(chosen == profiles.size() - 1);
+    custom_menu->actions().last()->trigger();
+    CHECK(managed == 1);
+#endif
+}
+
+// Settings must show actual GUI quantities and the deliberately retained
+// electrical group, without deleting other registered/profiled quantities.
+static void verifyUnitSettingsFieldVisibility()
+{
+    const aowis::units::UnitField *head = aowis::units::findUnitField("pressure_head");
+    const aowis::units::UnitField *distance = aowis::units::findUnitField("distance");
+    const aowis::units::UnitField *altitude = aowis::units::findUnitField("altitude");
+    const aowis::units::UnitField *offset = aowis::units::findUnitField("vertical_offset");
+    const aowis::units::UnitField *area = aowis::units::findUnitField("area");
+    const aowis::units::UnitField *volume = aowis::units::findUnitField("volume");
+    const aowis::units::UnitField *tank_volume = aowis::units::findUnitField("tank_minimum_volume");
+    const aowis::units::UnitField *age = aowis::units::findUnitField("water_age");
+    const aowis::units::UnitField *roughness = aowis::units::findUnitField(
+        "darcy_weisbach_roughness_height");
+    const aowis::units::UnitField *current = aowis::units::findUnitField("electric_current");
+    const aowis::units::UnitField *capacitance = aowis::units::findUnitField("capacitance");
+    const aowis::units::UnitField *stress = aowis::units::findUnitField("stress");
+    const aowis::units::UnitField *diffusivity = aowis::units::findUnitField("molecular_diffusivity");
+    const aowis::units::UnitField *easting = aowis::units::findUnitField("projected_easting");
+    const aowis::units::UnitField *pattern = aowis::units::findUnitField("pattern_multiplier");
+
+    CHECK(head != nullptr && UnitSettingsFieldVisibility::isVisible(*head));
+    CHECK(distance != nullptr && UnitSettingsFieldVisibility::isVisible(*distance));
+    CHECK(offset != nullptr && UnitSettingsFieldVisibility::isVisible(*offset));
+    CHECK(altitude != nullptr && !UnitSettingsFieldVisibility::isVisible(*altitude));
+    CHECK(area != nullptr && UnitSettingsFieldVisibility::isVisible(*area)
+          && area->group == "Lengths and geometry");
+    CHECK(volume != nullptr && UnitSettingsFieldVisibility::isVisible(*volume)
+          && volume->group == "Lengths and geometry");
+    CHECK(tank_volume != nullptr && !UnitSettingsFieldVisibility::isVisible(*tank_volume));
+    CHECK(age != nullptr && UnitSettingsFieldVisibility::isVisible(*age));
+    CHECK(roughness != nullptr && UnitSettingsFieldVisibility::isVisible(*roughness));
+    CHECK(current != nullptr && UnitSettingsFieldVisibility::isVisible(*current));
+    CHECK(capacitance != nullptr && UnitSettingsFieldVisibility::isVisible(*capacitance));
+    CHECK(stress != nullptr && !UnitSettingsFieldVisibility::isVisible(*stress));
+    CHECK(diffusivity != nullptr && !UnitSettingsFieldVisibility::isVisible(*diffusivity));
+    CHECK(easting != nullptr && !UnitSettingsFieldVisibility::isVisible(*easting));
+    CHECK(pattern != nullptr && !UnitSettingsFieldVisibility::isVisible(*pattern));
+
+    // The filtered-out choices still exist and remain valid in stored profiles.
+    CHECK(aowis::units::isAllowedUnit("molecular_diffusivity", "cm2/s"));
+    CHECK(aowis::units::isAllowedUnit("projected_easting", "ft"));
+}
+
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
+    verifyProfileMenus();
+    verifyUnitSettingsFieldVisibility();
     UnitPresentationContext context;
     const QJsonObject metric{
         {QStringLiteral("pressure_head"), QStringLiteral("m")},
         {QStringLiteral("hydraulic_head"), QStringLiteral("m")},
         {QStringLiteral("volumetric_flow_rate"), QStringLiteral("m3/h")},
-        {QStringLiteral("length"), QStringLiteral("m")}};
+        {QStringLiteral("length"), QStringLiteral("m")},
+        {QStringLiteral("distance"), QStringLiteral("m")},
+        {QStringLiteral("vertical_offset"), QStringLiteral("m")}};
     const QJsonObject customary{
         {QStringLiteral("pressure_head"), QStringLiteral("ft")},
         {QStringLiteral("hydraulic_head"), QStringLiteral("ft")},
         {QStringLiteral("volumetric_flow_rate"), QStringLiteral("US gal/min")},
-        {QStringLiteral("length"), QStringLiteral("ft")}};
+        {QStringLiteral("length"), QStringLiteral("km")},
+        {QStringLiteral("distance"), QStringLiteral("ft")},
+        {QStringLiteral("vertical_offset"), QStringLiteral("ft")}};
     context.initialize(metric);
 
     // Deliberately more precise than the editor's three-decimal display.
@@ -241,7 +350,7 @@ int main(int argc, char **argv)
     app.processEvents();
     CHECK(map_2d_refreshes == 1);
     CHECK(map_2d_label.text().contains(QStringLiteral("ft")));
-    CHECK(map_2d_label.text().contains(QStringLiteral("mi")));
+    CHECK(map_2d_label.text().contains(QStringLiteral("km")));
     tabs.setCurrentWidget(&map_3d_page);
     app.processEvents();
     CHECK(map_3d_refreshes == 1);

@@ -5,6 +5,7 @@
 #include <QLineEdit>
 #include <QLocale>
 #include <cstdlib>
+#include <cmath>
 #include <cstring>
 #include <iostream>
 
@@ -90,8 +91,11 @@ static void checkEditor(bool demand_point)
     // A refreshed neighbor is not a request to overwrite its exact value.
     CHECK(latitude.refreshCoordinate() && longitude.refreshCoordinate());
     CHECK(writes == 2);
-    latitude.stepUp();  // Only an explicit step can quantize the edited component.
-    CHECK(writes == 3 && model.latitude_deg == 12.123458);
+    const double latitude_before_step = model.latitude_deg;
+    latitude.stepUp();  // Stepping adds to the precise stored component.
+    CHECK(writes == 3);
+    CHECK(std::abs(model.latitude_deg - (latitude_before_step + 0.000001)) < 1e-12);
+    CHECK(latitude.value() == 12.123458); // Only the GUI presentation is rounded.
     CHECK(model.longitude_deg == 19.125 && model.altitude_m == original.altitude_m);
     if (demand_point)
         std::cout << "Demand Point coordinate spin boxes passed\n";

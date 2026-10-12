@@ -1,5 +1,6 @@
 #include "app/main_window.h"
 #include "config/gui_configuration.h"
+#include "config/unit_profile_manager.h"
 #include "config/shortcut_registry.h"
 #include "config/map_server_client_configuration.h"
 #include <QPushButton>
@@ -386,6 +387,8 @@ MainWindow::MainWindow(QWidget *parent)
     });
     connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, [this]
     {
+        UnitProfileManager::instance().presentation().setSpecificGravity(
+            this->hydraulic_data->networkHydraulic().options_hydraulic.specific_gravity);
         this->top_control_bar->setSelectedSimulationHeadlossFormula(
             this->hydraulic_data->networkHydraulic().options_hydraulic.headloss_formula);
     });

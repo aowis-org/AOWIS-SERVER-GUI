@@ -188,14 +188,12 @@ std::optional<double> waterAgeToHours(double value, const QString &unit)
     return std::nullopt;
 }
 
-// Converts an epanet-js pressure value to canonical pressure head of the
-// simulated fluid, following EPANET 2.3, which epanet-js runs:
-//  - mwc / fwc map to EPANET PRESSURE METERS / FEET, which EPANET 2.3 treats as
-//    head of the fluid itself (input1.c: pcf = MperFT, pcf = 1.0). Specific
-//    gravity does not apply. (EPANET 2.2 still scaled METERS by SpGrav.)
-//  - psi / kPa / bar are true pressures (pcf = PSIperFT * SpGrav, ...); head is
-//    obtained with reference water density 1000 kg/m^3, standard gravity and
-//    the project's specific gravity.
+// Interpret pressure-valued EPANET-JS input in EPANET 2.3's own hydraulic
+// head units. These historically rounded factors are from EPANET constants.h
+// (PSIperFT, KPAperPSI, BARperPSI); do not replace them with physical SI
+// pressure conversions, which yield a slightly different hydraulic model.
+// METERS / FEET pressure selections already represent fluid head in 2.3,
+// independently of the project's specific gravity.
 std::optional<double> pressureToHeadM(
     double value,
     const QString &unit,
@@ -210,19 +208,21 @@ std::optional<double> pressureToHeadM(
         return units::feetToMetres(value);
     if (!std::isfinite(specific_gravity) || specific_gravity <= 0.0)
         return std::nullopt;
+
+    constexpr double epanet_psi_per_foot = 0.4333;
+    constexpr double epanet_kpa_per_psi = 6.895;
+    constexpr double epanet_bar_per_psi = 0.068948;
+    double pressure_units_per_foot = 0.0;
     if (normalized == QStringLiteral("psi"))
-        return units::pascalsToMetresHead(units::psiToPascals(value),
-                                           units::reference_water_density_kg_per_m3 * specific_gravity,
-                                           units::standard_gravity_m_per_s2);
-    if (normalized == QStringLiteral("kpa"))
-        return units::pascalsToMetresHead(units::kilopascalsToPascals(value),
-                                           units::reference_water_density_kg_per_m3 * specific_gravity,
-                                           units::standard_gravity_m_per_s2);
-    if (normalized == QStringLiteral("bar"))
-        return units::pascalsToMetresHead(units::barToPascals(value),
-                                           units::reference_water_density_kg_per_m3 * specific_gravity,
-                                           units::standard_gravity_m_per_s2);
-    return std::nullopt;
+        pressure_units_per_foot = epanet_psi_per_foot;
+    else if (normalized == QStringLiteral("kpa"))
+        pressure_units_per_foot = epanet_psi_per_foot * epanet_kpa_per_psi;
+    else if (normalized == QStringLiteral("bar"))
+        pressure_units_per_foot = epanet_psi_per_foot * epanet_bar_per_psi;
+    else
+        return std::nullopt;
+
+    return units::feetToMetres(value / (pressure_units_per_foot * specific_gravity));
 }
 
 // EPANET 2.3 defines emitter coefficients independently of the PRESSURE

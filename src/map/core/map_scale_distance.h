@@ -39,7 +39,7 @@ inline Scale forMaximumDistance(double maximum_distance_m,
     if (!(maximum_distance_m > 0.0) || !std::isfinite(maximum_distance_m))
         return result;
 
-    QString unit = context.unit(QStringLiteral("length"));
+    QString unit = context.unit(QStringLiteral("distance"));
     if (unit.isEmpty())
         unit = QStringLiteral("m");
 
@@ -52,7 +52,7 @@ inline Scale forMaximumDistance(double maximum_distance_m,
 
     const std::string unit_id = unit.toStdString();
     const std::optional<double> maximum_in_unit = aowis::units::convert(
-        "length", maximum_distance_m, "m", unit_id);
+        "distance", maximum_distance_m, "m", unit_id);
     if (!maximum_in_unit || !(*maximum_in_unit > 0.0))
         return result;
 
@@ -60,7 +60,7 @@ inline Scale forMaximumDistance(double maximum_distance_m,
     if (!(rounded > 0.0))
         return result;
     const std::optional<double> rounded_m = aowis::units::convert(
-        "length", rounded, unit_id, "m");
+        "distance", rounded, unit_id, "m");
     if (!rounded_m || !(*rounded_m > 0.0)
         || *rounded_m > maximum_distance_m * (1.0 + 1e-12))
         return result;

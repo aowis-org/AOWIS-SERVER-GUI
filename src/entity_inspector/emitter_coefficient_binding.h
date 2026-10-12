@@ -22,20 +22,29 @@ struct Unit
     std::string flow;
     std::string head;
     double exponent = 0.0;
+    double specific_gravity = 1.0;
 };
 
 inline std::optional<std::string> encode(const Unit &unit)
 {
     if (unit.flow.empty() || unit.head.empty() || unit.flow.find('|') != std::string::npos ||
         unit.head.find('|') != std::string::npos || !std::isfinite(unit.exponent) ||
-        unit.exponent <= 0.0)
+        unit.exponent <= 0.0 || !std::isfinite(unit.specific_gravity) ||
+        unit.specific_gravity <= 0.0)
         return std::nullopt;
     char buffer[64] = {};
     const std::to_chars_result result = std::to_chars(
         buffer, buffer + sizeof(buffer), unit.exponent, std::chars_format::general,
         std::numeric_limits<double>::max_digits10);
     if (result.ec != std::errc{}) return std::nullopt;
-    return unit.flow + "|" + unit.head + "|" + std::string(buffer, result.ptr);
+    const std::string base = unit.flow + "|" + unit.head + "|" + std::string(buffer, result.ptr);
+    if (unit.specific_gravity == 1.0) return base;
+    char gravity_buffer[64] = {};
+    const std::to_chars_result gravity_result = std::to_chars(
+        gravity_buffer, gravity_buffer + sizeof(gravity_buffer), unit.specific_gravity,
+        std::chars_format::general, std::numeric_limits<double>::max_digits10);
+    if (gravity_result.ec != std::errc{}) return std::nullopt;
+    return base + "|" + std::string(gravity_buffer, gravity_result.ptr);
 }
 
 inline std::optional<Unit> decode(const std::string &key)
@@ -43,16 +52,26 @@ inline std::optional<Unit> decode(const std::string &key)
     const std::size_t first = key.find('|');
     if (first == std::string::npos) return std::nullopt;
     const std::size_t second = key.find('|', first + 1);
-    if (second == std::string::npos || key.find('|', second + 1) != std::string::npos)
+    if (second == std::string::npos) return std::nullopt;
+    const std::size_t third = key.find('|', second + 1);
+    if (third != std::string::npos && key.find('|', third + 1) != std::string::npos)
         return std::nullopt;
     Unit unit{key.substr(0, first), key.substr(first + 1, second - first - 1), 0.0};
-    const char *begin = key.data() + second + 1;
+    const char *exponent_end = third == std::string::npos
+        ? key.data() + key.size() : key.data() + third;
     const std::from_chars_result result = std::from_chars(
-        begin, key.data() + key.size(), unit.exponent, std::chars_format::general);
-    if (result.ec != std::errc{} || result.ptr != key.data() + key.size() ||
+        key.data() + second + 1, exponent_end, unit.exponent, std::chars_format::general);
+    if (result.ec != std::errc{} || result.ptr != exponent_end ||
         unit.flow.empty() || unit.head.empty() || !std::isfinite(unit.exponent) ||
-        unit.exponent <= 0.0)
-        return std::nullopt;
+        unit.exponent <= 0.0) return std::nullopt;
+    if (third != std::string::npos) {
+        const std::from_chars_result gravity_result = std::from_chars(
+            key.data() + third + 1, key.data() + key.size(), unit.specific_gravity,
+            std::chars_format::general);
+        if (gravity_result.ec != std::errc{} || gravity_result.ptr != key.data() + key.size()
+            || !std::isfinite(unit.specific_gravity) || unit.specific_gravity <= 0.0)
+            return std::nullopt;
+    }
     return unit;
 }
 
@@ -61,7 +80,7 @@ inline std::optional<double> flowAndHeadScale(const Unit &unit)
     const std::optional<double> flow = aowis::units::convert(
         "volumetric_flow_rate", 1.0, "m3/h", unit.flow);
     const std::optional<double> head = aowis::units::convert(
-        "pressure_head", 1.0, "m", unit.head);
+        "pressure_head", 1.0, "m", unit.head, unit.specific_gravity);
     if (!flow || !head || !std::isfinite(*flow) || *flow <= 0.0 ||
         !std::isfinite(*head) || *head <= 0.0 ||
         !std::isfinite(unit.exponent) || unit.exponent <= 0.0)

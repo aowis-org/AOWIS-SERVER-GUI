@@ -18,7 +18,9 @@ inline QString format(double meters, const UnitPresentationContext &context,
     if (!std::isfinite(meters))
         return QStringLiteral("—");
 
-    QString unit = context.unit(QStringLiteral("length"));
+    const QString quantity = camera_distance
+        ? QStringLiteral("distance") : QStringLiteral("vertical_offset");
+    QString unit = context.unit(quantity);
     if (unit.isEmpty())
         unit = QStringLiteral("m");
 
@@ -31,7 +33,7 @@ inline QString format(double meters, const UnitPresentationContext &context,
     }
 
     const std::optional<double> converted = aowis::units::convert(
-        "length", meters, "m", unit.toStdString());
+        quantity.toStdString(), meters, "m", unit.toStdString());
     if (!converted || !std::isfinite(*converted))
         return QStringLiteral("—");
 
