@@ -27,7 +27,7 @@ inline std::string_view quantityForMetric(const QString &metric)
 {
     if (metric == QStringLiteral("Elevation")) return "elevation";
     if (metric == QStringLiteral("Head")) return "hydraulic_head";
-    if (metric == QStringLiteral("Pressure Head")) return "pressure_head";
+    if (metric == QStringLiteral("Pressure")) return "pressure_head";
     if (metric == QStringLiteral("Head Loss")) return "head_loss";
     if (metric == QStringLiteral("Diameter")) return "link_diameter";
     if (metric == QStringLiteral("Length")) return "length";

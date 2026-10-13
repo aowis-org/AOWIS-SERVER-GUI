@@ -95,6 +95,9 @@ void testImportedUnitProfileIsOnlyPresentation()
     expectTrue(imported_profile.value(QStringLiteral("volumetric_flow_rate")).toString()
                    == QStringLiteral("US gal/min"),
                "importer proposes the actual source flow unit for its GUI profile");
+    expectTrue(EpanetJsUnitProfile::matchingBuiltinId(imported_profile)
+                   == QStringLiteral("GPM"),
+               "resolved source preferences should reuse the built-in GPM profile");
     expectTrue(unmapped.isEmpty(), "all supported source units map to AOWIS units");
 
     UnitPresentationContext presentation;
@@ -440,6 +443,53 @@ void testInferredDarcyRoughnessMatchesImportedProfile()
             expectNear(*from_profile, canonical, 1e-12,
                        "profile roughness and imported roughness are physically equivalent");
     }
+}
+
+// Imported source presentation should reuse an existing flow template when
+// all representable choices agree with it, rather than duplicating a preset.
+void testEpanetJsProfileMatchesBuiltinsBeforeOfferingCopy()
+{
+    struct FlowCase { const char *source; const char *builtin; };
+    const FlowCase cases[] = {
+        {"m^3/h", "CMH"}, {"l/s", "LPS"}, {"l/min", "LPM"},
+        {"Ml/d", "MLD"}, {"m^3/d", "CMD"}, {"m^3/s", "CMS"},
+        {"ft^3/s", "CFS"}, {"gal/min", "GPM"},
+        {"Mgal/d", "MGD"}, {"IMgal/d", "IMGD"}, {"acft/d", "AFD"}
+    };
+    for (const FlowCase &flow_case : cases) {
+        QJsonObject source;
+        source.insert(QStringLiteral("flow"), QString::fromLatin1(flow_case.source));
+        const QJsonObject selections = EpanetJsUnitProfile::selections(source);
+        expectTrue(EpanetJsUnitProfile::matchingBuiltinId(selections)
+                       == QString::fromLatin1(flow_case.builtin), flow_case.source);
+    }
+
+    QJsonObject customary;
+    customary.insert(QStringLiteral("flow"), QStringLiteral("ft^3/s"));
+    customary.insert(QStringLiteral("length"), QStringLiteral("ft"));
+    customary.insert(QStringLiteral("elevation"), QStringLiteral("ft"));
+    customary.insert(QStringLiteral("pressure"), QStringLiteral("psi"));
+    customary.insert(QStringLiteral("volume"), QStringLiteral("ft^3"));
+    customary.insert(QStringLiteral("minVolume"), QStringLiteral("m^3"));
+    const QJsonObject customary_selections = EpanetJsUnitProfile::selections(customary);
+    expectTrue(EpanetJsUnitProfile::matchingBuiltinId(customary_selections)
+                   == QStringLiteral("CFS"),
+               "hidden altitude and legacy minimum tank volume must not require a duplicate");
+
+    customary.insert(QStringLiteral("velocity"), QStringLiteral("m/s"));
+    expectTrue(EpanetJsUnitProfile::matchingBuiltinId(
+                   EpanetJsUnitProfile::selections(customary)).isEmpty(),
+               "a genuinely different velocity choice requires a custom profile");
+    customary.remove(QStringLiteral("velocity"));
+    customary.insert(QStringLiteral("pressure"), QStringLiteral("kPa"));
+    expectTrue(EpanetJsUnitProfile::matchingBuiltinId(
+                   EpanetJsUnitProfile::selections(customary)).isEmpty(),
+               "a nondefault pressure choice requires a custom profile");
+    expectTrue(EpanetJsUnitProfile::matchingBuiltinId(QJsonObject()).isEmpty(),
+               "empty source preferences never suggest an arbitrary preset");
+    expectTrue(EpanetJsUnitProfile::matchingBuiltinId(QJsonObject{
+                   {QStringLiteral("pressure_head"), QStringLiteral("psi")}}).isEmpty(),
+               "a partial profile without flow units must not guess a preset");
 }
 
 // Every water-age unit the numerical importer accepts must also be representable

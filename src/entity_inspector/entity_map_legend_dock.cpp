@@ -102,7 +102,7 @@ LegendDescriptor nodeLegendDescriptor(VisualNode visual_node)
     case VisualNode::Head:
         return {QStringLiteral("Head"), QStringLiteral("m")};
     case VisualNode::Pressure:
-        return {QStringLiteral("Pressure Head"), QStringLiteral("m")};
+        return {QStringLiteral("Pressure"), QStringLiteral("m")};
     case VisualNode::Chlorine:
         return {QStringLiteral("Cl₂"), QStringLiteral("mg/L")};
     case VisualNode::RiverWater:
@@ -170,7 +170,7 @@ LegendDescriptor heatmapLegendDescriptor(VisualHeatmap visual_heatmap)
     case VisualHeatmap::Head:
         return {QStringLiteral("Head"), QStringLiteral("m")};
     case VisualHeatmap::Pressure:
-        return {QStringLiteral("Pressure Head"), QStringLiteral("m")};
+        return {QStringLiteral("Pressure"), QStringLiteral("m")};
     case VisualHeatmap::Chlorine:
         return {QStringLiteral("Cl₂"), QStringLiteral("mg/L")};
     case VisualHeatmap::RiverWater:
@@ -1547,7 +1547,7 @@ void EntityMapLegendDock::updateNodeLegend()
         metric = QStringLiteral("Head");
         break;
     case VisualNode::Pressure:
-        metric = QStringLiteral("Pressure Head");
+        metric = QStringLiteral("Pressure");
         break;
     case VisualNode::Chlorine:
         metric = QStringLiteral("Chlorine");
@@ -1673,7 +1673,7 @@ void EntityMapLegendDock::updateHeatmapLegend()
         metric = QStringLiteral("Head");
         break;
     case VisualHeatmap::Pressure:
-        metric = QStringLiteral("Pressure Head");
+        metric = QStringLiteral("Pressure");
         break;
     case VisualHeatmap::Chlorine:
         metric = QStringLiteral("Chlorine");

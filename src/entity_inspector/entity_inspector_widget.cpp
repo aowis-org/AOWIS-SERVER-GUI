@@ -561,21 +561,21 @@ void EntityInspectorWidget::addGroupSimulation()
         addSimulationRow(grid, row, SimulationField::EmitterFlow, "Emitter Flow");
         addSimulationRow(grid, row, SimulationField::LeakageFlow, "Leakage Flow");
         addSimulationRow(grid, row, SimulationField::Head, "Head");
-        addSimulationRow(grid, row, SimulationField::PressureHead, "Pressure Head");
+        addSimulationRow(grid, row, SimulationField::PressureHead, "Pressure");
         addSimulationRow(grid, row, SimulationField::ReferencedByControl, "Referenced by Control");
         break;
     case InfrastructureEntity::Reservoir:
         addSimulationRow(grid, row, SimulationField::NetDemand, "Net Demand",
                          "Negative means the reservoir supplies the network; positive means it receives water.");
         addSimulationRow(grid, row, SimulationField::Head, "Head");
-        addSimulationRow(grid, row, SimulationField::PressureHead, "Pressure Head");
+        addSimulationRow(grid, row, SimulationField::PressureHead, "Pressure");
         addSimulationRow(grid, row, SimulationField::ReferencedByControl, "Referenced by Control");
         break;
     case InfrastructureEntity::Tank:
         addSimulationRow(grid, row, SimulationField::NetDemand, "Net Demand",
                          "Positive means the tank is filling; negative means it supplies the network.");
         addSimulationRow(grid, row, SimulationField::Head, "Head");
-        addSimulationRow(grid, row, SimulationField::PressureHead, "Pressure Head");
+        addSimulationRow(grid, row, SimulationField::PressureHead, "Pressure");
         addSimulationRow(grid, row, SimulationField::WaterLevel, "Water Level");
         addSimulationRow(grid, row, SimulationField::Volume, "Volume");
         addSimulationRow(grid, row, SimulationField::MixingZoneVolume, "Mixing-Zone Volume");

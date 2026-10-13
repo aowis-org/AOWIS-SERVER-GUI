@@ -1,6 +1,7 @@
 #pragma once
 
 #include <aowis/model/units/unit_profile.h>
+#include "settings/unit_settings_field_visibility.h"
 #include <QJsonObject>
 #include <QString>
 #include <QStringList>
@@ -128,5 +129,33 @@ inline QJsonObject selections(const QJsonObject &source, QStringList *unmapped =
     assignSelection(source, result, unmapped, "waterAge", {"water_age"});
     assignSelection(source, result, unmapped, "chemicalConcentration", {"chemical_mass_concentration"});
     return result;
+}
+
+// Match only source preferences that the GUI can actually present. An EPANET
+// flow template wins over the canonical profile when both resolve identically
+// (notably CMH). Hidden fields (including legacy minimum tank volume and
+// CRS-defined altitude) do not justify another GUI presentation profile.
+inline QString matchingBuiltinId(const QJsonObject &selections) {
+    const QString flow = selections.value(QStringLiteral("volumetric_flow_rate")).toString();
+    if (flow.isEmpty()) return {};
+    for (std::size_t index = 0; index < aowis::units::flow_template_names.size(); ++index) {
+        if (flow.toStdString() != aowis::units::flow_template_units[index]) continue;
+        const aowis::units::UnitProfile profile = aowis::units::flowTemplateProfile(index);
+        bool matches = true;
+        for (QJsonObject::const_iterator item = selections.constBegin();
+             item != selections.constEnd(); ++item) {
+            const aowis::units::UnitField *field =
+                aowis::units::findUnitField(item.key().toStdString());
+            if (field == nullptr || !UnitSettingsFieldVisibility::isVisible(*field)) continue;
+            if (aowis::units::resolvedUnit(profile, item.key().toStdString())
+                != item.value().toString().toStdString()) {
+                matches = false;
+                break;
+            }
+        }
+        if (matches) return QString::fromStdString(profile.id);
+    }
+    // No other built-in flow template can be equivalent to the source flow.
+    return {};
 }
 } // namespace EpanetJsUnitProfile

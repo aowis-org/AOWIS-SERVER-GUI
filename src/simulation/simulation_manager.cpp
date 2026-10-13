@@ -687,6 +687,15 @@ void SimulationManager::importNetworkProjectContent(
                 if (!imported_units.isEmpty())
                 {
                     UnitProfileManager &profiles = UnitProfileManager::instance();
+                    const QString matching_id = EpanetJsUnitProfile::matchingBuiltinId(imported_units);
+                    QString matching_name;
+                    for (const UnitProfileManager::Profile &profile : profiles.profiles()) {
+                        if (profile.builtin && profile.id == matching_id) {
+                            matching_name = profile.name;
+                            break;
+                        }
+                    }
+                    const bool matches_builtin = !matching_name.isEmpty();
                     const QString base_name = imported_project_name.trimmed().isEmpty()
                         ? tr("Imported EPANET-JS units")
                         : tr("%1 (EPANET-JS units)").arg(imported_project_name);
@@ -699,41 +708,76 @@ void SimulationManager::importNetworkProjectContent(
                         profile_name = base_name + QStringLiteral(" (%1)").arg(suffix++);
 
                     QDialog *confirmation = new QDialog(parent_widget);
-                    confirmation->setWindowTitle(tr("Import EPANET-JS unit profile"));
+                    confirmation->setWindowTitle(tr("EPANET-JS display units"));
                     confirmation->setMinimumWidth(460);
                     confirmation->setAttribute(Qt::WA_DeleteOnClose);
                     QVBoxLayout *layout = new QVBoxLayout(confirmation);
-                    QLabel *prompt = new QLabel(
-                        tr("Create a custom unit profile from this EPANET-JS project's unit settings?"),
+                    QLabel *prompt = new QLabel(matches_builtin
+                        ? tr("The imported unit preferences match the built-in %1 unit system. "
+                             "You can use it directly; there is no need to create a copy.")
+                              .arg(matching_name)
+                        : tr("The imported unit preferences differ from the built-in unit systems. "
+                             "Create a custom unit profile to reproduce them?"),
                         confirmation);
                     prompt->setWordWrap(true);
                     layout->addWidget(prompt);
+
+                    QCheckBox *create_copy = nullptr;
+                    if (matches_builtin) {
+                        create_copy = new QCheckBox(tr("Create a custom copy instead"), confirmation);
+                        create_copy->setChecked(false);
+                        layout->addWidget(create_copy);
+                    }
                     QLabel *name_label = new QLabel(tr("Profile name:"), confirmation);
                     layout->addWidget(name_label);
                     QLineEdit *name_edit = new QLineEdit(profile_name, confirmation);
                     name_label->setBuddy(name_edit);
                     layout->addWidget(name_edit);
+                    if (matches_builtin) {
+                        name_label->hide();
+                        name_edit->hide();
+                        QObject::connect(create_copy, &QCheckBox::toggled,
+                                         name_label, &QWidget::setVisible);
+                        QObject::connect(create_copy, &QCheckBox::toggled,
+                                         name_edit, &QWidget::setVisible);
+                    }
                     if (!unrepresented_units.isEmpty()) {
                         QLabel *warning = new QLabel(
                             tr("The following source unit settings could not be mapped to the AOWIS "
                                "presentation registry: %1\nThose preferences will not be reproduced "
-                               "in the custom profile. The imported numerical data remains canonical.")
+                               "in a custom profile. The imported numerical data remains canonical.")
                                 .arg(unrepresented_units.join(QStringLiteral(", "))),
                             confirmation);
                         warning->setWordWrap(true);
                         layout->addWidget(warning);
                     }
                     QCheckBox *activate_profile = new QCheckBox(
-                        tr("Activate this custom unit system"), confirmation);
+                        matches_builtin ? tr("Activate this unit system")
+                                        : tr("Activate this custom unit system"), confirmation);
                     activate_profile->setChecked(true);
                     layout->addWidget(activate_profile);
                     QDialogButtonBox *buttons = new QDialogButtonBox(
-                        QDialogButtonBox::Yes | QDialogButtonBox::No, confirmation);
+                        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, confirmation);
                     layout->addWidget(buttons);
                     QObject::connect(buttons, &QDialogButtonBox::rejected,
                                      confirmation, &QDialog::reject);
                     QObject::connect(buttons, &QDialogButtonBox::accepted,
-                                     confirmation, [confirmation, name_edit, activate_profile, imported_units] {
+                                     confirmation, [confirmation, name_edit, activate_profile,
+                                                    create_copy, matching_id, matches_builtin, imported_units] {
+                        if (matches_builtin && !create_copy->isChecked()) {
+                            if (activate_profile->isChecked()) {
+                                UnitProfileManager &profiles = UnitProfileManager::instance();
+                                for (int index = 0; index < profiles.profiles().size(); ++index) {
+                                    if (profiles.profiles().at(index).id == matching_id
+                                        && profiles.profiles().at(index).builtin) {
+                                        (void)profiles.select(index);
+                                        break;
+                                    }
+                                }
+                            }
+                            confirmation->accept();
+                            return;
+                        }
                         const QString name = name_edit->text().trimmed();
                         if (!UnitProfileManager::instance().createFromUnits(
                                 name, imported_units, activate_profile->isChecked())) {

@@ -50,6 +50,38 @@ int main(int argc, char **argv) {
     available = false;
     CHECK(!editor.refreshUnits(context) && !editor.isEnabled() && writes == 1);
 
+    // A unit requiring 17 edit decimals must not print 17 fractional zeros.
+    // Keeping Qt's actual decimals setting allows edits at full resolution.
+    double wall_rate_per_day = 108000.0;
+    int wall_rate_writes = 0;
+    UnitPresentationContext wall_rate_context;
+    wall_rate_context.initialize(QJsonObject{
+        {QStringLiteral("zero_order_wall_reaction_coefficient"), QStringLiteral("mg/m2/s")}});
+    wall_rate_context.setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
+    UnitNumericSpinBox wall_rate_editor(
+        [&] { return std::optional<double>(wall_rate_per_day); },
+        [&](double candidate) { wall_rate_per_day = candidate; ++wall_rate_writes; return true; },
+        "zero_order_wall_reaction_coefficient", "mg/m2/d",
+        -1000000.0, 1000000.0, 0.001, 12);
+    CHECK(wall_rate_editor.refreshUnits(wall_rate_context));
+    CHECK(wall_rate_editor.decimals() == 17);
+    CHECK(wall_rate_editor.cleanText() == QStringLiteral("1.25"));
+    CHECK(wall_rate_editor.commitEdit() == NumericPropertyBinding::Result::Unchanged);
+    CHECK(wall_rate_per_day == 108000.0 && wall_rate_writes == 0);
+    wall_rate_per_day = 0.0;
+    CHECK(wall_rate_editor.refreshUnits(wall_rate_context));
+    CHECK(wall_rate_editor.cleanText() == QStringLiteral("0"));
+    CHECK(wall_rate_editor.decimals() == 17 && wall_rate_writes == 0);
+    QLineEdit *wall_rate_text = wall_rate_editor.findChild<QLineEdit *>();
+    CHECK(wall_rate_text != nullptr);
+    wall_rate_text->selectAll();
+    QKeyEvent wall_rate_input(QEvent::KeyPress, Qt::Key_unknown,
+                              Qt::NoModifier, QStringLiteral("0.00000000012345678"));
+    QApplication::sendEvent(wall_rate_text, &wall_rate_input);
+    CHECK(wall_rate_editor.commitEdit() == NumericPropertyBinding::Result::Committed);
+    CHECK(std::abs(wall_rate_per_day - 0.00000000012345678 * 86400.0) < 1e-14);
+    CHECK(wall_rate_writes == 1);
+
     // Decimal precision is specified in stored units. Displaying the same
     // 0.1-mm pipe-diameter resolution in m/ft must add fractional digits,
     // including when a fixed formatting policy asks for fewer digits.
@@ -152,8 +184,7 @@ int main(int argc, char **argv) {
         [&](double canonical) { pressure_head_m = canonical; ++pressure_writes; return true; },
         "pressure_head", "m", 0.0, 100.0, 1.0, 2);
     CHECK(pressure_editor.refreshUnits(pressure_context));
-    const double psi_per_m = 1.2 * 1000.0 * aowis::units::standard_gravity_m_per_s2 /
-        aowis::units::pascals_per_psi;
+    const double psi_per_m = 1.2 * 0.4333 / 0.3048;
     CHECK(std::abs(pressure_editor.value() - 10.0 * psi_per_m) < 0.01);
     CHECK(pressure_head_m == 10.0 && pressure_writes == 0);
     pressure_editor.stepUp();

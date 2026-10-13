@@ -29,6 +29,11 @@ public:
         notifyPresentationChanged();
         return true;
     }
+    // Invalid/missing project data must not leave the previous network's
+    // specific gravity active in this shared presentation context.
+    bool setNetworkSpecificGravity(double value) {
+        return setSpecificGravity(std::isfinite(value) && value > 0.0 ? value : 1.0);
+    }
     [[nodiscard]] qsizetype subscriberCount() const { return this->listeners_.size(); }
     [[nodiscard]] QString unit(const QString &quantity) const {
         // The legacy minimum-volume key never has an independent display unit,
@@ -37,12 +42,6 @@ public:
             return unit(QStringLiteral("volume"));
         const QString selected = this->effective_units_.value(quantity).toString();
         if (!selected.isEmpty()) return selected;
-        if (quantity == QStringLiteral("pressure_head")) {
-            const QString legacy = this->effective_units_.value(QStringLiteral("pressure")).toString();
-            if (legacy == QStringLiteral("psi") || legacy == QStringLiteral("kPa") ||
-                legacy == QStringLiteral("Pa") || legacy == QStringLiteral("bar"))
-                return legacy;
-        }
         // Partial/legacy profiles inherit new semantic display quantities.
         const std::string_view parent = aowis::units::inheritedUnitQuantity(
             quantity.toStdString());

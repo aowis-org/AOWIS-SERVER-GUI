@@ -189,7 +189,7 @@ std::optional<double> waterAgeToHours(double value, const QString &unit)
 }
 
 // Interpret pressure-valued EPANET-JS input in EPANET 2.3's own hydraulic
-// head units. These historically rounded factors are from EPANET constants.h
+// head units. These historically rounded factors are from EPANET src/types.h
 // (PSIperFT, KPAperPSI, BARperPSI); do not replace them with physical SI
 // pressure conversions, which yield a slightly different hydraulic model.
 // METERS / FEET pressure selections already represent fluid head in 2.3,
@@ -209,20 +209,19 @@ std::optional<double> pressureToHeadM(
     if (!std::isfinite(specific_gravity) || specific_gravity <= 0.0)
         return std::nullopt;
 
-    constexpr double epanet_psi_per_foot = 0.4333;
-    constexpr double epanet_kpa_per_psi = 6.895;
-    constexpr double epanet_bar_per_psi = 0.068948;
-    double pressure_units_per_foot = 0.0;
+    // Interpret EPANET pressure with the same rounded factors used by
+    // pressure_head presentation, so imported source values round-trip.
+    std::string_view pressure_unit;
     if (normalized == QStringLiteral("psi"))
-        pressure_units_per_foot = epanet_psi_per_foot;
+        pressure_unit = "psi";
     else if (normalized == QStringLiteral("kpa"))
-        pressure_units_per_foot = epanet_psi_per_foot * epanet_kpa_per_psi;
+        pressure_unit = "kPa";
     else if (normalized == QStringLiteral("bar"))
-        pressure_units_per_foot = epanet_psi_per_foot * epanet_bar_per_psi;
+        pressure_unit = "bar";
     else
         return std::nullopt;
 
-    return units::feetToMetres(value / (pressure_units_per_foot * specific_gravity));
+    return units::convert("pressure_head", value, pressure_unit, "m", specific_gravity);
 }
 
 // EPANET 2.3 defines emitter coefficients independently of the PRESSURE

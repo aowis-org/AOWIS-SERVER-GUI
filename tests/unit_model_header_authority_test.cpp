@@ -1,6 +1,9 @@
+#include <aowis/model/units/canonical_registry.h>
+#include <aowis/model/units/unit_profile.h>
 #include <aowis/model/units/conversion.h>
 
 #include <cmath>
+#include <filesystem>
 #include <cstdio>
 #include <cstdlib>
 
@@ -25,6 +28,13 @@ static_assert(aowis::units::unitScale("g/m2/d").has_value(),
 
 int main()
 {
+    const std::filesystem::path source_file(__FILE__);
+    CHECK(source_file.is_absolute());
+    const std::filesystem::path legacy_units =
+        source_file.parent_path().parent_path() / "include/aowis/model/units";
+    CHECK(!std::filesystem::exists(legacy_units / "canonical_registry.h"));
+    CHECK(!std::filesystem::exists(legacy_units / "unit_profile.h"));
+    CHECK(!std::filesystem::exists(legacy_units / "conversion.h"));
     const std::optional<double> converted = aowis::units::convert(
         "zero_order_wall_reaction_coefficient", 1.0, "mg/m2/d", "mg/m2/s");
     CHECK(converted.has_value());

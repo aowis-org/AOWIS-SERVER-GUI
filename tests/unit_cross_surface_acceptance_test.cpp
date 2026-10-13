@@ -76,7 +76,7 @@ public:
         if (orientation == Qt::Vertical) return column + 1;
         if (column < 0 || column >= columnCount()) return {};
         return UnitTablePresentation::formattedTitle(
-            column == 0 ? QStringLiteral("Head") : QStringLiteral("Flow"),
+            column == 0 ? QStringLiteral("Pressure") : QStringLiteral("Flow"),
             this->context_,
             {column == 0 ? std::string_view("pressure_head")
                          : std::string_view("volumetric_flow_rate")});
@@ -325,7 +325,7 @@ int main(int argc, char **argv)
     app.processEvents();
     CHECK(table_refreshes == 1 && table_model.invalidations() == 1);
     CHECK(table_model.headerData(0, Qt::Horizontal, Qt::DisplayRole)
-          .toString().contains(QStringLiteral("ft")));
+          .toString() == QStringLiteral("Pressure [ft]"));
     CHECK(table_model.headerData(1, Qt::Horizontal, Qt::DisplayRole)
           .toString().contains(QStringLiteral("US gal/min")));
     const double table_canonical_before = table_model.canonicalValue(12000, 0);

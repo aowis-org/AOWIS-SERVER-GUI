@@ -193,6 +193,9 @@ int main()
         "epanet-js source flow and pressure profiles",
         testEpanetJsProfileSupportsSourceUnitPresets);
     test_harness.runCase(
+        "epanet-js source display profiles reuse built-in unit templates",
+        testEpanetJsProfileMatchesBuiltinsBeforeOfferingCopy);
+    test_harness.runCase(
         "stable epanet-js id mapping",
         testUsesSourceProjectIdentityAndStableEntityUuids);
     test_harness.runCase(

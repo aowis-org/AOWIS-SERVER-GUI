@@ -1476,7 +1476,7 @@ private:
         this->columns.append({QStringLiteral("Flow Leakage [m³/h]"), true,
             {"volumetric_flow_rate"}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Head [m]"), true, {"hydraulic_head"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Head Pressure [m]"), true, {"pressure_head"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Pressure [m]"), true, {"pressure_head"}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Referenced by Control"), true, {}, ColumnFilterKind::Choice});
         appendNodeQualityInputColumns(this->columns);
         this->columns.append(qualityResultColumn(quality_analysis));
@@ -1575,7 +1575,7 @@ private:
         this->columns.append({QStringLiteral("Demand Net [m³/h]"), true,
             {"volumetric_flow_rate"}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Head [m]"), true, {"hydraulic_head"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Head Pressure [m]"), true, {"pressure_head"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Pressure [m]"), true, {"pressure_head"}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Referenced by Control"), true, {}, ColumnFilterKind::Choice});
         appendNodeQualityInputColumns(this->columns);
         this->columns.append(qualityResultColumn(quality_analysis));
@@ -1675,7 +1675,7 @@ private:
         this->columns.append({QStringLiteral("Demand Net [m³/h]"), true,
             {"volumetric_flow_rate"}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Head [m]"), true, {"hydraulic_head"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Head Pressure [m]"), true, {"pressure_head"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Pressure [m]"), true, {"pressure_head"}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Level Water [m]"), true, {"water_level"}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Volume [m³]"), true, {"volume"}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Volume Mixing-Zone [m³]"), true, {"volume"}, ColumnFilterKind::Number});

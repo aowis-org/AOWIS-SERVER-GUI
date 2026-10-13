@@ -387,7 +387,7 @@ MainWindow::MainWindow(QWidget *parent)
     });
     connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, [this]
     {
-        UnitProfileManager::instance().presentation().setSpecificGravity(
+        UnitProfileManager::instance().presentation().setNetworkSpecificGravity(
             this->hydraulic_data->networkHydraulic().options_hydraulic.specific_gravity);
         this->top_control_bar->setSelectedSimulationHeadlossFormula(
             this->hydraulic_data->networkHydraulic().options_hydraulic.headloss_formula);

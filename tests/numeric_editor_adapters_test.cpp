@@ -37,6 +37,25 @@ int main(int argc, char **argv) {
     require(spin.refresh(settings));
     require(spin.value() == 4.06 && value == original && writes == 0);
     require(spin.commitEdit() == NumericPropertyBinding::Result::Unchanged);
+    // A generous decimal allowance must not turn into fixed-width padding.
+    // The precision still has to be available for user-entered fractional digits.
+    spin.setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
+    NumericEditorPresentation high_precision{
+        "native", QStringLiteral(" mg/m²/s"), -100.0, 100.0, 0.000000000000001, 17};
+    value = 1.25;
+    require(spin.refresh(high_precision));
+    require(spin.decimals() == 17);
+    require(spin.cleanText() == QStringLiteral("1.25"));
+    value = 0.0;
+    require(spin.refresh(high_precision));
+    require(spin.cleanText() == QStringLiteral("0"));
+    spin.setLocale(QLocale(QLocale::German, QLocale::Germany));
+    value = -12.5;
+    require(spin.refresh(high_precision));
+    require(spin.cleanText() == QStringLiteral("-12,5"));
+    value = original;
+    spin.setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
+    require(spin.refresh(settings));
     spin.setValue(9.0); // Public programmatic API is never a user edit.
     require(spin.commitEdit() == NumericPropertyBinding::Result::Unchanged && writes == 0);
     spin.refresh(settings);
@@ -190,5 +209,66 @@ int main(int argc, char **argv) {
     hidden_fraction_editor.stepDown();
     require(std::abs(hidden_fraction_value - 4.057389123) < 1e-12);
     require(hidden_fraction_writes == 2);
+
+    // The stored value can legitimately be outside the editor's visible
+    // range (for example after an external update or a changed limit).
+    // Qt displays the nearest boundary, but neither arrow is permitted to
+    // replace the precise stored value with that boundary.
+    const int before_out_of_range = hidden_fraction_writes;
+    hidden_fraction_value = 123.456789;
+    require(hidden_fraction_editor.refresh(hidden_fraction_settings));
+    require(hidden_fraction_editor.value() == 100.0);
+    hidden_fraction_editor.stepUp();
+    hidden_fraction_editor.stepDown();
+    require(hidden_fraction_value == 123.456789);
+    require(hidden_fraction_writes == before_out_of_range);
+    require(hidden_fraction_binding.state() == NumericPropertyBinding::State::Clean);
+
+    hidden_fraction_value = -12.3456789;
+    require(hidden_fraction_editor.refresh(hidden_fraction_settings));
+    require(hidden_fraction_editor.value() == 0.0);
+    hidden_fraction_editor.stepDown();
+    hidden_fraction_editor.stepUp();
+    require(hidden_fraction_value == -12.3456789);
+    require(hidden_fraction_writes == before_out_of_range);
+    require(hidden_fraction_binding.state() == NumericPropertyBinding::State::Clean);
+
+    // The bound check is in the active display unit, not the canonical one.
+    // 15 native units are 150 scaled units, above the display maximum 100.
+    hidden_fraction_value = 15.0;
+    hidden_fraction_settings.unit = "scaled";
+    require(hidden_fraction_editor.refresh(hidden_fraction_settings));
+    require(hidden_fraction_editor.value() == 100.0);
+    hidden_fraction_editor.stepUp();
+    hidden_fraction_editor.stepDown();
+    require(hidden_fraction_value == 15.0);
+    require(hidden_fraction_writes == before_out_of_range);
+
+    // Valid in-range values still step from the precise stored quantity.
+    hidden_fraction_value = 4.057389123;
+    hidden_fraction_settings.unit = "native";
+    require(hidden_fraction_editor.refresh(hidden_fraction_settings));
+    hidden_fraction_editor.stepUp();
+    require(std::abs(hidden_fraction_value - 4.157389123) < 1e-12);
+    require(hidden_fraction_writes == before_out_of_range + 1);
+
+    // Integer editors must also leave out-of-range model values untouched.
+    double out_of_range_integer_value = 125.0;
+    int out_of_range_integer_writes = 0;
+    NumericPropertyBinding out_of_range_integer_binding = bindingFor(
+        out_of_range_integer_value, out_of_range_integer_writes);
+    NumericIntegerSpinBox out_of_range_integer_editor(out_of_range_integer_binding);
+    NumericEditorPresentation integer_bounds{"native", {}, 0.0, 100.0, 1.0, 0};
+    require(out_of_range_integer_editor.refresh(integer_bounds));
+    require(out_of_range_integer_editor.value() == 100);
+    out_of_range_integer_editor.stepUp();
+    out_of_range_integer_editor.stepDown();
+    require(out_of_range_integer_value == 125.0 && out_of_range_integer_writes == 0);
+    out_of_range_integer_value = -5.0;
+    require(out_of_range_integer_editor.refresh(integer_bounds));
+    require(out_of_range_integer_editor.value() == 0);
+    out_of_range_integer_editor.stepDown();
+    out_of_range_integer_editor.stepUp();
+    require(out_of_range_integer_value == -5.0 && out_of_range_integer_writes == 0);
     return 0;
 }

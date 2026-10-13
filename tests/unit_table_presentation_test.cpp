@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include "unit_test_check.h"
 #include <string_view>
@@ -76,7 +77,7 @@ void testSimulationResultColumnUnits()
     const SimulationColumnCase cases[] = {
         {QStringLiteral("Elevation Direct [m]"), "elevation", 0.3048, 1.0},
         {QStringLiteral("Head [m]"), "hydraulic_head", 0.3048, 1.0},
-        {QStringLiteral("Head Pressure [m]"), "pressure_head", 0.3048, 1.0},
+        {QStringLiteral("Pressure [m]"), "pressure_head", 0.3048, 1.0},
         {QStringLiteral("Head Gain [m]"), "head_gain", 0.3048, 1.0},
         {QStringLiteral("Head Loss [m]"), "head_loss", 0.3048, 1.0},
         {QStringLiteral("Level Water [m]"), "water_level", 0.3048, 1.0},
@@ -122,15 +123,29 @@ void testSimulationResultColumnUnits()
     QJsonObject pressure_units = profile;
     pressure_units.insert(QStringLiteral("pressure_head"), QStringLiteral("psi"));
     context.update(pressure_units);
-    const double pressure_psi = 1000.0 * aowis::units::standard_gravity_m_per_s2
-        / aowis::units::pascals_per_psi;
+    const double pressure_psi = 0.4333 / 0.3048;
     near(*UnitTablePresentation::toDisplay(context, "pressure_head", 1.0), pressure_psi);
     near(*UnitTablePresentation::toCanonical(context, "pressure_head", pressure_psi), 1.0);
     CHECK(context.setSpecificGravity(1.2));
     near(*UnitTablePresentation::toDisplay(context, "pressure_head", 1.0), pressure_psi * 1.2);
     near(*UnitTablePresentation::toCanonical(context, "pressure_head", pressure_psi * 1.2), 1.0);
     CHECK(!context.setSpecificGravity(0.0));
-    CHECK(context.setSpecificGravity(1.0));
+    near(context.specificGravity(), 1.2);
+    // Loading a new project with invalid gravity resets the previous project's
+    // presentation state, including values shown as pressure.
+    const UnitPresentationContext::Generation previous_generation = context.generation();
+    CHECK(context.setNetworkSpecificGravity(std::numeric_limits<double>::quiet_NaN()));
+    CHECK(context.generation() > previous_generation);
+    near(context.specificGravity(), 1.0);
+    near(*UnitTablePresentation::toDisplay(context, "pressure_head", 1.0), pressure_psi);
+    CHECK(context.setNetworkSpecificGravity(1.35));
+    near(*UnitTablePresentation::toDisplay(context, "pressure_head", 1.0), pressure_psi * 1.35);
+    CHECK(context.setNetworkSpecificGravity(-1.0));
+    near(context.specificGravity(), 1.0);
+    CHECK(context.setNetworkSpecificGravity(1.4));
+    CHECK(context.setNetworkSpecificGravity(std::numeric_limits<double>::infinity()));
+    near(context.specificGravity(), 1.0);
+    CHECK(!context.setNetworkSpecificGravity(0.0));
     CHECK(context.update(profile));
 
     near(*UnitTablePresentation::toDisplay(context, "volumetric_flow_rate", 3.6), 1.0);
@@ -318,6 +333,7 @@ int main(int argc, char **argv)
     QJsonObject units;
     units.insert(QStringLiteral("volumetric_flow_rate"), QStringLiteral("L/s"));
     units.insert(QStringLiteral("length"), QStringLiteral("ft"));
+    units.insert(QStringLiteral("distance"), QStringLiteral("ft"));
     units.insert(QStringLiteral("pressure_head"), QStringLiteral("ft"));
     units.insert(QStringLiteral("link_diameter"), QStringLiteral("in"));
     units.insert(QStringLiteral("chemical_mass_concentration"), QStringLiteral("ug/L"));
@@ -361,8 +377,20 @@ int main(int argc, char **argv)
         CHECK(presentation.update(units));
     }
 
+    // Legacy physical-pressure fallback is resolved by the Model profile,
+    // never reimplemented in the already-resolved GUI context.
+    {
+        UnitPresentationContext partial;
+        partial.initialize(QJsonObject{{QStringLiteral("pressure"), QStringLiteral("psi")}});
+        CHECK(partial.unit(QStringLiteral("pressure_head")).isEmpty());
+        CHECK(partial.unit(QStringLiteral("pressure")) == QStringLiteral("psi"));
+        CHECK(partial.update(QJsonObject{{QStringLiteral("pressure"), QStringLiteral("psi")},
+                                        {QStringLiteral("pressure_head"), QStringLiteral("m")}}));
+        CHECK(partial.unit(QStringLiteral("pressure_head")) == QStringLiteral("m"));
+    }
+
     // Physical icon-size controls retain integer-metre slider positions.
-    // Only tooltip representation follows the length profile.
+    // Their tooltip follows map distance, not pipe length.
     {
         const MapSymbologyLengthUnits::Presentation feet =
             MapSymbologyLengthUnits::forContext(presentation);
@@ -372,6 +400,12 @@ int main(int argc, char **argv)
         const double stored_size_m = 150.0;
         QJsonObject alternate_units = units;
         alternate_units.insert(QStringLiteral("length"), QStringLiteral("mi"));
+        CHECK(presentation.update(alternate_units));
+        const MapSymbologyLengthUnits::Presentation still_feet =
+            MapSymbologyLengthUnits::forContext(presentation);
+        CHECK(still_feet.unit == QStringLiteral("ft"));
+        near(still_feet.metres_to_display, feet.metres_to_display);
+        alternate_units.insert(QStringLiteral("distance"), QStringLiteral("mi"));
         CHECK(presentation.update(alternate_units));
         const MapSymbologyLengthUnits::Presentation miles =
             MapSymbologyLengthUnits::forContext(presentation);
@@ -440,16 +474,20 @@ int main(int argc, char **argv)
     near(terrain_legend.maximum, 328.0839895013123);
     CHECK(terrain_legend.unit == QStringLiteral("ft"));
     const MapRange head_legend = MapLegendUnitPresentation::range(
-        presentation, QStringLiteral("Pressure Head"), 0.0, 1.0);
+        presentation, QStringLiteral("Pressure"), 0.0, 1.0);
     near(head_legend.maximum, 3.280839895013123);
     map_units.insert(QStringLiteral("pressure_head"), QStringLiteral("psi"));
     CHECK(presentation.update(map_units));
     CHECK(presentation.setSpecificGravity(1.2));
+    CHECK(UnitTablePresentation::formattedTitle(
+              QStringLiteral("Pressure [m]"), presentation, {"pressure_head"})
+          == QStringLiteral("Pressure [psi]"));
+    CHECK(MapLegendUnitPresentation::quantityForMetric(QStringLiteral("Pressure"))
+          == "pressure_head");
     const MapRange pressure_legend = MapLegendUnitPresentation::range(
-        presentation, QStringLiteral("Pressure Head"), 0.0, 1.0);
+        presentation, QStringLiteral("Pressure"), 0.0, 1.0);
     near(pressure_legend.maximum,
-         1.2 * 1000.0 * aowis::units::standard_gravity_m_per_s2
-         / aowis::units::pascals_per_psi);
+         1.2 * 0.4333 / 0.3048);
     CHECK(pressure_legend.unit == QStringLiteral("psi"));
     const MapRange age_legend = MapLegendUnitPresentation::range(
         presentation, QStringLiteral("Water Age"), 0.0, 1.0);

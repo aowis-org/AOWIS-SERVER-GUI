@@ -178,13 +178,18 @@ protected:
         // An arrow must not silently replace incomplete input with Qt's fixup.
         if (this->binding_.state() == NumericPropertyBinding::State::Dirty &&
             !this->binding_.pendingCanonical()) return;
-        if constexpr (std::is_same_v<SpinBox, QDoubleSpinBox>) {
-            if (this->binding_.state() == NumericPropertyBinding::State::Clean) {
+        if (this->binding_.state() == NumericPropertyBinding::State::Clean) {
+            const std::optional<double> precise = this->binding_.presentation(this->display_unit_);
+            if (!precise || !std::isfinite(*precise)) return;
+            // Qt displays a clamped boundary when the actual stored value is
+            // outside the editor's range. Neither arrow direction may turn
+            // that presentation clamp into an unrelated model write.
+            if (*precise < this->latest_.minimum || *precise > this->latest_.maximum)
+                return;
+            if constexpr (std::is_same_v<SpinBox, QDoubleSpinBox>) {
                 // Qt's value() is rounded to decimals(). Start instead from
                 // the precise stored value to avoid losing hidden fractions
                 // each time an arrow is pressed.
-                const std::optional<double> precise = this->binding_.presentation(this->display_unit_);
-                if (!precise || !std::isfinite(*precise)) return;
                 if (!this->binding_.beginEdit(this->display_unit_, *precise)) return;
                 const double stepped = *precise + static_cast<double>(steps) * this->latest_.step;
                 if (!std::isfinite(stepped)) {
@@ -234,7 +239,26 @@ private:
     NumericPropertyBinding::Result last_result_ = NumericPropertyBinding::Result::Unchanged;
 };
 
-using NumericDoubleSpinBox = NumericSpinBox<QDoubleSpinBox>;
+// Keep Qt's full fractional editing resolution, but do not pad clean
+// presentation text with zeros all the way out to decimals(). A high
+// decimals() limit is needed for small unit conversions, not a display policy.
+class NumericDoubleSpinBox : public NumericSpinBox<QDoubleSpinBox>
+{
+public:
+    using NumericSpinBox<QDoubleSpinBox>::NumericSpinBox;
+
+protected:
+    QString textFromValue(double value) const override {
+        QString text = QDoubleSpinBox::textFromValue(value);
+        const QString decimal = locale().decimalPoint();
+        const qsizetype point = text.indexOf(decimal);
+        if (point < 0) return text;
+        while (text.size() > point + decimal.size() && text.back().digitValue() == 0)
+            text.chop(1);
+        if (text.endsWith(decimal)) text.chop(decimal.size());
+        return text;
+    }
+};
 using NumericIntegerSpinBox = NumericSpinBox<QSpinBox>;
 
 class NumericSlider : public QSlider

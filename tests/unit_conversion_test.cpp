@@ -69,18 +69,42 @@ int main()
     check(u::isAllowedUnit("pressure_head", "bar"));
     check(u::isAllowedUnit("pressure_head", "psi"));
     check(u::isAllowedUnit("pressure_head", "ft"));
-    // Hydraulic head is still canonical metres. Pressure display uses physical
-    // density x gravity, with explicit project-specific gravity when needed.
-    const double one_metre_psi = 1000.0 * u::standard_gravity_m_per_s2 / u::pascals_per_psi;
+    // EPANET-compatible hydraulic-head presentation must invert import
+    // exactly (including specific gravity). Physical pressure stays exact SI.
+    const double one_metre_psi = 0.4333 / 0.3048;
     check(near(*u::convert("pressure_head", 1.0, "m", "psi"), one_metre_psi));
     check(near(*u::convert("pressure_head", 1.0, "m", "psi", 1.2), one_metre_psi * 1.2));
-    check(near(*u::convert("pressure_head", 1.0, "m", "kPa", 1.2), 11.76798));
-    check(near(*u::convert("pressure_head", 1.0, "m", "bar", 1.2), 0.1176798));
+    // Profile-based conversions must use the supplied project-specific gravity.
+    const u::UnitProfile pressure_profile = u::flowTemplateProfile(8);
+    check(near(*u::fromCanonical("pressure_head", 1.0, pressure_profile, 1.2),
+               one_metre_psi * 1.2));
+    check(near(*u::toCanonical("pressure_head", one_metre_psi * 1.2,
+                                pressure_profile, 1.2), 1.0));
+    check(!u::fromCanonical("pressure_head", 1.0, pressure_profile, 0.0));
+    check(!u::toCanonical("pressure_head", one_metre_psi, pressure_profile,
+                          std::numeric_limits<double>::quiet_NaN()));
+    check(near(*u::convert("pressure_head", 1.0, "m", "kPa", 1.2),
+               one_metre_psi * 6.895 * 1.2));
+    check(near(*u::convert("pressure_head", 1.0, "m", "Pa", 1.2),
+               one_metre_psi * 6.895 * 1000.0 * 1.2));
+    check(near(*u::convert("pressure_head", 1.0, "m", "bar", 1.2),
+               one_metre_psi * 0.068948 * 1.2));
     check(near(*u::convert("pressure_head", one_metre_psi * 1.2, "psi", "m", 1.2), 1.0));
     check(near(*u::convert("pressure_head", 1.0, "ft", "kPa", 1.2),
-               0.3048 * 11.76798));
-    check(near(*u::convert("pressure_head", 1.0, "psi", "bar", 1.2),
-               u::pascals_per_psi / u::pascals_per_bar));
+               0.4333 * 6.895 * 1.2));
+    check(near(*u::convert("pressure_head", 1.0, "psi", "bar", 1.2), 0.068948));
+    check(near(*u::convert("pressure_head", 1.0, "psi", "kPa"), 6.895));
+    check(near(*u::convert("pressure_head", 1.0, "bar", "psi"), 1.0 / 0.068948));
+    check(near(*u::convert("pressure_head", 1.0, "kPa", "Pa"), 1000.0));
+    for (const std::string_view unit : {"psi", "kPa", "bar", "Pa"}) {
+        for (const double sg : {1.0, 1.2}) {
+            const double head = *u::convert("pressure_head", 60.0, unit, "m", sg);
+            check(near(*u::convert("pressure_head", head, "m", unit, sg), 60.0));
+        }
+    }
+    check(near(*u::convert("pressure", 60.0, "psi", "kPa"),
+               60.0 * u::pascals_per_psi / u::pascals_per_kilopascal));
+    check(near(u::pascalsToMetresHead(9806.65, 1000.0, 9.80665), 1.0));
     check(!u::convert("pressure_head", 1.0, "m", "psi", 0.0));
     check(!u::convert("pressure_head", 1.0, "m", "psi", -1.0));
     check(!u::convert("pressure_head", 1.0, "m", "psi",
@@ -210,7 +234,7 @@ int main()
         for (const std::pair<std::string_view, std::string_view> &expected : imperial_expected) {
             check(u::resolvedUnit(preset, expected.first) == expected.second);
             check(u::isAllowedUnit(expected.first, expected.second));
-            check(u::fromCanonical(expected.first, 10.0, preset).has_value());
+            check(u::fromCanonical(expected.first, 10.0, preset, 1.0).has_value());
         }
         // The projection / local coordinate system, not hydraulic flow units,
         // determines whether metre, international foot, or survey foot applies.
@@ -251,7 +275,7 @@ int main()
     check(!u::convert("missing", 1.0, "m", "m"));
     check(!u::convert("pressure", std::numeric_limits<double>::infinity(), "kPa", "psi"));
     check(!u::convert("pressure", std::numeric_limits<double>::max(), "kPa", "Pa"));
-    check(near(*u::fromCanonical("pressure", 100.0, u::flowTemplateProfile(8)),
+    check(near(*u::fromCanonical("pressure", 100.0, u::flowTemplateProfile(8), 1.0),
                100000.0 / u::pascals_per_psi));
 
 }

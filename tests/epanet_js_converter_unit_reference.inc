@@ -53,6 +53,26 @@ void testIndependentUnitReferenceValues()
     check(EpanetJsUnits::pressureToHeadM(1.0, QStringLiteral("bar"), 1.2),
           foot_m / (epanet_psi_per_ft * epanet_bar_per_psi * specific_gravity),
           1e-12, "EPANET bar to head");
+    // Numeric import and presentation are inverse operations for EPANET
+    // pressure choices. Explicitly check reported 60-unit offsets.
+    for (const QString &pressure_unit : {QStringLiteral("psi"),
+                                         QStringLiteral("kPa"),
+                                         QStringLiteral("bar")}) {
+        const std::string_view unit_id = pressure_unit == QStringLiteral("psi") ? "psi"
+            : pressure_unit == QStringLiteral("kPa") ? "kPa" : "bar";
+        for (const double sg : {1.0, 1.2}) {
+            const std::optional<double> head = EpanetJsUnits::pressureToHeadM(
+                60.0, pressure_unit, sg);
+            expectTrue(head.has_value(), "EPANET pressure import valid");
+            if (head.has_value()) {
+                const std::optional<double> displayed = aowis::units::convert(
+                    "pressure_head", *head, "m", unit_id, sg);
+                expectTrue(displayed.has_value(), "EPANET pressure display valid");
+                if (displayed.has_value())
+                    expectNear(*displayed, 60.0, 1e-10, "pressure import/display round-trip");
+            }
+        }
+    }
     // EPANET 2.3 emitters use psi (US) or metres of head (SI), independent of
     // the PRESSURE option and, for SI, of specific gravity.
     check(EpanetJsUnits::emitterCoefficientToCanonical(

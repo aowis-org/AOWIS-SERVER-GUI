@@ -8,8 +8,9 @@
 #include <optional>
 #include <string>
 
-// Map symbology sizes are stored in metres. These values affect tooltip
-// presentation only: slider steps and renderer sizes are never converted back.
+// Map world-space icon sizes are stored in metres. Their tooltip presentation
+// follows the map distance unit, independently of pipe-length units.
+// Slider steps and renderer sizes are never converted back.
 namespace MapSymbologyLengthUnits
 {
 struct Presentation
@@ -22,12 +23,12 @@ struct Presentation
 inline Presentation forContext(const UnitPresentationContext &context)
 {
     Presentation result;
-    const QString requested = context.unit(QStringLiteral("length"));
+    const QString requested = context.unit(QStringLiteral("distance"));
     if (requested.isEmpty() || requested == QStringLiteral("m"))
         return result;
 
     const std::optional<double> converted = aowis::units::convert(
-        "length", 1.0, "m", requested.toStdString());
+        "distance", 1.0, "m", requested.toStdString());
     if (!converted || !std::isfinite(*converted) || *converted <= 0.0)
         return result;
 
