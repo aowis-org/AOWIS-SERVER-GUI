@@ -708,27 +708,33 @@ void SimulationManager::importNetworkProjectContent(
                         profile_name = base_name + QStringLiteral(" (%1)").arg(suffix++);
 
                     QDialog *confirmation = new QDialog(parent_widget);
-                    confirmation->setWindowTitle(tr("EPANET-JS display units"));
+                    confirmation->setWindowTitle(tr("Unit system for imported EPANET-JS project"));
                     confirmation->setMinimumWidth(460);
                     confirmation->setAttribute(Qt::WA_DeleteOnClose);
                     QVBoxLayout *layout = new QVBoxLayout(confirmation);
                     QLabel *prompt = new QLabel(matches_builtin
-                        ? tr("The imported unit preferences match the built-in %1 unit system. "
-                             "You can use it directly; there is no need to create a copy.")
+                        ? tr("The imported project's units match the built-in \"%1\" unit system. "
+                             "You can use it directly; no new unit system is needed.\n\n"
+                             "If you prefer your own named unit system that you can edit later, "
+                             "you can create a copy instead. You can also do this at any time "
+                             "in Settings → Units.")
                               .arg(matching_name)
-                        : tr("The imported unit preferences differ from the built-in unit systems. "
-                             "Create a custom unit profile to reproduce them?"),
+                        : tr("The imported project's units do not match any built-in AOWIS "
+                             "unit system. You can create a named, editable unit system "
+                             "using these display preferences.\n\n"
+                             "This is optional: importing the project does not depend on it. "
+                             "You can also set up a custom unit system later in Settings → Units."),
                         confirmation);
                     prompt->setWordWrap(true);
                     layout->addWidget(prompt);
 
                     QCheckBox *create_copy = nullptr;
                     if (matches_builtin) {
-                        create_copy = new QCheckBox(tr("Create a custom copy instead"), confirmation);
+                        create_copy = new QCheckBox(tr("Create a named, editable copy instead"), confirmation);
                         create_copy->setChecked(false);
                         layout->addWidget(create_copy);
                     }
-                    QLabel *name_label = new QLabel(tr("Profile name:"), confirmation);
+                    QLabel *name_label = new QLabel(tr("New unit system name:"), confirmation);
                     layout->addWidget(name_label);
                     QLineEdit *name_edit = new QLineEdit(profile_name, confirmation);
                     name_label->setBuddy(name_edit);
@@ -743,19 +749,27 @@ void SimulationManager::importNetworkProjectContent(
                     }
                     if (!unrepresented_units.isEmpty()) {
                         QLabel *warning = new QLabel(
-                            tr("The following source unit settings could not be mapped to the AOWIS "
-                               "presentation registry: %1\nThose preferences will not be reproduced "
-                               "in a custom profile. The imported numerical data remains canonical.")
+                            tr("Some source unit choices are not available as AOWIS display "
+                               "settings: %1\nA custom unit system cannot reproduce those "
+                               "particular choices. This does not affect the imported network values.")
                                 .arg(unrepresented_units.join(QStringLiteral(", "))),
                             confirmation);
                         warning->setWordWrap(true);
                         layout->addWidget(warning);
                     }
                     QCheckBox *activate_profile = new QCheckBox(
-                        matches_builtin ? tr("Activate this unit system")
-                                        : tr("Activate this custom unit system"), confirmation);
+                        matches_builtin ? tr("Use \"%1\" after import").arg(matching_name)
+                                        : tr("Use the new unit system after import"), confirmation);
                     activate_profile->setChecked(true);
                     layout->addWidget(activate_profile);
+                    if (matches_builtin) {
+                        QObject::connect(create_copy, &QCheckBox::toggled,
+                                         activate_profile, [activate_profile, matching_name](bool create) {
+                            activate_profile->setText(create
+                                ? QObject::tr("Use the new unit system after import")
+                                : QObject::tr("Use \"%1\" after import").arg(matching_name));
+                        });
+                    }
                     QDialogButtonBox *buttons = new QDialogButtonBox(
                         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, confirmation);
                     layout->addWidget(buttons);

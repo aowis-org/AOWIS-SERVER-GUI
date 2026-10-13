@@ -90,8 +90,10 @@ protected:
     QPushButton *button_node_2_inspect = nullptr;
     
     void addGroupPosition();
+    void refreshGeographicAltitude();
     QDoubleSpinBox *spin_latitude = nullptr;
     QDoubleSpinBox *spin_longitude = nullptr;
+    QLabel *label_geographic_altitude = nullptr;
     QPushButton *button_find_on_map = nullptr;
 
     void bindHydraulicNode(InfrastructureEntity entity_type, const QUuid &uuid,

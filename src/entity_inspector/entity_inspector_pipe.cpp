@@ -150,12 +150,12 @@ void EntityInspectorPipe::addGroupRoughness()
     this->combo_material->setToolTip(
         "Pipe materials are defined by the network material library.");
 
-    QLabel *label_roughness_mode = new QLabel("Roughness Source");
+    QLabel *label_roughness_mode = new QLabel("Roughness<br>Source");
     this->combo_roughness_mode = new QComboBox();
     this->combo_roughness_mode->addItem(
         "Explicit", static_cast<int>(HydraulicPipeRoughnessMode::Explicit));
     this->combo_roughness_mode->addItem(
-        "Material + installation age",
+        "Material + age",
         static_cast<int>(HydraulicPipeRoughnessMode::MaterialLibrary));
     this->combo_roughness_mode->setToolTip(
         "Explicit uses the pipe roughness values below. Material + installation age "

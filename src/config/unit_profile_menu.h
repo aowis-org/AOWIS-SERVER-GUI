@@ -41,10 +41,32 @@ enum class Group { Canonical, FeaturedMetric, OtherMetric, Imperial, Custom };
 
 [[nodiscard]] inline QString label(const UnitProfileManager::Profile &profile)
 {
-    if (profile.builtin && profile.id == QStringLiteral("CMH"))
+    if (!profile.builtin) return profile.name;
+    if (profile.id == QStringLiteral("canonical"))
+        return QStringLiteral("AOWIS Canonical — standard AOWIS units");
+    if (profile.id == QStringLiteral("CMH"))
         return QStringLiteral("CMH — cubic meters per hour");
-    if (profile.builtin && profile.id == QStringLiteral("LPS"))
+    if (profile.id == QStringLiteral("LPS"))
         return QStringLiteral("LPS — liters per second");
+    if (profile.id == QStringLiteral("LPM"))
+        return QStringLiteral("LPM — liters per minute");
+    if (profile.id == QStringLiteral("MLD"))
+        return QStringLiteral("MLD — million liters per day");
+    if (profile.id == QStringLiteral("CMD"))
+        return QStringLiteral("CMD — cubic meters per day");
+    if (profile.id == QStringLiteral("CMS"))
+        return QStringLiteral("CMS — cubic meters per second");
+    if (profile.id == QStringLiteral("CFS"))
+        return QStringLiteral("CFS — cubic feet per second");
+    if (profile.id == QStringLiteral("GPM"))
+        return QStringLiteral("GPM — US gallons per minute");
+    if (profile.id == QStringLiteral("MGD"))
+        return QStringLiteral("MGD — million US gallons per day");
+    if (profile.id == QStringLiteral("IMGD"))
+        return QStringLiteral("IMGD — million Imperial gallons per day");
+    if (profile.id == QStringLiteral("AFD"))
+        return QStringLiteral("AFD — acre-feet per day");
+    // Preserve names of future built-in profiles until they have a description.
     return profile.name;
 }
 

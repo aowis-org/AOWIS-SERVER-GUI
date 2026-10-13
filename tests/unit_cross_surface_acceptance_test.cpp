@@ -1,4 +1,5 @@
 #include "config/unit_aware_view.h"
+#include "config/geographic_altitude_presentation.h"
 #include "config/unit_profile_menu.h"
 #include "config/unit_numeric_spin_box.h"
 #include "config/unit_table_presentation.h"
@@ -132,7 +133,7 @@ static void verifyProfileMenus()
     UnitProfileMenu::populate(&menu, &menu, profiles, 0,
         [&chosen](int index) { chosen = index; },
         [&managed] { ++managed; });
-    CHECK(menu.actions().at(0)->text() == QStringLiteral("AOWIS Canonical"));
+    CHECK(menu.actions().at(0)->text() == QStringLiteral("AOWIS Canonical — standard AOWIS units"));
     CHECK(menu.actions().at(0)->data().toInt() == 1);
     CHECK(menu.actions().at(2)->text() == QStringLiteral("CMH — cubic meters per hour"));
     CHECK(menu.actions().at(3)->text() == QStringLiteral("LPS — liters per second"));
@@ -142,6 +143,15 @@ static void verifyProfileMenus()
     CHECK(metric_menu != nullptr && metric_menu->actions().size() == 4);
     CHECK(imperial_menu != nullptr && imperial_menu->actions().size() == 5);
     CHECK(custom_menu != nullptr && custom_menu->actions().size() == 4);
+    CHECK(metric_menu->actions().at(0)->text() == QStringLiteral("LPM — liters per minute"));
+    CHECK(metric_menu->actions().at(1)->text() == QStringLiteral("MLD — million liters per day"));
+    CHECK(metric_menu->actions().at(2)->text() == QStringLiteral("CMD — cubic meters per day"));
+    CHECK(metric_menu->actions().at(3)->text() == QStringLiteral("CMS — cubic meters per second"));
+    CHECK(imperial_menu->actions().at(0)->text() == QStringLiteral("CFS — cubic feet per second"));
+    CHECK(imperial_menu->actions().at(1)->text() == QStringLiteral("GPM — US gallons per minute"));
+    CHECK(imperial_menu->actions().at(2)->text() == QStringLiteral("MGD — million US gallons per day"));
+    CHECK(imperial_menu->actions().at(3)->text() == QStringLiteral("IMGD — million Imperial gallons per day"));
+    CHECK(imperial_menu->actions().at(4)->text() == QStringLiteral("AFD — acre-feet per day"));
     CHECK(custom_menu->actions().at(0)->text() == QStringLiteral("Field"));
     CHECK(custom_menu->actions().at(1)->text() == QStringLiteral("field"));
     CHECK(custom_menu->actions().at(0)->isChecked());
@@ -156,6 +166,27 @@ static void verifyProfileMenus()
 
 // Settings must show actual GUI quantities and the deliberately retained
 // electrical group, without deleting other registered/profiled quantities.
+static void verifyGeographicAltitudePresentation()
+{
+    UnitPresentationContext context;
+    QJsonObject profile;
+    profile.insert(QStringLiteral("altitude"), QStringLiteral("m"));
+    profile.insert(QStringLiteral("length"), QStringLiteral("km"));
+    context.initialize(profile);
+    (void)context.setLocale(QLocale::c());
+    const QString missing = GeographicAltitudePresentation::format(context, std::nullopt);
+    CHECK(missing == QString(QChar(0x2014)));
+    const QString metric = GeographicAltitudePresentation::format(context, 120.0);
+    CHECK(metric.contains(QStringLiteral("120")) && metric.endsWith(QStringLiteral("m")));
+    profile.insert(QStringLiteral("altitude"), QStringLiteral("ft"));
+    CHECK(context.update(profile));
+    const QString imperial = GeographicAltitudePresentation::format(context, 120.0);
+    CHECK(imperial.contains(QStringLiteral("393.701")) && imperial.endsWith(QStringLiteral("ft")));
+    CHECK(GeographicAltitudePresentation::format(context, std::nullopt) == missing);
+    CHECK(context.setLocale(QLocale(QLocale::German, QLocale::Germany)));
+    CHECK(GeographicAltitudePresentation::format(context, 120.0).contains(QLatin1Char(',')));
+}
+
 static void verifyUnitSettingsFieldVisibility()
 {
     const aowis::units::UnitField *head = aowis::units::findUnitField("pressure_head");
@@ -178,7 +209,7 @@ static void verifyUnitSettingsFieldVisibility()
     CHECK(head != nullptr && UnitSettingsFieldVisibility::isVisible(*head));
     CHECK(distance != nullptr && UnitSettingsFieldVisibility::isVisible(*distance));
     CHECK(offset != nullptr && UnitSettingsFieldVisibility::isVisible(*offset));
-    CHECK(altitude != nullptr && !UnitSettingsFieldVisibility::isVisible(*altitude));
+    CHECK(altitude != nullptr && UnitSettingsFieldVisibility::isVisible(*altitude));
     CHECK(area != nullptr && UnitSettingsFieldVisibility::isVisible(*area)
           && area->group == "Lengths and geometry");
     CHECK(volume != nullptr && UnitSettingsFieldVisibility::isVisible(*volume)
@@ -203,6 +234,7 @@ int main(int argc, char **argv)
     QApplication app(argc, argv);
     verifyProfileMenus();
     verifyUnitSettingsFieldVisibility();
+    verifyGeographicAltitudePresentation();
     UnitPresentationContext context;
     const QJsonObject metric{
         {QStringLiteral("pressure_head"), QStringLiteral("m")},

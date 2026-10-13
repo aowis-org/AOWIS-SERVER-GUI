@@ -134,7 +134,7 @@ inline QJsonObject selections(const QJsonObject &source, QStringList *unmapped =
 // Match only source preferences that the GUI can actually present. An EPANET
 // flow template wins over the canonical profile when both resolve identically
 // (notably CMH). Hidden fields (including legacy minimum tank volume and
-// CRS-defined altitude) do not justify another GUI presentation profile.
+// other unused/legacy metadata) do not justify another GUI presentation profile.
 inline QString matchingBuiltinId(const QJsonObject &selections) {
     const QString flow = selections.value(QStringLiteral("volumetric_flow_rate")).toString();
     if (flow.isEmpty()) return {};

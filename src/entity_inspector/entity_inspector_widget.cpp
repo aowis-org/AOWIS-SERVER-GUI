@@ -4,6 +4,7 @@
 #include "simulation/simulation_inspector_unit_presentation.h"
 #include "entity_inspector/entity_inspector_widget.h"
 #include "entity_inspector/coordinate_numeric_spin_box.h"
+#include "config/geographic_altitude_presentation.h"
 #include "entity_inspector/emitter_numeric_spin_box.h"
 
 #include "services/interface_server_map_rest.h"
@@ -1636,15 +1637,48 @@ void EntityInspectorWidget::addGroupPosition()
     this->spin_longitude = new CoordinateNumericSpinBox(
         read_coordinate, write_coordinate, CoordinatePropertyBinding::Component::Longitude);
 
+    this->label_geographic_altitude = new QLabel(group);
+    this->label_geographic_altitude->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    this->label_geographic_altitude->setToolTip(QStringLiteral(
+        "Recorded geographic/GPS altitude, when available; not hydraulic elevation."));
+
     this->button_find_on_map = new QPushButton("Find on Map");
     
     grid->addWidget(label_latitude, 0, 0);
     grid->addWidget(this->spin_latitude, 0, 1);
     grid->addWidget(label_longitude, 1, 0);
     grid->addWidget(this->spin_longitude, 1, 1);
-    grid->addWidget(this->button_find_on_map, 2, 0, 1, 2);
+    grid->addWidget(new QLabel(QStringLiteral("Geographic altitude"), group), 2, 0);
+    grid->addWidget(this->label_geographic_altitude, 2, 1);
+    grid->addWidget(this->button_find_on_map, 3, 0, 1, 2);
+
+    new UnitAwareView(group, UnitProfileManager::instance().presentation(), [this] {
+        this->refreshGeographicAltitude();
+    });
     
     layoutConfiguration()->addWidget(group);
+}
+
+void EntityInspectorWidget::refreshGeographicAltitude()
+{
+    if (!this->label_geographic_altitude || !this->hydraulic_data || this->entity_uuid.isNull())
+        return;
+
+    std::optional<double> altitude_m;
+    if (this->entity_type == InfrastructureEntity::DemandPoint)
+    {
+        const std::optional<HydraulicDemandPoint> point =
+            this->hydraulic_data->demandPoint(this->entity_uuid);
+        if (point) altitude_m = point->coordinate_wgs84.altitude_m;
+    }
+    else
+    {
+        const std::optional<HydraulicNodeCommonData> node =
+            this->hydraulic_data->nodeCommonData(this->entity_type, this->entity_uuid);
+        if (node) altitude_m = node->coordinate_wgs84.altitude_m;
+    }
+    this->label_geographic_altitude->setText(GeographicAltitudePresentation::format(
+        UnitProfileManager::instance().presentation(), altitude_m));
 }
 
 void EntityInspectorWidget::bindHydraulicNode(InfrastructureEntity entity_type, const QUuid &uuid,
@@ -1866,6 +1900,7 @@ void EntityInspectorWidget::refreshHydraulicNode()
     // must never be written back as a side effect of refreshing the inspector.
     static_cast<CoordinateNumericSpinBox *>(this->spin_latitude)->refreshCoordinate();
     static_cast<CoordinateNumericSpinBox *>(this->spin_longitude)->refreshCoordinate();
+    this->refreshGeographicAltitude();
 
     refreshHydraulicNodeElevation();
 }
@@ -1898,6 +1933,7 @@ void EntityInspectorWidget::refreshDemandPoint()
 
     static_cast<CoordinateNumericSpinBox *>(this->spin_latitude)->refreshCoordinate();
     static_cast<CoordinateNumericSpinBox *>(this->spin_longitude)->refreshCoordinate();
+    this->refreshGeographicAltitude();
 }
 
 void EntityInspectorWidget::refreshHydraulicEndpoints()

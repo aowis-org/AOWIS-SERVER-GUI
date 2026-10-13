@@ -4409,6 +4409,13 @@ bool MapRhiWidget::terrainCoordinateAtScreen(
             return false;
 
         *coordinate = hit.coordinate;
+        double altitude_m = 0.0;
+        double cell_size_m = 0.0;
+        if (hit.isTerrainMesh()
+            && globeTerrainElevationAtCoordinate(*coordinate, &altitude_m, &cell_size_m))
+            coordinate->altitude_m = altitude_m;
+        else
+            coordinate->altitude_m.reset();
         return true;
     }
 

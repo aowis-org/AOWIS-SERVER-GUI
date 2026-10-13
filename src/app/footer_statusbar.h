@@ -7,6 +7,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QDoubleSpinBox>
+#include <optional>
 
 #include "common/_enums_structs.h"
 #include <aowis/model/gis.h>
@@ -26,7 +27,7 @@ public:
     void setMapCoordinatesUTM(const CoordinateUTM &utm);
     void clearMapCoordinates();
     
-    QStatusBar* statusBar() const { return bar; };
+    QStatusBar* statusBar() const { return this->bar; };
     
     void statusUpdateServerMap(StatusColorCode code);
 
@@ -37,6 +38,9 @@ signals:
     void zoomEdited(double zoom);
 
 private:
+    // Height is a datum-dependent observation; keep it missing until supplied.
+    void refreshAltitudeDisplay();
+
     QStatusBar *bar;
     
     QHBoxLayout *layout;
@@ -44,6 +48,8 @@ private:
     QDoubleSpinBox *spin_map_zoom;
     QLabel *label_map_coords_lat;
     QLabel *label_map_coords_lon;
+    QLabel *label_map_coords_height;
+    std::optional<double> coordinate_altitude_m;
     
     QLabel *label_map_coords_utm_easting;
     QLabel *label_map_coords_utm_northing;

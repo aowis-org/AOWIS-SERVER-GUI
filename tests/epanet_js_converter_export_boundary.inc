@@ -474,7 +474,15 @@ void testEpanetJsProfileMatchesBuiltinsBeforeOfferingCopy()
     const QJsonObject customary_selections = EpanetJsUnitProfile::selections(customary);
     expectTrue(EpanetJsUnitProfile::matchingBuiltinId(customary_selections)
                    == QStringLiteral("CFS"),
-               "hidden altitude and legacy minimum tank volume must not require a duplicate");
+               "matching geographic altitude and legacy minimum tank volume need no duplicate");
+
+    // Altitude is now a real independent display choice. A metric altitude
+    // preference genuinely differs from CFS, unlike the hidden legacy tank key.
+    customary.insert(QStringLiteral("elevation"), QStringLiteral("m"));
+    expectTrue(EpanetJsUnitProfile::matchingBuiltinId(
+                   EpanetJsUnitProfile::selections(customary)).isEmpty(),
+               "different geographic altitude requires a custom profile");
+    customary.insert(QStringLiteral("elevation"), QStringLiteral("ft"));
 
     customary.insert(QStringLiteral("velocity"), QStringLiteral("m/s"));
     expectTrue(EpanetJsUnitProfile::matchingBuiltinId(

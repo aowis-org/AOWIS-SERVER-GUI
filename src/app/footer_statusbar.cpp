@@ -1,12 +1,15 @@
 #include "app/footer_statusbar.h"
 
 #include <QSignalBlocker>
+#include "config/geographic_altitude_presentation.h"
+#include "config/unit_profile_manager.h"
 
 FooterStatusBar::FooterStatusBar(QWidget *parent)
     : QWidget(parent),
     spin_map_zoom( new QDoubleSpinBox ),
-    label_map_coords_lon( new QLabel ),
     label_map_coords_lat( new QLabel ),
+    label_map_coords_lon( new QLabel ),
+    label_map_coords_height( new QLabel ),
     label_map_coords_utm_easting( new QLabel ),
     label_map_coords_utm_northing( new QLabel ),
     label_indicator_map( new QLabel ),
@@ -32,6 +35,10 @@ FooterStatusBar::FooterStatusBar(QWidget *parent)
     this->spin_map_zoom->setMinimumWidth(110);
     this->label_map_coords_lat->setMinimumWidth(135);
     this->label_map_coords_lon->setMinimumWidth(112);
+    this->label_map_coords_height->setMinimumWidth(115);
+    this->label_map_coords_height->setToolTip(QStringLiteral(
+        "Terrain elevation at the map pointer, when a DEM sample is available. "
+        "Uses the terrain dataset's vertical datum; unavailable data is shown as —."));
     
     this->label_map_coords_utm_easting->setMinimumWidth(155);
     this->label_map_coords_utm_northing->setMinimumWidth(100);
@@ -39,6 +46,7 @@ FooterStatusBar::FooterStatusBar(QWidget *parent)
     this->bar->addWidget(this->spin_map_zoom);
     this->bar->addWidget(this->label_map_coords_lat);
     this->bar->addWidget(this->label_map_coords_lon);
+    this->bar->addWidget(this->label_map_coords_height);
     
     this->bar->addWidget(this->label_map_coords_utm_easting);
     this->bar->addWidget(this->label_map_coords_utm_northing);
@@ -55,6 +63,11 @@ FooterStatusBar::FooterStatusBar(QWidget *parent)
     
     //this->label_indicator_map_status->setFixedSize(12, 12);
     //this->label_indicator_map_status->setStyleSheet("background-color: green; border-radius: 6px;");
+
+    UnitProfileManager::instance().presentation().subscribe(this, [this](UnitPresentationContext::Generation) {
+        this->refreshAltitudeDisplay();
+    });
+    this->refreshAltitudeDisplay();
 
     connect(this->spin_map_zoom, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
         [this](double value)
@@ -73,6 +86,8 @@ void FooterStatusBar::setMapZoom(double zoom)
 }
 void FooterStatusBar::setMapCoordinatesWGS84(const CoordinateWGS84 &wgs)
 {
+    this->coordinate_altitude_m = wgs.altitude_m;
+    this->refreshAltitudeDisplay();
     // 5 decimals are about 1.11 m (depending on location)
     this->label_map_coords_lat->setText(
         "WGS 84 Lat: " + QString::number(wgs.latitude_deg, 'f', 5)
@@ -99,8 +114,17 @@ void FooterStatusBar::setMapCoordinatesUTM(const CoordinateUTM &utm)
         );
 }
 
+void FooterStatusBar::refreshAltitudeDisplay()
+{
+    this->label_map_coords_height->setText(QStringLiteral("Height: ")
+        + GeographicAltitudePresentation::format(
+            UnitProfileManager::instance().presentation(), this->coordinate_altitude_m));
+}
+
 void FooterStatusBar::clearMapCoordinates()
 {
+    this->coordinate_altitude_m.reset();
+    this->refreshAltitudeDisplay();
     this->label_map_coords_lat->clear();
     this->label_map_coords_lon->clear();
     this->label_map_coords_utm_easting->clear();

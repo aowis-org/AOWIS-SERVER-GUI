@@ -15,7 +15,7 @@ namespace UnitSettingsFieldVisibility
     if (field.group == "Power and electrical") return true;
 
     constexpr std::string_view gui_quantities[] = {
-        "length", "elevation", "distance", "vertical_offset", "link_diameter",
+        "length", "elevation", "altitude", "distance", "vertical_offset", "link_diameter",
         "tank_diameter", "darcy_weisbach_roughness_height",
         "area", "volume",
         "volumetric_flow_rate", "base_demand_flow_rate", "customer_demand_flow_rate",
