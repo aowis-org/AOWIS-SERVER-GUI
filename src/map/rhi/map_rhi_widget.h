@@ -53,6 +53,8 @@ public:
     bool terrainCoordinateAtScreen(
         const QPointF &screen_position, CoordinateWGS84 *coordinate,
         bool request_missing_tile = true) override;
+    bool cachedTerrainElevationAtCoordinate(
+        const CoordinateWGS84 &coordinate, double *elevation_m) const override;
     // Globe surface picking against the exact DEM triangles currently
     // retained by MapRhiGlobeRenderer, with a WGS84 ellipsoid fallback when
     // no rendered DEM triangle is hit. Cursor-coordinate lookup, orbit

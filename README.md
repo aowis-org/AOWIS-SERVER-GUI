@@ -8,6 +8,8 @@ This software is written in C++ with Qt and can be compiled for all major platfo
 
 ## Build
 
+**Compiler requirement:** C++20 (a compiler with C++20 support, for example GCC 12 or newer on Debian 12+). The GUI, its tests, and the AOWIS Model/EPANET components use C++20. CMake enforces this requirement across native and WebAssembly builds.
+
 ### Linux
 Run the script `compile_linux.sh`
 

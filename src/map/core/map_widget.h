@@ -17,6 +17,7 @@
 #include <functional>
 
 #include "map/core/map_model.h"
+#include "map/core/map_cached_terrain_altitude.h"
 #include "map/data/map_tile_repository.h"
 
 #ifdef Q_OS_WASM
@@ -39,6 +40,7 @@ public:
         std::function<bool(const QPointF &screen_position, CoordinateWGS84 *coordinate)>;
     using GlobeTerrainPanResolver =
         std::function<bool(const QPoint &delta_pixels)>;
+    using CachedTerrainElevationResolver = MapCachedTerrainElevationLookup;
 
     explicit MapWidget(MapModel *model, MapTileRepository *tile_repository, GpsProvider *gps, QWidget *parent = nullptr);
     ~MapWidget() override;
@@ -59,6 +61,7 @@ public:
     void setEdgePanningEnabled(bool enabled);
     void setRenderSurfaceScreenCoordinateResolver(ScreenCoordinateResolver resolver);
     void setRenderSurfaceGlobeTerrainPanResolver(GlobeTerrainPanResolver resolver);
+    void setCachedTerrainElevationResolver(CachedTerrainElevationResolver resolver);
 
 #ifdef Q_OS_WASM
     void setBrowserMapLayerEnabled(bool enabled);
@@ -138,8 +141,7 @@ private:
     void applyView3dOrbitPointerDelta(const QPoint &delta);
 
     void updatePointerCoordinates(const QPoint &position);
-    CoordinateWGS84 withCachedTerrainAltitude(
-        const CoordinateWGS84 &wgs, const QPoint &screen_position) const;
+    CoordinateWGS84 withCachedTerrainAltitude(const CoordinateWGS84 &wgs) const;
     void emitPointerCoordinate(const CoordinateWGS84 &wgs);
     void scheduleTileUpdate(const QString &);
     void drawTiles(QPainter &painter);
@@ -180,6 +182,7 @@ private:
     bool render_surface_active = false;
     ScreenCoordinateResolver render_surface_screen_coordinate_resolver;
     GlobeTerrainPanResolver render_surface_globe_terrain_pan_resolver;
+    CachedTerrainElevationResolver cached_terrain_elevation_resolver;
     bool view_2d_zoom_in_key_pressed = false;
     bool view_2d_zoom_out_key_pressed = false;
     bool view_3d_zoom_in_key_pressed = false;

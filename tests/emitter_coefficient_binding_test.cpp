@@ -63,8 +63,10 @@ int main()
     expectNear(*reversed, canonical_coefficient);
     const std::optional<double> flow_scale = aowis::units::convert(
         "volumetric_flow_rate", 1.0, "m3/h", "US gal/min");
+    // Even m-to-ft head conversions must specify project specific gravity.
+    CHECK(!aowis::units::convert("pressure_head", 1.0, "m", "ft"));
     const std::optional<double> head_scale = aowis::units::convert(
-        "pressure_head", 1.0, "m", "ft");
+        "pressure_head", 1.0, "m", "ft", imperial.specific_gravity);
     CHECK(flow_scale && head_scale);
     expectNear(*converted, canonical_coefficient * *flow_scale / std::sqrt(*head_scale));
 

@@ -4191,6 +4191,16 @@ bool MapRhiWidget::globeTerrainElevationAtCoordinate(
     return false;
 }
 
+bool MapRhiWidget::cachedTerrainElevationAtCoordinate(
+    const CoordinateWGS84 &coordinate, double *elevation_m) const
+{
+    if (elevation_m == nullptr)
+        return false;
+
+    double cell_size_m = 0.0;
+    return globeTerrainElevationAtCoordinate(coordinate, elevation_m, &cell_size_m);
+}
+
 bool MapRhiWidget::globeCameraTerrainElevationAtCoordinate(
     const CoordinateWGS84 &coordinate, double *elevation_m,
     bool request_missing_tile) const

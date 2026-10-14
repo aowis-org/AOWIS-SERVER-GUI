@@ -704,6 +704,12 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             return render_surface->terrainCoordinateAtScreen(
                 screen_position, coordinate, true);
         });
+        this->map->setCachedTerrainElevationResolver(
+            [render_surface](const CoordinateWGS84 &coordinate, double *elevation_m)
+        {
+            return render_surface->cachedTerrainElevationAtCoordinate(
+                coordinate, elevation_m);
+        });
         this->map->setRenderSurfaceGlobeTerrainPanResolver(
             [render_surface](const QPoint &delta_pixels)
         {
@@ -1190,6 +1196,7 @@ MapMonitorContainer::~MapMonitorContainer()
 #if AOWIS_HAS_QRHI
     this->map->setRenderSurfaceScreenCoordinateResolver(MapWidget::ScreenCoordinateResolver());
     this->map->setRenderSurfaceGlobeTerrainPanResolver(MapWidget::GlobeTerrainPanResolver());
+    this->map->setCachedTerrainElevationResolver(MapWidget::CachedTerrainElevationResolver());
     if (this->desktop_scene_fullscreen_active)
         setDesktopRenderSurfaceFullscreen(false);
 #endif

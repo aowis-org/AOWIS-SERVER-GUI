@@ -330,8 +330,7 @@ void MapWidget::init()
         else
         {
             // Keep 2D centre readouts aware of any cached 3D terrain too.
-            emit signalCoordsChangedWgs84(withCachedTerrainAltitude(
-                wgs, QPoint(width() / 2, height() / 2)));
+            emit signalCoordsChangedWgs84(withCachedTerrainAltitude(wgs));
         }
         if (this->backing_store_pan_active)
             return;
@@ -1867,26 +1866,12 @@ void MapWidget::updatePointerCoordinates(const QPoint &position)
     }
 
     const CoordinateWGS84 wgs = this->m_model->wgs84FromScreen(position, this->size());
-    emitPointerCoordinate(withCachedTerrainAltitude(wgs, position));
+    emitPointerCoordinate(withCachedTerrainAltitude(wgs));
 }
 
-CoordinateWGS84 MapWidget::withCachedTerrainAltitude(
-    const CoordinateWGS84 &wgs, const QPoint &screen_position) const
+CoordinateWGS84 MapWidget::withCachedTerrainAltitude(const CoordinateWGS84 &wgs) const
 {
-    // The flat map owns its WGS84 position. Ask the 3D surface only for
-    // elevation from already available DEM data, even if the 2D fallback is
-    // active. The surface's 2D lookup must never request a new terrain tile.
-    CoordinateWGS84 result = wgs;
-    if (this->render_surface_screen_coordinate_resolver)
-    {
-        CoordinateWGS84 sampled;
-        if (this->render_surface_screen_coordinate_resolver(
-                QPointF(screen_position), &sampled))
-        {
-            result.altitude_m = sampled.altitude_m;
-        }
-    }
-    return result;
+    return mapWithCachedTerrainAltitude(wgs, this->cached_terrain_elevation_resolver);
 }
 
 void MapWidget::emitPointerCoordinate(const CoordinateWGS84 &wgs)
@@ -1906,6 +1891,11 @@ void MapWidget::setRenderSurfaceScreenCoordinateResolver(ScreenCoordinateResolve
 void MapWidget::setRenderSurfaceGlobeTerrainPanResolver(GlobeTerrainPanResolver resolver)
 {
     this->render_surface_globe_terrain_pan_resolver = std::move(resolver);
+}
+
+void MapWidget::setCachedTerrainElevationResolver(CachedTerrainElevationResolver resolver)
+{
+    this->cached_terrain_elevation_resolver = std::move(resolver);
 }
 
 void MapWidget::scheduleTileUpdate(const QString &)

@@ -546,8 +546,9 @@ void testEpanetJsProfileRetainsWaterAgeSecondsAndPressureHeadAliases()
         expectTrue(selections.value(QStringLiteral("pressure_head")).toString() == unit,
                    pressure_case.source);
         const std::optional<double> imported = EpanetJsUnits::pressureToHeadM(1.0, source, 1.0);
+        // The source import and the display conversion use the same SG.
         const std::optional<double> converted = aowis::units::convert(
-            "pressure_head", 1.0, unit.toStdString(), "m");
+            "pressure_head", 1.0, unit.toStdString(), "m", 1.0);
         expectTrue(imported.has_value() && converted.has_value(), pressure_case.source);
         if (imported.has_value() && converted.has_value())
             expectNear(*converted, *imported, 1e-12, pressure_case.source);

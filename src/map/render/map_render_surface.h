@@ -80,6 +80,10 @@ public:
     virtual bool terrainCoordinateAtScreen(
         const QPointF &screen_position, CoordinateWGS84 *coordinate,
         bool request_missing_tile = true) = 0;
+    // Cached DEM elevation at an already resolved WGS84 coordinate.
+    // No screen projection, globe-camera picking or tile requests.
+    virtual bool cachedTerrainElevationAtCoordinate(
+        const CoordinateWGS84 &coordinate, double *elevation_m) const = 0;
     virtual bool globeSurfaceRayHitAtScreen(
         const QPointF &screen_position, MapGlobeSurfaceHit *hit) const = 0;
     virtual bool panGlobeByTerrainPixels(const QPoint &delta_pixels) = 0;

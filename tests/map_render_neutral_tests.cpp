@@ -6,6 +6,7 @@
 #include "map/render/map_globe_surface_render_frame.h"
 #include "map/render/map_globe_tank_model.h"
 #include "map/render/map_globe_vertical_transform.h"
+#include "map/core/map_cached_terrain_altitude.h"
 #include "map/core/map_scale_distance.h"
 #include "map/monitor/map_hud_length_units.h"
 #include "map/render/map_node_declutter.h"
@@ -624,6 +625,53 @@ void testSurfaceRenderFrameInvariants()
         "surface render frame rejects missing neutral geometry stream");
 }
 
+void testCachedTerrainAltitudeFollowsCoordinate()
+{
+    CoordinateWGS84 coordinate;
+    coordinate.longitude_deg = 18.187213;
+    coordinate.latitude_deg = 11.948855;
+    coordinate.altitude_m = 500.0; // Should not leak through on a cache miss.
+
+    int query_count = 0;
+    const CoordinateWGS84 cached = mapWithCachedTerrainAltitude(
+        coordinate, [&query_count](const CoordinateWGS84 &requested, double *height_m)
+        {
+            ++query_count;
+            expectNear(requested.longitude_deg, 18.187213, 0.0,
+                "terrain lookup receives original 2D longitude");
+            expectNear(requested.latitude_deg, 11.948855, 0.0,
+                "terrain lookup receives original 2D latitude");
+            *height_m = 123.456;
+            return true;
+        });
+    expectTrue(query_count == 1, "terrain lookup occurs exactly once");
+    expectNear(cached.longitude_deg, coordinate.longitude_deg, 0.0,
+        "cached terrain height leaves longitude unchanged");
+    expectNear(cached.latitude_deg, coordinate.latitude_deg, 0.0,
+        "cached terrain height leaves latitude unchanged");
+    expectTrue(cached.altitude_m.has_value(), "cached terrain height becomes available");
+    if (cached.altitude_m.has_value())
+        expectNear(*cached.altitude_m, 123.456, 1e-12,
+            "cached terrain elevation is displayed");
+
+    const CoordinateWGS84 missing = mapWithCachedTerrainAltitude(
+        coordinate, [](const CoordinateWGS84 &, double *) { return false; });
+    expectTrue(!missing.altitude_m.has_value(),
+        "missing terrain tile leaves footer height unknown");
+    const CoordinateWGS84 unavailable = mapWithCachedTerrainAltitude(
+        coordinate, MapCachedTerrainElevationLookup());
+    expectTrue(!unavailable.altitude_m.has_value(),
+        "absent renderer leaves footer height unknown");
+    const CoordinateWGS84 invalid = mapWithCachedTerrainAltitude(
+        coordinate, [](const CoordinateWGS84 &, double *height_m)
+        {
+            *height_m = std::numeric_limits<double>::quiet_NaN();
+            return true;
+        });
+    expectTrue(!invalid.altitude_m.has_value(),
+        "nonfinite cached terrain height is not displayed");
+}
+
 void testTerrainMeshGenerationAndStitching()
 {
     MapTerrainMeshRequest request;
@@ -701,6 +749,7 @@ int main()
 {
     test_harness.runCase("vertical transform", testVerticalTransform);
     test_harness.runCase("map scale unit presentation", testMapScaleUnits);
+    test_harness.runCase("cached terrain footer coordinate", testCachedTerrainAltitudeFollowsCoordinate);
     test_harness.runCase("map HUD length presentation", testMapHudLengthUnits);
     test_harness.runCase("render cache math", testRenderCacheMath);
     test_harness.runCase("node declutter", testNodeDeclutter);
