@@ -6,6 +6,44 @@ This is the GUI for the AOWIS-SERVER infrastucture.
 
 This software is written in C++ with Qt and can be compiled for all major platforms, including WebAssembly.
 
+## Git submodules
+
+Clone the repository with its dependencies, or initialize them after cloning:
+
+```bash
+git clone https://github.com/aowis-org/AOWIS-SERVER-GUI.git
+cd AOWIS-SERVER-GUI
+./git_submodule_init.sh
+```
+
+`git_submodule_init.sh` initializes **all** submodules recursively, including
+AOWIS-SERVER-EPANET, AOWIS-SERVER-MODEL, GeographicLib, and the bgfx rendering
+libraries (`bgfx`, `bx`, and `bimg`). For normal clones it checks out the exact
+revisions recorded by the AOWIS-SERVER-GUI repository; it does not update them
+to their latest upstream commits.
+
+To **update** submodules to their remote-tracking branches, use:
+
+```bash
+./git_submodule_update.sh          # AOWIS submodules and GeographicLib only
+./git_submodule_update.sh --bgfx   # bgfx, bx and bimg only
+./git_submodule_update.sh --all    # Both groups
+./git_submodule_update.sh --help   # Usage
+```
+
+**First-time setup of the bgfx patch:** ZIP files cannot contain Git submodule
+gitlinks. If the three bgfx entries exist in `.gitmodules` but have not yet
+been registered in Git, either `git_submodule_init.sh` or
+`git_submodule_update.sh --bgfx` will register them automatically. Review and
+commit the new `external/bgfx`, `external/bx`, and `external/bimg` gitlinks
+alongside `.gitmodules`, so subsequent clones can initialize all dependencies
+normally. This initial registration fetches the bgfx repositories; future
+`git_submodule_init.sh` runs use the committed revisions.
+
+The bgfx submodules prepare the dependency tree for the renderer migration.
+They do **not** change the currently selected QRhi or browser WebGL renderer;
+CMake integration and runtime selection are separate steps.
+
 ## Build
 
 **Compiler requirement:** C++20 (a compiler with C++20 support, for example GCC 12 or newer on Debian 12+). The GUI, its tests, and the AOWIS Model/EPANET components use C++20. CMake enforces this requirement across native and WebAssembly builds.

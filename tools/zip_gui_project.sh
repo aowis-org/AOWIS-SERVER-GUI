@@ -32,7 +32,10 @@ find "$project_name" \
         -name "__pycache__" -o \
         -name "*.dSYM" -o \
         -path "$project_name/external/AOWIS-SERVER-EPANET" -o \
-        -path "$project_name/external/AOWIS-SERVER-MODEL" \
+        -path "$project_name/external/AOWIS-SERVER-MODEL" -o \
+        -path "$project_name/external/bgfx" -o \
+        -path "$project_name/external/bx" -o \
+        -path "$project_name/external/bimg" \
     \) \) -prune -o \
     \( -type f \( \
         -name ".git" -o \
