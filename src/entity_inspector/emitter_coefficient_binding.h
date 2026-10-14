@@ -1,13 +1,17 @@
 #pragma once
 
+#include <aowis/model/units/quantity.h>
+
 #include "config/numeric_property_binding.h"
 #include <aowis/model/units/conversion.h>
 
 #include <charconv>
 #include <cmath>
 #include <limits>
+#include <locale>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -47,6 +51,22 @@ inline std::optional<std::string> encode(const Unit &unit)
     return base + "|" + std::string(gravity_buffer, gravity_result.ptr);
 }
 
+// Floating-point std::from_chars is unavailable in some Emscripten libc++
+// versions. Tokens use a locale-independent decimal point and must parse fully.
+inline std::optional<double> parsePositiveReal(std::string_view text)
+{
+    if (text.empty()) return std::nullopt;
+    std::istringstream input{std::string(text)};
+    input.imbue(std::locale::classic());
+    input >> std::noskipws;
+    double value = 0.0;
+    input >> value;
+    if (!input || input.peek() != std::char_traits<char>::eof() ||
+        !std::isfinite(value) || value <= 0.0)
+        return std::nullopt;
+    return value;
+}
+
 inline std::optional<Unit> decode(const std::string &key)
 {
     const std::size_t first = key.find('|');
@@ -57,20 +77,17 @@ inline std::optional<Unit> decode(const std::string &key)
     if (third != std::string::npos && key.find('|', third + 1) != std::string::npos)
         return std::nullopt;
     Unit unit{key.substr(0, first), key.substr(first + 1, second - first - 1), 0.0};
-    const char *exponent_end = third == std::string::npos
-        ? key.data() + key.size() : key.data() + third;
-    const std::from_chars_result result = std::from_chars(
-        key.data() + second + 1, exponent_end, unit.exponent, std::chars_format::general);
-    if (result.ec != std::errc{} || result.ptr != exponent_end ||
-        unit.flow.empty() || unit.head.empty() || !std::isfinite(unit.exponent) ||
-        unit.exponent <= 0.0) return std::nullopt;
+    const std::size_t exponent_length =
+        (third == std::string::npos ? key.size() : third) - second - 1;
+    const std::optional<double> exponent = parsePositiveReal(
+        std::string_view(key).substr(second + 1, exponent_length));
+    if (!exponent || unit.flow.empty() || unit.head.empty()) return std::nullopt;
+    unit.exponent = *exponent;
     if (third != std::string::npos) {
-        const std::from_chars_result gravity_result = std::from_chars(
-            key.data() + third + 1, key.data() + key.size(), unit.specific_gravity,
-            std::chars_format::general);
-        if (gravity_result.ec != std::errc{} || gravity_result.ptr != key.data() + key.size()
-            || !std::isfinite(unit.specific_gravity) || unit.specific_gravity <= 0.0)
-            return std::nullopt;
+        const std::optional<double> gravity = parsePositiveReal(
+            std::string_view(key).substr(third + 1));
+        if (!gravity) return std::nullopt;
+        unit.specific_gravity = *gravity;
     }
     return unit;
 }
@@ -78,9 +95,9 @@ inline std::optional<Unit> decode(const std::string &key)
 inline std::optional<double> flowAndHeadScale(const Unit &unit)
 {
     const std::optional<double> flow = aowis::units::convert(
-        "volumetric_flow_rate", 1.0, "m3/h", unit.flow);
+        AOWIS_QUANTITY("volumetric_flow_rate"), 1.0, "m3/h", unit.flow);
     const std::optional<double> head = aowis::units::convert(
-        "pressure_head", 1.0, "m", unit.head, unit.specific_gravity);
+        AOWIS_QUANTITY("pressure_head"), 1.0, "m", unit.head, unit.specific_gravity);
     if (!flow || !head || !std::isfinite(*flow) || *flow <= 0.0 ||
         !std::isfinite(*head) || *head <= 0.0 ||
         !std::isfinite(unit.exponent) || unit.exponent <= 0.0)

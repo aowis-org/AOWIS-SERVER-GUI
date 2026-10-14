@@ -1,3 +1,4 @@
+#include <aowis/model/units/quantity.h>
 #include "entity_inspector/entity_inspector_valve.h"
 
 #include "config/unit_aware_view.h"
@@ -99,7 +100,7 @@ void EntityInspectorValve::addGroupValveConfiguration()
                            valve->type != HydraulicLinkValveType::PSV &&
                            valve->type != HydraulicLinkValveType::PBV)) return false;
             return this->hydraulic_data->setValveSettingPressureHeadM(this->valve_uuid, value);
-        }, "pressure_head", "m", 0.0, 1000000.0, 1.0, 2, this->stack_setting);
+        }, AOWIS_QUANTITY("pressure_head"), "m", 0.0, 1000000.0, 1.0, 2, this->stack_setting);
     this->spin_setting_flow = new UnitNumericSpinBox(
         [this]() -> std::optional<double> {
             if (!this->hydraulic_data) return std::nullopt;
@@ -112,7 +113,7 @@ void EntityInspectorValve::addGroupValveConfiguration()
             const std::optional<HydraulicLinkValve> valve = this->hydraulic_data->valve(this->valve_uuid);
             if (!valve || valve->type != HydraulicLinkValveType::FCV) return false;
             return this->hydraulic_data->setValveSettingFlowM3PerH(this->valve_uuid, value);
-        }, "volumetric_flow_rate", "m3/h", 0.0, 1000000.0, 1.0, 3, this->stack_setting);
+        }, AOWIS_QUANTITY("volumetric_flow_rate"), "m3/h", 0.0, 1000000.0, 1.0, 3, this->stack_setting);
     this->spin_setting_loss = new UnitNumericSpinBox(
         [this]() -> std::optional<double> {
             if (!this->hydraulic_data) return std::nullopt;
@@ -125,7 +126,7 @@ void EntityInspectorValve::addGroupValveConfiguration()
             const std::optional<HydraulicLinkValve> valve = this->hydraulic_data->valve(this->valve_uuid);
             if (!valve || valve->type != HydraulicLinkValveType::TCV) return false;
             return this->hydraulic_data->setValveSettingLossCoefficient(this->valve_uuid, value);
-        }, "minor_loss_coefficient", "1", 0.0, 1000000.0, 0.1, 3, this->stack_setting,
+        }, AOWIS_QUANTITY("minor_loss_coefficient"), "1", 0.0, 1000000.0, 0.1, 3, this->stack_setting,
         [](const QString &) { return QString(); });
     this->spin_setting_position = new UnitNumericSpinBox(
         [this]() -> std::optional<double> {
@@ -139,7 +140,7 @@ void EntityInspectorValve::addGroupValveConfiguration()
             const std::optional<HydraulicLinkValve> valve = this->hydraulic_data->valve(this->valve_uuid);
             if (!valve || valve->type != HydraulicLinkValveType::PCV) return false;
             return this->hydraulic_data->setValveSettingPositionPercent(this->valve_uuid, value);
-        }, "valve_position", "%", 0.0, 100.0, 1.0, 2, this->stack_setting,
+        }, AOWIS_QUANTITY("valve_position"), "%", 0.0, 100.0, 1.0, 2, this->stack_setting,
         [](const QString &unit) {
             return unit == QStringLiteral("1") ? QString() : NumericText::suffix(unit);
         });
@@ -176,7 +177,7 @@ void EntityInspectorValve::addGroupValveConfiguration()
         [this](double diameter_mm) {
             if (!this->hydraulic_data || !this->hydraulic_data->valve(this->valve_uuid)) return false;
             return this->hydraulic_data->setValveDiameterMm(this->valve_uuid, diameter_mm);
-        }, "link_diameter", "mm", 0.0, 1000000.0, 10.0, 2, group);
+        }, AOWIS_QUANTITY("link_diameter"), "mm", 0.0, 1000000.0, 10.0, 2, group);
 
     QLabel *label_loss_coeff = new QLabel("Loss Coefficient");
     label_loss_coeff->setWordWrap(true);
@@ -189,7 +190,7 @@ void EntityInspectorValve::addGroupValveConfiguration()
         [this](double coefficient) {
             if (!this->hydraulic_data || !this->hydraulic_data->valve(this->valve_uuid)) return false;
             return this->hydraulic_data->setValveMinorLoss(this->valve_uuid, coefficient);
-        }, "minor_loss_coefficient", "1", 0.0, 1000000.0, 0.1, 4, group);
+        }, AOWIS_QUANTITY("minor_loss_coefficient"), "1", 0.0, 1000000.0, 0.1, 4, group);
     
     grid->addWidget(label_valve_type, 0, 0, 1, 2);
     grid->addWidget(this->combo_valve_type, 1, 0, 1, 2);

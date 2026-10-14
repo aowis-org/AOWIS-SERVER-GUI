@@ -1,5 +1,7 @@
 #pragma once
 
+#include <aowis/model/units/quantity.h>
+
 #include "config/unit_display_text.h"
 #include "config/unit_presentation_context.h"
 #include "config/unit_energy_price_conversion.h"
@@ -71,7 +73,7 @@ inline std::optional<double> toDisplayForColumn(const UnitPresentationContext &c
 {
     if (column.kind == ColumnKind::EnergyPrice)
         return UnitEnergyPriceConversion::fromStored(
-            canonical, selectedUnit(context, "energy").toStdString());
+            canonical, selectedUnit(context, AOWIS_QUANTITY("energy")).toStdString());
     return toDisplay(context, column.quantity, canonical);
 }
 
@@ -80,7 +82,7 @@ inline std::optional<double> toCanonicalForColumn(const UnitPresentationContext 
 {
     if (column.kind == ColumnKind::EnergyPrice)
         return UnitEnergyPriceConversion::toStored(
-            displayed, selectedUnit(context, "energy").toStdString());
+            displayed, selectedUnit(context, AOWIS_QUANTITY("energy")).toStdString());
     return toCanonical(context, column.quantity, displayed);
 }
 
@@ -91,9 +93,9 @@ enum class ReactionKind { Bulk, Wall };
 inline std::string_view reactionQuantity(ReactionKind kind, double order)
 {
     if (!std::isfinite(order)) return {};
-    if (kind == ReactionKind::Bulk) return "first_order_bulk_reaction_coefficient";
-    if (std::abs(order - 1.0) <= 1e-12) return "first_order_wall_reaction_coefficient";
-    if (std::abs(order) <= 1e-12) return "zero_order_wall_reaction_coefficient";
+    if (kind == ReactionKind::Bulk) return AOWIS_QUANTITY("first_order_bulk_reaction_coefficient");
+    if (std::abs(order - 1.0) <= 1e-12) return AOWIS_QUANTITY("first_order_wall_reaction_coefficient");
+    if (std::abs(order) <= 1e-12) return AOWIS_QUANTITY("zero_order_wall_reaction_coefficient");
     return {}; // EPANET wall reactions only allow orders zero and one.
 }
 
@@ -123,7 +125,7 @@ inline QString reactionColumnTooltip(const UnitPresentationContext &context,
     if (kind == ReactionKind::Bulk)
         return QStringLiteral("Bulk reaction coefficient: units depend on reaction order. "
                               "Concentration basis is mg/L; selected time basis: ")
-            + unitSymbol(selectedUnit(context, "first_order_bulk_reaction_coefficient"))
+            + unitSymbol(selectedUnit(context, AOWIS_QUANTITY("first_order_bulk_reaction_coefficient")))
             + QStringLiteral(". Each row displays its own unit.");
     return QStringLiteral("Wall reaction coefficient: units depend on reaction order. "
                           "First order: ")
@@ -267,7 +269,7 @@ inline QString formatReactionCoefficient(const UnitPresentationContext &context,
 
 inline QString formatDemandRate(const UnitPresentationContext &context, double canonical,
                                  int decimals = 3,
-                                 std::string_view quantity = "base_demand_flow_rate")
+                                 std::string_view quantity = AOWIS_QUANTITY("base_demand_flow_rate"))
 {
     const std::optional<double> displayed = toDisplay(context, quantity, canonical);
     if (!displayed)
@@ -287,7 +289,7 @@ inline QString formatEnergyPrice(const UnitPresentationContext &context, double 
     if (*displayed > 0.0 && *displayed < 1.0)
         decimals = std::max(decimals, static_cast<int>(std::ceil(-std::log10(*displayed))) + 3);
     return formatNumber(context, *displayed, std::min(decimals, 18), QString(),
-                        "energy");
+                        AOWIS_QUANTITY("energy"));
 }
 
 inline QString formattedTitle(const QString &title, const UnitPresentationContext &context,
@@ -300,7 +302,7 @@ inline QString formattedTitle(const QString &title, const UnitPresentationContex
     const QString base = start >= 0 && title.endsWith(QLatin1Char(']'))
         ? title.left(start) : title;
     const QString unit = column.kind == ColumnKind::EnergyPrice
-        ? column.currency + QStringLiteral("/") + unitSymbol(selectedUnit(context, "energy"))
+        ? column.currency + QStringLiteral("/") + unitSymbol(selectedUnit(context, AOWIS_QUANTITY("energy")))
         : unitSymbol(selectedUnit(context, column.quantity));
     return base + QStringLiteral(" [") + unit + QStringLiteral("]");
 }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "config/unit_quantity_key.h"
+
 #include "numeric_text.h"
 #include <aowis/model/units/unit_profile.h>
 #include <QHash>
@@ -38,8 +40,8 @@ public:
     [[nodiscard]] QString unit(const QString &quantity) const {
         // The legacy minimum-volume key never has an independent display unit,
         // even when older profile JSON still contains its own selection.
-        if (quantity == QStringLiteral("tank_minimum_volume"))
-            return unit(QStringLiteral("volume"));
+        if (quantity == AOWIS_QSTRING_QUANTITY("tank_minimum_volume"))
+            return unit(AOWIS_QSTRING_QUANTITY("volume"));
         const QString selected = this->effective_units_.value(quantity).toString();
         if (!selected.isEmpty()) return selected;
         // Partial/legacy profiles inherit new semantic display quantities.

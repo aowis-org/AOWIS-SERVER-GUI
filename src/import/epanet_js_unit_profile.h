@@ -1,5 +1,7 @@
 #pragma once
 
+#include "config/unit_quantity_key.h"
+
 #include <aowis/model/units/unit_profile.h>
 #include "config/unit_presented_quantities.h"
 #include <QJsonObject>
@@ -98,18 +100,21 @@ inline void assignSelection(
 }
 inline QJsonObject selections(const QJsonObject &source, QStringList *unmapped = nullptr) {
     QJsonObject result;
-    assignSelection(source, result, unmapped, "flow", {"volumetric_flow_rate"});
-    assignSelection(source, result, unmapped, "baseDemand", {"base_demand_flow_rate"});
-    assignSelection(source, result, unmapped, "customerDemand", {"customer_demand_flow_rate"});
-    assignSelection(source, result, unmapped, "length", {"length", "distance", "vertical_offset"});
-    assignSelection(source, result, unmapped, "level", {"water_level"});
-    assignSelection(source, result, unmapped, "initialLevel", {"tank_initial_level"});
-    assignSelection(source, result, unmapped, "minLevel", {"tank_minimum_level"});
-    assignSelection(source, result, unmapped, "maxLevel", {"tank_maximum_level"});
-    assignSelection(source, result, unmapped, "elevation", {"elevation", "altitude"});
-    assignSelection(source, result, unmapped, "head", {"hydraulic_head", "head_gain"});
-    assignSelection(source, result, unmapped, "headloss", {"head_loss"});
-    assignSelection(source, result, unmapped, "diameter", {"link_diameter"});
+    assignSelection(source, result, unmapped, "flow", {AOWIS_QUANTITY("volumetric_flow_rate")});
+    assignSelection(source, result, unmapped, "baseDemand", {AOWIS_QUANTITY("base_demand_flow_rate")});
+    assignSelection(source, result, unmapped, "customerDemand", {AOWIS_QUANTITY("customer_demand_flow_rate")});
+    assignSelection(source, result, unmapped, "length",
+                    {AOWIS_QUANTITY("length"), AOWIS_QUANTITY("distance"),
+                     AOWIS_QUANTITY("vertical_offset")});
+    assignSelection(source, result, unmapped, "level", {AOWIS_QUANTITY("water_level")});
+    assignSelection(source, result, unmapped, "initialLevel", {AOWIS_QUANTITY("tank_initial_level")});
+    assignSelection(source, result, unmapped, "minLevel", {AOWIS_QUANTITY("tank_minimum_level")});
+    assignSelection(source, result, unmapped, "maxLevel", {AOWIS_QUANTITY("tank_maximum_level")});
+    assignSelection(source, result, unmapped, "elevation",
+                    {AOWIS_QUANTITY("elevation"), AOWIS_QUANTITY("altitude")});
+    assignSelection(source, result, unmapped, "head", {AOWIS_QUANTITY("hydraulic_head"), AOWIS_QUANTITY("head_gain")});
+    assignSelection(source, result, unmapped, "headloss", {AOWIS_QUANTITY("head_loss")});
+    assignSelection(source, result, unmapped, "diameter", {AOWIS_QUANTITY("link_diameter")});
     // Roughness has length units only for Darcy-Weisbach. The imported
     // coefficient for Hazen-Williams or Chezy-Manning remains dimensionless;
     // do not interpret a dimensionless "roughness" source preference as length.
@@ -117,17 +122,18 @@ inline QJsonObject selections(const QJsonObject &source, QStringList *unmapped =
         source.value(QStringLiteral("roughness")).toString());
     if (!source_roughness.isEmpty() && source_roughness != QStringLiteral("1"))
         assignSelection(source, result, unmapped, "roughness",
-                        {"darcy_weisbach_roughness_height"});
-    assignSelection(source, result, unmapped, "tankDiameter", {"tank_diameter"});
-    assignSelection(source, result, unmapped, "velocity", {"velocity"});
+                        {AOWIS_QUANTITY("darcy_weisbach_roughness_height")});
+    assignSelection(source, result, unmapped, "tankDiameter", {AOWIS_QUANTITY("tank_diameter")});
+    assignSelection(source, result, unmapped, "velocity", {AOWIS_QUANTITY("velocity")});
     // Pressure-valued EPANET inputs are normalized to metres of hydraulic
     // head by the importer; choose their original unit for GUI presentation.
-    assignSelection(source, result, unmapped, "pressure", {"pressure_head"});
-    assignSelection(source, result, unmapped, "volume", {"volume"});
-    assignSelection(source, result, unmapped, "minVolume", {"tank_minimum_volume"});
-    assignSelection(source, result, unmapped, "power", {"power"});
-    assignSelection(source, result, unmapped, "waterAge", {"water_age"});
-    assignSelection(source, result, unmapped, "chemicalConcentration", {"chemical_mass_concentration"});
+    assignSelection(source, result, unmapped, "pressure", {AOWIS_QUANTITY("pressure_head")});
+    assignSelection(source, result, unmapped, "volume", {AOWIS_QUANTITY("volume")});
+    assignSelection(source, result, unmapped, "minVolume", {AOWIS_QUANTITY("tank_minimum_volume")});
+    assignSelection(source, result, unmapped, "power", {AOWIS_QUANTITY("power")});
+    assignSelection(source, result, unmapped, "waterAge", {AOWIS_QUANTITY("water_age")});
+    assignSelection(source, result, unmapped, "chemicalConcentration",
+                    {AOWIS_QUANTITY("chemical_mass_concentration")});
     return result;
 }
 
@@ -136,7 +142,7 @@ inline QJsonObject selections(const QJsonObject &source, QStringList *unmapped =
 // (notably CMH). Hidden fields (including legacy minimum tank volume and
 // other unused/legacy metadata) do not justify another GUI presentation profile.
 inline QString matchingBuiltinId(const QJsonObject &selections) {
-    const QString flow = selections.value(QStringLiteral("volumetric_flow_rate")).toString();
+    const QString flow = selections.value(AOWIS_QSTRING_QUANTITY("volumetric_flow_rate")).toString();
     if (flow.isEmpty()) return {};
     for (std::size_t index = 0; index < aowis::units::flow_template_names.size(); ++index) {
         if (flow.toStdString() != aowis::units::flow_template_units[index]) continue;

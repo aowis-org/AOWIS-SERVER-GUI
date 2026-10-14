@@ -1,3 +1,4 @@
+#include "config/unit_quantity_key.h"
 #include "config/unit_numeric_spin_box.h"
 #include "config/unit_profile_manager.h"
 #include "config/unit_aware_view.h"
@@ -202,7 +203,7 @@ QString pipeRoughnessText(const HydraulicSimulationResultLinkPipe &result,
     if (result.roughness_darcy_weisbach_mm.has_value())
     {
         return SimulationInspectorUnitPresentation::format(
-            presentation, "darcy_weisbach_roughness_height",
+            presentation, AOWIS_QUANTITY("darcy_weisbach_roughness_height"),
             result.roughness_darcy_weisbach_mm.value(), 6)
             + QStringLiteral(" (Darcy-Weisbach)");
     }
@@ -697,45 +698,45 @@ void EntityInspectorWidget::setSimulationValue(SimulationField field, double val
     case SimulationField::EmitterFlow:
     case SimulationField::LeakageFlow:
     case SimulationField::Flow:
-        quantity = "volumetric_flow_rate";
+        quantity = AOWIS_QUANTITY("volumetric_flow_rate");
         break;
     case SimulationField::Head:
         quantity = this->entity_type == InfrastructureEntity::Pump
-            ? "head_gain" : "hydraulic_head";
+            ? AOWIS_QUANTITY("head_gain") : AOWIS_QUANTITY("hydraulic_head");
         break;
     case SimulationField::PressureHead:
-        quantity = "pressure_head";
+        quantity = AOWIS_QUANTITY("pressure_head");
         break;
     case SimulationField::WaterLevel:
-        quantity = "water_level";
+        quantity = AOWIS_QUANTITY("water_level");
         break;
     case SimulationField::Volume:
     case SimulationField::MixingZoneVolume:
-        quantity = "volume";
+        quantity = AOWIS_QUANTITY("volume");
         break;
     case SimulationField::Velocity:
-        quantity = "velocity";
+        quantity = AOWIS_QUANTITY("velocity");
         break;
     case SimulationField::HeadLoss:
-        quantity = "head_loss";
+        quantity = AOWIS_QUANTITY("head_loss");
         break;
     case SimulationField::UnitHeadLoss:
-        quantity = "head_loss_gradient";
+        quantity = AOWIS_QUANTITY("head_loss_gradient");
         break;
     case SimulationField::Efficiency:
     case SimulationField::AverageEfficiency:
-        quantity = "efficiency";
+        quantity = AOWIS_QUANTITY("efficiency");
         break;
     case SimulationField::TimeOnline:
-        quantity = "operating_time_percentage";
+        quantity = AOWIS_QUANTITY("operating_time_percentage");
         break;
     case SimulationField::Power:
     case SimulationField::AveragePower:
     case SimulationField::PeakPower:
-        quantity = "power";
+        quantity = AOWIS_QUANTITY("power");
         break;
     case SimulationField::AverageEnergyIntensity:
-        quantity = "energy_intensity";
+        quantity = AOWIS_QUANTITY("energy_intensity");
         break;
     default:
         break;
@@ -989,13 +990,13 @@ void EntityInspectorWidget::refreshSimulation()
             setSimulationText(SimulationField::Setting,
                 SimulationInspectorUnitPresentation::format(
                     UnitProfileManager::instance().presentation(),
-                    "pressure_head", valve_result->setting_pressure_head_m, 3));
+                    AOWIS_QUANTITY("pressure_head"), valve_result->setting_pressure_head_m, 3));
             break;
         case HydraulicLinkValveType::FCV:
             setSimulationText(SimulationField::Setting,
                 SimulationInspectorUnitPresentation::format(
                     UnitProfileManager::instance().presentation(),
-                    "volumetric_flow_rate", valve_result->setting_flow_m3_per_h, 3));
+                    AOWIS_QUANTITY("volumetric_flow_rate"), valve_result->setting_flow_m3_per_h, 3));
             break;
         case HydraulicLinkValveType::TCV:
             setSimulationValue(SimulationField::Setting, valve_result->setting_loss_coefficient, 6);
@@ -1004,7 +1005,7 @@ void EntityInspectorWidget::refreshSimulation()
             setSimulationText(SimulationField::Setting,
                 SimulationInspectorUnitPresentation::format(
                     UnitProfileManager::instance().presentation(),
-                    "valve_position", valve_result->setting_position_percent, 2));
+                    AOWIS_QUANTITY("valve_position"), valve_result->setting_position_percent, 2));
             break;
         case HydraulicLinkValveType::GPV:
             setSimulationText(SimulationField::Setting, QStringLiteral("Curve-defined"));
@@ -1235,7 +1236,7 @@ void EntityInspectorWidget::refreshWaterQualitySimulation()
         this->label_quality_simulation_value->setText(
             SimulationInspectorUnitPresentation::format(
                 UnitProfileManager::instance().presentation(),
-                "chemical_mass_concentration", value, 6));
+                AOWIS_QUANTITY("chemical_mass_concentration"), value, 6));
         if (node_entity)
         {
             this->label_quality_simulation_source_mass_name->setVisible(true);
@@ -1243,7 +1244,7 @@ void EntityInspectorWidget::refreshWaterQualitySimulation()
             this->label_quality_simulation_source_mass->setText(
                 SimulationInspectorUnitPresentation::format(
                     UnitProfileManager::instance().presentation(),
-                    "chemical_mass_flow_rate", source_mass_flow_mg_per_min, 6));
+                    AOWIS_QUANTITY("chemical_mass_flow_rate"), source_mass_flow_mg_per_min, 6));
         }
     }
     else if (timeline->analysis == WaterQualityAnalysisType::WaterAge)
@@ -1251,7 +1252,7 @@ void EntityInspectorWidget::refreshWaterQualitySimulation()
         this->label_quality_simulation_value_name->setText("Water Age");
         this->label_quality_simulation_value->setText(
             SimulationInspectorUnitPresentation::format(
-                UnitProfileManager::instance().presentation(), "water_age", value, 6));
+                UnitProfileManager::instance().presentation(), AOWIS_QUANTITY("water_age"), value, 6));
     }
     else
     {
@@ -1259,7 +1260,7 @@ void EntityInspectorWidget::refreshWaterQualitySimulation()
         this->label_quality_simulation_value->setText(
             SimulationInspectorUnitPresentation::format(
                 UnitProfileManager::instance().presentation(),
-                "source_trace_percentage", value, 6));
+                AOWIS_QUANTITY("source_trace_percentage"), value, 6));
     }
 }
 
@@ -2147,9 +2148,9 @@ void EntityInspectorWidget::addGroupElevation()
     // All three node types use canonical metre values. Editors only present a
     // selected unit and must never write back a rounded display value.
     const auto node_editor = [this](int field) -> QDoubleSpinBox * {
-        const std::string quantity = field == 1 ? "vertical_offset" :
+        const std::string quantity = field == 1 ? AOWIS_QUANTITY("vertical_offset") :
             this->entity_type == InfrastructureEntity::Reservoir && field == 2
-                ? "hydraulic_head" : "elevation";
+                ? AOWIS_QUANTITY("hydraulic_head") : AOWIS_QUANTITY("elevation");
         return new UnitNumericSpinBox(
             [this, field]() -> std::optional<double> {
                 if (!this->hydraulic_data) return std::nullopt;
@@ -2729,7 +2730,7 @@ void EntityInspectorWidget::addGroupDemands(bool include_emitter)
             read_exponent,
             [data, junction_uuid](double value) {
                 return data && data->setJunctionEmitterPressureExponent(junction_uuid, value);
-            }, "emitter_exponent", "1", 0.000001, 1000000.0, 0.01, 10,
+            }, AOWIS_QUANTITY("emitter_exponent"), "1", 0.000001, 1000000.0, 0.01, 10,
             nullptr, [](const QString &) { return QString(); });
         this->spin_emitter_pressure_exponent = exponent;
         exponent->setAlignment(Qt::AlignRight);
@@ -2926,8 +2927,8 @@ void EntityInspectorWidget::refreshDemands(bool presentation_only)
         const int demand_count = demands.size();
         const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
         const QString quantity = this->entity_type == InfrastructureEntity::DemandPoint
-            ? QStringLiteral("customer_demand_flow_rate")
-            : QStringLiteral("base_demand_flow_rate");
+            ? AOWIS_QSTRING_QUANTITY("customer_demand_flow_rate")
+            : AOWIS_QSTRING_QUANTITY("base_demand_flow_rate");
         const QString unit = context.unit(quantity);
         const std::optional<double> total = aowis::units::convert(
             quantity.toStdString(), total_base_demand_m3_per_h, "m3/h", unit.toStdString());
@@ -3024,7 +3025,7 @@ void EntityInspectorWidget::addDemandRow(
             return !this->demands_structure_stale &&
                 setCurrentDemandBaseDemandM3PerH(demand_index, value);
         }, this->entity_type == InfrastructureEntity::DemandPoint
-               ? "customer_demand_flow_rate" : "base_demand_flow_rate",
+               ? AOWIS_QUANTITY("customer_demand_flow_rate") : AOWIS_QUANTITY("base_demand_flow_rate"),
         "m3/h", -1000000000.0, 1000000000.0,
         0.1, 6, this->table_demands);
     spin_base_demand->setAlignment(Qt::AlignRight);
@@ -3313,9 +3314,9 @@ void EntityInspectorWidget::addGroupNodeQualityInputs()
     // All node types share these canonical-backed editors. Only accepted user
     // edits invoke the HydraulicData setters; unit changes are read-only.
     const auto quality_editor = [this](NodeQualityNumber field) -> QDoubleSpinBox * {
-        const std::string quantity = field == NodeQualityNumber::InitialWaterAge ? "water_age"
-            : field == NodeQualityNumber::SourceMassFlow ? "chemical_mass_flow_rate"
-            : "chemical_mass_concentration";
+        const std::string quantity = field == NodeQualityNumber::InitialWaterAge ? AOWIS_QUANTITY("water_age")
+            : field == NodeQualityNumber::SourceMassFlow ? AOWIS_QUANTITY("chemical_mass_flow_rate")
+            : AOWIS_QUANTITY("chemical_mass_concentration");
         const std::string storage_unit = field == NodeQualityNumber::InitialWaterAge ? "h"
             : field == NodeQualityNumber::SourceMassFlow ? "mg/min" : "mg/L";
         const double maximum = field == NodeQualityNumber::SourceMassFlow ? 1e12 : 1e9;

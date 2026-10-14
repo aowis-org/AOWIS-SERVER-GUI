@@ -1,5 +1,7 @@
 #pragma once
 
+#include "config/unit_quantity_key.h"
+
 #include "config/unit_presentation_context.h"
 #include <aowis/model/units/conversion.h>
 
@@ -23,12 +25,12 @@ struct Presentation
 inline Presentation forContext(const UnitPresentationContext &context)
 {
     Presentation result;
-    const QString requested = context.unit(QStringLiteral("distance"));
+    const QString requested = context.unit(AOWIS_QSTRING_QUANTITY("distance"));
     if (requested.isEmpty() || requested == QStringLiteral("m"))
         return result;
 
     const std::optional<double> converted = aowis::units::convert(
-        "distance", 1.0, "m", requested.toStdString());
+        AOWIS_QUANTITY("distance"), 1.0, "m", requested.toStdString());
     if (!converted || !std::isfinite(*converted) || *converted <= 0.0)
         return result;
 

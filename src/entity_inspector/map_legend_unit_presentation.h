@@ -1,5 +1,7 @@
 #pragma once
 
+#include <aowis/model/units/quantity.h>
+
 #include "config/unit_presentation_context.h"
 #include "config/unit_table_presentation.h"
 
@@ -25,24 +27,24 @@ struct Range
 
 inline std::string_view quantityForMetric(const QString &metric)
 {
-    if (metric == QStringLiteral("Elevation")) return "elevation";
-    if (metric == QStringLiteral("Head")) return "hydraulic_head";
-    if (metric == QStringLiteral("Pressure")) return "pressure_head";
-    if (metric == QStringLiteral("Head Loss")) return "head_loss";
-    if (metric == QStringLiteral("Diameter")) return "link_diameter";
-    if (metric == QStringLiteral("Length")) return "length";
+    if (metric == QStringLiteral("Elevation")) return AOWIS_QUANTITY("elevation");
+    if (metric == QStringLiteral("Head")) return AOWIS_QUANTITY("hydraulic_head");
+    if (metric == QStringLiteral("Pressure")) return AOWIS_QUANTITY("pressure_head");
+    if (metric == QStringLiteral("Head Loss")) return AOWIS_QUANTITY("head_loss");
+    if (metric == QStringLiteral("Diameter")) return AOWIS_QUANTITY("link_diameter");
+    if (metric == QStringLiteral("Length")) return AOWIS_QUANTITY("length");
     if (metric == QStringLiteral("Absolute Roughness ε"))
-        return "darcy_weisbach_roughness_height";
-    if (metric == QStringLiteral("Base Demand")) return "base_demand_flow_rate";
+        return AOWIS_QUANTITY("darcy_weisbach_roughness_height");
+    if (metric == QStringLiteral("Base Demand")) return AOWIS_QUANTITY("base_demand_flow_rate");
     if (metric == QStringLiteral("Flow Rate") || metric == QStringLiteral("Total Demand") || metric == QStringLiteral("Demand Deficit")
         || metric == QStringLiteral("Emitter Flow") || metric == QStringLiteral("Leakage"))
-        return "volumetric_flow_rate";
-    if (metric == QStringLiteral("Velocity")) return "velocity";
+        return AOWIS_QUANTITY("volumetric_flow_rate");
+    if (metric == QStringLiteral("Velocity")) return AOWIS_QUANTITY("velocity");
     if (metric == QStringLiteral("Cl₂") || metric == QStringLiteral("Chlorine"))
-        return "chemical_mass_concentration";
-    if (metric == QStringLiteral("Water Age")) return "water_age";
+        return AOWIS_QUANTITY("chemical_mass_concentration");
+    if (metric == QStringLiteral("Water Age")) return AOWIS_QUANTITY("water_age");
     if (metric == QStringLiteral("River Water") || metric == QStringLiteral("Lake Water"))
-        return "source_trace_percentage";
+        return AOWIS_QUANTITY("source_trace_percentage");
     return {};
 }
 

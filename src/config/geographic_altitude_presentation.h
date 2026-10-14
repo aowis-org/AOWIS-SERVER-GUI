@@ -1,5 +1,7 @@
 #pragma once
 
+#include "config/unit_quantity_key.h"
+
 #include "config/unit_presentation_context.h"
 #include <aowis/model/units/conversion.h>
 
@@ -17,10 +19,10 @@ namespace GeographicAltitudePresentation
     if (!altitude_m || !std::isfinite(*altitude_m))
         return QString(QChar(0x2014));
 
-    QString unit = context.unit(QStringLiteral("altitude"));
+    QString unit = context.unit(AOWIS_QSTRING_QUANTITY("altitude"));
     if (unit.isEmpty()) unit = QStringLiteral("m");
     const std::optional<double> displayed = aowis::units::convert(
-        "altitude", *altitude_m, "m", unit.toStdString());
+        AOWIS_QUANTITY("altitude"), *altitude_m, "m", unit.toStdString());
     if (!displayed) return QString(QChar(0x2014));
     const std::optional<QString> formatted = NumericText::measurement(
         displayed, unit, context.locale(), policy);
@@ -30,6 +32,6 @@ namespace GeographicAltitudePresentation
 [[nodiscard]] inline QString format(const UnitPresentationContext &context,
                                    const std::optional<double> &altitude_m)
 {
-    return format(context, altitude_m, context.formatPolicy(QStringLiteral("altitude")));
+    return format(context, altitude_m, context.formatPolicy(AOWIS_QSTRING_QUANTITY("altitude")));
 }
 }

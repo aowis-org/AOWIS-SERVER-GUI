@@ -30,6 +30,23 @@ int main()
     CHECK(!EmitterCoefficientUnits::decode("US gal/min|ft|garbage"));
     CHECK(!EmitterCoefficientUnits::decode("US gal/min|ft|0"));
     CHECK(!EmitterCoefficientUnits::decode("US gal/min|ft|0.5|other"));
+    // The token parser must work with Emscripten libc++ (no floating from_chars),
+    // accept the C-locale decimal point, and reject incomplete/nonfinite values.
+    CHECK(!EmitterCoefficientUnits::decode("US gal/min|ft|0,5"));
+    CHECK(!EmitterCoefficientUnits::decode("US gal/min|ft| 0.5"));
+    CHECK(!EmitterCoefficientUnits::decode("US gal/min|ft|0.5 "));
+    CHECK(!EmitterCoefficientUnits::decode("US gal/min|ft|0.5junk"));
+    CHECK(!EmitterCoefficientUnits::decode("US gal/min|ft|inf"));
+    CHECK(!EmitterCoefficientUnits::decode("US gal/min|ft|0.5|1.2junk"));
+    CHECK(!EmitterCoefficientUnits::decode("US gal/min|ft|0.5|0"));
+    CHECK(!EmitterCoefficientUnits::decode("US gal/min|ft|0.5|"));
+    CHECK(!EmitterCoefficientUnits::decode("US gal/min|ft|0.5|1,2"));
+    const Unit precision_unit{"m3/h", "m", 0.12345678901234567, 1.2345678901234567};
+    const std::optional<std::string> precision_key = EmitterCoefficientUnits::encode(precision_unit);
+    CHECK(precision_key);
+    const std::optional<Unit> precision_decoded = EmitterCoefficientUnits::decode(*precision_key);
+    CHECK(precision_decoded && precision_decoded->exponent == precision_unit.exponent &&
+          precision_decoded->specific_gravity == precision_unit.specific_gravity);
     const std::optional<std::string> pressure_key = EmitterCoefficientUnits::encode(pressure_imperial);
     CHECK(pressure_key);
     const std::optional<Unit> pressure_decoded = EmitterCoefficientUnits::decode(*pressure_key);

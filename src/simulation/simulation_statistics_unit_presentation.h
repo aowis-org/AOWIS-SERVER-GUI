@@ -1,5 +1,7 @@
 #pragma once
 
+#include <aowis/model/units/quantity.h>
+
 #include "config/unit_table_presentation.h"
 
 #include <QString>
@@ -11,17 +13,17 @@ namespace SimulationStatisticsUnits
 inline QString selectedUnit(const UnitPresentationContext &context, bool head_error)
 {
     return UnitTablePresentation::unitSymbol(UnitTablePresentation::selectedUnit(
-        context, head_error ? "hydraulic_head" : "volumetric_flow_rate"));
+        context, head_error ? AOWIS_QUANTITY("hydraulic_head") : AOWIS_QUANTITY("volumetric_flow_rate")));
 }
 
 inline QString format(const UnitPresentationContext &context, bool head_error, double canonical)
 {
     const std::optional<double> displayed = UnitTablePresentation::toDisplay(
-        context, head_error ? "hydraulic_head" : "volumetric_flow_rate", canonical);
+        context, head_error ? AOWIS_QUANTITY("hydraulic_head") : AOWIS_QUANTITY("volumetric_flow_rate"), canonical);
     if (!displayed)
         return QStringLiteral("—");
     return UnitTablePresentation::formatNumber(
-        context, *displayed, 6, QString(), head_error ? "hydraulic_head" : "volumetric_flow_rate");
+        context, *displayed, 6, QString(), head_error ? AOWIS_QUANTITY("hydraulic_head") : AOWIS_QUANTITY("volumetric_flow_rate"));
 }
 
 inline QString formatWithUnit(const UnitPresentationContext &context, bool head_error,

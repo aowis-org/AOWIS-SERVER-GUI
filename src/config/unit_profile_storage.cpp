@@ -1,3 +1,4 @@
+#include <aowis/model/units/quantity.h>
 #include "config/unit_profile_storage.h"
 
 #include <QJsonArray>
@@ -42,7 +43,7 @@ UnitProfileSnapshot QSettingsUnitProfileStorage::load() const
             if (aowis::units::isAllowedUnit(field.key, unit.toStdString()) &&
                 (unit.toStdString() != aowis::units::canonicalUnit(field.key) ||
                  !aowis::units::inheritedUnitQuantity(field.key).empty() ||
-                 (field.key == "pressure_head" && explicit_pressure_head)))
+                 (field.key == AOWIS_QUANTITY("pressure_head") && explicit_pressure_head)))
                 profile.overrides.emplace(key.toStdString(), unit.toStdString());
         }
         names.insert(name);
@@ -59,7 +60,7 @@ bool QSettingsUnitProfileStorage::save(const UnitProfileSnapshot &snapshot) cons
         if (profile.builtin) continue;
         QJsonObject units;
         const bool explicit_pressure_head =
-            profile.overrides.find("pressure_head") != profile.overrides.end();
+            profile.overrides.find(AOWIS_QUANTITY("pressure_head")) != profile.overrides.end();
         // Preserve the legacy full-unit JSON representation for backward compatibility.
         for (const aowis::units::UnitField &field : aowis::units::unit_fields) {
             // Omit inherited choices until explicitly selected, so older profiles
@@ -69,14 +70,14 @@ bool QSettingsUnitProfileStorage::save(const UnitProfileSnapshot &snapshot) cons
                 continue;
             // The legacy physical-pressure preference is a fallback, not an
             // explicit pressure-head override. Do not freeze it during saving.
-            if (field.key == "pressure_head" && !explicit_pressure_head
-                && profile.overrides.find("pressure") != profile.overrides.end())
+            if (field.key == AOWIS_QUANTITY("pressure_head") && !explicit_pressure_head
+                && profile.overrides.find(AOWIS_QUANTITY("pressure")) != profile.overrides.end())
                 continue;
             // Keep historical minimum-volume selections in storage for a
             // lossless legacy round trip; presentation always follows volume.
             const aowis::units::UnitSelections::const_iterator explicit_choice =
                 profile.overrides.find(field.key);
-            const std::string_view unit = field.key == "tank_minimum_volume"
+            const std::string_view unit = field.key == AOWIS_QUANTITY("tank_minimum_volume")
                 && explicit_choice != profile.overrides.end()
                 ? std::string_view(explicit_choice->second)
                 : aowis::units::resolvedUnit(profile, field.key);

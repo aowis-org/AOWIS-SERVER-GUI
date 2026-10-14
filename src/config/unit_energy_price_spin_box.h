@@ -1,5 +1,7 @@
 #pragma once
 
+#include "config/unit_quantity_key.h"
+
 #include "numeric_editor_adapters.h"
 #include "unit_presentation_context.h"
 #include "unit_energy_price_conversion.h"
@@ -49,7 +51,7 @@ public:
 
     bool refreshUnits(const UnitPresentationContext &context, const QString &currency)
     {
-        const QString unit = context.unit(QStringLiteral("energy"));
+        const QString unit = context.unit(AOWIS_QSTRING_QUANTITY("energy"));
         const std::string unit_id = unit.toStdString();
         const std::optional<double> maximum = UnitEnergyPriceConversion::fromStored(1000.0, unit_id);
         const std::optional<double> step = UnitEnergyPriceConversion::fromStored(0.01, unit_id);
@@ -68,7 +70,7 @@ public:
         const std::optional<double> actual = UnitEnergyPriceBindingStorage::binding_.presentation(unit_id);
         if (actual && *actual > 0.0 && *actual < 1.0)
             decimals = std::max(decimals, static_cast<int>(std::ceil(-std::log10(*actual))) + 2);
-        const NumericFormatPolicy policy = context.formatPolicy(QStringLiteral("energy"));
+        const NumericFormatPolicy policy = context.formatPolicy(AOWIS_QSTRING_QUANTITY("energy"));
         if (policy.notation == NumericFormatPolicy::Notation::Fixed)
             decimals = std::max(decimals, policy.precision);
         decimals = std::clamp(decimals, 4, 18);

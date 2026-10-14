@@ -1,5 +1,7 @@
 #pragma once
 
+#include "config/unit_quantity_key.h"
+
 #include "config/unit_presentation_context.h"
 #include <aowis/model/units/conversion.h>
 
@@ -19,7 +21,7 @@ inline QString format(double meters, const UnitPresentationContext &context,
         return QStringLiteral("—");
 
     const QString quantity = camera_distance
-        ? QStringLiteral("distance") : QStringLiteral("vertical_offset");
+        ? AOWIS_QSTRING_QUANTITY("distance") : AOWIS_QSTRING_QUANTITY("vertical_offset");
     QString unit = context.unit(quantity);
     if (unit.isEmpty())
         unit = QStringLiteral("m");

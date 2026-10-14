@@ -1,6 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
+# The Docker environment may default to the ASCII-only C locale. Host-side Qt
+# tools (particularly qsb and rcc) require UTF-8 and otherwise warn on each
+# invocation during the build.
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
+
 QT_WASM_PATH="${AOWIS_QT_WASM_PATH:-/opt/qt-wasm}"
 QT_CMAKE="${QT_WASM_PATH}/bin/qt-cmake"
 EMSDK_ROOT="${EMSDK:-/opt/emsdk}"

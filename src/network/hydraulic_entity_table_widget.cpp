@@ -1,3 +1,4 @@
+#include <aowis/model/units/quantity.h>
 #include "network/hydraulic_entity_table_widget.h"
 
 #include <algorithm>
@@ -301,13 +302,13 @@ TableColumn qualityResultColumn(WaterQualityAnalysisType analysis)
     {
     case WaterQualityAnalysisType::Chemical:
         return {QStringLiteral("Chemical Concentration [mg/L]"), true,
-                {"chemical_mass_concentration"}, ColumnFilterKind::Number};
+                {AOWIS_QUANTITY("chemical_mass_concentration")}, ColumnFilterKind::Number};
     case WaterQualityAnalysisType::WaterAge:
         return {QStringLiteral("Water Age [h]"), true,
-                {"water_age"}, ColumnFilterKind::Number};
+                {AOWIS_QUANTITY("water_age")}, ColumnFilterKind::Number};
     case WaterQualityAnalysisType::SourceTrace:
         return {QStringLiteral("Source Trace [%]"), true,
-                {"source_trace_percentage"}, ColumnFilterKind::Number};
+                {AOWIS_QUANTITY("source_trace_percentage")}, ColumnFilterKind::Number};
     case WaterQualityAnalysisType::None:
         return {QStringLiteral("Water Quality Result"), true, {}, ColumnFilterKind::None};
     }
@@ -337,13 +338,13 @@ TableCell qualityResultCell(const ResultType *result, WaterQualityAnalysisType a
 void appendNodeQualityInputColumns(QList<TableColumn> &columns)
 {
     columns.append({QStringLiteral("Initial Chemical [mg/L]"), false,
-        {"chemical_mass_concentration"}, ColumnFilterKind::Number});
-    columns.append({QStringLiteral("Initial Water Age [h]"), false, {"water_age"}, ColumnFilterKind::Number});
+        {AOWIS_QUANTITY("chemical_mass_concentration")}, ColumnFilterKind::Number});
+    columns.append({QStringLiteral("Initial Water Age [h]"), false, {AOWIS_QUANTITY("water_age")}, ColumnFilterKind::Number});
     columns.append({QStringLiteral("Quality Source Type"), false, {}, ColumnFilterKind::Choice});
     columns.append({QStringLiteral("Quality Source Concentration [mg/L]"), false,
-        {"chemical_mass_concentration"}, ColumnFilterKind::Number});
+        {AOWIS_QUANTITY("chemical_mass_concentration")}, ColumnFilterKind::Number});
     columns.append({QStringLiteral("Quality Source Mass Flow [mg/min]"), false,
-        {"chemical_mass_flow_rate"}, ColumnFilterKind::Number});
+        {AOWIS_QUANTITY("chemical_mass_flow_rate")}, ColumnFilterKind::Number});
     columns.append({QStringLiteral("Quality Source Pattern"), false, {}, ColumnFilterKind::Text});
 }
 
@@ -667,13 +668,13 @@ TableCell valveSettingCell(const HydraulicLinkValve &valve)
     case HydraulicLinkValveType::PRV:
     case HydraulicLinkValveType::PSV:
     case HydraulicLinkValveType::PBV:
-        return quantityCell(valve.setting_pressure_head_m, 3, "pressure_head", QStringLiteral(" m"));
+        return quantityCell(valve.setting_pressure_head_m, 3, AOWIS_QUANTITY("pressure_head"), QStringLiteral(" m"));
     case HydraulicLinkValveType::FCV:
-        return quantityCell(valve.setting_flow_m3_per_h, 3, "volumetric_flow_rate", QStringLiteral(" m³/h"));
+        return quantityCell(valve.setting_flow_m3_per_h, 3, AOWIS_QUANTITY("volumetric_flow_rate"), QStringLiteral(" m³/h"));
     case HydraulicLinkValveType::TCV:
         return numberCell(valve.setting_loss_coefficient, 6);
     case HydraulicLinkValveType::PCV:
-        return quantityCell(valve.setting_position_percent, 2, "valve_position", QStringLiteral(" %"));
+        return quantityCell(valve.setting_position_percent, 2, AOWIS_QUANTITY("valve_position"), QStringLiteral(" %"));
     case HydraulicLinkValveType::GPV:
         return emptyCell();
     }
@@ -688,13 +689,13 @@ TableCell valveResultSettingCell(const HydraulicSimulationResultLinkValve &valve
     case HydraulicLinkValveType::PRV:
     case HydraulicLinkValveType::PSV:
     case HydraulicLinkValveType::PBV:
-        return quantityCell(valve.setting_pressure_head_m, 3, "pressure_head", QStringLiteral(" m"));
+        return quantityCell(valve.setting_pressure_head_m, 3, AOWIS_QUANTITY("pressure_head"), QStringLiteral(" m"));
     case HydraulicLinkValveType::FCV:
-        return quantityCell(valve.setting_flow_m3_per_h, 3, "volumetric_flow_rate", QStringLiteral(" m³/h"));
+        return quantityCell(valve.setting_flow_m3_per_h, 3, AOWIS_QUANTITY("volumetric_flow_rate"), QStringLiteral(" m³/h"));
     case HydraulicLinkValveType::TCV:
         return numberCell(valve.setting_loss_coefficient, 6);
     case HydraulicLinkValveType::PCV:
-        return quantityCell(valve.setting_position_percent, 2, "valve_position", QStringLiteral(" %"));
+        return quantityCell(valve.setting_position_percent, 2, AOWIS_QUANTITY("valve_position"), QStringLiteral(" %"));
     case HydraulicLinkValveType::GPV:
         return emptyCell();
     }
@@ -740,7 +741,7 @@ QList<DemandDetail> junctionDemandDetails(const NetworkHydraulic &network,
 
 QString demandDetailsText(const QList<DemandDetail> &details,
                           const UnitPresentationContext *context = nullptr,
-                          std::string_view quantity = "base_demand_flow_rate")
+                          std::string_view quantity = AOWIS_QUANTITY("base_demand_flow_rate"))
 {
     QStringList parts;
     for (const DemandDetail &detail : details)
@@ -1091,7 +1092,7 @@ public:
                 return demandDetailsText(
                     row.demand_details, &context,
                     this->entity_type == InfrastructureEntity::DemandPoint
-                        ? "customer_demand_flow_rate" : "base_demand_flow_rate");
+                        ? AOWIS_QUANTITY("customer_demand_flow_rate") : AOWIS_QUANTITY("base_demand_flow_rate"));
             if (cell.reaction_kind.has_value() && cell.sort_value.isValid())
                 return UnitTablePresentation::formatReactionCoefficient(
                     context, *cell.reaction_kind, cell.reaction_order,
@@ -1375,7 +1376,7 @@ private:
         appendNodePositionColumns(this->columns);
         this->columns.append({QStringLiteral("Demand Count"), false, {}, ColumnFilterKind::Integer});
         this->columns.append({QStringLiteral("Customer Demand Base [m³/h]"), false,
-            {"customer_demand_flow_rate"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("customer_demand_flow_rate")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Demand Details"), false,
             {{}, UnitTablePresentation::ColumnKind::DemandDetails}, ColumnFilterKind::Text});
         this->columns.append({QStringLiteral("Attachment Type"), false, {}, ColumnFilterKind::Choice});
@@ -1450,39 +1451,39 @@ private:
         appendCommonColumns(this->columns);
         appendNodePositionColumns(this->columns);
         this->columns.append({QStringLiteral("Elevation Input"), false, {}, ColumnFilterKind::Choice});
-        this->columns.append({QStringLiteral("Elevation Direct [m]"), false, {"elevation"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Elevation Terrain [m]"), false, {"elevation"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Elevation Direct [m]"), false, {AOWIS_QUANTITY("elevation")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Elevation Terrain [m]"), false, {AOWIS_QUANTITY("elevation")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Elevation Offset [m]"), false,
-            {"vertical_offset"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("vertical_offset")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Elevation Resolved [m]"), false,
-            {"elevation"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("elevation")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Demand Count"), false, {}, ColumnFilterKind::Integer});
         this->columns.append({QStringLiteral("Demand Base [m³/h]"), false,
-            {"base_demand_flow_rate"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("base_demand_flow_rate")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Demand Details"), false,
             {{}, UnitTablePresentation::ColumnKind::DemandDetails}, ColumnFilterKind::Text});
         this->columns.append({QStringLiteral("Emitter Coefficient"), false, {}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Emitter Exponent"), false, {}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Demand Requested [m³/h]"), true,
-            {"volumetric_flow_rate"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("volumetric_flow_rate")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Demand Delivered [m³/h]"), true,
-            {"volumetric_flow_rate"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("volumetric_flow_rate")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Demand Deficit [m³/h]"), true,
-            {"volumetric_flow_rate"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("volumetric_flow_rate")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Demand Total [m³/h]"), true,
-            {"volumetric_flow_rate"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("volumetric_flow_rate")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Flow Emitter [m³/h]"), true,
-            {"volumetric_flow_rate"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("volumetric_flow_rate")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Flow Leakage [m³/h]"), true,
-            {"volumetric_flow_rate"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Head [m]"), true, {"hydraulic_head"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Pressure [m]"), true, {"pressure_head"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("volumetric_flow_rate")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head [m]"), true, {AOWIS_QUANTITY("hydraulic_head")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Pressure [m]"), true, {AOWIS_QUANTITY("pressure_head")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Referenced by Control"), true, {}, ColumnFilterKind::Choice});
         appendNodeQualityInputColumns(this->columns);
         this->columns.append(qualityResultColumn(quality_analysis));
         if (quality_analysis == WaterQualityAnalysisType::Chemical)
             this->columns.append({QStringLiteral("Quality Source Mass Flow [mg/min]"), true,
-                {"chemical_mass_flow_rate"}, ColumnFilterKind::Number});
+                {AOWIS_QUANTITY("chemical_mass_flow_rate")}, ColumnFilterKind::Number});
 
         for (const HydraulicNodeJunction &junction : network.nodes_junctions)
         {
@@ -1565,23 +1566,23 @@ private:
         appendCommonColumns(this->columns);
         appendNodePositionColumns(this->columns);
         this->columns.append({QStringLiteral("Head Input"), false, {}, ColumnFilterKind::Choice});
-        this->columns.append({QStringLiteral("Head Direct [m]"), false, {"hydraulic_head"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Elevation Terrain [m]"), false, {"elevation"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Head Offset [m]"), false, {"vertical_offset"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head Direct [m]"), false, {AOWIS_QUANTITY("hydraulic_head")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Elevation Terrain [m]"), false, {AOWIS_QUANTITY("elevation")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head Offset [m]"), false, {AOWIS_QUANTITY("vertical_offset")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Head Resolved [m]"), false,
-            {"hydraulic_head"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("hydraulic_head")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Head Pattern Mode"), false, {}, ColumnFilterKind::Choice});
         this->columns.append({QStringLiteral("Head Pattern"), false, {}, ColumnFilterKind::Text});
         this->columns.append({QStringLiteral("Demand Net [m³/h]"), true,
-            {"volumetric_flow_rate"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Head [m]"), true, {"hydraulic_head"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Pressure [m]"), true, {"pressure_head"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("volumetric_flow_rate")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head [m]"), true, {AOWIS_QUANTITY("hydraulic_head")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Pressure [m]"), true, {AOWIS_QUANTITY("pressure_head")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Referenced by Control"), true, {}, ColumnFilterKind::Choice});
         appendNodeQualityInputColumns(this->columns);
         this->columns.append(qualityResultColumn(quality_analysis));
         if (quality_analysis == WaterQualityAnalysisType::Chemical)
             this->columns.append({QStringLiteral("Quality Source Mass Flow [mg/min]"), true,
-                {"chemical_mass_flow_rate"}, ColumnFilterKind::Number});
+                {AOWIS_QUANTITY("chemical_mass_flow_rate")}, ColumnFilterKind::Number});
 
         for (const HydraulicNodeReservoir &reservoir : network.nodes_reservoirs)
         {
@@ -1652,33 +1653,33 @@ private:
         appendCommonColumns(this->columns);
         appendNodePositionColumns(this->columns);
         this->columns.append({QStringLiteral("Elevation Input"), false, {}, ColumnFilterKind::Choice});
-        this->columns.append({QStringLiteral("Elevation Bottom [m]"), false, {"elevation"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Elevation Terrain [m]"), false, {"elevation"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Elevation Bottom [m]"), false, {AOWIS_QUANTITY("elevation")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Elevation Terrain [m]"), false, {AOWIS_QUANTITY("elevation")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Bottom Offset [m]"), false,
-            {"vertical_offset"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("vertical_offset")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Elevation Bottom Resolved [m]"), false,
-            {"elevation"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("elevation")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Level Initial [m]"), false,
-            {"tank_initial_level"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("tank_initial_level")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Level Minimum [m]"), false,
-            {"tank_minimum_level"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("tank_minimum_level")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Level Maximum [m]"), false,
-            {"tank_maximum_level"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("tank_maximum_level")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Geometry Input"), false, {}, ColumnFilterKind::Choice});
-        this->columns.append({QStringLiteral("Diameter [m]"), false, {"tank_diameter"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Area Cross-Section [m²]"), false, {"area"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Volume Maximum [m³]"), false, {"volume"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Diameter [m]"), false, {AOWIS_QUANTITY("tank_diameter")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Area Cross-Section [m²]"), false, {AOWIS_QUANTITY("area")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Volume Maximum [m³]"), false, {AOWIS_QUANTITY("volume")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Volume Minimum [m³]"), false,
-            {"tank_minimum_volume"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("tank_minimum_volume")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Volume Curve"), false, {}, ColumnFilterKind::Text});
         this->columns.append({QStringLiteral("Can Overflow"), false, {}, ColumnFilterKind::Choice});
         this->columns.append({QStringLiteral("Demand Net [m³/h]"), true,
-            {"volumetric_flow_rate"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Head [m]"), true, {"hydraulic_head"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Pressure [m]"), true, {"pressure_head"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Level Water [m]"), true, {"water_level"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Volume [m³]"), true, {"volume"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Volume Mixing-Zone [m³]"), true, {"volume"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("volumetric_flow_rate")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head [m]"), true, {AOWIS_QUANTITY("hydraulic_head")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Pressure [m]"), true, {AOWIS_QUANTITY("pressure_head")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Level Water [m]"), true, {AOWIS_QUANTITY("water_level")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Volume [m³]"), true, {AOWIS_QUANTITY("volume")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Volume Mixing-Zone [m³]"), true, {AOWIS_QUANTITY("volume")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Referenced by Control"), true, {}, ColumnFilterKind::Choice});
         appendNodeQualityInputColumns(this->columns);
         this->columns.append({QStringLiteral("Quality Mixing Model"), false, {}, ColumnFilterKind::Choice});
@@ -1689,7 +1690,7 @@ private:
         this->columns.append(qualityResultColumn(quality_analysis));
         if (quality_analysis == WaterQualityAnalysisType::Chemical)
             this->columns.append({QStringLiteral("Quality Source Mass Flow [mg/min]"), true,
-                {"chemical_mass_flow_rate"}, ColumnFilterKind::Number});
+                {AOWIS_QUANTITY("chemical_mass_flow_rate")}, ColumnFilterKind::Number});
 
         for (const HydraulicNodeTank &tank : network.nodes_tanks)
         {
@@ -1779,33 +1780,33 @@ private:
         this->columns.append({QStringLiteral("Node 1"), false, {}, ColumnFilterKind::Text});
         this->columns.append({QStringLiteral("Node 2"), false, {}, ColumnFilterKind::Text});
         this->columns.append({QStringLiteral("Vertices"), false, {}, ColumnFilterKind::Integer});
-        this->columns.append({QStringLiteral("Length Calculated [m]"), false, {"length"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Length Measured [m]"), false, {"length"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Length Effective [m]"), false, {"length"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Length Calculated [m]"), false, {AOWIS_QUANTITY("length")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Length Measured [m]"), false, {AOWIS_QUANTITY("length")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Length Effective [m]"), false, {AOWIS_QUANTITY("length")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Status Initial"), false, {}, ColumnFilterKind::Choice});
-        this->columns.append({QStringLiteral("Diameter [mm]"), false, {"link_diameter"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Diameter [mm]"), false, {AOWIS_QUANTITY("link_diameter")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Material"), false, {}, ColumnFilterKind::Text});
         this->columns.append({QStringLiteral("Roughness HW"), false, {}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Roughness DW [mm]"), false,
-            {"darcy_weisbach_roughness_height"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("darcy_weisbach_roughness_height")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Roughness CM"), false, {}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Minor Loss"), false, {}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Leak Area [mm²/100m]"), false,
-            {"leak_area_per_100m_pipe_length"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("leak_area_per_100m_pipe_length")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Leak Expansion [mm²/m head]"), false,
-            {"leak_area_expansion_per_pressure_head"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Flow [m³/h]"), true, {"volumetric_flow_rate"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("leak_area_expansion_per_pressure_head")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Flow [m³/h]"), true, {AOWIS_QUANTITY("volumetric_flow_rate")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Flow Leakage [m³/h]"), true,
-            {"volumetric_flow_rate"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Velocity [m/s]"), true, {"velocity"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Head Loss [m]"), true, {"head_loss"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("volumetric_flow_rate")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Velocity [m/s]"), true, {AOWIS_QUANTITY("velocity")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head Loss [m]"), true, {AOWIS_QUANTITY("head_loss")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Head Loss Unit [m/km]"), true,
-            {"head_loss_gradient"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("head_loss_gradient")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Friction Factor"), true, {}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Status"), true, {}, ColumnFilterKind::Choice});
         this->columns.append({QStringLiteral("Roughness HW Effective"), true, {}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Roughness DW Effective [mm]"), true,
-            {"darcy_weisbach_roughness_height"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("darcy_weisbach_roughness_height")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Roughness CM Effective"), true, {}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Referenced by Control"), true, {}, ColumnFilterKind::Choice});
         this->columns.append({QStringLiteral("Quality Override Bulk Reaction"), false, {}, ColumnFilterKind::Choice});
@@ -1904,7 +1905,7 @@ private:
         this->columns.append({QStringLiteral("Node 2"), false, {}, ColumnFilterKind::Text});
         this->columns.append({QStringLiteral("Vertices"), false, {}, ColumnFilterKind::Integer});
         this->columns.append({QStringLiteral("Definition"), false, {}, ColumnFilterKind::Choice});
-        this->columns.append({QStringLiteral("Power Constant [kW]"), false, {"power"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Power Constant [kW]"), false, {AOWIS_QUANTITY("power")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Head Curve"), false, {}, ColumnFilterKind::Text});
         this->columns.append({QStringLiteral("Speed Initial"), false, {}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Status Initial"), false, {}, ColumnFilterKind::Choice});
@@ -1912,7 +1913,7 @@ private:
         this->columns.append({QStringLiteral("Controls"), false, {}, ColumnFilterKind::None});
         this->columns.append({QStringLiteral("Efficiency Input"), false, {}, ColumnFilterKind::Choice});
         this->columns.append({QStringLiteral("Efficiency Constant [%]"), false,
-            {"efficiency"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("efficiency")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Efficiency Curve"), false, {}, ColumnFilterKind::Text});
         this->columns.append({QStringLiteral("Energy Price Input"), false, {}, ColumnFilterKind::Choice});
         const QString energy_currency = network.options_energy.currency_iso4217;
@@ -1924,23 +1925,23 @@ private:
             : QStringLiteral("Cost Average [%1/day]").arg(energy_currency);
         this->columns.append({energy_price_header, false, {{}, UnitTablePresentation::ColumnKind::EnergyPrice, energy_currency}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Price Pattern"), false, {}, ColumnFilterKind::Text});
-        this->columns.append({QStringLiteral("Flow [m³/h]"), true, {"volumetric_flow_rate"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Velocity [m/s]"), true, {"velocity"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Head Gain [m]"), true, {"head_gain"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Flow [m³/h]"), true, {AOWIS_QUANTITY("volumetric_flow_rate")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Velocity [m/s]"), true, {AOWIS_QUANTITY("velocity")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head Gain [m]"), true, {AOWIS_QUANTITY("head_gain")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Status"), true, {}, ColumnFilterKind::Choice});
         this->columns.append({QStringLiteral("State Operating"), true, {}, ColumnFilterKind::Choice});
         this->columns.append({QStringLiteral("Speed"), true, {}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Efficiency [%]"), true, {"efficiency"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Power [kW]"), true, {"power"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Efficiency [%]"), true, {AOWIS_QUANTITY("efficiency")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Power [kW]"), true, {AOWIS_QUANTITY("power")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Referenced by Control"), true, {}, ColumnFilterKind::Choice});
         this->columns.append({QStringLiteral("Time Online [%]"), true,
-            {"operating_time_percentage"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("operating_time_percentage")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Efficiency Average [%]"), true,
-            {"efficiency"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("efficiency")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Energy Intensity Average [kWh/m³]"), true,
-            {"energy_intensity"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Power Average [kW]"), true, {"power"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Power Peak [kW]"), true, {"power"}, ColumnFilterKind::Number});
+            {AOWIS_QUANTITY("energy_intensity")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Power Average [kW]"), true, {AOWIS_QUANTITY("power")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Power Peak [kW]"), true, {AOWIS_QUANTITY("power")}, ColumnFilterKind::Number});
         this->columns.append({energy_cost_header, true, {}, ColumnFilterKind::Number});
         this->columns.append(qualityResultColumn(quality_analysis));
 
@@ -2058,11 +2059,11 @@ private:
             {{}, UnitTablePresentation::ColumnKind::RowQuantity}, ColumnFilterKind::None});
         this->columns.append({QStringLiteral("Setting Curve"), false, {}, ColumnFilterKind::Text});
         this->columns.append({QStringLiteral("Status Initial"), false, {}, ColumnFilterKind::Choice});
-        this->columns.append({QStringLiteral("Diameter [mm]"), false, {"link_diameter"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Diameter [mm]"), false, {AOWIS_QUANTITY("link_diameter")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Minor Loss"), false, {}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Flow [m³/h]"), true, {"volumetric_flow_rate"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Velocity [m/s]"), true, {"velocity"}, ColumnFilterKind::Number});
-        this->columns.append({QStringLiteral("Head Loss [m]"), true, {"head_loss"}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Flow [m³/h]"), true, {AOWIS_QUANTITY("volumetric_flow_rate")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Velocity [m/s]"), true, {AOWIS_QUANTITY("velocity")}, ColumnFilterKind::Number});
+        this->columns.append({QStringLiteral("Head Loss [m]"), true, {AOWIS_QUANTITY("head_loss")}, ColumnFilterKind::Number});
         this->columns.append({QStringLiteral("Status"), true, {}, ColumnFilterKind::Choice});
         this->columns.append({QStringLiteral("Regulating"), true, {}, ColumnFilterKind::Choice});
         this->columns.append({QStringLiteral("Setting"), true,

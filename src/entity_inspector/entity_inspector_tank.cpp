@@ -1,3 +1,4 @@
+#include <aowis/model/units/quantity.h>
 #include "entity_inspector/entity_inspector_tank.h"
 
 #include "config/unit_aware_view.h"
@@ -83,8 +84,8 @@ void EntityInspectorTank::addGroupGeometry()
                 if (field == 0) return this->hydraulic_data->setTankWaterLevelInitialM(this->tank_uuid, metres);
                 if (field == 1) return this->hydraulic_data->setTankWaterLevelMinimumM(this->tank_uuid, metres);
                 return this->hydraulic_data->setTankWaterLevelMaximumM(this->tank_uuid, metres);
-            }, field == 0 ? "tank_initial_level"
-                : field == 1 ? "tank_minimum_level" : "tank_maximum_level",
+            }, field == 0 ? AOWIS_QUANTITY("tank_initial_level")
+                : field == 1 ? AOWIS_QUANTITY("tank_minimum_level") : AOWIS_QUANTITY("tank_maximum_level"),
             "m", -1000000.0, 1000000.0, 0.1, 3, this->group_geometry);
     };
 
@@ -118,8 +119,8 @@ void EntityInspectorTank::addGroupGeometry()
     // results, depending on the geometry mode. In either case the Model values
     // remain canonical and no control refresh may write rounded values back.
     const auto geometry_editor = [this](int field) -> QDoubleSpinBox * {
-        const std::string quantity = field == 0 ? "tank_diameter"
-            : field == 1 ? "area" : field == 2 ? "tank_minimum_volume" : "volume";
+        const std::string quantity = field == 0 ? AOWIS_QUANTITY("tank_diameter")
+            : field == 1 ? AOWIS_QUANTITY("area") : field == 2 ? AOWIS_QUANTITY("tank_minimum_volume") : AOWIS_QUANTITY("volume");
         const std::string storage_unit = field == 0 ? "m" : field == 1 ? "m2" : "m3";
         const double step = field == 0 ? 0.1 : 1.0;
         return new UnitNumericSpinBox(
@@ -591,7 +592,7 @@ void EntityInspectorTank::addGroupQuality()
             if (tank->mixing_model != HydraulicNodeTankMixingModel::TwoCompartment) return false;
             if (fraction < 0.0 || fraction > 1.0) return false;
             return this->hydraulic_data->setTankQualityMixingFraction(this->tank_uuid, fraction);
-        }, "mixing_fraction", "1", 0.0, 1.0, 0.05, 4, group_mixing,
+        }, AOWIS_QUANTITY("mixing_fraction"), "1", 0.0, 1.0, 0.05, 4, group_mixing,
         [](const QString &) { return QString(); });
     this->spin_quality_mixing_fraction->setToolTip(
         "Fraction of tank volume assigned to the inlet/outlet compartment for the two-compartment model.");
@@ -621,7 +622,7 @@ void EntityInspectorTank::addGroupQuality()
             if (!tank || !tank->override_bulk_reaction ||
                 !std::isfinite(tank->bulk_reaction.order)) return false;
             return this->hydraulic_data->setTankBulkReactionCoefficient(this->tank_uuid, coefficient);
-        }, "first_order_bulk_reaction_coefficient", "/d", -1000000.0, 1000000.0,
+        }, AOWIS_QUANTITY("first_order_bulk_reaction_coefficient"), "/d", -1000000.0, 1000000.0,
         0.001, 12, group_reactions,
         [this](const QString &inverse_time) {
             if (!this->hydraulic_data) return QString();

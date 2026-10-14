@@ -1,3 +1,4 @@
+#include <aowis/model/units/quantity.h>
 #include "entity_inspector/entity_inspector_pipe.h"
 
 #include "config/unit_aware_view.h"
@@ -57,7 +58,7 @@ void EntityInspectorPipe::addGroupGeometry()
     // The widget value is only a representation. Bindings read the authoritative
     // pipe property on every refresh, so conversion/rounding cannot modify it.
     const auto geometry_editor = [this, group](int field) -> QDoubleSpinBox * {
-        const std::string quantity = field == 0 ? "link_diameter" : "length";
+        const std::string quantity = field == 0 ? AOWIS_QUANTITY("link_diameter") : AOWIS_QUANTITY("length");
         const std::string storage_unit = field == 0 ? "mm" : "m";
         const double minimum = field == 0 ? 1.0 : 0.0;
         const double maximum = field == 0 ? 5000.0 : 1000000000.0;
@@ -165,9 +166,9 @@ void EntityInspectorPipe::addGroupRoughness()
     // Darcy-Weisbach roughness has a length dimension; H-W, C-M, and the
     // minor-loss coefficient retain dimensionless presentation.
     const auto roughness_editor = [this, group](int field) -> QDoubleSpinBox * {
-        const std::string quantity = field == 0 ? "hazen_williams_roughness_coefficient"
-            : field == 1 ? "darcy_weisbach_roughness_height"
-            : field == 2 ? "chezy_manning_roughness_coefficient" : "minor_loss_coefficient";
+        const std::string quantity = field == 0 ? AOWIS_QUANTITY("hazen_williams_roughness_coefficient")
+            : field == 1 ? AOWIS_QUANTITY("darcy_weisbach_roughness_height")
+            : field == 2 ? AOWIS_QUANTITY("chezy_manning_roughness_coefficient") : AOWIS_QUANTITY("minor_loss_coefficient");
         const std::string storage_unit = field == 1 ? "mm" : "1";
         const double minimum = field == 0 ? 1.0 : field == 1 ? 0.000001 : field == 2 ? 0.001 : 0.0;
         const double maximum = field == 0 ? 200.0 : field == 1 ? 100.0 : field == 2 ? 0.1 : 1000.0;
@@ -370,7 +371,7 @@ void EntityInspectorPipe::addGroupQuality()
             if (!pipe || !pipe->override_bulk_reaction || !std::isfinite(pipe->bulk_reaction.order))
                 return false;
             return this->hydraulic_data->setPipeBulkReactionCoefficient(this->pipe_uuid, coefficient);
-        }, "first_order_bulk_reaction_coefficient", "/d", -1000000.0, 1000000.0,
+        }, AOWIS_QUANTITY("first_order_bulk_reaction_coefficient"), "/d", -1000000.0, 1000000.0,
         0.001, 12, group,
         [this](const QString &inverse_time) {
             if (!this->hydraulic_data) return QString();
@@ -403,12 +404,12 @@ void EntityInspectorPipe::addGroupQuality()
     this->spin_wall_reaction = new UnitNumericSpinBox(
         wall_reader,
         [wall_writer](double coefficient) { return wall_writer(1.0, coefficient); },
-        "first_order_wall_reaction_coefficient", "m/d", -1000000.0, 1000000.0,
+        AOWIS_QUANTITY("first_order_wall_reaction_coefficient"), "m/d", -1000000.0, 1000000.0,
         0.001, 12, this->stack_wall_reaction);
     this->spin_wall_reaction_zero = new UnitNumericSpinBox(
         wall_reader,
         [wall_writer](double coefficient) { return wall_writer(0.0, coefficient); },
-        "zero_order_wall_reaction_coefficient", "mg/m2/d", -1000000.0, 1000000.0,
+        AOWIS_QUANTITY("zero_order_wall_reaction_coefficient"), "mg/m2/d", -1000000.0, 1000000.0,
         0.001, 12, this->stack_wall_reaction);
     this->stack_wall_reaction->addWidget(this->spin_wall_reaction);
     this->stack_wall_reaction->addWidget(this->spin_wall_reaction_zero);

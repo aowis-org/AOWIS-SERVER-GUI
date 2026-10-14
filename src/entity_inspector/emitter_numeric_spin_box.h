@@ -1,5 +1,7 @@
 #pragma once
 
+#include "config/unit_quantity_key.h"
+
 #include "entity_inspector/emitter_coefficient_binding.h"
 #include "config/numeric_editor_adapters.h"
 #include "config/unit_presentation_context.h"
@@ -22,8 +24,8 @@ public:
         const std::optional<double> exponent = this->read_exponent_();
         if (!exponent) { setEnabled(false); return false; }
         const EmitterCoefficientUnits::Unit unit{
-            context.unit(QStringLiteral("volumetric_flow_rate")).toStdString(),
-            context.unit(QStringLiteral("pressure_head")).toStdString(), *exponent,
+            context.unit(AOWIS_QSTRING_QUANTITY("volumetric_flow_rate")).toStdString(),
+            context.unit(AOWIS_QSTRING_QUANTITY("pressure_head")).toStdString(), *exponent,
             context.specificGravity()};
         const std::optional<std::string> token = EmitterCoefficientUnits::encode(unit);
         const std::optional<double> maximum = EmitterCoefficientUnits::toDisplay(1e9, unit);
@@ -32,7 +34,7 @@ public:
             setEnabled(false);
             return false;
         }
-        const NumericFormatPolicy format = context.formatPolicy(QStringLiteral("volumetric_flow_rate"));
+        const NumericFormatPolicy format = context.formatPolicy(AOWIS_QSTRING_QUANTITY("volumetric_flow_rate"));
         const int decimals = format.notation == NumericFormatPolicy::Notation::Fixed
             ? format.precision : 10;
         return refresh({*token, QString(), 0.0, *maximum, *step,

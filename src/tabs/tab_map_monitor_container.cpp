@@ -1,3 +1,4 @@
+#include <aowis/model/units/quantity.h>
 #include "tabs/tab_map_monitor_container.h"
 
 #include "network/hydraulic_data.h"
@@ -2138,10 +2139,10 @@ MapMonitorMenuWidget::MapMonitorMenuWidget(MapWidget *map, QWidget *parent)
                 QAbstractButton *button = group->button(id);
                 if (button != nullptr) button->setText(label(name, quantity));
             };
-            set_label(water_age, QStringLiteral("Water Age"), "water_age");
-            set_label(chlorine, QStringLiteral("Cl₂"), "chemical_mass_concentration");
-            set_label(river_water, QStringLiteral("River Water"), "source_trace_percentage");
-            set_label(lake_water, QStringLiteral("Lake Water"), "source_trace_percentage");
+            set_label(water_age, QStringLiteral("Water Age"), AOWIS_QUANTITY("water_age"));
+            set_label(chlorine, QStringLiteral("Cl₂"), AOWIS_QUANTITY("chemical_mass_concentration"));
+            set_label(river_water, QStringLiteral("River Water"), AOWIS_QUANTITY("source_trace_percentage"));
+            set_label(lake_water, QStringLiteral("Lake Water"), AOWIS_QUANTITY("source_trace_percentage"));
         };
         update_group(this->node_visual_group,
                      static_cast<int>(VisualNode::WaterAge), static_cast<int>(VisualNode::Chlorine),

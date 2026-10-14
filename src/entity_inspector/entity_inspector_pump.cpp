@@ -1,3 +1,4 @@
+#include <aowis/model/units/quantity.h>
 #include "entity_inspector/entity_inspector_pump.h"
 
 #include "config/unit_aware_view.h"
@@ -145,7 +146,7 @@ void EntityInspectorPump::addGroupPumpInput()
             if (!pump || pump->definition_type != HydraulicLinkPumpDefinitionType::ConstantPower)
                 return false;
             return this->hydraulic_data->setPumpConstantPowerKw(this->pump_uuid, kilowatts);
-        }, "power", "kW", 0.0, 1000000.0, 1.0, 3, group);
+        }, AOWIS_QUANTITY("power"), "kW", 0.0, 1000000.0, 1.0, 3, group);
     this->spin_constant_power->setSpecialValueText("Not configured");
 
     QLabel *label_speed_initial = new QLabel("Initial Speed");
@@ -159,7 +160,7 @@ void EntityInspectorPump::addGroupPumpInput()
             if (!this->hydraulic_data || !this->hydraulic_data->pump(this->pump_uuid))
                 return false;
             return this->hydraulic_data->setPumpInitialSpeed(this->pump_uuid, speed_ratio);
-        }, "pump_speed_ratio", "1", 0.0, 10.0, 0.05, 2, group,
+        }, AOWIS_QUANTITY("pump_speed_ratio"), "1", 0.0, 10.0, 0.05, 2, group,
         [](const QString &) { return QStringLiteral(" ×"); });
     this->spin_speed_initial->setSpecialValueText("0.00 × (off)");
 
@@ -671,7 +672,7 @@ void EntityInspectorPump::refreshPumpControls()
                     }
                     return false;
                 },
-                trigger_is_junction ? "pressure_head" : "water_level", "m",
+                trigger_is_junction ? AOWIS_QUANTITY("pressure_head") : AOWIS_QUANTITY("water_level"), "m",
                 -10000.0, 10000.0, 0.1, 3, this->table_controls,
                 [trigger_is_junction](const QString &unit) {
                     return NumericText::suffix(unit) +
@@ -719,7 +720,7 @@ void EntityInspectorPump::refreshPumpControls()
                         }
                         return false;
                     },
-                    "elapsed_time", "s", 0.0, 596523.0 * 3600.0, 900.0, 3,
+                    AOWIS_QUANTITY("elapsed_time"), "s", 0.0, 596523.0 * 3600.0, 900.0, 3,
                     this->table_controls,
                     [](const QString &unit) { return NumericText::suffix(unit) + QStringLiteral(" elapsed"); });
                 elapsed_time->refreshUnits(UnitProfileManager::instance().presentation());
@@ -794,7 +795,7 @@ void EntityInspectorPump::refreshPumpControls()
                 }
                 return false;
             },
-            "pump_speed_ratio", "1", 0.0, 1000.0, 0.05, 3, this->table_controls,
+            AOWIS_QUANTITY("pump_speed_ratio"), "1", 0.0, 1000.0, 0.05, 3, this->table_controls,
             [](const QString &) { return QStringLiteral(" ×"); });
         speed->refreshUnits(UnitProfileManager::instance().presentation());
         this->table_controls->setCellWidget(row, 5, speed);

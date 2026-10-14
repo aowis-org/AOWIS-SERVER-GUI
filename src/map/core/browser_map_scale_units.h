@@ -1,5 +1,7 @@
 #pragma once
 
+#include "config/unit_quantity_key.h"
+
 #include "config/unit_presentation_context.h"
 #include <aowis/model/units/conversion.h>
 #include <QJsonArray>
@@ -14,7 +16,7 @@ namespace BrowserMapScaleUnits
 // readable 1/2/5 distance fitting its viewport, without calling back on pan.
 inline QJsonArray choices(const UnitPresentationContext &context)
 {
-    QString unit = context.unit(QStringLiteral("distance"));
+    QString unit = context.unit(AOWIS_QSTRING_QUANTITY("distance"));
     if (unit.isEmpty())
         unit = QStringLiteral("m");
     QString compact;
@@ -27,7 +29,7 @@ inline QJsonArray choices(const UnitPresentationContext &context)
     if (!compact.isEmpty())
     {
         const std::optional<double> threshold = aowis::units::convert(
-            "distance", 1.0, compact.toStdString(), "m");
+            AOWIS_QUANTITY("distance"), 1.0, compact.toStdString(), "m");
         if (threshold)
             compact_threshold = *threshold;
     }
@@ -41,7 +43,7 @@ inline QJsonArray choices(const UnitPresentationContext &context)
             {
                 const double value = factor * std::pow(10.0, exponent);
                 const std::optional<double> meters = aowis::units::convert(
-                    "distance", value, symbol.toStdString(), "m");
+                    AOWIS_QUANTITY("distance"), value, symbol.toStdString(), "m");
                 if (!meters || !std::isfinite(*meters) || *meters <= 0.0
                     || *meters < minimum || *meters >= maximum)
                     continue;

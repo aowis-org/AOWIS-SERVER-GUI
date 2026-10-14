@@ -1,3 +1,4 @@
+#include <aowis/model/units/quantity.h>
 #include "import/epanet_js_units.h"
 
 #include <cmath>
@@ -221,7 +222,7 @@ std::optional<double> pressureToHeadM(
     else
         return std::nullopt;
 
-    return units::convert("pressure_head", value, pressure_unit, "m", specific_gravity);
+    return units::convert(AOWIS_QUANTITY("pressure_head"), value, pressure_unit, "m", specific_gravity);
 }
 
 // EPANET 2.3 defines emitter coefficients independently of the PRESSURE
