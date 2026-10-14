@@ -138,6 +138,8 @@ private:
     void applyView3dOrbitPointerDelta(const QPoint &delta);
 
     void updatePointerCoordinates(const QPoint &position);
+    CoordinateWGS84 withCachedTerrainAltitude(
+        const CoordinateWGS84 &wgs, const QPoint &screen_position) const;
     void emitPointerCoordinate(const CoordinateWGS84 &wgs);
     void scheduleTileUpdate(const QString &);
     void drawTiles(QPainter &painter);

@@ -4425,8 +4425,21 @@ bool MapRhiWidget::terrainCoordinateAtScreen(
 
     *coordinate = this->map_model->wgs84FromScreen(
         screen_position.toPoint(), this->viewport_size);
-    return std::isfinite(coordinate->longitude_deg)
-        && std::isfinite(coordinate->latitude_deg);
+    if (!std::isfinite(coordinate->longitude_deg)
+        || !std::isfinite(coordinate->latitude_deg))
+    {
+        return false;
+    }
+
+    // The 2D map uses the 3D terrain cache for its footer height, without
+    // activating globe rendering or requesting missing DEM tiles.
+    double altitude_m = 0.0;
+    double cell_size_m = 0.0;
+    if (globeTerrainElevationAtCoordinate(*coordinate, &altitude_m, &cell_size_m))
+        coordinate->altitude_m = altitude_m;
+    else
+        coordinate->altitude_m.reset();
+    return true;
 }
 
 void MapRhiWidget::captureViewGlobeFocusAnchor()

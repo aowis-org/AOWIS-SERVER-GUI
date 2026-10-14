@@ -41,6 +41,8 @@ int main(int argc, char **argv) {
     CHECK(NumericText::heading(QStringLiteral("Area"), QStringLiteral("mm2")) == QStringLiteral("Area (mm²)"));
     CHECK(UnitDisplayText::symbol(QStringLiteral("kW.h/m3")) == QStringLiteral("kWh/m³"));
     CHECK(UnitDisplayText::symbol(QStringLiteral("in2/(100.ft)")) == QStringLiteral("in²/(100 ft)"));
+    CHECK(UnitDisplayText::symbol(QStringLiteral("mm2/(100.ft)")) == QStringLiteral("mm²/(100 ft)"));
+    CHECK(UnitDisplayText::symbol(QStringLiteral("mm2/ft")) == QStringLiteral("mm²/ft"));
     CHECK(UnitDisplayText::symbol(QStringLiteral("mg/m2/d")) == QStringLiteral("mg/m²/d"));
     CHECK(UnitDisplayText::symbol(QStringLiteral("ug/L")) == QStringLiteral("µg/L"));
     CHECK(UnitDisplayText::symbol(QStringLiteral("kOhm")) == QStringLiteral("kΩ"));

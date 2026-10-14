@@ -4,13 +4,13 @@
 
 #include <string_view>
 
-// Only quantities consumed by current GUI editors, tables, legends, or readouts
-// belong in the unit Settings tree. Keep all electrical options available for
-// future GUI consumers. This is a presentation filter, never a registry or
-// profile-storage filter: previously saved choices remain intact.
-namespace UnitSettingsFieldVisibility
+// Quantities presented by current GUI editors, tables, legends or readouts;
+// used by Settings and by import profile matching. Keep all electrical
+// options available for future GUI consumers. This is a presentation filter,
+// never a registry or profile-storage filter: saved choices remain intact.
+namespace UnitPresentedQuantities
 {
-[[nodiscard]] constexpr bool isVisible(const aowis::units::UnitField &field) noexcept
+[[nodiscard]] constexpr bool isPresented(const aowis::units::UnitField &field) noexcept
 {
     if (field.group == "Power and electrical") return true;
 

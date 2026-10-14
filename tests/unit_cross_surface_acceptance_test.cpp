@@ -5,7 +5,7 @@
 #include "config/unit_table_presentation.h"
 #include "entity_inspector/map_legend_unit_presentation.h"
 #include "map/monitor/map_hud_length_units.h"
-#include "settings/unit_settings_field_visibility.h"
+#include "config/unit_presented_quantities.h"
 #include "simulation/simulation_inspector_unit_presentation.h"
 #include "simulation/simulation_statistics_unit_presentation.h"
 #include "unit_test_check.h"
@@ -178,16 +178,31 @@ static void verifyGeographicAltitudePresentation()
     CHECK(missing == QString(QChar(0x2014)));
     const QString metric = GeographicAltitudePresentation::format(context, 120.0);
     CHECK(metric.contains(QStringLiteral("120")) && metric.endsWith(QStringLiteral("m")));
+    // The footer always uses two fractional digits, independent of the
+    // configurable altitude formatting used in inspectors.
+    NumericFormatPolicy footer_height_policy;
+    footer_height_policy.notation = NumericFormatPolicy::Notation::Fixed;
+    footer_height_policy.precision = 2;
+    CHECK(GeographicAltitudePresentation::format(context, 120.0, footer_height_policy)
+          == QStringLiteral("120.00") + NumericText::suffix(QStringLiteral("m")));
+    CHECK(GeographicAltitudePresentation::format(context, 120.5, footer_height_policy)
+          == QStringLiteral("120.50") + NumericText::suffix(QStringLiteral("m")));
+    CHECK(GeographicAltitudePresentation::format(context, std::nullopt, footer_height_policy)
+          == missing);
     profile.insert(QStringLiteral("altitude"), QStringLiteral("ft"));
     CHECK(context.update(profile));
     const QString imperial = GeographicAltitudePresentation::format(context, 120.0);
     CHECK(imperial.contains(QStringLiteral("393.701")) && imperial.endsWith(QStringLiteral("ft")));
+    CHECK(GeographicAltitudePresentation::format(context, 120.0, footer_height_policy)
+          == QStringLiteral("393.70") + NumericText::suffix(QStringLiteral("ft")));
     CHECK(GeographicAltitudePresentation::format(context, std::nullopt) == missing);
     CHECK(context.setLocale(QLocale(QLocale::German, QLocale::Germany)));
     CHECK(GeographicAltitudePresentation::format(context, 120.0).contains(QLatin1Char(',')));
+    CHECK(GeographicAltitudePresentation::format(context, 120.0, footer_height_policy)
+          == QStringLiteral("393,70") + NumericText::suffix(QStringLiteral("ft")));
 }
 
-static void verifyUnitSettingsFieldVisibility()
+static void verifyUnitPresentedQuantities()
 {
     const aowis::units::UnitField *head = aowis::units::findUnitField("pressure_head");
     const aowis::units::UnitField *distance = aowis::units::findUnitField("distance");
@@ -206,23 +221,23 @@ static void verifyUnitSettingsFieldVisibility()
     const aowis::units::UnitField *easting = aowis::units::findUnitField("projected_easting");
     const aowis::units::UnitField *pattern = aowis::units::findUnitField("pattern_multiplier");
 
-    CHECK(head != nullptr && UnitSettingsFieldVisibility::isVisible(*head));
-    CHECK(distance != nullptr && UnitSettingsFieldVisibility::isVisible(*distance));
-    CHECK(offset != nullptr && UnitSettingsFieldVisibility::isVisible(*offset));
-    CHECK(altitude != nullptr && UnitSettingsFieldVisibility::isVisible(*altitude));
-    CHECK(area != nullptr && UnitSettingsFieldVisibility::isVisible(*area)
+    CHECK(head != nullptr && UnitPresentedQuantities::isPresented(*head));
+    CHECK(distance != nullptr && UnitPresentedQuantities::isPresented(*distance));
+    CHECK(offset != nullptr && UnitPresentedQuantities::isPresented(*offset));
+    CHECK(altitude != nullptr && UnitPresentedQuantities::isPresented(*altitude));
+    CHECK(area != nullptr && UnitPresentedQuantities::isPresented(*area)
           && area->group == "Lengths and geometry");
-    CHECK(volume != nullptr && UnitSettingsFieldVisibility::isVisible(*volume)
+    CHECK(volume != nullptr && UnitPresentedQuantities::isPresented(*volume)
           && volume->group == "Lengths and geometry");
-    CHECK(tank_volume != nullptr && !UnitSettingsFieldVisibility::isVisible(*tank_volume));
-    CHECK(age != nullptr && UnitSettingsFieldVisibility::isVisible(*age));
-    CHECK(roughness != nullptr && UnitSettingsFieldVisibility::isVisible(*roughness));
-    CHECK(current != nullptr && UnitSettingsFieldVisibility::isVisible(*current));
-    CHECK(capacitance != nullptr && UnitSettingsFieldVisibility::isVisible(*capacitance));
-    CHECK(stress != nullptr && !UnitSettingsFieldVisibility::isVisible(*stress));
-    CHECK(diffusivity != nullptr && !UnitSettingsFieldVisibility::isVisible(*diffusivity));
-    CHECK(easting != nullptr && !UnitSettingsFieldVisibility::isVisible(*easting));
-    CHECK(pattern != nullptr && !UnitSettingsFieldVisibility::isVisible(*pattern));
+    CHECK(tank_volume != nullptr && !UnitPresentedQuantities::isPresented(*tank_volume));
+    CHECK(age != nullptr && UnitPresentedQuantities::isPresented(*age));
+    CHECK(roughness != nullptr && UnitPresentedQuantities::isPresented(*roughness));
+    CHECK(current != nullptr && UnitPresentedQuantities::isPresented(*current));
+    CHECK(capacitance != nullptr && UnitPresentedQuantities::isPresented(*capacitance));
+    CHECK(stress != nullptr && !UnitPresentedQuantities::isPresented(*stress));
+    CHECK(diffusivity != nullptr && !UnitPresentedQuantities::isPresented(*diffusivity));
+    CHECK(easting != nullptr && !UnitPresentedQuantities::isPresented(*easting));
+    CHECK(pattern != nullptr && !UnitPresentedQuantities::isPresented(*pattern));
 
     // The filtered-out choices still exist and remain valid in stored profiles.
     CHECK(aowis::units::isAllowedUnit("molecular_diffusivity", "cm2/s"));
@@ -233,7 +248,7 @@ int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
     verifyProfileMenus();
-    verifyUnitSettingsFieldVisibility();
+    verifyUnitPresentedQuantities();
     verifyGeographicAltitudePresentation();
     UnitPresentationContext context;
     const QJsonObject metric{

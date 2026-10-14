@@ -116,9 +116,13 @@ void FooterStatusBar::setMapCoordinatesUTM(const CoordinateUTM &utm)
 
 void FooterStatusBar::refreshAltitudeDisplay()
 {
+    NumericFormatPolicy footer_height_policy;
+    footer_height_policy.notation = NumericFormatPolicy::Notation::Fixed;
+    footer_height_policy.precision = 2;
     this->label_map_coords_height->setText(QStringLiteral("Height: ")
         + GeographicAltitudePresentation::format(
-            UnitProfileManager::instance().presentation(), this->coordinate_altitude_m));
+            UnitProfileManager::instance().presentation(), this->coordinate_altitude_m,
+            footer_height_policy));
 }
 
 void FooterStatusBar::clearMapCoordinates()

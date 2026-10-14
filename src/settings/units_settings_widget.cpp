@@ -1,5 +1,5 @@
 #include "settings/units_settings_widget.h"
-#include "settings/unit_settings_field_visibility.h"
+#include "config/unit_presented_quantities.h"
 #include "config/unit_profile_manager.h"
 #include "config/unit_display_text.h"
 #include "config/unit_profile_menu.h"
@@ -203,7 +203,7 @@ void UnitsSettingsWidget::refreshFields()
         last_group.clear();
         category_item = nullptr;
         for (const UnitField &field : aowis::units::unit_fields) {
-            if (!UnitSettingsFieldVisibility::isVisible(field)) continue;
+            if (!UnitPresentedQuantities::isPresented(field)) continue;
             const bool bottom_group = field.group == "Dimensionless" || field.group == "Percentages";
             if (bottom_group != (pass == 1)) continue;
             const QString group = asQString(field.group);

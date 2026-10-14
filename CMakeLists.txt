@@ -587,6 +587,13 @@ else()
 endif()
 
 if(BUILD_TESTING AND NOT EMSCRIPTEN)
+    # The Model owns the complete unit-conversion regression test. Its CTest
+    # entry is registered in the Model subdirectory, so assign our suite label
+    # there instead of maintaining a duplicate GUI test source.
+    set_tests_properties(aowis-model-unit-conversion
+        DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL"
+        PROPERTIES LABELS "aowis")
+
     # Dimension-aware ordering for the mixed-unit valve-setting table columns.
     add_executable(aowis-valve-setting-sort-policy-tests
         tests/valve_setting_sort_policy_test.cpp)
@@ -933,6 +940,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
 
     add_custom_target(aowis-tests
         DEPENDS
+            aowis-model-unit-conversion-test
             aowis-unit-cross-surface-acceptance-tests
             aowis-valve-setting-sort-policy-tests
             aowis-unit-presentation-benchmark

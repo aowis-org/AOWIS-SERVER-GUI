@@ -329,7 +329,9 @@ void MapWidget::init()
         }
         else
         {
-            emit signalCoordsChangedWgs84(wgs);
+            // Keep 2D centre readouts aware of any cached 3D terrain too.
+            emit signalCoordsChangedWgs84(withCachedTerrainAltitude(
+                wgs, QPoint(width() / 2, height() / 2)));
         }
         if (this->backing_store_pan_active)
             return;
@@ -1865,7 +1867,26 @@ void MapWidget::updatePointerCoordinates(const QPoint &position)
     }
 
     const CoordinateWGS84 wgs = this->m_model->wgs84FromScreen(position, this->size());
-    emitPointerCoordinate(wgs);
+    emitPointerCoordinate(withCachedTerrainAltitude(wgs, position));
+}
+
+CoordinateWGS84 MapWidget::withCachedTerrainAltitude(
+    const CoordinateWGS84 &wgs, const QPoint &screen_position) const
+{
+    // The flat map owns its WGS84 position. Ask the 3D surface only for
+    // elevation from already available DEM data, even if the 2D fallback is
+    // active. The surface's 2D lookup must never request a new terrain tile.
+    CoordinateWGS84 result = wgs;
+    if (this->render_surface_screen_coordinate_resolver)
+    {
+        CoordinateWGS84 sampled;
+        if (this->render_surface_screen_coordinate_resolver(
+                QPointF(screen_position), &sampled))
+        {
+            result.altitude_m = sampled.altitude_m;
+        }
+    }
+    return result;
 }
 
 void MapWidget::emitPointerCoordinate(const CoordinateWGS84 &wgs)

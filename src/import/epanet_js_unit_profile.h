@@ -1,7 +1,7 @@
 #pragma once
 
 #include <aowis/model/units/unit_profile.h>
-#include "settings/unit_settings_field_visibility.h"
+#include "config/unit_presented_quantities.h"
 #include <QJsonObject>
 #include <QString>
 #include <QStringList>
@@ -146,7 +146,7 @@ inline QString matchingBuiltinId(const QJsonObject &selections) {
              item != selections.constEnd(); ++item) {
             const aowis::units::UnitField *field =
                 aowis::units::findUnitField(item.key().toStdString());
-            if (field == nullptr || !UnitSettingsFieldVisibility::isVisible(*field)) continue;
+            if (field == nullptr || !UnitPresentedQuantities::isPresented(*field)) continue;
             if (aowis::units::resolvedUnit(profile, item.key().toStdString())
                 != item.value().toString().toStdString()) {
                 matches = false;
