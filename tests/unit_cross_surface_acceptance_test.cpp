@@ -313,7 +313,7 @@ int main(int argc, char **argv)
     UnitAwareView map_2d_binding(&map_2d_page, context, [&] {
         ++map_2d_refreshes;
         const MapLegendUnitPresentation::Range range =
-            MapLegendUnitPresentation::range(context, QStringLiteral("Length"),
+            MapLegendUnitPresentation::range(context, MapLegendMetrics::link(VisualLink::Length),
                                              0.0, world_distance_m);
         map_2d_label.setText(MapHudLengthUnits::networkOffset(world_distance_m, context)
                              + QStringLiteral(" / ") + range.unit);

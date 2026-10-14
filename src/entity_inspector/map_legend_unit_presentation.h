@@ -1,9 +1,8 @@
 #pragma once
 
-#include <aowis/model/units/quantity.h>
-
 #include "config/unit_presentation_context.h"
 #include "config/unit_table_presentation.h"
+#include "entity_inspector/map_legend_metric_descriptors.h"
 
 #include <aowis/model/units/conversion.h>
 
@@ -14,8 +13,7 @@
 #include <string>
 #include <string_view>
 
-// Map symbology ranges are canonical. Only the numbers shown beside their
-// color ramps are converted: the normalized colors/geometry remain unchanged.
+// Symbology ranges remain canonical; convert only the displayed ramp numbers.
 namespace MapLegendUnitPresentation
 {
 struct Range
@@ -25,48 +23,29 @@ struct Range
     QString unit;
 };
 
-inline std::string_view quantityForMetric(const QString &metric)
+inline QString label(const MapLegendMetrics::Descriptor &descriptor)
 {
-    if (metric == QStringLiteral("Elevation")) return AOWIS_QUANTITY("elevation");
-    if (metric == QStringLiteral("Head")) return AOWIS_QUANTITY("hydraulic_head");
-    if (metric == QStringLiteral("Pressure")) return AOWIS_QUANTITY("pressure_head");
-    if (metric == QStringLiteral("Head Loss")) return AOWIS_QUANTITY("head_loss");
-    if (metric == QStringLiteral("Diameter")) return AOWIS_QUANTITY("link_diameter");
-    if (metric == QStringLiteral("Length")) return AOWIS_QUANTITY("length");
-    if (metric == QStringLiteral("Absolute Roughness ε"))
-        return AOWIS_QUANTITY("darcy_weisbach_roughness_height");
-    if (metric == QStringLiteral("Base Demand")) return AOWIS_QUANTITY("base_demand_flow_rate");
-    if (metric == QStringLiteral("Flow Rate") || metric == QStringLiteral("Total Demand") || metric == QStringLiteral("Demand Deficit")
-        || metric == QStringLiteral("Emitter Flow") || metric == QStringLiteral("Leakage"))
-        return AOWIS_QUANTITY("volumetric_flow_rate");
-    if (metric == QStringLiteral("Velocity")) return AOWIS_QUANTITY("velocity");
-    if (metric == QStringLiteral("Cl₂") || metric == QStringLiteral("Chlorine"))
-        return AOWIS_QUANTITY("chemical_mass_concentration");
-    if (metric == QStringLiteral("Water Age")) return AOWIS_QUANTITY("water_age");
-    if (metric == QStringLiteral("River Water") || metric == QStringLiteral("Lake Water"))
-        return AOWIS_QUANTITY("source_trace_percentage");
-    return {};
+    return QString::fromUtf8(descriptor.label);
 }
 
-inline QString canonicalSymbol(const QString &metric)
+inline QString canonicalSymbol(const MapLegendMetrics::Descriptor &descriptor)
 {
-    const std::string_view quantity = quantityForMetric(metric);
-    if (quantity.empty()) return {};
-    const std::string_view canonical = aowis::units::canonicalUnit(quantity);
+    if (descriptor.quantity.empty()) return {};
+    const std::string_view canonical = aowis::units::canonicalUnit(descriptor.quantity);
     return UnitTablePresentation::unitSymbol(
         QString::fromUtf8(canonical.data(), static_cast<int>(canonical.size())));
 }
 
-inline Range range(const UnitPresentationContext &context, const QString &metric,
+inline Range range(const UnitPresentationContext &context,
+                   const MapLegendMetrics::Descriptor &descriptor,
                    double minimum, double maximum)
 {
-    const std::string_view quantity = quantityForMetric(metric);
-    Range result{minimum, maximum, canonicalSymbol(metric)};
-    if (quantity.empty()) return result;
+    Range result{minimum, maximum, canonicalSymbol(descriptor)};
+    if (descriptor.quantity.empty()) return result;
 
-    const std::string_view source = aowis::units::canonicalUnit(quantity);
-    QString chosen = UnitTablePresentation::selectedUnit(context, quantity);
-    if (metric == QStringLiteral("Length")
+    const std::string_view source = aowis::units::canonicalUnit(descriptor.quantity);
+    QString chosen = UnitTablePresentation::selectedUnit(context, descriptor.quantity);
+    if (descriptor.quantity == AOWIS_QUANTITY("length")
         && std::isfinite(minimum) && std::isfinite(maximum))
     {
         const double largest = std::max(std::abs(minimum), std::abs(maximum));
@@ -77,10 +56,10 @@ inline Range range(const UnitPresentationContext &context, const QString &metric
     }
     const std::string target = chosen.toStdString();
     const std::optional<double> lower = aowis::units::convert(
-        quantity, minimum, source, target, context.specificGravity());
+        descriptor.quantity, minimum, source, target, context.specificGravity());
     const std::optional<double> upper = aowis::units::convert(
-        quantity, maximum, source, target, context.specificGravity());
-    if (!lower || !upper) return result; // Never attach a wrong unit to raw data.
+        descriptor.quantity, maximum, source, target, context.specificGravity());
+    if (!lower || !upper) return result;
 
     result.minimum = *lower;
     result.maximum = *upper;
@@ -88,11 +67,11 @@ inline Range range(const UnitPresentationContext &context, const QString &metric
     return result;
 }
 
-inline QString unit(const UnitPresentationContext &context, const QString &metric)
+inline QString unit(const UnitPresentationContext &context,
+                    const MapLegendMetrics::Descriptor &descriptor)
 {
-    const std::string_view quantity = quantityForMetric(metric);
-    if (quantity.empty()) return {};
+    if (descriptor.quantity.empty()) return {};
     return UnitTablePresentation::unitSymbol(
-        UnitTablePresentation::selectedUnit(context, quantity));
+        UnitTablePresentation::selectedUnit(context, descriptor.quantity));
 }
 }

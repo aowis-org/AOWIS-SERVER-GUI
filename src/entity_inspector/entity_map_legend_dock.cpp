@@ -77,118 +77,26 @@ QIcon palettePreviewIcon(NetworkSymbologyPalette palette)
     return QIcon(pixmap);
 }
 
-struct LegendDescriptor
-{
-    QString metric;
-    QString unit;
-};
+using LegendDescriptor = MapLegendMetrics::Descriptor;
 
-LegendDescriptor nodeLegendDescriptor(VisualNode visual_node)
+MapLegendMetrics::RoughnessStyle roughnessStyle(HydraulicHeadlossFormula formula)
 {
-    switch (visual_node)
+    switch (formula)
     {
-    case VisualNode::Elevation:
-        return {QStringLiteral("Elevation"), QStringLiteral("m")};
-    case VisualNode::BaseDemand:
-        return {QStringLiteral("Base Demand"), QStringLiteral("m³/h")};
-    case VisualNode::TotalDemand:
-        return {QStringLiteral("Total Demand"), QStringLiteral("m³/h")};
-    case VisualNode::DemandDeficit:
-        return {QStringLiteral("Demand Deficit"), QStringLiteral("m³/h")};
-    case VisualNode::EmitterFlow:
-        return {QStringLiteral("Emitter Flow"), QStringLiteral("m³/h")};
-    case VisualNode::Leakage:
-        return {QStringLiteral("Leakage"), QStringLiteral("m³/h")};
-    case VisualNode::Head:
-        return {QStringLiteral("Head"), QStringLiteral("m")};
-    case VisualNode::Pressure:
-        return {QStringLiteral("Pressure"), QStringLiteral("m")};
-    case VisualNode::Chlorine:
-        return {QStringLiteral("Cl₂"), QStringLiteral("mg/L")};
-    case VisualNode::RiverWater:
-        return {QStringLiteral("River Water"), QStringLiteral("%")};
-    case VisualNode::LakeWater:
-        return {QStringLiteral("Lake Water"), QStringLiteral("%")};
-    case VisualNode::WaterAge:
-        return {QStringLiteral("Water Age"), QStringLiteral("h")};
-    case VisualNode::None:
-        return {QStringLiteral("None"), QString()};
+    case HydraulicHeadlossFormula::HazenWilliams:
+        return MapLegendMetrics::RoughnessStyle::HazenWilliams;
+    case HydraulicHeadlossFormula::DarcyWeisbach:
+        return MapLegendMetrics::RoughnessStyle::DarcyWeisbach;
+    case HydraulicHeadlossFormula::ChezyManning:
+        return MapLegendMetrics::RoughnessStyle::ChezyManning;
     }
-
-    return {QStringLiteral("None"), QString()};
-}
-
-LegendDescriptor linkLegendDescriptor(VisualLink visual_link)
-{
-    switch (visual_link)
-    {
-    case VisualLink::Diameter:
-        return {QStringLiteral("Diameter"), QStringLiteral("mm")};
-    case VisualLink::Length:
-        return {QStringLiteral("Length"), QStringLiteral("m")};
-    case VisualLink::Roughness:
-        return {QStringLiteral("Hazen-Williams C"), QString()};
-    case VisualLink::FlowRate:
-        return {QStringLiteral("Flow Rate"), QStringLiteral("m³/h")};
-    case VisualLink::Velocity:
-        return {QStringLiteral("Velocity"), QStringLiteral("m/s")};
-    case VisualLink::HeadLoss:
-        return {QStringLiteral("Head Loss"), QStringLiteral("m")};
-    case VisualLink::Leakage:
-        return {QStringLiteral("Leakage"), QStringLiteral("m³/h")};
-    case VisualLink::Chlorine:
-        return {QStringLiteral("Cl₂"), QStringLiteral("mg/L")};
-    case VisualLink::RiverWater:
-        return {QStringLiteral("River Water"), QStringLiteral("%")};
-    case VisualLink::LakeWater:
-        return {QStringLiteral("Lake Water"), QStringLiteral("%")};
-    case VisualLink::WaterAge:
-        return {QStringLiteral("Water Age"), QStringLiteral("h")};
-    case VisualLink::None:
-        return {QStringLiteral("None"), QString()};
-    }
-
-    return {QStringLiteral("None"), QString()};
-}
-
-LegendDescriptor heatmapLegendDescriptor(VisualHeatmap visual_heatmap)
-{
-    switch (visual_heatmap)
-    {
-    case VisualHeatmap::Elevation:
-        return {QStringLiteral("Elevation"), QStringLiteral("m")};
-    case VisualHeatmap::BaseDemand:
-        return {QStringLiteral("Base Demand"), QStringLiteral("m³/h")};
-    case VisualHeatmap::TotalDemand:
-        return {QStringLiteral("Total Demand"), QStringLiteral("m³/h")};
-    case VisualHeatmap::DemandDeficit:
-        return {QStringLiteral("Demand Deficit"), QStringLiteral("m³/h")};
-    case VisualHeatmap::EmitterFlow:
-        return {QStringLiteral("Emitter Flow"), QStringLiteral("m³/h")};
-    case VisualHeatmap::Leakage:
-        return {QStringLiteral("Leakage"), QStringLiteral("m³/h")};
-    case VisualHeatmap::Head:
-        return {QStringLiteral("Head"), QStringLiteral("m")};
-    case VisualHeatmap::Pressure:
-        return {QStringLiteral("Pressure"), QStringLiteral("m")};
-    case VisualHeatmap::Chlorine:
-        return {QStringLiteral("Cl₂"), QStringLiteral("mg/L")};
-    case VisualHeatmap::RiverWater:
-        return {QStringLiteral("River Water"), QStringLiteral("%")};
-    case VisualHeatmap::LakeWater:
-        return {QStringLiteral("Lake Water"), QStringLiteral("%")};
-    case VisualHeatmap::WaterAge:
-        return {QStringLiteral("Water Age"), QStringLiteral("h")};
-    case VisualHeatmap::None:
-        return {QStringLiteral("None"), QString()};
-    }
-
-    return {QStringLiteral("None"), QString()};
+    return MapLegendMetrics::RoughnessStyle::HazenWilliams;
 }
 
 QString hudComboText(const QString &scope, const LegendDescriptor &descriptor)
 {
-    return legendGroupTitle(scope, descriptor.metric, descriptor.unit);
+    return legendGroupTitle(scope, MapLegendUnitPresentation::label(descriptor),
+                            MapLegendUnitPresentation::canonicalSymbol(descriptor));
 }
 }
 
@@ -816,7 +724,7 @@ EntityMapLegendHud::EntityMapLegendHud(HydraulicData *hydraulic_data, QWidget *p
     for (const VisualNode visual_node : node_visuals)
     {
         this->combo_node->addItem(
-            hudComboText(QStringLiteral("Node"), nodeLegendDescriptor(visual_node)),
+            hudComboText(QStringLiteral("Node"), MapLegendMetrics::node(visual_node)),
             static_cast<int>(visual_node));
     }
 
@@ -837,7 +745,7 @@ EntityMapLegendHud::EntityMapLegendHud(HydraulicData *hydraulic_data, QWidget *p
     for (const VisualLink visual_link : link_visuals)
     {
         this->combo_link->addItem(
-            hudComboText(QStringLiteral("Link"), linkLegendDescriptor(visual_link)),
+            hudComboText(QStringLiteral("Link"), MapLegendMetrics::link(visual_link)),
             static_cast<int>(visual_link));
     }
 
@@ -859,7 +767,7 @@ EntityMapLegendHud::EntityMapLegendHud(HydraulicData *hydraulic_data, QWidget *p
     for (const VisualHeatmap visual_heatmap : heatmap_visuals)
     {
         this->combo_heatmap->addItem(
-            hudComboText(QStringLiteral("Heatmap"), heatmapLegendDescriptor(visual_heatmap)),
+            hudComboText(QStringLiteral("Heatmap"), MapLegendMetrics::heatmap(visual_heatmap)),
             static_cast<int>(visual_heatmap));
     }
 
@@ -1052,19 +960,20 @@ void EntityMapLegendHud::updateNodeLegend()
     for (int index = 0; index < this->combo_node->count(); ++index)
     {
         const VisualNode visual = static_cast<VisualNode>(this->combo_node->itemData(index).toInt());
-        LegendDescriptor option = nodeLegendDescriptor(visual);
-        option.unit = MapLegendUnitPresentation::unit(context, option.metric);
-        this->combo_node->setItemText(index, hudComboText(QStringLiteral("Node"), option));
+        const LegendDescriptor &option = MapLegendMetrics::node(visual);
+        this->combo_node->setItemText(index, legendGroupTitle(
+            QStringLiteral("Node"), MapLegendUnitPresentation::label(option),
+            MapLegendUnitPresentation::unit(context, option)));
     }
 
     if (this->visual_node != VisualNode::None)
     {
-        const LegendDescriptor descriptor = nodeLegendDescriptor(this->visual_node);
+        const LegendDescriptor descriptor = MapLegendMetrics::node(this->visual_node);
         NetworkSymbologySettings settings;
         settings.visual_node = this->visual_node;
         const NetworkSymbologyRanges ranges = this->hydraulic_data->symbologyRanges(settings);
         const MapLegendUnitPresentation::Range displayed = MapLegendUnitPresentation::range(
-            context, descriptor.metric, ranges.node_minimum, ranges.node_maximum);
+            context, descriptor, ranges.node_minimum, ranges.node_maximum);
         this->legend_node->setRange(displayed.minimum, displayed.maximum, displayed.unit);
     }
 
@@ -1075,33 +984,15 @@ void EntityMapLegendHud::updateLinkLegend()
 {
     this->legend_link->setPaletteSelection(
         this->link_palette, this->link_palette_flipped);
-    LegendDescriptor descriptor = linkLegendDescriptor(this->visual_link);
+    const MapLegendMetrics::RoughnessStyle roughness = roughnessStyle(
+        this->hydraulic_data->networkHydraulic().options_hydraulic.headloss_formula);
+    const LegendDescriptor &descriptor = MapLegendMetrics::link(this->visual_link, roughness);
     NetworkSymbologyRanges ranges;
-
     if (this->visual_link != VisualLink::None)
     {
         NetworkSymbologySettings settings;
         settings.visual_link = this->visual_link;
         ranges = this->hydraulic_data->symbologyRanges(settings);
-
-        if (this->visual_link == VisualLink::Roughness)
-        {
-            switch (this->hydraulic_data->networkHydraulic().options_hydraulic.headloss_formula)
-            {
-            case HydraulicHeadlossFormula::HazenWilliams:
-                descriptor.metric = QStringLiteral("Hazen-Williams C");
-                descriptor.unit.clear();
-                break;
-            case HydraulicHeadlossFormula::DarcyWeisbach:
-                descriptor.metric = QStringLiteral("Absolute Roughness ε");
-                descriptor.unit = QStringLiteral("mm");
-                break;
-            case HydraulicHeadlossFormula::ChezyManning:
-                descriptor.metric = QStringLiteral("Manning Roughness n");
-                descriptor.unit.clear();
-                break;
-            }
-        }
     }
 
     const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
@@ -1109,38 +1000,23 @@ void EntityMapLegendHud::updateLinkLegend()
     for (int index = 0; index < this->combo_link->count(); ++index)
     {
         const VisualLink visual = static_cast<VisualLink>(this->combo_link->itemData(index).toInt());
-        LegendDescriptor option = visual == this->visual_link
-            ? descriptor : linkLegendDescriptor(visual);
-        if (visual == VisualLink::Roughness && visual != this->visual_link)
-        {
-            switch (this->hydraulic_data->networkHydraulic().options_hydraulic.headloss_formula)
-            {
-            case HydraulicHeadlossFormula::HazenWilliams:
-                option.metric = QStringLiteral("Hazen-Williams C");
-                break;
-            case HydraulicHeadlossFormula::DarcyWeisbach:
-                option.metric = QStringLiteral("Absolute Roughness ε");
-                break;
-            case HydraulicHeadlossFormula::ChezyManning:
-                option.metric = QStringLiteral("Manning Roughness n");
-                break;
-            }
-        }
-        option.unit = MapLegendUnitPresentation::unit(context, option.metric);
-        this->combo_link->setItemText(index, hudComboText(QStringLiteral("Link"), option));
+        const LegendDescriptor &option = MapLegendMetrics::link(visual, roughness);
+        this->combo_link->setItemText(index, legendGroupTitle(
+            QStringLiteral("Link"), MapLegendUnitPresentation::label(option),
+            MapLegendUnitPresentation::unit(context, option)));
     }
 
     if (this->visual_link != VisualLink::None)
     {
         const MapLegendUnitPresentation::Range displayed = MapLegendUnitPresentation::range(
-            context, descriptor.metric, ranges.link_minimum, ranges.link_maximum);
+            context, descriptor, ranges.link_minimum, ranges.link_maximum);
         this->legend_link->setRange(displayed.minimum, displayed.maximum, displayed.unit);
         // The active selection may use km/mi for readability even when the
         // profile uses metres/feet; the combo must match the ramp label.
         const int selected_index = this->combo_link->findData(static_cast<int>(this->visual_link));
         if (selected_index >= 0)
             this->combo_link->setItemText(selected_index,
-                legendGroupTitle(QStringLiteral("Link"), descriptor.metric, displayed.unit));
+                legendGroupTitle(QStringLiteral("Link"), MapLegendUnitPresentation::label(descriptor), displayed.unit));
     }
 
     updateVisibility();
@@ -1156,19 +1032,20 @@ void EntityMapLegendHud::updateHeatmapLegend()
     {
         const VisualHeatmap visual = static_cast<VisualHeatmap>(
             this->combo_heatmap->itemData(index).toInt());
-        LegendDescriptor option = heatmapLegendDescriptor(visual);
-        option.unit = MapLegendUnitPresentation::unit(context, option.metric);
-        this->combo_heatmap->setItemText(index, hudComboText(QStringLiteral("Heatmap"), option));
+        const LegendDescriptor &option = MapLegendMetrics::heatmap(visual);
+        this->combo_heatmap->setItemText(index, legendGroupTitle(
+            QStringLiteral("Heatmap"), MapLegendUnitPresentation::label(option),
+            MapLegendUnitPresentation::unit(context, option)));
     }
 
     if (this->visual_heatmap != VisualHeatmap::None)
     {
-        const LegendDescriptor descriptor = heatmapLegendDescriptor(this->visual_heatmap);
+        const LegendDescriptor descriptor = MapLegendMetrics::heatmap(this->visual_heatmap);
         NetworkSymbologySettings settings;
         settings.visual_heatmap = this->visual_heatmap;
         const NetworkSymbologyRanges ranges = this->hydraulic_data->symbologyRanges(settings);
         const MapLegendUnitPresentation::Range displayed = MapLegendUnitPresentation::range(
-            context, descriptor.metric, ranges.heatmap_minimum, ranges.heatmap_maximum);
+            context, descriptor, ranges.heatmap_minimum, ranges.heatmap_maximum);
         this->legend_heatmap->setRange(displayed.minimum, displayed.maximum, displayed.unit);
     }
 
@@ -1516,58 +1393,17 @@ void EntityMapLegendDock::updateNodeLegend()
 {
     this->legend_node->setPaletteSelection(
         this->node_palette, this->node_palette_flipped);
-    QString metric;
+    if (this->visual_node == VisualNode::None) return;
+
+    const LegendDescriptor &descriptor = MapLegendMetrics::node(this->visual_node);
     NetworkSymbologySettings settings;
     settings.visual_node = this->visual_node;
     const NetworkSymbologyRanges ranges = this->hydraulic_data->symbologyRanges(settings);
-    double minimum = ranges.node_minimum;
-    double maximum = ranges.node_maximum;
-
-    switch (this->visual_node)
-    {
-    case VisualNode::Elevation:
-        metric = QStringLiteral("Elevation");
-        break;
-    case VisualNode::BaseDemand:
-        metric = QStringLiteral("Base Demand");
-        break;
-    case VisualNode::TotalDemand:
-        metric = QStringLiteral("Total Demand");
-        break;
-    case VisualNode::DemandDeficit:
-        metric = QStringLiteral("Demand Deficit");
-        break;
-    case VisualNode::EmitterFlow:
-        metric = QStringLiteral("Emitter Flow");
-        break;
-    case VisualNode::Leakage:
-        metric = QStringLiteral("Leakage");
-        break;
-    case VisualNode::Head:
-        metric = QStringLiteral("Head");
-        break;
-    case VisualNode::Pressure:
-        metric = QStringLiteral("Pressure");
-        break;
-    case VisualNode::Chlorine:
-        metric = QStringLiteral("Chlorine");
-        break;
-    case VisualNode::RiverWater:
-        metric = QStringLiteral("River Water");
-        break;
-    case VisualNode::LakeWater:
-        metric = QStringLiteral("Lake Water");
-        break;
-    case VisualNode::WaterAge:
-        metric = QStringLiteral("Water Age");
-        break;
-    case VisualNode::None:
-        return;
-    }
-
     const MapLegendUnitPresentation::Range displayed = MapLegendUnitPresentation::range(
-        UnitProfileManager::instance().presentation(), metric, minimum, maximum);
-    this->group_node->setTitle(legendGroupTitle(QStringLiteral("Node"), metric, displayed.unit));
+        UnitProfileManager::instance().presentation(), descriptor,
+        ranges.node_minimum, ranges.node_maximum);
+    this->group_node->setTitle(legendGroupTitle(
+        QStringLiteral("Node"), MapLegendUnitPresentation::label(descriptor), displayed.unit));
     this->legend_node->setRange(displayed.minimum, displayed.maximum, displayed.unit);
 }
 
@@ -1575,66 +1411,19 @@ void EntityMapLegendDock::updateLinkLegend()
 {
     this->legend_link->setPaletteSelection(
         this->link_palette, this->link_palette_flipped);
-    QString metric;
+    if (this->visual_link == VisualLink::None) return;
+
+    const MapLegendMetrics::RoughnessStyle roughness = roughnessStyle(
+        this->hydraulic_data->networkHydraulic().options_hydraulic.headloss_formula);
+    const LegendDescriptor &descriptor = MapLegendMetrics::link(this->visual_link, roughness);
     NetworkSymbologySettings settings;
     settings.visual_link = this->visual_link;
     const NetworkSymbologyRanges ranges = this->hydraulic_data->symbologyRanges(settings);
-    double minimum = ranges.link_minimum;
-    double maximum = ranges.link_maximum;
-
-    switch (this->visual_link)
-    {
-    case VisualLink::Diameter:
-        metric = QStringLiteral("Diameter");
-        break;
-    case VisualLink::Length:
-        metric = QStringLiteral("Length");
-        break;
-    case VisualLink::Roughness:
-        switch (this->hydraulic_data->networkHydraulic().options_hydraulic.headloss_formula)
-        {
-        case HydraulicHeadlossFormula::HazenWilliams:
-            metric = QStringLiteral("Hazen-Williams C");
-            break;
-        case HydraulicHeadlossFormula::DarcyWeisbach:
-            metric = QStringLiteral("Absolute Roughness ε");
-            break;
-        case HydraulicHeadlossFormula::ChezyManning:
-            metric = QStringLiteral("Manning Roughness n");
-            break;
-        }
-        break;
-    case VisualLink::FlowRate:
-        metric = QStringLiteral("Flow Rate");
-        break;
-    case VisualLink::Velocity:
-        metric = QStringLiteral("Velocity");
-        break;
-    case VisualLink::HeadLoss:
-        metric = QStringLiteral("Head Loss");
-        break;
-    case VisualLink::Leakage:
-        metric = QStringLiteral("Leakage");
-        break;
-    case VisualLink::Chlorine:
-        metric = QStringLiteral("Chlorine");
-        break;
-    case VisualLink::RiverWater:
-        metric = QStringLiteral("River Water");
-        break;
-    case VisualLink::LakeWater:
-        metric = QStringLiteral("Lake Water");
-        break;
-    case VisualLink::WaterAge:
-        metric = QStringLiteral("Water Age");
-        break;
-    case VisualLink::None:
-        return;
-    }
-
     const MapLegendUnitPresentation::Range displayed = MapLegendUnitPresentation::range(
-        UnitProfileManager::instance().presentation(), metric, minimum, maximum);
-    this->group_link->setTitle(legendGroupTitle(QStringLiteral("Link"), metric, displayed.unit));
+        UnitProfileManager::instance().presentation(), descriptor,
+        ranges.link_minimum, ranges.link_maximum);
+    this->group_link->setTitle(legendGroupTitle(
+        QStringLiteral("Link"), MapLegendUnitPresentation::label(descriptor), displayed.unit));
     this->legend_link->setRange(displayed.minimum, displayed.maximum, displayed.unit);
 }
 
@@ -1642,57 +1431,16 @@ void EntityMapLegendDock::updateHeatmapLegend()
 {
     this->legend_heat->setPaletteSelection(
         this->heatmap_palette, this->heatmap_palette_flipped);
-    QString metric;
+    if (this->visual_heatmap == VisualHeatmap::None) return;
+
+    const LegendDescriptor &descriptor = MapLegendMetrics::heatmap(this->visual_heatmap);
     NetworkSymbologySettings settings;
     settings.visual_heatmap = this->visual_heatmap;
     const NetworkSymbologyRanges ranges = this->hydraulic_data->symbologyRanges(settings);
-    double minimum = ranges.heatmap_minimum;
-    double maximum = ranges.heatmap_maximum;
-
-    switch (this->visual_heatmap)
-    {
-    case VisualHeatmap::Elevation:
-        metric = QStringLiteral("Elevation");
-        break;
-    case VisualHeatmap::BaseDemand:
-        metric = QStringLiteral("Base Demand");
-        break;
-    case VisualHeatmap::TotalDemand:
-        metric = QStringLiteral("Total Demand");
-        break;
-    case VisualHeatmap::DemandDeficit:
-        metric = QStringLiteral("Demand Deficit");
-        break;
-    case VisualHeatmap::EmitterFlow:
-        metric = QStringLiteral("Emitter Flow");
-        break;
-    case VisualHeatmap::Leakage:
-        metric = QStringLiteral("Leakage");
-        break;
-    case VisualHeatmap::Head:
-        metric = QStringLiteral("Head");
-        break;
-    case VisualHeatmap::Pressure:
-        metric = QStringLiteral("Pressure");
-        break;
-    case VisualHeatmap::Chlorine:
-        metric = QStringLiteral("Chlorine");
-        break;
-    case VisualHeatmap::RiverWater:
-        metric = QStringLiteral("River Water");
-        break;
-    case VisualHeatmap::LakeWater:
-        metric = QStringLiteral("Lake Water");
-        break;
-    case VisualHeatmap::WaterAge:
-        metric = QStringLiteral("Water Age");
-        break;
-    case VisualHeatmap::None:
-        return;
-    }
-
     const MapLegendUnitPresentation::Range displayed = MapLegendUnitPresentation::range(
-        UnitProfileManager::instance().presentation(), metric, minimum, maximum);
-    this->group_heat->setTitle(legendGroupTitle(QStringLiteral("Heatmap"), metric, displayed.unit));
+        UnitProfileManager::instance().presentation(), descriptor,
+        ranges.heatmap_minimum, ranges.heatmap_maximum);
+    this->group_heat->setTitle(legendGroupTitle(
+        QStringLiteral("Heatmap"), MapLegendUnitPresentation::label(descriptor), displayed.unit));
     this->legend_heat->setRange(displayed.minimum, displayed.maximum, displayed.unit);
 }

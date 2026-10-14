@@ -440,25 +440,44 @@ int main(int argc, char **argv)
         CHECK(original_flow_m3_per_h == 3.6);
     }
 
+    // All legend visuals have explicit descriptors, shared by dock and HUD.
+    for (int value = int(VisualNode::None); value <= int(VisualNode::WaterAge); ++value)
+    {
+        CHECK(MapLegendMetrics::node(static_cast<VisualNode>(value)).visual == value);
+        CHECK(MapLegendMetrics::heatmap(static_cast<VisualHeatmap>(value)).visual == value);
+    }
+    for (int value = int(VisualLink::None); value <= int(VisualLink::WaterAge); ++value)
+        CHECK(MapLegendMetrics::link(static_cast<VisualLink>(value)).visual == value);
+    CHECK(MapLegendUnitPresentation::label(MapLegendMetrics::node(VisualNode::Chlorine))
+          == QStringLiteral("Cl₂"));
+    CHECK(MapLegendUnitPresentation::label(MapLegendMetrics::link(
+              VisualLink::Roughness, MapLegendMetrics::RoughnessStyle::DarcyWeisbach))
+          == QStringLiteral("Absolute Roughness ε"));
     // Map legends convert visible tick ranges only. The color ramp retains
     // the canonical values used by network symbology and simulation.
     using MapRange = MapLegendUnitPresentation::Range;
     const double canonical_base_demand = 3.6;
     const MapRange demand_legend = MapLegendUnitPresentation::range(
-        presentation, QStringLiteral("Base Demand"), 0.0, canonical_base_demand);
+        presentation, MapLegendMetrics::node(VisualNode::BaseDemand), 0.0, canonical_base_demand);
     near(demand_legend.maximum, 1.0);
     CHECK(demand_legend.unit == QStringLiteral("L/s"));
     CHECK(canonical_base_demand == 3.6);
     const MapRange diameter_legend = MapLegendUnitPresentation::range(
-        presentation, QStringLiteral("Diameter"), 0.0, 25.4);
+        presentation, MapLegendMetrics::link(VisualLink::Diameter), 0.0, 25.4);
     near(diameter_legend.maximum, 1.0);
     CHECK(diameter_legend.unit == QStringLiteral("in"));
+    // The quantity identity, not the printed label, determines conversion.
+    MapLegendMetrics::Descriptor renamed_chlorine =
+        MapLegendMetrics::heatmap(VisualHeatmap::Chlorine);
+    renamed_chlorine.label = "A differently worded quality label";
+    near(MapLegendUnitPresentation::range(
+             presentation, renamed_chlorine, 0.0, 1.0).maximum, 1000.0);
     const MapRange chlorine_legend = MapLegendUnitPresentation::range(
-        presentation, QStringLiteral("Cl₂"), 0.0, 1.0);
+        presentation, MapLegendMetrics::heatmap(VisualHeatmap::Chlorine), 0.0, 1.0);
     near(chlorine_legend.maximum, 1000.0);
     CHECK(chlorine_legend.unit == QStringLiteral("µg/L"));
     const MapRange no_unit_legend = MapLegendUnitPresentation::range(
-        presentation, QStringLiteral("Hazen-Williams C"), 10.0, 120.0);
+        presentation, MapLegendMetrics::link(VisualLink::Roughness), 10.0, 120.0);
     near(no_unit_legend.minimum, 10.0);
     near(no_unit_legend.maximum, 120.0);
     CHECK(no_unit_legend.unit.isEmpty());
@@ -470,11 +489,11 @@ int main(int argc, char **argv)
     map_units.insert(QStringLiteral("darcy_weisbach_roughness_height"), QStringLiteral("in"));
     CHECK(presentation.update(map_units));
     const MapRange terrain_legend = MapLegendUnitPresentation::range(
-        presentation, QStringLiteral("Elevation"), 0.0, 100.0);
+        presentation, MapLegendMetrics::node(VisualNode::Elevation), 0.0, 100.0);
     near(terrain_legend.maximum, 328.0839895013123);
     CHECK(terrain_legend.unit == QStringLiteral("ft"));
     const MapRange head_legend = MapLegendUnitPresentation::range(
-        presentation, QStringLiteral("Pressure"), 0.0, 1.0);
+        presentation, MapLegendMetrics::node(VisualNode::Pressure), 0.0, 1.0);
     near(head_legend.maximum, 3.280839895013123);
     map_units.insert(QStringLiteral("pressure_head"), QStringLiteral("psi"));
     CHECK(presentation.update(map_units));
@@ -482,25 +501,30 @@ int main(int argc, char **argv)
     CHECK(UnitTablePresentation::formattedTitle(
               QStringLiteral("Pressure [m]"), presentation, {"pressure_head"})
           == QStringLiteral("Pressure [psi]"));
-    CHECK(MapLegendUnitPresentation::quantityForMetric(QStringLiteral("Pressure"))
-          == "pressure_head");
+    CHECK(MapLegendMetrics::node(VisualNode::Pressure).quantity == AOWIS_QUANTITY("pressure_head"));
+    CHECK(MapLegendUnitPresentation::label(MapLegendMetrics::node(VisualNode::Chlorine))
+          == MapLegendUnitPresentation::label(MapLegendMetrics::heatmap(VisualHeatmap::Chlorine)));
+    CHECK(MapLegendMetrics::link(VisualLink::Roughness,
+              MapLegendMetrics::RoughnessStyle::HazenWilliams).quantity.empty());
+    CHECK(MapLegendMetrics::link(VisualLink::Roughness,
+              MapLegendMetrics::RoughnessStyle::ChezyManning).quantity.empty());
     const MapRange pressure_legend = MapLegendUnitPresentation::range(
-        presentation, QStringLiteral("Pressure"), 0.0, 1.0);
+        presentation, MapLegendMetrics::node(VisualNode::Pressure), 0.0, 1.0);
     near(pressure_legend.maximum,
          1.2 * 0.4333 / 0.3048);
     CHECK(pressure_legend.unit == QStringLiteral("psi"));
     const MapRange age_legend = MapLegendUnitPresentation::range(
-        presentation, QStringLiteral("Water Age"), 0.0, 1.0);
+        presentation, MapLegendMetrics::heatmap(VisualHeatmap::WaterAge), 0.0, 1.0);
     near(age_legend.maximum, 60.0);
     CHECK(age_legend.unit == QStringLiteral("min"));
     const MapRange roughness_legend = MapLegendUnitPresentation::range(
-        presentation, QStringLiteral("Absolute Roughness ε"), 0.0, 25.4);
+        presentation, MapLegendMetrics::link(VisualLink::Roughness, MapLegendMetrics::RoughnessStyle::DarcyWeisbach), 0.0, 25.4);
     near(roughness_legend.maximum, 1.0);
     CHECK(roughness_legend.unit == QStringLiteral("in"));
     // Length is already set to feet; verify large ranges use miles without
     // forcing a redundant presentation-generation change.
     const MapRange long_length = MapLegendUnitPresentation::range(
-        presentation, QStringLiteral("Length"), 0.0, 2000.0);
+        presentation, MapLegendMetrics::link(VisualLink::Length), 0.0, 2000.0);
     CHECK(long_length.unit == QStringLiteral("mi"));
     near(long_length.maximum, 2000.0 / 1609.344);
     // Restore the profile so existing table assertions stay independent.
@@ -647,7 +671,7 @@ int main(int argc, char **argv)
              presentation, {"tank_minimum_volume"}, 1.0),
          1.0 / aowis::units::cubic_metres_per_cubic_foot);
     near(MapLegendUnitPresentation::range(
-             presentation, QStringLiteral("Base Demand"), 0.0, 3.6).maximum, 3.6);
+             presentation, MapLegendMetrics::node(VisualNode::BaseDemand), 0.0, 3.6).maximum, 3.6);
     CHECK(canonical_flow == 1.234567890123);
     return 0;
 }
