@@ -2,6 +2,7 @@
 
 #include "map/render/map_node_declutter.h"
 #include "map/render/map_render_cache_math.h"
+#include "map/render/map_render_diagnostics.h"
 #include "geo/geo_web_mercator.h"
 #include "network/infrastructure_entity_traits.h"
 #include "network/network_symbology_rendering.h"
@@ -35,8 +36,9 @@ constexpr float TwoDIconLayerZ = 1.2f;
 
 void MapRhiScene::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
 {
-    this->network_snapshot = snapshot;
-    rebuildNetworkGeometry();
+    const MapRetainedNetworkUpdate update = this->retained_network.setSnapshot(snapshot);
+    if (update.geometry_changed)
+        rebuildNetworkGeometry();
 }
 
 bool MapRhiScene::setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids)
@@ -51,6 +53,9 @@ bool MapRhiScene::setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids)
 
 void MapRhiScene::rebuildNetworkGeometry()
 {
+    const MapRenderDiagnostics::Scope timing(MapRenderDiagnostics::Counter::FlatGeometryRebuilt);
+    MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::DemandAttachmentsPrepared,
+        quint64(this->retained_network.snapshot().demand_point_attachments.size()));
     this->link_vertices.clear();
     this->node_vertices.clear();
     this->selected_link_vertices.clear();
@@ -66,17 +71,17 @@ void MapRhiScene::rebuildNetworkGeometry()
     this->entity_keys_by_uuid.clear();
     this->link_vertex_indices_by_entity.clear();
     this->node_vertex_indices_by_entity.clear();
-    this->geometry_revision = this->network_snapshot.geometry_revision;
-    this->origin_world = chooseOriginWorld(this->network_snapshot);
+    this->geometry_revision = this->retained_network.snapshot().geometry_revision;
+    this->origin_world = chooseOriginWorld(this->retained_network.snapshot());
     this->origin_valid =
-        !this->network_snapshot.nodes.isEmpty() || !this->network_snapshot.links.isEmpty();
+        !this->retained_network.snapshot().nodes.isEmpty() || !this->retained_network.snapshot().links.isEmpty();
     rebuildNetworkStyles();
 
     if (!this->origin_valid)
         return;
 
     bool reference_latitude_initialized = false;
-    for (const NetworkRenderNode &node : this->network_snapshot.nodes)
+    for (const NetworkRenderNode &node : this->retained_network.snapshot().nodes)
     {
         if (!finiteCoordinate(node.coordinate_wgs84))
             continue;
@@ -87,7 +92,7 @@ void MapRhiScene::rebuildNetworkGeometry()
     }
     if (!reference_latitude_initialized)
     {
-        for (const NetworkRenderLink &link : this->network_snapshot.links)
+        for (const NetworkRenderLink &link : this->retained_network.snapshot().links)
         {
             for (const CoordinateWGS84 &coordinate : link.vertices_wgs84)
             {
@@ -112,8 +117,8 @@ void MapRhiScene::rebuildNetworkGeometry()
     };
 
     QVector<PreparedNode> prepared_nodes;
-    prepared_nodes.reserve(this->network_snapshot.nodes.size());
-    for (const NetworkRenderNode &node : this->network_snapshot.nodes)
+    prepared_nodes.reserve(this->retained_network.snapshot().nodes.size());
+    for (const NetworkRenderNode &node : this->retained_network.snapshot().nodes)
     {
         if (this->hidden_entity_uuids.contains(node.uuid) ||
             !finiteCoordinate(node.coordinate_wgs84))
@@ -168,15 +173,15 @@ void MapRhiScene::rebuildNetworkGeometry()
     }
 
     qsizetype segment_count = 0;
-    for (const NetworkRenderLink &link : this->network_snapshot.links)
+    for (const NetworkRenderLink &link : this->retained_network.snapshot().links)
     {
         if (!this->hidden_entity_uuids.contains(link.uuid))
             segment_count += qMax<qsizetype>(0, link.vertices_wgs84.size() - 1);
     }
-    segment_count += this->network_snapshot.demand_point_attachments.size();
+    segment_count += this->retained_network.snapshot().demand_point_attachments.size();
     this->link_vertices.reserve(segment_count * 6);
 
-    for (const NetworkRenderLink &link : this->network_snapshot.links)
+    for (const NetworkRenderLink &link : this->retained_network.snapshot().links)
     {
         if (this->hidden_entity_uuids.contains(link.uuid) ||
             link.vertices_wgs84.size() < 2)
@@ -276,7 +281,7 @@ void MapRhiScene::rebuildNetworkGeometry()
     }
 
     for (const NetworkRenderDemandPointAttachment &attachment :
-         this->network_snapshot.demand_point_attachments)
+         this->retained_network.snapshot().demand_point_attachments)
     {
         if (this->hidden_entity_uuids.contains(attachment.demand_point_uuid)
             || !finiteCoordinate(attachment.demand_point_coordinate_wgs84)
@@ -352,7 +357,7 @@ void MapRhiScene::setSymbology(const MapNetworkRenderSymbology &symbology)
         || this->symbology.flow_directions != symbology.flow_directions;
 
     this->symbology = symbology;
-    if (link_thickness_changed && !this->network_snapshot.demand_point_attachments.isEmpty())
+    if (link_thickness_changed && !this->retained_network.snapshot().demand_point_attachments.isEmpty())
     {
         rebuildNetworkGeometry();
         return;
@@ -480,7 +485,7 @@ QPointF MapRhiScene::originWorld() const
 
 const NetworkRenderSnapshot &MapRhiScene::networkSnapshot() const
 {
-    return this->network_snapshot;
+    return this->retained_network.snapshot();
 }
 
 QVector3D MapRhiScene::worldPosition(
@@ -773,6 +778,7 @@ void MapRhiScene::appendHeatmap(const HeatmapMarker &marker)
 
 void MapRhiScene::rebuildIcons()
 {
+    const MapRenderDiagnostics::Scope timing(MapRenderDiagnostics::Counter::FlatIconsRebuilt);
     this->icon_vertices.clear();
     if (!this->symbology.show_icons)
         return;
@@ -855,7 +861,7 @@ void MapRhiScene::appendIcon(const IconMarker &marker)
 void MapRhiScene::rebuildNetworkStyles()
 {
     this->network_style_table.rebuild(
-        this->network_snapshot,
+        this->retained_network.snapshot(),
         this->hidden_entity_uuids,
         this->symbology,
         this->selected_entity_type,
@@ -867,6 +873,7 @@ void MapRhiScene::rebuildNetworkStyles()
 
 void MapRhiScene::rebuildFlowDirections()
 {
+    const MapRenderDiagnostics::Scope timing(MapRenderDiagnostics::Counter::FlatFlowRebuilt);
     this->flow_direction_vertices.clear();
 
     if (!this->symbology.show_flow_direction

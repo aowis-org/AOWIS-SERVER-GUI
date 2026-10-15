@@ -36,6 +36,12 @@ public:
 
     QMatrix4x4 viewProjectionMatrix(
         MapGlobeCameraBasis *camera_basis = nullptr) const;
+    // Re-evaluate the same physical camera relative to a retained geometry
+    // origin. Terrain continues to use viewProjectionMatrix() with the
+    // frequently rebased camera origin.
+    QMatrix4x4 viewProjectionMatrixForOrigin(
+        const GeoWgs84Ellipsoid::EcefPositionD &origin_ecef,
+        MapGlobeCameraBasis *camera_basis = nullptr) const;
     bool screenRay(
         const QPointF &screen_position,
         MapGlobeScreenRay *ray) const;

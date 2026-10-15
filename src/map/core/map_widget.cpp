@@ -1,4 +1,5 @@
 #include "map/core/map_widget.h"
+#include "map/core/map_zoom_animation.h"
 #include "config/gui_configuration.h"
 #include "config/shortcut_registry.h"
 
@@ -173,9 +174,13 @@ constexpr double MousePanVelocitySmoothing = 0.65;
 constexpr double MousePanMaximumSpeedPixelsPerSecond = 2400.0;
 constexpr double MousePanMinimumInertiaSpeedPixelsPerSecond = 70.0;
 constexpr double MousePanInertiaDecelerationPixelsPerSecondSquared = 2600.0;
-constexpr double View2dKeyboardZoomOctavesPerSecond = 1.0;
-constexpr double View3dKeyboardZoomOctavesPerSecond = 1.0;
-constexpr double View3dKeyboardZoomFastMultiplier = 2.0;
+// Held-key zoom rate, identical in 2D and on the globe (both in octaves).
+// Shift doubles it, as for keyboard panning.
+constexpr double KeyboardZoomOctavesPerSecond = 1.5;
+constexpr double KeyboardZoomFastMultiplier = 2.0;
+// Globe wheel notches have always scaled the orbit distance by 0.85; in the
+// shared octave units that is -log2(0.85) ~= 0.2345 octave per notch.
+const double GlobeOctavesPerWheelStep = -std::log2(0.85);
 
 qreal vectorLength(const QPointF &vector)
 {
@@ -249,9 +254,17 @@ void MapWidget::fitViewToBounds(
     if (this->m_model == nullptr)
         return;
 
+    // Continuous fit for every renderer that draws fractional scale (GPU
+    // surfaces and the desktop CPU painter). Only the legacy WASM browser
+    // map layer needs an integer zoom.
+    bool allow_continuous_2d_zoom = true;
+#ifdef Q_OS_WASM
+    allow_continuous_2d_zoom = !this->browser_map_layer_enabled;
+#endif
+    cancelSmoothZoom();
     this->m_model->fitViewToBounds(
         minimum, maximum, size(), elevation_minimum_m, elevation_maximum_m,
-        this->render_surface_active);
+        allow_continuous_2d_zoom);
 }
 
 void MapWidget::deleteCachedTiles(int zoom, int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max)
@@ -369,16 +382,15 @@ void MapWidget::init()
 
     connect(this->m_model, &MapModel::viewModeChanged, this, [this](MapViewMode view_mode)
     {
-        if (view_mode != MapViewMode::TwoD)
-        {
-            this->view_2d_zoom_in_key_pressed = false;
-            this->view_2d_zoom_out_key_pressed = false;
-        }
+        // The motion's octave units differ per mode (2D zoom level versus
+        // -log2(globe distance)); never carry a glide across a mode switch.
+        // A still-held zoom key restarts in the new mode on the next frame.
+        cancelSmoothZoom();
+        if (hasKeyboardZoomInput())
+            ensurePanAnimationRunning();
         const bool orbit_camera_mode = view_mode == MapViewMode::Globe;
         if (!orbit_camera_mode)
         {
-            this->view_3d_zoom_in_key_pressed = false;
-            this->view_3d_zoom_out_key_pressed = false;
             if (this->view_3d_orbit_active)
                 endView3dOrbit();
             stopPanAnimationIfIdle();
@@ -490,17 +502,61 @@ void MapWidget::initPanAnimation()
 
 void MapWidget::ensurePanAnimationRunning()
 {
-    if (this->pan_timer->isActive())
+    // With an external frame driver the render surface ticks every
+    // presented frame anyway; a second timer would reintroduce beating.
+    if (this->external_navigation_frame_driver || this->pan_timer->isActive())
         return;
 
     this->pan_elapsed_timer.start();
     this->pan_timer->start();
 }
 
+void MapWidget::setNavigationFrameDriver(bool external)
+{
+    if (this->external_navigation_frame_driver == external)
+        return;
+
+    this->external_navigation_frame_driver = external;
+    if (external)
+    {
+        this->pan_timer->stop();
+        return;
+    }
+    if (this->zoom_motion.active() || hasKeyboardPanInput() || hasKeyboardZoomInput()
+        || vectorLength(this->pan_velocity) >= PanVelocityStopThreshold)
+    {
+        ensurePanAnimationRunning();
+    }
+}
+
+void MapWidget::advanceNavigationFrame(double elapsed_seconds)
+{
+    if (!this->external_navigation_frame_driver)
+        return;
+    advanceNavigation(qBound<qreal>(0.0, qreal(elapsed_seconds), 0.05));
+}
+
+void MapWidget::setTilePaintingEnabled(bool enabled)
+{
+    if (this->tile_painting_enabled == enabled)
+        return;
+    this->tile_painting_enabled = enabled;
+    update();
+}
+
+#ifndef Q_OS_WASM
+void MapWidget::setOrbitPointerLockWindow(QWindow *window)
+{
+    // Never retarget a live lock; the next orbit gesture uses the new window.
+    if (this->view_3d_orbit_active)
+        endView3dOrbit(false);
+    this->orbit_pointer_lock_window = window;
+}
+#endif
+
 void MapWidget::stopPanAnimationIfIdle()
 {
-    if (hasKeyboardPanInput() || hasView2dKeyboardZoomInput()
-        || hasView3dKeyboardZoomInput()
+    if (this->zoom_motion.active() || hasKeyboardPanInput() || hasKeyboardZoomInput()
         || vectorLength(this->pan_velocity) >= PanVelocityStopThreshold
         || browserMapInertiaActive())
     {
@@ -519,10 +575,9 @@ void MapWidget::stopAllPanMovement()
     this->pan_key_up_pressed = false;
     this->pan_key_down_pressed = false;
     this->pan_fast_modifier_pressed = false;
-    this->view_2d_zoom_in_key_pressed = false;
-    this->view_2d_zoom_out_key_pressed = false;
-    this->view_3d_zoom_in_key_pressed = false;
-    this->view_3d_zoom_out_key_pressed = false;
+    this->zoom_in_key_pressed = false;
+    this->zoom_out_key_pressed = false;
+    cancelSmoothZoom();
     this->keyboard_pan_motion_active = false;
     this->mouse_pan_active = false;
     this->mouse_pan_sensitivity_fractional_delta = QPointF();
@@ -544,14 +599,28 @@ void MapWidget::updatePanAnimation()
     if (elapsed_seconds <= 0.0)
         return;
 
-    if (!isVisible())
+    advanceNavigation(elapsed_seconds);
+}
+
+void MapWidget::advanceNavigation(qreal elapsed_seconds)
+{
+    if (elapsed_seconds <= 0.0)
+        return;
+
+    // A GPU surface can replace this widget in QStackedLayout while the map
+    // remains visible. Camera navigation must not depend on whether the CPU
+    // painting widget is the selected stack page. Still stop the animation
+    // when the entire map stack (for example, its tab) becomes hidden.
+    const bool navigation_visible = isVisible()
+        || (this->render_surface_active && parentWidget() != nullptr
+            && parentWidget()->isVisible());
+    if (!navigation_visible)
     {
         stopAllPanMovement();
         return;
     }
 
-    updateView2dKeyboardZoom(elapsed_seconds);
-    updateView3dKeyboardZoom(elapsed_seconds);
+    updateSmoothZoom(elapsed_seconds);
 
     if (this->mouse_pan_active)
     {
@@ -797,63 +866,127 @@ bool MapWidget::hasFastKeyboardPanInput() const
     return this->pan_fast_modifier_pressed && this->hasKeyboardPanInput();
 }
 
-bool MapWidget::hasView2dKeyboardZoomInput() const
+QPointF MapWidget::viewportCenter() const
 {
-    return this->render_surface_active
-        && this->m_model != nullptr
-        && this->m_model->viewMode() == MapViewMode::TwoD
-        && (this->view_2d_zoom_in_key_pressed || this->view_2d_zoom_out_key_pressed);
+    // Exact geometric centre. QRect::center() is (w-1)/2 truncated, i.e. one
+    // pixel left/up of the crosshair for even sizes, which made every
+    // keyboard zoom step drift the map by a fraction of a pixel.
+    return QPointF(double(width()) * 0.5, double(height()) * 0.5);
 }
 
-void MapWidget::updateView2dKeyboardZoom(qreal elapsed_seconds)
+double MapWidget::zoomMotionOctaves() const
 {
-    if (!hasView2dKeyboardZoomInput() || elapsed_seconds <= 0.0)
+    if (this->zoom_motion_mode == MapViewMode::Globe)
+        return -std::log2(qMax(MapModel::MinViewGlobeDistanceM,
+                               this->m_model->viewGlobeDistanceM()));
+    return this->m_model->view2dContinuousZoom();
+}
+
+void MapWidget::applyZoomMotionOctaves(double octaves)
+{
+    if (this->zoom_motion_mode == MapViewMode::Globe)
+    {
+        this->m_model->setViewGlobeDistanceM(std::exp2(-octaves));
+        return;
+    }
+    const double delta = octaves - this->m_model->view2dContinuousZoom();
+    if (delta != 0.0)
+        this->m_model->zoomByAt(delta, this->zoom_motion_anchor, size());
+}
+
+// Binds the motion to the current view mode. Returns false when no model.
+bool MapWidget::prepareZoomMotion()
+{
+    if (this->m_model == nullptr)
+        return false;
+
+    const MapViewMode mode = this->m_model->viewMode() == MapViewMode::Globe
+        ? MapViewMode::Globe
+        : MapViewMode::TwoD;
+    if (this->zoom_motion.active() && this->zoom_motion_mode != mode)
+        this->zoom_motion.cancel();
+    this->zoom_motion_mode = mode;
+    if (mode == MapViewMode::Globe)
+    {
+        this->zoom_motion.setLimits(
+            -std::log2(MapModel::MaxViewGlobeDistanceM),
+            -std::log2(MapModel::MinViewGlobeDistanceM));
+    }
+    else
+    {
+        this->zoom_motion.setLimits(double(MapModel::MinZoom), double(MapModel::MaxZoom));
+    }
+    return true;
+}
+
+void MapWidget::queueZoomImpulse(double octaves, const QPointF &anchor)
+{
+    if (!std::isfinite(octaves) || octaves == 0.0 || !prepareZoomMotion())
+        return;
+
+    this->zoom_motion_anchor = anchor;
+    this->zoom_motion.addImpulse(zoomMotionOctaves(), octaves);
+    ensurePanAnimationRunning();
+}
+
+void MapWidget::synchronizeKeyboardZoomHold()
+{
+    if (!prepareZoomMotion())
         return;
 
     int direction = 0;
-    if (this->view_2d_zoom_in_key_pressed)
+    if (this->zoom_in_key_pressed)
         ++direction;
-    if (this->view_2d_zoom_out_key_pressed)
+    if (this->zoom_out_key_pressed)
         --direction;
-    if (direction == 0)
-        return;
 
-    const double current_zoom = this->m_model->view2dContinuousZoom();
-    const double next_zoom = current_zoom
-        + double(direction) * View2dKeyboardZoomOctavesPerSecond
-            * double(elapsed_seconds);
-    this->m_model->setView2dContinuousZoom(next_zoom, size());
-}
-
-bool MapWidget::hasView3dKeyboardZoomInput() const
-{
-    return this->m_model != nullptr
-        && this->m_model->viewMode() == MapViewMode::Globe
-        && (this->view_3d_zoom_in_key_pressed || this->view_3d_zoom_out_key_pressed);
-}
-
-void MapWidget::updateView3dKeyboardZoom(qreal elapsed_seconds)
-{
-    if (!hasView3dKeyboardZoomInput() || elapsed_seconds <= 0.0)
-        return;
-
-    int direction = 0;
-    if (this->view_3d_zoom_in_key_pressed)
-        ++direction;
-    if (this->view_3d_zoom_out_key_pressed)
-        --direction;
-    if (direction == 0)
-        return;
-
-    double octaves_per_second = View3dKeyboardZoomOctavesPerSecond;
+    double octaves_per_second = KeyboardZoomOctavesPerSecond;
     if (this->pan_fast_modifier_pressed)
-        octaves_per_second *= View3dKeyboardZoomFastMultiplier;
+        octaves_per_second *= KeyboardZoomFastMultiplier;
 
-    const double current_distance_m = qMax(
-        MapModel::MinViewGlobeDistanceM, this->m_model->viewGlobeDistanceM());
-    const double distance_scale = std::exp2(
-        -double(direction) * octaves_per_second * double(elapsed_seconds));
-    this->m_model->setViewGlobeDistanceM(current_distance_m * distance_scale);
+    // Keyboard zoom always keeps the crosshair fixed, also when the hold
+    // continues a wheel glide that was anchored at the mouse pointer.
+    if (direction != 0)
+        this->zoom_motion_anchor = viewportCenter();
+    this->zoom_motion.setHold(zoomMotionOctaves(), direction, octaves_per_second,
+                              MapZoomAnimation::KeyboardTapOctaves);
+    if (this->zoom_motion.active())
+        ensurePanAnimationRunning();
+}
+
+void MapWidget::updateSmoothZoom(qreal elapsed_seconds)
+{
+    if (!this->zoom_motion.active() || this->m_model == nullptr)
+        return;
+
+    const MapViewMode mode = this->m_model->viewMode() == MapViewMode::Globe
+        ? MapViewMode::Globe
+        : MapViewMode::TwoD;
+    if (mode != this->zoom_motion_mode)
+    {
+        cancelSmoothZoom();
+        if (hasKeyboardZoomInput())
+            synchronizeKeyboardZoomHold();
+        return;
+    }
+
+    const double current = zoomMotionOctaves();
+    const double next = this->zoom_motion.advance(current, double(elapsed_seconds));
+    if (next != current)
+        applyZoomMotionOctaves(next);
+}
+
+void MapWidget::cancelSmoothZoom()
+{
+    this->zoom_motion.cancel();
+}
+
+bool MapWidget::hasKeyboardZoomInput() const
+{
+    // Keyboard camera motion is never gated by the selected map renderer and
+    // never falls back to integer zoom steps.
+    return this->m_model != nullptr
+        && (this->zoom_in_key_pressed || this->zoom_out_key_pressed);
 }
 
 QPointF MapWidget::keyboardPanDirection() const
@@ -966,10 +1099,10 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
     if (event->key() == Qt::Key_Shift)
     {
         this->pan_fast_modifier_pressed = true;
-        this->view_2d_zoom_in_key_pressed = false;
-        this->view_2d_zoom_out_key_pressed = false;
         if (this->hasKeyboardPanInput())
             this->ensurePanAnimationRunning();
+        if (hasKeyboardZoomInput())
+            synchronizeKeyboardZoomHold();
 
         event->accept();
         return true;
@@ -989,35 +1122,16 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
     const bool zoom_out = guiShortcutMatches(event, guiShortcutRegistry().shortcut(GuiShortcutId::MapZoomOut), Qt::ShiftModifier);
     if (zoom_in || zoom_out)
     {
-        if (this->m_model->viewMode() == MapViewMode::Globe)
+        // All keyboard zoom uses the one continuous camera motion, with every
+        // renderer and in every view mode. The key state is level-triggered:
+        // press/release only switch the motion's hold direction; OS key
+        // auto-repeat (isAutoRepeat) never adds zoom.
+        this->pan_fast_modifier_pressed = event->modifiers().testFlag(Qt::ShiftModifier);
+        bool &pressed = zoom_in ? this->zoom_in_key_pressed : this->zoom_out_key_pressed;
+        if (!event->isAutoRepeat() || !pressed)
         {
-            if (!event->isAutoRepeat())
-            {
-                if (zoom_in)
-                    this->view_3d_zoom_in_key_pressed = true;
-                else
-                    this->view_3d_zoom_out_key_pressed = true;
-
-            }
-            this->pan_fast_modifier_pressed = event->modifiers().testFlag(Qt::ShiftModifier);
-            ensurePanAnimationRunning();
-        }
-        else if (this->render_surface_active
-                 && !event->modifiers().testFlag(Qt::ShiftModifier))
-        {
-            if (zoom_in)
-                this->view_2d_zoom_in_key_pressed = true;
-            else
-                this->view_2d_zoom_out_key_pressed = true;
-            ensurePanAnimationRunning();
-        }
-        else if (zoom_in)
-        {
-            zoomIn();
-        }
-        else
-        {
-            zoomOut();
+            pressed = true;
+            synchronizeKeyboardZoomHold();
         }
         event->accept();
         return true;
@@ -1052,6 +1166,8 @@ bool MapWidget::handleKeyReleaseEvent(QKeyEvent *event)
 
         if (this->hasKeyboardPanInput())
             this->ensurePanAnimationRunning();
+        if (hasKeyboardZoomInput())
+            synchronizeKeyboardZoomHold();
 
         event->accept();
         return true;
@@ -1066,22 +1182,26 @@ bool MapWidget::handleKeyReleaseEvent(QKeyEvent *event)
         return true;
     }
 
-    const bool zoom_in = guiShortcutMatches(event, guiShortcutRegistry().shortcut(GuiShortcutId::MapZoomIn), Qt::ShiftModifier);
-    const bool zoom_out = guiShortcutMatches(event, guiShortcutRegistry().shortcut(GuiShortcutId::MapZoomOut), Qt::ShiftModifier);
+    // Release by the configured physical key even if modifiers changed while
+    // it was held (for example, Shift or Ctrl pressed before key-up). Otherwise
+    // keyboard zoom can remain stuck indefinitely after the real key release.
+    const QKeySequence zoom_in_sequence = guiShortcutRegistry().keySequence(GuiShortcutId::MapZoomIn);
+    const QKeySequence zoom_out_sequence = guiShortcutRegistry().keySequence(GuiShortcutId::MapZoomOut);
+    const bool zoom_in = zoom_in_sequence.count() == 1
+        && zoom_in_sequence[0].key() == event->key();
+    const bool zoom_out = zoom_out_sequence.count() == 1
+        && zoom_out_sequence[0].key() == event->key();
     if (zoom_in || zoom_out)
     {
         if (!event->isAutoRepeat())
         {
             if (zoom_in)
-            {
-                this->view_2d_zoom_in_key_pressed = false;
-                this->view_3d_zoom_in_key_pressed = false;
-            }
+                this->zoom_in_key_pressed = false;
             else
-            {
-                this->view_2d_zoom_out_key_pressed = false;
-                this->view_3d_zoom_out_key_pressed = false;
-            }
+                this->zoom_out_key_pressed = false;
+            // Release ends the hold; the motion decelerates over its spring
+            // lag (and completes a short press to one tap step).
+            synchronizeKeyboardZoomHold();
             stopPanAnimationIfIdle();
         }
         event->accept();
@@ -1103,11 +1223,13 @@ void MapWidget::clearKeyboardPanInput()
     this->pan_key_up_pressed = false;
     this->pan_key_down_pressed = false;
     this->pan_fast_modifier_pressed = false;
-    this->view_2d_zoom_in_key_pressed = false;
-    this->view_2d_zoom_out_key_pressed = false;
-    this->view_3d_zoom_in_key_pressed = false;
-    this->view_3d_zoom_out_key_pressed = false;
-    this->stopPanAnimationIfIdle();
+    const bool zoom_key_was_held = hasKeyboardZoomInput();
+    this->zoom_in_key_pressed = false;
+    this->zoom_out_key_pressed = false;
+    // Focus loss is a release, not an emergency stop: decelerate smoothly.
+    if (zoom_key_was_held)
+        synchronizeKeyboardZoomHold();
+    stopPanAnimationIfIdle();
 }
 
 #ifdef Q_OS_WASM
@@ -1119,6 +1241,12 @@ void MapWidget::setBrowserMapLayerEnabled(bool enabled)
     this->browser_map_layer_enabled = enabled;
     if (enabled)
     {
+        // Legacy JS/WebGL map layer: setView() only takes an integer zoom.
+        // Align the camera to it so overlays and the layer agree. Remove
+        // together with the layer once bgfx replaces it.
+        cancelSmoothZoom();
+        if (this->m_model->viewMode() == MapViewMode::TwoD)
+            this->m_model->resetView2dContinuousZoom(this->size());
         const QByteArray crosshair_data_url = browserCrosshairDataUrl();
         if (!crosshair_data_url.isEmpty())
             aowisBrowserMapSetCrosshairImage(crosshair_data_url.constData());
@@ -1345,29 +1473,26 @@ void MapWidget::wheelEvent(QWheelEvent *event)
 
 void MapWidget::handleWheelEvent(QWheelEvent *event)
 {
-    const int angle_delta_y = event->angleDelta().y();
-    const double wheel_steps = double(angle_delta_y) / 120.0;
-    if (std::abs(wheel_steps) <= 1e-9)
+    const QPoint angle_delta = event->angleDelta();
+    const QPoint pixel_delta = event->pixelDelta();
+    // Precise trackpads may report pixels without angle deltas.
+    const double wheel_steps = angle_delta.y() != 0
+        ? double(angle_delta.y()) / 120.0
+        : double(pixel_delta.y()) / 240.0;
+    if (!std::isfinite(wheel_steps) || std::abs(wheel_steps) <= 1e-9)
     {
         event->accept();
         return;
     }
 
     const GuiMapNavigationConfiguration &navigation = guiConfiguration().map_navigation;
+    const double requested_steps = wheel_steps * navigation.scroll_zoom_sensitivity;
+    // Same motion for every renderer: the old immediate CPU-fallback paths
+    // jumped by a whole notch per event.
     if (this->m_model->viewMode() == MapViewMode::Globe)
-    {
-        // Keep the historical globe response at 1.00x while allowing
-        // fractional sensitivity values for high-resolution wheels/trackpads.
-        this->m_model->setViewGlobeDistanceM(
-            this->m_model->viewGlobeDistanceM()
-            * std::pow(0.85, wheel_steps * navigation.scroll_zoom_sensitivity));
-    }
+        queueZoomImpulse(requested_steps * GlobeOctavesPerWheelStep, viewportCenter());
     else
-    {
-        this->m_model->zoomByAt(
-            wheel_steps * navigation.scroll_zoom_sensitivity,
-            event->position().toPoint(), size());
-    }
+        queueZoomImpulse(requested_steps, event->position());
     event->accept();
 }
 
@@ -1416,8 +1541,17 @@ void MapWidget::beginView3dOrbit(
         if (top_level_widget != nullptr)
             restore_surface_position = mapTo(top_level_widget, position);
 
+        QWindow *lock_window = top_level_window;
+        if (!this->orbit_pointer_lock_window.isNull())
+        {
+            // Embedded native window (bgfx) owns pointer focus; its local
+            // coordinates are this widget's coordinates.
+            lock_window = this->orbit_pointer_lock_window.data();
+            restore_surface_position = position;
+        }
+
         wayland_pointer_locked = this->view_3d_orbit_wayland_pointer_lock.lock(
-            top_level_window,
+            lock_window,
             QPointF(restore_surface_position),
             [this](const QPointF &delta)
             {
@@ -1911,14 +2045,16 @@ void MapWidget::scheduleTileUpdate(const QString &)
         this->tile_update_timer->start();
 }
 
+// Zoom buttons/menu: one smooth octave about the crosshair, never an
+// integer tile-zoom jump (MapModel::zoomIn/zoomOut are not navigation).
 void MapWidget::zoomIn()
 {
-    this->m_model->zoomIn(this->size());
+    queueZoomImpulse(1.0, viewportCenter());
 }
 
 void MapWidget::zoomOut()
 {
-    this->m_model->zoomOut(this->size());
+    queueZoomImpulse(-1.0, viewportCenter());
 }
 
 void MapWidget::setRenderSurfaceActive(bool active)
@@ -1930,10 +2066,10 @@ void MapWidget::setRenderSurfaceActive(bool active)
     if (active)
         return;
 
-    this->view_2d_zoom_in_key_pressed = false;
-    this->view_2d_zoom_out_key_pressed = false;
-    if (this->m_model != nullptr && this->m_model->viewMode() == MapViewMode::TwoD)
-        this->m_model->resetView2dContinuousZoom(this->size());
+    // Never snap the camera to an integer zoom here. The remaining CPU
+    // painter (drawTiles, editor only) draws the fractional continuous scale.
+    // Only the legacy WASM browser map layer is integer-zoom only; it is
+    // re-synchronized by setBrowserMapLayerEnabled().
     stopPanAnimationIfIdle();
 }
 
@@ -1947,6 +2083,13 @@ void MapWidget::paintEvent(QPaintEvent *event)
     if (this->render_surface_active)
     {
         Q_UNUSED(event)
+        return;
+    }
+    if (!this->tile_painting_enabled)
+    {
+        // WA_OpaquePaintEvent: the widget must still cover its area.
+        QPainter painter(this);
+        painter.fillRect(event->rect(), this->palette().brush(QPalette::Window));
         return;
     }
 #ifdef Q_OS_WASM

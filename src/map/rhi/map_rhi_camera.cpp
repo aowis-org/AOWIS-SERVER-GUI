@@ -8,6 +8,8 @@
 
 #include <QtMath>
 
+#include <cmath>
+
 MapRhiCamera::MapRhiCamera() = default;
 
 void MapRhiCamera::setSceneOriginWorld(const QPointF &origin_world)
@@ -23,13 +25,13 @@ void MapRhiCamera::setViewportSize(const QSize &viewport_size)
 
 void MapRhiCamera::syncFromMapModel(const MapModel &map_model)
 {
-    this->zoom = map_model.zoom();
-    this->view_2d_continuous_scale = map_model.view2dContinuousScale();
+    const MapCameraViewState view = map_model.cameraViewState();
+    this->continuous_2d_zoom = view.continuous_2d_zoom;
     this->globe_camera.syncFromMapModel(map_model);
 
     const QPointF raw_center_world = GeoWebMercator::lonLatToWorldPixel(
-        GeoWebMercator::normalizeLongitude(map_model.centerLon()),
-        map_model.centerLat(),
+        GeoWebMercator::normalizeLongitude(view.center_lon_deg),
+        view.center_lat_deg,
         MapRenderCacheMath::ReferenceZoom);
     const double center_x = GeoWebMercator::nearestWrappedWorldPixelX(
         raw_center_world.x(),
@@ -45,11 +47,10 @@ QMatrix4x4 MapRhiCamera::viewProjectionMatrix(const QRhi &rhi) const
 {
     const int viewport_width = qMax(1, this->viewport_size.width());
     const int viewport_height = qMax(1, this->viewport_size.height());
-    const double base_scale = GeoWebMercator::zoomScale(
-        this->zoom, MapRenderCacheMath::ReferenceZoom);
-    const double scale =
-        base_scale * qMax(1e-9, this->view_2d_continuous_scale);
-    const double safe_scale = scale > 0.0 ? scale : 1.0;
+    // GPU view scaling is continuous: selecting a different imagery tile
+    // zoom level must not change this matrix or any network vertex data.
+    const double safe_scale = std::exp2(
+        this->continuous_2d_zoom - MapRenderCacheMath::ReferenceZoom);
     const double half_width_world =
         double(viewport_width) / (2.0 * safe_scale);
     const double half_height_world =
@@ -76,10 +77,13 @@ void MapRhiCamera::updateGlobeRenderOrigin()
 }
 
 QMatrix4x4 MapRhiCamera::globeNetworkViewProjectionMatrix(
-    const QRhi &rhi, MapRhiImpostorCameraBasis *impostor_camera_basis) const
+    const QRhi &rhi,
+    const GeoWgs84Ellipsoid::EcefPositionD &network_origin_ecef,
+    MapRhiImpostorCameraBasis *impostor_camera_basis) const
 {
     QMatrix4x4 result = rhi.clipSpaceCorrMatrix();
-    result *= this->globe_camera.viewProjectionMatrix(impostor_camera_basis);
+    result *= this->globe_camera.viewProjectionMatrixForOrigin(
+        network_origin_ecef, impostor_camera_basis);
     return result;
 }
 
@@ -88,11 +92,10 @@ QPointF MapRhiCamera::projectWorldToScreen(
 {
     const int viewport_width = qMax(1, this->viewport_size.width());
     const int viewport_height = qMax(1, this->viewport_size.height());
-    const double base_scale = GeoWebMercator::zoomScale(
-        this->zoom, MapRenderCacheMath::ReferenceZoom);
-    const double scale =
-        base_scale * qMax(1e-9, this->view_2d_continuous_scale);
-    const double safe_scale = scale > 0.0 ? scale : 1.0;
+    // GPU view scaling is continuous: selecting a different imagery tile
+    // zoom level must not change this matrix or any network vertex data.
+    const double safe_scale = std::exp2(
+        this->continuous_2d_zoom - MapRenderCacheMath::ReferenceZoom);
 
     return QPointF(
         viewport_width / 2.0

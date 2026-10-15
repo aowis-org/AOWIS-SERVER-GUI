@@ -23,12 +23,12 @@ public:
     void syncFromMapModel(const MapModel &map_model);
 
     QMatrix4x4 viewProjectionMatrix(const QRhi &rhi) const;
-    // QRhi adapter around the backend-neutral Globe camera matrix. Terrain
-    // and network vertices must both be built relative to
-    // globeRenderOriginEcef(). QRhi-specific clip-space correction is applied
-    // only here, after MapGlobeCamera has produced the canonical matrix.
+    // QRhi adapter for the retained-network ECEF frame. Terrain uses the
+    // independently rebased globeRenderOriginEcef() instead. QRhi-specific
+    // clip-space correction is applied after the neutral camera matrix.
     QMatrix4x4 globeNetworkViewProjectionMatrix(
         const QRhi &rhi,
+        const GeoWgs84Ellipsoid::EcefPositionD &network_origin_ecef,
         MapRhiImpostorCameraBasis *impostor_camera_basis = nullptr) const;
     QPointF projectWorldToScreen(const QVector3D &world_position) const;
     double globeOrbitDistanceM() const;
@@ -47,8 +47,7 @@ private:
     QPointF scene_origin_world;
     QPointF center_world;
     QSize viewport_size;
-    int zoom = 0;
-    double view_2d_continuous_scale = 1.0;
+    double continuous_2d_zoom = 0.0;
     MapGlobeCamera globe_camera;
 };
 

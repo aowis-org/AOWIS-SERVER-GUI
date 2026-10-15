@@ -1,4 +1,5 @@
 #include "map/rhi/map_rhi_widget.h"
+#include "map/render/map_render_diagnostics.h"
 
 #include "config/gui_configuration.h"
 #include "map/data/map_terrain_repository.h"
@@ -457,7 +458,7 @@ constexpr int GlobeUndergroundXRayRefreshQuietMs = 500;
 // out of sync with the render matrix as either one is tweaked in the
 // future -- using the actual matrix means picking is, by construction,
 // checking against exactly what is on screen. position must already be
-// relative to the camera's current globeRenderOriginEcef(), i.e. taken
+// relative to the scene's stable renderOriginEcef(), i.e. taken
 // directly from MapGlobeNetworkScene's own vertex/instance data (which
 // is already in that space -- see its ecefPosition()), not a raw ECEF or
 // geodetic coordinate.
@@ -948,7 +949,8 @@ MapRenderHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
     MapRhiImpostorCameraBasis impostor_camera_basis;
     const QMatrix4x4 view_projection =
         this->camera.globeNetworkViewProjectionMatrix(
-            *this->active_rhi, &impostor_camera_basis);
+            *this->active_rhi, this->globe_network_scene.renderOriginEcef(),
+            &impostor_camera_basis);
 
     // this->scene and this->globe_network_scene are always fed the same
     // NetworkRenderSnapshot (see setNetworkSnapshot()) and the same hidden-
@@ -956,7 +958,7 @@ MapRenderHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
     // for uuid/hidden-state lookups is safe and avoids adding a redundant
     // accessor to MapGlobeNetworkScene purely for that. Every position
     // read out of globe_network_scene below, in contrast, is Globe-specific:
-    // already relative to the camera's current render origin (see
+    // already relative to the retained network origin (see
     // MapGlobeNetworkScene::ecefPosition()), matching exactly what
     // view_projection itself expects -- see projectGlobeToScreen()'s
     // comment.
@@ -966,8 +968,8 @@ MapRenderHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
     // removed from iconVertices(). Their rendered meshes therefore need their
     // own hit path. Use the same backend-independent Globe screen ray as DEM
     // picking and intersect it with the exact CPU-side triangles uploaded for
-    // the rendered models. Model vertices are relative to globeRenderOriginEcef(),
-    // so translate the absolute ECEF camera origin into that same local frame.
+    // the rendered models. Model vertices use the stable network anchor,
+    // so translate the absolute ECEF ray origin into that same local frame.
     MapGlobeScreenRay globe_mesh_ray;
     const bool have_globe_mesh_ray = this->camera.globeScreenRay(
         screen_position, &globe_mesh_ray);
@@ -975,7 +977,7 @@ MapRenderHit MapRhiWidget::globeHitTest(const QPointF &screen_position) const
     if (have_globe_mesh_ray)
     {
         const GeoWgs84Ellipsoid::EcefPositionD render_origin_ecef =
-            this->camera.globeRenderOriginEcef();
+            this->globe_network_scene.renderOriginEcef();
         globe_mesh_ray_origin = QVector3D(
             float(globe_mesh_ray.origin_ecef.x - render_origin_ecef.x),
             float(globe_mesh_ray.origin_ecef.y - render_origin_ecef.y),
@@ -1441,6 +1443,10 @@ void MapRhiWidget::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
     if (this->scene.geometryRevision() == snapshot.geometry_revision &&
         this->scene.hasGeometry())
     {
+        // Forward attribute-only revision bookkeeping without touching
+        // static scene geometry or GPU upload flags.
+        this->scene.setNetworkSnapshot(snapshot);
+        this->globe_network_scene.setNetworkSnapshot(snapshot);
         return;
     }
 
@@ -2004,7 +2010,10 @@ void MapRhiWidget::initialize(QRhiCommandBuffer *command_buffer)
     this->render_pass_descriptor = target->renderPassDescriptor();
 
     syncViewState();
-    if (this->scene.setViewZoom(this->map_model->zoom()))
+    // Legacy QRhi icon/flow decoration geometry still depends on tile zoom.
+    // This is an appearance update, not a retained-network geometry change;
+    // it is removed in the GPU-driven symbol stage of the migration.
+    if (this->scene.setViewZoom(this->map_model->imageryTileZoom()))
     {
         this->flow_direction_upload_pending = true;
         this->icon_upload_pending = true;
@@ -2051,8 +2060,13 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         return;
     }
 
+    const MapRenderDiagnostics::Scope frame_timing(MapRenderDiagnostics::Counter::Frame);
+    MapRenderDiagnostics::reportIfDue();
     syncViewState();
-    if (this->scene.setViewZoom(this->map_model->zoom()))
+    // Legacy QRhi icon/flow decoration geometry still depends on tile zoom.
+    // This is an appearance update, not a retained-network geometry change;
+    // it is removed in the GPU-driven symbol stage of the migration.
+    if (this->scene.setViewZoom(this->map_model->imageryTileZoom()))
     {
         this->flow_direction_upload_pending = true;
         this->icon_upload_pending = true;
@@ -2165,6 +2179,8 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         const QVector<MapRhiScene::NodeVertex> &node_vertices = this->scene.nodeVertices();
         if (!link_vertices.isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(link_vertices.size()) * sizeof(MapRhiScene::LinkVertex));
             resource_updates->updateDynamicBuffer(
                 this->link_vertex_buffer.get(), 0,
                 int(link_vertices.size() * qsizetype(sizeof(MapRhiScene::LinkVertex))),
@@ -2172,6 +2188,8 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         }
         if (!node_vertices.isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(node_vertices.size()) * sizeof(MapRhiScene::NodeVertex));
             resource_updates->updateDynamicBuffer(
                 this->node_vertex_buffer.get(), 0,
                 int(node_vertices.size() * qsizetype(sizeof(MapRhiScene::NodeVertex))),
@@ -2193,6 +2211,8 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
 
         if (!selected_link_vertices.isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(selected_link_vertices.size()) * sizeof(MapRhiScene::LinkVertex));
             resource_updates->updateDynamicBuffer(
                 this->selected_link_vertex_buffer.get(), 0,
                 int(selected_link_vertices.size() * qsizetype(sizeof(MapRhiScene::LinkVertex))),
@@ -2200,6 +2220,8 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         }
         if (!selected_node_vertices.isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(selected_node_vertices.size()) * sizeof(MapRhiScene::NodeVertex));
             resource_updates->updateDynamicBuffer(
                 this->selected_node_vertex_buffer.get(), 0,
                 int(selected_node_vertices.size() * qsizetype(sizeof(MapRhiScene::NodeVertex))),
@@ -2207,6 +2229,8 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         }
         if (!diagnostic_link_vertices.isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(diagnostic_link_vertices.size()) * sizeof(MapRhiScene::LinkVertex));
             resource_updates->updateDynamicBuffer(
                 this->diagnostic_link_vertex_buffer.get(), 0,
                 int(diagnostic_link_vertices.size() * qsizetype(sizeof(MapRhiScene::LinkVertex))),
@@ -2214,6 +2238,8 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         }
         if (!diagnostic_node_vertices.isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(diagnostic_node_vertices.size()) * sizeof(MapRhiScene::NodeVertex));
             resource_updates->updateDynamicBuffer(
                 this->diagnostic_node_vertex_buffer.get(), 0,
                 int(diagnostic_node_vertices.size() * qsizetype(sizeof(MapRhiScene::NodeVertex))),
@@ -2228,6 +2254,8 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
             this->scene.flowDirectionVertices();
         if (!flow_direction_vertices.isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(flow_direction_vertices.size()) * sizeof(MapRhiScene::LinkVertex));
             resource_updates->updateDynamicBuffer(
                 this->flow_direction_vertex_buffer.get(), 0,
                 int(flow_direction_vertices.size() * qsizetype(sizeof(MapRhiScene::LinkVertex))),
@@ -2241,6 +2269,8 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
         const QVector<MapRhiScene::IconVertex> &icon_vertices = this->scene.iconVertices();
         if (!icon_vertices.isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(icon_vertices.size()) * sizeof(MapRhiScene::IconVertex));
             resource_updates->updateDynamicBuffer(
                 this->icon_vertex_buffer.get(), 0,
                 int(icon_vertices.size() * qsizetype(sizeof(MapRhiScene::IconVertex))),
@@ -2266,6 +2296,8 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     {
         if (!this->tank_model_vertices.isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(this->tank_model_vertices.size()) * sizeof(MapGlobeTankModelVertex));
             resource_updates->updateDynamicBuffer(
                 this->tank_vertex_buffer.get(), 0,
                 int(this->tank_model_vertices.size() * qsizetype(sizeof(MapGlobeTankModelVertex))),
@@ -2278,6 +2310,8 @@ void MapRhiWidget::render(QRhiCommandBuffer *command_buffer)
     {
         if (!this->reservoir_model_vertices.isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(this->reservoir_model_vertices.size()) * sizeof(MapGlobeReservoirModelVertex));
             resource_updates->updateDynamicBuffer(
                 this->reservoir_vertex_buffer.get(), 0,
                 int(this->reservoir_model_vertices.size() * qsizetype(sizeof(MapGlobeReservoirModelVertex))),
@@ -2434,32 +2468,27 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     if (this->globe_renderer == nullptr)
         return;
 
-    // Must happen before the neutral MapGlobeRenderFrame is built and before
-    // the concrete Globe QRhi backend below -- everything downstream in this
-    // function that cares about the
-    // Globe render origin (the network view/projection matrix and the
-    // network scene's own vertex data) must agree on the exact same,
-    // already-updated origin for this frame. See
-    // MapRhiCamera::updateGlobeRenderOrigin() for why this is a sticky,
-    // rarely-changing value rather than something recomputed fresh (and
-    // handed straight to setRenderOriginEcef()) every frame.
+    // The camera/terrain origin may rebase independently of the retained
+    // network geometry anchor. Terrain uses the camera-origin matrix; the
+    // network frame and picking use a separate matrix relative to the
+    // stable network anchor. No static network buffers are invalidated.
+    const GeoWgs84Ellipsoid::EcefPositionD previous_camera_origin =
+        this->camera.globeRenderOriginEcef();
     this->camera.updateGlobeRenderOrigin();
 
     const GeoWgs84Ellipsoid::EcefPositionD globe_render_origin =
         this->camera.globeRenderOriginEcef();
-
-    // Terrain and network share one origin-relative coordinate frame. This
-    // removes raw-float ECEF cancellation from terrain depth, which otherwise
-    // makes depth-tested pipes/chevrons and Hide/X-Ray visibility oscillate
-    // during Globe camera motion. Both setters are cheap on ordinary frames;
-    // the sticky origin changes only after a long translation.
-    this->globe_renderer->setRenderOriginEcef(globe_render_origin);
-    if (this->globe_network_scene.setRenderOriginEcef(globe_render_origin))
+    if (globe_render_origin.x != previous_camera_origin.x
+        || globe_render_origin.y != previous_camera_origin.y
+        || globe_render_origin.z != previous_camera_origin.z)
     {
-        this->globe_network_backend.invalidateAll();
-        this->tank_upload_pending = true;
-        this->reservoir_upload_pending = true;
+        MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::GlobeOriginRebased);
     }
+
+    this->globe_renderer->setRenderOriginEcef(globe_render_origin);
+    // Only the first call on a previously empty scene can initialize this
+    // fallback origin. Real network geometry anchors are snapshot-owned.
+    this->globe_network_scene.setRenderOriginEcef(globe_render_origin);
 
     // Convert the configured pixel chevron size/spacing into ECEF meters at
     // the orbit focus depth. This is the inverse of the same perspective
@@ -2501,11 +2530,11 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
         return;
     }
 
-    // Terrain receives the same backend-corrected matrix as the network
-    // backend. The neutral frame remains in canonical clip space until this
-    // QRhi boundary.
+    // Terrain is still stored relative to the sticky camera/terrain origin;
+    // its own view matrix must not use the independently anchored network
+    // frame. Both matrices project the same physical ECEF coordinates.
     QMatrix4x4 view_projection = this->active_rhi->clipSpaceCorrMatrix();
-    view_projection *= globe_frame.canonical_view_projection;
+    view_projection *= this->camera.globeCamera().viewProjectionMatrix();
 
     QRhiResourceUpdateBatch *resource_updates = this->active_rhi->nextResourceUpdateBatch();
     this->globe_network_backend.updateCameraUniforms(
@@ -2538,6 +2567,8 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     {
         if (!this->tank_model_vertices.isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(this->tank_model_vertices.size()) * sizeof(MapGlobeTankModelVertex));
             resource_updates->updateDynamicBuffer(
                 this->tank_vertex_buffer.get(), 0,
                 int(this->tank_model_vertices.size()
@@ -2551,6 +2582,8 @@ void MapRhiWidget::renderGlobe(QRhiCommandBuffer *command_buffer, QRhiRenderTarg
     {
         if (!this->reservoir_model_vertices.isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(this->reservoir_model_vertices.size()) * sizeof(MapGlobeReservoirModelVertex));
             resource_updates->updateDynamicBuffer(
                 this->reservoir_vertex_buffer.get(), 0,
                 int(this->reservoir_model_vertices.size()

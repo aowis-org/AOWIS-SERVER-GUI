@@ -1,4 +1,5 @@
 #include "map/rhi/map_rhi_globe_surface_backend.h"
+#include "map/render/map_render_diagnostics.h"
 
 #include <QFile>
 #include <QImage>
@@ -934,6 +935,7 @@ bool MapRhiGlobeSurfaceBackend::uploadGeometry(
                 return false;
             }
 
+            MapRenderDiagnostics::terrainUpload(quint64(required_bytes));
             resource_updates->updateDynamicBuffer(
                 this->window_vertex_buffer.get(), 0, required_bytes,
                 resources.window_vertices->constData());
@@ -961,6 +963,7 @@ bool MapRhiGlobeSurfaceBackend::uploadGeometry(
                 return false;
             }
 
+            MapRenderDiagnostics::terrainUpload(quint64(required_bytes));
             resource_updates->updateDynamicBuffer(
                 this->window_index_buffer.get(), 0, required_bytes,
                 resources.window_indices->constData());
@@ -989,6 +992,7 @@ bool MapRhiGlobeSurfaceBackend::uploadGeometry(
                 return false;
             }
 
+            MapRenderDiagnostics::terrainUpload(quint64(required_bytes));
             resource_updates->updateDynamicBuffer(
                 this->cap_vertex_buffer.get(), 0, required_bytes,
                 resources.cap_vertices->constData());
@@ -1016,6 +1020,7 @@ bool MapRhiGlobeSurfaceBackend::uploadGeometry(
                 return false;
             }
 
+            MapRenderDiagnostics::terrainUpload(quint64(required_bytes));
             resource_updates->updateDynamicBuffer(
                 this->cap_index_buffer.get(), 0, required_bytes,
                 resources.cap_indices->constData());
@@ -1046,6 +1051,7 @@ bool MapRhiGlobeSurfaceBackend::uploadGeometry(
                 return false;
             }
 
+            MapRenderDiagnostics::terrainUpload(quint64(required_bytes));
             resource_updates->updateDynamicBuffer(
                 this->wireframe_vertex_buffer.get(), 0, required_bytes,
                 resources.wireframe_vertices->constData());

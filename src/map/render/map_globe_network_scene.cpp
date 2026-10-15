@@ -3,6 +3,7 @@
 #include "map/core/map_model.h"
 #include "map/render/map_icon_atlas.h"
 #include "map/render/map_node_declutter.h"
+#include "map/render/map_render_diagnostics.h"
 #include "geo/geo_wgs84_ellipsoid.h"
 #include "network/infrastructure_entity_traits.h"
 #include "network/network_symbology_rendering.h"
@@ -139,8 +140,62 @@ CoordinateWGS84 coordinateWithDeclutterOffset(
 
 void MapGlobeNetworkScene::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
 {
-    this->network_snapshot = snapshot;
-    rebuildNetworkGeometry();
+    const MapRetainedNetworkUpdate update = this->retained_network.setSnapshot(snapshot);
+    if (update.geometry_changed)
+    {
+        // Use a network-local origin for the retained vertices. Unlike the
+        // camera's sticky terrain origin, this anchor changes only on actual
+        // geometry revisions, never on pan/orbit/zoom or camera rebasing.
+        const NetworkRenderSnapshot &geometry = this->retained_network.snapshot();
+        bool found_anchor = false;
+        CoordinateWGS84 anchor;
+        for (const NetworkRenderNode &node : geometry.nodes)
+        {
+            if (finiteCoordinate(node.coordinate_wgs84))
+            {
+                anchor = node.coordinate_wgs84;
+                found_anchor = true;
+                break;
+            }
+        }
+        if (!found_anchor)
+        {
+            for (const NetworkRenderLink &link : geometry.links)
+            {
+                for (const CoordinateWGS84 &coordinate : link.vertices_wgs84)
+                {
+                    if (finiteCoordinate(coordinate))
+                    {
+                        anchor = coordinate;
+                        found_anchor = true;
+                        break;
+                    }
+                }
+                if (found_anchor)
+                    break;
+            }
+        }
+        if (!found_anchor)
+        {
+            for (const NetworkRenderDemandPointAttachment &attachment
+                 : geometry.demand_point_attachments)
+            {
+                if (finiteCoordinate(attachment.demand_point_coordinate_wgs84))
+                {
+                    anchor = attachment.demand_point_coordinate_wgs84;
+                    found_anchor = true;
+                    break;
+                }
+            }
+        }
+        if (found_anchor)
+        {
+            this->retained_origin.setGeometryOrigin(
+                GeoWgs84Ellipsoid::geodeticToEcefD(
+                    anchor.longitude_deg, anchor.latitude_deg, 0.0));
+        }
+        rebuildNetworkGeometry();
+    }
 }
 
 bool MapGlobeNetworkScene::setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids)
@@ -185,7 +240,7 @@ void MapGlobeNetworkScene::setSymbology(const MapNetworkRenderSymbology &symbolo
         || link_colors_changed;
 
     this->symbology = symbology;
-    if (link_thickness_changed && !this->network_snapshot.demand_point_attachments.isEmpty())
+    if (link_thickness_changed && !this->retained_network.snapshot().demand_point_attachments.isEmpty())
     {
         rebuildNetworkGeometry();
         return;
@@ -312,16 +367,18 @@ void MapGlobeNetworkScene::setTerrainElevationResolver(TerrainElevationResolver 
 bool MapGlobeNetworkScene::setRenderOriginEcef(
     const GeoWgs84Ellipsoid::EcefPositionD &origin_ecef)
 {
-    if (this->render_origin_ecef.x == origin_ecef.x
-        && this->render_origin_ecef.y == origin_ecef.y
-        && this->render_origin_ecef.z == origin_ecef.z)
-    {
-        return false;
-    }
+    // A camera rebase is NOT a geometry revision. Only an empty/uninitialized
+    // retained scene may adopt the camera's origin once. Normal snapshots
+    // already established their own geometry-local anchor.
+    const bool initialized = this->retained_origin.initializeFromCamera(origin_ecef);
+    if (initialized && this->retained_network.hasSnapshot())
+        rebuildNetworkGeometry();
+    return initialized;
+}
 
-    this->render_origin_ecef = origin_ecef;
-    rebuildNetworkGeometry();
-    return true;
+GeoWgs84Ellipsoid::EcefPositionD MapGlobeNetworkScene::renderOriginEcef() const
+{
+    return this->retained_origin.originEcef();
 }
 
 bool MapGlobeNetworkScene::setUndergroundXRayEnabled(bool enabled)
@@ -344,8 +401,8 @@ bool MapGlobeNetworkScene::refreshUndergroundXRayGeometry()
 {
     if (!this->underground_xray_enabled
         || !this->terrain_elevation_resolver
-        || (this->network_snapshot.links.isEmpty()
-            && this->network_snapshot.nodes.isEmpty()))
+        || (this->retained_network.snapshot().links.isEmpty()
+            && this->retained_network.snapshot().nodes.isEmpty()))
     {
         return false;
     }
@@ -527,15 +584,15 @@ QVector3D MapGlobeNetworkScene::ecefPosition(
     const double height_m = this->vertical_transform.networkHeightM(elevation_m);
 
     // Computed in double (geodeticToEcefD(), not geodeticToEcef()) and
-    // subtracted against render_origin_ecef -- also double -- before ever
+    // subtracted against the retained network ECEF anchor -- also double -- before ever
     // narrowing to the QVector3D (float32) this function returns. Both
     // operands of that subtraction carry full ECEF-scale (~6.378e6 m)
     // precision right up until the subtraction happens, so the result is
     // accurate to double precision; only *after* subtracting does the
-    // magnitude drop to something small (bounded by how far this vertex
-    // actually is from the render origin, i.e. from the current Globe
-    // orbit target -- see MapGlobeCamera::globeRenderOriginEcef()), which is
-    // where narrowing to float32 finally becomes safe. Getting the order of
+    // magnitude drop to something small for a geographically local network
+    // (bounded by its extent from the retained anchor), which is where
+    // narrowing to float32 becomes safe. Extremely wide networks will use
+    // multiple chunk-local frames in the future GPU backend. Getting the order of
     // operations right here is the entire fix: computing raw ECEF in
     // float32 first (as geodeticToEcef() does) and subtracting afterward,
     // or subtracting two float32 ECEF positions directly, both reintroduce
@@ -545,13 +602,16 @@ QVector3D MapGlobeNetworkScene::ecefPosition(
     const GeoWgs84Ellipsoid::EcefPositionD absolute_ecef = GeoWgs84Ellipsoid::geodeticToEcefD(
         coordinate.longitude_deg, coordinate.latitude_deg, height_m);
     return QVector3D(
-        float(absolute_ecef.x - this->render_origin_ecef.x),
-        float(absolute_ecef.y - this->render_origin_ecef.y),
-        float(absolute_ecef.z - this->render_origin_ecef.z));
+        float(absolute_ecef.x - this->retained_origin.originEcef().x),
+        float(absolute_ecef.y - this->retained_origin.originEcef().y),
+        float(absolute_ecef.z - this->retained_origin.originEcef().z));
 }
 
 void MapGlobeNetworkScene::rebuildNetworkGeometry()
 {
+    const MapRenderDiagnostics::Scope timing(MapRenderDiagnostics::Counter::GlobeGeometryRebuilt);
+    MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::DemandAttachmentsPrepared,
+        quint64(this->retained_network.snapshot().demand_point_attachments.size()));
     this->link_vertices.clear();
     this->node_vertices.clear();
     this->selected_link_vertices.clear();
@@ -567,7 +627,7 @@ void MapGlobeNetworkScene::rebuildNetworkGeometry()
     this->entity_keys_by_uuid.clear();
     this->link_vertex_indices_by_entity.clear();
     this->node_vertex_indices_by_entity.clear();
-    this->geometry_revision = this->network_snapshot.geometry_revision;
+    this->geometry_revision = this->retained_network.snapshot().geometry_revision;
 
     // Used only as a placeholder height for vertices whose own elevation is
     // missing/non-finite, so an incomplete dataset still lands near the rest
@@ -576,7 +636,7 @@ void MapGlobeNetworkScene::rebuildNetworkGeometry()
     // globe's DEM-displaced terrain to look buried).
     bool fallback_elevation_initialized = false;
     this->fallback_elevation_m = 0.0;
-    for (const NetworkRenderNode &node : this->network_snapshot.nodes)
+    for (const NetworkRenderNode &node : this->retained_network.snapshot().nodes)
     {
         if (!finiteCoordinate(node.coordinate_wgs84) || !std::isfinite(node.elevation_m))
             continue;
@@ -594,8 +654,8 @@ void MapGlobeNetworkScene::rebuildNetworkGeometry()
     };
 
     QVector<PreparedNode> prepared_nodes;
-    prepared_nodes.reserve(this->network_snapshot.nodes.size());
-    for (const NetworkRenderNode &node : this->network_snapshot.nodes)
+    prepared_nodes.reserve(this->retained_network.snapshot().nodes.size());
+    for (const NetworkRenderNode &node : this->retained_network.snapshot().nodes)
     {
         if (this->hidden_entity_uuids.contains(node.uuid)
             || !finiteCoordinate(node.coordinate_wgs84))
@@ -684,15 +744,15 @@ void MapGlobeNetworkScene::rebuildNetworkGeometry()
     }
 
     qsizetype segment_count = 0;
-    for (const NetworkRenderLink &link : this->network_snapshot.links)
+    for (const NetworkRenderLink &link : this->retained_network.snapshot().links)
     {
         if (!this->hidden_entity_uuids.contains(link.uuid))
             segment_count += qMax<qsizetype>(0, link.vertices_wgs84.size() - 1);
     }
-    segment_count += this->network_snapshot.demand_point_attachments.size();
+    segment_count += this->retained_network.snapshot().demand_point_attachments.size();
     this->link_vertices.reserve(segment_count * 6);
 
-    for (const NetworkRenderLink &link : this->network_snapshot.links)
+    for (const NetworkRenderLink &link : this->retained_network.snapshot().links)
     {
         if (this->hidden_entity_uuids.contains(link.uuid) || link.vertices_wgs84.size() < 2)
             continue;
@@ -832,7 +892,7 @@ void MapGlobeNetworkScene::rebuildNetworkGeometry()
     rebuildUndergroundXRayGeometry();
     rebuildFlowDirections();
     for (const NetworkRenderDemandPointAttachment &attachment :
-         this->network_snapshot.demand_point_attachments)
+         this->retained_network.snapshot().demand_point_attachments)
     {
         if (this->hidden_entity_uuids.contains(attachment.demand_point_uuid)
             || !finiteCoordinate(attachment.demand_point_coordinate_wgs84)
@@ -875,7 +935,7 @@ void MapGlobeNetworkScene::rebuildUndergroundXRayGeometry()
     if (!this->underground_xray_enabled || !this->terrain_elevation_resolver)
         return;
 
-    for (const NetworkRenderLink &link : this->network_snapshot.links)
+    for (const NetworkRenderLink &link : this->retained_network.snapshot().links)
     {
         if (this->hidden_entity_uuids.contains(link.uuid)
             || link.vertices_wgs84.size() < 2)
@@ -944,7 +1004,7 @@ void MapGlobeNetworkScene::rebuildUndergroundXRayGeometry()
     const double rendered_underground_tolerance_m =
         this->vertical_transform.renderedVerticalDistanceM(UndergroundToleranceM);
     this->underground_junction_instances.reserve(this->junction_instances.size());
-    for (const NetworkRenderNode &node : this->network_snapshot.nodes)
+    for (const NetworkRenderNode &node : this->retained_network.snapshot().nodes)
     {
         if (node.entity_type != InfrastructureEntity::Junction
             || this->hidden_entity_uuids.contains(node.uuid)
@@ -986,9 +1046,9 @@ QVector3D MapGlobeNetworkScene::linkWidthDirection(
 
     const QVector3D midpoint_relative = (start + end) * 0.5f;
     GeoWgs84Ellipsoid::EcefPositionD midpoint_ecef;
-    midpoint_ecef.x = this->render_origin_ecef.x + double(midpoint_relative.x());
-    midpoint_ecef.y = this->render_origin_ecef.y + double(midpoint_relative.y());
-    midpoint_ecef.z = this->render_origin_ecef.z + double(midpoint_relative.z());
+    midpoint_ecef.x = this->retained_origin.originEcef().x + double(midpoint_relative.x());
+    midpoint_ecef.y = this->retained_origin.originEcef().y + double(midpoint_relative.y());
+    midpoint_ecef.z = this->retained_origin.originEcef().z + double(midpoint_relative.z());
 
     double longitude_deg = 0.0;
     double latitude_deg = 0.0;
@@ -1363,6 +1423,7 @@ void MapGlobeNetworkScene::applyNodeColor(MapNetworkNodeVertex *vertex) const
 
 void MapGlobeNetworkScene::rebuildFlowDirections()
 {
+    const MapRenderDiagnostics::Scope timing(MapRenderDiagnostics::Counter::GlobeFlowRebuilt);
     this->flow_direction_vertices.clear();
 
     if (!this->symbology.show_flow_direction
@@ -1528,9 +1589,9 @@ void MapGlobeNetworkScene::appendFlowDirectionStroke(
 QVector3D MapGlobeNetworkScene::ellipsoidNormalAt(
     const QVector3D &relative_ecef) const
 {
-    const double absolute_x = this->render_origin_ecef.x + double(relative_ecef.x());
-    const double absolute_y = this->render_origin_ecef.y + double(relative_ecef.y());
-    const double absolute_z = this->render_origin_ecef.z + double(relative_ecef.z());
+    const double absolute_x = this->retained_origin.originEcef().x + double(relative_ecef.x());
+    const double absolute_y = this->retained_origin.originEcef().y + double(relative_ecef.y());
+    const double absolute_z = this->retained_origin.originEcef().z + double(relative_ecef.z());
     const double equatorial_radius_squared =
         GeoWgs84Ellipsoid::EquatorialRadiusM * GeoWgs84Ellipsoid::EquatorialRadiusM;
     const double polar_radius_squared =

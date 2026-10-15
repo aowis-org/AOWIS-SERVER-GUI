@@ -6,9 +6,8 @@
 // Full retained-network geometry invalidation is intentionally tracked separately
 // from camera-scale changes. Smooth zoom/orbit scale changes may rebuild derived
 // screen-space decoration such as flow-direction chevrons, but retained network
-// and icon geometry must stay intact. RenderOriginRebase is the one camera-driven
-// full rebuild that remains legitimate: Globe float precision requires
-// re-expressing retained ECEF vertices relative to the new origin.
+// and icon geometry must stay intact. Globe camera-origin rebasing is not a
+// geometry rebuild reason once the retained network has its own ECEF frame.
 enum class MapNetworkGeometryRebuildReason
 {
     None,
@@ -16,8 +15,7 @@ enum class MapNetworkGeometryRebuildReason
     HiddenEntitySet,
     NodeDecluttering,
     GroundOffset,
-    VerticalExaggeration,
-    RenderOriginRebase
+    VerticalExaggeration
 };
 
 // Lightweight renderer diagnostics used by neutral regression tests and during

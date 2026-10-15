@@ -1,7 +1,8 @@
 #ifndef MAP_GLOBE_NETWORK_SCENE_H
 #define MAP_GLOBE_NETWORK_SCENE_H
 
-#include "network/network_render_snapshot.h"
+#include "map/render/map_retained_network_scene.h"
+#include "map/render/map_globe_retained_origin.h"
 #include "map/render/map_network_render_symbology.h"
 #include "map/render/map_globe_render_instances.h"
 #include "map/render/map_globe_vertical_transform.h"
@@ -34,10 +35,10 @@
 // -- far enough from zero that float32 (which every GPU vertex buffer here
 // ultimately is) only has ~0.5-1m of resolution left once you're at that
 // magnitude, before any camera-relative arithmetic is even done. See
-// setRenderOriginEcef() and ecefPosition() for how this class avoids that:
-// every vertex is placed relative to a caller-supplied ECEF origin (kept in
-// sync with whatever MapGlobeCamera's Globe view/projection matrix itself
-// rendered relative to) rather than at its raw ECEF position, so the
+// renderOriginEcef() and ecefPosition() for how this class avoids that:
+// network vertices are placed relative to a geometry-owned ECEF origin
+// (not the camera's periodically rebased origin). The network view matrix
+// is independently evaluated in that retained coordinate frame, so the
 // float32 narrowing happens only after the large-magnitude part of the
 // position has already been subtracted off in double precision.
 //
@@ -122,29 +123,12 @@ public:
     // untouched, so terrain streaming cannot force a full network rebuild.
     // Returns true when classification was performed.
     bool refreshUndergroundXRayGeometry();
-    // The ECEF point every vertex this class builds is placed *relative
-    // to*, in place of the raw (Earth-center-relative) ECEF position
-    // GeoWgs84Ellipsoid::geodeticToEcef() would otherwise hand back
-    // directly. Must be kept equal to the render origin used by the active
-    // Globe camera/view transform for this frame. The renderer backend is
-    // responsible for synchronizing that origin before drawing.
-    // Globe terrain uses this exact origin and matrix too. Keeping both
-    // geometry sets in one coordinate frame is required for stable and
-    // directly comparable depth during pan/orbit; raw float32 ECEF terrain
-    // would reintroduce the precision loss described in ecefPosition().
-    // Comparing the previous and new origin for exact equality (rather
-    // than some epsilon) is intentional and correct: globeRenderOriginEcef()
-    // is a sticky value that the Globe camera updates only by wholesale
-    // replacement (never incrementally nudged),
-    // so as long as the camera hasn't drifted far enough to trigger a
-    // rebase -- the common case, true for the entire duration of ordinary
-    // orbiting/panning around one local area -- every call here sees the
-    // exact same double bit pattern as last time, letting this skip the
-    // (comparatively expensive) full geometry rebuild on every such frame
-    // and only actually rebuild on the rare frame where a rebase just
-    // happened. Returns true if the origin actually changed (and geometry
-    // was rebuilt).
+    // Initializes the retained frame from the camera only when no network
+    // geometry has supplied a stable ECEF anchor. Subsequent camera-origin
+    // changes are deliberately ignored: network vertices/GPU buffers stay
+    // in their retained frame. Returns true only on first initialization.
     bool setRenderOriginEcef(const GeoWgs84Ellipsoid::EcefPositionD &origin_ecef);
+    GeoWgs84Ellipsoid::EcefPositionD renderOriginEcef() const;
     // Screen scale at the Globe orbit target, used to give flow-direction
     // chevrons the same pixel-based length, spacing, and terrain clearance
     // with the same scale semantics as the network models. Returns true when the scale changed and
@@ -272,7 +256,7 @@ private:
         const CoordinateWGS84 &end_coordinate, double end_elevation_m,
         const QVector3D &end_ecef);
 
-    NetworkRenderSnapshot network_snapshot;
+    MapRetainedNetworkScene retained_network;
     QSet<QUuid> hidden_entity_uuids;
     QVector<MapNetworkLinkVertex> link_vertices;
     QVector<MapNetworkNodeVertex> node_vertices;
@@ -297,15 +281,7 @@ private:
     QHash<quint64, QVector<int>> link_vertex_indices_by_entity;
     QHash<quint64, QVector<int>> node_vertex_indices_by_entity;
     quint64 geometry_revision = 0;
-    // Deliberately NOT default-constructed to a plausible ECEF value (e.g.
-    // the equator/prime-meridian point) -- (0,0,0) is Earth's *center*,
-    // nowhere any real network geometry could ever legitimately be placed
-    // relative to, so the very first setRenderOriginEcef() call (made
-    // before the first rebuildNetworkGeometry()) is guaranteed to see a
-    // change and
-    // rebuild, rather than possibly matching a real starting origin by
-    // coincidence and skipping a rebuild that needs to happen.
-    GeoWgs84Ellipsoid::EcefPositionD render_origin_ecef;
+    MapGlobeRetainedOrigin retained_origin;
     MapGlobeVerticalTransform vertical_transform;
     double flow_direction_pixels_per_meter = 0.0;
     TerrainElevationResolver terrain_elevation_resolver;

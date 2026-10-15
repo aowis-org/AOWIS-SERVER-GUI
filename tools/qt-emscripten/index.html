@@ -490,10 +490,10 @@
           const values = parseAowisIni(loadedConfiguration.text);
           const configuredWasmRenderer = (values['gui/map_wasm_renderer'] || 'rhi')
               .trim().toLowerCase();
-          const mapWasmRenderer = configuredWasmRenderer === 'browser'
-              ? 'browser'
+          const mapWasmRenderer = ['browser', 'rhi', 'bgfx'].includes(configuredWasmRenderer)
+              ? configuredWasmRenderer
               : 'rhi';
-          if (configuredWasmRenderer !== 'rhi' && configuredWasmRenderer !== 'browser')
+          if (mapWasmRenderer !== configuredWasmRenderer)
               console.warn(`Invalid gui/map_wasm_renderer '${configuredWasmRenderer}', using rhi`);
 
           const guiConfiguration = Object.freeze({
@@ -608,6 +608,7 @@
       }
     </script>
 
+    <script src="aowis-bgfx-map.js?v=__AOWIS_BGFX_MAP_JS_VERSION__"></script>
     <script src="aowis-browser-map.js?v=__AOWIS_MAP_JS_VERSION__"></script>
     <script src="aowis-browser-vector.js?v=__AOWIS_VECTOR_JS_VERSION__"></script>
     <script src="aowis-browser-network-webgl.js?v=__AOWIS_NETWORK_JS_VERSION__"></script>

@@ -1,7 +1,7 @@
 #ifndef MAP_RHI_SCENE_H
 #define MAP_RHI_SCENE_H
 
-#include "network/network_render_snapshot.h"
+#include "map/render/map_retained_network_scene.h"
 #include "map/render/map_network_render_symbology.h"
 #include "map/render/map_icon_atlas.h"
 #include "map/rhi/map_rhi_network_style.h"
@@ -118,7 +118,7 @@ private:
                                QVector<LinkVertex> *link_target,
                                QVector<NodeVertex> *node_target) const;
 
-    NetworkRenderSnapshot network_snapshot;
+    MapRetainedNetworkScene retained_network;
     QSet<QUuid> hidden_entity_uuids;
     QVector<LinkVertex> link_vertices;
     QVector<NodeVertex> node_vertices;

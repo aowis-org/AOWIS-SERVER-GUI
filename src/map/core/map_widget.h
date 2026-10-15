@@ -9,6 +9,7 @@
 #include <QPainter>
 #include <QPoint>
 #include <QPointF>
+#include <QPointer>
 #include <QShowEvent>
 #include <QTimer>
 #include <QWheelEvent>
@@ -18,6 +19,7 @@
 
 #include "map/core/map_model.h"
 #include "map/core/map_cached_terrain_altitude.h"
+#include "map/core/map_zoom_animation.h"
 #include "map/data/map_tile_repository.h"
 
 #ifdef Q_OS_WASM
@@ -27,6 +29,8 @@
 #else
 #include "gps/gps_provider.h"
 #include "map/core/map_wayland_pointer_lock.h"
+
+#include <QWindow>
 #endif
 
 #include "common/_enums_structs.h"
@@ -58,6 +62,31 @@ public:
     void handleWheelEvent(QWheelEvent *event);
 
     void clearKeyboardPanInput();
+
+    // Single navigation clock. A render surface that presents frames itself
+    // (bgfx) enables the external driver and calls advanceNavigationFrame()
+    // once per presented frame, *before* sampling the camera. MapWidget's own
+    // 16 ms pan timer is then never started: two independent clocks (camera
+    // integration timer + render timer, with a vsync-blocking swap on the
+    // same thread) advance the camera by 0, 1 or 2 steps per displayed frame.
+    void setNavigationFrameDriver(bool external);
+    void advanceNavigationFrame(double elapsed_seconds);
+
+    // CPU tile painting (QPainter imagery). Only the map editor still uses
+    // it, until the editor moves to bgfx; the monitor disables it so that no
+    // CPU map rendering exists there at all. Disabled = no paint, no tile
+    // requests from this widget.
+    void setTilePaintingEnabled(bool enabled);
+
+#ifndef Q_OS_WASM
+    // When mouse input arrives from an embedded native window (bgfx) rather
+    // than from this widget, the Wayland orbit pointer lock must target that
+    // window's own wl_surface: it, not the top-level, has pointer focus.
+    // Its coordinates equal this widget's (same stack geometry). nullptr
+    // restores the top-level window.
+    void setOrbitPointerLockWindow(QWindow *window);
+#endif
+
     void setEdgePanningEnabled(bool enabled);
     void setRenderSurfaceScreenCoordinateResolver(ScreenCoordinateResolver resolver);
     void setRenderSurfaceGlobeTerrainPanResolver(GlobeTerrainPanResolver resolver);
@@ -120,10 +149,16 @@ private:
     bool setKeyboardPanKey(QKeyEvent *event, bool pressed);
     bool hasKeyboardPanInput() const;
     bool hasFastKeyboardPanInput() const;
-    bool hasView2dKeyboardZoomInput() const;
-    bool hasView3dKeyboardZoomInput() const;
-    void updateView2dKeyboardZoom(qreal elapsed_seconds);
-    void updateView3dKeyboardZoom(qreal elapsed_seconds);
+    void advanceNavigation(qreal elapsed_seconds);
+    bool hasKeyboardZoomInput() const;
+    QPointF viewportCenter() const;
+    double zoomMotionOctaves() const;
+    void applyZoomMotionOctaves(double octaves);
+    bool prepareZoomMotion();
+    void queueZoomImpulse(double octaves, const QPointF &anchor);
+    void synchronizeKeyboardZoomHold();
+    void updateSmoothZoom(qreal elapsed_seconds);
+    void cancelSmoothZoom();
     QPointF keyboardPanDirection() const;
     QPointF edgePanDirection() const;
     void panMapByPixels(const QPoint &delta, bool keyboard_pan = false);
@@ -168,6 +203,7 @@ private:
     bool view_3d_orbit_pointer_warp_enabled = false;
     bool view_3d_orbit_mouse_grabbed = false;
     bool view_3d_orbit_cursor_hidden = false;
+    QPointer<QWindow> orbit_pointer_lock_window;
 #endif
     QPointF mouse_pan_velocity;
     QElapsedTimer mouse_pan_move_elapsed_timer;
@@ -183,11 +219,19 @@ private:
     ScreenCoordinateResolver render_surface_screen_coordinate_resolver;
     GlobeTerrainPanResolver render_surface_globe_terrain_pan_resolver;
     CachedTerrainElevationResolver cached_terrain_elevation_resolver;
-    bool view_2d_zoom_in_key_pressed = false;
-    bool view_2d_zoom_out_key_pressed = false;
-    bool view_3d_zoom_in_key_pressed = false;
-    bool view_3d_zoom_out_key_pressed = false;
+    bool zoom_in_key_pressed = false;
+    bool zoom_out_key_pressed = false;
     bool keyboard_pan_motion_active = false;
+    bool external_navigation_frame_driver = false;
+    bool tile_painting_enabled = true;
+
+    // The one continuous camera zoom motion for wheel, buttons and keys, in
+    // every view mode and with every renderer. Octaves: the 2D continuous
+    // zoom level, or -log2(globe distance). The integer tile zoom is never
+    // a navigation quantity; it remains a derived imagery LOD in MapModel.
+    MapZoomMotion zoom_motion;
+    MapViewMode zoom_motion_mode = MapViewMode::TwoD;
+    QPointF zoom_motion_anchor;
 
     bool edge_panning_enabled = false;
     QPointF pan_velocity;

@@ -8,6 +8,42 @@
     if (!WEBGL_RENDERER)
         throw new Error("AOWIS browser network requires aowis-browser-network-webgl.js");
 
+    // Browser counterpart of the native opt-in baseline counters. Enable by
+    // adding ?aowisMapDiagnostics=1 to the application URL. Values are
+    // cumulative, and render times measure JavaScript/CPU time (not GPU time).
+    const diagnosticsEnabled = new URLSearchParams(window.location.search)
+        .get("aowisMapDiagnostics") === "1";
+    const diagnostics = diagnosticsEnabled ? {
+        started: performance.now(),
+        nextReport: performance.now() + 5000,
+        counts: Object.create(null),
+        cpuMs: Object.create(null),
+        count(name, durationMs) {
+            this.counts[name] = (this.counts[name] || 0) + 1;
+            if (Number.isFinite(durationMs))
+                this.cpuMs[name] = (this.cpuMs[name] || 0) + durationMs;
+        },
+        upload(bytes) {
+            this.count("network_buffer_uploads");
+            this.counts.network_buffer_bytes =
+                (this.counts.network_buffer_bytes || 0) + bytes;
+        },
+        reportIfDue() {
+            const now = performance.now();
+            if (now < this.nextReport)
+                return;
+            this.nextReport = now + 5000;
+            console.info(JSON.stringify({
+                kind: "aowis_browser_map_render_diagnostics",
+                elapsed_ms: now - this.started,
+                counts: this.counts,
+                total_duration_ms: this.cpuMs
+            }));
+        }
+    } : null;
+    if (diagnostics)
+        window.aowisMapRenderDiagnostics = diagnostics;
+
     const TILE_SIZE = 256;
     const REFERENCE_ZOOM = SHARED_RENDERER.REFERENCE_ZOOM;
     const NETWORK_COLOR = "#000000";
@@ -844,7 +880,10 @@
 
     function synchronizeNetworkRenderer(mapView) {
         if (state.networkRendererGeometryRevision !== state.networkGeometryRevision) {
+            const started = diagnostics ? performance.now() : 0;
             buildNetworkRendererGeometry();
+            if (diagnostics)
+                diagnostics.count("network_geometry_rebuilds", performance.now() - started);
             state.networkRendererGeometryRevision = state.networkGeometryRevision;
             state.networkRendererColorRevision = 0;
         }
@@ -857,7 +896,10 @@
             || state.networkRendererFlowDirectionGeometryRevision !== state.networkGeometryRevision
             || state.networkRendererFlowDirectionZoom !== mapView.zoom;
         if (flowDirectionGeometryChanged) {
+            const started = diagnostics ? performance.now() : 0;
             buildNetworkRendererFlowDirectionGeometry(mapView);
+            if (diagnostics)
+                diagnostics.count("flow_geometry_rebuilds", performance.now() - started);
             state.networkRendererFlowDirectionRevision = state.networkFlowDirectionRevision;
             state.networkRendererFlowDirectionGeometryRevision = state.networkGeometryRevision;
             state.networkRendererFlowDirectionZoom = mapView.zoom;
@@ -888,6 +930,7 @@
         if (!ensureNetworkRenderer())
             return;
 
+        const frameStarted = diagnostics ? performance.now() : 0;
         try {
             synchronizeNetworkRenderer(mapView);
             const transform = worldTransform(mapView);
@@ -927,6 +970,11 @@
                 state.networkCanvas.style.display = "none";
         } catch (error) {
             disableNetworkRenderer(error);
+        } finally {
+            if (diagnostics) {
+                diagnostics.count("network_render_cpu_frames", performance.now() - frameStarted);
+                diagnostics.reportIfDue();
+            }
         }
     }
 

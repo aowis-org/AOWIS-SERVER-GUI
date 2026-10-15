@@ -96,68 +96,19 @@ set(AOWIS_SERVER_EPANET_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 set(AOWIS_SERVER_EPANET_BUILD_SHARED_EPANET OFF CACHE BOOL "" FORCE)
 add_subdirectory(external/AOWIS-SERVER-EPANET EXCLUDE_FROM_ALL)
 
-# Experimental bgfx proof-of-concept. The production map keeps its QRhi,
-# browser WebGL and CPU paths until this isolated native/WASM surface is verified.
+# The bgfx Map Monitor and the optional bgfx stacking probe share one minimal
+# bgfx build (cmake/aowis_bgfx.cmake: bx/bimg/bgfx as three unity TUs, only
+# the renderers AOWIS uses). Shaders are pre-compiled and committed
+# (cmake/aowis_bgfx_shaders.cmake); the shader compiler is an opt-in
+# developer tool (-DAOWIS_BGFX_SHADER_TOOLS=ON).
 option(AOWIS_BUILD_BGFX_PROBE "Build the independent bgfx window/stacking probe" OFF)
-if(AOWIS_BUILD_BGFX_PROBE)
-    foreach(component bgfx bx bimg)
-        if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/${component}/include")
-            message(FATAL_ERROR
-                "bgfx dependency external/${component} is missing. Run ./git_submodule_init.sh")
-        endif()
-    endforeach()
-    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/bgfx.cmake/CMakeLists.txt")
-        message(FATAL_ERROR
-            "bgfx CMake integration is missing. Run ./git_submodule_init.sh "
-            "(requires external/bgfx.cmake).")
-    endif()
-    set(BX_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/bx")
-    set(BIMG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/bimg")
-    set(BGFX_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/bgfx")
-    set(BGFX_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
-    set(BGFX_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-    set(BGFX_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-    set(BGFX_INSTALL OFF CACHE BOOL "" FORCE)
-    set(BGFX_CUSTOM_TARGETS OFF CACHE BOOL "" FORCE)
-    set(BGFX_CONFIG_RENDERER_WEBGPU OFF CACHE BOOL "" FORCE)
-    set(BGFX_CONFIG_MULTITHREADED OFF CACHE BOOL "" FORCE)
-    if(EMSCRIPTEN)
-        # AOWIS's browser map remains WebGL 2, never WebGL 1 fallback.
-        set(BGFX_OPENGLES_VERSION 30 CACHE STRING "" FORCE)
-        set(BGFX_CONFIG_MULTITHREADED OFF CACHE BOOL "" FORCE)
-    endif()
-    add_subdirectory(external/bgfx.cmake "${CMAKE_BINARY_DIR}/bgfx-build" EXCLUDE_FROM_ALL)
-    if(EMSCRIPTEN)
-        # bx/config.h disables bx threading on Emscripten by default, but
-        # newer/pinned combinations of bx and bgfx.cmake may still compile
-        # bx/src/thread.cpp's unsupported platform branch. Enforce the upstream
-        # WebAssembly contract on bx and propagate it consistently to bimg,
-        # bgfx and the probe. This does not change Qt's pthread configuration.
-        target_compile_definitions(bx PUBLIC BX_CONFIG_SUPPORTS_THREADING=0)
-        target_compile_definitions(bgfx PUBLIC BX_CONFIG_SUPPORTS_THREADING=0)
-
-        # bgfx's internal render thread is disabled on Emscripten. This does
-        # not disable Qt's separate pthread support. bx's POSIX source uses
-        # time/scheduler/dynamic-loader declarations even when the included
-        # headers are conditional in some upstream bx revisions. Pre-include
-        # those declarations only when compiling bx itself (no vendor edits).
-        # Keep bx's threading configuration upstream-controlled.
-        target_compile_options(bx PRIVATE
-            "-include" "${CMAKE_CURRENT_SOURCE_DIR}/tests/bgfx_probe/bx_emscripten_compat.h")
-    endif()
-    add_subdirectory(tests/bgfx_probe)
-    if(EMSCRIPTEN)
-        # Emscripten 4.0.7 provides __EMSCRIPTEN_major__ (lowercase),
-        # whereas current bx/platform.h uses __EMSCRIPTEN_MAJOR__. The bx
-        # target already pre-includes bx_emscripten_compat.h, which imports
-        # this version shim. Pre-include it for the other bgfx-related targets
-        # without changing Qt or the production application.
-        set(AOWIS_BGFX_EMSCRIPTEN_VERSION_COMPAT
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/bgfx_probe/emscripten_version_compat.h")
-        foreach(aowis_bgfx_target bimg bgfx aowis-bgfx-probe)
-            target_compile_options(${aowis_bgfx_target} PRIVATE
-                "SHELL:-include ${AOWIS_BGFX_EMSCRIPTEN_VERSION_COMPAT}")
-        endforeach()
+# ON by default: there is no CPU map renderer any more, so the Map Monitor
+# needs bgfx (or QRhi until it is removed) to show a map at all.
+option(AOWIS_ENABLE_BGFX_MAP "Enable the bgfx Map Monitor surface" ON)
+if(AOWIS_BUILD_BGFX_PROBE OR AOWIS_ENABLE_BGFX_MAP)
+    include(cmake/aowis_bgfx.cmake)
+    if(AOWIS_BUILD_BGFX_PROBE)
+        add_subdirectory(tests/bgfx_probe)
     endif()
 endif()
 
@@ -469,6 +420,7 @@ endif()
 target_compile_definitions(aowis-server-gui
     PRIVATE
         AOWIS_HAS_QRHI=${AOWIS_HAS_QRHI}
+        AOWIS_HAS_BGFX=$<BOOL:${AOWIS_ENABLE_BGFX_MAP}>
         AOWIS_HAS_WAYLAND_POINTER_LOCK=${AOWIS_HAS_WAYLAND_POINTER_LOCK}
 )
 
@@ -493,6 +445,46 @@ target_link_libraries(aowis-server-gui
         AOWIS::ServerEpanet
         GeographicLib_STATIC
 )
+
+if(AOWIS_ENABLE_BGFX_MAP)
+    # Pre-compiled shaders for every renderer in AOWIS_BGFX_RENDERERS,
+    # embedded as :/aowis/map/bgfx/<glsl|essl|spirv|dx11|metal>/<name>.bin
+    # (see map_bgfx_backend.h), so deployed builds and WASM bundles need no
+    # shader sidecar files.
+    include(cmake/aowis_bgfx_shaders.cmake)
+    if(AOWIS_BGFX_SHADER_TOOLS)
+        include(cmake/aowis_bgfx_shaderc.cmake)
+    endif()
+    aowis_bgfx_add_shaders(aowis-server-gui)
+    target_sources(aowis-server-gui PRIVATE
+        src/map/bgfx/map_bgfx_2d_projection.h
+        src/map/bgfx/map_bgfx_2d_scene.h
+        src/map/bgfx/map_bgfx_2d_mesh.h
+        src/map/bgfx/map_bgfx_2d_gpu.h
+        src/map/bgfx/map_bgfx_2d_gpu.cpp
+        src/map/bgfx/map_bgfx_2d_symbology.h
+        src/map/bgfx/map_bgfx_2d_picking.h
+        src/map/bgfx/map_bgfx_2d_imagery_layout.h
+        src/map/bgfx/map_bgfx_2d_imagery_gpu.h
+        src/map/bgfx/map_bgfx_2d_imagery_gpu.cpp
+        src/map/bgfx/map_bgfx_hud_canvas.h
+        src/map/bgfx/map_bgfx_hud_text_cache.h
+        src/map/bgfx/map_bgfx_hud_text_cache.cpp
+        src/map/bgfx/map_bgfx_hud.h
+        src/map/bgfx/map_bgfx_hud.cpp
+        src/map/bgfx/map_bgfx_hud_gpu.h
+        src/map/bgfx/map_bgfx_hud_gpu.cpp
+        src/map/bgfx/map_bgfx_backend.h
+        src/map/bgfx/map_bgfx_surface.h
+        src/map/bgfx/map_bgfx_surface.cpp)
+    target_link_libraries(aowis-server-gui PRIVATE bgfx)
+    if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN AND TARGET Qt6::GuiPrivate)
+        target_link_libraries(aowis-server-gui PRIVATE Qt6::GuiPrivate)
+        target_compile_definitions(aowis-server-gui PRIVATE
+            AOWIS_BGFX_NATIVE_WAYLAND_PRIVATE=1)
+    endif()
+    # The Emscripten version shim reaches this target through bgfx -> bx.
+endif()
 
 if(AOWIS_HAS_QRHI)
     target_sources(aowis-server-gui
@@ -632,8 +624,6 @@ if(NOT EMSCRIPTEN)
         PRIVATE
             src/gps/gps_provider.h
             src/gps/gps_provider.cpp
-            src/map/monitor/map_network_overlay_widget.h
-            src/map/monitor/map_network_overlay_widget.cpp
     )
 
     target_compile_definitions(aowis-server-gui
@@ -652,6 +642,66 @@ else()
 endif()
 
 if(BUILD_TESTING AND NOT EMSCRIPTEN)
+    # Continuous Web Mercator transforms are independent of Qt, bgfx and the
+    # legacy integer zoom/cache path. Always test them, even with bgfx off.
+    add_executable(aowis-bgfx-2d-projection-tests tests/bgfx_2d_projection_test.cpp)
+    target_include_directories(aowis-bgfx-2d-projection-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME aowis-bgfx-2d-projection COMMAND aowis-bgfx-2d-projection-tests)
+    set_tests_properties(aowis-bgfx-2d-projection PROPERTIES LABELS "aowis")
+
+    # 2D imagery tile layout: continuity across imagery levels, coverage,
+    # wrap/clamp and ancestor/child fallback. Pure C++, no Qt or bgfx.
+    add_executable(aowis-bgfx-2d-imagery-layout-tests tests/bgfx_2d_imagery_layout_test.cpp)
+    target_include_directories(aowis-bgfx-2d-imagery-layout-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME aowis-bgfx-2d-imagery-layout COMMAND aowis-bgfx-2d-imagery-layout-tests)
+    set_tests_properties(aowis-bgfx-2d-imagery-layout PROPERTIES LABELS "aowis")
+
+    # The bgfx scene declutters coincident nodes with the shared routine.
+    add_executable(aowis-bgfx-2d-scene-tests tests/bgfx_2d_scene_test.cpp
+        src/map/render/map_node_declutter.cpp)
+    target_include_directories(aowis-bgfx-2d-scene-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    target_link_libraries(aowis-bgfx-2d-scene-tests PRIVATE Qt6::Core AOWIS::ServerModel)
+    add_test(NAME aowis-bgfx-2d-scene COMMAND aowis-bgfx-2d-scene-tests)
+    set_tests_properties(aowis-bgfx-2d-scene PROPERTIES LABELS "aowis")
+
+    # Chunked thick-line mesh: chunking, antimeridian wrap, view culling, and
+    # the line quad encoding against a CPU mirror of vs_line_2d.sc.
+    add_executable(aowis-bgfx-2d-mesh-tests tests/bgfx_2d_mesh_test.cpp
+        src/map/render/map_node_declutter.cpp)
+    target_include_directories(aowis-bgfx-2d-mesh-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    # Qt6::Gui only for QRgb/QColor in the symbology mapping header.
+    target_link_libraries(aowis-bgfx-2d-mesh-tests PRIVATE Qt6::Core Qt6::Gui AOWIS::ServerModel)
+    add_test(NAME aowis-bgfx-2d-mesh COMMAND aowis-bgfx-2d-mesh-tests)
+    set_tests_properties(aowis-bgfx-2d-mesh PROPERTIES LABELS "aowis")
+
+    # bgfx 2D picking (click selection, hover) and highlight subsets.
+    add_executable(aowis-bgfx-2d-picking-tests tests/bgfx_2d_picking_test.cpp
+        src/map/render/map_node_declutter.cpp)
+    target_include_directories(aowis-bgfx-2d-picking-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    target_link_libraries(aowis-bgfx-2d-picking-tests PRIVATE Qt6::Core Qt6::Gui AOWIS::ServerModel)
+    add_test(NAME aowis-bgfx-2d-picking COMMAND aowis-bgfx-2d-picking-tests)
+    set_tests_properties(aowis-bgfx-2d-picking PROPERTIES LABELS "aowis")
+
+    # Native bgfx HUD without a GPU: draw-list canvas, text/image atlas and
+    # the HUD layout/input contract (slice 6a). Fonts need QGuiApplication.
+    add_executable(aowis-bgfx-hud-tests tests/bgfx_hud_test.cpp
+        src/map/bgfx/map_bgfx_hud.cpp
+        src/map/bgfx/map_bgfx_hud_text_cache.cpp)
+    target_include_directories(aowis-bgfx-hud-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(aowis-bgfx-hud-tests PRIVATE Qt6::Core Qt6::Gui)
+    add_test(NAME aowis-bgfx-hud COMMAND aowis-bgfx-hud-tests)
+    set_tests_properties(aowis-bgfx-hud PROPERTIES
+        LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     # The Model owns the complete unit-conversion regression test. Its CTest
     # entry is registered in the Model subdirectory, so assign our suite label
     # there instead of maintaining a duplicate GUI test source.
@@ -699,6 +749,10 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
             COMMAND ${AOWIS_NODE_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/bgfx_probe/performance_check.js --self-test)
         set_tests_properties(aowis-bgfx-probe-performance-analyzer PROPERTIES LABELS "aowis")
+        add_test(NAME aowis-bgfx-map-canvas
+            COMMAND ${AOWIS_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/bgfx_map_canvas_test.js)
+        set_tests_properties(aowis-bgfx-map-canvas PROPERTIES LABELS "aowis")
     endif()
     add_executable(aowis-emitter-coefficient-binding-tests tests/emitter_coefficient_binding_test.cpp)
     target_include_directories(aowis-emitter-coefficient-binding-tests PRIVATE
@@ -801,6 +855,83 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     # Add future performance targets here and label their CTest tests "performance".
     add_custom_target(aowis-benchmarks
         DEPENDS aowis-unit-presentation-benchmark)
+
+    # Baseline for retained-scene work during the bgfx migration. It creates
+    # 10,000 demand points and attachments and measures repeated integer zoom
+    # crossings on the actual retained 2D scene preparation code. CTest only
+    # enforces structural checks; timings are informational and will change.
+    add_executable(aowis-map-zoom-baseline-benchmark
+        tests/map_zoom_render_baseline_benchmark.cpp
+        src/map/rhi/map_rhi_scene.cpp
+        src/map/rhi/map_rhi_network_style.cpp
+        src/map/render/map_node_declutter.cpp
+        src/map/render/map_render_cache_math.cpp
+        src/map/render/map_icon_atlas.cpp
+        src/geo/geo_web_mercator.cpp
+    )
+    target_include_directories(aowis-map-zoom-baseline-benchmark PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include
+    )
+    target_link_libraries(aowis-map-zoom-baseline-benchmark PRIVATE
+        Qt6::Core Qt6::Gui AOWIS::ServerModel)
+    add_test(NAME aowis-map-zoom-baseline-benchmark
+        COMMAND aowis-map-zoom-baseline-benchmark)
+    set_tests_properties(aowis-map-zoom-baseline-benchmark PROPERTIES
+        LABELS "aowis;performance"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_dependencies(aowis-benchmarks aowis-map-zoom-baseline-benchmark)
+
+    # Step 2: camera changes and imagery LOD do not invalidate the retained
+    # network scene. These are fast deterministic policy checks, not timings.
+    add_executable(aowis-map-camera-invalidation-tests
+        tests/map_camera_invalidation_test.cpp)
+    target_include_directories(aowis-map-camera-invalidation-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(aowis-map-camera-invalidation-tests PRIVATE Qt6::Core)
+    add_test(NAME aowis-map-camera-invalidation
+        COMMAND aowis-map-camera-invalidation-tests)
+    set_tests_properties(aowis-map-camera-invalidation PROPERTIES LABELS "aowis")
+
+    # Continuous camera interpolation is independent of discrete imagery LOD.
+    add_executable(aowis-map-zoom-animation-tests
+        tests/map_zoom_animation_test.cpp)
+    target_include_directories(aowis-map-zoom-animation-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME aowis-map-zoom-animation
+        COMMAND aowis-map-zoom-animation-tests)
+    set_tests_properties(aowis-map-zoom-animation PROPERTIES LABELS "aowis")
+
+    # Step 3: backend-neutral snapshot retention, UUID identity and coarse
+    # geographic chunk metadata. No graphics backend or GPU is required.
+    add_executable(aowis-map-retained-network-scene-tests
+        tests/map_retained_network_scene_test.cpp)
+    target_include_directories(aowis-map-retained-network-scene-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    target_link_libraries(aowis-map-retained-network-scene-tests PRIVATE
+        Qt6::Core AOWIS::ServerModel)
+    add_test(NAME aowis-map-retained-network-scene
+        COMMAND aowis-map-retained-network-scene-tests)
+    set_tests_properties(aowis-map-retained-network-scene PROPERTIES LABELS "aowis")
+
+    # Step 4: actual Globe scene remains anchored to its geometry across
+    # camera/terrain ECEF origin rebases, including 10,000 demand points.
+    add_executable(aowis-map-globe-retained-origin-tests
+        tests/map_globe_retained_origin_test.cpp
+        src/map/render/map_globe_network_scene.cpp
+        src/map/render/map_icon_atlas.cpp
+        src/map/render/map_node_declutter.cpp
+        src/geo/geo_wgs84_ellipsoid.cpp)
+    target_include_directories(aowis-map-globe-retained-origin-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    target_link_libraries(aowis-map-globe-retained-origin-tests PRIVATE
+        Qt6::Core Qt6::Gui AOWIS::ServerModel GeographicLib_STATIC)
+    add_test(NAME aowis-map-globe-retained-origin
+        COMMAND aowis-map-globe-retained-origin-tests)
+    set_tests_properties(aowis-map-globe-retained-origin PROPERTIES
+        LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     # End-to-end Qt presentation binding across an editor, a virtualized table,
     # map HUD/legend formatters and simulation readouts. This is headless
@@ -1013,12 +1144,26 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
             LABELS "aowis"
     )
 
+    # Every executable behind an 'aowis'-labelled test must be listed here:
+    # compile_linux_tests.sh builds only this target, and a missing entry
+    # shows up as "Not Run" in CTest.
     add_custom_target(aowis-tests
         DEPENDS
+            aowis-bgfx-2d-projection-tests
+            aowis-bgfx-2d-imagery-layout-tests
+            aowis-bgfx-2d-scene-tests
+            aowis-bgfx-2d-mesh-tests
+            aowis-bgfx-2d-picking-tests
+            aowis-bgfx-hud-tests
             aowis-model-unit-conversion-test
             aowis-unit-cross-surface-acceptance-tests
             aowis-valve-setting-sort-policy-tests
             aowis-unit-presentation-benchmark
+            aowis-map-zoom-baseline-benchmark
+            aowis-map-camera-invalidation-tests
+            aowis-map-zoom-animation-tests
+            aowis-map-retained-network-scene-tests
+            aowis-map-globe-retained-origin-tests
             aowis-unit-model-header-authority-tests
             aowis-browser-map-scale-units-tests
             aowis-emitter-coefficient-binding-tests

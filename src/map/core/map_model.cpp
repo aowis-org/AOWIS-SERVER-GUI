@@ -1,4 +1,5 @@
 #include "map/core/map_model.h"
+#include "map/render/map_render_diagnostics.h"
 
 #include "map/render/map_render_cache_math.h"
 #include "config/gui_configuration.h"
@@ -75,6 +76,26 @@ int MapModel::zoom() const
     return this->m_zoom;
 }
 
+int MapModel::imageryTileZoom() const
+{
+    return this->m_zoom;
+}
+
+MapCameraViewState MapModel::cameraViewState() const
+{
+    MapCameraViewState state;
+    state.mode = this->m_view_mode;
+    state.center_lon_deg = this->m_centerLon;
+    state.center_lat_deg = this->m_centerLat;
+    state.continuous_2d_zoom = view2dContinuousZoom();
+    state.globe_yaw_deg = this->m_view_globe_yaw_deg;
+    state.globe_pitch_deg = this->m_view_globe_pitch_deg;
+    state.globe_distance_m = this->m_view_globe_distance_m;
+    state.globe_vertical_offset_m = this->m_view_globe_vertical_offset_m;
+    state.globe_collision_lift_m = this->m_view_globe_camera_collision_lift_m;
+    return state;
+}
+
 double MapModel::view2dContinuousScale() const
 {
     return this->m_view_2d_continuous_scale;
@@ -82,7 +103,7 @@ double MapModel::view2dContinuousScale() const
 
 double MapModel::view2dContinuousZoom() const
 {
-    return double(this->m_zoom) + std::log2(qMax(1e-9, this->m_view_2d_continuous_scale));
+    return this->m_view_2d_continuous_zoom;
 }
 
 double MapModel::centerLon() const
@@ -266,6 +287,8 @@ void MapModel::setView(double lon, double lat, int zoom_value, const QSize &view
     const int old_zoom = this->m_zoom;
 
     this->m_zoom = std::clamp(zoom_value, MinZoom, MaxZoom);
+    this->m_view_2d_continuous_zoom = double(this->m_zoom)
+        + std::log2(qMax(1e-9, this->m_view_2d_continuous_scale));
     this->m_centerLon = GeoWebMercator::normalizeLongitude(lon);
 
     // The flat 2D view is backed by Web Mercator and therefore cannot
@@ -295,7 +318,10 @@ void MapModel::setView(double lon, double lat, int zoom_value, const QSize &view
         return;
 
     if (zoom_changed)
+    {
+        MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::ZoomBoundary);
         emit zoomChanged(this->m_zoom);
+    }
     if (center_changed)
         emitCenterChanged();
 }
@@ -446,15 +472,22 @@ void MapModel::setView2dContinuousZoom(double continuous_zoom, const QSize &view
     const double old_lon = this->m_centerLon;
     const double old_lat = this->m_centerLat;
 
+    this->m_view_2d_continuous_zoom = bounded_zoom;
     this->m_zoom = next_tile_zoom;
     this->m_view_2d_continuous_scale = next_scale;
     if (viewport.isValid())
         clampCenter(viewport);
 
     if (this->m_zoom != old_zoom)
+    {
+        MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::ZoomBoundary);
         emit zoomChanged(this->m_zoom);
+    }
     if (!coordinatesEqual(this->m_view_2d_continuous_scale, old_scale))
+    {
+        MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::FractionalZoom);
         emit view2dContinuousScaleChanged(this->m_view_2d_continuous_scale);
+    }
     if (!coordinatesEqual(this->m_centerLon, old_lon)
         || !coordinatesEqual(this->m_centerLat, old_lat))
     {
@@ -469,9 +502,11 @@ void MapModel::resetView2dContinuousZoom(const QSize &viewport)
 
     const double old_lon = this->m_centerLon;
     const double old_lat = this->m_centerLat;
+    this->m_view_2d_continuous_zoom = double(this->m_zoom);
     this->m_view_2d_continuous_scale = 1.0;
     if (viewport.isValid())
         clampCenter(viewport);
+    MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::FractionalZoom);
     emit view2dContinuousScaleChanged(this->m_view_2d_continuous_scale);
     if (!coordinatesEqual(this->m_centerLon, old_lon)
         || !coordinatesEqual(this->m_centerLat, old_lat))
@@ -480,15 +515,14 @@ void MapModel::resetView2dContinuousZoom(const QSize &viewport)
     }
 }
 
-void MapModel::zoomByAt(double steps, const QPoint &anchorPos, const QSize &viewport)
+void MapModel::zoomByAt(double steps, const QPointF &anchorPos, const QSize &viewport)
 {
     if (!viewport.isValid() || !std::isfinite(steps) || coordinatesEqual(steps, 0.0))
         return;
 
     const int old_zoom = this->m_zoom;
     const double old_scale = qMax(1e-9, this->m_view_2d_continuous_scale);
-    const double old_continuous_zoom =
-        double(old_zoom) + std::log2(old_scale);
+    const double old_continuous_zoom = this->m_view_2d_continuous_zoom;
     const double new_continuous_zoom = qBound(
         double(MinZoom), old_continuous_zoom + steps, double(MaxZoom));
     if (coordinatesEqual(new_continuous_zoom, old_continuous_zoom))
@@ -518,6 +552,7 @@ void MapModel::zoomByAt(double steps, const QPoint &anchorPos, const QSize &view
     const double center_tile_y_new =
         anchor_tile_y_new - screen_offset_y_tiles / new_scale;
 
+    this->m_view_2d_continuous_zoom = new_continuous_zoom;
     this->m_zoom = new_zoom;
     this->m_view_2d_continuous_scale = new_scale;
     this->m_centerLon = GeoWebMercator::normalizeLongitude(
@@ -526,9 +561,15 @@ void MapModel::zoomByAt(double steps, const QPoint &anchorPos, const QSize &view
     clampCenter(viewport);
 
     if (this->m_zoom != old_zoom)
+    {
+        MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::ZoomBoundary);
         emit zoomChanged(this->m_zoom);
+    }
     if (!coordinatesEqual(this->m_view_2d_continuous_scale, old_scale))
+    {
+        MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::FractionalZoom);
         emit view2dContinuousScaleChanged(this->m_view_2d_continuous_scale);
+    }
 
     if (!coordinatesEqual(this->m_centerLon, old_lon)
         || !coordinatesEqual(this->m_centerLat, old_lat))
@@ -1285,6 +1326,7 @@ QPointF MapModel::screenFromWgs84(double lon, double lat, const QSize &viewport,
 
 void MapModel::emitCenterChanged()
 {
+    MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::CenterChange);
     CoordinateWGS84 wgs;
     wgs.latitude_deg = this->m_centerLat;
     wgs.longitude_deg = this->m_centerLon;

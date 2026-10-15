@@ -40,8 +40,9 @@ MapGlobeRenderFrame mapGlobeBuildRenderFrame(
     MapGlobeRenderFrame frame;
     frame.logical_viewport_size = logical_viewport_size;
     frame.output_size = output_size;
-    frame.canonical_view_projection = camera.viewProjectionMatrix(&frame.camera_basis);
-    frame.render_origin_ecef = camera.renderOriginEcef();
+    frame.render_origin_ecef = scene.renderOriginEcef();
+    frame.canonical_view_projection = camera.viewProjectionMatrixForOrigin(
+        frame.render_origin_ecef, &frame.camera_basis);
     frame.orbit_distance_m = camera.orbitDistanceM();
     frame.output_pixels_per_logical_pixel_x = qMax(
         1.0f,

@@ -13,6 +13,7 @@
 #include "geo/geo_metric_projection.h"
 #include "geo/geo_web_mercator.h"
 #include "geo/geo_wgs84_ellipsoid.h"
+#include "map/render/map_camera_view_state.h"
 
 enum class MapView3dNavigationState
 {
@@ -98,7 +99,11 @@ public:
     static constexpr double ViewGlobeOrbitYawDegreesPerPixel = 0.35;
     static constexpr double ViewGlobeOrbitPitchDegreesPerPixel = 0.25;
 
+    // Legacy integer tile/cache zoom. Never use to invalidate GPU network
+    // geometry. Use cameraViewState() for camera transformations instead.
     int zoom() const;
+    int imageryTileZoom() const;
+    MapCameraViewState cameraViewState() const;
     double view2dContinuousScale() const;
     double view2dContinuousZoom() const;
     double centerLon() const;
@@ -172,7 +177,9 @@ public:
     void setView2dContinuousZoom(double continuous_zoom, const QSize &viewport = QSize());
     void resetView2dContinuousZoom(const QSize &viewport = QSize());
 
-    void zoomByAt(double steps, const QPoint &anchorPos, const QSize &viewport);
+    // Sub-pixel anchor: an integer anchor cannot express the exact centre of
+    // an odd-sized viewport and makes repeated zoom steps drift laterally.
+    void zoomByAt(double steps, const QPointF &anchorPos, const QSize &viewport);
     void panByPixels(const QPoint &delta, const QSize &viewport);
     void panByPixelsGlobe(const QPoint &delta, const QSize &viewport);
     void panByPixelsGlobeKeyboard(const QPoint &delta, const QSize &viewport);
@@ -262,6 +269,8 @@ private:
     void applyGlobePanRotation(const QQuaternion &rotation);
     QString providerPath() const;
 
+    // Authoritative 2D camera zoom. m_zoom is only a derived tile/cache LOD.
+    double m_view_2d_continuous_zoom = 18.0;
     int m_zoom = 18;
     double m_view_2d_continuous_scale = 1.0;
     double m_centerLon = 18.19331;

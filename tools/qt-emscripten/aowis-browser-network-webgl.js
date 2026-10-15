@@ -571,6 +571,8 @@
     function uploadStaticBuffer(gl, buffer, data) {
         gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
         gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+        if (window.aowisMapRenderDiagnostics)
+            window.aowisMapRenderDiagnostics.upload(data.byteLength);
     }
 
     function uploadColorBuffer(gl, buffer, data, previousLength) {
@@ -579,6 +581,8 @@
             gl.bufferSubData(gl.ARRAY_BUFFER, 0, data);
         else
             gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+        if (window.aowisMapRenderDiagnostics)
+            window.aowisMapRenderDiagnostics.upload(data.byteLength);
         return data.length;
     }
 

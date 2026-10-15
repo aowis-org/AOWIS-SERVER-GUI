@@ -52,6 +52,11 @@ fi
 "/opt/qt-host/bin/qsb" --version
 
 cd /project
+
+# bgfx shaders are pre-compiled and committed (src/map/bgfx/shaders/bin,
+# cmake/aowis_bgfx_shaders.cmake): no shader compiler is built here. If the
+# configure step reports stale essl shaders, regenerate them with a native
+# build (./compile_linux.sh --shader-tools) and commit them.
 mkdir -p build-wasm
 
 # A build directory configured with an older/single-threaded Qt toolchain must not
@@ -64,6 +69,7 @@ rm -rf build-wasm/CMakeFiles
     -B /project/build-wasm \
     -DCMAKE_BUILD_TYPE=Release \
     -DAOWIS_BUILD_BGFX_PROBE="${AOWIS_BUILD_BGFX_PROBE:-OFF}" \
+    -DAOWIS_ENABLE_BGFX_MAP="${AOWIS_ENABLE_BGFX_MAP:-ON}" \
     -DCMAKE_CXX_FLAGS="-pthread" \
     -DCMAKE_EXE_LINKER_FLAGS="-lembind -pthread -sPTHREAD_POOL_SIZE=1"
 

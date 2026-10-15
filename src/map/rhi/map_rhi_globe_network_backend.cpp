@@ -1,4 +1,5 @@
 #include "map/rhi/map_rhi_globe_network_backend.h"
+#include "map/render/map_render_diagnostics.h"
 
 #include <rhi/qrhi.h>
 
@@ -381,6 +382,8 @@ void MapRhiGlobeNetworkBackend::uploadGeometry(
     {
         if (!resources.link_vertices->isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(resources.link_vertices->size()) * sizeof(MapNetworkLinkVertex));
             resource_updates->updateDynamicBuffer(
                 this->link_vertex_buffer.get(), 0,
                 int(resources.link_vertices->size()
@@ -389,6 +392,8 @@ void MapRhiGlobeNetworkBackend::uploadGeometry(
         }
         if (!resources.node_vertices->isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(resources.node_vertices->size()) * sizeof(MapNetworkNodeVertex));
             resource_updates->updateDynamicBuffer(
                 this->node_vertex_buffer.get(), 0,
                 int(resources.node_vertices->size()
@@ -402,6 +407,8 @@ void MapRhiGlobeNetworkBackend::uploadGeometry(
     {
         if (!resources.selected_link_vertices->isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(resources.selected_link_vertices->size()) * sizeof(MapNetworkLinkVertex));
             resource_updates->updateDynamicBuffer(
                 this->selected_link_vertex_buffer.get(), 0,
                 int(resources.selected_link_vertices->size()
@@ -410,6 +417,8 @@ void MapRhiGlobeNetworkBackend::uploadGeometry(
         }
         if (!resources.selected_node_vertices->isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(resources.selected_node_vertices->size()) * sizeof(MapNetworkNodeVertex));
             resource_updates->updateDynamicBuffer(
                 this->selected_node_vertex_buffer.get(), 0,
                 int(resources.selected_node_vertices->size()
@@ -418,6 +427,8 @@ void MapRhiGlobeNetworkBackend::uploadGeometry(
         }
         if (!resources.diagnostic_link_vertices->isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(resources.diagnostic_link_vertices->size()) * sizeof(MapNetworkLinkVertex));
             resource_updates->updateDynamicBuffer(
                 this->diagnostic_link_vertex_buffer.get(), 0,
                 int(resources.diagnostic_link_vertices->size()
@@ -426,6 +437,8 @@ void MapRhiGlobeNetworkBackend::uploadGeometry(
         }
         if (!resources.diagnostic_node_vertices->isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(resources.diagnostic_node_vertices->size()) * sizeof(MapNetworkNodeVertex));
             resource_updates->updateDynamicBuffer(
                 this->diagnostic_node_vertex_buffer.get(), 0,
                 int(resources.diagnostic_node_vertices->size()
@@ -439,6 +452,8 @@ void MapRhiGlobeNetworkBackend::uploadGeometry(
     {
         if (!resources.flow_direction_vertices->isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(resources.flow_direction_vertices->size()) * sizeof(MapNetworkLinkVertex));
             resource_updates->updateDynamicBuffer(
                 this->flow_direction_vertex_buffer.get(), 0,
                 int(resources.flow_direction_vertices->size()
@@ -452,6 +467,8 @@ void MapRhiGlobeNetworkBackend::uploadGeometry(
     {
         if (!resources.icon_vertices->isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(resources.icon_vertices->size()) * sizeof(MapNetworkIconVertex));
             resource_updates->updateDynamicBuffer(
                 this->icon_vertex_buffer.get(), 0,
                 int(resources.icon_vertices->size()
@@ -465,6 +482,8 @@ void MapRhiGlobeNetworkBackend::uploadGeometry(
     {
         if (!resources.underground_link_vertices->isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(resources.underground_link_vertices->size()) * sizeof(MapNetworkLinkVertex));
             resource_updates->updateDynamicBuffer(
                 this->underground_link_vertex_buffer.get(), 0,
                 int(resources.underground_link_vertices->size()
@@ -473,6 +492,8 @@ void MapRhiGlobeNetworkBackend::uploadGeometry(
         }
         if (!resources.underground_junction_instances->isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(resources.underground_junction_instances->size()) * sizeof(MapGlobeJunctionInstance));
             resource_updates->updateDynamicBuffer(
                 this->underground_junction_instance_buffer.get(), 0,
                 int(resources.underground_junction_instances->size()
@@ -486,6 +507,8 @@ void MapRhiGlobeNetworkBackend::uploadGeometry(
     {
         if (!resources.junction_instances->isEmpty())
         {
+            MapRenderDiagnostics::networkUpload(
+                quint64(resources.junction_instances->size()) * sizeof(MapGlobeJunctionInstance));
             resource_updates->updateDynamicBuffer(
                 this->junction_instance_buffer.get(), 0,
                 int(resources.junction_instances->size()

@@ -16,34 +16,40 @@ cd AOWIS-SERVER-GUI
 ./git_submodule_init.sh
 ```
 
-`git_submodule_init.sh` initializes **all** submodules recursively, including
-AOWIS-SERVER-EPANET, AOWIS-SERVER-MODEL, GeographicLib, and the bgfx rendering
-libraries (`bgfx`, `bx`, and `bimg`) plus the upstream `bgfx.cmake` build scripts. For normal clones it checks out the exact
-revisions recorded by the AOWIS-SERVER-GUI repository; it does not update them
-to their latest upstream commits.
+`git_submodule_init.sh` initializes all submodules: AOWIS-SERVER-EPANET,
+AOWIS-SERVER-MODEL and GeographicLib (recursively), and the bgfx rendering
+libraries `bgfx`, `bx` and `bimg`. It checks out the exact revisions recorded
+by the AOWIS-SERVER-GUI repository; it does not update them to their latest
+upstream commits.
+
+The bgfx libraries are fetched **shallow** (only the pinned commit) and checked
+out **sparse** (`tools/bgfx_sparse_checkout.sh`): only the headers and sources
+AOWIS builds, ~19 MB instead of ~270 MB. AOWIS builds them with its own small
+CMake file (`cmake/aowis_bgfx.cmake`), not with `bgfx.cmake`.
+`./git_submodule_init.sh --shader-tools` additionally checks out the bgfx shader
+compiler sources, which are only needed to regenerate the committed shaders
+(see `src/map/bgfx/README.md`, "bgfx build").
 
 To **update** submodules to their remote-tracking branches, use:
 
 ```bash
 ./git_submodule_update.sh          # AOWIS submodules and GeographicLib only
-./git_submodule_update.sh --bgfx   # bgfx, bx, bimg and bgfx.cmake only
+./git_submodule_update.sh --bgfx   # bgfx, bx and bimg only
 ./git_submodule_update.sh --all    # Both groups
 ./git_submodule_update.sh --help   # Usage
 ```
 
+The committed bgfx shader binaries (`src/map/bgfx/shaders/bin`) must match the
+bgfx revision. After `--bgfx`, run `./compile_linux.sh --shader-tools` and commit
+the regenerated shaders together with the new `external/bgfx`, `external/bx`
+and `external/bimg` gitlinks.
+
 **First-time setup of the bgfx patch:** ZIP files cannot contain Git submodule
-gitlinks. If the four bgfx-group entries exist in `.gitmodules` but have not yet
+gitlinks. If the bgfx-group entries exist in `.gitmodules` but have not yet
 been registered in Git, either `git_submodule_init.sh` or
 `git_submodule_update.sh --bgfx` will register them automatically. Review and
-commit the new `external/bgfx`, `external/bx`, `external/bimg`, and `external/bgfx.cmake` gitlinks
-alongside `.gitmodules`, so subsequent clones can initialize all dependencies
-normally. This initial registration fetches the bgfx repositories; future
-`git_submodule_init.sh` runs use the committed revisions. The scripts deliberately
-skip the nested `bgfx.cmake` submodules (otherwise bgfx, bx and bimg would be
-cloned twice).
-
-The bgfx submodules are only built when the experimental bgfx probe is enabled.
-The main application still uses its existing QRhi, browser WebGL, or CPU backend.
+commit the new gitlinks alongside `.gitmodules`, so subsequent clones can
+initialize all dependencies normally.
 
 ### bgfx surface and stacking proof of concept
 
@@ -112,9 +118,7 @@ performance parity with AOWIS's eventual full map workload.
 
 The WebAssembly probe runs in a dedicated HTML page to avoid interference with
 existing browser renderers. The actual map isn't migrated by this option.
-The official `bgfx.cmake` port describes its Emscripten build as experimental;
-compiler or browser integration failures must be resolved before promoting
-bgfx to a default backend. The native Wayland path uses Qt GuiPrivate's
+The native Wayland path uses Qt GuiPrivate's
 platform-native window resource API and therefore requires that component.
 
 

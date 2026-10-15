@@ -35,8 +35,7 @@ find "$project_name" \
         -path "$project_name/external/AOWIS-SERVER-MODEL" -o \
         -path "$project_name/external/bgfx" -o \
         -path "$project_name/external/bx" -o \
-        -path "$project_name/external/bimg" -o \
-        -path "$project_name/external/bgfx.cmake" \
+        -path "$project_name/external/bimg" \
     \) \) -prune -o \
     \( -type f \( \
         -name ".git" -o \

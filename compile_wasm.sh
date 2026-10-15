@@ -37,6 +37,7 @@ docker run --rm \
     -v "$(pwd)":/project \
     -w /project \
     -e AOWIS_BUILD_BGFX_PROBE="${AOWIS_BUILD_BGFX_PROBE:-OFF}" \
+    -e AOWIS_ENABLE_BGFX_MAP="${AOWIS_ENABLE_BGFX_MAP:-ON}" \
     "${AOWIS_WASM_IMAGE}" \
     /bin/bash /project/tools/qt-emscripten/build_wasm_inside_container.sh
 
@@ -55,6 +56,7 @@ else
     rm -f build-wasm/aowis-bgfx-probe*.js build-wasm/aowis-bgfx-probe*.wasm \
           build-wasm/bgfx-probe.html build-wasm/bgfx-probe-stack.js
 fi
+cp tools/qt-emscripten/aowis-bgfx-map.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-map.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-vector.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-network-webgl.js build-wasm/
@@ -69,12 +71,14 @@ if [ ! -f "$BUILD_CONFIG" ]; then
     cp "$CONFIG_TEMPLATE" "$BUILD_CONFIG"
 fi
 
+BGFX_MAP_JS_VERSION=$(sha256sum tools/qt-emscripten/aowis-bgfx-map.js | cut -c1-16)
 MAP_JS_VERSION=$(sha256sum tools/qt-emscripten/aowis-browser-map.js | cut -c1-16)
 VECTOR_JS_VERSION=$(sha256sum tools/qt-emscripten/aowis-browser-vector.js | cut -c1-16)
 NETWORK_JS_VERSION=$(sha256sum \
     tools/qt-emscripten/aowis-browser-network-webgl.js \
     tools/qt-emscripten/aowis-browser-network.js | sha256sum | cut -c1-16)
 EDITOR_JS_VERSION=$(sha256sum tools/qt-emscripten/aowis-browser-map-editor.js | cut -c1-16)
+sed -i "s|__AOWIS_BGFX_MAP_JS_VERSION__|${BGFX_MAP_JS_VERSION}|g" build-wasm/index.html
 sed -i "s|__AOWIS_MAP_JS_VERSION__|${MAP_JS_VERSION}|g" build-wasm/index.html
 sed -i "s|__AOWIS_VECTOR_JS_VERSION__|${VECTOR_JS_VERSION}|g" build-wasm/index.html
 sed -i "s|__AOWIS_NETWORK_JS_VERSION__|${NETWORK_JS_VERSION}|g" build-wasm/index.html

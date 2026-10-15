@@ -37,7 +37,6 @@
 #include "widgets/group_box_collapsible.h"
 
 class HydraulicData;
-class MapNetworkOverlayWidget;
 class MapTerrainRepository;
 class MapRenderSurface;
 class MapRenderHudWidget;
@@ -47,7 +46,9 @@ class MapMonitorCompassHudWidget;
 class MapMonitorScaleHudWidget;
 class MapMonitorVerticalControlsHudWidget;
 class EntityMapLegendHud;
+class MapBgfxSurface;
 class QFrame;
+class QTimer;
 class QShortcut;
 class QToolButton;
 
@@ -149,7 +150,9 @@ private:
     QStackedLayout *map_stack_layout = nullptr;
     MapWidget *map = nullptr;
 #ifndef Q_OS_WASM
-    MapNetworkOverlayWidget *desktop_network_overlay = nullptr;
+    // Shown while no GPU map surface is active (startup or failure). There
+    // is deliberately no CPU map renderer behind it.
+    QLabel *desktop_renderer_status = nullptr;
 #endif
 #if AOWIS_HAS_QRHI
     MapRenderSurface *desktop_render_surface = nullptr;
@@ -171,6 +174,43 @@ private:
     int network_background_opacity = 0;
     NetworkSymbologySettings symbology_settings;
     bool visual_control_symbology_apply_pending = false;
+    // bgfx monitor surface (or nullptr). Receives the same resolved
+    // symbology as the QRhi surface through applySymbology().
+    MapRenderSurface *bgfx_render_surface = nullptr;
+    // The same object as a widget (visibility), and whether it presents
+    // frames: picking and hover only run against a live bgfx surface.
+    QWidget *bgfx_render_widget = nullptr;
+    bool bgfx_render_surface_active = false;
+    // The same object with its concrete type, for the native HUD (slice 6a).
+    MapBgfxSurface *bgfx_surface = nullptr;
+    // Download activity of the shared repositories, mirrored into the bgfx
+    // HUD (signals plus the QWidget HUD's 400 ms poll).
+    QTimer *bgfx_download_poll_timer = nullptr;
+    int bgfx_tiles_active = 0;
+    int bgfx_tiles_queued = 0;
+    int bgfx_terrain_active = 0;
+    int bgfx_terrain_queued = 0;
+    // Map fullscreen for the bgfx surface (desktop): the HUD button and the
+    // MapMonitorFullscreen shortcut, same reparenting as the QRhi path.
+    QShortcut *bgfx_fullscreen_shortcut = nullptr;
+    bool bgfx_fullscreen_active = false;
+    // Pointer over an enabled bgfx HUD button (pointing-hand cursor).
+    bool bgfx_hud_button_hovered = false;
+    // Click selection on the bgfx surface (desktop and WASM); true when an
+    // entity was hit and selected.
+    bool selectBgfxNetworkEntityAt(const QPointF &position);
+    // Sends a map mouse event to the bgfx HUD first; true when the HUD
+    // consumed it. *over_hud_panel: the pointer is on a HUD panel (no map
+    // hover picking there).
+    bool routeBgfxHudMouseEvent(QMouseEvent *event, bool *over_hud_panel);
+    void handleBgfxHudAction(int action);
+    void refreshBgfxDownloadActivity();
+    void pushBgfxDownloadActivity();
+    void setBgfxFullscreen(bool fullscreen);
+    void setBgfxHudButtonHovered(bool hovered);
+    // One cursor decision for network hover and HUD buttons; on desktop the
+    // bgfx native window needs its own cursor.
+    void applyMapHoverCursor();
 
     bool selectNetworkEntity(quint32 render_id, InfrastructureEntity entity_type, const QUuid &uuid = QUuid());
     void applySymbology();
@@ -184,6 +224,7 @@ private:
         const QPointF &position, Qt::MouseButtons buttons,
         Qt::KeyboardModifiers modifiers);
     void setDesktopNetworkHovered(bool hovered);
+    void showDesktopRendererStatus(const QString &text);
 #endif
 #if AOWIS_HAS_QRHI
     void applyDesktopRenderSurfaceSymbology();

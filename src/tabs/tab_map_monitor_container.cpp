@@ -16,7 +16,9 @@
 #include "config/shortcut_registry.h"
 #include "map/data/map_terrain_repository.h"
 #ifndef Q_OS_WASM
-#include "map/monitor/map_network_overlay_widget.h"
+#endif
+#if AOWIS_HAS_BGFX
+#include "map/bgfx/map_bgfx_surface.h"
 #endif
 #if AOWIS_HAS_QRHI
 #include "map/rhi/map_rhi_widget.h"
@@ -30,6 +32,7 @@
 #include <QAbstractButton>
 #include <QColor>
 #include <QContextMenuEvent>
+#include <QCoreApplication>
 #include <QDebug>
 #include <QFrame>
 #include <QJsonArray>
@@ -44,6 +47,12 @@
 
 #include <cmath>
 #include <functional>
+#include <string_view>
+
+#ifndef Q_OS_WASM
+#include <QGeoCoordinate>
+#include <QGeoPositionInfo>
+#endif
 
 namespace
 {
@@ -444,7 +453,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     map_stack_layout( new QStackedLayout(this->map_stack) ),
     map( new MapWidget(this->map_model, this->tile_repository, this->gps, this->map_stack) ),
 #ifndef Q_OS_WASM
-    desktop_network_overlay( new MapNetworkOverlayWidget(this->map_model, this->hydraulic_data, this->map_stack) ),
+    desktop_renderer_status( new QLabel(this->map_stack) ),
 #endif
     map_menu( new MapMonitorMenuWidget(this->map, this) )
 {
@@ -515,10 +524,326 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
 #endif
     this->map_stack_layout->addWidget(this->map);
 #ifndef Q_OS_WASM
-    this->map_stack_layout->addWidget(this->desktop_network_overlay);
-    this->map_stack_layout->setCurrentWidget(this->desktop_network_overlay);
+    // There is no CPU map renderer on desktop any more: the integer-zoom
+    // raster overlay was the source of step-wise ("bucketed") zoom. Until a
+    // GPU surface reports its first frame (or if it fails), this label is
+    // shown instead. MapWidget stays underneath as the input/navigation owner
+    // but never paints map tiles itself.
+    this->map->setTilePaintingEnabled(false);
+    this->desktop_renderer_status->setAlignment(Qt::AlignCenter);
+    this->desktop_renderer_status->setWordWrap(true);
+    this->desktop_renderer_status->setAutoFillBackground(true);
+    this->desktop_renderer_status->setAttribute(Qt::WA_TransparentForMouseEvents);
+    this->map_stack_layout->addWidget(this->desktop_renderer_status);
+    showDesktopRendererStatus(tr("Starting map renderer\u2026"));
 #else
     this->map_stack_layout->setCurrentWidget(this->map);
+#endif
+    // Set when a GPU map surface is created; without one there is no map.
+    bool gpu_map_surface_created = false;
+#if AOWIS_HAS_BGFX
+    bool bgfx_requested = false;
+#ifdef Q_OS_WASM
+    bgfx_requested = wasmMapRenderer() == WasmMapRenderer::Bgfx;
+#else
+    bgfx_requested = desktopMapRenderer() == DesktopMapRenderer::Bgfx;
+#endif
+    if (bgfx_requested)
+    {
+        // Experimental real-app surface. Do not promote until bgfx has
+        // actually produced a frame; the existing browser/CPU map stays as
+        // fallback and retains map navigation input.
+        MapBgfxSurface *surface = new MapBgfxSurface(this->map_model, this->map_stack);
+        gpu_map_surface_created = true;
+        surface->setNavigationHandlers(
+            [this](QKeyEvent *event) { return this->map->handleKeyPressEvent(event); },
+            [this](QKeyEvent *event) { return this->map->handleKeyReleaseEvent(event); },
+            [this]() { this->map->clearKeyboardPanInput(); });
+        surface->setNavigationWheelHandler(
+            [this](QWheelEvent *event) { this->map->handleWheelEvent(event); });
+        surface->setNavigationFrameHandler(
+            [this](double elapsed_seconds) { this->map->advanceNavigationFrame(elapsed_seconds); });
+        // Desktop: the embedded native window receives all pointer input over
+        // the map. Deliver it to MapWidget as if MapWidget had received it
+        // (same geometry, same coordinates) via sendEvent, NOT by calling the
+        // handlers directly: this container's eventFilter on this->map (click
+        // selection) must see these events too. MapWidget stays the single
+        // navigation owner (pan, inertia, Ctrl/middle orbit, coordinates).
+        surface->setNavigationMouseHandlers(
+            [this](QMouseEvent *event) { return QCoreApplication::sendEvent(this->map, event); },
+            [this](QMouseEvent *event) { return QCoreApplication::sendEvent(this->map, event); },
+            [this](QMouseEvent *event) { return QCoreApplication::sendEvent(this->map, event); });
+        // 2D imagery is drawn by bgfx itself from the shared tile repository;
+        // the "slide opacity" fades it towards the background under the network.
+        surface->setTileRepository(this->tile_repository);
+        surface->setBackgroundOpacity(this->network_background_opacity);
+        connect(this->map_menu->mapNavigationWidget(),
+                &MapNavigationWidget::signalSlideOpacityChanged,
+                surface, [surface](int opacity) { surface->setBackgroundOpacity(opacity); });
+        this->map_stack_layout->addWidget(surface);
+        connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
+                surface, [this, surface]() {
+            surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged,
+                surface, [this, surface](quint64) {
+            surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
+        });
+        surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
+
+        // Symbology: the same resolved MapNetworkRenderSymbology as QRhi.
+        // Every data change that can alter colours re-resolves it, coalesced
+        // to one resolve per event-loop burst by applyVisualControlSymbology().
+        // On the GPU this only re-uploads the colour stream, never geometry.
+        this->bgfx_render_surface = surface;
+        this->bgfx_render_widget = surface;
+        this->bgfx_surface = surface;
+
+        // --- Native HUD (slice 6a) -----------------------------------------
+        // Button clicks arrive queued from the surface (never inside the
+        // native window's event dispatch, fullscreen reparents the map).
+        surface->setHudActionHandler([this](MapBgfxHud::Action action)
+        {
+            handleBgfxHudAction(static_cast<int>(action));
+        });
+#ifndef Q_OS_WASM
+        // GPS position dot (same source as MapRenderHudWidget).
+        if (this->gps != nullptr)
+        {
+            connect(this->gps, &GpsProvider::positionChanged, surface,
+                    [surface](const QGeoPositionInfo &info)
+            {
+                const QGeoCoordinate coordinate = info.coordinate();
+                surface->setHudGpsPosition(info.isValid() && coordinate.isValid(),
+                                           coordinate.longitude(), coordinate.latitude());
+            });
+            connect(this->gps, &GpsProvider::gpsDisconnected, surface, [surface]()
+            {
+                surface->setHudGpsPosition(false, 0.0, 0.0);
+            });
+        }
+#endif
+        // Download activity of the shared tile/terrain repositories, exactly
+        // like MapMonitorDownloadActivityHudWidget: change signals plus a
+        // 400 ms poll while the surface is active.
+        if (this->tile_repository != nullptr)
+        {
+            connect(this->tile_repository, &MapTileRepository::signalUpstreamActivityChanged,
+                    surface, [this](const MapUpstreamActivity &activity)
+            {
+                this->bgfx_tiles_active = activity.active;
+                this->bgfx_tiles_queued = activity.queued;
+                pushBgfxDownloadActivity();
+            });
+        }
+        if (this->terrain_repository != nullptr)
+        {
+            connect(this->terrain_repository,
+                    &MapTerrainRepository::signalUpstreamActivityChanged,
+                    surface, [this](const MapUpstreamActivity &activity)
+            {
+                this->bgfx_terrain_active = activity.active;
+                this->bgfx_terrain_queued = activity.queued;
+                pushBgfxDownloadActivity();
+            });
+        }
+        this->bgfx_download_poll_timer = new QTimer(this);
+        this->bgfx_download_poll_timer->setInterval(400);
+        connect(this->bgfx_download_poll_timer, &QTimer::timeout, this, [this]()
+        {
+            refreshBgfxDownloadActivity();
+        });
+#ifndef Q_OS_WASM
+        // Fullscreen shortcut, enabled while the surface presents frames and
+        // no shortcut is being captured (same rules as the QRhi path).
+        this->bgfx_fullscreen_shortcut = new QShortcut(
+            guiShortcutRegistry().keySequence(GuiShortcutId::MapMonitorFullscreen),
+            this->map_stack);
+        this->bgfx_fullscreen_shortcut->setContext(Qt::ApplicationShortcut);
+        this->bgfx_fullscreen_shortcut->setAutoRepeat(false);
+        this->bgfx_fullscreen_shortcut->setEnabled(false);
+        connect(this->bgfx_fullscreen_shortcut, &QShortcut::activated, this, [this]()
+        {
+            if (!this->bgfx_render_surface_active)
+                return;
+            if (!this->bgfx_fullscreen_active && !isVisible())
+                return;
+            setBgfxFullscreen(!this->bgfx_fullscreen_active);
+        });
+        connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutChanged, this,
+                [this](GuiShortcutId id)
+        {
+            if (id != GuiShortcutId::MapMonitorFullscreen || this->bgfx_fullscreen_shortcut == nullptr)
+                return;
+            this->bgfx_fullscreen_shortcut->setKey(
+                guiShortcutRegistry().keySequence(GuiShortcutId::MapMonitorFullscreen));
+        });
+        connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutCaptureActiveChanged,
+                this, [this](bool active)
+        {
+            if (this->bgfx_fullscreen_shortcut != nullptr)
+                this->bgfx_fullscreen_shortcut->setEnabled(this->bgfx_render_surface_active && !active);
+        });
+        surface->setHudFullscreen(true, false);
+#else
+        // The browser build keeps the page layout; no map fullscreen yet.
+        surface->setHudFullscreen(false, false);
+#endif
+
+        // Selection from anywhere (map click, tables, inspector) is drawn as
+        // the QRhi selection highlight.
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, surface,
+                [surface](const HydraulicNodeTank &tank)
+        {
+            surface->setSelectedEntity(InfrastructureEntity::Tank, tank.uuid);
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedReservoir, surface,
+                [surface](const HydraulicNodeReservoir &reservoir)
+        {
+            surface->setSelectedEntity(InfrastructureEntity::Reservoir, reservoir.uuid);
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedJunction, surface,
+                [surface](const HydraulicNodeJunction &junction)
+        {
+            surface->setSelectedEntity(InfrastructureEntity::Junction, junction.uuid);
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedPipe, surface,
+                [surface](const HydraulicLinkPipe &pipe)
+        {
+            surface->setSelectedEntity(InfrastructureEntity::Pipe, pipe.uuid);
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedPump, surface,
+                [surface](const HydraulicLinkPump &pump)
+        {
+            surface->setSelectedEntity(InfrastructureEntity::Pump, pump.uuid);
+        });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedValve, surface,
+                [surface](const HydraulicLinkValve &valve)
+        {
+            surface->setSelectedEntity(InfrastructureEntity::Valve, valve.uuid);
+        });
+
+        // Simulation error / stale-result highlights: same triggers as QRhi
+        // (applyDesktopRenderSurfaceHighlights()). The surface ignores
+        // unchanged sets, so redundant calls cost nothing on the GPU.
+        const std::function<void()> apply_bgfx_highlights = [this, surface]()
+        {
+            surface->setSimulationErrorEntities(
+                this->hydraulic_data->simulationErrorEntities(),
+                this->hydraulic_data->simulationStaleDiagnosticEntityUuids());
+        };
+        connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
+                surface, apply_bgfx_highlights);
+        connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged,
+                surface, [apply_bgfx_highlights](quint64) { apply_bgfx_highlights(); });
+        connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, surface,
+                [apply_bgfx_highlights](InfrastructureEntity, const QUuid &)
+                { apply_bgfx_highlights(); });
+        connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, surface,
+                [apply_bgfx_highlights](InfrastructureEntity, const QUuid &)
+                { apply_bgfx_highlights(); });
+        connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged,
+                surface, [apply_bgfx_highlights](bool) { apply_bgfx_highlights(); });
+        apply_bgfx_highlights();
+
+        const std::function<void()> request_bgfx_symbology = [this]()
+        {
+            applyVisualControlSymbology();
+        };
+        connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
+                surface, request_bgfx_symbology);
+        connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged,
+                surface, [request_bgfx_symbology](quint64) { request_bgfx_symbology(); });
+        connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, surface,
+                [request_bgfx_symbology](InfrastructureEntity, const QUuid &)
+                { request_bgfx_symbology(); });
+        connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, surface,
+                [request_bgfx_symbology](InfrastructureEntity, const QUuid &)
+                { request_bgfx_symbology(); });
+        connect(this->hydraulic_data, &HydraulicData::signalSimulationHeadlossFormulaChanged,
+                surface, request_bgfx_symbology);
+        connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged,
+                surface, [request_bgfx_symbology](bool) { request_bgfx_symbology(); });
+        connect(this->hydraulic_data,
+                &HydraulicData::signalWaterQualitySimulationResultTimelineChanged,
+                surface, [request_bgfx_symbology](bool) { request_bgfx_symbology(); });
+        connect(this->hydraulic_data, &HydraulicData::signalCurrentSimulationResultChanged,
+                surface, [request_bgfx_symbology](int) { request_bgfx_symbology(); });
+        applySymbology();
+
+        connect(surface, &MapBgfxSurface::signalRendererReady, this, [this, surface]() {
+            this->bgfx_render_surface_active = true;
+#ifndef Q_OS_WASM
+            this->map_stack_layout->setCurrentWidget(surface);
+            this->desktop_renderer_status->hide();
+#else
+            this->wasm_browser_renderer_active = false;
+            this->map->setBrowserMapLayerGeometry(QRect(), false);
+            this->map->setBrowserMapLayerEnabled(false);
+#endif
+            // Match the QRhi activation path: keyboard zoom must use the
+            // continuous GPU-camera animation, not integer MapModel::zoomIn/
+            // zoomOut. Tile zoom is only a derived imagery LOD.
+            this->map->setRenderSurfaceActive(true);
+            // bgfx presents the frames, so it is the only navigation clock.
+            this->map->setNavigationFrameDriver(true);
+#ifndef Q_OS_WASM
+            this->map->setOrbitPointerLockWindow(surface->nativeInputWindow());
+#endif
+            surface->focusNavigationInput();
+            // HUD inputs: current download numbers now, then the poll.
+            refreshBgfxDownloadActivity();
+            if (this->bgfx_download_poll_timer != nullptr)
+                this->bgfx_download_poll_timer->start();
+#ifndef Q_OS_WASM
+            if (this->bgfx_fullscreen_shortcut != nullptr)
+            {
+                this->bgfx_fullscreen_shortcut->setEnabled(
+                    !guiShortcutRegistry().shortcutCaptureActive());
+            }
+#endif
+            // WASM: MapWidget keeps pointer input on the Qt layer (the bgfx
+            // canvas has pointer-events:none); picking and the HUD are routed
+            // from this container's event filter on the map.
+            qInfo() << "Experimental production bgfx Map Monitor surface active";
+        });
+        connect(surface, &MapBgfxSurface::signalRendererFailed, this,
+                [this, surface](const QString &reason) {
+            qWarning() << "bgfx Map Monitor failed, existing renderer remains active:" << reason;
+#ifndef Q_OS_WASM
+            if (this->bgfx_fullscreen_active)
+                setBgfxFullscreen(false);
+            if (this->bgfx_fullscreen_shortcut != nullptr)
+                this->bgfx_fullscreen_shortcut->setEnabled(false);
+#endif
+            if (this->bgfx_download_poll_timer != nullptr)
+                this->bgfx_download_poll_timer->stop();
+            setBgfxHudButtonHovered(false);
+            this->bgfx_render_surface_active = false;
+            this->map->setNavigationFrameDriver(false);
+#ifndef Q_OS_WASM
+            this->map->setOrbitPointerLockWindow(nullptr);
+#endif
+            this->map->setRenderSurfaceActive(false);
+#ifndef Q_OS_WASM
+            showDesktopRendererStatus(
+                tr("The bgfx map renderer could not start:\n%1").arg(reason));
+#else
+            this->wasm_browser_renderer_active = true;
+            this->map->setBrowserMapLayerEnabled(true);
+            this->map->setBrowserMapLayerTopmost(true);
+            scheduleWasmMapLayerSync();
+            scheduleWasmNetworkSymbologySync();
+#endif
+            surface->hide();
+        });
+        surface->show();
+#ifndef Q_OS_WASM
+        showDesktopRendererStatus(tr("Starting map renderer\u2026"));
+#else
+        this->map_stack_layout->setCurrentWidget(this->map);
+#endif
+    }
 #endif
 #if AOWIS_HAS_QRHI
     bool rhi_requested = false;
@@ -531,6 +856,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     {
         MapRhiWidget *rhi_widget =
             new MapRhiWidget(this->map_model, QStringLiteral("monitor"), this->map_stack);
+        gpu_map_surface_created = true;
         MapRenderSurface *render_surface = rhi_widget;
         connect(this->map_menu->mapNavigationWidget(),
                 &MapNavigationWidget::signal3dIconsChanged,
@@ -731,8 +1057,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         this->map_stack_layout->addWidget(this->desktop_render_widget);
         this->desktop_render_widget->show();
 #ifndef Q_OS_WASM
-        this->map_stack_layout->setCurrentWidget(this->desktop_network_overlay);
-        this->desktop_network_overlay->raise();
+        showDesktopRendererStatus(tr("Starting map renderer\u2026"));
 #else
         this->map_stack_layout->setCurrentWidget(this->map);
         this->map->raise();
@@ -851,7 +1176,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             this->map_stack_layout->setCurrentWidget(rhi_widget);
             this->map->setRenderSurfaceActive(true);
 #ifndef Q_OS_WASM
-            this->desktop_network_overlay->hide();
+            this->desktop_renderer_status->hide();
 #else
             this->wasm_browser_renderer_active = false;
             this->map->setBrowserMapLayerGeometry(QRect(), false);
@@ -895,7 +1220,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
 #ifdef Q_OS_WASM
             qInfo() << "Monitor map renderer: QRhi/WebGL 2 active; browser renderer retained as fallback.";
 #else
-            qInfo() << "Monitor map renderer: RHI active; CPU renderer retained as fallback.";
+            qInfo() << "Monitor map renderer: RHI active.";
 #endif
         });
         connect(rhi_widget, &MapRhiWidget::signalRendererFailed, this,
@@ -912,20 +1237,15 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
 #else
             qWarning().noquote()
                 << QStringLiteral("Monitor RHI surface failed (%1). "
-                                  "Falling back to the existing CPU renderer.")
+                                  "No map renderer is available.")
                        .arg(reason);
 #endif
             if (this->map_model->viewMode() != MapViewMode::TwoD)
                 this->map_model->setViewMode(MapViewMode::TwoD);
             this->map->setRenderSurfaceActive(false);
 #ifndef Q_OS_WASM
-            this->symbology_settings = this->symbology_settings.bounded();
-            const NetworkSymbologyRanges fallback_ranges =
-                this->hydraulic_data->symbologyRanges(this->symbology_settings);
-            this->desktop_network_overlay->setSymbology(
-                this->symbology_settings, fallback_ranges);
-            this->desktop_network_overlay->show();
-            this->map_stack_layout->setCurrentWidget(this->desktop_network_overlay);
+            showDesktopRendererStatus(
+                tr("The RHI map renderer could not start:\n%1").arg(reason));
 #else
             this->wasm_browser_renderer_active = true;
             this->wasm_network_snapshot_sent = false;
@@ -969,6 +1289,16 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             applyDesktopRenderSurfaceSymbology();
         });
     }
+#endif
+#ifndef Q_OS_WASM
+    if (!gpu_map_surface_created)
+    {
+        showDesktopRendererStatus(
+            tr("The bgfx map renderer is not part of this build.\n"
+               "Reconfigure with -DAOWIS_ENABLE_BGFX_MAP=ON."));
+    }
+#else
+    Q_UNUSED(gpu_map_surface_created)
 #endif
 #ifdef Q_OS_WASM
     this->map->setBrowserMapLayerEnabled(true);
@@ -1122,9 +1452,9 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
 #if AOWIS_HAS_QRHI
         if (this->desktop_render_surface != nullptr)
             this->desktop_render_surface->setNodeDeclutteringEnabled(enabled);
-#else
-        Q_UNUSED(enabled);
 #endif
+        if (this->bgfx_render_surface != nullptr)
+            this->bgfx_render_surface->setNodeDeclutteringEnabled(enabled);
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalLinkVisualClicked, this,
         [this](VisualLink visual_link)
@@ -1200,6 +1530,10 @@ MapMonitorContainer::~MapMonitorContainer()
     this->map->setCachedTerrainElevationResolver(MapWidget::CachedTerrainElevationResolver());
     if (this->desktop_scene_fullscreen_active)
         setDesktopRenderSurfaceFullscreen(false);
+#endif
+#ifndef Q_OS_WASM
+    if (this->bgfx_fullscreen_active)
+        setBgfxFullscreen(false);
 #endif
 #ifdef Q_OS_WASM
     this->map->setBrowserMapLayerGeometry(QRect(), false);
@@ -1554,6 +1888,32 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
         positionDesktopHudWidgets();
     }
 #endif
+#ifndef Q_OS_WASM
+    // Closing the bgfx fullscreen window returns the map to the tab.
+    if (watched == this->map_stack && event->type() == QEvent::Close
+        && this->bgfx_fullscreen_active)
+    {
+        setBgfxFullscreen(false);
+        event->ignore();
+        return true;
+    }
+#endif
+
+    // The bgfx HUD sits on top of the map: it sees every pointer event first
+    // (desktop: forwarded from the native window through MapWidget; WASM:
+    // MapWidget receives them directly), and what it consumes never reaches
+    // navigation, picking or hover.
+    bool over_bgfx_hud_panel = false;
+    if (watched == this->map
+        && (event->type() == QEvent::MouseButtonPress
+            || event->type() == QEvent::MouseButtonDblClick
+            || event->type() == QEvent::MouseButtonRelease
+            || event->type() == QEvent::MouseMove)
+        && routeBgfxHudMouseEvent(static_cast<QMouseEvent *>(event), &over_bgfx_hud_panel))
+    {
+        event->accept();
+        return true;
+    }
 
     if (watched == this->map)
     {
@@ -1582,7 +1942,15 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
                 }
                 else
 #endif
-                if (selectWasmNetworkEntityAt(mouse_event->position()))
+                if (this->bgfx_render_surface_active)
+                {
+                    if (selectBgfxNetworkEntityAt(mouse_event->position()))
+                    {
+                        mouse_event->accept();
+                        return true;
+                    }
+                }
+                else if (selectWasmNetworkEntityAt(mouse_event->position()))
                 {
                     mouse_event->accept();
                     return true;
@@ -1604,26 +1972,12 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
                     }
                     this->desktop_render_surface->setSelectedEntity(
                         InfrastructureEntity::Unknown, QUuid());
-                    this->desktop_network_overlay->clearSelectedEntity();
                 }
-                else
 #endif
+                if (selectBgfxNetworkEntityAt(mouse_event->position()))
                 {
-                    const NetworkOverlayHit hit =
-                        this->desktop_network_overlay->hitTest(mouse_event->position());
-                    if (hit.isValid()
-                        && selectNetworkEntity(hit.render_id, hit.entity_type, hit.uuid))
-                    {
-                        this->desktop_network_overlay->setSelectedEntity(hit);
-                        mouse_event->accept();
-                        return true;
-                    }
-                    this->desktop_network_overlay->clearSelectedEntity();
-#if AOWIS_HAS_QRHI
-                    if (this->desktop_render_surface != nullptr)
-                        this->desktop_render_surface->setSelectedEntity(
-                            InfrastructureEntity::Unknown, QUuid());
-#endif
+                    mouse_event->accept();
+                    return true;
                 }
 #endif
             }
@@ -1632,8 +1986,12 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
         else if (event->type() == QEvent::MouseMove)
         {
             QMouseEvent *mouse_event = static_cast<QMouseEvent *>(event);
-            updateDesktopNetworkHover(
-                mouse_event->position(), mouse_event->buttons(), mouse_event->modifiers());
+            // No network picking through a HUD panel.
+            if (over_bgfx_hud_panel)
+                setDesktopNetworkHovered(false);
+            else
+                updateDesktopNetworkHover(
+                    mouse_event->position(), mouse_event->buttons(), mouse_event->modifiers());
         }
         else if (event->type() == QEvent::Leave || event->type() == QEvent::Hide)
         {
@@ -1668,6 +2026,23 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
 #endif
 
     return QWidget::eventFilter(watched, event);
+}
+
+bool MapMonitorContainer::selectBgfxNetworkEntityAt(const QPointF &position)
+{
+    if (!this->bgfx_render_surface_active || this->bgfx_render_surface == nullptr
+        || this->bgfx_render_widget == nullptr || !this->bgfx_render_widget->isVisible())
+        return false;
+    // Same behaviour as the QRhi click path: a hit selects the entity (the
+    // highlight follows HydraulicData's selection signal), a miss clears it.
+    const MapRenderHit hit = this->bgfx_render_surface->hitTest(position);
+    if (hit.isValid() && selectNetworkEntity(hit.render_id, hit.entity_type, hit.uuid))
+    {
+        this->bgfx_render_surface->setSelectedEntity(hit.entity_type, hit.uuid);
+        return true;
+    }
+    this->bgfx_render_surface->setSelectedEntity(InfrastructureEntity::Unknown, QUuid());
+    return false;
 }
 
 bool MapMonitorContainer::selectNetworkEntity(quint32 render_id, InfrastructureEntity entity_type, const QUuid &uuid)
@@ -1747,7 +2122,21 @@ void MapMonitorContainer::updateDesktopNetworkHover(
     }
 #endif
 
-    setDesktopNetworkHovered(this->desktop_network_overlay->hitTest(position).isValid());
+    if (this->bgfx_render_surface_active && this->bgfx_render_surface != nullptr
+        && this->bgfx_render_widget != nullptr && this->bgfx_render_widget->isVisible())
+    {
+        setDesktopNetworkHovered(this->bgfx_render_surface->hitTest(position).isValid());
+        return;
+    }
+    setDesktopNetworkHovered(false);
+}
+
+void MapMonitorContainer::showDesktopRendererStatus(const QString &text)
+{
+    this->desktop_renderer_status->setText(text);
+    this->desktop_renderer_status->show();
+    this->map_stack_layout->setCurrentWidget(this->desktop_renderer_status);
+    this->desktop_renderer_status->raise();
 }
 
 void MapMonitorContainer::setDesktopNetworkHovered(bool hovered)
@@ -1756,12 +2145,147 @@ void MapMonitorContainer::setDesktopNetworkHovered(bool hovered)
         return;
 
     this->desktop_network_hovered = hovered;
-    if (hovered)
+    applyMapHoverCursor();
+}
+#endif
+
+void MapMonitorContainer::applyMapHoverCursor()
+{
+    bool pointing = this->bgfx_hud_button_hovered;
+#ifndef Q_OS_WASM
+    pointing = pointing || this->desktop_network_hovered;
+#endif
+    if (pointing)
         this->map->setCursor(Qt::PointingHandCursor);
     else
         this->map->unsetCursor();
-}
+#if AOWIS_HAS_BGFX
+    // Desktop: the visible cursor over the bgfx map is the native window's.
+    if (this->bgfx_surface != nullptr)
+        this->bgfx_surface->setHoverCursor(pointing);
 #endif
+}
+
+void MapMonitorContainer::setBgfxHudButtonHovered(bool hovered)
+{
+    if (this->bgfx_hud_button_hovered == hovered)
+        return;
+    this->bgfx_hud_button_hovered = hovered;
+    applyMapHoverCursor();
+}
+
+bool MapMonitorContainer::routeBgfxHudMouseEvent(QMouseEvent *event, bool *over_hud_panel)
+{
+    *over_hud_panel = false;
+#if AOWIS_HAS_BGFX
+    if (this->bgfx_surface == nullptr || !this->bgfx_render_surface_active
+        || !this->bgfx_surface->isVisible())
+    {
+        return false;
+    }
+    const MapBgfxSurface::HudPointer pointer = this->bgfx_surface->handleHudMouseEvent(event);
+    *over_hud_panel = pointer.over_panel;
+    if (event->type() == QEvent::MouseMove)
+        setBgfxHudButtonHovered(pointer.over_button);
+    return pointer.consumed;
+#else
+    Q_UNUSED(event)
+    return false;
+#endif
+}
+
+void MapMonitorContainer::handleBgfxHudAction(int action)
+{
+#if AOWIS_HAS_BGFX
+    switch (static_cast<MapBgfxHud::Action>(action))
+    {
+        case MapBgfxHud::Action::CancelMapTiles:
+            if (this->tile_repository != nullptr)
+                this->tile_repository->cancelUpstreamDownloads();
+            // Same short settle delay as the QWidget HUD before re-reading.
+            QTimer::singleShot(100, this, [this]() { refreshBgfxDownloadActivity(); });
+            break;
+        case MapBgfxHud::Action::CancelTerrain:
+            if (this->terrain_repository != nullptr)
+                this->terrain_repository->cancelUpstreamDownloads();
+            QTimer::singleShot(100, this, [this]() { refreshBgfxDownloadActivity(); });
+            break;
+        case MapBgfxHud::Action::ViewMode2d:
+            if (this->map_model->viewMode() != MapViewMode::TwoD)
+                this->map_model->setViewMode(MapViewMode::TwoD);
+            break;
+        case MapBgfxHud::Action::ViewMode3d:
+            // Offered (enabled) only once the bgfx globe exists (Phase 3).
+            break;
+        case MapBgfxHud::Action::ToggleFullscreen:
+#ifndef Q_OS_WASM
+            setBgfxFullscreen(!this->bgfx_fullscreen_active);
+#endif
+            break;
+        case MapBgfxHud::Action::None:
+            break;
+    }
+#else
+    Q_UNUSED(action)
+#endif
+}
+
+void MapMonitorContainer::refreshBgfxDownloadActivity()
+{
+    // Answers arrive through signalUpstreamActivityChanged.
+    if (this->tile_repository != nullptr)
+        this->tile_repository->requestUpstreamActivity();
+    if (this->terrain_repository != nullptr)
+        this->terrain_repository->requestUpstreamActivity();
+}
+
+void MapMonitorContainer::pushBgfxDownloadActivity()
+{
+#if AOWIS_HAS_BGFX
+    if (this->bgfx_surface != nullptr)
+    {
+        this->bgfx_surface->setHudDownloadActivity(
+            this->bgfx_tiles_active, this->bgfx_tiles_queued,
+            this->bgfx_terrain_active, this->bgfx_terrain_queued);
+    }
+#endif
+}
+
+void MapMonitorContainer::setBgfxFullscreen(bool fullscreen)
+{
+#if AOWIS_HAS_BGFX && !defined(Q_OS_WASM)
+    if (fullscreen == this->bgfx_fullscreen_active)
+        return;
+    if (fullscreen && (!this->bgfx_render_surface_active || this->bgfx_surface == nullptr))
+        return;
+
+    // Same reparenting as setDesktopRenderSurfaceFullscreen(). The bgfx
+    // surface follows a possibly recreated native window by itself
+    // (QPlatformSurfaceEvent in MapBgfxSurface::eventFilter()).
+    if (fullscreen)
+    {
+        const QPoint previous_global_position = this->map_stack->mapToGlobal(QPoint(0, 0));
+        this->layout->removeWidget(this->map_stack);
+        this->map_stack->setParent(nullptr, Qt::Window);
+        this->map_stack->move(previous_global_position);
+        this->bgfx_fullscreen_active = true;
+        this->map_stack->showFullScreen();
+    }
+    else
+    {
+        this->bgfx_fullscreen_active = false;
+        this->map_stack->hide();
+        this->map_stack->setWindowState(Qt::WindowNoState);
+        this->map_stack->setParent(this, Qt::Widget);
+        this->layout->addWidget(this->map_stack);
+        this->map_stack->show();
+    }
+    this->bgfx_surface->setHudFullscreen(true, this->bgfx_fullscreen_active);
+    this->bgfx_surface->focusNavigationInput();
+#else
+    Q_UNUSED(fullscreen)
+#endif
+}
 
 #if AOWIS_HAS_QRHI
 void MapMonitorContainer::applyDesktopRenderSurfaceSymbology()
@@ -1800,9 +2324,12 @@ void MapMonitorContainer::applySymbology()
             *this->hydraulic_data, this->symbology_settings, ranges));
     }
 #endif
-#ifndef Q_OS_WASM
-    this->desktop_network_overlay->setSymbology(this->symbology_settings, ranges);
-#else
+    if (this->bgfx_render_surface != nullptr)
+    {
+        this->bgfx_render_surface->setSymbology(resolveMapNetworkRenderSymbology(
+            *this->hydraulic_data, this->symbology_settings, ranges));
+    }
+#ifdef Q_OS_WASM
     if (this->wasm_browser_renderer_active)
         scheduleWasmNetworkSymbologySync();
 #endif
@@ -1843,9 +2370,7 @@ void MapMonitorContainer::setNetworkBackgroundOpacity(int opacity)
     if (this->desktop_render_surface != nullptr)
         this->desktop_render_surface->setBackgroundOpacity(bounded_opacity);
 #endif
-#ifndef Q_OS_WASM
-    this->desktop_network_overlay->setBackgroundOpacity(bounded_opacity);
-#else
+#ifdef Q_OS_WASM
     if (this->wasm_browser_renderer_active)
         syncWasmNetworkBackground();
 #endif
@@ -2125,17 +2650,18 @@ MapMonitorMenuWidget::MapMonitorMenuWidget(MapWidget *map, QWidget *parent)
     // choices consistent without touching canonical symbology values.
     new UnitAwareView(this, UnitProfileManager::instance().presentation(), [this] {
         const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
-        const auto label = [&context](const QString &name, std::string_view quantity) {
+        const std::function<QString(const QString &, std::string_view)> label =
+            [&context](const QString &name, std::string_view quantity) {
             const QString unit = UnitTablePresentation::unitSymbol(
                 UnitTablePresentation::selectedUnit(context, quantity));
             return QStringLiteral("%1 [%2]").arg(name, unit);
         };
-        const auto update_group = [&label](QButtonGroup *group,
-                                           int water_age, int chlorine,
-                                           int river_water, int lake_water) {
+        const std::function<void(QButtonGroup *, int, int, int, int)> update_group =
+            [&label](QButtonGroup *group, int water_age, int chlorine,
+                     int river_water, int lake_water) {
             if (group == nullptr) return;
-            const auto set_label = [group, &label](int id, const QString &name,
-                                                   std::string_view quantity) {
+            const std::function<void(int, const QString &, std::string_view)> set_label =
+                [group, &label](int id, const QString &name, std::string_view quantity) {
                 QAbstractButton *button = group->button(id);
                 if (button != nullptr) button->setText(label(name, quantity));
             };

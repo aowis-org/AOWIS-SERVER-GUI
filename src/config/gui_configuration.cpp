@@ -10,6 +10,9 @@
 #ifndef AOWIS_HAS_QRHI
 #define AOWIS_HAS_QRHI 0
 #endif
+#ifndef AOWIS_HAS_BGFX
+#define AOWIS_HAS_BGFX 0
+#endif
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -148,13 +151,13 @@ EM_JS(int, aowisBuiltinExamplesEnabled, (),
     return configuration.examplesBuiltinEnable === false ? 0 : 1;
 });
 
-EM_JS(int, aowisWasmRhiRendererRequested, (),
+EM_JS(int, aowisWasmRendererPreference, (),
 {
     const configuration = globalThis.aowisGuiConfiguration || {};
     const renderer = typeof configuration.mapWasmRenderer === "string"
         ? configuration.mapWasmRenderer.trim().toLowerCase()
         : "rhi";
-    return renderer === "browser" ? 0 : 1;
+    return renderer === "browser" ? 0 : (renderer === "bgfx" ? 2 : 1);
 });
 
 EM_JS(int, aowisSymbologyPalettePreference, (const char *key, int default_value),
@@ -322,9 +325,9 @@ GuiConfiguration loadConfiguration()
 {
     GuiConfiguration configuration;
     configuration.examples_builtin_enable = aowisBuiltinExamplesEnabled() != 0;
-    configuration.map_wasm_renderer = aowisWasmRhiRendererRequested() != 0
-        ? WasmMapRenderer::Rhi
-        : WasmMapRenderer::Browser;
+    const int wasm_renderer = aowisWasmRendererPreference();
+    configuration.map_wasm_renderer = wasm_renderer == 2 ? WasmMapRenderer::Bgfx
+        : (wasm_renderer == 1 ? WasmMapRenderer::Rhi : WasmMapRenderer::Browser);
     const int node_palette_value = aowisSymbologyPalettePreference(
         "aowis.symbology.node_palette",
         static_cast<int>(NetworkSymbologyDefaultNodePalette));
@@ -513,9 +516,12 @@ DesktopMapRenderer parseDesktopMapRenderer(const QString &value, bool *valid)
     const QString normalized = value.trimmed().toLower();
     if (normalized == QStringLiteral("cpu"))
     {
+        // The CPU map renderer was removed (it displayed the network at the
+        // integer tile zoom only). Keep old ini files working.
+        qWarning() << "gui/map_desktop_renderer=cpu is no longer supported; using bgfx.";
         if (valid != nullptr)
             *valid = true;
-        return DesktopMapRenderer::Cpu;
+        return DesktopMapRenderer::Bgfx;
     }
 
     if (normalized == QStringLiteral("rhi"))
@@ -523,6 +529,12 @@ DesktopMapRenderer parseDesktopMapRenderer(const QString &value, bool *valid)
         if (valid != nullptr)
             *valid = true;
         return DesktopMapRenderer::Rhi;
+    }
+    if (normalized == QStringLiteral("bgfx"))
+    {
+        if (valid != nullptr)
+            *valid = true;
+        return DesktopMapRenderer::Bgfx;
     }
 
     if (valid != nullptr)
@@ -633,7 +645,7 @@ GuiConfiguration loadConfiguration()
     if (!renderer_valid)
     {
         qWarning() << "Invalid gui/map_desktop_renderer value" << configured_renderer
-                   << "in" << path << "- using rhi. Valid values are: cpu, rhi.";
+                   << "in" << path << "- using rhi. Valid values are: rhi, bgfx.";
     }
 
     configuration.shortcuts.sidebar_toggle = loadShortcutSetting(settings, QStringLiteral("shortcuts/sidebar_toggle"), advertised_shortcuts.sidebar_toggle);
@@ -797,9 +809,9 @@ const char *desktopMapRendererName(DesktopMapRenderer renderer)
     {
         case DesktopMapRenderer::Rhi:
             return "rhi";
-        case DesktopMapRenderer::Cpu:
+        case DesktopMapRenderer::Bgfx:
         default:
-            return "cpu";
+            return "bgfx";
     }
 }
 
@@ -815,12 +827,23 @@ DesktopMapRenderer desktopMapRenderer()
 #else
     static const DesktopMapRenderer renderer = []()
     {
+        // Only GPU renderers exist. bgfx is the target renderer: if it was
+        // requested but is not part of this build, do NOT silently switch to
+        // QRhi (which is being removed). The monitor then shows a status
+        // message telling how to enable bgfx. An old CMake cache with
+        // AOWIS_ENABLE_BGFX_MAP=OFF otherwise looked like "RHI came back".
         const DesktopMapRenderer requested = guiConfiguration().map_desktop_renderer;
+        if (requested == DesktopMapRenderer::Bgfx && !AOWIS_HAS_BGFX)
+        {
+            qWarning() << "Desktop bgfx map requested but this build has AOWIS_ENABLE_BGFX_MAP=OFF; "
+                          "no map renderer. Reconfigure with -DAOWIS_ENABLE_BGFX_MAP=ON.";
+            return DesktopMapRenderer::Bgfx;
+        }
         if (requested == DesktopMapRenderer::Rhi && !desktopMapRhiBuildAvailable())
         {
             qWarning() << "Desktop map renderer 'rhi' was requested, but this build has no "
-                          "QRhi support. Falling back to the CPU renderer.";
-            return DesktopMapRenderer::Cpu;
+                          "QRhi support; using bgfx.";
+            return DesktopMapRenderer::Bgfx;
         }
 
         return requested;
@@ -835,6 +858,8 @@ const char *wasmMapRendererName(WasmMapRenderer renderer)
     {
         case WasmMapRenderer::Browser:
             return "browser";
+        case WasmMapRenderer::Bgfx:
+            return "bgfx";
         case WasmMapRenderer::Rhi:
         default:
             return "rhi";
@@ -856,6 +881,11 @@ WasmMapRenderer wasmMapRenderer()
     static const WasmMapRenderer renderer = []()
     {
         const WasmMapRenderer requested = guiConfiguration().map_wasm_renderer;
+        if (requested == WasmMapRenderer::Bgfx && !AOWIS_HAS_BGFX)
+        {
+            qWarning() << "WASM bgfx map requested but AOWIS_ENABLE_BGFX_MAP is OFF; using browser.";
+            return WasmMapRenderer::Browser;
+        }
         if (requested == WasmMapRenderer::Rhi && !wasmMapRhiBuildAvailable())
         {
             qWarning() << "WASM map renderer 'rhi' was requested, but this build has no "

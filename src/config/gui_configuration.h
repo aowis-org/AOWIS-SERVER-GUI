@@ -8,16 +8,18 @@
 
 class QKeyEvent;
 
+// No CPU renderer: a legacy "cpu" ini value is mapped to a GPU renderer.
 enum class DesktopMapRenderer
 {
-    Cpu,
-    Rhi
+    Rhi,
+    Bgfx
 };
 
 enum class WasmMapRenderer
 {
     Browser,
-    Rhi
+    Rhi,
+    Bgfx
 };
 
 struct GuiShortcutConfiguration

@@ -10,12 +10,16 @@ Usage: ./git_submodule_update.sh [--bgfx | --all | --help]
 
   (no option)  Update existing AOWIS and GeographicLib submodules from
                their tracked remote branches (original behavior).
-  --bgfx       Initialize/update bgfx, bx, bimg and the CMake build scripts.
+  --bgfx       Initialize/update bgfx, bx and bimg to their upstream master
+               (shallow, sparse; see tools/bgfx_sparse_checkout.sh).
                Does not touch the AOWIS and GeographicLib submodules.
+               Afterwards regenerate the committed bgfx shaders with
+               ./compile_linux.sh --shader-tools and commit them together
+               with the new gitlinks: shader binaries must match bgfx.
   --all        Update both groups.
   --help       Show this help.
 
-On the first --bgfx run, any missing bgfx/bx/bimg/bgfx.cmake Git submodules are
+On the first --bgfx run, any missing bgfx/bx/bimg Git submodules are
 registered via 'git submodule add'. Commit the resulting .gitmodules and
 submodule gitlinks together so other clones receive their pinned versions.
 HELP
@@ -31,14 +35,12 @@ bgfx_paths=(
     external/bx
     external/bimg
     external/bgfx
-    external/bgfx.cmake
 )
 
 bgfx_urls=(
     https://github.com/bkaradzic/bx.git
     https://github.com/bkaradzic/bimg.git
     https://github.com/bkaradzic/bgfx.git
-    https://github.com/bkaradzic/bgfx.cmake.git
 )
 
 # A .gitmodules entry by itself does not register a submodule: the index also
@@ -61,7 +63,8 @@ ensure_bgfx_submodules_registered() {
         fi
 
         printf 'Registering %s as a Git submodule...\n' "$path"
-        git submodule add -- "$url" "$path"
+        git submodule add --depth 1 -- "$url" "$path"
+        git config -f .gitmodules "submodule.$path.shallow" true
     done
 }
 
@@ -71,9 +74,10 @@ update_standard() {
 
 update_bgfx() {
     ensure_bgfx_submodules_registered
-    # Do not recurse into bgfx.cmake: it also contains bgfx/bx/bimg gitlinks,
-    # which would duplicate AOWIS's own sibling repositories on disk.
-    git submodule update --init --remote -- "${bgfx_paths[@]}"
+    # Never recursive: AOWIS needs none of bgfx's own submodules.
+    git submodule update --init --remote --depth 1 -- "${bgfx_paths[@]}"
+    tools/bgfx_sparse_checkout.sh
+    printf 'bgfx updated. Regenerate the shader binaries: ./compile_linux.sh --shader-tools\n'
 }
 
 case "${1:-}" in

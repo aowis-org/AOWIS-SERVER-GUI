@@ -8,8 +8,9 @@
 
 namespace
 {
-// A rebase rebuilds Globe terrain and every CPU-built network vertex. The
-// minimum keeps close-range coordinates comfortably sub-centimetre, while
+// A camera-origin rebase affects Globe terrain resources, not the separately
+// anchored retained network geometry. The minimum keeps camera-relative
+// terrain coordinates comfortably sub-centimetre, while
 // updateRenderOrigin() expands it at distant zooms according to the current
 // meters-per-pixel.
 constexpr double GlobeRenderOriginMinimumRebaseThresholdM = 50000.0;
@@ -52,13 +53,14 @@ void MapGlobeCamera::setViewportSize(const QSize &viewport_size)
 
 void MapGlobeCamera::syncFromMapModel(const MapModel &map_model)
 {
-    this->target_lon_deg = map_model.centerLon();
-    this->target_lat_deg = map_model.centerLat();
-    this->yaw_deg = map_model.viewGlobeYawDeg();
-    this->pitch_deg = map_model.viewGlobePitchDeg();
-    this->distance_m = map_model.viewGlobeDistanceM();
-    this->vertical_offset_m = map_model.viewGlobeVerticalOffsetM();
-    this->camera_collision_lift_m = map_model.viewGlobeCameraCollisionLiftM();
+    const MapCameraViewState view = map_model.cameraViewState();
+    this->target_lon_deg = view.center_lon_deg;
+    this->target_lat_deg = view.center_lat_deg;
+    this->yaw_deg = view.globe_yaw_deg;
+    this->pitch_deg = view.globe_pitch_deg;
+    this->distance_m = view.globe_distance_m;
+    this->vertical_offset_m = view.globe_vertical_offset_m;
+    this->camera_collision_lift_m = view.globe_collision_lift_m;
 }
 
 void MapGlobeCamera::updateRenderOrigin()
@@ -111,6 +113,13 @@ GeoWgs84Ellipsoid::EcefPositionD MapGlobeCamera::renderOriginEcef() const
 QMatrix4x4 MapGlobeCamera::viewProjectionMatrix(
     MapGlobeCameraBasis *camera_basis) const
 {
+    return viewProjectionMatrixForOrigin(this->render_origin_ecef, camera_basis);
+}
+
+QMatrix4x4 MapGlobeCamera::viewProjectionMatrixForOrigin(
+    const GeoWgs84Ellipsoid::EcefPositionD &origin_ecef,
+    MapGlobeCameraBasis *camera_basis) const
+{
     const int viewport_width = qMax(1, this->viewport_size.width());
     const int viewport_height = qMax(1, this->viewport_size.height());
     const double bounded_pitch_deg = qBound(
@@ -122,7 +131,7 @@ QMatrix4x4 MapGlobeCamera::viewProjectionMatrix(
         GeoWgs84Ellipsoid::orbitCameraBasisRelativeToOrigin(
             this->target_lon_deg, this->target_lat_deg,
             this->yaw_deg, bounded_pitch_deg, bounded_distance_m,
-            this->vertical_offset_m, this->render_origin_ecef,
+            this->vertical_offset_m, origin_ecef,
             this->camera_collision_lift_m);
     if (camera_basis != nullptr)
     {
