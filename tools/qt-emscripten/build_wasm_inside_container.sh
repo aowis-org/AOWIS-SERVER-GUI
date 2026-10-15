@@ -63,6 +63,7 @@ rm -rf build-wasm/CMakeFiles
     -S /project \
     -B /project/build-wasm \
     -DCMAKE_BUILD_TYPE=Release \
+    -DAOWIS_BUILD_BGFX_PROBE="${AOWIS_BUILD_BGFX_PROBE:-OFF}" \
     -DCMAKE_CXX_FLAGS="-pthread" \
     -DCMAKE_EXE_LINKER_FLAGS="-lembind -pthread -sPTHREAD_POOL_SIZE=1"
 

@@ -10,12 +10,12 @@ Usage: ./git_submodule_update.sh [--bgfx | --all | --help]
 
   (no option)  Update existing AOWIS and GeographicLib submodules from
                their tracked remote branches (original behavior).
-  --bgfx       Initialize/update bgfx and its required bx/bimg dependencies.
+  --bgfx       Initialize/update bgfx, bx, bimg and the CMake build scripts.
                Does not touch the AOWIS and GeographicLib submodules.
   --all        Update both groups.
   --help       Show this help.
 
-On the first --bgfx run, any missing bgfx/bx/bimg Git submodules are
+On the first --bgfx run, any missing bgfx/bx/bimg/bgfx.cmake Git submodules are
 registered via 'git submodule add'. Commit the resulting .gitmodules and
 submodule gitlinks together so other clones receive their pinned versions.
 HELP
@@ -31,12 +31,14 @@ bgfx_paths=(
     external/bx
     external/bimg
     external/bgfx
+    external/bgfx.cmake
 )
 
 bgfx_urls=(
     https://github.com/bkaradzic/bx.git
     https://github.com/bkaradzic/bimg.git
     https://github.com/bkaradzic/bgfx.git
+    https://github.com/bkaradzic/bgfx.cmake.git
 )
 
 # A .gitmodules entry by itself does not register a submodule: the index also
@@ -69,7 +71,9 @@ update_standard() {
 
 update_bgfx() {
     ensure_bgfx_submodules_registered
-    git submodule update --init --recursive --remote -- "${bgfx_paths[@]}"
+    # Do not recurse into bgfx.cmake: it also contains bgfx/bx/bimg gitlinks,
+    # which would duplicate AOWIS's own sibling repositories on disk.
+    git submodule update --init --remote -- "${bgfx_paths[@]}"
 }
 
 case "${1:-}" in

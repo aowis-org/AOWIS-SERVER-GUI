@@ -36,6 +36,7 @@ echo "Toolchain image: ${AOWIS_WASM_IMAGE}"
 docker run --rm \
     -v "$(pwd)":/project \
     -w /project \
+    -e AOWIS_BUILD_BGFX_PROBE="${AOWIS_BUILD_BGFX_PROBE:-OFF}" \
     "${AOWIS_WASM_IMAGE}" \
     /bin/bash /project/tools/qt-emscripten/build_wasm_inside_container.sh
 
@@ -43,6 +44,17 @@ docker run --rm \
 # Replace it with the project wrapper.
 cp tools/qt-emscripten/index.html build-wasm/
 cp tools/qt-emscripten/.htaccess build-wasm/
+if [ "${AOWIS_BUILD_BGFX_PROBE:-OFF}" = "ON" ]; then
+    # Include possible Emscripten worker JS and sidecar WASM files, not just
+    # the application JS/WASM pair.
+    cp build-wasm/tests/bgfx_probe/aowis-bgfx-probe*.js build-wasm/
+    cp build-wasm/tests/bgfx_probe/aowis-bgfx-probe*.wasm build-wasm/
+    cp tools/qt-emscripten/bgfx-probe.html build-wasm/
+    cp tools/qt-emscripten/bgfx-probe-stack.js build-wasm/
+else
+    rm -f build-wasm/aowis-bgfx-probe*.js build-wasm/aowis-bgfx-probe*.wasm \
+          build-wasm/bgfx-probe.html build-wasm/bgfx-probe-stack.js
+fi
 cp tools/qt-emscripten/aowis-browser-map.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-vector.js build-wasm/
 cp tools/qt-emscripten/aowis-browser-network-webgl.js build-wasm/

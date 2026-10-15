@@ -96,6 +96,71 @@ set(AOWIS_SERVER_EPANET_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 set(AOWIS_SERVER_EPANET_BUILD_SHARED_EPANET OFF CACHE BOOL "" FORCE)
 add_subdirectory(external/AOWIS-SERVER-EPANET EXCLUDE_FROM_ALL)
 
+# Experimental bgfx proof-of-concept. The production map keeps its QRhi,
+# browser WebGL and CPU paths until this isolated native/WASM surface is verified.
+option(AOWIS_BUILD_BGFX_PROBE "Build the independent bgfx window/stacking probe" OFF)
+if(AOWIS_BUILD_BGFX_PROBE)
+    foreach(component bgfx bx bimg)
+        if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/${component}/include")
+            message(FATAL_ERROR
+                "bgfx dependency external/${component} is missing. Run ./git_submodule_init.sh")
+        endif()
+    endforeach()
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/bgfx.cmake/CMakeLists.txt")
+        message(FATAL_ERROR
+            "bgfx CMake integration is missing. Run ./git_submodule_init.sh "
+            "(requires external/bgfx.cmake).")
+    endif()
+    set(BX_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/bx")
+    set(BIMG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/bimg")
+    set(BGFX_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/bgfx")
+    set(BGFX_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    set(BGFX_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(BGFX_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(BGFX_INSTALL OFF CACHE BOOL "" FORCE)
+    set(BGFX_CUSTOM_TARGETS OFF CACHE BOOL "" FORCE)
+    set(BGFX_CONFIG_RENDERER_WEBGPU OFF CACHE BOOL "" FORCE)
+    set(BGFX_CONFIG_MULTITHREADED OFF CACHE BOOL "" FORCE)
+    if(EMSCRIPTEN)
+        # AOWIS's browser map remains WebGL 2, never WebGL 1 fallback.
+        set(BGFX_OPENGLES_VERSION 30 CACHE STRING "" FORCE)
+        set(BGFX_CONFIG_MULTITHREADED OFF CACHE BOOL "" FORCE)
+    endif()
+    add_subdirectory(external/bgfx.cmake "${CMAKE_BINARY_DIR}/bgfx-build" EXCLUDE_FROM_ALL)
+    if(EMSCRIPTEN)
+        # bx/config.h disables bx threading on Emscripten by default, but
+        # newer/pinned combinations of bx and bgfx.cmake may still compile
+        # bx/src/thread.cpp's unsupported platform branch. Enforce the upstream
+        # WebAssembly contract on bx and propagate it consistently to bimg,
+        # bgfx and the probe. This does not change Qt's pthread configuration.
+        target_compile_definitions(bx PUBLIC BX_CONFIG_SUPPORTS_THREADING=0)
+        target_compile_definitions(bgfx PUBLIC BX_CONFIG_SUPPORTS_THREADING=0)
+
+        # bgfx's internal render thread is disabled on Emscripten. This does
+        # not disable Qt's separate pthread support. bx's POSIX source uses
+        # time/scheduler/dynamic-loader declarations even when the included
+        # headers are conditional in some upstream bx revisions. Pre-include
+        # those declarations only when compiling bx itself (no vendor edits).
+        # Keep bx's threading configuration upstream-controlled.
+        target_compile_options(bx PRIVATE
+            "-include" "${CMAKE_CURRENT_SOURCE_DIR}/tests/bgfx_probe/bx_emscripten_compat.h")
+    endif()
+    add_subdirectory(tests/bgfx_probe)
+    if(EMSCRIPTEN)
+        # Emscripten 4.0.7 provides __EMSCRIPTEN_major__ (lowercase),
+        # whereas current bx/platform.h uses __EMSCRIPTEN_MAJOR__. The bx
+        # target already pre-includes bx_emscripten_compat.h, which imports
+        # this version shim. Pre-include it for the other bgfx-related targets
+        # without changing Qt or the production application.
+        set(AOWIS_BGFX_EMSCRIPTEN_VERSION_COMPAT
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/bgfx_probe/emscripten_version_compat.h")
+        foreach(aowis_bgfx_target bimg bgfx aowis-bgfx-probe)
+            target_compile_options(${aowis_bgfx_target} PRIVATE
+                "SHELL:-include ${AOWIS_BGFX_EMSCRIPTEN_VERSION_COMPAT}")
+        endforeach()
+    endif()
+endif()
+
 # epanet-js is a SQLite source-file format. Keep its reader and converter in one
 # internal target so the GUI and every test use the same implementation.
 add_library(aowis-epanet-js-import STATIC
@@ -624,6 +689,16 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         add_test(NAME aowis-browser-map-scale
             COMMAND ${AOWIS_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/browser_map_scale_test.js)
         set_tests_properties(aowis-browser-map-scale PROPERTIES LABELS "aowis")
+    endif()
+    if(AOWIS_NODE_EXECUTABLE)
+        add_test(NAME aowis-bgfx-browser-stacking
+            COMMAND ${AOWIS_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/bgfx_probe/stacking_test.js)
+        set_tests_properties(aowis-bgfx-browser-stacking PROPERTIES LABELS "aowis")
+        add_test(NAME aowis-bgfx-probe-performance-analyzer
+            COMMAND ${AOWIS_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/bgfx_probe/performance_check.js --self-test)
+        set_tests_properties(aowis-bgfx-probe-performance-analyzer PROPERTIES LABELS "aowis")
     endif()
     add_executable(aowis-emitter-coefficient-binding-tests tests/emitter_coefficient_binding_test.cpp)
     target_include_directories(aowis-emitter-coefficient-binding-tests PRIVATE

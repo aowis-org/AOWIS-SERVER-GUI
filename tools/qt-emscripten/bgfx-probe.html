@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>AOWIS bgfx surface probe</title>
+  <style>
+    html, body, #screen { width:100%; height:100%; margin:0; overflow:hidden; }
+    #screen { position:relative; }
+    #message { position:absolute; top:0; left:0; padding:12px; font:14px sans-serif; }
+  </style>
+</head>
+<body>
+<div id="screen"></div>
+<div id="message" role="status">Loading bgfx proof of concept...</div>
+<script src="bgfx-probe-stack.js"></script>
+<script src="aowis-bgfx-probe.js"></script>
+<script src="qtloader.js"></script>
+<script>
+  (async () => {
+    const status = document.querySelector('#message');
+    try {
+      if (!crossOriginIsolated || typeof SharedArrayBuffer === 'undefined')
+        throw new Error('Threaded Qt requires HTTPS/localhost and COOP/COEP headers');
+      await qtLoad({qt: {
+        entryFunction: window.aowis_bgfx_probe_entry,
+        containerElements: [document.querySelector('#screen')],
+        onLoaded: () => { status.remove(); },
+        onExit: data => { status.textContent = `bgfx probe exited: ${data.code}`; }
+      }});
+    } catch (error) {
+      status.textContent = String(error);
+      console.error(error);
+    }
+  })();
+</script>
+</body>
+</html>

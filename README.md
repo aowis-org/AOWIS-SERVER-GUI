@@ -18,7 +18,7 @@ cd AOWIS-SERVER-GUI
 
 `git_submodule_init.sh` initializes **all** submodules recursively, including
 AOWIS-SERVER-EPANET, AOWIS-SERVER-MODEL, GeographicLib, and the bgfx rendering
-libraries (`bgfx`, `bx`, and `bimg`). For normal clones it checks out the exact
+libraries (`bgfx`, `bx`, and `bimg`) plus the upstream `bgfx.cmake` build scripts. For normal clones it checks out the exact
 revisions recorded by the AOWIS-SERVER-GUI repository; it does not update them
 to their latest upstream commits.
 
@@ -26,23 +26,97 @@ To **update** submodules to their remote-tracking branches, use:
 
 ```bash
 ./git_submodule_update.sh          # AOWIS submodules and GeographicLib only
-./git_submodule_update.sh --bgfx   # bgfx, bx and bimg only
+./git_submodule_update.sh --bgfx   # bgfx, bx, bimg and bgfx.cmake only
 ./git_submodule_update.sh --all    # Both groups
 ./git_submodule_update.sh --help   # Usage
 ```
 
 **First-time setup of the bgfx patch:** ZIP files cannot contain Git submodule
-gitlinks. If the three bgfx entries exist in `.gitmodules` but have not yet
+gitlinks. If the four bgfx-group entries exist in `.gitmodules` but have not yet
 been registered in Git, either `git_submodule_init.sh` or
 `git_submodule_update.sh --bgfx` will register them automatically. Review and
-commit the new `external/bgfx`, `external/bx`, and `external/bimg` gitlinks
+commit the new `external/bgfx`, `external/bx`, `external/bimg`, and `external/bgfx.cmake` gitlinks
 alongside `.gitmodules`, so subsequent clones can initialize all dependencies
 normally. This initial registration fetches the bgfx repositories; future
-`git_submodule_init.sh` runs use the committed revisions.
+`git_submodule_init.sh` runs use the committed revisions. The scripts deliberately
+skip the nested `bgfx.cmake` submodules (otherwise bgfx, bx and bimg would be
+cloned twice).
 
-The bgfx submodules prepare the dependency tree for the renderer migration.
-They do **not** change the currently selected QRhi or browser WebGL renderer;
-CMake integration and runtime selection are separate steps.
+The bgfx submodules are only built when the experimental bgfx probe is enabled.
+The main application still uses its existing QRhi, browser WebGL, or CPU backend.
+
+### bgfx surface and stacking proof of concept
+
+An isolated probe, **not yet a map backend**, tests native bgfx surface
+integration and the browser rule that a bgfx canvas must be above the normal
+Qt canvas but below Qt top-level dialogs. No QWidget is painted above bgfx.
+The probe uses bgfx's GPU debug-text HUD, rather than a QWidget overlay.
+
+```bash
+# Native: configure your usual GUI build with this additional flag:
+cmake -S . -B build-linux -DAOWIS_BUILD_BGFX_PROBE=ON
+cmake --build build-linux --target aowis-bgfx-probe
+./build-linux/tests/bgfx_probe/aowis-bgfx-probe
+
+# WASM: opt in (the Docker build uses this environment variable):
+AOWIS_BUILD_BGFX_PROBE=ON ./compile_wasm.sh
+# Serve build-wasm-dist/bgfx-probe.html using the same COOP/COEP headers
+# as the main app. Run it manually in a browser for the GPU stacking test.
+```
+
+In the probe, click **Open Qt dialog** while watching the continuously updated
+GPU text/frame counter. The dialog should remain visible above the bgfx canvas.
+Close the dialog and watch timing logs printed to the browser console (JSON
+records, 120-frame intervals, separated by `dialog_open` true/false). Test at your usual map viewport size and on
+multiple GPUs. This is a *measurement harness*, not yet an automated
+pass/fail GPU throughput benchmark: frame timings need a verified baseline and
+normal browser load controls before a hard threshold can be established. In the
+browser the JSON report additionally contains `stacking_ok`, which checks the
+**actual live Qt windows**, not just the synthetic DOM test. It must remain
+`true` both with the dialog closed and open; any `false` value is a failure.
+
+For a repeatable **relative WASM regression check**, capture the browser console
+output with at least three 120-frame reports for each of `dialog_open=false`
+and `dialog_open=true` **at the same viewport dimensions**, then run:
+
+```bash
+node tests/bgfx_probe/performance_check.js browser-console.log
+# Optional: set maximum tolerated median FPS loss (default: 10 percent)
+node tests/bgfx_probe/performance_check.js --max-loss-pct 10 browser-console.log
+```
+
+The checker compares median FPS at one common viewport size and requires
+`stacking_ok=true` in **every compared browser sample**. It returns exit code 0
+only when FPS and live stacking both pass, 1 for a measured regression or a
+reported stacking failure, and 2 when results are inconclusive (including
+missing `stacking_ok`). Run both dialog scenarios without resizing between
+them; resize/warm-up samples can be outliers.
+
+To compare older, FPS-only console logs **without treating them as a successful
+stacking test**, explicitly use:
+
+```bash
+node tests/bgfx_probe/performance_check.js --allow-unverified-stacking browser-console.log
+```
+
+If your browser still logs no `stacking_ok` although the current
+`tests/bgfx_probe/main.cpp` contains it, the browser is probably running an
+older JS/WASM bundle. Rebuild with `AOWIS_BUILD_BGFX_PROBE=ON`, serve the freshly
+generated `build-wasm-dist/bgfx-probe.html` and assets, and hard-reload the page.
+Ensure your web server actually points at that updated directory. A previous
+HTML/JS/WASM deployment cannot fulfill the live stacking assertion.
+
+The 16 ms probe timer caps observed FPS near 62.5, so this test can catch major
+composition regressions but **does not measure peak GPU throughput** or prove
+performance parity with AOWIS's eventual full map workload.
+
+The WebAssembly probe runs in a dedicated HTML page to avoid interference with
+existing browser renderers. The actual map isn't migrated by this option.
+The official `bgfx.cmake` port describes its Emscripten build as experimental;
+compiler or browser integration failures must be resolved before promoting
+bgfx to a default backend. The native Wayland path uses Qt GuiPrivate's
+platform-native window resource API and therefore requires that component.
+
 
 ## Build
 
