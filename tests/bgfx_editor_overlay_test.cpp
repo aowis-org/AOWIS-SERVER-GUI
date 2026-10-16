@@ -168,6 +168,61 @@ bool hasSpriteCorner(const MapBgfxHudCanvas &canvas, const MapBgfxHudTextCache &
     return false;
 }
 
+// Textured, white-tinted vertices (sprites, not solid shapes) near (x, y).
+int spriteVerticesNear(const MapBgfxHudCanvas &canvas, const MapBgfxHudTextCache &cache,
+                       double x, double y, double radius)
+{
+    int result = 0;
+    for (const MapBgfxHudVertex &vertex : canvas.vertices())
+    {
+        const bool white_texel = vertex.u == cache.whiteU() && vertex.v == cache.whiteV();
+        if (!white_texel && vertex.abgr == 0xffffffffu && std::fabs(vertex.x - x) <= radius
+            && std::fabs(vertex.y - y) <= radius)
+            ++result;
+    }
+    return result;
+}
+
+// Dashes drawn with colour abgr: the textured quads' pattern, read back from
+// the atlas along each quad's u range (on -> off transitions = dashes).
+int texturedDashes(const MapBgfxHudCanvas &canvas, const MapBgfxHudTextCache &cache,
+                   quint32 abgr)
+{
+    const QVector<MapBgfxHudVertex> &vertices = canvas.vertices();
+    const QImage &atlas = cache.atlas();
+    int dashes = 0;
+    for (qsizetype index = 0; index + 3 < vertices.size(); )
+    {
+        const MapBgfxHudVertex &first = vertices.at(index);
+        const bool textured = !(first.u == cache.whiteU() && first.v == cache.whiteV());
+        if (first.abgr != abgr || !textured)
+        {
+            ++index;
+            continue;
+        }
+        float u_min = first.u;
+        float u_max = first.u;
+        float v_sum = 0.0f;
+        for (qsizetype corner = 0; corner < 4; ++corner)
+        {
+            u_min = std::min(u_min, vertices.at(index + corner).u);
+            u_max = std::max(u_max, vertices.at(index + corner).u);
+            v_sum += vertices.at(index + corner).v;
+        }
+        const int row = int(v_sum / 4.0f * float(atlas.height()));
+        bool previous_on = false;
+        for (int column = int(u_min * float(atlas.width())); column < int(u_max * float(atlas.width())); ++column)
+        {
+            const bool on = qAlpha(atlas.pixel(column, row)) > 0;
+            if (on && !previous_on)
+                ++dashes;
+            previous_on = on;
+        }
+        index += 4;
+    }
+    return dashes;
+}
+
 struct Harness
 {
     MapBgfxEditorOverlay overlay;
@@ -402,11 +457,10 @@ void testFramesAndAttachments()
     state.attachment_coordinate_valid = true;
     attachment.state.demand_point_attachments.append(state);
     harness.build(attachment, view);
-    int dash_vertices = 0;
     const quint32 dash = MapBgfxHudCanvas::premultipliedAbgr(qRgba(70, 105, 125, 190));
-    for (const MapBgfxHudVertex &vertex : harness.canvas.vertices())
-        dash_vertices += vertex.abgr == dash ? 1 : 0;
-    req(dash_vertices >= 8 * 4, "attachment line is dashed (many dash quads)");
+    // 0.0005 deg of latitude ~ 136 px at zoom 18: about 22 dashes of 4 on / 2 off.
+    const int dashes = texturedDashes(harness.canvas, harness.cache, dash);
+    req(dashes >= 15 && dashes <= 30, "attachment line is dashed (pattern strip, ~22 dashes)");
 }
 
 // Attachments run per frame for every demand point: culled, clipped, and
@@ -416,15 +470,6 @@ void testAttachmentCost()
     Harness harness;
     const MapBgfx2d::Camera view = camera();
     const quint32 dash = MapBgfxHudCanvas::premultipliedAbgr(qRgba(70, 105, 125, 190));
-    const quint32 handle = MapBgfxHudCanvas::premultipliedAbgr(qRgba(255, 255, 255, 190));
-    const std::function<int(const MapBgfxHudCanvas &, quint32)> count =
-        [](const MapBgfxHudCanvas &canvas, quint32 abgr)
-    {
-        int result = 0;
-        for (const MapBgfxHudVertex &vertex : canvas.vertices())
-            result += vertex.abgr == abgr ? 1 : 0;
-        return result;
-    };
     const std::function<MapEditorDemandPointAttachmentVisualState(double, double, double, double)>
         attachment = [](double lon0, double lat0, double lon1, double lat1)
     {
@@ -450,21 +495,25 @@ void testAttachmentCost()
     across.state.demand_point_attachments.clear();
     across.state.demand_point_attachments.append(attachment(8.99, 47.0, 9.01, 47.0));
     harness.build(across, view);
-    const int dashes = count(harness.canvas, dash) / 4;
+    const int dashes = texturedDashes(harness.canvas, harness.cache, dash);
     req(dashes > 50 && dashes < 160, "attachment: dashes clipped to the viewport");
-    req(count(harness.canvas, handle) == 0, "attachment: no handle when it is off screen");
+    req(harness.canvas.vertices().size() <= 4 * 4,
+        "attachment: a few pattern quads instead of one quad per dash");
+    req(spriteVerticesNear(harness.canvas, harness.cache, 0.0, 0.0, 1e9) == 0,
+        "attachment: no handle when it is off screen");
 
     // Shorter on screen than MinimumAttachmentHandleLinePx: no handle.
     Scene tiny = away;
     tiny.state.demand_point_attachments.clear();
     tiny.state.demand_point_attachments.append(attachment(9.0, 47.0, 9.00003, 47.0));
     harness.build(tiny, view);
-    req(count(harness.canvas, handle) == 0, "attachment: no handle on a short line");
+    const MapBgfxHudPoint network = project(view, 9.00003, 47.0);
+    req(spriteVerticesNear(harness.canvas, harness.cache, network.x, network.y, 12.0) == 0,
+        "attachment: no handle on a short line");
     tiny.state.demand_point_attachments[0].selected = true;
     harness.build(tiny, view);
-    const quint32 selected_handle =
-        MapBgfxHudCanvas::premultipliedAbgr(qRgba(255, 255, 255, 230));
-    req(count(harness.canvas, selected_handle) > 0, "attachment: a selected one keeps its handle");
+    req(spriteVerticesNear(harness.canvas, harness.cache, network.x, network.y, 12.0) == 4,
+        "attachment: a selected one keeps its handle (one disc sprite)");
 }
 
 void testAntimeridian()

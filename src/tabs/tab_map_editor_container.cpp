@@ -474,10 +474,33 @@ void MapEditorContainer::setupBgfxEditor()
         {
             return icons->icon(cache, entity, path, width, highlight);
         });
+    // The last built overlay frame: while neither the camera nor the editor
+    // changed (an idle map), the canvas from then is drawn again as is.
+    struct OverlayFrame
+    {
+        bool valid = false;
+        double center_x = 0.0;
+        double center_y = 0.0;
+        double world_pixels = 0.0;
+        double viewport_width = 0.0;
+        double viewport_height = 0.0;
+        quint64 atlas_generation = 0;
+    };
+    const std::shared_ptr<OverlayFrame> overlay_frame = std::make_shared<OverlayFrame>();
     surface->setOverlayBuilder(
-        [this, overlay](MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
-                        const MapBgfx2d::Camera &camera, const QSizeF &viewport)
+        [this, overlay, overlay_frame](MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
+                                       const MapBgfx2d::Camera &camera, const QSizeF &viewport)
         {
+            const bool unchanged = overlay_frame->valid && !this->bgfx_visual_state_dirty
+                && !this->bgfx_visual_camera_dirty
+                && overlay_frame->center_x == camera.center.x
+                && overlay_frame->center_y == camera.center.y
+                && overlay_frame->world_pixels == camera.world_pixels
+                && overlay_frame->viewport_width == viewport.width()
+                && overlay_frame->viewport_height == viewport.height()
+                && overlay_frame->atlas_generation == cache->generation();
+            if (unchanged)
+                return;
             // Full rebuild only when the editor's content changed; camera
             // motion only moves the pointer's map coordinate (the visual
             // state is O(demand points) and must not run every frame).
@@ -509,6 +532,13 @@ void MapEditorContainer::setupBgfxEditor()
             inputs.full_network_move = this->render_full_network_move;
             inputs.full_network_move_translation = this->render_move_translation;
             overlay->build(canvas, cache, inputs);
+            overlay_frame->valid = true;
+            overlay_frame->center_x = camera.center.x;
+            overlay_frame->center_y = camera.center.y;
+            overlay_frame->world_pixels = camera.world_pixels;
+            overlay_frame->viewport_width = viewport.width();
+            overlay_frame->viewport_height = viewport.height();
+            overlay_frame->atlas_generation = cache->generation();
         });
     connect(this->map_canvas, &MapCanvasWidget::signalRenderUpdateRequested, this, [this]()
     {

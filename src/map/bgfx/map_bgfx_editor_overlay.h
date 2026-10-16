@@ -110,6 +110,9 @@ public:
     // line is at least this long on screen (or it is selected / being
     // edited): zoomed out, thousands of handles would only cover the dots.
     static constexpr double MinimumAttachmentHandleLinePx = 12.0;
+    // Logical length of a dash pattern strip in the atlas (rounded down to
+    // whole periods).
+    static constexpr double DashStripLengthPx = 512.0;
 
 private:
     // Snapshot geometry in normalized Web Mercator, built once per geometry
@@ -151,8 +154,45 @@ private:
     // QPainter pens: round caps and joins.
     void polyline(const QVector<MapBgfxHudPoint> &points, double width, quint32 argb);
     // Qt::DashLine (4 on, 2 off) / Qt::DotLine (1 on, 2 off) in pen widths.
+    // Drawn as textured quads with a dash pattern strip from the atlas (one
+    // quad per DashStripLengthPx, not one per dash: thousands of attachment
+    // lines per frame).
     void dashedPolyline(const QVector<MapBgfxHudPoint> &points, double width, double dash,
                         double gap, double offset, quint32 argb);
+    void dashedSegment(const MapBgfxHudPoint &a, const MapBgfxHudPoint &b, double width,
+                       double dash, double gap, double phase, quint32 argb);
+    // A filled disc with a ring (pen centred on radius), as one sprite.
+    void disc(double x, double y, double radius, double pen, quint32 fill_argb,
+              quint32 ring_argb);
+
+    // Pattern strips and discs in the overlay atlas, memoized per atlas
+    // generation (no string keys per draw).
+    struct DashStrip
+    {
+        double width = 0.0;
+        double dash = 0.0;
+        double gap = 0.0;
+        // Logical length: a whole number of periods.
+        double length = 0.0;
+        MapBgfxHudSprite sprite;
+    };
+    struct Disc
+    {
+        double radius = 0.0;
+        double pen = 0.0;
+        quint32 fill = 0;
+        quint32 ring = 0;
+        // Logical edge length of the square sprite.
+        double extent = 0.0;
+        MapBgfxHudSprite sprite;
+    };
+    DashStrip dashStrip(double width, double dash, double gap);
+    Disc discSprite(double radius, double pen, quint32 fill_argb, quint32 ring_argb);
+    void synchronizeSpriteMemo();
+    QVector<DashStrip> dash_strips;
+    QVector<Disc> discs;
+    quint64 sprite_memo_generation = 0;
+    bool sprite_memo_valid = false;
     void dashedCircle(double x, double y, double radius, double width, double dash, double gap,
                       quint32 argb);
     // QPen stroke centred on the path of a rect (sharp corners or radius).

@@ -12,6 +12,10 @@ Usage: ./compile_linux.sh [--shader-tools]
   --shader-tools  Also build the bgfx shader compiler and regenerate the
                   committed shader binaries in src/map/bgfx/shaders/bin
                   (needed after editing a .sc file; commit the result).
+
+Environment:
+  AOWIS_BUILD_TYPE  CMake build type (default RelWithDebInfo: optimized with
+                    debug info). Use Debug for an unoptimized build.
 HELP
 }
 
@@ -34,7 +38,12 @@ fi
 # option had another value is switched as well (option() defaults never
 # override a cached value). Without --shader-tools no shader compiler is
 # built: the committed binaries are embedded.
+# The build type is explicit too: without one CMake compiles unoptimized
+# (no -O flags at all), and the per-frame map work (bgfx, HUD, editor
+# overlay, labels) then costs several times as much as in an optimized build.
+BUILD_TYPE="${AOWIS_BUILD_TYPE:-RelWithDebInfo}"
 cmake -S "${PROJECT_DIR}" -B "${BUILD_DIR}" -G Ninja \
+    -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
     -DAOWIS_ENABLE_BGFX_MAP=ON \
     -DAOWIS_BGFX_SHADER_TOOLS="${SHADER_TOOLS}"
 cmake --build "${BUILD_DIR}" --parallel

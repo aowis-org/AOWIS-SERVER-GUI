@@ -2,6 +2,11 @@
 
 #include "network/infrastructure_entity_traits.h"
 
+#include <QColor>
+#include <QImage>
+#include <QPainter>
+#include <QPen>
+
 #include <algorithm>
 #include <cmath>
 
@@ -315,23 +320,94 @@ void MapBgfxEditorOverlay::dashedPolyline(const QVector<MapBgfxHudPoint> &points
 {
     if (points.size() < 2 || !(dash > 0.0) || !(gap >= 0.0))
         return;
-    const double period = dash + gap;
     // Position inside the pattern carried over segment boundaries.
-    double phase = std::fmod(std::max(0.0, offset), period);
+    double phase = std::max(0.0, offset);
     for (qsizetype index = 1; index < points.size(); ++index)
     {
         const MapBgfxHudPoint &a = points.at(index - 1);
         const MapBgfxHudPoint &b = points.at(index);
-        const double length = std::hypot(b.x - a.x, b.y - a.y);
-        if (!(length > 0.0))
-            continue;
-        const double ux = (b.x - a.x) / length;
-        const double uy = (b.y - a.y) / length;
+        dashedSegment(a, b, width, dash, gap, phase, argb);
+        phase += std::hypot(b.x - a.x, b.y - a.y);
+    }
+}
+
+void MapBgfxEditorOverlay::synchronizeSpriteMemo()
+{
+    // A cleared atlas (full, or a new device pixel ratio) invalidates every
+    // memoized sprite.
+    if (this->sprite_memo_valid && this->sprite_memo_generation == this->cache->generation())
+        return;
+    this->dash_strips.clear();
+    this->discs.clear();
+    this->sprite_memo_generation = this->cache->generation();
+    this->sprite_memo_valid = true;
+}
+
+MapBgfxEditorOverlay::DashStrip MapBgfxEditorOverlay::dashStrip(double width, double dash,
+                                                               double gap)
+{
+    synchronizeSpriteMemo();
+    for (const DashStrip &strip : this->dash_strips)
+    {
+        if (strip.width == width && strip.dash == dash && strip.gap == gap)
+            return strip;
+    }
+    DashStrip strip;
+    strip.width = width;
+    strip.dash = dash;
+    strip.gap = gap;
+    const double period = dash + gap;
+    strip.length = period * std::max(1.0, std::floor(DashStripLengthPx / period));
+    const QSizeF logical(strip.length, width);
+    const QString key = QStringLiteral("D|%1|%2|%3").arg(width).arg(dash).arg(gap);
+    strip.sprite = this->cache->cachedImage(key, logical);
+    if (!strip.sprite.valid)
+    {
+        // White where the pattern is on (sampled at texel centres on the
+        // physical grid), transparent in the gaps; tinted when drawn.
+        const double ratio = this->cache->devicePixelRatio();
+        const int image_width = std::max(1, int(std::lround(strip.length * ratio)));
+        const int image_height = std::max(1, int(std::lround(width * ratio)));
+        QImage image(image_width, image_height, QImage::Format_RGBA8888_Premultiplied);
+        image.fill(Qt::transparent);
+        for (int x = 0; x < image_width; ++x)
+        {
+            const double position = (double(x) + 0.5) * strip.length / double(image_width);
+            if (std::fmod(position, period) >= dash)
+                continue;
+            for (int y = 0; y < image_height; ++y)
+                image.setPixel(x, y, 0xffffffffu);
+        }
+        strip.sprite = this->cache->image(key, image, logical);
+        // Storing may have cleared the atlas: start the memo over in the new
+        // generation (the build is then repeated, see build()).
+        synchronizeSpriteMemo();
+    }
+    if (strip.sprite.valid)
+        this->dash_strips.append(strip);
+    return strip;
+}
+
+void MapBgfxEditorOverlay::dashedSegment(const MapBgfxHudPoint &a, const MapBgfxHudPoint &b,
+                                         double width, double dash, double gap, double phase,
+                                         quint32 argb)
+{
+    const double length = std::hypot(b.x - a.x, b.y - a.y);
+    if (!(length > 0.0) || !(dash > 0.0) || !(gap >= 0.0) || !(width > 0.0))
+        return;
+    const double period = dash + gap;
+    const double ux = (b.x - a.x) / length;
+    const double uy = (b.y - a.y) / length;
+    double pattern = std::fmod(std::max(0.0, phase), period);
+    const DashStrip strip = dashStrip(width, dash, gap);
+    if (!strip.sprite.valid || !(strip.length > period))
+    {
+        // No atlas room: one quad per dash.
         double position = 0.0;
         while (position < length)
         {
-            const bool on = phase < dash;
-            const double step = std::min(length - position, on ? dash - phase : period - phase);
+            const bool on = pattern < dash;
+            const double step = std::min(length - position, on ? dash - pattern : period - pattern);
             if (on)
             {
                 this->canvas->line(a.x + ux * position, a.y + uy * position,
@@ -339,9 +415,97 @@ void MapBgfxEditorOverlay::dashedPolyline(const QVector<MapBgfxHudPoint> &points
                                    width, argb);
             }
             position += step;
-            phase = std::fmod(phase + step, period);
+            pattern = std::fmod(pattern + step, period);
         }
+        return;
     }
+    // One textured quad per strip length; u runs along the line from the
+    // current pattern position, v across it.
+    const double nx = -uy * 0.5 * width;
+    const double ny = ux * 0.5 * width;
+    const double chunk_limit = strip.length - period;
+    const float du = strip.sprite.u1 - strip.sprite.u0;
+    double position = 0.0;
+    while (position < length)
+    {
+        const double chunk = std::min(length - position, chunk_limit);
+        const double x0 = a.x + ux * position;
+        const double y0 = a.y + uy * position;
+        const double x1 = a.x + ux * (position + chunk);
+        const double y1 = a.y + uy * (position + chunk);
+        const float u_start = strip.sprite.u0 + float(pattern / strip.length) * du;
+        const float u_end = strip.sprite.u0 + float((pattern + chunk) / strip.length) * du;
+        const MapBgfxHudPoint corners[4] = {
+            {x0 + nx, y0 + ny}, {x1 + nx, y1 + ny}, {x1 - nx, y1 - ny}, {x0 - nx, y0 - ny}};
+        const float u[4] = {u_start, u_end, u_end, u_start};
+        const float v[4] = {strip.sprite.v0, strip.sprite.v0, strip.sprite.v1, strip.sprite.v1};
+        this->canvas->spriteQuad(corners, u, v, argb);
+        position += chunk;
+        pattern = std::fmod(pattern + chunk, period);
+    }
+}
+
+MapBgfxEditorOverlay::Disc MapBgfxEditorOverlay::discSprite(double radius, double pen,
+                                                           quint32 fill_argb, quint32 ring_argb)
+{
+    synchronizeSpriteMemo();
+    for (const Disc &disc : this->discs)
+    {
+        if (disc.radius == radius && disc.pen == pen && disc.fill == fill_argb
+            && disc.ring == ring_argb)
+            return disc;
+    }
+    Disc disc;
+    disc.radius = radius;
+    disc.pen = pen;
+    disc.fill = fill_argb;
+    disc.ring = ring_argb;
+    // Ring outside edge plus one pixel for antialiasing on every side.
+    disc.extent = std::ceil(2.0 * (radius + 0.5 * pen) + 2.0);
+    const QSizeF logical(disc.extent, disc.extent);
+    const QString key = QStringLiteral("C|%1|%2|%3|%4").arg(radius).arg(pen)
+        .arg(qulonglong(fill_argb)).arg(qulonglong(ring_argb));
+    disc.sprite = this->cache->cachedImage(key, logical);
+    if (!disc.sprite.valid)
+    {
+        const double ratio = this->cache->devicePixelRatio();
+        const int size = std::max(1, int(std::lround(disc.extent * ratio)));
+        QImage image(size, size, QImage::Format_RGBA8888_Premultiplied);
+        image.fill(Qt::transparent);
+        {
+            QPainter painter(&image);
+            painter.setRenderHint(QPainter::Antialiasing, true);
+            painter.setBrush(QColor::fromRgba(fill_argb));
+            painter.setPen(QPen(QColor::fromRgba(ring_argb), pen * ratio, Qt::SolidLine,
+                                Qt::RoundCap, Qt::RoundJoin));
+            const double center = 0.5 * double(size);
+            painter.drawEllipse(QPointF(center, center), radius * ratio, radius * ratio);
+        }
+        disc.sprite = this->cache->image(key, image, logical);
+        synchronizeSpriteMemo();
+    }
+    if (disc.sprite.valid)
+        this->discs.append(disc);
+    return disc;
+}
+
+void MapBgfxEditorOverlay::disc(double x, double y, double radius, double pen,
+                                quint32 fill_argb, quint32 ring_argb)
+{
+    const Disc sprite = discSprite(radius, pen, fill_argb, ring_argb);
+    if (!sprite.sprite.valid)
+    {
+        this->canvas->fillCircle(x, y, radius, fill_argb);
+        this->canvas->strokeCircle(x, y, radius + 0.5 * pen, pen, ring_argb);
+        return;
+    }
+    // Top-left on the physical pixel grid: the point-sampled sprite then
+    // maps texel to pixel 1:1 (no shimmer while panning).
+    const double ratio = this->cache->devicePixelRatio();
+    const double left = std::round((x - 0.5 * sprite.extent) * ratio) / ratio;
+    const double top = std::round((y - 0.5 * sprite.extent) * ratio) / ratio;
+    this->canvas->sprite(MapBgfxHudRect{left, top, sprite.extent, sprite.extent}, sprite.sprite,
+                         0xffffffffu);
 }
 
 void MapBgfxEditorOverlay::dashedCircle(double x, double y, double radius, double width,
@@ -948,15 +1112,13 @@ void MapBgfxEditorOverlay::demandPointAttachments()
             && clipSegment(demand, network, -Margin, -Margin, viewport_width + Margin,
                            viewport_height + Margin, &t0, &t1))
         {
-            QVector<MapBgfxHudPoint> visible;
-            visible.reserve(2);
-            visible.append(MapBgfxHudPoint{demand.x + (network.x - demand.x) * t0,
-                                           demand.y + (network.y - demand.y) * t0});
-            visible.append(MapBgfxHudPoint{demand.x + (network.x - demand.x) * t1,
-                                           demand.y + (network.y - demand.y) * t1});
             // The pattern continues from where the clipped part starts.
-            dashedPolyline(visible, line_width, 4.0 * line_width, 2.0 * line_width,
-                           t0 * length, line_color);
+            dashedSegment(MapBgfxHudPoint{demand.x + (network.x - demand.x) * t0,
+                                          demand.y + (network.y - demand.y) * t0},
+                          MapBgfxHudPoint{demand.x + (network.x - demand.x) * t1,
+                                          demand.y + (network.y - demand.y) * t1},
+                          line_width, 4.0 * line_width, 2.0 * line_width, t0 * length,
+                          line_color);
         }
 
         const double radius = attachment.moving ? 7.0 : attachment.selected ? 6.0 : 4.5;
@@ -965,9 +1127,8 @@ void MapBgfxEditorOverlay::demandPointAttachments()
             && onScreen(network.x - radius - pen, network.y - radius - pen,
                         2.0 * (radius + pen), 2.0 * (radius + pen)))
         {
-            this->canvas->fillCircle(network.x, network.y, radius,
-                                     rgba(255, 255, 255, emphasized ? 230 : 190));
-            this->canvas->strokeCircle(network.x, network.y, radius + 0.5 * pen, pen, line_color);
+            disc(network.x, network.y, radius, pen, rgba(255, 255, 255, emphasized ? 230 : 190),
+                 line_color);
         }
         if (attachment.selecting_target
             && onScreen(demand.x - Margin, demand.y - Margin, 2.0 * Margin, 2.0 * Margin))

@@ -253,6 +253,13 @@ as in the monitor.
   cached map bounds before projection. Per pointer move the hover hit tests
   reject markers and pipes outside a map-coordinate box around the pointer
   (`MapCanvasHitBox`) before projecting them or looking up pixmaps.
+  Dashed lines are textured quads over a dash-pattern strip in the overlay
+  atlas (one quad per 512 px instead of one per dash), attachment handles
+  are one disc sprite each, circles and lines go straight into the draw
+  list (no temporary outlines), and an unchanged frame (same camera, no
+  editor change) reuses the last overlay canvas. `compile_linux.sh` builds
+  RelWithDebInfo by default (`AOWIS_BUILD_TYPE`): without a build type
+  CMake compiled without optimization.
 * Move preview: dragged entities are hidden in the GPU network
   (`setHiddenEntityUuids()`: alpha 0 in the colour stream, no geometry
   upload) and drawn by the overlay; a full-network move shifts the network

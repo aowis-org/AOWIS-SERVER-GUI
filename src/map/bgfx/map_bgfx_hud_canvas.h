@@ -136,16 +136,51 @@ public:
                  roundedRectOutline(inner, std::max(0.0, radius - line_width), rounded), argb);
     }
 
+    // Circles and lines are emitted straight into the draw list (no
+    // temporary outlines): the editor overlay draws thousands per frame.
     void fillCircle(double center_x, double center_y, double radius, quint32 argb)
     {
-        fillConvexPolygon(circleOutline(center_x, center_y, radius), argb);
+        if (!(radius > 0.0))
+            return;
+        const int segments = circleSegments(radius);
+        const quint32 color = premultipliedAbgr(argb);
+        const quint32 base = quint32(this->vertex_list.size());
+        appendCirclePoints(center_x, center_y, radius, segments, color);
+        for (int index = 1; index + 1 < segments; ++index)
+        {
+            this->index_list.append(base);
+            this->index_list.append(base + quint32(index));
+            this->index_list.append(base + quint32(index) + 1u);
+        }
     }
 
+    // Ring between radius and radius - line_width; both outlines use the
+    // outer one's segment count (unequal counts used to fill the whole disc).
     void strokeCircle(double center_x, double center_y, double radius, double line_width,
                       quint32 argb)
     {
-        fillRing(circleOutline(center_x, center_y, radius),
-                 circleOutline(center_x, center_y, std::max(0.0, radius - line_width)), argb);
+        if (!(radius > 0.0) || !(line_width > 0.0))
+            return;
+        const double inner = std::max(0.0, radius - line_width);
+        if (!(inner > 0.0))
+        {
+            fillCircle(center_x, center_y, radius, argb);
+            return;
+        }
+        const int segments = circleSegments(radius);
+        const quint32 color = premultipliedAbgr(argb);
+        const quint32 base = quint32(this->vertex_list.size());
+        const quint32 count = quint32(segments);
+        appendCirclePoints(center_x, center_y, radius, segments, color);
+        appendCirclePoints(center_x, center_y, inner, segments, color);
+        for (quint32 index = 0; index < count; ++index)
+        {
+            const quint32 next = (index + 1u) % count;
+            const quint32 quad[6] = {base + index, base + next, base + count + next,
+                                     base + index, base + count + next, base + count + index};
+            for (const quint32 vertex : quad)
+                this->index_list.append(vertex);
+        }
     }
 
     // Straight line of width line_width (square ends).
@@ -158,12 +193,28 @@ public:
             return;
         const double nx = -dy / length * 0.5 * line_width;
         const double ny = dx / length * 0.5 * line_width;
-        QVector<MapBgfxHudPoint> corners;
-        corners.append({x0 + nx, y0 + ny});
-        corners.append({x1 + nx, y1 + ny});
-        corners.append({x1 - nx, y1 - ny});
-        corners.append({x0 - nx, y0 - ny});
-        fillConvexPolygon(corners, argb);
+        const quint32 color = premultipliedAbgr(argb);
+        const quint32 base = quint32(this->vertex_list.size());
+        this->vertex_list.append({float(x0 + nx), float(y0 + ny), this->white_u, this->white_v, color});
+        this->vertex_list.append({float(x1 + nx), float(y1 + ny), this->white_u, this->white_v, color});
+        this->vertex_list.append({float(x1 - nx), float(y1 - ny), this->white_u, this->white_v, color});
+        this->vertex_list.append({float(x0 - nx), float(y0 - ny), this->white_u, this->white_v, color});
+        appendQuadIndices(base);
+    }
+
+    // Textured convex quad: corners in order, each with its atlas uv (a
+    // sprite drawn rotated or partially, e.g. a dash pattern along a line).
+    void spriteQuad(const MapBgfxHudPoint (&corners)[4], const float (&u)[4], const float (&v)[4],
+                    quint32 tint_argb)
+    {
+        const quint32 color = premultipliedAbgr(tint_argb);
+        const quint32 base = quint32(this->vertex_list.size());
+        for (int index = 0; index < 4; ++index)
+        {
+            this->vertex_list.append({float(corners[index].x), float(corners[index].y),
+                                      u[index], v[index], color});
+        }
+        appendQuadIndices(base);
     }
 
     void fillTriangle(const MapBgfxHudPoint &a, const MapBgfxHudPoint &b,
@@ -332,19 +383,28 @@ public:
     bool overflowed() const { return this->vertex_list.size() > MaximumVertices; }
 
 private:
-    static QVector<MapBgfxHudPoint> circleOutline(double cx, double cy, double radius)
+    // About one segment per 2 px of circumference, 12 to 64.
+    static int circleSegments(double radius)
     {
-        QVector<MapBgfxHudPoint> points;
-        if (!(radius > 0.0))
-            return points;
-        // About one segment per 2 px of circumference, at least 12.
-        const int segments = std::clamp(int(std::ceil(radius * 3.0)), 12, 64);
+        return std::clamp(int(std::ceil(radius * 3.0)), 12, 64);
+    }
+
+    // Circle points from angle 0 in steps of 2 pi / segments, by rotating
+    // one vector: no trigonometry per point.
+    void appendCirclePoints(double cx, double cy, double radius, int segments, quint32 color)
+    {
+        const double step = 2.0 * Pi / double(segments);
+        const double cosine = std::cos(step);
+        const double sine = std::sin(step);
+        double x = radius;
+        double y = 0.0;
         for (int index = 0; index < segments; ++index)
         {
-            const double angle = 2.0 * Pi * double(index) / double(segments);
-            points.append({cx + radius * std::cos(angle), cy + radius * std::sin(angle)});
+            this->vertex_list.append({float(cx + x), float(cy + y), this->white_u, this->white_v, color});
+            const double rotated_x = x * cosine - y * sine;
+            y = x * sine + y * cosine;
+            x = rotated_x;
         }
-        return points;
     }
 
     // keep_arcs: emit the corner arcs even for radius 0 (coincident
