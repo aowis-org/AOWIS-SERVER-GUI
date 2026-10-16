@@ -50,6 +50,8 @@ public:
 
     void setIconSizePercent(int size_percent);
     void scaleMarkers();
+    // scaleMarkers() when the icon width changed (camera zoom motion).
+    void updateMarkerScale();
     void positionMarkers();
     // An entity / network move is in progress (visualState().move.active,
     // without building the whole visual state).
@@ -134,6 +136,8 @@ private:
     quint64 move_session_id = 0;
     double wrap_reference_longitude = 0.0;
     quint64 visual_state_revision = 0;
+    // Icon width scaleMarkers() last applied (updateMarkerScale()).
+    int applied_marker_width = -1;
     bool synchronizing_geometry = false;
     QUuid demand_point_attachment_interaction_uuid;
     bool demand_point_attachment_selecting = false;

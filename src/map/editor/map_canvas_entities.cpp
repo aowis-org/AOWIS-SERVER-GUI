@@ -73,8 +73,14 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
     connect(this->device_links, &MapCanvasDeviceLinks::signalCanvasUpdateRequested,
             this, &MapCanvasEntities::repaintCanvas);
 
+    // Icon widths follow the continuous zoom (MapCanvasMarkers::entityWidth());
+    // rescale whenever the whole-pixel width actually changes.
     connect(this->map_model, &MapModel::zoomChanged,
-            this, &MapCanvasEntities::scaleMarkers);
+            this, &MapCanvasEntities::updateMarkerScale);
+    connect(this->map_model, &MapModel::view2dContinuousScaleChanged, this, [this](double)
+    {
+        updateMarkerScale();
+    });
     // Panning moves no marker in map coordinates; the bgfx overlay follows
     // the camera itself (MapCanvasWidget::signalCameraChanged()).
 
@@ -1158,9 +1164,17 @@ void MapCanvasEntities::setIconSizePercent(int size_percent)
     scaleMarkers();
 }
 
+void MapCanvasEntities::updateMarkerScale()
+{
+    if (this->point_markers->entityWidth() == this->applied_marker_width)
+        return;
+    scaleMarkers();
+}
+
 void MapCanvasEntities::scaleMarkers()
 {
     const int width = this->point_markers->entityWidth();
+    this->applied_marker_width = width;
     this->point_markers->scaleMarkers(width);
     this->device_links->scaleMarkers(width);
 

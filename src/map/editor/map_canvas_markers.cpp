@@ -54,15 +54,12 @@ void MapCanvasMarkers::clear()
 
 int MapCanvasMarkers::entityWidth() const
 {
-    const int zoom = this->map_model->zoom();
-    int base_width = 10;
-    if (zoom == 19)
-        base_width = 40;
-    else if (zoom == 18)
-        base_width = 30;
-    else if (zoom == 17)
-        base_width = 20;
-
+    // Continuous in the camera's zoom, never the integer tile zoom: the
+    // former steps (zoom <= 16: 10 px, 17: 20, 18: 30, >= 19: 40)
+    // interpolated, so icons grow with the zoom motion instead of jumping
+    // whenever an integer level is crossed. Whole pixels (pixmap widths).
+    const double zoom = this->map_model->view2dContinuousZoom();
+    const double base_width = std::clamp(10.0 + (zoom - 16.0) * 10.0, 10.0, 40.0);
     return qMax(1, qRound(base_width * this->icon_size_percent / 100.0));
 }
 
