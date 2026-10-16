@@ -10,6 +10,7 @@
 #include "map/bgfx/map_bgfx_hud_gpu.h"
 #include "map/bgfx/map_bgfx_hud_text_cache.h"
 #include "map/bgfx/map_bgfx_labels.h"
+#include "map/bgfx/map_bgfx_pan_reuse.h"
 #include "map/core/map_frame_pacer.h"
 #include "map/render/map_camera_view_state.h"
 #include "map/render/map_network_render_symbology.h"
@@ -168,8 +169,11 @@ public:
     // --- Map editor (Phase 2) ---------------------------------------------------
     // Called every 2D frame after the network and before the HUD with the
     // frame's continuous camera; draws into its own canvas and atlas, which
-    // the surface uploads and submits with the HUD program.
-    using OverlayBuilder = std::function<void(MapBgfxHudCanvas *canvas,
+    // the surface uploads and submits with the HUD program. Returns the
+    // translation (logical px) to draw the canvas with: a builder may keep
+    // the canvas of an earlier frame and only move it (pure pans,
+    // map_bgfx_pan_reuse.h); QPointF() for a canvas built for this camera.
+    using OverlayBuilder = std::function<QPointF(MapBgfxHudCanvas *canvas,
                                               MapBgfxHudTextCache *cache,
                                               const MapBgfx2d::Camera &camera,
                                               const QSizeF &viewport)>;
@@ -311,8 +315,8 @@ private:
     MapBgfxHudGpu overlay_gpu;
     // Map labels: settings, value formats, optional symbol boxes, the
     // builder, its atlas (created on first use: 16 MiB) and bgfx objects.
-    // The canvas is rebuilt only when label_build_key changes or labels
-    // were deferred (rasterization budget).
+    // The canvas is rebuilt only when label_build_key changes, labels were
+    // deferred (rasterization budget) or a pan left label_pan's margin.
     MapLabelSettings label_settings;
     MapBgfxLabelValueFormat label_node_format;
     MapBgfxLabelValueFormat label_link_format;
@@ -322,10 +326,10 @@ private:
     std::unique_ptr<MapBgfxHudTextCache> label_text_cache;
     MapBgfxHudCanvas label_canvas;
     MapBgfxHudGpu label_gpu;
+    // Everything but the camera centre: pans reuse the canvas translated
+    // (label_pan) while the key is unchanged.
     struct LabelBuildKey
     {
-        double center_x = 0.0;
-        double center_y = 0.0;
         double world_pixels = 0.0;
         double viewport_width = 0.0;
         double viewport_height = 0.0;
@@ -336,8 +340,7 @@ private:
         quint64 atlas_generation = 0;
         bool operator==(const LabelBuildKey &other) const
         {
-            return this->center_x == other.center_x && this->center_y == other.center_y
-                && this->world_pixels == other.world_pixels
+            return this->world_pixels == other.world_pixels
                 && this->viewport_width == other.viewport_width
                 && this->viewport_height == other.viewport_height
                 && this->node_half_px == other.node_half_px
@@ -348,6 +351,8 @@ private:
         }
     };
     LabelBuildKey label_build_key;
+    // Built camera / margin of label_canvas and its draw offset this frame.
+    MapBgfxPanReuse label_pan;
     // Content changed (settings, values, symbols, hidden entities, font):
     // rebuild on the next frame.
     bool labels_dirty = true;

@@ -1,6 +1,7 @@
 #include "map/bgfx/map_bgfx_labels.h"
 #include "map/bgfx/map_bgfx_hud_canvas.h"
 #include "map/bgfx/map_bgfx_hud_text_cache.h"
+#include "map/bgfx/map_bgfx_pan_reuse.h"
 #include "map/render/map_retained_network_scene.h"
 
 #include <QFont>
@@ -131,8 +132,13 @@ struct Harness
     }
     bool build(const MapBgfx2d::Camera &view)
     {
+        return build(view, QSizeF(ViewportWidth, ViewportHeight));
+    }
+    // A camera and viewport grown by a pan margin (MapBgfxPanReuse::Build).
+    bool build(const MapBgfx2d::Camera &view, const QSizeF &viewport)
+    {
         MapBgfxLabels::Inputs inputs;
-        inputs.viewport = QSizeF(ViewportWidth, ViewportHeight);
+        inputs.viewport = viewport;
         inputs.camera = view;
         inputs.scene = &this->scene;
         inputs.snapshot = &this->retained.snapshot();
@@ -488,6 +494,114 @@ void testBudgetAndStability()
     req(moved_consistently == compared, "stability: labels move with the map");
 }
 
+// Pure pans reuse the last labels translated (MapBgfxSurface::renderLabels()
+// with MapBgfxPanReuse): a build with the pan margin, drawn with the reuse
+// offset, shows every label of an exact build at the same place, and the
+// labels beyond the edge are already there when they scroll in.
+void testPanReuse()
+{
+    Harness harness;
+    quint32 render_id = 1;
+    // Sparse grid (no conflicts), wider than the viewport.
+    for (int row = 0; row < 6; ++row)
+    {
+        for (int column = 0; column < 14; ++column)
+        {
+            harness.snapshot.nodes.append(node(render_id, QStringLiteral("P%1").arg(int(render_id)),
+                                               InfrastructureEntity::Junction,
+                                               8.9970 + 0.00045 * column,
+                                               46.9992 + 0.00025 * row));
+            ++render_id;
+        }
+    }
+    harness.prepare();
+    const QSizeF viewport(ViewportWidth, ViewportHeight);
+    const double ratio = 1.25;
+    harness.cache.setDevicePixelRatio(ratio);
+    MapBgfxPanReuse pan;
+    const MapBgfx2d::Camera start = camera();
+
+    // At rest: no margin, reused only for the identical camera.
+    MapBgfxPanReuse::Build build = pan.begin(start, viewport, ratio, true);
+    req(build.margin == 0.0 && build.offset.isNull(), "pan reuse: no margin at rest");
+    QPointF offset;
+    req(pan.reuse(start, viewport, ratio, &offset) && offset.isNull(),
+        "pan reuse: unchanged camera reuses without offset");
+    MapBgfx2d::Camera panned = start;
+    panned.center.x += 3.0 / start.world_pixels;
+    req(!pan.reuse(panned, viewport, ratio, &offset), "pan reuse: no margin, no pan reuse");
+
+    // The first pan frame rebuilds with the margin.
+    build = pan.begin(panned, viewport, ratio, true);
+    const double expected_margin = std::ceil(MapBgfxPanReuse::MarginFraction * ViewportWidth * ratio) / ratio;
+    req(std::fabs(build.margin - expected_margin) < 1e-9, "pan reuse: margin of a fifth of the screen");
+    req(std::fabs(build.margin * ratio - std::round(build.margin * ratio)) < 1e-9,
+        "pan reuse: margin is whole physical pixels");
+    req(build.viewport.width() == ViewportWidth + 2.0 * build.margin
+            && build.camera.viewport_width == start.viewport_width + 2.0 * build.margin,
+        "pan reuse: grown viewport and camera");
+    int builds = 0;
+    while (!harness.build(build.camera, build.viewport) && builds < 10)
+        ++builds;
+    const QVector<MapBgfxLabels::Placed> grown = harness.labels.placed();
+
+    // Later frames within the margin: translated, on the physical pixel grid.
+    MapBgfx2d::Camera later = panned;
+    later.center.x += 97.3 / start.world_pixels;
+    later.center.y -= 41.6 / start.world_pixels;
+    req(pan.reuse(later, viewport, ratio, &offset), "pan reuse: pan within the margin reuses");
+    req(std::fabs(offset.x() * ratio - std::round(offset.x() * ratio)) < 1e-9
+            && std::fabs(offset.y() * ratio - std::round(offset.y() * ratio)) < 1e-9,
+        "pan reuse: offset on the physical pixel grid");
+
+    // The exact build for that camera agrees with the translated one.
+    builds = 0;
+    while (!harness.build(later) && builds < 10)
+        ++builds;
+    int compared = 0;
+    int agreeing = 0;
+    for (const MapBgfxLabels::Placed &exact : harness.labels.placed())
+    {
+        if (exact.box.x < 0.0 || exact.box.y < 0.0 || exact.box.right() > ViewportWidth
+            || exact.box.bottom() > ViewportHeight)
+            continue;
+        ++compared;
+        for (const MapBgfxLabels::Placed &reused : grown)
+        {
+            if (reused.text == exact.text
+                && std::fabs(reused.box.x + offset.x() - exact.box.x) <= 1.0 / ratio + 1e-6
+                && std::fabs(reused.box.y + offset.y() - exact.box.y) <= 1.0 / ratio + 1e-6)
+            {
+                ++agreeing;
+                break;
+            }
+        }
+    }
+    req(compared > 20, "pan reuse: labels to compare");
+    req(agreeing == compared, "pan reuse: translated labels sit where an exact build puts them");
+    // Labels right of the screen when the margin build was made are in it.
+    const MapBgfxHudPoint far_right = project(panned, 8.9970 + 0.00045 * 12, 46.9992);
+    req(far_right.x > ViewportWidth && far_right.x < ViewportWidth + build.margin - 60.0,
+        "pan reuse: test node beyond the right edge, inside the margin");
+    bool far_right_built = false;
+    for (const MapBgfxLabels::Placed &reused : grown)
+        far_right_built = far_right_built || reused.text == QStringLiteral("P13");
+    req(far_right_built, "pan reuse: labels beyond the edge are built in the margin");
+
+    // Leaving the margin, zooming or resizing rebuilds; zooming without margin.
+    MapBgfx2d::Camera beyond = panned;
+    beyond.center.x += (build.margin + 1.0) / start.world_pixels;
+    req(!pan.reuse(beyond, viewport, ratio, &offset), "pan reuse: leaving the margin rebuilds");
+    MapBgfx2d::Camera zoomed = later;
+    zoomed.world_pixels *= 1.01;
+    req(!pan.reuse(zoomed, viewport, ratio, &offset), "pan reuse: zoom rebuilds");
+    req(!pan.reuse(later, QSizeF(ViewportWidth + 1.0, ViewportHeight), ratio, &offset),
+        "pan reuse: resize rebuilds");
+    req(pan.begin(zoomed, viewport, ratio, true).margin == 0.0, "pan reuse: zoom frames get no margin");
+    req(pan.begin(later, viewport, ratio, false).margin == 0.0,
+        "pan reuse: screen-anchored content gets no margin");
+}
+
 void testAtlasLimit()
 {
     // A small atlas holds only a few labels: placement stops before the
@@ -565,6 +679,7 @@ int main(int argc, char **argv)
     testRename();
     testHiddenAndViewport();
     testBudgetAndStability();
+    testPanReuse();
     testAtlasLimit();
     testHaloSprite();
 

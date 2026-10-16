@@ -4,6 +4,7 @@
 #include "map/bgfx/map_bgfx_hud_canvas.h"
 #include "map/bgfx/map_bgfx_hud_text_cache.h"
 
+#include <QPointF>
 #include <QSizeF>
 
 #include <bgfx/bgfx.h>
@@ -22,7 +23,10 @@ public:
 
     // Uploads the atlas' dirty region (or creates the texture).
     void uploadAtlas(MapBgfxHudTextCache *cache);
-    void draw(bgfx::ViewId view, const MapBgfxHudCanvas &canvas, const QSizeF &logical_viewport);
+    // offset: logical px added to every vertex while it is copied into the
+    // transient buffer (a draw list reused across a pan, map_bgfx_pan_reuse.h).
+    void draw(bgfx::ViewId view, const MapBgfxHudCanvas &canvas, const QSizeF &logical_viewport,
+              const QPointF &offset = QPointF());
 
 private:
     bgfx::VertexLayout layout;

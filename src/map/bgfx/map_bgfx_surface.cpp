@@ -954,9 +954,10 @@ void MapBgfxSurface::renderOverlay(const QSizeF &logical, const MapBgfx2d::Camer
     this->overlay_text_cache.setDevicePixelRatio(ratio);
     if (overlay_screen != nullptr)
         this->overlay_text_cache.setLogicalDpi(overlay_screen->logicalDotsPerInch());
-    this->overlay_builder(&this->overlay_canvas, &this->overlay_text_cache, camera, logical);
+    const QPointF offset =
+        this->overlay_builder(&this->overlay_canvas, &this->overlay_text_cache, camera, logical);
     this->overlay_gpu.uploadAtlas(&this->overlay_text_cache);
-    this->overlay_gpu.draw(kMapBgfxView, this->overlay_canvas, logical);
+    this->overlay_gpu.draw(kMapBgfxView, this->overlay_canvas, logical, offset);
 }
 
 void MapBgfxSurface::renderLabels(const QSizeF &logical, const MapBgfx2d::Camera &network_camera,
@@ -982,8 +983,6 @@ void MapBgfxSurface::renderLabels(const QSizeF &logical, const MapBgfx2d::Camera
     cache->setLogicalDpi(dpi);
 
     LabelBuildKey key;
-    key.center_x = network_camera.center.x;
-    key.center_y = network_camera.center.y;
     key.world_pixels = network_camera.world_pixels;
     key.viewport_width = logical.width();
     key.viewport_height = logical.height();
@@ -992,7 +991,11 @@ void MapBgfxSurface::renderLabels(const QSizeF &logical, const MapBgfx2d::Camera
     key.device_pixel_ratio = ratio;
     key.preparation_id = this->prepared_2d_scene.preparationId();
     key.atlas_generation = cache->generation();
-    if (this->labels_dirty || !(key == this->label_build_key))
+    // Unchanged content and zoom: a pure pan draws the last build translated
+    // (it was built with a margin around the viewport, map_bgfx_pan_reuse.h).
+    QPointF offset;
+    if (this->labels_dirty || !(key == this->label_build_key)
+        || !this->label_pan.reuse(network_camera, logical, ratio, &offset))
     {
         // The application font one step smaller, pixel sized (the halo
         // outline path and the metrics then agree; see haloText()).
@@ -1039,9 +1042,15 @@ void MapBgfxSurface::renderLabels(const QSizeF &logical, const MapBgfx2d::Camera
             return MapBgfxHudRect();
         };
 
+        // Labels have no screen-anchored parts: a rebuild while panning gets
+        // the margin, so the labels scrolling in from the edges are placed
+        // already (and decluttered against what lies beyond the edge).
+        const MapBgfxPanReuse::Build build =
+            this->label_pan.begin(network_camera, logical, ratio, true);
+        offset = build.offset;
         MapBgfxLabels::Inputs inputs;
-        inputs.viewport = logical;
-        inputs.camera = network_camera;
+        inputs.viewport = build.viewport;
+        inputs.camera = build.camera;
         inputs.scene = &this->prepared_2d_scene;
         inputs.snapshot = &this->retained_scene.snapshot();
         inputs.settings = this->label_settings;
@@ -1060,7 +1069,7 @@ void MapBgfxSurface::renderLabels(const QSizeF &logical, const MapBgfx2d::Camera
         this->label_build_key = key;
     }
     this->label_gpu.uploadAtlas(cache);
-    this->label_gpu.draw(kMapBgfxView, this->label_canvas, logical);
+    this->label_gpu.draw(kMapBgfxView, this->label_canvas, logical, offset);
 }
 
 void MapBgfxSurface::renderHud(const QSizeF &logical, const MapBgfx2d::Camera &camera)

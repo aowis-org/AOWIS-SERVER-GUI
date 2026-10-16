@@ -486,6 +486,7 @@ if(AOWIS_ENABLE_BGFX_MAP)
         src/map/bgfx/map_bgfx_hud.h
         src/map/bgfx/map_bgfx_hud.cpp
         src/map/bgfx/map_bgfx_hud_gpu.h
+        src/map/bgfx/map_bgfx_pan_reuse.h
         src/map/bgfx/map_bgfx_hud_gpu.cpp
         src/map/bgfx/map_bgfx_legend_content.h
         src/map/bgfx/map_bgfx_legend_content.cpp

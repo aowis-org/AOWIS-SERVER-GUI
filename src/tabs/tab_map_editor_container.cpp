@@ -6,6 +6,7 @@
 #if AOWIS_HAS_BGFX
 #include "map/bgfx/map_bgfx_editor_icons.h"
 #include "map/bgfx/map_bgfx_editor_overlay.h"
+#include "map/bgfx/map_bgfx_pan_reuse.h"
 #include "map/bgfx/map_bgfx_surface.h"
 #include "map/render/map_entity_pixmap_renderer.h"
 #endif
@@ -474,33 +475,37 @@ void MapEditorContainer::setupBgfxEditor()
         {
             return icons->icon(cache, entity, path, width, highlight);
         });
-    // The last built overlay frame: while neither the camera nor the editor
-    // changed (an idle map), the canvas from then is drawn again as is.
+    // The last built overlay frame. While the editor's content is unchanged
+    // it is drawn again as is (an idle map) or translated (a pure pan: built
+    // with a margin around the viewport, rebuilt only when the pan leaves
+    // it; map_bgfx_pan_reuse.h). Content with screen-anchored parts (pointer
+    // rubber bands, the floating marker, the selection rectangle) and
+    // interactive moves get no margin and are rebuilt on every camera change
+    // as before.
     struct OverlayFrame
     {
-        bool valid = false;
-        double center_x = 0.0;
-        double center_y = 0.0;
-        double world_pixels = 0.0;
-        double viewport_width = 0.0;
-        double viewport_height = 0.0;
+        MapBgfxPanReuse pan;
+        // The last build had no screen-anchored parts.
+        bool pannable = false;
         quint64 atlas_generation = 0;
+        // A build with margin exceeded the draw-list budget at this zoom
+        // (huge networks): no margin until the zoom changes.
+        double margin_overflow_world_pixels = 0.0;
     };
     const std::shared_ptr<OverlayFrame> overlay_frame = std::make_shared<OverlayFrame>();
     surface->setOverlayBuilder(
         [this, overlay, overlay_frame](MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
                                        const MapBgfx2d::Camera &camera, const QSizeF &viewport)
         {
-            const bool unchanged = overlay_frame->valid && !this->bgfx_visual_state_dirty
-                && !this->bgfx_visual_camera_dirty
-                && overlay_frame->center_x == camera.center.x
-                && overlay_frame->center_y == camera.center.y
-                && overlay_frame->world_pixels == camera.world_pixels
-                && overlay_frame->viewport_width == viewport.width()
-                && overlay_frame->viewport_height == viewport.height()
+            const double ratio = cache->devicePixelRatio();
+            // The camera-dirty work below only refreshes the pointer's map
+            // coordinate, which pannable content does not show.
+            const bool content_unchanged = !this->bgfx_visual_state_dirty
+                && (overlay_frame->pannable || !this->bgfx_visual_camera_dirty)
                 && overlay_frame->atlas_generation == cache->generation();
-            if (unchanged)
-                return;
+            QPointF offset;
+            if (content_unchanged && overlay_frame->pan.reuse(camera, viewport, ratio, &offset))
+                return offset;
             // Full rebuild only when the editor's content changed; camera
             // motion only moves the pointer's map coordinate (the visual
             // state is O(demand points) and must not run every frame).
@@ -523,22 +528,37 @@ void MapEditorContainer::setupBgfxEditor()
             }
             const MapEditorViewportRenderState viewport_state =
                 this->map_canvas->viewportRenderState();
+            // Screen-anchored or changing with every pointer move: no margin
+            // (it would only make each of those rebuilds larger).
+            const bool pannable = !this->bgfx_visual_state.placement.creating
+                && !this->bgfx_visual_state.placement.floating_marker_visible
+                && !this->bgfx_visual_state.move.active
+                && !viewport_state.rectangle_selection_visible
+                && !this->render_full_network_move
+                && overlay_frame->margin_overflow_world_pixels != camera.world_pixels;
             MapBgfxEditorOverlay::Inputs inputs;
-            inputs.viewport = viewport;
-            inputs.camera = camera;
             inputs.snapshot = &this->hydraulic_data->networkRenderSnapshot();
             inputs.visual_state = &this->bgfx_visual_state;
             inputs.viewport_state = &viewport_state;
             inputs.full_network_move = this->render_full_network_move;
             inputs.full_network_move_translation = this->render_move_translation;
+            MapBgfxPanReuse::Build build = overlay_frame->pan.begin(camera, viewport, ratio, pannable);
+            inputs.viewport = build.viewport;
+            inputs.camera = build.camera;
             overlay->build(canvas, cache, inputs);
-            overlay_frame->valid = true;
-            overlay_frame->center_x = camera.center.x;
-            overlay_frame->center_y = camera.center.y;
-            overlay_frame->world_pixels = camera.world_pixels;
-            overlay_frame->viewport_width = viewport.width();
-            overlay_frame->viewport_height = viewport.height();
+            if (canvas->overflowed() && build.margin > 0.0)
+            {
+                // The margin pushed a huge network over the draw-list budget:
+                // this frame exactly, and per pan frame as before at this zoom.
+                overlay_frame->margin_overflow_world_pixels = camera.world_pixels;
+                build = overlay_frame->pan.begin(camera, viewport, ratio, false);
+                inputs.viewport = build.viewport;
+                inputs.camera = build.camera;
+                overlay->build(canvas, cache, inputs);
+            }
+            overlay_frame->pannable = pannable;
             overlay_frame->atlas_generation = cache->generation();
+            return build.offset;
         });
     connect(this->map_canvas, &MapCanvasWidget::signalRenderUpdateRequested, this, [this]()
     {

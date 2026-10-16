@@ -114,7 +114,7 @@ void MapBgfxHudGpu::uploadAtlas(MapBgfxHudTextCache *cache)
 }
 
 void MapBgfxHudGpu::draw(bgfx::ViewId view, const MapBgfxHudCanvas &canvas,
-                         const QSizeF &logical_viewport)
+                         const QSizeF &logical_viewport, const QPointF &offset)
 {
     if (!ready() || !bgfx::isValid(this->atlas_texture) || canvas.indices().isEmpty()
         || canvas.overflowed())
@@ -139,8 +139,26 @@ void MapBgfxHudGpu::draw(bgfx::ViewId view, const MapBgfxHudCanvas &canvas,
         }
         return;
     }
-    std::memcpy(vertices.data, canvas.vertices().constData(),
-                vertex_count * sizeof(MapBgfxHudVertex));
+    if (offset.isNull())
+    {
+        std::memcpy(vertices.data, canvas.vertices().constData(),
+                    vertex_count * sizeof(MapBgfxHudVertex));
+    }
+    else
+    {
+        // Translated copy: same cost class as the memcpy, instead of
+        // rebuilding the list for a panned camera.
+        const float offset_x = float(offset.x());
+        const float offset_y = float(offset.y());
+        const MapBgfxHudVertex *source = canvas.vertices().constData();
+        MapBgfxHudVertex *target = reinterpret_cast<MapBgfxHudVertex *>(vertices.data);
+        for (uint32_t index = 0; index < vertex_count; ++index)
+        {
+            target[index] = source[index];
+            target[index].x += offset_x;
+            target[index].y += offset_y;
+        }
+    }
     std::memcpy(indices.data, canvas.indices().constData(), index_count * sizeof(quint32));
     const float viewport[4] = {float(logical_viewport.width()), float(logical_viewport.height()),
                                0.0f, 0.0f};

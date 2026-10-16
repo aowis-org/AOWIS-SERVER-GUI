@@ -1,6 +1,7 @@
 #include "map/bgfx/map_bgfx_editor_overlay.h"
 #include "map/bgfx/map_bgfx_hud_canvas.h"
 #include "map/bgfx/map_bgfx_hud_text_cache.h"
+#include "map/bgfx/map_bgfx_pan_reuse.h"
 
 #include <QGuiApplication>
 #include <QImage>
@@ -239,11 +240,12 @@ struct Harness
         });
     }
     void build(const Scene &scene, const MapBgfx2d::Camera &view, bool full_move = false,
-               QPointF translation = QPointF())
+               QPointF translation = QPointF(),
+               const QSizeF &viewport = QSizeF(ViewportWidth, ViewportHeight))
     {
         probe.calls.clear();
         MapBgfxEditorOverlay::Inputs inputs;
-        inputs.viewport = QSizeF(ViewportWidth, ViewportHeight);
+        inputs.viewport = viewport;
         inputs.camera = view;
         inputs.snapshot = &scene.snapshot;
         inputs.visual_state = &scene.state;
@@ -516,6 +518,49 @@ void testAttachmentCost()
         "attachment: a selected one keeps its handle (one disc sprite)");
 }
 
+// Pure pans (tab_map_editor_container.cpp): the overlay built with the pan
+// margin (MapBgfxPanReuse) and drawn with the reuse offset puts every icon
+// where an exact build for the panned camera does, and icons that scroll in
+// from beyond the edge are part of it already.
+void testPanReuse()
+{
+    Harness harness;
+    Scene s = scene();
+    const QSizeF viewport(ViewportWidth, ViewportHeight);
+    const double ratio = harness.cache.devicePixelRatio();
+    MapBgfx2d::Camera panned = camera();
+    // Junction C (9.0010) about 880 px from the left: right of the screen.
+    const MapBgfxHudPoint c_start = project(panned, 9.0010, 47.0);
+    panned.center.x -= (880.0 - c_start.x) / panned.world_pixels;
+    MapBgfxPanReuse pan;
+    pan.begin(camera(), viewport, ratio, true);
+    const MapBgfxPanReuse::Build build = pan.begin(panned, viewport, ratio, true);
+    req(build.margin > 100.0, "pan reuse: a pan frame builds with the margin");
+
+    harness.build(s, panned);
+    const int exact_icons = harness.probe.calls.size();
+    harness.build(s, build.camera, false, QPointF(), build.viewport);
+    req(harness.probe.calls.size() > exact_icons,
+        "pan reuse: the margin build contains the icon beyond the right edge");
+
+    MapBgfx2d::Camera later = panned;
+    later.center.x += 120.0 / panned.world_pixels;
+    later.center.y += 13.4 / panned.world_pixels;
+    QPointF offset;
+    req(pan.reuse(later, viewport, ratio, &offset), "pan reuse: reused within the margin");
+    const double tolerance = 1.0 / ratio + 0.01;
+    const double nodes[3] = {8.9995, 9.0005, 9.0010};
+    for (const double longitude : nodes)
+    {
+        const MapBgfxHudPoint exact = project(later, longitude, 47.0);
+        req(spriteVerticesNear(harness.canvas, harness.cache, double(qRound(exact.x)) - offset.x(),
+                               double(qRound(exact.y)) - offset.y(), tolerance) > 0,
+            "pan reuse: translated icon corner where an exact build puts it");
+    }
+    const MapBgfxHudPoint c_later = project(later, 9.0010, 47.0);
+    req(c_later.x > 0.0 && c_later.x < ViewportWidth, "pan reuse: junction C scrolled in");
+}
+
 void testAntimeridian()
 {
     Harness harness;
@@ -546,6 +591,7 @@ int main(int argc, char **argv)
     testDiagnostics();
     testFramesAndAttachments();
     testAttachmentCost();
+    testPanReuse();
     testAntimeridian();
 
     if (fails == 0)
