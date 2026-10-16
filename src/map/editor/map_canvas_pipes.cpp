@@ -1,5 +1,6 @@
 #include "map/editor/map_canvas_pipes.h"
 #include "map/editor/map_canvas_markers.h"
+#include "map/editor/map_canvas_hit_box.h"
 #include "map/editor/map_canvas_widget.h"
 
 #include "geo/geo_metric_projection.h"
@@ -20,6 +21,34 @@
 
 namespace
 {
+// Map bounds of a pipe (relative longitudes around the box centre, so the
+// test is wrap aware) against the hit box.
+bool pipeBoundsMayHit(const MapCanvasHitBox &box, const CoordinateWGS84 &start,
+                      const CoordinateWGS84 &end, const QList<CoordinateWGS84> &vertices)
+{
+    double latitude_min = std::min(start.latitude_deg, end.latitude_deg);
+    double latitude_max = std::max(start.latitude_deg, end.latitude_deg);
+    double longitude_min = std::min(box.relativeLongitude(start.longitude_deg),
+                                    box.relativeLongitude(end.longitude_deg));
+    double longitude_max = std::max(box.relativeLongitude(start.longitude_deg),
+                                    box.relativeLongitude(end.longitude_deg));
+    for (const CoordinateWGS84 &vertex : vertices)
+    {
+        latitude_min = std::min(latitude_min, vertex.latitude_deg);
+        latitude_max = std::max(latitude_max, vertex.latitude_deg);
+        const double longitude = box.relativeLongitude(vertex.longitude_deg);
+        longitude_min = std::min(longitude_min, longitude);
+        longitude_max = std::max(longitude_max, longitude);
+    }
+    if (latitude_max < box.latitude_min || latitude_min > box.latitude_max)
+        return false;
+    // A pipe spanning more than half the world in relative longitude wraps
+    // around: keep it for the exact test.
+    if (box.longitude_half >= 180.0 || longitude_max - longitude_min > 180.0)
+        return true;
+    return longitude_max >= -box.longitude_half && longitude_min <= box.longitude_half;
+}
+
 constexpr double link_hit_distance = 7.0;
 constexpr double pipe_vertex_hit_distance = 9.0;
 
@@ -340,12 +369,19 @@ MapCanvasPipes::PipeSegmentHit MapCanvasPipes::pipeSegmentAt(
     const double hit_max_x = position.x() + link_hit_distance;
     const double hit_min_y = position.y() - link_hit_distance;
     const double hit_max_y = position.y() + link_hit_distance;
+    // Pipes whose map bounds miss the hit box are skipped before any
+    // vertex is projected (every pointer move tests every pipe).
+    const MapCanvasHitBox box = MapCanvasHitBox::around(
+        *this->map_model, position, link_hit_distance + 1.0, this->map_canvas->size());
 
     for (const PipeCanvasItem &pipe : this->list_pipes)
     {
         const MapEntityMarker *start_marker = markers.findMarker(pipe.geometry.start_node.uuid);
         const MapEntityMarker *end_marker = markers.findMarker(pipe.geometry.end_node.uuid);
         if (!start_marker || !end_marker)
+            continue;
+        if (!pipeBoundsMayHit(box, start_marker->coord_wgs84, end_marker->coord_wgs84,
+                              pipe.geometry.intermediate_vertices))
             continue;
 
         QPointF previous_point = screenFromWgs84(start_marker->coord_wgs84);
@@ -542,6 +578,28 @@ std::optional<CoordinateWGS84> MapCanvasPipes::coordinateAtPosition(
     const PipeCanvasItem *pipe = pipeByUuid(pipe_uuid);
     if (!pipe)
         return std::nullopt;
+    // Straight pipe (the common case; this runs once per pipe-attached
+    // demand point whenever the editor state is rebuilt): the position is
+    // the fraction along its one segment, no lists, no distances.
+    if (pipe->geometry.intermediate_vertices.isEmpty())
+    {
+        const MapEntityMarker *start_marker = markers.findMarker(pipe->geometry.start_node.uuid);
+        const MapEntityMarker *end_marker = markers.findMarker(pipe->geometry.end_node.uuid);
+        if (start_marker == nullptr || end_marker == nullptr)
+            return std::nullopt;
+        const CoordinateWGS84 &from = start_marker->coord_wgs84;
+        const CoordinateWGS84 &to = end_marker->coord_wgs84;
+        if (!(GeoMetricProjection::distanceMeters(from, to) > 0.0))
+            return std::nullopt;
+        CoordinateWGS84 coordinate;
+        coordinate.latitude_deg = from.latitude_deg
+            + (to.latitude_deg - from.latitude_deg) * pipe_position;
+        const double longitude_delta = GeoWebMercator::normalizeLongitude(
+            to.longitude_deg - from.longitude_deg);
+        coordinate.longitude_deg = GeoWebMercator::normalizeLongitude(
+            from.longitude_deg + longitude_delta * pipe_position);
+        return coordinate;
+    }
     const QList<CoordinateWGS84> coordinates = pipeCoordinates(*pipe, markers);
     if (coordinates.size() < 2)
         return std::nullopt;

@@ -247,6 +247,12 @@ as in the monitor.
   per pipe or per demand point (that was quadratic: seconds per zoom level
   change); the overlay's icons are memoized per (entity, width, highlight)
   and atlas generation; zoom changes do no editor symbology work.
+  Per frame the overlay culls demand-point attachments against the viewport,
+  clips their dashes to it and draws handles only where the line is at least
+  12 px long (or selected / edited); pipes with vertices are culled by their
+  cached map bounds before projection. Per pointer move the hover hit tests
+  reject markers and pipes outside a map-coordinate box around the pointer
+  (`MapCanvasHitBox`) before projecting them or looking up pixmaps.
 * Move preview: dragged entities are hidden in the GPU network
   (`setHiddenEntityUuids()`: alpha 0 in the colour stream, no geometry
   upload) and drawn by the overlay; a full-network move shifts the network

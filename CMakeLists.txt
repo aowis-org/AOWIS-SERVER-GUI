@@ -293,6 +293,7 @@ qt_add_executable(aowis-server-gui
     src/map/editor/map_canvas_entities.h
     src/map/editor/map_canvas_markers.cpp
     src/map/editor/map_canvas_markers.h
+    src/map/editor/map_canvas_hit_box.h
     src/map/editor/map_canvas_pipes.cpp
     src/map/editor/map_canvas_pipes.h
     src/map/editor/map_canvas_placement.cpp

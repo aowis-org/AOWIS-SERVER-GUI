@@ -106,6 +106,10 @@ public:
     static constexpr quint32 DeviceLinkColor = 0xff8b5a2bu;
     static constexpr quint32 ErrorColor = 0xffff0000u;
     static constexpr quint32 StaleColor = 0xff808080u;
+    // Demand-point attachment handles are drawn only where the attachment
+    // line is at least this long on screen (or it is selected / being
+    // edited): zoomed out, thousands of handles would only cover the dots.
+    static constexpr double MinimumAttachmentHandleLinePx = 12.0;
 
 private:
     // Snapshot geometry in normalized Web Mercator, built once per geometry
@@ -117,6 +121,17 @@ private:
         const NetworkRenderSnapshot *snapshot = nullptr;
         QVector<MapBgfx2d::WorldPoint> node_world;
         QVector<QVector<MapBgfx2d::WorldPoint>> link_world;
+        // Per link: x range continuous from its first point (unwrapped like
+        // screenPolyline()), y range; culls off-screen pipes before they are
+        // projected.
+        struct Bounds
+        {
+            double min_x = 0.0;
+            double max_x = 0.0;
+            double min_y = 0.0;
+            double max_y = 0.0;
+        };
+        QVector<Bounds> link_bounds;
         QVector<MapBgfx2d::WorldPoint> device_center_world;
         QHash<QUuid, int> node_index;
         QHash<QUuid, int> link_index;
@@ -143,6 +158,8 @@ private:
     // QPen stroke centred on the path of a rect (sharp corners or radius).
     void strokeRectCentered(const MapBgfxHudRect &rect, double radius, double width, quint32 argb);
     bool onScreen(double x, double y, double width, double height) const;
+    // A link's world bounds intersect the viewport grown by margin_px.
+    bool boundsOnScreen(const Geometry::Bounds &bounds, double margin_px) const;
 
     // Icon helpers: bottom-anchored at the rounded anchor (nodes) or
     // centred (device links, MapEntityPixmapRenderer rects).

@@ -1,4 +1,5 @@
 #include "map/editor/map_canvas_markers.h"
+#include "map/editor/map_canvas_hit_box.h"
 #include "map/editor/map_canvas_widget.h"
 
 #include "geo/geo_web_mercator.h"
@@ -187,12 +188,21 @@ void MapCanvasMarkers::scaleMarkers(int width)
 std::optional<InfrastructureEntityReference> MapCanvasMarkers::markerAt(
     const QPointF &position) const
 {
-    if (!this->pixmap_renderer)
+    if (!this->pixmap_renderer || !this->map_model || !this->map_canvas)
         return std::nullopt;
 
+    // A marker can only be hit within its dot radius or its icon, which is
+    // marker_width wide and (editor pixmaps) at most a few widths tall above
+    // the anchor: everything else is rejected in map coordinates before any
+    // projection or pixmap lookup.
+    const double reach = marker_dot_hit_radius + 4.0 * double(std::max(1, this->marker_width));
+    const MapCanvasHitBox box = MapCanvasHitBox::around(
+        *this->map_model, position, reach, this->map_canvas->size());
     for (int i = this->list_markers.size() - 1; i >= 0; i--)
     {
         const MapEntityMarker &marker = this->list_markers[i];
+        if (!box.contains(marker.coord_wgs84))
+            continue;
         const QPointF dot_center = markerAnchorPosition(marker);
         if (dotHit(position, dot_center) ||
             this->pixmap_renderer->hitTest(marker.path_pixmap, this->marker_width,

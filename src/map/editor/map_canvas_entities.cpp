@@ -1303,8 +1303,10 @@ MapEditorVisualState MapCanvasEntities::visualState() const
                                               state.selected_marker_uuids.cend());
         for (const HydraulicDemandPoint &demand_point : network.demand_points)
         {
-            const std::optional<MapEntityMarker> marker = markerByUuid(demand_point.uuid);
-            if (!marker.has_value())
+            // Demand points are point markers: the uuid index in place, no
+            // marker copy (this loop runs on every editor state change).
+            const MapEntityMarker *marker = this->point_markers->findMarker(demand_point.uuid);
+            if (marker == nullptr)
                 continue;
 
             const bool interacting =
@@ -1590,9 +1592,9 @@ std::optional<CoordinateWGS84> MapCanvasEntities::demandPointAttachmentCoordinat
 {
     if (demand_point.attachment.type == HydraulicDemandPointAttachmentType::Junction)
     {
-        const std::optional<MapEntityMarker> junction_marker =
-            markerByUuid(demand_point.attachment.junction_uuid);
-        if (!junction_marker.has_value() ||
+        const MapEntityMarker *junction_marker =
+            this->point_markers->findMarker(demand_point.attachment.junction_uuid);
+        if (junction_marker == nullptr ||
             junction_marker->entity.type != InfrastructureEntity::Junction)
         {
             return std::nullopt;

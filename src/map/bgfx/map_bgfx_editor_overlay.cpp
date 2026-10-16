@@ -53,6 +53,38 @@ MapBgfx2d::WorldPoint world(const CoordinateWGS84 &coordinate)
     return MapBgfx2d::worldFromWgs84(coordinate.longitude_deg, coordinate.latitude_deg);
 }
 
+// Liang-Barsky: the part [t0, t1] of a -> b inside the rect; false when
+// none.
+bool clipSegment(const MapBgfxHudPoint &a, const MapBgfxHudPoint &b, double left, double top,
+                 double right, double bottom, double *t0, double *t1)
+{
+    const double dx = b.x - a.x;
+    const double dy = b.y - a.y;
+    const double p[4] = {-dx, dx, -dy, dy};
+    const double q[4] = {a.x - left, right - a.x, a.y - top, bottom - a.y};
+    double start = 0.0;
+    double end = 1.0;
+    for (int side = 0; side < 4; ++side)
+    {
+        if (p[side] == 0.0)
+        {
+            if (q[side] < 0.0)
+                return false;
+            continue;
+        }
+        const double t = q[side] / p[side];
+        if (p[side] < 0.0)
+            start = std::max(start, t);
+        else
+            end = std::min(end, t);
+        if (start > end)
+            return false;
+    }
+    *t0 = start;
+    *t1 = end;
+    return true;
+}
+
 bool finite(const CoordinateWGS84 &coordinate)
 {
     return std::isfinite(coordinate.longitude_deg) && std::isfinite(coordinate.latitude_deg);
@@ -94,6 +126,7 @@ void MapBgfxEditorOverlay::synchronizeGeometry(const NetworkRenderSnapshot &snap
         built.node_index.insert(node.uuid, int(index));
     }
     built.link_world.reserve(snapshot.links.size());
+    built.link_bounds.reserve(snapshot.links.size());
     built.device_center_world.reserve(snapshot.links.size());
     for (qsizetype index = 0; index < snapshot.links.size(); ++index)
     {
@@ -102,6 +135,23 @@ void MapBgfxEditorOverlay::synchronizeGeometry(const NetworkRenderSnapshot &snap
         points.reserve(link.vertices_wgs84.size());
         for (const CoordinateWGS84 &vertex : link.vertices_wgs84)
             points.append(world(vertex));
+        Geometry::Bounds bounds;
+        if (!points.isEmpty())
+        {
+            double previous = points.first().x;
+            bounds.min_x = bounds.max_x = previous;
+            bounds.min_y = bounds.max_y = points.first().y;
+            for (const MapBgfx2d::WorldPoint &point : points)
+            {
+                const double x = MapBgfx2d::wrapNearest(point.x, previous);
+                previous = x;
+                bounds.min_x = std::min(bounds.min_x, x);
+                bounds.max_x = std::max(bounds.max_x, x);
+                bounds.min_y = std::min(bounds.min_y, point.y);
+                bounds.max_y = std::max(bounds.max_y, point.y);
+            }
+        }
+        built.link_bounds.append(bounds);
         built.link_world.append(points);
         built.device_center_world.append(world(deviceLinkCenter(link.vertices_wgs84)));
         built.link_index.insert(link.uuid, int(index));
@@ -325,6 +375,23 @@ bool MapBgfxEditorOverlay::onScreen(double x, double y, double width, double hei
 {
     return x + width >= 0.0 && y + height >= 0.0 && x <= this->inputs->viewport.width()
         && y <= this->inputs->viewport.height();
+}
+
+bool MapBgfxEditorOverlay::boundsOnScreen(const Geometry::Bounds &bounds, double margin_px) const
+{
+    // The copy nearest to the camera, like screenPolyline().
+    const MapBgfx2d::Camera &camera = this->inputs->camera;
+    const double shift = std::round(camera.center.x - 0.5 * (bounds.min_x + bounds.max_x));
+    const double left = camera.viewport_width * 0.5
+        + (bounds.min_x + shift - camera.center.x) * camera.world_pixels + this->offset_x;
+    const double right = camera.viewport_width * 0.5
+        + (bounds.max_x + shift - camera.center.x) * camera.world_pixels + this->offset_x;
+    const double top = camera.viewport_height * 0.5
+        + (bounds.min_y - camera.center.y) * camera.world_pixels + this->offset_y;
+    const double bottom = camera.viewport_height * 0.5
+        + (bounds.max_y - camera.center.y) * camera.world_pixels + this->offset_y;
+    return onScreen(left - margin_px, top - margin_px, right - left + 2.0 * margin_px,
+                    bottom - top + 2.0 * margin_px);
 }
 
 // --- Icons -------------------------------------------------------------------------
@@ -561,6 +628,9 @@ void MapBgfxEditorOverlay::staticDetails(bool include_moving)
         {
             const QVector<MapBgfx2d::WorldPoint> &points = this->geometry.link_world.at(index);
             if (points.size() < 3)
+                continue;
+            // Cull before projecting (and allocating) the whole pipe.
+            if (!boundsOnScreen(this->geometry.link_bounds.at(index), PipeVertexRadiusPx))
                 continue;
             const quint32 color = include_moving && this->selected_pipes.contains(link.uuid)
                 ? SelectedColor : BlackColor;
@@ -827,35 +897,80 @@ void MapBgfxEditorOverlay::floatingPlacement()
 void MapBgfxEditorOverlay::demandPointAttachments()
 {
     // The former QPainter editor's paintDemandPointAttachment(): dashed line from the
-    // demand point to its network attachment with a round handle.
+    // demand point to its network attachment with a round handle. Runs every
+    // frame for every attachment, so: no allocations, culled against the
+    // viewport, the dashes clipped to it (a long attachment at a high zoom
+    // would otherwise emit thousands of off-screen dashes), and handles only
+    // where the line is long enough to show them (MinimumAttachmentHandleLinePx).
     const MapEditorVisualState &state = *this->inputs->visual_state;
+    const MapBgfx2d::Camera &camera = this->inputs->camera;
+    const double viewport_width = this->inputs->viewport.width();
+    const double viewport_height = this->inputs->viewport.height();
+    // Handle and selection-circle reach around the line.
+    constexpr double Margin = 16.0;
     const quint32 emphasized_color = rgba(0, 120, 190, 255);
     for (const MapEditorDemandPointAttachmentVisualState &attachment : state.demand_point_attachments)
     {
         if (!attachment.visible || !finite(attachment.demand_point_coordinate_wgs84))
             continue;
-        const MapBgfxHudPoint demand = screen(attachment.demand_point_coordinate_wgs84);
         if (!attachment.attachment_coordinate_valid)
         {
             if (attachment.selecting_target)
-                dashedCircle(demand.x, demand.y, 11.0, 1.5, 6.0, 3.0, emphasized_color);
+            {
+                const MapBgfxHudPoint demand = screen(attachment.demand_point_coordinate_wgs84);
+                if (onScreen(demand.x - Margin, demand.y - Margin, 2.0 * Margin, 2.0 * Margin))
+                    dashedCircle(demand.x, demand.y, 11.0, 1.5, 6.0, 3.0, emphasized_color);
+            }
             continue;
         }
-        QList<CoordinateWGS84> pair;
-        pair.append(attachment.demand_point_coordinate_wgs84);
-        pair.append(attachment.attachment_coordinate_wgs84);
-        const QVector<MapBgfxHudPoint> line = screenPolyline(pair);
+        // Both ends as one continuous segment at the copy nearest to the
+        // camera (screenPolyline() rule for the pair).
+        MapBgfx2d::ScreenPoint start;
+        MapBgfx2d::ScreenPoint end;
+        MapBgfx2d::screenSegment(camera, world(attachment.demand_point_coordinate_wgs84),
+                                 world(attachment.attachment_coordinate_wgs84), &start, &end);
+        const MapBgfxHudPoint demand{start.x + this->offset_x, start.y + this->offset_y};
+        const MapBgfxHudPoint network{end.x + this->offset_x, end.y + this->offset_y};
+        const double min_x = std::min(demand.x, network.x);
+        const double min_y = std::min(demand.y, network.y);
+        if (!onScreen(min_x - Margin, min_y - Margin,
+                      std::fabs(network.x - demand.x) + 2.0 * Margin,
+                      std::fabs(network.y - demand.y) + 2.0 * Margin))
+            continue;
+
         const bool emphasized = attachment.selected || attachment.selecting_target || attachment.moving;
         const quint32 line_color = emphasized ? emphasized_color : rgba(70, 105, 125, 190);
         const double line_width = emphasized ? 1.5 : 1.0;
-        dashedPolyline(line, line_width, 4.0 * line_width, 2.0 * line_width, 0.0, line_color);
+        const double length = std::hypot(network.x - demand.x, network.y - demand.y);
+        double t0 = 0.0;
+        double t1 = 1.0;
+        if (length > 0.0
+            && clipSegment(demand, network, -Margin, -Margin, viewport_width + Margin,
+                           viewport_height + Margin, &t0, &t1))
+        {
+            QVector<MapBgfxHudPoint> visible;
+            visible.reserve(2);
+            visible.append(MapBgfxHudPoint{demand.x + (network.x - demand.x) * t0,
+                                           demand.y + (network.y - demand.y) * t0});
+            visible.append(MapBgfxHudPoint{demand.x + (network.x - demand.x) * t1,
+                                           demand.y + (network.y - demand.y) * t1});
+            // The pattern continues from where the clipped part starts.
+            dashedPolyline(visible, line_width, 4.0 * line_width, 2.0 * line_width,
+                           t0 * length, line_color);
+        }
 
-        const MapBgfxHudPoint &network = line.last();
         const double radius = attachment.moving ? 7.0 : attachment.selected ? 6.0 : 4.5;
         const double pen = emphasized ? 2.0 : 1.5;
-        this->canvas->fillCircle(network.x, network.y, radius, rgba(255, 255, 255, emphasized ? 230 : 190));
-        this->canvas->strokeCircle(network.x, network.y, radius + 0.5 * pen, pen, line_color);
-        if (attachment.selecting_target)
-            dashedCircle(line.first().x, line.first().y, 10.0, 1.0, 1.0, 2.0, emphasized_color);
+        if ((emphasized || length >= MinimumAttachmentHandleLinePx)
+            && onScreen(network.x - radius - pen, network.y - radius - pen,
+                        2.0 * (radius + pen), 2.0 * (radius + pen)))
+        {
+            this->canvas->fillCircle(network.x, network.y, radius,
+                                     rgba(255, 255, 255, emphasized ? 230 : 190));
+            this->canvas->strokeCircle(network.x, network.y, radius + 0.5 * pen, pen, line_color);
+        }
+        if (attachment.selecting_target
+            && onScreen(demand.x - Margin, demand.y - Margin, 2.0 * Margin, 2.0 * Margin))
+            dashedCircle(demand.x, demand.y, 10.0, 1.0, 1.0, 2.0, emphasized_color);
     }
 }

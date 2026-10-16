@@ -409,6 +409,64 @@ void testFramesAndAttachments()
     req(dash_vertices >= 8 * 4, "attachment line is dashed (many dash quads)");
 }
 
+// Attachments run per frame for every demand point: culled, clipped, and
+// without handles where the line is too short to show one.
+void testAttachmentCost()
+{
+    Harness harness;
+    const MapBgfx2d::Camera view = camera();
+    const quint32 dash = MapBgfxHudCanvas::premultipliedAbgr(qRgba(70, 105, 125, 190));
+    const quint32 handle = MapBgfxHudCanvas::premultipliedAbgr(qRgba(255, 255, 255, 190));
+    const std::function<int(const MapBgfxHudCanvas &, quint32)> count =
+        [](const MapBgfxHudCanvas &canvas, quint32 abgr)
+    {
+        int result = 0;
+        for (const MapBgfxHudVertex &vertex : canvas.vertices())
+            result += vertex.abgr == abgr ? 1 : 0;
+        return result;
+    };
+    const std::function<MapEditorDemandPointAttachmentVisualState(double, double, double, double)>
+        attachment = [](double lon0, double lat0, double lon1, double lat1)
+    {
+        MapEditorDemandPointAttachmentVisualState state;
+        state.visible = true;
+        state.demand_point_coordinate_wgs84 = coordinate(lon0, lat0);
+        state.attachment_coordinate_wgs84 = coordinate(lon1, lat1);
+        state.attachment_coordinate_valid = true;
+        return state;
+    };
+
+    // Entirely off screen (0.01 deg = ~1900 px away): nothing at all.
+    Scene away = scene();
+    away.snapshot.nodes.clear();
+    away.snapshot.links.clear();
+    away.state.demand_point_attachments.append(attachment(9.01, 47.0, 9.0101, 47.0));
+    harness.build(away, view);
+    req(harness.canvas.vertices().isEmpty(), "attachment: off-screen attachment draws nothing");
+
+    // Crossing the screen from far away: only the visible dashes, a few
+    // hundred, not the ~1000 of the whole line.
+    Scene across = away;
+    across.state.demand_point_attachments.clear();
+    across.state.demand_point_attachments.append(attachment(8.99, 47.0, 9.01, 47.0));
+    harness.build(across, view);
+    const int dashes = count(harness.canvas, dash) / 4;
+    req(dashes > 50 && dashes < 160, "attachment: dashes clipped to the viewport");
+    req(count(harness.canvas, handle) == 0, "attachment: no handle when it is off screen");
+
+    // Shorter on screen than MinimumAttachmentHandleLinePx: no handle.
+    Scene tiny = away;
+    tiny.state.demand_point_attachments.clear();
+    tiny.state.demand_point_attachments.append(attachment(9.0, 47.0, 9.00003, 47.0));
+    harness.build(tiny, view);
+    req(count(harness.canvas, handle) == 0, "attachment: no handle on a short line");
+    tiny.state.demand_point_attachments[0].selected = true;
+    harness.build(tiny, view);
+    const quint32 selected_handle =
+        MapBgfxHudCanvas::premultipliedAbgr(qRgba(255, 255, 255, 230));
+    req(count(harness.canvas, selected_handle) > 0, "attachment: a selected one keeps its handle");
+}
+
 void testAntimeridian()
 {
     Harness harness;
@@ -438,6 +496,7 @@ int main(int argc, char **argv)
     testMove();
     testDiagnostics();
     testFramesAndAttachments();
+    testAttachmentCost();
     testAntimeridian();
 
     if (fails == 0)
