@@ -332,6 +332,8 @@ qt_add_executable(aowis-server-gui
     src/map/render/map_globe_surface_scene.cpp
     src/map/render/map_globe_surface_preparation.h
     src/map/render/map_globe_surface_preparation.cpp
+    src/map/render/map_globe_terrain_navigation.h
+    src/map/render/map_globe_terrain_navigation.cpp
     src/map/render/map_globe_surface_render_frame.h
     src/map/render/map_globe_surface_render_frame.cpp
     src/map/render/map_globe_heatmap_scene.h
@@ -485,6 +487,8 @@ if(AOWIS_ENABLE_BGFX_MAP)
         src/map/bgfx/map_bgfx_2d_symbology.h
         src/map/bgfx/map_bgfx_2d_picking.h
         src/map/bgfx/map_bgfx_2d_imagery_layout.h
+        src/map/bgfx/map_bgfx_2d_imagery_atlas.h
+        src/map/bgfx/map_bgfx_2d_imagery_atlas.cpp
         src/map/bgfx/map_bgfx_2d_imagery_gpu.h
         src/map/bgfx/map_bgfx_2d_imagery_gpu.cpp
         src/map/bgfx/map_bgfx_hud_canvas.h
@@ -504,6 +508,11 @@ if(AOWIS_ENABLE_BGFX_MAP)
         src/map/bgfx/map_bgfx_editor_icons.h
         src/map/bgfx/map_bgfx_editor_icons.cpp
         src/map/bgfx/map_bgfx_backend.h
+        src/map/bgfx/map_bgfx_globe_imagery.h
+        src/map/bgfx/map_bgfx_globe_network.h
+        src/map/bgfx/map_bgfx_globe_network.cpp
+        src/map/bgfx/map_bgfx_globe_surface.h
+        src/map/bgfx/map_bgfx_globe_surface.cpp
         src/map/bgfx/map_bgfx_surface.h
         src/map/bgfx/map_bgfx_surface.cpp)
     target_link_libraries(aowis-server-gui PRIVATE bgfx)
@@ -698,6 +707,16 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME aowis-bgfx-2d-imagery-layout COMMAND aowis-bgfx-2d-imagery-layout-tests)
     set_tests_properties(aowis-bgfx-2d-imagery-layout PROPERTIES LABELS "aowis")
+
+    # 2D imagery tile atlas: cell placement, gutters, texture coordinates,
+    # page sizing for the budget, LRU reuse, never evicting the drawn frame.
+    add_executable(aowis-bgfx-2d-imagery-atlas-tests tests/bgfx_2d_imagery_atlas_test.cpp
+        src/map/bgfx/map_bgfx_2d_imagery_atlas.cpp)
+    target_include_directories(aowis-bgfx-2d-imagery-atlas-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(aowis-bgfx-2d-imagery-atlas-tests PRIVATE Qt6::Core)
+    add_test(NAME aowis-bgfx-2d-imagery-atlas COMMAND aowis-bgfx-2d-imagery-atlas-tests)
+    set_tests_properties(aowis-bgfx-2d-imagery-atlas PROPERTIES LABELS "aowis")
 
     # The bgfx scene declutters coincident nodes with the shared routine.
     add_executable(aowis-bgfx-2d-scene-tests tests/bgfx_2d_scene_test.cpp
@@ -1212,6 +1231,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         DEPENDS
             aowis-bgfx-2d-projection-tests
             aowis-bgfx-2d-imagery-layout-tests
+            aowis-bgfx-2d-imagery-atlas-tests
             aowis-bgfx-2d-scene-tests
             aowis-bgfx-2d-mesh-tests
             aowis-bgfx-2d-picking-tests

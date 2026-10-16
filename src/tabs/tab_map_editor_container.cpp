@@ -375,6 +375,8 @@ void MapEditorContainer::setupBgfxEditor()
     // HUD; MapCanvasWidget stays the input owner (editor controller first,
     // then MapWidget navigation) and paints nothing.
     MapBgfxSurface *surface = new MapBgfxSurface(this->map_model, this->map_stack);
+    // The editor is 2D only: no globe GPU setup, no 3D in its HUD.
+    surface->setGlobeOffered(false);
     surface->setObjectName(QStringLiteral("aowis-bgfx-editor-surface"));
     this->bgfx_surface = surface;
     // Editor HUD: crosshair, scale bar, the 2D/3D switch (3D is offered once

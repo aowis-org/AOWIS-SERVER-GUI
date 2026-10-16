@@ -43,8 +43,8 @@ endforeach()
 if(EMSCRIPTEN)
     set(aowis_bgfx_default_renderers OPENGLES)
 elseif(WIN32)
-    # dx11 shaders can only be compiled on a Windows host; until they are
-    # committed, bgfx's D3D11 pick is rejected and OpenGL is used.
+    # dx11 shaders are committed like the others (compiled on Linux under
+    # Wine, see cmake/aowis_bgfx_shaders.cmake); OpenGL stays as fallback.
     set(aowis_bgfx_default_renderers DIRECT3D11 OPENGL)
 elseif(APPLE)
     set(aowis_bgfx_default_renderers METAL)

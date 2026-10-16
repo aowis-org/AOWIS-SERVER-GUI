@@ -11,8 +11,12 @@
 # * the SPIRV-Tools reducer (spirv-reduce, never called by shaderc),
 # What remains is the shaderc front end and preprocessor, glslang
 # (GLSL -> SPIR-V), the SPIRV-Tools optimizer/validator and SPIRV-Cross
-# (SPIR-V -> GLSL/ESSL/MSL). DXBC (dx11) is produced only on a Windows host,
-# through the Windows SDK's d3dcompiler, exactly as before.
+# (SPIR-V -> GLSL/ESSL/MSL). DXBC (dx11) comes from Microsoft's
+# d3dcompiler_47.dll, which bgfx ships in tools/bin/windows: on a Windows host
+# shaderc loads it directly (copied next to the executable, so Windows' own
+# or Wine's builtin compiler is never picked); on Linux and macOS shaderc runs
+# it through bgfx's d3d4linux helper (tools/bin/windows/d3d4linux.exe) under
+# Wine.
 #
 # Requires: AOWIS_BGFX_DIR (external/bgfx) and the bx target from
 # aowis_bgfx.cmake. Host-only: never include this for an Emscripten build.
@@ -28,7 +32,8 @@ set(AOWIS_BGFX_SPIRV_CROSS_DIR "${AOWIS_BGFX_DIR}/3rdparty/spirv-cross")
 foreach(aowis_bgfx_tool_dir
         "${AOWIS_BGFX_GLSLANG_DIR}" "${AOWIS_BGFX_SPIRV_TOOLS_DIR}"
         "${AOWIS_BGFX_SPIRV_HEADERS_DIR}" "${AOWIS_BGFX_SPIRV_CROSS_DIR}"
-        "${AOWIS_BGFX_DIR}/tools/shaderc")
+        "${AOWIS_BGFX_DIR}/tools/shaderc" "${AOWIS_BGFX_DIR}/3rdparty/d3d4linux"
+        "${AOWIS_BGFX_DIR}/tools/bin/windows")
     if(NOT IS_DIRECTORY "${aowis_bgfx_tool_dir}")
         message(FATAL_ERROR
             "${aowis_bgfx_tool_dir} is missing. The shader tools need the full "
@@ -117,12 +122,38 @@ target_link_libraries(aowis-bgfx-shaderc PRIVATE
     bimg bx aowis-bgfx-glslang aowis-bgfx-spirv-opt aowis-bgfx-spirv-cross)
 # Upstream switches (tools/shaderc/shaderc.h); no source edits. Without the
 # Tint headers on the include path __has_include would already disable WGSL,
-# the explicit 0 documents it. D3DCOMPILER stays automatic on Windows (SDK).
+# the explicit 0 documents it. The D3D compiler is found by __has_include:
+# <d3dcompiler.h> on Windows, <d3d4linux.h> elsewhere.
 target_compile_definitions(aowis-bgfx-shaderc PRIVATE
     SHADERC_CONFIG_HAS_TINT=0
     SHADERC_CONFIG_HAS_DXC=0)
 if(NOT WIN32)
-    # d3d4linux would need Wine and the Windows d3dcompiler DLL.
-    target_compile_definitions(aowis-bgfx-shaderc PRIVATE SHADERC_CONFIG_HAS_D3DCOMPILER=0)
+    # As upstream's scripts/shaderc.lua: d3d4linux plus the Win32 type
+    # adapter of the DirectX headers (already in the runtime sparse set).
+    target_include_directories(aowis-bgfx-shaderc PRIVATE
+        "${AOWIS_BGFX_DIR}/3rdparty/d3d4linux/include"
+        "${AOWIS_BGFX_DIR}/3rdparty/directx-headers/include"
+        "${AOWIS_BGFX_DIR}/3rdparty/directx-headers/include/wsl/stubs")
 endif()
-set_target_properties(aowis-bgfx-shaderc PROPERTIES OUTPUT_NAME aowis-bgfx-shaderc)
+# shaderc looks for the D3D compiler relative to its own executable: Windows
+# next to it, d3d4linux in ../windows/ (shaderc_hlsl.cpp). Both layouts in one
+# build-tree folder: bin/ for the executable, windows/ for the helper.
+set(AOWIS_BGFX_SHADERC_ROOT "${CMAKE_BINARY_DIR}/aowis-bgfx-shaderc")
+set_target_properties(aowis-bgfx-shaderc PROPERTIES
+    OUTPUT_NAME aowis-bgfx-shaderc
+    RUNTIME_OUTPUT_DIRECTORY "${AOWIS_BGFX_SHADERC_ROOT}/bin")
+if(WIN32)
+    set(aowis_bgfx_d3d_runtime "${AOWIS_BGFX_SHADERC_ROOT}/bin")
+    set(aowis_bgfx_d3d_files d3dcompiler_47.dll)
+else()
+    set(aowis_bgfx_d3d_runtime "${AOWIS_BGFX_SHADERC_ROOT}/windows")
+    set(aowis_bgfx_d3d_files d3d4linux.exe d3dcompiler_47.dll)
+endif()
+foreach(aowis_bgfx_d3d_file IN LISTS aowis_bgfx_d3d_files)
+    add_custom_command(TARGET aowis-bgfx-shaderc POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${aowis_bgfx_d3d_runtime}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${AOWIS_BGFX_DIR}/tools/bin/windows/${aowis_bgfx_d3d_file}"
+            "${aowis_bgfx_d3d_runtime}/${aowis_bgfx_d3d_file}"
+        VERBATIM)
+endforeach()

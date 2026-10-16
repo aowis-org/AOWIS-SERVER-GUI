@@ -5,6 +5,8 @@
 #include "map/bgfx/map_bgfx_2d_gpu.h"
 #include "map/bgfx/map_bgfx_2d_imagery_gpu.h"
 #include "map/bgfx/map_bgfx_2d_symbology.h"
+#include "map/bgfx/map_bgfx_globe_network.h"
+#include "map/bgfx/map_bgfx_globe_surface.h"
 #include "map/bgfx/map_bgfx_hud.h"
 #include "map/bgfx/map_bgfx_hud_canvas.h"
 #include "map/bgfx/map_bgfx_hud_gpu.h"
@@ -13,6 +15,8 @@
 #include "map/bgfx/map_bgfx_pan_reuse.h"
 #include "map/core/map_frame_pacer.h"
 #include "map/render/map_camera_view_state.h"
+#include "map/render/map_globe_camera.h"
+#include "map/render/map_globe_terrain_navigation.h"
 #include "map/render/map_network_render_symbology.h"
 #include "map/render/map_render_surface.h"
 #include "map/render/map_retained_network_scene.h"
@@ -47,7 +51,8 @@ class QWindow;
 // The map editor uses a second instance (Phase 2): hidden entities and the
 // network screen translation for its move preview, and an overlay pass
 // (setOverlayBuilder()) for its icons and interaction feedback. The globe is
-// NOT yet implemented.
+// in progress (Phase 3): terrain surface, terrain-aware navigation and the
+// network with its heatmap (on by default; AOWIS_BGFX_GLOBE=0 disables it).
 //
 // One bgfx device per process: it belongs to the visible surface. Hiding a
 // surface (tab switch) shuts bgfx down; showing one starts it again, so the
@@ -64,10 +69,17 @@ public:
     // 2D picking with the QRhi rules (map_bgfx_2d_picking.h) at the current
     // continuous camera. Globe picking arrives with the bgfx globe.
     MapRenderHit hitTest(const QPointF &screen_position) const override;
-    bool terrainCoordinateAtScreen(const QPointF &, CoordinateWGS84 *, bool = true) override { return false; }
-    bool cachedTerrainElevationAtCoordinate(const CoordinateWGS84 &, double *) const override { return false; }
-    bool globeSurfaceRayHitAtScreen(const QPointF &, MapGlobeSurfaceHit *) const override { return false; }
-    bool panGlobeByTerrainPixels(const QPoint &) override { return false; }
+    // Terrain-aware navigation (Phase 3, slice 2; MapGlobeTerrainNavigation):
+    // pointer coordinates with DEM altitude (2D: cached DEM only), rays
+    // against the drawn terrain meshes, terrain-anchored globe panning. The
+    // camera-height follow runs inside this surface.
+    bool terrainCoordinateAtScreen(const QPointF &screen_position, CoordinateWGS84 *coordinate,
+                                   bool request_missing_tile = true) override;
+    bool cachedTerrainElevationAtCoordinate(const CoordinateWGS84 &coordinate,
+                                            double *elevation_m) const override;
+    bool globeSurfaceRayHitAtScreen(const QPointF &screen_position,
+                                    MapGlobeSurfaceHit *hit) const override;
+    bool panGlobeByTerrainPixels(const QPoint &delta_pixels) override;
 
     // Keyboard events originate from the embedded QWindow on native desktop.
     // Forward them to the shared map-navigation owner; bgfx must not implement
@@ -109,17 +121,32 @@ public:
     void setSymbology(const MapNetworkRenderSymbology &symbology) override;
     void setVisualControlSettings(const NetworkSymbologySettings &settings) override;
     void setTileRepository(MapTileRepository *tile_repository) override;
-    void setTerrainRepository(MapTerrainRepository *) override {}
+    void setTerrainRepository(MapTerrainRepository *terrain_repository) override;
     void setBackgroundOpacity(int opacity) override;
     void setSelectedEntity(InfrastructureEntity entity_type, const QUuid &uuid) override;
     void setSimulationErrorEntities(const QHash<QUuid, InfrastructureEntity> &error_entities,
                                     const QSet<QUuid> &stale_entity_uuids) override;
-    void setGlobe3dIconsEnabled(bool) override {}
-    void setUndergroundMode(MapUndergroundMode mode) override { this->underground_mode = mode; }
+    // Globe network (slice 3): tank/reservoir as 3D models instead of icons;
+    // underground pipes Solid (through the terrain), X-Ray (buried runs
+    // dashed through the terrain) or Hide.
+    void setGlobe3dIconsEnabled(bool enabled) override;
+    void setUndergroundMode(MapUndergroundMode mode) override;
     MapUndergroundMode undergroundMode() const override { return this->underground_mode; }
-    void setTerrainWireframeVisible(bool) override {}
-    void setMapTilesVisible(bool) override {}
+    void setTerrainWireframeVisible(bool visible) override;
+    void setMapTilesVisible(bool visible) override;
     void globeTerrainMeshProgress(int *completed, int *total, bool *active) const override;
+
+    // --- Globe on bgfx (roadmap Phase 3, in progress) -----------------------------
+    // Slices 1-3: terrain surface (imagery, DEM relief, caps, wireframe),
+    // terrain-aware navigation, the network and its heatmap (no globe
+    // picking or globe HUD controls yet). On by default;
+    // AOWIS_BGFX_GLOBE=0 switches it off (the HUD then offers no 3D).
+    static bool globePreviewEnabled();
+    // The globe surface initialized on this device (preview enabled).
+    bool globeAvailable() const { return this->globe_ready; }
+    // Surfaces that never show the globe (the editor, 2D only) skip its GPU
+    // setup and offer no 3D. Call before the surface is first shown.
+    void setGlobeOffered(bool offered) { this->globe_offered = offered; }
 
     // Planned native-window changes (fullscreen reparenting, desktop): shut
     // bgfx down while the old native surface still exists, restart once the
@@ -252,6 +279,25 @@ private:
     void beginInitialization();
     // Draws the editor overlay (when a builder is set) for this frame.
     void renderOverlay(const QSizeF &logical, const MapBgfx2d::Camera &camera);
+    // Globe mode: terrain surface with the frame's camera (slice 1).
+    void renderGlobe(const QSizeF &logical);
+    // The globe's viewport: logical pixels of the drawn surface, rounded.
+    QSize globeViewportSize() const;
+    // One camera-height step of the terrain follow while the bgfx globe is
+    // shown (slice 2); see MapGlobeTerrainNavigation::syncCameraHeight().
+    void syncGlobeCameraHeight(bool request_missing_tile);
+    // The symbology for the globe network: the icon fill themed like the
+    // QRhi monitor (light theme: soft pink).
+    MapNetworkRenderSymbology globeSymbology() const;
+    // The globe heatmap's markers (node positions, ramp colours of the
+    // heatmap metric), radius and solid centre from the symbology, as
+    // MapRhiWidget::syncGlobeHeatmapOverlay(): a pixel radius is converted
+    // at the current orbit distance when the heatmap data or style change.
+    void syncGlobeHeatmap();
+    // X-Ray classification against the cached DEM, 500 ms after the last
+    // camera change or terrain arrival and only once no terrain mesh is
+    // being built (as the QRhi globe): never on the pan/zoom hot path.
+    void scheduleGlobeUndergroundRefresh();
     // Map labels with the network's camera (the editor's full-network move
     // included); rebuilt only when the camera or the content changed.
     void renderLabels(const QSizeF &logical, const MapBgfx2d::Camera &network_camera,
@@ -292,6 +338,30 @@ private:
     bool highlight_show_junctions = true;
     MapBgfx2dImageryGpu imagery_gpu;
     MapTileRepository *tile_repository = nullptr;
+    // Globe (Phase 3): camera (sticky render origin) and terrain surface;
+    // the surface shares imagery_gpu's atlas with the 2D map.
+    MapGlobeCamera globe_camera;
+    std::unique_ptr<MapBgfxGlobeSurface> globe_surface;
+    MapTerrainRepository *terrain_repository = nullptr;
+    // Terrain-aware navigation over globe_surface's retained DEM meshes.
+    MapGlobeTerrainNavigation terrain_navigation;
+    // The network on the globe (slice 3); its inputs are applied lazily on
+    // globe frames. Ready: its programs exist on this device.
+    MapBgfxGlobeNetwork globe_network;
+    bool globe_network_ready = false;
+    // X-Ray refresh wanted, and the generation of the pending quiet timer.
+    bool globe_underground_refresh_requested = false;
+    quint64 globe_underground_refresh_generation = 0;
+    // A network arrived in Globe mode: the next fitted camera loads its
+    // visible DEM tiles at once (one shot, like the QRhi globe).
+    bool globe_terrain_prime_pending = false;
+    bool globe_ready = false;
+    bool globe_offered = true;
+    // Imagery uploads or terrain meshes outstanding: keep presenting.
+    bool globe_pending = false;
+    // View mode of the last presented frame: a switch starts new tile
+    // request batches for the mode now shown.
+    MapViewMode presented_view_mode = MapViewMode::TwoD;
     quint64 imagery_layout_key = 0;
     quint64 imagery_request_batch = 0;
     bool imagery_requests_dirty = true;

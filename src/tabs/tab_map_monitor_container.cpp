@@ -460,6 +460,31 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         // 2D imagery is drawn by bgfx itself from the shared tile repository;
         // the "slide opacity" fades it towards the background under the network.
         surface->setTileRepository(this->tile_repository);
+        // DEM tiles for the globe's terrain relief (Phase 3 preview).
+        surface->setTerrainRepository(this->terrain_repository);
+        // Terrain-aware navigation (Phase 3, slice 2), as on the QRhi
+        // surface: pointer coordinates with DEM altitude (the 2D footer
+        // reads cached DEM tiles too), globe pans anchored to the drawn
+        // terrain. MapWidget keeps owning the navigation.
+        this->map->setRenderSurfaceScreenCoordinateResolver(
+            [surface](const QPointF &screen_position, CoordinateWGS84 *coordinate)
+        {
+            return surface->terrainCoordinateAtScreen(screen_position, coordinate, true);
+        });
+        this->map->setCachedTerrainElevationResolver(
+            [surface](const CoordinateWGS84 &coordinate, double *elevation_m)
+        {
+            return surface->cachedTerrainElevationAtCoordinate(coordinate, elevation_m);
+        });
+        this->map->setRenderSurfaceGlobeTerrainPanResolver(
+            [surface](const QPoint &delta_pixels)
+        {
+            return surface->panGlobeByTerrainPixels(delta_pixels);
+        });
+        // Globe network (slice 3): tanks and reservoirs as 3D models.
+        connect(this->map_menu->mapNavigationWidget(),
+                &MapNavigationWidget::signal3dIconsChanged,
+                surface, [surface](bool enabled) { surface->setGlobe3dIconsEnabled(enabled); });
         surface->setBackgroundOpacity(this->network_background_opacity);
         connect(this->map_menu->mapNavigationWidget(),
                 &MapNavigationWidget::signalSlideOpacityChanged,
@@ -1303,10 +1328,11 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
 
 MapMonitorContainer::~MapMonitorContainer()
 {
-#if AOWIS_HAS_QRHI
+    // The resolvers capture the render surface (QRhi or bgfx).
     this->map->setRenderSurfaceScreenCoordinateResolver(MapWidget::ScreenCoordinateResolver());
     this->map->setRenderSurfaceGlobeTerrainPanResolver(MapWidget::GlobeTerrainPanResolver());
     this->map->setCachedTerrainElevationResolver(MapWidget::CachedTerrainElevationResolver());
+#if AOWIS_HAS_QRHI
     if (this->desktop_scene_fullscreen_active)
         setDesktopRenderSurfaceFullscreen(false);
 #endif
@@ -1967,7 +1993,11 @@ void MapMonitorContainer::handleBgfxHudAction(int action, int group, int value, 
                 this->map_model->setViewMode(MapViewMode::TwoD);
             break;
         case MapBgfxHud::Action::ViewMode3d:
-            // Offered (enabled) only once the bgfx globe exists (Phase 3).
+            // Offered (enabled) only with the bgfx globe (on by default,
+            // AOWIS_BGFX_GLOBE=0 disables it: MapBgfxSurface::globePreviewEnabled()).
+            if (this->bgfx_surface != nullptr && this->bgfx_surface->globeAvailable()
+                && this->map_model->viewMode() != MapViewMode::Globe)
+                this->map_model->setViewMode(MapViewMode::Globe, this->map->size());
             break;
         case MapBgfxHud::Action::ToggleFullscreen:
 #ifndef Q_OS_WASM

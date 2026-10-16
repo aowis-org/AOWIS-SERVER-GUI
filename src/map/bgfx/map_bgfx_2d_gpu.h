@@ -43,6 +43,9 @@ public:
     // True after a geometry (re)upload until updateColors() ran: the attribute
     // stream must match the new vertex counts before anything is drawn.
     bool colorsStale() const { return this->colors_stale; }
+    // The network icon atlas (with mips); the globe network draws its icons
+    // from it too.
+    bgfx::TextureHandle iconAtlasTexture() const { return this->icon_atlas_texture; }
     // Rebuilds and uploads only the attribute stream (symbology change).
     bool updateColors(const MapBgfx2dMesh::ColorLookup &lookup,
                       const MapBgfx2dMesh::FlowLookup &flow);

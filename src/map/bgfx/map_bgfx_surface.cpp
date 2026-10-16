@@ -2,6 +2,7 @@
 
 #include "map/bgfx/map_bgfx_backend.h"
 #include "map/core/map_model.h"
+#include "map/data/map_terrain_repository.h"
 #include "map/data/map_tile_repository.h"
 #include "map/bgfx/map_bgfx_2d_picking.h"
 #include "map/core/map_scale_distance.h"
@@ -11,6 +12,7 @@
 #include "map/bgfx/map_bgfx_2d_symbology.h"
 #include "map/render/map_icon_atlas.h"
 #include "network/infrastructure_entity_traits.h"
+#include "network/network_symbology_rendering.h"
 
 #include <QByteArray>
 #include <QDebug>
@@ -30,6 +32,7 @@
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <QWindow>
+#include <QtMath>
 
 #include <bgfx/bgfx.h>
 
@@ -90,8 +93,9 @@ MapBgfxSurface *g_bgfx_device_owner = nullptr;
 // HUD and imagery: bgfx's defaults are 6 MiB vertices / 2 MiB indices.
 constexpr uint32_t kTransientVertexBytes = 16u << 20;
 constexpr uint32_t kTransientIndexBytes = 8u << 20;
-// Tile texture uploads per frame (~256 KiB each). Enough to fill a screen
-// within a few frames, small enough to never cost a frame while streaming.
+// Tile uploads per frame (~256 KiB each, atlas cell updates). Enough to fill
+// a screen within a few frames, small enough to never cost a frame while
+// streaming.
 constexpr int kImageryUploadsPerFrame = 8;
 // VSYNC: presentation pacing (see MapFramePacer). MSAA x4: antialiased thick
 // line and marker edges; bgfx clamps it to what the renderer supports.
@@ -145,11 +149,109 @@ quintptr g_bgfx_frame_loop_generation = 0;
 }
 
 MapBgfxSurface::MapBgfxSurface(MapModel *model, QWidget *parent)
-    : QWidget(parent), map_model(model)
+    : QWidget(parent), map_model(model), terrain_navigation(model)
 {
     Q_ASSERT(this->map_model != nullptr);
     setObjectName(QStringLiteral("aowis-bgfx-monitor-surface"));
     this->camera_state = this->map_model->cameraViewState();
+    this->globe_surface = std::make_unique<MapBgfxGlobeSurface>(this->map_model);
+    // Rays and the visible terrain LOD come from the meshes the globe draws.
+    this->terrain_navigation.setSurfacePreparation(&this->globe_surface->preparation());
+    // --- Globe network (slice 3) --------------------------------------------
+    // X-Ray classifies the network against the DEM the globe shows; the
+    // network follows the shared vertical transform (exaggeration, ground
+    // offset) of the terrain.
+    this->globe_network.setTerrainElevationResolver(
+        [this](const CoordinateWGS84 &coordinate, double *elevation_m, double *cell_size_m)
+    {
+        return this->terrain_navigation.terrainElevationAtCoordinate(coordinate, elevation_m, cell_size_m);
+    });
+    this->globe_network.setGroundOffsetM(this->map_model->view3dNetworkGroundOffsetM());
+    this->globe_network.setVerticalExaggeration(this->map_model->view3dVerticalExaggeration());
+    this->globe_network.setUndergroundMode(this->underground_mode);
+    connect(this->map_model, &MapModel::view3dNetworkGroundOffsetChanged, this, [this](double offset_m)
+    {
+        this->globe_network.setGroundOffsetM(offset_m);
+        requestRedraw();
+    });
+    // --- Terrain-aware globe camera (slice 2), as the QRhi globe ----------
+    // The orbit rig follows the DEM under the eye. Camera changes take a
+    // filter step at once (and request the DEM tile under the eye); the
+    // frame loop continues while it settles (renderFrameAt()). The height
+    // offsets change the camera state, so they present frames by themselves.
+    connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode view_mode)
+    {
+        if (!this->globe_ready)
+            return;
+        this->terrain_navigation.stopFollowing();
+        // Heatmap markers exist only on the globe.
+        syncGlobeHeatmap();
+        if (view_mode == MapViewMode::Globe)
+        {
+            // Window selection from scratch for the camera entering now.
+            this->globe_surface->invalidateTerrainView();
+            syncGlobeCameraHeight(true);
+        }
+        else
+        {
+            this->map_model->setViewGlobeCameraCollisionLiftM(0.0);
+            // No X-Ray classification outside the globe.
+            this->globe_underground_refresh_requested = false;
+            ++this->globe_underground_refresh_generation;
+        }
+    });
+    connect(this->map_model, &MapModel::centerChangedWGS84, this, [this]
+    {
+        // A network fit can move the centre before it sets the final
+        // distance: while the one-shot prime is pending, request the DEM of
+        // this centre at once; viewGlobeCameraChanged consumes the prime.
+        const bool prime_terrain = this->globe_terrain_prime_pending
+            && this->terrain_repository != nullptr && this->globe_ready
+            && this->map_model->viewMode() == MapViewMode::Globe;
+        syncGlobeCameraHeight(true);
+        if (prime_terrain)
+            this->globe_surface->requestTerrainForCurrentView(globeViewportSize());
+    });
+    connect(this->map_model, &MapModel::viewGlobeCameraChanged, this, [this]
+    {
+        const bool prime_terrain = this->globe_terrain_prime_pending
+            && this->terrain_repository != nullptr && this->globe_ready
+            && this->map_model->viewMode() == MapViewMode::Globe;
+        if (prime_terrain)
+            this->globe_terrain_prime_pending = false;
+        syncGlobeCameraHeight(true);
+        if (prime_terrain)
+            this->globe_surface->requestTerrainForCurrentView(globeViewportSize());
+        // Other terrain under the network: classify again once it settled.
+        if (this->underground_mode == MapUndergroundMode::XRay)
+        {
+            this->globe_underground_refresh_requested = true;
+            scheduleGlobeUndergroundRefresh();
+        }
+    });
+    connect(this->map_model, &MapModel::view3dNavigationStateChanged, this,
+            [this](MapView3dNavigationState state)
+    {
+        if (!this->globe_ready || this->map_model->viewMode() != MapViewMode::Globe)
+            return;
+        this->terrain_navigation.stopFollowing();
+        // Entering an orbit is a pure state change (re-anchoring here would
+        // jump the map before any orbit delta); the orbit's camera changes
+        // drive the collision lift. Its end resumes ordinary following.
+        if (state == MapView3dNavigationState::Rotate)
+            return;
+        syncGlobeCameraHeight(true);
+    });
+    connect(this->map_model, &MapModel::view3dVerticalExaggerationChanged, this, [this](double)
+    {
+        // Every terrain mesh is rebuilt with the new exaggeration (vertex
+        // patches), the network is placed again; the rig follows the
+        // exaggerated height under the eye.
+        this->globe_surface->invalidateTerrain();
+        this->globe_network.setVerticalExaggeration(this->map_model->view3dVerticalExaggeration());
+        syncGlobeCameraHeight(false);
+        requestRedraw();
+    });
     // A provider switch reuses the same tile ids for different pixels. The
     // new imagery must be drawn at once (on-demand rendering): tiles already
     // in the repository cache arrive without any signalTileAvailable.
@@ -159,6 +261,7 @@ MapBgfxSurface::MapBgfxSurface(MapModel *model, QWidget *parent)
             this->imagery_gpu.clearTextures();
         this->imagery_layout_key = 0;
         this->imagery_requests_dirty = true;
+        this->globe_surface->requestAgain();
         requestRedraw();
     });
     // A unit profile switch changes the scale bar label (HUD).
@@ -443,17 +546,118 @@ QWindow *MapBgfxSurface::nativeInputWindow() const
 void MapBgfxSurface::globeTerrainMeshProgress(int *completed, int *total,
                                              bool *active) const
 {
-    if (completed != nullptr)
-        *completed = 0;
-    if (total != nullptr)
-        *total = 0;
-    if (active != nullptr)
-        *active = false;
+    this->globe_surface->terrainMeshProgress(completed, total, active);
+}
+
+bool MapBgfxSurface::globePreviewEnabled()
+{
+    // On unless AOWIS_BGFX_GLOBE is set to 0.
+    static const bool enabled = []()
+    {
+        bool is_number = false;
+        const int value = qEnvironmentVariableIntValue("AOWIS_BGFX_GLOBE", &is_number);
+        return !is_number || value != 0;
+    }();
+    return enabled;
+}
+
+void MapBgfxSurface::setTerrainRepository(MapTerrainRepository *terrain_repository)
+{
+    requestRedraw();
+    if (this->terrain_repository == terrain_repository)
+        return;
+    if (this->terrain_repository != nullptr)
+        QObject::disconnect(this->terrain_repository, nullptr, this, nullptr);
+    this->terrain_repository = terrain_repository;
+    this->globe_surface->setTerrainRepository(terrain_repository);
+    this->terrain_navigation.setTerrainRepository(terrain_repository);
+    if (this->terrain_repository == nullptr)
+        return;
+    // DEM tiles feed the terrain meshes (built asynchronously, applied by
+    // the next frames); a retryable tile is requested again by the next
+    // frame's preparation.
+    connect(this->terrain_repository, &MapTerrainRepository::signalTerrainTileAvailable, this,
+            [this](const QString &key)
+    {
+        this->globe_surface->notifyTerrainTileAvailable(key);
+        // The DEM under the eye may just have arrived.
+        syncGlobeCameraHeight(false);
+        if (this->underground_mode == MapUndergroundMode::XRay)
+        {
+            this->globe_underground_refresh_requested = true;
+            scheduleGlobeUndergroundRefresh();
+        }
+        requestRedraw();
+    });
+    connect(this->terrain_repository, &MapTerrainRepository::signalTerrainTileRetryReady, this,
+            [this](const QString &) { requestRedraw(); });
+    // Possibly already in Globe mode: the height under the camera now, with
+    // priority for that exact DEM tile.
+    syncGlobeCameraHeight(true);
+}
+
+QSize MapBgfxSurface::globeViewportSize() const
+{
+    const QSizeF logical = logicalSize();
+    return QSize(std::max(1, qRound(logical.width())), std::max(1, qRound(logical.height())));
+}
+
+void MapBgfxSurface::syncGlobeCameraHeight(bool request_missing_tile)
+{
+    if (!this->globe_ready)
+        return;
+    this->terrain_navigation.setViewportSize(globeViewportSize());
+    this->terrain_navigation.syncCameraHeight(request_missing_tile);
+}
+
+bool MapBgfxSurface::terrainCoordinateAtScreen(const QPointF &screen_position,
+                                               CoordinateWGS84 *coordinate, bool)
+{
+    // Without the bgfx globe drawn, a Globe ray meets the ellipsoid (no
+    // retained meshes); 2D reads the flat map with a cached DEM altitude.
+    this->terrain_navigation.setViewportSize(globeViewportSize());
+    return this->terrain_navigation.terrainCoordinateAtScreen(screen_position, coordinate);
+}
+
+bool MapBgfxSurface::cachedTerrainElevationAtCoordinate(const CoordinateWGS84 &coordinate,
+                                                        double *elevation_m) const
+{
+    return this->terrain_navigation.cachedTerrainElevationAtCoordinate(coordinate, elevation_m);
+}
+
+bool MapBgfxSurface::globeSurfaceRayHitAtScreen(const QPointF &screen_position,
+                                                MapGlobeSurfaceHit *hit) const
+{
+    // Viewport as of the last frame or resize.
+    return this->terrain_navigation.surfaceRayHitAtScreen(screen_position, hit);
+}
+
+bool MapBgfxSurface::panGlobeByTerrainPixels(const QPoint &delta_pixels)
+{
+    // Only over drawn terrain meshes; false lets MapWidget pan the ellipsoid.
+    if (!this->globe_ready)
+        return false;
+    this->terrain_navigation.setViewportSize(globeViewportSize());
+    return this->terrain_navigation.panByTerrainPixels(delta_pixels);
+}
+
+void MapBgfxSurface::setTerrainWireframeVisible(bool visible)
+{
+    requestRedraw();
+    this->globe_surface->setWireframeVisible(visible);
+}
+
+void MapBgfxSurface::setMapTilesVisible(bool visible)
+{
+    requestRedraw();
+    this->globe_surface->setMapVisible(visible);
 }
 
 void MapBgfxSurface::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
 {
     requestRedraw();
+    // The globe builds its geometry on its next frame (implicitly shared).
+    this->globe_network.setNetworkSnapshot(snapshot);
     // Retained geometry revisions change only with model changes, not zoom.
     const MapRetainedNetworkUpdate update = this->retained_scene.setSnapshot(snapshot);
     // New entities or renamed ones: the labels read the IDs again.
@@ -479,6 +683,16 @@ void MapBgfxSurface::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
         }
         this->highlights_dirty = true;
     }
+    // A network opened in Globe mode: load the DEM of the current camera now
+    // and arm the one-shot for the fitted camera that normally follows
+    // (signalNetworkLoaded fits after the snapshot).
+    if (update.geometry_changed && this->globe_ready && this->terrain_repository != nullptr
+        && this->map_model->viewMode() == MapViewMode::Globe)
+    {
+        this->globe_terrain_prime_pending = true;
+        syncGlobeCameraHeight(true);
+        this->globe_surface->requestTerrainForCurrentView(globeViewportSize());
+    }
     if (update.geometry_changed && this->prepared_2d_scene.prepare(this->retained_scene))
     {
         qInfo() << "bgfx retained geometry prepared" << snapshot.geometry_revision
@@ -488,6 +702,9 @@ void MapBgfxSurface::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
                 << "nodes incl. demand points" << this->prepared_2d_scene.networkNodes().size()
                 << "attachments" << this->prepared_2d_scene.attachments().size();
     }
+    // The heatmap's markers sit on the nodes.
+    if (update.geometry_changed)
+        syncGlobeHeatmap();
 }
 
 void MapBgfxSurface::setNodeDeclutteringEnabled(bool enabled)
@@ -498,6 +715,7 @@ void MapBgfxSurface::setNodeDeclutteringEnabled(bool enabled)
     this->prepared_2d_scene.setDeclutteringEnabled(enabled);
     if (this->retained_scene.hasSnapshot())
         this->prepared_2d_scene.prepare(this->retained_scene);
+    this->globe_network.setNodeDeclutteringEnabled(enabled);
 }
 
 void MapBgfxSurface::setSelectedEntity(InfrastructureEntity entity_type, const QUuid &uuid)
@@ -508,6 +726,7 @@ void MapBgfxSurface::setSelectedEntity(InfrastructureEntity entity_type, const Q
     this->selected_entity_type = entity_type;
     this->selected_entity_uuid = uuid;
     this->highlights_dirty = true;
+    this->globe_network.setSelectedEntity(entity_type, uuid);
 }
 
 void MapBgfxSurface::setSimulationErrorEntities(
@@ -521,6 +740,7 @@ void MapBgfxSurface::setSimulationErrorEntities(
     this->simulation_error_entities = error_entities;
     this->simulation_stale_entity_uuids = stale_entity_uuids;
     this->highlights_dirty = true;
+    this->globe_network.setSimulationErrorEntities(error_entities, stale_entity_uuids);
 }
 
 MapRenderHit MapBgfxSurface::hitTest(const QPointF &screen_position) const
@@ -652,6 +872,10 @@ void MapBgfxSurface::synchronizeHighlights()
 
 void MapBgfxSurface::releaseGpuResources()
 {
+    this->globe_network.release();
+    this->globe_network_ready = false;
+    this->globe_surface->release();
+    this->globe_ready = false;
     this->imagery_gpu.release();
     this->gpu_2d_scene.release();
     this->hud_gpu.release();
@@ -802,6 +1026,8 @@ void MapBgfxSurface::setHiddenEntityUuids(const QSet<QUuid> &uuids)
     this->hidden_entity_uuids = uuids;
     // Only the colour stream changes (alpha 0 for hidden entities).
     this->symbology_colors_dirty = true;
+    this->globe_network.setHiddenEntityUuids(uuids);
+    syncGlobeHeatmap();
     // Moved entities lose their labels during the move.
     this->labels_dirty = true;
 }
@@ -960,6 +1186,40 @@ void MapBgfxSurface::renderOverlay(const QSizeF &logical, const MapBgfx2d::Camer
     this->overlay_gpu.draw(kMapBgfxView, this->overlay_canvas, logical, offset);
 }
 
+void MapBgfxSurface::renderGlobe(const QSizeF &logical)
+{
+    // The camera is the model's, sampled for this frame like the 2D one; its
+    // viewport is logical pixels (as the QRhi globe's), its sticky origin is
+    // advanced once per frame.
+    const QSize viewport(std::max(1, qRound(logical.width())), std::max(1, qRound(logical.height())));
+    this->globe_camera.setViewportSize(viewport);
+    // Rays between frames use the viewport drawn last.
+    this->terrain_navigation.setViewportSize(viewport);
+    this->globe_camera.syncFromMapModel(*this->map_model);
+    this->globe_camera.updateRenderOrigin();
+    MapBgfxGlobeSurface::FrameInputs inputs;
+    inputs.logical_viewport = viewport;
+    inputs.background = palette().color(QPalette::Window);
+    inputs.background_opacity = double(this->background_opacity) / 100.0;
+    inputs.upload_budget = kImageryUploadsPerFrame;
+    inputs.heatmap_opacity = this->symbology.visual_heatmap != VisualHeatmap::None
+        ? double(this->symbology.heatmap_opacity) / 100.0 : 0.0;
+    const MapBgfxGlobeSurface::FrameResult result =
+        this->globe_surface->render(kMapBgfxView, this->globe_camera, &this->imagery_gpu, inputs);
+    // The atlas' frame (LRU, budget trim) advances in either mode.
+    this->imagery_gpu.endFrame();
+    this->globe_pending = result.pending;
+    this->imagery_quad_count = result.tiles_drawn;
+    // The network on top of the terrain, in the same view (its depth
+    // tests run against the terrain's depth).
+    if (this->globe_network_ready)
+    {
+        const MapBgfxGlobeNetwork::FrameResult network = this->globe_network.render(
+            kMapBgfxView, this->globe_camera, viewport, this->gpu_2d_scene.iconAtlasTexture());
+        this->network_frame_stats.draw_calls += network.draw_calls;
+    }
+}
+
 void MapBgfxSurface::renderLabels(const QSizeF &logical, const MapBgfx2d::Camera &network_camera,
                                   const MapBgfx2dSymbology::Sizes &sizes)
 {
@@ -1086,8 +1346,9 @@ void MapBgfxSurface::renderHud(const QSizeF &logical, const MapBgfx2d::Camera &c
     this->hud_text_cache.setDevicePixelRatio(ratio);
     if (hud_screen != nullptr)
         this->hud_text_cache.setLogicalDpi(hud_screen->logicalDotsPerInch());
-    // 3D is offered once the bgfx globe exists (Phase 3).
-    this->hud.setViewMode(this->camera_state.mode == MapViewMode::TwoD, false);
+    // 3D is offered with the bgfx globe (Phase 3 preview, see
+    // globePreviewEnabled()).
+    this->hud.setViewMode(this->camera_state.mode == MapViewMode::TwoD, this->globe_ready);
     MapBgfxHud::FrameInputs inputs;
     inputs.viewport = logical;
     inputs.two_d = this->camera_state.mode == MapViewMode::TwoD;
@@ -1165,7 +1426,12 @@ void MapBgfxSurface::changeEvent(QEvent *event)
 {
     if (event->type() == QEvent::PaletteChange || event->type() == QEvent::FontChange
         || event->type() == QEvent::StyleChange || event->type() == QEvent::ApplicationPaletteChange)
+    {
         requestRedraw();
+        // The globe network's icon fill follows the theme.
+        if (event->type() != QEvent::FontChange)
+            this->globe_network.setSymbology(globeSymbology());
+    }
     QWidget::changeEvent(event);
 }
 
@@ -1429,6 +1695,12 @@ bool MapBgfxSurface::initializeBackend()
         const bool imagery_ready = network_ready && this->imagery_gpu.initialize();
         const bool hud_ready = imagery_ready && this->hud_gpu.initialize()
             && this->overlay_gpu.initialize() && this->label_gpu.initialize();
+        // The globe is optional: without it (or without the preview switch)
+        // the 2D map works as before and the HUD offers no 3D.
+        this->globe_ready = network_ready && imagery_ready && hud_ready
+            && this->globe_offered && globePreviewEnabled() && this->globe_surface->initialize();
+        // The network on the globe: without it the terrain still works.
+        this->globe_network_ready = this->globe_ready && this->globe_network.initialize();
         if (!network_ready || !imagery_ready || !hud_ready)
         {
             const bgfx::Caps *caps = bgfx::getCaps();
@@ -1449,6 +1721,10 @@ bool MapBgfxSurface::initializeBackend()
         // bgfx's text overlay covers the HUD; diagnostics only on request.
         bgfx::setDebug(this->debug_overlay_enabled ? BGFX_DEBUG_TEXT : BGFX_DEBUG_NONE);
         synchronizeGeometry();
+        // Already in Globe mode (device restart): the camera height resumes,
+        // the heatmap is baked again.
+        syncGlobeCameraHeight(true);
+        syncGlobeHeatmap();
         return true;
     }
     return false;
@@ -1498,6 +1774,10 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
         this->navigation_frame(elapsed_seconds);
     if (!this->initialized)
         return;
+    // Terrain follow of the globe camera (slice 2): one filter step per frame
+    // while it settles; it moves the camera, which presents the frame.
+    if (this->terrain_navigation.following())
+        syncGlobeCameraHeight(false);
     this->camera_state = this->map_model->cameraViewState();
     const QSize pixels = physicalSize();
     const QSizeF logical = logicalSize();
@@ -1512,8 +1792,10 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
         || mapCameraUpdate(this->presented_camera, this->camera_state, 0, 0).camera_changed;
     const bool size_changed = pixels != this->presented_pixels
         || logical != this->presented_logical;
+    const bool globe_shown = this->globe_ready && this->camera_state.mode == MapViewMode::Globe;
     const bool animating = !this->ready_reported || this->debug_overlay_enabled
         || this->hud.animating() || this->imagery_uploads_pending
+        || (globe_shown && this->globe_pending)
         || (this->label_settings.anyEnabled() && this->labels_dirty);
     if (!this->redraw_requested && !camera_moved && !size_changed && !animating)
         return;
@@ -1524,7 +1806,15 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
                       static_cast<uint16_t>(std::min(65535, pixels.width())),
                       static_cast<uint16_t>(std::min(65535, pixels.height())));
     bgfx::setViewClear(kMapBgfxView, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH,
-                       0x16324aff, 1.0f, 0);
+                       globe_shown ? MapBgfxGlobeSurface::SpaceColorRgba : 0x16324affu, 1.0f, 0);
+    // The repository keeps one request batch: entering a mode requests its
+    // own visible tiles again.
+    if (this->camera_state.mode != this->presented_view_mode)
+    {
+        this->presented_view_mode = this->camera_state.mode;
+        this->imagery_layout_key = 0;
+        this->globe_surface->requestAgain();
+    }
     bgfx::setViewMode(kMapBgfxView, bgfx::ViewMode::Sequential);
     bgfx::setViewTransform(kMapBgfxView, nullptr, nullptr);
     bgfx::touch(kMapBgfxView);
@@ -1645,6 +1935,13 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
         // Labels above the network and the editor's icons, below the HUD.
         renderLabels(logical, network_view, sizes);
     }
+    else
+    {
+        // 2D imagery uploads are not pending while the 2D map is not drawn.
+        this->imagery_uploads_pending = false;
+        if (globe_shown)
+            renderGlobe(logical);
+    }
     // The HUD is submitted last into the Sequential map view: always on top.
     renderHud(logical, MapBgfx2d::cameraFor(
         this->camera_state.center_lon_deg, this->camera_state.center_lat_deg,
@@ -1698,9 +1995,9 @@ void MapBgfxSurface::renderDebugOverlay()
                         this->network_frame_stats.chunks_total,
                         this->network_frame_stats.draw_calls);
     bgfx::dbgTextPrintf(2, 12, 0x0f,
-                        "Imagery z%d quads %d textures %d uploads %llu",
+                        "Imagery z%d quads %d draw calls %d tiles %d uploads %llu",
                         this->imagery_zoom, this->imagery_quad_count,
-                        this->imagery_gpu.textureCount(),
+                        this->imagery_gpu.drawCallCount(), this->imagery_gpu.textureCount(),
                         static_cast<unsigned long long>(this->imagery_gpu.uploadCount()));
 }
 
@@ -1769,12 +2066,18 @@ void MapBgfxSurface::setTileRepository(MapTileRepository *tile_repository)
     this->tile_repository = tile_repository;
     this->imagery_layout_key = 0;
     this->imagery_requests_dirty = true;
+    this->globe_surface->setTileRepository(tile_repository);
     if (this->tile_repository == nullptr)
         return;
     // A failed tile becoming retryable needs a fresh request; an arriving
     // tile needs nothing (the next frame finds it in the repository cache).
     connect(this->tile_repository, &MapTileRepository::signalTileRetryReady, this,
-            [this](const QString &) { this->imagery_requests_dirty = true; requestRedraw(); });
+            [this](const QString &)
+    {
+        this->imagery_requests_dirty = true;
+        this->globe_surface->requestAgain();
+        requestRedraw();
+    });
     // On-demand rendering: an arriving tile is drawn by the next frame.
     connect(this->tile_repository, &MapTileRepository::signalTileAvailable, this,
             [this](const QString &) { requestRedraw(); });
@@ -1783,6 +2086,7 @@ void MapBgfxSurface::setTileRepository(MapTileRepository *tile_repository)
         if (this->initialized)
             this->imagery_gpu.clearTextures();
         this->imagery_requests_dirty = true;
+        this->globe_surface->requestAgain();
         requestRedraw();
     });
 }
@@ -1827,6 +2131,9 @@ void MapBgfxSurface::renderImagery(const QSizeF &logical)
                     .arg(layout.layout_key));
             this->imagery_requests_dirty = true;
         }
+        // Uploads take atlas cells from the least recently used tiles: the
+        // ones this frame draws are taken as used first.
+        this->imagery_gpu.markUsed(layout);
         int uploads = 0;
         for (const MapBgfx2dImagery::Request &request : layout.requests)
         {
@@ -1877,6 +2184,8 @@ void MapBgfxSurface::setSymbology(const MapNetworkRenderSymbology &symbology)
     this->symbology_colors_dirty = true;
     // New values (time step, metric) and symbol sizes.
     this->labels_dirty = true;
+    this->globe_network.setSymbology(globeSymbology());
+    syncGlobeHeatmap();
 }
 
 void MapBgfxSurface::setVisualControlSettings(const NetworkSymbologySettings &settings)
@@ -1910,4 +2219,136 @@ void MapBgfxSurface::setVisualControlSettings(const NetworkSymbologySettings &se
         this->symbology_colors_dirty = true;
     // Junction visibility and icon sizes move the labels' symbol boxes.
     this->labels_dirty = true;
+    this->globe_network.setSymbology(globeSymbology());
+    // Radius and solid centre.
+    syncGlobeHeatmap();
+}
+
+void MapBgfxSurface::syncGlobeHeatmap()
+{
+    QVector<MapGlobeHeatmapMarker> markers;
+    if (this->globe_ready && this->map_model->viewMode() == MapViewMode::Globe
+        && this->symbology.visual_heatmap != VisualHeatmap::None && this->retained_scene.hasSnapshot())
+    {
+        const NetworkRenderSnapshot &snapshot = this->retained_scene.snapshot();
+        markers.reserve(snapshot.nodes.size());
+        for (const NetworkRenderNode &node : snapshot.nodes)
+        {
+            if (this->hidden_entity_uuids.contains(node.uuid) || !std::isfinite(node.coordinate_wgs84.longitude_deg)
+                || !std::isfinite(node.coordinate_wgs84.latitude_deg))
+                continue;
+            MapGlobeHeatmapMarker marker;
+            marker.render_id = node.render_id;
+            marker.longitude_deg = node.coordinate_wgs84.longitude_deg;
+            marker.latitude_deg = node.coordinate_wgs84.latitude_deg;
+            const QHash<quint32, double>::const_iterator fraction =
+                this->symbology.heatmap_fractions.constFind(node.render_id);
+            marker.active = fraction != this->symbology.heatmap_fractions.cend();
+            if (marker.active)
+            {
+                marker.color = networkSymbologyInterpolatedRampColor(
+                    fraction.value(), this->symbology.heatmap_palette, this->symbology.heatmap_palette_flipped);
+            }
+            markers.append(marker);
+        }
+        // Stable marker indices across time steps (the scene's stamp layout
+        // cache) whatever order the snapshot has.
+        std::sort(markers.begin(), markers.end(),
+                  [](const MapGlobeHeatmapMarker &first, const MapGlobeHeatmapMarker &second)
+        {
+            if (first.render_id != second.render_id)
+                return first.render_id < second.render_id;
+            if (first.longitude_deg != second.longitude_deg)
+                return first.longitude_deg < second.longitude_deg;
+            return first.latitude_deg < second.latitude_deg;
+        });
+    }
+    double radius_m = 0.0;
+    if (!markers.isEmpty())
+    {
+        if (this->symbology.heatmap_radius_unit != HeatmapRadiusUnit::Pixels)
+        {
+            // Terrain tiles are real-world sized: metres as they are.
+            radius_m = std::max(0.0, double(this->symbology.heatmap_radius_m));
+        }
+        else
+        {
+            // Stable on screen at the orbit distance, as the node sizes.
+            const double pixel_radius = std::max(1, this->symbology.heatmap_radius_px);
+            const double viewport_height = std::max(1, globeViewportSize().height());
+            const double reference_depth = std::max(1.0, this->map_model->viewGlobeDistanceM());
+            radius_m = 2.0 * pixel_radius * reference_depth
+                * std::tan(qDegreesToRadians(MapModel::GlobeFieldOfViewDeg / 2.0)) / viewport_height;
+        }
+    }
+    const double solid_fraction =
+        std::clamp(double(this->symbology.heatmap_solid_center_percent) / 100.0, 0.0, 0.9);
+    this->globe_surface->setHeatmapOverlay(markers, radius_m, solid_fraction);
+    requestRedraw();
+}
+
+MapNetworkRenderSymbology MapBgfxSurface::globeSymbology() const
+{
+    // As MapRhiWidget::setSymbology() for the monitor: a neutral icon fill
+    // on dark windows, a soft pink on light ones (visibility on imagery).
+    MapNetworkRenderSymbology themed = this->symbology;
+    const QColor window_color = palette().color(QPalette::Window);
+    themed.icon_default_fill_color = networkSymbologyIconDefaultFillColor(window_color);
+    const double luminance = 0.2126 * window_color.red() + 0.7152 * window_color.green()
+        + 0.0722 * window_color.blue();
+    if (luminance >= 128.0)
+        themed.icon_default_fill_color = qRgb(244, 174, 194);
+    return themed;
+}
+
+void MapBgfxSurface::setGlobe3dIconsEnabled(bool enabled)
+{
+    requestRedraw();
+    this->globe_network.setUse3dIconModels(enabled);
+}
+
+void MapBgfxSurface::setUndergroundMode(MapUndergroundMode mode)
+{
+    requestRedraw();
+    if (this->underground_mode == mode)
+        return;
+    this->underground_mode = mode;
+    this->globe_network.setUndergroundMode(mode);
+    if (mode == MapUndergroundMode::XRay)
+    {
+        this->globe_underground_refresh_requested = true;
+        scheduleGlobeUndergroundRefresh();
+    }
+    else
+    {
+        this->globe_underground_refresh_requested = false;
+        ++this->globe_underground_refresh_generation;
+    }
+}
+
+void MapBgfxSurface::scheduleGlobeUndergroundRefresh()
+{
+    if (!this->globe_underground_refresh_requested || !this->globe_network_ready
+        || this->underground_mode != MapUndergroundMode::XRay
+        || this->map_model->viewMode() != MapViewMode::Globe)
+        return;
+    const quint64 generation = ++this->globe_underground_refresh_generation;
+    QTimer::singleShot(500, this, [this, generation]()
+    {
+        if (generation != this->globe_underground_refresh_generation
+            || !this->globe_underground_refresh_requested || !this->globe_network_ready
+            || this->underground_mode != MapUndergroundMode::XRay
+            || this->map_model->viewMode() != MapViewMode::Globe)
+            return;
+        // Terrain meshes still being built: the classification would only
+        // be replaced again; wait for the next quiet period.
+        if (this->globe_surface->hasPendingTerrainMeshes())
+        {
+            scheduleGlobeUndergroundRefresh();
+            return;
+        }
+        this->globe_underground_refresh_requested = false;
+        if (this->globe_network.refreshUndergroundXRay())
+            requestRedraw();
+    });
 }

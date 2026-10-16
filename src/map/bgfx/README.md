@@ -319,8 +319,11 @@ only the owner positions or hides it.
   test asserts continuity of a world point's screen position across x.5.
 * A missing tile is covered by the nearest resident ancestor's sub-rectangle
   and by resident children on top; never a hole while tiles stream in.
-* `map_bgfx_2d_imagery_gpu.*`: one RGBA8 texture per tile, LRU budget of 384,
-  at most 8 uploads per frame (nearest first), one transient quad per tile.
+* `map_bgfx_2d_imagery_gpu.*` with `map_bgfx_2d_imagery_atlas.*`: tiles are
+  cells of a few atlas pages (edge-replicating 1-texel gutters, so bilinear
+  sampling equals clamp-to-edge), LRU budget of 384 tiles, at most 8 uploads
+  per frame (nearest first), one draw per run of quads on the same page
+  (normally a single draw call for all imagery). The globe shares the atlas.
 * Requests go to the shared `MapTileRepository` only when the visible tile set
   changes or a failed tile becomes retryable. Provider switches and deleted
   tiles clear the texture cache.
@@ -332,6 +335,108 @@ per-batch origins and culling are still mandatory for larger extents.
 
 Do not reintroduce integer-zoom geometry caching on this new GPU path. Imagery
 LOD will remain independent from retained network geometry.
+
+## Globe (Phase 3, in progress)
+
+On by default since slice 3b (2026-10-17): the HUD offers 3D in the Map
+Monitor and Globe mode draws on bgfx. `AOWIS_BGFX_GLOBE=0` (environment)
+switches it off (3D disabled again). The editor never offers it
+(`MapBgfxSurface::setGlobeOffered(false)`).
+
+Slice 1, the terrain surface (`map_bgfx_globe_surface.*`):
+
+* CPU work is the backend-neutral `MapGlobeSurfacePreparation` the QRhi globe
+  uses: quadtree leaves with horizon and view-cone culling, ellipsoid and polar
+  cap geometry relative to `MapGlobeCamera`'s sticky render origin, DEM
+  requests, LOD and stitching, asynchronous terrain meshes, wireframe edges.
+* GPU: window and cap vertices/indices in dynamic buffers (full upload on a
+  window/cap rebuild, terrain meshes as vertex-range patches), one indexed draw
+  per tile, depth test and write LessEqual. The camera's canonical OpenGL clip
+  space gets the [0, 1] depth correction where bgfx reports no homogeneous
+  depth (Direct3D, Vulkan, Metal). `QMatrix4x4::constData()` is column-major,
+  as bgfx's `mul(matrix, vector)` expects.
+* Imagery from the shared 2D atlas: a tile samples its own cell, or the
+  covering part of its nearest resident ancestor (`map_bgfx_globe_imagery.h`,
+  texture coordinates mapped into the ancestor's cell, no CPU compositing),
+  or a solid colour (nothing loaded; polar caps). Uploads share the 8 per
+  frame budget; requests go to the tile repository in one batch per window.
+* Globe shaders (`vs/fs_globe_surface`, `vs/fs_globe_wireframe`) declare
+  their vec3 positions in `varying_globe.def.sc`; the 2D shaders keep
+  `varying.def.sc` (and byte-identical binaries).
+
+Slice 2, terrain-aware navigation (`src/map/render/map_globe_terrain_navigation.*`,
+backend-neutral, the port of MapRhiWidget's terrain code):
+
+* Camera height: the orbit rig's vertical offset follows the DEM
+  perpendicularly beneath the eye; while rotating (frozen pivot) an eye-only
+  collision lift keeps `MinViewGlobeCameraGroundClearanceM`, released into the
+  offset when the orbit ends. Monotonic exponential filter (0.22 s / 0.16 s),
+  settled at a quarter pixel. Camera changes take a step at once (and request
+  the DEM tile under the eye); the surface's frame loop continues the filter
+  while `following()` (no extra timer).
+* Rays against the drawn surface (`MapGlobeSurfacePreparation`'s retained
+  meshes, ellipsoid elsewhere): the pointer coordinate with DEM altitude,
+  `globeSurfaceRayHitAtScreen()`, and globe pans anchored to the grabbed DEM
+  point (`MapModel::panGlobeByTerrainPointerDrag`, blended out at grazing
+  angles). The Map Monitor installs MapWidget's resolvers for the bgfx
+  surface as for QRhi; the 2D footer altitude reads cached DEM tiles too.
+* A vertical exaggeration change rebuilds the terrain meshes (vertex
+  patches); a network opened in Globe mode requests its DEM tiles at once.
+
+Slice 3, the network on the globe (`map_bgfx_globe_network.*`):
+
+* Geometry is the backend-neutral `MapGlobeNetworkScene` of the QRhi globe
+  (WGS84 placement relative to a retained network origin, adaptive geodesic
+  subdivision, metre/pixel sizing, declutter, X-Ray classification against
+  the DEM the globe shows). Its inputs are stored and applied on the next
+  globe frame (`synchronize()`), so the 2D map never builds globe geometry.
+  GPU streams are re-uploaded per category (links/nodes, highlights,
+  chevrons, icons + models, X-Ray runs, junctions), as the QRhi backend's
+  invalidations.
+* Shaders: the QRhi globe network shaders in bgfx form (`vs_globe_link`,
+  `vs_globe_flow`, `fs_globe_link(_xray)`, `vs/fs_globe_node`,
+  `vs/fs_globe_junction(_xray)`, `vs/fs_globe_icon`, `vs/fs_globe_model`),
+  their own `varying_globe_network.def.sc` and shared uniforms/helpers in
+  `globe_network.sh`. Pixel-space segment coordinates are interpolated
+  screen-linearly (passed times w, divided in the fragment shader; WebGL 2
+  has no `noperspective`), which also replaces the QRhi chevron shader's
+  `gl_FragCoord` reconstruction.
+* Junctions: sphere impostors writing the sphere's depth (`gl_FragDepth`,
+  NDC to window depth per bgfx's homogeneous-depth cap). Expanded to six
+  vertices each with the colour resolved on the CPU (symbology, selection
+  cyan, error red / stale grey, hidden, show-junctions) instead of instancing
+  plus a style-table texture read in the vertex shader.
+* Draw order and states of `MapRhiGlobeNetworkBackend::draw()`: Solid draws
+  the network once without depth test first; X-Ray draws the buried runs
+  (dashed) and junctions (dithered) through the terrain; Hide lets the
+  terrain occlude them. Premultiplied blending; tank/reservoir models with
+  back-face culling. The chevrons keep their 8 px pull towards the eye but
+  have no extra depth bias (bgfx has no depth-bias state).
+* The underground mode is set through `setUndergroundMode()` (default
+  X-Ray); its HUD buttons arrive with the globe HUD (slice 5). X-Ray
+  classification runs 500 ms after the last camera change or DEM arrival,
+  once no terrain mesh is being built, like the QRhi globe.
+
+Slice 3b, the globe heatmap (`map_bgfx_globe_surface.*`):
+
+* Markers, radius and solid centre as `MapRhiWidget::syncGlobeHeatmapOverlay()`
+  (node positions, ramp colours of the heatmap metric; a pixel radius is
+  converted at the orbit distance when the heatmap data or style change).
+  `MapGlobeHeatmapScene` gives each window tile its stamps in the tile's
+  256 px space.
+* GPU bake: atlas pages of 2048 x 2048 (64 cells, up to 4 pages, created as
+  needed) rendered in bake views 1-4, which `bgfx::setViewOrder()` puts
+  before the map view 0. Per cell a clear quad (no blending), then the stamp
+  quads (`vs/fs_globe_heatmap_bake`, premultiplied source-over, clamped to
+  the cell). The bake's Y follows `Caps::originBottomLeft`, so the cell is
+  sampled with the tile's own v-down texture coordinates on every backend.
+* Cells per tile and scene revision (LRU over pages, 24 bakes per frame);
+  a tile without stamps has no cell. Tiles with a cell are drawn by
+  `vs/fs_globe_surface_heatmap` (the imagery, then the heatmap with the
+  symbology opacity: rgb * (1 - a * opacity) + heat * opacity).
+
+Still on QRhi only: globe picking and the globe HUD controls (slices 4-5,
+roadmap).
 
 ## Renderer selection
 
@@ -375,9 +480,17 @@ After editing a `.sc` file, or after updating bgfx:
 
 builds `aowis-bgfx-shaderc` (`cmake/aowis_bgfx_shaderc.cmake`: shaderc
 without Tint/Dawn/DXC/spirv-reduce, ~280 TUs, once), recompiles glsl, essl,
-spirv and metal into the build tree and copies them plus `inputs.sha256` into
-`src/map/bgfx/shaders/bin`. Commit that directory. dx11 (DXBC) can only be
-compiled on a Windows host; without current dx11 binaries a Windows build
+spirv, metal and dx11 into the build tree and copies them plus `inputs.sha256`
+into `src/map/bgfx/shaders/bin`. Commit that directory.
+
+dx11 (DXBC, for the Windows build's Direct3D 11 renderer) is compiled by
+Microsoft's `d3dcompiler_47.dll`, which bgfx ships in `tools/bin/windows`
+(part of the `--shader-tools` sparse checkout). A Windows host loads it
+directly (copied next to `aowis-bgfx-shaderc.exe`); Linux and macOS run it
+through bgfx's d3d4linux helper under **Wine** (any `wine` on `PATH`, or
+`-DAOWIS_BGFX_WINE=/path/to/wine`; it uses its own prefix in the build tree).
+Without Wine the dx11 family is skipped with a warning and the committed
+binaries stay as they are; a Windows build without current dx11 binaries
 warns and runs on OpenGL.
 
 ## Input

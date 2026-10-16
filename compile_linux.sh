@@ -12,6 +12,7 @@ Usage: ./compile_linux.sh [--shader-tools]
   --shader-tools  Also build the bgfx shader compiler and regenerate the
                   committed shader binaries in src/map/bgfx/shaders/bin
                   (needed after editing a .sc file; commit the result).
+                  The dx11 (Windows) family needs Wine on PATH.
 
 Environment:
   AOWIS_BUILD_TYPE  CMake build type (default RelWithDebInfo: optimized with
@@ -30,7 +31,8 @@ esac
 cd "${PROJECT_DIR}"
 
 # The shader compiler sources are not part of the default sparse checkout.
-if [ "${SHADER_TOOLS}" = "ON" ] && [ ! -d external/bgfx/tools/shaderc ]; then
+if [ "${SHADER_TOOLS}" = "ON" ] && { [ ! -d external/bgfx/tools/shaderc ] \
+    || [ ! -f external/bgfx/tools/bin/windows/d3d4linux.exe ]; }; then
     tools/bgfx_sparse_checkout.sh --shader-tools
 fi
 

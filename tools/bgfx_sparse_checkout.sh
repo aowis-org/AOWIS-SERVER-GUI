@@ -69,12 +69,17 @@ bgfx_patterns=(
 )
 if [[ "$mode" == "tools" ]]; then
     # shaderc without Tint/Dawn/DXC (see cmake/aowis_bgfx_shaderc.cmake).
+    # dx11: Microsoft's d3dcompiler_47.dll and bgfx's d3d4linux helper that
+    # runs it under Wine on Linux/macOS (not DXC, dxcompiler.dll is 18 MB).
     bgfx_patterns+=(
         '/tools/shaderc/'
         '/3rdparty/glslang/'
         '/3rdparty/spirv-tools/'
         '/3rdparty/spirv-headers/'
         '/3rdparty/spirv-cross/'
+        '/3rdparty/d3d4linux/'
+        '/tools/bin/windows/d3dcompiler_47.dll'
+        '/tools/bin/windows/d3d4linux.exe'
     )
 fi
 

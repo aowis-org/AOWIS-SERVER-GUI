@@ -15,7 +15,8 @@
 # Tint/Dawn, SPIRV-Tools, glslang and SPIRV-Cross, ~690 translation units).
 #
 # Staleness guard: every family directory has inputs.sha256, the hash of
-# everything its binaries were compiled from (all .sc files, varying.def.sc,
+# everything its binaries were compiled from (all .sc files, the varying files,
+# globe_network.sh,
 # bgfx's bgfx_shader.sh, profile and platform; line endings normalised so a
 # CRLF checkout hashes like LF). Editing a shader reconfigures CMake
 # (CMAKE_CONFIGURE_DEPENDS) and a family whose hash no longer matches is
@@ -27,8 +28,9 @@
 # compiles every family this host can produce into the build tree, then
 # copies the binaries and inputs.sha256 into src/map/bgfx/shaders/bin for
 # committing. Outputs live in the build tree, so "clean" never deletes
-# committed files. A Linux host produces glsl, essl, spirv and metal; dx11
-# needs a Windows host (Windows SDK d3dcompiler).
+# committed files. Every host produces glsl, essl, spirv and metal; dx11
+# comes from Microsoft's d3dcompiler_47.dll (bundled with bgfx), directly on
+# Windows and under Wine elsewhere (AOWIS_BGFX_WINE: found on PATH, or set it).
 
 set(AOWIS_BGFX_SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/map/bgfx/shaders")
 set(AOWIS_BGFX_SHADER_BIN_DIR "${AOWIS_BGFX_SHADER_DIR}/bin")
@@ -37,7 +39,39 @@ set(AOWIS_BGFX_SHADER_NAMES
     vs_icon_2d fs_icon_2d vs_flow_2d fs_flow_2d
     vs_imagery_2d fs_imagery_2d
     fs_heatmap_2d
-    vs_hud fs_hud)
+    vs_hud fs_hud
+    vs_globe_surface fs_globe_surface vs_globe_wireframe fs_globe_wireframe
+    vs_globe_link fs_globe_link fs_globe_link_xray vs_globe_flow
+    vs_globe_node fs_globe_node vs_globe_junction fs_globe_junction fs_globe_junction_xray
+    vs_globe_icon fs_globe_icon vs_globe_model fs_globe_model
+    vs_globe_surface_heatmap fs_globe_surface_heatmap vs_globe_heatmap_bake fs_globe_heatmap_bake)
+# Varying/attribute declarations: varying.def.sc unless a shader names its
+# own here (the globe's positions are vec3; the 2D shaders keep theirs
+# untouched, so their binaries do not change).
+set(AOWIS_BGFX_SHADER_VARYINGS_vs_globe_surface varying_globe.def.sc)
+set(AOWIS_BGFX_SHADER_VARYINGS_fs_globe_surface varying_globe.def.sc)
+set(AOWIS_BGFX_SHADER_VARYINGS_vs_globe_wireframe varying_globe.def.sc)
+set(AOWIS_BGFX_SHADER_VARYINGS_fs_globe_wireframe varying_globe.def.sc)
+set(AOWIS_BGFX_SHADER_VARYINGS_vs_globe_surface_heatmap varying_globe.def.sc)
+set(AOWIS_BGFX_SHADER_VARYINGS_fs_globe_surface_heatmap varying_globe.def.sc)
+# The globe heatmap bake into atlas cells (map_bgfx_globe_surface.h).
+set(AOWIS_BGFX_SHADER_VARYINGS_vs_globe_heatmap_bake varying_globe_heatmap.def.sc)
+set(AOWIS_BGFX_SHADER_VARYINGS_fs_globe_heatmap_bake varying_globe_heatmap.def.sc)
+# The globe network (map_bgfx_globe_network.h): its own vertex streams and
+# varyings; shared uniforms and helpers in globe_network.sh.
+foreach(aowis_shader_name
+        vs_globe_link fs_globe_link fs_globe_link_xray vs_globe_flow
+        vs_globe_node fs_globe_node vs_globe_junction fs_globe_junction fs_globe_junction_xray
+        vs_globe_icon fs_globe_icon vs_globe_model fs_globe_model)
+    set(AOWIS_BGFX_SHADER_VARYINGS_${aowis_shader_name} varying_globe_network.def.sc)
+endforeach()
+function(aowis_bgfx_shader_varyings shader_name out_variable)
+    if(DEFINED AOWIS_BGFX_SHADER_VARYINGS_${shader_name})
+        set(${out_variable} "${AOWIS_BGFX_SHADER_VARYINGS_${shader_name}}" PARENT_SCOPE)
+    else()
+        set(${out_variable} varying.def.sc PARENT_SCOPE)
+    endif()
+endfunction()
 # <family>|<shaderc profile>|<shaderc platform>
 set(AOWIS_BGFX_SHADER_FAMILIES
     "glsl|330|linux"
@@ -61,6 +95,10 @@ foreach(aowis_shader_name IN LISTS AOWIS_BGFX_SHADER_NAMES)
 endforeach()
 list(APPEND AOWIS_BGFX_SHADER_INPUTS
     "${AOWIS_BGFX_SHADER_DIR}/varying.def.sc"
+    "${AOWIS_BGFX_SHADER_DIR}/varying_globe.def.sc"
+    "${AOWIS_BGFX_SHADER_DIR}/varying_globe_network.def.sc"
+    "${AOWIS_BGFX_SHADER_DIR}/varying_globe_heatmap.def.sc"
+    "${AOWIS_BGFX_SHADER_DIR}/globe_network.sh"
     "${AOWIS_BGFX_DIR}/src/bgfx_shader.sh")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${AOWIS_BGFX_SHADER_INPUTS})
 
@@ -78,9 +116,15 @@ function(aowis_bgfx_shader_inputs_hash profile platform out_variable)
     set(${out_variable} "${aowis_hash}" PARENT_SCOPE)
 endfunction()
 
+# dx11 on Linux/macOS: shaderc's d3d4linux runs the compiler under Wine.
+if(AOWIS_BGFX_SHADER_TOOLS AND NOT CMAKE_HOST_WIN32)
+    find_program(AOWIS_BGFX_WINE NAMES wine wine64
+        DOC "Wine for compiling dx11 shaders (bgfx d3d4linux)")
+endif()
+
 # Whether shaderc on this host can produce a family.
 function(aowis_bgfx_shader_family_producible family out_variable)
-    if(family STREQUAL "dx11" AND NOT CMAKE_HOST_WIN32)
+    if(family STREQUAL "dx11" AND NOT CMAKE_HOST_WIN32 AND NOT AOWIS_BGFX_WINE)
         set(${out_variable} FALSE PARENT_SCOPE)
     else()
         set(${out_variable} TRUE PARENT_SCOPE)
@@ -150,8 +194,16 @@ function(aowis_bgfx_add_shaders target)
             # the recompilations that are needed.
             file(CONFIGURE OUTPUT "${aowis_stamp_source}" CONTENT "${aowis_hash}\n")
             set(aowis_optimize "")
+            set(aowis_shaderc_launcher "")
             if(aowis_family STREQUAL "dx11")
                 set(aowis_optimize -O 3)
+                if(NOT CMAKE_HOST_WIN32)
+                    # Wine quietly, in its own prefix inside the build tree.
+                    set(aowis_shaderc_launcher "${CMAKE_COMMAND}" -E env
+                        "D3D4LINUX_WINE=${AOWIS_BGFX_WINE}"
+                        "WINEPREFIX=${CMAKE_BINARY_DIR}/aowis-bgfx-shaderc/wineprefix"
+                        "WINEDEBUG=-all")
+                endif()
             endif()
             set(aowis_commands COMMAND "${CMAKE_COMMAND}" -E make_directory
                 "${aowis_out_dir}" "${aowis_committed_dir}")
@@ -161,14 +213,15 @@ function(aowis_bgfx_add_shaders target)
                 else()
                     set(aowis_type fragment)
                 endif()
+                aowis_bgfx_shader_varyings("${aowis_shader_name}" aowis_varyings)
                 set(aowis_binary "${aowis_out_dir}/${aowis_shader_name}.bin")
                 list(APPEND aowis_family_binaries "${aowis_binary}")
                 list(APPEND aowis_commands
-                    COMMAND $<TARGET_FILE:aowis-bgfx-shaderc>
+                    COMMAND ${aowis_shaderc_launcher} $<TARGET_FILE:aowis-bgfx-shaderc>
                         -f "${AOWIS_BGFX_SHADER_DIR}/${aowis_shader_name}.sc"
                         -o "${aowis_binary}"
                         -i "${AOWIS_BGFX_DIR}/src"
-                        --varyingdef "${AOWIS_BGFX_SHADER_DIR}/varying.def.sc"
+                        --varyingdef "${AOWIS_BGFX_SHADER_DIR}/${aowis_varyings}"
                         --type ${aowis_type}
                         --platform ${aowis_platform}
                         --profile ${aowis_profile}
@@ -198,15 +251,15 @@ function(aowis_bgfx_add_shaders target)
                 message(FATAL_ERROR
                     "The committed bgfx ${aowis_family} shaders in "
                     "src/map/bgfx/shaders/bin/${aowis_family} do not match their sources "
-                    "(a .sc file, varying.def.sc or bgfx's bgfx_shader.sh changed). "
+                    "(a .sc file, a varying file or bgfx's bgfx_shader.sh changed). "
                     "Regenerate them with a native build configured with "
                     "-DAOWIS_BGFX_SHADER_TOOLS=ON (e.g. ./compile_linux.sh --shader-tools) "
                     "and commit src/map/bgfx/shaders/bin.")
             endif()
             message(WARNING
-                "bgfx ${aowis_family} shaders are missing or out of date and can only be "
-                "compiled on a Windows host (-DAOWIS_BGFX_SHADER_TOOLS=ON). That renderer "
-                "is not embedded; bgfx falls back to the next renderer with shaders.")
+                "bgfx ${aowis_family} shaders are missing or out of date; they need "
+                "Wine on this host (-DAOWIS_BGFX_SHADER_TOOLS=ON, AOWIS_BGFX_WINE). That "
+                "renderer is not embedded; bgfx falls back to the next renderer with shaders.")
         endif()
 
         if(NOT aowis_required_index EQUAL -1 AND aowis_family_binaries)
