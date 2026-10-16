@@ -432,6 +432,13 @@ target_include_directories(aowis-server-gui
 )
 
 if(EMSCRIPTEN)
+    # Map tiles decoded by the browser's native decoders on a dedicated
+    # worker (createImageBitmap + OffscreenCanvas); Qt's decoders remain the
+    # fallback and the desktop path.
+    target_sources(aowis-server-gui PRIVATE
+        src/map/data/map_tile_browser_decoder.h
+        src/map/data/map_tile_browser_decoder.cpp)
+
     # WebAssembly SIMD (128 bit): clang auto-vectorizes the app's hot loops
     # (vertex generation of the map, editor overlay, labels and HUD, tile
     # format handling) into wasm SIMD instead of scalar code. Every browser

@@ -83,6 +83,8 @@ private:
     bool tileDeletionPending(const QString &key, int x, int y) const;
     void finishTileDeletion(quint64 request_id, const QString &error = QString());
     void tileDataReceived(const QString &key, const QByteArray &data);
+    // Qt's image plugins on tile_decode_pool (desktop; WASM fallback).
+    void decodeTileWithQt(const QString &key, const QByteArray &data, quint64 generation);
     void finishTileDecode(const QString &key, quint64 generation, const QImage &image);
     void tileFailed(const QString &key);
 

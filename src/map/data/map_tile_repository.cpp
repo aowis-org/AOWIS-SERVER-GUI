@@ -1,4 +1,7 @@
 #include "map/data/map_tile_repository.h"
+#ifdef Q_OS_WASM
+#include "map/data/map_tile_browser_decoder.h"
+#endif
 
 #include "services/interface_server_map_rest.h"
 
@@ -556,6 +559,28 @@ void MapTileRepository::tileDataReceived(const QString &key, const QByteArray &d
     }
 
     const quint64 generation = this->tile_generation;
+#ifdef Q_OS_WASM
+    // The browser's native decoders on their own threads, pixels written
+    // straight into the RGBA8888 image (map_tile_browser_decoder.h). What the
+    // browser cannot decode - and the first tiles, until its decode worker
+    // runs - goes through Qt below.
+    if (MapTileBrowserDecoder::decode(data, this, [this, key, data, generation](const QImage &image)
+        {
+            if (image.isNull())
+                decodeTileWithQt(key, data, generation);
+            else
+                finishTileDecode(key, generation, image);
+        }))
+    {
+        return;
+    }
+#endif
+    decodeTileWithQt(key, data, generation);
+}
+
+void MapTileRepository::decodeTileWithQt(const QString &key, const QByteArray &data,
+                                         quint64 generation)
+{
     MapTileRepository *repository = this;
     this->tile_decode_pool.start(QRunnable::create([repository, key, data, generation]
     {
