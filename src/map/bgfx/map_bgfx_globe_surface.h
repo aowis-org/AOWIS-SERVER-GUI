@@ -81,6 +81,8 @@ public:
     void invalidateTerrain();
     void setWireframeVisible(bool visible);
     void setMapVisible(bool visible);
+    // Imagery drawn on the terrain (the HUD's "map" toggle).
+    bool mapVisible() const { return this->map_visible; }
 
     // The network heatmap on the terrain: markers (lon/lat, ramp colour),
     // radius in metres and solid-centre fraction; no markers: no heatmap.

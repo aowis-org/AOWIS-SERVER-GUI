@@ -511,6 +511,8 @@ if(AOWIS_ENABLE_BGFX_MAP)
         src/map/bgfx/map_bgfx_globe_imagery.h
         src/map/bgfx/map_bgfx_globe_network.h
         src/map/bgfx/map_bgfx_globe_network.cpp
+        src/map/bgfx/map_bgfx_globe_hud_controller.h
+        src/map/bgfx/map_bgfx_globe_hud_controller.cpp
         src/map/bgfx/map_bgfx_globe_surface.h
         src/map/bgfx/map_bgfx_globe_surface.cpp
         src/map/bgfx/map_bgfx_surface.h

@@ -2,6 +2,8 @@
 #define MAP_BGFX_GLOBE_NETWORK_H
 
 #include "map/render/map_globe_network_scene.h"
+#include "map/render/map_globe_reservoir_model.h"
+#include "map/render/map_globe_tank_model.h"
 #include "map/render/map_network_render_symbology.h"
 #include "map/render/map_render_surface.h"
 #include "network/network_render_snapshot.h"
@@ -86,6 +88,17 @@ public:
     FrameResult render(bgfx::ViewId view, const MapGlobeCamera &camera, const QSize &logical_viewport,
                        bgfx::TextureHandle icon_atlas);
 
+    // Globe picking (slice 4), the QRhi globe's rules: the screen position
+    // (logical px) against the network as the camera shows it now - tank /
+    // reservoir models by ray-triangle test, then junction spheres, icons,
+    // generic nodes and pipes by projected distance with the globe's larger
+    // hit radii. camera: viewport set and synced with the model. Projects
+    // with the camera's matrix for the network origin, i.e. what is drawn.
+    // Deliberately no occlusion test against the terrain (as the QRhi
+    // globe): entities behind or under it stay selectable.
+    MapRenderHit hitTest(const QPointF &screen_position, const MapGlobeCamera &camera,
+                         const QSize &logical_viewport);
+
 private:
     // GPU streams that are out of date, as the QRhi backend's invalidations.
     enum Stream : quint32
@@ -130,6 +143,12 @@ private:
         float camera_eye[4];
     };
 
+    static quint64 entityKey(InfrastructureEntity entity_type, quint32 render_id);
+    // Marks GPU streams out of date (the icon stream also the CPU models).
+    void markDirty(quint32 streams);
+    void ensureModelVertices();
+    // The hit for an entity, unless it is unknown or hidden.
+    MapRenderHit entityHit(InfrastructureEntity entity_type, quint32 render_id) const;
     void uploadStreams(FrameResult *result);
     // One draw of a stream (nothing when it is empty).
     void submitStream(bgfx::ViewId view, const Buffer &buffer, bgfx::ProgramHandle program, uint64_t state,
@@ -170,8 +189,13 @@ private:
     bool exaggeration_pending = false;
     MapUndergroundMode underground_mode = MapUndergroundMode::XRay;
     bool underground_pending = true;
-    // Junction render id -> uuid (selection, diagnostics, hidden entities).
-    QHash<quint32, QUuid> junction_uuids;
+    // Entity (type, render id) -> uuid: junction colours (selection,
+    // diagnostics, hidden entities) and picking.
+    QHash<quint64, QUuid> entity_uuids;
+    // Tank/reservoir model triangles as uploaded (also picked by ray).
+    QVector<MapGlobeTankModelVertex> tank_model_vertices;
+    QVector<MapGlobeReservoirModelVertex> reservoir_model_vertices;
+    bool model_vertices_stale = true;
     // A link thickness change rebuilds the scene's geometry when the network
     // has demand point attachments.
     bool has_attachments = false;

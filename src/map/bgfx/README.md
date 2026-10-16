@@ -413,7 +413,7 @@ Slice 3, the network on the globe (`map_bgfx_globe_network.*`):
   back-face culling. The chevrons keep their 8 px pull towards the eye but
   have no extra depth bias (bgfx has no depth-bias state).
 * The underground mode is set through `setUndergroundMode()` (default
-  X-Ray); its HUD buttons arrive with the globe HUD (slice 5). X-Ray
+  X-Ray) from the globe HUD's buttons (slice 5). X-Ray
   classification runs 500 ms after the last camera change or DEM arrival,
   once no terrain mesh is being built, like the QRhi globe.
 
@@ -435,8 +435,43 @@ Slice 3b, the globe heatmap (`map_bgfx_globe_surface.*`):
   `vs/fs_globe_surface_heatmap` (the imagery, then the heatmap with the
   symbology opacity: rgb * (1 - a * opacity) + heat * opacity).
 
-Still on QRhi only: globe picking and the globe HUD controls (slices 4-5,
-roadmap).
+Slice 4, globe picking (`MapBgfxGlobeNetwork::hitTest()`, used by
+`MapBgfxSurface::hitTest()` in Globe mode for clicks and hover): the rules of
+`MapRhiWidget::globeHitTest()`. Tank/reservoir 3D models by screen ray
+against their triangles, then junction spheres (projected radius), icons
+(projected billboard rectangle with the icon shader's depth-dependent size),
+generic nodes, then link segments, with the globe's larger hit radii.
+Positions are projected with the camera's matrix for the network origin, the
+one the network is drawn with; pending inputs are applied first. Picking
+deliberately reaches entities behind or under the terrain (as the QRhi
+globe): buried and hidden parts of the network stay selectable.
+
+Slice 5, the globe HUD (`map_bgfx_hud.*`, `map_bgfx_globe_hud_controller.*`):
+the QWidget globe HUD drawn by the native HUD, with the same behaviour.
+
+* Layout: "wireframe" and "map" toggles next to the 2D/3D switch, the
+  "Terrain mesh" progress next to the downloads (x / y, or "building..."),
+  and bottom left the four camera sliders (network height, tilt, distance,
+  vertical exaggeration; maximum, value and minimum labels in the user's
+  units, the QWidget tooltips), the X-Ray / Hide / Solid buttons, the compass
+  with its heading, and the globe scale (above the controls when the map is
+  too narrow).
+* `MapBgfxHud` stays pure: it reports slider and compass interactions as
+  commands with a phase (Begin / Move / End) and a number (slider fraction,
+  pointer delta, wheel notches), collected by `MapBgfxSurface` after every
+  pointer event and delivered queued, in order, through the HUD action
+  handler. Right press on a slider resets it.
+* `MapBgfxGlobeHudController` (Map Monitor) applies them to `MapModel` as
+  `map_monitor_hud_controls.cpp` does: 0.1 m / 1 deg / logarithmic 1000-step
+  / 0.1x slider steps, tilt and distance drags inside a rotate interaction,
+  240 ms InOutCubic resets, compass drag by horizontal pointer motion, click
+  to north (280 ms), wheel 5 deg per notch with the rotate interaction ending
+  350 ms after the last notch. Everything stops when the view mode changes.
+  `fillHudState()` gives the HUD its per-frame state (yaw, slider positions
+  and labels, the globe scale at the focus distance).
+* Toggles and underground buttons go through the container's
+  `handleBgfxHudAction()` to the same `MapRenderSurface` setters as the
+  QWidget check boxes and combo.
 
 ## Renderer selection
 

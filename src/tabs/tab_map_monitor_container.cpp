@@ -12,6 +12,7 @@
 #include "config/shortcut_registry.h"
 #include "map/data/map_terrain_repository.h"
 #if AOWIS_HAS_BGFX
+#include "map/bgfx/map_bgfx_globe_hud_controller.h"
 #include "map/bgfx/map_bgfx_legend_content.h"
 #include "map/bgfx/map_bgfx_surface.h"
 #endif
@@ -529,13 +530,27 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         this->bgfx_render_widget = surface;
         this->bgfx_surface = surface;
 
-        // --- Native HUD (slices 6a, 6b) ------------------------------------
+        // --- Native HUD (slices 6a, 6b; globe controls Phase 3 slice 5) -----
         // Button clicks arrive queued from the surface (never inside the
         // native window's event dispatch, fullscreen reparents the map).
+        // Globe slider and compass interactions carry a phase and a number
+        // and go to the globe HUD controller (map model camera).
+        this->bgfx_globe_hud = new MapBgfxGlobeHudController(this->map_model, this);
         surface->setHudActionHandler([this](const MapBgfxHud::Command &command)
         {
-            handleBgfxHudAction(static_cast<int>(command.action), command.group,
-                                command.value, command.flipped);
+            switch (command.action)
+            {
+                case MapBgfxHud::Action::GlobeSlider:
+                case MapBgfxHud::Action::GlobeSliderReset:
+                case MapBgfxHud::Action::CompassDrag:
+                case MapBgfxHud::Action::CompassWheel:
+                    this->bgfx_globe_hud->handleCommand(command);
+                    break;
+                default:
+                    handleBgfxHudAction(static_cast<int>(command.action), command.group,
+                                        command.value, command.flipped);
+                    break;
+            }
         });
         // Legend texts carry units: refresh them when the unit profile
         // changes (ranges and metrics follow applySymbology()).
@@ -2048,6 +2063,25 @@ void MapMonitorContainer::handleBgfxHudAction(int action, int group, int value, 
                 setHeatmapPalette(palette, flipped);
             break;
         }
+        // Globe (slice 5): the same surface setters as the QWidget HUD's
+        // "wireframe" / "map" check boxes and underground combo.
+        case MapBgfxHud::Action::ToggleWireframe:
+            if (this->bgfx_surface != nullptr)
+                this->bgfx_surface->setTerrainWireframeVisible(!this->bgfx_surface->terrainWireframeVisible());
+            break;
+        case MapBgfxHud::Action::ToggleMapTiles:
+            if (this->bgfx_surface != nullptr)
+                this->bgfx_surface->setMapTilesVisible(!this->bgfx_surface->mapTilesVisible());
+            break;
+        case MapBgfxHud::Action::UndergroundMode:
+            if (this->bgfx_surface != nullptr)
+                this->bgfx_surface->setUndergroundMode(static_cast<MapUndergroundMode>(value));
+            break;
+        // Handled by bgfx_globe_hud (setHudActionHandler()).
+        case MapBgfxHud::Action::GlobeSlider:
+        case MapBgfxHud::Action::GlobeSliderReset:
+        case MapBgfxHud::Action::CompassDrag:
+        case MapBgfxHud::Action::CompassWheel:
         case MapBgfxHud::Action::None:
             break;
     }

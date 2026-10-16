@@ -1,6 +1,7 @@
 #include "map/bgfx/map_bgfx_surface.h"
 
 #include "map/bgfx/map_bgfx_backend.h"
+#include "map/bgfx/map_bgfx_globe_hud_controller.h"
 #include "map/core/map_model.h"
 #include "map/data/map_terrain_repository.h"
 #include "map/data/map_tile_repository.h"
@@ -653,6 +654,16 @@ void MapBgfxSurface::setMapTilesVisible(bool visible)
     this->globe_surface->setMapVisible(visible);
 }
 
+bool MapBgfxSurface::terrainWireframeVisible() const
+{
+    return this->globe_surface->preparation().wireframeVisible();
+}
+
+bool MapBgfxSurface::mapTilesVisible() const
+{
+    return this->globe_surface->mapVisible();
+}
+
 void MapBgfxSurface::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
 {
     requestRedraw();
@@ -756,6 +767,17 @@ MapRenderHit MapBgfxSurface::hitTest(const QPointF &screen_position) const
     // The model's current camera, not the last presented frame: a click
     // right after a zoom step must hit what the next frame shows.
     const MapCameraViewState state = this->map_model->cameraViewState();
+    if (state.mode == MapViewMode::Globe)
+    {
+        // The network as the globe draws it (only while it is shown).
+        if (!this->globe_network_ready)
+            return no_hit;
+        const QSize viewport = globeViewportSize();
+        MapGlobeCamera camera;
+        camera.setViewportSize(viewport);
+        camera.syncFromMapModel(*this->map_model);
+        return this->globe_network.hitTest(screen_position, camera, viewport);
+    }
     if (state.mode != MapViewMode::TwoD)
         return no_hit;
     const MapBgfx2d::Camera camera = MapBgfx2d::cameraFor(
@@ -1044,7 +1066,25 @@ bool MapBgfxSurface::handleHudWheelEvent(QWheelEvent *event)
     if (event == nullptr || !this->initialized)
         return false;
     const QPointF position = event->position();
-    return this->hud.mouseWheel(position.x(), position.y(), double(event->angleDelta().y()));
+    const bool consumed = this->hud.mouseWheel(position.x(), position.y(), double(event->angleDelta().y()));
+    // The wheel over the compass turns the globe.
+    dispatchHudCommands();
+    return consumed;
+}
+
+void MapBgfxSurface::dispatchHudCommands()
+{
+    const QVector<MapBgfxHud::Command> commands = this->hud.takeCommands();
+    if (commands.isEmpty() || !this->hud_action_handler)
+        return;
+    // Deferred as the button actions (handleHudMouseEvent), in order and in
+    // one go: a drag's Begin / Move / End reach the handler as they came.
+    const std::function<void(const MapBgfxHud::Command &)> handler = this->hud_action_handler;
+    QTimer::singleShot(0, this, [handler, commands]()
+    {
+        for (const MapBgfxHud::Command &command : commands)
+            handler(command);
+    });
 }
 
 bool MapBgfxSurface::handleHudKeyPress(QKeyEvent *event)
@@ -1091,9 +1131,14 @@ MapBgfxSurface::HudPointer MapBgfxSurface::handleHudMouseEvent(QMouseEvent *even
         case QEvent::MouseButtonPress:
         case QEvent::MouseButtonDblClick:
             requestRedraw();
-            result.consumed = event->button() == Qt::LeftButton
-                ? this->hud.mousePress(position.x(), position.y())
-                : result.over_panel;
+            if (event->button() == Qt::LeftButton)
+                result.consumed = this->hud.mousePress(position.x(), position.y());
+            else if (event->button() == Qt::RightButton)
+                result.consumed = this->hud.mousePressRight(position.x(), position.y());
+            else
+                result.consumed = result.over_panel;
+            // A press on a globe slider or the compass starts its drag.
+            dispatchHudCommands();
             break;
         case QEvent::MouseButtonRelease:
             requestRedraw();
@@ -1110,6 +1155,9 @@ MapBgfxSurface::HudPointer MapBgfxSurface::handleHudMouseEvent(QMouseEvent *even
                         this->hud_action_handler;
                     QTimer::singleShot(0, this, [handler, command]() { handler(command); });
                 }
+                // The end of a slider / compass drag (after the button
+                // action, which a drag never has).
+                dispatchHudCommands();
             }
             else
             {
@@ -1119,6 +1167,8 @@ MapBgfxSurface::HudPointer MapBgfxSurface::handleHudMouseEvent(QMouseEvent *even
         case QEvent::MouseMove:
         {
             result.consumed = this->hud.mouseMove(position.x(), position.y(), nullptr);
+            // Slider and compass drags.
+            dispatchHudCommands();
             switch (this->hud.cursor())
             {
                 case MapBgfxHud::Cursor::PointingHand:
@@ -1354,6 +1404,19 @@ void MapBgfxSurface::renderHud(const QSizeF &logical, const MapBgfx2d::Camera &c
     inputs.two_d = this->camera_state.mode == MapViewMode::TwoD;
     inputs.camera = camera;
     inputs.time_s = double(this->hud_clock.elapsed()) / 1000.0;
+    // Globe controls (slice 5): camera state from the model, the toggles,
+    // underground mode and terrain-mesh progress from this surface.
+    MapBgfxHud::Globe globe;
+    globe.visible = this->camera_state.mode == MapViewMode::Globe && this->globe_ready;
+    if (globe.visible)
+    {
+        MapBgfxGlobeHudController::fillHudState(*this->map_model, globeViewportSize(), &globe);
+        globe.underground_mode = int(this->underground_mode);
+        globe.wireframe = terrainWireframeVisible();
+        globe.map_tiles = mapTilesVisible();
+        this->globe_surface->terrainMeshProgress(&globe.mesh_completed, &globe.mesh_total, &globe.mesh_active);
+    }
+    this->hud.setGlobe(globe);
     this->hud.build(&this->hud_canvas, &this->hud_text_cache, inputs,
                     MapBgfxHud::Palette::fromQPalette(palette()));
     this->hud_gpu.uploadAtlas(&this->hud_text_cache);

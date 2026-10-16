@@ -83,6 +83,47 @@ constexpr double TooltipPaddingPx = 4.0;
 constexpr double TooltipOffsetXPx = 2.0;
 constexpr double TooltipOffsetYPx = 20.0;
 constexpr double ViewportEdgePx = 2.0;
+// Globe controls (map_monitor_hud_controls.cpp): slider panel padding 3,
+// column margins 2,3,2,3 and spacing 1; the vertical controls and the
+// underground panel 4 px apart, the compass 8 px to the right; terrain-mesh
+// progress 72 x 10 with a 52 px label.
+constexpr double SliderPanelPaddingPx = 3.0;
+constexpr double SliderColumnMarginPx = 3.0;
+constexpr double SliderColumnSpacingPx = 1.0;
+constexpr double SliderGrooveWidthPx = 4.0;
+constexpr double SliderHandleWidthPx = 18.0;
+constexpr double SliderHandleHeightPx = 10.0;
+constexpr double UndergroundPaddingPx = 4.0;
+constexpr double UndergroundSpacingPx = 2.0;
+constexpr double ControlsSpacingPx = 4.0;
+constexpr double CompassGapPx = 8.0;
+constexpr double CompassLabelSpacingPx = 3.0;
+constexpr double CompassLabelPaddingPx = 6.0;
+constexpr double ViewToggleSpacingPx = 8.0;
+constexpr double MeshBarWidthPx = 72.0;
+constexpr double MeshLabelMinimumWidthPx = 52.0;
+constexpr double MeshMarginHorizontalPx = 8.0;
+
+// A point at angle_deg clockwise from straight up, distance radius from
+// the centre (screen y down): the QPainter::rotate() of the compass.
+MapBgfxHudPoint rotatedPoint(double center_x, double center_y, double x, double y, double angle_deg)
+{
+    const double radians = angle_deg * MapBgfxHudCanvas::Pi / 180.0;
+    const double cosine = std::cos(radians);
+    const double sine = std::sin(radians);
+    return MapBgfxHudPoint{center_x + x * cosine - y * sine, center_y + x * sine + y * cosine};
+}
+
+// QWidget compass label: "NE  45°" from the camera yaw.
+QString compassHeadingText(double yaw_deg)
+{
+    double heading = std::fmod(-yaw_deg, 360.0);
+    if (heading < 0.0)
+        heading += 360.0;
+    static const char *const cardinals[8] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+    const int sector = int(std::floor((heading + 22.5) / 45.0)) % 8;
+    return QStringLiteral("%1  %2°").arg(QLatin1String(cardinals[sector])).arg(qRound(heading) % 360);
+}
 
 QRgb withAlpha(QRgb color, int alpha)
 {
@@ -208,6 +249,18 @@ void MapBgfxHud::setViewMode(bool two_d, bool globe_available)
 {
     this->two_d = two_d;
     this->globe_available = globe_available;
+}
+
+void MapBgfxHud::setGlobe(const Globe &globe)
+{
+    this->globe = globe;
+}
+
+QVector<MapBgfxHud::Command> MapBgfxHud::takeCommands()
+{
+    QVector<Command> commands;
+    commands.swap(this->pending_commands);
+    return commands;
 }
 
 void MapBgfxHud::setFullscreen(bool available, bool active)
@@ -401,11 +454,17 @@ void MapBgfxHud::scaleBar(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
     to_wgs84(sample_x, &lon0, &lat0);
     to_wgs84(sample_x + maximum_bar_width, &lon1, &lat1);
     const ScaleBar scale = this->scale_provider(lon0, lat0, lon1, lat1, maximum_bar_width);
+    drawScalePanel(canvas, cache, MarginPx, std::max(MarginPx, viewport_height - ScaleHeightPx - MarginPx),
+                   scale, palette);
+}
+
+void MapBgfxHud::drawScalePanel(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache, double x, double y,
+                                const ScaleBar &scale, const Palette &palette)
+{
     if (!scale.valid || !(scale.width_px > 0.0))
         return;
-
-    const MapBgfxHudRect panel{MarginPx, std::max(MarginPx, viewport_height - ScaleHeightPx - MarginPx),
-                               ScaleWidthPx, ScaleHeightPx};
+    const double maximum_bar_width = ScaleWidthPx - 2.0 * ScalePaddingPx;
+    const MapBgfxHudRect panel{x, y, ScaleWidthPx, ScaleHeightPx};
     canvas->fillRoundedRect(panel, PanelRadiusPx, palette.panel);
     canvas->strokeRoundedRect(panel, PanelRadiusPx, 1.0, palette.border);
     // Not blocking: the QWidget scale HUD is transparent for mouse events.
@@ -475,8 +534,13 @@ void MapBgfxHud::buildOnce(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
                             this->terrain_active, this->terrain_queued, Element::CancelTerrain,
                             this->terrain_cancel_pending, inputs.time_s, palette)
             : 0.0;
-        const double total = tiles_width + terrain_width
-            + (tiles_busy && terrain_busy ? PanelSpacingPx : 0.0);
+        // Terrain meshes being built (globe): third panel of the row.
+        const bool mesh_busy = this->globe.visible && this->globe.mesh_active;
+        const double mesh_width = mesh_busy
+            ? meshPanel(nullptr, cache, 0.0, 0.0, inputs.time_s, palette) : 0.0;
+        const int panels = int(tiles_busy) + int(terrain_busy) + int(mesh_busy);
+        const double total = tiles_width + terrain_width + mesh_width
+            + double(std::max(0, panels - 1)) * PanelSpacingPx;
         double x = std::max(MarginPx, std::floor(0.5 * (viewport_width - total)));
         if (tiles_busy)
         {
@@ -490,7 +554,10 @@ void MapBgfxHud::buildOnce(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
             downloadPanel(canvas, cache, x, MarginPx, QStringLiteral("Terrain"),
                           this->terrain_active, this->terrain_queued, Element::CancelTerrain,
                           this->terrain_cancel_pending, inputs.time_s, palette);
+            x += terrain_width + PanelSpacingPx;
         }
+        if (mesh_busy)
+            meshPanel(canvas, cache, x, MarginPx, inputs.time_s, palette);
     }
 
     // 2D / 3D switch, top left. 3D stays disabled until the bgfx globe exists.
@@ -501,8 +568,16 @@ void MapBgfxHud::buildOnce(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
         const double segment_height = buttonHeight(cache);
         const double width_2d = std::max(SegmentMinimumWidthPx, buttonWidth(cache, label_2d));
         const double width_3d = std::max(SegmentMinimumWidthPx, buttonWidth(cache, label_3d));
+        // On the globe: "wireframe" and "map" toggles follow (the QWidget
+        // HUD's check boxes).
+        const QString label_wireframe = QStringLiteral("wireframe");
+        const QString label_map = QStringLiteral("map");
+        const double width_wireframe = this->globe.visible ? buttonWidth(cache, label_wireframe) : 0.0;
+        const double width_map = this->globe.visible ? buttonWidth(cache, label_map) : 0.0;
+        const double toggles_width = this->globe.visible
+            ? ViewToggleSpacingPx + width_wireframe + ControlsSpacingPx + width_map : 0.0;
         const MapBgfxHudRect frame{MarginPx, MarginPx,
-                                   2.0 * FramePaddingPx + width_2d + width_3d,
+                                   2.0 * FramePaddingPx + width_2d + width_3d + toggles_width,
                                    2.0 * FramePaddingPx + segment_height};
         drawPanel(canvas, frame, palette);
         drawButton(canvas, cache,
@@ -514,6 +589,19 @@ void MapBgfxHud::buildOnce(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
                                   width_3d, segment_height},
                    label_3d, Target{Element::ViewMode3d, -1, -1}, this->globe_available,
                    !this->two_d, palette);
+        if (this->globe.visible)
+        {
+            const double toggle_x = frame.x + FramePaddingPx + width_2d + width_3d + ViewToggleSpacingPx;
+            drawButton(canvas, cache,
+                       MapBgfxHudRect{toggle_x, frame.y + FramePaddingPx, width_wireframe, segment_height},
+                       label_wireframe, Target{Element::GlobeWireframe, -1, -1}, true, this->globe.wireframe,
+                       palette, QStringLiteral("Draw the 3D globe terrain mesh as a wireframe."));
+            drawButton(canvas, cache,
+                       MapBgfxHudRect{toggle_x + width_wireframe + ControlsSpacingPx, frame.y + FramePaddingPx,
+                                      width_map, segment_height},
+                       label_map, Target{Element::GlobeMapTiles, -1, -1}, true, this->globe.map_tiles, palette,
+                       QStringLiteral("Draw map tiles as textures on the 3D globe surface."));
+        }
     }
 
     // Fullscreen, top right (desktop only).
@@ -541,12 +629,274 @@ void MapBgfxHud::buildOnce(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
         }
     }
 
+    // Globe camera controls, compass and scale, bottom left (slice 5).
+    globeControls(canvas, cache, inputs, palette);
+
     // Map legend, bottom right (slice 6b), then its popups and the tooltip
     // on top of everything.
     legendPanel(canvas, cache, inputs, palette);
     comboPopup(canvas, cache, inputs, palette);
     paletteMenu(canvas, cache, inputs, palette);
     tooltipBox(canvas, cache, inputs, palette);
+}
+
+// --- Globe (slice 5) ------------------------------------------------------------
+
+double MapBgfxHud::meshPanel(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache, double x, double y,
+                             double time_s, const Palette &palette)
+{
+    // MapMonitorDownloadActivityHudWidget's terrain-mesh panel: a determinate
+    // bar "completed / total", indeterminate "building…" while the total is
+    // not known yet.
+    const QString title = QStringLiteral("Terrain mesh");
+    const int completed = std::max(0, this->globe.mesh_completed);
+    const int total = std::max(completed, this->globe.mesh_total);
+    const QString label = total > 0 ? QStringLiteral("%1 / %2").arg(completed).arg(total)
+                                    : QStringLiteral("building…");
+    const QSizeF title_size = cache->measure(title, this->bold_font);
+    const QSizeF label_size = cache->measure(label, this->font);
+    const double label_width = std::max(MeshLabelMinimumWidthPx, std::ceil(label_size.width()));
+    const double width = std::ceil(MeshMarginHorizontalPx + title_size.width() + DownloadSpacingPx
+                                   + MeshBarWidthPx + DownloadSpacingPx + label_width + MeshMarginHorizontalPx);
+    if (canvas == nullptr)
+        return width;
+    const double content_height = std::max({title_size.height(), label_size.height(), BusyBarHeightPx});
+    const double height = std::ceil(content_height + 2.0 * DownloadMarginVerticalPx);
+    const MapBgfxHudRect panel{x, y, width, height};
+    drawPanel(canvas, panel, palette);
+    const double ratio = cache->devicePixelRatio();
+    double cursor = x + MeshMarginHorizontalPx;
+    drawText(canvas, cache, cursor, y + 0.5 * (height - title_size.height()), title, this->bold_font,
+             palette.text);
+    cursor += title_size.width() + DownloadSpacingPx;
+    const MapBgfxHudRect track{snap(cursor, ratio), snap(y + 0.5 * (height - BusyBarHeightPx), ratio),
+                               MeshBarWidthPx, BusyBarHeightPx};
+    canvas->fillRoundedRect(track, 2.0, withAlpha(palette.border, 110));
+    if (total > 0)
+    {
+        const double fraction = double(completed) / double(total);
+        if (fraction > 0.0)
+            canvas->fillRoundedRect(MapBgfxHudRect{track.x, track.y, MeshBarWidthPx * fraction, BusyBarHeightPx},
+                                    2.0, palette.highlight);
+    }
+    else
+    {
+        const double chunk_width = 0.4 * MeshBarWidthPx;
+        const double phase = std::fmod(std::max(0.0, time_s) * 0.8, 2.0);
+        const double travel = phase < 1.0 ? phase : 2.0 - phase;
+        canvas->fillRoundedRect(MapBgfxHudRect{track.x + travel * (MeshBarWidthPx - chunk_width), track.y,
+                                               chunk_width, BusyBarHeightPx},
+                                2.0, palette.highlight);
+    }
+    cursor += MeshBarWidthPx + DownloadSpacingPx;
+    drawText(canvas, cache, cursor, y + 0.5 * (height - label_size.height()), label, this->font, palette.text);
+    return width;
+}
+
+double MapBgfxHud::sliderFraction(int index, double y) const
+{
+    const MapBgfxHudRect &track = this->slider_tracks[std::size_t(index)];
+    const double travel = track.height - SliderHandleHeightPx;
+    if (!(travel > 0.0))
+        return 0.0;
+    // The handle's centre follows the pointer; top = 1.
+    return std::clamp((track.bottom() - 0.5 * SliderHandleHeightPx - y) / travel, 0.0, 1.0);
+}
+
+void MapBgfxHud::drawSlider(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache, const MapBgfxHudRect &column,
+                            int index, const Palette &palette)
+{
+    const GlobeSliderState &slider = this->globe.sliders[std::size_t(index)];
+    const double label_height = std::ceil(cache->measure(QStringLiteral("Ag"), this->font).height());
+    const std::function<void(const QString &, double)> centered_label =
+        [this, canvas, cache, &column, &palette](const QString &text, double top)
+    {
+        const QSizeF size = cache->measure(text, this->font);
+        drawText(canvas, cache, column.x + 0.5 * (column.width - size.width()), top, text, this->font,
+                 palette.text);
+    };
+    double y = column.y + SliderColumnMarginPx;
+    centered_label(slider.maximum_label, y);
+    y += label_height + SliderColumnSpacingPx;
+    const MapBgfxHudRect track{column.x, y, column.width, SliderHeightPx};
+    this->slider_tracks[std::size_t(index)] = track;
+    const double center_x = std::round(column.x + 0.5 * column.width);
+    // Groove (QSlider vertical) and the handle at the value.
+    canvas->fillRoundedRect(MapBgfxHudRect{center_x - 0.5 * SliderGrooveWidthPx, y + 0.5 * SliderHandleHeightPx,
+                                           SliderGrooveWidthPx, SliderHeightPx - SliderHandleHeightPx},
+                            2.0, withAlpha(palette.border, 160));
+    const double fraction = std::clamp(slider.fraction, 0.0, 1.0);
+    const double handle_y = y + (1.0 - fraction) * (SliderHeightPx - SliderHandleHeightPx);
+    const Target target{Element::GlobeSlider, -1, index};
+    QRgb handle_fill = palette.button;
+    if (this->armed == target)
+        handle_fill = palette.highlight;
+    else if (this->hovered == target)
+        handle_fill = lighter(palette.button, 106);
+    const MapBgfxHudRect handle{center_x - 0.5 * SliderHandleWidthPx, handle_y, SliderHandleWidthPx,
+                                SliderHandleHeightPx};
+    canvas->fillRoundedRect(handle, ButtonRadiusPx, handle_fill);
+    canvas->strokeRoundedRect(handle, ButtonRadiusPx, 1.0, palette.border);
+    addHitBox(track, target, true, Cursor::Arrow, slider.tooltip);
+    y += SliderHeightPx + SliderColumnSpacingPx;
+    centered_label(slider.minimum_label, y);
+    y += label_height + SliderColumnSpacingPx;
+    centered_label(slider.value_label, y);
+}
+
+void MapBgfxHud::drawCompass(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache, double x, double y,
+                             const Palette &palette)
+{
+    // MapCompassWidget's dial: face, ring, 24 ticks, N/E/S/W, needles (all
+    // turned by the yaw), centre dot and the fixed heading marker on top.
+    const MapBgfxHudRect dial{x, y, CompassDiameterPx, CompassDiameterPx};
+    this->compass_rect = dial;
+    this->blocking_panels.append(dial);
+    const double inset = 2.5;
+    const double radius = 0.5 * CompassDiameterPx - inset;
+    const double cx = x + 0.5 * CompassDiameterPx;
+    const double cy = y + 0.5 * CompassDiameterPx;
+    const Target target{Element::Compass, -1, -1};
+    canvas->fillCircle(cx, cy + 1.5, radius, qRgba(0, 0, 0, 85));
+    QRgb face = withAlpha(palette.base, 245);
+    if (this->armed == target)
+        face = withAlpha(darker(palette.base, 106), 245);
+    else if (this->hovered == target)
+        face = withAlpha(lighter(palette.base, 103), 245);
+    canvas->fillCircle(cx, cy, radius, face);
+    canvas->strokeCircle(cx, cy, radius, 1.2, palette.border);
+    const double ring_radius = radius - 5.0;
+    canvas->strokeCircle(cx, cy, ring_radius, 1.0, withAlpha(palette.border, 130));
+
+    const double yaw = this->globe.yaw_deg;
+    const double tick_outer = ring_radius - 1.5;
+    for (int tick = 0; tick < 24; ++tick)
+    {
+        const bool major = tick % 6 == 0;
+        const bool medium = !major && tick % 3 == 0;
+        const double length = major ? 7.0 : (medium ? 5.0 : 3.0);
+        const double angle = yaw + 15.0 * double(tick);
+        const MapBgfxHudPoint outer = rotatedPoint(cx, cy, 0.0, -tick_outer, angle);
+        const MapBgfxHudPoint inner = rotatedPoint(cx, cy, 0.0, -tick_outer + length, angle);
+        canvas->line(outer.x, outer.y, inner.x, inner.y, major ? 1.5 : 1.0, major ? palette.text : palette.border);
+    }
+    // Cardinal letters at their turned positions, upright.
+    const QFont &letter_font = this->bold_font;
+    struct Letter
+    {
+        const char *text;
+        double x;
+        double y;
+        bool accent;
+    };
+    const Letter letters[4] = {{"N", 0.0, -radius + 18.0, true},
+                    {"E", radius - 15.0, 0.0, false},
+                    {"S", 0.0, radius - 18.0, false},
+                    {"W", -radius + 15.0, 0.0, false}};
+    for (const Letter &letter : letters)
+    {
+        const QString text = QString::fromLatin1(letter.text);
+        const QSizeF size = cache->measure(text, letter_font);
+        const MapBgfxHudPoint at = rotatedPoint(cx, cy, letter.x, letter.y, yaw);
+        drawText(canvas, cache, at.x - 0.5 * size.width(), at.y - 0.5 * size.height(), text, letter_font,
+                 letter.accent ? palette.highlight : palette.text);
+    }
+    canvas->fillTriangle(rotatedPoint(cx, cy, 0.0, -radius + 27.0, yaw), rotatedPoint(cx, cy, -5.0, 4.0, yaw),
+                         rotatedPoint(cx, cy, 5.0, 4.0, yaw), palette.highlight);
+    canvas->fillTriangle(rotatedPoint(cx, cy, 0.0, radius - 19.0, yaw), rotatedPoint(cx, cy, -4.0, -4.0, yaw),
+                         rotatedPoint(cx, cy, 4.0, -4.0, yaw), palette.border);
+    canvas->fillCircle(cx, cy, 3.5, palette.window);
+    canvas->strokeCircle(cx, cy, 3.5, 1.0, palette.text);
+    const double top = cy - radius;
+    canvas->fillTriangle(MapBgfxHudPoint{cx, top + 1.0}, MapBgfxHudPoint{cx - 4.0, top + 7.0},
+                         MapBgfxHudPoint{cx + 4.0, top + 7.0}, palette.text);
+    addHitBox(dial, target, true, Cursor::PointingHand,
+              QStringLiteral("Compass\nClick: animate back to north\nDrag or mouse wheel: rotate map"));
+}
+
+void MapBgfxHud::globeControls(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
+                               const FrameInputs &inputs, const Palette &palette)
+{
+    this->compass_rect = MapBgfxHudRect();
+    if (!this->globe.visible)
+        return;
+    const double viewport_width = inputs.viewport.width();
+    const double viewport_height = inputs.viewport.height();
+    const double label_height = std::ceil(cache->measure(QStringLiteral("Ag"), this->font).height());
+
+    // Camera sliders (MapMonitorVerticalControlsHudWidget), bottom left.
+    const double column_height = 2.0 * SliderColumnMarginPx + 3.0 * label_height + SliderHeightPx
+        + 3.0 * SliderColumnSpacingPx;
+    const MapBgfxHudRect sliders{MarginPx,
+                                 std::max(MarginPx, viewport_height - MarginPx - column_height
+                                                        - 2.0 * SliderPanelPaddingPx),
+                                 2.0 * SliderPanelPaddingPx + double(GlobeSliderCount) * SliderColumnWidthPx,
+                                 column_height + 2.0 * SliderPanelPaddingPx};
+    drawPanel(canvas, sliders, palette);
+    for (int index = 0; index < GlobeSliderCount; ++index)
+    {
+        drawSlider(canvas, cache,
+                   MapBgfxHudRect{sliders.x + SliderPanelPaddingPx + double(index) * SliderColumnWidthPx,
+                                  sliders.y + SliderPanelPaddingPx, SliderColumnWidthPx, column_height},
+                   index, palette);
+    }
+
+    // Underground mode (MapMonitorUndergroundHudWidget's combo as three
+    // buttons), bottom aligned to its right.
+    const QString underground_labels[3] = {QStringLiteral("X-Ray"), QStringLiteral("Hide"),
+                                           QStringLiteral("Solid")};
+    const QString underground_tooltip = QStringLiteral(
+        "Underground network display\n"
+        "X-Ray: show actual underground pipe sections with a distinct pattern.\n"
+        "Hide: let terrain hide the network normally.\n"
+        "Solid: show the network through terrain without an underground pattern.");
+    double button_width = 0.0;
+    for (const QString &label : underground_labels)
+        button_width = std::max(button_width, buttonWidth(cache, label));
+    const double button_height = buttonHeight(cache);
+    const double underground_height = 2.0 * UndergroundPaddingPx + 3.0 * button_height + 2.0 * UndergroundSpacingPx;
+    const MapBgfxHudRect underground{sliders.right() + ControlsSpacingPx,
+                                     std::max(MarginPx, viewport_height - MarginPx - underground_height),
+                                     button_width + 2.0 * UndergroundPaddingPx, underground_height};
+    drawPanel(canvas, underground, palette);
+    for (int mode = 0; mode < 3; ++mode)
+    {
+        drawButton(canvas, cache,
+                   MapBgfxHudRect{underground.x + UndergroundPaddingPx,
+                                  underground.y + UndergroundPaddingPx
+                                      + double(mode) * (button_height + UndergroundSpacingPx),
+                                  button_width, button_height},
+                   underground_labels[mode], Target{Element::GlobeUnderground, -1, mode}, true,
+                   this->globe.underground_mode == mode, palette, underground_tooltip);
+    }
+
+    // Compass with its heading label, 8 px to the right.
+    const QString heading = compassHeadingText(this->globe.yaw_deg);
+    const QSizeF heading_size = cache->measure(heading, this->font);
+    const double label_panel_width = std::max(CompassDiameterPx,
+                                              std::ceil(heading_size.width() + 2.0 * CompassLabelPaddingPx));
+    const double label_panel_height = std::ceil(label_height + 2.0 * DownloadMarginVerticalPx);
+    const double compass_block_height = CompassDiameterPx + CompassLabelSpacingPx + label_panel_height;
+    const double compass_x = underground.right() + CompassGapPx;
+    const double compass_y = std::max(MarginPx, viewport_height - MarginPx - compass_block_height);
+    drawCompass(canvas, cache, compass_x + 0.5 * (label_panel_width - CompassDiameterPx), compass_y, palette);
+    const MapBgfxHudRect heading_panel{compass_x, compass_y + CompassDiameterPx + CompassLabelSpacingPx,
+                                       label_panel_width, label_panel_height};
+    drawPanel(canvas, heading_panel, palette);
+    drawText(canvas, cache, heading_panel.x + 0.5 * (heading_panel.width - heading_size.width()),
+             heading_panel.y + 0.5 * (heading_panel.height - heading_size.height()), heading, this->font,
+             palette.text);
+
+    // Globe scale: right of the compass, above the controls when the
+    // viewport is too narrow (positionDesktopHudWidgets()).
+    double scale_x = compass_x + label_panel_width + CompassGapPx;
+    double scale_y = std::max(MarginPx, viewport_height - ScaleHeightPx - MarginPx);
+    if (scale_x + ScaleWidthPx > viewport_width - MarginPx)
+    {
+        scale_x = MarginPx;
+        scale_y = std::max(MarginPx, std::min({sliders.y, underground.y, compass_y}) - ScaleHeightPx - CompassGapPx);
+    }
+    drawScalePanel(canvas, cache, scale_x, scale_y, this->globe.scale, palette);
 }
 
 // --- Legend ---------------------------------------------------------------------
@@ -1266,6 +1616,9 @@ bool MapBgfxHud::isClickable(Element element)
         case Element::LegendPalette:
         case Element::LegendPaletteFlip:
         case Element::LegendPaletteReset:
+        case Element::GlobeWireframe:
+        case Element::GlobeMapTiles:
+        case Element::GlobeUnderground:
             return true;
         default:
             return false;
@@ -1292,6 +1645,12 @@ MapBgfxHud::Action MapBgfxHud::actionFor(Element element)
         case Element::LegendPaletteFlip:
         case Element::LegendPaletteReset:
             return Action::LegendPalette;
+        case Element::GlobeWireframe:
+            return Action::ToggleWireframe;
+        case Element::GlobeMapTiles:
+            return Action::ToggleMapTiles;
+        case Element::GlobeUnderground:
+            return Action::UndergroundMode;
         default:
             break;
     }
@@ -1305,8 +1664,11 @@ MapBgfxHud::Command MapBgfxHud::commandFor(const Target &target)
     command.group = target.group;
     if (target.group < 0 || target.group >= LegendGroupCount)
     {
-        // Not a legend element (6a buttons): the action alone.
+        // Not a legend element (6a buttons, globe buttons): the action and
+        // the underground mode.
         command.group = -1;
+        if (target.element == Element::GlobeUnderground)
+            command.value = target.index;
         return command;
     }
     LegendGroup &group = this->legend_content.groups[std::size_t(target.group)];
@@ -1445,6 +1807,32 @@ bool MapBgfxHud::mousePress(double x, double y)
             openPaletteMenu(target.group);
             this->press_consumed = true;
             return true;
+        case Element::GlobeSlider:
+        {
+            // Dragged from the press on: the value follows the pointer.
+            this->armed = target;
+            Command command;
+            command.action = Action::GlobeSlider;
+            command.group = target.index;
+            command.number = sliderFraction(target.index, y);
+            command.phase = Phase::Begin;
+            this->pending_commands.append(command);
+            this->press_consumed = true;
+            return true;
+        }
+        case Element::Compass:
+        {
+            this->armed = target;
+            this->compass_last_x = x;
+            this->compass_last_y = y;
+            this->compass_drag_distance = 0.0;
+            Command command;
+            command.action = Action::CompassDrag;
+            command.phase = Phase::Begin;
+            this->pending_commands.append(command);
+            this->press_consumed = true;
+            return true;
+        }
         case Element::LegendComboScroll:
             if (this->combo_thumb_rect.contains(x, y))
             {
@@ -1478,6 +1866,27 @@ MapBgfxHud::Action MapBgfxHud::mouseRelease(double x, double y, bool *consumed, 
         *consumed = was_consumed;
     if (command != nullptr)
         *command = Command();
+    // Continuous interactions end wherever the button is released.
+    if (armed_target.element == Element::GlobeSlider)
+    {
+        Command end;
+        end.action = Action::GlobeSlider;
+        end.group = armed_target.index;
+        end.number = sliderFraction(armed_target.index, y);
+        end.phase = Phase::End;
+        this->pending_commands.append(end);
+        return Action::None;
+    }
+    if (armed_target.element == Element::Compass)
+    {
+        Command end;
+        end.action = Action::CompassDrag;
+        end.phase = Phase::End;
+        // A press that hardly moved is a click: turn north.
+        end.value = this->compass_drag_distance < CompassDragThresholdPx ? 1 : 0;
+        this->pending_commands.append(end);
+        return Action::None;
+    }
     if (armed_target.element == Element::None
         || armed_target.element == Element::LegendComboScroll
         || targetAt(x, y) != armed_target)
@@ -1502,6 +1911,32 @@ bool MapBgfxHud::mouseMove(double x, double y, bool *over_button)
     this->pointer_inside = true;
     if (this->armed.element == Element::LegendComboScroll)
         dragComboThumbTo(y);
+    if (this->armed.element == Element::GlobeSlider)
+    {
+        Command command;
+        command.action = Action::GlobeSlider;
+        command.group = this->armed.index;
+        command.number = sliderFraction(this->armed.index, y);
+        command.phase = Phase::Move;
+        this->pending_commands.append(command);
+    }
+    else if (this->armed.element == Element::Compass)
+    {
+        // Horizontal pointer motion turns the camera (MapCompassWidget).
+        const double dx = x - this->compass_last_x;
+        const double dy = y - this->compass_last_y;
+        this->compass_drag_distance += std::abs(dx) + std::abs(dy);
+        this->compass_last_x = x;
+        this->compass_last_y = y;
+        if (dx != 0.0)
+        {
+            Command command;
+            command.action = Action::CompassDrag;
+            command.number = dx;
+            command.phase = Phase::Move;
+            this->pending_commands.append(command);
+        }
+    }
     const Target target = targetAt(x, y);
     if (target != this->hovered)
     {
@@ -1514,8 +1949,31 @@ bool MapBgfxHud::mouseMove(double x, double y, bool *over_button)
     return this->press_consumed;
 }
 
+bool MapBgfxHud::mousePressRight(double x, double y)
+{
+    const Target target = targetAt(x, y);
+    if (target.element == Element::GlobeSlider && !popupOpen())
+    {
+        // QWidget HUD: right click animates the slider back to its default.
+        Command command;
+        command.action = Action::GlobeSliderReset;
+        command.group = target.index;
+        this->pending_commands.append(command);
+        return true;
+    }
+    return blocksInput(x, y);
+}
+
 bool MapBgfxHud::mouseWheel(double x, double y, double angle_delta_y)
 {
+    if (this->globe.visible && this->compass_rect.contains(x, y) && !popupOpen())
+    {
+        Command command;
+        command.action = Action::CompassWheel;
+        command.number = angle_delta_y / 120.0;
+        this->pending_commands.append(command);
+        return true;
+    }
     if (this->open_combo >= 0 && this->combo_list_rect.contains(x, y))
     {
         const int count = int(this->legend_content.groups[std::size_t(this->open_combo)].items.size());

@@ -45,6 +45,7 @@ class MapMonitorScaleHudWidget;
 class MapMonitorVerticalControlsHudWidget;
 class EntityMapLegendHud;
 class MapBgfxSurface;
+class MapBgfxGlobeHudController;
 class QFrame;
 class QTimer;
 class QShortcut;
@@ -179,6 +180,9 @@ private:
     bool bgfx_render_surface_active = false;
     // The same object with its concrete type, for the native HUD (slice 6a).
     MapBgfxSurface *bgfx_surface = nullptr;
+    // What the globe HUD's camera sliders and compass do to the map model
+    // (Phase 3 slice 5); created with the bgfx surface.
+    MapBgfxGlobeHudController *bgfx_globe_hud = nullptr;
     // Download activity of the shared repositories, mirrored into the bgfx
     // HUD (signals plus the QWidget HUD's 400 ms poll).
     QTimer *bgfx_download_poll_timer = nullptr;
@@ -202,7 +206,9 @@ private:
     bool routeBgfxHudMouseEvent(QMouseEvent *event, bool *over_hud_panel);
     // A clicked HUD button or legend entry (MapBgfxHud::Command, passed as
     // plain values to keep bgfx out of this header). group: legend node (0),
-    // link (1), heatmap (2); value: metric or palette; flipped: palette flip.
+    // link (1), heatmap (2); value: metric or palette, or the underground
+    // mode; flipped: palette flip. The globe sliders and the compass go to
+    // bgfx_globe_hud instead.
     void handleBgfxHudAction(int action, int group, int value, bool flipped);
     // Map legend on the bgfx HUD (slice 6b): rebuilt from the symbology
     // settings and their canonical ranges whenever the symbology is

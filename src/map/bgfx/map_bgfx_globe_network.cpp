@@ -3,6 +3,7 @@
 #include "map/bgfx/map_bgfx_backend.h"
 #include "map/core/map_model.h"
 #include "map/render/map_globe_camera.h"
+#include "map/render/map_globe_picking.h"
 #include "map/render/map_globe_render_frame.h"
 #include "map/render/map_globe_reservoir_model.h"
 #include "map/render/map_globe_tank_model.h"
@@ -11,13 +12,17 @@
 #include <QByteArray>
 #include <QDebug>
 #include <QImage>
+#include <QLineF>
 #include <QMatrix4x4>
+#include <QSet>
 #include <QVector3D>
+#include <QVector4D>
 #include <QtMath>
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 
 namespace
 {
@@ -166,7 +171,7 @@ bool MapBgfxGlobeNetwork::initialize()
     this->tank_texture = mipmappedTexture(mapGlobeTankAlbedoImage(), kAlbedoSamplerFlags);
     this->reservoir_texture = mipmappedTexture(mapGlobeReservoirAlbedoImage(), kAlbedoSamplerFlags);
     // Everything goes up again on the (new) device.
-    this->dirty_streams = AllStreams;
+    markDirty(AllStreams);
     if (!ready())
     {
         qWarning() << "bgfx globe network unavailable: programs" << bgfx::isValid(this->link_program)
@@ -227,7 +232,7 @@ void MapBgfxGlobeNetwork::release()
     destroyHandle(&this->flow_program);
     destroyHandle(&this->link_xray_program);
     destroyHandle(&this->link_program);
-    this->dirty_streams = AllStreams;
+    markDirty(AllStreams);
 }
 
 // --- Inputs ---------------------------------------------------------------
@@ -318,7 +323,7 @@ bool MapBgfxGlobeNetwork::refreshUndergroundXRay()
     synchronize();
     if (!this->network_scene.refreshUndergroundXRayGeometry())
         return false;
-    this->dirty_streams |= UndergroundStream;
+    markDirty(UndergroundStream);
     return true;
 }
 
@@ -329,25 +334,25 @@ void MapBgfxGlobeNetwork::synchronize()
     {
         this->exaggeration_pending = false;
         if (this->network_scene.setVerticalExaggeration(this->vertical_exaggeration))
-            this->dirty_streams = AllStreams;
+            markDirty(AllStreams);
     }
     if (this->ground_offset_pending)
     {
         this->ground_offset_pending = false;
         if (this->network_scene.setGroundOffsetM(this->ground_offset_m))
-            this->dirty_streams = AllStreams;
+            markDirty(AllStreams);
     }
     if (this->declutter_pending)
     {
         this->declutter_pending = false;
         if (this->network_scene.setNodeDeclutteringEnabled(this->node_decluttering_enabled))
-            this->dirty_streams = AllStreams;
+            markDirty(AllStreams);
     }
     if (this->hidden_pending)
     {
         this->hidden_pending = false;
         if (this->network_scene.setHiddenEntityUuids(this->hidden_entity_uuids))
-            this->dirty_streams = AllStreams;
+            markDirty(AllStreams);
     }
     if (this->snapshot_pending)
     {
@@ -356,14 +361,13 @@ void MapBgfxGlobeNetwork::synchronize()
         this->network_scene.setNetworkSnapshot(this->snapshot);
         if (this->network_scene.geometryRevision() != revision)
         {
-            this->dirty_streams = AllStreams;
+            markDirty(AllStreams);
             this->has_attachments = !this->snapshot.demand_point_attachments.isEmpty();
-            this->junction_uuids.clear();
+            this->entity_uuids.clear();
             for (const NetworkRenderNode &node : this->snapshot.nodes)
-            {
-                if (node.entity_type == InfrastructureEntity::Junction)
-                    this->junction_uuids.insert(node.render_id, node.uuid);
-            }
+                this->entity_uuids.insert(entityKey(node.entity_type, node.render_id), node.uuid);
+            for (const NetworkRenderLink &link : this->snapshot.links)
+                this->entity_uuids.insert(entityKey(link.entity_type, link.render_id), link.uuid);
         }
         // Only the geometry is needed here: the copy's lists are released.
         this->snapshot = NetworkRenderSnapshot();
@@ -394,56 +398,77 @@ void MapBgfxGlobeNetwork::synchronize()
         this->applied_symbology = next;
         this->symbology_applied = true;
         if (node_colors_changed || link_colors_changed)
-            this->dirty_streams |= GeometryStream;
+            markDirty(GeometryStream);
         // Junction colours are resolved on the CPU (junctionVertices()).
         if (node_colors_changed || junctions_changed)
-            this->dirty_streams |= JunctionStream | UndergroundStream;
+            markDirty(JunctionStream | UndergroundStream);
         if (link_colors_changed)
-            this->dirty_streams |= UndergroundStream;
+            markDirty(UndergroundStream);
         if (thickness_changed)
         {
-            this->dirty_streams |= HighlightStream;
+            markDirty(HighlightStream);
             // With demand point attachments the scene rebuilds the geometry.
             if (this->has_attachments)
-                this->dirty_streams = AllStreams;
+                markDirty(AllStreams);
         }
         if (icons_changed)
-            this->dirty_streams |= IconStream;
+            markDirty(IconStream);
         if (flow_changed)
-            this->dirty_streams |= FlowStream;
+            markDirty(FlowStream);
     }
     if (this->selection_pending)
     {
         this->selection_pending = false;
         this->network_scene.setSelectedEntity(this->selected_entity_type, this->selected_entity_uuid);
-        this->dirty_streams |= HighlightStream | IconStream | JunctionStream | UndergroundStream;
+        markDirty(HighlightStream | IconStream | JunctionStream | UndergroundStream);
     }
     if (this->errors_pending)
     {
         this->errors_pending = false;
         this->network_scene.setSimulationErrorEntities(this->simulation_error_entities,
                                                        this->simulation_stale_entity_uuids);
-        this->dirty_streams |= HighlightStream | JunctionStream | UndergroundStream;
+        markDirty(HighlightStream | JunctionStream | UndergroundStream);
     }
     if (this->icon_models_pending)
     {
         this->icon_models_pending = false;
         if (this->network_scene.setUse3dIconModels(this->use_3d_icon_models))
-            this->dirty_streams |= IconStream;
+            markDirty(IconStream);
     }
     if (this->underground_pending)
     {
         this->underground_pending = false;
         if (this->network_scene.setUndergroundXRayEnabled(this->underground_mode == MapUndergroundMode::XRay))
-            this->dirty_streams |= UndergroundStream | JunctionStream;
+            markDirty(UndergroundStream | JunctionStream);
     }
+}
+
+quint64 MapBgfxGlobeNetwork::entityKey(InfrastructureEntity entity_type, quint32 render_id)
+{
+    return (quint64(entity_type) << 32) | quint64(render_id);
+}
+
+void MapBgfxGlobeNetwork::markDirty(quint32 streams)
+{
+    this->dirty_streams |= streams;
+    if (streams & IconStream)
+        this->model_vertices_stale = true;
+}
+
+void MapBgfxGlobeNetwork::ensureModelVertices()
+{
+    if (!this->model_vertices_stale)
+        return;
+    this->model_vertices_stale = false;
+    this->tank_model_vertices = mapGlobeBuildTankModelVertices(this->network_scene.tankInstances());
+    this->reservoir_model_vertices = mapGlobeBuildReservoirModelVertices(this->network_scene.reservoirInstances());
 }
 
 // --- GPU ------------------------------------------------------------------
 
 bool MapBgfxGlobeNetwork::junctionColor(quint32 render_id, float (&rgba)[4]) const
 {
-    const QUuid uuid = this->junction_uuids.value(render_id);
+    const QUuid uuid = this->entity_uuids.value(entityKey(InfrastructureEntity::Junction, render_id));
     if (!this->applied_symbology.show_junctions || this->hidden_entity_uuids.contains(uuid))
         return false;
     QRgb color = this->applied_symbology.node_colors.value(render_id, networkSymbologyDefaultColor());
@@ -547,12 +572,13 @@ void MapBgfxGlobeNetwork::uploadStreams(FrameResult *result)
     {
         bytes += uploadVertices(&this->icon_buffer.handle, &this->icon_buffer.count, this->icon_layout,
                                 scene.iconVertices());
-        // The models are built per instance in their local frames.
+        // The models are built per instance in their local frames (kept for
+        // picking).
+        ensureModelVertices();
         bytes += uploadVertices(&this->tank_buffer.handle, &this->tank_buffer.count, this->model_layout,
-                                mapGlobeBuildTankModelVertices(scene.tankInstances()));
+                                this->tank_model_vertices);
         bytes += uploadVertices(&this->reservoir_buffer.handle, &this->reservoir_buffer.count,
-                                this->model_layout,
-                                mapGlobeBuildReservoirModelVertices(scene.reservoirInstances()));
+                                this->model_layout, this->reservoir_model_vertices);
     }
     if (this->dirty_streams & UndergroundStream)
     {
@@ -603,7 +629,7 @@ MapBgfxGlobeNetwork::FrameResult MapBgfxGlobeNetwork::render(bgfx::ViewId view, 
     // An empty scene adopts the camera's origin once; networks keep their
     // own geometry anchor (camera rebases never touch the buffers).
     if (this->network_scene.setRenderOriginEcef(camera.renderOriginEcef()))
-        this->dirty_streams = AllStreams;
+        markDirty(AllStreams);
     if (!this->network_scene.hasGeometry())
         return result;
     // Pixel-sized chevrons (and pixel-sized 3D models) in metres at the
@@ -612,7 +638,7 @@ MapBgfxGlobeNetwork::FrameResult MapBgfxGlobeNetwork::render(bgfx::ViewId view, 
     const double tan_half_fov = std::tan(qDegreesToRadians(MapModel::GlobeFieldOfViewDeg / 2.0));
     if (this->network_scene.setFlowDirectionPixelsPerMeter(
             double(logical_viewport.height()) / (2.0 * reference_depth_m * tan_half_fov)))
-        this->dirty_streams |= FlowStream | IconStream;
+        markDirty(FlowStream | IconStream);
     if (this->dirty_streams != 0)
         uploadStreams(&result);
 
@@ -712,4 +738,292 @@ MapBgfxGlobeNetwork::FrameResult MapBgfxGlobeNetwork::render(bgfx::ViewId view, 
         submitStream(view, this->icon_buffer, this->icon_program, kOverlayState, uniforms, icon_atlas,
                      this->icon_sampler, &result);
     return result;
+}
+
+// --- Picking (slice 4) -----------------------------------------------------
+
+namespace
+{
+// Hit radii of the QRhi globe (larger than 2D: perspective views).
+constexpr double GlobeMinimumNodeHitRadiusPx = 16.0;
+constexpr double GlobeNodeHitPaddingPx = 9.0;
+constexpr double GlobeMinimumLinkHitRadiusPx = 12.0;
+constexpr double GlobeLinkHitPaddingPx = 8.0;
+constexpr double GlobeMinimumIconHitRadiusPx = 18.0;
+constexpr double GlobeIconHitPaddingPx = 10.0;
+
+bool finitePoint(const QPointF &point)
+{
+    return std::isfinite(point.x()) && std::isfinite(point.y());
+}
+
+// Canonical clip space (NDC y up) to logical screen pixels (y down); NaN
+// behind the camera.
+QPointF projectToScreen(const QMatrix4x4 &view_projection, const QVector3D &position, const QSize &viewport)
+{
+    const QVector4D clip = view_projection * QVector4D(position, 1.0f);
+    if (!(clip.w() > 1e-6f))
+        return QPointF(qQNaN(), qQNaN());
+    const double ndc_x = double(clip.x() / clip.w());
+    const double ndc_y = double(clip.y() / clip.w());
+    return QPointF((ndc_x + 1.0) * viewport.width() / 2.0, (1.0 - ndc_y) * viewport.height() / 2.0);
+}
+
+double pointSegmentDistance(const QPointF &point, const QPointF &start, const QPointF &end)
+{
+    const QPointF segment = end - start;
+    const double length_squared = segment.x() * segment.x() + segment.y() * segment.y();
+    if (length_squared <= 1e-12)
+        return QLineF(point, start).length();
+    const QPointF relative = point - start;
+    const double ratio = qBound(0.0, (relative.x() * segment.x() + relative.y() * segment.y()) / length_squared, 1.0);
+    return QLineF(point, QPointF(start.x() + segment.x() * ratio, start.y() + segment.y() * ratio)).length();
+}
+
+// Nearest model triangle along the ray (model vertices are triangle lists
+// relative to the network origin); 0: none.
+template <typename Vertex>
+quint32 nearestModelHit(const QVector<Vertex> &vertices, const QVector3D &ray_origin,
+                        const QVector3D &ray_direction)
+{
+    quint32 best_render_id = 0;
+    double best_distance = std::numeric_limits<double>::infinity();
+    for (qsizetype index = 0; index + 2 < vertices.size(); index += 3)
+    {
+        const Vertex &a = vertices.at(index);
+        const Vertex &b = vertices.at(index + 1);
+        const Vertex &c = vertices.at(index + 2);
+        if (a.render_id == 0 || a.render_id != b.render_id || a.render_id != c.render_id)
+            continue;
+        double distance = 0.0;
+        if (!mapGlobeRayTriangleIntersectionDistance(
+                ray_origin, ray_direction, QVector3D(a.position_x, a.position_y, a.position_z),
+                QVector3D(b.position_x, b.position_y, b.position_z),
+                QVector3D(c.position_x, c.position_y, c.position_z), &distance)
+            || !mapGlobeUpdateNearestHitDistance(distance, &best_distance))
+            continue;
+        best_render_id = a.render_id;
+    }
+    return best_render_id;
+}
+}
+
+MapRenderHit MapBgfxGlobeNetwork::entityHit(InfrastructureEntity entity_type, quint32 render_id) const
+{
+    MapRenderHit hit;
+    const QUuid uuid = this->entity_uuids.value(entityKey(entity_type, render_id));
+    if (uuid.isNull() || this->hidden_entity_uuids.contains(uuid))
+        return hit;
+    hit.render_id = render_id;
+    hit.entity_type = entity_type;
+    hit.uuid = uuid;
+    return hit;
+}
+
+MapRenderHit MapBgfxGlobeNetwork::hitTest(const QPointF &screen_position, const MapGlobeCamera &camera,
+                                          const QSize &logical_viewport)
+{
+    MapRenderHit no_hit;
+    synchronize();
+    if (!this->network_scene.hasGeometry() || !logical_viewport.isValid() || !finitePoint(screen_position))
+        return no_hit;
+    ensureModelVertices();
+    const MapGlobeNetworkScene &scene = this->network_scene;
+    const QSize viewport(std::max(1, logical_viewport.width()), std::max(1, logical_viewport.height()));
+    const GeoWgs84Ellipsoid::EcefPositionD origin = scene.renderOriginEcef();
+    MapGlobeCameraBasis basis;
+    const QMatrix4x4 view_projection = camera.viewProjectionMatrixForOrigin(origin, &basis);
+
+    // 3D tank / reservoir models: the screen ray against their triangles
+    // (with 3D icons on, their billboard icons are gone).
+    MapGlobeScreenRay ray;
+    if (camera.screenRay(screen_position, &ray))
+    {
+        const QVector3D ray_origin(float(ray.origin_ecef.x - origin.x), float(ray.origin_ecef.y - origin.y),
+                                   float(ray.origin_ecef.z - origin.z));
+        const quint32 tank = nearestModelHit(this->tank_model_vertices, ray_origin, ray.direction);
+        if (tank != 0)
+        {
+            const MapRenderHit hit = entityHit(InfrastructureEntity::Tank, tank);
+            if (hit.isValid())
+                return hit;
+        }
+        const quint32 reservoir = nearestModelHit(this->reservoir_model_vertices, ray_origin, ray.direction);
+        if (reservoir != 0)
+        {
+            const MapRenderHit hit = entityHit(InfrastructureEntity::Reservoir, reservoir);
+            if (hit.isValid())
+                return hit;
+        }
+    }
+
+    // Junction spheres (only drawn ones), by their projected radius.
+    double best_junction_distance = std::numeric_limits<double>::infinity();
+    quint32 best_junction = 0;
+    for (const MapGlobeJunctionInstance &instance : scene.junctionInstances())
+    {
+        float rgba[4];
+        if (!junctionColor(instance.render_id, rgba))
+            continue;
+        const QVector3D center(instance.center_x, instance.center_y, instance.center_z);
+        const QPointF projected = projectToScreen(view_projection, center, viewport);
+        if (!finitePoint(projected))
+            continue;
+        double visual_radius_px = GlobeMinimumNodeHitRadiusPx;
+        if (instance.radius_world > 0.0f)
+        {
+            const QPointF edge = projectToScreen(view_projection, center + basis.right * instance.radius_world,
+                                                 viewport);
+            if (finitePoint(edge))
+                visual_radius_px = QLineF(projected, edge).length();
+        }
+        const double hit_radius = std::max(GlobeMinimumNodeHitRadiusPx, visual_radius_px + GlobeNodeHitPaddingPx);
+        const double distance = QLineF(screen_position, projected).length();
+        if (distance > hit_radius || distance >= best_junction_distance)
+            continue;
+        best_junction_distance = distance;
+        best_junction = instance.render_id;
+    }
+    if (best_junction != 0)
+    {
+        const MapRenderHit hit = entityHit(InfrastructureEntity::Junction, best_junction);
+        if (hit.isValid())
+            return hit;
+    }
+
+    // Icons: the projected billboard rectangle (atlas aspect ratio, the
+    // icon shader's depth-dependent size).
+    const double tan_half_fov = std::tan(qDegreesToRadians(MapModel::GlobeFieldOfViewDeg / 2.0));
+    double best_icon_distance = std::numeric_limits<double>::infinity();
+    quint32 best_icon = 0;
+    InfrastructureEntity best_icon_type = InfrastructureEntity::Unknown;
+    const QVector<MapNetworkIconVertex> &icons = scene.iconVertices();
+    for (qsizetype index = 0; index + 5 < icons.size(); index += 6)
+    {
+        const MapNetworkIconVertex &icon = icons.at(index);
+        const QVector3D center(icon.center_x, icon.center_y, icon.center_z);
+        const QPointF projected = projectToScreen(view_projection, center, viewport);
+        if (!finitePoint(projected))
+            continue;
+        const double depth_m = std::abs(double((view_projection * QVector4D(center, 1.0f)).w()));
+        if (!std::isfinite(depth_m) || depth_m <= 0.000001)
+            continue;
+        double icon_size_px = double(scene.iconSizePx());
+        if (scene.iconSizeUnit() == NetworkSymbologySizeUnit::Meters)
+            icon_size_px = scene.iconSizeM() * double(viewport.height()) / (2.0 * depth_m * tan_half_fov);
+        else
+            icon_size_px *= std::max(1.0, camera.orbitDistanceM()) / depth_m;
+        const double half_width = std::max(GlobeMinimumIconHitRadiusPx,
+                                           std::abs(double(icon.offset_x_ratio)) * icon_size_px
+                                               + GlobeIconHitPaddingPx);
+        const double half_height = std::max(GlobeMinimumIconHitRadiusPx,
+                                            std::abs(double(icon.offset_y_ratio)) * icon_size_px
+                                                + GlobeIconHitPaddingPx);
+        if (std::abs(screen_position.x() - projected.x()) > half_width
+            || std::abs(screen_position.y() - projected.y()) > half_height)
+            continue;
+        const double distance = QLineF(screen_position, projected).length();
+        if (distance >= best_icon_distance)
+            continue;
+        best_icon_distance = distance;
+        best_icon = icon.render_id;
+        best_icon_type = icon.entity_type;
+    }
+    if (best_icon != 0)
+    {
+        const MapRenderHit hit = entityHit(best_icon_type, best_icon);
+        if (hit.isValid())
+            return hit;
+    }
+
+    // Generic nodes (not junctions; not tanks/reservoirs shown as models,
+    // whose invisible centre points would be targets outside the model).
+    QSet<quint32> modeled_tanks;
+    for (const MapGlobeTankInstance &instance : scene.tankInstances())
+        modeled_tanks.insert(instance.render_id);
+    QSet<quint32> modeled_reservoirs;
+    for (const MapGlobeReservoirInstance &instance : scene.reservoirInstances())
+        modeled_reservoirs.insert(instance.render_id);
+    double best_node_distance = std::numeric_limits<double>::infinity();
+    quint32 best_node = 0;
+    InfrastructureEntity best_node_type = InfrastructureEntity::Unknown;
+    const QVector<MapNetworkNodeVertex> &nodes = scene.nodeVertices();
+    for (qsizetype index = 0; index + 5 < nodes.size(); index += 6)
+    {
+        const MapNetworkNodeVertex &node = nodes.at(index);
+        if (node.entity_type == InfrastructureEntity::Junction
+            || (node.entity_type == InfrastructureEntity::Tank && modeled_tanks.contains(node.render_id))
+            || (node.entity_type == InfrastructureEntity::Reservoir && modeled_reservoirs.contains(node.render_id)))
+            continue;
+        const QVector3D center(node.center_x, node.center_y, node.center_z);
+        const QPointF projected = projectToScreen(view_projection, center, viewport);
+        if (!finitePoint(projected))
+            continue;
+        double visual_radius_px = scene.nodeSizePx() * 0.5;
+        if (scene.nodeSizeUnit() == NetworkSymbologySizeUnit::Meters)
+        {
+            const QPointF edge = projectToScreen(
+                view_projection, center + basis.right * float(scene.nodeSizeM() * 0.5), viewport);
+            if (finitePoint(edge))
+                visual_radius_px = QLineF(projected, edge).length();
+        }
+        visual_radius_px = std::max(0.0, visual_radius_px + double(node.size_adjust_px));
+        const double hit_radius = std::max(GlobeMinimumNodeHitRadiusPx, visual_radius_px + GlobeNodeHitPaddingPx);
+        const double distance = QLineF(screen_position, projected).length();
+        if (distance > hit_radius || distance >= best_node_distance)
+            continue;
+        best_node_distance = distance;
+        best_node = node.render_id;
+        best_node_type = node.entity_type;
+    }
+    if (best_node != 0)
+    {
+        const MapRenderHit hit = entityHit(best_node_type, best_node);
+        if (hit.isValid())
+            return hit;
+    }
+
+    // Pipes, pumps, valves: distance to each projected segment (six vertices
+    // per segment share start and end).
+    const double fixed_half_width_px = scene.linkThicknessPx() * 0.5;
+    double best_link_distance = std::numeric_limits<double>::infinity();
+    quint32 best_link = 0;
+    InfrastructureEntity best_link_type = InfrastructureEntity::Unknown;
+    const QVector<MapNetworkLinkVertex> &links = scene.linkVertices();
+    for (qsizetype index = 0; index + 5 < links.size(); index += 6)
+    {
+        const MapNetworkLinkVertex &link = links.at(index);
+        const QVector3D start(link.start_x, link.start_y, link.start_z);
+        const QVector3D end(link.end_x, link.end_y, link.end_z);
+        const QPointF start_screen = projectToScreen(view_projection, start, viewport);
+        const QPointF end_screen = projectToScreen(view_projection, end, viewport);
+        if (!finitePoint(start_screen) || !finitePoint(end_screen))
+            continue;
+        double half_width_px = fixed_half_width_px;
+        if (scene.linkThicknessUnit() == NetworkSymbologySizeUnit::Meters)
+        {
+            QVector3D width_direction(link.width_direction_x, link.width_direction_y, link.width_direction_z);
+            if (width_direction.lengthSquared() > 0.000001f)
+                width_direction.normalize();
+            else
+                width_direction = basis.right;
+            const QVector3D midpoint = (start + end) * 0.5f;
+            const QPointF midpoint_screen = projectToScreen(view_projection, midpoint, viewport);
+            const QPointF edge_screen = projectToScreen(
+                view_projection, midpoint + width_direction * float(scene.linkThicknessM() * 0.5), viewport);
+            if (finitePoint(midpoint_screen) && finitePoint(edge_screen))
+                half_width_px = QLineF(midpoint_screen, edge_screen).length();
+        }
+        half_width_px = std::max(0.0, half_width_px + double(link.size_adjust_px));
+        const double hit_radius = std::max(GlobeMinimumLinkHitRadiusPx, half_width_px + GlobeLinkHitPaddingPx);
+        const double distance = pointSegmentDistance(screen_position, start_screen, end_screen);
+        if (distance > hit_radius || distance >= best_link_distance)
+            continue;
+        best_link_distance = distance;
+        best_link = link.render_id;
+        best_link_type = link.entity_type;
+    }
+    if (best_link != 0)
+        return entityHit(best_link_type, best_link);
+    return no_hit;
 }

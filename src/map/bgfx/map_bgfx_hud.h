@@ -23,8 +23,12 @@
 // with cancel buttons, the 2D/3D view switch, the fullscreen button (6a) and
 // the map legend (6b: node / link / heatmap metric combos, colour ramps with
 // value labels, hover value swatch, palette menu with flip and reset,
-// tooltips). Globe-only controls (compass, tilt, ...) follow with the bgfx
-// globe.
+// tooltips). On the globe (Phase 3 slice 5, setGlobe()): the wireframe /
+// map toggles next to the view switch, the terrain-mesh progress next to the
+// downloads, the camera sliders (network height, tilt, distance, vertical
+// exaggeration), the underground mode (X-Ray / Hide / Solid), the compass
+// with its heading and the globe scale, bottom left like the QWidget globe
+// HUD (MapMonitorVerticalControlsHudWidget, MapMonitorCompassHudWidget).
 //
 // Same content, positions and sizes as the QWidget HUD
 // (MapMonitorContainer::positionDesktopHudWidgets(), map_monitor_hud_controls,
@@ -56,16 +60,52 @@ public:
         LegendVisual,
         // LegendPalette: Command::value is the NetworkSymbologyPalette as
         // int, Command::flipped its direction.
-        LegendPalette
+        LegendPalette,
+        // --- Globe (slice 5) ---------------------------------------------------
+        ToggleWireframe,
+        ToggleMapTiles,
+        // Command::value: MapUndergroundMode as int (X-Ray 0, Hide 1, Solid 2).
+        UndergroundMode,
+        // A camera slider dragged: Command::group the GlobeSlider, number its
+        // position 0..1 (bottom to top), phase Begin (press) / Move / End.
+        GlobeSlider,
+        // Right press on a slider: back to its default (QWidget HUD).
+        GlobeSliderReset,
+        // Compass drag: phase Begin (press), Move (number: horizontal pointer
+        // delta in px), End (value 1: it was a click, turn north).
+        CompassDrag,
+        // Wheel over the compass: number = notches (angle delta / 120).
+        CompassWheel
     };
 
-    // An action plus its legend arguments (unused fields stay default).
+    // Continuous interactions (sliders, compass) report their course.
+    enum class Phase
+    {
+        None,
+        Begin,
+        Move,
+        End
+    };
+
+    // An action plus its arguments (unused fields stay default).
     struct Command
     {
         Action action = Action::None;
         int group = -1;
         int value = 0;
         bool flipped = false;
+        double number = 0.0;
+        Phase phase = Phase::None;
+    };
+
+    // The globe's camera sliders, left to right (QWidget HUD order).
+    enum GlobeSliderIndex
+    {
+        NetworkOffsetSlider = 0,
+        TiltSlider = 1,
+        DistanceSlider = 2,
+        ExaggerationSlider = 3,
+        GlobeSliderCount = 4
     };
 
     // Pointer shape the map should show for the HUD element under it.
@@ -157,6 +197,36 @@ public:
     };
     static constexpr int LegendGroupCount = 3;
 
+    // --- Globe content (slice 5) ---------------------------------------------------
+    // One camera slider: position 0..1 (bottom to top) and its labels in the
+    // user's units (formatted by the application).
+    struct GlobeSliderState
+    {
+        double fraction = 0.0;
+        QString maximum_label;
+        QString minimum_label;
+        QString value_label;
+        QString tooltip;
+    };
+    struct Globe
+    {
+        // The globe is shown: draw its controls (and its scale instead of
+        // the 2D one).
+        bool visible = false;
+        double yaw_deg = 0.0;
+        std::array<GlobeSliderState, GlobeSliderCount> sliders;
+        // MapUndergroundMode as int.
+        int underground_mode = 0;
+        bool wireframe = false;
+        bool map_tiles = true;
+        // Globe scale bar (MapMonitorScaleHudWidget's globe formula).
+        ScaleBar scale;
+        // Terrain meshes being built: completed / total (0: unknown yet).
+        bool mesh_active = false;
+        int mesh_completed = 0;
+        int mesh_total = 0;
+    };
+
     struct FrameInputs
     {
         QSizeF viewport;
@@ -177,13 +247,17 @@ public:
     void setViewMode(bool two_d, bool globe_available);
     // The 2D/3D switch (default shown). The map editor has none.
     void setViewSwitchVisible(bool visible) { this->view_switch_visible = visible; }
+    // Globe controls and their state (call per frame while the globe is
+    // shown; visible=false hides them).
+    void setGlobe(const Globe &globe);
     // The HUD changes with time alone (download busy indicators, a tooltip
     // waiting for its delay): the surface must keep presenting frames while
     // this is true, otherwise it renders only on changes.
     bool animating() const
     {
         return this->tiles_active > 0 || this->tiles_queued > 0 || this->terrain_active > 0
-            || this->terrain_queued > 0 || this->tooltip_waiting;
+            || this->terrain_queued > 0 || this->tooltip_waiting
+            || (this->globe.visible && this->globe.mesh_active);
     }
     void setFullscreen(bool available, bool active);
     // Replaces the legend content. Open popups stay open when their group
@@ -212,10 +286,17 @@ public:
     // a HUD press is held. over_button: the pointer is over an enabled
     // button (pointing-hand cursor); cursor() has the exact shape.
     bool mouseMove(double x, double y, bool *over_button);
+    // Right button press: on a globe slider it resets the slider (command);
+    // consumed over any HUD panel.
+    bool mousePressRight(double x, double y);
     // Wheel over the HUD (angle delta in 1/8 degree, positive = away from
-    // the user). Scrolls an open combo list; consumed over any HUD panel
-    // so the map does not zoom underneath.
+    // the user). Scrolls an open combo list, turns the compass; consumed
+    // over any HUD panel so the map does not zoom underneath.
     bool mouseWheel(double x, double y, double angle_delta_y);
+    // Commands of continuous interactions (slider drags, compass drags and
+    // wheel, slider resets) since the last call, in order. The application
+    // drains them after every input event.
+    QVector<Command> takeCommands();
     // The pointer left the map: drop the hover highlight (a held press
     // stays armed; the window keeps the implicit grab).
     void clearHover();
@@ -252,6 +333,13 @@ public:
     static constexpr double LegendSwatchHeightPx = 52.0;
     // QToolTip wake-up delay.
     static constexpr double TooltipDelayS = 0.7;
+    // Globe controls (map_monitor_hud_controls.cpp): compass 82 px, slider
+    // columns 56 px wide with 74 px sliders.
+    static constexpr double CompassDiameterPx = 82.0;
+    static constexpr double SliderColumnWidthPx = 56.0;
+    static constexpr double SliderHeightPx = 74.0;
+    // A compass press that moves less than this is a click (turn north).
+    static constexpr double CompassDragThresholdPx = 4.0;
 
 private:
     enum class Element
@@ -271,6 +359,12 @@ private:
         LegendPalette,
         LegendPaletteFlip,
         LegendPaletteReset,
+        // Globe (index = toggle / underground mode / slider).
+        GlobeWireframe,
+        GlobeMapTiles,
+        GlobeUnderground,
+        GlobeSlider,
+        Compass,
         // Background of an open popup: blocks what lies underneath
         // (Target::index: PopupComboList or PopupPaletteMenu).
         Popup
@@ -314,6 +408,23 @@ private:
                          bool cancel_pending, double time_s, const Palette &palette);
     void scaleBar(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
                   const FrameInputs &inputs, const Palette &palette);
+    // Scale panel at (x, y) for a computed bar.
+    void drawScalePanel(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache, double x, double y,
+                        const ScaleBar &scale, const Palette &palette);
+
+    // --- Globe (slice 5) -----------------------------------------------------------
+    // Terrain-mesh progress panel (layout pass when canvas null); width.
+    double meshPanel(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache, double x, double y,
+                     double time_s, const Palette &palette);
+    // Sliders, underground mode, compass and the globe scale, bottom left.
+    void globeControls(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
+                       const FrameInputs &inputs, const Palette &palette);
+    void drawSlider(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache, const MapBgfxHudRect &column,
+                    int index, const Palette &palette);
+    void drawCompass(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache, double x, double y,
+                     const Palette &palette);
+    // Slider position 0..1 at pointer y on slider index's track.
+    double sliderFraction(int index, double y) const;
 
     // --- Legend (slice 6b) -------------------------------------------------------
     double comboHeight(MapBgfxHudTextCache *cache) const;
@@ -383,6 +494,16 @@ private:
     bool view_switch_visible = true;
     bool fullscreen_available = false;
     bool fullscreen_active = false;
+
+    // Globe controls (slice 5): state, the slider tracks of the last build,
+    // the compass drag and the queued continuous commands.
+    Globe globe;
+    std::array<MapBgfxHudRect, GlobeSliderCount> slider_tracks;
+    MapBgfxHudRect compass_rect;
+    double compass_last_x = 0.0;
+    double compass_last_y = 0.0;
+    double compass_drag_distance = 0.0;
+    QVector<Command> pending_commands;
 
     // Legend content and its per-frame layout (positions of the last build,
     // used to anchor popups and the hover swatch).

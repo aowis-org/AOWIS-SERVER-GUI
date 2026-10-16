@@ -66,8 +66,8 @@ public:
     ~MapBgfxSurface() override;
 
     QString graphicsApiName() const override;
-    // 2D picking with the QRhi rules (map_bgfx_2d_picking.h) at the current
-    // continuous camera. Globe picking arrives with the bgfx globe.
+    // Picking with the QRhi rules at the model's current camera: 2D
+    // (map_bgfx_2d_picking.h) and the globe (MapBgfxGlobeNetwork::hitTest()).
     MapRenderHit hitTest(const QPointF &screen_position) const override;
     // Terrain-aware navigation (Phase 3, slice 2; MapGlobeTerrainNavigation):
     // pointer coordinates with DEM altitude (2D: cached DEM only), rays
@@ -134,13 +134,17 @@ public:
     MapUndergroundMode undergroundMode() const override { return this->underground_mode; }
     void setTerrainWireframeVisible(bool visible) override;
     void setMapTilesVisible(bool visible) override;
+    // Current state of the globe HUD's "wireframe" / "map" toggles.
+    bool terrainWireframeVisible() const;
+    bool mapTilesVisible() const;
     void globeTerrainMeshProgress(int *completed, int *total, bool *active) const override;
 
     // --- Globe on bgfx (roadmap Phase 3, in progress) -----------------------------
-    // Slices 1-3: terrain surface (imagery, DEM relief, caps, wireframe),
-    // terrain-aware navigation, the network and its heatmap (no globe
-    // picking or globe HUD controls yet). On by default;
-    // AOWIS_BGFX_GLOBE=0 switches it off (the HUD then offers no 3D).
+    // Slices 1-5: terrain surface (imagery, DEM relief, caps, wireframe),
+    // terrain-aware navigation, the network and its heatmap, picking and
+    // the globe HUD (compass, camera sliders, underground mode, toggles,
+    // terrain-mesh progress, scale). On by default; AOWIS_BGFX_GLOBE=0
+    // switches it off (the HUD then offers no 3D).
     static bool globePreviewEnabled();
     // The globe surface initialized on this device (preview enabled).
     bool globeAvailable() const { return this->globe_ready; }
@@ -265,6 +269,9 @@ private:
     void synchronizeHighlights();
     // Builds the HUD, uploads its atlas changes and submits it on top.
     void renderHud(const QSizeF &logical, const MapBgfx2d::Camera &camera);
+    // Hands the HUD's continuous-interaction commands (globe sliders,
+    // compass) to the action handler, deferred like the button actions.
+    void dispatchHudCommands();
     // bgfx's text statistics overlay (AOWIS_BGFX_DEBUG=1).
     void renderDebugOverlay();
     // Releases every bgfx object owned by this surface (before
@@ -346,8 +353,9 @@ private:
     // Terrain-aware navigation over globe_surface's retained DEM meshes.
     MapGlobeTerrainNavigation terrain_navigation;
     // The network on the globe (slice 3); its inputs are applied lazily on
-    // globe frames. Ready: its programs exist on this device.
-    MapBgfxGlobeNetwork globe_network;
+    // globe frames. Ready: its programs exist on this device. Mutable:
+    // hitTest() (const) applies pending inputs before picking (slice 4).
+    mutable MapBgfxGlobeNetwork globe_network;
     bool globe_network_ready = false;
     // X-Ray refresh wanted, and the generation of the pending quiet timer.
     bool globe_underground_refresh_requested = false;

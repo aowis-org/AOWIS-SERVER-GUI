@@ -973,6 +973,204 @@ void testLegend()
     hud.build(&canvas, &cache, frameInputs(true), palette);
     req(!canvas.overflowed(), "legend frame fits the draw list budget");
 }
+
+MapBgfxHud::Globe globeState()
+{
+    MapBgfxHud::Globe globe;
+    globe.visible = true;
+    globe.yaw_deg = 30.0;
+    for (int index = 0; index < MapBgfxHud::GlobeSliderCount; ++index)
+    {
+        globe.sliders[std::size_t(index)].fraction = 0.25 * double(index);
+        globe.sliders[std::size_t(index)].maximum_label = QStringLiteral("max");
+        globe.sliders[std::size_t(index)].minimum_label = QStringLiteral("min");
+        globe.sliders[std::size_t(index)].value_label = QStringLiteral("v%1").arg(index);
+    }
+    globe.underground_mode = 1;
+    globe.scale.valid = true;
+    globe.scale.width_px = 60.0;
+    globe.scale.label = QStringLiteral("2 km");
+    return globe;
+}
+
+// First grid point whose press queues a command of action (its group for
+// sliders); every press is released again.
+bool findCommandPoint(MapBgfxHud *hud, MapBgfxHud::Action action, int group, double *found_x,
+                      double *found_y)
+{
+    for (double y = 0.5; y < ViewportHeight; y += 2.0)
+    {
+        for (double x = 0.5; x < ViewportWidth; x += 2.0)
+        {
+            hud->mousePress(x, y);
+            const QVector<MapBgfxHud::Command> commands = hud->takeCommands();
+            bool consumed = false;
+            hud->mouseRelease(x, y, &consumed);
+            hud->takeCommands();
+            if (!commands.isEmpty() && commands.first().action == action
+                && (group < 0 || commands.first().group == group))
+            {
+                *found_x = x;
+                *found_y = y;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Globe controls (Phase 3 slice 5): toggles, underground mode, camera
+// sliders, compass, terrain-mesh progress, globe scale.
+void testGlobe()
+{
+    QFont font;
+    font.setPixelSize(13);
+    MapBgfxHud hud;
+    hud.setFont(font);
+    hud.setViewMode(false, true);
+    MapBgfxHudTextCache cache(1024);
+    MapBgfxHudCanvas canvas;
+    const MapBgfxHud::Palette palette;
+
+    // Hidden: none of the globe controls exist.
+    hud.build(&canvas, &cache, frameInputs(false), palette);
+    ActionScan scan = scanActions(&hud, 4.0);
+    req(!scan.found(MapBgfxHud::Action::ToggleWireframe) && !scan.found(MapBgfxHud::Action::UndergroundMode),
+        "no globe controls while the globe is not shown");
+    req(hud.takeCommands().isEmpty(), "no globe commands while the globe is not shown");
+
+    hud.setGlobe(globeState());
+    hud.build(&canvas, &cache, frameInputs(false), palette);
+    req(!canvas.overflowed(), "globe HUD fits the draw list budget");
+    req(!hud.animating(), "no terrain meshes: the globe HUD does not animate");
+    scan = scanActions(&hud, 2.0);
+    hud.takeCommands();
+    req(scan.found(MapBgfxHud::Action::ToggleWireframe) && scan.found(MapBgfxHud::Action::ToggleMapTiles),
+        "wireframe and map toggles are clickable");
+    req(scan.where(MapBgfxHud::Action::ToggleWireframe).top() < 60.0
+            && scan.where(MapBgfxHud::Action::ToggleWireframe).left()
+                > scan.where(MapBgfxHud::Action::ViewMode3d).right(),
+        "the toggles follow the view switch, top left");
+    req(scan.found(MapBgfxHud::Action::UndergroundMode), "underground mode buttons are clickable");
+    req(scan.where(MapBgfxHud::Action::UndergroundMode).bottom() > ViewportHeight - 100.0,
+        "underground mode is at the bottom");
+    // The three modes, top to bottom.
+    {
+        const QRectF where = scan.where(MapBgfxHud::Action::UndergroundMode);
+        int modes[3] = {-1, -1, -1};
+        for (int mode = 0; mode < 3; ++mode)
+        {
+            const double y = where.top() + (where.height() * (double(mode) + 0.5) / 3.0);
+            hud.mousePress(where.center().x(), y);
+            bool consumed = false;
+            MapBgfxHud::Command command;
+            hud.mouseRelease(where.center().x(), y, &consumed, &command);
+            modes[mode] = command.action == MapBgfxHud::Action::UndergroundMode ? command.value : -1;
+        }
+        req(modes[0] == 0 && modes[1] == 1 && modes[2] == 2, "X-Ray, Hide, Solid top to bottom");
+    }
+
+    // Sliders: four columns left to right; a drag reports Begin, Move, End.
+    double slider_x[MapBgfxHud::GlobeSliderCount] = {};
+    double slider_y[MapBgfxHud::GlobeSliderCount] = {};
+    bool sliders_found = true;
+    for (int index = 0; index < MapBgfxHud::GlobeSliderCount; ++index)
+    {
+        sliders_found = findCommandPoint(&hud, MapBgfxHud::Action::GlobeSlider, index, &slider_x[index],
+                                         &slider_y[index])
+            && sliders_found;
+    }
+    req(sliders_found, "every camera slider takes a press");
+    req(slider_x[0] < slider_x[1] && slider_x[1] < slider_x[2] && slider_x[2] < slider_x[3],
+        "sliders are left to right: offset, tilt, distance, exaggeration");
+    req(slider_x[0] < 80.0 && slider_y[0] > ViewportHeight - 160.0, "sliders are bottom left");
+    {
+        // Press at the top of the tilt track, drag to the bottom, release.
+        const double x = slider_x[1];
+        const double top = slider_y[1];
+        req(hud.mousePress(x, top), "a slider press is consumed");
+        bool over_button = false;
+        req(hud.mouseMove(x, top + 40.0, &over_button), "slider drags are consumed");
+        hud.mouseMove(x, top + 200.0, &over_button);
+        bool consumed = false;
+        req(hud.mouseRelease(x, top + 200.0, &consumed) == MapBgfxHud::Action::None && consumed,
+            "a slider release is consumed without a click action");
+        const QVector<MapBgfxHud::Command> commands = hud.takeCommands();
+        req(commands.size() == 4, "begin, two moves, end");
+        if (commands.size() == 4)
+        {
+            req(commands[0].phase == MapBgfxHud::Phase::Begin && commands[3].phase == MapBgfxHud::Phase::End
+                    && commands[1].phase == MapBgfxHud::Phase::Move,
+                "slider phases in order");
+            req(commands[0].group == MapBgfxHud::TiltSlider && commands[3].group == MapBgfxHud::TiltSlider,
+                "the tilt slider reports itself");
+            req(commands[0].number > 0.95 && commands[1].number < commands[0].number
+                    && std::fabs(commands[3].number) < 1e-9,
+                "the value follows the pointer, top 1 to clamped bottom 0");
+        }
+    }
+    req(hud.mousePressRight(slider_x[2], slider_y[2]), "a right press on a slider is consumed");
+    {
+        const QVector<MapBgfxHud::Command> commands = hud.takeCommands();
+        req(commands.size() == 1 && commands.first().action == MapBgfxHud::Action::GlobeSliderReset
+                && commands.first().group == MapBgfxHud::DistanceSlider,
+            "a right press resets the slider");
+    }
+
+    // Compass: right of the controls; click turns north, drag turns by the
+    // horizontal motion, the wheel by notches.
+    double compass_x = 0.0;
+    double compass_y = 0.0;
+    req(findCommandPoint(&hud, MapBgfxHud::Action::CompassDrag, -1, &compass_x, &compass_y),
+        "the compass takes a press");
+    req(compass_x > slider_x[3], "the compass is right of the sliders");
+    {
+        hud.mousePress(compass_x + 30.0, compass_y + 30.0);
+        bool consumed = false;
+        hud.mouseRelease(compass_x + 30.0, compass_y + 30.0, &consumed);
+        const QVector<MapBgfxHud::Command> click = hud.takeCommands();
+        req(click.size() == 2 && click[0].phase == MapBgfxHud::Phase::Begin
+                && click[1].phase == MapBgfxHud::Phase::End && click[1].value == 1,
+            "a compass click ends as a click (turn north)");
+        hud.mousePress(compass_x + 30.0, compass_y + 30.0);
+        bool over_button = false;
+        hud.mouseMove(compass_x + 50.0, compass_y + 31.0, &over_button);
+        hud.mouseRelease(compass_x + 50.0, compass_y + 31.0, &consumed);
+        const QVector<MapBgfxHud::Command> drag = hud.takeCommands();
+        req(drag.size() == 3 && drag[1].phase == MapBgfxHud::Phase::Move
+                && std::fabs(drag[1].number - 20.0) < 1e-9 && drag[2].value == 0,
+            "a compass drag reports the horizontal motion and is no click");
+        req(hud.mouseWheel(compass_x + 30.0, compass_y + 30.0, 240.0), "the wheel over the compass is consumed");
+        const QVector<MapBgfxHud::Command> wheel = hud.takeCommands();
+        req(wheel.size() == 1 && wheel.first().action == MapBgfxHud::Action::CompassWheel
+                && std::fabs(wheel.first().number - 2.0) < 1e-9,
+            "the wheel turns the compass by notches");
+        req(hud.blocksInput(compass_x + 30.0, compass_y + 30.0), "the compass blocks map input");
+    }
+
+    // The globe scale is drawn (its label text uses the scale font; check
+    // its frame bottom left of the viewport, right of the compass).
+    bool scale_drawn = false;
+    for (const MapBgfxHudVertex &vertex : canvas.vertices())
+    {
+        if (vertex.x > compass_x + MapBgfxHud::CompassDiameterPx
+            && vertex.y > ViewportHeight - MapBgfxHud::MarginPx - MapBgfxHud::ScaleHeightPx - 1.0)
+            scale_drawn = true;
+    }
+    req(scale_drawn, "globe scale is right of the compass");
+
+    // Terrain meshes: progress panel and animation while building.
+    MapBgfxHud::Globe building = globeState();
+    building.mesh_active = true;
+    building.mesh_completed = 3;
+    building.mesh_total = 10;
+    hud.setGlobe(building);
+    req(hud.animating(), "building terrain meshes keep the HUD animating");
+    hud.build(&canvas, &cache, frameInputs(false), palette);
+    req(hud.blocksInput(0.5 * ViewportWidth, MapBgfxHud::MarginPx + 4.0), "terrain-mesh panel is top centre");
+    hud.setGlobe(MapBgfxHud::Globe());
+    req(!hud.animating(), "hidden globe controls do not animate");
+}
 }
 
 int main(int argc, char **argv)
@@ -991,6 +1189,7 @@ int main(int argc, char **argv)
     testLegendFormatting();
     testGradient();
     testLegend();
+    testGlobe();
 
     if (fails == 0)
         std::printf("bgfx HUD tests passed\n");
