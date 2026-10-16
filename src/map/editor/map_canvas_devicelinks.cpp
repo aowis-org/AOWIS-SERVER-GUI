@@ -1,4 +1,5 @@
 #include "map/editor/map_canvas_devicelinks.h"
+#include "map/editor/map_canvas_markers.h"
 #include "map/editor/map_canvas_widget.h"
 
 #include "geo/geo_web_mercator.h"
@@ -113,7 +114,7 @@ bool MapCanvasDeviceLinks::addDeviceLink(const InfrastructureEntityReference &en
 MapCanvasDeviceLinks::AnchorResult MapCanvasDeviceLinks::anchor(
     const InfrastructureEntityReference &entity,
     const QUuid &connection_target_uuid,
-    const QList<MapEntityMarker> &markers,
+    const MapCanvasMarkers &markers,
     const QString &pixmap_path,
     int marker_width)
 {
@@ -147,7 +148,7 @@ MapCanvasDeviceLinks::AnchorResult MapCanvasDeviceLinks::anchor(
 
 std::optional<DeviceLinkGeometry> MapCanvasDeviceLinks::completionGeometry(
     const QUuid &connection_target_uuid,
-    const QList<MapEntityMarker> &markers) const
+    const MapCanvasMarkers &markers) const
 {
     if (this->device_link_start_uuid.isNull() || connection_target_uuid.isNull() ||
         connection_target_uuid == this->device_link_start_uuid)
@@ -326,7 +327,7 @@ std::optional<InfrastructureEntityReference> MapCanvasDeviceLinks::markerAt(
 }
 
 std::optional<InfrastructureEntityReference> MapCanvasDeviceLinks::linkAt(
-    const QPointF &position, const QList<MapEntityMarker> &markers) const
+    const QPointF &position, const MapCanvasMarkers &markers) const
 {
     double nearest_distance_squared = link_hit_distance * link_hit_distance;
     std::optional<InfrastructureEntityReference> nearest_entity;
@@ -371,15 +372,15 @@ QRectF MapCanvasDeviceLinks::markerRect(const MapEntityMarker &marker) const
 }
 
 std::optional<MapEntityMarker> MapCanvasDeviceLinks::pointMarkerByUuid(
-    const QUuid &uuid, const QList<MapEntityMarker> &markers) const
+    const QUuid &uuid, const MapCanvasMarkers &markers) const
 {
-    for (const MapEntityMarker &marker : markers)
-    {
-        if (marker.entity.uuid == uuid)
-            return marker;
-    }
-
-    return std::nullopt;
+    // The node markers' uuid index: linkAt() asks twice per device link on
+    // every hover move, a linear search over all markers (demand points
+    // included) made that O(links x markers).
+    const MapEntityMarker *marker = markers.findMarker(uuid);
+    if (marker == nullptr)
+        return std::nullopt;
+    return *marker;
 }
 
 void MapCanvasDeviceLinks::rebuildUuidIndex()

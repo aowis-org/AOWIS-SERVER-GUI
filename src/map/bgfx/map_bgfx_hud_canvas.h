@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
+#include <utility>
 
 // Immediate-mode draw list for the native bgfx HUD (slice 6).
 //
@@ -18,6 +20,9 @@
 // ABGR (bytes R,G,B,A), because the HUD shader multiplies the premultiplied
 // atlas texel by the vertex colour and blends One / OneMinusSrcAlpha. Shapes
 // are plain triangles; their edges are antialiased by the view's MSAA.
+//
+// Indices are 32-bit: the editor overlay (Phase 2) draws one icon quad per
+// visible network node through the same kit, far beyond 65535 vertices.
 struct MapBgfxHudRect
 {
     double x = 0.0;
@@ -123,8 +128,12 @@ public:
             fillRoundedRect(rect, radius, argb);
             return;
         }
-        fillRing(roundedRectOutline(rect, radius),
-                 roundedRectOutline(inner, std::max(0.0, radius - line_width)), argb);
+        // Both outlines need the same number of points (fillRing pairs
+        // them): when either corner is rounded, both get corner arcs, the
+        // inner one possibly of radius 0 (a wide pen on a small radius).
+        const bool rounded = radius > 0.0;
+        fillRing(roundedRectOutline(rect, radius, rounded),
+                 roundedRectOutline(inner, std::max(0.0, radius - line_width), rounded), argb);
     }
 
     void fillCircle(double center_x, double center_y, double radius, quint32 argb)
@@ -157,6 +166,139 @@ public:
         fillConvexPolygon(corners, argb);
     }
 
+    void fillTriangle(const MapBgfxHudPoint &a, const MapBgfxHudPoint &b,
+                      const MapBgfxHudPoint &c, quint32 argb)
+    {
+        QVector<MapBgfxHudPoint> corners;
+        corners.append(a);
+        corners.append(b);
+        corners.append(c);
+        fillConvexPolygon(corners, argb);
+    }
+
+    // Rounded rect filled with a left-to-right gradient through evenly
+    // spaced colour stops (0xAARRGGBB), interpolated linearly per channel
+    // like QLinearGradient.
+    void fillHorizontalGradient(const MapBgfxHudRect &rect, double radius,
+                                const QVector<quint32> &stops)
+    {
+        QVector<double> positions;
+        for (qsizetype index = 0; index < stops.size(); ++index)
+            positions.append(stops.size() > 1 ? double(index) / double(stops.size() - 1) : 0.0);
+        fillLinearGradient(rect, radius, false, rect.x, rect.right(), positions, stops);
+    }
+
+    // Rounded rect filled with a horizontal (vertical=false: along x) or
+    // vertical (along y) linear gradient running from gradient_start to
+    // gradient_end on that axis, with stops at positions 0..1 (ascending)
+    // and pad spread outside, like QLinearGradient. The shape is cut into
+    // one slab per pair of neighbouring stops (plus the padded ends);
+    // within a slab the colour is an affine function of the axis, so
+    // per-vertex colours interpolate exactly, also on rounded corners.
+    void fillLinearGradient(const MapBgfxHudRect &rect, double radius, bool vertical,
+                            double gradient_start, double gradient_end,
+                            const QVector<double> &positions, const QVector<quint32> &stops)
+    {
+        if (stops.isEmpty() || positions.size() != stops.size())
+            return;
+        if (stops.size() == 1 || !(std::fabs(gradient_end - gradient_start) > 0.0))
+        {
+            fillRoundedRect(rect, radius, stops.first());
+            return;
+        }
+        QVector<MapBgfxHudPoint> outline = roundedRectOutline(rect, radius);
+        if (outline.size() < 3)
+            return;
+        // Clip in a frame where the gradient axis is x.
+        if (vertical)
+        {
+            for (MapBgfxHudPoint &point : outline)
+                std::swap(point.x, point.y);
+        }
+        const double length = gradient_end - gradient_start;
+        const std::function<double(double)> axis_at = [gradient_start, length](double position)
+        {
+            return gradient_start + length * position;
+        };
+        // Slab borders: -inf, stop positions, +inf (pad spread).
+        QVector<double> borders;
+        borders.append(-1e30);
+        for (const double position : positions)
+            borders.append(axis_at(position));
+        borders.append(1e30);
+        if (length < 0.0)
+            std::sort(borders.begin(), borders.end());
+        const std::function<quint32(double)> color_at = [&](double axis_value)
+        {
+            const double t = (axis_value - gradient_start) / length;
+            if (t <= positions.first())
+                return stops.first();
+            if (t >= positions.last())
+                return stops.last();
+            for (qsizetype index = 0; index + 1 < positions.size(); ++index)
+            {
+                const double a = positions.at(index);
+                const double b = positions.at(index + 1);
+                if (t >= a && t <= b)
+                    return interpolateArgb(stops.at(index), stops.at(index + 1),
+                                           b > a ? (t - a) / (b - a) : 0.0);
+            }
+            return stops.last();
+        };
+        for (qsizetype slab = 0; slab + 1 < borders.size(); ++slab)
+        {
+            const double low = borders.at(slab);
+            const double high = borders.at(slab + 1);
+            if (!(high > low))
+                continue;
+            QVector<MapBgfxHudPoint> piece = clipToVerticalSlab(outline, low, high);
+            if (piece.size() < 3)
+                continue;
+            QVector<quint32> colors;
+            colors.reserve(piece.size());
+            for (const MapBgfxHudPoint &point : piece)
+                colors.append(premultipliedAbgr(color_at(point.x)));
+            if (vertical)
+            {
+                for (MapBgfxHudPoint &point : piece)
+                    std::swap(point.x, point.y);
+            }
+            fillConvexPolygonColored(piece, colors);
+        }
+    }
+
+    // Convex polygon with one colour per vertex (0xAARRGGBB each).
+    void fillConvexPolygonArgb(const QVector<MapBgfxHudPoint> &points,
+                               const QVector<quint32> &argb_colors)
+    {
+        if (points.size() != argb_colors.size())
+            return;
+        QVector<quint32> colors;
+        colors.reserve(argb_colors.size());
+        for (const quint32 argb : argb_colors)
+            colors.append(premultipliedAbgr(argb));
+        fillConvexPolygonColored(points, colors);
+    }
+
+    // Any convex polygon in one colour.
+    void fillConvex(const QVector<MapBgfxHudPoint> &points, quint32 argb)
+    {
+        fillConvexPolygon(points, argb);
+    }
+
+    // Per-channel linear interpolation of two 0xAARRGGBB colours, rounded
+    // like networkSymbologyInterpolatedRampColor() (qRound per channel).
+    static quint32 interpolateArgb(quint32 from, quint32 to, double fraction)
+    {
+        const std::function<quint32(int)> channel = [from, to, fraction](int shift)
+        {
+            const double a = double((from >> shift) & 0xffu);
+            const double b = double((to >> shift) & 0xffu);
+            return quint32(std::clamp(qRound(a + (b - a) * fraction), 0, 255)) << shift;
+        };
+        return channel(24) | channel(16) | channel(8) | channel(0);
+    }
+
     // Atlas sprite stretched to rect, tinted (white = original colours).
     void sprite(const MapBgfxHudRect &rect, const MapBgfxHudSprite &sprite, quint32 tint_argb)
     {
@@ -181,9 +323,13 @@ public:
     }
 
     const QVector<MapBgfxHudVertex> &vertices() const { return this->vertex_list; }
-    const QVector<quint16> &indices() const { return this->index_list; }
-    // 16-bit indices: a HUD frame has a few hundred vertices.
-    bool overflowed() const { return this->vertex_list.size() > 65535; }
+    const QVector<quint32> &indices() const { return this->index_list; }
+    // Per-frame vertex budget below bgfx's transient vertex buffer
+    // (MapBgfxSurface sets Init::limits.maxTransientVbSize to 16 MiB = 838860
+    // HUD vertices; the HUD and the editor overlay share it with imagery
+    // quads). A larger list is reported and not drawn.
+    static constexpr qsizetype MaximumVertices = 600000;
+    bool overflowed() const { return this->vertex_list.size() > MaximumVertices; }
 
 private:
     static QVector<MapBgfxHudPoint> circleOutline(double cx, double cy, double radius)
@@ -201,13 +347,16 @@ private:
         return points;
     }
 
-    static QVector<MapBgfxHudPoint> roundedRectOutline(const MapBgfxHudRect &rect, double radius)
+    // keep_arcs: emit the corner arcs even for radius 0 (coincident
+    // points), so two outlines of one ring always have equal point counts.
+    static QVector<MapBgfxHudPoint> roundedRectOutline(const MapBgfxHudRect &rect, double radius,
+                                                       bool keep_arcs = false)
     {
         QVector<MapBgfxHudPoint> points;
         if (!(rect.width > 0.0) || !(rect.height > 0.0))
             return points;
         const double r = std::clamp(radius, 0.0, 0.5 * std::min(rect.width, rect.height));
-        if (r <= 0.0)
+        if (r <= 0.0 && !keep_arcs)
         {
             points.append({rect.x, rect.y});
             points.append({rect.right(), rect.y});
@@ -244,10 +393,67 @@ private:
             this->vertex_list.append({float(point.x), float(point.y), this->white_u, this->white_v, color});
         for (qsizetype index = 1; index + 1 < points.size(); ++index)
         {
-            this->index_list.append(quint16(base));
-            this->index_list.append(quint16(base + quint32(index)));
-            this->index_list.append(quint16(base + quint32(index) + 1u));
+            this->index_list.append(base);
+            this->index_list.append(base + quint32(index));
+            this->index_list.append(base + quint32(index) + 1u);
         }
+    }
+
+    // Convex polygon with one colour per vertex (already premultiplied ABGR).
+    void fillConvexPolygonColored(const QVector<MapBgfxHudPoint> &points,
+                                  const QVector<quint32> &abgr_colors)
+    {
+        if (points.size() < 3 || points.size() != abgr_colors.size())
+            return;
+        const quint32 base = quint32(this->vertex_list.size());
+        for (qsizetype index = 0; index < points.size(); ++index)
+        {
+            const MapBgfxHudPoint &point = points.at(index);
+            this->vertex_list.append({float(point.x), float(point.y), this->white_u,
+                                      this->white_v, abgr_colors.at(index)});
+        }
+        for (qsizetype index = 1; index + 1 < points.size(); ++index)
+        {
+            this->index_list.append(base);
+            this->index_list.append(base + quint32(index));
+            this->index_list.append(base + quint32(index) + 1u);
+        }
+    }
+
+    // Sutherland-Hodgman clip of a convex polygon to left <= x <= right; the
+    // result is convex again (a fan triangulates it).
+    static QVector<MapBgfxHudPoint> clipToVerticalSlab(const QVector<MapBgfxHudPoint> &polygon,
+                                                       double left, double right)
+    {
+        const std::function<QVector<MapBgfxHudPoint>(const QVector<MapBgfxHudPoint> &, double, bool)>
+            clip = [](const QVector<MapBgfxHudPoint> &input, double edge, bool keep_greater)
+        {
+            QVector<MapBgfxHudPoint> output;
+            if (input.isEmpty())
+                return output;
+            const std::function<bool(const MapBgfxHudPoint &)> inside =
+                [edge, keep_greater](const MapBgfxHudPoint &point)
+            {
+                return keep_greater ? point.x >= edge : point.x <= edge;
+            };
+            MapBgfxHudPoint previous = input.last();
+            for (const MapBgfxHudPoint &current : input)
+            {
+                const bool current_inside = inside(current);
+                const bool previous_inside = inside(previous);
+                if (current_inside != previous_inside)
+                {
+                    // Edge crossing: x == edge exactly, y interpolated.
+                    const double t = (edge - previous.x) / (current.x - previous.x);
+                    output.append({edge, previous.y + (current.y - previous.y) * t});
+                }
+                if (current_inside)
+                    output.append(current);
+                previous = current;
+            }
+            return output;
+        };
+        return clip(clip(polygon, left, true), right, false);
     }
 
     // Area between two outlines with the same number of points (same shape
@@ -273,7 +479,7 @@ private:
             const quint32 quad[6] = {base + index, base + next, base + count + next,
                                      base + index, base + count + next, base + count + index};
             for (const quint32 vertex : quad)
-                this->index_list.append(quint16(vertex));
+                this->index_list.append(vertex);
         }
     }
 
@@ -281,11 +487,11 @@ private:
     {
         const quint32 quad[6] = {base, base + 1u, base + 2u, base, base + 2u, base + 3u};
         for (const quint32 vertex : quad)
-            this->index_list.append(quint16(vertex));
+            this->index_list.append(vertex);
     }
 
     QVector<MapBgfxHudVertex> vertex_list;
-    QVector<quint16> index_list;
+    QVector<quint32> index_list;
     float white_u = 0.0f;
     float white_v = 0.0f;
 };

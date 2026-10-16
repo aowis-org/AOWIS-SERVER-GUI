@@ -472,6 +472,8 @@ private:
     void rebuildBoundingBoxWgs84();
     void rebuildSymbologyMinMaxValues();
     void rebuildNetworkRenderSnapshot() const;
+    // After an ID change: the render snapshot's IDs follow (map labels).
+    void refreshNetworkRenderSnapshotIds();
 
     NetworkHydraulic network_hydraulic;
     QList<WaterQualitySolverOptions> simulation_quality_run_options;

@@ -137,6 +137,29 @@
     <div id="screen" tabindex="0"></div>
 
     <script type="text/javascript">
+      // Uncaught errors (including JavaScript exceptions thrown inside the
+      // WebAssembly code, which unwind a Qt timer callback without killing
+      // the app) are kept here so the application can show them, e.g. in
+      // the map renderer's startup diagnostics.
+      window.aowisRecentErrors = [];
+      (() => {
+          const record = (value) => {
+              let text;
+              if (value instanceof Error)
+                  text = `${value.name}: ${value.message}`;
+              else
+                  text = String(value);
+              window.aowisRecentErrors.push(text);
+              if (window.aowisRecentErrors.length > 8)
+                  window.aowisRecentErrors.shift();
+          };
+          window.addEventListener('error', (event) =>
+              record(event.error !== undefined && event.error !== null ? event.error : event.message));
+          window.addEventListener('unhandledrejection', (event) => record(event.reason));
+      })();
+    </script>
+
+    <script type="text/javascript">
       let qtFocusHandlersInstalled = false;
       let qtFocusRetryTimer = null;
 
@@ -488,13 +511,18 @@
           const loadedConfiguration = await fetchAowisConfiguration();
           const configurationUrl = loadedConfiguration.url;
           const values = parseAowisIni(loadedConfiguration.text);
-          const configuredWasmRenderer = (values['gui/map_wasm_renderer'] || 'rhi')
+          // bgfx is the map renderer. "rhi" stays selectable until the bgfx
+          // globe exists; the JavaScript "browser" renderer was removed and
+          // the old value maps to bgfx (like the desktop "cpu" value).
+          const configuredWasmRenderer = (values['gui/map_wasm_renderer'] || 'bgfx')
               .trim().toLowerCase();
-          const mapWasmRenderer = ['browser', 'rhi', 'bgfx'].includes(configuredWasmRenderer)
+          const mapWasmRenderer = ['rhi', 'bgfx'].includes(configuredWasmRenderer)
               ? configuredWasmRenderer
-              : 'rhi';
-          if (mapWasmRenderer !== configuredWasmRenderer)
-              console.warn(`Invalid gui/map_wasm_renderer '${configuredWasmRenderer}', using rhi`);
+              : 'bgfx';
+          if (configuredWasmRenderer === 'browser')
+              console.warn("gui/map_wasm_renderer 'browser' is no longer supported, using bgfx");
+          else if (mapWasmRenderer !== configuredWasmRenderer)
+              console.warn(`Invalid gui/map_wasm_renderer '${configuredWasmRenderer}', using bgfx`);
 
           const guiConfiguration = Object.freeze({
               examplesBuiltinEnable: parseAowisBoolean(
@@ -511,12 +539,11 @@
               deleteApiKey: (values['map_server/delete_api_key'] || '').trim()
           });
 
-          if (typeof window.aowisSetMapServerConfiguration !== 'function')
-              throw new Error('Browser map configuration receiver is unavailable');
-
+          // Read by the application itself (EM_JS in gui_configuration.cpp and
+          // map_server_client_configuration.cpp) before Qt starts. The removed
+          // JavaScript map had its own receiver; there is none any more.
           window.aowisGuiConfiguration = guiConfiguration;
           window.aowisMapServerConfiguration = configuration;
-          window.aowisSetMapServerConfiguration(configuration);
 
           console.info('Loaded and activated AOWIS configuration:', {
               configurationUrl: configurationUrl.toString(),
@@ -609,11 +636,6 @@
     </script>
 
     <script src="aowis-bgfx-map.js?v=__AOWIS_BGFX_MAP_JS_VERSION__"></script>
-    <script src="aowis-browser-map.js?v=__AOWIS_MAP_JS_VERSION__"></script>
-    <script src="aowis-browser-vector.js?v=__AOWIS_VECTOR_JS_VERSION__"></script>
-    <script src="aowis-browser-network-webgl.js?v=__AOWIS_NETWORK_JS_VERSION__"></script>
-    <script src="aowis-browser-network.js?v=__AOWIS_NETWORK_JS_VERSION__"></script>
-    <script src="aowis-browser-map-editor.js?v=__AOWIS_EDITOR_JS_VERSION__"></script>
     <script src="aowis-server-gui.js"></script>
     <script type="text/javascript" src="qtloader.js"></script>
   </body>

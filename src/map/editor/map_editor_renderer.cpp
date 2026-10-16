@@ -141,20 +141,8 @@ void MapEditorRenderer::paint(QPainter &painter, const QPaintEvent &event,
                               const MapEditorVisualState &visual_state,
                               const MapEditorViewportRenderState &viewport_state)
 {
-#ifdef Q_OS_WASM
-    Q_UNUSED(network_snapshot)
-    Q_UNUSED(visual_state)
-    Q_UNUSED(viewport_state)
-
-    painter.setCompositionMode(QPainter::CompositionMode_Source);
-    const QRegion dirty_region = event.region();
-    for (const QRect &dirty_rect : dirty_region)
-        painter.fillRect(dirty_rect, Qt::transparent);
-    return;
-#else
     Q_UNUSED(event)
     painter.setRenderHint(QPainter::Antialiasing);
-#endif
 
     this->current_entity_width = qMax(1, visual_state.entity_width);
     paintBackground(painter, viewport_state);

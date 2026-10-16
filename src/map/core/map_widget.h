@@ -72,12 +72,6 @@ public:
     void setNavigationFrameDriver(bool external);
     void advanceNavigationFrame(double elapsed_seconds);
 
-    // CPU tile painting (QPainter imagery). Only the map editor still uses
-    // it, until the editor moves to bgfx; the monitor disables it so that no
-    // CPU map rendering exists there at all. Disabled = no paint, no tile
-    // requests from this widget.
-    void setTilePaintingEnabled(bool enabled);
-
 #ifndef Q_OS_WASM
     // When mouse input arrives from an embedded native window (bgfx) rather
     // than from this widget, the Wayland orbit pointer lock must target that
@@ -91,13 +85,6 @@ public:
     void setRenderSurfaceScreenCoordinateResolver(ScreenCoordinateResolver resolver);
     void setRenderSurfaceGlobeTerrainPanResolver(GlobeTerrainPanResolver resolver);
     void setCachedTerrainElevationResolver(CachedTerrainElevationResolver resolver);
-
-#ifdef Q_OS_WASM
-    void setBrowserMapLayerEnabled(bool enabled);
-    void setBrowserMapLayerTopmost(bool topmost);
-    void setBrowserMapLayerGeometry(const QRect &geometry, bool visible);
-    int browserMapLayerOwnerId() const;
-#endif
 
 public slots:
     void zoomIn();
@@ -131,19 +118,10 @@ private:
     void stopAllPanMovement();
     void updatePanAnimation();
     void pollEdgePan();
-    bool browserMapHandlesMouseInertia() const;
-    void beginBrowserMapMousePan();
-    void updateBrowserMapMousePan(const QPoint &delta, qint64 elapsed_ms);
-    bool releaseBrowserMapMousePan();
-    bool browserMapInertiaActive() const;
-    bool updateBrowserMapInertia();
-    void cancelBrowserMapMousePan();
 
 #ifdef Q_OS_WASM
     static EM_BOOL browserMouseMoveCallback(int event_type, const EmscriptenMouseEvent *event, void *user_data);
     static EM_BOOL browserMouseLeaveCallback(int event_type, const EmscriptenMouseEvent *event, void *user_data);
-    void syncBrowserMapView();
-    void syncBrowserMapScaleUnits();
 #endif
 
     bool setKeyboardPanKey(QKeyEvent *event, bool pressed);
@@ -178,12 +156,8 @@ private:
     void updatePointerCoordinates(const QPoint &position);
     CoordinateWGS84 withCachedTerrainAltitude(const CoordinateWGS84 &wgs) const;
     void emitPointerCoordinate(const CoordinateWGS84 &wgs);
-    void scheduleTileUpdate(const QString &);
-    void drawTiles(QPainter &painter);
 
     GpsProvider *gps = nullptr;
-    CoordinateWGS84 gps_coordinate;
-    bool has_gps_coordinate = false;
 
     MapModel *m_model = nullptr;
     MapTileRepository *tile_repository = nullptr;
@@ -223,7 +197,6 @@ private:
     bool zoom_out_key_pressed = false;
     bool keyboard_pan_motion_active = false;
     bool external_navigation_frame_driver = false;
-    bool tile_painting_enabled = true;
 
     // The one continuous camera zoom motion for wheel, buttons and keys, in
     // every view mode and with every renderer. Octaves: the 2D continuous
@@ -239,14 +212,10 @@ private:
     QTimer *pan_timer = nullptr;
     QElapsedTimer pan_elapsed_timer;
     QTimer *edge_pan_poll_timer = nullptr;
-    QTimer *tile_update_timer = nullptr;
 
 #ifdef Q_OS_WASM
     QPoint browser_pointer_position;
     bool browser_pointer_inside = false;
-    bool browser_map_layer_enabled = false;
-    bool browser_map_layer_topmost = false;
-    int browser_map_layer_owner_id = 0;
 #endif
     bool backing_store_pan_active = false;
 

@@ -11,6 +11,8 @@
 // bgfx side of the native HUD: one program, the HUD atlas texture (updated
 // only where MapBgfxHudTextCache changed) and one transient indexed draw per
 // frame, submitted last in the map view (Sequential), so the HUD is on top.
+// The editor overlay (Phase 2) uses a second instance with its own atlas,
+// drawn between the network and the HUD.
 class MapBgfxHudGpu
 {
 public:
@@ -31,6 +33,7 @@ private:
     int atlas_width = 0;
     int atlas_height = 0;
     quint64 atlas_generation = 0;
+    bool budget_warning_shown = false;
 };
 
 #endif // MAP_BGFX_HUD_GPU_H

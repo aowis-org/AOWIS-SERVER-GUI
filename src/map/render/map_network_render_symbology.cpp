@@ -140,6 +140,10 @@ MapNetworkRenderSymbology resolveMapNetworkRenderSymbology(
     }
 
     result.node_colors.reserve(snapshot.nodes.size());
+    if (bounded_settings.visual_node != VisualNode::None)
+        result.node_values.reserve(snapshot.nodes.size());
+    if (bounded_settings.visual_link != VisualLink::None)
+        result.link_values.reserve(snapshot.links.size());
     for (const NetworkRenderNode &node : snapshot.nodes)
     {
         QRgb color = networkSymbologyDefaultColor();
@@ -151,6 +155,8 @@ MapNetworkRenderSymbology resolveMapNetworkRenderSymbology(
                 : networkSymbologyColor(
                     iterator.value(), ranges.node_minimum, ranges.node_maximum,
                     bounded_settings.node_palette, bounded_settings.node_palette_flipped);
+            if (iterator != node_values.cend())
+                result.node_values.insert(node.render_id, iterator.value());
         }
         result.node_colors.insert(node.render_id, color);
     }
@@ -167,6 +173,8 @@ MapNetworkRenderSymbology resolveMapNetworkRenderSymbology(
                 : networkSymbologyColor(
                     iterator.value(), ranges.link_minimum, ranges.link_maximum,
                     bounded_settings.link_palette, bounded_settings.link_palette_flipped);
+            if (iterator != link_values.cend())
+                result.link_values.insert(link.render_id, iterator.value());
         }
         result.link_colors.insert(link.render_id, color);
     }

@@ -1917,6 +1917,16 @@ void HydraulicData::rebuildNetworkRenderSnapshot() const
         this->network_hydraulic, this->geometry_revision, this->visual_revision);
 }
 
+void HydraulicData::refreshNetworkRenderSnapshotIds()
+{
+    // An ID is no geometry: the revision stays, but the render snapshot
+    // carries the IDs (map labels), so a current snapshot is rebuilt now
+    // (deterministic: same render ids, same geometry). A stale one is
+    // rebuilt on its next access anyway.
+    if (this->network_render_snapshot.geometry_revision == this->geometry_revision)
+        rebuildNetworkRenderSnapshot();
+}
+
 void HydraulicData::setSelectedUuid(InfrastructureEntity entity_type, const QUuid &uuid)
 {
     switch (entity_type)
@@ -2126,7 +2136,10 @@ QUuid HydraulicData::addValve(const QUuid &node_uuid_from, const QUuid &node_uui
 
 bool HydraulicData::setNodeId(const QUuid &uuid, const QString &id)
 {
-    return emitNodeChangedIfSuccessful(uuid, this->network_editor.setNodeId(uuid, id));
+    if (!this->network_editor.setNodeId(uuid, id))
+        return false;
+    refreshNetworkRenderSnapshotIds();
+    return emitNodeChangedIfSuccessful(uuid, true);
 }
 
 bool HydraulicData::setNodeModelRole(const QUuid &uuid, EntityModelRole model_role)
@@ -2174,7 +2187,10 @@ bool HydraulicData::setNodeCoordinate(const QUuid &uuid, const CoordinateWGS84 &
 
 bool HydraulicData::setLinkId(const QUuid &uuid, const QString &id)
 {
-    return emitLinkChangedIfSuccessful(uuid, this->network_editor.setLinkId(uuid, id));
+    if (!this->network_editor.setLinkId(uuid, id))
+        return false;
+    refreshNetworkRenderSnapshotIds();
+    return emitLinkChangedIfSuccessful(uuid, true);
 }
 
 bool HydraulicData::setLinkModelRole(const QUuid &uuid, EntityModelRole model_role)
@@ -2207,6 +2223,7 @@ bool HydraulicData::setDemandPointId(const QUuid &uuid, const QString &id)
     if (!this->network_editor.setDemandPointId(uuid, id))
         return false;
 
+    refreshNetworkRenderSnapshotIds();
     markNetworkChanged(NetworkChange::Visual, uuid);
     emit signalDemandPointChanged(uuid);
     return true;

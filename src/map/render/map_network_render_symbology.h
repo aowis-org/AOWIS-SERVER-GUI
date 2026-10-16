@@ -42,6 +42,11 @@ struct MapNetworkRenderSymbology
     QHash<quint32, QRgb> node_colors;
     QHash<quint32, QRgb> link_colors;
     QHash<quint32, qint8> flow_directions;
+    // Canonical values of the colouring metric by render id (only while
+    // visual_node / visual_link is not None; entities without a value are
+    // absent). The map's value labels show them (map_label_settings.h).
+    QHash<quint32, double> node_values;
+    QHash<quint32, double> link_values;
 };
 
 MapNetworkRenderSymbology resolveMapNetworkRenderSymbology(

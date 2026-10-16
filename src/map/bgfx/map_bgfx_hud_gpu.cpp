@@ -2,6 +2,7 @@
 
 #include "map/bgfx/map_bgfx_backend.h"
 
+#include <QDebug>
 #include <QImage>
 #include <QRect>
 
@@ -40,7 +41,14 @@ bool MapBgfxHudGpu::initialize()
     this->viewport_uniform = bgfx::createUniform("u_hud_viewport", bgfx::UniformType::Vec4);
     this->atlas_sampler = bgfx::createUniform("s_hud_atlas", bgfx::UniformType::Sampler);
     this->atlas_generation = 0;
-    return ready();
+    if (!ready())
+    {
+        qWarning() << "bgfx HUD: program" << bgfx::isValid(this->program)
+                   << "uniforms" << bgfx::isValid(this->viewport_uniform)
+                   << bgfx::isValid(this->atlas_sampler);
+        return false;
+    }
+    return true;
 }
 
 bool MapBgfxHudGpu::ready() const
@@ -115,12 +123,25 @@ void MapBgfxHudGpu::draw(bgfx::ViewId view, const MapBgfxHudCanvas &canvas,
     const uint32_t index_count = uint32_t(canvas.indices().size());
     bgfx::TransientVertexBuffer vertices;
     bgfx::TransientIndexBuffer indices;
-    if (!bgfx::allocTransientBuffers(&vertices, this->layout, vertex_count,
-                                     &indices, index_count))
+    // 32-bit indices (MapBgfxHudCanvas): the editor overlay exceeds 65535
+    // vertices on large networks. Skip the frame's draw (with one warning)
+    // rather than drawing a truncated list when the transient budget is out.
+    if (bgfx::getAvailTransientVertexBuffer(vertex_count, this->layout) < vertex_count
+        || bgfx::getAvailTransientIndexBuffer(index_count, true) < index_count
+        || !bgfx::allocTransientBuffers(&vertices, this->layout, vertex_count,
+                                        &indices, index_count, true))
+    {
+        if (!this->budget_warning_shown)
+        {
+            qWarning() << "bgfx HUD/overlay draw list exceeds the transient buffers:"
+                       << vertex_count << "vertices" << index_count << "indices";
+            this->budget_warning_shown = true;
+        }
         return;
+    }
     std::memcpy(vertices.data, canvas.vertices().constData(),
                 vertex_count * sizeof(MapBgfxHudVertex));
-    std::memcpy(indices.data, canvas.indices().constData(), index_count * sizeof(quint16));
+    std::memcpy(indices.data, canvas.indices().constData(), index_count * sizeof(quint32));
     const float viewport[4] = {float(logical_viewport.width()), float(logical_viewport.height()),
                                0.0f, 0.0f};
     bgfx::setUniform(this->viewport_uniform, viewport);

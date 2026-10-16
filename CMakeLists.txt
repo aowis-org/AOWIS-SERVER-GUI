@@ -305,8 +305,6 @@ qt_add_executable(aowis-server-gui
     src/map/editor/map_editor_controller.h
     src/map/editor/map_editor_guide_dock.cpp
     src/map/editor/map_editor_guide_dock.h
-    src/map/editor/map_editor_renderer.cpp
-    src/map/editor/map_editor_renderer.h
     src/map/editor/map_editor_visual_state.h
 
     # Map rendering
@@ -341,6 +339,7 @@ qt_add_executable(aowis-server-gui
     src/map/render/map_render_hud_widget.h
     src/map/render/map_render_hud_widget.cpp
     src/map/render/map_network_render_symbology.h
+    src/map/render/map_label_settings.h
     src/map/render/map_network_render_symbology.cpp
     src/map/render/map_network_render_data.h
     src/map/render/map_globe_render_instances.h
@@ -390,10 +389,6 @@ qt_add_executable(aowis-server-gui
     src/widgets/slider_number_control.h
     src/widgets/wasm_popup_menu.cpp
     src/widgets/wasm_popup_menu.h
-
-    # WebAssembly
-    src/wasm/browser_network_snapshot_serializer.cpp
-    src/wasm/browser_network_snapshot_serializer.h
 )
 
 if(APPLE)
@@ -474,10 +469,29 @@ if(AOWIS_ENABLE_BGFX_MAP)
         src/map/bgfx/map_bgfx_hud.cpp
         src/map/bgfx/map_bgfx_hud_gpu.h
         src/map/bgfx/map_bgfx_hud_gpu.cpp
+        src/map/bgfx/map_bgfx_legend_content.h
+        src/map/bgfx/map_bgfx_legend_content.cpp
+        src/map/bgfx/map_bgfx_editor_overlay.h
+        src/map/bgfx/map_bgfx_editor_overlay.cpp
+        src/map/bgfx/map_bgfx_labels.h
+        src/map/bgfx/map_bgfx_labels.cpp
+        src/map/bgfx/map_bgfx_editor_icons.h
+        src/map/bgfx/map_bgfx_editor_icons.cpp
         src/map/bgfx/map_bgfx_backend.h
         src/map/bgfx/map_bgfx_surface.h
         src/map/bgfx/map_bgfx_surface.cpp)
     target_link_libraries(aowis-server-gui PRIVATE bgfx)
+    if(EMSCRIPTEN)
+        # Keep wasm function names in the binary (name section only, no
+        # DWARF): browser stack traces show "bgfx::gl::...::init" instead of
+        # "$func25562". Costs a few MB of download; turn off for releases
+        # once the browser renderer is stable.
+        option(AOWIS_WASM_FUNCTION_NAMES
+            "Keep WebAssembly function names for readable browser stack traces" ON)
+        if(AOWIS_WASM_FUNCTION_NAMES)
+            target_link_options(aowis-server-gui PRIVATE "--profiling-funcs")
+        endif()
+    endif()
     if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN AND TARGET Qt6::GuiPrivate)
         target_link_libraries(aowis-server-gui PRIVATE Qt6::GuiPrivate)
         target_compile_definitions(aowis-server-gui PRIVATE
@@ -691,7 +705,9 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     set_tests_properties(aowis-bgfx-2d-picking PROPERTIES LABELS "aowis")
 
     # Native bgfx HUD without a GPU: draw-list canvas, text/image atlas and
-    # the HUD layout/input contract (slice 6a). Fonts need QGuiApplication.
+    # the HUD layout/input contract (slice 6a), the map legend with its
+    # combo lists, palette menu and tooltips (slice 6b). Fonts need
+    # QGuiApplication.
     add_executable(aowis-bgfx-hud-tests tests/bgfx_hud_test.cpp
         src/map/bgfx/map_bgfx_hud.cpp
         src/map/bgfx/map_bgfx_hud_text_cache.cpp)
@@ -700,6 +716,36 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     target_link_libraries(aowis-bgfx-hud-tests PRIVATE Qt6::Core Qt6::Gui)
     add_test(NAME aowis-bgfx-hud COMMAND aowis-bgfx-hud-tests)
     set_tests_properties(aowis-bgfx-hud PROPERTIES
+        LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # Map editor on bgfx (Phase 2) without a GPU: what the overlay builder
+    # draws for each editor state, positioned with the continuous camera.
+    add_executable(aowis-bgfx-editor-overlay-tests tests/bgfx_editor_overlay_test.cpp
+        src/map/bgfx/map_bgfx_editor_overlay.cpp
+        src/map/bgfx/map_bgfx_hud_text_cache.cpp)
+    target_include_directories(aowis-bgfx-editor-overlay-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    target_link_libraries(aowis-bgfx-editor-overlay-tests PRIVATE
+        Qt6::Core Qt6::Gui AOWIS::ServerModel)
+    add_test(NAME aowis-bgfx-editor-overlay COMMAND aowis-bgfx-editor-overlay-tests)
+    set_tests_properties(aowis-bgfx-editor-overlay PROPERTIES
+        LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # Map labels on the bgfx 2D map without a GPU: decluttered placement,
+    # priorities, values, viewport edges, rasterization budget, stability.
+    add_executable(aowis-bgfx-labels-tests tests/bgfx_labels_test.cpp
+        src/map/bgfx/map_bgfx_labels.cpp
+        src/map/bgfx/map_bgfx_hud.cpp
+        src/map/bgfx/map_bgfx_hud_text_cache.cpp
+        src/map/render/map_node_declutter.cpp)
+    target_include_directories(aowis-bgfx-labels-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    target_link_libraries(aowis-bgfx-labels-tests PRIVATE
+        Qt6::Core Qt6::Gui AOWIS::ServerModel)
+    add_test(NAME aowis-bgfx-labels COMMAND aowis-bgfx-labels-tests)
+    set_tests_properties(aowis-bgfx-labels PROPERTIES
         LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     # The Model owns the complete unit-conversion regression test. Its CTest
@@ -727,19 +773,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_test(NAME aowis-unit-model-header-authority COMMAND aowis-unit-model-header-authority-tests)
     set_tests_properties(aowis-unit-model-header-authority PROPERTIES LABELS "aowis")
 
-    add_executable(aowis-browser-map-scale-units-tests tests/browser_map_scale_units_test.cpp)
-    target_include_directories(aowis-browser-map-scale-units-tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
-    target_link_libraries(aowis-browser-map-scale-units-tests PRIVATE Qt6::Core)
-    add_test(NAME aowis-browser-map-scale-units COMMAND aowis-browser-map-scale-units-tests)
-    set_tests_properties(aowis-browser-map-scale-units PROPERTIES LABELS "aowis")
     find_program(AOWIS_NODE_EXECUTABLE NAMES node nodejs)
-    if(AOWIS_NODE_EXECUTABLE)
-        add_test(NAME aowis-browser-map-scale
-            COMMAND ${AOWIS_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/browser_map_scale_test.js)
-        set_tests_properties(aowis-browser-map-scale PROPERTIES LABELS "aowis")
-    endif()
     if(AOWIS_NODE_EXECUTABLE)
         add_test(NAME aowis-bgfx-browser-stacking
             COMMAND ${AOWIS_NODE_EXECUTABLE}
@@ -1155,6 +1189,8 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
             aowis-bgfx-2d-mesh-tests
             aowis-bgfx-2d-picking-tests
             aowis-bgfx-hud-tests
+            aowis-bgfx-editor-overlay-tests
+            aowis-bgfx-labels-tests
             aowis-model-unit-conversion-test
             aowis-unit-cross-surface-acceptance-tests
             aowis-valve-setting-sort-policy-tests
@@ -1165,7 +1201,6 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
             aowis-map-retained-network-scene-tests
             aowis-map-globe-retained-origin-tests
             aowis-unit-model-header-authority-tests
-            aowis-browser-map-scale-units-tests
             aowis-emitter-coefficient-binding-tests
             aowis-emitter-numeric-spin-box-tests
             aowis-coordinate-property-binding-tests

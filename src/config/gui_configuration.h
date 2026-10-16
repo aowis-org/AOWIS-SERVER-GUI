@@ -15,9 +15,10 @@ enum class DesktopMapRenderer
     Bgfx
 };
 
+// WebAssembly map renderer. The JavaScript/WebGL "browser" renderer was
+// removed; an old "browser" ini value selects bgfx.
 enum class WasmMapRenderer
 {
-    Browser,
     Rhi,
     Bgfx
 };
@@ -100,8 +101,10 @@ struct GuiMapPerformanceConfiguration
 struct GuiConfiguration
 {
     bool examples_builtin_enable = true;
-    DesktopMapRenderer map_desktop_renderer = DesktopMapRenderer::Rhi;
-    WasmMapRenderer map_wasm_renderer = WasmMapRenderer::Rhi;
+    // bgfx is the map renderer on every platform. QRhi stays selectable
+    // explicitly ("rhi") only until the bgfx globe exists (roadmap Phase 3).
+    DesktopMapRenderer map_desktop_renderer = DesktopMapRenderer::Bgfx;
+    WasmMapRenderer map_wasm_renderer = WasmMapRenderer::Bgfx;
     GuiSymbologyPaletteConfiguration symbology_palettes;
     GuiShortcutConfiguration shortcuts;
     GuiMapNavigationConfiguration map_navigation;

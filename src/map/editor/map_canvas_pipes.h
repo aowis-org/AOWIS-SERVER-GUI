@@ -14,6 +14,7 @@
 #include "map/core/map_model.h"
 #include "map/core/map_models.h"
 
+class MapCanvasMarkers;
 class MapCanvasWidget;
 
 class MapCanvasPipes : public QObject
@@ -79,20 +80,24 @@ public:
     void moveIntermediateVertices(const QList<QUuid> &pipe_uuids,
                                   double longitude_delta, double latitude_delta);
 
+    // Node positions come from the node markers' uuid index (O(1) per pipe
+    // end); never rebuild a lookup of all markers per pipe or per demand
+    // point: with thousands of demand points that was quadratic (seconds
+    // per editor visual state, i.e. per zoom level change).
     std::optional<InfrastructureEntityReference> pipeAt(
-        const QPointF &position, const QList<MapEntityMarker> &markers) const;
+        const QPointF &position, const MapCanvasMarkers &markers) const;
     PipeVertexHit pipeVertexAt(const QPointF &position) const;
     PipeSegmentHit pipeSegmentAt(const QPointF &position,
-                                 const QList<MapEntityMarker> &markers) const;
+                                 const MapCanvasMarkers &markers) const;
     PipePositionHit pipePositionAt(const QPointF &position,
-                                   const QList<MapEntityMarker> &markers) const;
+                                   const MapCanvasMarkers &markers) const;
     PipePositionHit nearestPositionOnPipe(const QUuid &pipe_uuid, const QPointF &position,
-                                          const QList<MapEntityMarker> &markers) const;
+                                          const MapCanvasMarkers &markers) const;
     std::optional<CoordinateWGS84> coordinateAtPosition(
         const QUuid &pipe_uuid, double pipe_position,
-        const QList<MapEntityMarker> &markers) const;
+        const MapCanvasMarkers &markers) const;
     bool showContextMenuAt(const QPointF &position, const QPoint &global_position,
-                           const QList<MapEntityMarker> &markers);
+                           const MapCanvasMarkers &markers);
 
     bool addPipeVertex(const QUuid &pipe_uuid, int insert_index,
                        const CoordinateWGS84 &coordinate);
@@ -138,9 +143,9 @@ private:
     int pipeIndexByUuid(const QUuid &pipe_uuid) const;
     PipePositionHit nearestPositionOnPipeInternal(
         const PipeCanvasItem &pipe, const QPointF &position,
-        const QList<MapEntityMarker> &markers, double max_distance) const;
+        const MapCanvasMarkers &markers, double max_distance) const;
     QList<CoordinateWGS84> pipeCoordinates(
-        const PipeCanvasItem &pipe, const QList<MapEntityMarker> &markers) const;
+        const PipeCanvasItem &pipe, const MapCanvasMarkers &markers) const;
     void rebuildUuidIndex();
     void updateCanvas();
 

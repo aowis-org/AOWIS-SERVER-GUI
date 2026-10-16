@@ -48,7 +48,9 @@ void appendIndexedGridIndices(
     const qsizetype grid_width_size = qsizetype(cell_count) + 1;
     const qsizetype last_vertex = first_vertex
         + grid_width_size * grid_width_size - 1;
-    if (last_vertex > qsizetype(std::numeric_limits<quint32>::max()))
+    // Compare as quint64: qsizetype is 32-bit on wasm32, where
+    // qsizetype(UINT32_MAX) is -1 and every grid would be skipped.
+    if (quint64(last_vertex) > quint64(std::numeric_limits<quint32>::max()))
         return;
 
     const quint32 first = quint32(first_vertex);

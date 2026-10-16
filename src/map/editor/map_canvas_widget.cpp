@@ -1,17 +1,10 @@
 #include "map/editor/map_canvas_widget.h"
 
 #include "map/editor/map_editor_controller.h"
-#include "map/core/map_scale_renderer.h"
-#include "config/unit_aware_view.h"
-#include "config/unit_profile_manager.h"
 
 #include <QFocusEvent>
-#include <QHideEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
-#include <QPaintEvent>
-#include <QPainter>
-#include <QPixmap>
 #include <QResizeEvent>
 #include <QShowEvent>
 #include <QWheelEvent>
@@ -19,32 +12,34 @@
 MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map,
                                  HydraulicData *hydraulic_data, QWidget *parent)
     : QWidget(parent), map_model(map_model), map(map), hydraulic_data(hydraulic_data),
-      map_editor_renderer(map_model, this),
       map_canvas_entities(new MapCanvasEntities(map_model, hydraulic_data, this))
 {
+    // Input only: no background, no painting (paintEvent() is QWidget's).
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_NoSystemBackground);
     setMouseTracking(true);
-
-    // A unit switch redraws the scale label; it does not invalidate map geometry.
-    new UnitAwareView(this, UnitProfileManager::instance().presentation(),
-        [this] { update(); });
 
     connect(this->map_model, &MapModel::zoomChanged, this, [this]
     {
         requestRenderUpdate();
     });
+    // Camera motion (every frame while zooming or panning): the pointer now
+    // lies over another map position, so the editor re-evaluates it - only
+    // while the editor is shown (synced map movement moves this camera with
+    // the monitor's, and hover hit testing there is wasted work). The visual
+    // state itself is camera independent except for the pointer's map
+    // coordinate: signalCameraChanged(), not a full render update.
     connect(this->map_model, &MapModel::view2dContinuousScaleChanged, this, [this](double)
     {
-        if (this->editor_controller && this->last_pointer_position_valid)
+        if (isVisible() && this->editor_controller && this->last_pointer_position_valid)
             this->editor_controller->mouseMove(this->last_pointer_position, size(), false);
-        requestRenderUpdate();
+        emit signalCameraChanged();
     });
     connect(this->map_model, &MapModel::centerChangedWGS84, this, [this]
     {
-        if (this->editor_controller && this->last_pointer_position_valid)
+        if (isVisible() && this->editor_controller && this->last_pointer_position_valid)
             this->editor_controller->mouseMove(this->last_pointer_position, size(), false);
-        requestRenderUpdate();
+        emit signalCameraChanged();
     });
     if (this->hydraulic_data)
     {
@@ -131,77 +126,9 @@ void MapCanvasWidget::applyControllerState()
     requestRenderUpdate();
 }
 
-void MapCanvasWidget::setRenderSurfaceOverlayMode(bool enabled)
-{
-    if (this->render_surface_overlay_mode == enabled)
-        return;
-
-    this->render_surface_overlay_mode = enabled;
-    this->map_editor_renderer.setRenderSurfaceOverlayMode(enabled);
-    requestRenderUpdate();
-}
-
-void MapCanvasWidget::setRenderSurfaceFullNetworkMoveState(
-    bool active, const QPointF &translation_pixels)
-{
-    this->map_editor_renderer.setRenderSurfaceFullNetworkMoveState(active, translation_pixels);
-}
-
-bool MapCanvasWidget::renderSurfaceOverlayMode() const
-{
-    return this->render_surface_overlay_mode;
-}
-
 void MapCanvasWidget::requestRenderUpdate()
 {
-#ifndef Q_OS_WASM
-    update();
-#endif
-}
-
-void MapCanvasWidget::paintEvent(QPaintEvent *event)
-{
-#ifdef Q_OS_WASM
-    Q_UNUSED(event)
-    return;
-#else
-    static const NetworkRenderSnapshot empty_network_snapshot;
-    const NetworkRenderSnapshot &network_snapshot = this->hydraulic_data
-        ? this->hydraulic_data->networkRenderSnapshot()
-        : empty_network_snapshot;
-
-    QPainter painter(this);
-    if (this->render_surface_overlay_mode)
-    {
-        painter.save();
-        painter.setCompositionMode(QPainter::CompositionMode_Source);
-        painter.fillRect(event->rect(), Qt::transparent);
-        painter.restore();
-        this->map_editor_renderer.paintRenderSurfaceOverlay(
-            painter, network_snapshot, this->map_canvas_entities->visualState(),
-            viewportRenderState());
-    }
-    else
-    {
-        this->map_editor_renderer.paint(
-            painter, *event, network_snapshot, this->map_canvas_entities->visualState(),
-            viewportRenderState());
-    }
-
-    static const QPixmap crosshair_pixmap =
-        QPixmap(QStringLiteral(":/icon/crosshair.png")).scaled(
-            QSize(60, 60), Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    if (!crosshair_pixmap.isNull())
-    {
-        const QPoint crosshair_position(
-            (width() - crosshair_pixmap.width()) / 2,
-            (height() - crosshair_pixmap.height()) / 2);
-        painter.drawPixmap(crosshair_position, crosshair_pixmap);
-    }
-
-    MapScaleRenderer::draw(painter, *this->map_model, size(),
-        UnitProfileManager::instance().presentation());
-#endif
+    emit signalRenderUpdateRequested();
 }
 
 MapEditorViewportRenderState MapCanvasWidget::viewportRenderState() const
@@ -221,6 +148,7 @@ MapEditorViewportRenderState MapCanvasWidget::viewportRenderState() const
         if (range.valid)
         {
             state.tile_selection_visible = true;
+            state.tile_selection_zoom = this->map_model->zoom();
             state.tile_x_min = range.tile_x_min;
             state.tile_x_max = range.tile_x_max;
             state.tile_y_min = range.tile_y_min;
@@ -273,12 +201,6 @@ void MapCanvasWidget::focusOutEvent(QFocusEvent *event)
 {
     this->map->clearKeyboardPanInput();
     QWidget::focusOutEvent(event);
-}
-
-void MapCanvasWidget::hideEvent(QHideEvent *event)
-{
-    this->map_editor_renderer.setRenderingActive(false);
-    QWidget::hideEvent(event);
 }
 
 void MapCanvasWidget::mousePressEvent(QMouseEvent *event)
@@ -357,6 +279,5 @@ void MapCanvasWidget::resizeEvent(QResizeEvent *event)
 void MapCanvasWidget::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
-    this->map_editor_renderer.setRenderingActive(true);
     requestRenderUpdate();
 }

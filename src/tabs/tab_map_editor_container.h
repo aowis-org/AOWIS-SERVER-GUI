@@ -6,11 +6,7 @@
 #include <QWidget>
 
 #include <QEvent>
-#ifdef Q_OS_WASM
-#include <QByteArray>
-#include <QSet>
 #include <QTimer>
-#endif
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -47,7 +43,13 @@
 
 #include <QDebug>
 
-class MapRenderSurface;
+// The map editor draws with bgfx only (roadmap Phase 2; the QPainter editor
+// and the QRhi editor path are gone): imagery, the network, every editor
+// overlay, map labels and the HUD. Without bgfx in the build, or when it
+// cannot start, a status label takes the map's place.
+class MapBgfxSurface;
+class QKeyEvent;
+class QShortcut;
 
 class MapEditorMenuWidget : public QWidget
 {
@@ -59,6 +61,11 @@ public:
     
     MapNavigationWidget *mapNavigationWidget();
     bool isEditNetworkSectionActive() const;
+    // Map fullscreen: the left menu is not visible, so its buttons' window
+    // shortcuts (tools, map providers) cannot fire. The map forwards key
+    // presses here instead; true when a button's shortcut matched (the
+    // button was clicked).
+    bool triggerButtonShortcut(const QKeyEvent *event);
     
 private:
     CanvasMode mode;
@@ -126,44 +133,51 @@ private:
     QStackedLayout *map_stack_layout;
     MapWidget *map;
     MapCanvasWidget *map_canvas;
-#ifndef Q_OS_WASM
-    MapRenderSurface *desktop_render_surface = nullptr;
-    QWidget *desktop_render_widget = nullptr;
+    // Shown instead of the map until bgfx presents its first frame, and
+    // when it cannot (no bgfx in the build, startup failure).
+    QLabel *renderer_status;
+    void showRendererStatus(const QString &text);
+#if AOWIS_HAS_BGFX
+    MapBgfxSurface *bgfx_surface = nullptr;
+    bool bgfx_editor_active = false;
+    // The editor's visual state for the bgfx overlay, refreshed when the
+    // canvas reports a change (MapCanvasWidget::signalRenderUpdateRequested)
+    // instead of being rebuilt every frame.
+    MapEditorVisualState bgfx_visual_state;
+    bool bgfx_visual_state_dirty = true;
+    // Only the camera moved: refresh the pointer's map coordinate.
+    bool bgfx_visual_camera_dirty = false;
+    // Pointer shape of the HUD element under the pointer (buttons); wins
+    // over the editor tool's cursor.
+    Qt::CursorShape bgfx_hud_cursor = Qt::ArrowCursor;
+    // Map fullscreen (desktop): the HUD button and the map fullscreen
+    // shortcut, the monitor's reparenting.
+    QShortcut *bgfx_fullscreen_shortcut = nullptr;
+    bool bgfx_fullscreen_active = false;
+    void setupBgfxEditor();
+    // HUD clicks (queued from the surface): 2D/3D switch, fullscreen.
+    void handleBgfxHudAction(int action);
+    void setBgfxFullscreen(bool fullscreen);
+    void applyEditorCursor();
+    // HUD first for pointer, wheel and Escape on the canvas (desktop: the
+    // events forwarded from the native window; WASM: the canvas' own).
+    bool routeBgfxHudEvent(QEvent *event);
+
+    // Network snapshot, editor symbology and move preview (hidden entities,
+    // full-network translation) of the bgfx map.
+    void connectRenderSurfaceSync();
+    void syncRenderSurfaceEditorState();
+    void syncRenderSurfaceNetworkSnapshot();
+    void applyRenderSurfaceEditorSymbology();
+    quint64 render_move_session_id = 0;
+    QPointF render_move_start_mouse_position;
+    bool render_full_network_move = false;
+    QPointF render_move_translation;
 #endif
     MapEditorController *editor_controller;
     MapEditorMenuWidget *map_menu;
     
     QHBoxLayout *layout;
-
-#if !defined(Q_OS_WASM) && AOWIS_HAS_QRHI
-    void syncDesktopRenderSurfaceEditorState();
-    void syncDesktopRenderSurfaceNetworkSnapshot();
-    void applyDesktopRenderSurfaceEditorSymbology();
-    void setDesktopRenderSurfaceBackgroundOpacity(int opacity);
-    quint64 desktop_render_move_session_id = 0;
-    QPointF desktop_render_move_start_mouse_position;
-    bool desktop_render_full_network_move = false;
-#endif
-
-#ifdef Q_OS_WASM
-    QTimer *wasm_map_layer_sync_timer = nullptr;
-    quint64 wasm_network_geometry_revision_sent = 0;
-    quint64 wasm_visual_state_revision_sent = 0;
-    QByteArray wasm_viewport_state_sent;
-    QSet<QUuid> wasm_network_node_uuids_sent;
-    QSet<QUuid> wasm_network_link_uuids_sent;
-    QSet<QUuid> wasm_dirty_node_uuids;
-    QSet<QUuid> wasm_dirty_link_uuids;
-    bool wasm_network_snapshot_sent = false;
-    bool wasm_visual_state_sent = false;
-
-    void scheduleWasmMapLayerSync();
-    void syncWasmMapLayers();
-    void syncWasmNetworkSnapshot();
-    void syncWasmVisualState();
-    void syncWasmViewportState();
-    void syncWasmBackground();
-#endif
     
 signals:
     void signalMapEditorGuideVisibilityChanged(bool visible);

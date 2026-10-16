@@ -168,7 +168,7 @@ On Windows, `%APPDATA%` normally resolves to `C:\Users\<user>\AppData\Roaming`. 
 ```ini
 [gui]
 examples_builtin_enable=true
-map_desktop_renderer=rhi
+map_desktop_renderer=bgfx
 
 [shortcuts]
 sidebar_toggle=Win+Tab
@@ -207,8 +207,8 @@ Restart the application after editing the file. Missing native `[shortcuts]` ent
 
 Set `examples_builtin_enable=false` to hide the bundled `Examples` project and its revisions from the toolbar. If the option is missing, built-in examples are enabled.
 
-Native builds accept `map_desktop_renderer=cpu` or `map_desktop_renderer=rhi`. `rhi` is the default and requests the QRhi backend when the build provides the required Qt support; `cpu` keeps the QPainter fallback. If RHI initialization fails at runtime, the existing CPU renderer is promoted automatically.
+Native builds accept `map_desktop_renderer=bgfx` or `map_desktop_renderer=rhi`. `bgfx` is the default map renderer. `rhi` selects the QRhi renderer and remains available only until the bgfx globe is finished; it is then removed. The former `cpu` value is accepted with a warning and selects bgfx. There is no CPU map renderer any more: if bgfx cannot start, Map Monitor shows a status message.
 
-WebAssembly builds accept `map_wasm_renderer=rhi` or `map_wasm_renderer=browser`. `rhi` is the default for Map Monitor and uses the same QRhi renderer through WebGL 2. `browser` keeps the existing JavaScript/WebGL renderer. If QRhi initialization fails in the browser, Map Monitor automatically falls back to the browser renderer. Map Editor remains on the existing browser renderer during this first WASM runtime-validation stage.
+WebAssembly builds accept `map_wasm_renderer=bgfx` or `map_wasm_renderer=rhi`. `bgfx` is the default for Map Monitor (WebGL 2 through bgfx). `rhi` selects QRhi through WebGL 2 and remains available only until the bgfx globe is finished. The JavaScript/WebGL map renderer was removed from the project (monitor and editor); the former `browser` value is accepted with a warning and selects bgfx. If the GPU renderer cannot start, Map Monitor shows a status message, as on the desktop. Map Editor renders with the same QPainter editor as the desktop until it moves to bgfx (roadmap Phase 2). `compile_wasm.sh` preserves an existing `build-wasm-dist/aowis-server-gui.ini`, so a deployment created earlier keeps its `map_wasm_renderer` line until it is edited.
 
 WebAssembly builds include `aowis-server-gui.ini` beside the generated `index.html`. Set `examples_builtin_enable`, `map_wasm_renderer`, `base_url`, `api_key`, and `delete_api_key` there and reload the page. The browser first loads the configuration from the same deployment directory as `index.html`, so subdirectory deployments work correctly; `/aowis-server-gui.ini` at the origin root remains a compatibility fallback. Existing administrator-edited files in `build-wasm` and `build-wasm-dist` are preserved across rebuilds. The normal API key is used for tile requests; the delete API key is used only for tile-cache deletion requests.

@@ -16,6 +16,7 @@
 #include "map/core/map_model.h"
 #include "map/core/map_models.h"
 
+class MapCanvasMarkers;
 class MapCanvasWidget;
 
 class MapCanvasDeviceLinks : public QObject
@@ -51,12 +52,12 @@ public:
                        int marker_width);
     AnchorResult anchor(const InfrastructureEntityReference &entity,
                         const QUuid &connection_target_uuid,
-                        const QList<MapEntityMarker> &markers,
+                        const MapCanvasMarkers &markers,
                         const QString &pixmap_path,
                         int marker_width);
     std::optional<DeviceLinkGeometry> completionGeometry(
         const QUuid &connection_target_uuid,
-        const QList<MapEntityMarker> &markers) const;
+        const MapCanvasMarkers &markers) const;
 
     bool updateMove(const QUuid &uuid, const QPointF &screen_position);
     bool setCenterCoordinate(const QUuid &uuid, const CoordinateWGS84 &coordinate);
@@ -72,7 +73,7 @@ public:
     QList<QUuid> connectedLinkUuids(const QSet<QUuid> &node_uuids) const;
     std::optional<InfrastructureEntityReference> markerAt(const QPointF &position) const;
     std::optional<InfrastructureEntityReference> linkAt(
-        const QPointF &position, const QList<MapEntityMarker> &markers) const;
+        const QPointF &position, const MapCanvasMarkers &markers) const;
     QPointF markerCenterPosition(const MapEntityMarker &marker) const;
     QRectF markerRect(const MapEntityMarker &marker) const;
 
@@ -89,7 +90,7 @@ private:
 
     QPointF screenFromWgs84(const CoordinateWGS84 &coordinate) const;
     std::optional<MapEntityMarker> pointMarkerByUuid(
-        const QUuid &uuid, const QList<MapEntityMarker> &markers) const;
+        const QUuid &uuid, const MapCanvasMarkers &markers) const;
     void rebuildUuidIndex();
     void updateCanvas();
 

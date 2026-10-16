@@ -2,18 +2,28 @@
 #include "config/gui_configuration.h"
 #include "config/shortcut_registry.h"
 
-#ifdef Q_OS_WASM
-#include "wasm/browser_network_snapshot_serializer.h"
-#else
 #include "network/network_symbology_rendering.h"
-#include "map/render/map_render_surface.h"
-#if AOWIS_HAS_QRHI
-#include "map/rhi/map_rhi_widget.h"
-#endif
+#if AOWIS_HAS_BGFX
+#include "map/bgfx/map_bgfx_editor_icons.h"
+#include "map/bgfx/map_bgfx_editor_overlay.h"
+#include "map/bgfx/map_bgfx_surface.h"
+#include "map/render/map_entity_pixmap_renderer.h"
 #endif
 
+#include <QCoreApplication>
+#ifndef Q_OS_WASM
+#include <QGeoCoordinate>
+#include <QGeoPositionInfo>
+#endif
 #include <QDebug>
+#include <QKeyEvent>
 #include <QMessageBox>
+#include <QMouseEvent>
+#include <QShortcut>
+#include <QWheelEvent>
+
+#include <memory>
+#include <optional>
 
 namespace
 {
@@ -39,275 +49,49 @@ void bindEditorShortcut(QAbstractButton *button, GuiShortcutId id,
         button->setShortcut(guiShortcutRegistry().keySequence(id));
     });
 }
-}
 
-#ifdef Q_OS_WASM
-#include <QColor>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QPalette>
-
-#include <emscripten.h>
-
-EM_JS(int, aowisBrowserMapEditorSetNetworkSnapshot, (const char *json_data, int json_size),
+#if AOWIS_HAS_BGFX
+// Label symbol boxes of the editor's icons (MapEntityPixmapRenderer rects at
+// the editor's entity width): nodes bottom-anchored on their position,
+// pumps and valves centred on the link's middle, pipes none. Memoized per
+// entity type and width (the labels ask once per on-screen entity).
+class EditorLabelSymbols
 {
-    if (!window.aowisBrowserMapEditor ||
-        typeof window.aowisBrowserMapEditor.setNetworkSnapshot !== "function")
-        return 0;
-
-    try
+public:
+    MapBgfxHudRect node(InfrastructureEntity entity_type, int width)
     {
-        window.aowisBrowserMapEditor.setNetworkSnapshot(
-            JSON.parse(UTF8ToString(json_data, json_size)));
-        return 1;
+        return rect(entity_type, width, false);
     }
-    catch (error)
+    MapBgfxHudRect link(InfrastructureEntity entity_type, int width)
     {
-        console.error("Could not transfer AOWIS map editor network snapshot:", error);
-        return 0;
-    }
-});
-
-EM_JS(int, aowisBrowserMapEditorUpdateGeometry, (const char *json_data, int json_size),
-{
-    if (!window.aowisBrowserMapEditor ||
-        typeof window.aowisBrowserMapEditor.updateGeometry !== "function")
-        return 0;
-
-    try
-    {
-        window.aowisBrowserMapEditor.updateGeometry(
-            JSON.parse(UTF8ToString(json_data, json_size)));
-        return 1;
-    }
-    catch (error)
-    {
-        console.error("Could not transfer AOWIS map editor geometry update:", error);
-        return 0;
-    }
-});
-
-EM_JS(int, aowisBrowserMapEditorSetVisualState, (const char *json_data, int json_size),
-{
-    if (!window.aowisBrowserMapEditor ||
-        typeof window.aowisBrowserMapEditor.setVisualState !== "function")
-        return 0;
-
-    try
-    {
-        window.aowisBrowserMapEditor.setVisualState(
-            JSON.parse(UTF8ToString(json_data, json_size)));
-        return 1;
-    }
-    catch (error)
-    {
-        console.error("Could not transfer AOWIS map editor visual state:", error);
-        return 0;
-    }
-});
-
-EM_JS(int, aowisBrowserMapEditorSetViewportState, (const char *json_data, int json_size),
-{
-    if (!window.aowisBrowserMapEditor ||
-        typeof window.aowisBrowserMapEditor.setViewportState !== "function")
-        return 0;
-
-    try
-    {
-        window.aowisBrowserMapEditor.setViewportState(
-            JSON.parse(UTF8ToString(json_data, json_size)));
-        return 1;
-    }
-    catch (error)
-    {
-        console.error("Could not transfer AOWIS map editor viewport state:", error);
-        return 0;
-    }
-});
-
-EM_JS(void, aowisBrowserMapEditorSetBackground, (int red, int green, int blue),
-{
-    if (!window.aowisBrowserMapEditor ||
-        typeof window.aowisBrowserMapEditor.setBackground !== "function")
-        return;
-
-    window.aowisBrowserMapEditor.setBackground(red, green, blue);
-});
-
-EM_JS(void, aowisBrowserMapEditorSetOwnerId, (int owner_id),
-{
-    if (!window.aowisBrowserMapEditor ||
-        typeof window.aowisBrowserMapEditor.setOwnerId !== "function")
-        return;
-
-    window.aowisBrowserMapEditor.setOwnerId(owner_id);
-});
-
-EM_JS(void, aowisBrowserMapEditorClear, (),
-{
-    if (window.aowisBrowserMapEditor &&
-        typeof window.aowisBrowserMapEditor.clear === "function")
-        window.aowisBrowserMapEditor.clear();
-});
-
-namespace
-{
-QJsonArray coordinateToJson(const CoordinateWGS84 &coordinate)
-{
-    QJsonArray result;
-    result.append(coordinate.longitude_deg);
-    result.append(coordinate.latitude_deg);
-    return result;
-}
-
-QJsonArray uuidListToJson(const QList<QUuid> &uuids)
-{
-    QJsonArray result;
-    for (const QUuid &uuid : uuids)
-        result.append(uuid.toString(QUuid::WithoutBraces));
-    return result;
-}
-
-QSet<QUuid> networkNodeUuids(const NetworkRenderSnapshot &snapshot)
-{
-    QSet<QUuid> result;
-    result.reserve(snapshot.nodes.size());
-    for (const NetworkRenderNode &node : snapshot.nodes)
-        result.insert(node.uuid);
-    return result;
-}
-
-QSet<QUuid> networkLinkUuids(const NetworkRenderSnapshot &snapshot)
-{
-    QSet<QUuid> result;
-    result.reserve(snapshot.links.size());
-    for (const NetworkRenderLink &link : snapshot.links)
-        result.insert(link.uuid);
-    return result;
-}
-
-QByteArray serializeMapEditorVisualState(const MapEditorVisualState &state)
-{
-    QJsonArray intermediate_vertices;
-    for (const CoordinateWGS84 &coordinate : state.placement.pipe_intermediate_vertices)
-        intermediate_vertices.append(coordinateToJson(coordinate));
-
-    QJsonArray move_markers;
-    for (const MapEditorDynamicMarkerVisualState &marker : state.move.markers)
-    {
-        QJsonObject item;
-        item.insert(QStringLiteral("entity"), static_cast<int>(marker.entity));
-        item.insert(QStringLiteral("uuid"), marker.uuid.toString(QUuid::WithoutBraces));
-        item.insert(QStringLiteral("coordinate"), coordinateToJson(marker.coordinate_wgs84));
-        item.insert(QStringLiteral("pixmapPath"), marker.pixmap_path);
-        move_markers.append(item);
+        if (entity_type == InfrastructureEntity::Pipe)
+            return MapBgfxHudRect();
+        return rect(entity_type, width, true);
     }
 
-    QJsonArray move_links;
-    for (const MapEditorDynamicLinkVisualState &link : state.move.links)
+private:
+    MapBgfxHudRect rect(InfrastructureEntity entity_type, int width, bool centered)
     {
-        QJsonArray vertices;
-        for (const CoordinateWGS84 &coordinate : link.vertices_wgs84)
-            vertices.append(coordinateToJson(coordinate));
-
-        QJsonObject item;
-        item.insert(QStringLiteral("entity"), static_cast<int>(link.entity));
-        item.insert(QStringLiteral("uuid"), link.uuid.toString(QUuid::WithoutBraces));
-        item.insert(QStringLiteral("vertices"), vertices);
-        move_links.append(item);
+        const quint64 key = (quint64(quint8(entity_type)) << 33) | (quint64(centered) << 32)
+            | quint64(quint32(width));
+        const QHash<quint64, MapBgfxHudRect>::const_iterator found = this->rects.constFind(key);
+        if (found != this->rects.cend())
+            return found.value();
+        const QString path = MapEntityPixmapRenderer::pixmapPathForEntity(entity_type);
+        const QRectF bounds = centered
+            ? this->metrics.centeredRect(QPointF(0.0, 0.0), path, width)
+            : this->metrics.bottomAnchoredRect(QPointF(0.0, 0.0), path, width);
+        const MapBgfxHudRect result{bounds.x(), bounds.y(), bounds.width(), bounds.height()};
+        this->rects.insert(key, result);
+        return result;
     }
 
-    QJsonObject move;
-    move.insert(QStringLiteral("active"), state.move.active);
-    move.insert(QStringLiteral("sessionId"), QString::number(state.move.session_id));
-    move.insert(QStringLiteral("markers"), move_markers);
-    move.insert(QStringLiteral("links"), move_links);
-
-    QJsonObject placement;
-    placement.insert(QStringLiteral("creating"), state.placement.creating);
-    placement.insert(QStringLiteral("floatingMarkerVisible"),
-                     state.placement.floating_marker_visible);
-    placement.insert(QStringLiteral("entity"), static_cast<int>(state.placement.entity));
-    placement.insert(QStringLiteral("mouseX"), state.placement.mouse_position.x());
-    placement.insert(QStringLiteral("mouseY"), state.placement.mouse_position.y());
-    placement.insert(QStringLiteral("mouseCoordinateValid"),
-                     state.placement.mouse_coordinate_wgs84_valid);
-    if (state.placement.mouse_coordinate_wgs84_valid)
-    {
-        placement.insert(QStringLiteral("mouseCoordinate"),
-                         coordinateToJson(state.placement.mouse_coordinate_wgs84));
-    }
-    placement.insert(QStringLiteral("connectionTargetUuid"),
-                     state.placement.connection_target_uuid.toString(QUuid::WithoutBraces));
-    placement.insert(QStringLiteral("pipeStartNodeUuid"),
-                     state.placement.pipe_start_node_uuid.toString(QUuid::WithoutBraces));
-    placement.insert(QStringLiteral("pipeIntermediateVertices"), intermediate_vertices);
-    placement.insert(QStringLiteral("deviceLinkStartNodeUuid"),
-                     state.placement.device_link_start_node_uuid.toString(QUuid::WithoutBraces));
-    placement.insert(QStringLiteral("floatingWidth"), state.placement.floating_width);
-
-    QJsonArray simulation_error_entities;
-    for (QHash<QUuid, InfrastructureEntity>::const_iterator error_iterator =
-             state.simulation_error_entities.cbegin();
-         error_iterator != state.simulation_error_entities.cend(); ++error_iterator)
-    {
-        QJsonObject error_entity;
-        error_entity.insert(QStringLiteral("entity"), static_cast<int>(error_iterator.value()));
-        error_entity.insert(QStringLiteral("uuid"), error_iterator.key().toString(QUuid::WithoutBraces));
-        error_entity.insert(
-            QStringLiteral("stale"),
-            state.simulation_stale_diagnostic_entity_uuids.contains(error_iterator.key()));
-        simulation_error_entities.append(error_entity);
-    }
-
-    QJsonObject root;
-    root.insert(QStringLiteral("revision"), QString::number(state.revision));
-    root.insert(QStringLiteral("selectedMarkerUuids"),
-                uuidListToJson(state.selected_marker_uuids));
-    root.insert(QStringLiteral("selectedPipeUuids"),
-                uuidListToJson(state.selected_pipe_uuids));
-    root.insert(QStringLiteral("simulationErrorEntities"), simulation_error_entities);
-    root.insert(QStringLiteral("wrapReferenceLongitude"), state.wrap_reference_longitude);
-    root.insert(QStringLiteral("entityWidth"), state.entity_width);
-    root.insert(QStringLiteral("placement"), placement);
-    root.insert(QStringLiteral("move"), move);
-    return QJsonDocument(root).toJson(QJsonDocument::Compact);
-}
-
-QByteArray serializeMapEditorViewportState(const MapEditorViewportRenderState &state)
-{
-    QJsonObject tile_selection;
-    tile_selection.insert(QStringLiteral("visible"), state.tile_selection_visible);
-    tile_selection.insert(QStringLiteral("xMin"), state.tile_x_min);
-    tile_selection.insert(QStringLiteral("xMax"), state.tile_x_max);
-    tile_selection.insert(QStringLiteral("yMin"), state.tile_y_min);
-    tile_selection.insert(QStringLiteral("yMax"), state.tile_y_max);
-
-    QJsonObject rectangle_selection;
-    rectangle_selection.insert(QStringLiteral("visible"), state.rectangle_selection_visible);
-    rectangle_selection.insert(QStringLiteral("x"), state.rectangle_selection.x());
-    rectangle_selection.insert(QStringLiteral("y"), state.rectangle_selection.y());
-    rectangle_selection.insert(QStringLiteral("width"), state.rectangle_selection.width());
-    rectangle_selection.insert(QStringLiteral("height"), state.rectangle_selection.height());
-    rectangle_selection.insert(QStringLiteral("worldValid"),
-                               state.rectangle_selection_wgs84_valid);
-    if (state.rectangle_selection_wgs84_valid)
-    {
-        rectangle_selection.insert(QStringLiteral("northWest"),
-                                   coordinateToJson(state.rectangle_selection_north_west));
-        rectangle_selection.insert(QStringLiteral("southEast"),
-                                   coordinateToJson(state.rectangle_selection_south_east));
-    }
-
-    QJsonObject root;
-    root.insert(QStringLiteral("backgroundOpacity"), state.background_opacity);
-    root.insert(QStringLiteral("tileSelection"), tile_selection);
-    root.insert(QStringLiteral("rectangleSelection"), rectangle_selection);
-    return QJsonDocument(root).toJson(QJsonDocument::Compact);
-}
-}
+    MapEntityPixmapRenderer metrics;
+    QHash<quint64, MapBgfxHudRect> rects;
+};
 #endif
+}
+
 
 MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *tile_repository, HydraulicData *hydraulic_data, GpsProvider *gps, EntityInspectorDock *map_inspector, QWidget *parent)
     : QWidget{parent},
@@ -320,6 +104,7 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     map_stack_layout( new QStackedLayout(this->map_stack) ),
     map( new MapWidget(this->map_model, this->tile_repository, this->gps, this->map_stack) ),
     map_canvas( new MapCanvasWidget(this->map_model, this->map, this->hydraulic_data, this->map_stack) ),
+    renderer_status( new QLabel(this->map_stack) ),
     editor_controller( new MapEditorController(this->map_model, this->map_canvas->mapCanvasEntities(), this) ),
     map_menu( new MapEditorMenuWidget(this->map, this->map_canvas, this->editor_controller,
                                       CanvasMode::Edit, this) ),
@@ -341,6 +126,9 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     scroll_controls->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
     scroll_controls->setWidget(this->map_menu);
     
+    // Stack (StackAll, all at the map's size): MapWidget (navigation owner,
+    // paints only its background), the canvas (editor input, paints
+    // nothing), the bgfx surface and the status label.
     this->map_stack_layout->setContentsMargins(0, 0, 0, 0);
     this->map_stack_layout->setSpacing(0);
     this->map_stack_layout->setStackingMode(QStackedLayout::StackAll);
@@ -348,170 +136,22 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     this->map_stack_layout->addWidget(this->map);
     this->map_stack_layout->addWidget(this->map_canvas);
     this->map_stack_layout->setCurrentWidget(this->map_canvas);
-#if !defined(Q_OS_WASM) && AOWIS_HAS_QRHI
-    if (desktopMapRenderer() == DesktopMapRenderer::Rhi)
-    {
-        MapRhiWidget *rhi_widget =
-            new MapRhiWidget(this->map_model, QStringLiteral("editor"), this->map_stack);
-        this->desktop_render_surface = rhi_widget;
-        this->desktop_render_widget = rhi_widget;
-        this->desktop_render_surface->setTileRepository(this->tile_repository);
-        this->desktop_render_surface->setBackgroundOpacity(
-            this->map_canvas->backgroundOpacity());
-        syncDesktopRenderSurfaceNetworkSnapshot();
-        syncDesktopRenderSurfaceEditorState();
-
-        // Probe QRhi at the real map-stack size behind the working CPU editor.
-        // Do not promote from a 1x1 probe: Vulkan QRhiWidget backing resources
-        // can be recreated when the widget grows, so readiness has to mean that
-        // an actual full-size frame was submitted. The StackAll layout keeps the
-        // RHI surface sized correctly while MapCanvasWidget remains on top.
-        this->map_stack_layout->addWidget(this->desktop_render_widget);
-        this->desktop_render_widget->show();
-        this->map_stack_layout->setCurrentWidget(this->map_canvas);
-        this->map_canvas->raise();
-
-        connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
-                this, &MapEditorContainer::syncDesktopRenderSurfaceNetworkSnapshot);
-        connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged,
-                this, [this](quint64)
-        {
-            syncDesktopRenderSurfaceNetworkSnapshot();
-        });
-        connect(this->map_canvas->mapCanvasEntities(),
-                &MapCanvasEntities::signalVisualStateChanged,
-                this, [this](quint64)
-        {
-            syncDesktopRenderSurfaceEditorState();
-        });
-        connect(this->editor_controller, &MapEditorController::signalStateChanged,
-                this, [this]
-        {
-            syncDesktopRenderSurfaceEditorState();
-            this->map_canvas->requestRenderUpdate();
-        });
-        connect(this->map_model, &MapModel::zoomChanged, this, [this]
-        {
-            applyDesktopRenderSurfaceEditorSymbology();
-            this->map_canvas->requestRenderUpdate();
-        });
-
-        connect(rhi_widget, &MapRhiWidget::signalRendererReady, this,
-                [this, rhi_widget]
-        {
-            this->map->setRenderSurfaceActive(true);
-            rhi_widget->show();
-            this->map_stack_layout->setCurrentWidget(rhi_widget);
-            rhi_widget->raise();
-
-            this->map_canvas->setRenderSurfaceOverlayMode(true);
-            if (rhi_widget->api() == QRhiWidget::Api::Vulkan)
-            {
-                // MapRhiWidget is normally transparent for mouse input so monitor/map
-                // interaction can be handled by the separate MapWidget. On Vulkan the
-                // editor overlay has to be a child of the QRhiWidget for reliable
-                // composition. WA_TransparentForMouseEvents also makes child widgets
-                // transparent, so leaving it enabled here disables the complete editor.
-                rhi_widget->setAttribute(Qt::WA_TransparentForMouseEvents, false);
-                this->map_stack_layout->removeWidget(this->map_canvas);
-                this->map_canvas->setParent(rhi_widget);
-                this->map_canvas->setGeometry(rhi_widget->rect());
-                rhi_widget->installEventFilter(this);
-            }
-            else
-            {
-                this->map_stack_layout->setCurrentWidget(this->map_canvas);
-            }
-            this->map_canvas->show();
-            this->map_canvas->raise();
-            this->map_canvas->setFocus(Qt::OtherFocusReason);
-
-            qInfo() << "Editor map renderer: RHI map active with GPU basemap/static network "
-                       "and lightweight QWidget interaction overlay; CPU renderer retained as fallback.";
-        });
-        connect(rhi_widget, &MapRhiWidget::signalRendererFailed, this,
-                [this](const QString &reason)
-        {
-            qWarning().noquote()
-                << QStringLiteral("Editor RHI surface failed (%1). "
-                                  "Falling back to the existing CPU editor renderer.")
-                       .arg(reason);
-            if (this->map_model->viewMode() != MapViewMode::TwoD)
-                this->map_model->setViewMode(MapViewMode::TwoD);
-            this->map->setRenderSurfaceActive(false);
-            if (this->desktop_render_widget != nullptr
-                && this->map_canvas->parentWidget() == this->desktop_render_widget)
-            {
-                this->desktop_render_widget->removeEventFilter(this);
-                this->map_canvas->setParent(this->map_stack);
-                this->map_stack_layout->addWidget(this->map_canvas);
-                this->desktop_render_widget->setAttribute(
-                    Qt::WA_TransparentForMouseEvents, true);
-            }
-            this->map_canvas->setRenderSurfaceOverlayMode(false);
-            this->map_canvas->show();
-            this->map_stack_layout->setCurrentWidget(this->map_canvas);
-            this->map_canvas->raise();
-            if (this->desktop_render_widget != nullptr)
-                this->desktop_render_widget->hide();
-        });
-    }
-#endif
-#ifdef Q_OS_WASM
-    this->map->setBrowserMapLayerEnabled(true);
-    this->map->setBrowserMapLayerTopmost(true);
-    aowisBrowserMapEditorSetOwnerId(this->map->browserMapLayerOwnerId());
-
-    this->wasm_map_layer_sync_timer = new QTimer(this);
-    this->wasm_map_layer_sync_timer->setSingleShot(true);
-    connect(this->wasm_map_layer_sync_timer, &QTimer::timeout,
-            this, &MapEditorContainer::syncWasmMapLayers);
-
-    this->installEventFilter(this);
-    this->map->installEventFilter(this);
-    this->map_stack->installEventFilter(this);
+    // Text only, never an opaque cover (the monitor's rule): the surface
+    // must keep receiving paint/expose events to present its first frame.
+    this->renderer_status->setAlignment(Qt::AlignCenter);
+    this->renderer_status->setWordWrap(true);
+    this->renderer_status->setAutoFillBackground(false);
+    this->renderer_status->setAttribute(Qt::WA_TranslucentBackground);
+    this->renderer_status->setAttribute(Qt::WA_TransparentForMouseEvents);
+    this->map_stack_layout->addWidget(this->renderer_status);
+    // HUD routing and the map fullscreen window's close button.
     this->map_canvas->installEventFilter(this);
-    if (this->window())
-        this->window()->installEventFilter(this);
-
-    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
-            this, &MapEditorContainer::scheduleWasmMapLayerSync);
-    connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged,
-            this, &MapEditorContainer::scheduleWasmMapLayerSync);
-    connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
-            [this](InfrastructureEntity, const QUuid &uuid)
-    {
-        this->wasm_dirty_node_uuids.insert(uuid);
-        this->scheduleWasmMapLayerSync();
-    });
-    connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
-            [this](InfrastructureEntity, const QUuid &uuid)
-    {
-        this->wasm_dirty_link_uuids.insert(uuid);
-        this->scheduleWasmMapLayerSync();
-    });
-    connect(this->map_canvas->mapCanvasEntities(), &MapCanvasEntities::signalVisualStateChanged,
-            this, [this](quint64)
-    {
-        if (this->map_canvas->mapCanvasEntities()->positioningActive())
-        {
-            this->syncWasmVisualState();
-            return;
-        }
-        this->scheduleWasmMapLayerSync();
-    });
-    connect(this->editor_controller, &MapEditorController::signalStateChanged, this, [this]
-    {
-        if (this->editor_controller->rectangleDragging())
-        {
-            this->syncWasmViewportState();
-            return;
-        }
-        this->scheduleWasmMapLayerSync();
-    });
-
-    this->syncWasmBackground();
-    this->scheduleWasmMapLayerSync();
+    this->map_stack->installEventFilter(this);
+#if AOWIS_HAS_BGFX
+    setupBgfxEditor();
+#else
+    showRendererStatus(tr("The map editor draws with the bgfx map renderer, which this "
+                          "build does not include (AOWIS_ENABLE_BGFX_MAP=OFF)."));
 #endif
     
     this->layout->addWidget(scroll_controls);
@@ -521,19 +161,6 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
             this->map_canvas, &MapCanvasWidget::setBackgroundOpacity);
     connect(this->map_menu->mapNavigationWidget(), &MapNavigationWidget::signalIconSizeChanged,
             this->map_canvas, &MapCanvasWidget::setIconSizePercent);
-#if !defined(Q_OS_WASM) && AOWIS_HAS_QRHI
-    connect(this->map_menu, &MapEditorMenuWidget::signalSlideOpacityChanged,
-            this, &MapEditorContainer::setDesktopRenderSurfaceBackgroundOpacity);
-    connect(this->map_menu->mapNavigationWidget(), &MapNavigationWidget::signalIconSizeChanged,
-            this, [this](int)
-    {
-        applyDesktopRenderSurfaceEditorSymbology();
-    });
-#endif
-#ifdef Q_OS_WASM
-    connect(this->map_menu, &MapEditorMenuWidget::signalSlideOpacityChanged,
-            this, &MapEditorContainer::scheduleWasmMapLayerSync);
-#endif
     connect(this->map_menu, &MapEditorMenuWidget::signalMapEditorGuideVisibilityChanged, this, &MapEditorContainer::signalMapEditorGuideVisibilityChanged);
     connect(this->map_menu, &MapEditorMenuWidget::signalEditNetworkSectionActive, this, &MapEditorContainer::signalEditNetworkSectionActive);
     
@@ -546,57 +173,108 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
 
 MapEditorContainer::~MapEditorContainer()
 {
-#ifdef Q_OS_WASM
-    this->map->setBrowserMapLayerGeometry(QRect(), false);
-    aowisBrowserMapEditorClear();
-#endif
 }
 
-#if !defined(Q_OS_WASM) && AOWIS_HAS_QRHI
-void MapEditorContainer::syncDesktopRenderSurfaceNetworkSnapshot()
+void MapEditorContainer::showRendererStatus(const QString &text)
 {
-    if (this->desktop_render_surface == nullptr || this->hydraulic_data == nullptr)
-        return;
-
-    this->desktop_render_surface->setNetworkSnapshot(
-        this->hydraulic_data->networkRenderSnapshot());
-    applyDesktopRenderSurfaceEditorSymbology();
-    syncDesktopRenderSurfaceEditorState();
+    this->renderer_status->setText(text);
+    this->renderer_status->show();
+    this->map_stack_layout->setCurrentWidget(this->renderer_status);
+    this->renderer_status->raise();
 }
 
-void MapEditorContainer::syncDesktopRenderSurfaceEditorState()
+#if AOWIS_HAS_BGFX
+void MapEditorContainer::connectRenderSurfaceSync()
 {
-    if (this->desktop_render_surface == nullptr ||
-        this->map_canvas == nullptr ||
-        this->hydraulic_data == nullptr)
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
+            this, &MapEditorContainer::syncRenderSurfaceNetworkSnapshot);
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged,
+            this, [this](quint64)
     {
+        syncRenderSurfaceNetworkSnapshot();
+    });
+    // Renames (no geometry change): the labels' IDs follow the snapshot.
+    connect(this->hydraulic_data, &HydraulicData::signalNodeChanged,
+            this, [this](InfrastructureEntity, const QUuid &)
+    {
+        if (this->bgfx_surface != nullptr)
+            this->bgfx_surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalLinkChanged,
+            this, [this](InfrastructureEntity, const QUuid &)
+    {
+        if (this->bgfx_surface != nullptr)
+            this->bgfx_surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalDemandPointChanged,
+            this, [this](const QUuid &)
+    {
+        if (this->bgfx_surface != nullptr)
+            this->bgfx_surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
+    });
+    connect(this->map_canvas->mapCanvasEntities(),
+            &MapCanvasEntities::signalVisualStateChanged,
+            this, [this](quint64)
+    {
+        syncRenderSurfaceEditorState();
+    });
+    connect(this->editor_controller, &MapEditorController::signalStateChanged,
+            this, [this]
+    {
+        syncRenderSurfaceEditorState();
+        this->map_canvas->requestRenderUpdate();
+    });
+    // No symbology work on zoom changes: the editor's GPU network has fixed
+    // pixel sizes and no GPU icons (the overlay draws them), so the colour
+    // stream never depends on the zoom.
+}
+
+void MapEditorContainer::syncRenderSurfaceNetworkSnapshot()
+{
+    if (this->bgfx_surface == nullptr || this->hydraulic_data == nullptr)
         return;
-    }
+
+    this->bgfx_surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
+    applyRenderSurfaceEditorSymbology();
+    syncRenderSurfaceEditorState();
+}
+
+void MapEditorContainer::syncRenderSurfaceEditorState()
+{
+    if (this->bgfx_surface == nullptr || this->hydraulic_data == nullptr)
+        return;
+
+    // Called on every editor state change (pointer moves included) and on
+    // every visual state change, also while the editor is hidden (synced map
+    // movement): build the full visual state only when a move is involved.
+    if (!this->map_canvas->mapCanvasEntities()->isMoveActive()
+        && this->render_move_session_id == 0 && !this->render_full_network_move)
+        return;
 
     const MapEditorVisualState state = this->map_canvas->visualState();
     const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
 
     if (!state.move.active)
     {
-        if (this->desktop_render_move_session_id != 0 ||
-            this->desktop_render_full_network_move)
+        if (this->render_move_session_id != 0 || this->render_full_network_move)
         {
-            this->desktop_render_move_session_id = 0;
-            this->desktop_render_full_network_move = false;
-            this->desktop_render_move_start_mouse_position = QPointF();
-            this->desktop_render_surface->setNetworkScreenTranslation(QPointF());
-            this->desktop_render_surface->setHiddenEntityUuids(QSet<QUuid>());
-            this->map_canvas->setRenderSurfaceFullNetworkMoveState(false, QPointF());
+            this->render_move_session_id = 0;
+            this->render_full_network_move = false;
+            this->render_move_start_mouse_position = QPointF();
+            this->render_move_translation = QPointF();
+            this->bgfx_surface->setNetworkScreenTranslation(QPointF());
+            this->bgfx_surface->setHiddenEntityUuids(QSet<QUuid>());
         }
         return;
     }
 
-    const bool new_move_session =
-        this->desktop_render_move_session_id != state.move.session_id;
-    if (new_move_session)
+    // A move session hides the dragged entities in the GPU network (the
+    // overlay draws them moving) - or, when the whole network moves, shifts
+    // the GPU network instead (camera offset, no upload).
+    if (this->render_move_session_id != state.move.session_id)
     {
-        this->desktop_render_move_session_id = state.move.session_id;
-        this->desktop_render_move_start_mouse_position = state.placement.mouse_position;
+        this->render_move_session_id = state.move.session_id;
+        this->render_move_start_mouse_position = state.placement.mouse_position;
 
         QSet<QUuid> hidden_entity_uuids;
         hidden_entity_uuids.reserve(state.move.markers.size() + state.move.links.size());
@@ -605,69 +283,66 @@ void MapEditorContainer::syncDesktopRenderSurfaceEditorState()
         for (const MapEditorDynamicLinkVisualState &link : state.move.links)
             hidden_entity_uuids.insert(link.uuid);
 
-        this->desktop_render_full_network_move = !hidden_entity_uuids.isEmpty();
-        if (this->desktop_render_full_network_move)
+        this->render_full_network_move = !hidden_entity_uuids.isEmpty();
+        if (this->render_full_network_move)
         {
             for (const NetworkRenderNode &node : snapshot.nodes)
             {
                 if (!hidden_entity_uuids.contains(node.uuid))
                 {
-                    this->desktop_render_full_network_move = false;
+                    this->render_full_network_move = false;
                     break;
                 }
             }
         }
-        if (this->desktop_render_full_network_move)
+        if (this->render_full_network_move)
         {
             for (const NetworkRenderLink &link : snapshot.links)
             {
                 if (!hidden_entity_uuids.contains(link.uuid))
                 {
-                    this->desktop_render_full_network_move = false;
+                    this->render_full_network_move = false;
                     break;
                 }
             }
         }
 
-        if (this->desktop_render_full_network_move)
-            this->desktop_render_surface->setHiddenEntityUuids(QSet<QUuid>());
+        if (this->render_full_network_move)
+            this->bgfx_surface->setHiddenEntityUuids(QSet<QUuid>());
         else
-            this->desktop_render_surface->setHiddenEntityUuids(hidden_entity_uuids);
+            this->bgfx_surface->setHiddenEntityUuids(hidden_entity_uuids);
     }
 
-    if (this->desktop_render_full_network_move)
+    if (this->render_full_network_move)
     {
         const QPointF translation_pixels =
-            state.placement.mouse_position - this->desktop_render_move_start_mouse_position;
-        this->desktop_render_surface->setNetworkScreenTranslation(translation_pixels);
-        this->map_canvas->setRenderSurfaceFullNetworkMoveState(true, translation_pixels);
+            state.placement.mouse_position - this->render_move_start_mouse_position;
+        this->render_move_translation = translation_pixels;
+        this->bgfx_surface->setNetworkScreenTranslation(translation_pixels);
         return;
     }
 
-    this->desktop_render_surface->setNetworkScreenTranslation(QPointF());
-    this->map_canvas->setRenderSurfaceFullNetworkMoveState(false, QPointF());
+    this->render_move_translation = QPointF();
+    this->bgfx_surface->setNetworkScreenTranslation(QPointF());
 }
 
-void MapEditorContainer::applyDesktopRenderSurfaceEditorSymbology()
+void MapEditorContainer::applyRenderSurfaceEditorSymbology()
 {
-    if (this->desktop_render_surface == nullptr ||
-        this->hydraulic_data == nullptr ||
-        this->map_canvas == nullptr)
-    {
+    if (this->bgfx_surface == nullptr || this->hydraulic_data == nullptr)
         return;
-    }
 
     const NetworkRenderSnapshot &snapshot =
         this->hydraulic_data->networkRenderSnapshot();
 
+    // The editor look: black pipes and node dots, brown device links, no
+    // GPU icons (the overlay draws the full-colour editor icons), no flow.
     MapNetworkRenderSymbology symbology;
     symbology.node_size_unit = NetworkSymbologySizeUnit::Pixels;
     symbology.node_size_px = 10;
     symbology.node_size_m = NetworkSymbologyDefaultNodeSizeM;
+    // No GPU icons (show_icons false): their size is irrelevant here.
     symbology.icon_size_unit = NetworkSymbologySizeUnit::Pixels;
-    symbology.icon_size_px = qRound(networkSymbologyMarkerSizeForZoom(
-        this->map_model->zoom(),
-        this->map_canvas->mapCanvasEntities()->iconSizePercent()));
+    symbology.icon_size_px = NetworkSymbologyDefaultIconSizePx;
     symbology.icon_size_m = NetworkSymbologyDefaultIconSizeM;
     symbology.show_icons = false;
     symbology.link_thickness_unit = NetworkSymbologySizeUnit::Pixels;
@@ -689,173 +364,429 @@ void MapEditorContainer::applyDesktopRenderSurfaceEditorSymbology()
         symbology.link_colors.insert(link.render_id, color);
     }
 
-    this->desktop_render_surface->setSymbology(symbology);
+    this->bgfx_surface->setSymbology(symbology);
 }
 
-void MapEditorContainer::setDesktopRenderSurfaceBackgroundOpacity(int opacity)
+void MapEditorContainer::setupBgfxEditor()
 {
-    if (this->desktop_render_surface != nullptr)
-        this->desktop_render_surface->setBackgroundOpacity(opacity);
+    // Map editor on bgfx (roadmap Phase 2). bgfx draws imagery, the static
+    // network in the editor look, every editor overlay, map labels and the
+    // HUD; MapCanvasWidget stays the input owner (editor controller first,
+    // then MapWidget navigation) and paints nothing.
+    MapBgfxSurface *surface = new MapBgfxSurface(this->map_model, this->map_stack);
+    surface->setObjectName(QStringLiteral("aowis-bgfx-editor-surface"));
+    this->bgfx_surface = surface;
+    // Editor HUD: crosshair, scale bar, the 2D/3D switch (3D is offered once
+    // the bgfx globe exists) and, on desktop, the fullscreen button.
+    surface->setHudViewSwitchVisible(true);
+#ifndef Q_OS_WASM
+    surface->setHudFullscreen(true, false);
+#else
+    // The browser build keeps the page layout (as the monitor).
+    surface->setHudFullscreen(false, false);
+#endif
+    surface->setHudActionHandler([this](const MapBgfxHud::Command &command)
+    {
+        handleBgfxHudAction(static_cast<int>(command.action));
+    });
+    // Keys stay on the canvas (editor keys, window shortcuts of the tools).
+    surface->setKeyboardFocusWidget(this->map_canvas);
+    // Node dots at their true positions, exactly under the overlay icons and
+    // the editor's hit testing (the monitor spreads coincident nodes).
+    surface->setNodeDeclutteringEnabled(false);
+
+    // Desktop: the embedded native window receives the pointer; deliver
+    // every event to the canvas as if it had received it (same geometry),
+    // where this container's event filter lets the HUD see it first.
+    // WASM: the bgfx canvas has pointer-events:none, the canvas widget on
+    // top of the Qt stack receives them directly (same filter).
+    const std::function<bool(QMouseEvent *)> to_canvas = [this](QMouseEvent *event)
+    {
+        return QCoreApplication::sendEvent(this->map_canvas, event);
+    };
+    surface->setNavigationMouseHandlers(to_canvas, to_canvas, to_canvas);
+    surface->setNavigationHandlers(
+        [this](QKeyEvent *event)
+        {
+            QCoreApplication::sendEvent(this->map_canvas, event);
+            return event->isAccepted();
+        },
+        [this](QKeyEvent *event)
+        {
+            QCoreApplication::sendEvent(this->map_canvas, event);
+            return event->isAccepted();
+        },
+        [this]() { this->map->clearKeyboardPanInput(); });
+    surface->setNavigationWheelHandler([this](QWheelEvent *event) { this->map->handleWheelEvent(event); });
+    surface->setNavigationFrameHandler(
+        [this](double elapsed_seconds) { this->map->advanceNavigationFrame(elapsed_seconds); });
+
+    surface->setTileRepository(this->tile_repository);
+    surface->setBackgroundOpacity(this->map_canvas->backgroundOpacity());
+    connect(this->map_menu, &MapEditorMenuWidget::signalSlideOpacityChanged,
+            surface, [surface](int opacity) { surface->setBackgroundOpacity(opacity); });
+
+#ifndef Q_OS_WASM
+    // GPS position dot on the HUD (formerly painted by MapWidget's CPU map;
+    // the monitor's wiring).
+    if (this->gps != nullptr)
+    {
+        connect(this->gps, &GpsProvider::positionChanged, surface,
+                [surface](const QGeoPositionInfo &info)
+        {
+            const QGeoCoordinate coordinate = info.coordinate();
+            surface->setHudGpsPosition(info.isValid() && coordinate.isValid(),
+                                       coordinate.longitude(), coordinate.latitude());
+        });
+        connect(this->gps, &GpsProvider::gpsDisconnected, surface, [surface]()
+        {
+            surface->setHudGpsPosition(false, 0.0, 0.0);
+        });
+    }
+#endif
+
+    // Map labels: IDs from the left menu's switches, placed around the
+    // editor's icons (the GPU network only has dots here).
+    MapNavigationWidget *navigation = this->map_menu->mapNavigationWidget();
+    surface->setLabelSettings(navigation->labelSettings());
+    connect(navigation, &MapNavigationWidget::signalLabelSettingsChanged,
+            surface, [surface](const MapLabelSettings &settings)
+    {
+        surface->setLabelSettings(settings);
+    });
+    const std::shared_ptr<EditorLabelSymbols> label_symbols = std::make_shared<EditorLabelSymbols>();
+    surface->setLabelSymbolRects(
+        [this, label_symbols](InfrastructureEntity entity_type)
+        {
+            return label_symbols->node(entity_type, qMax(1, this->bgfx_visual_state.entity_width));
+        },
+        [this, label_symbols](InfrastructureEntity entity_type)
+        {
+            return label_symbols->link(entity_type, qMax(1, this->bgfx_visual_state.entity_width));
+        });
+
+    // Editor overlay: built per frame from the cached visual state.
+    const std::shared_ptr<MapBgfxEditorIcons> icons = std::make_shared<MapBgfxEditorIcons>();
+    const std::shared_ptr<MapBgfxEditorOverlay> overlay = std::make_shared<MapBgfxEditorOverlay>();
+    overlay->setIconProvider(
+        [icons](MapBgfxHudTextCache *cache, InfrastructureEntity entity, const QString &path,
+                int width, MapBgfxEditorOverlay::Highlight highlight)
+        {
+            return icons->icon(cache, entity, path, width, highlight);
+        });
+    surface->setOverlayBuilder(
+        [this, overlay](MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
+                        const MapBgfx2d::Camera &camera, const QSizeF &viewport)
+        {
+            // Full rebuild only when the editor's content changed; camera
+            // motion only moves the pointer's map coordinate (the visual
+            // state is O(demand points) and must not run every frame).
+            if (this->bgfx_visual_state_dirty)
+            {
+                this->bgfx_visual_state = this->map_canvas->visualState();
+                this->bgfx_visual_state_dirty = false;
+                this->bgfx_visual_camera_dirty = false;
+            }
+            else if (this->bgfx_visual_camera_dirty)
+            {
+                this->bgfx_visual_camera_dirty = false;
+                if (this->bgfx_visual_state.placement.mouse_coordinate_wgs84_valid)
+                {
+                    this->bgfx_visual_state.placement.mouse_coordinate_wgs84 =
+                        this->map_model->wgs84FromScreen(
+                            this->bgfx_visual_state.placement.mouse_position.toPoint(),
+                            this->map_canvas->size());
+                }
+            }
+            const MapEditorViewportRenderState viewport_state =
+                this->map_canvas->viewportRenderState();
+            MapBgfxEditorOverlay::Inputs inputs;
+            inputs.viewport = viewport;
+            inputs.camera = camera;
+            inputs.snapshot = &this->hydraulic_data->networkRenderSnapshot();
+            inputs.visual_state = &this->bgfx_visual_state;
+            inputs.viewport_state = &viewport_state;
+            inputs.full_network_move = this->render_full_network_move;
+            inputs.full_network_move_translation = this->render_move_translation;
+            overlay->build(canvas, cache, inputs);
+        });
+    connect(this->map_canvas, &MapCanvasWidget::signalRenderUpdateRequested, this, [this]()
+    {
+        this->bgfx_visual_state_dirty = true;
+    });
+    connect(this->map_canvas, &MapCanvasWidget::signalCameraChanged, this, [this]()
+    {
+        this->bgfx_visual_camera_dirty = true;
+    });
+    // The native window shows its own cursor (desktop); the tool's cursor
+    // unless a HUD button is under the pointer.
+    connect(this->editor_controller, &MapEditorController::signalStateChanged, this, [this]()
+    {
+        applyEditorCursor();
+    });
+
+#ifndef Q_OS_WASM
+    // Map fullscreen shortcut (the monitor's "Toggle map fullscreen"),
+    // enabled while bgfx presents frames and no shortcut is being captured.
+    // Its parent is the map stack, so only the visible map's shortcut fires.
+    this->bgfx_fullscreen_shortcut = new QShortcut(
+        guiShortcutRegistry().keySequence(GuiShortcutId::MapMonitorFullscreen), this->map_stack);
+    this->bgfx_fullscreen_shortcut->setContext(Qt::ApplicationShortcut);
+    this->bgfx_fullscreen_shortcut->setAutoRepeat(false);
+    this->bgfx_fullscreen_shortcut->setEnabled(false);
+    connect(this->bgfx_fullscreen_shortcut, &QShortcut::activated, this, [this]()
+    {
+        if (!this->bgfx_editor_active)
+            return;
+        if (!this->bgfx_fullscreen_active && !isVisible())
+            return;
+        setBgfxFullscreen(!this->bgfx_fullscreen_active);
+    });
+    connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutChanged, this,
+            [this](GuiShortcutId id)
+    {
+        if (id != GuiShortcutId::MapMonitorFullscreen || this->bgfx_fullscreen_shortcut == nullptr)
+            return;
+        this->bgfx_fullscreen_shortcut->setKey(
+            guiShortcutRegistry().keySequence(GuiShortcutId::MapMonitorFullscreen));
+    });
+    connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutCaptureActiveChanged,
+            this, [this](bool active)
+    {
+        if (this->bgfx_fullscreen_shortcut != nullptr)
+            this->bgfx_fullscreen_shortcut->setEnabled(this->bgfx_editor_active && !active);
+    });
+#endif
+
+    syncRenderSurfaceNetworkSnapshot();
+    connectRenderSurfaceSync();
+
+    connect(surface, &MapBgfxSurface::signalRendererReady, this, [this, surface]()
+    {
+        this->bgfx_editor_active = true;
+        this->renderer_status->hide();
+        this->map->setRenderSurfaceActive(true);
+        // bgfx presents the frames, so it is the only navigation clock.
+        this->map->setNavigationFrameDriver(true);
+#ifndef Q_OS_WASM
+        this->map_stack_layout->setCurrentWidget(surface);
+        if (this->bgfx_fullscreen_shortcut != nullptr)
+        {
+            this->bgfx_fullscreen_shortcut->setEnabled(
+                !guiShortcutRegistry().shortcutCaptureActive());
+        }
+#else
+        // The canvas widget stays on top of the Qt stack for the pointer.
+        this->map_stack_layout->setCurrentWidget(this->map_canvas);
+        this->map_canvas->raise();
+#endif
+        this->map_canvas->setFocus(Qt::OtherFocusReason);
+        this->bgfx_visual_state_dirty = true;
+        applyEditorCursor();
+        qInfo() << "Editor map renderer: bgfx (" << surface->graphicsApiName()
+                << ") with imagery, network, editor overlay, labels and HUD";
+    });
+    connect(surface, &MapBgfxSurface::signalRendererFailed, this,
+            [this, surface](const QString &reason)
+    {
+        qWarning().noquote()
+            << QStringLiteral("Editor bgfx surface failed; no map renderer is available: %1")
+                   .arg(reason);
+#ifndef Q_OS_WASM
+        if (this->bgfx_fullscreen_active)
+            setBgfxFullscreen(false);
+        if (this->bgfx_fullscreen_shortcut != nullptr)
+            this->bgfx_fullscreen_shortcut->setEnabled(false);
+#endif
+        this->bgfx_editor_active = false;
+        this->bgfx_hud_cursor = Qt::ArrowCursor;
+        this->map->setNavigationFrameDriver(false);
+        this->map->setRenderSurfaceActive(false);
+        surface->hide();
+        showRendererStatus(tr("The bgfx map renderer could not start:\n%1").arg(reason));
+    });
+
+    // The StackAll layout keeps the surface at the real map size; the
+    // status label covers the start (text only, see above).
+    this->map_stack_layout->addWidget(surface);
+    surface->show();
+    showRendererStatus(tr("Starting map renderer…"));
+    // Startup watchdog (the monitor's): never an endless "Starting...".
+    QTimer::singleShot(10000, surface, [this, surface]()
+    {
+        if (this->bgfx_editor_active || !surface->isVisible())
+            return;
+        const QString diagnostics = surface->startupDiagnostics();
+        qWarning().noquote() << "bgfx map editor did not start within 10 s:" << diagnostics;
+        showRendererStatus(tr("The bgfx map renderer has not presented a frame "
+                              "after 10 s.\n%1").arg(diagnostics));
+    });
+}
+
+void MapEditorContainer::applyEditorCursor()
+{
+    // A HUD button under the pointer wins; otherwise the tool's cursor.
+    Qt::CursorShape shape = Qt::ArrowCursor;
+    if (this->bgfx_hud_cursor != Qt::ArrowCursor)
+    {
+        shape = this->bgfx_hud_cursor;
+    }
+    else
+    {
+        const std::optional<Qt::CursorShape> tool_shape = this->editor_controller->cursorShape();
+        if (tool_shape.has_value())
+            shape = tool_shape.value();
+    }
+    // WASM: the canvas widget is under the pointer; desktop: the native
+    // window (the canvas lies below it).
+    if (shape != Qt::ArrowCursor)
+        this->map_canvas->setCursor(shape);
+    else
+        this->map_canvas->unsetCursor();
+    if (this->bgfx_surface != nullptr)
+        this->bgfx_surface->setMapCursor(shape);
+}
+
+bool MapEditorContainer::routeBgfxHudEvent(QEvent *event)
+{
+    if (this->bgfx_surface == nullptr || !this->bgfx_editor_active
+        || !this->bgfx_surface->isVisible())
+    {
+        return false;
+    }
+    switch (event->type())
+    {
+        case QEvent::MouseButtonPress:
+        case QEvent::MouseButtonDblClick:
+        case QEvent::MouseButtonRelease:
+        case QEvent::MouseMove:
+        {
+            QMouseEvent *mouse_event = static_cast<QMouseEvent *>(event);
+            const MapBgfxSurface::HudPointer pointer =
+                this->bgfx_surface->handleHudMouseEvent(mouse_event);
+            if (event->type() == QEvent::MouseMove && pointer.cursor != this->bgfx_hud_cursor)
+            {
+                this->bgfx_hud_cursor = pointer.cursor;
+                applyEditorCursor();
+            }
+            return pointer.consumed;
+        }
+        case QEvent::Wheel:
+            // WASM (desktop routes the native window's wheel internally).
+            return this->bgfx_surface->handleHudWheelEvent(static_cast<QWheelEvent *>(event));
+        case QEvent::KeyPress:
+            return this->bgfx_surface->handleHudKeyPress(static_cast<QKeyEvent *>(event));
+        case QEvent::FocusOut:
+            // Losing focus closes a HUD popup like a Qt popup.
+            this->bgfx_surface->closeHudPopup();
+            return false;
+        default:
+            return false;
+    }
+}
+
+void MapEditorContainer::handleBgfxHudAction(int action)
+{
+    switch (static_cast<MapBgfxHud::Action>(action))
+    {
+        case MapBgfxHud::Action::ViewMode2d:
+            if (this->map_model->viewMode() != MapViewMode::TwoD)
+                this->map_model->setViewMode(MapViewMode::TwoD);
+            break;
+        case MapBgfxHud::Action::ViewMode3d:
+            // Offered (enabled) only once the bgfx globe exists (Phase 3).
+            break;
+        case MapBgfxHud::Action::ToggleFullscreen:
+#ifndef Q_OS_WASM
+            setBgfxFullscreen(!this->bgfx_fullscreen_active);
+#endif
+            break;
+        default:
+            // Downloads and the legend are monitor-only HUD parts.
+            break;
+    }
+}
+
+void MapEditorContainer::setBgfxFullscreen(bool fullscreen)
+{
+#ifndef Q_OS_WASM
+    if (fullscreen == this->bgfx_fullscreen_active)
+        return;
+    if (fullscreen && (!this->bgfx_editor_active || this->bgfx_surface == nullptr))
+        return;
+
+    // MapMonitorContainer::setBgfxFullscreen(): bgfx is shut down first,
+    // reparenting destroys the embedded native surface (Wayland: the
+    // wl_surface) and a live swapchain on it is a fatal protocol error. The
+    // surface restarts once the window is exposed again. The map stack is
+    // the layout's last widget, so re-adding it restores the order.
+    this->bgfx_surface->suspendForNativeWindowChange();
+    if (fullscreen)
+    {
+        const QPoint previous_global_position = this->map_stack->mapToGlobal(QPoint(0, 0));
+        this->layout->removeWidget(this->map_stack);
+        this->map_stack->setParent(nullptr, Qt::Window);
+        this->map_stack->move(previous_global_position);
+        this->bgfx_fullscreen_active = true;
+        this->map_stack->showFullScreen();
+    }
+    else
+    {
+        this->bgfx_fullscreen_active = false;
+        this->map_stack->hide();
+        this->map_stack->setWindowState(Qt::WindowNoState);
+        this->map_stack->setParent(this, Qt::Widget);
+        this->layout->addWidget(this->map_stack);
+        this->map_stack->show();
+    }
+    this->bgfx_surface->setHudFullscreen(true, this->bgfx_fullscreen_active);
+    this->bgfx_surface->resumeAfterNativeWindowChange();
+    // Keys belong to the canvas (editor keys; in fullscreen also the left
+    // menu's button shortcuts, see eventFilter()).
+    this->map_canvas->activateWindow();
+    this->map_canvas->setFocus(Qt::OtherFocusReason);
+#else
+    Q_UNUSED(fullscreen)
+#endif
 }
 #endif
 
 bool MapEditorContainer::eventFilter(QObject *watched, QEvent *event)
 {
-#if !defined(Q_OS_WASM) && AOWIS_HAS_QRHI
-    if (watched == this->desktop_render_widget
-        && event->type() == QEvent::Resize
-        && this->map_canvas != nullptr
-        && this->map_canvas->parentWidget() == this->desktop_render_widget)
+#if AOWIS_HAS_BGFX
+#ifndef Q_OS_WASM
+    // Closing the fullscreen map window returns the map to the tab.
+    if (watched == this->map_stack && event->type() == QEvent::Close
+        && this->bgfx_fullscreen_active)
     {
-        this->map_canvas->setGeometry(this->desktop_render_widget->rect());
+        setBgfxFullscreen(false);
+        event->ignore();
+        return true;
     }
 #endif
-#ifdef Q_OS_WASM
-    if (watched == this || watched == this->map || watched == this->map_stack ||
-        watched == this->map_canvas || watched == this->window())
+    if (watched == this->map_canvas)
     {
-        switch (event->type())
+        // The HUD sits on top of the map: it sees pointer, wheel and Escape
+        // first, and what it consumes never reaches the editor.
+        if (routeBgfxHudEvent(event))
         {
-        case QEvent::Move:
-        case QEvent::Resize:
-        case QEvent::Show:
-        case QEvent::Hide:
-        case QEvent::LayoutRequest:
-        case QEvent::ParentChange:
-        case QEvent::WindowStateChange:
-            this->scheduleWasmMapLayerSync();
-            break;
-        case QEvent::ApplicationPaletteChange:
-        case QEvent::PaletteChange:
-        case QEvent::StyleChange:
-            this->syncWasmBackground();
-            this->scheduleWasmMapLayerSync();
-            break;
-        default:
-            break;
+            event->accept();
+            return true;
+        }
+        // Fullscreen: the left menu's button shortcuts cannot fire (other
+        // window), so the canvas' key presses try them first - exactly what
+        // the shortcut would have done before the key reached the canvas.
+        if (event->type() == QEvent::KeyPress && this->bgfx_fullscreen_active
+            && this->map_menu->triggerButtonShortcut(static_cast<QKeyEvent *>(event)))
+        {
+            event->accept();
+            return true;
         }
     }
 #endif
     return QWidget::eventFilter(watched, event);
 }
 
-#ifdef Q_OS_WASM
-void MapEditorContainer::scheduleWasmMapLayerSync()
-{
-    if (!this->wasm_map_layer_sync_timer->isActive())
-        this->wasm_map_layer_sync_timer->start(0);
-}
-
-void MapEditorContainer::syncWasmMapLayers()
-{
-    const bool visible = this->isVisible() && this->map->isVisible()
-        && this->map->width() > 0 && this->map->height() > 0;
-
-    if (!visible)
-    {
-        this->map->setBrowserMapLayerGeometry(QRect(), false);
-        return;
-    }
-
-    const QRect map_geometry(this->map->mapToGlobal(QPoint(0, 0)), this->map->size());
-    this->map->setBrowserMapLayerGeometry(map_geometry, true);
-    this->syncWasmNetworkSnapshot();
-    this->syncWasmVisualState();
-    this->syncWasmViewportState();
-}
-
-void MapEditorContainer::syncWasmNetworkSnapshot()
-{
-    if (!this->hydraulic_data)
-        return;
-
-    const quint64 geometry_revision = this->hydraulic_data->geometryRevision();
-    if (this->wasm_network_snapshot_sent &&
-        this->wasm_network_geometry_revision_sent == geometry_revision)
-    {
-        this->wasm_dirty_node_uuids.clear();
-        this->wasm_dirty_link_uuids.clear();
-        return;
-    }
-
-    const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
-    const QSet<QUuid> node_uuids = networkNodeUuids(snapshot);
-    const QSet<QUuid> link_uuids = networkLinkUuids(snapshot);
-    const bool structure_unchanged = this->wasm_network_snapshot_sent &&
-        node_uuids == this->wasm_network_node_uuids_sent &&
-        link_uuids == this->wasm_network_link_uuids_sent;
-    const bool has_geometry_patch = structure_unchanged &&
-        (!this->wasm_dirty_node_uuids.isEmpty() || !this->wasm_dirty_link_uuids.isEmpty());
-
-    int transferred = 0;
-    if (has_geometry_patch)
-    {
-        const QByteArray json = BrowserNetworkSnapshotSerializer::serializeGeometryPatch(
-            snapshot, this->wasm_dirty_node_uuids, this->wasm_dirty_link_uuids);
-        transferred = aowisBrowserMapEditorUpdateGeometry(
-            json.constData(), static_cast<int>(json.size()));
-    }
-    else
-    {
-        const QByteArray json = BrowserNetworkSnapshotSerializer::serialize(snapshot);
-        transferred = aowisBrowserMapEditorSetNetworkSnapshot(
-            json.constData(), static_cast<int>(json.size()));
-    }
-
-    if (transferred == 0)
-        return;
-
-    this->wasm_network_geometry_revision_sent = snapshot.geometry_revision;
-    this->wasm_network_node_uuids_sent = node_uuids;
-    this->wasm_network_link_uuids_sent = link_uuids;
-    this->wasm_dirty_node_uuids.clear();
-    this->wasm_dirty_link_uuids.clear();
-    this->wasm_network_snapshot_sent = true;
-}
-
-void MapEditorContainer::syncWasmVisualState()
-{
-    const MapEditorVisualState state = this->map_canvas->visualState();
-    if (this->wasm_visual_state_sent &&
-        this->wasm_visual_state_revision_sent == state.revision)
-    {
-        return;
-    }
-
-    const QByteArray json = serializeMapEditorVisualState(state);
-    if (aowisBrowserMapEditorSetVisualState(
-            json.constData(), static_cast<int>(json.size())) == 0)
-    {
-        return;
-    }
-
-    this->wasm_visual_state_revision_sent = state.revision;
-    this->wasm_visual_state_sent = true;
-}
-
-void MapEditorContainer::syncWasmViewportState()
-{
-    const QByteArray json = serializeMapEditorViewportState(
-        this->map_canvas->viewportRenderState());
-    if (json == this->wasm_viewport_state_sent)
-        return;
-
-    if (aowisBrowserMapEditorSetViewportState(
-            json.constData(), static_cast<int>(json.size())) == 0)
-    {
-        return;
-    }
-
-    this->wasm_viewport_state_sent = json;
-}
-
-void MapEditorContainer::syncWasmBackground()
-{
-    const QColor background = this->map_canvas->palette().color(QPalette::Window);
-    aowisBrowserMapEditorSetBackground(
-        background.red(), background.green(), background.blue());
-}
-#endif
 
 MapWidget *MapEditorContainer::getMap()
 {
@@ -953,6 +884,26 @@ MapNavigationWidget *MapEditorMenuWidget::mapNavigationWidget()
 bool MapEditorMenuWidget::isEditNetworkSectionActive() const
 {
     return this->toolbox->currentIndex() == this->toolbox_edit_index;
+}
+
+bool MapEditorMenuWidget::triggerButtonShortcut(const QKeyEvent *event)
+{
+    if (event == nullptr || event->isAutoRepeat())
+        return false;
+    const QKeySequence pressed(event->keyCombination());
+    const QList<QAbstractButton *> buttons = findChildren<QAbstractButton *>();
+    for (QAbstractButton *button : buttons)
+    {
+        // What QShortcutMap would accept in the main window: an enabled
+        // button whose own page is shown.
+        if (!button->isEnabled() || !button->isVisibleTo(this) || button->shortcut().isEmpty())
+            continue;
+        if (button->shortcut().matches(pressed) != QKeySequence::ExactMatch)
+            continue;
+        button->click();
+        return true;
+    }
+    return false;
 }
 
 void MapEditorMenuWidget::setMapEditorGuideChecked(bool checked)

@@ -4,10 +4,12 @@
 #include "map/bgfx/map_bgfx_2d_scene.h"
 #include "map/bgfx/map_bgfx_2d_gpu.h"
 #include "map/bgfx/map_bgfx_2d_imagery_gpu.h"
+#include "map/bgfx/map_bgfx_2d_symbology.h"
 #include "map/bgfx/map_bgfx_hud.h"
 #include "map/bgfx/map_bgfx_hud_canvas.h"
 #include "map/bgfx/map_bgfx_hud_gpu.h"
 #include "map/bgfx/map_bgfx_hud_text_cache.h"
+#include "map/bgfx/map_bgfx_labels.h"
 #include "map/core/map_frame_pacer.h"
 #include "map/render/map_camera_view_state.h"
 #include "map/render/map_network_render_symbology.h"
@@ -16,6 +18,7 @@
 
 #include <QElapsedTimer>
 #include <QHash>
+#include <QPointer>
 #include <QSet>
 #include <QSize>
 #include <QSizeF>
@@ -23,6 +26,7 @@
 #include <QWidget>
 
 #include <functional>
+#include <memory>
 
 #ifdef Q_OS_WASM
 #include <emscripten/html5.h>
@@ -37,9 +41,17 @@ class QWindow;
 // Experimental production integration with continuous 2D projection and
 // zoom-independent CPU staging: GPU network, imagery, heatmap, 2D picking
 // (click selection and hover), selection/error highlights and the native HUD
-// (crosshair, GPS, scale, downloads, view switch, fullscreen). The map legend
-// HUD (slice 6b) and the globe are NOT yet implemented. The MapRenderSurface contract is preserved
-// without making the application depend on the probe executable.
+// (crosshair, GPS, scale, downloads, view switch, fullscreen, map legend) and
+// map labels (entity IDs / values, map_bgfx_labels.h).
+// The map editor uses a second instance (Phase 2): hidden entities and the
+// network screen translation for its move preview, and an overlay pass
+// (setOverlayBuilder()) for its icons and interaction feedback. The globe is
+// NOT yet implemented.
+//
+// One bgfx device per process: it belongs to the visible surface. Hiding a
+// surface (tab switch) shuts bgfx down; showing one starts it again, so the
+// Map Monitor and the Map Editor take turns on the same device (and, in the
+// browser, the same canvas).
 class MapBgfxSurface final : public QWidget, public MapRenderSurface
 {
     Q_OBJECT
@@ -80,12 +92,19 @@ public:
     // The window that actually has pointer focus over the map (desktop), so
     // a Wayland pointer lock can target its own wl_surface. nullptr on WASM.
     QWindow *nativeInputWindow() const;
+    // One line on where startup stands (initialization, frame loop, frames),
+    // for the startup watchdog and failure messages.
+    QString startupDiagnostics() const;
     void focusNavigationInput();
 
     void setNetworkSnapshot(const NetworkRenderSnapshot &snapshot) override;
-    void setHiddenEntityUuids(const QSet<QUuid> &) override {}
+    // Editor move preview: these entities are drawn transparent (colour
+    // stream only, no geometry upload) while the overlay draws them moving.
+    void setHiddenEntityUuids(const QSet<QUuid> &uuids) override;
     void setNodeDeclutteringEnabled(bool enabled) override;
-    void setNetworkScreenTranslation(const QPointF &) override {}
+    // Editor full-network move: the network (not the imagery) is drawn
+    // shifted by this many logical pixels (camera offset, no upload).
+    void setNetworkScreenTranslation(const QPointF &translation) override;
     void setSymbology(const MapNetworkRenderSymbology &symbology) override;
     void setVisualControlSettings(const NetworkSymbologySettings &settings) override;
     void setTileRepository(MapTileRepository *tile_repository) override;
@@ -101,29 +120,80 @@ public:
     void setMapTilesVisible(bool) override {}
     void globeTerrainMeshProgress(int *completed, int *total, bool *active) const override;
 
-    // --- Native HUD (slice 6a) --------------------------------------------------
+    // Planned native-window changes (fullscreen reparenting, desktop): shut
+    // bgfx down while the old native surface still exists, restart once the
+    // window is exposed again. Qt Wayland destroys the wl_surface on reparent
+    // without a QPlatformSurfaceEvent, so this must not rely on events.
+    void suspendForNativeWindowChange();
+    void resumeAfterNativeWindowChange();
+
+    // --- Native HUD (slices 6a, 6b) ---------------------------------------------
     // Called (queued, outside the native window's event dispatch) when a HUD
-    // button is clicked.
-    void setHudActionHandler(std::function<void(MapBgfxHud::Action)> handler);
+    // button or legend entry is clicked.
+    void setHudActionHandler(std::function<void(const MapBgfxHud::Command &)> handler);
     void setHudGpsPosition(bool valid, double longitude_deg, double latitude_deg);
     void setHudDownloadActivity(int tiles_active, int tiles_queued,
                                 int terrain_active, int terrain_queued);
     void setHudFullscreen(bool available, bool active);
+    // Map legend content (map_bgfx_legend_content.h); visible=false hides it.
+    void setHudLegend(const MapBgfxHud::Legend &legend);
+    // Closes an open HUD popup (combo list, palette menu).
+    void closeHudPopup();
+    // The 2D/3D switch (shown by default; 3D is offered once the bgfx globe
+    // exists).
+    void setHudViewSwitchVisible(bool visible);
+
+    // --- Map labels (map_label_settings.h) ----------------------------------------
+    // Which labels are drawn; all off (default) costs nothing.
+    void setLabelSettings(const MapLabelSettings &settings);
+    // Canonical -> displayed value of the node / link colouring metric
+    // (mapBgfxLabelValueFormat()); the values come with setSymbology().
+    void setLabelValueFormats(const MapBgfxLabelValueFormat &node_format,
+                              const MapBgfxLabelValueFormat &link_format);
+    // Symbol boxes the labels are placed around and keep clear of, relative
+    // to the anchor (logical px). Unset: the GPU network's own symbols (dots,
+    // icons at the symbology's sizes). The editor sets its icon boxes (its
+    // icons are drawn by the overlay, the GPU network only has dots).
+    void setLabelSymbolRects(MapBgfxLabels::SymbolRect node_symbol,
+                             MapBgfxLabels::SymbolRect link_symbol);
+
+    // --- Map editor (Phase 2) ---------------------------------------------------
+    // Called every 2D frame after the network and before the HUD with the
+    // frame's continuous camera; draws into its own canvas and atlas, which
+    // the surface uploads and submits with the HUD program.
+    using OverlayBuilder = std::function<void(MapBgfxHudCanvas *canvas,
+                                              MapBgfxHudTextCache *cache,
+                                              const MapBgfx2d::Camera &camera,
+                                              const QSizeF &viewport)>;
+    void setOverlayBuilder(OverlayBuilder builder);
+    // Desktop: keyboard focus stays on this widget instead of moving to the
+    // embedded native window on a click (the editor canvas handles keys and
+    // owns the editor's window shortcuts). nullptr: the native window takes
+    // focus (Map Monitor).
+    void setKeyboardFocusWidget(QWidget *widget);
     // Routes a mouse event (logical px of this widget) to the HUD first.
     // consumed: the event belongs to the HUD and must not reach navigation or
-    // picking. over_button: pointing-hand cursor. over_panel: hovering a
-    // blocking HUD panel (no map hover there).
+    // picking. cursor: the HUD element's pointer shape (Qt::ArrowCursor when
+    // the HUD has no opinion). over_panel: hovering a blocking HUD panel or
+    // popup (no map hover there).
     struct HudPointer
     {
         bool consumed = false;
-        bool over_button = false;
+        Qt::CursorShape cursor = Qt::ArrowCursor;
         bool over_panel = false;
     };
     HudPointer handleHudMouseEvent(QMouseEvent *event);
-    // Pointing-hand cursor over pickable entities and HUD buttons. On desktop
-    // the cursor must be set on the embedded native window; the widget's own
-    // cursor is never visible there.
-    void setHoverCursor(bool hovered);
+    // Wheel over a HUD panel scrolls an open combo list and never zooms the
+    // map underneath; true when consumed. On desktop the native window's
+    // wheel events are routed here internally; WASM routes MapWidget's.
+    bool handleHudWheelEvent(QWheelEvent *event);
+    // Escape closes an open HUD popup; true when consumed (same routing).
+    bool handleHudKeyPress(QKeyEvent *event);
+    // Map pointer shape: pointing hand over pickable entities and HUD
+    // buttons, cross over legend ramps, Qt::ArrowCursor resets it. On
+    // desktop the cursor must be set on the embedded native window; the
+    // widget's own cursor is never visible there.
+    void setMapCursor(Qt::CursorShape shape);
 
 signals:
     void signalRendererReady();
@@ -163,6 +233,15 @@ private:
     // the backend restarts once the platform surface exists again.
     void shutdownBackend();
     void scheduleBackendRestart();
+    // First initialization after the first show (retried while another
+    // visible surface still holds the device).
+    void beginInitialization();
+    // Draws the editor overlay (when a builder is set) for this frame.
+    void renderOverlay(const QSizeF &logical, const MapBgfx2d::Camera &camera);
+    // Map labels with the network's camera (the editor's full-network move
+    // included); rebuilt only when the camera or the content changed.
+    void renderLabels(const QSizeF &logical, const MapBgfx2d::Camera &network_camera,
+                      const MapBgfx2dSymbology::Sizes &sizes);
     QSize physicalSize() const;
     QSizeF logicalSize() const;
     void fail(const QString &reason);
@@ -212,8 +291,60 @@ private:
     MapBgfxHudTextCache hud_text_cache;
     MapBgfxHudCanvas hud_canvas;
     MapBgfxHudGpu hud_gpu;
-    std::function<void(MapBgfxHud::Action)> hud_action_handler;
+    std::function<void(const MapBgfxHud::Command &)> hud_action_handler;
     QElapsedTimer hud_clock;
+    // Editor overlay: builder, its atlas (icons with glows; larger than the
+    // HUD's), draw list and bgfx objects.
+    OverlayBuilder overlay_builder;
+    MapBgfxHudTextCache overlay_text_cache{2048};
+    MapBgfxHudCanvas overlay_canvas;
+    MapBgfxHudGpu overlay_gpu;
+    // Map labels: settings, value formats, optional symbol boxes, the
+    // builder, its atlas (created on first use: 16 MiB) and bgfx objects.
+    // The canvas is rebuilt only when label_build_key changes or labels
+    // were deferred (rasterization budget).
+    MapLabelSettings label_settings;
+    MapBgfxLabelValueFormat label_node_format;
+    MapBgfxLabelValueFormat label_link_format;
+    MapBgfxLabels::SymbolRect label_node_symbol;
+    MapBgfxLabels::SymbolRect label_link_symbol;
+    MapBgfxLabels labels;
+    std::unique_ptr<MapBgfxHudTextCache> label_text_cache;
+    MapBgfxHudCanvas label_canvas;
+    MapBgfxHudGpu label_gpu;
+    struct LabelBuildKey
+    {
+        double center_x = 0.0;
+        double center_y = 0.0;
+        double world_pixels = 0.0;
+        double viewport_width = 0.0;
+        double viewport_height = 0.0;
+        double node_half_px = 0.0;
+        double icon_size_px = 0.0;
+        double device_pixel_ratio = 0.0;
+        quint64 preparation_id = 0;
+        quint64 atlas_generation = 0;
+        bool operator==(const LabelBuildKey &other) const
+        {
+            return this->center_x == other.center_x && this->center_y == other.center_y
+                && this->world_pixels == other.world_pixels
+                && this->viewport_width == other.viewport_width
+                && this->viewport_height == other.viewport_height
+                && this->node_half_px == other.node_half_px
+                && this->icon_size_px == other.icon_size_px
+                && this->device_pixel_ratio == other.device_pixel_ratio
+                && this->preparation_id == other.preparation_id
+                && this->atlas_generation == other.atlas_generation;
+        }
+    };
+    LabelBuildKey label_build_key;
+    // Content changed (settings, values, symbols, hidden entities, font):
+    // rebuild on the next frame.
+    bool labels_dirty = true;
+    QPointer<QWidget> keyboard_focus_widget;
+    // Editor move preview.
+    QSet<QUuid> hidden_entity_uuids;
+    QPointF network_screen_translation;
     bool debug_overlay_enabled = false;
     // Desktop: one PreciseTimer slightly faster than the display; the
     // vsync-blocking bgfx::frame() then locks presentation to the refresh.
@@ -231,7 +362,13 @@ private:
     bool ready_reported = false;
     // The native window lost its platform surface while bgfx was running.
     bool reinitialize_on_surface = false;
+    // initializeBackend() found the device held by another visible surface.
+    bool device_busy = false;
     quint64 frame_count = 0;
+    // renderFrameAt() calls, including skipped ones (startupDiagnostics()).
+    quint64 frame_callback_count = 0;
+    // Current initialization step, reported when startup stalls.
+    const char *startup_step = "not started";
 #ifndef Q_OS_WASM
     QWindow *native_window = nullptr;
 #endif

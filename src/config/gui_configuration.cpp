@@ -153,11 +153,14 @@ EM_JS(int, aowisBuiltinExamplesEnabled, (),
 
 EM_JS(int, aowisWasmRendererPreference, (),
 {
+    // 1 = rhi, 2 = bgfx. index.html already normalizes the value; bgfx is
+    // the default and the removed "browser" renderer maps to bgfx like the
+    // desktop "cpu" value.
     const configuration = globalThis.aowisGuiConfiguration || {};
     const renderer = typeof configuration.mapWasmRenderer === "string"
         ? configuration.mapWasmRenderer.trim().toLowerCase()
-        : "rhi";
-    return renderer === "browser" ? 0 : (renderer === "bgfx" ? 2 : 1);
+        : "bgfx";
+    return renderer === "rhi" ? 1 : 2;
 });
 
 EM_JS(int, aowisSymbologyPalettePreference, (const char *key, int default_value),
@@ -326,8 +329,8 @@ GuiConfiguration loadConfiguration()
     GuiConfiguration configuration;
     configuration.examples_builtin_enable = aowisBuiltinExamplesEnabled() != 0;
     const int wasm_renderer = aowisWasmRendererPreference();
-    configuration.map_wasm_renderer = wasm_renderer == 2 ? WasmMapRenderer::Bgfx
-        : (wasm_renderer == 1 ? WasmMapRenderer::Rhi : WasmMapRenderer::Browser);
+    configuration.map_wasm_renderer = wasm_renderer == 1 ? WasmMapRenderer::Rhi
+                                                          : WasmMapRenderer::Bgfx;
     const int node_palette_value = aowisSymbologyPalettePreference(
         "aowis.symbology.node_palette",
         static_cast<int>(NetworkSymbologyDefaultNodePalette));
@@ -446,7 +449,7 @@ bool createDefaultConfiguration(const QString &path)
         "\n"
         "[gui]\n"
         "examples_builtin_enable=true\n"
-        "map_desktop_renderer=rhi\n"
+        "map_desktop_renderer=bgfx\n"
         "\n"
         "[shortcuts]\n"
         "sidebar_toggle=Win+Tab\n"
@@ -539,7 +542,7 @@ DesktopMapRenderer parseDesktopMapRenderer(const QString &value, bool *valid)
 
     if (valid != nullptr)
         *valid = false;
-    return DesktopMapRenderer::Rhi;
+    return DesktopMapRenderer::Bgfx;
 }
 
 GuiConfiguration loadConfiguration()
@@ -569,7 +572,7 @@ GuiConfiguration loadConfiguration()
     const GuiShortcutConfiguration advertised_shortcuts;
     migrateSetting(settings, QStringLiteral("shortcuts/map_editor_add_customer_point"),
                    QStringLiteral("shortcuts/map_editor_add_demand_point"));
-    ensureSettingDefault(settings, QStringLiteral("gui/map_desktop_renderer"), QStringLiteral("rhi"));
+    ensureSettingDefault(settings, QStringLiteral("gui/map_desktop_renderer"), QStringLiteral("bgfx"));
     ensureSettingDefault(settings, QStringLiteral("shortcuts/sidebar_toggle"), advertised_shortcuts.sidebar_toggle);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/fullscreen"), advertised_shortcuts.fullscreen);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/map_monitor_fullscreen"), advertised_shortcuts.map_monitor_fullscreen);
@@ -638,14 +641,14 @@ GuiConfiguration loadConfiguration()
         QStringLiteral("symbology/heatmap_palette_flipped"), false).toBool();
 
     const QString configured_renderer = settings.value(
-        QStringLiteral("gui/map_desktop_renderer"), QStringLiteral("rhi")).toString();
+        QStringLiteral("gui/map_desktop_renderer"), QStringLiteral("bgfx")).toString();
     bool renderer_valid = false;
     configuration.map_desktop_renderer = parseDesktopMapRenderer(
         configured_renderer, &renderer_valid);
     if (!renderer_valid)
     {
         qWarning() << "Invalid gui/map_desktop_renderer value" << configured_renderer
-                   << "in" << path << "- using rhi. Valid values are: rhi, bgfx.";
+                   << "in" << path << "- using bgfx. Valid values are: bgfx, rhi.";
     }
 
     configuration.shortcuts.sidebar_toggle = loadShortcutSetting(settings, QStringLiteral("shortcuts/sidebar_toggle"), advertised_shortcuts.sidebar_toggle);
@@ -856,8 +859,6 @@ const char *wasmMapRendererName(WasmMapRenderer renderer)
 {
     switch (renderer)
     {
-        case WasmMapRenderer::Browser:
-            return "browser";
         case WasmMapRenderer::Bgfx:
             return "bgfx";
         case WasmMapRenderer::Rhi:
@@ -880,23 +881,25 @@ WasmMapRenderer wasmMapRenderer()
 #ifdef __EMSCRIPTEN__
     static const WasmMapRenderer renderer = []()
     {
+        // Same policy as the desktop: only GPU renderers exist. Without bgfx
+        // in the build the monitor shows a status message (no silent switch).
         const WasmMapRenderer requested = guiConfiguration().map_wasm_renderer;
         if (requested == WasmMapRenderer::Bgfx && !AOWIS_HAS_BGFX)
         {
-            qWarning() << "WASM bgfx map requested but AOWIS_ENABLE_BGFX_MAP is OFF; using browser.";
-            return WasmMapRenderer::Browser;
+            qWarning() << "WASM bgfx map requested but this build has AOWIS_ENABLE_BGFX_MAP=OFF; "
+                          "no map renderer.";
         }
         if (requested == WasmMapRenderer::Rhi && !wasmMapRhiBuildAvailable())
         {
             qWarning() << "WASM map renderer 'rhi' was requested, but this build has no "
-                          "QRhi support. Falling back to the browser renderer.";
-            return WasmMapRenderer::Browser;
+                          "QRhi support; using bgfx.";
+            return WasmMapRenderer::Bgfx;
         }
         return requested;
     }();
     return renderer;
 #else
-    return WasmMapRenderer::Browser;
+    return WasmMapRenderer::Bgfx;
 #endif
 }
 

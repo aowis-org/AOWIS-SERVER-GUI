@@ -112,6 +112,16 @@ std::optional<MapEntityMarker> MapCanvasMarkers::markerByUuid(const QUuid &uuid)
     return this->list_markers.at(iterator.value());
 }
 
+const MapEntityMarker *MapCanvasMarkers::findMarker(const QUuid &uuid) const
+{
+    if (uuid.isNull())
+        return nullptr;
+    const QHash<QUuid, int>::const_iterator iterator = this->marker_indices_by_uuid.constFind(uuid);
+    if (iterator == this->marker_indices_by_uuid.cend())
+        return nullptr;
+    return &this->list_markers.at(iterator.value());
+}
+
 MapEntityMarker MapCanvasMarkers::addMarker(const InfrastructureEntityReference &entity,
                                              const CoordinateWGS84 &coordinate,
                                              const QString &pixmap_path,

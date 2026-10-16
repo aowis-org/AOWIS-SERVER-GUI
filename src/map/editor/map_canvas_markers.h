@@ -38,6 +38,9 @@ public:
         const QPointF &mouse_position, const QUuid &excluded_uuid = QUuid(),
         double max_distance = 18.0) const;
     std::optional<MapEntityMarker> markerByUuid(const QUuid &uuid) const;
+    // The marker of uuid in place (uuid index, no copy), nullptr if none.
+    // Valid until the next marker list change.
+    const MapEntityMarker *findMarker(const QUuid &uuid) const;
     MapEntityMarker addMarker(const InfrastructureEntityReference &entity,
                               const CoordinateWGS84 &coordinate,
                               const QString &pixmap_path,

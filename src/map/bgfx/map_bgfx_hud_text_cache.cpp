@@ -1,7 +1,11 @@
 #include "map/bgfx/map_bgfx_hud_text_cache.h"
 
+#include <QColor>
 #include <QFontMetricsF>
 #include <QPainter>
+#include <QPainterPath>
+#include <QPen>
+#include <QStringList>
 
 #include <algorithm>
 #include <cmath>
@@ -159,6 +163,14 @@ MapBgfxHudSprite MapBgfxHudTextCache::text(const QString &text, const QFont &fon
     return sprite;
 }
 
+MapBgfxHudSprite MapBgfxHudTextCache::cachedImage(const QString &key,
+                                                  const QSizeF &logical_size) const
+{
+    const QString full_key = QStringLiteral("I|%1|%2x%3")
+        .arg(key).arg(logical_size.width()).arg(logical_size.height());
+    return this->sprites.value(full_key);
+}
+
 MapBgfxHudSprite MapBgfxHudTextCache::image(const QString &key, const QImage &image,
                                             const QSizeF &logical_size)
 {
@@ -179,5 +191,96 @@ MapBgfxHudSprite MapBgfxHudTextCache::image(const QString &key, const QImage &im
     const MapBgfxHudSprite sprite = store(pixels, logical_size);
     if (sprite.valid)
         this->sprites.insert(full_key, sprite);
+    return sprite;
+}
+
+QString MapBgfxHudTextCache::haloKey(const QString &text, const QFont &font, quint32 text_argb,
+                                     quint32 halo_argb, double halo_px)
+{
+    return QStringLiteral("L|%1|%2|%3|%4|").arg(font.key())
+               .arg(qulonglong(text_argb)).arg(qulonglong(halo_argb)).arg(halo_px)
+        + text;
+}
+
+QSizeF MapBgfxHudTextCache::measureBlock(const QString &text, const QFont &font) const
+{
+    const QFontMetricsF metrics(font);
+    const QStringList lines = text.split(QLatin1Char('\n'));
+    double width = 0.0;
+    for (const QString &line : lines)
+        width = std::max(width, metrics.horizontalAdvance(line));
+    return QSizeF(width, metrics.height() * double(lines.size()));
+}
+
+double MapBgfxHudTextCache::haloTextFootprint(const QSizeF &block, double halo_px) const
+{
+    // Same rounding as haloText(): halo and the overhang padding on every
+    // side, at the device ratio, plus the atlas entry padding.
+    const double margin = std::max(0.0, halo_px) + TextPaddingPx;
+    const double ratio = this->device_pixel_ratio;
+    const double width = std::ceil((block.width() + 2.0 * margin) * ratio) + 2.0 * EntryPadding;
+    const double height = std::ceil((block.height() + 2.0 * margin) * ratio) + 2.0 * EntryPadding;
+    return width * height;
+}
+
+bool MapBgfxHudTextCache::containsHaloText(const QString &text, const QFont &font,
+                                           quint32 text_argb, quint32 halo_argb,
+                                           double halo_px) const
+{
+    return this->sprites.contains(haloKey(text, font, text_argb, halo_argb, halo_px));
+}
+
+MapBgfxHudSprite MapBgfxHudTextCache::haloText(const QString &text, const QFont &font,
+                                               quint32 text_argb, quint32 halo_argb,
+                                               double halo_px)
+{
+    const QString key = haloKey(text, font, text_argb, halo_argb, halo_px);
+    const QHash<QString, MapBgfxHudSprite>::const_iterator found = this->sprites.constFind(key);
+    if (found != this->sprites.cend())
+        return found.value();
+
+    const double halo = std::max(0.0, halo_px);
+    const double margin = halo + TextPaddingPx;
+    const QSizeF block = measureBlock(text, font);
+    const QSizeF logical(std::ceil(block.width() + 2.0 * margin),
+                         std::ceil(block.height() + 2.0 * margin));
+    const double ratio = this->device_pixel_ratio;
+    QImage run(std::max(1, int(std::ceil(logical.width() * ratio))),
+               std::max(1, int(std::ceil(logical.height() * ratio))),
+               QImage::Format_RGBA8888_Premultiplied);
+    run.fill(Qt::transparent);
+    const int dots_per_meter = int(std::lround(this->logical_dpi / 0.0254));
+    run.setDotsPerMeterX(dots_per_meter);
+    run.setDotsPerMeterY(dots_per_meter);
+    run.setDevicePixelRatio(ratio);
+    {
+        // One outline path for all lines: the halo is its stroke (round
+        // joins, twice the halo width, half of it outside the glyphs), the
+        // text its fill on top.
+        const QFontMetricsF metrics(font);
+        const QStringList lines = text.split(QLatin1Char('\n'));
+        QPainterPath path;
+        double baseline = margin + metrics.ascent();
+        for (const QString &line : lines)
+        {
+            const double line_x = margin + 0.5 * (block.width() - metrics.horizontalAdvance(line));
+            path.addText(QPointF(line_x, baseline), font, line);
+            baseline += metrics.height();
+        }
+        QPainter painter(&run);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        if (halo > 0.0)
+        {
+            painter.strokePath(path, QPen(QColor::fromRgba(halo_argb), 2.0 * halo, Qt::SolidLine,
+                                          Qt::RoundCap, Qt::RoundJoin));
+        }
+        painter.fillPath(path, QColor::fromRgba(text_argb));
+    }
+    run.setDevicePixelRatio(1.0);
+    MapBgfxHudSprite sprite = store(run, logical);
+    sprite.origin_x = margin;
+    sprite.origin_y = margin;
+    if (sprite.valid)
+        this->sprites.insert(key, sprite);
     return sprite;
 }

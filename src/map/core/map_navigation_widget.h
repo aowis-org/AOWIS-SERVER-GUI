@@ -20,6 +20,7 @@
 #include "map/core/map_widget.h"
 #include "common/_enums_structs.h"
 #include "network/network_symbology.h"
+#include "map/render/map_label_settings.h"
 
 class MapNavigationWidget : public QWidget
 {
@@ -28,6 +29,8 @@ public:
     explicit MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidget *keyboard_focus_target, QWidget *parent = nullptr);
     
     void mapProviderChange(MapProvider provider);
+    // The map label switches (all off initially).
+    MapLabelSettings labelSettings() const;
     
 private:
     CanvasMode mode;
@@ -50,6 +53,12 @@ private:
     
     QCheckBox* check_map_sync = nullptr;
     QCheckBox *check_3d_icons = nullptr;
+    // Map labels: IDs (monitor and editor), values of the colouring metric
+    // (monitor only).
+    QCheckBox *check_label_node_ids = nullptr;
+    QCheckBox *check_label_link_ids = nullptr;
+    QCheckBox *check_label_node_values = nullptr;
+    QCheckBox *check_label_link_values = nullptr;
     QSlider *slider_icon_size = nullptr;
     QComboBox *combo_icon_size_unit = nullptr;
     int icon_size_2d_percent = 100;
@@ -66,6 +75,7 @@ private:
     void syncIconSizeSliderForViewMode(MapViewMode view_mode);
     void refreshIconSizeUnitPresentation();
     void refreshShortcutPresentation();
+    QWidget *createLabelControls();
     
 signals:
     void signalSlideOpacityChanged(int opacity);
@@ -74,6 +84,7 @@ signals:
     void signalMonitorIconSizeChanged(NetworkSymbologySizeUnit unit, double size);
     void signal3dIconsChanged(bool enabled);
     void signalSyncMapMovementStateChanged(bool sync);
+    void signalLabelSettingsChanged(const MapLabelSettings &settings);
     
 public slots:
     void mapMovementSyncStateChange(bool sync);

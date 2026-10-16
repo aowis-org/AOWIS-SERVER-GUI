@@ -20,21 +20,6 @@ struct ImageryVertex
     float v = 0.0f;
 };
 
-bgfx::ShaderHandle loadImageryShader(const char *name)
-{
-    const QString resource = MapBgfxBackend::shaderResourcePath(bgfx::getRendererType(), name);
-    QFile file(resource);
-    if (resource.isEmpty() || !file.open(QIODevice::ReadOnly))
-    {
-        qWarning() << "bgfx imagery shader resource missing" << name;
-        return BGFX_INVALID_HANDLE;
-    }
-    const QByteArray binary = file.readAll();
-    if (binary.isEmpty() || binary.size() > std::numeric_limits<uint32_t>::max())
-        return BGFX_INVALID_HANDLE;
-    return bgfx::createShader(bgfx::copy(binary.constData(), uint32_t(binary.size())));
-}
-
 // Clamp sampling so linear filtering never bleeds the opposite tile edge in.
 constexpr uint64_t kTileSamplerFlags = BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
 }
@@ -53,16 +38,7 @@ bool MapBgfx2dImageryGpu::initialize()
         .add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float)
         .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
         .end();
-    const bgfx::ShaderHandle vertex = loadImageryShader("vs_imagery_2d");
-    if (!bgfx::isValid(vertex))
-        return false;
-    const bgfx::ShaderHandle fragment = loadImageryShader("fs_imagery_2d");
-    if (!bgfx::isValid(fragment))
-    {
-        bgfx::destroy(vertex);
-        return false;
-    }
-    this->program = bgfx::createProgram(vertex, fragment, true);
+    this->program = MapBgfxBackend::loadProgram("vs_imagery_2d", "fs_imagery_2d");
     if (!bgfx::isValid(this->program))
         return false;
     this->tile_sampler = bgfx::createUniform("s_tile", bgfx::UniformType::Sampler);

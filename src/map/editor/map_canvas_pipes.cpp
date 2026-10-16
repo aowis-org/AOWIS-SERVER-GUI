@@ -1,4 +1,5 @@
 #include "map/editor/map_canvas_pipes.h"
+#include "map/editor/map_canvas_markers.h"
 #include "map/editor/map_canvas_widget.h"
 
 #include "geo/geo_metric_projection.h"
@@ -292,7 +293,7 @@ QList<QUuid> MapCanvasPipes::connectedPipeUuids(const QSet<QUuid> &node_uuids) c
 }
 
 std::optional<InfrastructureEntityReference> MapCanvasPipes::pipeAt(
-    const QPointF &position, const QList<MapEntityMarker> &markers) const
+    const QPointF &position, const MapCanvasMarkers &markers) const
 {
     const PipeSegmentHit hit = pipeSegmentAt(position, markers);
     if (!hit.isValid())
@@ -330,15 +331,10 @@ MapCanvasPipes::PipeVertexHit MapCanvasPipes::pipeVertexAt(const QPointF &positi
 }
 
 MapCanvasPipes::PipeSegmentHit MapCanvasPipes::pipeSegmentAt(
-    const QPointF &position, const QList<MapEntityMarker> &markers) const
+    const QPointF &position, const MapCanvasMarkers &markers) const
 {
     PipeSegmentHit hit;
     double nearest_distance_squared = link_hit_distance * link_hit_distance;
-
-    QHash<QUuid, const MapEntityMarker *> markers_by_uuid;
-    markers_by_uuid.reserve(markers.size());
-    for (const MapEntityMarker &marker : markers)
-        markers_by_uuid.insert(marker.entity.uuid, &marker);
 
     const double hit_min_x = position.x() - link_hit_distance;
     const double hit_max_x = position.x() + link_hit_distance;
@@ -347,10 +343,8 @@ MapCanvasPipes::PipeSegmentHit MapCanvasPipes::pipeSegmentAt(
 
     for (const PipeCanvasItem &pipe : this->list_pipes)
     {
-        const MapEntityMarker *start_marker = markers_by_uuid.value(
-            pipe.geometry.start_node.uuid, nullptr);
-        const MapEntityMarker *end_marker = markers_by_uuid.value(
-            pipe.geometry.end_node.uuid, nullptr);
+        const MapEntityMarker *start_marker = markers.findMarker(pipe.geometry.start_node.uuid);
+        const MapEntityMarker *end_marker = markers.findMarker(pipe.geometry.end_node.uuid);
         if (!start_marker || !end_marker)
             continue;
 
@@ -412,30 +406,27 @@ MapCanvasPipes::PipeSegmentHit MapCanvasPipes::pipeSegmentAt(
 
 
 QList<CoordinateWGS84> MapCanvasPipes::pipeCoordinates(
-    const PipeCanvasItem &pipe, const QList<MapEntityMarker> &markers) const
+    const PipeCanvasItem &pipe, const MapCanvasMarkers &markers) const
 {
-    QHash<QUuid, CoordinateWGS84> coordinates_by_uuid;
-    coordinates_by_uuid.reserve(markers.size());
-    for (const MapEntityMarker &marker : markers)
-        coordinates_by_uuid.insert(marker.entity.uuid, marker.coord_wgs84);
-
-    if (!coordinates_by_uuid.contains(pipe.geometry.start_node.uuid) ||
-        !coordinates_by_uuid.contains(pipe.geometry.end_node.uuid))
-    {
+    // Two uuid-index lookups (this ran once per demand point attached to a
+    // pipe and once per pipe in pipePositionAt(), each time over a fresh
+    // hash of every marker).
+    const MapEntityMarker *start_marker = markers.findMarker(pipe.geometry.start_node.uuid);
+    const MapEntityMarker *end_marker = markers.findMarker(pipe.geometry.end_node.uuid);
+    if (start_marker == nullptr || end_marker == nullptr)
         return QList<CoordinateWGS84>();
-    }
 
     QList<CoordinateWGS84> coordinates;
     coordinates.reserve(pipe.geometry.intermediate_vertices.size() + 2);
-    coordinates.append(coordinates_by_uuid.value(pipe.geometry.start_node.uuid));
+    coordinates.append(start_marker->coord_wgs84);
     coordinates.append(pipe.geometry.intermediate_vertices);
-    coordinates.append(coordinates_by_uuid.value(pipe.geometry.end_node.uuid));
+    coordinates.append(end_marker->coord_wgs84);
     return coordinates;
 }
 
 MapCanvasPipes::PipePositionHit MapCanvasPipes::nearestPositionOnPipeInternal(
     const PipeCanvasItem &pipe, const QPointF &position,
-    const QList<MapEntityMarker> &markers, double max_distance) const
+    const MapCanvasMarkers &markers, double max_distance) const
 {
     PipePositionHit hit;
     const QList<CoordinateWGS84> coordinates = pipeCoordinates(pipe, markers);
@@ -507,7 +498,7 @@ MapCanvasPipes::PipePositionHit MapCanvasPipes::nearestPositionOnPipeInternal(
 }
 
 MapCanvasPipes::PipePositionHit MapCanvasPipes::pipePositionAt(
-    const QPointF &position, const QList<MapEntityMarker> &markers) const
+    const QPointF &position, const MapCanvasMarkers &markers) const
 {
     PipePositionHit best_hit;
     double best_distance_squared = link_hit_distance * link_hit_distance;
@@ -532,7 +523,7 @@ MapCanvasPipes::PipePositionHit MapCanvasPipes::pipePositionAt(
 
 MapCanvasPipes::PipePositionHit MapCanvasPipes::nearestPositionOnPipe(
     const QUuid &pipe_uuid, const QPointF &position,
-    const QList<MapEntityMarker> &markers) const
+    const MapCanvasMarkers &markers) const
 {
     const PipeCanvasItem *pipe = pipeByUuid(pipe_uuid);
     if (!pipe)
@@ -543,7 +534,7 @@ MapCanvasPipes::PipePositionHit MapCanvasPipes::nearestPositionOnPipe(
 
 std::optional<CoordinateWGS84> MapCanvasPipes::coordinateAtPosition(
     const QUuid &pipe_uuid, double pipe_position,
-    const QList<MapEntityMarker> &markers) const
+    const MapCanvasMarkers &markers) const
 {
     if (!std::isfinite(pipe_position) || pipe_position < 0.0 || pipe_position > 1.0)
         return std::nullopt;
@@ -600,7 +591,7 @@ std::optional<CoordinateWGS84> MapCanvasPipes::coordinateAtPosition(
 
 bool MapCanvasPipes::showContextMenuAt(const QPointF &position,
                                        const QPoint &global_position,
-                                       const QList<MapEntityMarker> &markers)
+                                       const MapCanvasMarkers &markers)
 {
     const PipeVertexHit vertex_hit = pipeVertexAt(position);
     if (vertex_hit.isValid())

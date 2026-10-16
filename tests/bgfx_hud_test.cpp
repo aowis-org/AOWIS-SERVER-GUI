@@ -3,12 +3,17 @@
 #include "map/bgfx/map_bgfx_hud_text_cache.h"
 
 #include <QFont>
+#include <QFontMetricsF>
 #include <QHash>
 #include <QGuiApplication>
 #include <QImage>
+#include <QLocale>
 #include <QRectF>
 #include <QSet>
+#include <QVector>
 
+#include <algorithm>
+#include <functional>
 #include <cmath>
 #include <cstdio>
 
@@ -128,7 +133,7 @@ void testCanvas()
             && vertex.u == 0.25f && vertex.v == 0.5f;
     }
     req(corners_ok, "fillRect corners are the rect, solid fills sample the white texel");
-    for (const quint16 index : canvas.indices())
+    for (const quint32 index : canvas.indices())
         req(index < 4, "fillRect indices stay inside its vertices");
 
     canvas.fillRect(MapBgfxHudRect{0.0, 0.0, 0.0, 5.0}, qRgb(1, 2, 3));
@@ -164,7 +169,7 @@ void testCanvas()
     canvas.strokeCircle(50.0, 50.0, 5.5, 1.0, qRgb(0, 0, 0));
     canvas.line(0.0, 0.0, 10.0, 0.0, 2.0, qRgb(0, 0, 0));
     bool indices_in_range = canvas.indices().size() % 3 == 0;
-    for (const quint16 index : canvas.indices())
+    for (const quint32 index : canvas.indices())
         indices_in_range = indices_in_range && int(index) < canvas.vertices().size();
     req(indices_in_range, "shape indices form triangles inside the vertex list");
     bool line_ok = false;
@@ -175,11 +180,18 @@ void testCanvas()
     }
     req(line_ok, "a 2 px horizontal line extends 1 px to each side");
 
-    // 16-bit indices: more than 65535 vertices is reported, never drawn.
+    // 32-bit indices: more than 65535 vertices are fine (editor overlay);
+    // beyond the transient budget a list is reported and never drawn.
     canvas.clear();
-    while (canvas.vertices().size() <= 65535)
+    while (canvas.vertices().size() <= 70000)
         canvas.fillCircle(1.0, 1.0, 50.0, qRgb(1, 1, 1));
-    req(canvas.overflowed(), "a list beyond 16-bit indices reports overflow");
+    bool large_indices_ok = !canvas.overflowed();
+    for (const quint32 index : canvas.indices())
+        large_indices_ok = large_indices_ok && qsizetype(index) < canvas.vertices().size();
+    req(large_indices_ok, "lists beyond 65535 vertices keep valid 32-bit indices");
+    while (canvas.vertices().size() <= MapBgfxHudCanvas::MaximumVertices)
+        canvas.fillCircle(1.0, 1.0, 50.0, qRgb(1, 1, 1));
+    req(canvas.overflowed(), "a list beyond the transient budget reports overflow");
     canvas.clear();
     req(!canvas.overflowed() && canvas.vertices().isEmpty() && canvas.indices().isEmpty(),
         "clear() empties the list");
@@ -517,6 +529,445 @@ void testHud()
     scan = scanActions(&hud, 2.0);
     req(scan.found(MapBgfxHud::Action::CancelMapTiles), "hit boxes match the rebuilt frame");
 }
+
+// --- Slice 6b: map legend --------------------------------------------------------
+
+QVector<QRgb> rampStops(int seed)
+{
+    QVector<QRgb> stops;
+    for (int index = 0; index < 7; ++index)
+        stops.append(qRgb(10 * index + seed, 200 - 20 * index, 30 + seed));
+    return stops;
+}
+
+// Node / link / heatmap like EntityMapLegendHud (13 / 12 / 13 entries); the
+// link group has a metric and therefore a ramp.
+MapBgfxHud::Legend legendContent()
+{
+    MapBgfxHud::Legend legend;
+    legend.visible = true;
+    const int counts[3] = {13, 12, 13};
+    for (int group = 0; group < 3; ++group)
+    {
+        MapBgfxHud::LegendGroup &content = legend.groups[std::size_t(group)];
+        for (int index = 0; index < counts[group]; ++index)
+        {
+            content.items.append(QStringLiteral("Group %1 item %2 [unit]").arg(group).arg(index));
+            content.values.append(100 * group + index);
+        }
+    }
+    MapBgfxHud::LegendRamp &ramp = legend.groups[1].ramp;
+    ramp.visible = true;
+    ramp.minimum = 0.0;
+    ramp.maximum = 12.5;
+    ramp.unit = QStringLiteral("L/s");
+    ramp.colors = rampStops(5);
+    ramp.palette = 3;
+    ramp.flipped = false;
+    ramp.default_palette = 7;
+    ramp.default_flipped = false;
+    legend.groups[1].current = 4;
+    for (int index = 0; index < 9; ++index)
+    {
+        MapBgfxHud::LegendPaletteChoice choice;
+        choice.value = index;
+        choice.name = QStringLiteral("Palette %1").arg(index);
+        choice.colors = rampStops(index);
+        choice.diverging = index >= 7;
+        legend.palettes.append(choice);
+    }
+    return legend;
+}
+
+// The legend's geometry for the 800 x 600 test viewport, from the same
+// constants as the HUD (combo height = text height + 8).
+struct LegendLayout
+{
+    double x = 0.0;
+    double y = 0.0;
+    double width = 0.0;
+    double height = 0.0;
+    double combo_height = 0.0;
+    double node_combo_y = 0.0;
+    double link_combo_y = 0.0;
+    double ramp_row_y = 0.0;
+    double heat_combo_y = 0.0;
+    MapBgfxHudRect bar;
+};
+
+LegendLayout legendLayout(const QFont &font, double viewport_height = ViewportHeight)
+{
+    LegendLayout layout;
+    layout.combo_height = std::ceil(QFontMetricsF(font).height() + 8.0);
+    layout.width = MapBgfxHud::LegendWidthPx;
+    layout.height = 2.0 * MapBgfxHud::LegendPaddingPx + 3.0 * layout.combo_height
+        + MapBgfxHud::LegendRampRowHeightPx + 3.0 * MapBgfxHud::LegendSpacingPx;
+    layout.x = ViewportWidth - MapBgfxHud::MarginPx - layout.width;
+    layout.y = viewport_height - MapBgfxHud::MarginPx - layout.height;
+    layout.node_combo_y = layout.y + MapBgfxHud::LegendPaddingPx;
+    layout.link_combo_y = layout.node_combo_y + layout.combo_height + MapBgfxHud::LegendSpacingPx;
+    layout.ramp_row_y = layout.link_combo_y + layout.combo_height + MapBgfxHud::LegendSpacingPx;
+    layout.heat_combo_y = layout.ramp_row_y + MapBgfxHud::LegendRampRowHeightPx
+        + MapBgfxHud::LegendSpacingPx;
+    layout.bar = MapBgfxHudRect{layout.x + MapBgfxHud::LegendPaddingPx + MapBgfxHud::LegendRampInsetXPx,
+                                layout.ramp_row_y + MapBgfxHud::LegendRampInsetYPx,
+                                layout.width - 2.0 * MapBgfxHud::LegendPaddingPx
+                                    - 2.0 * MapBgfxHud::LegendRampInsetXPx,
+                                MapBgfxHud::LegendRampHeightPx};
+    return layout;
+}
+
+MapBgfxHud::Action click(MapBgfxHud *hud, double x, double y, MapBgfxHud::Command *command)
+{
+    hud->mouseMove(x, y, nullptr);
+    hud->mousePress(x, y);
+    bool consumed = false;
+    return hud->mouseRelease(x, y, &consumed, command);
+}
+
+bool canvasHasColor(const MapBgfxHudCanvas &canvas, QRgb argb)
+{
+    const quint32 abgr = MapBgfxHudCanvas::premultipliedAbgr(argb);
+    for (const MapBgfxHudVertex &vertex : canvas.vertices())
+    {
+        if (vertex.abgr == abgr)
+            return true;
+    }
+    return false;
+}
+
+void testLegendFormatting()
+{
+    req(MapBgfxHud::formatLegendValue(0.0) == QStringLiteral("0.00"), "zero shows two decimals");
+    req(MapBgfxHud::formatLegendValue(12.345) == QStringLiteral("12.3"), "three significant digits");
+    req(MapBgfxHud::formatLegendValue(0.5) == QStringLiteral("0.500"), "small values keep three digits");
+    req(MapBgfxHud::formatLegendValue(999.6) == QStringLiteral("1.00e+03"),
+        "a value rounding to 1000 switches to scientific");
+    req(MapBgfxHud::formatLegendValue(0.0004).contains(QStringLiteral("e-04")),
+        "tiny values are scientific");
+    req(MapBgfxHud::formatLegendValue(std::nan("")) == QStringLiteral("—"), "NaN is a dash");
+}
+
+void testGradient()
+{
+    MapBgfxHudCanvas canvas;
+    QVector<quint32> stops;
+    stops.append(qRgb(0, 0, 0));
+    stops.append(qRgb(200, 100, 50));
+    stops.append(qRgb(255, 255, 255));
+    canvas.fillHorizontalGradient(MapBgfxHudRect{0.0, 0.0, 60.0, 10.0}, 4.0, stops);
+    bool middle_stop = false;
+    bool left_stop = false;
+    bool in_range = true;
+    for (const MapBgfxHudVertex &vertex : canvas.vertices())
+    {
+        if (std::fabs(vertex.x - 30.0f) < 1e-4f
+            && vertex.abgr == MapBgfxHudCanvas::premultipliedAbgr(qRgb(200, 100, 50)))
+            middle_stop = true;
+        if (vertex.x < 0.01f && vertex.abgr == MapBgfxHudCanvas::premultipliedAbgr(qRgb(0, 0, 0)))
+            left_stop = true;
+        in_range = in_range && vertex.x >= -1e-4f && vertex.x <= 60.0001f
+            && vertex.y >= -1e-4f && vertex.y <= 10.0001f;
+    }
+    req(middle_stop, "the middle stop colour sits exactly at the strip boundary");
+    req(left_stop, "the left edge has the first stop colour");
+    req(in_range, "gradient strips stay inside the rounded rect");
+    bool indices_ok = canvas.indices().size() % 3 == 0;
+    for (const quint32 index : canvas.indices())
+        indices_ok = indices_ok && int(index) < canvas.vertices().size();
+    req(indices_ok, "gradient strips are valid triangles");
+    // A corner vertex inside the first strip interpolates between stops 0 and 1.
+    const quint32 quarter = MapBgfxHudCanvas::interpolateArgb(qRgb(0, 0, 0), qRgb(200, 100, 50), 0.5);
+    req(quarter == qRgb(100, 50, 25), "per-channel interpolation rounds like the ramp colours");
+}
+
+void testLegend()
+{
+    QFont font;
+    font.setPixelSize(13);
+    MapBgfxHud hud;
+    hud.setFont(font);
+    hud.setViewMode(true, false);
+    MapBgfxHudTextCache cache(1024);
+    MapBgfxHudCanvas canvas;
+    MapBgfxHud::Palette palette;
+    palette.tooltip = qRgb(250, 250, 200);
+    const LegendLayout layout = legendLayout(font);
+
+    // Hidden by default: nothing at the bottom right.
+    hud.build(&canvas, &cache, frameInputs(true), palette);
+    req(!hud.blocksInput(ViewportWidth - 20.0, ViewportHeight - 20.0), "no legend until it is set");
+
+    hud.setLegend(legendContent());
+    hud.build(&canvas, &cache, frameInputs(true), palette);
+    req(hud.blocksInput(ViewportWidth - MapBgfxHud::MarginPx - 2.0,
+                        ViewportHeight - MapBgfxHud::MarginPx - 2.0),
+        "legend panel sits bottom right");
+    req(hud.blocksInput(layout.x + 2.0, layout.y + 2.0)
+            && !hud.blocksInput(layout.x - 2.0, layout.y + 2.0)
+            && !hud.blocksInput(layout.x + 2.0, layout.y - 2.0),
+        "legend is 380 px wide with the combo/ramp stack height");
+    bool over_button = false;
+    hud.mouseMove(layout.x + 100.0, layout.link_combo_y + 5.0, &over_button);
+    req(over_button && hud.cursor() == MapBgfxHud::Cursor::PointingHand, "combos are buttons");
+    req(hud.mouseWheel(layout.x + 100.0, layout.y + 3.0, -120.0), "wheel over the legend is consumed");
+    req(!hud.mouseWheel(100.0, 300.0, -120.0), "wheel over the map is not");
+
+    // Ramp: cross cursor, hover swatch with the ramp colour at the pointer.
+    const double ramp_mid_x = layout.bar.x + 0.5 * layout.bar.width;
+    const double ramp_mid_y = layout.bar.y + 0.5 * layout.bar.height;
+    hud.mouseMove(ramp_mid_x, ramp_mid_y, &over_button);
+    req(!over_button && hud.cursor() == MapBgfxHud::Cursor::Cross, "the ramp shows a cross cursor");
+    hud.build(&canvas, &cache, frameInputs(true), palette);
+    // Fraction 0.5 of 7 stops = stop 3 exactly.
+    req(canvasHasColor(canvas, rampStops(5).at(3)), "hover swatch shows the ramp colour");
+
+    // Tooltip after the QToolTip delay.
+    MapBgfxHud::FrameInputs later = frameInputs(true);
+    hud.build(&canvas, &cache, later, palette);
+    req(!canvasHasColor(canvas, palette.tooltip), "no tooltip before the delay");
+    later.time_s += MapBgfxHud::TooltipDelayS + 0.05;
+    hud.build(&canvas, &cache, later, palette);
+    req(canvasHasColor(canvas, palette.tooltip), "ramp tooltip after the delay");
+
+    // Combo: press opens the list (above, it does not fit below), click an
+    // item -> LegendVisual with the group and the metric value.
+    MapBgfxHud::Command command;
+    req(hud.mousePress(layout.x + 100.0, layout.link_combo_y + 5.0), "press on a combo is consumed");
+    req(hud.popupOpen(), "press opens the combo list");
+    bool consumed = false;
+    req(hud.mouseRelease(layout.x + 100.0, layout.link_combo_y + 5.0, &consumed, &command)
+            == MapBgfxHud::Action::None && consumed,
+        "the opening press does not select anything");
+    hud.build(&canvas, &cache, frameInputs(true), palette);
+    const double item_height = std::ceil(QFontMetricsF(font).height() + 6.0);
+    // Room above the combo: the list is tall enough for all 12 entries and
+    // has no scroll bar (the rows reach the right edge).
+    const double list_height = 12.0 * item_height + 2.0;
+    const double list_top = layout.link_combo_y - list_height;
+    const double list_right = layout.x + MapBgfxHud::LegendPaddingPx + layout.width
+        - 2.0 * MapBgfxHud::LegendPaddingPx;
+    req(hud.blocksInput(layout.x + 50.0, list_top + 2.0)
+            && !hud.blocksInput(layout.x + 50.0, list_top - 2.0),
+        "12 entries show all 12 rows above the combo");
+    const double first_row_y = list_top + 1.0 + 0.5 * item_height;
+    hud.build(&canvas, &cache, frameInputs(true), palette);
+    req(click(&hud, list_right - 3.0, first_row_y + 2.0 * item_height, &command)
+            == MapBgfxHud::Action::LegendVisual,
+        "a list that fits has no scroll bar: rows reach its right edge");
+    req(command.group == 1 && command.value == 102, "the command carries group and metric");
+    req(!hud.popupOpen() && hud.legend().groups[1].current == 2, "the list closes, the combo shows it");
+    hud.mousePress(layout.x + 100.0, layout.link_combo_y + 5.0);
+    hud.mouseRelease(layout.x + 100.0, layout.link_combo_y + 5.0, &consumed, &command);
+    hud.build(&canvas, &cache, frameInputs(true), palette);
+    hud.mouseWheel(layout.x + 50.0, first_row_y, -120.0);
+    hud.build(&canvas, &cache, frameInputs(true), palette);
+    req(click(&hud, layout.x + 50.0, first_row_y, &command) == MapBgfxHud::Action::LegendVisual
+            && command.value == 100,
+        "the wheel does not scroll a list that fits");
+
+    // Too little room on both sides (300 px map): the larger side, scrolled,
+    // with a scroll bar on the right.
+    {
+        MapBgfxHud::FrameInputs small = frameInputs(true);
+        small.viewport = QSizeF(ViewportWidth, 300.0);
+        const LegendLayout compact = legendLayout(font, 300.0);
+        MapBgfxHud::Legend reset_current = hud.legend();
+        reset_current.groups[1].current = 0;
+        const std::function<void()> reopen = [&]()
+        {
+            hud.closePopup();
+            hud.setLegend(reset_current);
+            hud.build(&canvas, &cache, small, palette);
+            hud.mousePress(compact.x + 100.0, compact.link_combo_y + 5.0);
+            hud.mouseRelease(compact.x + 100.0, compact.link_combo_y + 5.0, &consumed, &command);
+            hud.build(&canvas, &cache, small, palette);
+        };
+        reopen();
+        const int rows = int(std::floor((compact.link_combo_y - 2.0 - 2.0) / item_height));
+        const int maximum = 12 - rows;
+        const double small_top = compact.link_combo_y - (double(rows) * item_height + 2.0);
+        const double small_first = small_top + 1.0 + 0.5 * item_height;
+        const double bar_x = list_right - 1.0 - 6.0;
+        req(rows > 2 && rows < 12 && small_top >= 2.0 && hud.blocksInput(compact.x + 50.0, small_top + 1.0)
+                && !hud.blocksInput(compact.x + 50.0, small_top - 2.0),
+            "an overflowing list fills the larger side");
+        // Near the bottom of the track, below the thumb (scroll 0).
+        req(click(&hud, bar_x, small_top + double(rows) * item_height - 3.0, &command)
+                == MapBgfxHud::Action::None && hud.popupOpen(),
+            "the scroll bar is no entry");
+        // The press above paged down (the track below the thumb).
+        hud.build(&canvas, &cache, small, palette);
+        req(click(&hud, compact.x + 50.0, small_first, &command) == MapBgfxHud::Action::LegendVisual
+                && command.value == 100 + std::min(maximum, rows - 1),
+            "a click on the track pages down");
+
+        reopen();
+        req(hud.mouseWheel(compact.x + 50.0, small_first, -120.0), "wheel over an overflowing list");
+        hud.build(&canvas, &cache, small, palette);
+        req(click(&hud, compact.x + 50.0, small_first, &command) == MapBgfxHud::Action::LegendVisual
+                && command.value == 100 + std::min(maximum, 3),
+            "one notch scrolls three rows");
+
+        // Drag the thumb from its top to far below the list: the end.
+        reopen();
+        const double grab_y = small_top + 1.0 + 2.0 + 2.0;
+        req(hud.mousePress(bar_x, grab_y), "press on the thumb");
+        hud.mouseMove(bar_x, grab_y + 1000.0, nullptr);
+        hud.mouseRelease(bar_x, grab_y + 1000.0, &consumed, &command);
+        hud.build(&canvas, &cache, small, palette);
+        req(click(&hud, compact.x + 50.0, small_first, &command) == MapBgfxHud::Action::LegendVisual
+                && command.value == 100 + maximum,
+            "dragging the thumb to the bottom scrolls to the last page");
+        hud.setLegend(reset_current);
+        hud.build(&canvas, &cache, frameInputs(true), palette);
+    }
+
+    // Press outside an open popup closes it and is swallowed.
+    hud.mousePress(layout.x + 100.0, layout.heat_combo_y + 5.0);
+    hud.mouseRelease(layout.x + 100.0, layout.heat_combo_y + 5.0, &consumed, &command);
+    req(hud.popupOpen(), "heatmap list open");
+    hud.build(&canvas, &cache, frameInputs(true), palette);
+    req(hud.mousePress(100.0, 100.0), "a press on the map closes the popup and is consumed");
+    req(hud.mouseRelease(100.0, 100.0, &consumed, &command) == MapBgfxHud::Action::None && consumed,
+        "its release is consumed too");
+    req(!hud.popupOpen(), "the popup is closed");
+    hud.mousePress(layout.x + 100.0, layout.node_combo_y + 5.0);
+    hud.mouseRelease(layout.x + 100.0, layout.node_combo_y + 5.0, &consumed, &command);
+    req(hud.closePopup() && !hud.popupOpen() && !hud.closePopup(), "Escape closes the popup once");
+
+    // Palette menu: press on the ramp, then palette / flip / reset.
+    hud.build(&canvas, &cache, frameInputs(true), palette);
+    req(hud.mousePress(ramp_mid_x, ramp_mid_y) && hud.popupOpen(), "press on the ramp opens the menu");
+    hud.mouseRelease(ramp_mid_x, ramp_mid_y, &consumed, &command);
+    hud.build(&canvas, &cache, frameInputs(true), palette);
+    // Find the menu's buttons by scanning for actions (each click closes the
+    // menu, so reopen before every probe).
+    // Every hit with its command; the reference palette (3, unflipped) is
+    // restored after each click.
+    struct MenuHit
+    {
+        double x = 0.0;
+        double y = 0.0;
+        int value = 0;
+        bool flipped = false;
+    };
+    QVector<MenuHit> hits;
+    for (double y = 1.0; y < ViewportHeight; y += 3.0)
+    {
+        for (double x = 1.0; x < ViewportWidth; x += 6.0)
+        {
+            if (!hud.popupOpen())
+            {
+                hud.mousePress(ramp_mid_x, ramp_mid_y);
+                hud.mouseRelease(ramp_mid_x, ramp_mid_y, &consumed, &command);
+                hud.build(&canvas, &cache, frameInputs(true), palette);
+            }
+            hud.mouseMove(x, y, nullptr);
+            hud.mousePress(x, y);
+            const MapBgfxHud::Action action = hud.mouseRelease(x, y, &consumed, &command);
+            if (action != MapBgfxHud::Action::LegendPalette)
+                continue;
+            hits.append(MenuHit{x, y, command.value, command.flipped});
+            MapBgfxHud::Legend reference = hud.legend();
+            reference.groups[1].ramp.palette = 3;
+            reference.groups[1].ramp.flipped = false;
+            hud.setLegend(reference);
+        }
+    }
+    // Preview buttons give (value, false), Flip buttons (value, true); Reset
+    // gives the default (7, false) and is the only hit left of the preview
+    // column (its row spans the menu, the palette rows have labels there).
+    double preview_left = ViewportWidth;
+    for (const MenuHit &hit : hits)
+    {
+        if (!hit.flipped && hit.value != 7)
+            preview_left = std::min(preview_left, hit.x);
+    }
+    QHash<int, QRectF> palette_hits;
+    QHash<int, QRectF> flip_hits;
+    bool reset_found = false;
+    double reset_top = 0.0;
+    for (const MenuHit &hit : hits)
+    {
+        const QRectF point(hit.x, hit.y, 0.001, 0.001);
+        if (hit.value == 7 && !hit.flipped && hit.x < preview_left)
+        {
+            reset_top = reset_found ? std::min(reset_top, hit.y) : hit.y;
+            reset_found = true;
+            continue;
+        }
+        QHash<int, QRectF> &target = hit.flipped ? flip_hits : palette_hits;
+        target.insert(hit.value, target.contains(hit.value)
+            ? target.value(hit.value).united(point) : point);
+    }
+    req(reset_found, "the menu has a Reset row");
+    req(reset_found && palette_hits.contains(8) && reset_top > palette_hits.value(8).bottom(),
+        "Reset is below the palettes");
+    int palette_buttons = 0;
+    for (int value = 0; value < 9; ++value)
+        palette_buttons += palette_hits.contains(value) ? 1 : 0;
+    req(palette_buttons >= 8, "every palette has a preview button");
+    req(flip_hits.contains(0) && flip_hits.contains(8), "every palette has a Flip button");
+    req(flip_hits.contains(0) && palette_hits.contains(0)
+            && flip_hits.value(0).left() > palette_hits.value(0).right(),
+        "Flip sits right of the preview");
+    req(palette_hits.contains(0) && palette_hits.contains(8)
+            && palette_hits.value(8).top() > palette_hits.value(0).bottom(),
+        "palettes are listed top to bottom");
+
+    // Flip semantics: on the active palette it toggles, elsewhere it selects
+    // the other palette flipped. Reset restores the default.
+    MapBgfxHud::Legend reference = hud.legend();
+    reference.groups[1].ramp.palette = 3;
+    reference.groups[1].ramp.flipped = true;
+    hud.setLegend(reference);
+    hud.closePopup();
+    hud.mousePress(ramp_mid_x, ramp_mid_y);
+    hud.mouseRelease(ramp_mid_x, ramp_mid_y, &consumed, &command);
+    hud.build(&canvas, &cache, frameInputs(true), palette);
+    req(flip_hits.contains(3), "flip of the active palette found");
+    if (flip_hits.contains(3))
+    {
+        const QPointF at = flip_hits.value(3).center();
+        req(click(&hud, at.x(), at.y(), &command) == MapBgfxHud::Action::LegendPalette
+                && command.value == 3 && !command.flipped,
+            "Flip on the flipped active palette unflips it");
+        req(!hud.popupOpen(), "a menu choice closes the menu");
+    }
+
+    // Hiding the ramp closes its menu; hiding the legend closes everything.
+    hud.mousePress(ramp_mid_x, ramp_mid_y);
+    hud.mouseRelease(ramp_mid_x, ramp_mid_y, &consumed, &command);
+    req(hud.popupOpen(), "menu open again");
+    MapBgfxHud::Legend without_ramp = hud.legend();
+    without_ramp.groups[1].ramp.visible = false;
+    hud.setLegend(without_ramp);
+    req(!hud.popupOpen(), "a hidden ramp closes its palette menu");
+    MapBgfxHud::Legend hidden = hud.legend();
+    hidden.visible = false;
+    hud.setLegend(hidden);
+    hud.build(&canvas, &cache, frameInputs(true), palette);
+    req(!hud.blocksInput(ViewportWidth - 20.0, ViewportHeight - 20.0), "a hidden legend draws nothing");
+
+    // No finite values: no cross cursor, the message instead of labels.
+    MapBgfxHud::Legend no_values = legendContent();
+    no_values.groups[1].ramp.minimum = std::nan("");
+    hud.setLegend(no_values);
+    hud.build(&canvas, &cache, frameInputs(true), palette);
+    hud.mouseMove(ramp_mid_x, ramp_mid_y, &over_button);
+    req(hud.cursor() == MapBgfxHud::Cursor::Arrow, "a ramp without values has no cross cursor");
+
+    // Out-of-range current index and mismatched lists are clamped.
+    MapBgfxHud::Legend broken = legendContent();
+    broken.groups[0].current = 99;
+    broken.groups[2].values.resize(3);
+    hud.setLegend(broken);
+    req(hud.legend().groups[0].current == 12 && hud.legend().groups[2].items.size() == 3,
+        "setLegend() clamps the current entry and trims parallel lists");
+    hud.build(&canvas, &cache, frameInputs(true), palette);
+    req(!canvas.overflowed(), "legend frame fits the draw list budget");
+}
 }
 
 int main(int argc, char **argv)
@@ -525,10 +976,16 @@ int main(int argc, char **argv)
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication application(argc, argv);
+    // Legend numbers follow the default locale (decimal comma in German);
+    // the expectations below are written for the C locale.
+    QLocale::setDefault(QLocale::c());
 
     testCanvas();
     testTextCache();
     testHud();
+    testLegendFormatting();
+    testGradient();
+    testLegend();
 
     if (fails == 0)
         std::printf("bgfx HUD tests passed\n");

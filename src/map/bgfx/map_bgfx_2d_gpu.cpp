@@ -25,34 +25,9 @@ constexpr uint64_t kHeatmapState = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A
 // Clamp so linear/mip filtering never bleeds a neighbouring atlas cell in.
 constexpr uint64_t kAtlasSamplerFlags = BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
 
-// Loads the shader compiled for the renderer bgfx actually selected.
-bgfx::ShaderHandle loadShader(const char *name)
-{
-    const QString resource = MapBgfxBackend::shaderResourcePath(bgfx::getRendererType(), name);
-    QFile file(resource);
-    if (resource.isEmpty() || !file.open(QIODevice::ReadOnly)) {
-        qWarning() << "bgfx shader resource missing" << name << "for renderer"
-                   << bgfx::getRendererName(bgfx::getRendererType());
-        return BGFX_INVALID_HANDLE;
-    }
-    const QByteArray binary = file.readAll();
-    if (binary.isEmpty() || binary.size() > std::numeric_limits<uint32_t>::max())
-        return BGFX_INVALID_HANDLE;
-    return bgfx::createShader(bgfx::copy(binary.constData(), uint32_t(binary.size())));
-}
-
-bgfx::ProgramHandle loadProgram(const char *vertex_name, const char *fragment_name)
-{
-    const bgfx::ShaderHandle vertex = loadShader(vertex_name);
-    if (!bgfx::isValid(vertex))
-        return BGFX_INVALID_HANDLE;
-    const bgfx::ShaderHandle fragment = loadShader(fragment_name);
-    if (!bgfx::isValid(fragment)) {
-        bgfx::destroy(vertex);
-        return BGFX_INVALID_HANDLE;
-    }
-    return bgfx::createProgram(vertex, fragment, true);
-}
+// Shaders come from MapBgfxBackend::loadProgram(), shared with the imagery
+// and HUD parts, so every part reports a missing or rejected shader alike.
+using MapBgfxBackend::loadProgram;
 
 template <typename Vertex>
 bgfx::VertexBufferHandle createVertices(const QVector<Vertex> &vertices,
@@ -61,7 +36,7 @@ bgfx::VertexBufferHandle createVertices(const QVector<Vertex> &vertices,
     if (vertices.isEmpty())
         return BGFX_INVALID_HANDLE;
     const qsizetype size = vertices.size() * qsizetype(sizeof(Vertex));
-    if (size > std::numeric_limits<uint32_t>::max())
+    if (!MapBgfxBackend::fitsUint32(size))
         return BGFX_INVALID_HANDLE;
     *bytes += quint64(size);
     return bgfx::createVertexBuffer(bgfx::copy(vertices.constData(), uint32_t(size)), layout);
@@ -72,7 +47,7 @@ bgfx::IndexBufferHandle createIndices(const QVector<quint32> &indices, quint64 *
     if (indices.isEmpty())
         return BGFX_INVALID_HANDLE;
     const qsizetype size = indices.size() * qsizetype(sizeof(quint32));
-    if (size > std::numeric_limits<uint32_t>::max())
+    if (!MapBgfxBackend::fitsUint32(size))
         return BGFX_INVALID_HANDLE;
     *bytes += quint64(size);
     // 32-bit indices: a dense chunk may exceed 65535 vertices (WebGL 2 and
@@ -84,7 +59,9 @@ bgfx::IndexBufferHandle createIndices(const QVector<quint32> &indices, quint64 *
 bgfx::DynamicVertexBufferHandle createAttributeStream(qsizetype vertex_count,
                                                       const bgfx::VertexLayout &layout)
 {
-    if (vertex_count <= 0 || vertex_count > qsizetype(std::numeric_limits<uint32_t>::max()))
+    // fitsUint32: on wasm32 a qsizetype(UINT32_MAX) cast is -1 and rejected
+    // every stream, leaving the browser map without per-vertex attributes.
+    if (vertex_count <= 0 || !MapBgfxBackend::fitsUint32(vertex_count))
         return BGFX_INVALID_HANDLE;
     return bgfx::createDynamicVertexBuffer(uint32_t(vertex_count), layout);
 }
@@ -156,7 +133,14 @@ bool MapBgfx2dGpu::initialize(const QImage &icon_atlas)
     // Heatmap spots reuse the node marker vertex shader (radius as size).
     this->heatmap_program = loadProgram("vs_network_2d", "fs_heatmap_2d");
     if (!ready())
+    {
+        qWarning() << "bgfx network programs: point" << bgfx::isValid(this->point_program)
+                   << "line" << bgfx::isValid(this->line_program)
+                   << "icon" << bgfx::isValid(this->icon_program)
+                   << "flow" << bgfx::isValid(this->flow_program)
+                   << "heatmap" << bgfx::isValid(this->heatmap_program);
         return false;
+    }
     this->camera_uniform = bgfx::createUniform("u_network_camera", bgfx::UniformType::Vec4);
     this->pixel_uniform = bgfx::createUniform("u_network_pixel", bgfx::UniformType::Vec4);
     this->line_style_uniform = bgfx::createUniform("u_line_style", bgfx::UniformType::Vec4);
@@ -166,12 +150,22 @@ bool MapBgfx2dGpu::initialize(const QImage &icon_atlas)
     this->flow_limits_uniform = bgfx::createUniform("u_flow_limits", bgfx::UniformType::Vec4);
     this->heatmap_style_uniform = bgfx::createUniform("u_heatmap_style", bgfx::UniformType::Vec4);
     this->icon_atlas_sampler = bgfx::createUniform("s_icon_atlas", bgfx::UniformType::Sampler);
-    return bgfx::isValid(this->camera_uniform) && bgfx::isValid(this->pixel_uniform)
+    const bool uniforms_ready = bgfx::isValid(this->camera_uniform) && bgfx::isValid(this->pixel_uniform)
         && bgfx::isValid(this->line_style_uniform) && bgfx::isValid(this->marker_style_uniform)
         && bgfx::isValid(this->icon_style_uniform) && bgfx::isValid(this->flow_style_uniform)
         && bgfx::isValid(this->flow_limits_uniform) && bgfx::isValid(this->heatmap_style_uniform)
-        && bgfx::isValid(this->icon_atlas_sampler)
-        && createIconAtlas(icon_atlas);
+        && bgfx::isValid(this->icon_atlas_sampler);
+    if (!uniforms_ready)
+    {
+        qWarning() << "bgfx rejected a network uniform";
+        return false;
+    }
+    if (!createIconAtlas(icon_atlas))
+    {
+        qWarning() << "bgfx rejected the icon atlas texture" << icon_atlas.size();
+        return false;
+    }
+    return true;
 }
 
 bool MapBgfx2dGpu::createIconAtlas(const QImage &icon_atlas)

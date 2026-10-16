@@ -51,6 +51,9 @@ public:
     void setIconSizePercent(int size_percent);
     void scaleMarkers();
     void positionMarkers();
+    // An entity / network move is in progress (visualState().move.active,
+    // without building the whole visual state).
+    bool isMoveActive() const;
     MapEditorVisualState visualState() const;
     int iconSizePercent() const;
 

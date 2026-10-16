@@ -4,7 +4,6 @@
 #include "config/shortcut_registry.h"
 
 #include <QApplication>
-#include <QFile>
 #include <QPaintEvent>
 #include <QPalette>
 
@@ -15,15 +14,14 @@
 #include <QWindow>
 #else
 #include <emscripten.h>
-#include "config/unit_profile_manager.h"
-#include "map/core/browser_map_scale_units.h"
-#include <QJsonDocument>
 #endif
 
 #include <cmath>
 #include <utility>
 
 #ifdef Q_OS_WASM
+// Browser viewport and focus state for edge panning (pointer position comes
+// from the window-level Emscripten mouse callbacks below).
 EM_JS(int, aowisBrowserViewportWidth, (),
 {
     return window.innerWidth | 0;
@@ -39,127 +37,12 @@ EM_JS(int, aowisBrowserDocumentActive, (),
     return document.hasFocus() && !document.hidden ? 1 : 0;
 });
 
-EM_JS(void, aowisBrowserMapSetGeometry, (int owner_id, int x, int y, int width, int height, int visible, int topmost),
-{
-    if (window.aowisBrowserMap)
-        window.aowisBrowserMap.setGeometry(owner_id, x, y, width, height, visible !== 0, topmost !== 0);
-});
-
-EM_JS(void, aowisBrowserMapSetScaleChoices, (int owner_id, const char *choices),
-{
-    if (window.aowisBrowserMap)
-        window.aowisBrowserMap.setScaleChoices(owner_id, UTF8ToString(choices));
-});
-
-EM_JS(void, aowisBrowserMapSetView, (int owner_id, double longitude, double latitude, int zoom, int provider),
-{
-    if (window.aowisBrowserMap)
-        window.aowisBrowserMap.setView(owner_id, longitude, latitude, zoom, provider);
-});
-
-EM_JS(void, aowisBrowserMapInvalidateTiles, (),
-{
-    if (window.aowisBrowserMap)
-        window.aowisBrowserMap.invalidateTiles();
-});
-
-EM_JS(void, aowisBrowserMapRelease, (int owner_id),
-{
-    if (window.aowisBrowserMap)
-        window.aowisBrowserMap.release(owner_id);
-});
-
-EM_JS(void, aowisBrowserMapSetCrosshairImage, (const char *data_url),
-{
-    if (window.aowisBrowserMap &&
-        typeof window.aowisBrowserMap.setCrosshairImage === "function")
-    {
-        window.aowisBrowserMap.setCrosshairImage(UTF8ToString(data_url));
-    }
-});
-
-EM_JS(void, aowisBrowserMapMousePanBegin, (int owner_id),
-{
-    if (window.aowisBrowserMap && typeof window.aowisBrowserMap.mousePanBegin === "function")
-        window.aowisBrowserMap.mousePanBegin(owner_id);
-});
-
-EM_JS(void, aowisBrowserMapMousePanMove, (int owner_id, int delta_x, int delta_y, double elapsed_ms),
-{
-    if (window.aowisBrowserMap && typeof window.aowisBrowserMap.mousePanMove === "function")
-        window.aowisBrowserMap.mousePanMove(owner_id, delta_x, delta_y, elapsed_ms);
-});
-
-EM_JS(int, aowisBrowserMapMousePanRelease, (int owner_id, int start_drag_distance),
-{
-    if (!window.aowisBrowserMap || typeof window.aowisBrowserMap.mousePanRelease !== "function")
-        return 0;
-
-    return window.aowisBrowserMap.mousePanRelease(owner_id, start_drag_distance) ? 1 : 0;
-});
-
-EM_JS(int, aowisBrowserMapInertiaActive, (int owner_id),
-{
-    if (!window.aowisBrowserMap || typeof window.aowisBrowserMap.inertiaActive !== "function")
-        return 0;
-
-    return window.aowisBrowserMap.inertiaActive(owner_id) ? 1 : 0;
-});
-
-EM_JS(int, aowisBrowserMapTakeInertiaDelta, (int owner_id, int *delta_x, int *delta_y),
-{
-    let x = 0;
-    let y = 0;
-    let active = false;
-
-    if (window.aowisBrowserMap && typeof window.aowisBrowserMap.takeInertiaDelta === "function")
-    {
-        const movement = window.aowisBrowserMap.takeInertiaDelta(owner_id);
-        if (movement)
-        {
-            x = movement.x | 0;
-            y = movement.y | 0;
-            active = Boolean(movement.active);
-        }
-    }
-
-    HEAP32[delta_x >> 2] = x;
-    HEAP32[delta_y >> 2] = y;
-    return active ? 1 : 0;
-});
-
-EM_JS(void, aowisBrowserMapMousePanCancel, (int owner_id),
-{
-    if (window.aowisBrowserMap && typeof window.aowisBrowserMap.mousePanCancel === "function")
-        window.aowisBrowserMap.mousePanCancel(owner_id);
-});
 #endif
 
 namespace
 {
-#ifdef Q_OS_WASM
-int nextBrowserMapLayerOwnerId()
-{
-    static int next_owner_id = 1;
-    return next_owner_id++;
-}
-
-QByteArray browserCrosshairDataUrl()
-{
-    static const QByteArray data_url = []
-    {
-        QFile file(QStringLiteral(":/icon/crosshair.png"));
-        if (!file.open(QIODevice::ReadOnly))
-            return QByteArray();
-
-        return QByteArrayLiteral("data:image/png;base64,") + file.readAll().toBase64();
-    }();
-    return data_url;
-}
-#endif
 
 constexpr int PanFrameIntervalMs = 16;
-constexpr int TileUpdateIntervalMs = 16;
 constexpr int PanButtonStepPixels = 120;
 constexpr int EdgePanMarginPixels = 2;
 constexpr int EdgePanPollIntervalMs = 50;
@@ -217,14 +100,6 @@ MapWidget::MapWidget(MapModel *model, MapTileRepository *tile_repository, GpsPro
     Q_ASSERT(this->m_model);
     Q_ASSERT(this->tile_repository);
 
-#ifdef Q_OS_WASM
-    this->browser_map_layer_owner_id = nextBrowserMapLayerOwnerId();
-    UnitProfileManager::instance().presentation().subscribe(
-        this, [this](UnitPresentationContext::Generation) {
-            syncBrowserMapScaleUnits();
-        });
-#endif
-
     this->init();
 }
 
@@ -234,9 +109,6 @@ MapWidget::~MapWidget()
     endView3dOrbit(false);
 #endif
 #ifdef Q_OS_WASM
-    if (this->browser_map_layer_enabled)
-        aowisBrowserMapRelease(this->browser_map_layer_owner_id);
-
     emscripten_set_mousemove_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, this, EM_TRUE, nullptr);
     emscripten_set_mouseleave_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, this, EM_TRUE, nullptr);
 #endif
@@ -254,17 +126,10 @@ void MapWidget::fitViewToBounds(
     if (this->m_model == nullptr)
         return;
 
-    // Continuous fit for every renderer that draws fractional scale (GPU
-    // surfaces and the desktop CPU painter). Only the legacy WASM browser
-    // map layer needs an integer zoom.
-    bool allow_continuous_2d_zoom = true;
-#ifdef Q_OS_WASM
-    allow_continuous_2d_zoom = !this->browser_map_layer_enabled;
-#endif
+    // Continuous fit: every renderer draws the fractional scale.
     cancelSmoothZoom();
     this->m_model->fitViewToBounds(
-        minimum, maximum, size(), elevation_minimum_m, elevation_maximum_m,
-        allow_continuous_2d_zoom);
+        minimum, maximum, size(), elevation_minimum_m, elevation_maximum_m, true);
 }
 
 void MapWidget::deleteCachedTiles(int zoom, int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max)
@@ -297,13 +162,6 @@ void MapWidget::init()
         emit signalZoomChanged(zoom);
         if (this->m_model->viewMode() == MapViewMode::TwoD)
             emit signalZoomLevelChanged(this->m_model->view2dContinuousZoom());
-#ifdef Q_OS_WASM
-        if (this->browser_map_layer_enabled)
-        {
-            this->syncBrowserMapView();
-            return;
-        }
-#endif
         update();
     });
 
@@ -319,13 +177,6 @@ void MapWidget::init()
             return;
 
         emit signalZoomLevelChanged(this->m_model->view2dContinuousZoom());
-#ifdef Q_OS_WASM
-        if (this->browser_map_layer_enabled)
-        {
-            this->syncBrowserMapView();
-            return;
-        }
-#endif
         update();
     });
 
@@ -347,13 +198,6 @@ void MapWidget::init()
         }
         if (this->backing_store_pan_active)
             return;
-#ifdef Q_OS_WASM
-        if (this->browser_map_layer_enabled)
-        {
-            this->syncBrowserMapView();
-            return;
-        }
-#endif
         update();
     });
 
@@ -370,13 +214,6 @@ void MapWidget::init()
     });
     connect(this->m_model, &MapModel::providerChanged, this, [this](MapProvider)
     {
-#ifdef Q_OS_WASM
-        if (this->browser_map_layer_enabled)
-        {
-            this->syncBrowserMapView();
-            return;
-        }
-#endif
         update();
     });
 
@@ -408,58 +245,10 @@ void MapWidget::init()
             emit signalZoomLevelChanged(this->m_model->view2dContinuousZoom());
     });
 
-    this->tile_update_timer = new QTimer(this);
-    this->tile_update_timer->setSingleShot(true);
-    this->tile_update_timer->setTimerType(Qt::PreciseTimer);
-    this->tile_update_timer->setInterval(TileUpdateIntervalMs);
-    connect(this->tile_update_timer, &QTimer::timeout, this, [this]
-    {
-#ifdef Q_OS_WASM
-        if (this->browser_map_layer_enabled)
-            return;
-#endif
-        update();
-    });
-
-    connect(this->tile_repository, &MapTileRepository::signalTileAvailable,
-            this, &MapWidget::scheduleTileUpdate);
-    connect(this->tile_repository, &MapTileRepository::signalTileRetryReady,
-            this, &MapWidget::scheduleTileUpdate);
-    connect(this->tile_repository, &MapTileRepository::signalTilesDeleted, this, [this]
-    {
-#ifdef Q_OS_WASM
-        if (this->browser_map_layer_enabled)
-            aowisBrowserMapInvalidateTiles();
-#endif
-    });
-
+    // No CPU map painting: imagery (and the GPS dot) are drawn by the bgfx
+    // surface, which follows the tile repository itself.
     if (this->gps)
     {
-        connect(this->gps, &GpsProvider::positionChanged, this, [this](const QGeoPositionInfo &info)
-        {
-#ifndef Q_OS_WASM
-            const QGeoCoordinate coordinate = info.coordinate();
-            if (!info.isValid() || !coordinate.isValid())
-            {
-                this->has_gps_coordinate = false;
-                update();
-                return;
-            }
-
-            this->gps_coordinate.latitude_deg = coordinate.latitude();
-            this->gps_coordinate.longitude_deg = coordinate.longitude();
-            this->gps_coordinate.altitude_m = coordinate.altitude();
-            this->has_gps_coordinate = true;
-            update();
-#else
-            Q_UNUSED(info)
-#endif
-        });
-        connect(this->gps, &GpsProvider::gpsDisconnected, this, [this]
-        {
-            this->has_gps_coordinate = false;
-            update();
-        });
         connect(this->gps, &GpsProvider::statusMessage, this, [](const QString &message)
         {
             qDebug() << message;
@@ -536,14 +325,6 @@ void MapWidget::advanceNavigationFrame(double elapsed_seconds)
     advanceNavigation(qBound<qreal>(0.0, qreal(elapsed_seconds), 0.05));
 }
 
-void MapWidget::setTilePaintingEnabled(bool enabled)
-{
-    if (this->tile_painting_enabled == enabled)
-        return;
-    this->tile_painting_enabled = enabled;
-    update();
-}
-
 #ifndef Q_OS_WASM
 void MapWidget::setOrbitPointerLockWindow(QWindow *window)
 {
@@ -557,8 +338,7 @@ void MapWidget::setOrbitPointerLockWindow(QWindow *window)
 void MapWidget::stopPanAnimationIfIdle()
 {
     if (this->zoom_motion.active() || hasKeyboardPanInput() || hasKeyboardZoomInput()
-        || vectorLength(this->pan_velocity) >= PanVelocityStopThreshold
-        || browserMapInertiaActive())
+        || vectorLength(this->pan_velocity) >= PanVelocityStopThreshold)
     {
         return;
     }
@@ -586,7 +366,6 @@ void MapWidget::stopAllPanMovement()
     this->mouse_pan_velocity = QPointF();
     this->mouse_pan_inertia_active = false;
     this->mouse_pan_drag_distance = 0;
-    cancelBrowserMapMousePan();
 
     this->pan_timer->stop();
 }
@@ -648,7 +427,6 @@ void MapWidget::advanceNavigation(qreal elapsed_seconds)
     if (!direction.isNull())
     {
         this->mouse_pan_inertia_active = false;
-        cancelBrowserMapMousePan();
     }
 
     bool fast_pan_active = keyboard_pan_active && hasFastKeyboardPanInput();
@@ -656,15 +434,6 @@ void MapWidget::advanceNavigation(qreal elapsed_seconds)
     if (edge_pan_active && QApplication::keyboardModifiers().testFlag(Qt::ShiftModifier))
         fast_pan_active = true;
 #endif
-
-    if (direction.isNull() && browserMapHandlesMouseInertia() && browserMapInertiaActive())
-    {
-        this->pan_velocity = QPointF();
-        this->pan_fractional_delta = QPointF();
-        updateBrowserMapInertia();
-        stopPanAnimationIfIdle();
-        return;
-    }
 
     qreal maximum_speed = PanMaximumSpeedPixelsPerSecond;
     qreal acceleration = PanAccelerationPixelsPerSecondSquared;
@@ -703,86 +472,6 @@ void MapWidget::pollEdgePan()
 {
     if (!this->edgePanDirection().isNull())
         this->ensurePanAnimationRunning();
-}
-
-bool MapWidget::browserMapHandlesMouseInertia() const
-{
-#ifdef Q_OS_WASM
-    return this->browser_map_layer_enabled;
-#else
-    return false;
-#endif
-}
-
-void MapWidget::beginBrowserMapMousePan()
-{
-#ifdef Q_OS_WASM
-    if (this->browser_map_layer_enabled)
-        aowisBrowserMapMousePanBegin(this->browser_map_layer_owner_id);
-#endif
-}
-
-void MapWidget::updateBrowserMapMousePan(const QPoint &delta, qint64 elapsed_ms)
-{
-#ifdef Q_OS_WASM
-    if (this->browser_map_layer_enabled)
-        aowisBrowserMapMousePanMove(this->browser_map_layer_owner_id, delta.x(), delta.y(), elapsed_ms);
-#else
-    Q_UNUSED(delta)
-    Q_UNUSED(elapsed_ms)
-#endif
-}
-
-bool MapWidget::releaseBrowserMapMousePan()
-{
-#ifdef Q_OS_WASM
-    if (!this->browser_map_layer_enabled)
-        return false;
-
-    return aowisBrowserMapMousePanRelease(
-        this->browser_map_layer_owner_id,
-        QApplication::startDragDistance()) != 0;
-#else
-    return false;
-#endif
-}
-
-bool MapWidget::browserMapInertiaActive() const
-{
-#ifdef Q_OS_WASM
-    return this->browser_map_layer_enabled &&
-        aowisBrowserMapInertiaActive(this->browser_map_layer_owner_id) != 0;
-#else
-    return false;
-#endif
-}
-
-bool MapWidget::updateBrowserMapInertia()
-{
-#ifdef Q_OS_WASM
-    if (!this->browser_map_layer_enabled)
-        return false;
-
-    int delta_x = 0;
-    int delta_y = 0;
-    const bool active = aowisBrowserMapTakeInertiaDelta(
-        this->browser_map_layer_owner_id, &delta_x, &delta_y) != 0;
-    const QPoint delta(delta_x, delta_y);
-    if (!delta.isNull())
-        panMapByPixels(delta);
-
-    return active;
-#else
-    return false;
-#endif
-}
-
-void MapWidget::cancelBrowserMapMousePan()
-{
-#ifdef Q_OS_WASM
-    if (this->browser_map_layer_enabled)
-        aowisBrowserMapMousePanCancel(this->browser_map_layer_owner_id);
-#endif
 }
 
 #ifdef Q_OS_WASM
@@ -1112,7 +801,6 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
     {
         this->pan_fast_modifier_pressed = event->modifiers().testFlag(Qt::ShiftModifier);
         this->mouse_pan_inertia_active = false;
-        cancelBrowserMapMousePan();
         this->ensurePanAnimationRunning();
         event->accept();
         return true;
@@ -1232,89 +920,6 @@ void MapWidget::clearKeyboardPanInput()
     stopPanAnimationIfIdle();
 }
 
-#ifdef Q_OS_WASM
-void MapWidget::setBrowserMapLayerEnabled(bool enabled)
-{
-    if (this->browser_map_layer_enabled == enabled)
-        return;
-
-    this->browser_map_layer_enabled = enabled;
-    if (enabled)
-    {
-        // Legacy JS/WebGL map layer: setView() only takes an integer zoom.
-        // Align the camera to it so overlays and the layer agree. Remove
-        // together with the layer once bgfx replaces it.
-        cancelSmoothZoom();
-        if (this->m_model->viewMode() == MapViewMode::TwoD)
-            this->m_model->resetView2dContinuousZoom(this->size());
-        const QByteArray crosshair_data_url = browserCrosshairDataUrl();
-        if (!crosshair_data_url.isEmpty())
-            aowisBrowserMapSetCrosshairImage(crosshair_data_url.constData());
-        this->syncBrowserMapView();
-    }
-    else
-    {
-        aowisBrowserMapRelease(this->browser_map_layer_owner_id);
-        update();
-    }
-}
-
-void MapWidget::setBrowserMapLayerTopmost(bool topmost)
-{
-    this->browser_map_layer_topmost = topmost;
-}
-
-int MapWidget::browserMapLayerOwnerId() const
-{
-    return this->browser_map_layer_owner_id;
-}
-
-void MapWidget::setBrowserMapLayerGeometry(const QRect &geometry, bool visible)
-{
-    aowisBrowserMapSetGeometry(
-        this->browser_map_layer_owner_id,
-        geometry.x(),
-        geometry.y(),
-        geometry.width(),
-        geometry.height(),
-        visible ? 1 : 0,
-        this->browser_map_layer_topmost ? 1 : 0);
-
-    if (visible)
-        this->syncBrowserMapView();
-}
-
-void MapWidget::syncBrowserMapScaleUnits()
-{
-    if (!this->browser_map_layer_enabled)
-        return;
-
-    const UnitPresentationContext &context = UnitProfileManager::instance().presentation();
-    static UnitPresentationContext::Generation cached_generation = 0;
-    static QByteArray choices;
-    if (cached_generation != context.generation())
-    {
-        choices = QJsonDocument(BrowserMapScaleUnits::choices(context)).toJson(QJsonDocument::Compact);
-        cached_generation = context.generation();
-    }
-    aowisBrowserMapSetScaleChoices(this->browser_map_layer_owner_id, choices.constData());
-}
-
-void MapWidget::syncBrowserMapView()
-{
-    if (!this->browser_map_layer_enabled)
-        return;
-
-    syncBrowserMapScaleUnits();
-    aowisBrowserMapSetView(
-        this->browser_map_layer_owner_id,
-        this->m_model->centerLon(),
-        this->m_model->centerLat(),
-        this->m_model->zoom(),
-        int(this->m_model->provider()));
-}
-#endif
-
 void MapWidget::setEdgePanningEnabled(bool enabled)
 {
     if (this->edge_panning_enabled == enabled)
@@ -1386,7 +991,6 @@ void MapWidget::panByStep(const QPoint &delta)
     this->pan_velocity = QPointF();
     this->pan_fractional_delta = QPointF();
     this->mouse_pan_inertia_active = false;
-    cancelBrowserMapMousePan();
     panMapByPixels(delta);
 }
 
@@ -1425,14 +1029,6 @@ void MapWidget::panMapByPixels(const QPoint &delta, bool keyboard_pan)
     const QPoint actual_delta(
         qRound(horizontal_tile_delta * MapModel::TileSize),
         qRound((old_center.y() - new_center.y()) * MapModel::TileSize));
-
-#ifdef Q_OS_WASM
-    if (this->browser_map_layer_enabled)
-    {
-        this->syncBrowserMapView();
-        return;
-    }
-#endif
 
     if (actual_delta.isNull())
         return;
@@ -1708,7 +1304,6 @@ bool MapWidget::handleMousePressEvent(QMouseEvent *event)
     this->mouse_pan_move_elapsed_timer.start();
     this->mouse_pan_inertia_active = false;
     this->mouse_pan_drag_distance = 0;
-    beginBrowserMapMousePan();
     stopPanAnimationIfIdle();
     event->accept();
     return true;
@@ -1739,22 +1334,6 @@ bool MapWidget::handleMouseReleaseEvent(QMouseEvent *event)
 
     this->mouse_pan_active = false;
     this->mouse_pan_sensitivity_fractional_delta = QPointF();
-
-    if (browserMapHandlesMouseInertia())
-    {
-        this->pan_velocity = QPointF();
-        this->pan_fractional_delta = QPointF();
-        this->mouse_pan_velocity = QPointF();
-        this->mouse_pan_inertia_active = false;
-        this->mouse_pan_drag_distance = 0;
-
-        if (releaseBrowserMapMousePan())
-            ensurePanAnimationRunning();
-
-        stopPanAnimationIfIdle();
-        event->accept();
-        return true;
-    }
 
     const bool movement_is_recent = this->mouse_pan_move_elapsed_timer.isValid() &&
         this->mouse_pan_move_elapsed_timer.elapsed() <= MousePanReleaseTimeoutMs;
@@ -1886,7 +1465,6 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
         this->mouse_pan_move_elapsed_timer.start();
         this->mouse_pan_inertia_active = false;
         this->mouse_pan_drag_distance = 0;
-        beginBrowserMapMousePan();
         stopPanAnimationIfIdle();
         event->accept();
         return true;
@@ -1903,7 +1481,6 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
         this->mouse_pan_velocity = QPointF();
         this->mouse_pan_inertia_active = false;
         this->mouse_pan_drag_distance = 0;
-        cancelBrowserMapMousePan();
         return false;
     }
 
@@ -1932,33 +1509,26 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
     }
 
     const qint64 elapsed_ms = this->mouse_pan_move_elapsed_timer.restart();
-    if (browserMapHandlesMouseInertia())
-    {
-        updateBrowserMapMousePan(delta, elapsed_ms);
-    }
-    else
-    {
-        this->mouse_pan_drag_distance += delta.manhattanLength();
+    this->mouse_pan_drag_distance += delta.manhattanLength();
 
-        if (!delta.isNull() && elapsed_ms > 0)
+    if (!delta.isNull() && elapsed_ms > 0)
+    {
+        const qreal elapsed_seconds = qBound<qreal>(0.001, elapsed_ms / 1000.0, 0.1);
+        QPointF measured_velocity = QPointF(delta) / elapsed_seconds;
+        const qreal measured_speed = vectorLength(measured_velocity);
+        if (measured_speed > MousePanMaximumSpeedPixelsPerSecond)
+            measured_velocity = normalized(measured_velocity) * MousePanMaximumSpeedPixelsPerSecond;
+        measured_velocity *= mouse_pan_sensitivity;
+
+        if (this->mouse_pan_velocity.isNull())
         {
-            const qreal elapsed_seconds = qBound<qreal>(0.001, elapsed_ms / 1000.0, 0.1);
-            QPointF measured_velocity = QPointF(delta) / elapsed_seconds;
-            const qreal measured_speed = vectorLength(measured_velocity);
-            if (measured_speed > MousePanMaximumSpeedPixelsPerSecond)
-                measured_velocity = normalized(measured_velocity) * MousePanMaximumSpeedPixelsPerSecond;
-            measured_velocity *= mouse_pan_sensitivity;
-
-            if (this->mouse_pan_velocity.isNull())
-            {
-                this->mouse_pan_velocity = measured_velocity;
-            }
-            else
-            {
-                this->mouse_pan_velocity =
-                    this->mouse_pan_velocity * (1.0 - MousePanVelocitySmoothing) +
-                    measured_velocity * MousePanVelocitySmoothing;
-            }
+            this->mouse_pan_velocity = measured_velocity;
+        }
+        else
+        {
+            this->mouse_pan_velocity =
+                this->mouse_pan_velocity * (1.0 - MousePanVelocitySmoothing) +
+                measured_velocity * MousePanVelocitySmoothing;
         }
     }
 
@@ -2032,19 +1602,6 @@ void MapWidget::setCachedTerrainElevationResolver(CachedTerrainElevationResolver
     this->cached_terrain_elevation_resolver = std::move(resolver);
 }
 
-void MapWidget::scheduleTileUpdate(const QString &)
-{
-    if (this->render_surface_active)
-        return;
-#ifdef Q_OS_WASM
-    if (this->browser_map_layer_enabled)
-        return;
-#endif
-
-    if (!this->tile_update_timer->isActive())
-        this->tile_update_timer->start();
-}
-
 // Zoom buttons/menu: one smooth octave about the crosshair, never an
 // integer tile-zoom jump (MapModel::zoomIn/zoomOut are not navigation).
 void MapWidget::zoomIn()
@@ -2066,10 +1623,8 @@ void MapWidget::setRenderSurfaceActive(bool active)
     if (active)
         return;
 
-    // Never snap the camera to an integer zoom here. The remaining CPU
-    // painter (drawTiles, editor only) draws the fractional continuous scale.
-    // Only the legacy WASM browser map layer is integer-zoom only; it is
-    // re-synchronized by setBrowserMapLayerEnabled().
+    // Never snap the camera to an integer zoom here: the continuous camera
+    // stays authoritative with or without a GPU surface.
     stopPanAnimationIfIdle();
 }
 
@@ -2080,100 +1635,11 @@ void MapWidget::changeMapProvider(MapProvider provider)
 
 void MapWidget::paintEvent(QPaintEvent *event)
 {
+    // The GPU surface draws the map; until it does (or when it cannot), this
+    // widget only covers its area (WA_OpaquePaintEvent). It never paints map
+    // tiles: the CPU map renderers are gone (monitor and editor).
     if (this->render_surface_active)
-    {
-        Q_UNUSED(event)
         return;
-    }
-    if (!this->tile_painting_enabled)
-    {
-        // WA_OpaquePaintEvent: the widget must still cover its area.
-        QPainter painter(this);
-        painter.fillRect(event->rect(), this->palette().brush(QPalette::Window));
-        return;
-    }
-#ifdef Q_OS_WASM
-    if (this->browser_map_layer_enabled)
-    {
-        Q_UNUSED(event)
-        return;
-    }
-#endif
-
     QPainter painter(this);
-    painter.setClipRegion(event->region());
     painter.fillRect(event->rect(), this->palette().brush(QPalette::Window));
-    this->drawTiles(painter);
-
-    if (this->has_gps_coordinate)
-    {
-        const QPointF gps_point = this->m_model->screenFromWgs84(
-            this->gps_coordinate, size());
-        painter.setBrush(Qt::red);
-        painter.drawEllipse(gps_point, 5.0, 5.0);
-    }
-}
-
-void MapWidget::drawTiles(QPainter &painter)
-{
-    const int tile_count = this->m_model->tileCount();
-    const QPointF center = this->m_model->centerTile();
-    const double center_x = center.x();
-    const double center_y = center.y();
-    const double view_scale = this->m_model->viewMode() == MapViewMode::TwoD
-        ? qMax(1e-9, this->m_model->view2dContinuousScale())
-        : 1.0;
-    const double rendered_tile_size = double(MapModel::TileSize) * view_scale;
-
-    const int viewport_width = this->width();
-    const int viewport_height = this->height();
-    const int tiles_x = int(std::ceil(double(viewport_width) / rendered_tile_size)) + 4;
-    const int tiles_y = int(std::ceil(double(viewport_height) / rendered_tile_size)) + 4;
-    const int center_tile_x = int(std::floor(center_x));
-    const int center_tile_y = int(std::floor(center_y));
-    const int start_x = center_tile_x - tiles_x / 2;
-    const int start_y = center_tile_y - tiles_y / 2;
-    const QString request_layout_key = QStringLiteral("%1|%2|%3|%4|%5")
-        .arg(this->m_model->tileCachePrefix(this->m_model->zoom()))
-        .arg(start_x)
-        .arg(start_y)
-        .arg(tiles_x)
-        .arg(tiles_y);
-    const quint64 request_batch = this->tile_repository->beginTileRequestBatch(
-        this, request_layout_key);
-
-    for (int delta_x = 0; delta_x < tiles_x; ++delta_x)
-    {
-        for (int delta_y = 0; delta_y < tiles_y; ++delta_y)
-        {
-            const int virtual_x = start_x + delta_x;
-            const int y = start_y + delta_y;
-
-            if (y < 0 || y >= tile_count)
-                continue;
-
-            const int tile_x = GeoWebMercator::wrapTileX(virtual_x, this->m_model->zoom());
-            const QString key = this->m_model->tileCacheKey(tile_x, y);
-            const QPixmap *pixmap = this->tile_repository->tile(key);
-
-            if (!pixmap)
-            {
-                const int priority_x = virtual_x - center_tile_x;
-                const int priority_y = y - center_tile_y;
-                const int priority = priority_x * priority_x + priority_y * priority_y;
-                this->tile_repository->requestTile(
-                    this->m_model->tileEndpoint(tile_x, y), key, tile_x, y,
-                    priority, request_batch);
-                continue;
-            }
-
-            const double pixel_x =
-                (virtual_x - center_x) * rendered_tile_size + viewport_width / 2.0;
-            const double pixel_y =
-                (y - center_y) * rendered_tile_size + viewport_height / 2.0;
-            painter.drawPixmap(
-                QRectF(pixel_x, pixel_y, rendered_tile_size, rendered_tile_size),
-                *pixmap, QRectF(pixmap->rect()));
-        }
-    }
 }

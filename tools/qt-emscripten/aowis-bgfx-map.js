@@ -1,8 +1,8 @@
-/* Production experimental bgfx canvas; only enabled with mapWasmRenderer="bgfx".
+/* bgfx map canvas (the only browser map renderer; mapWasmRenderer="bgfx").
  * Keep all ordinary Qt widgets BELOW the independent canvas. Only top-level
- * Qt transient dialogs/popups may be above it. Unlike the eventual HUD, this
- * first-step test surface intentionally has pointer-events:none, so camera
- * input continues to be handled by the existing underlying Qt MapWidget.
+ * Qt transient dialogs/popups may be above it. The canvas has
+ * pointer-events:none: all pointer input goes to the Qt MapWidget below,
+ * which routes it to navigation, picking and the native bgfx HUD.
  */
 (function () {
     "use strict";

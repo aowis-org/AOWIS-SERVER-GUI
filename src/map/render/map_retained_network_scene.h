@@ -54,8 +54,19 @@ public:
         {
             // NetworkRenderSnapshot's visual revision carries no new geometry.
             // Replacing the snapshot would copy every demand point needlessly.
+            // IDs can change without geometry (map labels show them): take
+            // them over (same geometry revision = same entities, same order;
+            // QString copies are implicitly shared).
             this->network_snapshot.visual_revision = snapshot.visual_revision;
             update.visual_changed = true;
+            if (this->network_snapshot.nodes.size() == snapshot.nodes.size()
+                && this->network_snapshot.links.size() == snapshot.links.size())
+            {
+                for (qsizetype index = 0; index < snapshot.nodes.size(); ++index)
+                    this->network_snapshot.nodes[index].id = snapshot.nodes.at(index).id;
+                for (qsizetype index = 0; index < snapshot.links.size(); ++index)
+                    this->network_snapshot.links[index].id = snapshot.links.at(index).id;
+            }
         }
         return update;
     }

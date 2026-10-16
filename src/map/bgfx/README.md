@@ -4,9 +4,13 @@ The surface is integrated into the actual Map Monitor on desktop and WASM and
 built by default (`AOWIS_ENABLE_BGFX_MAP=ON`). The desktop CPU (QPainter) map
 monitor was removed: it displayed the network at the integer tile zoom and was
 the source of step-wise zoom. Without a working GPU surface the monitor shows a
-status message, never a CPU-rendered map. QRhi remains selectable
-(`gui/map_desktop_renderer=rhi`) until the bgfx globe is done; the editor still
-renders with QPainter until it moves to bgfx (roadmap Phase 2).
+status message, never a CPU-rendered map. bgfx is the default renderer on
+desktop and WASM. QRhi remains selectable (`gui/map_desktop_renderer=rhi`,
+`map_wasm_renderer=rhi`) for the monitor until the bgfx globe is done. The
+map editor draws with bgfx only (roadmap Phase 2); the QPainter editor
+(`MapEditorRenderer`), its QRhi overlay path and `MapWidget`'s CPU tile
+painting were removed. The JavaScript/WebGL map renderer (monitor and
+editor) was removed.
 
 ## Retained 2D network GPU drawing
 
@@ -96,7 +100,7 @@ renders with QPainter until it moves to bgfx (roadmap Phase 2).
   scene; the GPU mesh, highlights and picking follow
   `MapBgfx2dScene::preparationId()` (no geometry revision needed).
 
-## Native HUD (slice 6a)
+## Native HUD (slices 6a, 6b)
 
 QWidgets cannot sit on top of bgfx's native window, so the HUD is drawn by
 bgfx itself, last in the map view (always on top), as one indexed draw per
@@ -104,7 +108,7 @@ frame:
 
 * `map_bgfx_hud_canvas.h`: logical-pixel draw list (rects, rounded rects,
   circles, lines, atlas sprites) with premultiplied ABGR vertex colours and
-  16-bit indices. Solid shapes sample one white atlas texel, so everything is
+  32-bit indices. Solid shapes sample one white atlas texel, so everything is
   one program, one texture, one draw.
 * `map_bgfx_hud_text_cache.*`: whole text runs and images rasterized by Qt
   (QPainter, the widget font, the screen's logical DPI and device pixel
@@ -120,29 +124,158 @@ frame:
   m queued", Cancel stays disabled until fresh numbers arrive), 2D/3D switch
   top left (3D disabled until the bgfx globe exists), fullscreen button top
   right (desktop). Hit boxes come from the last build: clickable is exactly
-  what was drawn.
+  what was drawn; boxes of a popup closed since then are ignored.
+* Map legend (slice 6b), bottom right, like `EntityMapLegendHud`: node /
+  link / heatmap metric combos (list opens on press, below or above the
+  combo and tall enough for every entry; only when neither side has room it
+  scrolls, with a scroll bar: drag the thumb, click the track to page, wheel),
+  colour ramps (gradient through the palette stops, 7/5/3 value labels that
+  never collide, "uniform", "No finite values"), the hover value swatch, the
+  palette menu (Sequential / Diverging, preview + Flip per palette, Reset)
+  and QToolTip-style tooltips after 0.7 s. A press outside an open popup
+  closes it and is swallowed; Escape and focus loss close it too.
+* `map_bgfx_legend_content.*` (application side): the legend's entries,
+  ranges in the displayed unit, palette stops and defaults, computed exactly
+  like `EntityMapLegendHud` from the symbology settings and the ranges
+  `applySymbology()` already has. While the bgfx map is active the legend
+  dock stays hidden; a HUD choice goes through the same container paths as
+  the left menu and the dock (`setNodePalette()`, `applySymbology()`).
 * `map_bgfx_hud_gpu.*`, `vs_hud.sc`/`fs_hud.sc`: point-sampled atlas
   (texels on the physical pixel grid), premultiplied blend, transient buffers.
 
 Input: every map mouse event goes to the HUD first
 (`MapMonitorContainer::routeBgfxHudMouseEvent()`); a press on a HUD panel is
 consumed together with its moves and release and never reaches navigation,
-picking or hover. Button actions are delivered queued
+picking or hover. Wheel events over a HUD panel scroll an open list or are
+swallowed (`handleHudWheelEvent()`), never zooming the map underneath.
+Button and legend actions are delivered queued as `MapBgfxHud::Command`
 (`setHudActionHandler()`), outside the native window's event dispatch,
-because fullscreen reparents the map. Desktop cursors are set on the
-embedded native window (`setHoverCursor()`), the only cursor visible there.
+because fullscreen reparents the map. Desktop cursors (pointing hand, cross
+over ramps) are set on the embedded native window (`setMapCursor()`), the
+only cursor visible there.
 
-Fullscreen reparents `map_stack` like the QRhi path. If the platform destroys
-and recreates the native window meanwhile, the surface shuts bgfx down on
-`SurfaceAboutToBeDestroyed` and restarts on the new surface
-(`QPlatformSurfaceEvent`).
+Fullscreen reparents `map_stack` like the QRhi path, but shuts bgfx down
+first (`suspendForNativeWindowChange()`) and restarts it once the native
+window is exposed again (`resumeAfterNativeWindowChange()`). Qt Wayland
+destroys the embedded window's wl_surface on reparent without a
+`QPlatformSurfaceEvent`; a Vulkan swapchain still alive on it ends the whole
+Wayland connection ("wp_linux_drm_syncobj_surface_v1: Surface got destroyed
+already"). `QPlatformSurfaceEvent` handling remains as the fallback for
+unplanned native-window recreation.
 
 bgfx's statistics text overlay would cover the HUD; it is shown only with
 `AOWIS_BGFX_DEBUG=1`.
 
-**Not yet implemented:** map legend HUD (slice 6b), labels, hidden-entity
-filter (`setHiddenEntityUuids`) and network screen translation (editor
-features, Phase 2), terrain/globe.
+**Not yet implemented:** terrain/globe.
+
+## Map labels
+
+Text on the map next to the network entities, like EPANET's *Map Options ->
+Notation*: node IDs, link IDs and (monitor) the values of the metric the map
+is coloured by, in the legend's unit (`MapLabelSettings`,
+`map/render/map_label_settings.h`; switches under "Labels" in the left
+menu's `MapNavigationWidget`, all off by default).
+
+* `map_bgfx_labels.*` (pure Qt Gui, unit-tested in
+  `tests/bgfx_labels_test.cpp`): greedy, decluttered screen-space placement.
+  Candidates are the entities on screen at their drawn positions (links: the
+  middle of their visible length; pipes shorter than 24 px get none). Every
+  on-screen node symbol and device icon is an obstacle; labels are tried in
+  priority order (tanks/reservoirs, pumps/valves, junctions, pipes, demand
+  points; ties by render id, stable while panning) at up to four positions
+  around their symbol, and kept only where they overlap neither a label nor
+  a symbol and lie inside the viewport. A 48 px grid keeps each test local.
+  Above 30000 on-screen nodes only tanks, reservoirs, pumps and valves are
+  labelled.
+* Text: `MapBgfxHudTextCache::haloText()` rasterizes each run once as one
+  colour sprite, dark text with a white outline (`QPainterPath` stroke +
+  fill), readable over imagery and lines; node labels near black, link
+  labels dark blue. ID and value are two centred lines. The labels' own
+  2048 x 2048 atlas is created on first use; placement stops before one
+  frame's labels would exceed 70 % of it, and at most 160 new runs are
+  rasterized per frame (the rest keep their slot and appear in the next
+  frames).
+* `MapBgfxSurface::renderLabels()`: drawn after the network and the editor
+  overlay, before the HUD, with the network's camera (the editor's
+  full-network move included); rebuilt only when the camera, the viewport,
+  the prepared scene, the atlas or the content (settings, symbology, value
+  formats, hidden entities, renames) changed. Values: canonical metric values
+  by render id in `MapNetworkRenderSymbology::node_values / link_values`,
+  converted with `mapBgfxLabelValueFormat()` (the legend ramp's affine unit
+  conversion). Symbol boxes: the GPU network's dots and icons (monitor), the
+  editor's bottom-anchored / centred icon rects (`setLabelSymbolRects()`).
+* Renames change no geometry: `HydraulicData::setNodeId()` & co. rebuild the
+  current render snapshot (same render ids), the retained scene takes the
+  IDs over on the visual-revision update, and the containers re-send the
+  snapshot on `signalNodeChanged` / `signalLinkChanged` /
+  `signalDemandPointChanged`.
+
+## Map editor (Phase 2)
+
+The Map Editor uses a second `MapBgfxSurface`, and only bgfx. It draws the
+imagery, the static network in the editor look (black pipes, brown device
+links, black 10 px node dots: `applyRenderSurfaceEditorSymbology()`), every
+editor overlay, map labels and the HUD (crosshair, GPS dot, scale bar, the
+2D/3D switch, the fullscreen button on desktop). `MapCanvasWidget` is the input
+owner (editor controller first, then MapWidget navigation) and paints
+nothing. There is no fallback renderer: until the first frame, and when bgfx
+cannot start (or is not in the build), a status label takes the map's place,
+as in the monitor.
+
+* `map_bgfx_editor_overlay.*` (pure Qt Gui, unit-tested in
+  `tests/bgfx_editor_overlay_test.cpp`): port of the former QPainter editor's
+  `paintRenderSurfaceOverlay()` into a HUD-kit draw list,
+  rebuilt per frame from `MapEditorVisualState` with the continuous camera:
+  tile-cache and rectangle selection frames, full-colour icons (nodes
+  bottom-anchored at the rounded position, device links centred), pipe
+  vertex dots, demand-point attachments (dashed, with handles), selection,
+  connection target, simulation errors, pipe / device-link rubber bands, the
+  floating marker and the move preview. Snapshot geometry is projected to
+  Web Mercator once per geometry revision; icons are culled before they are
+  requested.
+* `map_bgfx_editor_icons.*`: the icon provider. Each (pixmap, width,
+  highlight) is composited once at the device pixel ratio with the glows of
+  `MapEntityPixmapRenderer::paint()` into the overlay's own 2048 x 2048
+  atlas, then drawn as one quad.
+* Cost rules (networks with many demand points): the editor's visual state
+  (`MapCanvasWidget::visualState()`, O(demand points)) is rebuilt only when
+  the editor's content changes, never per camera frame
+  (`signalCameraChanged()` only refreshes the pointer's map coordinate) and
+  never while the editor is hidden (synced map movement); pipe and device
+  link endpoints come from the markers' uuid index
+  (`MapCanvasMarkers::findMarker()`), not from a hash of all markers built
+  per pipe or per demand point (that was quadratic: seconds per zoom level
+  change); the overlay's icons are memoized per (entity, width, highlight)
+  and atlas generation; zoom changes do no editor symbology work.
+* Move preview: dragged entities are hidden in the GPU network
+  (`setHiddenEntityUuids()`: alpha 0 in the colour stream, no geometry
+  upload) and drawn by the overlay; a full-network move shifts the network
+  by the camera (`setNetworkScreenTranslation()`), the imagery stays.
+* The overlay is drawn between the network and the HUD with a second
+  `MapBgfxHudGpu`. HUD canvases use 32-bit indices; bgfx's transient buffers
+  are raised to 16 MiB vertices / 8 MiB indices (`Init::limits`) for one icon
+  quad per visible node.
+* Input: desktop forwards the native window's events to the canvas
+  (`sendEvent`, same geometry); keyboard focus stays on the canvas
+  (`setKeyboardFocusWidget()`: the native window does not take focus), so
+  the editor's window shortcuts keep working. WASM: the canvas is on top of
+  the Qt stack and receives the pointer directly. Either way the container's
+  event filter on the canvas gives the HUD every pointer event, wheel and
+  Escape first (`routeBgfxHudEvent()`); a HUD button's pointing hand wins
+  over the tool's cursor.
+* Fullscreen (desktop): the HUD button and the map fullscreen shortcut
+  (`MapMonitorFullscreen`, parented to each map stack, so only the visible
+  map's fires) reparent the editor's map stack exactly like the monitor
+  (suspend bgfx, top-level window, `showFullScreen()`, resume). The left
+  menu is then in another window, so its buttons' window shortcuts cannot
+  fire; the canvas' key presses try them first
+  (`MapEditorMenuWidget::triggerButtonShortcut()`), as the shortcut map would
+  have.
+
+One bgfx device per process belongs to the visible surface: hiding a map
+(tab switch) shuts bgfx down, showing the other one starts it (the
+fullscreen restart path). In the browser both maps share the one canvas;
+only the owner positions or hides it.
 
 ## 2D imagery
 

@@ -57,13 +57,11 @@ else
           build-wasm/bgfx-probe.html build-wasm/bgfx-probe-stack.js
 fi
 cp tools/qt-emscripten/aowis-bgfx-map.js build-wasm/
-cp tools/qt-emscripten/aowis-browser-map.js build-wasm/
-cp tools/qt-emscripten/aowis-browser-vector.js build-wasm/
-cp tools/qt-emscripten/aowis-browser-network-webgl.js build-wasm/
-cp tools/qt-emscripten/aowis-browser-network.js build-wasm/
-cp tools/qt-emscripten/aowis-browser-map-editor.js build-wasm/
-# Do not carry the retired Canvas renderer worker forward from an older build tree.
-rm -f build-wasm/aowis-browser-monitor-worker.js
+# The JavaScript/WebGL map renderer (monitor and editor) was removed. Do not
+# carry its scripts forward from an older build tree into build-wasm-dist.
+rm -f build-wasm/aowis-browser-map.js build-wasm/aowis-browser-vector.js \
+      build-wasm/aowis-browser-network-webgl.js build-wasm/aowis-browser-network.js \
+      build-wasm/aowis-browser-map-editor.js build-wasm/aowis-browser-monitor-worker.js
 
 # The WASM configuration is administered in the webroot. Never overwrite an existing
 # administrator-edited build configuration with the source template.
@@ -72,33 +70,11 @@ if [ ! -f "$BUILD_CONFIG" ]; then
 fi
 
 BGFX_MAP_JS_VERSION=$(sha256sum tools/qt-emscripten/aowis-bgfx-map.js | cut -c1-16)
-MAP_JS_VERSION=$(sha256sum tools/qt-emscripten/aowis-browser-map.js | cut -c1-16)
-VECTOR_JS_VERSION=$(sha256sum tools/qt-emscripten/aowis-browser-vector.js | cut -c1-16)
-NETWORK_JS_VERSION=$(sha256sum \
-    tools/qt-emscripten/aowis-browser-network-webgl.js \
-    tools/qt-emscripten/aowis-browser-network.js | sha256sum | cut -c1-16)
-EDITOR_JS_VERSION=$(sha256sum tools/qt-emscripten/aowis-browser-map-editor.js | cut -c1-16)
 sed -i "s|__AOWIS_BGFX_MAP_JS_VERSION__|${BGFX_MAP_JS_VERSION}|g" build-wasm/index.html
-sed -i "s|__AOWIS_MAP_JS_VERSION__|${MAP_JS_VERSION}|g" build-wasm/index.html
-sed -i "s|__AOWIS_VECTOR_JS_VERSION__|${VECTOR_JS_VERSION}|g" build-wasm/index.html
-sed -i "s|__AOWIS_NETWORK_JS_VERSION__|${NETWORK_JS_VERSION}|g" build-wasm/index.html
-sed -i "s|__AOWIS_EDITOR_JS_VERSION__|${EDITOR_JS_VERSION}|g" build-wasm/index.html
 
-rm -rf build-wasm/svg
-cp -r tools/qt-emscripten/svg build-wasm/
-
-rm -rf build-wasm/map-editor-icons
-mkdir -p build-wasm/map-editor-icons
-cp assets/iconsets/gothic/junction.png build-wasm/map-editor-icons/
-cp assets/iconsets/gothic/reservoir.png build-wasm/map-editor-icons/
-cp assets/iconsets/gothic/tower.png build-wasm/map-editor-icons/
-cp assets/iconsets/gothic/pipe.png build-wasm/map-editor-icons/
-cp assets/iconsets/gothic/pump.png build-wasm/map-editor-icons/
-cp assets/iconsets/gothic/valve.png build-wasm/map-editor-icons/
-cp assets/iconsets/gothic/customer.png build-wasm/map-editor-icons/
-cp assets/iconsets/gothic/electricity.png build-wasm/map-editor-icons/
-cp assets/iconsets/gothic/energy.png build-wasm/map-editor-icons/
-cp assets/iconsets/gothic/geomarker.png build-wasm/map-editor-icons/
+# The SVG and PNG icon folders were only loaded by the removed JavaScript map.
+# Icons now come from the Qt resources inside the WASM binary.
+rm -rf build-wasm/svg build-wasm/map-editor-icons
 
 cp assets/img/favicon.ico build-wasm/.
 cp assets/img/aowis.png build-wasm/.
@@ -110,8 +86,6 @@ mkdir -p build-wasm-dist
 
 cp build-wasm/*.js build-wasm/*.wasm build-wasm/*.html build-wasm/favicon.ico build-wasm/aowis.png build-wasm/index.html build-wasm-dist 2>/dev/null || true
 cp build-wasm/.htaccess build-wasm-dist/
-cp -r build-wasm/map-editor-icons build-wasm-dist/
-cp -r build-wasm/svg build-wasm-dist/
 
 # Preserve an administrator-edited distribution config across rebuilds. On the first
 # build, initialize it from build-wasm, which itself is only initialized once.
@@ -120,5 +94,21 @@ if [ -n "$PRESERVED_DIST_CONFIG" ]; then
 else
     cp "$BUILD_CONFIG" "$DIST_CONFIG"
 fi
+
+# Renderer value check for preserved configurations. bgfx is the map renderer;
+# the JavaScript "browser" renderer was removed (rewritten to bgfx, the app
+# would map it anyway). An explicit "rhi" is respected but reported: it was the old
+# template default, so older deployments still carry it without anyone having
+# chosen it.
+for aowis_config in "$BUILD_CONFIG" "$DIST_CONFIG"; do
+    [ -f "$aowis_config" ] || continue
+    if grep -Eq '^[[:space:]]*map_wasm_renderer[[:space:]]*=[[:space:]]*browser[[:space:]]*$' "$aowis_config"; then
+        sed -i -E 's/^([[:space:]]*map_wasm_renderer[[:space:]]*=[[:space:]]*)browser[[:space:]]*$/\1bgfx/' "$aowis_config"
+        echo "NOTE: $aowis_config: map_wasm_renderer=browser is retired; changed to bgfx."
+    elif grep -Eq '^[[:space:]]*map_wasm_renderer[[:space:]]*=[[:space:]]*rhi[[:space:]]*$' "$aowis_config"; then
+        echo "NOTE: $aowis_config still selects map_wasm_renderer=rhi (old default)."
+        echo "      Set map_wasm_renderer=bgfx there (or delete the line) to use bgfx."
+    fi
+done
 
 echo "=== WASM build finished ==="

@@ -9,10 +9,13 @@
 #include "config/unit_profile_manager.h"
 #include "map/bgfx/map_bgfx_2d_symbology.h"
 #include "map/render/map_icon_atlas.h"
+#include "network/infrastructure_entity_traits.h"
 
+#include <QByteArray>
 #include <QDebug>
 #include <QGuiApplication>
 #include <QFocusEvent>
+#include <QFont>
 #include <QHideEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -36,6 +39,7 @@
 
 #ifdef Q_OS_WASM
 #include <emscripten/emscripten.h>
+#include <emscripten/html5.h>
 
 // Resolve the independent canvas within Qt's shadow-root screen, as tested
 // by the existing bgfx probe. Emscripten also needs this alias for reset().
@@ -50,6 +54,19 @@ EM_JS(int, aowisBgfxMapPrepare, (), {
 EM_JS(void, aowisBgfxMapGeometry, (int x, int y, int w, int h, int visible), {
     window.aowisBgfxMap?.geometry(x, y, w, h, Boolean(visible));
 });
+// Latest uncaught browser error recorded by index.html, written as UTF-8
+// into buffer (NUL-terminated, truncated to capacity). Uses only HEAPU8 so
+// it does not depend on optional Emscripten string helpers being linked.
+EM_JS(int, aowisLastBrowserError, (char *buffer, int capacity), {
+    const errors = window.aowisRecentErrors;
+    const text = Array.isArray(errors) && errors.length > 0 ? errors[errors.length - 1] : "";
+    const bytes = new TextEncoder().encode(String(text));
+    const length = Math.min(bytes.length, capacity - 1);
+    for (let index = 0; index < length; ++index)
+        HEAPU8[buffer + index] = bytes[index];
+    HEAPU8[buffer + length] = 0;
+    return length;
+});
 EM_JS(void, aowisBgfxMapRemove, (), {
     if (typeof specialHTMLTargets !== 'undefined')
         delete specialHTMLTargets['!aowis-bgfx-map'];
@@ -63,18 +80,53 @@ EM_JS(void, aowisBgfxMapRemove, (), {
 
 namespace {
 constexpr uint16_t kMapBgfxView = 0;
-// bgfx::init/bgfx::shutdown own a process-global renderer. Until multi-view
-// ownership is introduced, only one experimental surface may initialize it.
-bool g_bgfx_map_initialized = false;
+// bgfx::init/bgfx::shutdown own a process-global renderer. It belongs to one
+// surface at a time: the visible one (Map Monitor or Map Editor tab). A
+// surface that becomes visible takes it over from a hidden owner.
+MapBgfxSurface *g_bgfx_device_owner = nullptr;
+// Room for the editor overlay (one icon quad per visible node) on top of the
+// HUD and imagery: bgfx's defaults are 6 MiB vertices / 2 MiB indices.
+constexpr uint32_t kTransientVertexBytes = 16u << 20;
+constexpr uint32_t kTransientIndexBytes = 8u << 20;
 // Tile texture uploads per frame (~256 KiB each). Enough to fill a screen
 // within a few frames, small enough to never cost a frame while streaming.
 constexpr int kImageryUploadsPerFrame = 8;
 // VSYNC: presentation pacing (see MapFramePacer). MSAA x4: antialiased thick
 // line and marker edges; bgfx clamps it to what the renderer supports.
+#ifdef Q_OS_WASM
+// NOT on WebGL: bgfx's OpenGL ES MSAA back buffer calls
+// glFramebufferTexture2DMultisampleEXT (EXT_multisampled_render_to_texture),
+// which WebGL does not provide. The function pointer stays NULL and the first
+// frame traps with "RuntimeError: null function" inside
+// RendererContextGL::submit(). The browser multisamples the canvas instead:
+// the WebGL context is created with antialias=true (createBrowserContext()).
+constexpr uint32_t kMapBgfxResetFlags = BGFX_RESET_VSYNC;
+#else
 constexpr uint32_t kMapBgfxResetFlags = BGFX_RESET_VSYNC | BGFX_RESET_MSAA_X4;
+#endif
 // Fallback when the platform reports no usable refresh rate.
 constexpr double kFallbackRefreshHz = 60.0;
 #ifdef Q_OS_WASM
+// The WebGL 2 context for the map canvas, created here instead of by bgfx
+// (bgfx hard-codes antialias=false for the contexts it creates). bgfx adopts
+// it through Init::platformData.context and destroys it on bgfx::shutdown().
+// Opaque canvas (alpha=false), depth + stencil for the default framebuffer,
+// browser multisampling for antialiased line and marker edges.
+EMSCRIPTEN_WEBGL_CONTEXT_HANDLE createBrowserContext()
+{
+    EmscriptenWebGLContextAttributes attributes;
+    emscripten_webgl_init_context_attributes(&attributes);
+    attributes.majorVersion = 2;
+    attributes.minorVersion = 0;
+    attributes.alpha = false;
+    attributes.depth = true;
+    attributes.stencil = true;
+    attributes.antialias = true;
+    attributes.premultipliedAlpha = false;
+    attributes.enableExtensionsByDefault = true;
+    return emscripten_webgl_create_context("!aowis-bgfx-map", &attributes);
+}
+
 // requestAnimationFrame loops cannot be cancelled from C++. A loop is only
 // valid while its generation matches; stop/restart/destruction bump it, so a
 // stale callback returns EM_FALSE instead of touching a dead surface or
@@ -166,10 +218,16 @@ MapBgfxSurface::~MapBgfxSurface()
     if (this->initialized) {
         releaseGpuResources();
         bgfx::shutdown();
-        g_bgfx_map_initialized = false;
+        this->initialized = false;
+        if (g_bgfx_device_owner == this)
+            g_bgfx_device_owner = nullptr;
     }
+    if (g_bgfx_device_owner == this)
+        g_bgfx_device_owner = nullptr;
 #ifdef Q_OS_WASM
-    aowisBgfxMapRemove();
+    // The canvas is shared; only the last surface removes it.
+    if (g_bgfx_device_owner == nullptr)
+        aowisBgfxMapRemove();
 #endif
 }
 
@@ -194,6 +252,12 @@ void MapBgfxSurface::setNavigationFrameHandler(NavigationFrameHandler advance)
 
 void MapBgfxSurface::focusNavigationInput()
 {
+    if (this->keyboard_focus_widget)
+    {
+        // Editor: keys go to its canvas widget (ordinary QWidget focus).
+        this->keyboard_focus_widget->setFocus(Qt::OtherFocusReason);
+        return;
+    }
 #ifndef Q_OS_WASM
     // The embedded native window owns key focus on desktop. QWidget focus on
     // the hidden MapWidget cannot be used as a substitute.
@@ -203,12 +267,25 @@ void MapBgfxSurface::focusNavigationInput()
 #endif
 }
 
+void MapBgfxSurface::setKeyboardFocusWidget(QWidget *widget)
+{
+    this->keyboard_focus_widget = widget;
+#ifndef Q_OS_WASM
+    // Clicks must not activate the embedded window, or the top-level loses
+    // its focus widget (and the editor's window shortcuts with it).
+    if (this->native_window != nullptr)
+        this->native_window->setFlag(Qt::WindowDoesNotAcceptFocus, widget != nullptr);
+#endif
+}
+
 bool MapBgfxSurface::eventFilter(QObject *watched, QEvent *event)
 {
 #ifndef Q_OS_WASM
-    // Reparenting the map (fullscreen) can destroy and recreate the native
-    // window: bgfx must let go of the old surface first and start again on
-    // the new one, or it would present into a dead window handle.
+    // Platforms that destroy and recreate the whole native window announce
+    // it here: bgfx must let go of the old surface first and start again on
+    // the new one. This is only the fallback; Qt Wayland destroys the
+    // wl_surface on reparent WITHOUT this event, so planned reparents
+    // (fullscreen) go through suspendForNativeWindowChange() beforehand.
     if (watched == this->native_window && event->type() == QEvent::PlatformSurface)
     {
         const QPlatformSurfaceEvent *surface_event = static_cast<QPlatformSurfaceEvent *>(event);
@@ -222,17 +299,29 @@ bool MapBgfxSurface::eventFilter(QObject *watched, QEvent *event)
             scheduleBackendRestart();
         }
     }
+    // A suspended backend restarts once the (new) surface is on screen.
+    if (watched == this->native_window && event->type() == QEvent::Expose
+        && this->reinitialize_on_surface && this->native_window->isExposed())
+    {
+        scheduleBackendRestart();
+    }
     if (watched == this->native_window && this->initialized)
     {
+        if (event->type() == QEvent::KeyPress && handleHudKeyPress(static_cast<QKeyEvent *>(event)))
+            return true;
         if (event->type() == QEvent::KeyPress && this->navigation_key_press)
             return this->navigation_key_press(static_cast<QKeyEvent *>(event));
         if (event->type() == QEvent::KeyRelease && this->navigation_key_release)
             return this->navigation_key_release(static_cast<QKeyEvent *>(event));
         // The native window fills this surface, which has the same geometry
         // as MapWidget in the stack, so the position is a valid anchor as-is.
+        // The HUD sees the wheel first: over a HUD panel it scrolls a list
+        // or is swallowed, never zooming the map underneath.
         if (event->type() == QEvent::Wheel && this->navigation_wheel)
         {
-            this->navigation_wheel(static_cast<QWheelEvent *>(event));
+            QWheelEvent *wheel = static_cast<QWheelEvent *>(event);
+            if (!handleHudWheelEvent(wheel))
+                this->navigation_wheel(wheel);
             return true;
         }
         // Mouse: same coordinates as MapWidget for the same reason. A QWindow
@@ -245,9 +334,18 @@ bool MapBgfxSurface::eventFilter(QObject *watched, QEvent *event)
              || event->type() == QEvent::MouseButtonDblClick)
             && this->navigation_mouse_press)
         {
-            // A click must also move keyboard focus to the embedded window,
-            // otherwise zoom/pan keys keep going to the previous widget.
-            this->native_window->requestActivate();
+            // A click must also move keyboard focus to the map, otherwise
+            // zoom/pan keys keep going to the previous widget: the embedded
+            // window itself, or the configured focus widget (editor).
+            if (this->keyboard_focus_widget)
+            {
+                this->keyboard_focus_widget->setFocus(Qt::MouseFocusReason);
+                this->keyboard_focus_widget->window()->activateWindow();
+            }
+            else
+            {
+                this->native_window->requestActivate();
+            }
             return this->navigation_mouse_press(static_cast<QMouseEvent *>(event));
         }
         if (event->type() == QEvent::MouseButtonRelease && this->navigation_mouse_release)
@@ -256,6 +354,9 @@ bool MapBgfxSurface::eventFilter(QObject *watched, QEvent *event)
             return this->navigation_mouse_move(static_cast<QMouseEvent *>(event));
         if (event->type() == QEvent::FocusOut && this->navigation_cancel)
             this->navigation_cancel();
+        // Like a Qt popup, an open HUD popup closes when the map loses focus.
+        if (event->type() == QEvent::FocusOut)
+            this->hud.closePopup();
         // The pointer left the map: no HUD button stays hover-highlighted.
         if (event->type() == QEvent::Leave)
             this->hud.clearHover();
@@ -269,6 +370,8 @@ bool MapBgfxSurface::eventFilter(QObject *watched, QEvent *event)
 
 void MapBgfxSurface::keyPressEvent(QKeyEvent *event)
 {
+    if (handleHudKeyPress(event))
+        return;
     if (this->initialized && this->navigation_key_press
         && this->navigation_key_press(event))
         return;
@@ -335,6 +438,9 @@ void MapBgfxSurface::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
 {
     // Retained geometry revisions change only with model changes, not zoom.
     const MapRetainedNetworkUpdate update = this->retained_scene.setSnapshot(snapshot);
+    // New entities or renamed ones: the labels read the IDs again.
+    if (update.geometry_changed || update.visual_changed)
+        this->labels_dirty = true;
     if (update.geometry_changed)
     {
         // Identity for picking (hit -> uuid) and highlights (uuid -> entity).
@@ -528,8 +634,11 @@ void MapBgfxSurface::releaseGpuResources()
     this->imagery_gpu.release();
     this->gpu_2d_scene.release();
     this->hud_gpu.release();
+    this->overlay_gpu.release();
+    this->label_gpu.release();
     // Everything staged on the GPU is gone with the device.
     this->highlights_dirty = true;
+    this->labels_dirty = true;
     this->imagery_layout_key = 0;
     this->imagery_requests_dirty = true;
     this->last_physical_size = QSize();
@@ -543,7 +652,8 @@ void MapBgfxSurface::shutdownBackend()
     releaseGpuResources();
     bgfx::shutdown();
     this->initialized = false;
-    g_bgfx_map_initialized = false;
+    if (g_bgfx_device_owner == this)
+        g_bgfx_device_owner = nullptr;
     this->reinitialize_on_surface = true;
 }
 
@@ -551,26 +661,134 @@ void MapBgfxSurface::scheduleBackendRestart()
 {
     // Queued: the platform window must be fully set up, and the widget may
     // become visible only after the surface was created (or the other way
-    // round); both paths end here and the first one that can start wins.
+    // round); show, SurfaceCreated and Expose all end here and the first one
+    // that finds a mapped, exposed window starts the backend. Starting on an
+    // unexposed Wayland surface would block the first vsync swap.
     QTimer::singleShot(0, this, [this]()
     {
         if (!this->reinitialize_on_surface || this->initialized || this->failed || !isVisible())
             return;
 #ifndef Q_OS_WASM
-        if (this->native_window == nullptr || this->native_window->handle() == nullptr)
+        if (this->native_window == nullptr || this->native_window->handle() == nullptr
+            || !this->native_window->isExposed())
+        {
             return;
+        }
 #endif
         this->reinitialize_on_surface = false;
-        if (!initializeBackend())
-            fail(QStringLiteral("bgfx could not restart on the recreated map window"));
-        else
+        if (initializeBackend())
+        {
             startFrameLoop();
+            return;
+        }
+        if (this->device_busy)
+        {
+            // Another visible map still renders; try again shortly.
+            this->reinitialize_on_surface = true;
+            QTimer::singleShot(250, this, [this]() { scheduleBackendRestart(); });
+            return;
+        }
+        fail(QStringLiteral("bgfx could not restart on the recreated map window"));
     });
 }
 
-void MapBgfxSurface::setHudActionHandler(std::function<void(MapBgfxHud::Action)> handler)
+void MapBgfxSurface::suspendForNativeWindowChange()
+{
+    // bgfx::shutdown() destroys the swapchain and the VkSurface / EGL window
+    // while the native surface still exists. Without this, Qt Wayland
+    // destroys the wl_surface under a live Vulkan swapchain on reparent and
+    // Mesa's explicit-sync object then hits a dead surface: fatal Wayland
+    // protocol error ("Surface got destroyed already").
+    shutdownBackend();
+}
+
+void MapBgfxSurface::resumeAfterNativeWindowChange()
+{
+    // Restarts when the window is exposed again (see the Expose handling in
+    // eventFilter()); no-op when the backend was not running.
+    scheduleBackendRestart();
+}
+
+void MapBgfxSurface::setHudActionHandler(std::function<void(const MapBgfxHud::Command &)> handler)
 {
     this->hud_action_handler = std::move(handler);
+}
+
+void MapBgfxSurface::setHudLegend(const MapBgfxHud::Legend &legend)
+{
+    this->hud.setLegend(legend);
+}
+
+void MapBgfxSurface::closeHudPopup()
+{
+    this->hud.closePopup();
+}
+
+void MapBgfxSurface::setHudViewSwitchVisible(bool visible)
+{
+    this->hud.setViewSwitchVisible(visible);
+}
+
+void MapBgfxSurface::setOverlayBuilder(OverlayBuilder builder)
+{
+    this->overlay_builder = std::move(builder);
+}
+
+void MapBgfxSurface::setLabelSettings(const MapLabelSettings &settings)
+{
+    if (this->label_settings == settings)
+        return;
+    this->label_settings = settings;
+    this->labels_dirty = true;
+}
+
+void MapBgfxSurface::setLabelValueFormats(const MapBgfxLabelValueFormat &node_format,
+                                          const MapBgfxLabelValueFormat &link_format)
+{
+    if (this->label_node_format == node_format && this->label_link_format == link_format)
+        return;
+    this->label_node_format = node_format;
+    this->label_link_format = link_format;
+    this->labels_dirty = true;
+}
+
+void MapBgfxSurface::setLabelSymbolRects(MapBgfxLabels::SymbolRect node_symbol,
+                                         MapBgfxLabels::SymbolRect link_symbol)
+{
+    this->label_node_symbol = std::move(node_symbol);
+    this->label_link_symbol = std::move(link_symbol);
+    this->labels_dirty = true;
+}
+
+void MapBgfxSurface::setHiddenEntityUuids(const QSet<QUuid> &uuids)
+{
+    if (this->hidden_entity_uuids == uuids)
+        return;
+    this->hidden_entity_uuids = uuids;
+    // Only the colour stream changes (alpha 0 for hidden entities).
+    this->symbology_colors_dirty = true;
+    // Moved entities lose their labels during the move.
+    this->labels_dirty = true;
+}
+
+void MapBgfxSurface::setNetworkScreenTranslation(const QPointF &translation)
+{
+    this->network_screen_translation = translation;
+}
+
+bool MapBgfxSurface::handleHudWheelEvent(QWheelEvent *event)
+{
+    if (event == nullptr || !this->initialized)
+        return false;
+    const QPointF position = event->position();
+    return this->hud.mouseWheel(position.x(), position.y(), double(event->angleDelta().y()));
+}
+
+bool MapBgfxSurface::handleHudKeyPress(QKeyEvent *event)
+{
+    if (event == nullptr || !this->initialized || event->key() != Qt::Key_Escape)
+        return false;
+    return this->hud.closePopup();
 }
 
 void MapBgfxSurface::setHudGpsPosition(bool valid, double longitude_deg, double latitude_deg)
@@ -607,15 +825,16 @@ MapBgfxSurface::HudPointer MapBgfxSurface::handleHudMouseEvent(QMouseEvent *even
         case QEvent::MouseButtonRelease:
             if (event->button() == Qt::LeftButton)
             {
-                const MapBgfxHud::Action action =
-                    this->hud.mouseRelease(position.x(), position.y(), &result.consumed);
+                MapBgfxHud::Command command;
+                const MapBgfxHud::Action action = this->hud.mouseRelease(
+                    position.x(), position.y(), &result.consumed, &command);
                 if (action != MapBgfxHud::Action::None && this->hud_action_handler)
                 {
                     // Deferred: an action may reparent this widget (fullscreen),
                     // which must not happen inside the native window's event.
-                    const std::function<void(MapBgfxHud::Action)> handler =
+                    const std::function<void(const MapBgfxHud::Command &)> handler =
                         this->hud_action_handler;
-                    QTimer::singleShot(0, this, [handler, action]() { handler(action); });
+                    QTimer::singleShot(0, this, [handler, command]() { handler(command); });
                 }
             }
             else
@@ -624,31 +843,168 @@ MapBgfxSurface::HudPointer MapBgfxSurface::handleHudMouseEvent(QMouseEvent *even
             }
             break;
         case QEvent::MouseMove:
-            result.consumed = this->hud.mouseMove(position.x(), position.y(), &result.over_button);
+        {
+            result.consumed = this->hud.mouseMove(position.x(), position.y(), nullptr);
+            switch (this->hud.cursor())
+            {
+                case MapBgfxHud::Cursor::PointingHand:
+                    result.cursor = Qt::PointingHandCursor;
+                    break;
+                case MapBgfxHud::Cursor::Cross:
+                    result.cursor = Qt::CrossCursor;
+                    break;
+                case MapBgfxHud::Cursor::Arrow:
+                    result.cursor = Qt::ArrowCursor;
+                    break;
+            }
             break;
+        }
         default:
             break;
     }
     return result;
 }
 
-void MapBgfxSurface::setHoverCursor(bool hovered)
+void MapBgfxSurface::setMapCursor(Qt::CursorShape shape)
 {
 #ifndef Q_OS_WASM
     // The embedded native window has its own cursor; MapWidget's cursor is
     // never shown over it.
     if (this->native_window == nullptr)
         return;
-    if (hovered)
-        this->native_window->setCursor(Qt::PointingHandCursor);
+    if (shape != Qt::ArrowCursor)
+        this->native_window->setCursor(shape);
     else
         this->native_window->unsetCursor();
 #else
-    if (hovered)
-        setCursor(Qt::PointingHandCursor);
+    if (shape != Qt::ArrowCursor)
+        setCursor(shape);
     else
         unsetCursor();
 #endif
+}
+
+void MapBgfxSurface::renderOverlay(const QSizeF &logical, const MapBgfx2d::Camera &camera)
+{
+    if (!this->overlay_builder || !this->overlay_gpu.ready())
+        return;
+#ifdef Q_OS_WASM
+    const qreal ratio = devicePixelRatioF();
+    const QScreen *overlay_screen = screen();
+#else
+    const qreal ratio = this->native_window->devicePixelRatio();
+    const QScreen *overlay_screen = this->native_window->screen();
+#endif
+    this->overlay_text_cache.setDevicePixelRatio(ratio);
+    if (overlay_screen != nullptr)
+        this->overlay_text_cache.setLogicalDpi(overlay_screen->logicalDotsPerInch());
+    this->overlay_builder(&this->overlay_canvas, &this->overlay_text_cache, camera, logical);
+    this->overlay_gpu.uploadAtlas(&this->overlay_text_cache);
+    this->overlay_gpu.draw(kMapBgfxView, this->overlay_canvas, logical);
+}
+
+void MapBgfxSurface::renderLabels(const QSizeF &logical, const MapBgfx2d::Camera &network_camera,
+                                  const MapBgfx2dSymbology::Sizes &sizes)
+{
+    if (!this->label_settings.anyEnabled() || !this->label_gpu.ready()
+        || !this->retained_scene.hasSnapshot() || !this->prepared_2d_scene.isPrepared())
+    {
+        return;
+    }
+#ifdef Q_OS_WASM
+    const qreal ratio = devicePixelRatioF();
+    const QScreen *label_screen = screen();
+#else
+    const qreal ratio = this->native_window->devicePixelRatio();
+    const QScreen *label_screen = this->native_window->screen();
+#endif
+    if (!this->label_text_cache)
+        this->label_text_cache = std::make_unique<MapBgfxHudTextCache>(2048);
+    MapBgfxHudTextCache *cache = this->label_text_cache.get();
+    cache->setDevicePixelRatio(ratio);
+    const double dpi = label_screen != nullptr ? label_screen->logicalDotsPerInch() : 96.0;
+    cache->setLogicalDpi(dpi);
+
+    LabelBuildKey key;
+    key.center_x = network_camera.center.x;
+    key.center_y = network_camera.center.y;
+    key.world_pixels = network_camera.world_pixels;
+    key.viewport_width = logical.width();
+    key.viewport_height = logical.height();
+    key.node_half_px = sizes.node_half_px;
+    key.icon_size_px = sizes.icon_size_px;
+    key.device_pixel_ratio = ratio;
+    key.preparation_id = this->prepared_2d_scene.preparationId();
+    key.atlas_generation = cache->generation();
+    if (this->labels_dirty || !(key == this->label_build_key))
+    {
+        // The application font one step smaller, pixel sized (the halo
+        // outline path and the metrics then agree; see haloText()).
+        QFont font = QGuiApplication::font();
+        const double point_size = font.pointSizeF() > 0.0 ? font.pointSizeF() : 9.0;
+        font.setPixelSize(std::max(9, int(std::lround(0.92 * point_size * dpi / 72.0))));
+
+        // Hidden entities (editor move preview) by entity key.
+        QSet<quint64> hidden_keys;
+        for (const QUuid &uuid : this->hidden_entity_uuids)
+        {
+            const QHash<QUuid, quint64>::const_iterator found =
+                this->entity_key_by_uuid.constFind(uuid);
+            if (found != this->entity_key_by_uuid.cend())
+                hidden_keys.insert(found.value());
+        }
+        // Default symbol boxes: what the GPU network draws (dots, or icons
+        // of icon_size_px with the atlas aspect; pipes have none).
+        const MapNetworkRenderSymbology &symbology = this->symbology;
+        const MapBgfxLabels::SymbolRect icon_box = [sizes](InfrastructureEntity entity_type)
+        {
+            const MapIconAtlasEntry entry = mapIconAtlasEntry(entity_type);
+            const double half_width = sizes.icon_size_px * entry.width_ratio * 0.5;
+            const double half_height = sizes.icon_size_px * entry.height_ratio * 0.5;
+            return MapBgfxHudRect{-half_width, -half_height, 2.0 * half_width, 2.0 * half_height};
+        };
+        const MapBgfxLabels::SymbolRect default_node_symbol =
+            [&symbology, sizes, icon_box](InfrastructureEntity entity_type)
+        {
+            if (entity_type != InfrastructureEntity::Junction && symbology.show_icons
+                && mapHasIcon(entity_type))
+                return icon_box(entity_type);
+            if (entity_type == InfrastructureEntity::Junction && !symbology.show_junctions)
+                return MapBgfxHudRect();
+            const double half = sizes.node_half_px;
+            return MapBgfxHudRect{-half, -half, 2.0 * half, 2.0 * half};
+        };
+        const MapBgfxLabels::SymbolRect default_link_symbol =
+            [&symbology, icon_box](InfrastructureEntity entity_type)
+        {
+            if (entity_type != InfrastructureEntity::Pipe && symbology.show_icons
+                && mapHasIcon(entity_type))
+                return icon_box(entity_type);
+            return MapBgfxHudRect();
+        };
+
+        MapBgfxLabels::Inputs inputs;
+        inputs.viewport = logical;
+        inputs.camera = network_camera;
+        inputs.scene = &this->prepared_2d_scene;
+        inputs.snapshot = &this->retained_scene.snapshot();
+        inputs.settings = this->label_settings;
+        inputs.node_values = &this->symbology.node_values;
+        inputs.link_values = &this->symbology.link_values;
+        inputs.node_value_format = this->label_node_format;
+        inputs.link_value_format = this->label_link_format;
+        inputs.hidden_keys = &hidden_keys;
+        inputs.node_symbol = this->label_node_symbol ? this->label_node_symbol : default_node_symbol;
+        inputs.link_symbol = this->label_link_symbol ? this->label_link_symbol : default_link_symbol;
+        inputs.font = font;
+        const bool complete = this->labels.build(&this->label_canvas, cache, inputs);
+        // Deferred labels: build again next frame even without a change.
+        this->labels_dirty = !complete;
+        key.atlas_generation = cache->generation();
+        this->label_build_key = key;
+    }
+    this->label_gpu.uploadAtlas(cache);
+    this->label_gpu.draw(kMapBgfxView, this->label_canvas, logical);
 }
 
 void MapBgfxSurface::renderHud(const QSizeF &logical, const MapBgfx2d::Camera &camera)
@@ -693,15 +1049,32 @@ void MapBgfxSurface::showEvent(QShowEvent *event)
     }
     if (this->failed || this->initialization_attempted)
         return;
+    beginInitialization();
+}
+
+void MapBgfxSurface::beginInitialization()
+{
     // Native platform window and Qt's WASM shadow-root must exist first.
     QTimer::singleShot(0, this, [this]() {
-        if (!isVisible() || this->failed || this->initialization_attempted)
+        if (!isVisible() || this->failed || this->initialization_attempted || this->initialized)
             return;
         this->initialization_attempted = true;
-        if (!initializeBackend())
-            fail(QStringLiteral("bgfx initialization failed; original map renderer retained"));
-        else
+        qInfo() << "bgfx map: initializing at" << physicalSize() << "physical pixels";
+        if (initializeBackend())
+        {
+            qInfo() << "bgfx map: initialized, waiting for the first frame";
             startFrameLoop();
+            return;
+        }
+        if (this->device_busy)
+        {
+            // The other map tab has not released the device yet (it is
+            // still visible); not a failure.
+            this->initialization_attempted = false;
+            QTimer::singleShot(250, this, [this]() { beginInitialization(); });
+            return;
+        }
+        fail(QStringLiteral("bgfx initialization failed (%1)").arg(startupDiagnostics()));
     });
 }
 
@@ -709,8 +1082,17 @@ void MapBgfxSurface::hideEvent(QHideEvent *event)
 {
     QWidget::hideEvent(event);
     stopFrameLoop();
+    // No popup survives the map being hidden (tab switch, fullscreen).
+    this->hud.closePopup();
+    // The device follows the visible map: a hidden map releases it so the
+    // other tab's map can start (restarts on the next show). A fullscreen
+    // reparent has already suspended the backend; nothing to do then.
+    if (this->initialized)
+        shutdownBackend();
 #ifdef Q_OS_WASM
-    aowisBgfxMapGeometry(0, 0, 0, 0, 0);
+    // The canvas is shared; hide it only when no other map owns it now.
+    if (g_bgfx_device_owner == nullptr)
+        aowisBgfxMapGeometry(0, 0, 0, 0, 0);
 #endif
 }
 
@@ -821,9 +1203,13 @@ EM_BOOL MapBgfxSurface::animationFrameCallback(double time_ms, void *user_data)
 void MapBgfxSurface::synchronizeGeometry()
 {
 #ifdef Q_OS_WASM
-    const QPoint position = mapToGlobal(QPoint(0, 0));
-    aowisBgfxMapGeometry(position.x(), position.y(), width(), height(),
-                         isVisible() && this->initialized ? 1 : 0);
+    // The shared canvas follows the map that owns the device.
+    if (g_bgfx_device_owner == this || g_bgfx_device_owner == nullptr)
+    {
+        const QPoint position = mapToGlobal(QPoint(0, 0));
+        aowisBgfxMapGeometry(position.x(), position.y(), width(), height(),
+                             isVisible() && this->initialized ? 1 : 0);
+    }
 #endif
     if (!this->initialized)
         return;
@@ -839,15 +1225,44 @@ void MapBgfxSurface::synchronizeGeometry()
 
 bool MapBgfxSurface::initializeBackend()
 {
-    if (g_bgfx_map_initialized) {
-        qWarning() << "A bgfx map surface is already active";
-        return false;
+    this->device_busy = false;
+    if (g_bgfx_device_owner != nullptr && g_bgfx_device_owner != this)
+    {
+        if (g_bgfx_device_owner->isVisible())
+        {
+            // Two maps visible at once (not a layout the application has):
+            // wait for the other one to be hidden.
+            qInfo() << "bgfx map: the device is in use by another visible map; waiting";
+            this->device_busy = true;
+            return false;
+        }
+        // Take the device over from a hidden map (it restarts when shown).
+        g_bgfx_device_owner->shutdownBackend();
     }
     bgfx::Init settings{};
+    settings.limits.maxTransientVbSize = kTransientVertexBytes;
+    settings.limits.maxTransientIbSize = kTransientIndexBytes;
+    this->startup_step = "preparing the render target";
 #ifdef Q_OS_WASM
     if (!aowisBgfxMapPrepare())
+    {
+        // window.aowisBgfxMap missing (aowis-bgfx-map.js not loaded), Qt's
+        // screen element not found, or specialHTMLTargets unavailable.
+        qWarning() << "bgfx map: the browser canvas could not be prepared";
         return false;
+    }
     settings.swapChain.nwh = const_cast<char *>("!aowis-bgfx-map");
+    {
+        const EMSCRIPTEN_WEBGL_CONTEXT_HANDLE context = createBrowserContext();
+        if (context <= 0)
+        {
+            qWarning() << "bgfx map: the WebGL 2 context could not be created, error"
+                       << int(context);
+            return false;
+        }
+        settings.platformData.context =
+            reinterpret_cast<void *>(static_cast<intptr_t>(context));
+    }
 #else
     settings.swapChain.nwh = reinterpret_cast<void *>(this->native_window->winId());
 #if defined(Q_OS_LINUX)
@@ -911,6 +1326,10 @@ bool MapBgfxSurface::initializeBackend()
     for (const bgfx::RendererType::Enum attempt : attempts)
     {
         settings.type = attempt;
+        this->startup_step = "bgfx::init()";
+        qInfo() << "bgfx map: bgfx::init() for"
+                << (attempt == bgfx::RendererType::Count
+                    ? "automatic selection" : bgfx::getRendererName(attempt));
         if (!bgfx::init(settings))
         {
             qWarning() << "bgfx init failed for"
@@ -927,18 +1346,29 @@ bool MapBgfxSurface::initializeBackend()
             continue;
         }
         this->initialized = true;
-        g_bgfx_map_initialized = true;
-        if (!this->gpu_2d_scene.initialize(mapIconAtlasImage()) || !this->imagery_gpu.initialize()
-            || !this->hud_gpu.initialize())
+        g_bgfx_device_owner = this;
+        this->startup_step = "creating shaders and GPU resources";
+        // Each part reports what it rejected; name the part here as well.
+        const bool network_ready = this->gpu_2d_scene.initialize(mapIconAtlasImage());
+        const bool imagery_ready = network_ready && this->imagery_gpu.initialize();
+        const bool hud_ready = imagery_ready && this->hud_gpu.initialize()
+            && this->overlay_gpu.initialize() && this->label_gpu.initialize();
+        if (!network_ready || !imagery_ready || !hud_ready)
         {
+            const bgfx::Caps *caps = bgfx::getCaps();
             qWarning() << "bgfx map shader initialization failed on"
-                       << bgfx::getRendererName(selected);
+                       << bgfx::getRendererName(selected) << "in"
+                       << (!network_ready ? "network" : !imagery_ready ? "imagery" : "HUD")
+                       << "- max texture size" << (caps != nullptr ? int(caps->limits.maxTextureSize) : -1)
+                       << "RGBA8 caps" << Qt::hex
+                       << (caps != nullptr ? int(caps->formats[bgfx::TextureFormat::RGBA8]) : -1);
             releaseGpuResources();
             bgfx::shutdown();
             this->initialized = false;
-            g_bgfx_map_initialized = false;
+            g_bgfx_device_owner = nullptr;
             continue;
         }
+        this->startup_step = "running";
         qInfo() << "Map Monitor renderer:" << graphicsApiName();
         // bgfx's text overlay covers the HUD; diagnostics only on request.
         bgfx::setDebug(this->debug_overlay_enabled ? BGFX_DEBUG_TEXT : BGFX_DEBUG_NONE);
@@ -979,6 +1409,9 @@ void MapBgfxSurface::renderFrame()
 
 void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
 {
+    // Counted before any early return: tells a dead frame loop apart from a
+    // loop that runs but skips (startupDiagnostics()).
+    ++this->frame_callback_count;
     if (!this->initialized || !isVisible())
         return;
     synchronizeGeometry();
@@ -1032,10 +1465,52 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
         if (this->gpu_2d_scene.colorsStale() || this->symbology_colors_dirty)
         {
             const MapNetworkRenderSymbology &symbology = this->symbology;
-            const MapBgfx2dMesh::ColorLookup lookup =
-                [&symbology](MapBgfx2dPrimitive primitive, quint32 render_id,
-                             InfrastructureEntity entity_type)
+            // Hidden entities (editor move preview) by the keys the colour
+            // lookup sees: links by render id, nodes by entity key, demand
+            // point attachments by the demand point's render id.
+            QSet<quint32> hidden_links;
+            QSet<quint64> hidden_nodes;
+            QSet<quint32> hidden_attachments;
+            for (const QUuid &uuid : this->hidden_entity_uuids)
             {
+                const QHash<QUuid, quint64>::const_iterator found =
+                    this->entity_key_by_uuid.constFind(uuid);
+                if (found == this->entity_key_by_uuid.cend())
+                    continue;
+                const InfrastructureEntity entity_type =
+                    static_cast<InfrastructureEntity>(quint8(found.value() >> 32));
+                const quint32 render_id = quint32(found.value() & 0xffffffffu);
+                if (InfrastructureEntityTraits::isHydraulicNetworkLink(entity_type))
+                {
+                    hidden_links.insert(render_id);
+                    continue;
+                }
+                hidden_nodes.insert(found.value());
+                if (entity_type == InfrastructureEntity::DemandPoint)
+                    hidden_attachments.insert(render_id);
+            }
+            const MapBgfx2dMesh::ColorLookup lookup =
+                [&symbology, &hidden_links, &hidden_nodes, &hidden_attachments](
+                    MapBgfx2dPrimitive primitive, quint32 render_id,
+                    InfrastructureEntity entity_type)
+            {
+                switch (primitive)
+                {
+                    case MapBgfx2dPrimitive::Link:
+                    case MapBgfx2dPrimitive::LinkIcon:
+                        if (hidden_links.contains(render_id))
+                            return 0u;
+                        break;
+                    case MapBgfx2dPrimitive::Attachment:
+                        if (hidden_attachments.contains(render_id))
+                            return 0u;
+                        break;
+                    default:
+                        if (!hidden_nodes.isEmpty()
+                            && hidden_nodes.contains(MapBgfx2dScene::entityKey(entity_type, render_id)))
+                            return 0u;
+                        break;
+                }
                 return MapBgfx2dSymbology::color(symbology, primitive, render_id, entity_type,
                                                  mapHasIcon(entity_type));
             };
@@ -1062,7 +1537,18 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
         style.heatmap_radius_px = sizes.heatmap_radius_px;
         style.heatmap_opacity = sizes.heatmap_opacity;
         style.heatmap_solid_fraction = sizes.heatmap_solid_fraction;
-        this->network_frame_stats = this->gpu_2d_scene.draw(view, style);
+        // Editor full-network move: the network is drawn shifted (camera
+        // offset), the imagery underneath is not.
+        MapBgfx2d::Camera network_view = view;
+        if (!this->network_screen_translation.isNull() && view.world_pixels > 0.0)
+        {
+            network_view.center.x -= this->network_screen_translation.x() / view.world_pixels;
+            network_view.center.y -= this->network_screen_translation.y() / view.world_pixels;
+        }
+        this->network_frame_stats = this->gpu_2d_scene.draw(network_view, style);
+        renderOverlay(logical, view);
+        // Labels above the network and the editor's icons, below the HUD.
+        renderLabels(logical, network_view, sizes);
     }
     // The HUD is submitted last into the Sequential map view: always on top.
     renderHud(logical, MapBgfx2d::cameraFor(
@@ -1074,6 +1560,7 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
     ++this->frame_count;
     if (!this->ready_reported) {
         this->ready_reported = true;
+        qInfo() << "bgfx map: first frame presented";
         emit signalRendererReady();
     }
 }
@@ -1118,6 +1605,46 @@ void MapBgfxSurface::renderDebugOverlay()
                         static_cast<unsigned long long>(this->imagery_gpu.uploadCount()));
 }
 
+QString MapBgfxSurface::startupDiagnostics() const
+{
+    QString stage;
+    if (this->failed)
+        stage = QStringLiteral("failed");
+    else if (!this->initialization_attempted)
+        stage = isVisible() ? QStringLiteral("not initialized yet (waiting for the event loop)")
+                            : QStringLiteral("not initialized: map surface not visible");
+    else if (!this->initialized)
+        stage = QStringLiteral("initialization did not complete (stuck in: %1)")
+                    .arg(QString::fromLatin1(this->startup_step));
+    else if (!this->frame_loop_running)
+        stage = QStringLiteral("initialized, frame loop not running");
+    else if (this->frame_count == 0)
+        stage = QStringLiteral("initialized, no frame presented yet");
+    else
+        stage = QStringLiteral("presenting frames");
+    const QSize pixels = physicalSize();
+    return QStringLiteral("%1; visible %2, size %3x%4 px, frame callbacks %5, frames %6")
+        .arg(stage)
+        .arg(isVisible() ? QStringLiteral("yes") : QStringLiteral("no"))
+        .arg(pixels.width())
+        .arg(pixels.height())
+        .arg(this->frame_callback_count)
+        .arg(this->frame_count)
+#ifdef Q_OS_WASM
+        // A JavaScript exception thrown inside bgfx/Emscripten code unwinds
+        // the Qt callback silently; the page recorded it.
+        + []()
+        {
+            QByteArray buffer(512, '\0');
+            const int length = aowisLastBrowserError(buffer.data(), int(buffer.size()));
+            const QString error = QString::fromUtf8(buffer.constData(), std::max(0, length));
+            return error.isEmpty() ? QString()
+                                   : QStringLiteral("\nlast browser error: %1").arg(error);
+        }()
+#endif
+        ;
+}
+
 void MapBgfxSurface::fail(const QString &reason)
 {
     this->failed = true;
@@ -1126,7 +1653,8 @@ void MapBgfxSurface::fail(const QString &reason)
         releaseGpuResources();
         bgfx::shutdown();
         this->initialized = false;
-        g_bgfx_map_initialized = false;
+        if (g_bgfx_device_owner == this)
+            g_bgfx_device_owner = nullptr;
     }
     qWarning().noquote() << reason;
     emit signalRendererFailed(reason);
@@ -1235,6 +1763,8 @@ void MapBgfxSurface::setSymbology(const MapNetworkRenderSymbology &symbology)
 {
     this->symbology = symbology;
     this->symbology_colors_dirty = true;
+    // New values (time step, metric) and symbol sizes.
+    this->labels_dirty = true;
 }
 
 void MapBgfxSurface::setVisualControlSettings(const NetworkSymbologySettings &settings)
@@ -1265,4 +1795,6 @@ void MapBgfxSurface::setVisualControlSettings(const NetworkSymbologySettings &se
     this->symbology.heatmap_solid_center_percent = bounded.heatmap_solid_center_percent;
     if (attributes_changed)
         this->symbology_colors_dirty = true;
+    // Junction visibility and icon sizes move the labels' symbol boxes.
+    this->labels_dirty = true;
 }

@@ -7,9 +7,7 @@
 #include <QWidget>
 #include <QUuid>
 
-#ifdef Q_OS_WASM
 #include <QTimer>
-#endif
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QGridLayout>
@@ -149,11 +147,9 @@ private:
     QWidget *map_stack = nullptr;
     QStackedLayout *map_stack_layout = nullptr;
     MapWidget *map = nullptr;
-#ifndef Q_OS_WASM
     // Shown while no GPU map surface is active (startup or failure). There
-    // is deliberately no CPU map renderer behind it.
-    QLabel *desktop_renderer_status = nullptr;
-#endif
+    // is deliberately no CPU or JavaScript map renderer behind it.
+    QLabel *renderer_status = nullptr;
 #if AOWIS_HAS_QRHI
     MapRenderSurface *desktop_render_surface = nullptr;
     QWidget *desktop_render_widget = nullptr;
@@ -194,8 +190,9 @@ private:
     // MapMonitorFullscreen shortcut, same reparenting as the QRhi path.
     QShortcut *bgfx_fullscreen_shortcut = nullptr;
     bool bgfx_fullscreen_active = false;
-    // Pointer over an enabled bgfx HUD button (pointing-hand cursor).
-    bool bgfx_hud_button_hovered = false;
+    // Pointer shape the bgfx HUD wants under the pointer (pointing hand over
+    // buttons and combos, cross over legend ramps, arrow otherwise).
+    Qt::CursorShape bgfx_hud_cursor = Qt::ArrowCursor;
     // Click selection on the bgfx surface (desktop and WASM); true when an
     // entity was hit and selected.
     bool selectBgfxNetworkEntityAt(const QPointF &position);
@@ -203,12 +200,20 @@ private:
     // consumed it. *over_hud_panel: the pointer is on a HUD panel (no map
     // hover picking there).
     bool routeBgfxHudMouseEvent(QMouseEvent *event, bool *over_hud_panel);
-    void handleBgfxHudAction(int action);
+    // A clicked HUD button or legend entry (MapBgfxHud::Command, passed as
+    // plain values to keep bgfx out of this header). group: legend node (0),
+    // link (1), heatmap (2); value: metric or palette; flipped: palette flip.
+    void handleBgfxHudAction(int action, int group, int value, bool flipped);
+    // Map legend on the bgfx HUD (slice 6b): rebuilt from the symbology
+    // settings and their canonical ranges whenever the symbology is
+    // resolved, the unit profile changes or the surface becomes active.
+    void pushBgfxLegend(const NetworkSymbologyRanges &ranges);
+    void refreshBgfxLegend();
     void refreshBgfxDownloadActivity();
     void pushBgfxDownloadActivity();
     void setBgfxFullscreen(bool fullscreen);
-    void setBgfxHudButtonHovered(bool hovered);
-    // One cursor decision for network hover and HUD buttons; on desktop the
+    void setBgfxHudCursor(Qt::CursorShape shape);
+    // One cursor decision for network hover and the HUD; on desktop the
     // bgfx native window needs its own cursor.
     void applyMapHoverCursor();
 
@@ -217,15 +222,13 @@ private:
     void applyVisualControlSymbology();
     void setNetworkBackgroundOpacity(int opacity);
 
-#ifndef Q_OS_WASM
-    bool desktop_network_hovered = false;
+    bool network_hovered = false;
 
-    void updateDesktopNetworkHover(
+    void updateNetworkHover(
         const QPointF &position, Qt::MouseButtons buttons,
         Qt::KeyboardModifiers modifiers);
-    void setDesktopNetworkHovered(bool hovered);
-    void showDesktopRendererStatus(const QString &text);
-#endif
+    void setNetworkHovered(bool hovered);
+    void showRendererStatus(const QString &text);
 #if AOWIS_HAS_QRHI
     void applyDesktopRenderSurfaceSymbology();
     void applyDesktopRenderSurfaceHighlights();
@@ -238,26 +241,6 @@ private:
     void showMapLegendLink(VisualLink visual_link);
     void showMapLegendHeatmap(VisualHeatmap visual_heatmap);
 
-#ifdef Q_OS_WASM
-    QTimer *wasm_map_layer_sync_timer = nullptr;
-    QTimer *wasm_network_symbology_sync_timer = nullptr;
-    bool wasm_browser_renderer_active = true;
-    quint64 wasm_network_geometry_revision_sent = 0;
-    bool wasm_network_snapshot_sent = false;
-    int wasm_network_symbology_sync_retry_count = 0;
-    InfrastructureEntity wasm_selected_entity_type = InfrastructureEntity::Unknown;
-    QUuid wasm_selected_entity_uuid;
-
-    bool selectWasmNetworkEntityAt(const QPointF &position);
-    void syncWasmSelectedEntity(InfrastructureEntity entity_type, const QUuid &uuid);
-    void syncWasmSimulationErrorEntities();
-    void scheduleWasmMapLayerSync();
-    void scheduleWasmNetworkSymbologySync();
-    void syncWasmMapLayer();
-    void syncWasmNetworkBackground();
-    void syncWasmNetworkSnapshot();
-    void syncWasmNetworkSymbology();
-#endif
 
 signals:
     void signalShowMapLegendNode(VisualNode visual_node);

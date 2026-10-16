@@ -235,6 +235,7 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
         this->grid->addWidget(this->combo_icon_size_unit, icon_label_row, 2);
     this->grid->addWidget(this->slider_icon_size, icon_slider_row, 0, 1, 3);
     this->grid->addWidget(check_map_sync, map_sync_row, 0, 1, 3);
+    this->grid->addWidget(createLabelControls(), map_sync_row + 1, 0, 1, 3);
     
     this->button_group_map_select = new QButtonGroup(this);
     this->button_group_map_select->addButton(this->map_arcgissat, 1);
@@ -260,6 +261,73 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     }
     
     
+}
+
+QWidget *MapNavigationWidget::createLabelControls()
+{
+    // Map labels (EPANET's "Map Options -> Notation"): the IDs and, in the
+    // monitor, the values of the metric the map is coloured by, written
+    // next to the entities. Decluttered on the map: labels never overlap
+    // each other or a symbol, so zooming in reveals more of them.
+    QWidget *box = new QWidget(this);
+    QGridLayout *box_grid = new QGridLayout(box);
+    box_grid->setContentsMargins(0, 0, 0, 0);
+    QLabel *title = new QLabel(QStringLiteral("Labels"), box);
+    box_grid->addWidget(title, 0, 0, 1, 2);
+
+    this->check_label_node_ids = new QCheckBox(QStringLiteral("Node IDs"), box);
+    this->check_label_node_ids->setToolTip(QStringLiteral(
+        "Write the ID of every junction, tank, reservoir and demand point next to it "
+        "(where there is room; zoom in for more)."));
+    this->check_label_link_ids = new QCheckBox(QStringLiteral("Link IDs"), box);
+    this->check_label_link_ids->setToolTip(QStringLiteral(
+        "Write the ID of every pipe, pump and valve at its middle "
+        "(where there is room; zoom in for more)."));
+    box_grid->addWidget(this->check_label_node_ids, 1, 0);
+    box_grid->addWidget(this->check_label_link_ids, 1, 1);
+    connect(this->check_label_node_ids, &QCheckBox::toggled, this, [this](bool)
+    {
+        emit signalLabelSettingsChanged(labelSettings());
+    });
+    connect(this->check_label_link_ids, &QCheckBox::toggled, this, [this](bool)
+    {
+        emit signalLabelSettingsChanged(labelSettings());
+    });
+
+    if (this->mode == CanvasMode::Monitor)
+    {
+        this->check_label_node_values = new QCheckBox(QStringLiteral("Node Values"), box);
+        this->check_label_node_values->setToolTip(QStringLiteral(
+            "Write the value of the node metric the map is coloured by (legend unit)."));
+        this->check_label_link_values = new QCheckBox(QStringLiteral("Link Values"), box);
+        this->check_label_link_values->setToolTip(QStringLiteral(
+            "Write the value of the link metric the map is coloured by (legend unit)."));
+        box_grid->addWidget(this->check_label_node_values, 2, 0);
+        box_grid->addWidget(this->check_label_link_values, 2, 1);
+        connect(this->check_label_node_values, &QCheckBox::toggled, this, [this](bool)
+        {
+            emit signalLabelSettingsChanged(labelSettings());
+        });
+        connect(this->check_label_link_values, &QCheckBox::toggled, this, [this](bool)
+        {
+            emit signalLabelSettingsChanged(labelSettings());
+        });
+    }
+    return box;
+}
+
+MapLabelSettings MapNavigationWidget::labelSettings() const
+{
+    MapLabelSettings settings;
+    settings.node_ids = this->check_label_node_ids != nullptr
+        && this->check_label_node_ids->isChecked();
+    settings.link_ids = this->check_label_link_ids != nullptr
+        && this->check_label_link_ids->isChecked();
+    settings.node_values = this->check_label_node_values != nullptr
+        && this->check_label_node_values->isChecked();
+    settings.link_values = this->check_label_link_values != nullptr
+        && this->check_label_link_values->isChecked();
+    return settings;
 }
 
 void MapNavigationWidget::refreshIconSizeUnitPresentation()

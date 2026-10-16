@@ -58,35 +58,62 @@ inline QString shaderResourcePath(bgfx::RendererType::Enum renderer, const char 
         .arg(QString::fromLatin1(directory), QString::fromLatin1(name));
 }
 
-// Program from the embedded shader set of the renderer bgfx selected;
-// invalid (with a warning) when either shader is missing or rejected.
+// Whether a GPU buffer size or vertex count fits the uint32_t arguments of
+// bgfx::copy()/createDynamicVertexBuffer() (guards against silent truncation
+// of the retained network buffers; not used for shader files).
+//
+// Never compare against qsizetype(std::numeric_limits<uint32_t>::max()):
+// qsizetype is 32-bit on wasm32, where that cast yields -1 and every
+// non-negative size compares "too large".
+inline bool fitsUint32(qsizetype value)
+{
+    return value >= 0 && quint64(value) <= quint64(std::numeric_limits<uint32_t>::max());
+}
+
+// Shader from the embedded set of the renderer bgfx selected; invalid, with
+// a warning naming the shader, when the resource is missing or bgfx rejects
+// it. Every bgfx GPU part loads its shaders through here.
+//
+// No size check of our own: the binaries are a few hundred bytes compiled
+// into the executable from committed files (cmake/aowis_bgfx_shaders.cmake
+// refuses to embed a family with a missing .bin), and bgfx::createShader()
+// validates the binary header itself.
+inline bgfx::ShaderHandle loadShader(const char *name)
+{
+    const QString resource = shaderResourcePath(bgfx::getRendererType(), name);
+    QFile file(resource);
+    if (resource.isEmpty() || !file.open(QIODevice::ReadOnly))
+    {
+        qWarning() << "bgfx shader resource missing" << name << "for renderer"
+                   << bgfx::getRendererName(bgfx::getRendererType());
+        return BGFX_INVALID_HANDLE;
+    }
+    const QByteArray binary = file.readAll();
+    const bgfx::ShaderHandle shader =
+        bgfx::createShader(bgfx::copy(binary.constData(), uint32_t(binary.size())));
+    if (!bgfx::isValid(shader))
+        qWarning() << "bgfx rejected shader" << name << binary.size() << "bytes";
+    return shader;
+}
+
+// Program from loadShader(); invalid (with a warning) when either shader is
+// missing or rejected, or bgfx refuses to link the pair. The shaders are
+// owned by the program (destroyShaders = true).
 inline bgfx::ProgramHandle loadProgram(const char *vertex_name, const char *fragment_name)
 {
-    const std::function<bgfx::ShaderHandle(const char *)> load = [](const char *name)
-    {
-        const QString resource = shaderResourcePath(bgfx::getRendererType(), name);
-        QFile file(resource);
-        if (resource.isEmpty() || !file.open(QIODevice::ReadOnly))
-        {
-            qWarning() << "bgfx shader resource missing" << name << "for renderer"
-                       << bgfx::getRendererName(bgfx::getRendererType());
-            return bgfx::ShaderHandle(BGFX_INVALID_HANDLE);
-        }
-        const QByteArray binary = file.readAll();
-        if (binary.isEmpty() || binary.size() > qsizetype(std::numeric_limits<uint32_t>::max()))
-            return bgfx::ShaderHandle(BGFX_INVALID_HANDLE);
-        return bgfx::createShader(bgfx::copy(binary.constData(), uint32_t(binary.size())));
-    };
-    const bgfx::ShaderHandle vertex = load(vertex_name);
+    const bgfx::ShaderHandle vertex = loadShader(vertex_name);
     if (!bgfx::isValid(vertex))
         return BGFX_INVALID_HANDLE;
-    const bgfx::ShaderHandle fragment = load(fragment_name);
+    const bgfx::ShaderHandle fragment = loadShader(fragment_name);
     if (!bgfx::isValid(fragment))
     {
         bgfx::destroy(vertex);
         return BGFX_INVALID_HANDLE;
     }
-    return bgfx::createProgram(vertex, fragment, true);
+    const bgfx::ProgramHandle program = bgfx::createProgram(vertex, fragment, true);
+    if (!bgfx::isValid(program))
+        qWarning() << "bgfx rejected program" << vertex_name << "+" << fragment_name;
+    return program;
 }
 
 // Probe with the first vertex shader; every program is compiled for every

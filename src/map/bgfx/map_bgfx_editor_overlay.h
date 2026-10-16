@@ -1,0 +1,186 @@
+#ifndef MAP_BGFX_EDITOR_OVERLAY_H
+#define MAP_BGFX_EDITOR_OVERLAY_H
+
+#include "map/bgfx/map_bgfx_2d_projection.h"
+#include "map/bgfx/map_bgfx_hud_canvas.h"
+#include "map/bgfx/map_bgfx_hud_text_cache.h"
+#include "map/editor/map_editor_visual_state.h"
+#include "network/network_render_snapshot.h"
+
+#include <QHash>
+#include <QPointF>
+#include <QSet>
+#include <QSizeF>
+#include <QString>
+#include <QUuid>
+#include <QVector>
+
+#include <functional>
+
+// Map editor on bgfx (roadmap Phase 2): everything the former QPainter editor
+// (MapEditorRenderer, removed) drew on top of the GPU network in its
+// render-surface mode, rebuilt per frame into a
+// MapBgfxHudCanvas from the editor's visual state and drawn with the HUD
+// program between the network and the HUD:
+//
+// - tile-cache selection (green tiles with glow and grid) and the rectangle
+//   selection (steel frame with blue glow and dashed inner frame);
+// - the full-colour entity icons (nodes bottom-anchored, device links
+//   centred) with the selected / error / stale glows, pipe vertex dots and
+//   demand-point attachment lines with their handles;
+// - selection (blue pipes, device-link lines, glowing icons), the connection
+//   target, simulation errors (red / grey, blue outline when selected);
+// - placement feedback: pipe and device-link rubber bands, the floating
+//   marker; the move preview of dragged entities (hidden in the GPU network
+//   meanwhile) and the full-network move (the GPU network is shifted by the
+//   camera, the icons here by the same translation).
+//
+// The network lines and node dots themselves stay in the retained GPU scene
+// (editor symbology: black pipes, brown device links, black dots).
+// Positions use the continuous camera, exactly like the GPU network, so the
+// overlay never drifts against it while zooming.
+//
+// Pure Qt Gui + math (no bgfx, no widgets); icons come from an
+// IconProvider (map_bgfx_editor_icons.h composites the glows like
+// MapEntityPixmapRenderer), so the builder is unit-tested without a GPU.
+class MapBgfxEditorOverlay
+{
+public:
+    // MapEntityPixmapRenderer::Highlight.
+    enum class Highlight
+    {
+        None,
+        Selected,
+        Error,
+        SelectedError,
+        Stale,
+        SelectedStale
+    };
+
+    // An icon in the overlay atlas. width/height: the pixmap's logical size
+    // (MapEntityPixmapRenderer::pixmap(path, width)); the sprite carries
+    // `padding` logical pixels of glow room on every side.
+    struct Icon
+    {
+        MapBgfxHudSprite sprite;
+        double width = 0.0;
+        double height = 0.0;
+        double padding = 0.0;
+    };
+    // pixmap_path empty: the entity type's icon.
+    using IconProvider = std::function<Icon(MapBgfxHudTextCache *cache,
+                                            InfrastructureEntity entity,
+                                            const QString &pixmap_path, int width,
+                                            Highlight highlight)>;
+
+    struct Inputs
+    {
+        QSizeF viewport;
+        // Continuous 2D camera of the frame (the GPU network's camera
+        // without the full-move translation).
+        MapBgfx2d::Camera camera;
+        const NetworkRenderSnapshot *snapshot = nullptr;
+        const MapEditorVisualState *visual_state = nullptr;
+        const MapEditorViewportRenderState *viewport_state = nullptr;
+        // The whole network is being moved: the GPU network is drawn
+        // shifted by this many logical pixels, and so are the icons here.
+        bool full_network_move = false;
+        QPointF full_network_move_translation;
+    };
+
+    void setIconProvider(IconProvider provider) { this->icon_provider = std::move(provider); }
+
+    // Builds the overlay into canvas (cleared first); rebuilds once when the
+    // atlas had to be cleared during the build.
+    void build(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache, const Inputs &inputs);
+
+    // The former QPainter editor's sizes (logical px) and colours (0xAARRGGBB).
+    static constexpr double MarkerDotRadiusPx = 5.0;
+    static constexpr double ConnectionTargetRadiusPx = 9.0;
+    static constexpr double PipeVertexRadiusPx = 4.0;
+    static constexpr double LineWidthPx = 3.0;
+    static constexpr double SelectedOutlineWidthPx = 7.0;
+    static constexpr quint32 BlackColor = 0xff000000u;
+    static constexpr quint32 SelectedColor = 0xff00beffu;
+    static constexpr quint32 PreviewColor = 0xff008cffu;
+    static constexpr quint32 DeviceLinkColor = 0xff8b5a2bu;
+    static constexpr quint32 ErrorColor = 0xffff0000u;
+    static constexpr quint32 StaleColor = 0xff808080u;
+
+private:
+    // Snapshot geometry in normalized Web Mercator, built once per geometry
+    // revision (the per-frame work is then a linear transform).
+    struct Geometry
+    {
+        bool valid = false;
+        quint64 geometry_revision = 0;
+        const NetworkRenderSnapshot *snapshot = nullptr;
+        QVector<MapBgfx2d::WorldPoint> node_world;
+        QVector<QVector<MapBgfx2d::WorldPoint>> link_world;
+        QVector<MapBgfx2d::WorldPoint> device_center_world;
+        QHash<QUuid, int> node_index;
+        QHash<QUuid, int> link_index;
+    };
+
+    void synchronizeGeometry(const NetworkRenderSnapshot &snapshot);
+    void buildOnce();
+
+    // Projection with the current translation offset.
+    MapBgfxHudPoint screen(const MapBgfx2d::WorldPoint &world) const;
+    MapBgfxHudPoint screen(const CoordinateWGS84 &coordinate) const;
+    // A polyline unwrapped continuously, then placed at its copy nearest to
+    // the camera (screenSegment() rule for whole links).
+    QVector<MapBgfxHudPoint> screenPolyline(const QVector<MapBgfx2d::WorldPoint> &world) const;
+    QVector<MapBgfxHudPoint> screenPolyline(const QList<CoordinateWGS84> &coordinates) const;
+
+    // QPainter pens: round caps and joins.
+    void polyline(const QVector<MapBgfxHudPoint> &points, double width, quint32 argb);
+    // Qt::DashLine (4 on, 2 off) / Qt::DotLine (1 on, 2 off) in pen widths.
+    void dashedPolyline(const QVector<MapBgfxHudPoint> &points, double width, double dash,
+                        double gap, double offset, quint32 argb);
+    void dashedCircle(double x, double y, double radius, double width, double dash, double gap,
+                      quint32 argb);
+    // QPen stroke centred on the path of a rect (sharp corners or radius).
+    void strokeRectCentered(const MapBgfxHudRect &rect, double radius, double width, quint32 argb);
+    bool onScreen(double x, double y, double width, double height) const;
+
+    // Icon helpers: bottom-anchored at the rounded anchor (nodes) or
+    // centred (device links, MapEntityPixmapRenderer rects).
+    void bottomAnchoredIcon(const MapBgfxHudPoint &anchor, InfrastructureEntity entity,
+                            const QString &path, int width, Highlight highlight, bool round_anchor);
+    void centeredIcon(const MapBgfxHudPoint &center, InfrastructureEntity entity,
+                      const QString &path, int width, Highlight highlight);
+    void drawIcon(double x, double y, const Icon &icon);
+
+    void tileSelection();
+    void rectangleSelection();
+    void staticDetails(bool include_moving);
+    void movingNetwork();
+    void selectedPipes();
+    void pipePlacement();
+    void deviceLinkPlacement();
+    void selectedMarkersAndDeviceLinks();
+    void simulationErrors();
+    void floatingPlacement();
+    void demandPointAttachments();
+    // Start, centre and end of a device link on screen.
+    bool deviceLinkScreen(int link_index, MapBgfxHudPoint *start, MapBgfxHudPoint *center,
+                          MapBgfxHudPoint *end) const;
+    const NetworkRenderNode *nodeByUuid(const QUuid &uuid) const;
+
+    IconProvider icon_provider;
+    Geometry geometry;
+
+    // Per-build state.
+    MapBgfxHudCanvas *canvas = nullptr;
+    MapBgfxHudTextCache *cache = nullptr;
+    const Inputs *inputs = nullptr;
+    double offset_x = 0.0;
+    double offset_y = 0.0;
+    QSet<QUuid> selected_markers;
+    QSet<QUuid> selected_pipes;
+    QSet<QUuid> moving_markers;
+    QSet<QUuid> moving_links;
+};
+
+#endif // MAP_BGFX_EDITOR_OVERLAY_H
