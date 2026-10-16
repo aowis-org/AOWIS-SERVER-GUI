@@ -78,7 +78,7 @@ MapTileRepository::~MapTileRepository()
     this->tile_decode_pool.waitForDone();
 }
 
-const QPixmap *MapTileRepository::tile(const QString &key) const
+const QImage *MapTileRepository::tile(const QString &key) const
 {
     return this->cache.object(key);
 }
@@ -561,8 +561,10 @@ void MapTileRepository::tileDataReceived(const QString &key, const QByteArray &d
     {
         QImage image;
         image.loadFromData(data);
-        if (!image.isNull() && image.format() != QImage::Format_ARGB32_Premultiplied)
-            image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+        // The renderers' texture format (bgfx RGBA8, QRhi RGBA8888), here on
+        // the decode thread instead of per upload on the GUI thread.
+        if (!image.isNull() && image.format() != QImage::Format_RGBA8888)
+            image = image.convertToFormat(QImage::Format_RGBA8888);
 
         QMetaObject::invokeMethod(repository, [repository, key, generation, image]
         {
@@ -577,7 +579,6 @@ void MapTileRepository::finishTileDecode(
     if (generation != this->tile_generation || !this->tiles_pending.contains(key))
         return;
 
-    const QPixmap pixmap = QPixmap::fromImage(image);
     this->tiles_pending.remove(key);
 
     if (this->tiles_invalidated_while_pending.remove(key))
@@ -587,19 +588,18 @@ void MapTileRepository::finishTileDecode(
         return;
     }
 
-    if (pixmap.isNull())
+    if (image.isNull())
     {
         tileFailed(key);
         return;
     }
 
-    const qint64 cost_bytes = qint64(pixmap.width()) * pixmap.height() *
-                              qMax(1, pixmap.depth()) / 8;
+    const qint64 cost_bytes = image.sizeInBytes();
     const qint64 cost_kib_rounded = (cost_bytes + 1023) / 1024;
     const int cost_kib = qMax(
         1, int(qMin<qint64>(cost_kib_rounded, TileCacheMaximumCostKiB)));
 
-    if (!this->cache.insert(key, new QPixmap(pixmap), cost_kib))
+    if (!this->cache.insert(key, new QImage(image), cost_kib))
     {
         tileFailed(key);
         return;

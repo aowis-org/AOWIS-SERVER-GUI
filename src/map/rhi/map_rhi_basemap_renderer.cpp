@@ -10,7 +10,6 @@
 #include <QImage>
 #include <QPainter>
 #include <QRadialGradient>
-#include <QPixmap>
 #include <QtMath>
 #include <rhi/qshader.h>
 #include <rhi/qrhi.h>
@@ -781,7 +780,7 @@ bool MapRhiBasemapRenderer::tileReadyForZoomHandoff(
     if (this->tile_repository == nullptr)
         return false;
 
-    const QPixmap *pixmap = this->tile_repository->tile(tile.imagery_key);
+    const QImage *pixmap = this->tile_repository->tile(tile.imagery_key);
     return pixmap != nullptr && !pixmap->isNull();
 }
 
@@ -1152,7 +1151,7 @@ bool MapRhiBasemapRenderer::ensureTileResource(
     std::map<QString, std::unique_ptr<TileResource>>::iterator iterator =
         this->tile_resources.find(key);
 
-    const QPixmap *pixmap = this->tile_repository != nullptr
+    const QImage *pixmap = this->tile_repository != nullptr
         ? this->tile_repository->tile(key)
         : nullptr;
     if (pixmap == nullptr || pixmap->isNull())
@@ -1180,7 +1179,7 @@ bool MapRhiBasemapRenderer::ensureTileResource(
     const qint64 cache_key = pixmap->cacheKey();
     if (!tile_resource->texture || tile_resource->pixmap_cache_key != cache_key)
     {
-        QImage image = pixmap->toImage().convertToFormat(QImage::Format_RGBA8888);
+        QImage image = *pixmap;
         if (image.isNull())
             return true;
 
@@ -1236,7 +1235,7 @@ bool MapRhiBasemapRenderer::ensureTileArrayLayer(
     std::map<QString, std::unique_ptr<TileResource>>::iterator iterator =
         this->tile_resources.find(key);
 
-    const QPixmap *pixmap = this->tile_repository != nullptr
+    const QImage *pixmap = this->tile_repository != nullptr
         ? this->tile_repository->tile(key)
         : nullptr;
     if (pixmap == nullptr || pixmap->isNull())
@@ -1278,7 +1277,7 @@ bool MapRhiBasemapRenderer::ensureTileArrayLayer(
         if (resource_updates == nullptr)
             return false;
 
-        QImage image = pixmap->toImage().convertToFormat(QImage::Format_RGBA8888);
+        QImage image = *pixmap;
         if (image.isNull())
         {
             *resource = tile_resource;

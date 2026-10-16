@@ -431,6 +431,23 @@ target_include_directories(aowis-server-gui
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
+if(EMSCRIPTEN)
+    # WebAssembly SIMD (128 bit): clang auto-vectorizes the app's hot loops
+    # (vertex generation of the map, editor overlay, labels and HUD, tile
+    # format handling) into wasm SIMD instead of scalar code. Every browser
+    # with the WebGL 2 the map requires also runs wasm SIMD (Chrome/Edge 91,
+    # Firefox 89, Safari 16.4); a browser without it refuses to load the
+    # module at all, so ./compile_wasm.sh accepts AOWIS_WASM_SIMD=OFF from
+    # the environment for such a deployment. Only this target: Qt and bx
+    # are left as they were built (no app source includes bx's SIMD
+    # headers, so the types cannot disagree between translation units).
+    option(AOWIS_WASM_SIMD "Compile the app with WebAssembly SIMD (-msimd128)" ON)
+    if(AOWIS_WASM_SIMD)
+        target_compile_options(aowis-server-gui PRIVATE "-msimd128")
+        target_link_options(aowis-server-gui PRIVATE "-msimd128")
+    endif()
+endif()
+
 target_link_libraries(aowis-server-gui
     PRIVATE
         Qt6::Widgets

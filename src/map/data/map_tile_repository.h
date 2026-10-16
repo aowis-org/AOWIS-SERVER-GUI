@@ -6,7 +6,6 @@
 #include <QHash>
 #include <QList>
 #include <QObject>
-#include <QPixmap>
 #include <QSet>
 #include <QString>
 #include <QImage>
@@ -24,7 +23,12 @@ public:
     explicit MapTileRepository(QObject *parent = nullptr);
     ~MapTileRepository() override;
 
-    const QPixmap *tile(const QString &key) const;
+    // The decoded tile, GPU-ready: QImage::Format_RGBA8888 (bytes R,G,B,A,
+    // straight alpha), converted on the decode threads, so a renderer
+    // uploads it without any per-pixel work on the GUI thread (QPixmap ->
+    // QImage -> unpremultiplied RGBA cost ~1 ms per tile there, in the
+    // browser more). nullptr when not cached.
+    const QImage *tile(const QString &key) const;
     quint64 beginTileRequestBatch(const void *owner, const QString &layout_key);
     void requestTile(const QString &endpoint, const QString &key, int x, int y,
                      int priority, quint64 request_batch, bool foreground = true);
@@ -105,7 +109,7 @@ private:
     quint64 next_tile_deletion_id = 1;
     quint64 tile_generation = 0;
     QThreadPool tile_decode_pool;
-    QCache<QString, QPixmap> cache;
+    QCache<QString, QImage> cache;
 };
 
 #endif // MAP_TILE_REPOSITORY_H

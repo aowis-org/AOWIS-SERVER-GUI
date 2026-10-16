@@ -113,7 +113,8 @@ constexpr double kFallbackRefreshHz = 60.0;
 // (bgfx hard-codes antialias=false for the contexts it creates). bgfx adopts
 // it through Init::platformData.context and destroys it on bgfx::shutdown().
 // Opaque canvas (alpha=false), depth + stencil for the default framebuffer,
-// browser multisampling for antialiased line and marker edges.
+// browser multisampling for antialiased line and marker edges below a device
+// pixel ratio of 1.75.
 EMSCRIPTEN_WEBGL_CONTEXT_HANDLE createBrowserContext()
 {
     EmscriptenWebGLContextAttributes attributes;
@@ -123,7 +124,12 @@ EMSCRIPTEN_WEBGL_CONTEXT_HANDLE createBrowserContext()
     attributes.alpha = false;
     attributes.depth = true;
     attributes.stencil = true;
-    attributes.antialias = true;
+    // Multisampling quadruples fill and adds a resolve per frame; at a
+    // device pixel ratio of 2 and more the physical pixels are small enough
+    // that edges look smooth without it (and the map has 4x the pixels).
+    attributes.antialias = emscripten_get_device_pixel_ratio() < 1.75;
+    // Laptops with two GPUs: the map wants the fast one.
+    attributes.powerPreference = EM_WEBGL_POWER_PREFERENCE_HIGH_PERFORMANCE;
     attributes.premultipliedAlpha = false;
     attributes.enableExtensionsByDefault = true;
     return emscripten_webgl_create_context("!aowis-bgfx-map", &attributes);
@@ -1817,12 +1823,12 @@ void MapBgfxSurface::renderImagery(const QSizeF &logical)
         {
             const QString key = this->map_model->tileCacheKeyAtZoom(
                 request.tile.x, request.tile.y, request.tile.zoom);
-            const QPixmap *pixmap = this->tile_repository->tile(key);
-            if (pixmap != nullptr)
+            const QImage *image = this->tile_repository->tile(key);
+            if (image != nullptr)
             {
                 // Bounded so a burst of arriving tiles never stalls a frame.
                 if (uploads < kImageryUploadsPerFrame
-                    && this->imagery_gpu.uploadTexture(request.tile, pixmap->toImage()))
+                    && this->imagery_gpu.uploadTexture(request.tile, *image))
                 {
                     ++uploads;
                 }

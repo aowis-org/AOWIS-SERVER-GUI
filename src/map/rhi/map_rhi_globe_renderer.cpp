@@ -14,7 +14,6 @@
 #include <QImage>
 #include <QLoggingCategory>
 #include <QPainter>
-#include <QPixmap>
 #include <QRect>
 #include <QSet>
 #include <QtMath>
@@ -1053,13 +1052,13 @@ QImage MapRhiGlobeRenderer::currentTileArrayImage(
 
     if (!resource.is_provisional)
     {
-        const QPixmap *pixmap = this->tile_repository->tile(tile.imagery_key);
+        const QImage *pixmap = this->tile_repository->tile(tile.imagery_key);
         if (pixmap == nullptr || pixmap->isNull()
             || pixmap->cacheKey() != resource.pixmap_cache_key)
         {
             return QImage();
         }
-        return pixmap->toImage().convertToFormat(QImage::Format_RGBA8888);
+        return *pixmap;
     }
 
     const QString children_key = QStringLiteral("children:%1/%2/%3")
@@ -1078,12 +1077,11 @@ QImage MapRhiGlobeRenderer::currentTileArrayImage(
             {
                 const QString child_key = this->map_model->tileCacheKeyAtZoom(
                     child_x0 + dx, child_y0 + dy, child_zoom);
-                const QPixmap *child_pixmap = this->tile_repository->tile(child_key);
+                const QImage *child_pixmap = this->tile_repository->tile(child_key);
                 if (child_pixmap == nullptr || child_pixmap->isNull())
                     return QImage();
 
-                child_images[dx][dy] = child_pixmap->toImage().convertToFormat(
-                    QImage::Format_RGBA8888);
+                child_images[dx][dy] = *child_pixmap;
                 if (child_images[dx][dy].isNull())
                     return QImage();
                 child_w = qMax(child_w, child_images[dx][dy].width());
@@ -1119,7 +1117,7 @@ QImage MapRhiGlobeRenderer::currentTileArrayImage(
         if (ancestor_key != resource.provisional_source_key)
             continue;
 
-        const QPixmap *ancestor_pixmap = this->tile_repository->tile(ancestor_key);
+        const QImage *ancestor_pixmap = this->tile_repository->tile(ancestor_key);
         if (ancestor_pixmap == nullptr || ancestor_pixmap->isNull())
             return QImage();
 
@@ -1132,7 +1130,6 @@ QImage MapRhiGlobeRenderer::currentTileArrayImage(
             local_x * source_w / span, local_y * source_h / span,
             qMax(1, source_w / span), qMax(1, source_h / span));
         return ancestor_pixmap->copy(crop_rect)
-            .toImage().convertToFormat(QImage::Format_RGBA8888)
             .scaled(source_w, source_h, Qt::IgnoreAspectRatio,
                     Qt::SmoothTransformation);
     }
@@ -1639,7 +1636,7 @@ bool MapRhiGlobeRenderer::ensureTileResource(
     if (this->tile_repository == nullptr || tile.imagery_key.isEmpty())
         return true;
 
-    const QPixmap *pixmap = this->tile_repository->tile(tile.imagery_key);
+    const QImage *pixmap = this->tile_repository->tile(tile.imagery_key);
 
     std::unique_ptr<TileResource> &slot = this->tile_resources[tile.imagery_key];
     if (!slot)
@@ -1673,7 +1670,7 @@ bool MapRhiGlobeRenderer::ensureTileResource(
     const qint64 cache_key = pixmap->cacheKey();
     if (!tileTextureReady(resource) || resource->is_provisional || resource->pixmap_cache_key != cache_key)
     {
-        QImage image = pixmap->toImage().convertToFormat(QImage::Format_RGBA8888);
+        QImage image = *pixmap;
         if (image.isNull())
             return true;
 
@@ -1764,14 +1761,14 @@ bool MapRhiGlobeRenderer::ensureProvisionalTileResource(
         {
             const QString child_key = this->map_model->tileCacheKeyAtZoom(
                 child_x0 + dx, child_y0 + dy, child_zoom);
-            const QPixmap *child_pixmap = this->tile_repository->tile(child_key);
+            const QImage *child_pixmap = this->tile_repository->tile(child_key);
             if (child_pixmap == nullptr || child_pixmap->isNull())
             {
                 all_children_cached = false;
                 break;
             }
 
-            const QImage image = child_pixmap->toImage().convertToFormat(QImage::Format_RGBA8888);
+            const QImage image = *child_pixmap;
             if (image.isNull())
             {
                 all_children_cached = false;
@@ -1835,7 +1832,7 @@ bool MapRhiGlobeRenderer::ensureProvisionalTileResource(
         const quint32 ancestor_y = quint32(tile.tile_y) >> levels_up;
         const QString ancestor_key = this->map_model->tileCacheKeyAtZoom(
             int(ancestor_x), int(ancestor_y), ancestor_zoom);
-        const QPixmap *ancestor_pixmap = this->tile_repository->tile(ancestor_key);
+        const QImage *ancestor_pixmap = this->tile_repository->tile(ancestor_key);
         if (ancestor_pixmap == nullptr || ancestor_pixmap->isNull())
             continue;
 
@@ -1857,7 +1854,6 @@ bool MapRhiGlobeRenderer::ensureProvisionalTileResource(
             local_x * source_w / span, local_y * source_h / span,
             qMax(1, source_w / span), qMax(1, source_h / span));
         const QImage fallback_image = ancestor_pixmap->copy(crop_rect)
-            .toImage().convertToFormat(QImage::Format_RGBA8888)
             .scaled(source_w, source_h, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
         if (fallback_image.isNull())
             continue;

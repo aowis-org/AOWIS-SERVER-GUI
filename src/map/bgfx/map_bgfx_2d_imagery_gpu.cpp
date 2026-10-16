@@ -92,20 +92,34 @@ bool MapBgfx2dImageryGpu::uploadTexture(const MapBgfx2dImagery::TileId &tile,
     }
     // RGBA8888 is byte order R,G,B,A in memory, i.e. bgfx RGBA8. Rows are
     // uploaded top first, so v = 0 is the top edge on every renderer.
+    // MapTileRepository already delivers RGBA8888 (converted on its decode
+    // threads).
     const QImage rgba = image.format() == QImage::Format_RGBA8888
         ? image : image.convertToFormat(QImage::Format_RGBA8888);
     const int row_bytes = rgba.width() * 4;
-    QByteArray pixels;
-    pixels.resize(qsizetype(row_bytes) * rgba.height());
-    for (int row = 0; row < rgba.height(); ++row)
+    const bgfx::Memory *memory = nullptr;
+    if (rgba.bytesPerLine() == row_bytes)
     {
-        // bytesPerLine() may be padded; bgfx expects tightly packed rows.
-        std::copy_n(rgba.constScanLine(row), row_bytes, pixels.data() + qsizetype(row) * row_bytes);
+        // Tightly packed (every 256 px tile): no copy at all. bgfx reads the
+        // pixels when it creates the texture during the next bgfx::frame()
+        // and then calls the release function, which drops this implicitly
+        // shared reference (the pixels stay valid even if the repository
+        // evicts the tile meanwhile).
+        QImage *keep = new QImage(rgba);
+        memory = bgfx::makeRef(keep->constBits(), uint32_t(keep->sizeInBytes()),
+                               [](void *, void *user_data) { delete static_cast<QImage *>(user_data); },
+                               keep);
+    }
+    else
+    {
+        // bytesPerLine() is padded; bgfx expects tightly packed rows.
+        memory = bgfx::alloc(uint32_t(qsizetype(row_bytes) * rgba.height()));
+        for (int row = 0; row < rgba.height(); ++row)
+            std::copy_n(rgba.constScanLine(row), row_bytes, memory->data + qsizetype(row) * row_bytes);
     }
     const bgfx::TextureHandle handle = bgfx::createTexture2D(
         uint16_t(rgba.width()), uint16_t(rgba.height()), false, 1,
-        bgfx::TextureFormat::RGBA8, kTileSamplerFlags,
-        bgfx::copy(pixels.constData(), uint32_t(pixels.size())));
+        bgfx::TextureFormat::RGBA8, kTileSamplerFlags, memory);
     if (!bgfx::isValid(handle))
         return false;
 

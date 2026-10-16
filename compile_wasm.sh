@@ -39,6 +39,7 @@ docker run --rm \
     -e AOWIS_BUILD_BGFX_PROBE="${AOWIS_BUILD_BGFX_PROBE:-OFF}" \
     -e AOWIS_ENABLE_BGFX_MAP="${AOWIS_ENABLE_BGFX_MAP:-ON}" \
     -e AOWIS_WASM_FUNCTION_NAMES="${AOWIS_WASM_FUNCTION_NAMES:-OFF}" \
+    -e AOWIS_WASM_SIMD="${AOWIS_WASM_SIMD:-ON}" \
     "${AOWIS_WASM_IMAGE}" \
     /bin/bash /project/tools/qt-emscripten/build_wasm_inside_container.sh
 

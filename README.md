@@ -147,6 +147,11 @@ usermod -aG docker [USERNAME]
 
 Find the result in the folder `build-wasm`.
 
+The WebAssembly build is a `Release` build. Two switches are taken from the environment of `compile_wasm.sh`:
+
+- `AOWIS_WASM_SIMD` (default `ON`): compiles the GUI with WebAssembly SIMD (`-msimd128`), so the map's vertex generation runs vectorized. Every browser with WebGL 2 supports it (Chrome/Edge 91+, Firefox 89+, Safari 16.4+); `AOWIS_WASM_SIMD=OFF ./compile_wasm.sh` builds a module for browsers without it.
+- `AOWIS_WASM_FUNCTION_NAMES` (default `OFF`): keeps function names in the module for readable browser stack traces (a few MB larger download).
+
 To run the result, you need to have a web server set up. Threaded WebAssembly additionally requires a secure context and the `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` response headers. The generated webroot includes an `.htaccess` with these headers for Apache deployments that allow overrides.
 
 ### Windows / macOS
@@ -209,6 +214,8 @@ Set `examples_builtin_enable=false` to hide the bundled `Examples` project and i
 
 Native builds accept `map_desktop_renderer=bgfx` or `map_desktop_renderer=rhi`. `bgfx` is the default map renderer. `rhi` selects the QRhi renderer and remains available only until the bgfx globe is finished; it is then removed. The former `cpu` value is accepted with a warning and selects bgfx. There is no CPU map renderer any more: if bgfx cannot start, Map Monitor shows a status message.
 
-WebAssembly builds accept `map_wasm_renderer=bgfx` or `map_wasm_renderer=rhi`. `bgfx` is the default for Map Monitor (WebGL 2 through bgfx). `rhi` selects QRhi through WebGL 2 and remains available only until the bgfx globe is finished. The JavaScript/WebGL map renderer was removed from the project (monitor and editor); the former `browser` value is accepted with a warning and selects bgfx. If the GPU renderer cannot start, Map Monitor shows a status message, as on the desktop. Map Editor renders with the same QPainter editor as the desktop until it moves to bgfx (roadmap Phase 2). `compile_wasm.sh` preserves an existing `build-wasm-dist/aowis-server-gui.ini`, so a deployment created earlier keeps its `map_wasm_renderer` line until it is edited.
+WebAssembly builds accept `map_wasm_renderer=bgfx` or `map_wasm_renderer=rhi`. `bgfx` is the default for Map Monitor (WebGL 2 through bgfx). `rhi` selects QRhi through WebGL 2 and remains available only until the bgfx globe is finished. The JavaScript/WebGL map renderer was removed from the project (monitor and editor); the former `browser` value is accepted with a warning and selects bgfx. If the GPU renderer cannot start, Map Monitor shows a status message, as on the desktop. Map Editor renders with bgfx as well, as on the desktop.
+
+The bgfx map renders on demand: a frame is drawn only when the camera, the viewport, the content or an animation changes, so an idle map costs no CPU or GPU time in the browser. Map tiles are decoded and converted to the GPU's pixel format on worker threads and handed to WebGL without a further copy. The browser canvas uses multisampling only below a device pixel ratio of 1.75 (on HiDPI screens the pixels are small enough without it, and there are four times as many) and requests the high-performance GPU on systems with two. `compile_wasm.sh` preserves an existing `build-wasm-dist/aowis-server-gui.ini`, so a deployment created earlier keeps its `map_wasm_renderer` line until it is edited.
 
 WebAssembly builds include `aowis-server-gui.ini` beside the generated `index.html`. Set `examples_builtin_enable`, `map_wasm_renderer`, `base_url`, `api_key`, and `delete_api_key` there and reload the page. The browser first loads the configuration from the same deployment directory as `index.html`, so subdirectory deployments work correctly; `/aowis-server-gui.ini` at the origin root remains a compatibility fallback. Existing administrator-edited files in `build-wasm` and `build-wasm-dist` are preserved across rebuilds. The normal API key is used for tile requests; the delete API key is used only for tile-cache deletion requests.
