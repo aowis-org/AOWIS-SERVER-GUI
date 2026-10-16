@@ -7,6 +7,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QDoubleSpinBox>
+#include <QTimer>
 #include <optional>
 
 #include "common/_enums_structs.h"
@@ -40,6 +41,18 @@ signals:
 private:
     // Height is a datum-dependent observation; keep it missing until supplied.
     void refreshAltitudeDisplay();
+    // The map setters above arrive every frame while the camera moves (from
+    // both maps when their movement is synced). Each label text change
+    // relayouts and repaints the status bar, which in the browser costs a
+    // backing-store flush per frame: the latest values are kept and shown at
+    // most every DisplayIntervalMs.
+    void scheduleDisplay();
+    void applyPendingDisplay();
+    static constexpr int DisplayIntervalMs = 100;
+    QTimer *display_timer = nullptr;
+    std::optional<double> pending_zoom;
+    std::optional<CoordinateWGS84> pending_wgs84;
+    std::optional<CoordinateUTM> pending_utm;
 
     QStatusBar *bar;
     

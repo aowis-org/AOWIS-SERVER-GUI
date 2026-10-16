@@ -6,6 +6,7 @@
 #include "map/bgfx/map_bgfx_2d_picking.h"
 #include "map/core/map_scale_distance.h"
 #include "map/core/map_scale_renderer.h"
+#include "config/unit_aware_view.h"
 #include "config/unit_profile_manager.h"
 #include "map/bgfx/map_bgfx_2d_symbology.h"
 #include "map/render/map_icon_atlas.h"
@@ -33,6 +34,7 @@
 #include <bgfx/bgfx.h>
 
 #include <algorithm>
+#include <iterator>
 #include <cmath>
 #include <cstdint>
 #include <utility>
@@ -142,14 +144,20 @@ MapBgfxSurface::MapBgfxSurface(MapModel *model, QWidget *parent)
     Q_ASSERT(this->map_model != nullptr);
     setObjectName(QStringLiteral("aowis-bgfx-monitor-surface"));
     this->camera_state = this->map_model->cameraViewState();
-    // A provider switch reuses the same tile ids for different pixels.
+    // A provider switch reuses the same tile ids for different pixels. The
+    // new imagery must be drawn at once (on-demand rendering): tiles already
+    // in the repository cache arrive without any signalTileAvailable.
     connect(this->map_model, &MapModel::providerChanged, this, [this](MapProvider)
     {
         if (this->initialized)
             this->imagery_gpu.clearTextures();
         this->imagery_layout_key = 0;
         this->imagery_requests_dirty = true;
+        requestRedraw();
     });
+    // A unit profile switch changes the scale bar label (HUD).
+    new UnitAwareView(this, UnitProfileManager::instance().presentation(),
+                      [this]() { requestRedraw(); });
     // Native HUD (slice 6a): app font, the QWidget HUD's images, a scale bar in
     // the user's distance unit from the continuous camera.
     this->hud.setFont(font());
@@ -300,6 +308,9 @@ bool MapBgfxSurface::eventFilter(QObject *watched, QEvent *event)
         }
     }
     // A suspended backend restarts once the (new) surface is on screen.
+    // Exposed again (uncovered, restored): present a fresh frame.
+    if (watched == this->native_window && event->type() == QEvent::Expose)
+        requestRedraw();
     if (watched == this->native_window && event->type() == QEvent::Expose
         && this->reinitialize_on_surface && this->native_window->isExposed())
     {
@@ -436,6 +447,7 @@ void MapBgfxSurface::globeTerrainMeshProgress(int *completed, int *total,
 
 void MapBgfxSurface::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
 {
+    requestRedraw();
     // Retained geometry revisions change only with model changes, not zoom.
     const MapRetainedNetworkUpdate update = this->retained_scene.setSnapshot(snapshot);
     // New entities or renamed ones: the labels read the IDs again.
@@ -474,6 +486,7 @@ void MapBgfxSurface::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
 
 void MapBgfxSurface::setNodeDeclutteringEnabled(bool enabled)
 {
+    requestRedraw();
     // Positions change without a geometry revision: re-prepare now; the GPU
     // mesh and the highlights follow MapBgfx2dScene::preparationId().
     this->prepared_2d_scene.setDeclutteringEnabled(enabled);
@@ -483,6 +496,7 @@ void MapBgfxSurface::setNodeDeclutteringEnabled(bool enabled)
 
 void MapBgfxSurface::setSelectedEntity(InfrastructureEntity entity_type, const QUuid &uuid)
 {
+    requestRedraw();
     if (this->selected_entity_type == entity_type && this->selected_entity_uuid == uuid)
         return;
     this->selected_entity_type = entity_type;
@@ -494,6 +508,7 @@ void MapBgfxSurface::setSimulationErrorEntities(
     const QHash<QUuid, InfrastructureEntity> &error_entities,
     const QSet<QUuid> &stale_entity_uuids)
 {
+    requestRedraw();
     if (this->simulation_error_entities == error_entities
         && this->simulation_stale_entity_uuids == stale_entity_uuids)
         return;
@@ -704,6 +719,7 @@ void MapBgfxSurface::suspendForNativeWindowChange()
 
 void MapBgfxSurface::resumeAfterNativeWindowChange()
 {
+    requestRedraw();
     // Restarts when the window is exposed again (see the Expose handling in
     // eventFilter()); no-op when the backend was not running.
     scheduleBackendRestart();
@@ -716,26 +732,36 @@ void MapBgfxSurface::setHudActionHandler(std::function<void(const MapBgfxHud::Co
 
 void MapBgfxSurface::setHudLegend(const MapBgfxHud::Legend &legend)
 {
+    requestRedraw();
     this->hud.setLegend(legend);
 }
 
 void MapBgfxSurface::closeHudPopup()
 {
+    requestRedraw();
     this->hud.closePopup();
 }
 
 void MapBgfxSurface::setHudViewSwitchVisible(bool visible)
 {
+    requestRedraw();
     this->hud.setViewSwitchVisible(visible);
+}
+
+void MapBgfxSurface::requestRedraw()
+{
+    this->redraw_requested = true;
 }
 
 void MapBgfxSurface::setOverlayBuilder(OverlayBuilder builder)
 {
+    requestRedraw();
     this->overlay_builder = std::move(builder);
 }
 
 void MapBgfxSurface::setLabelSettings(const MapLabelSettings &settings)
 {
+    requestRedraw();
     if (this->label_settings == settings)
         return;
     this->label_settings = settings;
@@ -745,6 +771,7 @@ void MapBgfxSurface::setLabelSettings(const MapLabelSettings &settings)
 void MapBgfxSurface::setLabelValueFormats(const MapBgfxLabelValueFormat &node_format,
                                           const MapBgfxLabelValueFormat &link_format)
 {
+    requestRedraw();
     if (this->label_node_format == node_format && this->label_link_format == link_format)
         return;
     this->label_node_format = node_format;
@@ -755,6 +782,7 @@ void MapBgfxSurface::setLabelValueFormats(const MapBgfxLabelValueFormat &node_fo
 void MapBgfxSurface::setLabelSymbolRects(MapBgfxLabels::SymbolRect node_symbol,
                                          MapBgfxLabels::SymbolRect link_symbol)
 {
+    requestRedraw();
     this->label_node_symbol = std::move(node_symbol);
     this->label_link_symbol = std::move(link_symbol);
     this->labels_dirty = true;
@@ -762,6 +790,7 @@ void MapBgfxSurface::setLabelSymbolRects(MapBgfxLabels::SymbolRect node_symbol,
 
 void MapBgfxSurface::setHiddenEntityUuids(const QSet<QUuid> &uuids)
 {
+    requestRedraw();
     if (this->hidden_entity_uuids == uuids)
         return;
     this->hidden_entity_uuids = uuids;
@@ -773,11 +802,13 @@ void MapBgfxSurface::setHiddenEntityUuids(const QSet<QUuid> &uuids)
 
 void MapBgfxSurface::setNetworkScreenTranslation(const QPointF &translation)
 {
+    requestRedraw();
     this->network_screen_translation = translation;
 }
 
 bool MapBgfxSurface::handleHudWheelEvent(QWheelEvent *event)
 {
+    requestRedraw();
     if (event == nullptr || !this->initialized)
         return false;
     const QPointF position = event->position();
@@ -786,6 +817,7 @@ bool MapBgfxSurface::handleHudWheelEvent(QWheelEvent *event)
 
 bool MapBgfxSurface::handleHudKeyPress(QKeyEvent *event)
 {
+    requestRedraw();
     if (event == nullptr || !this->initialized || event->key() != Qt::Key_Escape)
         return false;
     return this->hud.closePopup();
@@ -793,17 +825,25 @@ bool MapBgfxSurface::handleHudKeyPress(QKeyEvent *event)
 
 void MapBgfxSurface::setHudGpsPosition(bool valid, double longitude_deg, double latitude_deg)
 {
+    requestRedraw();
     this->hud.setGps(valid, longitude_deg, latitude_deg);
 }
 
 void MapBgfxSurface::setHudDownloadActivity(int tiles_active, int tiles_queued,
                                             int terrain_active, int terrain_queued)
 {
+    // The monitor polls these every 400 ms: unchanged numbers present no
+    // frame (while busy, the busy bars animate the HUD anyway).
+    const int activity[4] = {tiles_active, tiles_queued, terrain_active, terrain_queued};
+    if (!std::equal(std::begin(activity), std::end(activity), std::begin(this->hud_download_activity)))
+        requestRedraw();
+    std::copy(std::begin(activity), std::end(activity), std::begin(this->hud_download_activity));
     this->hud.setDownloadActivity(tiles_active, tiles_queued, terrain_active, terrain_queued);
 }
 
 void MapBgfxSurface::setHudFullscreen(bool available, bool active)
 {
+    requestRedraw();
     this->hud.setFullscreen(available, active);
 }
 
@@ -818,11 +858,13 @@ MapBgfxSurface::HudPointer MapBgfxSurface::handleHudMouseEvent(QMouseEvent *even
     {
         case QEvent::MouseButtonPress:
         case QEvent::MouseButtonDblClick:
+            requestRedraw();
             result.consumed = event->button() == Qt::LeftButton
                 ? this->hud.mousePress(position.x(), position.y())
                 : result.over_panel;
             break;
         case QEvent::MouseButtonRelease:
+            requestRedraw();
             if (event->button() == Qt::LeftButton)
             {
                 MapBgfxHud::Command command;
@@ -857,6 +899,14 @@ MapBgfxSurface::HudPointer MapBgfxSurface::handleHudMouseEvent(QMouseEvent *even
                     result.cursor = Qt::ArrowCursor;
                     break;
             }
+            // Hover feedback (button highlight, ramp swatch, tooltip) only
+            // where the HUD is under the pointer, and once more when it
+            // leaves it: plain moves over the map present nothing.
+            const bool hud_involved = result.consumed || result.over_panel
+                || result.cursor != Qt::ArrowCursor;
+            if (hud_involved || this->hud_pointer_involved)
+                requestRedraw();
+            this->hud_pointer_involved = hud_involved;
             break;
         }
         default:
@@ -1096,6 +1146,14 @@ void MapBgfxSurface::hideEvent(QHideEvent *event)
 #endif
 }
 
+void MapBgfxSurface::changeEvent(QEvent *event)
+{
+    if (event->type() == QEvent::PaletteChange || event->type() == QEvent::FontChange
+        || event->type() == QEvent::StyleChange || event->type() == QEvent::ApplicationPaletteChange)
+        requestRedraw();
+    QWidget::changeEvent(event);
+}
+
 void MapBgfxSurface::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
@@ -1150,6 +1208,9 @@ void MapBgfxSurface::startFrameLoop()
     if (this->frame_loop_running || !this->initialized || this->failed)
         return;
     this->frame_loop_running = true;
+    // A (re)started loop presents its first frame unconditionally.
+    this->presented_valid = false;
+    this->redraw_requested = true;
     this->frame_pacer.reset();
     this->frame_clock.invalidate();
     this->last_frame_time_ms = -1.0;
@@ -1425,6 +1486,25 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
     this->camera_state = this->map_model->cameraViewState();
     const QSize pixels = physicalSize();
     const QSizeF logical = logicalSize();
+    // On-demand rendering: present only when something visible changed (the
+    // camera, the size, any input of the surface, see requestRedraw()) or
+    // while something animates by itself. An idle map then costs this
+    // early return per display refresh instead of a full frame: in the
+    // browser the map no longer keeps a CPU core busy. The navigation clock
+    // above still runs every tick (keyboard pan, inertia, zoom glides move
+    // the camera and so present frames).
+    const bool camera_moved = !this->presented_valid
+        || mapCameraUpdate(this->presented_camera, this->camera_state, 0, 0).camera_changed;
+    const bool size_changed = pixels != this->presented_pixels
+        || logical != this->presented_logical;
+    const bool animating = !this->ready_reported || this->debug_overlay_enabled
+        || this->hud.animating() || this->imagery_uploads_pending
+        || (this->label_settings.anyEnabled() && this->labels_dirty);
+    if (!this->redraw_requested && !camera_moved && !size_changed && !animating)
+        return;
+    // Cleared before rendering: whatever asks for a frame from now on
+    // (also during this one) gets the next.
+    this->redraw_requested = false;
     bgfx::setViewRect(kMapBgfxView, 0, 0,
                       static_cast<uint16_t>(std::min(65535, pixels.width())),
                       static_cast<uint16_t>(std::min(65535, pixels.height())));
@@ -1558,6 +1638,10 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
         renderDebugOverlay();
     bgfx::frame();
     ++this->frame_count;
+    this->presented_valid = true;
+    this->presented_camera = this->camera_state;
+    this->presented_pixels = pixels;
+    this->presented_logical = logical;
     if (!this->ready_reported) {
         this->ready_reported = true;
         qInfo() << "bgfx map: first frame presented";
@@ -1662,6 +1746,7 @@ void MapBgfxSurface::fail(const QString &reason)
 
 void MapBgfxSurface::setTileRepository(MapTileRepository *tile_repository)
 {
+    requestRedraw();
     if (this->tile_repository == tile_repository)
         return;
     if (this->tile_repository != nullptr)
@@ -1674,23 +1759,29 @@ void MapBgfxSurface::setTileRepository(MapTileRepository *tile_repository)
     // A failed tile becoming retryable needs a fresh request; an arriving
     // tile needs nothing (the next frame finds it in the repository cache).
     connect(this->tile_repository, &MapTileRepository::signalTileRetryReady, this,
-            [this](const QString &) { this->imagery_requests_dirty = true; });
+            [this](const QString &) { this->imagery_requests_dirty = true; requestRedraw(); });
+    // On-demand rendering: an arriving tile is drawn by the next frame.
+    connect(this->tile_repository, &MapTileRepository::signalTileAvailable, this,
+            [this](const QString &) { requestRedraw(); });
     connect(this->tile_repository, &MapTileRepository::signalTilesDeleted, this, [this]()
     {
         if (this->initialized)
             this->imagery_gpu.clearTextures();
         this->imagery_requests_dirty = true;
+        requestRedraw();
     });
 }
 
 void MapBgfxSurface::setBackgroundOpacity(int opacity)
 {
+    requestRedraw();
     this->background_opacity = qBound(0, opacity, 100);
 }
 
 void MapBgfxSurface::renderImagery(const QSizeF &logical)
 {
     this->imagery_quad_count = 0;
+    this->imagery_uploads_pending = false;
     const MapBgfx2d::WorldPoint center = MapBgfx2d::worldFromWgs84(
         this->camera_state.center_lon_deg, this->camera_state.center_lat_deg);
     MapBgfx2dImagery::Camera camera;
@@ -1735,6 +1826,11 @@ void MapBgfxSurface::renderImagery(const QSizeF &logical)
                 {
                     ++uploads;
                 }
+                else if (uploads >= kImageryUploadsPerFrame)
+                {
+                    // Over this frame's budget: upload it in the next one.
+                    this->imagery_uploads_pending = true;
+                }
                 continue;
             }
             if (this->imagery_requests_dirty)
@@ -1761,6 +1857,7 @@ void MapBgfxSurface::renderImagery(const QSizeF &logical)
 
 void MapBgfxSurface::setSymbology(const MapNetworkRenderSymbology &symbology)
 {
+    requestRedraw();
     this->symbology = symbology;
     this->symbology_colors_dirty = true;
     // New values (time step, metric) and symbol sizes.
@@ -1769,6 +1866,7 @@ void MapBgfxSurface::setSymbology(const MapNetworkRenderSymbology &symbology)
 
 void MapBgfxSurface::setVisualControlSettings(const NetworkSymbologySettings &settings)
 {
+    requestRedraw();
     // Cheap path for slider/toggle changes: sizes, the heatmap radius,
     // opacity and solid centre are uniforms; only the junction and flow-arrow
     // toggles need the attribute stream again. Heatmap values and palette

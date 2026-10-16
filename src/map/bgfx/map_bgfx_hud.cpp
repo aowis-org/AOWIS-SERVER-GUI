@@ -1122,6 +1122,7 @@ void MapBgfxHud::paletteMenu(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cach
 void MapBgfxHud::tooltipBox(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
                             const FrameInputs &inputs, const Palette &palette)
 {
+    this->tooltip_waiting = false;
     if (!this->pointer_inside || this->tooltip_suppressed
         || this->armed.element != Element::None)
     {
@@ -1135,7 +1136,10 @@ void MapBgfxHud::tooltipBox(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache
     if (this->tooltip_since_s < 0.0)
         this->tooltip_since_s = inputs.time_s;
     if (inputs.time_s - this->tooltip_since_s < TooltipDelayS)
+    {
+        this->tooltip_waiting = true;
         return;
+    }
 
     const QStringList lines = box->tooltip.split(QLatin1Char('\n'));
     const double line_height = cache->measure(QStringLiteral("Ag"), this->font).height();

@@ -485,10 +485,11 @@ if(AOWIS_ENABLE_BGFX_MAP)
     if(EMSCRIPTEN)
         # Keep wasm function names in the binary (name section only, no
         # DWARF): browser stack traces show "bgfx::gl::...::init" instead of
-        # "$func25562". Costs a few MB of download; turn off for releases
-        # once the browser renderer is stable.
+        # "$func25562". Costs a few MB of download, so it is off now that the
+        # browser renderer is stable; ./compile_wasm.sh passes
+        # AOWIS_WASM_FUNCTION_NAMES=ON from the environment for debugging.
         option(AOWIS_WASM_FUNCTION_NAMES
-            "Keep WebAssembly function names for readable browser stack traces" ON)
+            "Keep WebAssembly function names for readable browser stack traces" OFF)
         if(AOWIS_WASM_FUNCTION_NAMES)
             target_link_options(aowis-server-gui PRIVATE "--profiling-funcs")
         endif()

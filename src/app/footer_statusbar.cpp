@@ -74,6 +74,61 @@ FooterStatusBar::FooterStatusBar(QWidget *parent)
     {
         emit zoomEdited(value);
     });
+
+    this->display_timer = new QTimer(this);
+    this->display_timer->setSingleShot(true);
+    this->display_timer->setInterval(DisplayIntervalMs);
+    connect(this->display_timer, &QTimer::timeout, this, &FooterStatusBar::applyPendingDisplay);
+}
+
+void FooterStatusBar::scheduleDisplay()
+{
+    // Leading edge after a quiet period (an isolated change shows at once),
+    // then at most one update per interval while values keep coming.
+    if (this->display_timer->isActive())
+        return;
+    applyPendingDisplay();
+    this->display_timer->start();
+}
+
+void FooterStatusBar::applyPendingDisplay()
+{
+    if (this->pending_zoom.has_value())
+    {
+        const double zoom = this->pending_zoom.value();
+        this->pending_zoom.reset();
+        // Not while the person edits the value (see setMapZoom()).
+        if (!this->spin_map_zoom->hasFocus())
+        {
+            const QSignalBlocker blocker(this->spin_map_zoom);
+            this->spin_map_zoom->setValue(zoom);
+        }
+    }
+    if (this->pending_wgs84.has_value())
+    {
+        const CoordinateWGS84 wgs = this->pending_wgs84.value();
+        this->pending_wgs84.reset();
+        this->coordinate_altitude_m = wgs.altitude_m;
+        this->refreshAltitudeDisplay();
+        // 5 decimals are about 1.11 m (depending on location)
+        this->label_map_coords_lat->setText(
+            "WGS 84 Lat: " + QString::number(wgs.latitude_deg, 'f', 5));
+        this->label_map_coords_lon->setText(
+            "Lon: " + QString::number(wgs.longitude_deg, 'f', 5));
+    }
+    if (this->pending_utm.has_value())
+    {
+        const CoordinateUTM utm = this->pending_utm.value();
+        this->pending_utm.reset();
+        const QString hemisphere = utm.hemisphere_northern ? "N" : "S";
+        const QString crs = utm.isUPS()
+                                ? "UPS " + hemisphere
+                                : "UTM " + QString::number(utm.zone) + hemisphere;
+        this->label_map_coords_utm_easting->setText(
+            crs + " E: " + QString::number(utm.easting_m, 'f', 2) + " m");
+        this->label_map_coords_utm_northing->setText(
+            "N: " + QString::number(utm.northing_m, 'f', 2) + " m");
+    }
 }
 
 void FooterStatusBar::setMapZoom(double zoom)
@@ -81,37 +136,18 @@ void FooterStatusBar::setMapZoom(double zoom)
     if (this->spin_map_zoom->hasFocus())
         return;
 
-    const QSignalBlocker blocker(this->spin_map_zoom);
-    this->spin_map_zoom->setValue(zoom);
+    this->pending_zoom = zoom;
+    scheduleDisplay();
 }
 void FooterStatusBar::setMapCoordinatesWGS84(const CoordinateWGS84 &wgs)
 {
-    this->coordinate_altitude_m = wgs.altitude_m;
-    this->refreshAltitudeDisplay();
-    // 5 decimals are about 1.11 m (depending on location)
-    this->label_map_coords_lat->setText(
-        "WGS 84 Lat: " + QString::number(wgs.latitude_deg, 'f', 5)
-        );
-    
-    this->label_map_coords_lon->setText(
-        "Lon: " + QString::number(wgs.longitude_deg, 'f', 5)
-        );
+    this->pending_wgs84 = wgs;
+    scheduleDisplay();
 }
 void FooterStatusBar::setMapCoordinatesUTM(const CoordinateUTM &utm)
 {
-    const QString hemisphere = utm.hemisphere_northern ? "N" : "S";
-    
-    const QString crs = utm.isUPS()
-                            ? "UPS " + hemisphere
-                            : "UTM " + QString::number(utm.zone) + hemisphere;
-    
-    this->label_map_coords_utm_easting->setText(
-        crs + " E: " + QString::number(utm.easting_m, 'f', 2) + " m"
-        );
-    
-    this->label_map_coords_utm_northing->setText(
-        "N: " + QString::number(utm.northing_m, 'f', 2) + " m"
-        );
+    this->pending_utm = utm;
+    scheduleDisplay();
 }
 
 void FooterStatusBar::refreshAltitudeDisplay()
@@ -127,6 +163,9 @@ void FooterStatusBar::refreshAltitudeDisplay()
 
 void FooterStatusBar::clearMapCoordinates()
 {
+    // A throttled update must not bring the values back.
+    this->pending_wgs84.reset();
+    this->pending_utm.reset();
     this->coordinate_altitude_m.reset();
     this->refreshAltitudeDisplay();
     this->label_map_coords_lat->clear();

@@ -452,6 +452,7 @@ void testHud()
 
     // Download activity: top centre, one panel per source, tiles first.
     hud.setDownloadActivity(2, 3, 1, 0);
+    req(hud.animating(), "busy downloads animate the HUD (busy bars)");
     hud.build(&canvas, &cache, frameInputs(true), palette);
     scan = scanActions(&hud, 1.0);
     req(scan.found(MapBgfxHud::Action::CancelMapTiles) && scan.found(MapBgfxHud::Action::CancelTerrain),
@@ -477,6 +478,7 @@ void testHud()
     hud.build(&canvas, &cache, frameInputs(true), palette);
     req(!hud.blocksInput(0.5 * ViewportWidth, MapBgfxHud::MarginPx + 3.0),
         "idle repositories hide the download panels");
+    req(!hud.animating(), "an idle HUD needs no frames by itself");
 
     // GPS dot at the camera centre (opaque red, premultiplied ABGR).
     hud.setGps(true, 9.0, 47.0);
@@ -726,9 +728,12 @@ void testLegend()
     MapBgfxHud::FrameInputs later = frameInputs(true);
     hud.build(&canvas, &cache, later, palette);
     req(!canvasHasColor(canvas, palette.tooltip), "no tooltip before the delay");
+    // On-demand rendering: the waiting tooltip keeps frames coming.
+    req(hud.animating(), "a tooltip inside its delay animates the HUD");
     later.time_s += MapBgfxHud::TooltipDelayS + 0.05;
     hud.build(&canvas, &cache, later, palette);
     req(canvasHasColor(canvas, palette.tooltip), "ramp tooltip after the delay");
+    req(!hud.animating(), "a shown tooltip no longer animates the HUD");
 
     // Combo: press opens the list (above, it does not fit below), click an
     // item -> LegendVisual with the group and the metric value.

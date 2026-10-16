@@ -157,6 +157,14 @@ public:
     void setLabelSymbolRects(MapBgfxLabels::SymbolRect node_symbol,
                              MapBgfxLabels::SymbolRect link_symbol);
 
+    // --- On-demand rendering ------------------------------------------------------
+    // The surface presents a frame only when its camera or size changed, one
+    // of its setters was called, or something animates (HUD busy bars or
+    // tooltip delay, budgeted imagery uploads, deferred labels). Anything
+    // else that changes what it draws - the editor overlay's content - calls
+    // this.
+    void requestRedraw();
+
     // --- Map editor (Phase 2) ---------------------------------------------------
     // Called every 2D frame after the network and before the HUD with the
     // frame's continuous camera; draws into its own canvas and atlas, which
@@ -207,6 +215,8 @@ protected:
     void showEvent(QShowEvent *event) override;
     void hideEvent(QHideEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    // Palette / font changes restyle the HUD: present a frame.
+    void changeEvent(QEvent *event) override;
 
 private:
     bool initializeBackend();
@@ -341,6 +351,20 @@ private:
     // Content changed (settings, values, symbols, hidden entities, font):
     // rebuild on the next frame.
     bool labels_dirty = true;
+    // On-demand rendering (requestRedraw()): what the last presented frame
+    // showed, and whether a frame is wanted regardless.
+    bool redraw_requested = true;
+    bool presented_valid = false;
+    MapCameraViewState presented_camera;
+    QSize presented_pixels;
+    QSizeF presented_logical;
+    // Tiles in the repository that did not fit into this frame's upload
+    // budget: keep presenting until all are resident.
+    bool imagery_uploads_pending = false;
+    // The last pointer move involved the HUD (hover feedback to redraw).
+    bool hud_pointer_involved = false;
+    // Last setHudDownloadActivity() numbers.
+    int hud_download_activity[4] = {0, 0, 0, 0};
     QPointer<QWidget> keyboard_focus_widget;
     // Editor move preview.
     QSet<QUuid> hidden_entity_uuids;

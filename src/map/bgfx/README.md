@@ -100,6 +100,27 @@ editor) was removed.
   scene; the GPU mesh, highlights and picking follow
   `MapBgfx2dScene::preparationId()` (no geometry revision needed).
 
+## On-demand rendering
+
+The frame loop (desktop: a timer slightly faster than the display; WASM:
+`requestAnimationFrame`) keeps ticking for the navigation clock, but a tick
+presents a frame only when something visible changed: the camera
+(`mapCameraUpdate()` against the last presented frame), the size or device
+ratio, a call of any surface setter or `requestRedraw()` (the editor overlay's
+content), an arriving tile, an expose; or while something animates by itself
+(`MapBgfxHud::animating()`: download busy bars, a tooltip inside its delay;
+tile uploads over the per-frame budget; deferred labels). An idle map costs
+an early return per refresh instead of a full frame - in the browser it no
+longer keeps a core busy. Plain pointer moves over the map present nothing;
+only HUD hover feedback does. Unchanged download numbers (the monitor polls
+every 400 ms) present nothing either.
+
+Around the surface: `MapWidget` neither repaints nor scrolls its backing store
+while a GPU surface is active (a full-size copy and flush per pan step), and
+the footer's map readouts are coalesced to at most one update per 100 ms
+(each label change relayouts the status bar). WASM builds drop the function
+name section by default (`AOWIS_WASM_FUNCTION_NAMES=ON` to keep it).
+
 ## Native HUD (slices 6a, 6b)
 
 QWidgets cannot sit on top of bgfx's native window, so the HUD is drawn by

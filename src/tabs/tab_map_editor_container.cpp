@@ -543,6 +543,10 @@ void MapEditorContainer::setupBgfxEditor()
     connect(this->map_canvas, &MapCanvasWidget::signalRenderUpdateRequested, this, [this]()
     {
         this->bgfx_visual_state_dirty = true;
+        // The surface renders on demand; the overlay's content is not one of
+        // its own inputs.
+        if (this->bgfx_surface != nullptr)
+            this->bgfx_surface->requestRedraw();
     });
     connect(this->map_canvas, &MapCanvasWidget::signalCameraChanged, this, [this]()
     {

@@ -162,7 +162,10 @@ void MapWidget::init()
         emit signalZoomChanged(zoom);
         if (this->m_model->viewMode() == MapViewMode::TwoD)
             emit signalZoomLevelChanged(this->m_model->view2dContinuousZoom());
-        update();
+        // Nothing to repaint while a GPU surface draws the map (every repaint
+        // is a full-size backing-store flush, per frame while zooming).
+        if (!this->render_surface_active)
+            update();
     });
 
     connect(this->m_model, &MapModel::viewGlobeCameraChanged, this, [this]
@@ -177,7 +180,8 @@ void MapWidget::init()
             return;
 
         emit signalZoomLevelChanged(this->m_model->view2dContinuousZoom());
-        update();
+        if (!this->render_surface_active)
+            update();
     });
 
     connect(this->m_model, &MapModel::centerChangedWGS84, this, [this](CoordinateWGS84 wgs)
@@ -196,7 +200,7 @@ void MapWidget::init()
             // Keep 2D centre readouts aware of any cached 3D terrain too.
             emit signalCoordsChangedWgs84(withCachedTerrainAltitude(wgs));
         }
-        if (this->backing_store_pan_active)
+        if (this->backing_store_pan_active || this->render_surface_active)
             return;
         update();
     });
@@ -1030,7 +1034,10 @@ void MapWidget::panMapByPixels(const QPoint &delta, bool keyboard_pan)
         qRound(horizontal_tile_delta * MapModel::TileSize),
         qRound((old_center.y() - new_center.y()) * MapModel::TileSize));
 
-    if (actual_delta.isNull())
+    // A GPU surface draws the map: this widget shows nothing, so neither a
+    // repaint nor a backing-store scroll (a full-size copy plus a flush per
+    // pan step, the costliest part of panning in the browser).
+    if (actual_delta.isNull() || this->render_surface_active)
         return;
 
     if (std::abs(actual_delta.x()) >= this->width() || std::abs(actual_delta.y()) >= this->height())
@@ -1626,6 +1633,9 @@ void MapWidget::setRenderSurfaceActive(bool active)
     // Never snap the camera to an integer zoom here: the continuous camera
     // stays authoritative with or without a GPU surface.
     stopPanAnimationIfIdle();
+    // Camera changes did not repaint this widget while the surface was
+    // active; cover the area again now.
+    update();
 }
 
 void MapWidget::changeMapProvider(MapProvider provider)

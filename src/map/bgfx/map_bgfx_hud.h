@@ -177,6 +177,14 @@ public:
     void setViewMode(bool two_d, bool globe_available);
     // The 2D/3D switch (default shown). The map editor has none.
     void setViewSwitchVisible(bool visible) { this->view_switch_visible = visible; }
+    // The HUD changes with time alone (download busy indicators, a tooltip
+    // waiting for its delay): the surface must keep presenting frames while
+    // this is true, otherwise it renders only on changes.
+    bool animating() const
+    {
+        return this->tiles_active > 0 || this->tiles_queued > 0 || this->terrain_active > 0
+            || this->terrain_queued > 0 || this->tooltip_waiting;
+    }
     void setFullscreen(bool available, bool active);
     // Replaces the legend content. Open popups stay open when their group
     // still exists; hiding the legend closes them.
@@ -413,6 +421,8 @@ private:
     // reaches another target.
     double tooltip_since_s = -1.0;
     bool tooltip_suppressed = false;
+    // The last build found a tooltip target still inside its delay.
+    bool tooltip_waiting = false;
 };
 
 #endif // MAP_BGFX_HUD_H
