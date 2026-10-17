@@ -46,7 +46,6 @@ fi
 BUILD_TYPE="${AOWIS_BUILD_TYPE:-RelWithDebInfo}"
 cmake -S "${PROJECT_DIR}" -B "${BUILD_DIR}" -G Ninja \
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-    -DAOWIS_ENABLE_BGFX_MAP=ON \
     -DAOWIS_BGFX_SHADER_TOOLS="${SHADER_TOOLS}"
 cmake --build "${BUILD_DIR}" --parallel
 

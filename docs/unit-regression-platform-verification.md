@@ -24,7 +24,7 @@ Existing and expanded regression coverage includes:
 | Emitter coefficient and exponent | `emitter_coefficient_binding_test.cpp`, `emitter_numeric_spin_box_test.cpp` | Edit on actual enabled junctions with mixed network exponent constraints |
 | Visible/hidden unit generations | `unit_aware_view_test.cpp` | This step adds hidden nested-page, 500 profile-change coalescing, and destroyed-owner checks; still test real dock/tab lifecycles |
 | Typed table cells and filters | `unit_table_presentation_test.cpp` | Edit/filter/sort across every live entity column and user clipboard/export behavior |
-| Web browser scale logic | `browser_map_scale_test.js`, `browser_map_scale_units_test.cpp` | Real browser/WebAssembly profile change while 2D/3D map active |
+| Map scale logic (desktop and browser) | `map_render_neutral_tests.cpp` (map scale, HUD lengths) | Real browser/WebAssembly profile change while 2D/3D map active |
 | External format independence | `epanet_inp_unit_roundtrip.inc`, `epanet_js_converter_unit_reference.inc`, GUI integration targets | REST/DB (SQLite + PostgreSQL), other EPANET/MSX revisions, and actual project export UI |
 
 All `CHECK`-based regression conditions must continue executing in Release (`NDEBUG`); never put required actions only inside `assert()`.
@@ -56,7 +56,7 @@ Run the repository's established `./compile_wasm.sh` and serve `build-wasm-dist`
 3. A `.ejsdb` import preserves its source-unit semantics and optionally offers a custom display profile; network properties and EPANET export remain canonical/source-defined.
 4. Rapid repeated switches do not trigger unexpected network reloads, solver reruns, or render geometry rebuilds. Record actual timings for Step 8.
 
-The native Node.js test for `aowis-browser-map.js` is an excellent fast contract test but runs in a mocked JavaScript VM, **not** a real Qt/WASM/browser environment. Do not report it as a completed WebAssembly acceptance test.
+The native Node.js test `tests/bgfx_map_canvas_test.js` only checks how `aowis-bgfx-map.js` places the bgfx canvas, in a mocked JavaScript VM, **not** a real Qt/WASM/browser environment. Do not report it as a completed WebAssembly acceptance test.
 
 ## Evidence ledger
 

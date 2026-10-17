@@ -137,7 +137,6 @@ private:
     // when it cannot (no bgfx in the build, startup failure).
     QLabel *renderer_status;
     void showRendererStatus(const QString &text);
-#if AOWIS_HAS_BGFX
     MapBgfxSurface *bgfx_surface = nullptr;
     bool bgfx_editor_active = false;
     // The editor's visual state for the bgfx overlay, refreshed when the
@@ -173,7 +172,6 @@ private:
     QPointF render_move_start_mouse_position;
     bool render_full_network_move = false;
     QPointF render_move_translation;
-#endif
     MapEditorController *editor_controller;
     MapEditorMenuWidget *map_menu;
     

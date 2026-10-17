@@ -39,7 +39,8 @@ Those require the following live checks.
 ## B. Live application protocol
 
 For every run, record GUI and Model commit IDs, OS, Qt version, profile names,
-renderer backend (CPU/QRhi/WebGL) and source project/fixture. Use one small
+map renderer backend (bgfx with Vulkan, OpenGL, Direct3D 11, Metal or WebGL 2,
+as logged at startup) and source project/fixture. Use one small
 project for correctness and one representative **large network**, recording
 actual nodes, links, demand points and result time steps. Do not fabricate a
 required network size or a machine-independent response-time threshold.

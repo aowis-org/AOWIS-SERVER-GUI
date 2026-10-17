@@ -34,7 +34,7 @@ runs. Optional ASan/UBSan checks use normal CMake/CTest, as described in
 
 | Step | Code and test evidence in this snapshot | Audit disposition |
 | --- | --- | --- |
-| 1 — WASM map scale | C++-provided display-unit scale choices; `tools/qt-emscripten/aowis-browser-map.js` uses canonical metre distances and supplied labels; `browser_map_scale_units_test.cpp` and `browser_map_scale_test.js` exist | **Source-implemented**. Actual browser/WASM switch and no-map-reload behavior must be observed |
+| 1 — WASM map scale | C++-provided display-unit scale choices (`MapScaleDistance`), drawn by the bgfx HUD on desktop and WASM; covered by `map_render_neutral_tests.cpp`. (The JavaScript scale in `aowis-browser-map.js` and its tests were removed with the JavaScript map renderer.) | **Source-implemented**. Actual browser/WASM switch and no-map-reload behavior must be observed |
 | 2 — Typed table quantities | `UnitTablePresentation::ColumnUnits`; `TableColumn` explicit quantity and filter kind; row-dependent special cases; `unit_table_presentation_test.cpp` | **Source-implemented**. Audit table modes, clipboard/export and live filter/editor transitions |
 | 3 — Precision-safe slider controls | `SliderNumberControl::precise_value`, `NumericPropertyBinding`, separate slider/spin representations; `slider_number_control_test.cpp` | **Source-implemented**. Verify real settings persistence with values more precise than the widget shows |
 | 4 — Cleanup | `include/aowis/model/units/conversion.h` forwards to Model; `unit_model_header_authority_test.cpp` verifies Model-only units; obsolete Settings text corrected; tank suffix cleanup | **Source-implemented**. The compatibility forwarding file intentionally remains because a ZIP patch cannot delete a tracked file; remove it via Git only after all downstream includes are migrated |
@@ -66,7 +66,7 @@ Capture the **Debug and Release test counts, failures and dates separately**. Do
 
 The audit also independently checked the following in this snapshot:
 
-- `node tests/browser_map_scale_test.js` **passed**.
+- `node tests/browser_map_scale_test.js` **passed** at the time; that test was later removed together with the JavaScript map renderer.
 - The ordinary C++ test executables **and the benchmark** are dependencies of `aowis-tests`; the benchmark is now registered as a CTest test with labels `aowis` and `performance`, and uses structural assertions without timing cutoffs.
 - Unit conversion's GUI compatibility header contains no duplicate scale constants; it forwards to the Model submodule.
 - A passing unit test is evidence only for the cases it exercises. Complete native Qt application and production renderer runs were **not performed by this audit**.

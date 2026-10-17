@@ -51,83 +51,14 @@ been registered in Git, either `git_submodule_init.sh` or
 commit the new gitlinks alongside `.gitmodules`, so subsequent clones can
 initialize all dependencies normally.
 
-### bgfx surface and stacking proof of concept
-
-An isolated probe, **not yet a map backend**, tests native bgfx surface
-integration and the browser rule that a bgfx canvas must be above the normal
-Qt canvas but below Qt top-level dialogs. No QWidget is painted above bgfx.
-The probe uses bgfx's GPU debug-text HUD, rather than a QWidget overlay.
-
-```bash
-# Native: configure your usual GUI build with this additional flag:
-cmake -S . -B build-linux -DAOWIS_BUILD_BGFX_PROBE=ON
-cmake --build build-linux --target aowis-bgfx-probe
-./build-linux/tests/bgfx_probe/aowis-bgfx-probe
-
-# WASM: opt in (the Docker build uses this environment variable):
-AOWIS_BUILD_BGFX_PROBE=ON ./compile_wasm.sh
-# Serve build-wasm-dist/bgfx-probe.html using the same COOP/COEP headers
-# as the main app. Run it manually in a browser for the GPU stacking test.
-```
-
-In the probe, click **Open Qt dialog** while watching the continuously updated
-GPU text/frame counter. The dialog should remain visible above the bgfx canvas.
-Close the dialog and watch timing logs printed to the browser console (JSON
-records, 120-frame intervals, separated by `dialog_open` true/false). Test at your usual map viewport size and on
-multiple GPUs. This is a *measurement harness*, not yet an automated
-pass/fail GPU throughput benchmark: frame timings need a verified baseline and
-normal browser load controls before a hard threshold can be established. In the
-browser the JSON report additionally contains `stacking_ok`, which checks the
-**actual live Qt windows**, not just the synthetic DOM test. It must remain
-`true` both with the dialog closed and open; any `false` value is a failure.
-
-For a repeatable **relative WASM regression check**, capture the browser console
-output with at least three 120-frame reports for each of `dialog_open=false`
-and `dialog_open=true` **at the same viewport dimensions**, then run:
-
-```bash
-node tests/bgfx_probe/performance_check.js browser-console.log
-# Optional: set maximum tolerated median FPS loss (default: 10 percent)
-node tests/bgfx_probe/performance_check.js --max-loss-pct 10 browser-console.log
-```
-
-The checker compares median FPS at one common viewport size and requires
-`stacking_ok=true` in **every compared browser sample**. It returns exit code 0
-only when FPS and live stacking both pass, 1 for a measured regression or a
-reported stacking failure, and 2 when results are inconclusive (including
-missing `stacking_ok`). Run both dialog scenarios without resizing between
-them; resize/warm-up samples can be outliers.
-
-To compare older, FPS-only console logs **without treating them as a successful
-stacking test**, explicitly use:
-
-```bash
-node tests/bgfx_probe/performance_check.js --allow-unverified-stacking browser-console.log
-```
-
-If your browser still logs no `stacking_ok` although the current
-`tests/bgfx_probe/main.cpp` contains it, the browser is probably running an
-older JS/WASM bundle. Rebuild with `AOWIS_BUILD_BGFX_PROBE=ON`, serve the freshly
-generated `build-wasm-dist/bgfx-probe.html` and assets, and hard-reload the page.
-Ensure your web server actually points at that updated directory. A previous
-HTML/JS/WASM deployment cannot fulfill the live stacking assertion.
-
-The 16 ms probe timer caps observed FPS near 62.5, so this test can catch major
-composition regressions but **does not measure peak GPU throughput** or prove
-performance parity with AOWIS's eventual full map workload.
-
-The WebAssembly probe runs in a dedicated HTML page to avoid interference with
-existing browser renderers. The actual map isn't migrated by this option.
-The native Wayland path uses Qt GuiPrivate's
-platform-native window resource API and therefore requires that component.
-
-
 ## Build
 
 **Compiler requirement:** C++20 (a compiler with C++20 support, for example GCC 12 or newer on Debian 12+). The GUI, its tests, and the AOWIS Model/EPANET components use C++20. CMake enforces this requirement across native and WebAssembly builds.
 
 ### Linux
 Run the script `compile_linux.sh`
+
+Qt's private Gui headers are required (Debian/Ubuntu: `qt6-base-private-dev`): the bgfx map and the Wayland orbit pointer lock read the native window and display handles through them.
 
 Find the result in the folder `build-linux`
 

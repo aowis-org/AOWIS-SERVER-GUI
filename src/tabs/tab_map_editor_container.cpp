@@ -3,13 +3,11 @@
 #include "config/shortcut_registry.h"
 
 #include "network/network_symbology_rendering.h"
-#if AOWIS_HAS_BGFX
 #include "map/bgfx/map_bgfx_editor_icons.h"
 #include "map/bgfx/map_bgfx_editor_overlay.h"
 #include "map/bgfx/map_bgfx_pan_reuse.h"
 #include "map/bgfx/map_bgfx_surface.h"
 #include "map/render/map_entity_pixmap_renderer.h"
-#endif
 
 #include <QCoreApplication>
 #ifndef Q_OS_WASM
@@ -51,7 +49,6 @@ void bindEditorShortcut(QAbstractButton *button, GuiShortcutId id,
     });
 }
 
-#if AOWIS_HAS_BGFX
 // Label symbol boxes of the editor's icons (MapEntityPixmapRenderer rects at
 // the editor's entity width): nodes bottom-anchored on their position,
 // pumps and valves centred on the link's middle, pipes none. Memoized per
@@ -90,7 +87,6 @@ private:
     MapEntityPixmapRenderer metrics;
     QHash<quint64, MapBgfxHudRect> rects;
 };
-#endif
 }
 
 
@@ -148,12 +144,7 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     // HUD routing and the map fullscreen window's close button.
     this->map_canvas->installEventFilter(this);
     this->map_stack->installEventFilter(this);
-#if AOWIS_HAS_BGFX
     setupBgfxEditor();
-#else
-    showRendererStatus(tr("The map editor draws with the bgfx map renderer, which this "
-                          "build does not include (AOWIS_ENABLE_BGFX_MAP=OFF)."));
-#endif
     
     this->layout->addWidget(scroll_controls);
     this->layout->addWidget(this->map_stack);
@@ -184,7 +175,6 @@ void MapEditorContainer::showRendererStatus(const QString &text)
     this->renderer_status->raise();
 }
 
-#if AOWIS_HAS_BGFX
 void MapEditorContainer::connectRenderSurfaceSync()
 {
     connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
@@ -805,11 +795,9 @@ void MapEditorContainer::setBgfxFullscreen(bool fullscreen)
     Q_UNUSED(fullscreen)
 #endif
 }
-#endif
 
 bool MapEditorContainer::eventFilter(QObject *watched, QEvent *event)
 {
-#if AOWIS_HAS_BGFX
 #ifndef Q_OS_WASM
     // Closing the fullscreen map window returns the map to the tab.
     if (watched == this->map_stack && event->type() == QEvent::Close
@@ -839,7 +827,6 @@ bool MapEditorContainer::eventFilter(QObject *watched, QEvent *event)
             return true;
         }
     }
-#endif
     return QWidget::eventFilter(watched, event);
 }
 
@@ -867,8 +854,8 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_ca
                                          MapEditorController *editor_controller, CanvasMode mode,
                                          QWidget *parent)
     : QWidget{parent},
-    layout( new QVBoxLayout(this) ),
     mode( mode ),
+    layout( new QVBoxLayout(this) ),
     map( map ),
     map_nav( new MapNavigationWidget(this->map, this->mode, map_canvas, this) ),
     map_canvas( map_canvas ),

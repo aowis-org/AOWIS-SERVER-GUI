@@ -36,8 +36,6 @@ echo "Toolchain image: ${AOWIS_WASM_IMAGE}"
 docker run --rm \
     -v "$(pwd)":/project \
     -w /project \
-    -e AOWIS_BUILD_BGFX_PROBE="${AOWIS_BUILD_BGFX_PROBE:-OFF}" \
-    -e AOWIS_ENABLE_BGFX_MAP="${AOWIS_ENABLE_BGFX_MAP:-ON}" \
     -e AOWIS_WASM_FUNCTION_NAMES="${AOWIS_WASM_FUNCTION_NAMES:-OFF}" \
     -e AOWIS_WASM_SIMD="${AOWIS_WASM_SIMD:-ON}" \
     "${AOWIS_WASM_IMAGE}" \
@@ -47,23 +45,7 @@ docker run --rm \
 # Replace it with the project wrapper.
 cp tools/qt-emscripten/index.html build-wasm/
 cp tools/qt-emscripten/.htaccess build-wasm/
-if [ "${AOWIS_BUILD_BGFX_PROBE:-OFF}" = "ON" ]; then
-    # Include possible Emscripten worker JS and sidecar WASM files, not just
-    # the application JS/WASM pair.
-    cp build-wasm/tests/bgfx_probe/aowis-bgfx-probe*.js build-wasm/
-    cp build-wasm/tests/bgfx_probe/aowis-bgfx-probe*.wasm build-wasm/
-    cp tools/qt-emscripten/bgfx-probe.html build-wasm/
-    cp tools/qt-emscripten/bgfx-probe-stack.js build-wasm/
-else
-    rm -f build-wasm/aowis-bgfx-probe*.js build-wasm/aowis-bgfx-probe*.wasm \
-          build-wasm/bgfx-probe.html build-wasm/bgfx-probe-stack.js
-fi
 cp tools/qt-emscripten/aowis-bgfx-map.js build-wasm/
-# The JavaScript/WebGL map renderer (monitor and editor) was removed. Do not
-# carry its scripts forward from an older build tree into build-wasm-dist.
-rm -f build-wasm/aowis-browser-map.js build-wasm/aowis-browser-vector.js \
-      build-wasm/aowis-browser-network-webgl.js build-wasm/aowis-browser-network.js \
-      build-wasm/aowis-browser-map-editor.js build-wasm/aowis-browser-monitor-worker.js
 
 # The WASM configuration is administered in the webroot. Never overwrite an existing
 # administrator-edited build configuration with the source template.

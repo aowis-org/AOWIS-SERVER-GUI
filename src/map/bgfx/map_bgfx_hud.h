@@ -16,7 +16,8 @@
 #include <array>
 #include <functional>
 
-// Native bgfx HUD of the 2D Map Monitor (Phase 1 slices 6a and 6b).
+// Native bgfx HUD of the Map Monitor (Phase 1 slices 6a and 6b, globe
+// controls Phase 3 slice 5).
 //
 // Replaces the QWidget HUD that cannot sit on top of bgfx's native window:
 // crosshair, GPS position, scale bar, download activity (map tiles, terrain)
@@ -30,9 +31,11 @@
 // with its heading and the globe scale, bottom left like the QWidget globe
 // HUD (MapMonitorVerticalControlsHudWidget, MapMonitorCompassHudWidget).
 //
-// Same content, positions and sizes as the QWidget HUD
-// (MapMonitorContainer::positionDesktopHudWidgets(), map_monitor_hud_controls,
-// EntityMapLegendHud), drawn as one batch per frame into MapBgfxHudCanvas
+// Same content, positions and sizes as the QWidget HUD of the removed QRhi
+// map (MapMonitorContainer::positionDesktopHudWidgets(),
+// map_monitor_hud_controls, EntityMapLegendHud; the QWidget class names in
+// the HUD comments refer to it, see the version history), drawn as one batch
+// per frame into MapBgfxHudCanvas
 // with text runs from MapBgfxHudTextCache. Layout is rebuilt every frame
 // from the current state (a handful of rectangles); the hit boxes of the
 // last build answer mouse input, so what is clickable is exactly what was

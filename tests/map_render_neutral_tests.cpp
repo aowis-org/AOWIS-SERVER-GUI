@@ -1,9 +1,7 @@
 #include "geo/geo_web_mercator.h"
 #include "map/render/map_globe_heatmap_scene.h"
-#include "map/render/map_globe_junction_model.h"
 #include "map/render/map_globe_picking.h"
 #include "map/render/map_globe_reservoir_model.h"
-#include "map/render/map_globe_surface_render_frame.h"
 #include "map/render/map_globe_tank_model.h"
 #include "map/render/map_globe_vertical_transform.h"
 #include "map/core/map_cached_terrain_altitude.h"
@@ -575,54 +573,6 @@ void testGlobeModelGeometry()
     expectTrue(reservoir_hit_distance_m > 0.0
         && reservoir_hit_distance_m < 10.0,
         "reservoir mesh picking returns nearby positive distance");
-
-    const QVector<MapGlobeJunctionImpostorVertex> &junction_vertices =
-        mapGlobeJunctionImpostorVertices();
-    expectTrue(junction_vertices.size() == 6,
-        "junction impostor is exactly two triangles");
-    bool junction_corners_valid = true;
-    for (const MapGlobeJunctionImpostorVertex &vertex : junction_vertices)
-    {
-        junction_corners_valid = junction_corners_valid
-            && std::abs(std::abs(double(vertex.corner_x)) - 1.0) <= 1e-12
-            && std::abs(std::abs(double(vertex.corner_y)) - 1.0) <= 1e-12;
-    }
-    expectTrue(junction_corners_valid,
-        "junction impostor vertices stay on canonical unit-quad corners");
-}
-
-void testSurfaceRenderFrameInvariants()
-{
-    QVector<MapGlobeSurfaceVertex> window_vertices;
-    window_vertices.append({1.0f, 2.0f, 3.0f, 0.0f, 0.0f});
-    QVector<quint32> window_indices;
-    window_indices.append(0);
-    QVector<MapGlobeSurfaceVertex> cap_vertices;
-    cap_vertices.append({4.0f, 5.0f, 6.0f, 1.0f, 1.0f});
-    QVector<quint32> cap_indices;
-    cap_indices.append(0);
-    QVector<MapGlobeSurfaceWireframeVertex> wireframe_vertices;
-    wireframe_vertices.append({7.0f, 8.0f, 9.0f});
-
-    MapGlobeSurfaceRenderFrame frame;
-    frame.viewport_size = QSize(800, 600);
-    frame.resources.window_vertices = &window_vertices;
-    frame.resources.window_indices = &window_indices;
-    frame.resources.cap_vertices = &cap_vertices;
-    frame.resources.cap_indices = &cap_indices;
-    frame.resources.wireframe_vertices = &wireframe_vertices;
-    expectTrue(frame.resources.isValid(),
-        "surface render resources require all neutral geometry streams");
-    expectTrue(frame.isValid(),
-        "surface render frame is valid with viewport and all neutral resources");
-
-    frame.viewport_size = QSize();
-    expectTrue(!frame.isValid(),
-        "surface render frame rejects invalid viewport");
-    frame.viewport_size = QSize(800, 600);
-    frame.resources.window_vertices = nullptr;
-    expectTrue(!frame.resources.isValid() && !frame.isValid(),
-        "surface render frame rejects missing neutral geometry stream");
 }
 
 void testCachedTerrainAltitudeFollowsCoordinate()
@@ -757,7 +707,6 @@ int main()
     test_harness.runCase("canonical screen ray", testCanonicalScreenRay);
     test_harness.runCase("heatmap scene", testHeatmapScene);
     test_harness.runCase("globe model geometry", testGlobeModelGeometry);
-    test_harness.runCase("surface render frame invariants", testSurfaceRenderFrameInvariants);
     test_harness.runCase("terrain mesh generation and stitching", testTerrainMeshGenerationAndStitching);
     return test_harness.finish();
 }

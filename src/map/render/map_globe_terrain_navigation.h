@@ -1,7 +1,7 @@
 #ifndef MAP_GLOBE_TERRAIN_NAVIGATION_H
 #define MAP_GLOBE_TERRAIN_NAVIGATION_H
 
-#include "map/render/map_render_surface.h"
+#include "map/render/map_render_types.h"
 
 #include <QElapsedTimer>
 #include <QPoint>

@@ -12,12 +12,10 @@
 #include "config/shortcut_registry.h"
 #include "map/data/map_terrain_repository.h"
 #include "map/render/map_network_render_symbology.h"
-#include "map/render/map_render_surface.h"
-#if AOWIS_HAS_BGFX
+#include "map/render/map_render_types.h"
 #include "map/bgfx/map_bgfx_globe_hud_controller.h"
 #include "map/bgfx/map_bgfx_legend_content.h"
 #include "map/bgfx/map_bgfx_surface.h"
-#endif
 
 #include <QAbstractButton>
 #include <QColor>
@@ -398,7 +396,6 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     this->renderer_status->setAttribute(Qt::WA_TransparentForMouseEvents);
     this->map_stack_layout->addWidget(this->renderer_status);
     showRendererStatus(tr("Starting map renderer\u2026"));
-#if AOWIS_HAS_BGFX
     // bgfx is the only map renderer.
     {
         // Do not promote until bgfx has actually produced a frame; until then
@@ -486,11 +483,10 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         });
         surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
 
-        // Symbology: the resolved MapNetworkRenderSymbology. Every data change that can alter colours re-resolves it, coalesced
-        // to one resolve per event-loop burst by applyVisualControlSymbology().
-        // On the GPU this only re-uploads the colour stream, never geometry.
-        this->bgfx_render_surface = surface;
-        this->bgfx_render_widget = surface;
+        // Symbology: the resolved MapNetworkRenderSymbology. Every data change
+        // that can alter colours re-resolves it, coalesced to one resolve per
+        // event-loop burst by applyVisualControlSymbology(). On the GPU this
+        // only re-uploads the colour stream, never geometry.
         this->bgfx_surface = surface;
 
         // --- Native HUD (slices 6a, 6b; globe controls Phase 3 slice 5) -----
@@ -662,6 +658,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
 
         const std::function<void()> request_bgfx_symbology = [this]()
         {
+            // Data, not a slider: values and colours must be resolved again.
+            this->symbology_resolve_requested = true;
             applyVisualControlSymbology();
         };
         connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
@@ -727,7 +725,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             // WASM: MapWidget keeps pointer input on the Qt layer (the bgfx
             // canvas has pointer-events:none); picking and the HUD are routed
             // from this container's event filter on the map.
-            qInfo() << "Experimental production bgfx Map Monitor surface active";
+            qInfo() << "bgfx Map Monitor surface active";
         });
         connect(surface, &MapBgfxSurface::signalRendererFailed, this,
                 [this, surface](const QString &reason) {
@@ -771,11 +769,6 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                                   "after 10 s.\n%1").arg(diagnostics));
         });
     }
-#else
-    showRendererStatus(
-        tr("The bgfx map renderer is not part of this build.\n"
-           "Reconfigure with -DAOWIS_ENABLE_BGFX_MAP=ON."));
-#endif
 
     this->layout->addWidget(scroll_controls);
     this->layout->addWidget(this->map_stack);
@@ -810,8 +803,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     connect(this->map_menu, &MapMonitorMenuWidget::signalNodeDeclutteringChanged, this,
         [this](bool enabled)
     {
-        if (this->bgfx_render_surface != nullptr)
-            this->bgfx_render_surface->setNodeDeclutteringEnabled(enabled);
+        if (this->bgfx_surface != nullptr)
+            this->bgfx_surface->setNodeDeclutteringEnabled(enabled);
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalLinkVisualClicked, this,
         [this](VisualLink visual_link)
@@ -1007,7 +1000,6 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
         event->accept();
         return true;
     }
-#if AOWIS_HAS_BGFX
     // WASM: MapWidget receives wheel and keys directly (desktop: the native
     // window, routed inside the surface). Wheel over a HUD panel scrolls a
     // legend list or is swallowed; Escape closes a HUD popup; losing focus
@@ -1031,7 +1023,6 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
             this->bgfx_surface->closeHudPopup();
 #endif
     }
-#endif
 
     if (watched == this->map)
     {
@@ -1068,17 +1059,17 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
 
 bool MapMonitorContainer::selectBgfxNetworkEntityAt(const QPointF &position)
 {
-    if (!this->bgfx_render_surface_active || this->bgfx_render_surface == nullptr
-        || this->bgfx_render_widget == nullptr || !this->bgfx_render_widget->isVisible())
+    if (!this->bgfx_render_surface_active || this->bgfx_surface == nullptr
+        || !this->bgfx_surface->isVisible())
         return false;
     // A hit selects the entity (the highlight follows HydraulicData's selection signal), a miss clears it.
-    const MapRenderHit hit = this->bgfx_render_surface->hitTest(position);
+    const MapRenderHit hit = this->bgfx_surface->hitTest(position);
     if (hit.isValid() && selectNetworkEntity(hit.render_id, hit.entity_type, hit.uuid))
     {
-        this->bgfx_render_surface->setSelectedEntity(hit.entity_type, hit.uuid);
+        this->bgfx_surface->setSelectedEntity(hit.entity_type, hit.uuid);
         return true;
     }
-    this->bgfx_render_surface->setSelectedEntity(InfrastructureEntity::Unknown, QUuid());
+    this->bgfx_surface->setSelectedEntity(InfrastructureEntity::Unknown, QUuid());
     return false;
 }
 
@@ -1127,7 +1118,7 @@ void MapMonitorContainer::updateNetworkHover(
 {
     // Ctrl-without-a-button is the desktop orbit gesture. MouseMove reaches
     // this container's event filter before MapWidget starts/updates that
-    // gesture, so checking buttons alone used to run MapRenderSurface::hitTest()
+    // gesture, so checking buttons alone used to run MapBgfxSurface::hitTest()
     // first. Globe hit-testing projects every junction, icon, node and pipe
     // segment on the CPU; doing that for every KY4 orbit event is pure work
     // whose result is immediately hidden with the cursor. The navigation
@@ -1149,10 +1140,10 @@ void MapMonitorContainer::updateNetworkHover(
     }
 
 
-    if (this->bgfx_render_surface_active && this->bgfx_render_surface != nullptr
-        && this->bgfx_render_widget != nullptr && this->bgfx_render_widget->isVisible())
+    if (this->bgfx_render_surface_active && this->bgfx_surface != nullptr
+        && this->bgfx_surface->isVisible())
     {
-        setNetworkHovered(this->bgfx_render_surface->hitTest(position).isValid());
+        setNetworkHovered(this->bgfx_surface->hitTest(position).isValid());
         return;
     }
     setNetworkHovered(false);
@@ -1188,11 +1179,9 @@ void MapMonitorContainer::applyMapHoverCursor()
         this->map->setCursor(shape);
     else
         this->map->unsetCursor();
-#if AOWIS_HAS_BGFX
     // Desktop: the visible cursor over the bgfx map is the native window's.
     if (this->bgfx_surface != nullptr)
         this->bgfx_surface->setMapCursor(shape);
-#endif
 }
 
 void MapMonitorContainer::setBgfxHudCursor(Qt::CursorShape shape)
@@ -1206,7 +1195,6 @@ void MapMonitorContainer::setBgfxHudCursor(Qt::CursorShape shape)
 bool MapMonitorContainer::routeBgfxHudMouseEvent(QMouseEvent *event, bool *over_hud_panel)
 {
     *over_hud_panel = false;
-#if AOWIS_HAS_BGFX
     if (this->bgfx_surface == nullptr || !this->bgfx_render_surface_active
         || !this->bgfx_surface->isVisible())
     {
@@ -1217,15 +1205,10 @@ bool MapMonitorContainer::routeBgfxHudMouseEvent(QMouseEvent *event, bool *over_
     if (event->type() == QEvent::MouseMove)
         setBgfxHudCursor(pointer.cursor);
     return pointer.consumed;
-#else
-    Q_UNUSED(event)
-    return false;
-#endif
 }
 
 void MapMonitorContainer::handleBgfxHudAction(int action, int group, int value, bool flipped)
 {
-#if AOWIS_HAS_BGFX
     switch (static_cast<MapBgfxHud::Action>(action))
     {
         case MapBgfxHud::Action::CancelMapTiles:
@@ -1244,8 +1227,8 @@ void MapMonitorContainer::handleBgfxHudAction(int action, int group, int value, 
                 this->map_model->setViewMode(MapViewMode::TwoD);
             break;
         case MapBgfxHud::Action::ViewMode3d:
-            // Offered (enabled) only with the bgfx globe (on by default,
-            // AOWIS_BGFX_GLOBE=0 disables it: MapBgfxSurface::globeEnabled()).
+            // Offered (enabled) only when the globe surface initialized
+            // (MapBgfxSurface::globeAvailable()).
             if (this->bgfx_surface != nullptr && this->bgfx_surface->globeAvailable()
                 && this->map_model->viewMode() != MapViewMode::Globe)
                 this->map_model->setViewMode(MapViewMode::Globe, this->map->size());
@@ -1321,12 +1304,6 @@ void MapMonitorContainer::handleBgfxHudAction(int action, int group, int value, 
         case MapBgfxHud::Action::None:
             break;
     }
-#else
-    Q_UNUSED(action)
-    Q_UNUSED(group)
-    Q_UNUSED(value)
-    Q_UNUSED(flipped)
-#endif
 }
 
 void MapMonitorContainer::refreshBgfxDownloadActivity()
@@ -1340,19 +1317,17 @@ void MapMonitorContainer::refreshBgfxDownloadActivity()
 
 void MapMonitorContainer::pushBgfxDownloadActivity()
 {
-#if AOWIS_HAS_BGFX
     if (this->bgfx_surface != nullptr)
     {
         this->bgfx_surface->setHudDownloadActivity(
             this->bgfx_tiles_active, this->bgfx_tiles_queued,
             this->bgfx_terrain_active, this->bgfx_terrain_queued);
     }
-#endif
 }
 
 void MapMonitorContainer::setBgfxFullscreen(bool fullscreen)
 {
-#if AOWIS_HAS_BGFX && !defined(Q_OS_WASM)
+#ifndef Q_OS_WASM
     if (fullscreen == this->bgfx_fullscreen_active)
         return;
     if (fullscreen && (!this->bgfx_render_surface_active || this->bgfx_surface == nullptr))
@@ -1396,17 +1371,19 @@ void MapMonitorContainer::applySymbology()
 
     const NetworkSymbologyRanges ranges =
         this->hydraulic_data->symbologyRanges(this->symbology_settings);
-    if (this->bgfx_render_surface != nullptr)
+    if (this->bgfx_surface != nullptr)
     {
-        this->bgfx_render_surface->setSymbology(resolveMapNetworkRenderSymbology(
+        this->bgfx_surface->setSymbology(resolveMapNetworkRenderSymbology(
             *this->hydraulic_data, this->symbology_settings, ranges));
         pushBgfxLegend(ranges);
+        this->resolved_symbology_settings = this->symbology_settings;
+        this->symbology_resolved = true;
+        this->symbology_resolve_requested = false;
     }
 }
 
 void MapMonitorContainer::pushBgfxLegend(const NetworkSymbologyRanges &ranges)
 {
-#if AOWIS_HAS_BGFX
     if (this->bgfx_surface == nullptr || this->hydraulic_data == nullptr)
         return;
     MapBgfxHud::Legend legend = mapBgfxLegendContent(
@@ -1417,19 +1394,14 @@ void MapMonitorContainer::pushBgfxLegend(const NetworkSymbologyRanges &ranges)
     this->bgfx_surface->setLabelValueFormats(
         mapBgfxLabelValueFormat(*this->hydraulic_data, this->symbology_settings, ranges, false),
         mapBgfxLabelValueFormat(*this->hydraulic_data, this->symbology_settings, ranges, true));
-#else
-    Q_UNUSED(ranges)
-#endif
 }
 
 void MapMonitorContainer::refreshBgfxLegend()
 {
-#if AOWIS_HAS_BGFX
     if (this->bgfx_surface == nullptr || this->hydraulic_data == nullptr)
         return;
     this->symbology_settings = this->symbology_settings.bounded();
     pushBgfxLegend(this->hydraulic_data->symbologyRanges(this->symbology_settings));
-#endif
 }
 
 void MapMonitorContainer::applyVisualControlSymbology()
@@ -1444,6 +1416,31 @@ void MapMonitorContainer::applyVisualControlSymbology()
         this->visual_control_symbology_apply_pending = false;
         this->symbology_settings = this->symbology_settings.bounded();
 
+        // Sizes, junction visibility, flow-arrow size and the heatmap's
+        // radius / opacity / solid centre are uniforms or a colour-stream
+        // flag on the surface (setVisualControlSettings()): no resolve of
+        // every entity's colour and no legend rebuild while a slider moves.
+        // Metrics, palettes and the flow-arrow toggle (flow directions are
+        // only resolved while it is on) need the full resolve.
+        const NetworkSymbologySettings &resolved = this->resolved_symbology_settings;
+        const NetworkSymbologySettings &current = this->symbology_settings;
+        const bool resolve_inputs_unchanged = this->symbology_resolved
+            && !this->symbology_resolve_requested
+            && resolved.visual_node == current.visual_node
+            && resolved.node_palette == current.node_palette
+            && resolved.node_palette_flipped == current.node_palette_flipped
+            && resolved.visual_link == current.visual_link
+            && resolved.link_palette == current.link_palette
+            && resolved.link_palette_flipped == current.link_palette_flipped
+            && resolved.visual_heatmap == current.visual_heatmap
+            && resolved.heatmap_palette == current.heatmap_palette
+            && resolved.heatmap_palette_flipped == current.heatmap_palette_flipped
+            && resolved.show_flow_direction == current.show_flow_direction;
+        if (this->bgfx_surface != nullptr && resolve_inputs_unchanged)
+        {
+            this->bgfx_surface->setVisualControlSettings(current);
+            return;
+        }
         applySymbology();
     });
 }

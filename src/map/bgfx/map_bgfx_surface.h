@@ -18,7 +18,7 @@
 #include "map/render/map_globe_camera.h"
 #include "map/render/map_globe_terrain_navigation.h"
 #include "map/render/map_network_render_symbology.h"
-#include "map/render/map_render_surface.h"
+#include "map/render/map_render_types.h"
 #include "map/render/map_retained_network_scene.h"
 
 #include <QElapsedTimer>
@@ -43,43 +43,43 @@ class QMouseEvent;
 class QWheelEvent;
 class QWindow;
 
-// Experimental production integration with continuous 2D projection and
-// zoom-independent CPU staging: GPU network, imagery, heatmap, 2D picking
+// The map renderer (Map Monitor and Map Editor), with continuous 2D
+// projection and zoom-independent CPU staging: GPU network, imagery, heatmap,
+// 2D picking
 // (click selection and hover), selection/error highlights and the native HUD
 // (crosshair, GPS, scale, downloads, view switch, fullscreen, map legend) and
 // map labels (entity IDs / values, map_bgfx_labels.h).
 // The map editor uses a second instance (Phase 2): hidden entities and the
 // network screen translation for its move preview, and an overlay pass
-// (setOverlayBuilder()) for its icons and interaction feedback. The globe is
-// in progress (Phase 3): terrain surface, terrain-aware navigation and the
-// network with its heatmap (on by default; AOWIS_BGFX_GLOBE=0 disables it).
+// (setOverlayBuilder()) for its icons and interaction feedback. The Map
+// Monitor's instance also draws the globe (roadmap Phase 3).
 //
 // One bgfx device per process: it belongs to the visible surface. Hiding a
 // surface (tab switch) shuts bgfx down; showing one starts it again, so the
 // Map Monitor and the Map Editor take turns on the same device (and, in the
 // browser, the same canvas).
-class MapBgfxSurface final : public QWidget, public MapRenderSurface
+class MapBgfxSurface final : public QWidget
 {
     Q_OBJECT
 public:
     explicit MapBgfxSurface(MapModel *model, QWidget *parent = nullptr);
     ~MapBgfxSurface() override;
 
-    QString graphicsApiName() const override;
+    QString graphicsApiName() const;
     // Picking with the QRhi rules at the model's current camera: 2D
     // (map_bgfx_2d_picking.h) and the globe (MapBgfxGlobeNetwork::hitTest()).
-    MapRenderHit hitTest(const QPointF &screen_position) const override;
+    MapRenderHit hitTest(const QPointF &screen_position) const;
     // Terrain-aware navigation (Phase 3, slice 2; MapGlobeTerrainNavigation):
     // pointer coordinates with DEM altitude (2D: cached DEM only), rays
     // against the drawn terrain meshes, terrain-anchored globe panning. The
     // camera-height follow runs inside this surface.
     bool terrainCoordinateAtScreen(const QPointF &screen_position, CoordinateWGS84 *coordinate,
-                                   bool request_missing_tile = true) override;
+                                   bool request_missing_tile = true);
     bool cachedTerrainElevationAtCoordinate(const CoordinateWGS84 &coordinate,
-                                            double *elevation_m) const override;
+                                            double *elevation_m) const;
     bool globeSurfaceRayHitAtScreen(const QPointF &screen_position,
-                                    MapGlobeSurfaceHit *hit) const override;
-    bool panGlobeByTerrainPixels(const QPoint &delta_pixels) override;
+                                    MapGlobeSurfaceHit *hit) const;
+    bool panGlobeByTerrainPixels(const QPoint &delta_pixels);
 
     // Keyboard events originate from the embedded QWindow on native desktop.
     // Forward them to the shared map-navigation owner; bgfx must not implement
@@ -110,43 +110,40 @@ public:
     QString startupDiagnostics() const;
     void focusNavigationInput();
 
-    void setNetworkSnapshot(const NetworkRenderSnapshot &snapshot) override;
+    void setNetworkSnapshot(const NetworkRenderSnapshot &snapshot);
     // Editor move preview: these entities are drawn transparent (colour
     // stream only, no geometry upload) while the overlay draws them moving.
-    void setHiddenEntityUuids(const QSet<QUuid> &uuids) override;
-    void setNodeDeclutteringEnabled(bool enabled) override;
+    void setHiddenEntityUuids(const QSet<QUuid> &uuids);
+    void setNodeDeclutteringEnabled(bool enabled);
     // Editor full-network move: the network (not the imagery) is drawn
     // shifted by this many logical pixels (camera offset, no upload).
-    void setNetworkScreenTranslation(const QPointF &translation) override;
-    void setSymbology(const MapNetworkRenderSymbology &symbology) override;
-    void setVisualControlSettings(const NetworkSymbologySettings &settings) override;
-    void setTileRepository(MapTileRepository *tile_repository) override;
-    void setTerrainRepository(MapTerrainRepository *terrain_repository) override;
-    void setBackgroundOpacity(int opacity) override;
-    void setSelectedEntity(InfrastructureEntity entity_type, const QUuid &uuid) override;
+    void setNetworkScreenTranslation(const QPointF &translation);
+    void setSymbology(const MapNetworkRenderSymbology &symbology);
+    void setVisualControlSettings(const NetworkSymbologySettings &settings);
+    void setTileRepository(MapTileRepository *tile_repository);
+    void setTerrainRepository(MapTerrainRepository *terrain_repository);
+    void setBackgroundOpacity(int opacity);
+    void setSelectedEntity(InfrastructureEntity entity_type, const QUuid &uuid);
     void setSimulationErrorEntities(const QHash<QUuid, InfrastructureEntity> &error_entities,
-                                    const QSet<QUuid> &stale_entity_uuids) override;
+                                    const QSet<QUuid> &stale_entity_uuids);
     // Globe network (slice 3): tank/reservoir as 3D models instead of icons;
     // underground pipes Solid (through the terrain), X-Ray (buried runs
     // dashed through the terrain) or Hide.
-    void setGlobe3dIconsEnabled(bool enabled) override;
-    void setUndergroundMode(MapUndergroundMode mode) override;
-    MapUndergroundMode undergroundMode() const override { return this->underground_mode; }
-    void setTerrainWireframeVisible(bool visible) override;
-    void setMapTilesVisible(bool visible) override;
+    void setGlobe3dIconsEnabled(bool enabled);
+    void setUndergroundMode(MapUndergroundMode mode);
+    MapUndergroundMode undergroundMode() const { return this->underground_mode; }
+    void setTerrainWireframeVisible(bool visible);
+    void setMapTilesVisible(bool visible);
     // Current state of the globe HUD's "wireframe" / "map" toggles.
     bool terrainWireframeVisible() const;
     bool mapTilesVisible() const;
-    void globeTerrainMeshProgress(int *completed, int *total, bool *active) const override;
 
     // --- Globe on bgfx (roadmap Phase 3) ------------------------------------------
     // Terrain surface (imagery, DEM relief, caps, wireframe),
     // terrain-aware navigation, the network and its heatmap, picking and
     // the globe HUD (compass, camera sliders, underground mode, toggles,
-    // terrain-mesh progress, scale). On by default; AOWIS_BGFX_GLOBE=0
-    // switches it off (the HUD then offers no 3D).
-    static bool globeEnabled();
-    // The globe surface initialized on this device (globe enabled).
+    // terrain-mesh progress, scale).
+    // The globe surface initialized on this device (the HUD offers 3D).
     bool globeAvailable() const { return this->globe_ready; }
     // Surfaces that never show the globe (the editor, 2D only) skip its GPU
     // setup and offer no 3D. Call before the surface is first shown.

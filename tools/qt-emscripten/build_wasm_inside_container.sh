@@ -49,8 +49,6 @@ rm -rf build-wasm/CMakeFiles
     -S /project \
     -B /project/build-wasm \
     -DCMAKE_BUILD_TYPE=Release \
-    -DAOWIS_BUILD_BGFX_PROBE="${AOWIS_BUILD_BGFX_PROBE:-OFF}" \
-    -DAOWIS_ENABLE_BGFX_MAP="${AOWIS_ENABLE_BGFX_MAP:-ON}" \
     -DAOWIS_WASM_FUNCTION_NAMES="${AOWIS_WASM_FUNCTION_NAMES:-OFF}" \
     -DAOWIS_WASM_SIMD="${AOWIS_WASM_SIMD:-ON}" \
     -DCMAKE_CXX_FLAGS="-pthread" \

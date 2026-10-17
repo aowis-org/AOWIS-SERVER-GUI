@@ -36,7 +36,6 @@
 
 class HydraulicData;
 class MapTerrainRepository;
-class MapRenderSurface;
 class MapBgfxSurface;
 class MapBgfxGlobeHudController;
 class QTimer;
@@ -146,15 +145,19 @@ private:
     int network_background_opacity = 0;
     NetworkSymbologySettings symbology_settings;
     bool visual_control_symbology_apply_pending = false;
-    // bgfx monitor surface (or nullptr). Receives the resolved symbology
-    // through applySymbology().
-    MapRenderSurface *bgfx_render_surface = nullptr;
-    // The same object as a widget (visibility), and whether it presents
-    // frames: picking and hover only run against a live bgfx surface.
-    QWidget *bgfx_render_widget = nullptr;
-    bool bgfx_render_surface_active = false;
-    // The same object with its concrete type, for the native HUD (slice 6a).
+    // The settings of the last full symbology resolve (applySymbology()):
+    // slider changes against them take the surface's cheap path.
+    NetworkSymbologySettings resolved_symbology_settings;
+    bool symbology_resolved = false;
+    // Network or simulation data changed: the next coalesced apply must
+    // resolve again whatever the settings say.
+    bool symbology_resolve_requested = false;
+    // The bgfx map surface (created in the constructor). It receives the
+    // resolved symbology through applySymbology().
     MapBgfxSurface *bgfx_surface = nullptr;
+    // The surface presents frames: picking and hover only run against a
+    // live surface.
+    bool bgfx_render_surface_active = false;
     // What the globe HUD's camera sliders and compass do to the map model
     // (Phase 3 slice 5); created with the bgfx surface.
     MapBgfxGlobeHudController *bgfx_globe_hud = nullptr;

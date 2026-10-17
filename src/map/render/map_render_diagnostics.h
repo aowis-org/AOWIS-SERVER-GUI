@@ -1,13 +1,11 @@
 #ifndef MAP_RENDER_DIAGNOSTICS_H
 #define MAP_RENDER_DIAGNOSTICS_H
 
-// Opt-in, backend-neutral baseline counters for the bgfx migration.
-// Enable AOWIS_MAP_RENDER_DIAGNOSTICS=1 before starting the application.
-// A cumulative JSON snapshot is logged at most once every five seconds while
-// Map Monitor frames or CPU cache requests are being processed. The snapshot
-// can also be queried by benchmarks without requiring a GPU or a Qt window.
-// Counters are approximate across concurrent workers, but none of them
-// changes rendering behavior or owns rendering resources.
+// Opt-in map rendering counters. Enable AOWIS_MAP_RENDER_DIAGNOSTICS=1
+// before starting the application: the bgfx map then logs a cumulative JSON
+// snapshot at most once every five seconds while it presents frames
+// (MapBgfxSurface::renderFrameAt()). Tests query single counters without a
+// GPU or a Qt window. None of them changes rendering behaviour.
 
 #include <QDebug>
 #include <QJsonDocument>
@@ -24,42 +22,23 @@ namespace MapRenderDiagnostics
 {
 enum class Counter : size_t
 {
+    // MapModel camera changes.
     ZoomBoundary,
     FractionalZoom,
     CenterChange,
+    // Presented bgfx frames; the duration is the CPU time of building and
+    // submitting one (bgfx::frame() included), not GPU time.
     Frame,
-    TerrainBufferUpload,
-    TerrainBufferBytes,
-    CpuCacheForced,
-    CpuCacheZoomRequest,
-    CpuCacheSubmitted,
-    CpuCacheCancelled,
-    CpuCacheAccepted,
-    CpuCacheRejected,
-    CpuGeometryPrepared,
-    CpuRasterPrepared,
-    CpuOverlayPaint,
+    // MapGlobeNetworkScene work.
     DemandAttachmentsPrepared,
-    FlatGeometryRebuilt,
-    FlatIconsRebuilt,
-    FlatFlowRebuilt,
     GlobeGeometryRebuilt,
     GlobeFlowRebuilt,
-    GlobeOriginRebased,
-    NetworkBufferUpload,
-    NetworkBufferBytes,
     Count
 };
 
 inline constexpr std::array<const char *, static_cast<std::size_t>(Counter::Count)> CounterNames{{
-    "zoom_boundary", "fractional_zoom", "center_change", "rhi_render_cpu_frames",
-    "terrain_buffer_uploads", "terrain_buffer_bytes",
-    "cpu_cache_forced", "cpu_cache_zoom_requests", "cpu_cache_submitted", "cpu_cache_cancelled",
-    "cpu_cache_accepted", "cpu_cache_rejected", "cpu_geometry_preparation_calls",
-    "cpu_raster_attempts", "cpu_overlay_paint", "demand_attachments_prepared",
-    "flat_geometry_rebuilt", "flat_icons_rebuilt",
-    "flat_flow_rebuilt", "globe_geometry_rebuilt", "globe_flow_rebuilt",
-    "globe_origin_rebased", "network_buffer_uploads", "network_buffer_bytes"
+    "zoom_boundary", "fractional_zoom", "center_change", "frames",
+    "demand_attachments_prepared", "globe_geometry_rebuilt", "globe_flow_rebuilt"
 }};
 
 using Clock = std::chrono::steady_clock;
@@ -98,22 +77,6 @@ inline void add(Counter counter, quint64 amount = 1)
 inline quint64 value(Counter counter)
 {
     return state().values[static_cast<size_t>(counter)].load(std::memory_order_relaxed);
-}
-
-inline void terrainUpload(quint64 bytes)
-{
-    if (!enabled() || bytes == 0)
-        return;
-    add(Counter::TerrainBufferUpload);
-    add(Counter::TerrainBufferBytes, bytes);
-}
-
-inline void networkUpload(quint64 bytes)
-{
-    if (!enabled() || bytes == 0)
-        return;
-    add(Counter::NetworkBufferUpload);
-    add(Counter::NetworkBufferBytes, bytes);
 }
 
 class Scope final

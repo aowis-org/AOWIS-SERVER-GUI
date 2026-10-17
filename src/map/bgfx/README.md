@@ -1,7 +1,7 @@
 # bgfx map (Map Monitor and Map Editor)
 
-The surface is integrated into the actual Map Monitor on desktop and WASM and
-built by default (`AOWIS_ENABLE_BGFX_MAP=ON`). The desktop CPU (QPainter) map
+The surface draws the Map Monitor and the Map Editor on desktop and WASM;
+it is always built. The desktop CPU (QPainter) map
 monitor was removed: it displayed the network at the integer tile zoom and was
 the source of step-wise zoom. Without a working GPU surface the monitor shows a
 status message, never a CPU-rendered map. bgfx is the only map renderer on
@@ -344,9 +344,8 @@ LOD will remain independent from retained network geometry.
 
 Globe mode draws on bgfx; the QRhi globe it replaces was removed with the
 rest of QRhi. "QRhi" below names the behaviour that was ported. The HUD
-offers 3D in the Map Monitor; `AOWIS_BGFX_GLOBE=0` (environment, for
-diagnosis) switches it off (3D disabled). The editor never offers it
-(`MapBgfxSurface::setGlobeOffered(false)`).
+offers 3D in the Map Monitor once the globe surface initialized. The
+editor never offers it (`MapBgfxSurface::setGlobeOffered(false)`).
 
 Slice 1, the terrain surface (`map_bgfx_globe_surface.*`):
 
@@ -484,8 +483,9 @@ the QWidget globe HUD drawn by the native HUD, with the same behaviour.
   `fillHudState()` gives the HUD its per-frame state (yaw, slider positions
   and labels, the globe scale at the focus distance).
 * Toggles and underground buttons go through the container's
-  `handleBgfxHudAction()` to the same `MapRenderSurface` setters as the
-  QWidget check boxes and combo.
+  `handleBgfxHudAction()` to the surface's setters
+  (`setTerrainWireframeVisible()`, `setMapTilesVisible()`,
+  `setUndergroundMode()`).
 
 ## Renderer selection
 
@@ -586,8 +586,4 @@ Native Linux: `./compile_linux.sh` (GUI) and `./compile_linux_tests.sh
 regenerates the committed shaders (see "bgfx build").
 
 WASM: `sudo ./compile_wasm.sh`. It embeds the committed essl shaders; the
-Docker image no longer builds a shader compiler. `AOWIS_ENABLE_BGFX_MAP=OFF`
-disables the bgfx path.
-
-User validation is still required for both desktop and WASM shader compilation,
-linking, GPU draw behavior, and steady-state GPU-upload counter behavior.
+Docker image no longer builds a shader compiler.

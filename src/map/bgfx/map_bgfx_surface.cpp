@@ -7,6 +7,7 @@
 #include "map/data/map_tile_repository.h"
 #include "map/bgfx/map_bgfx_2d_picking.h"
 #include "map/core/map_scale_distance.h"
+#include "map/render/map_render_diagnostics.h"
 #include "map/core/map_scale_renderer.h"
 #include "config/unit_aware_view.h"
 #include "config/unit_profile_manager.h"
@@ -525,9 +526,9 @@ QString MapBgfxSurface::graphicsApiName() const
     if (!this->initialized)
         return QStringLiteral("bgfx (not initialized)");
 #ifdef Q_OS_WASM
-    return QStringLiteral("bgfx / WebGL 2 (experimental)");
+    return QStringLiteral("bgfx / WebGL 2");
 #else
-    return QStringLiteral("bgfx / %1 (experimental)")
+    return QStringLiteral("bgfx / %1")
         .arg(QString::fromLatin1(bgfx::getRendererName(bgfx::getRendererType())));
 #endif
 }
@@ -548,24 +549,6 @@ QWindow *MapBgfxSurface::nativeInputWindow() const
 #else
     return this->native_window;
 #endif
-}
-
-void MapBgfxSurface::globeTerrainMeshProgress(int *completed, int *total,
-                                             bool *active) const
-{
-    this->globe_surface->terrainMeshProgress(completed, total, active);
-}
-
-bool MapBgfxSurface::globeEnabled()
-{
-    // On unless AOWIS_BGFX_GLOBE is set to 0.
-    static const bool enabled = []()
-    {
-        bool is_number = false;
-        const int value = qEnvironmentVariableIntValue("AOWIS_BGFX_GLOBE", &is_number);
-        return !is_number || value != 0;
-    }();
-    return enabled;
 }
 
 void MapBgfxSurface::setTerrainRepository(MapTerrainRepository *terrain_repository)
@@ -1404,7 +1387,7 @@ void MapBgfxSurface::renderHud(const QSizeF &logical, const MapBgfx2d::Camera &c
     this->hud_text_cache.setDevicePixelRatio(ratio);
     if (hud_screen != nullptr)
         this->hud_text_cache.setLogicalDpi(hud_screen->logicalDotsPerInch());
-    // 3D is offered with the bgfx globe (see globeEnabled()).
+    // 3D is offered when the globe surface initialized.
     this->hud.setViewMode(this->camera_state.mode == MapViewMode::TwoD, this->globe_ready);
     MapBgfxHud::FrameInputs inputs;
     inputs.viewport = logical;
@@ -1765,10 +1748,10 @@ bool MapBgfxSurface::initializeBackend()
         const bool imagery_ready = network_ready && this->imagery_gpu.initialize();
         const bool hud_ready = imagery_ready && this->hud_gpu.initialize()
             && this->overlay_gpu.initialize() && this->label_gpu.initialize();
-        // The globe is optional: without it (or with AOWIS_BGFX_GLOBE=0)
+        // The globe is optional: without it (editor, or its GPU setup failed)
         // the 2D map works as before and the HUD offers no 3D.
         this->globe_ready = network_ready && imagery_ready && hud_ready
-            && this->globe_offered && globeEnabled() && this->globe_surface->initialize();
+            && this->globe_offered && this->globe_surface->initialize();
         // The network on the globe: without it the terrain still works.
         this->globe_network_ready = this->globe_ready && this->globe_network.initialize();
         if (!network_ready || !imagery_ready || !hud_ready)
@@ -1872,6 +1855,8 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
     // Cleared before rendering: whatever asks for a frame from now on
     // (also during this one) gets the next.
     this->redraw_requested = false;
+    // AOWIS_MAP_RENDER_DIAGNOSTICS: counts this frame and its CPU time.
+    const MapRenderDiagnostics::Scope frame_timing(MapRenderDiagnostics::Counter::Frame);
     bgfx::setViewRect(kMapBgfxView, 0, 0,
                       static_cast<uint16_t>(std::min(65535, pixels.width())),
                       static_cast<uint16_t>(std::min(65535, pixels.height())));
@@ -2020,6 +2005,7 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
         renderDebugOverlay();
     bgfx::frame();
     ++this->frame_count;
+    MapRenderDiagnostics::reportIfDue();
     this->presented_valid = true;
     this->presented_camera = this->camera_state;
     this->presented_pixels = pixels;
@@ -2037,7 +2023,7 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
 void MapBgfxSurface::renderDebugOverlay()
 {
     bgfx::dbgTextClear();
-    bgfx::dbgTextPrintf(2, 2, 0x0f, "AOWIS bgfx Map Monitor (EXPERIMENTAL)");
+    bgfx::dbgTextPrintf(2, 2, 0x0f, "AOWIS bgfx map");
     bgfx::dbgTextPrintf(2, 4, 0x0e, "2D network, imagery, heatmap, picking, HUD active");
     bgfx::dbgTextPrintf(2, 6, 0x0f, "Camera lon %.5f lat %.5f",
                         this->camera_state.center_lon_deg, this->camera_state.center_lat_deg);

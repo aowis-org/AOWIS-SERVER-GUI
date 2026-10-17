@@ -88,21 +88,11 @@ set(AOWIS_SERVER_EPANET_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 set(AOWIS_SERVER_EPANET_BUILD_SHARED_EPANET OFF CACHE BOOL "" FORCE)
 add_subdirectory(external/AOWIS-SERVER-EPANET EXCLUDE_FROM_ALL)
 
-# The bgfx Map Monitor and the optional bgfx stacking probe share one minimal
-# bgfx build (cmake/aowis_bgfx.cmake: bx/bimg/bgfx as three unity TUs, only
-# the renderers AOWIS uses). Shaders are pre-compiled and committed
-# (cmake/aowis_bgfx_shaders.cmake); the shader compiler is an opt-in
-# developer tool (-DAOWIS_BGFX_SHADER_TOOLS=ON).
-option(AOWIS_BUILD_BGFX_PROBE "Build the independent bgfx window/stacking probe" OFF)
-# ON by default: bgfx is the only map renderer, so without it the Map
-# Monitor shows no map at all.
-option(AOWIS_ENABLE_BGFX_MAP "Enable the bgfx Map Monitor surface" ON)
-if(AOWIS_BUILD_BGFX_PROBE OR AOWIS_ENABLE_BGFX_MAP)
-    include(cmake/aowis_bgfx.cmake)
-    if(AOWIS_BUILD_BGFX_PROBE)
-        add_subdirectory(tests/bgfx_probe)
-    endif()
-endif()
+# The map renderer: a minimal bgfx build (cmake/aowis_bgfx.cmake: bx/bimg/
+# bgfx as three unity TUs, only the renderers AOWIS uses). Shaders are
+# pre-compiled and committed (cmake/aowis_bgfx_shaders.cmake); the shader
+# compiler is an opt-in developer tool (-DAOWIS_BGFX_SHADER_TOOLS=ON).
+include(cmake/aowis_bgfx.cmake)
 
 # epanet-js is a SQLite source-file format. Keep its reader and converter in one
 # internal target so the GUI and every test use the same implementation.
@@ -305,10 +295,6 @@ qt_add_executable(aowis-server-gui
     src/map/render/map_entity_pixmap_renderer.h
     src/map/render/map_render_cache_math.cpp
     src/map/render/map_render_cache_math.h
-    src/map/render/map_retained_vector_renderer.cpp
-    src/map/render/map_retained_vector_renderer.h
-    src/map/render/map_vector_document.cpp
-    src/map/render/map_vector_document.h
 
     # Backend-neutral Globe rendering
     src/map/render/map_terrain_mesh_scheduler.h
@@ -326,18 +312,15 @@ qt_add_executable(aowis-server-gui
     src/map/render/map_globe_surface_preparation.cpp
     src/map/render/map_globe_terrain_navigation.h
     src/map/render/map_globe_terrain_navigation.cpp
-    src/map/render/map_globe_surface_render_frame.h
-    src/map/render/map_globe_surface_render_frame.cpp
+    src/map/render/map_globe_surface_vertex.h
     src/map/render/map_globe_heatmap_scene.h
     src/map/render/map_globe_heatmap_scene.cpp
-    src/map/render/map_render_surface.h
+    src/map/render/map_render_types.h
     src/map/render/map_network_render_symbology.h
     src/map/render/map_label_settings.h
     src/map/render/map_network_render_symbology.cpp
     src/map/render/map_network_render_data.h
     src/map/render/map_globe_render_instances.h
-    src/map/render/map_globe_junction_model.h
-    src/map/render/map_globe_junction_model.cpp
     src/map/render/map_globe_tank_model.h
     src/map/render/map_globe_tank_model.cpp
     src/map/render/map_globe_reservoir_model.h
@@ -407,7 +390,6 @@ endif()
 
 target_compile_definitions(aowis-server-gui
     PRIVATE
-        AOWIS_HAS_BGFX=$<BOOL:${AOWIS_ENABLE_BGFX_MAP}>
         AOWIS_HAS_WAYLAND_POINTER_LOCK=${AOWIS_HAS_WAYLAND_POINTER_LOCK}
 )
 
@@ -459,75 +441,73 @@ target_link_libraries(aowis-server-gui
         GeographicLib_STATIC
 )
 
-if(AOWIS_ENABLE_BGFX_MAP)
-    # Pre-compiled shaders for every renderer in AOWIS_BGFX_RENDERERS,
-    # embedded as :/aowis/map/bgfx/<glsl|essl|spirv|dx11|metal>/<name>.bin
-    # (see map_bgfx_backend.h), so deployed builds and WASM bundles need no
-    # shader sidecar files.
-    include(cmake/aowis_bgfx_shaders.cmake)
-    if(AOWIS_BGFX_SHADER_TOOLS)
-        include(cmake/aowis_bgfx_shaderc.cmake)
-    endif()
-    aowis_bgfx_add_shaders(aowis-server-gui)
-    target_sources(aowis-server-gui PRIVATE
-        src/map/bgfx/map_bgfx_2d_projection.h
-        src/map/bgfx/map_bgfx_2d_scene.h
-        src/map/bgfx/map_bgfx_2d_mesh.h
-        src/map/bgfx/map_bgfx_2d_gpu.h
-        src/map/bgfx/map_bgfx_2d_gpu.cpp
-        src/map/bgfx/map_bgfx_2d_symbology.h
-        src/map/bgfx/map_bgfx_2d_picking.h
-        src/map/bgfx/map_bgfx_2d_imagery_layout.h
-        src/map/bgfx/map_bgfx_2d_imagery_atlas.h
-        src/map/bgfx/map_bgfx_2d_imagery_atlas.cpp
-        src/map/bgfx/map_bgfx_2d_imagery_gpu.h
-        src/map/bgfx/map_bgfx_2d_imagery_gpu.cpp
-        src/map/bgfx/map_bgfx_hud_canvas.h
-        src/map/bgfx/map_bgfx_hud_text_cache.h
-        src/map/bgfx/map_bgfx_hud_text_cache.cpp
-        src/map/bgfx/map_bgfx_hud.h
-        src/map/bgfx/map_bgfx_hud.cpp
-        src/map/bgfx/map_bgfx_hud_gpu.h
-        src/map/bgfx/map_bgfx_pan_reuse.h
-        src/map/bgfx/map_bgfx_hud_gpu.cpp
-        src/map/bgfx/map_bgfx_legend_content.h
-        src/map/bgfx/map_bgfx_legend_content.cpp
-        src/map/bgfx/map_bgfx_editor_overlay.h
-        src/map/bgfx/map_bgfx_editor_overlay.cpp
-        src/map/bgfx/map_bgfx_labels.h
-        src/map/bgfx/map_bgfx_labels.cpp
-        src/map/bgfx/map_bgfx_editor_icons.h
-        src/map/bgfx/map_bgfx_editor_icons.cpp
-        src/map/bgfx/map_bgfx_backend.h
-        src/map/bgfx/map_bgfx_globe_imagery.h
-        src/map/bgfx/map_bgfx_globe_network.h
-        src/map/bgfx/map_bgfx_globe_network.cpp
-        src/map/bgfx/map_bgfx_globe_hud_controller.h
-        src/map/bgfx/map_bgfx_globe_hud_controller.cpp
-        src/map/bgfx/map_bgfx_globe_surface.h
-        src/map/bgfx/map_bgfx_globe_surface.cpp
-        src/map/bgfx/map_bgfx_surface.h
-        src/map/bgfx/map_bgfx_surface.cpp)
-    target_link_libraries(aowis-server-gui PRIVATE bgfx)
-    if(EMSCRIPTEN)
-        # Keep wasm function names in the binary (name section only, no
-        # DWARF): browser stack traces show "bgfx::gl::...::init" instead of
-        # "$func25562". Costs a few MB of download, so it is off now that the
-        # browser renderer is stable; ./compile_wasm.sh passes
-        # AOWIS_WASM_FUNCTION_NAMES=ON from the environment for debugging.
-        option(AOWIS_WASM_FUNCTION_NAMES
-            "Keep WebAssembly function names for readable browser stack traces" OFF)
-        if(AOWIS_WASM_FUNCTION_NAMES)
-            target_link_options(aowis-server-gui PRIVATE "--profiling-funcs")
-        endif()
-    endif()
-    if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN AND TARGET Qt6::GuiPrivate)
-        target_link_libraries(aowis-server-gui PRIVATE Qt6::GuiPrivate)
-        target_compile_definitions(aowis-server-gui PRIVATE
-            AOWIS_BGFX_NATIVE_WAYLAND_PRIVATE=1)
-    endif()
-    # The Emscripten version shim reaches this target through bgfx -> bx.
+# Pre-compiled shaders for every renderer in AOWIS_BGFX_RENDERERS,
+# embedded as :/aowis/map/bgfx/<glsl|essl|spirv|dx11|metal>/<name>.bin
+# (see map_bgfx_backend.h), so deployed builds and WASM bundles need no
+# shader sidecar files.
+include(cmake/aowis_bgfx_shaders.cmake)
+if(AOWIS_BGFX_SHADER_TOOLS)
+    include(cmake/aowis_bgfx_shaderc.cmake)
 endif()
+aowis_bgfx_add_shaders(aowis-server-gui)
+target_sources(aowis-server-gui PRIVATE
+    src/map/bgfx/map_bgfx_2d_projection.h
+    src/map/bgfx/map_bgfx_2d_scene.h
+    src/map/bgfx/map_bgfx_2d_mesh.h
+    src/map/bgfx/map_bgfx_2d_gpu.h
+    src/map/bgfx/map_bgfx_2d_gpu.cpp
+    src/map/bgfx/map_bgfx_2d_symbology.h
+    src/map/bgfx/map_bgfx_2d_picking.h
+    src/map/bgfx/map_bgfx_2d_imagery_layout.h
+    src/map/bgfx/map_bgfx_2d_imagery_atlas.h
+    src/map/bgfx/map_bgfx_2d_imagery_atlas.cpp
+    src/map/bgfx/map_bgfx_2d_imagery_gpu.h
+    src/map/bgfx/map_bgfx_2d_imagery_gpu.cpp
+    src/map/bgfx/map_bgfx_hud_canvas.h
+    src/map/bgfx/map_bgfx_hud_text_cache.h
+    src/map/bgfx/map_bgfx_hud_text_cache.cpp
+    src/map/bgfx/map_bgfx_hud.h
+    src/map/bgfx/map_bgfx_hud.cpp
+    src/map/bgfx/map_bgfx_hud_gpu.h
+    src/map/bgfx/map_bgfx_pan_reuse.h
+    src/map/bgfx/map_bgfx_hud_gpu.cpp
+    src/map/bgfx/map_bgfx_legend_content.h
+    src/map/bgfx/map_bgfx_legend_content.cpp
+    src/map/bgfx/map_bgfx_editor_overlay.h
+    src/map/bgfx/map_bgfx_editor_overlay.cpp
+    src/map/bgfx/map_bgfx_labels.h
+    src/map/bgfx/map_bgfx_labels.cpp
+    src/map/bgfx/map_bgfx_editor_icons.h
+    src/map/bgfx/map_bgfx_editor_icons.cpp
+    src/map/bgfx/map_bgfx_backend.h
+    src/map/bgfx/map_bgfx_globe_imagery.h
+    src/map/bgfx/map_bgfx_globe_network.h
+    src/map/bgfx/map_bgfx_globe_network.cpp
+    src/map/bgfx/map_bgfx_globe_hud_controller.h
+    src/map/bgfx/map_bgfx_globe_hud_controller.cpp
+    src/map/bgfx/map_bgfx_globe_surface.h
+    src/map/bgfx/map_bgfx_globe_surface.cpp
+    src/map/bgfx/map_bgfx_surface.h
+    src/map/bgfx/map_bgfx_surface.cpp)
+target_link_libraries(aowis-server-gui PRIVATE bgfx)
+if(EMSCRIPTEN)
+    # Keep wasm function names in the binary (name section only, no
+    # DWARF): browser stack traces show "bgfx::gl::...::init" instead of
+    # "$func25562". Costs a few MB of download, so it is off now that the
+    # browser renderer is stable; ./compile_wasm.sh passes
+    # AOWIS_WASM_FUNCTION_NAMES=ON from the environment for debugging.
+    option(AOWIS_WASM_FUNCTION_NAMES
+        "Keep WebAssembly function names for readable browser stack traces" OFF)
+    if(AOWIS_WASM_FUNCTION_NAMES)
+        target_link_options(aowis-server-gui PRIVATE "--profiling-funcs")
+    endif()
+endif()
+if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN AND TARGET Qt6::GuiPrivate)
+    target_link_libraries(aowis-server-gui PRIVATE Qt6::GuiPrivate)
+    target_compile_definitions(aowis-server-gui PRIVATE
+        AOWIS_BGFX_NATIVE_WAYLAND_PRIVATE=1)
+endif()
+# The Emscripten version shim reaches this target through bgfx -> bx.
 
 if(EMSCRIPTEN)
     # The map needs WebGL 2 / OpenGL ES 3 (bgfx's GLES 3 renderer and its
@@ -697,14 +677,6 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
 
     find_program(AOWIS_NODE_EXECUTABLE NAMES node nodejs)
     if(AOWIS_NODE_EXECUTABLE)
-        add_test(NAME aowis-bgfx-browser-stacking
-            COMMAND ${AOWIS_NODE_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/bgfx_probe/stacking_test.js)
-        set_tests_properties(aowis-bgfx-browser-stacking PROPERTIES LABELS "aowis")
-        add_test(NAME aowis-bgfx-probe-performance-analyzer
-            COMMAND ${AOWIS_NODE_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/bgfx_probe/performance_check.js --self-test)
-        set_tests_properties(aowis-bgfx-probe-performance-analyzer PROPERTIES LABELS "aowis")
         add_test(NAME aowis-bgfx-map-canvas
             COMMAND ${AOWIS_NODE_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/bgfx_map_canvas_test.js)
@@ -920,15 +892,11 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         src/map/data/map_terrain_tile.h
         src/map/render/map_globe_heatmap_scene.cpp
         src/map/render/map_globe_heatmap_scene.h
-        src/map/render/map_globe_junction_model.cpp
-        src/map/render/map_globe_junction_model.h
         src/map/render/map_globe_picking.cpp
         src/map/render/map_globe_picking.h
         src/map/render/map_globe_render_instances.h
         src/map/render/map_globe_reservoir_model.cpp
         src/map/render/map_globe_reservoir_model.h
-        src/map/render/map_globe_surface_render_frame.cpp
-        src/map/render/map_globe_surface_render_frame.h
         src/map/render/map_globe_tank_model.cpp
         src/map/render/map_globe_tank_model.h
         src/map/render/map_globe_vertical_transform.h

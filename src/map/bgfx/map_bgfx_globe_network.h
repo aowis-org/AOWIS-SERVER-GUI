@@ -5,7 +5,7 @@
 #include "map/render/map_globe_reservoir_model.h"
 #include "map/render/map_globe_tank_model.h"
 #include "map/render/map_network_render_symbology.h"
-#include "map/render/map_render_surface.h"
+#include "map/render/map_render_types.h"
 #include "network/network_render_snapshot.h"
 
 #include <QHash>

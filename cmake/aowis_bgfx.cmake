@@ -128,8 +128,7 @@ if(EMSCRIPTEN)
     # version shim below).
     target_compile_options(bx PRIVATE
         "SHELL:-include ${CMAKE_CURRENT_LIST_DIR}/bgfx_emscripten/bx_emscripten_compat.h")
-    # Everything that includes bx headers (bimg, bgfx, the Map Monitor, the
-    # probe): Emscripten 4.0.7 only defines the lower-case version macros
+    # Everything that includes bx headers (bimg, bgfx, the map): Emscripten 4.0.7 only defines the lower-case version macros
     # bx/platform.h expects in upper case. INTERFACE, so consumers get it
     # through linking and no target has to repeat it.
     target_compile_options(bx INTERFACE

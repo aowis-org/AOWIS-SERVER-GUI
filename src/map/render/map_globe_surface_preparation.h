@@ -2,7 +2,7 @@
 #define MAP_GLOBE_SURFACE_PREPARATION_H
 
 #include "geo/geo_wgs84_ellipsoid.h"
-#include "map/render/map_globe_surface_render_frame.h"
+#include "map/render/map_globe_surface_vertex.h"
 #include "map/render/map_globe_surface_scene.h"
 
 #include <aowis/model/gis.h>
@@ -128,19 +128,6 @@ public:
     QVector<MapGlobeSurfaceTile> &capTiles();
 
     const QVector<MapGlobeSurfaceWireframeVertex> &wireframeVertices() const;
-
-    void refreshRenderFrame(
-        MapGlobeSurfaceRenderFrame *frame,
-        const QSize &viewport_size, bool map_visible,
-        float heatmap_opacity, quint64 heatmap_revision,
-        quint64 heatmap_layout_revision,
-        int active_heatmap_marker_count) const;
-    void rebuildRenderFrame(
-        MapGlobeSurfaceRenderFrame *frame,
-        const QSize &viewport_size, bool map_visible,
-        float heatmap_opacity, quint64 heatmap_revision,
-        quint64 heatmap_layout_revision,
-        int active_heatmap_marker_count) const;
 
 private:
     MapGlobeSurfaceVertex makeTileVertex(
