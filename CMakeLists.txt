@@ -657,9 +657,17 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL"
         PROPERTY TESTS)
     if("aowis-model-unit-conversion" IN_LIST aowis_model_registered_tests)
-        set_tests_properties(aowis-model-unit-conversion
-            DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL"
-            PROPERTIES LABELS "aowis")
+        # Cross-directory test properties require CMake 3.28; older toolchains
+        # still register and run the Model test without the GUI suite label.
+        if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.28)
+            set_tests_properties(aowis-model-unit-conversion
+                DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL"
+                PROPERTIES LABELS "aowis")
+        else()
+            message(STATUS
+                "Model unit-conversion test registered; skipping its cross-directory "
+                "GUI suite label (requires CMake 3.28 or newer)")
+        endif()
     else()
         message(STATUS "Model unit-conversion test is not registered; skipping its GUI suite label")
     endif()
