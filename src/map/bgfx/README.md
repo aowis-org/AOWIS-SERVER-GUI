@@ -399,6 +399,21 @@ Slice 1, the terrain surface (`map_bgfx_globe_surface.*`):
   neighbour elsewhere. It keeps the edge's texture coordinates, draws in the
   tile's one indexed draw, and is left out of ray picking, draping heights,
   terrain ray bounds and the wireframe (grid indices only).
+* Sky (`vs_globe_sky.sc` / `fs_globe_sky.sc`, `MapBgfxGlobeSurface::drawSky()`):
+  before the surface, one screen triangle whose corners carry their view
+  rays adds the atmosphere's light onto the space colour (additive, no
+  depth). Per pixel the ray is clipped to a spherical atmosphere about the
+  Earth's centre (sea level: the radius under the eye; top 100 km) and to
+  the ground; along it the optical depth of an exponential Rayleigh layer
+  (8 km, per-channel coefficients: blue) and a Mie haze layer (1.2 km, grey:
+  the white horizon) is integrated with 24 samples, in km, heights computed
+  without cancelling Earth radii. The light of an evenly lit atmosphere,
+  1 - exp(-beta * depth), is mapped so long paths reach the pale horizon
+  colour and the short vertical path a deep blue. Hence, with no special
+  case: a blue sky with a hazy horizon near the ground, darker with
+  altitude, black above the atmosphere except for the thin bright band along
+  the limb; the surface covers everything below the horizon. Drawn with the
+  map tiles (not in the wireframe-only view); optional like the heatmap.
 * GPU: window and cap vertices/indices in dynamic buffers (full upload on a
   window/cap rebuild, terrain meshes as vertex-range patches), one indexed draw
   per tile, depth test and write LessEqual. The camera's canonical OpenGL clip

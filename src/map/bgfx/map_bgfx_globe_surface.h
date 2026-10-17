@@ -54,6 +54,13 @@ class MapTileRepository;
 // heatmap variant of the surface program, which composites its cell over
 // the imagery. Cells are kept per tile and scene revision (LRU), baked
 // within a per-frame budget; tiles without stamps need no cell.
+//
+// The sky: before the surface, one screen triangle adds the light of the
+// atmosphere along each view ray onto the space colour (fs_globe_sky.sc: a
+// spherical exponential atmosphere, integrated per pixel). Blue from close
+// to the ground, darker with altitude, black above the atmosphere except for
+// the thin bright band along the globe's limb; the surface covers it below
+// the horizon. Drawn with the map tiles (not in the wireframe-only view).
 class MapBgfxGlobeSurface
 {
 public:
@@ -189,6 +196,10 @@ private:
     // used this frame; creates pages as needed. false: all cells in use.
     bool allocateHeatmapCell(HeatmapCell *cell);
     void releaseHeatmap();
+    // The sky triangle (see above); before everything else in the view.
+    void drawSky(bgfx::ViewId view, const MapGlobeCameraBasis &basis,
+                 const GeoWgs84Ellipsoid::EcefPositionD &render_origin, const QSize &logical_viewport);
+    void releaseSky();
     void destroyBuffers();
 
     MapModel *map_model = nullptr;
@@ -234,6 +245,16 @@ private:
     QHash<quint64, HeatmapCell> heatmap_cells;
     QVector<quint64> heatmap_slot_owners[HeatmapPageCount];
     quint64 heatmap_frame = 0;
+
+    // Sky (optional: without its program the globe draws as before).
+    bgfx::ProgramHandle sky_program = BGFX_INVALID_HANDLE;
+    bgfx::VertexLayout sky_layout;
+    bgfx::VertexBufferHandle sky_triangle = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle sky_forward_uniform = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle sky_right_uniform = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle sky_up_uniform = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle sky_vertical_uniform = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle sky_params_uniform = BGFX_INVALID_HANDLE;
 };
 
 #endif // MAP_BGFX_GLOBE_SURFACE_H

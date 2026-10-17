@@ -9,8 +9,10 @@
 #include <QDebug>
 #include <QImage>
 #include <QMatrix4x4>
+#include <QtMath>
 
 #include <algorithm>
+#include <cmath>
 
 namespace
 {
@@ -19,6 +21,10 @@ constexpr uint64_t kTileSamplerFlags = BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLA
 // Opaque surface with depth, as the QRhi tile pipeline (LessOrEqual, write).
 constexpr uint64_t kSurfaceState = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A
     | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LEQUAL | BGFX_STATE_MSAA;
+// Sky: added onto the cleared space colour, no depth (the surface follows).
+constexpr uint64_t kSkyState = BGFX_STATE_WRITE_RGB | BGFX_STATE_BLEND_ADD | BGFX_STATE_MSAA;
+// One triangle covering the screen (normalised device coordinates).
+const float kSkyTriangle[6] = {-1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f};
 // Wireframe lines on top of the surface they belong to: tested, not written.
 constexpr uint64_t kWireframeState = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A
     | BGFX_STATE_DEPTH_TEST_LEQUAL | BGFX_STATE_PT_LINES | BGFX_STATE_MSAA;
@@ -140,6 +146,21 @@ bool MapBgfxGlobeSurface::initialize()
         qWarning() << "bgfx globe heatmap unavailable";
         releaseHeatmap();
     }
+    // Sky (optional as well).
+    this->sky_layout.begin().add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float).end();
+    this->sky_program = MapBgfxBackend::loadProgram("vs_globe_sky", "fs_globe_sky");
+    this->sky_triangle = bgfx::createVertexBuffer(bgfx::copy(kSkyTriangle, sizeof(kSkyTriangle)),
+                                                  this->sky_layout);
+    this->sky_forward_uniform = bgfx::createUniform("u_sky_forward", bgfx::UniformType::Vec4);
+    this->sky_right_uniform = bgfx::createUniform("u_sky_right", bgfx::UniformType::Vec4);
+    this->sky_up_uniform = bgfx::createUniform("u_sky_up", bgfx::UniformType::Vec4);
+    this->sky_vertical_uniform = bgfx::createUniform("u_sky_vertical", bgfx::UniformType::Vec4);
+    this->sky_params_uniform = bgfx::createUniform("u_sky_params", bgfx::UniformType::Vec4);
+    if (!bgfx::isValid(this->sky_program))
+    {
+        qWarning() << "bgfx globe sky unavailable";
+        releaseSky();
+    }
     // Everything goes up again on the (new) device.
     this->window_upload_pending = true;
     this->cap_upload_pending = true;
@@ -190,8 +211,61 @@ void MapBgfxGlobeSurface::releaseHeatmap()
     destroyHandle(&this->heatmap_surface_program);
 }
 
+void MapBgfxGlobeSurface::releaseSky()
+{
+    destroyHandle(&this->sky_params_uniform);
+    destroyHandle(&this->sky_vertical_uniform);
+    destroyHandle(&this->sky_up_uniform);
+    destroyHandle(&this->sky_right_uniform);
+    destroyHandle(&this->sky_forward_uniform);
+    destroyHandle(&this->sky_triangle);
+    destroyHandle(&this->sky_program);
+}
+
+void MapBgfxGlobeSurface::drawSky(bgfx::ViewId view, const MapGlobeCameraBasis &basis,
+                                  const GeoWgs84Ellipsoid::EcefPositionD &render_origin,
+                                  const QSize &logical_viewport)
+{
+    // The eye in ECEF and its height: the atmosphere is a sphere about the
+    // Earth's centre whose sea level is the radius under the eye.
+    GeoWgs84Ellipsoid::EcefPositionD eye;
+    eye.x = render_origin.x + double(basis.eye.x());
+    eye.y = render_origin.y + double(basis.eye.y());
+    eye.z = render_origin.z + double(basis.eye.z());
+    double longitude_deg = 0.0;
+    double latitude_deg = 0.0;
+    double height_m = 0.0;
+    if (!GeoWgs84Ellipsoid::ecefToGeodetic(eye, &longitude_deg, &latitude_deg, &height_m))
+        return;
+    const double eye_radius_m = std::sqrt(eye.x * eye.x + eye.y * eye.y + eye.z * eye.z);
+    // View rays: forward (up x right, the lookAt basis) plus the screen's
+    // half-extents along right and up (vertical FOV, aspect ratio).
+    const QVector3D forward = QVector3D::crossProduct(basis.up, basis.right).normalized();
+    const double tan_half_height = std::tan(qDegreesToRadians(MapModel::GlobeFieldOfViewDeg * 0.5));
+    const double aspect = double(std::max(1, logical_viewport.width()))
+        / double(std::max(1, logical_viewport.height()));
+    const QVector3D right = basis.right.normalized() * float(tan_half_height * aspect);
+    const QVector3D up = basis.up.normalized() * float(tan_half_height);
+    const float forward_uniform[4] = {forward.x(), forward.y(), forward.z(), 0.0f};
+    const float right_uniform[4] = {right.x(), right.y(), right.z(), 0.0f};
+    const float up_uniform[4] = {up.x(), up.y(), up.z(), 0.0f};
+    const float vertical_uniform[4] = {float(eye.x / eye_radius_m), float(eye.y / eye_radius_m),
+                                       float(eye.z / eye_radius_m), 0.0f};
+    const float params_uniform[4] = {float(height_m / 1000.0), float((eye_radius_m - height_m) / 1000.0),
+                                     0.0f, 0.0f};
+    bgfx::setVertexBuffer(0, this->sky_triangle);
+    bgfx::setUniform(this->sky_forward_uniform, forward_uniform);
+    bgfx::setUniform(this->sky_right_uniform, right_uniform);
+    bgfx::setUniform(this->sky_up_uniform, up_uniform);
+    bgfx::setUniform(this->sky_vertical_uniform, vertical_uniform);
+    bgfx::setUniform(this->sky_params_uniform, params_uniform);
+    bgfx::setState(kSkyState);
+    bgfx::submit(view, this->sky_program);
+}
+
 void MapBgfxGlobeSurface::release()
 {
+    releaseSky();
     releaseHeatmap();
     destroyBuffers();
     destroyHandle(&this->missing_texture);
@@ -490,7 +564,8 @@ MapBgfxGlobeSurface::FrameResult MapBgfxGlobeSurface::render(
     // --- Draw --------------------------------------------------------------
     // Canonical OpenGL clip space (z in [-w, w]); Direct3D, Vulkan and Metal
     // expect [0, w]: z' = (z + w) / 2.
-    QMatrix4x4 view_projection = camera.viewProjectionMatrix();
+    MapGlobeCameraBasis camera_basis;
+    QMatrix4x4 view_projection = camera.viewProjectionMatrix(&camera_basis);
     const bgfx::Caps *caps = bgfx::getCaps();
     if (caps != nullptr && !caps->homogeneousDepth)
     {
@@ -519,6 +594,9 @@ MapBgfxGlobeSurface::FrameResult MapBgfxGlobeSurface::render(
 
     if (this->map_visible)
     {
+        // The sky first (the view is sequential): the surface covers it.
+        if (bgfx::isValid(this->sky_program))
+            drawSky(view, camera_basis, camera.renderOriginEcef(), inputs.logical_viewport);
         // Polar caps: flat colour beyond Web Mercator's latitude limit.
         if (bgfx::isValid(this->cap_vertices) && bgfx::isValid(this->cap_indices))
         {

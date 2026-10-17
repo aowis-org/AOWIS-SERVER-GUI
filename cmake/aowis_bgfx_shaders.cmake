@@ -39,7 +39,8 @@ set(AOWIS_BGFX_SHADER_NAMES
     vs_globe_link fs_globe_link fs_globe_link_xray vs_globe_flow
     vs_globe_node fs_globe_node vs_globe_junction fs_globe_junction fs_globe_junction_xray
     vs_globe_icon fs_globe_icon vs_globe_model fs_globe_model
-    vs_globe_surface_heatmap fs_globe_surface_heatmap vs_globe_heatmap_bake fs_globe_heatmap_bake)
+    vs_globe_surface_heatmap fs_globe_surface_heatmap vs_globe_heatmap_bake fs_globe_heatmap_bake
+    vs_globe_sky fs_globe_sky)
 # Varying/attribute declarations: varying.def.sc unless a shader names its
 # own here (the globe's positions are vec3; the 2D shaders keep theirs
 # untouched, so their binaries do not change).
@@ -52,6 +53,9 @@ set(AOWIS_BGFX_SHADER_VARYINGS_fs_globe_surface_heatmap varying_globe.def.sc)
 # The globe heatmap bake into atlas cells (map_bgfx_globe_surface.h).
 set(AOWIS_BGFX_SHADER_VARYINGS_vs_globe_heatmap_bake varying_globe_heatmap.def.sc)
 set(AOWIS_BGFX_SHADER_VARYINGS_fs_globe_heatmap_bake varying_globe_heatmap.def.sc)
+# The globe sky (map_bgfx_globe_surface.h): a screen triangle with view rays.
+set(AOWIS_BGFX_SHADER_VARYINGS_vs_globe_sky varying_globe_sky.def.sc)
+set(AOWIS_BGFX_SHADER_VARYINGS_fs_globe_sky varying_globe_sky.def.sc)
 # The globe network (map_bgfx_globe_network.h): its own vertex streams and
 # varyings; shared uniforms and helpers in globe_network.sh.
 foreach(aowis_shader_name
