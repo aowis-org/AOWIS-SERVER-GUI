@@ -149,7 +149,9 @@ frame:
   m queued", Cancel stays disabled until fresh numbers arrive), one panel
   top left with the fullscreen button (always: monitor and editor, desktop
   and WASM) and the 2D/3D switch (3D disabled until the bgfx globe exists),
-  the pan joystick top right. Hit boxes come from the last build: clickable
+  the pan joystick top right with the zoom buttons (zoom in above zoom out,
+  the former sidebar icons) under it. Pan and zoom are on the HUD only: the
+  sidebar (`MapNavigationWidget`) no longer has buttons for them. Hit boxes come from the last build: clickable
   is exactly what was drawn; boxes of a popup closed since then are ignored.
 * Pan joystick (`MapBgfxHud::joystick()`): a ring with four arrows and a
   knob. A press on it sends `JoystickDrag` (Begin, press position) and is
@@ -164,7 +166,13 @@ frame:
   release (seen by the orbit's application event filter on desktop, by the
   map handlers on WASM) ends it, the knob springs back
   (`MapWidget::joystickChanged()` -> `setHudJoystick()`) and the pan glides
-  out like a keyboard pan.
+  out like a keyboard pan. The arrows glow towards the view's motion: the
+  knob's lean, and the held keyboard pan keys
+  (`MapWidget::keyboardPanChanged()` -> `setHudKeyboardPan()`). The wheel
+  over the joystick and the zoom buttons zooms the map about the crosshair
+  (`MapBgfxHud::wheelZoomsAtCrosshair()`; the surface re-anchors the event),
+  also during a drag (`MapWidget::handleWheelEvent()` anchors at the
+  crosshair while the joystick holds the pointer).
 * Map legend (slice 6b), bottom right, like `EntityMapLegendHud`: node /
   link / heatmap metric combos (list opens on press, below or above the
   combo and tall enough for every entry; only when neither side has room it

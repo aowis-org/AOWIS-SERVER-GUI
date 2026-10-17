@@ -41,7 +41,6 @@ namespace
 {
 
 constexpr int PanFrameIntervalMs = 16;
-constexpr int PanButtonStepPixels = 120;
 constexpr int EdgePanMarginPixels = 2;
 constexpr int EdgePanPollIntervalMs = 50;
 constexpr double PanMaximumSpeedPixelsPerSecond = 900.0;
@@ -334,6 +333,7 @@ void MapWidget::stopAllPanMovement()
     this->pan_key_right_pressed = false;
     this->pan_key_up_pressed = false;
     this->pan_key_down_pressed = false;
+    updateKeyboardPanIndicator();
     this->pan_fast_modifier_pressed = false;
     this->zoom_in_key_pressed = false;
     this->zoom_out_key_pressed = false;
@@ -555,7 +555,19 @@ bool MapWidget::pressKeyboardPanKey(QKeyEvent *event)
 
     *pressed = true;
     *identity = navigationKeyIdentity(event);
+    updateKeyboardPanIndicator();
     return true;
+}
+
+void MapWidget::updateKeyboardPanIndicator()
+{
+    // keyboardPanDirection() is the content's motion; the view moves the
+    // other way.
+    const QPointF direction = -keyboardPanDirection();
+    if (direction == this->keyboard_pan_indicator)
+        return;
+    this->keyboard_pan_indicator = direction;
+    emit keyboardPanChanged(direction);
 }
 
 bool MapWidget::hasKeyboardPanInput() const
@@ -918,7 +930,10 @@ bool MapWidget::handleKeyReleaseEvent(QKeyEvent *event)
         // (the motion decelerates over its spring lag and completes a short
         // press to one tap step).
         if (pan_released)
+        {
             ensurePanAnimationRunning();
+            updateKeyboardPanIndicator();
+        }
         if (zoom_released)
         {
             synchronizeKeyboardZoomHold();
@@ -941,6 +956,7 @@ void MapWidget::clearKeyboardPanInput()
     this->pan_key_up_pressed = false;
     this->pan_key_down_pressed = false;
     this->pan_fast_modifier_pressed = false;
+    updateKeyboardPanIndicator();
     const bool zoom_key_was_held = hasKeyboardZoomInput();
     this->zoom_in_key_pressed = false;
     this->zoom_out_key_pressed = false;
@@ -1016,14 +1032,6 @@ void MapWidget::showEvent(QShowEvent *event)
     }
 }
 
-void MapWidget::panByStep(const QPoint &delta)
-{
-    this->pan_velocity = QPointF();
-    this->pan_fractional_delta = QPointF();
-    this->mouse_pan_inertia_active = false;
-    panMapByPixels(delta);
-}
-
 void MapWidget::panMapByPixels(const QPoint &delta, bool keyboard_pan)
 {
     if (delta.isNull())
@@ -1055,26 +1063,6 @@ void MapWidget::panMapByPixels(const QPoint &delta, bool keyboard_pan)
     this->m_model->panByPixelsGlobe(delta, size(), crosshair_radius_m);
 }
 
-void MapWidget::panUp()
-{
-    this->panByStep(QPoint(0, PanButtonStepPixels));
-}
-
-void MapWidget::panDown()
-{
-    this->panByStep(QPoint(0, -PanButtonStepPixels));
-}
-
-void MapWidget::panLeft()
-{
-    this->panByStep(QPoint(PanButtonStepPixels, 0));
-}
-
-void MapWidget::panRight()
-{
-    this->panByStep(QPoint(-PanButtonStepPixels, 0));
-}
-
 void MapWidget::wheelEvent(QWheelEvent *event)
 {
     this->handleWheelEvent(event);
@@ -1098,8 +1086,12 @@ void MapWidget::handleWheelEvent(QWheelEvent *event)
     const double requested_steps = wheel_steps * navigation.scroll_zoom_sensitivity;
     // Same motion for every renderer: the old immediate CPU-fallback paths
     // jumped by a whole notch per event.
+    // A joystick drag holds the pointer on the HUD joystick: zoom about the
+    // crosshair then, not about that corner.
     if (this->m_model->viewMode() == MapViewMode::Globe)
         queueZoomImpulse(requested_steps * GlobeOctavesPerWheelStep, viewportCenter());
+    else if (joystickPanActive())
+        queueZoomImpulse(requested_steps, viewportCenter());
     else
         queueZoomImpulse(requested_steps, event->position());
     event->accept();

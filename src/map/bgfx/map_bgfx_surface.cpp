@@ -284,7 +284,9 @@ MapBgfxSurface::MapBgfxSurface(MapModel *model, QWidget *parent)
     this->hud.setFont(font());
     this->hud.setImages(QImage(QStringLiteral(":/icon/crosshair.png")),
                         QImage(QStringLiteral(":/icon/fullscreen.png")),
-                        QImage(QStringLiteral(":/icon/fullscreen_undo.png")));
+                        QImage(QStringLiteral(":/icon/fullscreen_undo.png")),
+                        QImage(QStringLiteral(":/icon/zoom_in.png")),
+                        QImage(QStringLiteral(":/icon/zoom_out.png")));
     this->hud.setScaleProvider([](double lon0, double lat0, double lon1, double lat1,
                                   double bar_px)
     {
@@ -1063,6 +1065,18 @@ bool MapBgfxSurface::handleHudWheelEvent(QWheelEvent *event)
     if (event == nullptr || !this->initialized)
         return false;
     const QPointF position = event->position();
+    if (this->hud.wheelZoomsAtCrosshair(position.x(), position.y()) && this->navigation_wheel)
+    {
+        // Over the joystick / zoom buttons: the map zooms about the
+        // crosshair, as if the pointer were there.
+        const QSizeF logical = logicalSize();
+        const QPointF centre(0.5 * logical.width(), 0.5 * logical.height());
+        QWheelEvent anchored(centre, event->globalPosition() - position + centre, event->pixelDelta(),
+                             event->angleDelta(), event->buttons(), event->modifiers(), event->phase(),
+                             event->inverted(), event->source());
+        this->navigation_wheel(&anchored);
+        return true;
+    }
     const bool consumed = this->hud.mouseWheel(position.x(), position.y(), double(event->angleDelta().y()));
     // The wheel over the compass turns the globe.
     dispatchHudCommands();
@@ -1120,6 +1134,12 @@ void MapBgfxSurface::setHudJoystick(const QPointF &deflection, bool active)
 {
     requestRedraw();
     this->hud.setJoystick(deflection, active);
+}
+
+void MapBgfxSurface::setHudKeyboardPan(const QPointF &direction)
+{
+    requestRedraw();
+    this->hud.setKeyboardPan(direction);
 }
 
 MapBgfxSurface::HudPointer MapBgfxSurface::handleHudMouseEvent(QMouseEvent *event)

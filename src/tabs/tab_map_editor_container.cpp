@@ -375,8 +375,8 @@ void MapEditorContainer::setupBgfxEditor()
     surface->setObjectName(QStringLiteral("aowis-bgfx-editor-surface"));
     this->bgfx_surface = surface;
     // Editor HUD: crosshair, scale bar, the fullscreen button with the
-    // 2D/3D switch (3D is offered once the bgfx globe exists) and the pan
-    // joystick.
+    // 2D/3D switch (3D is offered once the bgfx globe exists), the pan
+    // joystick and the zoom buttons.
     surface->setHudViewSwitchVisible(true);
     surface->setHudActionHandler([this](const MapBgfxHud::Command &command)
     {
@@ -385,9 +385,12 @@ void MapEditorContainer::setupBgfxEditor()
         else
             handleBgfxHudAction(static_cast<int>(command.action));
     });
-    // The joystick's knob follows MapWidget's captured drag.
+    // The joystick's knob follows MapWidget's captured drag, its arrows also
+    // the held keyboard pan keys.
     connect(this->map, &MapWidget::joystickChanged, surface,
             [surface](QPointF deflection, bool active) { surface->setHudJoystick(deflection, active); });
+    connect(this->map, &MapWidget::keyboardPanChanged, surface,
+            [surface](QPointF direction) { surface->setHudKeyboardPan(direction); });
     // Keys stay on the canvas (editor keys, window shortcuts of the tools).
     surface->setKeyboardFocusWidget(this->map_canvas);
     // Node dots at their true positions, exactly under the overlay icons and
@@ -749,6 +752,12 @@ void MapEditorContainer::handleBgfxHudAction(int action)
             break;
         case MapBgfxHud::Action::ToggleFullscreen:
             setBgfxFullscreen(!this->bgfx_fullscreen_active);
+            break;
+        case MapBgfxHud::Action::ZoomIn:
+            this->map->zoomIn();
+            break;
+        case MapBgfxHud::Action::ZoomOut:
+            this->map->zoomOut();
             break;
         default:
             // Downloads and the legend are monitor-only HUD parts.

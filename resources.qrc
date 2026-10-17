@@ -13,10 +13,6 @@
         <file alias="site_switcher.png">assets/iconsets/gothic/site_switcher.png</file>
         <file alias="sensor.png">assets/iconsets/gothic/sensor.png</file>
         
-        <file alias="arrow_down.png">assets/iconsets/gothic/arrow_down.png</file>
-        <file alias="arrow_left.png">assets/iconsets/gothic/arrow_left.png</file>
-        <file alias="arrow_right.png">assets/iconsets/gothic/arrow_right.png</file>
-        <file alias="arrow_up.png">assets/iconsets/gothic/arrow_up.png</file>
         
         <file alias="delete.png">assets/iconsets/gothic/delete.png</file>
         <file alias="remove.png">assets/iconsets/gothic/remove.png</file>

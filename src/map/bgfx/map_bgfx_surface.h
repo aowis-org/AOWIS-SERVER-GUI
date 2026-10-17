@@ -170,6 +170,9 @@ public:
     void setHudFullscreen(bool active);
     // The pan joystick's knob (MapWidget::joystickChanged()).
     void setHudJoystick(const QPointF &deflection, bool active);
+    // Held keyboard pan keys (MapWidget::keyboardPanChanged()): the
+    // joystick's arrows glow.
+    void setHudKeyboardPan(const QPointF &direction);
     // Map legend content (map_bgfx_legend_content.h); visible=false hides it.
     void setHudLegend(const MapBgfxHud::Legend &legend);
     // Closes an open HUD popup (combo list, palette menu).

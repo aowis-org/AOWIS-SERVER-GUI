@@ -567,9 +567,12 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         {
             refreshBgfxDownloadActivity();
         });
-        // The joystick's knob follows MapWidget's captured drag.
+        // The joystick's knob follows MapWidget's captured drag, its arrows
+        // also the held keyboard pan keys.
         connect(this->map, &MapWidget::joystickChanged, surface,
                 [surface](QPointF deflection, bool active) { surface->setHudJoystick(deflection, active); });
+        connect(this->map, &MapWidget::keyboardPanChanged, surface,
+                [surface](QPointF direction) { surface->setHudKeyboardPan(direction); });
         // Fullscreen shortcut, enabled while the surface presents frames and
         // no shortcut is being captured.
         this->bgfx_fullscreen_shortcut = new QShortcut(
@@ -1222,6 +1225,12 @@ void MapMonitorContainer::handleBgfxHudAction(int action, int group, int value, 
             break;
         case MapBgfxHud::Action::ToggleFullscreen:
             setBgfxFullscreen(!this->bgfx_fullscreen_active);
+            break;
+        case MapBgfxHud::Action::ZoomIn:
+            this->map->zoomIn();
+            break;
+        case MapBgfxHud::Action::ZoomOut:
+            this->map->zoomOut();
             break;
         case MapBgfxHud::Action::LegendVisual:
             // Same as the left menu's radio buttons: settings, the radio

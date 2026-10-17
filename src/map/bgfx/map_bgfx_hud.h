@@ -23,7 +23,7 @@
 // Replaces the QWidget HUD that cannot sit on top of bgfx's native window:
 // crosshair, GPS position, scale bar, download activity (map tiles, terrain)
 // with cancel buttons, the 2D/3D view switch with the fullscreen button (6a),
-// the pan joystick top right and
+// the pan joystick top right with the zoom buttons under it and
 // the map legend (6b: node / link / heatmap metric combos, colour ramps with
 // value labels, hover value swatch, palette menu with flip and reset,
 // tooltips). On the globe (Phase 3 slice 5, setGlobe()): the wireframe /
@@ -59,6 +59,9 @@ public:
         ViewMode2d,
         ViewMode3d,
         ToggleFullscreen,
+        // Zoom buttons under the joystick (one smooth octave each).
+        ZoomIn,
+        ZoomOut,
         // Legend: Command::group selects node (0) / link (1) / heatmap (2).
         // LegendVisual: Command::value is the chosen metric (VisualNode /
         // VisualLink / VisualHeatmap as int).
@@ -252,7 +255,8 @@ public:
     // --- State ----------------------------------------------------------------
     void setFont(const QFont &font);
     void setScaleProvider(ScaleProvider provider) { this->scale_provider = std::move(provider); }
-    void setImages(const QImage &crosshair, const QImage &fullscreen, const QImage &fullscreen_exit);
+    void setImages(const QImage &crosshair, const QImage &fullscreen, const QImage &fullscreen_exit,
+                   const QImage &zoom_in, const QImage &zoom_out);
     void setGps(bool valid, double longitude_deg, double latitude_deg);
     void setDownloadActivity(int tiles_active, int tiles_queued,
                              int terrain_active, int terrain_queued);
@@ -277,6 +281,9 @@ public:
     // Pan joystick: the knob's deflection (|deflection| <= 1, screen
     // directions) and whether a joystick drag is running.
     void setJoystick(const QPointF &deflection, bool active);
+    // Keyboard pan keys held: the view's direction (x right, y down; each
+    // -1, 0 or 1). The joystick's arrows glow for them too.
+    void setKeyboardPan(const QPointF &direction) { this->keyboard_pan_direction = direction; }
     // Replaces the legend content. Open popups stay open when their group
     // still exists; hiding the legend closes them.
     void setLegend(const Legend &legend);
@@ -310,6 +317,10 @@ public:
     // the user). Scrolls an open combo list, turns the compass; consumed
     // over any HUD panel so the map does not zoom underneath.
     bool mouseWheel(double x, double y, double angle_delta_y);
+    // The wheel over the joystick or the zoom buttons zooms the map, about
+    // the crosshair (not about the pointer up in the corner); mouseWheel()
+    // leaves it to the map there.
+    bool wheelZoomsAtCrosshair(double x, double y) const;
     // Commands of continuous interactions (slider drags, compass drags and
     // wheel, slider resets) since the last call, in order. The application
     // drains them after every input event.
@@ -368,6 +379,8 @@ public:
     static constexpr double JoystickDiameterPx = 76.0;
     static constexpr double JoystickKnobDiameterPx = 26.0;
     static constexpr double JoystickKnobTravelPx = 18.0;
+    // Zoom in / out, stacked under the joystick: square icon buttons.
+    static constexpr double ZoomButtonExtentPx = 34.0;
 
 private:
     enum class Element
@@ -378,6 +391,8 @@ private:
         ViewMode2d,
         ViewMode3d,
         Fullscreen,
+        ZoomIn,
+        ZoomOut,
         // Legend (group = node/link/heatmap, index = item / palette choice).
         LegendCombo,
         LegendRampRow,
@@ -452,8 +467,10 @@ private:
                     int index, const Palette &palette);
     void drawCompass(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache, double x, double y,
                      const Palette &palette);
-    // Pan joystick, top right.
+    // Pan joystick, top right, and the zoom buttons under it.
     void joystick(MapBgfxHudCanvas *canvas, const FrameInputs &inputs, const Palette &palette);
+    void zoomButtons(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache, const FrameInputs &inputs,
+                     const Palette &palette);
     // Slider position 0..1 at pointer y on slider index's track.
     double sliderFraction(int index, double y) const;
 
@@ -510,6 +527,8 @@ private:
     QImage crosshair_image;
     QImage fullscreen_image;
     QImage fullscreen_exit_image;
+    QImage zoom_in_image;
+    QImage zoom_out_image;
     bool gps_valid = false;
     double gps_longitude_deg = 0.0;
     double gps_latitude_deg = 0.0;
@@ -526,6 +545,10 @@ private:
     bool fullscreen_active = false;
     QPointF joystick_deflection;
     bool joystick_active = false;
+    QPointF keyboard_pan_direction;
+    // Joystick and zoom buttons of the last build (wheel zooms there).
+    MapBgfxHudRect joystick_rect;
+    MapBgfxHudRect zoom_rect;
 
     // Globe controls (slice 5): state, the slider tracks of the last build,
     // the compass drag and the queued continuous commands.

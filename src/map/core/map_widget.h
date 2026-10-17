@@ -109,10 +109,6 @@ public:
 public slots:
     void zoomIn();
     void zoomOut();
-    void panUp();
-    void panDown();
-    void panLeft();
-    void panRight();
 
     void changeMapProvider(MapProvider provider);
 
@@ -173,7 +169,6 @@ private:
     QPointF keyboardPanDirection() const;
     QPointF edgePanDirection() const;
     void panMapByPixels(const QPoint &delta, bool keyboard_pan = false);
-    void panByStep(const QPoint &delta);
     enum class View3dOrbitInput
     {
         None,
@@ -190,6 +185,8 @@ private:
     void applyView3dOrbitPointerDelta(const QPoint &delta);
     // Deflection of the joystick, |deflection| <= 1, screen directions.
     QPointF joystickDeflection() const;
+    // Emits keyboardPanChanged() when the held pan keys' direction changed.
+    void updateKeyboardPanIndicator();
 
     void updatePointerCoordinates(const QPoint &position);
     CoordinateWGS84 withCachedTerrainAltitude(const CoordinateWGS84 &wgs) const;
@@ -207,6 +204,8 @@ private:
     View3dOrbitInput view_3d_orbit_input = View3dOrbitInput::None;
     // Virtual knob position of a joystick drag (captured pointer motion).
     QPointF joystick_offset_px;
+    // Direction last sent with keyboardPanChanged().
+    QPointF keyboard_pan_indicator;
     QPoint view_3d_orbit_last_position;
 #ifndef Q_OS_WASM
     QPoint view_3d_orbit_last_global_position;
@@ -274,6 +273,9 @@ signals:
     void signalCoordsUnavailable();
     // The pan joystick's knob moved, or its drag began / ended.
     void joystickChanged(QPointF deflection, bool active);
+    // The held keyboard pan keys changed: the view's direction (x right,
+    // y down; each -1, 0 or 1), shown on the HUD joystick's arrows.
+    void keyboardPanChanged(QPointF direction);
 };
 
 #endif // MAP_WIDGET_H

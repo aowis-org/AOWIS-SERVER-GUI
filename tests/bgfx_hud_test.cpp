@@ -347,7 +347,7 @@ void testHud()
     crosshair.fill(qRgba(255, 255, 255, 255));
     QImage fullscreen(32, 32, QImage::Format_ARGB32);
     fullscreen.fill(qRgba(0, 0, 0, 255));
-    hud.setImages(crosshair, fullscreen, fullscreen);
+    hud.setImages(crosshair, fullscreen, fullscreen, fullscreen, fullscreen);
     hud.setViewMode(true, false);
 
     MapBgfxHudTextCache cache(1024);
@@ -466,7 +466,8 @@ void testHud()
         const double cx = ViewportWidth - MapBgfxHud::MarginPx - 0.5 * MapBgfxHud::JoystickDiameterPx;
         const double cy = MapBgfxHud::MarginPx + 0.5 * MapBgfxHud::JoystickDiameterPx;
         req(hud.blocksInput(cx, cy), "the joystick blocks map input");
-        req(!hud.blocksInput(cx, cy + MapBgfxHud::JoystickDiameterPx), "below the joystick is map");
+        req(!hud.blocksInput(cx - 30.0, cy + MapBgfxHud::JoystickDiameterPx),
+            "below the joystick, beside the zoom buttons, is map");
         hud.takeCommands();
         req(hud.mousePress(cx + 3.0, cy - 2.0), "a press on the joystick is consumed");
         const QVector<MapBgfxHud::Command> commands = hud.takeCommands();
@@ -496,7 +497,41 @@ void testHud()
         }
         req(knob_right, "a full deflection to the right draws the knob at its travel");
         hud.setJoystick(QPointF(), false);
+
+        // Held keyboard pan keys light the arrows: the right arrow's tip
+        // (highlight) only while the view moves right.
+        const quint32 highlight_abgr = MapBgfxHudCanvas::premultipliedAbgr(palette.highlight);
+        const double right_tip_x = cx + 0.5 * MapBgfxHud::JoystickDiameterPx - 2.5 - 4.0;
         hud.build(&canvas, &cache, frameInputs(true), palette);
+        req(!canvasHasColorNear(canvas, highlight_abgr, right_tip_x, cy, 0.5), "no key held: no arrow glows");
+        hud.setKeyboardPan(QPointF(1.0, 0.0));
+        hud.build(&canvas, &cache, frameInputs(true), palette);
+        req(canvasHasColorNear(canvas, highlight_abgr, right_tip_x, cy, 0.5), "a held right key lights the right arrow");
+        req(!canvasHasColorNear(canvas, highlight_abgr, cx - (right_tip_x - cx), cy, 0.5),
+            "and not the left one");
+        hud.setKeyboardPan(QPointF());
+        hud.build(&canvas, &cache, frameInputs(true), palette);
+
+        // Zoom buttons, stacked under the joystick: in above out.
+        ActionScan zoom = scanActions(&hud, 1.0);
+        hud.takeCommands();
+        req(zoom.found(MapBgfxHud::Action::ZoomIn) && zoom.found(MapBgfxHud::Action::ZoomOut),
+            "zoom in and zoom out are clickable");
+        const QRectF zoom_in = zoom.where(MapBgfxHud::Action::ZoomIn);
+        const QRectF zoom_out = zoom.where(MapBgfxHud::Action::ZoomOut);
+        req(zoom_in.top() > MapBgfxHud::MarginPx + MapBgfxHud::JoystickDiameterPx && zoom_in.bottom() < zoom_out.top()
+                && std::fabs(zoom_in.center().x() - cx) <= 1.01 && std::fabs(zoom_out.center().x() - cx) <= 1.01,
+            "zoom in above zoom out, centred under the joystick");
+
+        // The wheel over the joystick and the zoom buttons zooms the map
+        // (about the crosshair); elsewhere on a panel it is swallowed.
+        req(hud.wheelZoomsAtCrosshair(cx, cy) && !hud.mouseWheel(cx, cy, 120.0),
+            "the wheel over the joystick goes to the map");
+        req(hud.wheelZoomsAtCrosshair(zoom_out.center().x(), zoom_out.center().y()),
+            "so does the wheel over the zoom buttons");
+        req(!hud.wheelZoomsAtCrosshair(MapBgfxHud::MarginPx + 3.0, MapBgfxHud::MarginPx + 3.0)
+                && hud.mouseWheel(MapBgfxHud::MarginPx + 3.0, MapBgfxHud::MarginPx + 3.0, 120.0),
+            "over the top-left panel it does not");
     }
 
     // Download activity: top centre, one panel per source, tiles first.

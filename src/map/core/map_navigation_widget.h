@@ -38,13 +38,6 @@ private:
     MapWidget *map;
     QWidget *keyboard_focus_target;
     
-    QPushButton *button_zoom_in;
-    QPushButton *button_zoom_out;
-    QPushButton *button_up;
-    QPushButton *button_down;
-    QPushButton *button_left;
-    QPushButton *button_right;
-    
     QButtonGroup *button_group_map_select;
     QRadioButton* map_arcgissat = nullptr;
     QRadioButton* map_opentopomap = nullptr;

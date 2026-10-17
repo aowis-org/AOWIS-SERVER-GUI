@@ -217,11 +217,13 @@ void MapBgfxHud::setFont(const QFont &font)
 }
 
 void MapBgfxHud::setImages(const QImage &crosshair, const QImage &fullscreen,
-                           const QImage &fullscreen_exit)
+                           const QImage &fullscreen_exit, const QImage &zoom_in, const QImage &zoom_out)
 {
     this->crosshair_image = crosshair;
     this->fullscreen_image = fullscreen;
     this->fullscreen_exit_image = fullscreen_exit;
+    this->zoom_in_image = zoom_in;
+    this->zoom_out_image = zoom_out;
 }
 
 void MapBgfxHud::setGps(bool valid, double longitude_deg, double latitude_deg)
@@ -663,8 +665,9 @@ void MapBgfxHud::buildOnce(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
         }
     }
 
-    // Pan joystick, top right.
+    // Pan joystick, top right, the zoom buttons under it.
     joystick(canvas, inputs, palette);
+    zoomButtons(canvas, cache, inputs, palette);
 
     // Globe camera controls, compass and scale, bottom left (slice 5).
     globeControls(canvas, cache, inputs, palette);
@@ -858,6 +861,7 @@ void MapBgfxHud::joystick(MapBgfxHudCanvas *canvas, const FrameInputs &inputs, c
     const double x = std::max(MarginPx, inputs.viewport.width() - MarginPx - JoystickDiameterPx);
     const double y = MarginPx;
     const MapBgfxHudRect rect{x, y, JoystickDiameterPx, JoystickDiameterPx};
+    this->joystick_rect = rect;
     this->blocking_panels.append(rect);
     const Target target{Element::Joystick, -1, -1};
     const double radius = 0.5 * JoystickDiameterPx - 2.5;
@@ -867,17 +871,22 @@ void MapBgfxHud::joystick(MapBgfxHudCanvas *canvas, const FrameInputs &inputs, c
     canvas->fillCircle(cx, cy, radius, palette.panel);
     canvas->strokeCircle(cx, cy, radius, 1.2, palette.border);
 
-    // Arrows: the one(s) the knob leans towards in the highlight colour.
-    const double deflection_x = this->joystick_deflection.x();
-    const double deflection_y = this->joystick_deflection.y();
+    // Arrows glow (highlight colour) towards where the view moves: the
+    // knob's lean while dragged, the held keyboard pan keys.
+    const double deflection_x = this->joystick_active ? this->joystick_deflection.x() : 0.0;
+    const double deflection_y = this->joystick_active ? this->joystick_deflection.y() : 0.0;
+    const double key_x = this->keyboard_pan_direction.x();
+    const double key_y = this->keyboard_pan_direction.y();
     struct Arrow
     {
         double direction_x;
         double direction_y;
         double lean;
     };
-    const Arrow arrows[4] = {{0.0, -1.0, -deflection_y}, {1.0, 0.0, deflection_x},
-                             {0.0, 1.0, deflection_y}, {-1.0, 0.0, -deflection_x}};
+    const Arrow arrows[4] = {{0.0, -1.0, std::max(-deflection_y, -key_y)},
+                             {1.0, 0.0, std::max(deflection_x, key_x)},
+                             {0.0, 1.0, std::max(deflection_y, key_y)},
+                             {-1.0, 0.0, std::max(-deflection_x, -key_x)}};
     for (const Arrow &arrow : arrows)
     {
         const double tip = radius - 4.0;
@@ -888,8 +897,7 @@ void MapBgfxHud::joystick(MapBgfxHudCanvas *canvas, const FrameInputs &inputs, c
                                 cy + arrow.direction_y * base + arrow.direction_x * half_width};
         const MapBgfxHudPoint c{cx + arrow.direction_x * base + arrow.direction_y * half_width,
                                 cy + arrow.direction_y * base - arrow.direction_x * half_width};
-        canvas->fillTriangle(a, b, c, this->joystick_active && arrow.lean > 0.3 ? palette.highlight
-                                                                                  : palette.border);
+        canvas->fillTriangle(a, b, c, arrow.lean > 0.3 ? palette.highlight : palette.border);
     }
 
     // Knob.
@@ -910,6 +918,45 @@ void MapBgfxHud::joystick(MapBgfxHudCanvas *canvas, const FrameInputs &inputs, c
     addHitBox(rect, target, true, Cursor::PointingHand,
               QStringLiteral("Pan joystick\nPress and push the mouse: the map pans in that direction,\n"
                              "faster the further you push. Release to stop."));
+}
+
+void MapBgfxHud::zoomButtons(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache, const FrameInputs &inputs,
+                             const Palette &palette)
+{
+    // One panel centred under the joystick: zoom in on top, zoom out below
+    // (the icons of the former sidebar buttons).
+    const double ratio = cache->devicePixelRatio();
+    const double width = ZoomButtonExtentPx + 2.0 * FramePaddingPx;
+    const double joystick_x = std::max(MarginPx, inputs.viewport.width() - MarginPx - JoystickDiameterPx);
+    const MapBgfxHudRect frame{std::floor(joystick_x + 0.5 * (JoystickDiameterPx - width)),
+                               MarginPx + JoystickDiameterPx + PanelSpacingPx, width,
+                               2.0 * ZoomButtonExtentPx + ControlsSpacingPx + 2.0 * FramePaddingPx};
+    this->zoom_rect = frame;
+    drawPanel(canvas, frame, palette);
+    struct ZoomButton
+    {
+        Element element;
+        const QImage *image;
+        const char *key;
+        const char *tooltip;
+    };
+    const ZoomButton buttons[2] = {{Element::ZoomIn, &this->zoom_in_image, "zoom-in", "Zoom in"},
+                                   {Element::ZoomOut, &this->zoom_out_image, "zoom-out", "Zoom out"}};
+    double y = frame.y + FramePaddingPx;
+    for (const ZoomButton &button : buttons)
+    {
+        const MapBgfxHudRect rect{frame.x + FramePaddingPx, y, ZoomButtonExtentPx, ZoomButtonExtentPx};
+        drawButton(canvas, cache, rect, QString(), Target{button.element, -1, -1}, true, false, palette,
+                   QString::fromLatin1(button.tooltip));
+        if (!button.image->isNull())
+        {
+            const double icon_extent = ZoomButtonExtentPx - 6.0;
+            const MapBgfxHudSprite sprite = cache->image(QString::fromLatin1(button.key), *button.image,
+                                                         QSizeF(icon_extent, icon_extent));
+            canvas->sprite(snap(rect.x + 3.0, ratio), snap(rect.y + 3.0, ratio), sprite, 0xffffffffu);
+        }
+        y += ZoomButtonExtentPx + ControlsSpacingPx;
+    }
 }
 
 void MapBgfxHud::globeControls(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
@@ -1710,6 +1757,8 @@ bool MapBgfxHud::isClickable(Element element)
         case Element::ViewMode2d:
         case Element::ViewMode3d:
         case Element::Fullscreen:
+        case Element::ZoomIn:
+        case Element::ZoomOut:
         case Element::LegendComboItem:
         case Element::LegendPalette:
         case Element::LegendPaletteFlip:
@@ -1737,6 +1786,10 @@ MapBgfxHud::Action MapBgfxHud::actionFor(Element element)
             return Action::ViewMode3d;
         case Element::Fullscreen:
             return Action::ToggleFullscreen;
+        case Element::ZoomIn:
+            return Action::ZoomIn;
+        case Element::ZoomOut:
+            return Action::ZoomOut;
         case Element::LegendComboItem:
             return Action::LegendVisual;
         case Element::LegendPalette:
@@ -2095,6 +2148,15 @@ bool MapBgfxHud::mouseWheel(double x, double y, double angle_delta_y)
         this->combo_scroll = std::clamp(this->combo_scroll - rows, 0, maximum);
         return true;
     }
-    // Over any HUD panel the map underneath must not zoom.
+    // Over the joystick and the zoom buttons the map zooms
+    // (wheelZoomsAtCrosshair()); over any other HUD panel the map underneath
+    // must not zoom.
+    if (wheelZoomsAtCrosshair(x, y))
+        return false;
     return blocksInput(x, y);
+}
+
+bool MapBgfxHud::wheelZoomsAtCrosshair(double x, double y) const
+{
+    return !popupOpen() && (this->joystick_rect.contains(x, y) || this->zoom_rect.contains(x, y));
 }

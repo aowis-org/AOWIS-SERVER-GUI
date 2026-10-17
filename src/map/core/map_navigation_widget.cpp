@@ -17,44 +17,6 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     map( map ),
     keyboard_focus_target( keyboard_focus_target != nullptr ? keyboard_focus_target : map )
 {
-    this->button_zoom_in = new QPushButton();
-    this->button_zoom_in->setIcon(QIcon(":/icon/zoom_in.png"));
-    this->button_zoom_in->setIconSize(QSize(35, 35));
-    this->button_zoom_in->setToolTip(QStringLiteral("Shortcut: [%1]").arg(guiShortcutPresentation(GuiShortcutId::MapZoomIn)));
-    
-    this->button_zoom_out = new QPushButton();
-    this->button_zoom_out->setIcon(QIcon(":/icon/zoom_out.png"));
-    this->button_zoom_out->setIconSize(QSize(35, 35));
-    this->button_zoom_out->setToolTip(QStringLiteral("Shortcut: [%1]").arg(guiShortcutPresentation(GuiShortcutId::MapZoomOut)));
-    
-    this->button_up = new QPushButton();
-    this->button_up->setIcon(QIcon(":/icon/arrow_up"));
-    this->button_up->setIconSize(QSize(25, 25));
-    this->button_up->setToolTip(QStringLiteral("Shortcut: [%1]").arg(guiShortcutPresentation(GuiShortcutId::MapPanUp)));
-    
-    this->button_down = new QPushButton();
-    this->button_down->setIcon(QIcon(":/icon/arrow_down"));
-    this->button_down->setIconSize(QSize(25, 25));
-    this->button_down->setToolTip(QStringLiteral("Shortcut: [%1]").arg(guiShortcutPresentation(GuiShortcutId::MapPanDown)));
-    
-    this->button_left = new QPushButton();
-    this->button_left->setIcon(QIcon(":/icon/arrow_left"));
-    this->button_left->setIconSize(QSize(25, 25));
-    this->button_left->setToolTip(QStringLiteral("Shortcut: [%1]").arg(guiShortcutPresentation(GuiShortcutId::MapPanLeft)));
-    
-    this->button_right = new QPushButton();
-    this->button_right->setIcon(QIcon(":/icon/arrow_right"));
-    this->button_right->setIconSize(QSize(25, 25));
-    this->button_right->setToolTip(QStringLiteral("Shortcut: [%1]").arg(guiShortcutPresentation(GuiShortcutId::MapPanRight)));
-    
-    connect(button_zoom_in, &QPushButton::clicked, this->map, &MapWidget::zoomIn);
-    connect(button_zoom_out, &QPushButton::clicked, this->map, &MapWidget::zoomOut);
-    
-    connect(button_up, &QPushButton::clicked, this->map, &MapWidget::panUp);
-    connect(button_down, &QPushButton::clicked, this->map, &MapWidget::panDown);
-    connect(button_left, &QPushButton::clicked, this->map, &MapWidget::panLeft);
-    connect(button_right, &QPushButton::clicked, this->map, &MapWidget::panRight);
-    
     this->map_arcgissat = new QRadioButton(QStringLiteral("[%1] ArcGIS SAT").arg(guiShortcutPresentation(GuiShortcutId::MapProviderArcGisSat)));
     this->map_arcgissat->setShortcut(guiShortcutRegistry().keySequence(GuiShortcutId::MapProviderArcGisSat));
     
@@ -86,12 +48,6 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
         this->activateMapProvider(MapProvider::OSMCyclo);
     });
 
-    installShortcutEditContextMenu(this->button_zoom_in, GuiShortcutId::MapZoomIn);
-    installShortcutEditContextMenu(this->button_zoom_out, GuiShortcutId::MapZoomOut);
-    installShortcutEditContextMenu(this->button_up, GuiShortcutId::MapPanUp);
-    installShortcutEditContextMenu(this->button_down, GuiShortcutId::MapPanDown);
-    installShortcutEditContextMenu(this->button_left, GuiShortcutId::MapPanLeft);
-    installShortcutEditContextMenu(this->button_right, GuiShortcutId::MapPanRight);
     installShortcutEditContextMenu(this->map_arcgissat, GuiShortcutId::MapProviderArcGisSat);
     installShortcutEditContextMenu(this->map_openstreetmap, GuiShortcutId::MapProviderOpenStreetMap);
     installShortcutEditContextMenu(this->map_opentopomap, GuiShortcutId::MapProviderOpenTopoMap);
@@ -211,24 +167,18 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
         emit signalSyncMapMovementStateChanged(this->check_map_sync->isChecked());
     });
     
-    this->grid->addWidget(button_zoom_out, 0, 0);
-    this->grid->addWidget(button_up, 0, 1, Qt::AlignBottom);
-    this->grid->addWidget(button_zoom_in, 0, 2);
-    this->grid->addWidget(button_left, 1, 0);
-    this->grid->addWidget(button_down, 1, 1);
-    this->grid->addWidget(button_right, 1, 2);
-    
-    this->grid->addWidget(map_arcgissat, 2, 0, 1, 3);
-    this->grid->addWidget(map_openstreetmap, 3, 0, 1, 3);
-    this->grid->addWidget(map_opentopomap, 4, 0, 1, 3);
-    this->grid->addWidget(map_osmcyclo, 5, 0, 1, 3);
-    this->grid->addWidget(label_slider_map_visibility, 6, 0, 1, 3);
-    this->grid->addWidget(slider_map_visibility, 7, 0, 1, 3);
-    const int icon_label_row = this->check_3d_icons != nullptr ? 9 : 8;
+    // Pan and zoom live on the map's HUD (joystick, zoom buttons).
+    this->grid->addWidget(map_arcgissat, 0, 0, 1, 3);
+    this->grid->addWidget(map_openstreetmap, 1, 0, 1, 3);
+    this->grid->addWidget(map_opentopomap, 2, 0, 1, 3);
+    this->grid->addWidget(map_osmcyclo, 3, 0, 1, 3);
+    this->grid->addWidget(label_slider_map_visibility, 4, 0, 1, 3);
+    this->grid->addWidget(slider_map_visibility, 5, 0, 1, 3);
+    const int icon_label_row = this->check_3d_icons != nullptr ? 7 : 6;
     const int icon_slider_row = icon_label_row + 1;
     const int map_sync_row = icon_slider_row + 1;
     if (this->check_3d_icons != nullptr)
-        this->grid->addWidget(this->check_3d_icons, 8, 0, 1, 3);
+        this->grid->addWidget(this->check_3d_icons, 6, 0, 1, 3);
     this->grid->addWidget(label_slider_icon_size, icon_label_row, 0, 1,
         this->mode == CanvasMode::Monitor ? 2 : 3);
     if (this->combo_icon_size_unit != nullptr)
@@ -451,19 +401,6 @@ void MapNavigationWidget::activateMapProvider(MapProvider provider)
 
 void MapNavigationWidget::refreshShortcutPresentation()
 {
-    this->button_zoom_in->setToolTip(QStringLiteral("Shortcut: [%1]").arg(
-        guiShortcutPresentation(GuiShortcutId::MapZoomIn)));
-    this->button_zoom_out->setToolTip(QStringLiteral("Shortcut: [%1]").arg(
-        guiShortcutPresentation(GuiShortcutId::MapZoomOut)));
-    this->button_up->setToolTip(QStringLiteral("Shortcut: [%1]").arg(
-        guiShortcutPresentation(GuiShortcutId::MapPanUp)));
-    this->button_down->setToolTip(QStringLiteral("Shortcut: [%1]").arg(
-        guiShortcutPresentation(GuiShortcutId::MapPanDown)));
-    this->button_left->setToolTip(QStringLiteral("Shortcut: [%1]").arg(
-        guiShortcutPresentation(GuiShortcutId::MapPanLeft)));
-    this->button_right->setToolTip(QStringLiteral("Shortcut: [%1]").arg(
-        guiShortcutPresentation(GuiShortcutId::MapPanRight)));
-
     this->map_arcgissat->setText(QStringLiteral("[%1] ArcGIS SAT").arg(
         guiShortcutPresentation(GuiShortcutId::MapProviderArcGisSat)));
     this->map_arcgissat->setShortcut(guiShortcutRegistry().keySequence(

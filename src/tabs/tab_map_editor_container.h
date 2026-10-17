@@ -154,7 +154,7 @@ private:
     QShortcut *bgfx_fullscreen_shortcut = nullptr;
     bool bgfx_fullscreen_active = false;
     void setupBgfxEditor();
-    // HUD clicks (queued from the surface): 2D/3D switch, fullscreen.
+    // HUD clicks (queued from the surface): 2D/3D switch, fullscreen, zoom.
     void handleBgfxHudAction(int action);
     void setBgfxFullscreen(bool fullscreen);
     void applyEditorCursor();
