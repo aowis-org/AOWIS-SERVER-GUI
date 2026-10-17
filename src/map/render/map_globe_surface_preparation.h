@@ -47,6 +47,9 @@ struct MapGlobeSurfaceTile
     int vertex_count = 0;
     int first_index = 0;
     int index_count = 0;
+    // Cells per side of the tile's grid; vertex_count and index_count
+    // include the skirt below its edges (mapGlobeTileVertexCount()).
+    int grid_cell_count = 0;
     QString imagery_key;
 
     int terrain_zoom = -1;
@@ -179,7 +182,7 @@ private:
     bool currentTerrainLodMatches(const QSize &viewport_size) const;
     void appendWireframeEdges(
         const QVector<MapGlobeSurfaceVertex> &vertices,
-        const QVector<quint32> &indices);
+        const QVector<quint32> &indices, qsizetype index_begin, qsizetype index_end);
     void rebuildWireframeVertices();
     bool viewSelectionMatches(const QSize &viewport_size) const;
     void rememberViewSelection(const QSize &viewport_size);

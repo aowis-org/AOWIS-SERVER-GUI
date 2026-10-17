@@ -355,6 +355,16 @@ Slice 1, the terrain surface (`map_bgfx_globe_surface.*`):
   uses: quadtree leaves with horizon and view-cone culling, ellipsoid and polar
   cap geometry relative to `MapGlobeCamera`'s sticky render origin, DEM
   requests, LOD and stitching, asynchronous terrain meshes, wireframe edges.
+* Every surface tile (terrain mesh, stand-in, flat) is its (cells + 1)^2 grid
+  followed by a skirt: the four edges again, lowered by the tile's DEM
+  elevation range plus one cell length (at least 20 m), times the vertical
+  exaggeration (`mapGlobeAppendTileSkirt()` / `mapGlobeTileSkirtDepthM()` in
+  `map_terrain_mesh_scheduler.h`). Neighbours disagree about a shared edge
+  where their quadtree levels, DEM zooms or stand-in state differ; the skirt
+  hanging from the higher edge closes that crack and lies hidden below the
+  neighbour elsewhere. It keeps the edge's texture coordinates, draws in the
+  tile's one indexed draw, and is left out of ray picking, draping heights,
+  terrain ray bounds and the wireframe (grid indices only).
 * GPU: window and cap vertices/indices in dynamic buffers (full upload on a
   window/cap rebuild, terrain meshes as vertex-range patches), one indexed draw
   per tile, depth test and write LessEqual. The camera's canonical OpenGL clip

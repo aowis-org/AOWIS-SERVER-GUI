@@ -9,6 +9,7 @@
 #include <QVector>
 #include <QWaitCondition>
 
+#include <cmath>
 #include <deque>
 
 // One Globe terrain-mesh vertex. Results contain one row-major
@@ -91,7 +92,64 @@ struct MapTerrainMeshResult
     QVector<MapTerrainMeshVertex> vertices;
 };
 
-// Builds one Globe terrain vertex grid. Pure and thread-safe.
+// --- Globe surface tile layout ---------------------------------------------
+// Every globe surface tile (terrain mesh, stand-in or flat) is its
+// row-major (cells + 1)^2 grid followed by its skirt: the edge vertices
+// again (top row, bottom row, left column, right column; cells + 1 each),
+// lowered along the vertical by mapGlobeTileSkirtDepthM(). Neighbouring
+// tiles can disagree about their shared edge (another quadtree level with
+// vertices the coarser edge does not have, another DEM tile, a stand-in
+// next to a final mesh); the skirt fills that crack and lies hidden below
+// the neighbour everywhere else. The grid alone is the surface for rays.
+inline int mapGlobeTileGridVertexCount(int cells) { return (cells + 1) * (cells + 1); }
+inline int mapGlobeTileVertexCount(int cells) { return mapGlobeTileGridVertexCount(cells) + 4 * (cells + 1); }
+inline int mapGlobeTileGridIndexCount(int cells) { return cells * cells * 6; }
+inline int mapGlobeTileIndexCount(int cells) { return mapGlobeTileGridIndexCount(cells) + 4 * cells * 6; }
+
+// Skirt depth of a tile: the elevation range of its DEM plus one grid
+// cell's ground length (at least 20 m), times the vertical exaggeration.
+// Both neighbours' edges interpolate heights from within that range, so the
+// bottom of whichever skirt hangs from the higher edge, lowered below the
+// lowest height, reaches past the lower one; the cell length is the margin
+// for DEM levels smoothed differently and for the flat tiles' chords.
+double mapGlobeTileSkirtDepthM(int zoom, int tile_y, int cells, double vertical_exaggeration,
+                               double elevation_range_m);
+
+// Appends the skirt of the grid that starts at grid_first (positions
+// relative to the render origin; the vertical is the geocentric direction,
+// within a fraction of a degree of the ellipsoid normal).
+template <typename Vertex>
+void mapGlobeAppendTileSkirt(QVector<Vertex> *vertices, qsizetype grid_first, int cells, double depth_m,
+                             double origin_x, double origin_y, double origin_z)
+{
+    const int width = cells + 1;
+    const qsizetype skirt_first = vertices->size();
+    vertices->resize(skirt_first + 4 * qsizetype(width));
+    Vertex *skirt = vertices->data() + skirt_first;
+    const Vertex *grid = vertices->constData() + grid_first;
+    for (int edge = 0; edge < 4; ++edge)
+    {
+        for (int index = 0; index < width; ++index)
+        {
+            const int row = edge == 0 ? 0 : edge == 1 ? cells : index;
+            const int column = edge == 2 ? 0 : edge == 3 ? cells : index;
+            Vertex vertex = grid[row * width + column];
+            const double x = origin_x + double(vertex.x);
+            const double y = origin_y + double(vertex.y);
+            const double z = origin_z + double(vertex.z);
+            const double length = std::sqrt(x * x + y * y + z * z);
+            if (length > 0.0)
+            {
+                vertex.x = float(double(vertex.x) - x / length * depth_m);
+                vertex.y = float(double(vertex.y) - y / length * depth_m);
+                vertex.z = float(double(vertex.z) - z / length * depth_m);
+            }
+            skirt[edge * width + index] = vertex;
+        }
+    }
+}
+
+// Builds one Globe terrain vertex grid and its skirt. Pure and thread-safe.
 MapTerrainMeshResult buildTerrainMeshResult(const MapTerrainMeshRequest &request);
 
 // Stand-in DEM tile at `address`, bilinearly resampled from the matching

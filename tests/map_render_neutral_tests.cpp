@@ -652,16 +652,45 @@ void testTerrainMeshGenerationAndStitching()
         "terrain mesh respects requested cell count below native resolution");
     expectTrue(result.stitch_top_cell_count == 2,
         "terrain mesh retains valid coarser top-edge stitch count");
-    expectTrue(result.vertices.size() == 25,
-        "four-cell terrain mesh produces five-by-five vertex grid");
+    expectTrue(result.vertices.size() == 25 + 4 * 5 && mapGlobeTileVertexCount(4) == 25 + 4 * 5,
+        "four-cell terrain mesh produces a five-by-five vertex grid and its skirt");
+    if (result.vertices.size() != mapGlobeTileVertexCount(4))
+        return;
     expectNear(result.vertices.at(0).u, 0.0, 1e-12,
         "terrain mesh first vertex has u=0");
     expectNear(result.vertices.at(0).v, 0.0, 1e-12,
         "terrain mesh first vertex has v=0");
-    expectNear(result.vertices.constLast().u, 1.0, 1e-12,
-        "terrain mesh last vertex has u=1");
-    expectNear(result.vertices.constLast().v, 1.0, 1e-12,
-        "terrain mesh last vertex has v=1");
+    expectNear(result.vertices.at(24).u, 1.0, 1e-12,
+        "terrain mesh last grid vertex has u=1");
+    expectNear(result.vertices.at(24).v, 1.0, 1e-12,
+        "terrain mesh last grid vertex has v=1");
+
+    // Skirt: top row, bottom row, left column, right column, each the edge
+    // vertex lowered by the skirt depth with the edge vertex's texture
+    // coordinates.
+    const std::function<double(const MapTerrainMeshVertex &)> geocentric_radius_m =
+        [&render_origin](const MapTerrainMeshVertex &vertex)
+    {
+        const double x = render_origin.x + double(vertex.x);
+        const double y = render_origin.y + double(vertex.y);
+        const double z = render_origin.z + double(vertex.z);
+        return std::sqrt(x * x + y * y + z * z);
+    };
+    const double skirt_depth_m = mapGlobeTileSkirtDepthM(10, 512, 4, 1.0, 0.0);
+    expectTrue(skirt_depth_m > 9000.0 && skirt_depth_m < 10000.0,
+        "skirt depth of an equatorial zoom-10 four-cell tile is one cell length");
+    expectNear(mapGlobeTileSkirtDepthM(10, 512, 4, 2.0, 1500.0), 2.0 * (skirt_depth_m + 1500.0), 1e-6,
+        "skirt depth adds the DEM elevation range, all exaggerated");
+    const int skirt_grid_vertex[4][2] = {{25, 0}, {25 + 5 + 4, 24}, {25 + 10 + 2, 10}, {25 + 15 + 3, 19}};
+    for (const int (&pair)[2] : skirt_grid_vertex)
+    {
+        const MapTerrainMeshVertex &skirt = result.vertices.at(pair[0]);
+        const MapTerrainMeshVertex &edge = result.vertices.at(pair[1]);
+        expectNear(geocentric_radius_m(edge) - geocentric_radius_m(skirt), skirt_depth_m, 0.5,
+            "skirt vertex hangs the skirt depth below its edge vertex");
+        expectTrue(skirt.u == edge.u && skirt.v == edge.v,
+            "skirt vertex keeps its edge vertex's texture coordinates");
+    }
 
     if (result.vertices.size() >= 3)
     {
@@ -769,9 +798,9 @@ void testTerrainStandInFromAncestor()
     request.globe_render_origin_y = origin.y;
     request.globe_render_origin_z = origin.z;
     const MapTerrainMeshResult result = buildTerrainMeshResult(request);
-    expectTrue(result.cell_count == 16 && result.vertices.size() == 17 * 17,
-        "stand-in mesh has the final mesh's grid");
-    if (result.vertices.size() != 17 * 17)
+    expectTrue(result.cell_count == 16 && result.vertices.size() == mapGlobeTileVertexCount(16),
+        "stand-in mesh has the final mesh's grid and skirt");
+    if (result.vertices.size() != mapGlobeTileVertexCount(16))
         return;
     // The imagery tile is the top-left quarter of the terrain tile.
     const std::function<double(const MapTerrainMeshVertex &)> height_m =
@@ -789,7 +818,7 @@ void testTerrainStandInFromAncestor()
     };
     expectNear(height_m(result.vertices.constFirst()), plane(0.75, 0.25), 0.05,
         "stand-in mesh corner lies on the ancestor relief");
-    expectNear(height_m(result.vertices.constLast()), plane(0.875, 0.375), 0.05,
+    expectNear(height_m(result.vertices.at(17 * 17 - 1)), plane(0.875, 0.375), 0.05,
         "stand-in mesh opposite corner lies on the ancestor relief");
 
     // The preparation hands the mesh thread the ancestor itself; the

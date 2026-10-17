@@ -39,15 +39,18 @@ int subdivisionsForZoom(int zoom)
     return 2;
 }
 
-void appendIndexedGridIndices(
+// Indices of one tile laid out as mapGlobeTileVertexCount(cell_count)
+// vertices from first_vertex: the grid's cells first (row by row, so a
+// grid row's triangles are one contiguous block, which
+// visibleTerrainRayIntersection() relies on), then the skirt's walls.
+void appendIndexedTileIndices(
     QVector<quint32> *indices, qsizetype first_vertex, int cell_count)
 {
     if (indices == nullptr || first_vertex < 0 || cell_count <= 0)
         return;
 
-    const qsizetype grid_width_size = qsizetype(cell_count) + 1;
     const qsizetype last_vertex = first_vertex
-        + grid_width_size * grid_width_size - 1;
+        + mapGlobeTileVertexCount(cell_count) - 1;
     // Compare as quint64: qsizetype is 32-bit on wasm32, where
     // qsizetype(UINT32_MAX) is -1 and every grid would be skipped.
     if (quint64(last_vertex) > quint64(std::numeric_limits<quint32>::max()))
@@ -58,7 +61,7 @@ void appendIndexedGridIndices(
     // Written in place after one resize (window rebuilds append hundreds of
     // thousands of indices while the camera moves).
     const qsizetype begin = indices->size();
-    indices->resize(begin + qsizetype(cell_count) * qsizetype(cell_count) * 6);
+    indices->resize(begin + mapGlobeTileIndexCount(cell_count));
     quint32 *target = indices->data() + begin;
     for (int row = 0; row < cell_count; ++row)
     {
@@ -75,6 +78,45 @@ void appendIndexedGridIndices(
             *target++ = p10;
             *target++ = p01;
             *target++ = p11;
+        }
+    }
+
+    // Skirt: one quad per edge segment between the grid edge vertices g0,
+    // g1 and their lowered copies s0, s1 (mapGlobeAppendTileSkirt() order:
+    // top row, bottom row, left column, right column). The surface state
+    // culls no faces, so the winding does not matter.
+    const quint32 skirt_first = first + quint32(mapGlobeTileGridVertexCount(cell_count));
+    const quint32 cells = quint32(cell_count);
+    for (quint32 edge = 0; edge < 4; ++edge)
+    {
+        for (quint32 index = 0; index < cells; ++index)
+        {
+            quint32 g0 = 0;
+            quint32 g1 = 0;
+            if (edge == 0)
+            {
+                g0 = first + index;
+                g1 = g0 + 1;
+            }
+            else if (edge == 1)
+            {
+                g0 = first + cells * grid_width + index;
+                g1 = g0 + 1;
+            }
+            else
+            {
+                const quint32 column = edge == 2 ? 0 : cells;
+                g0 = first + index * grid_width + column;
+                g1 = g0 + grid_width;
+            }
+            const quint32 s0 = skirt_first + edge * grid_width + index;
+            const quint32 s1 = s0 + 1;
+            *target++ = g0;
+            *target++ = s0;
+            *target++ = g1;
+            *target++ = g1;
+            *target++ = s0;
+            *target++ = s1;
         }
     }
 }
@@ -499,8 +541,14 @@ void MapGlobeSurfacePreparation::updateTerrainRayBounds(
         return;
     }
 
+    // Bounds of the grid only: the skirt hangs below it and is no surface
+    // a ray may hit (mapGlobeAppendTileSkirt()).
+    const int cell_count = tile->grid_cell_count;
+    const qsizetype grid_width = qsizetype(cell_count) + 1;
+    if (cell_count < 1 || tile->vertex_count != mapGlobeTileVertexCount(cell_count))
+        return;
     const qsizetype vertex_begin = qsizetype(tile->first_vertex);
-    const qsizetype vertex_end = vertex_begin + qsizetype(tile->vertex_count);
+    const qsizetype vertex_end = vertex_begin + mapGlobeTileGridVertexCount(cell_count);
     if (vertex_begin < 0 || vertex_end > this->window_vertices.size())
         return;
 
@@ -523,12 +571,6 @@ void MapGlobeSurfacePreparation::updateTerrainRayBounds(
     tile->terrain_ray_bounds_min = bounds_min;
     tile->terrain_ray_bounds_max = bounds_max;
     tile->terrain_ray_bounds_valid = true;
-
-    const int cell_count = qMax(1, tile->terrain_cell_count);
-    const qsizetype grid_width = qsizetype(cell_count) + 1;
-    const qsizetype expected_vertex_count = grid_width * grid_width;
-    if (qsizetype(tile->vertex_count) != expected_vertex_count)
-        return;
 
     tile->terrain_ray_row_bounds.reserve(cell_count);
     for (int row = 0; row < cell_count; ++row)
@@ -664,10 +706,8 @@ void MapGlobeSurfacePreparation::rebuildWindow(
         const int subdivisions = !tile.terrain_key.isEmpty()
             ? qMax(1, tile.terrain_cell_count)
             : subdivisionsForZoom(tile.zoom);
-        const qsizetype grid_width = qsizetype(subdivisions) + 1;
-        estimated_vertex_count += grid_width * grid_width;
-        estimated_index_count +=
-            qsizetype(subdivisions) * qsizetype(subdivisions) * 6;
+        estimated_vertex_count += mapGlobeTileVertexCount(subdivisions);
+        estimated_index_count += mapGlobeTileIndexCount(subdivisions);
     }
 
     this->window_vertices.clear();
@@ -688,9 +728,10 @@ void MapGlobeSurfacePreparation::rebuildWindow(
         const int subdivisions = terrain_enabled
             ? qMax(1, tile.terrain_cell_count)
             : subdivisionsForZoom(tile.zoom);
-        const int grid_width = subdivisions + 1;
-        const int expected_vertex_count = grid_width * grid_width;
-        const int expected_index_count = subdivisions * subdivisions * 6;
+        // Grid plus skirt, for flat tiles and terrain meshes alike, so an
+        // asynchronous mesh replaces the flat stand-in vertex for vertex.
+        const int expected_vertex_count = mapGlobeTileVertexCount(subdivisions);
+        const int expected_index_count = mapGlobeTileIndexCount(subdivisions);
 
         bool reused = false;
         const QHash<quint64, qsizetype>::const_iterator previous_iterator =
@@ -814,11 +855,21 @@ void MapGlobeSurfacePreparation::rebuildWindow(
                             float(u), float(v)));
                     }
                 }
+                mapGlobeAppendTileSkirt(
+                    &this->window_vertices, tile.first_vertex, subdivisions,
+                    mapGlobeTileSkirtDepthM(tile.zoom, tile.tile_y, subdivisions,
+                                            this->map_model != nullptr
+                                                ? this->map_model->view3dVerticalExaggeration()
+                                                : 1.0,
+                                            0.0),
+                    this->render_origin_ecef.x, this->render_origin_ecef.y,
+                    this->render_origin_ecef.z);
                 tile.vertex_count = expected_vertex_count;
             }
         }
 
-        appendIndexedGridIndices(
+        tile.grid_cell_count = subdivisions;
+        appendIndexedTileIndices(
             &this->window_indices, tile.first_vertex, subdivisions);
         tile.index_count = this->window_indices.size() - tile.first_index;
         this->updateTerrainRayBounds(&tile);
@@ -1347,8 +1398,13 @@ bool MapGlobeSurfacePreparation::visibleTerrainRayIntersection(
             continue;
         }
 
+        // The grid's triangles only: the skirt below its edges is no
+        // surface (appendIndexedTileIndices()).
+        const int cell_count = tile.grid_cell_count;
+        if (cell_count < 1 || tile.index_count != mapGlobeTileIndexCount(cell_count))
+            continue;
         const qsizetype index_begin = qsizetype(tile.first_index);
-        const qsizetype index_end = index_begin + qsizetype(tile.index_count);
+        const qsizetype index_end = index_begin + mapGlobeTileGridIndexCount(cell_count);
         if (index_begin < 0 || index_end > this->window_indices.size())
             continue;
 
@@ -1397,13 +1453,8 @@ bool MapGlobeSurfacePreparation::visibleTerrainRayIntersection(
                 }
             };
 
-        const int cell_count = qMax(1, tile.terrain_cell_count);
         const qsizetype row_index_count = qsizetype(cell_count) * 6;
-        const bool have_row_bounds =
-            tile.terrain_ray_row_bounds.size() == cell_count
-            && qsizetype(tile.index_count)
-                == qsizetype(cell_count) * qsizetype(cell_count) * 6;
-        if (!have_row_bounds)
+        if (tile.terrain_ray_row_bounds.size() != cell_count)
         {
             test_index_range(index_begin, index_end);
             continue;
@@ -1474,10 +1525,10 @@ MapGlobeSurfacePreparation::DrawnSurfaceHeight MapGlobeSurfacePreparation::drawn
         if (!tile.terrain_mesh_has_relief)
             return DrawnSurfaceHeight::Flat;
         // The mesh is a row-major (cells + 1)^2 grid, uniform in the tile's
-        // Mercator coordinates (appendIndexedGridIndices()).
-        const int grid_width = int(std::lround(std::sqrt(double(tile.vertex_count))));
-        const int cell_count = grid_width - 1;
-        if (cell_count < 1 || grid_width * grid_width != tile.vertex_count
+        // Mercator coordinates, followed by its skirt (appendIndexedTileIndices()).
+        const int cell_count = tile.grid_cell_count;
+        const int grid_width = cell_count + 1;
+        if (cell_count < 1 || tile.vertex_count != mapGlobeTileVertexCount(cell_count)
             || tile.first_vertex + tile.vertex_count > this->window_vertices.size())
         {
             return DrawnSurfaceHeight::Unknown;
@@ -1616,9 +1667,9 @@ bool MapGlobeSurfacePreparation::visibleTerrainSamplingAtCoordinate(
 
 void MapGlobeSurfacePreparation::appendWireframeEdges(
     const QVector<MapGlobeSurfaceVertex> &vertices,
-    const QVector<quint32> &indices)
+    const QVector<quint32> &indices, qsizetype index_begin, qsizetype index_end)
 {
-    for (qsizetype index = 0; index + 2 < indices.size(); index += 3)
+    for (qsizetype index = index_begin; index + 2 < index_end; index += 3)
     {
         const quint32 a_index = indices.at(index);
         const quint32 b_index = indices.at(index + 1);
@@ -1651,8 +1702,17 @@ void MapGlobeSurfacePreparation::rebuildWireframeVertices()
     this->wireframe_vertices.clear();
     this->wireframe_vertices.reserve(
         (this->window_indices.size() + this->cap_indices.size()) * 2);
-    this->appendWireframeEdges(this->window_vertices, this->window_indices);
-    this->appendWireframeEdges(this->cap_vertices, this->cap_indices);
+    // Each tile's grid; its skirt is a hidden crack filler, not mesh
+    // structure worth showing.
+    for (const MapGlobeSurfaceTile &tile : this->window_tiles)
+    {
+        if (tile.grid_cell_count >= 1 && tile.index_count == mapGlobeTileIndexCount(tile.grid_cell_count))
+        {
+            this->appendWireframeEdges(this->window_vertices, this->window_indices, tile.first_index,
+                                       tile.first_index + mapGlobeTileGridIndexCount(tile.grid_cell_count));
+        }
+    }
+    this->appendWireframeEdges(this->cap_vertices, this->cap_indices, 0, this->cap_indices.size());
 }
 
 const GeoWgs84Ellipsoid::EcefPositionD &

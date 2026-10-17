@@ -286,6 +286,18 @@ QVector3D globeTerrainMeshVertexPosition(
 }
 }
 
+double mapGlobeTileSkirtDepthM(int zoom, int tile_y, int cells, double vertical_exaggeration,
+                               double elevation_range_m)
+{
+    constexpr double MinimumSkirtDepthM = 20.0;
+    const double latitude_deg = GeoWebMercator::tileYToLat(double(tile_y) + 0.5, zoom);
+    const double tile_width_m = 2.0 * M_PI * GeoWgs84Ellipsoid::EquatorialRadiusM
+        * std::cos(qDegreesToRadians(latitude_deg)) / std::ldexp(1.0, zoom);
+    const double cell_length_m = tile_width_m / double(std::max(1, cells));
+    return (elevation_range_m + std::max(MinimumSkirtDepthM, cell_length_m))
+        * std::max(1.0, vertical_exaggeration);
+}
+
 MapTerrainMeshResult buildTerrainMeshResult(const MapTerrainMeshRequest &request)
 {
     // A stand-in carries its coarser ancestor DEM tile: resampled at the
@@ -348,8 +360,7 @@ MapTerrainMeshResult buildTerrainMeshResult(const MapTerrainMeshRequest &request
     result.stitch_left_cell_count = normalizedTerrainStitchCellCount(
         request.stitch_left_cell_count, cell_count);
 
-    const qsizetype grid_width = qsizetype(cell_count) + 1;
-    result.vertices.reserve(grid_width * grid_width);
+    result.vertices.reserve(mapGlobeTileVertexCount(cell_count));
     for (int row = 0; row <= cell_count; ++row)
     {
         const double v = double(row) / double(cell_count);
@@ -368,6 +379,19 @@ MapTerrainMeshResult buildTerrainMeshResult(const MapTerrainMeshRequest &request
                 position.x(), position.y(), position.z(), float(u), float(v)});
         }
     }
+    // A DEM tile whose samples are all missing has no finite range.
+    const double minimum_m = request.terrain_tile.minimum_elevation_m;
+    const double maximum_m = request.terrain_tile.maximum_elevation_m;
+    const double elevation_range_m =
+        std::isfinite(minimum_m) && std::isfinite(maximum_m) && maximum_m > minimum_m
+        ? maximum_m - minimum_m
+        : 0.0;
+    mapGlobeAppendTileSkirt(&result.vertices, 0, cell_count,
+                            mapGlobeTileSkirtDepthM(request.imagery_zoom, request.y, cell_count,
+                                                    request.globe_vertical_exaggeration,
+                                                    elevation_range_m),
+                            request.globe_render_origin_x, request.globe_render_origin_y,
+                            request.globe_render_origin_z);
 
     return result;
 }
